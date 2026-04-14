@@ -2,14 +2,16 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
-COPY requirements.txt .
+# Install dependencies
+COPY apps/orchestrator-api/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 RUN pip install apscheduler==3.10.4 python-telegram-bot==21.3 fakeredis
 
-COPY . .
+# Copy orchestrator code
+COPY apps/orchestrator-api/ .
 
-# Copy adapters from monorepo root (needed for agent dispatch)
-COPY ../../adapters /app/adapters
+# Copy adapters from monorepo root
+COPY adapters/ /app/adapters/
 
 ENV PYTHONPATH=/app
 
