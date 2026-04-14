@@ -1,0 +1,121 @@
+{
+  "$defs": {
+    "TaskStatus": {
+      "enum": [
+        "pending",
+        "running",
+        "completed",
+        "failed",
+        "partial",
+        "cancelled"
+      ],
+      "title": "TaskStatus",
+      "type": "string"
+    }
+  },
+  "description": "Standard output contract returned by agents to the Orchestrator.",
+  "examples": [
+    {
+      "agent_id": "mock-asset-agent",
+      "output_payload": {
+        "currency": "KRW",
+        "total_value": 1250000
+      },
+      "status": "completed",
+      "summary": "Portfolio PF-1234 summary generated",
+      "task_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+      "trace_id": "tr-20260413-001"
+    }
+  ],
+  "properties": {
+    "task_id": {
+      "description": "Must match the request task_id",
+      "format": "uuid",
+      "title": "Task Id",
+      "type": "string"
+    },
+    "trace_id": {
+      "description": "Must match the request trace_id",
+      "title": "Trace Id",
+      "type": "string"
+    },
+    "agent_id": {
+      "description": "ID of the agent that executed the task",
+      "title": "Agent Id",
+      "type": "string"
+    },
+    "status": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/TaskStatus"
+        }
+      ],
+      "description": "Execution result status"
+    },
+    "summary": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Human-readable summary of the result",
+      "title": "Summary"
+    },
+    "output_payload": {
+      "anyOf": [
+        {
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Agent-specific output data",
+      "title": "Output Payload"
+    },
+    "error_message": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Error details if status is failed",
+      "title": "Error Message"
+    },
+    "evidence_refs": {
+      "description": "URIs to supporting evidence or artifacts",
+      "items": {
+        "type": "string"
+      },
+      "title": "Evidence Refs",
+      "type": "array"
+    },
+    "generated_at": {
+      "format": "date-time",
+      "title": "Generated At",
+      "type": "string"
+    },
+    "version": {
+      "default": "1.0",
+      "title": "Version",
+      "type": "string"
+    }
+  },
+  "required": [
+    "task_id",
+    "trace_id",
+    "agent_id",
+    "status"
+  ],
+  "title": "TaskResponse",
+  "type": "object"
+}

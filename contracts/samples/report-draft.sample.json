@@ -1,0 +1,19 @@
+{
+  "trace_id": "tr-20260413-001",
+  "report_type": "daily_summary",
+  "title": "Daily Portfolio Summary \u2014 2026-04-13",
+  "sections": [
+    {
+      "title": "Overview",
+      "content": "Portfolio value increased by 2.3% today."
+    },
+    {
+      "title": "Top Movers",
+      "content": "AAPL +5.1%, TSLA -2.0%, 005930.KS +1.2%"
+    },
+    {
+      "title": "Risk Assessment",
+      "content": "All positions within tolerance."
+    }
+  ]
+}

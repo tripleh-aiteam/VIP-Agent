@@ -1,0 +1,17 @@
+{
+  "trace_id": "tr-20260413-glass-001",
+  "agent_id": "mock-realty-agent",
+  "device_id": "glass-device-A1",
+  "capture_type": "spatial_3d",
+  "property_ref": "PROP-2026-0413",
+  "location": {
+    "latitude": 37.5665,
+    "longitude": 126.978
+  },
+  "processing_status": "initiated",
+  "metadata": {
+    "fps": 30,
+    "resolution": "4K",
+    "stereo": true
+  }
+}

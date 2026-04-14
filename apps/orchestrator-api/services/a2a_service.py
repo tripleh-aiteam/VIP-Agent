@@ -1,0 +1,177 @@
+"""
+VIP AI Platform — A2A (Agent-to-Agent) Service
+Every message uses A2AMessageEnvelope. All messages are persisted, traced, and authorized.
+High-risk messages can be flagged for judgement review.
+"""
+
+from datetime import datetime
+from uuid import UUID, uuid4
+from typing import Any
+
+from sqlalchemy.orm import Session
+
+from db.models import A2AMessage, CoreAgent
+from services.audit_service import record_event
+from services.event_bus import publish
+from services.logger import log
+
+
+# Message types that require judgement review
+HIGH_RISK_TYPES = {"risk_alert", "escalation_request"}
+
+VALID_MESSAGE_TYPES = {
+    "risk_alert",
+    "data_request",
+    "report_request",
+    "report_response",
+    "feedback_request",
+    "escalation_request",
+}
+
+VALID_PURPOSES = {"delegate", "inform", "query", "escalate", "ack"}
+
+
+def send_message(
+    db: Session,
+    trace_id: str,
+    sender_agent_id: str,
+    target_agent_id: str,
+    message_type: str,
+    purpose: str,
+    payload: dict[str, Any],
+    source_task_id: UUID | None = None,
+    authorization_context: dict | None = None,
+    proof_of_intent: dict | None = None,
+    deadline: datetime | None = None,
+) -> dict:
+    """
+    Send an A2A message. Validates, persists, publishes to event bus, and flags high-risk.
+    """
+
+    # Validate message type
+    if message_type not in VALID_MESSAGE_TYPES:
+        raise ValueError(f"Invalid message_type: {message_type}. Must be one of: {VALID_MESSAGE_TYPES}")
+
+    if purpose not in VALID_PURPOSES:
+        raise ValueError(f"Invalid purpose: {purpose}. Must be one of: {VALID_PURPOSES}")
+
+    # Verify sender exists
+    sender = db.query(CoreAgent).filter(CoreAgent.name == sender_agent_id).first()
+    if not sender:
+        sender = db.query(CoreAgent).filter(CoreAgent.id == sender_agent_id).first() if len(sender_agent_id) > 30 else None
+    sender_name = sender.name if sender else sender_agent_id
+    sender_uuid = sender.id if sender else None
+
+    # Verify target exists
+    target = db.query(CoreAgent).filter(CoreAgent.name == target_agent_id).first()
+    if not target:
+        target = db.query(CoreAgent).filter(CoreAgent.id == target_agent_id).first() if len(target_agent_id) > 30 else None
+    target_name = target.name if target else target_agent_id
+    target_uuid = target.id if target else None
+
+    if not sender_uuid or not target_uuid:
+        raise ValueError(f"Agent not found: sender={sender_agent_id}, target={target_agent_id}")
+
+    # Determine if high-risk
+    is_high_risk = message_type in HIGH_RISK_TYPES
+    needs_judgement = is_high_risk
+
+    # Build envelope
+    message_id = uuid4()
+    envelope = {
+        "message_id": str(message_id),
+        "trace_id": trace_id,
+        "sender_agent_id": sender_name,
+        "target_agent_id": target_name,
+        "source_task_id": str(source_task_id) if source_task_id else None,
+        "message_type": message_type,
+        "purpose": purpose,
+        "authorization_context": authorization_context or {"sender_role": "agent", "trust_level": "internal"},
+        "proof_of_intent": proof_of_intent,
+        "deadline": deadline.isoformat() if deadline else None,
+        "payload": payload,
+        "is_high_risk": is_high_risk,
+        "needs_judgement": needs_judgement,
+    }
+
+    # Persist to DB
+    msg = A2AMessage(
+        id=message_id,
+        sender_agent_id=sender_uuid,
+        target_agent_id=target_uuid,
+        task_run_id=source_task_id,
+        trace_id=trace_id,
+        message_type=message_type,
+        envelope_json=envelope,
+        status="sent",
+    )
+    db.add(msg)
+    db.flush()
+
+    # Publish to event bus
+    publish(f"a2a.{message_type}", envelope)
+    publish(f"a2a.to.{target_name}", envelope)
+
+    # Audit
+    record_event(db, "a2a", f"a2a.{message_type}", trace_id, {
+        "message_id": str(message_id),
+        "sender": sender_name,
+        "target": target_name,
+        "purpose": purpose,
+        "is_high_risk": is_high_risk,
+    })
+
+    log.info(
+        f"a2a: {sender_name} -> {target_name} [{message_type}/{purpose}]",
+        extra={"trace_id": trace_id, "action": f"a2a.{message_type}"},
+    )
+
+    db.commit()
+
+    return {
+        "message_id": str(message_id),
+        "trace_id": trace_id,
+        "sender": sender_name,
+        "target": target_name,
+        "message_type": message_type,
+        "purpose": purpose,
+        "status": "sent",
+        "is_high_risk": is_high_risk,
+        "needs_judgement": needs_judgement,
+    }
+
+
+def get_message(db: Session, message_id: UUID) -> dict | None:
+    msg = db.query(A2AMessage).filter(A2AMessage.id == message_id).first()
+    if not msg:
+        return None
+    return _msg_to_dict(msg)
+
+
+def list_messages(
+    db: Session,
+    message_type: str | None = None,
+    trace_id: str | None = None,
+    limit: int = 50,
+) -> list[dict]:
+    q = db.query(A2AMessage)
+    if message_type:
+        q = q.filter(A2AMessage.message_type == message_type)
+    if trace_id:
+        q = q.filter(A2AMessage.trace_id == trace_id)
+    msgs = q.order_by(A2AMessage.created_at.desc()).limit(limit).all()
+    return [_msg_to_dict(m) for m in msgs]
+
+
+def _msg_to_dict(msg: A2AMessage) -> dict:
+    return {
+        "id": str(msg.id),
+        "trace_id": msg.trace_id,
+        "sender_agent": msg.sender_agent.name if msg.sender_agent else str(msg.sender_agent_id),
+        "target_agent": msg.target_agent.name if msg.target_agent else str(msg.target_agent_id),
+        "message_type": msg.message_type,
+        "status": msg.status,
+        "envelope": msg.envelope_json,
+        "source_task_id": str(msg.task_run_id) if msg.task_run_id else None,
+        "created_at": msg.created_at.isoformat() if msg.created_at else None,
+    }

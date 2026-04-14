@@ -1,0 +1,15 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "TaskInput",
+  "description": "Standard input contract for tasks dispatched by the Orchestrator",
+  "type": "object",
+  "properties": {
+    "task_id": { "type": "string" },
+    "task_type": { "type": "string" },
+    "agent_target": { "type": "string" },
+    "payload": { "type": "object" },
+    "priority": { "type": "string", "enum": ["low", "medium", "high", "critical"] },
+    "created_at": { "type": "string", "format": "date-time" }
+  },
+  "required": ["task_id", "task_type", "agent_target"]
+}

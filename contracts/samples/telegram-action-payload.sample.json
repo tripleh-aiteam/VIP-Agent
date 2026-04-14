@@ -1,0 +1,10 @@
+{
+  "telegram_user_id": "123456789",
+  "chat_id": "-100987654321",
+  "action_type": "command",
+  "command": "/status",
+  "args": [
+    "portfolio",
+    "PF-1234"
+  ]
+}

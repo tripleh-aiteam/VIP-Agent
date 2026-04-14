@@ -1,0 +1,15 @@
+{
+  "trace_id": "tr-20260413-001",
+  "initiator_type": "user",
+  "initiator_id": "user-001",
+  "source_channel": "web",
+  "target_agent_type": "asset",
+  "task_type": "asset_summary",
+  "priority": "medium",
+  "input_payload": {
+    "portfolio_id": "PF-1234"
+  },
+  "metadata": {
+    "source": "dashboard"
+  }
+}

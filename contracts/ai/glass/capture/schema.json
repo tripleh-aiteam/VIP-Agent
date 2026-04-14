@@ -1,0 +1,213 @@
+{
+  "$defs": {
+    "CaptureType": {
+      "enum": [
+        "video",
+        "photo",
+        "spatial_3d",
+        "audio",
+        "mixed"
+      ],
+      "title": "CaptureType",
+      "type": "string"
+    },
+    "GeoLocation": {
+      "properties": {
+        "latitude": {
+          "maximum": 90.0,
+          "minimum": -90.0,
+          "title": "Latitude",
+          "type": "number"
+        },
+        "longitude": {
+          "maximum": 180.0,
+          "minimum": -180.0,
+          "title": "Longitude",
+          "type": "number"
+        },
+        "altitude_m": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Altitude M"
+        },
+        "accuracy_m": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Accuracy M"
+        }
+      },
+      "required": [
+        "latitude",
+        "longitude"
+      ],
+      "title": "GeoLocation",
+      "type": "object"
+    },
+    "ProcessingStatus": {
+      "enum": [
+        "initiated",
+        "uploading",
+        "processing",
+        "done",
+        "error"
+      ],
+      "title": "ProcessingStatus",
+      "type": "string"
+    }
+  },
+  "description": "Event emitted when AI Glasses capture spatial data for a property.",
+  "examples": [
+    {
+      "agent_id": "mock-realty-agent",
+      "capture_type": "spatial_3d",
+      "device_id": "glass-device-A1",
+      "location": {
+        "latitude": 37.5665,
+        "longitude": 126.978
+      },
+      "metadata": {
+        "fps": 30,
+        "resolution": "4K"
+      },
+      "processing_status": "initiated",
+      "property_ref": "PROP-2026-0413",
+      "trace_id": "tr-20260413-glass-001"
+    }
+  ],
+  "properties": {
+    "capture_id": {
+      "format": "uuid",
+      "title": "Capture Id",
+      "type": "string"
+    },
+    "trace_id": {
+      "title": "Trace Id",
+      "type": "string"
+    },
+    "agent_id": {
+      "description": "Realty agent handling this capture",
+      "title": "Agent Id",
+      "type": "string"
+    },
+    "device_id": {
+      "description": "AI Glass device identifier",
+      "title": "Device Id",
+      "type": "string"
+    },
+    "capture_type": {
+      "$ref": "#/$defs/CaptureType"
+    },
+    "property_ref": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Property reference or listing ID",
+      "title": "Property Ref"
+    },
+    "location": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/GeoLocation"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "video_uri": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Video Uri"
+    },
+    "audio_uri": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Audio Uri"
+    },
+    "photo_uris": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Photo Uris",
+      "type": "array"
+    },
+    "model_3d_uri": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Model 3D Uri"
+    },
+    "processing_status": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/ProcessingStatus"
+        }
+      ],
+      "default": "initiated"
+    },
+    "metadata": {
+      "description": "Device-specific metadata (FPS, resolution, etc)",
+      "title": "Metadata",
+      "type": "object"
+    },
+    "captured_at": {
+      "format": "date-time",
+      "title": "Captured At",
+      "type": "string"
+    },
+    "version": {
+      "default": "1.0",
+      "title": "Version",
+      "type": "string"
+    }
+  },
+  "required": [
+    "trace_id",
+    "agent_id",
+    "device_id",
+    "capture_type"
+  ],
+  "title": "AIGlassCaptureEvent",
+  "type": "object"
+}

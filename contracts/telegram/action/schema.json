@@ -1,0 +1,129 @@
+{
+  "$defs": {
+    "TelegramActionType": {
+      "enum": [
+        "command",
+        "approval",
+        "notification",
+        "query",
+        "alert"
+      ],
+      "title": "TelegramActionType",
+      "type": "string"
+    }
+  },
+  "description": "Payload for Telegram bot interactions \u2014 commands, approvals, notifications.",
+  "examples": [
+    {
+      "action_type": "command",
+      "args": [
+        "portfolio",
+        "PF-1234"
+      ],
+      "chat_id": "-100987654321",
+      "command": "/status",
+      "telegram_user_id": "123456789"
+    }
+  ],
+  "properties": {
+    "action_id": {
+      "format": "uuid",
+      "title": "Action Id",
+      "type": "string"
+    },
+    "telegram_user_id": {
+      "description": "Telegram user ID",
+      "title": "Telegram User Id",
+      "type": "string"
+    },
+    "chat_id": {
+      "description": "Telegram chat ID",
+      "title": "Chat Id",
+      "type": "string"
+    },
+    "action_type": {
+      "$ref": "#/$defs/TelegramActionType"
+    },
+    "command": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Bot command (e.g., /status, /approve)",
+      "title": "Command"
+    },
+    "args": {
+      "description": "Command arguments",
+      "items": {
+        "type": "string"
+      },
+      "title": "Args",
+      "type": "array"
+    },
+    "related_task_run_id": {
+      "anyOf": [
+        {
+          "format": "uuid",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Related Task Run Id"
+    },
+    "related_judgement_id": {
+      "anyOf": [
+        {
+          "format": "uuid",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Related Judgement Id"
+    },
+    "reply_text": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Text to send back to user",
+      "title": "Reply Text"
+    },
+    "payload": {
+      "title": "Payload",
+      "type": "object"
+    },
+    "created_at": {
+      "format": "date-time",
+      "title": "Created At",
+      "type": "string"
+    },
+    "version": {
+      "default": "1.0",
+      "title": "Version",
+      "type": "string"
+    }
+  },
+  "required": [
+    "telegram_user_id",
+    "chat_id",
+    "action_type"
+  ],
+  "title": "TelegramActionPayload",
+  "type": "object"
+}

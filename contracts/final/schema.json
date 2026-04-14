@@ -1,0 +1,179 @@
+{
+  "$defs": {
+    "ReportSection": {
+      "properties": {
+        "title": {
+          "title": "Title",
+          "type": "string"
+        },
+        "content": {
+          "title": "Content",
+          "type": "string"
+        },
+        "data": {
+          "anyOf": [
+            {
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Data"
+        },
+        "charts": {
+          "description": "URIs to chart images or data",
+          "items": {
+            "type": "string"
+          },
+          "title": "Charts",
+          "type": "array"
+        }
+      },
+      "required": [
+        "title",
+        "content"
+      ],
+      "title": "ReportSection",
+      "type": "object"
+    },
+    "ReportType": {
+      "enum": [
+        "daily_summary",
+        "weekly_digest",
+        "alert",
+        "audit",
+        "portfolio",
+        "custom"
+      ],
+      "title": "ReportType",
+      "type": "string"
+    }
+  },
+  "description": "Finalized report ready for delivery.",
+  "examples": [
+    {
+      "delivery_channels": [
+        "web",
+        "telegram"
+      ],
+      "recipient_ids": [
+        "user-001"
+      ],
+      "report_type": "daily_summary",
+      "sections": [
+        {
+          "content": "Portfolio value increased by 2.3%",
+          "title": "Overview"
+        }
+      ],
+      "title": "Daily Portfolio Summary \u2014 2026-04-13",
+      "trace_id": "tr-20260413-001"
+    }
+  ],
+  "properties": {
+    "report_id": {
+      "format": "uuid",
+      "title": "Report Id",
+      "type": "string"
+    },
+    "trace_id": {
+      "title": "Trace Id",
+      "type": "string"
+    },
+    "draft_id": {
+      "anyOf": [
+        {
+          "format": "uuid",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Draft this report was generated from",
+      "title": "Draft Id"
+    },
+    "report_type": {
+      "$ref": "#/$defs/ReportType"
+    },
+    "title": {
+      "title": "Title",
+      "type": "string"
+    },
+    "sections": {
+      "items": {
+        "$ref": "#/$defs/ReportSection"
+      },
+      "title": "Sections",
+      "type": "array"
+    },
+    "delivery_channels": {
+      "description": "Channels to deliver to (web, telegram, email)",
+      "items": {
+        "type": "string"
+      },
+      "title": "Delivery Channels",
+      "type": "array"
+    },
+    "recipient_ids": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Recipient Ids",
+      "type": "array"
+    },
+    "judgement_id": {
+      "anyOf": [
+        {
+          "format": "uuid",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Judgement case if report was reviewed",
+      "title": "Judgement Id"
+    },
+    "approved": {
+      "default": true,
+      "title": "Approved",
+      "type": "boolean"
+    },
+    "generated_at": {
+      "format": "date-time",
+      "title": "Generated At",
+      "type": "string"
+    },
+    "delivered_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Delivered At"
+    },
+    "version": {
+      "default": "1.0",
+      "title": "Version",
+      "type": "string"
+    }
+  },
+  "required": [
+    "trace_id",
+    "report_type",
+    "title",
+    "sections"
+  ],
+  "title": "FinalReport",
+  "type": "object"
+}

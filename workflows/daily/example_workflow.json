@@ -1,0 +1,11 @@
+{
+  "name": "daily-portfolio-check",
+  "description": "Example daily workflow — placeholder for future implementation",
+  "schedule": "0 9 * * *",
+  "steps": [
+    { "agent": "asset-agent", "action": "fetch_summary" },
+    { "agent": "stock-agent", "action": "fetch_market_data" },
+    { "agent": "judgement", "action": "evaluate" },
+    { "agent": "report-composer", "action": "generate_report" }
+  ]
+}

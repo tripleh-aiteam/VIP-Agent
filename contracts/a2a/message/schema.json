@@ -1,0 +1,215 @@
+{
+  "$defs": {
+    "A2AAuthorizationContext": {
+      "properties": {
+        "sender_role": {
+          "default": "agent",
+          "title": "Sender Role",
+          "type": "string"
+        },
+        "trust_level": {
+          "default": "internal",
+          "title": "Trust Level",
+          "type": "string"
+        },
+        "signed": {
+          "default": false,
+          "title": "Signed",
+          "type": "boolean"
+        },
+        "signature_ref": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Signature Ref"
+        }
+      },
+      "title": "A2AAuthorizationContext",
+      "type": "object"
+    },
+    "A2AMessageType": {
+      "enum": [
+        "request",
+        "response",
+        "event",
+        "broadcast"
+      ],
+      "title": "A2AMessageType",
+      "type": "string"
+    },
+    "A2APurpose": {
+      "enum": [
+        "delegate",
+        "inform",
+        "query",
+        "escalate",
+        "ack"
+      ],
+      "title": "A2APurpose",
+      "type": "string"
+    },
+    "ProofOfIntent": {
+      "properties": {
+        "reason": {
+          "description": "Why this message is being sent",
+          "title": "Reason",
+          "type": "string"
+        },
+        "originating_task_type": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Originating Task Type"
+        },
+        "policy_ref": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Policy Ref"
+        }
+      },
+      "required": [
+        "reason"
+      ],
+      "title": "ProofOfIntent",
+      "type": "object"
+    }
+  },
+  "description": "Standard envelope for agent-to-agent communication.",
+  "examples": [
+    {
+      "message_type": "request",
+      "payload": {
+        "symbols": [
+          "AAPL",
+          "GOOGL"
+        ]
+      },
+      "proof_of_intent": {
+        "reason": "Need stock data to complete portfolio analysis"
+      },
+      "purpose": "delegate",
+      "sender_agent_id": "mock-asset-agent",
+      "target_agent_id": "mock-stock-agent",
+      "trace_id": "tr-20260413-001"
+    }
+  ],
+  "properties": {
+    "message_id": {
+      "format": "uuid",
+      "title": "Message Id",
+      "type": "string"
+    },
+    "trace_id": {
+      "description": "Distributed tracing ID",
+      "title": "Trace Id",
+      "type": "string"
+    },
+    "sender_agent_id": {
+      "description": "ID of the sending agent",
+      "title": "Sender Agent Id",
+      "type": "string"
+    },
+    "target_agent_id": {
+      "description": "ID of the receiving agent",
+      "title": "Target Agent Id",
+      "type": "string"
+    },
+    "source_task_id": {
+      "anyOf": [
+        {
+          "format": "uuid",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Task that triggered this message",
+      "title": "Source Task Id"
+    },
+    "message_type": {
+      "$ref": "#/$defs/A2AMessageType"
+    },
+    "purpose": {
+      "$ref": "#/$defs/A2APurpose"
+    },
+    "authorization_context": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/A2AAuthorizationContext"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "proof_of_intent": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ProofOfIntent"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "deadline": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Deadline"
+    },
+    "payload": {
+      "title": "Payload",
+      "type": "object"
+    },
+    "created_at": {
+      "format": "date-time",
+      "title": "Created At",
+      "type": "string"
+    },
+    "version": {
+      "default": "1.0",
+      "title": "Version",
+      "type": "string"
+    }
+  },
+  "required": [
+    "trace_id",
+    "sender_agent_id",
+    "target_agent_id",
+    "message_type",
+    "purpose"
+  ],
+  "title": "A2AMessageEnvelope",
+  "type": "object"
+}

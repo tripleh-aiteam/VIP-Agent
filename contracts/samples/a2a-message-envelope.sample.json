@@ -1,0 +1,17 @@
+{
+  "trace_id": "tr-20260413-001",
+  "sender_agent_id": "mock-asset-agent",
+  "target_agent_id": "mock-stock-agent",
+  "message_type": "request",
+  "purpose": "delegate",
+  "proof_of_intent": {
+    "reason": "Need stock data to complete portfolio analysis"
+  },
+  "payload": {
+    "symbols": [
+      "AAPL",
+      "GOOGL",
+      "005930.KS"
+    ]
+  }
+}

@@ -1,0 +1,135 @@
+{
+  "$defs": {
+    "JudgementDecision": {
+      "enum": [
+        "approve",
+        "reject",
+        "escalate",
+        "hold"
+      ],
+      "title": "JudgementDecision",
+      "type": "string"
+    },
+    "RiskLevel": {
+      "enum": [
+        "low",
+        "medium",
+        "high",
+        "critical"
+      ],
+      "title": "RiskLevel",
+      "type": "string"
+    }
+  },
+  "description": "Result from the Judgement Service after evaluation.",
+  "examples": [
+    {
+      "decision": "approve",
+      "judgement_id": "b2c3d4e5-f6a7-8901-bcde-f12345678901",
+      "model_result": "low_risk",
+      "reasoning": "Stock recommendation within risk tolerance",
+      "risk_level": "low",
+      "risk_score": 0.15,
+      "rule_result": "pass",
+      "task_run_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+      "trace_id": "tr-20260413-001"
+    }
+  ],
+  "properties": {
+    "judgement_id": {
+      "format": "uuid",
+      "title": "Judgement Id",
+      "type": "string"
+    },
+    "trace_id": {
+      "title": "Trace Id",
+      "type": "string"
+    },
+    "task_run_id": {
+      "format": "uuid",
+      "title": "Task Run Id",
+      "type": "string"
+    },
+    "rule_result": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Aggregated rule evaluation result",
+      "title": "Rule Result"
+    },
+    "model_result": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "AI model evaluation result",
+      "title": "Model Result"
+    },
+    "risk_score": {
+      "description": "Risk score 0.0 (safe) to 1.0 (critical)",
+      "maximum": 1.0,
+      "minimum": 0.0,
+      "title": "Risk Score",
+      "type": "number"
+    },
+    "risk_level": {
+      "$ref": "#/$defs/RiskLevel"
+    },
+    "decision": {
+      "$ref": "#/$defs/JudgementDecision"
+    },
+    "reasoning": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Human-readable reasoning",
+      "title": "Reasoning"
+    },
+    "evidence_json": {
+      "title": "Evidence Json",
+      "type": "object"
+    },
+    "requires_approval": {
+      "default": false,
+      "title": "Requires Approval",
+      "type": "boolean"
+    },
+    "judged_at": {
+      "format": "date-time",
+      "title": "Judged At",
+      "type": "string"
+    },
+    "version": {
+      "default": "1.0",
+      "title": "Version",
+      "type": "string"
+    }
+  },
+  "required": [
+    "judgement_id",
+    "trace_id",
+    "task_run_id",
+    "risk_score",
+    "risk_level",
+    "decision"
+  ],
+  "title": "JudgementResult",
+  "type": "object"
+}

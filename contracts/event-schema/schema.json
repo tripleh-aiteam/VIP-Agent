@@ -1,0 +1,14 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Event",
+  "description": "Standard event contract for pub/sub communication between services",
+  "type": "object",
+  "properties": {
+    "event_id": { "type": "string" },
+    "event_type": { "type": "string" },
+    "source": { "type": "string" },
+    "payload": { "type": "object" },
+    "timestamp": { "type": "string", "format": "date-time" }
+  },
+  "required": ["event_id", "event_type", "source"]
+}

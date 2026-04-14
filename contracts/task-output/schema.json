@@ -1,0 +1,15 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "TaskOutput",
+  "description": "Standard output contract returned by agents to the Orchestrator",
+  "type": "object",
+  "properties": {
+    "task_id": { "type": "string" },
+    "agent": { "type": "string" },
+    "status": { "type": "string", "enum": ["completed", "failed", "partial"] },
+    "result": { "type": "object" },
+    "error": { "type": "string" },
+    "completed_at": { "type": "string", "format": "date-time" }
+  },
+  "required": ["task_id", "agent", "status"]
+}

@@ -1,0 +1,11 @@
+{
+  "judgement_id": "b2c3d4e5-f6a7-8901-bcde-f12345678901",
+  "trace_id": "tr-20260413-001",
+  "task_run_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+  "rule_result": "pass",
+  "model_result": "low_risk",
+  "risk_score": 0.15,
+  "risk_level": "low",
+  "decision": "approve",
+  "reasoning": "Stock recommendation within risk tolerance, no compliance flags"
+}

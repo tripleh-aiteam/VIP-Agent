@@ -1,0 +1,99 @@
+services:
+  # --- Infrastructure ---
+  postgres:
+    image: postgres:16-alpine
+    container_name: vip-postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-vip}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme}
+      POSTGRES_DB: ${POSTGRES_DB:-vip_platform}
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./db/seeds/init.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U vip"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: vip-redis
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # --- Core Apps ---
+  orchestrator-api:
+    build:
+      context: ./apps/orchestrator-api
+    container_name: vip-orchestrator
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    environment:
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-vip}:${POSTGRES_PASSWORD:-changeme}@postgres:5432/${POSTGRES_DB:-vip_platform}
+      - REDIS_URL=redis://redis:6379/0
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  gateway-adapter:
+    build:
+      context: ./apps/gateway-adapter
+    container_name: vip-gateway
+    ports:
+      - "8001:8001"
+    env_file:
+      - .env
+    environment:
+      - ORCHESTRATOR_URL=http://orchestrator-api:8000
+    depends_on:
+      - orchestrator-api
+
+  judgement-service:
+    build:
+      context: ./apps/judgement-service
+    container_name: vip-judgement
+    ports:
+      - "8002:8002"
+    env_file:
+      - .env
+    depends_on:
+      - orchestrator-api
+
+  report-composer:
+    build:
+      context: ./apps/report-composer
+    container_name: vip-report-composer
+    ports:
+      - "8003:8003"
+    env_file:
+      - .env
+    depends_on:
+      - orchestrator-api
+
+  # --- Frontend ---
+  admin-dashboard:
+    build:
+      context: ./apps/admin-dashboard
+      target: dev
+    container_name: vip-dashboard
+    ports:
+      - "3000:3000"
+    environment:
+      - NEXT_PUBLIC_API_URL=http://localhost:8000
+    volumes:
+      - ./apps/admin-dashboard/src:/app/src
+
+volumes:
+  pgdata:
