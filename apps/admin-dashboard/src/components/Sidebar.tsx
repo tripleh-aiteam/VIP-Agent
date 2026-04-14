@@ -20,12 +20,12 @@ export default function Sidebar() {
   const pathname = usePathname();
 
   return (
-    <aside className="w-56 bg-white dark:bg-gray-900 border-r border-gray-200 dark:border-gray-800 flex flex-col h-screen sticky top-0">
-      <div className="px-5 py-5 border-b border-gray-800">
-        <h1 className="text-lg font-bold bg-gradient-to-r from-yellow-400 via-amber-300 to-yellow-500 bg-clip-text text-transparent">
+    <aside className="w-56 bg-[#f8f9fa] dark:bg-[#111622] border-r border-[#e5e7eb] dark:border-[#2a3142] flex flex-col h-screen sticky top-0">
+      <div className="px-5 py-5 border-b border-[#e5e7eb] dark:border-[#2a3142]">
+        <h1 className="text-lg font-bold bg-gradient-to-r from-amber-500 via-yellow-500 to-amber-400 bg-clip-text text-transparent">
           VIP Agent
         </h1>
-        <p className="text-[10px] text-gray-500 mt-0.5">Orchestration Platform</p>
+        <p className="text-[10px] text-[#9ca3af] dark:text-[#5c6a7e] mt-0.5 font-medium">Orchestration Platform</p>
       </div>
       <nav className="flex-1 py-3 px-3 space-y-0.5">
         {nav.map((n) => {
@@ -34,10 +34,10 @@ export default function Sidebar() {
             <Link
               key={n.href}
               href={n.href}
-              className={`flex items-center gap-3 px-3 py-2 rounded-md text-sm transition-colors ${
+              className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-[13px] font-medium transition-colors ${
                 active
-                  ? "bg-yellow-500/10 text-yellow-400"
-                  : "text-gray-400 hover:bg-gray-800 hover:text-white"
+                  ? "bg-amber-500/10 text-amber-600 dark:text-amber-400"
+                  : "text-[#4a5568] dark:text-[#9aa5b4] hover:bg-gray-200/60 dark:hover:bg-[#1a1f2e] hover:text-[#1a1a2e] dark:hover:text-white"
               }`}
             >
               <svg className="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
@@ -48,8 +48,8 @@ export default function Sidebar() {
           );
         })}
       </nav>
-      <div className="px-5 py-3 border-t border-gray-800 dark:border-gray-800 border-gray-200 flex items-center justify-between">
-        <span className="text-[10px] text-gray-600">v0.2.0</span>
+      <div className="px-5 py-3 border-t border-[#e5e7eb] dark:border-[#2a3142] flex items-center justify-between">
+        <span className="text-[10px] text-[#9ca3af] dark:text-[#5c6a7e] font-medium">v0.2.0</span>
         <ThemeToggle />
       </div>
     </aside>

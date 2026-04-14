@@ -30,7 +30,7 @@ export default function ThemeToggle() {
   return (
     <button
       onClick={toggle}
-      className="p-1.5 rounded hover:bg-gray-700 dark:hover:bg-gray-700 hover:bg-gray-200 transition-colors"
+      className="p-1.5 rounded-lg hover:bg-gray-200 dark:hover:bg-[#1a1f2e] transition-colors"
       title={dark ? "Switch to Light Mode" : "Switch to Dark Mode"}
     >
       {dark ? (
