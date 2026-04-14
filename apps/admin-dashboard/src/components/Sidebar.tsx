@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import ThemeToggle from "./ThemeToggle";
 
 const nav = [
   { href: "/", label: "Dashboard", icon: "M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-4 0a1 1 0 01-1-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 01-1 1" },
@@ -19,7 +20,7 @@ export default function Sidebar() {
   const pathname = usePathname();
 
   return (
-    <aside className="w-56 bg-gray-900 border-r border-gray-800 flex flex-col h-screen sticky top-0">
+    <aside className="w-56 bg-white dark:bg-gray-900 border-r border-gray-200 dark:border-gray-800 flex flex-col h-screen sticky top-0">
       <div className="px-5 py-5 border-b border-gray-800">
         <h1 className="text-lg font-bold bg-gradient-to-r from-yellow-400 via-amber-300 to-yellow-500 bg-clip-text text-transparent">
           VIP Agent
@@ -47,8 +48,9 @@ export default function Sidebar() {
           );
         })}
       </nav>
-      <div className="px-5 py-3 border-t border-gray-800 text-[10px] text-gray-600">
-        v0.2.0
+      <div className="px-5 py-3 border-t border-gray-800 dark:border-gray-800 border-gray-200 flex items-center justify-between">
+        <span className="text-[10px] text-gray-600">v0.2.0</span>
+        <ThemeToggle />
       </div>
     </aside>
   );
