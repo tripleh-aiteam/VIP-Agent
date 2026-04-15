@@ -11,10 +11,12 @@ from services.logger import log
 
 
 def resolve_agent(db: Session, target_agent_type: str) -> CoreAgent | None:
-    """Find an active agent matching the requested type."""
+    """Find the best active agent matching the requested type. Picks highest priority."""
+    from sqlalchemy import desc
     agent = (
         db.query(CoreAgent)
         .filter(CoreAgent.type == target_agent_type, CoreAgent.status == "active")
+        .order_by(desc(CoreAgent.priority_score), desc(CoreAgent.reliability_score))
         .first()
     )
     if agent:
