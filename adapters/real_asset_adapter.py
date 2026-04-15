@@ -78,22 +78,22 @@ class RealAssetAdapter(BaseAdapter):
             cash = self._fetch("/api/cash/positions")
             forecast = self._fetch("/api/cash/forecast")
             rental = self._fetch("/api/cash/rental-income/summary")
-            daily_report = self._fetch("/api/scheduler/reports/daily-summary")
             vacancies = self._fetch("/api/lease/vacancies")
+            contracts = self._fetch("/api/lease/contracts")
+            expiries = self._fetch("/api/lease/expiries")
 
-            if not dashboard:
-                return AdapterResult(
-                    success=False, status="failed", agent_id=self.agent_name,
-                    error_message="Failed to connect to Asset Agent — auth or network error",
-                )
+            # Use contracts as fallback if dashboard returns error
+            dash_data = {}
+            if dashboard and dashboard.get("status") == "success":
+                dash_data = dashboard.get("data", {})
 
-            dash_data = dashboard.get("data", {})
             cash_data = (cash or {}).get("data", {})
             forecast_data = (forecast or {}).get("data", [])
             rental_data = (rental or {}).get("data", [])
             alerts_data = (alerts or {}).get("data", [])
             vacancy_data = (vacancies or {}).get("data", [])
-            report_data = (daily_report or {}).get("data", {})
+            contracts_data = (contracts or {}).get("data", [])
+            expiries_data = (expiries or {}).get("data", [])
 
             # Build normalized output
             output = {
@@ -125,7 +125,20 @@ class RealAssetAdapter(BaseAdapter):
                 ],
                 "alerts_count": len(alerts_data),
                 "vacancies_count": len(vacancy_data),
-                "daily_report": report_data.get("data", {}).get("portfolio", {}) if isinstance(report_data.get("data"), dict) else {},
+                "contracts": {
+                    "total": len(contracts_data),
+                    "list": [
+                        {"tenant": c.get("tenant_name", "?"), "end_date": c.get("end_date", "?"), "monthly_rent": c.get("monthly_rent", 0), "deposit": c.get("deposit", 0), "status": c.get("status", "?")}
+                        for c in contracts_data[:15]
+                    ],
+                },
+                "expiring_leases": {
+                    "total": len(expiries_data),
+                    "list": [
+                        {"tenant": e.get("tenant_name", "?"), "end_date": e.get("end_date", "?"), "monthly_rent": e.get("monthly_rent", 0)}
+                        for e in expiries_data[:10]
+                    ],
+                },
             }
 
             # Build formatted executive report
@@ -154,8 +167,8 @@ class RealAssetAdapter(BaseAdapter):
                 risks.append(f"High vacancy rate ({vacancy_rate}%)")
             if overdue > 0:
                 risks.append(f"Overdue payments: {overdue:,.0f} {currency}")
-            if exp_30 > 0:
-                risks.append(f"{exp_30} lease(s) expiring within 30 days")
+            if len(expiries_data) > 0:
+                risks.append(f"{len(expiries_data)} lease(s) expiring soon")
             if pending > 0:
                 risks.append(f"{pending} pending approval(s)")
             risk_level = "High" if len(risks) >= 3 else "Medium" if len(risks) >= 1 else "Low"
@@ -163,31 +176,44 @@ class RealAssetAdapter(BaseAdapter):
             # Collection rate
             latest_collection = rental_data[0].get("collection_rate", 100) if rental_data else 100
 
+            # Total rent from contracts
+            total_monthly_rent = sum(c.get("monthly_rent", 0) for c in contracts_data if c.get("monthly_rent"))
+            total_deposit = sum(c.get("deposit", 0) for c in contracts_data if c.get("deposit"))
+
             report_lines = [
                 "━━━ Asset Portfolio Report ━━━",
                 "",
-                f"Properties: {props} properties, {units} units",
-                f"Occupancy: {occ_rate}% ({occupied} occupied, {vacant} vacant)",
-                f"Vacancy Rate: {vacancy_rate}%",
+                f"Total Contracts: {len(contracts_data)}",
+                f"Total Monthly Rent: {total_monthly_rent:,.0f} KRW",
+                f"Total Deposits: {total_deposit:,.0f} KRW",
+                "",
+                "━━━ Expiring Leases ━━━",
+                "",
+                f"Expiring Soon: {len(expiries_data)} lease(s)",
+            ]
+            for e in expiries_data[:5]:
+                report_lines.append(f"  • {e.get('tenant_name', '?')} — expires {e.get('end_date', '?')}")
+            if len(expiries_data) > 5:
+                report_lines.append(f"  ... and {len(expiries_data) - 5} more")
+
+            report_lines += [
+                "",
+                "━━━ Active Contracts ━━━",
+                "",
+            ]
+            for c in contracts_data[:8]:
+                rent = c.get("monthly_rent", 0)
+                report_lines.append(f"  • {c.get('tenant_name', '?')} | {rent:,.0f} KRW/month | ends {c.get('end_date', '?')}")
+            if len(contracts_data) > 8:
+                report_lines.append(f"  ... and {len(contracts_data) - 8} more contracts")
+
+            report_lines += [
                 "",
                 "━━━ Financial Summary ━━━",
                 "",
-                f"Monthly Rental Income: {income:,.0f} {currency}",
-                f"Overdue Amount: {overdue:,.0f} {currency}",
-                f"Collection Rate: {latest_collection}%",
                 f"Cash Balance: {balance:,.0f} {currency}",
-                f"3-Month Forecast: {forecast_net:,.0f} {currency} net",
-                "",
-                "━━━ Lease Status ━━━",
-                "",
-                f"Expiring (30 days): {exp_30} lease(s)",
-                f"Expiring (90 days): {exp_90} lease(s)",
-                f"Pending Approvals: {pending}",
-                "",
-                "━━━ Alerts ━━━",
-                "",
-                f"Active Alerts: {len(alerts_data)}",
-                f"Vacant Units: {len(vacancy_data)}",
+                f"Collection Rate: {latest_collection}%",
+                f"Overdue: {overdue:,.0f} {currency}",
                 "",
                 "━━━ Risk Assessment ━━━",
                 "",
