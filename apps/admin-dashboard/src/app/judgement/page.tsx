@@ -79,8 +79,8 @@ export default function JudgementPage() {
                     <td className="px-4 py-2.5">
                       {isPending ? (
                         <div className="flex gap-1">
-                          <button onClick={() => handleAction(c.id, "approve")} className="px-2 py-1 text-[10px] rounded bg-green-700 hover:bg-green-600 text-[var(--text-primary)]">Approve</button>
-                          <button onClick={() => handleAction(c.id, "reject")} className="px-2 py-1 text-[10px] rounded bg-red-700 hover:bg-red-600 text-[var(--text-primary)]">Reject</button>
+                          <button onClick={() => handleAction(c.id, "approve")} className="px-2 py-1 text-[10px] rounded bg-[var(--text-primary)] hover:bg-[var(--text-secondary)] text-white">Approve</button>
+                          <button onClick={() => handleAction(c.id, "reject")} className="px-2 py-1 text-[10px] rounded bg-[var(--text-primary)] hover:bg-[var(--text-secondary)] text-white">Reject</button>
                         </div>
                       ) : <span className="text-[10px] text-[var(--text-muted)]">—</span>}
                     </td>

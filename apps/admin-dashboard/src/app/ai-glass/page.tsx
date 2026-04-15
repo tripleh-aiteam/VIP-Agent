@@ -53,7 +53,7 @@ export default function AIGlassPage() {
           <p className="text-sm text-[var(--text-muted)]">Spatial capture sessions and processing</p>
         </div>
         <button onClick={submitCapture} disabled={submitting}
-          className="px-4 py-2 rounded bg-[var(--brand-blue)] hover:bg-[var(--brand-blue-deep)] text-[var(--text-primary)] text-xs font-semibold disabled:opacity-50">
+          className="px-4 py-2 rounded bg-[var(--text-primary)] hover:bg-[var(--text-secondary)] text-white text-xs font-semibold disabled:opacity-50">
           {submitting ? "Submitting..." : "Simulate Capture"}
         </button>
       </div>
@@ -91,7 +91,7 @@ export default function AIGlassPage() {
                 <div className="flex items-center gap-3 flex-1 min-w-0">
                   <div className={`w-2 h-2 rounded-full ${statusIcon[s.processing_status] || "bg-gray-500"}`} />
                   <span className="text-xs font-mono text-[var(--text-secondary)]">{s.device_id}</span>
-                  {s.property_ref && <span className="text-[10px] px-2 py-0.5 rounded-full bg-purple-900/30 text-purple-400">{s.property_ref}</span>}
+                  {s.property_ref && <span className="text-[10px] px-2 py-0.5 rounded-full bg-[var(--bg-elevated)] text-[var(--text-secondary)]">{s.property_ref}</span>}
                   <Badge text={s.processing_status} />
                 </div>
                 <span className="text-[10px] text-[var(--text-muted)]">{s.created_at ? new Date(s.created_at).toLocaleString() : ""}</span>

@@ -86,8 +86,8 @@ export default function WorkflowsPage() {
                       </span>
                     </div>
                     <div className="flex gap-1 ml-3">
-                      <button onClick={() => runNow(s.id)} className="px-3 py-1.5 text-[10px] rounded bg-blue-700 hover:bg-blue-600 text-[var(--text-primary)] font-medium">Run Now</button>
-                      <button onClick={() => toggle(s.id, !s.enabled)} className={`px-3 py-1.5 text-[10px] rounded text-[var(--text-primary)] font-medium ${s.enabled ? "bg-gray-600 hover:bg-gray-500" : "bg-green-700 hover:bg-green-600"}`}>
+                      <button onClick={() => runNow(s.id)} className="px-3 py-1.5 text-[10px] rounded bg-[var(--text-primary)] hover:bg-[var(--text-secondary)] text-white font-medium">Run Now</button>
+                      <button onClick={() => toggle(s.id, !s.enabled)} className={`px-3 py-1.5 text-[10px] rounded text-[var(--text-primary)] font-medium ${s.enabled ? "bg-[var(--bg-elevated)] hover:bg-[var(--bg-hover)]" : "bg-[var(--text-primary)] hover:bg-[var(--text-secondary)]"}`}>
                         {s.enabled ? "Disable" : "Enable"}
                       </button>
                     </div>

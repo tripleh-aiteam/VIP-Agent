@@ -80,7 +80,7 @@ export default function AgentsPage() {
                 <div className="pt-1">
                   <span className="text-[var(--text-secondary)]">Tasks: </span>
                   {a.supported_task_types.map((t: string) => (
-                    <span key={t} className="inline-block mr-1 mb-1 px-1.5 py-0.5 bg-blue-900/30 text-blue-400 rounded text-[10px]">{t}</span>
+                    <span key={t} className="inline-block mr-1 mb-1 px-1.5 py-0.5 bg-[var(--bg-elevated)] text-[var(--text-secondary)] rounded text-[10px]">{t}</span>
                   ))}
                 </div>
               )}
@@ -88,7 +88,7 @@ export default function AgentsPage() {
                 <div>
                   <span className="text-[var(--text-secondary)]">Channels: </span>
                   {a.supported_channels.map((c: string) => (
-                    <span key={c} className="inline-block mr-1 mb-1 px-1.5 py-0.5 bg-purple-900/30 text-purple-400 rounded text-[10px]">{c}</span>
+                    <span key={c} className="inline-block mr-1 mb-1 px-1.5 py-0.5 bg-[var(--bg-elevated)] text-[var(--text-secondary)] rounded text-[10px]">{c}</span>
                   ))}
                 </div>
               )}

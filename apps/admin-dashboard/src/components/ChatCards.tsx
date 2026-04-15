@@ -226,11 +226,11 @@ export function ApprovalResultCard({ data, traceId, linkedIds, onAction }: { dat
               {(c.actionable || c.decision === "human_review_required" || c.decision === "conditional_approve") && onAction && (
                 <div className="flex gap-1 mt-1.5">
                   <button onClick={() => onAction(`approve ${c.id}`)}
-                    className="px-2 py-0.5 text-[9px] rounded bg-green-800 hover:bg-green-700 text-green-200 font-medium">
+                    className="px-2 py-0.5 text-[9px] rounded bg-[var(--text-primary)] hover:bg-[var(--text-secondary)] text-white font-medium">
                     Approve
                   </button>
                   <button onClick={() => onAction(`reject ${c.id}`)}
-                    className="px-2 py-0.5 text-[9px] rounded bg-red-800 hover:bg-red-700 text-red-200 font-medium">
+                    className="px-2 py-0.5 text-[9px] rounded bg-[var(--text-primary)] hover:bg-[var(--text-secondary)] text-white font-medium">
                     Reject
                   </button>
                   <button onClick={() => onAction(`explain case ${c.id}`)}
@@ -412,7 +412,7 @@ function ReportExplainerCard({ data, traceId, linkedIds }: { data: any; traceId?
         <div className="flex items-center gap-2">
           <span className="text-[10px] font-medium text-[var(--text-primary)]">Report Q&A</span>
           {data.question_category && (
-            <span className="text-[9px] px-1.5 py-0.5 rounded bg-purple-900/30 text-purple-400">{data.question_category}</span>
+            <span className="text-[9px] px-1.5 py-0.5 rounded bg-[var(--bg-elevated)] text-[var(--text-secondary)]">{data.question_category}</span>
           )}
         </div>
         {data.grounded && <span className="text-[8px] text-green-500">grounded</span>}

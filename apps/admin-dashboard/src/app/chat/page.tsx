@@ -166,7 +166,7 @@ export default function ChatPage() {
                         </span>
                         {isAssistant && !isSystem && (
                           <span className={`text-[7px] px-1 py-0 rounded ${
-                            isAI ? "bg-purple-900/30 text-purple-400 border border-purple-800/40" : "bg-[var(--bg-elevated)] text-[var(--text-muted)]"
+                            isAI ? "bg-[var(--bg-elevated)] text-[var(--text-secondary)] border border-purple-800/40" : "bg-[var(--bg-elevated)] text-[var(--text-muted)]"
                           }`}>
                             {isAI ? "LLM Response" : "Structured Response"}
                           </span>
