@@ -855,6 +855,7 @@ def _session_to_dict(s: ChatSession) -> dict:
         "channel": s.channel,
         "mode": s.mode or "structured",
         "title": s.title,
+        "folder": s.folder,
         "status": s.status,
         "message_count": len(s.messages) if s.messages else 0,
         "created_at": s.created_at.isoformat() if s.created_at else None,

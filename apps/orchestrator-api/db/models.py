@@ -291,6 +291,7 @@ class ChatSession(Base):
     channel = Column(String(30), default="web")            # web | telegram | api
     mode = Column(String(20), default="structured")        # structured | llm
     title = Column(String(255), default="New Chat")
+    folder = Column(String(100), nullable=True)            # folder name or null
     status = Column(String(20), default="active")          # active | archived | closed
     created_at = _now()
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

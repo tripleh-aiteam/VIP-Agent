@@ -47,6 +47,23 @@ export default function ChatPage() {
     loadSessions();
   };
 
+  const moveToFolder = async (id: string, folder: string | null) => {
+    await apiPatch(`/chat/sessions/${id}/folder`, { folder });
+    loadSessions();
+  };
+
+  const [newFolderName, setNewFolderName] = useState("");
+  const [showNewFolder, setShowNewFolder] = useState(false);
+  const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set(["_unfiled"]));
+
+  const toggleFolder = (f: string) => {
+    setExpandedFolders((prev) => {
+      const next = new Set(prev);
+      next.has(f) ? next.delete(f) : next.add(f);
+      return next;
+    });
+  };
+
   useEffect(() => { loadSessions(); }, []);
   useEffect(() => {
     if (activeSession) {
@@ -119,64 +136,119 @@ export default function ChatPage() {
           />
         </div>
 
-        <div className="flex-1 overflow-y-auto p-1.5 space-y-0.5">
-          {sessions.map((s: any) => {
-            const sMode = MODE_INFO[(s.mode || "structured")] || MODE_INFO.structured;
-            return (
-              <div
-                key={s.id}
-                className={`group relative rounded-lg transition-colors ${
-                  activeSession === s.id ? "bg-[var(--bg-hover)]" : "hover:bg-[var(--bg-elevated)]"
-                }`}
-              >
-                <button
-                  onClick={() => setActiveSession(s.id)}
-                  className="w-full text-left px-3 py-2.5 text-xs"
-                >
-                  {renaming === s.id ? (
-                    <input
-                      autoFocus
-                      defaultValue={s.title}
-                      onBlur={(e) => { renameSession(s.id, e.target.value); setRenaming(null); }}
-                      onKeyDown={(e) => { if (e.key === "Enter") { renameSession(s.id, (e.target as HTMLInputElement).value); setRenaming(null); } if (e.key === "Escape") setRenaming(null); }}
-                      onClick={(e) => e.stopPropagation()}
-                      className="w-full px-1 py-0.5 text-[12px] font-medium bg-[var(--bg-elevated)] border border-[var(--brand-blue)] rounded focus:outline-none text-[var(--text-primary)]"
-                    />
-                  ) : (
-                    <p className={`truncate font-medium text-[12px] ${activeSession === s.id ? "text-[var(--text-primary)]" : "text-[var(--text-secondary)]"}`}>{s.title}</p>
-                  )}
-                  <div className="flex items-center gap-1.5 mt-1">
-                    <span className="text-[10px] text-[var(--text-muted)]">{s.message_count} msgs</span>
-                    <span className={`text-[8px] px-1 py-0 rounded ${sMode.bg} ${sMode.color}`}>
-                      {s.mode === "llm" ? "LLM" : "Simple"}
-                    </span>
-                  </div>
-                </button>
+        {/* New folder button */}
+        <div className="px-3 py-2 border-b border-[var(--border-default)]">
+          {showNewFolder ? (
+            <div className="flex gap-1">
+              <input
+                autoFocus
+                value={newFolderName}
+                onChange={(e) => setNewFolderName(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && newFolderName.trim()) { setShowNewFolder(false); setNewFolderName(""); toggleFolder(newFolderName.trim()); }
+                  if (e.key === "Escape") { setShowNewFolder(false); setNewFolderName(""); }
+                }}
+                placeholder="Folder name..."
+                className="flex-1 px-2 py-1 text-[11px] rounded bg-[var(--bg-elevated)] border border-[var(--brand-blue)] focus:outline-none text-[var(--text-primary)]"
+              />
+              <button onClick={() => { if (newFolderName.trim()) { setShowNewFolder(false); setNewFolderName(""); } }} className="text-[10px] text-[var(--text-muted)]">Done</button>
+            </div>
+          ) : (
+            <button onClick={() => setShowNewFolder(true)} className="flex items-center gap-1.5 text-[11px] text-[var(--text-muted)] hover:text-[var(--text-primary)] transition-colors">
+              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M9 13h6m-3-3v6m-9 1V7a2 2 0 012-2h6l2 2h6a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2z" />
+              </svg>
+              New Folder
+            </button>
+          )}
+        </div>
 
-                {/* Action menu — shows on hover */}
-                <div className="absolute right-1 top-1.5 hidden group-hover:flex items-center gap-0.5">
-                  <button
-                    onClick={(e) => { e.stopPropagation(); setRenaming(s.id); }}
-                    className="p-1 rounded hover:bg-[var(--bg-hover)] text-[var(--text-muted)] hover:text-[var(--text-primary)]"
-                    title="Rename"
-                  >
-                    <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
-                    </svg>
+        <div className="flex-1 overflow-y-auto p-1.5 space-y-1">
+          {/* Group sessions by folder */}
+          {(() => {
+            const folders = new Map<string, any[]>();
+            const unfiled: any[] = [];
+            sessions.forEach((s: any) => {
+              if (s.folder) {
+                if (!folders.has(s.folder)) folders.set(s.folder, []);
+                folders.get(s.folder)!.push(s);
+              } else {
+                unfiled.push(s);
+              }
+            });
+
+            const renderSession = (s: any) => {
+              const sMode = MODE_INFO[(s.mode || "structured")] || MODE_INFO.structured;
+              return (
+                <div key={s.id} className={`group relative rounded-lg transition-colors ${activeSession === s.id ? "bg-[var(--bg-hover)]" : "hover:bg-[var(--bg-elevated)]"}`}>
+                  <button onClick={() => setActiveSession(s.id)} className="w-full text-left px-3 py-2 text-xs">
+                    {renaming === s.id ? (
+                      <input autoFocus defaultValue={s.title}
+                        onBlur={(e) => { renameSession(s.id, e.target.value); setRenaming(null); }}
+                        onKeyDown={(e) => { if (e.key === "Enter") { renameSession(s.id, (e.target as HTMLInputElement).value); setRenaming(null); } if (e.key === "Escape") setRenaming(null); }}
+                        onClick={(e) => e.stopPropagation()}
+                        className="w-full px-1 py-0.5 text-[12px] font-medium bg-[var(--bg-elevated)] border border-[var(--brand-blue)] rounded focus:outline-none text-[var(--text-primary)]" />
+                    ) : (
+                      <p className={`truncate font-medium text-[12px] ${activeSession === s.id ? "text-[var(--text-primary)]" : "text-[var(--text-secondary)]"}`}>{s.title}</p>
+                    )}
+                    <div className="flex items-center gap-1.5 mt-0.5">
+                      <span className="text-[10px] text-[var(--text-muted)]">{s.message_count} msgs</span>
+                      <span className={`text-[8px] px-1 py-0 rounded ${sMode.bg} ${sMode.color}`}>{s.mode === "llm" ? "LLM" : "Simple"}</span>
+                    </div>
                   </button>
-                  <button
-                    onClick={(e) => { e.stopPropagation(); deleteSession(s.id); }}
-                    className="p-1 rounded hover:bg-[var(--badge-error-bg)] text-[var(--text-muted)] hover:text-[var(--error)]"
-                    title="Delete"
-                  >
-                    <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                    </svg>
-                  </button>
+                  <div className="absolute right-1 top-1.5 hidden group-hover:flex items-center gap-0.5">
+                    <button onClick={(e) => { e.stopPropagation(); setRenaming(s.id); }} className="p-1 rounded hover:bg-[var(--bg-hover)] text-[var(--text-muted)] hover:text-[var(--text-primary)]" title="Rename">
+                      <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" /></svg>
+                    </button>
+                    {s.folder ? (
+                      <button onClick={(e) => { e.stopPropagation(); moveToFolder(s.id, null); }} className="p-1 rounded hover:bg-[var(--bg-hover)] text-[var(--text-muted)] hover:text-[var(--text-primary)]" title="Remove from folder">
+                        <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M13 7l5 5m0 0l-5 5m5-5H6" /></svg>
+                      </button>
+                    ) : folders.size > 0 ? (
+                      <select onChange={(e) => { e.stopPropagation(); if (e.target.value) moveToFolder(s.id, e.target.value); e.target.value = ""; }} onClick={(e) => e.stopPropagation()} className="w-3 h-3 opacity-0 group-hover:opacity-100 cursor-pointer absolute" title="Move to folder">
+                        <option value="">Move...</option>
+                        {Array.from(folders.keys()).map((f) => <option key={f} value={f}>{f}</option>)}
+                      </select>
+                    ) : null}
+                    <button onClick={(e) => { e.stopPropagation(); deleteSession(s.id); }} className="p-1 rounded hover:bg-[var(--badge-error-bg)] text-[var(--text-muted)] hover:text-[var(--error)]" title="Delete">
+                      <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+                    </button>
+                  </div>
                 </div>
-              </div>
+              );
+            };
+
+            return (
+              <>
+                {/* Folders */}
+                {Array.from(folders.entries()).map(([folderName, folderSessions]) => (
+                  <div key={folderName} className="mb-1">
+                    <button onClick={() => toggleFolder(folderName)} className="flex items-center gap-1.5 px-2 py-1.5 w-full text-left text-[11px] font-semibold text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors">
+                      <svg className={`w-3 h-3 transition-transform ${expandedFolders.has(folderName) ? "rotate-90" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+                      </svg>
+                      <svg className="w-3.5 h-3.5 text-[var(--brand-blue)]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
+                      </svg>
+                      {folderName}
+                      <span className="text-[9px] text-[var(--text-muted)] ml-auto">{folderSessions.length}</span>
+                    </button>
+                    {expandedFolders.has(folderName) && (
+                      <div className="pl-4 space-y-0.5">
+                        {folderSessions.map(renderSession)}
+                      </div>
+                    )}
+                  </div>
+                ))}
+
+                {/* Unfiled chats */}
+                {unfiled.length > 0 && folders.size > 0 && (
+                  <div className="px-2 py-1 text-[10px] text-[var(--text-muted)] font-medium mt-2">Recent</div>
+                )}
+                {unfiled.map(renderSession)}
+              </>
             );
-          })}
+          })()}
         </div>
       </div>
 

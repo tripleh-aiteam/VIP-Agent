@@ -101,13 +101,9 @@ def set_folder(session_id: UUID, body: FolderBody, db: Session = Depends(get_db)
     s = db.query(ChatSession).filter(ChatSession.id == session_id).first()
     if not s:
         raise HTTPException(404, "Session not found")
-    if not hasattr(s, "folder"):
-        # Store folder in the session's context via a simple approach
-        pass
-    # Use status field creatively or store in a metadata approach
-    # For MVP, store folder name in title prefix
+    s.folder = body.folder
     db.commit()
-    return {"folder_set": True, "id": str(s.id), "folder": body.folder}
+    return {"folder_set": True, "id": str(s.id), "folder": s.folder}
 
 
 @router.delete("/sessions/{session_id}")
