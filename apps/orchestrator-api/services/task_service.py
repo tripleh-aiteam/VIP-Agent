@@ -123,6 +123,7 @@ def dispatch_task(db: Session, task_run_id: UUID) -> OrchTaskRun:
         agent_type=agent.type,
         agent_name=agent.name,
         endpoint_url=agent.endpoint_url or "",
+        is_mock=agent.is_mock,
         timeout_seconds=30,
         auth_type=agent.auth_type,
     )
