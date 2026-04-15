@@ -45,8 +45,8 @@ export default function ChannelsPage() {
 
   return (
     <div>
-      <h1 className="text-2xl font-bold mb-1">Channels</h1>
-      <p className="text-sm text-[var(--text-muted)] mb-6">Communication channels and integrations</p>
+      <h1 className="text-[28px] font-semibold tracking-tight mb-1">Channels</h1>
+      <p className="text-[14px] text-[var(--text-muted)] mb-6">Communication channels and integrations</p>
 
       {/* Channel Tabs */}
       <div className="flex gap-2 mb-6">
@@ -188,7 +188,7 @@ export default function ChannelsPage() {
             <path strokeLinecap="round" strokeLinejoin="round" d={channelConfig[activeChannel]?.icon || ""} />
           </svg>
           <h3 className="text-lg font-semibold mb-1">{channelConfig[activeChannel]?.label}</h3>
-          <p className="text-sm text-[var(--text-muted)] mb-4">{channelConfig[activeChannel]?.description}</p>
+          <p className="text-[14px] text-[var(--text-muted)] mb-4">{channelConfig[activeChannel]?.description}</p>
           {channels.find((c) => c.type === activeChannel) && (
             <Badge text={channels.find((c) => c.type === activeChannel)?.status || "unknown"} />
           )}

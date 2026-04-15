@@ -23,8 +23,8 @@ export default function JudgementPage() {
 
   return (
     <div>
-      <h1 className="text-2xl font-bold mb-1">Judgement</h1>
-      <p className="text-sm text-[var(--text-muted)] mb-6">Risk evaluation and approval workflow</p>
+      <h1 className="text-[28px] font-semibold tracking-tight mb-1">Judgement</h1>
+      <p className="text-[14px] text-[var(--text-muted)] mb-6">Risk evaluation and approval workflow</p>
 
       <div className="mb-6">
         <AskVIPBar suggestions={[
@@ -45,7 +45,7 @@ export default function JudgementPage() {
           <h2 className="text-sm font-semibold text-[var(--text-primary)]">All Cases</h2>
         </div>
         <div className="overflow-x-auto">
-          <table className="w-full text-xs">
+          <table className="w-full text-[13px]">
             <thead>
               <tr className="text-[var(--text-muted)] border-b border-[var(--border-default)]/50">
                 <th className="text-left px-4 py-2">Case</th>

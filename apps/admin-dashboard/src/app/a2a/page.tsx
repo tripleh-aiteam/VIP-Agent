@@ -31,8 +31,8 @@ export default function A2APage() {
     <div>
       <div className="flex items-center justify-between mb-6">
         <div>
-          <h1 className="text-2xl font-bold mb-1">A2A Monitor</h1>
-          <p className="text-sm text-[var(--text-muted)]">Inter-agent communication</p>
+          <h1 className="text-[28px] font-semibold tracking-tight mb-1">A2A Monitor</h1>
+          <p className="text-[14px] text-[var(--text-muted)]">Inter-agent communication</p>
         </div>
         <div className="flex items-center gap-3">
           {busStatus && (
@@ -41,7 +41,7 @@ export default function A2APage() {
             </span>
           )}
           <button onClick={runDemo} disabled={running}
-            className="px-4 py-2 rounded bg-[var(--text-primary)] hover:bg-[var(--text-secondary)] text-white text-xs font-semibold disabled:opacity-50">
+            className="px-4 py-2 rounded-lg bg-[var(--error)] hover:bg-red-600 text-white text-[13px] font-semibold disabled:opacity-50 transition-colors">
             {running ? "Running..." : "Risk Alert Demo"}
           </button>
         </div>
@@ -53,34 +53,34 @@ export default function A2APage() {
 
       <div className="border border-[var(--border-default)] rounded-lg bg-[var(--bg-card)]">
         <div className="overflow-x-auto">
-          <table className="w-full text-xs">
+          <table className="w-full text-[13px]">
             <thead>
-              <tr className="text-[var(--text-muted)] border-b border-[var(--border-default)]">
-                <th className="text-left px-4 py-2.5">Type</th>
-                <th className="text-left px-4 py-2.5">Sender</th>
-                <th className="text-left px-4 py-2.5">Target</th>
-                <th className="text-left px-4 py-2.5">Risk</th>
-                <th className="text-left px-4 py-2.5">Status</th>
-                <th className="text-left px-4 py-2.5">Trace</th>
-                <th className="text-left px-4 py-2.5">Time</th>
+              <tr className="text-[var(--text-muted)] text-[12px] font-medium border-b border-[var(--border-default)] bg-[var(--bg-elevated)]">
+                <th className="text-left px-4 py-3">Type</th>
+                <th className="text-left px-4 py-3">Sender</th>
+                <th className="text-left px-4 py-3">Target</th>
+                <th className="text-left px-4 py-3">Risk</th>
+                <th className="text-left px-4 py-3">Status</th>
+                <th className="text-left px-4 py-3">Trace</th>
+                <th className="text-left px-4 py-3">Time</th>
               </tr>
             </thead>
             <tbody>
               {messages.map((m: any) => {
                 const isHighRisk = m.envelope?.is_high_risk === true;
                 return (
-                  <tr key={m.id} className={`border-b border-[var(--border-default)]/30 hover:bg-[var(--bg-hover)] ${isHighRisk ? "bg-red-950/10" : ""}`}>
-                    <td className="px-4 py-2.5"><Badge text={m.message_type} /></td>
-                    <td className="px-4 py-2.5 text-cyan-400">{m.sender_agent}</td>
-                    <td className="px-4 py-2.5">{m.target_agent}</td>
-                    <td className="px-4 py-2.5">
+                  <tr key={m.id} className={`border-b border-[var(--border-default)] hover:bg-[var(--bg-hover)] ${isHighRisk ? "bg-[var(--badge-error-bg)]" : ""}`}>
+                    <td className="px-4 py-3"><Badge text={m.message_type} /></td>
+                    <td className="px-4 py-3 text-[var(--brand-blue)] font-medium">{m.sender_agent}</td>
+                    <td className="px-4 py-3 text-[var(--text-primary)]">{m.target_agent}</td>
+                    <td className="px-4 py-3">
                       {isHighRisk
-                        ? <span className="text-[10px] px-2 py-0.5 rounded-full text-red-400 bg-red-900/30 font-medium">HIGH</span>
-                        : <span className="text-[10px] text-[var(--text-muted)]">—</span>}
+                        ? <span className="text-[12px] px-2.5 py-1 rounded-full text-[var(--error)] bg-[var(--badge-error-bg)] font-semibold">HIGH</span>
+                        : <span className="text-[12px] text-[var(--text-muted)]">—</span>}
                     </td>
-                    <td className="px-4 py-2.5"><Badge text={m.status} /></td>
-                    <td className="px-4 py-2.5 text-[var(--text-muted)] font-mono">{m.trace_id}</td>
-                    <td className="px-4 py-2.5 text-[var(--text-muted)]">{m.created_at ? new Date(m.created_at).toLocaleTimeString() : "-"}</td>
+                    <td className="px-4 py-3"><Badge text={m.status} /></td>
+                    <td className="px-4 py-3 text-[var(--text-muted)] font-mono text-[11px]">{m.trace_id}</td>
+                    <td className="px-4 py-3 text-[var(--text-muted)]">{m.created_at ? new Date(m.created_at).toLocaleTimeString() : "-"}</td>
                   </tr>
                 );
               })}

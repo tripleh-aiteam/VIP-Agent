@@ -48,7 +48,7 @@ export default function ReportsPage() {
     <div>
       <div className="flex items-center justify-between mb-6">
         <div>
-          <h1 className="text-2xl font-bold mb-1">Reports</h1>
+          <h1 className="text-[28px] font-semibold tracking-tight mb-1">Reports</h1>
           <p className="text-sm text-[var(--text-muted)]">Executive summaries and alerts</p>
         </div>
         <div className="flex gap-2">

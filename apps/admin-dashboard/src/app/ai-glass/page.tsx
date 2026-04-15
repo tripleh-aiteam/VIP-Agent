@@ -49,11 +49,11 @@ export default function AIGlassPage() {
     <div>
       <div className="flex items-center justify-between mb-6">
         <div>
-          <h1 className="text-2xl font-bold mb-1">AI Glass</h1>
-          <p className="text-sm text-[var(--text-muted)]">Spatial capture sessions and processing</p>
+          <h1 className="text-[28px] font-semibold tracking-tight mb-1">AI Glass</h1>
+          <p className="text-[14px] text-[var(--text-muted)]">Spatial capture sessions and processing</p>
         </div>
         <button onClick={submitCapture} disabled={submitting}
-          className="px-4 py-2 rounded bg-[var(--text-primary)] hover:bg-[var(--text-secondary)] text-white text-xs font-semibold disabled:opacity-50">
+          className="px-4 py-2 rounded bg-[var(--text-primary)] hover:bg-[var(--text-secondary)] text-white text-[13px] font-semibold disabled:opacity-50">
           {submitting ? "Submitting..." : "Simulate Capture"}
         </button>
       </div>

@@ -46,8 +46,8 @@ export default function WorkflowsPage() {
 
   return (
     <div>
-      <h1 className="text-2xl font-bold mb-1">Workflows</h1>
-      <p className="text-sm text-[var(--text-muted)] mb-6">Scheduled tasks and automation</p>
+      <h1 className="text-[28px] font-semibold tracking-tight mb-1">Workflows</h1>
+      <p className="text-[14px] text-[var(--text-muted)] mb-6">Scheduled tasks and automation</p>
 
       {/* Schedule Accordions */}
       <div className="space-y-3 mb-8">
@@ -105,7 +105,7 @@ export default function WorkflowsPage() {
         <div className="px-4 py-3 border-b border-[var(--border-default)]">
           <h2 className="text-sm font-semibold text-[var(--text-primary)]">Recent Workflow History</h2>
         </div>
-        <table className="w-full text-xs">
+        <table className="w-full text-[13px]">
           <thead>
             <tr className="text-[var(--text-muted)] border-b border-[var(--border-default)]/50">
               <th className="text-left px-4 py-2">Task</th>
