@@ -177,7 +177,7 @@ export default function ChatPage() {
             return (
               <>
                 {/* Folders section */}
-                {(folders.size > 0 || showNewFolder) && (
+                {(true) && (
                   <div className="mb-2">
                     <div className="flex items-center justify-between px-2 mb-1">
                       <span className="text-[11px] font-semibold text-[var(--text-muted)] uppercase tracking-wider">Folders</span>
