@@ -57,21 +57,30 @@ export default function ChatPage() {
   const [newFolderName, setNewFolderName] = useState("");
   const [showNewFolder, setShowNewFolder] = useState(false);
   const [renamingFolder, setRenamingFolder] = useState<string | null>(null);
-  const [savedFolders, setSavedFolders] = useState<string[]>(() => {
-    if (typeof window !== "undefined") {
+  const [savedFolders, setSavedFolders] = useState<string[]>([]);
+  const [foldersLoaded, setFoldersLoaded] = useState(false);
+  const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set());
+
+  // Load folders from localStorage on mount
+  useEffect(() => {
+    try {
       const saved = localStorage.getItem("vip-chat-folders");
-      return saved ? JSON.parse(saved) : [];
-    }
-    return [];
-  });
-  const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set(["_unfiled"]));
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        setSavedFolders(parsed);
+        setExpandedFolders(new Set(parsed));
+      }
+    } catch {}
+    setFoldersLoaded(true);
+  }, []);
 
   const addFolder = (name: string) => {
-    if (!name.trim() || savedFolders.includes(name.trim())) return;
-    const updated = [...savedFolders, name.trim()];
+    const trimmed = name.trim();
+    if (!trimmed || savedFolders.includes(trimmed)) return;
+    const updated = [...savedFolders, trimmed];
     setSavedFolders(updated);
     localStorage.setItem("vip-chat-folders", JSON.stringify(updated));
-    setExpandedFolders((prev) => new Set([...prev, name.trim()]));
+    setExpandedFolders((prev) => new Set([...prev, trimmed]));
   };
 
   const removeFolder = (name: string) => {
