@@ -21,11 +21,10 @@ export default function Sidebar() {
 
   return (
     <aside className="w-56 bg-[var(--bg-sidebar)] border-r border-[var(--border-default)] flex flex-col h-screen sticky top-0">
-      <div className="px-5 py-5 border-b border-[var(--border-default)]">
-        <h1 className="text-lg font-bold text-white">
-          <span className="bg-gradient-to-r from-[#1B96FF] to-[#7F56D9] bg-clip-text text-transparent">VIP Agent</span>
+      <div className="px-5 py-6 border-b border-[var(--border-default)]">
+        <h1 className="text-xl font-extrabold tracking-tight text-white">
+          VIP AGENT
         </h1>
-        <p className="text-[10px] text-[var(--sidebar-text)] mt-0.5 font-medium tracking-wide uppercase">Orchestration Platform</p>
       </div>
       <nav className="flex-1 py-3 px-3 space-y-0.5">
         {nav.map((n) => {

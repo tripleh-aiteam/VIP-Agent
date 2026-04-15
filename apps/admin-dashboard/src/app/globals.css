@@ -1,4 +1,4 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
 
 @tailwind base;
 @tailwind components;
@@ -8,21 +8,22 @@
   /* ============================================
      VIP Agent Platform — Design Tokens
      Inspired by Salesforce Agentforce Builder
+     White/light blue clean background
      ============================================ */
 
-  /* Light mode */
+  /* Light mode — Salesforce-style white with blue accents */
   :root {
-    --bg-app: #F0F4F8;
+    --bg-app: #ffffff;
     --bg-sidebar: #032D60;
     --bg-card: #ffffff;
-    --bg-elevated: #ffffff;
+    --bg-elevated: #F7F9FC;
     --bg-input: #F0F4F8;
-    --border-default: rgba(0,0,0,0.08);
-    --border-strong: rgba(0,0,0,0.12);
+    --border-default: #E1E6EF;
+    --border-strong: #C9D1DC;
     --border-active: #1B96FF;
     --text-primary: #032D60;
     --text-secondary: #3E5F8A;
-    --text-muted: #98A2B3;
+    --text-muted: #7B8FA8;
     --text-on-brand: #ffffff;
     --brand-primary: #1B96FF;
     --brand-secondary: #7F56D9;
@@ -30,28 +31,28 @@
     --success: #12B76A;
     --warning: #F79009;
     --error: #F04438;
-    --shadow-sm: 0 1px 2px rgba(0,0,0,0.05);
-    --shadow-md: 0 2px 8px rgba(0,0,0,0.08);
-    --shadow-lg: 0 4px 16px rgba(0,0,0,0.1);
-    --sidebar-text: rgba(255,255,255,0.7);
+    --shadow-sm: 0 1px 3px rgba(3,45,96,0.06);
+    --shadow-md: 0 2px 8px rgba(3,45,96,0.08);
+    --shadow-lg: 0 4px 20px rgba(3,45,96,0.1);
+    --sidebar-text: rgba(255,255,255,0.65);
     --sidebar-text-active: #ffffff;
     --sidebar-hover: rgba(255,255,255,0.08);
     --sidebar-active: rgba(27,150,255,0.2);
   }
 
-  /* Dark mode */
+  /* Dark mode — deep navy premium */
   .dark {
-    --bg-app: #0B1220;
-    --bg-sidebar: #0A1628;
-    --bg-card: #111827;
-    --bg-elevated: #1A2233;
-    --bg-input: #1A2233;
-    --border-default: rgba(255,255,255,0.08);
+    --bg-app: #080E1A;
+    --bg-sidebar: #060C18;
+    --bg-card: #0D1526;
+    --bg-elevated: #131D33;
+    --bg-input: #131D33;
+    --border-default: rgba(255,255,255,0.07);
     --border-strong: rgba(255,255,255,0.12);
     --border-active: #1B96FF;
-    --text-primary: #F8FAFC;
-    --text-secondary: #D0D5DD;
-    --text-muted: #98A2B3;
+    --text-primary: #F0F4F8;
+    --text-secondary: #B0BEC5;
+    --text-muted: #6B7D93;
     --text-on-brand: #ffffff;
     --brand-primary: #1B96FF;
     --brand-secondary: #7F56D9;
@@ -59,13 +60,13 @@
     --success: #12B76A;
     --warning: #F79009;
     --error: #F04438;
-    --shadow-sm: 0 1px 2px rgba(0,0,0,0.2);
-    --shadow-md: 0 2px 8px rgba(0,0,0,0.3);
-    --shadow-lg: 0 4px 16px rgba(0,0,0,0.4);
-    --sidebar-text: rgba(255,255,255,0.6);
+    --shadow-sm: 0 1px 3px rgba(0,0,0,0.3);
+    --shadow-md: 0 2px 8px rgba(0,0,0,0.4);
+    --shadow-lg: 0 4px 20px rgba(0,0,0,0.5);
+    --sidebar-text: rgba(255,255,255,0.55);
     --sidebar-text-active: #ffffff;
-    --sidebar-hover: rgba(255,255,255,0.06);
-    --sidebar-active: rgba(27,150,255,0.15);
+    --sidebar-hover: rgba(255,255,255,0.05);
+    --sidebar-active: rgba(27,150,255,0.12);
   }
 
   body {
