@@ -16,8 +16,8 @@ const QUICK_ACTIONS = [
 ];
 
 const MODE_INFO: Record<string, { label: string; desc: string; color: string; bg: string; border: string }> = {
-  structured: { label: "Structured Mode", desc: "Best for strict commands and approvals", color: "text-green-400", bg: "bg-green-900/30", border: "border-green-800/40" },
-  llm: { label: "LLM Mode", desc: "Best for natural questions, summaries, and explanations", color: "text-purple-400", bg: "bg-purple-900/30", border: "border-purple-800/40" },
+  structured: { label: "Simple Mode", desc: "Commands and control", color: "text-[var(--text-secondary)]", bg: "bg-[var(--bg-elevated)]", border: "border-[var(--border-default)]" },
+  llm: { label: "LLM Mode", desc: "Natural language understanding", color: "text-[var(--brand-purple)]", bg: "bg-[var(--badge-purple-bg)]", border: "border-[var(--brand-purple)]/20" },
 };
 
 export default function ChatPage() {
@@ -233,31 +233,57 @@ export default function ChatPage() {
           </>
         ) : (
           <div className="flex-1 flex items-center justify-center">
-            <div className="text-center max-w-md">
-              <svg className="w-16 h-16 text-gray-800 mx-auto mb-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={0.8}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
-              </svg>
-              <h2 className="text-lg font-semibold mb-1">VIP Chatbot</h2>
-              <p className="text-xs text-[var(--text-muted)] mb-5">Control the VIP platform through conversation</p>
+            <div className="w-full max-w-xl px-4">
+              <h2 className="text-[22px] font-semibold text-center text-[var(--text-primary)] mb-8">VIP Chatbot</h2>
 
-              <div className="flex gap-3 justify-center mb-6">
-                <button onClick={() => createSession("structured")}
-                  className="px-5 py-2.5 rounded-lg border border-green-800/40 bg-green-900/20 text-green-400 text-xs font-semibold hover:bg-green-900/40 transition-colors">
-                  <div className="text-sm mb-0.5">Structured</div>
-                  <div className="text-[8px] text-green-500/70 font-normal">Commands & Control</div>
-                </button>
-                <button onClick={() => createSession("llm")}
-                  className="px-5 py-2.5 rounded-lg border border-purple-800/40 bg-purple-900/20 text-purple-400 text-xs font-semibold hover:bg-purple-900/40 transition-colors">
-                  <div className="text-sm mb-0.5">LLM</div>
-                  <div className="text-[8px] text-purple-500/70 font-normal">Natural Language</div>
-                </button>
+              {/* Claude-style input box */}
+              <div className="border border-[var(--border-default)] rounded-2xl bg-[var(--bg-card)] overflow-hidden" style={{ boxShadow: "var(--shadow-md)" }}>
+                <input
+                  value={input}
+                  onChange={(e) => setInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && input.trim()) {
+                      handleQuickAction(input.trim());
+                      setInput("");
+                    }
+                  }}
+                  placeholder="Ask VIP anything..."
+                  className="w-full px-5 py-4 text-[15px] bg-transparent focus:outline-none text-[var(--text-primary)] placeholder:text-[var(--text-muted)]"
+                />
+                <div className="px-5 pb-3 flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <select
+                      value={activeMode}
+                      onChange={(e) => setActiveMode(e.target.value)}
+                      className="text-[13px] font-bold text-[var(--text-primary)] bg-transparent border-none focus:outline-none cursor-pointer"
+                    >
+                      <option value="structured">Simple Mode</option>
+                      <option value="llm">LLM Mode</option>
+                    </select>
+                  </div>
+                  <button
+                    onClick={() => {
+                      if (input.trim()) {
+                        handleQuickAction(input.trim());
+                        setInput("");
+                      }
+                    }}
+                    disabled={!input.trim()}
+                    className="p-2 rounded-lg bg-[var(--brand-blue)] hover:bg-[var(--brand-blue-deep)] text-white disabled:opacity-30 transition-colors"
+                  >
+                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M5 12h14M12 5l7 7-7 7" />
+                    </svg>
+                  </button>
+                </div>
               </div>
 
-              <div className="grid grid-cols-3 gap-2">
+              {/* Quick action chips */}
+              <div className="flex flex-wrap gap-2 justify-center mt-5">
                 {QUICK_ACTIONS.slice(0, 6).map((qa) => (
                   <button key={qa.label} onClick={() => handleQuickAction(qa.message)}
-                    className="flex flex-col items-center gap-1 p-2 rounded border border-[var(--border-default)] text-[9px] text-[var(--text-muted)] hover:border-[var(--border-active)] hover:text-[var(--brand-blue)] transition-colors">
-                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-[var(--border-default)] bg-[var(--bg-card)] text-[12px] text-[var(--text-secondary)] hover:border-[var(--brand-blue)] hover:text-[var(--brand-blue)] transition-colors font-medium">
+                    <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
                       <path strokeLinecap="round" strokeLinejoin="round" d={qa.icon} />
                     </svg>
                     {qa.label}
