@@ -72,6 +72,59 @@ def send_daily_headline(summary: str):
 # Inbound — handle commands
 # ---------------------------------------------------------------------------
 
+def handle_natural_message(db: Session, telegram_user_id: str, chat_id: str, text: str) -> str:
+    """Handle natural language messages (no slash command). Routes through chat service."""
+
+    # Check user authorization
+    user = db.query(TelegramUser).filter(TelegramUser.telegram_user_id == telegram_user_id).first()
+    if not user:
+        return "You are not registered. Contact an admin to link your Telegram account."
+
+    # Log action
+    action = TelegramAction(
+        telegram_user_id=telegram_user_id,
+        action_type="natural_message",
+        payload_json={"text": text, "chat_id": chat_id, "channel": "telegram"},
+        status="processing",
+    )
+    db.add(action)
+    db.flush()
+
+    try:
+        # Route through chat service (same as dashboard chatbot)
+        from services.chat_service import add_message
+        from uuid import UUID
+
+        session_id = _get_or_create_telegram_session(db, telegram_user_id)
+        result = add_message(
+            db=db,
+            session_id=UUID(session_id),
+            role="user",
+            content=text,
+            message_type="plain_text",
+            data={"telegram_chat_id": chat_id, "natural_language": True},
+        )
+
+        assistant_msg = result.get("assistant_message", {})
+        content = assistant_msg.get("content", {})
+        response_text = content.get("text", "I didn't understand that. Try: status, report, agents, approvals")
+
+        response = _format_for_telegram(response_text, content)
+        action.status = "completed"
+
+    except Exception as e:
+        response = f"Error: {e}"
+        action.status = "failed"
+
+    trace_id = f"tr-tg-natural-{int(datetime.utcnow().timestamp())}"
+    record_event(db, "telegram", "telegram.natural_message", trace_id, {
+        "user": telegram_user_id, "text": text[:100], "status": action.status,
+    })
+
+    db.commit()
+    return response
+
+
 # Map Telegram commands to natural language for the intent classifier
 TELEGRAM_COMMAND_MAP = {
     "/status": "status",

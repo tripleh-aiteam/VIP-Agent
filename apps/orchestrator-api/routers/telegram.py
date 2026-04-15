@@ -53,16 +53,27 @@ async def webhook(request: Request, db: Session = Depends(get_db)):
 
     # Parse command
     parts = text.strip().split()
-    command = parts[0].lower().split("@")[0]  # Handle /command@BotName
-    args = parts[1:]
+    first_word = parts[0].lower().split("@")[0]
+
+    # Check if it starts with / (traditional command)
+    if first_word.startswith("/"):
+        command = first_word
+        args = parts[1:]
+    else:
+        # Natural language — send full text as the message
+        command = "__natural__"
+        args = []
 
     log.info(
-        f"telegram: {telegram_user_id} -> {command}",
+        f"telegram: {telegram_user_id} -> {command if command != '__natural__' else text[:50]}",
         extra={"action": "telegram.webhook"},
     )
 
-    # Process command
-    response = telegram_service.handle_command(db, telegram_user_id, chat_id, command, args)
+    # Process command or natural language
+    if command == "__natural__":
+        response = telegram_service.handle_natural_message(db, telegram_user_id, chat_id, text)
+    else:
+        response = telegram_service.handle_command(db, telegram_user_id, chat_id, command, args)
 
     # Send response back
     telegram_service.send_message(chat_id, response)
