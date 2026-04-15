@@ -221,7 +221,8 @@ export default function ChatPage() {
                     <div className="px-2 mb-1">
                       <input autoFocus value={newFolderName} onChange={(e) => setNewFolderName(e.target.value)}
                         onKeyDown={(e) => { if (e.key === "Enter" && newFolderName.trim()) { addFolder(newFolderName.trim()); setShowNewFolder(false); setNewFolderName(""); } if (e.key === "Escape") { setShowNewFolder(false); setNewFolderName(""); } }}
-                        placeholder="Folder name..."
+                        onBlur={() => { if (newFolderName.trim()) { addFolder(newFolderName.trim()); } setShowNewFolder(false); setNewFolderName(""); }}
+                        placeholder="Type folder name, press Enter..."
                         className="w-full px-2 py-1.5 text-[12px] rounded-lg bg-[var(--bg-elevated)] border border-[var(--brand-blue)] focus:outline-none text-[var(--text-primary)]" />
                     </div>
                   )}
