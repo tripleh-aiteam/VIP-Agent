@@ -9,7 +9,7 @@ export default function AgentsPage() {
   const [agents, setAgents] = useState<any[]>([]);
 
   useEffect(() => {
-    const load = () => api<any[]>("/registry/agents").then(setAgents).catch(() => {});
+    const load = () => api<any[]>("/registry/agents").then((data) => setAgents(data.filter((a: any) => a.status === "active"))).catch(() => {});
     load();
     const i = setInterval(load, 5000);
     return () => clearInterval(i);
