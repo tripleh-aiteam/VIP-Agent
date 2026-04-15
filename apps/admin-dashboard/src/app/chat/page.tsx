@@ -76,24 +76,32 @@ export default function ChatPage() {
 
   const addFolder = (name: string) => {
     const trimmed = name.trim();
-    if (!trimmed || savedFolders.includes(trimmed)) return;
-    const updated = [...savedFolders, trimmed];
-    setSavedFolders(updated);
-    localStorage.setItem("vip-chat-folders", JSON.stringify(updated));
+    if (!trimmed) return;
+    setSavedFolders((prev) => {
+      if (prev.includes(trimmed)) return prev;
+      const updated = [...prev, trimmed];
+      localStorage.setItem("vip-chat-folders", JSON.stringify(updated));
+      return updated;
+    });
     setExpandedFolders((prev) => new Set([...prev, trimmed]));
   };
 
   const removeFolder = (name: string) => {
-    const updated = savedFolders.filter((f) => f !== name);
-    setSavedFolders(updated);
-    localStorage.setItem("vip-chat-folders", JSON.stringify(updated));
-    // Move chats out of this folder
+    setSavedFolders((prev) => {
+      const updated = prev.filter((f) => f !== name);
+      localStorage.setItem("vip-chat-folders", JSON.stringify(updated));
+      return updated;
+    });
     sessions.filter((s: any) => s.folder === name).forEach((s: any) => moveToFolder(s.id, null));
   };
 
   const renameFolderTo = (oldName: string, newName: string) => {
     if (!newName.trim() || newName.trim() === oldName) return;
-    const updated = savedFolders.map((f) => f === oldName ? newName.trim() : f);
+    setSavedFolders((prev) => {
+      const updated = prev.map((f) => f === oldName ? newName.trim() : f);
+      localStorage.setItem("vip-chat-folders", JSON.stringify(updated));
+      return updated;
+    });
     setSavedFolders(updated);
     localStorage.setItem("vip-chat-folders", JSON.stringify(updated));
     sessions.filter((s: any) => s.folder === oldName).forEach((s: any) => moveToFolder(s.id, newName.trim()));
@@ -254,8 +262,8 @@ export default function ChatPage() {
 
             return (
               <>
-                {/* Folders — persist even when empty */}
-                {savedFolders.length > 0 && (
+                {/* Folders — always show if any exist */}
+                {foldersLoaded && savedFolders.length > 0 && (
                 <div className="mb-2">
                   <div className="px-2 mb-1">
                     <span className="text-[11px] font-semibold text-[var(--text-muted)] uppercase tracking-wider">Folders</span>
