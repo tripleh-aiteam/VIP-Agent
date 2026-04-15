@@ -11,8 +11,10 @@ export default function ThemeToggle() {
       setDark(true);
       document.documentElement.classList.add("dark");
     } else {
+      // Force light mode on first visit or if not explicitly set to dark
       setDark(false);
       document.documentElement.classList.remove("dark");
+      localStorage.setItem("vip-theme", "light");
     }
   }, []);
 

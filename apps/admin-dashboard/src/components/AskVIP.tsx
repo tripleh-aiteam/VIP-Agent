@@ -157,23 +157,24 @@ export function CommandLauncher() {
   };
 
   return (
-    <div className="border border-gray-800 rounded-lg bg-gray-900/50">
-      <div className="px-4 py-3 border-b border-gray-800 flex items-center justify-between">
-        <h2 className="text-sm font-semibold text-gray-300">Quick Commands</h2>
-        <span className="text-[9px] text-gray-600">Opens in Chat</span>
+    <div>
+      <div className="flex items-center justify-between mb-3">
+        <h2 className="text-[14px] font-semibold text-[var(--text-primary)]">Quick Commands</h2>
+        <span className="text-[11px] text-[var(--text-muted)]">Opens in Chat</span>
       </div>
-      <div className="p-3 grid grid-cols-3 gap-2">
+      <div className="grid grid-cols-3 gap-2">
         {COMMANDS.map((cmd) => (
           <button
             key={cmd.label}
             onClick={() => run(cmd.prompt)}
             disabled={sending}
-            className="flex flex-col items-center gap-1.5 p-3 rounded border border-gray-800 hover:border-yellow-700 hover:bg-yellow-900/10 transition-colors disabled:opacity-50 group"
+            className="flex flex-col items-center gap-1.5 p-3 rounded-xl border border-[var(--border-default)] bg-[var(--bg-card)] hover:border-[var(--brand-blue)] hover:bg-[var(--bg-elevated)] transition-colors disabled:opacity-50 group"
+            style={{ boxShadow: "var(--shadow-sm)" }}
           >
-            <svg className="w-5 h-5 text-gray-500 group-hover:text-yellow-400 transition-colors" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+            <svg className="w-5 h-5 text-[var(--text-muted)] group-hover:text-[var(--brand-blue)] transition-colors" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
               <path strokeLinecap="round" strokeLinejoin="round" d={cmd.icon} />
             </svg>
-            <span className="text-[10px] text-gray-400 group-hover:text-yellow-400 transition-colors">{cmd.label}</span>
+            <span className="text-[11px] text-[var(--text-secondary)] group-hover:text-[var(--brand-blue)] transition-colors font-medium">{cmd.label}</span>
           </button>
         ))}
       </div>
