@@ -24,7 +24,7 @@ export default function JudgementPage() {
   return (
     <div>
       <h1 className="text-2xl font-bold mb-1">Judgement</h1>
-      <p className="text-sm text-gray-500 mb-6">Risk evaluation and approval workflow</p>
+      <p className="text-sm text-[var(--text-muted)] mb-6">Risk evaluation and approval workflow</p>
 
       <div className="mb-6">
         <AskVIPBar suggestions={[
@@ -40,14 +40,14 @@ export default function JudgementPage() {
         <StatCard label="Rejected" value={rejected.length} color="red" />
       </div>
 
-      <div className="border border-gray-800 rounded-lg bg-gray-900/50">
-        <div className="px-4 py-3 border-b border-gray-800">
-          <h2 className="text-sm font-semibold text-gray-300">All Cases</h2>
+      <div className="border border-[var(--border-default)] rounded-lg bg-[var(--bg-card)]">
+        <div className="px-4 py-3 border-b border-[var(--border-default)]">
+          <h2 className="text-sm font-semibold text-[var(--text-primary)]">All Cases</h2>
         </div>
         <div className="overflow-x-auto">
           <table className="w-full text-xs">
             <thead>
-              <tr className="text-gray-500 border-b border-gray-800/50">
+              <tr className="text-[var(--text-muted)] border-b border-[var(--border-default)]/50">
                 <th className="text-left px-4 py-2">Case</th>
                 <th className="text-left px-4 py-2">Risk Score</th>
                 <th className="text-left px-4 py-2">Rules</th>
@@ -62,34 +62,34 @@ export default function JudgementPage() {
                 const riskPct = Math.round((c.risk_score || 0) * 100);
                 const isPending = c.decision === "human_review_required" || c.decision === "conditional_approve";
                 return (
-                  <tr key={c.id} className="border-b border-gray-800/30 hover:bg-gray-800/20">
-                    <td className="px-4 py-2.5 font-mono text-gray-400">{c.id.slice(0, 8)}...</td>
+                  <tr key={c.id} className="border-b border-[var(--border-default)]/30 hover:bg-[var(--bg-hover)]">
+                    <td className="px-4 py-2.5 font-mono text-[var(--text-secondary)]">{c.id.slice(0, 8)}...</td>
                     <td className="px-4 py-2.5">
                       <div className="flex items-center gap-2">
-                        <div className="w-14 h-1.5 bg-gray-800 rounded-full overflow-hidden">
-                          <div className={`h-full rounded-full ${riskPct >= 70 ? "bg-red-500" : riskPct >= 40 ? "bg-yellow-500" : "bg-green-500"}`} style={{ width: `${riskPct}%` }} />
+                        <div className="w-14 h-1.5 bg-[var(--bg-elevated)] rounded-full overflow-hidden">
+                          <div className={`h-full rounded-full ${riskPct >= 70 ? "bg-red-500" : riskPct >= 40 ? "bg-[var(--brand-blue-deep)]" : "bg-green-500"}`} style={{ width: `${riskPct}%` }} />
                         </div>
-                        <span className={`text-xs font-medium ${riskPct >= 70 ? "text-red-400" : riskPct >= 40 ? "text-yellow-400" : "text-green-400"}`}>{riskPct}%</span>
+                        <span className={`text-xs font-medium ${riskPct >= 70 ? "text-red-400" : riskPct >= 40 ? "text-[var(--brand-blue)]" : "text-green-400"}`}>{riskPct}%</span>
                       </div>
                     </td>
                     <td className="px-4 py-2.5"><Badge text={c.rule_result || "—"} /></td>
                     <td className="px-4 py-2.5"><Badge text={c.decision} /></td>
-                    <td className="px-4 py-2.5 text-gray-500 max-w-[200px] truncate">{c.evidence?.reasoning || "—"}</td>
-                    <td className="px-4 py-2.5 text-gray-500">{c.created_at ? new Date(c.created_at).toLocaleTimeString() : "-"}</td>
+                    <td className="px-4 py-2.5 text-[var(--text-muted)] max-w-[200px] truncate">{c.evidence?.reasoning || "—"}</td>
+                    <td className="px-4 py-2.5 text-[var(--text-muted)]">{c.created_at ? new Date(c.created_at).toLocaleTimeString() : "-"}</td>
                     <td className="px-4 py-2.5">
                       {isPending ? (
                         <div className="flex gap-1">
-                          <button onClick={() => handleAction(c.id, "approve")} className="px-2 py-1 text-[10px] rounded bg-green-700 hover:bg-green-600 text-white">Approve</button>
-                          <button onClick={() => handleAction(c.id, "reject")} className="px-2 py-1 text-[10px] rounded bg-red-700 hover:bg-red-600 text-white">Reject</button>
+                          <button onClick={() => handleAction(c.id, "approve")} className="px-2 py-1 text-[10px] rounded bg-green-700 hover:bg-green-600 text-[var(--text-primary)]">Approve</button>
+                          <button onClick={() => handleAction(c.id, "reject")} className="px-2 py-1 text-[10px] rounded bg-red-700 hover:bg-red-600 text-[var(--text-primary)]">Reject</button>
                         </div>
-                      ) : <span className="text-[10px] text-gray-600">—</span>}
+                      ) : <span className="text-[10px] text-[var(--text-muted)]">—</span>}
                     </td>
                   </tr>
                 );
               })}
             </tbody>
           </table>
-          {cases.length === 0 && <p className="text-center text-gray-500 py-8 text-xs">No judgement cases. Dispatch a stock_analysis task to trigger one.</p>}
+          {cases.length === 0 && <p className="text-center text-[var(--text-muted)] py-8 text-xs">No judgement cases. Dispatch a stock_analysis task to trigger one.</p>}
         </div>
       </div>
     </div>

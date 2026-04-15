@@ -49,12 +49,12 @@ export default function ReportsPage() {
       <div className="flex items-center justify-between mb-6">
         <div>
           <h1 className="text-2xl font-bold mb-1">Reports</h1>
-          <p className="text-sm text-gray-500">Executive summaries and alerts</p>
+          <p className="text-sm text-[var(--text-muted)]">Executive summaries and alerts</p>
         </div>
         <div className="flex gap-2">
           {["daily", "weekly", "alert"].map((t) => (
             <button key={t} onClick={() => compose(t)} disabled={composing}
-              className="px-4 py-2 rounded bg-purple-600 hover:bg-purple-500 text-white text-xs font-semibold transition-colors disabled:opacity-50 capitalize">
+              className="px-4 py-2 rounded bg-purple-600 hover:bg-purple-500 text-[var(--text-primary)] text-xs font-semibold transition-colors disabled:opacity-50 capitalize">
               {composing ? "..." : `Compose ${t}`}
             </button>
           ))}
@@ -79,7 +79,7 @@ export default function ReportsPage() {
       </div>
 
       {/* Filter Tabs */}
-      <div className="flex gap-1 mb-4 border-b border-gray-800">
+      <div className="flex gap-1 mb-4 border-b border-[var(--border-default)]">
         {[
           { key: "all", label: `All (${reports.length})` },
           { key: "daily", label: `Daily (${dailyReports.length})` },
@@ -91,8 +91,8 @@ export default function ReportsPage() {
             onClick={() => setActiveType(f.key)}
             className={`px-4 py-2 text-xs font-medium transition-colors ${
               activeType === f.key
-                ? "text-yellow-400 border-b-2 border-yellow-400"
-                : "text-gray-500 hover:text-gray-300"
+                ? "text-[var(--brand-blue)] border-b-2 border-[var(--border-active)]"
+                : "text-[var(--text-muted)] hover:text-[var(--text-primary)]"
             }`}
           >
             {f.label}
@@ -109,8 +109,8 @@ export default function ReportsPage() {
               <div
                 key={r.id}
                 onClick={() => openDetail(r.id)}
-                className={`border rounded-lg bg-gray-900/50 cursor-pointer hover:border-gray-600 transition-colors ${
-                  detail?.id === r.id ? "border-yellow-600" : "border-gray-800"
+                className={`border rounded-lg bg-[var(--bg-card)] cursor-pointer hover:border-gray-600 transition-colors ${
+                  detail?.id === r.id ? "border-[var(--border-active)]" : "border-[var(--border-default)]"
                 }`}
               >
                 <div className="px-4 py-3 flex items-center justify-between">
@@ -118,52 +118,52 @@ export default function ReportsPage() {
                     <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium ${cfg.color} ${cfg.bg} border ${cfg.border}`}>
                       {cfg.label}
                     </span>
-                    <span className="text-xs text-gray-400">{r.source_run_count} runs</span>
-                    <span className="text-[10px] text-gray-600">
+                    <span className="text-xs text-[var(--text-secondary)]">{r.source_run_count} runs</span>
+                    <span className="text-[10px] text-[var(--text-muted)]">
                       {r.created_at ? new Date(r.created_at).toLocaleString() : ""}
                     </span>
                   </div>
-                  <svg className="w-4 h-4 text-gray-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <svg className="w-4 h-4 text-[var(--text-muted)]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
                   </svg>
                 </div>
                 <div className="px-4 pb-3">
-                  <p className="text-[11px] text-gray-400 truncate">{r.executive_summary}</p>
+                  <p className="text-[11px] text-[var(--text-secondary)] truncate">{r.executive_summary}</p>
                 </div>
               </div>
             );
           })}
           {filteredReports.length === 0 && (
-            <p className="text-center text-gray-500 py-10 text-sm">
+            <p className="text-center text-[var(--text-muted)] py-10 text-sm">
               No {activeType === "all" ? "" : activeType} reports yet. Click compose to generate.
             </p>
           )}
         </div>
 
         {/* Detail Panel */}
-        <div className="border border-gray-800 rounded-lg bg-gray-900/50 h-fit sticky top-6">
+        <div className="border border-[var(--border-default)] rounded-lg bg-[var(--bg-card)] h-fit sticky top-6">
           {detail ? (
             <div>
-              <div className="px-4 py-3 border-b border-gray-800 flex items-center justify-between">
+              <div className="px-4 py-3 border-b border-[var(--border-default)] flex items-center justify-between">
                 <h3 className="text-sm font-semibold">Report Detail</h3>
-                <button onClick={() => setDetail(null)} className="text-gray-500 hover:text-white text-xs">Close</button>
+                <button onClick={() => setDetail(null)} className="text-[var(--text-muted)] hover:text-[var(--text-primary)] text-xs">Close</button>
               </div>
               <div className="p-4 space-y-4 max-h-[70vh] overflow-y-auto">
                 <div className="flex items-center gap-2">
                   <Badge text={detail.report_type} />
-                  <span className="text-[10px] text-gray-500">
+                  <span className="text-[10px] text-[var(--text-muted)]">
                     {detail.created_at ? new Date(detail.created_at).toLocaleString() : ""}
                   </span>
                 </div>
 
                 {(detail.content?.sections || []).map((s: any, i: number) => (
-                  <div key={i} className="border-l-2 border-gray-700 pl-3">
-                    <h4 className="text-xs font-medium text-yellow-400 mb-1">{s.title}</h4>
-                    <p className="text-[11px] text-gray-400 leading-relaxed">{s.content}</p>
+                  <div key={i} className="border-l-2 border-[var(--border-default)] pl-3">
+                    <h4 className="text-xs font-medium text-[var(--brand-blue)] mb-1">{s.title}</h4>
+                    <p className="text-[11px] text-[var(--text-secondary)] leading-relaxed">{s.content}</p>
                     {s.data && Object.keys(s.data).length > 0 && (
                       <div className="mt-1.5 flex flex-wrap gap-1">
                         {Object.entries(s.data).map(([k, v]) => (
-                          <span key={k} className="text-[9px] px-1.5 py-0.5 bg-gray-800 rounded text-gray-500">
+                          <span key={k} className="text-[9px] px-1.5 py-0.5 bg-[var(--bg-elevated)] rounded text-[var(--text-muted)]">
                             {k}: {String(v)}
                           </span>
                         ))}
@@ -174,16 +174,16 @@ export default function ReportsPage() {
 
                 {detail.content?.trace_references?.length > 0 && (
                   <div>
-                    <h4 className="text-xs font-medium text-gray-400 mb-1">Traces</h4>
+                    <h4 className="text-xs font-medium text-[var(--text-secondary)] mb-1">Traces</h4>
                     <div className="flex flex-wrap gap-1">
                       {detail.content.trace_references.slice(0, 8).map((t: string) => (
-                        <span key={t} className="text-[9px] px-1.5 py-0.5 bg-gray-800 rounded font-mono text-gray-500">{t}</span>
+                        <span key={t} className="text-[9px] px-1.5 py-0.5 bg-[var(--bg-elevated)] rounded font-mono text-[var(--text-muted)]">{t}</span>
                       ))}
                     </div>
                   </div>
                 )}
 
-                <div className="pt-2 border-t border-gray-800 flex gap-3">
+                <div className="pt-2 border-t border-[var(--border-default)] flex gap-3">
                   <a href={`${API}/reports/${detail.id}/markdown`} target="_blank" rel="noreferrer" className="text-[10px] text-purple-400 hover:underline">Markdown</a>
                   <a href={`${API}/reports/${detail.id}`} target="_blank" rel="noreferrer" className="text-[10px] text-blue-400 hover:underline">JSON</a>
                 </div>
@@ -191,10 +191,10 @@ export default function ReportsPage() {
             </div>
           ) : (
             <div className="p-8 text-center">
-              <svg className="w-8 h-8 text-gray-700 mx-auto mb-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <svg className="w-8 h-8 text-[var(--text-secondary)] mx-auto mb-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
               </svg>
-              <p className="text-xs text-gray-500">Click a report to view details</p>
+              <p className="text-xs text-[var(--text-muted)]">Click a report to view details</p>
             </div>
           )}
         </div>

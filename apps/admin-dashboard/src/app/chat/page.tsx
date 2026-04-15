@@ -92,10 +92,10 @@ export default function ChatPage() {
   return (
     <div className="flex h-[calc(100vh-3rem)] gap-4">
       {/* Sessions sidebar */}
-      <div className="w-60 border border-gray-800 rounded-lg bg-gray-900/50 flex flex-col shrink-0">
-        <div className="p-3 border-b border-gray-800 flex items-center justify-between">
-          <h3 className="text-xs font-semibold text-gray-400">Sessions</h3>
-          <button onClick={() => createSession()} className="px-2 py-1 text-[9px] rounded bg-yellow-600 hover:bg-yellow-500 text-white font-medium">+ New</button>
+      <div className="w-60 border border-[var(--border-default)] rounded-lg bg-[var(--bg-card)] flex flex-col shrink-0">
+        <div className="p-3 border-b border-[var(--border-default)] flex items-center justify-between">
+          <h3 className="text-xs font-semibold text-[var(--text-secondary)]">Sessions</h3>
+          <button onClick={() => createSession()} className="px-2 py-1 text-[9px] rounded bg-[var(--brand-blue)] hover:bg-[var(--brand-blue-deep)] text-[var(--text-primary)] font-medium">+ New</button>
         </div>
         <div className="flex-1 overflow-y-auto p-1.5 space-y-0.5">
           {sessions.map((s: any) => {
@@ -105,12 +105,12 @@ export default function ChatPage() {
                 key={s.id}
                 onClick={() => setActiveSession(s.id)}
                 className={`w-full text-left px-3 py-2 rounded text-xs transition-colors ${
-                  activeSession === s.id ? "bg-yellow-900/20 text-yellow-400 border border-yellow-800/40" : "text-gray-400 hover:bg-gray-800"
+                  activeSession === s.id ? "bg-[var(--bg-hover)] text-[var(--brand-blue)] border border-yellow-800/40" : "text-[var(--text-secondary)] hover:bg-[var(--bg-elevated)]"
                 }`}
               >
                 <p className="truncate font-medium text-[11px]">{s.title}</p>
                 <div className="flex items-center gap-1.5 mt-0.5">
-                  <span className="text-[8px] text-gray-600">{s.message_count} msgs</span>
+                  <span className="text-[8px] text-[var(--text-muted)]">{s.message_count} msgs</span>
                   <span className={`text-[7px] px-1 py-0 rounded ${sMode.bg} ${sMode.color} border ${sMode.border}`}>
                     {s.mode === "llm" ? "LLM" : "Structured"}
                   </span>
@@ -122,11 +122,11 @@ export default function ChatPage() {
       </div>
 
       {/* Chat area */}
-      <div className="flex-1 border border-gray-800 rounded-lg bg-gray-900/50 flex flex-col">
+      <div className="flex-1 border border-[var(--border-default)] rounded-lg bg-[var(--bg-card)] flex flex-col">
         {activeSession ? (
           <>
             {/* Chat Header */}
-            <div className="px-4 py-2.5 border-b border-gray-800 flex items-center justify-between">
+            <div className="px-4 py-2.5 border-b border-[var(--border-default)] flex items-center justify-between">
               <h2 className="text-sm font-semibold text-gray-200">VIP Chatbot</h2>
               <div className="flex items-center gap-2">
                 {modeMsg && <span className="text-[9px] text-green-400">{modeMsg}</span>}
@@ -134,7 +134,7 @@ export default function ChatPage() {
                   value={activeMode}
                   onChange={(e) => changeMode(e.target.value)}
                   disabled={modeChanging}
-                  className="bg-gray-800 border border-gray-700 rounded px-3 py-1.5 text-xs focus:outline-none disabled:opacity-50 cursor-pointer"
+                  className="bg-[var(--bg-elevated)] border border-[var(--border-default)] rounded px-3 py-1.5 text-xs focus:outline-none disabled:opacity-50 cursor-pointer"
                 >
                   <option value="structured">Structured Mode</option>
                   <option value="llm">LLM Mode</option>
@@ -155,32 +155,32 @@ export default function ChatPage() {
                   <div key={m.id} className={isUser ? "ml-16" : isSystem ? "mx-12" : "mr-8"}>
                     <div className={`rounded-lg p-3 ${
                       isUser ? "bg-blue-900/20 border border-blue-800/30" :
-                      isSystem ? "bg-gray-900/30 border border-gray-800/30 text-center" :
-                      "bg-gray-800/40 border border-gray-700/30"
+                      isSystem ? "bg-[var(--bg-card)] border border-[var(--border-default)]/30 text-center" :
+                      "bg-[var(--bg-elevated)] border border-[var(--border-default)]/30"
                     }`}>
                       <div className="flex items-center gap-2 mb-1.5">
                         <span className={`text-[9px] font-semibold ${
-                          isUser ? "text-blue-400" : isAssistant ? "text-green-400" : "text-gray-500"
+                          isUser ? "text-blue-400" : isAssistant ? "text-green-400" : "text-[var(--text-muted)]"
                         }`}>
                           {isUser ? "You" : isAssistant ? "VIP Agent" : "System"}
                         </span>
                         {isAssistant && !isSystem && (
                           <span className={`text-[7px] px-1 py-0 rounded ${
-                            isAI ? "bg-purple-900/30 text-purple-400 border border-purple-800/40" : "bg-gray-800 text-gray-500"
+                            isAI ? "bg-purple-900/30 text-purple-400 border border-purple-800/40" : "bg-[var(--bg-elevated)] text-[var(--text-muted)]"
                           }`}>
                             {isAI ? "LLM Response" : "Structured Response"}
                           </span>
                         )}
-                        <span className="text-[8px] text-gray-600">
+                        <span className="text-[8px] text-[var(--text-muted)]">
                           {m.created_at ? new Date(m.created_at).toLocaleTimeString() : ""}
                         </span>
                       </div>
-                      <p className="text-[11px] text-gray-300 whitespace-pre-wrap leading-relaxed">{m.content?.text || ""}</p>
+                      <p className="text-[11px] text-[var(--text-primary)] whitespace-pre-wrap leading-relaxed">{m.content?.text || ""}</p>
                       {hasCard && <ChatResponseCard message={m} onAction={(msg) => sendMessage(msg)} />}
                       {isUser && m.content?.intent && (
                         <div className="mt-1.5 flex items-center gap-1">
                           <Badge text={m.content.intent.intent} />
-                          <span className="text-[8px] text-gray-600">conf={m.content.intent.confidence}</span>
+                          <span className="text-[8px] text-[var(--text-muted)]">conf={m.content.intent.confidence}</span>
                           {m.content.intent.matched_pattern?.startsWith("openai") && (
                             <span className="text-[7px] text-purple-400">via OpenAI</span>
                           )}
@@ -197,7 +197,7 @@ export default function ChatPage() {
             <div className="px-3 pt-2 flex gap-1.5 flex-wrap">
               {QUICK_ACTIONS.map((qa) => (
                 <button key={qa.label} onClick={() => handleQuickAction(qa.message)} disabled={sending}
-                  className="flex items-center gap-1 px-2 py-1 rounded border border-gray-700 bg-gray-800/50 text-[9px] text-gray-400 hover:border-yellow-700 hover:text-yellow-400 transition-colors disabled:opacity-50">
+                  className="flex items-center gap-1 px-2 py-1 rounded border border-[var(--border-default)] bg-[var(--bg-elevated)] text-[9px] text-[var(--text-secondary)] hover:border-[var(--border-active)] hover:text-[var(--brand-blue)] transition-colors disabled:opacity-50">
                   <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
                     <path strokeLinecap="round" strokeLinejoin="round" d={qa.icon} />
                   </svg>
@@ -214,13 +214,13 @@ export default function ChatPage() {
                   onChange={(e) => setInput(e.target.value)}
                   onKeyDown={(e) => e.key === "Enter" && !e.shiftKey && sendMessage()}
                   placeholder={activeMode === "llm" ? "Ask naturally... (LLM will help interpret and explain)" : "Type a command... (status, run asset summary, approvals)"}
-                  className={`flex-1 bg-gray-800 border rounded-lg px-4 py-2.5 text-sm focus:outline-none transition-colors ${
-                    activeMode === "llm" ? "border-purple-800/40 focus:border-purple-600" : "border-gray-700 focus:border-yellow-600"
+                  className={`flex-1 bg-[var(--bg-elevated)] border rounded-lg px-4 py-2.5 text-sm focus:outline-none transition-colors ${
+                    activeMode === "llm" ? "border-purple-800/40 focus:border-purple-600" : "border-[var(--border-default)] focus:border-[var(--border-active)]"
                   }`}
                   disabled={sending}
                 />
                 <button onClick={() => sendMessage()} disabled={sending || !input.trim()}
-                  className="px-5 py-2.5 rounded-lg bg-yellow-600 hover:bg-yellow-500 text-white text-sm font-semibold disabled:opacity-50 transition-colors">
+                  className="px-5 py-2.5 rounded-lg bg-[var(--brand-blue)] hover:bg-[var(--brand-blue-deep)] text-[var(--text-primary)] text-sm font-semibold disabled:opacity-50 transition-colors">
                   {sending ? "..." : "Send"}
                 </button>
               </div>
@@ -238,7 +238,7 @@ export default function ChatPage() {
                 <path strokeLinecap="round" strokeLinejoin="round" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
               </svg>
               <h2 className="text-lg font-semibold mb-1">VIP Chatbot</h2>
-              <p className="text-xs text-gray-500 mb-5">Control the VIP platform through conversation</p>
+              <p className="text-xs text-[var(--text-muted)] mb-5">Control the VIP platform through conversation</p>
 
               <div className="flex gap-3 justify-center mb-6">
                 <button onClick={() => createSession("structured")}
@@ -256,7 +256,7 @@ export default function ChatPage() {
               <div className="grid grid-cols-3 gap-2">
                 {QUICK_ACTIONS.slice(0, 6).map((qa) => (
                   <button key={qa.label} onClick={() => handleQuickAction(qa.message)}
-                    className="flex flex-col items-center gap-1 p-2 rounded border border-gray-800 text-[9px] text-gray-500 hover:border-yellow-700 hover:text-yellow-400 transition-colors">
+                    className="flex flex-col items-center gap-1 p-2 rounded border border-[var(--border-default)] text-[9px] text-[var(--text-muted)] hover:border-[var(--border-active)] hover:text-[var(--brand-blue)] transition-colors">
                     <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
                       <path strokeLinecap="round" strokeLinejoin="round" d={qa.icon} />
                     </svg>

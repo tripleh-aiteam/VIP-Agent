@@ -46,7 +46,7 @@ export default function ChannelsPage() {
   return (
     <div>
       <h1 className="text-2xl font-bold mb-1">Channels</h1>
-      <p className="text-sm text-gray-500 mb-6">Communication channels and integrations</p>
+      <p className="text-sm text-[var(--text-muted)] mb-6">Communication channels and integrations</p>
 
       {/* Channel Tabs */}
       <div className="flex gap-2 mb-6">
@@ -60,8 +60,8 @@ export default function ChannelsPage() {
               onClick={() => setActiveChannel(key)}
               className={`flex items-center gap-2 px-4 py-2.5 rounded-lg border text-sm transition-colors ${
                 isActive
-                  ? "border-yellow-600 bg-yellow-900/10 text-white"
-                  : "border-gray-800 bg-gray-900/50 text-gray-400 hover:border-gray-700"
+                  ? "border-[var(--border-active)] bg-[var(--bg-hover)] text-[var(--text-primary)]"
+                  : "border-[var(--border-default)] bg-[var(--bg-card)] text-[var(--text-secondary)] hover:border-[var(--border-default)]"
               }`}
             >
               <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
@@ -69,7 +69,7 @@ export default function ChannelsPage() {
               </svg>
               {cfg.label}
               {ch && (
-                <span className={`w-1.5 h-1.5 rounded-full ${ch.status === "active" ? "bg-green-400" : ch.status === "planned" ? "bg-yellow-400" : "bg-gray-500"}`} />
+                <span className={`w-1.5 h-1.5 rounded-full ${ch.status === "active" ? "bg-green-400" : ch.status === "planned" ? "bg-[var(--brand-blue)]" : "bg-gray-500"}`} />
               )}
             </button>
           );
@@ -82,27 +82,27 @@ export default function ChannelsPage() {
           {/* Bot Status + Users Row */}
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
             {/* Bot Status */}
-            <div className="border border-gray-800 rounded-lg bg-gray-900/50 p-4">
+            <div className="border border-[var(--border-default)] rounded-lg bg-[var(--bg-card)] p-4">
               <h3 className="text-sm font-semibold mb-3">Bot Status</h3>
               <div className="space-y-2 text-xs">
-                <div className="flex justify-between text-gray-400">
+                <div className="flex justify-between text-[var(--text-secondary)]">
                   <span>Configured</span>
                   <Badge text={botStatus?.configured ? "active" : "inactive"} />
                 </div>
                 {botStatus?.username && (
-                  <div className="flex justify-between text-gray-400">
+                  <div className="flex justify-between text-[var(--text-secondary)]">
                     <span>Username</span>
-                    <span className="text-white">@{botStatus.username}</span>
+                    <span className="text-[var(--text-primary)]">@{botStatus.username}</span>
                   </div>
                 )}
                 {botStatus?.bot_name && (
-                  <div className="flex justify-between text-gray-400">
+                  <div className="flex justify-between text-[var(--text-secondary)]">
                     <span>Name</span>
-                    <span className="text-white">{botStatus.bot_name}</span>
+                    <span className="text-[var(--text-primary)]">{botStatus.bot_name}</span>
                   </div>
                 )}
                 {botStatus?.error && (
-                  <div className="text-[10px] text-yellow-400 bg-yellow-900/20 rounded p-2 mt-2">
+                  <div className="text-[10px] text-[var(--brand-blue)] bg-[var(--bg-hover)] rounded p-2 mt-2">
                     {botStatus.error}
                   </div>
                 )}
@@ -110,31 +110,31 @@ export default function ChannelsPage() {
             </div>
 
             {/* Linked Users */}
-            <div className="border border-gray-800 rounded-lg bg-gray-900/50 p-4 lg:col-span-2">
+            <div className="border border-[var(--border-default)] rounded-lg bg-[var(--bg-card)] p-4 lg:col-span-2">
               <h3 className="text-sm font-semibold mb-3">Linked Users ({tgUsers.length})</h3>
               <div className="space-y-1.5">
                 {tgUsers.map((u: any) => (
-                  <div key={u.id} className="flex items-center justify-between text-xs bg-gray-800/30 rounded px-3 py-2">
+                  <div key={u.id} className="flex items-center justify-between text-xs bg-[var(--bg-elevated)] rounded px-3 py-2">
                     <div className="flex items-center gap-3">
-                      <span className="font-mono text-gray-400">{u.telegram_user_id}</span>
+                      <span className="font-mono text-[var(--text-secondary)]">{u.telegram_user_id}</span>
                       <Badge text={u.role} />
                     </div>
                     <Badge text={u.status} />
                   </div>
                 ))}
-                {tgUsers.length === 0 && <p className="text-xs text-gray-500">No linked users</p>}
+                {tgUsers.length === 0 && <p className="text-xs text-[var(--text-muted)]">No linked users</p>}
               </div>
             </div>
           </div>
 
           {/* Command Simulator */}
-          <div className="border border-gray-800 rounded-lg bg-gray-900/50 p-4">
+          <div className="border border-[var(--border-default)] rounded-lg bg-[var(--bg-card)] p-4">
             <h3 className="text-sm font-semibold mb-3">Command Simulator</h3>
             <div className="flex gap-2 mb-3">
               <select
                 value={tgCommand}
                 onChange={(e) => setTgCommand(e.target.value)}
-                className="flex-1 bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm"
+                className="flex-1 bg-[var(--bg-elevated)] border border-[var(--border-default)] rounded px-3 py-2 text-sm"
               >
                 <option value="/status">/status — System health</option>
                 <option value="/agents">/agents — List agents</option>
@@ -147,7 +147,7 @@ export default function ChannelsPage() {
               <button
                 onClick={runTgCommand}
                 disabled={tgRunning}
-                className="px-4 py-2 rounded bg-blue-600 hover:bg-blue-500 text-white text-sm font-semibold disabled:opacity-50"
+                className="px-4 py-2 rounded bg-blue-600 hover:bg-blue-500 text-[var(--text-primary)] text-sm font-semibold disabled:opacity-50"
               >
                 {tgRunning ? "..." : "Send"}
               </button>
@@ -155,7 +155,7 @@ export default function ChannelsPage() {
 
             {/* Response */}
             {tgResult && (
-              <div className="bg-gray-800 border border-gray-700 rounded p-4 text-xs text-gray-300 leading-relaxed whitespace-pre-wrap"
+              <div className="bg-[var(--bg-elevated)] border border-[var(--border-default)] rounded p-4 text-xs text-[var(--text-primary)] leading-relaxed whitespace-pre-wrap"
                 dangerouslySetInnerHTML={{
                   __html: tgResult
                     .replace(/</g, "&lt;")
@@ -168,14 +168,14 @@ export default function ChannelsPage() {
           </div>
 
           {/* Setup Instructions */}
-          <div className="border border-gray-800 rounded-lg bg-gray-900/50 p-4">
+          <div className="border border-[var(--border-default)] rounded-lg bg-[var(--bg-card)] p-4">
             <h3 className="text-sm font-semibold mb-2">Setup Instructions</h3>
-            <ol className="text-xs text-gray-400 space-y-1.5 list-decimal list-inside">
-              <li>Message <b className="text-white">@BotFather</b> on Telegram → <code className="bg-gray-800 px-1 rounded">/newbot</code> → get token</li>
-              <li>Set <code className="bg-gray-800 px-1 rounded">TELEGRAM_BOT_TOKEN=your-token</code> in <code className="bg-gray-800 px-1 rounded">.env</code></li>
-              <li>Install ngrok: <code className="bg-gray-800 px-1 rounded">ngrok http 8000</code></li>
-              <li>Register webhook via Swagger: <code className="bg-gray-800 px-1 rounded">POST /telegram/set-webhook</code></li>
-              <li>Send <code className="bg-gray-800 px-1 rounded">/status</code> to your bot in Telegram</li>
+            <ol className="text-xs text-[var(--text-secondary)] space-y-1.5 list-decimal list-inside">
+              <li>Message <b className="text-[var(--text-primary)]">@BotFather</b> on Telegram → <code className="bg-[var(--bg-elevated)] px-1 rounded">/newbot</code> → get token</li>
+              <li>Set <code className="bg-[var(--bg-elevated)] px-1 rounded">TELEGRAM_BOT_TOKEN=your-token</code> in <code className="bg-[var(--bg-elevated)] px-1 rounded">.env</code></li>
+              <li>Install ngrok: <code className="bg-[var(--bg-elevated)] px-1 rounded">ngrok http 8000</code></li>
+              <li>Register webhook via Swagger: <code className="bg-[var(--bg-elevated)] px-1 rounded">POST /telegram/set-webhook</code></li>
+              <li>Send <code className="bg-[var(--bg-elevated)] px-1 rounded">/status</code> to your bot in Telegram</li>
             </ol>
           </div>
         </div>
@@ -183,12 +183,12 @@ export default function ChannelsPage() {
 
       {/* Other Channels - Coming Soon */}
       {activeChannel !== "telegram" && (
-        <div className="border border-gray-800 rounded-lg bg-gray-900/50 p-8 text-center">
-          <svg className="w-12 h-12 text-gray-700 mx-auto mb-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1}>
+        <div className="border border-[var(--border-default)] rounded-lg bg-[var(--bg-card)] p-8 text-center">
+          <svg className="w-12 h-12 text-[var(--text-secondary)] mx-auto mb-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1}>
             <path strokeLinecap="round" strokeLinejoin="round" d={channelConfig[activeChannel]?.icon || ""} />
           </svg>
           <h3 className="text-lg font-semibold mb-1">{channelConfig[activeChannel]?.label}</h3>
-          <p className="text-sm text-gray-500 mb-4">{channelConfig[activeChannel]?.description}</p>
+          <p className="text-sm text-[var(--text-muted)] mb-4">{channelConfig[activeChannel]?.description}</p>
           {channels.find((c) => c.type === activeChannel) && (
             <Badge text={channels.find((c) => c.type === activeChannel)?.status || "unknown"} />
           )}

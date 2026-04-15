@@ -38,7 +38,7 @@ export default function AIGlassPage() {
   const filtered = filter === "all" ? sessions : sessions.filter((s) => s.processing_status === filter);
 
   const statusIcon: Record<string, string> = {
-    pending: "bg-yellow-400",
+    pending: "bg-[var(--brand-blue)]",
     processing: "bg-blue-400 animate-pulse",
     completed: "bg-green-400",
     failed: "bg-red-400",
@@ -50,10 +50,10 @@ export default function AIGlassPage() {
       <div className="flex items-center justify-between mb-6">
         <div>
           <h1 className="text-2xl font-bold mb-1">AI Glass</h1>
-          <p className="text-sm text-gray-500">Spatial capture sessions and processing</p>
+          <p className="text-sm text-[var(--text-muted)]">Spatial capture sessions and processing</p>
         </div>
         <button onClick={submitCapture} disabled={submitting}
-          className="px-4 py-2 rounded bg-yellow-600 hover:bg-yellow-500 text-white text-xs font-semibold disabled:opacity-50">
+          className="px-4 py-2 rounded bg-[var(--brand-blue)] hover:bg-[var(--brand-blue-deep)] text-[var(--text-primary)] text-xs font-semibold disabled:opacity-50">
           {submitting ? "Submitting..." : "Simulate Capture"}
         </button>
       </div>
@@ -68,11 +68,11 @@ export default function AIGlassPage() {
       </div>
 
       {/* Filter */}
-      <div className="flex gap-1 mb-4 border-b border-gray-800">
+      <div className="flex gap-1 mb-4 border-b border-[var(--border-default)]">
         {["all", "pending", "processing", "completed", "failed", "manual_review"].map((f) => (
           <button key={f} onClick={() => setFilter(f)}
             className={`px-3 py-2 text-xs font-medium capitalize transition-colors ${
-              filter === f ? "text-yellow-400 border-b-2 border-yellow-400" : "text-gray-500 hover:text-gray-300"
+              filter === f ? "text-[var(--brand-blue)] border-b-2 border-[var(--border-active)]" : "text-[var(--text-muted)] hover:text-[var(--text-primary)]"
             }`}>
             {f === "manual_review" ? "Manual Review" : f}
           </button>
@@ -84,19 +84,19 @@ export default function AIGlassPage() {
         <div className="lg:col-span-2 space-y-2">
           {filtered.map((s: any) => (
             <div key={s.id} onClick={() => setDetail(s)}
-              className={`border rounded-lg bg-gray-900/50 cursor-pointer hover:border-gray-600 transition-colors ${
-                detail?.id === s.id ? "border-yellow-600" : "border-gray-800"
+              className={`border rounded-lg bg-[var(--bg-card)] cursor-pointer hover:border-gray-600 transition-colors ${
+                detail?.id === s.id ? "border-[var(--border-active)]" : "border-[var(--border-default)]"
               }`}>
               <div className="px-4 py-3 flex items-center justify-between">
                 <div className="flex items-center gap-3 flex-1 min-w-0">
                   <div className={`w-2 h-2 rounded-full ${statusIcon[s.processing_status] || "bg-gray-500"}`} />
-                  <span className="text-xs font-mono text-gray-400">{s.device_id}</span>
+                  <span className="text-xs font-mono text-[var(--text-secondary)]">{s.device_id}</span>
                   {s.property_ref && <span className="text-[10px] px-2 py-0.5 rounded-full bg-purple-900/30 text-purple-400">{s.property_ref}</span>}
                   <Badge text={s.processing_status} />
                 </div>
-                <span className="text-[10px] text-gray-600">{s.created_at ? new Date(s.created_at).toLocaleString() : ""}</span>
+                <span className="text-[10px] text-[var(--text-muted)]">{s.created_at ? new Date(s.created_at).toLocaleString() : ""}</span>
               </div>
-              <div className="px-4 pb-2 flex gap-3 text-[10px] text-gray-500">
+              <div className="px-4 pb-2 flex gap-3 text-[10px] text-[var(--text-muted)]">
                 {s.video_uri && <span>Video</span>}
                 {s.audio_uri && <span>Audio</span>}
                 {s.model_3d_uri && <span className="text-green-400">3D Model</span>}
@@ -104,46 +104,46 @@ export default function AIGlassPage() {
             </div>
           ))}
           {filtered.length === 0 && (
-            <p className="text-center text-gray-500 py-10 text-sm">No capture sessions. Click &quot;Simulate Capture&quot; to create one.</p>
+            <p className="text-center text-[var(--text-muted)] py-10 text-sm">No capture sessions. Click &quot;Simulate Capture&quot; to create one.</p>
           )}
         </div>
 
         {/* Detail Panel */}
-        <div className="border border-gray-800 rounded-lg bg-gray-900/50 h-fit sticky top-6">
+        <div className="border border-[var(--border-default)] rounded-lg bg-[var(--bg-card)] h-fit sticky top-6">
           {detail ? (
             <div>
-              <div className="px-4 py-3 border-b border-gray-800 flex items-center justify-between">
+              <div className="px-4 py-3 border-b border-[var(--border-default)] flex items-center justify-between">
                 <h3 className="text-sm font-semibold">Session Detail</h3>
-                <button onClick={() => setDetail(null)} className="text-gray-500 hover:text-white text-xs">Close</button>
+                <button onClick={() => setDetail(null)} className="text-[var(--text-muted)] hover:text-[var(--text-primary)] text-xs">Close</button>
               </div>
               <div className="p-4 space-y-3 text-xs max-h-[70vh] overflow-y-auto">
-                <div className="flex justify-between text-gray-400">
-                  <span>ID</span><span className="text-white font-mono">{detail.id.slice(0, 12)}...</span>
+                <div className="flex justify-between text-[var(--text-secondary)]">
+                  <span>ID</span><span className="text-[var(--text-primary)] font-mono">{detail.id.slice(0, 12)}...</span>
                 </div>
-                <div className="flex justify-between text-gray-400">
-                  <span>Device</span><span className="text-white">{detail.device_id}</span>
+                <div className="flex justify-between text-[var(--text-secondary)]">
+                  <span>Device</span><span className="text-[var(--text-primary)]">{detail.device_id}</span>
                 </div>
-                <div className="flex justify-between text-gray-400">
-                  <span>Property</span><span className="text-white">{detail.property_ref || "—"}</span>
+                <div className="flex justify-between text-[var(--text-secondary)]">
+                  <span>Property</span><span className="text-[var(--text-primary)]">{detail.property_ref || "—"}</span>
                 </div>
-                <div className="flex justify-between text-gray-400">
+                <div className="flex justify-between text-[var(--text-secondary)]">
                   <span>Status</span><Badge text={detail.processing_status} />
                 </div>
 
                 {/* URIs */}
-                <div className="pt-2 border-t border-gray-800 space-y-1.5">
-                  <h4 className="text-[10px] text-gray-500 font-medium">Files</h4>
+                <div className="pt-2 border-t border-[var(--border-default)] space-y-1.5">
+                  <h4 className="text-[10px] text-[var(--text-muted)] font-medium">Files</h4>
                   {detail.video_uri && <p className="text-[10px] text-blue-400 truncate">{detail.video_uri}</p>}
                   {detail.audio_uri && <p className="text-[10px] text-cyan-400 truncate">{detail.audio_uri}</p>}
                   {detail.model_3d_uri && <p className="text-[10px] text-green-400 truncate">{detail.model_3d_uri}</p>}
-                  {!detail.video_uri && !detail.audio_uri && !detail.model_3d_uri && <p className="text-[10px] text-gray-600">No files</p>}
+                  {!detail.video_uri && !detail.audio_uri && !detail.model_3d_uri && <p className="text-[10px] text-[var(--text-muted)]">No files</p>}
                 </div>
 
                 {/* Metadata */}
                 {detail.metadata && Object.keys(detail.metadata).length > 0 && (
-                  <div className="pt-2 border-t border-gray-800">
-                    <h4 className="text-[10px] text-gray-500 font-medium mb-1">Metadata</h4>
-                    <div className="bg-gray-800 rounded p-2 text-[10px] text-gray-400 max-h-40 overflow-y-auto">
+                  <div className="pt-2 border-t border-[var(--border-default)]">
+                    <h4 className="text-[10px] text-[var(--text-muted)] font-medium mb-1">Metadata</h4>
+                    <div className="bg-[var(--bg-elevated)] rounded p-2 text-[10px] text-[var(--text-secondary)] max-h-40 overflow-y-auto">
                       <pre className="whitespace-pre-wrap">{JSON.stringify(detail.metadata, null, 2)}</pre>
                     </div>
                   </div>
@@ -152,10 +152,10 @@ export default function AIGlassPage() {
             </div>
           ) : (
             <div className="p-8 text-center">
-              <svg className="w-8 h-8 text-gray-700 mx-auto mb-2" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+              <svg className="w-8 h-8 text-[var(--text-secondary)] mx-auto mb-2" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
               </svg>
-              <p className="text-xs text-gray-500">Click a session to view details</p>
+              <p className="text-xs text-[var(--text-muted)]">Click a session to view details</p>
             </div>
           )}
         </div>

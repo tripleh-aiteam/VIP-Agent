@@ -36,20 +36,20 @@ export function AskVIPBar({ suggestions }: { suggestions: { label: string; promp
   };
 
   return (
-    <div className="border border-gray-800 rounded-lg bg-gray-900/50 p-3">
+    <div className="border border-[var(--border-default)] rounded-lg bg-[var(--bg-card)] p-3">
       <div className="flex gap-2 mb-2">
         <input
           value={input}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && input.trim() && send(input.trim())}
           placeholder="Ask VIP anything..."
-          className="flex-1 bg-gray-800 border border-gray-700 rounded px-3 py-1.5 text-xs focus:outline-none focus:border-yellow-600"
+          className="flex-1 bg-[var(--bg-elevated)] border border-[var(--border-default)] rounded px-3 py-1.5 text-xs focus:outline-none focus:border-[var(--border-active)]"
           disabled={sending}
         />
         <button
           onClick={() => input.trim() && send(input.trim())}
           disabled={sending || !input.trim()}
-          className="px-3 py-1.5 rounded bg-yellow-600 hover:bg-yellow-500 text-white text-[10px] font-semibold disabled:opacity-50"
+          className="px-3 py-1.5 rounded bg-[var(--brand-blue)] hover:bg-[var(--brand-blue-deep)] text-[var(--text-primary)] text-[10px] font-semibold disabled:opacity-50"
         >
           {sending ? "..." : "Ask"}
         </button>
@@ -60,7 +60,7 @@ export function AskVIPBar({ suggestions }: { suggestions: { label: string; promp
             key={s.label}
             onClick={() => send(s.prompt)}
             disabled={sending}
-            className="px-2 py-0.5 rounded border border-gray-700 bg-gray-800/50 text-[9px] text-gray-400 hover:border-yellow-700 hover:text-yellow-400 transition-colors disabled:opacity-50"
+            className="px-2 py-0.5 rounded border border-[var(--border-default)] bg-[var(--bg-elevated)] text-[9px] text-[var(--text-secondary)] hover:border-[var(--border-active)] hover:text-[var(--brand-blue)] transition-colors disabled:opacity-50"
           >
             {s.label}
           </button>
@@ -92,7 +92,7 @@ export function AskVIPFloat({ defaultPrompt }: { defaultPrompt?: string }) {
     return (
       <button
         onClick={() => setOpen(true)}
-        className="fixed bottom-6 right-6 w-10 h-10 rounded-full bg-yellow-600 hover:bg-yellow-500 text-white flex items-center justify-center shadow-lg transition-colors z-50"
+        className="fixed bottom-6 right-6 w-10 h-10 rounded-full bg-[var(--brand-blue)] hover:bg-[var(--brand-blue-deep)] text-[var(--text-primary)] flex items-center justify-center shadow-lg transition-colors z-50"
         title="Ask VIP"
       >
         <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -103,10 +103,10 @@ export function AskVIPFloat({ defaultPrompt }: { defaultPrompt?: string }) {
   }
 
   return (
-    <div className="fixed bottom-6 right-6 w-72 border border-gray-700 rounded-lg bg-gray-900 shadow-xl z-50">
-      <div className="px-3 py-2 border-b border-gray-800 flex items-center justify-between">
-        <span className="text-xs font-semibold text-yellow-400">Ask VIP</span>
-        <button onClick={() => setOpen(false)} className="text-gray-500 hover:text-white text-xs">x</button>
+    <div className="fixed bottom-6 right-6 w-72 border border-[var(--border-default)] rounded-lg bg-[var(--bg-card)] shadow-xl z-50">
+      <div className="px-3 py-2 border-b border-[var(--border-default)] flex items-center justify-between">
+        <span className="text-xs font-semibold text-[var(--brand-blue)]">Ask VIP</span>
+        <button onClick={() => setOpen(false)} className="text-[var(--text-muted)] hover:text-[var(--text-primary)] text-xs">x</button>
       </div>
       <div className="p-3">
         <div className="flex gap-1">
@@ -115,14 +115,14 @@ export function AskVIPFloat({ defaultPrompt }: { defaultPrompt?: string }) {
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && send()}
             placeholder="Ask anything..."
-            className="flex-1 bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-xs focus:outline-none focus:border-yellow-600"
+            className="flex-1 bg-[var(--bg-elevated)] border border-[var(--border-default)] rounded px-2 py-1.5 text-xs focus:outline-none focus:border-[var(--border-active)]"
             disabled={sending}
             autoFocus
           />
           <button
             onClick={send}
             disabled={sending || !input.trim()}
-            className="px-2 py-1.5 rounded bg-yellow-600 hover:bg-yellow-500 text-white text-[10px] font-semibold disabled:opacity-50"
+            className="px-2 py-1.5 rounded bg-[var(--brand-blue)] hover:bg-[var(--brand-blue-deep)] text-[var(--text-primary)] text-[10px] font-semibold disabled:opacity-50"
           >
             {sending ? "..." : "Go"}
           </button>
@@ -168,7 +168,7 @@ export function CommandLauncher() {
             key={cmd.label}
             onClick={() => run(cmd.prompt)}
             disabled={sending}
-            className="flex flex-col items-center gap-1.5 p-3 rounded-xl border border-[var(--border-default)] bg-[var(--bg-card)] hover:border-[var(--brand-blue)] hover:bg-[var(--bg-elevated)] transition-colors disabled:opacity-50 group"
+            className="flex flex-col items-center gap-1.5 p-3 rounded-xl border border-[var(--border-default)] bg-[var(--bg-card)] hover:border-[var(--border-active)] hover:bg-[var(--bg-elevated)] transition-colors disabled:opacity-50 group"
             style={{ boxShadow: "var(--shadow-sm)" }}
           >
             <svg className="w-5 h-5 text-[var(--text-muted)] group-hover:text-[var(--brand-blue)] transition-colors" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>

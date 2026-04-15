@@ -132,7 +132,7 @@ export default function Dashboard() {
               {recentRuns.map((r: any) => (
                 <tr key={r.id} className="border-b border-[var(--border-default)] hover:bg-[var(--bg-elevated)]">
                   <td className="px-4 py-2">{r.task_type}</td>
-                  <td className="px-4 py-2 text-blue-400">{r.agent_name}</td>
+                  <td className="px-4 py-2 text-[var(--brand-blue)]">{r.agent_name}</td>
                   <td className="px-4 py-2"><Badge text={r.status} /></td>
                   <td className="px-4 py-2 text-gray-500 font-mono">{r.trace_id}</td>
                   <td className="px-4 py-2 text-gray-500">{r.started_at ? new Date(r.started_at).toLocaleTimeString() : "-"}</td>
