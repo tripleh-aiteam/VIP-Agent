@@ -1,36 +1,77 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
 @layer base {
-  /* Light mode — clean white with warm grays */
+  /* ============================================
+     VIP Agent Platform — Design Tokens
+     Inspired by Salesforce Agentforce Builder
+     ============================================ */
+
+  /* Light mode */
   :root {
-    --bg-primary: #ffffff;
-    --bg-secondary: #f8f9fa;
+    --bg-app: #F0F4F8;
+    --bg-sidebar: #032D60;
     --bg-card: #ffffff;
-    --bg-sidebar: #f8f9fa;
-    --border: #e5e7eb;
-    --text-primary: #1a1a2e;
-    --text-secondary: #4a5568;
-    --text-muted: #9ca3af;
+    --bg-elevated: #ffffff;
+    --bg-input: #F0F4F8;
+    --border-default: rgba(0,0,0,0.08);
+    --border-strong: rgba(0,0,0,0.12);
+    --border-active: #1B96FF;
+    --text-primary: #032D60;
+    --text-secondary: #3E5F8A;
+    --text-muted: #98A2B3;
+    --text-on-brand: #ffffff;
+    --brand-primary: #1B96FF;
+    --brand-secondary: #7F56D9;
+    --brand-gradient: linear-gradient(135deg, #1B96FF 0%, #7F56D9 100%);
+    --success: #12B76A;
+    --warning: #F79009;
+    --error: #F04438;
+    --shadow-sm: 0 1px 2px rgba(0,0,0,0.05);
+    --shadow-md: 0 2px 8px rgba(0,0,0,0.08);
+    --shadow-lg: 0 4px 16px rgba(0,0,0,0.1);
+    --sidebar-text: rgba(255,255,255,0.7);
+    --sidebar-text-active: #ffffff;
+    --sidebar-hover: rgba(255,255,255,0.08);
+    --sidebar-active: rgba(27,150,255,0.2);
   }
 
-  /* Dark mode — deep navy, not pure black */
+  /* Dark mode */
   .dark {
-    --bg-primary: #0f1117;
-    --bg-secondary: #161b26;
-    --bg-card: #1a1f2e;
-    --bg-sidebar: #111622;
-    --border: #2a3142;
-    --text-primary: #e8eaed;
-    --text-secondary: #9aa5b4;
-    --text-muted: #5c6a7e;
+    --bg-app: #0B1220;
+    --bg-sidebar: #0A1628;
+    --bg-card: #111827;
+    --bg-elevated: #1A2233;
+    --bg-input: #1A2233;
+    --border-default: rgba(255,255,255,0.08);
+    --border-strong: rgba(255,255,255,0.12);
+    --border-active: #1B96FF;
+    --text-primary: #F8FAFC;
+    --text-secondary: #D0D5DD;
+    --text-muted: #98A2B3;
+    --text-on-brand: #ffffff;
+    --brand-primary: #1B96FF;
+    --brand-secondary: #7F56D9;
+    --brand-gradient: linear-gradient(135deg, #1B96FF 0%, #7F56D9 100%);
+    --success: #12B76A;
+    --warning: #F79009;
+    --error: #F04438;
+    --shadow-sm: 0 1px 2px rgba(0,0,0,0.2);
+    --shadow-md: 0 2px 8px rgba(0,0,0,0.3);
+    --shadow-lg: 0 4px 16px rgba(0,0,0,0.4);
+    --sidebar-text: rgba(255,255,255,0.6);
+    --sidebar-text-active: #ffffff;
+    --sidebar-hover: rgba(255,255,255,0.06);
+    --sidebar-active: rgba(27,150,255,0.15);
   }
 
   body {
-    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    font-family: 'Inter', system-ui, -apple-system, sans-serif;
     letter-spacing: -0.01em;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
   }
 }
-
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');

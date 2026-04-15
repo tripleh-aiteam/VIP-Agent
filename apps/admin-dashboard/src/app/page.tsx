@@ -55,8 +55,8 @@ export default function Dashboard() {
     <div>
       <div className="flex items-center justify-between mb-6">
         <div>
-          <h1 className="text-2xl font-bold">Command Center</h1>
-          <p className="text-sm text-gray-500">VIP Agent Platform Overview</p>
+          <h1 className="text-[28px] font-semibold tracking-tight">Command Center</h1>
+          <p className="text-[14px] text-[var(--text-muted)]">VIP Agent Platform Overview</p>
         </div>
         {health && (
           <div className="flex gap-2">
@@ -77,31 +77,31 @@ export default function Dashboard() {
       {/* Two column layout */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
         {/* Latest Reports */}
-        <div className="border border-gray-200 dark:border-[#2a3142] rounded-xl p-4 bg-white dark:bg-[#1a1f2e]">
-          <h2 className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-3">Latest Daily Report</h2>
-          <p className="text-xs text-gray-500 dark:text-gray-400 leading-relaxed">{stats.latestDaily}...</p>
+        <div className="border border-[var(--border-default)] rounded-xl p-4 bg-[var(--bg-card)]">
+          <h2 className="text-sm font-semibold text-[var(--text-primary)] mb-3">Latest Daily Report</h2>
+          <p className="text-xs text-[var(--text-secondary)] leading-relaxed">{stats.latestDaily}...</p>
         </div>
-        <div className="border border-gray-200 dark:border-[#2a3142] rounded-xl p-4 bg-white dark:bg-[#1a1f2e]">
-          <h2 className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-3">Latest Weekly Report</h2>
-          <p className="text-xs text-gray-500 dark:text-gray-400 leading-relaxed">{stats.latestWeekly}...</p>
+        <div className="border border-[var(--border-default)] rounded-xl p-4 bg-[var(--bg-card)]">
+          <h2 className="text-sm font-semibold text-[var(--text-primary)] mb-3">Latest Weekly Report</h2>
+          <p className="text-xs text-[var(--text-secondary)] leading-relaxed">{stats.latestWeekly}...</p>
         </div>
       </div>
 
       {/* Channel Status */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
-        <div className="border border-gray-200 dark:border-[#2a3142] rounded-xl p-3 bg-white dark:bg-[#1a1f2e]">
+        <div className="border border-[var(--border-default)] rounded-xl p-3 bg-[var(--bg-card)]">
           <p className="text-[10px] text-gray-500 mb-1">Telegram</p>
           <Badge text={stats.telegramStatus} />
         </div>
-        <div className="border border-gray-200 dark:border-[#2a3142] rounded-xl p-3 bg-white dark:bg-[#1a1f2e]">
+        <div className="border border-[var(--border-default)] rounded-xl p-3 bg-[var(--bg-card)]">
           <p className="text-[10px] text-gray-500 mb-1">AI Glasses</p>
           <Badge text={stats.aiGlassStatus} />
         </div>
-        <div className="border border-gray-200 dark:border-[#2a3142] rounded-xl p-3 bg-white dark:bg-[#1a1f2e]">
+        <div className="border border-[var(--border-default)] rounded-xl p-3 bg-[var(--bg-card)]">
           <p className="text-[10px] text-gray-500 mb-1">Web Channel</p>
           <Badge text="active" />
         </div>
-        <div className="border border-gray-200 dark:border-[#2a3142] rounded-xl p-3 bg-white dark:bg-[#1a1f2e]">
+        <div className="border border-[var(--border-default)] rounded-xl p-3 bg-[var(--bg-card)]">
           <p className="text-[10px] text-gray-500 mb-1">Event Bus</p>
           <Badge text="active" />
         </div>
@@ -113,9 +113,9 @@ export default function Dashboard() {
       </div>
 
       {/* Recent Runs */}
-      <div className="border border-gray-200 dark:border-[#2a3142] rounded-xl bg-white dark:bg-[#1a1f2e]">
+      <div className="border border-[var(--border-default)] rounded-xl bg-[var(--bg-card)]">
         <div className="px-4 py-3 border-b border-gray-800">
-          <h2 className="text-sm font-semibold text-gray-700 dark:text-gray-300">Recent Task Runs</h2>
+          <h2 className="text-sm font-semibold text-[var(--text-primary)]">Recent Task Runs</h2>
         </div>
         <div className="overflow-x-auto">
           <table className="w-full text-xs">
@@ -130,7 +130,7 @@ export default function Dashboard() {
             </thead>
             <tbody>
               {recentRuns.map((r: any) => (
-                <tr key={r.id} className="border-b border-gray-100 dark:border-gray-800/30 hover:bg-gray-50 dark:hover:bg-gray-800/20">
+                <tr key={r.id} className="border-b border-[var(--border-default)] hover:bg-[var(--bg-elevated)]">
                   <td className="px-4 py-2">{r.task_type}</td>
                   <td className="px-4 py-2 text-blue-400">{r.agent_name}</td>
                   <td className="px-4 py-2"><Badge text={r.status} /></td>

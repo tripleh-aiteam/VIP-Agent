@@ -17,8 +17,8 @@ export default function AgentsPage() {
 
   return (
     <div>
-      <h1 className="text-2xl font-bold mb-1">Agents</h1>
-      <p className="text-sm text-gray-500 mb-6">Registered agents — mock and real</p>
+      <h1 className="text-[28px] font-semibold tracking-tight mb-1">Agents</h1>
+      <p className="text-[14px] text-[var(--text-muted)] mb-6">Registered agents — mock and real</p>
 
       <div className="mb-6">
         <AskVIPBar suggestions={[
@@ -30,9 +30,9 @@ export default function AgentsPage() {
 
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
         {agents.map((a: any) => (
-          <div key={a.id} className="border border-gray-800 rounded-lg bg-gray-900/50 hover:border-gray-700 transition-colors">
+          <div key={a.id} className="border border-[var(--border-default)] rounded-lg bg-[var(--bg-card)] hover:border-[var(--border-active)] transition-colors">
             {/* Header */}
-            <div className="px-4 py-3 border-b border-gray-800/50 flex items-center justify-between">
+            <div className="px-4 py-3 border-b border-[var(--border-default)]/50 flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <div className={`w-2 h-2 rounded-full ${a.status === "active" ? "bg-green-400" : "bg-red-400"}`} />
                 <h3 className="text-sm font-semibold">{a.name}</h3>
@@ -45,27 +45,27 @@ export default function AgentsPage() {
 
             {/* Details */}
             <div className="px-4 py-3 space-y-2 text-xs">
-              <div className="flex justify-between text-gray-400">
+              <div className="flex justify-between text-[var(--text-muted)]">
                 <span>Type</span>
                 <span className="text-white font-medium">{a.type}</span>
               </div>
-              <div className="flex justify-between text-gray-400">
+              <div className="flex justify-between text-[var(--text-muted)]">
                 <span>Version</span>
                 <span className="text-white">{a.version}</span>
               </div>
-              <div className="flex justify-between text-gray-400">
+              <div className="flex justify-between text-[var(--text-muted)]">
                 <span>Owner</span>
                 <span className="text-white">{a.owner_team || "—"}</span>
               </div>
-              <div className="flex justify-between text-gray-400">
+              <div className="flex justify-between text-[var(--text-muted)]">
                 <span>Auth</span>
                 <span className="text-white">{a.auth_type}</span>
               </div>
-              <div className="flex justify-between text-gray-400">
+              <div className="flex justify-between text-[var(--text-muted)]">
                 <span>Priority</span>
                 <span className="text-white">{a.priority_score}</span>
               </div>
-              <div className="flex justify-between items-center text-gray-400">
+              <div className="flex justify-between items-center text-[var(--text-muted)]">
                 <span>Reliability</span>
                 <div className="flex items-center gap-2">
                   <div className="w-16 h-1.5 bg-gray-800 rounded-full overflow-hidden">
@@ -78,7 +78,7 @@ export default function AgentsPage() {
               {/* Capabilities */}
               {a.supported_task_types?.length > 0 && (
                 <div className="pt-1">
-                  <span className="text-gray-500">Tasks: </span>
+                  <span className="text-[var(--text-secondary)]">Tasks: </span>
                   {a.supported_task_types.map((t: string) => (
                     <span key={t} className="inline-block mr-1 mb-1 px-1.5 py-0.5 bg-blue-900/30 text-blue-400 rounded text-[10px]">{t}</span>
                   ))}
@@ -86,7 +86,7 @@ export default function AgentsPage() {
               )}
               {a.supported_channels?.length > 0 && (
                 <div>
-                  <span className="text-gray-500">Channels: </span>
+                  <span className="text-[var(--text-secondary)]">Channels: </span>
                   {a.supported_channels.map((c: string) => (
                     <span key={c} className="inline-block mr-1 mb-1 px-1.5 py-0.5 bg-purple-900/30 text-purple-400 rounded text-[10px]">{c}</span>
                   ))}
@@ -95,7 +95,7 @@ export default function AgentsPage() {
             </div>
 
             {/* Footer */}
-            <div className="px-4 py-2 border-t border-gray-800/50 text-[10px] text-gray-600 truncate">
+            <div className="px-4 py-2 border-t border-[var(--border-default)]/50 text-[10px] text-[var(--text-muted)] truncate">
               {a.endpoint_url}
             </div>
           </div>

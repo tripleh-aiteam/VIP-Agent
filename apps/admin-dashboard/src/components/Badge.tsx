@@ -1,34 +1,36 @@
 const styles: Record<string, string> = {
-  active: "text-green-400 bg-green-900/30",
-  completed: "text-green-400 bg-green-900/30",
-  auto_approve: "text-green-400 bg-green-900/30",
-  approved: "text-green-400 bg-green-900/30",
-  healthy: "text-green-400 bg-green-900/30",
-  enabled: "text-green-400 bg-green-900/30",
-  pending: "text-yellow-400 bg-yellow-900/30",
-  conditional_approve: "text-yellow-400 bg-yellow-900/30",
-  dispatched: "text-blue-400 bg-blue-900/30",
-  running: "text-blue-400 bg-blue-900/30",
-  sent: "text-blue-400 bg-blue-900/30",
-  failed: "text-red-400 bg-red-900/30",
-  rejected: "text-red-400 bg-red-900/30",
-  inactive: "text-red-400 bg-red-900/30",
-  error: "text-red-400 bg-red-900/30",
-  disabled: "text-gray-500 bg-gray-800",
-  review_required: "text-orange-400 bg-orange-900/30",
-  human_review_required: "text-orange-400 bg-orange-900/30",
-  risk_alert: "text-red-400 bg-red-900/30",
-  escalation_request: "text-orange-400 bg-orange-900/30",
-  data_request: "text-blue-400 bg-blue-900/30",
-  report_request: "text-purple-400 bg-purple-900/30",
-  report_response: "text-purple-400 bg-purple-900/30",
-  feedback_request: "text-cyan-400 bg-cyan-900/30",
+  active: "text-[#12B76A] bg-[#12B76A]/10",
+  completed: "text-[#12B76A] bg-[#12B76A]/10",
+  auto_approve: "text-[#12B76A] bg-[#12B76A]/10",
+  approved: "text-[#12B76A] bg-[#12B76A]/10",
+  healthy: "text-[#12B76A] bg-[#12B76A]/10",
+  enabled: "text-[#12B76A] bg-[#12B76A]/10",
+  pending: "text-[#F79009] bg-[#F79009]/10",
+  conditional_approve: "text-[#F79009] bg-[#F79009]/10",
+  dispatched: "text-[#1B96FF] bg-[#1B96FF]/10",
+  running: "text-[#1B96FF] bg-[#1B96FF]/10",
+  sent: "text-[#1B96FF] bg-[#1B96FF]/10",
+  failed: "text-[#F04438] bg-[#F04438]/10",
+  rejected: "text-[#F04438] bg-[#F04438]/10",
+  inactive: "text-[#F04438] bg-[#F04438]/10",
+  error: "text-[#F04438] bg-[#F04438]/10",
+  disabled: "text-[var(--text-muted)] bg-[var(--border-default)]",
+  review_required: "text-[#F79009] bg-[#F79009]/10",
+  human_review_required: "text-[#F79009] bg-[#F79009]/10",
+  risk_alert: "text-[#F04438] bg-[#F04438]/10",
+  escalation_request: "text-[#F79009] bg-[#F79009]/10",
+  data_request: "text-[#1B96FF] bg-[#1B96FF]/10",
+  report_request: "text-[#7F56D9] bg-[#7F56D9]/10",
+  report_response: "text-[#7F56D9] bg-[#7F56D9]/10",
+  feedback_request: "text-[#5BB0FF] bg-[#5BB0FF]/10",
+  mock: "text-[var(--text-muted)] bg-[var(--border-default)]",
+  planned: "text-[#7F56D9] bg-[#7F56D9]/10",
 };
 
 export default function Badge({ text }: { text: string }) {
-  const s = styles[text] || "text-gray-400 bg-gray-800";
+  const s = styles[text] || "text-[var(--text-muted)] bg-[var(--border-default)]";
   return (
-    <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium ${s}`}>
+    <span className={`text-[11px] px-2 py-0.5 rounded-full font-medium ${s}`}>
       {text}
     </span>
   );

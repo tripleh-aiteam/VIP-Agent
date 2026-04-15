@@ -20,12 +20,12 @@ export default function Sidebar() {
   const pathname = usePathname();
 
   return (
-    <aside className="w-56 bg-[#f8f9fa] dark:bg-[#111622] border-r border-[#e5e7eb] dark:border-[#2a3142] flex flex-col h-screen sticky top-0">
-      <div className="px-5 py-5 border-b border-[#e5e7eb] dark:border-[#2a3142]">
-        <h1 className="text-lg font-bold bg-gradient-to-r from-amber-500 via-yellow-500 to-amber-400 bg-clip-text text-transparent">
-          VIP Agent
+    <aside className="w-56 bg-[var(--bg-sidebar)] border-r border-[var(--border-default)] flex flex-col h-screen sticky top-0">
+      <div className="px-5 py-5 border-b border-[var(--border-default)]">
+        <h1 className="text-lg font-bold text-white">
+          <span className="bg-gradient-to-r from-[#1B96FF] to-[#7F56D9] bg-clip-text text-transparent">VIP Agent</span>
         </h1>
-        <p className="text-[10px] text-[#9ca3af] dark:text-[#5c6a7e] mt-0.5 font-medium">Orchestration Platform</p>
+        <p className="text-[10px] text-[var(--sidebar-text)] mt-0.5 font-medium tracking-wide uppercase">Orchestration Platform</p>
       </div>
       <nav className="flex-1 py-3 px-3 space-y-0.5">
         {nav.map((n) => {
@@ -34,13 +34,13 @@ export default function Sidebar() {
             <Link
               key={n.href}
               href={n.href}
-              className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-[13px] font-medium transition-colors ${
+              className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-[13px] font-medium transition-all duration-150 ${
                 active
-                  ? "bg-amber-500/10 text-amber-600 dark:text-amber-400"
-                  : "text-[#4a5568] dark:text-[#9aa5b4] hover:bg-gray-200/60 dark:hover:bg-[#1a1f2e] hover:text-[#1a1a2e] dark:hover:text-white"
+                  ? "bg-[var(--sidebar-active)] text-[var(--sidebar-text-active)] shadow-sm"
+                  : "text-[var(--sidebar-text)] hover:bg-[var(--sidebar-hover)] hover:text-[var(--sidebar-text-active)]"
               }`}
             >
-              <svg className="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+              <svg className={`w-4 h-4 shrink-0 ${active ? "text-[#1B96FF]" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
                 <path strokeLinecap="round" strokeLinejoin="round" d={n.icon} />
               </svg>
               {n.label}
@@ -48,8 +48,8 @@ export default function Sidebar() {
           );
         })}
       </nav>
-      <div className="px-5 py-3 border-t border-[#e5e7eb] dark:border-[#2a3142] flex items-center justify-between">
-        <span className="text-[10px] text-[#9ca3af] dark:text-[#5c6a7e] font-medium">v0.2.0</span>
+      <div className="px-5 py-3 border-t border-[var(--border-default)] flex items-center justify-between">
+        <span className="text-[10px] text-[var(--sidebar-text)] font-medium">v0.2.0</span>
         <ThemeToggle />
       </div>
     </aside>
