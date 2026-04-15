@@ -128,13 +128,81 @@ class RealAssetAdapter(BaseAdapter):
                 "daily_report": report_data.get("data", {}).get("portfolio", {}) if isinstance(report_data.get("data"), dict) else {},
             }
 
-            # Build summary
-            summary = (
-                f"Asset Portfolio: {dash_data.get('total_properties', 0)} properties, "
-                f"{dash_data.get('total_units', 0)} units, "
-                f"vacancy rate {dash_data.get('vacancy_rate', 0)}%, "
-                f"monthly income {dash_data.get('monthly_rental_income', 0):,} KRW"
-            )
+            # Build formatted executive report
+            props = dash_data.get("total_properties", 0)
+            units = dash_data.get("total_units", 0)
+            occupied = dash_data.get("occupied_units", 0)
+            vacant = dash_data.get("vacant_units", 0)
+            vacancy_rate = dash_data.get("vacancy_rate", 0)
+            income = dash_data.get("monthly_rental_income", 0)
+            overdue = dash_data.get("total_overdue_amount", 0)
+            exp_30 = dash_data.get("upcoming_expiries_30d", 0)
+            exp_90 = dash_data.get("upcoming_expiries_90d", 0)
+            pending = dash_data.get("pending_approvals", 0)
+            balance = cash_data.get("total_balance", 0)
+            currency = cash_data.get("currency", "KRW")
+
+            # Occupancy rate
+            occ_rate = round((occupied / units * 100), 1) if units > 0 else 0
+
+            # Forecast net
+            forecast_net = sum(f.get("net_cashflow", 0) for f in forecast_data[:3])
+
+            # Risk assessment
+            risks = []
+            if vacancy_rate > 10:
+                risks.append(f"High vacancy rate ({vacancy_rate}%)")
+            if overdue > 0:
+                risks.append(f"Overdue payments: {overdue:,.0f} {currency}")
+            if exp_30 > 0:
+                risks.append(f"{exp_30} lease(s) expiring within 30 days")
+            if pending > 0:
+                risks.append(f"{pending} pending approval(s)")
+            risk_level = "High" if len(risks) >= 3 else "Medium" if len(risks) >= 1 else "Low"
+
+            # Collection rate
+            latest_collection = rental_data[0].get("collection_rate", 100) if rental_data else 100
+
+            report_lines = [
+                "━━━ Asset Portfolio Report ━━━",
+                "",
+                f"Properties: {props} properties, {units} units",
+                f"Occupancy: {occ_rate}% ({occupied} occupied, {vacant} vacant)",
+                f"Vacancy Rate: {vacancy_rate}%",
+                "",
+                "━━━ Financial Summary ━━━",
+                "",
+                f"Monthly Rental Income: {income:,.0f} {currency}",
+                f"Overdue Amount: {overdue:,.0f} {currency}",
+                f"Collection Rate: {latest_collection}%",
+                f"Cash Balance: {balance:,.0f} {currency}",
+                f"3-Month Forecast: {forecast_net:,.0f} {currency} net",
+                "",
+                "━━━ Lease Status ━━━",
+                "",
+                f"Expiring (30 days): {exp_30} lease(s)",
+                f"Expiring (90 days): {exp_90} lease(s)",
+                f"Pending Approvals: {pending}",
+                "",
+                "━━━ Alerts ━━━",
+                "",
+                f"Active Alerts: {len(alerts_data)}",
+                f"Vacant Units: {len(vacancy_data)}",
+                "",
+                "━━━ Risk Assessment ━━━",
+                "",
+                f"Risk Level: {risk_level}",
+            ]
+            if risks:
+                for r in risks:
+                    report_lines.append(f"  • {r}")
+            else:
+                report_lines.append("  All metrics within normal range.")
+
+            summary = "\n".join(report_lines)
+            output["report_text"] = summary
+            output["risk_level"] = risk_level
+            output["risk_factors"] = risks
 
             return AdapterResult(
                 success=True,

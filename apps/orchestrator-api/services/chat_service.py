@@ -632,16 +632,20 @@ def _response_run_task(db: Session, task_type: str, agent_type: str, trace_id: s
         run = dispatch_task(db, run.id)
 
         agent_name = run.target_agent.name if run.target_agent else agent_type
-        output_preview = ""
-        if run.output_payload:
-            keys = list(run.output_payload.keys())[:5]
-            output_preview = f"\nOutput keys: {', '.join(keys)}"
+        output = run.output_payload or {}
+
+        # Use formatted report if available, otherwise show summary
+        report_text = output.get("report_text") or output.get("summary") or ""
+        if report_text:
+            display_text = report_text
+        else:
+            display_text = f"Task completed: {task_type} → {agent_name}"
 
         return {
             "type": "workflow_result",
             "content": {
-                "text": f"Task dispatched: {task_type} → {agent_name}\nStatus: {run.status}{output_preview}",
-                "data": {"task_type": task_type, "agent": agent_name, "status": run.status},
+                "text": display_text,
+                "data": {"task_type": task_type, "agent": agent_name, "status": run.status, "risk_level": output.get("risk_level")},
                 "action_result_type": "workflow_trigger",
                 "trace_id": trace_id,
                 "linked_object_ids": {"task_run_id": str(run.id)},
