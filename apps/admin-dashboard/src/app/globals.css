@@ -6,72 +6,117 @@
 
 @layer base {
   /* ============================================
-     VIP Agent Platform — Design Tokens
-     Inspired by Salesforce Agentforce Builder
-     White/light blue clean background
+     VIP Agent — Design System
+     Light mode = primary, Dark mode = secondary
      ============================================ */
 
-  /* Light mode — Salesforce-style white with blue accents */
+  /* LIGHT MODE (default) */
   :root {
-    --bg-app: #ffffff;
-    --bg-sidebar: #032D60;
-    --bg-card: #ffffff;
-    --bg-elevated: #F7F9FC;
-    --bg-input: #F0F4F8;
-    --border-default: #E1E6EF;
-    --border-strong: #C9D1DC;
+    --bg-app: #F8FAFC;
+    --bg-sidebar: #FFFFFF;
+    --bg-card: #FFFFFF;
+    --bg-elevated: #F1F5F9;
+    --bg-input: #F1F5F9;
+    --bg-table-header: #F9FAFB;
+    --bg-hover: #F1F5F9;
+
+    --border-default: #E5E7EB;
+    --border-strong: #D0D5DD;
     --border-active: #1B96FF;
-    --text-primary: #032D60;
-    --text-secondary: #3E5F8A;
-    --text-muted: #7B8FA8;
-    --text-on-brand: #ffffff;
-    --brand-primary: #1B96FF;
-    --brand-secondary: #7F56D9;
-    --brand-gradient: linear-gradient(135deg, #1B96FF 0%, #7F56D9 100%);
-    --success: #12B76A;
+
+    --text-primary: #111827;
+    --text-secondary: #475467;
+    --text-muted: #98A2B3;
+
+    --brand-blue: #1B96FF;
+    --brand-blue-deep: #0B5CAB;
+    --brand-green: #12B76A;
+    --brand-purple: #7F56D9;
     --warning: #F79009;
     --error: #F04438;
-    --shadow-sm: 0 1px 3px rgba(3,45,96,0.06);
-    --shadow-md: 0 2px 8px rgba(3,45,96,0.08);
-    --shadow-lg: 0 4px 20px rgba(3,45,96,0.1);
-    --sidebar-text: rgba(255,255,255,0.65);
-    --sidebar-text-active: #ffffff;
-    --sidebar-hover: rgba(255,255,255,0.08);
-    --sidebar-active: rgba(27,150,255,0.2);
+
+    --shadow-sm: 0 1px 2px rgba(0,0,0,0.05);
+    --shadow-md: 0 2px 6px rgba(0,0,0,0.06);
+    --shadow-lg: 0 4px 12px rgba(0,0,0,0.08);
+
+    --sidebar-bg: #FFFFFF;
+    --sidebar-border: #E5E7EB;
+    --sidebar-text: #475467;
+    --sidebar-text-active: #111827;
+    --sidebar-hover: #F1F5F9;
+    --sidebar-active: #EFF8FF;
+    --sidebar-active-text: #1B96FF;
+    --sidebar-active-icon: #1B96FF;
+
+    --badge-success-bg: #ECFDF3;
+    --badge-success-text: #12B76A;
+    --badge-neutral-bg: #F2F4F7;
+    --badge-neutral-text: #475467;
+    --badge-warning-bg: #FFFAEB;
+    --badge-warning-text: #F79009;
+    --badge-error-bg: #FEF3F2;
+    --badge-error-text: #F04438;
+    --badge-blue-bg: #EFF8FF;
+    --badge-blue-text: #1B96FF;
+    --badge-purple-bg: #F4F3FF;
+    --badge-purple-text: #7F56D9;
   }
 
-  /* Dark mode — deep navy premium */
+  /* DARK MODE (secondary — soft navy, not black) */
   .dark {
-    --bg-app: #080E1A;
-    --bg-sidebar: #060C18;
-    --bg-card: #0D1526;
-    --bg-elevated: #131D33;
-    --bg-input: #131D33;
-    --border-default: rgba(255,255,255,0.07);
+    --bg-app: #0F172A;
+    --bg-sidebar: #0F172A;
+    --bg-card: #1E293B;
+    --bg-elevated: #1E293B;
+    --bg-input: #1E293B;
+    --bg-table-header: #1E293B;
+    --bg-hover: #273449;
+
+    --border-default: rgba(255,255,255,0.08);
     --border-strong: rgba(255,255,255,0.12);
     --border-active: #1B96FF;
-    --text-primary: #F0F4F8;
-    --text-secondary: #B0BEC5;
-    --text-muted: #6B7D93;
-    --text-on-brand: #ffffff;
-    --brand-primary: #1B96FF;
-    --brand-secondary: #7F56D9;
-    --brand-gradient: linear-gradient(135deg, #1B96FF 0%, #7F56D9 100%);
-    --success: #12B76A;
-    --warning: #F79009;
-    --error: #F04438;
-    --shadow-sm: 0 1px 3px rgba(0,0,0,0.3);
-    --shadow-md: 0 2px 8px rgba(0,0,0,0.4);
-    --shadow-lg: 0 4px 20px rgba(0,0,0,0.5);
-    --sidebar-text: rgba(255,255,255,0.55);
-    --sidebar-text-active: #ffffff;
-    --sidebar-hover: rgba(255,255,255,0.05);
-    --sidebar-active: rgba(27,150,255,0.12);
+
+    --text-primary: #F9FAFB;
+    --text-secondary: #D1D5DB;
+    --text-muted: #9CA3AF;
+
+    --brand-blue: #1B96FF;
+    --brand-blue-deep: #5BB0FF;
+    --brand-green: #34D399;
+    --brand-purple: #9E77ED;
+    --warning: #FBBF24;
+    --error: #F87171;
+
+    --shadow-sm: 0 1px 2px rgba(0,0,0,0.3);
+    --shadow-md: 0 2px 6px rgba(0,0,0,0.35);
+    --shadow-lg: 0 4px 12px rgba(0,0,0,0.4);
+
+    --sidebar-bg: #111827;
+    --sidebar-border: rgba(255,255,255,0.08);
+    --sidebar-text: #9CA3AF;
+    --sidebar-text-active: #F9FAFB;
+    --sidebar-hover: #1E293B;
+    --sidebar-active: rgba(27,150,255,0.1);
+    --sidebar-active-text: #5BB0FF;
+    --sidebar-active-icon: #5BB0FF;
+
+    --badge-success-bg: rgba(18,183,106,0.12);
+    --badge-success-text: #34D399;
+    --badge-neutral-bg: rgba(255,255,255,0.06);
+    --badge-neutral-text: #9CA3AF;
+    --badge-warning-bg: rgba(247,144,9,0.12);
+    --badge-warning-text: #FBBF24;
+    --badge-error-bg: rgba(240,68,56,0.12);
+    --badge-error-text: #F87171;
+    --badge-blue-bg: rgba(27,150,255,0.12);
+    --badge-blue-text: #5BB0FF;
+    --badge-purple-bg: rgba(127,86,217,0.12);
+    --badge-purple-text: #B692F6;
   }
 
   body {
     font-family: 'Inter', system-ui, -apple-system, sans-serif;
-    letter-spacing: -0.01em;
+    letter-spacing: -0.011em;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
   }

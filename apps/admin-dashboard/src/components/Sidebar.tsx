@@ -20,9 +20,9 @@ export default function Sidebar() {
   const pathname = usePathname();
 
   return (
-    <aside className="w-56 bg-[var(--bg-sidebar)] border-r border-[var(--border-default)] flex flex-col h-screen sticky top-0">
-      <div className="px-5 py-6 border-b border-[var(--border-default)]">
-        <h1 className="text-xl font-extrabold tracking-tight text-white">
+    <aside className="w-56 bg-[var(--sidebar-bg)] border-r border-[var(--sidebar-border)] flex flex-col h-screen sticky top-0" style={{boxShadow: "var(--shadow-sm)"}}>
+      <div className="px-5 py-5 border-b border-[var(--sidebar-border)]">
+        <h1 className="text-[20px] font-extrabold tracking-tight text-[var(--text-primary)]">
           VIP AGENT
         </h1>
       </div>
@@ -35,11 +35,11 @@ export default function Sidebar() {
               href={n.href}
               className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-[13px] font-medium transition-all duration-150 ${
                 active
-                  ? "bg-[var(--sidebar-active)] text-[var(--sidebar-text-active)] shadow-sm"
+                  ? "bg-[var(--sidebar-active)] text-[var(--sidebar-active-text)]"
                   : "text-[var(--sidebar-text)] hover:bg-[var(--sidebar-hover)] hover:text-[var(--sidebar-text-active)]"
               }`}
             >
-              <svg className={`w-4 h-4 shrink-0 ${active ? "text-[#1B96FF]" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+              <svg className={`w-4 h-4 shrink-0 ${active ? "text-[var(--sidebar-active-icon)]" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
                 <path strokeLinecap="round" strokeLinejoin="round" d={n.icon} />
               </svg>
               {n.label}
@@ -47,8 +47,8 @@ export default function Sidebar() {
           );
         })}
       </nav>
-      <div className="px-5 py-3 border-t border-[var(--border-default)] flex items-center justify-between">
-        <span className="text-[10px] text-[var(--sidebar-text)] font-medium">v0.2.0</span>
+      <div className="px-5 py-3 border-t border-[var(--sidebar-border)] flex items-center justify-between">
+        <span className="text-[10px] text-[var(--text-muted)] font-medium">v0.2.0</span>
         <ThemeToggle />
       </div>
     </aside>
