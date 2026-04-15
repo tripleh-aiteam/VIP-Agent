@@ -36,9 +36,11 @@ export default function ChatPage() {
   const loadMessages = (sid: string) => api<any[]>(`/chat/sessions/${sid}/messages`).then(setMessages).catch(() => {});
 
   const deleteSession = async (id: string) => {
-    await api(`/chat/sessions/${id}`, { method: "DELETE" });
+    // Optimistic: remove from UI instantly
+    setSessions((prev) => prev.filter((s) => s.id !== id));
     if (activeSession === id) { setActiveSession(null); setMessages([]); }
-    loadSessions();
+    // Then delete from backend
+    api(`/chat/sessions/${id}`, { method: "DELETE" }).catch(() => loadSessions());
   };
 
   const renameSession = async (id: string, title: string) => {
@@ -121,50 +123,18 @@ export default function ChatPage() {
 
   return (
     <div className="flex h-[calc(100vh-3rem)] gap-4">
-      {/* Sessions sidebar */}
-      <div className="w-64 border border-[var(--border-default)] rounded-xl bg-[var(--bg-card)] flex flex-col shrink-0" style={{boxShadow: "var(--shadow-sm)"}}>
-        <div className="p-3 border-b border-[var(--border-default)] flex items-center justify-between">
-          <h3 className="text-[13px] font-semibold text-[var(--text-primary)]">Chats</h3>
-          <button onClick={() => createSession()} className="px-3 py-1.5 text-[11px] rounded-lg bg-[var(--text-primary)] text-white font-medium hover:opacity-80 transition-opacity">+ New Chat</button>
+      {/* Sessions sidebar — ChatGPT style */}
+      <div className="w-64 flex flex-col shrink-0 h-full">
+        {/* Top actions */}
+        <div className="flex items-center gap-2 mb-3">
+          <button onClick={() => createSession()} className="flex-1 flex items-center gap-2 px-3 py-2 rounded-lg border border-[var(--border-default)] bg-[var(--bg-card)] text-[13px] text-[var(--text-secondary)] hover:bg-[var(--bg-elevated)] transition-colors">
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" /></svg>
+            New chat
+          </button>
         </div>
 
-        {/* Search */}
-        <div className="px-3 py-2 border-b border-[var(--border-default)]">
-          <input
-            placeholder="Search chats..."
-            className="w-full px-2.5 py-1.5 text-[12px] rounded-lg bg-[var(--bg-elevated)] border border-[var(--border-default)] focus:outline-none focus:border-[var(--brand-blue)] text-[var(--text-primary)] placeholder:text-[var(--text-muted)]"
-          />
-        </div>
-
-        {/* New folder button */}
-        <div className="px-3 py-2 border-b border-[var(--border-default)]">
-          {showNewFolder ? (
-            <div className="flex gap-1">
-              <input
-                autoFocus
-                value={newFolderName}
-                onChange={(e) => setNewFolderName(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" && newFolderName.trim()) { setShowNewFolder(false); setNewFolderName(""); toggleFolder(newFolderName.trim()); }
-                  if (e.key === "Escape") { setShowNewFolder(false); setNewFolderName(""); }
-                }}
-                placeholder="Folder name..."
-                className="flex-1 px-2 py-1 text-[11px] rounded bg-[var(--bg-elevated)] border border-[var(--brand-blue)] focus:outline-none text-[var(--text-primary)]"
-              />
-              <button onClick={() => { if (newFolderName.trim()) { setShowNewFolder(false); setNewFolderName(""); } }} className="text-[10px] text-[var(--text-muted)]">Done</button>
-            </div>
-          ) : (
-            <button onClick={() => setShowNewFolder(true)} className="flex items-center gap-1.5 text-[11px] text-[var(--text-muted)] hover:text-[var(--text-primary)] transition-colors">
-              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M9 13h6m-3-3v6m-9 1V7a2 2 0 012-2h6l2 2h6a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2z" />
-              </svg>
-              New Folder
-            </button>
-          )}
-        </div>
-
-        <div className="flex-1 overflow-y-auto p-1.5 space-y-1">
-          {/* Group sessions by folder */}
+        {/* Scrollable list */}
+        <div className="flex-1 overflow-y-auto space-y-0.5">
           {(() => {
             const folders = new Map<string, any[]>();
             const unfiled: any[] = [];
@@ -177,75 +147,94 @@ export default function ChatPage() {
               }
             });
 
-            const renderSession = (s: any) => {
-              const sMode = MODE_INFO[(s.mode || "structured")] || MODE_INFO.structured;
-              return (
-                <div key={s.id} className={`group relative rounded-lg transition-colors ${activeSession === s.id ? "bg-[var(--bg-hover)]" : "hover:bg-[var(--bg-elevated)]"}`}>
-                  <button onClick={() => setActiveSession(s.id)} className="w-full text-left px-3 py-2 text-xs">
-                    {renaming === s.id ? (
-                      <input autoFocus defaultValue={s.title}
-                        onBlur={(e) => { renameSession(s.id, e.target.value); setRenaming(null); }}
-                        onKeyDown={(e) => { if (e.key === "Enter") { renameSession(s.id, (e.target as HTMLInputElement).value); setRenaming(null); } if (e.key === "Escape") setRenaming(null); }}
-                        onClick={(e) => e.stopPropagation()}
-                        className="w-full px-1 py-0.5 text-[12px] font-medium bg-[var(--bg-elevated)] border border-[var(--brand-blue)] rounded focus:outline-none text-[var(--text-primary)]" />
-                    ) : (
-                      <p className={`truncate font-medium text-[12px] ${activeSession === s.id ? "text-[var(--text-primary)]" : "text-[var(--text-secondary)]"}`}>{s.title}</p>
-                    )}
-                    <div className="flex items-center gap-1.5 mt-0.5">
-                      <span className="text-[10px] text-[var(--text-muted)]">{s.message_count} msgs</span>
-                      <span className={`text-[8px] px-1 py-0 rounded ${sMode.bg} ${sMode.color}`}>{s.mode === "llm" ? "LLM" : "Simple"}</span>
-                    </div>
+            const renderChat = (s: any) => (
+              <div key={s.id} className={`group flex items-center gap-2 px-3 py-2 rounded-lg cursor-pointer transition-colors ${activeSession === s.id ? "bg-[var(--bg-hover)]" : "hover:bg-[var(--bg-elevated)]"}`}
+                onClick={() => setActiveSession(s.id)}>
+                <svg className="w-4 h-4 shrink-0 text-[var(--text-muted)]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
+                </svg>
+                {renaming === s.id ? (
+                  <input autoFocus defaultValue={s.title}
+                    onBlur={(e) => { renameSession(s.id, e.target.value); setRenaming(null); }}
+                    onKeyDown={(e) => { if (e.key === "Enter") { renameSession(s.id, (e.target as HTMLInputElement).value); setRenaming(null); } if (e.key === "Escape") setRenaming(null); }}
+                    onClick={(e) => e.stopPropagation()}
+                    className="flex-1 px-1 py-0.5 text-[13px] bg-[var(--bg-elevated)] border border-[var(--brand-blue)] rounded focus:outline-none text-[var(--text-primary)]" />
+                ) : (
+                  <span className={`flex-1 truncate text-[13px] ${activeSession === s.id ? "text-[var(--text-primary)] font-medium" : "text-[var(--text-secondary)]"}`}>{s.title}</span>
+                )}
+                {/* Hover actions */}
+                <div className="hidden group-hover:flex items-center gap-0.5 shrink-0">
+                  <button onClick={(e) => { e.stopPropagation(); setRenaming(s.id); }} className="p-1 rounded hover:bg-[var(--bg-hover)] text-[var(--text-muted)]" title="Rename">
+                    <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" /></svg>
                   </button>
-                  <div className="absolute right-1 top-1.5 hidden group-hover:flex items-center gap-0.5">
-                    <button onClick={(e) => { e.stopPropagation(); setRenaming(s.id); }} className="p-1 rounded hover:bg-[var(--bg-hover)] text-[var(--text-muted)] hover:text-[var(--text-primary)]" title="Rename">
-                      <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" /></svg>
-                    </button>
-                    {s.folder ? (
-                      <button onClick={(e) => { e.stopPropagation(); moveToFolder(s.id, null); }} className="p-1 rounded hover:bg-[var(--bg-hover)] text-[var(--text-muted)] hover:text-[var(--text-primary)]" title="Remove from folder">
-                        <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M13 7l5 5m0 0l-5 5m5-5H6" /></svg>
-                      </button>
-                    ) : folders.size > 0 ? (
-                      <select onChange={(e) => { e.stopPropagation(); if (e.target.value) moveToFolder(s.id, e.target.value); e.target.value = ""; }} onClick={(e) => e.stopPropagation()} className="w-3 h-3 opacity-0 group-hover:opacity-100 cursor-pointer absolute" title="Move to folder">
-                        <option value="">Move...</option>
-                        {Array.from(folders.keys()).map((f) => <option key={f} value={f}>{f}</option>)}
-                      </select>
-                    ) : null}
-                    <button onClick={(e) => { e.stopPropagation(); deleteSession(s.id); }} className="p-1 rounded hover:bg-[var(--badge-error-bg)] text-[var(--text-muted)] hover:text-[var(--error)]" title="Delete">
-                      <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
-                    </button>
-                  </div>
+                  <button onClick={(e) => { e.stopPropagation(); deleteSession(s.id); }} className="p-1 rounded hover:bg-[var(--badge-error-bg)] text-[var(--text-muted)] hover:text-[var(--error)]" title="Delete">
+                    <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+                  </button>
                 </div>
-              );
-            };
+              </div>
+            );
 
             return (
               <>
-                {/* Folders */}
-                {Array.from(folders.entries()).map(([folderName, folderSessions]) => (
-                  <div key={folderName} className="mb-1">
-                    <button onClick={() => toggleFolder(folderName)} className="flex items-center gap-1.5 px-2 py-1.5 w-full text-left text-[11px] font-semibold text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors">
-                      <svg className={`w-3 h-3 transition-transform ${expandedFolders.has(folderName) ? "rotate-90" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
-                      </svg>
-                      <svg className="w-3.5 h-3.5 text-[var(--brand-blue)]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
-                      </svg>
-                      {folderName}
-                      <span className="text-[9px] text-[var(--text-muted)] ml-auto">{folderSessions.length}</span>
-                    </button>
-                    {expandedFolders.has(folderName) && (
-                      <div className="pl-4 space-y-0.5">
-                        {folderSessions.map(renderSession)}
+                {/* Folders section */}
+                {(folders.size > 0 || showNewFolder) && (
+                  <div className="mb-2">
+                    <div className="flex items-center justify-between px-2 mb-1">
+                      <span className="text-[11px] font-semibold text-[var(--text-muted)] uppercase tracking-wider">Folders</span>
+                      <button onClick={() => setShowNewFolder(true)} className="p-0.5 rounded hover:bg-[var(--bg-elevated)] text-[var(--text-muted)] hover:text-[var(--text-primary)]" title="New folder">
+                        <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" /></svg>
+                      </button>
+                    </div>
+
+                    {showNewFolder && (
+                      <div className="px-2 mb-1">
+                        <input autoFocus value={newFolderName} onChange={(e) => setNewFolderName(e.target.value)}
+                          onKeyDown={(e) => { if (e.key === "Enter" && newFolderName.trim()) { setShowNewFolder(false); setNewFolderName(""); } if (e.key === "Escape") { setShowNewFolder(false); setNewFolderName(""); } }}
+                          onBlur={() => { setShowNewFolder(false); setNewFolderName(""); }}
+                          placeholder="Folder name..."
+                          className="w-full px-2 py-1 text-[12px] rounded bg-[var(--bg-elevated)] border border-[var(--brand-blue)] focus:outline-none text-[var(--text-primary)]" />
                       </div>
                     )}
-                  </div>
-                ))}
 
-                {/* Unfiled chats */}
-                {unfiled.length > 0 && folders.size > 0 && (
-                  <div className="px-2 py-1 text-[10px] text-[var(--text-muted)] font-medium mt-2">Recent</div>
+                    {Array.from(folders.entries()).map(([folderName, folderSessions]) => (
+                      <div key={folderName}>
+                        <div className="group flex items-center gap-2 px-3 py-1.5 rounded-lg cursor-pointer hover:bg-[var(--bg-elevated)] transition-colors"
+                          onClick={() => toggleFolder(folderName)}>
+                          <svg className={`w-3 h-3 text-[var(--text-muted)] transition-transform ${expandedFolders.has(folderName) ? "rotate-90" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+                          </svg>
+                          <svg className="w-4 h-4 text-[var(--text-muted)]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
+                          </svg>
+                          <span className="flex-1 text-[13px] text-[var(--text-secondary)] font-medium">{folderName}</span>
+                          {/* Folder actions on hover */}
+                          <div className="hidden group-hover:flex items-center gap-0.5">
+                            <button onClick={(e) => { e.stopPropagation(); const name = prompt("Rename folder:", folderName); if (name && name.trim()) { folderSessions.forEach((s: any) => moveToFolder(s.id, name.trim())); } }}
+                              className="p-0.5 rounded hover:bg-[var(--bg-hover)] text-[var(--text-muted)]" title="Rename folder">
+                              <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" /></svg>
+                            </button>
+                            <button onClick={(e) => { e.stopPropagation(); folderSessions.forEach((s: any) => moveToFolder(s.id, null)); }}
+                              className="p-0.5 rounded hover:bg-[var(--badge-error-bg)] text-[var(--text-muted)] hover:text-[var(--error)]" title="Delete folder">
+                              <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+                            </button>
+                          </div>
+                          <span className="text-[10px] text-[var(--text-muted)] group-hover:hidden">{folderSessions.length}</span>
+                        </div>
+                        {expandedFolders.has(folderName) && (
+                          <div className="ml-5 space-y-0.5">{folderSessions.map(renderChat)}</div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
                 )}
-                {unfiled.map(renderSession)}
+
+                {/* Recents */}
+                {unfiled.length > 0 && (
+                  <div>
+                    {folders.size > 0 && <div className="px-2 mb-1 text-[11px] font-semibold text-[var(--text-muted)] uppercase tracking-wider">Recents</div>}
+                    {unfiled.map(renderChat)}
+                  </div>
+                )}
               </>
             );
           })()}
