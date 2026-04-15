@@ -96,8 +96,17 @@ export default function AgentsPage() {
 
             {/* Footer */}
             <div className="px-4 py-3 border-t border-[var(--border-default)]/50 flex items-center justify-between">
-              <span className="text-[10px] text-[var(--text-muted)] truncate max-w-[60%]">{a.endpoint_url}</span>
-              {a.endpoint_url && !a.endpoint_url.includes("placeholder") && (
+              <span className="text-[10px] text-[var(--text-muted)] truncate max-w-[60%]">{a.capabilities?.portal_url || a.endpoint_url}</span>
+              {a.capabilities?.portal_url ? (
+                <a
+                  href={a.capabilities.portal_url}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="px-3 py-1.5 rounded-lg bg-[var(--text-primary)] text-white text-[11px] font-medium hover:opacity-80 transition-opacity"
+                >
+                  Open Portal
+                </a>
+              ) : a.endpoint_url && !a.endpoint_url.includes("placeholder") ? (
                 <a
                   href={a.endpoint_url}
                   target="_blank"
@@ -106,8 +115,7 @@ export default function AgentsPage() {
                 >
                   Open Portal
                 </a>
-              )}
-              {a.endpoint_url && a.endpoint_url.includes("placeholder") && (
+              ) : (
                 <span className="text-[10px] text-[var(--text-muted)] italic">Coming soon</span>
               )}
             </div>
