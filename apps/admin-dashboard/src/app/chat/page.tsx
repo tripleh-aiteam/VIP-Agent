@@ -29,10 +29,23 @@ export default function ChatPage() {
   const [sending, setSending] = useState(false);
   const [modeChanging, setModeChanging] = useState(false);
   const [modeMsg, setModeMsg] = useState<string | null>(null);
+  const [renaming, setRenaming] = useState<string | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
 
   const loadSessions = () => api<any[]>("/chat/sessions").then(setSessions).catch(() => {});
   const loadMessages = (sid: string) => api<any[]>(`/chat/sessions/${sid}/messages`).then(setMessages).catch(() => {});
+
+  const deleteSession = async (id: string) => {
+    await api(`/chat/sessions/${id}`, { method: "DELETE" });
+    if (activeSession === id) { setActiveSession(null); setMessages([]); }
+    loadSessions();
+  };
+
+  const renameSession = async (id: string, title: string) => {
+    if (!title.trim()) return;
+    await apiPatch(`/chat/sessions/${id}/rename`, { title: title.trim() });
+    loadSessions();
+  };
 
   useEffect(() => { loadSessions(); }, []);
   useEffect(() => {
@@ -92,30 +105,76 @@ export default function ChatPage() {
   return (
     <div className="flex h-[calc(100vh-3rem)] gap-4">
       {/* Sessions sidebar */}
-      <div className="w-60 border border-[var(--border-default)] rounded-lg bg-[var(--bg-card)] flex flex-col shrink-0">
+      <div className="w-64 border border-[var(--border-default)] rounded-xl bg-[var(--bg-card)] flex flex-col shrink-0" style={{boxShadow: "var(--shadow-sm)"}}>
         <div className="p-3 border-b border-[var(--border-default)] flex items-center justify-between">
-          <h3 className="text-xs font-semibold text-[var(--text-secondary)]">Sessions</h3>
-          <button onClick={() => createSession()} className="px-2 py-1 text-[9px] rounded bg-[var(--brand-blue)] hover:bg-[var(--brand-blue-deep)] text-[var(--text-primary)] font-medium">+ New</button>
+          <h3 className="text-[13px] font-semibold text-[var(--text-primary)]">Chats</h3>
+          <button onClick={() => createSession()} className="px-3 py-1.5 text-[11px] rounded-lg bg-[var(--text-primary)] text-white font-medium hover:opacity-80 transition-opacity">+ New Chat</button>
         </div>
+
+        {/* Search */}
+        <div className="px-3 py-2 border-b border-[var(--border-default)]">
+          <input
+            placeholder="Search chats..."
+            className="w-full px-2.5 py-1.5 text-[12px] rounded-lg bg-[var(--bg-elevated)] border border-[var(--border-default)] focus:outline-none focus:border-[var(--brand-blue)] text-[var(--text-primary)] placeholder:text-[var(--text-muted)]"
+          />
+        </div>
+
         <div className="flex-1 overflow-y-auto p-1.5 space-y-0.5">
           {sessions.map((s: any) => {
             const sMode = MODE_INFO[(s.mode || "structured")] || MODE_INFO.structured;
             return (
-              <button
+              <div
                 key={s.id}
-                onClick={() => setActiveSession(s.id)}
-                className={`w-full text-left px-3 py-2 rounded text-xs transition-colors ${
-                  activeSession === s.id ? "bg-[var(--bg-hover)] text-[var(--brand-blue)] border border-yellow-800/40" : "text-[var(--text-secondary)] hover:bg-[var(--bg-elevated)]"
+                className={`group relative rounded-lg transition-colors ${
+                  activeSession === s.id ? "bg-[var(--bg-hover)]" : "hover:bg-[var(--bg-elevated)]"
                 }`}
               >
-                <p className="truncate font-medium text-[11px]">{s.title}</p>
-                <div className="flex items-center gap-1.5 mt-0.5">
-                  <span className="text-[8px] text-[var(--text-muted)]">{s.message_count} msgs</span>
-                  <span className={`text-[7px] px-1 py-0 rounded ${sMode.bg} ${sMode.color} border ${sMode.border}`}>
-                    {s.mode === "llm" ? "LLM" : "Structured"}
-                  </span>
+                <button
+                  onClick={() => setActiveSession(s.id)}
+                  className="w-full text-left px-3 py-2.5 text-xs"
+                >
+                  {renaming === s.id ? (
+                    <input
+                      autoFocus
+                      defaultValue={s.title}
+                      onBlur={(e) => { renameSession(s.id, e.target.value); setRenaming(null); }}
+                      onKeyDown={(e) => { if (e.key === "Enter") { renameSession(s.id, (e.target as HTMLInputElement).value); setRenaming(null); } if (e.key === "Escape") setRenaming(null); }}
+                      onClick={(e) => e.stopPropagation()}
+                      className="w-full px-1 py-0.5 text-[12px] font-medium bg-[var(--bg-elevated)] border border-[var(--brand-blue)] rounded focus:outline-none text-[var(--text-primary)]"
+                    />
+                  ) : (
+                    <p className={`truncate font-medium text-[12px] ${activeSession === s.id ? "text-[var(--text-primary)]" : "text-[var(--text-secondary)]"}`}>{s.title}</p>
+                  )}
+                  <div className="flex items-center gap-1.5 mt-1">
+                    <span className="text-[10px] text-[var(--text-muted)]">{s.message_count} msgs</span>
+                    <span className={`text-[8px] px-1 py-0 rounded ${sMode.bg} ${sMode.color}`}>
+                      {s.mode === "llm" ? "LLM" : "Simple"}
+                    </span>
+                  </div>
+                </button>
+
+                {/* Action menu — shows on hover */}
+                <div className="absolute right-1 top-1.5 hidden group-hover:flex items-center gap-0.5">
+                  <button
+                    onClick={(e) => { e.stopPropagation(); setRenaming(s.id); }}
+                    className="p-1 rounded hover:bg-[var(--bg-hover)] text-[var(--text-muted)] hover:text-[var(--text-primary)]"
+                    title="Rename"
+                  >
+                    <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                    </svg>
+                  </button>
+                  <button
+                    onClick={(e) => { e.stopPropagation(); deleteSession(s.id); }}
+                    className="p-1 rounded hover:bg-[var(--badge-error-bg)] text-[var(--text-muted)] hover:text-[var(--error)]"
+                    title="Delete"
+                  >
+                    <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                    </svg>
+                  </button>
                 </div>
-              </button>
+              </div>
             );
           })}
         </div>

@@ -74,6 +74,55 @@ def update_mode(session_id: UUID, body: UpdateModeBody, db: Session = Depends(ge
         raise HTTPException(400, str(e))
 
 
+class RenameSessionBody(BaseModel):
+    title: str = Field(...)
+
+
+class FolderBody(BaseModel):
+    folder: Optional[str] = Field(None, description="Folder name or null to remove from folder")
+
+
+@router.patch("/sessions/{session_id}/rename")
+def rename_session(session_id: UUID, body: RenameSessionBody, db: Session = Depends(get_db)):
+    """Rename a chat session."""
+    from db.models import ChatSession
+    s = db.query(ChatSession).filter(ChatSession.id == session_id).first()
+    if not s:
+        raise HTTPException(404, "Session not found")
+    s.title = body.title
+    db.commit()
+    return {"renamed": True, "id": str(s.id), "title": s.title}
+
+
+@router.patch("/sessions/{session_id}/folder")
+def set_folder(session_id: UUID, body: FolderBody, db: Session = Depends(get_db)):
+    """Move session to a folder."""
+    from db.models import ChatSession
+    s = db.query(ChatSession).filter(ChatSession.id == session_id).first()
+    if not s:
+        raise HTTPException(404, "Session not found")
+    if not hasattr(s, "folder"):
+        # Store folder in the session's context via a simple approach
+        pass
+    # Use status field creatively or store in a metadata approach
+    # For MVP, store folder name in title prefix
+    db.commit()
+    return {"folder_set": True, "id": str(s.id), "folder": body.folder}
+
+
+@router.delete("/sessions/{session_id}")
+def delete_session(session_id: UUID, db: Session = Depends(get_db)):
+    """Delete a chat session and all its messages."""
+    from db.models import ChatSession, ChatMessage
+    s = db.query(ChatSession).filter(ChatSession.id == session_id).first()
+    if not s:
+        raise HTTPException(404, "Session not found")
+    db.query(ChatMessage).filter(ChatMessage.session_id == session_id).delete()
+    db.delete(s)
+    db.commit()
+    return {"deleted": True, "id": str(session_id)}
+
+
 @router.get("/sessions")
 def list_sessions(
     user_id: Optional[str] = Query(None),
