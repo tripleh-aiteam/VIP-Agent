@@ -338,6 +338,12 @@
 - Click any message row → expands to show Reason, Purpose, full Payload
 - View Full Chain and Copy JSON buttons in expanded view
 
+**Notification Bell Position Fix**
+- Moved bell from sidebar (too narrow, dropdown overlapped nav) to fixed top-right of main content
+- New `TopBar.tsx` component in layout — bell visible on all pages
+- Dropdown opens left-aligned, 340px wide, no overflow
+- Works on both desktop and mobile
+
 ### Orchestration Progress: 75% → 100%
 
 ---
