@@ -341,6 +341,220 @@ def compose_report(
     }
 
 
+# ---------------------------------------------------------------------------
+# Cross-agent combined report — fetches real data from multiple agents via A2A
+# ---------------------------------------------------------------------------
+
+def compose_cross_agent_report(
+    db: Session,
+    agent_types: list[str],
+    report_type: str = "cross_agent_summary",
+    trace_id: str = "system",
+    delivery_channel: str = "web",
+) -> dict:
+    """
+    Compose a report by fetching real-time data from multiple agents via A2A.
+    Unlike compose_report() which uses historical task runs, this actively
+    queries agents and combines their responses.
+    """
+    from services.a2a_service import request_data_from_agent
+
+    generated_at = datetime.utcnow().isoformat()
+    sections = []
+    a2a_chain = []
+    agent_results = {}
+
+    # Fetch data from each agent type
+    for agent_type in agent_types:
+        try:
+            data_result = request_data_from_agent(
+                db=db,
+                requester_agent_id=_get_report_requester(agent_types, agent_type),
+                target_agent_type=agent_type,
+                trace_id=trace_id,
+                data_request=f"{agent_type}_summary_for_report",
+                context={"report_type": report_type, "real_time": True},
+            )
+            agent_results[agent_type] = data_result.get("data", {})
+            a2a_chain.extend(data_result.get("a2a_chain", []))
+
+            # Build section from real data
+            section = _build_section_from_a2a_data(agent_type, data_result)
+            sections.append(section)
+
+        except Exception as e:
+            sections.append({
+                "title": f"{agent_type.title()} Summary",
+                "content": f"Failed to fetch data from {agent_type} agent: {str(e)}",
+                "data": {"error": str(e), "agent_type": agent_type},
+            })
+
+    # Add cross-agent insights section
+    insights = _build_cross_agent_insights(agent_results)
+    if insights:
+        sections.append(insights)
+
+    # Executive summary
+    exec_summary = _generate_cross_agent_summary(sections, report_type, agent_types)
+
+    # Markdown
+    markdown = render_markdown(report_type, exec_summary, sections, [trace_id], generated_at)
+
+    # Persist
+    content_json = {
+        "report_type": report_type,
+        "executive_summary": exec_summary,
+        "sections": sections,
+        "agent_types": agent_types,
+        "a2a_message_chain": a2a_chain,
+        "generated_at": generated_at,
+        "markdown": markdown,
+    }
+
+    report = OrchReport(
+        report_type=report_type,
+        source_run_ids_json=a2a_chain,
+        content_json=content_json,
+        delivery_channel=delivery_channel,
+    )
+    db.add(report)
+    db.flush()
+
+    record_event(db, "report-composer", f"report.cross_agent.{report_type}", trace_id, {
+        "report_id": str(report.id),
+        "agent_types": agent_types,
+        "sections": len(sections),
+        "a2a_messages": len(a2a_chain),
+    })
+
+    log.info(
+        f"cross-agent report: {report_type} from {len(agent_types)} agents, {len(a2a_chain)} A2A messages",
+        extra={"trace_id": trace_id, "action": f"report.cross_agent.{report_type}"},
+    )
+
+    db.commit()
+
+    return {
+        "report_id": str(report.id),
+        "report_type": report_type,
+        "executive_summary": exec_summary,
+        "sections": sections,
+        "agent_types": agent_types,
+        "a2a_message_chain": a2a_chain,
+        "delivery_channel": delivery_channel,
+        "generated_at": generated_at,
+        "markdown": markdown,
+    }
+
+
+def _get_report_requester(all_types: list[str], current_type: str) -> str:
+    """Pick a requester agent name (the first agent that isn't the target)."""
+    type_to_name = {"asset": "Asset Agent", "stock": "Stock Agent", "realty": "Real Estate Agent"}
+    for t in all_types:
+        if t != current_type:
+            return type_to_name.get(t, f"{t.title()} Agent")
+    return type_to_name.get(current_type, f"{current_type.title()} Agent")
+
+
+def _build_section_from_a2a_data(agent_type: str, data_result: dict) -> dict:
+    """Build a report section from A2A fetched data."""
+    data = data_result.get("data", {})
+    success = data_result.get("success", False)
+    summary = data_result.get("summary")
+    agent_name = data_result.get("target", agent_type)
+
+    title_map = {
+        "asset": "Asset Portfolio Summary",
+        "stock": "Stock Market Analysis",
+        "realty": "Real Estate Overview",
+    }
+
+    if not success:
+        return {
+            "title": title_map.get(agent_type, f"{agent_type.title()} Summary"),
+            "content": f"Data fetch from {agent_name} did not return results.",
+            "data": {"success": False, "agent": agent_name},
+        }
+
+    content = summary or f"Data received from {agent_name}."
+
+    # Extract key metrics based on agent type
+    metrics = {}
+    if agent_type == "asset":
+        metrics = {
+            "total_value": data.get("total_value"),
+            "holdings": data.get("asset_count"),
+            "risk_level": data.get("risk_level"),
+        }
+    elif agent_type == "stock":
+        metrics = {
+            "stocks_analyzed": data.get("symbols_analyzed"),
+            "sentiment": data.get("market_sentiment"),
+            "risk_score": data.get("risk_score"),
+        }
+    elif agent_type == "realty":
+        metrics = {
+            "listings": data.get("total_listings"),
+            "avg_vacancy": data.get("avg_vacancy_pct"),
+            "avg_yield": data.get("avg_yield_pct"),
+        }
+
+    # Clean None values
+    metrics = {k: v for k, v in metrics.items() if v is not None}
+
+    return {
+        "title": title_map.get(agent_type, f"{agent_type.title()} Summary"),
+        "content": content,
+        "data": {"success": True, "agent": agent_name, "metrics": metrics, **data},
+    }
+
+
+def _build_cross_agent_insights(agent_results: dict) -> dict | None:
+    """Build insights by comparing data across agents."""
+    if len(agent_results) < 2:
+        return None
+
+    insights = []
+
+    # Compare asset and stock risk if both available
+    asset_data = agent_results.get("asset", {})
+    stock_data = agent_results.get("stock", {})
+
+    if asset_data and stock_data:
+        asset_risk = asset_data.get("risk_level", "unknown")
+        stock_risk = stock_data.get("risk_score", 0)
+        if stock_risk and isinstance(stock_risk, (int, float)) and stock_risk > 50:
+            insights.append(f"Stock market risk elevated ({stock_risk}/100) — portfolio risk level: {asset_risk}")
+        elif asset_risk and asset_risk != "unknown":
+            insights.append(f"Portfolio risk ({asset_risk}) aligned with market conditions")
+
+    # Check realty + stock correlation
+    realty_data = agent_results.get("realty", {})
+    if realty_data and stock_data:
+        insights.append("Real estate and equity market data available for diversification analysis")
+
+    if not insights:
+        insights.append("Cross-agent data collected successfully. No anomalies detected.")
+
+    return {
+        "title": "Cross-Agent Insights",
+        "content": " | ".join(insights),
+        "data": {"insight_count": len(insights), "agents_compared": list(agent_results.keys())},
+    }
+
+
+def _generate_cross_agent_summary(sections: list[dict], report_type: str, agent_types: list[str]) -> str:
+    """Generate executive summary for cross-agent report."""
+    agent_names = ", ".join([t.title() for t in agent_types])
+    parts = [f"Cross-Agent Report ({agent_names}):"]
+
+    for s in sections:
+        if s.get("data", {}).get("success", True) and s["content"]:
+            parts.append(s["content"][:200])
+
+    return " ".join(parts[:4])
+
+
 def get_report(db: Session, report_id: UUID) -> dict | None:
     report = db.query(OrchReport).filter(OrchReport.id == report_id).first()
     if not report:

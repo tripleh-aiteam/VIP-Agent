@@ -51,6 +51,36 @@ def compose_alert(body: ComposeBody, db: Session = Depends(get_db)):
     )
 
 
+class CrossAgentReportBody(BaseModel):
+    agent_types: list[str] = Field(..., description="List of agent types to include (e.g., ['asset', 'stock', 'realty'])")
+    report_type: str = Field(default="cross_agent_summary")
+    delivery_channel: str = Field(default="web")
+    trace_id: str = Field(default="system")
+
+    model_config = {"json_schema_extra": {"examples": [
+        {
+            "agent_types": ["asset", "stock", "realty"],
+            "report_type": "cross_agent_summary",
+            "trace_id": "tr-report-001",
+        }
+    ]}}
+
+
+@router.post("/compose/cross-agent")
+def compose_cross_agent(body: CrossAgentReportBody, db: Session = Depends(get_db)):
+    """
+    Compose a combined report by fetching real-time data from multiple agents via A2A.
+    Each agent is queried through the A2A data request flow.
+    """
+    return report_service.compose_cross_agent_report(
+        db,
+        agent_types=body.agent_types,
+        report_type=body.report_type,
+        trace_id=body.trace_id,
+        delivery_channel=body.delivery_channel,
+    )
+
+
 @router.get("/{report_id}")
 def get_report(report_id: UUID, db: Session = Depends(get_db)):
     """Get a report by ID with full JSON content."""
