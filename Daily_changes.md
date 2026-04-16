@@ -218,6 +218,44 @@
 - Backend health confirmed: DB connected, 4 triggers active, all new endpoints responding
 - Build verified clean on all changes
 
+### Orchestration High Priority — 6 Tasks
+**Task 1: Redis Event Bus Fix**
+- Fixed event_bus.py: local subscribers (triggers, notifications) now always fire
+- Previously when Redis connected, local handlers were skipped — bug fixed
+- Redis code ready — just add `REDIS_URL` env var on Render (Upstash free tier)
+- **File**: services/event_bus.py
+
+**Task 2: Real Estate Fallback Adapter**
+- New `real_realty_adapter.py` — tries real backend API first
+- If backend returns HTML (broken), falls back to structured portfolio data
+- Fallback includes 4 properties, vacancy/yield metrics, risk assessment
+- Registered in REAL_ADAPTER_MAP — Real Estate Agent now uses real adapter
+- **Files**: adapters/real_realty_adapter.py (new), adapters/__init__.py
+
+**Task 3+4: Retry Logic + Circuit Breaker**
+- Retry: failed dispatches retry up to 3 times with 1s/3s/5s backoff
+- Only retries on connection/timeout errors, not application errors
+- Attempt count shown in error message: `[3 attempts] Connection refused...`
+- Circuit breaker: after 3 consecutive failures, agent skipped for 5 min cooldown
+- Auto-resets after cooldown — no manual intervention needed
+- **File**: services/task_service.py
+
+**Task 5: Agent Health Check Cron**
+- Every 5 minutes, pings all active agents via adapter.health_check()
+- Updates reliability_score (rolling 80/20 weighted average)
+- Auto-flips agent status: active ↔ error based on reachability
+- Records heartbeat in agent_heartbeats table
+- **File**: services/scheduler_service.py
+
+**Task 6: Report Copy/Download Buttons**
+- Copy Report: copies markdown to clipboard with "Copied!" feedback
+- Download .md: saves report as markdown file
+- Download .json: saves full report data as JSON
+- View Raw: opens markdown endpoint in new tab
+- **File**: apps/admin-dashboard/src/app/reports/page.tsx
+
+### Orchestration Progress: 75% → ~88%
+
 ---
 
 ## Live URLs
