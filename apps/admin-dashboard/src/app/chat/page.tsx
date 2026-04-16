@@ -83,7 +83,7 @@ export default function ChatPage() {
       localStorage.setItem("vip-chat-folders", JSON.stringify(updated));
       return updated;
     });
-    setExpandedFolders((prev) => new Set([...prev, trimmed]));
+    setExpandedFolders((prev) => new Set([...Array.from(prev), trimmed]));
   };
 
   const removeFolder = (name: string) => {
@@ -102,14 +102,12 @@ export default function ChatPage() {
       localStorage.setItem("vip-chat-folders", JSON.stringify(updated));
       return updated;
     });
-    setSavedFolders(updated);
-    localStorage.setItem("vip-chat-folders", JSON.stringify(updated));
     sessions.filter((s: any) => s.folder === oldName).forEach((s: any) => moveToFolder(s.id, newName.trim()));
   };
 
   const toggleFolder = (f: string) => {
     setExpandedFolders((prev) => {
-      const next = new Set(prev);
+      const next = new Set(Array.from(prev));
       next.has(f) ? next.delete(f) : next.add(f);
       return next;
     });
@@ -270,7 +268,7 @@ export default function ChatPage() {
                   </div>
 
                   {/* Render all saved folders */}
-                  {[...new Set([...savedFolders, ...Array.from(folders.keys())])].map((folderName) => {
+                  {Array.from(new Set([...savedFolders, ...Array.from(folders.keys())])).map((folderName) => {
                     const folderSessions = folders.get(folderName) || [];
                     return (
                       <div key={folderName}>
