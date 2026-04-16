@@ -7,6 +7,7 @@ from adapters.base_adapter import BaseAdapter
 from adapters.asset_adapter import AssetAdapter
 from adapters.real_asset_adapter import RealAssetAdapter
 from adapters.real_stock_adapter import RealStockAdapter
+from adapters.real_realty_adapter import RealRealtyAdapter
 from adapters.stock_adapter import StockAdapter
 from adapters.realty_adapter import RealtyAdapter
 
@@ -20,6 +21,7 @@ ADAPTER_MAP: dict[str, type[BaseAdapter]] = {
 REAL_ADAPTER_MAP: dict[str, type[BaseAdapter]] = {
     "asset": RealAssetAdapter,
     "stock": RealStockAdapter,
+    "realty": RealRealtyAdapter,
 }
 
 
