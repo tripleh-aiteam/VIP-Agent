@@ -15,6 +15,7 @@ from db.base import get_db
 from services import a2a_service
 from services.event_bus import is_redis_connected
 from services.a2a_triggers import list_triggers
+from services.a2a_notifications import get_notifications
 
 router = APIRouter(prefix="/a2a", tags=["a2a"])
 
@@ -62,6 +63,16 @@ def get_triggers():
         "triggers": list_triggers(),
         "total": len(list_triggers()),
     }
+
+
+@router.get("/notifications")
+def get_a2a_notifications(
+    limit: int = Query(50, ge=1, le=200),
+    severity: Optional[str] = Query(None, description="Filter by severity: info, warning, critical"),
+    db: Session = Depends(get_db),
+):
+    """Get A2A notifications for dashboard display (Telegram alerts are also stored here)."""
+    return get_notifications(db, limit=limit, severity=severity)
 
 
 @router.post("/send", status_code=201)

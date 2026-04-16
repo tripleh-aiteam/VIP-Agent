@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 from services.task_service import create_task, dispatch_task
 from services import a2a_service, report_service
 from services.audit_service import record_event
+from services.event_bus import publish
 from services.logger import log
 
 
@@ -227,6 +228,16 @@ def execute_cross_agent_workflow(
         f"cross-agent: {workflow['name']} completed",
         extra={"trace_id": trace_id, "action": "cross_agent.completed"},
     )
+
+    # Publish workflow completion for notifications
+    publish("a2a.workflow.completed", {
+        "workflow": workflow_key,
+        "workflow_name": workflow["name"],
+        "trace_id": trace_id,
+        "tasks_completed": len([t for t in results["task_results"] if t.get("status") == "completed"]),
+        "tasks_total": len(results["task_results"]),
+        "a2a_sent": len(results["a2a_results"]),
+    })
 
     return results
 
