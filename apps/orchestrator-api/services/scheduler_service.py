@@ -88,6 +88,98 @@ def _execute_report_job(rule_name: str, report_type: str, hours_back: int = 24):
         db.close()
 
 
+def _auto_daily_report():
+    """
+    Automatic daily report pipeline:
+    1. Fetch fresh data from all agents (asset, stock)
+    2. Compose a daily report from all task runs in the last 24h
+    3. Send summary to Telegram admins
+    """
+    from services.task_service import create_task, dispatch_task
+    from services.report_service import compose_report
+    from services.telegram_service import send_alert
+
+    db = SessionLocal()
+    trace_id = f"tr-auto-daily-{int(datetime.utcnow().timestamp())}"
+
+    log.info("auto-report: starting daily pipeline", extra={"trace_id": trace_id, "action": "auto_report.daily.start"})
+
+    try:
+        # Step 1: Fetch fresh data from agents
+        agent_tasks = [
+            {"task_type": "asset_summary", "agent_type": "asset"},
+            {"task_type": "stock_analysis", "agent_type": "stock"},
+        ]
+
+        for task_info in agent_tasks:
+            try:
+                run = create_task(
+                    db=db, trace_id=trace_id,
+                    task_type=task_info["task_type"],
+                    target_agent_type=task_info["agent_type"],
+                    initiator_type="system_scheduler",
+                    initiator_id="auto-daily-report",
+                    source_channel="scheduler",
+                    input_payload={"auto_report": True},
+                )
+                dispatch_task(db, run.id)
+                log.info(f"auto-report: dispatched {task_info['task_type']}", extra={"trace_id": trace_id, "action": "auto_report.task"})
+            except Exception as e:
+                log.warning(f"auto-report: {task_info['task_type']} failed: {e}", extra={"action": "auto_report.task.failed"})
+
+        # Step 2: Compose report from all recent runs
+        report = compose_report(db, report_type="daily_summary", hours_back=24, trace_id=trace_id)
+
+        # Step 3: Send to Telegram
+        summary = report.get("executive_summary", "Daily report generated.")
+        telegram_text = (
+            f"<b>Daily Report</b>\n\n"
+            f"{summary[:500]}\n\n"
+            f"<i>View full report on dashboard</i>"
+        )
+        send_alert(telegram_text)
+
+        log.info("auto-report: daily pipeline completed", extra={"trace_id": trace_id, "action": "auto_report.daily.done"})
+
+    except Exception as e:
+        log.warning(f"auto-report: daily pipeline failed: {e}", extra={"trace_id": trace_id, "action": "auto_report.daily.failed"})
+    finally:
+        db.close()
+
+
+def _auto_weekly_report():
+    """
+    Automatic weekly report pipeline:
+    1. Compose a weekly report from all task runs in the last 7 days
+    2. Send summary to Telegram admins
+    """
+    from services.report_service import compose_report
+    from services.telegram_service import send_alert
+
+    db = SessionLocal()
+    trace_id = f"tr-auto-weekly-{int(datetime.utcnow().timestamp())}"
+
+    log.info("auto-report: starting weekly pipeline", extra={"trace_id": trace_id, "action": "auto_report.weekly.start"})
+
+    try:
+        report = compose_report(db, report_type="weekly_summary", hours_back=168, trace_id=trace_id)
+
+        summary = report.get("executive_summary", "Weekly report generated.")
+        telegram_text = (
+            f"<b>Weekly Report</b>\n\n"
+            f"{summary[:500]}\n\n"
+            f"<i>View full report on dashboard</i>"
+        )
+        send_alert(telegram_text)
+
+        log.info("auto-report: weekly pipeline completed", extra={"trace_id": trace_id, "action": "auto_report.weekly.done"})
+
+    except Exception as e:
+        log.warning(f"auto-report: weekly pipeline failed: {e}", extra={"trace_id": trace_id, "action": "auto_report.weekly.failed"})
+    finally:
+        db.close()
+
+
 # ---------------------------------------------------------------------------
 # Scheduler management
 # ---------------------------------------------------------------------------
@@ -161,6 +253,24 @@ def init_scheduler():
         replace_existing=True,
     )
     log.info("scheduler: health check registered (every 5 min)", extra={"action": "scheduler.health_registered"})
+
+    # Auto daily report — every day at 7 PM (19:00 UTC)
+    _scheduler.add_job(
+        _auto_daily_report,
+        CronTrigger.from_crontab("0 19 * * *"),
+        id="auto-daily-report",
+        replace_existing=True,
+    )
+    log.info("scheduler: auto daily report registered (19:00 UTC daily)", extra={"action": "scheduler.auto_daily_registered"})
+
+    # Auto weekly report — every Friday at 6 PM (18:00 UTC)
+    _scheduler.add_job(
+        _auto_weekly_report,
+        CronTrigger.from_crontab("0 18 * * 5"),
+        id="auto-weekly-report",
+        replace_existing=True,
+    )
+    log.info("scheduler: auto weekly report registered (Friday 18:00 UTC)", extra={"action": "scheduler.auto_weekly_registered"})
 
     _scheduler.start()
     log.info("scheduler: started", extra={"action": "scheduler.started"})
