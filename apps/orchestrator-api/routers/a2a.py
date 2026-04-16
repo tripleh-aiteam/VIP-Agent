@@ -1,6 +1,7 @@
 """
 VIP AI Platform — A2A Router
-POST /a2a/send, GET /a2a/messages, GET /a2a/messages/{id}, POST /a2a/demo/risk-flow
+POST /a2a/send, POST /a2a/webhook, POST /a2a/webhook/{agent_type}/data,
+GET /a2a/messages, GET /a2a/messages/{id}, POST /a2a/demo/risk-flow
 """
 
 from uuid import UUID
@@ -67,6 +68,91 @@ def send_message(body: SendMessageBody, db: Session = Depends(get_db)):
             source_task_id=UUID(body.source_task_id) if body.source_task_id else None,
             authorization_context=body.authorization_context,
             proof_of_intent=body.proof_of_intent,
+        )
+        return result
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+# ---------------------------------------------------------------------------
+#  Webhook endpoints — agents POST here to send data back to orchestrator
+# ---------------------------------------------------------------------------
+
+class WebhookMessageBody(BaseModel):
+    """Inbound A2A message from an external agent."""
+    sender_agent_id: str = Field(..., description="Name of the sending agent")
+    trace_id: str = Field(..., description="Trace ID for correlation")
+    message_type: str = Field(..., description="risk_alert | data_request | report_response | feedback_request | escalation_request | report_request")
+    purpose: str = Field(..., description="inform | ack | escalate | delegate | query")
+    payload: dict[str, Any] = Field(default_factory=dict)
+    in_reply_to: Optional[str] = Field(None, description="Message ID this is replying to")
+    proof_of_intent: Optional[dict] = None
+
+    model_config = {"json_schema_extra": {"examples": [
+        {
+            "sender_agent_id": "Stock Agent",
+            "trace_id": "tr-risk-001",
+            "message_type": "risk_alert",
+            "purpose": "escalate",
+            "payload": {"alert_level": "high", "trigger": "market_drop", "index": "KOSPI", "change_pct": -3.2},
+            "proof_of_intent": {"reason": "KOSPI dropped 3.2% — notifying orchestrator"},
+        }
+    ]}}
+
+
+class AgentDataBody(BaseModel):
+    """Structured data push from an agent."""
+    trace_id: str = Field(..., description="Trace ID for correlation")
+    data_type: str = Field(..., description="Type of data: report_response | data_request | risk_alert")
+    payload: dict[str, Any] = Field(default_factory=dict, description="Agent-specific data payload")
+    source_message_id: Optional[str] = Field(None, description="Original message ID that triggered this data push")
+
+    model_config = {"json_schema_extra": {"examples": [
+        {
+            "trace_id": "tr-stock-data-001",
+            "data_type": "report_response",
+            "payload": {"market_news": [{"title": "KOSPI falls 3.2%", "sentiment": "negative"}], "watchlist": ["AAPL", "005930.KS"]},
+            "source_message_id": "abc123-def456",
+        }
+    ]}}
+
+
+@router.post("/webhook", status_code=201)
+def receive_webhook(body: WebhookMessageBody, db: Session = Depends(get_db)):
+    """
+    Webhook for agents to send A2A messages to the orchestrator.
+    Agents call this endpoint to push alerts, replies, or data back.
+    """
+    try:
+        result = a2a_service.receive_webhook(
+            db=db,
+            sender_agent_id=body.sender_agent_id,
+            trace_id=body.trace_id,
+            message_type=body.message_type,
+            purpose=body.purpose,
+            payload=body.payload,
+            in_reply_to=body.in_reply_to,
+            proof_of_intent=body.proof_of_intent,
+        )
+        return result
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@router.post("/webhook/{agent_type}/data", status_code=201)
+def receive_agent_data(agent_type: str, body: AgentDataBody, db: Session = Depends(get_db)):
+    """
+    Typed webhook for agents to push structured data to the orchestrator.
+    URL includes agent_type (asset, stock, realty) for routing.
+    """
+    try:
+        result = a2a_service.receive_agent_data(
+            db=db,
+            agent_type=agent_type,
+            trace_id=body.trace_id,
+            data_type=body.data_type,
+            payload=body.payload,
+            source_message_id=body.source_message_id,
         )
         return result
     except ValueError as e:

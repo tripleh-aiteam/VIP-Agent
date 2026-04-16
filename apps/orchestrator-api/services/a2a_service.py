@@ -163,6 +163,205 @@ def list_messages(
     return [_msg_to_dict(m) for m in msgs]
 
 
+def receive_webhook(
+    db: Session,
+    sender_agent_id: str,
+    trace_id: str,
+    message_type: str,
+    purpose: str,
+    payload: dict[str, Any],
+    in_reply_to: str | None = None,
+    proof_of_intent: dict | None = None,
+) -> dict:
+    """
+    Receive an inbound A2A message from an external agent via webhook.
+    Validates sender, persists the message, publishes to event bus, and
+    optionally links it to the original outbound message.
+    """
+
+    if message_type not in VALID_MESSAGE_TYPES:
+        raise ValueError(f"Invalid message_type: {message_type}. Must be one of: {VALID_MESSAGE_TYPES}")
+
+    if purpose not in VALID_PURPOSES:
+        raise ValueError(f"Invalid purpose: {purpose}. Must be one of: {VALID_PURPOSES}")
+
+    # Verify sender agent exists
+    sender = db.query(CoreAgent).filter(CoreAgent.name == sender_agent_id).first()
+    if not sender:
+        sender = db.query(CoreAgent).filter(CoreAgent.id == sender_agent_id).first() if len(sender_agent_id) > 30 else None
+    if not sender:
+        raise ValueError(f"Unknown sender agent: {sender_agent_id}")
+
+    # If replying to a message, look up original to find target
+    original_msg = None
+    target_agent = None
+    if in_reply_to:
+        try:
+            original_msg = db.query(A2AMessage).filter(A2AMessage.id == UUID(in_reply_to)).first()
+        except (ValueError, AttributeError):
+            pass
+        if original_msg:
+            # The reply target is whoever sent the original message
+            target_agent = original_msg.sender_agent
+            # Mark original as delivered
+            original_msg.status = "delivered"
+            db.flush()
+
+    # Default target: the orchestrator itself (represented by the first system agent, or sender's own entry)
+    if not target_agent:
+        # Webhook messages are directed to the orchestrator
+        target_agent = db.query(CoreAgent).filter(CoreAgent.name == "Asset Agent").first() or sender
+
+    is_high_risk = message_type in HIGH_RISK_TYPES
+
+    message_id = uuid4()
+    envelope = {
+        "message_id": str(message_id),
+        "trace_id": trace_id,
+        "sender_agent_id": sender.name,
+        "target_agent_id": target_agent.name,
+        "message_type": message_type,
+        "purpose": purpose,
+        "direction": "inbound",
+        "in_reply_to": in_reply_to,
+        "proof_of_intent": proof_of_intent,
+        "payload": payload,
+        "is_high_risk": is_high_risk,
+    }
+
+    msg = A2AMessage(
+        id=message_id,
+        sender_agent_id=sender.id,
+        target_agent_id=target_agent.id,
+        task_run_id=original_msg.task_run_id if original_msg else None,
+        trace_id=trace_id,
+        message_type=message_type,
+        envelope_json=envelope,
+        status="received",
+    )
+    db.add(msg)
+    db.flush()
+
+    # Publish to event bus
+    publish(f"a2a.inbound.{message_type}", envelope)
+    publish(f"a2a.from.{sender.name}", envelope)
+
+    # Audit
+    record_event(db, "a2a_webhook", f"a2a.webhook.{message_type}", trace_id, {
+        "message_id": str(message_id),
+        "sender": sender.name,
+        "target": target_agent.name,
+        "purpose": purpose,
+        "direction": "inbound",
+        "in_reply_to": in_reply_to,
+        "is_high_risk": is_high_risk,
+    })
+
+    log.info(
+        f"a2a webhook: {sender.name} -> orchestrator [{message_type}/{purpose}]",
+        extra={"trace_id": trace_id, "action": f"a2a.webhook.{message_type}"},
+    )
+
+    db.commit()
+
+    return {
+        "accepted": True,
+        "message_id": str(message_id),
+        "trace_id": trace_id,
+        "sender": sender.name,
+        "message_type": message_type,
+        "purpose": purpose,
+        "status": "received",
+        "is_high_risk": is_high_risk,
+        "in_reply_to": in_reply_to,
+    }
+
+
+def receive_agent_data(
+    db: Session,
+    agent_type: str,
+    trace_id: str,
+    data_type: str,
+    payload: dict[str, Any],
+    source_message_id: str | None = None,
+) -> dict:
+    """
+    Receive structured data/result from an agent via webhook.
+    Used when an agent pushes data proactively (e.g., market alert, updated listings).
+    """
+
+    # Find the agent by type
+    agent = (
+        db.query(CoreAgent)
+        .filter(CoreAgent.type == agent_type, CoreAgent.status == "active")
+        .order_by(CoreAgent.priority_score.desc())
+        .first()
+    )
+    if not agent:
+        raise ValueError(f"No active agent found for type: {agent_type}")
+
+    message_id = uuid4()
+    is_high_risk = data_type in ("risk_alert", "escalation_request")
+
+    envelope = {
+        "message_id": str(message_id),
+        "trace_id": trace_id,
+        "sender_agent_id": agent.name,
+        "target_agent_id": "orchestrator",
+        "message_type": data_type,
+        "purpose": "inform",
+        "direction": "inbound",
+        "source_message_id": source_message_id,
+        "payload": payload,
+        "is_high_risk": is_high_risk,
+    }
+
+    # Find any agent to use as target FK (orchestrator doesn't have its own agent row)
+    # Use the sender itself as target for FK constraint
+    msg = A2AMessage(
+        id=message_id,
+        sender_agent_id=agent.id,
+        target_agent_id=agent.id,  # self-referencing for orchestrator-bound messages
+        trace_id=trace_id,
+        message_type=data_type,
+        envelope_json=envelope,
+        status="received",
+    )
+    db.add(msg)
+    db.flush()
+
+    # Publish
+    publish(f"a2a.inbound.{data_type}", envelope)
+    publish(f"a2a.agent_data.{agent_type}", envelope)
+
+    # Audit
+    record_event(db, "a2a_webhook", f"a2a.agent_data.{data_type}", trace_id, {
+        "message_id": str(message_id),
+        "agent": agent.name,
+        "agent_type": agent_type,
+        "data_type": data_type,
+        "direction": "inbound",
+    })
+
+    log.info(
+        f"a2a agent data: {agent.name} pushed {data_type}",
+        extra={"trace_id": trace_id, "action": f"a2a.agent_data.{data_type}"},
+    )
+
+    db.commit()
+
+    return {
+        "accepted": True,
+        "message_id": str(message_id),
+        "trace_id": trace_id,
+        "agent": agent.name,
+        "agent_type": agent_type,
+        "data_type": data_type,
+        "status": "received",
+        "is_high_risk": is_high_risk,
+    }
+
+
 def _msg_to_dict(msg: A2AMessage) -> dict:
     return {
         "id": str(msg.id),
