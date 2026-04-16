@@ -254,157 +254,135 @@ export default function ReportsPage() {
         )}
       </div>
 
-      {/* Detailed View — Full-screen modal overlay */}
+      {/* Detailed View — Full-screen document-style modal */}
       {viewMode === "detailed" && detail && (
-        <div className="fixed inset-0 z-50 bg-black/50 flex items-start justify-center overflow-y-auto p-4 sm:p-8"
+        <div className="fixed inset-0 z-50 bg-black/40 flex items-start justify-center overflow-y-auto"
           onClick={(e) => { if (e.target === e.currentTarget) setViewMode("summary"); }}>
-          <div className="bg-[var(--bg-primary)] rounded-xl border border-[var(--border-default)] w-full max-w-[900px] my-4" style={{ boxShadow: "var(--shadow-lg, 0 25px 50px -12px rgba(0,0,0,0.25))" }}>
+          <div className="bg-white w-full max-w-[800px] my-6 mx-4 rounded-xl shadow-2xl min-h-[60vh]">
 
-            {/* Modal Header */}
-            <div className="px-6 py-4 border-b border-[var(--border-default)] flex items-center justify-between sticky top-0 bg-[var(--bg-primary)] rounded-t-xl z-10">
-              <div className="flex items-center gap-3">
-                <h2 className="text-[18px] font-semibold text-[var(--text-primary)]">Detailed Report</h2>
-                <Badge text={detail.report_type} />
-                <span className="text-[12px] text-[var(--text-muted)]">
-                  {detail.created_at ? new Date(detail.created_at).toLocaleString() : ""}
-                </span>
-              </div>
+            {/* Toolbar */}
+            <div className="px-6 py-3 border-b border-gray-200 flex items-center justify-between sticky top-0 bg-white rounded-t-xl z-10">
               <div className="flex items-center gap-2">
                 <button onClick={copyReport}
-                  className="px-3 py-1.5 text-[12px] rounded-lg bg-[var(--bg-elevated)] hover:bg-[var(--bg-hover)] border border-[var(--border-default)] text-[var(--text-primary)] font-medium">
+                  className="px-3 py-1.5 text-[12px] rounded-lg bg-gray-100 hover:bg-gray-200 text-gray-700 font-medium">
                   {copied ? "Copied!" : "Copy"}
                 </button>
                 <button onClick={() => downloadFile(detail.content?.markdown || "", `report-${detail.id.slice(0,8)}.md`, "text/markdown")}
-                  className="px-3 py-1.5 text-[12px] rounded-lg bg-[var(--bg-elevated)] hover:bg-[var(--bg-hover)] border border-[var(--border-default)] text-[var(--text-primary)] font-medium">
-                  Download .md
+                  className="px-3 py-1.5 text-[12px] rounded-lg bg-gray-100 hover:bg-gray-200 text-gray-700 font-medium">
+                  .md
                 </button>
                 <button onClick={() => downloadFile(JSON.stringify(detail.content, null, 2), `report-${detail.id.slice(0,8)}.json`, "application/json")}
-                  className="px-3 py-1.5 text-[12px] rounded-lg bg-[var(--bg-elevated)] hover:bg-[var(--bg-hover)] border border-[var(--border-default)] text-[var(--text-primary)] font-medium">
-                  Download .json
-                </button>
-                <button onClick={() => setViewMode("summary")}
-                  className="ml-2 w-8 h-8 flex items-center justify-center rounded-lg hover:bg-[var(--bg-hover)] text-[var(--text-muted)] hover:text-[var(--text-primary)] text-lg">
-                  x
+                  className="px-3 py-1.5 text-[12px] rounded-lg bg-gray-100 hover:bg-gray-200 text-gray-700 font-medium">
+                  .json
                 </button>
               </div>
+              <button onClick={() => setViewMode("summary")}
+                className="w-8 h-8 flex items-center justify-center rounded-full hover:bg-gray-100 text-gray-400 hover:text-gray-700 text-[18px] font-light">
+                x
+              </button>
             </div>
 
-            {/* Modal Body */}
-            <div className="p-6 space-y-6">
+            {/* Document body — clean report style */}
+            <div className="px-10 py-8 text-gray-800">
+
+              {/* Title */}
+              <h1 className="text-[22px] font-bold text-gray-900 mb-1">
+                {detail.report_type === "cross_agent_summary" ? "Cross-Agent Report" :
+                 detail.report_type === "daily_summary" ? "Daily Executive Summary" :
+                 detail.report_type === "weekly_summary" ? "Weekly Executive Summary" :
+                 "Urgent Alert Report"}
+              </h1>
+              <p className="text-[13px] text-gray-400 mb-6">
+                Generated {detail.created_at ? new Date(detail.created_at).toLocaleString() : ""} | {detail.source_run_ids?.length || 0} data sources
+              </p>
+
+              <hr className="border-gray-200 mb-6" />
 
               {/* Executive Summary */}
-              <div className="p-4 rounded-lg bg-[var(--bg-elevated)] border border-[var(--border-default)]">
-                <h3 className="text-[14px] font-semibold text-[var(--text-primary)] mb-2">Executive Summary</h3>
-                <p className="text-[14px] text-[var(--text-secondary)] leading-[1.7]">
+              <div className="mb-8">
+                <h2 className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider mb-2">Executive Summary</h2>
+                <p className="text-[15px] text-gray-700 leading-[1.8]">
                   {detail.content?.executive_summary || "No summary available."}
                 </p>
               </div>
 
-              {/* Sections */}
-              {parseSections(detail.content?.sections).map((s: any, i: number) => (
-                <div key={i} className="border border-[var(--border-default)] rounded-lg overflow-hidden">
-                  <div className="px-5 py-3 bg-[var(--bg-elevated)] border-b border-[var(--border-default)]">
-                    <h3 className="text-[15px] font-semibold text-[var(--brand-blue)]">{s.title}</h3>
-                  </div>
-                  <div className="p-5">
-                    {/* Content — render line by line for structured reports */}
-                    <div className="text-[14px] text-[var(--text-secondary)] leading-[1.8] whitespace-pre-wrap">
-                      {(s.content || "").split(/[•]/).map((line: string, li: number) => {
+              {/* Sections — rendered as document paragraphs */}
+              {(detail.content?.sections || []).map((s: any, i: number) => {
+                const sectionContent = s.content || "";
+
+                return (
+                  <div key={i} className="mb-8">
+                    <h2 className="text-[16px] font-semibold text-gray-900 mb-3 pb-2 border-b border-gray-100">
+                      {s.title}
+                    </h2>
+
+                    {/* Render content as readable paragraphs */}
+                    <div className="text-[14px] text-gray-600 leading-[1.8]">
+                      {sectionContent.split("\n").map((line: string, li: number) => {
                         const trimmed = line.trim();
-                        if (!trimmed) return null;
-                        if (li === 0 && !s.content.startsWith("•")) {
-                          return <p key={li} className="mb-3">{trimmed}</p>;
+                        if (!trimmed) return <div key={li} className="h-2" />;
+
+                        // Section dividers
+                        if (trimmed.startsWith("━━━") || trimmed.startsWith("---")) return null;
+
+                        // Bullet points
+                        if (trimmed.startsWith("•") || trimmed.startsWith("- ")) {
+                          return (
+                            <div key={li} className="flex gap-2 ml-4 mb-1">
+                              <span className="text-blue-500 shrink-0">&#8226;</span>
+                              <span>{trimmed.replace(/^[•\-]\s*/, "")}</span>
+                            </div>
+                          );
                         }
-                        return (
-                          <div key={li} className="flex gap-2 mb-1.5 pl-2">
-                            <span className="text-[var(--brand-blue)] mt-0.5">&#8226;</span>
-                            <span>{trimmed}</span>
-                          </div>
-                        );
+
+                        // Key-value lines (e.g., "Total Contracts: 117")
+                        const kvMatch = trimmed.match(/^(.+?):\s+(.+)$/);
+                        if (kvMatch && kvMatch[1].length < 40 && !trimmed.includes("|")) {
+                          return (
+                            <div key={li} className="flex gap-2 mb-1">
+                              <span className="text-gray-500 shrink-0">{kvMatch[1]}:</span>
+                              <span className="font-medium text-gray-800">{kvMatch[2]}</span>
+                            </div>
+                          );
+                        }
+
+                        // Table-like lines with pipes
+                        if (trimmed.includes(" | ")) {
+                          const parts = trimmed.split(" | ");
+                          return (
+                            <div key={li} className="flex gap-4 mb-1 ml-4 text-[13px]">
+                              <span className="font-medium text-gray-800 min-w-[120px]">{parts[0]}</span>
+                              {parts.slice(1).map((p: string, pi: number) => (
+                                <span key={pi} className="text-gray-500">{p}</span>
+                              ))}
+                            </div>
+                          );
+                        }
+
+                        // Regular text
+                        return <p key={li} className="mb-1">{trimmed}</p>;
                       })}
                     </div>
-
-                    {/* Metrics */}
-                    {s.metrics.length > 0 && (
-                      <div className="mt-4 pt-3 border-t border-[var(--border-default)] flex flex-wrap gap-3">
-                        {s.metrics.map((m: any, j: number) => (
-                          <div key={j} className="px-3 py-2 rounded-lg bg-[var(--bg-elevated)] border border-[var(--border-default)]">
-                            <p className="text-[10px] text-[var(--text-muted)] mb-0.5">{m.label}</p>
-                            <p className="text-[14px] font-semibold text-[var(--text-primary)]">{m.value}</p>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-
-                    {/* Structured data for contracts, properties, etc. */}
-                    {s.data?.contracts?.list && s.data.contracts.list.length > 0 && (
-                      <div className="mt-4">
-                        <h4 className="text-[13px] font-semibold text-[var(--text-primary)] mb-2">Contracts ({s.data.contracts.total})</h4>
-                        <div className="overflow-x-auto">
-                          <table className="w-full text-[12px]">
-                            <thead>
-                              <tr className="text-[var(--text-muted)] border-b border-[var(--border-default)]">
-                                <th className="text-left py-2 pr-3">Tenant</th>
-                                <th className="text-right py-2 pr-3">Monthly Rent</th>
-                                <th className="text-right py-2 pr-3">Deposit</th>
-                                <th className="text-left py-2 pr-3">End Date</th>
-                                <th className="text-left py-2">Status</th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {s.data.contracts.list.map((c: any, ci: number) => (
-                                <tr key={ci} className="border-b border-[var(--border-default)]/50 hover:bg-[var(--bg-hover)]">
-                                  <td className="py-2 pr-3 font-medium text-[var(--text-primary)]">{c.tenant}</td>
-                                  <td className="py-2 pr-3 text-right">{(c.monthly_rent || 0).toLocaleString()} KRW</td>
-                                  <td className="py-2 pr-3 text-right">{(c.deposit || 0).toLocaleString()} KRW</td>
-                                  <td className="py-2 pr-3 text-[var(--text-muted)]">{c.end_date}</td>
-                                  <td className="py-2"><Badge text={c.status || "active"} /></td>
-                                </tr>
-                              ))}
-                            </tbody>
-                          </table>
-                        </div>
-                      </div>
-                    )}
-
-                    {s.data?.expiring_leases?.list && s.data.expiring_leases.list.length > 0 && (
-                      <div className="mt-4">
-                        <h4 className="text-[13px] font-semibold text-[var(--error)] mb-2">Expiring Leases ({s.data.expiring_leases.total})</h4>
-                        <div className="space-y-1">
-                          {s.data.expiring_leases.list.map((e: any, ei: number) => (
-                            <div key={ei} className="flex items-center justify-between py-1.5 px-2 rounded hover:bg-[var(--bg-hover)] text-[12px]">
-                              <span className="font-medium text-[var(--text-primary)]">{e.tenant}</span>
-                              <div className="flex items-center gap-4">
-                                <span className="text-[var(--text-muted)]">{(e.monthly_rent || 0).toLocaleString()} KRW/mo</span>
-                                <span className="text-[var(--error)] font-medium">expires {e.end_date}</span>
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    )}
                   </div>
-                </div>
-              ))}
+                );
+              })}
 
-              {/* Trace References */}
+              {/* Trace references */}
               {detail.content?.trace_references?.length > 0 && (
-                <div className="p-4 rounded-lg border border-[var(--border-default)]">
-                  <h3 className="text-[13px] font-semibold text-[var(--text-primary)] mb-2">Trace References</h3>
+                <div className="mt-6 pt-4 border-t border-gray-100">
+                  <h2 className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider mb-2">Trace References</h2>
                   <div className="flex flex-wrap gap-2">
-                    {detail.content.trace_references.slice(0, 12).map((t: string) => (
-                      <span key={t} className="text-[11px] px-2 py-1 bg-[var(--bg-elevated)] rounded font-mono text-[var(--text-muted)]">{t}</span>
+                    {detail.content.trace_references.slice(0, 10).map((t: string) => (
+                      <code key={t} className="text-[11px] px-2 py-1 bg-gray-50 rounded text-gray-500 border border-gray-100">{t}</code>
                     ))}
                   </div>
                 </div>
               )}
 
-              {/* Report metadata */}
-              <div className="text-[11px] text-[var(--text-muted)] flex items-center gap-4 pt-2 border-t border-[var(--border-default)]">
-                <span>Report ID: {detail.id}</span>
-                <span>Source runs: {detail.source_run_ids?.length || 0}</span>
-                <span>Channel: {detail.delivery_channel || "web"}</span>
-                <a href={`${API}/reports/${detail.id}/markdown`} target="_blank" rel="noreferrer" className="text-purple-500 hover:underline ml-auto">View Raw Markdown</a>
+              {/* Footer */}
+              <div className="mt-8 pt-4 border-t border-gray-200 text-[11px] text-gray-400 flex items-center justify-between">
+                <span>VIP Agent Platform | Report ID: {detail.id?.slice(0, 8)}</span>
+                <a href={`${API}/reports/${detail.id}/markdown`} target="_blank" rel="noreferrer" className="text-purple-500 hover:underline">Raw Markdown</a>
               </div>
             </div>
           </div>
