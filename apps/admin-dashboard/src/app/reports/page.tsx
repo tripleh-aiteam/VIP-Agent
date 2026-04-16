@@ -13,6 +13,7 @@ export default function ReportsPage() {
   const [composing, setComposing] = useState(false);
   const [detail, setDetail] = useState<any>(null);
   const [activeType, setActiveType] = useState<string>("all");
+  const [copied, setCopied] = useState(false);
 
   const load = () => api<any[]>("/reports/").then(setReports).catch(() => {});
   useEffect(() => { load(); const i = setInterval(load, 10000); return () => clearInterval(i); }, []);
@@ -196,9 +197,49 @@ export default function ReportsPage() {
                   </div>
                 )}
 
-                <div className="pt-2 border-t border-[var(--border-default)] flex gap-3">
-                  <a href={`${API}/reports/${detail.id}/markdown`} target="_blank" rel="noreferrer" className="text-[10px] text-purple-400 hover:underline">Markdown</a>
-                  <a href={`${API}/reports/${detail.id}`} target="_blank" rel="noreferrer" className="text-[10px] text-blue-400 hover:underline">JSON</a>
+                <div className="pt-2 border-t border-[var(--border-default)] flex flex-wrap gap-2">
+                  <button
+                    onClick={() => {
+                      const md = detail.content?.markdown || detail.content?.executive_summary || "";
+                      navigator.clipboard.writeText(md);
+                      setCopied(true);
+                      setTimeout(() => setCopied(false), 2000);
+                    }}
+                    className="px-3 py-1.5 text-[11px] rounded bg-[var(--bg-elevated)] hover:bg-[var(--bg-hover)] border border-[var(--border-default)] text-[var(--text-primary)] font-medium">
+                    {copied ? "Copied!" : "Copy Report"}
+                  </button>
+                  <button
+                    onClick={() => {
+                      const md = detail.content?.markdown || JSON.stringify(detail.content, null, 2);
+                      const blob = new Blob([md], { type: "text/markdown" });
+                      const url = URL.createObjectURL(blob);
+                      const a = document.createElement("a");
+                      a.href = url;
+                      a.download = `report-${detail.report_type}-${detail.id.slice(0, 8)}.md`;
+                      a.click();
+                      URL.revokeObjectURL(url);
+                    }}
+                    className="px-3 py-1.5 text-[11px] rounded bg-[var(--bg-elevated)] hover:bg-[var(--bg-hover)] border border-[var(--border-default)] text-[var(--text-primary)] font-medium">
+                    Download .md
+                  </button>
+                  <button
+                    onClick={() => {
+                      const jsonStr = JSON.stringify(detail.content, null, 2);
+                      const blob = new Blob([jsonStr], { type: "application/json" });
+                      const url = URL.createObjectURL(blob);
+                      const a = document.createElement("a");
+                      a.href = url;
+                      a.download = `report-${detail.report_type}-${detail.id.slice(0, 8)}.json`;
+                      a.click();
+                      URL.revokeObjectURL(url);
+                    }}
+                    className="px-3 py-1.5 text-[11px] rounded bg-[var(--bg-elevated)] hover:bg-[var(--bg-hover)] border border-[var(--border-default)] text-[var(--text-primary)] font-medium">
+                    Download .json
+                  </button>
+                  <a href={`${API}/reports/${detail.id}/markdown`} target="_blank" rel="noreferrer"
+                    className="px-3 py-1.5 text-[11px] rounded bg-[var(--bg-elevated)] hover:bg-[var(--bg-hover)] border border-[var(--border-default)] text-purple-500 font-medium">
+                    View Raw
+                  </a>
                 </div>
               </div>
             </div>
