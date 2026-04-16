@@ -88,70 +88,127 @@ def _execute_report_job(rule_name: str, report_type: str, hours_back: int = 24):
         db.close()
 
 
-def _auto_daily_report():
+def _auto_daily_reports():
     """
-    Automatic daily report pipeline:
-    1. Fetch fresh data from all agents (asset, stock)
-    2. Compose a daily report from all task runs in the last 24h
-    3. Send summary to Telegram admins
+    Automatic daily report pipeline — runs at 8 AM KST (23:00 UTC previous day).
+    Sends one report PER AGENT + one combined daily report.
+    Each report goes to both Dashboard and Telegram.
     """
     from services.task_service import create_task, dispatch_task
     from services.report_service import compose_report
     from services.telegram_service import send_alert
 
-    db = SessionLocal()
-    trace_id = f"tr-auto-daily-{int(datetime.utcnow().timestamp())}"
+    # All agents that should produce daily reports
+    AGENT_REPORTS = [
+        {"task_type": "asset_summary", "agent_type": "asset", "name": "Asset Agent", "emoji": "🏢"},
+        {"task_type": "stock_analysis", "agent_type": "stock", "name": "Stock Agent", "emoji": "📈"},
+        {"task_type": "realty_listing_fetch", "agent_type": "realty", "name": "Real Estate Agent", "emoji": "🏠"},
+    ]
 
-    log.info("auto-report: starting daily pipeline", extra={"trace_id": trace_id, "action": "auto_report.daily.start"})
+    db = SessionLocal()
+    base_trace = f"tr-auto-daily-{int(datetime.utcnow().timestamp())}"
+
+    log.info("auto-report: starting daily pipeline (3 agents + combined)", extra={"trace_id": base_trace, "action": "auto_report.daily.start"})
+
+    agent_results = []
 
     try:
-        # Step 1: Fetch fresh data from agents
-        agent_tasks = [
-            {"task_type": "asset_summary", "agent_type": "asset"},
-            {"task_type": "stock_analysis", "agent_type": "stock"},
-        ]
-
-        for task_info in agent_tasks:
+        # Step 1: Fetch fresh data from EACH agent and send individual Telegram report
+        for agent_info in AGENT_REPORTS:
+            trace_id = f"{base_trace}-{agent_info['agent_type']}"
             try:
                 run = create_task(
                     db=db, trace_id=trace_id,
-                    task_type=task_info["task_type"],
-                    target_agent_type=task_info["agent_type"],
+                    task_type=agent_info["task_type"],
+                    target_agent_type=agent_info["agent_type"],
                     initiator_type="system_scheduler",
                     initiator_id="auto-daily-report",
                     source_channel="scheduler",
                     input_payload={"auto_report": True},
                 )
-                dispatch_task(db, run.id)
-                log.info(f"auto-report: dispatched {task_info['task_type']}", extra={"trace_id": trace_id, "action": "auto_report.task"})
+                run = dispatch_task(db, run.id)
+
+                # Build per-agent Telegram message
+                output = run.output_payload or {}
+                status_icon = "✅" if run.status == "completed" else "❌"
+
+                telegram_lines = [
+                    f"{agent_info['emoji']} <b>{agent_info['name']} — Daily Report</b>",
+                    "",
+                ]
+
+                if run.status == "completed" and output:
+                    # Extract key metrics per agent type
+                    if agent_info["agent_type"] == "asset":
+                        portfolio = output.get("portfolio", {})
+                        contracts = output.get("contracts", {})
+                        telegram_lines.append(f"Properties: {portfolio.get('total_properties', 0)}")
+                        telegram_lines.append(f"Occupancy: {100 - portfolio.get('vacancy_rate', 0):.1f}%")
+                        telegram_lines.append(f"Contracts: {contracts.get('total', 0)}")
+                        telegram_lines.append(f"Cash Balance: {output.get('cash', {}).get('total_balance', 0):,.0f} KRW")
+                        telegram_lines.append(f"Risk: {output.get('risk_level', 'N/A')}")
+                    elif agent_info["agent_type"] == "stock":
+                        telegram_lines.append(f"Stocks Analyzed: {output.get('symbols_analyzed', output.get('news_count', 'N/A'))}")
+                        telegram_lines.append(f"Sentiment: {output.get('market_sentiment', 'N/A')}")
+                        telegram_lines.append(f"Risk Score: {output.get('risk_score', 'N/A')}")
+                    elif agent_info["agent_type"] == "realty":
+                        telegram_lines.append(f"Listings: {output.get('total_listings', 0)}")
+                        telegram_lines.append(f"Avg Vacancy: {output.get('avg_vacancy_pct', 0)}%")
+                        telegram_lines.append(f"Avg Yield: {output.get('avg_yield_pct', 0)}%")
+                        telegram_lines.append(f"Trend: {output.get('market_trend', 'N/A')}")
+                else:
+                    telegram_lines.append(f"Status: {run.status}")
+                    if run.error_message:
+                        telegram_lines.append(f"Error: {run.error_message[:100]}")
+
+                telegram_lines.append(f"\n{status_icon} Status: {run.status}")
+                telegram_lines.append(f"<code>{trace_id}</code>")
+
+                send_alert("\n".join(telegram_lines))
+                agent_results.append({"agent": agent_info["name"], "status": run.status})
+
+                log.info(f"auto-report: {agent_info['name']} done -> {run.status}", extra={"trace_id": trace_id, "action": "auto_report.agent"})
+
             except Exception as e:
-                log.warning(f"auto-report: {task_info['task_type']} failed: {e}", extra={"action": "auto_report.task.failed"})
+                agent_results.append({"agent": agent_info["name"], "status": "failed", "error": str(e)})
+                log.warning(f"auto-report: {agent_info['name']} failed: {e}", extra={"action": "auto_report.agent.failed"})
 
-        # Step 2: Compose report from all recent runs
-        report = compose_report(db, report_type="daily_summary", hours_back=24, trace_id=trace_id)
+        # Step 2: Compose combined daily report
+        report = compose_report(db, report_type="daily_summary", hours_back=24, trace_id=base_trace)
 
-        # Step 3: Send to Telegram
-        summary = report.get("executive_summary", "Daily report generated.")
-        telegram_text = (
-            f"<b>Daily Report</b>\n\n"
-            f"{summary[:500]}\n\n"
-            f"<i>View full report on dashboard</i>"
-        )
-        send_alert(telegram_text)
+        # Step 3: Send combined summary to Telegram
+        completed = len([r for r in agent_results if r["status"] == "completed"])
+        total = len(agent_results)
 
-        log.info("auto-report: daily pipeline completed", extra={"trace_id": trace_id, "action": "auto_report.daily.done"})
+        combined_lines = [
+            f"📊 <b>VIP Daily Summary</b>",
+            f"",
+            f"Agents: {completed}/{total} reported successfully",
+        ]
+        for r in agent_results:
+            icon = "✅" if r["status"] == "completed" else "❌"
+            combined_lines.append(f"  {icon} {r['agent']}: {r['status']}")
+
+        summary = report.get("executive_summary", "")
+        if summary:
+            combined_lines.append(f"\n{summary[:300]}")
+
+        combined_lines.append(f"\n<i>Full report on dashboard</i>")
+
+        send_alert("\n".join(combined_lines))
+
+        log.info(f"auto-report: daily pipeline completed ({completed}/{total} agents)", extra={"trace_id": base_trace, "action": "auto_report.daily.done"})
 
     except Exception as e:
-        log.warning(f"auto-report: daily pipeline failed: {e}", extra={"trace_id": trace_id, "action": "auto_report.daily.failed"})
+        log.warning(f"auto-report: daily pipeline failed: {e}", extra={"trace_id": base_trace, "action": "auto_report.daily.failed"})
     finally:
         db.close()
 
 
 def _auto_weekly_report():
     """
-    Automatic weekly report pipeline:
-    1. Compose a weekly report from all task runs in the last 7 days
-    2. Send summary to Telegram admins
+    Automatic weekly report — runs every Friday 6:30 PM KST (09:30 UTC).
+    Composes from last 7 days + sends to Telegram.
     """
     from services.report_service import compose_report
     from services.telegram_service import send_alert
@@ -165,12 +222,23 @@ def _auto_weekly_report():
         report = compose_report(db, report_type="weekly_summary", hours_back=168, trace_id=trace_id)
 
         summary = report.get("executive_summary", "Weekly report generated.")
-        telegram_text = (
-            f"<b>Weekly Report</b>\n\n"
-            f"{summary[:500]}\n\n"
-            f"<i>View full report on dashboard</i>"
-        )
-        send_alert(telegram_text)
+        sections = report.get("sections", [])
+
+        telegram_lines = [
+            f"📋 <b>VIP Weekly Report</b>",
+            f"<i>Week ending {datetime.utcnow().strftime('%Y-%m-%d')}</i>",
+            "",
+        ]
+
+        for s in sections:
+            if s.get("content") and "No" not in s["content"][:5]:
+                telegram_lines.append(f"<b>{s['title']}</b>")
+                telegram_lines.append(f"{s['content'][:150]}")
+                telegram_lines.append("")
+
+        telegram_lines.append(f"\n<i>Full report on dashboard</i>")
+
+        send_alert("\n".join(telegram_lines))
 
         log.info("auto-report: weekly pipeline completed", extra={"trace_id": trace_id, "action": "auto_report.weekly.done"})
 
@@ -254,23 +322,24 @@ def init_scheduler():
     )
     log.info("scheduler: health check registered (every 5 min)", extra={"action": "scheduler.health_registered"})
 
-    # Auto daily report — every day at 7 PM (19:00 UTC)
+    # Auto daily reports — 8:00 AM KST = 23:00 UTC (previous day)
+    # Sends 3 individual agent reports + 1 combined summary
     _scheduler.add_job(
-        _auto_daily_report,
-        CronTrigger.from_crontab("0 19 * * *"),
-        id="auto-daily-report",
+        _auto_daily_reports,
+        CronTrigger.from_crontab("0 23 * * *"),
+        id="auto-daily-reports",
         replace_existing=True,
     )
-    log.info("scheduler: auto daily report registered (19:00 UTC daily)", extra={"action": "scheduler.auto_daily_registered"})
+    log.info("scheduler: auto daily reports registered (23:00 UTC = 8:00 AM KST)", extra={"action": "scheduler.auto_daily_registered"})
 
-    # Auto weekly report — every Friday at 6 PM (18:00 UTC)
+    # Auto weekly report — Friday 6:30 PM KST = 09:30 UTC Friday
     _scheduler.add_job(
         _auto_weekly_report,
-        CronTrigger.from_crontab("0 18 * * 5"),
+        CronTrigger.from_crontab("30 9 * * 5"),
         id="auto-weekly-report",
         replace_existing=True,
     )
-    log.info("scheduler: auto weekly report registered (Friday 18:00 UTC)", extra={"action": "scheduler.auto_weekly_registered"})
+    log.info("scheduler: auto weekly report registered (09:30 UTC Friday = 18:30 KST Friday)", extra={"action": "scheduler.auto_weekly_registered"})
 
     _scheduler.start()
     log.info("scheduler: started", extra={"action": "scheduler.started"})
