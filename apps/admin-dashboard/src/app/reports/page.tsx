@@ -19,7 +19,15 @@ export default function ReportsPage() {
 
   const compose = async (type: string) => {
     setComposing(true);
-    await apiPost(`/reports/compose/${type}`, { hours_back: 48 });
+    if (type === "cross-agent") {
+      await apiPost("/reports/compose/cross-agent", {
+        agent_types: ["asset", "stock"],
+        report_type: "cross_agent_summary",
+        trace_id: `tr-report-${Date.now()}`,
+      });
+    } else {
+      await apiPost(`/reports/compose/${type}`, { hours_back: 48 });
+    }
     load();
     setComposing(false);
   };
@@ -32,16 +40,19 @@ export default function ReportsPage() {
   const dailyReports = reports.filter((r) => r.report_type === "daily_summary");
   const weeklyReports = reports.filter((r) => r.report_type === "weekly_summary");
   const alertReports = reports.filter((r) => r.report_type === "urgent_alert_summary");
+  const crossAgentReports = reports.filter((r) => r.report_type === "cross_agent_summary");
 
   const filteredReports = activeType === "all" ? reports
     : activeType === "daily" ? dailyReports
     : activeType === "weekly" ? weeklyReports
+    : activeType === "cross" ? crossAgentReports
     : alertReports;
 
   const typeConfig: Record<string, { label: string; color: string; bg: string; border: string }> = {
     daily_summary: { label: "Daily", color: "text-blue-400", bg: "bg-blue-900/20", border: "border-blue-800/40" },
     weekly_summary: { label: "Weekly", color: "text-green-400", bg: "bg-green-900/20", border: "border-green-800/40" },
     urgent_alert_summary: { label: "Alert", color: "text-red-400", bg: "bg-red-900/20", border: "border-red-800/40" },
+    cross_agent_summary: { label: "Cross-Agent", color: "text-purple-400", bg: "bg-purple-900/20", border: "border-purple-800/40" },
   };
 
   return (
@@ -52,7 +63,7 @@ export default function ReportsPage() {
           <p className="text-sm text-[var(--text-muted)]">Executive summaries and alerts</p>
         </div>
         <div className="flex gap-2">
-          {["daily", "weekly", "alert"].map((t) => (
+          {["daily", "weekly", "alert", "cross-agent"].map((t) => (
             <button key={t} onClick={() => compose(t)} disabled={composing}
               className="px-4 py-2 rounded bg-[var(--text-primary)] hover:bg-[var(--text-secondary)] text-white text-xs font-semibold transition-colors disabled:opacity-50 capitalize">
               {composing ? "..." : `Compose ${t}`}
@@ -72,10 +83,11 @@ export default function ReportsPage() {
       </div>
 
       {/* Stats */}
-      <div className="grid grid-cols-3 gap-4 mb-6">
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
         <StatCard label="Daily Reports" value={dailyReports.length} color="blue" sub={dailyReports[0] ? `Latest: ${new Date(dailyReports[0].created_at).toLocaleDateString()}` : "None yet"} />
         <StatCard label="Weekly Reports" value={weeklyReports.length} color="green" sub={weeklyReports[0] ? `Latest: ${new Date(weeklyReports[0].created_at).toLocaleDateString()}` : "None yet"} />
         <StatCard label="Urgent Alerts" value={alertReports.length} color="red" sub={alertReports[0] ? `Latest: ${new Date(alertReports[0].created_at).toLocaleDateString()}` : "None yet"} />
+        <StatCard label="Cross-Agent" value={crossAgentReports.length} color="purple" sub={crossAgentReports[0] ? `Latest: ${new Date(crossAgentReports[0].created_at).toLocaleDateString()}` : "None yet"} />
       </div>
 
       {/* Filter Tabs */}
@@ -85,6 +97,7 @@ export default function ReportsPage() {
           { key: "daily", label: `Daily (${dailyReports.length})` },
           { key: "weekly", label: `Weekly (${weeklyReports.length})` },
           { key: "alert", label: `Alerts (${alertReports.length})` },
+          { key: "cross", label: `Cross-Agent (${crossAgentReports.length})` },
         ].map((f) => (
           <button
             key={f.key}
