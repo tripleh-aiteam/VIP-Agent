@@ -27,6 +27,7 @@ from routers.aiglass import router as aiglass_router
 from routers.chat import router as chat_router
 from routers.demo import router as demo_router
 from routers.schedules import router as schedules_router
+from routers.users import router as users_router
 from services.scheduler_service import init_scheduler
 from services.event_bus import init_event_bus
 from services.a2a_triggers import init_triggers
@@ -88,6 +89,7 @@ app.include_router(telegram_router)
 app.include_router(aiglass_router)
 app.include_router(chat_router)
 app.include_router(demo_router)
+app.include_router(users_router)
 app.include_router(contracts_router)
 
 

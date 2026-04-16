@@ -28,6 +28,41 @@ def _now():
 
 
 # ===========================================================================
+#  PLATFORM USERS domain
+# ===========================================================================
+
+class PlatformUser(Base):
+    __tablename__ = "platform_users"
+
+    id = _uuid()
+    email = Column(String(255), unique=True, nullable=False)
+    name = Column(String(120), nullable=False)
+    role = Column(String(30), default="viewer")           # admin | operator | viewer
+    org_id = Column(String(120), default="default")
+    status = Column(String(20), default="active")         # active | inactive | suspended
+    preferences_json = Column(JSONB, default=dict)        # notification prefs, timezone, etc.
+    telegram_user_id = Column(String(60))                 # linked telegram account
+    last_login_at = Column(DateTime)
+    created_at = _now()
+
+
+class PlatformNotification(Base):
+    __tablename__ = "platform_notifications"
+
+    id = _uuid()
+    user_id = Column(UUID(as_uuid=True), ForeignKey("platform_users.id"))
+    title = Column(String(255), nullable=False)
+    body = Column(Text)
+    severity = Column(String(20), default="info")         # info | warning | critical
+    notification_type = Column(String(60))                # risk_alert | report | workflow | a2a
+    source_trace_id = Column(String(64))
+    is_read = Column(Boolean, default=False)
+    created_at = _now()
+
+    user = relationship("PlatformUser")
+
+
+# ===========================================================================
 #  CORE domain
 # ===========================================================================
 

@@ -120,9 +120,10 @@ def _store_dashboard_notification(
     severity: str = "info",
     metadata: dict | None = None,
 ):
-    """Store a notification in the audit log for dashboard polling."""
+    """Store a notification in audit log + platform_notifications for bell."""
     db = SessionLocal()
     try:
+        # Audit log (existing)
         event = AuditEventLog(
             source="a2a_notification",
             event_type=f"notification.{notification_type}",
@@ -137,6 +138,14 @@ def _store_dashboard_notification(
             },
         )
         db.add(event)
+
+        # Platform notification (for bell badge)
+        from services.user_service import create_notification
+        create_notification(
+            db, title=title, body=body, severity=severity,
+            notification_type=notification_type, trace_id=trace_id,
+        )
+
         db.commit()
     except Exception as e:
         log.warning(f"notification: failed to store dashboard notification: {e}")
