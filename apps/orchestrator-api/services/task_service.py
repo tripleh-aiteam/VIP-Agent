@@ -8,6 +8,7 @@ Status flow: pending -> dispatched -> running -> completed / failed / review_req
 from datetime import datetime
 from uuid import UUID
 from typing import Any
+import time
 
 import sys
 import os
@@ -20,6 +21,54 @@ from services.agent_service import resolve_agent
 from services.audit_service import record_event
 from services.logger import log
 from adapters import get_adapter
+
+
+# ---------------------------------------------------------------------------
+# Retry & Circuit Breaker Config
+# ---------------------------------------------------------------------------
+
+MAX_RETRIES = 3
+RETRY_BACKOFF_SECONDS = [1, 3, 5]  # wait between retries
+
+# Circuit breaker: track consecutive failures per agent
+_agent_failures: dict[str, int] = {}  # agent_id -> consecutive failure count
+CIRCUIT_BREAKER_THRESHOLD = 3  # failures before tripping
+CIRCUIT_BREAKER_COOLDOWN = 300  # seconds before trying again
+
+
+_agent_tripped_at: dict[str, float] = {}  # agent_id -> timestamp when circuit tripped
+
+
+def _is_circuit_open(agent_id: str) -> bool:
+    """Check if circuit breaker is tripped for an agent."""
+    if agent_id not in _agent_failures:
+        return False
+    if _agent_failures[agent_id] < CIRCUIT_BREAKER_THRESHOLD:
+        return False
+    # Check cooldown
+    tripped_at = _agent_tripped_at.get(agent_id, 0)
+    if time.time() - tripped_at > CIRCUIT_BREAKER_COOLDOWN:
+        # Cooldown expired — reset and allow retry
+        _agent_failures[agent_id] = 0
+        log.info(f"circuit breaker: reset for {agent_id} after cooldown", extra={"action": "circuit_breaker.reset"})
+        return False
+    return True
+
+
+def _record_agent_success(agent_id: str):
+    """Reset failure count on success."""
+    _agent_failures[agent_id] = 0
+
+
+def _record_agent_failure(agent_id: str):
+    """Increment failure count. Trip circuit if threshold reached."""
+    _agent_failures[agent_id] = _agent_failures.get(agent_id, 0) + 1
+    if _agent_failures[agent_id] >= CIRCUIT_BREAKER_THRESHOLD:
+        _agent_tripped_at[agent_id] = time.time()
+        log.warning(
+            f"circuit breaker: TRIPPED for {agent_id} after {_agent_failures[agent_id]} failures",
+            extra={"action": "circuit_breaker.tripped"},
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -128,15 +177,48 @@ def dispatch_task(db: Session, task_run_id: UUID) -> OrchTaskRun:
         auth_type=agent.auth_type,
     )
 
+    # Check circuit breaker
+    agent_key = str(agent.id)
+    if _is_circuit_open(agent_key):
+        run.status = "failed"
+        run.error_message = f"Circuit breaker open: {agent.name} has failed {CIRCUIT_BREAKER_THRESHOLD}+ times. Cooldown {CIRCUIT_BREAKER_COOLDOWN}s."
+        run.finished_at = datetime.utcnow()
+        record_event(db, "orchestrator", "task.circuit_breaker", run.trace_id, {
+            "task_run_id": str(run.id), "agent": agent.name,
+        })
+        log.warning(f"circuit breaker: skipping {agent.name}", extra={"trace_id": run.trace_id, "action": "dispatch.circuit_breaker"})
+        db.commit()
+        return run
+
     if agent.endpoint_url:
-        result = adapter.execute(
-            task_run_id=str(run.id),
-            trace_id=run.trace_id,
-            task_type=task_type,
-            input_payload=run.input_payload or {},
-        )
+        # Retry loop
+        result = None
+        attempts = 0
+        for attempt in range(MAX_RETRIES):
+            attempts = attempt + 1
+            result = adapter.execute(
+                task_run_id=str(run.id),
+                trace_id=run.trace_id,
+                task_type=task_type,
+                input_payload=run.input_payload or {},
+            )
+            if result.success:
+                break
+            # Don't retry if it's a clear application error (not a connection issue)
+            if result.error_message and "offline" not in result.error_message and "Timeout" not in result.error_message and "Connection" not in (result.error_message or ""):
+                break
+            if attempt < MAX_RETRIES - 1:
+                wait = RETRY_BACKOFF_SECONDS[attempt] if attempt < len(RETRY_BACKOFF_SECONDS) else 5
+                log.info(f"retry {attempt + 1}/{MAX_RETRIES}: {agent.name} — waiting {wait}s", extra={"trace_id": run.trace_id, "action": "dispatch.retry"})
+                time.sleep(wait)
+
+        if attempts > 1:
+            record_event(db, "orchestrator", "task.retried", run.trace_id, {
+                "task_run_id": str(run.id), "agent": agent.name, "attempts": attempts, "success": result.success,
+            })
 
         if result.success:
+            _record_agent_success(agent_key)
             run.output_payload = result.output_payload
 
             # Auto-route through judgement if required
@@ -176,6 +258,7 @@ def dispatch_task(db: Session, task_run_id: UUID) -> OrchTaskRun:
                 extra={"trace_id": run.trace_id, "task_id": str(run.id), "agent": agent.name, "action": "dispatch.adapter.success"},
             )
         elif result.status == "failed" and "offline" in (result.error_message or ""):
+            _record_agent_failure(agent_key)
             # Agent offline — fallback for mock agents
             if agent.is_mock:
                 run.status = "completed"
@@ -188,16 +271,18 @@ def dispatch_task(db: Session, task_run_id: UUID) -> OrchTaskRun:
                 log.info(f"mock fallback: {agent.name}", extra={"trace_id": run.trace_id, "action": "dispatch.mock_fallback"})
             else:
                 run.status = "failed"
-                run.error_message = result.error_message
+                run.error_message = f"[{attempts} attempts] {result.error_message}"
                 run.finished_at = datetime.utcnow()
         else:
+            _record_agent_failure(agent_key)
             run.status = "failed"
-            run.error_message = result.error_message
+            run.error_message = f"[{attempts} attempts] {result.error_message}"
             run.finished_at = datetime.utcnow()
             record_event(db, "orchestrator", "task.failed", run.trace_id, {
                 "task_run_id": str(run.id),
                 "agent": agent.name,
                 "error": result.error_message,
+                "attempts": attempts,
             })
     else:
         # No endpoint — immediate mock completion
