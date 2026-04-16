@@ -4,7 +4,7 @@ Core supervisor service that coordinates all sub-agents and workflows.
 All DB writes go through this service — gateway/OpenClaw must never write directly.
 """
 
-from fastapi import FastAPI, Depends
+from fastapi import FastAPI, Depends, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 from sqlalchemy import text
@@ -31,6 +31,7 @@ from services.scheduler_service import init_scheduler
 from services.event_bus import init_event_bus
 from services.a2a_triggers import init_triggers
 from services.a2a_notifications import init_a2a_notifications
+from services.ws_manager import ws_manager
 
 
 @asynccontextmanager
@@ -39,6 +40,14 @@ async def lifespan(app: FastAPI):
     init_event_bus(os.getenv("REDIS_URL", "redis://localhost:6379/0"))
     init_triggers()
     init_a2a_notifications()
+
+    # Wire event bus → WebSocket broadcast
+    from services.event_bus import subscribe
+    subscribe("*", lambda msg: ws_manager.broadcast_sync(
+        msg.get("channel", "event"),
+        {k: v for k, v in msg.items() if k != "channel"},
+    ))
+
     init_scheduler()
     app.state.redis = aioredis.from_url(
         os.getenv("REDIS_URL", "redis://localhost:6379/0")
@@ -104,6 +113,7 @@ def health(db: Session = Depends(get_db)):
         "status": "ok" if db_status == "connected" else "degraded",
         "database": db_status,
         "redis": "configured",
+        "websocket_clients": ws_manager.client_count,
         "version": "0.2.0",
     }
 
@@ -119,6 +129,21 @@ def health_db(db: Session = Depends(get_db)):
         return {"status": "connected", "ping": result == 1, "tables": table_count}
     except Exception as e:
         return {"status": "error", "detail": str(e)}
+
+
+# ---------------------------------------------------------------------------
+#  WebSocket — real-time push to dashboard
+# ---------------------------------------------------------------------------
+
+@app.websocket("/ws")
+async def websocket_endpoint(ws: WebSocket):
+    await ws_manager.connect(ws)
+    try:
+        while True:
+            # Keep connection alive, receive pings
+            await ws.receive_text()
+    except WebSocketDisconnect:
+        ws_manager.disconnect(ws)
 
 
 @app.get("/channels", tags=["channels"])
