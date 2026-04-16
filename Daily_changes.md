@@ -117,6 +117,19 @@
 - Chat sidebar hidden on mobile (full chat area)
 - Folder creation modal responsive (90vw max-width)
 - Stats grid 2 columns on mobile, 4 on desktop
+- VIP AGENT title clickable — links to home page
+- Build fix: TypeScript Set iteration errors resolved
+
+### Stock Agent Connected
+- Real stock adapter built (no auth needed)
+- Pulls: market news, watchlist, volume spikes, foreign flow, futures, geopolitical
+- Formatted report with sections
+- Portal URL: https://stock-analysis-crew.vercel.app
+- Backend URL: https://stock-advisor-agent-9qwi.onrender.com
+
+### Real Estate Agent Portal
+- Portal URL linked: https://real-estate-dashboard-steel.vercel.app
+- Backend API not available yet (returns HTML) — needs colleague to check
 
 ---
 
