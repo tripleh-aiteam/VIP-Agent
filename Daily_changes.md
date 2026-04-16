@@ -254,7 +254,20 @@
 - View Raw: opens markdown endpoint in new tab
 - **File**: apps/admin-dashboard/src/app/reports/page.tsx
 
-### Orchestration Progress: 75% → ~88%
+**Report Detail Redesign**
+- Click report → two buttons: Summary View (inline cards) and Detailed View (full-screen)
+- Detailed View: white document-style modal (800px), clean typography
+- Smart content rendering: key-value pairs, bullet points, pipe-separated columns
+- Section dividers (━━━) hidden, proper paragraph formatting
+- Copy / Download .md / Download .json in toolbar
+
+**Automatic Report Generation**
+- Daily auto-report at 7 PM UTC: fetches Asset+Stock data → composes report → sends to Telegram
+- Weekly auto-report every Friday 6 PM UTC: composes from last 7 days → sends to Telegram
+- Full pipeline: dispatch agents → collect results → compose report → Telegram notification
+- No manual clicking needed — reports arrive automatically
+
+### Orchestration Progress: 75% → ~90%
 
 ---
 
