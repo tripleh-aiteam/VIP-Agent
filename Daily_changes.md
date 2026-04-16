@@ -131,6 +131,85 @@
 - Portal URL linked: https://real-estate-dashboard-steel.vercel.app
 - Backend API not available yet (returns HTML) — needs colleague to check
 
+### A2A Task 1: Replace Mock Agent Names with Real Names
+- Replaced all `mock-asset-agent` → `Asset Agent`
+- Replaced all `mock-stock-agent` → `Stock Agent`
+- Replaced all `mock-realty-agent` → `Real Estate Agent`
+- **13 files updated**: contracts (a2a, ai_glass, generate_schemas, judgement, task), db/seed, routers (a2a, aiglass, demo, judgement), services (cross_agent_service, judgement_engine), tests
+- Zero mock references remaining — verified with grep
+- A2A progress: 20% → 25%
+
+### A2A Task 2: Build A2A Webhook on VIP Orchestrator
+- `POST /a2a/webhook` — agents send A2A messages (alerts, replies, data) back to orchestrator
+- `POST /a2a/webhook/{agent_type}/data` — typed data push from specific agent types
+- `receive_webhook()` in a2a_service: validates sender, persists, publishes to event bus, audit logs
+- `receive_agent_data()` in a2a_service: finds agent by type, stores inbound data, publishes events
+- Reply linking: `in_reply_to` field links response to original outbound message, marks it "delivered"
+- High-risk detection: risk_alert and escalation_request flagged automatically
+- Event bus channels: `a2a.inbound.{type}`, `a2a.from.{agent}`, `a2a.agent_data.{type}`
+- **Files**: routers/a2a.py, services/a2a_service.py
+- A2A progress: 25% → 35%
+
+### A2A Task 3: Cross-Agent Data Request Flow
+- `POST /a2a/request-data` — Agent A requests data from Agent B through orchestrator
+- `request_data_from_agent()` in a2a_service: full flow with real adapter data fetch
+- Flow: send data_request A2A msg → fetch via adapter → store report_response A2A msg → return data
+- Cross-agent workflows now use real data flows (data_request type) instead of notification-only A2A
+- Agent name-to-type mapping helper for adapter routing
+- A2A message chain linking: request_message_id + response_message_id tracked together
+- **Files**: services/a2a_service.py, routers/a2a.py, services/cross_agent_service.py
+- A2A progress: 35% → 45%
+
+### A2A Task 4: Event-Driven Triggers
+- New `services/a2a_triggers.py` with 4 auto-triggers subscribed to event bus
+- Trigger 1: High risk_alert → auto-request portfolio review from Asset Agent
+- Trigger 2: Critical risk_alert → also check realty exposure
+- Trigger 3: Escalation requests → auto-flag for judgement review
+- Trigger 4: Inbound data responses → audit log for dashboard visibility
+- `init_triggers()` called at app startup (wired in main.py lifespan)
+- `GET /a2a/triggers` — view all registered triggers from API/dashboard
+- Trigger count shown in `GET /a2a/status`
+- **Files**: services/a2a_triggers.py (new), routers/a2a.py, main.py
+- A2A progress: 45% → 55%
+
+### A2A Task 7: A2A Response Handling
+- `GET /a2a/messages/{id}/response` — find matching response for a data_request
+- `PATCH /a2a/messages/{id}/status` — update message status (sent→delivered→processed)
+- `GET /a2a/chain/{trace_id}` — full conversation chain with request-response pairing
+- `get_conversation_chain()`: chronological messages, request-response pairs, agents involved
+- `get_response_data()`: smart lookup — finds response for requests, returns data for responses
+- `update_message_status()`: status transitions with audit logging
+- **Files**: services/a2a_service.py, routers/a2a.py
+- A2A progress: 55% → 65%
+
+### A2A Task 8: Combined Cross-Agent Reports
+- `POST /reports/compose/cross-agent` — fetch real-time data from multiple agents and combine
+- `compose_cross_agent_report()`: queries each agent via A2A data request flow
+- Per-agent sections built from real adapter data (asset metrics, stock analysis, realty listings)
+- Cross-agent insights: compares risk levels across asset/stock, diversification analysis
+- Full A2A message chain stored in report for traceability
+- Markdown rendering with executive summary
+- **Files**: services/report_service.py, routers/reports.py
+- A2A progress: 65% → 75%
+
+### A2A Task 10: A2A Notifications (Telegram + Dashboard)
+- New `services/a2a_notifications.py` with 4 notification handlers
+- Telegram alerts: risk_alert (with emoji levels), escalation (with reason), workflow failures
+- Dashboard notifications: stored in audit_event_logs, queryable via `GET /a2a/notifications`
+- Severity filtering: info, warning, critical
+- Formatted HTML messages with agent names, trace IDs, alert levels
+- Cross-agent workflow completion events published for notification triggers
+- `init_a2a_notifications()` called at app startup
+- **Files**: services/a2a_notifications.py (new), routers/a2a.py, main.py, services/cross_agent_service.py
+- A2A progress: 75% → 85%
+
+### A2A Progress Summary (Day 4)
+- **Tasks Done**: 1, 2, 3, 4, 7, 8, 10 (all VIP-side tasks)
+- **Remaining**: Task 5, 6 (need colleague agent webhooks), Task 9 (Redis for real pub/sub)
+- **New Endpoints**: /a2a/webhook, /a2a/webhook/{type}/data, /a2a/request-data, /a2a/triggers, /a2a/notifications, /a2a/chain/{trace_id}, /a2a/messages/{id}/response, /reports/compose/cross-agent
+- **New Services**: a2a_triggers.py, a2a_notifications.py
+- **A2A at 85%** — infrastructure complete, waiting on agent-side webhook integration
+
 ---
 
 ## Live URLs
