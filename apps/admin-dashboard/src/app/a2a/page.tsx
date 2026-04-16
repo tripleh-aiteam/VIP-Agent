@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import React, { useEffect, useState } from "react";
 import { api, apiPost } from "@/components/api";
 import Badge from "@/components/Badge";
 import { AskVIPFloat } from "@/components/AskVIP";
@@ -23,6 +23,7 @@ export default function A2APage() {
   const [reportResult, setReportResult] = useState<any>(null);
   const [dataReqLoading, setDataReqLoading] = useState(false);
   const [dataReqResult, setDataReqResult] = useState<any>(null);
+  const [expandedMsg, setExpandedMsg] = useState<string | null>(null);
 
   const load = () => {
     api<any[]>("/a2a/messages?limit=30").then(setMessages).catch(() => {});
@@ -198,6 +199,7 @@ export default function A2APage() {
             <table className="w-full text-[13px]">
               <thead>
                 <tr className="text-[var(--text-muted)] text-[12px] font-medium border-b border-[var(--border-default)] bg-[var(--bg-elevated)]">
+                  <th className="w-6 px-2"></th>
                   <th className="text-left px-4 py-3">Type</th>
                   <th className="text-left px-4 py-3">Sender</th>
                   <th className="text-left px-4 py-3">Target</th>
@@ -210,21 +212,94 @@ export default function A2APage() {
               <tbody>
                 {messages.map((m: any) => {
                   const isHighRisk = m.envelope?.is_high_risk === true;
+                  const isExpanded = expandedMsg === m.id;
+                  const payload = m.envelope?.payload || {};
+                  const purpose = m.envelope?.purpose || "";
+                  const proofReason = m.envelope?.proof_of_intent?.reason || "";
+
                   return (
-                    <tr key={m.id} className={`border-b border-[var(--border-default)] hover:bg-[var(--bg-hover)] cursor-pointer ${isHighRisk ? "bg-[var(--badge-error-bg)]" : ""}`}
-                      onClick={() => { setChainTrace(m.trace_id); setTab("chain"); }}>
-                      <td className="px-4 py-3"><Badge text={m.message_type} /></td>
-                      <td className="px-4 py-3 text-[var(--brand-blue)] font-medium">{m.sender_agent}</td>
-                      <td className="px-4 py-3 text-[var(--text-primary)]">{m.target_agent}</td>
-                      <td className="px-4 py-3">
-                        {isHighRisk
-                          ? <span className="text-[12px] px-2.5 py-1 rounded-full text-[var(--error)] bg-[var(--badge-error-bg)] font-semibold">HIGH</span>
-                          : <span className="text-[12px] text-[var(--text-muted)]">—</span>}
-                      </td>
-                      <td className="px-4 py-3"><Badge text={m.status} /></td>
-                      <td className="px-4 py-3 text-[var(--text-muted)] font-mono text-[11px]">{m.trace_id}</td>
-                      <td className="px-4 py-3 text-[var(--text-muted)]">{m.created_at ? new Date(m.created_at).toLocaleTimeString() : "-"}</td>
-                    </tr>
+                    <React.Fragment key={m.id}>
+                      <tr className={`border-b border-[var(--border-default)] hover:bg-[var(--bg-hover)] cursor-pointer ${isHighRisk ? "bg-[var(--badge-error-bg)]" : ""} ${isExpanded ? "bg-[var(--bg-elevated)]" : ""}`}
+                        onClick={() => setExpandedMsg(isExpanded ? null : m.id)}>
+                        <td className="px-2 text-center">
+                          <svg className={`w-3.5 h-3.5 text-[var(--text-muted)] transition-transform inline-block ${isExpanded ? "rotate-90" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                          </svg>
+                        </td>
+                        <td className="px-4 py-3"><Badge text={m.message_type} /></td>
+                        <td className="px-4 py-3 text-[var(--brand-blue)] font-medium">{m.sender_agent}</td>
+                        <td className="px-4 py-3 text-[var(--text-primary)]">{m.target_agent}</td>
+                        <td className="px-4 py-3">
+                          {isHighRisk
+                            ? <span className="text-[12px] px-2.5 py-1 rounded-full text-[var(--error)] bg-[var(--badge-error-bg)] font-semibold">HIGH</span>
+                            : <span className="text-[12px] text-[var(--text-muted)]">—</span>}
+                        </td>
+                        <td className="px-4 py-3"><Badge text={m.status} /></td>
+                        <td className="px-4 py-3 text-[var(--text-muted)] font-mono text-[11px]">{m.trace_id}</td>
+                        <td className="px-4 py-3 text-[var(--text-muted)]">{m.created_at ? new Date(m.created_at).toLocaleTimeString() : "-"}</td>
+                      </tr>
+
+                      {/* Expanded detail row */}
+                      {isExpanded && (
+                        <tr>
+                          <td colSpan={8} className="px-6 py-4 bg-[var(--bg-elevated)] border-b border-[var(--border-default)]">
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                              {/* Left: Message content */}
+                              <div>
+                                {proofReason && (
+                                  <div className="mb-3">
+                                    <p className="text-[11px] text-[var(--text-muted)] font-medium mb-1">Reason</p>
+                                    <p className="text-[13px] text-[var(--text-primary)] leading-relaxed bg-[var(--bg-card)] rounded-lg p-3 border border-[var(--border-default)]">
+                                      {proofReason}
+                                    </p>
+                                  </div>
+                                )}
+                                {purpose && (
+                                  <div className="mb-3">
+                                    <p className="text-[11px] text-[var(--text-muted)] font-medium mb-1">Purpose</p>
+                                    <Badge text={purpose} />
+                                  </div>
+                                )}
+                                <div>
+                                  <p className="text-[11px] text-[var(--text-muted)] font-medium mb-1">Payload</p>
+                                  <div className="bg-[var(--bg-card)] rounded-lg p-3 border border-[var(--border-default)] text-[12px] text-[var(--text-secondary)] space-y-1">
+                                    {Object.entries(payload).map(([k, v]) => (
+                                      <div key={k} className="flex gap-2">
+                                        <span className="text-[var(--text-muted)] shrink-0 min-w-[100px]">{k}:</span>
+                                        <span className="text-[var(--text-primary)] font-medium">
+                                          {typeof v === "object" ? JSON.stringify(v) : String(v)}
+                                        </span>
+                                      </div>
+                                    ))}
+                                    {Object.keys(payload).length === 0 && (
+                                      <span className="text-[var(--text-muted)]">No payload data</span>
+                                    )}
+                                  </div>
+                                </div>
+                              </div>
+
+                              {/* Right: Actions */}
+                              <div className="space-y-2">
+                                <div>
+                                  <p className="text-[11px] text-[var(--text-muted)] font-medium mb-1">Message ID</p>
+                                  <code className="text-[11px] text-[var(--text-muted)] bg-[var(--bg-card)] px-2 py-1 rounded border border-[var(--border-default)]">{m.id}</code>
+                                </div>
+                                <div className="flex gap-2 mt-3">
+                                  <button onClick={(e) => { e.stopPropagation(); setChainTrace(m.trace_id); setTab("chain"); }}
+                                    className="px-3 py-1.5 text-[11px] rounded-lg bg-[var(--brand-blue)] text-white font-medium hover:opacity-90">
+                                    View Full Chain
+                                  </button>
+                                  <button onClick={(e) => { e.stopPropagation(); navigator.clipboard.writeText(JSON.stringify(m.envelope, null, 2)); }}
+                                    className="px-3 py-1.5 text-[11px] rounded-lg bg-[var(--bg-card)] border border-[var(--border-default)] text-[var(--text-primary)] font-medium hover:bg-[var(--bg-hover)]">
+                                    Copy JSON
+                                  </button>
+                                </div>
+                              </div>
+                            </div>
+                          </td>
+                        </tr>
+                      )}
+                    </React.Fragment>
                   );
                 })}
               </tbody>
