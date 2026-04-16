@@ -154,21 +154,44 @@ def execute_cross_agent_workflow(
                 "label": step["label"], "status": "failed", "error": str(e),
             })
 
-    # Step 2: Send A2A messages
+    # Step 2: Execute A2A data flows (real cross-agent data requests)
     for msg in workflow.get("a2a_messages", []):
         try:
-            a2a_result = a2a_service.send_message(
-                db=db, trace_id=trace_id,
-                sender_agent_id=msg["sender"], target_agent_id=msg["target"],
-                message_type=msg["type"], purpose=msg["purpose"],
-                payload=msg["payload"],
-                proof_of_intent={"reason": f"Cross-agent workflow: {workflow['name']}"},
-            )
-            results["a2a_results"].append({
-                "type": msg["type"], "sender": msg["sender"], "target": msg["target"],
-                "message_id": a2a_result["message_id"],
-            })
-            results["linked_ids"]["a2a_message_ids"].append(a2a_result["message_id"])
+            if msg["type"] == "data_request":
+                # Use the real cross-agent data request flow
+                target_type = _agent_name_to_type(msg["target"])
+                data_result = a2a_service.request_data_from_agent(
+                    db=db,
+                    requester_agent_id=msg["sender"],
+                    target_agent_type=target_type,
+                    trace_id=trace_id,
+                    data_request=msg["payload"].get("request", "general_query"),
+                    context=msg["payload"],
+                )
+                results["a2a_results"].append({
+                    "type": msg["type"], "sender": msg["sender"], "target": msg["target"],
+                    "request_message_id": data_result["request_message_id"],
+                    "response_message_id": data_result["response_message_id"],
+                    "data_success": data_result["success"],
+                    "data_summary": data_result.get("summary"),
+                })
+                results["linked_ids"]["a2a_message_ids"].extend(data_result["a2a_chain"])
+                # Store fetched data for potential use by other steps
+                results.setdefault("cross_agent_data", {})[target_type] = data_result.get("data", {})
+            else:
+                # Non-data messages (risk_alert, escalation, etc.)
+                a2a_result = a2a_service.send_message(
+                    db=db, trace_id=trace_id,
+                    sender_agent_id=msg["sender"], target_agent_id=msg["target"],
+                    message_type=msg["type"], purpose=msg["purpose"],
+                    payload=msg["payload"],
+                    proof_of_intent={"reason": f"Cross-agent workflow: {workflow['name']}"},
+                )
+                results["a2a_results"].append({
+                    "type": msg["type"], "sender": msg["sender"], "target": msg["target"],
+                    "message_id": a2a_result["message_id"],
+                })
+                results["linked_ids"]["a2a_message_ids"].append(a2a_result["message_id"])
         except Exception as e:
             results["a2a_results"].append({"type": msg["type"], "error": str(e)})
 
@@ -206,6 +229,17 @@ def execute_cross_agent_workflow(
     )
 
     return results
+
+
+_AGENT_NAME_TYPE_MAP = {
+    "Asset Agent": "asset",
+    "Stock Agent": "stock",
+    "Real Estate Agent": "realty",
+}
+
+def _agent_name_to_type(name: str) -> str:
+    """Map agent display name to agent type for adapter routing."""
+    return _AGENT_NAME_TYPE_MAP.get(name, name.lower().replace(" agent", "").strip())
 
 
 def _build_summary(results: dict) -> str:

@@ -159,6 +159,51 @@ def receive_agent_data(agent_type: str, body: AgentDataBody, db: Session = Depen
         raise HTTPException(400, str(e))
 
 
+# ---------------------------------------------------------------------------
+#  Cross-agent data request — orchestrator fetches data on behalf of one agent
+# ---------------------------------------------------------------------------
+
+class DataRequestBody(BaseModel):
+    """One agent requests data from another through the orchestrator."""
+    requester_agent_id: str = Field(..., description="Name of the agent requesting data")
+    target_agent_type: str = Field(..., description="Type of agent to fetch data from (asset, stock, realty)")
+    trace_id: str = Field(..., description="Trace ID for correlation")
+    data_request: str = Field(..., description="What data is being requested (e.g., portfolio_exposure, market_risk)")
+    context: Optional[dict[str, Any]] = Field(None, description="Additional context for the request")
+
+    model_config = {"json_schema_extra": {"examples": [
+        {
+            "requester_agent_id": "Stock Agent",
+            "target_agent_type": "asset",
+            "trace_id": "tr-cross-001",
+            "data_request": "portfolio_exposure",
+            "context": {"focus_sectors": ["tech", "finance"]},
+        }
+    ]}}
+
+
+@router.post("/request-data", status_code=200)
+def request_data(body: DataRequestBody, db: Session = Depends(get_db)):
+    """
+    Cross-agent data request flow:
+    1. Agent A requests data from Agent B through orchestrator
+    2. Orchestrator fetches real data from Agent B via adapter
+    3. Data returned to Agent A, linked by A2A message chain
+    """
+    try:
+        result = a2a_service.request_data_from_agent(
+            db=db,
+            requester_agent_id=body.requester_agent_id,
+            target_agent_type=body.target_agent_type,
+            trace_id=body.trace_id,
+            data_request=body.data_request,
+            context=body.context,
+        )
+        return result
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
 @router.get("/messages")
 def list_messages(
     message_type: Optional[str] = Query(None),

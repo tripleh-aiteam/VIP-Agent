@@ -362,6 +362,121 @@ def receive_agent_data(
     }
 
 
+def request_data_from_agent(
+    db: Session,
+    requester_agent_id: str,
+    target_agent_type: str,
+    trace_id: str,
+    data_request: str,
+    context: dict[str, Any] | None = None,
+) -> dict:
+    """
+    Cross-agent data request: one agent requests data from another through the orchestrator.
+    1. Sends an A2A data_request message
+    2. Fetches actual data from the target agent via adapter
+    3. Stores the response as an A2A report_response message
+    4. Returns the data linked to both A2A messages
+    """
+    from services.agent_service import resolve_agent
+    from adapters import get_adapter
+
+    # Verify requester
+    requester = db.query(CoreAgent).filter(CoreAgent.name == requester_agent_id).first()
+    if not requester:
+        raise ValueError(f"Requester agent not found: {requester_agent_id}")
+
+    # Resolve target agent
+    target = resolve_agent(db, target_agent_type)
+    if not target:
+        raise ValueError(f"No active agent for type: {target_agent_type}")
+
+    # Step 1: Send data_request A2A message
+    request_result = send_message(
+        db=db,
+        trace_id=trace_id,
+        sender_agent_id=requester.name,
+        target_agent_id=target.name,
+        message_type="data_request",
+        purpose="query",
+        payload={"request": data_request, "context": context or {}},
+        proof_of_intent={"reason": f"Cross-agent data request: {data_request}"},
+    )
+
+    # Step 2: Fetch data from target agent via adapter
+    adapter = get_adapter(
+        agent_type=target.type,
+        agent_name=target.name,
+        endpoint_url=target.endpoint_url or "",
+        is_mock=target.is_mock,
+        timeout_seconds=30,
+        auth_type=target.auth_type,
+    )
+
+    task_type_map = {
+        "asset": "asset_summary",
+        "stock": "stock_analysis",
+        "realty": "realty_listing_fetch",
+    }
+    task_type = task_type_map.get(target_agent_type, f"{target_agent_type}_query")
+
+    adapter_result = adapter.execute(
+        task_run_id=request_result["message_id"],
+        trace_id=trace_id,
+        task_type=task_type,
+        input_payload={"from_a2a": True, "request": data_request, **(context or {})},
+    )
+
+    fetched_data = adapter_result.output_payload or {}
+    fetch_success = adapter_result.success
+
+    # Step 3: Store the response as an A2A report_response
+    response_result = send_message(
+        db=db,
+        trace_id=trace_id,
+        sender_agent_id=target.name,
+        target_agent_id=requester.name,
+        message_type="report_response",
+        purpose="inform",
+        payload={
+            "data_type": data_request,
+            "success": fetch_success,
+            "data": fetched_data,
+            "summary": adapter_result.summary,
+        },
+        proof_of_intent={"reason": f"Response to data request: {data_request}"},
+    )
+
+    # Mark the original request as delivered
+    try:
+        original = db.query(A2AMessage).filter(
+            A2AMessage.id == UUID(request_result["message_id"])
+        ).first()
+        if original:
+            original.status = "delivered"
+            db.flush()
+            db.commit()
+    except Exception:
+        pass
+
+    log.info(
+        f"a2a data flow: {requester.name} <- {target.name} [{data_request}] success={fetch_success}",
+        extra={"trace_id": trace_id, "action": "a2a.data_flow.completed"},
+    )
+
+    return {
+        "trace_id": trace_id,
+        "requester": requester.name,
+        "target": target.name,
+        "data_request": data_request,
+        "success": fetch_success,
+        "data": fetched_data,
+        "summary": adapter_result.summary,
+        "request_message_id": request_result["message_id"],
+        "response_message_id": response_result["message_id"],
+        "a2a_chain": [request_result["message_id"], response_result["message_id"]],
+    }
+
+
 def _msg_to_dict(msg: A2AMessage) -> dict:
     return {
         "id": str(msg.id),
