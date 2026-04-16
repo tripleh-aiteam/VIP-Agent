@@ -477,6 +477,146 @@ def request_data_from_agent(
     }
 
 
+# ---------------------------------------------------------------------------
+# Response handling — match responses to requests, extract data
+# ---------------------------------------------------------------------------
+
+def get_conversation_chain(db: Session, trace_id: str) -> dict:
+    """
+    Get the full A2A conversation chain for a trace_id.
+    Returns messages ordered chronologically with request-response pairing.
+    """
+    msgs = (
+        db.query(A2AMessage)
+        .filter(A2AMessage.trace_id == trace_id)
+        .order_by(A2AMessage.created_at.asc())
+        .all()
+    )
+
+    chain = []
+    for msg in msgs:
+        envelope = msg.envelope_json or {}
+        chain.append({
+            "message_id": str(msg.id),
+            "sender": msg.sender_agent.name if msg.sender_agent else str(msg.sender_agent_id),
+            "target": msg.target_agent.name if msg.target_agent else str(msg.target_agent_id),
+            "message_type": msg.message_type,
+            "status": msg.status,
+            "direction": envelope.get("direction", "outbound"),
+            "in_reply_to": envelope.get("in_reply_to"),
+            "payload": envelope.get("payload", {}),
+            "created_at": msg.created_at.isoformat() if msg.created_at else None,
+        })
+
+    # Build request-response pairs
+    requests = {m["message_id"]: m for m in chain if m["message_type"] == "data_request"}
+    responses = [m for m in chain if m["message_type"] == "report_response"]
+    pairs = []
+
+    for resp in responses:
+        reply_to = resp.get("in_reply_to")
+        matched_request = requests.get(reply_to) if reply_to else None
+        pairs.append({
+            "request": matched_request,
+            "response": resp,
+            "matched": matched_request is not None,
+        })
+
+    return {
+        "trace_id": trace_id,
+        "total_messages": len(chain),
+        "messages": chain,
+        "request_response_pairs": pairs,
+        "agents_involved": list({m["sender"] for m in chain} | {m["target"] for m in chain}),
+    }
+
+
+def get_response_data(db: Session, message_id: UUID) -> dict | None:
+    """
+    Get the response data for a specific A2A message.
+    If this is a request, finds its matching response.
+    If this is a response, returns its data directly.
+    """
+    msg = db.query(A2AMessage).filter(A2AMessage.id == message_id).first()
+    if not msg:
+        return None
+
+    envelope = msg.envelope_json or {}
+
+    if msg.message_type in ("report_response", "data_request"):
+        # For a request, find the corresponding response
+        if msg.message_type == "data_request":
+            # Look for a response in the same trace that references this message
+            responses = (
+                db.query(A2AMessage)
+                .filter(
+                    A2AMessage.trace_id == msg.trace_id,
+                    A2AMessage.message_type == "report_response",
+                )
+                .order_by(A2AMessage.created_at.desc())
+                .all()
+            )
+            for resp in responses:
+                resp_env = resp.envelope_json or {}
+                if resp_env.get("in_reply_to") == str(msg.id):
+                    return {
+                        "request_id": str(msg.id),
+                        "response_id": str(resp.id),
+                        "status": "matched",
+                        "data": resp_env.get("payload", {}),
+                        "trace_id": msg.trace_id,
+                    }
+            # No matching response yet
+            return {
+                "request_id": str(msg.id),
+                "response_id": None,
+                "status": "pending",
+                "data": None,
+                "trace_id": msg.trace_id,
+            }
+        else:
+            # This is a response — return its data
+            return {
+                "request_id": envelope.get("in_reply_to"),
+                "response_id": str(msg.id),
+                "status": "completed",
+                "data": envelope.get("payload", {}),
+                "trace_id": msg.trace_id,
+            }
+
+    return _msg_to_dict(msg)
+
+
+def update_message_status(db: Session, message_id: UUID, new_status: str) -> dict | None:
+    """Update the status of an A2A message (e.g., sent -> delivered -> processed)."""
+    valid_statuses = {"sent", "delivered", "received", "processed", "failed"}
+    if new_status not in valid_statuses:
+        raise ValueError(f"Invalid status: {new_status}. Must be one of: {valid_statuses}")
+
+    msg = db.query(A2AMessage).filter(A2AMessage.id == message_id).first()
+    if not msg:
+        return None
+
+    old_status = msg.status
+    msg.status = new_status
+    db.flush()
+
+    record_event(db, "a2a", "a2a.status_update", msg.trace_id, {
+        "message_id": str(message_id),
+        "old_status": old_status,
+        "new_status": new_status,
+    })
+
+    db.commit()
+
+    log.info(
+        f"a2a status: {str(message_id)[:8]} {old_status} -> {new_status}",
+        extra={"trace_id": msg.trace_id, "action": "a2a.status_update"},
+    )
+
+    return _msg_to_dict(msg)
+
+
 def _msg_to_dict(msg: A2AMessage) -> dict:
     return {
         "id": str(msg.id),

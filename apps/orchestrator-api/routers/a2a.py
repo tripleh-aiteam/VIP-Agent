@@ -235,6 +235,33 @@ def get_message(message_id: UUID, db: Session = Depends(get_db)):
     return msg
 
 
+@router.get("/messages/{message_id}/response")
+def get_message_response(message_id: UUID, db: Session = Depends(get_db)):
+    """Get the response data for a specific A2A message (finds matching response for requests)."""
+    result = a2a_service.get_response_data(db, message_id)
+    if not result:
+        raise HTTPException(404, "Message not found")
+    return result
+
+
+@router.patch("/messages/{message_id}/status")
+def update_message_status(message_id: UUID, status: str = Query(...), db: Session = Depends(get_db)):
+    """Update the status of an A2A message."""
+    try:
+        result = a2a_service.update_message_status(db, message_id, status)
+        if not result:
+            raise HTTPException(404, "Message not found")
+        return result
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@router.get("/chain/{trace_id}")
+def get_conversation_chain(trace_id: str, db: Session = Depends(get_db)):
+    """Get the full A2A conversation chain for a trace_id with request-response pairing."""
+    return a2a_service.get_conversation_chain(db, trace_id)
+
+
 @router.post("/demo/risk-flow")
 def demo_risk_flow(db: Session = Depends(get_db)):
     """
