@@ -277,7 +277,37 @@
 - Summary table at top showing all sections with status indicators
 - Document-style modal with clean typography and structured tables
 
-### Orchestration Progress: 75% → ~90%
+### Orchestration Medium Priority — 4 Tasks
+**Task 7: WebSocket Real-Time Push**
+- `ws_manager.py` with ConnectionManager for WebSocket clients
+- `/ws` endpoint on FastAPI — dashboard connects for instant event push
+- All event bus events auto-broadcast to connected clients
+- Health endpoint shows `websocket_clients` count
+- **Files**: services/ws_manager.py (new), main.py
+
+**Task 8: Dashboard WebSocket Client**
+- `useRealtimeEvents.ts` hook — connects to `/ws`, auto-reconnects on disconnect
+- A2A page + Dashboard auto-refresh when events arrive via WebSocket
+- Polling interval reduced from 5s → 15s (backup only, WebSocket is primary)
+- **Files**: components/useRealtimeEvents.ts (new), app/a2a/page.tsx, app/page.tsx
+
+**Task 9: API Key Auth for Webhooks**
+- `api_security.py` — API key validation via `X-API-Key` header
+- Keys loaded from `VIP_API_KEYS` env var (comma-separated)
+- Dev key fallback for local development
+- Applied to: `POST /a2a/webhook`, `POST /a2a/webhook/{type}/data`
+- **File**: services/api_security.py (new), routers/a2a.py
+
+**Task 10: Rate Limiting**
+- In-memory sliding window rate limiter per IP
+- General API: 120 requests/min
+- Webhooks: 30 requests/min
+- Report compose: 10 requests/min
+- Returns 429 with retry info when exceeded
+- Applied to: webhook endpoints, all compose endpoints
+- **Files**: services/api_security.py, routers/a2a.py, routers/reports.py
+
+### Orchestration Progress: 75% → ~95%
 
 ---
 
