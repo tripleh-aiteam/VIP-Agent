@@ -5,6 +5,7 @@ import { api } from "@/components/api";
 import StatCard from "@/components/StatCard";
 import Badge from "@/components/Badge";
 import { CommandLauncher } from "@/components/AskVIP";
+import { useRealtimeEvents } from "@/components/useRealtimeEvents";
 
 export default function Dashboard() {
   const [stats, setStats] = useState({
@@ -14,42 +15,46 @@ export default function Dashboard() {
   const [recentRuns, setRecentRuns] = useState<any[]>([]);
   const [health, setHealth] = useState<any>(null);
 
-  useEffect(() => {
-    const load = async () => {
-      try {
-        const [agents, runs, cases, reports, channels, h] = await Promise.all([
-          api<any[]>("/registry/agents"),
-          api<any[]>("/runs?limit=50"),
-          api<any[]>("/judgement/cases"),
-          api<any[]>("/reports/"),
-          api<any[]>("/channels"),
-          api<any>("/health"),
-        ]);
+  const load = async () => {
+    try {
+      const [agents, runs, cases, reports, channels, h] = await Promise.all([
+        api<any[]>("/registry/agents"),
+        api<any[]>("/runs?limit=50"),
+        api<any[]>("/judgement/cases"),
+        api<any[]>("/reports/"),
+        api<any[]>("/channels"),
+        api<any>("/health"),
+      ]);
 
-        const pending = cases.filter((c: any) => c.decision === "human_review_required" || c.decision === "conditional_approve");
-        const daily = reports.find((r: any) => r.report_type === "daily_summary");
-        const weekly = reports.find((r: any) => r.report_type === "weekly_summary");
-        const telegram = channels.find((c: any) => c.type === "telegram");
-        const glass = channels.find((c: any) => c.type === "ai_glass");
+      const pending = cases.filter((c: any) => c.decision === "human_review_required" || c.decision === "conditional_approve");
+      const daily = reports.find((r: any) => r.report_type === "daily_summary");
+      const weekly = reports.find((r: any) => r.report_type === "weekly_summary");
+      const telegram = channels.find((c: any) => c.type === "telegram");
+      const glass = channels.find((c: any) => c.type === "ai_glass");
 
-        setStats({
-          agents: agents.length,
-          activeRuns: runs.filter((r: any) => ["pending", "dispatched", "running"].includes(r.status)).length,
-          failedRuns: runs.filter((r: any) => r.status === "failed").length,
-          pendingJudgement: pending.length,
-          latestDaily: daily?.executive_summary?.slice(0, 120) || "No daily report yet",
-          latestWeekly: weekly?.executive_summary?.slice(0, 120) || "No weekly report yet",
-          telegramStatus: telegram?.status || "unknown",
-          aiGlassStatus: glass?.status || "unknown",
-        });
-        setRecentRuns(runs.slice(0, 8));
-        setHealth(h);
-      } catch {}
-    };
-    load();
-    const i = setInterval(load, 10000);
-    return () => clearInterval(i);
-  }, []);
+      setStats({
+        agents: agents.length,
+        activeRuns: runs.filter((r: any) => ["pending", "dispatched", "running"].includes(r.status)).length,
+        failedRuns: runs.filter((r: any) => r.status === "failed").length,
+        pendingJudgement: pending.length,
+        latestDaily: daily?.executive_summary?.slice(0, 120) || "No daily report yet",
+        latestWeekly: weekly?.executive_summary?.slice(0, 120) || "No weekly report yet",
+        telegramStatus: telegram?.status || "unknown",
+        aiGlassStatus: glass?.status || "unknown",
+      });
+      setRecentRuns(runs.slice(0, 8));
+      setHealth(h);
+    } catch {}
+  };
+
+  useEffect(() => { load(); const i = setInterval(load, 15000); return () => clearInterval(i); }, []);
+
+  // Real-time: refresh dashboard when task/report events arrive
+  useRealtimeEvents((event) => {
+    if (event.type.includes("task") || event.type.includes("report") || event.type.includes("a2a")) {
+      load();
+    }
+  });
 
   return (
     <div>

@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 from db.base import get_db
 from db.models import OrchReport
 from services import report_service
+from services.api_security import rate_limit_compose
 
 router = APIRouter(prefix="/reports", tags=["reports"])
 
@@ -24,7 +25,7 @@ class ComposeBody(BaseModel):
     hours_back: int = Field(default=24, ge=1, le=720, description="How many hours back to look for data")
 
 
-@router.post("/compose/daily")
+@router.post("/compose/daily", dependencies=[Depends(rate_limit_compose)])
 def compose_daily(body: ComposeBody, db: Session = Depends(get_db)):
     """Compose a daily executive summary from the last 24h of task runs."""
     return report_service.compose_report(
@@ -33,7 +34,7 @@ def compose_daily(body: ComposeBody, db: Session = Depends(get_db)):
     )
 
 
-@router.post("/compose/weekly")
+@router.post("/compose/weekly", dependencies=[Depends(rate_limit_compose)])
 def compose_weekly(body: ComposeBody, db: Session = Depends(get_db)):
     """Compose a weekly summary from the last 168h of task runs."""
     return report_service.compose_report(
@@ -42,7 +43,7 @@ def compose_weekly(body: ComposeBody, db: Session = Depends(get_db)):
     )
 
 
-@router.post("/compose/alert")
+@router.post("/compose/alert", dependencies=[Depends(rate_limit_compose)])
 def compose_alert(body: ComposeBody, db: Session = Depends(get_db)):
     """Compose an urgent alert summary from recent task runs."""
     return report_service.compose_report(
@@ -66,7 +67,7 @@ class CrossAgentReportBody(BaseModel):
     ]}}
 
 
-@router.post("/compose/cross-agent")
+@router.post("/compose/cross-agent", dependencies=[Depends(rate_limit_compose)])
 def compose_cross_agent(body: CrossAgentReportBody, db: Session = Depends(get_db)):
     """
     Compose a combined report by fetching real-time data from multiple agents via A2A.

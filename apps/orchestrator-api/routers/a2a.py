@@ -16,6 +16,7 @@ from services import a2a_service
 from services.event_bus import is_redis_connected
 from services.a2a_triggers import list_triggers
 from services.a2a_notifications import get_notifications
+from services.api_security import rate_limit_webhook, verify_api_key
 
 router = APIRouter(prefix="/a2a", tags=["a2a"])
 
@@ -139,8 +140,8 @@ class AgentDataBody(BaseModel):
     ]}}
 
 
-@router.post("/webhook", status_code=201)
-def receive_webhook(body: WebhookMessageBody, db: Session = Depends(get_db)):
+@router.post("/webhook", status_code=201, dependencies=[Depends(rate_limit_webhook)])
+def receive_webhook(body: WebhookMessageBody, db: Session = Depends(get_db), api_key: str = Depends(verify_api_key)):
     """
     Webhook for agents to send A2A messages to the orchestrator.
     Agents call this endpoint to push alerts, replies, or data back.
@@ -161,8 +162,8 @@ def receive_webhook(body: WebhookMessageBody, db: Session = Depends(get_db)):
         raise HTTPException(400, str(e))
 
 
-@router.post("/webhook/{agent_type}/data", status_code=201)
-def receive_agent_data(agent_type: str, body: AgentDataBody, db: Session = Depends(get_db)):
+@router.post("/webhook/{agent_type}/data", status_code=201, dependencies=[Depends(rate_limit_webhook)])
+def receive_agent_data(agent_type: str, body: AgentDataBody, db: Session = Depends(get_db), api_key: str = Depends(verify_api_key)):
     """
     Typed webhook for agents to push structured data to the orchestrator.
     URL includes agent_type (asset, stock, realty) for routing.

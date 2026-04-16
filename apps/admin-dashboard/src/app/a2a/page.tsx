@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { api, apiPost } from "@/components/api";
 import Badge from "@/components/Badge";
 import { AskVIPFloat } from "@/components/AskVIP";
+import { useRealtimeEvents } from "@/components/useRealtimeEvents";
 
 type Tab = "messages" | "notifications" | "triggers" | "chain";
 
@@ -30,7 +31,14 @@ export default function A2APage() {
     api<any>("/a2a/triggers").then((d: any) => setTriggers(d.triggers || [])).catch(() => {});
   };
 
-  useEffect(() => { load(); const i = setInterval(load, 5000); return () => clearInterval(i); }, []);
+  useEffect(() => { load(); const i = setInterval(load, 15000); return () => clearInterval(i); }, []);
+
+  // Real-time: refresh when any A2A event arrives via WebSocket
+  useRealtimeEvents((event) => {
+    if (event.type.includes("a2a") || event.type.includes("notification") || event.type.includes("trigger")) {
+      load();
+    }
+  });
 
   const runDemo = async () => {
     setRunning(true);
