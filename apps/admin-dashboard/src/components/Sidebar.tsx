@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import ThemeToggle from "./ThemeToggle";
@@ -18,39 +19,70 @@ const nav = [
 
 export default function Sidebar() {
   const pathname = usePathname();
+  const [open, setOpen] = useState(false);
 
   return (
-    <aside className="w-56 bg-[var(--sidebar-bg)] border-r border-[var(--sidebar-border)] flex flex-col h-screen sticky top-0" style={{boxShadow: "var(--shadow-sm)"}}>
-      <div className="px-5 py-5 border-b border-[var(--sidebar-border)]">
-        <h1 className="text-[20px] font-extrabold tracking-tight text-[var(--text-primary)]">
-          VIP AGENT
-        </h1>
+    <>
+      {/* Mobile header bar */}
+      <div className="md:hidden fixed top-0 left-0 right-0 z-50 bg-[var(--sidebar-bg)] border-b border-[var(--sidebar-border)] flex items-center justify-between px-4 py-3" style={{boxShadow: "var(--shadow-sm)"}}>
+        <h1 className="text-[16px] font-extrabold tracking-tight text-[var(--text-primary)]">VIP AGENT</h1>
+        <button onClick={() => setOpen(!open)} className="p-1.5 rounded-lg hover:bg-[var(--sidebar-hover)]">
+          {open ? (
+            <svg className="w-5 h-5 text-[var(--text-primary)]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+          ) : (
+            <svg className="w-5 h-5 text-[var(--text-primary)]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M4 6h16M4 12h16M4 18h16" /></svg>
+          )}
+        </button>
       </div>
-      <nav className="flex-1 py-3 px-3 space-y-0.5">
-        {nav.map((n) => {
-          const active = pathname === n.href;
-          return (
-            <Link
-              key={n.href}
-              href={n.href}
-              className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-[13px] font-medium transition-all duration-150 ${
-                active
-                  ? "bg-[var(--sidebar-active)] text-[var(--sidebar-active-text)]"
-                  : "text-[var(--sidebar-text)] hover:bg-[var(--sidebar-hover)] hover:text-[var(--sidebar-text-active)]"
-              }`}
-            >
-              <svg className={`w-4 h-4 shrink-0 ${active ? "text-[var(--sidebar-active-icon)]" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                <path strokeLinecap="round" strokeLinejoin="round" d={n.icon} />
-              </svg>
-              {n.label}
-            </Link>
-          );
-        })}
-      </nav>
-      <div className="px-5 py-3 border-t border-[var(--sidebar-border)] flex items-center justify-between">
-        <span className="text-[10px] text-[var(--text-muted)] font-medium">v0.2.0</span>
-        <ThemeToggle />
-      </div>
-    </aside>
+
+      {/* Mobile overlay */}
+      {open && <div className="md:hidden fixed inset-0 bg-black/30 z-40" onClick={() => setOpen(false)} />}
+
+      {/* Sidebar */}
+      <aside className={`
+        bg-[var(--sidebar-bg)] border-r border-[var(--sidebar-border)] flex flex-col h-screen
+        fixed md:sticky top-0 z-40
+        w-64 md:w-56
+        transition-transform duration-200
+        ${open ? "translate-x-0" : "-translate-x-full md:translate-x-0"}
+        pt-14 md:pt-0
+      `} style={{boxShadow: "var(--shadow-sm)"}}>
+        {/* Desktop title */}
+        <div className="hidden md:block px-5 py-5 border-b border-[var(--sidebar-border)]">
+          <h1 className="text-[20px] font-extrabold tracking-tight text-[var(--text-primary)]">VIP AGENT</h1>
+        </div>
+
+        <nav className="flex-1 py-3 px-3 space-y-0.5 overflow-y-auto">
+          {nav.map((n) => {
+            const active = pathname === n.href;
+            return (
+              <Link
+                key={n.href}
+                href={n.href}
+                onClick={() => setOpen(false)}
+                className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-[13px] font-medium transition-all duration-150 ${
+                  active
+                    ? "bg-[var(--sidebar-active)] text-[var(--sidebar-active-text)]"
+                    : "text-[var(--sidebar-text)] hover:bg-[var(--sidebar-hover)] hover:text-[var(--sidebar-text-active)]"
+                }`}
+              >
+                <svg className={`w-4 h-4 shrink-0 ${active ? "text-[var(--sidebar-active-icon)]" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d={n.icon} />
+                </svg>
+                {n.label}
+              </Link>
+            );
+          })}
+        </nav>
+
+        <div className="px-5 py-3 border-t border-[var(--sidebar-border)] flex items-center justify-between">
+          <span className="text-[10px] text-[var(--text-muted)] font-medium">v0.2.0</span>
+          <ThemeToggle />
+        </div>
+      </aside>
+
+      {/* Mobile spacer */}
+      <div className="md:hidden h-14 shrink-0" />
+    </>
   );
 }

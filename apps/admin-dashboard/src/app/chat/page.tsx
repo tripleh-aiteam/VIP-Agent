@@ -171,11 +171,11 @@ export default function ChatPage() {
   const modeInfo = MODE_INFO[activeMode] || MODE_INFO.structured;
 
   return (
-    <div className="flex h-[calc(100vh-3rem)] gap-4">
+    <div className="flex flex-col md:flex-row h-[calc(100vh-5rem)] md:h-[calc(100vh-3rem)] gap-2 md:gap-4">
       {/* Create Folder Modal */}
       {showNewFolder && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50" onClick={() => { setShowNewFolder(false); setNewFolderName(""); }}>
-          <div className="bg-[var(--bg-card)] rounded-2xl w-[400px] p-6" style={{boxShadow: "var(--shadow-lg)"}} onClick={(e) => e.stopPropagation()}>
+          <div className="bg-[var(--bg-card)] rounded-2xl w-[90vw] max-w-[400px] p-6" style={{boxShadow: "var(--shadow-lg)"}} onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center justify-between mb-4">
               <h3 className="text-[16px] font-semibold text-[var(--text-primary)]">Create folder</h3>
               <button onClick={() => { setShowNewFolder(false); setNewFolderName(""); }} className="p-1 rounded-lg hover:bg-[var(--bg-elevated)] text-[var(--text-muted)]">
@@ -206,7 +206,7 @@ export default function ChatPage() {
       )}
 
       {/* Sessions sidebar — ChatGPT style */}
-      <div className="w-64 flex flex-col shrink-0 h-full">
+      <div className="hidden md:flex w-64 flex-col shrink-0 h-full">
         {/* Top actions */}
         <div className="space-y-1 mb-3">
           <button onClick={() => createSession()} className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-[13px] text-[var(--text-secondary)] hover:bg-[var(--bg-elevated)] transition-colors">
