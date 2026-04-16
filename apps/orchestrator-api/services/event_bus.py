@@ -1,6 +1,7 @@
 """
 VIP AI Platform — Event Bus
 Redis Pub/Sub for A2A messaging. Falls back to in-memory for local dev.
+Always fires local subscribers (triggers, notifications) regardless of Redis state.
 """
 
 import json
@@ -29,27 +30,33 @@ def init_event_bus(redis_url: str = "redis://localhost:6379/0"):
         log.info(f"event_bus: Redis unavailable ({e}), using in-memory bus", extra={"action": "event_bus.memory_fallback"})
 
 
+def _fire_local_subscribers(channel: str, message: dict[str, Any]):
+    """Fire all local subscribers for a channel. Always runs regardless of Redis."""
+    for handler in _subscribers.get(channel, []):
+        try:
+            handler(message)
+        except Exception as e:
+            log.warning(f"event_bus: handler error on {channel}: {e}")
+
+    for handler in _subscribers.get("*", []):
+        try:
+            handler({"channel": channel, **message})
+        except Exception:
+            pass
+
+
 def publish(channel: str, message: dict[str, Any]):
-    """Publish a message to a channel."""
-    payload = json.dumps(message, default=str)
+    """Publish a message. Always fires local subscribers + optionally publishes to Redis."""
+    # Always fire local subscribers (triggers, notifications)
+    _fire_local_subscribers(channel, message)
 
+    # Also publish to Redis if connected (for cross-process communication)
     if _use_redis and _redis_client:
-        _redis_client.publish(channel, payload)
-        log.info(f"event_bus: published to Redis channel={channel}", extra={"action": "event_bus.publish"})
-    else:
-        # In-memory fallback
-        for handler in _subscribers.get(channel, []):
-            try:
-                handler(message)
-            except Exception as e:
-                log.warning(f"event_bus: handler error on {channel}: {e}")
-
-        # Also fire wildcard subscribers
-        for handler in _subscribers.get("*", []):
-            try:
-                handler({"channel": channel, **message})
-            except Exception:
-                pass
+        try:
+            payload = json.dumps(message, default=str)
+            _redis_client.publish(channel, payload)
+        except Exception as e:
+            log.warning(f"event_bus: Redis publish failed: {e}")
 
     log.info(f"event_bus: published channel={channel}", extra={"action": "event_bus.publish"})
 
@@ -60,6 +67,7 @@ def subscribe(channel: str, handler: Callable):
         _subscribers[channel] = []
     _subscribers[channel].append(handler)
 
+    # If Redis is connected, also listen for messages from other processes
     if _use_redis and _redis_client:
         def _redis_listener():
             pubsub = _redis_client.pubsub()
