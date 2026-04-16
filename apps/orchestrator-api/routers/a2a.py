@@ -31,8 +31,8 @@ class SendMessageBody(BaseModel):
     model_config = {"json_schema_extra": {"examples": [
         {
             "trace_id": "tr-risk-001",
-            "sender_agent_id": "mock-stock-agent",
-            "target_agent_id": "mock-asset-agent",
+            "sender_agent_id": "Stock Agent",
+            "target_agent_id": "Asset Agent",
             "message_type": "risk_alert",
             "purpose": "escalate",
             "proof_of_intent": {"reason": "KOSPI dropped 3.2% — portfolio exposure check needed"},
@@ -109,8 +109,8 @@ def demo_risk_flow(db: Session = Depends(get_db)):
     r1 = a2a_service.send_message(
         db=db,
         trace_id=trace_id,
-        sender_agent_id="mock-stock-agent",
-        target_agent_id="mock-asset-agent",
+        sender_agent_id="Stock Agent",
+        target_agent_id="Asset Agent",
         message_type="risk_alert",
         purpose="escalate",
         payload={
@@ -128,8 +128,8 @@ def demo_risk_flow(db: Session = Depends(get_db)):
     r2 = a2a_service.send_message(
         db=db,
         trace_id=trace_id,
-        sender_agent_id="mock-asset-agent",
-        target_agent_id="mock-stock-agent",
+        sender_agent_id="Asset Agent",
+        target_agent_id="Stock Agent",
         message_type="data_request",
         purpose="query",
         payload={
@@ -145,8 +145,8 @@ def demo_risk_flow(db: Session = Depends(get_db)):
     r3 = a2a_service.send_message(
         db=db,
         trace_id=trace_id,
-        sender_agent_id="mock-asset-agent",
-        target_agent_id="mock-realty-agent",
+        sender_agent_id="Asset Agent",
+        target_agent_id="Real Estate Agent",
         message_type="report_request",
         purpose="delegate",
         payload={

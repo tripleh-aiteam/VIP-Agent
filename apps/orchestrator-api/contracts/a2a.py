@@ -60,8 +60,8 @@ class A2AMessageEnvelope(BaseModel):
     model_config = {"json_schema_extra": {"examples": [
         {
             "trace_id": "tr-20260413-001",
-            "sender_agent_id": "mock-asset-agent",
-            "target_agent_id": "mock-stock-agent",
+            "sender_agent_id": "Asset Agent",
+            "target_agent_id": "Stock Agent",
             "message_type": "request",
             "purpose": "delegate",
             "proof_of_intent": {"reason": "Need stock data to complete portfolio analysis"},

@@ -57,7 +57,7 @@ def run_full_demo(db: Session = Depends(get_db)):
     try:
         a2a_1 = a2a_service.send_message(
             db=db, trace_id=trace_id,
-            sender_agent_id="mock-stock-agent", target_agent_id="mock-asset-agent",
+            sender_agent_id="Stock Agent", target_agent_id="Asset Agent",
             message_type="risk_alert", purpose="escalate",
             payload={"alert": "Stock volatility detected", "symbols": ["AAPL", "GOOGL"], "risk_level": "high"},
             proof_of_intent={"reason": "Demo: stock analysis triggered risk alert"},
@@ -70,7 +70,7 @@ def run_full_demo(db: Session = Depends(get_db)):
     try:
         a2a_2 = a2a_service.send_message(
             db=db, trace_id=trace_id,
-            sender_agent_id="mock-asset-agent", target_agent_id="mock-stock-agent",
+            sender_agent_id="Asset Agent", target_agent_id="Stock Agent",
             message_type="data_request", purpose="query",
             payload={"request": "portfolio_exposure", "portfolios": ["PF-1234"]},
             proof_of_intent={"reason": "Demo: checking portfolio exposure after risk alert"},
@@ -83,7 +83,7 @@ def run_full_demo(db: Session = Depends(get_db)):
     try:
         a2a_3 = a2a_service.send_message(
             db=db, trace_id=trace_id,
-            sender_agent_id="mock-asset-agent", target_agent_id="mock-realty-agent",
+            sender_agent_id="Asset Agent", target_agent_id="Real Estate Agent",
             message_type="report_request", purpose="delegate",
             payload={"request": "realty_exposure_summary", "regions": ["Seoul-Gangnam"]},
             proof_of_intent={"reason": "Demo: cross-asset exposure check"},

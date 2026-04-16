@@ -26,7 +26,7 @@ class RuleResult:
 def rule_whitelist_check(output: dict, context: dict) -> RuleResult:
     """Check if agent/action is on the whitelist."""
     whitelisted_agents = context.get("whitelisted_agents", [
-        "mock-asset-agent", "mock-stock-agent", "mock-realty-agent",
+        "Asset Agent", "Stock Agent", "Real Estate Agent",
     ])
     agent_id = context.get("agent_id", "")
     if agent_id in whitelisted_agents:
@@ -201,7 +201,7 @@ def compute_risk_score(output: dict, context: dict, rule_results: list[dict]) ->
         factors.append({"factor": "conflicting_recs", "points": RISK_WEIGHTS["conflicting_recommendations"], "detail": "Buy and sell at high confidence"})
 
     # Unknown agent
-    whitelisted = context.get("whitelisted_agents", ["mock-asset-agent", "mock-stock-agent", "mock-realty-agent"])
+    whitelisted = context.get("whitelisted_agents", ["Asset Agent", "Stock Agent", "Real Estate Agent"])
     if context.get("agent_id", "") not in whitelisted:
         score += RISK_WEIGHTS["unknown_agent"]
         factors.append({"factor": "unknown_agent", "points": RISK_WEIGHTS["unknown_agent"], "detail": f"Agent not whitelisted"})

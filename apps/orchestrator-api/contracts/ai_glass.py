@@ -57,7 +57,7 @@ class AIGlassCaptureEvent(BaseModel):
     model_config = {"protected_namespaces": (), "json_schema_extra": {"examples": [
         {
             "trace_id": "tr-20260413-glass-001",
-            "agent_id": "mock-realty-agent",
+            "agent_id": "Real Estate Agent",
             "device_id": "glass-device-A1",
             "capture_type": "spatial_3d",
             "property_ref": "PROP-2026-0413",

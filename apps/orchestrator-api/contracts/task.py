@@ -112,7 +112,7 @@ class TaskResponse(BaseModel):
         {
             "task_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
             "trace_id": "tr-20260413-001",
-            "agent_id": "mock-asset-agent",
+            "agent_id": "Asset Agent",
             "status": "completed",
             "summary": "Portfolio PF-1234 summary generated",
             "output_payload": {"total_value": 1250000, "currency": "KRW"},

@@ -43,7 +43,7 @@ SAMPLES = {
     "task-response": {
         "task_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
         "trace_id": "tr-20260413-001",
-        "agent_id": "mock-asset-agent",
+        "agent_id": "Asset Agent",
         "status": "completed",
         "summary": "Portfolio PF-1234 summary generated",
         "output_payload": {"total_value": 1250000, "currency": "KRW", "change_pct": 2.3},
@@ -51,8 +51,8 @@ SAMPLES = {
     },
     "a2a-message-envelope": {
         "trace_id": "tr-20260413-001",
-        "sender_agent_id": "mock-asset-agent",
-        "target_agent_id": "mock-stock-agent",
+        "sender_agent_id": "Asset Agent",
+        "target_agent_id": "Stock Agent",
         "message_type": "request",
         "purpose": "delegate",
         "proof_of_intent": {"reason": "Need stock data to complete portfolio analysis"},
@@ -62,7 +62,7 @@ SAMPLES = {
         "trace_id": "tr-20260413-001",
         "task_run_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
         "task_type": "stock_analysis",
-        "agent_id": "mock-stock-agent",
+        "agent_id": "Stock Agent",
         "agent_output": {"recommendation": "buy", "confidence": 0.85, "symbol": "AAPL"},
         "rules": ["max_risk_threshold", "compliance_check"],
     },
@@ -108,7 +108,7 @@ SAMPLES = {
     },
     "ai-glass-capture-event": {
         "trace_id": "tr-20260413-glass-001",
-        "agent_id": "mock-realty-agent",
+        "agent_id": "Real Estate Agent",
         "device_id": "glass-device-A1",
         "capture_type": "spatial_3d",
         "property_ref": "PROP-2026-0413",

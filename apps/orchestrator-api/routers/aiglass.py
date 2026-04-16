@@ -18,7 +18,7 @@ router = APIRouter(prefix="/ai-glass", tags=["ai-glass"])
 
 class CaptureBody(BaseModel):
     trace_id: str = Field(default="system")
-    agent_id: str = Field(default="mock-realty-agent")
+    agent_id: str = Field(default="Real Estate Agent")
     device_id: str = Field(..., description="AI Glass device identifier")
     capture_type: str = Field(default="spatial_3d", description="video | photo | spatial_3d | audio | mixed")
     property_ref: Optional[str] = Field(None, description="Property reference or listing ID")

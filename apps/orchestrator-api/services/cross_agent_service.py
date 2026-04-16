@@ -27,7 +27,7 @@ WORKFLOWS = {
             {"task_type": "asset_summary", "agent_type": "asset", "label": "Portfolio Review"},
         ],
         "a2a_messages": [
-            {"sender": "mock-stock-agent", "target": "mock-asset-agent", "type": "risk_alert", "purpose": "escalate",
+            {"sender": "Stock Agent", "target": "Asset Agent", "type": "risk_alert", "purpose": "escalate",
              "payload": {"alert": "Risk check triggered from chat", "type": "cross_agent_risk_check"}},
         ],
         "compose_report": "daily_summary",
@@ -49,7 +49,7 @@ WORKFLOWS = {
             {"task_type": "stock_analysis", "agent_type": "stock", "label": "Stock View"},
         ],
         "a2a_messages": [
-            {"sender": "mock-asset-agent", "target": "mock-stock-agent", "type": "data_request", "purpose": "query",
+            {"sender": "Asset Agent", "target": "Stock Agent", "type": "data_request", "purpose": "query",
              "payload": {"request": "cross_comparison", "context": "Asset vs Stock comparison"}},
         ],
         "compose_report": None,
@@ -61,7 +61,7 @@ WORKFLOWS = {
             {"task_type": "stock_analysis", "agent_type": "stock", "label": "Market Risk Check"},
         ],
         "a2a_messages": [
-            {"sender": "mock-realty-agent", "target": "mock-stock-agent", "type": "data_request", "purpose": "query",
+            {"sender": "Real Estate Agent", "target": "Stock Agent", "type": "data_request", "purpose": "query",
              "payload": {"request": "market_risk_for_realty", "context": "Cross-checking market conditions"}},
         ],
         "compose_report": None,

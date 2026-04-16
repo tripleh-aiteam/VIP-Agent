@@ -40,7 +40,7 @@ def test_list_agents():
     agents = r.json()
     assert len(agents) >= 3  # seeded mock agents
     names = [a["name"] for a in agents]
-    assert "mock-asset-agent" in names
+    assert "Asset Agent" in names
 
 
 def test_register_agent():
@@ -76,7 +76,7 @@ def test_create_task():
     data = r.json()
     assert data["status"] == "pending"
     assert data["trace_id"] == "tr-test-001"
-    assert data["agent_name"] == "mock-asset-agent"
+    assert data["agent_name"] == "Asset Agent"
     return data["id"]
 
 

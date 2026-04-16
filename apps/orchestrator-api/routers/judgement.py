@@ -30,7 +30,7 @@ class EvaluateBody(BaseModel):
             "trace_id": "tr-judge-001",
             "task_run_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
             "task_type": "stock_analysis",
-            "agent_id": "mock-stock-agent",
+            "agent_id": "Stock Agent",
             "agent_output": {
                 "risk_score": 0.75,
                 "market_sentiment": "bearish",

@@ -14,7 +14,7 @@ from db.models import (
 
 MOCK_AGENTS = [
     {
-        "name": "mock-asset-agent",
+        "name": "Asset Agent",
         "type": "asset",
         "version": "0.1.0",
         "owner_team": "vip-core",
@@ -30,7 +30,7 @@ MOCK_AGENTS = [
         "description": "Mock asset management agent for development",
     },
     {
-        "name": "mock-stock-agent",
+        "name": "Stock Agent",
         "type": "stock",
         "version": "0.1.0",
         "owner_team": "vip-core",
@@ -46,7 +46,7 @@ MOCK_AGENTS = [
         "description": "Mock stock market agent for development",
     },
     {
-        "name": "mock-realty-agent",
+        "name": "Real Estate Agent",
         "type": "realty",
         "version": "0.1.0",
         "owner_team": "vip-core",
