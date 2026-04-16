@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 from db.base import get_db
 from services import a2a_service
 from services.event_bus import is_redis_connected
+from services.a2a_triggers import list_triggers
 
 router = APIRouter(prefix="/a2a", tags=["a2a"])
 
@@ -50,6 +51,16 @@ def a2a_status():
         "message_types": list(a2a_service.VALID_MESSAGE_TYPES),
         "purposes": list(a2a_service.VALID_PURPOSES),
         "high_risk_types": list(a2a_service.HIGH_RISK_TYPES),
+        "triggers_count": len(list_triggers()),
+    }
+
+
+@router.get("/triggers")
+def get_triggers():
+    """List all registered event-driven triggers."""
+    return {
+        "triggers": list_triggers(),
+        "total": len(list_triggers()),
     }
 
 

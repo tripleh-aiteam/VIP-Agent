@@ -29,12 +29,14 @@ from routers.demo import router as demo_router
 from routers.schedules import router as schedules_router
 from services.scheduler_service import init_scheduler
 from services.event_bus import init_event_bus
+from services.a2a_triggers import init_triggers
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     Base.metadata.create_all(bind=engine)
     init_event_bus(os.getenv("REDIS_URL", "redis://localhost:6379/0"))
+    init_triggers()
     init_scheduler()
     app.state.redis = aioredis.from_url(
         os.getenv("REDIS_URL", "redis://localhost:6379/0")
