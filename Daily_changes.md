@@ -261,11 +261,21 @@
 - Section dividers (━━━) hidden, proper paragraph formatting
 - Copy / Download .md / Download .json in toolbar
 
-**Automatic Report Generation**
-- Daily auto-report at 7 PM UTC: fetches Asset+Stock data → composes report → sends to Telegram
-- Weekly auto-report every Friday 6 PM UTC: composes from last 7 days → sends to Telegram
-- Full pipeline: dispatch agents → collect results → compose report → Telegram notification
-- No manual clicking needed — reports arrive automatically
+**Automatic Report Generation (Korean Time)**
+- **Daily 8:00 AM KST** — 3 individual agent reports + 1 combined summary:
+  - 🏢 Asset Agent report (contracts, occupancy, cash, risk)
+  - 📈 Stock Agent report (stocks analyzed, sentiment, risk score)
+  - 🏠 Real Estate Agent report (listings, vacancy, yield, trend)
+  - 📊 Combined VIP Daily Summary (all agents + overall status)
+- **Weekly Friday 18:30 KST** — weekly summary from last 7 days with section breakdown
+- All reports → Dashboard (Reports page) + Telegram (@vip_agentbot_bot)
+- Per-agent Telegram messages show key metrics specific to each agent
+- No manual clicking needed — 4 messages arrive on Telegram every morning
+
+**Report Detail Redesign**
+- Download dropdown with MS Word (.doc), Markdown (.md), JSON (.json)
+- Summary table at top showing all sections with status indicators
+- Document-style modal with clean typography and structured tables
 
 ### Orchestration Progress: 75% → ~90%
 
