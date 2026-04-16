@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import "./globals.css";
 import Sidebar from "@/components/Sidebar";
+import TopBar from "@/components/TopBar";
 
 export const metadata: Metadata = {
   title: "VIP Agent Platform",
@@ -13,7 +14,8 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <body className="bg-[var(--bg-app)] text-[var(--text-primary)] antialiased">
         <div className="flex">
           <Sidebar />
-          <main className="flex-1 min-h-screen overflow-x-hidden">
+          <main className="flex-1 min-h-screen overflow-x-hidden relative">
+            <TopBar />
             <div className="p-3 md:p-6 max-w-7xl">{children}</div>
           </main>
         </div>
