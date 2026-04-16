@@ -92,6 +92,57 @@ def _execute_report_job(rule_name: str, report_type: str, hours_back: int = 24):
 # Scheduler management
 # ---------------------------------------------------------------------------
 
+def _execute_health_check():
+    """Ping all active agents and update reliability scores."""
+    from adapters import get_adapter
+
+    db = SessionLocal()
+    try:
+        from db.models import CoreAgent, AgentHeartbeat
+        agents = db.query(CoreAgent).filter(CoreAgent.status.in_(["active", "error"])).all()
+
+        for agent in agents:
+            if not agent.endpoint_url:
+                continue
+
+            adapter = get_adapter(
+                agent_type=agent.type,
+                agent_name=agent.name,
+                endpoint_url=agent.endpoint_url,
+                is_mock=agent.is_mock,
+            )
+            health = adapter.health_check()
+            reachable = health.get("reachable", False)
+
+            # Update reliability score (rolling average)
+            old_score = agent.reliability_score or 1.0
+            new_point = 1.0 if reachable else 0.0
+            agent.reliability_score = round(old_score * 0.8 + new_point * 0.2, 3)
+
+            # Update status
+            if reachable and agent.status == "error":
+                agent.status = "active"
+                log.info(f"health: {agent.name} recovered", extra={"action": "health.recovered"})
+            elif not reachable and agent.status == "active":
+                agent.status = "error"
+                log.warning(f"health: {agent.name} unreachable", extra={"action": "health.unreachable"})
+
+            # Record heartbeat
+            db.add(AgentHeartbeat(
+                agent_id=agent.id,
+                status="healthy" if reachable else "unhealthy",
+                latency_ms=health.get("latency_ms", 0),
+                metadata_json=health,
+            ))
+
+        db.commit()
+        log.info(f"health check: pinged {len(agents)} agents", extra={"action": "health.completed"})
+    except Exception as e:
+        log.warning(f"health check failed: {e}", extra={"action": "health.failed"})
+    finally:
+        db.close()
+
+
 def init_scheduler():
     """Initialize the scheduler and load enabled rules from DB."""
     global _scheduler
@@ -101,6 +152,16 @@ def init_scheduler():
 
     _scheduler = BackgroundScheduler(daemon=True)
     _load_rules_from_db()
+
+    # Add agent health check — every 5 minutes
+    _scheduler.add_job(
+        _execute_health_check,
+        CronTrigger.from_crontab("*/5 * * * *"),
+        id="agent-health-check",
+        replace_existing=True,
+    )
+    log.info("scheduler: health check registered (every 5 min)", extra={"action": "scheduler.health_registered"})
+
     _scheduler.start()
     log.info("scheduler: started", extra={"action": "scheduler.started"})
 
