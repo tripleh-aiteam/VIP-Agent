@@ -307,7 +307,38 @@
 - Applied to: webhook endpoints, all compose endpoints
 - **Files**: services/api_security.py, routers/a2a.py, routers/reports.py
 
-### Orchestration Progress: 75% → ~95%
+### Orchestration Low Priority — 4 Tasks (Enterprise Grade)
+**Task 11: User Model**
+- `PlatformUser` model: email, name, role, org_id, telegram link, last login
+- `PlatformNotification` model: title, body, severity, is_read, user_id
+- GET/POST /users, GET /users/{id}, first user auto-assigned admin role
+- **Files**: db/models.py, services/user_service.py (new), routers/users.py (new)
+
+**Task 12: Org-Level Isolation**
+- Notifications linked to user_id for per-org filtering
+- User list filterable by org_id
+- Foundation for multi-tenant data separation
+
+**Task 13: Role-Based Access Control**
+- 3 roles: admin (full access), operator (approve+compose), viewer (read-only)
+- Permission map with 7 capabilities per role
+- PATCH /users/{id}/role, GET /roles endpoint
+- `check_permission()` utility function
+
+**Task 14: Notification Bell**
+- Bell icon in sidebar (desktop + mobile) with red unread count badge
+- Click → dropdown showing last 15 notifications with severity dots
+- Mark as read (click notification) or Mark All Read button
+- Real-time updates via WebSocket
+- GET /notifications, GET /notifications/unread-count, PATCH /notifications/{id}/read
+- A2A events auto-create platform notifications for bell
+- **Files**: components/NotificationBell.tsx (new), Sidebar.tsx, a2a_notifications.py
+
+**A2A Monitor Expandable Messages**
+- Click any message row → expands to show Reason, Purpose, full Payload
+- View Full Chain and Copy JSON buttons in expanded view
+
+### Orchestration Progress: 75% → 100%
 
 ---
 
