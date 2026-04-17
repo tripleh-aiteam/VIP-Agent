@@ -54,7 +54,7 @@ export default function ReportsPage() {
 
   const closeDetail = () => { setDetail(null); setViewMode(null); };
 
-  const dailyReports = reports.filter((r) => r.report_type === "daily_summary");
+  const dailyReports = reports.filter((r) => r.report_type === "daily_summary" || r.report_type?.startsWith("agent_daily_"));
   const weeklyReports = reports.filter((r) => r.report_type === "weekly_summary");
   const alertReports = reports.filter((r) => r.report_type === "urgent_alert_summary");
   const crossAgentReports = reports.filter((r) => r.report_type === "cross_agent_summary");
@@ -65,10 +65,20 @@ export default function ReportsPage() {
     : activeType === "cross" ? crossAgentReports
     : alertReports;
 
+  // Convert UTC to KST for display
+  const toKST = (utcStr: string) => {
+    if (!utcStr) return "";
+    const d = new Date(utcStr);
+    return d.toLocaleString("ko-KR", { timeZone: "Asia/Seoul" });
+  };
+
   const typeConfig: Record<string, { label: string; color: string; bg: string; border: string }> = {
     daily_summary: { label: "Daily", color: "text-blue-500", bg: "bg-blue-50", border: "border-blue-200" },
     weekly_summary: { label: "Weekly", color: "text-green-500", bg: "bg-green-50", border: "border-green-200" },
     urgent_alert_summary: { label: "Alert", color: "text-red-500", bg: "bg-red-50", border: "border-red-200" },
+    agent_daily_asset: { label: "Asset Daily", color: "text-emerald-500", bg: "bg-emerald-50", border: "border-emerald-200" },
+    agent_daily_stock: { label: "Stock Daily", color: "text-sky-500", bg: "bg-sky-50", border: "border-sky-200" },
+    agent_daily_realty: { label: "Realty Daily", color: "text-orange-500", bg: "bg-orange-50", border: "border-orange-200" },
     cross_agent_summary: { label: "Cross-Agent", color: "text-purple-500", bg: "bg-purple-50", border: "border-purple-200" },
   };
 
@@ -111,7 +121,7 @@ export default function ReportsPage() {
     const title = detail.report_type === "cross_agent_summary" ? "Cross-Agent Report" :
       detail.report_type === "daily_summary" ? "Daily Executive Summary" :
       detail.report_type === "weekly_summary" ? "Weekly Executive Summary" : "Urgent Alert Report";
-    const date = detail.created_at ? new Date(detail.created_at).toLocaleString() : "";
+    const date = detail.created_at ? toKST(detail.created_at) : "";
     const sections = detail.content?.sections || [];
 
     let html = `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word" xmlns="http://www.w3.org/TR/REC-html40">
@@ -217,10 +227,10 @@ td{padding:8px 12px;border:1px solid #e2e8f0;font-size:10pt}
       </div>
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
-        <StatCard label="Daily Reports" value={dailyReports.length} color="blue" sub={dailyReports[0] ? `Latest: ${new Date(dailyReports[0].created_at).toLocaleDateString()}` : "None yet"} />
-        <StatCard label="Weekly Reports" value={weeklyReports.length} color="green" sub={weeklyReports[0] ? `Latest: ${new Date(weeklyReports[0].created_at).toLocaleDateString()}` : "None yet"} />
-        <StatCard label="Urgent Alerts" value={alertReports.length} color="red" sub={alertReports[0] ? `Latest: ${new Date(alertReports[0].created_at).toLocaleDateString()}` : "None yet"} />
-        <StatCard label="Cross-Agent" value={crossAgentReports.length} color="purple" sub={crossAgentReports[0] ? `Latest: ${new Date(crossAgentReports[0].created_at).toLocaleDateString()}` : "None yet"} />
+        <StatCard label="Daily Reports" value={dailyReports.length} color="blue" sub={dailyReports[0] ? `Latest: ${toKST(dailyReports[0].created_at)}` : "None yet"} />
+        <StatCard label="Weekly Reports" value={weeklyReports.length} color="green" sub={weeklyReports[0] ? `Latest: ${toKST(weeklyReports[0].created_at)}` : "None yet"} />
+        <StatCard label="Urgent Alerts" value={alertReports.length} color="red" sub={alertReports[0] ? `Latest: ${toKST(alertReports[0].created_at)}` : "None yet"} />
+        <StatCard label="Cross-Agent" value={crossAgentReports.length} color="purple" sub={crossAgentReports[0] ? `Latest: ${toKST(crossAgentReports[0].created_at)}` : "None yet"} />
       </div>
 
       <div className="flex gap-1 mb-4 border-b border-[var(--border-default)]">
@@ -257,7 +267,7 @@ td{padding:8px 12px;border:1px solid #e2e8f0;font-size:10pt}
                   <div className="flex items-center gap-3 flex-1 min-w-0">
                     <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium ${cfg.color} ${cfg.bg} border ${cfg.border}`}>{cfg.label}</span>
                     <span className="text-xs text-[var(--text-secondary)]">{r.source_run_count} runs</span>
-                    <span className="text-[10px] text-[var(--text-muted)]">{r.created_at ? new Date(r.created_at).toLocaleString() : ""}</span>
+                    <span className="text-[10px] text-[var(--text-muted)]">{r.created_at ? toKST(r.created_at) : ""}</span>
                   </div>
                   <svg className={`w-4 h-4 text-[var(--text-muted)] transition-transform ${isSelected ? "rotate-90" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
@@ -385,7 +395,7 @@ td{padding:8px 12px;border:1px solid #e2e8f0;font-size:10pt}
                   </span>
                 </div>
                 <div className="flex items-center gap-4 text-[12px] text-gray-400">
-                  <span>{detail.created_at ? new Date(detail.created_at).toLocaleString() : ""}</span>
+                  <span>{detail.created_at ? toKST(detail.created_at) : ""}</span>
                   <span>{detail.source_run_ids?.length || 0} data sources</span>
                   <span>ID: {detail.id?.slice(0, 8)}</span>
                 </div>
