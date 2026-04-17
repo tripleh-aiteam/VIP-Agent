@@ -121,6 +121,14 @@
 - **Copy button**: on both user and assistant messages — copies text to clipboard
 - **Files**: services/chat_service.py, app/chat/page.tsx
 
+### Chat Speed Fix + Typing Indicator
+- Removed double LLM calls: was doing interpret + format = 2 calls (20s), now max 1 call
+- Known intents (status, report, run asset): **instant** — zero LLM calls
+- Unknown intents: single LLM conversation call (~2-3s)
+- Typing indicator (bouncing dots) shows immediately after sending message
+- User message appears instantly (optimistic), dots show while waiting, then response replaces dots
+- **Files**: services/chat_service.py, app/chat/page.tsx
+
 ### Chat Fallback: Clickable Suggestion Chips
 - Unknown input shows friendly message + 6 clickable buttons
 - Chips: Show overview, Open latest report, Review approvals, Check agents, Compare, Refresh
