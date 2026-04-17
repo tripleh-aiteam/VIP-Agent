@@ -129,17 +129,6 @@ def add_message(
     routing = route_message(content)
     intent_result = routing["intent_result"]
 
-    # If LLM re-interpretation is needed, try OpenAI for better classification
-    if routing["use_llm_interpretation"]:
-        try:
-            from services.interpreters import OpenAIInterpreter
-            ai_result = OpenAIInterpreter().interpret(content)
-            # Use AI result if it's more confident than rules
-            if ai_result.confidence > intent_result.confidence:
-                intent_result = ai_result
-        except Exception:
-            pass  # fall back to rule-based result
-
     # Store intent in user message
     user_msg.content_json = {
         "text": content,
@@ -151,23 +140,15 @@ def add_message(
     record_event(db, "chatbot", "chat.message_received", trace_id, {
         "session_id": str(session_id), "role": role, "message_type": message_type,
         "intent": intent_result.intent, "confidence": intent_result.confidence,
-        "routing": routing["routing_reason"],
     })
 
-    # Generate response based on routing decision
+    # Generate response — single path, no double LLM calls
     if routing["use_llm_conversation"]:
-        # Unknown intent → full AI conversation
-        raw_response = _llm_conversation(content, db, session)
+        # Unknown intent → one LLM call for conversation (no formatter needed)
+        assistant_response = _llm_conversation(content, db, session)
     else:
-        # Known intent → deterministic action execution
-        raw_response = _generate_response_from_intent(db, session, intent_result, trace_id)
-
-    # Format response: LLM rewrite for natural language, or plain for exact responses
-    if routing["use_llm_response"] and not routing["use_llm_conversation"]:
-        formatter = AIResponseFormatter()
-        assistant_response = formatter.format(raw_response)
-    else:
-        assistant_response = raw_response
+        # Known intent → deterministic execution (no LLM cost)
+        assistant_response = _generate_response_from_intent(db, session, intent_result, trace_id)
 
     assistant_msg = ChatMessage(
         session_id=session_id,

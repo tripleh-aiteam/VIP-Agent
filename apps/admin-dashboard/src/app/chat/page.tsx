@@ -136,23 +136,31 @@ export default function ChatPage() {
     setSending(true);
     setInput("");
 
-    // Optimistic: show user message immediately
+    // Optimistic: show user message + typing indicator immediately
     const tempUserMsg = {
       id: `temp-${Date.now()}`,
       role: "user",
       content: { text: msg },
       created_at: new Date().toISOString(),
     };
-    setMessages((prev) => [...prev, tempUserMsg]);
+    const typingMsg = {
+      id: "typing-indicator",
+      role: "assistant",
+      content: { text: "" },
+      created_at: new Date().toISOString(),
+      isTyping: true,
+    };
+    setMessages((prev) => [...prev, tempUserMsg, typingMsg]);
 
     try {
       const result = await apiPost<any>(`/chat/sessions/${activeSession}/messages`, { content: msg });
-      // Replace temp message with real messages
+      // Replace temp + typing with real messages
       setMessages((prev) => {
-        const withoutTemp = prev.filter((m) => m.id !== tempUserMsg.id);
-        return [...withoutTemp, result.user_message, result.assistant_message];
+        const cleaned = prev.filter((m) => m.id !== tempUserMsg.id && m.id !== "typing-indicator");
+        return [...cleaned, result.user_message, result.assistant_message];
       });
     } catch {
+      setMessages((prev) => prev.filter((m) => m.id !== "typing-indicator"));
       loadMessages(activeSession);
     }
     setSending(false);
@@ -351,6 +359,22 @@ export default function ChatPage() {
                 const isSystem = m.role === "system";
                 const isAssistant = m.role === "assistant";
                 const hasCard = isAssistant && m.content?.action_result_type && m.content.action_result_type !== "plain_text";
+
+                // Typing indicator
+                if (m.isTyping) {
+                  return (
+                    <div key={m.id} className="mr-8">
+                      <div className="rounded-lg p-3 bg-[var(--bg-elevated)] border border-[var(--border-default)]/30">
+                        <span className="text-[9px] font-semibold text-green-400 mb-1.5 block">VIP Agent</span>
+                        <div className="flex items-center gap-1.5">
+                          <div className="w-1.5 h-1.5 rounded-full bg-[var(--text-muted)] animate-bounce" style={{ animationDelay: "0ms" }} />
+                          <div className="w-1.5 h-1.5 rounded-full bg-[var(--text-muted)] animate-bounce" style={{ animationDelay: "150ms" }} />
+                          <div className="w-1.5 h-1.5 rounded-full bg-[var(--text-muted)] animate-bounce" style={{ animationDelay: "300ms" }} />
+                        </div>
+                      </div>
+                    </div>
+                  );
+                }
 
                 return (
                   <div key={m.id} className={isUser ? "ml-16" : isSystem ? "mx-12" : "mr-8"}>
