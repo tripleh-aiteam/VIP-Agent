@@ -121,6 +121,15 @@
 - **Copy button**: on both user and assistant messages — copies text to clipboard
 - **Files**: services/chat_service.py, app/chat/page.tsx
 
+### Upgrade: LLM Mode Human-Like Conversation
+- LLM mode now responds like a **real human assistant**, not a robot
+- Formatter rewrites all responses naturally: "Here's what I found..." "Looking at the numbers..."
+- OpenAI interpreter upgraded with natural language examples for better understanding
+- Supports casual speech: "hey show me what the asset agent has", "I wanna see stock data"
+- Agent-specific detection from casual language: "report related to asset" → asset only
+- Responds in same language as user (Korean/English)
+- **Files**: services/formatters.py, services/interpreters.py
+
 ### Fix: Agent-Specific Reports in Chat
 - "show asset report" → returns only Asset Agent's report (not combined summary)
 - "daily report of stock agent" → returns only Stock Agent's report
