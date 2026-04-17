@@ -226,6 +226,10 @@ export default function ChatPage() {
 
   return (
     <div className="flex flex-col md:flex-row h-[calc(100vh-5rem)] md:h-[calc(100vh-3rem)] gap-2 md:gap-4">
+      {/* Hidden file input — always in DOM */}
+      <input type="file" ref={fileInputRef} onChange={handleFileSelect} className="hidden"
+        accept=".txt,.csv,.json,.md,.pdf,.xlsx,.doc,.docx,.png,.jpg,.jpeg" />
+
       {/* Create Folder Modal */}
       {showNewFolder && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50" onClick={() => { setShowNewFolder(false); setNewFolderName(""); }}>
@@ -526,9 +530,6 @@ export default function ChatPage() {
               )}
 
               <div className="flex items-center gap-1.5 bg-[var(--bg-elevated)] border border-[var(--border-default)] rounded-xl px-2 focus-within:border-[var(--brand-blue)] transition-colors">
-                {/* File upload */}
-                <input type="file" ref={fileInputRef} onChange={handleFileSelect} className="hidden"
-                  accept=".txt,.csv,.json,.md,.pdf,.xlsx,.doc,.docx,.png,.jpg,.jpeg" />
                 <button onClick={() => fileInputRef.current?.click()}
                   className="p-2 rounded-lg text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors shrink-0"
                   title="Attach file">
