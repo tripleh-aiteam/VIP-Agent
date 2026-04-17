@@ -121,6 +121,17 @@
 - **Copy button**: on both user and assistant messages — copies text to clipboard
 - **Files**: services/chat_service.py, app/chat/page.tsx
 
+### Smart Chat Router — Auto Rules vs LLM
+- New `services/chat_router.py` — system decides routing automatically
+- Flow: classify with rules (free) → if confident, use rules → if not, use LLM
+- `should_use_llm()`: returns True only when rules can't handle the message
+- `is_deterministic_intent()`: approve/reject/workflows always use rules (safe)
+- `should_format_with_llm()`: rewrites responses naturally for reports/explanations
+- Confidence thresholds: >0.80 = rules only, <0.50 = LLM needed
+- Every decision logged with `routing_reason` for debugging
+- Cost efficient: most commands use zero LLM calls
+- **Files**: services/chat_router.py (new), services/chat_service.py
+
 ### Unified Chat UX — One Smart Assistant
 - Removed mode switch dropdown (Simple/LLM) from chat header
 - Removed "Structured Response" / "LLM Response" badges from messages
