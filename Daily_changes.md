@@ -121,6 +121,16 @@
 - **Copy button**: on both user and assistant messages — copies text to clipboard
 - **Files**: services/chat_service.py, app/chat/page.tsx
 
+### Chat Input: Voice + File Upload
+- Voice input: microphone button uses Web Speech API (free, browser built-in)
+- Click mic → pulses red → speak → transcript fills input automatically
+- File upload: paperclip button opens file picker
+- Text files (.txt, .csv, .json, .md) → content read and added to input
+- Other files (.pdf, .xlsx, images) → shown as attachment name
+- File preview bar with remove button before sending
+- Input redesigned: unified bar with [📎 file] [input text] [🎤 mic] [→ send]
+- **File**: app/chat/page.tsx
+
 ### Chat Response Redesign: Summary + Card + Details
 - Responses now have 3 layers:
   1. **Summary**: short human text ("All systems running" or "2 approvals need attention")
