@@ -121,6 +121,17 @@
 - **Copy button**: on both user and assistant messages — copies text to clipboard
 - **Files**: services/chat_service.py, app/chat/page.tsx
 
+### Unified Chat UX — One Smart Assistant
+- Removed mode switch dropdown (Simple/LLM) from chat header
+- Removed "Structured Response" / "LLM Response" badges from messages
+- Removed mode selector from empty state
+- One unified welcome: "Hi! I'm your VIP Assistant. Ask me anything."
+- Backend always uses OpenAI interpreter + AI formatter internally
+- System auto-decides: known commands → deterministic rules, natural language → AI conversation
+- Header shows "VIP Assistant" with hint text
+- Help response rewritten as friendly list, not command table
+- **Files**: app/chat/page.tsx, services/chat_service.py
+
 ### Upgrade: LLM Mode Human-Like Conversation
 - LLM mode now responds like a **real human assistant**, not a robot
 - Formatter rewrites all responses naturally: "Here's what I found..." "Looking at the numbers..."
