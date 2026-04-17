@@ -23,7 +23,49 @@ export default function ChatPage() {
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
   const [renaming, setRenaming] = useState<string | null>(null);
+  const [listening, setListening] = useState(false);
+  const [attachedFile, setAttachedFile] = useState<File | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Voice input
+  const startVoice = () => {
+    const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!SR) { alert("Voice input not supported in this browser."); return; }
+    const recognition = new SR();
+    recognition.lang = "auto";
+    recognition.interimResults = false;
+    recognition.maxAlternatives = 1;
+    setListening(true);
+    recognition.onresult = (event: any) => {
+      const transcript = event.results[0][0].transcript;
+      setInput((prev) => prev ? prev + " " + transcript : transcript);
+      setListening(false);
+    };
+    recognition.onerror = () => setListening(false);
+    recognition.onend = () => setListening(false);
+    recognition.start();
+  };
+
+  // File handling
+  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      setAttachedFile(file);
+      // Read text files and add to input
+      if (file.type.startsWith("text/") || file.name.endsWith(".csv") || file.name.endsWith(".json") || file.name.endsWith(".md")) {
+        const reader = new FileReader();
+        reader.onload = (ev) => {
+          const content = (ev.target?.result as string || "").slice(0, 2000);
+          setInput((prev) => prev ? prev + "\n\n[File: " + file.name + "]\n" + content : "[File: " + file.name + "]\n" + content);
+        };
+        reader.readAsText(file);
+      } else {
+        setInput((prev) => prev ? prev + ` [Attached: ${file.name}]` : `[Attached: ${file.name}]`);
+      }
+    }
+    if (e.target) e.target.value = "";
+  };
 
   const loadSessions = () => api<any[]>("/chat/sessions").then(setSessions).catch(() => {});
   const loadMessages = (sid: string) => api<any[]>(`/chat/sessions/${sid}/messages`).then(setMessages).catch(() => {});
@@ -134,6 +176,7 @@ export default function ChatPage() {
     if (!msg || !activeSession) return;
     setSending(true);
     setInput("");
+    setAttachedFile(null);
 
     // Optimistic: show user message + typing indicator immediately
     const tempUserMsg = {
@@ -469,23 +512,61 @@ export default function ChatPage() {
 
             {/* Input */}
             <div className="p-3">
-              <div className="flex gap-2">
+              {/* Attached file preview */}
+              {attachedFile && (
+                <div className="mb-2 flex items-center gap-2 px-3 py-1.5 rounded-lg bg-[var(--bg-elevated)] border border-[var(--border-default)] text-[11px]">
+                  <svg className="w-3.5 h-3.5 text-[var(--text-muted)]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
+                  </svg>
+                  <span className="text-[var(--text-secondary)] truncate flex-1">{attachedFile.name}</span>
+                  <button onClick={() => setAttachedFile(null)} className="text-[var(--text-muted)] hover:text-[var(--error)]">
+                    <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+                  </button>
+                </div>
+              )}
+
+              <div className="flex items-center gap-1.5 bg-[var(--bg-elevated)] border border-[var(--border-default)] rounded-xl px-2 focus-within:border-[var(--brand-blue)] transition-colors">
+                {/* File upload */}
+                <input type="file" ref={fileInputRef} onChange={handleFileSelect} className="hidden"
+                  accept=".txt,.csv,.json,.md,.pdf,.xlsx,.doc,.docx,.png,.jpg,.jpeg" />
+                <button onClick={() => fileInputRef.current?.click()}
+                  className="p-2 rounded-lg text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors shrink-0"
+                  title="Attach file">
+                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
+                  </svg>
+                </button>
+
+                {/* Text input */}
                 <input
                   value={input}
                   onChange={(e) => setInput(e.target.value)}
                   onKeyDown={(e) => e.key === "Enter" && !e.shiftKey && sendMessage()}
-                  placeholder="Ask anything or type a command..."
-                  className="flex-1 bg-[var(--bg-elevated)] border border-[var(--border-default)] rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:border-[var(--brand-blue)] transition-colors"
+                  placeholder="Ask anything..."
+                  className="flex-1 bg-transparent py-2.5 text-sm focus:outline-none text-[var(--text-primary)] placeholder:text-[var(--text-muted)]"
                   disabled={sending}
                 />
+
+                {/* Voice input */}
+                <button onClick={startVoice} disabled={listening}
+                  className={`p-2 rounded-lg transition-colors shrink-0 ${
+                    listening ? "text-red-500 bg-red-50 dark:bg-red-900/20 animate-pulse" : "text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)]"
+                  }`}
+                  title={listening ? "Listening..." : "Voice input"}>
+                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
+                  </svg>
+                </button>
+
+                {/* Send */}
                 <button onClick={() => sendMessage()} disabled={sending || !input.trim()}
-                  className="px-5 py-2.5 rounded-lg bg-[var(--brand-blue)] hover:bg-[var(--brand-blue-deep)] text-[var(--text-primary)] text-sm font-semibold disabled:opacity-50 transition-colors">
-                  {sending ? "..." : "Send"}
+                  className="p-2 rounded-lg bg-[var(--brand-blue)] text-white disabled:opacity-30 hover:bg-[var(--brand-blue-deep)] transition-colors shrink-0"
+                  title="Send">
+                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M5 12h14M12 5l7 7-7 7" />
+                  </svg>
                 </button>
               </div>
-              <p className="text-[8px] mt-1 text-[var(--text-muted)]">
-                Overview | Reports | Agents | Approvals | Compare | Refresh
-              </p>
             </div>
           </>
         ) : (
