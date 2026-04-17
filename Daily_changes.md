@@ -121,6 +121,16 @@
 - **Copy button**: on both user and assistant messages — copies text to clipboard
 - **Files**: services/chat_service.py, app/chat/page.tsx
 
+### Chat Follow-Up Suggestion Chips
+- Every response now has 2-4 clickable follow-up actions
+- Contextual: suggestions change based on actual data
+  - Overview with 3 pending → shows "Review 3 pending" chip
+  - Agents with 1 offline → shows "Check Asset Agent" chip
+  - After asset run → suggests "Stock report" and "Compare"
+  - After approvals → suggests "Explain top case" and "Approve"
+- Frontend already renders them (built earlier with fallback chips)
+- **File**: services/chat_service.py
+
 ### Chat Empty State: Task-Based Cards
 - Time-aware greeting: "Good morning/afternoon/evening"
 - "What would you like to do today?" instead of feature list
