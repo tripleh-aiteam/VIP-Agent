@@ -25,6 +25,15 @@ class ComposeBody(BaseModel):
     hours_back: int = Field(default=24, ge=1, le=720, description="How many hours back to look for data")
 
 
+@router.post("/compose/auto-daily", dependencies=[Depends(rate_limit_compose)])
+def trigger_auto_daily(db: Session = Depends(get_db)):
+    """Manually trigger the auto daily report pipeline (3 agent reports + combined)."""
+    from services.scheduler_service import _auto_daily_reports
+    import threading
+    threading.Thread(target=_auto_daily_reports, daemon=True).start()
+    return {"triggered": True, "message": "Auto daily reports running in background. Check Reports page in ~30 seconds."}
+
+
 @router.post("/compose/daily", dependencies=[Depends(rate_limit_compose)])
 def compose_daily(body: ComposeBody, db: Session = Depends(get_db)):
     """Compose a daily executive summary from the last 24h of task runs."""

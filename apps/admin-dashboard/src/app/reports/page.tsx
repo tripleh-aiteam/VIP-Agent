@@ -33,7 +33,11 @@ export default function ReportsPage() {
 
   const compose = async (type: string) => {
     setComposing(true);
-    if (type === "cross-agent") {
+    if (type === "auto-daily") {
+      await apiPost("/reports/compose/auto-daily");
+      // Wait for background processing
+      await new Promise((r) => setTimeout(r, 15000));
+    } else if (type === "cross-agent") {
       await apiPost("/reports/compose/cross-agent", {
         agent_types: ["asset", "stock"],
         report_type: "cross_agent_summary",
@@ -208,6 +212,10 @@ td{padding:8px 12px;border:1px solid #e2e8f0;font-size:10pt}
           <p className="text-sm text-[var(--text-muted)]">Executive summaries and alerts</p>
         </div>
         <div className="flex gap-2 flex-wrap">
+          <button onClick={() => compose("auto-daily")} disabled={composing}
+            className="px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold transition-colors disabled:opacity-50">
+            {composing ? "..." : "Auto Daily (3 Agents)"}
+          </button>
           {["daily", "weekly", "alert", "cross-agent"].map((t) => (
             <button key={t} onClick={() => compose(t)} disabled={composing}
               className="px-4 py-2 rounded-lg bg-[var(--text-primary)] hover:bg-[var(--text-secondary)] text-white text-xs font-semibold transition-colors disabled:opacity-50 capitalize">
