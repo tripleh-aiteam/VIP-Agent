@@ -121,6 +121,20 @@
 - **Copy button**: on both user and assistant messages — copies text to clipboard
 - **Files**: services/chat_service.py, app/chat/page.tsx
 
+### Chat Empty State: Task-Based Cards
+- Time-aware greeting: "Good morning/afternoon/evening"
+- "What would you like to do today?" instead of feature list
+- 6 task cards in 2x3 grid with icons and descriptions:
+  - Today's overview (status)
+  - Urgent items (approvals & risks)
+  - Latest report (daily summary)
+  - Refresh data (fetch from all agents)
+  - Compare (asset vs stock)
+  - Ask anything (focuses input)
+- Clean input below: "Or type your question here..."
+- Removed mode-specific input styling
+- **File**: app/chat/page.tsx
+
 ### Chat UI Cleanup: Hide Technical Metadata
 - Removed intent badges (unknown, report_request, etc.) from messages
 - Removed confidence scores (conf=0.85) from messages
