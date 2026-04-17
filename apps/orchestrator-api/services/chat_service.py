@@ -123,41 +123,52 @@ def add_message(
 
     session.updated_at = datetime.utcnow()
 
-    # Unified smart mode: always use LLM interpreter + AI formatter
-    # System decides internally when to use rules vs AI
-    from services.interpreters import OpenAIInterpreter, RuleBasedInterpreter
-    from services.formatters import AIResponseFormatter
+    # Smart routing: system decides rules vs LLM automatically
+    from services.chat_router import route_message
+    from services.formatters import AIResponseFormatter, StandardResponseFormatter
 
-    session_mode = "llm"  # always use smart mode internally
-    interpreter = OpenAIInterpreter()
-    formatter = AIResponseFormatter()
+    routing = route_message(content)
+    intent_result = routing["intent_result"]
 
-    # Classify intent using mode-appropriate interpreter
-    intent_result = interpreter.interpret(content)
+    # If LLM re-interpretation is needed, try OpenAI for better classification
+    if routing["use_llm_interpretation"]:
+        try:
+            from services.interpreters import OpenAIInterpreter
+            ai_result = OpenAIInterpreter().interpret(content)
+            # Use AI result if it's more confident than rules
+            if ai_result.confidence > intent_result.confidence:
+                intent_result = ai_result
+        except Exception:
+            pass  # fall back to rule-based result
 
     # Store intent in user message
     user_msg.content_json = {
         "text": content,
         "data": data or {},
         "intent": intent_result.to_dict(),
-        "mode": session_mode,
+        "routing": routing["routing_reason"],
     }
 
     record_event(db, "chatbot", "chat.message_received", trace_id, {
         "session_id": str(session_id), "role": role, "message_type": message_type,
         "intent": intent_result.intent, "confidence": intent_result.confidence,
-        "mode": session_mode,
+        "routing": routing["routing_reason"],
     })
 
-    # Generate assistant response
-    # In LLM mode with unknown intent: use full OpenAI conversation instead of structured default
-    if session_mode in ("llm", "ai_assist") and intent_result.intent == "unknown":
+    # Generate response based on routing decision
+    if routing["use_llm_conversation"]:
+        # Unknown intent → full AI conversation
         raw_response = _llm_conversation(content, db, session)
     else:
+        # Known intent → deterministic action execution
         raw_response = _generate_response_from_intent(db, session, intent_result, trace_id)
 
-    # Format response using mode-appropriate formatter
-    assistant_response = formatter.format(raw_response)
+    # Format response: LLM rewrite for natural language, or plain for exact responses
+    if routing["use_llm_response"] and not routing["use_llm_conversation"]:
+        formatter = AIResponseFormatter()
+        assistant_response = formatter.format(raw_response)
+    else:
+        assistant_response = raw_response
 
     assistant_msg = ChatMessage(
         session_id=session_id,
