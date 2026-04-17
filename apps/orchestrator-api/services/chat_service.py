@@ -849,15 +849,26 @@ def _response_help() -> dict:
     return {
         "type": "plain_text",
         "content": {
-            "text": "I can help you with:\n\n"
-                    "- \"status\" — System health overview\n"
-                    "- \"list agents\" — Show registered agents\n"
-                    "- \"report\" — Latest daily report\n"
-                    "- \"approvals\" — Pending judgement cases\n"
-                    "- \"run asset summary\" — Trigger asset analysis\n"
-                    "- \"run stock analysis\" — Trigger stock check\n"
-                    "- \"run realty listing\" — Trigger property search\n"
-                    "- \"help\" — Show this message",
+            "text": "VIP Agent Commands:\n"
+                    "━━━━━━━━━━━━━━━━━━━━━\n"
+                    "status          → System health\n"
+                    "agents          → List agents\n"
+                    "report          → Latest daily report\n"
+                    "weekly report   → Latest weekly report\n"
+                    "asset report    → Asset Agent report only\n"
+                    "stock report    → Stock Agent report only\n"
+                    "realty report   → Real Estate report only\n"
+                    "run asset       → Run asset summary\n"
+                    "run stock       → Run stock analysis\n"
+                    "run realty      → Run realty listing\n"
+                    "run daily report → Compose daily report\n"
+                    "approvals       → Pending judgement cases\n"
+                    "a2a messages    → A2A communication\n"
+                    "risk check      → Cross-agent risk analysis\n"
+                    "full summary    → Full executive summary\n"
+                    "help            → Show this list\n"
+                    "━━━━━━━━━━━━━━━━━━━━━\n"
+                    "Switch to LLM Mode for natural conversation.",
         },
     }
 
@@ -900,14 +911,25 @@ def _response_default(user_input: str, session_mode: str = "structured") -> dict
     return {
         "type": "plain_text",
         "content": {
-            "text": f"I can help you with:\n\n"
-                    "- \"show report\" or \"daily report\" — Latest reports\n"
-                    "- \"run asset summary\" — Fetch asset data\n"
-                    "- \"run stock analysis\" — Fetch stock data\n"
-                    "- \"status\" — System health\n"
-                    "- \"agents\" — List agents\n"
-                    "- \"approvals\" — Pending cases\n\n"
-                    f"Your message: \"{user_input}\"",
+            "text": f"Command not recognized: \"{user_input}\"\n\n"
+                    "Available commands:\n"
+                    "━━━━━━━━━━━━━━━━━━━━━\n"
+                    "status          → System health\n"
+                    "agents          → List agents\n"
+                    "report          → Latest daily report\n"
+                    "weekly report   → Latest weekly report\n"
+                    "asset report    → Asset Agent report\n"
+                    "stock report    → Stock Agent report\n"
+                    "realty report   → Real Estate report\n"
+                    "run asset       → Run asset summary\n"
+                    "run stock       → Run stock analysis\n"
+                    "run realty      → Run realty listing\n"
+                    "run daily report → Compose daily report\n"
+                    "approvals       → Pending judgement cases\n"
+                    "a2a messages    → A2A communication\n"
+                    "help            → Show this list\n"
+                    "━━━━━━━━━━━━━━━━━━━━━\n"
+                    "Switch to LLM Mode for natural language.",
         },
     }
 
