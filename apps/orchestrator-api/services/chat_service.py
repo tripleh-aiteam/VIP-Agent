@@ -152,8 +152,12 @@ def add_message(
         "mode": session_mode,
     })
 
-    # Generate assistant response (deterministic action execution — same for both modes)
-    raw_response = _generate_response_from_intent(db, session, intent_result, trace_id)
+    # Generate assistant response
+    # In LLM mode with unknown intent: use full OpenAI conversation instead of structured default
+    if session_mode in ("llm", "ai_assist") and intent_result.intent == "unknown":
+        raw_response = _llm_conversation(content, db, session)
+    else:
+        raw_response = _generate_response_from_intent(db, session, intent_result, trace_id)
 
     # Format response using mode-appropriate formatter
     assistant_response = formatter.format(raw_response)
@@ -880,6 +884,76 @@ def _response_help() -> dict:
                     "Switch to LLM Mode for natural conversation.",
         },
     }
+
+
+def _llm_conversation(user_input: str, db: Session, session) -> dict:
+    """Full LLM conversation mode — talks like a real human assistant with platform context."""
+    import os, httpx
+
+    api_key = os.getenv("OPENAI_API_KEY", "")
+    if not api_key:
+        return {"type": "plain_text", "content": {"text": "LLM mode requires OpenAI API key. Please configure OPENAI_API_KEY."}}
+
+    # Build context from recent chat history
+    recent_msgs = (
+        db.query(ChatMessage)
+        .filter(ChatMessage.session_id == session.id)
+        .order_by(ChatMessage.created_at.desc())
+        .limit(10)
+        .all()
+    )
+
+    # Build conversation history for OpenAI
+    conversation = [
+        {"role": "system", "content": (
+            "You are VIP Agent Platform personal assistant. You help manage a multi-agent investment platform "
+            "with Asset Agent (real estate portfolio, contracts, rent), Stock Agent (market analysis, sentiment), "
+            "and Real Estate Agent (property listings, vacancy, yield).\n\n"
+            "You can:\n"
+            "- Show reports: 'I'll pull up the asset report for you'\n"
+            "- Run tasks: 'Let me fetch the latest stock data'\n"
+            "- Check status: 'The system is running fine, all 3 agents are online'\n"
+            "- Explain data: 'Your vacancy rate is 8.5% which is healthy'\n"
+            "- Answer general questions about the platform\n\n"
+            "Style: Talk naturally like a real human assistant. Be friendly, professional, helpful. "
+            "Use the user's language (Korean or English). "
+            "If you can't do something, suggest what the user can try. "
+            "Don't just list commands — have a real conversation."
+        )},
+    ]
+
+    # Add recent chat history (oldest first)
+    for msg in reversed(recent_msgs):
+        msg_text = (msg.content_json or {}).get("text", "")
+        if msg.role == "user" and msg_text:
+            conversation.append({"role": "user", "content": msg_text})
+        elif msg.role == "assistant" and msg_text:
+            conversation.append({"role": "assistant", "content": msg_text[:300]})
+
+    # Add current message
+    conversation.append({"role": "user", "content": user_input})
+
+    try:
+        with httpx.Client(timeout=15) as client:
+            resp = client.post(
+                "https://api.openai.com/v1/chat/completions",
+                headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+                json={
+                    "model": os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
+                    "messages": conversation,
+                    "temperature": 0.7,
+                    "max_tokens": 600,
+                },
+            )
+        if resp.status_code == 200:
+            ai_text = resp.json()["choices"][0]["message"]["content"].strip()
+            return {"type": "plain_text", "content": {"text": ai_text, "ai_enhanced": True, "mode": "llm"}}
+        else:
+            log.warning(f"chat llm: OpenAI error {resp.status_code}", extra={"action": "chat.llm_error"})
+    except Exception as e:
+        log.warning(f"chat llm: error: {e}", extra={"action": "chat.llm_error"})
+
+    return {"type": "plain_text", "content": {"text": "I'm having trouble connecting to the AI service right now. Please try again in a moment."}}
 
 
 def _response_default(user_input: str, session_mode: str = "structured") -> dict:
