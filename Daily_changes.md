@@ -121,6 +121,15 @@
 - **Copy button**: on both user and assistant messages — copies text to clipboard
 - **Files**: services/chat_service.py, app/chat/page.tsx
 
+### Fix: Agent-Specific Reports in Chat
+- "show asset report" → returns only Asset Agent's report (not combined summary)
+- "daily report of stock agent" → returns only Stock Agent's report
+- "realty report" → returns only Real Estate Agent's report
+- If no saved agent report exists, runs the task directly and returns fresh data
+- No agent specified → shows combined daily summary (original behavior)
+- New intent patterns: `report_agent_specific` with 5 regex patterns
+- **Files**: services/chat_service.py, services/intent_service.py
+
 ### Fix: Korean Time (KST) Display
 - All report timestamps now display in KST (Asia/Seoul timezone)
 - Telegram auto-reports show KST time
