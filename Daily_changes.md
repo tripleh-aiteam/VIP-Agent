@@ -121,6 +121,14 @@
 - **Copy button**: on both user and assistant messages — copies text to clipboard
 - **Files**: services/chat_service.py, app/chat/page.tsx
 
+### Chat UX: Goal-Based Help (6 Categories)
+- Quick actions reduced from 7 to 6: Overview, Reports, Agents, Approvals, Compare, Refresh
+- Help response organized by user goal, not raw commands
+- Welcome: "Hi! I'm your VIP Assistant." + 6 topic menu
+- Fallback: same 6 categories, no long command dump
+- All advanced commands still work — just not exposed upfront
+- **Files**: services/chat_service.py, app/chat/page.tsx
+
 ### OpenAI Cost Optimization
 - `_llm_conversation`: prompt 50% shorter, max_tokens 600→200, history 10→5 msgs, temp 0.7→0.5
 - `AIResponseFormatter`: prompt 80% shorter (1 line), max_tokens 500→250, input capped at 800 chars
