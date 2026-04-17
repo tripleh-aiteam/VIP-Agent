@@ -941,17 +941,19 @@ def _llm_conversation(user_input: str, db: Session, session) -> dict:
 
 
 def _response_default(user_input: str, session_mode: str = "llm") -> dict:
-    """Default response — shows simple goal-based options."""
+    """Friendly fallback with actionable suggestions."""
     return {
-        "type": "plain_text",
+        "type": "suggestion",
         "content": {
-            "text": "I can help with:\n\n"
-                    "Overview — system status\n"
-                    "Reports — daily, asset, stock, or realty\n"
-                    "Approvals — pending cases\n"
-                    "Compare — asset vs stock\n"
-                    "Refresh — fetch latest data\n\n"
-                    "Try asking naturally or type \"help\" for examples.",
+            "text": "I'm not fully sure what you need, but I can help with these:",
+            "suggestions": [
+                {"label": "Show overview", "message": "status"},
+                {"label": "Open latest report", "message": "show daily report"},
+                {"label": "Review approvals", "message": "pending approvals"},
+                {"label": "Check agents", "message": "show agents"},
+                {"label": "Compare asset vs stock", "message": "compare asset vs stock"},
+                {"label": "Refresh all data", "message": "run full executive summary"},
+            ],
         },
     }
 

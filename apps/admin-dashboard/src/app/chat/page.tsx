@@ -370,6 +370,19 @@ export default function ChatPage() {
                         </span>
                       </div>
                       <p className="text-[11px] text-[var(--text-primary)] whitespace-pre-wrap leading-relaxed">{m.content?.text || ""}</p>
+
+                      {/* Suggestion chips */}
+                      {m.content?.suggestions && (
+                        <div className="mt-2.5 flex flex-wrap gap-1.5">
+                          {m.content.suggestions.map((s: any, si: number) => (
+                            <button key={si} onClick={() => sendMessage(s.message)}
+                              className="px-3 py-1.5 text-[11px] rounded-lg bg-[var(--bg-card)] border border-[var(--border-default)] text-[var(--brand-blue)] font-medium hover:bg-[var(--bg-hover)] hover:border-[var(--brand-blue)] transition-colors">
+                              {s.label}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+
                       {hasCard && <ChatResponseCard message={m} onAction={(msg) => sendMessage(msg)} />}
 
                       {/* Action buttons */}
