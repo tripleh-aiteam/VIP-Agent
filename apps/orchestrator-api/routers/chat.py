@@ -17,6 +17,38 @@ from services.intent_service import classify, classify_batch
 router = APIRouter(prefix="/chat", tags=["chat"])
 
 
+@router.get("/debug/openai")
+def debug_openai():
+    """Debug: test OpenAI connection."""
+    import os
+    import httpx
+
+    api_key = os.getenv("OPENAI_API_KEY", "")
+    model = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+
+    if not api_key:
+        return {"status": "error", "reason": "OPENAI_API_KEY not set", "key_length": 0}
+
+    try:
+        with httpx.Client(timeout=10) as client:
+            resp = client.post(
+                "https://api.openai.com/v1/chat/completions",
+                headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+                json={
+                    "model": model,
+                    "messages": [{"role": "user", "content": "say hi"}],
+                    "max_tokens": 10,
+                },
+            )
+        if resp.status_code == 200:
+            text = resp.json()["choices"][0]["message"]["content"]
+            return {"status": "ok", "model": model, "response": text, "key_prefix": api_key[:12] + "..."}
+        else:
+            return {"status": "error", "http_status": resp.status_code, "body": resp.text[:300], "key_prefix": api_key[:12] + "..."}
+    except Exception as e:
+        return {"status": "error", "exception": str(e), "key_prefix": api_key[:12] + "..."}
+
+
 class CreateSessionBody(BaseModel):
     user_id: str = Field(default="operator")
     channel: str = Field(default="web", description="web | telegram | api")
