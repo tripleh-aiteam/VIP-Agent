@@ -113,6 +113,14 @@
 - Combined daily_summary also saved as before
 - Total: 4 reports saved per morning (3 agents + 1 combined)
 
+### Fix: Chat LLM Mode + Copy Buttons
+- **LLM Mode fixed**: unknown intents now call OpenAI gpt-4o-mini for natural language response
+- Previously showed "I'm in MVP mode with pattern-based responses" — now gives real AI answers
+- **Simple Mode**: shows helpful command suggestions instead of error message
+- **Re-ask button**: on user messages — click to copy text back to input field for re-sending
+- **Copy button**: on both user and assistant messages — copies text to clipboard
+- **Files**: services/chat_service.py, app/chat/page.tsx
+
 ### Fix: Korean Time (KST) Display
 - All report timestamps now display in KST (Asia/Seoul timezone)
 - Telegram auto-reports show KST time
