@@ -2,7 +2,6 @@
 
 import { useEffect, useState, useRef } from "react";
 import { api, apiPost, apiPatch } from "@/components/api";
-import Badge from "@/components/Badge";
 import { ChatResponseCard } from "@/components/ChatCards";
 
 const QUICK_ACTIONS = [
@@ -377,7 +376,7 @@ export default function ChatPage() {
                 }
 
                 return (
-                  <div key={m.id} className={isUser ? "ml-16" : isSystem ? "mx-12" : "mr-8"}>
+                  <div key={m.id} className={`group ${isUser ? "ml-16" : isSystem ? "mx-12" : "mr-8"}`}>
                     <div className={`rounded-lg p-3 ${
                       isUser ? "bg-blue-900/20 border border-blue-800/30" :
                       isSystem ? "bg-[var(--bg-card)] border border-[var(--border-default)]/30 text-center" :
@@ -409,32 +408,21 @@ export default function ChatPage() {
 
                       {hasCard && <ChatResponseCard message={m} onAction={(msg) => sendMessage(msg)} />}
 
-                      {/* Action buttons */}
-                      <div className="mt-2 flex items-center gap-1.5">
-                        {isUser && (
-                          <button onClick={() => { setInput(m.content?.text || ""); }}
-                            className="text-[9px] px-2 py-0.5 rounded bg-blue-500/10 text-blue-500 hover:bg-blue-500/20 transition-colors"
-                            title="Copy to input">
-                            Re-ask
-                          </button>
-                        )}
-                        {(isUser || isAssistant) && (
+                      {/* Action buttons — clean, no debug info */}
+                      {(isUser || isAssistant) && !isSystem && (
+                        <div className="mt-2 flex items-center gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                          {isUser && (
+                            <button onClick={() => { setInput(m.content?.text || ""); }}
+                              className="text-[9px] px-2 py-0.5 rounded bg-blue-500/10 text-blue-500 hover:bg-blue-500/20 transition-colors">
+                              Re-ask
+                            </button>
+                          )}
                           <button onClick={() => navigator.clipboard.writeText(m.content?.text || "")}
-                            className="text-[9px] px-2 py-0.5 rounded bg-[var(--bg-card)] text-[var(--text-muted)] hover:text-[var(--text-primary)] border border-[var(--border-default)] transition-colors"
-                            title="Copy text">
+                            className="text-[9px] px-2 py-0.5 rounded bg-[var(--bg-card)] text-[var(--text-muted)] hover:text-[var(--text-primary)] border border-[var(--border-default)] transition-colors">
                             Copy
                           </button>
-                        )}
-                        {isUser && m.content?.intent && (
-                          <>
-                            <Badge text={m.content.intent.intent} />
-                            <span className="text-[8px] text-[var(--text-muted)]">conf={m.content.intent.confidence}</span>
-                            {m.content.intent.matched_pattern?.startsWith("openai") && (
-                              <span className="text-[7px] text-purple-400">via OpenAI</span>
-                            )}
-                          </>
-                        )}
-                      </div>
+                        </div>
+                      )}
                     </div>
                   </div>
                 );
