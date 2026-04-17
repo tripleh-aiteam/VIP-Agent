@@ -190,6 +190,7 @@ def _generate_response_from_intent(db: Session, session: ChatSession, intent_res
     """Generate response based on classified intent. Routes through orchestrator — never bypasses."""
     intent = intent_result.intent
     entities = intent_result.entities
+    session_mode = session.mode or "structured"
 
     if intent == "cross_agent_analysis":
         workflow = entities.get("workflow", "risk_check")
@@ -234,7 +235,7 @@ def _generate_response_from_intent(db: Session, session: ChatSession, intent_res
     elif intent == "help":
         return _response_help()
     else:
-        return _response_default(intent_result.original_text)
+        return _response_default(intent_result.original_text, session_mode)
 
 
 def _generate_response(db: Session, session: ChatSession, user_input: str, trace_id: str) -> dict:
@@ -819,14 +820,52 @@ def _response_help() -> dict:
     }
 
 
-def _response_default(user_input: str) -> dict:
+def _response_default(user_input: str, session_mode: str = "structured") -> dict:
+    """Default response — uses OpenAI in LLM mode, pattern hint in Simple mode."""
+
+    # In LLM mode, use OpenAI to generate a helpful response
+    if session_mode in ("llm", "ai_assist"):
+        try:
+            import os, httpx
+            api_key = os.getenv("OPENAI_API_KEY", "")
+            if api_key:
+                with httpx.Client(timeout=15) as client:
+                    resp = client.post(
+                        "https://api.openai.com/v1/chat/completions",
+                        headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+                        json={
+                            "model": os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
+                            "messages": [
+                                {"role": "system", "content": (
+                                    "You are VIP Agent Platform assistant. You help users manage their investment portfolio "
+                                    "with asset management, stock analysis, and real estate data. "
+                                    "Keep answers concise and professional. If you don't have specific data, "
+                                    "suggest the user try commands like: 'show report', 'run asset summary', 'status', "
+                                    "'show agents', 'run stock analysis'. Answer in the same language as the user."
+                                )},
+                                {"role": "user", "content": user_input},
+                            ],
+                            "temperature": 0.7,
+                            "max_tokens": 500,
+                        },
+                    )
+                if resp.status_code == 200:
+                    ai_text = resp.json()["choices"][0]["message"]["content"].strip()
+                    return {"type": "plain_text", "content": {"text": ai_text}}
+        except Exception as e:
+            log.warning(f"chat: OpenAI fallback error: {e}", extra={"action": "chat.llm_fallback_error"})
+
     return {
         "type": "plain_text",
         "content": {
-            "text": f"I received your message: \"{user_input}\"\n\n"
-                    "I'm currently in MVP mode with pattern-based responses. "
-                    "Try: status, agents, report, approvals, or run [asset/stock/realty].\n\n"
-                    "Natural language understanding will be added in a future update.",
+            "text": f"I can help you with:\n\n"
+                    "- \"show report\" or \"daily report\" — Latest reports\n"
+                    "- \"run asset summary\" — Fetch asset data\n"
+                    "- \"run stock analysis\" — Fetch stock data\n"
+                    "- \"status\" — System health\n"
+                    "- \"agents\" — List agents\n"
+                    "- \"approvals\" — Pending cases\n\n"
+                    f"Your message: \"{user_input}\"",
         },
     }
 

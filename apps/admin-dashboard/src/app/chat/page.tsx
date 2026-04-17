@@ -384,15 +384,33 @@ export default function ChatPage() {
                       </div>
                       <p className="text-[11px] text-[var(--text-primary)] whitespace-pre-wrap leading-relaxed">{m.content?.text || ""}</p>
                       {hasCard && <ChatResponseCard message={m} onAction={(msg) => sendMessage(msg)} />}
-                      {isUser && m.content?.intent && (
-                        <div className="mt-1.5 flex items-center gap-1">
-                          <Badge text={m.content.intent.intent} />
-                          <span className="text-[8px] text-[var(--text-muted)]">conf={m.content.intent.confidence}</span>
-                          {m.content.intent.matched_pattern?.startsWith("openai") && (
-                            <span className="text-[7px] text-purple-400">via OpenAI</span>
-                          )}
-                        </div>
-                      )}
+
+                      {/* Action buttons */}
+                      <div className="mt-2 flex items-center gap-1.5">
+                        {isUser && (
+                          <button onClick={() => { setInput(m.content?.text || ""); }}
+                            className="text-[9px] px-2 py-0.5 rounded bg-blue-500/10 text-blue-500 hover:bg-blue-500/20 transition-colors"
+                            title="Copy to input">
+                            Re-ask
+                          </button>
+                        )}
+                        {(isUser || isAssistant) && (
+                          <button onClick={() => navigator.clipboard.writeText(m.content?.text || "")}
+                            className="text-[9px] px-2 py-0.5 rounded bg-[var(--bg-card)] text-[var(--text-muted)] hover:text-[var(--text-primary)] border border-[var(--border-default)] transition-colors"
+                            title="Copy text">
+                            Copy
+                          </button>
+                        )}
+                        {isUser && m.content?.intent && (
+                          <>
+                            <Badge text={m.content.intent.intent} />
+                            <span className="text-[8px] text-[var(--text-muted)]">conf={m.content.intent.confidence}</span>
+                            {m.content.intent.matched_pattern?.startsWith("openai") && (
+                              <span className="text-[7px] text-purple-400">via OpenAI</span>
+                            )}
+                          </>
+                        )}
+                      </div>
                     </div>
                   </div>
                 );
