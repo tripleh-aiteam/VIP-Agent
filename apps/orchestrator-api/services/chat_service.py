@@ -331,10 +331,22 @@ def _response_status(db: Session, trace_id: str) -> dict:
         f"Pending Judgement: {pending_judgement}"
     )
 
+    suggestions = [
+        {"label": "Open latest report", "message": "show daily report"},
+        {"label": "Check agents", "message": "show agents"},
+    ]
+    if pending_judgement > 0:
+        suggestions.insert(0, {"label": f"Review {pending_judgement} pending", "message": "pending approvals"})
+    if runs_failed > 0:
+        suggestions.append({"label": "Show failures", "message": "why did tasks fail"})
+    else:
+        suggestions.append({"label": "Refresh data", "message": "run full executive summary"})
+
     return {
         "type": "workflow_result",
         "content": {
             "text": text,
+            "suggestions": suggestions[:4],
             "data": {
                 "agents_active": agents_active, "agents_total": agents_total,
                 "runs_total": runs_total, "runs_active": runs_active,
@@ -366,10 +378,19 @@ def _response_agents(db: Session, trace_id: str) -> dict:
     if low_reliability:
         lines.append(f"⚠ {len(low_reliability)} low reliability: {', '.join(a.name for a in low_reliability)}")
 
+    suggestions = [
+        {"label": "Run asset summary", "message": "run asset"},
+        {"label": "Run stock analysis", "message": "run stock"},
+        {"label": "System overview", "message": "status"},
+    ]
+    if unhealthy:
+        suggestions.insert(0, {"label": f"Check {unhealthy[0].name}", "message": f"why is {unhealthy[0].name} offline"})
+
     return {
         "type": "workflow_result",
         "content": {
             "text": "\n".join(lines),
+            "suggestions": suggestions[:4],
             "data": {
                 "count": len(agents), "unhealthy": len(unhealthy), "low_reliability": len(low_reliability),
                 "agents": [{"name": a.name, "type": a.type, "status": a.status, "is_mock": a.is_mock, "priority": a.priority_score} for a in agents],
@@ -436,6 +457,12 @@ def _response_report(db: Session, trace_id: str, report_type: str = "daily_summa
         "type": "report_summary",
         "content": {
             "text": f"{summary[:500]}\n\nSections: {', '.join(section_titles)}",
+            "suggestions": [
+                {"label": "What's the biggest risk?", "message": "what is the biggest risk"},
+                {"label": "Asset details", "message": "asset report"},
+                {"label": "Stock details", "message": "stock report"},
+                {"label": "Compare all", "message": "compare asset vs stock"},
+            ],
             "data": {
                 "report_type": report_type,
                 "sections": section_titles,
@@ -475,7 +502,7 @@ def _response_approvals(db: Session, trace_id: str) -> dict:
     ).order_by(AuditJudgementCase.created_at.desc()).all()
 
     if not cases:
-        return {"type": "approval_result", "content": {"text": "No pending approvals.", "data": {"count": 0}, "action_result_type": "approval_action", "trace_id": trace_id}}
+        return {"type": "approval_result", "content": {"text": "No pending approvals.", "suggestions": [{"label": "Show overview", "message": "status"}, {"label": "Open report", "message": "show daily report"}], "data": {"count": 0}, "action_result_type": "approval_action", "trace_id": trace_id}}
 
     lines = [f"{len(cases)} pending approval(s):\n"]
     for c in cases:
@@ -483,10 +510,18 @@ def _response_approvals(db: Session, trace_id: str) -> dict:
         lines.append(f"• {str(c.id)[:8]}... Risk: {risk_pct}% — {c.decision}")
         lines.append(f"  Say: approve {c.id} or reject {c.id}")
 
+    suggestions = [
+        {"label": "Show high risk cases", "message": "high risk cases"},
+        {"label": "Explain top case", "message": f"explain case {str(cases[0].id)[:8]}"},
+    ]
+    if cases[0].decision in ("human_review_required", "conditional_approve"):
+        suggestions.append({"label": f"Approve {str(cases[0].id)[:8]}", "message": f"approve {cases[0].id}"})
+
     return {
         "type": "approval_result",
         "content": {
             "text": "\n".join(lines),
+            "suggestions": suggestions[:4],
             "data": {"cases": [{"id": str(c.id), "risk": int((c.risk_score or 0)*100), "decision": c.decision} for c in cases], "count": len(cases)},
             "action_result_type": "approval_action",
             "trace_id": trace_id,
@@ -685,10 +720,20 @@ def _response_run_task(db: Session, task_type: str, agent_type: str, trace_id: s
         else:
             display_text = f"Task completed: {task_type} → {agent_name}"
 
+        suggestions = []
+        if agent_type == "asset":
+            suggestions = [{"label": "Stock report", "message": "run stock"}, {"label": "Compare", "message": "compare asset vs stock"}]
+        elif agent_type == "stock":
+            suggestions = [{"label": "Asset report", "message": "run asset"}, {"label": "Compare", "message": "compare asset vs stock"}]
+        else:
+            suggestions = [{"label": "Asset report", "message": "run asset"}, {"label": "Stock report", "message": "run stock"}]
+        suggestions.append({"label": "Full summary", "message": "show daily report"})
+
         return {
             "type": "workflow_result",
             "content": {
                 "text": display_text,
+                "suggestions": suggestions[:3],
                 "data": {"task_type": task_type, "agent": agent_name, "status": run.status, "risk_level": output.get("risk_level")},
                 "action_result_type": "workflow_trigger",
                 "trace_id": trace_id,
@@ -858,6 +903,12 @@ def _response_help() -> dict:
                     "Compare — \"compare asset vs stock\"\n"
                     "Refresh — \"run asset\" or \"run stock\" or \"run all\"\n\n"
                     "Just ask naturally — I'll figure it out.",
+            "suggestions": [
+                {"label": "Today's overview", "message": "status"},
+                {"label": "Latest report", "message": "show daily report"},
+                {"label": "Pending approvals", "message": "pending approvals"},
+                {"label": "Refresh all data", "message": "run full executive summary"},
+            ],
         },
     }
 
