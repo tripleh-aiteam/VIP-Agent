@@ -121,6 +121,14 @@
 - **Copy button**: on both user and assistant messages — copies text to clipboard
 - **Files**: services/chat_service.py, app/chat/page.tsx
 
+### OpenAI Cost Optimization
+- `_llm_conversation`: prompt 50% shorter, max_tokens 600→200, history 10→5 msgs, temp 0.7→0.5
+- `AIResponseFormatter`: prompt 80% shorter (1 line), max_tokens 500→250, input capped at 800 chars
+- `OpenAIInterpreter`: max_tokens 200→100 (only needs small JSON)
+- Expected **~60% cost reduction** per message
+- Responses still useful — just concise and operator-focused
+- **Files**: services/chat_service.py, services/formatters.py, services/interpreters.py
+
 ### Smart Chat Router — Auto Rules vs LLM
 - New `services/chat_router.py` — system decides routing automatically
 - Flow: classify with rules (free) → if confident, use rules → if not, use LLM
