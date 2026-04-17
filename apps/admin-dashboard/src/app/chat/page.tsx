@@ -604,8 +604,19 @@ export default function ChatPage() {
                 ))}
               </div>
 
-              {/* Input */}
+              {/* Input with voice + file */}
               <div className="border border-[var(--border-default)] rounded-xl bg-[var(--bg-card)] overflow-hidden" style={{ boxShadow: "var(--shadow-sm)" }}>
+                {attachedFile && (
+                  <div className="mx-4 mt-3 flex items-center gap-2 px-3 py-1.5 rounded-lg bg-[var(--bg-elevated)] border border-[var(--border-default)] text-[11px]">
+                    <svg className="w-3.5 h-3.5 text-[var(--text-muted)]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
+                    </svg>
+                    <span className="text-[var(--text-secondary)] truncate flex-1">{attachedFile.name}</span>
+                    <button onClick={() => setAttachedFile(null)} className="text-[var(--text-muted)] hover:text-[var(--error)]">
+                      <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+                    </button>
+                  </div>
+                )}
                 <input
                   id="chat-empty-input"
                   value={input}
@@ -614,11 +625,46 @@ export default function ChatPage() {
                     if (e.key === "Enter" && input.trim()) {
                       handleQuickAction(input.trim());
                       setInput("");
+                      setAttachedFile(null);
                     }
                   }}
-                  placeholder="Or type your question here..."
+                  placeholder="Type, speak, or attach a file..."
                   className="w-full px-4 py-3.5 text-[14px] bg-transparent focus:outline-none text-[var(--text-primary)] placeholder:text-[var(--text-muted)]"
                 />
+                <div className="px-3 pb-2.5 flex items-center justify-between">
+                  <div className="flex items-center gap-1">
+                    <button onClick={() => fileInputRef.current?.click()}
+                      className="p-1.5 rounded-lg text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-elevated)] transition-colors"
+                      title="Attach file">
+                      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
+                      </svg>
+                    </button>
+                    <button onClick={startVoice} disabled={listening}
+                      className={`p-1.5 rounded-lg transition-colors ${
+                        listening ? "text-red-500 bg-red-50 dark:bg-red-900/20 animate-pulse" : "text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-elevated)]"
+                      }`}
+                      title={listening ? "Listening..." : "Voice input"}>
+                      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
+                      </svg>
+                    </button>
+                  </div>
+                  <button
+                    onClick={() => {
+                      if (input.trim()) {
+                        handleQuickAction(input.trim());
+                        setInput("");
+                        setAttachedFile(null);
+                      }
+                    }}
+                    disabled={!input.trim()}
+                    className="p-1.5 rounded-lg bg-[var(--brand-blue)] text-white disabled:opacity-30 hover:bg-[var(--brand-blue-deep)] transition-colors">
+                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M5 12h14M12 5l7 7-7 7" />
+                    </svg>
+                  </button>
+                </div>
               </div>
             </div>
           </div>
