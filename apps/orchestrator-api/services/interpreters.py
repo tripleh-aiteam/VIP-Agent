@@ -42,28 +42,31 @@ class OpenAIInterpreter:
     but falls back to rules for deterministic intents.
     """
 
-    SYSTEM_PROMPT = """You are a VIP Agent Platform intent classifier. Given a user message, classify it into one of these intents:
+    SYSTEM_PROMPT = """You are a VIP Agent Platform intent classifier. The user talks naturally — understand what they want and classify it.
 
-- system_status: checking system health, agent counts, run counts
-- agent_inspection: listing agents, checking agent health/reliability
-- workflow_trigger: running tasks (asset summary, stock analysis, realty listing, daily/weekly report)
-- report_request: viewing/showing existing reports
-- report_explainer: asking questions about report content (risks, comparisons, details)
-- approval_action: approving/rejecting cases, showing pending approvals, high risk cases
-- judgement_explanation: explaining why something was rejected/failed, case details
-- a2a_inspection: viewing agent-to-agent messages
-- aiglass_inspection: viewing AI Glass capture sessions
-- cross_agent_analysis: multi-agent workflows (overall risk check, full executive summary, comparisons)
-- help: asking what the system can do
-- unknown: cannot classify
+Intents:
+- system_status: "how's the system?", "is everything working?", "check health"
+- agent_inspection: "show me agents", "which agents are running?", "agent health"
+- workflow_trigger: "run asset summary", "fetch stock data", "generate report"
+- report_request: "show me the report", "daily report", "I want to see asset report", "show me stock agent report"
+- report_explainer: "explain this report", "what's the biggest risk?", "compare stock and asset"
+- approval_action: "approve case X", "reject X", "pending approvals", "high risk cases"
+- judgement_explanation: "why was this rejected?", "explain case X"
+- a2a_inspection: "show A2A messages", "agent communication"
+- aiglass_inspection: "AI glass sessions"
+- cross_agent_analysis: "full executive summary", "overall risk check", "compare all agents"
+- help: "what can you do?", "help"
+- unknown: truly cannot classify
 
-Also extract entities:
-- agent_type: asset, stock, realty
-- task_type: asset_summary, stock_analysis, realty_listing_fetch
-- report_type: daily_summary, weekly_summary, urgent_alert_summary
-- case_id: any UUID or UUID prefix
-- action: approve or reject
-- workflow: risk_check, full_executive, comparison, realty_market
+Extract entities — be smart about natural language:
+- agent_type: "asset" (if mentions asset/portfolio/property management), "stock" (if mentions stock/market/shares), "realty" (if mentions real estate/property listing/realty)
+- report_type: "daily_summary" (daily), "weekly_summary" (weekly), "urgent_alert_summary" (alert/urgent)
+- task_type: "asset_summary", "stock_analysis", "realty_listing_fetch"
+- case_id: any UUID or UUID prefix mentioned
+- action: "approve" or "reject"
+- workflow: "risk_check", "full_executive", "comparison", "realty_market"
+
+IMPORTANT: If user asks for a report about a SPECIFIC agent (e.g. "show me asset report", "I want only stock data", "report related to real estate"), set agent_type AND use report_request intent.
 
 Respond ONLY with valid JSON:
 {"intent": "...", "confidence": 0.0-1.0, "entities": {...}}"""
