@@ -121,6 +121,15 @@
 - **Copy button**: on both user and assistant messages — copies text to clipboard
 - **Files**: services/chat_service.py, app/chat/page.tsx
 
+### Chat Response Redesign: Summary + Card + Details
+- Responses now have 3 layers:
+  1. **Summary**: short human text ("All systems running" or "2 approvals need attention")
+  2. **Card**: key metrics in 2-column grid, red highlighting for alerts
+  3. **Details**: expandable "Show details" — raw IDs, trace, counts (hidden by default)
+- Updated: status response, agents response
+- Frontend: card grid rendering + `<details>` collapsible section
+- **Files**: services/chat_service.py, app/chat/page.tsx
+
 ### Chat Follow-Up Suggestion Chips
 - Every response now has 2-4 clickable follow-up actions
 - Contextual: suggestions change based on actual data
