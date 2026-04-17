@@ -86,6 +86,13 @@ INTENT_PATTERNS: list[tuple[str, str, float, list[str]]] = [
     ("report_request", "report_direct", 0.95, [
         r"^/report$", r"^report$",
     ]),
+    ("report_request", "report_agent_specific", 0.92, [
+        r"(?:daily|show|get|view).*report.*(?:of|from|for)\s+(?:asset|stock|real\s*estate|realt)",
+        r"(?:asset|stock|real\s*estate|realt).*(?:agent)?\s*(?:daily)?\s*report",
+        r"(?:show|get|view)\s+(?:asset|stock|real\s*estate|realt).*(?:report|summary|data)",
+        r"(?:only|just)\s+(?:asset|stock|real\s*estate|realt)",
+        r"report\s+(?:of|from|for)\s+(?:asset|stock|real\s*estate|realt)",
+    ]),
     ("report_request", "report_phrase", 0.85, [
         r"show.*report", r"latest\s+report", r"daily\s+report",
         r"weekly\s+report", r"alert\s+report", r"view.*report",

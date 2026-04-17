@@ -212,7 +212,8 @@ def _generate_response_from_intent(db: Session, session: ChatSession, intent_res
         return _response_report_qa(db, session, intent_result.original_text, trace_id)
     elif intent == "report_request":
         report_type = entities.get("report_type", "daily_summary")
-        return _response_report(db, trace_id, report_type)
+        agent_type = entities.get("agent_type")
+        return _response_report(db, trace_id, report_type, agent_type)
     elif intent == "approval_action":
         action = entities.get("action")
         case_id = entities.get("case_id") or entities.get("case_id_prefix")
@@ -378,8 +379,49 @@ def _response_agents(db: Session, trace_id: str) -> dict:
     }
 
 
-def _response_report(db: Session, trace_id: str, report_type: str = "daily_summary") -> dict:
+def _response_report(db: Session, trace_id: str, report_type: str = "daily_summary", agent_type: str | None = None) -> dict:
     from db.models import OrchReport
+
+    # If user asked for a specific agent's report, look for agent_daily_* type
+    if agent_type:
+        agent_report_type = f"agent_daily_{agent_type}"
+        report = db.query(OrchReport).filter(OrchReport.report_type == agent_report_type).order_by(OrchReport.created_at.desc()).first()
+
+        if report:
+            content = report.content_json or {}
+            summary = content.get("executive_summary", "No summary")
+            sections = content.get("sections", [])
+            agent_name = content.get("agent", agent_type.title() + " Agent")
+
+            # Build detailed text from sections
+            text_parts = [f"{agent_name} Report:\n"]
+            for s in sections:
+                text_parts.append(f"\n{s.get('title', '')}:")
+                section_content = s.get("content", "")
+                text_parts.append(section_content)
+
+            return {
+                "type": "report_summary",
+                "content": {
+                    "text": "\n".join(text_parts),
+                    "data": {
+                        "report_type": agent_report_type,
+                        "agent": agent_name,
+                        "agent_type": agent_type,
+                        "sections": [s.get("title", "") for s in sections],
+                    },
+                    "action_result_type": "report_request",
+                    "trace_id": trace_id,
+                    "linked_object_ids": {"report_id": str(report.id)},
+                },
+            }
+
+        # No agent-specific report yet — try running the task directly
+        return _response_run_task(db, {
+            "asset": "asset_summary", "stock": "stock_analysis", "realty": "realty_listing_fetch"
+        }.get(agent_type, "asset_summary"), agent_type, trace_id)
+
+    # Default: combined report
     report = db.query(OrchReport).filter(OrchReport.report_type == report_type).order_by(OrchReport.created_at.desc()).first()
 
     if not report:
