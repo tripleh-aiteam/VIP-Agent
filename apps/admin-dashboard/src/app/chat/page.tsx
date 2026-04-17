@@ -450,10 +450,8 @@ export default function ChatPage() {
                   value={input}
                   onChange={(e) => setInput(e.target.value)}
                   onKeyDown={(e) => e.key === "Enter" && !e.shiftKey && sendMessage()}
-                  placeholder={activeMode === "llm" ? "Ask naturally... (LLM will help interpret and explain)" : "Type a command... (status, run asset summary, approvals)"}
-                  className={`flex-1 bg-[var(--bg-elevated)] border rounded-lg px-4 py-2.5 text-sm focus:outline-none transition-colors ${
-                    activeMode === "llm" ? "border-purple-800/40 focus:border-purple-600" : "border-[var(--border-default)] focus:border-[var(--border-active)]"
-                  }`}
+                  placeholder="Ask anything or type a command..."
+                  className="flex-1 bg-[var(--bg-elevated)] border border-[var(--border-default)] rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:border-[var(--brand-blue)] transition-colors"
                   disabled={sending}
                 />
                 <button onClick={() => sendMessage()} disabled={sending || !input.trim()}
@@ -468,12 +466,43 @@ export default function ChatPage() {
           </>
         ) : (
           <div className="flex-1 flex items-center justify-center">
-            <div className="w-full max-w-xl px-4">
-              <h2 className="text-[22px] font-semibold text-center text-[var(--text-primary)] mb-8">VIP Assistant</h2>
+            <div className="w-full max-w-lg px-4">
+              {/* Greeting */}
+              <div className="text-center mb-8">
+                <h2 className="text-[24px] font-semibold text-[var(--text-primary)] mb-2">Good {new Date().getHours() < 12 ? "morning" : new Date().getHours() < 18 ? "afternoon" : "evening"}</h2>
+                <p className="text-[14px] text-[var(--text-muted)]">What would you like to do today?</p>
+              </div>
 
-              {/* Claude-style input box */}
-              <div className="border border-[var(--border-default)] rounded-2xl bg-[var(--bg-card)] overflow-hidden" style={{ boxShadow: "var(--shadow-md)" }}>
+              {/* Task cards — 2x3 grid */}
+              <div className="grid grid-cols-2 gap-2.5 mb-6">
+                {[
+                  { label: "Today's overview", desc: "Status & key metrics", message: "status", icon: "M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" },
+                  { label: "Urgent items", desc: "Approvals & risks", message: "pending approvals", icon: "M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" },
+                  { label: "Latest report", desc: "Daily summary", message: "show daily report", icon: "M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" },
+                  { label: "Refresh data", desc: "Fetch from all agents", message: "run full executive summary", icon: "M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" },
+                  { label: "Compare", desc: "Asset vs Stock", message: "compare asset vs stock", icon: "M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" },
+                  { label: "Ask anything", desc: "Natural language", message: "", icon: "M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" },
+                ].map((task) => (
+                  <button key={task.label}
+                    onClick={() => task.message ? handleQuickAction(task.message) : document.querySelector<HTMLInputElement>("#chat-empty-input")?.focus()}
+                    className="flex items-start gap-3 p-3.5 rounded-xl border border-[var(--border-default)] bg-[var(--bg-card)] hover:border-[var(--brand-blue)] hover:bg-[var(--bg-hover)] transition-all text-left group">
+                    <div className="w-8 h-8 rounded-lg bg-[var(--bg-elevated)] flex items-center justify-center shrink-0 group-hover:bg-blue-500/10">
+                      <svg className="w-4 h-4 text-[var(--text-muted)] group-hover:text-[var(--brand-blue)]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d={task.icon} />
+                      </svg>
+                    </div>
+                    <div>
+                      <p className="text-[13px] font-medium text-[var(--text-primary)]">{task.label}</p>
+                      <p className="text-[11px] text-[var(--text-muted)]">{task.desc}</p>
+                    </div>
+                  </button>
+                ))}
+              </div>
+
+              {/* Input */}
+              <div className="border border-[var(--border-default)] rounded-xl bg-[var(--bg-card)] overflow-hidden" style={{ boxShadow: "var(--shadow-sm)" }}>
                 <input
+                  id="chat-empty-input"
                   value={input}
                   onChange={(e) => setInput(e.target.value)}
                   onKeyDown={(e) => {
@@ -482,38 +511,9 @@ export default function ChatPage() {
                       setInput("");
                     }
                   }}
-                  placeholder="Ask VIP anything..."
-                  className="w-full px-5 py-4 text-[15px] bg-transparent focus:outline-none text-[var(--text-primary)] placeholder:text-[var(--text-muted)]"
+                  placeholder="Or type your question here..."
+                  className="w-full px-4 py-3.5 text-[14px] bg-transparent focus:outline-none text-[var(--text-primary)] placeholder:text-[var(--text-muted)]"
                 />
-                <div className="px-5 pb-3 flex items-center justify-end">
-                  <button
-                    onClick={() => {
-                      if (input.trim()) {
-                        handleQuickAction(input.trim());
-                        setInput("");
-                      }
-                    }}
-                    disabled={!input.trim()}
-                    className="p-2 rounded-lg bg-[var(--brand-blue)] hover:bg-[var(--brand-blue-deep)] text-white disabled:opacity-30 transition-colors"
-                  >
-                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M5 12h14M12 5l7 7-7 7" />
-                    </svg>
-                  </button>
-                </div>
-              </div>
-
-              {/* Quick action chips */}
-              <div className="flex flex-wrap gap-2 justify-center mt-5">
-                {QUICK_ACTIONS.slice(0, 6).map((qa) => (
-                  <button key={qa.label} onClick={() => handleQuickAction(qa.message)}
-                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-[var(--border-default)] bg-[var(--bg-card)] text-[12px] text-[var(--text-secondary)] hover:border-[var(--brand-blue)] hover:text-[var(--brand-blue)] transition-colors font-medium">
-                    <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                      <path strokeLinecap="round" strokeLinejoin="round" d={qa.icon} />
-                    </svg>
-                    {qa.label}
-                  </button>
-                ))}
               </div>
             </div>
           </div>
