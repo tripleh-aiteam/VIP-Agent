@@ -104,6 +104,23 @@
 
 ---
 
+## 2026-04-17 (Friday)
+
+### Fix: Auto-Reports Not Showing in Reports Page
+- Per-agent daily reports now saved to DB as separate report entries
+- Report types: `agent_daily_asset`, `agent_daily_stock`, `agent_daily_realty`
+- Each shows on Reports page with colored labels: Asset Daily (emerald), Stock Daily (sky), Realty Daily (orange)
+- Combined daily_summary also saved as before
+- Total: 4 reports saved per morning (3 agents + 1 combined)
+
+### Fix: Korean Time (KST) Display
+- All report timestamps now display in KST (Asia/Seoul timezone)
+- Telegram auto-reports show KST time
+- Reports page: stat cards, report list, detail view — all KST
+- Word export dates in KST
+
+---
+
 ## 2026-04-16 (Thursday)
 
 ### Mobile Responsiveness Fix
