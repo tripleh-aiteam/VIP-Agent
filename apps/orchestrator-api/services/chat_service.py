@@ -44,10 +44,9 @@ def create_session(
 
     # Add system welcome message
     welcome_text = (
-        "Hi! I'm your VIP Assistant. Ask me anything naturally.\n\n"
-        "I can check your portfolio, run reports, analyze stock markets, "
-        "show real estate data, and manage approvals.\n\n"
-        "Try: \"show me the asset report\" or \"how's my portfolio?\""
+        "Hi! I'm your VIP Assistant.\n\n"
+        "Overview | Reports | Agents | Approvals | Compare | Refresh\n\n"
+        "Ask anything or pick a topic above."
     )
 
     welcome = ChatMessage(
@@ -870,22 +869,14 @@ def _response_help() -> dict:
     return {
         "type": "plain_text",
         "content": {
-            "text": "I'm your VIP Assistant. Here's what I can help with:\n\n"
-                    "Reports & Data:\n"
-                    "- \"show me the daily report\" — latest summary\n"
-                    "- \"asset report\" — Asset Agent data only\n"
-                    "- \"stock report\" — Stock Agent data only\n"
-                    "- \"realty report\" — Real Estate data only\n\n"
-                    "Actions:\n"
-                    "- \"run asset summary\" — fetch fresh asset data\n"
-                    "- \"run stock analysis\" — fetch market data\n"
-                    "- \"run full summary\" — all agents at once\n"
-                    "- \"risk check\" — cross-agent risk analysis\n\n"
-                    "System:\n"
-                    "- \"status\" — system health\n"
-                    "- \"agents\" — list all agents\n"
-                    "- \"approvals\" — pending judgement cases\n\n"
-                    "Or just ask naturally — I'll understand!",
+            "text": "I can help with:\n\n"
+                    "Overview — \"status\" or \"what's going on?\"\n"
+                    "Reports — \"show report\" or \"asset report\"\n"
+                    "Agents — \"show agents\" or \"agent health\"\n"
+                    "Approvals — \"pending approvals\" or \"high risk cases\"\n"
+                    "Compare — \"compare asset vs stock\"\n"
+                    "Refresh — \"run asset\" or \"run stock\" or \"run all\"\n\n"
+                    "Just ask naturally — I'll figure it out.",
         },
     }
 
@@ -950,18 +941,17 @@ def _llm_conversation(user_input: str, db: Session, session) -> dict:
 
 
 def _response_default(user_input: str, session_mode: str = "llm") -> dict:
-    """Default response — always tries AI conversation first."""
-    # This should rarely be called now since _llm_conversation handles unknown intents
+    """Default response — shows simple goal-based options."""
     return {
         "type": "plain_text",
         "content": {
-            "text": f"I'm not sure how to help with that. Here are some things I can do:\n\n"
-                    "- \"show me the asset report\" — Asset portfolio data\n"
-                    "- \"how's the stock market?\" — Stock analysis\n"
-                    "- \"status\" — System health check\n"
-                    "- \"approvals\" — Pending cases\n"
-                    "- \"run full summary\" — Complete analysis from all agents\n\n"
-                    "Just ask naturally — I'll figure it out!",
+            "text": "I can help with:\n\n"
+                    "Overview — system status\n"
+                    "Reports — daily, asset, stock, or realty\n"
+                    "Approvals — pending cases\n"
+                    "Compare — asset vs stock\n"
+                    "Refresh — fetch latest data\n\n"
+                    "Try asking naturally or type \"help\" for examples.",
         },
     }
 
