@@ -126,9 +126,12 @@ export default function ChatPage() {
   const createSession = async (mode?: string) => {
     const m = mode || activeMode;
     const s = await apiPost<any>("/chat/sessions", { user_id: "operator", channel: "web", mode: m });
-    loadSessions();
     setActiveSession(s.id);
     setActiveMode(s.mode || "structured");
+    setMessages([]);
+    // Load sessions in background
+    loadSessions();
+    loadMessages(s.id);
   };
 
   const changeMode = async (mode: string) => {
@@ -147,8 +150,26 @@ export default function ChatPage() {
     if (!msg || !activeSession) return;
     setSending(true);
     setInput("");
-    await apiPost(`/chat/sessions/${activeSession}/messages`, { content: msg });
-    loadMessages(activeSession);
+
+    // Optimistic: show user message immediately
+    const tempUserMsg = {
+      id: `temp-${Date.now()}`,
+      role: "user",
+      content: { text: msg },
+      created_at: new Date().toISOString(),
+    };
+    setMessages((prev) => [...prev, tempUserMsg]);
+
+    try {
+      const result = await apiPost<any>(`/chat/sessions/${activeSession}/messages`, { content: msg });
+      // Replace temp message with real messages
+      setMessages((prev) => {
+        const withoutTemp = prev.filter((m) => m.id !== tempUserMsg.id);
+        return [...withoutTemp, result.user_message, result.assistant_message];
+      });
+    } catch {
+      loadMessages(activeSession);
+    }
     setSending(false);
   };
 

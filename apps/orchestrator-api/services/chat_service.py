@@ -43,13 +43,22 @@ def create_session(
     db.flush()
 
     # Add system welcome message
+    is_llm = (mode or default_mode) in ("llm", "ai_assist")
+    welcome_text = (
+        "Hi! I'm your VIP Agent assistant. Ask me anything naturally — "
+        "I can check your portfolio, run reports, analyze markets, and more."
+        if is_llm else
+        "VIP Agent Platform ready.\n\n"
+        "Commands: status, agents, report, asset report, stock report, "
+        "run asset, run stock, approvals, help\n\n"
+        "Switch to LLM Mode for natural conversation."
+    )
+
     welcome = ChatMessage(
         session_id=session.id,
         role="system",
         message_type="plain_text",
-        content_json={
-            "text": "Welcome to VIP Agent Platform. I can help you with:\n- Check system status\n- Run tasks (asset, stock, realty)\n- View reports\n- Check pending approvals\n- Monitor agents\n\nType your request or use commands like /status, /agents, /report",
-        },
+        content_json={"text": welcome_text},
         trace_id=trace_id,
     )
     db.add(welcome)
