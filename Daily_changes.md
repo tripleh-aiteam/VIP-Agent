@@ -121,6 +121,15 @@
 - **Copy button**: on both user and assistant messages — copies text to clipboard
 - **Files**: services/chat_service.py, app/chat/page.tsx
 
+### Chat UI Cleanup: Hide Technical Metadata
+- Removed intent badges (unknown, report_request, etc.) from messages
+- Removed confidence scores (conf=0.85) from messages
+- Removed "via OpenAI" label from messages
+- Re-ask + Copy buttons now hidden by default, appear on hover only
+- Cleaner, premium-feeling chat — users see only the conversation
+- Debug data still stored in backend (content_json) for developers
+- **File**: app/chat/page.tsx
+
 ### Chat Speed Fix + Typing Indicator
 - Removed double LLM calls: was doing interpret + format = 2 calls (20s), now max 1 call
 - Known intents (status, report, run asset): **instant** — zero LLM calls
