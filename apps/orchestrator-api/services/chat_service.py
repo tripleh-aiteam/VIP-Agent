@@ -324,12 +324,13 @@ def _response_status(db: Session, trace_id: str) -> dict:
         AuditJudgementCase.decision.in_(["human_review_required", "conditional_approve"])
     ).count()
 
-    text = (
-        f"System is online.\n\n"
-        f"Agents: {agents_active} active / {agents_total} total\n"
-        f"Task Runs: {runs_total} total ({runs_completed} completed, {runs_active} active, {runs_failed} failed)\n"
-        f"Pending Judgement: {pending_judgement}"
-    )
+    # Human summary
+    issues = []
+    if pending_judgement > 0:
+        issues.append(f"{pending_judgement} approval(s) need attention")
+    if runs_failed > 0:
+        issues.append(f"{runs_failed} task(s) failed")
+    summary = "All systems running normally." if not issues else f"System is online, but {' and '.join(issues)}."
 
     suggestions = [
         {"label": "Open latest report", "message": "show daily report"},
@@ -345,13 +346,19 @@ def _response_status(db: Session, trace_id: str) -> dict:
     return {
         "type": "workflow_result",
         "content": {
-            "text": text,
+            "text": summary,
+            "card": [
+                {"label": "Agents", "value": f"{agents_active}/{agents_total} active"},
+                {"label": "Tasks", "value": f"{runs_completed} completed"},
+                {"label": "Active", "value": str(runs_active)},
+                {"label": "Failed", "value": str(runs_failed), "alert": runs_failed > 0},
+                {"label": "Pending Review", "value": str(pending_judgement), "alert": pending_judgement > 0},
+            ],
+            "details": f"Total runs: {runs_total} | Completed: {runs_completed} | Active: {runs_active} | Failed: {runs_failed}\nTrace: {trace_id}",
             "suggestions": suggestions[:4],
             "data": {
                 "agents_active": agents_active, "agents_total": agents_total,
-                "runs_total": runs_total, "runs_active": runs_active,
-                "runs_completed": runs_completed, "runs_failed": runs_failed,
-                "pending_judgement": pending_judgement, "status": "online",
+                "runs_total": runs_total, "pending_judgement": pending_judgement, "status": "online",
             },
             "action_result_type": "system_status",
             "trace_id": trace_id,
@@ -362,21 +369,27 @@ def _response_status(db: Session, trace_id: str) -> dict:
 def _response_agents(db: Session, trace_id: str) -> dict:
     from db.models import CoreAgent
     agents = db.query(CoreAgent).order_by(CoreAgent.priority_score.desc(), CoreAgent.name).all()
-
+    active_agents = [a for a in agents if a.status == "active"]
     unhealthy = [a for a in agents if a.status != "active"]
-    low_reliability = [a for a in agents if (a.reliability_score or 1.0) < 0.7]
 
-    lines = [f"{len(agents)} registered agent(s):\n"]
-    for a in agents:
-        icon = "🟢" if a.status == "active" else "🔴"
-        mock = " [mock]" if a.is_mock else ""
-        rel = f" reliability={int((a.reliability_score or 0)*100)}%" if a.reliability_score is not None else ""
-        lines.append(f"{icon} {a.name}{mock} — {a.type} v{a.version} priority={a.priority_score}{rel}")
-
+    # Human summary
     if unhealthy:
-        lines.append(f"\n⚠ {len(unhealthy)} unhealthy agent(s): {', '.join(a.name for a in unhealthy)}")
-    if low_reliability:
-        lines.append(f"⚠ {len(low_reliability)} low reliability: {', '.join(a.name for a in low_reliability)}")
+        summary = f"{len(active_agents)} agents online, {len(unhealthy)} need attention ({', '.join(a.name for a in unhealthy)})."
+    else:
+        summary = f"All {len(active_agents)} agents are healthy and running."
+
+    # Card — one row per active agent
+    card = []
+    for a in active_agents:
+        rel = int((a.reliability_score or 1.0) * 100)
+        card.append({"label": a.name, "value": f"{a.type} | {rel}% reliability", "alert": rel < 70})
+    for a in unhealthy:
+        card.append({"label": a.name, "value": f"{a.type} | {a.status}", "alert": True})
+
+    # Details
+    detail_lines = []
+    for a in agents:
+        detail_lines.append(f"{a.name}: type={a.type} priority={a.priority_score} mock={a.is_mock} v{a.version}")
 
     suggestions = [
         {"label": "Run asset summary", "message": "run asset"},
@@ -389,12 +402,11 @@ def _response_agents(db: Session, trace_id: str) -> dict:
     return {
         "type": "workflow_result",
         "content": {
-            "text": "\n".join(lines),
+            "text": summary,
+            "card": card,
+            "details": "\n".join(detail_lines),
             "suggestions": suggestions[:4],
-            "data": {
-                "count": len(agents), "unhealthy": len(unhealthy), "low_reliability": len(low_reliability),
-                "agents": [{"name": a.name, "type": a.type, "status": a.status, "is_mock": a.is_mock, "priority": a.priority_score} for a in agents],
-            },
+            "data": {"count": len(agents), "unhealthy": len(unhealthy)},
             "action_result_type": "agent_inspection",
             "trace_id": trace_id,
         },

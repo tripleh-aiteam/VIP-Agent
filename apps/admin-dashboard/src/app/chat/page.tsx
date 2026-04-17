@@ -392,7 +392,31 @@ export default function ChatPage() {
                           {m.created_at ? new Date(m.created_at).toLocaleTimeString() : ""}
                         </span>
                       </div>
-                      <p className="text-[11px] text-[var(--text-primary)] whitespace-pre-wrap leading-relaxed">{m.content?.text || ""}</p>
+                      <p className="text-[12px] text-[var(--text-primary)] leading-relaxed">{m.content?.text || ""}</p>
+
+                      {/* Card — key facts */}
+                      {m.content?.card && m.content.card.length > 0 && (
+                        <div className="mt-2.5 grid grid-cols-2 gap-1.5">
+                          {m.content.card.map((c: any, ci: number) => (
+                            <div key={ci} className={`px-2.5 py-1.5 rounded-lg text-[11px] border ${
+                              c.alert ? "border-red-200 bg-red-50 dark:border-red-800/30 dark:bg-red-900/10" : "border-[var(--border-default)] bg-[var(--bg-card)]"
+                            }`}>
+                              <span className="text-[var(--text-muted)]">{c.label}: </span>
+                              <span className={`font-medium ${c.alert ? "text-red-600 dark:text-red-400" : "text-[var(--text-primary)]"}`}>{c.value}</span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+
+                      {/* Details — expandable */}
+                      {m.content?.details && (
+                        <details className="mt-2">
+                          <summary className="text-[10px] text-[var(--text-muted)] cursor-pointer hover:text-[var(--text-secondary)] select-none">
+                            Show details
+                          </summary>
+                          <pre className="mt-1.5 text-[10px] text-[var(--text-muted)] bg-[var(--bg-card)] border border-[var(--border-default)] rounded-lg p-2.5 overflow-x-auto whitespace-pre-wrap">{m.content.details}</pre>
+                        </details>
+                      )}
 
                       {/* Suggestion chips */}
                       {m.content?.suggestions && (
