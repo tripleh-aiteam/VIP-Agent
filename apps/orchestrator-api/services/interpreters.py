@@ -95,7 +95,7 @@ Respond ONLY with valid JSON:
                             {"role": "user", "content": text},
                         ],
                         "temperature": 0.1,
-                        "max_tokens": 200,
+                        "max_tokens": 100,
                     },
                 )
 

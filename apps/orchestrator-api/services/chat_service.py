@@ -891,73 +891,62 @@ def _response_help() -> dict:
 
 
 def _llm_conversation(user_input: str, db: Session, session) -> dict:
-    """Full LLM conversation mode — talks like a real human assistant with platform context."""
+    """LLM conversation — concise, operator-friendly, cost-optimized."""
     import os, httpx
 
     api_key = os.getenv("OPENAI_API_KEY", "")
     if not api_key:
-        return {"type": "plain_text", "content": {"text": "LLM mode requires OpenAI API key. Please configure OPENAI_API_KEY."}}
+        return {"type": "plain_text", "content": {"text": "AI service not configured. Use commands: status, report, run asset, agents, approvals"}}
 
-    # Build context from recent chat history
+    # Last 5 messages only (saves tokens)
     recent_msgs = (
         db.query(ChatMessage)
         .filter(ChatMessage.session_id == session.id)
         .order_by(ChatMessage.created_at.desc())
-        .limit(10)
+        .limit(5)
         .all()
     )
 
-    # Build conversation history for OpenAI
     conversation = [
         {"role": "system", "content": (
-            "You are VIP Agent Platform personal assistant. You help manage a multi-agent investment platform "
-            "with Asset Agent (real estate portfolio, contracts, rent), Stock Agent (market analysis, sentiment), "
-            "and Real Estate Agent (property listings, vacancy, yield).\n\n"
-            "You can:\n"
-            "- Show reports: 'I'll pull up the asset report for you'\n"
-            "- Run tasks: 'Let me fetch the latest stock data'\n"
-            "- Check status: 'The system is running fine, all 3 agents are online'\n"
-            "- Explain data: 'Your vacancy rate is 8.5% which is healthy'\n"
-            "- Answer general questions about the platform\n\n"
-            "Style: Talk naturally like a real human assistant. Be friendly, professional, helpful. "
-            "Use the user's language (Korean or English). "
-            "If you can't do something, suggest what the user can try. "
-            "Don't just list commands — have a real conversation."
+            "You are VIP Agent assistant. Platform has 3 agents: Asset (portfolio, contracts, rent), "
+            "Stock (market, sentiment), Real Estate (listings, vacancy, yield).\n"
+            "Rules: Be concise (2-4 sentences). Keep numbers exact. Use user's language. "
+            "For reports, give key metrics first. Suggest commands when relevant: "
+            "status, report, asset report, stock report, run asset, run stock, approvals."
         )},
     ]
 
-    # Add recent chat history (oldest first)
     for msg in reversed(recent_msgs):
         msg_text = (msg.content_json or {}).get("text", "")
         if msg.role == "user" and msg_text:
-            conversation.append({"role": "user", "content": msg_text})
+            conversation.append({"role": "user", "content": msg_text[:150]})
         elif msg.role == "assistant" and msg_text:
-            conversation.append({"role": "assistant", "content": msg_text[:300]})
+            conversation.append({"role": "assistant", "content": msg_text[:150]})
 
-    # Add current message
     conversation.append({"role": "user", "content": user_input})
 
     try:
-        with httpx.Client(timeout=15) as client:
+        with httpx.Client(timeout=10) as client:
             resp = client.post(
                 "https://api.openai.com/v1/chat/completions",
                 headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
                 json={
                     "model": os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
                     "messages": conversation,
-                    "temperature": 0.7,
-                    "max_tokens": 600,
+                    "temperature": 0.5,
+                    "max_tokens": 200,
                 },
             )
         if resp.status_code == 200:
             ai_text = resp.json()["choices"][0]["message"]["content"].strip()
-            return {"type": "plain_text", "content": {"text": ai_text, "ai_enhanced": True, "mode": "llm"}}
+            return {"type": "plain_text", "content": {"text": ai_text}}
         else:
-            log.warning(f"chat llm: OpenAI error {resp.status_code}", extra={"action": "chat.llm_error"})
+            log.warning(f"chat llm: OpenAI {resp.status_code}", extra={"action": "chat.llm_error"})
     except Exception as e:
-        log.warning(f"chat llm: error: {e}", extra={"action": "chat.llm_error"})
+        log.warning(f"chat llm: {e}", extra={"action": "chat.llm_error"})
 
-    return {"type": "plain_text", "content": {"text": "I'm having trouble connecting to the AI service right now. Please try again in a moment."}}
+    return {"type": "plain_text", "content": {"text": "AI service temporarily unavailable. Try: status, report, run asset, agents"}}
 
 
 def _response_default(user_input: str, session_mode: str = "llm") -> dict:

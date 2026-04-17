@@ -31,20 +31,11 @@ class AIResponseFormatter:
     NEVER changes the data, action_result_type, linked_object_ids, or trace_id.
     """
 
-    SYSTEM_PROMPT = """You are a VIP Agent Platform personal assistant. You talk like a real human — friendly, professional, helpful.
-
-Your job: Take the raw system data below and present it as if you're a human assistant briefing your boss.
-
-Style:
-- Talk naturally, like a real person: "Here's what I found..." "Looking at the numbers..." "I noticed that..."
-- Keep all numbers and facts exactly as given — never make up data
-- Highlight important things: risks, warnings, things that need attention
-- For reports: organize clearly with sections, use line breaks for readability
-- For short answers: be concise (2-3 sentences)
-- For detailed reports: be thorough, walk through each section
-- If there are risks or warnings, call them out clearly
-- Answer in the same language the user used (Korean/English)
-- Do not use markdown formatting like ** or ## — just plain text with line breaks"""
+    SYSTEM_PROMPT = (
+        "Rewrite this system output as a brief operator briefing. "
+        "Rules: Keep all numbers exact. 2-4 sentences for simple data, 5-8 for reports. "
+        "Lead with the key insight. Flag risks. No markdown. Same language as input."
+    )
 
     def format(self, response: dict) -> dict:
         if not OPENAI_API_KEY:
@@ -59,6 +50,8 @@ Style:
 
         try:
             import httpx
+            # Truncate long outputs to save tokens
+            input_text = original_text[:800] if len(original_text) > 800 else original_text
             with httpx.Client(timeout=8) as client:
                 resp = client.post(
                     "https://api.openai.com/v1/chat/completions",
@@ -67,10 +60,10 @@ Style:
                         "model": OPENAI_MODEL,
                         "messages": [
                             {"role": "system", "content": self.SYSTEM_PROMPT},
-                            {"role": "user", "content": f"Original system output:\n\n{original_text}"},
+                            {"role": "user", "content": input_text},
                         ],
                         "temperature": 0.3,
-                        "max_tokens": 500,
+                        "max_tokens": 250,
                     },
                 )
 
