@@ -43,15 +43,11 @@ def create_session(
     db.flush()
 
     # Add system welcome message
-    is_llm = (mode or default_mode) in ("llm", "ai_assist")
     welcome_text = (
-        "Hi! I'm your VIP Agent assistant. Ask me anything naturally — "
-        "I can check your portfolio, run reports, analyze markets, and more."
-        if is_llm else
-        "VIP Agent Platform ready.\n\n"
-        "Commands: status, agents, report, asset report, stock report, "
-        "run asset, run stock, approvals, help\n\n"
-        "Switch to LLM Mode for natural conversation."
+        "Hi! I'm your VIP Assistant. Ask me anything naturally.\n\n"
+        "I can check your portfolio, run reports, analyze stock markets, "
+        "show real estate data, and manage approvals.\n\n"
+        "Try: \"show me the asset report\" or \"how's my portfolio?\""
     )
 
     welcome = ChatMessage(
@@ -127,13 +123,14 @@ def add_message(
 
     session.updated_at = datetime.utcnow()
 
-    # Mode-aware interpretation
-    from services.interpreters import get_interpreter
-    from services.formatters import get_formatter
+    # Unified smart mode: always use LLM interpreter + AI formatter
+    # System decides internally when to use rules vs AI
+    from services.interpreters import OpenAIInterpreter, RuleBasedInterpreter
+    from services.formatters import AIResponseFormatter
 
-    session_mode = session.mode or "structured"
-    interpreter = get_interpreter(session_mode)
-    formatter = get_formatter(session_mode)
+    session_mode = "llm"  # always use smart mode internally
+    interpreter = OpenAIInterpreter()
+    formatter = AIResponseFormatter()
 
     # Classify intent using mode-appropriate interpreter
     intent_result = interpreter.interpret(content)
@@ -862,26 +859,22 @@ def _response_help() -> dict:
     return {
         "type": "plain_text",
         "content": {
-            "text": "VIP Agent Commands:\n"
-                    "━━━━━━━━━━━━━━━━━━━━━\n"
-                    "status          → System health\n"
-                    "agents          → List agents\n"
-                    "report          → Latest daily report\n"
-                    "weekly report   → Latest weekly report\n"
-                    "asset report    → Asset Agent report only\n"
-                    "stock report    → Stock Agent report only\n"
-                    "realty report   → Real Estate report only\n"
-                    "run asset       → Run asset summary\n"
-                    "run stock       → Run stock analysis\n"
-                    "run realty      → Run realty listing\n"
-                    "run daily report → Compose daily report\n"
-                    "approvals       → Pending judgement cases\n"
-                    "a2a messages    → A2A communication\n"
-                    "risk check      → Cross-agent risk analysis\n"
-                    "full summary    → Full executive summary\n"
-                    "help            → Show this list\n"
-                    "━━━━━━━━━━━━━━━━━━━━━\n"
-                    "Switch to LLM Mode for natural conversation.",
+            "text": "I'm your VIP Assistant. Here's what I can help with:\n\n"
+                    "Reports & Data:\n"
+                    "- \"show me the daily report\" — latest summary\n"
+                    "- \"asset report\" — Asset Agent data only\n"
+                    "- \"stock report\" — Stock Agent data only\n"
+                    "- \"realty report\" — Real Estate data only\n\n"
+                    "Actions:\n"
+                    "- \"run asset summary\" — fetch fresh asset data\n"
+                    "- \"run stock analysis\" — fetch market data\n"
+                    "- \"run full summary\" — all agents at once\n"
+                    "- \"risk check\" — cross-agent risk analysis\n\n"
+                    "System:\n"
+                    "- \"status\" — system health\n"
+                    "- \"agents\" — list all agents\n"
+                    "- \"approvals\" — pending judgement cases\n\n"
+                    "Or just ask naturally — I'll understand!",
         },
     }
 
@@ -956,63 +949,19 @@ def _llm_conversation(user_input: str, db: Session, session) -> dict:
     return {"type": "plain_text", "content": {"text": "I'm having trouble connecting to the AI service right now. Please try again in a moment."}}
 
 
-def _response_default(user_input: str, session_mode: str = "structured") -> dict:
-    """Default response — uses OpenAI in LLM mode, pattern hint in Simple mode."""
-
-    # In LLM mode, use OpenAI to generate a helpful response
-    if session_mode in ("llm", "ai_assist"):
-        try:
-            import os, httpx
-            api_key = os.getenv("OPENAI_API_KEY", "")
-            if api_key:
-                with httpx.Client(timeout=15) as client:
-                    resp = client.post(
-                        "https://api.openai.com/v1/chat/completions",
-                        headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
-                        json={
-                            "model": os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
-                            "messages": [
-                                {"role": "system", "content": (
-                                    "You are VIP Agent Platform assistant. You help users manage their investment portfolio "
-                                    "with asset management, stock analysis, and real estate data. "
-                                    "Keep answers concise and professional. If you don't have specific data, "
-                                    "suggest the user try commands like: 'show report', 'run asset summary', 'status', "
-                                    "'show agents', 'run stock analysis'. Answer in the same language as the user."
-                                )},
-                                {"role": "user", "content": user_input},
-                            ],
-                            "temperature": 0.7,
-                            "max_tokens": 500,
-                        },
-                    )
-                if resp.status_code == 200:
-                    ai_text = resp.json()["choices"][0]["message"]["content"].strip()
-                    return {"type": "plain_text", "content": {"text": ai_text}}
-        except Exception as e:
-            log.warning(f"chat: OpenAI fallback error: {e}", extra={"action": "chat.llm_fallback_error"})
-
+def _response_default(user_input: str, session_mode: str = "llm") -> dict:
+    """Default response — always tries AI conversation first."""
+    # This should rarely be called now since _llm_conversation handles unknown intents
     return {
         "type": "plain_text",
         "content": {
-            "text": f"Command not recognized: \"{user_input}\"\n\n"
-                    "Available commands:\n"
-                    "━━━━━━━━━━━━━━━━━━━━━\n"
-                    "status          → System health\n"
-                    "agents          → List agents\n"
-                    "report          → Latest daily report\n"
-                    "weekly report   → Latest weekly report\n"
-                    "asset report    → Asset Agent report\n"
-                    "stock report    → Stock Agent report\n"
-                    "realty report   → Real Estate report\n"
-                    "run asset       → Run asset summary\n"
-                    "run stock       → Run stock analysis\n"
-                    "run realty      → Run realty listing\n"
-                    "run daily report → Compose daily report\n"
-                    "approvals       → Pending judgement cases\n"
-                    "a2a messages    → A2A communication\n"
-                    "help            → Show this list\n"
-                    "━━━━━━━━━━━━━━━━━━━━━\n"
-                    "Switch to LLM Mode for natural language.",
+            "text": f"I'm not sure how to help with that. Here are some things I can do:\n\n"
+                    "- \"show me the asset report\" — Asset portfolio data\n"
+                    "- \"how's the stock market?\" — Stock analysis\n"
+                    "- \"status\" — System health check\n"
+                    "- \"approvals\" — Pending cases\n"
+                    "- \"run full summary\" — Complete analysis from all agents\n\n"
+                    "Just ask naturally — I'll figure it out!",
         },
     }
 

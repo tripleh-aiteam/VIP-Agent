@@ -15,10 +15,7 @@ const QUICK_ACTIONS = [
   { label: "Full Analysis", message: "run full executive summary", icon: "M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" },
 ];
 
-const MODE_INFO: Record<string, { label: string; desc: string; color: string; bg: string; border: string }> = {
-  structured: { label: "Simple Mode", desc: "Commands and control", color: "text-[var(--text-secondary)]", bg: "bg-[var(--bg-elevated)]", border: "border-[var(--border-default)]" },
-  llm: { label: "LLM Mode", desc: "Natural language understanding", color: "text-[var(--brand-purple)]", bg: "bg-[var(--badge-purple-bg)]", border: "border-[var(--brand-purple)]/20" },
-};
+// Mode info kept for internal use only — not shown to users
 
 export default function ChatPage() {
   const [sessions, setSessions] = useState<any[]>([]);
@@ -27,8 +24,6 @@ export default function ChatPage() {
   const [messages, setMessages] = useState<any[]>([]);
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
-  const [modeChanging, setModeChanging] = useState(false);
-  const [modeMsg, setModeMsg] = useState<string | null>(null);
   const [renaming, setRenaming] = useState<string | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
 
@@ -134,16 +129,7 @@ export default function ChatPage() {
     loadMessages(s.id);
   };
 
-  const changeMode = async (mode: string) => {
-    if (!activeSession) return;
-    setModeChanging(true);
-    await apiPatch(`/chat/sessions/${activeSession}/mode`, { mode });
-    setActiveMode(mode);
-    setModeMsg(`Mode updated to ${MODE_INFO[mode]?.label || mode}`);
-    setTimeout(() => setModeMsg(null), 3000);
-    loadSessions();
-    setModeChanging(false);
-  };
+  // Mode is now handled internally — no user-facing switch needed
 
   const sendMessage = async (text?: string) => {
     const msg = text || input.trim();
@@ -187,7 +173,7 @@ export default function ChatPage() {
     }
   };
 
-  const modeInfo = MODE_INFO[activeMode] || MODE_INFO.structured;
+  // Mode is unified — no user-facing mode info needed
 
   return (
     <div className="flex flex-col md:flex-row h-[calc(100vh-5rem)] md:h-[calc(100vh-3rem)] gap-2 md:gap-4">
@@ -355,19 +341,8 @@ export default function ChatPage() {
           <>
             {/* Chat Header */}
             <div className="px-4 py-2.5 border-b border-[var(--border-default)] flex items-center justify-between">
-              <h2 className="text-sm font-semibold text-gray-200">VIP Chatbot</h2>
-              <div className="flex items-center gap-2">
-                {modeMsg && <span className="text-[9px] text-green-400">{modeMsg}</span>}
-                <select
-                  value={activeMode}
-                  onChange={(e) => changeMode(e.target.value)}
-                  disabled={modeChanging}
-                  className="bg-[var(--bg-elevated)] border border-[var(--border-default)] rounded px-3 py-1.5 text-xs focus:outline-none disabled:opacity-50 cursor-pointer"
-                >
-                  <option value="structured">Structured Mode</option>
-                  <option value="llm">LLM Mode</option>
-                </select>
-              </div>
+              <h2 className="text-sm font-semibold text-[var(--text-primary)]">VIP Assistant</h2>
+              <span className="text-[10px] text-[var(--text-muted)]">Ask anything or use quick commands below</span>
             </div>
 
             {/* Messages */}
@@ -377,7 +352,6 @@ export default function ChatPage() {
                 const isSystem = m.role === "system";
                 const isAssistant = m.role === "assistant";
                 const hasCard = isAssistant && m.content?.action_result_type && m.content.action_result_type !== "plain_text";
-                const isAI = m.content?.ai_enhanced || (m.content?.mode === "llm");
 
                 return (
                   <div key={m.id} className={isUser ? "ml-16" : isSystem ? "mx-12" : "mr-8"}>
@@ -392,13 +366,6 @@ export default function ChatPage() {
                         }`}>
                           {isUser ? "You" : isAssistant ? "VIP Agent" : "System"}
                         </span>
-                        {isAssistant && !isSystem && (
-                          <span className={`text-[7px] px-1 py-0 rounded ${
-                            isAI ? "bg-[var(--bg-elevated)] text-[var(--text-secondary)] border border-purple-800/40" : "bg-[var(--bg-elevated)] text-[var(--text-muted)]"
-                          }`}>
-                            {isAI ? "LLM Response" : "Structured Response"}
-                          </span>
-                        )}
                         <span className="text-[8px] text-[var(--text-muted)]">
                           {m.created_at ? new Date(m.created_at).toLocaleTimeString() : ""}
                         </span>
@@ -470,17 +437,15 @@ export default function ChatPage() {
                   {sending ? "..." : "Send"}
                 </button>
               </div>
-              <p className={`text-[8px] mt-1 ${modeInfo.color}`}>
-                {activeMode === "llm"
-                  ? "LLM: natural explanations over grounded platform data — sensitive actions remain deterministic"
-                  : "Structured: deterministic system control — all commands executed via rule-based pipeline"}
+              <p className="text-[8px] mt-1 text-[var(--text-muted)]">
+                Ask naturally or use commands like: status, report, run asset, approvals
               </p>
             </div>
           </>
         ) : (
           <div className="flex-1 flex items-center justify-center">
             <div className="w-full max-w-xl px-4">
-              <h2 className="text-[22px] font-semibold text-center text-[var(--text-primary)] mb-8">VIP Chatbot</h2>
+              <h2 className="text-[22px] font-semibold text-center text-[var(--text-primary)] mb-8">VIP Assistant</h2>
 
               {/* Claude-style input box */}
               <div className="border border-[var(--border-default)] rounded-2xl bg-[var(--bg-card)] overflow-hidden" style={{ boxShadow: "var(--shadow-md)" }}>
@@ -496,17 +461,7 @@ export default function ChatPage() {
                   placeholder="Ask VIP anything..."
                   className="w-full px-5 py-4 text-[15px] bg-transparent focus:outline-none text-[var(--text-primary)] placeholder:text-[var(--text-muted)]"
                 />
-                <div className="px-5 pb-3 flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <select
-                      value={activeMode}
-                      onChange={(e) => setActiveMode(e.target.value)}
-                      className="text-[13px] font-bold text-[var(--text-primary)] bg-transparent border-none focus:outline-none cursor-pointer"
-                    >
-                      <option value="structured">Simple Mode</option>
-                      <option value="llm">LLM Mode</option>
-                    </select>
-                  </div>
+                <div className="px-5 pb-3 flex items-center justify-end">
                   <button
                     onClick={() => {
                       if (input.trim()) {
