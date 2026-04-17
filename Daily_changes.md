@@ -121,6 +121,14 @@
 - **Copy button**: on both user and assistant messages — copies text to clipboard
 - **Files**: services/chat_service.py, app/chat/page.tsx
 
+### Chat Fallback: Clickable Suggestion Chips
+- Unknown input shows friendly message + 6 clickable buttons
+- Chips: Show overview, Open latest report, Review approvals, Check agents, Compare, Refresh
+- Clicking a chip sends the command directly — no typing needed
+- No more "Command not recognized" or long command lists
+- New response type `suggestion` with `suggestions` array in content_json
+- **Files**: services/chat_service.py, app/chat/page.tsx
+
 ### Chat UX: Goal-Based Help (6 Categories)
 - Quick actions reduced from 7 to 6: Overview, Reports, Agents, Approvals, Compare, Refresh
 - Help response organized by user goal, not raw commands
