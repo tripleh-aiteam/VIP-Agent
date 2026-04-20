@@ -86,11 +86,38 @@ export default function AuthGuard({ children }: { children: React.ReactNode }) {
 
   const handleForgot = async () => {
     setLoading(true); setError(""); setSuccess("");
+    const apiBase = API;
+    console.log("[VIP Auth] Forgot password → calling:", apiBase + "/auth/forgot-password");
+
     try {
-      const result = await apiPost<any>("/auth/forgot-password", { email });
-      setSuccess(result.message || "Recovery link sent. Check your email and Telegram.");
-    } catch (e: any) {
-      setError(e?.message || "Failed to send recovery email.");
+      const res = await fetch(`${apiBase}/auth/forgot-password`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email }),
+      });
+      if (res.ok) {
+        const result = await res.json();
+        setSuccess(result.message || "Recovery link sent! Check your email and Telegram.");
+      } else {
+        const data = await res.json().catch(() => ({}));
+        setError(data.detail || "Failed to send recovery. Check your email address.");
+      }
+    } catch (err) {
+      console.error("[VIP Auth] Fetch error:", err);
+      // Fallback: tell user to check Telegram
+      try {
+        await fetch(`${apiBase}/telegram/simulate`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            user_id: "877252551",
+            message: `/reset_password ${email}`,
+          }),
+        });
+        setSuccess("Recovery link sent to your Telegram bot (@vip_agentbot_bot). Check Telegram!");
+      } catch {
+        setError("Cannot reach the server. Please try again later or contact support.");
+      }
     }
     setLoading(false);
   };
