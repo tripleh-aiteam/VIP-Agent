@@ -6,6 +6,9 @@ import StatCard from "@/components/StatCard";
 import Badge from "@/components/Badge";
 import { useRealtimeEvents } from "@/components/useRealtimeEvents";
 import { apiPost } from "@/components/api";
+import dynamic from "next/dynamic";
+
+const AgentHealthPanel = dynamic(() => import("@/components/AgentHealthPanel"), { ssr: false });
 
 export default function Dashboard() {
   const [stats, setStats] = useState({
@@ -16,6 +19,7 @@ export default function Dashboard() {
   const [recentRuns, setRecentRuns] = useState<any[]>([]);
   const [health, setHealth] = useState<any>(null);
   const [quickResult, setQuickResult] = useState<{ title: string; text: string; loading: boolean } | null>(null);
+  const [healthExpanded, setHealthExpanded] = useState(false);
 
   const runQuickCommand = async (label: string, prompt: string) => {
     setQuickResult({ title: label, text: "", loading: true });
@@ -102,6 +106,36 @@ export default function Dashboard() {
         <StatCard label="Active Runs" value={stats.activeRuns} color="green" />
         <StatCard label="Failed Runs" value={stats.failedRuns} color="red" />
         <StatCard label="Pending Judgement" value={stats.pendingJudgement} color="yellow" />
+      </div>
+
+      {/* Agent Health — expandable */}
+      <div className="mb-8">
+        <button onClick={() => setHealthExpanded(!healthExpanded)}
+          className="w-full flex items-center justify-between px-4 py-3 rounded-xl border border-[var(--border-default)] bg-[var(--bg-card)] hover:border-[var(--brand-blue)] transition-colors"
+          style={{ boxShadow: "var(--shadow-sm)" }}>
+          <div className="flex items-center gap-3">
+            <div className="w-8 h-8 rounded-lg bg-green-50 flex items-center justify-center">
+              <svg className="w-4 h-4 text-green-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+            </div>
+            <div className="text-left">
+              <h3 className="text-[14px] font-semibold text-[var(--text-primary)]">Agent Health</h3>
+              <p className="text-[11px] text-[var(--text-muted)]">
+                {stats.agents} agents | {stats.webhooksReachable}/{stats.webhooksTotal} webhooks | {stats.eventBus}
+              </p>
+            </div>
+          </div>
+          <svg className={`w-4 h-4 text-[var(--text-muted)] transition-transform duration-200 ${healthExpanded ? "rotate-180" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+          </svg>
+        </button>
+
+        {healthExpanded && (
+          <div className="mt-3 border border-[var(--border-default)] rounded-xl bg-[var(--bg-card)] p-5" style={{ boxShadow: "var(--shadow-sm)" }}>
+            <AgentHealthPanel />
+          </div>
+        )}
       </div>
 
       {/* Two column layout */}
