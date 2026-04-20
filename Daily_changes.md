@@ -98,6 +98,16 @@
 - Shows 20 runs max with count indicator
 - **Files**: components/RecentTaskRuns.tsx (new), app/page.tsx
 
+### Infrastructure Drilldowns
+- All 4 infrastructure cards now clickable with analytics panels:
+- **Telegram**: message activity area chart, delivery rate donut, success/failure counts
+- **Event Bus**: throughput line chart, latency area chart, Redis status, trigger count
+- **A2A Webhooks**: reachable/unreachable donut, availability trend, agent webhook table with URLs
+- **Web Channel**: request volume area, response time line, uptime %, error count
+- Each panel: time filters (24h/7d/30d), 4 summary cards, alert box (green OK or amber warnings)
+- Cards highlight blue when selected, only one open at a time
+- **Files**: components/InfrastructureDrilldown.tsx (new), app/page.tsx
+
 ### Dashboard Improvements
 - Quick Commands show results inline (no page navigation)
 - Notifications clickable — navigate to relevant page (A2A/Reports/Judgement)
