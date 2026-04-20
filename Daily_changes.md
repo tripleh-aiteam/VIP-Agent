@@ -2,6 +2,19 @@
 
 ---
 
+## 2026-04-20 (Monday)
+
+### Login & Privacy Protection
+- Login page added — password required to access dashboard
+- Clean login UI: VIP AGENT branding, password field, Sign in button
+- Password set via `NEXT_PUBLIC_VIP_PASSWORD` env var on Vercel
+- Auth token saved in localStorage — boss stays logged in
+- Sign out button in sidebar bottom
+- Anyone without password sees only login screen — no data exposed
+- **Files**: components/AuthGuard.tsx (new), layout.tsx, Sidebar.tsx
+
+---
+
 ## 2026-04-13 (Monday) — Phase 1
 
 | Step | What was built |
@@ -101,19 +114,6 @@
 - Multiple Render redeploys for bug fixes
 - Supabase connection pool limit resolved
 - Vercel auto-deploys on every push
-
----
-
-## 2026-04-20 (Monday)
-
-### Login & Privacy Protection
-- Login page added — password required to access dashboard
-- Clean login UI: VIP AGENT branding, password field, Sign in button
-- Password set via `NEXT_PUBLIC_VIP_PASSWORD` env var on Vercel
-- Auth token saved in localStorage — boss stays logged in
-- Sign out button in sidebar bottom
-- Anyone without password sees only login screen — no data exposed
-- **Files**: components/AuthGuard.tsx (new), layout.tsx, Sidebar.tsx
 
 ---
 
