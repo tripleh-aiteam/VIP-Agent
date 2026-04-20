@@ -1,13 +1,10 @@
 const _base = process.env.NEXT_PUBLIC_API_BASE_URL;
 
-if (!_base && typeof window !== "undefined") {
-  console.warn(
-    "[VIP] NEXT_PUBLIC_API_BASE_URL is not set. API calls will fail.\n" +
-    "Set it in .env.local: NEXT_PUBLIC_API_BASE_URL=http://localhost:8000"
-  );
-}
+// Production fallback — if env var is missing or invalid, use Render URL
+const PROD_API = "https://vip-orchestrator.onrender.com";
+const isValidUrl = _base && (_base.startsWith("http://") || _base.startsWith("https://")) && !_base.includes("eyJ");
 
-export const API = _base || "http://localhost:8000";
+export const API = isValidUrl ? _base : (typeof window !== "undefined" && window.location.hostname !== "localhost" ? PROD_API : "http://localhost:8000");
 
 export async function api<T>(path: string, options?: RequestInit): Promise<T> {
   const res = await fetch(`${API}${path}`, options);
