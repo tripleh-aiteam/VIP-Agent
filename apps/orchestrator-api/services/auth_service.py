@@ -141,6 +141,39 @@ def reset_password(db: Session, token: str, new_password: str) -> dict:
     return {"success": True, "message": "Password has been reset. You can now sign in."}
 
 
+def reset_via_telegram(db: Session, email: str) -> dict:
+    """Generate a temporary password and send it directly to Telegram."""
+    user = db.query(PlatformUser).filter(PlatformUser.email == email).first()
+
+    # Also try default admin
+    if not user:
+        user = db.query(PlatformUser).first()
+
+    if not user:
+        return {"success": True, "message": "If the account exists, a temporary password has been sent to Telegram."}
+
+    # Generate temporary password
+    temp_password = secrets.token_urlsafe(8)  # e.g. "aB3x_kL9"
+    user.password_hash = _hash_password(temp_password)
+    db.commit()
+
+    # Send to Telegram
+    try:
+        from services.telegram_service import send_alert
+        send_alert(
+            f"<b>VIP Agent — Password Reset</b>\n\n"
+            f"Your temporary password:\n"
+            f"<code>{temp_password}</code>\n\n"
+            f"Use this to sign in, then change your password in Settings."
+        )
+        log.info(f"auth: temp password sent to Telegram for {user.email}", extra={"action": "auth.telegram_reset"})
+    except Exception as e:
+        log.warning(f"auth: Telegram send failed: {e}", extra={"action": "auth.telegram_failed"})
+        return {"success": False, "message": "Failed to send to Telegram. Please try again."}
+
+    return {"success": True, "message": "Temporary password sent to Telegram! Check @vip_agentbot_bot."}
+
+
 def _send_recovery_email(to_email: str, token: str):
     """Send password recovery email via SMTP or Telegram fallback."""
     import smtplib

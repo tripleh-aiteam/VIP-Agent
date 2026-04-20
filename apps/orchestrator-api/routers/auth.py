@@ -51,7 +51,15 @@ def change_password(body: ChangePasswordBody, db: Session = Depends(get_db)):
 
 @router.post("/forgot-password")
 def forgot_password(body: ForgotPasswordBody, db: Session = Depends(get_db)):
-    return auth_service.forgot_password(db, body.email)
+    result = auth_service.forgot_password(db, body.email)
+    return result
+
+
+@router.post("/forgot-password-telegram")
+def forgot_password_telegram(body: ForgotPasswordBody, db: Session = Depends(get_db)):
+    """Send a temporary password directly to Telegram — no email needed."""
+    result = auth_service.reset_via_telegram(db, body.email)
+    return result
 
 
 @router.post("/reset-password")

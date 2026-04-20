@@ -86,38 +86,36 @@ export default function AuthGuard({ children }: { children: React.ReactNode }) {
 
   const handleForgot = async () => {
     setLoading(true); setError(""); setSuccess("");
-    const apiBase = API;
-    console.log("[VIP Auth] Forgot password → calling:", apiBase + "/auth/forgot-password");
 
+    // Try email recovery first, then Telegram fallback
     try {
-      const res = await fetch(`${apiBase}/auth/forgot-password`, {
+      const res = await fetch(`${API}/auth/forgot-password`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email }),
       });
       if (res.ok) {
-        const result = await res.json();
-        setSuccess(result.message || "Recovery link sent! Check your email and Telegram.");
+        setSuccess("Recovery sent! Check your email and Telegram.");
+        setLoading(false);
+        return;
+      }
+    } catch {}
+
+    // Fallback: send temporary password to Telegram directly
+    try {
+      const res = await fetch(`${API}/auth/forgot-password-telegram`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setSuccess(data.message || "Temporary password sent to Telegram! Check @vip_agentbot_bot.");
       } else {
-        const data = await res.json().catch(() => ({}));
-        setError(data.detail || "Failed to send recovery. Check your email address.");
+        setError("Failed to reset password. Please try again.");
       }
-    } catch (err) {
-      console.error("[VIP Auth] Fetch error:", err);
-      // Fallback: tell user to check Telegram
-      try {
-        await fetch(`${apiBase}/telegram/simulate`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            user_id: "877252551",
-            message: `/reset_password ${email}`,
-          }),
-        });
-        setSuccess("Recovery link sent to your Telegram bot (@vip_agentbot_bot). Check Telegram!");
-      } catch {
-        setError("Cannot reach the server. Please try again later or contact support.");
-      }
+    } catch {
+      setError("Cannot reach the server. Please check your connection.");
     }
     setLoading(false);
   };
@@ -192,7 +190,7 @@ export default function AuthGuard({ children }: { children: React.ReactNode }) {
           {view === "forgot" && (
             <>
               <h2 className="text-[16px] font-semibold text-gray-800 mb-2">Reset password</h2>
-              <p className="text-[12px] text-gray-400 mb-6">Enter your email. We'll send a recovery link to your email and Telegram.</p>
+              <p className="text-[12px] text-gray-400 mb-6">Enter your email. We'll send a temporary password to your Telegram bot.</p>
               <div className="space-y-4">
                 <div>
                   <label className="block text-[12px] font-medium text-gray-500 mb-1.5">Email</label>
