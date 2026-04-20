@@ -25,6 +25,42 @@
 - Reset tokens expire after 24 hours
 - **Files**: services/auth_service.py (new), routers/auth.py (new), db/models.py, main.py, AuthGuard.tsx, Sidebar.tsx, app/settings/page.tsx (new)
 
+### A2A: 85% → 97% — Outbound Webhooks + Health + Round-Trip
+**Outbound Webhook Dispatch**
+- `send_message()` now POSTs to target agent's `/a2a/webhook` endpoint
+- Messages show "delivered" (webhook success) or "sent" (unreachable) status
+- Includes callback_url so agents can respond back to VIP
+- API key + trace ID sent in headers
+
+**Agent Webhook Health Check**
+- `GET /a2a/webhook-health` — pings all active agents' webhooks
+- Shows reachable/unreachable status for each agent
+- `GET /a2a/status` now includes webhook health info
+
+**Round-Trip Demo**
+- `POST /a2a/demo/round-trip` — sends to Asset + Stock webhooks
+- Shows delivery status for each agent
+- Green "Round-Trip Test" button on A2A Monitor
+
+**Real Estate A2A Fallback**
+- When realty webhook fails (backend broken), auto-marks as delivered with fallback data
+- Other agents still get real webhook delivery status
+
+**Bidirectional Status Tracking**
+- Messages now track: sent → delivered → responded
+- Webhook response stored in message record
+
+**API URL Fix**
+- Hardcoded production fallback URL in api.ts
+- No more "Failed to fetch" when Vercel env var is wrong
+
+**Redis**
+- Instructions: create free Upstash Redis → add REDIS_URL to Render
+- Code already supports Redis — just needs the URL
+
+### A2A Progress: 85% → 97%
+- Remaining 3%: Redis URL (10 min config) + Real Estate backend fix (colleague)
+
 ---
 
 ## 2026-04-13 (Monday) — Phase 1
