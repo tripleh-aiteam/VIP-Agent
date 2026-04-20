@@ -11,8 +11,9 @@ const AgentHealthPanel = dynamic(() => import("@/components/AgentHealthPanel"), 
 const SummaryDrilldown = dynamic(() => import("@/components/SummaryDrilldown"), { ssr: false });
 const RecentTaskRuns = dynamic(() => import("@/components/RecentTaskRuns"), { ssr: false });
 const InfrastructureDrilldown = dynamic(() => import("@/components/InfrastructureDrilldown"), { ssr: false });
-const ReportsDashboardPanel = dynamic(() => import("@/components/ReportsDashboardPanel"), { ssr: false });
+// ReportsDashboardPanel available at /reports page
 const QuickCommandResult = dynamic(() => import("@/components/QuickCommandResult"), { ssr: false });
+const ReportCard = dynamic(() => import("@/components/ReportCard"), { ssr: false });
 
 export default function Dashboard() {
   const [stats, setStats] = useState({
@@ -22,9 +23,7 @@ export default function Dashboard() {
   });
   const [recentRuns, setRecentRuns] = useState<any[]>([]);
   const [health, setHealth] = useState<any>(null);
-  const [allReports, setAllReports] = useState<any[]>([]);
   const [quickResult, setQuickResult] = useState<{ title: string; text: string; loading: boolean } | null>(null);
-  const [reportsExpanded, setReportsExpanded] = useState(false);
   const [healthExpanded, setHealthExpanded] = useState(false);
   const [drilldown, setDrilldown] = useState<"agents" | "active" | "failed" | "judgement" | null>(null);
   const [infraPanel, setInfraPanel] = useState<"telegram" | "eventbus" | "webhooks" | "web" | null>(null);
@@ -76,7 +75,6 @@ export default function Dashboard() {
       });
       setRecentRuns(runs.slice(0, 50));
       setHealth(h);
-      setAllReports(reports);
     } catch {}
   };
 
@@ -168,33 +166,10 @@ export default function Dashboard() {
         )}
       </div>
 
-      {/* Reports — clickable expandable */}
-      <div className="mb-8">
-        <button onClick={() => setReportsExpanded(!reportsExpanded)}
-          className={`w-full flex items-center justify-between px-4 py-3 rounded-xl border transition-all ${
-            reportsExpanded ? "border-[var(--brand-blue)] ring-1 ring-[var(--brand-blue)] bg-blue-50/50 dark:bg-blue-900/10" : "border-[var(--border-default)] bg-[var(--bg-card)] hover:border-[var(--brand-blue)]"
-          }`} style={{ boxShadow: "var(--shadow-sm)" }}>
-          <div className="flex items-center gap-3 text-left">
-            <div className="w-8 h-8 rounded-lg bg-blue-50 flex items-center justify-center">
-              <svg className="w-4 h-4 text-blue-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-              </svg>
-            </div>
-            <div>
-              <h3 className="text-[14px] font-semibold text-[var(--text-primary)]">Latest Reports</h3>
-              <p className="text-[11px] text-[var(--text-muted)]">{allReports.length} reports | Daily: {stats.latestDaily.slice(0, 50)}...</p>
-            </div>
-          </div>
-          <svg className={`w-4 h-4 text-[var(--text-muted)] transition-transform duration-200 ${reportsExpanded ? "rotate-180" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-            <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
-          </svg>
-        </button>
-
-        {reportsExpanded && (
-          <div className="mt-3 border border-[var(--border-default)] rounded-xl bg-[var(--bg-card)] p-5" style={{ boxShadow: "var(--shadow-sm)" }}>
-            <ReportsDashboardPanel reports={allReports} dailySummary={stats.latestDaily} weeklySummary={stats.latestWeekly} />
-          </div>
-        )}
+      {/* Report Cards — with sparklines and expandable analytics */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-8">
+        <ReportCard type="daily" summary={stats.latestDaily} />
+        <ReportCard type="weekly" summary={stats.latestWeekly} />
       </div>
 
       {/* Infrastructure — clickable for drilldown */}
