@@ -4,6 +4,7 @@ import { useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import ThemeToggle from "./ThemeToggle";
+import { logout } from "./AuthGuard";
 
 const nav = [
   { href: "/", label: "Dashboard", icon: "M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-4 0a1 1 0 01-1-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 01-1 1" },
@@ -78,7 +79,9 @@ export default function Sidebar() {
         </nav>
 
         <div className="px-5 py-3 border-t border-[var(--sidebar-border)] flex items-center justify-between">
-          <span className="text-[10px] text-[var(--text-muted)] font-medium">v0.2.0</span>
+          <button onClick={logout} className="text-[10px] text-[var(--text-muted)] hover:text-[var(--error)] transition-colors font-medium">
+            Sign out
+          </button>
           <ThemeToggle />
         </div>
       </aside>
