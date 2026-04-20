@@ -49,6 +49,25 @@ export default function WorkflowsPage() {
       <h1 className="text-[28px] font-semibold tracking-tight mb-1">Workflows</h1>
       <p className="text-[14px] text-[var(--text-muted)] mb-6">Scheduled tasks and automation</p>
 
+      {/* Auto-Report Schedule Info */}
+      <div className="mb-6 p-4 rounded-xl border border-blue-200 bg-blue-50 dark:border-blue-800/30 dark:bg-blue-900/10">
+        <h3 className="text-[13px] font-semibold text-blue-700 dark:text-blue-400 mb-2">Automatic Reports</h3>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-[12px]">
+          <div className="flex items-center gap-2">
+            <span className="text-blue-500">Daily</span>
+            <span className="text-[var(--text-secondary)]">8:00 AM KST — 3 agent reports + combined summary → Telegram + Dashboard</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="text-blue-500">Weekly</span>
+            <span className="text-[var(--text-secondary)]">Friday 18:30 KST — weekly summary → Telegram + Dashboard</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="text-blue-500">Health</span>
+            <span className="text-[var(--text-secondary)]">Every 5 min — ping all agents, update reliability scores</span>
+          </div>
+        </div>
+      </div>
+
       {/* Schedule Accordions */}
       <div className="space-y-3 mb-8">
         {groups.map((g) => {

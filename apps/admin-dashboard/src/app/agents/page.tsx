@@ -1,12 +1,14 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { api } from "@/components/api";
+import { api, apiPost } from "@/components/api";
 import Badge from "@/components/Badge";
 import { AskVIPBar } from "@/components/AskVIP";
 
 export default function AgentsPage() {
   const [agents, setAgents] = useState<any[]>([]);
+  const [pinging, setPinging] = useState<string | null>(null);
+  const [pingResult, setPingResult] = useState<Record<string, string>>({});
 
   useEffect(() => {
     const load = () => api<any[]>("/registry/agents").then((data) => setAgents(data.filter((a: any) => a.status === "active"))).catch(() => {});
@@ -96,7 +98,24 @@ export default function AgentsPage() {
 
             {/* Footer */}
             <div className="px-4 py-3 border-t border-[var(--border-default)]/50 flex items-center justify-between">
-              <span className="text-[10px] text-[var(--text-muted)] truncate max-w-[60%]">{a.capabilities?.portal_url || a.endpoint_url}</span>
+              <div className="flex items-center gap-2">
+                <button onClick={async (e) => {
+                  e.stopPropagation();
+                  if (!a.endpoint_url) return;
+                  setPinging(a.id);
+                  try {
+                    const r = await api<any>(`/a2a/webhook-health`);
+                    const agentResult = (r.agents || []).find((x: any) => x.agent === a.name);
+                    setPingResult((prev) => ({ ...prev, [a.id]: agentResult?.reachable ? "OK" : "Down" }));
+                  } catch { setPingResult((prev) => ({ ...prev, [a.id]: "Error" })); }
+                  setPinging(null);
+                }}
+                  disabled={pinging === a.id || !a.endpoint_url}
+                  className="px-2 py-1 text-[10px] rounded bg-[var(--bg-elevated)] border border-[var(--border-default)] text-[var(--text-muted)] hover:text-[var(--text-primary)] disabled:opacity-30 transition-colors">
+                  {pinging === a.id ? "..." : pingResult[a.id] ? pingResult[a.id] : "Ping"}
+                </button>
+                <span className="text-[10px] text-[var(--text-muted)] truncate max-w-[120px]">{a.endpoint_url?.replace("https://","") || ""}</span>
+              </div>
               {a.capabilities?.portal_url ? (
                 <a
                   href={a.capabilities.portal_url}

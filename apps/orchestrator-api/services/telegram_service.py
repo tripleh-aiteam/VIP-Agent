@@ -137,6 +137,7 @@ TELEGRAM_COMMAND_MAP = {
     "/approve": "approve case",  # args appended
     "/reject": "reject case",    # args appended
     "/help": "help",
+    "/reset": "reset_password",  # triggers password reset
 }
 
 
@@ -198,6 +199,14 @@ def handle_command(
             action.status = "completed"
             db.commit()
             return _cmd_help()
+
+        if command == "/reset":
+            from services.auth_service import reset_via_telegram
+            email = args[0] if args else os.getenv("VIP_ADMIN_EMAIL", "admin@vip-agent.com")
+            result = reset_via_telegram(db, email)
+            action.status = "completed"
+            db.commit()
+            return result.get("message", "Password reset sent.")
 
         natural_text = TELEGRAM_COMMAND_MAP.get(command, command)
         if args:
