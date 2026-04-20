@@ -75,6 +75,17 @@
 - Dynamic import (no SSR) for performance
 - **Files**: components/AgentHealthPanel.tsx (new), app/page.tsx, package.json
 
+### Interactive Stat Card Drilldowns
+- All 4 top stat cards now clickable with analytics panels:
+- **Total Agents**: donut (active/inactive), bar (by type), full agent table
+- **Active Runs**: bar (by agent), line (activity trend 24h/7d/30d), running tasks list
+- **Failed Runs**: failures by agent bar, failure reasons donut (timeout/connection/circuit breaker), recent failures table
+- **Pending Judgement**: decision breakdown pie, risk distribution bar, oldest pending table
+- Cards highlight blue when selected, show "Click to explore/close"
+- Only one panel open at a time
+- Time range filters (24h/7d/30d) inside each panel
+- **Files**: components/SummaryDrilldown.tsx (new), app/page.tsx
+
 ### Dashboard Improvements
 - Quick Commands show results inline (no page navigation)
 - Notifications clickable — navigate to relevant page (A2A/Reports/Judgement)
