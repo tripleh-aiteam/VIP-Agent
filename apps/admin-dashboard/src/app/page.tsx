@@ -9,6 +9,7 @@ import dynamic from "next/dynamic";
 
 const AgentHealthPanel = dynamic(() => import("@/components/AgentHealthPanel"), { ssr: false });
 const SummaryDrilldown = dynamic(() => import("@/components/SummaryDrilldown"), { ssr: false });
+const RecentTaskRuns = dynamic(() => import("@/components/RecentTaskRuns"), { ssr: false });
 
 export default function Dashboard() {
   const [stats, setStats] = useState({
@@ -33,11 +34,6 @@ export default function Dashboard() {
     } catch {
       setQuickResult({ title: label, text: "Failed to fetch. Please try again.", loading: false });
     }
-  };
-
-  const toKST = (utcStr: string) => {
-    if (!utcStr) return "";
-    return new Date(utcStr).toLocaleString("ko-KR", { timeZone: "Asia/Seoul" });
   };
 
   const load = async () => {
@@ -245,36 +241,8 @@ export default function Dashboard() {
         )}
       </div>
 
-      {/* Recent Runs */}
-      <div className="border border-[var(--border-default)] rounded-xl bg-[var(--bg-card)]">
-        <div className="px-4 py-3 border-b border-gray-800">
-          <h2 className="text-sm font-semibold text-[var(--text-primary)]">Recent Task Runs</h2>
-        </div>
-        <div className="overflow-x-auto">
-          <table className="w-full text-xs">
-            <thead>
-              <tr className="text-gray-500 border-b border-gray-800/50">
-                <th className="text-left px-4 py-2">Type</th>
-                <th className="text-left px-4 py-2">Agent</th>
-                <th className="text-left px-4 py-2">Status</th>
-                <th className="text-left px-4 py-2">Trace</th>
-                <th className="text-left px-4 py-2">Time</th>
-              </tr>
-            </thead>
-            <tbody>
-              {recentRuns.map((r: any) => (
-                <tr key={r.id} className="border-b border-[var(--border-default)] hover:bg-[var(--bg-elevated)]">
-                  <td className="px-4 py-2">{r.task_type}</td>
-                  <td className="px-4 py-2 text-[var(--brand-blue)]">{r.agent_name}</td>
-                  <td className="px-4 py-2"><Badge text={r.status} /></td>
-                  <td className="px-4 py-2 text-gray-500 font-mono">{r.trace_id}</td>
-                  <td className="px-4 py-2 text-gray-500">{r.started_at ? toKST(r.started_at) : "-"}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </div>
+      {/* Recent Runs — Table + Graph views */}
+      <RecentTaskRuns runs={recentRuns} />
     </div>
   );
 }
