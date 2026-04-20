@@ -86,6 +86,18 @@
 - Time range filters (24h/7d/30d) inside each panel
 - **Files**: components/SummaryDrilldown.tsx (new), app/page.tsx
 
+### Recent Task Runs: Table + Graph Views
+- View toggle: **Table** (default) and **Graph** buttons
+- **Table View**: sortable columns (click header to sort), KST timestamps, started + finished
+- **Graph View**:
+  - Line chart: completed vs failed runs over time (24h/7d/30d)
+  - Bar chart: runs by agent
+  - Donut chart: status breakdown (completed/failed/pending)
+  - Horizontal bar: runs by task type
+- **Filters**: time range (24h/7d/30d/all), agent dropdown, status dropdown
+- Shows 20 runs max with count indicator
+- **Files**: components/RecentTaskRuns.tsx (new), app/page.tsx
+
 ### Dashboard Improvements
 - Quick Commands show results inline (no page navigation)
 - Notifications clickable — navigate to relevant page (A2A/Reports/Judgement)
