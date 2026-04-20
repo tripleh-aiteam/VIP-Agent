@@ -12,6 +12,7 @@ const SummaryDrilldown = dynamic(() => import("@/components/SummaryDrilldown"), 
 const RecentTaskRuns = dynamic(() => import("@/components/RecentTaskRuns"), { ssr: false });
 const InfrastructureDrilldown = dynamic(() => import("@/components/InfrastructureDrilldown"), { ssr: false });
 const ReportsDashboardPanel = dynamic(() => import("@/components/ReportsDashboardPanel"), { ssr: false });
+const QuickCommandResult = dynamic(() => import("@/components/QuickCommandResult"), { ssr: false });
 
 export default function Dashboard() {
   const [stats, setStats] = useState({
@@ -256,22 +257,9 @@ export default function Dashboard() {
           ))}
         </div>
 
-        {/* Inline result */}
+        {/* Inline result with charts */}
         {quickResult && (
-          <div className="mt-4 border border-[var(--border-default)] rounded-xl bg-[var(--bg-card)] p-4">
-            <div className="flex items-center justify-between mb-2">
-              <h3 className="text-[13px] font-semibold text-[var(--text-primary)]">{quickResult.title}</h3>
-              <button onClick={() => setQuickResult(null)} className="text-[var(--text-muted)] hover:text-[var(--text-primary)] text-xs">Close</button>
-            </div>
-            {quickResult.loading ? (
-              <div className="flex items-center gap-2 text-[12px] text-[var(--text-muted)]">
-                <div className="w-3 h-3 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
-                Loading...
-              </div>
-            ) : (
-              <p className="text-[12px] text-[var(--text-secondary)] whitespace-pre-wrap leading-relaxed">{quickResult.text}</p>
-            )}
-          </div>
+          <QuickCommandResult command={quickResult.title === "System Status" ? "status" : quickResult.title === "Latest Report" ? "show daily report" : quickResult.title === "Agent Health" ? "show agents" : quickResult.title === "Approvals" ? "pending approvals" : quickResult.title === "Check Risk" ? "high risk cases" : "run full executive summary"} onClose={() => setQuickResult(null)} />
         )}
       </div>
 
