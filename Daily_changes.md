@@ -13,6 +13,18 @@
 - Anyone without password sees only login screen — no data exposed
 - **Files**: components/AuthGuard.tsx (new), layout.tsx, Sidebar.tsx
 
+### Full Auth System: Change Password + Forgot Password + Gmail Recovery
+- **Login**: email + password via backend API (`POST /auth/login`)
+- **Change Password**: Settings page → enter current + new password (`POST /auth/change-password`)
+- **Forgot Password**: click "Forgot password?" → enter email → recovery link sent
+- **Recovery channels**: Gmail SMTP (primary) + Telegram bot (fallback)
+- **Reset Password**: click link from email → set new password (`POST /auth/reset-password`)
+- **Settings page**: shows account info (email, name, role) + change password form
+- Settings added to sidebar nav with gear icon
+- PlatformUser model: added password_hash, reset_token, reset_token_expires
+- Reset tokens expire after 24 hours
+- **Files**: services/auth_service.py (new), routers/auth.py (new), db/models.py, main.py, AuthGuard.tsx, Sidebar.tsx, app/settings/page.tsx (new)
+
 ---
 
 ## 2026-04-13 (Monday) — Phase 1
