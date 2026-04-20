@@ -1,11 +1,19 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "enables the default permissions",
-  "windows": [
-    "main"
-  ],
+  "description": "VIP Agent default permissions",
+  "windows": ["main"],
   "permissions": [
-    "core:default"
-  ]
+    "core:default",
+    {
+      "identifier": "core:window:allow-set-title",
+      "allow": true
+    }
+  ],
+  "remote": {
+    "urls": [
+      "https://oasisvip.vercel.app/*",
+      "https://vip-orchestrator.onrender.com/*"
+    ]
+  }
 }
