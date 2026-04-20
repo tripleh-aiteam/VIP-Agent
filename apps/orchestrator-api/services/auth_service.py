@@ -149,8 +149,9 @@ def reset_via_telegram(db: Session, email: str) -> dict:
     if not user:
         user = db.query(PlatformUser).first()
 
+    # If no user exists at all, create the admin user first
     if not user:
-        return {"success": True, "message": "If the account exists, a temporary password has been sent to Telegram."}
+        user = _get_or_create_admin(db)
 
     # Generate temporary password
     temp_password = secrets.token_urlsafe(8)  # e.g. "aB3x_kL9"
