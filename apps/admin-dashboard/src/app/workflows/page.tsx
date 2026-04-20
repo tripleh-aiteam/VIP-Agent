@@ -82,7 +82,7 @@ export default function WorkflowsPage() {
                       </div>
                       <Badge text={s.enabled ? "enabled" : "disabled"} />
                       <span className="text-[10px] text-[var(--text-muted)] w-40 text-right hidden md:block">
-                        {s.next_fire_time ? new Date(s.next_fire_time).toLocaleString() : "—"}
+                        {s.next_fire_time ? new Date(s.next_fire_time).toLocaleString("ko-KR", { timeZone: "Asia/Seoul" }) : "—"}
                       </span>
                     </div>
                     <div className="flex gap-1 ml-3">
@@ -123,8 +123,8 @@ export default function WorkflowsPage() {
                 <td className="px-4 py-2 text-blue-400">{r.agent_name}</td>
                 <td className="px-4 py-2"><Badge text={r.status} /></td>
                 <td className="px-4 py-2 text-[var(--text-muted)] font-mono">{r.trace_id}</td>
-                <td className="px-4 py-2 text-[var(--text-muted)]">{r.started_at ? new Date(r.started_at).toLocaleTimeString() : "-"}</td>
-                <td className="px-4 py-2 text-[var(--text-muted)]">{r.finished_at ? new Date(r.finished_at).toLocaleTimeString() : "-"}</td>
+                <td className="px-4 py-2 text-[var(--text-muted)]">{r.started_at ? new Date(r.started_at).toLocaleString("ko-KR", { timeZone: "Asia/Seoul" }) : "-"}</td>
+                <td className="px-4 py-2 text-[var(--text-muted)]">{r.finished_at ? new Date(r.finished_at).toLocaleString("ko-KR", { timeZone: "Asia/Seoul" }) : "-"}</td>
               </tr>
             ))}
           </tbody>

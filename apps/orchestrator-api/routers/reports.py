@@ -100,6 +100,17 @@ def get_report(report_id: UUID, db: Session = Depends(get_db)):
     return report
 
 
+@router.delete("/{report_id}")
+def delete_report(report_id: UUID, db: Session = Depends(get_db)):
+    """Delete a report."""
+    report = db.query(OrchReport).filter(OrchReport.id == report_id).first()
+    if not report:
+        raise HTTPException(404, "Report not found")
+    db.delete(report)
+    db.commit()
+    return {"deleted": True, "id": str(report_id)}
+
+
 @router.get("/{report_id}/markdown", response_class=PlainTextResponse)
 def get_report_markdown(report_id: UUID, db: Session = Depends(get_db)):
     """Get a report in Markdown format."""

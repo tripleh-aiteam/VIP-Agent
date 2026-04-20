@@ -75,7 +75,7 @@ export default function JudgementPage() {
                     <td className="px-4 py-2.5"><Badge text={c.rule_result || "—"} /></td>
                     <td className="px-4 py-2.5"><Badge text={c.decision} /></td>
                     <td className="px-4 py-2.5 text-[var(--text-muted)] max-w-[200px] truncate">{c.evidence?.reasoning || "—"}</td>
-                    <td className="px-4 py-2.5 text-[var(--text-muted)]">{c.created_at ? new Date(c.created_at).toLocaleTimeString() : "-"}</td>
+                    <td className="px-4 py-2.5 text-[var(--text-muted)]">{c.created_at ? new Date(c.created_at).toLocaleString("ko-KR", { timeZone: "Asia/Seoul" }) : "-"}</td>
                     <td className="px-4 py-2.5">
                       {isPending ? (
                         <div className="flex gap-1">

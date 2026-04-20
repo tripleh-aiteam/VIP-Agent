@@ -11,19 +11,26 @@ export default function Dashboard() {
   const [stats, setStats] = useState({
     agents: 0, activeRuns: 0, failedRuns: 0, pendingJudgement: 0,
     latestDaily: "", latestWeekly: "", telegramStatus: "active", aiGlassStatus: "planned",
+    eventBus: "in-memory", webhooksReachable: 0, webhooksTotal: 0,
   });
   const [recentRuns, setRecentRuns] = useState<any[]>([]);
   const [health, setHealth] = useState<any>(null);
 
+  const toKST = (utcStr: string) => {
+    if (!utcStr) return "";
+    return new Date(utcStr).toLocaleString("ko-KR", { timeZone: "Asia/Seoul" });
+  };
+
   const load = async () => {
     try {
-      const [agents, runs, cases, reports, channels, h] = await Promise.all([
+      const [agents, runs, cases, reports, channels, h, a2aStatus] = await Promise.all([
         api<any[]>("/registry/agents"),
         api<any[]>("/runs?limit=50"),
         api<any[]>("/judgement/cases"),
         api<any[]>("/reports/"),
         api<any[]>("/channels"),
         api<any>("/health"),
+        api<any>("/a2a/status").catch(() => null),
       ]);
 
       const pending = cases.filter((c: any) => c.decision === "human_review_required" || c.decision === "conditional_approve");
@@ -32,6 +39,7 @@ export default function Dashboard() {
       const telegram = channels.find((c: any) => c.type === "telegram");
       const glass = channels.find((c: any) => c.type === "ai_glass");
 
+      const webhooks = a2aStatus?.agent_webhooks || {};
       setStats({
         agents: agents.length,
         activeRuns: runs.filter((r: any) => ["pending", "dispatched", "running"].includes(r.status)).length,
@@ -41,6 +49,9 @@ export default function Dashboard() {
         latestWeekly: weekly?.executive_summary?.slice(0, 120) || "No weekly report yet",
         telegramStatus: telegram?.status || "unknown",
         aiGlassStatus: glass?.status || "unknown",
+        eventBus: a2aStatus?.event_bus || "unknown",
+        webhooksReachable: webhooks.reachable || 0,
+        webhooksTotal: webhooks.total || 0,
       });
       setRecentRuns(runs.slice(0, 8));
       setHealth(h);
@@ -92,22 +103,26 @@ export default function Dashboard() {
         </div>
       </div>
 
-      {/* Channel Status */}
+      {/* Channel & A2A Status */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
         <div className="border border-[var(--border-default)] rounded-xl p-3 bg-[var(--bg-card)]">
           <p className="text-[10px] text-gray-500 mb-1">Telegram</p>
           <Badge text={stats.telegramStatus} />
         </div>
         <div className="border border-[var(--border-default)] rounded-xl p-3 bg-[var(--bg-card)]">
-          <p className="text-[10px] text-gray-500 mb-1">AI Glasses</p>
-          <Badge text={stats.aiGlassStatus} />
+          <p className="text-[10px] text-gray-500 mb-1">Event Bus</p>
+          <Badge text={stats.eventBus === "redis" ? "active" : "in-memory"} />
+          <span className="text-[9px] text-[var(--text-muted)] ml-1">{stats.eventBus}</span>
+        </div>
+        <div className="border border-[var(--border-default)] rounded-xl p-3 bg-[var(--bg-card)]">
+          <p className="text-[10px] text-gray-500 mb-1">A2A Webhooks</p>
+          <span className={`text-[13px] font-semibold ${stats.webhooksReachable === stats.webhooksTotal ? "text-green-500" : "text-amber-500"}`}>
+            {stats.webhooksReachable}/{stats.webhooksTotal}
+          </span>
+          <span className="text-[9px] text-[var(--text-muted)] ml-1">reachable</span>
         </div>
         <div className="border border-[var(--border-default)] rounded-xl p-3 bg-[var(--bg-card)]">
           <p className="text-[10px] text-gray-500 mb-1">Web Channel</p>
-          <Badge text="active" />
-        </div>
-        <div className="border border-[var(--border-default)] rounded-xl p-3 bg-[var(--bg-card)]">
-          <p className="text-[10px] text-gray-500 mb-1">Event Bus</p>
           <Badge text="active" />
         </div>
       </div>
@@ -140,7 +155,7 @@ export default function Dashboard() {
                   <td className="px-4 py-2 text-[var(--brand-blue)]">{r.agent_name}</td>
                   <td className="px-4 py-2"><Badge text={r.status} /></td>
                   <td className="px-4 py-2 text-gray-500 font-mono">{r.trace_id}</td>
-                  <td className="px-4 py-2 text-gray-500">{r.started_at ? new Date(r.started_at).toLocaleTimeString() : "-"}</td>
+                  <td className="px-4 py-2 text-gray-500">{r.started_at ? toKST(r.started_at) : "-"}</td>
                 </tr>
               ))}
             </tbody>

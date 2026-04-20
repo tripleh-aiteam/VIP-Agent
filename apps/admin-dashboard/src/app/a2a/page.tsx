@@ -240,7 +240,7 @@ export default function A2APage() {
                         </td>
                         <td className="px-4 py-3"><Badge text={m.status} /></td>
                         <td className="px-4 py-3 text-[var(--text-muted)] font-mono text-[11px]">{m.trace_id}</td>
-                        <td className="px-4 py-3 text-[var(--text-muted)]">{m.created_at ? new Date(m.created_at).toLocaleTimeString() : "-"}</td>
+                        <td className="px-4 py-3 text-[var(--text-muted)]">{m.created_at ? new Date(m.created_at).toLocaleString("ko-KR", { timeZone: "Asia/Seoul" }) : "-"}</td>
                       </tr>
 
                       {/* Expanded detail row */}
