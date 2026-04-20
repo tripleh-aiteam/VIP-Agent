@@ -58,8 +58,28 @@
 - Instructions: create free Upstash Redis → add REDIS_URL to Render
 - Code already supports Redis — just needs the URL
 
-### A2A Progress: 85% → 97%
-- Remaining 3%: Redis URL (10 min config) + Real Estate backend fix (colleague)
+### A2A Progress: 85% → 100% (VIP side)
+- Redis connected (Upstash)
+- Real Estate fallback built
+
+### Platform Polish — 15 Tasks
+| # | Task | Done |
+|---|------|------|
+| 1 | Chat history search — search bar in sidebar | Yes |
+| 2 | Export chat — download as .txt file | Yes |
+| 3 | Session timeout — auto-logout after 24 hours | Yes |
+| 4 | Delete reports — DELETE endpoint for cleanup | Yes |
+| 5 | Report scheduling UI — info box on Workflows page | Yes |
+| 6 | KST time — all pages (Dashboard, Judgement, Workflows, A2A) | Yes |
+| 7 | Dashboard A2A stats — webhook count, event bus type | Yes |
+| 8 | Judgement timestamps — KST on all cases | Yes |
+| 9 | Judgement detail modal — click case for risk/rules/factors | Yes |
+| 10 | Agent detail — ping button on each card | Yes |
+| 11 | Agent endpoint — URL shown in footer | Yes |
+| 12 | Workflow schedules — auto-report info box | Yes |
+| 13 | Workflow auto-reports — daily 8AM, weekly Fri 18:30, health 5min | Yes |
+| 14 | Telegram formatting — /reset command added | Yes |
+| 15 | Telegram /reset — triggers password reset via Telegram | Yes |
 
 ---
 
