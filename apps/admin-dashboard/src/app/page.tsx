@@ -5,6 +5,7 @@ import { api } from "@/components/api";
 import StatCard from "@/components/StatCard";
 import Badge from "@/components/Badge";
 import { useRealtimeEvents } from "@/components/useRealtimeEvents";
+import { apiPost } from "@/components/api";
 
 export default function Dashboard() {
   const [stats, setStats] = useState({
@@ -14,6 +15,20 @@ export default function Dashboard() {
   });
   const [recentRuns, setRecentRuns] = useState<any[]>([]);
   const [health, setHealth] = useState<any>(null);
+  const [quickResult, setQuickResult] = useState<{ title: string; text: string; loading: boolean } | null>(null);
+
+  const runQuickCommand = async (label: string, prompt: string) => {
+    setQuickResult({ title: label, text: "", loading: true });
+    try {
+      // Create a temp session and send the command
+      const session = await apiPost<any>("/chat/sessions", { user_id: "dashboard", channel: "web" });
+      const result = await apiPost<any>(`/chat/sessions/${session.id}/messages`, { content: prompt });
+      const text = result?.assistant_message?.content?.text || "No response";
+      setQuickResult({ title: label, text, loading: false });
+    } catch {
+      setQuickResult({ title: label, text: "Failed to fetch. Please try again.", loading: false });
+    }
+  };
 
   const toKST = (utcStr: string) => {
     if (!utcStr) return "";
@@ -126,28 +141,47 @@ export default function Dashboard() {
         </div>
       </div>
 
-      {/* Quick Navigation */}
+      {/* Quick Commands — results show inline */}
       <div className="mb-8">
-        <h2 className="text-[14px] font-semibold text-[var(--text-primary)] mb-3">Quick Access</h2>
+        <h2 className="text-[14px] font-semibold text-[var(--text-primary)] mb-3">Quick Commands</h2>
         <div className="grid grid-cols-3 md:grid-cols-6 gap-2">
           {[
-            { label: "Chat", href: "/chat", icon: "M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" },
-            { label: "Reports", href: "/reports", icon: "M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" },
-            { label: "Agents", href: "/agents", icon: "M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z" },
-            { label: "Approvals", href: "/judgement", icon: "M3 6l3 1m0 0l-3 9a5.002 5.002 0 006.001 0M6 7l3 9M6 7l6-2m6 2l3-1m-3 1l-3 9a5.002 5.002 0 006.001 0M18 7l3 9m-3-9l-6-2m0-2v2m0 16V5" },
-            { label: "A2A", href: "/a2a", icon: "M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" },
-            { label: "Workflows", href: "/workflows", icon: "M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" },
-          ].map((item) => (
-            <a key={item.label} href={item.href}
-              className="flex flex-col items-center gap-1.5 p-3 rounded-xl border border-[var(--border-default)] bg-[var(--bg-card)] hover:border-[var(--brand-blue)] hover:bg-[var(--bg-elevated)] transition-colors group"
+            { label: "System Status", prompt: "status", icon: "M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" },
+            { label: "Latest Report", prompt: "show daily report", icon: "M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" },
+            { label: "Agent Health", prompt: "show agents", icon: "M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z" },
+            { label: "Approvals", prompt: "pending approvals", icon: "M3 6l3 1m0 0l-3 9a5.002 5.002 0 006.001 0M6 7l3 9M6 7l6-2m6 2l3-1m-3 1l-3 9a5.002 5.002 0 006.001 0M18 7l3 9m-3-9l-6-2m0-2v2m0 16V5" },
+            { label: "Check Risk", prompt: "high risk cases", icon: "M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" },
+            { label: "Run All", prompt: "run full executive summary", icon: "M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" },
+          ].map((cmd) => (
+            <button key={cmd.label} onClick={() => runQuickCommand(cmd.label, cmd.prompt)}
+              disabled={quickResult?.loading}
+              className="flex flex-col items-center gap-1.5 p-3 rounded-xl border border-[var(--border-default)] bg-[var(--bg-card)] hover:border-[var(--brand-blue)] hover:bg-[var(--bg-elevated)] transition-colors group disabled:opacity-50"
               style={{ boxShadow: "var(--shadow-sm)" }}>
               <svg className="w-5 h-5 text-[var(--text-muted)] group-hover:text-[var(--brand-blue)] transition-colors" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                <path strokeLinecap="round" strokeLinejoin="round" d={item.icon} />
+                <path strokeLinecap="round" strokeLinejoin="round" d={cmd.icon} />
               </svg>
-              <span className="text-[11px] text-[var(--text-secondary)] group-hover:text-[var(--brand-blue)] font-medium">{item.label}</span>
-            </a>
+              <span className="text-[11px] text-[var(--text-secondary)] group-hover:text-[var(--brand-blue)] font-medium">{cmd.label}</span>
+            </button>
           ))}
         </div>
+
+        {/* Inline result */}
+        {quickResult && (
+          <div className="mt-4 border border-[var(--border-default)] rounded-xl bg-[var(--bg-card)] p-4">
+            <div className="flex items-center justify-between mb-2">
+              <h3 className="text-[13px] font-semibold text-[var(--text-primary)]">{quickResult.title}</h3>
+              <button onClick={() => setQuickResult(null)} className="text-[var(--text-muted)] hover:text-[var(--text-primary)] text-xs">Close</button>
+            </div>
+            {quickResult.loading ? (
+              <div className="flex items-center gap-2 text-[12px] text-[var(--text-muted)]">
+                <div className="w-3 h-3 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
+                Loading...
+              </div>
+            ) : (
+              <p className="text-[12px] text-[var(--text-secondary)] whitespace-pre-wrap leading-relaxed">{quickResult.text}</p>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Recent Runs */}
