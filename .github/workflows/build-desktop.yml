@@ -1,0 +1,61 @@
+name: Build Desktop App
+
+on:
+  workflow_dispatch:  # Manual trigger from GitHub
+  push:
+    tags:
+      - 'v*'  # Auto-build on version tags (v1.0.0, v1.1.0, etc.)
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - platform: macos-latest
+            target: aarch64-apple-darwin
+            name: Mac-ARM (M1/M2/M3/M4/M5)
+          - platform: macos-latest
+            target: x86_64-apple-darwin
+            name: Mac-Intel
+          - platform: windows-latest
+            target: x86_64-pc-windows-msvc
+            name: Windows
+
+    runs-on: ${{ matrix.platform }}
+    name: Build ${{ matrix.name }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install dependencies (Ubuntu)
+        if: matrix.platform == 'ubuntu-latest'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential curl wget file libssl-dev libayatana-appindicator3-dev librsvg2-dev
+
+      - name: Install frontend dependencies
+        working-directory: apps/admin-dashboard
+        run: npm ci
+
+      - name: Build Tauri app
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          projectPath: apps/admin-dashboard
+          tagName: ${{ github.ref_name }}
+          releaseName: 'VIP Agent ${{ github.ref_name }}'
+          releaseBody: 'VIP Agent Desktop App — download the installer for your platform.'
+          releaseDraft: false
+          prerelease: false
+          args: --target ${{ matrix.target }}
