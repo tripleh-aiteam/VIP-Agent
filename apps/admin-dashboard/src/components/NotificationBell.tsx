@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState, useRef } from "react";
+import { useRouter } from "next/navigation";
 import { api, apiPost } from "./api";
 import { useRealtimeEvents } from "./useRealtimeEvents";
 
@@ -16,6 +17,7 @@ interface Notification {
 }
 
 export default function NotificationBell() {
+  const router = useRouter();
   const [unread, setUnread] = useState(0);
   const [open, setOpen] = useState(false);
   const [notifications, setNotifications] = useState<Notification[]>([]);
@@ -111,30 +113,46 @@ export default function NotificationBell() {
             {notifications.length === 0 && (
               <p className="text-center text-[var(--text-muted)] py-8 text-[12px]">No notifications</p>
             )}
-            {notifications.map((n) => (
-              <div key={n.id}
-                onClick={() => !n.is_read && markRead(n.id)}
-                className={`px-4 py-3 border-b border-[var(--border-default)] hover:bg-[var(--bg-hover)] cursor-pointer transition-colors ${
-                  !n.is_read ? "bg-[var(--bg-elevated)]" : ""
-                }`}>
-                <div className="flex items-start gap-3">
-                  <div className={`w-2 h-2 rounded-full mt-1.5 shrink-0 ${sevColor[n.severity] || sevColor.info}`} />
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center justify-between gap-2">
-                      <p className={`text-[13px] truncate ${!n.is_read ? "font-semibold text-[var(--text-primary)]" : "text-[var(--text-secondary)]"}`}>
-                        {n.title}
-                      </p>
-                      <span className="text-[10px] text-[var(--text-muted)] shrink-0">
-                        {n.created_at ? new Date(n.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : ""}
-                      </span>
+            {notifications.map((n) => {
+              // Map notification type to page
+              const getLink = (type: string) => {
+                if (type?.includes("risk") || type?.includes("escalation")) return "/a2a";
+                if (type?.includes("report")) return "/reports";
+                if (type?.includes("workflow")) return "/workflows";
+                if (type?.includes("approval") || type?.includes("judgement")) return "/judgement";
+                return "/a2a";
+              };
+
+              return (
+                <div key={n.id}
+                  onClick={() => {
+                    if (!n.is_read) markRead(n.id);
+                    setOpen(false);
+                    router.push(getLink(n.type));
+                  }}
+                  className={`px-4 py-3 border-b border-[var(--border-default)] hover:bg-[var(--bg-hover)] cursor-pointer transition-colors ${
+                    !n.is_read ? "bg-[var(--bg-elevated)]" : ""
+                  }`}>
+                  <div className="flex items-start gap-3">
+                    <div className={`w-2 h-2 rounded-full mt-1.5 shrink-0 ${sevColor[n.severity] || sevColor.info}`} />
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center justify-between gap-2">
+                        <p className={`text-[13px] truncate ${!n.is_read ? "font-semibold text-[var(--text-primary)]" : "text-[var(--text-secondary)]"}`}>
+                          {n.title}
+                        </p>
+                        <span className="text-[10px] text-[var(--text-muted)] shrink-0">
+                          {n.created_at ? new Date(n.created_at).toLocaleTimeString("ko-KR", { timeZone: "Asia/Seoul", hour: "2-digit", minute: "2-digit" }) : ""}
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-2 mt-0.5">
+                        {n.type && <span className="text-[10px] text-[var(--text-muted)]">{n.type}</span>}
+                        <span className="text-[9px] text-[var(--brand-blue)]">View →</span>
+                      </div>
                     </div>
-                    {n.type && (
-                      <span className="text-[10px] text-[var(--text-muted)]">{n.type}</span>
-                    )}
                   </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </div>
       )}
