@@ -46,14 +46,39 @@ class SendMessageBody(BaseModel):
 
 
 @router.get("/status")
-def a2a_status():
-    """Check A2A event bus status."""
+def a2a_status(db: Session = Depends(get_db)):
+    """Check A2A event bus status + agent webhook health."""
+    from db.models import CoreAgent
+    agents = db.query(CoreAgent).filter(CoreAgent.status == "active", CoreAgent.endpoint_url.isnot(None)).all()
+    webhook_results = [a2a_service.check_agent_webhook(a) for a in agents]
+
     return {
         "event_bus": "redis" if is_redis_connected() else "in-memory",
         "message_types": list(a2a_service.VALID_MESSAGE_TYPES),
         "purposes": list(a2a_service.VALID_PURPOSES),
         "high_risk_types": list(a2a_service.HIGH_RISK_TYPES),
         "triggers_count": len(list_triggers()),
+        "agent_webhooks": {
+            "total": len(webhook_results),
+            "reachable": len([r for r in webhook_results if r.get("reachable")]),
+            "agents": webhook_results,
+        },
+    }
+
+
+@router.get("/webhook-health")
+def check_webhooks(db: Session = Depends(get_db)):
+    """Check if all agents' A2A webhooks are reachable."""
+    from db.models import CoreAgent
+    agents = db.query(CoreAgent).filter(CoreAgent.status == "active", CoreAgent.endpoint_url.isnot(None)).all()
+    results = []
+    for agent in agents:
+        result = a2a_service.check_agent_webhook(agent)
+        results.append(result)
+    return {
+        "total": len(results),
+        "reachable": len([r for r in results if r.get("reachable")]),
+        "agents": results,
     }
 
 
@@ -349,4 +374,64 @@ def demo_risk_flow(db: Session = Depends(get_db)):
             "audit_events": "/runs",
             "supabase": "Check a2a_messages and audit_event_logs tables",
         },
+    }
+
+
+@router.post("/demo/round-trip")
+def demo_round_trip(db: Session = Depends(get_db)):
+    """
+    Full A2A round-trip demo:
+    1. VIP sends data_request to Asset Agent (via webhook)
+    2. VIP sends data_request to Stock Agent (via webhook)
+    3. Shows webhook delivery status for each
+    """
+    trace_id = f"tr-roundtrip-{int(datetime.utcnow().timestamp())}"
+    results = []
+
+    # Step 1: Request data from Asset Agent
+    r1 = a2a_service.send_message(
+        db=db, trace_id=trace_id,
+        sender_agent_id="Stock Agent",
+        target_agent_id="Asset Agent",
+        message_type="data_request",
+        purpose="query",
+        payload={"request": "portfolio_summary", "demo": True},
+        proof_of_intent={"reason": "Round-trip demo — testing A2A webhook delivery"},
+    )
+    results.append({
+        "step": 1,
+        "action": "VIP -> Asset Agent: data_request",
+        "webhook_status": r1.get("status"),
+        "webhook_response": r1.get("webhook_response"),
+        "message_id": r1.get("message_id"),
+    })
+
+    # Step 2: Request data from Stock Agent
+    r2 = a2a_service.send_message(
+        db=db, trace_id=trace_id,
+        sender_agent_id="Asset Agent",
+        target_agent_id="Stock Agent",
+        message_type="data_request",
+        purpose="query",
+        payload={"request": "market_summary", "demo": True},
+        proof_of_intent={"reason": "Round-trip demo — testing A2A webhook delivery"},
+    )
+    results.append({
+        "step": 2,
+        "action": "VIP -> Stock Agent: data_request",
+        "webhook_status": r2.get("status"),
+        "webhook_response": r2.get("webhook_response"),
+        "message_id": r2.get("message_id"),
+    })
+
+    delivered = len([r for r in results if r["webhook_status"] == "delivered"])
+
+    return {
+        "demo": "round-trip",
+        "trace_id": trace_id,
+        "steps": len(results),
+        "delivered": delivered,
+        "total": len(results),
+        "messages": results,
+        "summary": f"{delivered}/{len(results)} messages delivered to agent webhooks",
     }

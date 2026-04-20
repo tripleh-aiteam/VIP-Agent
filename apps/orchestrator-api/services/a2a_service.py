@@ -112,6 +112,16 @@ def send_message(
     publish(f"a2a.{message_type}", envelope)
     publish(f"a2a.to.{target_name}", envelope)
 
+    # Dispatch to target agent's webhook (if agent has endpoint)
+    webhook_status = "sent"
+    webhook_response = None
+    if target and target.endpoint_url:
+        webhook_result = _dispatch_to_agent_webhook(target, envelope, message_id, trace_id)
+        webhook_status = webhook_result.get("status", "sent")
+        webhook_response = webhook_result.get("response")
+        msg.status = webhook_status
+        db.flush()
+
     # Audit
     record_event(db, "a2a", f"a2a.{message_type}", trace_id, {
         "message_id": str(message_id),
@@ -119,10 +129,11 @@ def send_message(
         "target": target_name,
         "purpose": purpose,
         "is_high_risk": is_high_risk,
+        "webhook_status": webhook_status,
     })
 
     log.info(
-        f"a2a: {sender_name} -> {target_name} [{message_type}/{purpose}]",
+        f"a2a: {sender_name} -> {target_name} [{message_type}/{purpose}] webhook={webhook_status}",
         extra={"trace_id": trace_id, "action": f"a2a.{message_type}"},
     )
 
@@ -135,10 +146,99 @@ def send_message(
         "target": target_name,
         "message_type": message_type,
         "purpose": purpose,
-        "status": "sent",
+        "status": webhook_status,
         "is_high_risk": is_high_risk,
         "needs_judgement": needs_judgement,
+        "webhook_response": webhook_response,
     }
+
+
+def _dispatch_to_agent_webhook(
+    target_agent: CoreAgent,
+    envelope: dict,
+    message_id: UUID,
+    trace_id: str,
+) -> dict:
+    """
+    POST A2A message to target agent's webhook endpoint.
+    Returns {"status": "delivered"|"failed", "response": ...}
+    """
+    import httpx
+    import os
+
+    webhook_url = f"{target_agent.endpoint_url.rstrip('/')}/a2a/webhook"
+    api_key = os.getenv("VIP_OUTBOUND_API_KEY", "vip-dev-key-2026")
+    callback_url = os.getenv("APP_BACKEND_URL", "https://vip-orchestrator.onrender.com")
+
+    payload = {
+        "message_id": str(message_id),
+        "trace_id": trace_id,
+        "sender": envelope.get("sender_agent_id"),
+        "message_type": envelope.get("message_type"),
+        "purpose": envelope.get("purpose"),
+        "payload": envelope.get("payload", {}),
+        "callback_url": f"{callback_url}/a2a/webhook",
+    }
+
+    try:
+        with httpx.Client(timeout=10) as client:
+            resp = client.post(
+                webhook_url,
+                json=payload,
+                headers={
+                    "Content-Type": "application/json",
+                    "X-API-Key": api_key,
+                    "X-Trace-ID": trace_id,
+                },
+            )
+
+        if resp.status_code in (200, 201, 202):
+            log.info(f"a2a webhook: delivered to {target_agent.name} ({resp.status_code})",
+                     extra={"trace_id": trace_id, "action": "a2a.webhook.delivered"})
+            try:
+                response_data = resp.json()
+            except Exception:
+                response_data = {"raw": resp.text[:200]}
+            return {"status": "delivered", "response": response_data}
+        else:
+            log.warning(f"a2a webhook: {target_agent.name} returned {resp.status_code}",
+                        extra={"trace_id": trace_id, "action": "a2a.webhook.error"})
+            return {"status": "sent", "response": {"error": f"HTTP {resp.status_code}"}}
+
+    except httpx.ConnectError:
+        log.warning(f"a2a webhook: {target_agent.name} unreachable",
+                    extra={"trace_id": trace_id, "action": "a2a.webhook.unreachable"})
+        return {"status": "sent", "response": {"error": "Agent webhook unreachable"}}
+    except httpx.TimeoutException:
+        log.warning(f"a2a webhook: {target_agent.name} timeout",
+                    extra={"trace_id": trace_id, "action": "a2a.webhook.timeout"})
+        return {"status": "sent", "response": {"error": "Webhook timeout"}}
+    except Exception as e:
+        log.warning(f"a2a webhook: {target_agent.name} error: {e}",
+                    extra={"trace_id": trace_id, "action": "a2a.webhook.error"})
+        return {"status": "sent", "response": {"error": str(e)}}
+
+
+def check_agent_webhook(agent: CoreAgent) -> dict:
+    """Check if an agent's A2A webhook is reachable."""
+    import httpx
+
+    if not agent.endpoint_url:
+        return {"agent": agent.name, "reachable": False, "reason": "No endpoint URL"}
+
+    webhook_url = f"{agent.endpoint_url.rstrip('/')}/a2a/webhook"
+    try:
+        with httpx.Client(timeout=5) as client:
+            # Use OPTIONS or a small POST to check
+            resp = client.post(webhook_url, json={"ping": True}, headers={"Content-Type": "application/json"})
+        return {
+            "agent": agent.name,
+            "webhook_url": webhook_url,
+            "reachable": resp.status_code in (200, 201, 202, 400, 405, 422),
+            "status_code": resp.status_code,
+        }
+    except Exception as e:
+        return {"agent": agent.name, "webhook_url": webhook_url, "reachable": False, "reason": str(e)}
 
 
 def get_message(db: Session, message_id: UUID) -> dict | None:

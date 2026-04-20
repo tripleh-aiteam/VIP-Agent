@@ -125,18 +125,22 @@ export default function A2APage() {
       )}
 
       {/* Action Buttons */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-6">
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-6">
         <button onClick={runCrossAgentReport} disabled={reportLoading}
           className="px-4 py-3 rounded-lg bg-[var(--brand-blue)] hover:opacity-90 text-white text-[13px] font-semibold disabled:opacity-50 transition-colors">
           {reportLoading ? "Generating..." : "Cross-Agent Report"}
         </button>
+        <button onClick={async () => { setDataReqLoading(true); setDataReqResult(null); try { const d = await apiPost<any>("/a2a/demo/round-trip"); setDataReqResult(d); } catch (e: any) { setDataReqResult({ error: e.message }); } setDataReqLoading(false); load(); }} disabled={dataReqLoading}
+          className="px-4 py-3 rounded-lg bg-green-600 hover:bg-green-700 text-white text-[13px] font-semibold disabled:opacity-50 transition-colors">
+          {dataReqLoading ? "Testing..." : "Round-Trip Test"}
+        </button>
         <button onClick={() => runDataRequest("Stock Agent", "asset")} disabled={dataReqLoading}
           className="px-4 py-3 rounded-lg bg-[var(--bg-elevated)] hover:bg-[var(--bg-hover)] border border-[var(--border-default)] text-[var(--text-primary)] text-[13px] font-semibold disabled:opacity-50 transition-colors">
-          {dataReqLoading ? "Requesting..." : "Stock → Asset Data"}
+          {dataReqLoading ? "..." : "Stock → Asset"}
         </button>
         <button onClick={() => runDataRequest("Asset Agent", "stock")} disabled={dataReqLoading}
           className="px-4 py-3 rounded-lg bg-[var(--bg-elevated)] hover:bg-[var(--bg-hover)] border border-[var(--border-default)] text-[var(--text-primary)] text-[13px] font-semibold disabled:opacity-50 transition-colors">
-          {dataReqLoading ? "Requesting..." : "Asset → Stock Data"}
+          {dataReqLoading ? "..." : "Asset → Stock"}
         </button>
       </div>
 
