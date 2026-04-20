@@ -23,6 +23,7 @@ export default function ChatPage() {
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
   const [renaming, setRenaming] = useState<string | null>(null);
+  const [searchQuery, setSearchQuery] = useState("");
   const [listening, setListening] = useState(false);
   const [attachedFile, setAttachedFile] = useState<File | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -266,7 +267,7 @@ export default function ChatPage() {
       {/* Sessions sidebar — ChatGPT style */}
       <div className="hidden md:flex w-64 flex-col shrink-0 h-full">
         {/* Top actions */}
-        <div className="space-y-1 mb-3">
+        <div className="space-y-1 mb-2">
           <button onClick={() => createSession()} className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-[13px] text-[var(--text-secondary)] hover:bg-[var(--bg-elevated)] transition-colors">
             <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" /></svg>
             New chat
@@ -277,12 +278,30 @@ export default function ChatPage() {
           </button>
         </div>
 
+        {/* Search */}
+        <div className="px-2 mb-2">
+          <div className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg bg-[var(--bg-elevated)] border border-[var(--border-default)]">
+            <svg className="w-3.5 h-3.5 text-[var(--text-muted)] shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>
+            <input value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Search chats..."
+              className="flex-1 bg-transparent text-[12px] text-[var(--text-primary)] placeholder:text-[var(--text-muted)] focus:outline-none" />
+            {searchQuery && (
+              <button onClick={() => setSearchQuery("")} className="text-[var(--text-muted)] hover:text-[var(--text-primary)]">
+                <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+              </button>
+            )}
+          </div>
+        </div>
+
         {/* Scrollable list */}
         <div className="flex-1 overflow-y-auto space-y-0.5">
           {(() => {
+            const q = searchQuery.toLowerCase().trim();
+            const filteredSessions = q ? sessions.filter((s: any) => (s.title || "").toLowerCase().includes(q)) : sessions;
+
             const folders = new Map<string, any[]>();
             const unfiled: any[] = [];
-            sessions.forEach((s: any) => {
+            filteredSessions.forEach((s: any) => {
               if (s.folder) {
                 if (!folders.has(s.folder)) folders.set(s.folder, []);
                 folders.get(s.folder)!.push(s);
@@ -395,7 +414,23 @@ export default function ChatPage() {
             {/* Chat Header */}
             <div className="px-4 py-2.5 border-b border-[var(--border-default)] flex items-center justify-between">
               <h2 className="text-sm font-semibold text-[var(--text-primary)]">VIP Assistant</h2>
-              <span className="text-[10px] text-[var(--text-muted)]">Ask anything or use quick commands below</span>
+              <button onClick={() => {
+                const chatText = messages.filter((m: any) => m.role !== "system").map((m: any) => {
+                  const role = m.role === "user" ? "You" : "VIP Agent";
+                  const time = m.created_at ? new Date(m.created_at).toLocaleString("ko-KR", { timeZone: "Asia/Seoul" }) : "";
+                  return `[${time}] ${role}:\n${m.content?.text || ""}\n`;
+                }).join("\n");
+                const blob = new Blob([chatText], { type: "text/plain" });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement("a");
+                a.href = url;
+                a.download = `vip-chat-${new Date().toISOString().slice(0,10)}.txt`;
+                a.click();
+                URL.revokeObjectURL(url);
+              }}
+                className="px-2.5 py-1 rounded-lg text-[10px] text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-elevated)] border border-[var(--border-default)] transition-colors">
+                Export
+              </button>
             </div>
 
             {/* Messages */}

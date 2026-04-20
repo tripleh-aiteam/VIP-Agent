@@ -4,6 +4,8 @@ import { useState, useEffect } from "react";
 import { apiPost, API } from "./api";
 
 const AUTH_KEY = "vip-auth";
+const AUTH_TIME_KEY = "vip-auth-time";
+const SESSION_HOURS = 24;
 
 type AuthView = "login" | "forgot" | "reset" | "change";
 
@@ -15,6 +17,16 @@ interface AuthData {
 export function getAuth(): AuthData | null {
   if (typeof window === "undefined") return null;
   try {
+    // Check session timeout
+    const loginTime = localStorage.getItem(AUTH_TIME_KEY);
+    if (loginTime) {
+      const elapsed = Date.now() - parseInt(loginTime);
+      if (elapsed > SESSION_HOURS * 60 * 60 * 1000) {
+        localStorage.removeItem(AUTH_KEY);
+        localStorage.removeItem(AUTH_TIME_KEY);
+        return null;
+      }
+    }
     const raw = localStorage.getItem(AUTH_KEY);
     return raw ? JSON.parse(raw) : null;
   } catch { return null; }
@@ -22,6 +34,7 @@ export function getAuth(): AuthData | null {
 
 export function logout() {
   localStorage.removeItem(AUTH_KEY);
+  localStorage.removeItem(AUTH_TIME_KEY);
   window.location.reload();
 }
 
@@ -57,7 +70,7 @@ export default function AuthGuard({ children }: { children: React.ReactNode }) {
       const result = await apiPost<any>("/auth/login", { email, password });
       if (result.success) {
         const authData = { token: result.token, user: result.user };
-        localStorage.setItem(AUTH_KEY, JSON.stringify(authData));
+        localStorage.setItem(AUTH_KEY, JSON.stringify(authData)); localStorage.setItem(AUTH_TIME_KEY, Date.now().toString());
         setAuth(authData);
         return;
       }
@@ -76,7 +89,7 @@ export default function AuthGuard({ children }: { children: React.ReactNode }) {
     const localPw = process.env.NEXT_PUBLIC_VIP_PASSWORD || "VipBoss2026!";
     if (password === localPw) {
       const authData = { token: "local", user: { id: "local", email: email || "admin", name: "VIP Admin", role: "admin" } };
-      localStorage.setItem(AUTH_KEY, JSON.stringify(authData));
+      localStorage.setItem(AUTH_KEY, JSON.stringify(authData)); localStorage.setItem(AUTH_TIME_KEY, Date.now().toString());
       setAuth(authData);
     } else {
       setError("Incorrect password");
