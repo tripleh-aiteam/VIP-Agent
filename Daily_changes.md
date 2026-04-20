@@ -62,6 +62,24 @@
 - Redis connected (Upstash)
 - Real Estate fallback built
 
+### Agent Health Command Center
+- Expandable panel on Dashboard — click "Agent Health" card to open/close
+- **Summary cards**: Healthy, Warning, Failed, Avg Reliability (color-coded)
+- **Donut chart**: agent status breakdown (healthy/warning/failed/offline)
+- **Bar chart**: success rate per agent with hover showing total runs, failures, last run
+- **Line chart**: activity trend (completed vs failures) with 24h/7d/30d toggle
+- **Alerts panel**: shows active agent warnings (error state, low reliability, webhook unreachable)
+- **Agent details table**: name, status dot, reliability %, success rate %, runs, failed, last run (KST)
+- **Filters**: time range (24h/7d/30d) + status filter (all/healthy/warning/failed)
+- Uses Recharts library (lightweight React charts)
+- Dynamic import (no SSR) for performance
+- **Files**: components/AgentHealthPanel.tsx (new), app/page.tsx, package.json
+
+### Dashboard Improvements
+- Quick Commands show results inline (no page navigation)
+- Notifications clickable — navigate to relevant page (A2A/Reports/Judgement)
+- "View →" link on each notification
+
 ### Platform Polish — 15 Tasks
 | # | Task | Done |
 |---|------|------|
