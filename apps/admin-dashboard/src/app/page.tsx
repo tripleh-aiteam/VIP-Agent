@@ -2,13 +2,13 @@
 
 import { useEffect, useState } from "react";
 import { api } from "@/components/api";
-import StatCard from "@/components/StatCard";
 import Badge from "@/components/Badge";
 import { useRealtimeEvents } from "@/components/useRealtimeEvents";
 import { apiPost } from "@/components/api";
 import dynamic from "next/dynamic";
 
 const AgentHealthPanel = dynamic(() => import("@/components/AgentHealthPanel"), { ssr: false });
+const SummaryDrilldown = dynamic(() => import("@/components/SummaryDrilldown"), { ssr: false });
 
 export default function Dashboard() {
   const [stats, setStats] = useState({
@@ -20,6 +20,7 @@ export default function Dashboard() {
   const [health, setHealth] = useState<any>(null);
   const [quickResult, setQuickResult] = useState<{ title: string; text: string; loading: boolean } | null>(null);
   const [healthExpanded, setHealthExpanded] = useState(false);
+  const [drilldown, setDrilldown] = useState<"agents" | "active" | "failed" | "judgement" | null>(null);
 
   const runQuickCommand = async (label: string, prompt: string) => {
     setQuickResult({ title: label, text: "", loading: true });
@@ -100,13 +101,39 @@ export default function Dashboard() {
         )}
       </div>
 
-      {/* Stats Grid */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
-        <StatCard label="Total Agents" value={stats.agents} color="blue" />
-        <StatCard label="Active Runs" value={stats.activeRuns} color="green" />
-        <StatCard label="Failed Runs" value={stats.failedRuns} color="red" />
-        <StatCard label="Pending Judgement" value={stats.pendingJudgement} color="yellow" />
+      {/* Stats Grid — clickable for drilldown */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
+        {([
+          { key: "agents" as const, label: "Total Agents", value: stats.agents, color: "blue" as const },
+          { key: "active" as const, label: "Active Runs", value: stats.activeRuns, color: "green" as const },
+          { key: "failed" as const, label: "Failed Runs", value: stats.failedRuns, color: "red" as const },
+          { key: "judgement" as const, label: "Pending Judgement", value: stats.pendingJudgement, color: "yellow" as const },
+        ]).map((card) => {
+          const valColor: Record<string, string> = { blue: "text-[var(--brand-blue)]", green: "text-[var(--brand-green)]", red: "text-[var(--error)]", yellow: "text-[var(--warning)]" };
+          const isActive = drilldown === card.key;
+          return (
+            <button key={card.key} onClick={() => setDrilldown(isActive ? null : card.key)}
+              className={`text-left rounded-xl border p-4 transition-all cursor-pointer ${
+                isActive ? "border-[var(--brand-blue)] ring-1 ring-[var(--brand-blue)] bg-blue-50/50 dark:bg-blue-900/10" : "border-[var(--border-default)] bg-[var(--bg-card)] hover:border-[var(--brand-blue)]"
+              }`} style={{ boxShadow: "var(--shadow-sm)" }}>
+              <p className="text-[12px] text-[var(--text-muted)] mb-1 font-medium">{card.label}</p>
+              <p className={`text-[24px] font-semibold tracking-tight ${valColor[card.color]}`}>{card.value}</p>
+              <p className="text-[9px] text-[var(--text-muted)] mt-1">{isActive ? "Click to close" : "Click to explore"}</p>
+            </button>
+          );
+        })}
       </div>
+
+      {/* Drilldown Panel */}
+      {drilldown && (
+        <div className="mb-8 border border-[var(--border-default)] rounded-xl bg-[var(--bg-card)] p-5" style={{ boxShadow: "var(--shadow-sm)" }}>
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-[14px] font-semibold text-[var(--text-primary)] capitalize">{drilldown === "judgement" ? "Pending Judgement" : drilldown === "agents" ? "Total Agents" : drilldown === "active" ? "Active Runs" : "Failed Runs"} — Analytics</h3>
+            <button onClick={() => setDrilldown(null)} className="text-[var(--text-muted)] hover:text-[var(--text-primary)] text-xs">Close</button>
+          </div>
+          <SummaryDrilldown panel={drilldown} />
+        </div>
+      )}
 
       {/* Agent Health — expandable */}
       <div className="mb-8">
