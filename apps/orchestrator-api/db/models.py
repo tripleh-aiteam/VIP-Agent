@@ -37,11 +37,14 @@ class PlatformUser(Base):
     id = _uuid()
     email = Column(String(255), unique=True, nullable=False)
     name = Column(String(120), nullable=False)
+    password_hash = Column(String(255))                    # bcrypt hash
     role = Column(String(30), default="viewer")           # admin | operator | viewer
     org_id = Column(String(120), default="default")
     status = Column(String(20), default="active")         # active | inactive | suspended
     preferences_json = Column(JSONB, default=dict)        # notification prefs, timezone, etc.
     telegram_user_id = Column(String(60))                 # linked telegram account
+    reset_token = Column(String(255))                      # password reset token
+    reset_token_expires = Column(DateTime)                 # reset token expiry
     last_login_at = Column(DateTime)
     created_at = _now()
 
