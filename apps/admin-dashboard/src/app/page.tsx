@@ -10,6 +10,7 @@ import dynamic from "next/dynamic";
 const AgentHealthPanel = dynamic(() => import("@/components/AgentHealthPanel"), { ssr: false });
 const SummaryDrilldown = dynamic(() => import("@/components/SummaryDrilldown"), { ssr: false });
 const RecentTaskRuns = dynamic(() => import("@/components/RecentTaskRuns"), { ssr: false });
+const InfrastructureDrilldown = dynamic(() => import("@/components/InfrastructureDrilldown"), { ssr: false });
 
 export default function Dashboard() {
   const [stats, setStats] = useState({
@@ -22,6 +23,7 @@ export default function Dashboard() {
   const [quickResult, setQuickResult] = useState<{ title: string; text: string; loading: boolean } | null>(null);
   const [healthExpanded, setHealthExpanded] = useState(false);
   const [drilldown, setDrilldown] = useState<"agents" | "active" | "failed" | "judgement" | null>(null);
+  const [infraPanel, setInfraPanel] = useState<"telegram" | "eventbus" | "webhooks" | "web" | null>(null);
 
   const runQuickCommand = async (label: string, prompt: string) => {
     setQuickResult({ title: label, text: "", loading: true });
@@ -174,29 +176,41 @@ export default function Dashboard() {
         </div>
       </div>
 
-      {/* Channel & A2A Status */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
-        <div className="border border-[var(--border-default)] rounded-xl p-3 bg-[var(--bg-card)]">
-          <p className="text-[10px] text-gray-500 mb-1">Telegram</p>
-          <Badge text={stats.telegramStatus} />
-        </div>
-        <div className="border border-[var(--border-default)] rounded-xl p-3 bg-[var(--bg-card)]">
-          <p className="text-[10px] text-gray-500 mb-1">Event Bus</p>
-          <Badge text={stats.eventBus === "redis" ? "active" : "in-memory"} />
-          <span className="text-[9px] text-[var(--text-muted)] ml-1">{stats.eventBus}</span>
-        </div>
-        <div className="border border-[var(--border-default)] rounded-xl p-3 bg-[var(--bg-card)]">
-          <p className="text-[10px] text-gray-500 mb-1">A2A Webhooks</p>
-          <span className={`text-[13px] font-semibold ${stats.webhooksReachable === stats.webhooksTotal ? "text-green-500" : "text-amber-500"}`}>
-            {stats.webhooksReachable}/{stats.webhooksTotal}
-          </span>
-          <span className="text-[9px] text-[var(--text-muted)] ml-1">reachable</span>
-        </div>
-        <div className="border border-[var(--border-default)] rounded-xl p-3 bg-[var(--bg-card)]">
-          <p className="text-[10px] text-gray-500 mb-1">Web Channel</p>
-          <Badge text="active" />
-        </div>
+      {/* Infrastructure — clickable for drilldown */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
+        {([
+          { key: "telegram" as const, label: "Telegram", status: stats.telegramStatus, detail: "" },
+          { key: "eventbus" as const, label: "Event Bus", status: stats.eventBus === "redis" ? "active" : "in-memory", detail: stats.eventBus },
+          { key: "webhooks" as const, label: "A2A Webhooks", status: stats.webhooksReachable === stats.webhooksTotal ? "active" : "warning", detail: `${stats.webhooksReachable}/${stats.webhooksTotal} reachable` },
+          { key: "web" as const, label: "Web Channel", status: "active", detail: "" },
+        ]).map(card => {
+          const isActive = infraPanel === card.key;
+          return (
+            <button key={card.key} onClick={() => setInfraPanel(isActive ? null : card.key)}
+              className={`text-left rounded-xl border p-3 transition-all cursor-pointer ${
+                isActive ? "border-[var(--brand-blue)] ring-1 ring-[var(--brand-blue)] bg-blue-50/50 dark:bg-blue-900/10" : "border-[var(--border-default)] bg-[var(--bg-card)] hover:border-[var(--brand-blue)]"
+              }`}>
+              <p className="text-[10px] text-gray-500 mb-1">{card.label}</p>
+              <Badge text={card.status} />
+              {card.detail && <span className="text-[9px] text-[var(--text-muted)] ml-1">{card.detail}</span>}
+              <p className="text-[8px] text-[var(--text-muted)] mt-1">{isActive ? "Click to close" : "Click to explore"}</p>
+            </button>
+          );
+        })}
       </div>
+
+      {/* Infrastructure Drilldown */}
+      {infraPanel && (
+        <div className="mb-8 border border-[var(--border-default)] rounded-xl bg-[var(--bg-card)] p-5" style={{ boxShadow: "var(--shadow-sm)" }}>
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-[14px] font-semibold text-[var(--text-primary)]">
+              {infraPanel === "telegram" ? "Telegram" : infraPanel === "eventbus" ? "Event Bus" : infraPanel === "webhooks" ? "A2A Webhooks" : "Web Channel"} — Analytics
+            </h3>
+            <button onClick={() => setInfraPanel(null)} className="text-[var(--text-muted)] hover:text-[var(--text-primary)] text-xs">Close</button>
+          </div>
+          <InfrastructureDrilldown panel={infraPanel} />
+        </div>
+      )}
 
       {/* Quick Commands — results show inline */}
       <div className="mb-8">
