@@ -11,7 +11,17 @@ export const API = _base || "http://localhost:8000";
 
 export async function api<T>(path: string, options?: RequestInit): Promise<T> {
   const res = await fetch(`${API}${path}`, options);
-  return res.json();
+  let data: any;
+  try {
+    data = await res.json();
+  } catch {
+    if (!res.ok) throw new Error(`Request failed (${res.status})`);
+    return {} as T;
+  }
+  if (!res.ok) {
+    throw new Error(data?.detail || data?.message || data?.error || `Request failed (${res.status})`);
+  }
+  return data;
 }
 
 export async function apiPost<T>(path: string, body?: unknown): Promise<T> {
