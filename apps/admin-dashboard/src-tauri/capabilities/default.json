@@ -4,6 +4,7 @@
   "description": "VIP Agent default permissions",
   "windows": ["main"],
   "permissions": [
-    "core:default"
+    "core:default",
+    "notification:default"
   ]
 }

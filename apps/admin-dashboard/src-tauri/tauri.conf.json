@@ -55,5 +55,7 @@
         "applicationFolderPosition": { "x": 480, "y": 170 }
       }
     }
-  }
+  },
+  "plugins": {}
+
 }

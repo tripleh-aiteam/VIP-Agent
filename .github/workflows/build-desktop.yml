@@ -21,6 +21,15 @@ jobs:
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Generate updater keys if not set
+        shell: bash
+        run: |
+          if [ -z "$TAURI_SIGNING_PRIVATE_KEY" ]; then
+            echo "No signing key set — updater signatures will be skipped"
+          fi
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+
       - name: Install frontend dependencies
         working-directory: apps/admin-dashboard
         run: npm ci
@@ -29,10 +38,18 @@ jobs:
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           projectPath: apps/admin-dashboard
           tagName: vip-agent-v1.0.${{ github.run_number }}
           releaseName: 'VIP Agent v1.0.${{ github.run_number }}'
-          releaseBody: 'Download VIP Agent desktop app — Windows version.'
+          releaseBody: |
+            ## VIP Agent Desktop App
+
+            **Auto-update enabled** — if you have a previous version installed, it will update automatically.
+
+            ### Download:
+            - **Windows**: Download the `.exe` file below and run it
           releaseDraft: false
           prerelease: false
