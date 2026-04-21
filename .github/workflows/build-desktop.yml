@@ -7,43 +7,6 @@ permissions:
   contents: write
 
 jobs:
-  build-windows:
-    runs-on: windows-latest
-    name: Windows (.exe)
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Install frontend dependencies
-        working-directory: apps/admin-dashboard
-        run: npm ci
-
-      - name: Build Tauri
-        uses: tauri-apps/tauri-action@v0
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          projectPath: apps/admin-dashboard
-          tagName: vip-agent-v1.0.${{ github.run_number }}
-          releaseName: 'VIP Agent v1.0.${{ github.run_number }}'
-          releaseBody: |
-            ## VIP Agent Desktop App
-
-            **Auto-update** — app content updates automatically via Vercel. No reinstall needed.
-
-            ### Download:
-            - **Windows**: `.exe` file
-            - **Mac (M1-M5 Apple Silicon)**: `.dmg` file
-          releaseDraft: false
-          prerelease: false
-
   build-mac:
     runs-on: macos-latest
     name: Mac ARM (.dmg)
@@ -70,12 +33,16 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           projectPath: apps/admin-dashboard
-          tagName: vip-agent-v1.0.${{ github.run_number }}
-          releaseName: 'VIP Agent v1.0.${{ github.run_number }}'
+          tagName: vip-agent-mac-v1.0.${{ github.run_number }}
+          releaseName: 'VIP Agent Mac v1.0.${{ github.run_number }}'
           releaseBody: |
-            ## VIP Agent Desktop App
+            ## VIP Agent — Mac Desktop App
 
-            **Auto-update** — app content updates automatically via Vercel. No reinstall needed.
+            **For MacBook M1/M2/M3/M4/M5 (Apple Silicon)**
+
+            Download the `.dmg` file → open → drag VIP Agent to Applications → done.
+
+            Auto-update enabled — app content updates automatically.
           releaseDraft: false
           prerelease: false
           args: --target aarch64-apple-darwin
