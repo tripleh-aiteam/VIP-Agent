@@ -13,6 +13,7 @@
     "windows": [
       {
         "title": "VIP Agent",
+        "url": "https://oasisvip.vercel.app",
         "width": 1280,
         "height": 800,
         "minWidth": 900,
@@ -57,5 +58,4 @@
     }
   },
   "plugins": {}
-
 }
