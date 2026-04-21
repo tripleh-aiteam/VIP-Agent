@@ -1,5 +1,4 @@
 use tauri::Manager;
-use tauri::Url;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -14,10 +13,13 @@ pub fn run() {
                 )?;
             }
 
-            // Navigate main window to Vercel URL
+            // Load Vercel URL via JavaScript injection
             if let Some(window) = app.get_webview_window("main") {
-                let url = Url::parse("https://oasisvip.vercel.app").unwrap();
-                let _ = window.navigate(url);
+                let w = window.clone();
+                std::thread::spawn(move || {
+                    std::thread::sleep(std::time::Duration::from_millis(500));
+                    let _ = w.eval("window.location.replace('https://oasisvip.vercel.app')");
+                });
             }
 
             Ok(())
