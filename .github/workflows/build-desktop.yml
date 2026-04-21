@@ -33,39 +33,6 @@ jobs:
           projectPath: apps/admin-dashboard
           tagName: vip-agent-v1.0.${{ github.run_number }}
           releaseName: 'VIP Agent v1.0.${{ github.run_number }}'
-          releaseBody: 'Download VIP Agent desktop app for your platform.'
+          releaseBody: 'Download VIP Agent desktop app — Windows version.'
           releaseDraft: false
           prerelease: false
-
-  build-mac:
-    runs-on: macos-latest
-    name: Mac ARM (.dmg)
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: aarch64-apple-darwin
-
-      - name: Install frontend dependencies
-        working-directory: apps/admin-dashboard
-        run: npm ci
-
-      - name: Build Tauri
-        uses: tauri-apps/tauri-action@v0
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          projectPath: apps/admin-dashboard
-          tagName: vip-agent-v1.0.${{ github.run_number }}
-          releaseName: 'VIP Agent v1.0.${{ github.run_number }}'
-          releaseBody: 'Download VIP Agent desktop app for your platform.'
-          releaseDraft: false
-          prerelease: false
-          args: --target aarch64-apple-darwin
