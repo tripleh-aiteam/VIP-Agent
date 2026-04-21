@@ -77,7 +77,14 @@ export default function AuthGuard({ children }: { children: React.ReactNode }) {
     } catch (e: any) {
       // If backend auth fails with clear message, show it
       const msg = e?.message || "";
-      if (msg && msg !== "Failed to fetch" && !msg.includes("NetworkError")) {
+      const isNetworkErr =
+        !msg ||
+        msg === "Failed to fetch" ||
+        /NetworkError/i.test(msg) ||
+        /Load failed/i.test(msg) ||              // Safari / WKWebView (Tauri on macOS)
+        /The Internet connection appears to be offline/i.test(msg) ||
+        /network connection was lost/i.test(msg);
+      if (!isNetworkErr) {
         setError(msg);
         setLoading(false);
         return;
