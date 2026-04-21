@@ -3,6 +3,7 @@ import "./globals.css";
 import Sidebar from "@/components/Sidebar";
 import TopBar from "@/components/TopBar";
 import AuthGuard from "@/components/AuthGuard";
+import UpdateBanner from "@/components/UpdateBanner";
 
 export const metadata: Metadata = {
   title: "VIP Agent Platform",
@@ -21,6 +22,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
               <div className="p-3 md:p-6 max-w-7xl">{children}</div>
             </main>
           </div>
+          <UpdateBanner />
         </AuthGuard>
       </body>
     </html>
