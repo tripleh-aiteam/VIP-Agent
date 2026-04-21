@@ -3,6 +3,9 @@ name: Build Desktop App
 on:
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build-windows:
     runs-on: windows-latest
