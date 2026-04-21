@@ -2,6 +2,66 @@
 
 ---
 
+## 2026-04-21 (Tuesday)
+
+### Windows Desktop App (.exe) — Enterprise Version
+- Built VIP Agent as installable Windows desktop app using **Tauri v2**
+- App loads live Vercel URL — **auto-updates** when code is pushed (no reinstall)
+- GitHub Actions workflow builds `.exe` automatically on manual trigger
+- Available at: GitHub Releases → `VIP.Agent_1.0.0_x64-setup.exe` (1.8 MB)
+- Window: 1280x800, centered, resizable, min 900x600
+- App ID: com.vipagent.platform | Category: Business
+- **Files**: src-tauri/ (Cargo.toml, tauri.conf.json, lib.rs, frontend/), .github/workflows/build-desktop.yml
+
+### Auto-Update System
+- Desktop app loads from Vercel — all code changes appear automatically
+- No reinstall needed for dashboard updates
+- Only rebuild `.exe` for native app changes (window, icon, title)
+
+### Update Notification Banner
+- Red alert popup in bottom-right when new version detected
+- Shows changelog: what changed in this update
+- "Got it" button to dismiss — only shows once per version
+- Works on both web and desktop app
+- To trigger: change `APP_VERSION` + `CHANGELOG` in UpdateBanner.tsx
+- **Files**: components/UpdateBanner.tsx (new), layout.tsx
+
+### Meetings Menu Added
+- New "Meetings" button in sidebar (before Settings)
+- Placeholder page: "Digital Twin meeting room — coming soon"
+- Prepared for Phase 2: Digital Twin Meeting System
+- **Files**: app/meetings/page.tsx (new), Sidebar.tsx
+
+### GitHub Actions — Desktop Build Pipeline
+- `build-desktop.yml` — Windows only (Mac removed for now)
+- Triggers manually from GitHub Actions page
+- Builds `.exe` + `.msi` installers
+- Creates GitHub Release with download links
+- Permissions: contents write for release creation
+- **File**: .github/workflows/build-desktop.yml
+
+### Tauri Project Structure
+```
+apps/admin-dashboard/src-tauri/
+├── Cargo.toml          — Rust dependencies (tauri, notification plugin)
+├── tauri.conf.json     — App config (name, window, bundle, plugins)
+├── capabilities/       — Permissions (core, notification)
+├── frontend/           — Local HTML that redirects to Vercel
+├── icons/              — App icons (ico, icns, png)
+└── src/
+    ├── main.rs         — Entry point
+    └── lib.rs          — App setup with notification plugin
+```
+
+### Build Fixes (multiple iterations)
+- Fixed capabilities JSON format (boolean → sequence)
+- Fixed identifier `.app` suffix conflict with macOS
+- Removed tokio dependency (not needed)
+- Added write permissions for GitHub Release creation
+- Switched from remote URL to local HTML redirect approach
+
+---
+
 ## 2026-04-20 (Monday)
 
 ### Login & Privacy Protection
