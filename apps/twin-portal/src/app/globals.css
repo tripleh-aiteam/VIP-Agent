@@ -1,0 +1,60 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --bg-app: #F8FAFC;
+    --bg-card: #FFFFFF;
+    --bg-secondary: #F1F5F9;
+    --bg-input: #F1F5F9;
+
+    --border-default: #E5E7EB;
+    --card-border: #E5E7EB;
+    --card-bg: #FFFFFF;
+
+    --text-primary: #111827;
+    --text-secondary: #475467;
+    --text-muted: #98A2B3;
+
+    --brand-blue: #1B96FF;
+    --brand-green: #12B76A;
+    --brand-purple: #7F56D9;
+    --warning: #F79009;
+    --error: #F04438;
+
+    --shadow-sm: 0 1px 2px rgba(0,0,0,0.05);
+    --shadow-md: 0 2px 6px rgba(0,0,0,0.06);
+    --shadow-lg: 0 4px 12px rgba(0,0,0,0.08);
+  }
+
+  .dark {
+    --bg-app: #0F172A;
+    --bg-card: #1E293B;
+    --bg-secondary: #334155;
+    --bg-input: #334155;
+
+    --border-default: #334155;
+    --card-border: #334155;
+    --card-bg: #1E293B;
+
+    --text-primary: #F8FAFC;
+    --text-secondary: #CBD5E1;
+    --text-muted: #64748B;
+  }
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+  background: var(--bg-app);
+  color: var(--text-primary);
+  -webkit-font-smoothing: antialiased;
+}

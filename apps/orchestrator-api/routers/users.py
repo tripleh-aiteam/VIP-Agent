@@ -48,8 +48,56 @@ def get_user(user_id: UUID, db: Session = Depends(get_db)):
     return user_service._user_to_dict(user)
 
 
+class CreateWorkerBody(BaseModel):
+    email: str = Field(...)
+    name: str = Field(...)
+    password: str = Field(...)
+    twin_id: Optional[str] = Field(None, description="Digital twin ID to link")
+    department: Optional[str] = None
+
+
+@router.post("/users/worker", status_code=201)
+def create_worker(body: CreateWorkerBody, db: Session = Depends(get_db)):
+    """Create a worker account with password and optional twin link."""
+    from db.models import PlatformUser, DigitalTwin
+    from services.auth_service import _hash_password
+
+    # Check if email already exists
+    existing = db.query(PlatformUser).filter(PlatformUser.email == body.email).first()
+    if existing:
+        raise HTTPException(400, "Email already registered")
+
+    user = PlatformUser(
+        email=body.email,
+        name=body.name,
+        password_hash=_hash_password(body.password),
+        role="worker",
+        department=body.department,
+    )
+
+    # Link twin if provided
+    if body.twin_id:
+        twin = db.query(DigitalTwin).filter(DigitalTwin.id == body.twin_id).first()
+        if twin:
+            user.has_twin = True
+            user.twin_id = twin.id
+
+    db.add(user)
+    db.commit()
+
+    return {
+        "created": True,
+        "id": str(user.id),
+        "email": user.email,
+        "name": user.name,
+        "role": user.role,
+        "has_twin": user.has_twin,
+        "twin_id": str(user.twin_id) if user.twin_id else None,
+    }
+
+
 class UpdateRoleBody(BaseModel):
-    role: str = Field(..., description="admin | operator | viewer")
+    role: str = Field(..., description="admin | operator | viewer | worker")
 
 
 @router.patch("/users/{user_id}/role")

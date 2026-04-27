@@ -29,6 +29,10 @@ from routers.demo import router as demo_router
 from routers.schedules import router as schedules_router
 from routers.users import router as users_router
 from routers.auth import router as auth_router
+from routers.twins import router as twins_router
+from routers.control_room import router as control_room_router
+from routers.task_board import router as task_board_router
+from routers.meetings import router as meetings_router
 from services.scheduler_service import init_scheduler
 from services.event_bus import init_event_bus
 from services.a2a_triggers import init_triggers
@@ -93,6 +97,10 @@ app.include_router(demo_router)
 app.include_router(auth_router)
 app.include_router(users_router)
 app.include_router(contracts_router)
+app.include_router(twins_router)
+app.include_router(control_room_router)
+app.include_router(task_board_router)
+app.include_router(meetings_router)
 
 
 # ---------------------------------------------------------------------------

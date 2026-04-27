@@ -111,6 +111,9 @@ def _user_to_dict(user: PlatformUser) -> dict:
         "telegram_linked": bool(user.telegram_user_id),
         "last_login": user.last_login_at.isoformat() if user.last_login_at else None,
         "created_at": user.created_at.isoformat() if user.created_at else None,
+        "has_twin": getattr(user, "has_twin", False) or False,
+        "twin_id": str(user.twin_id) if getattr(user, "twin_id", None) else None,
+        "department": getattr(user, "department", None),
     }
 
 

@@ -1,11 +1,12 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { api } from "@/components/api";
+import { api, API } from "@/components/api";
 import Badge from "@/components/Badge";
 import { useRealtimeEvents } from "@/components/useRealtimeEvents";
 import { apiPost } from "@/components/api";
 import dynamic from "next/dynamic";
+import Link from "next/link";
 
 const AgentHealthPanel = dynamic(() => import("@/components/AgentHealthPanel"), { ssr: false });
 const SummaryDrilldown = dynamic(() => import("@/components/SummaryDrilldown"), { ssr: false });
@@ -27,6 +28,13 @@ export default function Dashboard() {
   const [healthExpanded, setHealthExpanded] = useState(false);
   const [drilldown, setDrilldown] = useState<"agents" | "active" | "failed" | "judgement" | null>(null);
   const [infraPanel, setInfraPanel] = useState<"telegram" | "eventbus" | "webhooks" | "web" | null>(null);
+  const [handoff, setHandoff] = useState<{ stats: { twins_worked: number; tasks_completed: number; items_need_review: number; unreviewed_handoffs: number }; handoffs: any[] } | null>(null);
+  const [bossBriefing, setBossBriefing] = useState<any>(null);
+  const [absences, setAbsences] = useState<any>(null);
+  const [showBroadcast, setShowBroadcast] = useState(false);
+  const [broadcastMsg, setBroadcastMsg] = useState("");
+  const [broadcastPriority, setBroadcastPriority] = useState("normal");
+  const [broadcasting, setBroadcasting] = useState(false);
 
   const runQuickCommand = async (label: string, prompt: string) => {
     setQuickResult({ title: label, text: "", loading: true });
@@ -76,6 +84,24 @@ export default function Dashboard() {
       setRecentRuns(runs.slice(0, 50));
       setHealth(h);
     } catch {}
+
+    // Fetch twin handoffs (separate try to not block main dashboard)
+    try {
+      const res = await fetch(`${API}/twins/handoff/today`);
+      if (res.ok) setHandoff(await res.json());
+    } catch {}
+
+    // Fetch boss daily briefing
+    try {
+      const res = await fetch(`${API}/twins/reports/boss-briefing`);
+      if (res.ok) setBossBriefing(await res.json());
+    } catch {}
+
+    // Fetch worker absences
+    try {
+      const res = await fetch(`${API}/twins/reports/absences?hours=24`);
+      if (res.ok) setAbsences(await res.json());
+    } catch {}
   };
 
   useEffect(() => { load(); const i = setInterval(load, 15000); return () => clearInterval(i); }, []);
@@ -94,13 +120,172 @@ export default function Dashboard() {
           <h1 className="text-[28px] font-semibold tracking-tight">Command Center</h1>
           <p className="text-[14px] text-[var(--text-muted)]">VIP Agent Platform Overview</p>
         </div>
-        {health && (
-          <div className="flex gap-2">
-            <Badge text={health.status === "ok" ? "active" : "error"} />
-            <span className="text-xs text-gray-500">DB: {health.database}</span>
-          </div>
-        )}
+        <div className="flex items-center gap-2">
+          <button onClick={() => setShowBroadcast(true)}
+            className="px-4 py-2 bg-blue-600 text-white rounded-lg text-[12px] font-medium hover:bg-blue-700 flex items-center gap-1.5">
+            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M11 5.882V19.24a1.76 1.76 0 01-3.417.592l-2.147-6.15M18 13a3 3 0 100-6M5.436 13.683A4.001 4.001 0 017 6h1.832c4.1 0 7.625-1.234 9.168-3v14c-1.543-1.766-5.067-3-9.168-3H7a3.988 3.988 0 01-1.564-.317z" /></svg>
+            Broadcast
+          </button>
+          {health && (
+            <div className="flex gap-2">
+              <Badge text={health.status === "ok" ? "active" : "error"} />
+            </div>
+          )}
+        </div>
       </div>
+
+      {/* Broadcast Modal */}
+      {showBroadcast && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4" onClick={() => setShowBroadcast(false)}>
+          <div className="absolute inset-0 bg-black/50" />
+          <div className="relative bg-white rounded-2xl border border-gray-200 w-full max-w-md" style={{ boxShadow: "0 20px 60px rgba(0,0,0,0.2)" }} onClick={e => e.stopPropagation()}>
+            <div className="p-5 border-b border-gray-200">
+              <h2 className="text-[16px] font-semibold text-[var(--text-primary)]">Broadcast to All Workers</h2>
+              <p className="text-[12px] text-[var(--text-muted)] mt-1">Send a message to all 10 workers at once</p>
+            </div>
+            <div className="p-5 space-y-4">
+              <div>
+                <label className="block text-[12px] font-medium text-[var(--text-secondary)] mb-1">Priority</label>
+                <div className="flex gap-2">
+                  <button onClick={() => setBroadcastPriority("normal")}
+                    className={`flex-1 py-2 rounded-lg text-[12px] font-medium ${broadcastPriority === "normal" ? "bg-blue-600 text-white" : "bg-gray-100 text-gray-600"}`}>
+                    Normal
+                  </button>
+                  <button onClick={() => setBroadcastPriority("urgent")}
+                    className={`flex-1 py-2 rounded-lg text-[12px] font-medium ${broadcastPriority === "urgent" ? "bg-red-500 text-white" : "bg-gray-100 text-gray-600"}`}>
+                    🚨 Urgent
+                  </button>
+                </div>
+              </div>
+              <div>
+                <label className="block text-[12px] font-medium text-[var(--text-secondary)] mb-1">Message</label>
+                <textarea value={broadcastMsg} onChange={e => setBroadcastMsg(e.target.value)} rows={4}
+                  placeholder="e.g. Team meeting at 3 PM today. Please prepare your weekly updates."
+                  className="w-full px-4 py-3 bg-[var(--bg-secondary)] border border-[var(--card-border)] rounded-xl text-[13px] text-[var(--text-primary)] placeholder:text-[var(--text-muted)] focus:outline-none focus:border-blue-400 resize-none" />
+              </div>
+            </div>
+            <div className="p-5 border-t border-gray-200 flex gap-3 justify-end">
+              <button onClick={() => setShowBroadcast(false)} className="px-4 py-2.5 text-[13px] text-[var(--text-muted)]">Cancel</button>
+              <button onClick={async () => {
+                if (!broadcastMsg.trim()) return;
+                setBroadcasting(true);
+                try {
+                  const res = await fetch(`${API}/twins/broadcast`, {
+                    method: "POST", headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ message: broadcastMsg, priority: broadcastPriority }),
+                  });
+                  const data = await res.json();
+                  setShowBroadcast(false); setBroadcastMsg(""); setBroadcastPriority("normal");
+                  alert(`Message sent to ${data.twins_notified} workers!`);
+                } catch {} finally { setBroadcasting(false); }
+              }} disabled={!broadcastMsg.trim() || broadcasting}
+                className={`px-5 py-2.5 rounded-lg text-[13px] font-medium disabled:opacity-50 ${broadcastPriority === "urgent" ? "bg-red-500 text-white hover:bg-red-600" : "bg-blue-600 text-white hover:bg-blue-700"}`}>
+                {broadcasting ? "Sending..." : `Send to All Workers`}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Morning Handoff Banner */}
+      {handoff && handoff.stats.twins_worked > 0 && handoff.stats.unreviewed_handoffs > 0 && (
+        <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50 px-5 py-4 flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <span className="text-[24px]">🌅</span>
+            <div>
+              <div className="text-[14px] font-semibold text-amber-900">Morning Handoff</div>
+              <div className="text-[12px] text-amber-700">
+                {handoff.stats.twins_worked} twins worked overnight — {handoff.stats.tasks_completed} tasks completed, {handoff.stats.items_need_review} items need review
+              </div>
+            </div>
+          </div>
+          <Link href="/handoff" className="px-4 py-2 bg-amber-600 text-white rounded-lg text-[12px] font-medium hover:bg-amber-700 transition-colors">
+            Review Now →
+          </Link>
+        </div>
+      )}
+
+      {/* Boss Daily Briefing */}
+      {bossBriefing && (bossBriefing.summary?.total_completed > 0 || bossBriefing.alerts?.length > 0) && (
+        <div className="mb-4 bg-[var(--card-bg)] rounded-xl border border-[var(--card-border)] p-5" style={{ boxShadow: "var(--shadow-sm)" }}>
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="text-[15px] font-semibold text-[var(--text-primary)] flex items-center gap-2">
+              <span>📊</span> Daily Twin Briefing
+            </h2>
+            <span className="text-[10px] text-[var(--text-muted)]">
+              {new Date().toLocaleDateString("en-US", { weekday: "long", month: "short", day: "numeric" })}
+            </span>
+          </div>
+
+          {/* Summary Stats */}
+          <div className="grid grid-cols-4 gap-3 mb-3">
+            <div className="bg-blue-50 rounded-lg px-3 py-2 text-center">
+              <div className="text-[18px] font-bold text-blue-600">{bossBriefing.summary?.twins_worked || 0}</div>
+              <div className="text-[9px] text-[var(--text-muted)]">Twins Worked</div>
+            </div>
+            <div className="bg-green-50 rounded-lg px-3 py-2 text-center">
+              <div className="text-[18px] font-bold text-green-600">{bossBriefing.summary?.total_completed || 0}</div>
+              <div className="text-[9px] text-[var(--text-muted)]">Completed</div>
+            </div>
+            <div className="bg-amber-50 rounded-lg px-3 py-2 text-center">
+              <div className="text-[18px] font-bold text-amber-600">{bossBriefing.summary?.total_review || 0}</div>
+              <div className="text-[9px] text-[var(--text-muted)]">Need Review</div>
+            </div>
+            <div className={`rounded-lg px-3 py-2 text-center ${(bossBriefing.summary?.total_failed || 0) > 0 ? "bg-red-50" : "bg-green-50"}`}>
+              <div className={`text-[18px] font-bold ${(bossBriefing.summary?.total_failed || 0) > 0 ? "text-red-600" : "text-green-600"}`}>{bossBriefing.summary?.total_failed || 0}</div>
+              <div className="text-[9px] text-[var(--text-muted)]">Failed</div>
+            </div>
+          </div>
+
+          {/* Alerts */}
+          {bossBriefing.alerts?.length > 0 && (
+            <div className="mb-3">
+              {bossBriefing.alerts.map((a: any, i: number) => (
+                <div key={i} className={`flex items-center gap-2 text-[11px] mb-1 ${a.type === "failed_tasks" ? "text-red-600" : "text-blue-600"}`}>
+                  <span>{a.type === "failed_tasks" ? "⚠️" : "💬"}</span>
+                  {a.message}
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Top twins (compact) */}
+          <div className="flex gap-2 flex-wrap">
+            {bossBriefing.twins?.filter((t: any) => t.tasks_done > 0).slice(0, 5).map((t: any) => (
+              <span key={t.twin_id} className="px-2.5 py-1 bg-[var(--bg-secondary)] rounded-full text-[10px] text-[var(--text-secondary)]">
+                {t.name}: {t.tasks_done} done
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Worker Absence Alert */}
+      {absences && absences.count > 0 && (
+        <div className="mb-4 bg-red-50 rounded-xl border border-red-200 p-4">
+          <div className="flex items-center gap-2 mb-2">
+            <span className="text-[16px]">⚠️</span>
+            <span className="text-[13px] font-semibold text-red-800">{absences.count} worker{absences.count > 1 ? "s" : ""} absent (no login for 24h+)</span>
+          </div>
+          <div className="space-y-1.5">
+            {absences.absent_workers.map((w: any) => (
+              <div key={w.worker_id} className="flex items-center justify-between text-[12px]">
+                <div className="flex items-center gap-2">
+                  <span className="text-red-500">•</span>
+                  <span className="font-medium text-red-900">{w.worker_name}</span>
+                  <span className="text-red-600">— {w.days_absent === 999 ? "never logged in" : `${w.days_absent} day${w.days_absent > 1 ? "s" : ""} absent`}</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-[10px] text-red-500">Twin: {w.twin_name} ({w.twin_mode})</span>
+                  {w.twin_tasks_done_while_absent > 0 && (
+                    <span className="px-2 py-0.5 bg-green-100 text-green-700 rounded text-[9px]">{w.twin_tasks_done_while_absent} tasks done by twin</span>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Stats Grid — clickable for drilldown */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">

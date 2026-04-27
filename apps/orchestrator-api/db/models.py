@@ -1,14 +1,14 @@
 """
 VIP AI Platform — SQLAlchemy Models
-15 tables across 6 domains: core, orchestration, audit, a2a, agent-ops, telegram, spatial.
+25+ tables across 8 domains: core, orchestration, audit, a2a, agent-ops, telegram, spatial, digital-twin.
 """
 
 import uuid
-from datetime import datetime
+from datetime import datetime, time
 
 from sqlalchemy import (
     Column, String, Text, Boolean, Integer, Float,
-    DateTime, ForeignKey, Enum as SAEnum,
+    DateTime, Time, ForeignKey, Enum as SAEnum,
 )
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import relationship
@@ -47,6 +47,15 @@ class PlatformUser(Base):
     reset_token_expires = Column(DateTime)                 # reset token expiry
     last_login_at = Column(DateTime)
     created_at = _now()
+
+    # --- Digital Twin fields ---
+    has_twin = Column(Boolean, default=False)
+    twin_id = Column(UUID(as_uuid=True), ForeignKey("digital_twins.id"), nullable=True)
+    department = Column(String(120))                       # AI Team | Business | Asset | Investment
+    working_hours_start = Column(Time, default=time(9, 0))   # 09:00
+    working_hours_end = Column(Time, default=time(18, 0))    # 18:00
+
+    twin = relationship("DigitalTwin", foreign_keys=[twin_id])
 
 
 class PlatformNotification(Base):
@@ -349,3 +358,224 @@ class ChatMessage(Base):
     created_at = _now()
 
     session = relationship("ChatSession", back_populates="messages")
+
+
+# ===========================================================================
+#  DIGITAL TWIN domain
+# ===========================================================================
+
+class DigitalTwin(Base):
+    __tablename__ = "digital_twins"
+
+    id = _uuid()
+    name = Column(String(120), nullable=False)                # "김개발" or "Dev Kim"
+    role = Column(String(120), nullable=False)                # "Backend Developer"
+    department = Column(String(120))                          # AI Team | Business | Asset | Investment
+    avatar_url = Column(Text)                                 # profile image or color code
+    personality_prompt = Column(Text)                         # system prompt describing personality
+    skills = Column(JSONB, default=list)                      # ["Python", "FastAPI", "SQL"]
+    mode = Column(String(20), default="shadow")               # shadow | active | handoff
+    permission_level = Column(String(30), default="suggest")  # observe | suggest | act | act_unsupervised
+    status = Column(String(20), default="idle")               # online | working | idle | offline | in_meeting
+    current_task_id = Column(UUID(as_uuid=True), nullable=True)
+    linked_agent_id = Column(UUID(as_uuid=True), ForeignKey("core_agents.id"), nullable=True)
+    created_at = _now()
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    # relationships
+    linked_agent = relationship("CoreAgent", foreign_keys=[linked_agent_id])
+    knowledge = relationship("TwinKnowledge", back_populates="twin", cascade="all, delete-orphan")
+    activity_logs = relationship("TwinActivityLog", back_populates="twin", cascade="all, delete-orphan")
+    tasks = relationship("TwinTask", back_populates="twin", cascade="all, delete-orphan")
+    handoffs = relationship("TwinHandoff", back_populates="twin", cascade="all, delete-orphan")
+
+
+class TwinKnowledge(Base):
+    __tablename__ = "twin_knowledge"
+
+    id = _uuid()
+    twin_id = Column(UUID(as_uuid=True), ForeignKey("digital_twins.id"), nullable=False)
+    title = Column(String(255), nullable=False)
+    content = Column(Text, nullable=False)
+    source_type = Column(String(30), default="document")      # document | decision | style | instruction
+    created_at = _now()
+
+    twin = relationship("DigitalTwin", back_populates="knowledge")
+
+
+class TwinActivityLog(Base):
+    __tablename__ = "twin_activity_logs"
+
+    id = _uuid()
+    twin_id = Column(UUID(as_uuid=True), ForeignKey("digital_twins.id"), nullable=False)
+    action_type = Column(String(30), nullable=False)          # reading | writing | analyzing | thinking | waiting | tool_call
+    description = Column(Text, nullable=False)
+    metadata_json = Column(JSONB, default=dict)
+    timestamp = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    twin = relationship("DigitalTwin", back_populates="activity_logs")
+
+
+class TwinTask(Base):
+    __tablename__ = "twin_tasks"
+
+    id = _uuid()
+    twin_id = Column(UUID(as_uuid=True), ForeignKey("digital_twins.id"), nullable=False)
+    title = Column(String(255), nullable=False)
+    description = Column(Text)
+    status = Column(String(20), default="todo")               # todo | in_progress | review | done
+    priority = Column(String(20), default="medium")           # low | medium | high | urgent
+    deadline = Column(DateTime, nullable=True)
+    assigned_by = Column(String(120))                         # "vip" or twin name
+    assigned_in_meeting_id = Column(UUID(as_uuid=True), ForeignKey("meetings.id"), nullable=True)
+    result_json = Column(JSONB, default=dict)
+    result_text = Column(Text)
+    needs_review = Column(Boolean, default=False)
+    reviewed_by = Column(String(120))
+    review_status = Column(String(20))                        # pending | approved | rejected
+    review_comment = Column(Text)
+    created_at = _now()
+    started_at = Column(DateTime)
+    completed_at = Column(DateTime)
+
+    twin = relationship("DigitalTwin", back_populates="tasks")
+    meeting = relationship("Meeting", foreign_keys=[assigned_in_meeting_id])
+
+
+class Meeting(Base):
+    __tablename__ = "meetings"
+
+    id = _uuid()
+    title = Column(String(255), nullable=False)
+    meeting_type = Column(String(30), default="all_hands")    # all_hands | team | one_on_one | standup | weekly_review
+    status = Column(String(20), default="scheduled")          # scheduled | active | ended
+    scheduled_at = Column(DateTime, nullable=True)
+    started_at = Column(DateTime)
+    ended_at = Column(DateTime)
+    created_by = Column(String(120), default="vip")
+    recurrence_rule = Column(String(120))                     # cron expression for recurring meetings
+    created_at = _now()
+
+    participants = relationship("MeetingParticipant", back_populates="meeting", cascade="all, delete-orphan")
+    messages = relationship("MeetingMessage", back_populates="meeting", cascade="all, delete-orphan", order_by="MeetingMessage.created_at")
+    minutes = relationship("MeetingMinutes", back_populates="meeting", cascade="all, delete-orphan")
+
+
+class MeetingParticipant(Base):
+    __tablename__ = "meeting_participants"
+
+    id = _uuid()
+    meeting_id = Column(UUID(as_uuid=True), ForeignKey("meetings.id"), nullable=False)
+    twin_id = Column(UUID(as_uuid=True), ForeignKey("digital_twins.id"), nullable=False)
+    joined_at = Column(DateTime, default=datetime.utcnow)
+    paused_task_id = Column(UUID(as_uuid=True), ForeignKey("twin_tasks.id"), nullable=True)
+
+    meeting = relationship("Meeting", back_populates="participants")
+    twin = relationship("DigitalTwin")
+    paused_task = relationship("TwinTask", foreign_keys=[paused_task_id])
+
+
+class MeetingMessage(Base):
+    __tablename__ = "meeting_messages"
+
+    id = _uuid()
+    meeting_id = Column(UUID(as_uuid=True), ForeignKey("meetings.id"), nullable=False)
+    sender_type = Column(String(10), nullable=False)          # vip | twin
+    sender_twin_id = Column(UUID(as_uuid=True), ForeignKey("digital_twins.id"), nullable=True)
+    content = Column(Text, nullable=False)
+    routed_to_twins = Column(JSONB, default=list)             # [twin_id, ...] who should respond
+    created_at = _now()
+
+    meeting = relationship("Meeting", back_populates="messages")
+    sender_twin = relationship("DigitalTwin", foreign_keys=[sender_twin_id])
+
+
+class MeetingMinutes(Base):
+    __tablename__ = "meeting_minutes"
+
+    id = _uuid()
+    meeting_id = Column(UUID(as_uuid=True), ForeignKey("meetings.id"), nullable=False)
+    decisions = Column(JSONB, default=list)                   # ["Approved KOSPI report format", ...]
+    tasks_assigned = Column(JSONB, default=list)              # [{"twin": "Dev Twin", "task": "Fix login", "deadline": "Monday"}, ...]
+    open_questions = Column(JSONB, default=list)              # ["Should we include foreign flow?", ...]
+    summary = Column(Text)
+    generated_at = Column(DateTime, default=datetime.utcnow)
+
+    meeting = relationship("Meeting", back_populates="minutes")
+
+
+class TwinHandoff(Base):
+    __tablename__ = "twin_handoffs"
+
+    id = _uuid()
+    twin_id = Column(UUID(as_uuid=True), ForeignKey("digital_twins.id"), nullable=False)
+    date = Column(DateTime, nullable=False)                   # handoff date
+    tasks_completed = Column(JSONB, default=list)             # [{"task": "...", "result": "..."}, ...]
+    tasks_pending_review = Column(JSONB, default=list)        # [{"task": "...", "draft": "..."}, ...]
+    meeting_notes = Column(JSONB, default=list)               # [{"meeting": "...", "notes": "..."}, ...]
+    overnight_summary = Column(Text)
+    reviewed = Column(Boolean, default=False)
+    reviewed_at = Column(DateTime)
+    created_at = _now()
+
+    twin = relationship("DigitalTwin", back_populates="handoffs")
+
+
+class WorkerStatus(Base):
+    __tablename__ = "worker_statuses"
+
+    id = _uuid()
+    user_id = Column(UUID(as_uuid=True), ForeignKey("platform_users.id"), nullable=False)
+    is_online = Column(Boolean, default=False)
+    last_active_at = Column(DateTime, default=datetime.utcnow)
+    manual_status = Column(String(20), default="offline")     # working | meeting | break | offline
+    created_at = _now()
+
+    user = relationship("PlatformUser", foreign_keys=[user_id])
+
+
+class DirectMessage(Base):
+    __tablename__ = "direct_messages"
+
+    id = _uuid()
+    twin_id = Column(UUID(as_uuid=True), ForeignKey("digital_twins.id"), nullable=False)
+    sender_type = Column(String(10), nullable=False)          # boss | worker
+    content = Column(Text, nullable=False)
+    is_read = Column(Boolean, default=False)
+    created_at = _now()
+
+    twin = relationship("DigitalTwin", foreign_keys=[twin_id])
+
+
+class TwinSnapshot(Base):
+    __tablename__ = "twin_snapshots"
+
+    id = _uuid()
+    twin_id = Column(UUID(as_uuid=True), ForeignKey("digital_twins.id"), nullable=False)
+    version_name = Column(String(120), nullable=False)      # "v1.0 — initial training", "v2.0 — after bug fixes"
+    snapshot_type = Column(String(30), default="manual")    # manual | auto | milestone
+    personality_prompt = Column(Text)                        # Backup of twin's personality
+    skills_json = Column(JSONB, default=list)                # Backup of skills
+    mode = Column(String(20))
+    permission_level = Column(String(30))
+    knowledge_count = Column(Integer, default=0)
+    intelligence_pct = Column(Integer, default=0)
+    knowledge_ids = Column(JSONB, default=list)              # List of TwinKnowledge IDs at snapshot time
+    notes = Column(Text)                                      # Why this snapshot was created
+    created_at = _now()
+
+    twin = relationship("DigitalTwin", foreign_keys=[twin_id])
+
+
+class TwinNotification(Base):
+    __tablename__ = "twin_notifications"
+
+    id = _uuid()
+    twin_id = Column(UUID(as_uuid=True), ForeignKey("digital_twins.id"), nullable=False)
+    type = Column(String(30), nullable=False)              # task_completed | task_failed | boss_message | self_improved | handoff
+    title = Column(String(255), nullable=False)
+    body = Column(Text)
+    is_read = Column(Boolean, default=False)
+    created_at = _now()
+
+    twin = relationship("DigitalTwin", foreign_keys=[twin_id])

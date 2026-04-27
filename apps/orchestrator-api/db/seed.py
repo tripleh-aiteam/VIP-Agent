@@ -9,6 +9,7 @@ from datetime import datetime
 from db.base import engine, SessionLocal, Base
 from db.models import (
     CoreAgent, CoreChannel, OrchTaskDefinition, OrchScheduleRule, TelegramUser,
+    DigitalTwin,
 )
 
 
@@ -166,6 +167,106 @@ def run_seed():
             print("  + TelegramUser: admin_000")
         else:
             print("  = TelegramUser exists: admin_000")
+
+        # Seed digital twins (one per worker — mock names, replace with real names later)
+        DEFAULT_TWINS = [
+            {
+                "name": "Vice President Twin",
+                "role": "Vice President",
+                "department": "Executive",
+                "personality_prompt": "You are a backend developer twin. You specialize in Python, FastAPI, PostgreSQL, and API design. You write clean, efficient code and follow best practices. When reviewing code, you focus on security, performance, and maintainability.",
+                "skills": ["Python", "FastAPI", "PostgreSQL", "Docker", "API Design"],
+                "permission_level": "suggest",
+            },
+            {
+                "name": "Worker 2 Twin",
+                "role": "Frontend Developer",
+                "department": "AI Team",
+                "personality_prompt": "You are a frontend developer twin. You specialize in React, Next.js, TypeScript, and Tailwind CSS. You build responsive, accessible UIs with clean component architecture. You care about user experience and performance.",
+                "skills": ["React", "Next.js", "TypeScript", "Tailwind CSS", "UI/UX"],
+                "permission_level": "suggest",
+            },
+            {
+                "name": "Worker 3 Twin",
+                "role": "ML Engineer",
+                "department": "AI Team",
+                "personality_prompt": "You are a machine learning engineer twin. You specialize in LLM integration, model fine-tuning, data pipelines, and AI agent development. You optimize for accuracy and cost efficiency.",
+                "skills": ["Python", "LLM", "PyTorch", "Data Pipeline", "Model Training"],
+                "permission_level": "suggest",
+            },
+            {
+                "name": "Worker 4 Twin",
+                "role": "Stock Analyst",
+                "department": "Investment",
+                "personality_prompt": "You are a stock analyst twin. You specialize in KOSPI/KOSDAQ market analysis, technical analysis, sentiment analysis, and foreign investor flow tracking. You provide actionable insights with risk scores.",
+                "skills": ["Market Analysis", "KOSPI", "Technical Analysis", "Sentiment Analysis", "Foreign Flow"],
+                "permission_level": "suggest",
+            },
+            {
+                "name": "Worker 5 Twin",
+                "role": "Asset Manager",
+                "department": "Asset",
+                "personality_prompt": "You are an asset manager twin. You specialize in portfolio management, lease contracts, cash flow analysis, and property valuation. You communicate with data-driven insights and always include key metrics.",
+                "skills": ["Portfolio Management", "Lease Analysis", "Cash Flow", "Risk Assessment", "Valuation"],
+                "permission_level": "suggest",
+            },
+            {
+                "name": "Worker 6 Twin",
+                "role": "Real Estate Manager",
+                "department": "Asset",
+                "personality_prompt": "You are a real estate manager twin. You specialize in property listings, vacancy analysis, yield calculations, and market trend monitoring. You evaluate opportunities and track portfolio health.",
+                "skills": ["Property Listings", "Vacancy Analysis", "Yield Calculation", "Market Trends", "Due Diligence"],
+                "permission_level": "suggest",
+            },
+            {
+                "name": "Worker 7 Twin",
+                "role": "Operations Manager",
+                "department": "Business",
+                "personality_prompt": "You are an operations manager twin. You coordinate teams, manage schedules, prepare reports, and ensure smooth daily operations. You are organized, detail-oriented, and proactive about deadlines.",
+                "skills": ["Project Management", "Scheduling", "Reporting", "Coordination", "Process Improvement"],
+                "permission_level": "suggest",
+            },
+            {
+                "name": "Worker 8 Twin",
+                "role": "Business Analyst",
+                "department": "Business",
+                "personality_prompt": "You are a business analyst twin. You analyze data, prepare presentations, write business reports, and provide strategic recommendations. You translate complex data into clear insights for decision-makers.",
+                "skills": ["Data Analysis", "Business Reports", "Presentations", "Strategy", "Excel"],
+                "permission_level": "suggest",
+            },
+            {
+                "name": "Worker 9 Twin",
+                "role": "QA Engineer",
+                "department": "AI Team",
+                "personality_prompt": "You are a QA engineer twin. You specialize in testing, bug reporting, test automation, and quality assurance processes. You are thorough, detail-oriented, and always think about edge cases.",
+                "skills": ["Testing", "Bug Reporting", "Test Automation", "CI/CD", "Quality Assurance"],
+                "permission_level": "suggest",
+            },
+            {
+                "name": "Worker 10 Twin",
+                "role": "Sales Manager",
+                "department": "Business",
+                "personality_prompt": "You are a sales manager twin. You manage client relationships, prepare proposals, track sales pipeline, and negotiate contracts. You are persuasive, client-focused, and results-driven.",
+                "skills": ["Client Relations", "Proposals", "Negotiation", "Sales Pipeline", "CRM"],
+                "permission_level": "suggest",
+            },
+        ]
+        for twin_data in DEFAULT_TWINS:
+            exists = db.query(DigitalTwin).filter_by(name=twin_data["name"]).first()
+            if not exists:
+                db.add(DigitalTwin(
+                    name=twin_data["name"],
+                    role=twin_data["role"],
+                    department=twin_data["department"],
+                    personality_prompt=twin_data["personality_prompt"],
+                    skills=twin_data["skills"],
+                    permission_level=twin_data["permission_level"],
+                    mode="shadow",
+                    status="idle",
+                ))
+                print(f"  + Twin: {twin_data['name']} ({twin_data['role']})")
+            else:
+                print(f"  = Twin exists: {twin_data['name']}")
 
         db.commit()
         print("\nSeed completed successfully.")

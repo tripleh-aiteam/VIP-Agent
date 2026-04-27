@@ -4,7 +4,7 @@ Reads schedule rules from DB, runs tasks on cron, retries once on failure.
 Uses APScheduler for MVP.
 """
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from uuid import UUID
 from typing import Any
 
@@ -341,6 +341,181 @@ def _execute_health_check():
         db.close()
 
 
+# ---------------------------------------------------------------------------
+#  Twin Mode Auto-Switch
+# ---------------------------------------------------------------------------
+
+def _auto_twin_mode_switch():
+    """Check working hours and auto-switch twin modes.
+    Working hours (9-18 KST, Mon-Fri): twins → shadow
+    After hours: twins → active
+    """
+    from datetime import timezone, timedelta
+    from db.models import DigitalTwin, TwinActivityLog
+
+    db = SessionLocal()
+    try:
+        kst = timezone(timedelta(hours=9))
+        now = datetime.now(kst)
+        is_working = 9 <= now.hour < 18 and now.weekday() < 5
+
+        twins = db.query(DigitalTwin).all()
+        switched = 0
+
+        for twin in twins:
+            # Skip twins in meeting or that had manual handoff recently
+            if twin.status == "in_meeting":
+                continue
+
+            # Check if worker did manual evening handoff (don't override)
+            recent_handoff = (
+                db.query(TwinActivityLog)
+                .filter(TwinActivityLog.twin_id == twin.id, TwinActivityLog.action_type == "handoff")
+                .filter(TwinActivityLog.timestamp >= datetime.utcnow() - timedelta(hours=12))
+                .first()
+            )
+            if recent_handoff and twin.mode == "active":
+                continue  # Worker manually handed off — don't switch back to shadow
+
+            if is_working and twin.mode == "active":
+                # Working hours — switch to shadow (real workers take over)
+                twin.mode = "shadow"
+                twin.updated_at = datetime.utcnow()
+                switched += 1
+                log.info(f"twin-mode: {twin.name} → shadow (working hours)", extra={"action": "twin.mode_auto_shadow"})
+
+            elif not is_working and twin.mode == "shadow":
+                # After hours — switch to active (twins take over)
+                twin.mode = "active"
+                twin.status = "idle"
+                twin.updated_at = datetime.utcnow()
+                switched += 1
+                log.info(f"twin-mode: {twin.name} → active (after hours)", extra={"action": "twin.mode_auto_active"})
+
+        if switched > 0:
+            db.commit()
+            log.info(f"twin-mode: {switched} twins switched ({'shadow' if is_working else 'active'})",
+                     extra={"action": "twin.mode_batch_switch"})
+    except Exception as e:
+        db.rollback()
+        log.error(f"twin-mode: error {e}", extra={"action": "twin.mode_error"})
+    finally:
+        db.close()
+
+
+def _auto_morning_handoff():
+    """Generate morning handoff reports for all twins at 9 AM KST."""
+    from db.models import DigitalTwin, TwinTask, TwinHandoff, TwinActivityLog
+
+    db = SessionLocal()
+    try:
+        twins = db.query(DigitalTwin).all()
+        handoffs_created = 0
+
+        for twin in twins:
+            # Check if handoff already exists for today
+            today = datetime.utcnow().date()
+            existing = (
+                db.query(TwinHandoff)
+                .filter(TwinHandoff.twin_id == twin.id)
+                .filter(TwinHandoff.date >= datetime(today.year, today.month, today.day))
+                .first()
+            )
+            if existing:
+                continue
+
+            # Get tasks completed overnight (last 15 hours to catch after-hours work)
+            cutoff = datetime.utcnow() - timedelta(hours=15)
+
+            completed_tasks = (
+                db.query(TwinTask)
+                .filter(TwinTask.twin_id == twin.id)
+                .filter(TwinTask.completed_at >= cutoff)
+                .filter(TwinTask.status.in_(["done", "review"]))
+                .all()
+            )
+
+            tasks_completed = [
+                {"task": t.title, "status": t.status, "result": (t.result_text or "")[:200]}
+                for t in completed_tasks if t.status == "done"
+            ]
+
+            tasks_pending_review = [
+                {"task": t.title, "draft": (t.result_text or "")[:200]}
+                for t in completed_tasks if t.status == "review"
+            ]
+
+            # Get overnight activity count
+            activity_count = (
+                db.query(TwinActivityLog)
+                .filter(TwinActivityLog.twin_id == twin.id)
+                .filter(TwinActivityLog.timestamp >= cutoff)
+                .count()
+            )
+
+            # Only create handoff if there was activity
+            if tasks_completed or tasks_pending_review or activity_count > 0:
+                summary = f"{twin.name} ({twin.role}): {len(tasks_completed)} tasks completed, {len(tasks_pending_review)} items need review, {activity_count} total activities overnight."
+
+                handoff = TwinHandoff(
+                    twin_id=twin.id,
+                    date=datetime.utcnow(),
+                    tasks_completed=tasks_completed,
+                    tasks_pending_review=tasks_pending_review,
+                    meeting_notes=[],
+                    overnight_summary=summary,
+                    reviewed=False,
+                )
+                db.add(handoff)
+                handoffs_created += 1
+
+        if handoffs_created > 0:
+            db.commit()
+            log.info(f"handoff: {handoffs_created} morning handoffs generated", extra={"action": "twin.handoff_generated"})
+        else:
+            log.info("handoff: no overnight activity — no handoffs needed", extra={"action": "twin.handoff_skip"})
+
+    except Exception as e:
+        db.rollback()
+        log.error(f"handoff: error {e}", extra={"action": "twin.handoff_error"})
+    finally:
+        db.close()
+
+
+def _auto_import_claude_sessions():
+    """Import recent Claude Code sessions for all twins."""
+    db = SessionLocal()
+    try:
+        from services.claude_auto_import import auto_import_all_twins
+        results = auto_import_all_twins(db)
+        total = sum(r.get("imported_count", 0) for r in results)
+        db.commit()
+        log.info(f"claude-auto: imported {total} sessions across {len(results)} twins",
+                 extra={"action": "twin.claude_auto_import"})
+    except Exception as e:
+        db.rollback()
+        log.error(f"claude-auto: error {e}", extra={"action": "twin.claude_auto_error"})
+    finally:
+        db.close()
+
+
+def _auto_self_improvement():
+    """Run self-improvement cycle for all twins."""
+    db = SessionLocal()
+    try:
+        from services.twin_self_improve import run_all_twins_improvement
+        results = run_all_twins_improvement(db)
+        total = sum(r.get("total_improvements", 0) for r in results)
+        db.commit()
+        log.info(f"self-improve: cycle complete — {total} total improvements across {len(results)} twins",
+                 extra={"action": "twin.self_improve_cycle"})
+    except Exception as e:
+        db.rollback()
+        log.error(f"self-improve: error {e}", extra={"action": "twin.self_improve_error"})
+    finally:
+        db.close()
+
+
 def init_scheduler():
     """Initialize the scheduler and load enabled rules from DB."""
     global _scheduler
@@ -378,6 +553,43 @@ def init_scheduler():
         replace_existing=True,
     )
     log.info("scheduler: auto weekly report registered (09:30 UTC Friday = 18:30 KST Friday)", extra={"action": "scheduler.auto_weekly_registered"})
+
+    # Twin auto-mode-switch — every 1 minute
+    # Checks working hours (9-18 KST, Mon-Fri) and switches twin modes
+    _scheduler.add_job(
+        _auto_twin_mode_switch,
+        CronTrigger.from_crontab("* * * * *"),
+        id="twin-auto-mode-switch",
+        replace_existing=True,
+    )
+    log.info("scheduler: twin auto-mode-switch registered (every 1 min)", extra={"action": "scheduler.twin_mode_registered"})
+
+    # Twin morning handoff — 9:00 AM KST = 00:00 UTC
+    _scheduler.add_job(
+        _auto_morning_handoff,
+        CronTrigger.from_crontab("0 0 * * 1-5"),
+        id="twin-morning-handoff",
+        replace_existing=True,
+    )
+    log.info("scheduler: twin morning handoff registered (00:00 UTC = 9:00 AM KST, Mon-Fri)", extra={"action": "scheduler.twin_handoff_registered"})
+
+    # Twin self-improvement — runs every 6 hours
+    _scheduler.add_job(
+        _auto_self_improvement,
+        CronTrigger.from_crontab("0 */6 * * *"),
+        id="twin-self-improvement",
+        replace_existing=True,
+    )
+    log.info("scheduler: twin self-improvement registered (every 6 hours)", extra={"action": "scheduler.twin_self_improve_registered"})
+
+    # Claude Code auto-import — every hour
+    _scheduler.add_job(
+        _auto_import_claude_sessions,
+        CronTrigger.from_crontab("15 * * * *"),
+        id="claude-auto-import",
+        replace_existing=True,
+    )
+    log.info("scheduler: claude auto-import registered (every hour at :15)", extra={"action": "scheduler.claude_import_registered"})
 
     _scheduler.start()
     log.info("scheduler: started", extra={"action": "scheduler.started"})

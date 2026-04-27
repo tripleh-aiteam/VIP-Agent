@@ -2,6 +2,625 @@
 
 ---
 
+## 2026-04-24 (Friday) — Meeting Notes + Twin Improvements
+
+### Claude Code Auto-Import (Reads PC Files Directly)
+
+**Problem**: Manual copy-paste is painful. Every Claude Code session should train the twin automatically.
+
+**Solution**: Direct file reading from `C:/Users/{user}/.claude/projects/{project}/{session}.jsonl`
+
+**Backend — `services/claude_auto_import.py`** (new)
+- `get_claude_projects_dir()`: detects Claude Code folder on any OS (Windows/Mac/Linux)
+- `list_claude_projects()`: returns all your Claude Code projects with session counts + last modified times
+- `read_session_file()`: parses JSONL format, extracts user messages + assistant responses, skips system reminders and metadata
+- `_was_session_imported()`: deduplication check — same session never imported twice
+- `import_recent_sessions()`: imports sessions modified in last N hours, max N per run
+- `auto_import_all_twins()`: called by scheduler hourly — imports for ALL twins
+
+**API endpoints**
+- `GET /twins/claude-projects/list` — list all Claude Code projects
+- `POST /twins/{id}/import/claude-auto` — manual trigger (body: project_filter, hours, max_sessions)
+
+**Scheduler**
+- New cron job: `_auto_import_claude_sessions` runs **every hour at :15**
+- Imports last 6 hours of sessions for all twins
+- Max 3 sessions per twin per run
+- **File**: services/scheduler_service.py (updated)
+
+**Twin Portal UI**
+- New **⚡ Auto-Import from Claude Code** section at top of Import tab (gradient purple/blue card)
+- Big **[Import Now]** button — imports last 72 hours
+- Status indicator: "✓ Runs automatically every hour · ✓ Last 72 hours · ✓ Auto-skips duplicates"
+- Success panel shows per-session details: session ID, message count, transcript length
+- Manual paste section preserved below ("— or import manually —")
+
+**Result — First Auto-Import**
+- Imported 4 Claude Code sessions from Davronbek's PC
+- Total: 2,669 messages across sessions (741 + 10 + 13 + 1905)
+- Character count: 21,178 chars of conversation context
+- Zero manual copy-paste required
+
+**Files**: services/claude_auto_import.py (new), services/scheduler_service.py (updated), routers/twins.py (updated), twin-portal dashboard (updated)
+
+### Step 5: AI Session Import (Claude Code / ChatGPT / Gemini)
+
+**Backend**
+- `services/claude_import.py` (new): imports AI sessions as twin knowledge
+- `import_claude_session()`: for Claude Code — uses LLM to extract DECISIONS, PATTERNS, RULES, LEARNINGS from the session
+- `import_generic_ai_session()`: for ChatGPT/Gemini — extracts Q&A pairs automatically
+- Detects conversation markers: "You:", "User:", "ChatGPT:", "Claude:", etc.
+- Extracted items saved with proper source_type: decisions/rules → decision, patterns → instruction, Q&As → document
+- Max 10 extracted items per Claude session, 8 Q&As per generic import
+- API: `POST /twins/{id}/import/claude`, `POST /twins/{id}/import/ai-session`
+- **Files**: services/claude_import.py (new), routers/twins.py (updated)
+
+**Twin Portal — Import Tab**
+- New **"Import AI Sessions"** tab in Teach page
+- **Source selector**: 3 big cards for Claude Code 🤖 / ChatGPT 💬 / Gemini ✨
+- **Import form**: optional title + paste textarea (12 rows, monospace font)
+- Character/word counter below textarea
+- **Gradient Import button**: "Import & Learn from {source} Session"
+- Loading state with spinner
+- **Success panel** (green): shows extracted insights with icons (🎯 decisions, 🔷 patterns, 📏 rules, 💡 learnings)
+- **How-to guide** (blue info box): instructions per source
+- **Files**: apps/twin-portal/src/app/dashboard/page.tsx (updated)
+
+### C1: Knowledge Priority Weighting (from colleague.skill)
+- Rewrote `_select_relevant_knowledge()` in twin_brain.py with proper priority hierarchy
+- **Priority order**:
+  - Corrections (score +15) — never repeat past mistakes
+  - Hard rules "When X → Do Y" (score +10)
+  - Long documents (>300 chars) (score +8)
+  - Other decision-type knowledge (score +8)
+  - Style knowledge (score +5)
+  - Instructions (score +6)
+  - Short documents (score +4)
+- **Plus relevance boost**: title keyword match (+4 each), content match (+1 each capped at 5)
+- **Plus recency**: <3 days (+3), <7 days (+2), <30 days (+1)
+- **Size penalty**: very long docs (>1000 chars) get -2 (token cost)
+- Now twin picks YOUR RULES first, not random chat messages
+- **File**: services/twin_brain.py (updated)
+
+### C2: Twin Version Snapshots (from colleague.skill)
+- New `TwinSnapshot` database table: version_name, personality_prompt, skills, mode, permission_level, knowledge_ids, intelligence_pct, notes
+- `services/twin_snapshots.py` (new): create, list, restore, delete snapshots
+- **Snapshot captures**: personality prompt, skills, mode, permissions, current knowledge IDs, intelligence %
+- **Restore functionality**: automatically creates auto-backup BEFORE restoring + removes knowledge added after snapshot
+- Snapshot types: manual (by user), auto (before restore), milestone (major events)
+- API: `GET /twins/{id}/snapshots`, `POST /twins/{id}/snapshots`, `POST /twins/{id}/snapshots/{sid}/restore`, `DELETE /twins/{id}/snapshots/{sid}`
+- First snapshot created: "v1.0 - Phase 1 training complete" (48 items, 52% intelligence)
+- **Files**: db/models.py (new table), services/twin_snapshots.py (new), routers/twins.py (updated)
+
+### Step 3: 6-Layer Personality System (from colleague.skill)
+- Rewrote `build_system_prompt()` in twin_brain.py — single paragraph → 6 structured layers
+- **Layer 1 — Hard Rules**: always/never rules from decision + instruction knowledge, auto-populated
+- **Layer 2 — Identity**: role, department, skills, personality from twin profile
+- **Layer 3 — Expression**: different communication styles per audience (boss=brief, dev=technical, client=professional, reports=tables+examples)
+- **Layer 4 — Decisions**: decision-making patterns from knowledge base
+- **Layer 5 — Interpersonal**: adapts tone based on who is talking (detects boss vs developer vs client)
+- **Layer 6 — Corrections**: mistakes to never repeat, from correction/pattern rule knowledge items
+- Knowledge auto-sorted into correct layers: `decision` type → Layer 1/4/6, `instruction` → Layer 1, `document` → Knowledge section
+- No manual work needed — uses existing 41 knowledge items
+- **File**: services/twin_brain.py (updated)
+
+### Step 1: Fix 3 Twin Bugs
+
+**Bug 1.1 — Review tab not showing twin's output**
+- Problem: Twin completed task but worker couldn't see the actual report — only title + description shown
+- Fix: Added `result_text`, `result_json`, `review_comment` to tasks API response
+- **File**: routers/twins.py (updated)
+
+**Bug 1.2 — Morning report shows 0 completed**
+- Problem: Task completed 15+ hours ago → morning report used 15-hour window → missed it
+- Fix: Expanded window to 48 hours + always includes tasks in "review" status regardless of time
+- **File**: services/twin_reports.py (updated)
+
+**Bug 1.3 — Self-improvement says "hasn't improved"**
+- Problem: API endpoint crashed with `NameError: TwinActivityLog is not defined`
+- Fix: Added `from db.models import TwinActivityLog` import inside the function
+- **File**: routers/twins.py (updated)
+
+### Meeting Notes — Voice Recording + Bilingual Summary (Notion-style)
+
+**Backend**
+- `services/meeting_recorder.py` (new): voice recording transcription processing, bilingual summary generation
+- `generate_meeting_summary()`: takes transcript → generates English summary + Korean summary (한국어 요약) + action items using LLM
+- `save_meeting_to_twin_knowledge()`: saves meeting notes to participating twins' knowledge bases
+- Action items auto-extracted as JSON: who, task, deadline
+- API: `POST /twins/meetings/summarize`
+- **Files**: services/meeting_recorder.py (new), routers/twins.py (updated)
+
+**Frontend — Meeting Notes Page**
+- New page at `/meeting-notes` with Notion-style design
+- **Left panel**: Meeting info (title, participants, save to twins checkboxes)
+- **Voice recording**: big red "Start Recording" button → uses Web Speech API → live transcription appears in real-time
+- Live interim text shown in blue while speaking
+- Transcript textarea: auto-fills from voice OR paste manually
+- Word count displayed
+- **[Generate Summary (Korean + English)]** button
+- **Right panel — Notion-style output**:
+  - Gradient header with meeting title, date, participant pills
+  - Language toggle: Both | English | 한국어
+  - English summary with structured sections (overview, key points, decisions, action items, next steps)
+  - Korean summary (한국어 요약) with same structure
+  - Action items with checkboxes (who, task, deadline)
+  - Footer: [Copy] [Download .md] [New Meeting]
+- Previous notes list at bottom
+- **Sidebar**: "Meeting Notes" added to navigation
+- **Files**: app/meeting-notes/page.tsx (new), Sidebar.tsx (updated)
+
+**How it works:**
+```
+Option 1: Voice Recording
+  Click "Start Recording" → speak → transcript appears live → click "Stop"
+  → click "Generate Summary" → Korean + English summaries generated
+
+Option 2: Paste Text
+  Paste meeting transcript/notes into textarea
+  → click "Generate Summary" → Korean + English summaries generated
+
+Both options:
+  → Select which twins should learn from this meeting
+  → Meeting notes saved to selected twins' knowledge
+  → Download as markdown or copy to clipboard
+```
+
+---
+
+## 2026-04-23 (Thursday) — Twin Report System + Phase 1 Training
+
+### Day Summary
+| Category | What Was Built | Files |
+|---|---|---|
+| **R1-R9 Report System** | 9 complete reports: morning, weekly update, evening handoff, boss briefing, monthly comparison, task notifications, broadcast, weekly self-report, absence detection | 5 new, 8 updated |
+| **Chat Input Upgrade** | All chat inputs (Twin Portal + VIP Agent) changed from single-line to multi-line textarea with Shift+Enter | 4 updated |
+| **Boss Chat → Worker Fix** | Boss chats from Twins page now saves as DirectMessage + notification → worker sees it | 1 updated |
+| **Davronbek Twin Setup** | Created personal twin (AI Team Lead) + worker account | DB updated |
+| **Phase 1: Foundation Training** | Taught twin: role, tech stack, team, daily routine, communication style, decision rules, documents | Twin knowledge: 33 items |
+| **Speed Optimization** | Reduced context (5 docs x 300 chars), max_tokens (300), memory (5 msgs), tool description (1 line), model (qwen2.5:0.5b) | 2 updated |
+| **Auto-Switch Fix** | Manual handoff overrides auto-switcher for 12 hours — twin stays active after evening handoff | 1 updated |
+| **First Twin Task** | "AI Glass + Chatbot Integration" report — assigned, executed, completed, waiting review | Task system working |
+
+---
+
+### R1: Morning Twin Report (Twin → Worker)
+- Backend: `services/twin_reports.py` (new) — generates comprehensive morning report
+- Collects: tasks completed overnight, items needing review, today's tasks (sorted by priority), unread boss messages, self-improvement activities, knowledge growth stats, today's meetings, intelligence %
+- API: `GET /twins/{id}/reports/morning`
+- Twin Portal: new **"Reports"** tab in navigation bar
+- Report UI: stats bar (completed, review, today's tasks, progress %) + color-coded sections:
+  - ✅ Completed Overnight (green border) — task list with result previews
+  - ⚠️ Needs Your Review (amber border) — items to check + "Go to Review" button
+  - 💬 Messages from Boss (blue border) — unread messages + "Reply to Boss" button
+  - 📋 Today's Tasks — priority badges (urgent/high/medium) + deadlines
+  - 🧠 Twin Self-Improved — overnight self-improvement activities
+  - 📚 Knowledge — total count, new overnight, progress %
+  - 📅 Today's Meetings — scheduled meetings with times
+- [Refresh] button to regenerate report
+- **Files**: services/twin_reports.py (new), routers/twins.py (updated), apps/twin-portal/src/app/dashboard/page.tsx (updated)
+
+### R9: Worker Absence Auto-Report
+- Backend: `check_worker_absences()` in `services/twin_reports.py` — scans all workers with twins, finds those not logged in for 24h+
+- Per absent worker: name, email, department, days absent, twin status (mode, active tasks done while absent)
+- API: `GET /twins/reports/absences?hours=24`
+- VIP Agent Dashboard: **red absence alert banner** — "⚠️ 3 workers absent (no login for 24h+)"
+  - Per worker: name, days absent, twin name + mode, tasks done by twin while worker away
+  - Auto-loads and refreshes every 15 seconds
+  - Handles "never logged in" workers
+- **Files**: services/twin_reports.py (updated), routers/twins.py (updated), app/page.tsx (updated)
+
+### R8: Twin Weekly Self-Report (Friday)
+- Backend: `generate_weekly_self_report()` in `services/twin_reports.py`
+- Twin analyzes its own week: tasks completed (with titles), knowledge growth by type, self-improvements, chat interactions, progress % change, strongest/weakest areas
+- API: `GET /twins/{id}/reports/weekly-self`
+- Twin Portal Reports page: new **📊 Weekly Summary** tab (3 tabs now: Morning | Evening | Weekly)
+- Weekly report UI:
+  - Green header with period + progress % and direction arrow (↑+5% or ↓-2%)
+  - Stats grid: tasks done, knowledge added, self-improved, chats
+  - Tasks completed list with green checkmarks + rejected count warning
+  - Knowledge growth: total + this week + breakdown by type
+  - Self-improvement activities list
+  - Analysis: strongest area (green) vs needs more training (amber)
+- **Files**: services/twin_reports.py (updated), routers/twins.py (updated), Twin Portal dashboard (updated)
+
+### R7: Boss Message Broadcast
+- API: `POST /twins/broadcast` — boss sends one message → all workers receive it as DirectMessage + TwinNotification
+- Priority levels: normal (blue) and urgent (🚨 red)
+- VIP Agent Dashboard: **[Broadcast]** button in header → modal with priority toggle + message textarea + [Send to All Workers]
+- Workers receive: message in Messages tab + notification bell alert
+- **Files**: routers/twins.py (updated), app/page.tsx (updated)
+
+### R6: Task Completion Notification (Real-time)
+- New `TwinNotification` table: twin_id, type, title, body, is_read
+- `services/twin_notifications.py` (new): notify, get_notifications, get_unread_count, mark_read, mark_all_read
+- Wired into task execution: when twin completes a task → notification created automatically
+- API: `GET /twins/{id}/notifications`, `POST /twins/{id}/notifications/read-all`
+- Twin Portal: **notification bell** in nav bar with red unread badge
+  - Click bell → dropdown shows notifications (✅ task completed, 💬 boss message, 🧠 self-improved)
+  - Unread notifications highlighted blue
+  - Click opens → marks all as read
+  - Auto-refreshes with dashboard data
+- **Files**: db/models.py (new table), services/twin_notifications.py (new), services/twin_brain.py (updated), routers/twins.py (updated), Twin Portal dashboard (updated)
+
+### R5: Monthly Twin Comparison
+- Backend: `generate_monthly_comparison()` in `services/twin_reports.py` — 30-day analysis per twin
+- Per twin: tasks completed/rejected, approval rate, knowledge added, self-improvements, chat interactions, corrections, growth trend (up/down/flat), daily score sparkline
+- Company summary: total twins, avg progress, total tasks, total knowledge
+- Highlights: most active twin, most improved twin, twins needing attention
+- API: `GET /twins/reports/monthly`
+- VIP Agent: **"Monthly Report"** button on Progress tab → modal with:
+  - Company summary stats (4 boxes)
+  - Most Active + Most Improved highlight cards
+  - Full rankings table (twin, progress %, tasks, knowledge, self-improvements, chats, trend emoji)
+  - 30-day sparkline activity charts per twin
+- **Files**: services/twin_reports.py (updated), routers/twins.py (updated), app/twins/page.tsx (updated)
+
+### R4: Boss Daily Briefing (System → Boss, 8 AM)
+- Backend: `generate_boss_briefing()` in `services/twin_reports.py` — aggregates ALL twins overnight activity
+- Collects per twin: tasks done, tasks needing review, failed tasks, self-improvements, worker unread replies
+- Alerts system: flags twins with failed tasks + twins with unread worker replies
+- API: `GET /twins/reports/boss-briefing`
+- VIP Agent Dashboard: new **"Daily Twin Briefing"** section (appears when twins have overnight activity)
+  - 4 stat boxes: twins worked, completed, need review, failed
+  - Alert list with icons (⚠️ failed tasks, 💬 unread replies)
+  - Top twins compact pills showing who did the most work
+- Auto-loads on dashboard refresh every 15 seconds
+- **Files**: services/twin_reports.py (updated), routers/twins.py (updated), app/page.tsx (updated)
+
+### R3: Evening Handoff (Worker → Twin, 6 PM)
+- Backend: `get_evening_handoff_data()` + `process_evening_handoff()` in `services/twin_reports.py`
+- Handoff data: today's summary (completed, unfinished, messages), unfinished task list with checkboxes
+- Handoff process: selected tasks continued, new tasks created, instructions saved as temporary knowledge, twin switched to active mode
+- API: `GET /twins/{id}/reports/evening`, `POST /twins/{id}/reports/evening/handoff`
+- Twin Portal: Reports page now has **2 tabs**: 🌅 Morning Report | 🌙 Evening Handoff
+- Evening Handoff UI:
+  - Today's summary stats (completed, unfinished, messages)
+  - Checkbox list of unfinished tasks — worker selects which twin should continue
+  - "Add New Task for Tonight" — inline form with title + priority + [Add] button
+  - "Special Instructions" — textarea for worker to guide twin's overnight work
+  - **"Hand Off & Go Home"** — big purple gradient button → saves everything, switches twin to active mode
+  - Success screen: "Handoff Complete! Your twin is now working. Go home and rest."
+- **Files**: services/twin_reports.py (updated), routers/twins.py (updated), apps/twin-portal dashboard (updated)
+
+### R2: Weekly Team Update (Boss → All Workers)
+- Backend: `generate_weekly_update()` in `services/twin_reports.py` — calculates per-twin weekly stats (tasks done, rejected, approval rate, new knowledge, self-improvements, progress %)
+- Ranks top performers (🥇🥈🥉) and flags twins needing improvement
+- Company-wide stats: total tasks, total new knowledge, average progress %
+- Boss writes personal message → sent to all workers as DirectMessage
+- API: `GET /twins/reports/weekly`, `POST /twins/reports/weekly/send`
+- VIP Agent: **"Send Weekly Update"** button on Progress tab → modal shows: stats, top performers, needs improvement, message textarea, [Send to All Workers] button
+- Workers receive boss's weekly message in Messages tab on Twin Portal
+- **Files**: services/twin_reports.py (updated), routers/twins.py (updated), app/twins/page.tsx (updated)
+
+### Chat Input Upgrade (All Apps)
+- All chat inputs changed from single-line `<input>` to multi-line `<textarea>`
+- Twin Portal Chat: 3 rows, Twin Portal Messages: 2 rows
+- VIP Agent Twins Chat modal: 3 rows + taller modal (700px/85vh)
+- VIP Agent Control Room: 2 rows
+- VIP Agent Meetings: 2 rows
+- Enter = send, Shift+Enter = new line, helper text shown
+- **Files**: Twin Portal dashboard (updated), twins/page.tsx (updated), control-room/page.tsx (updated), meetings/page.tsx (updated)
+
+### Boss Chat → Worker Notification Fix
+- When boss chats with twin from Twins page (Chat modal), message now saved as DirectMessage + TwinNotification
+- Worker sees boss's chat in Messages tab + bell notification
+- Detects boss vs worker by checking X-User-Email header
+- **File**: routers/twins.py (updated)
+
+### Davronbek Twin Setup
+- AI Team Lead Twin renamed to "Davronbek Twin" with personalized personality prompt
+- Worker account created: davronbek@company.com / 1234
+- Skills: Tech Leadership, Sprint Planning, Code Review, Architecture, Python, FastAPI, Next.js, Team Management
+
+### Phase 1: Foundation Knowledge Training
+- Taught twin via Chat: role, responsibilities, tech stack, team structure, daily routine, communication style
+- Added 10 decision rules: project status, ETA, video review, AI news, daily report, urgent tasks, team problems, new projects, deadlines, meeting responses
+- Uploaded documents: architecture, coding standards
+- Twin knowledge after Phase 1: 33 items, 74K+ characters
+- Twin progress: 0% → ~15%
+
+### LLM Speed Optimization
+- Knowledge per chat: 8 docs x 600 chars → 5 docs x 300 chars
+- Max tokens: 800 → 300
+- Memory loaded: 15 messages → 5 messages
+- Max message context: 20 → 8
+- Tools description: 12 lines → 1 line
+- Ollama model: qwen2.5:1.5b (crashed) → qwen2.5:0.5b (works)
+- **Files**: services/twin_brain.py (updated), services/llm_client.py (updated)
+
+### Auto-Switch Manual Override Fix
+- Problem: auto-switcher kept changing twin from active → shadow during working hours even after manual evening handoff
+- Fix: checks for recent handoff activity (last 12 hours) — if worker did evening handoff, auto-switcher won't override active mode
+- **File**: services/scheduler_service.py (updated)
+
+### First Twin Task Execution
+- Task: "Research Report: AI Glass + Chatbot Integration"
+- 10-point research report covering AI Glass, chatbot, voice/visual AI, VIP company use cases, architecture, roadmap
+- Task created → executed → completed → status: "review" (waiting for worker review)
+- Demonstrates full task lifecycle: assign → execute → self-reflect → ready for review
+
+---
+
+## 2026-04-22 (Wednesday) — Twin Portal + Twin Intelligence + Self-Improvement
+
+### Day Summary
+| Category | What Was Built | New Files | Updated Files |
+|---|---|---|---|
+| **Twin Portal** | Separate app for workers (login, dashboard, teach, chat, review, messages) | 10 files | 0 |
+| **Direct Messaging** | Boss ↔ Worker chat system with unread badges | 1 | 4 |
+| **Security** | Workers blocked from accessing other twins (backend middleware) | 1 | 3 |
+| **Worker Management** | Boss creates worker accounts from UI (Workers tab) | 0 | 2 |
+| **Twin Brain Upgrade** | Task execution (#23), conversation memory (#24), context management (#25), tool usage (#26) | 0 | 2 |
+| **Feedback Loop** | Reject/approve → auto-saves to twin knowledge (#27) | 0 | 2 |
+| **Chat-to-Knowledge** | Worker chats like ChatGPT → twin auto-learns from every conversation (#33) | 0 | 1 |
+| **Smart LLM Client** | Auto-fallback: OpenAI → local Ollama when rate limited | 0 | 1 |
+| **Drag & Drop Upload** | Worker drags file → twin reads instantly (2 sec vs 2 min) | 0 | 1 |
+| **Google Drive** | Backend service + Connected Tools UI (needs API keys) | 1 | 2 |
+| **Intelligence Dashboard** | Real scoring system + ranking chart + timeline + breakdown table | 1 | 2 |
+| **Self-Improvement (S1-S7)** | Twin teaches itself: reflection, gap detection, pattern analysis, consolidation, proactive research | 1 | 3 |
+| **10 Worker Twins** | VP, HR, Finance, Sales, Real Estate, Manager, AI Team Lead, 3 AI Devs | 0 | 1 |
+| **UI Fixes** | Modal z-index, dark buttons → blue, "Kanban" → "All Tasks" | 0 | 5 |
+| **Total** | | **15 new** | **29 updates** |
+
+---
+
+### Twin Portal — New Separate App for Workers
+- **New app**: `apps/twin-portal/` — completely separate frontend from VIP Agent (boss-only)
+- **Purpose**: Workers access ONLY their own digital twin — teach, chat, review work
+- **Tech**: Next.js 14 + Tailwind CSS + TypeScript (same stack as VIP Agent)
+- **Port**: runs on port 3001 (VIP Agent = 3000)
+- **Security**: Worker logs in → backend returns their twin_id → portal only shows that one twin
+- **Files**: package.json, tsconfig.json, next.config.js, tailwind.config.ts, postcss.config.js
+
+### Twin Self-Improvement Engine (S1-S7)
+
+**What it does**: Twins teach themselves to get smarter without human intervention. Runs automatically every 6 hours or manually triggered.
+
+**S1 — Self-Reflection**: After completing a task, twin reviews its own output → asks "What did I do well? What could I improve?" → saves lesson learned as knowledge
+
+**S2 — Knowledge Gap Detection**: Scans recent activity → finds questions twin couldn't answer or topics asked 3+ times → marks as gaps
+
+**S3 — Correction Pattern Analysis**: Reviews ALL past corrections → finds repeated mistake patterns → creates permanent rules to prevent them
+
+**S4 — Knowledge Consolidation**: Takes 3+ scattered Q&As on same topic → merges into 1 organized guide using LLM
+
+**S5 — Proactive Research**: Before starting a task, twin checks if it has enough knowledge → if not, researches the topic first using LLM → then starts the task
+
+**S6 — Auto Scheduler**: Runs full S1-S4 cycle every 6 hours automatically. Also integrated into task execution: S5 runs before each task, S1 runs after each task completion.
+
+**S7 — Dashboard UI**:
+- Twin Portal (worker): "Self-Improvement" section with history (🪞 reflections, 🔍 gap fills, 📏 pattern rules, 📚 consolidations) + "Improve Now" button
+- VIP Agent (boss): Purple "Self-Improvement" banner on Progress tab + "Improve All Twins Now" button
+
+**API**: `POST /twins/{id}/self-improve` (trigger manually), `GET /twins/{id}/self-improve/history` (view history)
+
+**Files**: services/twin_self_improve.py (new), services/twin_brain.py (updated — S1+S5 wired into task execution), services/scheduler_service.py (updated — S6 cron), routers/twins.py (updated — 2 new endpoints), Twin Portal dashboard (updated), VIP Agent twins page (updated)
+
+### Twin Intelligence Dashboard (Interactive Analytics)
+
+**Backend: Intelligence Metrics Service**
+- `services/twin_intelligence.py` (new): calculates intelligence score per twin
+- Weighted scoring: documents (3pts), decision rules (5pts), instructions (4pts), chat learned (2pts), corrections (8pts), approvals (3pts), tasks (4pts)
+- Intelligence % = raw score / max score (500)
+- `get_learning_timeline()`: daily breakdown over 30 days — knowledge added, chat learned, corrections, approvals, tasks done, cumulative score
+- `get_all_twins_intelligence()`: all twins ranked by intelligence %
+- API endpoints: `GET /twins/intelligence/all`, `GET /twins/{id}/intelligence`, `GET /twins/{id}/intelligence/timeline`
+
+**VIP Agent (Boss Side) — Intelligence Tab on Twins Page**
+- New **"Intelligence"** tab next to Twins and Workers tabs
+- **Ranking bar chart**: all 10 twins ranked by intelligence % with gradient progress bars (green >70%, blue >40%, amber <40%)
+- Click any twin → shows **30-day learning timeline** (bar chart per day, blue bars = learning activity)
+- **Knowledge breakdown table**: per-twin comparison of docs, rules, chat learned, corrections, approvals, tasks, score
+- Timeline shows: total knowledge added, chat learned, corrections, approvals, tasks done over 30 days
+- **File**: app/twins/page.tsx (updated)
+
+**Twin Portal (Worker Side) — Real Intelligence Dashboard**
+- Replaced fake "0% trained" with real **circular progress gauge** (SVG ring chart)
+- Color changes: green >70%, blue >40%, amber <40%
+- **6-metric breakdown grid**: documents (blue), rules (purple), chat learned (indigo), corrections (red), approvals (green), tasks done (amber)
+- **30-day growth bar chart**: daily learning activity bars with gradient coloring
+- All data from real backend metrics — updates as worker teaches/chats/reviews
+- **File**: apps/twin-portal/src/app/dashboard/page.tsx (updated)
+
+### Smart Document Upload (Drag & Drop + Google Drive)
+
+**Drag & Drop File Upload (Option A)**
+- Replaced old manual form with drag & drop zone — worker drags file from desktop → twin reads instantly
+- Supports: TXT, MD, CSV, JSON, DOC, DOCX, PDF
+- Auto-generates title from filename (no typing needed)
+- Auto-reads text content from files (TXT/MD/CSV/JSON read directly, Word basic extraction)
+- Truncates long files at 5000 chars
+- Upload progress indicator (spinning animation)
+- Manual paste option collapsed under "Or paste text manually..." (still available)
+- Shows "Recently Uploaded" list with dates
+- **Before**: 2 minutes (type title + select type + copy-paste content + click save)
+- **After**: 2 seconds (drag file + done)
+- **File**: apps/twin-portal/src/app/dashboard/page.tsx (updated)
+
+**Google Drive Integration (Option C)**
+- Backend service: `services/gdrive_service.py` (new) — OAuth flow, token exchange, document pulling
+- Pulls recent docs (last 7 days) from worker's Google Drive every 2 hours
+- Reads: Google Docs, Sheets (CSV), text files
+- Auto-saves new/updated docs to TwinKnowledge
+- API endpoints: `GET /twins/{id}/gdrive/auth-url`, `POST /twins/{id}/gdrive/connect`, `POST /twins/{id}/gdrive/pull`
+- **Connected Tools tab** added to Twin Portal Teach page — shows Google Drive, GitHub, Slack, Notion with connect buttons
+- Google Drive: [Connect] button → OAuth flow. Others: "Coming Soon"
+- Requires admin to set `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` env vars
+- **Files**: services/gdrive_service.py (new), routers/twins.py (updated), dashboard/page.tsx (updated)
+
+### Chat-to-Knowledge Extraction (#33)
+
+**What it does**: Every time worker chats with twin, useful Q&A pairs are automatically saved as twin knowledge. Worker uses chat like ChatGPT — twin learns from every conversation invisibly.
+
+**How it works:**
+- Worker asks: "How to calculate cap rate?" → Twin answers using LLM → Q&A saved to TwinKnowledge
+- Next time worker (or boss) asks about cap rate → twin already knows, answers from knowledge
+- Smart filtering: skips greetings ("hi", "thanks"), short messages (<15 chars), LLM errors
+- Deduplication: checks existing knowledge — won't save duplicate topics
+- Auto-detects knowledge type: decision rules (when/should/always), instructions (how to/steps), documents (general)
+- Logged as "auto_learn" activity — visible in Control Room [Watch]
+
+**Example flow:**
+```
+Week 1: Worker asks 20 questions → 15 useful Q&A pairs saved automatically
+Week 2: Worker asks 20 more → twin already knows 5 of them from last week
+Week 4: Twin knows 80% of worker's daily questions → answers instantly
+```
+
+**File**: services/twin_brain.py (updated — added _auto_extract_knowledge function in think())
+
+### Feedback → Knowledge Loop (#27)
+
+**How it works:**
+- Boss rejects twin work on Task Board → writes reason → auto-saved as TwinKnowledge (decision type) → twin never repeats mistake
+- Boss approves twin work → saved as positive reinforcement → twin repeats similar approach
+- Worker clicks "Needs Fix" on Review page → correction modal → explains correct approach → saved to twin knowledge
+- Worker clicks "Looks Good" → saved as approved approach
+- All feedback logged as activity (visible in Control Room)
+- New endpoint: `POST /twins/{id}/correct` — submit correction with what_was_wrong + correct_approach
+
+**Example flow:**
+```
+Twin writes report → vacancy 8.5% = "Low risk"
+Worker corrects: "8.5% should be Medium risk. Threshold: <5% low, 5-10% medium, >10% high"
+→ Saved to twin knowledge as decision rule
+→ Next time twin sees 8.5% vacancy → correctly says "Medium risk"
+```
+
+**Files**: services/twin_service.py (updated), routers/twins.py (updated), apps/twin-portal/src/app/dashboard/page.tsx (updated)
+
+### Security: Worker Access Control
+- `services/twin_access.py` (new): `verify_twin_access()` — checks user role + twin_id
+- Workers can ONLY access their own twin — 403 Forbidden if they try another twin_id
+- Boss (admin/operator) can access any twin — no restrictions
+- Backward compatible — if no auth headers, allows all (boss mode)
+- Twin Portal API client updated: sends `X-User-Email` + `X-User-Token` headers with every request
+- **Files**: services/twin_access.py (new), apps/twin-portal/src/components/api.ts (updated)
+
+### Boss Creates Worker Accounts (UI)
+- **Workers tab** added to Twins page — boss switches between "Twins" and "Workers" tabs
+- Worker list: shows name, email, department badge, "Twin Linked" / "No Twin" status
+- **[Create Worker Account]** button → modal with: name, email, password, department dropdown, link to twin dropdown
+- Boss creates account → worker uses email + password to log into Digital Twin Portal
+- User list API updated to return has_twin, twin_id, department fields
+- **Files**: app/twins/page.tsx (updated), services/user_service.py (updated)
+
+### Twin Brain — Core Intelligence Upgrade (#23-26)
+
+**#23 — Task Execution Engine**
+- `execute_task(twin_id, task_id)` — twin actually works on assigned tasks
+- Flow: load task → set twin status "working" → build task prompt → think with tools → generate output → mark done/review
+- `execute_pending_tasks(twin_id)` — execute all todo tasks in priority order (urgent first)
+- Permission-aware: act_unsupervised → marks done automatically, others → marks as needs_review
+- Twin's current_task_id tracked while working
+- New endpoints: `POST /twins/{id}/tasks/{task_id}/execute`, `POST /twins/{id}/execute-all`
+- **Files**: services/twin_brain.py (rewritten), routers/twins.py (updated)
+
+**#24 — Conversation Memory**
+- `_load_conversation_history()` — loads past conversations from DirectMessage table + activity logs
+- Includes: past boss messages, worker replies, previous responses, completed task summaries
+- Memory injected as system message: "YOUR RECENT MEMORY (things you did/said before)"
+- Deduplication: overlapping memory and explicit history cleaned up
+- Max 20 messages kept in context to stay within token limits
+- Twin now remembers what was discussed in previous conversations
+
+**#25 — Context Window Management**
+- `_select_relevant_knowledge()` — scores and ranks knowledge docs by relevance to current message
+- Scoring: decision rules (+5), instructions (+4), title keyword match (+3), content match (+1), recency bonus (+2 if <7 days)
+- Max 8 docs, max 3000 chars total — prevents token overflow
+- Truncates long docs instead of dropping them entirely
+- Content capped at 600 chars per doc in system prompt
+
+**#26 — Tool Usage**
+- 5 tools available to twins:
+  - `fetch_agent_data` — calls real Asset/Stock/Realty Agent APIs via existing adapters
+  - `search_knowledge` — searches twin's own knowledge base
+  - `create_task` — creates a new task for self or another twin
+  - `get_current_tasks` — lists current task queue
+  - `write_report` — generates structured report draft
+- Tool format in LLM response: `[TOOL: tool_name | param=value]`
+- `_parse_and_execute_tools()` — regex parses tool calls → executes → replaces with results
+- Permission-aware: observe mode blocks tool usage
+- All tool calls logged as activity (visible in Control Room [Watch])
+
+### Direct Messaging System (Boss ↔ Worker)
+
+**Backend**
+- New `DirectMessage` table: twin_id, sender_type (boss/worker), content, is_read, created_at
+- `GET /twins/{id}/messages` — get conversation between boss and worker
+- `POST /twins/{id}/messages` — send message (boss or worker)
+- `POST /twins/{id}/messages/read` — mark messages as read
+- **Files**: db/models.py (updated), routers/twins.py (updated)
+
+**VIP Agent — Control Room Chat Panel (Boss Side)**
+- Replaced simple interrupt input with proper **tabbed panel** (Chat | Activity)
+- **Chat tab**: full conversation view — boss messages (dark, right), worker replies (blue, left) with "Worker Reply" label
+- Unread badge on Chat tab when worker has replied
+- Auto-marks worker replies as read when boss opens panel
+- Messages persist in database — conversation history preserved
+- **File**: app/control-room/page.tsx (updated)
+
+**Twin Portal — Messages Page (Worker Side)**
+- New **Messages** tab in navigation with red unread count badge
+- Full conversation page: boss messages (gray, left with VIP avatar) and worker replies (gradient, right)
+- Reply input at bottom — worker types and sends directly to boss
+- Unread banner on home page: "1 new message from Boss — Tap to read and reply"
+- Auto-marks boss messages as read when worker opens Messages tab
+- Removed old hacky "Boss Messages" section — replaced with proper chat
+- **File**: apps/twin-portal/src/app/dashboard/page.tsx (updated)
+
+**Backend Updates for Workers**
+- Login now returns `twin_id` + `twin_name` for worker accounts
+- `POST /users/worker` — create worker account with password + twin link
+- 10 worker twins seeded: VP, HR, Finance, Sales, Real Estate, Manager, AI Team Lead, 3 AI Developers
+- **Files**: services/auth_service.py (updated), routers/users.py (updated), db/seed.py (updated)
+
+### Worker Login Page
+- Clean login form: email + password with gradient button
+- Twin Portal branding (separate from VIP Agent)
+- Authenticates via same `POST /auth/login` backend API
+- If worker has no linked twin → shows "Contact your admin" error
+- Saves twin_id + worker_name in localStorage after login
+- Sign out clears all data
+- **File**: apps/twin-portal/src/app/page.tsx
+
+### My Twin Dashboard (Worker Home)
+- Twin profile card: avatar, name, role, department, mode badge (Shadow/Active/Handoff), skills
+- Learning progress: knowledge docs count, decision rules count, tasks done, progress bar with % trained
+- Quick action cards: Teach (upload & rules), Chat (talk to twin), Review (check work)
+- Recent twin activity feed: thinking, responding, mode switch events with timestamps
+- **File**: apps/twin-portal/src/app/dashboard/page.tsx
+
+### Teach My Twin Page
+- **3 tabs**: Upload Document | Decision Rules | Knowledge Base
+- **Upload Document**: title, type dropdown (document/style/instruction), content textarea → saves to TwinKnowledge
+- **Decision Rules**: "When [situation] → Do [action] — Because [reason]" form → saves as decision-type knowledge
+- **Knowledge Base**: list of all knowledge docs with type icons, content preview, delete button
+- Calls existing `POST /twins/{id}/knowledge` API
+- **File**: apps/twin-portal/src/app/dashboard/page.tsx (Teach section)
+
+### Chat with My Twin Page
+- 1-on-1 chat with worker's own twin
+- Message bubbles: worker (gradient blue-purple, right) and twin (gray, left)
+- Typing indicator (bouncing dots)
+- Suggestion chips on empty state: "What do you know?", "How would you write a report?", "What rules do you follow?"
+- Calls existing `POST /twins/{id}/chat` API
+- **File**: apps/twin-portal/src/app/dashboard/page.tsx (Chat section)
+
+### Review Twin's Work Page
+- **Needs Review section**: tasks with amber border, shows twin's output, [Looks Good] + [Needs Fix] buttons
+- **Completed section**: green checkmarks, task titles with completion dates
+- Calls existing `GET /twins/{id}/tasks` API
+- **File**: apps/twin-portal/src/app/dashboard/page.tsx (Review section)
+
+### API Helper
+- Shared API client pointing to same backend as VIP Agent
+- Production fallback URL for deployment
+- **File**: apps/twin-portal/src/components/api.ts
+
+---
+
 ## 2026-04-21 (Tuesday)
 
 ### Windows Desktop App (.exe) — Enterprise Version
@@ -12,6 +631,175 @@
 - Window: 1280x800, centered, resizable, min 900x600
 - App ID: com.vipagent.platform | Category: Business
 - **Files**: src-tauri/ (Cargo.toml, tauri.conf.json, lib.rs, frontend/), .github/workflows/build-desktop.yml
+
+### Digital Twin System — Morning Handoff
+
+**Handoff API**
+- `GET /twins/handoff/today` — all handoffs from last 24 hours with stats (twins worked, tasks completed, items needing review, unreviewed count)
+- `POST /twins/handoff/{id}/review` — mark handoff as reviewed by boss
+- **File**: routers/twins.py (updated)
+
+**Dashboard Handoff Banner**
+- Amber banner at top of dashboard when unreviewed handoffs exist
+- Shows: "3 twins worked overnight — 5 tasks completed, 2 items need review"
+- [Review Now →] button links to /handoff page
+- Auto-hides when all handoffs reviewed
+- **File**: app/page.tsx (updated)
+
+**Handoff Review Page**
+- Full review page at `/handoff`
+- Stats bar: twins worked, tasks done, need review, unreviewed count
+- Per-twin handoff cards with: avatar, name, role, overnight summary
+- Completed tasks (green checkmarks) with results
+- Pending review items (amber warnings) with draft content
+- Meeting notes (blue) from overnight meetings
+- [Approve] button per twin + [Approve All] button in header
+- Reviewed handoffs show green "Reviewed" badge and fade slightly
+- Empty state: "No overnight activity — your twins didn't have tasks"
+- **File**: app/handoff/page.tsx (new)
+
+### Digital Twin System — Meeting Room
+
+**Meeting Service**
+- services/meeting_service.py (new): full meeting lifecycle — create, start, end, join twins, call all-hands, send messages, auto-generate minutes, quick-start (one-click all-hands)
+- Smart message routing: detects if boss addressed specific twin by name, a team keyword (stock/asset/dev), or "everyone" — routes to correct twin(s)
+- Twin responses: each routed twin thinks via twin_brain and responds in-character
+- Auto-minutes generation: extracts decisions, tasks assigned, open questions from conversation
+
+**Meeting Router (12 Endpoints)**
+- routers/meetings.py (new): `GET /meetings`, `GET /meetings/{id}`, `POST /meetings`, `POST /meetings/{id}/start`, `POST /meetings/{id}/join`, `POST /meetings/{id}/call-all`, `POST /meetings/{id}/end`, `POST /meetings/{id}/message`, `GET /meetings/{id}/messages`, `GET /meetings/{id}/minutes`, `POST /meetings/quick-start`
+- Registered in main.py
+
+**Meetings Page (Full Rewrite)**
+- Meeting list view: upcoming + recent meetings, [Start Now (All-Hands)] + [Schedule Meeting] buttons
+- Meeting room view: multi-twin chat with avatars, message routing, typing indicator
+- Participant bar: boss + twin avatars in pills
+- Boss sends message → twins respond one by one based on routing
+- Meeting minutes sidebar: decisions (green), tasks (blue), open questions (amber)
+- [End Meeting] button → generates final minutes
+- Schedule meeting modal: title + type selector
+- **File**: app/meetings/page.tsx (rewrite)
+
+### Digital Twin System — Auto Mode Switching
+
+**Twin Mode Auto-Switch (Scheduler)**
+- Every 1 minute: checks KST time → if working hours (9-18 Mon-Fri), twins go shadow → if after hours, twins go active
+- Skips twins in meetings
+- Logs every mode switch
+- **File**: services/scheduler_service.py (updated)
+
+**Morning Handoff (Scheduler)**
+- 9:00 AM KST (Mon-Fri): generates handoff report for each twin
+- Collects: tasks completed overnight, items pending review, activity count
+- Only creates handoff if twin had overnight activity
+- Stores in TwinHandoff table — boss reviews in morning
+- **File**: services/scheduler_service.py (updated)
+
+### Digital Twin System — Task Board (Kanban)
+
+**Task Board Backend**
+- routers/task_board.py (new): 6 endpoints — `GET /task-board` (all tasks, filterable by twin/status/priority), `GET /task-board/stats` (counts by status/priority/twin + overdue), `GET /task-board/review-queue` (items needing boss approval), `POST /task-board/tasks` (create + assign to twin), `PATCH /task-board/tasks/{id}` (move on board), `POST /task-board/tasks/{id}/review` (approve/reject)
+- Registered in main.py
+
+**Task Board Page (Frontend)**
+- Full Kanban board at `/task-board`
+- **4 columns**: To Do → In Progress → Review → Done (with colored headers + icons)
+- **Task cards**: priority badge (color-coded), title, description preview, twin avatar + name, deadline
+- **Move buttons**: hover any card → ← Back / Next → buttons to move between columns
+- **Review button**: on Review column cards — opens review modal
+- **Stats bar**: total tasks, to do, in progress, review, overdue count
+- **Filters**: twin dropdown, priority dropdown
+- **Tabs**: Kanban Board | Review Queue (with red badge count)
+- **Review Queue tab**: list of all items needing boss approval, twin result preview, Approve (green) / Reject (red) buttons
+- **Create task modal**: assign to twin, title, description, priority, deadline
+- **Review modal**: shows twin's result, comment field, approve/reject buttons
+- **File**: app/task-board/page.tsx (new)
+
+### Digital Twin System — Phase 2: Control Room + Twin Brain + Chat
+
+**Control Room Backend**
+- services/control_room_service.py (new): time detection (working hours vs after hours KST), full twin/worker status aggregation, live activity feed for [Watch], boss interrupt handler, "everyone summary" generator
+- routers/control_room.py (new): `GET /control-room/status` (full grid data), `GET /control-room/twin/{id}/watch` (live feed), `POST /control-room/twin/{id}/interrupt` (boss interrupts twin), `GET /control-room/summary` (what is everyone doing)
+- Registered in main.py
+
+**Control Room Page (Frontend)**
+- Full control room page at `/control-room`
+- Time mode banner: sun icon + "Working Hours" (blue) or moon icon + "After Hours" (purple) — auto-detects KST
+- Stats bar: total, active, shadow, working, idle, in meeting
+- Twin grid with colored borders by status (green=working, yellow=idle, blue=meeting, gray=offline)
+- Avatar with status dot overlay, mode badge, current task or last activity
+- **[Watch] button**: opens right-side activity feed panel with live stream
+- Activity feed: emoji icons per action type (reading, writing, analyzing, thinking, etc.), timestamps, auto-refresh every 5s
+- **Interrupt input**: boss types message to pause and redirect a twin, red Send button
+- Auto-refresh grid every 10 seconds
+- **File**: app/control-room/page.tsx (new)
+
+**LLM Client**
+- services/llm_client.py (new): OpenAI-compatible wrapper — works with OpenAI API, local vLLM, or Ollama
+- Configurable via env vars: `LLM_BASE_URL`, `LLM_API_KEY`, `LLM_MODEL`
+- Default: OpenAI gpt-4o-mini — swap to GPU server by changing one env var
+- Both async and sync versions
+
+**Twin Brain Service**
+- services/twin_brain.py (new): core intelligence engine for digital twins
+- `build_system_prompt()`: builds unique prompt per twin from profile + personality + knowledge + permission rules
+- `think()`: load twin → load knowledge → build prompt → call LLM → log activity → return response
+- Knowledge injection: up to 5 most relevant docs injected into context
+- Permission-aware: different instructions for observe/suggest/act/act_unsupervised modes
+- Activity logging: logs "thinking" and "responding" actions for Control Room [Watch]
+
+**Twin Chat (1-on-1)**
+- `POST /twins/{id}/chat` endpoint: send message → twin brain thinks → returns intelligent response
+- Twin status set to "working" while thinking, back to "idle" after
+- Frontend chat modal on Twins page: click [Chat] button on any twin card
+- Chat UI: avatar header, message bubbles (user right, twin left), typing indicator (bouncing dots), Enter to send
+- Empty state with suggestions: "What can you do?" or "Give me a status report"
+- **Files**: routers/twins.py (updated), app/twins/page.tsx (updated)
+
+### Digital Twin System — Phase 1 Foundation
+
+**Database (10 New Tables)**
+- DigitalTwin: profiles with name, role, department, personality prompt, skills, mode (shadow/active/handoff), permission level (observe/suggest/act/act_unsupervised)
+- TwinKnowledge: per-twin knowledge documents (document/decision/style/instruction)
+- TwinActivityLog: real-time activity stream for Control Room [Watch]
+- TwinTask: task management with status (todo/in_progress/review/done), priority, deadline, review workflow
+- Meeting: session management with type (all_hands/team/one_on_one/standup/weekly_review)
+- MeetingParticipant: tracks who's in meeting + paused tasks
+- MeetingMessage: meeting conversation with sender type (vip/twin) and routing
+- MeetingMinutes: auto-generated notes — decisions, tasks, open questions, summary
+- TwinHandoff: morning handoff reports — overnight work, items needing review
+- WorkerStatus: real worker online/offline tracking
+- PlatformUser updated: has_twin, twin_id, department, working_hours_start/end
+- **File**: db/models.py
+
+**Contracts (Pydantic Schemas)**
+- contracts/twin.py (new): 10 schemas + 7 enums for twin CRUD, tasks, knowledge, activity, chat
+- contracts/meeting.py (new): 7 schemas + 2 enums for meeting creation, messages, minutes, participants
+
+**Twin Service**
+- services/twin_service.py (new): 15+ functions — full CRUD, mode switching, knowledge management, activity logging, task lifecycle, twin summary for dashboard/control room
+
+**Twin API (15 Endpoints)**
+- routers/twins.py (new): CRUD twins, switch mode, manage tasks, knowledge, activity log, summaries
+- Registered in main.py
+
+**Default Twins Seeded**
+- Asset Twin (Asset Manager) — linked to Asset Agent, portfolio/lease/cash flow skills
+- Stock Twin (Stock Analyst) — linked to Stock Agent, KOSPI/sentiment/technical analysis skills
+- Realty Twin (Real Estate Manager) — linked to Realty Agent, listings/vacancy/yield skills
+- Each has personality prompt + skill set
+- **File**: db/seed.py
+
+**Sidebar Updated**
+- 3 new menu items: Twins (/twins), Control Room (/control-room), Task Board (/task-board)
+- **File**: components/Sidebar.tsx
+
+**Twins Page (Frontend)**
+- Full management page at `/twins` with stats bar, filter bar, 3-column twin card grid
+- Twin cards: avatar, name, role, status dot, mode/department/permission badges, skills tags
+- Create/Edit modal: name, role, department, skills, personality prompt, permission level
+- Mode switch + delete from card hover actions
+- **File**: app/twins/page.tsx (new)
 
 ### Auto-Update System
 - Desktop app loads from Vercel — all code changes appear automatically

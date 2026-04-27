@@ -67,6 +67,16 @@ def login(db: Session, email: str, password: str) -> dict:
 
     log.info(f"auth: login success for {user.email}", extra={"action": "auth.login"})
 
+    # Include twin info if worker has a linked twin
+    twin_id = None
+    twin_name = None
+    if user.has_twin and user.twin_id:
+        twin_id = str(user.twin_id)
+        from db.models import DigitalTwin
+        twin = db.query(DigitalTwin).filter(DigitalTwin.id == user.twin_id).first()
+        if twin:
+            twin_name = twin.name
+
     return {
         "success": True,
         "user": {
@@ -76,6 +86,9 @@ def login(db: Session, email: str, password: str) -> dict:
             "role": user.role,
         },
         "token": _hash_password(f"{user.id}:{user.email}"),  # simple session token
+        "name": user.name,
+        "twin_id": twin_id,
+        "twin_name": twin_name,
     }
 
 
