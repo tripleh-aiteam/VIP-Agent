@@ -1,9 +1,13 @@
 import type { Metadata } from "next";
+import dynamic from "next/dynamic";
 import "./globals.css";
 import Sidebar from "@/components/Sidebar";
 import TopBar from "@/components/TopBar";
 import AuthGuard from "@/components/AuthGuard";
 import UpdateBanner from "@/components/UpdateBanner";
+
+// Chatbot is voice-driven — only mount on client
+const ChatbotOverlay = dynamic(() => import("@/components/ChatbotOverlay"), { ssr: false });
 
 export const metadata: Metadata = {
   title: "VIP Agent Platform",
@@ -23,6 +27,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             </main>
           </div>
           <UpdateBanner />
+          <ChatbotOverlay />
         </AuthGuard>
       </body>
     </html>

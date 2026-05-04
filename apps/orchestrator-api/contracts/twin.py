@@ -198,3 +198,4 @@ class TwinActivityEntry(BaseModel):
 
 class TwinChatMessage(BaseModel):
     message: str = Field(..., description="Message to send to the twin")
+    model: str | None = Field(None, description="LLM model to use (e.g. 'claude-sonnet-4-6'). Defaults if omitted.")

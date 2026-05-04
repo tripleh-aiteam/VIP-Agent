@@ -7,11 +7,13 @@ from typing import Optional
 from uuid import UUID
 
 from pydantic import BaseModel
-from fastapi import APIRouter, Depends, HTTPException, Header
+from fastapi import APIRouter, Depends, HTTPException, Header, UploadFile, File
+from fastapi.responses import StreamingResponse
+import io
 from sqlalchemy.orm import Session
 
 from db.base import get_db
-from db.models import PlatformUser
+from db.models import PlatformUser, TwinTask
 from services import twin_service
 from services import twin_brain
 from contracts.twin import (
@@ -21,6 +23,41 @@ from contracts.twin import (
 )
 
 router = APIRouter(prefix="/twins", tags=["digital-twins"])
+
+
+# ---------------------------------------------------------------------------
+# LLM Models + File Upload (for Chat menu)
+# ---------------------------------------------------------------------------
+
+@router.get("/llm/models")
+def list_llm_models():
+    """List available LLM models for the chat picker (Claude, OpenAI, Gemini, Ollama)."""
+    from services.llm_client import list_available_models
+    return {"models": list_available_models()}
+
+
+@router.post("/{twin_id}/upload")
+async def upload_file(twin_id: UUID, file: UploadFile = File(...), db: Session = Depends(get_db)):
+    """Upload a file (PDF/Excel/DOCX/text) and extract its text for chat context."""
+    twin = twin_service.get_twin(db, twin_id)
+    if not twin:
+        raise HTTPException(status_code=404, detail="Twin not found")
+
+    from services.file_extract import extract_text
+    data = await file.read()
+    if len(data) > 10_000_000:  # 10 MB hard cap
+        raise HTTPException(status_code=413, detail="File too large (max 10MB)")
+
+    result = extract_text(file.filename or "upload", data)
+
+    return {
+        "filename": file.filename,
+        "size_bytes": len(data),
+        "kind": result["kind"],
+        "ok": result["ok"],
+        "note": result["note"],
+        "text": result["text"],
+    }
 
 
 def _check_twin_access(twin_id: UUID, x_user_email: Optional[str] = Header(None), db: Session = Depends(get_db)):
@@ -245,14 +282,46 @@ def create_twin_task(twin_id: UUID, body: TwinTaskCreate, db: Session = Depends(
     return {"created": True, "id": str(task.id), "title": task.title, "twin": twin.name}
 
 
+class TaskExecuteBody(BaseModel):
+    model: Optional[str] = None  # e.g. "claude-sonnet-4-6", "claude-opus-4-7"
+
+
+@router.get("/{twin_id}/tasks/{task_id}/download.docx")
+def download_task_as_docx(twin_id: UUID, task_id: UUID, db: Session = Depends(get_db)):
+    """Download a task's result as a Microsoft Word .docx file."""
+    task = db.query(TwinTask).filter(TwinTask.id == task_id, TwinTask.twin_id == twin_id).first()
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+    if not task.result_text:
+        raise HTTPException(status_code=400, detail="Task has no result yet — execute it first")
+
+    from services.docx_export import markdown_to_docx
+    twin = twin_service.get_twin(db, twin_id)
+    docx_bytes = markdown_to_docx(
+        title=task.title,
+        markdown_text=task.result_text,
+        author=f"{twin.name} ({twin.role})" if twin else "Twin",
+        subtitle=task.description or "",
+    )
+
+    safe_name = "".join(c if c.isalnum() or c in " -_" else "_" for c in task.title)[:80]
+    filename = f"{safe_name}.docx"
+    return StreamingResponse(
+        io.BytesIO(docx_bytes),
+        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
 @router.post("/{twin_id}/tasks/{task_id}/execute")
-def execute_task(twin_id: UUID, task_id: UUID, db: Session = Depends(get_db), _ac=Depends(_check_twin_access)):
-    """Make a twin actually work on and complete a task."""
+def execute_task(twin_id: UUID, task_id: UUID, body: Optional[TaskExecuteBody] = None, db: Session = Depends(get_db), _ac=Depends(_check_twin_access)):
+    """Make a twin work on a task (long-form, up to ~6000 words). Pass {model} to pick LLM."""
     twin = twin_service.get_twin(db, twin_id)
     if not twin:
         raise HTTPException(status_code=404, detail="Twin not found")
 
-    result = twin_brain.execute_task(db, twin_id, task_id)
+    model = body.model if body else None
+    result = twin_brain.execute_task(db, twin_id, task_id, model=model)
     if "error" in result:
         raise HTTPException(status_code=404, detail=result["error"])
 
@@ -270,6 +339,46 @@ def execute_all_tasks(twin_id: UUID, db: Session = Depends(get_db), _ac=Depends(
     results = twin_brain.execute_pending_tasks(db, twin_id)
     db.commit()
     return {"twin": twin.name, "tasks_executed": len(results), "results": results}
+
+
+@router.post("/{twin_id}/tasks/{task_id}/approve")
+def approve_task(twin_id: UUID, task_id: UUID, db: Session = Depends(get_db), _ac=Depends(_check_twin_access)):
+    """Worker approves a task that was awaiting review. Marks task done + logs approval feedback."""
+    twin = twin_service.get_twin(db, twin_id)
+    if not twin:
+        raise HTTPException(status_code=404, detail="Twin not found")
+
+    task = twin_service.review_task(db, task_id, review_status="approved", reviewed_by="worker")
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    twin_service.log_activity(
+        db, twin_id, "feedback",
+        f"Worker approved: {task.title}",
+        {"task_id": str(task_id), "outcome": "approved"},
+    )
+    db.commit()
+    return {"approved": True, "task_id": str(task_id), "title": task.title, "status": task.status}
+
+
+@router.post("/{twin_id}/tasks/{task_id}/reject")
+def reject_task(twin_id: UUID, task_id: UUID, body: TwinTaskReview, db: Session = Depends(get_db), _ac=Depends(_check_twin_access)):
+    """Worker rejects a task with correction. Marks task back to todo + saves correction as knowledge."""
+    twin = twin_service.get_twin(db, twin_id)
+    if not twin:
+        raise HTTPException(status_code=404, detail="Twin not found")
+
+    task = twin_service.review_task(db, task_id, review_status="rejected", reviewed_by="worker", comment=body.review_comment)
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    twin_service.log_activity(
+        db, twin_id, "feedback",
+        f"Worker rejected: {task.title} — correction saved",
+        {"task_id": str(task_id), "outcome": "rejected", "comment": (body.review_comment or "")[:200]},
+    )
+    db.commit()
+    return {"rejected": True, "task_id": str(task_id), "title": task.title, "status": task.status}
 
 
 # ---------------------------------------------------------------------------
@@ -379,8 +488,8 @@ def chat_with_twin(twin_id: UUID, body: TwinChatMessage, x_user_email: Optional[
             pass
         db.flush()
 
-    # Get response from twin brain
-    response = twin_brain.think(db, twin_id, body.message)
+    # Get response from twin brain (model param routes to correct LLM provider)
+    response = twin_brain.think(db, twin_id, body.message, model=body.model)
 
     db.commit()
 

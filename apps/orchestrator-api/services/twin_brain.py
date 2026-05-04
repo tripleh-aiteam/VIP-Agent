@@ -433,6 +433,7 @@ def think(
     twin_id: UUID,
     user_message: str,
     conversation_history: Optional[list[dict]] = None,
+    model: Optional[str] = None,
 ) -> str:
     """
     Make a twin think and respond.
@@ -479,12 +480,13 @@ def think(
             unique_messages.append(msg)
     messages = unique_messages[-8:]  # Keep last 8 messages max for speed
 
-    # Call LLM
+    # Call LLM (model param picks provider; None uses default)
     response = chat_completion_sync(
         system_prompt=system_prompt,
         messages=messages,
-        max_tokens=300,
+        max_tokens=1500,
         temperature=0.7,
+        model=model,
     )
 
     # #26 — Parse and execute any tool calls in the response
@@ -585,14 +587,11 @@ def _auto_extract_knowledge(db: Session, twin_id: UUID, question: str, answer: s
 #  #23 — Task Execution
 # ---------------------------------------------------------------------------
 
-def execute_task(db: Session, twin_id: UUID, task_id: UUID) -> dict:
+def execute_task(db: Session, twin_id: UUID, task_id: UUID, model: Optional[str] = None) -> dict:
     """
     Twin actually works on an assigned task.
-    1. Load task details
-    2. Think about the task
-    3. Use tools if needed
-    4. Generate output
-    5. Mark task as done or needs_review
+    Long-form output (up to ~6000 words) — use for research/reports.
+    Pass `model` to override default LLM (e.g. 'claude-sonnet-4-6' for long writing).
     """
     twin = twin_service.get_twin(db, twin_id)
     task = db.query(TwinTask).filter(TwinTask.id == task_id).first()
@@ -632,8 +631,19 @@ Instructions:
 
 Provide your complete work output below:"""
 
-    # Twin thinks and works
-    result = think(db, twin_id, task_prompt)
+    # Twin thinks and works — task execution uses higher token budget for long reports
+    # Bypass the standard short-form `think()` and call LLM directly for full output.
+    all_knowledge = twin_service.get_knowledge(db, twin_id)
+    relevant_knowledge = _select_relevant_knowledge(all_knowledge, task_prompt, max_docs=8, max_chars=4000)
+    system_prompt = build_system_prompt(twin, relevant_knowledge, available_tools=False)
+    system_prompt += "\n\nYOU ARE WORKING ON A TASK. Produce a thorough, well-structured deliverable. Use Markdown headings (## , ### ), bullet lists, tables where helpful. Aim for at least 2000–4000 words for research reports. Cite specific examples. Do NOT summarize — produce the complete deliverable."
+    result = chat_completion_sync(
+        system_prompt=system_prompt,
+        messages=[{"role": "user", "content": task_prompt}],
+        max_tokens=6000,
+        temperature=0.5,
+        model=model or "claude-sonnet-4-6",
+    )
 
     # Log completion
     twin_service.log_activity(

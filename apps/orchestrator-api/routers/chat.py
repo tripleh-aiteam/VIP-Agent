@@ -17,6 +17,24 @@ from services.intent_service import classify, classify_batch
 router = APIRouter(prefix="/chat", tags=["chat"])
 
 
+# ---------------------------------------------------------------------------
+# Voice Assistant ("Chatbot") — single endpoint for Web Speech API integration
+# ---------------------------------------------------------------------------
+
+class VoiceCommandBody(BaseModel):
+    transcript: str = Field(..., description="What the user said (Web Speech API transcript)")
+    language: Optional[str] = Field("auto", description="'en', 'ko', or 'auto' for language detection")
+
+
+@router.post("/voice")
+def voice_command(body: VoiceCommandBody, db: Session = Depends(get_db)):
+    """Boss voice command endpoint — used by the floating Chatbot overlay.
+    Returns a short, voice-friendly reply that the browser can speak via SpeechSynthesis."""
+    from services.voice_intents import handle_voice_command
+    result = handle_voice_command(db, body.transcript, body.language or "auto")
+    return result
+
+
 @router.get("/debug/openai")
 def debug_openai():
     """Debug: test OpenAI connection."""

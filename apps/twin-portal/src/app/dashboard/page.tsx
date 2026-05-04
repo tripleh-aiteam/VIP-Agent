@@ -70,16 +70,36 @@ export default function Dashboard({ onLogout }: Props) {
   const [dmSending, setDmSending] = useState(false);
   const [unreadCount, setUnreadCount] = useState(0);
 
-  // Chat state
-  const [chatMessages, setChatMessages] = useState<{role: string; content: string}[]>([]);
+  // Chat state — new rich experience
+  const [chatMessages, setChatMessages] = useState<{role: string; content: string; model?: string}[]>([]);
   const [chatInput, setChatInput] = useState("");
   const [chatLoading, setChatLoading] = useState(false);
+  const [selectedModel, setSelectedModel] = useState<string>("gpt-4o-mini");
+  const [availableModels, setAvailableModels] = useState<Array<{id: string; provider: string; available: boolean}>>([]);
+  const [showModelPicker, setShowModelPicker] = useState(false);
+  const [voiceListening, setVoiceListening] = useState(false);
+  const [attachedFiles, setAttachedFiles] = useState<Array<{filename: string; kind: string; text: string; note: string}>>([]);
+  const [uploadingFile, setUploadingFile] = useState(false);
+  // Sessions + folders (stored in localStorage)
+  type ChatSession = { id: string; title: string; messages: {role: string; content: string; model?: string}[]; folder?: string; created_at: string; updated_at: string };
+  const [chatSessions, setChatSessions] = useState<ChatSession[]>([]);
+  const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
+  const [chatSearch, setChatSearch] = useState("");
+  const [chatFolders, setChatFolders] = useState<string[]>([]);
+  const [expandedChatFolders, setExpandedChatFolders] = useState<Set<string>>(new Set());
+  const [showChatSidebar, setShowChatSidebar] = useState(true);
+  const [renamingSession, setRenamingSession] = useState<string | null>(null);
+  const [showNewFolder, setShowNewFolder] = useState(false);
+  const [newFolderName, setNewFolderName] = useState("");
 
   // Progress state
   const [intel, setIntel] = useState<any>(null);
   const [timeline, setTimeline] = useState<any[]>([]);
   const [selfImproveHistory, setSelfImproveHistory] = useState<any[]>([]);
   const [improving, setImproving] = useState(false);
+  const [switchingMode, setSwitchingMode] = useState(false);
+  const [detailModal, setDetailModal] = useState<{ title: string; items: any[]; renderItem?: (it: any) => any } | null>(null);
+  const [hoveredDay, setHoveredDay] = useState<any | null>(null);
 
   // Correction state
   const [correctingTask, setCorrectingTask] = useState<any | null>(null);
@@ -175,22 +195,245 @@ export default function Dashboard({ onLogout }: Props) {
     } catch (e) { console.error(e); } finally { setDmSending(false); }
   }
 
+  // ==================== CHAT — Sessions, Folders, Models, Voice, Files ====================
+
+  // Load chat sessions + folders + selected model from localStorage on mount
+  useEffect(() => {
+    if (!twinId) return;
+    try {
+      const sRaw = localStorage.getItem(`twin-chat-sessions-${twinId}`);
+      if (sRaw) setChatSessions(JSON.parse(sRaw));
+      const aId = localStorage.getItem(`twin-chat-active-${twinId}`);
+      if (aId) setActiveSessionId(aId);
+      const fRaw = localStorage.getItem(`twin-chat-folders-${twinId}`);
+      if (fRaw) {
+        const f = JSON.parse(fRaw);
+        setChatFolders(f);
+        setExpandedChatFolders(new Set(f));
+      }
+      const m = localStorage.getItem(`twin-chat-model-${twinId}`);
+      if (m) setSelectedModel(m);
+    } catch {}
+  }, [twinId]);
+
+  // Persist sessions whenever they change
+  useEffect(() => {
+    if (!twinId || chatSessions.length === 0) return;
+    try { localStorage.setItem(`twin-chat-sessions-${twinId}`, JSON.stringify(chatSessions)); } catch {}
+  }, [chatSessions, twinId]);
+
+  useEffect(() => {
+    if (!twinId) return;
+    try { localStorage.setItem(`twin-chat-folders-${twinId}`, JSON.stringify(chatFolders)); } catch {}
+  }, [chatFolders, twinId]);
+
+  useEffect(() => {
+    if (!twinId) return;
+    try { localStorage.setItem(`twin-chat-model-${twinId}`, selectedModel); } catch {}
+  }, [selectedModel, twinId]);
+
+  useEffect(() => {
+    if (!twinId) return;
+    if (activeSessionId) localStorage.setItem(`twin-chat-active-${twinId}`, activeSessionId);
+    else localStorage.removeItem(`twin-chat-active-${twinId}`);
+  }, [activeSessionId, twinId]);
+
+  // Load available models from backend
+  useEffect(() => {
+    apiFetch(`/twins/llm/models`).then(r => r.json()).then(d => {
+      setAvailableModels(d.models || []);
+    }).catch(() => {});
+  }, []);
+
+  // Auto-fetch morning report when user opens the Reports tab (no manual click needed)
+  useEffect(() => {
+    if (page !== "reports" || !twinId) return;
+    if (reportTab === "morning" && !morningReport && !reportLoading) {
+      setReportLoading(true);
+      apiFetch(`/twins/${twinId}/reports/morning`)
+        .then(r => r.json())
+        .then(d => setMorningReport(d))
+        .catch(() => {})
+        .finally(() => setReportLoading(false));
+    }
+    if (reportTab === "weekly" && !weeklyReport && !reportLoading) {
+      setReportLoading(true);
+      apiFetch(`/twins/${twinId}/reports/weekly-self`)
+        .then(r => r.json())
+        .then(d => setWeeklyReport(d))
+        .catch(() => {})
+        .finally(() => setReportLoading(false));
+    }
+    if (reportTab === "evening" && !eveningData && !reportLoading) {
+      setReportLoading(true);
+      apiFetch(`/twins/${twinId}/reports/evening`)
+        .then(r => r.json())
+        .then(d => setEveningData(d))
+        .catch(() => {})
+        .finally(() => setReportLoading(false));
+    }
+  }, [page, reportTab, twinId, morningReport, weeklyReport, eveningData, reportLoading]);
+
+  // Helper for download URL — use the same API base as apiFetch
+  const downloadUrl = (taskId: string) => `${API}/twins/${twinId}/tasks/${taskId}/download.docx`;
+
+  // When user switches sessions, load its messages
+  useEffect(() => {
+    if (!activeSessionId) { setChatMessages([]); return; }
+    const s = chatSessions.find(x => x.id === activeSessionId);
+    if (s) setChatMessages(s.messages);
+  }, [activeSessionId]);
+
+  function newChatSession() {
+    const id = `s-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+    const session: ChatSession = {
+      id,
+      title: "New chat",
+      messages: [],
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    };
+    setChatSessions(prev => [session, ...prev]);
+    setActiveSessionId(id);
+    setChatMessages([]);
+    setAttachedFiles([]);
+  }
+
+  function deleteChatSession(id: string) {
+    setChatSessions(prev => prev.filter(s => s.id !== id));
+    if (activeSessionId === id) {
+      setActiveSessionId(null);
+      setChatMessages([]);
+    }
+  }
+
+  function renameChatSession(id: string, title: string) {
+    if (!title.trim()) return;
+    setChatSessions(prev => prev.map(s => s.id === id ? { ...s, title: title.trim() } : s));
+  }
+
+  function moveChatSessionToFolder(id: string, folder: string | null) {
+    setChatSessions(prev => prev.map(s => s.id === id ? { ...s, folder: folder || undefined } : s));
+  }
+
+  function addChatFolder(name: string) {
+    const t = name.trim();
+    if (!t) return;
+    if (chatFolders.includes(t)) return;
+    setChatFolders(prev => [...prev, t]);
+    setExpandedChatFolders(prev => new Set([...Array.from(prev), t]));
+  }
+
+  function removeChatFolder(name: string) {
+    setChatFolders(prev => prev.filter(f => f !== name));
+    setChatSessions(prev => prev.map(s => s.folder === name ? { ...s, folder: undefined } : s));
+  }
+
+  function toggleChatFolder(name: string) {
+    setExpandedChatFolders(prev => {
+      const next = new Set(Array.from(prev));
+      next.has(name) ? next.delete(name) : next.add(name);
+      return next;
+    });
+  }
+
+  // Voice input — Web Speech API
+  function startVoiceInput() {
+    const SR = (typeof window !== "undefined") && ((window as any).SpeechRecognition || (window as any).webkitSpeechRecognition);
+    if (!SR) { alert("Voice input not supported in this browser. Try Chrome or Edge."); return; }
+    const recognition = new SR();
+    recognition.lang = "en-US";
+    recognition.interimResults = false;
+    recognition.maxAlternatives = 1;
+    setVoiceListening(true);
+    recognition.onresult = (event: any) => {
+      const transcript = event.results[0][0].transcript;
+      setChatInput(prev => prev ? prev + " " + transcript : transcript);
+      setVoiceListening(false);
+    };
+    recognition.onerror = () => setVoiceListening(false);
+    recognition.onend = () => setVoiceListening(false);
+    try { recognition.start(); } catch { setVoiceListening(false); }
+  }
+
+  // File attachment — upload to backend, extract text
+  async function attachFile(file: File) {
+    if (!twinId || !file) return;
+    setUploadingFile(true);
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      const res = await apiFetch(`/twins/${twinId}/upload`, { method: "POST", body: fd });
+      const data = await res.json();
+      if (!res.ok) {
+        alert(`Upload failed: ${data.detail || res.status}`);
+        return;
+      }
+      setAttachedFiles(prev => [...prev, {
+        filename: data.filename,
+        kind: data.kind,
+        text: data.text || "",
+        note: data.note || "",
+      }]);
+    } catch (e) {
+      alert(`Upload failed: ${e}`);
+    } finally {
+      setUploadingFile(false);
+    }
+  }
+
   async function sendChat() {
-    if (!chatInput.trim() || chatLoading || !twinId) return;
+    if ((!chatInput.trim() && attachedFiles.length === 0) || chatLoading || !twinId) return;
     const msg = chatInput.trim();
-    setChatMessages(prev => [...prev, { role: "user", content: msg }]);
+    // Build composed message with file context
+    let composed = msg;
+    if (attachedFiles.length > 0) {
+      const fileBlocks = attachedFiles.map(f => `[Attached: ${f.filename} (${f.kind})]\n${f.text}`).join("\n\n---\n\n");
+      composed = (msg ? msg + "\n\n" : "") + fileBlocks;
+    }
+    const displayMsg = msg + (attachedFiles.length > 0 ? `\n\n📎 ${attachedFiles.length} file(s) attached` : "");
+
+    // Auto-create session on first message
+    let sessionId = activeSessionId;
+    if (!sessionId) {
+      sessionId = `s-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+      const newSession: ChatSession = {
+        id: sessionId,
+        title: msg.slice(0, 40) || `Chat ${new Date().toLocaleString()}`,
+        messages: [],
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      };
+      setChatSessions(prev => [newSession, ...prev]);
+      setActiveSessionId(sessionId);
+    }
+
+    const userMsg = { role: "user", content: displayMsg };
+    setChatMessages(prev => [...prev, userMsg]);
     setChatInput("");
+    setAttachedFiles([]);
     setChatLoading(true);
+
     try {
       const res = await apiFetch(`/twins/${twinId}/chat`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: msg }),
+        body: JSON.stringify({ message: composed, model: selectedModel }),
       });
       const data = await res.json();
-      setChatMessages(prev => [...prev, { role: "assistant", content: data.response || "No response" }]);
+      const assistantMsg = { role: "assistant", content: data.response || "No response", model: selectedModel };
+      const newMessages = [...chatMessages, userMsg, assistantMsg];
+      setChatMessages(newMessages);
+      // Update session
+      setChatSessions(prev => prev.map(s => s.id === sessionId ? {
+        ...s,
+        messages: newMessages,
+        title: (s.title === "New chat" || !s.title) ? msg.slice(0, 40) : s.title,
+        updated_at: new Date().toISOString(),
+      } : s));
     } catch {
-      setChatMessages(prev => [...prev, { role: "assistant", content: "[Error] Could not reach twin." }]);
+      const errorMsg = { role: "assistant", content: "[Error] Could not reach twin." };
+      setChatMessages(prev => [...prev, errorMsg]);
     } finally {
       setChatLoading(false);
     }
@@ -290,16 +533,64 @@ export default function Dashboard({ onLogout }: Props) {
   const modeInfo = MODE_LABELS[twin.mode] || MODE_LABELS.shadow;
 
   // Navigation bar
+  // === Live state info for animated indicator ===
+  // Maps twin.mode + twin.status → label, emoji, gradient, animation class
+  const getStateInfo = () => {
+    const m = twin.mode;
+    const s = twin.status;
+    if (m === "active" && (s === "working" || s === "in_meeting")) {
+      return { label: "Working", short: "Twin", emoji: "⚡", grad: "from-orange-400 to-red-500", anim: "animate-pulse", ring: "ring-orange-300" };
+    }
+    if (m === "active") {
+      return { label: "Twin Mode — Ready to work", short: "Twin", emoji: "🤖", grad: "from-blue-500 to-purple-600", anim: "animate-pulse-slow", ring: "ring-blue-300" };
+    }
+    if (m === "handoff") {
+      return { label: "Preparing Handoff", short: "Handoff", emoji: "📋", grad: "from-amber-400 to-orange-500", anim: "animate-pulse", ring: "ring-amber-300" };
+    }
+    // shadow → assistant
+    return { label: "Assistant Mode — Ready to help", short: "Assistant", emoji: "💡", grad: "from-emerald-400 to-teal-500", anim: "", ring: "ring-emerald-300" };
+  };
+  const stateInfo = getStateInfo();
+
+  // Toggle Twin (active) ↔ Assistant (shadow) — note: switchingMode state declared at top with other hooks
+  const toggleTwinMode = async () => {
+    if (!twinId || switchingMode) return;
+    const newMode = twin.mode === "active" ? "shadow" : "active";
+    setSwitchingMode(true);
+    try {
+      const res = await apiFetch(`/twins/${twinId}/mode`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mode: newMode }),
+      });
+      if (res.ok) await fetchAll();
+    } catch (e) { console.error(e); } finally { setSwitchingMode(false); }
+  };
+
   const nav = (
     <div className="bg-[var(--card-bg)] border-b border-[var(--card-border)] px-4 py-3 flex items-center justify-between sticky top-0 z-10" style={{ boxShadow: "var(--shadow-sm)" }}>
       <div className="flex items-center gap-3">
-        <div className="w-8 h-8 rounded-full flex items-center justify-center text-white font-bold text-[11px]" style={{ backgroundColor: getAvatarColor(twin.name) }}>
-          {getInitials(twin.name)}
+        {/* Animated state avatar */}
+        <div className="relative">
+          <div className={`w-9 h-9 rounded-full flex items-center justify-center text-white font-bold text-[12px] bg-gradient-to-br ${stateInfo.grad} ${stateInfo.anim} ring-2 ${stateInfo.ring} ring-offset-1`}>
+            {getInitials(twin.name)}
+          </div>
+          <span className="absolute -bottom-0.5 -right-0.5 w-3.5 h-3.5 rounded-full bg-white flex items-center justify-center text-[8px] border border-gray-200">{stateInfo.emoji}</span>
         </div>
         <div>
           <div className="text-[14px] font-semibold text-[var(--text-primary)]">Digital Twin</div>
           <div className="text-[10px] text-[var(--text-muted)]">{workerName}</div>
         </div>
+        {/* Twin / Assistant Toggle Switch */}
+        <button onClick={toggleTwinMode} disabled={switchingMode}
+          className="ml-3 flex items-center gap-1 bg-[var(--bg-secondary)] border border-[var(--card-border)] rounded-full p-0.5 transition-all hover:border-blue-400 disabled:opacity-50"
+          title={`Currently in ${twin.mode === "active" ? "Twin (autonomous)" : "Assistant (chat helper)"} mode. Click to switch.`}>
+          <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-semibold transition-all ${twin.mode === "shadow" ? "bg-emerald-500 text-white" : "text-[var(--text-muted)]"}`}>
+            💡 Assistant
+          </span>
+          <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-semibold transition-all ${twin.mode === "active" ? "bg-blue-600 text-white" : "text-[var(--text-muted)]"}`}>
+            🤖 Twin
+          </span>
+        </button>
       </div>
       <div className="flex gap-1">
         {(["home", "messages", "reports", "teach", "chat", "review"] as const).map(p => (
@@ -357,120 +648,321 @@ export default function Dashboard({ onLogout }: Props) {
   );
 
   // ==================== HOME PAGE ====================
+
+  // Lifelike Workspace Scene — shows what the twin/assistant is actually doing
+  // Three scene variants picked from twin.mode + twin.status + active task
+  const renderWorkspaceScene = () => {
+    const isWorking = twin.mode === "active" && (twin.status === "working" || tasks.some((t: any) => t.status === "in_progress"));
+    const isAssistant = twin.mode === "shadow";
+    const currentTask = tasks.find((t: any) => t.status === "in_progress") || null;
+
+    // Scene config
+    let scene;
+    if (isWorking) {
+      scene = {
+        bg: "from-orange-50 via-amber-50 to-rose-50",
+        characterEmoji: "👨‍💻",
+        animation: "animate-typing",
+        statusTitle: "Working",
+        statusText: currentTask ? `Working on: ${currentTask.title}` : "Twin is executing tasks...",
+        floatingItems: ["⚡", "📊", "📝", "🔧", "✨"],
+        bubbleColor: "bg-orange-500",
+        screenContent: "// running task...",
+        screenGrad: "from-orange-400 via-red-400 to-orange-400",
+        accent: "text-orange-700",
+      };
+    } else if (isAssistant) {
+      scene = {
+        bg: "from-emerald-50 via-teal-50 to-cyan-50",
+        characterEmoji: "💁",
+        animation: "animate-breathe",
+        statusTitle: "Ready to help",
+        statusText: "Assistant is listening — chat anytime",
+        floatingItems: ["💬", "❓", "💡", "⭐", "✨"],
+        bubbleColor: "bg-emerald-500",
+        screenContent: "Hi! How can I help?",
+        screenGrad: "from-emerald-400 via-teal-400 to-cyan-400",
+        accent: "text-emerald-700",
+      };
+    } else {
+      // Twin idle (active mode but no task yet)
+      scene = {
+        bg: "from-blue-50 via-indigo-50 to-purple-50",
+        characterEmoji: "🤖",
+        animation: "animate-breathe",
+        statusTitle: "Standing by",
+        statusText: "Twin is in active mode — waiting for tasks",
+        floatingItems: ["⚙️", "🎯", "📋", "🔋", "✨"],
+        bubbleColor: "bg-blue-500",
+        screenContent: "ready.",
+        screenGrad: "from-blue-400 via-purple-400 to-blue-400",
+        accent: "text-blue-700",
+      };
+    }
+
+    return (
+      <div className={`relative bg-gradient-to-br ${scene.bg} rounded-2xl border border-[var(--card-border)] overflow-hidden mb-5`}
+        style={{ boxShadow: "var(--shadow-md)", height: "240px" }}>
+
+        {/* Floating ambient items */}
+        <div className="absolute top-6 left-8 text-[26px] animate-float-a opacity-80">{scene.floatingItems[0]}</div>
+        <div className="absolute top-12 right-10 text-[22px] animate-float-b opacity-70">{scene.floatingItems[1]}</div>
+        <div className="absolute bottom-14 left-14 text-[22px] animate-float-c opacity-75">{scene.floatingItems[2]}</div>
+        <div className="absolute top-20 right-24 text-[18px] animate-float-a opacity-60" style={{ animationDelay: "1.2s" }}>{scene.floatingItems[3]}</div>
+        <div className="absolute bottom-8 right-8 text-[16px] animate-blink opacity-80">{scene.floatingItems[4]}</div>
+        <div className="absolute top-4 right-1/3 text-[14px] animate-blink opacity-60" style={{ animationDelay: "1.8s" }}>{scene.floatingItems[4]}</div>
+
+        {/* Center "desk" composition */}
+        <div className="absolute inset-0 flex flex-col items-center justify-center gap-2">
+          {/* Speech bubble */}
+          <div className="relative animate-bubble">
+            <div className={`${scene.bubbleColor} text-white px-4 py-2 rounded-2xl text-[12px] font-medium shadow-md max-w-[280px] text-center`}>
+              {isWorking ? (
+                <span className="flex items-center gap-1.5">
+                  <span>💭</span>
+                  <span className="truncate">{scene.statusText}</span>
+                  <span className="flex gap-0.5 ml-1">
+                    <span className="w-1 h-1 bg-white rounded-full animate-dot" style={{ animationDelay: "0ms" }} />
+                    <span className="w-1 h-1 bg-white rounded-full animate-dot" style={{ animationDelay: "200ms" }} />
+                    <span className="w-1 h-1 bg-white rounded-full animate-dot" style={{ animationDelay: "400ms" }} />
+                  </span>
+                </span>
+              ) : (
+                <span>{scene.statusText}</span>
+              )}
+            </div>
+            {/* Bubble tail */}
+            <div className={`absolute left-1/2 -bottom-1.5 -translate-x-1/2 w-3 h-3 ${scene.bubbleColor} rotate-45`} />
+          </div>
+
+          {/* Character + laptop */}
+          <div className="flex items-end gap-1 mt-1">
+            <span className={`text-[64px] inline-block ${scene.animation}`} style={{ filter: "drop-shadow(0 4px 8px rgba(0,0,0,0.1))" }}>
+              {scene.characterEmoji}
+            </span>
+          </div>
+
+          {/* Mini "screen" / status bar below the character */}
+          <div className="flex items-center gap-2 mt-1">
+            <div className={`px-3 py-1 rounded-full bg-white border border-gray-200 flex items-center gap-2`} style={{ boxShadow: "var(--shadow-sm)" }}>
+              <span className={`w-2 h-2 rounded-full ${isWorking ? "bg-orange-500 animate-pulse" : isAssistant ? "bg-emerald-500" : "bg-blue-500 animate-pulse-slow"}`} />
+              <span className={`text-[11px] font-semibold ${scene.accent}`}>{scene.statusTitle}</span>
+              <span className="text-[10px] text-[var(--text-muted)]">·</span>
+              <span className="text-[10px] text-[var(--text-muted)] font-mono">{scene.screenContent}</span>
+            </div>
+          </div>
+        </div>
+
+        {/* Animated bottom gradient bar (like a "status track") */}
+        <div className={`absolute bottom-0 left-0 right-0 h-1 bg-gradient-to-r ${scene.screenGrad} animate-screen`} />
+      </div>
+    );
+  };
+
   if (page === "home") return (
     <div className="min-h-screen bg-[var(--bg-app)]">
       {nav}
       <div className="max-w-[700px] mx-auto p-4 md:p-6">
-        {/* Twin Profile Card */}
+        {/* Lifelike Workspace Scene — shows twin/assistant in action */}
+        {renderWorkspaceScene()}
+
+        {/* Twin Profile Card — animated state avatar + mode toggle */}
         <div className="bg-[var(--card-bg)] rounded-2xl border border-[var(--card-border)] p-6 mb-5" style={{ boxShadow: "var(--shadow-md)" }}>
           <div className="flex items-center gap-4 mb-4">
-            <div className="w-16 h-16 rounded-full flex items-center justify-center text-white font-bold text-[22px]" style={{ backgroundColor: getAvatarColor(twin.name) }}>
-              {getInitials(twin.name)}
+            {/* Big animated state avatar */}
+            <div className="relative">
+              <div className={`w-20 h-20 rounded-full flex items-center justify-center text-white font-bold text-[26px] bg-gradient-to-br ${stateInfo.grad} ring-4 ${stateInfo.ring} ring-offset-2 ring-offset-[var(--card-bg)] ${stateInfo.anim}`}>
+                {getInitials(twin.name)}
+              </div>
+              {/* Live status dot */}
+              <div className="absolute -bottom-1 -right-1 w-7 h-7 rounded-full bg-white flex items-center justify-center text-[14px] border-2 border-gray-200">
+                {stateInfo.emoji}
+              </div>
+              {/* Pulsing ring for active state */}
+              {(twin.mode === "active" || twin.status === "working") && (
+                <span className={`absolute inset-0 rounded-full ${stateInfo.ring.replace("ring-", "border-")} border-2 animate-ping opacity-30`} />
+              )}
             </div>
-            <div>
+            <div className="flex-1">
               <h1 className="text-[22px] font-bold text-[var(--text-primary)]">{twin.name}</h1>
               <p className="text-[13px] text-[var(--text-muted)]">{twin.role} — {twin.department || "General"}</p>
-              <span className={`inline-block mt-1 px-3 py-1 rounded-full text-[11px] font-medium ${modeInfo.color}`}>{modeInfo.text}</span>
+              <div className="flex items-center gap-2 mt-2">
+                <span className={`inline-flex items-center gap-1 px-3 py-1 rounded-full text-[11px] font-semibold text-white bg-gradient-to-r ${stateInfo.grad}`}>
+                  <span>{stateInfo.emoji}</span> {stateInfo.label}
+                </span>
+              </div>
+            </div>
+            {/* Big mode toggle */}
+            <div className="flex flex-col items-center gap-1.5">
+              <div className="text-[9px] font-semibold text-[var(--text-muted)] uppercase tracking-wider">Mode</div>
+              <button onClick={toggleTwinMode} disabled={switchingMode}
+                className="flex flex-col gap-0.5 bg-[var(--bg-secondary)] border border-[var(--card-border)] rounded-xl p-0.5 transition-all hover:border-blue-400 disabled:opacity-50"
+                title={`Currently in ${twin.mode === "active" ? "Twin" : "Assistant"} mode. Click to switch.`}>
+                <span className={`px-3 py-1 rounded-lg text-[11px] font-semibold transition-all flex items-center gap-1 ${twin.mode === "shadow" ? "bg-emerald-500 text-white" : "text-[var(--text-muted)]"}`}>
+                  💡 Assistant
+                </span>
+                <span className={`px-3 py-1 rounded-lg text-[11px] font-semibold transition-all flex items-center gap-1 ${twin.mode === "active" ? "bg-blue-600 text-white" : "text-[var(--text-muted)]"}`}>
+                  🤖 Twin
+                </span>
+              </button>
             </div>
           </div>
-          {twin.skills && twin.skills.length > 0 && (
-            <div className="flex flex-wrap gap-1.5">
-              {twin.skills.map(s => <span key={s} className="px-2.5 py-1 bg-[var(--bg-secondary)] text-[var(--text-secondary)] rounded-lg text-[11px]">{s}</span>)}
+          {/* Auto-detected specialties (from knowledge content) */}
+          {intel?.specialties && intel.specialties.length > 0 && (
+            <div>
+              <div className="text-[10px] font-medium text-[var(--text-muted)] mb-2 flex items-center gap-1.5">
+                <span>🎯</span><span>Detected specialties (from your knowledge)</span>
+              </div>
+              <div className="space-y-1.5">
+                {intel.specialties.slice(0, 5).map((sp: any) => (
+                  <div key={sp.topic} className="flex items-center gap-2">
+                    <div className="w-[110px] text-[11px] text-[var(--text-secondary)] shrink-0">{sp.topic}</div>
+                    <div className="flex-1 h-2 bg-[var(--bg-secondary)] rounded-full overflow-hidden">
+                      <div className="h-full bg-gradient-to-r from-blue-500 to-purple-500 rounded-full" style={{ width: `${sp.share_pct}%` }} />
+                    </div>
+                    <div className="w-[36px] text-right text-[10px] text-[var(--text-muted)]">{sp.share_pct}%</div>
+                  </div>
+                ))}
+              </div>
             </div>
           )}
         </div>
 
-        {/* Progress Dashboard */}
+        {/* Progress Dashboard — Readiness label replaces meaningless % */}
         <div className="bg-[var(--card-bg)] rounded-2xl border border-[var(--card-border)] p-5 mb-5" style={{ boxShadow: "var(--shadow-sm)" }}>
           <h2 className="text-[14px] font-semibold text-[var(--text-primary)] mb-4">Learning Progress</h2>
 
-          {/* Main Score */}
-          <div className="text-center mb-4">
-            <div className="relative inline-flex items-center justify-center">
-              <svg className="w-28 h-28 transform -rotate-90">
-                <circle cx="56" cy="56" r="48" fill="none" stroke="#e5e7eb" strokeWidth="8" />
-                <circle cx="56" cy="56" r="48" fill="none"
-                  stroke={intel?.intelligence_pct >= 70 ? "#10b981" : intel?.intelligence_pct >= 40 ? "#3b82f6" : "#f59e0b"}
-                  strokeWidth="8" strokeLinecap="round"
-                  strokeDasharray={`${(intel?.intelligence_pct || 0) * 3.01} 301.6`} />
-              </svg>
-              <div className="absolute text-center">
-                <div className="text-[28px] font-bold text-[var(--text-primary)]">{intel?.intelligence_pct || 0}%</div>
-                <div className="text-[9px] text-[var(--text-muted)]">Progress</div>
-              </div>
-            </div>
-          </div>
-
-          {/* Breakdown Grid */}
-          <div className="grid grid-cols-3 gap-2 mb-4">
-            {[
-              { label: "Documents", value: intel?.breakdown?.documents || 0, color: "text-blue-600", bg: "bg-blue-50" },
-              { label: "Rules", value: intel?.breakdown?.decision_rules || 0, color: "text-purple-600", bg: "bg-purple-50" },
-              { label: "Chat Learned", value: intel?.breakdown?.chat_learned || 0, color: "text-indigo-600", bg: "bg-indigo-50" },
-              { label: "Corrections", value: intel?.breakdown?.corrections || 0, color: "text-red-600", bg: "bg-red-50" },
-              { label: "Approvals", value: intel?.breakdown?.approvals || 0, color: "text-green-600", bg: "bg-green-50" },
-              { label: "Tasks Done", value: intel?.breakdown?.tasks_completed || 0, color: "text-amber-600", bg: "bg-amber-50" },
-            ].map(s => (
-              <div key={s.label} className={`${s.bg} rounded-xl px-3 py-2.5 text-center`}>
-                <div className={`text-[18px] font-bold ${s.color}`}>{s.value}</div>
-                <div className="text-[9px] text-[var(--text-muted)]">{s.label}</div>
-              </div>
-            ))}
-          </div>
-
-          {/* Learning Timeline (30-day bar chart) */}
-          {timeline.length > 0 && (
-            <div>
-              <div className="text-[11px] font-medium text-[var(--text-muted)] mb-2">30-Day Growth</div>
-              <div className="flex items-end gap-[2px] h-[60px] mb-1">
-                {timeline.slice(-30).map((d: any, i: number) => {
-                  const height = Math.max(2, d.day_score * 3);
-                  const hasActivity = d.day_score > 0;
-                  return (
-                    <div key={i} className="flex-1 flex flex-col items-center justify-end" title={`${d.date}: +${d.day_score} pts`}>
-                      <div
-                        className={`w-full rounded-t transition-all ${hasActivity ? "bg-gradient-to-t from-blue-500 to-purple-500" : "bg-gray-100"}`}
-                        style={{ height: `${Math.min(60, height)}px` }}
-                      />
+          {/* Readiness Tier (replaces % circle) */}
+          {intel?.readiness && (
+            <div className="mb-4 rounded-xl p-4" style={{ backgroundColor: `${intel.readiness.color}15`, borderLeft: `4px solid ${intel.readiness.color}` }}>
+              <div className="flex items-center gap-3">
+                <div className="text-[28px]">
+                  {intel.readiness.tier === 5 ? "🚀" : intel.readiness.tier === 4 ? "✅" : intel.readiness.tier === 3 ? "📈" : intel.readiness.tier === 2 ? "🌱" : "👶"}
+                </div>
+                <div className="flex-1">
+                  <div className="flex items-center gap-2">
+                    <div className="text-[18px] font-bold" style={{ color: intel.readiness.color }}>{intel.readiness.label}</div>
+                    <div className="flex gap-0.5">
+                      {[1,2,3,4,5].map(t => (
+                        <span key={t} className={`w-1.5 h-1.5 rounded-full ${t <= intel.readiness.tier ? "" : "bg-gray-200"}`} style={{ backgroundColor: t <= intel.readiness.tier ? intel.readiness.color : undefined }} />
+                      ))}
                     </div>
-                  );
-                })}
-              </div>
-              <div className="flex justify-between text-[8px] text-[var(--text-muted)]">
-                <span>30 days ago</span>
-                <span>Today</span>
+                  </div>
+                  <div className="text-[11px] text-[var(--text-secondary)] mt-0.5">{intel.readiness.description}</div>
+                </div>
               </div>
             </div>
           )}
+
+          {/* Breakdown Grid — Now CLICKABLE */}
+          <div className="grid grid-cols-3 gap-2 mb-4">
+            {[
+              { key: "documents", label: "Documents", value: intel?.breakdown?.documents || 0, color: "text-blue-600", bg: "bg-blue-50",
+                getItems: () => knowledge.filter(k => k.source_type === "document"),
+                renderItem: (k: any) => ({ title: k.title, subtitle: (k.content || "").slice(0, 120) }) },
+              { key: "rules", label: "Rules", value: intel?.breakdown?.decision_rules || 0, color: "text-purple-600", bg: "bg-purple-50",
+                getItems: () => knowledge.filter(k => k.source_type === "decision"),
+                renderItem: (k: any) => ({ title: k.title, subtitle: (k.content || "").slice(0, 200) }) },
+              { key: "chat", label: "Chat Learned", value: intel?.breakdown?.chat_learned || 0, color: "text-indigo-600", bg: "bg-indigo-50",
+                getItems: () => activity.filter((a: any) => a.action_type === "auto_learn"),
+                renderItem: (a: any) => ({ title: a.description, subtitle: new Date(a.timestamp).toLocaleString() }) },
+              { key: "corrections", label: "Corrections", value: intel?.breakdown?.corrections || 0, color: "text-red-600", bg: "bg-red-50",
+                getItems: () => knowledge.filter(k => (k.title || "").toLowerCase().includes("correction")),
+                renderItem: (k: any) => ({ title: k.title, subtitle: (k.content || "").slice(0, 200) }) },
+              { key: "approvals", label: "Approvals", value: intel?.breakdown?.approvals || 0, color: "text-green-600", bg: "bg-green-50",
+                getItems: () => activity.filter((a: any) => a.action_type === "feedback" && /approv/i.test(a.description || "")),
+                renderItem: (a: any) => ({ title: a.description, subtitle: new Date(a.timestamp).toLocaleString() }) },
+              { key: "tasks_done", label: "Tasks Done", value: intel?.breakdown?.tasks_completed || 0, color: "text-amber-600", bg: "bg-amber-50",
+                getItems: () => tasks.filter((t: any) => t.status === "done"),
+                renderItem: (t: any) => ({ title: t.title, subtitle: (t.result_text || "").slice(0, 200) }) },
+            ].map(s => (
+              <button key={s.key} onClick={() => setDetailModal({ title: `${s.label} (${s.value})`, items: s.getItems(), renderItem: s.renderItem })}
+                className={`${s.bg} rounded-xl px-3 py-2.5 text-center hover:ring-2 hover:ring-blue-300 transition-all cursor-pointer`}>
+                <div className={`text-[18px] font-bold ${s.color}`}>{s.value}</div>
+                <div className="text-[9px] text-[var(--text-muted)]">{s.label}</div>
+              </button>
+            ))}
+          </div>
+
+          {/* 30-Day Chart — Y axis + X dates + hover tooltip */}
+          {timeline.length > 0 && (() => {
+            const days = timeline.slice(-30);
+            const maxScore = Math.max(...days.map((d: any) => d.day_score), 10);
+            const yTicks = [0, Math.round(maxScore * 0.5), maxScore];
+            return (
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <div className="text-[11px] font-medium text-[var(--text-muted)]">30-Day Growth</div>
+                  {hoveredDay && (
+                    <div className="text-[10px] text-[var(--text-primary)] bg-blue-50 px-2 py-0.5 rounded font-medium">
+                      {new Date(hoveredDay.date).toLocaleDateString("en-US", { month: "short", day: "numeric" })}
+                      &nbsp;·&nbsp;<span className="text-blue-600">+{hoveredDay.day_score} pts</span>
+                      {hoveredDay.knowledge_added > 0 && <span className="text-[var(--text-muted)]">&nbsp;·&nbsp;{hoveredDay.knowledge_added} docs</span>}
+                      {hoveredDay.corrections > 0 && <span className="text-red-500">&nbsp;·&nbsp;{hoveredDay.corrections} corrections</span>}
+                      {hoveredDay.tasks_done > 0 && <span className="text-amber-600">&nbsp;·&nbsp;{hoveredDay.tasks_done} tasks</span>}
+                    </div>
+                  )}
+                </div>
+                <div className="flex gap-2">
+                  {/* Y-axis labels */}
+                  <div className="flex flex-col justify-between text-[9px] text-[var(--text-muted)] py-0.5" style={{ height: "70px" }}>
+                    {yTicks.slice().reverse().map(v => <span key={v}>{v}</span>)}
+                  </div>
+                  {/* Bars */}
+                  <div className="flex-1 flex items-end gap-[2px]" style={{ height: "70px" }}
+                       onMouseLeave={() => setHoveredDay(null)}>
+                    {days.map((d: any, i: number) => {
+                      const heightPct = (d.day_score / maxScore) * 100;
+                      const hasActivity = d.day_score > 0;
+                      return (
+                        <div key={i} className="flex-1 flex flex-col items-center justify-end h-full"
+                             onMouseEnter={() => setHoveredDay(d)}>
+                          <div
+                            className={`w-full rounded-t transition-all hover:opacity-80 cursor-pointer ${hasActivity ? "bg-gradient-to-t from-blue-500 to-purple-500" : "bg-gray-100"}`}
+                            style={{ height: `${Math.max(2, heightPct)}%` }}
+                          />
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+                {/* X-axis dates */}
+                <div className="flex justify-between text-[9px] text-[var(--text-muted)] mt-1 ml-6">
+                  <span>{new Date(days[0].date).toLocaleDateString("en-US", { month: "short", day: "numeric" })}</span>
+                  <span>{new Date(days[Math.floor(days.length / 2)].date).toLocaleDateString("en-US", { month: "short", day: "numeric" })}</span>
+                  <span>Today</span>
+                </div>
+                <div className="text-[9px] text-[var(--text-muted)] mt-1 ml-6">Y axis = learning points per day · Hover for details</div>
+              </div>
+            );
+          })()}
         </div>
 
-        {/* Self-Improvement */}
+        {/* Self-Improvement — No Improve Now button, all entries clickable */}
         <div className="bg-[var(--card-bg)] rounded-2xl border border-[var(--card-border)] p-5 mb-5" style={{ boxShadow: "var(--shadow-sm)" }}>
           <div className="flex items-center justify-between mb-3">
             <h2 className="text-[14px] font-semibold text-[var(--text-primary)] flex items-center gap-2">
               <span className="text-[16px]">🧠</span> Self-Improvement
             </h2>
-            <button
-              onClick={async () => {
-                setImproving(true);
-                try {
-                  await apiFetch(`/twins/${twinId}/self-improve`, { method: "POST" });
-                  fetchAll();
-                } catch {} finally { setImproving(false); }
-              }}
-              disabled={improving}
-              className="px-3 py-1.5 bg-purple-50 text-purple-600 rounded-lg text-[11px] font-medium hover:bg-purple-100 transition-colors disabled:opacity-50"
-            >
-              {improving ? "Improving..." : "Improve Now"}
-            </button>
+            <span className="text-[10px] text-[var(--text-muted)]">Auto-runs every 6 hours</span>
           </div>
 
           {selfImproveHistory.length === 0 ? (
             <div className="text-[12px] text-[var(--text-muted)] text-center py-4">
-              Your twin hasn't self-improved yet. Click "Improve Now" or it runs automatically every 6 hours.
+              Your twin hasn't self-improved yet. The system runs automatically every 6 hours.
             </div>
           ) : (
-            <div className="space-y-2">
+            <button onClick={() => setDetailModal({
+              title: `Self-Improvement History (${selfImproveHistory.length})`,
+              items: selfImproveHistory,
+              renderItem: (s: any) => ({
+                title: s.description,
+                subtitle: `Method: ${s.metadata?.method || "unknown"} · ${new Date(s.timestamp).toLocaleString()}` +
+                  (s.metadata?.improvements_count ? ` · ${s.metadata.improvements_count} improvements` : "") +
+                  (s.metadata?.items_count ? ` · ${s.metadata.items_count} items` : ""),
+              }),
+            })}
+              className="w-full text-left space-y-2 hover:opacity-90 transition-opacity">
               {selfImproveHistory.slice(0, 5).map((s: any) => (
                 <div key={s.id} className="flex items-start gap-2">
                   <span className="text-[12px] mt-0.5">
@@ -490,7 +982,8 @@ export default function Dashboard({ onLogout }: Props) {
                   </div>
                 </div>
               ))}
-            </div>
+              <div className="text-[10px] text-blue-600 font-medium pt-1">Tap to see all {selfImproveHistory.length} entries →</div>
+            </button>
           )}
         </div>
 
@@ -549,6 +1042,36 @@ export default function Dashboard({ onLogout }: Props) {
           )}
         </div>
       </div>
+
+      {/* Detail Modal — shared by stat cards + self-improve */}
+      {detailModal && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4" onClick={() => setDetailModal(null)}>
+          <div className="absolute inset-0 bg-black/50" />
+          <div className="relative bg-white rounded-2xl border border-gray-200 w-full max-w-lg max-h-[80vh] flex flex-col" style={{ boxShadow: "0 20px 60px rgba(0,0,0,0.2)" }} onClick={e => e.stopPropagation()}>
+            <div className="p-5 border-b border-gray-200 flex items-center justify-between">
+              <h2 className="text-[16px] font-semibold text-[var(--text-primary)]">{detailModal.title}</h2>
+              <button onClick={() => setDetailModal(null)} className="text-[var(--text-muted)] hover:text-[var(--text-primary)] text-[18px]">×</button>
+            </div>
+            <div className="p-5 overflow-y-auto flex-1">
+              {detailModal.items.length === 0 ? (
+                <div className="text-center text-[var(--text-muted)] text-[13px] py-8">Nothing here yet.</div>
+              ) : (
+                <div className="space-y-3">
+                  {detailModal.items.map((it: any, i: number) => {
+                    const rendered = detailModal.renderItem ? detailModal.renderItem(it) : { title: String(it), subtitle: "" };
+                    return (
+                      <div key={it.id || i} className="bg-[var(--bg-secondary)] rounded-lg px-4 py-3">
+                        <div className="text-[13px] font-medium text-[var(--text-primary)]">{rendered.title}</div>
+                        {rendered.subtitle && <div className="text-[11px] text-[var(--text-muted)] mt-1 whitespace-pre-wrap">{rendered.subtitle}</div>}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 
@@ -980,71 +1503,323 @@ export default function Dashboard({ onLogout }: Props) {
   );
 
   // ==================== CHAT PAGE ====================
-  if (page === "chat") return (
-    <div className="min-h-screen bg-[var(--bg-app)] flex flex-col">
-      {nav}
-      <div className="flex-1 flex flex-col max-w-[700px] mx-auto w-full p-4 md:p-6">
-        <div className="flex-1 bg-[var(--card-bg)] rounded-2xl border border-[var(--card-border)] flex flex-col" style={{ boxShadow: "var(--shadow-sm)", minHeight: "500px", maxHeight: "calc(100vh - 140px)" }}>
-          {/* Chat messages */}
-          <div className="flex-1 overflow-y-auto px-5 py-4 space-y-3">
-            {chatMessages.length === 0 && (
-              <div className="text-center py-10">
-                <div className="text-[36px] mb-2">💬</div>
-                <div className="text-[14px] font-semibold text-[var(--text-primary)] mb-1">Chat with {twin.name}</div>
-                <div className="text-[12px] text-[var(--text-muted)] mb-4">Teach your twin by having a conversation</div>
-                <div className="flex flex-wrap gap-2 justify-center">
-                  {["What do you know about my job?", "How would you write a daily report?", "What rules do you follow?"].map(q => (
-                    <button key={q} onClick={() => { setChatInput(q); }}
-                      className="px-3 py-1.5 bg-[var(--bg-secondary)] rounded-full text-[11px] text-[var(--text-secondary)] hover:bg-blue-50 hover:text-blue-600 transition-all">
-                      {q}
-                    </button>
+  if (page === "chat") {
+    // Filter sessions by search + group by folder
+    const q = chatSearch.toLowerCase();
+    const filtered = q ? chatSessions.filter(s => s.title.toLowerCase().includes(q)) : chatSessions;
+    const sessionsByFolder = new Map<string, ChatSession[]>();
+    const unfiledSessions: ChatSession[] = [];
+    filtered.forEach(s => {
+      if (s.folder) {
+        if (!sessionsByFolder.has(s.folder)) sessionsByFolder.set(s.folder, []);
+        sessionsByFolder.get(s.folder)!.push(s);
+      } else {
+        unfiledSessions.push(s);
+      }
+    });
+
+    const currentModelMeta = availableModels.find(m => m.id === selectedModel);
+    const MODEL_LABEL: Record<string, string> = {
+      "claude-opus-4-7":   "Opus 4.7",
+      "claude-sonnet-4-6": "Sonnet 4.6",
+      "claude-haiku-4-5":  "Haiku 4.5",
+      "gpt-4o":            "GPT-4o",
+      "gpt-4o-mini":       "GPT-4o mini",
+      "gemini-2.0-flash":  "Gemini 2.0",
+      "gemini-1.5-pro":    "Gemini 1.5",
+      "llama3":            "Llama 3",
+      "qwen2.5":           "Qwen 2.5",
+      "gemma3":            "Gemma 3",
+      "phi-4":             "Phi-4",
+    };
+    const PROVIDER_HINT: Record<string, string> = {
+      anthropic: "Claude — high quality reasoning",
+      openai:    "OpenAI — fast, balanced",
+      gemini:    "Google — multimodal capable",
+      ollama:    "Local model (no internet)",
+    };
+
+    // Helper: render one session row in the sidebar (arrow fn — block-scope safe)
+    const renderChatSessionItem = (s: ChatSession) => {
+      const isActive = activeSessionId === s.id;
+      return (
+        <div key={s.id} onClick={() => setActiveSessionId(s.id)}
+          className={`group flex items-center gap-2 px-2 py-1.5 rounded-md cursor-pointer transition-colors ${isActive ? "bg-blue-50 dark:bg-blue-900/20" : "hover:bg-[var(--card-bg)]"}`}>
+          <span className="text-[12px]">💬</span>
+          {renamingSession === s.id ? (
+            <input autoFocus defaultValue={s.title}
+              onBlur={e => { renameChatSession(s.id, e.target.value); setRenamingSession(null); }}
+              onKeyDown={e => { if (e.key === "Enter") { renameChatSession(s.id, (e.target as HTMLInputElement).value); setRenamingSession(null); } if (e.key === "Escape") setRenamingSession(null); }}
+              onClick={e => e.stopPropagation()}
+              className="flex-1 px-1 py-0.5 text-[12px] bg-[var(--card-bg)] border border-blue-400 rounded text-[var(--text-primary)] focus:outline-none" />
+          ) : (
+            <span className={`flex-1 truncate text-[12px] ${isActive ? "text-[var(--text-primary)] font-medium" : "text-[var(--text-secondary)]"}`}>{s.title}</span>
+          )}
+          <div className="hidden group-hover:flex items-center gap-1 shrink-0">
+            <button onClick={e => { e.stopPropagation(); setRenamingSession(s.id); }}
+              className="text-[10px] text-[var(--text-muted)] hover:text-blue-500" title="Rename">✏️</button>
+            <button onClick={e => { e.stopPropagation(); deleteChatSession(s.id); }}
+              className="text-[10px] text-[var(--text-muted)] hover:text-red-500" title="Delete">🗑️</button>
+          </div>
+        </div>
+      );
+    };
+
+    return (
+      <div className="min-h-screen bg-[var(--bg-app)] flex flex-col">
+        {nav}
+        <div className="flex-1 flex w-full overflow-hidden" style={{ minHeight: 0 }}>
+          {/* ============ SIDEBAR ============ */}
+          {showChatSidebar && (
+          <aside className="w-[260px] shrink-0 border-r border-[var(--card-border)] bg-[var(--bg-secondary)] flex flex-col" style={{ height: "calc(100vh - 56px)" }}>
+            {/* Header buttons */}
+            <div className="p-3 space-y-2 border-b border-[var(--card-border)]">
+              <button onClick={newChatSession}
+                className="w-full flex items-center gap-2 px-3 py-2 bg-gradient-to-r from-blue-500 to-purple-600 text-white rounded-lg text-[12px] font-semibold hover:opacity-90 transition-opacity">
+                <span className="text-[14px]">+</span> New chat
+              </button>
+              <button onClick={() => setShowNewFolder(!showNewFolder)}
+                className="w-full flex items-center gap-2 px-3 py-2 bg-[var(--card-bg)] border border-[var(--card-border)] text-[var(--text-secondary)] rounded-lg text-[12px] font-medium hover:border-blue-400 transition-colors">
+                <span className="text-[14px]">📁</span> New folder
+              </button>
+              {showNewFolder && (
+                <div className="flex gap-1">
+                  <input autoFocus value={newFolderName} onChange={e => setNewFolderName(e.target.value)}
+                    onKeyDown={e => { if (e.key === "Enter") { addChatFolder(newFolderName); setNewFolderName(""); setShowNewFolder(false); } if (e.key === "Escape") { setShowNewFolder(false); setNewFolderName(""); } }}
+                    placeholder="Folder name..."
+                    className="flex-1 px-2 py-1.5 bg-[var(--card-bg)] border border-[var(--card-border)] rounded text-[11px] text-[var(--text-primary)] focus:outline-none focus:border-blue-400" />
+                  <button onClick={() => { addChatFolder(newFolderName); setNewFolderName(""); setShowNewFolder(false); }}
+                    className="px-2 py-1.5 bg-blue-500 text-white rounded text-[11px] font-medium">OK</button>
+                </div>
+              )}
+              {/* Search */}
+              <div className="relative">
+                <input value={chatSearch} onChange={e => setChatSearch(e.target.value)}
+                  placeholder="Search chats..."
+                  className="w-full pl-8 pr-2 py-1.5 bg-[var(--card-bg)] border border-[var(--card-border)] rounded-lg text-[12px] text-[var(--text-primary)] placeholder:text-[var(--text-muted)] focus:outline-none focus:border-blue-400" />
+                <span className="absolute left-2 top-1/2 -translate-y-1/2 text-[var(--text-muted)] text-[12px]">🔍</span>
+              </div>
+            </div>
+
+            {/* Folders + sessions list */}
+            <div className="flex-1 overflow-y-auto p-2 space-y-1">
+              {/* Folders */}
+              {chatFolders.length > 0 && (
+                <div className="mb-2">
+                  <div className="px-2 mb-1 text-[10px] font-semibold text-[var(--text-muted)] uppercase tracking-wide">Folders</div>
+                  {chatFolders.map(folder => {
+                    const folderSessions = sessionsByFolder.get(folder) || [];
+                    const expanded = expandedChatFolders.has(folder);
+                    return (
+                      <div key={folder}>
+                        <div onClick={() => toggleChatFolder(folder)}
+                          className="group flex items-center gap-2 px-2 py-1.5 rounded-md cursor-pointer hover:bg-[var(--card-bg)] transition-colors">
+                          <span className={`text-[10px] text-[var(--text-muted)] transition-transform ${expanded ? "rotate-90" : ""}`}>▶</span>
+                          <span className="text-[13px]">📁</span>
+                          <span className="flex-1 text-[12px] text-[var(--text-secondary)] font-medium truncate">{folder}</span>
+                          <span className="text-[9px] text-[var(--text-muted)]">{folderSessions.length}</span>
+                          <button onClick={e => { e.stopPropagation(); removeChatFolder(folder); }}
+                            className="hidden group-hover:block text-[10px] text-[var(--text-muted)] hover:text-red-500">×</button>
+                        </div>
+                        {expanded && (
+                          <div className="ml-4 space-y-0.5">
+                            {folderSessions.length === 0 ? (
+                              <div className="px-2 py-1 text-[10px] text-[var(--text-muted)] italic">Empty folder</div>
+                            ) : folderSessions.map(s => renderChatSessionItem(s))}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+
+              {/* Recents */}
+              {unfiledSessions.length > 0 && (
+                <div>
+                  <div className="px-2 mb-1 text-[10px] font-semibold text-[var(--text-muted)] uppercase tracking-wide">Recent</div>
+                  {unfiledSessions.map(s => renderChatSessionItem(s))}
+                </div>
+              )}
+
+              {chatSessions.length === 0 && (
+                <div className="text-center py-8 text-[12px] text-[var(--text-muted)]">
+                  No chats yet.<br />Click "+ New chat" to start.
+                </div>
+              )}
+            </div>
+          </aside>
+          )}
+
+          {/* ============ MAIN CHAT AREA ============ */}
+          <div className="flex-1 flex flex-col" style={{ minHeight: 0 }}>
+            {/* Top bar — Model picker + Sidebar toggle */}
+            <div className="flex items-center gap-2 px-4 py-2 border-b border-[var(--card-border)] bg-[var(--card-bg)]">
+              <button onClick={() => setShowChatSidebar(!showChatSidebar)}
+                className="p-1.5 text-[var(--text-muted)] hover:text-[var(--text-primary)] rounded hover:bg-[var(--bg-secondary)] transition-colors" title={showChatSidebar ? "Hide sidebar" : "Show sidebar"}>
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M4 6h16M4 12h16M4 18h16" /></svg>
+              </button>
+              <div className="flex-1 truncate text-[13px] font-medium text-[var(--text-primary)]">
+                {activeSessionId ? (chatSessions.find(s => s.id === activeSessionId)?.title || "Chat") : `Chat with ${twin.name}`}
+              </div>
+              {/* Model picker dropdown */}
+              <div className="relative">
+                <button onClick={() => setShowModelPicker(!showModelPicker)}
+                  className="flex items-center gap-1.5 px-3 py-1.5 bg-[var(--bg-secondary)] border border-[var(--card-border)] rounded-lg text-[12px] font-medium text-[var(--text-primary)] hover:border-blue-400 transition-colors">
+                  <span>{MODEL_LABEL[selectedModel] || selectedModel}</span>
+                  <span className="text-[10px] text-[var(--text-muted)]">▾</span>
+                </button>
+                {showModelPicker && (
+                  <>
+                    <div className="fixed inset-0 z-40" onClick={() => setShowModelPicker(false)} />
+                    <div className="absolute right-0 top-full mt-1 w-[280px] bg-[var(--card-bg)] border border-[var(--card-border)] rounded-xl z-50 overflow-hidden" style={{ boxShadow: "0 10px 40px rgba(0,0,0,0.15)" }}>
+                      {[
+                        { group: "Cloud — Claude", provider: "anthropic", models: ["claude-opus-4-7", "claude-sonnet-4-6", "claude-haiku-4-5"] },
+                        { group: "Cloud — OpenAI", provider: "openai", models: ["gpt-4o", "gpt-4o-mini"] },
+                        { group: "Cloud — Gemini", provider: "gemini", models: ["gemini-2.0-flash", "gemini-1.5-pro"] },
+                        { group: "Local — Ollama", provider: "ollama", models: ["llama3", "qwen2.5", "gemma3", "phi-4"] },
+                      ].map(group => (
+                        <div key={group.group}>
+                          <div className="px-3 py-1.5 text-[10px] font-semibold text-[var(--text-muted)] uppercase tracking-wide bg-[var(--bg-secondary)]">{group.group}</div>
+                          {group.models.map(mid => {
+                            const meta = availableModels.find(x => x.id === mid);
+                            const isAvailable = meta?.available !== false;
+                            const isActive = selectedModel === mid;
+                            return (
+                              <button key={mid} onClick={() => { if (!isAvailable) return; setSelectedModel(mid); setShowModelPicker(false); }}
+                                disabled={!isAvailable}
+                                className={`w-full text-left px-3 py-2 flex items-center gap-2 transition-colors ${isActive ? "bg-blue-50" : "hover:bg-[var(--bg-secondary)]"} ${!isAvailable ? "opacity-40 cursor-not-allowed" : ""}`}>
+                                <div className="flex-1">
+                                  <div className="text-[12px] font-medium text-[var(--text-primary)]">{MODEL_LABEL[mid] || mid}</div>
+                                  <div className="text-[10px] text-[var(--text-muted)]">{!isAvailable ? "API key not set" : PROVIDER_HINT[group.provider]}</div>
+                                </div>
+                                {isActive && <span className="text-blue-500">✓</span>}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      ))}
+                    </div>
+                  </>
+                )}
+              </div>
+            </div>
+
+            {/* Messages */}
+            <div className="flex-1 overflow-y-auto px-5 py-4 space-y-3" style={{ minHeight: 0 }}>
+              {chatMessages.length === 0 && (
+                <div className="text-center py-10">
+                  <div className="text-[36px] mb-2">💬</div>
+                  <div className="text-[15px] font-semibold text-[var(--text-primary)] mb-1">How can I help you today?</div>
+                  <div className="text-[12px] text-[var(--text-muted)] mb-5">Ask anything, attach files, or speak — your twin learns from every conversation</div>
+                  <div className="flex flex-wrap gap-2 justify-center max-w-md mx-auto">
+                    {[
+                      { label: "📊 Make me a report", q: "Make me a report on what I've been working on this week" },
+                      { label: "📝 Draft an email", q: "Draft a professional email to a client about our Q3 launch" },
+                      { label: "🎓 Learn something", q: "Teach me about FastAPI middleware" },
+                      { label: "💡 Brainstorm", q: "Brainstorm 10 ideas for our next product feature" },
+                    ].map(s => (
+                      <button key={s.q} onClick={() => setChatInput(s.q)}
+                        className="px-3 py-2 bg-[var(--bg-secondary)] rounded-full text-[12px] text-[var(--text-secondary)] hover:bg-blue-50 hover:text-blue-600 transition-all">
+                        {s.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {chatMessages.map((msg, i) => (
+                <div key={i} className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}>
+                  <div className={`max-w-[80%]`}>
+                    <div className={`px-4 py-2.5 rounded-2xl text-[13px] leading-relaxed whitespace-pre-wrap ${
+                      msg.role === "user"
+                        ? "bg-gradient-to-r from-blue-500 to-purple-600 text-white rounded-br-md"
+                        : "bg-[var(--bg-secondary)] text-[var(--text-primary)] rounded-bl-md"
+                    }`}>
+                      {msg.content}
+                    </div>
+                    {msg.role === "assistant" && msg.model && (
+                      <div className="text-[9px] text-[var(--text-muted)] mt-1 ml-2">via {MODEL_LABEL[msg.model] || msg.model}</div>
+                    )}
+                  </div>
+                </div>
+              ))}
+              {chatLoading && (
+                <div className="flex justify-start">
+                  <div className="bg-[var(--bg-secondary)] px-4 py-3 rounded-2xl rounded-bl-md">
+                    <div className="flex gap-1">
+                      <span className="w-2 h-2 bg-[var(--text-muted)] rounded-full animate-bounce" style={{ animationDelay: "0ms" }} />
+                      <span className="w-2 h-2 bg-[var(--text-muted)] rounded-full animate-bounce" style={{ animationDelay: "150ms" }} />
+                      <span className="w-2 h-2 bg-[var(--text-muted)] rounded-full animate-bounce" style={{ animationDelay: "300ms" }} />
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Attached files preview */}
+            {attachedFiles.length > 0 && (
+              <div className="px-5 py-2 border-t border-[var(--card-border)] bg-[var(--bg-secondary)]">
+                <div className="flex flex-wrap gap-2">
+                  {attachedFiles.map((f, i) => (
+                    <div key={i} className="flex items-center gap-2 px-3 py-1.5 bg-[var(--card-bg)] border border-[var(--card-border)] rounded-lg text-[11px]">
+                      <span>📄</span>
+                      <span className="text-[var(--text-primary)] font-medium">{f.filename}</span>
+                      <span className="text-[var(--text-muted)]">({f.kind}, {f.text.length} chars)</span>
+                      <button onClick={() => setAttachedFiles(prev => prev.filter((_, idx) => idx !== i))}
+                        className="text-[var(--text-muted)] hover:text-red-500">×</button>
+                    </div>
                   ))}
                 </div>
               </div>
             )}
-            {chatMessages.map((msg, i) => (
-              <div key={i} className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}>
-                <div className={`max-w-[80%] px-4 py-2.5 rounded-2xl text-[13px] leading-relaxed ${
-                  msg.role === "user"
-                    ? "bg-gradient-to-r from-blue-500 to-purple-600 text-white rounded-br-md"
-                    : "bg-[var(--bg-secondary)] text-[var(--text-primary)] rounded-bl-md"
-                }`}>
-                  {msg.content}
-                </div>
+
+            {/* Input bar */}
+            <div className="px-4 py-3 border-t border-[var(--card-border)] bg-[var(--card-bg)]">
+              <div className="flex items-end gap-2">
+                {/* + Attach button */}
+                <input id="twin-chat-file" type="file" className="hidden"
+                  accept=".txt,.md,.csv,.json,.pdf,.xlsx,.xlsm,.docx,.hwp,.log,.yaml,.yml,.py,.js,.ts,.tsx,.jsx,.html,.css"
+                  onChange={e => { const f = e.target.files?.[0]; if (f) attachFile(f); e.target.value = ""; }} />
+                <label htmlFor="twin-chat-file"
+                  className="p-2.5 bg-[var(--bg-secondary)] border border-[var(--card-border)] rounded-xl text-[var(--text-muted)] hover:bg-blue-50 hover:text-blue-600 hover:border-blue-300 cursor-pointer transition-colors shrink-0" title="Attach file (PDF, Excel, DOCX, text)">
+                  {uploadingFile ? (
+                    <div className="w-4 h-4 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
+                  ) : (
+                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6m0 0v6m0-6h6m-6 0H6" /></svg>
+                  )}
+                </label>
+
+                {/* Textarea */}
+                <textarea value={chatInput} onChange={e => setChatInput(e.target.value)}
+                  onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendChat(); } }}
+                  placeholder="How can I help you today?"
+                  disabled={chatLoading}
+                  rows={2}
+                  className="flex-1 px-4 py-2.5 bg-[var(--bg-input)] border border-[var(--card-border)] rounded-xl text-[13px] text-[var(--text-primary)] placeholder:text-[var(--text-muted)] focus:outline-none focus:border-blue-400 resize-none" />
+
+                {/* Voice button */}
+                <button onClick={startVoiceInput} disabled={voiceListening}
+                  className={`p-2.5 border rounded-xl transition-colors shrink-0 ${voiceListening ? "bg-red-500 border-red-500 text-white animate-pulse" : "bg-[var(--bg-secondary)] border-[var(--card-border)] text-[var(--text-muted)] hover:bg-blue-50 hover:text-blue-600 hover:border-blue-300"}`}
+                  title={voiceListening ? "Listening..." : "Voice input"}>
+                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M19 11a7 7 0 01-14 0m7 0V5a3 3 0 116 0v6a3 3 0 11-6 0z" />
+                  </svg>
+                </button>
+
+                {/* Send button */}
+                <button onClick={sendChat} disabled={(!chatInput.trim() && attachedFiles.length === 0) || chatLoading}
+                  className="px-4 py-2.5 bg-gradient-to-r from-blue-500 to-purple-600 text-white rounded-xl text-[13px] font-semibold hover:opacity-90 disabled:opacity-50 shrink-0">
+                  Send
+                </button>
               </div>
-            ))}
-            {chatLoading && (
-              <div className="flex justify-start">
-                <div className="bg-[var(--bg-secondary)] px-4 py-3 rounded-2xl rounded-bl-md">
-                  <div className="flex gap-1">
-                    <span className="w-2 h-2 bg-[var(--text-muted)] rounded-full animate-bounce" style={{ animationDelay: "0ms" }} />
-                    <span className="w-2 h-2 bg-[var(--text-muted)] rounded-full animate-bounce" style={{ animationDelay: "150ms" }} />
-                    <span className="w-2 h-2 bg-[var(--text-muted)] rounded-full animate-bounce" style={{ animationDelay: "300ms" }} />
-                  </div>
-                </div>
-              </div>
-            )}
-          </div>
-          {/* Input */}
-          <div className="px-5 py-4 border-t border-[var(--card-border)]">
-            <div className="flex gap-2 items-end">
-              <textarea value={chatInput} onChange={e => setChatInput(e.target.value)}
-                onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendChat(); } }}
-                placeholder={`Talk to ${twin.name}... (Shift+Enter for new line)`}
-                disabled={chatLoading}
-                rows={3}
-                className="flex-1 px-4 py-3 bg-[var(--bg-input)] border border-[var(--card-border)] rounded-xl text-[13px] text-[var(--text-primary)] placeholder:text-[var(--text-muted)] focus:outline-none focus:border-blue-400 resize-none" />
-              <button onClick={sendChat} disabled={!chatInput.trim() || chatLoading}
-                className="px-5 py-3 bg-gradient-to-r from-blue-500 to-purple-600 text-white rounded-xl text-[13px] font-semibold hover:opacity-90 disabled:opacity-50 shrink-0">
-                Send
-              </button>
+              <div className="text-[9px] text-[var(--text-muted)] mt-1 ml-12">Enter = send · Shift+Enter = new line · Voice + files supported · Model: <span className="font-medium text-[var(--text-secondary)]">{MODEL_LABEL[selectedModel] || selectedModel}</span></div>
             </div>
-            <div className="text-[9px] text-[var(--text-muted)] mt-1">Enter to send · Shift+Enter for new line</div>
           </div>
         </div>
       </div>
-    </div>
-  );
+    );
+
+  }
 
   // ==================== REVIEW PAGE ====================
   if (page === "review") return (
@@ -1156,12 +1931,25 @@ export default function Dashboard({ onLogout }: Props) {
                           </div>
                         )}
                         <div className="flex gap-2">
+                          {t.result_text && (
+                            <a href={downloadUrl(t.id)} download
+                              className="px-3 py-2 bg-blue-50 text-blue-700 rounded-lg text-[12px] font-medium hover:bg-blue-100 border border-blue-200 flex items-center gap-1 shrink-0">
+                              📥 Word
+                            </a>
+                          )}
                           <button onClick={async () => {
-                            await apiFetch(`/twins/${twinId}/correct`, {
-                              method: "POST", headers: { "Content-Type": "application/json" },
-                              body: JSON.stringify({ task_title: t.title, what_was_wrong: "", correct_approach: "Worker approved this work as correct." }),
-                            });
-                            fetchAll();
+                            try {
+                              const res = await apiFetch(`/twins/${twinId}/tasks/${t.id}/approve`, { method: "POST" });
+                              if (!res.ok) {
+                                const err = await res.json().catch(() => ({}));
+                                alert(`Approve failed: ${err.detail || res.status}`);
+                                return;
+                              }
+                            } catch (e) {
+                              alert(`Approve failed: ${e}`);
+                              return;
+                            }
+                            await fetchAll();
                           }} className="flex-1 py-2 bg-green-500 text-white rounded-lg text-[12px] font-medium hover:bg-green-600">Looks Good</button>
                           <button onClick={() => { setCorrectingTask(t); setCorrectionText(""); }}
                             className="flex-1 py-2 bg-red-50 text-red-600 rounded-lg text-[12px] font-medium hover:bg-red-100 border border-red-200">Needs Fix</button>
@@ -1228,6 +2016,7 @@ export default function Dashboard({ onLogout }: Props) {
                 <button onClick={() => setCorrectingTask(null)} className="px-4 py-2.5 text-[13px] text-[var(--text-muted)]">Cancel</button>
                 <button onClick={async () => {
                   if (!correctionText.trim()) return;
+                  // Save the correction as knowledge (so twin learns)
                   await apiFetch(`/twins/${twinId}/correct`, {
                     method: "POST", headers: { "Content-Type": "application/json" },
                     body: JSON.stringify({
@@ -1236,6 +2025,13 @@ export default function Dashboard({ onLogout }: Props) {
                       correct_approach: correctionText,
                     }),
                   });
+                  // Mark task as rejected so it leaves the review queue
+                  try {
+                    await apiFetch(`/twins/${twinId}/tasks/${correctingTask.id}/reject`, {
+                      method: "POST", headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({ review_status: "rejected", review_comment: correctionText }),
+                    });
+                  } catch {}
                   setCorrectingTask(null); setCorrectionText("");
                   fetchAll();
                 }} disabled={!correctionText.trim()}
@@ -1521,12 +2317,22 @@ export default function Dashboard({ onLogout }: Props) {
           </div>
         )}
 
-        {/* Morning Report Tab */}
-        {reportTab === "morning" && (!morningReport ? (
+        {/* Morning Report Tab — Auto-loads on open + Download buttons */}
+        {reportTab === "morning" && (reportLoading && !morningReport ? (
           <div className="text-center py-16 bg-[var(--card-bg)] rounded-2xl border border-[var(--card-border)]">
             <div className="text-[40px] mb-3">🌅</div>
-            <div className="text-[14px] font-semibold text-[var(--text-primary)] mb-2">Generate Morning Report</div>
-            <div className="text-[12px] text-[var(--text-muted)] mb-4">See what your twin did overnight</div>
+            <div className="text-[14px] font-semibold text-[var(--text-primary)] mb-2">Loading Morning Report...</div>
+            <div className="text-[12px] text-[var(--text-muted)]">Fetching what your twin did overnight</div>
+            <div className="flex justify-center gap-1 mt-4">
+              <span className="w-2 h-2 bg-blue-500 rounded-full animate-bounce" style={{ animationDelay: "0ms" }} />
+              <span className="w-2 h-2 bg-blue-500 rounded-full animate-bounce" style={{ animationDelay: "150ms" }} />
+              <span className="w-2 h-2 bg-blue-500 rounded-full animate-bounce" style={{ animationDelay: "300ms" }} />
+            </div>
+          </div>
+        ) : !morningReport ? (
+          <div className="text-center py-16 bg-[var(--card-bg)] rounded-2xl border border-[var(--card-border)]">
+            <div className="text-[40px] mb-3">🌅</div>
+            <div className="text-[14px] font-semibold text-[var(--text-primary)] mb-2">No report available</div>
             <button onClick={async () => {
               setReportLoading(true);
               try {
@@ -1534,7 +2340,7 @@ export default function Dashboard({ onLogout }: Props) {
                 setMorningReport(await res.json());
               } catch {} finally { setReportLoading(false); }
             }} className="px-5 py-2.5 bg-blue-600 text-white rounded-lg text-[13px] font-medium">
-              {reportLoading ? "Generating..." : "Get Report"}
+              Refresh
             </button>
           </div>
         ) : (
@@ -1554,6 +2360,39 @@ export default function Dashboard({ onLogout }: Props) {
               ))}
             </div>
 
+            {/* 📥 Downloadable Reports — Pulled from completed/review tasks */}
+            {(() => {
+              const downloadableTasks = tasks.filter((t: any) => t.result_text && t.result_text.length > 100);
+              if (downloadableTasks.length === 0) return null;
+              return (
+                <div className="bg-[var(--card-bg)] rounded-2xl border-2 border-blue-200 p-5" style={{ boxShadow: "var(--shadow-sm)" }}>
+                  <h2 className="text-[14px] font-semibold text-blue-700 mb-3 flex items-center gap-2">
+                    <span>📥</span> Downloadable Reports ({downloadableTasks.length})
+                  </h2>
+                  <div className="space-y-2">
+                    {downloadableTasks.map((t: any) => (
+                      <div key={t.id} className="flex items-center gap-3 bg-blue-50/50 rounded-lg px-4 py-3 border border-blue-100">
+                        <div className="text-[18px]">📄</div>
+                        <div className="flex-1 min-w-0">
+                          <div className="text-[13px] font-medium text-[var(--text-primary)] truncate">{t.title}</div>
+                          <div className="text-[10px] text-[var(--text-muted)]">
+                            {t.result_text?.length || 0} chars · {(t.result_text || "").split(/\s+/).filter(Boolean).length} words · status: {t.status}
+                          </div>
+                        </div>
+                        <a href={downloadUrl(t.id)} download
+                          className="px-3 py-1.5 bg-blue-600 text-white rounded-lg text-[11px] font-medium hover:bg-blue-700 flex items-center gap-1 shrink-0">
+                          <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                          </svg>
+                          Word
+                        </a>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              );
+            })()}
+
             {/* Overnight Completed */}
             {(morningReport.overnight?.completed_count || 0) > 0 && (
               <div className="bg-[var(--card-bg)] rounded-2xl border border-green-200 p-5" style={{ boxShadow: "var(--shadow-sm)" }}>
@@ -1561,15 +2400,24 @@ export default function Dashboard({ onLogout }: Props) {
                   <span>✅</span> Completed Overnight ({morningReport.overnight.completed_count})
                 </h2>
                 <div className="space-y-2">
-                  {morningReport.overnight.tasks_completed.map((t: any, i: number) => (
-                    <div key={i} className="flex items-start gap-2">
-                      <span className="text-green-500 mt-0.5">✓</span>
-                      <div>
-                        <div className="text-[13px] font-medium text-[var(--text-primary)]">{t.title}</div>
-                        {t.result_preview && <div className="text-[11px] text-[var(--text-muted)] mt-0.5">{t.result_preview}</div>}
+                  {morningReport.overnight.tasks_completed.map((t: any, i: number) => {
+                    const fullTask = tasks.find((x: any) => x.id === t.id || x.title === t.title);
+                    return (
+                      <div key={i} className="flex items-start gap-2 group">
+                        <span className="text-green-500 mt-0.5">✓</span>
+                        <div className="flex-1">
+                          <div className="text-[13px] font-medium text-[var(--text-primary)]">{t.title}</div>
+                          {t.result_preview && <div className="text-[11px] text-[var(--text-muted)] mt-0.5">{t.result_preview}</div>}
+                        </div>
+                        {fullTask?.id && (
+                          <a href={downloadUrl(fullTask.id)} download
+                            className="px-2 py-1 bg-green-50 text-green-700 rounded text-[10px] font-medium hover:bg-green-100 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
+                            📥 Word
+                          </a>
+                        )}
                       </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               </div>
             )}
@@ -1581,12 +2429,25 @@ export default function Dashboard({ onLogout }: Props) {
                   <span>⚠️</span> Needs Your Review ({morningReport.needs_review.count})
                 </h2>
                 <div className="space-y-2">
-                  {morningReport.needs_review.items.map((t: any, i: number) => (
-                    <div key={i} className="bg-amber-50 rounded-lg px-4 py-3">
-                      <div className="text-[13px] font-medium text-[var(--text-primary)]">{t.title}</div>
-                      {t.result_preview && <div className="text-[11px] text-[var(--text-muted)] mt-1">{t.result_preview}</div>}
-                    </div>
-                  ))}
+                  {morningReport.needs_review.items.map((t: any, i: number) => {
+                    const fullTask = tasks.find((x: any) => x.id === t.id || x.title === t.title);
+                    return (
+                      <div key={i} className="bg-amber-50 rounded-lg px-4 py-3">
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="flex-1">
+                            <div className="text-[13px] font-medium text-[var(--text-primary)]">{t.title}</div>
+                            {t.result_preview && <div className="text-[11px] text-[var(--text-muted)] mt-1">{t.result_preview}</div>}
+                          </div>
+                          {fullTask?.id && (
+                            <a href={downloadUrl(fullTask.id)} download
+                              className="px-2 py-1 bg-amber-100 text-amber-700 rounded text-[10px] font-medium hover:bg-amber-200 shrink-0">
+                              📥 Word
+                            </a>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
                   <button onClick={() => setPage("review")} className="w-full py-2 bg-amber-100 text-amber-700 rounded-lg text-[12px] font-medium hover:bg-amber-200">
                     Go to Review →
                   </button>

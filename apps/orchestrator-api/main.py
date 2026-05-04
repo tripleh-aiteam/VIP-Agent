@@ -4,13 +4,28 @@ Core supervisor service that coordinates all sub-agents and workflows.
 All DB writes go through this service — gateway/OpenClaw must never write directly.
 """
 
+# Load .env files BEFORE any other module that reads env vars (db.base, llm_client, etc.)
+import os
+from pathlib import Path
+try:
+    from dotenv import load_dotenv
+    # Try repo-root .env (vip-ai-platform/.env) — orchestrator runs from apps/orchestrator-api
+    repo_root_env = Path(__file__).resolve().parent.parent.parent / ".env"
+    if repo_root_env.exists():
+        load_dotenv(repo_root_env, override=False)
+    # Also load .env right next to main.py if present
+    local_env = Path(__file__).resolve().parent / ".env"
+    if local_env.exists():
+        load_dotenv(local_env, override=False)
+except ImportError:
+    pass  # dotenv optional — explicit env vars still work
+
 from fastapi import FastAPI, Depends, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 import redis.asyncio as aioredis
-import os
 
 from db.base import engine, Base, get_db
 from contracts.router import router as contracts_router
