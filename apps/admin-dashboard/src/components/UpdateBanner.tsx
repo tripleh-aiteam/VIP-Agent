@@ -2,14 +2,25 @@
 
 import { useState, useEffect } from "react";
 
-// Change this version string every time you push an update
-// The app compares this with localStorage to detect changes
-const APP_VERSION = "2026.04.21.001";
+// Web-deploy notice. Bumped each time we ship a meaningful change to the
+// website. Detects on the boss/worker's first visit after a deploy.
+//
+// Inside the Tauri desktop app this banner is suppressed — the
+// DesktopUpdater component shows real binary update prompts via Tauri's
+// updater plugin, so we don't double-notify.
+const APP_VERSION = "2026.05.08.001";
 const VERSION_KEY = "vip-app-version";
 const DISMISSED_KEY = "vip-update-dismissed";
 
-// Changelog for each version
+// Changelog for each version. Keep entries terse — full notes go in
+// Daily_changes.md (engineering log) and the GitHub release page.
 const CHANGELOG: Record<string, string[]> = {
+  "2026.05.08.001": [
+    "Reusable @triple-h/chatbot v1.1 module — streaming + multi-agent routing",
+    "Asset Agent migrated to the shared chatbot module",
+    "Desktop app: real auto-update via Tauri updater plugin (signed releases)",
+    "Removed redundant Chatting menu — chatbot is now overlay-only",
+  ],
   "2026.04.21.001": [
     "Added Meetings menu (Digital Twin meetings coming soon)",
     "Desktop app with auto-update support",
@@ -17,18 +28,24 @@ const CHANGELOG: Record<string, string[]> = {
   ],
 };
 
+// Detect whether we're running inside the Tauri desktop app.
+function isTauri(): boolean {
+  return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+}
+
 export default function UpdateBanner() {
   const [show, setShow] = useState(false);
   const [changes, setChanges] = useState<string[]>([]);
-  const [isNew, setIsNew] = useState(false);
 
   useEffect(() => {
+    // Inside the desktop app, DesktopUpdater handles version notices —
+    // this banner would just duplicate the message with stale info.
+    if (isTauri()) return;
+
     const storedVersion = localStorage.getItem(VERSION_KEY);
     const dismissed = localStorage.getItem(DISMISSED_KEY);
 
     if (storedVersion !== APP_VERSION) {
-      // New version detected
-      setIsNew(true);
       setChanges(CHANGELOG[APP_VERSION] || ["Platform updated with improvements"]);
 
       if (dismissed !== APP_VERSION) {
