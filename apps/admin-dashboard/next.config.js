@@ -2,15 +2,11 @@
 const nextConfig = {
   // Vercel handles output automatically
   // standalone mode only needed for Docker
+  // @triple-h/chatbot is declared as a file:../../packages/chatbot dependency
+  // in package.json, so npm install resolves it via node_modules. We still
+  // need transpilePackages because the package ships TypeScript source
+  // (no compiled dist/ in this monorepo path) and Next.js needs to transpile it.
   transpilePackages: ["@triple-h/chatbot"],
-  webpack: (config) => {
-    const path = require("path");
-    config.resolve.alias = {
-      ...(config.resolve.alias || {}),
-      "@triple-h/chatbot": path.resolve(__dirname, "../../packages/chatbot/src"),
-    };
-    return config;
-  },
 };
 
 module.exports = nextConfig;

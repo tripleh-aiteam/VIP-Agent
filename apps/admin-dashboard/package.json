@@ -13,6 +13,7 @@
     "@tauri-apps/api": "^2.10.1",
     "@tauri-apps/plugin-process": "^2.3.1",
     "@tauri-apps/plugin-updater": "^2.10.1",
+    "@triple-h/chatbot": "file:../../packages/chatbot",
     "next": "14.2.4",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
