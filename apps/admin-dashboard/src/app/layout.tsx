@@ -6,8 +6,14 @@ import TopBar from "@/components/TopBar";
 import AuthGuard from "@/components/AuthGuard";
 import UpdateBanner from "@/components/UpdateBanner";
 
-// Chatbot is voice-driven — only mount on client
-const ChatbotOverlay = dynamic(() => import("@/components/ChatbotOverlay"), { ssr: false });
+// Chatbot is voice-driven — only mount on client.
+// As of 2026-05-07 we use the new reusable @triple-h/chatbot module via VipChatbotMount.
+// The old src/components/ChatbotOverlay.tsx stays in the repo for reference but is no longer imported.
+const ChatbotOverlay = dynamic(() => import("@/components/VipChatbotMount"), { ssr: false });
+
+// DesktopUpdater talks to Tauri's updater plugin — only meaningful inside the
+// desktop app. On web builds it renders nothing (Tauri APIs absent).
+const DesktopUpdater = dynamic(() => import("@/components/DesktopUpdater"), { ssr: false });
 
 export const metadata: Metadata = {
   title: "VIP Agent Platform",
@@ -27,6 +33,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             </main>
           </div>
           <UpdateBanner />
+          <DesktopUpdater />
           <ChatbotOverlay />
         </AuthGuard>
       </body>

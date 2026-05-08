@@ -1,7 +1,14 @@
-name: Build Desktop App
+name: Release Desktop App
 
+# Triggers a signed Mac build whenever a `v*` tag is pushed.
+# Tagging convention: vMAJOR.MINOR.PATCH (e.g. v1.0.1, v1.0.2, v1.1.0).
+# The Tauri updater plugin in the installed app polls the GitHub Releases
+# `latest` URL and prompts the user when a newer signed binary appears.
 on:
-  workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:   # manual trigger kept for emergency rebuilds
 
 permissions:
   contents: write
@@ -9,7 +16,7 @@ permissions:
 jobs:
   build-mac:
     runs-on: macos-latest
-    name: Mac ARM (.dmg)
+    name: Mac (Apple Silicon, signed)
     steps:
       - uses: actions/checkout@v4
 
@@ -27,22 +34,33 @@ jobs:
         working-directory: apps/admin-dashboard
         run: npm ci
 
-      - name: Build Tauri
+      - name: Build + sign + release
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # The updater key pair generated via `tauri signer generate`.
+          # Private key (passwordless) added as repo secret TAURI_SIGNING_PRIVATE_KEY.
+          # Public key is embedded in tauri.conf.json (plugins.updater.pubkey).
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           projectPath: apps/admin-dashboard
-          tagName: vip-agent-mac-v1.0.${{ github.run_number }}
-          releaseName: 'VIP Agent Mac v1.0.${{ github.run_number }}'
+          # Use the pushed git tag verbatim — must be in vMAJOR.MINOR.PATCH form
+          # for tauri's updater to compare versions correctly.
+          tagName: ${{ github.ref_name }}
+          releaseName: 'VIP Agent ${{ github.ref_name }}'
           releaseBody: |
-            ## VIP Agent — Mac Desktop App
+            ## VIP Agent Desktop — ${{ github.ref_name }}
 
-            **For MacBook M1/M2/M3/M4/M5 (Apple Silicon)**
+            **For Mac (Apple Silicon — M1/M2/M3/M4)**
 
-            Download the `.dmg` file → open → drag VIP Agent to Applications → done.
+            Existing users: app shows an update prompt — click **Update now**, that's it.
+            New users: download the `.dmg` below → drag to Applications → first launch may show a "developer cannot be verified" warning, right-click the app → **Open** → confirm. Future launches and updates work without prompts.
 
-            Auto-update enabled — app content updates automatically.
+            See `Daily_changes.md` for what changed in this release.
           releaseDraft: false
           prerelease: false
+          # Critical flag: emits latest.json (the manifest the updater plugin reads).
+          # Without this the auto-update never fires.
+          includeUpdaterJson: true
           args: --target aarch64-apple-darwin
