@@ -4,12 +4,246 @@
   <meta charset="utf-8">
   <title>VIP Agent</title>
   <style>
-    * { margin: 0; padding: 0; }
-    html, body { height: 100%; overflow: hidden; }
-    iframe { width: 100%; height: 100%; border: none; }
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body {
+      height: 100%;
+      overflow: hidden;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    }
+    #app-iframe { width: 100%; height: 100%; border: none; }
+
+    /* Updater popup — floats over the iframe in the MAIN FRAME so Tauri
+       APIs are accessible. Iframe (Vercel content) is unaware. */
+    #updater {
+      display: none;
+      position: fixed;
+      bottom: 16px;
+      right: 16px;
+      z-index: 99999;
+      width: 380px;
+      background: white;
+      border-radius: 12px;
+      box-shadow: 0 10px 40px rgba(0,0,0,0.18), 0 0 0 1px rgba(59,130,246,0.3);
+      overflow: hidden;
+      animation: slideIn 0.25s ease-out;
+    }
+    @keyframes slideIn {
+      from { opacity: 0; transform: translateY(12px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    #updater .accent { height: 3px; background: #2563eb; }
+    #updater .header {
+      padding: 14px 18px 4px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    #updater .icon {
+      width: 28px;
+      height: 28px;
+      border-radius: 8px;
+      background: #eff6ff;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: #2563eb;
+      font-size: 14px;
+    }
+    #updater h3 {
+      font-size: 14px;
+      font-weight: 600;
+      color: #111;
+    }
+    #updater .version {
+      font-size: 11px;
+      color: #999;
+      margin-top: 1px;
+    }
+    #updater .notes {
+      margin: 10px 18px 0;
+      padding: 8px 12px;
+      max-height: 140px;
+      overflow-y: auto;
+      font-size: 12px;
+      color: #555;
+      background: #f5f5f7;
+      border-radius: 6px;
+      white-space: pre-wrap;
+      line-height: 1.45;
+    }
+    #updater .progress-wrap {
+      display: none;
+      margin: 10px 18px 0;
+    }
+    #updater .progress {
+      width: 100%;
+      height: 6px;
+      background: #e5e5e7;
+      border-radius: 3px;
+      overflow: hidden;
+    }
+    #updater .progress > div {
+      height: 100%;
+      background: #2563eb;
+      width: 0%;
+      transition: width 0.25s;
+    }
+    #updater .progress-label {
+      font-size: 11px;
+      color: #888;
+      margin-top: 4px;
+    }
+    #updater .actions {
+      padding: 14px 18px 16px;
+      display: flex;
+      gap: 8px;
+    }
+    #updater button {
+      flex: 1;
+      padding: 9px 0;
+      border: none;
+      border-radius: 8px;
+      font-size: 12px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+    #updater button.primary { background: #2563eb; color: white; }
+    #updater button.primary:hover { background: #1d4ed8; }
+    #updater button.primary:disabled { background: #93c5fd; cursor: not-allowed; }
+    #updater button.secondary { background: #f3f4f6; color: #374151; }
+    #updater button.secondary:hover { background: #e5e7eb; }
   </style>
 </head>
 <body>
-  <iframe src="https://oasisvip.vercel.app" allow="*"></iframe>
+  <iframe id="app-iframe" src="https://oasisvip.vercel.app" allow="*"></iframe>
+
+  <div id="updater">
+    <div class="accent"></div>
+    <div class="header">
+      <div class="icon">⬆</div>
+      <div>
+        <h3 id="updater-title">Update available</h3>
+        <div class="version" id="updater-version"></div>
+      </div>
+    </div>
+    <div class="notes" id="updater-notes"></div>
+    <div class="progress-wrap" id="updater-progress-wrap">
+      <div class="progress"><div id="updater-progress-bar"></div></div>
+      <div class="progress-label" id="updater-progress-label">Preparing…</div>
+    </div>
+    <div class="actions" id="updater-actions">
+      <button class="secondary" id="updater-skip">Skip</button>
+      <button class="primary" id="updater-update">Update now</button>
+    </div>
+  </div>
+
+  <script>
+    /**
+     * Auto-update flow. Runs in the MAIN FRAME (this file) so Tauri APIs
+     * are accessible. Uses raw __TAURI_INTERNALS__.invoke and event listen
+     * to avoid bundling the @tauri-apps/plugin-updater npm package — keeps
+     * this file zero-build-step.
+     */
+    (async function() {
+      // Only run inside the Tauri shell. In a browser, do nothing.
+      if (!window.__TAURI_INTERNALS__) return;
+
+      const invoke = window.__TAURI_INTERNALS__.invoke;
+      const popup = document.getElementById('updater');
+      const versionEl = document.getElementById('updater-version');
+      const notesEl = document.getElementById('updater-notes');
+      const titleEl = document.getElementById('updater-title');
+      const actions = document.getElementById('updater-actions');
+      const progressWrap = document.getElementById('updater-progress-wrap');
+      const progressBar = document.getElementById('updater-progress-bar');
+      const progressLabel = document.getElementById('updater-progress-label');
+      const skipBtn = document.getElementById('updater-skip');
+      const updateBtn = document.getElementById('updater-update');
+
+      let pendingUpdate = null;
+
+      function showPopup() { popup.style.display = 'block'; }
+      function hidePopup() { popup.style.display = 'none'; }
+
+      // Wait a beat so the iframe gets a head start, then check.
+      await new Promise(r => setTimeout(r, 1500));
+
+      try {
+        const update = await invoke('plugin:updater|check');
+        if (!update || !update.available) return;
+
+        pendingUpdate = update;
+        versionEl.textContent = 'v' + update.version + (update.currentVersion ? ' — you have v' + update.currentVersion : '');
+        notesEl.textContent = (update.body || '').trim() || '(no release notes)';
+        showPopup();
+      } catch (e) {
+        // Network error / not logged into auth / etc. Silent — app still works.
+        console.warn('[Updater] check failed:', e);
+        return;
+      }
+
+      skipBtn.addEventListener('click', hidePopup);
+
+      updateBtn.addEventListener('click', async () => {
+        actions.style.display = 'none';
+        progressWrap.style.display = 'block';
+        titleEl.textContent = 'Downloading…';
+
+        try {
+          // Set up event listener for download progress before invoking.
+          // The plugin:updater download_and_install command emits these
+          // events as the binary streams in.
+          let total = 0;
+          let downloaded = 0;
+          let unlistenStarted = null;
+          let unlistenProgress = null;
+          let unlistenFinished = null;
+
+          if (window.__TAURI_INTERNALS__.event && window.__TAURI_INTERNALS__.event.listen) {
+            // Tauri 2 internal event API — best-effort progress display
+            const listen = window.__TAURI_INTERNALS__.event.listen;
+            unlistenStarted = await listen('updater-download-started', (e) => {
+              total = e.payload?.contentLength || 0;
+              progressLabel.textContent = total ? '0 / ' + fmtBytes(total) : 'Starting…';
+            });
+            unlistenProgress = await listen('updater-download-progress', (e) => {
+              downloaded += e.payload?.chunkLength || 0;
+              const pct = total > 0 ? Math.min(100, (downloaded / total) * 100) : 0;
+              progressBar.style.width = pct + '%';
+              progressLabel.textContent = fmtBytes(downloaded) + (total ? ' / ' + fmtBytes(total) : '');
+            });
+            unlistenFinished = await listen('updater-download-finished', () => {
+              titleEl.textContent = 'Installing…';
+              progressLabel.textContent = 'Restarting in a moment…';
+            });
+          }
+
+          await invoke('plugin:updater|download_and_install');
+
+          if (unlistenStarted) unlistenStarted();
+          if (unlistenProgress) unlistenProgress();
+          if (unlistenFinished) unlistenFinished();
+
+          // Restart to load the new binary.
+          await invoke('plugin:process|restart');
+        } catch (e) {
+          titleEl.textContent = 'Update failed';
+          progressLabel.textContent = (e && e.message) || String(e);
+          progressWrap.style.display = 'block';
+          actions.style.display = 'flex';
+          updateBtn.textContent = 'Try again';
+          actions.removeChild(skipBtn);
+          updateBtn.disabled = false;
+        }
+      });
+
+      function fmtBytes(b) {
+        if (b < 1024) return b + ' B';
+        if (b < 1024 * 1024) return (b / 1024).toFixed(1) + ' KB';
+        return (b / (1024 * 1024)).toFixed(1) + ' MB';
+      }
+    })();
+  </script>
 </body>
 </html>
