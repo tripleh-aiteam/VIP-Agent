@@ -256,7 +256,20 @@ export default function TwinsPage() {
     }
   }
 
-  const filteredTwins = filter === "all" ? twins : twins.filter(t => t.status === filter || t.mode === filter);
+  // Priority twins shown at the top of the list. The order in this array
+  // is the order they appear (after applying any filter).
+  const PRIORITY_TWIN_NAMES = ["김현성", "이승현", "이승준", "Shakhzod", "Davronbek Twin"];
+  function priorityRank(name: string): number {
+    const idx = PRIORITY_TWIN_NAMES.indexOf(name);
+    return idx === -1 ? 999 : idx;
+  }
+  const baseFiltered = filter === "all" ? twins : twins.filter(t => t.status === filter || t.mode === filter);
+  const filteredTwins = [...baseFiltered].sort((a, b) => {
+    const ra = priorityRank(a.name);
+    const rb = priorityRank(b.name);
+    if (ra !== rb) return ra - rb;
+    return (a.name || "").localeCompare(b.name || "");
+  });
 
   const stats = {
     total: twins.length,
@@ -423,7 +436,8 @@ export default function TwinsPage() {
                 for (const t of twins) {
                   try { await fetch(`${API}/twins/${t.id}/self-improve`, { method: "POST" }); } catch {}
                 }
-                fetchIntelligence();
+                // Refresh twin data after triggering improvements (was fetchIntelligence which doesn't exist)
+                fetchTwins();
               }}
               className="px-4 py-2 bg-purple-600 text-white rounded-lg text-[12px] font-medium hover:bg-purple-700 transition-colors"
             >
