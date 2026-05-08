@@ -34,14 +34,24 @@ jobs:
         working-directory: apps/admin-dashboard
         run: npm ci
 
+      # Strip any whitespace / trailing newlines from the signing key secret.
+      # GitHub's web UI sometimes includes a trailing newline when pasting
+      # base64 strings, which the rsign base64 decoder rejects with
+      # "Invalid symbol 10, offset N". This step makes the workflow
+      # tolerant of pasted-with-newline secrets.
+      - name: Sanitize signing key (strip whitespace)
+        shell: bash
+        run: |
+          SANITIZED=$(printf '%s' "${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}" | tr -d '[:space:]')
+          echo "::add-mask::$SANITIZED"
+          echo "TAURI_SIGNING_PRIVATE_KEY=$SANITIZED" >> "$GITHUB_ENV"
+
       - name: Build + sign + release
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # The updater key pair generated via `tauri signer generate`.
-          # Private key (passwordless) added as repo secret TAURI_SIGNING_PRIVATE_KEY.
+          # TAURI_SIGNING_PRIVATE_KEY is set by the previous step (sanitized).
           # Public key is embedded in tauri.conf.json (plugins.updater.pubkey).
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           projectPath: apps/admin-dashboard
