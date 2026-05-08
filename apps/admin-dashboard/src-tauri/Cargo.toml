@@ -1,6 +1,6 @@
 [package]
 name = "vip-agent"
-version = "1.0.3"
+version = "1.0.4"
 description = "VIP Agent Platform — Enterprise Multi-Agent Orchestration"
 authors = ["VIP Agent Team"]
 license = "MIT"
