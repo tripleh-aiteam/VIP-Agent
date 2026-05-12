@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 from db.base import SessionLocal
 from db.models import OrchScheduleRule, OrchTaskDefinition
 from services.logger import log
+from services.resilience import with_retry, alert, detect_missed_runs
 
 _scheduler: BackgroundScheduler | None = None
 
@@ -88,11 +89,13 @@ def _execute_report_job(rule_name: str, report_type: str, hours_back: int = 24):
         db.close()
 
 
+@with_retry(max_attempts=3, backoff_seconds=(30, 120, 300), job_name="auto_daily_reports")
 def _auto_daily_reports():
     """
     Automatic daily report pipeline — runs at 8 AM KST (23:00 UTC previous day).
     Sends one report PER AGENT + one combined daily report.
     Each report saved to Dashboard (Reports page) AND sent to Telegram.
+    Wrapped with @with_retry: 3 attempts with 30s/2min/5min backoff.
     """
     from services.task_service import create_task, dispatch_task
     from services.report_service import compose_report
@@ -142,6 +145,7 @@ def _auto_daily_reports():
                 ]
 
                 if run.status == "completed" and output:
+                    highlights = []  # 1-2 sentence narrative — Phase 2 data + Phase 1 polish
                     if agent_info["agent_type"] == "asset":
                         portfolio = output.get("portfolio", {})
                         contracts = output.get("contracts", {})
@@ -152,12 +156,31 @@ def _auto_daily_reports():
                             "Cash Balance": f"{output.get('cash', {}).get('total_balance', 0):,.0f} KRW",
                             "Risk": output.get("risk_level", "N/A"),
                         }
+                        # Highlight: total portfolio value if available
+                        if output.get("portfolio_value_krw"):
+                            highlights.append(f"💰 Portfolio value: {output['portfolio_value_krw']/1e9:.1f}B KRW")
+                        if contracts.get("expiring_within_30d", 0) > 0:
+                            highlights.append(f"⏰ {contracts['expiring_within_30d']} contract(s) expiring in 30 days")
+                        if contracts.get("overdue_payment", 0) > 0:
+                            highlights.append(f"🚨 {contracts['overdue_payment']} overdue payment(s)")
                     elif agent_info["agent_type"] == "stock":
                         metrics = {
                             "Stocks Analyzed": output.get("symbols_analyzed", output.get("news_count", "N/A")),
                             "Sentiment": output.get("market_sentiment", "N/A"),
                             "Risk Score": output.get("risk_score", "N/A"),
                         }
+                        # Phase 2: Yahoo live data — show portfolio value + KOSPI + top movers
+                        portfolio = output.get("portfolio", {})
+                        if portfolio.get("total_value_krw"):
+                            pnl_pct = portfolio.get("unrealized_pnl_pct", 0)
+                            highlights.append(f"💰 Portfolio: {portfolio['total_value_krw']/1e9:.1f}B KRW ({pnl_pct:+.2f}%)")
+                        market = output.get("market_summary", {})
+                        if market.get("value"):
+                            highlights.append(f"📊 KOSPI: {market['value']} ({market.get('change_pct', 0):+.2f}%)")
+                        high_risk = output.get("high_risk_holdings", [])
+                        if high_risk:
+                            top = high_risk[0]
+                            highlights.append(f"⚠️ Big mover: {top.get('name', '?')} {top.get('change_pct', 0):+.2f}%")
                     else:
                         metrics = {
                             "Listings": output.get("total_listings", 0),
@@ -165,9 +188,20 @@ def _auto_daily_reports():
                             "Avg Yield": f"{output.get('avg_yield_pct', 0)}%",
                             "Trend": output.get("market_trend", "N/A"),
                         }
+                        if output.get("market_value_krw"):
+                            highlights.append(f"💰 Market value: {output['market_value_krw']/1e9:.1f}B KRW")
+                        high_vac = output.get("high_vacancy_listings", [])
+                        if high_vac:
+                            highlights.append(f"⚠️ {len(high_vac)} listing(s) with vacancy >15%")
 
                     for k, v in metrics.items():
                         telegram_lines.append(f"{k}: {v}")
+
+                    if highlights:
+                        telegram_lines.append("")
+                        telegram_lines.append("<b>Highlights</b>")
+                        for h in highlights[:3]:
+                            telegram_lines.append(h)
 
                     sections.append({
                         "title": agent_info["name"],
@@ -228,9 +262,16 @@ def _auto_daily_reports():
 
         summary = report.get("executive_summary", "")
         if summary:
-            combined_lines.append(f"\n{summary[:300]}")
+            combined_lines.append(f"\n<b>Executive Summary</b>")
+            combined_lines.append(summary[:400])
 
-        combined_lines.append(f"\n<i>View on dashboard → Reports</i>")
+        # Phase 3: report quality footer
+        quality = report.get("quality") or {}
+        if quality and quality.get("grade"):
+            grade_emoji = {"A": "🟢", "B": "🟢", "C": "🟡", "D": "🟠", "F": "🔴"}.get(quality["grade"], "⚪")
+            combined_lines.append(f"\n{grade_emoji} <i>Quality: {quality['grade']} ({quality.get('score', 0)}/100)</i>")
+
+        combined_lines.append(f"<i>View on dashboard → Reports</i>")
 
         send_alert("\n".join(combined_lines))
 
@@ -243,6 +284,7 @@ def _auto_daily_reports():
         db.close()
 
 
+@with_retry(max_attempts=3, backoff_seconds=(30, 120, 300), job_name="auto_weekly_report")
 def _auto_weekly_report():
     """
     Automatic weekly report — runs every Friday 6:30 PM KST (09:30 UTC).
@@ -261,10 +303,15 @@ def _auto_weekly_report():
 
         summary = report.get("executive_summary", "Weekly report generated.")
         sections = report.get("sections", [])
+        quality = report.get("quality") or {}
 
         telegram_lines = [
             f"📋 <b>VIP Weekly Report</b>",
             f"<i>Week ending {datetime.utcnow().strftime('%Y-%m-%d')}</i>",
+            "",
+            # Phase 1: AI-written executive summary at top
+            f"<b>Executive Summary</b>",
+            summary[:600] if summary else "(no summary)",
             "",
         ]
 
@@ -274,7 +321,11 @@ def _auto_weekly_report():
                 telegram_lines.append(f"{s['content'][:150]}")
                 telegram_lines.append("")
 
-        telegram_lines.append(f"\n<i>Full report on dashboard</i>")
+        # Phase 3: quality footer
+        if quality and quality.get("grade"):
+            telegram_lines.append(f"<i>Report quality: {quality['grade']} ({quality.get('score', 0)}/100)</i>")
+
+        telegram_lines.append(f"<i>Full report on dashboard</i>")
 
         send_alert("\n".join(telegram_lines))
 
@@ -403,6 +454,7 @@ def _auto_twin_mode_switch():
         db.close()
 
 
+@with_retry(max_attempts=3, backoff_seconds=(60, 180, 600), job_name="twin_morning_handoff")
 def _auto_morning_handoff():
     """Generate morning handoff reports for all twins at 9 AM KST."""
     from db.models import DigitalTwin, TwinTask, TwinHandoff, TwinActivityLog
@@ -482,6 +534,7 @@ def _auto_morning_handoff():
         db.close()
 
 
+@with_retry(max_attempts=2, backoff_seconds=(30, 120), job_name="claude_auto_import", alert_on_final_failure=False)
 def _auto_import_claude_sessions():
     """Import recent Claude Code sessions for all twins."""
     db = SessionLocal()
@@ -499,6 +552,78 @@ def _auto_import_claude_sessions():
         db.close()
 
 
+@with_retry(max_attempts=2, backoff_seconds=(60, 300), job_name="daily_standing_tasks")
+def _auto_assign_daily_standing_tasks():
+    """
+    Every evening, give each twin one standing daily task scoped to their role.
+    Ensures twins always have work overnight, so morning handoffs show real activity.
+    """
+    db = SessionLocal()
+    try:
+        from db.models import DigitalTwin, TwinTask
+        from datetime import datetime as dt, timedelta
+
+        # Map role/dept → standing task template
+        ROLE_TASKS = {
+            "Stock Analyst":      "Review today's KOSPI movements and prepare a 5-line summary highlighting top gainers, losers, and any high-risk holdings.",
+            "Asset Manager":      "Run a portfolio health check: occupancy, expiring contracts, overdue payments. Flag anything needing attention tomorrow.",
+            "Real Estate Manager":"Scan today's listings for changes >5%, identify high-yield opportunities, and note any vacancy spikes.",
+            "Vice President":     "Compile a 1-page executive snapshot from today's reports — what worked, what's at risk, what to watch tomorrow.",
+            "AI Team Lead":       "Review yesterday's twin activity, identify patterns or recurring issues, and propose 1-2 improvements.",
+            "Frontend Developer": "Audit dashboard UI for any rendering issues from today's deploys, list 3 small UX wins to ship tomorrow.",
+            "Backend Developer":  "Check API health metrics, identify slow endpoints, and propose 1-2 optimization tasks for tomorrow.",
+            "ML Engineer":        "Review LLM cost + latency for today, identify cache opportunities, suggest prompt optimizations.",
+            "Operations Manager": "Update project status across all teams, flag any deadline risks, prepare tomorrow's stand-up agenda.",
+            "Business Analyst":   "Pull today's KPIs, draft a 1-page summary with trend lines, list 3 strategic questions for VIP.",
+            "QA Engineer":        "Run smoke tests on critical paths, document any regressions, prepare bug priority list for tomorrow.",
+            "Sales Manager":      "Update the sales pipeline, draft follow-ups for prospects last contacted >5 days ago.",
+            "Finance Manager":    "Reconcile today's transactions, flag any anomalies, draft tomorrow's cash position summary.",
+            "HR Manager":         "Review attendance, flag any 24h+ absences, prepare any pending HR requests for tomorrow.",
+            "General Manager":    "Compile cross-department status, identify any escalations needed for VIP attention.",
+        }
+
+        twins = db.query(DigitalTwin).all()
+        assigned = 0
+        skipped = 0
+
+        for twin in twins:
+            # Skip if twin already has a standing task created today (avoid duplicates)
+            today_start = dt.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+            existing = (
+                db.query(TwinTask)
+                .filter(TwinTask.twin_id == twin.id, TwinTask.assigned_by == "system_standing", TwinTask.created_at >= today_start)
+                .first()
+            )
+            if existing:
+                skipped += 1
+                continue
+
+            template = ROLE_TASKS.get(twin.role, f"Review your area of responsibility ({twin.role}) and prepare a brief status note for tomorrow morning.")
+            task = TwinTask(
+                twin_id=twin.id,
+                title=f"Daily Standing Task — {dt.utcnow().strftime('%Y-%m-%d')}",
+                description=template,
+                priority="medium",
+                status="todo",
+                assigned_by="system_standing",
+                deadline=dt.utcnow() + timedelta(hours=14),
+                needs_review=True,
+                review_status="pending",
+            )
+            db.add(task)
+            assigned += 1
+
+        db.commit()
+        log.info(f"daily-standing-tasks: assigned {assigned} new, skipped {skipped} existing",
+                 extra={"action": "twin.standing_tasks", "assigned": assigned, "skipped": skipped})
+    except Exception as e:
+        db.rollback()
+        log.error(f"daily-standing-tasks: error {e}", extra={"action": "twin.standing_tasks_error"})
+    finally:
+        db.close()
+
+
+@with_retry(max_attempts=2, backoff_seconds=(60, 300), job_name="auto_self_improvement", alert_on_final_failure=False)
 def _auto_self_improvement():
     """Run self-improvement cycle for all twins."""
     db = SessionLocal()
@@ -512,6 +637,37 @@ def _auto_self_improvement():
     except Exception as e:
         db.rollback()
         log.error(f"self-improve: error {e}", extra={"action": "twin.self_improve_error"})
+    finally:
+        db.close()
+
+
+@with_retry(max_attempts=2, backoff_seconds=(60, 300), job_name="chatbot_self_improvement", alert_on_final_failure=False)
+def _chatbot_self_improvement():
+    """
+    Chatbot module self-improve cycle (runs every 6h).
+    Currently surfaces clusters of failed queries per agent and logs them so
+    the team knows what intents to add. Future: auto-promote high-frequency
+    correct intents into FAQ + auto-prune low-confidence auto-examples.
+    """
+    db = SessionLocal()
+    try:
+        from services.chatbot_self_improve import cluster_failures
+        from db.models import ChatbotInteraction
+        # Find every distinct agent that's been used in the last 24h
+        from sqlalchemy import distinct
+        agent_ids = [r[0] for r in db.query(distinct(ChatbotInteraction.agent_id)).all() if r[0]]
+        total_suggestions = 0
+        for aid in agent_ids:
+            failures = cluster_failures(db, aid, hours=168, min_count=3)
+            if failures:
+                log.info(f"chatbot.self_improve [{aid}]: {len(failures)} skill suggestions",
+                         extra={"action": "chatbot.skill_suggest", "agent_id": aid, "count": len(failures)})
+                total_suggestions += len(failures)
+        log.info(f"chatbot.self_improve cycle complete — {total_suggestions} total suggestions across {len(agent_ids)} agents",
+                 extra={"action": "chatbot.self_improve_cycle"})
+    except Exception as e:
+        db.rollback()
+        log.error(f"chatbot.self_improve error: {e}", extra={"action": "chatbot.self_improve_error"})
     finally:
         db.close()
 
@@ -582,6 +738,16 @@ def init_scheduler():
     )
     log.info("scheduler: twin self-improvement registered (every 6 hours)", extra={"action": "scheduler.twin_self_improve_registered"})
 
+    # Chatbot self-improvement — runs every 6 hours, offset 30 min from twin
+    _scheduler.add_job(
+        _chatbot_self_improvement,
+        CronTrigger.from_crontab("30 */6 * * *"),
+        id="chatbot-self-improvement",
+        replace_existing=True,
+    )
+    log.info("scheduler: chatbot self-improvement registered (every 6 hours, :30 past)",
+             extra={"action": "scheduler.chatbot_self_improve_registered"})
+
     # Claude Code auto-import — every hour
     _scheduler.add_job(
         _auto_import_claude_sessions,
@@ -591,8 +757,87 @@ def init_scheduler():
     )
     log.info("scheduler: claude auto-import registered (every hour at :15)", extra={"action": "scheduler.claude_import_registered"})
 
+    # Daily standing tasks — assign 1 standard task per twin every day at 18:00 KST = 09:00 UTC
+    # Ensures twins always have something to do overnight, so morning handoff isn't empty
+    _scheduler.add_job(
+        _auto_assign_daily_standing_tasks,
+        CronTrigger.from_crontab("0 9 * * *"),
+        id="daily-standing-tasks",
+        replace_existing=True,
+    )
+    log.info("scheduler: daily standing tasks registered (09:00 UTC = 18:00 KST)", extra={"action": "scheduler.daily_tasks_registered"})
+
+    # Voice campaign runner — every 30 seconds, dial the next queued recipient
+    # for each running campaign across all agents, respecting per-campaign
+    # pacing + working hours. See services/campaign_runner.py
+    from services.campaign_runner import tick as _voice_campaign_tick
+    _scheduler.add_job(
+        _voice_campaign_tick,
+        "interval",
+        seconds=30,
+        id="voice-campaign-runner",
+        replace_existing=True,
+    )
+    log.info("scheduler: voice campaign runner registered (every 30s)",
+             extra={"action": "scheduler.voice_runner_registered"})
+
+    # Voice recording retention — daily at 03:00 UTC = 12:00 KST
+    # Deletes Storage objects + DB rows past retention_expires_at.
+    from services.voice_storage import cleanup_expired_recordings as _voice_retention
+    _scheduler.add_job(
+        _voice_retention,
+        CronTrigger.from_crontab("0 3 * * *"),
+        id="voice-recording-retention",
+        replace_existing=True,
+    )
+    log.info("scheduler: voice recording retention registered (daily 03:00 UTC)",
+             extra={"action": "scheduler.voice_retention_registered"})
+
+    # Chatbot morning report — daily at 23:00 UTC = 08:00 KST next day.
+    # Aggregates yesterday's chat + call activity per agent + Telegram delivers.
+    from services.chatbot_morning_report import deliver_morning_reports_all_agents as _morning_report
+    _scheduler.add_job(
+        _morning_report,
+        CronTrigger.from_crontab("0 23 * * *"),
+        id="chatbot-morning-report",
+        replace_existing=True,
+    )
+    log.info("scheduler: chatbot morning report registered (23:00 UTC = 08:00 KST)",
+             extra={"action": "scheduler.chatbot_morning_report_registered"})
+
     _scheduler.start()
     log.info("scheduler: started", extra={"action": "scheduler.started"})
+
+    # === Phase 3: Restart-safe catch-up ===
+    # If we were down when a daily job should have fired, run it now (delayed 30s
+    # so the scheduler is fully up). Each catch-up runs in a background thread.
+    try:
+        missed = detect_missed_runs()
+        if missed:
+            import threading
+            for m in missed:
+                job_name = m["job"]
+                fn = {
+                    "auto_daily_reports":   _auto_daily_reports,
+                    "twin_morning_handoff": _auto_morning_handoff,
+                    "daily_standing_tasks": _auto_assign_daily_standing_tasks,
+                }.get(job_name)
+                if not fn:
+                    continue
+                log.info(f"scheduler: catch-up firing missed job {job_name}",
+                         extra={"action": "scheduler.catchup", "job": job_name})
+                threading.Thread(
+                    target=fn, daemon=True,
+                    name=f"catchup-{job_name}",
+                ).start()
+            alert(
+                kind="catchup_fired",
+                title=f"📅 Caught up {len(missed)} missed scheduled job(s)",
+                body="\n".join(f"- {m['job']} (was due at {m['expected_at']})" for m in missed),
+                severity="info",
+            )
+    except Exception as e:
+        log.warning(f"scheduler: catch-up check failed: {e}", extra={"action": "scheduler.catchup_failed"})
 
 
 def _load_rules_from_db():

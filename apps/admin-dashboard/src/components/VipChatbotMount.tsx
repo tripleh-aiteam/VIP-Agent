@@ -11,10 +11,16 @@
  * opens the dashboard, the chatbot delivers today's briefing unprompted.
  */
 
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ChatbotOverlay } from "@triple-h/chatbot";
 import { vipConfig } from "../chatbot.config";
+
+/**
+ * Custom window event the host dispatches to open the Assistant overlay.
+ * Sidebar's "Assistant" entry fires this on click.
+ */
+const OPEN_EVENT = "vip:open-assistant";
 
 /**
  * After navigating to a page, find an element containing the given text and
@@ -62,6 +68,15 @@ function scrollToTextAndHighlight(text: string, attempts = 0) {
 
 export default function VipChatbotMount() {
   const router = useRouter();
+
+  // Assistant is hidden until the user explicitly opens it (via the sidebar's
+  // Assistant entry, which dispatches a `vip:open-assistant` window event).
+  const [open, setOpen] = useState(false);
+  useEffect(() => {
+    const opener = () => setOpen(true);
+    window.addEventListener(OPEN_EVENT, opener);
+    return () => window.removeEventListener(OPEN_EVENT, opener);
+  }, []);
 
   // PROACTIVE — first dashboard visit each day → chatbot speaks today's briefing.
   // Triggered on the first user gesture so TTS is allowed by browser autoplay policy.
@@ -113,6 +128,13 @@ export default function VipChatbotMount() {
   return (
     <ChatbotOverlay
       config={vipConfig}
+      open={open}
+      onOpenChange={setOpen}
+      // Note: hideLauncher intentionally OMITTED. The original floating
+      // launcher button must stay visible (so the boss can see + open the
+      // Assistant). What we DO change vs the old default: the panel starts
+      // CLOSED (open=false) so it doesn't auto-pop on page load. The boss
+      // clicks the launcher (or the Sidebar's Assistant entry) to open it.
       onAction={(action) => {
         if (action.type === "navigate" && action.to) {
           try {

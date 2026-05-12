@@ -221,14 +221,44 @@ def merge_sections(drafts: dict) -> list[dict]:
 # ---------------------------------------------------------------------------
 
 def generate_executive_summary(sections: list[dict], report_type: str) -> str:
-    """Generate a one-paragraph executive summary from sections."""
+    """
+    Generate an executive summary. Tries LLM first for a richer briefing;
+    falls back to a template if LLM unavailable (so reports never fail to compose).
+    """
     parts = []
     for s in sections:
         if s["data"] and s["content"] != "No data available for this period.":
             parts.append(s["content"])
 
     period = "daily" if "daily" in report_type else "weekly" if "weekly" in report_type else "alert"
-    return f"VIP {period.title()} Report: " + " ".join(parts[:3])
+    template = f"VIP {period.title()} Report: " + " ".join(parts[:3])
+
+    if not parts:
+        return template
+
+    # Try LLM for richer summary — degrade gracefully if it fails
+    try:
+        from services.llm_client import chat_completion_sync
+        section_text = "\n".join(f"- {s['title']}: {s['content']}" for s in sections if s.get("content"))
+        system_prompt = (
+            "You are an executive briefing writer for the VIP boss. "
+            "Write a concise 2-3 sentence summary of the period's data. "
+            "Highlight what matters: anomalies, key numbers, action items. "
+            "No markdown, no lists — just clean prose suitable for a daily briefing."
+        )
+        user_prompt = f"Report type: {report_type}\nPeriod: {period}\n\nSections:\n{section_text}\n\nWrite the executive summary."
+        result = chat_completion_sync(
+            system_prompt=system_prompt,
+            messages=[{"role": "user", "content": user_prompt}],
+            max_tokens=200,
+            temperature=0.5,
+            model="claude-haiku-4-5",
+        )
+        if result and not result.startswith("[LLM unavailable]") and len(result.strip()) > 20:
+            return result.strip()
+    except Exception:
+        pass
+    return template
 
 
 # ---------------------------------------------------------------------------
@@ -328,6 +358,17 @@ def compose_report(
 
     db.commit()
 
+    # Phase 3: score the generated report and flag if low quality
+    try:
+        from services.report_quality import log_report_quality
+        quality = log_report_quality(str(report.id), {
+            "report_type": report_type,
+            "executive_summary": exec_summary,
+            "sections": sections,
+        })
+    except Exception:
+        quality = None
+
     return {
         "report_id": str(report.id),
         "report_type": report_type,
@@ -338,6 +379,7 @@ def compose_report(
         "delivery_channel": delivery_channel,
         "generated_at": generated_at,
         "markdown": markdown,
+        "quality": quality,
     }
 
 

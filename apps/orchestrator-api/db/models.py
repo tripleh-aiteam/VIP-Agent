@@ -579,3 +579,379 @@ class TwinNotification(Base):
     created_at = _now()
 
     twin = relationship("DigitalTwin", foreign_keys=[twin_id])
+
+
+# ===========================================================================
+# CHATBOT MODULE — SELF-IMPROVEMENT pillar (Phase 1: foundation tables)
+#
+# These tables let the chatbot learn from interactions:
+#   - chatbot_interactions: log of every query + reply (raw data for analysis)
+#   - chatbot_corrections: explicit user corrections ("no, you got it wrong")
+#   - chatbot_auto_examples: phrasings auto-promoted into intent example lists
+#   - chatbot_user_profiles: per-user preferences (length, tone, topic affinity)
+# ===========================================================================
+
+class ChatbotInteraction(Base):
+    """One row per /chatbot/talk call. Source of truth for all learning analytics."""
+    __tablename__ = "chatbot_interactions"
+
+    id = _uuid()
+    agent_id = Column(String(40), nullable=False, index=True)        # "vip" / "asset" / "health" / ...
+    user_id = Column(UUID(as_uuid=True), nullable=True, index=True)  # null = anonymous
+    query = Column(Text, nullable=False)
+    language = Column(String(8), default="auto")
+    intent = Column(String(80), nullable=True, index=True)           # matched intent name OR "fallback" / "free_answer"
+    source = Column(String(40), nullable=True)                        # keyword / llm / workflow / script / proactive / fallback
+    reply = Column(Text)
+    action_type = Column(String(40), nullable=True)                   # navigate / trigger / ui_command / script / workflow
+    latency_ms = Column(Integer, default=0)
+    was_corrected = Column(Boolean, default=False)                    # set later if user corrects this turn
+    correction_id = Column(UUID(as_uuid=True), nullable=True)         # links to ChatbotCorrection if any
+    created_at = _now()
+
+
+class ChatbotCorrection(Base):
+    """Explicit user correction: 'no, you got it wrong, X really means Y'."""
+    __tablename__ = "chatbot_corrections"
+
+    id = _uuid()
+    agent_id = Column(String(40), nullable=False, index=True)
+    user_id = Column(UUID(as_uuid=True), nullable=True)
+    original_query = Column(Text, nullable=False)            # what the user originally said
+    wrong_intent = Column(String(80), nullable=True)         # intent the chatbot picked first
+    correct_intent = Column(String(80), nullable=True)       # the right intent (set after follow-up)
+    correction_text = Column(Text)                            # what the user said when correcting
+    applied = Column(Boolean, default=False)                  # has this correction been folded into auto_examples?
+    created_at = _now()
+
+
+class ChatbotAutoExample(Base):
+    """Phrasings the system auto-learned and added to an intent's example list.
+    Loaded at request time so future fast-path matches benefit from them."""
+    __tablename__ = "chatbot_auto_examples"
+
+    id = _uuid()
+    agent_id = Column(String(40), nullable=False, index=True)
+    intent = Column(String(80), nullable=False, index=True)
+    example_text = Column(Text, nullable=False)
+    source = Column(String(20), default="auto_vocab")        # auto_vocab | correction | manual
+    confidence = Column(Float, default=0.5)
+    use_count = Column(Integer, default=0)                    # bumped each time it matches
+    created_at = _now()
+
+
+class ChatbotUserProfile(Base):
+    """Per-user preferences detected over time (Phase 2 / 3)."""
+    __tablename__ = "chatbot_user_profiles"
+
+    id = _uuid()
+    user_id = Column(UUID(as_uuid=True), nullable=True, index=True)
+    agent_id = Column(String(40), nullable=False, index=True)
+    preferred_length = Column(String(20), default="normal")   # terse | normal | detailed
+    preferred_tone = Column(String(20), default="neutral")    # formal | casual | neutral
+    topic_affinity = Column(JSONB, default=dict)              # {"asset": 12, "twins": 5, ...}
+    language_preference = Column(String(8), default="auto")
+    interaction_count = Column(Integer, default=0)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = _now()
+
+
+# ===========================================================================
+#  VOICE / CALLING AGENT domain (v1.2.0)
+#
+#  Multi-tenant by `agent_id` — every row knows which consuming agent
+#  (vip / realty / health / ...) owns it. The dashboard's REST endpoints
+#  scope queries by the URL's {agent_id} segment so no cross-agent reads
+#  ever happen.
+#
+#  Provider-agnostic. The discriminator is `voice_calls.provider`, plus
+#  `provider_call_id` for matching Vapi/Twilio webhook events back to our
+#  rows. Adding a new provider only changes the value, never the schema.
+# ===========================================================================
+
+class VoiceProviderAssistant(Base):
+    """
+    Maps a telephony provider's assistant/number ID → our agent_id.
+    Used by the webhook handler to route inbound events to the right
+    agent without trusting the wire payload's agent claim.
+    """
+    __tablename__ = "voice_provider_assistants"
+
+    id = _uuid()
+    agent_id = Column(String(40), nullable=False, index=True)
+    provider = Column(String(20), nullable=False)            # "vapi" | "twilio" | "bird" | "nhn-toast"
+    provider_assistant_id = Column(String(120), nullable=False, index=True)
+    phone_number = Column(String(40), nullable=False)         # E.164: "+82-70-XXXX-XXXX"
+    active = Column(Boolean, default=True, nullable=False)
+    created_at = _now()
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class VoiceCall(Base):
+    """
+    One phone call — inbound or outbound, AI-handled or escalated.
+    Transcript turns live in voice_call_turns (separate table for
+    efficient streaming inserts). Recording metadata in voice_recordings.
+    """
+    __tablename__ = "voice_calls"
+
+    id = _uuid()
+    agent_id = Column(String(40), nullable=False, index=True)
+    provider = Column(String(20), nullable=False)            # which telephony provider handled this
+    provider_call_id = Column(String(120), index=True)        # provider's call UUID — match webhooks
+    direction = Column(String(12), nullable=False)            # "inbound" | "outbound"
+    status = Column(String(16), nullable=False, default="ringing")
+                                                              # ringing | active | completed | missed | failed | escalated
+    urgency = Column(String(8))                               # low | medium | high
+    caller_number = Column(String(40), nullable=False)
+    caller_name = Column(String(120))
+    caller_tag = Column(String(120))                          # "Lease #L1-040" etc.
+    started_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    ended_at = Column(DateTime)
+    duration_sec = Column(Integer)
+    summary = Column(Text)                                    # LLM-generated post-call
+    recording_url = Column(Text)                              # signed URL — convenience copy of voice_recordings.signed_url
+    needs_review = Column(Boolean, default=False)
+    escalation_json = Column(JSONB)                           # {to, reason, at} when status=escalated
+    raw_provider_event = Column(JSONB)                        # last raw webhook payload — debugging
+    # Batch campaign linkage (optional)
+    campaign_id = Column(UUID(as_uuid=True), ForeignKey("batch_campaigns.id"), index=True)
+    recipient_id = Column(UUID(as_uuid=True), ForeignKey("batch_recipients.id"), index=True)
+    created_at = _now()
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class VoiceCallTurn(Base):
+    """One transcript turn within a call. Streams in via the Vapi webhook
+    as the conversation unfolds. `partial=True` rows get overwritten when
+    the final version arrives (handled in voice_service.upsert_turn).
+    """
+    __tablename__ = "voice_call_turns"
+
+    id = _uuid()
+    call_id = Column(UUID(as_uuid=True), ForeignKey("voice_calls.id"), nullable=False, index=True)
+    role = Column(String(8), nullable=False)                 # "bot" | "user"
+    text = Column(Text, nullable=False)
+    at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    confidence = Column(Float)                                # STT confidence, 0-1
+    partial = Column(Boolean, default=False, nullable=False)
+    provider_turn_id = Column(String(120), index=True)         # provider's stable turn id
+    created_at = _now()
+
+
+class VoiceRecording(Base):
+    """Recording metadata for a finished call. Audio bytes live in
+    Supabase Storage at /{agent_id}/{call_id}.mp3 — this row stores the
+    storage path + a cached signed URL with expiry.
+    """
+    __tablename__ = "voice_recordings"
+
+    id = _uuid()
+    call_id = Column(UUID(as_uuid=True), ForeignKey("voice_calls.id"), nullable=False, unique=True)
+    agent_id = Column(String(40), nullable=False, index=True)
+    storage_path = Column(Text, nullable=False)               # "/{agent_id}/{call_id}.mp3"
+    size_bytes = Column(Integer)
+    duration_sec = Column(Integer)
+    format = Column(String(8), default="mp3")
+    signed_url = Column(Text)                                  # cached signed URL
+    signed_url_expires_at = Column(DateTime)
+    retention_expires_at = Column(DateTime)                    # row + storage object both purged after this
+    created_at = _now()
+
+
+class BatchCampaign(Base):
+    """An outbound campaign — agent dials a list of recipients one-by-one
+    respecting pacing + working hours.
+    """
+    __tablename__ = "batch_campaigns"
+
+    id = _uuid()
+    agent_id = Column(String(40), nullable=False, index=True)
+    name = Column(String(200), nullable=False)
+    reason = Column(String(60), nullable=False)               # outbound reason ID from AgentConfig.voice.outboundReasons
+    status = Column(String(16), nullable=False, default="idle")
+                                                              # idle | running | paused | completed
+    pacing = Column(Integer, default=12)                       # calls per hour
+    working_hours_json = Column(JSONB, default=dict)           # {start, end} hours
+    created_by = Column(UUID(as_uuid=True), ForeignKey("platform_users.id"))
+    started_at = Column(DateTime)
+    completed_at = Column(DateTime)
+    created_at = _now()
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class BatchRecipient(Base):
+    """One recipient in a batch campaign queue."""
+    __tablename__ = "batch_recipients"
+
+    id = _uuid()
+    campaign_id = Column(UUID(as_uuid=True), ForeignKey("batch_campaigns.id"), nullable=False, index=True)
+    name = Column(String(120))
+    number = Column(String(40), nullable=False)               # E.164
+    context_json = Column(JSONB, default=dict)                 # {amount, lease, dueDate, ...} for script fill-in
+    status = Column(String(16), nullable=False, default="queued")
+                                                              # queued | calling | completed | skipped | failed
+    outcome = Column(String(32))                              # promised_to_pay | refused | voicemail_left | no_answer | wrong_number | technical_failure | needs_callback
+    notes = Column(Text)                                      # AI-generated note
+    call_id = Column(UUID(as_uuid=True), ForeignKey("voice_calls.id"))  # set once dialed
+    attempted_at = Column(DateTime)
+    queue_order = Column(Integer, default=0)                   # for stable ordering within campaign
+    created_at = _now()
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+# ===========================================================================
+#  CHATBOT INBOX domain (v1.3.0) — customer ↔ boss conversations
+#
+#  Multi-tenant by `agent_id` — every row knows which consuming agent
+#  (vip / realty / health / ...) owns it. Mirrors the voice-call tables'
+#  pattern.
+#
+#  Channel-agnostic: same table holds KakaoTalk, phone, SMS, web
+#  conversations. The `channel` discriminator on chatbot_conversations
+#  + nullable channel-specific id columns let one transport's metadata
+#  live alongside another.
+# ===========================================================================
+
+class ChatbotCustomer(Base):
+    """One customer (per agent_id) — keyed by their channel identifier.
+    A single person reached via multiple channels (e.g. KakaoTalk AND
+    phone) gets ONE row, linked by phone or kakao_user_id."""
+    __tablename__ = "chatbot_customers"
+
+    id = _uuid()
+    agent_id = Column(String(40), nullable=False, index=True)
+    name = Column(String(120))
+    phone = Column(String(40), index=True)                    # E.164 — links KakaoTalk + phone if same person
+    kakao_user_id = Column(String(120), index=True)           # Kakao app user identifier
+    tag = Column(String(120))                                  # "Lease #L1-040", "Viewing #V-23"
+    avatar_url = Column(Text)
+    notes = Column(Text)                                       # Boss-added free-form notes
+    tags_json = Column(JSONB, default=list)                    # ["VIP", "신규고객", ...]
+    last_seen_at = Column(DateTime)
+    created_at = _now()
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class ChatbotConversation(Base):
+    """One conversation thread between a customer and the bot/boss.
+    Multiple messages within a conversation live in chatbot_messages.
+    A new conversation starts when the customer is silent for >24h OR
+    explicitly closes (e.g. boss marks resolved)."""
+    __tablename__ = "chatbot_conversations"
+
+    id = _uuid()
+    agent_id = Column(String(40), nullable=False, index=True)
+    channel = Column(String(12), nullable=False)              # "kakao" | "phone" | "sms" | "web"
+    customer_id = Column(UUID(as_uuid=True), ForeignKey("chatbot_customers.id"), nullable=False, index=True)
+    status = Column(String(20), nullable=False, default="needs_reply")
+                                                              # needs_reply | bot_handling | needs_review | escalated | resolved | missed
+    urgency = Column(String(8))                               # low | medium | high
+    last_message_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    unread_count = Column(Integer, default=0)                  # boss's perspective
+    preview = Column(Text)                                     # latest message text (cached for list view)
+
+    # Bot's draft reply awaiting boss approval (Boss-IN mode)
+    suggested_reply_json = Column(JSONB)                       # {text, kind, reasoning}
+
+    # If escalated, where + when + why
+    escalation_json = Column(JSONB)                            # {to, reason, at}
+
+    # Linked phone call (when channel="phone" and call originated outside chatbot)
+    voice_call_id = Column(UUID(as_uuid=True), ForeignKey("voice_calls.id"))
+
+    started_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    ended_at = Column(DateTime)
+    created_at = _now()
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class ChatbotMessage(Base):
+    """One message within a conversation. Polymorphic on `kind`:
+    - text: text field has content
+    - voice: voice_url + voice_duration_sec + voice_transcript populated
+    - image: image_url + image_caption populated
+    - file: file_url + file_name + file_size_bytes + file_mime populated
+    - system: text field has system event description (e.g. escalation banner)
+    """
+    __tablename__ = "chatbot_messages"
+
+    id = _uuid()
+    conversation_id = Column(UUID(as_uuid=True), ForeignKey("chatbot_conversations.id"),
+                             nullable=False, index=True)
+    author = Column(String(12), nullable=False)               # "customer" | "bot" | "boss"
+    kind = Column(String(12), nullable=False)                 # "text" | "voice" | "image" | "file" | "system"
+    at = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+    # Channel-specific provider message ID (Kakao messageId, Twilio SID, etc.)
+    provider_message_id = Column(String(120), index=True)
+
+    # Text content (also used for system events)
+    text = Column(Text)
+
+    # Voice message metadata
+    voice_url = Column(Text)
+    voice_duration_sec = Column(Integer)
+    voice_transcript = Column(Text)                            # Whisper-transcribed text
+    confidence = Column(Float)                                 # STT confidence
+
+    # Image metadata
+    image_url = Column(Text)
+    image_caption = Column(Text)
+    image_width = Column(Integer)
+    image_height = Column(Integer)
+
+    # File attachment metadata
+    file_url = Column(Text)
+    file_name = Column(String(200))
+    file_size_bytes = Column(Integer)
+    file_mime = Column(String(80))
+
+    # Bot reply metadata (when author="bot")
+    # {status: "auto" | "approved" | "draft", reasoning?: "..."}
+    bot_meta_json = Column(JSONB)
+
+    # For streaming/typing indicators
+    partial = Column(Boolean, default=False)
+
+    created_at = _now()
+
+
+class ChatbotConversationAction(Base):
+    """Audit log of business actions on a conversation:
+    - viewing scheduled / rent reminder sent / document uploaded / call placed / note added
+    Rendered in the right-side CustomerInfoPanel as activity history."""
+    __tablename__ = "chatbot_conversation_actions"
+
+    id = _uuid()
+    conversation_id = Column(UUID(as_uuid=True), ForeignKey("chatbot_conversations.id"),
+                             nullable=False, index=True)
+    at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    kind = Column(String(40), nullable=False)
+                                                              # viewing_scheduled | rent_reminder_sent |
+                                                              # document_uploaded | call_placed |
+                                                              # call_received | note_added
+    description = Column(Text, nullable=False)
+    ref_id = Column(String(120))                              # linked call_id / viewing_id / etc.
+    created_by = Column(UUID(as_uuid=True), ForeignKey("platform_users.id"))
+    created_at = _now()
+
+
+class ChatbotChannelMapping(Base):
+    """Maps a provider channel ID to our internal agent_id.
+    Mirrors voice_provider_assistants pattern. The Kakao webhook handler
+    looks up agent_id here on every incoming event, so we never trust
+    the wire payload's claimed agent."""
+    __tablename__ = "chatbot_channel_mappings"
+
+    id = _uuid()
+    agent_id = Column(String(40), nullable=False, index=True)
+    channel = Column(String(12), nullable=False)              # "kakao" | "sms" | "web"
+    provider_channel_id = Column(String(120), nullable=False, index=True)
+                                                              # Kakao Channel ID (e.g. "_abc123")
+    display_name = Column(String(120))                         # for UI ("@triple-h-realestate")
+    api_key_env_var = Column(String(80))                       # name of env var holding the API key
+    webhook_secret_env_var = Column(String(80))                # name of env var holding webhook secret
+    active = Column(Boolean, default=True, nullable=False)
+    created_at = _now()
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

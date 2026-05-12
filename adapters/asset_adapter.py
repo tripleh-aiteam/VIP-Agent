@@ -5,6 +5,8 @@ from adapters.base_adapter import BaseAdapter, AdapterResult
 
 
 class AssetAdapter(BaseAdapter):
+    agent_type = "asset"
+
     def _build_payload(self, task_run_id, trace_id, task_type, input_payload):
         return {
             "task_run_id": task_run_id,

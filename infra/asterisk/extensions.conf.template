@@ -1,0 +1,53 @@
+; Asterisk dialplan — routes inbound KT calls into the Python voice pipeline
+; via AudioSocket, and routes outbound calls (from the pipeline) to KT.
+;
+; AudioSocket protocol docs: https://docs.asterisk.org/Configuration/Channel-Drivers/AudioSocket/
+; Wire format: 16-bit signed PCM @ 8kHz mono, framed with a 3-byte header.
+
+[from-kt]
+; This context handles every call arriving from the KT SIP trunk
+; (matched in pjsip.conf via context = from-kt on the kt-endpoint).
+;
+; Pattern _X. matches any digit sequence — we don't care what the caller
+; dialed; everything goes to the bot.
+
+exten => _X.,1,NoOp(Incoming KT call from ${CALLERID(num)} to ${EXTEN})
+ ; Answer the call immediately so audio path is up
+ same => n,Answer()
+ ; Pass caller info to the pipeline via AudioSocket UUID — the Python
+ ; service treats the UUID as the conversation ID. We use a deterministic
+ ; UUID derived from CDR uniqueid so dropped+reconnected calls share state.
+ same => n,Set(__AGENT_ID=vip)
+ same => n,Set(__CALL_UUID=${CHANNEL(uniqueid)})
+ ; Forward audio to the Python voice pipeline at AUDIOSOCKET_HOST:PORT.
+ ; The pipeline receives raw PCM in, generates LLM response, sends PCM back.
+ same => n,AudioSocket(${CALL_UUID},${AUDIOSOCKET_HOST}:${AUDIOSOCKET_PORT})
+ ; When AudioSocket returns (caller hung up OR Python closed), hang up cleanly
+ same => n,Hangup()
+
+[outbound-to-kt]
+; The dialplan context for outbound calls placed by the orchestrator.
+; Invoked from voice_pipeline.py via ARI (Asterisk REST Interface) when
+; the dashboard's "Call now" button fires.
+;
+; ARI originates a channel into Local/outbound-call@outbound-to-kt,
+; which Dial()'s out through the KT trunk.
+
+exten => outbound-call,1,NoOp(Outbound call from agent ${AGENT_ID} to ${EXTEN})
+ same => n,Set(CALLERID(num)=_REPLACE_ME_OUR_070_NUMBER_)
+ same => n,Set(CALLERID(name)=Triple-H AI Assistant)
+ ; Connect the AudioSocket FIRST — pipeline is ready to talk
+ same => n,Set(__CALL_UUID=${CHANNEL(uniqueid)})
+ same => n,Dial(PJSIP/${EXTEN}@kt-endpoint,60,U(audiosocket-bridge^${CALL_UUID}))
+ same => n,Hangup()
+
+[audiosocket-bridge]
+; Subroutine — once the outbound leg answers, connect it to AudioSocket
+exten => s,1,AudioSocket(${ARG1},${AUDIOSOCKET_HOST}:${AUDIOSOCKET_PORT})
+ same => n,Return()
+
+[globals]
+; Set these via Asterisk environment or override here directly.
+; The orchestrator-api service must be reachable from Asterisk at this address.
+AUDIOSOCKET_HOST = _REPLACE_ME_ORCHESTRATOR_HOST_     ; e.g. host.docker.internal or 192.168.1.x
+AUDIOSOCKET_PORT = 8765                               ; matches services/voice_pipeline.py default

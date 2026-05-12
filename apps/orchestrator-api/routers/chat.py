@@ -7,7 +7,7 @@ POST /chat/sessions/{id}/messages, GET /chat/sessions/{id}/messages, GET /chat/h
 from uuid import UUID
 from pydantic import BaseModel, Field
 from typing import Optional
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File
 from sqlalchemy.orm import Session
 
 from db.base import get_db
@@ -33,6 +33,86 @@ def voice_command(body: VoiceCommandBody, db: Session = Depends(get_db)):
     from services.voice_intents import handle_voice_command
     result = handle_voice_command(db, body.transcript, body.language or "auto")
     return result
+
+
+@router.post("/transcribe")
+async def transcribe_audio(file: UploadFile = File(...)):
+    """
+    Accept an audio blob (webm/ogg/mp3/wav) and transcribe.
+    Tries OpenAI Whisper first; falls back to Gemini 2.5 Flash audio understanding
+    if Whisper is unavailable (quota / no key). Used by the Chatbot overlay as a
+    reliable alternative to Chrome's Web Speech API.
+    """
+    import os
+    import base64
+    import httpx
+
+    audio_bytes = await file.read()
+    if len(audio_bytes) < 200:
+        return {"transcript": "", "language": "auto", "reason": "audio too short"}
+
+    content_type = file.content_type or "audio/webm"
+
+    # --- Attempt 1: OpenAI Whisper ---
+    openai_key = os.getenv("OPENAI_API_KEY", "")
+    if openai_key:
+        try:
+            async with httpx.AsyncClient(timeout=60) as client:
+                resp = await client.post(
+                    "https://api.openai.com/v1/audio/transcriptions",
+                    headers={"Authorization": f"Bearer {openai_key}"},
+                    files={"file": (file.filename or "audio.webm", audio_bytes, content_type)},
+                    data={"model": "whisper-1"},
+                )
+                if resp.status_code == 200:
+                    data = resp.json()
+                    return {"transcript": (data.get("text") or "").strip(),
+                            "language": data.get("language", "auto"),
+                            "engine": "whisper"}
+                # else fall through to Gemini
+        except Exception:
+            pass  # fall through
+
+    # --- Attempt 2: Gemini 2.5 Flash audio understanding ---
+    gemini_key = os.getenv("GEMINI_API_KEY", "")
+    if not gemini_key:
+        raise HTTPException(status_code=503, detail="No transcription engine available (OpenAI quota exceeded and GEMINI_API_KEY not set)")
+
+    try:
+        b64 = base64.b64encode(audio_bytes).decode("ascii")
+        # Gemini accepts audio/webm; if not, fall back to audio/ogg
+        gem_mime = content_type if content_type.startswith("audio/") else "audio/webm"
+        body = {
+            "contents": [{
+                "parts": [
+                    {"inlineData": {"mimeType": gem_mime, "data": b64}},
+                    {"text": "Output the words spoken in the audio. If the audio contains no speech, return exactly the single word: empty"}
+                ]
+            }],
+            "generationConfig": {"temperature": 0.0, "maxOutputTokens": 500},
+        }
+        # Flash gives much better audio transcription than Flash-Lite
+        # (Lite has a tendency to hallucinate "here's the transcript:" loops)
+        async with httpx.AsyncClient(timeout=60) as client:
+            resp = await client.post(
+                f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={gemini_key}",
+                json=body,
+            )
+            if resp.status_code != 200:
+                raise HTTPException(status_code=resp.status_code, detail=f"Gemini transcribe error: {resp.text[:300]}")
+            j = resp.json()
+            try:
+                text = j["candidates"][0]["content"]["parts"][0]["text"].strip().strip('"').strip()
+            except Exception:
+                text = ""
+            # Treat sentinel as no-speech
+            if text.lower() == "empty":
+                text = ""
+            return {"transcript": text, "language": "auto", "engine": "gemini"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Transcription failed: {e}")
 
 
 @router.get("/debug/openai")

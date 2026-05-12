@@ -16,6 +16,8 @@ from adapters.base_adapter import BaseAdapter, AdapterResult
 class RealRealtyAdapter(BaseAdapter):
     """Adapter for the Real Estate Agent with fallback."""
 
+    agent_type = "realty"
+
     def execute(self, task_run_id: str, trace_id: str, task_type: str, input_payload: dict[str, Any]) -> AdapterResult:
         """Try real backend, fall back to structured summary if unavailable."""
 
@@ -75,24 +77,17 @@ class RealRealtyAdapter(BaseAdapter):
         }
 
     def _fallback_response(self, trace_id: str, input_payload: dict[str, Any]) -> AdapterResult:
-        """Structured fallback when real backend is unavailable."""
+        """Structured fallback when real backend is unavailable — uses realistic mock data."""
+        from adapters.mock_data import get_mock_summary
         region = input_payload.get("region", "Seoul-Gangnam")
 
+        mock = get_mock_summary("realty")
         output = {
+            **mock,
             "source": "realty-adapter-fallback",
             "fallback": True,
             "region": region,
-            "total_listings": 24,
-            "avg_vacancy_pct": 8.5,
-            "avg_yield_pct": 4.2,
-            "market_trend": "stable",
             "portal_url": "https://real-estate-dashboard-steel.vercel.app",
-            "properties": [
-                {"name": "Gangnam Tower A", "type": "office", "floors": 25, "vacancy_pct": 5.0, "yield_pct": 4.5, "monthly_rent": 85000000},
-                {"name": "Seocho Residence B", "type": "residential", "units": 120, "vacancy_pct": 3.0, "yield_pct": 3.8, "monthly_rent": 42000000},
-                {"name": "Yeoksam Commercial C", "type": "retail", "floors": 8, "vacancy_pct": 12.0, "yield_pct": 5.1, "monthly_rent": 28000000},
-                {"name": "Samsung-dong Mixed D", "type": "mixed", "units": 85, "vacancy_pct": 7.0, "yield_pct": 4.0, "monthly_rent": 65000000},
-            ],
             "risk_factors": [],
         }
 

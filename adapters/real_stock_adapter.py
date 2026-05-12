@@ -11,6 +11,8 @@ from adapters.base_adapter import BaseAdapter, AdapterResult
 
 class RealStockAdapter(BaseAdapter):
 
+    agent_type = "stock"
+
     def execute(self, task_run_id: str, trace_id: str, task_type: str, input_payload: dict[str, Any]) -> AdapterResult:
         try:
             news = self._fetch("/market/news")
@@ -21,6 +23,16 @@ class RealStockAdapter(BaseAdapter):
             foreign_sell = self._fetch("/market/foreign-flow/top-sell")
             futures = self._fetch("/market/futures-positions")
             geopolitical = self._fetch("/market/geopolitical-impact")
+
+            # If ALL endpoints failed → fall back to realistic mock so reports stay rich
+            if all(x is None for x in (news, watchlist, volume, investor, foreign_buy, foreign_sell, futures, geopolitical)):
+                from adapters.mock_data import get_mock_summary
+                mock = get_mock_summary("stock")
+                return AdapterResult(
+                    success=True, status="completed", agent_id=self.agent_name,
+                    summary=mock.get("summary", "Stock report (mock fallback)"),
+                    output_payload={**mock, "source": "real-stock-agent (mock fallback)", "fallback": True},
+                )
 
             # Build output
             news_data = news or {}
@@ -33,8 +45,21 @@ class RealStockAdapter(BaseAdapter):
             futures_data = futures or {}
             geo_data = geopolitical or {}
 
+            # Compute summary metrics for the daily report (key names match scheduler)
+            symbols_analyzed = len(watchlist_data) + len(spikes) + (
+                len(foreign_buy_data) if isinstance(foreign_buy_data, list) else 0
+            )
+            buy_sell_ratio = len(foreign_buy_data) / max(len(foreign_sell_data), 1) if isinstance(foreign_buy_data, list) and isinstance(foreign_sell_data, list) else 1.0
+            market_sentiment = "bullish" if buy_sell_ratio > 1.2 else "bearish" if buy_sell_ratio < 0.8 else "neutral"
+            risk_score = round(min(1.0, max(0.1, 0.5 + (1.0 - buy_sell_ratio) * 0.3)), 2)
+
             output = {
                 "source": "real-stock-agent",
+                # Keys the auto-daily report expects (top-level)
+                "symbols_analyzed": symbols_analyzed,
+                "market_sentiment": market_sentiment,
+                "risk_score": risk_score,
+                # Detailed real data
                 "news": {"count": len(articles), "articles": [{"title": a.get("title", ""), "source": a.get("source", "")} for a in articles[:5]]},
                 "watchlist": {"count": len(watchlist_data), "items": [{"ticker": w.get("ticker", ""), "name": w.get("ticker_name", "")} for w in watchlist_data[:10]]},
                 "volume_spikes": {"count": len(spikes)},

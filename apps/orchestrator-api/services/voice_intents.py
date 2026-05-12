@@ -24,7 +24,29 @@ from sqlalchemy import func
 # ---------------------------------------------------------------------------
 
 # Each tuple: (intent_name, English keywords, Korean keywords)
+# IMPORTANT: order matters — first match wins. Specific multi-word patterns
+# (e.g. "open asset agent") must come BEFORE single-word patterns (e.g. "asset")
+# so navigation requests don't get intercepted by data-query intents.
 INTENT_PATTERNS = [
+    # ========== Specific navigation: per-agent (must precede *_situation) ==========
+    ("nav_asset_agent", [
+        "open asset agent", "go to asset agent", "show asset agent",
+        "asset agent page", "open the asset agent", "navigate to asset agent",
+    ], [
+        "자산 에이전트 열어", "자산 에이전트 페이지",
+    ]),
+    ("nav_stock_agent", [
+        "open stock agent", "go to stock agent", "show stock agent",
+        "stock agent page", "open the stock agent", "navigate to stock agent",
+    ], [
+        "주식 에이전트 열어", "주식 에이전트 페이지",
+    ]),
+    ("nav_realty_agent", [
+        "open realty agent", "go to realty agent", "show realty agent",
+        "realty agent page", "open real estate agent", "go to real estate agent",
+    ], [
+        "부동산 에이전트 열어", "부동산 에이전트 페이지",
+    ]),
     # ========== Reports ==========
     ("daily_briefing", [
         "today", "today's report", "daily briefing", "daily report",
@@ -196,8 +218,9 @@ INTENT_PATTERNS = [
     ]),
     # ========== Send message to a specific twin ==========
     ("send_twin_message", [
-        "send message to", "tell", "message to", "say to", "ping",
-        "send a message to", "let know", "notify"
+        "send message to", "send a message to", "message to",
+        "text to", "send text to",
+        "tell", "say to", "notify", "ping", "let know",
     ], [
         "메시지 보내", "메시지를 보내", "전달", "전해", "알려줘"
     ]),
@@ -227,16 +250,43 @@ def detect_language(text: str) -> str:
     return "ko" if hangul > len(text) / 4 else "en"
 
 
+def _fuzzy_contains(text: str, keyword: str, threshold: float = 0.86) -> bool:
+    """
+    True if `keyword` appears in `text` (substring) OR — for SINGLE-word keywords
+    only — a word in `text` is a close fuzzy match (handles typos like 'assest'
+    for 'asset'). Multi-word keywords require an exact substring match to avoid
+    false-matches like 'agent' triggering 'how are the agents'.
+    Hangul keywords are substring-only.
+    """
+    if keyword in text:
+        return True
+    if any(0xAC00 <= ord(c) <= 0xD7A3 for c in keyword):
+        return False
+    # Multi-word keyword → must be exact substring
+    if " " in keyword.strip():
+        return False
+    if len(keyword) < 5:
+        return False
+    from difflib import SequenceMatcher
+    for tw in re.findall(r"[a-z']+", text):
+        if abs(len(tw) - len(keyword)) > 2:
+            continue
+        if SequenceMatcher(None, keyword, tw).ratio() >= threshold:
+            return True
+    return False
+
+
 def classify_voice_intent(text: str) -> tuple[str, dict]:
     """
     Match transcript to one of the known voice intents.
     Returns (intent_name, extracted_entities).
+    Tolerant of typos for English keywords (e.g. 'assest' → 'asset').
     """
     t = text.lower().strip()
 
     for intent, en_kws, ko_kws in INTENT_PATTERNS:
         for kw in en_kws + ko_kws:
-            if kw.lower() in t:
+            if _fuzzy_contains(t, kw.lower()):
                 # Extract simple entities (e.g. message text after "broadcast:")
                 entities = {}
                 if intent == "broadcast":
@@ -273,9 +323,10 @@ def _parse_twin_message(text: str) -> tuple[str, str]:
     t = text.strip()
 
     # English patterns: "to <NAME>: <MSG>" or "to <NAME> that/saying <MSG>" or "tell <NAME> <MSG>"
+    _TRIGGER = r"(?:send (?:a )?message to|send text to|text to|message to|tell|notify|let|ping|ask)"
     patterns = [
-        r"(?:send (?:a )?message to|message to|tell|notify|let|ping|ask)\s+([A-Za-z가-힣\s]+?)\s*(?:[:,]|that|saying|to)\s+(.+)",
-        r"(?:send (?:a )?message to|message to|tell|notify|ping|ask)\s+([A-Za-z가-힣\s]+?)\s*[:,]\s*(.+)",
+        rf"{_TRIGGER}\s+([A-Za-z가-힣\s]+?)\s*(?:[:,]|that|saying|to)\s+(.+)",
+        rf"{_TRIGGER}\s+([A-Za-z가-힣\s]+?)\s*[:,]\s*(.+)",
         r"([A-Za-z가-힣\s]+?)\s*에게(?:\s+메시지)?(?:\s+(?:보내|전해))?\s*[:,]?\s*(.+)",
     ]
     for p in patterns:
@@ -520,6 +571,28 @@ def _llm_fallback(db: Session, user_text: str, lang: str) -> str:
     except Exception:
         twins_count = agents_count = 0
 
+    # Live agent summaries — so LLM can answer asset/stock/realty queries even
+    # when keyword matching missed (e.g. typos: "Assest" instead of "Asset")
+    domain_lines: list[str] = []
+    try:
+        from db.models import CoreAgent as _CA
+        from adapters import get_adapter as _get_adapter
+        for domain in ("asset", "stock", "realty"):
+            agent = db.query(_CA).filter(_CA.type == domain, _CA.status == "active").first()
+            if not agent:
+                continue
+            try:
+                adapter = _get_adapter(agent.type, agent.name, agent.endpoint_url or "", agent.is_mock)
+                if hasattr(adapter, "fetch_summary"):
+                    summary = adapter.fetch_summary().get("summary") or ""
+                    if summary:
+                        domain_lines.append(f"- {domain.title()} agent: {summary[:200]}")
+            except Exception:
+                pass
+    except Exception:
+        pass
+    domains_block = "\n".join(domain_lines) if domain_lines else "(no live agent summaries available)"
+
     kst = timezone(timedelta(hours=9))
     now_kst = datetime.now(kst).strftime("%Y-%m-%d %H:%M KST")
 
@@ -528,16 +601,19 @@ def _llm_fallback(db: Session, user_text: str, lang: str) -> str:
             f"당신은 VIP AI 플랫폼의 음성 비서 '챗봇'입니다. "
             f"보스(VIP)에게 짧고 자연스럽게, 60단어 이내로 한국어로 답변하세요. "
             f"마크다운, 목록, 코드 블록을 사용하지 마세요 — 음성으로 읽힐 답변입니다. "
-            f"현재 시각: {now_kst}. 트윈 {twins_count}개, 에이전트 {agents_count}개 등록됨. "
-            f"잘 모르는 데이터는 추측하지 말고 짧게 인정하세요."
+            f"현재 시각: {now_kst}. 트윈 {twins_count}개, 에이전트 {agents_count}개 등록됨.\n\n"
+            f"실시간 에이전트 데이터:\n{domains_block}\n\n"
+            f"위 데이터에 답이 있으면 그 숫자를 그대로 사용하세요. 없으면 짧게 인정하세요 — 추측 금지."
         )
     else:
         system = (
             f"You are 'Chatbot', the voice assistant for the VIP AI platform. "
             f"Reply to the boss (VIP) in short, natural English — under 60 words. "
             f"NO markdown, NO bullet lists, NO code blocks — your reply will be spoken aloud. "
-            f"Current time: {now_kst}. Platform has {twins_count} twins and {agents_count} registered agents. "
-            f"If you don't know specific data, say so briefly — don't invent numbers."
+            f"Current time: {now_kst}. Platform has {twins_count} twins and {agents_count} registered agents.\n\n"
+            f"Live agent data right now:\n{domains_block}\n\n"
+            f"If the user asks about asset / stock / realty / portfolio, use the numbers above. "
+            f"If the data isn't there, say so briefly — never invent numbers."
         )
 
     try:
@@ -607,6 +683,9 @@ def handle_voice_command(db: Session, transcript: str, lang_pref: str = "auto") 
 
     # Navigation intents — friendlier conversational replies
     NAV_MAP = {
+        "nav_asset_agent":    ("/agents",         "Sure, opening the Asset Agent for you.",                    "네, 자산 에이전트 페이지를 엽니다."),
+        "nav_stock_agent":    ("/agents",         "Of course, opening the Stock Agent.",                       "네, 주식 에이전트 페이지를 엽니다."),
+        "nav_realty_agent":   ("/agents",         "On it — opening the Real Estate Agent.",                    "네, 부동산 에이전트 페이지를 엽니다."),
         "nav_reports":        ("/reports",        "Sure, opening the reports page for you now.",                "네, 리포트 페이지를 열어드릴게요."),
         "nav_twins":          ("/twins",          "Of course, taking you to the twins page.",                  "네, 트윈 페이지로 이동합니다."),
         "nav_agents":         ("/agents",         "On it — opening the agents page.",                          "네, 에이전트 페이지를 열어드릴게요."),
@@ -677,10 +756,20 @@ def handle_voice_command(db: Session, transcript: str, lang_pref: str = "auto") 
                 )
                 process_log.append({"icon": "🔍", "label": _voice(f"Looking up {target_name}...", f"{target_name}을(를) 찾고 있습니다...", lang), "status": "running"})
 
-                # Fuzzy-match twin by name (case-insensitive substring)
+                # Fuzzy-match twin by name — try full substring, then per-word match.
+                # Strips noise words ("twin", "agent") so "Davronbek Agent" finds "Davronbek Twin".
                 target_lower = target_name.lower()
+                NOISE = {"twin", "agent", "the", "to", "for", "please"}
+                target_words = [w for w in re.split(r"\s+", target_lower) if w and w not in NOISE]
                 twins = db.query(DigitalTwin).all()
                 twin = next((t for t in twins if target_lower in t.name.lower()), None)
+                if not twin and target_words:
+                    # Fall back: any meaningful word from target appears in twin name
+                    for t in twins:
+                        tname = t.name.lower()
+                        if any(w in tname for w in target_words):
+                            twin = t
+                            break
                 if not twin:
                     process_log[-1].update({"status": "error", "icon": "❌"})
                     reply = _voice(

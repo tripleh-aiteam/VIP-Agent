@@ -17,7 +17,7 @@
  * Module version — semver. See CHANGELOG.md for the stable API contract.
  * Compare against `GET /chatbot/version` from the backend to verify compat.
  */
-export const MODULE_VERSION = "1.1.0";
+export const MODULE_VERSION = "1.2.0-alpha.1";
 export const COMPATIBLE_BACKEND_VERSIONS = ["1.x"];
 
 export type {
@@ -41,6 +41,10 @@ export type {
   StreamingTalkCallbacks,
   SubAgent,
   SubAgentRouting,
+  // v1.2.0 — voice / calling agent
+  VoiceConfig,
+  VoiceEscalationChannel,
+  VoiceOutboundReason,
 } from "./types";
 
 export { ask, askStreaming, transcribe, detectLanguage, pick } from "./engine";

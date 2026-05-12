@@ -5,6 +5,8 @@ from adapters.base_adapter import BaseAdapter, AdapterResult
 
 
 class RealtyAdapter(BaseAdapter):
+    agent_type = "realty"
+
     def _build_payload(self, task_run_id, trace_id, task_type, input_payload):
         return {
             "task_run_id": task_run_id,

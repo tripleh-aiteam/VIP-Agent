@@ -38,6 +38,20 @@ interface Props {
   commands?: CommandMap;
   /** Override default 480x640 panel position */
   className?: string;
+  /**
+   * Controlled open state. When provided, parent controls open/close;
+   * the internal `open` state is bypassed. Pair with `onOpenChange`.
+   * Leave undefined to keep the legacy uncontrolled behavior.
+   */
+  open?: boolean;
+  /** Fires whenever the overlay wants to open or close (e.g. user clicks ×) */
+  onOpenChange?: (open: boolean) => void;
+  /**
+   * When true, the minimized floating launcher button does NOT render.
+   * Use this when the host app provides its own way to open the overlay
+   * (e.g. a sidebar item) and doesn't want a persistent floating widget.
+   */
+  hideLauncher?: boolean;
 }
 
 interface Turn {
@@ -59,8 +73,25 @@ interface Turn {
 
 type State = "idle" | "thinking" | "listening" | "speaking" | "error";
 
-export function ChatbotOverlay({ config, speakReplies = true, onAction, commands, className }: Props) {
-  const [open, setOpen] = useState(true);
+export function ChatbotOverlay({
+  config,
+  speakReplies = true,
+  onAction,
+  commands,
+  className,
+  open: controlledOpen,
+  onOpenChange,
+  hideLauncher = false,
+}: Props) {
+  // Controlled mode: when `open` prop is provided, parent owns state.
+  // Otherwise fall back to the legacy uncontrolled behavior (defaults open).
+  const isControlled = controlledOpen !== undefined;
+  const [internalOpen, setInternalOpen] = useState(true);
+  const open = isControlled ? !!controlledOpen : internalOpen;
+  const setOpen = (next: boolean) => {
+    if (isControlled) onOpenChange?.(next);
+    else setInternalOpen(next);
+  };
   const [minimized, setMinimized] = useState(false);
   const [state, setState] = useState<State>("idle");
   const [turns, setTurns] = useState<Turn[]>([]);
@@ -722,8 +753,10 @@ export function ChatbotOverlay({ config, speakReplies = true, onAction, commands
     state === "speaking"  ? "🔊" :
                             "💬";
 
-  // Minimized launcher
+  // Minimized launcher — render nothing when host requested hideLauncher
+  // (e.g. the host provides its own "open" trigger via a sidebar item).
   if (!open || minimized) {
+    if (hideLauncher) return null;
     return (
       <button
         onClick={() => { setOpen(true); setMinimized(false); }}

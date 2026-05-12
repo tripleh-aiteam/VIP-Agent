@@ -15,6 +15,17 @@ const ChatbotOverlay = dynamic(() => import("@/components/VipChatbotMount"), { s
 // desktop app. On web builds it renders nothing (Tauri APIs absent).
 const DesktopUpdater = dynamic(() => import("@/components/DesktopUpdater"), { ssr: false });
 
+// IncomingCallToast — bottom-left floating notification when the calling
+// agent picks up an inbound call. The actual toast component now lives in
+// @triple-h/chatbot/voice-ui (framework-agnostic). VipIncomingCallToastMount
+// wires it to Next.js's router and pathname + the mock 8-second demo trigger.
+// Once voice-client.ts is wired (Step 16), the mount swaps the mock trigger
+// for a real subscribeToCalls() WebSocket subscription.
+const IncomingCallToast = dynamic(
+  () => import("@/components/VipIncomingCallToastMount"),
+  { ssr: false },
+);
+
 export const metadata: Metadata = {
   title: "VIP Agent Platform",
   description: "Enterprise Multi-Agent Orchestration System",
@@ -34,6 +45,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           </div>
           <UpdateBanner />
           <DesktopUpdater />
+          <IncomingCallToast />
           <ChatbotOverlay />
         </AuthGuard>
       </body>

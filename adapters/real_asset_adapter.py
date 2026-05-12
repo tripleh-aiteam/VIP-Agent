@@ -15,6 +15,8 @@ from adapters.base_adapter import BaseAdapter, AdapterResult
 class RealAssetAdapter(BaseAdapter):
     """Adapter for the real Asset Operations Backend (asset-agent-s4tw.onrender.com)."""
 
+    agent_type = "asset"
+
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self._token: str | None = None
@@ -82,10 +84,41 @@ class RealAssetAdapter(BaseAdapter):
             contracts = self._fetch("/api/lease/contracts")
             expiries = self._fetch("/api/lease/expiries")
 
+            # If real backend completely unreachable → realistic mock fallback
+            if all(x is None for x in (dashboard, alerts, cash, forecast, rental, vacancies, contracts, expiries)):
+                from adapters.mock_data import get_mock_summary
+                mock = get_mock_summary("asset")
+                return AdapterResult(
+                    success=True, status="completed", agent_id=self.agent_name,
+                    summary=mock.get("summary", "Asset report (mock fallback)"),
+                    output_payload={**mock, "source": "real-asset-agent (mock fallback - unreachable)", "fallback": True},
+                )
+
             # Use contracts as fallback if dashboard returns error
             dash_data = {}
             if dashboard and dashboard.get("status") == "success":
                 dash_data = dashboard.get("data", {})
+
+            # Detect 'connected but empty' — auth+endpoints work, but org has zero data
+            cash_data_check = (cash or {}).get("data", {}) if isinstance(cash, dict) else {}
+            contracts_data_check = (contracts or {}).get("data", []) if isinstance(contracts, dict) else []
+            total_props = (dash_data or {}).get("total_properties", 0)
+            has_real_data = total_props > 0 or len(contracts_data_check) > 0 or cash_data_check.get("total_balance", 0) > 0
+
+            if not has_real_data:
+                from adapters.mock_data import get_mock_summary
+                mock = get_mock_summary("asset")
+                return AdapterResult(
+                    success=True, status="completed", agent_id=self.agent_name,
+                    summary=mock.get("summary", "Asset report (real backend connected but no data seeded yet)"),
+                    output_payload={
+                        **mock,
+                        "source": "real-asset-agent (connected, awaiting data seed)",
+                        "fallback": True,
+                        "backend_status": "connected_empty",
+                        "_action_needed": "Seed properties via POST /api/manage/properties or run scripts/seed_asset_agent.py",
+                    },
+                )
 
             cash_data = (cash or {}).get("data", {})
             forecast_data = (forecast or {}).get("data", [])

@@ -134,73 +134,284 @@ export default function ChatbotOverlay() {
     return r;
   }
 
-  // === Wake-word continuous listener ===
+  // === Wake-word continuous listener — VAD + MediaRecorder + server transcription ===
+  // Replaces the unreliable Chrome SpeechRecognition with a proper voice-activity-detection
+  // pipeline: monitor mic audio level, record when user starts speaking, stop after silence,
+  // send blob to /chat/transcribe (Gemini), check if it contains a wake word.
+  // Singleton refs so Fast Refresh / strict-mode double-mount doesn't open multiple
+  // AudioContexts (which causes "AudioContext encountered an error" failures).
+  const wakeStreamRef    = useRef<MediaStream | null>(null);
+  const wakeAudioCtxRef  = useRef<AudioContext | null>(null);
+  const wakeRafRef       = useRef<number>(0);
+  const wakeStoppedRef   = useRef<boolean>(false);
+  const wakeRecorderRef  = useRef<MediaRecorder | null>(null);
+
   useEffect(() => {
+    // Window-level lock — survives React strict-mode double-mount and Fast Refresh.
+    // Only one VAD instance per page, period.
+    const W = window as any;
+
     if (!wakeWordEnabled) {
-      try { recognitionRef.current?.stop(); } catch {}
+      // Tear down any existing VAD (and release the global lock)
+      wakeStoppedRef.current = true;
+      cancelAnimationFrame(wakeRafRef.current);
+      try { wakeRecorderRef.current?.stop(); } catch {}
+      try { wakeAudioCtxRef.current?.close(); } catch {}
+      try { wakeStreamRef.current?.getTracks().forEach(t => t.stop()); } catch {}
+      wakeStreamRef.current = null;
+      wakeAudioCtxRef.current = null;
+      // Also kill any previously-leaked instance
+      try { W.__vipChatbotVadCleanup?.(); } catch {}
+      W.__vipChatbotVadCleanup = null;
+      W.__vipChatbotVadActive = false;
       if (state === "wake_listening") setState("idle");
       return;
     }
     if (state !== "wake_listening" && state !== "idle") return;
 
-    const r = makeRecognition(true);
-    if (!r) {
-      setError("Voice not supported in this browser. Use Chrome or Edge.");
-      setWakeWordEnabled(false);
-      return;
+    // If a VAD instance is already running (strict-mode double-mount), kill the
+    // previous one and let this one take over.
+    if (W.__vipChatbotVadActive) {
+      console.log("[Chatbot] previous VAD instance detected — killing it");
+      try { W.__vipChatbotVadCleanup?.(); } catch {}
     }
+    W.__vipChatbotVadActive = true;
 
-    setState("wake_listening");
+    let stream: MediaStream | null = null;
+    let audioCtx: AudioContext | null = null;
+    let analyser: AnalyserNode | null = null;
+    let recorder: MediaRecorder | null = null;
+    let chunks: Blob[] = [];
+    let rafId = 0;
+    let stopped = false;
+    let speechActive = false;
+    let silenceFrames = 0;
+    let speechFrames = 0;
+    let cooldownUntil = 0;
+    wakeStoppedRef.current = false;
 
-    r.onresult = (e: any) => {
-      for (let i = e.resultIndex; i < e.results.length; i++) {
-        const result = e.results[i];
-        if (!result.isFinal) continue;
-        const heard = (result[0].transcript || "").toLowerCase().trim();
-        const isWake =
-          WAKE_WORDS_EN.some(w => heard.includes(w)) ||
-          WAKE_WORDS_KO.some(w => heard.includes(w));
-        if (isWake) {
+    async function init() {
+      try {
+        // Jabra has hardware noise suppression — disable browser-side processing to give
+        // Gemini cleaner audio (over-processing causes "asset status" → "set stage")
+        stream = await navigator.mediaDevices.getUserMedia({
+          audio: { echoCancellation: true, noiseSuppression: false, autoGainControl: true },
+        });
+      } catch (e: any) {
+        console.warn("[Chatbot] wake getUserMedia failed:", e);
+        setError("Microphone access denied. Allow it in browser settings, then re-check 'Hey Chatbot' always-on.");
+        setWakeWordEnabled(false);
+        try { localStorage.removeItem("chatbot-wake"); } catch {}
+        return;
+      }
+      wakeStreamRef.current = stream;
+      audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
+      wakeAudioCtxRef.current = audioCtx;
+      audioCtx.onstatechange = () => {
+        console.log("[Chatbot] AudioContext state:", audioCtx?.state);
+      };
+      const src = audioCtx.createMediaStreamSource(stream);
+      analyser = audioCtx.createAnalyser();
+      analyser.fftSize = 512;
+      src.connect(analyser);
+
+      setState("wake_listening");
+      console.log("[Chatbot] wake VAD started");
+
+      const data = new Uint8Array(analyser.frequencyBinCount);
+      const SPEECH_THRESHOLD = 30;       // higher → less noise triggering
+      const SILENCE_FRAMES_TO_STOP = 35; // ~580ms — fast response, still tolerates micro-pauses
+      const MIN_SPEECH_FRAMES = 18;      // ~300ms — filter out coughs / clicks / mouse
+      let lastSpeakingState: State = "idle";
+      let lastUiLevel = 0;
+
+      function tick() {
+        if (stopped || wakeStoppedRef.current) return;
+        rafId = requestAnimationFrame(tick);
+        wakeRafRef.current = rafId;
+        if (!analyser) return;
+        // If our AudioContext was killed (device change / Chrome error), stop the loop
+        if (audioCtx && audioCtx.state === "closed") {
+          stopped = true;
+          return;
+        }
+
+        // Resume AudioContext if Chrome suspended it (happens on tab inactivity)
+        if (audioCtx && audioCtx.state === "suspended") {
+          audioCtx.resume().catch(() => {});
+        }
+
+        // When TTS just finished, give Jabra a moment for echo to clear before listening
+        if (lastSpeakingState === "speaking" && stateRef.current !== "speaking") {
+          cooldownUntil = Date.now() + 800;
+        }
+        lastSpeakingState = stateRef.current;
+
+        analyser.getByteFrequencyData(data);
+        let sum = 0;
+        for (let i = 0; i < data.length; i++) sum += data[i];
+        const energy = sum / data.length;
+        // Drive UI pulse — clamp 0-100, throttle to ~10Hz so React doesn't thrash
+        const levelPct = Math.min(100, Math.round(energy * 2));
+        if (Math.abs(levelPct - lastUiLevel) > 5) {
+          setMicLevel(levelPct);
+          lastUiLevel = levelPct;
+        }
+        const now = Date.now();
+        if (now < cooldownUntil) return;
+
+        // Don't capture wake while assistant is speaking, thinking, or push-to-talk is active
+        if (stateRef.current === "speaking" || stateRef.current === "thinking" || stateRef.current === "listening") return;
+
+        if (energy > SPEECH_THRESHOLD) {
+          if (!speechActive && stream) {
+            speechActive = true;
+            speechFrames = 0;
+            silenceFrames = 0;
+            chunks = [];
+            const mimeOpts = ["audio/webm;codecs=opus", "audio/webm", "audio/ogg;codecs=opus", ""];
+            const mime = mimeOpts.find(m => !m || MediaRecorder.isTypeSupported(m)) || "";
+            try {
+              recorder = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
+              recorder.ondataavailable = (e) => { if (e.data && e.data.size > 0) chunks.push(e.data); };
+              recorder.onstop = onRecordingStopped;
+              recorder.start();
+            } catch (e) {
+              console.warn("[Chatbot] recorder start failed:", e);
+              speechActive = false;
+            }
+          }
+          speechFrames++;
+          silenceFrames = 0;
+        } else if (speechActive) {
+          silenceFrames++;
+          if (silenceFrames >= SILENCE_FRAMES_TO_STOP) {
+            speechActive = false;
+            if (speechFrames < MIN_SPEECH_FRAMES) {
+              // Too brief — discard
+              try { recorder?.stop(); } catch {}
+              chunks = [];
+            } else {
+              try { recorder?.stop(); } catch {}
+            }
+            speechFrames = 0;
+            silenceFrames = 0;
+          }
+        }
+      }
+
+      async function onRecordingStopped() {
+        if (chunks.length === 0) return;
+        const mime = recorder?.mimeType || "audio/webm";
+        const blob = new Blob(chunks, { type: mime });
+        chunks = [];
+        if (blob.size < 4000) return; // too small — likely background noise
+
+        // Cooldown so we don't immediately re-record our own echo
+        cooldownUntil = Date.now() + 600;
+
+        try {
+          const fd = new FormData();
+          fd.append("file", blob, "wake.webm");
+          const res = await fetch(`${API}/chat/transcribe`, { method: "POST", body: fd });
+          if (!res.ok) return;
+          const data = await res.json();
+          const heard = ((data.transcript || "") as string).toLowerCase().trim();
+          if (!heard) return;
+
+          // Filter Gemini hallucinations (model echoes prompt when audio is unclear)
+          const HALLUCINATIONS = [
+            "transcribe this audio", "no commentary", "no description",
+            "spoken words", "return only", "verbatim",
+            "here's the transcript", "transcript of the audio",
+            "00:00", "[music]", "[applause]", "(music)", "(applause)",
+          ];
+          if (HALLUCINATIONS.some(h => heard.includes(h))) {
+            console.log("[Chatbot] discarded hallucination:", JSON.stringify(heard.slice(0, 60)));
+            return;
+          }
+
+          console.log("[Chatbot] wake-VAD heard:", JSON.stringify(heard));
+          setLastHeard(heard.slice(0, 80));
+
+          // Fuzzy wake-word match: "hey chatbot" / "hi chatbot" / "chatbot"
+          // Also catches misheard variants: "hey catbot", "chat bot", "hey chat", etc.
+          const FUZZY_WAKE = [
+            /\bhey\s*(chat|cat|chad|that)\s*(bot|but|baht)?\b/,
+            /\bhi\s*(chat|cat|chad)\s*(bot|but)?\b/,
+            /\b(chat|cat|chad)\s*(bot|but|baht)\b/,
+            /\b챗\s*봇\b/, /\b쳇\s*봇\b/, /헤이\s*챗봇/, /안녕\s*챗봇/,
+          ];
+          const isWake =
+            WAKE_WORDS_EN.some(w => heard.includes(w)) ||
+            WAKE_WORDS_KO.some(w => heard.includes(w)) ||
+            FUZZY_WAKE.some(rx => rx.test(heard));
+          if (!isWake) return;
+
+          console.log("[Chatbot] WAKE WORD DETECTED");
           let rest = heard;
+          // Strip exact wake words AND fuzzy variants
           [...WAKE_WORDS_EN, ...WAKE_WORDS_KO].forEach(w => {
             rest = rest.replace(new RegExp(w, "gi"), "");
           });
-          rest = rest.trim().replace(/^[,.\-?!]+/, "");
-          try { r.stop(); } catch {}
+          FUZZY_WAKE.forEach(rx => { rest = rest.replace(rx, ""); });
+          rest = rest.trim().replace(/^[,.\-?!\s]+/, "");
           setOpen(true);
           setMinimized(false);
+
           if (rest && rest.length > 2) {
+            console.log("[Chatbot] sending command from wake utterance:", rest);
             sendVoiceCommand(rest);
           } else {
+            console.log("[Chatbot] wake alone — starting active listening");
             startListening();
           }
-          break;
+        } catch (e) {
+          console.warn("[Chatbot] wake transcribe failed:", e);
         }
       }
+
+      tick();
+    }
+
+    // Register a window-level cleanup so a future re-mount can kill us
+    const cleanup = () => {
+      stopped = true;
+      wakeStoppedRef.current = true;
+      cancelAnimationFrame(rafId);
+      cancelAnimationFrame(wakeRafRef.current);
+      try { if (recorder && recorder.state === "recording") recorder.stop(); } catch {}
+      try { audioCtx?.close(); } catch {}
+      try { stream?.getTracks().forEach(t => t.stop()); } catch {}
+      wakeStreamRef.current = null;
+      wakeAudioCtxRef.current = null;
+      wakeRecorderRef.current = null;
     };
-    r.onerror = (e: any) => {
-      if (e.error === "no-speech" || e.error === "aborted") return;
-      console.warn("Wake word error:", e.error);
-      if (e.error === "not-allowed") {
-        setError("Microphone access denied. Click the mic icon next to the address bar to allow it.");
-        setWakeWordEnabled(false);
+    (window as any).__vipChatbotVadCleanup = cleanup;
+
+    init();
+
+    return () => {
+      cleanup();
+      const W = window as any;
+      // Only release the global flag if this cleanup is for the active instance
+      if (W.__vipChatbotVadCleanup === cleanup) {
+        W.__vipChatbotVadActive = false;
+        W.__vipChatbotVadCleanup = null;
       }
     };
-    r.onend = () => {
-      if (wakeWordEnabled && (stateRef.current === "wake_listening" || stateRef.current === "idle")) {
-        try { r.start(); } catch {}
-      }
-    };
-
-    try { r.start(); } catch (e) { console.warn("start failed", e); }
-    recognitionRef.current = r;
-
-    return () => { try { r.stop(); } catch {}; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [wakeWordEnabled, language]);
 
   // === Active listening (push-to-talk OR after wake word) ===
-  function startListening() {
+  // Uses MediaRecorder + server-side Whisper transcription instead of Chrome's
+  // Web Speech API, which silently fails on some hardware setups (Jabra, etc.).
+  // Records up to 7 seconds OR until the user clicks "Stop listening".
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const mediaStreamRef   = useRef<MediaStream | null>(null);
+  const recordTimerRef   = useRef<number | null>(null);
+
+  async function startListening() {
     setError(null);
     setInterim("");
     setOpen(true);
@@ -209,51 +420,103 @@ export default function ChatbotOverlay() {
     try { speechSynthesis.cancel(); } catch {}
     try { recognitionRef.current?.stop(); } catch {}
 
-    const r = makeRecognition(false);
-    if (!r) {
-      setError("Voice not supported in this browser. Use Chrome or Edge.");
+    if (!navigator.mediaDevices || !window.MediaRecorder) {
+      setError("Recording not supported in this browser. Use Chrome or Edge.");
       return;
     }
 
-    setState("listening");
-    let finalText = "";
+    let stream: MediaStream;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+        },
+      });
+    } catch (e: any) {
+      console.warn("[Chatbot] getUserMedia failed:", e);
+      setError("Microphone access denied or unavailable.");
+      return;
+    }
+    mediaStreamRef.current = stream;
 
-    r.onresult = (e: any) => {
-      let interimText = "";
-      for (let i = e.resultIndex; i < e.results.length; i++) {
-        const t = e.results[i][0].transcript;
-        if (e.results[i].isFinal) finalText += t;
-        else interimText += t;
+    // Pick a supported MIME — webm/opus is widely supported in Chrome
+    const mimeOptions = ["audio/webm;codecs=opus", "audio/webm", "audio/ogg;codecs=opus", ""];
+    const mime = mimeOptions.find(m => !m || MediaRecorder.isTypeSupported(m)) || "";
+    const recorder = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
+    mediaRecorderRef.current = recorder;
+
+    const chunks: Blob[] = [];
+    recorder.ondataavailable = (e) => {
+      if (e.data && e.data.size > 0) chunks.push(e.data);
+    };
+    recorder.onstop = async () => {
+      try { stream.getTracks().forEach(t => t.stop()); } catch {}
+      mediaStreamRef.current = null;
+      mediaRecorderRef.current = null;
+      if (recordTimerRef.current) { clearTimeout(recordTimerRef.current); recordTimerRef.current = null; }
+
+      const blob = new Blob(chunks, { type: mime || "audio/webm" });
+      console.log("[Chatbot] recorded", blob.size, "bytes, mime:", blob.type);
+      if (blob.size < 1000) {
+        setError("Audio too short — try speaking longer.");
+        setState("idle");
+        return;
       }
-      setInterim(finalText + interimText);
-    };
-    r.onerror = (e: any) => {
-      if (e.error === "no-speech") setError("I didn't hear anything. Try again.");
-      else if (e.error === "not-allowed") setError("Microphone access denied. Allow it in browser settings.");
-      else setError(`Voice error: ${e.error}`);
-      setState("idle");
-    };
-    r.onend = () => {
-      const said = (finalText || interim).trim();
-      setInterim("");
-      if (said && stateRef.current === "listening") {
-        sendVoiceCommand(said);
-      } else if (stateRef.current === "listening") {
+
+      setState("thinking");
+      setInterim("Transcribing…");
+
+      try {
+        const fd = new FormData();
+        fd.append("file", blob, "speech.webm");
+        const res = await fetch(`${API}/chat/transcribe`, { method: "POST", body: fd });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        const text = (data.transcript || "").trim();
+        console.log("[Chatbot] whisper transcript:", JSON.stringify(text));
+        setInterim("");
+        if (!text) {
+          setError("I didn't catch that — try again.");
+          setState("idle");
+          return;
+        }
+        sendVoiceCommand(text);
+      } catch (e: any) {
+        console.warn("[Chatbot] transcribe failed:", e);
+        setError(`Couldn't transcribe: ${e.message || e}`);
         setState("idle");
       }
     };
 
-    try { r.start(); } catch (e) { setError(`Couldn't start mic: ${e}`); setState("idle"); }
-    recognitionRef.current = r;
+    setState("listening");
+    recorder.start();
+    console.log("[Chatbot] recording started, mime:", mime || "default");
+
+    // Auto-stop after 7 seconds (user can click Stop earlier)
+    recordTimerRef.current = window.setTimeout(() => {
+      if (recorder.state === "recording") {
+        try { recorder.stop(); } catch {}
+      }
+    }, 7000);
   }
 
   function stopListening() {
     try { recognitionRef.current?.stop(); } catch {}
+    // Also stop MediaRecorder if active (will trigger upload + transcription)
+    try {
+      if (mediaRecorderRef.current && mediaRecorderRef.current.state === "recording") {
+        mediaRecorderRef.current.stop();
+      }
+    } catch {}
+    if (recordTimerRef.current) { clearTimeout(recordTimerRef.current); recordTimerRef.current = null; }
     if (state === "listening") setState("idle");
   }
 
   // === Send transcript to /chat/voice — handles ack → steps → final reply ===
   async function sendVoiceCommand(text: string) {
+    console.log("[Chatbot] sendVoiceCommand:", JSON.stringify(text));
     setHistory(prev => [...prev, { who: "user", text, ts: Date.now() }]);
     setState("thinking");
 
@@ -265,6 +528,7 @@ export default function ChatbotOverlay() {
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
+      console.log("[Chatbot] reply:", data.reply?.slice(0, 80), "intent:", data.intent);
       const reply = data.reply || "(no reply)";
       const ack: string | null = data.ack_reply || null;
       const steps: ProcessStep[] = data.process_log || [];
@@ -319,6 +583,8 @@ export default function ChatbotOverlay() {
 
   // Type instead of speak
   const [textInput, setTextInput] = useState("");
+  const [micLevel, setMicLevel] = useState(0); // 0..100 — drives the visual pulse
+  const [lastHeard, setLastHeard] = useState(""); // shows what wake-VAD just transcribed
   function submitText() {
     const t = textInput.trim();
     if (!t) return;
@@ -410,6 +676,35 @@ export default function ChatbotOverlay() {
         </div>
       </div>
 
+      {/* Mic level meter — visible feedback that we're hearing the user */}
+      {wakeWordEnabled && (state === "wake_listening" || state === "listening") && (
+        <div className="px-5 pt-3">
+          <div className="flex items-center gap-2 text-[11px] text-[var(--text-muted)]">
+            <div className="flex gap-0.5 items-end h-4 flex-shrink-0">
+              {[0, 1, 2, 3, 4, 5, 6, 7].map(i => {
+                const cap = (i + 1) * 12.5;
+                const active = micLevel >= cap - 6;
+                const tall = state === "listening";
+                return (
+                  <div
+                    key={i}
+                    className={`w-1 rounded-sm transition-all duration-100 ${
+                      active
+                        ? (state === "listening" ? "bg-red-500" : "bg-purple-500")
+                        : "bg-[var(--bg-elevated)]"
+                    }`}
+                    style={{ height: active ? `${4 + i * (tall ? 2 : 1.5)}px` : "3px" }}
+                  />
+                );
+              })}
+            </div>
+            <span className="font-mono">{micLevel.toString().padStart(3)}</span>
+            <span className="text-[10px] flex-1 truncate italic opacity-70" title={lastHeard}>
+              {lastHeard ? `last: "${lastHeard}"` : "say 'Hey Chatbot ...'"}
+            </span>
+          </div>
+        </div>
+      )}
       {/* Settings row */}
       <div className="px-5 py-2.5 border-b border-[var(--border-default)] flex items-center gap-3 text-[12px] flex-wrap">
         <label className="text-[var(--text-muted)] whitespace-nowrap">🌍 Language:</label>

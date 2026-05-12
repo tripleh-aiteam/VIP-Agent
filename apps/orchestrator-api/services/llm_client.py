@@ -34,8 +34,8 @@ MODEL_CATALOG = {
     "gpt-4o":      ("openai", "gpt-4o"),
     "gpt-4o-mini": ("openai", "gpt-4o-mini"),
     # --- Google Gemini ---
-    "gemini-2.0-flash": ("gemini", "gemini-2.0-flash"),
-    "gemini-1.5-pro":   ("gemini", "gemini-1.5-pro"),
+    "gemini-2.0-flash": ("gemini", "gemini-2.5-flash"),     # 2.0 deprecated; route to 2.5
+    "gemini-1.5-pro":   ("gemini", "gemini-2.5-pro"),       # 1.5 deprecated; route to 2.5
     # --- Local Ollama ---
     "llama3":   ("ollama", "llama3"),
     "qwen2.5":  ("ollama", "qwen2.5"),

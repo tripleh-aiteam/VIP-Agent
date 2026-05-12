@@ -1,0 +1,39 @@
+# Asterisk SIP edge for the voice agent pipeline.
+#
+# Pulls the andrius/asterisk image (community-maintained, Asterisk 20 LTS
+# with AudioSocket compiled in). Volumes mount our config templates.
+#
+# Network: host mode so SIP/RTP can bind real ports without NAT shenanigans.
+# On Windows/Mac use bridge mode + explicit port maps (see commented block).
+
+version: "3.9"
+
+services:
+  asterisk:
+    image: andrius/asterisk:20.6.0
+    container_name: vip-asterisk
+    restart: unless-stopped
+    # Linux: host networking is simplest for SIP. RTP needs ports 10000-20000
+    # which is painful to map manually.
+    network_mode: host
+
+    # Windows / macOS alternative: bridge mode with explicit ports.
+    # Uncomment this block AND remove `network_mode: host` above.
+    # ports:
+    #   - "5060:5060/udp"        # SIP signaling
+    #   - "5060:5060/tcp"
+    #   - "10000-10100:10000-10100/udp"   # RTP audio (narrow range for dev)
+
+    volumes:
+      - ./pjsip.conf:/etc/asterisk/pjsip.conf:ro
+      - ./extensions.conf:/etc/asterisk/extensions.conf:ro
+      - asterisk-logs:/var/log/asterisk
+
+    environment:
+      # Asterisk reads /etc/asterisk/* on startup. The .template versions in
+      # this directory must be copied to .conf (no .template suffix) before
+      # `docker compose up` — see README.md for the workflow.
+      TZ: Asia/Seoul
+
+volumes:
+  asterisk-logs:

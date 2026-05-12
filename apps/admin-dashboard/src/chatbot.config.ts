@@ -17,14 +17,29 @@ export const vipConfig: AgentConfig = {
   apiBase: API,
 
   identity: {
-    name: "Chatbot",
+    // Renamed 2026-05-12: this floating overlay is the BOSS-side assistant
+    // (helps you operate VIP). The customer-facing chatbot (KakaoTalk + phone)
+    // is mounted separately at /chatbot via @triple-h/chatbot/inbox-ui.
+    name: "Assistant",
     greeting: {
-      en: "Hi Boss. I'm your VIP assistant — speak or type naturally and I'll figure it out.",
-      ko: "안녕하세요 보스. VIP 비서 챗봇입니다. 편하게 말씀해 주세요.",
+      en:
+        "Hi Boss. I can:\n" +
+        "• Open any page (Reports, Twins, Messages, Calls, Chatbot…)\n" +
+        "• Send a message to a twin\n" +
+        "• Give today's briefing, stock or asset status\n" +
+        "• Answer questions about the VIP platform\n" +
+        "Try: \"open reports\" or \"send a message to Alice\".",
+      ko:
+        "안녕하세요 보스. 제가 도와드릴 수 있는 일:\n" +
+        "• 페이지 열기 (리포트, 트윈, 메시지, 콜, 챗봇 등)\n" +
+        "• 트윈에게 메시지 보내기\n" +
+        "• 오늘의 브리핑, 주식·자산 상황 알려드리기\n" +
+        "• VIP 플랫폼 사용법 안내\n" +
+        "예: \"리포트 열어줘\" 또는 \"Alice에게 메시지 보내줘\".",
     },
     wakeWords: {
-      en: ["hey chatbot", "hi chatbot", "chatbot", "hey assistant"],
-      ko: ["챗봇", "쳇봇", "헤이 챗봇", "안녕 챗봇"],
+      en: ["hey assistant", "hi assistant", "assistant", "hey vip"],
+      ko: ["비서", "어시스턴트", "헤이 비서", "안녕 비서"],
     },
     tone: "formal",
   },
@@ -147,4 +162,93 @@ export const vipConfig: AgentConfig = {
   },
 
   supportedLanguages: ["auto", "en", "ko"],
+
+  /**
+   * Voice / Calling Agent — VIP's phone presence.
+   *
+   * Using ElevenLabs Conversational AI (the user already has an
+   * ElevenLabs subscription). Backend resolves provider routing via
+   * `voice_provider_assistants.provider="elevenlabs"`.
+   *
+   * Three placeholders below are filled in once their real-world
+   * setup completes (tracked in Daily_changes.md):
+   *
+   *   - assistantId       ← ElevenLabs Conversational AI agent ID
+   *                         (created in https://elevenlabs.io/app/conversational-ai)
+   *   - phoneNumber       ← filled after SIP-trunking the company 070
+   *                         (Step 22 — Korean carrier setup)
+   *   - escalationChannel.chatId ← from your existing Telegram bot's chat ID
+   *
+   * The dashboard renders fine with the placeholders for mock-mode UI;
+   * the backend is where they actually need to be real.
+   */
+  voice: {
+    // Self-hosted voice agent on KT 070 — Asterisk SIP edge + local
+    // Whisper + Ollama (EXAONE 3.5 32B) + MeloTTS. See
+    // infra/asterisk/README.md for the carrier-side setup steps.
+    //
+    // `assistantId` here is just a logical key — the actual SIP routing
+    // is in Asterisk's dialplan. We use "vip-selfhosted" as a stable id
+    // that ties this row to voice_provider_assistants.
+    provider: "selfhosted",
+    assistantId: "vip-selfhosted",
+    phoneNumber: "+82-70-XXXX-XXXX",
+    defaultLanguage: "ko",
+    escalationChannel: {
+      kind: "telegram",
+      chatId: "FILL_FROM_EXISTING_TELEGRAM_BOT",
+      botEnvKey: "TELEGRAM_BOT_TOKEN",
+    },
+    batchPacing: 12,
+    workingHours: { start: 9, end: 21, timezone: "Asia/Seoul" },
+    perRecipientLimit: { maxCalls: 1, perRecipientWindowDays: 7 },
+    recordingRetentionDays: 30,
+    recordingDisclosure: {
+      ko: "안녕하세요, 트리플H 부동산 AI 비서입니다. 본 통화는 녹음되며 담당자에게 전달됩니다.",
+      en: "Hello, this is Triple-H Real Estate's AI assistant. This call is being recorded and may be shared with a human agent.",
+    },
+    outboundReasons: [
+      {
+        id: "rent_reminder",
+        label: { en: "Rent reminder", ko: "임대료 알림" },
+        scriptTemplate: {
+          ko: `"안녕하세요 {name}, 트리플H 부동산 AI 비서입니다. 이번 달 임대료 납부 예정일이 다가오고 있어 알려드리려고 연락드렸습니다. 혹시 납부에 어려움이 있으신가요?"`,
+          en: `"Hello {name}, this is Triple-H Real Estate's AI assistant. Your rent payment is due soon — is there anything I can help with to make sure it goes through on time?"`,
+        },
+        requiredContextKeys: ["amount", "dueDate", "lease"],
+      },
+      {
+        id: "viewing_confirm",
+        label: { en: "Viewing confirmation", ko: "방문 예약 확인" },
+        scriptTemplate: {
+          ko: `"안녕하세요 {name}, 트리플H 부동산 AI 비서입니다. 내일 예정된 방문 일정을 확인하려고 연락드렸습니다. 예정대로 진행하시겠어요?"`,
+          en: `"Hello {name}, this is Triple-H Real Estate's AI assistant. I'm calling to confirm your viewing scheduled for tomorrow — does the time still work for you?"`,
+        },
+      },
+      {
+        id: "document_followup",
+        label: { en: "Document follow-up", ko: "서류 확인" },
+        scriptTemplate: {
+          ko: `"안녕하세요 {name}, 트리플H 부동산 AI 비서입니다. 요청드린 서류를 아직 받지 못하여 확인차 연락드렸습니다. 언제쯤 보내주실 수 있으신가요?"`,
+          en: `"Hello {name}, this is Triple-H Real Estate's AI assistant. We haven't received the documents you were going to send — when do you think you'll be able to share them?"`,
+        },
+      },
+      {
+        id: "appointment_reminder",
+        label: { en: "Appointment reminder", ko: "약속 알림" },
+        scriptTemplate: {
+          ko: `"안녕하세요 {name}, 트리플H 부동산 AI 비서입니다. 다가오는 약속을 알려드리려고 연락드렸습니다. 일정 변경 사항이 있으신가요?"`,
+          en: `"Hello {name}, this is Triple-H Real Estate's AI assistant. I'm calling about your upcoming appointment — is there anything you'd like to change?"`,
+        },
+      },
+      {
+        id: "custom",
+        label: { en: "Custom", ko: "기타" },
+        scriptTemplate: {
+          ko: `"안녕하세요 {name}, 트리플H 부동산 AI 비서입니다. [커스텀 스크립트는 호출 직전에 LLM이 생성합니다.]"`,
+          en: `"Hello {name}, this is Triple-H Real Estate's AI assistant. [Custom script generated by the LLM at call time.]"`,
+        },
+      },
+    ],
+  },
 };

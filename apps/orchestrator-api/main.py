@@ -20,6 +20,8 @@ try:
 except ImportError:
     pass  # dotenv optional — explicit env vars still work
 
+import asyncio
+
 from fastapi import FastAPI, Depends, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
@@ -40,6 +42,7 @@ from routers.reports import router as reports_router
 from routers.telegram import router as telegram_router
 from routers.aiglass import router as aiglass_router
 from routers.chat import router as chat_router
+from routers.chatbot import router as chatbot_router
 from routers.demo import router as demo_router
 from routers.schedules import router as schedules_router
 from routers.users import router as users_router
@@ -48,6 +51,9 @@ from routers.twins import router as twins_router
 from routers.control_room import router as control_room_router
 from routers.task_board import router as task_board_router
 from routers.meetings import router as meetings_router
+from routers.voice import router as voice_router, ws_router as voice_ws_router
+from routers.chatbot_inbox import router as chatbot_inbox_router, ws_router as chatbot_ws_router
+from routers.kakao_webhook import router as kakao_webhook_router
 from services.scheduler_service import init_scheduler
 from services.event_bus import init_event_bus
 from services.a2a_triggers import init_triggers
@@ -70,6 +76,31 @@ async def lifespan(app: FastAPI):
     ))
 
     init_scheduler()
+
+    # Ensure the voice-recordings Storage bucket exists. Idempotent — no-op
+    # if SUPABASE_URL/SUPABASE_SERVICE_KEY aren't configured (dev mode).
+    try:
+        from services.voice_storage import ensure_bucket as _ensure_voice_bucket
+        _ensure_voice_bucket()
+    except Exception as _e:
+        # Bucket setup failure shouldn't block orchestrator startup —
+        # the recording upload path will log clear errors when it fires.
+        pass
+
+    # Start the self-hosted voice pipeline's AudioSocket server when enabled.
+    # Asterisk connects to this on inbound calls. Off by default until
+    # Asterisk is configured + KT SIP trunk is up.
+    voice_pipeline_task = None
+    if os.getenv("VOICE_AUDIOSOCKET_ENABLED", "0") == "1":
+        try:
+            from services.voice_pipeline import start_audiosocket_server
+            voice_pipeline_task = asyncio.create_task(start_audiosocket_server())
+        except Exception as _e:
+            import logging as _logging
+            _logging.getLogger(__name__).warning(
+                f"voice_pipeline: failed to start AudioSocket server: {_e}"
+            )
+
     app.state.redis = aioredis.from_url(
         os.getenv("REDIS_URL", "redis://localhost:6379/0")
     )
@@ -108,6 +139,7 @@ app.include_router(schedules_router)
 app.include_router(telegram_router)
 app.include_router(aiglass_router)
 app.include_router(chat_router)
+app.include_router(chatbot_router)
 app.include_router(demo_router)
 app.include_router(auth_router)
 app.include_router(users_router)
@@ -116,6 +148,11 @@ app.include_router(twins_router)
 app.include_router(control_room_router)
 app.include_router(task_board_router)
 app.include_router(meetings_router)
+app.include_router(voice_router)
+app.include_router(voice_ws_router)
+app.include_router(chatbot_inbox_router)
+app.include_router(chatbot_ws_router)
+app.include_router(kakao_webhook_router)
 
 
 # ---------------------------------------------------------------------------
@@ -156,6 +193,46 @@ def health_db(db: Session = Depends(get_db)):
         return {"status": "connected", "ping": result == 1, "tables": table_count}
     except Exception as e:
         return {"status": "error", "detail": str(e)}
+
+
+@app.get("/health/dashboard", tags=["health"])
+def health_dashboard(hours: int = 24):
+    """
+    Phase 3 — full system health view.
+    Returns traffic-light status for every scheduler job + recent alerts + summary.
+    Used by the /health-dashboard UI page.
+    """
+    from services.resilience import get_health_dashboard
+    return get_health_dashboard(hours_back=hours)
+
+
+@app.get("/health/alerts", tags=["health"])
+def health_alerts(hours: int = 24, severity: str = "all"):
+    """List recent alerts (info / warning / error / critical)."""
+    from db.models import AuditEventLog
+    from datetime import datetime, timedelta
+    db = next(get_db())
+    try:
+        cutoff = datetime.utcnow() - timedelta(hours=hours)
+        q = db.query(AuditEventLog).filter(
+            AuditEventLog.source == "alert",
+            AuditEventLog.created_at >= cutoff,
+        )
+        if severity != "all":
+            q = q.filter(AuditEventLog.event_type == f"alert.{severity}")
+        events = q.order_by(AuditEventLog.created_at.desc()).limit(100).all()
+        return [
+            {
+                "title": (e.payload_json or {}).get("title", ""),
+                "body":  (e.payload_json or {}).get("body", ""),
+                "severity": (e.payload_json or {}).get("severity", "info"),
+                "kind":  (e.payload_json or {}).get("kind", ""),
+                "timestamp": e.created_at.isoformat() if e.created_at else None,
+            }
+            for e in events
+        ]
+    finally:
+        db.close()
 
 
 # ---------------------------------------------------------------------------

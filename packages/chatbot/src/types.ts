@@ -290,6 +290,140 @@ export interface SubAgent {
 export type SubAgentRouting = "passthrough" | "auto" | "explicit";
 
 /**
+ * @experimental — added in v1.2.0
+ *
+ * Voice / Calling Agent configuration. When set, the agent gains a full
+ * phone-call surface: inbound AI receptionist, outbound calls (single +
+ * batch campaigns), live transcript stream, and call history.
+ *
+ * Consumers mount the <VoiceDashboard /> from `@triple-h/chatbot/voice-ui`
+ * passing this object — every per-agent setting (phone number, voice,
+ * escalation target, working hours, pacing) is config-driven, so a second
+ * agent (Real Estate, Health, ...) only needs to declare a new VoiceConfig.
+ *
+ * Backend resolves `agentId` (from AgentConfig) plus this block to know
+ * which telephony assistant to dial, where to escalate urgent calls, and
+ * which knowledge base feeds the in-call LLM.
+ */
+export interface VoiceConfig {
+  /**
+   * Provider name. Currently supported:
+   *   - "selfhosted": Asterisk (SIP edge) + local Whisper + local LLM (Ollama)
+   *     + local TTS (MeloTTS). Pay only carrier fees. Requires GPU server.
+   *   - "elevenlabs": ElevenLabs Conversational AI (best Korean voice, $$/min).
+   *   - "vapi":       Vapi (US-focused, $$/min).
+   * "twilio" / "bird" / "nhn-toast" reserved for future direct integrations.
+   *
+   * Backend dispatch is in `apps/orchestrator-api/routers/voice.py`
+   * (_dispatch_outbound) — keyed off this string via voice_provider_assistants.
+   */
+  provider: "selfhosted" | "elevenlabs" | "vapi" | "twilio" | "bird" | "nhn-toast";
+  /**
+   * Provider-side assistant identifier. For Vapi this is the assistant UUID
+   * configured in the Vapi console; for Twilio this is a TwiML application SID.
+   */
+  assistantId: string;
+  /**
+   * The phone number that owns this agent's calls — E.164 format.
+   * For Korean 070 numbers: "+82-70-XXXX-XXXX".
+   * Inbound calls to this number ring the AI; outbound calls show this
+   * number as caller-ID.
+   */
+  phoneNumber: string;
+  /**
+   * Default language for new calls when no caller-language hint is available.
+   * The in-call LLM may switch mid-call based on what the caller speaks.
+   */
+  defaultLanguage: Lang;
+  /**
+   * Where urgent calls (urgency=high) get escalated to. Resolved by the
+   * orchestrator's escalation pipeline on call.ended or mid-call when the
+   * LLM raises urgency.
+   */
+  escalationChannel: VoiceEscalationChannel;
+  /**
+   * Catalog of preset outbound reasons available in the OutboundCallForm
+   * and BatchCallCampaign. Real Estate's set differs from VIP's — that's
+   * the whole point of config-driving this.
+   */
+  outboundReasons: VoiceOutboundReason[];
+  /**
+   * Batch campaign pacing — max outbound calls per hour the agent will dial
+   * autonomously. Soft limit; carriers may impose their own.
+   * Korean carriers typically allow 12–20 calls/hour from a single 070
+   * before flagging spammy patterns. Default: 12.
+   */
+  batchPacing: number;
+  /**
+   * Hours during which outbound calls are allowed (24h, in the agent's
+   * timezone). Inbound calls are always accepted. KR best practice:
+   * 09:00–21:00.
+   */
+  workingHours: { start: number; end: number; timezone: string };
+  /**
+   * Recording-consent disclosure spoken (or text-displayed) as the first
+   * sentence of every call. Required by Korean Communications Privacy Act
+   * for call recording. Provide both languages; the assistant picks based
+   * on the call's resolved language.
+   */
+  recordingDisclosure: { en?: string; ko?: string };
+  /**
+   * Hard per-recipient rate limit — same recipient can't be called by this
+   * agent more than N times within `perRecipientWindowDays`. Default:
+   * { maxCalls: 1, perRecipientWindowDays: 7 }.
+   */
+  perRecipientLimit?: { maxCalls: number; perRecipientWindowDays: number };
+  /**
+   * Where audio recordings are stored. Defaults to the backend's own
+   * Supabase Storage bucket under `/{agentId}/{callId}.mp3` with 30-day
+   * signed URLs.
+   */
+  recordingRetentionDays?: number;
+  /**
+   * Optional override — by default the dashboard fetches against
+   * `${AgentConfig.apiBase}/api/voice/${agentId}/...`. Set this only if
+   * voice endpoints live on a separate host.
+   */
+  apiBase?: string;
+}
+
+/**
+ * @experimental — added in v1.2.0
+ * Where an urgent call (urgency=high) gets escalated to.
+ *
+ * VIP routes to a Telegram bot that pings the boss; Real Estate may route
+ * to a Slack channel; Health might route to an on-call PagerDuty rotation.
+ * Adding new channels means adding a new branch here.
+ */
+export type VoiceEscalationChannel =
+  | { kind: "telegram"; chatId: string; botEnvKey?: string }
+  | { kind: "slack"; channel: string; botEnvKey?: string }
+  | { kind: "email"; to: string }
+  | { kind: "webhook"; url: string; method?: "POST" | "PUT" }
+  | { kind: "none" };
+
+/**
+ * @experimental — added in v1.2.0
+ * One preset outbound reason. The agent (or its operator) picks one when
+ * placing a call; the LLM uses `scriptTemplate` as the seed for the
+ * opening sentence. `{name}`, `{amount}`, `{dueDate}` placeholders are
+ * filled from the recipient's `context` map.
+ */
+export interface VoiceOutboundReason {
+  /** Stable id — used in the API + DB */
+  id: string;
+  /** Human label per language for UI dropdowns */
+  label: { en?: string; ko?: string };
+  /** Opening-line template per language — see placeholder notes above */
+  scriptTemplate: { en?: string; ko?: string };
+  /**
+   * Optional: which `context` keys this reason expects (for UI validation
+   * + CSV-import column mapping). E.g. ["amount","dueDate","lease"].
+   */
+  requiredContextKeys?: string[];
+}
+
+/**
  * Top-level config — what each agent provides to <ChatbotOverlay>.
  */
 export interface AgentConfig {
@@ -342,6 +476,16 @@ export interface AgentConfig {
    * How the module routes queries across `subAgents`. Default "passthrough".
    */
   subAgentRouting?: SubAgentRouting;
+
+  /**
+   * @experimental — added in v1.2.0
+   * Voice / Calling Agent configuration. When set, the agent gains a phone
+   * presence — inbound AI receptionist + outbound calls — mounted via
+   * <VoiceDashboard /> from `@triple-h/chatbot/voice-ui`.
+   *
+   * Agents without `voice` simply don't render the calls UI.
+   */
+  voice?: VoiceConfig;
 }
 
 // ---------------------------------------------------------------------------

@@ -1,0 +1,66 @@
+; PJSIP configuration — KT 070 SIP trunk
+; Asterisk 18+ uses res_pjsip (the modern SIP stack). This file
+; defines:
+;   - An outbound registration so KT knows we're online
+;   - An endpoint for incoming/outgoing calls
+;   - Authentication credentials
+;
+; Fill in every _REPLACE_ME_ value with what KT emails you after
+; processing your SIP trunk request. See README.md for what to ask for.
+
+;------------------------------------------------------------------
+; Transport — UDP/5060 is what KT uses by default
+;------------------------------------------------------------------
+[transport-udp]
+type = transport
+protocol = udp
+bind = 0.0.0.0:5060
+; If your server is behind NAT (typical for home/office), uncomment + fill:
+;external_media_address = _REPLACE_ME_PUBLIC_IP_
+;external_signaling_address = _REPLACE_ME_PUBLIC_IP_
+;local_net = 192.168.0.0/16
+;local_net = 10.0.0.0/8
+
+;------------------------------------------------------------------
+; KT SIP server registration
+;------------------------------------------------------------------
+[kt-registration]
+type = registration
+transport = transport-udp
+outbound_auth = kt-auth
+server_uri = sip:_REPLACE_ME_KT_SIP_HOST_
+client_uri = sip:_REPLACE_ME_USERNAME_@_REPLACE_ME_KT_SIP_HOST_
+retry_interval = 60
+expiration = 3600
+
+[kt-auth]
+type = auth
+auth_type = userpass
+username = _REPLACE_ME_USERNAME_
+password = _REPLACE_ME_PASSWORD_
+
+;------------------------------------------------------------------
+; KT endpoint — represents the SIP trunk in dialplan
+;------------------------------------------------------------------
+[kt-endpoint]
+type = endpoint
+transport = transport-udp
+context = from-kt              ; dialplan context for inbound calls — see extensions.conf
+disallow = all
+allow = ulaw                   ; G.711 μ-law — KT default, universally supported
+allow = alaw                   ; fallback
+outbound_auth = kt-auth
+aors = kt-aor
+direct_media = no              ; relay all RTP through Asterisk (so AudioSocket can tap it)
+rtp_symmetric = yes
+force_rport = yes
+rewrite_contact = yes
+
+[kt-aor]
+type = aor
+contact = sip:_REPLACE_ME_KT_SIP_HOST_
+
+[kt-identify]
+type = identify
+endpoint = kt-endpoint
+match = _REPLACE_ME_KT_SIP_HOST_   ; allow inbound from KT's SIP server IP/hostname
