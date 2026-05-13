@@ -112,23 +112,42 @@ def change_password(db: Session, email: str, current_password: str, new_password
 
 
 def forgot_password(db: Session, email: str) -> dict:
-    """Generate reset token and send recovery email."""
+    """Generate reset token and send recovery email. Returns real send status."""
+    email = (email or "").strip().lower()
     user = db.query(PlatformUser).filter(PlatformUser.email == email).first()
-    if not user:
-        # Don't reveal if user exists
-        return {"success": True, "message": "If the email exists, a recovery link has been sent."}
 
-    # Generate reset token
+    # Auto-seed the configured admin so first-time recovery works
+    if not user and email == DEFAULT_ADMIN_EMAIL.lower():
+        user = _get_or_create_admin(db)
+
+    if not user:
+        return {
+            "success": False,
+            "email_sent": False,
+            "error": "No account with that email",
+        }
+
     token = secrets.token_urlsafe(32)
     user.reset_token = _hash_password(token)
     user.reset_token_expires = datetime.utcnow() + timedelta(hours=RESET_TOKEN_HOURS)
     db.commit()
 
-    # Send email via Gmail
-    _send_recovery_email(user.email, token)
+    email_sent, err = _send_recovery_email(user.email, token)
 
-    log.info(f"auth: reset token generated for {user.email}", extra={"action": "auth.reset_requested"})
-    return {"success": True, "message": "If the email exists, a recovery link has been sent."}
+    if email_sent:
+        log.info(f"auth: recovery email sent to {user.email}", extra={"action": "auth.reset_requested"})
+        return {
+            "success": True,
+            "email_sent": True,
+            "message": f"Recovery link sent to {user.email}. Check your inbox (and spam).",
+        }
+
+    log.warning(f"auth: recovery email FAILED for {user.email}: {err}", extra={"action": "auth.reset_failed"})
+    return {
+        "success": False,
+        "email_sent": False,
+        "error": err or "Email delivery failed. Check SMTP_EMAIL / SMTP_PASSWORD in .env.",
+    }
 
 
 def reset_password(db: Session, token: str, new_password: str) -> dict:
@@ -188,48 +207,40 @@ def reset_via_telegram(db: Session, email: str) -> dict:
     return {"success": True, "message": "Temporary password sent to Telegram! Check @vip_agentbot_bot."}
 
 
-def _send_recovery_email(to_email: str, token: str):
-    """Send password recovery email via SMTP or Telegram fallback."""
+def _send_recovery_email(to_email: str, token: str) -> tuple[bool, str | None]:
+    """Send password recovery email via Gmail SMTP. Returns (success, error_message)."""
     import smtplib
     from email.mime.text import MIMEText
 
-    smtp_user = os.getenv("SMTP_EMAIL", "")
-    smtp_pass = os.getenv("SMTP_PASSWORD", "")
-    app_url = os.getenv("APP_URL", "https://oasisvip.vercel.app")
+    smtp_user = (os.getenv("SMTP_EMAIL", "") or "").strip()
+    smtp_pass = (os.getenv("SMTP_PASSWORD", "") or "").replace(" ", "")
+    app_url = os.getenv("APP_URL", "http://localhost:3000").rstrip("/")
 
-    reset_link = f"{app_url}/reset-password?token={token}"
+    if not smtp_user or not smtp_pass:
+        return False, "Email service not configured (SMTP_EMAIL / SMTP_PASSWORD missing)"
 
-    if smtp_user and smtp_pass:
-        try:
-            msg = MIMEText(
-                f"VIP Agent Platform\n\n"
-                f"You requested a password reset.\n\n"
-                f"Click this link to set a new password:\n{reset_link}\n\n"
-                f"This link expires in {RESET_TOKEN_HOURS} hours.\n\n"
-                f"If you didn't request this, ignore this email.",
-                "plain",
-            )
-            msg["Subject"] = "VIP Agent — Password Reset"
-            msg["From"] = smtp_user
-            msg["To"] = to_email
+    # AuthGuard reads ?token= from the root URL and switches into reset view
+    reset_link = f"{app_url}/?token={token}"
 
-            with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
-                server.login(smtp_user, smtp_pass)
-                server.send_message(msg)
-
-            log.info(f"auth: recovery email sent to {to_email}", extra={"action": "auth.email_sent"})
-            return True
-        except Exception as e:
-            log.warning(f"auth: email send failed: {e}", extra={"action": "auth.email_failed"})
-
-    # Fallback: send via Telegram
     try:
-        from services.telegram_service import send_alert
-        send_alert(
-            f"<b>VIP Agent Password Reset</b>\n\n"
-            f"Reset link:\n<code>{reset_link}</code>\n\n"
-            f"Expires in {RESET_TOKEN_HOURS} hours."
+        msg = MIMEText(
+            f"VIP Agent Platform\n\n"
+            f"You requested a password reset.\n\n"
+            f"Click this link to set a new password:\n{reset_link}\n\n"
+            f"This link expires in {RESET_TOKEN_HOURS} hours.\n\n"
+            f"If you didn't request this, ignore this email.",
+            "plain",
         )
-        log.info("auth: recovery sent via Telegram fallback", extra={"action": "auth.telegram_fallback"})
-    except Exception:
-        log.warning("auth: both email and Telegram failed", extra={"action": "auth.recovery_failed"})
+        msg["Subject"] = "VIP Agent — Password Reset"
+        msg["From"] = smtp_user
+        msg["To"] = to_email
+
+        with smtplib.SMTP_SSL("smtp.gmail.com", 465, timeout=15) as server:
+            server.login(smtp_user, smtp_pass)
+            server.send_message(msg)
+
+        return True, None
+    except smtplib.SMTPAuthenticationError:
+        return False, "Gmail rejected the SMTP credentials. Verify SMTP_EMAIL and the 16-char App Password."
+    except Exception as e:
+        return False, f"SMTP send failed: {e.__class__.__name__}: {e}"

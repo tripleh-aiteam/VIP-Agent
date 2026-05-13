@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import { apiPost } from "@/components/api";
 import { getAuth } from "@/components/AuthGuard";
 
@@ -56,6 +57,39 @@ export default function SettingsPage() {
               <span className="text-[var(--text-primary)] font-medium capitalize">{auth?.user?.role || "—"}</span>
             </div>
           </div>
+        </div>
+
+        {/* Integrations — Channels lives here now */}
+        <div className="mb-8 p-4 rounded-xl border border-[var(--border-default)] bg-[var(--bg-card)]">
+          <h2 className="text-[14px] font-semibold text-[var(--text-primary)] mb-1">Integrations</h2>
+          <p className="text-[12px] text-[var(--text-muted)] mb-3">External channels and connectors</p>
+          <Link href="/channels" className="flex items-center justify-between p-3 -mx-1 rounded-lg hover:bg-[var(--bg-elevated)] transition-colors">
+            <div>
+              <div className="text-[13px] font-medium text-[var(--text-primary)]">Channels</div>
+              <div className="text-[11px] text-[var(--text-muted)]">Telegram, Slack, WhatsApp, Web, AI Glasses</div>
+            </div>
+            <svg className="w-4 h-4 text-[var(--text-muted)]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" /></svg>
+          </Link>
+        </div>
+
+        {/* Diagnostics — non-daily monitoring */}
+        <div className="mb-8 p-4 rounded-xl border border-[var(--border-default)] bg-[var(--bg-card)]">
+          <h2 className="text-[14px] font-semibold text-[var(--text-primary)] mb-1">Diagnostics</h2>
+          <p className="text-[12px] text-[var(--text-muted)] mb-3">Behind-the-scenes monitoring</p>
+          <Link href="/chatbot-health" className="flex items-center justify-between p-3 -mx-1 rounded-lg hover:bg-[var(--bg-elevated)] transition-colors">
+            <div>
+              <div className="text-[13px] font-medium text-[var(--text-primary)]">Chatbot Self-Improvement</div>
+              <div className="text-[11px] text-[var(--text-muted)]">Auto-improvement cycle and learning health</div>
+            </div>
+            <svg className="w-4 h-4 text-[var(--text-muted)]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" /></svg>
+          </Link>
+          <Link href="/ai-glass" className="flex items-center justify-between p-3 -mx-1 rounded-lg hover:bg-[var(--bg-elevated)] transition-colors">
+            <div>
+              <div className="text-[13px] font-medium text-[var(--text-primary)]">AI Glass</div>
+              <div className="text-[11px] text-[var(--text-muted)]">Spatial capture sessions (experimental)</div>
+            </div>
+            <svg className="w-4 h-4 text-[var(--text-muted)]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" /></svg>
+          </Link>
         </div>
 
         {/* Change password */}

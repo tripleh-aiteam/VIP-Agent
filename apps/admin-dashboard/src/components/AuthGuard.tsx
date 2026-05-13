@@ -53,15 +53,24 @@ export default function AuthGuard({ children }: { children: React.ReactNode }) {
   const [success, setSuccess] = useState("");
   const [loading, setLoading] = useState(false);
 
+  const [hasResetToken, setHasResetToken] = useState(false);
+
   useEffect(() => {
+    // A reset-link token in the URL always wins — even over an existing session,
+    // otherwise users who reset while signed in skip straight past the reset form.
+    const params = new URLSearchParams(window.location.search);
+    const token = params.get("token");
+    if (token) {
+      setResetToken(token);
+      setView("reset");
+      setHasResetToken(true);
+      setChecking(false);
+      return;
+    }
+
     const saved = getAuth();
     if (saved) setAuth(saved);
     setChecking(false);
-
-    // Check URL for reset token
-    const params = new URLSearchParams(window.location.search);
-    const token = params.get("token");
-    if (token) { setResetToken(token); setView("reset"); }
   }, []);
 
   const handleLogin = async () => {
@@ -106,36 +115,20 @@ export default function AuthGuard({ children }: { children: React.ReactNode }) {
 
   const handleForgot = async () => {
     setLoading(true); setError(""); setSuccess("");
-
-    // Try email recovery first, then Telegram fallback
     try {
       const res = await fetch(`${API}/auth/forgot-password`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email }),
       });
-      if (res.ok) {
-        setSuccess("Recovery sent! Check your email and Telegram.");
-        setLoading(false);
-        return;
-      }
-    } catch {}
-
-    // Fallback: send temporary password to Telegram directly
-    try {
-      const res = await fetch(`${API}/auth/forgot-password-telegram`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email }),
-      });
-      if (res.ok) {
-        const data = await res.json();
-        setSuccess(data.message || "Temporary password sent to Telegram! Check @vip_agentbot_bot.");
+      const data = await res.json().catch(() => ({}));
+      if (data?.email_sent) {
+        setSuccess(data.message || `Recovery link sent to ${email}. Check your inbox (and spam).`);
       } else {
-        setError("Failed to reset password. Please try again.");
+        setError(data?.error || "Failed to send recovery email. Please try again.");
       }
     } catch {
-      setError("Cannot reach the server. Please check your connection.");
+      setError("Cannot reach the server. Is the orchestrator running?");
     }
     setLoading(false);
   };
@@ -146,6 +139,9 @@ export default function AuthGuard({ children }: { children: React.ReactNode }) {
     try {
       const result = await apiPost<any>("/auth/reset-password", { token: resetToken, new_password: newPassword });
       setSuccess(result.message || "Password reset! You can now sign in.");
+      // Strip ?token=... from the URL so a refresh doesn't loop the user back into the reset view
+      window.history.replaceState({}, "", window.location.pathname);
+      setHasResetToken(false);
       setTimeout(() => { setView("login"); setSuccess(""); }, 2000);
     } catch (e: any) {
       setError(e?.message || "Reset failed. Link may be expired.");
@@ -161,7 +157,7 @@ export default function AuthGuard({ children }: { children: React.ReactNode }) {
     );
   }
 
-  if (auth) return <>{children}</>;
+  if (auth && !hasResetToken) return <>{children}</>;
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-gray-50">
@@ -210,7 +206,7 @@ export default function AuthGuard({ children }: { children: React.ReactNode }) {
           {view === "forgot" && (
             <>
               <h2 className="text-[16px] font-semibold text-gray-800 mb-2">Reset password</h2>
-              <p className="text-[12px] text-gray-400 mb-6">Enter your email. We'll send a temporary password to your Telegram bot.</p>
+              <p className="text-[12px] text-gray-400 mb-6">Enter your email. We'll send you a reset link.</p>
               <div className="space-y-4">
                 <div>
                   <label className="block text-[12px] font-medium text-gray-500 mb-1.5">Email</label>
@@ -222,7 +218,7 @@ export default function AuthGuard({ children }: { children: React.ReactNode }) {
                 {success && <p className="text-[12px] text-green-600 font-medium">{success}</p>}
                 <button onClick={handleForgot} disabled={!email || loading}
                   className="w-full py-3 rounded-xl bg-gray-900 hover:bg-gray-800 text-white text-[14px] font-semibold disabled:opacity-30 transition-colors">
-                  {loading ? "Sending..." : "Send recovery link"}
+                  {loading ? "Sending..." : "Send reset link"}
                 </button>
                 <button onClick={() => { setView("login"); setError(""); setSuccess(""); }}
                   className="w-full text-[12px] text-gray-400 hover:text-gray-600 font-medium mt-2">

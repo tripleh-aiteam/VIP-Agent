@@ -2,6 +2,8 @@
 
 import { useEffect, useState, useRef } from "react";
 import { API } from "../../components/api";
+import MeetingsTabs from "@/components/MeetingsTabs";
+import MeetingOpsBar from "../../components/MeetingOpsBar";
 
 interface Meeting {
   id: string;
@@ -361,6 +363,11 @@ export default function MeetingsPage() {
   // Meeting List View
   return (
     <div className="p-4 md:p-6 max-w-[1200px] mx-auto">
+      <MeetingsTabs />
+
+      {/* Sprint 8 + 9: assistant-driven meeting starter + embedded ops metrics */}
+      <MeetingOpsBar onMeetingCreated={() => fetchAll()} />
+
       {/* Header */}
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 mb-6">
         <div>

@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useRef } from "react";
 import { API } from "../../components/api";
+import MeetingsTabs from "@/components/MeetingsTabs";
 
 interface MeetingSummary {
   meeting_title: string;
@@ -116,6 +117,7 @@ export default function MeetingNotesPage() {
 
   return (
     <div className="p-4 md:p-6 max-w-[1000px] mx-auto">
+      <MeetingsTabs />
       {/* Header */}
       <div className="flex items-center justify-between mb-6">
         <div>
