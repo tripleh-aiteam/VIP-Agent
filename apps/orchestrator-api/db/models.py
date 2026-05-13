@@ -454,11 +454,18 @@ class Meeting(Base):
     ended_at = Column(DateTime)
     created_by = Column(String(120), default="vip")
     recurrence_rule = Column(String(120))                     # cron expression for recurring meetings
+
+    # Live voice meeting fields (Sprint 1 — twin-attends-meeting feature)
+    is_voice = Column(Boolean, default=False, nullable=False)  # text meeting vs. live voice meeting
+    voice_call_id = Column(UUID(as_uuid=True), ForeignKey("voice_calls.id"), nullable=True)
+    sip_call_id = Column(String(120), nullable=True)           # Asterisk Call-ID for audio routing
+
     created_at = _now()
 
     participants = relationship("MeetingParticipant", back_populates="meeting", cascade="all, delete-orphan")
     messages = relationship("MeetingMessage", back_populates="meeting", cascade="all, delete-orphan", order_by="MeetingMessage.created_at")
     minutes = relationship("MeetingMinutes", back_populates="meeting", cascade="all, delete-orphan")
+    utterances = relationship("MeetingUtterance", back_populates="meeting", cascade="all, delete-orphan", order_by="MeetingUtterance.spoken_at")
 
 
 class MeetingParticipant(Base):
@@ -470,9 +477,27 @@ class MeetingParticipant(Base):
     joined_at = Column(DateTime, default=datetime.utcnow)
     paused_task_id = Column(UUID(as_uuid=True), ForeignKey("twin_tasks.id"), nullable=True)
 
+    # Twin-attends-meeting fields (Sprint 1)
+    participant_type = Column(String(20), default="twin", nullable=False)
+                                                             # twin (regular) | twin_proxy (attending FOR absent worker) | observer
+    for_user_id = Column(UUID(as_uuid=True), ForeignKey("platform_users.id"), nullable=True)
+                                                             # if twin_proxy: which worker the twin represents
+    meeting_authority = Column(String(30), default="answer_factual", nullable=False)
+                                                             # listener_only | answer_factual | answer_and_commit | full_proxy
+    authorized_by_user_id = Column(UUID(as_uuid=True), ForeignKey("platform_users.id"), nullable=True)
+    authorized_at = Column(DateTime, nullable=True)
+    session_status = Column(String(20), default="active", nullable=False)
+                                                             # active | left | escalated | ended
+    left_at = Column(DateTime, nullable=True)
+    escalation_count = Column(Integer, default=0, nullable=False)
+    commitment_count = Column(Integer, default=0, nullable=False)  # how many "I will do X" commitments twin made
+
     meeting = relationship("Meeting", back_populates="participants")
     twin = relationship("DigitalTwin")
     paused_task = relationship("TwinTask", foreign_keys=[paused_task_id])
+    for_user = relationship("PlatformUser", foreign_keys=[for_user_id])
+    authorized_by = relationship("PlatformUser", foreign_keys=[authorized_by_user_id])
+    utterances = relationship("MeetingUtterance", back_populates="participant", cascade="all, delete-orphan")
 
 
 class MeetingMessage(Base):
@@ -502,6 +527,36 @@ class MeetingMinutes(Base):
     generated_at = Column(DateTime, default=datetime.utcnow)
 
     meeting = relationship("Meeting", back_populates="minutes")
+
+
+class MeetingUtterance(Base):
+    """Audit log of every utterance in a live voice meeting.
+    Captures who spoke, what they said, and whether twin commitments
+    require post-meeting worker review. Sprint 1 of twin-attends-meeting.
+    """
+    __tablename__ = "meeting_utterances"
+
+    id = _uuid()
+    meeting_id = Column(UUID(as_uuid=True), ForeignKey("meetings.id"), nullable=False, index=True)
+    participant_id = Column(UUID(as_uuid=True), ForeignKey("meeting_participants.id"), nullable=True, index=True)
+                                                              # null when speaker is non-tracked (boss, external)
+    speaker_role = Column(String(20), nullable=False)         # boss | worker | twin | colleague | external
+    speaker_label = Column(String(120))                       # human-readable name (e.g. "김개발 Twin", "Boss")
+    text = Column(Text, nullable=False)
+    text_korean = Column(Text)                                 # original Korean if twin/boss spoke Korean
+    audio_url = Column(Text)                                   # Asterisk recording segment URL
+    spoken_at = Column(DateTime, nullable=False, default=datetime.utcnow, index=True)
+
+    # Twin-specific flags (only set when speaker_role=twin)
+    is_commitment = Column(Boolean, default=False, nullable=False)  # twin said "I/we will ..."
+    requires_worker_review = Column(Boolean, default=False, nullable=False)
+    confidence = Column(Float)                                 # STT confidence, 0-1
+    latency_ms = Column(Integer)                               # time from previous speaker end → this utterance start
+
+    created_at = _now()
+
+    meeting = relationship("Meeting", back_populates="utterances")
+    participant = relationship("MeetingParticipant", back_populates="utterances")
 
 
 class TwinHandoff(Base):
@@ -579,6 +634,115 @@ class TwinNotification(Base):
     created_at = _now()
 
     twin = relationship("DigitalTwin", foreign_keys=[twin_id])
+
+
+class TwinGroup(Base):
+    """A boss-defined group of workers + their twins. Group chat lives in
+    DirectMessage-like rows tagged by group_id (we reuse MeetingMessage for
+    in-meeting chat; groups have their own table below for plain chat).
+    Adding a worker to the group auto-includes their linked twin.
+    """
+    __tablename__ = "twin_groups"
+
+    id = _uuid()
+    name = Column(String(160), nullable=False)
+    description = Column(Text)
+    created_by_user_id = Column(UUID(as_uuid=True), ForeignKey("platform_users.id"), nullable=True)
+    avatar_color = Column(String(16))                       # hex color for tile UI
+    created_at = _now()
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    members = relationship("TwinGroupMember", back_populates="group", cascade="all, delete-orphan")
+    messages = relationship("TwinGroupMessage", back_populates="group", cascade="all, delete-orphan", order_by="TwinGroupMessage.created_at")
+
+
+class TwinGroupMember(Base):
+    __tablename__ = "twin_group_members"
+
+    id = _uuid()
+    group_id = Column(UUID(as_uuid=True), ForeignKey("twin_groups.id"), nullable=False, index=True)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("platform_users.id"), nullable=True)   # the worker
+    twin_id = Column(UUID(as_uuid=True), ForeignKey("digital_twins.id"), nullable=True)    # the worker's twin (auto)
+    role = Column(String(20), default="member", nullable=False)   # admin | member
+    joined_at = _now()
+
+    group = relationship("TwinGroup", back_populates="members")
+    user = relationship("PlatformUser", foreign_keys=[user_id])
+    twin = relationship("DigitalTwin", foreign_keys=[twin_id])
+
+
+class TwinGroupMessage(Base):
+    __tablename__ = "twin_group_messages"
+
+    id = _uuid()
+    group_id = Column(UUID(as_uuid=True), ForeignKey("twin_groups.id"), nullable=False, index=True)
+    sender_type = Column(String(10), nullable=False)              # boss | worker | twin | system
+    sender_user_id = Column(UUID(as_uuid=True), ForeignKey("platform_users.id"), nullable=True)
+    sender_twin_id = Column(UUID(as_uuid=True), ForeignKey("digital_twins.id"), nullable=True)
+    content = Column(Text, nullable=False)
+    meta_json = Column(JSONB, default=dict)                       # parsed intent, scheduled meeting_id, etc.
+    created_at = _now()
+
+    group = relationship("TwinGroup", back_populates="messages")
+
+
+class MeetingHandRaise(Base):
+    """One twin signalling 'I can answer this' during a meeting question.
+    The boss reviews raised hands and grants the floor to one twin.
+    """
+    __tablename__ = "meeting_hand_raises"
+
+    id = _uuid()
+    meeting_id = Column(UUID(as_uuid=True), ForeignKey("meetings.id"), nullable=False, index=True)
+    participant_id = Column(UUID(as_uuid=True), ForeignKey("meeting_participants.id"), nullable=False, index=True)
+    twin_id = Column(UUID(as_uuid=True), ForeignKey("digital_twins.id"), nullable=False)
+    question_text = Column(Text, nullable=False)                  # what the boss asked
+    confidence_score = Column(Float, nullable=False)              # 0-1 — twin's self-rated ability to answer
+    reasoning = Column(Text)                                       # twin's brief justification
+    status = Column(String(20), default="raised", nullable=False)
+                                                                  # raised | granted | declined | lowered
+    raised_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    granted_at = Column(DateTime, nullable=True)
+    lowered_at = Column(DateTime, nullable=True)
+
+    twin = relationship("DigitalTwin", foreign_keys=[twin_id])
+    participant = relationship("MeetingParticipant", foreign_keys=[participant_id])
+
+
+class WorkerVoiceProfile(Base):
+    """Per-worker cloned voice profile for twin-attends-meeting (Sprint 4).
+    Stores consent record, voice sample reference, and MeloTTS model handle.
+    A twin uses this profile (via PlatformUser.twin_id back-reference) so
+    its voice in meetings sounds like the actual worker.
+    """
+    __tablename__ = "worker_voice_profiles"
+
+    id = _uuid()
+    user_id = Column(UUID(as_uuid=True), ForeignKey("platform_users.id"), nullable=False, unique=True, index=True)
+
+    # Consent — required before any voice processing
+    consent_given = Column(Boolean, default=False, nullable=False)
+    consent_text = Column(Text)                                # full text of the consent the user agreed to
+    consent_given_at = Column(DateTime)
+    consent_revoked_at = Column(DateTime)                      # if user later revokes
+
+    # Voice sample
+    sample_url = Column(Text)                                  # storage URL for the recorded sample
+    sample_duration_sec = Column(Integer)
+    sample_quality_score = Column(Float)                       # 0-1, set by voice_clone evaluator
+
+    # MeloTTS / clone state
+    status = Column(String(20), default="pending", nullable=False)
+                                                              # pending | training | ready | failed | revoked
+    melotts_model_path = Column(Text)                          # path to fine-tuned model on disk / GCS
+    training_started_at = Column(DateTime)
+    training_completed_at = Column(DateTime)
+    failure_reason = Column(Text)
+
+    created_at = _now()
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    user = relationship("PlatformUser", foreign_keys=[user_id])
 
 
 # ===========================================================================
