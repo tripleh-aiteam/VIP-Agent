@@ -48,6 +48,7 @@ from routers.schedules import router as schedules_router
 from routers.users import router as users_router
 from routers.auth import router as auth_router
 from routers.twins import router as twins_router
+from routers.twin_groups import router as twin_groups_router
 from routers.control_room import router as control_room_router
 from routers.task_board import router as task_board_router
 from routers.meetings import router as meetings_router
@@ -64,6 +65,19 @@ from services.ws_manager import ws_manager
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     Base.metadata.create_all(bind=engine)
+
+    # v4: backfill columns added to EXISTING tables since v1. create_all
+    # only handles new tables — these ALTERs are idempotent.
+    try:
+        from services.db_migrate_v4 import apply as _apply_v4_migrations
+        _report = _apply_v4_migrations(engine)
+        if _report.get("added"):
+            from services.logger import log as _log
+            _log.info(f"v4 schema migration added columns: {_report['added']}")
+    except Exception as _e:
+        from services.logger import log as _log
+        _log.warning(f"v4 schema migration failed (non-fatal): {_e}")
+
     init_event_bus(os.getenv("REDIS_URL", "redis://localhost:6379/0"))
     init_triggers()
     init_a2a_notifications()
@@ -76,6 +90,21 @@ async def lifespan(app: FastAPI):
     ))
 
     init_scheduler()
+
+    # v4-A: install the Twin Autopilot cron so twins self-improve every N hours.
+    try:
+        from services.twin_autopilot import register_with_scheduler as _install_autopilot
+        _install_autopilot()
+    except Exception:
+        pass  # autopilot is best-effort; manual /admin/autopilot/run-now still works
+
+    # v4-E: install the auto-join dispatcher so scheduled meetings fire on time
+    # even without anyone manually opening the room.
+    try:
+        from services.twin_meeting_autojoin import register_with_scheduler as _install_autojoin
+        _install_autojoin()
+    except Exception:
+        pass
 
     # Ensure the voice-recordings Storage bucket exists. Idempotent — no-op
     # if SUPABASE_URL/SUPABASE_SERVICE_KEY aren't configured (dev mode).
@@ -126,6 +155,14 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Serve uploaded media (twin_voice TTS output, voice clone samples) so the
+# dashboard can play them via <audio src="/static/twin_voice/...wav">.
+from fastapi.staticfiles import StaticFiles
+from pathlib import Path as _Path
+_uploads_root = _Path(__file__).resolve().parent / "uploads"
+_uploads_root.mkdir(exist_ok=True)
+app.mount("/static", StaticFiles(directory=str(_uploads_root)), name="static")
+
 # Register routers
 app.include_router(tasks_router)
 app.include_router(callbacks_router)
@@ -145,6 +182,7 @@ app.include_router(auth_router)
 app.include_router(users_router)
 app.include_router(contracts_router)
 app.include_router(twins_router)
+app.include_router(twin_groups_router)
 app.include_router(control_room_router)
 app.include_router(task_board_router)
 app.include_router(meetings_router)

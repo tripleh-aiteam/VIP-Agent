@@ -3,8 +3,10 @@ VIP AI Platform — Digital Twin Router
 CRUD, mode switching, tasks, knowledge, activity, and chat endpoints.
 """
 
+from datetime import datetime
 from typing import Optional
-from uuid import UUID
+from uuid import UUID, uuid4
+from pathlib import Path
 
 from pydantic import BaseModel
 from fastapi import APIRouter, Depends, HTTPException, Header, UploadFile, File
@@ -20,6 +22,12 @@ from contracts.twin import (
     TwinCreate, TwinUpdate, TwinModeSwitch,
     TwinTaskCreate, TwinTaskUpdate, TwinTaskReview,
     TwinKnowledgeCreate, TwinChatMessage,
+    MeetingJoinRequest, MeetingJoinResponse, MeetingLeaveRequest,
+    MeetingEscalateRequest, MeetingUtteranceCreate, MeetingActiveSession,
+    MeetingListenStartAsterisk, MeetingListenStatus, MeetingListenStopResponse,
+    TwinRespondRequest, TwinRespondResponse,
+    VoiceConsentRequest, VoiceProfileResponse,
+    AutoCreateMeetingRequest, AutoCreateMeetingResponse,
 )
 
 router = APIRouter(prefix="/twins", tags=["digital-twins"])
@@ -564,7 +572,10 @@ def get_messages(twin_id: UUID, limit: int = 50, db: Session = Depends(get_db)):
 
 @router.post("/{twin_id}/messages")
 def send_message(twin_id: UUID, body: SendMessageBody, db: Session = Depends(get_db), _ac=Depends(_check_twin_access)):
-    """Send a message (boss → worker or worker → boss)."""
+    """Send a message (boss → worker or worker → boss). v4-K: if the boss
+    message contains both a meeting intent and a time, auto-schedule a
+    meeting with THIS twin invited and reply with the room link.
+    """
     from db.models import DirectMessage, DigitalTwin
 
     twin = db.query(DigitalTwin).filter(DigitalTwin.id == twin_id).first()
@@ -585,12 +596,87 @@ def send_message(twin_id: UUID, body: SendMessageBody, db: Session = Depends(get
         f"{'Boss' if body.sender_type == 'boss' else 'Worker'}: {body.content[:80]}",
     )
 
+    schedule_result = None
+    if body.sender_type == "boss":
+        try:
+            from services import twin_meeting_intent, twin_meeting_scheduler
+            if twin_meeting_intent.detect_meeting_intent(body.content):
+                # DM-scoped: target ONLY this twin
+                from services.time_parser import parse_meeting_time
+                ti = parse_meeting_time(body.content) or {
+                    "scheduled_at_utc": datetime.utcnow(),
+                    "kind": "now",
+                    "matched": "(implicit)",
+                    "delta_seconds": 0,
+                    "human": "right now",
+                }
+                from db.models import Meeting, MeetingParticipant
+                fire_now = ti["delta_seconds"] <= 30
+                meeting = Meeting(
+                    title=f"DM meeting — {twin.name}",
+                    meeting_type="one_on_one",
+                    status="active" if fire_now else "scheduled",
+                    scheduled_at=ti["scheduled_at_utc"],
+                    started_at=datetime.utcnow() if fire_now else None,
+                    created_by="vip_dm",
+                    is_voice=True,
+                )
+                db.add(meeting)
+                db.flush()
+                owner = (
+                    db.query(PlatformUser)
+                    .filter(PlatformUser.twin_id == twin_id)
+                    .first()
+                )
+                for_user_id = owner.id if owner else None
+                if fire_now:
+                    from services import twin_meeting_session
+                    twin_meeting_session.join_meeting(
+                        db, twin_id=twin_id, meeting_id=meeting.id,
+                        for_user_id=for_user_id,
+                        authority="answer_factual",
+                        authorized_by_user_id=None,
+                        reason="DM-scheduled meeting (immediate)",
+                    )
+                else:
+                    participant = MeetingParticipant(
+                        meeting_id=meeting.id,
+                        twin_id=twin_id,
+                        participant_type="twin_proxy" if for_user_id else "twin",
+                        for_user_id=for_user_id,
+                        meeting_authority="answer_factual",
+                        session_status="invited",
+                        joined_at=datetime.utcnow(),
+                    )
+                    db.add(participant)
+                schedule_result = {
+                    "ok": True,
+                    "meeting_id": str(meeting.id),
+                    "meeting_status": meeting.status,
+                    "scheduled_at": ti["scheduled_at_utc"].isoformat(),
+                    "scheduled_at_human": ti.get("human"),
+                    "meeting_room_url": f"/meetings/{meeting.id}/room",
+                }
+                # Auto-reply as the twin so the boss sees confirmation in the DM
+                reply = DirectMessage(
+                    twin_id=twin_id,
+                    sender_type="worker",
+                    content=(
+                        f"🗓 Scheduled meeting {ti.get('human')}. "
+                        f"Room: /meetings/{meeting.id}/room"
+                    ),
+                )
+                db.add(reply)
+        except Exception as _e:
+            schedule_result = {"ok": False, "reason": str(_e)}
+
     db.commit()
     return {
         "sent": True,
         "id": str(msg.id),
         "sender_type": body.sender_type,
         "twin_name": twin.name,
+        "schedule_result": schedule_result,
     }
 
 
@@ -701,6 +787,656 @@ def summarize_meeting(body: MeetingTranscriptBody, db: Session = Depends(get_db)
     db.commit()
     return result
 
+
+# ---------------------------------------------------------------------------
+#  Live Meeting Attendance (Sprint 1 — twin-attends-meeting feature)
+# ---------------------------------------------------------------------------
+
+@router.post("/{twin_id}/meetings/join", response_model=MeetingJoinResponse, status_code=201)
+def twin_join_meeting(
+    twin_id: UUID,
+    body: MeetingJoinRequest,
+    x_user_email: Optional[str] = Header(None),
+    db: Session = Depends(get_db),
+    _ac=Depends(_check_twin_access),
+):
+    """Twin joins a live meeting on the worker's behalf. Worker (or boss)
+    sets the authority level. The voice pipeline (Sprint 2) consumes the
+    returned participant_id to stream audio in/out.
+    """
+    from db.models import Meeting
+    from services import twin_meeting_session
+    from services.meeting_rate_limiter import check_join_allowed, RateLimitError
+
+    # Sprint 6: enforce rate limits before any DB write
+    try:
+        check_join_allowed(db, twin_id)
+    except RateLimitError as e:
+        raise HTTPException(status_code=429, detail=str(e))
+
+    meeting = db.query(Meeting).filter(Meeting.id == body.meeting_id).first()
+    if not meeting:
+        raise HTTPException(status_code=404, detail="Meeting not found")
+
+    # Resolve who is authorizing this proxy attendance
+    authorized_by_id = None
+    if x_user_email:
+        user = db.query(PlatformUser).filter(PlatformUser.email == x_user_email).first()
+        if user:
+            authorized_by_id = user.id
+
+    try:
+        participant = twin_meeting_session.join_meeting(
+            db,
+            twin_id=twin_id,
+            meeting_id=body.meeting_id,
+            for_user_id=body.for_user_id,
+            authority=body.authority.value,
+            authorized_by_user_id=authorized_by_id,
+            reason=body.reason,
+        )
+    except ValueError as e:
+        # Validation failure (twin missing, meeting ended, duplicate join) — 400 is clearer than 404
+        raise HTTPException(status_code=400, detail=str(e))
+
+    # Move meeting to active if it isn't already
+    if meeting.status == "scheduled":
+        from datetime import datetime as _dt
+        meeting.status = "active"
+        meeting.started_at = _dt.utcnow()
+
+    db.commit()
+    return MeetingJoinResponse(
+        participant_id=participant.id,
+        meeting_id=participant.meeting_id,
+        twin_id=participant.twin_id,
+        authority=body.authority,
+        session_status=participant.session_status,
+        joined_at=participant.joined_at,
+        is_voice=meeting.is_voice,
+    )
+
+
+@router.post("/{twin_id}/meetings/{meeting_id}/leave")
+def twin_leave_meeting(
+    twin_id: UUID,
+    meeting_id: UUID,
+    body: Optional[MeetingLeaveRequest] = None,
+    db: Session = Depends(get_db),
+    _ac=Depends(_check_twin_access),
+):
+    """Twin leaves the meeting. By default generates a bilingual summary,
+    promotes commitments to review-tasks, and DMs the worker.
+    """
+    from services import twin_meeting_session
+
+    generate_summary = body.generate_summary if body else True
+    reason = body.reason if body else None
+    try:
+        result = twin_meeting_session.leave_meeting(
+            db, twin_id, meeting_id, generate_summary=generate_summary, reason=reason,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    db.commit()
+    return result
+
+
+@router.post("/{twin_id}/meetings/{meeting_id}/escalate")
+def twin_escalate_in_meeting(
+    twin_id: UUID,
+    meeting_id: UUID,
+    body: MeetingEscalateRequest,
+    db: Session = Depends(get_db),
+    _ac=Depends(_check_twin_access),
+):
+    """Twin can't answer without the worker. DMs the worker; Sprint 2 also
+    plays a Korean stall phrase aloud while waiting.
+    """
+    from services import twin_meeting_session
+    try:
+        result = twin_meeting_session.escalate(
+            db, twin_id, meeting_id, body.question, body.stall_phrase_kr,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    db.commit()
+    return result
+
+
+@router.get("/{twin_id}/meetings/active")
+def twin_active_meetings(
+    twin_id: UUID,
+    db: Session = Depends(get_db),
+    _ac=Depends(_check_twin_access),
+):
+    """List meetings this twin is currently attending."""
+    from services import twin_meeting_session
+    sessions = twin_meeting_session.list_active_sessions(db, twin_id)
+    return {"twin_id": str(twin_id), "active_sessions": sessions, "count": len(sessions)}
+
+
+@router.post("/{twin_id}/meetings/{meeting_id}/utterances", status_code=201)
+def record_meeting_utterance(
+    twin_id: UUID,
+    meeting_id: UUID,
+    body: MeetingUtteranceCreate,
+    db: Session = Depends(get_db),
+):
+    """Internal endpoint — voice pipeline (Whisper STT) pushes one utterance
+    per speaker turn into the audit log. Twin commitments are auto-promoted
+    to review-tasks at /leave.
+    """
+    from db.models import MeetingParticipant
+    from services import twin_meeting_session
+
+    # Find the participant row (if speaker is the twin)
+    participant_id = None
+    if body.speaker_role == "twin":
+        participant = (
+            db.query(MeetingParticipant)
+            .filter(
+                MeetingParticipant.meeting_id == meeting_id,
+                MeetingParticipant.twin_id == twin_id,
+                MeetingParticipant.session_status.in_(("active", "escalated")),
+            )
+            .first()
+        )
+        if participant:
+            participant_id = participant.id
+
+    utterance = twin_meeting_session.record_utterance(
+        db,
+        meeting_id=meeting_id,
+        participant_id=participant_id,
+        speaker_role=body.speaker_role,
+        speaker_label=body.speaker_label,
+        text=body.text,
+        text_korean=body.text_korean,
+        audio_url=body.audio_url,
+        is_commitment=body.is_commitment,
+        requires_worker_review=body.requires_worker_review,
+        confidence=body.confidence,
+        latency_ms=body.latency_ms,
+    )
+    db.commit()
+    return {
+        "id": str(utterance.id),
+        "spoken_at": utterance.spoken_at.isoformat(),
+        "is_commitment": utterance.is_commitment,
+    }
+
+
+# ---------------------------------------------------------------------------
+#  Auto-create meeting from natural language (Sprint 8)
+# ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+#  Hybrid meeting room finalize (Sprint 10)
+# ---------------------------------------------------------------------------
+
+@router.post("/meetings/{meeting_id}/finalize")
+def finalize_meeting_endpoint(
+    meeting_id: UUID,
+    send_emails: bool = True,
+    save_to_twins: bool = True,
+    db: Session = Depends(get_db),
+):
+    """End a hybrid meeting room. Generates Korean+English summary, saves
+    it to every attending twin's knowledge base, and emails participants
+    (when SMTP is configured). Replaces the old 'leave + summarize' flow
+    for the Zoom-style multi-attendee case.
+    """
+    from services import twin_meeting_finalizer
+    result = twin_meeting_finalizer.finalize_meeting(
+        db, meeting_id, send_emails=send_emails, save_to_twins=save_to_twins,
+    )
+    if not result.get("ok"):
+        raise HTTPException(status_code=404, detail=result.get("reason", "finalize failed"))
+    return result
+
+
+@router.post("/meetings/auto-create", response_model=AutoCreateMeetingResponse)
+def auto_create_meeting(
+    body: AutoCreateMeetingRequest,
+    x_user_email: Optional[str] = Header(None),
+    db: Session = Depends(get_db),
+):
+    """Parse a natural-language meeting request (Korean or English) and
+    auto-create a Meeting + auto-join the named twins. Hookable from:
+    1) the Assistant page text box, 2) the floating voice overlay
+    (already calls /chat/voice which routes here on meeting intent).
+
+    Examples:
+      "Let's have a meeting with Kim and Davronbek"
+      "회의하자 김현성 트윈과 다브론벡 트윈"
+      "Start a meeting with the AI team"
+    """
+    from services import twin_meeting_intent
+
+    authorized_by_id = None
+    if x_user_email:
+        user = db.query(PlatformUser).filter(PlatformUser.email == x_user_email).first()
+        if user:
+            authorized_by_id = user.id
+
+    return twin_meeting_intent.auto_create_meeting_from_text(
+        db,
+        text=body.text,
+        authorized_by_user_id=authorized_by_id,
+        authority=body.authority.value,
+        meeting_type=body.meeting_type,
+        title=body.title,
+    )
+
+
+# ---------------------------------------------------------------------------
+#  Twin Speaks in Meeting (Sprint 3)
+# ---------------------------------------------------------------------------
+
+@router.post("/{twin_id}/meetings/{meeting_id}/twin-respond", response_model=TwinRespondResponse)
+async def twin_respond_in_meeting(
+    twin_id: UUID,
+    meeting_id: UUID,
+    body: TwinRespondRequest,
+    db: Session = Depends(get_db),
+    _ac=Depends(_check_twin_access),
+):
+    """Generate the twin's reply to a meeting prompt. Applies the authority
+    gate — escalates instead of speaking if a commitment would exceed the
+    twin's authorization. Renders TTS audio when speak_aloud=True and
+    returns the audio URL the dashboard can play back.
+    """
+    from services import twin_meeting_orchestrator
+    try:
+        result = await twin_meeting_orchestrator.respond_in_meeting(
+            db, twin_id, meeting_id,
+            prompt=body.prompt,
+            model=body.model,
+            speak_aloud=body.speak_aloud,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    return result
+
+
+# ---------------------------------------------------------------------------
+#  Worker Voice Clone (Sprint 4)
+# ---------------------------------------------------------------------------
+
+@router.post("/voice/users/{user_id}/consent", response_model=VoiceProfileResponse, status_code=201)
+def voice_record_consent(
+    user_id: UUID,
+    body: VoiceConsentRequest,
+    db: Session = Depends(get_db),
+):
+    """Worker explicitly consents to voice cloning. Required before sample
+    upload. Returns the (created or updated) voice profile.
+    """
+    from services import voice_clone
+    try:
+        profile = voice_clone.record_consent(db, user_id, body.consent_text)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    db.commit()
+    return voice_clone.get_profile(db, user_id)
+
+
+@router.post("/voice/users/{user_id}/sample", status_code=201)
+async def voice_upload_sample(
+    user_id: UUID,
+    file: UploadFile = File(..., description="WAV recording (>=30s, ideally 1-3 min)"),
+    db: Session = Depends(get_db),
+):
+    """Upload a clean voice sample. Consent must already be on file."""
+    from services import voice_clone
+    data = await file.read()
+    if len(data) > 50_000_000:
+        raise HTTPException(status_code=413, detail="Voice sample too large (max 50MB)")
+    try:
+        result = voice_clone.store_voice_sample(db, user_id, data, file.filename or "sample.wav")
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    db.commit()
+    return result
+
+
+@router.post("/voice/users/{user_id}/train")
+def voice_start_training(
+    user_id: UUID,
+    db: Session = Depends(get_db),
+):
+    """Kick off MeloTTS fine-tune. Sprint 4 stub auto-marks ready; real
+    training will run on a GPU node and update the row asynchronously.
+    """
+    from services import voice_clone
+    try:
+        result = voice_clone.start_training(db, user_id)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    db.commit()
+    return result
+
+
+@router.get("/voice/users/{user_id}/profile", response_model=Optional[VoiceProfileResponse])
+def voice_get_profile(user_id: UUID, db: Session = Depends(get_db)):
+    from services import voice_clone
+    profile = voice_clone.get_profile(db, user_id)
+    if not profile:
+        raise HTTPException(status_code=404, detail="No voice profile for this user")
+    return profile
+
+
+@router.delete("/voice/users/{user_id}/consent")
+def voice_revoke_consent(user_id: UUID, db: Session = Depends(get_db)):
+    """Worker revokes consent. Marks profile 'revoked' and prevents twin
+    from using their cloned voice. Sample file is retained until purge job
+    runs (Sprint 6 retention policy).
+    """
+    from services import voice_clone
+    result = voice_clone.revoke_consent(db, user_id)
+    db.commit()
+    return result
+
+
+# ---------------------------------------------------------------------------
+#  Live STT Listener (Sprint 2)
+# ---------------------------------------------------------------------------
+
+@router.post("/{twin_id}/meetings/{meeting_id}/listen/upload", status_code=202)
+async def start_listening_upload(
+    twin_id: UUID,
+    meeting_id: UUID,
+    file: UploadFile = File(..., description="WAV file (mono or stereo, any sample rate)"),
+    speaker_label: str = "Meeting Audio",
+    db: Session = Depends(get_db),
+    _ac=Depends(_check_twin_access),
+):
+    """Upload a WAV recording of a meeting. The listener transcribes it
+    chunk-by-chunk via Whisper and writes MeetingUtterance rows in real
+    time. Returns a session_id immediately; poll /listen/status to watch
+    progress.
+    """
+    from services import twin_voice_listener
+
+    # Persist upload to a temp file under .uploads/meetings/
+    upload_dir = Path("uploads") / "meeting_audio"
+    upload_dir.mkdir(parents=True, exist_ok=True)
+    safe_suffix = Path(file.filename or "audio.wav").suffix or ".wav"
+    out_path = upload_dir / f"{meeting_id}_{uuid4()}{safe_suffix}"
+    data = await file.read()
+    if len(data) > 50_000_000:  # 50 MB cap
+        raise HTTPException(status_code=413, detail="Audio file too large (max 50MB)")
+    out_path.write_bytes(data)
+
+    try:
+        session_id = twin_voice_listener.start_listening_from_file(
+            twin_id=twin_id,
+            meeting_id=meeting_id,
+            audio_path=str(out_path),
+            speaker_label=speaker_label,
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to start listener: {e}")
+
+    return {
+        "session_id": session_id,
+        "twin_id": str(twin_id),
+        "meeting_id": str(meeting_id),
+        "source": "file",
+        "audio_filename": file.filename,
+        "audio_bytes": len(data),
+        "status_url": f"/twins/{twin_id}/meetings/{meeting_id}/listen/status?session_id={session_id}",
+    }
+
+
+@router.post("/{twin_id}/meetings/{meeting_id}/listen/asterisk", status_code=202)
+def start_listening_asterisk(
+    twin_id: UUID,
+    meeting_id: UUID,
+    body: MeetingListenStartAsterisk,
+    db: Session = Depends(get_db),
+    _ac=Depends(_check_twin_access),
+):
+    """Attach to a live Asterisk SIP channel. Sprint 2 returns a stub
+    error; Sprint 3 wires the AudioSocket bridge.
+    """
+    from services import twin_voice_listener
+    session_id = twin_voice_listener.start_listening_from_asterisk(
+        twin_id=twin_id,
+        meeting_id=meeting_id,
+        asterisk_channel_id=body.asterisk_channel_id,
+        speaker_label=body.speaker_label,
+    )
+    status = twin_voice_listener.get_status(session_id)
+    return status
+
+
+@router.get("/{twin_id}/meetings/{meeting_id}/listen/status")
+def get_listening_status(
+    twin_id: UUID,
+    meeting_id: UUID,
+    session_id: Optional[str] = None,
+    _ac=Depends(_check_twin_access),
+):
+    """Poll for a single session's status (pass session_id) or list every
+    active listener for this meeting.
+    """
+    from services import twin_voice_listener
+    if session_id:
+        status = twin_voice_listener.get_status(session_id)
+        if not status:
+            raise HTTPException(status_code=404, detail="Listener session not found")
+        return status
+    return {
+        "meeting_id": str(meeting_id),
+        "listeners": twin_voice_listener.list_active_listeners(meeting_id),
+    }
+
+
+@router.post("/{twin_id}/meetings/{meeting_id}/listen/stop")
+def stop_listening(
+    twin_id: UUID,
+    meeting_id: UUID,
+    session_id: str,
+    _ac=Depends(_check_twin_access),
+):
+    """Cancel a running listener session."""
+    from services import twin_voice_listener
+    return twin_voice_listener.stop_listening(session_id)
+
+
+@router.get("/{twin_id}/meetings/{meeting_id}/utterances")
+def list_meeting_utterances(
+    twin_id: UUID,
+    meeting_id: UUID,
+    redact: bool = False,
+    db: Session = Depends(get_db),
+    _ac=Depends(_check_twin_access),
+):
+    """Replay the meeting transcript with speaker attribution. Pass
+    ?redact=true to mask PII (phones, emails, RRN, cards) — Sprint 6.
+    """
+    from db.models import MeetingUtterance
+    rows = (
+        db.query(MeetingUtterance)
+        .filter(MeetingUtterance.meeting_id == meeting_id)
+        .order_by(MeetingUtterance.spoken_at.asc())
+        .all()
+    )
+    out_rows = [
+        {
+            "id": str(u.id),
+            "speaker_role": u.speaker_role,
+            "speaker_label": u.speaker_label,
+            "text": u.text,
+            "text_korean": u.text_korean,
+            "audio_url": u.audio_url,
+            "spoken_at": u.spoken_at.isoformat() if u.spoken_at else None,
+            "is_commitment": u.is_commitment,
+            "requires_worker_review": u.requires_worker_review,
+            "confidence": u.confidence,
+            "latency_ms": u.latency_ms,
+        }
+        for u in rows
+    ]
+    if redact:
+        from services.pii_redactor import redact_utterances
+        out_rows = redact_utterances(out_rows)
+    return {
+        "meeting_id": str(meeting_id),
+        "twin_id": str(twin_id),
+        "count": len(rows),
+        "redacted": redact,
+        "utterances": out_rows,
+    }
+
+
+# ---------------------------------------------------------------------------
+#  Sprint 6 — Admin / Ops endpoints (metrics + retention + rate limits)
+# ---------------------------------------------------------------------------
+
+@router.get("/admin/meeting-metrics/system")
+def get_system_meeting_metrics(
+    since_days: int = 30,
+    db: Session = Depends(get_db),
+):
+    """System-wide meeting health for the ops dashboard."""
+    from services import meeting_metrics
+    from services.meeting_rate_limiter import current_limits
+    return {
+        "metrics": meeting_metrics.system_wide(db, since_days=since_days),
+        "rate_limits": current_limits(),
+        "recent_escalations": meeting_metrics.recent_escalations(db, limit=10),
+    }
+
+
+@router.get("/admin/meeting-metrics/twin/{twin_id}")
+def get_twin_meeting_metrics(
+    twin_id: UUID,
+    since_days: int = 30,
+    db: Session = Depends(get_db),
+):
+    """Per-twin meeting health: commitments, escalations, latency."""
+    from services import meeting_metrics
+    summary = meeting_metrics.per_twin_summary(db, twin_id, since_days=since_days)
+    if not summary:
+        raise HTTPException(status_code=404, detail="Twin not found")
+    return summary
+
+
+@router.post("/admin/retention/purge")
+def admin_run_retention(
+    dry_run: bool = True,
+    db: Session = Depends(get_db),
+):
+    """Manually trigger the retention purge job. Pass dry_run=false to
+    actually delete files. Wire this to the existing scheduler_service
+    for daily auto-cleanup.
+    """
+    from services import meeting_retention
+    return meeting_retention.run_all(db, dry_run=dry_run)
+
+
+@router.get("/admin/rate-limits")
+def admin_get_rate_limits():
+    """Read current rate-limit configuration + in-memory state."""
+    from services.meeting_rate_limiter import current_limits
+    return current_limits()
+
+
+# ---------------------------------------------------------------------------
+#  v4-A: Twin Autopilot — periodic self-improvement
+# ---------------------------------------------------------------------------
+
+@router.get("/admin/autopilot/status")
+def admin_autopilot_status():
+    from services import twin_autopilot
+    return twin_autopilot.get_status()
+
+
+@router.post("/admin/autopilot/run-now")
+def admin_autopilot_run_now():
+    """Trigger one autopilot cycle immediately (any-time manual run)."""
+    from services import twin_autopilot
+    return twin_autopilot.run_all_twins_cycle()
+
+
+@router.post("/admin/autopilot/install")
+def admin_autopilot_install():
+    """Install / re-install the autopilot cron job in the running scheduler.
+    Idempotent — safe to call after a code change.
+    """
+    from services import twin_autopilot
+    return twin_autopilot.register_with_scheduler()
+
+
+# ---------------------------------------------------------------------------
+#  v4-E: Twin auto-join dispatcher controls
+# ---------------------------------------------------------------------------
+
+@router.get("/admin/autojoin/status")
+def admin_autojoin_status():
+    from services import twin_meeting_autojoin
+    return twin_meeting_autojoin.get_status()
+
+
+@router.post("/admin/autojoin/install")
+def admin_autojoin_install():
+    from services import twin_meeting_autojoin
+    return twin_meeting_autojoin.register_with_scheduler()
+
+
+@router.post("/admin/autojoin/run-now")
+def admin_autojoin_run_now():
+    """Manually trigger one autojoin sweep — useful for testing scheduled meetings."""
+    from services import twin_meeting_autojoin
+    return twin_meeting_autojoin.run_once()
+
+
+# ---------------------------------------------------------------------------
+#  v4-J: Backfill avatars for every twin lacking one
+# ---------------------------------------------------------------------------
+
+@router.post("/admin/avatars/backfill")
+def admin_backfill_avatars(db: Session = Depends(get_db)):
+    """Assign a DiceBear avatar URL to every twin that doesn't have one yet."""
+    from services import twin_avatar
+    from db.models import DigitalTwin
+    twins = db.query(DigitalTwin).filter(
+        (DigitalTwin.avatar_url == None) | (DigitalTwin.avatar_url == "")  # noqa: E711
+    ).all()
+    updated = 0
+    for t in twins:
+        t.avatar_url = twin_avatar.url_for_twin(str(t.id), t.name)
+        updated += 1
+    db.commit()
+    return {"updated": updated, "total_checked": len(twins)}
+
+
+# ---------------------------------------------------------------------------
+#  v4-B: Twin Readiness Audit
+# ---------------------------------------------------------------------------
+
+@router.get("/admin/readiness/all")
+def admin_readiness_all(db: Session = Depends(get_db)):
+    """Audit every twin and return per-twin completeness scores + missing pieces."""
+    from services import twin_readiness
+    return twin_readiness.audit_all(db)
+
+
+@router.get("/admin/readiness/twin/{twin_id}")
+def admin_readiness_twin(twin_id: UUID, db: Session = Depends(get_db)):
+    from services import twin_readiness
+    result = twin_readiness.audit_twin(db, twin_id)
+    if not result:
+        raise HTTPException(status_code=404, detail="Twin not found")
+    return result
+
+
+# ---------------------------------------------------------------------------
+#  Daily / Monthly / Weekly Reports
+# ---------------------------------------------------------------------------
 
 @router.get("/reports/boss-briefing")
 def get_boss_briefing(db: Session = Depends(get_db)):
