@@ -29,3 +29,12 @@ pgdata/
 # OS
 .DS_Store
 Thumbs.db
+
+# Runtime logs
+*.log
+.uvicorn.log
+.nextdev.log
+
+# Local databases / vector indexes
+*.db
+ruvector.db
