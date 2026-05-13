@@ -2,6 +2,180 @@
 
 ---
 
+## 2026-05-13 (Wednesday) — Meeting Twins v3/v4 + Sprint 1-10 chunked commit
+
+### Goal
+
+A pile of meeting-twin work (Sprints 1-10 + the v3 group redesign + the v4 autonomous off-day flow) had accumulated as untracked + modified files without ever being committed. Yesterday's admin-dashboard polish was logged but also still uncommitted. Risk was real — `git clean` or a workspace mishap would lose ~5,000 lines of new code. This session locked everything in via a Ruflo swarm pipeline, smoke-tested imports, and documented the result.
+
+### Pipeline — what ran
+
+Spun a fresh hierarchical swarm (`swarm-1778648979213-61f4ij`, max 5 agents) and dispatched a 4-stage pipeline: **auditor → committer → reviewer → scribe**. Auditor + committer hit a subagent shell-permission wall (denied on `git commit` even though `git status` worked), so the lead session executed the audit + commits directly. Plan stayed unchanged. Reviewer's import smoke-test (24/24 pass) ran in the lead session too.
+
+### Commits landed (this session)
+
+```
+74d699a chore(scripts): add asset agent seed scripts
+0b15df5 feat(ui): meeting twin panel + ops bar + groups hub + per-meeting room
+d22b721 feat(api): wire new meeting/group endpoints + autojoin scheduler
+d99d7d7 feat(meetings): v4 autonomous off-day flow (autojoin + avatar + readiness + autopilot)
+a2ee537 feat(meetings): v3 redesign — group meetings, hand-raise, scheduler
+db34f49 feat(meetings): Sprint 10 finalizer (KR+EN summary -> twin KB -> email)
+b926c9e feat(meetings): Sprint 8 bilingual KR/EN meeting-intent + time parser
+0154429 feat(meetings): Sprint 6 ops, rate-limit, retention, PII redaction
+918db4c feat(meetings): Sprint 1-3 live-meeting core + Sprint 4 voice-clone hook
+62ebb2c feat(meetings): db schema + contracts + v4 migration helper for meeting twins
+c2dcdb9 feat(admin): password recovery + sidebar cleanup + Meetings tabs (2026-05-12 polish)
+5aa0c43 chore(gitignore): exclude runtime logs and local vector dbs
+```
+
+12 commits before this docs commit. Total deltas: ~7,800 insertions, ~175 deletions across 41 files.
+
+### What this gives you (feature inventory by sprint)
+
+**Sprint 1-3 — live-meeting core** ([twin_meeting_session.py](apps/orchestrator-api/services/twin_meeting_session.py), [twin_voice_listener.py](apps/orchestrator-api/services/twin_voice_listener.py), [twin_voice_speaker.py](apps/orchestrator-api/services/twin_voice_speaker.py), [twin_meeting_orchestrator.py](apps/orchestrator-api/services/twin_meeting_orchestrator.py))
+- Meeting lifecycle + 4-tier authority gate (`listener_only` → `full_proxy`)
+- WAV / Asterisk AudioSocket → Whisper STT → utterance log
+- Outbound TTS (MeloTTS / OpenAI nova) tied to twin replies
+- Full-duplex orchestrator: STT → twin_brain.think → authority check → TTS → low-confidence fallback to written report
+- [voice_clone.py](apps/orchestrator-api/services/voice_clone.py) — Sprint 4 per-worker voice profile lookup hook
+
+**Sprint 6 — ops & safety** ([meeting_metrics.py](apps/orchestrator-api/services/meeting_metrics.py), [meeting_rate_limiter.py](apps/orchestrator-api/services/meeting_rate_limiter.py), [meeting_retention.py](apps/orchestrator-api/services/meeting_retention.py), [pii_redactor.py](apps/orchestrator-api/services/pii_redactor.py))
+- Per-twin / per-day / system-wide metrics
+- Concurrent-meeting and join-rate caps (in-memory; Redis swap when needed)
+- 90 / 365 / 30-day audio + signed-URL purge
+- Korean-aware PII mask (RRN, phone, account, plus email/CC/IP)
+
+**Sprint 8 — bilingual intent** ([twin_meeting_intent.py](apps/orchestrator-api/services/twin_meeting_intent.py), [time_parser.py](apps/orchestrator-api/services/time_parser.py))
+- Boss says "let's meet with X" or "회의하자 X 트윈과" → fuzzy name match against the twin registry → auto-create Meeting and join named twins
+- Shared KR/EN relative-time parser used by the scheduler
+
+**Sprint 10 — end-of-meeting persistence** ([twin_meeting_finalizer.py](apps/orchestrator-api/services/twin_meeting_finalizer.py), [twin_meeting_email.py](apps/orchestrator-api/services/twin_meeting_email.py))
+- Bilingual (KR + EN) summary generated from utterances + chat
+- Summary saved to every attending twin's TwinKnowledge so each twin learns from the meeting
+- stdlib SMTP delivery to participant workers (no-op when SMTP unset; KB save still happens)
+
+**v3 — group meetings** ([twin_group_service.py](apps/orchestrator-api/services/twin_group_service.py), [twin_meeting_scheduler.py](apps/orchestrator-api/services/twin_meeting_scheduler.py), [twin_meeting_handraise.py](apps/orchestrator-api/services/twin_meeting_handraise.py), [routers/twin_groups.py](apps/orchestrator-api/routers/twin_groups.py))
+- Boss-defined worker groups; each member auto-includes their twin
+- "Let's meet in 10 min" inside a group chat → schedules + auto-joins at fire time
+- Confidence-scored hand-raise badges (named twin = 1.0, else keyword overlap vs knowledge titles + skills, threshold via `TWIN_HAND_RAISE_THRESHOLD`)
+
+**v4 — autonomous off-day flow** ([twin_meeting_autojoin.py](apps/orchestrator-api/services/twin_meeting_autojoin.py), [twin_avatar.py](apps/orchestrator-api/services/twin_avatar.py), [twin_readiness.py](apps/orchestrator-api/services/twin_readiness.py), [twin_autopilot.py](apps/orchestrator-api/services/twin_autopilot.py))
+- APScheduler 60s job auto-joins twins for due meetings → flips meeting to active → boss can vanish, twins do the meeting + finalizer summarizes + email goes out
+- DiceBear deterministic SVG avatars per twin/worker (uploaded photos still override)
+- Composite readiness score per twin
+- Autopilot loop pairing with the autojoin dispatcher
+
+**API wiring** ([main.py](apps/orchestrator-api/main.py), [routers/twins.py](apps/orchestrator-api/routers/twins.py))
+- Registers `twin_groups` router + starts the autojoin APScheduler interval job in lifespan
+- `routers/twins.py` +740 lines exposing the Sprint 1-10 + v3/v4 flow as REST
+
+**Frontend** ([TwinMeetingPanel.tsx](apps/admin-dashboard/src/components/TwinMeetingPanel.tsx), [MeetingOpsBar.tsx](apps/admin-dashboard/src/components/MeetingOpsBar.tsx), [TwinGroupsHub.tsx](apps/admin-dashboard/src/components/TwinGroupsHub.tsx), [meetings/[meetingId]/room/page.tsx](apps/admin-dashboard/src/app/meetings/%5BmeetingId%5D/room/page.tsx), [admin/meeting-twins/page.tsx](apps/admin-dashboard/src/app/admin/meeting-twins/page.tsx))
+- Per-meeting tile grid with live utterance stream + hand-raise badges + boss tap-to-grant-floor
+- Ops metrics strip (active sessions, commitments, escalations, voice-profile readiness)
+- Group CRUD + member roster
+- `/meetings/[meetingId]/room` route + `/admin/meeting-twins` admin page
+- twins/page.tsx + messages/page.tsx updated to surface meeting affordances
+
+### Verification
+
+Ran an import smoke-test from `apps/orchestrator-api/` covering all 24 new/touched modules:
+
+```
+PASS: 24/24, FAIL: 0
+```
+
+No syntax errors, no missing imports across the orchestrator surface. The runtime side (Whisper / MeloTTS / Asterisk bridge) hasn't been exercised yet — that's Sprint 2 wiring work, separate from this commit.
+
+### Intentionally NOT committed
+
+- `apps/admin-dashboard/.nextdev.log`, `apps/orchestrator-api/.uvicorn.log` — runtime logs; added `*.log` to `.gitignore`
+- `ruvector.db` — Ruflo HNSW vector index (runtime state); added `*.db` and explicit `ruvector.db` to `.gitignore`
+- `apps/orchestrator-api/v4)` — empty 0-byte file from a malformed shell command; deleted
+
+### Pipeline lessons
+
+- Subagent shell access is more restrictive than the lead's even in `acceptEdits` mode. Read-only `git status` worked from a subagent, but `git commit` was denied. For commit pipelines, plan on the lead executing the actual `git commit` calls and only using subagents for read/plan/document work. (Worth saving as a Ruflo memory once memory is repopulated — the daemon currently shows 0 entries despite the SessionStart hook's claim about `vip-platform` snapshots.)
+
+### What user does next — pick one
+
+1. **Wire Sprint 2 voice IO over Asterisk AudioSocket.** Listener stub is in place ([twin_voice_listener.py:11-15](apps/orchestrator-api/services/twin_voice_listener.py)); needs the live SIP bridge using existing `services/voice_pipeline.py`. Highest-impact next step — turns the meeting twin from text-only to actually speaking on the call.
+2. **Hook [voice_clone.py](apps/orchestrator-api/services/voice_clone.py) into [twin_voice_speaker.py](apps/orchestrator-api/services/twin_voice_speaker.py)** so each twin replies in their worker's cloned voice (Sprint 4 — currently every twin uses the default speaker).
+3. **Inbox merge** — Chatbot + Messages + Calls under one tabbed menu (proposed in 2026-05-12 audit, not yet executed).
+4. **Run the v4 DB migration** in production: `python -m services.db_migrate_v4` against Supabase so the new `MeetingUtterance` / `MeetingHandRaise` / `TwinGroup*` tables exist before anyone hits the new endpoints.
+
+KT + Kakao + KCC + AlimTalk approvals are still pending. Chatbot module remains code-complete and idle on those.
+
+---
+
+## 2026-05-12 (Tuesday) — Admin dashboard polish: password recovery, menu cleanup, DB pointer, Meetings merge
+
+### Goal
+
+User session focused on admin-dashboard usability while waiting on KT/Kakao approvals. Three things needed fixing: (1) "Forgot password" UI claimed success even though no email/Telegram was ever sent — totally broken silently; (2) the sidebar had 18 items with overlapping menus that the boss had to remember; (3) after the orchestrator restart, twins/agents/messages appeared empty — looked like a data wipe, was actually a `.env` `DATABASE_URL` pointing at the empty local Postgres instead of Supabase.
+
+### Files updated
+
+**[`apps/orchestrator-api/services/auth_service.py`](apps/orchestrator-api/services/auth_service.py)** — recovery flow now reports the truth:
+
+- `forgot_password()` returns `{success, email_sent, error?}` instead of always-success "If the email exists…" pattern. Auto-creates the configured admin user on first recovery request so `tripleh.agents@gmail.com` works even before the user ever logs in.
+- `_send_recovery_email()` now returns `(bool, error_message)` so the caller can see why Gmail rejected. Strips spaces from the App Password (Google formats it with spaces). Specific branches for `SMTPAuthenticationError` vs generic SMTP failure. Reset link changed from `{APP_URL}/reset-password?token=...` (no such route) to `{APP_URL}/?token=...` — `AuthGuard` already reads `?token=` from the root URL, so no new route needed.
+
+**[`apps/admin-dashboard/src/components/AuthGuard.tsx`](apps/admin-dashboard/src/components/AuthGuard.tsx)** — frontend now believes the backend:
+
+- `handleForgot()` rewritten: checks `data.email_sent === true` instead of just `res.ok`. Green message only when the email actually left the server. Telegram fallback path removed (Gmail-only by user request).
+- Reset-token-in-URL now wins over existing session (previously, signing in elsewhere short-circuited past the reset view because `if (auth) return children` ran first). Added `hasResetToken` flag so the precedence is explicit.
+- After successful reset, strips `?token=...` from URL via `history.replaceState` so a refresh doesn't trap the user back in reset view with a spent token.
+- Copy: "We'll send you a reset link" / "Send reset link" (replaces "send a temporary password to your Telegram bot" / "Send recovery link").
+
+**[`.env`](.env)** — two distinct config fixes:
+
+- Added `VIP_ADMIN_EMAIL=tripleh.agents@gmail.com`, `SMTP_EMAIL`, `SMTP_PASSWORD=njxdqgwnsxwlimpi` (Gmail App Password, 16 char), `APP_URL=http://localhost:3000`. Enables Gmail SMTP for recovery emails.
+- **Critical**: switched `DATABASE_URL` from `localhost:5432/vip_platform` (empty local Postgres) to the Supabase URL from `.env.supabase`. This was the cause of "all twins/agents disappeared after password reset" — orchestrator was reading the wrong DB. CLAUDE.md actually warned about exactly this symptom. Data was never lost; 11 twins + 11 agents reappeared instantly on restart.
+
+**[`apps/admin-dashboard/src/components/Sidebar.tsx`](apps/admin-dashboard/src/components/Sidebar.tsx)** — menu hygiene (18 items → 14):
+
+- Removed `Channels` entry (moved into Settings → Integrations card)
+- Removed `AI Glass` entry (moved into Settings → Diagnostics card; experimental feature, not boss-facing daily)
+- Removed `Chatbot Health` entry (moved into Settings → Diagnostics; it's a self-improvement diagnostic, not daily workspace)
+- Removed `Meeting Notes` entry (now reached via tab from `/meetings`)
+- All routes preserved — only the sidebar entries were trimmed. Direct URLs and bookmarks still work.
+
+**[`apps/admin-dashboard/src/app/settings/page.tsx`](apps/admin-dashboard/src/app/settings/page.tsx)** — Settings now hosts the items removed from sidebar:
+
+- New **Integrations** card → links to `/channels` (Telegram, Slack, WhatsApp, Web, AI Glasses)
+- New **Diagnostics** card → links to `/chatbot-health` (Chatbot Self-Improvement) and `/ai-glass` (Spatial capture, experimental)
+- Account info + Change Password remain.
+
+**[`apps/admin-dashboard/src/app/meetings/page.tsx`](apps/admin-dashboard/src/app/meetings/page.tsx)** and **[`apps/admin-dashboard/src/app/meeting-notes/page.tsx`](apps/admin-dashboard/src/app/meeting-notes/page.tsx)** — both now render `<MeetingsTabs />` above their header. User clicks "Meetings" in the sidebar once; the tab bar at the top of either page flips between Live and Notes. Each page keeps its own logic; the merge is purely navigational.
+
+### Files added
+
+**[`apps/admin-dashboard/src/components/MeetingsTabs.tsx`](apps/admin-dashboard/src/components/MeetingsTabs.tsx)** — shared tab bar (Live / Notes). Uses `usePathname()` to highlight the active tab. ~25 LOC.
+
+### Files deleted
+
+- `apps/admin-dashboard/src/app/chatbot-test/` — orphaned test scaffold, not in the sidebar, no inbound links. Safe deletion.
+
+### What this unblocks
+
+- User can now actually recover their password if they forget it. Verified end-to-end: clicked Forgot password → email arrived at `tripleh.agents@gmail.com` → clicked link → landed on Set-new-password form → signed in with new password.
+- Admin dashboard is shorter and less ambiguous: one menu entry for Meetings (with tabs), all configuration concentrated under Settings.
+- Future restarts won't silently break with "where are my twins?" — the Supabase URL is now the default.
+
+### Investigated but intentionally not changed
+
+- **`/calls` vs `/chatbot`** — user asked whether they're duplicates. Verified by grepping the chatbot inbox page top to bottom: the only "calling"-adjacent thing in `/chatbot` is a `📞 Call customer` quick-action button in `packages/chatbot/src/inbox-ui/CustomerInfoPanel.tsx:102`, and that button is a Phase-B5 stub (`alert("Voice call wired in Phase B5")`). `/calls` is the actual `VoiceDashboard` (live calls, history, outbound campaigns). Two separate surfaces of the same `@triple-h/chatbot` SDK, not duplicates. Recommended keeping `/calls` as its own menu item while KT/Asterisk work is in flight.
+- **`/chat` route** — user's original "Removal candidates" table listed it for deletion, but `AskVIP` widget on `agents/judgement/reports/a2a/ai-glass` pages still does `router.push("/chat")` after sending a message. Deleting would silently break those buttons. Flagged for a future refactor: switch `AskVIP` to dispatch `vip:open-assistant` event instead, then delete `/chat`.
+
+### What user does next
+
+- Test password recovery end-to-end one more time (already verified by AI, but worth a user-eye pass).
+- Decide whether to do the full "Inbox merge" (Chatbot + Messages + Calls into one menu with tabs) — proposed in the menu audit but not yet executed; user's call.
+- Continue waiting on KT + Kakao + KCC + AlimTalk approvals (no change today).
+
+---
+
 ## 2026-05-12 (Tuesday) — Chatbot — full module shipped (Phase A complete in one day)
 
 ### Summary
