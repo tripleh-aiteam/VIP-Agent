@@ -671,6 +671,30 @@ def handle_voice_command(db: Session, transcript: str, lang_pref: str = "auto") 
     else:
         lang = detect_language(transcript)
 
+    # Sprint 8 — auto-create meeting from natural language. Runs BEFORE the
+    # keyword classifier so phrasings like "Let's meet with Kim and Davronbek"
+    # trigger meeting creation instead of unrelated keyword matches.
+    try:
+        from services import twin_meeting_intent
+        if twin_meeting_intent.detect_meeting_intent(transcript):
+            result = twin_meeting_intent.auto_create_meeting_from_text(db, transcript)
+            reply = result.get("korean_message") if lang == "ko" else result.get("message")
+            return {
+                "intent": "start_meeting_with_twins",
+                "language": lang,
+                "reply": reply or "Meeting handler ran.",
+                "speak": True,
+                "data": result,
+                "action": (
+                    {"type": "navigate", "to": result["meeting_room_url"]}
+                    if result.get("ok") and result.get("meeting_room_url")
+                    else None
+                ),
+            }
+    except Exception as _e:  # never break the wider voice handler
+        from services.logger import log as _log
+        _log.warning(f"voice_intents: meeting auto-create failed: {_e}")
+
     intent, entities = classify_voice_intent(transcript)
 
     # Track whether we used LLM fallback for the response intent label

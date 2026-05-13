@@ -55,6 +55,13 @@ async def _transcribe_openai(pcm_bytes: bytes, sample_rate: int) -> str:
         log.warning("stt_local: OPENAI_API_KEY not set — cannot transcribe")
         return ""
 
+    # Model + language are env-tunable so the operator can flip to
+    # whisper-large-v3 for higher Korean accuracy without code changes.
+    # Note: OpenAI's hosted Whisper API only exposes 'whisper-1' (large-v2);
+    # WHISPER_MODEL=whisper-large-v3 is honored when VOICE_USE_LOCAL_STT=1
+    # (faster-whisper / whisper.cpp).
+    model = os.getenv("WHISPER_MODEL", "whisper-1")
+    language = os.getenv("WHISPER_LANGUAGE", "ko")
     # Whisper accepts wav uploads; wrap raw PCM in a minimal WAV header.
     wav_bytes = _pcm_to_wav(pcm_bytes, sample_rate)
     try:
@@ -63,7 +70,7 @@ async def _transcribe_openai(pcm_bytes: bytes, sample_rate: int) -> str:
                 "https://api.openai.com/v1/audio/transcriptions",
                 headers={"Authorization": f"Bearer {api_key}"},
                 files={"file": ("speech.wav", wav_bytes, "audio/wav")},
-                data={"model": "whisper-1", "language": "ko"},  # bias to Korean
+                data={"model": model, "language": language},
             )
             if resp.status_code != 200:
                 log.warning(f"stt_local: Whisper API {resp.status_code}: {resp.text[:200]}")
