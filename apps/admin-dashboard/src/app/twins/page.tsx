@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { API } from "../../components/api";
+import TwinMeetingPanel from "../../components/TwinMeetingPanel";
 
 interface Twin {
   id: string;
@@ -75,6 +76,15 @@ export default function TwinsPage() {
   const [chatInput, setChatInput] = useState("");
   const [chatLoading, setChatLoading] = useState(false);
 
+  // Twin meeting console (Sprints 1-4: join, listen, speak, review)
+  const [meetingTwin, setMeetingTwin] = useState<Twin | null>(null);
+
+  // v4-B: per-twin readiness scores (twin_id -> %)
+  const [readiness, setReadiness] = useState<Record<string, { score_pct: number; tier: string; missing: { label: string }[] }>>({});
+  const [readinessSummary, setReadinessSummary] = useState<{ average_score_pct: number; ready_for_production: number; total_twins: number } | null>(null);
+  const [autopilotStatus, setAutopilotStatus] = useState<{ installed: boolean; interval_hours?: number; next_run_time?: string } | null>(null);
+  const [autopilotBusy, setAutopilotBusy] = useState(false);
+
   // Workers management
   const [pageTab, setPageTab] = useState<"twins" | "workers" | "intelligence">("twins");
   const [intelligenceData, setProgressData] = useState<any[]>([]);
@@ -95,7 +105,61 @@ export default function TwinsPage() {
   const [wTwinId, setWTwinId] = useState("");
   const [wSaving, setWSaving] = useState(false);
 
-  useEffect(() => { fetchTwins(); fetchWorkers(); fetchProgress(); }, []);
+  useEffect(() => { fetchTwins(); fetchWorkers(); fetchProgress(); fetchReadiness(); fetchAutopilot(); }, []);
+
+  async function fetchReadiness() {
+    try {
+      const res = await fetch(`${API}/twins/admin/readiness/all`);
+      if (!res.ok) return;
+      const data = await res.json();
+      setReadinessSummary({
+        average_score_pct: data.average_score_pct,
+        ready_for_production: data.ready_for_production,
+        total_twins: data.total_twins,
+      });
+      const map: Record<string, any> = {};
+      for (const t of (data.twins || [])) {
+        map[t.twin_id] = {
+          score_pct: t.score_pct,
+          tier: t.tier,
+          missing: t.missing || [],
+        };
+      }
+      setReadiness(map);
+    } catch {/* silent — backend may not have v4 yet */}
+  }
+
+  async function fetchAutopilot() {
+    try {
+      const res = await fetch(`${API}/twins/admin/autopilot/status`);
+      if (!res.ok) return;
+      setAutopilotStatus(await res.json());
+    } catch {/* silent */}
+  }
+
+  async function handleAutopilotRunNow() {
+    setAutopilotBusy(true);
+    try {
+      const res = await fetch(`${API}/twins/admin/autopilot/run-now`, { method: "POST" });
+      const data = await res.json();
+      alert(`Autopilot finished: ${data.twins_processed} twins processed.`);
+      fetchReadiness();
+    } catch (e: any) {
+      alert(`Autopilot failed: ${e.message || e}`);
+    } finally {
+      setAutopilotBusy(false);
+    }
+  }
+
+  async function handleAutopilotInstall() {
+    setAutopilotBusy(true);
+    try {
+      await fetch(`${API}/twins/admin/autopilot/install`, { method: "POST" });
+      await fetchAutopilot();
+    } finally {
+      setAutopilotBusy(false);
+    }
+  }
 
   async function fetchTwins() {
     try {
@@ -281,6 +345,52 @@ export default function TwinsPage() {
 
   return (
     <div className="p-4 md:p-6 max-w-[1400px] mx-auto">
+      {/* v4 — Readiness + Autopilot summary bar */}
+      {(readinessSummary || autopilotStatus) && pageTab === "twins" && (
+        <div className="mb-4 rounded-xl border border-gray-200 bg-white p-3 flex flex-wrap items-center gap-3 text-xs">
+          {readinessSummary && (
+            <>
+              <span className="text-gray-500">Fleet readiness:</span>
+              <span className={`font-bold ${
+                readinessSummary.average_score_pct >= 80 ? "text-emerald-700"
+                : readinessSummary.average_score_pct >= 50 ? "text-amber-700"
+                : "text-rose-700"
+              }`}>
+                {readinessSummary.average_score_pct}%
+              </span>
+              <span className="text-gray-500">
+                · {readinessSummary.ready_for_production} of {readinessSummary.total_twins} production-ready
+              </span>
+            </>
+          )}
+          <span className="ml-auto flex items-center gap-2">
+            <span className="text-gray-500">
+              Autopilot: {autopilotStatus?.installed ? (
+                <span className="text-emerald-700 font-medium">
+                  ON — every {autopilotStatus.interval_hours}h
+                </span>
+              ) : <span className="text-gray-400">off</span>}
+            </span>
+            {!autopilotStatus?.installed && (
+              <button
+                onClick={handleAutopilotInstall}
+                disabled={autopilotBusy}
+                className="bg-emerald-600 text-white rounded px-2 py-1 disabled:opacity-50"
+              >
+                Install
+              </button>
+            )}
+            <button
+              onClick={handleAutopilotRunNow}
+              disabled={autopilotBusy}
+              className="bg-indigo-600 text-white rounded px-2 py-1 disabled:opacity-50"
+            >
+              {autopilotBusy ? "Running…" : "Run cycle now"}
+            </button>
+          </span>
+        </div>
+      )}
+
       {/* Header */}
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 mb-6">
         <div>
@@ -887,6 +997,28 @@ export default function TwinsPage() {
                  "Offline"}
               </div>
 
+              {/* v4-B: Readiness pill — at a glance, how production-ready is this twin */}
+              {readiness[twin.id] && (
+                <div
+                  className={`flex items-center gap-1 text-[11px] font-medium mt-1 ${
+                    readiness[twin.id].score_pct >= 80 ? "text-emerald-700"
+                    : readiness[twin.id].score_pct >= 50 ? "text-amber-700"
+                    : "text-rose-700"
+                  }`}
+                  title={readiness[twin.id].missing.map(m => "• " + m.label).join("\n") || "Production-ready"}
+                >
+                  <span className={`inline-block w-2 h-2 rounded-full ${
+                    readiness[twin.id].score_pct >= 80 ? "bg-emerald-500"
+                    : readiness[twin.id].score_pct >= 50 ? "bg-amber-500"
+                    : "bg-rose-500"
+                  }`} />
+                  Readiness: {readiness[twin.id].score_pct}% — {readiness[twin.id].tier}
+                  {readiness[twin.id].missing.length > 0 && (
+                    <span className="text-gray-500 ml-1">({readiness[twin.id].missing.length} missing)</span>
+                  )}
+                </div>
+              )}
+
               {/* Action buttons (visible on hover) */}
               <div className="flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity" onClick={e => e.stopPropagation()}>
                 <button
@@ -894,6 +1026,12 @@ export default function TwinsPage() {
                   className="flex-1 py-1.5 bg-blue-50 text-blue-700 rounded-lg text-[11px] font-medium hover:bg-blue-100 transition-colors"
                 >
                   Chat
+                </button>
+                <button
+                  onClick={() => setMeetingTwin(twin)}
+                  className="flex-1 py-1.5 bg-indigo-50 text-indigo-700 rounded-lg text-[11px] font-medium hover:bg-indigo-100 transition-colors"
+                >
+                  Meeting
                 </button>
                 {twin.mode !== "active" && (
                   <button
@@ -1034,6 +1172,15 @@ export default function TwinsPage() {
           </div>
         </div>
       )}
+      {/* Twin Meeting Console (Sprints 1-4) */}
+      {meetingTwin && (
+        <TwinMeetingPanel
+          twinId={meetingTwin.id}
+          twinName={meetingTwin.name}
+          onClose={() => setMeetingTwin(null)}
+        />
+      )}
+
       {/* Chat Modal */}
       {chatTwin && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center p-4" onClick={() => setChatTwin(null)}>

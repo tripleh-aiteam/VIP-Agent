@@ -13,6 +13,7 @@
 
 import { useEffect, useState, useRef } from "react";
 import { API } from "../../components/api";
+import TwinGroupsHub from "../../components/TwinGroupsHub";
 
 interface Twin {
   id: string;
@@ -37,7 +38,27 @@ interface ThreadInfo {
   unread: number;
 }
 
+function MessagesTabSwitcher({ tab, setTab }: { tab: "direct" | "groups"; setTab: (t: "direct" | "groups") => void }) {
+  return (
+    <div className="flex gap-2 mb-4 text-sm">
+      <button
+        onClick={() => setTab("groups")}
+        className={`px-3 py-1.5 rounded ${tab === "groups" ? "bg-indigo-600 text-white" : "bg-gray-100 text-gray-700"}`}
+      >
+        Groups
+      </button>
+      <button
+        onClick={() => setTab("direct")}
+        className={`px-3 py-1.5 rounded ${tab === "direct" ? "bg-indigo-600 text-white" : "bg-gray-100 text-gray-700"}`}
+      >
+        Direct
+      </button>
+    </div>
+  );
+}
+
 export default function MessagesPage() {
+  const [tab, setTab] = useState<"direct" | "groups">("groups");
   const [threads, setThreads] = useState<ThreadInfo[]>([]);
   const [activeTwinId, setActiveTwinId] = useState<string | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
@@ -47,10 +68,13 @@ export default function MessagesPage() {
   const [error, setError] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
 
-  // Load all twins + their last messages on mount
+  // Load all twins + their last messages on mount.
+  // NOTE: hooks must run on every render — only skip the fetch when tab !== "direct".
   useEffect(() => {
+    if (tab !== "direct") return;
     void loadAllThreads();
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab]);
 
   async function loadAllThreads() {
     setLoading(true);
@@ -150,8 +174,20 @@ export default function MessagesPage() {
 
   const activeTwin = threads.find(t => t.twin.id === activeTwinId)?.twin;
 
+  // Render the Groups hub inside the same JSX tree (NO early return — would
+  // break hook order). When tab=groups we hide the direct UI below.
+  if (tab === "groups") {
+    return (
+      <div className="p-4 md:p-6 max-w-[1280px] mx-auto">
+        <MessagesTabSwitcher tab={tab} setTab={setTab} />
+        <TwinGroupsHub />
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-3">
+      <MessagesTabSwitcher tab={tab} setTab={setTab} />
       <div>
         <h1 className="text-[20px] font-bold text-[var(--text-primary)]">Messages</h1>
         <p className="text-[12px] text-[var(--text-muted)] mt-0.5">
