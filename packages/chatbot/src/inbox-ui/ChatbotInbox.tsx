@@ -53,6 +53,10 @@ interface Props {
   onApproveDraft?: (conv: Conversation) => void;
   onDismissDraft?: (conv: Conversation) => void;
   onModeChange?: (mode: BossMode, manual: boolean) => void;
+  /** Boss-IN helper: boss clicks AI button to request a draft suggestion */
+  onGenerateDraft?: (conv: Conversation) => void;
+  /** Boss uploads an image / file / voice clip via the composer */
+  onSendAttachment?: (conv: Conversation, file: File, kind: "image" | "file" | "voice", caption?: string) => void;
 }
 
 export function ChatbotInbox({
@@ -69,6 +73,8 @@ export function ChatbotInbox({
   onApproveDraft,
   onDismissDraft,
   onModeChange,
+  onGenerateDraft,
+  onSendAttachment,
 }: Props) {
   const conversations = liveConversations ?? (mock ? getMockConversations() : []);
   const dailyReport = liveDailyReport ?? (mock ? mockInboxDailyReport : null);
@@ -140,6 +146,8 @@ export function ChatbotInbox({
           onSendReply={onSendReply}
           onApproveDraft={onApproveDraft}
           onDismissDraft={onDismissDraft}
+          onGenerateDraft={onGenerateDraft}
+          onSendAttachment={onSendAttachment}
         />
         {showCustomerPanel && (
           <CustomerInfoPanel conversation={selected} />

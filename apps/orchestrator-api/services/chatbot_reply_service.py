@@ -48,6 +48,18 @@ async def handle_incoming_message(
 ) -> dict[str, Any]:
     """Process a customer's incoming message and either draft or send a reply.
 
+    Behavior by Boss mode:
+
+    - Boss-IN (working hours): **boss is the primary operator.** Bot does
+      NOT auto-draft anything. Customer message just sits as `needs_reply`
+      so the boss can read it + reply manually (text or file/image). The
+      bot watches + learns from boss's actual replies via the self-improve
+      pipeline. If boss wants help, they click "AI suggestion" on the
+      dashboard, which calls `generate_draft_on_demand()` separately.
+
+    - Boss-OUT (off-hours/weekends): bot replies autonomously via `on_send`,
+      escalates urgent items via Telegram.
+
     Args:
       conversation: the conversation the message belongs to
       incoming_text: the customer's text (already transcribed for voice msgs)
@@ -57,43 +69,54 @@ async def handle_incoming_message(
                on_send(reply_text: str, agent_id: str, conversation: ChatbotConversation)
 
     Returns a dict describing what happened:
-      {"mode": "in"|"out", "action": "draft"|"sent"|"escalated", "reply": "..."}
+      {"mode": "in"|"out", "action": "wait"|"sent"|"escalated", "reply": "..."}
     """
     mode, auto_detected = chatbot_mode_detector.get_mode(agent_id)
     is_urgent = chatbot_mode_detector.is_urgent_keyword(incoming_text)
 
-    # Step 1: generate the reply text via the existing chatbot brain
+    # Boss-IN: hands off. Just mark it as needing the boss's attention.
+    if mode == "in":
+        # If the message is urgent, ping the boss via Telegram so they
+        # don't miss it even if they're heads-down on other work.
+        if is_urgent:
+            try:
+                _dispatch_text_escalation(
+                    agent_id=agent_id,
+                    customer_name=customer.name or "Unknown",
+                    incoming_text=incoming_text,
+                    conversation_id=str(conversation.id),
+                )
+                conv_service.patch_conversation(
+                    db, agent_id, conversation.id, urgency="high"
+                )
+            except Exception as e:
+                log.warning(f"chatbot_reply: urgent ping failed (boss-in): {e}")
+        # Make sure status is needs_reply (NOT needs_review — no draft pending)
+        conv_service.patch_conversation(
+            db, agent_id, conversation.id,
+            status="needs_reply",
+            suggested_reply_json=None,    # clear any stale draft
+        )
+        log.info(
+            f"chatbot_reply: waiting for boss (mode=in, urgent={is_urgent}) "
+            f"for conv {conversation.id}",
+            extra={"action": "chatbot.boss_in_waiting"},
+        )
+        return {"mode": "in", "action": "wait", "reply": ""}
+
+    # Boss-OUT path — bot is the operator
     reply_text, reasoning = await _generate_reply(
         agent_id=agent_id,
         incoming_text=incoming_text,
         customer=customer,
         conversation=conversation,
     )
-
     if not reply_text:
         log.warning(
             f"chatbot_reply: empty reply for conv {conversation.id}",
             extra={"action": "chatbot.reply_empty"},
         )
-        reply_text = "잠시 후 다시 답변드리겠습니다." if mode == "out" else ""
-
-    # Step 2: Boss-IN → draft only. Boss-OUT → send + maybe escalate.
-    if mode == "in":
-        conv_service.set_suggested_reply(
-            db,
-            agent_id,
-            conversation.id,
-            text=reply_text,
-            kind="text",
-            reasoning=reasoning,
-        )
-        log.info(
-            f"chatbot_reply: drafted (mode=in) for conv {conversation.id}",
-            extra={"action": "chatbot.draft_created"},
-        )
-        return {"mode": "in", "action": "draft", "reply": reply_text}
-
-    # Boss-OUT path
+        reply_text = "잠시 후 다시 답변드리겠습니다."
     if is_urgent:
         conv_service.escalate_conversation(
             db,
@@ -152,6 +175,61 @@ async def handle_incoming_message(
         "action": "escalated" if is_urgent else "sent",
         "reply": reply_text,
     }
+
+
+async def generate_draft_on_demand(
+    db: Session,
+    agent_id: str,
+    conversation: ChatbotConversation,
+    *,
+    customer: ChatbotCustomer,
+    persist: bool = False,
+) -> dict[str, Any]:
+    """Generate a reply suggestion when the boss explicitly asks for one.
+
+    Triggered by the dashboard's "AI suggestion" button. Looks at the
+    latest customer message in the conversation + the agent's knowledge
+    base, returns draft text the boss can use as a starting point.
+
+    Args:
+      persist: if True, also save the draft into conversation.suggested_reply_json
+               (so it appears in the AI suggestion panel until boss approves/dismisses).
+               If False (default), the draft is returned only — boss is in
+               full control of whether to use it.
+
+    Returns: {"text": str, "reasoning": str | None, "ok": bool}
+    """
+    # Find the latest customer message to use as the "what to reply to"
+    msgs = conv_service.list_messages(db, agent_id, conversation.id, limit=20)
+    latest_customer = next(
+        (m for m in reversed(msgs) if m.author == "customer"), None
+    )
+    incoming_text = ""
+    if latest_customer:
+        incoming_text = latest_customer.text or latest_customer.voice_transcript or ""
+    if not incoming_text:
+        return {"text": "", "reasoning": "no customer message to respond to", "ok": False}
+
+    reply_text, reasoning = await _generate_reply(
+        agent_id=agent_id,
+        incoming_text=incoming_text,
+        customer=customer,
+        conversation=conversation,
+    )
+    if not reply_text:
+        return {"text": "", "reasoning": "LLM returned empty reply", "ok": False}
+
+    if persist:
+        conv_service.set_suggested_reply(
+            db,
+            agent_id,
+            conversation.id,
+            text=reply_text,
+            kind="text",
+            reasoning=reasoning,
+        )
+
+    return {"text": reply_text, "reasoning": reasoning, "ok": True}
 
 
 async def handle_boss_approval(

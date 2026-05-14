@@ -32,7 +32,7 @@ from datetime import datetime
 from typing import Any, Optional
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
@@ -302,6 +302,257 @@ def dismiss_draft(
     updated = conv_service.get_conversation(db, agent_id, conv.id)
     _broadcast_conv(db, agent_id, updated)
     return {"ok": True, **result}
+
+
+class GenerateDraftBody(BaseModel):
+    persist: Optional[bool] = Field(
+        False,
+        description="When true, save the draft into the conversation's "
+                    "suggested_reply panel. When false, just return the text "
+                    "for the boss to use as a starting point.",
+    )
+
+
+@router.post("/{agent_id}/conversations/{conversation_id}/generate-draft")
+async def generate_draft(
+    agent_id: str,
+    conversation_id: UUID,
+    body: GenerateDraftBody,
+    db: Session = Depends(get_db),
+):
+    """Boss explicitly asks the AI for a draft reply (Boss-IN mode helper).
+
+    The bot doesn't auto-draft in Boss-IN — the boss is in control. This
+    endpoint exists for moments when boss wants help: "what would you say?"
+    Returns the suggestion; boss can copy-edit-send or ignore."""
+    conv = conv_service.get_conversation(db, agent_id, conversation_id)
+    if not conv:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    customer = conv_service.get_customer(db, agent_id, conv.customer_id)
+    if not customer:
+        raise HTTPException(status_code=404, detail="Customer not found")
+    result = await chatbot_reply_service.generate_draft_on_demand(
+        db, agent_id, conv, customer=customer, persist=bool(body.persist)
+    )
+    if body.persist:
+        updated = conv_service.get_conversation(db, agent_id, conv.id)
+        _broadcast_conv(db, agent_id, updated)
+    return result
+
+
+# ============================================================================
+#  Attachments — boss sends image/file/voice through the channel
+# ============================================================================
+
+@router.post("/{agent_id}/conversations/{conversation_id}/reply-attachment")
+async def reply_attachment(
+    agent_id: str,
+    conversation_id: UUID,
+    file: UploadFile = File(...),
+    caption: Optional[str] = Form(None),
+    kind: Optional[str] = Form(None),       # "image" | "file" | "voice" — autodetect from MIME if absent
+    db: Session = Depends(get_db),
+):
+    """Boss uploads an image / file / voice clip via dashboard → we save it
+    to Supabase Storage → send via the conversation's channel client.
+
+    Multipart fields:
+      file:    the attachment (required)
+      caption: optional caption text
+      kind:    "image" / "file" / "voice" — auto-detected from MIME if omitted
+    """
+    conv = conv_service.get_conversation(db, agent_id, conversation_id)
+    if not conv:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+
+    raw = await file.read()
+    if not raw or len(raw) < 10:
+        raise HTTPException(status_code=400, detail="Attachment is empty")
+    if len(raw) > 25 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="Attachment too large (max 25 MB)")
+
+    content_type = (file.content_type or "application/octet-stream").lower()
+    filename = file.filename or "attachment"
+    resolved_kind = (kind or "").lower() or _autodetect_kind(content_type)
+
+    # Upload to Supabase Storage under voice-recordings bucket (reused for
+    # generic attachments — keeps one bucket per agent). Path scheme:
+    # /{agent_id}/chatbot/{conversation_id}/{message_id}-{filename}
+    public_url, storage_path = await _upload_attachment(
+        agent_id=agent_id,
+        conversation_id=str(conv.id),
+        file_bytes=raw,
+        filename=filename,
+        content_type=content_type,
+    )
+
+    # Persist the outgoing message row
+    msg = conv_service.append_message(
+        db, agent_id, conv.id,
+        author="boss",
+        kind=resolved_kind,
+        text=caption,
+        image_url=public_url if resolved_kind == "image" else None,
+        image_caption=caption if resolved_kind == "image" else None,
+        file_url=public_url if resolved_kind == "file" else None,
+        file_name=filename if resolved_kind == "file" else None,
+        file_mime=content_type if resolved_kind == "file" else None,
+        file_size_bytes=len(raw) if resolved_kind == "file" else None,
+        voice_url=public_url if resolved_kind == "voice" else None,
+    )
+
+    # Send via channel
+    await _send_attachment_via_channel(
+        db, agent_id, conv, resolved_kind, public_url, caption, filename
+    )
+
+    # Clear any stale draft, broadcast
+    conv_service.patch_conversation(
+        db, agent_id, conv.id,
+        suggested_reply_json=None,
+        status="bot_handling",
+        unread_count=0,
+    )
+    updated = conv_service.get_conversation(db, agent_id, conv.id)
+    _broadcast_conv(db, agent_id, updated, with_message=msg)
+    return {
+        "ok": True,
+        "messageId": str(msg.id) if msg else None,
+        "url": public_url,
+        "kind": resolved_kind,
+    }
+
+
+def _autodetect_kind(content_type: str) -> str:
+    if content_type.startswith("image/"):
+        return "image"
+    if content_type.startswith("audio/"):
+        return "voice"
+    return "file"
+
+
+async def _upload_attachment(
+    *,
+    agent_id: str,
+    conversation_id: str,
+    file_bytes: bytes,
+    filename: str,
+    content_type: str,
+) -> tuple[str, str]:
+    """Upload to Supabase Storage and return (signed_url, storage_path).
+
+    Reuses the existing voice-recordings bucket so attachments live in the
+    same agent-scoped folder structure: /{agent_id}/chatbot/{conv_id}/{file}.
+    Storage helper from services/voice_storage.py handles the actual API call.
+    """
+    from services import voice_storage
+    import asyncio as _asyncio
+    import uuid as _uuid
+
+    safe_filename = filename.replace("/", "_").replace("\\", "_")
+    storage_path = (
+        f"{agent_id}/chatbot/{conversation_id}/{_uuid.uuid4().hex[:8]}-{safe_filename}"
+    )
+
+    base = voice_storage._supabase_base()
+    key = voice_storage._service_key()
+    if not base or not key:
+        # Dev mode fallback — return a placeholder URL so the flow continues.
+        # Real production needs SUPABASE_SERVICE_KEY env var.
+        log.warning("attachment upload: Supabase not configured — placeholder URL")
+        return (f"https://placeholder/{storage_path}", storage_path)
+
+    import httpx as _httpx
+    try:
+        async with _httpx.AsyncClient(timeout=30) as client:
+            resp = await client.post(
+                f"{base}/storage/v1/object/{voice_storage.BUCKET}/{storage_path}",
+                headers={
+                    "Authorization": f"Bearer {key}",
+                    "apikey": key,
+                    "Content-Type": content_type,
+                    "x-upsert": "true",
+                },
+                content=file_bytes,
+            )
+            if resp.status_code not in (200, 201):
+                log.warning(
+                    f"attachment upload failed {resp.status_code}: {resp.text[:200]}"
+                )
+                raise HTTPException(status_code=502, detail="Storage upload failed")
+            # Sign a URL with 1-day expiry — long enough for the customer to
+            # see + tap, short enough to limit exposure if URL leaks.
+            sign_resp = await client.post(
+                f"{base}/storage/v1/object/sign/{voice_storage.BUCKET}/{storage_path}",
+                headers={"Authorization": f"Bearer {key}", "apikey": key},
+                json={"expiresIn": 60 * 60 * 24},
+            )
+            if sign_resp.status_code != 200:
+                # Fall back to a public-style URL (works if the bucket has public read)
+                return (
+                    f"{base}/storage/v1/object/public/{voice_storage.BUCKET}/{storage_path}",
+                    storage_path,
+                )
+            signed = sign_resp.json().get("signedURL") or sign_resp.json().get("signedUrl") or ""
+            full_url = (
+                f"{base}/storage/v1{signed}" if signed.startswith("/") else signed
+            )
+            return (full_url, storage_path)
+    except HTTPException:
+        raise
+    except Exception as e:
+        log.warning(f"attachment upload error: {e}")
+        raise HTTPException(status_code=502, detail=f"Upload error: {e}")
+
+
+async def _send_attachment_via_channel(
+    db: Session,
+    agent_id: str,
+    conv,
+    kind: str,
+    url: str,
+    caption: Optional[str],
+    filename: str,
+) -> None:
+    """Route the attachment to the right channel client."""
+    if conv.channel == "kakao":
+        try:
+            from services import kakao_client
+            customer = conv_service.get_customer(db, agent_id, conv.customer_id)
+            receiver_uuid = customer.kakao_user_id if customer else None
+            if kind == "image":
+                await asyncio.to_thread(
+                    kakao_client.send_image,
+                    agent_id=agent_id,
+                    conversation_id=str(conv.id),
+                    image_url=url,
+                    caption=caption,
+                    receiver_uuid=receiver_uuid,
+                )
+            else:
+                # File / voice — for now send as a text reply with link
+                # (Kakao Channel API file sends require business verification +
+                # specific file message template; placeholder until that's set up)
+                fallback_text = (
+                    f"{filename}\n{url}"
+                    if not caption
+                    else f"{caption}\n{filename}\n{url}"
+                )
+                await asyncio.to_thread(
+                    kakao_client.send_text,
+                    agent_id=agent_id,
+                    conversation_id=str(conv.id),
+                    text=fallback_text,
+                    receiver_uuid=receiver_uuid,
+                )
+        except Exception as e:
+            log.warning(f"chatbot.attachment send via kakao failed: {e}")
+    elif conv.channel == "phone":
+        log.info(
+            "chatbot.attachment: phone channel doesn't support attachments — skipped"
+        )
+    else:
+        log.info(f"chatbot.attachment: unhandled channel {conv.channel}")
 
 
 @router.post("/{agent_id}/mode")

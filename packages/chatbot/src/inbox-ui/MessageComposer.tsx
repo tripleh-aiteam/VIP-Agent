@@ -3,34 +3,41 @@
 /**
  * MessageComposer — reply input bar at the bottom of ConversationView.
  *
- * Features:
- *  - Text input (always visible)
- *  - Voice record button (mic icon, hold to record — mock toggles state)
- *  - Image upload button (paperclip → file picker)
- *  - File upload button (separate icon)
- *  - "Suggested reply" panel above input — shows AI draft (Boss-IN mode);
- *    boss can edit before sending, or approve as-is
+ * Behavior depends on Boss mode:
  *
- * In Boss-IN mode the bot drafts replies and waits; in Boss-OUT mode the
- * bot would have already sent autonomously, so this composer is mostly
- * used to "jump in" if the boss takes over.
+ * - Boss-IN (default working hours): **boss is in control**.
+ *   • Composer is always available; boss types replies directly.
+ *   • Image / file / voice buttons let boss send attachments.
+ *   • A small "💡 AI 도움" button lets boss OPT-IN to a draft when stuck.
+ *   • The purple suggested-reply panel only appears AFTER boss clicks
+ *     that button — never auto-generated.
+ *
+ * - Boss-OUT: bot is autonomous; composer still works for boss to "jump in".
+ *
+ * All upload / send / draft callbacks are optional — host wires them
+ * to chatbot-client.ts in live mode.
  */
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 interface Props {
-  /** AI-drafted reply waiting for boss approval (Boss-IN mode). Empty in OUT mode. */
+  /** AI-drafted reply (only set when boss explicitly clicked "AI 도움" with persist=true) */
   suggestedReply?: string;
-  /** Reasoning the bot generated for the suggested reply — shown in tooltip */
+  /** Reasoning behind the AI draft — shown in tooltip */
   suggestedReplyReasoning?: string;
   /** Whether the chatbot is in autonomous mode (Boss-OUT) */
   bossOutMode?: boolean;
-  /** Fires when boss clicks Send (with text + any attachments) */
+
+  /** Fires when boss clicks Send with text content */
   onSend?: (payload: { text: string; kind: "text" | "voice" | "image" | "file" }) => void;
-  /** Fires when boss approves the AI draft as-is */
+  /** Fires when boss approves an existing AI draft as-is */
   onApproveDraft?: () => void;
   /** Fires when boss dismisses the AI draft */
   onDismissDraft?: () => void;
+  /** Fires when boss clicks "AI 도움" — host calls generateDraft + populates the composer */
+  onGenerateDraft?: () => void;
+  /** Fires when boss attaches a file (image/file/voice) */
+  onSendAttachment?: (file: File, kind: "image" | "file" | "voice", caption?: string) => void;
 }
 
 export function MessageComposer({
@@ -40,14 +47,21 @@ export function MessageComposer({
   onSend,
   onApproveDraft,
   onDismissDraft,
+  onGenerateDraft,
+  onSendAttachment,
 }: Props) {
   const [text, setText] = useState("");
   const [recording, setRecording] = useState(false);
+  const [generating, setGenerating] = useState(false);
+  const imageInputRef = useRef<HTMLInputElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // When a new suggested reply arrives, pre-fill the text input with it
-  // so boss can edit-and-send. Empty string clears.
+  // If a suggested reply arrives (boss clicked "AI 도움" with persist), pre-fill
+  // the input so boss can edit. Empty string clears.
   useEffect(() => {
-    if (suggestedReply !== undefined) setText(suggestedReply);
+    if (suggestedReply !== undefined && suggestedReply !== "") {
+      setText(suggestedReply);
+    }
   }, [suggestedReply]);
 
   const handleSend = () => {
@@ -57,9 +71,35 @@ export function MessageComposer({
     setText("");
   };
 
+  const handleImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const f = e.target.files?.[0];
+    if (!f) return;
+    onSendAttachment?.(f, "image", text.trim() || undefined);
+    setText("");
+    e.target.value = "";   // allow re-uploading the same file later
+  };
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const f = e.target.files?.[0];
+    if (!f) return;
+    onSendAttachment?.(f, "file", text.trim() || undefined);
+    setText("");
+    e.target.value = "";
+  };
+
+  const handleGenerate = async () => {
+    if (!onGenerateDraft || generating) return;
+    setGenerating(true);
+    try {
+      await onGenerateDraft();
+    } finally {
+      setGenerating(false);
+    }
+  };
+
   return (
     <div className="border-t border-gray-200 bg-white">
-      {/* Suggested reply panel (Boss-IN mode) */}
+      {/* Suggested reply panel — only appears when boss explicitly asked for it */}
       {suggestedReply && (
         <div className="px-4 py-2.5 bg-purple-50 border-b border-purple-200">
           <div className="flex items-start gap-2">
@@ -96,33 +136,60 @@ export function MessageComposer({
         </div>
       )}
 
-      {/* Mode indicator + composer */}
+      {/* Mode indicator */}
       <div className="px-4 py-3">
-        {bossOutMode && !suggestedReply && (
+        {bossOutMode ? (
           <div className="text-[11px] text-gray-500 mb-2 italic">
             🤖 Boss-OUT mode — bot is replying autonomously. Type below to step in.
+          </div>
+        ) : (
+          <div className="text-[11px] text-gray-500 mb-2 italic">
+            ✏️ Boss-IN mode — you're in control. Bot is watching to learn.
           </div>
         )}
 
         <div className="flex items-end gap-2">
           {/* Attach buttons */}
           <div className="flex gap-1 pb-1.5">
-            <IconButton title="Upload image" onClick={() => alert("Image upload wired in Phase A11")}>
+            <IconButton
+              title="Upload image"
+              onClick={() => imageInputRef.current?.click()}
+              disabled={!onSendAttachment}
+            >
               📷
             </IconButton>
-            <IconButton title="Upload file" onClick={() => alert("File upload wired in Phase A11")}>
+            <IconButton
+              title="Upload file"
+              onClick={() => fileInputRef.current?.click()}
+              disabled={!onSendAttachment}
+            >
               📎
             </IconButton>
             <IconButton
               title={recording ? "Stop recording" : "Record voice message"}
               onClick={() => {
                 setRecording((r) => !r);
-                if (recording) alert("Voice recording wired in Phase A10");
+                if (recording) alert("Voice recording: pick a pre-recorded audio file via 📎 for now");
               }}
               active={recording}
             >
               {recording ? "⏹" : "🎙️"}
             </IconButton>
+
+            {/* Hidden inputs that the buttons trigger */}
+            <input
+              ref={imageInputRef}
+              type="file"
+              accept="image/*"
+              onChange={handleImageChange}
+              className="hidden"
+            />
+            <input
+              ref={fileInputRef}
+              type="file"
+              onChange={handleFileChange}
+              className="hidden"
+            />
           </div>
 
           {/* Text input — auto-expanding */}
@@ -143,6 +210,18 @@ export function MessageComposer({
             />
           </div>
 
+          {/* AI suggestion button (Boss-IN helper, opt-in) */}
+          {onGenerateDraft && !suggestedReply && (
+            <button
+              onClick={handleGenerate}
+              disabled={generating}
+              className="shrink-0 px-3 py-2 rounded-lg text-[12px] font-medium text-purple-700 bg-purple-50 hover:bg-purple-100 border border-purple-200 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              title="Ask the AI to suggest a reply you can edit before sending"
+            >
+              {generating ? "..." : "💡 AI"}
+            </button>
+          )}
+
           {/* Send */}
           <button
             onClick={handleSend}
@@ -161,22 +240,25 @@ function IconButton({
   title,
   onClick,
   active,
+  disabled,
   children,
 }: {
   title: string;
   onClick: () => void;
   active?: boolean;
+  disabled?: boolean;
   children: React.ReactNode;
 }) {
   return (
     <button
       onClick={onClick}
       title={title}
+      disabled={disabled}
       className={`w-9 h-9 rounded-lg flex items-center justify-center text-[15px] transition-colors ${
         active
           ? "bg-red-100 text-red-700 ring-2 ring-red-300 animate-pulse"
           : "text-gray-500 hover:bg-gray-100"
-      }`}
+      } disabled:opacity-40 disabled:cursor-not-allowed`}
     >
       {children}
     </button>

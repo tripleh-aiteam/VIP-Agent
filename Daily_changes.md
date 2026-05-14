@@ -2,6 +2,88 @@
 
 ---
 
+## 2026-05-14 (Thursday) — Chatbot: Boss-IN behavior switch — human in control + attachments
+
+### Goal
+
+Before flipping the Kakao integration live, the user requested a behavior change to Boss-IN mode. Previously the bot auto-drafted a reply for every incoming customer message; boss reviewed + approved. The user wants the **boss to be the primary channel operator** during working hours — typing replies directly, sending files/images. The bot becomes passive (watches + learns) and only assists when explicitly asked.
+
+This shift matches Korean SMB practice: when the boss is in the office, customers expect a real human; when boss is out, the bot covers off-hours.
+
+### Behavioral change
+
+**Boss-IN mode (working hours, 09:00-18:00 KST Mon-Fri):**
+
+- ❌ Old: bot auto-generates a draft → persists as `suggestedReply` → boss approves/dismisses
+- ✅ New: bot stays silent. Customer message lands as `needs_reply`. Boss reads + replies manually.
+- ✅ New: boss can send **text, images, files** through the same composer.
+- ✅ New: boss can opt-in to AI help by clicking **💡 AI** button → bot generates a draft on demand → boss edits + sends.
+- ✅ Unchanged: urgent keywords (계약금, 긴급, lawsuit) still ping the boss via Telegram even in Boss-IN mode.
+
+**Boss-OUT mode (off-hours, weekends, vacation):** unchanged — bot replies autonomously, escalates urgent.
+
+### Files updated
+
+**Backend**:
+
+- [`apps/orchestrator-api/services/chatbot_reply_service.py`](apps/orchestrator-api/services/chatbot_reply_service.py)
+  - `handle_incoming_message` now short-circuits in Boss-IN: marks status `needs_reply`, clears any stale draft, dispatches urgent Telegram ping if applicable, but **does NOT generate a draft**.
+  - Added `generate_draft_on_demand(db, agent_id, conv, customer, persist=False)` — looks up the latest customer message, asks the LLM for a reply, optionally persists it as `suggestedReply` (when boss clicked the AI button with persist=true).
+
+- [`apps/orchestrator-api/routers/chatbot_inbox.py`](apps/orchestrator-api/routers/chatbot_inbox.py)
+  - New endpoint `POST /api/chatbot/{agent_id}/conversations/{id}/generate-draft` — takes `{persist: bool}`, returns `{text, reasoning, ok}`. Boss-IN's "Get AI suggestion" button calls this.
+  - New endpoint `POST /api/chatbot/{agent_id}/conversations/{id}/reply-attachment` — multipart: takes file (image/file/voice), optional caption + kind. Uploads to Supabase Storage at `voice-recordings/{agent_id}/chatbot/{conv_id}/{file}`, signs a 24h URL, dispatches via the conversation's channel client (Kakao image template for images, fallback to text-with-link for files until Kakao file-attachment business verification lands).
+  - `_send_attachment_via_channel()` + `_upload_attachment()` helpers — Supabase Storage POST + sign-url flow.
+
+**Frontend**:
+
+- [`packages/chatbot/src/engine/chatbot-client.ts`](packages/chatbot/src/engine/chatbot-client.ts)
+  - Added `generateDraft(config, conversationId, { persist })` and `sendAttachment(config, conversationId, file, { caption, kind })` (multipart FormData).
+- [`packages/chatbot/src/engine/index.ts`](packages/chatbot/src/engine/index.ts) — re-exported both.
+- [`packages/chatbot/src/inbox-ui/MessageComposer.tsx`](packages/chatbot/src/inbox-ui/MessageComposer.tsx)
+  - Composer now shows different hint text per mode: Boss-IN says "✏️ Boss-IN mode — you're in control. Bot is watching to learn." Boss-OUT says "🤖 Boss-OUT mode — bot is replying autonomously."
+  - Image/file upload buttons now wired with `<input type="file">` triggers — when boss picks a file, it goes through `onSendAttachment`.
+  - New **💡 AI** button (visible only when `onGenerateDraft` is wired AND no draft is currently shown) — opt-in path for boss to request a suggestion.
+  - The purple suggested-reply panel only appears when boss explicitly asked for it (via the AI button).
+- [`packages/chatbot/src/inbox-ui/ConversationView.tsx`](packages/chatbot/src/inbox-ui/ConversationView.tsx) — passes `onGenerateDraft` + `onSendAttachment` through to the composer.
+- [`packages/chatbot/src/inbox-ui/ChatbotInbox.tsx`](packages/chatbot/src/inbox-ui/ChatbotInbox.tsx) — added the two callbacks to the Props interface and forwarded to ConversationView.
+- [`packages/chatbot/src/inbox-ui/mock-data.ts`](packages/chatbot/src/inbox-ui/mock-data.ts) — removed auto-generated `suggestedReply` from 3 mock conversations (박지영 / 이수진 / 한지원). Kept one (정민호) as a demonstration of "boss clicked AI button → suggestion now shows".
+- [`apps/admin-dashboard/src/app/chatbot/page.tsx`](apps/admin-dashboard/src/app/chatbot/page.tsx) — wired `onGenerateDraft` (calls `generateDraft(config, conv.id, { persist: true })`) and `onSendAttachment` (calls `sendAttachment(config, conv.id, file, { kind, caption })`) in both mock + live modes.
+
+### What the boss sees now
+
+**Conversation in Boss-IN mode** (e.g. 김민호 sends "B-201호 임대 가능한가요?"):
+
+1. The message appears in the inbox immediately as "needs_reply" — purple panel NOT shown.
+2. Boss reads it, types reply directly OR clicks **💡 AI** for a suggestion.
+3. If boss clicks AI: purple panel appears with the AI's suggestion + ✓ Send / ✗ Dismiss buttons OR boss can edit the suggestion in the composer before sending.
+4. Boss can attach photos via 📷 button (e.g. "here's the floor plan") or files via 📎 (e.g. "here's the lease contract PDF") — these go through Supabase Storage and then Kakao Channel.
+
+**Mode indicator above composer**:
+- Boss-IN: *"✏️ Boss-IN mode — you're in control. Bot is watching to learn."*
+- Boss-OUT: *"🤖 Boss-OUT mode — bot is replying autonomously. Type below to step in."*
+
+### Why this matters for go-live
+
+This was a UX-blocking change. The user wanted real-customer behavior to feel right BEFORE we connect Kakao Channel to live customers. Now:
+
+- During business hours, customers reach a real human (the boss) typing back personally — high-trust experience.
+- The boss can send any attachment type they would normally use in KakaoTalk.
+- The bot quietly learns from every boss reply (self-improve pipeline already wired from earlier work) — over time it generates better drafts when asked.
+- At 18:00 KST when boss heads home, mode auto-switches to OUT and the bot takes over autonomously.
+
+### What's NOT changed
+
+- Kakao webhook handler — still receives + persists messages the same way.
+- Phone calls — still bridge to inbox, still get LLM summary at end (always autonomous for phone since you can't "manually answer" a call in retrospect).
+- Multi-tenant architecture, escalation, morning report — all unchanged.
+
+### Next
+
+User continues Kakao integration setup (Kakao i Open Builder bot creation + skill webhook URL pointing at our orchestrator). When credentials arrive, we plug them in and the system goes live with the new Boss-IN behavior baked in.
+
+---
+
 ## 2026-05-13 (Wednesday) — Meeting Twins v3/v4 + Sprint 1-10 chunked commit
 
 ### Goal

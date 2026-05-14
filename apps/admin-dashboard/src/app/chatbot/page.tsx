@@ -24,7 +24,9 @@ import {
   fetchConversations,
   fetchConversation,
   fetchInboxDailyReport,
+  generateDraft,
   resolveConversation,
+  sendAttachment,
   sendReply,
   setBossMode,
   subscribeToInbox,
@@ -50,6 +52,10 @@ export default function ChatbotPage() {
       onTakeOver={(conv) => console.log("Take over (mock):", conv.id)}
       onEscalate={(conv) => console.log("Escalate (mock):", conv.id)}
       onResolve={(conv) => console.log("Resolve (mock):", conv.id)}
+      onGenerateDraft={(conv) => console.log("Generate draft (mock):", conv.id)}
+      onSendAttachment={(conv, file, kind, caption) =>
+        console.log("Send attachment (mock):", conv.id, file.name, kind, caption)
+      }
       onModeChange={(mode, manual) =>
         console.log(`Mode → ${mode} (${manual ? "manual" : "auto"})`)
       }
@@ -159,6 +165,16 @@ function LiveChatbotInbox() {
       }
       onResolve={(conv) =>
         resolveConversation(config, conv.id).then(() => refreshConv(conv.id))
+      }
+      onGenerateDraft={(conv) =>
+        generateDraft(config, conv.id, { persist: true })
+          .then(() => refreshConv(conv.id))
+          .catch(console.warn)
+      }
+      onSendAttachment={(conv, file, kind, caption) =>
+        sendAttachment(config, conv.id, file, { kind, caption })
+          .then(() => refreshConv(conv.id))
+          .catch(console.warn)
       }
       onModeChange={(mode, manual) => {
         setBossMode(config, mode, { auto: !manual }).catch(console.warn);

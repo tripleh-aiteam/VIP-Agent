@@ -19,6 +19,10 @@ interface Props {
   onSendReply?: (conv: Conversation, payload: { text: string; kind: string }) => void;
   onApproveDraft?: (conv: Conversation) => void;
   onDismissDraft?: (conv: Conversation) => void;
+  /** Boss-IN helper: boss clicks the AI button → host calls generateDraft */
+  onGenerateDraft?: (conv: Conversation) => void;
+  /** Boss uploads image/file/voice → host calls sendAttachment */
+  onSendAttachment?: (conv: Conversation, file: File, kind: "image" | "file" | "voice", caption?: string) => void;
 }
 
 export function ConversationView({
@@ -30,6 +34,8 @@ export function ConversationView({
   onSendReply,
   onApproveDraft,
   onDismissDraft,
+  onGenerateDraft,
+  onSendAttachment,
 }: Props) {
   const threadRef = useRef<HTMLDivElement>(null);
 
@@ -146,6 +152,12 @@ export function ConversationView({
         onSend={(payload) => onSendReply?.(c, payload)}
         onApproveDraft={() => onApproveDraft?.(c)}
         onDismissDraft={() => onDismissDraft?.(c)}
+        onGenerateDraft={onGenerateDraft ? () => onGenerateDraft(c) : undefined}
+        onSendAttachment={
+          onSendAttachment
+            ? (file, kind, caption) => onSendAttachment(c, file, kind, caption)
+            : undefined
+        }
       />
     </div>
   );

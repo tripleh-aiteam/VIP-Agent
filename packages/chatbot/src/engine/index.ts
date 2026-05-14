@@ -14,6 +14,8 @@ export {
   sendReply,
   approveDraft,
   dismissDraft,
+  generateDraft,
+  sendAttachment,
   setBossMode,
   subscribeToInbox,
 } from "./chatbot-client";

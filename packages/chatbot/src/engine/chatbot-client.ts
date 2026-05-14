@@ -180,6 +180,56 @@ export async function dismissDraft(
 }
 
 
+/**
+ * Boss-IN mode helper. Bot doesn't auto-draft anymore — boss is the
+ * primary operator. This endpoint lets the boss explicitly ask the AI
+ * for a draft when they want help.
+ *
+ * @param persist If true, the draft appears in the conversation's
+ *                suggested-reply panel (purple banner above composer).
+ *                If false (default), returns the text only — boss can
+ *                copy-paste-edit into the composer manually.
+ */
+export async function generateDraft(
+  config: AgentConfig,
+  conversationId: string,
+  options?: { persist?: boolean },
+): Promise<{ text: string; reasoning?: string; ok: boolean }> {
+  return _post(config, `/conversations/${conversationId}/generate-draft`, {
+    persist: options?.persist ?? false,
+  });
+}
+
+
+/**
+ * Boss sends an attachment (image / file / voice) via the channel.
+ * Backend uploads to Supabase Storage, then dispatches through the
+ * channel's send client (Kakao image template, etc.).
+ */
+export async function sendAttachment(
+  config: AgentConfig,
+  conversationId: string,
+  file: File,
+  options?: { caption?: string; kind?: "image" | "file" | "voice" },
+): Promise<{ ok: true; messageId?: string; url: string; kind: string }> {
+  const form = new FormData();
+  form.append("file", file);
+  if (options?.caption) form.append("caption", options.caption);
+  if (options?.kind) form.append("kind", options.kind);
+
+  const url = `${chatbotBase(config)}/conversations/${encodeURIComponent(conversationId)}/reply-attachment`;
+  const res = await fetch(url, {
+    method: "POST",
+    headers: {
+      ...(config.authHeaders ? config.authHeaders() : {}),
+      // Note: do NOT set Content-Type; browser sets it with multipart boundary
+    },
+    body: form,
+  });
+  return expectJson(res);
+}
+
+
 /* ------------------------------------------------------------------ *
  * Mode override
  * ------------------------------------------------------------------ */

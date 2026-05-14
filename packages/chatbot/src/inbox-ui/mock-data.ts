@@ -99,11 +99,8 @@ export const mockConversations: Conversation[] = [
         },
         confidence: 0.91 },
     ],
-    suggestedReply: {
-      text: "Hi Ji-young, I've noted your request to split the payment. I'll need to confirm with the owner before responding — I'll get back to you shortly.",
-      kind: "text",
-      reasoning: "Bot flagged for human review — rent installment requests need owner approval",
-    },
+    // Boss-IN mode → no auto-draft. Boss reads + replies directly.
+    // (Old: auto-suggested rent-installment reply removed.)
     history: [
       { id: "h1", at: now() - days(7), kind: "rent_reminder_sent",
         description: "Monthly rent reminder sent (May)" },
@@ -140,15 +137,13 @@ export const mockConversations: Conversation[] = [
           height: 768,
         }},
     ],
-    suggestedReply: {
-      text: "Hi Su-jin, I've reviewed the photo. The leak looks serious. Can a maintenance technician visit today to inspect? Please let me know what time works for you.",
-      kind: "text",
-      reasoning: "Image analysis: visible water damage. Maintenance request — requires on-site visit.",
-    },
+    // Boss-IN mode → no auto-draft. Boss reviews photo and replies directly.
     history: [],
   },
 
-  // 4. Boss-IN mode: bot suggested reply waiting for approval
+  // 4. Boss-IN example: customer is waiting, boss can either reply manually
+  //    OR click "💡 AI" button to get a suggested draft (the suggestedReply
+  //    field is populated below to simulate what shows up AFTER boss opted in)
   {
     id: "conv_004",
     channel: "kakao",
@@ -167,16 +162,18 @@ export const mockConversations: Conversation[] = [
     messages: [
       { id: "m1", at: now() - hours(2), author: "customer", kind: "text",
         text: "Hi, I'd like to inquire about viewing unit A-105." },
-      { id: "m2", at: now() - hours(2) + mins(1), author: "bot", kind: "text",
-        text: "Hello! A-105 is available for viewing. Any preferred time?",
-        botMeta: { status: "auto" } },
+      { id: "m2", at: now() - hours(2) + mins(1), author: "boss", kind: "text",
+        text: "Hello! A-105 is available for viewing. Any preferred time?" },
       { id: "m3", at: now() - mins(15), author: "customer", kind: "text",
         text: "Could we visit around 2pm tomorrow? Bringing my family along." },
     ],
+    // ↓ Populated here ONLY because this mock conversation demonstrates the
+    //   "boss clicked AI button → draft appears" state. In real usage,
+    //   suggestedReply is null until boss explicitly requests it.
     suggestedReply: {
       text: "2pm tomorrow works. How many people will be in the group? Also, would you like me to send the unit's location via KakaoTalk Place?",
       kind: "text",
-      reasoning: "Schedule slot is open. Asking clarifying questions before confirming.",
+      reasoning: "Generated on-demand at boss request. Schedule slot is open. Asks clarifying question before confirming.",
     },
     history: [
       { id: "h1", at: now() - hours(2), kind: "note_added",
@@ -285,11 +282,7 @@ export const mockConversations: Conversation[] = [
       { id: "m1", at: now() - hours(8), author: "customer", kind: "text",
         text: "Hi, this is Han Ji-won. I visited yesterday. Is there parking included with the C-Tower unit?" },
     ],
-    suggestedReply: {
-      text: "Hi Ji-won, apologies for the late reply. C-Tower includes 1 parking spot per unit. Additional vehicles are 50,000 KRW/month.",
-      kind: "text",
-      reasoning: "Customer messaged outside hours. Apology + factual answer drafted.",
-    },
+    // Boss can read this missed conversation and reply manually now they're back.
     history: [
       { id: "h1", at: now() - hours(28), kind: "viewing_scheduled",
         description: "C-Tower viewing (5/11 11:00)" },
