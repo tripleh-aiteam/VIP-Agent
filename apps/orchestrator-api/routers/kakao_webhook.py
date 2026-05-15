@@ -161,7 +161,11 @@ async def kakao_webhook(request: Request, db: Session = Depends(get_db)):
             db, agent_id, conv, customer, payload, provider_msg_id
         )
     else:
-        # Default: text
+        # Default: text — use Kakao's callback pattern because the LLM call
+        # takes 5-8 seconds, which exceeds Kakao's 5-second skill timeout.
+        # Callback extends the timeout to 60 seconds: we return immediately
+        # with `useCallback: true`, then POST the real reply to Kakao's
+        # callback URL when the LLM call finishes.
         msg = conv_service.append_message(
             db, agent_id, conv.id,
             author="customer",
@@ -169,6 +173,69 @@ async def kakao_webhook(request: Request, db: Session = Depends(get_db)):
             text=utterance,
             provider_message_id=provider_msg_id,
         )
+
+        # Kakao supplies a callbackUrl per request when callback is enabled
+        # in the bot's 시나리오/스킬 settings. If absent, fall through to
+        # synchronous reply (best-effort, may time out on slow LLM calls).
+        callback_url = (
+            user_request.get("callbackUrl")
+            or payload.get("callbackUrl")
+            or ""
+        )
+
+        if callback_url:
+            import asyncio as _asyncio
+
+            async def _send_callback_reply() -> None:
+                """Compute the reply, then POST it to Kakao's callback URL."""
+                try:
+                    reply = await _process_text_message(
+                        db, agent_id, conv, customer, utterance
+                    )
+                    body = {
+                        "version": "2.0",
+                        "template": {
+                            "outputs": [
+                                {"simpleText": {"text": reply or "잠시 후 다시 답변드리겠습니다."}}
+                            ],
+                        },
+                    }
+                    import httpx as _httpx
+                    async with _httpx.AsyncClient(timeout=30) as client:
+                        await client.post(callback_url, json=body)
+                except Exception as e:
+                    log.warning(
+                        f"kakao.webhook: callback dispatch failed: {e}",
+                        extra={"action": "kakao.callback_failed"},
+                    )
+
+            # Fire-and-forget — Kakao's 5s ack window doesn't wait on this.
+            _asyncio.create_task(_send_callback_reply())
+
+            # Broadcast inbound now (the reply broadcast happens after the
+            # callback completes; that's good enough for the dashboard).
+            try:
+                from routers.chatbot_inbox import get_broker
+                updated = conv_service.get_conversation(db, agent_id, conv.id)
+                customer_obj = conv_service.get_customer(db, agent_id, updated.customer_id)
+                get_broker().publish_sync(
+                    agent_id,
+                    {
+                        "type": "conversation.updated",
+                        "conversation": conv_service.serialize_conversation(
+                            updated, customer=customer_obj
+                        ),
+                    },
+                )
+            except Exception as e:
+                log.warning(f"kakao.webhook: broadcast failed: {e}")
+
+            # Tell Kakao we'll send the reply asynchronously via callback.
+            return {"version": "2.0", "useCallback": True}
+
+        # Fallback path (no callbackUrl supplied) — synchronous reply.
+        # Will time out on slow LLM calls; configure callback in i 오픈빌더
+        # to avoid this.
         reply_text = await _process_text_message(db, agent_id, conv, customer, utterance)
 
     # Step 6 — Broadcast updated conversation to dashboard subscribers
