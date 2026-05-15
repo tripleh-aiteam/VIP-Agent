@@ -397,7 +397,7 @@ async def _generate_reply(
     the LLM matches the boss's tone + length preferences."""
     try:
         from db.base import SessionLocal
-        from services.chatbot_talk import handle_talk
+        from services.chatbot_talk import handle_talk, _triple_h_realty_knowledge_base
     except Exception as e:
         log.warning(f"chatbot_reply: chatbot_talk import failed: {e}")
         return "", None
@@ -432,6 +432,11 @@ async def _generate_reply(
         if style_hint:
             query_text = f"{style_hint}\n\n[고객 메시지]\n{incoming_text}"
 
+        # Customer-facing chatbot context: pass the Triple H real estate
+        # knowledge base directly so the LLM grounds answers in property
+        # data, not the VIP boss-platform info (which is irrelevant to
+        # KakaoTalk customers).
+        realty_kb = _triple_h_realty_knowledge_base()
         result = await asyncio.to_thread(
             handle_talk,
             db2,
@@ -439,7 +444,7 @@ async def _generate_reply(
             "ko",     # KR-first; the LLM will switch if user spoke English
             agent_id,
             intents=None,           # backend has agent's intents registered
-            knowledge_base=None,    # backend has agent's KB registered
+            knowledge_base=realty_kb,
             history=history,
             current_path="/chatbot",
         )

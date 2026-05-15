@@ -137,6 +137,143 @@ def _vip_intent_list() -> list[dict[str, Any]]:
     ]
 
 
+def _triple_h_realty_knowledge_base() -> dict[str, Any]:
+    """Knowledge base for the Triple H Real Estate customer-facing chatbot
+    (`@부동산에이전트챗봇` on KakaoTalk).
+
+    Used by chatbot_reply_service when handling inbound customer messages
+    from the Kakao channel — NOT the VIP boss-facing platform.
+
+    EDIT THE LISTS BELOW to add real property data, rental terms, contract
+    info, etc. The LLM uses this content to ground its replies; without it
+    the bot returns generic "I don't understand" fallbacks.
+
+    Pattern for each list item: the more SPECIFIC and SEARCHABLE the text,
+    the better the LLM grounds its answer. Include unit numbers, neighborhoods,
+    prices, and dates whenever possible.
+    """
+    return {
+        "purpose":
+            "Triple H(트리플에이치) 부동산 AI 상담 챗봇입니다. 고객의 매물 문의, "
+            "임대/매매 상담, 계약 관련 안내, 부동산 시장 정보 등에 답변합니다. "
+            "복잡한 상담이나 계약 협상이 필요한 경우 담당자에게 연결해 드립니다.",
+
+        # ── 매물 정보 (Property Listings) ─────────────────────────────────
+        # Replace these placeholders with your real listings. Format keeps
+        # it human-readable AND searchable by the LLM. One entry per unit.
+        "listings": [
+            {
+                "unit": "A-303",
+                "type": "오피스텔 임대",
+                "location": "강남구 역삼동",
+                "size": "전용 26㎡ (약 8평)",
+                "rent": "월세 120만원",
+                "deposit": "보증금 1,000만원",
+                "maintenance": "관리비 12만원 (전기·수도 별도)",
+                "features": "남향, 풀옵션 (냉장고/세탁기/에어컨/침대), 역삼역 도보 3분",
+                "available_from": "즉시 입주 가능",
+                "tour": "방문 예약 가능 — 평일 10:00-18:00, 토요일 10:00-15:00",
+            },
+            {
+                "unit": "B-201",
+                "type": "아파트 임대",
+                "location": "서초구 반포동",
+                "size": "전용 84㎡ (32평형)",
+                "rent": "월세 180만원",
+                "deposit": "보증금 2,000만원",
+                "maintenance": "관리비 25만원 (장기수선충당금 별도)",
+                "features": "남동향, 풀옵션 + 발코니 확장, 반포역 도보 5분, 단지 내 헬스장",
+                "available_from": "2026년 6월 1일 입주 가능",
+                "tour": "방문 예약 필수 — 1주일 전 사전 문의",
+            },
+            {
+                "unit": "C-Tower 1505호",
+                "type": "오피스텔 매매",
+                "location": "성동구 성수동",
+                "size": "전용 33㎡ (12평)",
+                "price": "매매가 4억 8,000만원",
+                "maintenance": "관리비 약 15만원",
+                "features": "한강뷰 일부, 풀옵션, 성수역 도보 7분, 주차 1대",
+                "available_from": "잔금 후 즉시 입주",
+                "tour": "매매 계약 전 현장 확인 필수",
+            },
+        ],
+
+        # ── 기본 임대 조건 (Standard Rental Terms) ────────────────────────
+        "rental_terms": {
+            "default_lease_period": "기본 임대 기간은 2년이며, 1년 단기 임대도 협의 가능합니다.",
+            "deposit_policy": "보증금은 임대 시작 전 전액 납부, 계약 만료 후 30일 이내 반환됩니다.",
+            "payment_schedule": "월세는 매월 1일 자동이체 권장. 카드 결제 시 수수료 별도 발생.",
+            "renewal": "임대 갱신은 만료 1개월 전 통보. 시세 변동에 따라 임대료 조정 가능 (통상 5% 이내).",
+            "early_termination": "중도 해지 시 잔여 기간 1개월분 위약금 발생. 새 임차인 매칭 시 면제 가능.",
+        },
+
+        # ── 계약 정보 (Contract Info) ────────────────────────────────────
+        "contract_info": {
+            "required_docs": [
+                "신분증 (주민등록증 또는 운전면허증) 사본",
+                "재직증명서 또는 사업자등록증",
+                "최근 3개월 통장 사본 (월세 납부 능력 증빙)",
+                "보증인 동의서 (보증금 1,000만원 이상의 경우)",
+            ],
+            "contract_process": (
+                "1) 매물 방문 및 확인  "
+                "2) 가계약금 입금 (보증금의 10%)  "
+                "3) 본 계약서 작성 및 잔금 납부  "
+                "4) 입주일 키 수령 및 시설 점검  "
+                "5) 입주 후 1주일 내 누락된 설비 신고 가능"
+            ),
+            "fees": (
+                "공인중개사 수수료: 임대인·임차인 각 0.4% (월세 환산 기준). "
+                "계약서 작성 비용 5만원, 등기 비용은 매매 시 별도 안내."
+            ),
+        },
+
+        # ── 자주 묻는 질문 (FAQ) ─────────────────────────────────────────
+        "faq": [
+            {"q": "방문 예약은 어떻게 하나요?",
+             "a": "이 채널에 방문 희망 매물 번호(예: B-201호)와 가능한 날짜·시간을 알려주시면 담당자가 예약 확인 메시지를 보내드립니다. 평일 10:00-18:00, 토요일 10:00-15:00 가능합니다."},
+
+            {"q": "전세 매물도 있나요?",
+             "a": "현재 전세 매물은 제한적으로 보유하고 있습니다. 희망 지역과 예산을 알려주시면 시장에 나온 전세 매물을 별도로 안내해 드리겠습니다."},
+
+            {"q": "외국인도 임대 가능한가요?",
+             "a": "네, 가능합니다. 외국인 등록증 또는 여권, 한국 내 체류 자격 증빙(비자), 재직증명서 또는 학생증이 필요합니다. 보증보험 가입을 권장드립니다."},
+
+            {"q": "반려동물 동반 가능한 매물이 있나요?",
+             "a": "매물에 따라 다릅니다. 반려동물 동반 가능 매물을 별도로 안내해 드릴 수 있으니, 동물 종류와 크기를 알려주세요."},
+
+            {"q": "월세를 더 낮출 수 있나요?",
+             "a": "임대료 협의는 가능하지만, 보증금 조정과 연계되는 경우가 많습니다. 구체적인 협의는 담당자가 직접 연락드리겠습니다."},
+
+            {"q": "공실 매물 알림을 받고 싶어요",
+             "a": "선호 지역, 예산, 면적, 입주 희망 시기를 알려주시면 매물 등록 시 우선 안내해 드리겠습니다."},
+
+            {"q": "Triple H는 어떤 회사인가요?",
+             "a": "트리플에이치(Triple H)는 서울 강남·서초·성동 지역 중심의 부동산 중개 회사입니다. 오피스텔·아파트·상가 임대 및 매매를 전문으로 합니다."},
+        ],
+
+        # ── 회사 정보 (Company Info) ─────────────────────────────────────
+        "company": {
+            "name": "트리플에이치 주식회사 (Triple H Co., Ltd.)",
+            "business_no": "215-86-81254",
+            "specialty": "오피스텔 / 아파트 임대 및 매매, 부동산 중개",
+            "service_areas": ["강남구", "서초구", "성동구", "송파구"],
+            "channel": "@부동산에이전트챗봇 (카카오톡)",
+            "operating_hours": "평일 10:00-18:00, 토요일 10:00-15:00 (일요일·공휴일 휴무)",
+        },
+
+        # ── 응대 가이드 (Reply Guidelines for the LLM) ────────────────────
+        "reply_style": (
+            "1) 항상 정중하고 친근한 한국어 존댓말로 답변합니다. "
+            "2) 매물 정보가 KB에 있으면 정확히 인용합니다 (가격, 면적, 위치 등). "
+            "3) 모르는 정보는 추측하지 말고 '담당자에게 확인 후 안내드리겠습니다'라고 답변합니다. "
+            "4) 계약·법적 문의는 반드시 담당자 연결을 권장합니다. "
+            "5) 답변은 카카오톡 메시지에 맞게 2-4문장으로 간결하게 작성합니다."
+        ),
+    }
+
+
 def _vip_knowledge_base() -> dict[str, Any]:
     """
     Static knowledge about VIP — UI structure, features, FAQ.
