@@ -381,6 +381,35 @@ def handle_boss_dismiss(
 #  Internals
 # ============================================================================
 
+_FAST_REPLY_CACHE: dict[str, str] = {
+    # Greetings (Korean + English) — instant replies, no LLM call.
+    # Critical: Kakao i 오픈빌더 has a 5-second skill timeout, but our LLM
+    # call takes 4-8 seconds. For common conversational opens, this cache
+    # returns a reply in ~50ms so Kakao always gets a response in time.
+    "안녕하세요": "안녕하세요! 트리플에이치 부동산 챗봇입니다. 어떤 매물 또는 상담이 필요하신가요? 🏠",
+    "안녕": "안녕하세요! 트리플에이치 부동산 챗봇입니다. 무엇을 도와드릴까요?",
+    "hi": "안녕하세요! Triple H Real Estate Chatbot입니다. 어떻게 도와드릴까요? / How can I help?",
+    "hello": "안녕하세요! Triple H Real Estate Chatbot입니다. 어떻게 도와드릴까요? / How can I help?",
+    "테스트": "테스트 메시지를 잘 받았습니다. 챗봇이 정상 작동 중입니다. ✅",
+    "test": "Test message received. The chatbot is working correctly. ✅",
+    "test123": "테스트 메시지를 잘 받았습니다. 챗봇이 정상 작동 중입니다. ✅",
+    "감사합니다": "별말씀을요! 추가로 궁금한 점이 있으시면 언제든 말씀해 주세요. 😊",
+    "감사": "별말씀을요! 추가로 궁금한 점이 있으시면 언제든 말씀해 주세요.",
+    "고맙습니다": "별말씀을요! 추가로 궁금한 점이 있으시면 언제든 말씀해 주세요.",
+    "thank you": "You're welcome! Let me know if there's anything else I can help with. 😊",
+    "thanks": "You're welcome! Let me know if there's anything else I can help with.",
+}
+
+
+def _check_fast_reply(text: str) -> Optional[str]:
+    """Return a cached instant reply if the text matches a common greeting
+    pattern. Returns None if no match — caller falls through to the LLM."""
+    if not text:
+        return None
+    normalized = text.strip().lower().rstrip("!?.~ ")
+    return _FAST_REPLY_CACHE.get(normalized)
+
+
 async def _generate_reply(
     *,
     agent_id: str,
@@ -395,6 +424,12 @@ async def _generate_reply(
     Style mimicry: pulls the boss style hint from chatbot_boss_observer
     (built from past boss replies) and prepends it to the user message so
     the LLM matches the boss's tone + length preferences."""
+    # Fast path: check the greeting/test cache first. Kakao's 5s skill
+    # timeout doesn't allow time for the full LLM call on simple intents.
+    cached = _check_fast_reply(incoming_text)
+    if cached:
+        return cached, "fast-cache"
+
     try:
         from db.base import SessionLocal
         from services.chatbot_talk import handle_talk, _triple_h_realty_knowledge_base
