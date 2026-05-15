@@ -546,44 +546,43 @@ def _check_topic_pattern(text: str) -> Optional[str]:
 
 
 def _check_fast_reply(text: str) -> Optional[str]:
-    """Return a cached instant reply if the text matches a common pattern.
-    Returns None ONLY if disable_fallback is requested.
+    """Hybrid fast-path lookup. Returns a template reply IF the message
+    matches a specific known pattern (greetings, FAQs, topic keywords).
+    Returns None for novel/complex questions, signalling the caller to
+    consult the LLM for a smarter answer.
 
-    Four-stage lookup:
-      1. Exact match after normalizing (lowercase, strip quotes/punct).
-      2. Substring trigger — if a known keyword appears anywhere.
-      3. Topic-pattern matching — covers FAQs without calling LLM.
-      4. Generic helpful fallback — always returns SOMETHING useful.
+    Three stages (local, ~50ms total):
+      1. Exact match (greetings + common phrases)
+      2. Substring trigger (keyword anywhere in short message)
+      3. Topic-pattern matching (real-estate FAQs)
 
-    All four stages are local (no LLM call), so reply latency is ~50ms
-    regardless of customer message complexity. Kakao timeouts cannot
-    drop these replies."""
+    Cache miss → returns None → caller falls through to LLM (smart path).
+    If LLM also times out, caller uses `_GENERIC_HELPFUL_FALLBACK` as
+    the last-resort reply (so bot still always responds)."""
     if not text:
         return None
     normalized = text.strip().lower()
-    # Strip surrounding quotes ("test123" -> test123)
     normalized = normalized.strip('"').strip("'").strip("`")
-    # Strip trailing punctuation
     normalized_full = normalized.rstrip("!?.~ ")
     if not normalized_full:
-        return _GENERIC_HELPFUL_FALLBACK
+        return None
     # Stage 1: exact match
     hit = _FAST_REPLY_CACHE.get(normalized_full)
     if hit:
         return hit
-    # Stage 2: substring trigger
+    # Stage 2: substring trigger (short messages only)
     if len(normalized_full) <= 30:
         for key in _FAST_REPLY_SUBSTRING_KEYS:
             if key in normalized_full:
                 cached = _FAST_REPLY_CACHE.get(key)
                 if cached:
                     return cached
-    # Stage 3: topic-pattern matching (handles FAQs)
+    # Stage 3: topic-pattern matching
     topic = _check_topic_pattern(text)
     if topic:
         return topic
-    # Stage 4: generic helpful fallback — bot ALWAYS replies
-    return _GENERIC_HELPFUL_FALLBACK
+    # Cache miss — signal caller to try LLM (smart path)
+    return None
 
 
 async def _generate_reply(
@@ -593,25 +592,30 @@ async def _generate_reply(
     customer: ChatbotCustomer,
     conversation: ChatbotConversation,
 ) -> tuple[str, Optional[str]]:
-    """Call the existing chatbot brain (services.chatbot_talk.handle_talk)
-    with this customer's message + agent's knowledge base. Returns
-    (reply_text, reasoning).
+    """Hybrid reply generation. Three layers, descending speed but ascending
+    intelligence:
 
-    Style mimicry: pulls the boss style hint from chatbot_boss_observer
-    (built from past boss replies) and prepends it to the user message so
-    the LLM matches the boss's tone + length preferences."""
-    # Fast path: check the greeting/test cache first. Kakao's 5s skill
-    # timeout doesn't allow time for the full LLM call on simple intents.
+      Layer 1 (~50ms): Template cache — greetings, FAQs, topic patterns.
+      Layer 2 (~1-3s): LLM (OpenAI gpt-4o-mini) for novel/complex questions.
+      Layer 3 (instant): Generic helpful template if LLM times out / errors.
+
+    The bot ALWAYS replies. Fast cases use templates; complex cases get
+    LLM smartness within Kakao's timeout; if LLM is too slow, a friendly
+    generic reply still goes out (better than no reply at all)."""
+
+    # Layer 1: Try template cache first (greetings, FAQs, common topics)
     cached = _check_fast_reply(incoming_text)
     if cached:
-        return cached, "fast-cache"
+        return cached, "template"
 
+    # Layer 2: Cache miss — try the LLM for a smarter answer
     try:
         from db.base import SessionLocal
         from services.chatbot_talk import handle_talk, _triple_h_realty_knowledge_base
     except Exception as e:
         log.warning(f"chatbot_reply: chatbot_talk import failed: {e}")
-        return "", None
+        # Layer 3 fallback: import failure means LLM is broken — use template
+        return _GENERIC_HELPFUL_FALLBACK, "template-fallback-import-error"
 
     # Get a fresh session for the sync handle_talk call
     db2 = SessionLocal()
@@ -649,12 +653,12 @@ async def _generate_reply(
         # KakaoTalk customers).
         realty_kb = _triple_h_realty_knowledge_base()
 
-        # Hard timeout: Kakao's effective skill timeout is ~3 seconds.
-        # If the LLM doesn't return in time, fall back to a friendly
-        # generic reply (better than no reply at all). The full LLM call
-        # is allowed up to 4 seconds because Kakao also gives us some
-        # network buffer — but we cap aggressively to avoid the silent
-        # drop we saw at 5+ seconds.
+        # Hard timeout: Kakao's effective skill timeout is ~3 seconds on
+        # Render free tier (network latency + processing). Cap LLM at
+        # 2.5s so we have buffer to wrap the response and ship it back
+        # within Kakao's window. If the LLM is slower than 2.5s, the
+        # generic template fallback fires below — customer still gets
+        # a useful reply, just not LLM-smart.
         try:
             result = await asyncio.wait_for(
                 asyncio.to_thread(
@@ -668,20 +672,17 @@ async def _generate_reply(
                     history=history,
                     current_path="/chatbot",
                 ),
-                timeout=4.0,
+                timeout=2.5,
             )
         except asyncio.TimeoutError:
             log.warning(
-                "chatbot_reply: LLM timed out (>4s) — falling back to generic helpful reply",
+                "chatbot_reply: LLM timed out (>2.5s) — Layer 3 generic fallback",
                 extra={"action": "chatbot.llm_timeout"},
             )
-            # Friendly fallback that keeps the conversation going. Better
-            # than no reply (which Kakao would have dropped silently).
-            return (
-                "문의해 주셔서 감사합니다! 좀 더 자세한 정보를 확인하고 안내해 드리겠습니다. "
-                "구체적으로 어떤 매물(지역·평형·가격대)을 찾고 계신지 알려주시면 빠르게 답변드릴 수 있습니다. 🏠",
-                "llm-timeout-fallback",
-            )
+            # Layer 3: LLM was too slow for Kakao's timeout. Return the
+            # generic helpful template so the customer still sees a useful
+            # reply (better than Kakao silently dropping the message).
+            return _GENERIC_HELPFUL_FALLBACK, "template-fallback-llm-timeout"
 
         reply = result.get("reply", "") if isinstance(result, dict) else ""
         source = result.get("source") if isinstance(result, dict) else None
