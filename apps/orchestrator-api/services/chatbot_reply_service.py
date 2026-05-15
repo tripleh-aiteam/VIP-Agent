@@ -383,30 +383,89 @@ def handle_boss_dismiss(
 
 _FAST_REPLY_CACHE: dict[str, str] = {
     # Greetings (Korean + English) — instant replies, no LLM call.
-    # Critical: Kakao i 오픈빌더 has a 5-second skill timeout, but our LLM
-    # call takes 4-8 seconds. For common conversational opens, this cache
-    # returns a reply in ~50ms so Kakao always gets a response in time.
+    # Critical: Kakao i 오픈빌더's effective skill timeout is ~3 seconds on
+    # our Render free-tier deployment. LLM (Haiku) takes 2-5 seconds, so
+    # cached replies are the only way to guarantee delivery for common
+    # conversational opens. The LLM path runs as a slower fallback for
+    # KB-specific questions (property numbers, prices, etc.).
+    #
+    # ADD MORE ENTRIES here whenever you spot a frequent customer message
+    # that doesn't get a reply. Keys are normalized (lowercase, trim).
+
+    # === Greetings ===
     "안녕하세요": "안녕하세요! 트리플에이치 부동산 챗봇입니다. 어떤 매물 또는 상담이 필요하신가요? 🏠",
     "안녕": "안녕하세요! 트리플에이치 부동산 챗봇입니다. 무엇을 도와드릴까요?",
-    "hi": "안녕하세요! Triple H Real Estate Chatbot입니다. 어떻게 도와드릴까요? / How can I help?",
-    "hello": "안녕하세요! Triple H Real Estate Chatbot입니다. 어떻게 도와드릴까요? / How can I help?",
+    "여보세요": "네, 안녕하세요! 트리플에이치 부동산입니다. 무엇을 도와드릴까요?",
+    "hi": "안녕하세요! Triple H Real Estate Chatbot입니다. 어떻게 도와드릴까요? / How can I help you?",
+    "hello": "안녕하세요! Triple H Real Estate Chatbot입니다. 어떻게 도와드릴까요? / How can I help you?",
+    "hey": "안녕하세요! Triple H 부동산 챗봇입니다. 무엇을 도와드릴까요?",
+
+    # === Test messages ===
     "테스트": "테스트 메시지를 잘 받았습니다. 챗봇이 정상 작동 중입니다. ✅",
     "test": "Test message received. The chatbot is working correctly. ✅",
     "test123": "테스트 메시지를 잘 받았습니다. 챗봇이 정상 작동 중입니다. ✅",
+    "ping": "pong ✅ 챗봇 응답 중",
+
+    # === Thanks / closing ===
     "감사합니다": "별말씀을요! 추가로 궁금한 점이 있으시면 언제든 말씀해 주세요. 😊",
     "감사": "별말씀을요! 추가로 궁금한 점이 있으시면 언제든 말씀해 주세요.",
     "고맙습니다": "별말씀을요! 추가로 궁금한 점이 있으시면 언제든 말씀해 주세요.",
+    "고마워요": "별말씀을요! 도움이 필요하시면 언제든 다시 연락주세요. 😊",
     "thank you": "You're welcome! Let me know if there's anything else I can help with. 😊",
     "thanks": "You're welcome! Let me know if there's anything else I can help with.",
+    "안녕히 계세요": "감사합니다. 좋은 하루 보내세요! 다음에 또 문의해 주세요. 👋",
+    "bye": "Goodbye! Feel free to reach out anytime. Have a great day! 👋",
+
+    # === Common casual questions ===
+    "잘 지내고 있어요?": "네, 잘 지내고 있습니다! 어떤 부동산 상담이 필요하신가요? 매물 문의나 임대/매매 관련 질문 모두 환영합니다. 🏠",
+    "잘 지내세요?": "네, 감사합니다! 어떤 매물 또는 상담이 필요하신가요?",
+    "어디 있어요?": "트리플에이치 부동산은 서울 강남구·서초구·성동구·송파구 지역의 매물을 전문으로 관리하고 있습니다. 특정 지역의 매물을 찾으시나요?",
+    "어디예요?": "트리플에이치 부동산은 서울 강남·서초·성동·송파 지역을 전문으로 합니다. 어느 지역 매물을 찾으시나요?",
+    "어디인가요?": "트리플에이치 부동산은 서울 강남·서초·성동·송파 지역의 매물을 전문으로 합니다.",
+    "위치": "트리플에이치 부동산은 서울 강남구·서초구·성동구·송파구 지역의 매물을 전문으로 합니다.",
+
+    # === Language questions ===
+    "can you speak in english?": "Yes, I can respond in English! Triple H Real Estate covers properties in Gangnam, Seocho, Seongdong, and Songpa districts. What kind of property are you looking for?",
+    "can you speak english?": "Yes! Triple H Real Estate covers properties in Gangnam, Seocho, Seongdong, and Songpa. What can I help you find?",
+    "do you speak english?": "Yes! Triple H Real Estate covers properties in Gangnam, Seocho, Seongdong, and Songpa. What can I help you find?",
+    "영어 가능": "네, 영어로도 답변드릴 수 있습니다. / Yes, I can respond in English. 어떤 매물을 찾고 계신가요?",
+    "영어 가능해요?": "네, 영어로도 답변드릴 수 있습니다. / Yes, I can respond in English. 어떤 매물을 찾고 계신가요?",
+    "한국어": "네, 한국어로 답변드리겠습니다! 어떤 매물 또는 상담이 필요하신가요? 🏠",
+    "korean": "네, 한국어로 답변드리겠습니다! Yes, I'll respond in Korean. 어떤 매물 또는 상담이 필요하신가요?",
+
+    # === Real estate quick intent ===
+    "매물": "어떤 매물을 찾고 계신가요? 임대(월세/전세) 또는 매매 중 어떤 거래를 원하시는지, 그리고 희망 지역과 예산을 알려주시면 더 자세히 안내해 드릴 수 있습니다.",
+    "월세": "어느 지역, 어느 평형대를 찾고 계신가요? 강남·서초·성동·송파 지역의 다양한 월세 매물을 보유하고 있습니다.",
+    "전세": "전세 매물에 대해 문의해 주셔서 감사합니다. 어느 지역, 어떤 조건을 찾고 계신가요? 담당자가 자세한 매물 정보를 안내해 드리겠습니다.",
+    "매매": "매매 문의 감사합니다. 어느 지역, 어떤 유형(아파트/오피스텔)의 매물을 찾고 계신가요?",
+    "방문": "방문 예약 가능합니다! 보고 싶으신 매물 번호(예: B-201호)와 가능한 날짜·시간을 알려주시면 담당자가 예약을 도와드리겠습니다. 평일 10:00-18:00, 토요일 10:00-15:00 가능합니다.",
+    "방문 예약": "방문 예약 가능합니다! 보고 싶으신 매물 번호와 가능한 날짜·시간을 알려주시면 담당자가 예약을 도와드리겠습니다.",
+    "상담": "네, 부동산 상담을 도와드리겠습니다. 어떤 상담이 필요하신가요? 매물 문의, 임대/매매 조건, 계약 관련 등 모두 가능합니다.",
+
+    # === Out-of-scope / off-topic ===
+    "?": "어떤 도움이 필요하신가요? 매물 문의, 임대/매매 상담, 방문 예약 등 부동산 관련 질문에 답변드릴 수 있습니다.",
+    "??": "어떤 도움이 필요하신가요? 매물 문의, 임대/매매 상담, 방문 예약 등 부동산 관련 질문에 답변드릴 수 있습니다.",
+    "ㅋㅋ": "😊 어떤 부동산 관련 문의가 있으신가요?",
+    "ㅎㅎ": "😊 어떤 부동산 관련 문의가 있으신가요?",
 }
 
 
 def _check_fast_reply(text: str) -> Optional[str]:
-    """Return a cached instant reply if the text matches a common greeting
-    pattern. Returns None if no match — caller falls through to the LLM."""
+    """Return a cached instant reply if the text matches a common pattern.
+    Returns None if no match — caller falls through to the LLM (slower).
+
+    Normalization: lowercase, strip surrounding whitespace, strip trailing
+    punctuation, strip surrounding quotes. Keeps the lookup forgiving for
+    customer typing variations."""
     if not text:
         return None
-    normalized = text.strip().lower().rstrip("!?.~ ")
+    normalized = text.strip().lower()
+    # Strip surrounding quotes ("test123" -> test123)
+    normalized = normalized.strip('"').strip("'").strip("`")
+    # Strip trailing punctuation
+    normalized = normalized.rstrip("!?.~ ")
+    if not normalized:
+        return None
     return _FAST_REPLY_CACHE.get(normalized)
 
 
