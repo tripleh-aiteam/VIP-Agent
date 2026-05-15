@@ -115,8 +115,12 @@ async def kakao_webhook(request: Request, db: Session = Depends(get_db)):
     if not _verify_kakao_signature(agent_id, raw, signature):
         raise HTTPException(status_code=401, detail="Invalid webhook signature")
 
-    # Step 3 — Extract user identity + message
-    user_request = payload.get("user_request") or {}
+    # Step 3 — Extract user identity + message.
+    # Kakao i 오픈빌더 sends `userRequest` (camelCase). Older internal
+    # callers may send `user_request` (snake_case). Accept both so this
+    # handler works with the real Kakao payload AND our own integration
+    # tests / internal forwarders.
+    user_request = payload.get("userRequest") or payload.get("user_request") or {}
     user = user_request.get("user") or {}
     user_id = user.get("id") or ""
     user_phone = user.get("phone")            # may be absent unless customer shared
@@ -138,6 +142,7 @@ async def kakao_webhook(request: Request, db: Session = Depends(get_db)):
     # Step 5 — Append the incoming message (idempotent on provider_message_id if Kakao sends one)
     provider_msg_id = (
         payload.get("message_id")
+        or payload.get("messageId")
         or (user_request.get("message") or {}).get("id")
     )
 
@@ -264,7 +269,7 @@ async def _handle_voice_message(
       5. Run the chatbot_reply_service with the transcript as the user's
          "utterance" — same path as text messages
     """
-    media = (payload.get("user_request") or {}).get("media") or {}
+    media = (payload.get("userRequest") or payload.get("user_request") or {}).get("media") or {}
     audio_url = media.get("url") or ""
     duration = media.get("duration_sec") or 0
     if not audio_url:
@@ -370,9 +375,9 @@ async def _handle_image_message(
     "어제부터 이래요" gives the LLM enough context to draft a maintenance
     response without the customer needing to type a detailed description.
     """
-    media = (payload.get("user_request") or {}).get("media") or {}
+    media = (payload.get("userRequest") or payload.get("user_request") or {}).get("media") or {}
     image_url = media.get("url") or ""
-    caption = (payload.get("user_request") or {}).get("utterance", "") or None
+    caption = (payload.get("userRequest") or payload.get("user_request") or {}).get("utterance", "") or None
     image_width = media.get("width") or None
     image_height = media.get("height") or None
     if not image_url:
@@ -440,7 +445,7 @@ async def _handle_file_message(
     db: Session, agent_id: str, conv, customer, payload: dict, provider_msg_id: Optional[str]
 ) -> None:
     """File attachment: persist metadata; downstream processing in Phase A16."""
-    media = (payload.get("user_request") or {}).get("media") or {}
+    media = (payload.get("userRequest") or payload.get("user_request") or {}).get("media") or {}
     file_url = media.get("url") or ""
     file_name = media.get("name") or "file"
     file_mime = media.get("mime_type") or "application/octet-stream"
