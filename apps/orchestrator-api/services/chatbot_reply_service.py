@@ -460,16 +460,104 @@ _FAST_REPLY_SUBSTRING_KEYS = (
 )
 
 
+# Topic-based keyword patterns — for ANY customer message that doesn't
+# match exact/substring cache, we still want to give a useful reply
+# (without calling the slow LLM). These regex-free string-contains
+# checks cover the most common real-estate FAQs and return helpful
+# topic-specific text. Returns the FIRST matching pattern, so order is
+# more-specific → less-specific.
+_TOPIC_PATTERNS: list[tuple[tuple[str, ...], str]] = [
+    # === Property unit references (highest priority) ===
+    (("호 ", "호?", "호.", "a-", "b-", "c-", "동 "),
+     "찾으시는 매물 번호를 확인했습니다. 해당 매물의 상세 정보(월세/보증금/입주 가능일/방문 예약 등)는 담당자가 정확히 안내해 드릴 수 있습니다. 어떤 정보를 먼저 알고 싶으신가요? 🏠"),
+
+    # === Foreigner / language ===
+    (("외국인", "foreigner", "foreign"),
+     "네, 외국인 임대 가능합니다. 필요 서류: 외국인 등록증 또는 여권, 한국 내 체류 자격 증빙(비자), 재직증명서 또는 학생증. 보증보험 가입을 권장드립니다. 자세한 안내는 담당자가 연락드리겠습니다. 🌍"),
+    (("english", "영어로"),
+     "Yes, we can communicate in English! Triple H Real Estate handles rentals and sales in Gangnam, Seocho, Seongdong, and Songpa districts. What kind of property are you looking for?"),
+
+    # === Pets ===
+    (("반려동물", "강아지", "고양이", "pet"),
+     "반려동물 동반 가능 매물은 별도로 보유하고 있습니다. 동물 종류와 크기를 알려주시면 가능한 매물을 안내해 드리겠습니다. 🐾"),
+
+    # === Price / cost ===
+    (("얼마", "가격", "비용", "price", "cost", "how much"),
+     "정확한 가격은 매물마다 다릅니다. 관심 있으신 매물 번호(예: B-201호) 또는 희망 지역·평형대를 알려주시면 정확한 월세/보증금/매매가를 안내해 드리겠습니다. 💰"),
+
+    # === Deposit ===
+    (("보증금", "deposit"),
+     "보증금은 매물 및 임대 조건에 따라 다릅니다 (대략 월세의 10~12배). 임대 시작 전 전액 납부, 계약 만료 후 30일 이내 반환됩니다. 특정 매물의 보증금은 담당자가 안내해 드립니다."),
+
+    # === Contract / 계약 ===
+    (("계약", "contract", "서류", "document"),
+     "계약 시 필요 서류: 신분증 사본, 재직증명서 또는 사업자등록증, 최근 3개월 통장 사본, 보증인 동의서(보증금 1,000만원 이상 시). 계약 절차는 ①가계약금 → ②본 계약 → ③잔금 → ④입주 순으로 진행됩니다. 📋"),
+
+    # === Tour / viewing ===
+    (("구경", "보고 싶", "viewing", "tour", "visit"),
+     "방문 예약 도와드리겠습니다! 보고 싶으신 매물 번호와 가능한 날짜·시간을 알려주시면 담당자가 예약해 드리겠습니다. 가능 시간: 평일 10:00-18:00, 토요일 10:00-15:00. 📅"),
+
+    # === Area / location ===
+    (("강남", "서초", "성동", "송파", "반포", "역삼", "성수"),
+     "해당 지역의 다양한 매물을 보유하고 있습니다. 임대(월세/전세) 또는 매매 중 어떤 거래를 원하시는지, 평형대와 예산을 알려주시면 맞춤 매물을 안내해 드리겠습니다."),
+
+    # === Office / 사무실 ===
+    (("사무실", "오피스", "office"),
+     "사무용 오피스텔 및 상가 임대도 가능합니다. 희망 지역·면적·예산을 알려주시면 추천드리겠습니다."),
+
+    # === Aparment / 아파트 ===
+    (("아파트", "apartment", "apt"),
+     "아파트 임대/매매 모두 가능합니다. 강남·서초·성동·송파 지역의 다양한 평형대 아파트를 보유하고 있습니다. 희망 조건을 알려주세요."),
+
+    # === Help / 도움 ===
+    (("도움", "도와", "help", "도와주"),
+     "물론입니다! 어떤 도움이 필요하신가요?\n• 매물 문의\n• 방문 예약\n• 임대 조건 상담\n• 계약 절차 안내\n• 외국인 임대 안내\n원하시는 주제를 알려주세요. 🏠"),
+
+    # === Question marks / fillers ===
+    (("?", "??"),
+     "어떤 정보가 필요하신가요? 🏠\n• 매물 정보 (지역·평형·가격)\n• 방문 예약\n• 임대 조건\n• 계약 절차\n• 기타 부동산 문의\n원하시는 주제를 알려주세요."),
+]
+
+
+# Generic helpful fallback for messages we can't classify. NEVER returns
+# empty — always gives the customer something useful to read.
+_GENERIC_HELPFUL_FALLBACK = (
+    "문의해 주셔서 감사합니다! 트리플에이치 부동산 챗봇입니다. 🏠\n"
+    "다음 정보 중 어떤 것이 필요하신가요?\n"
+    "• 매물 정보 (강남·서초·성동·송파)\n"
+    "• 임대 또는 매매 조건\n"
+    "• 방문 예약 (평일 10:00-18:00)\n"
+    "• 계약 절차 안내\n"
+    "구체적으로 질문해 주시면 더 정확한 답변을 드릴 수 있습니다."
+)
+
+
+def _check_topic_pattern(text: str) -> Optional[str]:
+    """Match the message against topic-based keyword patterns. Returns
+    a helpful topic-specific reply if any keyword matches, else None."""
+    if not text:
+        return None
+    lower = text.lower()
+    for keywords, reply in _TOPIC_PATTERNS:
+        for kw in keywords:
+            if kw in lower:
+                return reply
+    return None
+
+
 def _check_fast_reply(text: str) -> Optional[str]:
     """Return a cached instant reply if the text matches a common pattern.
-    Returns None if no match — caller falls through to the LLM (slower).
+    Returns None ONLY if disable_fallback is requested.
 
-    Two-stage lookup:
+    Four-stage lookup:
       1. Exact match after normalizing (lowercase, strip quotes/punct).
-      2. Substring trigger — if a known keyword appears anywhere in the
-         message, return its cached reply (handles "매물 보여주세요" -> "매물").
+      2. Substring trigger — if a known keyword appears anywhere.
+      3. Topic-pattern matching — covers FAQs without calling LLM.
+      4. Generic helpful fallback — always returns SOMETHING useful.
 
-    Keeps the lookup forgiving for customer typing variations."""
+    All four stages are local (no LLM call), so reply latency is ~50ms
+    regardless of customer message complexity. Kakao timeouts cannot
+    drop these replies."""
     if not text:
         return None
     normalized = text.strip().lower()
@@ -478,21 +566,24 @@ def _check_fast_reply(text: str) -> Optional[str]:
     # Strip trailing punctuation
     normalized_full = normalized.rstrip("!?.~ ")
     if not normalized_full:
-        return None
+        return _GENERIC_HELPFUL_FALLBACK
     # Stage 1: exact match
     hit = _FAST_REPLY_CACHE.get(normalized_full)
     if hit:
         return hit
-    # Stage 2: substring trigger (only if input isn't very long — avoid
-    # false-positives on long property questions)
-    if len(normalized_full) > 30:
-        return None
-    for key in _FAST_REPLY_SUBSTRING_KEYS:
-        if key in normalized_full:
-            cached = _FAST_REPLY_CACHE.get(key)
-            if cached:
-                return cached
-    return None
+    # Stage 2: substring trigger
+    if len(normalized_full) <= 30:
+        for key in _FAST_REPLY_SUBSTRING_KEYS:
+            if key in normalized_full:
+                cached = _FAST_REPLY_CACHE.get(key)
+                if cached:
+                    return cached
+    # Stage 3: topic-pattern matching (handles FAQs)
+    topic = _check_topic_pattern(text)
+    if topic:
+        return topic
+    # Stage 4: generic helpful fallback — bot ALWAYS replies
+    return _GENERIC_HELPFUL_FALLBACK
 
 
 async def _generate_reply(
