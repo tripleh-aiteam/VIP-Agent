@@ -145,9 +145,19 @@ def daily_report(agent_id: str, db: Session = Depends(get_db)):
 
 
 @router.get("/{agent_id}/mode")
-def get_mode(agent_id: str):
-    mode, auto = chatbot_mode_detector.get_mode(agent_id)
-    return {"mode": mode, "autoDetected": auto}
+def get_mode(agent_id: str, db: Session = Depends(get_db)):
+    """Returns the current mode + reason + expiry for the dashboard banner."""
+    mode, auto = chatbot_mode_detector.get_mode(agent_id, db=db)
+    setting = chatbot_mode_detector.get_setting(agent_id, db=db)
+    payload: dict[str, Any] = {"mode": mode, "autoDetected": auto}
+    if setting and not auto:
+        payload["reason"] = setting.mode_reason
+        payload["reasonNote"] = setting.mode_reason_note
+        payload["expiresAt"] = (
+            int(setting.mode_expires_at.timestamp() * 1000)
+            if setting.mode_expires_at else None
+        )
+    return payload
 
 
 # ============================================================================
@@ -172,6 +182,13 @@ class ApproveBody(BaseModel):
 class ModeBody(BaseModel):
     mode: str = Field(..., pattern="^(in|out)$")
     expires_in_hours: Optional[float] = None
+    reason: Optional[str] = Field(
+        None,
+        description="meeting / lunch / off_day / vacation / after_hours / other",
+    )
+    reason_note: Optional[str] = Field(
+        None, description="Free text — used when reason='other'"
+    )
     auto: Optional[bool] = Field(
         False, description="When true, clears the manual override (returns to auto-detect)"
     )
@@ -264,6 +281,18 @@ async def reply(
         status="bot_handling",
         unread_count=0,
     )
+    # Boss-IN learning: bot observes the manual reply + learns
+    # Note: fire-and-forget — failures here never break the user-visible reply
+    try:
+        from services import chatbot_boss_observer
+        previous_draft = None
+        if conv.suggested_reply_json:
+            previous_draft = (conv.suggested_reply_json or {}).get("text")
+        await chatbot_boss_observer.observe_boss_reply(
+            db, agent_id, conv, body.text, edited_from_draft=previous_draft
+        )
+    except Exception as e:
+        log.warning(f"chatbot.reply: boss observer failed (non-fatal): {e}")
     updated = conv_service.get_conversation(db, agent_id, conv.id)
     _broadcast_conv(db, agent_id, updated, with_message=msg)
     return {"ok": True, "messageId": str(msg.id) if msg else None}
@@ -556,21 +585,106 @@ async def _send_attachment_via_channel(
 
 
 @router.post("/{agent_id}/mode")
-def set_mode(agent_id: str, body: ModeBody):
+def set_mode(agent_id: str, body: ModeBody, db: Session = Depends(get_db)):
     if body.auto:
-        chatbot_mode_detector.clear_manual_mode(agent_id)
+        chatbot_mode_detector.clear_manual_mode(agent_id, db=db)
     else:
         chatbot_mode_detector.set_manual_mode(
             agent_id,
             body.mode,  # type: ignore[arg-type]
+            reason=body.reason,
+            reason_note=body.reason_note,
             expires_in_hours=body.expires_in_hours,
+            db=db,
         )
-    mode, auto = chatbot_mode_detector.get_mode(agent_id)
+    mode, auto = chatbot_mode_detector.get_mode(agent_id, db=db)
+    setting = chatbot_mode_detector.get_setting(agent_id, db=db)
+    payload: dict[str, Any] = {"mode": mode, "autoDetected": auto}
+    if setting and not auto:
+        payload["reason"] = setting.mode_reason
+        payload["reasonNote"] = setting.mode_reason_note
+        payload["expiresAt"] = (
+            int(setting.mode_expires_at.timestamp() * 1000)
+            if setting.mode_expires_at else None
+        )
     # Notify subscribed dashboards
-    _broker.publish_sync(
-        agent_id, {"type": "mode.changed", "mode": mode, "autoDetected": auto}
+    _broker.publish_sync(agent_id, {"type": "mode.changed", **payload})
+    return payload
+
+
+# ============================================================================
+#  Agent asset library — bot's autonomous-attachment file pool
+# ============================================================================
+
+
+class AssetCreateBody(BaseModel):
+    label: str = Field(..., min_length=1, max_length=120)
+    file_url: str = Field(..., min_length=1)
+    file_kind: str = Field(default="file")               # "image" | "file" | "voice"
+    file_mime: Optional[str] = None
+    description: Optional[str] = None
+    keywords: list[str] = Field(default_factory=list)
+    enabled: bool = True
+
+
+@router.get("/{agent_id}/assets")
+def list_assets(agent_id: str, db: Session = Depends(get_db)):
+    """List the boss-curated file library for this agent. Each asset
+    has keywords the bot scans incoming messages for in Boss-OUT mode."""
+    from services import chatbot_attachment_dispatcher
+    assets = chatbot_attachment_dispatcher.list_assets(agent_id, db=db)
+    return [
+        {
+            "id": str(a.id),
+            "label": a.label,
+            "description": a.description,
+            "fileUrl": a.file_url,
+            "fileKind": a.file_kind,
+            "fileMime": a.file_mime,
+            "keywords": a.keywords_json or [],
+            "enabled": a.enabled,
+            "sendCount": a.send_count,
+            "lastSentAt": (
+                int(a.last_sent_at.timestamp() * 1000) if a.last_sent_at else None
+            ),
+            "createdAt": (
+                int(a.created_at.timestamp() * 1000) if a.created_at else None
+            ),
+        }
+        for a in assets
+    ]
+
+
+@router.post("/{agent_id}/assets")
+def create_asset(
+    agent_id: str,
+    body: AssetCreateBody,
+    db: Session = Depends(get_db),
+):
+    """Register a new asset. Boss uploads the file separately via
+    /reply-attachment (or any other storage path) and POSTs the URL here."""
+    from services import chatbot_attachment_dispatcher
+    asset = chatbot_attachment_dispatcher.create_asset(
+        agent_id=agent_id,
+        label=body.label,
+        file_url=body.file_url,
+        file_kind=body.file_kind,
+        file_mime=body.file_mime,
+        description=body.description,
+        keywords=body.keywords,
+        enabled=body.enabled,
+        db=db,
     )
-    return {"mode": mode, "autoDetected": auto}
+    return {"ok": True, "assetId": str(asset.id)}
+
+
+@router.delete("/{agent_id}/assets/{asset_id}")
+def delete_asset(agent_id: str, asset_id: UUID, db: Session = Depends(get_db)):
+    from services import chatbot_attachment_dispatcher
+    deleted = chatbot_attachment_dispatcher.delete_asset(agent_id, asset_id, db=db)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Asset not found")
+    return {"ok": True}
 
 
 # ============================================================================

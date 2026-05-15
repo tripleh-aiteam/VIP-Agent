@@ -583,6 +583,7 @@ def serialize_customer(c: ChatbotCustomer) -> dict[str, Any]:
         "id": str(c.id),
         "name": c.name or "",
         "phone": c.phone,
+        "email": getattr(c, "email", None),
         "tag": c.tag,
         "avatarUrl": c.avatar_url,
         "notes": c.notes,

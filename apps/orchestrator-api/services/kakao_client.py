@@ -25,6 +25,7 @@ Base URL:    https://kapi.kakao.com
 
 from __future__ import annotations
 
+import json
 import os
 from typing import Any, Optional
 
@@ -225,17 +226,74 @@ def send_voice_message(
     audio_url: str,
     duration_sec: int,
     receiver_uuid: Optional[str] = None,
+    caption: Optional[str] = None,
 ) -> dict[str, Any]:
-    """Send a voice message (audio file). KakaoTalk Channel typically
-    handles voice notes via the file attachment path with audio/mpeg or
-    audio/m4a mime type.
+    """Send a voice message (audio file).
 
-    Not all Kakao Channel API tiers support voice — confirm with your
-    business verification. For now, raise so misconfiguration is loud
-    rather than silent."""
-    raise NotImplementedError(
-        "Kakao voice message send not yet wired — requires verified business "
-        "channel + audio file attachment support."
+    Native voice playback in KakaoTalk Channel messages requires a
+    verified business channel with the Premium audio template. Since
+    most accounts start on the basic tier, this implementation falls
+    back to a feed template with a tappable download link — customer
+    taps the link to listen in the system audio player.
+
+    When the channel is upgraded, set `KAKAO_VOICE_NATIVE=1` and we'll
+    send the dedicated audio template instead.
+
+    Args:
+      audio_url: publicly fetchable URL to the audio file (MP3/M4A)
+      duration_sec: clip length for UI hint
+      caption: optional preamble text shown above the link"""
+    if os.getenv("KAKAO_VOICE_NATIVE", "0") == "1":
+        # Premium audio template — payload shape mirrors Kakao's docs:
+        # https://developers.kakao.com/docs/latest/en/message/rest-api
+        # We feature-flag it so the basic flow (below) keeps working until
+        # the business account is verified.
+        payload: dict[str, Any] = {
+            "template_object": json.dumps(
+                {
+                    "object_type": "audio",
+                    "content": {
+                        "title": caption or "음성 메시지",
+                        "description": f"{duration_sec}초",
+                        "audio_url": audio_url,
+                        "link": {
+                            "web_url": audio_url,
+                            "mobile_web_url": audio_url,
+                        },
+                    },
+                },
+                ensure_ascii=False,
+            ),
+        }
+        if receiver_uuid:
+            payload["receiver_uuids"] = f'["{receiver_uuid}"]'
+        try:
+            with httpx.Client(timeout=15) as client:
+                resp = client.post(
+                    f"{_api_base()}/v1/api/talk/friends/message/default/send",
+                    headers=_auth_headers(agent_id),
+                    data=payload,
+                )
+        except httpx.HTTPError as e:
+            raise KakaoClientError(f"network error: {e}") from e
+        if resp.status_code not in (200, 201):
+            raise KakaoClientError(
+                f"Kakao send_voice (native) returned "
+                f"{resp.status_code}: {resp.text[:300]}"
+            )
+        return resp.json()
+
+    # Basic-tier fallback: tappable link
+    body = (
+        f"🎤 음성 메시지 ({duration_sec}s)\n{audio_url}"
+        if not caption
+        else f"{caption}\n\n🎤 음성 메시지 ({duration_sec}s)\n{audio_url}"
+    )
+    return send_text(
+        agent_id=agent_id,
+        conversation_id=conversation_id,
+        text=body,
+        receiver_uuid=receiver_uuid,
     )
 
 

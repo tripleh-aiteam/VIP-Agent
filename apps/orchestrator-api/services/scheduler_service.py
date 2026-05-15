@@ -4,6 +4,7 @@ Reads schedule rules from DB, runs tasks on cron, retries once on failure.
 Uses APScheduler for MVP.
 """
 
+import os
 from datetime import datetime, timedelta
 from uuid import UUID
 from typing import Any
@@ -804,6 +805,35 @@ def init_scheduler():
     )
     log.info("scheduler: chatbot morning report registered (23:00 UTC = 08:00 KST)",
              extra={"action": "scheduler.chatbot_morning_report_registered"})
+
+    # Chatbot mode-override expiry — every minute, clears overrides where
+    # mode_expires_at has passed (so "back in 2 hours" actually flips back
+    # to IN at the 2-hour mark without manual intervention).
+    from services.chatbot_mode_detector import expire_overdue_overrides as _mode_expire
+    _scheduler.add_job(
+        _mode_expire,
+        CronTrigger.from_crontab("* * * * *"),
+        id="chatbot-mode-expire",
+        replace_existing=True,
+    )
+    log.info("scheduler: chatbot mode expiry tick registered (every 1 min)",
+             extra={"action": "scheduler.chatbot_mode_expire_registered"})
+
+    # Chatbot email poll — every 2 minutes; pulls UNSEEN messages for each
+    # configured agent and feeds them through the inbound reply pipeline.
+    # Env-gated so it doesn't run in dev without IMAP creds.
+    if os.getenv("CHATBOT_EMAIL_POLL_ENABLED", "0") == "1":
+        from services.chatbot_email_ingest import poll_all_agents as _email_poll
+        _scheduler.add_job(
+            _email_poll,
+            CronTrigger.from_crontab("*/2 * * * *"),
+            id="chatbot-email-poll",
+            replace_existing=True,
+        )
+        log.info(
+            "scheduler: chatbot email poll registered (every 2 min)",
+            extra={"action": "scheduler.chatbot_email_poll_registered"},
+        )
 
     _scheduler.start()
     log.info("scheduler: started", extra={"action": "scheduler.started"})

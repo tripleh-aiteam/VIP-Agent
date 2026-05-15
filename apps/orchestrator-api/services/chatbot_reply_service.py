@@ -111,6 +111,10 @@ async def handle_incoming_message(
         customer=customer,
         conversation=conversation,
     )
+
+    # Did the customer message in *voice*? If so, reply in voice too (when
+    # configured). We detect by looking at the latest customer message kind.
+    customer_used_voice = _last_customer_msg_was_voice(db, agent_id, conversation.id)
     if not reply_text:
         log.warning(
             f"chatbot_reply: empty reply for conv {conversation.id}",
@@ -160,6 +164,75 @@ async def handle_incoming_message(
         bot_meta={"status": "auto", "reasoning": reasoning},
     )
 
+    # Autonomous voice reply — if the customer used voice (and voice
+    # replies aren't disabled), generate TTS of the bot's text reply and
+    # send it as an audio attachment alongside the text. Best-effort:
+    # any failure falls back silently to text-only.
+    voice_reply_sent = None
+    if customer_used_voice and _voice_replies_enabled(agent_id):
+        try:
+            from services import chatbot_voice_reply
+            audio_url = await chatbot_voice_reply.synthesize_and_upload(
+                agent_id=agent_id,
+                conversation_id=str(conversation.id),
+                text=reply_text,
+            )
+            if audio_url:
+                # Send via channel client
+                if conversation.channel == "kakao":
+                    try:
+                        from services import kakao_client
+                        cust_obj = conv_service.get_customer(db, agent_id, conversation.customer_id)
+                        receiver = cust_obj.kakao_user_id if cust_obj else None
+                        await asyncio.to_thread(
+                            kakao_client.send_voice_message,
+                            agent_id=agent_id,
+                            conversation_id=str(conversation.id),
+                            audio_url=audio_url,
+                            duration_sec=20,
+                            receiver_uuid=receiver,
+                        )
+                    except Exception as e:
+                        log.warning(f"chatbot_reply: voice send via kakao failed: {e}")
+                # Persist the voice message row regardless of channel result
+                conv_service.append_message(
+                    db, agent_id, conversation.id,
+                    author="bot",
+                    kind="voice",
+                    voice_url=audio_url,
+                    voice_transcript=reply_text,
+                    bot_meta={"status": "auto-voice"},
+                )
+                voice_reply_sent = audio_url
+        except Exception as e:
+            log.warning(
+                f"chatbot_reply: voice reply failed: {e}",
+                extra={"action": "chatbot.voice_reply_failed"},
+            )
+
+    # Autonomous attachment — if the customer's message matches a keyword
+    # in the agent's asset library (floor plans, contract templates, etc.),
+    # the bot sends the file too. Best-effort; never blocks the text reply.
+    attachment_sent = None
+    try:
+        from services import chatbot_attachment_dispatcher
+        asset = chatbot_attachment_dispatcher.find_relevant_attachment(
+            agent_id, incoming_text, db=db
+        )
+        if asset:
+            await chatbot_attachment_dispatcher.dispatch_autonomous_attachment(
+                db=db,
+                agent_id=agent_id,
+                conversation=conversation,
+                asset=asset,
+            )
+            attachment_sent = {"asset_id": str(asset.id), "label": asset.label}
+    except Exception as e:
+        log.warning(
+            f"chatbot_reply: auto-attachment failed: {e}",
+            extra={"action": "chatbot.auto_attachment_failed"},
+        )
+
     # Promote the conversation back to "bot_handling" — bot is actively engaged
     new_status = "escalated" if is_urgent else "bot_handling"
     conv_service.patch_conversation(
@@ -167,13 +240,16 @@ async def handle_incoming_message(
     )
 
     log.info(
-        f"chatbot_reply: sent (mode=out, urgent={is_urgent}) for conv {conversation.id}",
+        f"chatbot_reply: sent (mode=out, urgent={is_urgent}, "
+        f"attached={attachment_sent is not None}) for conv {conversation.id}",
         extra={"action": "chatbot.reply_sent"},
     )
     return {
         "mode": "out",
         "action": "escalated" if is_urgent else "sent",
         "reply": reply_text,
+        "attachment": attachment_sent,
+        "voice_reply": voice_reply_sent,
     }
 
 
@@ -314,7 +390,11 @@ async def _generate_reply(
 ) -> tuple[str, Optional[str]]:
     """Call the existing chatbot brain (services.chatbot_talk.handle_talk)
     with this customer's message + agent's knowledge base. Returns
-    (reply_text, reasoning)."""
+    (reply_text, reasoning).
+
+    Style mimicry: pulls the boss style hint from chatbot_boss_observer
+    (built from past boss replies) and prepends it to the user message so
+    the LLM matches the boss's tone + length preferences."""
     try:
         from db.base import SessionLocal
         from services.chatbot_talk import handle_talk
@@ -336,10 +416,26 @@ async def _generate_reply(
             if (m.text or m.voice_transcript)
         ]
 
+        # Pull learned style hint from observer (formal/casual/length/etc.)
+        style_hint = ""
+        try:
+            from services import chatbot_boss_observer
+            style_hint = chatbot_boss_observer.build_style_hint(db2, agent_id)
+        except Exception:
+            pass
+
+        # If we have a style hint, prefix the user message with it so the LLM
+        # sees it as context. The chatbot_talk pipeline forwards intent + KB
+        # but doesn't expose a separate "style" slot — this is the cleanest
+        # injection point without modifying the handle_talk signature.
+        query_text = incoming_text
+        if style_hint:
+            query_text = f"{style_hint}\n\n[고객 메시지]\n{incoming_text}"
+
         result = await asyncio.to_thread(
             handle_talk,
             db2,
-            incoming_text,
+            query_text,
             "ko",     # KR-first; the LLM will switch if user spoke English
             agent_id,
             intents=None,           # backend has agent's intents registered
@@ -353,12 +449,39 @@ async def _generate_reply(
         reasoning = None
         if source and intent:
             reasoning = f"source={source}, intent={intent}"
+            if style_hint:
+                reasoning += " + boss-style"
         return reply.strip(), reasoning
     except Exception as e:
         log.warning(f"chatbot_reply: generate failed: {e}")
         return "", None
     finally:
         db2.close()
+
+
+def _last_customer_msg_was_voice(
+    db: Session, agent_id: str, conversation_id
+) -> bool:
+    """True if the most recent customer-authored message in this conversation
+    arrived as voice (kind='voice'). Used to decide whether to mirror the
+    bot's reply as TTS audio."""
+    try:
+        msgs = conv_service.list_messages(db, agent_id, conversation_id, limit=20)
+        for m in reversed(msgs):
+            if m.author != "customer":
+                continue
+            return (m.kind or "").lower() == "voice"
+    except Exception:
+        pass
+    return False
+
+
+def _voice_replies_enabled(agent_id: str) -> bool:
+    """Voice replies are opt-in via env. Default off so dev environments
+    don't burn TTS credits unintentionally. Set CHATBOT_VOICE_REPLIES=1
+    to enable per orchestrator (per-agent toggle is future work)."""
+    import os as _os
+    return _os.getenv("CHATBOT_VOICE_REPLIES", "0") == "1"
 
 
 def _resolve_escalation_target(agent_id: str) -> str:

@@ -52,7 +52,11 @@ interface Props {
   onResolve?: (conv: Conversation) => void;
   onApproveDraft?: (conv: Conversation) => void;
   onDismissDraft?: (conv: Conversation) => void;
-  onModeChange?: (mode: BossMode, manual: boolean) => void;
+  onModeChange?: (
+    mode: BossMode,
+    manual: boolean,
+    options?: { reason?: string; reasonNote?: string; expiresInHours?: number },
+  ) => void;
   /** Boss-IN helper: boss clicks AI button to request a draft suggestion */
   onGenerateDraft?: (conv: Conversation) => void;
   /** Boss uploads an image / file / voice clip via the composer */
@@ -79,20 +83,40 @@ export function ChatbotInbox({
   const conversations = liveConversations ?? (mock ? getMockConversations() : []);
   const dailyReport = liveDailyReport ?? (mock ? mockInboxDailyReport : null);
 
-  // Mode: auto-detect from time, but user can override
+  // Mode: auto-detect from time, but user can override.
+  // When the host is wired to the orchestrator, it should call
+  // `updateModeState` from a fetchBossMode() / WS mode.changed callback so
+  // the banner reflects the server-side override + countdown.
   const [autoDetected, setAutoDetected] = useState<boolean>(true);
   const [manualMode, setManualMode] = useState<BossMode>(MOCK_DEFAULT_BOSS_MODE);
+  const [overrideReason, setOverrideReason] = useState<string | undefined>(undefined);
+  const [overrideReasonNote, setOverrideReasonNote] = useState<string | undefined>(undefined);
+  const [overrideExpiresAt, setOverrideExpiresAt] = useState<number | null | undefined>(undefined);
   const detectedMode = useMemo(() => autoDetectMode(new Date()), []);
   const mode: BossMode = autoDetected ? detectedMode : manualMode;
 
-  const handleModeChange = (m: BossMode, manual: boolean) => {
+  const handleModeChange = (
+    m: BossMode,
+    manual: boolean,
+    options?: { reason?: string; reasonNote?: string; expiresInHours?: number },
+  ) => {
     if (manual) {
       setAutoDetected(false);
       setManualMode(m);
+      setOverrideReason(options?.reason);
+      setOverrideReasonNote(options?.reasonNote);
+      setOverrideExpiresAt(
+        options?.expiresInHours && options.expiresInHours > 0
+          ? Date.now() + options.expiresInHours * 3600 * 1000
+          : null,
+      );
     } else {
       setAutoDetected(true);
+      setOverrideReason(undefined);
+      setOverrideReasonNote(undefined);
+      setOverrideExpiresAt(undefined);
     }
-    onModeChange?.(m, manual);
+    onModeChange?.(m, manual, options);
   };
 
   const [selectedId, setSelectedId] = useState<string | null>(
@@ -121,7 +145,14 @@ export function ChatbotInbox({
             All customer conversations (KakaoTalk + Phone + SMS) — AI handles or you review
           </p>
         </div>
-        <ModeToggle mode={mode} autoDetected={autoDetected} onChange={handleModeChange} />
+        <ModeToggle
+          mode={mode}
+          autoDetected={autoDetected}
+          reason={overrideReason}
+          reasonNote={overrideReasonNote}
+          expiresAt={overrideExpiresAt ?? null}
+          onChange={handleModeChange}
+        />
       </div>
 
       {/* Daily report */}

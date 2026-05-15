@@ -56,8 +56,11 @@ export default function ChatbotPage() {
       onSendAttachment={(conv, file, kind, caption) =>
         console.log("Send attachment (mock):", conv.id, file.name, kind, caption)
       }
-      onModeChange={(mode, manual) =>
-        console.log(`Mode → ${mode} (${manual ? "manual" : "auto"})`)
+      onModeChange={(mode, manual, options) =>
+        console.log(
+          `Mode → ${mode} (${manual ? "manual" : "auto"})`,
+          options,
+        )
       }
     />
   );
@@ -176,8 +179,13 @@ function LiveChatbotInbox() {
           .then(() => refreshConv(conv.id))
           .catch(console.warn)
       }
-      onModeChange={(mode, manual) => {
-        setBossMode(config, mode, { auto: !manual }).catch(console.warn);
+      onModeChange={(mode, manual, options) => {
+        setBossMode(config, mode, {
+          auto: !manual,
+          reason: options?.reason,
+          reasonNote: options?.reasonNote,
+          expiresInHours: options?.expiresInHours,
+        }).catch(console.warn);
       }}
     />
   );

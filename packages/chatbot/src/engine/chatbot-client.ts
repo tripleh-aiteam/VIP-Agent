@@ -106,10 +106,21 @@ export async function fetchInboxDailyReport(
   return expectJson<InboxDailyReport>(res);
 }
 
+export interface BossModeState {
+  mode: BossMode;
+  autoDetected: boolean;
+  /** Reason code while manually OUT (matches MODE_REASONS keys server-side). */
+  reason?: string | null;
+  /** Free-text note when reason = "other". */
+  reasonNote?: string | null;
+  /** Unix ms when override auto-reverts to auto-detect. null = indefinite. */
+  expiresAt?: number | null;
+}
+
 export async function fetchBossMode(
   config: AgentConfig,
   options?: { signal?: AbortSignal },
-): Promise<{ mode: BossMode; autoDetected: boolean }> {
+): Promise<BossModeState> {
   const url = `${chatbotBase(config)}/mode`;
   const res = await fetch(url, {
     method: "GET",
@@ -237,10 +248,21 @@ export async function sendAttachment(
 export async function setBossMode(
   config: AgentConfig,
   mode: BossMode,
-  options?: { expiresInHours?: number; auto?: boolean },
-): Promise<{ mode: BossMode; autoDetected: boolean }> {
+  options?: {
+    /** Reason code (matches MODE_REASONS keys: meeting / lunch / off_day / vacation / after_hours / other). */
+    reason?: string;
+    /** Free-text used when reason = "other". */
+    reasonNote?: string;
+    /** Hours until auto-revert to auto-detect. Omit for indefinite. */
+    expiresInHours?: number;
+    /** Set true to clear the override and resume time-based auto-detect. */
+    auto?: boolean;
+  },
+): Promise<BossModeState> {
   return _post(config, "/mode", {
     mode,
+    reason: options?.reason,
+    reason_note: options?.reasonNote,
     expires_in_hours: options?.expiresInHours,
     auto: options?.auto,
   });
@@ -254,13 +276,20 @@ export async function setBossMode(
 export type ChatbotWsEvent =
   | { type: "conversation.updated"; conversation: Conversation }
   | { type: "message.added"; conversationId: string; message: Message }
-  | { type: "mode.changed"; mode: BossMode; autoDetected: boolean };
+  | {
+      type: "mode.changed";
+      mode: BossMode;
+      autoDetected: boolean;
+      reason?: string | null;
+      reasonNote?: string | null;
+      expiresAt?: number | null;
+    };
 
 export interface ChatbotSubscriptionCallbacks {
   onEvent?: (event: ChatbotWsEvent) => void;
   onConversationUpdated?: (conversation: Conversation) => void;
   onMessageAdded?: (conversationId: string, message: Message) => void;
-  onModeChanged?: (mode: BossMode, autoDetected: boolean) => void;
+  onModeChanged?: (state: BossModeState) => void;
   onError?: (err: Error) => void;
   onOpen?: () => void;
   onClose?: (code: number, reason: string) => void;
@@ -300,7 +329,13 @@ export function subscribeToInbox(
         callbacks.onMessageAdded?.(event.conversationId, event.message);
         break;
       case "mode.changed":
-        callbacks.onModeChanged?.(event.mode, event.autoDetected);
+        callbacks.onModeChanged?.({
+          mode: event.mode,
+          autoDetected: event.autoDetected,
+          reason: event.reason ?? null,
+          reasonNote: event.reasonNote ?? null,
+          expiresAt: event.expiresAt ?? null,
+        });
         break;
     }
   });

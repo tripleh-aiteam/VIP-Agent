@@ -988,6 +988,7 @@ class ChatbotCustomer(Base):
     name = Column(String(120))
     phone = Column(String(40), index=True)                    # E.164 — links KakaoTalk + phone if same person
     kakao_user_id = Column(String(120), index=True)           # Kakao app user identifier
+    email = Column(String(254), index=True)                    # email channel identifier
     tag = Column(String(120))                                  # "Lease #L1-040", "Viewing #V-23"
     avatar_url = Column(Text)
     notes = Column(Text)                                       # Boss-added free-form notes
@@ -1006,8 +1007,14 @@ class ChatbotConversation(Base):
 
     id = _uuid()
     agent_id = Column(String(40), nullable=False, index=True)
-    channel = Column(String(12), nullable=False)              # "kakao" | "phone" | "sms" | "web"
+    channel = Column(String(12), nullable=False)              # "kakao" | "phone" | "sms" | "web" | "email"
     customer_id = Column(UUID(as_uuid=True), ForeignKey("chatbot_customers.id"), nullable=False, index=True)
+
+    # Email threading keys (RFC Message-IDs + normalized subject). Looked up
+    # on inbound delivery to attach the new mail to the right Conversation.
+    thread_keys_json = Column(JSONB, default=list)             # list[str]
+    # IMAP UID watermark so the poller can resume past the last fetched UID.
+    last_imap_uid = Column(Integer)
     status = Column(String(20), nullable=False, default="needs_reply")
                                                               # needs_reply | bot_handling | needs_review | escalated | resolved | missed
     urgency = Column(String(8))                               # low | medium | high
@@ -1099,6 +1106,66 @@ class ChatbotConversationAction(Base):
     ref_id = Column(String(120))                              # linked call_id / viewing_id / etc.
     created_by = Column(UUID(as_uuid=True), ForeignKey("platform_users.id"))
     created_at = _now()
+
+
+class ChatbotAgentSetting(Base):
+    """Per-agent runtime settings — currently used for the manual
+    Boss-IN/Boss-OUT mode override + its reason + expiry.
+
+    Why a DB row instead of in-memory: the boss flips the toggle, server
+    restarts (deploys, OOM, scaling event), and the manual choice should
+    NOT silently revert to auto-detect. This row makes the override survive."""
+    __tablename__ = "chatbot_agent_settings"
+
+    id = _uuid()
+    agent_id = Column(String(40), nullable=False, unique=True, index=True)
+
+    # Mode override — "in" / "out" / None (None = auto-detect by time)
+    mode_override = Column(String(8))
+
+    # Why the override was set: "meeting" / "lunch" / "off_day" / "vacation" / "other"
+    # Free-form text in `mode_reason_note` for "other"
+    mode_reason = Column(String(40))
+    mode_reason_note = Column(Text)
+
+    # When the override auto-expires (back to auto-detect). NULL = indefinite.
+    mode_expires_at = Column(DateTime)
+
+    # Whether auto-detect is allowed at all. When False, the override is
+    # sticky until explicitly cleared regardless of time.
+    auto_mode_enabled = Column(Boolean, default=True, nullable=False)
+
+    # Audit trail
+    updated_by = Column(UUID(as_uuid=True), ForeignKey("platform_users.id"))
+    created_at = _now()
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class ChatbotAgentAsset(Base):
+    """Per-agent reusable file library — floor plans, brochures, contract
+    templates, business cards, etc. The bot can autonomously send these
+    in Boss-OUT mode when the customer's question matches the asset's
+    keywords (e.g. customer asks "도면 보여주세요" → bot sends floor plan).
+
+    The boss uploads assets via the dashboard; the autonomous-attachment
+    dispatcher in chatbot_attachment_dispatcher.py picks a match based on
+    keyword overlap with the incoming customer message."""
+    __tablename__ = "chatbot_agent_assets"
+
+    id = _uuid()
+    agent_id = Column(String(40), nullable=False, index=True)
+    label = Column(String(120), nullable=False)                # short title shown in dashboard
+    description = Column(Text)                                  # what this asset is, when to send
+    file_url = Column(Text, nullable=False)                     # public/signed URL the channel can fetch
+    file_kind = Column(String(12), nullable=False, default="file")  # "image" | "file" | "voice"
+    file_mime = Column(String(80))
+    keywords_json = Column(JSONB, default=list)                 # ["도면", "평면도", "floor plan"]
+    enabled = Column(Boolean, default=True, nullable=False)
+    send_count = Column(Integer, default=0, nullable=False)     # how many times auto-sent
+    last_sent_at = Column(DateTime)
+    created_by = Column(UUID(as_uuid=True), ForeignKey("platform_users.id"))
+    created_at = _now()
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
 class ChatbotChannelMapping(Base):

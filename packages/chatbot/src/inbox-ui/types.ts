@@ -14,7 +14,7 @@
  * MessageBubble component picks the right rendering per kind.
  */
 
-export type ChannelKind = "kakao" | "phone" | "sms" | "web";
+export type ChannelKind = "kakao" | "phone" | "sms" | "web" | "email";
 
 export type BossMode = "in" | "out";
 
@@ -37,6 +37,8 @@ export interface Customer {
   name: string;
   /** E.164 phone number (KakaoTalk users typically have phone-linked IDs) */
   phone?: string;
+  /** Email address (populated for the email channel) */
+  email?: string;
   /** Display tag — "Lease #L1-040", "Viewing #V-23", etc. */
   tag?: string;
   /** Customer's profile photo URL (KakaoTalk avatar) */
