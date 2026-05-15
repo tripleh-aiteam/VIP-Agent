@@ -164,7 +164,7 @@ async def kakao_webhook(request: Request, db: Session = Depends(get_db)):
             text=utterance,
             provider_message_id=provider_msg_id,
         )
-        await _process_text_message(db, agent_id, conv, customer, utterance)
+        reply_text = await _process_text_message(db, agent_id, conv, customer, utterance)
 
     # Step 6 — Broadcast updated conversation to dashboard subscribers
     try:
@@ -183,6 +183,21 @@ async def kakao_webhook(request: Request, db: Session = Depends(get_db)):
     except Exception as e:
         log.warning(f"kakao.webhook: broadcast failed: {e}")
 
+    # Step 7 — Return reply inline in Kakao i 오픈빌더 skill format. This is
+    # what i 오픈빌더 expects from a skill webhook: it shows the `simpleText`
+    # to the customer in the channel. Returning `{"ok": True}` alone causes
+    # the bot to show no reply to the customer.
+    if attachment_type not in ("audio", "voice", "image", "photo", "file", "document"):
+        reply_text = locals().get("reply_text") or ""
+        if reply_text:
+            return {
+                "version": "2.0",
+                "template": {
+                    "outputs": [
+                        {"simpleText": {"text": reply_text}}
+                    ],
+                },
+            }
     return {"ok": True}
 
 
@@ -192,10 +207,16 @@ async def kakao_webhook(request: Request, db: Session = Depends(get_db)):
 
 async def _process_text_message(
     db: Session, agent_id: str, conv, customer, utterance: str
-) -> None:
-    """Run the reply pipeline for a text message."""
+) -> str:
+    """Run the reply pipeline for a text message. Returns the bot's reply
+    text (empty string if no reply was generated, e.g. Boss-IN mode where
+    bot stays silent and waits for the boss to respond manually).
+
+    The reply is also dispatched via `on_send` (Kakao Channel Message API)
+    as a redundant outbound — but the primary delivery path is the inline
+    return value, which i 오픈빌더 picks up from the webhook response."""
     if not utterance:
-        return
+        return ""
     try:
         from services import chatbot_reply_service
         from services import kakao_client
@@ -209,16 +230,23 @@ async def _process_text_message(
                     receiver_uuid=customer.kakao_user_id,
                 )
             except Exception as e:
+                # Outbound send may fail until the channel message-send
+                # permission is approved by Kakao — that's OK, the inline
+                # webhook return still delivers the reply.
                 log.warning(f"kakao.send via reply_service failed: {e}")
 
-        await chatbot_reply_service.handle_incoming_message(
+        result = await chatbot_reply_service.handle_incoming_message(
             db, agent_id, conv, utterance, customer=customer, on_send=_send
         )
+        if isinstance(result, dict):
+            return (result.get("reply") or "").strip()
+        return ""
     except Exception as e:
         log.warning(
             f"kakao.webhook: reply pipeline error: {e}",
             extra={"action": "kakao.webhook_reply_failed"},
         )
+        return ""
 
 
 async def _handle_voice_message(
