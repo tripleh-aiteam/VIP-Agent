@@ -450,23 +450,49 @@ _FAST_REPLY_CACHE: dict[str, str] = {
 }
 
 
+# Substring trigger keys — match anywhere in the customer message, not
+# just exact. Order matters: more specific keys first.
+_FAST_REPLY_SUBSTRING_KEYS = (
+    "방문 예약", "방문", "월세", "전세", "매매", "매물",
+    "어디 있", "어디예요", "어디인가요", "위치",
+    "잘 지내", "감사", "고맙", "thanks", "thank you",
+    "안녕히 계세요", "bye",
+)
+
+
 def _check_fast_reply(text: str) -> Optional[str]:
     """Return a cached instant reply if the text matches a common pattern.
     Returns None if no match — caller falls through to the LLM (slower).
 
-    Normalization: lowercase, strip surrounding whitespace, strip trailing
-    punctuation, strip surrounding quotes. Keeps the lookup forgiving for
-    customer typing variations."""
+    Two-stage lookup:
+      1. Exact match after normalizing (lowercase, strip quotes/punct).
+      2. Substring trigger — if a known keyword appears anywhere in the
+         message, return its cached reply (handles "매물 보여주세요" -> "매물").
+
+    Keeps the lookup forgiving for customer typing variations."""
     if not text:
         return None
     normalized = text.strip().lower()
     # Strip surrounding quotes ("test123" -> test123)
     normalized = normalized.strip('"').strip("'").strip("`")
     # Strip trailing punctuation
-    normalized = normalized.rstrip("!?.~ ")
-    if not normalized:
+    normalized_full = normalized.rstrip("!?.~ ")
+    if not normalized_full:
         return None
-    return _FAST_REPLY_CACHE.get(normalized)
+    # Stage 1: exact match
+    hit = _FAST_REPLY_CACHE.get(normalized_full)
+    if hit:
+        return hit
+    # Stage 2: substring trigger (only if input isn't very long — avoid
+    # false-positives on long property questions)
+    if len(normalized_full) > 30:
+        return None
+    for key in _FAST_REPLY_SUBSTRING_KEYS:
+        if key in normalized_full:
+            cached = _FAST_REPLY_CACHE.get(key)
+            if cached:
+                return cached
+    return None
 
 
 async def _generate_reply(
@@ -531,17 +557,41 @@ async def _generate_reply(
         # data, not the VIP boss-platform info (which is irrelevant to
         # KakaoTalk customers).
         realty_kb = _triple_h_realty_knowledge_base()
-        result = await asyncio.to_thread(
-            handle_talk,
-            db2,
-            query_text,
-            "ko",     # KR-first; the LLM will switch if user spoke English
-            agent_id,
-            intents=None,           # backend has agent's intents registered
-            knowledge_base=realty_kb,
-            history=history,
-            current_path="/chatbot",
-        )
+
+        # Hard timeout: Kakao's effective skill timeout is ~3 seconds.
+        # If the LLM doesn't return in time, fall back to a friendly
+        # generic reply (better than no reply at all). The full LLM call
+        # is allowed up to 4 seconds because Kakao also gives us some
+        # network buffer — but we cap aggressively to avoid the silent
+        # drop we saw at 5+ seconds.
+        try:
+            result = await asyncio.wait_for(
+                asyncio.to_thread(
+                    handle_talk,
+                    db2,
+                    query_text,
+                    "ko",
+                    agent_id,
+                    intents=None,
+                    knowledge_base=realty_kb,
+                    history=history,
+                    current_path="/chatbot",
+                ),
+                timeout=4.0,
+            )
+        except asyncio.TimeoutError:
+            log.warning(
+                "chatbot_reply: LLM timed out (>4s) — falling back to generic helpful reply",
+                extra={"action": "chatbot.llm_timeout"},
+            )
+            # Friendly fallback that keeps the conversation going. Better
+            # than no reply (which Kakao would have dropped silently).
+            return (
+                "문의해 주셔서 감사합니다! 좀 더 자세한 정보를 확인하고 안내해 드리겠습니다. "
+                "구체적으로 어떤 매물(지역·평형·가격대)을 찾고 계신지 알려주시면 빠르게 답변드릴 수 있습니다. 🏠",
+                "llm-timeout-fallback",
+            )
+
         reply = result.get("reply", "") if isinstance(result, dict) else ""
         source = result.get("source") if isinstance(result, dict) else None
         intent = result.get("intent") if isinstance(result, dict) else None
