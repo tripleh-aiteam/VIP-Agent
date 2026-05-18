@@ -197,12 +197,12 @@ app.include_router(kakao_webhook_router)
 #  Health & status
 # ---------------------------------------------------------------------------
 
-@app.get("/", tags=["health"])
+@app.api_route("/", methods=["GET", "HEAD"], tags=["health"])
 async def root():
     return {"service": "vip-orchestrator", "status": "running", "version": "0.2.0"}
 
 
-@app.get("/health", tags=["health"])
+@app.api_route("/health", methods=["GET", "HEAD"], tags=["health"])
 def health(db: Session = Depends(get_db)):
     """Health check — confirms DB connectivity."""
     try:
