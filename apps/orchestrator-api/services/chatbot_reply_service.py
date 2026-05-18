@@ -519,17 +519,30 @@ _TOPIC_PATTERNS: list[tuple[tuple[str, ...], str]] = [
 ]
 
 
-# Generic helpful fallback for messages we can't classify. NEVER returns
-# empty — always gives the customer something useful to read.
-_GENERIC_HELPFUL_FALLBACK = (
-    "문의해 주셔서 감사합니다! 트리플에이치 부동산 챗봇입니다. 🏠\n"
-    "다음 정보 중 어떤 것이 필요하신가요?\n"
-    "• 매물 정보 (강남·서초·성동·송파)\n"
-    "• 임대 또는 매매 조건\n"
-    "• 방문 예약 (평일 10:00-18:00)\n"
-    "• 계약 절차 안내\n"
-    "구체적으로 질문해 주시면 더 정확한 답변을 드릴 수 있습니다."
-)
+# Conversational holding messages — fire when LLM is too slow for Kakao's
+# 3-second skill timeout. Picked at random so the bot doesn't feel like a
+# robot repeating the same canned line. Each one keeps the dialogue alive
+# by asking a clarifying question, so customer engagement continues even
+# though we couldn't answer the underlying question yet.
+_CONVERSATIONAL_FALLBACKS = [
+    "음, 좋은 질문이네요! 조금 더 자세히 알려주실 수 있을까요? 어떤 지역(강남·서초·성동·송파) 매물을 찾으세요?",
+    "네, 도와드릴게요! 임대(월세/전세)와 매매 중 어떤 거래를 원하세요? 그리고 희망 평형대(예: 10평/20평/30평 이상)를 알려주시면 추천드리겠습니다.",
+    "문의 감사합니다 🙂 정확히 어떤 정보가 필요하실까요? 예를 들어 '강남 월세 30평대 매물' 처럼 알려주시면 바로 안내드릴 수 있어요.",
+    "좋아요, 도와드리겠습니다! 혹시 특정 매물 번호(예: B-201호)가 있나요? 아니면 새로 찾고 계신가요? 희망 조건을 알려주세요.",
+    "네, 트리플에이치 부동산입니다 🏠 어떤 매물 또는 상담이 필요하신가요? 예산·지역·평형 중 알려주실 수 있는 정보가 있으면 더 정확하게 답변드릴 수 있어요.",
+    "조금만 더 알려주실 수 있을까요? 임대인지 매매인지, 그리고 어느 지역을 보고 계신지 말씀해 주시면 맞춤 매물을 빠르게 찾아드릴게요.",
+]
+
+
+def _pick_conversational_fallback() -> str:
+    """Pick a random conversational holding message. Varies across messages
+    so the bot doesn't feel like it's stuck on one canned line."""
+    import random
+    return random.choice(_CONVERSATIONAL_FALLBACKS)
+
+
+# Backward-compat alias (referenced in tests / older call sites)
+_GENERIC_HELPFUL_FALLBACK = _CONVERSATIONAL_FALLBACKS[0]
 
 
 def _check_topic_pattern(text: str) -> Optional[str]:
@@ -614,8 +627,8 @@ async def _generate_reply(
         from services.chatbot_talk import handle_talk, _triple_h_realty_knowledge_base
     except Exception as e:
         log.warning(f"chatbot_reply: chatbot_talk import failed: {e}")
-        # Layer 3 fallback: import failure means LLM is broken — use template
-        return _GENERIC_HELPFUL_FALLBACK, "template-fallback-import-error"
+        # Layer 3 fallback: import failure means LLM is broken — use conversational template
+        return _pick_conversational_fallback(), "template-fallback-import-error"
 
     # Get a fresh session for the sync handle_talk call
     db2 = SessionLocal()
@@ -655,10 +668,10 @@ async def _generate_reply(
 
         # Hard timeout: Kakao's effective skill timeout is ~3 seconds on
         # Render free tier (network latency + processing). Cap LLM at
-        # 2.5s so we have buffer to wrap the response and ship it back
-        # within Kakao's window. If the LLM is slower than 2.5s, the
-        # generic template fallback fires below — customer still gets
-        # a useful reply, just not LLM-smart.
+        # 1.5s so we have a full second of buffer to wrap and ship the
+        # response within Kakao's window. If the LLM is slower than 1.5s,
+        # a conversational holding-message fires below — customer still
+        # gets a useful reply, just not LLM-smart on this turn.
         try:
             result = await asyncio.wait_for(
                 asyncio.to_thread(
@@ -672,17 +685,18 @@ async def _generate_reply(
                     history=history,
                     current_path="/chatbot",
                 ),
-                timeout=2.5,
+                timeout=1.5,
             )
         except asyncio.TimeoutError:
             log.warning(
-                "chatbot_reply: LLM timed out (>2.5s) — Layer 3 generic fallback",
+                "chatbot_reply: LLM timed out (>1.5s) — conversational fallback",
                 extra={"action": "chatbot.llm_timeout"},
             )
-            # Layer 3: LLM was too slow for Kakao's timeout. Return the
-            # generic helpful template so the customer still sees a useful
-            # reply (better than Kakao silently dropping the message).
-            return _GENERIC_HELPFUL_FALLBACK, "template-fallback-llm-timeout"
+            # Layer 3: LLM was too slow for Kakao's window. Return a
+            # conversational holding message so the customer feels heard
+            # and the dialogue keeps flowing (instead of dead-ending on
+            # a generic menu).
+            return _pick_conversational_fallback(), "template-fallback-llm-timeout"
 
         reply = result.get("reply", "") if isinstance(result, dict) else ""
         source = result.get("source") if isinstance(result, dict) else None
