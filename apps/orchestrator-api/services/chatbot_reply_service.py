@@ -615,21 +615,27 @@ async def _generate_reply(
         # Render free tier. Cap LLM at 1.5s so we have buffer to wrap the
         # response. If LLM is slower, a conversational holding-message
         # fires (dialogue keeps flowing, not a dead-end).
+        # NOTE: this synchronous timeout only matters when Kakao's callback
+        # pattern is NOT enabled in i 오픈빌더's skill settings. When
+        # callback IS enabled, kakao_webhook returns useCallback:true
+        # immediately and the LLM gets 60s via the callback dispatch.
+        # 2.8s here = max we can get from synchronous path on Render free.
         try:
             reply_text = await asyncio.wait_for(
                 asyncio.to_thread(
                     chat_completion_sync,
                     system_prompt,
                     messages,
-                    200,             # max_tokens — short Kakao replies
+                    180,             # max_tokens — keep replies short
                     0.7,             # temperature
                     "gpt-4o-mini",   # model
                 ),
-                timeout=1.5,
+                timeout=2.8,
             )
         except asyncio.TimeoutError:
             log.warning(
-                "chatbot_reply: LLM timed out (>1.5s) — conversational fallback",
+                "chatbot_reply: LLM timed out (>2.8s) — conversational fallback. "
+                "Enable callback in i 오픈빌더 skill settings to remove timeout.",
                 extra={"action": "chatbot.llm_timeout"},
             )
             return _pick_conversational_fallback(), "template-fallback-llm-timeout"
@@ -651,74 +657,61 @@ async def _generate_reply(
 
 
 def _build_realty_system_prompt(kb: dict[str, Any]) -> str:
-    """Compose the LLM system prompt for the Triple H realty customer
-    chatbot. Includes ALL realty KB fields — listings, rental_terms,
-    contract_info, FAQ, company info — plus the persona/tone rules from
-    kb['reply_style']. This is what makes B-201호 questions actually
-    answer with real data instead of generic boilerplate."""
+    """Compose a COMPACT system prompt for the Triple H realty chatbot.
+    Includes only essentials to keep LLM latency low — full listings as
+    one-liners, condensed terms, top FAQs. Tone rules at the top.
+
+    Why compact: gpt-4o-mini latency scales with input tokens. A 5,000-char
+    prompt added ~2s vs a ~1,500-char prompt — that 2s pushed us past
+    Kakao's 3s window. With callback enabled (i 오픈빌더), this matters
+    less but still saves cost."""
     parts: list[str] = []
 
-    # Persona + tone rules (from reply_style) — most important; goes first
-    if kb.get("reply_style"):
-        parts.append(kb["reply_style"])
+    # Persona — short version (under 400 chars)
+    parts.append(
+        "당신은 트리플에이치 부동산의 친절한 상담 매니저입니다. "
+        "고객이 한국어로 쓰면 한국어로, 영어로 쓰면 영어로 답변하세요. "
+        "카카오톡 채팅 호흡으로 1-3문장, 너무 격식 차리지 않고 친근하게. "
+        "이모지 1-2개 자연스럽게 (🏠 🙂 ✨). "
+        "아래 매물 데이터에 있는 것만 정확히 인용하고, 없는 매물은 만들지 마세요. "
+        "모르는 정보는 '담당자가 정확히 확인 후 안내드릴게요'라고 답변하세요. "
+        "항상 다음 질문이나 행동을 자연스럽게 유도해서 대화가 끊기지 않게 하세요."
+    )
 
-    if kb.get("purpose"):
-        parts.append(f"\n■ 챗봇 소개\n{kb['purpose']}")
-
-    # Listings — the single most important block for grounding answers
+    # Listings — one compact line each
     listings = kb.get("listings") or []
     if listings:
-        parts.append("\n■ 현재 매물 목록 (정확한 데이터 — 추측 금지)")
+        parts.append("\n■ 현재 매물 (정확한 데이터)")
         for L in listings:
-            fields = []
-            for key in ("unit", "type", "location", "size", "rent", "deposit",
-                        "price", "maintenance", "features", "available_from", "tour"):
-                if L.get(key):
-                    fields.append(f"  · {key}: {L[key]}")
-            if fields:
-                parts.append("- 매물 " + (L.get("unit") or "?") + "\n" + "\n".join(fields))
+            unit = L.get("unit", "?")
+            type_ = L.get("type", "")
+            loc = L.get("location", "")
+            size = L.get("size", "")
+            rent = L.get("rent") or L.get("price", "")
+            deposit = L.get("deposit", "")
+            feats = L.get("features", "")[:80]
+            avail = L.get("available_from", "")
+            parts.append(
+                f"- {unit} | {type_} | {loc} | {size} | "
+                f"{rent}{(' / ' + deposit) if deposit else ''} | "
+                f"{feats} | 입주: {avail}"
+            )
 
-    # Rental terms
-    rt = kb.get("rental_terms") or {}
-    if rt:
-        parts.append("\n■ 표준 임대 조건")
-        for k, v in rt.items():
-            parts.append(f"• {k}: {v}")
-
-    # Contract info
-    ci = kb.get("contract_info") or {}
-    if ci:
-        parts.append("\n■ 계약 정보")
-        if ci.get("required_docs"):
-            parts.append("• 필요 서류: " + ", ".join(ci["required_docs"]))
-        if ci.get("contract_process"):
-            parts.append(f"• 계약 절차: {ci['contract_process']}")
-        if ci.get("fees"):
-            parts.append(f"• 수수료: {ci['fees']}")
-
-    # FAQ
+    # Key FAQs only (cherry-picked — the most likely 8)
     faq = kb.get("faq") or []
     if faq:
-        parts.append("\n■ 자주 묻는 질문")
-        for entry in faq:
+        parts.append("\n■ FAQ")
+        for entry in faq[:8]:
             parts.append(f"Q: {entry.get('q', '')}\nA: {entry.get('a', '')}")
 
-    # Company info
+    # Compact terms + company
+    rt = kb.get("rental_terms") or {}
+    if rt.get("default_lease_period"):
+        parts.append(f"\n■ 임대: {rt['default_lease_period']}")
     co = kb.get("company") or {}
-    if co:
-        parts.append("\n■ 회사 정보")
-        for k, v in co.items():
-            if isinstance(v, list):
-                v = ", ".join(v)
-            parts.append(f"• {k}: {v}")
-
-    parts.append(
-        "\n■ 답변 규칙 (필수)\n"
-        "• 위 매물 데이터에 있는 정보만 정확히 인용 (가격/평형/위치/입주일).\n"
-        "• 위에 없는 매물은 절대 만들지 마세요. 모르면 '담당자가 정확히 확인 후 안내드릴게요'.\n"
-        "• 카카오톡 채팅 호흡으로 1-3문장. 길게 쓰지 않기.\n"
-        "• 항상 다음 질문/행동을 자연스럽게 유도 (대화 끊김 방지).\n"
-    )
+    if co.get("service_areas"):
+        areas = ", ".join(co["service_areas"]) if isinstance(co["service_areas"], list) else co["service_areas"]
+        parts.append(f"■ 서비스 지역: {areas} | 운영시간: {co.get('operating_hours', '평일 10-18시')}")
 
     return "\n".join(parts)
 
