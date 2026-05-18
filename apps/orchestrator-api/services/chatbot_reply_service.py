@@ -579,69 +579,51 @@ async def _generate_reply(
     if cached:
         return cached, "template"
 
-    # Layer 2: Cache miss — try the LLM for a smarter answer
+    # Layer 2: Cache miss — call the LLM DIRECTLY with the full realty KB
+    # (listings, rental_terms, contract_info, FAQ). We bypass handle_talk
+    # because handle_talk's prompt builder only reads kb fields
+    # (purpose/menus/features/faq/context) — it ignores the realty-specific
+    # fields where our actual property data lives.
     try:
         from db.base import SessionLocal
-        from services.chatbot_talk import handle_talk, _triple_h_realty_knowledge_base
+        from services.chatbot_talk import _triple_h_realty_knowledge_base
+        from services.llm_client import chat_completion_sync
     except Exception as e:
-        log.warning(f"chatbot_reply: chatbot_talk import failed: {e}")
-        # Layer 3 fallback: import failure means LLM is broken — use conversational template
+        log.warning(f"chatbot_reply: LLM imports failed: {e}")
         return _pick_conversational_fallback(), "template-fallback-import-error"
 
-    # Get a fresh session for the sync handle_talk call
     db2 = SessionLocal()
     try:
-        # Build conversation history from recent messages (for pronoun resolution)
-        recent_msgs = conv_service.list_messages(db2, agent_id, conversation.id, limit=10)
-        history = [
-            {
-                "role": "user" if m.author == "customer" else "assistant",
-                "text": m.text or m.voice_transcript or "",
-            }
-            for m in recent_msgs
-            if (m.text or m.voice_transcript)
-        ]
+        # Build conversation history for pronoun resolution + continuity
+        recent_msgs = conv_service.list_messages(db2, agent_id, conversation.id, limit=8)
+        history_msgs: list[dict[str, str]] = []
+        for m in recent_msgs:
+            text = m.text or m.voice_transcript or ""
+            if not text:
+                continue
+            role = "user" if m.author == "customer" else "assistant"
+            history_msgs.append({"role": role, "content": text[:400]})
 
-        # Pull learned style hint from observer (formal/casual/length/etc.)
-        style_hint = ""
-        try:
-            from services import chatbot_boss_observer
-            style_hint = chatbot_boss_observer.build_style_hint(db2, agent_id)
-        except Exception:
-            pass
-
-        # If we have a style hint, prefix the user message with it so the LLM
-        # sees it as context. The chatbot_talk pipeline forwards intent + KB
-        # but doesn't expose a separate "style" slot — this is the cleanest
-        # injection point without modifying the handle_talk signature.
-        query_text = incoming_text
-        if style_hint:
-            query_text = f"{style_hint}\n\n[고객 메시지]\n{incoming_text}"
-
-        # Customer-facing chatbot context: pass the Triple H real estate
-        # knowledge base directly so the LLM grounds answers in property
-        # data, not the VIP boss-platform info (which is irrelevant to
-        # KakaoTalk customers).
         realty_kb = _triple_h_realty_knowledge_base()
+        system_prompt = _build_realty_system_prompt(realty_kb)
 
-        # Hard timeout: Kakao's effective skill timeout is ~3 seconds on
-        # Render free tier (network latency + processing). Cap LLM at
-        # 1.5s so we have a full second of buffer to wrap and ship the
-        # response within Kakao's window. If the LLM is slower than 1.5s,
-        # a conversational holding-message fires below — customer still
-        # gets a useful reply, just not LLM-smart on this turn.
+        # Build the messages list: system → history → current user message
+        messages: list[dict[str, str]] = list(history_msgs)
+        messages.append({"role": "user", "content": incoming_text})
+
+        # Hard timeout — Kakao's effective skill timeout is ~3 seconds on
+        # Render free tier. Cap LLM at 1.5s so we have buffer to wrap the
+        # response. If LLM is slower, a conversational holding-message
+        # fires (dialogue keeps flowing, not a dead-end).
         try:
-            result = await asyncio.wait_for(
+            reply_text = await asyncio.wait_for(
                 asyncio.to_thread(
-                    handle_talk,
-                    db2,
-                    query_text,
-                    "ko",
-                    agent_id,
-                    intents=None,
-                    knowledge_base=realty_kb,
-                    history=history,
-                    current_path="/chatbot",
+                    chat_completion_sync,
+                    system_prompt,
+                    messages,
+                    200,             # max_tokens — short Kakao replies
+                    0.7,             # temperature
+                    "gpt-4o-mini",   # model
                 ),
                 timeout=1.5,
             )
@@ -650,26 +632,95 @@ async def _generate_reply(
                 "chatbot_reply: LLM timed out (>1.5s) — conversational fallback",
                 extra={"action": "chatbot.llm_timeout"},
             )
-            # Layer 3: LLM was too slow for Kakao's window. Return a
-            # conversational holding message so the customer feels heard
-            # and the dialogue keeps flowing (instead of dead-ending on
-            # a generic menu).
             return _pick_conversational_fallback(), "template-fallback-llm-timeout"
+        except Exception as e:
+            log.warning(f"chatbot_reply: LLM call failed: {e}")
+            return _pick_conversational_fallback(), "template-fallback-llm-error"
 
-        reply = result.get("reply", "") if isinstance(result, dict) else ""
-        source = result.get("source") if isinstance(result, dict) else None
-        intent = result.get("intent") if isinstance(result, dict) else None
-        reasoning = None
-        if source and intent:
-            reasoning = f"source={source}, intent={intent}"
-            if style_hint:
-                reasoning += " + boss-style"
-        return reply.strip(), reasoning
+        reply = (reply_text or "").strip()
+        if not reply or reply.startswith("[LLM unavailable"):
+            log.warning(f"chatbot_reply: LLM returned empty/error: {reply[:80]}")
+            return _pick_conversational_fallback(), "template-fallback-llm-empty"
+
+        return reply, "llm-direct-realty-kb"
     except Exception as e:
         log.warning(f"chatbot_reply: generate failed: {e}")
-        return "", None
+        return _pick_conversational_fallback(), "template-fallback-exception"
     finally:
         db2.close()
+
+
+def _build_realty_system_prompt(kb: dict[str, Any]) -> str:
+    """Compose the LLM system prompt for the Triple H realty customer
+    chatbot. Includes ALL realty KB fields — listings, rental_terms,
+    contract_info, FAQ, company info — plus the persona/tone rules from
+    kb['reply_style']. This is what makes B-201호 questions actually
+    answer with real data instead of generic boilerplate."""
+    parts: list[str] = []
+
+    # Persona + tone rules (from reply_style) — most important; goes first
+    if kb.get("reply_style"):
+        parts.append(kb["reply_style"])
+
+    if kb.get("purpose"):
+        parts.append(f"\n■ 챗봇 소개\n{kb['purpose']}")
+
+    # Listings — the single most important block for grounding answers
+    listings = kb.get("listings") or []
+    if listings:
+        parts.append("\n■ 현재 매물 목록 (정확한 데이터 — 추측 금지)")
+        for L in listings:
+            fields = []
+            for key in ("unit", "type", "location", "size", "rent", "deposit",
+                        "price", "maintenance", "features", "available_from", "tour"):
+                if L.get(key):
+                    fields.append(f"  · {key}: {L[key]}")
+            if fields:
+                parts.append("- 매물 " + (L.get("unit") or "?") + "\n" + "\n".join(fields))
+
+    # Rental terms
+    rt = kb.get("rental_terms") or {}
+    if rt:
+        parts.append("\n■ 표준 임대 조건")
+        for k, v in rt.items():
+            parts.append(f"• {k}: {v}")
+
+    # Contract info
+    ci = kb.get("contract_info") or {}
+    if ci:
+        parts.append("\n■ 계약 정보")
+        if ci.get("required_docs"):
+            parts.append("• 필요 서류: " + ", ".join(ci["required_docs"]))
+        if ci.get("contract_process"):
+            parts.append(f"• 계약 절차: {ci['contract_process']}")
+        if ci.get("fees"):
+            parts.append(f"• 수수료: {ci['fees']}")
+
+    # FAQ
+    faq = kb.get("faq") or []
+    if faq:
+        parts.append("\n■ 자주 묻는 질문")
+        for entry in faq:
+            parts.append(f"Q: {entry.get('q', '')}\nA: {entry.get('a', '')}")
+
+    # Company info
+    co = kb.get("company") or {}
+    if co:
+        parts.append("\n■ 회사 정보")
+        for k, v in co.items():
+            if isinstance(v, list):
+                v = ", ".join(v)
+            parts.append(f"• {k}: {v}")
+
+    parts.append(
+        "\n■ 답변 규칙 (필수)\n"
+        "• 위 매물 데이터에 있는 정보만 정확히 인용 (가격/평형/위치/입주일).\n"
+        "• 위에 없는 매물은 절대 만들지 마세요. 모르면 '담당자가 정확히 확인 후 안내드릴게요'.\n"
+        "• 카카오톡 채팅 호흡으로 1-3문장. 길게 쓰지 않기.\n"
+        "• 항상 다음 질문/행동을 자연스럽게 유도 (대화 끊김 방지).\n"
+    )
+
+    return "\n".join(parts)
 
 
 def _last_customer_msg_was_voice(
