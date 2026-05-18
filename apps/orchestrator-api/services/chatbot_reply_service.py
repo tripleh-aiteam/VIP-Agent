@@ -605,7 +605,21 @@ async def _generate_reply(
             history_msgs.append({"role": role, "content": text[:400]})
 
         realty_kb = _triple_h_realty_knowledge_base()
-        system_prompt = _build_realty_system_prompt(realty_kb)
+        # Detect the customer's language in code and prepend a STRICT rule to
+        # the system prompt. The LLM (Llama 3.3 70B via Groq) was sometimes
+        # ignoring a soft "respond in same language" hint and replying in
+        # English to Korean queries. A hard rule at the top fixes this.
+        lang = _detect_lang(incoming_text)
+        lang_rule = (
+            "■ 언어 규칙 (절대 어기지 마세요)\n"
+            "고객이 한국어로 질문했습니다. 반드시 한국어로만 답변하세요. "
+            "영어 단어는 사용하지 마세요 (매물 번호 'B-201호' 같은 고유명사 제외).\n\n"
+            if lang == "ko" else
+            "■ Language Rule (strict)\n"
+            "The customer wrote in English. You MUST reply in English only. "
+            "Do not switch to Korean.\n\n"
+        )
+        system_prompt = lang_rule + _build_realty_system_prompt(realty_kb)
 
         # Build the messages list: system → history → current user message
         messages: list[dict[str, str]] = list(history_msgs)
@@ -659,6 +673,21 @@ async def _generate_reply(
         return _pick_conversational_fallback(), "template-fallback-exception"
     finally:
         db2.close()
+
+
+def _detect_lang(text: str) -> str:
+    """Detect whether the customer's message is Korean or English.
+    Returns 'ko' if any Hangul characters are present, else 'en'.
+    Treats messages with mixed content as Korean (since Korean is the
+    primary language for this Kakao channel)."""
+    if not text:
+        return "ko"
+    # Count Hangul syllables (U+AC00–U+D7A3) and Hangul jamo (U+3131–U+318E)
+    for ch in text:
+        cp = ord(ch)
+        if 0xAC00 <= cp <= 0xD7A3 or 0x3131 <= cp <= 0x318E:
+            return "ko"
+    return "en"
 
 
 def _build_realty_system_prompt(kb: dict[str, Any]) -> str:
