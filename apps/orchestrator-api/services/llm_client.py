@@ -36,6 +36,12 @@ MODEL_CATALOG = {
     # --- Google Gemini ---
     "gemini-2.0-flash": ("gemini", "gemini-2.5-flash"),     # 2.0 deprecated; route to 2.5
     "gemini-1.5-pro":   ("gemini", "gemini-2.5-pro"),       # 1.5 deprecated; route to 2.5
+    # --- Groq (LPU-based, 200-500ms latency, OpenAI-compatible API) ---
+    # Free tier on console.groq.com. Fastest option for latency-sensitive
+    # Kakao chatbot. Set GROQ_API_KEY env var to enable.
+    "groq-llama-3.3-70b":   ("groq", "llama-3.3-70b-versatile"),
+    "groq-llama-3.1-8b":    ("groq", "llama-3.1-8b-instant"),
+    "groq-qwen-32b":        ("groq", "qwen-2.5-32b"),
     # --- Local Ollama ---
     "llama3":   ("ollama", "llama3"),
     "qwen2.5":  ("ollama", "qwen2.5"),
@@ -203,6 +209,7 @@ def chat_completion_sync(
     openai_key = _env("OPENAI_API_KEY") or _env("LLM_API_KEY")
     openai_base = _env("LLM_BASE_URL") or "https://api.openai.com/v1"
     ollama_url = _env("OLLAMA_URL") or "http://localhost:11434"
+    groq_key = _env("GROQ_API_KEY")
     chosen = model or _env("LLM_MODEL") or DEFAULT_MODEL_NAME
     full_messages_with_sys = [{"role": "system", "content": system_prompt}] + messages
 
@@ -219,6 +226,12 @@ def chat_completion_sync(
                                                      full_messages_with_sys, max_tokens, temperature, 30.0)
             else:
                 ok, result = False, "OPENAI_API_KEY not set"
+        elif provider == "groq":
+            if groq_key:
+                ok, result = _call_openai_compatible("https://api.groq.com/openai/v1", groq_key, real_model,
+                                                     full_messages_with_sys, max_tokens, temperature, 15.0)
+            else:
+                ok, result = False, "GROQ_API_KEY not set"
         elif provider == "ollama":
             ok, result = _call_openai_compatible(f"{ollama_url}/v1", "", real_model,
                                                  full_messages_with_sys, max_tokens, temperature, 60.0)

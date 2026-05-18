@@ -621,17 +621,19 @@ async def _generate_reply(
         # immediately and the LLM gets 60s via the callback dispatch.
         # 2.8s here = max we can get from synchronous path on Render free.
         #
-        # Model = Claude Haiku 4.5: typically 800ms-1.5s response time vs
-        # gpt-4o-mini's 2-4s. Critical for staying inside Kakao's 3s window.
+        # Model = Groq llama-3.3-70b: 200-500ms response time via LPU
+        # inference. Far faster than gpt-4o-mini (2-4s) or Claude Haiku
+        # (0.8-1.5s). Requires GROQ_API_KEY on Render. If not set,
+        # falls through to default OpenAI fallback chain in llm_client.
         try:
             reply_text = await asyncio.wait_for(
                 asyncio.to_thread(
                     chat_completion_sync,
                     system_prompt,
                     messages,
-                    180,                  # max_tokens — keep replies short
-                    0.7,                  # temperature
-                    "claude-haiku-4-5",   # fast model — fits 3s Kakao window
+                    180,                       # max_tokens — keep replies short
+                    0.7,                       # temperature
+                    "groq-llama-3.3-70b",      # blazing-fast model via Groq LPU
                 ),
                 timeout=2.8,
             )
