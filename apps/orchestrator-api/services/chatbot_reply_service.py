@@ -112,144 +112,148 @@ async def handle_incoming_message(
         conversation=conversation,
     )
 
-    # Did the customer message in *voice*? If so, reply in voice too (when
-    # configured). We detect by looking at the latest customer message kind.
-    customer_used_voice = _last_customer_msg_was_voice(db, agent_id, conversation.id)
     if not reply_text:
         log.warning(
             f"chatbot_reply: empty reply for conv {conversation.id}",
             extra={"action": "chatbot.reply_empty"},
         )
         reply_text = "잠시 후 다시 답변드리겠습니다."
-    if is_urgent:
-        conv_service.escalate_conversation(
-            db,
-            agent_id,
-            conversation.id,
-            to=_resolve_escalation_target(agent_id),
-            reason=f"Urgent keyword detected in customer message: '{incoming_text[:80]}'",
-        )
-        try:
-            from services import voice_escalation
-            # Reuse voice_escalation's dispatcher pattern
-            _dispatch_text_escalation(
-                agent_id=agent_id,
-                customer_name=customer.name or "Unknown",
-                incoming_text=incoming_text,
-                conversation_id=str(conversation.id),
-            )
-        except Exception as e:
-            log.warning(f"chatbot_reply: escalation dispatch failed: {e}")
 
-    # Send the bot's reply via the channel client
-    if on_send:
-        try:
-            result = on_send(reply_text, agent_id, conversation)
-            if asyncio.iscoroutine(result):
-                await result
-        except Exception as e:
-            log.warning(
-                f"chatbot_reply: on_send failed: {e}",
-                extra={"action": "chatbot.send_failed"},
-            )
+    # ── HOT PATH ENDS HERE ──
+    # Everything below (DB writes, voice TTS, attachment dispatch, channel
+    # send, status update, escalation) runs in the BACKGROUND so the
+    # caller (Kakao webhook) gets the reply text immediately and can ship
+    # it within Kakao's ~3-second skill timeout. Previously these ran on
+    # the hot path and pushed total response time to 4s — Kakao silently
+    # dropped every reply.
+    conversation_id_str = str(conversation.id)
 
-    # Append the sent reply to the conversation history
-    conv_service.append_message(
-        db,
-        agent_id,
-        conversation.id,
-        author="bot",
-        kind="text",
-        text=reply_text,
-        bot_meta={"status": "auto", "reasoning": reasoning},
-    )
-
-    # Autonomous voice reply — if the customer used voice (and voice
-    # replies aren't disabled), generate TTS of the bot's text reply and
-    # send it as an audio attachment alongside the text. Best-effort:
-    # any failure falls back silently to text-only.
-    voice_reply_sent = None
-    if customer_used_voice and _voice_replies_enabled(agent_id):
+    async def _background_finalize() -> None:
+        # Re-fetch conversation in a fresh session to avoid stale handles
+        # after the request completes.
+        from db.base import SessionLocal
+        db_bg = SessionLocal()
         try:
-            from services import chatbot_voice_reply
-            audio_url = await chatbot_voice_reply.synthesize_and_upload(
-                agent_id=agent_id,
-                conversation_id=str(conversation.id),
-                text=reply_text,
-            )
-            if audio_url:
-                # Send via channel client
-                if conversation.channel == "kakao":
-                    try:
-                        from services import kakao_client
-                        cust_obj = conv_service.get_customer(db, agent_id, conversation.customer_id)
-                        receiver = cust_obj.kakao_user_id if cust_obj else None
-                        await asyncio.to_thread(
-                            kakao_client.send_voice_message,
-                            agent_id=agent_id,
-                            conversation_id=str(conversation.id),
-                            audio_url=audio_url,
-                            duration_sec=20,
-                            receiver_uuid=receiver,
-                        )
-                    except Exception as e:
-                        log.warning(f"chatbot_reply: voice send via kakao failed: {e}")
-                # Persist the voice message row regardless of channel result
+            conv_bg = conv_service.get_conversation(db_bg, agent_id, conversation_id_str)
+            if not conv_bg:
+                return
+
+            # 1. Escalation (if urgent)
+            if is_urgent:
+                try:
+                    conv_service.escalate_conversation(
+                        db_bg, agent_id, conv_bg.id,
+                        to=_resolve_escalation_target(agent_id),
+                        reason=f"Urgent keyword in customer message: '{incoming_text[:80]}'",
+                    )
+                    _dispatch_text_escalation(
+                        agent_id=agent_id,
+                        customer_name=customer.name or "Unknown",
+                        incoming_text=incoming_text,
+                        conversation_id=conversation_id_str,
+                    )
+                except Exception as e:
+                    log.warning(f"chatbot_reply.bg: escalation failed: {e}")
+
+            # 2. Send via channel client (Kakao Channel Message API).
+            #    The PRIMARY delivery is the inline webhook return; this is
+            #    a redundant outbound that may fail if perms aren't granted.
+            if on_send:
+                try:
+                    result = on_send(reply_text, agent_id, conv_bg)
+                    if asyncio.iscoroutine(result):
+                        await result
+                except Exception as e:
+                    log.warning(f"chatbot_reply.bg: on_send failed: {e}")
+
+            # 3. Append bot's reply to conversation history
+            try:
                 conv_service.append_message(
-                    db, agent_id, conversation.id,
-                    author="bot",
-                    kind="voice",
-                    voice_url=audio_url,
-                    voice_transcript=reply_text,
-                    bot_meta={"status": "auto-voice"},
+                    db_bg, agent_id, conv_bg.id,
+                    author="bot", kind="text", text=reply_text,
+                    bot_meta={"status": "auto", "reasoning": reasoning},
                 )
-                voice_reply_sent = audio_url
+            except Exception as e:
+                log.warning(f"chatbot_reply.bg: append_message failed: {e}")
+
+            # 4. Voice reply (TTS) if customer used voice
+            customer_used_voice = _last_customer_msg_was_voice(db_bg, agent_id, conv_bg.id)
+            if customer_used_voice and _voice_replies_enabled(agent_id):
+                try:
+                    from services import chatbot_voice_reply
+                    audio_url = await chatbot_voice_reply.synthesize_and_upload(
+                        agent_id=agent_id,
+                        conversation_id=conversation_id_str,
+                        text=reply_text,
+                    )
+                    if audio_url:
+                        if conv_bg.channel == "kakao":
+                            try:
+                                from services import kakao_client
+                                cust_obj = conv_service.get_customer(db_bg, agent_id, conv_bg.customer_id)
+                                receiver = cust_obj.kakao_user_id if cust_obj else None
+                                await asyncio.to_thread(
+                                    kakao_client.send_voice_message,
+                                    agent_id=agent_id,
+                                    conversation_id=conversation_id_str,
+                                    audio_url=audio_url,
+                                    duration_sec=20,
+                                    receiver_uuid=receiver,
+                                )
+                            except Exception as e:
+                                log.warning(f"chatbot_reply.bg: voice send failed: {e}")
+                        conv_service.append_message(
+                            db_bg, agent_id, conv_bg.id,
+                            author="bot", kind="voice",
+                            voice_url=audio_url, voice_transcript=reply_text,
+                            bot_meta={"status": "auto-voice"},
+                        )
+                except Exception as e:
+                    log.warning(f"chatbot_reply.bg: voice reply failed: {e}")
+
+            # 5. Autonomous attachment (floor plans / contract templates)
+            try:
+                from services import chatbot_attachment_dispatcher
+                asset = chatbot_attachment_dispatcher.find_relevant_attachment(
+                    agent_id, incoming_text, db=db_bg
+                )
+                if asset:
+                    await chatbot_attachment_dispatcher.dispatch_autonomous_attachment(
+                        db=db_bg, agent_id=agent_id, conversation=conv_bg, asset=asset,
+                    )
+            except Exception as e:
+                log.warning(f"chatbot_reply.bg: auto-attachment failed: {e}")
+
+            # 6. Update conversation status
+            try:
+                new_status = "escalated" if is_urgent else "bot_handling"
+                conv_service.patch_conversation(
+                    db_bg, agent_id, conv_bg.id,
+                    status=new_status, suggested_reply_json=None,
+                )
+            except Exception as e:
+                log.warning(f"chatbot_reply.bg: patch_conversation failed: {e}")
+
+            log.info(
+                f"chatbot_reply.bg: finalized (mode=out, urgent={is_urgent}) "
+                f"for conv {conv_bg.id}",
+                extra={"action": "chatbot.reply_finalized_bg"},
+            )
         except Exception as e:
-            log.warning(
-                f"chatbot_reply: voice reply failed: {e}",
-                extra={"action": "chatbot.voice_reply_failed"},
-            )
+            log.warning(f"chatbot_reply.bg: unexpected error: {e}")
+        finally:
+            db_bg.close()
 
-    # Autonomous attachment — if the customer's message matches a keyword
-    # in the agent's asset library (floor plans, contract templates, etc.),
-    # the bot sends the file too. Best-effort; never blocks the text reply.
-    attachment_sent = None
+    # Fire-and-forget background finalization. Don't await — return reply NOW.
     try:
-        from services import chatbot_attachment_dispatcher
-        asset = chatbot_attachment_dispatcher.find_relevant_attachment(
-            agent_id, incoming_text, db=db
-        )
-        if asset:
-            await chatbot_attachment_dispatcher.dispatch_autonomous_attachment(
-                db=db,
-                agent_id=agent_id,
-                conversation=conversation,
-                asset=asset,
-            )
-            attachment_sent = {"asset_id": str(asset.id), "label": asset.label}
+        asyncio.create_task(_background_finalize())
     except Exception as e:
-        log.warning(
-            f"chatbot_reply: auto-attachment failed: {e}",
-            extra={"action": "chatbot.auto_attachment_failed"},
-        )
+        log.warning(f"chatbot_reply: failed to schedule background task: {e}")
 
-    # Promote the conversation back to "bot_handling" — bot is actively engaged
-    new_status = "escalated" if is_urgent else "bot_handling"
-    conv_service.patch_conversation(
-        db, agent_id, conversation.id, status=new_status, suggested_reply_json=None
-    )
-
-    log.info(
-        f"chatbot_reply: sent (mode=out, urgent={is_urgent}, "
-        f"attached={attachment_sent is not None}) for conv {conversation.id}",
-        extra={"action": "chatbot.reply_sent"},
-    )
     return {
         "mode": "out",
         "action": "escalated" if is_urgent else "sent",
         "reply": reply_text,
-        "attachment": attachment_sent,
-        "voice_reply": voice_reply_sent,
     }
 
 
