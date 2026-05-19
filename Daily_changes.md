@@ -2,6 +2,55 @@
 
 ---
 
+## 2026-05-18 (Monday) — 🚀 Chatbot returns real KB-grounded answers (Groq + language fix)
+
+### Goal
+
+After last week's launch the bot was alive but giving rigid template-cache replies to everything (incl. "B-201호 보증금 얼마?"). Real LLM answers from the property knowledge base never landed because (a) the template cache intercepted, (b) the LLM was too slow for Kakao's ~3s skill timeout. Make the bot actually answer with real data and warm conversational tone.
+
+### What happened
+
+Six distinct fixes, each unblocking the next:
+
+**1. UptimeRobot was wrong all along.** Status had said "Up" but the monitor was using HTTP **HEAD** while our `/health` endpoint only accepted GET — returning 405 for 2d 16h 40m. Render had been sleeping the entire weekend. Added `methods=["GET","HEAD"]` to `/health` + `/` in main.py.
+
+**2. 1:1 채팅 was stealing all messages.** Davronbek's KakaoTalk messages were going to the human-agent inbox (`내 채팅`) instead of the chatbot. With 1:1 채팅 ON, Kakao routes to human queue first; chatbot only fires when human queue is empty. User turned `1:1 채팅 사용` OFF in center-pf.kakao.com → 채팅 → 채팅 설정. Bot started receiving messages.
+
+**3. Template cache was intercepting LLM-bound questions.** "B-201호 보증금 얼마?" hit the "호" topic pattern and returned generic boilerplate instead of real B-201 data. Pruned `_TOPIC_PATTERNS` to empty + shrank substring cache to messages ≤10 chars. Cache now only handles greetings/thanks/test/fillers.
+
+**4. `handle_talk` was ignoring our realty KB.** Its prompt builder only reads kb fields `purpose/menus/features/faq/context` — it skips `listings/rental_terms/contract_info`. So the LLM literally never saw B-201 in its context. Replaced the call with a direct `chat_completion_sync()` + new `_build_realty_system_prompt()` that includes ALL listings, top FAQs, persona/tone rules. Prompt size 5,913 → 2,265 chars for latency.
+
+**5. The LLM was too slow.** gpt-4o-mini took 2-4s, Claude Haiku 4.5 took ~1.5s — both hit our 2.8s timeout often. Added **Groq** (LPU-based inference, 200-500ms) as a new provider. Switched chatbot to `groq-llama-3.3-70b`. User signed up for Groq free tier, added `GROQ_API_KEY` to Render env. **Bot finally returns real KB data within 1 second.**
+
+**6. Language was flipping to English.** Llama 3.3 sometimes replied in English to Korean queries. Added `_detect_lang()` (counts Hangul codepoints) + a strict per-turn language rule injected at the top of the system prompt. Soft rules in the persona weren't enough; the hard injection works.
+
+### Files updated
+
+- [apps/orchestrator-api/main.py](apps/orchestrator-api/main.py) — `@app.api_route("/health", methods=["GET","HEAD"])` so UptimeRobot's default HEAD requests succeed.
+- [apps/orchestrator-api/services/chatbot_reply_service.py](apps/orchestrator-api/services/chatbot_reply_service.py) — pruned topic-pattern cache, replaced `handle_talk` with direct `chat_completion_sync` call, added `_build_realty_system_prompt`, switched model to `groq-llama-3.3-70b`, added `_detect_lang` + per-turn strict language rule, swapped single generic fallback for 6 randomized conversational holding messages.
+- [apps/orchestrator-api/services/chatbot_talk.py](apps/orchestrator-api/services/chatbot_talk.py) — expanded `_triple_h_realty_knowledge_base` 3 → 9 sample listings (D-105, E-702, F-301, G-Tower, H-1102 added), 7 → 14 FAQs, rewrote `reply_style` as a persona prompt with good/bad examples.
+- [apps/orchestrator-api/services/llm_client.py](apps/orchestrator-api/services/llm_client.py) — added Groq provider (LPU inference, 200-500ms). 3 friendly aliases in `MODEL_CATALOG`; OpenAI-compatible API so reuses existing `_call_openai_compatible` against `https://api.groq.com/openai/v1`.
+
+### Verified working — live customer tests
+
+- `안녕하세요` → instant cache greeting
+- `B-201호 보증금 얼마?` → "**B-201호의 보증금은 2,000만원입니다. 월세는 180만원이구요.** … 😊" (real KB data)
+- `송파에 신축 원룸 있어요?` → "**송파구 잠실동에 D-105호** 매물이 있습니다. 전용면적 17㎡, 월세 75만원, 보증금 500만원, 신축 1년차, 풀옵션…" (perfect)
+- `반려동물 가능?` → mentions **E-702**, 논현역, 소형견 가능, 입주 6월 15일
+- `예산 100만원 이하?` → suggests **D-105** (75만원)
+- KO query → KO reply ✅ / EN query → EN reply ✅
+
+### Next
+
+- Replace 9 sample listings with real Triple H inventory
+- Property photos: send via Kakao image when customer asks for visuals
+- Property search filters (region/budget/size → programmatic match)
+- Handoff to human: Telegram alert when bot can't help or customer asks
+- Bot analytics dashboard (queries/day, common failures)
+- Boss-IN review flow polish
+
+---
+
 ## 2026-05-15 (Friday) — 🎉 KakaoTalk Chatbot is LIVE — first AI reply to real customer
 
 ### Goal
