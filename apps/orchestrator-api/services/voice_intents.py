@@ -47,13 +47,30 @@ INTENT_PATTERNS = [
     ], [
         "부동산 에이전트 열어", "부동산 에이전트 페이지",
     ]),
-    # ========== Reports ==========
-    ("daily_briefing", [
-        "today", "today's report", "daily briefing", "daily report",
-        "current situation", "situation now", "morning briefing",
-        "what's the situation", "status today", "overview"
+    # ========== Domain-specific situations (MUST come before daily_briefing
+    # so e.g. 'kospi today' / '주식 오늘' routes to stock, not daily) ==========
+    ("stock_situation", [
+        "kospi", "kosdaq", "stock market", "my stocks", "my portfolio",
+        "stock situation", "stock report", "stock status", "stock summary",
+        "how are my stocks", "how's the market", "market today",
     ], [
-        "오늘", "오늘 리포트", "오늘 보고", "현재 상황", "데일리", "상황", "오늘 상황", "브리핑"
+        "코스피", "코스닥", "주식", "주식 상황", "주식 리포트", "내 주식",
+        "내 포트폴리오", "주식 시장", "시장 상황",
+    ]),
+    ("realty_situation", [
+        "real estate", "realty", "property market", "vacancy rate",
+        "rental income", "occupancy",
+    ], [
+        "부동산", "부동산 상황", "공실률", "임대수익",
+    ]),
+    # ========== Reports (daily_briefing is the catchall — keywords are
+    # intentionally generic, so it runs AFTER the specific domain patterns) ==========
+    ("daily_briefing", [
+        "today's report", "daily briefing", "daily report",
+        "current situation", "situation now", "morning briefing",
+        "what's the situation", "status today", "general overview",
+    ], [
+        "오늘 리포트", "오늘 보고", "현재 상황", "데일리", "오늘 상황", "브리핑",
     ]),
     ("weekly_report", [
         "weekly report", "this week", "weekly summary", "weekly update",
@@ -73,21 +90,11 @@ INTENT_PATTERNS = [
     ], [
         "에이전트 상태", "에이전트", "에이전트 보여", "에이전트 목록"
     ]),
-    ("stock_situation", [
-        "stock", "stock situation", "stock report", "stock status",
-        "stock summary", "kospi", "market"
-    ], [
-        "주식", "주식 상황", "주식 리포트", "코스피", "시장"
-    ]),
     ("asset_situation", [
-        "asset", "asset status", "asset report", "asset summary", "portfolio"
+        "asset status", "asset report", "asset summary", "real estate portfolio",
+        "my assets",
     ], [
         "자산", "자산 상태", "자산 리포트", "포트폴리오"
-    ]),
-    ("realty_situation", [
-        "real estate", "realty", "property", "real estate status"
-    ], [
-        "부동산", "부동산 상태", "부동산 리포트"
     ]),
     # ========== Twins ==========
     ("twin_handoff", [
