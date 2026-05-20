@@ -152,15 +152,32 @@ def _triple_h_realty_knowledge_base() -> dict[str, Any]:
     the better the LLM grounds its answer. Include unit numbers, neighborhoods,
     prices, and dates whenever possible.
     """
+    # Load REAL listings from the Triple H Excel portfolio. Falls back to
+    # the sample listings below if the workbook can't be read (dev env
+    # without the data file, parser failure, etc.).
+    try:
+        from services.realty_kb_loader import load_real_listings, service_areas as _real_areas
+        _real_listings = load_real_listings()
+    except Exception:
+        _real_listings = []
+        _real_areas = lambda: []  # type: ignore[assignment]
+
     return {
         "purpose":
             "Triple H(트리플에이치) 부동산 AI 상담 챗봇입니다. 고객의 매물 문의, "
             "임대/매매 상담, 계약 관련 안내, 부동산 시장 정보 등에 답변합니다. "
             "복잡한 상담이나 계약 협상이 필요한 경우 담당자에게 연결해 드립니다.",
 
-        # ── 매물 정보 (Property Listings) ─────────────────────────────────
-        # Replace these placeholders with your real listings. Format keeps
-        # it human-readable AND searchable by the LLM. One entry per unit.
+        # ── 실제 매물 목록 (Real Property Portfolio) ─────────────────────
+        # If the Excel workbook loaded successfully (data/tripleh_properties.xlsx),
+        # those listings are returned. Otherwise we fall back to the sample
+        # data below so dev environments without the workbook still work.
+        "real_listings": _real_listings,
+
+        # ── 매물 정보 (Property Listings - sample fallback) ────────────────
+        # These are sample/placeholder properties. Real Triple H portfolio
+        # is loaded above via the Excel parser. The chatbot prompt builder
+        # prefers real_listings when present, falls back to these otherwise.
         "listings": [
             {
                 "unit": "A-303",
@@ -308,7 +325,7 @@ def _triple_h_realty_knowledge_base() -> dict[str, Any]:
              "a": "선호 지역, 예산, 면적, 입주 희망 시기를 알려주시면 매물 등록 시 우선 안내해 드리겠습니다."},
 
             {"q": "Triple H는 어떤 회사인가요?",
-             "a": "트리플에이치(Triple H)는 서울 강남·서초·성동·송파 지역 중심의 부동산 중개 회사입니다. 오피스텔·아파트·상가 임대 및 매매를 전문으로 합니다."},
+             "a": "트리플에이치(Triple H)는 경기·서울 지역(파주, 향남, 의정부, 고척동, 보성리, 낙하리)에서 아파트·상가·토지·공장 자산을 직접 관리·운영하는 부동산 회사입니다. 임대·매매·자산 컨설팅을 전문으로 합니다."},
 
             {"q": "예산이 적은데 가능한 매물이 있나요?",
              "a": "네, 예산에 맞는 매물을 추천드릴 수 있습니다. 희망 월세(예: 50만원 이하 / 80만원 이하) 또는 보증금 한도를 알려주시면 해당 가격대 매물을 안내해 드리겠습니다."},
@@ -330,11 +347,14 @@ def _triple_h_realty_knowledge_base() -> dict[str, Any]:
         ],
 
         # ── 회사 정보 (Company Info) ─────────────────────────────────────
+        # Service areas derived from the actual portfolio when the Excel
+        # workbook loads. Falls back to a sensible default otherwise.
         "company": {
             "name": "트리플에이치 주식회사 (Triple H Co., Ltd.)",
             "business_no": "215-86-81254",
-            "specialty": "오피스텔 / 아파트 임대 및 매매, 부동산 중개",
-            "service_areas": ["강남구", "서초구", "성동구", "송파구"],
+            "specialty": "아파트·상가·토지·공장 자산 관리 및 임대/매매",
+            "service_areas": _real_areas() if callable(_real_areas) and _real_areas()
+                              else ["파주", "향남", "의정부", "고척동", "보성리", "낙하리"],
             "channel": "@부동산에이전트챗봇 (카카오톡)",
             "operating_hours": "평일 10:00-18:00, 토요일 10:00-15:00 (일요일·공휴일 휴무)",
         },
@@ -362,10 +382,10 @@ def _triple_h_realty_knowledge_base() -> dict[str, Any]:
             "• 항상 다음 질문이나 행동을 자연스럽게 유도 (대화가 끊기지 않게)\n\n"
             "■ 예시\n"
             "고객: '월세 매물 있어요?'\n"
-            "좋은 답변: '네, 다양하게 보유하고 있어요 🏠 혹시 어느 지역 보시나요? 강남·서초·성동·송파 중에서요. 그리고 희망 평형대도 알려주시면 바로 추천드릴게요!'\n"
+            "좋은 답변: '네, 다양하게 보유하고 있어요 🏠 혹시 어느 지역 보시나요? 파주·향남·의정부·고척동 중에서요. 그리고 희망 평형대(원룸/15평/30평+)도 알려주시면 바로 추천드릴게요!'\n"
             "나쁜 답변 (피해야 함): '월세 매물 문의 감사합니다. 지역과 평형을 알려주시면 매물을 안내해 드리겠습니다.'\n\n"
-            "고객: 'B-201호 보증금이 얼마예요?'\n"
-            "좋은 답변: 'B-201호는 보증금 2,000만원이에요! 서초구 반포동 32평 아파트로 월세 180만원이고, 6월 1일부터 입주 가능합니다 🙂 방문 보시려면 1주일 전에 미리 말씀해 주세요.'\n"
+            "고객: '의정부 한양파크뷰 월세 얼마예요?'\n"
+            "좋은 답변: '의정부 한양파크뷰는 호수에 따라 다른데요, 예를 들어 9.75평형은 보증금 500만원에 월세 55만원 정도예요 🙂 더 자세한 호수별 정보는 알려주시면 바로 확인해드릴게요!'\n"
         ),
     }
 

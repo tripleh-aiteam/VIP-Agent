@@ -716,24 +716,61 @@ def _build_realty_system_prompt(kb: dict[str, Any]) -> str:
         "항상 다음 질문이나 행동을 자연스럽게 유도해서 대화가 끊기지 않게 하세요."
     )
 
-    # Listings — one compact line each
-    listings = kb.get("listings") or []
-    if listings:
-        parts.append("\n■ 현재 매물 (정확한 데이터)")
-        for L in listings:
-            unit = L.get("unit", "?")
-            type_ = L.get("type", "")
-            loc = L.get("location", "")
-            size = L.get("size", "")
-            rent = L.get("rent") or L.get("price", "")
+    # Listings — prefer REAL parsed Triple H portfolio if loaded, else
+    # fall back to sample listings.
+    real_listings = kb.get("real_listings") or []
+    if real_listings:
+        parts.append(f"\n■ 트리플에이치 실제 매물 ({len(real_listings)}건 - 정확한 데이터)")
+        for L in real_listings:
+            sheet = L.get("sheet", "")
+            cat = L.get("category", "")
+            unit = L.get("unit_no", "")
+            addr = L.get("address", "")
+            size_p = L.get("size_pyeong", "")
+            status = L.get("status", "")
             deposit = L.get("deposit", "")
-            feats = L.get("features", "")[:80]
-            avail = L.get("available_from", "")
+            rent = L.get("rent", "")
+            price = L.get("purchase_price", "")
+            sale = L.get("sale_plan", "")
+            money_parts = []
+            if deposit:
+                money_parts.append(f"보증금 {deposit}원")
+            if rent:
+                money_parts.append(f"월세 {rent}원")
+            if not money_parts and price:
+                money_parts.append(f"매입가 {price}원")
+            if not money_parts and sale:
+                money_parts.append(f"매각가 {sale}원")
+            money = " · ".join(money_parts) if money_parts else "-"
+            # Some cells already contain "평", others don't. Avoid duplicate.
+            size_str = ""
+            if size_p:
+                size_str = str(size_p) if "평" in str(size_p) else f"{size_p}평"
+            addr_str = addr or sheet
+            status_str = f"[{status}]" if status else ""
             parts.append(
-                f"- {unit} | {type_} | {loc} | {size} | "
-                f"{rent}{(' / ' + deposit) if deposit else ''} | "
-                f"{feats} | 입주: {avail}"
+                f"- [{sheet}] {cat} #{unit} {size_str} | {addr_str} | "
+                f"{status_str} {money}".strip()
             )
+    else:
+        # Fallback to sample listings (sample data for dev environments)
+        listings = kb.get("listings") or []
+        if listings:
+            parts.append("\n■ 현재 매물 (샘플 데이터 - 실제 데이터로 교체 예정)")
+            for L in listings:
+                unit = L.get("unit", "?")
+                type_ = L.get("type", "")
+                loc = L.get("location", "")
+                size = L.get("size", "")
+                rent = L.get("rent") or L.get("price", "")
+                deposit = L.get("deposit", "")
+                feats = L.get("features", "")[:80]
+                avail = L.get("available_from", "")
+                parts.append(
+                    f"- {unit} | {type_} | {loc} | {size} | "
+                    f"{rent}{(' / ' + deposit) if deposit else ''} | "
+                    f"{feats} | 입주: {avail}"
+                )
 
     # Key FAQs only (cherry-picked — the most likely 8)
     faq = kb.get("faq") or []
