@@ -1151,8 +1151,40 @@ def _execute_intent(
                  else "Opening the Stock Agent portal in a new tab."),
                 {"type": "navigate", "to": url, "external": True})
 
-    # Per-agent navigation: navigate to /agents AND highlight the specific card.
-    # Handled below NAV_MAP because it adds an extra `highlight` field to the action.
+    # Per-agent navigation — opens the EXTERNAL deployed agent app
+    # (Vercel/Render). User wants 'open stock agent' to land on the
+    # functional web app, not the internal /agents listing.
+    AGENT_PORTALS = {
+        "nav_asset_agent":  (
+            (os.getenv("REAL_ASSET_AGENT_PORTAL_URL")
+             or os.getenv("REAL_ASSET_AGENT_URL")
+             or "https://asset-agent-s4tw.onrender.com"),
+            "Opening the Asset Agent in a new tab.",
+            "자산 에이전트를 새 탭에서 엽니다.",
+        ),
+        "nav_stock_agent":  (
+            (os.getenv("REAL_STOCK_AGENT_PORTAL_URL")
+             or "https://stock-advisor-agent-ten.vercel.app"),
+            "Opening the Stock Agent in a new tab.",
+            "주식 에이전트를 새 탭에서 엽니다.",
+        ),
+        "nav_realty_agent": (
+            (os.getenv("REAL_REALTY_AGENT_PORTAL_URL")
+             or os.getenv("REAL_REALTY_AGENT_URL")
+             or "https://real-estate-dashboard-steel.vercel.app"),
+            "Opening the Real Estate Agent in a new tab.",
+            "부동산 에이전트를 새 탭에서 엽니다.",
+        ),
+    }
+    if intent_name in AGENT_PORTALS:
+        url, en_msg, ko_msg = AGENT_PORTALS[intent_name]
+        return (
+            (ko_msg if lang == "ko" else en_msg),
+            {"type": "navigate", "to": url, "external": True},
+        )
+
+    # Legacy AGENT_HIGHLIGHT preserved for back-compat — only fires if the
+    # above lookup misses (e.g. future per-agent intents).
     AGENT_HIGHLIGHT = {
         "nav_asset_agent":   ("Asset Agent",       "Opening the Asset Agent — scrolling to it now.",         "자산 에이전트로 이동해서 강조합니다."),
         "nav_stock_agent":   ("Stock",             "Opening the Stock Agent.",                                "주식 에이전트로 이동해서 강조합니다."),
