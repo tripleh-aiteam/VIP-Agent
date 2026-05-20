@@ -726,7 +726,32 @@ def handle_voice_command(db: Session, transcript: str, lang_pref: str = "auto") 
     }
 
     try:
-        if intent in NAV_MAP:
+        # External agent portals — "open stock agent" / "open asset agent" /
+        # "open realty agent" should open the actual functional web app in a
+        # new tab, NOT the internal /agents listing. Resolve the portal URL
+        # from env (with sensible defaults for production).
+        if intent in ("nav_stock_agent", "nav_asset_agent", "nav_realty_agent"):
+            import os as _os
+            portal_url = ""
+            ack_en = ""
+            ack_ko = ""
+            if intent == "nav_stock_agent":
+                portal_url = (_os.getenv("REAL_STOCK_AGENT_PORTAL_URL")
+                              or "https://stock-advisor-agent-ten.vercel.app")
+                ack_en, ack_ko = "Opening the Stock Agent in a new tab.", "주식 에이전트를 새 탭에서 엽니다."
+            elif intent == "nav_asset_agent":
+                portal_url = (_os.getenv("REAL_ASSET_AGENT_PORTAL_URL")
+                              or _os.getenv("REAL_ASSET_AGENT_URL")
+                              or "https://asset-agent-s4tw.onrender.com")
+                ack_en, ack_ko = "Opening the Asset Agent in a new tab.", "자산 에이전트를 새 탭에서 엽니다."
+            elif intent == "nav_realty_agent":
+                portal_url = (_os.getenv("REAL_REALTY_AGENT_PORTAL_URL")
+                              or _os.getenv("REAL_REALTY_AGENT_URL")
+                              or "https://real-estate-dashboard-steel.vercel.app")
+                ack_en, ack_ko = "Opening the Real Estate Agent in a new tab.", "부동산 에이전트를 새 탭에서 엽니다."
+            reply = _voice(ack_en, ack_ko, lang)
+            action = {"type": "navigate", "to": portal_url, "external": True}
+        elif intent in NAV_MAP:
             path, en_msg, ko_msg = NAV_MAP[intent]
             reply = _voice(en_msg, ko_msg, lang)
             action = {"type": "navigate", "to": path}

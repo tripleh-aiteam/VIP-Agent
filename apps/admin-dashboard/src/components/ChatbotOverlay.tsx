@@ -40,6 +40,8 @@ interface Action {
   to?: string;
   endpoint?: string;
   method?: string;
+  external?: boolean;
+  highlight?: string;
 }
 
 const WAKE_WORDS_EN = ["hey chatbot", "hi chatbot", "chatbot", "hey assistant"];
@@ -570,7 +572,18 @@ export default function ChatbotOverlay() {
   // Execute the action returned by the orchestrator
   async function executeAction(action: Action) {
     if (action.type === "navigate" && action.to) {
-      try { router.push(action.to); } catch (e) { console.warn("nav failed", e); }
+      // External URLs (Stock Agent portal, Asset Agent portal, etc.) open in
+      // a new tab — Next.js router only handles internal routes and would
+      // fail on https:// URLs. Also handle protocol-prefixed URLs as external
+      // even when external flag is missing, so the assistant Just Works.
+      const isExternal = action.external === true
+        || /^https?:\/\//i.test(action.to);
+      if (isExternal) {
+        try { window.open(action.to, "_blank", "noopener,noreferrer"); }
+        catch (e) { console.warn("external open failed", e); }
+      } else {
+        try { router.push(action.to); } catch (e) { console.warn("nav failed", e); }
+      }
     } else if (action.type === "trigger" && action.endpoint) {
       try {
         await fetch(`${API}${action.endpoint}`, {

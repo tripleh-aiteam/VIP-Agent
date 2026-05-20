@@ -1123,14 +1123,23 @@ def _execute_intent(
     Execute an intent and return (reply_text, optional_action_dict).
     Reuses the existing voice_intents handlers for VIP-specific behavior.
     """
-    # External agent portals — open in new tab via `external: true`
+    # External agent portals — open in new tab via `external: true`.
+    # IMPORTANT: each external agent has TWO URLs:
+    #   • Backend API   → REAL_<X>_AGENT_URL        (used by adapters for data)
+    #   • Frontend UI   → REAL_<X>_AGENT_PORTAL_URL (used by "open <agent>"
+    #                       to send the user to the usable web app)
+    # Navigation prefers the PORTAL URL; falls back to the API URL only if
+    # the portal env var isn't set (legacy behavior).
     if intent_name == "nav_asset_portal":
-        url = os.getenv("REAL_ASSET_AGENT_URL", "https://asset-agent-s4tw.onrender.com")
+        url = (os.getenv("REAL_ASSET_AGENT_PORTAL_URL")
+               or os.getenv("REAL_ASSET_AGENT_URL")
+               or "https://asset-agent-s4tw.onrender.com")
         return (("자산 에이전트 포털을 새 탭에서 엽니다." if lang == "ko"
                  else "Opening the Asset Agent portal in a new tab."),
                 {"type": "navigate", "to": url, "external": True})
     if intent_name == "nav_stock_portal":
-        url = os.getenv("REAL_STOCK_AGENT_URL", "https://stock-advisor-agent-9qwi.onrender.com")
+        url = (os.getenv("REAL_STOCK_AGENT_PORTAL_URL")
+               or "https://stock-advisor-agent-ten.vercel.app")
         return (("주식 에이전트 포털을 새 탭에서 엽니다." if lang == "ko"
                  else "Opening the Stock Agent portal in a new tab."),
                 {"type": "navigate", "to": url, "external": True})
