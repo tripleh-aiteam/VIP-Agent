@@ -169,8 +169,9 @@ function ChannelBadge({ channel }: { channel: Conversation["channel"] }) {
     phone: { icon: "📞", label: "Phone", bg: "bg-green-100 text-green-800" },
     sms: { icon: "✉", label: "SMS", bg: "bg-blue-100 text-blue-800" },
     web: { icon: "🌐", label: "Web", bg: "bg-purple-100 text-purple-800" },
+    email: { icon: "📧", label: "Email", bg: "bg-slate-100 text-slate-800" },
   } as const;
-  const m = map[channel];
+  const m = map[channel] || { icon: "❔", label: channel, bg: "bg-gray-100 text-gray-800" };
   return (
     <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium ${m.bg}`}>
       {m.icon} {m.label}

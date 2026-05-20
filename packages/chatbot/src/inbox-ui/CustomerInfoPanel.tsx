@@ -177,7 +177,10 @@ function ActionButton({
 }
 
 function channelLabel(c: Conversation["channel"]): string {
-  return { kakao: "💬 KakaoTalk", phone: "📞 Phone", sms: "✉ SMS", web: "🌐 Web" }[c];
+  const m: Record<string, string> = {
+    kakao: "💬 KakaoTalk", phone: "📞 Phone", sms: "✉ SMS", web: "🌐 Web", email: "📧 Email",
+  };
+  return m[c] || `❔ ${c}`;
 }
 
 function statusLabel(s: Conversation["status"]): string {

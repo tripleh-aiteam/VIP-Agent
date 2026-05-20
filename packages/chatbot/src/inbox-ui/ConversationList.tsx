@@ -218,8 +218,9 @@ function ChannelIcon({ kind }: { kind: Conversation["channel"] }) {
     phone: { icon: "📞", title: "Phone" },
     sms: { icon: "✉", title: "SMS" },
     web: { icon: "🌐", title: "Web" },
+    email: { icon: "📧", title: "Email" },
   } as const;
-  const m = map[kind];
+  const m = map[kind] || { icon: "❔", title: kind };
   return <span title={m.title} className="text-[11px]">{m.icon}</span>;
 }
 
