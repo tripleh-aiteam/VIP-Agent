@@ -704,6 +704,45 @@ def handle_voice_command(db: Session, transcript: str, lang_pref: str = "auto") 
 
     intent, entities = classify_voice_intent(transcript)
 
+    # === SMART FALLBACK ===
+    # If strict keyword matching didn't hit, ask Groq (via chatbot_talk's
+    # LLM classifier) to pick from the FULL intent menu. This handles
+    # synonyms ("I wanna see asset agent" / "show me the stock app"),
+    # typos, and natural phrasings the keyword table can't anticipate.
+    # The LLM returns a structured intent + entities + reply + action
+    # which we forward to the frontend unchanged.
+    if intent == "unknown":
+        try:
+            from services.chatbot_talk import handle_talk
+            talk_result = handle_talk(
+                db, transcript, lang,
+                agent_id="vip",
+                current_path=None,
+            )
+            if isinstance(talk_result, dict):
+                reply_text = (talk_result.get("reply") or "").strip()
+                action_obj = talk_result.get("action")
+                picked_intent = talk_result.get("intent") or "llm_chat"
+                if reply_text or action_obj:
+                    return {
+                        "intent": picked_intent,
+                        "language": lang,
+                        "reply": reply_text or _voice(
+                            "On it.", "처리하겠습니다.", lang,
+                        ),
+                        "ack_reply": None,
+                        "process_log": [],
+                        "speak": True,
+                        "transcript": transcript,
+                        "action": action_obj,
+                    }
+        except Exception as e:
+            from services.logger import log as _log
+            _log.warning(
+                f"voice_intents: smart-fallback handle_talk failed: {e}",
+                extra={"action": "voice.smart_fallback_failed"},
+            )
+
     # Track whether we used LLM fallback for the response intent label
     was_fallback = (intent == "unknown")
 

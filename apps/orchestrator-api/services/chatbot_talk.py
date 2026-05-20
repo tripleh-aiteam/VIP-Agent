@@ -1058,12 +1058,15 @@ def _llm_classify_or_answer(
         )
 
     try:
+        # Use Groq for fast intent classification (200-500ms vs 2-4s on
+        # gpt-4o-mini). The chatbot widget should feel instant.
+        # Falls back through llm_client's chain if GROQ_API_KEY missing.
         raw = chat_completion_sync(
             system_prompt=system,
             messages=[{"role": "user", "content": query}],
             max_tokens=400,
             temperature=0.3,
-            model="gpt-4o-mini",
+            model="groq-llama-3.3-70b",
         )
     except Exception as e:
         log.warning(f"chatbot.talk llm error: {e}")
