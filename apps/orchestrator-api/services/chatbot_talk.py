@@ -52,18 +52,32 @@ def _vip_intent_list() -> list[dict[str, Any]]:
          "examples": ["open messages", "show me messages", "go to messages",
                       "open the message hub", "see DMs", "show my inbox",
                       "메시지 페이지", "메시지 열어", "받은 메시지"]},
-        {"name": "nav_agents", "description": "Open the agents listing page",
-         "examples": ["open agents", "show all agents", "list of agents"]},
-        {"name": "nav_asset_agent", "description": "Open the EXTERNAL Asset Agent web portal in a new browser tab.",
+        # IMPORTANT for the LLM: when the user mentions a SPECIFIC agent by
+        # name (Asset / Stock / Real Estate / Realty / 자산 / 주식 / 부동산),
+        # ALWAYS pick the matching nav_<agent>_agent intent below — NEVER
+        # nav_agents. nav_agents is ONLY for explicit listing requests like
+        # 'show me ALL my agents' / 'list of agents' / 'agents page'.
+        {"name": "nav_agents", "description": "Open the internal /agents LISTING page (a directory of all registered agents). Only use when the user explicitly wants to SEE THE LIST of all agents — e.g. 'show all agents', 'list my agents', 'agents page'. If the user mentions ANY specific agent by name (Asset, Stock, Real Estate), DO NOT pick this — pick nav_asset_agent / nav_stock_agent / nav_realty_agent instead.",
+         "examples": ["show all agents", "list of agents", "agents page", "all my agents",
+                      "registered agents", "에이전트 목록", "전체 에이전트"]},
+        {"name": "nav_asset_agent", "description": "Open the EXTERNAL Asset Agent web portal (its deployed homepage) in a new browser tab. Pick this WHENEVER the user mentions the Asset Agent or wants to see/visit/use the Asset agent — even with casual phrasings like 'I wanna see asset agent', 'hey can you show me the asset agent', 'pull up asset', 'bring up the asset thing'.",
          "examples": ["open asset agent", "go to asset agent", "show asset agent",
-                      "launch asset agent", "asset agent app", "자산 에이전트 열어", "자산 앱"]},
-        {"name": "nav_stock_agent", "description": "Open the EXTERNAL Stock Agent web portal in a new browser tab — the deployed stock-advisor app where the boss can view market data, portfolio, watchlist.",
+                      "I wanna see asset agent", "I want to see the asset agent",
+                      "hey bro can you provide me asset agent", "pull up asset",
+                      "launch asset agent", "asset agent app", "asset agent homepage",
+                      "자산 에이전트 열어", "자산 앱", "자산 에이전트 보여줘", "자산 에이전트 좀"]},
+        {"name": "nav_stock_agent", "description": "Open the EXTERNAL Stock Agent web portal (the deployed stock-advisor homepage) in a new browser tab. Pick this WHENEVER the user mentions the Stock Agent — even casual / synonym phrasings like 'hey bro can you provide me stock agent', 'show me the stock app', 'I wanna see stock', 'launch stocks'. The boss uses this app to view live market data, portfolio, watchlist.",
          "examples": ["open stock agent", "go to stock agent", "launch stock agent",
                       "stock agent app", "open stock", "show me stock agent",
-                      "주식 에이전트 열어", "주식 앱 열어", "스톡 에이전트"]},
-        {"name": "nav_realty_agent", "description": "Open the EXTERNAL Real Estate Agent web portal in a new browser tab.",
-         "examples": ["open realty", "go to real estate agent", "launch realty app",
-                      "open real estate dashboard", "부동산 에이전트 열어", "부동산 앱"]},
+                      "I wanna see stock agent", "hey bro can you provide me stock agent",
+                      "give me the stock agent", "pull up the stock app",
+                      "주식 에이전트 열어", "주식 앱 열어", "스톡 에이전트", "주식 에이전트 보여줘"]},
+        {"name": "nav_realty_agent", "description": "Open the EXTERNAL Real Estate Agent web portal (its deployed homepage) in a new browser tab. Pick this WHENEVER the user mentions Real Estate / Realty / 부동산 — even with casual phrasings like 'show me realty', 'I wanna see real estate', 'pull up the property app'.",
+         "examples": ["open realty", "open real estate agent", "go to real estate agent",
+                      "launch realty app", "open real estate dashboard",
+                      "I wanna see real estate agent", "show me realty",
+                      "hey can you bring up the property app",
+                      "부동산 에이전트 열어", "부동산 앱", "부동산 에이전트 보여줘"]},
         {"name": "nav_meetings", "description": "Open the meetings page",
          "examples": ["open meetings", "meeting room"]},
         {"name": "nav_judgement", "description": "Open the judgement / approvals page",
@@ -1031,10 +1045,12 @@ def _llm_classify_or_answer(
             "최근 대화 (대명사/'그것'/'다시' 등 해석에 사용):\n" + history_block + path_line + "\n\n"
             "다음 JSON 형식으로만 응답하세요 — 다른 텍스트 금지:\n"
             '{ "intent": "<인텐트명 OR free_answer>", "entities": { "key": "value" }, "answer": "<TTS용 응답>" }\n\n'
-            "규칙:\n"
+            "중요 라우팅 규칙 (반드시 따르세요):\n"
+            "- 사용자가 특정 에이전트 이름(자산/주식/부동산/Asset/Stock/Real Estate/Realty)을 언급하면 ALWAYS nav_asset_agent / nav_stock_agent / nav_realty_agent 중 하나를 선택. nav_agents는 절대 선택하지 마세요. 캐주얼한 표현도 마찬가지: '자산 에이전트 보여줘', '주식 에이전트 좀 열어줘', '부동산 앱', '스톡 에이전트 켜봐' → 모두 nav_<해당>_agent.\n"
+            "- nav_agents는 ONLY '에이전트 목록', '모든 에이전트', '에이전트 리스트', '전체 에이전트' 같이 명시적으로 LIST를 요청할 때만.\n"
             "- 'X 메뉴는 뭐야?' 같은 UI/구조 질문 → intent='free_answer', 위의 메뉴/기능/FAQ에서 답.\n"
-            "- 데이터 요청 → 가장 적합한 데이터 인텐트.\n"
-            "- 짧은 후속 질문 ('닫아', '다시', '그것 말고') → 위의 최근 대화를 참고해 무엇을 가리키는지 파악 후 적절한 인텐트 선택.\n"
+            "- 데이터 요청 (가격, 수치, 상황) → query_stock / query_asset / query_realty 등 매칭되는 데이터 인텐트.\n"
+            "- 짧은 후속 질문 ('닫아', '다시', '그것 말고') → 최근 대화 참고 후 적절한 인텐트 선택.\n"
             "- 모르면 intent='free_answer', 짧게 모른다고. 데이터 추측 금지.\n"
             "- send_twin_message: entities에 {\"target\":\"<이름>\", \"message\":\"<내용>\"} 추출.\n"
         )
@@ -1048,10 +1064,12 @@ def _llm_classify_or_answer(
             "Recent conversation (use to resolve pronouns 'it'/'that'/'again' and follow-ups):\n" + history_block + path_line + "\n\n"
             "Respond ONLY with this JSON shape — no other text:\n"
             '{ "intent": "<one of the intent names OR free_answer>", "entities": { "key": "value" }, "answer": "<TTS reply>" }\n\n'
-            "Rules:\n"
+            "CRITICAL ROUTING RULES (read carefully):\n"
+            "- If the user mentions a SPECIFIC agent by name (Asset / Stock / Real Estate / Realty / 자산 / 주식 / 부동산) — ALWAYS pick nav_asset_agent, nav_stock_agent, or nav_realty_agent. NEVER pick nav_agents in that case. This applies even for casual phrasings: 'I wanna see asset agent', 'hey bro can you provide me stock agent', 'show me realty', 'pull up the property thing' → all map to nav_<that>_agent.\n"
+            "- nav_agents is ONLY for explicit LIST requests like 'show all agents' / 'list of agents' / 'agents page' / 'registered agents'.\n"
             "- 'what is X menu?' / 'where is Y?' / 'how do I Z?' → intent='free_answer', use menus/features/FAQ above.\n"
-            "- DATA requests (status, current numbers) → pick the matching data intent.\n"
-            "- Short follow-ups ('close it', 'do it again', 'do the same for stocks') → look at the RECENT CONVERSATION above to figure out what 'it'/'that'/'same' refers to, then pick the right intent. Example: if previous turn was nav_reports and user says 'close it', they mean go back from reports — pick ui_go_back, NOT ui_close_chatbot.\n"
+            "- DATA requests (status, current numbers, 'how is X doing') → pick the matching data intent (query_stock / query_asset / query_realty / etc.).\n"
+            "- Short follow-ups ('close it', 'do it again', 'do the same for stocks') → look at the RECENT CONVERSATION above to figure out what 'it'/'that'/'same' refers to, then pick the right intent.\n"
             "- Live data answers it but no intent fits → intent='free_answer' with the answer.\n"
             "- If you don't know, intent='free_answer' and briefly admit. Never guess data.\n"
             "- For send_twin_message: extract {\"target\":\"<name>\", \"message\":\"<body>\"} into entities.\n"
