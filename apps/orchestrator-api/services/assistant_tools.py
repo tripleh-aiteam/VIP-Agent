@@ -71,28 +71,36 @@ class Tool:
 #  Universal tools (Phase 1)
 # ============================================================================
 
-def tool_navigate(path: str, **_kw) -> dict[str, Any]:
-    """Validate the path against the manifest and return a navigate action."""
+def tool_navigate(path: str, query: str = "", **_kw) -> dict[str, Any]:
+    """Validate the path against the manifest and return a navigate action.
+
+    Pass `query` to apply page-level filters via URL search params.
+    Examples:
+      navigate("/reports", "filter=daily")    → /reports?filter=daily
+      navigate("/task-board", "status=pending&twin=Davronbek")
+      navigate("/twins", "mode=active")
+    The page must read these params itself (most do via useSearchParams).
+    """
+    target_path = path
     if not is_valid_path(path):
-        # Try to be helpful: find the closest match in the manifest
         path_lower = (path or "").lower()
+        match = None
         for p in get_all_pages():
             if path_lower in p["path"].lower() or path_lower in p["name"].lower():
-                return {
-                    "ok": True,
-                    "action": {"type": "navigate", "to": p["path"]},
-                    "message": f"Opening {p['name']}.",
-                    "matched_path": p["path"],
-                }
-        return {
-            "ok": False,
-            "error": f"Unknown path '{path}'. See list_pages() for valid options.",
-        }
-    page = get_page_by_path(path)
+                match = p["path"]; break
+        if not match:
+            return {
+                "ok": False,
+                "error": f"Unknown path '{path}'. See list_pages() for valid options.",
+            }
+        target_path = match
+    final_url = target_path + (f"?{query}" if query else "")
+    page = get_page_by_path(target_path)
+    filter_msg = f" (filter: {query})" if query else ""
     return {
         "ok": True,
-        "action": {"type": "navigate", "to": path},
-        "message": f"Opening {page['name']}.",
+        "action": {"type": "navigate", "to": final_url},
+        "message": f"Opening {page['name']}{filter_msg}.",
     }
 
 
@@ -1084,12 +1092,26 @@ TOOL_REGISTRY: dict[str, Tool] = {
     # --- Phase 1: Universal navigation tools ---
     "navigate": Tool(
         name="navigate",
-        description="Navigate the dashboard to an internal page. Use for ANY in-app page (chatbot, twins, reports, meetings, settings, etc.). Path MUST be one from the pages list (see list_pages()).",
+        description=(
+            "Navigate the dashboard to an internal page WITH OPTIONAL FILTERS. "
+            "Use for ANY in-app page (chatbot, twins, reports, meetings, etc.). "
+            "Pass `query` for page filters. Common filters:\n"
+            "  /reports?filter=daily       (or weekly / cross / alerts / all)\n"
+            "  /task-board?status=pending  (or in_progress / completed / blocked)\n"
+            "  /task-board?twin=Davronbek\n"
+            "  /twins?mode=active          (or shadow / handoff)\n"
+            "  /chatbot?status=needs_reply (or resolved / escalated)\n"
+            "  /chatbot?channel=kakao      (or phone / sms)\n"
+            "  /judgement?status=pending\n"
+            "If the user says 'open DAILY reports' / '주식 task board' / 'active twins', "
+            "pick the right filter — don't just navigate to the base page."
+        ),
         kind="read",
         parameters={
             "type": "object",
             "properties": {
                 "path": {"type": "string", "description": "The route path, e.g. '/chatbot' or '/reports'"},
+                "query": {"type": "string", "description": "Optional URL search params (e.g. 'filter=daily' or 'status=pending&twin=Kim')"},
             },
             "required": ["path"],
         },
@@ -1515,6 +1537,433 @@ TOOL_REGISTRY: dict[str, Tool] = {
         fn=tool_set_twin_mode,
     ),
 }
+
+
+# ============================================================================
+#  Extended tools — covers the rest of the boss's manual operations
+# ============================================================================
+
+# --- Twin CRUD ---
+def tool_create_twin(name: str, owner_email: str = "", db: Session = None, **_kw) -> dict[str, Any]:
+    if not db: return {"ok": False, "error": "DB required"}
+    try:
+        from db.models import DigitalTwin
+        t = DigitalTwin(name=name, owner_email=owner_email or f"{name.lower()}@tripleh.co.kr",
+                        mode="shadow", status="idle")
+        db.add(t); db.commit(); db.refresh(t)
+        return {"ok": True, "message": f"✅ Created twin '{t.name}' (id {t.id[:8]})", "twin_id": t.id}
+    except Exception as e:
+        return {"ok": False, "error": str(e)[:200]}
+
+def tool_delete_twin(twin_name: str, db: Session = None, **_kw) -> dict[str, Any]:
+    if not db: return {"ok": False, "error": "DB required"}
+    try:
+        tw = _find_twin_by_name(db, twin_name)
+        if not tw: return {"ok": False, "error": f"No twin matching '{twin_name}'"}
+        twin_id = tw.id
+        db.delete(tw); db.commit()
+        return {"ok": True, "message": f"🗑️ Deleted twin {tw.name} ({twin_id[:8]})"}
+    except Exception as e:
+        return {"ok": False, "error": str(e)[:200]}
+
+def tool_update_twin_owner(twin_name: str, owner_email: str, db: Session = None, **_kw) -> dict[str, Any]:
+    if not db: return {"ok": False, "error": "DB required"}
+    try:
+        tw = _find_twin_by_name(db, twin_name)
+        if not tw: return {"ok": False, "error": f"No twin matching '{twin_name}'"}
+        tw.owner_email = owner_email; db.commit()
+        return {"ok": True, "message": f"✏️ Updated {tw.name}'s owner to {owner_email}"}
+    except Exception as e:
+        return {"ok": False, "error": str(e)[:200]}
+
+def tool_list_twins(mode: str = None, db: Session = None, **_kw) -> dict[str, Any]:
+    if not db: return {"ok": False, "error": "DB required"}
+    try:
+        from db.models import DigitalTwin
+        q = db.query(DigitalTwin)
+        if mode: q = q.filter(DigitalTwin.mode == mode)
+        twins = q.all()
+        return {"ok": True, "count": len(twins), "filter_mode": mode,
+                "twins": [{"id": t.id, "name": t.name, "owner": t.owner_email,
+                           "mode": t.mode, "status": t.status} for t in twins[:30]]}
+    except Exception as e:
+        return {"ok": False, "error": str(e)[:200]}
+
+
+# --- Task ops ---
+def tool_update_task_status(task_id: str, status: str, db: Session = None, **_kw) -> dict[str, Any]:
+    if not db: return {"ok": False, "error": "DB required"}
+    valid = {"pending", "in_progress", "blocked", "completed", "cancelled"}
+    if status not in valid: return {"ok": False, "error": f"status must be one of {valid}"}
+    try:
+        from db.models import TwinTask
+        t = db.query(TwinTask).filter(TwinTask.id == task_id).first()
+        if not t: return {"ok": False, "error": f"Task {task_id} not found"}
+        t.status = status; db.commit()
+        return {"ok": True, "message": f"✓ Task {task_id[:8]} → {status}"}
+    except Exception as e:
+        return {"ok": False, "error": str(e)[:200]}
+
+def tool_update_task_priority(task_id: str, priority: str, db: Session = None, **_kw) -> dict[str, Any]:
+    if not db: return {"ok": False, "error": "DB required"}
+    try:
+        from db.models import TwinTask
+        t = db.query(TwinTask).filter(TwinTask.id == task_id).first()
+        if not t: return {"ok": False, "error": "Task not found"}
+        if hasattr(t, "priority"): t.priority = priority; db.commit()
+        return {"ok": True, "message": f"✓ Task {task_id[:8]} priority → {priority}"}
+    except Exception as e:
+        return {"ok": False, "error": str(e)[:200]}
+
+def tool_reassign_task(task_id: str, twin_name: str, db: Session = None, **_kw) -> dict[str, Any]:
+    if not db: return {"ok": False, "error": "DB required"}
+    try:
+        from db.models import TwinTask
+        tw = _find_twin_by_name(db, twin_name)
+        if not tw: return {"ok": False, "error": f"No twin '{twin_name}'"}
+        t = db.query(TwinTask).filter(TwinTask.id == task_id).first()
+        if not t: return {"ok": False, "error": "Task not found"}
+        t.twin_id = tw.id; db.commit()
+        return {"ok": True, "message": f"↪️ Task {task_id[:8]} reassigned to {tw.name}"}
+    except Exception as e:
+        return {"ok": False, "error": str(e)[:200]}
+
+def tool_list_tasks_filtered(status: str = None, twin_name: str = None, db: Session = None, **_kw) -> dict[str, Any]:
+    if not db: return {"ok": False, "error": "DB required"}
+    try:
+        from db.models import TwinTask
+        q = db.query(TwinTask)
+        if status: q = q.filter(TwinTask.status == status)
+        if twin_name:
+            tw = _find_twin_by_name(db, twin_name)
+            if tw: q = q.filter(TwinTask.twin_id == tw.id)
+        tasks = q.order_by(TwinTask.created_at.desc()).limit(30).all()
+        return {"ok": True, "count": len(tasks), "filter": {"status": status, "twin": twin_name},
+                "tasks": [{"id": t.id, "title": (t.title or "")[:60], "status": t.status} for t in tasks]}
+    except Exception as e:
+        return {"ok": False, "error": str(e)[:200]}
+
+
+# --- Knowledge ops ---
+def tool_update_knowledge(knowledge_id: str, title: str = None, body: str = None, db: Session = None, **_kw) -> dict[str, Any]:
+    if not db: return {"ok": False, "error": "DB required"}
+    try:
+        from db.models import TwinKnowledge
+        k = db.query(TwinKnowledge).filter(TwinKnowledge.id == knowledge_id).first()
+        if not k: return {"ok": False, "error": "Knowledge not found"}
+        if title is not None: k.title = title
+        if body is not None: k.body = body
+        db.commit()
+        return {"ok": True, "message": f"✏️ Knowledge {knowledge_id[:8]} updated"}
+    except Exception as e:
+        return {"ok": False, "error": str(e)[:200]}
+
+def tool_list_twin_knowledge(twin_name: str, db: Session = None, **_kw) -> dict[str, Any]:
+    if not db: return {"ok": False, "error": "DB required"}
+    try:
+        from db.models import TwinKnowledge
+        tw = _find_twin_by_name(db, twin_name)
+        if not tw: return {"ok": False, "error": f"No twin '{twin_name}'"}
+        entries = (db.query(TwinKnowledge)
+                   .filter(TwinKnowledge.twin_id == tw.id)
+                   .order_by(TwinKnowledge.created_at.desc()).limit(50).all())
+        return {"ok": True, "twin_name": tw.name, "count": len(entries),
+                "entries": [{"id": e.id, "title": (e.title or "")[:60],
+                             "body_preview": (e.body or "")[:120]} for e in entries]}
+    except Exception as e:
+        return {"ok": False, "error": str(e)[:200]}
+
+
+# --- Report ops ---
+def tool_trigger_cross_agent_report(db: Session = None, **_kw) -> dict[str, Any]:
+    try:
+        import httpx
+        r = httpx.post("http://localhost:8000/reports/compose/cross-agent",
+                       json={"agent_types": ["asset", "stock"], "report_type": "cross_agent_summary"},
+                       timeout=30)
+        return {"ok": r.status_code < 400, "message": "📊 Cross-agent report queued.",
+                "action": {"type": "navigate", "to": "/reports?filter=cross"}}
+    except Exception as e:
+        return {"ok": False, "error": str(e)[:200]}
+
+def tool_delete_report(report_id: str, db: Session = None, **_kw) -> dict[str, Any]:
+    if not db: return {"ok": False, "error": "DB required"}
+    try:
+        from db.models import OrchReport as Report
+        r = db.query(Report).filter(Report.id == report_id).first()
+        if not r: return {"ok": False, "error": "Report not found"}
+        db.delete(r); db.commit()
+        return {"ok": True, "message": f"🗑️ Report {report_id[:8]} deleted"}
+    except Exception as e:
+        return {"ok": False, "error": str(e)[:200]}
+
+
+# --- Judgement ops ---
+def tool_get_case_details(case_id: str, db: Session = None, **_kw) -> dict[str, Any]:
+    if not db: return {"ok": False, "error": "DB required"}
+    try:
+        from db.models import AuditJudgementCase as JC
+        c = db.query(JC).filter(JC.id == case_id).first()
+        if not c: return {"ok": False, "error": "Case not found"}
+        return {"ok": True, "case": {"id": c.id, "title": c.title, "severity": c.severity,
+                                     "decision": c.decision, "agent_type": c.agent_type,
+                                     "context": (str(getattr(c, "context_json", "") or ""))[:500]}}
+    except Exception as e:
+        return {"ok": False, "error": str(e)[:200]}
+
+
+# --- Workflow ops ---
+def tool_list_workflows(db: Session = None, **_kw) -> dict[str, Any]:
+    if not db: return {"ok": False, "error": "DB required"}
+    try:
+        from db.models import OrchScheduleRule
+        rules = db.query(OrchScheduleRule).all()
+        return {"ok": True, "count": len(rules),
+                "workflows": [{"id": r.id, "name": r.name, "cron": r.cron,
+                               "enabled": getattr(r, "enabled", True)} for r in rules]}
+    except Exception as e:
+        return {"ok": False, "error": str(e)[:200]}
+
+def tool_trigger_workflow(workflow_id: str, db: Session = None, **_kw) -> dict[str, Any]:
+    try:
+        import httpx
+        r = httpx.post(f"http://localhost:8000/workflows/{workflow_id}/run", timeout=10)
+        return {"ok": r.status_code < 400, "message": f"▶️ Workflow {workflow_id[:8]} triggered"}
+    except Exception as e:
+        return {"ok": False, "error": str(e)[:200]}
+
+def tool_set_workflow_enabled(workflow_id: str, enabled: bool, db: Session = None, **_kw) -> dict[str, Any]:
+    if not db: return {"ok": False, "error": "DB required"}
+    try:
+        from db.models import OrchScheduleRule
+        r = db.query(OrchScheduleRule).filter(OrchScheduleRule.id == workflow_id).first()
+        if not r: return {"ok": False, "error": "Workflow not found"}
+        if hasattr(r, "enabled"): r.enabled = bool(enabled); db.commit()
+        verb = "enabled" if enabled else "disabled"
+        return {"ok": True, "message": f"⚙️ Workflow {workflow_id[:8]} {verb}"}
+    except Exception as e:
+        return {"ok": False, "error": str(e)[:200]}
+
+
+# --- Call ops ---
+def tool_list_calls(limit: int = 10, db: Session = None, **_kw) -> dict[str, Any]:
+    if not db: return {"ok": False, "error": "DB required"}
+    try:
+        # Calls are stored as conversations with channel="phone"
+        from db.models import ChatbotConversation, ChatbotCustomer
+        convs = (db.query(ChatbotConversation)
+                 .filter(ChatbotConversation.channel == "phone")
+                 .order_by(ChatbotConversation.updated_at.desc())
+                 .limit(int(limit)).all())
+        out = []
+        for c in convs:
+            cust = db.query(ChatbotCustomer).filter(ChatbotCustomer.id == c.customer_id).first()
+            out.append({"id": c.id, "customer": cust.name if cust else None,
+                        "phone": cust.phone if cust else None, "status": c.status,
+                        "updated": c.updated_at.isoformat() if c.updated_at else None})
+        return {"ok": True, "count": len(out), "calls": out}
+    except Exception as e:
+        return {"ok": False, "error": str(e)[:200]}
+
+
+# --- Agent ops ---
+def tool_ping_agent(agent_name: str, db: Session = None, **_kw) -> dict[str, Any]:
+    if not db: return {"ok": False, "error": "DB required"}
+    try:
+        from db.models import CoreAgent
+        a = db.query(CoreAgent).filter(CoreAgent.name.ilike(f"%{agent_name}%")).first()
+        if not a: return {"ok": False, "error": f"Agent '{agent_name}' not found"}
+        import httpx
+        try:
+            r = httpx.get(f"{a.endpoint_url}/health", timeout=8)
+            return {"ok": r.status_code == 200,
+                    "message": f"🏓 {a.name}: HTTP {r.status_code} from {a.endpoint_url}"}
+        except Exception as e:
+            return {"ok": False, "message": f"🏓 {a.name}: unreachable ({str(e)[:80]})"}
+    except Exception as e:
+        return {"ok": False, "error": str(e)[:200]}
+
+
+# --- Mode ops ---
+def tool_get_current_mode(**_kw) -> dict[str, Any]:
+    try:
+        from services import chatbot_mode_detector
+        mode, auto = chatbot_mode_detector.get_mode("vip")
+        return {"ok": True, "mode": mode, "auto_detected": auto,
+                "message": f"Current Boss mode: {mode}{' (auto-detected)' if auto else ' (manual override)'}"}
+    except Exception as e:
+        return {"ok": False, "error": str(e)[:200]}
+
+
+# ============================================================================
+#  Register the 14 new tools
+# ============================================================================
+
+TOOL_REGISTRY.update({
+    "create_twin": Tool(
+        name="create_twin", kind="write",
+        description="Create a new digital twin (employee AI). Pass name and optional owner_email.",
+        parameters={"type": "object", "properties": {
+            "name": {"type": "string"},
+            "owner_email": {"type": "string"},
+        }, "required": ["name"]},
+        fn=tool_create_twin,
+    ),
+    "delete_twin": Tool(
+        name="delete_twin", kind="write",
+        description="Delete a digital twin by name. DESTRUCTIVE — removes all associated knowledge / tasks / activity.",
+        parameters={"type": "object", "properties": {
+            "twin_name": {"type": "string"},
+        }, "required": ["twin_name"]},
+        fn=tool_delete_twin,
+    ),
+    "update_twin_owner": Tool(
+        name="update_twin_owner", kind="write",
+        description="Change which worker owns a twin (transfer ownership).",
+        parameters={"type": "object", "properties": {
+            "twin_name": {"type": "string"},
+            "owner_email": {"type": "string"},
+        }, "required": ["twin_name", "owner_email"]},
+        fn=tool_update_twin_owner,
+    ),
+    "list_twins": Tool(
+        name="list_twins", kind="read",
+        description="List all twins. Optional `mode` filter (shadow/active/handoff).",
+        parameters={"type": "object", "properties": {
+            "mode": {"type": "string", "enum": ["shadow", "active", "handoff"]},
+        }, "required": []},
+        fn=tool_list_twins,
+    ),
+
+    "update_task_status": Tool(
+        name="update_task_status", kind="write",
+        description="Move a task between status columns: pending / in_progress / blocked / completed / cancelled.",
+        parameters={"type": "object", "properties": {
+            "task_id": {"type": "string"},
+            "status": {"type": "string", "enum": ["pending", "in_progress", "blocked", "completed", "cancelled"]},
+        }, "required": ["task_id", "status"]},
+        fn=tool_update_task_status,
+    ),
+    "update_task_priority": Tool(
+        name="update_task_priority", kind="write",
+        description="Change a task's priority (low / normal / high / urgent).",
+        parameters={"type": "object", "properties": {
+            "task_id": {"type": "string"},
+            "priority": {"type": "string", "enum": ["low", "normal", "high", "urgent"]},
+        }, "required": ["task_id", "priority"]},
+        fn=tool_update_task_priority,
+    ),
+    "reassign_task": Tool(
+        name="reassign_task", kind="write",
+        description="Reassign a task to a different twin.",
+        parameters={"type": "object", "properties": {
+            "task_id": {"type": "string"},
+            "twin_name": {"type": "string"},
+        }, "required": ["task_id", "twin_name"]},
+        fn=tool_reassign_task,
+    ),
+    "list_tasks_filtered": Tool(
+        name="list_tasks_filtered", kind="read",
+        description="List tasks with optional filters: status, twin_name. Pass either, both, or neither.",
+        parameters={"type": "object", "properties": {
+            "status": {"type": "string"},
+            "twin_name": {"type": "string"},
+        }, "required": []},
+        fn=tool_list_tasks_filtered,
+    ),
+
+    "update_knowledge": Tool(
+        name="update_knowledge", kind="write",
+        description="Edit an existing knowledge entry. Pass new title and/or body.",
+        parameters={"type": "object", "properties": {
+            "knowledge_id": {"type": "string"},
+            "title": {"type": "string"},
+            "body": {"type": "string"},
+        }, "required": ["knowledge_id"]},
+        fn=tool_update_knowledge,
+    ),
+    "list_twin_knowledge": Tool(
+        name="list_twin_knowledge", kind="read",
+        description="List all knowledge entries belonging to a specific twin.",
+        parameters={"type": "object", "properties": {
+            "twin_name": {"type": "string"},
+        }, "required": ["twin_name"]},
+        fn=tool_list_twin_knowledge,
+    ),
+
+    "trigger_cross_agent_report": Tool(
+        name="trigger_cross_agent_report", kind="write",
+        description="Compose a fresh cross-agent summary report (Asset + Stock combined).",
+        parameters={"type": "object", "properties": {}, "required": []},
+        fn=tool_trigger_cross_agent_report,
+    ),
+    "delete_report": Tool(
+        name="delete_report", kind="write",
+        description="Delete a report by ID. DESTRUCTIVE.",
+        parameters={"type": "object", "properties": {
+            "report_id": {"type": "string"},
+        }, "required": ["report_id"]},
+        fn=tool_delete_report,
+    ),
+
+    "get_case_details": Tool(
+        name="get_case_details", kind="read",
+        description="Fetch full details of a judgement / approval case by ID.",
+        parameters={"type": "object", "properties": {
+            "case_id": {"type": "string"},
+        }, "required": ["case_id"]},
+        fn=tool_get_case_details,
+    ),
+
+    "list_workflows": Tool(
+        name="list_workflows", kind="read",
+        description="List scheduled cron jobs / workflows with their cron expressions and enabled state.",
+        parameters={"type": "object", "properties": {}, "required": []},
+        fn=tool_list_workflows,
+    ),
+    "trigger_workflow": Tool(
+        name="trigger_workflow", kind="write",
+        description="Manually run a workflow now (bypass cron schedule).",
+        parameters={"type": "object", "properties": {
+            "workflow_id": {"type": "string"},
+        }, "required": ["workflow_id"]},
+        fn=tool_trigger_workflow,
+    ),
+    "set_workflow_enabled": Tool(
+        name="set_workflow_enabled", kind="write",
+        description="Enable or disable a scheduled workflow.",
+        parameters={"type": "object", "properties": {
+            "workflow_id": {"type": "string"},
+            "enabled": {"type": "boolean"},
+        }, "required": ["workflow_id", "enabled"]},
+        fn=tool_set_workflow_enabled,
+    ),
+
+    "list_calls": Tool(
+        name="list_calls", kind="read",
+        description="Recent phone calls (inbound/outbound) with customer name and status.",
+        parameters={"type": "object", "properties": {
+            "limit": {"type": "integer"},
+        }, "required": []},
+        fn=tool_list_calls,
+    ),
+
+    "ping_agent": Tool(
+        name="ping_agent", kind="read",
+        description="Health-check a registered domain agent (Asset / Stock / Realty) by hitting its /health endpoint.",
+        parameters={"type": "object", "properties": {
+            "agent_name": {"type": "string"},
+        }, "required": ["agent_name"]},
+        fn=tool_ping_agent,
+    ),
+
+    "get_current_mode": Tool(
+        name="get_current_mode", kind="read",
+        description="Show the current Boss mode (in / out / auto) for the VIP chatbot.",
+        parameters={"type": "object", "properties": {}, "required": []},
+        fn=tool_get_current_mode,
+    ),
+})
 
 
 def list_tool_schemas() -> list[dict]:

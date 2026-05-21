@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState, useRef } from "react";
+import { useSearchParams } from "next/navigation";
 import { api, apiPost } from "@/components/api";
 import Badge from "@/components/Badge";
 import StatCard from "@/components/StatCard";
@@ -10,11 +11,23 @@ import { API } from "@/components/api";
 type ViewMode = null | "summary" | "detailed";
 
 export default function ReportsPage() {
+  // Read ?filter= from URL so the assistant can deep-link to a specific tab:
+  //   /reports?filter=daily   → opens with Daily tab active
+  //   /reports?filter=weekly  → Weekly
+  //   /reports?filter=cross   → Cross-agent
+  //   /reports?filter=alerts  → Alerts
+  // Defaults to "all" if no param or invalid.
+  const searchParams = useSearchParams();
+  const initialFilter = (() => {
+    const f = (searchParams?.get("filter") || "").toLowerCase();
+    return ["all", "daily", "weekly", "cross", "alerts"].includes(f) ? f : "all";
+  })();
+
   const [reports, setReports] = useState<any[]>([]);
   const [composing, setComposing] = useState(false);
   const [detail, setDetail] = useState<any>(null);
   const [viewMode, setViewMode] = useState<ViewMode>(null);
-  const [activeType, setActiveType] = useState<string>("all");
+  const [activeType, setActiveType] = useState<string>(initialFilter);
   const [copied, setCopied] = useState(false);
   const [dlOpen, setDlOpen] = useState(false);
   const dlRef = useRef<HTMLDivElement>(null);
