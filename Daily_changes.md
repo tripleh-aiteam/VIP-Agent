@@ -2,6 +2,73 @@
 
 ---
 
+## 2026-05-21 (Thursday) — 🧠 VIP Assistant fully reshaped (8 phases) + Kakao security
+
+### Goal
+
+Replace the brittle keyword classifier on the assistant widget with a real LLM tool-calling architecture — Notion-AI-grade. Also harden the Kakao webhook against abuse.
+
+### What happened — assistant reshape (Phases 0-8)
+
+The user wanted the widget to handle ANY natural phrasing (not just memorized keywords) AND actually DO things ("send Davronbek a message"). Built a complete tool-calling agent on a fresh code path so the old `/chat/voice` keyword endpoint still works as fallback.
+
+**Three new modules + one new router + frontend confirm-card UI:**
+
+- [apps/orchestrator-api/services/assistant_manifest.py](apps/orchestrator-api/services/assistant_manifest.py) — single source of truth: 20 internal pages + 3 external agent apps (Asset / Stock / Realty), each with description + EN/KO keywords. Adding a new menu = 1 dict entry. Includes `detect_sidebar_drift()` that parses `Sidebar.tsx` and flags missing entries.
+- [apps/orchestrator-api/services/assistant_tools.py](apps/orchestrator-api/services/assistant_tools.py) — 37-tool registry (17 read + 20 write). Each tool has schema, kind, and `requires_confirmation` flag. Tools cover navigation, twin/conversation/report/knowledge search, live agent data fetch, semantic search across 5 data sources, send_dm, broadcast, kakao_reply, send_email, trigger reports, approve handoffs, create/cancel tasks, schedule/cancel meetings, add/delete knowledge, set boss/twin modes.
+- [apps/orchestrator-api/services/assistant_agent.py](apps/orchestrator-api/services/assistant_agent.py) — the tool-calling loop. LLM (Groq Llama 3.3 70B) returns `{tool, args}` OR `{steps: [...]}` OR `{answer}`. Backend executes read tools instantly; write tools return `proposed_action` for user confirm. Multi-step chains feed each step's output to the LLM for a final composed answer. Page context (current_path + selected_id) lets the user say "delete this report" / "resolve this conversation".
+- [apps/orchestrator-api/routers/chat.py](apps/orchestrator-api/routers/chat.py) — added `POST /chat/agent` (the new endpoint), `GET /chat/agent/manifest`, `GET /chat/agent/tools` (introspection).
+- [apps/admin-dashboard/src/components/ChatbotOverlay.tsx](apps/admin-dashboard/src/components/ChatbotOverlay.tsx) — opt-in via `NEXT_PUBLIC_USE_AGENT_ENDPOINT=true`. Adds yellow Confirm card for write proposals, purple Run-All card for multi-step chains, inline result cards (stat, agent_status, report_excerpt, lists) rendered next to the bot's text reply, and last-6-turns session memory.
+
+**Eight phases delivered today:**
+
+1. Manifest (catalog all pages + external agents)
+2. Tool-calling endpoint + 4 universal tools (navigate, open_portal, list_pages, what_can_you_do)
+3. 12 read tools for Notion-AI-style data search
+4. Permission framework + 20 write tools with preview-before-execute
+5. Page-context awareness (selected_id auto-fills "this conversation" / "this report")
+6. Multi-step chain executor
+7. Inline structured result cards
+8. Semantic search across 5 data sources + auto-discovery drift detector + introspection endpoints
+
+**Verified live** with 8 end-to-end tests against `/chat/agent`: navigation in EN/KO, external portal opens, cross-data search, live agent_status fetch (KOSPI numbers), write tool preview cards. All pass.
+
+### What happened — Kakao webhook security
+
+User asked: "if hackers try to access many time you have to block it." Built rate limiting.
+
+- [apps/orchestrator-api/services/rate_limiter.py](apps/orchestrator-api/services/rate_limiter.py) — sliding-window in-memory limiter. Per-IP: 30 req/min → 10 min block. Per-Kakao-user: 12 msg/min → silent drop. Thread-safe, GC bounded, admin endpoints for inspect / unblock.
+- [apps/orchestrator-api/routers/kakao_webhook.py](apps/orchestrator-api/routers/kakao_webhook.py) — wired both layers in front of all webhook processing. Returns 429 with Retry-After when exceeded.
+
+**Verified live**: hammered the endpoint, request #32 returned HTTP 429 ✓
+
+### Files added
+
+- `apps/orchestrator-api/services/assistant_manifest.py`
+- `apps/orchestrator-api/services/assistant_tools.py`
+- `apps/orchestrator-api/services/assistant_agent.py`
+- `apps/orchestrator-api/services/rate_limiter.py`
+
+### Files updated
+
+- `apps/orchestrator-api/routers/chat.py` — added `/chat/agent` + introspection endpoints
+- `apps/orchestrator-api/routers/kakao_webhook.py` — rate limit + admin endpoints
+- `apps/admin-dashboard/src/components/ChatbotOverlay.tsx` — agent endpoint, confirm cards, result cards, session history
+
+### What this unblocks
+
+- Boss can give natural-language commands ("send Davronbek 회의 3시", "approve all overnight handoffs", "find anything about 보증금") and the assistant routes/executes correctly without keyword tables to maintain.
+- Adding a new menu later = append to `PAGES` in manifest. No new intent code, no keyword tuning. The LLM auto-discovers it.
+- Kakao webhook is now protected from flood / brute-force attempts.
+
+### Next
+
+- Frontend redeploy on Vercel — set `NEXT_PUBLIC_USE_AGENT_ENDPOINT=true` env var, trigger redeploy
+- Phase 3 hardening (optional): persist rate-limit blocks to Redis; re-enable Kakao signature verification; Telegram alert on attacks
+- Phase 9 (later): pgvector embeddings to upgrade `semantic_search` from text-match to true semantic similarity
+
+---
+
 ## 2026-05-18 (Monday) — 🚀 Chatbot returns real KB-grounded answers (Groq + language fix)
 
 ### Goal
