@@ -184,9 +184,12 @@ INTENT_PATTERNS = [
         "트윈 페이지", "트윈 열어"
     ]),
     ("nav_agents", [
-        "open agents", "go to agents", "agents page", "show agents page"
+        "open agents", "go to agents", "agents page", "show agents page",
+        "show all agents", "list of agents", "list all agents", "all my agents",
+        "registered agents", "agents list", "show me all agents",
     ], [
-        "에이전트 페이지", "에이전트 열어"
+        "에이전트 페이지", "에이전트 열어", "에이전트 목록", "전체 에이전트",
+        "모든 에이전트", "에이전트 리스트",
     ]),
     ("nav_workflows", [
         "open workflows", "go to workflows", "workflows page", "schedules page"
