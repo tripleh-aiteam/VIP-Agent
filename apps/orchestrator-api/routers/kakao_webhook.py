@@ -63,6 +63,32 @@ def _verify_kakao_signature(
 
 
 # ============================================================================
+#  Rate-limit admin endpoints (boss can inspect / unblock)
+# ============================================================================
+
+@router.get("/webhook/kakao/security/stats")
+def kakao_rate_limit_stats():
+    """Snapshot of current rate-limiter state."""
+    from services.rate_limiter import stats
+    return stats()
+
+
+@router.get("/webhook/kakao/security/check/{ip}")
+def kakao_rate_limit_check_ip(ip: str):
+    """Is this IP currently blocked? Returns block info or null."""
+    from services.rate_limiter import get_block_status
+    s = get_block_status(ip)
+    return s or {"ip": ip, "blocked": False}
+
+
+@router.post("/webhook/kakao/security/unblock/{ip}")
+def kakao_rate_limit_unblock(ip: str):
+    """Manually lift a block (boss override)."""
+    from services.rate_limiter import unblock_ip
+    return {"ip": ip, "unblocked": unblock_ip(ip)}
+
+
+# ============================================================================
 #  Webhook entry point — single endpoint for ALL agents
 # ============================================================================
 
@@ -87,6 +113,36 @@ async def kakao_webhook(request: Request, db: Session = Depends(get_db)):
     a user types in the Channel chat. We respond with the bot's reply
     (Boss-OUT) OR persist a draft for boss approval (Boss-IN).
     """
+    # ────────────────────────────────────────────────────────────────────
+    # SECURITY — Rate limit by IP to block abusers / brute-force attempts.
+    # Default: 30 req/min per IP; exceeding it blocks the IP for 10 min.
+    # Kakao's legitimate webhook traffic is far below this threshold.
+    # Anyone pinging us faster than that is either probing the URL or
+    # attacking. Returns 429 Too Many Requests with Retry-After header.
+    # ────────────────────────────────────────────────────────────────────
+    from services.rate_limiter import rate_limit_ip, rate_limit_user
+    # X-Forwarded-For takes precedence (Render/Cloudflare prepend client IP)
+    client_ip = (
+        request.headers.get("x-forwarded-for", "").split(",")[0].strip()
+        or (request.client.host if request.client else "")
+        or "unknown"
+    )
+    allowed, retry = rate_limit_ip(
+        client_ip,
+        limit_per_min=int(os.getenv("KAKAO_RATE_LIMIT_IP_PER_MIN", "30")),
+        block_minutes=int(os.getenv("KAKAO_RATE_LIMIT_BLOCK_MIN", "10")),
+    )
+    if not allowed:
+        log.warning(
+            f"kakao.webhook: IP rate-limited {client_ip} (retry in {retry}s)",
+            extra={"action": "kakao.rate_limit_ip", "ip": client_ip, "retry_after": retry},
+        )
+        raise HTTPException(
+            status_code=429,
+            detail="Too many requests",
+            headers={"Retry-After": str(retry)},
+        )
+
     raw = await request.body()
     signature = request.headers.get("x-kakao-signature") or request.headers.get(
         "X-Kakao-Signature"
@@ -96,6 +152,30 @@ async def kakao_webhook(request: Request, db: Session = Depends(get_db)):
         payload = json.loads(raw)
     except Exception:
         raise HTTPException(status_code=400, detail="Malformed JSON")
+
+    # ────────────────────────────────────────────────────────────────────
+    # SECURITY — Per-Kakao-user throttle. Even from a valid IP, a single
+    # customer shouldn't be able to flood. Default: 12 msgs/min/user.
+    # Beyond that, we drop the message (no reply) — gentler than blocking
+    # the entire IP because Kakao IPs are shared.
+    # ────────────────────────────────────────────────────────────────────
+    try:
+        kakao_uid = ((payload.get("userRequest") or payload.get("user_request") or {})
+                     .get("user") or {}).get("id", "")
+    except Exception:
+        kakao_uid = ""
+    if kakao_uid:
+        ok_user, retry_u = rate_limit_user(
+            kakao_uid,
+            limit_per_min=int(os.getenv("KAKAO_RATE_LIMIT_USER_PER_MIN", "12")),
+        )
+        if not ok_user:
+            log.warning(
+                f"kakao.webhook: user-throttled {kakao_uid[:12]} (retry in {retry_u}s)",
+                extra={"action": "kakao.rate_limit_user", "user_id": kakao_uid, "retry_after": retry_u},
+            )
+            # Return a quiet OK so Kakao doesn't retry — we silently drop.
+            return {"version": "2.0", "template": {"outputs": []}}
 
     # Step 1 — Resolve channel → agent_id
     channel_id = (
