@@ -341,3 +341,71 @@ def agents_summary_for_llm() -> str:
         kw = ", ".join(a.get("keywords", [])[:6])
         lines.append(f"- {a['name']} ({a.get('name_ko', '')}): {a['description']} [keywords: {kw}]")
     return "\n".join(lines)
+
+
+# ============================================================================
+#  Phase 8 — Auto-discovery: detect drift between Sidebar.tsx and PAGES
+# ============================================================================
+
+import re
+from pathlib import Path
+
+
+def detect_sidebar_drift() -> dict:
+    """Parse the admin-dashboard Sidebar.tsx and compare its hrefs/labels
+    against PAGES. Returns:
+
+        {
+          "in_sidebar_not_manifest": [{href, label}, ...],   # missing from manifest
+          "in_manifest_not_sidebar": [{path, name}, ...],    # hidden routes only
+          "ok": bool,
+        }
+
+    Use this as a CI check or a startup warning when devs add new menus
+    to the sidebar without updating the manifest. Doesn't auto-edit;
+    just reports — that keeps the manifest under human control.
+    """
+    sidebar_file = (
+        Path(__file__).resolve().parents[3]  # apps/orchestrator-api/services -> repo root
+        / "apps" / "admin-dashboard" / "src" / "components" / "Sidebar.tsx"
+    )
+    if not sidebar_file.exists():
+        return {"ok": False, "error": f"Sidebar.tsx not found at {sidebar_file}"}
+
+    try:
+        text = sidebar_file.read_text(encoding="utf-8")
+    except Exception as e:
+        return {"ok": False, "error": f"Couldn't read Sidebar.tsx: {e}"}
+
+    # Match patterns like:  { href: "/chatbot", label: "Chatbot", ... }
+    sidebar_entries = []
+    pattern = re.compile(r'\{\s*href:\s*"([^"]+)"\s*,\s*label:\s*"([^"]+)"')
+    for m in pattern.finditer(text):
+        href, label = m.group(1), m.group(2)
+        sidebar_entries.append({"href": href, "label": label})
+
+    manifest_paths = {p["path"] for p in PAGES}
+    sidebar_paths = {e["href"] for e in sidebar_entries}
+
+    in_sidebar_not_manifest = [
+        e for e in sidebar_entries if e["href"] not in manifest_paths
+    ]
+    in_manifest_not_sidebar = [
+        {"path": p["path"], "name": p["name"], "sidebar": p.get("sidebar", False)}
+        for p in PAGES
+        if p["path"] not in sidebar_paths and p.get("sidebar")
+    ]
+
+    return {
+        "ok": not in_sidebar_not_manifest,  # success if no missing entries
+        "sidebar_count": len(sidebar_entries),
+        "manifest_count": len(PAGES),
+        "in_sidebar_not_manifest": in_sidebar_not_manifest,
+        "in_manifest_not_sidebar": in_manifest_not_sidebar,
+        "message": (
+            f"All {len(sidebar_entries)} sidebar entries are in the manifest."
+            if not in_sidebar_not_manifest
+            else f"⚠️ {len(in_sidebar_not_manifest)} sidebar entries are NOT in "
+                 "the manifest — add them so the assistant can navigate to them."
+        ),
+    }

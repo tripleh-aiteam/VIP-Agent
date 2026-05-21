@@ -361,6 +361,13 @@ def _build_card(tool_name: str, result: dict) -> Optional[dict]:
             "title": f"{result['count']} pages available",
             "items": result["pages"],
         }
+    if tool_name == "semantic_search" and result.get("matches"):
+        return {
+            "type": "cross_search",
+            "title": f"Found {result['count']} matches for '{result.get('query', '')}'",
+            "by_source": result.get("by_source"),
+            "items": result["matches"],
+        }
     return None
 
 

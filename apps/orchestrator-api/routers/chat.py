@@ -78,6 +78,40 @@ def agent_command(body: AgentCommandBody, db: Session = Depends(get_db)):
     )
 
 
+@router.get("/agent/manifest")
+def agent_manifest():
+    """Expose the assistant manifest (pages + external agents) as JSON so
+    the frontend can render dynamic page lists / hint chips without
+    duplicating the catalog."""
+    from services.assistant_manifest import (
+        get_all_pages, get_external_agents, detect_sidebar_drift,
+    )
+    return {
+        "pages": get_all_pages(),
+        "external_agents": [
+            {"name": a["name"], "name_ko": a.get("name_ko"),
+             "description": a["description"], "portal_url": a["portal_url"],
+             "keywords": a.get("keywords", [])}
+            for a in get_external_agents()
+        ],
+        "drift": detect_sidebar_drift(),
+    }
+
+
+@router.get("/agent/tools")
+def agent_tools():
+    """List every tool the assistant can call — useful for debugging and
+    for the frontend to show 'what the assistant can do'."""
+    from services.assistant_tools import list_tool_schemas
+    schemas = list_tool_schemas()
+    return {
+        "tool_count": len(schemas),
+        "read_count": sum(1 for s in schemas if s["kind"] == "read"),
+        "write_count": sum(1 for s in schemas if s["kind"] == "write"),
+        "tools": schemas,
+    }
+
+
 @router.post("/transcribe")
 async def transcribe_audio(file: UploadFile = File(...)):
     """

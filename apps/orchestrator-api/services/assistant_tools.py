@@ -913,6 +913,146 @@ def tool_set_twin_mode(twin_name: str, mode: str, db: Session = None, **_kw) -> 
         return {"ok": False, "error": str(e)[:200]}
 
 
+def tool_semantic_search(query: str, db: Session = None, limit: int = 8, **_kw) -> dict[str, Any]:
+    """Phase 7 — Cross-data search.
+
+    Searches ALL relevant tables in ONE call:
+      • Customer conversations (Kakao/Phone/SMS recent messages)
+      • Twin knowledge entries
+      • Orchestrator reports (daily/weekly)
+      • Meeting minutes
+      • Twin activity logs
+
+    Returns a unified list ranked by match strength. Use this when the user
+    asks vague "find anything about X" / "what was that thing we discussed"
+    questions where they don't know which table to look in.
+
+    Implementation: simple ILIKE substring search across each table. Future
+    upgrade: replace with pgvector embeddings for true semantic similarity.
+    """
+    if not db:
+        return {"ok": False, "error": "DB session required"}
+    if not query or not query.strip():
+        return {"ok": False, "error": "query required"}
+    q = query.strip()
+    qlike = f"%{q}%"
+    results: list[dict] = []
+
+    # --- Conversations ---
+    try:
+        from db.models import ChatbotConversation, ChatbotCustomer, ChatbotMessage
+        msgs = (db.query(ChatbotMessage)
+                .filter(ChatbotMessage.text.ilike(qlike))
+                .order_by(ChatbotMessage.created_at.desc())
+                .limit(limit).all())
+        for m in msgs:
+            conv = db.query(ChatbotConversation).filter(
+                ChatbotConversation.id == m.conversation_id).first()
+            cust = db.query(ChatbotCustomer).filter(
+                ChatbotCustomer.id == conv.customer_id).first() if conv else None
+            results.append({
+                "source": "conversation",
+                "id": str(m.conversation_id),
+                "title": f"{cust.name if cust else '?'} ({conv.channel if conv else '?'})",
+                "snippet": (m.text or "")[:160],
+                "ts": m.created_at.isoformat() if m.created_at else None,
+            })
+    except Exception as e:
+        log.warning(f"semantic_search conversations: {e}")
+
+    # --- Knowledge ---
+    try:
+        from db.models import TwinKnowledge, DigitalTwin
+        knowledge = (db.query(TwinKnowledge)
+                     .filter((TwinKnowledge.title.ilike(qlike)) |
+                             (TwinKnowledge.body.ilike(qlike)))
+                     .order_by(TwinKnowledge.created_at.desc())
+                     .limit(limit).all())
+        for k in knowledge:
+            tw = db.query(DigitalTwin).filter(DigitalTwin.id == k.twin_id).first()
+            results.append({
+                "source": "knowledge",
+                "id": str(k.id),
+                "title": f"{k.title or '(no title)'} [{tw.name if tw else '?'}]",
+                "snippet": (k.body or "")[:160],
+                "ts": k.created_at.isoformat() if k.created_at else None,
+            })
+    except Exception as e:
+        log.warning(f"semantic_search knowledge: {e}")
+
+    # --- Reports ---
+    try:
+        from db.models import OrchReport as Report
+        reports = (db.query(Report)
+                   .filter((Report.title.ilike(qlike)) |
+                           (Report.summary.ilike(qlike)))
+                   .order_by(Report.created_at.desc())
+                   .limit(limit).all())
+        for r in reports:
+            results.append({
+                "source": "report",
+                "id": str(r.id),
+                "title": f"{r.title} ({r.report_type})",
+                "snippet": (r.summary or "")[:160],
+                "ts": r.created_at.isoformat() if r.created_at else None,
+            })
+    except Exception as e:
+        log.warning(f"semantic_search reports: {e}")
+
+    # --- Meeting minutes ---
+    try:
+        from db.models import MeetingMinutes
+        minutes = (db.query(MeetingMinutes)
+                   .filter((MeetingMinutes.title.ilike(qlike)) |
+                           (MeetingMinutes.summary.ilike(qlike)))
+                   .order_by(MeetingMinutes.created_at.desc())
+                   .limit(limit).all())
+        for m in minutes:
+            results.append({
+                "source": "meeting_notes",
+                "id": str(m.id),
+                "title": m.title or "(untitled meeting)",
+                "snippet": (m.summary or "")[:160],
+                "ts": m.created_at.isoformat() if m.created_at else None,
+            })
+    except Exception as e:
+        log.warning(f"semantic_search meeting_minutes: {e}")
+
+    # --- Twin activity ---
+    try:
+        from db.models import TwinActivityLog
+        activities = (db.query(TwinActivityLog)
+                      .filter(TwinActivityLog.summary.ilike(qlike))
+                      .order_by(TwinActivityLog.created_at.desc())
+                      .limit(limit).all())
+        for a in activities:
+            results.append({
+                "source": "twin_activity",
+                "id": str(a.id),
+                "title": f"{a.action} (twin)",
+                "snippet": (a.summary or "")[:160],
+                "ts": a.created_at.isoformat() if a.created_at else None,
+            })
+    except Exception as e:
+        log.warning(f"semantic_search twin_activity: {e}")
+
+    # Sort by recency desc and trim
+    results.sort(key=lambda x: x.get("ts") or "", reverse=True)
+    return {
+        "ok": True,
+        "query": q,
+        "count": len(results),
+        "matches": results[:limit],
+        "by_source": {
+            "conversation": sum(1 for r in results if r["source"] == "conversation"),
+            "knowledge": sum(1 for r in results if r["source"] == "knowledge"),
+            "report": sum(1 for r in results if r["source"] == "report"),
+            "meeting_notes": sum(1 for r in results if r["source"] == "meeting_notes"),
+            "twin_activity": sum(1 for r in results if r["source"] == "twin_activity"),
+        },
+    }
+
+
 def tool_latest_meeting_notes(count: int = 3, db: Session = None, **_kw) -> dict[str, Any]:
     """Latest real-world meeting notes with summaries."""
     if not db:
@@ -1127,6 +1267,25 @@ TOOL_REGISTRY: dict[str, Tool] = {
             "required": [],
         },
         fn=tool_latest_meeting_notes,
+    ),
+    "semantic_search": Tool(
+        name="semantic_search", kind="read",
+        description=(
+            "CROSS-DATA SEARCH — searches conversations, knowledge entries, "
+            "reports, meeting notes, and twin activity logs ALL AT ONCE for "
+            "text matching the query. Use when the user asks vague 'find "
+            "anything about X' / 'what was that thing we discussed' / "
+            "'어디서 봤더라' style questions where the right table isn't obvious."
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "Text to search for"},
+                "limit": {"type": "integer", "description": "Max results per source (default 8)"},
+            },
+            "required": ["query"],
+        },
+        fn=tool_semantic_search,
     ),
 
     # ========================================================================

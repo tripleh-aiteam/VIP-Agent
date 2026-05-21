@@ -540,6 +540,12 @@ export default function ChatbotOverlay() {
     const body: any = { transcript: text, language };
     if (useAgent) {
       body.current_path = typeof window !== "undefined" ? window.location.pathname : null;
+      // Pass the last 6 turns so the assistant has session memory
+      // ("yes do that", "again", "instead Kim", etc. work naturally)
+      body.history = history.slice(-6).map(t => ({
+        role: t.who === "user" ? "user" : "assistant",
+        content: t.text,
+      }));
     }
 
     try {
