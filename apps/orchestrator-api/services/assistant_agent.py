@@ -427,6 +427,30 @@ def _compose_write_preview(tool_name: str, args: dict) -> dict[str, Any]:
         return {"message": f"🔧 Set Boss mode to '{args.get('mode')}' for {args.get('hours', 24)} hours?"}
     if tool_name == "set_twin_mode":
         return {"message": f"🔧 Set {args.get('twin_name', '?')}'s mode to '{args.get('mode')}'?"}
+    # ── New tools from the 56-tool expansion ──
+    if tool_name == "create_twin":
+        return {"message": f"➕ Create new twin '{args.get('name', '?')}' owned by {args.get('owner_email', '(default)')}?"}
+    if tool_name == "delete_twin":
+        return {"message": f"🗑️ DELETE twin '{args.get('twin_name', '?')}' and ALL its data? This cannot be undone."}
+    if tool_name == "update_twin_owner":
+        return {"message": f"✏️ Change {args.get('twin_name', '?')}'s owner to {args.get('owner_email', '?')}?"}
+    if tool_name == "update_task_status":
+        return {"message": f"✓ Move task {args.get('task_id', '?')[:12]} → status '{args.get('status', '?')}'?"}
+    if tool_name == "update_task_priority":
+        return {"message": f"⚑ Set task {args.get('task_id', '?')[:12]} priority → '{args.get('priority', '?')}'?"}
+    if tool_name == "reassign_task":
+        return {"message": f"↪️ Reassign task {args.get('task_id', '?')[:12]} → {args.get('twin_name', '?')}?"}
+    if tool_name == "update_knowledge":
+        return {"message": f"✏️ Edit knowledge entry {args.get('knowledge_id', '?')[:12]}?"}
+    if tool_name == "trigger_cross_agent_report":
+        return {"message": "📊 Generate a cross-agent summary (Asset + Stock) report now?"}
+    if tool_name == "delete_report":
+        return {"message": f"🗑️ DELETE report {args.get('report_id', '?')[:12]}? This cannot be undone."}
+    if tool_name == "trigger_workflow":
+        return {"message": f"▶️ Manually run workflow {args.get('workflow_id', '?')[:12]} now?"}
+    if tool_name == "set_workflow_enabled":
+        verb = "enable" if args.get("enabled") else "disable"
+        return {"message": f"⚙️ {verb.capitalize()} workflow {args.get('workflow_id', '?')[:12]}?"}
     # Generic fallback
     return {"message": f"Run {tool_name}({args})?"}
 

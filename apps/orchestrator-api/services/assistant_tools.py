@@ -71,16 +71,24 @@ class Tool:
 #  Universal tools (Phase 1)
 # ============================================================================
 
-def tool_navigate(path: str, query: str = "", **_kw) -> dict[str, Any]:
+def tool_navigate(path: str, query: Any = "", **_kw) -> dict[str, Any]:
     """Validate the path against the manifest and return a navigate action.
 
-    Pass `query` to apply page-level filters via URL search params.
+    Pass `query` to apply page-level filters. Accepts either:
+      - string:  "filter=daily" or "status=pending&twin=Kim"
+      - dict:    {"filter": "daily"} or {"status": "pending", "twin": "Kim"}
     Examples:
       navigate("/reports", "filter=daily")    → /reports?filter=daily
-      navigate("/task-board", "status=pending&twin=Davronbek")
-      navigate("/twins", "mode=active")
-    The page must read these params itself (most do via useSearchParams).
+      navigate("/task-board", {"status": "pending"})
     """
+    # Coerce dict → URL-encoded string. LLMs sometimes return JSON object.
+    from urllib.parse import urlencode
+    query_str = ""
+    if isinstance(query, dict):
+        query_str = urlencode({k: str(v) for k, v in query.items() if v is not None})
+    elif isinstance(query, str):
+        query_str = query.lstrip("?").strip()
+
     target_path = path
     if not is_valid_path(path):
         path_lower = (path or "").lower()
@@ -94,9 +102,9 @@ def tool_navigate(path: str, query: str = "", **_kw) -> dict[str, Any]:
                 "error": f"Unknown path '{path}'. See list_pages() for valid options.",
             }
         target_path = match
-    final_url = target_path + (f"?{query}" if query else "")
+    final_url = target_path + (f"?{query_str}" if query_str else "")
     page = get_page_by_path(target_path)
-    filter_msg = f" (filter: {query})" if query else ""
+    filter_msg = f" (filter: {query_str})" if query_str else ""
     return {
         "ok": True,
         "action": {"type": "navigate", "to": final_url},
@@ -1719,8 +1727,10 @@ def tool_list_workflows(db: Session = None, **_kw) -> dict[str, Any]:
         from db.models import OrchScheduleRule
         rules = db.query(OrchScheduleRule).all()
         return {"ok": True, "count": len(rules),
-                "workflows": [{"id": r.id, "name": r.name, "cron": r.cron,
-                               "enabled": getattr(r, "enabled", True)} for r in rules]}
+                "workflows": [{"id": r.id, "name": r.name,
+                               "cron": getattr(r, "cron_expr", None),
+                               "enabled": bool(getattr(r, "enabled", True))}
+                              for r in rules]}
     except Exception as e:
         return {"ok": False, "error": str(e)[:200]}
 
