@@ -1103,7 +1103,72 @@ def _llm_classify_or_answer(
         parsed["answer"] = ""
     if "entities" not in parsed or not isinstance(parsed["entities"], dict):
         parsed["entities"] = {}
+
+    # === STRICT VALIDATION + FUZZY CORRECTION ===
+    # The LLM sometimes hallucinates intent names that aren't in the menu
+    # (e.g. 'nav_asset' when only 'nav_asset_agent' exists). Without
+    # correction, no handler matches and the action never fires — the
+    # user sees text but the portal doesn't open. Auto-correct by:
+    #  1. Accepting if intent is in the menu OR == 'free_answer'
+    #  2. Otherwise trying prefix / substring match against menu names
+    #  3. Otherwise downgrading to 'free_answer' so we don't try to
+    #     execute a non-existent intent.
+    picked = (parsed.get("intent") or "").strip()
+    valid_names = {it["name"] for it in intents} | {"free_answer"}
+    if picked and picked not in valid_names:
+        corrected = _correct_intent_name(picked, valid_names)
+        if corrected:
+            log.info(
+                f"chatbot.talk: corrected hallucinated intent '{picked}' → '{corrected}'",
+                extra={"action": "chatbot.talk.intent_corrected", "from": picked, "to": corrected},
+            )
+            parsed["intent"] = corrected
+        else:
+            log.warning(
+                f"chatbot.talk: invalid intent '{picked}' from LLM — downgrading to free_answer",
+                extra={"action": "chatbot.talk.intent_invalid"},
+            )
+            parsed["intent"] = "free_answer"
+
     return parsed
+
+
+def _correct_intent_name(picked: str, valid: set[str]) -> Optional[str]:
+    """Fuzzy-match a hallucinated intent name against the real menu.
+    Examples:
+        'nav_asset'      → 'nav_asset_agent'  (prefix match)
+        'open_asset'     → 'nav_asset_agent'  (asset substring)
+        'navAssetAgent'  → 'nav_asset_agent'  (normalized match)
+    Returns None when no reasonable match exists."""
+    picked_lower = picked.lower().replace("-", "_").strip()
+    if picked_lower in valid:
+        return picked_lower
+    # 1. Prefix: an intent that starts with the picked name
+    for name in valid:
+        if name.startswith(picked_lower + "_") or name.startswith(picked_lower):
+            return name
+    # 2. Substring on a meaningful token (asset / stock / realty / report / twin)
+    KEY_TOKENS = ("asset", "stock", "realty", "real_estate", "reports",
+                  "twins", "messages", "judgement", "approval", "meeting",
+                  "task", "workflow", "control", "channel", "settings",
+                  "dashboard")
+    for token in KEY_TOKENS:
+        if token in picked_lower:
+            # Find a valid intent that contains the same token
+            for name in valid:
+                if token in name.replace("-", "_"):
+                    # Prefer nav_ over query_ if the user's name had 'nav' or 'open'
+                    if picked_lower.startswith(("nav", "open", "show", "go")):
+                        if name.startswith("nav_"):
+                            return name
+                    elif picked_lower.startswith(("query", "get", "what", "how")):
+                        if name.startswith("query_"):
+                            return name
+            # Fallback to any match of the token
+            for name in valid:
+                if token in name.replace("-", "_"):
+                    return name
+    return None
 
 
 def _try_extract_json(text: str) -> Any:
