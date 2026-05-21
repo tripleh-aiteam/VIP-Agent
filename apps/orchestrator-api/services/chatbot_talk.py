@@ -52,14 +52,12 @@ def _vip_intent_list() -> list[dict[str, Any]]:
          "examples": ["open messages", "show me messages", "go to messages",
                       "open the message hub", "see DMs", "show my inbox",
                       "메시지 페이지", "메시지 열어", "받은 메시지"]},
-        # IMPORTANT for the LLM: when the user mentions a SPECIFIC agent by
-        # name (Asset / Stock / Real Estate / Realty / 자산 / 주식 / 부동산),
-        # ALWAYS pick the matching nav_<agent>_agent intent below — NEVER
-        # nav_agents. nav_agents is ONLY for explicit listing requests like
-        # 'show me ALL my agents' / 'list of agents' / 'agents page'.
-        {"name": "nav_agents", "description": "Open the internal /agents LISTING page (a directory of all registered agents). Only use when the user explicitly wants to SEE THE LIST of all agents — e.g. 'show all agents', 'list my agents', 'agents page'. If the user mentions ANY specific agent by name (Asset, Stock, Real Estate), DO NOT pick this — pick nav_asset_agent / nav_stock_agent / nav_realty_agent instead.",
-         "examples": ["show all agents", "list of agents", "agents page", "all my agents",
-                      "registered agents", "에이전트 목록", "전체 에이전트"]},
+        # nav_agents (internal listing) intentionally NOT in this menu. When
+        # the user wants the agents listing, the keyword classifier in
+        # voice_intents handles it ("agents page" / "show all agents" /
+        # "에이전트 페이지"). Removing it from the LLM menu prevents Groq
+        # from mis-routing 'I wanna see Asset Agent' → nav_agents instead
+        # of the specific nav_asset_agent.
         {"name": "nav_asset_agent", "description": "Open the EXTERNAL Asset Agent web portal (its deployed homepage) in a new browser tab. Pick this WHENEVER the user mentions the Asset Agent or wants to see/visit/use the Asset agent — even with casual phrasings like 'I wanna see asset agent', 'hey can you show me the asset agent', 'pull up asset', 'bring up the asset thing'.",
          "examples": ["open asset agent", "go to asset agent", "show asset agent",
                       "I wanna see asset agent", "I want to see the asset agent",

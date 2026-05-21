@@ -29,23 +29,44 @@ from sqlalchemy import func
 # so navigation requests don't get intercepted by data-query intents.
 INTENT_PATTERNS = [
     # ========== Specific navigation: per-agent (must precede *_situation) ==========
+    # These patterns are intentionally permissive — catch casual phrasings
+    # ('I wanna see asset agent', 'show me the stock app', 'hey bro launch
+    # realty', '자산 에이전트 보여줘'). When the keyword classifier misses,
+    # handle_voice_command falls back to Groq via chatbot_talk.handle_talk
+    # which catches even more obscure synonyms.
     ("nav_asset_agent", [
         "open asset agent", "go to asset agent", "show asset agent",
-        "asset agent page", "open the asset agent", "navigate to asset agent",
+        "show me asset agent", "show me the asset agent", "asset agent page",
+        "open the asset agent", "navigate to asset agent", "launch asset agent",
+        "i wanna see asset agent", "i want to see asset agent",
+        "give me asset agent", "pull up asset agent", "bring up asset agent",
+        "asset agent home", "asset agent homepage", "asset agent app",
     ], [
-        "자산 에이전트 열어", "자산 에이전트 페이지",
+        "자산 에이전트 열어", "자산 에이전트 페이지", "자산 에이전트 보여",
+        "자산 에이전트 좀", "자산 앱", "자산 에이전트 띄워",
     ]),
     ("nav_stock_agent", [
         "open stock agent", "go to stock agent", "show stock agent",
-        "stock agent page", "open the stock agent", "navigate to stock agent",
+        "show me stock agent", "show me the stock agent", "stock agent page",
+        "open the stock agent", "navigate to stock agent", "launch stock agent",
+        "i wanna see stock agent", "i want to see stock agent",
+        "give me stock agent", "pull up stock agent", "bring up stock agent",
+        "stock agent home", "stock agent homepage", "stock agent app",
     ], [
-        "주식 에이전트 열어", "주식 에이전트 페이지",
+        "주식 에이전트 열어", "주식 에이전트 페이지", "주식 에이전트 보여",
+        "주식 에이전트 좀", "주식 앱", "주식 에이전트 띄워", "스톡 에이전트",
     ]),
     ("nav_realty_agent", [
         "open realty agent", "go to realty agent", "show realty agent",
-        "realty agent page", "open real estate agent", "go to real estate agent",
+        "open real estate agent", "go to real estate agent", "show me realty",
+        "show me real estate agent", "i wanna see realty",
+        "i wanna see real estate agent", "i want to see real estate agent",
+        "realty agent page", "real estate agent page", "launch realty",
+        "launch real estate agent", "give me realty", "pull up realty",
+        "realty app", "real estate app", "property app",
     ], [
-        "부동산 에이전트 열어", "부동산 에이전트 페이지",
+        "부동산 에이전트 열어", "부동산 에이전트 페이지", "부동산 에이전트 보여",
+        "부동산 에이전트 좀", "부동산 앱", "부동산 에이전트 띄워",
     ]),
     # ========== Domain-specific situations (MUST come before daily_briefing
     # so e.g. 'kospi today' / '주식 오늘' routes to stock, not daily) ==========
@@ -84,11 +105,15 @@ INTENT_PATTERNS = [
         "월간 보고", "이번 달", "월간", "월별 리포트"
     ]),
     # ========== Agents ==========
+    # NOTE: keep keywords very specific — bare "에이전트" used to match
+    # "자산 에이전트 좀 열어줘" and route to agent_status instead of
+    # nav_asset_agent. Removed the bare token; require 'agent status' /
+    # 'how are the agents' / 'agent health' specifically.
     ("agent_status", [
         "agent status", "agents status", "how are the agents", "agent health",
-        "show agents", "list agents", "agents overview"
+        "agents health", "agents overview",
     ], [
-        "에이전트 상태", "에이전트", "에이전트 보여", "에이전트 목록"
+        "에이전트 상태", "에이전트 헬스", "에이전트 건강", "전체 에이전트 상태",
     ]),
     ("asset_situation", [
         "asset status", "asset report", "asset summary", "real estate portfolio",
