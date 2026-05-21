@@ -2,7 +2,7 @@
 Real Estate Agent Adapter
 Tries the real backend first. If unavailable (returns HTML or errors),
 falls back to portal-sourced structured data.
-Portal: https://real-estate-dashboard-steel.vercel.app
+Portal: https://realestate-tripleh.vercel.app
 Backend: (pending colleague fix — currently returns HTML)
 """
 
@@ -87,7 +87,7 @@ class RealRealtyAdapter(BaseAdapter):
             "source": "realty-adapter-fallback",
             "fallback": True,
             "region": region,
-            "portal_url": "https://real-estate-dashboard-steel.vercel.app",
+            "portal_url": "https://realestate-tripleh.vercel.app",
             "risk_factors": [],
         }
 

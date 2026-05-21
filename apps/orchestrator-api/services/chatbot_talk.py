@@ -1171,7 +1171,7 @@ def _execute_intent(
         "nav_realty_agent": (
             (os.getenv("REAL_REALTY_AGENT_PORTAL_URL")
              or os.getenv("REAL_REALTY_AGENT_URL")
-             or "https://real-estate-dashboard-steel.vercel.app"),
+             or "https://realestate-tripleh.vercel.app"),
             "Opening the Real Estate Agent in a new tab.",
             "부동산 에이전트를 새 탭에서 엽니다.",
         ),
