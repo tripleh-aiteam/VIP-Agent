@@ -70,19 +70,29 @@ INTENT_PATTERNS = [
     ]),
     # ========== Domain-specific situations (MUST come before daily_briefing
     # so e.g. 'kospi today' / '주식 오늘' routes to stock, not daily) ==========
+    # NOTE: bare 'stock' / '주식' removed — they swallowed navigation queries
+    # like 'I wanna see my Stock Agent'. Now requires a qualifier
+    # (market / situation / report / status / kospi / my stocks).
     ("stock_situation", [
         "kospi", "kosdaq", "stock market", "my stocks", "my portfolio",
         "stock situation", "stock report", "stock status", "stock summary",
         "how are my stocks", "how's the market", "market today",
+        "how is my portfolio", "portfolio status",
     ], [
-        "코스피", "코스닥", "주식", "주식 상황", "주식 리포트", "내 주식",
-        "내 포트폴리오", "주식 시장", "시장 상황",
+        "코스피", "코스닥", "주식 상황", "주식 상태", "주식 리포트",
+        "내 주식", "내 포트폴리오", "주식 시장", "시장 상황",
     ]),
+    # NOTE: bare 'real estate' / 'realty' / '부동산' removed — they swallowed
+    # navigation queries like 'I wanna see my Real Estate Agent'. Now requires
+    # a qualifier like 'status', 'situation', 'market', 'report'.
     ("realty_situation", [
-        "real estate", "realty", "property market", "vacancy rate",
-        "rental income", "occupancy",
+        "real estate situation", "real estate status", "real estate report",
+        "real estate market", "realty status", "realty situation",
+        "realty report", "property market", "vacancy rate", "rental income",
+        "occupancy rate",
     ], [
-        "부동산", "부동산 상황", "공실률", "임대수익",
+        "부동산 상황", "부동산 상태", "부동산 리포트", "부동산 시장",
+        "공실률", "임대수익",
     ]),
     # ========== Reports (daily_briefing is the catchall — keywords are
     # intentionally generic, so it runs AFTER the specific domain patterns) ==========
