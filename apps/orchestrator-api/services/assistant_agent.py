@@ -40,7 +40,10 @@ from services.assistant_manifest import (
 #  System prompt builder
 # ============================================================================
 
-def _build_system_prompt(current_path: Optional[str] = None) -> str:
+def _build_system_prompt(
+    current_path: Optional[str] = None,
+    selected_id: Optional[str] = None,
+) -> str:
     """Compose the system prompt the LLM sees on every request.
 
     Includes:
@@ -59,9 +62,22 @@ def _build_system_prompt(current_path: Optional[str] = None) -> str:
         )
     tools_block = "\n".join(tool_lines)
 
-    context_block = ""
+    context_lines = []
     if current_path:
-        context_block = f"\n[CURRENT PAGE] User is currently on: {current_path}\n"
+        context_lines.append(f"[CURRENT PAGE] User is on: {current_path}")
+    if selected_id:
+        # Hint the LLM what 'this' refers to based on current page
+        hint = ""
+        if current_path and current_path.startswith("/chatbot"):
+            hint = f' (treat as conversation_id when the user says "this conversation" / "this message")'
+        elif current_path and current_path.startswith("/reports"):
+            hint = f' (treat as report_id when the user says "this report")'
+        elif current_path and current_path.startswith("/twins"):
+            hint = f' (treat as twin_id when the user says "this twin")'
+        elif current_path and current_path.startswith("/meetings"):
+            hint = f' (treat as meeting_id when the user says "this meeting")'
+        context_lines.append(f"[SELECTED ID] {selected_id}{hint}")
+    context_block = "\n" + "\n".join(context_lines) + "\n" if context_lines else ""
 
     return (
         "You are the VIP Agent Assistant — the boss's AI co-pilot for the "
@@ -81,8 +97,13 @@ def _build_system_prompt(current_path: Optional[str] = None) -> str:
         f"{context_block}\n"
         "■ HOW TO RESPOND\n"
         "Always respond with ONE of these JSON shapes — NOTHING ELSE:\n"
-        '  A. Call a tool: { "tool": "<name>", "args": { ... } }\n'
-        '  B. Answer directly (no tool needed): { "answer": "<your reply>" }\n\n'
+        '  A. Call ONE tool:    { "tool": "<name>", "args": { ... } }\n'
+        '  B. Chain N tools:    { "steps": [ { "tool": "<name>", "args": {...} }, ... ] }\n'
+        '                       The backend runs each step in order, feeds the\n'
+        '                       result of step N into step N+1 (you can reference\n'
+        '                       step results when the user asks compound questions).\n'
+        '                       Use chains for "find X and then do Y" requests.\n'
+        '  C. Answer directly:  { "answer": "<your reply>" }\n\n'
         "Rules:\n"
         "- For navigation queries (open X / show me X / go to X / 열어 / 보여줘): "
         "use navigate(path) for internal pages OR open_portal(agent) for "
@@ -155,6 +176,254 @@ def _extract_json(text: str) -> Any:
     return None
 
 
+def _run_chain(
+    db: Session,
+    transcript: str,
+    lang: str,
+    steps: list[dict],
+    current_path: Optional[str],
+    selected_id: Optional[str],
+    system_prompt: str,
+    history: list[dict],
+) -> dict[str, Any]:
+    """Execute a multi-step chain. If any step is a WRITE tool, halt and
+    return a proposed_chain so the widget can ask for confirmation up front
+    (single confirm covers the whole chain)."""
+    # Validate every step's tool exists; if any write tool appears, request confirm
+    validated_steps = []
+    any_write = False
+    for s in steps[:6]:  # cap chain length
+        tname = (s.get("tool") or "").strip()
+        if tname not in TOOL_REGISTRY:
+            log.warning(f"chain: skip unknown tool '{tname}'")
+            continue
+        targs = s.get("args") or {}
+        if selected_id:
+            for k in ("conversation_id", "report_id", "twin_id", "meeting_id",
+                      "handoff_id", "task_id", "knowledge_id"):
+                if k in (TOOL_REGISTRY[tname].parameters.get("properties") or {}) and not targs.get(k):
+                    targs[k] = selected_id
+                    break
+        validated_steps.append({"tool": tname, "args": targs})
+        if TOOL_REGISTRY[tname].requires_confirmation:
+            any_write = True
+
+    if not validated_steps:
+        return {
+            "intent": "chain_empty", "language": lang, "reply": "I'm not sure how to do that.",
+            "action": None, "speak": True, "transcript": transcript,
+        }
+
+    if any_write:
+        # Compose a multi-line preview
+        preview_lines = []
+        for i, s in enumerate(validated_steps, 1):
+            p = _compose_write_preview(s["tool"], s["args"])
+            preview_lines.append(f"{i}. {p['message']}")
+        return {
+            "intent": "chain_proposed", "language": lang,
+            "reply": "I'd like to run these steps — confirm?\n" + "\n".join(preview_lines),
+            "action": None, "speak": True, "transcript": transcript,
+            "tool_used": None,
+            "proposed_chain": validated_steps,
+        }
+
+    # Read-only chain — execute all and compose a final answer
+    step_results = []
+    for s in validated_steps:
+        res = execute_tool(s["tool"], s["args"], db=db)
+        step_results.append({"tool": s["tool"], "result": res})
+
+    # Compose final answer from all step results
+    follow_system = (
+        "You just ran the following tools sequentially. Summarize what you "
+        "found for the boss in 2-4 sentences (same language as their question). "
+        "Use specific names and numbers from the results. Be conversational."
+    )
+    import json as _json
+    summary_input = _json.dumps(step_results, ensure_ascii=False)[:3000]
+    try:
+        reply = chat_completion_sync(
+            system_prompt=follow_system,
+            messages=[
+                {"role": "user", "content": f"Question: {transcript}"},
+                {"role": "user", "content": f"Tool chain results:\n{summary_input}"},
+            ],
+            max_tokens=400, temperature=0.5,
+            model="groq-llama-3.3-70b",
+        )
+    except Exception:
+        reply = "Done — checked the data."
+
+    # If any step returned an action (navigate / open_portal), surface the LAST one
+    action = None
+    for s in reversed(step_results):
+        a = (s.get("result") or {}).get("action")
+        if a:
+            action = a
+            break
+
+    return {
+        "intent": "chain_completed",
+        "language": lang,
+        "reply": (reply or "Done.")[:1500],
+        "action": action,
+        "speak": True,
+        "transcript": transcript,
+        "tool_used": "[chain]",
+        "tool_result": {"steps": step_results, "step_count": len(step_results)},
+    }
+
+
+def _build_card(tool_name: str, result: dict) -> Optional[dict]:
+    """Convert a read-tool's result into a structured display card the
+    widget can render (Notion-AI style). Returns None when the tool
+    result isn't card-worthy (just text / action)."""
+    if not isinstance(result, dict) or not result.get("ok"):
+        return None
+    if tool_name == "search_twin" and result.get("matches"):
+        return {
+            "type": "twin_list",
+            "title": f"Found {len(result['matches'])} twin(s)",
+            "items": result["matches"],
+        }
+    if tool_name == "twin_activity" and result.get("activities"):
+        return {
+            "type": "activity_list",
+            "title": f"{result.get('twin_name', '?')} — last {result.get('hours_window', '?')}h activity",
+            "items": result["activities"],
+        }
+    if tool_name == "twin_tasks" and result.get("tasks"):
+        return {
+            "type": "task_list",
+            "title": f"{result.get('twin_name', '?')} — tasks",
+            "items": result["tasks"],
+        }
+    if tool_name == "search_conversations" and result.get("matches"):
+        return {
+            "type": "conversation_list",
+            "title": f"Found {result['count']} conversation(s)",
+            "items": result["matches"],
+        }
+    if tool_name == "conversation_history" and result.get("messages"):
+        return {
+            "type": "message_thread",
+            "title": f"Conversation {result.get('conversation_id', '')[:8]}",
+            "items": result["messages"],
+        }
+    if tool_name == "latest_report":
+        return {
+            "type": "report_excerpt",
+            "title": result.get("title") or f"{result.get('type', '?').title()} Report",
+            "summary": result.get("summary"),
+            "report_id": result.get("report_id"),
+        }
+    if tool_name == "search_reports" and result.get("matches"):
+        return {
+            "type": "report_list",
+            "title": f"Found {result['count']} report(s)",
+            "items": result["matches"],
+        }
+    if tool_name == "agent_status":
+        return {
+            "type": "agent_status_card",
+            "title": f"{result.get('agent', '?')} ({result.get('type', '?')})",
+            "summary": result.get("summary"),
+            "data": result.get("data"),
+        }
+    if tool_name == "list_pending_approvals" and result.get("cases"):
+        return {
+            "type": "approval_list",
+            "title": f"{result['count']} pending approval(s)",
+            "items": result["cases"],
+        }
+    if tool_name == "search_knowledge" and result.get("matches"):
+        return {
+            "type": "knowledge_list",
+            "title": f"Found {result['count']} knowledge entrie(s)",
+            "items": result["matches"],
+        }
+    if tool_name == "count":
+        return {
+            "type": "stat_card",
+            "label": result.get("entity"),
+            "value": result.get("count"),
+        }
+    if tool_name == "latest_meeting_notes" and result.get("notes"):
+        return {
+            "type": "meeting_notes_list",
+            "title": f"{result['count']} latest meeting note(s)",
+            "items": result["notes"],
+        }
+    if tool_name == "list_pages" and result.get("pages"):
+        return {
+            "type": "page_list",
+            "title": f"{result['count']} pages available",
+            "items": result["pages"],
+        }
+    return None
+
+
+def _compose_write_preview(tool_name: str, args: dict) -> dict[str, Any]:
+    """Human-readable preview of a write action before user confirms.
+    Returns {"message": str, "details": dict (optional)}."""
+    if tool_name == "send_dm":
+        return {
+            "message": f"📩 Send DM to {args.get('twin_name', '?')}: \"{(args.get('body') or '')[:120]}\"",
+            "details": {"target": args.get("twin_name"), "body": args.get("body")},
+        }
+    if tool_name == "send_email":
+        return {
+            "message": f"✉️ Send email to {args.get('to', '?')}: \"{(args.get('subject') or '')[:60]}\"",
+            "details": {"to": args.get("to"), "subject": args.get("subject"),
+                        "body": (args.get("body") or "")[:300]},
+        }
+    if tool_name == "broadcast":
+        return {
+            "message": f"📢 Broadcast to ALL workers: \"{(args.get('body') or '')[:120]}\"",
+            "details": {"body": args.get("body")},
+        }
+    if tool_name == "kakao_reply":
+        return {
+            "message": f"💬 Reply on Kakao conversation {args.get('conversation_id', '?')[:8]}: \"{(args.get('text') or '')[:120]}\"",
+            "details": {"conversation_id": args.get("conversation_id"), "text": args.get("text")},
+        }
+    if tool_name == "trigger_daily_report":
+        return {"message": "📊 Generate today's daily report now?"}
+    if tool_name == "trigger_weekly_report":
+        return {"message": "📈 Generate this week's report now?"}
+    if tool_name == "approve_handoff":
+        return {"message": f"✅ Approve handoff {args.get('handoff_id', '?')[:12]}?"}
+    if tool_name == "approve_all_pending":
+        return {"message": "✅ Approve ALL pending overnight handoffs?"}
+    if tool_name == "reject_handoff":
+        return {"message": f"❌ Reject handoff {args.get('handoff_id', '?')[:12]}? Reason: {args.get('reason', '(none)')}"}
+    if tool_name == "resolve_conversation":
+        return {"message": f"✓ Mark Kakao conversation {args.get('conversation_id', '?')[:8]} as resolved?"}
+    if tool_name == "take_over_conversation":
+        return {"message": f"👤 Take over Kakao conversation {args.get('conversation_id', '?')[:8]} (you will reply manually)?"}
+    if tool_name == "escalate_conversation":
+        return {"message": f"⚠️ Escalate Kakao conversation {args.get('conversation_id', '?')[:8]} as urgent?"}
+    if tool_name == "create_task":
+        return {"message": f"➕ Create task '{args.get('title', '')[:60]}' assigned to {args.get('twin_name', '?')}?"}
+    if tool_name == "cancel_task":
+        return {"message": f"❌ Cancel task {args.get('task_id', '?')[:12]}?"}
+    if tool_name == "schedule_meeting":
+        return {"message": f"📅 Schedule meeting with {args.get('participants', '?')} at {args.get('when', '?')}: {args.get('agenda', '')[:60]}"}
+    if tool_name == "cancel_meeting":
+        return {"message": f"❌ Cancel meeting {args.get('meeting_id', '?')[:12]}?"}
+    if tool_name == "add_knowledge":
+        return {"message": f"📝 Add knowledge to {args.get('twin_name', '?')}: '{args.get('title', '')[:60]}'?"}
+    if tool_name == "delete_knowledge":
+        return {"message": f"🗑️ Delete knowledge entry {args.get('knowledge_id', '?')[:12]}?"}
+    if tool_name == "set_boss_mode":
+        return {"message": f"🔧 Set Boss mode to '{args.get('mode')}' for {args.get('hours', 24)} hours?"}
+    if tool_name == "set_twin_mode":
+        return {"message": f"🔧 Set {args.get('twin_name', '?')}'s mode to '{args.get('mode')}'?"}
+    # Generic fallback
+    return {"message": f"Run {tool_name}({args})?"}
+
+
 def _compose_final_answer(
     system: str,
     user_msg: str,
@@ -198,11 +467,43 @@ def run_agent(
     transcript: str,
     language: str = "auto",
     current_path: Optional[str] = None,
+    selected_id: Optional[str] = None,
     history: Optional[list[dict]] = None,
+    confirmed_tool: Optional[str] = None,
+    confirmed_args: Optional[dict] = None,
 ) -> dict[str, Any]:
-    """Run one agent turn. Returns the same shape /chat/voice produces:
-        {intent, language, reply, action, speak, transcript, tool_used, tool_result}
+    """Run one agent turn. Returns:
+        {intent, language, reply, action, speak, transcript, tool_used, tool_result,
+         proposed_action?}
+
+    confirmed_tool / confirmed_args:
+        Set when the user clicked Confirm on a previously-proposed write
+        action. We bypass the LLM and execute the tool directly.
     """
+    # === Direct execute path (after user confirmed a proposed write) ===
+    if confirmed_tool and confirmed_tool in TOOL_REGISTRY:
+        tool = TOOL_REGISTRY[confirmed_tool]
+        args = confirmed_args or {}
+        # Carry the path through if the tool wants it
+        if current_path and "current_path" not in args:
+            args["current_path"] = current_path
+        tool_result = execute_tool(confirmed_tool, args, db=db)
+        action = tool_result.get("action") if isinstance(tool_result, dict) else None
+        reply = tool_result.get("message") if isinstance(tool_result, dict) else "Done."
+        if not reply:
+            reply = "Done." if tool_result.get("ok") else f"Failed: {tool_result.get('error', 'unknown')}"
+        return {
+            "intent": confirmed_tool,
+            "language": language if language in ("ko", "en") else "en",
+            "reply": reply,
+            "action": action,
+            "speak": True,
+            "transcript": transcript or f"[confirmed: {confirmed_tool}]",
+            "tool_used": confirmed_tool,
+            "tool_result": tool_result,
+            "confirmed": True,
+        }
+
     transcript = (transcript or "").strip()
     if not transcript:
         return {
@@ -222,10 +523,19 @@ def run_agent(
         hangul = sum(1 for c in transcript if 0xAC00 <= ord(c) <= 0xD7A3)
         lang = "ko" if hangul > 0 else "en"
 
-    system = _build_system_prompt(current_path=current_path)
+    system = _build_system_prompt(current_path=current_path, selected_id=selected_id)
+
+    # Auto-fill ID args from selected_id when the LLM picks a tool that
+    # needs an ID but the user said "this" (LLM may not include the ID).
+    # Done after LLM decision, see below.
 
     # ===== Turn 1: decision =====
     decision = _call_llm_for_decision(system, transcript, history or [])
+
+    # ===== Phase 5: Multi-step chain =====
+    steps = decision.get("steps")
+    if isinstance(steps, list) and len(steps) > 0:
+        return _run_chain(db, transcript, lang, steps, current_path, selected_id, system, history or [])
 
     # If the LLM chose to answer directly, return it
     if decision.get("answer") and not decision.get("tool"):
@@ -258,9 +568,51 @@ def run_agent(
 
     tool = TOOL_REGISTRY[tool_name]
 
-    # For Phase 1, all tools are READ tools. WRITE tools (Phase 3) will return
-    # a proposed_action instead of executing — the widget shows a confirm card.
+    # === Phase 4: Page-context auto-fill ===
+    # If the user said "this" and the tool needs an ID arg that wasn't
+    # populated by the LLM, fill from selected_id.
+    if selected_id:
+        id_keys = ("conversation_id", "report_id", "twin_id", "meeting_id",
+                   "handoff_id", "task_id", "knowledge_id")
+        for k in id_keys:
+            if k in (tool.parameters.get("properties") or {}) and not args.get(k):
+                args[k] = selected_id
+                break
+
+    # === PERMISSION GATE for WRITE tools (Phase 3) ===
+    # If the picked tool is a write/destructive action, DO NOT execute.
+    # Instead return a proposed_action so the frontend can render a
+    # confirm card. User clicks Confirm → widget re-calls /chat/agent
+    # with confirmed_tool + confirmed_args.
+    if tool.requires_confirmation:
+        # Carry current_path so previews / re-runs have it
+        preview_args = dict(args or {})
+        if current_path and "current_path" not in preview_args:
+            preview_args["current_path"] = current_path
+        # Compose a human-readable preview
+        preview = _compose_write_preview(tool_name, preview_args)
+        return {
+            "intent": tool_name,
+            "language": lang,
+            "reply": preview["message"],
+            "action": None,
+            "speak": True,
+            "transcript": transcript,
+            "tool_used": None,
+            "proposed_action": {
+                "tool": tool_name,
+                "args": preview_args,
+                "summary": preview["message"],
+                "details": preview.get("details"),
+                "requires_confirmation": True,
+            },
+        }
+
+    # READ tools execute immediately
     tool_result = execute_tool(tool_name, args, db=db)
+
+    # === Phase 6: Build inline result card ===
+    card = _build_card(tool_name, tool_result)
 
     # If the tool itself returned an action (navigate, open_portal, etc.),
     # surface it to the frontend so the widget can execute it.
@@ -282,4 +634,5 @@ def run_agent(
         "transcript": transcript,
         "tool_used": tool_name,
         "tool_result": tool_result if tool.kind == "read" else None,
+        "card": card,
     }

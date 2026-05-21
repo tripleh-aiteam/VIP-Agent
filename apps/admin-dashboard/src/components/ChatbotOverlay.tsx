@@ -33,6 +33,9 @@ interface Turn {
   ts: number;
   ack?: string;                  // optional ack spoken before main reply
   steps?: ProcessStep[];          // animated progress steps
+  proposed?: ProposedAction;     // Phase 3 — write actions awaiting user confirm
+  proposedChain?: { tool: string; args: any }[];  // Phase 5 — multi-step chain
+  card?: any;                    // Phase 6 — inline structured card
 }
 
 interface Action {
@@ -42,6 +45,14 @@ interface Action {
   method?: string;
   external?: boolean;
   highlight?: string;
+}
+
+interface ProposedAction {
+  tool: string;
+  args: Record<string, any>;
+  summary: string;
+  details?: any;
+  requires_confirmation: boolean;
 }
 
 const WAKE_WORDS_EN = ["hey chatbot", "hi chatbot", "chatbot", "hey assistant"];
@@ -546,7 +557,10 @@ export default function ChatbotOverlay() {
       const replyLang = data.language || (language === "auto" ? "en" : language);
       const action: Action | null = data.action || null;
 
-      // Render the assistant's turn with optional ack + steps
+      // Render the assistant's turn with optional ack + steps + proposed + card
+      const proposed: ProposedAction | undefined = data.proposed_action;
+      const proposedChain = data.proposed_chain;
+      const card = data.card;
       const newTurn: Turn = {
         who: "chatbot",
         text: reply,
@@ -554,6 +568,9 @@ export default function ChatbotOverlay() {
         ts: Date.now(),
         ack: ack || undefined,
         steps: steps.length > 0 ? steps : undefined,
+        proposed,
+        proposedChain,
+        card,
       };
       setHistory(prev => [...prev, newTurn]);
 
@@ -576,6 +593,77 @@ export default function ChatbotOverlay() {
       setError(`Couldn't reach server: ${e.message || e}`);
       setState("idle");
     }
+  }
+
+  // ===== Phase 3 — confirm a write action proposed by the agent =====
+  async function confirmProposed(p: ProposedAction) {
+    setState("thinking");
+    try {
+      const res = await fetch(`${API}/chat/agent`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          transcript: "",
+          confirmed_tool: p.tool,
+          confirmed_args: p.args,
+          current_path: typeof window !== "undefined" ? window.location.pathname : null,
+        }),
+      });
+      const data = await res.json();
+      const newTurn: Turn = {
+        who: "chatbot",
+        text: data.reply || "Done.",
+        intent: data.intent,
+        ts: Date.now(),
+      };
+      setHistory(prev => [...prev, newTurn]);
+      if (data.action) executeAction(data.action);
+    } catch (e: any) {
+      setError(`Couldn't reach server: ${e.message || e}`);
+    } finally {
+      setState("idle");
+    }
+  }
+
+  // ===== Phase 5 — confirm a multi-step chain =====
+  async function confirmChain(steps: { tool: string; args: any }[]) {
+    setState("thinking");
+    try {
+      // Execute each step sequentially via confirmed_tool path
+      const newTurn: Turn = { who: "chatbot", text: "Running chain...", ts: Date.now() };
+      setHistory(prev => [...prev, newTurn]);
+      const replies: string[] = [];
+      for (const s of steps) {
+        const res = await fetch(`${API}/chat/agent`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            transcript: "",
+            confirmed_tool: s.tool,
+            confirmed_args: s.args,
+          }),
+        });
+        const data = await res.json();
+        replies.push(`${s.tool}: ${data.reply || "(no reply)"}`);
+        if (data.action) executeAction(data.action);
+      }
+      const summary: Turn = {
+        who: "chatbot",
+        text: replies.join("\n"),
+        ts: Date.now(),
+      };
+      setHistory(prev => [...prev, summary]);
+    } catch (e: any) {
+      setError(`Chain failed: ${e.message || e}`);
+    } finally {
+      setState("idle");
+    }
+  }
+
+  function cancelProposed(turnIndex: number) {
+    setHistory(prev => prev.map((t, i) =>
+      i === turnIndex ? { ...t, proposed: undefined, proposedChain: undefined, text: t.text + " (cancelled)" } : t
+    ));
   }
 
   // Execute the action returned by the orchestrator
@@ -813,6 +901,89 @@ export default function ChatbotOverlay() {
                   <div className="text-[9px] opacity-60 mt-0.5">{t.intent}</div>
                 )}
               </div>
+
+              {/* Phase 6 — inline result card */}
+              {t.card && t.who === "chatbot" && (
+                <div className="w-full mt-1 rounded-xl border border-[var(--border-default)] bg-[var(--bg-elevated)] p-2.5 text-[12px]">
+                  {t.card.type === "stat_card" ? (
+                    <div className="text-center">
+                      <div className="text-[10px] uppercase tracking-wide text-[var(--text-muted)]">{t.card.label}</div>
+                      <div className="text-[20px] font-bold text-blue-600">{t.card.value}</div>
+                    </div>
+                  ) : t.card.type === "agent_status_card" ? (
+                    <div>
+                      <div className="font-semibold mb-1">{t.card.title}</div>
+                      <div className="text-[11px] text-[var(--text-secondary)]">{t.card.summary}</div>
+                    </div>
+                  ) : t.card.type === "report_excerpt" ? (
+                    <div>
+                      <div className="font-semibold mb-1">📊 {t.card.title}</div>
+                      <div className="text-[11px] text-[var(--text-secondary)] leading-snug">{t.card.summary?.slice(0, 250)}</div>
+                    </div>
+                  ) : (t.card.items && Array.isArray(t.card.items)) ? (
+                    <div>
+                      <div className="font-semibold mb-1.5 text-[11px] text-[var(--text-muted)]">{t.card.title}</div>
+                      <ul className="space-y-1">
+                        {t.card.items.slice(0, 5).map((it: any, ii: number) => (
+                          <li key={ii} className="text-[11px] py-1 border-b border-[var(--border-default)] last:border-0">
+                            {Object.entries(it).slice(0, 3).map(([k, v]) => (
+                              <div key={k}><span className="text-[var(--text-muted)]">{k}:</span> <span className="text-[var(--text-primary)]">{String(v).slice(0, 80)}</span></div>
+                            ))}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  ) : null}
+                </div>
+              )}
+
+              {/* Phase 3 — proposed write action: confirm card */}
+              {t.proposed && t.who === "chatbot" && (
+                <div className="w-full mt-1 rounded-xl border-2 border-amber-300 bg-amber-50 dark:bg-amber-900/20 p-3">
+                  <div className="text-[11px] font-semibold text-amber-900 dark:text-amber-200 mb-2">⚠️ Action requires confirmation</div>
+                  <div className="text-[12px] text-amber-900 dark:text-amber-100 mb-2.5">{t.proposed.summary}</div>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => confirmProposed(t.proposed!)}
+                      className="px-3 py-1.5 text-[11px] font-semibold rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white"
+                    >
+                      ✓ Confirm
+                    </button>
+                    <button
+                      onClick={() => cancelProposed(i)}
+                      className="px-3 py-1.5 text-[11px] font-semibold rounded-lg bg-gray-200 hover:bg-gray-300 text-gray-800"
+                    >
+                      ✗ Cancel
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* Phase 5 — proposed multi-step chain */}
+              {t.proposedChain && t.proposedChain.length > 0 && t.who === "chatbot" && (
+                <div className="w-full mt-1 rounded-xl border-2 border-purple-300 bg-purple-50 dark:bg-purple-900/20 p-3">
+                  <div className="text-[11px] font-semibold text-purple-900 dark:text-purple-200 mb-2">🔗 Multi-step action</div>
+                  <ol className="text-[12px] text-purple-900 dark:text-purple-100 mb-2.5 list-decimal pl-5 space-y-0.5">
+                    {t.proposedChain.map((s, si) => (
+                      <li key={si}><code className="text-[11px]">{s.tool}</code></li>
+                    ))}
+                  </ol>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => confirmChain(t.proposedChain!)}
+                      className="px-3 py-1.5 text-[11px] font-semibold rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white"
+                    >
+                      ✓ Run All
+                    </button>
+                    <button
+                      onClick={() => cancelProposed(i)}
+                      className="px-3 py-1.5 text-[11px] font-semibold rounded-lg bg-gray-200 hover:bg-gray-300 text-gray-800"
+                    >
+                      ✗ Cancel
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         ))}

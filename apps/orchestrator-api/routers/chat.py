@@ -46,22 +46,35 @@ def voice_command(body: VoiceCommandBody, db: Session = Depends(get_db)):
 # ---------------------------------------------------------------------------
 
 class AgentCommandBody(BaseModel):
-    transcript: str = Field(..., description="What the user said or typed")
+    transcript: str = Field("", description="What the user said or typed (can be empty if confirming)")
     language: Optional[str] = Field("auto", description="'en', 'ko', or 'auto'")
     current_path: Optional[str] = Field(None, description="The page the user is currently on (for 'this' references)")
+    selected_id: Optional[str] = Field(None, description="ID of the currently-selected item on the page (conversation_id on /chatbot, report_id on /reports/<id>, etc.) — used for 'this' references")
     history: Optional[list[dict]] = Field(None, description="Optional turn history for context")
+    confirmed_tool: Optional[str] = Field(None, description="If set, bypass LLM and execute this tool directly (user confirmed a previously-proposed write action)")
+    confirmed_args: Optional[dict] = Field(None, description="Args for the confirmed_tool")
 
 
 @router.post("/agent")
 def agent_command(body: AgentCommandBody, db: Session = Depends(get_db)):
-    """LLM-driven assistant with full tool catalog. Replaces keyword routing."""
+    """LLM-driven assistant with full tool catalog. Replaces keyword routing.
+
+    Two modes:
+      - Discovery (default): LLM picks a tool and either executes (read) or
+        proposes (write) for user confirmation.
+      - Confirmed execute: pass confirmed_tool + confirmed_args; backend
+        bypasses LLM and runs the write action.
+    """
     from services.assistant_agent import run_agent
     return run_agent(
         db,
-        transcript=body.transcript,
+        transcript=body.transcript or "",
         language=body.language or "auto",
         current_path=body.current_path,
+        selected_id=body.selected_id,
         history=body.history,
+        confirmed_tool=body.confirmed_tool,
+        confirmed_args=body.confirmed_args,
     )
 
 

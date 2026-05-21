@@ -500,6 +500,419 @@ def tool_count(entity: str, db: Session = None, **_kw) -> dict[str, Any]:
         return {"ok": False, "error": str(ex)[:200]}
 
 
+# ============================================================================
+#  WRITE tools (Phase 3) — require permission gate, executed only after
+#  the user confirms the proposed_action in the widget.
+# ============================================================================
+
+def _find_twin_by_name(db: Session, name: str):
+    """Helper — fuzzy find a twin by partial name match."""
+    from db.models import DigitalTwin
+    n = (name or "").strip().lower()
+    if not n:
+        return None
+    twins = db.query(DigitalTwin).all()
+    return next((t for t in twins if n in (t.name or "").lower()), None)
+
+
+# --- Communications ---
+
+def tool_send_dm(twin_name: str, body: str, db: Session = None, **_kw) -> dict[str, Any]:
+    """Send a direct message from the boss to a specific twin."""
+    if not db:
+        return {"ok": False, "error": "DB session required"}
+    try:
+        from db.models import TwinMessage
+        tw = _find_twin_by_name(db, twin_name)
+        if not tw:
+            return {"ok": False, "error": f"No twin matching '{twin_name}'"}
+        msg = TwinMessage(
+            twin_id=tw.id,
+            sender="boss",
+            body=body or "",
+        )
+        db.add(msg)
+        db.commit()
+        db.refresh(msg)
+        return {
+            "ok": True,
+            "message": f"✅ Sent DM to {tw.name}: \"{body[:100]}\"",
+            "message_id": msg.id,
+            "twin_name": tw.name,
+        }
+    except Exception as e:
+        log.warning(f"tool_send_dm error: {e}")
+        return {"ok": False, "error": str(e)[:200]}
+
+
+def tool_send_email(to: str, subject: str, body: str, db: Session = None, **_kw) -> dict[str, Any]:
+    """Send an email via configured SMTP."""
+    try:
+        from services.auth_service import _send_smtp_email
+        ok, err = _send_smtp_email(to, subject or "(no subject)", body or "")
+        if ok:
+            return {"ok": True, "message": f"✉️ Email sent to {to}"}
+        return {"ok": False, "error": err or "Email failed"}
+    except Exception as e:
+        return {"ok": False, "error": str(e)[:200]}
+
+
+def tool_broadcast(body: str, db: Session = None, **_kw) -> dict[str, Any]:
+    """Send a message to ALL workers via the broadcast pipeline."""
+    if not db:
+        return {"ok": False, "error": "DB session required"}
+    try:
+        from db.models import DigitalTwin, TwinMessage
+        twins = db.query(DigitalTwin).all()
+        sent = 0
+        for t in twins:
+            msg = TwinMessage(twin_id=t.id, sender="boss", body=body or "")
+            db.add(msg)
+            sent += 1
+        db.commit()
+        return {
+            "ok": True,
+            "message": f"📢 Broadcast sent to {sent} workers",
+            "recipient_count": sent,
+        }
+    except Exception as e:
+        log.warning(f"tool_broadcast error: {e}")
+        return {"ok": False, "error": str(e)[:200]}
+
+
+def tool_kakao_reply(conversation_id: str, text: str, db: Session = None, **_kw) -> dict[str, Any]:
+    """Send a reply on a Kakao customer conversation (boss takes over)."""
+    if not db:
+        return {"ok": False, "error": "DB session required"}
+    try:
+        from services import chatbot_conversation_service as conv_service
+        from services import kakao_client
+        conv = conv_service.get_conversation(db, "vip", conversation_id)
+        if not conv:
+            return {"ok": False, "error": f"Conversation {conversation_id} not found"}
+        customer = conv_service.get_customer(db, "vip", conv.customer_id)
+        if customer and getattr(customer, "kakao_user_id", None):
+            try:
+                kakao_client.send_text(
+                    agent_id="vip",
+                    conversation_id=str(conv.id),
+                    text=text,
+                    receiver_uuid=customer.kakao_user_id,
+                )
+            except Exception as e:
+                log.warning(f"kakao_reply send failed: {e}")
+        conv_service.append_message(
+            db, "vip", conv.id,
+            author="boss", kind="text", text=text,
+            bot_meta={"status": "boss-via-assistant"},
+        )
+        conv_service.patch_conversation(db, "vip", conv.id, status="bot_handling")
+        return {"ok": True, "message": f"💬 Reply sent on conversation {str(conv.id)[:8]}"}
+    except Exception as e:
+        log.warning(f"tool_kakao_reply error: {e}")
+        return {"ok": False, "error": str(e)[:200]}
+
+
+# --- Reports ---
+
+def tool_trigger_daily_report(db: Session = None, **_kw) -> dict[str, Any]:
+    """Trigger a fresh daily report generation."""
+    if not db:
+        return {"ok": False, "error": "DB session required"}
+    try:
+        from services.twin_reports import generate_daily_report
+        report = generate_daily_report(db)
+        rid = getattr(report, "id", None) if report else None
+        return {
+            "ok": True,
+            "message": "📊 Daily report generated.",
+            "report_id": str(rid) if rid else None,
+            "action": {"type": "navigate", "to": "/reports"},
+        }
+    except Exception as e:
+        log.warning(f"tool_trigger_daily_report error: {e}")
+        return {"ok": False, "error": str(e)[:200]}
+
+
+def tool_trigger_weekly_report(db: Session = None, **_kw) -> dict[str, Any]:
+    """Trigger a fresh weekly report generation."""
+    if not db:
+        return {"ok": False, "error": "DB session required"}
+    try:
+        from services.twin_reports import generate_weekly_update
+        result = generate_weekly_update(db)
+        return {
+            "ok": True,
+            "message": "📈 Weekly report generated.",
+            "action": {"type": "navigate", "to": "/reports"},
+        }
+    except Exception as e:
+        log.warning(f"tool_trigger_weekly_report error: {e}")
+        return {"ok": False, "error": str(e)[:200]}
+
+
+# --- Approvals ---
+
+def tool_approve_handoff(handoff_id: str, db: Session = None, **_kw) -> dict[str, Any]:
+    """Approve a single overnight twin handoff."""
+    if not db:
+        return {"ok": False, "error": "DB session required"}
+    try:
+        from db.models import TwinHandoff
+        h = db.query(TwinHandoff).filter(TwinHandoff.id == handoff_id).first()
+        if not h:
+            return {"ok": False, "error": f"Handoff {handoff_id} not found"}
+        h.boss_decision = "approved"
+        db.commit()
+        return {"ok": True, "message": f"✅ Handoff {str(h.id)[:8]} approved"}
+    except Exception as e:
+        return {"ok": False, "error": str(e)[:200]}
+
+
+def tool_approve_all_pending(db: Session = None, **_kw) -> dict[str, Any]:
+    """Approve all overnight handoffs currently pending review."""
+    if not db:
+        return {"ok": False, "error": "DB session required"}
+    try:
+        from db.models import TwinHandoff
+        pending = db.query(TwinHandoff).filter(
+            (TwinHandoff.boss_decision == None) | (TwinHandoff.boss_decision == "pending")
+        ).all()
+        n = 0
+        for h in pending:
+            h.boss_decision = "approved"
+            n += 1
+        db.commit()
+        return {"ok": True, "message": f"✅ Approved {n} overnight handoffs", "count": n}
+    except Exception as e:
+        return {"ok": False, "error": str(e)[:200]}
+
+
+def tool_reject_handoff(handoff_id: str, reason: str = "", db: Session = None, **_kw) -> dict[str, Any]:
+    """Reject a handoff with an optional reason."""
+    if not db:
+        return {"ok": False, "error": "DB session required"}
+    try:
+        from db.models import TwinHandoff
+        h = db.query(TwinHandoff).filter(TwinHandoff.id == handoff_id).first()
+        if not h:
+            return {"ok": False, "error": f"Handoff {handoff_id} not found"}
+        h.boss_decision = "rejected"
+        if reason and hasattr(h, "boss_notes"):
+            h.boss_notes = reason
+        db.commit()
+        return {"ok": True, "message": f"❌ Handoff {str(h.id)[:8]} rejected"}
+    except Exception as e:
+        return {"ok": False, "error": str(e)[:200]}
+
+
+# --- Conversation management ---
+
+def tool_resolve_conversation(conversation_id: str, db: Session = None, **_kw) -> dict[str, Any]:
+    """Mark a Kakao conversation as resolved (no more action needed)."""
+    if not db:
+        return {"ok": False, "error": "DB session required"}
+    try:
+        from services import chatbot_conversation_service as conv_service
+        conv_service.patch_conversation(db, "vip", conversation_id, status="resolved")
+        return {"ok": True, "message": f"✓ Conversation {conversation_id[:8]} resolved"}
+    except Exception as e:
+        return {"ok": False, "error": str(e)[:200]}
+
+
+def tool_take_over_conversation(conversation_id: str, db: Session = None, **_kw) -> dict[str, Any]:
+    """Take over a conversation — boss will reply manually."""
+    if not db:
+        return {"ok": False, "error": "DB session required"}
+    try:
+        from services import chatbot_conversation_service as conv_service
+        conv_service.patch_conversation(db, "vip", conversation_id, status="needs_reply")
+        return {
+            "ok": True,
+            "message": f"👤 Took over conversation {conversation_id[:8]}",
+            "action": {"type": "navigate", "to": "/chatbot"},
+        }
+    except Exception as e:
+        return {"ok": False, "error": str(e)[:200]}
+
+
+def tool_escalate_conversation(conversation_id: str, reason: str = "", db: Session = None, **_kw) -> dict[str, Any]:
+    """Flag a conversation as urgent."""
+    if not db:
+        return {"ok": False, "error": "DB session required"}
+    try:
+        from services import chatbot_conversation_service as conv_service
+        conv_service.escalate_conversation(db, "vip", conversation_id,
+                                           to="boss", reason=reason or "Manual escalation")
+        return {"ok": True, "message": f"⚠️ Conversation {conversation_id[:8]} escalated"}
+    except Exception as e:
+        return {"ok": False, "error": str(e)[:200]}
+
+
+# --- Tasks ---
+
+def tool_create_task(twin_name: str, title: str, body: str = "", db: Session = None, **_kw) -> dict[str, Any]:
+    """Create a task and assign it to a twin."""
+    if not db:
+        return {"ok": False, "error": "DB session required"}
+    try:
+        from db.models import TwinTask
+        tw = _find_twin_by_name(db, twin_name)
+        if not tw:
+            return {"ok": False, "error": f"No twin matching '{twin_name}'"}
+        task = TwinTask(
+            twin_id=tw.id,
+            title=title or "(no title)",
+            description=body or "",
+            status="pending",
+        )
+        db.add(task)
+        db.commit()
+        db.refresh(task)
+        return {
+            "ok": True,
+            "message": f"➕ Task '{task.title[:60]}' assigned to {tw.name}",
+            "task_id": task.id,
+        }
+    except Exception as e:
+        log.warning(f"tool_create_task error: {e}")
+        return {"ok": False, "error": str(e)[:200]}
+
+
+def tool_cancel_task(task_id: str, db: Session = None, **_kw) -> dict[str, Any]:
+    """Cancel a pending task by ID."""
+    if not db:
+        return {"ok": False, "error": "DB session required"}
+    try:
+        from db.models import TwinTask
+        t = db.query(TwinTask).filter(TwinTask.id == task_id).first()
+        if not t:
+            return {"ok": False, "error": f"Task {task_id} not found"}
+        t.status = "cancelled"
+        db.commit()
+        return {"ok": True, "message": f"❌ Task {task_id[:8]} cancelled"}
+    except Exception as e:
+        return {"ok": False, "error": str(e)[:200]}
+
+
+# --- Meetings ---
+
+def tool_schedule_meeting(participants: str, when: str = "", agenda: str = "",
+                          db: Session = None, **_kw) -> dict[str, Any]:
+    """Auto-create a multi-twin meeting room from natural-language participants list."""
+    if not db:
+        return {"ok": False, "error": "DB session required"}
+    try:
+        from services import twin_meeting_intent
+        # Reuse the natural-language meeting creator
+        free_text = f"meeting with {participants}"
+        if when:
+            free_text += f" at {when}"
+        if agenda:
+            free_text += f" about {agenda}"
+        result = twin_meeting_intent.auto_create_meeting_from_text(db, free_text)
+        if not result.get("ok"):
+            return {"ok": False, "error": result.get("message") or "Meeting creation failed"}
+        return {
+            "ok": True,
+            "message": result.get("message") or "📅 Meeting scheduled",
+            "meeting_id": result.get("meeting_id"),
+            "action": {"type": "navigate", "to": result.get("meeting_room_url", "/meetings")},
+        }
+    except Exception as e:
+        log.warning(f"tool_schedule_meeting error: {e}")
+        return {"ok": False, "error": str(e)[:200]}
+
+
+def tool_cancel_meeting(meeting_id: str, db: Session = None, **_kw) -> dict[str, Any]:
+    """Cancel a meeting by ID."""
+    if not db:
+        return {"ok": False, "error": "DB session required"}
+    try:
+        from db.models import Meeting
+        m = db.query(Meeting).filter(Meeting.id == meeting_id).first()
+        if not m:
+            return {"ok": False, "error": f"Meeting {meeting_id} not found"}
+        m.status = "cancelled"
+        db.commit()
+        return {"ok": True, "message": f"❌ Meeting {meeting_id[:8]} cancelled"}
+    except Exception as e:
+        return {"ok": False, "error": str(e)[:200]}
+
+
+# --- Knowledge ---
+
+def tool_add_knowledge(twin_name: str, title: str, body: str, db: Session = None, **_kw) -> dict[str, Any]:
+    """Add a knowledge entry to a twin's library."""
+    if not db:
+        return {"ok": False, "error": "DB session required"}
+    try:
+        from db.models import TwinKnowledge
+        tw = _find_twin_by_name(db, twin_name)
+        if not tw:
+            return {"ok": False, "error": f"No twin matching '{twin_name}'"}
+        k = TwinKnowledge(twin_id=tw.id, title=title or "(no title)", body=body or "")
+        db.add(k)
+        db.commit()
+        db.refresh(k)
+        return {
+            "ok": True,
+            "message": f"📝 Added knowledge '{k.title[:60]}' to {tw.name}",
+            "knowledge_id": k.id,
+        }
+    except Exception as e:
+        return {"ok": False, "error": str(e)[:200]}
+
+
+def tool_delete_knowledge(knowledge_id: str, db: Session = None, **_kw) -> dict[str, Any]:
+    """Delete a knowledge entry by ID."""
+    if not db:
+        return {"ok": False, "error": "DB session required"}
+    try:
+        from db.models import TwinKnowledge
+        k = db.query(TwinKnowledge).filter(TwinKnowledge.id == knowledge_id).first()
+        if not k:
+            return {"ok": False, "error": f"Knowledge {knowledge_id} not found"}
+        db.delete(k)
+        db.commit()
+        return {"ok": True, "message": f"🗑️ Knowledge {knowledge_id[:8]} deleted"}
+    except Exception as e:
+        return {"ok": False, "error": str(e)[:200]}
+
+
+# --- Modes ---
+
+def tool_set_boss_mode(mode: str, hours: int = 24, db: Session = None, **_kw) -> dict[str, Any]:
+    """Set Boss-IN / Boss-OUT mode override."""
+    try:
+        from services import chatbot_mode_detector
+        m = (mode or "").lower().strip()
+        if m not in ("in", "out", "auto"):
+            return {"ok": False, "error": "mode must be 'in', 'out', or 'auto'"}
+        chatbot_mode_detector.set_mode_override("vip", m, "via-assistant", expires_in_hours=int(hours))
+        return {"ok": True, "message": f"🔧 Boss mode set to '{m}' for {hours}h"}
+    except Exception as e:
+        return {"ok": False, "error": str(e)[:200]}
+
+
+def tool_set_twin_mode(twin_name: str, mode: str, db: Session = None, **_kw) -> dict[str, Any]:
+    """Set a specific twin's mode (shadow/active/handoff)."""
+    if not db:
+        return {"ok": False, "error": "DB session required"}
+    try:
+        m = (mode or "").lower().strip()
+        if m not in ("shadow", "active", "handoff"):
+            return {"ok": False, "error": "mode must be shadow/active/handoff"}
+        tw = _find_twin_by_name(db, twin_name)
+        if not tw:
+            return {"ok": False, "error": f"No twin matching '{twin_name}'"}
+        tw.mode = m
+        db.commit()
+        return {"ok": True, "message": f"🔧 {tw.name}'s mode set to '{m}'"}
+    except Exception as e:
+        return {"ok": False, "error": str(e)[:200]}
+
+
 def tool_latest_meeting_notes(count: int = 3, db: Session = None, **_kw) -> dict[str, Any]:
     """Latest real-world meeting notes with summaries."""
     if not db:
@@ -714,6 +1127,233 @@ TOOL_REGISTRY: dict[str, Tool] = {
             "required": [],
         },
         fn=tool_latest_meeting_notes,
+    ),
+
+    # ========================================================================
+    # WRITE tools (Phase 3) — every execution requires user confirm in widget
+    # ========================================================================
+
+    "send_dm": Tool(
+        name="send_dm", kind="write",
+        description="Send a direct message from boss to a specific digital twin. Use when user says 'send Davronbek: ...' / 'tell Kim that ...' / '다브론벡에게 메시지 보내'.",
+        parameters={
+            "type": "object",
+            "properties": {
+                "twin_name": {"type": "string", "description": "Twin name (partial match OK)"},
+                "body": {"type": "string", "description": "Message body"},
+            },
+            "required": ["twin_name", "body"],
+        },
+        fn=tool_send_dm,
+    ),
+    "send_email": Tool(
+        name="send_email", kind="write",
+        description="Send an email via SMTP. Use for 'email <recipient>: subject ...'.",
+        parameters={
+            "type": "object",
+            "properties": {
+                "to": {"type": "string"},
+                "subject": {"type": "string"},
+                "body": {"type": "string"},
+            },
+            "required": ["to", "body"],
+        },
+        fn=tool_send_email,
+    ),
+    "broadcast": Tool(
+        name="broadcast", kind="write",
+        description="Send a message to ALL workers/twins at once. Use for 'broadcast: ...' / 'tell everyone ...' / '전체 공지 ...'.",
+        parameters={
+            "type": "object",
+            "properties": {"body": {"type": "string"}},
+            "required": ["body"],
+        },
+        fn=tool_broadcast,
+    ),
+    "kakao_reply": Tool(
+        name="kakao_reply", kind="write",
+        description="Send a reply on a specific Kakao customer conversation. Requires the conversation_id (the boss often gets this from current_path on /chatbot or a prior search_conversations call).",
+        parameters={
+            "type": "object",
+            "properties": {
+                "conversation_id": {"type": "string"},
+                "text": {"type": "string"},
+            },
+            "required": ["conversation_id", "text"],
+        },
+        fn=tool_kakao_reply,
+    ),
+    "trigger_daily_report": Tool(
+        name="trigger_daily_report", kind="write",
+        description="Generate today's daily report on demand. Use for 'generate daily report', 'make today's report', '데일리 리포트 만들어'.",
+        parameters={"type": "object", "properties": {}, "required": []},
+        fn=tool_trigger_daily_report,
+    ),
+    "trigger_weekly_report": Tool(
+        name="trigger_weekly_report", kind="write",
+        description="Generate this week's report on demand.",
+        parameters={"type": "object", "properties": {}, "required": []},
+        fn=tool_trigger_weekly_report,
+    ),
+    "approve_handoff": Tool(
+        name="approve_handoff", kind="write",
+        description="Approve a single overnight handoff by ID.",
+        parameters={
+            "type": "object",
+            "properties": {"handoff_id": {"type": "string"}},
+            "required": ["handoff_id"],
+        },
+        fn=tool_approve_handoff,
+    ),
+    "approve_all_pending": Tool(
+        name="approve_all_pending", kind="write",
+        description="Approve ALL pending overnight handoffs at once. Use for 'approve all handoffs', 'approve everything overnight'.",
+        parameters={"type": "object", "properties": {}, "required": []},
+        fn=tool_approve_all_pending,
+    ),
+    "reject_handoff": Tool(
+        name="reject_handoff", kind="write",
+        description="Reject a handoff with an optional reason.",
+        parameters={
+            "type": "object",
+            "properties": {
+                "handoff_id": {"type": "string"},
+                "reason": {"type": "string"},
+            },
+            "required": ["handoff_id"],
+        },
+        fn=tool_reject_handoff,
+    ),
+    "resolve_conversation": Tool(
+        name="resolve_conversation", kind="write",
+        description="Mark a Kakao customer conversation as resolved.",
+        parameters={
+            "type": "object",
+            "properties": {"conversation_id": {"type": "string"}},
+            "required": ["conversation_id"],
+        },
+        fn=tool_resolve_conversation,
+    ),
+    "take_over_conversation": Tool(
+        name="take_over_conversation", kind="write",
+        description="Take over a Kakao conversation — boss will reply manually instead of AI auto-replying.",
+        parameters={
+            "type": "object",
+            "properties": {"conversation_id": {"type": "string"}},
+            "required": ["conversation_id"],
+        },
+        fn=tool_take_over_conversation,
+    ),
+    "escalate_conversation": Tool(
+        name="escalate_conversation", kind="write",
+        description="Flag a conversation as urgent — pings boss via configured channel.",
+        parameters={
+            "type": "object",
+            "properties": {
+                "conversation_id": {"type": "string"},
+                "reason": {"type": "string"},
+            },
+            "required": ["conversation_id"],
+        },
+        fn=tool_escalate_conversation,
+    ),
+    "create_task": Tool(
+        name="create_task", kind="write",
+        description="Create a new task and assign it to a twin.",
+        parameters={
+            "type": "object",
+            "properties": {
+                "twin_name": {"type": "string"},
+                "title": {"type": "string"},
+                "body": {"type": "string"},
+            },
+            "required": ["twin_name", "title"],
+        },
+        fn=tool_create_task,
+    ),
+    "cancel_task": Tool(
+        name="cancel_task", kind="write",
+        description="Cancel a pending task by ID.",
+        parameters={
+            "type": "object",
+            "properties": {"task_id": {"type": "string"}},
+            "required": ["task_id"],
+        },
+        fn=tool_cancel_task,
+    ),
+    "schedule_meeting": Tool(
+        name="schedule_meeting", kind="write",
+        description="Schedule a multi-twin meeting from natural language. Pass participants (comma-separated names or text), optional when (time/date), optional agenda.",
+        parameters={
+            "type": "object",
+            "properties": {
+                "participants": {"type": "string"},
+                "when": {"type": "string"},
+                "agenda": {"type": "string"},
+            },
+            "required": ["participants"],
+        },
+        fn=tool_schedule_meeting,
+    ),
+    "cancel_meeting": Tool(
+        name="cancel_meeting", kind="write",
+        description="Cancel a scheduled meeting by ID.",
+        parameters={
+            "type": "object",
+            "properties": {"meeting_id": {"type": "string"}},
+            "required": ["meeting_id"],
+        },
+        fn=tool_cancel_meeting,
+    ),
+    "add_knowledge": Tool(
+        name="add_knowledge", kind="write",
+        description="Add a knowledge entry (something the twin should remember) to a twin's library. Use for 'teach Davronbek: ...' / 'remember for Kim: ...'.",
+        parameters={
+            "type": "object",
+            "properties": {
+                "twin_name": {"type": "string"},
+                "title": {"type": "string"},
+                "body": {"type": "string"},
+            },
+            "required": ["twin_name", "title", "body"],
+        },
+        fn=tool_add_knowledge,
+    ),
+    "delete_knowledge": Tool(
+        name="delete_knowledge", kind="write",
+        description="Delete a knowledge entry by ID.",
+        parameters={
+            "type": "object",
+            "properties": {"knowledge_id": {"type": "string"}},
+            "required": ["knowledge_id"],
+        },
+        fn=tool_delete_knowledge,
+    ),
+    "set_boss_mode": Tool(
+        name="set_boss_mode", kind="write",
+        description="Set Boss-IN / Boss-OUT mode override. Boss-IN = boss reviews chatbot drafts before send; Boss-OUT = AI replies autonomously.",
+        parameters={
+            "type": "object",
+            "properties": {
+                "mode": {"type": "string", "enum": ["in", "out", "auto"]},
+                "hours": {"type": "integer", "description": "How long the override lasts (default 24)"},
+            },
+            "required": ["mode"],
+        },
+        fn=tool_set_boss_mode,
+    ),
+    "set_twin_mode": Tool(
+        name="set_twin_mode", kind="write",
+        description="Set a specific twin's mode (shadow=passive, active=working, handoff=preparing report).",
+        parameters={
+            "type": "object",
+            "properties": {
+                "twin_name": {"type": "string"},
+                "mode": {"type": "string", "enum": ["shadow", "active", "handoff"]},
+            },
+            "required": ["twin_name", "mode"],
+        },
+        fn=tool_set_twin_mode,
     ),
 }
 
