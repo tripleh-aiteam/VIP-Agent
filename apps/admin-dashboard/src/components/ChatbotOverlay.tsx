@@ -522,11 +522,20 @@ export default function ChatbotOverlay() {
     setHistory(prev => [...prev, { who: "user", text, ts: Date.now() }]);
     setState("thinking");
 
+    // NEW endpoint (LLM-driven tool-calling) — opt-in via env flag.
+    // Falls back to /chat/voice (keyword classifier) if not enabled.
+    const useAgent = process.env.NEXT_PUBLIC_USE_AGENT_ENDPOINT === "true";
+    const endpoint = useAgent ? `${API}/chat/agent` : `${API}/chat/voice`;
+    const body: any = { transcript: text, language };
+    if (useAgent) {
+      body.current_path = typeof window !== "undefined" ? window.location.pathname : null;
+    }
+
     try {
-      const res = await fetch(`${API}/chat/voice`, {
+      const res = await fetch(endpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ transcript: text, language }),
+        body: JSON.stringify(body),
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();

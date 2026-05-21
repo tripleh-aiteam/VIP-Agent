@@ -35,6 +35,36 @@ def voice_command(body: VoiceCommandBody, db: Session = Depends(get_db)):
     return result
 
 
+# ---------------------------------------------------------------------------
+# /chat/agent — Tool-calling agent (Notion-AI-style)
+#
+# Same response shape as /chat/voice but powered by the assistant_agent
+# tool-calling loop. The LLM (Groq Llama 3.3 70B) sees a full tool catalog
+# + page manifest and picks the right capability for any natural query —
+# no keyword lists, no hardcoded intents. Use this for the next-gen
+# Assistant widget.
+# ---------------------------------------------------------------------------
+
+class AgentCommandBody(BaseModel):
+    transcript: str = Field(..., description="What the user said or typed")
+    language: Optional[str] = Field("auto", description="'en', 'ko', or 'auto'")
+    current_path: Optional[str] = Field(None, description="The page the user is currently on (for 'this' references)")
+    history: Optional[list[dict]] = Field(None, description="Optional turn history for context")
+
+
+@router.post("/agent")
+def agent_command(body: AgentCommandBody, db: Session = Depends(get_db)):
+    """LLM-driven assistant with full tool catalog. Replaces keyword routing."""
+    from services.assistant_agent import run_agent
+    return run_agent(
+        db,
+        transcript=body.transcript,
+        language=body.language or "auto",
+        current_path=body.current_path,
+        history=body.history,
+    )
+
+
 @router.post("/transcribe")
 async def transcribe_audio(file: UploadFile = File(...)):
     """
