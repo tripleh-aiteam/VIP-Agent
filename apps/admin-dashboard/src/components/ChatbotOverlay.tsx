@@ -533,9 +533,10 @@ export default function ChatbotOverlay() {
     setHistory(prev => [...prev, { who: "user", text, ts: Date.now() }]);
     setState("thinking");
 
-    // NEW endpoint (LLM-driven tool-calling) — opt-in via env flag.
-    // Falls back to /chat/voice (keyword classifier) if not enabled.
-    const useAgent = process.env.NEXT_PUBLIC_USE_AGENT_ENDPOINT === "true";
+    // NEW endpoint (LLM-driven tool-calling) is now the DEFAULT.
+    // Set NEXT_PUBLIC_USE_AGENT_ENDPOINT=false to fall back to the old
+    // keyword classifier at /chat/voice (kept for emergency rollback).
+    const useAgent = process.env.NEXT_PUBLIC_USE_AGENT_ENDPOINT !== "false";
     const endpoint = useAgent ? `${API}/chat/agent` : `${API}/chat/voice`;
     const body: any = { transcript: text, language };
     if (useAgent) {
