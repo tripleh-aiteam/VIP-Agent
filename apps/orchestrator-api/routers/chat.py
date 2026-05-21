@@ -84,8 +84,14 @@ def agent_manifest():
     the frontend can render dynamic page lists / hint chips without
     duplicating the catalog."""
     from services.assistant_manifest import (
-        get_all_pages, get_external_agents, detect_sidebar_drift,
+        get_all_pages, get_external_agents,
     )
+    drift = {"ok": True, "message": "drift check unavailable", "skipped": True}
+    try:
+        from services.assistant_manifest import detect_sidebar_drift
+        drift = detect_sidebar_drift()
+    except Exception as e:
+        drift = {"ok": False, "error": f"drift check failed: {e}"}
     return {
         "pages": get_all_pages(),
         "external_agents": [
@@ -94,7 +100,7 @@ def agent_manifest():
              "keywords": a.get("keywords", [])}
             for a in get_external_agents()
         ],
-        "drift": detect_sidebar_drift(),
+        "drift": drift,
     }
 
 

@@ -365,12 +365,25 @@ def detect_sidebar_drift() -> dict:
     to the sidebar without updating the manifest. Doesn't auto-edit;
     just reports — that keeps the manifest under human control.
     """
-    sidebar_file = (
-        Path(__file__).resolve().parents[3]  # apps/orchestrator-api/services -> repo root
-        / "apps" / "admin-dashboard" / "src" / "components" / "Sidebar.tsx"
-    )
-    if not sidebar_file.exists():
-        return {"ok": False, "error": f"Sidebar.tsx not found at {sidebar_file}"}
+    # Try a few candidate paths since Render's working dir layout may
+    # differ from local. If none found, return a skipped result rather
+    # than crashing the manifest endpoint.
+    candidates = []
+    here = Path(__file__).resolve()
+    for parent_depth in (2, 3, 4, 5):
+        try:
+            root = here.parents[parent_depth]
+            candidates.append(root / "apps" / "admin-dashboard" / "src" / "components" / "Sidebar.tsx")
+        except IndexError:
+            continue
+    sidebar_file = next((c for c in candidates if c.exists()), None)
+    if not sidebar_file:
+        return {
+            "ok": True,
+            "skipped": True,
+            "message": "Sidebar.tsx not reachable from orchestrator runtime — drift check skipped.",
+            "checked_paths": [str(c) for c in candidates],
+        }
 
     try:
         text = sidebar_file.read_text(encoding="utf-8")
