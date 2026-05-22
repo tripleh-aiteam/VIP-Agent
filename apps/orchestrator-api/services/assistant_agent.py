@@ -205,23 +205,35 @@ def _call_llm_for_decision(system: str, user_msg: str, history: list[dict]) -> d
         fallback = "gpt-4o-mini"
 
     def _try(model: str) -> tuple[str, Optional[str]]:
+        """Returns (usable_text, error_reason). usable_text is empty when
+        the LLM call failed; the error_reason contains either the exception
+        message OR the LLM's own '[LLM unavailable] …' sentinel so the
+        caller can surface the real problem (404 model id, quota, etc.)."""
         try:
             out = chat_completion_sync(
-                system_prompt=system,
+                system_prompt=system_prompt,
                 messages=messages,
                 max_tokens=400,
                 temperature=0.2,
                 model=model,
             )
-            return (out or "").strip(), None
+            text = (out or "").strip()
+            # llm_client returns "[LLM unavailable] <reason>" on provider
+            # failure — propagate that reason instead of pretending success.
+            if not text or text.startswith("[LLM unavailable") or text.startswith("["):
+                return "", (text or "empty response from provider")
+            return text, None
         except Exception as e:
             return "", str(e)
 
+    # NB: _try used to reference `system` (out of scope here). Pin to
+    # `system_prompt` since this nested helper closes over the caller's
+    # `system` variable name. Both refer to the same string built above.
+    system_prompt = system
     raw, err_primary = _try(primary)
     err_fallback = None
-    if not raw or raw.startswith("[LLM unavailable") or raw.startswith("["):
-        log.info(f"assistant_agent: primary {primary} returned no usable output "
-                 f"(err={err_primary} | raw={(raw or '')[:120]}); cascading to {fallback}")
+    if not raw:
+        log.info(f"assistant_agent: primary {primary} failed ({err_primary}); cascading to {fallback}")
         raw, err_fallback = _try(fallback)
 
     if not raw or raw.startswith("[LLM unavailable"):
