@@ -634,15 +634,20 @@ def _run_multimodal_path(
         temperature=0.4,
     )
     if reply.startswith("[LLM unavailable]"):
-        log.warning(f"assistant_agent: multimodal Gemini failed: {reply}")
+        # Surface the specific reason so the boss / dev can see what failed
+        # (e.g. "OPENAI_API_KEY not set", "Gemini HTTP 429: …"). Saves a
+        # round-trip to Render logs every time the assistant goes silent.
+        reason = reply.replace("[LLM unavailable]", "").strip(" :-")
+        log.warning(f"assistant_agent: multimodal failed: {reply}")
         return {
             "intent": "multimodal_failed",
             "language": lang,
-            "reply": ("죄송합니다, 파일을 분석하는 비전 모델에 일시적으로 연결할 수 없습니다."
+            "reply": (f"죄송합니다, 비전 모델에 연결할 수 없습니다 — {reason}"
                       if lang == "ko" else
-                      "Sorry — couldn't reach the vision model to analyze the file. Try again in a moment."),
+                      f"Sorry — vision model unreachable: {reason}"),
             "action": None, "speak": True, "transcript": transcript,
             "tool_used": None,
+            "error_reason": reason,
         }
 
     return {
