@@ -153,6 +153,74 @@ def _call_anthropic(model: str, system_prompt: str, messages: list[dict],
         return False, str(e)
 
 
+def _openai_vision_fallback_sync(
+    system_prompt: str,
+    user_text: str,
+    attachments: list[dict],
+    *,
+    model: str = "gpt-4o",
+    max_tokens: int = 800,
+    temperature: float = 0.4,
+    timeout: float = 60.0,
+) -> str:
+    """OpenAI Vision (gpt-4o multimodal) fallback used when Gemini isn't
+    available. Only images survive — gpt-4o doesn't accept arbitrary file
+    types via inlineData. Returns "[LLM unavailable] ..." on any failure
+    so callers can detect + report uniformly.
+    """
+    import base64 as _b64
+    openai_key = _env("OPENAI_API_KEY") or _env("LLM_API_KEY")
+    if not openai_key:
+        return "[LLM unavailable] OPENAI_API_KEY not set"
+    image_parts: list[dict] = []
+    skipped = 0
+    for a in attachments or []:
+        mime = (a.get("mime_type") or "").lower()
+        raw = a.get("bytes") or b""
+        if not raw or not mime.startswith("image/"):
+            skipped += 1
+            continue
+        try:
+            b64 = _b64.b64encode(raw).decode("ascii")
+        except Exception:
+            skipped += 1
+            continue
+        image_parts.append({
+            "type": "image_url",
+            "image_url": {"url": f"data:{mime};base64,{b64}"},
+        })
+    if not image_parts:
+        return "[LLM unavailable] no image attachments (gpt-4o fallback only handles images)"
+    note = "" if skipped == 0 else (
+        f"\n(Note: {skipped} non-image attachment(s) skipped — the current "
+        "fallback model only reads images. Set GEMINI_API_KEY on the "
+        "orchestrator for full PDF/audio/video support.)"
+    )
+    content = image_parts + [{"type": "text", "text": (user_text or "") + note}]
+    try:
+        with httpx.Client(timeout=timeout) as client:
+            resp = client.post(
+                "https://api.openai.com/v1/chat/completions",
+                headers={"Authorization": f"Bearer {openai_key}",
+                         "Content-Type": "application/json"},
+                json={
+                    "model": model,
+                    "messages": [
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": content},
+                    ],
+                    "max_tokens": max_tokens,
+                    "temperature": temperature,
+                },
+            )
+            if resp.status_code != 200:
+                return f"[LLM unavailable] OpenAI Vision HTTP {resp.status_code}: {resp.text[:200]}"
+            data = resp.json()
+            return (data.get("choices") or [{}])[0].get("message", {}).get("content", "") or "[LLM unavailable] empty OpenAI response"
+    except Exception as e:
+        return f"[LLM unavailable] OpenAI Vision exception: {e}"
+
+
 def gemini_multimodal_sync(
     system_prompt: str,
     user_text: str,
@@ -180,7 +248,12 @@ def gemini_multimodal_sync(
     import base64 as _b64
     gemini_key = _env("GEMINI_API_KEY") or _env("GOOGLE_API_KEY")
     if not gemini_key:
-        return "[LLM unavailable] GEMINI_API_KEY not set"
+        # No Gemini configured — fall back to OpenAI Vision so the user
+        # still gets an answer (images only; PDF/audio/video lose support).
+        return _openai_vision_fallback_sync(
+            system_prompt, user_text, attachments,
+            max_tokens=max_tokens, temperature=temperature,
+        )
 
     # Resolve friendly model name to real one
     real_model = model
@@ -223,14 +296,26 @@ def gemini_multimodal_sync(
                 json=body,
             )
             if resp.status_code != 200:
-                return f"[LLM unavailable] Gemini HTTP {resp.status_code}: {resp.text[:200]}"
+                # Gemini errored at runtime (quota, safety filter, etc.) —
+                # try OpenAI Vision so the user still gets an answer.
+                return _openai_vision_fallback_sync(
+                    system_prompt, user_text, attachments,
+                    max_tokens=max_tokens, temperature=temperature,
+                )
             data = resp.json()
             cands = data.get("candidates") or []
             if cands and cands[0].get("content", {}).get("parts"):
                 return "".join(p.get("text", "") for p in cands[0]["content"]["parts"])
-            return "[LLM unavailable] empty Gemini response"
-    except Exception as e:
-        return f"[LLM unavailable] Gemini exception: {e}"
+            return _openai_vision_fallback_sync(
+                system_prompt, user_text, attachments,
+                max_tokens=max_tokens, temperature=temperature,
+            )
+    except Exception:
+        # Network / timeout / etc. — cascade to OpenAI
+        return _openai_vision_fallback_sync(
+            system_prompt, user_text, attachments,
+            max_tokens=max_tokens, temperature=temperature,
+        )
 
 
 def _call_gemini(model: str, system_prompt: str, messages: list[dict],
