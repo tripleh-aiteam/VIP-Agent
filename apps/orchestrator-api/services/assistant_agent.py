@@ -217,15 +217,27 @@ def _call_llm_for_decision(system: str, user_msg: str, history: list[dict]) -> d
         except Exception as e:
             return "", str(e)
 
-    raw, err = _try(primary)
+    raw, err_primary = _try(primary)
+    err_fallback = None
     if not raw or raw.startswith("[LLM unavailable") or raw.startswith("["):
         log.info(f"assistant_agent: primary {primary} returned no usable output "
-                 f"(err={err}); cascading to {fallback}")
-        raw, err = _try(fallback)
+                 f"(err={err_primary} | raw={(raw or '')[:120]}); cascading to {fallback}")
+        raw, err_fallback = _try(fallback)
 
     if not raw or raw.startswith("[LLM unavailable"):
-        log.warning(f"assistant_agent: both LLM tiers failed (last err: {err})")
-        return {"answer": "Sorry, the assistant LLM is unavailable right now."}
+        # Surface BOTH errors so the boss can see what's actually broken.
+        # The previous opaque "Sorry, unavailable" hid quota / key / model
+        # issues for hours of head-scratching.
+        log.warning(f"assistant_agent: both LLM tiers failed — "
+                    f"primary {primary}: {err_primary} | "
+                    f"fallback {fallback}: {err_fallback}")
+        return {
+            "answer": (
+                f"Sorry — LLM unavailable. Primary ({primary}): "
+                f"{err_primary or 'no output'}. Fallback ({fallback}): "
+                f"{err_fallback or 'no output'}."
+            )
+        }
 
     # Stash which model decided this turn so the response can surface it
     # (useful for telemetry — the overlay can show 'groq' / 'gemini' chip).
