@@ -175,8 +175,8 @@ def _pick_model_for_query(user_msg: str, history: list[dict]) -> str:
     deep_history = len(history or []) > 6
 
     if long_query or is_compound or is_reasoning or deep_history:
-        return "gemini-2.5-pro"
-    return "gemini-2.5-flash"
+        return "claude-sonnet-4-6"
+    return "claude-haiku-4-5"
 
 
 def _call_llm_for_decision(system: str, user_msg: str, history: list[dict]) -> dict:
@@ -192,15 +192,17 @@ def _call_llm_for_decision(system: str, user_msg: str, history: list[dict]) -> d
     messages.append({"role": "user", "content": user_msg})
 
     primary = _pick_model_for_query(user_msg, history or [])
-    # Fallback tier — if the primary Gemini call fails (rare), try the
-    # other Gemini variant first, then OpenAI as the cross-provider
-    # safety net so a Google outage doesn't brick the assistant.
-    if primary == "gemini-2.5-flash":
-        fallback = "gemini-2.5-pro"
-    elif primary == "gemini-2.5-pro":
-        fallback = "gemini-2.5-flash"
+    # Cascade order: if Claude is rate-limited, try its other tier; if both
+    # Claude tiers fail (outage, key issue), drop to Gemini Flash, then
+    # OpenAI as the cross-provider safety net. Cheapest survivor wins.
+    if primary == "claude-haiku-4-5":
+        fallback = "claude-sonnet-4-6"
+    elif primary == "claude-sonnet-4-6":
+        fallback = "claude-haiku-4-5"
+    elif primary.startswith("gemini"):
+        fallback = "claude-haiku-4-5"
     else:
-        fallback = "gpt-4o-mini"  # last-resort cross-provider fallback
+        fallback = "gpt-4o-mini"
 
     def _try(model: str) -> tuple[str, Optional[str]]:
         try:

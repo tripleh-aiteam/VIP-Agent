@@ -221,6 +221,85 @@ def _openai_vision_fallback_sync(
         return f"[LLM unavailable] OpenAI Vision exception: {e}"
 
 
+def anthropic_multimodal_sync(
+    system_prompt: str,
+    user_text: str,
+    attachments: list[dict],
+    *,
+    model: str = "claude-haiku-4-5",
+    max_tokens: int = 800,
+    temperature: float = 0.4,
+    timeout: float = 90.0,
+) -> str:
+    """Claude multimodal call (vision). Claude Haiku 4.5 / Sonnet 4.6 / Opus
+    accept images via base64 in the messages API. Non-image attachments are
+    skipped — Claude doesn't take arbitrary `inlineData` like Gemini does.
+    Returns "[LLM unavailable] ..." on failure.
+    """
+    import base64 as _b64
+    api_key = _env("ANTHROPIC_API_KEY")
+    if not api_key:
+        return "[LLM unavailable] ANTHROPIC_API_KEY not set"
+
+    # Resolve friendly model id (e.g. "claude-haiku-4-5") to real one
+    real_model = model
+    if model in MODEL_CATALOG:
+        prov, real = MODEL_CATALOG[model]
+        if prov != "anthropic":
+            return f"[LLM unavailable] model '{model}' is not an Anthropic model"
+        real_model = real
+
+    content_blocks: list[dict] = []
+    skipped = 0
+    for a in attachments or []:
+        mime = (a.get("mime_type") or "").lower()
+        raw = a.get("bytes") or b""
+        if not raw or not mime.startswith("image/"):
+            skipped += 1
+            continue
+        try:
+            b64 = _b64.b64encode(raw).decode("ascii")
+        except Exception:
+            skipped += 1
+            continue
+        content_blocks.append({
+            "type": "image",
+            "source": {"type": "base64", "media_type": mime, "data": b64},
+        })
+    if not content_blocks:
+        return "[LLM unavailable] no image attachments (Claude vision only handles images)"
+    note = "" if skipped == 0 else (
+        f"\n(Note: {skipped} non-image attachment(s) skipped — Claude vision only reads images.)"
+    )
+    content_blocks.append({"type": "text", "text": (user_text or "") + note})
+
+    try:
+        with httpx.Client(timeout=timeout) as client:
+            resp = client.post(
+                f"{ANTHROPIC_BASE}/messages",
+                headers={
+                    "x-api-key": api_key,
+                    "anthropic-version": "2023-06-01",
+                    "content-type": "application/json",
+                },
+                json={
+                    "model": real_model,
+                    "max_tokens": max_tokens,
+                    "temperature": temperature,
+                    "system": system_prompt,
+                    "messages": [{"role": "user", "content": content_blocks}],
+                },
+            )
+            if resp.status_code != 200:
+                return f"[LLM unavailable] Claude HTTP {resp.status_code}: {resp.text[:200]}"
+            data = resp.json()
+            parts = [b.get("text", "") for b in data.get("content", []) if b.get("type") == "text"]
+            text = "".join(parts).strip()
+            return text or "[LLM unavailable] Claude returned empty content"
+    except Exception as e:
+        return f"[LLM unavailable] Claude exception: {e}"
+
+
 def gemini_multimodal_sync(
     system_prompt: str,
     user_text: str,
@@ -301,7 +380,6 @@ def gemini_multimodal_sync(
                 cands = data.get("candidates") or []
                 if cands and cands[0].get("content", {}).get("parts"):
                     return "".join(p.get("text", "") for p in cands[0]["content"]["parts"])
-                # Empty response — could be safety-blocked. Check finish reason
                 finish = cands[0].get("finishReason") if cands else None
                 gemini_err = f"Gemini empty response (finishReason={finish})"
             else:
@@ -309,16 +387,26 @@ def gemini_multimodal_sync(
     except Exception as e:
         gemini_err = f"Gemini exception: {e}"
 
-    # Gemini failed — try OpenAI Vision as backup. If THAT also fails,
-    # bubble BOTH error reasons up so we can fix root cause without
-    # grepping logs.
-    fallback = _openai_vision_fallback_sync(
+    # Vision cascade: Gemini failed → try Claude Haiku (vision) →
+    # then OpenAI gpt-4o. Surface all error reasons if all three fail.
+    claude_reply = anthropic_multimodal_sync(
+        system_prompt, user_text, attachments,
+        model="claude-haiku-4-5",
+        max_tokens=max_tokens, temperature=temperature,
+    )
+    if not claude_reply.startswith("[LLM unavailable]"):
+        return claude_reply
+    claude_err = claude_reply.replace("[LLM unavailable]", "").strip()
+
+    openai_reply = _openai_vision_fallback_sync(
         system_prompt, user_text, attachments,
         max_tokens=max_tokens, temperature=temperature,
     )
-    if fallback.startswith("[LLM unavailable]"):
-        return f"[LLM unavailable] {gemini_err} | fallback: {fallback.replace('[LLM unavailable]', '').strip()}"
-    return fallback
+    if not openai_reply.startswith("[LLM unavailable]"):
+        return openai_reply
+    openai_err = openai_reply.replace("[LLM unavailable]", "").strip()
+
+    return f"[LLM unavailable] {gemini_err} | claude: {claude_err} | openai: {openai_err}"
 
 
 def _call_gemini(model: str, system_prompt: str, messages: list[dict],
