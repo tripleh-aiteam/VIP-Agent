@@ -146,9 +146,9 @@ def _pick_model_for_query(user_msg: str, history: list[dict]) -> str:
     Override available via env var `ASSISTANT_FORCE_MODEL` (escape hatch
     for debugging and load-balancing across providers).
     """
-    forced = os.getenv("ASSISTANT_FORCE_MODEL", "").strip()
-    if forced:
-        return forced
+    forced_env = os.getenv("ASSISTANT_FORCE_MODEL", "").strip()
+    if forced_env:
+        return forced_env
 
     q = (user_msg or "").strip()
     qlc = q.lower()
@@ -191,7 +191,9 @@ def _call_llm_for_decision(system: str, user_msg: str, history: list[dict]) -> d
                 for h in (history or []) if h.get("content")]
     messages.append({"role": "user", "content": user_msg})
 
-    primary = _pick_model_for_query(user_msg, history or [])
+    # Honor an explicit per-request model override (from the overlay's
+    # model dropdown). Otherwise let the smart router pick.
+    primary = (forced_model or _pick_model_for_query(user_msg, history or [])).strip()
     # Cascade order: if Claude is rate-limited, try its other tier; if both
     # Claude tiers fail (outage, key issue), drop to Gemini Flash, then
     # OpenAI as the cross-provider safety net. Cheapest survivor wins.
@@ -708,6 +710,7 @@ def run_agent(
     confirmed_tool: Optional[str] = None,
     confirmed_args: Optional[dict] = None,
     attachment_ids: Optional[list[str]] = None,
+    forced_model: Optional[str] = None,
 ) -> dict[str, Any]:
     """Run one agent turn. Returns:
         {intent, language, reply, action, speak, transcript, tool_used, tool_result,

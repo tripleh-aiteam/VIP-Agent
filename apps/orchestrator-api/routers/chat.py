@@ -54,6 +54,7 @@ class AgentCommandBody(BaseModel):
     confirmed_tool: Optional[str] = Field(None, description="If set, bypass LLM and execute this tool directly (user confirmed a previously-proposed write action)")
     confirmed_args: Optional[dict] = Field(None, description="Args for the confirmed_tool")
     attachment_ids: Optional[list[str]] = Field(None, description="IDs returned from POST /chatbot/upload — included so the assistant can use the file content (image/pdf/text) when answering. When present, the agent auto-routes to Gemini 2.5 Pro multimodal.")
+    model: Optional[str] = Field(None, description="Optional override — pin a specific LLM for this request (e.g. 'claude-sonnet-4-6'). Bypasses the smart router. Useful for the in-overlay model picker dropdown.")
 
 
 @router.post("/agent")
@@ -77,6 +78,7 @@ def agent_command(body: AgentCommandBody, db: Session = Depends(get_db)):
         confirmed_tool=body.confirmed_tool,
         confirmed_args=body.confirmed_args,
         attachment_ids=body.attachment_ids,
+        forced_model=body.model,
     )
 
 

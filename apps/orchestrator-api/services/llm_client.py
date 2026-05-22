@@ -505,7 +505,33 @@ def chat_completion_sync(
             return result
         attempt_log.append(f"{chosen} ({provider}): {str(result)[:200]}")
 
-    # -- Fallback 1: default OpenAI --
+    # -- Free-tier fallback chain --
+    # Try every free / no-credit-card-needed provider before giving up so a
+    # billing issue on one paid LLM doesn't brick the assistant. Order
+    # below is by latency: Groq (fastest free) → Gemini Flash (free quota) →
+    # OpenAI (only paid in this list, kept as a "last paid try" before
+    # going free-only) → Ollama (free, requires local install).
+
+    # Free tier #1 — Groq Llama 3.3 70B (free, 30 RPM, no credit card)
+    if groq_key:
+        ok, result = _call_openai_compatible("https://api.groq.com/openai/v1", groq_key,
+                                             "llama-3.3-70b-versatile",
+                                             full_messages_with_sys, max_tokens, temperature, 15.0)
+        if ok:
+            _last_used.update({"provider": "groq", "model": "llama-3.3-70b (free fallback)"})
+            return result
+        attempt_log.append(f"llama-3.3-70b (groq free fallback): {str(result)[:200]}")
+
+    # Free tier #2 — Gemini 2.5 Flash (free, 15 RPM / 1.5M TPM)
+    if _env("GEMINI_API_KEY") or _env("GOOGLE_API_KEY"):
+        ok, result = _call_gemini("gemini-2.5-flash", system_prompt, messages,
+                                  max_tokens, temperature)
+        if ok:
+            _last_used.update({"provider": "gemini", "model": "gemini-2.5-flash (free fallback)"})
+            return result
+        attempt_log.append(f"gemini-2.5-flash (free fallback): {str(result)[:200]}")
+
+    # Paid tier — OpenAI gpt-4o-mini (only fires if you've topped up credits)
     if openai_key:
         ok, result = _call_openai_compatible(openai_base, openai_key, "gpt-4o-mini",
                                              full_messages_with_sys, max_tokens, temperature, 30.0)
@@ -514,7 +540,8 @@ def chat_completion_sync(
             return result
         attempt_log.append(f"gpt-4o-mini (openai fallback): {str(result)[:200]}")
 
-    # -- Fallback 2: local Ollama --
+    # Free tier #3 — local Ollama (only useful when running on a dev box
+    # with Ollama installed; on Render this always 'Connection refused'd)
     ok, result = _call_openai_compatible(f"{ollama_url}/v1", "", "qwen2.5",
                                          full_messages_with_sys, max_tokens, temperature, 60.0)
     if ok:
