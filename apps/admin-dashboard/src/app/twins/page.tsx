@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
+import { useSearchParams } from "next/navigation";
 import { API } from "../../components/api";
 import TwinMeetingPanel from "../../components/TwinMeetingPanel";
 
@@ -55,7 +56,20 @@ function getInitials(name: string) {
 }
 
 export default function TwinsPage() {
+  // Assistant can deep-link to a specific twin:
+  //   /twins?highlight=Davronbek → scrolls to + highlights that twin's card
+  const searchParams = useSearchParams();
+  const highlight = (searchParams?.get("highlight") || "").toLowerCase();
+  const highlightRef = useRef<HTMLDivElement | null>(null);
+
   const [twins, setTwins] = useState<Twin[]>([]);
+
+  // Scroll to highlighted twin once data loads
+  useEffect(() => {
+    if (highlight && highlightRef.current) {
+      highlightRef.current.scrollIntoView({ behavior: "smooth", block: "center" });
+    }
+  }, [highlight, twins.length]);
   const [loading, setLoading] = useState(true);
   const [showCreate, setShowCreate] = useState(false);
   const [editTwin, setEditTwin] = useState<Twin | null>(null);
@@ -936,10 +950,17 @@ export default function TwinsPage() {
         </div>
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-          {filteredTwins.map(twin => (
+          {filteredTwins.map(twin => {
+            const isHighlighted = highlight && (twin.name || "").toLowerCase().includes(highlight);
+            return (
             <div
               key={twin.id}
-              className="bg-[var(--card-bg)] rounded-xl border border-[var(--card-border)] p-5 hover:border-[var(--text-primary)] transition-all cursor-pointer group"
+              ref={isHighlighted ? highlightRef : null}
+              className={`bg-[var(--card-bg)] rounded-xl border p-5 transition-all cursor-pointer group ${
+                isHighlighted
+                  ? "border-blue-400 ring-4 ring-blue-200 dark:ring-blue-900 animate-pulse"
+                  : "border-[var(--card-border)] hover:border-[var(--text-primary)]"
+              }`}
               style={{ boxShadow: "var(--shadow-sm)" }}
               onClick={() => openEdit(twin)}
             >
@@ -1057,7 +1078,8 @@ export default function TwinsPage() {
                 </button>
               </div>
             </div>
-          ))}
+            );
+          })}
         </div>
       )}
 

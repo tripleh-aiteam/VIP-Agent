@@ -1,11 +1,18 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
+import { useSearchParams } from "next/navigation";
 import { api, apiPost } from "@/components/api";
 import Badge from "@/components/Badge";
 import { AskVIPBar } from "@/components/AskVIP";
 
 export default function AgentsPage() {
+  // Assistant can deep-link to a specific agent card:
+  //   /agents?highlight=Asset → scrolls to + visually highlights the Asset card
+  const searchParams = useSearchParams();
+  const highlight = (searchParams?.get("highlight") || "").toLowerCase();
+  const highlightRef = useRef<HTMLDivElement | null>(null);
+
   const [agents, setAgents] = useState<any[]>([]);
   const [pinging, setPinging] = useState<string | null>(null);
   const [pingResult, setPingResult] = useState<Record<string, string>>({});
@@ -16,6 +23,13 @@ export default function AgentsPage() {
     const i = setInterval(load, 5000);
     return () => clearInterval(i);
   }, []);
+
+  // Scroll into view when the highlighted card mounts
+  useEffect(() => {
+    if (highlight && highlightRef.current) {
+      highlightRef.current.scrollIntoView({ behavior: "smooth", block: "center" });
+    }
+  }, [highlight, agents.length]);
 
   return (
     <div>
@@ -31,8 +45,21 @@ export default function AgentsPage() {
       </div>
 
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-        {agents.map((a: any) => (
-          <div key={a.id} className="border border-[var(--border-default)] rounded-lg bg-[var(--bg-card)] hover:border-[var(--border-active)] transition-colors">
+        {agents.map((a: any) => {
+          const isHighlighted = highlight && (
+            (a.name || "").toLowerCase().includes(highlight) ||
+            (a.type || "").toLowerCase().includes(highlight)
+          );
+          return (
+          <div
+            key={a.id}
+            ref={isHighlighted ? highlightRef : null}
+            className={`border rounded-lg bg-[var(--bg-card)] transition-all ${
+              isHighlighted
+                ? "border-blue-400 ring-4 ring-blue-200 dark:ring-blue-900 animate-pulse"
+                : "border-[var(--border-default)] hover:border-[var(--border-active)]"
+            }`}
+          >
             {/* Header */}
             <div className="px-4 py-3 border-b border-[var(--border-default)]/50 flex items-center justify-between">
               <div className="flex items-center gap-2">
@@ -139,7 +166,8 @@ export default function AgentsPage() {
               )}
             </div>
           </div>
-        ))}
+          );
+        })}
       </div>
     </div>
   );

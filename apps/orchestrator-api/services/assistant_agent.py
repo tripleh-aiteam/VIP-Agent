@@ -451,6 +451,10 @@ def _compose_write_preview(tool_name: str, args: dict) -> dict[str, Any]:
     if tool_name == "set_workflow_enabled":
         verb = "enable" if args.get("enabled") else "disable"
         return {"message": f"⚙️ {verb.capitalize()} workflow {args.get('workflow_id', '?')[:12]}?"}
+    if tool_name == "unsend_dm":
+        return {"message": f"↩️ Unsend DM {args.get('message_id', '?')[:12]}? This deletes the message from your records."}
+    if tool_name == "unsend_last_dm":
+        return {"message": f"↩️ Unsend your last DM to {args.get('twin_name', '?')}?"}
     # Generic fallback
     return {"message": f"Run {tool_name}({args})?"}
 

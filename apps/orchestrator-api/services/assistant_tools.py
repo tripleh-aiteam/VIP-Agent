@@ -538,14 +538,14 @@ def tool_send_dm(twin_name: str, body: str, db: Session = None, **_kw) -> dict[s
     if not db:
         return {"ok": False, "error": "DB session required"}
     try:
-        from db.models import TwinMessage
+        from db.models import DirectMessage
         tw = _find_twin_by_name(db, twin_name)
         if not tw:
             return {"ok": False, "error": f"No twin matching '{twin_name}'"}
-        msg = TwinMessage(
+        msg = DirectMessage(
             twin_id=tw.id,
-            sender="boss",
-            body=body or "",
+            sender_type="boss",
+            content=body or "",
         )
         db.add(msg)
         db.commit()
@@ -578,11 +578,11 @@ def tool_broadcast(body: str, db: Session = None, **_kw) -> dict[str, Any]:
     if not db:
         return {"ok": False, "error": "DB session required"}
     try:
-        from db.models import DigitalTwin, TwinMessage
+        from db.models import DigitalTwin, DirectMessage
         twins = db.query(DigitalTwin).all()
         sent = 0
         for t in twins:
-            msg = TwinMessage(twin_id=t.id, sender="boss", body=body or "")
+            msg = DirectMessage(twin_id=t.id, sender_type="boss", content=body or "")
             db.add(msg)
             sent += 1
         db.commit()
@@ -1551,6 +1551,154 @@ TOOL_REGISTRY: dict[str, Tool] = {
 #  Extended tools — covers the rest of the boss's manual operations
 # ============================================================================
 
+# --- Sub-navigation: open a SPECIFIC item inside a page ---
+def tool_open_item(category: str, name_or_id: str, db: Session = None, **_kw) -> dict[str, Any]:
+    """Open a specific item inside a page. Use when the user says
+    'open the Asset agent' (inside /agents), 'open Davronbek's twin'
+    (inside /twins), 'open the latest daily report', etc.
+
+    Categories supported:
+      - "agent"        → /agents?highlight=<name>           (Asset/Stock/Realty card)
+      - "external"     → opens the external Asset/Stock/Realty Vercel app
+      - "twin"         → /twins?highlight=<name>
+      - "report"       → /reports?open=<id>                 (auto-opens report detail)
+      - "conversation" → /chatbot?conversation_id=<id>
+      - "task"         → /task-board?highlight=<id>
+      - "meeting"      → /meetings/<id>/room                (joins the meeting room)
+    """
+    cat = (category or "").lower().strip()
+    target = (name_or_id or "").strip()
+    if not cat or not target:
+        return {"ok": False, "error": "Both category and name_or_id required"}
+
+    # External agent app (opens in new tab)
+    if cat in ("external", "external_agent", "portal"):
+        ag = get_agent_by_name(target)
+        if not ag:
+            return {"ok": False, "error": f"Unknown external agent '{target}'"}
+        return {
+            "ok": True,
+            "action": {"type": "navigate", "to": ag["portal_url"], "external": True},
+            "message": f"Opening the {ag['name']} Agent in a new tab.",
+        }
+
+    # Internal agent card (within /agents)
+    if cat == "agent":
+        # Capitalize first letter for highlight matching
+        highlight = target.title() if target.islower() else target
+        return {
+            "ok": True,
+            "action": {"type": "navigate", "to": f"/agents?highlight={highlight}"},
+            "message": f"Opening the agents page and highlighting {highlight}.",
+        }
+
+    if cat == "twin":
+        if not db:
+            return {"ok": False, "error": "DB required for twin lookup"}
+        tw = _find_twin_by_name(db, target)
+        if not tw:
+            return {"ok": False, "error": f"No twin matching '{target}'"}
+        return {
+            "ok": True,
+            "action": {"type": "navigate", "to": f"/twins?highlight={tw.name}"},
+            "message": f"Opening Twins page, highlighting {tw.name}.",
+        }
+
+    if cat == "report":
+        # If name_or_id looks like a UUID/hash use it directly; otherwise treat as filter
+        if len(target) > 8 and "-" in target:
+            return {
+                "ok": True,
+                "action": {"type": "navigate", "to": f"/reports?open={target}"},
+                "message": f"Opening report {target[:8]}…",
+            }
+        # Common shortcuts
+        f = target.lower()
+        if f in ("daily", "weekly", "cross", "alerts"):
+            return {
+                "ok": True,
+                "action": {"type": "navigate", "to": f"/reports?filter={f}"},
+                "message": f"Opening {f} reports.",
+            }
+        return {"ok": False, "error": f"Unknown report identifier '{target}'"}
+
+    if cat == "conversation":
+        return {
+            "ok": True,
+            "action": {"type": "navigate", "to": f"/chatbot?conversation_id={target}"},
+            "message": f"Opening conversation {target[:8]}…",
+        }
+
+    if cat == "task":
+        return {
+            "ok": True,
+            "action": {"type": "navigate", "to": f"/task-board?highlight={target}"},
+            "message": f"Opening Task Board, highlighting task {target[:8]}…",
+        }
+
+    if cat == "meeting":
+        return {
+            "ok": True,
+            "action": {"type": "navigate", "to": f"/meetings/{target}/room"},
+            "message": f"Joining meeting room {target[:8]}…",
+        }
+
+    return {"ok": False, "error": f"Unknown category '{cat}'. Use: agent / external / twin / report / conversation / task / meeting."}
+
+
+# --- Unsend / delete a sent DM ---
+def tool_unsend_dm(message_id: str, db: Session = None, **_kw) -> dict[str, Any]:
+    """Delete a previously sent boss→twin DM (or twin→boss). Use when
+    the user says 'unsend that message' / 'delete what I sent to Davronbek'.
+    Note: this only removes the row from our DB — does NOT recall the
+    message from any external channel (Kakao etc.)."""
+    if not db:
+        return {"ok": False, "error": "DB required"}
+    try:
+        from db.models import DirectMessage
+        m = db.query(DirectMessage).filter(DirectMessage.id == message_id).first()
+        if not m:
+            return {"ok": False, "error": f"DM {message_id} not found"}
+        twin_id_short = (m.twin_id or "")[:8]
+        db.delete(m)
+        db.commit()
+        return {
+            "ok": True,
+            "message": f"↩️ Unsent DM {message_id[:8]} (twin {twin_id_short})",
+        }
+    except Exception as e:
+        return {"ok": False, "error": str(e)[:200]}
+
+
+def tool_unsend_last_dm(twin_name: str, db: Session = None, **_kw) -> dict[str, Any]:
+    """Convenience: unsend the most recent DM the boss sent to a twin.
+    Use when the user says 'unsend the last message I sent to Davronbek'."""
+    if not db:
+        return {"ok": False, "error": "DB required"}
+    try:
+        from db.models import DirectMessage
+        tw = _find_twin_by_name(db, twin_name)
+        if not tw:
+            return {"ok": False, "error": f"No twin '{twin_name}'"}
+        m = (db.query(DirectMessage)
+             .filter(DirectMessage.twin_id == tw.id,
+                     DirectMessage.sender_type == "boss")
+             .order_by(DirectMessage.created_at.desc()).first())
+        if not m:
+            return {"ok": False, "error": f"No DM you sent to {tw.name}"}
+        mid = m.id
+        preview = (m.content or "")[:60]
+        db.delete(m)
+        db.commit()
+        return {
+            "ok": True,
+            "message": f"↩️ Unsent your last DM to {tw.name} (\"{preview}\")",
+            "deleted_id": mid,
+        }
+    except Exception as e:
+        return {"ok": False, "error": str(e)[:200]}
+
+
 # --- Twin CRUD ---
 def tool_create_twin(name: str, owner_email: str = "", db: Session = None, **_kw) -> dict[str, Any]:
     if not db: return {"ok": False, "error": "DB required"}
@@ -1810,6 +1958,51 @@ def tool_get_current_mode(**_kw) -> dict[str, Any]:
 # ============================================================================
 
 TOOL_REGISTRY.update({
+    "open_item": Tool(
+        name="open_item", kind="read",
+        description=(
+            "Open a SPECIFIC item INSIDE a page (sub-navigation). Use when the "
+            "user names a specific thing — not just a page. Examples:\n"
+            "  'open the Asset agent' (inside /agents)  → open_item('agent', 'Asset')\n"
+            "  'open the Stock agent app'                → open_item('external', 'Stock')\n"
+            "  'open Davronbek's twin'                   → open_item('twin', 'Davronbek')\n"
+            "  'open the latest daily report'            → open_item('report', 'daily')\n"
+            "  'open this conversation'                  → open_item('conversation', '<id>')\n"
+            "  'open task abc-123'                       → open_item('task', 'abc-123')\n"
+            "  'join meeting xyz'                        → open_item('meeting', 'xyz')\n"
+            "Use 'external' for the actual deployed agent apps (Vercel/Render). "
+            "Use 'agent' for the internal /agents listing card."
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "category": {"type": "string", "enum": ["agent", "external", "twin", "report", "conversation", "task", "meeting"]},
+                "name_or_id": {"type": "string"},
+            },
+            "required": ["category", "name_or_id"],
+        },
+        fn=tool_open_item,
+    ),
+    "unsend_dm": Tool(
+        name="unsend_dm", kind="write",
+        description="Delete a previously sent DM by message ID. Use 'unsend that message' / 'delete the message I sent'. Removes from our DB; does NOT recall from Kakao etc.",
+        parameters={
+            "type": "object",
+            "properties": {"message_id": {"type": "string"}},
+            "required": ["message_id"],
+        },
+        fn=tool_unsend_dm,
+    ),
+    "unsend_last_dm": Tool(
+        name="unsend_last_dm", kind="write",
+        description="Convenience: unsend the LAST DM the boss sent to a specific twin. Use 'unsend my last message to Davronbek'.",
+        parameters={
+            "type": "object",
+            "properties": {"twin_name": {"type": "string"}},
+            "required": ["twin_name"],
+        },
+        fn=tool_unsend_last_dm,
+    ),
     "create_twin": Tool(
         name="create_twin", kind="write",
         description="Create a new digital twin (employee AI). Pass name and optional owner_email.",
