@@ -129,18 +129,22 @@ def _build_system_prompt(
 def _pick_model_for_query(user_msg: str, history: list[dict]) -> str:
     """Decide which LLM gets the decision call.
 
-    Default tier is Groq Llama 3.3 70B — 200-500ms latency, free, perfectly
-    capable for short / single-tool queries. The slow-but-smarter Gemini 2.5
-    Pro tier is reserved for queries where Groq tends to fumble:
+    Two-tier Gemini router:
 
-      - long prompts (>200 chars) — typically multi-clause requests
-      - explicit conjunctions ("and then", "after that", "also")
-      - lots of conversation history (>3 prior turns)
-      - explicit "remember / summarize / explain / why" intent words
-      - non-trivial number of distinct entities mentioned
+      • Fast tier (default)  → Gemini 2.5 Flash — sub-2s latency, free tier,
+        plenty smart for the 90% case (single-tool routing, short Qs).
+      • Deep tier            → Gemini 2.5 Pro — same provider, smarter
+        reasoning. Promoted when the query smells "hard":
+            - long prompts (>200 chars) — typically multi-clause requests
+            - explicit conjunctions ("and then", "after that", "also")
+            - lots of conversation history (>6 prior turns)
+            - explicit "remember / summarize / explain / why" verbs
 
-    Override available via env var `ASSISTANT_FORCE_MODEL` (escape hatch for
-    debugging and load-balancing across providers).
+    Same provider for both tiers keeps the operational surface minimal —
+    one API key, one rate-limit bucket, no extra accounts.
+
+    Override available via env var `ASSISTANT_FORCE_MODEL` (escape hatch
+    for debugging and load-balancing across providers).
     """
     forced = os.getenv("ASSISTANT_FORCE_MODEL", "").strip()
     if forced:
@@ -159,7 +163,7 @@ def _pick_model_for_query(user_msg: str, history: list[dict]) -> str:
     )
     is_compound = any(m in qlc or m in q for m in compound_markers)
 
-    # Signal 3 — reasoning / synthesis verbs (these benefit from a smarter LLM)
+    # Signal 3 — reasoning / synthesis verbs (these benefit from Pro)
     reasoning_markers = (
         "summarize", "summary", "explain", "why", "compare", "analyze",
         "recommend", "suggest", "draft", "write a", "rewrite", "translate",
@@ -171,10 +175,8 @@ def _pick_model_for_query(user_msg: str, history: list[dict]) -> str:
     deep_history = len(history or []) > 6
 
     if long_query or is_compound or is_reasoning or deep_history:
-        # Gemini 2.5 Pro — better at compound reasoning + multi-tool plans.
-        # Falls back through llm_client's chain if GEMINI_API_KEY absent.
         return "gemini-2.5-pro"
-    return "groq-llama-3.3-70b"
+    return "gemini-2.5-flash"
 
 
 def _call_llm_for_decision(system: str, user_msg: str, history: list[dict]) -> dict:
@@ -190,9 +192,15 @@ def _call_llm_for_decision(system: str, user_msg: str, history: list[dict]) -> d
     messages.append({"role": "user", "content": user_msg})
 
     primary = _pick_model_for_query(user_msg, history or [])
-    # Fallback tier — the other side of the two-LLM router.
-    fallback = ("groq-llama-3.3-70b"
-                if primary.startswith("gemini") else "gemini-2.5-pro")
+    # Fallback tier — if the primary Gemini call fails (rare), try the
+    # other Gemini variant first, then OpenAI as the cross-provider
+    # safety net so a Google outage doesn't brick the assistant.
+    if primary == "gemini-2.5-flash":
+        fallback = "gemini-2.5-pro"
+    elif primary == "gemini-2.5-pro":
+        fallback = "gemini-2.5-flash"
+    else:
+        fallback = "gpt-4o-mini"  # last-resort cross-provider fallback
 
     def _try(model: str) -> tuple[str, Optional[str]]:
         try:
