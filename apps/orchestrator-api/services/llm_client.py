@@ -471,6 +471,10 @@ def chat_completion_sync(
     chosen = model or _env("LLM_MODEL") or DEFAULT_MODEL_NAME
     full_messages_with_sys = [{"role": "system", "content": system_prompt}] + messages
 
+    # Track every fallback attempt so a final failure can explain WHICH
+    # providers we tried and what they said.
+    attempt_log: list[str] = []
+
     # -- Try the requested model first --
     if chosen in MODEL_CATALOG:
         provider, real_model = MODEL_CATALOG[chosen]
@@ -499,6 +503,7 @@ def chat_completion_sync(
         if ok:
             _last_used.update({"provider": provider, "model": chosen})
             return result
+        attempt_log.append(f"{chosen} ({provider}): {str(result)[:200]}")
 
     # -- Fallback 1: default OpenAI --
     if openai_key:
@@ -507,6 +512,7 @@ def chat_completion_sync(
         if ok:
             _last_used.update({"provider": "openai", "model": "gpt-4o-mini (fallback)"})
             return result
+        attempt_log.append(f"gpt-4o-mini (openai fallback): {str(result)[:200]}")
 
     # -- Fallback 2: local Ollama --
     ok, result = _call_openai_compatible(f"{ollama_url}/v1", "", "qwen2.5",
@@ -514,6 +520,7 @@ def chat_completion_sync(
     if ok:
         _last_used.update({"provider": "ollama", "model": "qwen2.5 (fallback)"})
         return result
+    attempt_log.append(f"qwen2.5 (ollama fallback): {str(result)[:200]}")
 
     _last_used.update({"provider": "none", "model": "none"})
     # Friendlier error messages for common failures
@@ -527,10 +534,15 @@ def chat_completion_sync(
     elif "model" in last_err and "not found" in last_err:
         hint = "?쬂 Local Ollama model not installed. Install Ollama from ollama.com and run 'ollama pull qwen2.5'."
     elif "connection" in last_err or "connect" in last_err:
-        hint = "?뙋 Cannot reach LLM service. Check internet connection or local Ollama."
+        hint = "Cannot reach LLM service. Check internet connection or local Ollama."
     else:
         hint = "Check your API keys in .env or try a different model from the picker."
-    return f"[LLM unavailable] {hint}\n\nTechnical details: {result[:200]}"
+    # Surface every provider attempt so the boss sees the FIRST error (the
+    # one that matters), not just the last fallback. Previously only the
+    # final Ollama 'Connection refused' was shown, hiding Anthropic/OpenAI
+    # 404/401/429 errors that were the actual cause.
+    attempts_block = " || ".join(attempt_log) if attempt_log else "(no attempts logged)"
+    return f"[LLM unavailable] {hint} | attempts: {attempts_block}"
 
 
 async def chat_completion(
