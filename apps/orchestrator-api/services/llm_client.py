@@ -288,6 +288,7 @@ def gemini_multimodal_sync(
             "temperature": temperature,
         },
     }
+    gemini_err = ""
     try:
         with httpx.Client(timeout=timeout) as client:
             resp = client.post(
@@ -295,27 +296,29 @@ def gemini_multimodal_sync(
                 headers={"Content-Type": "application/json"},
                 json=body,
             )
-            if resp.status_code != 200:
-                # Gemini errored at runtime (quota, safety filter, etc.) —
-                # try OpenAI Vision so the user still gets an answer.
-                return _openai_vision_fallback_sync(
-                    system_prompt, user_text, attachments,
-                    max_tokens=max_tokens, temperature=temperature,
-                )
-            data = resp.json()
-            cands = data.get("candidates") or []
-            if cands and cands[0].get("content", {}).get("parts"):
-                return "".join(p.get("text", "") for p in cands[0]["content"]["parts"])
-            return _openai_vision_fallback_sync(
-                system_prompt, user_text, attachments,
-                max_tokens=max_tokens, temperature=temperature,
-            )
-    except Exception:
-        # Network / timeout / etc. — cascade to OpenAI
-        return _openai_vision_fallback_sync(
-            system_prompt, user_text, attachments,
-            max_tokens=max_tokens, temperature=temperature,
-        )
+            if resp.status_code == 200:
+                data = resp.json()
+                cands = data.get("candidates") or []
+                if cands and cands[0].get("content", {}).get("parts"):
+                    return "".join(p.get("text", "") for p in cands[0]["content"]["parts"])
+                # Empty response — could be safety-blocked. Check finish reason
+                finish = cands[0].get("finishReason") if cands else None
+                gemini_err = f"Gemini empty response (finishReason={finish})"
+            else:
+                gemini_err = f"Gemini HTTP {resp.status_code}: {resp.text[:200]}"
+    except Exception as e:
+        gemini_err = f"Gemini exception: {e}"
+
+    # Gemini failed — try OpenAI Vision as backup. If THAT also fails,
+    # bubble BOTH error reasons up so we can fix root cause without
+    # grepping logs.
+    fallback = _openai_vision_fallback_sync(
+        system_prompt, user_text, attachments,
+        max_tokens=max_tokens, temperature=temperature,
+    )
+    if fallback.startswith("[LLM unavailable]"):
+        return f"[LLM unavailable] {gemini_err} | fallback: {fallback.replace('[LLM unavailable]', '').strip()}"
+    return fallback
 
 
 def _call_gemini(model: str, system_prompt: str, messages: list[dict],
