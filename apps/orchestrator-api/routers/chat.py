@@ -53,6 +53,7 @@ class AgentCommandBody(BaseModel):
     history: Optional[list[dict]] = Field(None, description="Optional turn history for context")
     confirmed_tool: Optional[str] = Field(None, description="If set, bypass LLM and execute this tool directly (user confirmed a previously-proposed write action)")
     confirmed_args: Optional[dict] = Field(None, description="Args for the confirmed_tool")
+    attachment_ids: Optional[list[str]] = Field(None, description="IDs returned from POST /chatbot/upload — included so the assistant can use the file content (image/pdf/text) when answering. When present, the agent auto-routes to Gemini 2.5 Pro multimodal.")
 
 
 @router.post("/agent")
@@ -75,6 +76,7 @@ def agent_command(body: AgentCommandBody, db: Session = Depends(get_db)):
         history=body.history,
         confirmed_tool=body.confirmed_tool,
         confirmed_args=body.confirmed_args,
+        attachment_ids=body.attachment_ids,
     )
 
 

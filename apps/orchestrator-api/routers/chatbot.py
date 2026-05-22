@@ -33,6 +33,125 @@ MODULE_VERSION = "1.0.0"
 SUPPORTED_CLIENT_RANGE = "1.x"
 
 
+# ---------------------------------------------------------------------------
+# Attachment upload — multimodal pipeline (v1.4)
+#
+# Browser → POST /chatbot/upload (multipart/form-data, field name "file")
+#   → server stores in apps/orchestrator-api/uploads/chatbot/<uuid>.<ext>
+#   → returns { attachment_id, filename, mime_type, size, kind }
+#
+# Frontend then includes `attachment_ids` in the next /chat/agent request.
+# The assistant_agent reads each attachment, builds a Gemini multimodal
+# message (image/pdf/text inlineData), and runs the query against
+# gemini-2.5-pro (auto-promoted whenever an attachment is present).
+#
+# Storage is filesystem for now — fine for the boss-side Assistant. If we
+# expose this to many customers later, swap in S3/GCS via env var.
+# ---------------------------------------------------------------------------
+ATTACH_DIR_NAME = "uploads/chatbot"
+ATTACH_TTL_HOURS = 24  # uploads older than this are cleaned up on next write
+MAX_UPLOAD_BYTES = 20 * 1024 * 1024  # 20 MB per file
+ALLOWED_MIME_PREFIXES = ("image/", "application/pdf", "text/", "audio/", "video/")
+
+
+def _attach_dir() -> str:
+    import pathlib
+    base = pathlib.Path(__file__).resolve().parent.parent / ATTACH_DIR_NAME
+    base.mkdir(parents=True, exist_ok=True)
+    return str(base)
+
+
+def _classify_kind(mime: str) -> str:
+    if mime.startswith("image/"): return "image"
+    if mime == "application/pdf": return "pdf"
+    if mime.startswith("audio/"): return "audio"
+    if mime.startswith("video/"): return "video"
+    if mime.startswith("text/"):  return "text"
+    return "file"
+
+
+def _cleanup_stale_uploads():
+    """Drop attachments older than ATTACH_TTL_HOURS. Best-effort; failures
+    are non-fatal (the boss can still upload, we just leak some disk)."""
+    import pathlib, time
+    try:
+        cutoff = time.time() - ATTACH_TTL_HOURS * 3600
+        for p in pathlib.Path(_attach_dir()).iterdir():
+            try:
+                if p.is_file() and p.stat().st_mtime < cutoff:
+                    p.unlink(missing_ok=True)
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+
+@router.post("/upload")
+async def chatbot_upload(file: UploadFile = File(...)):
+    """Accept an attached file from the chatbot widget. Returns an
+    attachment_id the widget can send in subsequent /chat/agent requests.
+
+    Limits: 20 MB per file, MIME must start with image/, application/pdf,
+    text/, audio/, or video/. No DB row — files live in the local uploads
+    dir and expire after 24 hours."""
+    import uuid, pathlib, mimetypes
+
+    mime = (file.content_type or "").lower()
+    if not any(mime.startswith(p) for p in ALLOWED_MIME_PREFIXES):
+        raise HTTPException(status_code=415, detail=f"Unsupported MIME type: {mime or 'unknown'}")
+
+    data = await file.read()
+    if not data:
+        raise HTTPException(status_code=400, detail="Empty file")
+    if len(data) > MAX_UPLOAD_BYTES:
+        raise HTTPException(status_code=413, detail=f"File too large ({len(data)} > {MAX_UPLOAD_BYTES})")
+
+    _cleanup_stale_uploads()
+
+    ext = (mimetypes.guess_extension(mime) or "").lstrip(".") or (
+        (file.filename or "").rsplit(".", 1)[-1].lower() if "." in (file.filename or "") else "bin"
+    )
+    attachment_id = uuid.uuid4().hex
+    target = pathlib.Path(_attach_dir()) / f"{attachment_id}.{ext}"
+    target.write_bytes(data)
+
+    return {
+        "ok": True,
+        "attachment_id": attachment_id,
+        "filename": file.filename or f"upload.{ext}",
+        "mime_type": mime,
+        "size": len(data),
+        "kind": _classify_kind(mime),
+    }
+
+
+def load_attachment(attachment_id: str) -> Optional[dict]:
+    """Look up an uploaded attachment by id. Returns dict with keys:
+    {path, mime_type, bytes, kind} or None if not found / expired.
+
+    Used by assistant_agent when building multimodal Gemini requests."""
+    import pathlib, mimetypes
+    if not attachment_id or "/" in attachment_id or "\\" in attachment_id:
+        return None
+    base = pathlib.Path(_attach_dir())
+    matches = list(base.glob(f"{attachment_id}.*"))
+    if not matches:
+        return None
+    path = matches[0]
+    try:
+        data = path.read_bytes()
+    except Exception:
+        return None
+    mime = mimetypes.guess_type(str(path))[0] or "application/octet-stream"
+    return {
+        "path": str(path),
+        "mime_type": mime,
+        "bytes": data,
+        "kind": _classify_kind(mime),
+        "filename": path.name,
+    }
+
+
 @router.get("/version")
 def chatbot_version():
     """

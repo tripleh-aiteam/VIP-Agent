@@ -2,6 +2,82 @@
 
 ---
 
+## 2026-05-22 (Friday) — Notion-AI-style Assistant: Slice 1 + Slice 2
+
+### Goal
+
+Make the floating Assistant feel like Notion AI — natural phrasing, deep navigation, multi-LLM smart routing — as a reusable module other agents (Asset/Stock/Realty) can drop in.
+
+### Slice 1 — flip the widget to the tool-calling agent (LIVE on Vercel)
+
+The 2026-05-21 overhaul built `assistant_agent.py` + 37 tools but the deployed widget at oasisvip.vercel.app was still hitting the legacy keyword classifier (`/chatbot/talk`). This slice flips it.
+
+- [packages/chatbot/src/types.ts](packages/chatbot/src/types.ts) — added `endpointMode: "talk" | "agent"` to `AgentConfig`. Extended `TalkResponse` with pass-through fields the agent endpoint surfaces (`proposedAction`, `card`, `toolUsed`, `toolResult`).
+- [packages/chatbot/src/engine/talk-client.ts](packages/chatbot/src/engine/talk-client.ts) — new `askAgent()` function POSTs to `/chat/agent` with `{transcript, current_path, selected_id, history}`, normalizes response back to `TalkResponse`. `ask()` dispatches to it when `endpointMode === "agent"`.
+- [packages/chatbot/src/engine/index.ts](packages/chatbot/src/engine/index.ts) — export `askAgent`.
+- [packages/chatbot/src/components/ChatbotOverlay.tsx](packages/chatbot/src/components/ChatbotOverlay.tsx) — auto-extract `selectedId` from URL tail (UUID/ULID/numeric); bypass streaming in agent mode (tool-calling doesn't map cleanly to token streams yet); thread `selectedId` into the `ask()` call.
+- [apps/admin-dashboard/src/chatbot.config.ts](apps/admin-dashboard/src/chatbot.config.ts) — `endpointMode: "agent"` flipped on.
+- [apps/orchestrator-api/services/assistant_agent.py](apps/orchestrator-api/services/assistant_agent.py) — added `_pick_model_for_query()` dual-LLM router: Groq Llama 3.3 70B for short / single-tool / fast queries; Gemini 2.5 Pro for long / compound / reasoning / deep-history. `_call_llm_for_decision` cascades to the other tier if the primary returns `[LLM unavailable]`. `ASSISTANT_FORCE_MODEL` env var overrides for debugging.
+- [apps/orchestrator-api/services/llm_client.py](apps/orchestrator-api/services/llm_client.py) — added `gemini-2.5-flash` / `gemini-2.5-pro` canonical aliases in MODEL_CATALOG.
+- [apps/orchestrator-api/services/assistant_tools.py](apps/orchestrator-api/services/assistant_tools.py) — `tool_count` now supports `entity="agents"` and returns count + active_count + a list of registered agent names and types (was: "Unknown entity 'agents'").
+
+**Verified via curl on the live Render orchestrator:**
+- "open the Asset agent" → `open_portal` tool → external navigate to asset-agent-s4tw.onrender.com ✓
+- "show me the asset agent" → same ✓ (the original misroute is fixed)
+- Multi-step compound query → executes a chain of read tools and composes a single answer ✓
+
+### Slice 2 — deep menu discovery (LOCAL, ships on next orchestrator deploy)
+
+- [apps/orchestrator-api/services/assistant_manifest.py](apps/orchestrator-api/services/assistant_manifest.py) — added `sub_tabs` + `dynamic_routes` fields to PAGES. Filled them in for Chatbot (4 sub-tabs), Twins (5 sub-tabs), Reports (3 sub-tabs), Meetings (3 sub-tabs), Settings (5 sub-tabs). Added `/admin/meeting-twins` as a hidden admin route. `pages_summary_for_llm()` now emits nested sub-tabs and dynamic-route patterns under each page (45 lines for the LLM, up from 22).
+- [apps/orchestrator-api/services/assistant_tools.py](apps/orchestrator-api/services/assistant_tools.py) — new `find_page(query, limit=3)` tool: fuzzy scores every page + sub-tab + external agent against the query, returns top-N with `confidence` 0..1 and the deep-link path. Smoke-tested: "API keys" → Settings → API Keys (1.0), "needs reply" → Chatbot → Needs reply (1.0), "asset" → external Asset agent (1.0).
+
+### What this unblocks
+
+- "open the Asset agent" / "open stock app" / "show me realty" now route to the right external app instead of the wrong data query.
+- Multi-step compound queries (e.g. "summarize what my twins did this week and recommend what to prioritize tomorrow") now hit Gemini 2.5 Pro automatically and use the multi-tool chain executor.
+- "where can I find API keys" / "where is needs-reply" now resolve to nested sub-tabs (e.g. `/settings#api_keys`).
+- The package `@triple-h/chatbot` is now multi-endpoint — Asset/Stock/Realty consumers can opt into `endpointMode: "agent"` and instantly inherit the Notion-AI behavior.
+
+### Deploy state
+
+- **Vercel (oasisvip.vercel.app)** — Slice 1 frontend live (deployment `dpl_CFuRQHTofNVy4ntZpJfK2EGv43ZC`). The new widget posts to `/chat/agent`.
+- **Render (vip-orchestrator.onrender.com)** — Slice 1.4 (dual-LLM), Slice 2.1 (manifest sub-tabs), Slice 2.2 (find_page tool) are **local-only**, awaiting orchestrator redeploy. The widget already works against the existing Render backend (which serves the original `/chat/agent` from 2026-05-21).
+
+### Next
+
+- Slice 3 — file / image / drag-drop / paste + Gemini vision (input handlers in ChatbotOverlay + backend upload endpoint + vision call). Pending user signal.
+- Slice 4 — module repackage for Asset / Stock / Realty agents to drop in. Pending user signal.
+- Orchestrator redeploy required to ship Slice 1.4 + Slice 2.
+
+---
+
+## 2026-05-22 (Friday) — Assistant intent menu: per-agent navigation
+
+### Goal
+
+Fix the floating Assistant widget so that "open stock app" / "show me Asset agent" actually open the target agent, instead of misrouting to a generic data-query or the agents-list page.
+
+### Root cause
+
+The frontend always sends its own `vipConfig.intents` to `/chatbot/talk`, and the backend uses ONLY that list for the LLM classifier (its own `_vip_intent_list()` is a dead fallback that never fires). The frontend list was missing `nav_asset_agent` / `nav_stock_agent` / `nav_realty_agent`, so the LLM picked the closest available option — `query_stock` for "open stock app", and generic `nav_agents` for "show me Asset agent". The backend already knew how to execute those names (returns `{type: navigate, external: true, to: deployed-app-URL}`), it just never received them.
+
+### Files updated
+
+- [apps/admin-dashboard/src/chatbot.config.ts](apps/admin-dashboard/src/chatbot.config.ts) — added `nav_asset_agent`, `nav_stock_agent`, `nav_realty_agent` with rich EN/KO examples ("open stock app", "launch asset", "pull up the property app", "자산 에이전트 열어" …). Tightened `nav_agents` description to "ONLY when the user wants the FULL LIST, not a specific named agent". Tightened `query_stock` / `query_asset` descriptions to clarify they're for asking *about* numbers, not for opening the app — and explicitly point at `nav_*_agent` when the user says "open".
+
+### What this unblocks
+
+- "open stock app" now opens stock-advisor-agent-ten.vercel.app in a new tab (via backend `AGENT_PORTALS` map).
+- "show me Asset agent" / "open asset" opens asset-agent-s4tw.onrender.com.
+- Korean variants ("주식 앱 열어", "부동산 에이전트 보여줘") also route correctly.
+
+### Next
+
+- Restart admin-dashboard dev server (`npm run dev`) to pick up the config — no backend changes needed.
+- Consider deleting backend `_vip_intent_list()` since it's dead code, OR add an assert that catches drift between frontend and backend execute map (`AGENT_PORTALS` / `NAV_MAP` / `UI_CMD_MAP`).
+
+---
+
 ## 2026-05-21 (Thursday) — 🧠 VIP Assistant fully reshaped (8 phases) + Kakao security
 
 ### Goal

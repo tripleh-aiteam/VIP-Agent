@@ -48,6 +48,20 @@ PAGES: list[dict] = [
                          "take_over_conversation", "set_boss_mode"],
         "sidebar": True,
         "priority": 1,
+        # Sub-areas reachable from inside this page. Each entry tells the
+        # assistant "if user wants this thing, the path is here + open
+        # the named section." The LLM picks the right one when the user
+        # asks for something specific (e.g. "show needs-reply").
+        "sub_tabs": [
+            {"name": "All conversations",   "id": "all",         "description": "Default list of every conversation"},
+            {"name": "Needs reply",         "id": "needs_reply", "description": "Filter to only conversations awaiting a human response"},
+            {"name": "Active",              "id": "active",      "description": "Currently being handled by the boss / human"},
+            {"name": "Resolved",            "id": "resolved",    "description": "Closed / answered conversations"},
+        ],
+        # Dynamic detail routes the assistant can deep-link to
+        "dynamic_routes": [
+            {"pattern": "/chatbot/{conversation_id}", "description": "Single conversation detail view"},
+        ],
     },
     {
         "path": "/",
@@ -68,6 +82,16 @@ PAGES: list[dict] = [
         "capabilities": ["list_twins", "view_twin_detail", "change_twin_mode"],
         "sidebar": True,
         "priority": 3,
+        "sub_tabs": [
+            {"name": "Activity",      "id": "activity",  "description": "What the twin has done recently — events, knowledge added, decisions"},
+            {"name": "Knowledge",     "id": "knowledge", "description": "Per-twin knowledge base — corrections, rules, uploaded docs"},
+            {"name": "Tasks",         "id": "tasks",     "description": "Tasks the twin is currently working on or has finished"},
+            {"name": "Mode",          "id": "mode",      "description": "Shadow / active / handoff toggle"},
+            {"name": "Reports",       "id": "reports",   "description": "Reports the twin has produced"},
+        ],
+        "dynamic_routes": [
+            {"pattern": "/twins/{twin_id}", "description": "Single twin detail view with all sub-tabs above"},
+        ],
     },
     {
         "path": "/messages",
@@ -139,6 +163,14 @@ PAGES: list[dict] = [
                          "trigger_daily_report", "trigger_weekly_report"],
         "sidebar": True,
         "priority": 10,
+        "sub_tabs": [
+            {"name": "Daily",   "id": "daily",   "description": "Daily briefing reports (auto-generated 8 AM KST)"},
+            {"name": "Weekly",  "id": "weekly",  "description": "Weekly summary reports (Friday 6:30 PM KST)"},
+            {"name": "Custom",  "id": "custom",  "description": "Ad-hoc reports composed manually"},
+        ],
+        "dynamic_routes": [
+            {"pattern": "/reports/{report_id}", "description": "Single report — full text, with download as DOCX"},
+        ],
     },
     {
         "path": "/judgement",
@@ -169,6 +201,14 @@ PAGES: list[dict] = [
         "capabilities": ["list_meetings", "schedule_meeting", "join_meeting", "cancel_meeting"],
         "sidebar": True,
         "priority": 13,
+        "sub_tabs": [
+            {"name": "Upcoming",  "id": "upcoming",  "description": "Meetings that haven't started yet"},
+            {"name": "Live",      "id": "live",      "description": "Meetings happening right now"},
+            {"name": "Completed", "id": "completed", "description": "Past meetings with transcripts/summaries"},
+        ],
+        "dynamic_routes": [
+            {"pattern": "/meetings/{meeting_id}/room", "description": "Live meeting room — multi-participant view with voice + chat"},
+        ],
     },
     {
         "path": "/settings",
@@ -179,6 +219,23 @@ PAGES: list[dict] = [
         "capabilities": ["edit_user_account", "manage_api_keys", "configure_channels"],
         "sidebar": True,
         "priority": 14,
+        "sub_tabs": [
+            {"name": "Account",       "id": "account",       "description": "Boss user profile, change password, email"},
+            {"name": "API Keys",      "id": "api_keys",      "description": "Manage OpenAI / Anthropic / Gemini / Groq keys + per-tenant overrides"},
+            {"name": "Channels",      "id": "channels",      "description": "Telegram, email, webhook integrations — links to /channels"},
+            {"name": "Diagnostics",   "id": "diagnostics",   "description": "Chatbot health checks — links to /chatbot-health"},
+            {"name": "Preferences",   "id": "preferences",   "description": "Theme, language default, notification rules"},
+        ],
+    },
+    # === Hidden admin route, not in sidebar ===
+    {
+        "path": "/admin/meeting-twins",
+        "name": "Admin · Meeting Twins",
+        "description": "Admin-only page — manage the digital-twin participants assigned to multi-twin meeting rooms. Used to seed/clean up automated meeting attendees.",
+        "keywords": ["meeting twins", "admin twins", "meeting attendees",
+                     "어드민 미팅"],
+        "capabilities": ["list_meeting_twins", "create_meeting_twin", "delete_meeting_twin"],
+        "sidebar": False,
     },
     # ===== Hidden / direct-link only =====
     {
@@ -326,11 +383,23 @@ def get_agent_by_name(name: str) -> dict | None:
 
 
 def pages_summary_for_llm() -> str:
-    """A compact one-line-per-page summary the LLM can use to pick a path."""
+    """A compact summary the LLM uses to pick a path.
+
+    Each entry includes the page path, name, description, and — when the
+    page has known sub-tabs or dynamic detail routes — those are listed
+    indented underneath. This gives the LLM the full nested-menu picture
+    so it can answer "where is X" / "open Y inside Z" precisely.
+    """
     lines = []
     for p in PAGES:
         kw = ", ".join(p.get("keywords", [])[:6])
         lines.append(f"- {p['path']} ({p['name']}): {p['description']} [keywords: {kw}]")
+        # Sub-tabs (sections within the page)
+        for st in p.get("sub_tabs") or []:
+            lines.append(f"    • [tab] {st['name']} (id={st['id']}): {st['description']}")
+        # Dynamic detail routes (one record per pattern)
+        for dr in p.get("dynamic_routes") or []:
+            lines.append(f"    • [dynamic] {dr['pattern']}: {dr['description']}")
     return "\n".join(lines)
 
 

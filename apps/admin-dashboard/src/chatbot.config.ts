@@ -16,6 +16,13 @@ export const vipConfig: AgentConfig = {
   agentId: "vip",
   apiBase: API,
 
+  // v1.3 — route every user query through the tool-calling /chat/agent
+  // endpoint instead of the legacy /chatbot/talk keyword classifier. The
+  // backend's assistant_tools registry (37 tools, Notion-AI style) becomes
+  // the source of truth — the `intents` array below is kept only as a
+  // fallback for hosts that flip endpointMode back to "talk".
+  endpointMode: "agent",
+
   identity: {
     // Renamed 2026-05-12: this floating overlay is the BOSS-side assistant
     // (helps you operate VIP). The customer-facing chatbot (KakaoTalk + phone)
@@ -56,17 +63,35 @@ export const vipConfig: AgentConfig = {
       examples: { en: ["open messages", "show me my messages", "go to messages", "open the message hub", "see DMs", "show my inbox"],
                   ko: ["메시지 페이지", "메시지 열어", "받은 메시지"] },
       action: { type: "navigate", to: "/messages" } },
-    { name: "nav_agents", description: "Open the agents page",
-      examples: { en: ["open agents", "list agents"], ko: ["에이전트 페이지"] },
+    { name: "nav_agents", description: "Open the INTERNAL agents LIST page — only when the user wants to see ALL registered agents at once. Do NOT pick this when the user mentions a specific named agent (Asset / Stock / Realty / Real Estate / 자산 / 주식 / 부동산); use nav_asset_agent / nav_stock_agent / nav_realty_agent instead.",
+      examples: { en: ["open agents", "list agents", "show all agents", "agents page", "show agent list"],
+                  ko: ["에이전트 페이지", "에이전트 목록", "모든 에이전트"] },
       action: { type: "navigate", to: "/agents" } },
+    { name: "nav_asset_agent", description: "Open the Asset Agent web app (its deployed homepage) in a new browser tab. Pick this WHENEVER the user mentions the Asset Agent or wants to see/visit/open/launch the asset agent/app — even casual phrasings like 'open asset app', 'show me asset agent', 'pull up asset', 'launch asset'.",
+      examples: { en: ["open asset agent", "open asset app", "show me asset agent", "show me Asset agent",
+                       "launch asset agent", "pull up asset", "I wanna see asset agent",
+                       "go to asset agent", "asset agent app", "asset agent homepage"],
+                  ko: ["자산 에이전트 열어", "자산 앱", "자산 에이전트 보여줘", "자산 에이전트 좀"] },
+      action: { type: "navigate", to: "/agents", external: true } },
+    { name: "nav_stock_agent", description: "Open the Stock Agent web app (the deployed stock-advisor app) in a new browser tab. Pick this WHENEVER the user wants to OPEN/LAUNCH/VISIT the stock app or stock agent — even casual phrasings like 'open stock app', 'show me stock agent', 'launch stock', 'pull up the stock app'. NOTE: this is for OPENING the app; if the user is just asking for market/portfolio status numbers, use query_stock instead.",
+      examples: { en: ["open stock agent", "open stock app", "open the stock app", "launch stock agent",
+                       "show me stock agent", "go to stock agent", "pull up the stock app",
+                       "I wanna see stock agent", "stock agent app", "stock agent homepage"],
+                  ko: ["주식 에이전트 열어", "주식 앱 열어", "스톡 에이전트", "주식 에이전트 보여줘"] },
+      action: { type: "navigate", to: "/agents", external: true } },
+    { name: "nav_realty_agent", description: "Open the Real Estate / Realty Agent web app (its deployed homepage) in a new browser tab. Pick this WHENEVER the user mentions Realty / Real Estate / property / 부동산 and wants to open/visit/launch it.",
+      examples: { en: ["open realty", "open realty app", "open real estate agent", "launch realty",
+                       "show me realty", "I wanna see real estate agent", "pull up the property app"],
+                  ko: ["부동산 에이전트 열어", "부동산 앱", "부동산 에이전트 보여줘"] },
+      action: { type: "navigate", to: "/agents", external: true } },
     { name: "query_daily_briefing", description: "Get today's situation",
       examples: { en: ["what's today's situation", "daily briefing", "how is everything"], ko: ["오늘 상황", "오늘 어떻게 됐어"] },
       action: { type: "speak_only" } },
-    { name: "query_stock", description: "Stock portfolio + KOSPI",
-      examples: { en: ["how is my stock", "what is my stock status", "give me info about my stock", "kospi today"], ko: ["주식 상황", "내 주식 어때"] },
+    { name: "query_stock", description: "Speak the stock portfolio status (KOSPI, holdings, P&L). ONLY for asking ABOUT the numbers — NOT for opening the stock app. If the user says 'open stock app' or 'launch stock', use nav_stock_agent instead.",
+      examples: { en: ["how is my stock", "what is my stock status", "give me info about my stock", "kospi today", "stock status"], ko: ["주식 상황", "내 주식 어때"] },
       action: { type: "speak_only" } },
-    { name: "query_asset", description: "Asset portfolio + occupancy",
-      examples: { en: ["how is my asset portfolio", "asset status", "give me info about my assets"], ko: ["자산 상태", "내 자산 어때"] },
+    { name: "query_asset", description: "Speak the asset portfolio status (properties, rental income, occupancy). ONLY for asking ABOUT the numbers — NOT for opening the asset app. If the user says 'open asset app' or 'launch asset', use nav_asset_agent instead.",
+      examples: { en: ["how is my asset portfolio", "asset status", "give me info about my assets", "occupancy rate"], ko: ["자산 상태", "내 자산 어때"] },
       action: { type: "speak_only" } },
     { name: "send_twin_message", description: "Send a personal message to a specific twin",
       examples: { en: ["send a message to {name}", "tell {name} ...", "text {name} ..."], ko: ["{name}에게 메시지 보내"] },

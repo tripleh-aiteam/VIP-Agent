@@ -22,6 +22,7 @@ This module is provider-agnostic via llm_client. Defaults to Groq Llama
 from __future__ import annotations
 
 import json
+import os
 from typing import Any, Optional
 
 from sqlalchemy.orm import Session
@@ -125,31 +126,103 @@ def _build_system_prompt(
 #  LLM call with JSON parsing
 # ============================================================================
 
+def _pick_model_for_query(user_msg: str, history: list[dict]) -> str:
+    """Decide which LLM gets the decision call.
+
+    Default tier is Groq Llama 3.3 70B — 200-500ms latency, free, perfectly
+    capable for short / single-tool queries. The slow-but-smarter Gemini 2.5
+    Pro tier is reserved for queries where Groq tends to fumble:
+
+      - long prompts (>200 chars) — typically multi-clause requests
+      - explicit conjunctions ("and then", "after that", "also")
+      - lots of conversation history (>3 prior turns)
+      - explicit "remember / summarize / explain / why" intent words
+      - non-trivial number of distinct entities mentioned
+
+    Override available via env var `ASSISTANT_FORCE_MODEL` (escape hatch for
+    debugging and load-balancing across providers).
+    """
+    forced = os.getenv("ASSISTANT_FORCE_MODEL", "").strip()
+    if forced:
+        return forced
+
+    q = (user_msg or "").strip()
+    qlc = q.lower()
+
+    # Signal 1 — query length
+    long_query = len(q) > 200
+
+    # Signal 2 — compound / chained request
+    compound_markers = (
+        " and then ", " after that ", " also ", " then ", " plus ", "; ",
+        " 그리고 ", " 그다음 ", " 그런 다음 ",
+    )
+    is_compound = any(m in qlc or m in q for m in compound_markers)
+
+    # Signal 3 — reasoning / synthesis verbs (these benefit from a smarter LLM)
+    reasoning_markers = (
+        "summarize", "summary", "explain", "why", "compare", "analyze",
+        "recommend", "suggest", "draft", "write a", "rewrite", "translate",
+        "요약", "왜", "비교", "분석", "추천", "초안", "다시 써", "번역",
+    )
+    is_reasoning = any(m in qlc for m in reasoning_markers)
+
+    # Signal 4 — long conversation history (context-heavy follow-up)
+    deep_history = len(history or []) > 6
+
+    if long_query or is_compound or is_reasoning or deep_history:
+        # Gemini 2.5 Pro — better at compound reasoning + multi-tool plans.
+        # Falls back through llm_client's chain if GEMINI_API_KEY absent.
+        return "gemini-2.5-pro"
+    return "groq-llama-3.3-70b"
+
+
 def _call_llm_for_decision(system: str, user_msg: str, history: list[dict]) -> dict:
-    """Ask the LLM to pick a tool or give a direct answer. Returns dict."""
-    messages = [{"role": h["role"], "content": h["content"][:400]} for h in (history or [])]
+    """Ask the LLM to pick a tool or give a direct answer. Returns dict.
+
+    Uses _pick_model_for_query to route between fast (Groq) and smart
+    (Gemini Pro) tiers. If the chosen provider returns an error / the
+    "[LLM unavailable]" sentinel, we re-try with the other tier so a
+    single missing API key never bricks the assistant.
+    """
+    messages = [{"role": h["role"], "content": (h.get("content") or "")[:400]}
+                for h in (history or []) if h.get("content")]
     messages.append({"role": "user", "content": user_msg})
-    try:
-        raw = chat_completion_sync(
-            system_prompt=system,
-            messages=messages,
-            max_tokens=400,
-            temperature=0.2,
-            model="groq-llama-3.3-70b",
-        )
-    except Exception as e:
-        log.warning(f"assistant_agent: LLM call failed: {e}")
+
+    primary = _pick_model_for_query(user_msg, history or [])
+    # Fallback tier — the other side of the two-LLM router.
+    fallback = ("groq-llama-3.3-70b"
+                if primary.startswith("gemini") else "gemini-2.5-pro")
+
+    def _try(model: str) -> tuple[str, Optional[str]]:
+        try:
+            out = chat_completion_sync(
+                system_prompt=system,
+                messages=messages,
+                max_tokens=400,
+                temperature=0.2,
+                model=model,
+            )
+            return (out or "").strip(), None
+        except Exception as e:
+            return "", str(e)
+
+    raw, err = _try(primary)
+    if not raw or raw.startswith("[LLM unavailable") or raw.startswith("["):
+        log.info(f"assistant_agent: primary {primary} returned no usable output "
+                 f"(err={err}); cascading to {fallback}")
+        raw, err = _try(fallback)
+
+    if not raw or raw.startswith("[LLM unavailable"):
+        log.warning(f"assistant_agent: both LLM tiers failed (last err: {err})")
         return {"answer": "Sorry, the assistant LLM is unavailable right now."}
 
-    raw = (raw or "").strip()
-    if not raw or raw.startswith("[LLM unavailable"):
-        return {"answer": "Sorry, the LLM is unavailable right now."}
-
-    # Extract JSON object from raw
+    # Stash which model decided this turn so the response can surface it
+    # (useful for telemetry — the overlay can show 'groq' / 'gemini' chip).
     parsed = _extract_json(raw)
     if not isinstance(parsed, dict):
-        # Treat as freeform answer
-        return {"answer": raw[:500]}
+        return {"answer": raw[:500], "_model": primary}
+    parsed["_model"] = primary
     return parsed
 
 
@@ -497,6 +570,95 @@ def _compose_final_answer(
 #  Public entry point
 # ============================================================================
 
+def _run_multimodal_path(
+    transcript: str,
+    lang: str,
+    history: list[dict],
+    attachment_ids: list[str],
+) -> dict[str, Any]:
+    """Bypass the tool-calling decision step when the user attached files.
+
+    Why: the boss usually attaches an image and asks "what's in this", or a
+    PDF and asks "summarize this". Tool-routing won't help — we want the
+    LLM to look at the bytes and answer. Gemini 2.5 Pro is the smartest
+    multimodal option available in our llm_client; if it's unreachable
+    the user gets a friendly fallback.
+    """
+    from routers.chatbot import load_attachment
+    from services.llm_client import gemini_multimodal_sync
+
+    attachments: list[dict] = []
+    missing: list[str] = []
+    for aid in attachment_ids:
+        a = load_attachment(aid)
+        if a:
+            attachments.append(a)
+        else:
+            missing.append(aid)
+
+    if not attachments:
+        return {
+            "intent": "multimodal_missing",
+            "language": lang,
+            "reply": ("첨부 파일을 찾을 수 없습니다 — 다시 업로드해 주세요."
+                      if lang == "ko" else
+                      "I couldn't find the attached file — please re-upload."),
+            "action": None, "speak": True, "transcript": transcript,
+            "tool_used": None,
+        }
+
+    # Build a focused system prompt for multimodal Q&A
+    sys = (
+        "You are the VIP Assistant — the boss attached one or more files "
+        "and is asking a question about them. Look at the attachment(s) "
+        "and answer concretely (no 'I see an image of…' filler). Reply in "
+        "the SAME language the boss wrote in (Korean ↔ English). Keep it "
+        "tight — 1-4 sentences unless they explicitly asked for detail."
+    )
+    user_text = transcript or (
+        "이 파일에 대해 알려주세요." if lang == "ko" else "Tell me what's in this."
+    )
+    # Include the last user turn for context if available
+    if history:
+        recent = [h for h in history[-3:] if (h.get("role") == "user")]
+        if recent:
+            user_text = (recent[-1].get("content") or "").strip()[:400] + "\n\n" + user_text
+
+    reply = gemini_multimodal_sync(
+        system_prompt=sys,
+        user_text=user_text,
+        attachments=[{"mime_type": a["mime_type"], "bytes": a["bytes"], "filename": a["filename"]}
+                     for a in attachments],
+        model="gemini-2.5-pro",
+        max_tokens=800,
+        temperature=0.4,
+    )
+    if reply.startswith("[LLM unavailable]"):
+        log.warning(f"assistant_agent: multimodal Gemini failed: {reply}")
+        return {
+            "intent": "multimodal_failed",
+            "language": lang,
+            "reply": ("죄송합니다, 파일을 분석하는 비전 모델에 일시적으로 연결할 수 없습니다."
+                      if lang == "ko" else
+                      "Sorry — couldn't reach the vision model to analyze the file. Try again in a moment."),
+            "action": None, "speak": True, "transcript": transcript,
+            "tool_used": None,
+        }
+
+    return {
+        "intent": "multimodal_answer",
+        "language": lang,
+        "reply": reply[:1500],
+        "action": None, "speak": True, "transcript": transcript,
+        "tool_used": "gemini_vision",
+        "tool_result": {
+            "attachment_count": len(attachments),
+            "missing_count": len(missing),
+            "kinds": [a["kind"] for a in attachments],
+        },
+    }
+
+
 def run_agent(
     db: Session,
     transcript: str,
@@ -506,6 +668,7 @@ def run_agent(
     history: Optional[list[dict]] = None,
     confirmed_tool: Optional[str] = None,
     confirmed_args: Optional[dict] = None,
+    attachment_ids: Optional[list[str]] = None,
 ) -> dict[str, Any]:
     """Run one agent turn. Returns:
         {intent, language, reply, action, speak, transcript, tool_used, tool_result,
@@ -540,6 +703,22 @@ def run_agent(
         }
 
     transcript = (transcript or "").strip()
+
+    # Detect language for the output frame (LLM matches it itself)
+    if language in ("ko", "en"):
+        lang = language
+    else:
+        # Count Hangul
+        hangul = sum(1 for c in transcript if 0xAC00 <= ord(c) <= 0xD7A3)
+        lang = "ko" if hangul > 0 else "en"
+
+    # === Multimodal short-circuit (Slice 3) ===
+    # When the user attached one or more files, skip tool-calling and ask
+    # Gemini 2.5 Pro to look at the bytes directly. Empty transcript is
+    # OK here — the file itself is the question ("what's this?").
+    if attachment_ids:
+        return _run_multimodal_path(transcript, lang, history or [], attachment_ids)
+
     if not transcript:
         return {
             "intent": "empty",
@@ -549,14 +728,6 @@ def run_agent(
             "speak": True,
             "transcript": transcript,
         }
-
-    # Detect language for the output frame (LLM matches it itself)
-    if language in ("ko", "en"):
-        lang = language
-    else:
-        # Count Hangul
-        hangul = sum(1 for c in transcript if 0xAC00 <= ord(c) <= 0xD7A3)
-        lang = "ko" if hangul > 0 else "en"
 
     system = _build_system_prompt(current_path=current_path, selected_id=selected_id)
 

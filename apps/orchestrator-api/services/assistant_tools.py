@@ -511,7 +511,20 @@ def tool_count(entity: str, db: Session = None, **_kw) -> dict[str, Any]:
             from db.models import Meeting
             n = db.query(Meeting).count()
             return {"ok": True, "entity": "meetings", "count": n}
-        return {"ok": False, "error": f"Unknown entity '{entity}'. Try: twins, conversations, tasks, reports, approvals, meetings."}
+        if e in ("agents", "agent", "core_agents"):
+            from db.models import CoreAgent
+            agents = db.query(CoreAgent).all()
+            active = [a for a in agents if a.status == "active"]
+            return {
+                "ok": True, "entity": "agents", "count": len(agents),
+                "active_count": len(active),
+                "list": [
+                    {"name": a.name, "type": a.type, "status": a.status,
+                     "is_mock": bool(getattr(a, "is_mock", False))}
+                    for a in agents
+                ],
+            }
+        return {"ok": False, "error": f"Unknown entity '{entity}'. Try: twins, conversations, tasks, reports, approvals, meetings, agents."}
     except Exception as ex:
         return {"ok": False, "error": str(ex)[:200]}
 
@@ -1069,6 +1082,81 @@ def tool_semantic_search(query: str, db: Session = None, limit: int = 8, **_kw) 
     }
 
 
+def tool_find_page(query: str, db: Session = None, limit: int = 3, **_kw) -> dict[str, Any]:
+    """Fuzzy lookup of dashboard pages + sub-tabs + external agents by name.
+
+    Use when the user asks "where is X" / "how do I get to Y" / "어디에 있어"
+    and you need to TELL them the path rather than navigate there yourself.
+    Scores each manifest entry by token overlap against name, description,
+    and keywords; returns top-N matches with a relative confidence score
+    (0..1) and the deep-link the boss can click.
+
+    Faster than asking the LLM to scan the page list — and deterministic,
+    so the same query always returns the same top result.
+    """
+    from services.assistant_manifest import PAGES, EXTERNAL_AGENTS
+    q = (query or "").strip().lower()
+    if not q:
+        return {"ok": False, "error": "query required"}
+    q_tokens = {t for t in q.replace("?", " ").replace(",", " ").split() if len(t) >= 2}
+
+    def _score(haystack: str) -> int:
+        if not haystack:
+            return 0
+        h = haystack.lower()
+        # Exact phrase = strongest signal
+        score = 50 if q in h else 0
+        # Token overlap = secondary
+        score += sum(8 for t in q_tokens if t in h)
+        return score
+
+    candidates: list[dict] = []
+    for p in PAGES:
+        s = (_score(p.get("name", ""))
+             + _score(p.get("description", ""))
+             + _score(" ".join(p.get("keywords") or []))) // 1
+        if s > 0:
+            candidates.append({
+                "kind": "page", "path": p["path"], "name": p["name"],
+                "description": p.get("description", "")[:200], "score": s,
+            })
+        # Score each sub-tab too — let the LLM say "Settings → API Keys"
+        for st in p.get("sub_tabs") or []:
+            tab_s = (_score(st.get("name", "")) * 2
+                     + _score(st.get("description", "")))
+            if tab_s > 0:
+                candidates.append({
+                    "kind": "sub_tab",
+                    "path": f"{p['path']}#{st['id']}",
+                    "name": f"{p['name']} → {st['name']}",
+                    "description": st.get("description", "")[:200],
+                    "score": tab_s,
+                })
+    # External agents (highest weight on exact name match)
+    for a in EXTERNAL_AGENTS:
+        s = (_score(a.get("name", "")) * 3
+             + _score(a.get("name_ko", "")) * 3
+             + _score(a.get("description", ""))
+             + _score(" ".join(a.get("keywords") or [])) * 2)
+        if s > 0:
+            candidates.append({
+                "kind": "external_agent",
+                "agent": a["name"], "path": a["portal_url"],
+                "name": a["name"], "description": a.get("description", "")[:200],
+                "score": s, "external": True,
+            })
+
+    candidates.sort(key=lambda x: x["score"], reverse=True)
+    top = candidates[:max(1, int(limit))]
+    if not top:
+        return {"ok": True, "query": q, "count": 0, "matches": []}
+    max_score = top[0]["score"] or 1
+    for c in top:
+        c["confidence"] = round(c["score"] / max_score, 2)
+        c.pop("score", None)
+    return {"ok": True, "query": q, "count": len(top), "matches": top}
+
+
 def tool_latest_meeting_notes(count: int = 3, db: Session = None, **_kw) -> dict[str, Any]:
     """Latest real-world meeting notes with summaries."""
     if not db:
@@ -1278,7 +1366,7 @@ TOOL_REGISTRY: dict[str, Tool] = {
     ),
     "count": Tool(
         name="count",
-        description="Quick count of entities. Pass 'twins' / 'conversations' / 'needs_reply' / 'tasks' / 'reports' / 'approvals' / 'meetings'.",
+        description="Quick count of entities. Pass 'twins' / 'conversations' / 'needs_reply' / 'tasks' / 'reports' / 'approvals' / 'meetings' / 'agents'. For 'agents' the result includes both total + active count + a list of registered agent names and types.",
         kind="read",
         parameters={
             "type": "object",
@@ -1316,6 +1404,27 @@ TOOL_REGISTRY: dict[str, Tool] = {
             "required": ["query"],
         },
         fn=tool_semantic_search,
+    ),
+    "find_page": Tool(
+        name="find_page", kind="read",
+        description=(
+            "Fuzzy lookup of UI pages, sub-tabs, and external agent apps by "
+            "name / description. Use when the user asks 'where is X' / "
+            "'where can I find Y' / 'how do I get to Z' / '어디에 있어' — "
+            "returns top-N matches with deep-link paths and a 0..1 confidence "
+            "score. PREFER this over scanning the page list yourself; it "
+            "covers sub-tabs (e.g. 'Settings → API Keys') that aren't first-"
+            "class routes. NOT for navigating — for that use navigate(path)."
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "What the user is looking for, e.g. 'API keys', 'needs reply', 'asset agent'"},
+                "limit": {"type": "integer", "description": "Max results to return (default 3)"},
+            },
+            "required": ["query"],
+        },
+        fn=tool_find_page,
     ),
 
     # ========================================================================

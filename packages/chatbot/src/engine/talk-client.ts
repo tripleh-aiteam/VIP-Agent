@@ -69,8 +69,16 @@ export async function ask(
   config: AgentConfig,
   query: string,
   language: TalkRequest["language"] = "auto",
-  options?: { history?: ConversationTurn[]; currentPath?: string; targetAgentId?: string },
+  options?: { history?: ConversationTurn[]; currentPath?: string; targetAgentId?: string; selectedId?: string; attachmentIds?: string[] },
 ): Promise<TalkResponse> {
+  // v1.3 — when configured for "agent" mode, route to the tool-calling
+  // backend (Notion-AI style). Otherwise hit the legacy keyword classifier.
+  if (config.endpointMode === "agent") {
+    return askAgent(config, query, language, {
+      ...options,
+      attachmentIds: options?.attachmentIds,
+    });
+  }
   const url = `${config.apiBase.replace(/\/$/, "")}/chatbot/talk`;
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
@@ -93,6 +101,86 @@ export async function ask(
   const data = (await res.json()) as TalkResponse;
   if (!data.language) data.language = language === "ko" ? "ko" : "en";
   return data;
+}
+
+/**
+ * @experimental — added in v1.3.0
+ * Single-shot call to the tool-calling agent backend at `${apiBase}/chat/agent`.
+ *
+ * The backend runs an LLM tool-calling loop — picks a tool from its catalog,
+ * executes read tools immediately, returns `proposed_action` for write tools
+ * (caller is expected to render a Confirm card and resubmit with
+ * `confirmed_tool` + `confirmed_args` on user approval).
+ *
+ * Response is normalized to TalkResponse shape so the overlay component
+ * doesn't need to branch on which endpoint was hit. Extra fields the agent
+ * returns (`proposed_action`, `card`, `tool_used`, `tool_result`) are passed
+ * through verbatim.
+ */
+export async function askAgent(
+  config: AgentConfig,
+  query: string,
+  language: TalkRequest["language"] = "auto",
+  options?: {
+    history?: ConversationTurn[];
+    currentPath?: string;
+    selectedId?: string;
+    confirmedTool?: string;
+    confirmedArgs?: Record<string, unknown>;
+    attachmentIds?: string[];
+  },
+): Promise<TalkResponse> {
+  const url = `${config.apiBase.replace(/\/$/, "")}/chat/agent`;
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    ...(config.authHeaders ? config.authHeaders() : {}),
+  };
+  // Map ConversationTurn[] → backend's expected {role, content} shape
+  const historyForBackend = (options?.history || []).map(t => ({
+    role: t.role,
+    content: t.text || "",
+  }));
+  const body: Record<string, unknown> = {
+    transcript: query,
+    language,
+    agentId: config.agentId,
+    current_path: options?.currentPath ?? null,
+    selected_id: options?.selectedId ?? null,
+    history: historyForBackend,
+  };
+  if (options?.attachmentIds && options.attachmentIds.length > 0) {
+    body.attachment_ids = options.attachmentIds;
+  }
+  if (options?.confirmedTool) {
+    body.confirmed_tool = options.confirmedTool;
+    body.confirmed_args = options.confirmedArgs || {};
+  }
+  const res = await fetch(url, {
+    method: "POST",
+    headers,
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`Agent request failed (${res.status}): ${text.slice(0, 200)}`);
+  }
+  const data = (await res.json()) as any;
+  // Normalize to TalkResponse shape used by the overlay
+  return {
+    reply: data.reply || "",
+    language: data.language || (language === "ko" ? "ko" : "en"),
+    intent: data.intent,
+    source: "llm",
+    action: data.action || undefined,
+    ackReply: undefined,
+    requiresConfirmation: !!data.proposed_action,
+    confirmText: data.proposed_action?.summary,
+    // Pass-through fields the overlay can opt-in to render
+    ...(data.proposed_action ? { proposedAction: data.proposed_action } : {}),
+    ...(data.card ? { card: data.card } : {}),
+    ...(data.tool_used ? { toolUsed: data.tool_used } : {}),
+    ...(data.tool_result ? { toolResult: data.tool_result } : {}),
+  } as TalkResponse;
 }
 
 /**
@@ -279,6 +367,44 @@ export async function askStreaming(
     }
     callbacks.onError(new Error(`Stream interrupted: ${e?.message || e}`));
   }
+}
+
+/**
+ * @experimental — added in v1.3.0 (Slice 3)
+ * Upload an attachment (image, pdf, text, audio, video) to the agent's
+ * `/chatbot/upload` endpoint. Returns the attachment_id the caller can pass
+ * to `ask()` / `askAgent()` so the assistant can read the file content.
+ *
+ * Limits: ≤ 20 MB per file, MIME must be image/* | application/pdf |
+ * text/* | audio/* | video/*. Server purges uploads older than 24 hours.
+ */
+export interface UploadedAttachment {
+  attachment_id: string;
+  filename: string;
+  mime_type: string;
+  size: number;
+  kind: "image" | "pdf" | "audio" | "video" | "text" | "file";
+}
+
+export async function uploadAttachment(
+  config: AgentConfig,
+  file: File | Blob,
+  filename?: string,
+): Promise<UploadedAttachment> {
+  const url = `${config.apiBase.replace(/\/$/, "")}/chatbot/upload`;
+  const headers: Record<string, string> = {
+    ...(config.authHeaders ? config.authHeaders() : {}),
+  };
+  const fd = new FormData();
+  const name = filename || (file as File).name || "attachment.bin";
+  fd.append("file", file, name);
+  const res = await fetch(url, { method: "POST", headers, body: fd });
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`Upload failed (${res.status}): ${text.slice(0, 200)}`);
+  }
+  const data = await res.json();
+  return data as UploadedAttachment;
 }
 
 /**

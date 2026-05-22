@@ -348,15 +348,38 @@ export function ChatbotOverlay({
 
     const lang: Lang = language === "auto" ? detectLanguage(trimmed || "describe this") : language;
 
-    // Perceive any attachments — convert them to text descriptions before sending to TALK
+    // v1.3 (Slice 3) — In agent mode, upload each attachment to
+    // /chatbot/upload to get an attachment_id, then pass IDs into the
+    // /chat/agent call. Gemini 2.5 Pro reads the bytes directly.
+    // In legacy talk mode, fall back to the older "perceive" pipeline
+    // (turn files into text descriptions before classification).
     let perceivedBlock = "";
+    let agentAttachmentIds: string[] = [];
     if (hadAttachments) {
-      try {
-        perceivedBlock = await perceiveAll(trimmed || "describe / summarize this");
-      } catch (e: any) {
-        setError(`Perception failed: ${e.message || e}`);
+      if (config.endpointMode === "agent") {
+        try {
+          const { uploadAttachment } = await import("../engine/talk-client");
+          for (const att of attachments) {
+            const blob = att.file ?? att.blob;
+            if (!blob) continue;
+            try {
+              const up = await uploadAttachment(config, blob, att.name);
+              agentAttachmentIds.push(up.attachment_id);
+            } catch (e: any) {
+              setError(`Upload failed for ${att.name}: ${e.message || e}`);
+            }
+          }
+        } catch (e: any) {
+          setError(`Upload module failed: ${e.message || e}`);
+        }
+      } else {
+        try {
+          perceivedBlock = await perceiveAll(trimmed || "describe / summarize this");
+        } catch (e: any) {
+          setError(`Perception failed: ${e.message || e}`);
+        }
       }
-      // Clear attachments after they've been processed
+      // Clear attachments after they've been processed (uploaded or perceived)
       setAttachments([]);
     }
     const fullQuery = perceivedBlock
@@ -374,6 +397,24 @@ export function ChatbotOverlay({
       const currentPath = typeof window !== "undefined"
         ? window.location.pathname + window.location.hash
         : undefined;
+      // v1.3 — Agent mode resolves "this" references via selectedId. We
+      // auto-extract the last UUID-shaped segment of the URL (e.g.
+      // /chatbot/conversations/abc-123 → "abc-123") so the host doesn't
+      // have to wire a prop. Hosts that want explicit control can override
+      // via window.__chatbotSelectedId.
+      const selectedId = (() => {
+        if (typeof window === "undefined") return undefined;
+        const override = (window as any).__chatbotSelectedId;
+        if (typeof override === "string" && override.length > 0) return override;
+        const path = window.location.pathname || "";
+        const segs = path.split("/").filter(Boolean);
+        const last = segs[segs.length - 1] || "";
+        // UUID, ULID, or numeric id
+        if (/^[0-9a-fA-F]{8}-[0-9a-fA-F-]{20,}$/.test(last)) return last;
+        if (/^[0-9a-zA-Z]{10,}$/.test(last) && segs.length > 1) return last;
+        if (/^\d{1,12}$/.test(last) && segs.length > 1) return last;
+        return undefined;
+      })();
 
       // ---------------------------------------------------------------
       // Shared post-response logic — runs once the full TalkResponse is
@@ -459,8 +500,12 @@ export function ChatbotOverlay({
       // ---------------------------------------------------------------
       // Branch: streaming if config.streaming is set, else single-shot.
       // Both paths converge on finalizeResponse().
+      //
+      // v1.3 — agent mode bypasses streaming. The /chat/agent backend does
+      // tool-calling (multiple internal LLM hops) so token-level streaming
+      // doesn't map cleanly. Use single-shot for now; can stream later.
       // ---------------------------------------------------------------
-      if (config.streaming) {
+      if (config.streaming && config.endpointMode !== "agent") {
         // Append an empty assistant turn upfront — onToken mutates it as
         // deltas arrive so the user sees the reply growing word-by-word.
         setTurns(prev => [
@@ -506,7 +551,12 @@ export function ChatbotOverlay({
           { history: recent, currentPath },
         );
       } else {
-        const resp = await ask(config, fullQuery || trimmed, lang, { history: recent, currentPath });
+        const resp = await ask(config, fullQuery || trimmed, lang, {
+          history: recent,
+          currentPath,
+          selectedId,
+          attachmentIds: agentAttachmentIds.length > 0 ? agentAttachmentIds : undefined,
+        });
         finalizeResponse(resp, /* streamingTextAlreadyShown */ false);
       }
     } catch (e: any) {

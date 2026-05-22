@@ -486,6 +486,36 @@ export interface AgentConfig {
    * Agents without `voice` simply don't render the calls UI.
    */
   voice?: VoiceConfig;
+
+  /**
+   * @experimental — added in v1.3.0
+   * Which backend endpoint to hit for natural-language queries.
+   *
+   *  • "talk"  (default) — POST `${apiBase}/chatbot/talk` with the v1 body
+   *                        (query + intents + knowledgeBase). The backend
+   *                        runs a keyword-classifier + LLM fallback. This
+   *                        is the legacy path; intents must be enumerated
+   *                        in `config.intents`.
+   *
+   *  • "agent" — POST `${apiBase}/chat/agent` with the tool-calling body
+   *              (transcript + current_path + selected_id + history).
+   *              The backend invokes a tool-calling LLM loop (Notion-AI
+   *              style). `config.intents` is ignored — the backend's
+   *              tool catalog is the source of truth.
+   *
+   * New agents should use "agent" — it handles natural phrasing, deeply
+   * nested menus, multi-step chains, and write-action confirmation cards
+   * without any frontend intent definitions.
+   */
+  endpointMode?: "talk" | "agent";
+
+  /**
+   * When `endpointMode === "agent"`, expose the currently-selected entity
+   * id on the host page (conversation_id on /chatbot, report_id on
+   * /reports/<id>, twin_id on /twins/<id>, etc.) so the assistant resolves
+   * "this conversation" / "this report" correctly. The host computes this
+   * from the URL and passes it via the `selectedId` prop on <ChatbotOverlay>.
+   */
 }
 
 // ---------------------------------------------------------------------------
@@ -548,4 +578,26 @@ export interface TalkResponse {
   confirmText?: string;
   /** For debugging — was this answered from keyword, llm, or knowledge? */
   source?: "keyword" | "llm" | "knowledge" | "fallback" | "workflow";
+
+  // ---- Agent-mode (endpointMode: "agent") pass-through fields ----
+  /** Backend's proposed write action — overlay should render a Confirm card */
+  proposedAction?: {
+    tool: string;
+    args: Record<string, unknown>;
+    summary: string;
+    details?: unknown;
+    requires_confirmation: boolean;
+  };
+  /** Structured result card the overlay can render below the reply (lists,
+   *  threads, report excerpts, agent status, etc.) */
+  card?: {
+    type: string;
+    title?: string;
+    [k: string]: unknown;
+  };
+  /** Name of the tool the backend invoked (debugging / telemetry) */
+  toolUsed?: string;
+  /** Raw tool result payload (read tools only; write tools surface via
+   *  proposedAction). Useful for the overlay to render specialised UIs. */
+  toolResult?: Record<string, unknown>;
 }

@@ -36,6 +36,8 @@ MODEL_CATALOG = {
     # --- Google Gemini ---
     "gemini-2.0-flash": ("gemini", "gemini-2.5-flash"),     # 2.0 deprecated; route to 2.5
     "gemini-1.5-pro":   ("gemini", "gemini-2.5-pro"),       # 1.5 deprecated; route to 2.5
+    "gemini-2.5-flash": ("gemini", "gemini-2.5-flash"),     # current name
+    "gemini-2.5-pro":   ("gemini", "gemini-2.5-pro"),       # current name (Pro plan)
     # --- Groq (LPU-based, 200-500ms latency, OpenAI-compatible API) ---
     # Free tier on console.groq.com. Fastest option for latency-sensitive
     # Kakao chatbot. Set GROQ_API_KEY env var to enable.
@@ -149,6 +151,86 @@ def _call_anthropic(model: str, system_prompt: str, messages: list[dict],
             return False, f"HTTP {resp.status_code}: {resp.text[:200]}"
     except Exception as e:
         return False, str(e)
+
+
+def gemini_multimodal_sync(
+    system_prompt: str,
+    user_text: str,
+    attachments: list[dict],
+    *,
+    model: str = "gemini-2.5-pro",
+    max_tokens: int = 800,
+    temperature: float = 0.4,
+    timeout: float = 90.0,
+) -> str:
+    """Send a multimodal request to Gemini (text + image/pdf/audio bytes).
+
+    `attachments`: list of dicts shaped like
+        {"mime_type": "image/png", "bytes": b"...", "filename": "x.png"}
+
+    Returns the LLM's text response, or "[LLM unavailable] <reason>" on
+    failure. Use this from assistant_agent when the user uploaded files —
+    Gemini's inlineData accepts images directly without intermediate hosting.
+
+    Model defaults to gemini-2.5-pro because the cheap Flash tier
+    frequently refuses to describe images of UI/data; Pro reliably returns
+    a useful response. Pass `model="gemini-2.5-flash"` to override for
+    cost/latency-sensitive use cases.
+    """
+    import base64 as _b64
+    gemini_key = _env("GEMINI_API_KEY") or _env("GOOGLE_API_KEY")
+    if not gemini_key:
+        return "[LLM unavailable] GEMINI_API_KEY not set"
+
+    # Resolve friendly model name to real one
+    real_model = model
+    if model in MODEL_CATALOG:
+        prov, real = MODEL_CATALOG[model]
+        if prov != "gemini":
+            return f"[LLM unavailable] model '{model}' is not a Gemini model"
+        real_model = real
+
+    parts: list[dict] = []
+    for a in attachments or []:
+        mime = (a.get("mime_type") or "application/octet-stream")[:80]
+        raw = a.get("bytes") or b""
+        if not raw:
+            continue
+        try:
+            b64 = _b64.b64encode(raw).decode("ascii")
+        except Exception:
+            continue
+        parts.append({"inlineData": {"mimeType": mime, "data": b64}})
+    if user_text:
+        parts.append({"text": user_text})
+
+    if not parts:
+        return "[LLM unavailable] no input parts"
+
+    body = {
+        "system_instruction": {"parts": [{"text": system_prompt}]},
+        "contents": [{"role": "user", "parts": parts}],
+        "generationConfig": {
+            "maxOutputTokens": max_tokens,
+            "temperature": temperature,
+        },
+    }
+    try:
+        with httpx.Client(timeout=timeout) as client:
+            resp = client.post(
+                f"{GEMINI_BASE}/models/{real_model}:generateContent?key={gemini_key}",
+                headers={"Content-Type": "application/json"},
+                json=body,
+            )
+            if resp.status_code != 200:
+                return f"[LLM unavailable] Gemini HTTP {resp.status_code}: {resp.text[:200]}"
+            data = resp.json()
+            cands = data.get("candidates") or []
+            if cands and cands[0].get("content", {}).get("parts"):
+                return "".join(p.get("text", "") for p in cands[0]["content"]["parts"])
+            return "[LLM unavailable] empty Gemini response"
+    except Exception as e:
+        return f"[LLM unavailable] Gemini exception: {e}"
 
 
 def _call_gemini(model: str, system_prompt: str, messages: list[dict],

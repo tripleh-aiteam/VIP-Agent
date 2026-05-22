@@ -1,4 +1,5 @@
-export { ask, askStreaming, transcribe } from "./talk-client";
+export { ask, askAgent, askStreaming, transcribe, uploadAttachment } from "./talk-client";
+export type { UploadedAttachment } from "./talk-client";
 export { detectLanguage, pick } from "./language";
 
 // Chatbot Inbox — REST + WebSocket helpers (v1.3.0)
