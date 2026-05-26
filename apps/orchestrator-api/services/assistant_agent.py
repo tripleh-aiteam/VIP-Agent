@@ -179,13 +179,21 @@ def _pick_model_for_query(user_msg: str, history: list[dict]) -> str:
     return "claude-haiku-4-5"
 
 
-def _call_llm_for_decision(system: str, user_msg: str, history: list[dict]) -> dict:
+def _call_llm_for_decision(
+    system: str,
+    user_msg: str,
+    history: list[dict],
+    forced_model: Optional[str] = None,
+) -> dict:
     """Ask the LLM to pick a tool or give a direct answer. Returns dict.
 
     Uses _pick_model_for_query to route between fast (Groq) and smart
     (Gemini Pro) tiers. If the chosen provider returns an error / the
     "[LLM unavailable]" sentinel, we re-try with the other tier so a
     single missing API key never bricks the assistant.
+
+    `forced_model` (optional) bypasses the smart router — used by the
+    in-overlay model picker dropdown to pin a specific LLM per request.
     """
     messages = [{"role": h["role"], "content": (h.get("content") or "")[:400]}
                 for h in (history or []) if h.get("content")]
@@ -193,7 +201,8 @@ def _call_llm_for_decision(system: str, user_msg: str, history: list[dict]) -> d
 
     # Honor an explicit per-request model override (from the overlay's
     # model dropdown). Otherwise let the smart router pick.
-    primary = (forced_model or _pick_model_for_query(user_msg, history or [])).strip()
+    primary = ((forced_model or "").strip()
+               or _pick_model_for_query(user_msg, history or []))
     # Cascade order: if Claude is rate-limited, try its other tier; if both
     # Claude tiers fail (outage, key issue), drop to Gemini Flash, then
     # OpenAI as the cross-provider safety net. Cheapest survivor wins.
@@ -778,7 +787,7 @@ def run_agent(
     # Done after LLM decision, see below.
 
     # ===== Turn 1: decision =====
-    decision = _call_llm_for_decision(system, transcript, history or [])
+    decision = _call_llm_for_decision(system, transcript, history or [], forced_model=forced_model)
 
     # ===== Phase 5: Multi-step chain =====
     steps = decision.get("steps")
