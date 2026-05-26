@@ -72,12 +72,14 @@ def list_available_models() -> list[dict]:
     has_openai    = bool(_env("OPENAI_API_KEY") or _env("LLM_API_KEY"))
     has_anthropic = bool(_env("ANTHROPIC_API_KEY"))
     has_gemini    = bool(_env("GEMINI_API_KEY") or _env("GOOGLE_API_KEY"))
+    has_groq      = bool(_env("GROQ_API_KEY"))
     catalog = []
     for friendly, (provider, real) in MODEL_CATALOG.items():
         available = (
             (provider == "openai" and has_openai) or
             (provider == "anthropic" and has_anthropic) or
             (provider == "gemini" and has_gemini) or
+            (provider == "groq" and has_groq) or
             provider == "ollama"
         )
         catalog.append({
