@@ -69,7 +69,7 @@ export async function ask(
   config: AgentConfig,
   query: string,
   language: TalkRequest["language"] = "auto",
-  options?: { history?: ConversationTurn[]; currentPath?: string; targetAgentId?: string; selectedId?: string; attachmentIds?: string[] },
+  options?: { history?: ConversationTurn[]; currentPath?: string; targetAgentId?: string; selectedId?: string; attachmentIds?: string[]; model?: string },
 ): Promise<TalkResponse> {
   // v1.3 — when configured for "agent" mode, route to the tool-calling
   // backend (Notion-AI style). Otherwise hit the legacy keyword classifier.
@@ -128,6 +128,7 @@ export async function askAgent(
     confirmedTool?: string;
     confirmedArgs?: Record<string, unknown>;
     attachmentIds?: string[];
+    model?: string;
   },
 ): Promise<TalkResponse> {
   const url = `${config.apiBase.replace(/\/$/, "")}/chat/agent`;
@@ -150,6 +151,9 @@ export async function askAgent(
   };
   if (options?.attachmentIds && options.attachmentIds.length > 0) {
     body.attachment_ids = options.attachmentIds;
+  }
+  if (options?.model) {
+    body.model = options.model;
   }
   if (options?.confirmedTool) {
     body.confirmed_tool = options.confirmedTool;

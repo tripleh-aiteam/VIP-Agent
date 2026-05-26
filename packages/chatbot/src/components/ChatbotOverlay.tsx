@@ -101,6 +101,32 @@ export function ChatbotOverlay({
   const [hasGreeted, setHasGreeted] = useState(false);
   const greetingKey = `chatbot-${config.agentId}-greeted`;
 
+  // === Model picker (v1.3) — only shown when endpointMode === "agent" ===
+  // List is fetched lazily from /twins/llm/models the first time the panel
+  // opens. "" means "use the smart router" (default); any other value pins
+  // the model for that request via body.model.
+  interface AvailableModel { id: string; provider: string; real_model: string; available: boolean }
+  const [availableModels, setAvailableModels] = useState<AvailableModel[]>([]);
+  const [selectedModel, setSelectedModel] = useState<string>(() => {
+    if (typeof window === "undefined") return "";
+    return localStorage.getItem(`chatbot-${config.agentId}-model`) || "";
+  });
+  useEffect(() => {
+    if (config.endpointMode !== "agent" || !open || availableModels.length > 0) return;
+    fetch(`${config.apiBase.replace(/\/$/, "")}/twins/llm/models`)
+      .then(r => r.json())
+      .then((data: any) => {
+        const ms: AvailableModel[] = (data?.models || [])
+          .filter((m: AvailableModel) => m.available);
+        setAvailableModels(ms);
+      })
+      .catch(() => { /* model picker stays empty; default smart-router still works */ });
+  }, [config.endpointMode, config.apiBase, open]);
+  function persistSelectedModel(v: string) {
+    setSelectedModel(v);
+    try { localStorage.setItem(`chatbot-${config.agentId}-model`, v); } catch {}
+  }
+
   // === PERCEPTION pillar — pending attachments before send ===
   interface Attachment {
     id: string;
@@ -556,6 +582,7 @@ export function ChatbotOverlay({
           currentPath,
           selectedId,
           attachmentIds: agentAttachmentIds.length > 0 ? agentAttachmentIds : undefined,
+          model: selectedModel || undefined,
         });
         finalizeResponse(resp, /* streamingTextAlreadyShown */ false);
       }
@@ -875,6 +902,36 @@ export function ChatbotOverlay({
           <option value="en">English</option>
           <option value="ko">한국어</option>
         </select>
+
+        {/* Model picker (agent mode only) — Notion-AI-style LLM chooser.
+            "Auto" = smart router (default); any other value pins that model
+            for the request via body.model. Choice persists per-agent in
+            localStorage so reloads keep the user's preference. */}
+        {config.endpointMode === "agent" && availableModels.length > 0 && (
+          <>
+            <label className="text-gray-500 whitespace-nowrap ml-2">🧠 Model:</label>
+            <select
+              value={selectedModel}
+              onChange={e => persistSelectedModel(e.target.value)}
+              className="bg-gray-50 border border-gray-300 rounded px-2 py-1 text-[12px] max-w-[180px]"
+              title={selectedModel ? `Pinned to ${selectedModel}` : "Smart router picks per query"}
+            >
+              <option value="">Auto (smart router)</option>
+              {/* Group by provider for readability */}
+              {["anthropic", "gemini", "openai", "groq", "ollama"].map(provider => {
+                const opts = availableModels.filter(m => m.provider === provider);
+                if (opts.length === 0) return null;
+                return (
+                  <optgroup key={provider} label={provider.charAt(0).toUpperCase() + provider.slice(1)}>
+                    {opts.map(m => (
+                      <option key={m.id} value={m.id}>{m.id}</option>
+                    ))}
+                  </optgroup>
+                );
+              })}
+            </select>
+          </>
+        )}
       </div>
 
       {/* Conversation */}
