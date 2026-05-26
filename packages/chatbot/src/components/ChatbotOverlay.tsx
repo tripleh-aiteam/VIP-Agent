@@ -19,7 +19,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import type { AgentConfig, Lang, TalkResponse, ActionDefinition, ProcessStep, ConversationTurn } from "../types";
-import { ask, askStreaming, transcribe, detectLanguage, pick } from "../engine";
+import { ask, askAgentStreaming, askStreaming, transcribe, detectLanguage, pick } from "../engine";
 import { Markdown } from "./Markdown";
 
 /** Map of UI command name → handler. Host app registers any commands its UI supports. */
@@ -531,14 +531,63 @@ export function ChatbotOverlay({
       };
 
       // ---------------------------------------------------------------
-      // Branch: streaming if config.streaming is set, else single-shot.
-      // Both paths converge on finalizeResponse().
+      // Branch: pick the right transport for this turn.
       //
-      // v1.3 — agent mode bypasses streaming. The /chat/agent backend does
-      // tool-calling (multiple internal LLM hops) so token-level streaming
-      // doesn't map cleanly. Use single-shot for now; can stream later.
+      //   v1.3 agent + attachments → single-shot (server short-circuits to
+      //     multimodal vision; SSE doesn't add value there)
+      //   v1.3 agent + text         → askAgentStreaming over /chat/agent/stream
+      //   v1.0/1.1 legacy talk + config.streaming set → askStreaming
+      //   everything else           → single-shot ask()
+      //
+      // All paths converge on finalizeResponse().
       // ---------------------------------------------------------------
-      if (config.streaming && config.endpointMode !== "agent") {
+      const useAgentStreaming = config.endpointMode === "agent"
+        && agentAttachmentIds.length === 0;   // attachments use the vision short-circuit, no streaming
+
+      if (useAgentStreaming) {
+        // Append empty assistant turn upfront; onToken mutates it word-by-word
+        setTurns(prev => [
+          ...prev,
+          { who: "assistant", text: "", ts: Date.now() },
+        ]);
+        await askAgentStreaming(
+          config,
+          fullQuery || trimmed,
+          lang,
+          {
+            onToken: (delta) => {
+              setTurns(prev => {
+                const updated = [...prev];
+                const lastIdx = updated.length - 1;
+                const last = updated[lastIdx];
+                if (last?.who === "assistant") {
+                  updated[lastIdx] = { ...last, text: last.text + delta };
+                }
+                return updated;
+              });
+            },
+            onIntent: (intent) => {
+              setTurns(prev => {
+                const updated = [...prev];
+                const lastIdx = updated.length - 1;
+                const last = updated[lastIdx];
+                if (last?.who === "assistant") {
+                  updated[lastIdx] = { ...last, intent };
+                }
+                return updated;
+              });
+            },
+            onComplete: (final) => {
+              finalizeResponse(final, /* streamingTextAlreadyShown */ true);
+            },
+            onError: (err) => {
+              setError(`Streaming failed: ${err.message}`);
+              setState("error");
+            },
+          },
+          { history: recent, currentPath, selectedId, model: selectedModel || undefined },
+        );
+      } else if (config.streaming && config.endpointMode !== "agent") {
         // Append an empty assistant turn upfront — onToken mutates it as
         // deltas arrive so the user sees the reply growing word-by-word.
         setTurns(prev => [

@@ -82,6 +82,85 @@ def agent_command(body: AgentCommandBody, db: Session = Depends(get_db)):
     )
 
 
+@router.post("/agent/stream")
+def agent_command_stream(body: AgentCommandBody, db: Session = Depends(get_db)):
+    """Same as /chat/agent but returns the reply as a Server-Sent Events
+    stream so the overlay renders it Notion-AI-style — text appearing
+    word-by-word instead of all at once.
+
+    Implementation: we run the full tool-calling pipeline up front (fast),
+    then chunk the FINAL reply into small slices and emit them as SSE.
+    The trailing event carries the action / suggestions / proposed_action
+    metadata so the overlay can finalise the turn.
+
+    Output protocol — one JSON object per `data:` line:
+      {"delta": "<chunk>"}              # streaming text chunks
+      {"intent": "<name>"}              # surfaced once, mid-stream
+      {"done": true, ...rest}           # final event with metadata
+    """
+    from fastapi.responses import StreamingResponse
+    from services.assistant_agent import run_agent
+    import json as _json
+    import time as _time
+
+    # Run the agent synchronously — the bulk of latency is here; LLM tool
+    # decision + (maybe) compose. We then stream out the produced reply.
+    result = run_agent(
+        db,
+        transcript=body.transcript or "",
+        language=body.language or "auto",
+        current_path=body.current_path,
+        selected_id=body.selected_id,
+        history=body.history,
+        confirmed_tool=body.confirmed_tool,
+        confirmed_args=body.confirmed_args,
+        attachment_ids=body.attachment_ids,
+        forced_model=body.model,
+    )
+
+    reply = str(result.get("reply") or "")
+    # Chunk the reply word-by-word so it feels natural; pad short replies.
+    chunks: list[str] = []
+    if reply:
+        # Split keeping whitespace so the joined reassembly is identical
+        words = reply.split(" ")
+        for i, w in enumerate(words):
+            chunks.append(w + (" " if i < len(words) - 1 else ""))
+
+    def gen():
+        # Surface the intent up-front so the host can render a "thinking
+        # via X" hint before the prose starts arriving
+        if result.get("intent"):
+            yield f"data: {_json.dumps({'intent': result['intent']})}\n\n"
+        for c in chunks:
+            yield f"data: {_json.dumps({'delta': c})}\n\n"
+            _time.sleep(0.012)  # ~80 wpm — fast but visibly streaming
+        # Final event carries all the metadata + signals end of stream
+        trailing = {
+            "done": True,
+            "intent": result.get("intent"),
+            "action": result.get("action"),
+            "tool_used": result.get("tool_used"),
+            "tool_result": result.get("tool_result"),
+            "card": result.get("card"),
+            "suggestions": result.get("suggestions"),
+            "proposed_action": result.get("proposed_action"),
+            "language": result.get("language"),
+            "transcript": result.get("transcript"),
+        }
+        yield f"data: {_json.dumps(trailing, ensure_ascii=False)}\n\n"
+        yield "data: [DONE]\n\n"
+
+    return StreamingResponse(
+        gen(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache, no-transform",
+            "X-Accel-Buffering": "no",  # nginx — disable buffering
+        },
+    )
+
+
 @router.get("/agent/manifest")
 def agent_manifest():
     """Expose the assistant manifest (pages + external agents) as JSON so

@@ -189,6 +189,135 @@ export async function askAgent(
 }
 
 /**
+ * @experimental — added in v1.3.0
+ * Stream a /chat/agent response token-by-token via SSE.
+ *
+ * The backend chunks the final reply text into small pieces and emits each
+ * as `data: {"delta": "..."}\n\n`. Mid-stream there may be a
+ * `data: {"intent": "..."}\n\n` event surfacing which tool the agent
+ * picked. The stream ends with one trailing event carrying all metadata
+ * (action / suggestions / proposed_action / card / tool_used / tool_result),
+ * then a `data: [DONE]\n\n` sentinel.
+ *
+ * Pass an `AbortSignal` in options.signal to cancel mid-stream (e.g. Stop
+ * button). On abort, onComplete is called with whatever reply has been
+ * accumulated so far so the host can still persist the partial turn.
+ */
+export async function askAgentStreaming(
+  config: AgentConfig,
+  query: string,
+  language: TalkRequest["language"],
+  callbacks: StreamingTalkCallbacks,
+  options?: {
+    history?: ConversationTurn[];
+    currentPath?: string;
+    selectedId?: string;
+    attachmentIds?: string[];
+    model?: string;
+    signal?: AbortSignal;
+  },
+): Promise<void> {
+  const url = `${config.apiBase.replace(/\/$/, "")}/chat/agent/stream`;
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    Accept: "text/event-stream",
+    ...(config.authHeaders ? config.authHeaders() : {}),
+  };
+  const historyForBackend = (options?.history || []).map(t => ({
+    role: t.role,
+    content: t.text || "",
+  }));
+  const body: Record<string, unknown> = {
+    transcript: query,
+    language,
+    agentId: config.agentId,
+    current_path: options?.currentPath ?? null,
+    selected_id: options?.selectedId ?? null,
+    history: historyForBackend,
+  };
+  if (options?.attachmentIds && options.attachmentIds.length > 0) {
+    body.attachment_ids = options.attachmentIds;
+  }
+  if (options?.model) body.model = options.model;
+
+  let res: Response;
+  try {
+    res = await fetch(url, { method: "POST", headers, body: JSON.stringify(body), signal: options?.signal });
+  } catch (e: any) {
+    callbacks.onError(new Error(`Agent stream failed: ${e?.message || e}`));
+    return;
+  }
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    callbacks.onError(new Error(`Agent stream failed (${res.status}): ${text.slice(0, 200)}`));
+    return;
+  }
+  const reader = res.body?.getReader();
+  if (!reader) { callbacks.onError(new Error("No response body")); return; }
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let fullReply = "";
+  let trailingMeta: any = {};
+  let resolvedIntent: string | undefined;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split(/\r?\n/);
+      buffer = lines.pop() || "";
+      for (const rawLine of lines) {
+        const line = rawLine.trim();
+        if (!line || !line.startsWith("data:")) continue;
+        const payload = line.slice(5).trim();
+        if (!payload || payload === "[DONE]") continue;
+        let obj: any;
+        try { obj = JSON.parse(payload); } catch { continue; }
+        if (typeof obj.delta === "string") {
+          fullReply += obj.delta;
+          callbacks.onToken(obj.delta);
+        }
+        if (typeof obj.intent === "string" && !resolvedIntent) {
+          resolvedIntent = obj.intent;
+          callbacks.onIntent?.(obj.intent);
+        }
+        if (obj.done) {
+          trailingMeta = obj;
+        }
+      }
+    }
+    // Normalize the trailing metadata into a TalkResponse shape
+    const final: TalkResponse = {
+      reply: fullReply,
+      language: trailingMeta.language || (language === "ko" ? "ko" : "en"),
+      intent: trailingMeta.intent || resolvedIntent,
+      source: "llm",
+      action: trailingMeta.action || undefined,
+      requiresConfirmation: !!trailingMeta.proposed_action,
+      confirmText: trailingMeta.proposed_action?.summary,
+      ...(trailingMeta.proposed_action ? { proposedAction: trailingMeta.proposed_action } : {}),
+      ...(trailingMeta.card ? { card: trailingMeta.card } : {}),
+      ...(trailingMeta.tool_used ? { toolUsed: trailingMeta.tool_used } : {}),
+      ...(trailingMeta.tool_result ? { toolResult: trailingMeta.tool_result } : {}),
+      ...(Array.isArray(trailingMeta.suggestions) ? { suggestions: trailingMeta.suggestions } : {}),
+    };
+    callbacks.onComplete(final);
+  } catch (e: any) {
+    if (e?.name === "AbortError") {
+      callbacks.onComplete({
+        reply: fullReply,
+        language: language === "ko" ? "ko" : "en",
+        intent: resolvedIntent,
+        source: "llm",
+      });
+      return;
+    }
+    callbacks.onError(new Error(`Stream interrupted: ${e?.message || e}`));
+  }
+}
+
+
+/**
  * @experimental — added in v1.1.0
  * Stream a TALK response token-by-token. Use when `config.streaming` is set.
  *

@@ -1,4 +1,4 @@
-export { ask, askAgent, askStreaming, transcribe, uploadAttachment } from "./talk-client";
+export { ask, askAgent, askAgentStreaming, askStreaming, transcribe, uploadAttachment } from "./talk-client";
 export type { UploadedAttachment } from "./talk-client";
 export { detectLanguage, pick } from "./language";
 
