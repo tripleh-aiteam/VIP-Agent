@@ -88,7 +88,7 @@ def agent_manifest():
     the frontend can render dynamic page lists / hint chips without
     duplicating the catalog."""
     from services.assistant_manifest import (
-        get_all_pages, get_external_agents,
+        get_all_pages, get_external_agents, get_agent_identity,
     )
     drift = {"ok": True, "message": "drift check unavailable", "skipped": True}
     try:
@@ -97,6 +97,9 @@ def agent_manifest():
     except Exception as e:
         drift = {"ok": False, "error": f"drift check failed: {e}"}
     return {
+        # Identity — surfaced so a consumer agent can verify which branding
+        # the backend is responding under (sanity check after a rebrand).
+        "identity": get_agent_identity(),
         "pages": get_all_pages(),
         "external_agents": [
             {"name": a["name"], "name_ko": a.get("name_ko"),

@@ -33,7 +33,7 @@ from services.assistant_tools import (
     TOOL_REGISTRY, list_tool_schemas, execute_tool,
 )
 from services.assistant_manifest import (
-    pages_summary_for_llm, agents_summary_for_llm,
+    pages_summary_for_llm, agents_summary_for_llm, get_agent_identity,
 )
 
 
@@ -80,12 +80,10 @@ def _build_system_prompt(
         context_lines.append(f"[SELECTED ID] {selected_id}{hint}")
     context_block = "\n" + "\n".join(context_lines) + "\n" if context_lines else ""
 
+    identity = get_agent_identity()
     return (
-        "You are the VIP Agent Assistant — the boss's AI co-pilot for the "
-        "VIP AI Platform. You can navigate the dashboard, fetch live data "
-        "from external agents (Asset/Stock/Realty), search the boss's data "
-        "(twins, customer conversations, reports, knowledge), and perform "
-        "actions on the boss's behalf (with their permission).\n\n"
+        f"You are the {identity['name']} — {identity['tagline']}. "
+        f"{identity['scope']}\n\n"
         "Reply in the SAME language the user wrote in (Korean ↔ English).\n"
         "Be concise, warm, and conversational — like a smart human assistant. "
         "1-3 sentences for chat; longer only when listing data.\n\n"

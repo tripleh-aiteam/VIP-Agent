@@ -24,6 +24,44 @@ import os
 
 
 # ============================================================================
+#  Agent identity — used to brand the system prompt the LLM sees
+# ============================================================================
+#
+# A consumer agent (Asset, Stock, Realty, …) replicating this orchestrator
+# only has to change AGENT_IDENTITY + PAGES + EXTERNAL_AGENTS. The
+# assistant_agent system prompt reads these via getters at request time so
+# the LLM introduces itself by the right name on every reply.
+#
+# Override per-deployment by setting env vars ASSISTANT_AGENT_NAME and
+# ASSISTANT_AGENT_TAGLINE (so the same code can be deployed under multiple
+# brandings without an edit).
+# ============================================================================
+
+AGENT_IDENTITY: dict[str, str] = {
+    "name":     os.getenv("ASSISTANT_AGENT_NAME",     "VIP Agent Assistant"),
+    "tagline":  os.getenv("ASSISTANT_AGENT_TAGLINE",  "the boss's AI co-pilot for the VIP AI Platform"),
+    "scope":    os.getenv(
+        "ASSISTANT_AGENT_SCOPE",
+        "You can navigate the dashboard, fetch live data from external "
+        "agents (Asset/Stock/Realty), search the boss's data (twins, "
+        "customer conversations, reports, knowledge), and perform "
+        "actions on the boss's behalf (with their permission).",
+    ),
+}
+
+
+def get_agent_identity() -> dict[str, str]:
+    """Live read of the identity dict. Calling at request time (not module
+    load) lets env-var changes take effect on the next request without
+    restarting the orchestrator."""
+    return {
+        "name":    os.getenv("ASSISTANT_AGENT_NAME",    AGENT_IDENTITY["name"]),
+        "tagline": os.getenv("ASSISTANT_AGENT_TAGLINE", AGENT_IDENTITY["tagline"]),
+        "scope":   os.getenv("ASSISTANT_AGENT_SCOPE",   AGENT_IDENTITY["scope"]),
+    }
+
+
+# ============================================================================
 #  Internal dashboard pages
 # ============================================================================
 #
