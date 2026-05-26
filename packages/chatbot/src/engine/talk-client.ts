@@ -155,6 +155,19 @@ export async function askAgent(
   if (options?.model) {
     body.model = options.model;
   }
+  // Cross-session memory — server scopes the rolling 'assistant_overlay'
+  // ChatSession by this id. Default to the localStorage VIP auth email
+  // when not provided, else "boss".
+  const storedUser = (() => {
+    if (typeof window === "undefined") return undefined;
+    try {
+      const raw = localStorage.getItem("vip-auth");
+      if (!raw) return undefined;
+      const parsed = JSON.parse(raw);
+      return parsed?.user?.email || parsed?.email;
+    } catch { return undefined; }
+  })();
+  body.user_id = (options as any)?.userId || storedUser || "boss";
   if (options?.confirmedTool) {
     body.confirmed_tool = options.confirmedTool;
     body.confirmed_args = options.confirmedArgs || {};
@@ -239,6 +252,17 @@ export async function askAgentStreaming(
     body.attachment_ids = options.attachmentIds;
   }
   if (options?.model) body.model = options.model;
+  // Cross-session memory user_id — same logic as askAgent
+  const _storedUser = (() => {
+    if (typeof window === "undefined") return undefined;
+    try {
+      const raw = localStorage.getItem("vip-auth");
+      if (!raw) return undefined;
+      const parsed = JSON.parse(raw);
+      return parsed?.user?.email || parsed?.email;
+    } catch { return undefined; }
+  })();
+  body.user_id = _storedUser || "boss";
 
   let res: Response;
   try {

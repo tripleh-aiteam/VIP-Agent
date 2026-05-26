@@ -724,6 +724,59 @@ def _run_multimodal_path(
     }
 
 
+def _persist_assistant_turn(
+    db: Session,
+    user_id: str,
+    user_text: str,
+    assistant_reply: str,
+    intent: Optional[str] = None,
+    tool_used: Optional[str] = None,
+) -> None:
+    """Write the user-question + assistant-reply pair to the assistant's
+    cross-session memory (chat_sessions + chat_messages with channel
+    'assistant_overlay'). Used so the `recall_history` tool can answer
+    'what did we discuss yesterday'-style questions.
+
+    Best-effort — failures are swallowed; persistence is not on the
+    critical path of returning a reply. Each user gets ONE rolling
+    overlay session (channel='assistant_overlay'); messages append to it.
+    """
+    if not db or not user_id:
+        return
+    try:
+        from db.models import ChatSession, ChatMessage
+        session = (db.query(ChatSession)
+                   .filter(ChatSession.user_id == user_id,
+                           ChatSession.channel == "assistant_overlay")
+                   .order_by(ChatSession.created_at.desc())
+                   .first())
+        if not session:
+            session = ChatSession(
+                user_id=user_id, channel="assistant_overlay",
+                mode="llm", title="Assistant overlay history",
+            )
+            db.add(session)
+            db.flush()  # need session.id for the messages below
+
+        if user_text:
+            db.add(ChatMessage(
+                session_id=session.id, role="user", message_type="plain_text",
+                content_json={"text": user_text[:2000]},
+            ))
+        if assistant_reply:
+            db.add(ChatMessage(
+                session_id=session.id, role="assistant", message_type="plain_text",
+                content_json={
+                    "text": assistant_reply[:2000],
+                    "intent": intent,
+                    "tool_used": tool_used,
+                },
+            ))
+        db.commit()
+    except Exception as e:
+        log.info(f"assistant_agent: persist_turn skipped ({e})")
+
+
 def _suggest_followups(
     tool_used: Optional[str],
     tool_result: Optional[dict],
@@ -842,6 +895,45 @@ def run_agent(
     confirmed_args: Optional[dict] = None,
     attachment_ids: Optional[list[str]] = None,
     forced_model: Optional[str] = None,
+    user_id: Optional[str] = None,
+) -> dict[str, Any]:
+    """Public entry — wraps the actual implementation with cross-session
+    memory persistence (writes each turn to chat_sessions/chat_messages
+    under channel='assistant_overlay' so recall_history can find it
+    later). Persistence is best-effort and never blocks the response."""
+    result = _run_agent_impl(
+        db, transcript=transcript, language=language,
+        current_path=current_path, selected_id=selected_id, history=history,
+        confirmed_tool=confirmed_tool, confirmed_args=confirmed_args,
+        attachment_ids=attachment_ids, forced_model=forced_model,
+        user_id=user_id,
+    )
+    # Persist meaningful turns only — skip empty / multimodal_failed / errors
+    skip_intents = {"empty", "multimodal_failed", "multimodal_missing", "chain_empty"}
+    if user_id and result.get("intent") not in skip_intents and result.get("reply"):
+        _persist_assistant_turn(
+            db,
+            user_id=user_id,
+            user_text=transcript or "",
+            assistant_reply=str(result.get("reply") or ""),
+            intent=result.get("intent"),
+            tool_used=result.get("tool_used"),
+        )
+    return result
+
+
+def _run_agent_impl(
+    db: Session,
+    transcript: str,
+    language: str = "auto",
+    current_path: Optional[str] = None,
+    selected_id: Optional[str] = None,
+    history: Optional[list[dict]] = None,
+    confirmed_tool: Optional[str] = None,
+    confirmed_args: Optional[dict] = None,
+    attachment_ids: Optional[list[str]] = None,
+    forced_model: Optional[str] = None,
+    user_id: Optional[str] = None,
 ) -> dict[str, Any]:
     """Run one agent turn. Returns:
         {intent, language, reply, action, speak, transcript, tool_used, tool_result,
@@ -1032,6 +1124,9 @@ def run_agent(
         }
 
     # READ tools execute immediately
+    # recall_history needs to know whose history to search — inject user_id
+    if tool_name == "recall_history" and user_id and "user_id" not in args:
+        args["user_id"] = user_id
     tool_result = execute_tool(tool_name, args, db=db)
 
     # === Phase 6: Build inline result card ===

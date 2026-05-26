@@ -22,6 +22,37 @@ import type { AgentConfig, Lang, TalkResponse, ActionDefinition, ProcessStep, Co
 import { ask, askAgentStreaming, askStreaming, transcribe, detectLanguage, pick } from "../engine";
 import { Markdown } from "./Markdown";
 
+/**
+ * Slash-command quick menu — appears when the input starts with "/".
+ *
+ * Each entry maps a short slash to a longer natural-language prompt the
+ * backend's tool router already understands. The `___` placeholder marks
+ * commands the user must finish typing before submit (e.g. `/twin ___`
+ * → user types the twin's name). Commands without `___` auto-submit on
+ * click. This is purely a frontend shortcut — no backend changes needed
+ * to add or rename commands.
+ */
+const SLASH_COMMANDS: { cmd: string; label: string; prompt: string; icon: string }[] = [
+  { cmd: "help",         label: "What can the assistant do?",       prompt: "What can you do?",                                  icon: "❓" },
+  { cmd: "today",        label: "Today's situation",                prompt: "Give me today's daily briefing",                    icon: "📅" },
+  { cmd: "twins",        label: "List all twins",                   prompt: "list all twins with their modes",                   icon: "👥" },
+  { cmd: "twin",         label: "Search a specific twin",           prompt: "find twin ___",                                     icon: "🧑" },
+  { cmd: "send",         label: "Send a DM to a twin",              prompt: "send DM to ___ : ___",                              icon: "💬" },
+  { cmd: "broadcast",    label: "Broadcast to all workers",         prompt: "broadcast: ___",                                    icon: "📢" },
+  { cmd: "approvals",    label: "Pending approvals",                prompt: "what's pending approval?",                          icon: "✅" },
+  { cmd: "report",       label: "Generate today's report",          prompt: "generate today's daily report",                     icon: "📊" },
+  { cmd: "weekly",       label: "Generate weekly report",           prompt: "generate this week's weekly report",                icon: "📈" },
+  { cmd: "find",         label: "Find anything (data + pages)",     prompt: "find ___",                                          icon: "🔍" },
+  { cmd: "where",        label: "Where is X in the UI?",            prompt: "where is ___?",                                     icon: "🗺️" },
+  { cmd: "open",         label: "Open a page or external agent",    prompt: "open ___",                                          icon: "📂" },
+  { cmd: "connections",  label: "What's connected to my agent",     prompt: "what's connected to my agent?",                     icon: "🔌" },
+  { cmd: "recall",       label: "Recall a past conversation",       prompt: "what did we talk about yesterday?",                 icon: "🧠" },
+  { cmd: "agents",       label: "How many agents do I have",        prompt: "how many agents do I have?",                        icon: "🤖" },
+  { cmd: "asset",        label: "Open the Asset Agent",             prompt: "open the Asset agent",                              icon: "🏢" },
+  { cmd: "stock",        label: "Open the Stock Agent",             prompt: "open the Stock agent",                              icon: "📈" },
+  { cmd: "realty",       label: "Open the Realty Agent",            prompt: "open the Real Estate agent",                        icon: "🏠" },
+];
+
 /** Map of UI command name → handler. Host app registers any commands its UI supports. */
 export type CommandMap = Record<string, (params?: Record<string, unknown>) => void | Promise<void>>;
 
@@ -1315,7 +1346,7 @@ export function ChatbotOverlay({
             </button>
           )}
         </div>
-        <div className="flex gap-2 items-center">
+        <div className="relative flex gap-2 items-center">
           <button
             onClick={() => fileInputRef.current?.click()}
             className="px-2.5 py-2.5 bg-gray-100 hover:bg-gray-200 border border-gray-300 rounded-lg text-[14px]"
@@ -1326,12 +1357,45 @@ export function ChatbotOverlay({
             className="px-2.5 py-2.5 bg-gray-100 hover:bg-gray-200 border border-gray-300 rounded-lg text-[14px]"
             title="Take a photo with the camera"
           >📷</button>
+          {/* Slash-command menu — appears when the input starts with "/".
+              Notion-AI pattern: shortcut to common assistant queries. */}
+          {config.endpointMode === "agent" && textInput.startsWith("/") && (
+            <div className="absolute bottom-16 left-5 right-5 z-30 max-h-[260px] overflow-y-auto rounded-lg border border-gray-200 bg-white shadow-lg text-[12px]">
+              {SLASH_COMMANDS
+                .filter(c => {
+                  const q = textInput.slice(1).toLowerCase();
+                  return !q || c.cmd.startsWith(q) || c.label.toLowerCase().includes(q);
+                })
+                .slice(0, 8)
+                .map((c, i) => (
+                  <button
+                    key={c.cmd}
+                    type="button"
+                    onClick={() => {
+                      setTextInput(c.prompt);
+                      // Auto-submit if it's a no-arg command; otherwise let
+                      // the user fill in the placeholder fragments
+                      if (!c.prompt.includes("___")) {
+                        submitText();
+                      }
+                    }}
+                    className={`w-full text-left px-3 py-2 hover:bg-gray-50 flex items-center gap-2 border-b border-gray-100 last:border-b-0 ${i === 0 ? "bg-gray-50" : ""}`}
+                  >
+                    <span className="text-[14px]">{c.icon}</span>
+                    <span className="flex-1">
+                      <span className="font-semibold text-gray-800">/{c.cmd}</span>
+                      <span className="text-gray-500"> — {c.label}</span>
+                    </span>
+                  </button>
+                ))}
+            </div>
+          )}
           <input
             type="text"
             value={textInput}
             onChange={e => setTextInput(e.target.value)}
             onKeyDown={e => { if (e.key === "Enter") submitText(); }}
-            placeholder={attachments.length > 0 ? `Ask about your ${attachments.length} attachment(s)...` : "Or type a question..."}
+            placeholder={attachments.length > 0 ? `Ask about your ${attachments.length} attachment(s)...` : "Or type a question (press / for commands)..."}
             className="flex-1 px-3 py-2.5 bg-gray-50 border border-gray-300 rounded-lg text-[12px] focus:outline-none focus:border-blue-400"
           />
           <button

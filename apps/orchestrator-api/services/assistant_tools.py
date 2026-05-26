@@ -1209,6 +1209,161 @@ def tool_find_page(query: str, db: Session = None, limit: int = 3, **_kw) -> dic
     return {"ok": True, "query": q, "count": len(top), "matches": top}
 
 
+def tool_list_connections(db: Session = None, **_kw) -> dict[str, Any]:
+    """Introspect every channel / API / integration the agent is wired to —
+    reports whether the credentials / hosts are configured and (best-effort)
+    whether they actually respond. Use when the user asks 'what's connected
+    to my agent', 'is Telegram set up?', 'are my API keys configured', etc.
+
+    Buckets returned:
+      * LLM providers (env var presence — not live ping, to avoid quota burn)
+      * Channels       (Telegram bot token, Kakao webhook secret, SMTP)
+      * External agent backends (live HTTP HEAD)
+      * Database + Redis (connection echo)
+    """
+    import os
+    from services.llm_client import list_available_models
+
+    out: dict[str, Any] = {"ok": True, "buckets": {}}
+
+    # ── LLM providers ─────────────────────────────────────────────────
+    try:
+        models = list_available_models()
+        by_prov: dict[str, list[dict]] = {}
+        for m in models:
+            by_prov.setdefault(m["provider"], []).append(m)
+        out["buckets"]["llm_providers"] = {
+            prov: {
+                "available": any(m["available"] for m in ms),
+                "models": [m["id"] for m in ms if m["available"]],
+            }
+            for prov, ms in by_prov.items()
+        }
+    except Exception as e:
+        out["buckets"]["llm_providers"] = {"error": str(e)[:120]}
+
+    # ── Channels ──────────────────────────────────────────────────────
+    out["buckets"]["channels"] = {
+        "telegram_bot":   {"configured": bool(os.getenv("TELEGRAM_BOT_TOKEN"))},
+        "kakao_webhook":  {"configured": bool(os.getenv("KAKAO_WEBHOOK_SECRET") or os.getenv("KAKAO_REST_API_KEY"))},
+        "smtp_email":     {
+            "configured": bool(os.getenv("SMTP_EMAIL") and os.getenv("SMTP_PASSWORD")),
+            "from": os.getenv("SMTP_EMAIL", "(unset)"),
+        },
+        "supabase":       {"configured": bool(os.getenv("SUPABASE_URL") and os.getenv("SUPABASE_SERVICE_KEY"))},
+    }
+
+    # ── External agent backends (HEAD probe with short timeout) ─────
+    import httpx
+    agent_status: dict[str, dict] = {}
+    try:
+        from services.assistant_manifest import get_external_agents
+        for a in get_external_agents():
+            url = a.get("backend_url") or a.get("portal_url")
+            if not url:
+                agent_status[a["name"]] = {"configured": False}
+                continue
+            entry: dict[str, Any] = {"url": url}
+            try:
+                with httpx.Client(timeout=5.0) as c:
+                    r = c.get(f"{url.rstrip('/')}/health")
+                    entry["http_status"] = r.status_code
+                    entry["reachable"] = r.status_code < 500
+            except Exception as e:
+                entry["reachable"] = False
+                entry["error"] = str(e)[:80]
+            agent_status[a["name"]] = entry
+    except Exception as e:
+        agent_status["_error"] = str(e)[:120]
+    out["buckets"]["external_agents"] = agent_status
+
+    # ── Infrastructure ────────────────────────────────────────────────
+    infra: dict[str, Any] = {}
+    try:
+        if db:
+            from sqlalchemy import text as _text
+            db.execute(_text("SELECT 1"))
+            infra["database"] = "connected"
+        else:
+            infra["database"] = "no db session"
+    except Exception as e:
+        infra["database"] = f"error: {str(e)[:80]}"
+    infra["redis_url_set"] = bool(os.getenv("REDIS_URL"))
+    infra["render_host"] = os.getenv("RENDER", "false") == "true"
+    infra["vercel_host"] = bool(os.getenv("VERCEL"))
+    out["buckets"]["infra"] = infra
+
+    # ── Summary one-liner the LLM can quote ──────────────────────────
+    llm = out["buckets"]["llm_providers"]
+    live_llms = [p for p, v in llm.items() if isinstance(v, dict) and v.get("available")]
+    chans = out["buckets"]["channels"]
+    live_chans = [k for k, v in chans.items() if isinstance(v, dict) and v.get("configured")]
+    out["summary"] = (
+        f"LLMs available: {', '.join(live_llms) or 'none'}. "
+        f"Channels configured: {', '.join(live_chans) or 'none'}. "
+        f"External agents reachable: "
+        f"{sum(1 for v in agent_status.values() if isinstance(v, dict) and v.get('reachable'))}"
+        f"/{len([k for k in agent_status if not k.startswith('_')])}."
+    )
+    return out
+
+
+def tool_recall_history(query: str, days: int = 7, limit: int = 8, user_id: str = "boss",
+                        db: Session = None, **_kw) -> dict[str, Any]:
+    """Cross-session memory — search the boss's prior Assistant turns.
+
+    Use when the user asks 'what did we discuss yesterday', 'remember when
+    I asked about X', '어제 우리 뭐 얘기했어'. Searches the rolling
+    `channel='assistant_overlay'` chat session by ILIKE over the saved
+    content. Empty query → return the last N turns chronologically (so
+    the LLM can say 'last thing we discussed was…').
+    """
+    if not db:
+        return {"ok": False, "error": "DB session required"}
+    try:
+        from db.models import ChatSession, ChatMessage
+        from datetime import datetime, timedelta
+        cutoff = datetime.utcnow() - timedelta(days=max(1, int(days)))
+        sessions = (db.query(ChatSession)
+                    .filter(ChatSession.user_id == user_id,
+                            ChatSession.channel == "assistant_overlay")
+                    .all())
+        if not sessions:
+            return {"ok": True, "query": query, "count": 0, "matches": [],
+                    "note": "No prior Assistant history saved for this user yet."}
+        session_ids = [s.id for s in sessions]
+        q = db.query(ChatMessage).filter(
+            ChatMessage.session_id.in_(session_ids),
+            ChatMessage.created_at >= cutoff,
+        )
+        # ILIKE on the text inside content_json (Postgres JSONB ->> 'text')
+        if query and query.strip():
+            try:
+                q = q.filter(ChatMessage.content_json.op("->>")("text").ilike(f"%{query}%"))
+            except Exception:
+                # SQLite fallback — content_json may be stored as Text
+                q = q.filter(ChatMessage.content_json.cast(__import__("sqlalchemy").Text).ilike(f"%{query}%"))
+        msgs = q.order_by(ChatMessage.created_at.desc()).limit(int(limit)).all()
+        return {
+            "ok": True,
+            "query": query or "(recent)",
+            "days": days,
+            "count": len(msgs),
+            "matches": [
+                {
+                    "ts": m.created_at.isoformat() if m.created_at else None,
+                    "role": m.role,
+                    "text": ((m.content_json or {}).get("text") or "")[:240],
+                    "intent": (m.content_json or {}).get("intent"),
+                    "tool_used": (m.content_json or {}).get("tool_used"),
+                }
+                for m in msgs
+            ],
+        }
+    except Exception as e:
+        return {"ok": False, "error": str(e)[:200]}
+
+
 def tool_latest_meeting_notes(count: int = 3, db: Session = None, **_kw) -> dict[str, Any]:
     """Latest real-world meeting notes with summaries."""
     if not db:
@@ -1456,6 +1611,40 @@ TOOL_REGISTRY: dict[str, Tool] = {
             "required": ["query"],
         },
         fn=tool_semantic_search,
+    ),
+    "list_connections": Tool(
+        name="list_connections", kind="read",
+        description=(
+            "List EVERYTHING connected to this agent — LLM providers, "
+            "channels (Telegram/Kakao/SMTP/Supabase), external agent "
+            "backends (with live HTTP probe), and infra (DB/Redis/host). "
+            "Use when the user asks 'what's connected', 'are my keys set', "
+            "'is Telegram configured', 'is the Asset agent reachable', "
+            "'what providers do I have', '뭐가 연결되어 있어'."
+        ),
+        parameters={"type": "object", "properties": {}},
+        fn=tool_list_connections,
+    ),
+    "recall_history": Tool(
+        name="recall_history", kind="read",
+        description=(
+            "Cross-session memory — search the boss's PRIOR Assistant "
+            "conversations (last N days, default 7). Use when the user "
+            "asks 'what did we discuss yesterday', 'remember when I asked "
+            "about X', '어제 뭐 얘기했어', 'show me my last conversation', "
+            "'what were we doing'. Pass an empty query to get the most "
+            "recent turns chronologically."
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "Text to search past turns for (empty = recent)"},
+                "days":  {"type": "integer", "description": "How far back to look (default 7)"},
+                "limit": {"type": "integer", "description": "Max results (default 8)"},
+            },
+            "required": [],
+        },
+        fn=tool_recall_history,
     ),
     "find_page": Tool(
         name="find_page", kind="read",
