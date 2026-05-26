@@ -184,6 +184,7 @@ export async function askAgent(
     ...(data.card ? { card: data.card } : {}),
     ...(data.tool_used ? { toolUsed: data.tool_used } : {}),
     ...(data.tool_result ? { toolResult: data.tool_result } : {}),
+    ...(Array.isArray(data.suggestions) ? { suggestions: data.suggestions } : {}),
   } as TalkResponse;
 }
 

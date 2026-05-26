@@ -600,4 +600,8 @@ export interface TalkResponse {
   /** Raw tool result payload (read tools only; write tools surface via
    *  proposedAction). Useful for the overlay to render specialised UIs. */
   toolResult?: Record<string, unknown>;
+  /** Notion-AI-style follow-up chips — short strings the overlay renders
+   *  as clickable buttons under the assistant bubble. Clicking sends the
+   *  chip text as the next user query. Empty / missing → no chips. */
+  suggestions?: string[];
 }

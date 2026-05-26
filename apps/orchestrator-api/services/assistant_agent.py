@@ -44,6 +44,7 @@ from services.assistant_manifest import (
 def _build_system_prompt(
     current_path: Optional[str] = None,
     selected_id: Optional[str] = None,
+    pending_attachments: Optional[list[dict]] = None,
 ) -> str:
     """Compose the system prompt the LLM sees on every request.
 
@@ -80,6 +81,17 @@ def _build_system_prompt(
         context_lines.append(f"[SELECTED ID] {selected_id}{hint}")
     context_block = "\n" + "\n".join(context_lines) + "\n" if context_lines else ""
 
+    # Pending-attachments block — tells the LLM which attachment_ids it can
+    # pass to send_dm/send_email/broadcast/etc. When this is non-empty the
+    # user has dropped files into the chat AND used an action verb, so they
+    # almost certainly want one of those write tools.
+    attach_block = ""
+    if pending_attachments:
+        lines = ["[ATTACHED FILES] The user just attached these — pass the matching attachment_ids to send_dm / send_email / broadcast etc. if they ask to send/share/forward:"]
+        for a in pending_attachments[:8]:
+            lines.append(f"  - attachment_id={a.get('attachment_id')} filename={a.get('filename')} kind={a.get('kind')} mime={a.get('mime_type')}")
+        attach_block = "\n" + "\n".join(lines) + "\n"
+
     identity = get_agent_identity()
     return (
         f"You are the {identity['name']} — {identity['tagline']}. "
@@ -93,7 +105,7 @@ def _build_system_prompt(
         f"{pages_summary_for_llm()}\n\n"
         "■ EXTERNAL AGENT APPS (for open_portal(agent)):\n"
         f"{agents_summary_for_llm()}\n"
-        f"{context_block}\n"
+        f"{context_block}{attach_block}\n"
         "■ HOW TO RESPOND\n"
         "Always respond with ONE of these JSON shapes — NOTHING ELSE:\n"
         '  A. Call ONE tool:    { "tool": "<name>", "args": { ... } }\n'
@@ -379,6 +391,10 @@ def _run_chain(
             action = a
             break
 
+    # For chains, derive suggestions from the LAST tool that ran (most
+    # recent intent is the one the user is likely to follow up on)
+    last_tool = step_results[-1]["tool"] if step_results else None
+    last_result = step_results[-1].get("result") if step_results else None
     return {
         "intent": "chain_completed",
         "language": lang,
@@ -388,6 +404,7 @@ def _run_chain(
         "transcript": transcript,
         "tool_used": "[chain]",
         "tool_result": {"steps": step_results, "step_count": len(step_results)},
+        "suggestions": _suggest_followups(last_tool, last_result, lang),
     }
 
 
@@ -707,6 +724,113 @@ def _run_multimodal_path(
     }
 
 
+def _suggest_followups(
+    tool_used: Optional[str],
+    tool_result: Optional[dict],
+    lang: str,
+) -> list[str]:
+    """Generate 2-3 short follow-up questions the user might want to ask
+    next, based on the tool that just fired. Templated (deterministic, free).
+
+    Returns up to 3 user-facing strings. The overlay renders these as
+    clickable chips under the assistant bubble — clicking sends the chip
+    text as the next query. Empty list → no chips shown.
+    """
+    if not tool_used:
+        return []
+    en = lang != "ko"
+    # Pull useful entities out of the tool result for personalised chips
+    name = None
+    if isinstance(tool_result, dict):
+        name = (
+            tool_result.get("twin_name")
+            or tool_result.get("name")
+            or (tool_result.get("matches") or [{}])[0].get("name")
+            if tool_result.get("matches") else tool_result.get("twin_name")
+        )
+
+    def en_or_ko(en_text: str, ko_text: str) -> str:
+        return en_text if en else ko_text
+
+    # Tool-specific templates ---------------------------------------------
+    if tool_used == "send_dm":
+        return [
+            en_or_ko(f"Show {name}'s recent activity", f"{name}의 최근 활동 보여줘") if name else en_or_ko("Show recent DMs", "최근 메시지 보여줘"),
+            en_or_ko(f"What tasks does {name} have?", f"{name}의 작업은?") if name else en_or_ko("Unsend that message", "그 메시지 취소"),
+            en_or_ko("Broadcast something to everyone", "전체에게 공지"),
+        ]
+    if tool_used == "search_twin" or tool_used == "list_twins":
+        return [
+            en_or_ko(f"Show {name}'s activity today" if name else "Show twin activity today",
+                     f"오늘 {name} 활동" if name else "오늘 트윈 활동"),
+            en_or_ko(f"List {name}'s tasks" if name else "List tasks",
+                     f"{name} 작업 목록" if name else "작업 목록"),
+            en_or_ko("Send a message to a twin", "트윈에게 메시지 보내"),
+        ]
+    if tool_used == "open_portal":
+        portal = (tool_result or {}).get("agent") or "the agent"
+        return [
+            en_or_ko(f"What's the status of {portal}?", f"{portal} 상태는?"),
+            en_or_ko("Show agent health", "에이전트 상태 보여줘"),
+            en_or_ko("Open the agents list", "에이전트 목록 열어"),
+        ]
+    if tool_used == "navigate":
+        return [
+            en_or_ko("What can I do on this page?", "이 페이지에서 뭘 할 수 있어?"),
+            en_or_ko("Go back", "뒤로"),
+            en_or_ko("Show me the dashboard", "대시보드 보여줘"),
+        ]
+    if tool_used == "count":
+        return [
+            en_or_ko("List them with details", "자세한 목록"),
+            en_or_ko("Which are active right now?", "지금 활성 상태?"),
+            en_or_ko("Show today's activity", "오늘 활동 보여줘"),
+        ]
+    if tool_used in ("search_conversations", "conversation_history"):
+        return [
+            en_or_ko("Reply to this conversation", "이 대화에 답장"),
+            en_or_ko("Mark as resolved", "해결됨으로 표시"),
+            en_or_ko("Escalate it as urgent", "긴급으로 에스컬레이트"),
+        ]
+    if tool_used in ("latest_report", "search_reports", "trigger_daily_report"):
+        return [
+            en_or_ko("Compose a weekly report", "주간 리포트 생성"),
+            en_or_ko("Email this to the team", "팀에게 이메일"),
+            en_or_ko("Show the next report due", "다음 리포트 일정"),
+        ]
+    if tool_used == "agent_status":
+        return [
+            en_or_ko("Show all three agents' status", "세 에이전트 모두 상태"),
+            en_or_ko("Ping every agent now", "모든 에이전트 핑"),
+            en_or_ko("Open this agent's app", "이 에이전트 앱 열어"),
+        ]
+    if tool_used == "find_page":
+        return [
+            en_or_ko("Open it", "열어"),
+            en_or_ko("What can I do there?", "거기서 뭐 할 수 있어?"),
+            en_or_ko("Find something else", "다른 거 찾기"),
+        ]
+    if tool_used == "broadcast":
+        return [
+            en_or_ko("Show the broadcast history", "공지 기록 보기"),
+            en_or_ko("Send a different message", "다른 메시지 보내"),
+            en_or_ko("Schedule a daily summary", "일일 요약 예약"),
+        ]
+    if tool_used == "what_can_you_do":
+        return [
+            en_or_ko("Show today's situation", "오늘 상황 보여줘"),
+            en_or_ko("How many twins do I have?", "트윈 몇 명?"),
+            en_or_ko("Open the reports page", "리포트 페이지 열어"),
+        ]
+    # Generic fallback — works for any other read tool
+    if tool_used != "[chain]":
+        return [
+            en_or_ko("Show me more detail", "자세히 보여줘"),
+            en_or_ko("What else can you do?", "또 뭘 할 수 있어?"),
+        ]
+    return []
+
+
 def run_agent(
     db: Session,
     transcript: str,
@@ -761,12 +885,47 @@ def run_agent(
         hangul = sum(1 for c in transcript if 0xAC00 <= ord(c) <= 0xD7A3)
         lang = "ko" if hangul > 0 else "en"
 
-    # === Multimodal short-circuit (Slice 3) ===
-    # When the user attached one or more files, skip tool-calling and ask
-    # Gemini 2.5 Pro to look at the bytes directly. Empty transcript is
-    # OK here — the file itself is the question ("what's this?").
+    # === Multimodal handling (Slice 3) ===
+    # When the user attached files, we now have TWO possible flows:
+    #
+    #   (a) Q&A about the file ("what's in this image?", "summarize this PDF")
+    #       → short-circuit to Gemini Vision, no tool routing needed.
+    #
+    #   (b) ACTION on the file ("send Davronbek this image", "email this PDF
+    #       to Kim", "broadcast this screenshot") → go through normal tool
+    #       routing with attachment_ids exposed so the LLM passes them to
+    #       send_dm / send_email / broadcast.
+    #
+    # We disambiguate by scanning the transcript for action verbs. If none
+    # match, short-circuit to vision (cheap + fast). Otherwise tool-route.
     if attachment_ids:
-        return _run_multimodal_path(transcript, lang, history or [], attachment_ids)
+        action_markers = (
+            "send", "email", "broadcast", "share", "forward", "attach",
+            "post", "publish", "upload to", "give it to", "give to",
+            "보내", "전송", "공유", "전달", "올려",
+        )
+        tlow = (transcript or "").lower()
+        is_action = any(m in tlow for m in action_markers)
+        if not is_action:
+            return _run_multimodal_path(transcript, lang, history or [], attachment_ids)
+        # else: fall through to tool routing — the system prompt will tell
+        # the LLM about the pending attachments so it can pass them to
+        # the right write tool.
+        from routers.chatbot import load_attachment
+        pending: list[dict] = []
+        for aid in attachment_ids:
+            a = load_attachment(aid)
+            if a:
+                pending.append({
+                    "attachment_id": aid,
+                    "filename": a.get("filename"),
+                    "kind": a.get("kind"),
+                    "mime_type": a.get("mime_type"),
+                })
+        # Carry pending attachments into the system prompt below
+        _pending_attachments = pending
+    else:
+        _pending_attachments = None
 
     if not transcript:
         return {
@@ -778,7 +937,11 @@ def run_agent(
             "transcript": transcript,
         }
 
-    system = _build_system_prompt(current_path=current_path, selected_id=selected_id)
+    system = _build_system_prompt(
+        current_path=current_path,
+        selected_id=selected_id,
+        pending_attachments=_pending_attachments if attachment_ids else None,
+    )
 
     # Auto-fill ID args from selected_id when the LLM picks a tool that
     # needs an ID but the user said "this" (LLM may not include the ID).
@@ -802,6 +965,11 @@ def run_agent(
             "speak": True,
             "transcript": transcript,
             "tool_used": None,
+            "suggestions": [
+                ("What can you do?" if lang != "ko" else "뭘 할 수 있어?"),
+                ("Show today's situation" if lang != "ko" else "오늘 상황 보여줘"),
+                ("Open the dashboard" if lang != "ko" else "대시보드 열어"),
+            ],
         }
 
     # If the LLM chose a tool
@@ -890,4 +1058,6 @@ def run_agent(
         "tool_used": tool_name,
         "tool_result": tool_result if tool.kind == "read" else None,
         "card": card,
+        # Notion-AI-style follow-up chips (rendered by the overlay)
+        "suggestions": _suggest_followups(tool_name, tool_result, lang),
     }

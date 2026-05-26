@@ -546,28 +546,80 @@ def _find_twin_by_name(db: Session, name: str):
 
 # --- Communications ---
 
-def tool_send_dm(twin_name: str, body: str, db: Session = None, **_kw) -> dict[str, Any]:
-    """Send a direct message from the boss to a specific twin."""
+def tool_send_dm(
+    twin_name: str,
+    body: str = "",
+    attachment_ids: Optional[list] = None,
+    db: Session = None,
+    **_kw,
+) -> dict[str, Any]:
+    """Send a direct message (optionally with attached files/images) from the
+    boss to a specific twin.
+
+    `attachment_ids` are returned by POST /chatbot/upload — when present, we
+    persist a JSON list of {filename, mime_type, kind, url} alongside the
+    text body so the twin sees the attachment. Either body OR attachments
+    must be non-empty (sending an empty DM is rejected)."""
     if not db:
         return {"ok": False, "error": "DB session required"}
+    body = (body or "").strip()
+    attachment_ids = attachment_ids or []
+    if not body and not attachment_ids:
+        return {"ok": False, "error": "Message body or at least one attachment required."}
+
+    # Resolve attachments — store metadata + a static URL the twin UI can render
+    attachments_meta: list[dict] = []
+    if attachment_ids:
+        from routers.chatbot import load_attachment
+        for aid in attachment_ids[:8]:  # cap so a wild LLM can't blast 100s
+            a = load_attachment(aid)
+            if not a:
+                log.info(f"tool_send_dm: attachment_id '{aid}' not found (expired or wrong)")
+                continue
+            attachments_meta.append({
+                "attachment_id": aid,
+                "filename": a.get("filename"),
+                "mime_type": a.get("mime_type"),
+                "kind": a.get("kind"),
+                # The frontend rendering side can do GET /chatbot/attachments/<id>
+                # once that read endpoint exists; for now the id alone is enough.
+            })
+
     try:
         from db.models import DirectMessage
         tw = _find_twin_by_name(db, twin_name)
         if not tw:
             return {"ok": False, "error": f"No twin matching '{twin_name}'"}
+        # Embed attachments as JSON in the message metadata. We use a magic
+        # "[ATTACH] " prefix in the content for backward-compat with the
+        # legacy reader; the next reader iteration should look at a real
+        # `attachments_json` column once a migration lands.
+        meta_marker = ""
+        if attachments_meta:
+            import json as _json
+            meta_marker = "\n[ATTACH] " + _json.dumps(attachments_meta, ensure_ascii=False)
         msg = DirectMessage(
             twin_id=tw.id,
             sender_type="boss",
-            content=body or "",
+            content=(body or "") + meta_marker,
         )
         db.add(msg)
         db.commit()
         db.refresh(msg)
+        # Friendly summary for the assistant reply
+        if attachments_meta and body:
+            summary = f"✅ Sent DM to {tw.name} with {len(attachments_meta)} attachment(s): \"{body[:80]}\""
+        elif attachments_meta:
+            kinds = ", ".join(sorted({a["kind"] for a in attachments_meta}))
+            summary = f"✅ Sent {len(attachments_meta)} {kinds} attachment(s) to {tw.name}."
+        else:
+            summary = f"✅ Sent DM to {tw.name}: \"{body[:100]}\""
         return {
             "ok": True,
-            "message": f"✅ Sent DM to {tw.name}: \"{body[:100]}\"",
+            "message": summary,
             "message_id": msg.id,
             "twin_name": tw.name,
+            "attachment_count": len(attachments_meta),
         }
     except Exception as e:
         log.warning(f"tool_send_dm error: {e}")
@@ -1433,14 +1485,27 @@ TOOL_REGISTRY: dict[str, Tool] = {
 
     "send_dm": Tool(
         name="send_dm", kind="write",
-        description="Send a direct message from boss to a specific digital twin. Use when user says 'send Davronbek: ...' / 'tell Kim that ...' / '다브론벡에게 메시지 보내'.",
+        description=(
+            "Send a direct message (and optionally attach files/images) "
+            "from boss to a specific digital twin. Use when user says "
+            "'send Davronbek: ...' / 'tell Kim that ...' / '다브론벡에게 메시지 보내'. "
+            "If the boss attached files/images to THIS chat turn (i.e. there "
+            "are pending attachment_ids), include them in attachment_ids so "
+            "the twin receives them alongside the text. Either body or "
+            "attachment_ids must be non-empty."
+        ),
         parameters={
             "type": "object",
             "properties": {
-                "twin_name": {"type": "string", "description": "Twin name (partial match OK)"},
-                "body": {"type": "string", "description": "Message body"},
+                "twin_name":      {"type": "string", "description": "Twin name (partial match OK)"},
+                "body":           {"type": "string", "description": "Message body (optional if attachments present)"},
+                "attachment_ids": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Attachment ids returned by POST /chatbot/upload — sent with the DM as files/images.",
+                },
             },
-            "required": ["twin_name", "body"],
+            "required": ["twin_name"],
         },
         fn=tool_send_dm,
     ),

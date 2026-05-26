@@ -2,7 +2,29 @@ const _base = process.env.NEXT_PUBLIC_API_BASE_URL;
 const PROD_API = "https://vip-orchestrator.onrender.com";
 const isValidUrl = _base && (_base.startsWith("http://") || _base.startsWith("https://"));
 
-export const API = isValidUrl ? _base : (typeof window !== "undefined" && window.location.hostname !== "localhost" ? PROD_API : "http://localhost:8000");
+/**
+ * Auto-resolve the API base URL so LAN demos work without rebuilding.
+ *
+ *   1. Explicit `NEXT_PUBLIC_API_BASE_URL` env var wins.
+ *   2. `localhost` / `127.0.0.1`  → http://localhost:8000  (dev on the same PC)
+ *   3. LAN IP   (10/172.16-31/192.168)  → http://<same-host>:8000
+ *      (demo from another PC on the same Wi-Fi — orchestrator runs on
+ *      the host serving this page, so we use the same hostname.)
+ *   4. Anything else (public hostname like vercel.app)  → Render prod URL
+ */
+function resolveApiBase(): string {
+  if (isValidUrl) return _base as string;
+  if (typeof window === "undefined") return "http://localhost:8000";
+  const host = window.location.hostname;
+  if (host === "localhost" || host === "127.0.0.1") return "http://localhost:8000";
+  // RFC1918 private ranges = same-LAN demo → call orchestrator on the same host
+  if (/^10\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(host)) return `http://${host}:8000`;
+  if (/^192\.168\.\d{1,3}\.\d{1,3}$/.test(host))    return `http://${host}:8000`;
+  if (/^172\.(1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3}$/.test(host)) return `http://${host}:8000`;
+  return PROD_API;
+}
+
+export const API = resolveApiBase();
 
 function getAuthHeaders(): Record<string, string> {
   if (typeof window === "undefined") return {};

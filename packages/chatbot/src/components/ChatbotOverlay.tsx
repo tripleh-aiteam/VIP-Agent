@@ -20,6 +20,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { AgentConfig, Lang, TalkResponse, ActionDefinition, ProcessStep, ConversationTurn } from "../types";
 import { ask, askStreaming, transcribe, detectLanguage, pick } from "../engine";
+import { Markdown } from "./Markdown";
 
 /** Map of UI command name → handler. Host app registers any commands its UI supports. */
 export type CommandMap = Record<string, (params?: Record<string, unknown>) => void | Promise<void>>;
@@ -63,6 +64,10 @@ interface Turn {
   ack?: string;            // spoken first, before the main reply
   steps?: ProcessStep[];   // multi-step workflow progress
   pendingScript?: { code: string; explanation?: string };  // awaiting user confirm
+  /** Notion-AI follow-up chips: clicking sends that text as the next query.
+   *  Only attached to assistant turns; one-shot — clicking any chip clears
+   *  them so they don't re-fire on later turns. */
+  suggestions?: string[];
   pendingAction?: {
     /** original user query — used to re-issue with confirmed=true */
     query: string;
@@ -478,6 +483,7 @@ export function ChatbotOverlay({
                 source: resp.source ?? last.source,
                 ack: resp.ackReply || last.ack,
                 steps: resp.steps && resp.steps.length > 0 ? resp.steps : last.steps,
+                suggestions: resp.suggestions && resp.suggestions.length > 0 ? resp.suggestions : last.suggestions,
                 pendingScript,
                 pendingAction,
               };
@@ -496,6 +502,7 @@ export function ChatbotOverlay({
               source: resp.source,
               ack: resp.ackReply || undefined,
               steps: resp.steps && resp.steps.length > 0 ? resp.steps : undefined,
+              suggestions: resp.suggestions && resp.suggestions.length > 0 ? resp.suggestions : undefined,
               pendingScript,
               pendingAction,
             },
@@ -996,13 +1003,44 @@ export function ChatbotOverlay({
                 }`}
                 style={t.who === "user" ? { background: primary } : undefined}
               >
-                {t.text}
+                {/* User turns stay verbatim (they typed it; preserve whitespace).
+                    Assistant replies go through the markdown renderer so
+                    bullet lists / tables / **bold** / `code` look right
+                    instead of leaking raw asterisks. */}
+                {t.who === "user"
+                  ? <span className="whitespace-pre-wrap">{t.text}</span>
+                  : <Markdown text={t.text} />}
                 {t.who === "assistant" && t.intent && (
                   <div className="text-[9px] opacity-50 mt-0.5">
                     {t.intent}{t.source ? ` · ${t.source}` : ""}
                   </div>
                 )}
               </div>
+              {/* Notion-AI-style follow-up chips — only render when the
+                  backend returned suggestions AND this turn isn't waiting
+                  on a Confirm card (else two CTAs compete for the user). */}
+              {t.who === "assistant" && t.suggestions && t.suggestions.length > 0 && !t.pendingAction && !t.pendingScript && (
+                <div className="flex flex-wrap gap-1.5 mt-2 max-w-full">
+                  {t.suggestions.map((s, si) => (
+                    <button
+                      key={si}
+                      type="button"
+                      onClick={() => {
+                        // One-shot: clear chips on this turn so re-clicking
+                        // doesn't re-fire after the next reply lands.
+                        setTurns(prev => prev.map((row, ri) =>
+                          ri === i ? { ...row, suggestions: undefined } : row
+                        ));
+                        sendQuery(s).catch(() => {});
+                      }}
+                      className="text-[11px] px-2 py-1 rounded-full bg-white border border-gray-200 hover:border-gray-400 hover:bg-gray-50 text-gray-700 transition-colors"
+                      title="Click to ask this"
+                    >
+                      {s}
+                    </button>
+                  ))}
+                </div>
+              )}
               {/* Risky action awaiting confirmation (broadcast, send-message) */}
               {t.pendingAction && (
                 <div className="rounded-xl bg-amber-50 border border-amber-200 p-3 w-full space-y-2">
