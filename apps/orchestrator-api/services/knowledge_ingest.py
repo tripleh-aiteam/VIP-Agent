@@ -645,6 +645,57 @@ def ingest_file(
 # Retrieval
 # ---------------------------------------------------------------------------
 
+# Common Korean particles (조사) that get suffixed onto nouns and need to be
+# stripped so pgroonga can match the bare noun against indexed text. Listed
+# longest-first so 'ㅇ' + particle gets handled before shorter overlaps.
+_KO_PARTICLES = [
+    "에서는", "에서도", "에서",
+    "께서는", "께서",
+    "으로는", "으로", "로는", "로",
+    "보다는", "보다",
+    "이라는", "이라", "라는",
+    "까지는", "까지",
+    "부터는", "부터",
+    "에는", "에도", "에",
+    "은", "는", "이", "가", "을", "를", "의", "도", "만", "와", "과",
+]
+
+# Pgroonga query-syntax meta-characters that must be stripped/escaped so a
+# raw question doesn't get parsed as an operator (we want the LLM-typed text
+# to be treated as literal keywords).
+_PGROONGA_META = '"()\\'
+
+def _clean_pgroonga_query(q: str) -> str:
+    """Return a pgroonga-safe query string built from `q`.
+
+    - removes ASCII / fullwidth punctuation
+    - strips common Korean topic / case particles from tokens longer than 1 char
+    - drops single-char tokens (almost always particles/noise)
+    - removes pgroonga query-syntax meta characters
+    """
+    if not q:
+        return ""
+    # Replace punctuation with whitespace
+    cleaned = re.sub(r"[?!.,;:\(\)\[\]\{\}/'\"`~@#\$%\^&\*\+=<>。、，！？「」『』（）【】]+", " ", q)
+    # Remove pgroonga meta chars defensively
+    for ch in _PGROONGA_META:
+        cleaned = cleaned.replace(ch, " ")
+    tokens = cleaned.split()
+    out: list[str] = []
+    for tok in tokens:
+        stripped = tok
+        # Strip a particle suffix if the resulting stem is still 2+ chars
+        for p in _KO_PARTICLES:
+            if stripped.endswith(p) and len(stripped) - len(p) >= 2:
+                stripped = stripped[:-len(p)]
+                break
+        # Drop single-char Hangul fragments (almost always particles)
+        if len(stripped) <= 1:
+            continue
+        out.append(stripped)
+    return " ".join(out)
+
+
 def rag_retrieve(
     db: Session,
     *,
@@ -662,31 +713,51 @@ def rag_retrieve(
 
     # --- Text-only path (pgroonga, no embedding API needed) ---
     if EMBED_PROVIDER == "none":
-        try:
-            rows = db.execute(sa_text("""
-                SELECT * FROM search_assistant_knowledge_text(
-                    :agent_id, :query, :top_k
-                )
-            """), {
-                "agent_id": agent_id,
-                "query":    q,
-                "top_k":    top_k,
-            }).fetchall()
-        except Exception as e:
-            log.warning("pgroonga retrieve failed (%s) — returning empty", e)
-            return []
-        return [
-            {
-                "chunk_id":   str(r.chunk_id),
-                "file_id":    str(r.file_id),
-                "filename":   r.filename,
-                "location":   r.location,
-                "title":      r.title,
-                "content":    r.content,
-                "similarity": float(r.similarity),
-            }
-            for r in rows
-        ]
+        # pgroonga's `&@~` operator AND-matches tokens by default. Korean
+        # questions like "향남 분양가는?" tokenise to {"향남", "분양가는"}
+        # which doesn't match a doc that has "분양가" (the topic particle
+        # "는" + "?" make it a different token). We therefore:
+        #   1. strip ASCII / fullwidth punctuation
+        #   2. strip common Korean topic / case particles when they appear
+        #      as a suffix on a longer-than-1-char word
+        #   3. build an OR-joined query so any single keyword can match
+        #   4. fall back from strict (AND/space) → loose (OR) if the strict
+        #      pass returns nothing
+        cleaned = _clean_pgroonga_query(q)
+        candidates = [cleaned] if cleaned else []
+        # Add an OR variant as a fallback if the first pass returns nothing
+        or_form = " OR ".join(cleaned.split()) if cleaned else ""
+        if or_form and or_form != cleaned:
+            candidates.append(or_form)
+
+        for variant in candidates:
+            try:
+                rows = db.execute(sa_text("""
+                    SELECT * FROM search_assistant_knowledge_text(
+                        :agent_id, :query, :top_k
+                    )
+                """), {
+                    "agent_id": agent_id,
+                    "query":    variant,
+                    "top_k":    top_k,
+                }).fetchall()
+            except Exception as e:
+                log.warning("pgroonga retrieve failed (%s) — returning empty", e)
+                return []
+            if rows:
+                return [
+                    {
+                        "chunk_id":   str(r.chunk_id),
+                        "file_id":    str(r.file_id),
+                        "filename":   r.filename,
+                        "location":   r.location,
+                        "title":      r.title,
+                        "content":    r.content,
+                        "similarity": float(r.similarity),
+                    }
+                    for r in rows
+                ]
+        return []
 
     # --- Vector path (when embeddings are configured) ---
     q_input = ("query: " + q) if (EMBED_PROVIDER == "local" and "e5" in EMBED_MODEL.lower()) else q
