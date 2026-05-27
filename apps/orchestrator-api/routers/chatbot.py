@@ -428,7 +428,7 @@ async def perceive_file_endpoint(
 async def transcribe_audio(file: UploadFile = File(...)):
     """
     Accept an audio blob (webm/ogg/mp3/wav) and transcribe.
-    Tries OpenAI Whisper first; falls back to Gemini 2.5 Flash audio.
+    Cascade: Groq Whisper-large-v3 (free) → OpenAI Whisper → Gemini 2.5 Flash audio.
     """
     audio_bytes = await file.read()
     if len(audio_bytes) < 200:
@@ -436,7 +436,28 @@ async def transcribe_audio(file: UploadFile = File(...)):
 
     content_type = file.content_type or "audio/webm"
 
-    # Whisper first
+    # Groq Whisper-large-v3 FIRST — free tier, OpenAI-compatible endpoint,
+    # excellent multilingual (Korean + English). Promoted ahead of OpenAI
+    # because the OpenAI key was rate-limited / quota-exhausted in prod.
+    groq_key = os.getenv("GROQ_API_KEY", "")
+    if groq_key:
+        try:
+            async with httpx.AsyncClient(timeout=60) as client:
+                resp = await client.post(
+                    "https://api.groq.com/openai/v1/audio/transcriptions",
+                    headers={"Authorization": f"Bearer {groq_key}"},
+                    files={"file": (file.filename or "audio.webm", audio_bytes, content_type)},
+                    data={"model": "whisper-large-v3"},
+                )
+                if resp.status_code == 200:
+                    data = resp.json()
+                    return {"transcript": (data.get("text") or "").strip(),
+                            "language": data.get("language", "auto"),
+                            "engine": "groq-whisper"}
+        except Exception:
+            pass
+
+    # OpenAI Whisper
     openai_key = os.getenv("OPENAI_API_KEY", "")
     if openai_key:
         try:
@@ -451,11 +472,11 @@ async def transcribe_audio(file: UploadFile = File(...)):
                     data = resp.json()
                     return {"transcript": (data.get("text") or "").strip(),
                             "language": data.get("language", "auto"),
-                            "engine": "whisper"}
+                            "engine": "openai-whisper"}
         except Exception:
             pass
 
-    # Gemini fallback
+    # Gemini fallback (likely denied on the current project — kept as last resort)
     gemini_key = os.getenv("GEMINI_API_KEY", "")
     if not gemini_key:
         raise HTTPException(status_code=503, detail="No transcription engine available")
