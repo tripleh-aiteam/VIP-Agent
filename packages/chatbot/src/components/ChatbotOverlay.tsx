@@ -120,12 +120,12 @@ export function ChatbotOverlay({
   hideLauncher = false,
 }: Props) {
   // Controlled mode: when `open` prop is provided, parent owns state.
-  // Otherwise fall back to uncontrolled behavior — starts CLOSED (panel
-  // hidden, only the launcher bubble visible). User clicks the bubble to
-  // open. Previously this defaulted to `true` which auto-popped the panel
-  // on every page load — annoying.
+  // Otherwise default to OPEN — the bar is meant to be a persistent
+  // ChatGPT-style input pinned at the bottom of every page. Users hide it
+  // via the + menu → 'Close assistant'; hosts can re-open via the
+  // 'vip:open-assistant' window event listener wired up in their mount.
   const isControlled = controlledOpen !== undefined;
-  const [internalOpen, setInternalOpen] = useState(false);
+  const [internalOpen, setInternalOpen] = useState(true);
   const open = isControlled ? !!controlledOpen : internalOpen;
   const setOpen = (next: boolean) => {
     if (isControlled) onOpenChange?.(next);

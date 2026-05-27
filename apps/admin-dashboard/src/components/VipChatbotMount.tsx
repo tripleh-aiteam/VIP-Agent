@@ -71,7 +71,12 @@ export default function VipChatbotMount() {
 
   // Assistant is hidden until the user explicitly opens it (via the sidebar's
   // Assistant entry, which dispatches a `vip:open-assistant` window event).
-  const [open, setOpen] = useState(false);
+  // v1.4 — the Assistant is now a slim chat bar pinned at the bottom of
+  // every page (ChatGPT-style). Default it to OPEN so the bar is always
+  // visible. The user can hide it via + → 'Close assistant' (sets open=false),
+  // and the Sidebar's Assistant entry brings it back via the
+  // 'vip:open-assistant' window event below.
+  const [open, setOpen] = useState(true);
   useEffect(() => {
     const opener = () => setOpen(true);
     window.addEventListener(OPEN_EVENT, opener);
