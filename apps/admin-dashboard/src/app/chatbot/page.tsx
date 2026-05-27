@@ -32,6 +32,7 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import { API } from "../../components/api";
 import TwinGroupsHub from "../../components/TwinGroupsHub";
 import { vipConfig } from "../../chatbot.config";
@@ -629,7 +630,28 @@ function KnowledgePanel() {
 //  Centered Assistant card
 // ============================================================================
 
+interface AgentResponse {
+  reply?: string;
+  intent?: string;
+  tool_used?: string;
+  tool_result?: unknown;
+  action?: { type: string; to?: string; external?: boolean; command?: string };
+  proposed_action?: { confirm_text?: string; tool?: string; args?: Record<string, unknown> };
+  card?: unknown;
+  language?: string;
+}
+
+interface Turn {
+  who: "user" | "assistant";
+  text: string;
+  ts: number;
+  intent?: string;
+  tool_used?: string;
+  pendingAction?: { query: string; confirmText: string };
+}
+
 function AssistantCard() {
+  const router = useRouter();
   const base = vipConfig.apiBase.replace(/\/$/, "");
   const modelsCacheKey = `chatbot-${vipConfig.agentId}-models`;
   const [available, setAvailable] = useState<AvailableModel[]>(() => {
@@ -648,10 +670,10 @@ function AssistantCard() {
     return localStorage.getItem(`chatbot-${vipConfig.agentId}-model`) || "";
   });
   const [prompt, setPrompt] = useState("");
-  const [reply, setReply] = useState<string | null>(null);
-  const [intent, setIntent] = useState<string | null>(null);
+  const [turns, setTurns] = useState<Turn[]>([]);
   const [thinking, setThinking] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     fetch(`${base}/api/twins/llm/models`)
@@ -665,34 +687,87 @@ function AssistantCard() {
       .catch(() => {});
   }, [base, modelsCacheKey]);
 
+  // Auto-scroll the conversation panel when new turns arrive
+  useEffect(() => {
+    if (scrollRef.current) {
+      scrollRef.current.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
+    }
+  }, [turns.length]);
+
   function selectModel(v: string) {
     setModel(v);
     try { localStorage.setItem(`chatbot-${vipConfig.agentId}-model`, v); } catch {}
   }
 
-  async function ask() {
-    const q = prompt.trim();
-    if (!q || thinking) return;
+  // Execute an action returned by the agent — same logic as ChatbotOverlay
+  function executeAction(action: AgentResponse["action"]) {
+    if (!action) return;
+    if (action.type === "navigate" && action.to) {
+      if (action.external) {
+        try { window.open(action.to, "_blank", "noopener,noreferrer"); } catch {}
+        return;
+      }
+      try { router.push(action.to); } catch (e) { console.warn("[Assistant] nav failed:", e); }
+      return;
+    }
+    if (action.type === "ui_command") {
+      // Common built-ins
+      const cmd = action.command || "";
+      if (cmd === "scroll_top") window.scrollTo({ top: 0, behavior: "smooth" });
+      if (cmd === "scroll_bottom") window.scrollTo({ top: document.body.scrollHeight, behavior: "smooth" });
+      if (cmd === "refresh") window.location.reload();
+      if (cmd === "go_back") window.history.back();
+      return;
+    }
+  }
+
+  async function ask(text: string, confirmed = false, confirmedTool?: string, confirmedArgs?: Record<string, unknown>) {
+    const q = (text || "").trim();
+    if ((!q && !confirmed) || thinking) return;
     setThinking(true);
     setError(null);
-    setReply(null);
-    setIntent(null);
+    if (!confirmed && q) {
+      setTurns(prev => [...prev, { who: "user", text: q, ts: Date.now() }]);
+      setPrompt("");
+    }
     try {
+      const body: Record<string, unknown> = {
+        transcript: q,
+        language: "auto",
+        agentId: vipConfig.agentId,
+        model: model || undefined,
+        history: turns.slice(-6).map(t => ({ role: t.who, text: t.text, intent: t.intent })),
+        current_path: "/chatbot",
+      };
+      if (confirmed && confirmedTool) {
+        body.confirmed_tool = confirmedTool;
+        body.confirmed_args = confirmedArgs || {};
+      }
       const r = await fetch(`${base}/chat/agent`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          transcript: q,
-          language: "auto",
-          agentId: vipConfig.agentId,
-          model: model || undefined,
-          history: [],
-        }),
+        body: JSON.stringify(body),
       });
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
-      const data = await r.json();
-      setReply(data.reply || "");
-      setIntent(data.intent || null);
+      const data: AgentResponse = await r.json();
+
+      // A write action awaiting user confirmation — surface the card
+      const proposed = data.proposed_action;
+      const pendingAction = proposed?.confirm_text
+        ? { query: q, confirmText: proposed.confirm_text }
+        : undefined;
+
+      setTurns(prev => [...prev, {
+        who: "assistant",
+        text: data.reply || "Done.",
+        ts: Date.now(),
+        intent: data.intent,
+        tool_used: data.tool_used,
+        pendingAction,
+      }]);
+
+      // Auto-execute non-write actions immediately
+      if (!pendingAction && data.action) executeAction(data.action);
     } catch (e) {
       setError(`Failed: ${(e as Error).message || e}`);
     } finally {
@@ -700,12 +775,27 @@ function AssistantCard() {
     }
   }
 
+  async function confirmTurn(i: number) {
+    const t = turns[i];
+    if (!t?.pendingAction) return;
+    // Mark this turn as no-longer-pending, then re-issue with confirmed=true
+    setTurns(prev => prev.map((x, j) => j === i ? { ...x, pendingAction: undefined } : x));
+    await ask(t.pendingAction.query, true);
+  }
+
+  function cancelTurn(i: number) {
+    setTurns(prev => prev.map((x, j) => j === i ? { ...x, pendingAction: undefined } : x));
+  }
+
   return (
     <div className="max-w-3xl mx-auto rounded-2xl border border-gray-200 bg-white shadow-sm p-4 md:p-5 space-y-3 mt-4">
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <div>
           <h2 className="text-[15px] font-semibold text-gray-900 flex items-center gap-2">🤖 Assistant</h2>
-          <p className="text-[11px] text-gray-500 mt-0.5">Ask anything — your data, files, twins, calls. Pick a model or let it auto-route.</p>
+          <p className="text-[11px] text-gray-500 mt-0.5">
+            Ask anything · send / unsend messages · start calls · search files · navigate.
+            Both you and the Assistant write into the same archive.
+          </p>
         </div>
         <select
           value={model}
@@ -727,30 +817,74 @@ function AssistantCard() {
         </select>
       </div>
 
+      {/* Conversation */}
+      {turns.length > 0 && (
+        <div ref={scrollRef} className="max-h-[360px] overflow-y-auto space-y-2 pr-1">
+          {turns.map((t, i) => (
+            <div key={i} className={`flex ${t.who === "user" ? "justify-end" : "justify-start"}`}>
+              <div className={`max-w-[85%] flex flex-col gap-1.5 ${t.who === "user" ? "items-end" : "items-start"}`}>
+                <div className={`rounded-2xl px-3.5 py-2.5 text-[13px] leading-relaxed ${
+                  t.who === "user" ? "bg-blue-600 text-white rounded-br-md" : "bg-gray-100 text-gray-900 rounded-bl-md"
+                }`}>
+                  <span className="whitespace-pre-wrap">{t.text}</span>
+                  {t.who === "assistant" && (t.intent || t.tool_used) && (
+                    <div className="text-[9px] opacity-50 mt-0.5">
+                      {t.intent}{t.tool_used ? ` · ${t.tool_used}` : ""}
+                    </div>
+                  )}
+                </div>
+                {t.pendingAction && (
+                  <div className="rounded-xl bg-amber-50 border border-amber-200 p-3 w-full max-w-[420px] space-y-2">
+                    <div className="text-[12px] font-semibold text-amber-900">⚠️ Confirm before sending</div>
+                    <div className="text-[12px] text-amber-900">{t.pendingAction.confirmText}</div>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => confirmTurn(i)}
+                        className="flex-1 py-1.5 text-white text-[12px] font-semibold rounded-lg bg-blue-600 hover:bg-blue-700"
+                      >✓ Confirm</button>
+                      <button
+                        onClick={() => cancelTurn(i)}
+                        className="px-4 py-1.5 text-[12px] font-semibold rounded-lg bg-white border border-gray-300 text-gray-700 hover:bg-gray-50"
+                      >✗ Cancel</button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          ))}
+          {thinking && (
+            <div className="flex justify-start">
+              <div className="bg-gray-100 px-3.5 py-2.5 rounded-2xl rounded-bl-md">
+                <div className="flex gap-1">
+                  <span className="w-1.5 h-1.5 bg-amber-500 rounded-full animate-bounce" />
+                  <span className="w-1.5 h-1.5 bg-amber-500 rounded-full animate-bounce" style={{ animationDelay: "150ms" }} />
+                  <span className="w-1.5 h-1.5 bg-amber-500 rounded-full animate-bounce" style={{ animationDelay: "300ms" }} />
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Composer */}
       <div className="flex gap-2">
         <textarea
           rows={2}
           value={prompt}
           onChange={e => setPrompt(e.target.value)}
-          onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); ask(); } }}
+          onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); ask(prompt); } }}
           placeholder="Ask anything … (Enter to send · Shift+Enter for newline)"
           className="flex-1 px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-[13px] focus:outline-none focus:border-blue-400 resize-none"
           disabled={thinking}
         />
         <button
-          onClick={ask}
+          onClick={() => ask(prompt)}
           disabled={!prompt.trim() || thinking}
           className="px-4 py-2 bg-blue-600 text-white text-[13px] font-medium rounded-lg hover:bg-blue-700 disabled:opacity-50 self-end"
         >{thinking ? "..." : "Send"}</button>
       </div>
 
       {error && <div className="text-[12px] text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{error}</div>}
-      {reply && (
-        <div className="rounded-lg bg-gray-50 border border-gray-200 px-3 py-2.5">
-          <div className="text-[13px] text-gray-900 whitespace-pre-wrap leading-relaxed">{reply}</div>
-          {intent && <div className="mt-1 text-[10px] text-gray-400 uppercase tracking-wide">intent: {intent}</div>}
-        </div>
-      )}
     </div>
   );
 }

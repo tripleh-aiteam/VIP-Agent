@@ -12,7 +12,7 @@
  */
 
 import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, usePathname } from "next/navigation";
 import { ChatbotOverlay } from "@triple-h/chatbot";
 import { vipConfig } from "../chatbot.config";
 
@@ -77,6 +77,11 @@ export default function VipChatbotMount() {
   // and the Sidebar's Assistant entry brings it back via the
   // 'vip:open-assistant' window event below.
   const [open, setOpen] = useState(true);
+
+  // Hide the bar entirely on /chatbot — that page hosts its own centered
+  // Assistant card with the same capabilities (no need for two surfaces).
+  const pathname = usePathname();
+  const onChatbotPage = pathname?.startsWith("/chatbot");
   useEffect(() => {
     const opener = () => setOpen(true);
     window.addEventListener(OPEN_EVENT, opener);
@@ -129,6 +134,11 @@ export default function VipChatbotMount() {
       window.removeEventListener("keydown", handler);
     };
   }, []);
+
+  // On the /chatbot page the boss already has a centered Assistant card
+  // with the same capabilities — rendering the bottom slim bar too would
+  // give them two parallel Assistants, which is confusing.
+  if (onChatbotPage) return null;
 
   return (
     <ChatbotOverlay

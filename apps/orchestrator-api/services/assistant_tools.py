@@ -2678,6 +2678,90 @@ def tool_delete_knowledge_file(
         return {"ok": False, "error": str(e)[:200]}
 
 
+# ============================================================================
+#  Outbound call — Assistant places a Vapi call on the boss's behalf
+# ============================================================================
+
+def tool_place_call(
+    to: str,
+    caller_name: str = "",
+    reason: str = "custom",
+    agent_id: str = "vip",
+    db: Session = None,
+    **_kw,
+) -> dict[str, Any]:
+    """Place an outbound call to `to` via the configured voice provider.
+    `to` must be E.164 phone format (+821012345678). The route handles
+    rate-limiting and provider routing internally."""
+    if not db:
+        return {"ok": False, "error": "DB session required"}
+    if not (to or "").strip():
+        return {"ok": False, "error": "Phone number is required (E.164 format)"}
+    try:
+        from services import voice_service
+        from db.models import VoiceProviderAssistant
+
+        # Rate-limit check first
+        block = voice_service.check_recipient_eligibility(db, agent_id, to)
+        if block:
+            return {"ok": False, "error": f"Rate-limited: {block}"}
+
+        mapping = (
+            db.query(VoiceProviderAssistant)
+            .filter(
+                VoiceProviderAssistant.agent_id == agent_id,
+                VoiceProviderAssistant.provider == "vapi",
+                VoiceProviderAssistant.active.is_(True),
+            )
+            .first()
+        )
+        call = voice_service.start_call(
+            db,
+            agent_id,
+            provider="vapi" if mapping else "intent",
+            provider_call_id=None,
+            direction="outbound",
+            caller_number=to,
+            caller_name=caller_name or None,
+            reason=reason or "custom",
+        )
+        return {
+            "ok": True,
+            "call_id": str(call.id) if call else None,
+            "to": to,
+            "status": "ringing" if mapping else "intent_recorded",
+            "message": (
+                f"Placing call to {caller_name or to}…" if mapping
+                else f"Call intent recorded for {caller_name or to} (no Vapi assistant configured)."
+            ),
+        }
+    except Exception as e:
+        return {"ok": False, "error": str(e)[:200]}
+
+
+TOOL_REGISTRY["place_call"] = Tool(
+    name="place_call", kind="write",
+    description=(
+        "Place an outbound phone call via the agent's configured voice "
+        "provider (Vapi). Use when the boss says 'call 김민호', 'phone "
+        "the tenant at 010-1234-5678', etc. Requires E.164 format "
+        "(+82...). Requires confirmation because real money is spent on "
+        "the carrier and the recipient's phone rings immediately."
+    ),
+    parameters={
+        "type": "object",
+        "properties": {
+            "to": {"type": "string", "description": "E.164 phone number, e.g. +821012345678"},
+            "caller_name": {"type": "string", "description": "Optional name for the recipient (shown in UI / call log)"},
+            "reason": {"type": "string", "description": "Why the call is being placed (free-form tag, e.g. 'rent_reminder', 'lease_followup')"},
+        },
+        "required": ["to"],
+    },
+    fn=tool_place_call,
+    requires_confirmation=True,
+)
+
+
 TOOL_REGISTRY["delete_knowledge_file"] = Tool(
     name="delete_knowledge_file", kind="write",
     description=(
