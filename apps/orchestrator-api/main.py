@@ -148,18 +148,21 @@ app = FastAPI(
 _cors_origins_env = os.getenv("CORS_ALLOWED_ORIGINS", "")
 _cors_origins = [o.strip() for o in _cors_origins_env.split(",") if o.strip()] if _cors_origins_env else ["*"]
 
-# Always allow LAN origins on any port — lets boss demo the dashboard /
-# twin-portal from another laptop on the same Wi-Fi without changing the
-# env var. Matches http://localhost, 127.0.0.1, and RFC1918 private
-# ranges (10/172.16-31/192.168) on any port.
+# Always allow:
+#   - LAN origins on any port (laptop demos over Wi-Fi)
+#   - Every *.vercel.app subdomain (VIP, Realty, Asset, preview deploys)
+#   - Specific tripleh deploys
+# This is in addition to whatever CORS_ALLOWED_ORIGINS env var lists.
 _lan_origin_regex = (
-    r"^http://("
-    r"localhost"
-    r"|127\.0\.0\.1"
-    r"|10\.\d{1,3}\.\d{1,3}\.\d{1,3}"
-    r"|172\.(1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3}"
-    r"|192\.168\.\d{1,3}\.\d{1,3}"
-    r")(:\d+)?$"
+    r"^https?://("
+    r"localhost(:\d+)?"
+    r"|127\.0\.0\.1(:\d+)?"
+    r"|10\.\d{1,3}\.\d{1,3}\.\d{1,3}(:\d+)?"
+    r"|172\.(1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3}(:\d+)?"
+    r"|192\.168\.\d{1,3}\.\d{1,3}(:\d+)?"
+    r"|[a-zA-Z0-9-]+\.vercel\.app"
+    r"|[a-zA-Z0-9-]+\.tripleh\.app"
+    r")$"
 )
 
 app.add_middleware(
