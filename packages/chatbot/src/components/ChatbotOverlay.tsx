@@ -1402,6 +1402,36 @@ export function ChatbotOverlay({
             >{panelOpen ? "▾" : "▴"}</button>
           )}
 
+          {/* Model picker — compact dropdown directly in the bar.
+              'Auto' = smart router (server decides); otherwise pins to a
+              specific provider/model and persists in localStorage. The
+              option list is grouped by provider so the boss can see all
+              free + paid choices at a glance. Hidden on very narrow phones
+              to keep the bar tappable. */}
+          <select
+            value={selectedModel}
+            onChange={e => persistSelectedModel(e.target.value)}
+            className="hidden sm:block h-9 max-w-[140px] rounded-full bg-gray-100 hover:bg-gray-200 border-none px-3 text-[11px] font-medium text-gray-700 cursor-pointer focus:outline-none focus:ring-2 focus:ring-blue-200 shrink-0"
+            title={selectedModel ? `Pinned to ${selectedModel}` : "Smart router picks per query"}
+          >
+            <option value="">🧠 Auto</option>
+            {availableModels.length === 0 && (
+              <option value="" disabled>(loading…)</option>
+            )}
+            {["anthropic", "gemini", "openai", "groq", "ollama"].map(provider => {
+              const opts = availableModels.filter(m => m.provider === provider);
+              if (opts.length === 0) return null;
+              const label = provider.charAt(0).toUpperCase() + provider.slice(1);
+              return (
+                <optgroup key={provider} label={label}>
+                  {opts.map(m => (
+                    <option key={m.id} value={m.id}>{m.id}</option>
+                  ))}
+                </optgroup>
+              );
+            })}
+          </select>
+
           {/* Mic */}
           {state === "listening" ? (
             <button
