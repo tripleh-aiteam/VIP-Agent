@@ -48,7 +48,7 @@ log = logging.getLogger("knowledge_ingest")
 # vector dimension MUST match the active provider — see assistant_knowledge
 # migrations.
 
-EMBED_PROVIDER = (os.getenv("EMBED_PROVIDER") or "gemini").lower()
+EMBED_PROVIDER = (os.getenv("EMBED_PROVIDER") or "local").lower()
 
 if EMBED_PROVIDER == "openai":
     EMBED_MODEL = "text-embedding-3-small"
