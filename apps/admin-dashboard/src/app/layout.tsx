@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import dynamic from "next/dynamic";
 import "./globals.css";
 import Sidebar from "@/components/Sidebar";
@@ -31,6 +31,12 @@ export const metadata: Metadata = {
   description: "Enterprise Multi-Agent Orchestration System",
 };
 
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  viewportFit: "cover",
+};
+
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en">
@@ -38,9 +44,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <AuthGuard>
           <div className="flex">
             <Sidebar />
-            <main className="flex-1 min-h-screen overflow-x-hidden relative">
+            <main className="flex-1 min-w-0 min-h-screen overflow-x-hidden relative">
               <TopBar />
-              <div className="p-3 md:p-6 max-w-7xl">{children}</div>
+              <div className="p-3 md:p-6 max-w-7xl mx-auto w-full">{children}</div>
             </main>
           </div>
           <UpdateBanner />
