@@ -61,6 +61,10 @@ interface Props {
   onGenerateDraft?: (conv: Conversation) => void;
   /** Boss uploads an image / file / voice clip via the composer */
   onSendAttachment?: (conv: Conversation, file: File, kind: "image" | "file" | "voice", caption?: string) => void;
+  /** Fires when a conversation is selected. Host typically lazy-fetches
+   *  the full message thread here (the list endpoint returns rows with
+   *  empty messages[]; the detail endpoint has the full history). */
+  onConversationSelected?: (conversationId: string) => void;
 }
 
 export function ChatbotInbox({
@@ -79,6 +83,7 @@ export function ChatbotInbox({
   onModeChange,
   onGenerateDraft,
   onSendAttachment,
+  onConversationSelected,
 }: Props) {
   const conversations = liveConversations ?? (mock ? getMockConversations() : []);
   const dailyReport = liveDailyReport ?? (mock ? mockInboxDailyReport : null);
@@ -130,6 +135,13 @@ export function ChatbotInbox({
     }
   }, [conversations, selectedId]);
 
+  // Notify the host whenever selection changes so it can lazy-fetch the
+  // detail (list endpoint returns conversations with messages: []).
+  useEffect(() => {
+    if (selectedId) onConversationSelected?.(selectedId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedId]);
+
   const selected = conversations.find((c) => c.id === selectedId) ?? null;
   const displayName = agentLabel ?? agentId;
 
@@ -158,30 +170,49 @@ export function ChatbotInbox({
       {/* Daily report */}
       {dailyReport && <DailyReportCard report={dailyReport} />}
 
-      {/* Three-pane layout */}
+      {/*
+        Responsive three-pane layout:
+          – Phones (< md / 768px): one pane at a time. Show the conversation
+            LIST until a conversation is selected; show the THREAD when one
+            is selected (with a back button to clear selection). Customer
+            info panel is hidden entirely on phones.
+          – Tablets (md..lg): list + thread side-by-side, no info panel.
+          – Desktop (lg+): full 3-pane layout (list + thread + info).
+        Height switches from "calc(100vh - 320px)" desktop → "calc(100vh - 220px)"
+        on phones (less chrome above) to maximize usable thread space.
+      */}
       <div
-        className="flex border border-gray-200 rounded-2xl overflow-hidden bg-white"
-        style={{ height: "calc(100vh - 320px)", minHeight: 540 }}
+        className="flex border border-gray-200 rounded-2xl overflow-hidden bg-white max-w-full"
+        style={{ height: "calc(100dvh - 220px)", minHeight: 420 }}
       >
-        <ConversationList
-          conversations={conversations}
-          selectedId={selectedId}
-          onSelect={(c) => setSelectedId(c.id)}
-        />
-        <ConversationView
-          conversation={selected}
-          bossMode={mode}
-          onTakeOver={onTakeOver}
-          onEscalate={onEscalate}
-          onResolve={onResolve}
-          onSendReply={onSendReply}
-          onApproveDraft={onApproveDraft}
-          onDismissDraft={onDismissDraft}
-          onGenerateDraft={onGenerateDraft}
-          onSendAttachment={onSendAttachment}
-        />
+        <div
+          className={`${selected ? "hidden md:flex" : "flex"} flex-1 md:flex-initial`}
+        >
+          <ConversationList
+            conversations={conversations}
+            selectedId={selectedId}
+            onSelect={(c) => setSelectedId(c.id)}
+          />
+        </div>
+        <div className={`${selected ? "flex" : "hidden md:flex"} flex-1 min-w-0`}>
+          <ConversationView
+            conversation={selected}
+            bossMode={mode}
+            onTakeOver={onTakeOver}
+            onEscalate={onEscalate}
+            onResolve={onResolve}
+            onSendReply={onSendReply}
+            onApproveDraft={onApproveDraft}
+            onDismissDraft={onDismissDraft}
+            onGenerateDraft={onGenerateDraft}
+            onSendAttachment={onSendAttachment}
+            onBack={() => setSelectedId(null)}
+          />
+        </div>
         {showCustomerPanel && (
-          <CustomerInfoPanel conversation={selected} />
+          <div className="hidden lg:flex">
+            <CustomerInfoPanel conversation={selected} />
+          </div>
         )}
       </div>
 

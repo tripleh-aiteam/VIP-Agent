@@ -55,7 +55,7 @@ export function ConversationList({ conversations, selectedId, onSelect }: Props)
   }, [conversations]);
 
   return (
-    <div className="w-[340px] shrink-0 border-r border-gray-200 bg-white flex flex-col h-full">
+    <div className="w-full md:w-[340px] md:shrink-0 border-r border-gray-200 bg-white flex flex-col h-full">
       {/* Header + search */}
       <div className="px-3 py-3 border-b border-gray-100">
         <h2 className="text-[15px] font-semibold text-gray-900 mb-2.5 px-1">Inbox</h2>

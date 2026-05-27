@@ -23,6 +23,9 @@ interface Props {
   onGenerateDraft?: (conv: Conversation) => void;
   /** Boss uploads image/file/voice → host calls sendAttachment */
   onSendAttachment?: (conv: Conversation, file: File, kind: "image" | "file" | "voice", caption?: string) => void;
+  /** Mobile-only: tapping ← in the header returns to the conversation
+   *  list. Only renders when this callback is provided. */
+  onBack?: () => void;
 }
 
 export function ConversationView({
@@ -36,6 +39,7 @@ export function ConversationView({
   onDismissDraft,
   onGenerateDraft,
   onSendAttachment,
+  onBack,
 }: Props) {
   const threadRef = useRef<HTMLDivElement>(null);
 
@@ -64,11 +68,23 @@ export function ConversationView({
   const isEscalated = c.status === "escalated";
 
   return (
-    <div className="flex-1 flex flex-col bg-gray-50 h-full">
+    <div className="flex-1 flex flex-col bg-gray-50 h-full min-w-0">
       {/* Header */}
-      <div className="px-5 py-3 border-b border-gray-200 bg-white flex items-center justify-between">
-        <div className="flex items-center gap-3 min-w-0">
-          <div className="w-10 h-10 rounded-full bg-gradient-to-br from-blue-400 to-purple-500 flex items-center justify-center text-white text-[14px] font-semibold shrink-0">
+      <div className="px-3 md:px-5 py-3 border-b border-gray-200 bg-white flex items-center justify-between gap-2">
+        <div className="flex items-center gap-2 md:gap-3 min-w-0 flex-1">
+          {/* Mobile-only back button */}
+          {onBack && (
+            <button
+              type="button"
+              onClick={onBack}
+              className="md:hidden -ml-1 p-1.5 rounded hover:bg-gray-100 text-gray-600 text-[18px] shrink-0"
+              title="Back to inbox"
+              aria-label="Back to inbox"
+            >
+              ←
+            </button>
+          )}
+          <div className="w-9 h-9 md:w-10 md:h-10 rounded-full bg-gradient-to-br from-blue-400 to-purple-500 flex items-center justify-center text-white text-[14px] font-semibold shrink-0">
             {c.customer.name.slice(0, 1)}
           </div>
           <div className="min-w-0">

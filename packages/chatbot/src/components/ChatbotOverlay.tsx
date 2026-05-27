@@ -120,9 +120,12 @@ export function ChatbotOverlay({
   hideLauncher = false,
 }: Props) {
   // Controlled mode: when `open` prop is provided, parent owns state.
-  // Otherwise fall back to the legacy uncontrolled behavior (defaults open).
+  // Otherwise fall back to uncontrolled behavior — starts CLOSED (panel
+  // hidden, only the launcher bubble visible). User clicks the bubble to
+  // open. Previously this defaulted to `true` which auto-popped the panel
+  // on every page load — annoying.
   const isControlled = controlledOpen !== undefined;
-  const [internalOpen, setInternalOpen] = useState(true);
+  const [internalOpen, setInternalOpen] = useState(false);
   const open = isControlled ? !!controlledOpen : internalOpen;
   const setOpen = (next: boolean) => {
     if (isControlled) onOpenChange?.(next);
@@ -137,27 +140,43 @@ export function ChatbotOverlay({
   const [hasGreeted, setHasGreeted] = useState(false);
   const greetingKey = `chatbot-${config.agentId}-greeted`;
 
-  // === Model picker (v1.3) — only shown when endpointMode === "agent" ===
-  // List is fetched lazily from /twins/llm/models the first time the panel
-  // opens. "" means "use the smart router" (default); any other value pins
-  // the model for that request via body.model.
+  // === Model picker (v1.3) — always available, host-agnostic ===
+  // Fetches /api/twins/llm/models (Next.js convention) OR /twins/llm/models
+  // (legacy/FastAPI). Hydrates from localStorage immediately so the picker
+  // survives page refreshes; background fetch keeps the catalog fresh.
   interface AvailableModel { id: string; provider: string; real_model: string; available: boolean }
-  const [availableModels, setAvailableModels] = useState<AvailableModel[]>([]);
+  const modelsCacheKey = `chatbot-${config.agentId}-models`;
+  const [availableModels, setAvailableModels] = useState<AvailableModel[]>(() => {
+    if (typeof window === "undefined") return [];
+    try {
+      const raw = localStorage.getItem(modelsCacheKey);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) return parsed as AvailableModel[];
+      }
+    } catch {}
+    return [];
+  });
   const [selectedModel, setSelectedModel] = useState<string>(() => {
     if (typeof window === "undefined") return "";
     return localStorage.getItem(`chatbot-${config.agentId}-model`) || "";
   });
   useEffect(() => {
-    if (config.endpointMode !== "agent" || !open || availableModels.length > 0) return;
-    fetch(`${config.apiBase.replace(/\/$/, "")}/twins/llm/models`)
-      .then(r => r.json())
+    if (!open) return;
+    const apiBase = config.apiBase.replace(/\/$/, "");
+    fetch(`${apiBase}/api/twins/llm/models`)
+      .then((r) => (r.ok ? r.json() : Promise.reject(r.status)))
+      .catch(() =>
+        fetch(`${apiBase}/twins/llm/models`).then((r) => r.json()),
+      )
       .then((data: any) => {
         const ms: AvailableModel[] = (data?.models || [])
           .filter((m: AvailableModel) => m.available);
         setAvailableModels(ms);
+        try { localStorage.setItem(modelsCacheKey, JSON.stringify(ms)); } catch {}
       })
-      .catch(() => { /* model picker stays empty; default smart-router still works */ });
-  }, [config.endpointMode, config.apiBase, open]);
+      .catch(() => { /* keep whatever cache we had */ });
+  }, [config.apiBase, open, modelsCacheKey]);
   function persistSelectedModel(v: string) {
     setSelectedModel(v);
     try { localStorage.setItem(`chatbot-${config.agentId}-model`, v); } catch {}
@@ -215,6 +234,33 @@ export function ChatbotOverlay({
     theme.position === "top-right" ? "top-6 right-6" :
     theme.position === "top-left" ? "top-6 left-6" :
     "bottom-6 right-6";
+
+  // SSR-safe responsive sizing — MUST be declared above any conditional return
+  // below (the minimized-launcher branch). React's Rules of Hooks require the
+  // same hooks in the same order on every render; if this useState/useEffect
+  // pair sits below the early `return` then clicking the launcher to open the
+  // panel runs 2 MORE hooks than the previous render → React 19 throws
+  // "Rendered more hooks than during the previous render" → blank
+  // "Application error: client-side exception" screen.
+  //
+  // vw initializes to a constant 1280 on BOTH server and client so React's
+  // hydration matches; the useEffect updates it to the real innerWidth after
+  // mount and re-renders with the correct mobile/desktop layout.
+  const [vw, setVw] = useState<number>(1280);
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const onResize = () => setVw(window.innerWidth);
+    onResize();
+    window.addEventListener("resize", onResize);
+    window.addEventListener("orientationchange", onResize);
+    return () => {
+      window.removeEventListener("resize", onResize);
+      window.removeEventListener("orientationchange", onResize);
+    };
+  }, []);
+  const isMobile = vw < 640;
+  const responsiveWidth = isMobile ? "calc(100vw - 16px)" : panelW;
+  const responsiveHeight = isMobile ? "calc(100dvh - 16px)" : panelH;
 
   // Restore preferences
   useEffect(() => {
@@ -935,12 +981,12 @@ export function ChatbotOverlay({
 
   return (
     <div
-      className={`fixed ${positionClass} flex flex-col z-[200] bg-white text-gray-900 border border-gray-200 ${className || ""}`}
+      className={`fixed ${isMobile ? "inset-2" : positionClass} flex flex-col z-[200] bg-white text-gray-900 border border-gray-200 ${className || ""}`}
       style={{
-        width: panelW,
-        height: panelH,
-        maxWidth: "calc(100vw - 32px)",
-        maxHeight: "calc(100vh - 48px)",
+        width: responsiveWidth,
+        height: responsiveHeight,
+        maxWidth: "calc(100vw - 8px)",
+        maxHeight: "calc(100dvh - 16px)",
         borderRadius: radiusPx,
         boxShadow: "0 20px 60px rgba(0,0,0,0.25)",
         fontFamily: "inherit",
@@ -990,35 +1036,38 @@ export function ChatbotOverlay({
           <option value="ko">한국어</option>
         </select>
 
-        {/* Model picker (agent mode only) — Notion-AI-style LLM chooser.
-            "Auto" = smart router (default); any other value pins that model
-            for the request via body.model. Choice persists per-agent in
-            localStorage so reloads keep the user's preference. */}
-        {config.endpointMode === "agent" && availableModels.length > 0 && (
-          <>
-            <label className="text-gray-500 whitespace-nowrap ml-2">🧠 Model:</label>
-            <select
-              value={selectedModel}
-              onChange={e => persistSelectedModel(e.target.value)}
-              className="bg-gray-50 border border-gray-300 rounded px-2 py-1 text-[12px] max-w-[180px]"
-              title={selectedModel ? `Pinned to ${selectedModel}` : "Smart router picks per query"}
-            >
-              <option value="">Auto (smart router)</option>
-              {/* Group by provider for readability */}
-              {["anthropic", "gemini", "openai", "groq", "ollama"].map(provider => {
-                const opts = availableModels.filter(m => m.provider === provider);
-                if (opts.length === 0) return null;
-                return (
-                  <optgroup key={provider} label={provider.charAt(0).toUpperCase() + provider.slice(1)}>
-                    {opts.map(m => (
-                      <option key={m.id} value={m.id}>{m.id}</option>
-                    ))}
-                  </optgroup>
-                );
-              })}
-            </select>
-          </>
-        )}
+        {/* Model picker — ALWAYS rendered so it never "disappears" while
+            the catalog is in-flight. Shows "Auto" + a loading placeholder
+            until /api/twins/llm/models returns; then populates optgroups
+            per provider. The pinned choice persists in localStorage. */}
+        <label className="text-gray-500 whitespace-nowrap ml-2">🧠 Model:</label>
+        <select
+          value={selectedModel}
+          onChange={(e) => persistSelectedModel(e.target.value)}
+          className="bg-gray-50 border border-gray-300 rounded px-2 py-1 text-[12px] max-w-[180px]"
+          title={selectedModel ? `Pinned to ${selectedModel}` : "Smart router picks per query"}
+        >
+          <option value="">Auto (smart router)</option>
+          {availableModels.length === 0 && (
+            <option value="" disabled>(loading providers…)</option>
+          )}
+          {["anthropic", "gemini", "openai", "groq", "ollama"].map((provider) => {
+            const opts = availableModels.filter((m) => m.provider === provider);
+            if (opts.length === 0) return null;
+            return (
+              <optgroup
+                key={provider}
+                label={provider.charAt(0).toUpperCase() + provider.slice(1)}
+              >
+                {opts.map((m) => (
+                  <option key={m.id} value={m.id}>
+                    {m.id}
+                  </option>
+                ))}
+              </optgroup>
+            );
+          })}
+        </select>
       </div>
 
       {/* Conversation */}
