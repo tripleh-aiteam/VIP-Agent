@@ -797,38 +797,93 @@ def rag_retrieve(
 
     # --- Text-only path (pgroonga, no embedding API needed) ---
     if EMBED_PROVIDER == "none":
-        # pgroonga's `&@~` operator AND-matches tokens by default. Korean
-        # questions like "향남 분양가는?" tokenise to {"향남", "분양가는"}
-        # which doesn't match a doc that has "분양가" (the topic particle
-        # "는" + "?" make it a different token). We therefore:
-        #   1. strip ASCII / fullwidth punctuation
-        #   2. strip common Korean topic / case particles when they appear
-        #      as a suffix on a longer-than-1-char word
-        #   3. build an OR-joined query so any single keyword can match
-        #   4. fall back from strict (AND/space) → loose (OR) if the strict
-        #      pass returns nothing
         cleaned = _clean_pgroonga_query(q)
-        candidates = [cleaned] if cleaned else []
-        # Add an OR variant as a fallback if the first pass returns nothing
-        or_form = " OR ".join(cleaned.split()) if cleaned else ""
-        if or_form and or_form != cleaned:
-            candidates.append(or_form)
+        if not cleaned:
+            return []
+        tokens = cleaned.split()
 
-        for variant in candidates:
+        # Pre-filter: if any cleaned token matches a sheet/title in this
+        # agent's KB, restrict the search to those titles. This stops
+        # cross-property noise (asking '향남 203호' matched 의정부 rows
+        # because they had more occurrences of '203' under OR-fallback).
+        try:
+            title_rows = db.execute(sa_text("""
+                SELECT DISTINCT title
+                FROM assistant_knowledge_chunks
+                WHERE agent_id = :agent_id AND title IS NOT NULL
+            """), {"agent_id": agent_id}).fetchall()
+        except Exception:
+            title_rows = []
+        titles = [r.title for r in title_rows]
+        matched_titles: list[str] = []
+        for t in titles:
+            tl = t.lower().replace(" ", "")
+            for tok in tokens:
+                if len(tok) < 2:
+                    continue
+                if tok.lower() in tl or tl.startswith(tok.lower()):
+                    if t not in matched_titles:
+                        matched_titles.append(t)
+                    break
+
+        # 4-pass retrieval, return the first non-empty result:
+        #   1. strict AND, restricted to matched titles (most specific)
+        #   2. strict AND, all titles (no property name in query)
+        #   3. OR variant, restricted to matched titles
+        #   4. OR variant, all titles (broadest)
+        or_form = " OR ".join(tokens) if len(tokens) > 1 else cleaned
+        passes: list[tuple[str, Optional[list[str]]]] = []
+        if matched_titles:
+            passes.append((cleaned, matched_titles))
+        passes.append((cleaned, None))
+        if matched_titles and or_form != cleaned:
+            passes.append((or_form, matched_titles))
+        if or_form != cleaned:
+            passes.append((or_form, None))
+
+        for query_variant, title_filter in passes:
             try:
-                rows = db.execute(sa_text("""
-                    SELECT * FROM search_assistant_knowledge_text(
-                        :agent_id, :query, :top_k
-                    )
-                """), {
-                    "agent_id": agent_id,
-                    "query":    variant,
-                    "top_k":    top_k,
-                }).fetchall()
+                if title_filter:
+                    rows = db.execute(sa_text("""
+                        SELECT c.id   AS chunk_id,
+                               c.file_id,
+                               f.filename,
+                               c.location,
+                               c.title,
+                               c.content,
+                               (1.0 - 1.0 / (1.0 + pgroonga_score(c.tableoid, c.ctid)))::float
+                                 AS similarity
+                        FROM assistant_knowledge_chunks c
+                        JOIN assistant_knowledge_files  f ON f.id = c.file_id
+                        WHERE c.agent_id = :agent_id
+                          AND c.title    = ANY(:titles)
+                          AND c.content &@~ :query
+                        ORDER BY pgroonga_score(c.tableoid, c.ctid) DESC
+                        LIMIT :top_k
+                    """), {
+                        "agent_id": agent_id,
+                        "titles":   title_filter,
+                        "query":    query_variant,
+                        "top_k":    top_k,
+                    }).fetchall()
+                else:
+                    rows = db.execute(sa_text("""
+                        SELECT * FROM search_assistant_knowledge_text(
+                            :agent_id, :query, :top_k
+                        )
+                    """), {
+                        "agent_id": agent_id,
+                        "query":    query_variant,
+                        "top_k":    top_k,
+                    }).fetchall()
             except Exception as e:
-                log.warning("pgroonga retrieve failed (%s) — returning empty", e)
-                return []
+                log.warning("pgroonga retrieve failed (%s) — trying next pass", e)
+                continue
             if rows:
+                log.info(
+                    "rag: %d hits via variant=%r title_filter=%r",
+                    len(rows), query_variant[:60], title_filter,
+                )
                 return [
                     {
                         "chunk_id":   str(r.chunk_id),
