@@ -694,31 +694,105 @@ def _compose_final_answer(
 #  Public entry point
 # ============================================================================
 
+def _extract_attachment_text(filename: str, mime_type: str, blob: bytes) -> Optional[str]:
+    """Extract readable text from an attached file. Returns None if the
+    file type is binary-only (image / audio / unknown) — caller decides
+    what to do (vision fallback, transcription, etc.).
+
+    Supported:
+      .xlsx / .xls         → openpyxl (via knowledge_ingest._parse_xlsx)
+      .docx                → python-docx
+      .pptx                → python-pptx
+      .pdf                 → pypdf
+      .csv                 → built-in csv module
+      .txt / .md / .json   → utf-8 decode
+      .hwp                 → olefile + PrvText stream (Korean Hangul docs)
+    """
+    name = filename.lower()
+    try:
+        if name.endswith((".xlsx", ".xls", ".xlsm")):
+            from services.knowledge_ingest import _parse_xlsx
+            chunks = _parse_xlsx(filename, blob)
+            return "\n\n".join(c.get("content", "") for c in chunks)[:60000]
+        if name.endswith(".docx"):
+            from services.knowledge_ingest import _parse_docx
+            chunks = _parse_docx(filename, blob)
+            return "\n\n".join(c.get("content", "") for c in chunks)[:60000]
+        if name.endswith(".pptx"):
+            from services.knowledge_ingest import _parse_pptx
+            chunks = _parse_pptx(filename, blob)
+            return "\n\n".join(c.get("content", "") for c in chunks)[:60000]
+        if name.endswith(".pdf"):
+            from services.knowledge_ingest import _parse_pdf
+            chunks = _parse_pdf(filename, blob)
+            return "\n\n".join(c.get("content", "") for c in chunks)[:60000]
+        if name.endswith(".csv"):
+            from services.knowledge_ingest import _parse_csv
+            chunks = _parse_csv(filename, blob)
+            return "\n\n".join(c.get("content", "") for c in chunks)[:60000]
+        if name.endswith((".txt", ".md", ".json", ".log")):
+            return blob.decode("utf-8", errors="replace")[:60000]
+        if name.endswith(".hwp"):
+            # Hangul Word Processor (Korean). HWP is a compound document
+            # format; the 'PrvText' stream is a UTF-16-LE preview that's
+            # readable without licensed parsers.
+            try:
+                import olefile, io
+                ole = olefile.OleFileIO(io.BytesIO(blob))
+                if ole.exists("PrvText"):
+                    raw = ole.openstream("PrvText").read()
+                    return raw.decode("utf-16-le", errors="replace")[:60000]
+                # Fallback: BodyText sections (less reliable but worth trying)
+                if ole.exists("BodyText"):
+                    raw = b""
+                    for s in ole.listdir():
+                        if s and s[0] == "BodyText":
+                            raw += ole.openstream(s).read()
+                    if raw:
+                        return raw.decode("utf-16-le", errors="replace")[:60000]
+            except ImportError:
+                return "[HWP parser not installed — install 'olefile' on the orchestrator]"
+            except Exception as e:
+                return f"[Could not extract HWP text: {e}]"
+        # Office legacy (.doc / .xls / .ppt) — would need antiword / xlrd /
+        # python-pptx old format. Skip for now; report instead of crashing.
+        if name.endswith((".doc", ".xls", ".ppt")):
+            return f"[Legacy Office format {name.rsplit('.', 1)[-1]} — please re-save as the modern docx/xlsx/pptx format.]"
+    except Exception as e:
+        log.warning(f"_extract_attachment_text({filename}) failed: {e}")
+        return f"[Could not extract text from {filename}: {e}]"
+    return None  # Binary / unknown — caller handles
+
+
 def _run_multimodal_path(
     transcript: str,
     lang: str,
     history: list[dict],
     attachment_ids: list[str],
 ) -> dict[str, Any]:
-    """Bypass the tool-calling decision step when the user attached files.
+    """Handle Q&A about uploaded files of ANY supported type.
 
-    Why: the boss usually attaches an image and asks "what's in this", or a
-    PDF and asks "summarize this". Tool-routing won't help — we want the
-    LLM to look at the bytes and answer. Gemini 2.5 Pro is the smartest
-    multimodal option available in our llm_client; if it's unreachable
-    the user gets a friendly fallback.
+    Strategy:
+      1. Load each attachment by id.
+      2. For each:
+         - text-extractable (xlsx/docx/pptx/pdf/csv/txt/md/json/hwp) →
+           extract with _extract_attachment_text and inject as context.
+         - image (image/*) or PDF → ALSO send raw bytes to vision so the
+           LLM can see layout / charts / scanned content.
+         - audio (audio/*) → transcribe via Whisper (Groq) first, then
+           treat the transcript as text context.
+      3. Compose final answer using the text-or-vision path with the
+         best available provider (cascade).
     """
     from routers.chatbot import load_attachment
-    from services.llm_client import gemini_multimodal_sync
+    from services.llm_client import gemini_multimodal_sync, chat_completion_sync
+    import httpx as _httpx
 
     attachments: list[dict] = []
-    missing: list[str] = []
     for aid in attachment_ids:
         a = load_attachment(aid)
         if a:
             attachments.append(a)
-        else:
-            missing.append(aid)
 
     if not attachments:
         return {
@@ -731,44 +805,109 @@ def _run_multimodal_path(
             "tool_used": None,
         }
 
-    # Build a focused system prompt for multimodal Q&A
+    # 1) Build a text-context block out of every attachment we can parse
+    text_blocks: list[str] = []
+    image_or_pdf: list[dict] = []
+    for a in attachments:
+        fn = a.get("filename") or ""
+        mime = a.get("mime_type") or ""
+        blob = a.get("bytes") or b""
+        # Audio → transcribe and use the transcript as text
+        if mime.startswith("audio/"):
+            try:
+                groq_key = os.getenv("GROQ_API_KEY", "")
+                if groq_key:
+                    resp = _httpx.post(
+                        "https://api.groq.com/openai/v1/audio/transcriptions",
+                        headers={"Authorization": f"Bearer {groq_key}"},
+                        files={"file": (fn or "audio.webm", blob, mime)},
+                        data={"model": "whisper-large-v3"},
+                        timeout=90,
+                    )
+                    if resp.status_code == 200:
+                        text = (resp.json().get("text") or "").strip()
+                        if text:
+                            text_blocks.append(f"[{fn} — transcribed audio]\n{text}")
+                            continue
+            except Exception as e:
+                log.warning(f"audio transcribe ({fn}) failed: {e}")
+                text_blocks.append(f"[{fn}: transcription failed]")
+            continue
+        # Image + PDF → keep for vision pass (in addition to text extract for PDF)
+        if mime.startswith("image/"):
+            image_or_pdf.append({"mime_type": mime, "bytes": blob, "filename": fn})
+        # Try text extraction
+        extracted = _extract_attachment_text(fn, mime, blob)
+        if extracted and extracted.strip():
+            text_blocks.append(f"[{fn} — extracted]\n{extracted}")
+        elif mime == "application/pdf":
+            # No text extracted from PDF (likely scanned) → vision fallback
+            image_or_pdf.append({"mime_type": mime, "bytes": blob, "filename": fn})
+
+    # 2) Compose the prompt
     sys = (
         "You are the VIP Assistant — the boss attached one or more files "
-        "and is asking a question about them. Look at the attachment(s) "
-        "and answer concretely (no 'I see an image of…' filler). Reply in "
-        "the SAME language the boss wrote in (Korean ↔ English). Keep it "
-        "tight — 1-4 sentences unless they explicitly asked for detail."
+        "and is asking about them. Read the extracted text below carefully, "
+        "quote specific numbers / names verbatim, and answer concretely "
+        "(no 'I see a file…' filler). Reply in the SAME language the boss "
+        "wrote in (Korean ↔ English). Keep it tight — 1-4 sentences unless "
+        "they explicitly asked for detail."
     )
     user_text = transcript or (
         "이 파일에 대해 알려주세요." if lang == "ko" else "Tell me what's in this."
     )
-    # Include the last user turn for context if available
     if history:
         recent = [h for h in history[-3:] if (h.get("role") == "user")]
         if recent:
             user_text = (recent[-1].get("content") or "").strip()[:400] + "\n\n" + user_text
 
-    reply = gemini_multimodal_sync(
-        system_prompt=sys,
-        user_text=user_text,
-        attachments=[{"mime_type": a["mime_type"], "bytes": a["bytes"], "filename": a["filename"]}
-                     for a in attachments],
-        model="gemini-2.5-pro",
-        max_tokens=800,
-        temperature=0.4,
-    )
-    if reply.startswith("[LLM unavailable]"):
-        # Surface the specific reason so the boss / dev can see what failed
-        # (e.g. "OPENAI_API_KEY not set", "Gemini HTTP 429: …"). Saves a
-        # round-trip to Render logs every time the assistant goes silent.
+    context_block = ""
+    if text_blocks:
+        context_block = "\n\n===== ATTACHED FILE CONTENT =====\n" + "\n\n---\n".join(text_blocks) + "\n===== END =====\n"
+
+    # 3) Choose path: vision (image + maybe text) OR pure text
+    if image_or_pdf:
+        # Vision path: pass image bytes alongside the extracted text. Gemini
+        # is preferred but may be denied; fall back to OpenAI vision in the
+        # multimodal helper itself when configured to.
+        full_user = (context_block + "\n\n" if context_block else "") + user_text
+        reply = gemini_multimodal_sync(
+            system_prompt=sys,
+            user_text=full_user,
+            attachments=image_or_pdf,
+            model="gemini-2.5-pro",
+            max_tokens=800,
+            temperature=0.4,
+        )
+        if reply.startswith("[LLM unavailable]") and context_block:
+            # Vision dead — degrade gracefully to text-only on a working LLM
+            log.warning("vision unreachable, falling back to text-only on attached extracts")
+            reply = chat_completion_sync(
+                system_prompt=sys + "\n\n(Note: vision is unavailable; answer from the extracted text only.)",
+                messages=[{"role": "user", "content": full_user}],
+                max_tokens=800,
+                temperature=0.4,
+            )
+    else:
+        # Pure text path — works on any LLM (Anthropic/OpenAI/Gemini/Groq/Ollama).
+        # No vision needed, so we go through the standard cascade.
+        full_user = (context_block + "\n\n" if context_block else "") + user_text
+        reply = chat_completion_sync(
+            system_prompt=sys,
+            messages=[{"role": "user", "content": full_user}],
+            max_tokens=800,
+            temperature=0.4,
+        )
+
+    if isinstance(reply, str) and reply.startswith("[LLM unavailable]"):
         reason = reply.replace("[LLM unavailable]", "").strip(" :-")
         log.warning(f"assistant_agent: multimodal failed: {reply}")
         return {
             "intent": "multimodal_failed",
             "language": lang,
-            "reply": (f"죄송합니다, 비전 모델에 연결할 수 없습니다 — {reason}"
+            "reply": (f"죄송합니다, 모델에 연결할 수 없습니다 — {reason}"
                       if lang == "ko" else
-                      f"Sorry — vision model unreachable: {reason}"),
+                      f"Sorry — model unreachable: {reason}"),
             "action": None, "speak": True, "transcript": transcript,
             "tool_used": None,
             "error_reason": reason,
