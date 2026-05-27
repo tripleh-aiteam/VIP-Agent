@@ -141,13 +141,22 @@ def _parse_xlsx(filename: str, blob: bytes) -> list[dict]:
                 })
 
         # Data rows in blocks of ROWS_PER_BLOCK
+        # Format: ONE row per chunk-line, each row block-indented as
+        #   Row <N>:
+        #     <header1>: <value1>
+        #     <header2>: <value2>
+        # so the LLM can unambiguously tie a header to its value (the old
+        # "key=val | key=val" pipe format made the model conflate adjacent
+        # rows and hallucinate prices).
         block: list[str] = []
         block_start = header_idx + 2 if header_idx >= 0 else 1  # 1-based
+        cur_row_no = block_start
         for i, r in enumerate(data_rows):
             non_empty = [c for c in r if c is not None and str(c).strip()]
             if not non_empty:
+                cur_row_no += 1
                 continue
-            pairs = []
+            row_lines = [f"Row {cur_row_no}:"]
             for j, cell in enumerate(r):
                 if cell is None:
                     continue
@@ -155,25 +164,31 @@ def _parse_xlsx(filename: str, blob: bytes) -> list[dict]:
                 if not v:
                     continue
                 h = headers[j] if j < len(headers) else f"col{j+1}"
-                pairs.append(f"{h}={v}")
-            block.append(" | ".join(pairs))
+                # Quote strings, keep numbers/dates as-is. Drop column labels
+                # like 'col8' that came from unnamed columns — they add noise.
+                if h.startswith("col") and h[3:].isdigit():
+                    row_lines.append(f"  {v}")
+                else:
+                    row_lines.append(f"  {h}: {v}")
+            block.append("\n".join(row_lines))
+            cur_row_no += 1
             if len(block) >= ROWS_PER_BLOCK:
-                block_end = block_start + len(block) - 1
+                block_end = cur_row_no - 1
                 content = "\n".join(block)
                 chunks.append({
                     "location": f"Sheet: {sheet_name} / rows {block_start}-{block_end}",
                     "title": sheet_name,
-                    "content": f"[Sheet: {sheet_name}]\nHeaders: {' | '.join(headers)}\n{content}",
+                    "content": f"[Sheet: {sheet_name}]\n{content}",
                 })
-                block_start = block_end + 1
+                block_start = cur_row_no
                 block = []
         if block:
-            block_end = block_start + len(block) - 1
+            block_end = cur_row_no - 1
             content = "\n".join(block)
             chunks.append({
                 "location": f"Sheet: {sheet_name} / rows {block_start}-{block_end}",
                 "title": sheet_name,
-                "content": f"[Sheet: {sheet_name}]\nHeaders: {' | '.join(headers)}\n{content}",
+                "content": f"[Sheet: {sheet_name}]\n{content}",
             })
 
     wb.close()
@@ -287,31 +302,38 @@ def _parse_csv(filename: str, blob: bytes) -> list[dict]:
     out: list[dict] = []
     block: list[str] = []
     start = 2
+    cur = start
     for i, r in enumerate(rdr[1:], start=2):
-        pairs = []
+        row_lines = [f"Row {cur}:"]
+        any_val = False
         for j, cell in enumerate(r):
             v = (cell or "").strip()
             if not v:
                 continue
             h = headers[j] if j < len(headers) else f"col{j+1}"
-            pairs.append(f"{h}={v}")
-        if pairs:
-            block.append(" | ".join(pairs))
+            any_val = True
+            if h.startswith("col") and h[3:].isdigit():
+                row_lines.append(f"  {v}")
+            else:
+                row_lines.append(f"  {h}: {v}")
+        if any_val:
+            block.append("\n".join(row_lines))
+        cur += 1
         if len(block) >= ROWS_PER_BLOCK:
-            end = start + len(block) - 1
+            end = cur - 1
             out.append({
                 "location": f"rows {start}-{end}",
                 "title": filename,
-                "content": f"Headers: {' | '.join(headers)}\n" + "\n".join(block),
+                "content": "\n".join(block),
             })
-            start = end + 1
+            start = cur
             block = []
     if block:
-        end = start + len(block) - 1
+        end = cur - 1
         out.append({
             "location": f"rows {start}-{end}",
             "title": filename,
-            "content": f"Headers: {' | '.join(headers)}\n" + "\n".join(block),
+            "content": "\n".join(block),
         })
     return out
 

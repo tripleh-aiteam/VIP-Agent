@@ -1079,6 +1079,7 @@ def _run_agent_impl(
     # the user requested ("first search inside our DB locally, then answer
     # based on his knowledge").
     kb_hits: list[dict] = []
+    rag_error: Optional[str] = None
     try:
         from services.knowledge_ingest import rag_retrieve
         kb_hits = rag_retrieve(
@@ -1094,6 +1095,7 @@ def _run_agent_impl(
                 len(kb_hits), agent_id, transcript[:60], kb_hits[0]["similarity"],
             )
     except Exception as e:
+        rag_error = str(e)[:200]
         log.warning("rag retrieval failed (continuing without KB): %s", e)
 
     system = _build_system_prompt(
@@ -1102,6 +1104,17 @@ def _run_agent_impl(
         pending_attachments=_pending_attachments if attachment_ids else None,
         kb_context=kb_hits,
     )
+    _debug_kb = {
+        "agent_id": agent_id,
+        "hit_count": len(kb_hits),
+        "top_hits": [
+            {"location": h.get("location"), "similarity": h.get("similarity"),
+             "preview": (h.get("content") or "")[:120]}
+            for h in kb_hits[:3]
+        ],
+        "rag_error": rag_error,
+        "system_prompt_chars": len(system),
+    }
 
     # Auto-fill ID args from selected_id when the LLM picks a tool that
     # needs an ID but the user said "this" (LLM may not include the ID).
@@ -1125,6 +1138,7 @@ def _run_agent_impl(
             "speak": True,
             "transcript": transcript,
             "tool_used": None,
+            "_debug_kb": _debug_kb,
             "suggestions": [
                 ("What can you do?" if lang != "ko" else "뭘 할 수 있어?"),
                 ("Show today's situation" if lang != "ko" else "오늘 상황 보여줘"),
