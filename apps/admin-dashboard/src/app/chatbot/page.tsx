@@ -1,194 +1,347 @@
 "use client";
 
 /**
- * /chatbot — VIP's Customer Chatbot Inbox.
+ * VIP /chatbot — the boss's central communication hub.
  *
- * Two modes, switched by the `NEXT_PUBLIC_CHATBOT_LIVE_MODE` env var:
+ * v2 redesign (2026-05-27): the KakaoTalk customer inbox is gone — the
+ * boss doesn't personally answer customer DMs, the AI assistants do.
+ * This page now merges what used to be /messages: direct Boss ↔ Twin
+ * conversations + group chats with multiple twins.
  *
- *   - "true"  → live: subscribes to /ws/chatbot/{agentId}/conversations
- *               + fetches via chatbot-client.ts. Use once Kakao webhook
- *               is connected and at least one chatbot_channel_mappings
- *               row exists.
+ * Two tabs:
+ *   - Direct: one thread per twin, with boss-typed messages on top of
+ *     anything the Assistant sent on the boss's behalf via the send_dm
+ *     tool. Same archive — boss and Assistant share one outgoing inbox.
+ *   - Groups: TwinGroupsHub for multi-twin chats.
  *
- *   - anything else (default) → mock data so the UI demos cleanly
- *     without a backend dependency.
+ * Header includes a "📚 Add knowledge" button so the boss can upload
+ * documents the Assistant should learn from without leaving this page.
  */
 
-import { useCallback, useEffect, useState } from "react";
-import { ChatbotInbox } from "@triple-h/chatbot/inbox-ui";
-import type { Conversation, InboxDailyReport } from "@triple-h/chatbot/inbox-ui";
-import {
-  approveDraft,
-  dismissDraft,
-  escalateConversation,
-  fetchConversations,
-  fetchConversation,
-  fetchInboxDailyReport,
-  generateDraft,
-  resolveConversation,
-  sendAttachment,
-  sendReply,
-  setBossMode,
-  subscribeToInbox,
-  takeOverConversation,
-} from "@triple-h/chatbot/engine";
-import { vipConfig } from "@/chatbot.config";
+import { useEffect, useRef, useState } from "react";
+import { API } from "../../components/api";
+import TwinGroupsHub from "../../components/TwinGroupsHub";
+import { KnowledgeUploader } from "@triple-h/chatbot/inbox-ui";
+import { vipConfig } from "../../chatbot.config";
 
-const LIVE_MODE = process.env.NEXT_PUBLIC_CHATBOT_LIVE_MODE === "true";
+interface Twin {
+  id: string;
+  name: string;
+  mode?: string;
+  status?: string;
+  owner_email?: string;
+}
 
-export default function ChatbotPage() {
-  if (LIVE_MODE) return <LiveChatbotInbox />;
+interface Message {
+  id: string;
+  twin_id: string;
+  sender_type: "boss" | "worker" | "assistant" | string;
+  content: string;
+  created_at: string;
+  read?: boolean;
+}
 
+interface ThreadInfo {
+  twin: Twin;
+  lastMessage?: Message;
+  unread: number;
+}
+
+function TabSwitcher({ tab, setTab }: { tab: "direct" | "groups"; setTab: (t: "direct" | "groups") => void }) {
   return (
-    <ChatbotInbox
-      agentId={vipConfig.agentId}
-      agentLabel="VIP"
-      apiBase={vipConfig.apiBase}
-      mock
-      onSendReply={(conv, payload) => {
-        console.log("Reply sent (mock):", conv.id, payload);
-      }}
-      onApproveDraft={(conv) => console.log("Draft approved (mock):", conv.id)}
-      onDismissDraft={(conv) => console.log("Draft dismissed (mock):", conv.id)}
-      onTakeOver={(conv) => console.log("Take over (mock):", conv.id)}
-      onEscalate={(conv) => console.log("Escalate (mock):", conv.id)}
-      onResolve={(conv) => console.log("Resolve (mock):", conv.id)}
-      onGenerateDraft={(conv) => console.log("Generate draft (mock):", conv.id)}
-      onSendAttachment={(conv, file, kind, caption) =>
-        console.log("Send attachment (mock):", conv.id, file.name, kind, caption)
-      }
-      onModeChange={(mode, manual, options) =>
-        console.log(
-          `Mode → ${mode} (${manual ? "manual" : "auto"})`,
-          options,
-        )
-      }
-    />
+    <div className="flex gap-2 text-sm">
+      <button
+        onClick={() => setTab("direct")}
+        className={`px-3 py-1.5 rounded-lg font-medium ${tab === "direct" ? "bg-indigo-600 text-white" : "bg-gray-100 text-gray-700 hover:bg-gray-200"}`}
+      >
+        Direct
+      </button>
+      <button
+        onClick={() => setTab("groups")}
+        className={`px-3 py-1.5 rounded-lg font-medium ${tab === "groups" ? "bg-indigo-600 text-white" : "bg-gray-100 text-gray-700 hover:bg-gray-200"}`}
+      >
+        Groups
+      </button>
+    </div>
   );
 }
 
-/**
- * Live mode wrapper — fetches live data + subscribes to WebSocket for
- * push updates. Same callbacks as mock mode, wired to chatbot-client.ts.
- */
-function LiveChatbotInbox() {
-  const config = vipConfig;
-  const [conversations, setConversations] = useState<Conversation[]>([]);
-  const [dailyReport, setDailyReport] = useState<InboxDailyReport | null>(null);
+export default function VipChatbotPage() {
+  const [tab, setTab] = useState<"direct" | "groups">("direct");
+  const [threads, setThreads] = useState<ThreadInfo[]>([]);
+  const [activeTwinId, setActiveTwinId] = useState<string | null>(null);
+  const [messages, setMessages] = useState<Message[]>([]);
+  const [draft, setDraft] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [sending, setSending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [showKnowledge, setShowKnowledge] = useState(false);
+  const scrollRef = useRef<HTMLDivElement>(null);
 
-  // Initial hydration
   useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const [convs, report] = await Promise.all([
-          fetchConversations(config, { limit: 100 }),
-          fetchInboxDailyReport(config),
-        ]);
-        if (cancelled) return;
-        setConversations(convs);
-        setDailyReport(report);
-      } catch (e) {
-        console.warn("chatbot: initial hydration failed", e);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [config]);
+    if (tab !== "direct") return;
+    void loadAllThreads();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab]);
 
-  // Live WebSocket updates
+  async function loadAllThreads() {
+    setLoading(true);
+    try {
+      const r = await fetch(`${API}/twins`);
+      const data = await r.json();
+      const twins: Twin[] = (Array.isArray(data) ? data : data.twins || data.data || []).filter(
+        (t: { id?: string; name?: string }) => t && t.id && t.name,
+      );
+      const infos = await Promise.all(
+        twins.map(async (twin) => {
+          try {
+            const mr = await fetch(`${API}/twins/${twin.id}/messages`);
+            if (!mr.ok) return { twin, unread: 0 };
+            const md = await mr.json();
+            const msgs: Message[] = Array.isArray(md) ? md : md.messages || md.data || [];
+            const last = msgs[msgs.length - 1];
+            const unread = msgs.filter(m => m.sender_type === "worker" && !m.read).length;
+            return { twin, lastMessage: last, unread };
+          } catch {
+            return { twin, unread: 0 };
+          }
+        }),
+      );
+      infos.sort((a, b) => {
+        if (a.lastMessage && !b.lastMessage) return -1;
+        if (!a.lastMessage && b.lastMessage) return 1;
+        if (a.lastMessage && b.lastMessage) {
+          return new Date(b.lastMessage.created_at).getTime() - new Date(a.lastMessage.created_at).getTime();
+        }
+        return a.twin.name.localeCompare(b.twin.name);
+      });
+      setThreads(infos);
+      const first = infos.find(i => i.lastMessage) || infos[0];
+      if (first && !activeTwinId) {
+        setActiveTwinId(first.twin.id);
+      }
+    } catch (e: unknown) {
+      setError(`Couldn't load threads: ${(e as Error)?.message || e}`);
+    } finally {
+      setLoading(false);
+    }
+  }
+
   useEffect(() => {
-    const unsubscribe = subscribeToInbox(config, {
-      onConversationUpdated: (updated) => {
-        setConversations((prev) => {
-          const idx = prev.findIndex((c) => c.id === updated.id);
-          if (idx >= 0) {
-            const next = [...prev];
-            next[idx] = updated;
-            return next;
-          }
-          return [updated, ...prev];
-        });
-      },
-      onMessageAdded: (conversationId, message) => {
-        setConversations((prev) =>
-          prev.map((c) =>
-            c.id === conversationId
-              ? { ...c, messages: [...c.messages, message] }
-              : c,
-          ),
-        );
-      },
-      onError: (err) => console.warn("chatbot ws:", err.message),
-    });
-    return unsubscribe;
-  }, [config]);
+    if (!activeTwinId) return;
+    void loadMessages(activeTwinId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTwinId]);
 
-  const refreshConv = useCallback(
-    async (conversationId: string) => {
-      try {
-        const updated = await fetchConversation(config, conversationId);
-        setConversations((prev) => {
-          const idx = prev.findIndex((c) => c.id === conversationId);
-          if (idx >= 0) {
-            const next = [...prev];
-            next[idx] = updated;
-            return next;
-          }
-          return prev;
-        });
-      } catch {
-        // ignore — WS will catch up
-      }
-    },
-    [config],
-  );
+  async function loadMessages(twinId: string) {
+    try {
+      const r = await fetch(`${API}/twins/${twinId}/messages`);
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const data = await r.json();
+      const msgs: Message[] = Array.isArray(data) ? data : data.messages || data.data || [];
+      setMessages(msgs);
+      setTimeout(() => scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" }), 100);
+      fetch(`${API}/twins/${twinId}/messages/read`, { method: "POST" }).catch(() => {});
+    } catch (e: unknown) {
+      setError(`Couldn't load messages: ${(e as Error)?.message || e}`);
+    }
+  }
+
+  async function send() {
+    if (!activeTwinId || !draft.trim() || sending) return;
+    setSending(true);
+    setError(null);
+    const body = draft.trim();
+    setDraft("");
+    try {
+      const r = await fetch(`${API}/twins/${activeTwinId}/messages`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sender_type: "boss", content: body }),
+      });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      await loadMessages(activeTwinId);
+      void loadAllThreads();
+    } catch (e: unknown) {
+      setError(`Send failed: ${(e as Error)?.message || e}`);
+      setDraft(body);
+    } finally {
+      setSending(false);
+    }
+  }
+
+  const activeTwin = threads.find(t => t.twin.id === activeTwinId)?.twin;
 
   return (
-    <ChatbotInbox
-      agentId={config.agentId}
-      agentLabel="VIP"
-      apiBase={config.apiBase}
-      mock={false}
-      conversations={conversations}
-      dailyReport={dailyReport}
-      onSendReply={(conv, payload) =>
-        sendReply(config, conv.id, payload.text).then(() => refreshConv(conv.id))
-      }
-      onApproveDraft={(conv) =>
-        approveDraft(config, conv.id).then(() => refreshConv(conv.id))
-      }
-      onDismissDraft={(conv) =>
-        dismissDraft(config, conv.id).then(() => refreshConv(conv.id))
-      }
-      onTakeOver={(conv) =>
-        takeOverConversation(config, conv.id).then(() => refreshConv(conv.id))
-      }
-      onEscalate={(conv) =>
-        escalateConversation(config, conv.id).then(() => refreshConv(conv.id))
-      }
-      onResolve={(conv) =>
-        resolveConversation(config, conv.id).then(() => refreshConv(conv.id))
-      }
-      onGenerateDraft={(conv) =>
-        generateDraft(config, conv.id, { persist: true })
-          .then(() => refreshConv(conv.id))
-          .catch(console.warn)
-      }
-      onSendAttachment={(conv, file, kind, caption) =>
-        sendAttachment(config, conv.id, file, { kind, caption })
-          .then(() => refreshConv(conv.id))
-          .catch(console.warn)
-      }
-      onModeChange={(mode, manual, options) => {
-        setBossMode(config, mode, {
-          auto: !manual,
-          reason: options?.reason,
-          reasonNote: options?.reasonNote,
-          expiresInHours: options?.expiresInHours,
-        }).catch(console.warn);
-      }}
-    />
+    <div className="space-y-4">
+      {/* Page header */}
+      <div className="flex items-start justify-between gap-3 flex-wrap">
+        <div>
+          <h1 className="text-[20px] font-bold text-[var(--text-primary)] flex items-center gap-2">
+            💬 Chatbot
+          </h1>
+          <p className="text-[12px] text-[var(--text-muted)] mt-0.5">
+            Direct messages between you and your workers' twins. The Assistant
+            can also send/receive on your behalf via natural language.
+          </p>
+        </div>
+        <div className="flex items-center gap-2">
+          <TabSwitcher tab={tab} setTab={setTab} />
+          <button
+            type="button"
+            onClick={() => setShowKnowledge(true)}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[12px] font-medium border border-gray-300 text-gray-700 hover:bg-gray-50 active:bg-gray-100"
+            title="Upload files (xlsx, pdf, docx, pptx, csv) the Assistant should learn from"
+          >
+            📚 Add knowledge
+          </button>
+        </div>
+      </div>
+
+      {showKnowledge && (
+        <KnowledgeUploader
+          apiBase={vipConfig.apiBase}
+          agentId={vipConfig.agentId}
+          onClose={() => setShowKnowledge(false)}
+        />
+      )}
+
+      {error && (
+        <div className="text-[12px] text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{error}</div>
+      )}
+
+      {tab === "groups" ? (
+        <TwinGroupsHub />
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-[280px_1fr] gap-3 min-h-[600px]">
+          {/* === Thread list === */}
+          <div className="bg-[var(--bg-card)] border border-[var(--border-default)] rounded-lg overflow-y-auto">
+            <div className="px-3 py-2.5 border-b border-[var(--border-default)] text-[11px] font-semibold uppercase tracking-wide text-[var(--text-muted)]">
+              Workers ({threads.length})
+            </div>
+            {loading && (
+              <div className="p-4 text-[12px] text-[var(--text-muted)]">Loading...</div>
+            )}
+            {!loading && threads.length === 0 && (
+              <div className="p-4 text-[12px] text-[var(--text-muted)]">No twins yet.</div>
+            )}
+            {threads.map(({ twin, lastMessage, unread }) => {
+              const isActive = twin.id === activeTwinId;
+              return (
+                <button
+                  key={twin.id}
+                  onClick={() => setActiveTwinId(twin.id)}
+                  className={`w-full text-left px-3 py-2.5 border-b border-[var(--border-default)] transition-colors ${
+                    isActive ? "bg-blue-50 dark:bg-blue-900/20" : "hover:bg-[var(--bg-elevated)]"
+                  }`}
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="text-[13px] font-semibold text-[var(--text-primary)] truncate">
+                      {twin.name}
+                    </div>
+                    {unread > 0 && (
+                      <span className="text-[10px] font-bold bg-blue-600 text-white rounded-full px-1.5 min-w-[18px] text-center">
+                        {unread}
+                      </span>
+                    )}
+                  </div>
+                  {lastMessage && (
+                    <div className="mt-1 flex items-center gap-1 text-[11px] text-[var(--text-muted)]">
+                      <span className={
+                        lastMessage.sender_type === "boss" ? "text-blue-600" :
+                        lastMessage.sender_type === "assistant" ? "text-purple-600" :
+                        "text-emerald-600"
+                      }>
+                        {lastMessage.sender_type === "boss" ? "You: " :
+                         lastMessage.sender_type === "assistant" ? "Assistant: " :
+                         "Them: "}
+                      </span>
+                      <span className="truncate">{lastMessage.content}</span>
+                    </div>
+                  )}
+                  {!lastMessage && (
+                    <div className="mt-1 text-[11px] text-[var(--text-muted)] italic">
+                      No messages yet
+                    </div>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+
+          {/* === Thread + composer === */}
+          <div className="bg-[var(--bg-card)] border border-[var(--border-default)] rounded-lg flex flex-col">
+            <div className="px-4 py-3 border-b border-[var(--border-default)] flex items-center justify-between">
+              <div>
+                <div className="text-[14px] font-bold text-[var(--text-primary)]">
+                  {activeTwin ? activeTwin.name : "Select a twin"}
+                </div>
+                {activeTwin && (
+                  <div className="text-[11px] text-[var(--text-muted)]">
+                    Mode: {activeTwin.mode || "—"} · Status: {activeTwin.status || "—"}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <div ref={scrollRef} className="flex-1 overflow-y-auto p-4 space-y-2 min-h-[400px]">
+              {!activeTwin && (
+                <div className="text-center py-12 text-[12px] text-[var(--text-muted)]">
+                  Pick a twin from the left to see your conversation.
+                </div>
+              )}
+              {activeTwin && messages.length === 0 && (
+                <div className="text-center py-12 text-[12px] text-[var(--text-muted)]">
+                  No messages yet — say hi using the box below.
+                </div>
+              )}
+              {messages.map((m, i) => {
+                const fromBoss = m.sender_type === "boss" || m.sender_type === "assistant";
+                return (
+                  <div key={m.id || i} className={`flex ${fromBoss ? "justify-end" : "justify-start"}`}>
+                    <div
+                      className={`max-w-[75%] rounded-2xl px-3.5 py-2 text-[13px] leading-relaxed ${
+                        fromBoss
+                          ? "bg-blue-600 text-white rounded-br-md"
+                          : "bg-[var(--bg-elevated)] text-[var(--text-primary)] rounded-bl-md"
+                      }`}
+                    >
+                      {m.sender_type === "assistant" && (
+                        <div className="text-[9px] opacity-80 mb-0.5 font-semibold">Sent by Assistant</div>
+                      )}
+                      {m.content}
+                      <div className={`mt-1 text-[9px] ${fromBoss ? "opacity-75" : "text-[var(--text-muted)]"}`}>
+                        {new Date(m.created_at).toLocaleString()}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            {activeTwin && (
+              <div className="border-t border-[var(--border-default)] p-3 flex gap-2">
+                <input
+                  type="text"
+                  value={draft}
+                  onChange={e => setDraft(e.target.value)}
+                  onKeyDown={e => { if (e.key === "Enter") send(); }}
+                  placeholder={`Message ${activeTwin.name}...`}
+                  className="flex-1 px-3 py-2 bg-[var(--bg-elevated)] border border-[var(--border-default)] rounded-lg text-[13px] focus:outline-none focus:border-blue-400"
+                  disabled={sending}
+                />
+                <button
+                  onClick={send}
+                  disabled={!draft.trim() || sending}
+                  className="px-4 py-2 bg-blue-600 text-white text-[13px] font-medium rounded-lg hover:bg-blue-700 disabled:opacity-50"
+                >
+                  {sending ? "..." : "Send"}
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
   );
 }

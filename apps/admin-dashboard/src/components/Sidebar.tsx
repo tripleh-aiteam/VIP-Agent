@@ -7,14 +7,15 @@ import ThemeToggle from "./ThemeToggle";
 import { logout } from "./AuthGuard";
 
 const nav = [
-  // Chatbot — customer-facing message inbox (KakaoTalk + phone). Pinned at TOP
-  // because it's the primary boss-facing workspace. The floating <Assistant>
-  // overlay in the bottom-right is a separate, helper-style UI.
+  // Chatbot — boss's central comms hub. Merged with the old /messages
+  // page (Direct + Groups DMs with twins) + a 📚 Add knowledge button.
+  // The KakaoTalk customer inbox is GONE — those messages are handled
+  // by the AI assistants directly, never reaching the boss.
   { href: "/chatbot", label: "Chatbot", icon: "M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" },
   { href: "/", label: "Dashboard", icon: "M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-4 0a1 1 0 01-1-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 01-1 1" },
   // /chat removed — replaced by floating Assistant voice overlay
+  // /messages folded into /chatbot (Direct tab)
   { href: "/twins", label: "Twins", icon: "M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" },
-  { href: "/messages", label: "Messages", icon: "M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" },
   { href: "/calls", label: "Calls", icon: "M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z" },
   { href: "/control-room", label: "Control Room", icon: "M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" },
   { href: "/task-board", label: "Task Board", icon: "M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" },
