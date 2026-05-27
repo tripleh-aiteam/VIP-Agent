@@ -48,9 +48,17 @@ log = logging.getLogger("knowledge_ingest")
 # vector dimension MUST match the active provider — see assistant_knowledge
 # migrations.
 
-EMBED_PROVIDER = (os.getenv("EMBED_PROVIDER") or "local").lower()
+# Default to "none" — store chunks without embeddings, retrieve via pgroonga
+# full-text search. This is the path that works on Render's free tier (no
+# fastembed install, no model download, ~0 RAM overhead). Set EMBED_PROVIDER
+# to 'openai' / 'gemini' / 'local' to additionally generate vectors.
+EMBED_PROVIDER = (os.getenv("EMBED_PROVIDER") or "none").lower()
 
-if EMBED_PROVIDER == "openai":
+if EMBED_PROVIDER == "none":
+    EMBED_MODEL = ""
+    EMBED_DIM   = 0
+    EMBED_BATCH = 0
+elif EMBED_PROVIDER == "openai":
     EMBED_MODEL = "text-embedding-3-small"
     EMBED_DIM   = 1536
     EMBED_BATCH = 64
@@ -542,42 +550,63 @@ def ingest_file(
         db.commit()
         return {"file_id": file_id, "chunk_count": 0, "status": "empty"}
 
-    # 2. Embed in batches, insert rows
+    # 2. Insert chunks. When EMBED_PROVIDER=none we skip the embedding column;
+    # retrieval still works via pgroonga full-text-search on `content`.
     inserted = 0
-    # e5 models expect 'passage: ' prefix; MiniLM-paraphrase doesn't. Apply
-    # only when the active model is in the e5 family.
+    use_embeddings = EMBED_PROVIDER != "none"
     passage_prefix = "passage: " if (EMBED_PROVIDER == "local" and "e5" in EMBED_MODEL.lower()) else ""
     try:
-        for start in range(0, len(chunks), EMBED_BATCH):
-            batch = chunks[start:start + EMBED_BATCH]
-            texts = [(passage_prefix + c["content"]) for c in batch]
-            vecs  = embed_batch(texts)
+        batch_size = EMBED_BATCH if use_embeddings else 64
+        for start in range(0, len(chunks), batch_size):
+            batch = chunks[start:start + batch_size]
+            if use_embeddings:
+                texts = [(passage_prefix + c["content"]) for c in batch]
+                vecs  = embed_batch(texts)
+            else:
+                vecs = [None] * len(batch)
             for c, v in zip(batch, vecs):
-                db.execute(sa_text("""
-                    INSERT INTO assistant_knowledge_chunks
-                        (file_id, agent_id, location, title, content, token_count,
-                         embedding, metadata)
-                    VALUES
-                        (:file_id, :agent_id, :location, :title, :content, :tokens,
-                         CAST(:embedding AS vector), CAST(:metadata AS jsonb))
-                """), {
-                    "file_id":   file_id,
-                    "agent_id":  agent_id,
-                    "location":  c.get("location"),
-                    "title":     c.get("title"),
-                    "content":   c["content"],
-                    "tokens":    len(c["content"]) // 4,   # rough estimate
-                    "embedding": _vec_to_pg(v),
-                    "metadata":  json.dumps(c.get("metadata") or {}),
-                })
+                if use_embeddings and v is not None:
+                    db.execute(sa_text("""
+                        INSERT INTO assistant_knowledge_chunks
+                            (file_id, agent_id, location, title, content, token_count,
+                             embedding, metadata)
+                        VALUES
+                            (:file_id, :agent_id, :location, :title, :content, :tokens,
+                             CAST(:embedding AS vector), CAST(:metadata AS jsonb))
+                    """), {
+                        "file_id":   file_id,
+                        "agent_id":  agent_id,
+                        "location":  c.get("location"),
+                        "title":     c.get("title"),
+                        "content":   c["content"],
+                        "tokens":    len(c["content"]) // 4,
+                        "embedding": _vec_to_pg(v),
+                        "metadata":  json.dumps(c.get("metadata") or {}),
+                    })
+                else:
+                    db.execute(sa_text("""
+                        INSERT INTO assistant_knowledge_chunks
+                            (file_id, agent_id, location, title, content, token_count, metadata)
+                        VALUES
+                            (:file_id, :agent_id, :location, :title, :content, :tokens,
+                             CAST(:metadata AS jsonb))
+                    """), {
+                        "file_id":   file_id,
+                        "agent_id":  agent_id,
+                        "location":  c.get("location"),
+                        "title":     c.get("title"),
+                        "content":   c["content"],
+                        "tokens":    len(c["content"]) // 4,
+                        "metadata":  json.dumps(c.get("metadata") or {}),
+                    })
                 inserted += 1
-            db.commit()  # commit per batch so partial work isn't lost on errors
+            db.commit()
     except Exception as e:
         db.execute(sa_text("""
             UPDATE assistant_knowledge_files
                SET status='error', chunk_count=:n, error_msg=:msg
              WHERE id=:id
-        """), {"id": file_id, "n": inserted, "msg": f"embed failed: {e}"[:1000]})
+        """), {"id": file_id, "n": inserted, "msg": f"ingest failed: {e}"[:1000]})
         db.commit()
         raise
 
@@ -608,7 +637,36 @@ def rag_retrieve(
     q = (query or "").strip()
     if not q:
         return []
-    # e5 expects 'query: ' prefix; other models don't.
+
+    # --- Text-only path (pgroonga, no embedding API needed) ---
+    if EMBED_PROVIDER == "none":
+        try:
+            rows = db.execute(sa_text("""
+                SELECT * FROM search_assistant_knowledge_text(
+                    :agent_id, :query, :top_k
+                )
+            """), {
+                "agent_id": agent_id,
+                "query":    q,
+                "top_k":    top_k,
+            }).fetchall()
+        except Exception as e:
+            log.warning("pgroonga retrieve failed (%s) — returning empty", e)
+            return []
+        return [
+            {
+                "chunk_id":   str(r.chunk_id),
+                "file_id":    str(r.file_id),
+                "filename":   r.filename,
+                "location":   r.location,
+                "title":      r.title,
+                "content":    r.content,
+                "similarity": float(r.similarity),
+            }
+            for r in rows
+        ]
+
+    # --- Vector path (when embeddings are configured) ---
     q_input = ("query: " + q) if (EMBED_PROVIDER == "local" and "e5" in EMBED_MODEL.lower()) else q
     try:
         vec = embed_batch([q_input])[0]
