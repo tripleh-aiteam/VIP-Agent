@@ -915,11 +915,12 @@ def _run_multimodal_path(
         "language": lang,
         "reply": reply[:1500],
         "action": None, "speak": True, "transcript": transcript,
-        "tool_used": "gemini_vision",
+        "tool_used": "vision" if image_or_pdf else "file_text",
         "tool_result": {
             "attachment_count": len(attachments),
-            "missing_count": len(missing),
-            "kinds": [a["kind"] for a in attachments],
+            "text_blocks": len(text_blocks),
+            "images_or_pdf": len(image_or_pdf),
+            "kinds": [a.get("kind") for a in attachments],
         },
     }
 
