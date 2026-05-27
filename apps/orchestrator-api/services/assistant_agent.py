@@ -95,27 +95,36 @@ def _build_system_prompt(
 
     # RAG-first retrieval block. When the user's question matches anything in
     # the agent's uploaded knowledge base (xlsx/pdf/docx/pptx the boss has
-    # ingested), the top hits are injected here. The instruction wording
-    # ('PREFER ... fall back') is what implements the user's requested
-    # "DB-first, LLM-knowledge-fallback" behaviour: the model has the
-    # retrieved facts in front of it and is told to use them before
-    # generalising.
+    # ingested), the top hits are injected here. The wording is forceful
+    # ('ABSOLUTE PRIORITY', 'DO NOT call any tool') because earlier softer
+    # wording let the LLM ignore the excerpts and call agent_status / mock-
+    # data tools instead of quoting the actual file content.
     kb_block = ""
     if kb_context:
         kb_lines = [
-            "■ KNOWLEDGE BASE (verbatim excerpts from the boss's uploaded files — PREFER these facts; only fall back to your own knowledge when nothing here is relevant):",
+            "═══════════════════════════════════════════════════════════════",
+            "■■■ KNOWLEDGE BASE — ABSOLUTE PRIORITY ■■■",
+            "═══════════════════════════════════════════════════════════════",
+            "The following are VERBATIM EXCERPTS from documents the boss",
+            "uploaded. If the user's question can be answered from these",
+            "excerpts, you MUST:",
+            "  1. Answer DIRECTLY using the {\"answer\": \"...\"} shape.",
+            "  2. DO NOT call any tool (no agent_status, no search_twin, etc.)",
+            "     — the answer is already here.",
+            "  3. Quote specific numbers, names, and amounts verbatim.",
+            "  4. Cite the source like '(자산관리.xlsx, 총괄 sheet)'.",
+            "Only call a tool if the question is about CURRENT system state",
+            "(live twins, today's tasks, conversation status etc.) and NOT",
+            "answerable from the excerpts below.",
+            "─── excerpts ───",
         ]
         for i, c in enumerate(kb_context[:8], start=1):
             sim = c.get("similarity", 0.0)
             kb_lines.append(
-                f"  [{i}] file={c.get('filename')} loc={c.get('location')} sim={sim:.2f}\n"
-                f"      {c.get('content', '').strip()[:1800]}"
+                f"[{i}] {c.get('filename')} → {c.get('location')}  (relevance {sim:.2f})\n"
+                f"{c.get('content', '').strip()[:1800]}"
             )
-        kb_lines.append(
-            "When you cite a number/name from above, mention which file/sheet it came from "
-            "so the user can verify. If asked a question and NOTHING above is relevant, "
-            "say so briefly and then answer from general knowledge."
-        )
+        kb_lines.append("═══════════════════════════════════════════════════════════════")
         kb_block = "\n" + "\n".join(kb_lines) + "\n"
 
     identity = get_agent_identity()
@@ -142,6 +151,10 @@ def _build_system_prompt(
         '                       Use chains for "find X and then do Y" requests.\n'
         '  C. Answer directly:  { "answer": "<your reply>" }\n\n'
         "Rules:\n"
+        "- IF the KNOWLEDGE BASE section above has the answer (any excerpt "
+        "  contains the entity / number / topic the user asked about): use "
+        "  the answer shape with verbatim numbers from the excerpt. DO NOT "
+        "  call a tool. Cite the source file/sheet.\n"
         "- For navigation queries (open X / show me X / go to X / 열어 / 보여줘): "
         "use navigate(path) for internal pages OR open_portal(agent) for "
         "external agent apps. NEVER navigate to a path not in the pages list above.\n"
