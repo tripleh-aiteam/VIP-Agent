@@ -172,6 +172,9 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    # 60s instead of FastAPI's default 600s — keeps stale CORS rejections
+    # from sticking around in browsers after we adjust the allowlist.
+    max_age=60,
 )
 
 # Serve uploaded media (twin_voice TTS output, voice clone samples) so the
