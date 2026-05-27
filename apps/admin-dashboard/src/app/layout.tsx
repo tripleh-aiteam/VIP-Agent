@@ -6,10 +6,11 @@ import TopBar from "@/components/TopBar";
 import AuthGuard from "@/components/AuthGuard";
 import UpdateBanner from "@/components/UpdateBanner";
 
-// Chatbot is voice-driven — only mount on client.
-// As of 2026-05-07 we use the new reusable @triple-h/chatbot module via VipChatbotMount.
-// The old src/components/ChatbotOverlay.tsx stays in the repo for reference but is no longer imported.
-const ChatbotOverlay = dynamic(() => import("@/components/VipChatbotMount"), { ssr: false });
+// VIP's Assistant is a centered card that follows the boss across every
+// page. State (turns, model) lives in AssistantProvider so navigation
+// (router.push from an LLM-issued action) doesn't drop the conversation.
+// The legacy slim chat-bar via VipChatbotMount is no longer mounted.
+import { AssistantProvider, AssistantCard } from "@/components/AssistantCard";
 
 // DesktopUpdater talks to Tauri's updater plugin — only meaningful inside the
 // desktop app. On web builds it renders nothing (Tauri APIs absent).
@@ -42,17 +43,20 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html lang="en">
       <body className="bg-[var(--bg-app)] text-[var(--text-primary)] antialiased">
         <AuthGuard>
-          <div className="flex">
-            <Sidebar />
-            <main className="flex-1 min-w-0 min-h-screen overflow-x-hidden relative">
-              <TopBar />
-              <div className="p-3 md:p-6 max-w-7xl mx-auto w-full">{children}</div>
-            </main>
-          </div>
-          <UpdateBanner />
-          <DesktopUpdater />
-          <IncomingCallToast />
-          <ChatbotOverlay />
+          <AssistantProvider>
+            <div className="flex">
+              <Sidebar />
+              <main className="flex-1 min-w-0 min-h-screen overflow-x-hidden relative pb-[280px]">
+                <TopBar />
+                <div className="p-3 md:p-6 max-w-7xl mx-auto w-full">{children}</div>
+              </main>
+            </div>
+            <UpdateBanner />
+            <DesktopUpdater />
+            <IncomingCallToast />
+            {/* Global centered Assistant — same card on every page */}
+            <AssistantCard floating />
+          </AssistantProvider>
         </AuthGuard>
       </body>
     </html>
