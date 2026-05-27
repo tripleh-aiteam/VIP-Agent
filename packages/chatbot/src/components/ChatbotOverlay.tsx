@@ -1411,10 +1411,13 @@ export function ChatbotOverlay({
           <select
             value={selectedModel}
             onChange={e => persistSelectedModel(e.target.value)}
-            className="hidden sm:block h-9 max-w-[140px] rounded-full bg-gray-100 hover:bg-gray-200 border-none px-3 text-[11px] font-medium text-gray-700 cursor-pointer focus:outline-none focus:ring-2 focus:ring-blue-200 shrink-0"
-            title={selectedModel ? `Pinned to ${selectedModel}` : "Smart router picks per query"}
+            className="hidden sm:block h-9 max-w-[170px] rounded-full bg-gray-100 hover:bg-gray-200 border-none px-3 text-[11px] font-medium text-gray-700 cursor-pointer focus:outline-none focus:ring-2 focus:ring-blue-200 shrink-0"
+            title={selectedModel ? `Pinned to ${selectedModel}` : "Auto = smart router picks the best model per query"}
           >
-            <option value="">🧠 Auto</option>
+            {/* The blank value means 'Auto / smart router'. We prefix every
+                option with 'LLM:' so the dropdown is self-explanatory at a
+                glance instead of just showing 'Auto'. */}
+            <option value="">LLM: Auto (smart router)</option>
             {availableModels.length === 0 && (
               <option value="" disabled>(loading…)</option>
             )}
@@ -1425,7 +1428,7 @@ export function ChatbotOverlay({
               return (
                 <optgroup key={provider} label={label}>
                   {opts.map(m => (
-                    <option key={m.id} value={m.id}>{m.id}</option>
+                    <option key={m.id} value={m.id}>LLM: {m.id}</option>
                   ))}
                 </optgroup>
               );
