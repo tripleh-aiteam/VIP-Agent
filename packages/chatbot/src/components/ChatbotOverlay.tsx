@@ -235,17 +235,23 @@ export function ChatbotOverlay({
     theme.position === "top-left" ? "top-6 left-6" :
     "bottom-6 right-6";
 
+  // === New bar-UI state (v1.4 redesign) ===
+  // panelOpen — whether the conversation panel is showing ABOVE the slim bar
+  // showAttachMenu — small popover triggered by the + button
+  // voiceMode — continuous-listen mode (ChatGPT-style); after a TTS reply
+  //             finishes the mic auto-restarts so the user can keep talking
+  const [panelOpen, setPanelOpen] = useState(false);
+  const [showAttachMenu, setShowAttachMenu] = useState(false);
+  const [voiceMode, setVoiceMode] = useState(false);
+  const voiceModeRef = useRef(false);
+  useEffect(() => { voiceModeRef.current = voiceMode; }, [voiceMode]);
+  // Auto-expand the conversation panel whenever a new turn arrives
+  useEffect(() => { if (turns.length > 0) setPanelOpen(true); }, [turns.length]);
+
   // SSR-safe responsive sizing — MUST be declared above any conditional return
-  // below (the minimized-launcher branch). React's Rules of Hooks require the
-  // same hooks in the same order on every render; if this useState/useEffect
-  // pair sits below the early `return` then clicking the launcher to open the
-  // panel runs 2 MORE hooks than the previous render → React 19 throws
-  // "Rendered more hooks than during the previous render" → blank
-  // "Application error: client-side exception" screen.
-  //
-  // vw initializes to a constant 1280 on BOTH server and client so React's
-  // hydration matches; the useEffect updates it to the real innerWidth after
-  // mount and re-renders with the correct mobile/desktop layout.
+  // below. React's Rules of Hooks require the same hooks in the same order
+  // on every render. vw initialises to a desktop default on both server and
+  // client so hydration matches; the effect updates it after mount.
   const [vw, setVw] = useState<number>(1280);
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -938,8 +944,20 @@ export function ChatbotOverlay({
       const v = speechSynthesis.getVoices().find(x => x.lang.startsWith(u.lang));
       if (v) u.voice = v;
     }
-    u.onend = () => { setState("idle"); onDone?.(); };
-    u.onerror = () => { setState("idle"); onDone?.(); };
+    const finish = () => {
+      setState("idle");
+      onDone?.();
+      // Continuous voice mode: as soon as TTS finishes, restart the mic so
+      // the user can keep talking. Uses a ref because the onend closure
+      // captures voiceMode's initial value otherwise.
+      if (voiceModeRef.current) {
+        setTimeout(() => {
+          if (voiceModeRef.current) startListening();
+        }, 250);
+      }
+    };
+    u.onend = finish;
+    u.onerror = finish;
     speechSynthesis.speak(u);
   }
 
@@ -963,360 +981,278 @@ export function ChatbotOverlay({
     state === "speaking"  ? "🔊" :
                             "💬";
 
-  // Minimized launcher — render nothing when host requested hideLauncher
-  // (e.g. the host provides its own "open" trigger via a sidebar item).
-  if (!open || minimized) {
-    if (hideLauncher) return null;
-    return (
-      <button
-        onClick={() => { setOpen(true); setMinimized(false); }}
-        className={`fixed ${positionClass} w-16 h-16 rounded-full text-white text-[28px] flex items-center justify-center shadow-2xl hover:scale-105 transition-all z-[200]`}
-        style={{ background: `linear-gradient(135deg, ${primary}, ${accent})` }}
-        title={`${config.identity.name} · ${stateLabel}`}
-      >
-        {stateIcon}
-      </button>
-    );
+  // v1.4 — slim chat-bar layout. The bar is always pinned to the bottom of
+  // the viewport (centered, ~720px wide). When the user types or messages
+  // exist, an expanded panel opens above the bar showing the conversation.
+  // Hosts can still hide the whole thing via the controlled `open` prop or
+  // pass `hideLauncher` to suppress the bar entirely (sidebar-driven
+  // mounting).
+  if (!open) {
+    return null;
+  }
+  if (hideLauncher && turns.length === 0) {
+    // Host wants to manage visibility themselves — render nothing until a
+    // turn exists (then we still show the bar so the user can continue).
+    return null;
   }
 
+
+  // -----------------------------------------------------------------
+  //  Bar layout
+  // -----------------------------------------------------------------
+  const barPosition = isMobile
+    ? "bottom-2 left-2 right-2"
+    : "bottom-4 left-1/2 -translate-x-1/2";
+  const panelMaxHeight = isMobile ? "60vh" : "min(70vh, 600px)";
+
   return (
-    <div
-      className={`fixed ${isMobile ? "inset-2" : positionClass} flex flex-col z-[200] bg-white text-gray-900 border border-gray-200 ${className || ""}`}
-      style={{
-        width: responsiveWidth,
-        height: responsiveHeight,
-        maxWidth: "calc(100vw - 8px)",
-        maxHeight: "calc(100dvh - 16px)",
-        borderRadius: radiusPx,
-        boxShadow: "0 20px 60px rgba(0,0,0,0.25)",
-        fontFamily: "inherit",
-        position: "fixed",
-      }}
-      onDragOver={e => { e.preventDefault(); setIsDragging(true); }}
-      onDragLeave={e => { e.preventDefault(); setIsDragging(false); }}
-      onDrop={e => {
-        e.preventDefault();
-        setIsDragging(false);
-        const files = Array.from(e.dataTransfer.files || []);
-        files.forEach(f => addAttachment(f, f.name, f.type || "application/octet-stream"));
-      }}
-    >
-      {/* Header */}
-      <div
-        className="px-5 py-4 text-white flex items-center justify-between"
-        style={{
-          borderTopLeftRadius: radiusPx,
-          borderTopRightRadius: radiusPx,
-          background: `linear-gradient(90deg, ${primary}, ${accent})`,
-        }}
-      >
-        <div className="flex items-center gap-3">
-          <div className="text-[26px]">{stateIcon}</div>
-          <div>
-            <div className="text-[16px] font-bold">{config.identity.name}</div>
-            <div className="text-[11px] opacity-90">{stateLabel}</div>
-          </div>
-        </div>
-        <div className="flex items-center gap-1">
-          <button onClick={() => setMinimized(true)} className="opacity-80 hover:opacity-100 text-[18px] px-1" title="Minimize">−</button>
-          <button onClick={() => setOpen(false)} className="opacity-80 hover:opacity-100 text-[20px] px-1" title="Close">×</button>
-        </div>
-      </div>
-
-      {/* Settings */}
-      <div className="px-5 py-2.5 border-b border-gray-200 flex items-center gap-3 text-[12px] flex-wrap">
-        <label className="text-gray-500 whitespace-nowrap">🌍 Language:</label>
-        <select
-          value={language}
-          onChange={e => setLanguage(e.target.value as Lang)}
-          className="bg-gray-50 border border-gray-300 rounded px-2 py-1 text-[12px]"
+    <>
+      {/* === Expanded conversation panel (above the bar) === */}
+      {panelOpen && turns.length > 0 && (
+        <div
+          className={`fixed ${isMobile ? "left-2 right-2 bottom-20" : "left-1/2 -translate-x-1/2 bottom-24"} z-[199] bg-white border border-gray-200 rounded-2xl shadow-2xl flex flex-col overflow-hidden`}
+          style={{
+            width: isMobile ? "auto" : "min(92vw, 720px)",
+            maxHeight: panelMaxHeight,
+          }}
+          onDragOver={e => { e.preventDefault(); setIsDragging(true); }}
+          onDragLeave={e => { e.preventDefault(); setIsDragging(false); }}
+          onDrop={e => {
+            e.preventDefault();
+            setIsDragging(false);
+            const files = Array.from(e.dataTransfer.files || []);
+            files.forEach(f => addAttachment(f, f.name, f.type || "application/octet-stream"));
+          }}
         >
-          <option value="auto">Auto</option>
-          <option value="en">English</option>
-          <option value="ko">한국어</option>
-        </select>
-
-        {/* Model picker — ALWAYS rendered so it never "disappears" while
-            the catalog is in-flight. Shows "Auto" + a loading placeholder
-            until /api/twins/llm/models returns; then populates optgroups
-            per provider. The pinned choice persists in localStorage. */}
-        <label className="text-gray-500 whitespace-nowrap ml-2">🧠 Model:</label>
-        <select
-          value={selectedModel}
-          onChange={(e) => persistSelectedModel(e.target.value)}
-          className="bg-gray-50 border border-gray-300 rounded px-2 py-1 text-[12px] max-w-[180px]"
-          title={selectedModel ? `Pinned to ${selectedModel}` : "Smart router picks per query"}
-        >
-          <option value="">Auto (smart router)</option>
-          {availableModels.length === 0 && (
-            <option value="" disabled>(loading providers…)</option>
-          )}
-          {["anthropic", "gemini", "openai", "groq", "ollama"].map((provider) => {
-            const opts = availableModels.filter((m) => m.provider === provider);
-            if (opts.length === 0) return null;
-            return (
-              <optgroup
-                key={provider}
-                label={provider.charAt(0).toUpperCase() + provider.slice(1)}
-              >
-                {opts.map((m) => (
-                  <option key={m.id} value={m.id}>
-                    {m.id}
-                  </option>
-                ))}
-              </optgroup>
-            );
-          })}
-        </select>
-      </div>
-
-      {/* Conversation */}
-      <div className="flex-1 overflow-y-auto p-4 space-y-2 min-h-[200px]">
-        {turns.length === 0 && (
-          <div className="text-center py-6 text-[12px] text-gray-500 space-y-3">
-            <div className="text-[40px]">👋</div>
-            <div className="text-[14px] font-semibold text-gray-700">
-              Hi! I'm {config.identity.name}.
-            </div>
-            <div className="text-[11px]">
-              Speak or type naturally — I'll figure out what you need.
-            </div>
-          </div>
-        )}
-        {turns.map((t, i) => (
-          <div key={i} className={`flex ${t.who === "user" ? "justify-end" : "justify-start"}`}>
-            <div className={`max-w-[85%] flex flex-col gap-1.5 ${t.who === "user" ? "items-end" : "items-start"}`}>
-              {/* Ack bubble — spoken first while the assistant works */}
-              {t.ack && t.who === "assistant" && (
-                <div className="rounded-2xl px-3 py-2 text-[12px] italic bg-blue-50 text-blue-700 rounded-bl-md border border-blue-100">
-                  💬 {t.ack}
-                </div>
-              )}
-              {/* Multi-step process log */}
-              {t.steps && t.steps.length > 0 && (
-                <div className="rounded-xl bg-gray-50 border border-gray-200 px-3 py-2 space-y-1.5 w-full min-w-[280px]">
-                  <div className="text-[10px] font-semibold text-gray-500 uppercase tracking-wide">
-                    Workflow ({t.steps.length} steps)
-                  </div>
-                  {t.steps.map((s, si) => (
-                    <div key={si} className="flex items-center gap-2 text-[12px]">
-                      <span className={`text-[14px] ${s.status === "running" ? "animate-pulse" : ""}`}>
-                        {s.icon}
-                      </span>
-                      <span className={`flex-1 ${
-                        s.status === "done" ? "text-emerald-600" :
-                        s.status === "error" ? "text-red-500" :
-                        s.status === "warn" ? "text-amber-500" :
-                        "text-gray-700"
-                      }`}>
-                        {s.label}
-                      </span>
-                      {s.status === "done" && <span className="text-emerald-500">✓</span>}
-                      {s.status === "running" && (
-                        <span className="flex gap-0.5">
-                          <span className="w-1 h-1 rounded-full animate-bounce" style={{ background: primary, animationDelay: "0ms" }} />
-                          <span className="w-1 h-1 rounded-full animate-bounce" style={{ background: primary, animationDelay: "150ms" }} />
-                          <span className="w-1 h-1 rounded-full animate-bounce" style={{ background: primary, animationDelay: "300ms" }} />
-                        </span>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              )}
-              {/* Main reply bubble */}
+          {/* Header */}
+          <div className="px-4 py-2.5 border-b border-gray-100 flex items-center justify-between text-[12px] gap-2">
+            <div className="flex items-center gap-2 min-w-0 flex-1">
               <div
-                className={`rounded-2xl px-3.5 py-2.5 text-[13px] leading-relaxed ${
-                  t.who === "user"
-                    ? "text-white rounded-br-md"
-                    : "bg-gray-100 text-gray-900 rounded-bl-md"
-                }`}
-                style={t.who === "user" ? { background: primary } : undefined}
+                className="w-7 h-7 rounded-full flex items-center justify-center text-white text-[13px] shrink-0"
+                style={{ background: `linear-gradient(135deg, ${primary}, ${accent})` }}
               >
-                {/* User turns stay verbatim (they typed it; preserve whitespace).
-                    Assistant replies go through the markdown renderer so
-                    bullet lists / tables / **bold** / `code` look right
-                    instead of leaking raw asterisks. */}
-                {t.who === "user"
-                  ? <span className="whitespace-pre-wrap">{t.text}</span>
-                  : <Markdown text={t.text} />}
-                {t.who === "assistant" && t.intent && (
-                  <div className="text-[9px] opacity-50 mt-0.5">
-                    {t.intent}{t.source ? ` · ${t.source}` : ""}
-                  </div>
-                )}
+                {stateIcon}
               </div>
-              {/* Notion-AI-style follow-up chips — only render when the
-                  backend returned suggestions AND this turn isn't waiting
-                  on a Confirm card (else two CTAs compete for the user). */}
-              {t.who === "assistant" && t.suggestions && t.suggestions.length > 0 && !t.pendingAction && !t.pendingScript && (
-                <div className="flex flex-wrap gap-1.5 mt-2 max-w-full">
-                  {t.suggestions.map((s, si) => (
-                    <button
-                      key={si}
-                      type="button"
-                      onClick={() => {
-                        // One-shot: clear chips on this turn so re-clicking
-                        // doesn't re-fire after the next reply lands.
-                        setTurns(prev => prev.map((row, ri) =>
-                          ri === i ? { ...row, suggestions: undefined } : row
-                        ));
-                        sendQuery(s).catch(() => {});
-                      }}
-                      className="text-[11px] px-2 py-1 rounded-full bg-white border border-gray-200 hover:border-gray-400 hover:bg-gray-50 text-gray-700 transition-colors"
-                      title="Click to ask this"
-                    >
-                      {s}
-                    </button>
-                  ))}
+              <div className="min-w-0">
+                <div className="text-[13px] font-semibold text-gray-900 truncate">
+                  {config.identity.name}
                 </div>
-              )}
-              {/* Risky action awaiting confirmation (broadcast, send-message) */}
-              {t.pendingAction && (
-                <div className="rounded-xl bg-amber-50 border border-amber-200 p-3 w-full space-y-2">
-                  <div className="text-[12px] font-semibold text-amber-900">
-                    ⚠️ Confirm before sending
-                  </div>
-                  <div className="text-[12px] text-amber-900">{t.pendingAction.confirmText}</div>
-                  <div className="flex gap-2">
-                    <button
-                      onClick={async () => {
-                        const q = t.pendingAction!.query;
-                        // Clear the pending UI immediately so the user can't double-click
-                        setTurns(prev => prev.map((x, j) => j === i ? { ...x, pendingAction: undefined } : x));
-                        // Re-issue the query with confirmed=true
-                        try {
-                          setState("thinking");
-                          const url = `${config.apiBase.replace(/\/$/, "")}/chatbot/talk`;
-                          const recent: ConversationTurn[] = turns.slice(-6).map(tr => ({
-                            role: tr.who === "user" ? "user" : "assistant",
-                            text: tr.text,
-                            intent: tr.intent,
-                          }));
-                          const res = await fetch(url, {
-                            method: "POST",
-                            headers: { "Content-Type": "application/json" },
-                            body: JSON.stringify({
-                              query: q,
-                              language,
-                              agentId: config.agentId,
-                              intents: (config.intents || []).map(it => ({
-                                name: it.name,
-                                description: it.description,
-                                examples: [...(it.examples?.en || []), ...(it.examples?.ko || [])],
-                                requires_confirmation: it.requiresConfirmation || false,
-                              })),
-                              knowledgeBase: config.knowledgeBase,
-                              history: recent,
-                              currentPath: typeof window !== "undefined" ? window.location.pathname : undefined,
-                              confirmed: true,
-                            }),
-                          });
-                          const data = await res.json();
-                          setTurns(prev => [...prev, {
-                            who: "assistant",
-                            text: data.reply || "Done.",
-                            ts: Date.now(),
-                            intent: data.intent,
-                            source: data.source,
-                          }]);
-                          if (speakReplies && data.reply) speak(data.reply, language === "ko" ? "ko" : "en");
-                          else setState("idle");
-                          if (data.action) executeAction(data.action);
-                        } catch (e: any) {
-                          setError(`Confirm failed: ${e.message || e}`);
-                          setState("idle");
-                        }
-                      }}
-                      className="flex-1 py-2 text-white text-[12px] font-semibold rounded-lg hover:opacity-90"
-                      style={{ background: primary }}
-                    >
-                      ✓ Confirm
-                    </button>
-                    <button
-                      onClick={() => {
-                        setTurns(prev => prev.map((x, j) => j === i ? { ...x, pendingAction: undefined } : x));
-                      }}
-                      className="px-4 py-2 text-[12px] font-semibold rounded-lg bg-white border border-gray-300 text-gray-700 hover:bg-gray-50"
-                    >
-                      ✗ Cancel
-                    </button>
-                  </div>
-                </div>
-              )}
-
-              {/* LLM-generated script awaiting confirmation */}
-              {t.pendingScript && (
-                <div className="rounded-xl bg-amber-50 border border-amber-200 p-3 w-full space-y-2">
-                  <div className="text-[11px] font-semibold text-amber-900">
-                    ⚙️ Generated script — review before running
-                  </div>
-                  <pre className="text-[10px] bg-white border border-amber-100 rounded p-2 overflow-x-auto whitespace-pre-wrap font-mono text-gray-800">
-                    {t.pendingScript.code}
-                  </pre>
-                  <div className="flex gap-2">
-                    <button
-                      onClick={() => {
-                        const code = t.pendingScript!.code;
-                        try {
-                          // eslint-disable-next-line no-new-func
-                          const fn = new Function(code);
-                          fn();
-                          // Mark this turn as run (clear pendingScript)
-                          setTurns(prev => prev.map((x, j) => j === i ? { ...x, pendingScript: undefined } : x));
-                        } catch (e: any) {
-                          setError(`Script error: ${e.message || e}`);
-                        }
-                      }}
-                      className="flex-1 py-2 text-white text-[12px] font-semibold rounded-lg hover:opacity-90"
-                      style={{ background: primary }}
-                    >
-                      ✓ Run
-                    </button>
-                    <button
-                      onClick={() => {
-                        setTurns(prev => prev.map((x, j) => j === i ? { ...x, pendingScript: undefined } : x));
-                      }}
-                      className="px-4 py-2 text-[12px] font-semibold rounded-lg bg-white border border-gray-300 text-gray-700 hover:bg-gray-50"
-                    >
-                      ✗ Cancel
-                    </button>
-                  </div>
-                </div>
-              )}
-            </div>
-          </div>
-        ))}
-        {state === "thinking" && (
-          <div className="flex justify-start">
-            <div className="bg-gray-100 px-3.5 py-2.5 rounded-2xl rounded-bl-md">
-              <div className="flex gap-1">
-                <span className="w-1.5 h-1.5 bg-amber-500 rounded-full animate-bounce" style={{ animationDelay: "0ms" }} />
-                <span className="w-1.5 h-1.5 bg-amber-500 rounded-full animate-bounce" style={{ animationDelay: "150ms" }} />
-                <span className="w-1.5 h-1.5 bg-amber-500 rounded-full animate-bounce" style={{ animationDelay: "300ms" }} />
+                <div className="text-[10px] text-gray-500">{stateLabel}</div>
               </div>
             </div>
+            <select
+              value={language}
+              onChange={e => setLanguage(e.target.value as Lang)}
+              className="bg-gray-50 border border-gray-200 rounded px-1.5 py-1 text-[11px]"
+              title="Language"
+            >
+              <option value="auto">Auto</option>
+              <option value="en">EN</option>
+              <option value="ko">한</option>
+            </select>
+            <select
+              value={selectedModel}
+              onChange={e => persistSelectedModel(e.target.value)}
+              className="bg-gray-50 border border-gray-200 rounded px-1.5 py-1 text-[11px] max-w-[140px]"
+              title={selectedModel || "Auto router"}
+            >
+              <option value="">Auto</option>
+              {availableModels.length === 0 && <option value="" disabled>(loading…)</option>}
+              {["anthropic", "gemini", "openai", "groq", "ollama"].map(provider => {
+                const opts = availableModels.filter(m => m.provider === provider);
+                if (opts.length === 0) return null;
+                return (
+                  <optgroup key={provider} label={provider.charAt(0).toUpperCase() + provider.slice(1)}>
+                    {opts.map(m => <option key={m.id} value={m.id}>{m.id}</option>)}
+                  </optgroup>
+                );
+              })}
+            </select>
+            <button
+              onClick={() => setTurns([])}
+              className="text-gray-400 hover:text-gray-600 px-1.5 py-1 text-[11px]"
+              title="Clear conversation"
+            >Clear</button>
+            <button
+              onClick={() => setPanelOpen(false)}
+              className="text-gray-400 hover:text-gray-700 w-7 h-7 flex items-center justify-center rounded hover:bg-gray-100 text-[16px]"
+              aria-label="Collapse"
+            >×</button>
           </div>
-        )}
-        {error && (
-          <div className="text-[11px] text-red-600 bg-red-50 rounded-lg px-3 py-2 border border-red-200">
-            {error}
-          </div>
-        )}
-      </div>
 
-      {/* Drag-and-drop overlay */}
-      {isDragging && (
-        <div className="absolute inset-0 z-[210] flex items-center justify-center pointer-events-none rounded-2xl"
-             style={{ background: "rgba(99,102,241,0.15)", border: "3px dashed #6366F1" }}>
-          <div className="bg-white rounded-xl px-6 py-4 shadow-lg text-[14px] font-semibold text-indigo-700">
-            📎 Drop file to attach
+          {/* Conversation */}
+          <div className="flex-1 overflow-y-auto px-4 py-3 space-y-2 min-h-[100px]">
+            {turns.map((t, i) => (
+              <div key={i} className={`flex ${t.who === "user" ? "justify-end" : "justify-start"}`}>
+                <div className={`max-w-[85%] flex flex-col gap-1.5 ${t.who === "user" ? "items-end" : "items-start"}`}>
+                  {t.ack && t.who === "assistant" && (
+                    <div className="rounded-2xl px-3 py-2 text-[12px] italic bg-blue-50 text-blue-700 rounded-bl-md border border-blue-100">
+                      💬 {t.ack}
+                    </div>
+                  )}
+                  {t.steps && t.steps.length > 0 && (
+                    <div className="rounded-xl bg-gray-50 border border-gray-200 px-3 py-2 space-y-1.5 w-full min-w-[280px]">
+                      <div className="text-[10px] font-semibold text-gray-500 uppercase tracking-wide">
+                        Workflow ({t.steps.length} steps)
+                      </div>
+                      {t.steps.map((s, si) => (
+                        <div key={si} className="flex items-center gap-2 text-[12px]">
+                          <span className={`text-[14px] ${s.status === "running" ? "animate-pulse" : ""}`}>{s.icon}</span>
+                          <span className={`flex-1 ${
+                            s.status === "done" ? "text-emerald-600" :
+                            s.status === "error" ? "text-red-500" :
+                            s.status === "warn" ? "text-amber-500" : "text-gray-700"
+                          }`}>{s.label}</span>
+                          {s.status === "done" && <span className="text-emerald-500">✓</span>}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  <div
+                    className={`rounded-2xl px-3.5 py-2.5 text-[13px] leading-relaxed ${
+                      t.who === "user" ? "text-white rounded-br-md" : "bg-gray-100 text-gray-900 rounded-bl-md"
+                    }`}
+                    style={t.who === "user" ? { background: primary } : undefined}
+                  >
+                    {t.who === "user"
+                      ? <span className="whitespace-pre-wrap">{t.text}</span>
+                      : <Markdown text={t.text} />}
+                    {t.who === "assistant" && t.intent && (
+                      <div className="text-[9px] opacity-50 mt-0.5">
+                        {t.intent}{t.source ? ` · ${t.source}` : ""}
+                      </div>
+                    )}
+                  </div>
+                  {t.who === "assistant" && t.suggestions && t.suggestions.length > 0 && !t.pendingAction && (
+                    <div className="flex flex-wrap gap-1.5 mt-2 max-w-full">
+                      {t.suggestions.map((s, si) => (
+                        <button
+                          key={si}
+                          type="button"
+                          onClick={() => {
+                            setTurns(prev => prev.map((row, ri) =>
+                              ri === i ? { ...row, suggestions: undefined } : row
+                            ));
+                            sendQuery(s).catch(() => {});
+                          }}
+                          className="text-[11px] px-2 py-1 rounded-full bg-white border border-gray-200 hover:border-gray-400 hover:bg-gray-50 text-gray-700"
+                        >{s}</button>
+                      ))}
+                    </div>
+                  )}
+                  {t.pendingAction && (
+                    <div className="rounded-xl bg-amber-50 border border-amber-200 p-3 w-full space-y-2">
+                      <div className="text-[12px] font-semibold text-amber-900">⚠️ Confirm before sending</div>
+                      <div className="text-[12px] text-amber-900">{t.pendingAction.confirmText}</div>
+                      <div className="flex gap-2">
+                        <button
+                          onClick={async () => {
+                            const q = t.pendingAction!.query;
+                            setTurns(prev => prev.map((x, j) => j === i ? { ...x, pendingAction: undefined } : x));
+                            try {
+                              setState("thinking");
+                              const url = `${config.apiBase.replace(/\/$/, "")}/chatbot/talk`;
+                              const recent: ConversationTurn[] = turns.slice(-6).map(tr => ({
+                                role: tr.who === "user" ? "user" : "assistant",
+                                text: tr.text,
+                                intent: tr.intent,
+                              }));
+                              const res = await fetch(url, {
+                                method: "POST",
+                                headers: { "Content-Type": "application/json" },
+                                body: JSON.stringify({
+                                  query: q, language, agentId: config.agentId,
+                                  intents: (config.intents || []).map(it => ({
+                                    name: it.name, description: it.description,
+                                    examples: [...(it.examples?.en || []), ...(it.examples?.ko || [])],
+                                    requires_confirmation: it.requiresConfirmation || false,
+                                  })),
+                                  knowledgeBase: config.knowledgeBase,
+                                  history: recent,
+                                  currentPath: typeof window !== "undefined" ? window.location.pathname : undefined,
+                                  confirmed: true,
+                                }),
+                              });
+                              const data = await res.json();
+                              setTurns(prev => [...prev, {
+                                who: "assistant", text: data.reply || "Done.", ts: Date.now(),
+                                intent: data.intent, source: data.source,
+                              }]);
+                              if (speakReplies && data.reply) speak(data.reply, language === "ko" ? "ko" : "en");
+                              else setState("idle");
+                              if (data.action) executeAction(data.action);
+                            } catch (e: any) {
+                              setError(`Confirm failed: ${e.message || e}`);
+                              setState("idle");
+                            }
+                          }}
+                          className="flex-1 py-2 text-white text-[12px] font-semibold rounded-lg hover:opacity-90"
+                          style={{ background: primary }}
+                        >✓ Confirm</button>
+                        <button
+                          onClick={() => setTurns(prev => prev.map((x, j) => j === i ? { ...x, pendingAction: undefined } : x))}
+                          className="px-4 py-2 text-[12px] font-semibold rounded-lg bg-white border border-gray-300 text-gray-700 hover:bg-gray-50"
+                        >✗ Cancel</button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            ))}
+            {state === "thinking" && (
+              <div className="flex justify-start">
+                <div className="bg-gray-100 px-3.5 py-2.5 rounded-2xl rounded-bl-md">
+                  <div className="flex gap-1">
+                    <span className="w-1.5 h-1.5 bg-amber-500 rounded-full animate-bounce" style={{ animationDelay: "0ms" }} />
+                    <span className="w-1.5 h-1.5 bg-amber-500 rounded-full animate-bounce" style={{ animationDelay: "150ms" }} />
+                    <span className="w-1.5 h-1.5 bg-amber-500 rounded-full animate-bounce" style={{ animationDelay: "300ms" }} />
+                  </div>
+                </div>
+              </div>
+            )}
+            {error && (
+              <div className="text-[11px] text-red-600 bg-red-50 rounded-lg px-3 py-2 border border-red-200">{error}</div>
+            )}
           </div>
+
+          {/* Drag overlay */}
+          {isDragging && (
+            <div className="absolute inset-0 z-[210] flex items-center justify-center pointer-events-none rounded-2xl"
+                 style={{ background: "rgba(99,102,241,0.15)", border: "3px dashed #6366F1" }}>
+              <div className="bg-white rounded-xl px-6 py-4 shadow-lg text-[14px] font-semibold text-indigo-700">
+                📎 Drop to attach
+              </div>
+            </div>
+          )}
         </div>
       )}
 
-      {/* Camera modal */}
+      {/* === Continuous voice mode overlay === */}
+      {voiceMode && (
+        <div className="fixed inset-0 z-[210] flex flex-col items-center justify-center bg-black/80 backdrop-blur-sm">
+          <div
+            className={`w-44 h-44 rounded-full flex items-center justify-center text-white text-[60px] mb-6 ${state === "listening" ? "animate-pulse" : ""}`}
+            style={{ background: `linear-gradient(135deg, ${primary}, ${accent})` }}
+          >
+            {state === "speaking" ? "🔊" : state === "thinking" ? "💭" : "🎤"}
+          </div>
+          <div className="text-white text-[15px] font-medium mb-1">{stateLabel}</div>
+          <div className="text-white/70 text-[12px] mb-8">Continuous voice mode</div>
+          <button
+            type="button"
+            onClick={() => {
+              setVoiceMode(false);
+              stopListening();
+              stopSpeaking();
+            }}
+            className="px-6 py-2.5 rounded-full bg-white text-gray-900 text-[14px] font-medium hover:bg-gray-100"
+          >End voice</button>
+        </div>
+      )}
+
+      {/* === Camera modal === */}
       {showCamera && (
-        <div className="absolute inset-0 z-[220] bg-black flex flex-col rounded-2xl overflow-hidden">
+        <div className="fixed inset-2 z-[220] bg-black flex flex-col rounded-2xl overflow-hidden">
           <div className="px-4 py-3 text-white flex items-center justify-between" style={{ background: primary }}>
             <span className="font-bold">📷 Take a photo</span>
             <button onClick={closeCamera} className="text-[20px]">×</button>
@@ -1329,87 +1265,96 @@ export function ChatbotOverlay({
         </div>
       )}
 
-      {/* Attachments preview row (above input) */}
-      {attachments.length > 0 && (
-        <div className="border-t border-gray-200 px-3 py-2 flex gap-2 overflow-x-auto">
-          {attachments.map(att => (
-            <div key={att.id} className="relative shrink-0 group">
-              {att.preview ? (
-                <img src={att.preview} alt={att.name} className="h-14 w-14 object-cover rounded-lg border border-gray-300" />
-              ) : (
-                <div className="h-14 w-20 px-2 bg-gray-100 border border-gray-300 rounded-lg flex flex-col items-center justify-center">
-                  <div className="text-[18px]">📄</div>
-                  <div className="text-[9px] text-gray-600 truncate w-full text-center">{att.name.split(".").pop()?.toUpperCase()}</div>
-                </div>
-              )}
-              <button
-                onClick={() => removeAttachment(att.id)}
-                className="absolute -top-1 -right-1 bg-red-500 text-white text-[10px] rounded-full w-4 h-4 flex items-center justify-center hover:bg-red-600"
-                title={`Remove ${att.name}`}
-              >×</button>
-              <div className="absolute -bottom-1 left-0 right-0 text-[9px] text-center text-gray-500 truncate">{att.name}</div>
-            </div>
-          ))}
-        </div>
-      )}
+      {/* === The slim bar (always visible) === */}
+      <div
+        className={`fixed ${barPosition} z-[200]`}
+        style={{ width: isMobile ? "auto" : "min(92vw, 720px)" }}
+      >
+        {/* Attachment thumbnails row (above the bar) */}
+        {attachments.length > 0 && (
+          <div className="mb-2 flex gap-2 overflow-x-auto px-1">
+            {attachments.map(att => (
+              <div key={att.id} className="relative shrink-0">
+                {att.preview ? (
+                  <img src={att.preview} alt={att.name} className="h-12 w-12 object-cover rounded-lg border border-gray-300 bg-white" />
+                ) : (
+                  <div className="h-12 w-16 px-2 bg-white border border-gray-300 rounded-lg flex items-center justify-center text-[10px] font-mono">
+                    {att.name.split(".").pop()?.toUpperCase()}
+                  </div>
+                )}
+                <button
+                  onClick={() => removeAttachment(att.id)}
+                  className="absolute -top-1 -right-1 bg-red-500 text-white text-[10px] rounded-full w-4 h-4 flex items-center justify-center hover:bg-red-600"
+                  title={`Remove ${att.name}`}
+                >×</button>
+              </div>
+            ))}
+          </div>
+        )}
 
-      {/* Hidden file input */}
-      <input
-        ref={fileInputRef}
-        type="file"
-        multiple
-        accept="image/*,.pdf,.xlsx,.xls,.csv,.docx,.doc,.txt,.md,.json"
-        className="hidden"
-        onChange={e => {
-          const files = Array.from(e.target.files || []);
-          files.forEach(f => addAttachment(f, f.name, f.type || "application/octet-stream"));
-          if (e.target) e.target.value = ""; // allow re-selecting same file
-        }}
-      />
+        {/* Attach popover */}
+        {showAttachMenu && (
+          <div className="absolute bottom-full left-2 mb-2 bg-white border border-gray-200 rounded-xl shadow-xl p-1 flex flex-col text-[13px] min-w-[180px]">
+            <button
+              type="button"
+              onClick={() => { setShowAttachMenu(false); fileInputRef.current?.click(); }}
+              className="text-left px-3 py-2 hover:bg-gray-50 rounded-lg flex items-center gap-2"
+            >📎 <span>Attach file</span></button>
+            <button
+              type="button"
+              onClick={() => { setShowAttachMenu(false); openCamera(); }}
+              className="text-left px-3 py-2 hover:bg-gray-50 rounded-lg flex items-center gap-2"
+            >📷 <span>Take photo</span></button>
+            <button
+              type="button"
+              onClick={() => { setShowAttachMenu(false); setTurns([]); setPanelOpen(false); }}
+              className="text-left px-3 py-2 hover:bg-gray-50 rounded-lg flex items-center gap-2 border-t border-gray-100 mt-1 pt-2"
+            >🗑️ <span>Clear conversation</span></button>
+            <button
+              type="button"
+              onClick={() => { setShowAttachMenu(false); setOpen(false); }}
+              className="text-left px-3 py-2 hover:bg-gray-50 rounded-lg flex items-center gap-2"
+            >❌ <span>Close assistant</span></button>
+          </div>
+        )}
 
-      {/* Action row */}
-      <div className="border-t border-gray-200 p-4 space-y-2">
-        <div className="flex gap-2">
-          {state === "listening" ? (
-            <button
-              onClick={stopListening}
-              className="flex-1 py-3 bg-red-500 text-white rounded-xl text-[14px] font-semibold hover:bg-red-600 flex items-center justify-center gap-2"
-            >
-              <span className="w-2.5 h-2.5 bg-white rounded-full animate-pulse" /> Stop listening
-            </button>
-          ) : state === "speaking" ? (
-            <button
-              onClick={stopSpeaking}
-              className="flex-1 py-3 bg-amber-500 text-white rounded-xl text-[14px] font-semibold hover:bg-amber-600"
-            >
-              Stop speaking
-            </button>
-          ) : (
-            <button
-              onClick={startListening}
-              disabled={state === "thinking"}
-              className="flex-1 py-3 text-white rounded-xl text-[14px] font-semibold hover:opacity-90 disabled:opacity-50 flex items-center justify-center gap-2"
-              style={{ background: `linear-gradient(90deg, ${primary}, ${accent})` }}
-            >
-              🎤 Tap to talk
-            </button>
-          )}
-        </div>
-        <div className="relative flex gap-2 items-center">
+        {/* Hidden file input */}
+        <input
+          ref={fileInputRef}
+          type="file"
+          multiple
+          accept="image/*,.pdf,.xlsx,.xls,.csv,.docx,.doc,.txt,.md,.json"
+          className="hidden"
+          onChange={e => {
+            const files = Array.from(e.target.files || []);
+            files.forEach(f => addAttachment(f, f.name, f.type || "application/octet-stream"));
+            if (e.target) e.target.value = "";
+          }}
+        />
+
+        <div
+          className={`bg-white border border-gray-200 rounded-full shadow-xl flex items-center gap-1 px-1.5 py-1.5 ${className || ""}`}
+          onDragOver={e => { e.preventDefault(); setIsDragging(true); }}
+          onDragLeave={e => { e.preventDefault(); setIsDragging(false); }}
+          onDrop={e => {
+            e.preventDefault();
+            setIsDragging(false);
+            const files = Array.from(e.dataTransfer.files || []);
+            files.forEach(f => addAttachment(f, f.name, f.type || "application/octet-stream"));
+          }}
+        >
+          {/* + button */}
           <button
-            onClick={() => fileInputRef.current?.click()}
-            className="px-2.5 py-2.5 bg-gray-100 hover:bg-gray-200 border border-gray-300 rounded-lg text-[14px]"
-            title="Attach a file (image, PDF, Excel, CSV)"
-          >📎</button>
-          <button
-            onClick={openCamera}
-            className="px-2.5 py-2.5 bg-gray-100 hover:bg-gray-200 border border-gray-300 rounded-lg text-[14px]"
-            title="Take a photo with the camera"
-          >📷</button>
-          {/* Slash-command menu — appears when the input starts with "/".
-              Notion-AI pattern: shortcut to common assistant queries. */}
+            type="button"
+            onClick={() => setShowAttachMenu(v => !v)}
+            className="w-10 h-10 rounded-full hover:bg-gray-100 flex items-center justify-center text-[22px] text-gray-600 shrink-0"
+            title="Attach / actions"
+            aria-label="More actions"
+          >+</button>
+
+          {/* Slash menu */}
           {config.endpointMode === "agent" && textInput.startsWith("/") && (
-            <div className="absolute bottom-16 left-5 right-5 z-30 max-h-[260px] overflow-y-auto rounded-lg border border-gray-200 bg-white shadow-lg text-[12px]">
+            <div className="absolute bottom-full left-12 right-12 mb-2 max-h-[260px] overflow-y-auto rounded-xl border border-gray-200 bg-white shadow-xl text-[12px]">
               {SLASH_COMMANDS
                 .filter(c => {
                   const q = textInput.slice(1).toLowerCase();
@@ -1422,11 +1367,7 @@ export function ChatbotOverlay({
                     type="button"
                     onClick={() => {
                       setTextInput(c.prompt);
-                      // Auto-submit if it's a no-arg command; otherwise let
-                      // the user fill in the placeholder fragments
-                      if (!c.prompt.includes("___")) {
-                        submitText();
-                      }
+                      if (!c.prompt.includes("___")) submitText();
                     }}
                     className={`w-full text-left px-3 py-2 hover:bg-gray-50 flex items-center gap-2 border-b border-gray-100 last:border-b-0 ${i === 0 ? "bg-gray-50" : ""}`}
                   >
@@ -1439,24 +1380,81 @@ export function ChatbotOverlay({
                 ))}
             </div>
           )}
+
+          {/* Input */}
           <input
             type="text"
             value={textInput}
             onChange={e => setTextInput(e.target.value)}
-            onKeyDown={e => { if (e.key === "Enter") submitText(); }}
-            placeholder={attachments.length > 0 ? `Ask about your ${attachments.length} attachment(s)...` : "Or type a question (press / for commands)..."}
-            className="flex-1 px-3 py-2.5 bg-gray-50 border border-gray-300 rounded-lg text-[12px] focus:outline-none focus:border-blue-400"
+            onFocus={() => { if (turns.length > 0) setPanelOpen(true); }}
+            onKeyDown={e => { if (e.key === "Enter") { setPanelOpen(true); submitText(); } }}
+            placeholder={attachments.length > 0 ? `Ask about your ${attachments.length} attachment(s)...` : "Ask anything"}
+            className="flex-1 bg-transparent border-none outline-none px-3 text-[14px] min-w-0"
           />
+
+          {/* Toggle panel */}
+          {turns.length > 0 && (
+            <button
+              type="button"
+              onClick={() => setPanelOpen(v => !v)}
+              className="w-9 h-9 rounded-full hover:bg-gray-100 flex items-center justify-center text-[14px] text-gray-500 shrink-0"
+              title={panelOpen ? "Hide conversation" : "Show conversation"}
+            >{panelOpen ? "▾" : "▴"}</button>
+          )}
+
+          {/* Mic */}
+          {state === "listening" ? (
+            <button
+              type="button"
+              onClick={stopListening}
+              className="w-10 h-10 rounded-full bg-red-500 hover:bg-red-600 flex items-center justify-center text-white shrink-0"
+              title="Stop listening"
+            >
+              <span className="w-2.5 h-2.5 bg-white rounded-full animate-pulse" />
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={startListening}
+              disabled={state === "thinking"}
+              className="w-10 h-10 rounded-full hover:bg-gray-100 flex items-center justify-center text-[18px] text-gray-600 disabled:opacity-50 shrink-0"
+              title="Tap to talk"
+              aria-label="Microphone"
+            >🎤</button>
+          )}
+
+          {/* Voice — continuous mode */}
           <button
-            onClick={submitText}
-            disabled={(!textInput.trim() && attachments.length === 0) || state === "thinking"}
-            className="px-4 py-2.5 text-white rounded-lg text-[12px] font-medium hover:opacity-90 disabled:opacity-50"
-            style={{ background: primary }}
+            type="button"
+            onClick={() => {
+              setVoiceMode(true);
+              if (state !== "listening") startListening();
+            }}
+            className="px-3 h-10 rounded-full bg-gray-100 hover:bg-gray-200 flex items-center gap-1.5 text-[12px] font-medium text-gray-700 shrink-0"
+            title="Continuous voice mode"
           >
-            Send
+            <span className="flex items-end gap-[1px]">
+              <span className="w-[2px] h-2 bg-gray-700 rounded" />
+              <span className="w-[2px] h-3 bg-gray-700 rounded" />
+              <span className="w-[2px] h-1.5 bg-gray-700 rounded" />
+              <span className="w-[2px] h-2.5 bg-gray-700 rounded" />
+            </span>
+            <span className="hidden sm:inline">Voice</span>
           </button>
+
+          {/* Send */}
+          {(textInput.trim() || attachments.length > 0) && (
+            <button
+              type="button"
+              onClick={submitText}
+              disabled={state === "thinking"}
+              className="w-10 h-10 rounded-full text-white flex items-center justify-center text-[16px] hover:opacity-90 disabled:opacity-50 shrink-0"
+              style={{ background: primary }}
+              title="Send"
+            >↑</button>
+          )}
         </div>
       </div>
-    </div>
+    </>
   );
 }
