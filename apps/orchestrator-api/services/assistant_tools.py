@@ -2532,6 +2532,66 @@ TOOL_REGISTRY.update({
 })
 
 
+# ============================================================================
+#  Knowledge-base search (RAG)
+#
+#  The assistant ALREADY pre-fetches top-k chunks before every LLM turn (see
+#  assistant_agent._run_agent_impl). This explicit tool is for cases where the
+#  LLM realises mid-conversation it needs to look something else up — e.g.
+#  the user says "actually search for the 향남 contract" and the original
+#  retrieval didn't include it. The LLM can call this tool to fetch fresh hits.
+# ============================================================================
+
+def tool_search_knowledge_base(
+    query: str,
+    top_k: int = 8,
+    agent_id: str = "vip",
+    db: Session = None,
+    **_kw,
+) -> dict[str, Any]:
+    """Vector-search the uploaded knowledge base for `query`."""
+    if not db:
+        return {"ok": False, "error": "DB session required"}
+    try:
+        from services.knowledge_ingest import rag_retrieve
+        hits = rag_retrieve(db, agent_id=agent_id, query=query, top_k=top_k, min_sim=0.30)
+        # Trim content for the tool-result envelope; the LLM already has the
+        # top hits in its system prompt — this is for "deeper" queries.
+        compact = [
+            {
+                "filename":   h["filename"],
+                "location":   h["location"],
+                "similarity": round(h["similarity"], 3),
+                "excerpt":    (h["content"] or "")[:600],
+            } for h in hits
+        ]
+        return {"ok": True, "count": len(compact), "hits": compact}
+    except Exception as e:
+        return {"ok": False, "error": str(e)[:200]}
+
+
+TOOL_REGISTRY["search_knowledge_base"] = Tool(
+    name="search_knowledge_base", kind="read",
+    description=(
+        "Search the boss's uploaded knowledge base (xlsx/pdf/docx/pptx) for a "
+        "specific topic when the pre-fetched excerpts don't cover what the user "
+        "asked. Returns top file/sheet excerpts with similarity scores. Use "
+        "when the user references something you suspect is in the uploaded "
+        "files (a property name, a contract, a sheet label) and you don't "
+        "already have a matching excerpt in the [KNOWLEDGE BASE] section above."
+    ),
+    parameters={
+        "type": "object",
+        "properties": {
+            "query":   {"type": "string", "description": "What to search for"},
+            "top_k":   {"type": "integer", "description": "How many results (1-20)"},
+        },
+        "required": ["query"],
+    },
+    fn=tool_search_knowledge_base,
+)
+
+
 def list_tool_schemas() -> list[dict]:
     """Return all tool schemas for the LLM."""
     return [t.schema() for t in TOOL_REGISTRY.values()]

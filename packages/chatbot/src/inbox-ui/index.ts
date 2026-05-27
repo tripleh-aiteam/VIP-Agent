@@ -29,6 +29,7 @@ export { MessageComposer } from "./MessageComposer";
 export { CustomerInfoPanel } from "./CustomerInfoPanel";
 export { ModeToggle, autoDetectMode } from "./ModeToggle";
 export { DailyReportCard } from "./DailyReportCard";
+export { KnowledgeUploader } from "./KnowledgeUploader";
 
 /* ------------------------------------------------------------------ *
  * Domain types

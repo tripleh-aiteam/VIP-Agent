@@ -56,6 +56,7 @@ class AgentCommandBody(BaseModel):
     attachment_ids: Optional[list[str]] = Field(None, description="IDs returned from POST /chatbot/upload — included so the assistant can use the file content (image/pdf/text) when answering. When present, the agent auto-routes to Gemini 2.5 Pro multimodal.")
     model: Optional[str] = Field(None, description="Optional override — pin a specific LLM for this request (e.g. 'claude-sonnet-4-6'). Bypasses the smart router. Useful for the in-overlay model picker dropdown.")
     user_id: Optional[str] = Field(None, description="Caller user id (email) used for cross-session memory. Each user gets their own rolling 'assistant_overlay' chat session that recall_history searches. Defaults to 'boss' when unset.")
+    agentId: Optional[str] = Field(None, description="Which agent's knowledge base to consult (vip / realty / asset / ...). Defaults to 'vip'.")
 
 
 @router.post("/agent")
@@ -81,6 +82,7 @@ def agent_command(body: AgentCommandBody, db: Session = Depends(get_db)):
         attachment_ids=body.attachment_ids,
         forced_model=body.model,
         user_id=body.user_id or "boss",
+        agent_id=body.agentId or "vip",
     )
 
 
@@ -119,6 +121,7 @@ def agent_command_stream(body: AgentCommandBody, db: Session = Depends(get_db)):
         attachment_ids=body.attachment_ids,
         forced_model=body.model,
         user_id=body.user_id or "boss",
+        agent_id=body.agentId or "vip",
     )
 
     reply = str(result.get("reply") or "")

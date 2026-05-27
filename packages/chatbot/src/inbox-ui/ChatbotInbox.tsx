@@ -24,6 +24,7 @@ import { ConversationView } from "./ConversationView";
 import { CustomerInfoPanel } from "./CustomerInfoPanel";
 import { DailyReportCard } from "./DailyReportCard";
 import { ModeToggle, autoDetectMode } from "./ModeToggle";
+import { KnowledgeUploader } from "./KnowledgeUploader";
 import {
   getMockConversations,
   mockInboxDailyReport,
@@ -33,6 +34,14 @@ import {
 interface Props {
   agentId: string;
   agentLabel?: string;
+  /**
+   * Orchestrator base URL — used by the Knowledge Uploader to POST to
+   * /assistant/knowledge/upload. When unset the uploader button is hidden
+   * (the host hasn't wired the backend yet).
+   */
+  apiBase?: string;
+  /** Optional uploader id (boss email) recorded with each upload */
+  uploadedBy?: string;
   /**
    * Mock mode — when true (default), uses mock-data.ts internally.
    * Flip to false once the Kakao webhook ingestion is live.
@@ -70,6 +79,8 @@ interface Props {
 export function ChatbotInbox({
   agentId,
   agentLabel,
+  apiBase,
+  uploadedBy,
   mock = true,
   conversations: liveConversations,
   dailyReport: liveDailyReport,
@@ -145,6 +156,10 @@ export function ChatbotInbox({
   const selected = conversations.find((c) => c.id === selectedId) ?? null;
   const displayName = agentLabel ?? agentId;
 
+  // Knowledge Uploader modal — controlled inside the inbox so the host only
+  // has to pass `apiBase` to enable it.
+  const [showKnowledge, setShowKnowledge] = useState(false);
+
   return (
     <div className="space-y-4">
       {/* Page header */}
@@ -157,15 +172,36 @@ export function ChatbotInbox({
             All customer conversations (KakaoTalk + Phone + SMS) — AI handles or you review
           </p>
         </div>
-        <ModeToggle
-          mode={mode}
-          autoDetected={autoDetected}
-          reason={overrideReason}
-          reasonNote={overrideReasonNote}
-          expiresAt={overrideExpiresAt ?? null}
-          onChange={handleModeChange}
-        />
+        <div className="flex items-center gap-2 flex-wrap">
+          {apiBase && (
+            <button
+              type="button"
+              onClick={() => setShowKnowledge(true)}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[12px] font-medium border border-gray-300 text-gray-700 hover:bg-gray-50 active:bg-gray-100"
+              title="Upload files (xlsx, pdf, docx, pptx, csv) the Assistant should learn from"
+            >
+              📚 <span className="hidden sm:inline">Add knowledge</span><span className="sm:hidden">Files</span>
+            </button>
+          )}
+          <ModeToggle
+            mode={mode}
+            autoDetected={autoDetected}
+            reason={overrideReason}
+            reasonNote={overrideReasonNote}
+            expiresAt={overrideExpiresAt ?? null}
+            onChange={handleModeChange}
+          />
+        </div>
       </div>
+
+      {showKnowledge && apiBase && (
+        <KnowledgeUploader
+          apiBase={apiBase}
+          agentId={agentId}
+          uploadedBy={uploadedBy}
+          onClose={() => setShowKnowledge(false)}
+        />
+      )}
 
       {/* Daily report */}
       {dailyReport && <DailyReportCard report={dailyReport} />}

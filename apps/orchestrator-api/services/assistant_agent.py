@@ -45,6 +45,7 @@ def _build_system_prompt(
     current_path: Optional[str] = None,
     selected_id: Optional[str] = None,
     pending_attachments: Optional[list[dict]] = None,
+    kb_context: Optional[list[dict]] = None,
 ) -> str:
     """Compose the system prompt the LLM sees on every request.
 
@@ -92,6 +93,31 @@ def _build_system_prompt(
             lines.append(f"  - attachment_id={a.get('attachment_id')} filename={a.get('filename')} kind={a.get('kind')} mime={a.get('mime_type')}")
         attach_block = "\n" + "\n".join(lines) + "\n"
 
+    # RAG-first retrieval block. When the user's question matches anything in
+    # the agent's uploaded knowledge base (xlsx/pdf/docx/pptx the boss has
+    # ingested), the top hits are injected here. The instruction wording
+    # ('PREFER ... fall back') is what implements the user's requested
+    # "DB-first, LLM-knowledge-fallback" behaviour: the model has the
+    # retrieved facts in front of it and is told to use them before
+    # generalising.
+    kb_block = ""
+    if kb_context:
+        kb_lines = [
+            "■ KNOWLEDGE BASE (verbatim excerpts from the boss's uploaded files — PREFER these facts; only fall back to your own knowledge when nothing here is relevant):",
+        ]
+        for i, c in enumerate(kb_context[:8], start=1):
+            sim = c.get("similarity", 0.0)
+            kb_lines.append(
+                f"  [{i}] file={c.get('filename')} loc={c.get('location')} sim={sim:.2f}\n"
+                f"      {c.get('content', '').strip()[:1800]}"
+            )
+        kb_lines.append(
+            "When you cite a number/name from above, mention which file/sheet it came from "
+            "so the user can verify. If asked a question and NOTHING above is relevant, "
+            "say so briefly and then answer from general knowledge."
+        )
+        kb_block = "\n" + "\n".join(kb_lines) + "\n"
+
     identity = get_agent_identity()
     return (
         f"You are the {identity['name']} — {identity['tagline']}. "
@@ -105,7 +131,7 @@ def _build_system_prompt(
         f"{pages_summary_for_llm()}\n\n"
         "■ EXTERNAL AGENT APPS (for open_portal(agent)):\n"
         f"{agents_summary_for_llm()}\n"
-        f"{context_block}{attach_block}\n"
+        f"{context_block}{attach_block}{kb_block}\n"
         "■ HOW TO RESPOND\n"
         "Always respond with ONE of these JSON shapes — NOTHING ELSE:\n"
         '  A. Call ONE tool:    { "tool": "<name>", "args": { ... } }\n'
@@ -896,6 +922,7 @@ def run_agent(
     attachment_ids: Optional[list[str]] = None,
     forced_model: Optional[str] = None,
     user_id: Optional[str] = None,
+    agent_id: str = "vip",
 ) -> dict[str, Any]:
     """Public entry — wraps the actual implementation with cross-session
     memory persistence (writes each turn to chat_sessions/chat_messages
@@ -906,7 +933,7 @@ def run_agent(
         current_path=current_path, selected_id=selected_id, history=history,
         confirmed_tool=confirmed_tool, confirmed_args=confirmed_args,
         attachment_ids=attachment_ids, forced_model=forced_model,
-        user_id=user_id,
+        user_id=user_id, agent_id=agent_id,
     )
     # Persist meaningful turns only — skip empty / multimodal_failed / errors
     skip_intents = {"empty", "multimodal_failed", "multimodal_missing", "chain_empty"}
@@ -934,6 +961,7 @@ def _run_agent_impl(
     attachment_ids: Optional[list[str]] = None,
     forced_model: Optional[str] = None,
     user_id: Optional[str] = None,
+    agent_id: str = "vip",
 ) -> dict[str, Any]:
     """Run one agent turn. Returns:
         {intent, language, reply, action, speak, transcript, tool_used, tool_result,
@@ -1029,10 +1057,37 @@ def _run_agent_impl(
             "transcript": transcript,
         }
 
+    # === RAG-first retrieval ===
+    # Vector-search the agent's uploaded knowledge base BEFORE the LLM
+    # decision. Top matches are injected into the system prompt as verbatim
+    # excerpts with file/sheet citations. When nothing scores above the
+    # similarity floor (rag_retrieve returns []), the prompt has no kb_block
+    # and the LLM falls back to its own knowledge — exactly the behaviour
+    # the user requested ("first search inside our DB locally, then answer
+    # based on his knowledge").
+    kb_hits: list[dict] = []
+    try:
+        from services.knowledge_ingest import rag_retrieve
+        kb_hits = rag_retrieve(
+            db,
+            agent_id=agent_id,
+            query=transcript,
+            top_k=8,
+            min_sim=0.35,
+        )
+        if kb_hits:
+            log.info(
+                "rag: %d hits for agent=%s query=%r (top sim=%.2f)",
+                len(kb_hits), agent_id, transcript[:60], kb_hits[0]["similarity"],
+            )
+    except Exception as e:
+        log.warning("rag retrieval failed (continuing without KB): %s", e)
+
     system = _build_system_prompt(
         current_path=current_path,
         selected_id=selected_id,
         pending_attachments=_pending_attachments if attachment_ids else None,
+        kb_context=kb_hits,
     )
 
     # Auto-fill ID args from selected_id when the LLM picks a tool that

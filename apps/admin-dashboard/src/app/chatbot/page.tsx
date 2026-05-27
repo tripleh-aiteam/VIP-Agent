@@ -43,6 +43,7 @@ export default function ChatbotPage() {
     <ChatbotInbox
       agentId={vipConfig.agentId}
       agentLabel="VIP"
+      apiBase={vipConfig.apiBase}
       mock
       onSendReply={(conv, payload) => {
         console.log("Reply sent (mock):", conv.id, payload);
@@ -148,6 +149,7 @@ function LiveChatbotInbox() {
     <ChatbotInbox
       agentId={config.agentId}
       agentLabel="VIP"
+      apiBase={config.apiBase}
       mock={false}
       conversations={conversations}
       dailyReport={dailyReport}
