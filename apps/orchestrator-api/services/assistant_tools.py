@@ -2592,6 +2592,117 @@ TOOL_REGISTRY["search_knowledge_base"] = Tool(
 )
 
 
+# Knowledge-file management — list / delete uploads via natural language.
+# "What files do I have in my knowledge?" / "Show me my uploads"
+# "Delete the asset-management spreadsheet" → matches by filename substring
+
+def tool_list_knowledge_files(agent_id: str = "vip", db: Session = None, **_kw) -> dict[str, Any]:
+    """List all files currently indexed in the agent's knowledge base."""
+    if not db:
+        return {"ok": False, "error": "DB session required"}
+    try:
+        from services.knowledge_ingest import list_files
+        files = list_files(db, agent_id=agent_id)
+        compact = [
+            {
+                "filename":    f["filename"],
+                "chunk_count": f["chunk_count"],
+                "status":      f["status"],
+                "size_bytes":  f["size_bytes"],
+                "uploaded_at": f["uploaded_at"],
+                "uploaded_by": f["uploaded_by"],
+            } for f in files
+        ]
+        return {"ok": True, "count": len(compact), "files": compact}
+    except Exception as e:
+        return {"ok": False, "error": str(e)[:200]}
+
+
+TOOL_REGISTRY["list_knowledge_files"] = Tool(
+    name="list_knowledge_files", kind="read",
+    description=(
+        "List every file the boss has uploaded into the knowledge base "
+        "(xlsx, pdf, docx, pptx, csv). Returns filename, status, chunk count "
+        "and upload date. Use when the user asks 'what's in my knowledge?', "
+        "'show me my uploads', 'which documents have I added?', etc."
+    ),
+    parameters={"type": "object", "properties": {}, "required": []},
+    fn=tool_list_knowledge_files,
+)
+
+
+def tool_delete_knowledge_file(
+    filename: str,
+    agent_id: str = "vip",
+    db: Session = None,
+    **_kw,
+) -> dict[str, Any]:
+    """Delete an uploaded file (and its chunks) from the knowledge base.
+    Matches by filename substring — if multiple files match, refuses and
+    asks the user to be more specific."""
+    if not db:
+        return {"ok": False, "error": "DB session required"}
+    if not (filename or "").strip():
+        return {"ok": False, "error": "filename is required"}
+    try:
+        from services.knowledge_ingest import list_files, delete_file
+        files = list_files(db, agent_id=agent_id)
+        needle = filename.strip().lower()
+        matches = [f for f in files if needle in f["filename"].lower()]
+        if not matches:
+            return {
+                "ok": False,
+                "error": f"No file matching {filename!r} found.",
+                "available": [f["filename"] for f in files],
+            }
+        if len(matches) > 1:
+            return {
+                "ok": False,
+                "error": (
+                    f"Multiple files match {filename!r} — please be more "
+                    f"specific."
+                ),
+                "matches": [f["filename"] for f in matches],
+            }
+        target = matches[0]
+        n = delete_file(db, agent_id=agent_id, file_id=target["id"])
+        if n == 0:
+            return {"ok": False, "error": "delete returned 0 rows"}
+        return {
+            "ok": True,
+            "deleted": target["filename"],
+            "chunks_removed": target["chunk_count"],
+            "message": f"Removed {target['filename']!r} ({target['chunk_count']} chunks) from the knowledge base.",
+        }
+    except Exception as e:
+        return {"ok": False, "error": str(e)[:200]}
+
+
+TOOL_REGISTRY["delete_knowledge_file"] = Tool(
+    name="delete_knowledge_file", kind="write",
+    description=(
+        "Remove a file from the agent's knowledge base. The boss can refer "
+        "to the file by full name OR a unique substring (e.g. 'delete the "
+        "asset management spreadsheet' → matches '자산관리_ver.1_260206 (2).xlsx'). "
+        "If the substring is ambiguous (multiple files match), refuses and "
+        "lists the candidates. Requires confirmation because the chunks are "
+        "deleted permanently."
+    ),
+    parameters={
+        "type": "object",
+        "properties": {
+            "filename": {
+                "type": "string",
+                "description": "Filename or substring of the filename to delete",
+            },
+        },
+        "required": ["filename"],
+    },
+    fn=tool_delete_knowledge_file,
+    requires_confirmation=True,
+)
+
+
 def list_tool_schemas() -> list[dict]:
     """Return all tool schemas for the LLM."""
     return [t.schema() for t in TOOL_REGISTRY.values()]
