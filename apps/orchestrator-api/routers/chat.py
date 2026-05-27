@@ -61,6 +61,28 @@ class AgentCommandBody(BaseModel):
 
 @router.post("/agent")
 def agent_command(body: AgentCommandBody, db: Session = Depends(get_db)):
+    # Wrap the implementation so unhandled exceptions surface to the
+    # browser as JSON errors (not the opaque 'Internal Server Error') —
+    # makes the network tab actually useful when something explodes.
+    try:
+        return _agent_command_impl(body, db)
+    except Exception as e:
+        import traceback as _tb
+        from fastapi.responses import JSONResponse as _JSON
+        tb = _tb.format_exc()[-1500:]
+        return _JSON(
+            status_code=500,
+            content={
+                "intent": "error",
+                "language": body.language or "en",
+                "reply": f"[server error] {e.__class__.__name__}: {str(e)[:200]}",
+                "error": str(e)[:400],
+                "traceback": tb,
+            },
+        )
+
+
+def _agent_command_impl(body: AgentCommandBody, db: Session):
     """LLM-driven assistant with full tool catalog. Replaces keyword routing.
 
     Two modes:
