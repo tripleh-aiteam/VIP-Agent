@@ -148,8 +148,51 @@ export function AssistantCard({ floating = true }: Props = {}) {
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [thinking, setThinking] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [showModelPicker, setShowModelPicker] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  // --- Clipboard paste handler ---
+  // When the user pastes an image or text into the composer, capture it.
+  // Images become attachments; text is appended to the input.
+  useEffect(() => {
+    const el = inputRef.current;
+    if (!el) return;
+    const onPaste = (e: ClipboardEvent) => {
+      const items = e.clipboardData?.items;
+      if (!items) return;
+      let handledImage = false;
+      for (let i = 0; i < items.length; i++) {
+        const item = items[i];
+        if (item.type.startsWith("image/")) {
+          const blob = item.getAsFile();
+          if (blob) {
+            const fileName = `pasted-${Date.now()}.${item.type.split("/")[1] || "png"}`;
+            const file = new File([blob], fileName, { type: item.type });
+            addFiles([file]);
+            handledImage = true;
+          }
+        }
+      }
+      if (handledImage) e.preventDefault();
+      // Plain text falls through to the input naturally
+    };
+    el.addEventListener("paste", onPaste);
+    return () => el.removeEventListener("paste", onPaste);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Close model picker popover when clicking outside
+  useEffect(() => {
+    if (!showModelPicker) return;
+    const onDoc = (e: MouseEvent) => {
+      const tgt = e.target as HTMLElement;
+      if (!tgt.closest("[data-llm-picker]")) setShowModelPicker(false);
+    };
+    document.addEventListener("mousedown", onDoc);
+    return () => document.removeEventListener("mousedown", onDoc);
+  }, [showModelPicker]);
 
   useEffect(() => {
     if (scrollRef.current) {
@@ -293,9 +336,18 @@ export function AssistantCard({ floating = true }: Props = {}) {
   // SILENCE_MS, auto-stops the recorder so the boss doesn't have to wait
   // for a fixed timeout. This is what makes "pause a little bit and the
   // assistant talks" feel natural.
-  const SILENCE_THRESHOLD = 0.02;   // RMS amplitude
-  const SILENCE_MS = 1500;          // 1.5s of quiet → stop
-  const HARD_MAX_MS = 15000;        // ceiling so a bad analyzer never hangs
+  // Silence-detection thresholds. Tuned for natural conversation:
+  // - Lower threshold catches very soft speech (whispers / quiet rooms).
+  // - 2.0s wait gives the speaker time to think mid-sentence without the
+  //   recorder cutting them off (1.5s was too aggressive in tests).
+  // - 30s hard ceiling lets longer thoughts finish; Whisper handles it.
+  const SILENCE_THRESHOLD = 0.015;
+  const SILENCE_MS = 2000;
+  const HARD_MAX_MS = 30000;
+  // Minimum speech before VAD allows a silence-stop — otherwise the
+  // recorder stops the instant the user takes a breath BEFORE saying
+  // anything (initial ambient quiet).
+  const MIN_SPEECH_MS = 600;
 
   function cleanupVad() {
     if (vadRafRef.current) { cancelAnimationFrame(vadRafRef.current); vadRafRef.current = null; }
@@ -316,24 +368,30 @@ export function AssistantCard({ floating = true }: Props = {}) {
       audioCtxRef.current = ctx;
       analyserRef.current = analyser;
       const buf = new Uint8Array(analyser.fftSize);
+      const startedAt = performance.now();
+      let everSpoke = false;
       const tick = () => {
         if (!analyserRef.current) return;
         analyserRef.current.getByteTimeDomainData(buf);
-        // RMS amplitude (0..1)
         let sum = 0;
         for (let i = 0; i < buf.length; i++) {
           const v = (buf[i] - 128) / 128;
           sum += v * v;
         }
         const rms = Math.sqrt(sum / buf.length);
-        if (rms < SILENCE_THRESHOLD) {
-          if (silenceStartRef.current == null) silenceStartRef.current = performance.now();
-          else if (performance.now() - silenceStartRef.current > SILENCE_MS) {
-            onSilence();
-            return; // stop the loop
-          }
-        } else {
+        const now = performance.now();
+        const elapsed = now - startedAt;
+        if (rms >= SILENCE_THRESHOLD) {
+          everSpoke = true;
           silenceStartRef.current = null;
+        } else if (everSpoke && elapsed > MIN_SPEECH_MS) {
+          // Only count silence AFTER we've heard at least some speech.
+          // Prevents stopping during the user's initial breath / silence.
+          if (silenceStartRef.current == null) silenceStartRef.current = now;
+          else if (now - silenceStartRef.current > SILENCE_MS) {
+            onSilence();
+            return;
+          }
         }
         vadRafRef.current = requestAnimationFrame(tick);
       };
@@ -641,9 +699,10 @@ export function AssistantCard({ floating = true }: Props = {}) {
 
       {error && <div className="text-[11px] text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-1.5">{error}</div>}
 
-      {/* Composer — ChatGPT-style horizontal pill */}
+      {/* Composer — ChatGPT-style horizontal pill. gap-1 on mobile so all
+          buttons + input fit without squeezing. */}
       <div
-        className="flex items-center gap-1.5 rounded-full border border-gray-300 bg-white px-2 py-1.5 hover:border-gray-400 focus-within:border-blue-400"
+        className="flex items-center gap-0.5 sm:gap-1.5 rounded-full border border-gray-300 bg-white px-1.5 sm:px-2 py-1.5 hover:border-gray-400 focus-within:border-blue-400"
         onDragOver={e => { e.preventDefault(); }}
         onDrop={e => {
           e.preventDefault();
@@ -656,6 +715,7 @@ export function AssistantCard({ floating = true }: Props = {}) {
           ref={fileInputRef}
           type="file"
           multiple
+          accept="image/*,.pdf,.xlsx,.xls,.docx,.doc,.pptx,.ppt,.csv,.txt,.md,.json"
           className="hidden"
           onChange={e => {
             const arr = Array.from(e.target.files || []);
@@ -667,11 +727,12 @@ export function AssistantCard({ floating = true }: Props = {}) {
           type="button"
           onClick={() => fileInputRef.current?.click()}
           className="w-9 h-9 rounded-full hover:bg-gray-100 flex items-center justify-center text-[20px] text-gray-600 shrink-0"
-          title="Attach any file (image / pdf / xlsx / docx / pptx …)"
+          title="Attach any file (image / pdf / xlsx / docx / pptx …) — drag-drop and paste also work"
         >+</button>
 
         {/* Text input */}
         <input
+          ref={inputRef}
           type="text"
           value={prompt}
           onChange={e => setPrompt(e.target.value)}
@@ -681,25 +742,54 @@ export function AssistantCard({ floating = true }: Props = {}) {
           disabled={thinking}
         />
 
-        {/* LLM picker */}
-        <select
-          value={model}
-          onChange={e => setModel(e.target.value)}
-          className="h-9 max-w-[150px] rounded-full bg-gray-100 hover:bg-gray-200 border-none px-3 text-[11px] font-medium text-gray-700 cursor-pointer focus:outline-none shrink-0"
-          title={model ? `Pinned to ${model}` : "Auto = smart router picks the best model per query"}
-        >
-          <option value="">LLM: Auto</option>
-          {available.length === 0 && <option value="" disabled>(loading…)</option>}
-          {["anthropic", "gemini", "openai", "groq", "ollama"].map(prov => {
-            const opts = available.filter(m => m.provider === prov);
-            if (opts.length === 0) return null;
-            return (
-              <optgroup key={prov} label={prov.charAt(0).toUpperCase() + prov.slice(1)}>
-                {opts.map(m => (<option key={m.id} value={m.id}>LLM: {m.id}</option>))}
-              </optgroup>
-            );
-          })}
-        </select>
+        {/* LLM picker — compact icon button + popover. Old <select> was
+            too wide and squeezed the input on phones / mid-width screens. */}
+        <div className="relative shrink-0" data-llm-picker>
+          <button
+            type="button"
+            onClick={() => setShowModelPicker(v => !v)}
+            className="h-9 px-2.5 rounded-full bg-gray-100 hover:bg-gray-200 border-none text-[11px] font-medium text-gray-700 flex items-center gap-1 max-w-[100px]"
+            title={model ? `Pinned to ${model}` : "Auto = smart router picks the best model per query"}
+          >
+            <span>🧠</span>
+            <span className="hidden md:inline truncate max-w-[60px]">{model ? model.split("-")[0] : "Auto"}</span>
+          </button>
+          {showModelPicker && (
+            <div className="absolute bottom-full right-0 mb-2 min-w-[220px] max-h-[320px] overflow-y-auto rounded-xl border border-gray-200 bg-white shadow-xl text-[12px] py-1 z-[110]">
+              <button
+                type="button"
+                onClick={() => { setModel(""); setShowModelPicker(false); }}
+                className={`w-full text-left px-3 py-1.5 hover:bg-gray-50 ${!model ? "bg-blue-50 text-blue-700 font-medium" : "text-gray-700"}`}
+              >
+                Auto <span className="text-gray-400">(smart router)</span>
+              </button>
+              {available.length === 0 && (
+                <div className="px-3 py-1.5 text-gray-400">(loading…)</div>
+              )}
+              {["anthropic", "gemini", "openai", "groq", "ollama"].map(prov => {
+                const opts = available.filter(m => m.provider === prov);
+                if (opts.length === 0) return null;
+                return (
+                  <div key={prov} className="border-t border-gray-100 mt-1 pt-1">
+                    <div className="px-3 py-1 text-[10px] font-semibold uppercase tracking-wide text-gray-400">
+                      {prov.charAt(0).toUpperCase() + prov.slice(1)}
+                    </div>
+                    {opts.map(m => (
+                      <button
+                        key={m.id}
+                        type="button"
+                        onClick={() => { setModel(m.id); setShowModelPicker(false); }}
+                        className={`w-full text-left px-3 py-1.5 hover:bg-gray-50 ${model === m.id ? "bg-blue-50 text-blue-700 font-medium" : "text-gray-700"}`}
+                      >
+                        {m.id}
+                      </button>
+                    ))}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
 
         {/* 🎤 mic — single voice message */}
         {voiceState === "listening" ? (
@@ -783,7 +873,7 @@ export function AssistantCard({ floating = true }: Props = {}) {
 
       {/* The card */}
       {floating ? (
-        <div className="fixed z-[100] left-1/2 -translate-x-1/2 bottom-4 w-[min(94vw,820px)]">
+        <div className="fixed z-[100] left-1/2 -translate-x-1/2 bottom-2 sm:bottom-4 w-[min(96vw,820px)]">
           {card}
         </div>
       ) : (

@@ -51,7 +51,31 @@ SUPPORTED_CLIENT_RANGE = "1.x"
 ATTACH_DIR_NAME = "uploads/chatbot"
 ATTACH_TTL_HOURS = 24  # uploads older than this are cleaned up on next write
 MAX_UPLOAD_BYTES = 20 * 1024 * 1024  # 20 MB per file
-ALLOWED_MIME_PREFIXES = ("image/", "application/pdf", "text/", "audio/", "video/")
+# Accept Office docs (xlsx/docx/pptx/csv) in addition to the original
+# whitelist. Anything else returns 415.
+ALLOWED_MIME_PREFIXES = (
+    "image/",
+    "application/pdf",
+    "text/",
+    "audio/",
+    "video/",
+    # MS Office Open-XML
+    "application/vnd.openxmlformats-officedocument.",
+    # Legacy Office (.doc / .xls / .ppt)
+    "application/msword",
+    "application/vnd.ms-excel",
+    "application/vnd.ms-powerpoint",
+    # OpenDocument
+    "application/vnd.oasis.opendocument.",
+    # CSV (some browsers send this instead of text/csv)
+    "application/csv",
+    # JSON
+    "application/json",
+    # Catch-all for browsers that send 'application/octet-stream' for
+    # unknown types — let the file through; downstream parsers will
+    # complain if it's truly unreadable.
+    "application/octet-stream",
+)
 
 
 def _attach_dir() -> str:
