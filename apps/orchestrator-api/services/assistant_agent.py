@@ -201,24 +201,17 @@ def _build_system_prompt(
 # ============================================================================
 
 def _pick_model_for_query(user_msg: str, history: list[dict]) -> str:
-    """Decide which LLM gets the decision call.
+    """Smart router — picks an LLM tier based on query complexity:
 
-    Two-tier Gemini router:
+      • Easy + Normal → groq-llama-3.3-70b  (free, fast, no quota worry)
+      • Hard          → claude-sonnet-4-6   (paid Anthropic; cascades to
+                                             Groq automatically when the
+                                             paid key has no credit)
 
-      • Fast tier (default)  → Gemini 2.5 Flash — sub-2s latency, free tier,
-        plenty smart for the 90% case (single-tool routing, short Qs).
-      • Deep tier            → Gemini 2.5 Pro — same provider, smarter
-        reasoning. Promoted when the query smells "hard":
-            - long prompts (>200 chars) — typically multi-clause requests
-            - explicit conjunctions ("and then", "after that", "also")
-            - lots of conversation history (>6 prior turns)
-            - explicit "remember / summarize / explain / why" verbs
+    'Hard' is detected by the same signals as before (long prompts,
+    compound requests, reasoning verbs, deep conversation history).
 
-    Same provider for both tiers keeps the operational surface minimal —
-    one API key, one rate-limit bucket, no extra accounts.
-
-    Override available via env var `ASSISTANT_FORCE_MODEL` (escape hatch
-    for debugging and load-balancing across providers).
+    Override via env var `ASSISTANT_FORCE_MODEL`.
     """
     forced_env = os.getenv("ASSISTANT_FORCE_MODEL", "").strip()
     if forced_env:
@@ -249,8 +242,12 @@ def _pick_model_for_query(user_msg: str, history: list[dict]) -> str:
     deep_history = len(history or []) > 6
 
     if long_query or is_compound or is_reasoning or deep_history:
+        # Hard → paid model. llm_client cascade falls back to Groq when
+        # the Anthropic key has no credit, so this never bricks.
         return "claude-sonnet-4-6"
-    return "claude-haiku-4-5"
+    # Easy / Normal → free Groq Llama 3.3 70B (fast, no quota worry,
+    # excellent for tool-routing + RAG answers from the KB).
+    return "groq-llama-3.3-70b"
 
 
 def _call_llm_for_decision(

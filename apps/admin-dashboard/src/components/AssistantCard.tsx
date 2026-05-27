@@ -297,25 +297,6 @@ export function AssistantCard({ floating = true }: Props = {}) {
     const finish = () => {
       setVoiceState("idle");
       onDone?.();
-      if (continuousVoiceRef.current) {
-        // Re-open the mic right after the reply finishes so the boss can
-        // respond naturally.
-        setTimeout(() => { if (continuousVoiceRef.current) startListening(); }, 250);
-        // Idle-followup: if the boss stays silent for ~6s after the
-        // assistant finishes speaking (i.e. listening but no audio over
-        // VAD threshold), generate a gentle follow-up question instead
-        // of just waiting. This is what makes companion mode feel alive
-        // for lonely conversations.
-        if (idleFollowupTimerRef.current) clearTimeout(idleFollowupTimerRef.current);
-        idleFollowupTimerRef.current = window.setTimeout(() => {
-          // Only fire if still in voice mode AND still listening (mic
-          // didn't pick up speech — silence-detected stop would have
-          // cleared voiceState by then)
-          if (continuousVoiceRef.current && (voiceState === "listening" || voiceState === "idle")) {
-            void ask("[silence] The user has not responded for a while. Gently ask a friendly, open-ended follow-up question to keep the conversation going — relate to what was just discussed or ask how they're doing. Keep it short (1 sentence) and warm.");
-          }
-        }, 6000);
-      }
     };
     u.onend = finish;
     u.onerror = finish;
@@ -572,9 +553,18 @@ export function AssistantCard({ floating = true }: Props = {}) {
         pendingAction,
       }]);
       if (!pendingAction && data.action) executeAction(data.action);
-      // In continuous voice mode, speak the reply (which will restart mic via the speak() finish hook)
-      if (continuousVoiceRef.current && data.reply) {
-        speak(data.reply);
+      // Auto-TTS is OFF by design — replies are text-only. In continuous
+      // voice mode we still want the mic to re-open after a reply lands,
+      // so schedule that directly (no speak() round-trip). Followup-silence
+      // timer is the same one we used to wire to speak()'s finish hook.
+      if (continuousVoiceRef.current) {
+        setTimeout(() => { if (continuousVoiceRef.current) startListening(); }, 800);
+        if (idleFollowupTimerRef.current) clearTimeout(idleFollowupTimerRef.current);
+        idleFollowupTimerRef.current = window.setTimeout(() => {
+          if (continuousVoiceRef.current && (voiceState === "listening" || voiceState === "idle")) {
+            void ask("[silence] The user has not responded for a while. Gently ask a friendly, open-ended follow-up question to keep the conversation going — relate to what was just discussed or ask how they're doing. Keep it short (1 sentence) and warm.");
+          }
+        }, 6000);
       }
     } catch (e) {
       setError(`Failed: ${(e as Error).message || e}`);
@@ -699,10 +689,12 @@ export function AssistantCard({ floating = true }: Props = {}) {
 
       {error && <div className="text-[11px] text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-1.5">{error}</div>}
 
-      {/* Composer — ChatGPT-style horizontal pill. gap-1 on mobile so all
-          buttons + input fit without squeezing. */}
+      {/* Composer — ChatGPT-style horizontal pill, taller (h-14) so the
+          input feels comfortable to type in. gap-1 on mobile so all
+          buttons fit without squeezing. Drag-and-drop on the whole pill
+          accepts any file type. */}
       <div
-        className="flex items-center gap-0.5 sm:gap-1.5 rounded-full border border-gray-300 bg-white px-1.5 sm:px-2 py-1.5 hover:border-gray-400 focus-within:border-blue-400"
+        className="flex items-center gap-1 sm:gap-2 rounded-full border border-gray-300 bg-white px-2 sm:px-3 py-2 hover:border-gray-400 focus-within:border-blue-400"
         onDragOver={e => { e.preventDefault(); }}
         onDrop={e => {
           e.preventDefault();
@@ -726,8 +718,8 @@ export function AssistantCard({ floating = true }: Props = {}) {
         <button
           type="button"
           onClick={() => fileInputRef.current?.click()}
-          className="w-9 h-9 rounded-full hover:bg-gray-100 flex items-center justify-center text-[20px] text-gray-600 shrink-0"
-          title="Attach any file (image / pdf / xlsx / docx / pptx …) — drag-drop and paste also work"
+          className="w-11 h-11 rounded-full hover:bg-gray-100 flex items-center justify-center text-[22px] text-gray-600 shrink-0"
+          title="Attach any file (image / pdf / xlsx / docx / pptx / hwp / audio …) — drag-drop and paste also work"
         >+</button>
 
         {/* Text input */}
@@ -738,40 +730,44 @@ export function AssistantCard({ floating = true }: Props = {}) {
           onChange={e => setPrompt(e.target.value)}
           onKeyDown={e => { if (e.key === "Enter") ask(prompt); }}
           placeholder={attachments.length > 0 ? `Ask about your ${attachments.length} file(s)…` : "Ask anything …"}
-          className="flex-1 bg-transparent border-none outline-none px-1 text-[14px] min-w-0"
+          className="flex-1 bg-transparent border-none outline-none px-2 text-[15px] min-w-0"
           disabled={thinking}
         />
 
-        {/* LLM picker — compact icon button + popover. Old <select> was
-            too wide and squeezed the input on phones / mid-width screens. */}
+        {/* LLM picker — button label is just 'LLM'. Popover shows the
+            current selection at the top (Auto by default), then each
+            provider's models without redundant 'LLM:' prefix. */}
         <div className="relative shrink-0" data-llm-picker>
           <button
             type="button"
             onClick={() => setShowModelPicker(v => !v)}
-            className="h-9 px-2.5 rounded-full bg-gray-100 hover:bg-gray-200 border-none text-[11px] font-medium text-gray-700 flex items-center gap-1 max-w-[100px]"
-            title={model ? `Pinned to ${model}` : "Auto = smart router picks the best model per query"}
+            className="h-11 px-4 rounded-full bg-gray-100 hover:bg-gray-200 border-none text-[12px] font-medium text-gray-700 flex items-center gap-1.5"
+            title={model || "Auto (Smart router)"}
           >
             <span>🧠</span>
-            <span className="hidden md:inline truncate max-w-[60px]">{model ? model.split("-")[0] : "Auto"}</span>
+            <span>LLM</span>
           </button>
           {showModelPicker && (
-            <div className="absolute bottom-full right-0 mb-2 min-w-[220px] max-h-[320px] overflow-y-auto rounded-xl border border-gray-200 bg-white shadow-xl text-[12px] py-1 z-[110]">
+            <div className="absolute bottom-full right-0 mb-2 min-w-[260px] max-h-[360px] overflow-y-auto rounded-xl border border-gray-200 bg-white shadow-xl text-[13px] py-1.5 z-[110]">
               <button
                 type="button"
                 onClick={() => { setModel(""); setShowModelPicker(false); }}
-                className={`w-full text-left px-3 py-1.5 hover:bg-gray-50 ${!model ? "bg-blue-50 text-blue-700 font-medium" : "text-gray-700"}`}
+                className={`w-full text-left px-4 py-2 hover:bg-gray-50 ${!model ? "bg-blue-50 text-blue-700 font-medium" : "text-gray-700"}`}
               >
-                Auto <span className="text-gray-400">(smart router)</span>
+                <div className="font-medium">Auto (Smart router)</div>
+                <div className="text-[10px] opacity-70 mt-0.5">
+                  easy → DB only · normal → free LLM · hard → paid LLM
+                </div>
               </button>
               {available.length === 0 && (
-                <div className="px-3 py-1.5 text-gray-400">(loading…)</div>
+                <div className="px-4 py-1.5 text-gray-400">(loading…)</div>
               )}
               {["anthropic", "gemini", "openai", "groq", "ollama"].map(prov => {
                 const opts = available.filter(m => m.provider === prov);
                 if (opts.length === 0) return null;
                 return (
                   <div key={prov} className="border-t border-gray-100 mt-1 pt-1">
-                    <div className="px-3 py-1 text-[10px] font-semibold uppercase tracking-wide text-gray-400">
+                    <div className="px-4 py-1 text-[10px] font-semibold uppercase tracking-wide text-gray-400">
                       {prov.charAt(0).toUpperCase() + prov.slice(1)}
                     </div>
                     {opts.map(m => (
@@ -779,7 +775,7 @@ export function AssistantCard({ floating = true }: Props = {}) {
                         key={m.id}
                         type="button"
                         onClick={() => { setModel(m.id); setShowModelPicker(false); }}
-                        className={`w-full text-left px-3 py-1.5 hover:bg-gray-50 ${model === m.id ? "bg-blue-50 text-blue-700 font-medium" : "text-gray-700"}`}
+                        className={`w-full text-left px-4 py-1.5 hover:bg-gray-50 ${model === m.id ? "bg-blue-50 text-blue-700 font-medium" : "text-gray-700"}`}
                       >
                         {m.id}
                       </button>
@@ -796,7 +792,7 @@ export function AssistantCard({ floating = true }: Props = {}) {
           <button
             type="button"
             onClick={stopListening}
-            className="w-9 h-9 rounded-full bg-red-500 hover:bg-red-600 flex items-center justify-center text-white shrink-0"
+            className="w-11 h-11 rounded-full bg-red-500 hover:bg-red-600 flex items-center justify-center text-white shrink-0"
             title="Stop listening"
           ><span className="w-2.5 h-2.5 bg-white rounded-full animate-pulse" /></button>
         ) : (
@@ -804,7 +800,7 @@ export function AssistantCard({ floating = true }: Props = {}) {
             type="button"
             onClick={startListening}
             disabled={thinking}
-            className="w-9 h-9 rounded-full hover:bg-gray-100 flex items-center justify-center text-[16px] text-gray-600 disabled:opacity-50 shrink-0"
+            className="w-11 h-11 rounded-full hover:bg-gray-100 flex items-center justify-center text-[16px] text-gray-600 disabled:opacity-50 shrink-0"
             title="Tap to talk"
             aria-label="Microphone"
           >🎤</button>
@@ -817,7 +813,7 @@ export function AssistantCard({ floating = true }: Props = {}) {
             setContinuousVoice(true);
             if (voiceState !== "listening") startListening();
           }}
-          className="w-9 h-9 rounded-full bg-gray-900 hover:bg-black flex items-center justify-center text-white shrink-0"
+          className="w-11 h-11 rounded-full bg-gray-900 hover:bg-black flex items-center justify-center text-white shrink-0"
           title="Continuous voice mode"
         >
           <span className="flex items-end gap-[1.5px]">
@@ -834,7 +830,7 @@ export function AssistantCard({ floating = true }: Props = {}) {
             type="button"
             onClick={() => ask(prompt)}
             disabled={thinking}
-            className="w-9 h-9 rounded-full bg-blue-600 hover:bg-blue-700 text-white flex items-center justify-center text-[16px] disabled:opacity-50 shrink-0"
+            className="w-11 h-11 rounded-full bg-blue-600 hover:bg-blue-700 text-white flex items-center justify-center text-[16px] disabled:opacity-50 shrink-0"
             title="Send"
           >↑</button>
         )}
