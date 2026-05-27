@@ -166,6 +166,12 @@ export function AssistantCard({ floating = true }: Props = {}) {
   const mediaRef = useRef<MediaRecorder | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const stopTimerRef = useRef<number | null>(null);
+  // For Voice Activity Detection (silence stop)
+  const audioCtxRef = useRef<AudioContext | null>(null);
+  const analyserRef = useRef<AnalyserNode | null>(null);
+  const vadRafRef = useRef<number | null>(null);
+  const silenceStartRef = useRef<number | null>(null);
+  const idleFollowupTimerRef = useRef<number | null>(null);
 
   // ---------------------------------------------------------------
   //  Attachments
@@ -249,7 +255,23 @@ export function AssistantCard({ floating = true }: Props = {}) {
       setVoiceState("idle");
       onDone?.();
       if (continuousVoiceRef.current) {
+        // Re-open the mic right after the reply finishes so the boss can
+        // respond naturally.
         setTimeout(() => { if (continuousVoiceRef.current) startListening(); }, 250);
+        // Idle-followup: if the boss stays silent for ~6s after the
+        // assistant finishes speaking (i.e. listening but no audio over
+        // VAD threshold), generate a gentle follow-up question instead
+        // of just waiting. This is what makes companion mode feel alive
+        // for lonely conversations.
+        if (idleFollowupTimerRef.current) clearTimeout(idleFollowupTimerRef.current);
+        idleFollowupTimerRef.current = window.setTimeout(() => {
+          // Only fire if still in voice mode AND still listening (mic
+          // didn't pick up speech — silence-detected stop would have
+          // cleared voiceState by then)
+          if (continuousVoiceRef.current && (voiceState === "listening" || voiceState === "idle")) {
+            void ask("[silence] The user has not responded for a while. Gently ask a friendly, open-ended follow-up question to keep the conversation going — relate to what was just discussed or ask how they're doing. Keep it short (1 sentence) and warm.");
+          }
+        }, 6000);
       }
     };
     u.onend = finish;
@@ -266,7 +288,67 @@ export function AssistantCard({ floating = true }: Props = {}) {
   //  Voice capture
   // ---------------------------------------------------------------
 
+  // --- Voice Activity Detection ---
+  // Watches mic volume in a rAF loop; when level stays below threshold for
+  // SILENCE_MS, auto-stops the recorder so the boss doesn't have to wait
+  // for a fixed timeout. This is what makes "pause a little bit and the
+  // assistant talks" feel natural.
+  const SILENCE_THRESHOLD = 0.02;   // RMS amplitude
+  const SILENCE_MS = 1500;          // 1.5s of quiet → stop
+  const HARD_MAX_MS = 15000;        // ceiling so a bad analyzer never hangs
+
+  function cleanupVad() {
+    if (vadRafRef.current) { cancelAnimationFrame(vadRafRef.current); vadRafRef.current = null; }
+    try { audioCtxRef.current?.close(); } catch {}
+    audioCtxRef.current = null;
+    analyserRef.current = null;
+    silenceStartRef.current = null;
+  }
+
+  function startVad(stream: MediaStream, onSilence: () => void) {
+    try {
+      const Ctx = (window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext);
+      const ctx = new Ctx();
+      const source = ctx.createMediaStreamSource(stream);
+      const analyser = ctx.createAnalyser();
+      analyser.fftSize = 1024;
+      source.connect(analyser);
+      audioCtxRef.current = ctx;
+      analyserRef.current = analyser;
+      const buf = new Uint8Array(analyser.fftSize);
+      const tick = () => {
+        if (!analyserRef.current) return;
+        analyserRef.current.getByteTimeDomainData(buf);
+        // RMS amplitude (0..1)
+        let sum = 0;
+        for (let i = 0; i < buf.length; i++) {
+          const v = (buf[i] - 128) / 128;
+          sum += v * v;
+        }
+        const rms = Math.sqrt(sum / buf.length);
+        if (rms < SILENCE_THRESHOLD) {
+          if (silenceStartRef.current == null) silenceStartRef.current = performance.now();
+          else if (performance.now() - silenceStartRef.current > SILENCE_MS) {
+            onSilence();
+            return; // stop the loop
+          }
+        } else {
+          silenceStartRef.current = null;
+        }
+        vadRafRef.current = requestAnimationFrame(tick);
+      };
+      vadRafRef.current = requestAnimationFrame(tick);
+    } catch (e) {
+      console.warn("VAD setup failed:", e);
+    }
+  }
+
   async function startListening() {
+    // Cancel any pending idle-followup the moment the user starts talking
+    if (idleFollowupTimerRef.current) {
+      clearTimeout(idleFollowupTimerRef.current);
+      idleFollowupTimerRef.current = null;
+    }
     setError(null);
     if (!navigator.mediaDevices || !window.MediaRecorder) {
       setError("Voice recording not supported in this browser.");
@@ -275,7 +357,7 @@ export function AssistantCard({ floating = true }: Props = {}) {
     let stream: MediaStream;
     try {
       stream = await navigator.mediaDevices.getUserMedia({
-        audio: { echoCancellation: true, noiseSuppression: false, autoGainControl: true },
+        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
       });
     } catch {
       setError("Microphone access denied.");
@@ -292,11 +374,20 @@ export function AssistantCard({ floating = true }: Props = {}) {
       try { stream.getTracks().forEach(t => t.stop()); } catch {}
       streamRef.current = null;
       mediaRef.current = null;
+      cleanupVad();
       if (stopTimerRef.current) { clearTimeout(stopTimerRef.current); stopTimerRef.current = null; }
       const blob = new Blob(chunks, { type: mime || "audio/webm" });
       if (blob.size < 1000) {
-        setError("Audio too short.");
-        setVoiceState("idle");
+        // Either too short, or user never spoke. In continuous mode this can
+        // happen at the start of a turn — silently restart listening rather
+        // than erroring out.
+        if (continuousVoiceRef.current) {
+          setVoiceState("idle");
+          setTimeout(() => { if (continuousVoiceRef.current) startListening(); }, 300);
+        } else {
+          setError("Audio too short.");
+          setVoiceState("idle");
+        }
         return;
       }
       setVoiceState("thinking");
@@ -308,8 +399,13 @@ export function AssistantCard({ floating = true }: Props = {}) {
         const data = await r.json();
         const transcript = (data.transcript || "").trim();
         if (!transcript) {
-          setError("I didn't catch that.");
-          setVoiceState("idle");
+          if (continuousVoiceRef.current) {
+            setVoiceState("idle");
+            setTimeout(() => { if (continuousVoiceRef.current) startListening(); }, 300);
+          } else {
+            setError("I didn't catch that.");
+            setVoiceState("idle");
+          }
           return;
         }
         await ask(transcript);
@@ -320,13 +416,19 @@ export function AssistantCard({ floating = true }: Props = {}) {
     };
     setVoiceState("listening");
     recorder.start();
+    // VAD-based stop: silence > 1.5s → end the turn
+    startVad(stream, () => {
+      if (recorder.state === "recording") { try { recorder.stop(); } catch {} }
+    });
+    // Hard ceiling so a bad analyzer (e.g., flat audio level) doesn't hang
     stopTimerRef.current = window.setTimeout(() => {
       if (recorder.state === "recording") { try { recorder.stop(); } catch {} }
-    }, 7000);
+    }, HARD_MAX_MS);
   }
 
   function stopListening() {
     try { mediaRef.current?.stop(); } catch {}
+    cleanupVad();
     if (voiceState === "listening") setVoiceState("idle");
   }
 
@@ -366,6 +468,18 @@ export function AssistantCard({ floating = true }: Props = {}) {
     }
 
     try {
+      // user_id pulled from localStorage 'vip-auth' (set by AuthGuard) so
+      // cross-session memory works: the orchestrator persists each turn
+      // into chat_sessions/chat_messages under this user_id, and the
+      // assistant's recall_history tool can surface relevant history.
+      let userId: string | undefined;
+      try {
+        const raw = typeof window !== "undefined" ? localStorage.getItem("vip-auth") : null;
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          userId = parsed?.email || parsed?.user?.email || undefined;
+        }
+      } catch {}
       const body: Record<string, unknown> = {
         transcript: q,
         language: "auto",
@@ -373,6 +487,7 @@ export function AssistantCard({ floating = true }: Props = {}) {
         model: model || undefined,
         history: turns.slice(-6).map(t => ({ role: t.who, text: t.text, intent: t.intent })),
         current_path: pathname,
+        user_id: userId || "boss",
       };
       if (attachmentIds.length > 0) body.attachment_ids = attachmentIds;
       if (confirmed && confirmedTool) {
