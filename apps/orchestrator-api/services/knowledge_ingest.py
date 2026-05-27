@@ -89,43 +89,102 @@ ROWS_PER_BLOCK      = 8     # xlsx/csv: group this many data rows together
 
 def _parse_xlsx(filename: str, blob: bytes) -> list[dict]:
     """Split each sheet into N-row blocks; prepend column headers so each
-    chunk is self-describing ('회사=트리플에이치 | 구분=상가 | ...').
-    Header detection: the first non-empty row whose ≥60% of cells are strings
-    is treated as the header row; rows above it (often dates / titles) are
-    captured as a 'preface' chunk per sheet."""
-    import openpyxl
+    chunk is self-describing.
 
-    wb = openpyxl.load_workbook(io.BytesIO(blob), read_only=True, data_only=True)
+    Header detection (improved over the naive 'first stringy row'):
+      1. Expand merged cells — openpyxl returns merged-cell values only in
+         the top-left cell; we propagate them across the merged range so a
+         '기존분양가(VAT제외)' label spanning AK5:AY5 covers every column.
+      2. Scan first 20 rows. The header row is the one with the MOST
+         non-empty cells AND a majority of string-type values. A single
+         leading title row (1-2 cells) is treated as preface, not header.
+      3. If the row directly below the header also looks header-ish (mostly
+         strings, used to refine the main columns), MERGE them into
+         '<main> / <sub>' compound labels."""
+    import openpyxl
+    # Read NON-read-only so we can access ws.merged_cells. Disable formulae
+    # by passing data_only=True (already cached values).
+    wb = openpyxl.load_workbook(io.BytesIO(blob), data_only=True)
     chunks: list[dict] = []
 
     for sheet_name in wb.sheetnames:
         ws = wb[sheet_name]
         rows = [list(r) for r in ws.iter_rows(values_only=True)]
+        # Propagate merged-cell values across their range so each header
+        # cell carries the label (otherwise only the top-left cell has it).
+        for mrange in ws.merged_cells.ranges:
+            top_val = rows[mrange.min_row - 1][mrange.min_col - 1] if mrange.min_row - 1 < len(rows) else None
+            if top_val is None:
+                continue
+            for r_idx in range(mrange.min_row - 1, mrange.max_row):
+                if r_idx >= len(rows):
+                    continue
+                # Extend row length if needed
+                while len(rows[r_idx]) < mrange.max_col:
+                    rows[r_idx].append(None)
+                for c_idx in range(mrange.min_col - 1, mrange.max_col):
+                    if rows[r_idx][c_idx] is None:
+                        rows[r_idx][c_idx] = top_val
+
         # Trim trailing empty rows
         while rows and all(c is None or (isinstance(c, str) and not c.strip()) for c in rows[-1]):
             rows.pop()
         if not rows:
             continue
 
-        # Find header row: first row with ≥2 cells AND ≥60% string-type cells
-        header_idx = -1
-        for i, r in enumerate(rows[:10]):
+        # Find the best header row. Score = (#non-empty cells) * (string-ratio).
+        # Skip rows with fewer than 3 non-empty cells.
+        best_idx = -1
+        best_score = 0.0
+        for i, r in enumerate(rows[:20]):
             non_empty = [c for c in r if c is not None and str(c).strip()]
-            if len(non_empty) < 2:
+            if len(non_empty) < 3:
                 continue
             str_cells = sum(1 for c in non_empty if isinstance(c, str))
-            if str_cells / len(non_empty) >= 0.6:
-                header_idx = i
-                break
+            ratio = str_cells / len(non_empty)
+            if ratio < 0.5:
+                continue
+            score = len(non_empty) * ratio
+            if score > best_score:
+                best_score = score
+                best_idx = i
+        header_idx = best_idx
 
         if header_idx >= 0:
-            headers = [str(c).strip() if c is not None else f"col{j+1}" for j, c in enumerate(rows[header_idx])]
+            primary = rows[header_idx]
+            # Check the next row for sub-headers: it must be mostly strings
+            # and have at least 2 cells that the primary row left empty.
+            sub = rows[header_idx + 1] if header_idx + 1 < len(rows) else []
+            sub_non_empty = [c for c in sub if c is not None and str(c).strip()]
+            sub_strs = sum(1 for c in sub_non_empty if isinstance(c, str))
+            has_sub = (
+                len(sub_non_empty) >= 3
+                and sub_strs / max(len(sub_non_empty), 1) >= 0.6
+                and sum(1 for j, c in enumerate(sub) if c is not None and j < len(primary) and primary[j] is None) >= 1
+            )
+
+            headers: list[str] = []
+            max_cols = max(len(primary), len(sub) if has_sub else 0)
+            for j in range(max_cols):
+                p = primary[j] if j < len(primary) else None
+                s = sub[j] if (has_sub and j < len(sub)) else None
+                if p and s and str(p).strip() != str(s).strip():
+                    headers.append(f"{str(p).strip()} / {str(s).strip()}")
+                elif p:
+                    headers.append(str(p).strip())
+                elif s:
+                    headers.append(str(s).strip())
+                else:
+                    headers.append(f"col{j+1}")
+
             preface_rows = rows[:header_idx]
-            data_rows    = rows[header_idx + 1:]
+            data_start_row_offset = header_idx + (2 if has_sub else 1)
+            data_rows = rows[data_start_row_offset:]
         else:
             headers = [f"col{j+1}" for j in range(max((len(r) for r in rows), default=0))]
             preface_rows = []
             data_rows    = rows
+            data_start_row_offset = 0
 
         # Preface (titles / dates above the header) — one chunk
         if preface_rows:
@@ -149,7 +208,8 @@ def _parse_xlsx(filename: str, blob: bytes) -> list[dict]:
         # "key=val | key=val" pipe format made the model conflate adjacent
         # rows and hallucinate prices).
         block: list[str] = []
-        block_start = header_idx + 2 if header_idx >= 0 else 1  # 1-based
+        # 1-based row number where data starts on the original sheet.
+        block_start = (data_start_row_offset + 1) if header_idx >= 0 else 1
         cur_row_no = block_start
         for i, r in enumerate(data_rows):
             non_empty = [c for c in r if c is not None and str(c).strip()]
@@ -160,7 +220,13 @@ def _parse_xlsx(filename: str, blob: bytes) -> list[dict]:
             for j, cell in enumerate(r):
                 if cell is None:
                     continue
-                v = str(cell).strip()
+                # Format integer-valued floats as ints so '203.0' indexes as
+                # '203' (matches user queries like '203호'). Keep real
+                # decimals (할인율, 비율) as-is.
+                if isinstance(cell, float) and cell.is_integer():
+                    v = str(int(cell))
+                else:
+                    v = str(cell).strip()
                 if not v:
                     continue
                 h = headers[j] if j < len(headers) else f"col{j+1}"
@@ -689,11 +755,29 @@ def _clean_pgroonga_query(q: str) -> str:
             if stripped.endswith(p) and len(stripped) - len(p) >= 2:
                 stripped = stripped[:-len(p)]
                 break
+        # Unit suffixes on numbers: '203호' → '203', '15층' → '15', '3동' → '3'
+        # Apply only when the prefix is all digits (or float-like) so we
+        # don't mangle real Korean words ending in 호/층/동.
+        m = re.match(r"^(\d[\d,\.]*)([호층동번실평㎡])(.*)$", stripped)
+        if m:
+            number = m.group(1).replace(",", "")
+            # Drop trailing .0 so '203.0' → '203'
+            if number.endswith(".0"):
+                number = number[:-2]
+            tail = m.group(3)  # rest after the unit (rare)
+            stripped = number + (tail if tail else "")
         # Drop single-char Hangul fragments (almost always particles)
         if len(stripped) <= 1:
             continue
         out.append(stripped)
-    return " ".join(out)
+    # Also push unique tokens; duplicates make AND queries no-ops
+    seen: set[str] = set()
+    deduped: list[str] = []
+    for t in out:
+        if t not in seen:
+            seen.add(t)
+            deduped.append(t)
+    return " ".join(deduped)
 
 
 def rag_retrieve(
