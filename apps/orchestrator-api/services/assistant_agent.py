@@ -120,7 +120,14 @@ def _build_system_prompt(
             if preview:
                 line += f" — preview: {preview}"
             flines.append(line)
-        flines.append("If the user asks about their files, what you know, what's been uploaded, or any topic that obviously lives in one of these files, ANSWER from that knowledge — do NOT say 'I don't have access to your files'. Either quote the matched excerpts below (when present) or call search_knowledge_base(query) to pull more chunks.")
+        flines.append(
+            "These files describe the boss — TREAT THEM AS GROUND TRUTH. "
+            "If the file says the boss's name is X, the answer to 'what's my name?' "
+            "is 'You are X' — NOT 'I see you mentioned X in your file'. Speak as if "
+            "you already know the boss personally. Never say 'I'm not sure of your "
+            "name', 'in your knowledge file', 'in about me.docx', 'in your uploaded "
+            "documents', or anything that exposes which file the fact came from."
+        )
         files_block = "\n" + "\n".join(flines) + "\n"
 
     kb_block = ""
@@ -130,17 +137,25 @@ def _build_system_prompt(
             "■■■ KNOWLEDGE BASE — ABSOLUTE PRIORITY ■■■",
             "═══════════════════════════════════════════════════════════════",
             "The following are VERBATIM EXCERPTS from documents the boss",
-            "uploaded. If the user's question can be answered from these",
-            "excerpts, you MUST:",
+            "uploaded. Treat them as ESTABLISHED FACTS about the boss — you",
+            "already know this; you are not 'discovering' it.",
+            "If the question can be answered from these excerpts, you MUST:",
             "  1. Answer DIRECTLY using the {\"answer\": \"...\"} shape.",
             "  2. DO NOT call any tool (no agent_status, no search_twin, etc.)",
             "     — the answer is already here.",
-            "  3. Quote specific numbers, names, and amounts verbatim.",
-            "  4. Cite the source like '(자산관리.xlsx, 총괄 sheet)'.",
+            "  3. State facts confidently in 1st/2nd person — 'You are X',",
+            "     'Your favorite is Y', NOT 'I see you mentioned X' / 'It looks",
+            "     like…' / 'According to your file…'.",
+            "  4. NEVER expose the source: no 'in about me.docx', no",
+            "     '(filename.xlsx, sheet 1)', no 'in your knowledge file', no",
+            "     'in your uploaded documents'. The boss already knows what",
+            "     they uploaded; don't echo the filenames back.",
+            "  5. Quote specific numbers, names, and amounts verbatim — just",
+            "     without naming the file they came from.",
             "Only call a tool if the question is about CURRENT system state",
             "(live twins, today's tasks, conversation status etc.) and NOT",
             "answerable from the excerpts below.",
-            "─── excerpts ───",
+            "─── excerpts (internal — do NOT mention filenames in your reply) ───",
         ]
         for i, c in enumerate(kb_context[:8], start=1):
             sim = c.get("similarity", 0.0)
@@ -178,7 +193,9 @@ def _build_system_prompt(
         "- IF the KNOWLEDGE BASE section above has the answer (any excerpt "
         "  contains the entity / number / topic the user asked about): use "
         "  the answer shape with verbatim numbers from the excerpt. DO NOT "
-        "  call a tool. Cite the source file/sheet.\n"
+        "  call a tool. Speak confidently in 1st/2nd person ('You are X', "
+        "  'Your favorite is Y'). NEVER mention the file name, sheet name, "
+        "  or that you got the fact from an upload — just state it.\n"
         "- For navigation queries (open X / show me X / go to X / 열어 / 보여줘): "
         "use navigate(path) for internal pages OR open_portal(agent) for "
         "external agent apps. NEVER navigate to a path not in the pages list above.\n"
