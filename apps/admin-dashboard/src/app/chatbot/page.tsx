@@ -36,6 +36,7 @@ import { useRouter } from "next/navigation";
 import { API } from "../../components/api";
 import TwinGroupsHub from "../../components/TwinGroupsHub";
 import ChatWorkspace from "../../components/ChatWorkspace";
+import { AssistantCard } from "../../components/AssistantCard";
 import { vipConfig } from "../../chatbot.config";
 import { VoiceDashboard } from "@triple-h/chatbot/voice-ui";
 import type { CallEvent, DailyReportSummary } from "@triple-h/chatbot/voice-ui";
@@ -89,7 +90,7 @@ interface KnowledgeFile {
   uploaded_by: string | null;
 }
 
-type Tab = "messages" | "calls" | "knowledge" | null;
+type Tab = "assistant" | "messages" | "calls" | "knowledge";
 
 const LIVE_VOICE = process.env.NEXT_PUBLIC_VOICE_LIVE_MODE === "true";
 
@@ -105,11 +106,13 @@ function fmtBytes(n: number | null): string {
 // ============================================================================
 
 export default function VipChatbotPage() {
-  // Tabs are closed by default — Messages / Calls / Add knowledge only
-  // render after the boss explicitly clicks one. The centered Assistant
-  // card (mounted globally at the layout level) is the always-on surface
-  // and follows the boss to every page.
-  const [tab, setTab] = useState<Tab>(null);
+  // Default tab is "assistant" — clicking Chatbot in the sidebar opens
+  // the Law-Agent-style ChatWorkspace immediately. The other tabs
+  // (Messages / Calls / Add knowledge) remain available; switching to one
+  // of them keeps a slim AssistantCard pinned at the bottom so the
+  // boss can keep chatting with the Assistant while reviewing/sending DMs,
+  // call logs, or uploading knowledge files.
+  const [tab, setTab] = useState<Tab>("assistant");
 
   return (
     <div className="space-y-4">
@@ -119,14 +122,15 @@ export default function VipChatbotPage() {
           💬 Chatbot
         </h1>
         <p className="text-[12px] text-[var(--text-muted)] mt-0.5">
-          Pick a tab to open Messages, Calls, or Add knowledge. The
-          Assistant card below can do all of these by voice or chat too.
+          Assistant is the default. Tabs for Messages, Calls and Add
+          knowledge are one click away — the Assistant follows along.
         </p>
       </div>
 
-      {/* === 3 tabs (toggle: clicking the active one closes it) === */}
-      <div className="flex gap-1.5 border-b border-[var(--border-default)]">
+      {/* === 4 tabs (Assistant default) === */}
+      <div className="flex gap-1.5 border-b border-[var(--border-default)] overflow-x-auto">
         {([
+          { id: "assistant", label: "🤖 Assistant" },
           { id: "messages",  label: "💬 Messages" },
           { id: "calls",     label: "📞 Calls" },
           { id: "knowledge", label: "📚 Add knowledge" },
@@ -136,8 +140,8 @@ export default function VipChatbotPage() {
             <button
               key={t.id}
               type="button"
-              onClick={() => setTab(active ? null : t.id)}
-              className={`px-4 py-2 text-[13px] font-medium border-b-2 -mb-px transition-colors ${
+              onClick={() => setTab(t.id)}
+              className={`px-4 py-2 text-[13px] font-medium border-b-2 -mb-px transition-colors whitespace-nowrap ${
                 active
                   ? "border-indigo-600 text-indigo-700"
                   : "border-transparent text-gray-600 hover:text-gray-900 hover:border-gray-300"
@@ -149,10 +153,8 @@ export default function VipChatbotPage() {
         })}
       </div>
 
-      {/* === Tab content === When no tab is open, the new ChatWorkspace is
-           the default view (Law-Agent-style sidebar + Q/A history + per-turn
-           download). When a tab is open, that panel takes over. */}
-      {tab === null && (
+      {/* === Tab content === */}
+      {tab === "assistant" && (
         <div className="h-[calc(100vh-220px)] min-h-[600px]">
           <ChatWorkspace
             apiBase={vipConfig.apiBase}
@@ -165,10 +167,12 @@ export default function VipChatbotPage() {
       {tab === "calls" && <CallsPanel />}
       {tab === "knowledge" && <KnowledgePanel />}
 
-      {/* Centered Assistant lives at layout level (AssistantCard floating)
-          so it follows the boss across page navigation. The floating card
-          hides itself on /chatbot since ChatWorkspace already has its own
-          composer. */}
+      {/* AssistantCard "follows" the boss into Messages/Calls/Knowledge
+          tabs so they can keep chatting with the Assistant while reviewing
+          DMs, calls, or uploading files. On the Assistant tab the
+          ChatWorkspace already has its own composer, so this is hidden
+          there. The card is itself `position: fixed` (floating=true). */}
+      {tab !== "assistant" && <AssistantCard floating />}
     </div>
   );
 }
