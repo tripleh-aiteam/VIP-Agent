@@ -318,17 +318,15 @@ export function AssistantCard({ floating = true }: Props = {}) {
   // for a fixed timeout. This is what makes "pause a little bit and the
   // assistant talks" feel natural.
   // Silence-detection thresholds. Tuned for natural conversation:
-  // - Lower threshold catches very soft speech (whispers / quiet rooms).
-  // - 2.0s wait gives the speaker time to think mid-sentence without the
-  //   recorder cutting them off (1.5s was too aggressive in tests).
-  // - 30s hard ceiling lets longer thoughts finish; Whisper handles it.
-  const SILENCE_THRESHOLD = 0.015;
-  const SILENCE_MS = 2000;
-  const HARD_MAX_MS = 30000;
-  // Minimum speech before VAD allows a silence-stop — otherwise the
-  // recorder stops the instant the user takes a breath BEFORE saying
-  // anything (initial ambient quiet).
-  const MIN_SPEECH_MS = 600;
+  // - Threshold catches soft speech (whispers / quiet rooms).
+  // - 2.5s wait so a slow speaker doesn't get cut mid-thought.
+  // - 60s hard ceiling for long thoughts; Whisper handles it.
+  // - 800ms min-speech gate prevents the recorder from stopping on the
+  //   user's initial breath before they've said anything.
+  const SILENCE_THRESHOLD = 0.012;
+  const SILENCE_MS = 2500;
+  const HARD_MAX_MS = 60000;
+  const MIN_SPEECH_MS = 800;
 
   function cleanupVad() {
     if (vadRafRef.current) { cancelAnimationFrame(vadRafRef.current); vadRafRef.current = null; }
@@ -741,14 +739,19 @@ export function AssistantCard({ floating = true }: Props = {}) {
           <button
             type="button"
             onClick={() => setShowModelPicker(v => !v)}
-            className="h-11 px-4 rounded-full bg-gray-100 hover:bg-gray-200 border-none text-[12px] font-medium text-gray-700 flex items-center gap-1.5"
-            title={model || "Auto (Smart router)"}
+            className="h-11 px-4 rounded-full bg-gray-100 hover:bg-gray-200 border-none text-[12px] font-medium text-gray-700 flex items-center gap-1.5 max-w-[180px]"
+            title={model ? `Pinned to ${model}` : "Auto (Smart router)"}
           >
             <span>🧠</span>
             <span>LLM</span>
+            {model && (
+              <span className="text-[10px] bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded-full font-semibold truncate max-w-[90px]">
+                {model.replace(/^(claude-|gpt-|gemini-|groq-)/, "")}
+              </span>
+            )}
           </button>
           {showModelPicker && (
-            <div className="absolute bottom-full right-0 mb-2 min-w-[260px] max-h-[360px] overflow-y-auto rounded-xl border border-gray-200 bg-white shadow-xl text-[13px] py-1.5 z-[110]">
+            <div className="absolute bottom-full right-0 mb-2 min-w-[260px] max-h-[360px] overflow-y-auto rounded-xl border border-gray-200 bg-white shadow-2xl text-[13px] py-1.5 z-[300]">
               <button
                 type="button"
                 onClick={() => { setModel(""); setShowModelPicker(false); }}

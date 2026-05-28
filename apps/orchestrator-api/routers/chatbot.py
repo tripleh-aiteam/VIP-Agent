@@ -71,10 +71,36 @@ ALLOWED_MIME_PREFIXES = (
     "application/csv",
     # JSON
     "application/json",
+    # Hangul Word Processor (Korean .hwp) — various vendor MIME types
+    "application/x-hwp",
+    "application/haansofthwp",
+    "application/vnd.hancom.hwp",
+    "application/x-hwpml",
     # Catch-all for browsers that send 'application/octet-stream' for
     # unknown types — let the file through; downstream parsers will
     # complain if it's truly unreadable.
     "application/octet-stream",
+    # Generic application/* fallback — many browsers send this for
+    # files they don't have a specific MIME for. Since we now do an
+    # extension-based whitelist check below as well, this is safe.
+    "application/",
+)
+
+# Extensions we know how to handle even if the browser sends a weird
+# MIME type. Extension match alone is enough to accept the upload.
+ALLOWED_EXTENSIONS = (
+    ".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp", ".heic", ".heif", ".svg",
+    ".pdf",
+    ".txt", ".md", ".json", ".log", ".csv", ".tsv",
+    ".doc", ".docx",
+    ".xls", ".xlsx", ".xlsm",
+    ".ppt", ".pptx",
+    ".hwp", ".hwpx",
+    ".odt", ".ods", ".odp",
+    ".rtf",
+    ".mp3", ".wav", ".webm", ".ogg", ".m4a", ".flac", ".opus",
+    ".mp4", ".mov", ".avi", ".mkv",
+    ".zip",
 )
 
 
@@ -121,8 +147,18 @@ async def chatbot_upload(file: UploadFile = File(...)):
     import uuid, pathlib, mimetypes
 
     mime = (file.content_type or "").lower()
-    if not any(mime.startswith(p) for p in ALLOWED_MIME_PREFIXES):
-        raise HTTPException(status_code=415, detail=f"Unsupported MIME type: {mime or 'unknown'}")
+    fn_lower = (file.filename or "").lower()
+    mime_ok = any(mime.startswith(p) for p in ALLOWED_MIME_PREFIXES)
+    ext_ok  = any(fn_lower.endswith(e) for e in ALLOWED_EXTENSIONS)
+    # Accept if EITHER the MIME prefix or the file extension is on the
+    # whitelist. Browsers often send 'application/octet-stream' or vendor-
+    # specific MIMEs (e.g. HWP) we don't have prefixes for; the extension
+    # check picks those up.
+    if not (mime_ok or ext_ok):
+        raise HTTPException(
+            status_code=415,
+            detail=f"Unsupported file: mime={mime or 'unknown'}, name={file.filename or 'unknown'}",
+        )
 
     data = await file.read()
     if not data:
@@ -461,25 +497,39 @@ async def transcribe_audio(file: UploadFile = File(...)):
     content_type = file.content_type or "audio/webm"
 
     # Groq Whisper-large-v3 FIRST — free tier, OpenAI-compatible endpoint,
-    # excellent multilingual (Korean + English). Promoted ahead of OpenAI
-    # because the OpenAI key was rate-limited / quota-exhausted in prod.
+    # excellent multilingual (Korean + English).
     groq_key = os.getenv("GROQ_API_KEY", "")
     if groq_key:
         try:
             async with httpx.AsyncClient(timeout=60) as client:
+                # Use response_format=verbose_json so we get language back
+                # along with the transcript. No language= param so Whisper
+                # auto-detects (works well for KO + EN).
                 resp = await client.post(
                     "https://api.groq.com/openai/v1/audio/transcriptions",
                     headers={"Authorization": f"Bearer {groq_key}"},
                     files={"file": (file.filename or "audio.webm", audio_bytes, content_type)},
-                    data={"model": "whisper-large-v3"},
+                    data={
+                        "model": "whisper-large-v3",
+                        "response_format": "verbose_json",
+                        "temperature": "0",
+                    },
                 )
                 if resp.status_code == 200:
                     data = resp.json()
-                    return {"transcript": (data.get("text") or "").strip(),
-                            "language": data.get("language", "auto"),
-                            "engine": "groq-whisper"}
-        except Exception:
-            pass
+                    txt = (data.get("text") or "").strip()
+                    if txt:
+                        return {"transcript": txt,
+                                "language": data.get("language", "auto"),
+                                "engine": "groq-whisper"}
+                else:
+                    import logging as _lg
+                    _lg.getLogger("chatbot.transcribe").warning(
+                        f"groq whisper {resp.status_code}: {resp.text[:200]}"
+                    )
+        except Exception as e:
+            import logging as _lg
+            _lg.getLogger("chatbot.transcribe").warning(f"groq whisper failed: {e}")
 
     # OpenAI Whisper
     openai_key = os.getenv("OPENAI_API_KEY", "")
