@@ -169,6 +169,37 @@ export function AssistantCard({ floating = true }: Props = {}) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
+  // --- Smart-shrink: auto-collapse the floating bar to a small pill in
+  //     the bottom-right corner when nothing is happening, so it stops
+  //     covering page content (checkboxes, buttons, etc). Expands again
+  //     when the boss clicks the pill, focuses the input, types text,
+  //     attaches a file, or the assistant is mid-reply.
+  const [inputFocused, setInputFocused] = useState(false);
+  const [pillExpanded, setPillExpanded] = useState(false);
+  const hasActivity =
+    prompt.trim().length > 0 ||
+    attachments.length > 0 ||
+    thinking ||
+    inputFocused ||
+    pillExpanded ||
+    showModelPicker;
+  // Compact pill applies only to the global floating card. When idle (no
+  // activity) shrink to a corner pill so page content stays visible.
+  // The conversation isn't lost — it lives in the AssistantContext and
+  // reappears when the boss clicks the pill to expand again.
+  const compactPill = floating && !hasActivity;
+  // Auto-collapse pillExpanded after blur if user didn't type or send.
+  useEffect(() => {
+    if (!pillExpanded) return;
+    if (hasActivity && !pillExpanded) return;
+    const t = setTimeout(() => {
+      if (!prompt.trim() && attachments.length === 0 && !inputFocused && !thinking) {
+        setPillExpanded(false);
+      }
+    }, 4000);
+    return () => clearTimeout(t);
+  }, [pillExpanded, prompt, attachments.length, inputFocused, thinking, hasActivity]);
+
   // --- Clipboard paste handler ---
   // When the user pastes an image or text into the composer, capture it.
   // Images become attachments; text is appended to the input.
@@ -622,12 +653,24 @@ export function AssistantCard({ floating = true }: Props = {}) {
             >Clear</button>
           )}
           {floating && (
-            <button
-              type="button"
-              onClick={() => setCollapsed(!collapsed)}
-              className="w-8 h-8 rounded-lg text-gray-500 hover:bg-gray-100 flex items-center justify-center text-[14px]"
-              title={collapsed ? "Show conversation" : "Hide conversation"}
-            >{collapsed ? "▴" : "▾"}</button>
+            <>
+              <button
+                type="button"
+                onClick={() => setCollapsed(!collapsed)}
+                className="w-8 h-8 rounded-lg text-gray-500 hover:bg-gray-100 flex items-center justify-center text-[14px]"
+                title={collapsed ? "Show conversation" : "Hide conversation"}
+              >{collapsed ? "▴" : "▾"}</button>
+              <button
+                type="button"
+                onClick={() => {
+                  setPillExpanded(false);
+                  setShowModelPicker(false);
+                  inputRef.current?.blur();
+                }}
+                className="w-8 h-8 rounded-lg text-gray-500 hover:bg-gray-100 flex items-center justify-center text-[14px]"
+                title="Minimize to corner — page content stays visible"
+              >–</button>
+            </>
           )}
         </div>
       </div>
@@ -742,6 +785,8 @@ export function AssistantCard({ floating = true }: Props = {}) {
           type="text"
           value={prompt}
           onChange={e => setPrompt(e.target.value)}
+          onFocus={() => setInputFocused(true)}
+          onBlur={() => setInputFocused(false)}
           onKeyDown={e => { if (e.key === "Enter") ask(prompt); }}
           placeholder={attachments.length > 0 ? `Ask about your ${attachments.length} file(s)…` : "Ask anything …"}
           className="flex-1 bg-transparent border-none outline-none px-2 text-[15px] min-w-0"
@@ -886,11 +931,30 @@ export function AssistantCard({ floating = true }: Props = {}) {
         </div>
       )}
 
-      {/* The card */}
+      {/* The card — smart-shrink behaviour for the floating mount.
+          When idle (no focus, no text, no attachments, no live turns)
+          we collapse to a compact pill in the bottom-right corner so
+          page content underneath stays readable. Clicking the pill or
+          tabbing into the input expands it back to the centered card. */}
       {floating ? (
-        <div className="fixed z-[100] left-1/2 -translate-x-1/2 bottom-2 sm:bottom-4 w-[min(96vw,820px)]">
-          {card}
-        </div>
+        compactPill ? (
+          <button
+            type="button"
+            onClick={() => {
+              setPillExpanded(true);
+              setTimeout(() => inputRef.current?.focus(), 50);
+            }}
+            className="fixed z-[100] bottom-4 right-4 h-12 pl-3 pr-4 rounded-full bg-white border border-gray-200 shadow-xl flex items-center gap-2 hover:shadow-2xl hover:border-gray-300 transition-all"
+            title="Open Assistant"
+          >
+            <span className="text-[20px]">🤖</span>
+            <span className="text-[13px] font-medium text-gray-700">Ask</span>
+          </button>
+        ) : (
+          <div className="fixed z-[100] left-1/2 -translate-x-1/2 bottom-2 sm:bottom-4 w-[min(96vw,820px)]">
+            {card}
+          </div>
+        )
       ) : (
         <div className="max-w-3xl mx-auto mt-4">{card}</div>
       )}
