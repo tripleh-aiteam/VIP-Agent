@@ -46,6 +46,7 @@ def _build_system_prompt(
     selected_id: Optional[str] = None,
     pending_attachments: Optional[list[dict]] = None,
     kb_context: Optional[list[dict]] = None,
+    kb_files: Optional[list[dict]] = None,
 ) -> str:
     """Compose the system prompt the LLM sees on every request.
 
@@ -99,6 +100,29 @@ def _build_system_prompt(
     # ('ABSOLUTE PRIORITY', 'DO NOT call any tool') because earlier softer
     # wording let the LLM ignore the excerpts and call agent_status / mock-
     # data tools instead of quoting the actual file content.
+    # === File index block ===
+    # Always tell the LLM which files the boss has uploaded for this agent,
+    # even when the current question didn't match any chunk. This lets the
+    # assistant answer "what files do I have?" / "what do you know about
+    # me?" / "내가 올린 파일 알려줘" from awareness alone, and lets it
+    # recognize that a vague question is about file X without needing a
+    # chunk-level keyword match.
+    files_block = ""
+    if kb_files:
+        flines = [
+            "■ UPLOADED KNOWLEDGE FILES (scoped to this agent — the boss can see these in the /chatbot → Add knowledge tab):",
+        ]
+        for f in kb_files[:30]:
+            fn = f.get("filename") or "?"
+            ch = f.get("chunk_count") or 0
+            preview = (f.get("preview") or "").strip().replace("\n", " ")[:160]
+            line = f"  - {fn} ({ch} chunks)"
+            if preview:
+                line += f" — preview: {preview}"
+            flines.append(line)
+        flines.append("If the user asks about their files, what you know, what's been uploaded, or any topic that obviously lives in one of these files, ANSWER from that knowledge — do NOT say 'I don't have access to your files'. Either quote the matched excerpts below (when present) or call search_knowledge_base(query) to pull more chunks.")
+        files_block = "\n" + "\n".join(flines) + "\n"
+
     kb_block = ""
     if kb_context:
         kb_lines = [
@@ -140,7 +164,7 @@ def _build_system_prompt(
         f"{pages_summary_for_llm()}\n\n"
         "■ EXTERNAL AGENT APPS (for open_portal(agent)):\n"
         f"{agents_summary_for_llm()}\n"
-        f"{context_block}{attach_block}{kb_block}\n"
+        f"{context_block}{attach_block}{files_block}{kb_block}\n"
         "■ HOW TO RESPOND\n"
         "Always respond with ONE of these JSON shapes — NOTHING ELSE:\n"
         '  A. Call ONE tool:    { "tool": "<name>", "args": { ... } }\n'
@@ -1260,15 +1284,54 @@ def _run_agent_impl(
         rag_error = str(e)[:200]
         log.warning("rag retrieval failed (continuing without KB): %s", e)
 
+    # Pull the file index regardless of chunk matches so the LLM always
+    # knows which files the boss has uploaded. Critical for vague queries
+    # like "what files do I have?" / "what do you know about me?" /
+    # "내가 올린 파일 알려줘" — questions that don't keyword-match any
+    # individual chunk but obviously refer to the uploaded KB.
+    kb_files: list[dict] = []
+    try:
+        from sqlalchemy import text as _sa_text
+        rows = db.execute(_sa_text("""
+            SELECT f.filename,
+                   f.size_bytes,
+                   f.chunk_count,
+                   (SELECT c.content FROM assistant_knowledge_chunks c
+                    WHERE c.file_id = f.id
+                    ORDER BY c.id ASC
+                    LIMIT 1) AS preview
+            FROM assistant_knowledge_files f
+            WHERE f.agent_id = :agent_id
+              AND f.status = 'indexed'
+            ORDER BY f.uploaded_at DESC NULLS LAST
+            LIMIT 30
+        """), {"agent_id": agent_id}).fetchall()
+        kb_files = [
+            {
+                "filename": r.filename,
+                "size_bytes": r.size_bytes,
+                "chunk_count": r.chunk_count,
+                "preview": r.preview,
+            }
+            for r in rows
+        ]
+        if kb_files:
+            log.info("file-index: %d files for agent=%s", len(kb_files), agent_id)
+    except Exception as e:
+        log.warning("file-index lookup failed (continuing without it): %s", e)
+
     system = _build_system_prompt(
         current_path=current_path,
         selected_id=selected_id,
         pending_attachments=_pending_attachments if attachment_ids else None,
         kb_context=kb_hits,
+        kb_files=kb_files,
     )
     _debug_kb = {
         "agent_id": agent_id,
         "hit_count": len(kb_hits),
+        "file_count": len(kb_files),
+        "files": [f["filename"] for f in kb_files[:10]],
         "top_hits": [
             {"location": h.get("location"), "similarity": h.get("similarity"),
              "preview": (h.get("content") or "")[:120]}
