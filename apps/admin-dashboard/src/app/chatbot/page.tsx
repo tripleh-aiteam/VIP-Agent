@@ -35,6 +35,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { API } from "../../components/api";
 import TwinGroupsHub from "../../components/TwinGroupsHub";
+import ChatWorkspace from "../../components/ChatWorkspace";
 import { vipConfig } from "../../chatbot.config";
 import { VoiceDashboard } from "@triple-h/chatbot/voice-ui";
 import type { CallEvent, DailyReportSummary } from "@triple-h/chatbot/voice-ui";
@@ -148,14 +149,16 @@ export default function VipChatbotPage() {
         })}
       </div>
 
-      {/* === Tab content (only when a tab is open) === */}
+      {/* === Tab content === When no tab is open, the new ChatWorkspace is
+           the default view (Law-Agent-style sidebar + Q/A history + per-turn
+           download). When a tab is open, that panel takes over. */}
       {tab === null && (
-        <div className="rounded-2xl border border-dashed border-gray-300 bg-gray-50 p-10 text-center">
-          <div className="text-[28px] mb-2">👆</div>
-          <p className="text-[13px] text-gray-600">
-            Click a tab above to open Messages, Calls or Add knowledge —
-            or just ask the Assistant below.
-          </p>
+        <div className="h-[calc(100vh-220px)] min-h-[600px]">
+          <ChatWorkspace
+            apiBase={vipConfig.apiBase}
+            agentId={vipConfig.agentId}
+            agentLabel="VIP"
+          />
         </div>
       )}
       {tab === "messages" && <MessagesPanel />}
@@ -163,8 +166,9 @@ export default function VipChatbotPage() {
       {tab === "knowledge" && <KnowledgePanel />}
 
       {/* Centered Assistant lives at layout level (AssistantCard floating)
-          so it follows the boss across page navigation. No inline mount
-          needed here — the global one already shows. */}
+          so it follows the boss across page navigation. The floating card
+          hides itself on /chatbot since ChatWorkspace already has its own
+          composer. */}
     </div>
   );
 }

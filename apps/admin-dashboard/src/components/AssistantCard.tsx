@@ -110,6 +110,22 @@ interface Props {
   floating?: boolean;
 }
 
+/**
+ * AssistantCardGlobal — the layout-level mount of AssistantCard.
+ * Hides the floating card on /chatbot routes (where ChatWorkspace
+ * provides a full-page composer + history of its own).
+ *
+ * Doing the pathname check in a *wrapper* (not inside AssistantCard)
+ * keeps the Rules of Hooks happy: when pathname changes, this wrapper
+ * either mounts or unmounts AssistantCard, so the inner hooks always
+ * run in a consistent order during their lifetime.
+ */
+export function AssistantCardGlobal() {
+  const pathname = usePathname();
+  if (pathname && pathname.startsWith("/chatbot")) return null;
+  return <AssistantCard floating />;
+}
+
 export function AssistantCard({ floating = true }: Props = {}) {
   const ctx = useContext(AssistantContext);
   if (!ctx) return null;
