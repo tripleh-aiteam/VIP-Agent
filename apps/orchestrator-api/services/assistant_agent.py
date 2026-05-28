@@ -115,18 +115,31 @@ def _build_system_prompt(
         for f in kb_files[:30]:
             fn = f.get("filename") or "?"
             ch = f.get("chunk_count") or 0
-            preview = (f.get("preview") or "").strip().replace("\n", " ")[:160]
+            # Larger preview (up to 1200 chars) so identity-style files
+            # ("about me", "프로필", "introduction") expose name + soccer
+            # club + hometown etc. in the first-chunk preview, even when
+            # the keyword search misses (e.g. 'what is my name?' won't
+            # match the literal token 'name' in the file).
+            preview = (f.get("preview") or "").strip().replace("\n", " ")[:1200]
             line = f"  - {fn} ({ch} chunks)"
             if preview:
-                line += f" — preview: {preview}"
+                line += f"\n      preview: {preview}"
             flines.append(line)
         flines.append(
-            "These files describe the boss — TREAT THEM AS GROUND TRUTH. "
-            "If the file says the boss's name is X, the answer to 'what's my name?' "
-            "is 'You are X' — NOT 'I see you mentioned X in your file'. Speak as if "
-            "you already know the boss personally. Never say 'I'm not sure of your "
-            "name', 'in your knowledge file', 'in about me.docx', 'in your uploaded "
-            "documents', or anything that exposes which file the fact came from."
+            "RULES for answering from these files:\n"
+            "  • Treat every fact in the preview/excerpts as ESTABLISHED TRUTH about the boss — you already know it.\n"
+            "  • Speak in 2nd person: 'You are X', 'Your favorite is Y', 'You live in Z'.\n"
+            "  • NEVER use these forbidden phrases (the boss will see them and complain):\n"
+            "      - 'I'm not sure of your name'\n"
+            "      - 'I see you mentioned …'\n"
+            "      - 'as mentioned in …'\n"
+            "      - 'according to your file …'\n"
+            "      - 'in the about me document'\n"
+            "      - 'in your knowledge file'\n"
+            "      - 'in your uploaded documents'\n"
+            "      - any phrase that names a filename, sheet name, or document name\n"
+            "  • If asked 'what is my name?' and a file preview contains a name like 'Davronbek', the ONLY acceptable reply is: 'You are Davronbek.' (optionally followed by a friendly sentence — but NEVER mention the file).\n"
+            "  • If you genuinely cannot find the fact in any preview, call search_knowledge_base(query) BEFORE saying 'I don't know'."
         )
         files_block = "\n" + "\n".join(flines) + "\n"
 
@@ -159,8 +172,13 @@ def _build_system_prompt(
         ]
         for i, c in enumerate(kb_context[:8], start=1):
             sim = c.get("similarity", 0.0)
+            # Deliberately DO NOT include filename or sheet name in the
+            # excerpt header — the LLM tended to echo them back into the
+            # reply ("as mentioned in about me.docx"). The location alone
+            # is enough internal context.
+            loc = c.get("location") or f"excerpt {i}"
             kb_lines.append(
-                f"[{i}] {c.get('filename')} → {c.get('location')}  (relevance {sim:.2f})\n"
+                f"[{i}] {loc}  (relevance {sim:.2f})\n"
                 f"{c.get('content', '').strip()[:1800]}"
             )
         kb_lines.append("═══════════════════════════════════════════════════════════════")
