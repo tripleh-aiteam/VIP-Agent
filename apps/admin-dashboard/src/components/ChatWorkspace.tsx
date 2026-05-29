@@ -356,10 +356,12 @@ export default function ChatWorkspace({ apiBase, agentId, agentLabel }: Props) {
     }));
 
     try {
-      // Capture page DOM — used when the ChatWorkspace was navigated to
-      // from another page in the same SPA, so prior tab content is still
-      // present. (On a fresh /chatbot load, this just returns the chat
-      // header which is harmless.)
+      // Capture page DOM. /chatbot itself doesn't carry useful page
+      // data (it's the chat UI), so if our own capture is thin (<500
+      // chars) we fall back to the most recent snapshot the
+      // PageSnapshotter wrote to localStorage. That makes ChatWorkspace
+      // and the floating AssistantCard answer from the SAME data — fixes
+      // the "Dashboard says 55B but /chatbot says 1.4B" inconsistency.
       let pageCtx = "";
       try {
         if (typeof document !== "undefined") {
@@ -374,6 +376,22 @@ export default function ChatWorkspace({ apiBase, agentId, agentLabel }: Props) {
           }
         }
       } catch {}
+      // Fall back to PageSnapshotter cache when our own DOM is thin
+      // (e.g. we're on /chatbot which has no useful page data). Only
+      // use if recent (< 30 min) so we don't show stale numbers.
+      if (pageCtx.length < 500) {
+        try {
+          if (typeof window !== "undefined") {
+            const raw = window.localStorage.getItem(`page-ctx:${agentId}`);
+            if (raw) {
+              const cached = JSON.parse(raw);
+              if (cached?.text && cached?.ts && (Date.now() - cached.ts) < 30 * 60 * 1000) {
+                pageCtx = cached.text as string;
+              }
+            }
+          }
+        } catch {}
+      }
 
       const r = await fetch(`${base}/chat/agent`, {
         method: "POST",

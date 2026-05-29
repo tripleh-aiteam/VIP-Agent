@@ -11,6 +11,8 @@ import UpdateBanner from "@/components/UpdateBanner";
 // (router.push from an LLM-issued action) doesn't drop the conversation.
 // The legacy slim chat-bar via VipChatbotMount is no longer mounted.
 import { AssistantProvider, AssistantCardGlobal } from "@/components/AssistantCard";
+import PageSnapshotter from "@/components/PageSnapshotter";
+import { vipConfig } from "@/chatbot.config";
 
 // DesktopUpdater talks to Tauri's updater plugin — only meaningful inside the
 // desktop app. On web builds it renders nothing (Tauri APIs absent).
@@ -54,6 +56,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             <UpdateBanner />
             <DesktopUpdater />
             <IncomingCallToast />
+            {/* Captures each page's DOM into localStorage so the
+                Assistant (floating + workspace) sees the same data
+                whichever surface the user is in. */}
+            <PageSnapshotter agentId={vipConfig.agentId} />
             {/* Global centered Assistant — same card on every page except
                 /chatbot (where ChatWorkspace has its own composer) */}
             <AssistantCardGlobal />
