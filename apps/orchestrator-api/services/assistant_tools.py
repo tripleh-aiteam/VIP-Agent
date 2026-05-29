@@ -140,8 +140,31 @@ def tool_open_portal(agent: str, **_kw) -> dict[str, Any]:
     }
 
 
-def tool_list_pages(**_kw) -> dict[str, Any]:
-    """Return the full menu list for the LLM to answer "what pages exist"."""
+def _agent_profile(agent_id: str | None) -> dict | None:
+    """Look up the per-agent profile (name / pages / role) without a circular
+    import — AGENT_PROFILES lives in assistant_agent, which imports this module,
+    so we import it lazily at call time."""
+    if not agent_id or agent_id.lower() == "vip":
+        return None
+    try:
+        from services.assistant_agent import AGENT_PROFILES
+        return AGENT_PROFILES.get(agent_id.lower())
+    except Exception:
+        return None
+
+
+def tool_list_pages(agent_id: str = "vip", **_kw) -> dict[str, Any]:
+    """Return THIS agent's menu/pages so the LLM can answer "what menu do I have".
+    For non-VIP agents (Stock / Realty / Asset / AIGlass) we return that agent's
+    own page list — NOT the VIP platform's pages."""
+    prof = _agent_profile(agent_id)
+    if prof:
+        # profile pages are strings like "/recommendations — 추천 기록 (…)"
+        pages = []
+        for entry in prof.get("pages", []):
+            path, _, label = str(entry).partition(" — ")
+            pages.append({"path": path.strip(), "name": (label or path).strip()})
+        return {"ok": True, "agent": prof.get("name"), "pages": pages, "count": len(pages)}
     pages = [
         {"path": p["path"], "name": p["name"], "description": p["description"]}
         for p in get_all_pages(include_hidden=False)
@@ -149,8 +172,24 @@ def tool_list_pages(**_kw) -> dict[str, Any]:
     return {"ok": True, "pages": pages, "count": len(pages)}
 
 
-def tool_what_can_you_do(**_kw) -> dict[str, Any]:
-    """Return a summary of capabilities."""
+def tool_what_can_you_do(agent_id: str = "vip", **_kw) -> dict[str, Any]:
+    """Return a summary of capabilities — scoped to the CURRENT agent."""
+    prof = _agent_profile(agent_id)
+    if prof:
+        page_names = [str(e).split(" — ")[-1].split(" (")[0].strip() for e in prof.get("pages", [])]
+        return {
+            "ok": True,
+            "agent": prof.get("name"),
+            "summary": (
+                f"I'm the assistant for {prof.get('name')}. {prof.get('tagline','')} "
+                "I know every page and its data here, I remember our conversation, and I can "
+                "fetch LIVE data and analyze it for you — plus do things you'd otherwise do by "
+                "hand: open/navigate to any page, summarize what's on screen, and run actions "
+                "(with your confirmation)."
+            ),
+            "menus": page_names,
+            "examples": _agent_examples(agent_id),
+        }
     return {
         "ok": True,
         "summary": (
@@ -169,6 +208,25 @@ def tool_what_can_you_do(**_kw) -> dict[str, Any]:
             "schedule a meeting with Kim tomorrow 10 AM",
         ],
     }
+
+
+def _agent_examples(agent_id: str) -> list[str]:
+    aid = (agent_id or "").lower()
+    if aid == "stock":
+        return [
+            "what are today's recommendations?",
+            "오늘 외국인 순매수 상위 종목",
+            "any intraday signals right now?",
+            "open the 투자자 수급 page",
+            "summarize my trade journal",
+        ]
+    if aid == "realty":
+        return ["show me the market dashboard", "향남 시세 알려줘", "open the cashflow builder"]
+    if aid == "asset":
+        return ["open 자산현황", "this month's rent income", "which leases expire soon?"]
+    if aid == "aiglass":
+        return ["open property listings", "show my A-grade leads", "open the contracts page"]
+    return ["what can you do?", "open the dashboard"]
 
 
 # ============================================================================
@@ -2818,14 +2876,35 @@ def get_tool(name: str) -> Optional[Tool]:
     return TOOL_REGISTRY.get(name)
 
 
-def execute_tool(name: str, args: dict, db: Session = None) -> dict[str, Any]:
+def _fn_accepts(fn, param: str) -> bool:
+    """True if `fn` declares `param` explicitly or accepts **kwargs."""
+    try:
+        import inspect
+        sig = inspect.signature(fn)
+        for p in sig.parameters.values():
+            if p.name == param or p.kind == inspect.Parameter.VAR_KEYWORD:
+                return True
+    except (TypeError, ValueError):
+        return True  # builtins / un-introspectable — let the call try
+    return False
+
+
+def execute_tool(name: str, args: dict, db: Session = None, agent_id: str = "vip") -> dict[str, Any]:
     """Execute a tool by name with the given args. Returns the tool's
-    structured result. NEVER raises — always returns a dict with 'ok' key."""
+    structured result. NEVER raises — always returns a dict with 'ok' key.
+
+    `agent_id` is injected so tools can be per-agent aware (capabilities, page
+    lists, knowledge scope). It is only passed to tools that accept it, so the
+    LLM cannot accidentally override agent scoping by supplying its own value.
+    """
     tool = get_tool(name)
     if not tool:
         return {"ok": False, "error": f"Unknown tool '{name}'"}
     try:
-        result = tool.fn(**(args or {}), db=db)
+        call_args = dict(args or {})
+        if _fn_accepts(tool.fn, "agent_id"):
+            call_args["agent_id"] = agent_id  # authoritative — overrides any LLM-supplied value
+        result = tool.fn(**call_args, db=db)
         if not isinstance(result, dict):
             return {"ok": False, "error": f"Tool '{name}' returned non-dict"}
         return result

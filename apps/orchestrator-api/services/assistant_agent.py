@@ -367,7 +367,24 @@ def _build_system_prompt(
         kb_lines.append("═══════════════════════════════════════════════════════════════")
         kb_block = "\n" + "\n".join(kb_lines) + "\n"
 
-    identity = get_agent_identity()
+    # Per-agent identity — for Stock / Realty / Asset / AIGlass use THEIR own
+    # name + tagline + role so the assistant never claims to be the VIP
+    # platform. Falls back to the global VIP identity for vip / unknown agents.
+    _prof = AGENT_PROFILES.get((agent_id or "").lower()) if agent_id else None
+    if _prof and (agent_id or "").lower() != "vip":
+        identity = {
+            "name": f"{_prof['name']} assistant",
+            "tagline": _prof["tagline"],
+            "scope": (
+                f"You serve {_prof['user_role']} You know every page and data domain of "
+                f"THIS app (listed below), you remember the conversation, you can fetch live "
+                f"data and analyze it, and you can do anything the user would do by hand here — "
+                f"navigate/open pages, summarize the current screen, and run actions (with "
+                f"confirmation). You are NOT the VIP platform; do not mention VIP pages."
+            ),
+        }
+    else:
+        identity = get_agent_identity()
     return (
         f"You are the {identity['name']} — {identity['tagline']}. "
         f"{identity['scope']}\n\n"
@@ -627,6 +644,7 @@ def _run_chain(
     selected_id: Optional[str],
     system_prompt: str,
     history: list[dict],
+    agent_id: str = "vip",
 ) -> dict[str, Any]:
     """Execute a multi-step chain. If any step is a WRITE tool, halt and
     return a proposed_chain so the widget can ask for confirmation up front
@@ -673,7 +691,7 @@ def _run_chain(
     # Read-only chain — execute all and compose a final answer
     step_results = []
     for s in validated_steps:
-        res = execute_tool(s["tool"], s["args"], db=db)
+        res = execute_tool(s["tool"], s["args"], db=db, agent_id=agent_id)
         step_results.append({"tool": s["tool"], "result": res})
 
     # Compose final answer from all step results
@@ -1409,7 +1427,7 @@ def _run_agent_impl(
         # Carry the path through if the tool wants it
         if current_path and "current_path" not in args:
             args["current_path"] = current_path
-        tool_result = execute_tool(confirmed_tool, args, db=db)
+        tool_result = execute_tool(confirmed_tool, args, db=db, agent_id=agent_id)
         action = tool_result.get("action") if isinstance(tool_result, dict) else None
         reply = tool_result.get("message") if isinstance(tool_result, dict) else "Done."
         if not reply:
@@ -1586,7 +1604,7 @@ def _run_agent_impl(
     # ===== Phase 5: Multi-step chain =====
     steps = decision.get("steps")
     if isinstance(steps, list) and len(steps) > 0:
-        return _run_chain(db, transcript, lang, steps, current_path, selected_id, system, history or [])
+        return _run_chain(db, transcript, lang, steps, current_path, selected_id, system, history or [], agent_id=agent_id)
 
     # If the LLM chose to answer directly, return it
     if decision.get("answer") and not decision.get("tool"):
@@ -1669,7 +1687,7 @@ def _run_agent_impl(
     # recall_history needs to know whose history to search — inject user_id
     if tool_name == "recall_history" and user_id and "user_id" not in args:
         args["user_id"] = user_id
-    tool_result = execute_tool(tool_name, args, db=db)
+    tool_result = execute_tool(tool_name, args, db=db, agent_id=agent_id)
 
     # === Phase 6: Build inline result card ===
     card = _build_card(tool_name, tool_result)
