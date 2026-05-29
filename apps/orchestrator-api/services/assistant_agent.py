@@ -38,6 +38,148 @@ from services.assistant_manifest import (
 
 
 # ============================================================================
+#  Agent profiles — site map + capabilities + data-freshness notes
+# ============================================================================
+# Per-agent context the LLM gets at the top of every system prompt, so it
+# knows the full surface area of whichever app the user is in: every page
+# that exists, what each page shows, what data is real-time vs persisted,
+# and what the user can ask the assistant to do here. Lets the assistant
+# behave like a Claude Chrome extension that has been pre-briefed on the
+# app it's embedded in — no guessing, no "I'm not sure if this page
+# exists" hedging.
+AGENT_PROFILES: dict[str, dict[str, Any]] = {
+    "vip": {
+        "name": "VIP AI Platform",
+        "tagline": "Enterprise multi-agent orchestration with digital twins for each employee.",
+        "pages": [
+            "/chatbot — Assistant (this chat) + Messages (DMs with each twin) + Calls (voice) + Add knowledge",
+            "/dashboard — high-level KPIs across all twins",
+            "/twins — list of every digital twin, each with mode (shadow/active/handoff), specialty, readiness tier",
+            "/control-room — live twin status grid + traffic indicators",
+            "/task-board — task queue across all twins, kanban-style",
+            "/agents — registered domain agents (Asset / Stock / Realty / AIGlass)",
+            "/workflows — saved multi-step automations",
+            "/reports — daily / weekly summaries (boss + per-twin)",
+            "/judgement — pending approval decisions",
+            "/a2a — agent-to-agent coordination monitor",
+            "/meetings — multi-twin meeting rooms + meeting-notes",
+            "/settings — account + system configuration",
+        ],
+        "data_freshness": "Persisted state from Supabase + recent activity log, refreshed every page load. Twin modes auto-switch every 1 minute via scheduler.",
+        "user_role": "the boss / CEO — has full read+write on every twin.",
+    },
+    "realty": {
+        "name": "제주 영교도시 부동산 에이전트 (Realty Agent)",
+        "tagline": "Jeju English Town real-estate intelligence — market dashboard, evaluation, cashflow.",
+        "pages": [
+            "/ — home",
+            "/market — 시장 대시보드 (market dashboard, district-level prices and yields)",
+            "/evaluate — 분양성 평가 (property salability / yield evaluation)",
+            "/cashflow — 💸 Cash Flow builder (rental scenarios, NOI, IRR)",
+            "/pnl-builder — P&L builder",
+            "/sources — 📚 근거자료 (data sources)",
+            "/chatbot — Assistant (this chat) + KakaoTalk inbox + Add knowledge",
+            "/monitor — 시장 모니터 (market monitor)",
+        ],
+        "data_freshness": "Persisted market snapshot from Q1 2026. Reference report dated 2026-04-20 (국토부 / 네이버 / 호갱노노 transactions).",
+        "user_role": "real-estate consultant.",
+    },
+    "asset": {
+        "name": "Asset Agent — 종합 자산관리 대시보드",
+        "tagline": "Integrated asset-management: portfolio + leases + tenants + cash + tax + legal.",
+        "pages": [
+            "/chatbot — Assistant + Messages + Calls + Add knowledge",
+            "/ — dashboard (asset status, contract expirations, rent income, delinquencies)",
+            "/ops — operations center",
+            "/portfolio — 자산현황 (whole-portfolio overview)",
+            "/portfolio/evaluation — 월별 평가 (monthly evaluation)",
+            "/portfolio/analysis — 포트폴리오 분석 (portfolio analysis)",
+            "/commercial-analysis — 상권/MD 분석",
+            "/properties — 건물관리 (building management)",
+            "/maintenance — 유지보수",
+            "/lease — 임대관리 (lease management)",
+            "/tenants — 임차인 (tenants list)",
+            "/renewal — 재계약/매물 (renewals + listings)",
+            "/cash — 자금관리 (cashflow + bank balances)",
+            "/bank — 수납 관리",
+            "/tax — 세금관리 (tax records and filings)",
+            "/legal — 법적관리 (contracts + compliance)",
+            "/meetings — 회의록 (meeting notes)",
+            "/approvals — 결재 (approvals)",
+            "/notifications — 알림 이력",
+            "/settings — system settings",
+        ],
+        "data_freshness": "Persisted from Postgres (Drizzle), refreshed every page load. Multi-tenant by tenant_id.",
+        "user_role": "owner / manager of an asset-management portfolio.",
+    },
+    "stock": {
+        "name": "OASIS Stock Advisor",
+        "tagline": "AI investment advisory: market signals, recommendations, investor flow, intraday signals, journal analysis.",
+        "pages": [
+            "/chatbot — Assistant (this chat)",
+            "/recommendations — 추천 기록 (recommendation history of past picks)",
+            "/investment/investor-flow — 투자자 수급 (외국인 / 기관 / 개인 net buy/sell, by symbol)",
+            "/investment/intraday — 장중 신호 (intraday signals — bullish/bearish/risk score)",
+            "/investment/journal — 거래일지 분석 (your trade journal, analysis of past trades)",
+            "/news — 시장 뉴스 (market news feed)",
+            "/data-download — 시세 다운로드 (historical price downloads)",
+            "/settings — 운영 설정",
+            "/feedback — 의견 보내기",
+        ],
+        "data_freshness": (
+            "⚠ CRITICAL — STOCK DATA IS REAL-TIME AND CHANGES CONTINUOUSLY.\n"
+            "   Korean market hours: 09:00-15:30 KST Mon-Fri. During market hours the\n"
+            "   following all refresh every few seconds: KOSPI / KOSDAQ / KOSPI200 indices,\n"
+            "   individual stock prices, intraday signals, investor flow tallies, top movers.\n"
+            "   The page DOM snapshot you receive was captured a moment ago. The actual\n"
+            "   value at the moment of your reply may be different.\n"
+            "   When answering about live numbers, ALWAYS include a brief disclaimer like\n"
+            "   '(as of last refresh)' or '시점 기준' so the user understands the data is\n"
+            "   not strictly live. For after-hours / weekend questions, you can answer\n"
+            "   confidently — markets are closed and the snapshot is the last close."
+        ),
+        "user_role": "individual or professional investor using OASIS for trade ideas + reviewing their own trade journal.",
+    },
+    "aiglass": {
+        "name": "AIGlass Realty Agent",
+        "tagline": "AI-powered property listings + customer lead intelligence + 360° virtual tours.",
+        "pages": [
+            "/chatbot — Assistant + Messages + Calls + Add knowledge",
+            "/dashboard — broker KPIs",
+            "/properties — property listings + AI photo analysis (defects, finishes, PII blur)",
+            "/customers — customer leads + A/B/C/D scoring",
+            "/contracts — contract management",
+            "/aiglass — 360° virtual tour (coming soon)",
+        ],
+        "data_freshness": "Persisted via tRPC + Drizzle. Multi-tenant.",
+        "user_role": "real-estate broker / agency owner.",
+    },
+}
+
+
+def _agent_profile_block(agent_id: Optional[str]) -> str:
+    """Render the agent's site map + capabilities into a prompt block."""
+    if not agent_id:
+        return ""
+    p = AGENT_PROFILES.get(agent_id.lower())
+    if not p:
+        return ""
+    pages = "\n".join(f"  - {pg}" for pg in p["pages"])
+    return (
+        "\n■■■ THIS APP — FULL SURFACE AREA ■■■\n"
+        f"App: {p['name']}\n"
+        f"Purpose: {p['tagline']}\n"
+        f"The user is: {p['user_role']}\n\n"
+        "ALL PAGES (use navigate(path) to take the user to any of them):\n"
+        f"{pages}\n\n"
+        f"DATA FRESHNESS:\n  {p['data_freshness']}\n"
+        "\nYou know this entire surface area. Don't hedge with 'I'm not sure if "
+        "that page exists' — it does. When the user asks about a section, point "
+        "them at the right page or navigate them there directly.\n"
+    )
+
+
+# ============================================================================
 #  System prompt builder
 # ============================================================================
 
@@ -47,6 +189,7 @@ def _build_system_prompt(
     pending_attachments: Optional[list[dict]] = None,
     kb_context: Optional[list[dict]] = None,
     kb_files: Optional[list[dict]] = None,
+    agent_id: Optional[str] = None,
     page_context: Optional[str] = None,
 ) -> str:
     """Compose the system prompt the LLM sees on every request.
@@ -224,6 +367,7 @@ def _build_system_prompt(
         f"{pages_summary_for_llm()}\n\n"
         "■ EXTERNAL AGENT APPS (for open_portal(agent)):\n"
         f"{agents_summary_for_llm()}\n"
+        f"{_agent_profile_block(agent_id)}"
         f"{context_block}{page_block}{attach_block}{files_block}{kb_block}\n"
         "■ HOW TO RESPOND\n"
         "Always respond with ONE of these JSON shapes — NOTHING ELSE:\n"
@@ -1391,6 +1535,7 @@ def _run_agent_impl(
         pending_attachments=_pending_attachments if attachment_ids else None,
         kb_context=kb_hits,
         kb_files=kb_files,
+        agent_id=agent_id,
         page_context=page_context,
     )
     _debug_kb = {
