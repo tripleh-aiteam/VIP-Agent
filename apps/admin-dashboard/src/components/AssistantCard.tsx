@@ -65,6 +65,44 @@ interface Attachment {
 }
 
 // ----------------------------------------------------------------------
+//  Page-DOM capture — "Claude extension" style
+// ----------------------------------------------------------------------
+// Returns a text snapshot of what the user is currently seeing on screen,
+// so the orchestrator's LLM can answer "how much total asset?" /
+// "whose contract expires tomorrow?" by reading the rendered numbers
+// directly — no tool call, no API hit, no upload required.
+//
+// We strip out the Assistant's own UI (header, composer, floating card)
+// so the page context doesn't include the assistant's own messages.
+// Capped at ~14000 chars on the frontend side so a huge SPA doesn't blow
+// the LLM context window.
+export function capturePageContext(): string {
+  if (typeof document === "undefined") return "";
+  try {
+    // Prefer <main> when present (Next.js layouts almost always wrap pages in one)
+    const root = (document.querySelector("main") as HTMLElement | null)
+      || (document.body as HTMLElement | null);
+    if (!root) return "";
+    // Clone so we can mutate without touching the live DOM
+    const clone = root.cloneNode(true) as HTMLElement;
+    // Strip the Assistant's own UI so we don't recurse — they have
+    // data-assistant-ui markers or known classnames.
+    clone.querySelectorAll("[data-assistant-ui], [data-llm-picker], [data-download-menu]").forEach((n) => n.remove());
+    // Strip script / style / svg paths (noise)
+    clone.querySelectorAll("script, style, svg path, noscript").forEach((n) => n.remove());
+    let text = (clone.innerText || clone.textContent || "").trim();
+    // Collapse runs of whitespace
+    text = text.replace(/[ \t]+/g, " ").replace(/\n{3,}/g, "\n\n");
+    if (text.length > 14000) {
+      text = text.slice(0, 14000) + "\n…[truncated]";
+    }
+    return text;
+  } catch {
+    return "";
+  }
+}
+
+// ----------------------------------------------------------------------
 //  Context — survives route changes
 // ----------------------------------------------------------------------
 
@@ -572,6 +610,7 @@ export function AssistantCard({ floating = true }: Props = {}) {
         history: turns.slice(-6).map(t => ({ role: t.who, text: t.text, intent: t.intent })),
         current_path: pathname,
         user_id: userId || "boss",
+        page_context: capturePageContext(),
       };
       if (attachmentIds.length > 0) body.attachment_ids = attachmentIds;
       if (confirmed && confirmedTool) {
@@ -633,7 +672,7 @@ export function AssistantCard({ floating = true }: Props = {}) {
   // ---------------------------------------------------------------
 
   const card = (
-    <div className={`rounded-2xl border border-gray-200 bg-white shadow-${floating ? "2xl" : "sm"} p-3 md:p-4 space-y-2`}>
+    <div data-assistant-ui="card" className={`rounded-2xl border border-gray-200 bg-white shadow-${floating ? "2xl" : "sm"} p-3 md:p-4 space-y-2`}>
       {/* Header (collapsible) */}
       <div className="flex items-center justify-between gap-3 px-1">
         <div className="flex items-center gap-2">
@@ -940,6 +979,7 @@ export function AssistantCard({ floating = true }: Props = {}) {
         compactPill ? (
           <button
             type="button"
+            data-assistant-ui="pill"
             onClick={() => {
               setPillExpanded(true);
               setTimeout(() => inputRef.current?.focus(), 50);
@@ -951,7 +991,7 @@ export function AssistantCard({ floating = true }: Props = {}) {
             <span className="text-[13px] font-medium text-gray-700">Ask</span>
           </button>
         ) : (
-          <div className="fixed z-[100] left-1/2 -translate-x-1/2 bottom-2 sm:bottom-4 w-[min(96vw,820px)]">
+          <div data-assistant-ui="float" className="fixed z-[100] left-1/2 -translate-x-1/2 bottom-2 sm:bottom-4 w-[min(96vw,820px)]">
             {card}
           </div>
         )

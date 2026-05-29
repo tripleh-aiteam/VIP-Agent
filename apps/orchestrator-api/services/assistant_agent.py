@@ -47,6 +47,7 @@ def _build_system_prompt(
     pending_attachments: Optional[list[dict]] = None,
     kb_context: Optional[list[dict]] = None,
     kb_files: Optional[list[dict]] = None,
+    page_context: Optional[str] = None,
 ) -> str:
     """Compose the system prompt the LLM sees on every request.
 
@@ -100,6 +101,32 @@ def _build_system_prompt(
     # ('ABSOLUTE PRIORITY', 'DO NOT call any tool') because earlier softer
     # wording let the LLM ignore the excerpts and call agent_status / mock-
     # data tools instead of quoting the actual file content.
+    # === Page context block ===
+    # What the user is literally seeing on screen right now. The frontend
+    # AssistantCard captures innerText of the main page region (Claude
+    # extension-style) so the LLM can answer questions like "how much
+    # total asset?" / "whose contract expires tomorrow?" by reading the
+    # rendered dashboard numbers directly, with NO tool call required.
+    # This is the fast path for "ask about what's on this page" questions
+    # before the full tool-calling DB bridge ships.
+    page_block = ""
+    if page_context and page_context.strip():
+        # Hard cap so a giant page doesn't blow the LLM context window
+        trimmed = page_context.strip()[:14000]
+        page_block = (
+            "\n■■■ WHAT THE USER IS SEEING ON SCREEN (live page DOM snapshot) ■■■\n"
+            "The text below is exactly what's rendered on the user's current "
+            "page right now. If their question can be answered from these "
+            "numbers / lists / labels, ANSWER DIRECTLY using the answer shape "
+            "({\"answer\": \"...\"}). Quote the exact numbers and names verbatim. "
+            "Do NOT call search_knowledge_base or any tool when the answer is "
+            "already visible here. Do NOT say 'I don't have access to your "
+            "data' — you literally see it.\n"
+            "─── current page content ───\n"
+            f"{trimmed}\n"
+            "─── end page content ───\n"
+        )
+
     # === File index block ===
     # Always tell the LLM which files the boss has uploaded for this agent,
     # even when the current question didn't match any chunk. This lets the
@@ -197,7 +224,7 @@ def _build_system_prompt(
         f"{pages_summary_for_llm()}\n\n"
         "■ EXTERNAL AGENT APPS (for open_portal(agent)):\n"
         f"{agents_summary_for_llm()}\n"
-        f"{context_block}{attach_block}{files_block}{kb_block}\n"
+        f"{context_block}{page_block}{attach_block}{files_block}{kb_block}\n"
         "■ HOW TO RESPOND\n"
         "Always respond with ONE of these JSON shapes — NOTHING ELSE:\n"
         '  A. Call ONE tool:    { "tool": "<name>", "args": { ... } }\n'
@@ -1157,6 +1184,7 @@ def run_agent(
     forced_model: Optional[str] = None,
     user_id: Optional[str] = None,
     agent_id: str = "vip",
+    page_context: Optional[str] = None,
 ) -> dict[str, Any]:
     """Public entry — wraps the actual implementation with cross-session
     memory persistence (writes each turn to chat_sessions/chat_messages
@@ -1168,6 +1196,7 @@ def run_agent(
         confirmed_tool=confirmed_tool, confirmed_args=confirmed_args,
         attachment_ids=attachment_ids, forced_model=forced_model,
         user_id=user_id, agent_id=agent_id,
+        page_context=page_context,
     )
     # Persist meaningful turns only — skip empty / multimodal_failed / errors
     skip_intents = {"empty", "multimodal_failed", "multimodal_missing", "chain_empty"}
@@ -1196,6 +1225,7 @@ def _run_agent_impl(
     forced_model: Optional[str] = None,
     user_id: Optional[str] = None,
     agent_id: str = "vip",
+    page_context: Optional[str] = None,
 ) -> dict[str, Any]:
     """Run one agent turn. Returns:
         {intent, language, reply, action, speak, transcript, tool_used, tool_result,
@@ -1361,6 +1391,7 @@ def _run_agent_impl(
         pending_attachments=_pending_attachments if attachment_ids else None,
         kb_context=kb_hits,
         kb_files=kb_files,
+        page_context=page_context,
     )
     _debug_kb = {
         "agent_id": agent_id,
@@ -1374,6 +1405,7 @@ def _run_agent_impl(
         ],
         "rag_error": rag_error,
         "system_prompt_chars": len(system),
+        "page_context_chars": len(page_context) if page_context else 0,
     }
 
     # Auto-fill ID args from selected_id when the LLM picks a tool that

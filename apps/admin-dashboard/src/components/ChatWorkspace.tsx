@@ -356,6 +356,25 @@ export default function ChatWorkspace({ apiBase, agentId, agentLabel }: Props) {
     }));
 
     try {
+      // Capture page DOM — used when the ChatWorkspace was navigated to
+      // from another page in the same SPA, so prior tab content is still
+      // present. (On a fresh /chatbot load, this just returns the chat
+      // header which is harmless.)
+      let pageCtx = "";
+      try {
+        if (typeof document !== "undefined") {
+          const root = (document.querySelector("main") as HTMLElement | null) || document.body;
+          const clone = root?.cloneNode(true) as HTMLElement | undefined;
+          if (clone) {
+            clone.querySelectorAll("[data-assistant-ui], [data-llm-picker], [data-download-menu]").forEach((n) => n.remove());
+            clone.querySelectorAll("script, style, svg path, noscript").forEach((n) => n.remove());
+            let text = (clone.innerText || clone.textContent || "").trim();
+            text = text.replace(/[ \t]+/g, " ").replace(/\n{3,}/g, "\n\n");
+            pageCtx = text.length > 14000 ? text.slice(0, 14000) + "\n…[truncated]" : text;
+          }
+        }
+      } catch {}
+
       const r = await fetch(`${base}/chat/agent`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -368,6 +387,7 @@ export default function ChatWorkspace({ apiBase, agentId, agentLabel }: Props) {
             role: t.who, text: t.text, intent: t.intent,
           })),
           current_path: "/chatbot",
+          page_context: pageCtx || undefined,
         }),
       });
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
@@ -603,7 +623,7 @@ export default function ChatWorkspace({ apiBase, agentId, agentLabel }: Props) {
   }
 
   return (
-    <div className="flex border border-gray-200 rounded-2xl overflow-hidden bg-white" style={{ height: "calc(100vh - 180px)", minHeight: 500 }}>
+    <div data-assistant-ui="workspace" className="flex border border-gray-200 rounded-2xl overflow-hidden bg-white" style={{ height: "calc(100vh - 180px)", minHeight: 500 }}>
       {/* === Sidebar === */}
       <aside className="hidden md:flex w-64 flex-col border-r border-gray-200 bg-gray-50">
         <div className="px-4 py-3 border-b border-gray-200 flex items-center gap-2">

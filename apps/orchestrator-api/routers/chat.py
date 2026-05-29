@@ -57,6 +57,7 @@ class AgentCommandBody(BaseModel):
     model: Optional[str] = Field(None, description="Optional override — pin a specific LLM for this request (e.g. 'claude-sonnet-4-6'). Bypasses the smart router. Useful for the in-overlay model picker dropdown.")
     user_id: Optional[str] = Field(None, description="Caller user id (email) used for cross-session memory. Each user gets their own rolling 'assistant_overlay' chat session that recall_history searches. Defaults to 'boss' when unset.")
     agentId: Optional[str] = Field(None, description="Which agent's knowledge base to consult (vip / realty / asset / ...). Defaults to 'vip'.")
+    page_context: Optional[str] = Field(None, description="Snapshot of the user's current page DOM text — what they see on screen right now. Captured by the frontend AssistantCard and forwarded so the LLM can answer questions like 'how much total asset?' without needing a separate API/tool call. Capped at ~15K chars on the frontend side.")
 
 
 @router.post("/agent")
@@ -105,6 +106,7 @@ def _agent_command_impl(body: AgentCommandBody, db: Session):
         forced_model=body.model,
         user_id=body.user_id or "boss",
         agent_id=body.agentId or "vip",
+        page_context=body.page_context,
     )
 
 
@@ -144,6 +146,7 @@ def agent_command_stream(body: AgentCommandBody, db: Session = Depends(get_db)):
         forced_model=body.model,
         user_id=body.user_id or "boss",
         agent_id=body.agentId or "vip",
+        page_context=body.page_context,
     )
 
     reply = str(result.get("reply") or "")
