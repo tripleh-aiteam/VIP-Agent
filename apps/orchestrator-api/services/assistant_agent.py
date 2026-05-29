@@ -363,12 +363,22 @@ def _build_system_prompt(
         "1-3 sentences for chat; longer only when listing data.\n\n"
         "■ TOOL CATALOG (every capability you have):\n"
         f"{tools_block}\n\n"
-        "■ INTERNAL PAGES (for navigate(path)):\n"
-        f"{pages_summary_for_llm()}\n\n"
-        "■ EXTERNAL AGENT APPS (for open_portal(agent)):\n"
-        f"{agents_summary_for_llm()}\n"
-        f"{_agent_profile_block(agent_id)}"
-        f"{context_block}{page_block}{attach_block}{files_block}{kb_block}\n"
+        # Only include the global VIP-centric pages list when this is VIP
+        # itself OR when no agent profile is configured. For non-VIP
+        # agents (Stock / Realty / Asset / AIGlass), their own profile
+        # below provides the authoritative pages list; mixing in VIP's
+        # Dashboard / Control Room / Twins confuses the LLM into
+        # suggesting non-existent pages.
+        + (
+            "■ INTERNAL PAGES (for navigate(path)):\n"
+            f"{pages_summary_for_llm()}\n\n"
+            "■ EXTERNAL AGENT APPS (for open_portal(agent)):\n"
+            f"{agents_summary_for_llm()}\n"
+            if (not agent_id or agent_id.lower() == "vip" or agent_id.lower() not in AGENT_PROFILES)
+            else ""
+        )
+        + f"{_agent_profile_block(agent_id)}"
+        + f"{context_block}{page_block}{attach_block}{files_block}{kb_block}\n"
         "■ HOW TO RESPOND\n"
         "Always respond with ONE of these JSON shapes — NOTHING ELSE:\n"
         '  A. Call ONE tool:    { "tool": "<name>", "args": { ... } }\n'
