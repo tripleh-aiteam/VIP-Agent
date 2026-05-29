@@ -656,238 +656,292 @@ export default function ChatWorkspace({ apiBase, agentId, agentLabel }: Props) {
   })();
 
   return (
-    <div data-assistant-ui="workspace" className="flex h-full w-full overflow-hidden bg-white text-gray-900" style={{ minHeight: 480 }}>
-      {/* ============================ */}
-      {/* Sidebar — minimal, hideable  */}
-      {/* ============================ */}
-      <aside className="hidden md:flex w-[220px] shrink-0 flex-col border-r border-gray-100 bg-white">
-        <div className="px-4 h-12 border-b border-gray-100 flex items-center justify-between">
-          <div className="text-[13px] font-medium text-gray-900 truncate">{agentLabel || agentId}</div>
-          <div className="text-[11px] text-gray-400">{store.sessions.length}</div>
+    <div data-assistant-ui="workspace" className="flex border border-gray-200 rounded-2xl overflow-hidden bg-white shadow-sm" style={{ height: "calc(100vh - 180px)", minHeight: 560 }}>
+      {/* ========================================================== */}
+      {/* === Sidebar: folder/session tree                       === */}
+      {/* ========================================================== */}
+      <aside className="hidden md:flex w-[260px] shrink-0 flex-col border-r border-gray-200 bg-gradient-to-b from-gray-50 to-white">
+        <div className="px-4 py-3.5 border-b border-gray-200 flex items-center gap-2">
+          <span className="w-7 h-7 rounded-lg bg-gradient-to-br from-blue-500 to-violet-500 text-white flex items-center justify-center text-[14px] shrink-0">💬</span>
+          <div className="min-w-0">
+            <div className="text-[13px] font-bold text-gray-900 truncate">{agentLabel || agentId}</div>
+            <div className="text-[10px] text-gray-500">{store.sessions.length} chat{store.sessions.length === 1 ? "" : "s"}</div>
+          </div>
         </div>
-        <div className="px-3 pt-3 pb-1.5">
-          <button
-            onClick={() => createSession()}
-            className="w-full h-9 rounded-md bg-gray-900 text-white text-[13px] font-medium hover:bg-black flex items-center justify-center gap-1.5"
-            title="New chat"
-          >+ New chat</button>
-        </div>
-        <div className="flex-1 overflow-y-auto px-2 pb-2">
+        <div className="flex-1 overflow-y-auto p-2 space-y-1">
           {store.folders.map(f => (
-            <div key={f.id} className="mb-3">
-              <div className="group flex items-center gap-1 px-2 py-1 text-[10px] font-medium uppercase tracking-wider text-gray-400">
+            <div key={f.id}>
+              <div className="group flex items-center gap-1 px-2 py-1.5 text-[11px] font-semibold uppercase tracking-wide text-gray-500 hover:bg-gray-100 rounded">
+                <span>📂</span>
                 {editingFolderId === f.id ? (
                   <input
                     autoFocus
                     defaultValue={f.name}
                     onBlur={e => { renameFolder(f.id, e.target.value); setEditingFolderId(null); }}
                     onKeyDown={e => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
-                    className="flex-1 bg-white border border-gray-300 rounded px-1 py-0 text-[10px] outline-none uppercase"
+                    className="flex-1 bg-white border border-blue-400 rounded px-1 py-0 text-[11px] outline-none"
                   />
                 ) : (
                   <span className="flex-1 truncate">{f.name}</span>
                 )}
                 <div className="opacity-0 group-hover:opacity-100 flex gap-0.5">
-                  <button onClick={() => createSession(f.id)} className="hover:text-gray-900 w-4 h-4 text-[11px]" title="New chat in folder">+</button>
-                  <button onClick={() => setEditingFolderId(f.id)} className="hover:text-gray-900 w-4 h-4 text-[10px]" title="Rename folder">✎</button>
+                  <button onClick={() => createSession(f.id)} className="hover:text-blue-600 w-5 h-5 flex items-center justify-center" title="New chat in folder">📝</button>
+                  <button onClick={() => setEditingFolderId(f.id)} className="hover:text-blue-600 w-5 h-5 flex items-center justify-center" title="Rename folder">✏️</button>
                   {f.id !== DEFAULT_FOLDER_ID && (
-                    <button onClick={() => deleteFolder(f.id)} className="hover:text-red-500 w-4 h-4 text-[11px]" title="Delete folder">×</button>
+                    <button onClick={() => deleteFolder(f.id)} className="hover:text-red-500 w-5 h-5 flex items-center justify-center" title="Delete folder">🗑️</button>
                   )}
                 </div>
               </div>
-              <div className="space-y-0.5">
+              <div className="ml-1 mt-0.5 space-y-0.5">
                 {(sessionsByFolder[f.id] || []).map(s => {
                   const active = s.id === store.activeSessionId;
+                  const lastTurn = s.turns[s.turns.length - 1];
                   return (
                     <div
                       key={s.id}
-                      className={`group flex items-center gap-1.5 px-2.5 py-1.5 rounded-md cursor-pointer text-[13px] ${
-                        active ? "bg-gray-100 text-gray-900 font-medium" : "text-gray-700 hover:bg-gray-50"
+                      className={`group flex flex-col gap-0.5 px-2.5 py-2 rounded-lg cursor-pointer transition-all ${
+                        active
+                          ? "bg-blue-50 border-l-2 border-blue-500 shadow-sm"
+                          : "border-l-2 border-transparent hover:bg-gray-100"
                       }`}
                       onClick={() => update(prev => ({ ...prev, activeSessionId: s.id }))}
                     >
-                      {editingSessionId === s.id ? (
-                        <input
-                          autoFocus
-                          defaultValue={s.name}
-                          onClick={e => e.stopPropagation()}
-                          onBlur={e => { renameSession(s.id, e.target.value); setEditingSessionId(null); }}
-                          onKeyDown={e => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
-                          className="flex-1 bg-white border border-gray-300 rounded px-1 py-0 text-[13px] outline-none"
-                        />
-                      ) : (
-                        <span className="flex-1 truncate">{s.name}</span>
-                      )}
-                      <div className="opacity-0 group-hover:opacity-100 flex gap-0.5 shrink-0">
-                        <button onClick={e => { e.stopPropagation(); setEditingSessionId(s.id); }} className="hover:text-gray-900 w-4 h-4 text-[11px]" title="Rename">✎</button>
-                        <button onClick={e => { e.stopPropagation(); deleteSession(s.id); }} className="hover:text-red-500 w-4 h-4 text-[12px]" title="Delete">×</button>
+                      <div className="flex items-center gap-1.5">
+                        {editingSessionId === s.id ? (
+                          <input
+                            autoFocus
+                            defaultValue={s.name}
+                            onClick={e => e.stopPropagation()}
+                            onBlur={e => { renameSession(s.id, e.target.value); setEditingSessionId(null); }}
+                            onKeyDown={e => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
+                            className="flex-1 bg-white border border-blue-400 rounded px-1 py-0 text-[13px] outline-none"
+                          />
+                        ) : (
+                          <span className={`flex-1 truncate text-[13px] ${active ? "font-semibold text-gray-900" : "text-gray-800"}`}>{s.name}</span>
+                        )}
+                        <div className="opacity-0 group-hover:opacity-100 flex gap-0.5 shrink-0">
+                          <button onClick={e => { e.stopPropagation(); setEditingSessionId(s.id); }} className="hover:text-blue-600 w-5 h-5 flex items-center justify-center text-[12px]" title="Rename">✏️</button>
+                          <button onClick={e => { e.stopPropagation(); deleteSession(s.id); }} className="hover:text-red-500 w-5 h-5 flex items-center justify-center text-[12px]" title="Delete">🗑️</button>
+                        </div>
                       </div>
+                      {lastTurn && (
+                        <div className="text-[11px] text-gray-500 truncate">
+                          {lastTurn.who === "user" ? "You: " : ""}{lastTurn.text}
+                        </div>
+                      )}
                     </div>
                   );
                 })}
+                {(sessionsByFolder[f.id] || []).length === 0 && (
+                  <div className="px-2.5 py-1.5 text-[11px] text-gray-400 italic">No chats yet</div>
+                )}
               </div>
             </div>
           ))}
+        </div>
+        <div className="border-t border-gray-200 p-2.5 flex gap-1.5">
+          <button
+            onClick={() => createSession()}
+            className="flex-1 py-2 px-3 bg-gradient-to-r from-blue-600 to-violet-600 hover:from-blue-700 hover:to-violet-700 text-white text-[12px] font-semibold rounded-lg shadow-sm flex items-center justify-center gap-1.5"
+            title="New chat"
+          ><span className="text-[14px]">+</span> New chat</button>
           <button
             onClick={createFolder}
-            className="w-full text-left px-2.5 py-1.5 text-[12px] text-gray-400 hover:text-gray-700"
-          >+ New folder</button>
+            className="py-2 px-2.5 bg-white text-gray-700 text-[12px] font-medium rounded-lg border border-gray-300 hover:bg-gray-50"
+            title="New folder"
+          >+ Folder</button>
         </div>
       </aside>
 
-      {/* =================== */}
-      {/* Main: conversation  */}
-      {/* =================== */}
+      {/* ========================================================== */}
+      {/* === Main: conversation flow + composer                === */}
+      {/* ========================================================== */}
       <main className="flex-1 flex flex-col min-w-0 bg-white">
-        {/* Header — quiet, single line */}
-        <div className="h-12 px-4 md:px-6 border-b border-gray-100 flex items-center justify-between gap-3 shrink-0">
-          <button
-            onClick={() => createSession()}
-            className="md:hidden w-8 h-8 rounded-md border border-gray-200 text-gray-600 text-[15px] flex items-center justify-center shrink-0"
-            title="New chat"
-          >+</button>
-          <div className="text-[14px] font-medium text-gray-900 truncate flex-1">
-            {activeSession?.name || "New chat"}
+        {/* Conversation header */}
+        <div className="px-5 py-3 border-b border-gray-200 flex items-center justify-between gap-3 bg-gradient-to-r from-white to-gray-50">
+          <div className="min-w-0 flex-1 flex items-center gap-3">
+            <button
+              onClick={() => createSession()}
+              className="md:hidden w-9 h-9 rounded-lg bg-blue-600 text-white text-[16px] flex items-center justify-center shrink-0"
+              title="New chat"
+            >+</button>
+            <div className="min-w-0">
+              <div className="text-[15px] font-semibold text-gray-900 truncate">
+                {activeSession?.name || "Select a chat"}
+              </div>
+              <div className="text-[11px] text-gray-500">
+                {activeSession ? `${activeSession.turns.length} turn${activeSession.turns.length === 1 ? "" : "s"} · ${agentLabel || agentId}` : ""}
+              </div>
+            </div>
           </div>
           {activeSession && activeSession.turns.length > 0 && (
             <div className="relative" data-download-menu>
               <button
                 onClick={() => setShowDownload(showDownload === activeSession.id ? null : activeSession.id)}
-                className="h-8 px-3 rounded-md text-[12px] text-gray-600 hover:bg-gray-100"
-              >Export ▾</button>
+                className="px-3 py-1.5 rounded-lg border border-gray-300 text-[12px] font-medium text-gray-700 hover:bg-gray-50 flex items-center gap-1.5"
+              >
+                ⬇ Download ▾
+              </button>
               {showDownload === activeSession.id && (
-                <div className="absolute right-0 top-full mt-1 min-w-[180px] bg-white border border-gray-200 rounded-md shadow-lg z-50 py-1">
+                <div className="absolute right-0 top-full mt-1 min-w-[220px] bg-white border border-gray-200 rounded-xl shadow-2xl z-50 py-1.5">
                   <button
                     onClick={() => { downloadAsWord(activeSession.turns, activeSession.name); setShowDownload(null); }}
-                    className="w-full text-left px-3 py-1.5 hover:bg-gray-50 text-[13px] text-gray-700"
-                  >Word (.doc)</button>
+                    className="w-full text-left px-4 py-2 hover:bg-gray-50 text-[13px] text-gray-700 flex items-center gap-2"
+                  >📄 Word (.doc)</button>
                   <button
                     onClick={() => { downloadAsPdf(activeSession.turns, activeSession.name); setShowDownload(null); }}
-                    className="w-full text-left px-3 py-1.5 hover:bg-gray-50 text-[13px] text-gray-700"
-                  >PDF</button>
+                    className="w-full text-left px-4 py-2 hover:bg-gray-50 text-[13px] text-gray-700 flex items-center gap-2"
+                  >📕 PDF (Print)</button>
                 </div>
               )}
             </div>
           )}
         </div>
 
-        {/* Conversation scroll area — fluid width */}
-        <div ref={scrollRef} className="flex-1 overflow-y-auto">
+        {/* Conversation scroll area */}
+        <div ref={scrollRef} className="flex-1 overflow-y-auto bg-gradient-to-b from-white via-gray-50/30 to-white">
+          {/* No session yet */}
           {!activeSession && (
-            <div className="h-full flex items-center justify-center px-6 text-[13px] text-gray-400">
-              Pick a chat from the sidebar.
+            <div className="h-full flex items-center justify-center px-6">
+              <div className="text-center max-w-md">
+                <div className="text-5xl mb-3">💬</div>
+                <h3 className="text-[16px] font-semibold text-gray-900 mb-1">Pick a chat</h3>
+                <p className="text-[13px] text-gray-500">Choose a chat from the sidebar or start a new one.</p>
+              </div>
             </div>
           )}
+          {/* Empty session — welcome + example prompts */}
           {activeSession && activeSession.turns.length === 0 && (
-            <div className="h-full flex flex-col items-center justify-center px-6 py-12">
-              <div className="w-full max-w-[640px]">
-                <h2 className="text-[24px] font-medium text-gray-900 mb-2 text-center">
-                  How can I help?
+            <div className="h-full flex flex-col items-center justify-center px-6 py-10">
+              <div className="text-center max-w-2xl">
+                <div className="w-16 h-16 mx-auto mb-4 rounded-2xl bg-gradient-to-br from-blue-500 to-violet-500 text-white flex items-center justify-center text-[28px] shadow-lg">
+                  🤖
+                </div>
+                <h2 className="text-[22px] font-bold text-gray-900 mb-2">
+                  Ask {agentLabel || agentId} anything
                 </h2>
-                <p className="text-[13px] text-gray-500 mb-8 text-center">
-                  I can read what&apos;s on your page, search your uploaded files, and reply by voice if you switch on the mic.
+                <p className="text-[14px] text-gray-500 mb-6">
+                  I can read what&apos;s on your page, search your uploaded files, and reply in voice if you switch on the mic.
                 </p>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 mb-2">
                   {examplePrompts.map((p, idx) => (
                     <button
                       key={idx}
                       type="button"
                       onClick={() => { setPrompt(p); setTimeout(() => { void send(p); }, 0); }}
-                      className="text-left px-3.5 py-3 rounded-lg border border-gray-200 hover:border-gray-300 hover:bg-gray-50 text-[13px] text-gray-700 transition-colors"
-                    >{p}</button>
+                      className="text-left px-4 py-3 rounded-xl border border-gray-200 hover:border-blue-300 hover:bg-blue-50/30 text-[13px] text-gray-700 transition-colors"
+                    >
+                      {p}
+                    </button>
                   ))}
                 </div>
               </div>
             </div>
           )}
-          {/* Conversation turns — fluid width with comfortable reading max */}
+          {/* Conversation turns — centered column, ChatGPT-style */}
           {activeSession && activeSession.turns.length > 0 && (
-            <div className="w-full max-w-[820px] mx-auto px-4 md:px-8 py-6 space-y-7">
+            <div className="max-w-3xl mx-auto px-4 md:px-6 py-6 space-y-6">
               {activeSession.turns.map((t, i) => {
                 const qIdx = Math.floor(i / 2) + 1;
                 if (t.who === "user") {
                   return (
-                    <div key={i} className="space-y-1.5 group">
-                      <div className="text-[11px] font-medium uppercase tracking-wider text-gray-400">You</div>
-                      <div className="text-[15px] leading-relaxed text-gray-900 whitespace-pre-wrap break-words">
-                        {t.text}
+                    <div key={i} className="flex justify-end gap-3">
+                      <div className="flex flex-col items-end gap-1.5 min-w-[120px] max-w-[85%]">
+                        <div className="flex items-center gap-2 text-[10px] font-bold tracking-wide text-gray-400">
+                          <span>YOU</span>
+                          <span className="bg-gray-900 text-white px-1.5 py-0.5 rounded-md">Q{qIdx}</span>
+                        </div>
+                        <div className="bg-gradient-to-br from-blue-600 to-blue-700 text-white rounded-2xl rounded-tr-md px-4 py-3 text-[15px] leading-relaxed whitespace-pre-wrap shadow-sm">
+                          {t.text}
+                        </div>
+                        <button
+                          onClick={() => copyText(t.text)}
+                          className="text-[10px] text-gray-400 hover:text-gray-600 flex items-center gap-1 px-1 py-0.5"
+                          title="Copy"
+                        >📋 Copy</button>
                       </div>
-                      <button
-                        onClick={() => copyText(t.text)}
-                        className="opacity-0 group-hover:opacity-100 text-[11px] text-gray-400 hover:text-gray-700 transition-opacity"
-                        title="Copy"
-                      >Copy</button>
+                      <div className="w-9 h-9 rounded-full bg-gray-200 text-gray-700 flex items-center justify-center text-[15px] shrink-0 mt-6">
+                        🙂
+                      </div>
                     </div>
                   );
                 }
+                // Assistant turn
                 return (
-                  <div key={i} className="space-y-1.5 group">
-                    <div className="text-[11px] font-medium uppercase tracking-wider text-gray-400">
-                      {agentLabel || agentId}
+                  <div key={i} className="flex justify-start gap-3">
+                    <div className="w-9 h-9 rounded-full bg-gradient-to-br from-blue-500 to-violet-500 text-white flex items-center justify-center text-[15px] shrink-0 mt-6 shadow-sm">
+                      🤖
                     </div>
-                    <div className="text-[15px] leading-relaxed text-gray-900 whitespace-pre-wrap break-words">
-                      {t.text}
-                    </div>
-                    {(t.intent || t.tool_used) && (
-                      <div className="text-[10px] text-gray-400">
-                        {t.intent}{t.tool_used ? ` · ${t.tool_used}` : ""}
+                    <div className="flex flex-col items-start gap-1.5 max-w-[85%] min-w-[120px] flex-1">
+                      <div className="flex items-center gap-2 text-[10px] font-bold tracking-wide text-gray-400 uppercase">
+                        <span>{(agentLabel || agentId)} · Answer</span>
                       </div>
-                    )}
-                    <div className="flex gap-3 text-[11px] text-gray-400 opacity-0 group-hover:opacity-100 transition-opacity">
-                      <button
-                        onClick={() => copyText(t.text)}
-                        className="hover:text-gray-700"
-                        title="Copy"
-                      >Copy</button>
-                      <button
-                        onClick={() => {
-                          const prev = i > 0 ? activeSession.turns[i - 1] : undefined;
-                          const pair: AssistantTurn[] = prev && prev.who === "user" ? [prev, t] : [t];
-                          downloadAsWord(pair, `${activeSession.name} - Q${qIdx}`);
-                        }}
-                        className="hover:text-gray-700"
-                        title="Download this Q&A as Word"
-                      >.doc</button>
-                      <button
-                        onClick={() => {
-                          const prev = i > 0 ? activeSession.turns[i - 1] : undefined;
-                          const pair: AssistantTurn[] = prev && prev.who === "user" ? [prev, t] : [t];
-                          downloadAsPdf(pair, `${activeSession.name} - Q${qIdx}`);
-                        }}
-                        className="hover:text-gray-700"
-                        title="Print as PDF"
-                      >PDF</button>
+                      <div className="bg-white border border-gray-200 rounded-2xl rounded-tl-md px-4 py-3 text-[15px] leading-relaxed whitespace-pre-wrap text-gray-900 shadow-sm w-full">
+                        {t.text}
+                        {(t.intent || t.tool_used) && (
+                          <div className="text-[10px] text-gray-400 mt-2 pt-2 border-t border-gray-100">
+                            {t.intent}{t.tool_used ? ` · ${t.tool_used}` : ""}
+                          </div>
+                        )}
+                      </div>
+                      <div className="flex gap-1 text-[11px] flex-wrap">
+                        <button
+                          onClick={() => copyText(t.text)}
+                          className="px-2 py-1 rounded-md text-gray-500 hover:bg-gray-100 hover:text-gray-700 flex items-center gap-1"
+                          title="Copy"
+                        >📋 Copy</button>
+                        <button
+                          onClick={() => {
+                            const prev = i > 0 ? activeSession.turns[i - 1] : undefined;
+                            const pair: AssistantTurn[] = prev && prev.who === "user" ? [prev, t] : [t];
+                            downloadAsWord(pair, `${activeSession.name} - Q${qIdx}`);
+                          }}
+                          className="px-2 py-1 rounded-md text-gray-500 hover:bg-gray-100 hover:text-gray-700 flex items-center gap-1"
+                          title="Download this Q&A as Word"
+                        >📄 .doc</button>
+                        <button
+                          onClick={() => {
+                            const prev = i > 0 ? activeSession.turns[i - 1] : undefined;
+                            const pair: AssistantTurn[] = prev && prev.who === "user" ? [prev, t] : [t];
+                            downloadAsPdf(pair, `${activeSession.name} - Q${qIdx}`);
+                          }}
+                          className="px-2 py-1 rounded-md text-gray-500 hover:bg-gray-100 hover:text-gray-700 flex items-center gap-1"
+                          title="Print as PDF"
+                        >📕 PDF</button>
+                      </div>
                     </div>
                   </div>
                 );
               })}
               {thinking && (
-                <div className="space-y-1.5">
-                  <div className="text-[11px] font-medium uppercase tracking-wider text-gray-400">
-                    {agentLabel || agentId}
+                <div className="flex justify-start gap-3">
+                  <div className="w-9 h-9 rounded-full bg-gradient-to-br from-blue-500 to-violet-500 text-white flex items-center justify-center text-[15px] shrink-0 mt-6 shadow-sm animate-pulse">
+                    🤖
                   </div>
-                  <div className="flex gap-1.5 items-center h-6">
-                    <span className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce" />
-                    <span className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: "150ms" }} />
-                    <span className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: "300ms" }} />
+                  <div className="bg-white border border-gray-200 px-4 py-3 rounded-2xl rounded-tl-md mt-6 shadow-sm">
+                    <div className="flex gap-1.5">
+                      <span className="w-2 h-2 bg-blue-500 rounded-full animate-bounce" />
+                      <span className="w-2 h-2 bg-blue-500 rounded-full animate-bounce" style={{ animationDelay: "150ms" }} />
+                      <span className="w-2 h-2 bg-blue-500 rounded-full animate-bounce" style={{ animationDelay: "300ms" }} />
+                    </div>
                   </div>
                 </div>
               )}
               {error && (
-                <div className="text-[12px] text-red-600">{error}</div>
+                <div className="text-[12px] text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{error}</div>
               )}
             </div>
           )}
         </div>
 
-        {/* Composer — minimalist, fluid-width */}
-        <div className="border-t border-gray-100 bg-white px-4 md:px-8 py-4 shrink-0">
-          <div className="w-full max-w-[820px] mx-auto">
-            <div className="flex items-center gap-1.5 rounded-xl border border-gray-300 bg-white px-2 py-1.5 focus-within:border-gray-900 transition-colors">
+        {/* Composer */}
+        <div className="border-t border-gray-200 bg-white px-4 md:px-6 py-3 md:py-4">
+          <div className="max-w-3xl mx-auto">
+            <div className="flex items-center gap-2 rounded-2xl border-2 border-gray-200 bg-white px-2 py-1.5 hover:border-gray-300 focus-within:border-blue-500 focus-within:shadow-md transition-all">
               <button
                 type="button"
                 onClick={() => fileInputRef.current?.click()}
-                className="w-8 h-8 rounded-md hover:bg-gray-100 flex items-center justify-center text-[18px] text-gray-500 shrink-0"
+                className="w-10 h-10 rounded-xl hover:bg-gray-100 flex items-center justify-center text-[22px] text-gray-500 shrink-0"
                 title="Attach a file"
               >+</button>
               <input ref={fileInputRef} type="file" multiple className="hidden" />
@@ -897,84 +951,96 @@ export default function ChatWorkspace({ apiBase, agentId, agentLabel }: Props) {
                 onChange={e => setPrompt(e.target.value)}
                 onKeyDown={e => { if (e.key === "Enter") send(); }}
                 placeholder={activeSession?.turns.length === 0
-                  ? "Ask anything…"
-                  : "Ask a follow-up…"}
-                className="flex-1 bg-transparent border-none outline-none px-1.5 text-[14px] text-gray-900 placeholder:text-gray-400 min-w-0 py-1.5"
+                  ? "Ask anything …"
+                  : "Ask a follow-up — more detail, why, is this correct?"}
+                className="flex-1 bg-transparent border-none outline-none px-2 text-[15px] text-gray-900 placeholder:text-gray-400 min-w-0 py-1"
                 disabled={thinking || !activeSession}
               />
-              <div className="relative shrink-0" data-llm-picker>
-                <button
-                  type="button"
-                  onClick={() => setShowModelPicker(v => !v)}
-                  className="h-8 px-2.5 rounded-md hover:bg-gray-100 text-[11px] text-gray-500 flex items-center gap-1"
-                  title={model ? `Pinned to ${model}` : "Auto"}
-                >
-                  {model ? model.replace(/^(claude-|gpt-|gemini-|groq-)/, "") : "Auto"}
-                </button>
-                {showModelPicker && (
-                  <div className="absolute bottom-full right-0 mb-2 min-w-[240px] max-h-[340px] overflow-y-auto rounded-md border border-gray-200 bg-white shadow-lg py-1 z-[300]">
-                    <button
-                      onClick={() => { setModel(""); try { localStorage.setItem(`chatbot-${agentId}-model`, ""); } catch { /* ignore */ }; setShowModelPicker(false); }}
-                      className={`w-full text-left px-3 py-1.5 text-[13px] hover:bg-gray-50 ${!model ? "bg-gray-100 text-gray-900 font-medium" : "text-gray-700"}`}
-                    >
-                      <div>Auto</div>
-                      <div className="text-[10px] text-gray-400">Smart router</div>
-                    </button>
-                    {["anthropic", "gemini", "openai", "groq", "ollama"].map(prov => {
-                      const opts = available.filter(m => m.provider === prov);
-                      if (opts.length === 0) return null;
-                      return (
-                        <div key={prov} className="border-t border-gray-100 mt-1 pt-1">
-                          <div className="px-3 py-0.5 text-[10px] uppercase tracking-wider text-gray-400">{prov}</div>
-                          {opts.map(m => (
-                            <button
-                              key={m.id}
-                              onClick={() => { setModel(m.id); try { localStorage.setItem(`chatbot-${agentId}-model`, m.id); } catch { /* ignore */ }; setShowModelPicker(false); }}
-                              className={`w-full text-left px-3 py-1.5 text-[13px] hover:bg-gray-50 ${model === m.id ? "bg-gray-100 text-gray-900 font-medium" : "text-gray-700"}`}
-                            >{m.id}</button>
-                          ))}
-                        </div>
-                      );
-                    })}
-                  </div>
+            <div className="relative shrink-0" data-llm-picker>
+              <button
+                type="button"
+                onClick={() => setShowModelPicker(v => !v)}
+                className="h-9 px-3 rounded-full bg-gray-100 hover:bg-gray-200 text-[11px] font-medium text-gray-700 flex items-center gap-1.5"
+                title={model ? `Pinned to ${model}` : "Auto (Smart router)"}
+              >
+                🧠 LLM
+                {model && (
+                  <span className="text-[9px] bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded-full font-semibold truncate max-w-[80px]">
+                    {model.replace(/^(claude-|gpt-|gemini-|groq-)/, "")}
+                  </span>
                 )}
-              </div>
-              <button
-                type="button"
-                onClick={() => {
-                  if (voiceState === "listening") stopListening();
-                  else startListening();
-                }}
-                disabled={thinking || !activeSession || voiceState === "thinking" || continuousVoice}
-                className={`w-8 h-8 rounded-md flex items-center justify-center text-[13px] shrink-0 disabled:opacity-30 ${
-                  voiceState === "listening"
-                    ? "bg-red-500 text-white animate-pulse"
-                    : voiceState === "thinking"
-                    ? "bg-amber-400 text-white"
-                    : "hover:bg-gray-100 text-gray-500"
-                }`}
-                title={voiceState === "listening" ? "Stop recording" : "Voice message"}
-              >🎤</button>
-              <button
-                type="button"
-                onClick={() => {
-                  if (continuousVoice) endContinuousVoice();
-                  else startContinuousVoice();
-                }}
-                disabled={thinking || !activeSession || voiceState === "thinking"}
-                className={`w-8 h-8 rounded-md flex items-center justify-center text-[10px] shrink-0 disabled:opacity-30 ${
-                  continuousVoice
-                    ? "bg-green-500 text-white"
-                    : "hover:bg-gray-100 text-gray-500"
-                }`}
-                title={continuousVoice ? "Stop continuous voice mode" : "Continuous voice"}
-              >●</button>
-              <button
-                onClick={() => send()}
-                disabled={!prompt.trim() || thinking || !activeSession}
-                className="w-8 h-8 rounded-md bg-gray-900 hover:bg-black text-white flex items-center justify-center text-[14px] disabled:opacity-30 disabled:bg-gray-300 shrink-0"
-                title="Send"
-              >↑</button>
+              </button>
+              {showModelPicker && (
+                <div className="absolute bottom-full right-0 mb-2 min-w-[260px] max-h-[360px] overflow-y-auto rounded-xl border border-gray-200 bg-white shadow-2xl py-1.5 z-[300]">
+                  <button
+                    onClick={() => { setModel(""); try { localStorage.setItem(`chatbot-${agentId}-model`, ""); } catch {}; setShowModelPicker(false); }}
+                    className={`w-full text-left px-4 py-2 text-[13px] hover:bg-gray-50 ${!model ? "bg-blue-50 text-blue-700 font-medium" : "text-gray-700"}`}
+                  >
+                    <div className="font-medium">Auto (Smart router)</div>
+                    <div className="text-[10px] opacity-70">easy → DB only · normal → free LLM · hard → paid LLM</div>
+                  </button>
+                  {["anthropic", "gemini", "openai", "groq", "ollama"].map(prov => {
+                    const opts = available.filter(m => m.provider === prov);
+                    if (opts.length === 0) return null;
+                    return (
+                      <div key={prov} className="border-t border-gray-100 mt-1 pt-1">
+                        <div className="px-4 py-1 text-[10px] font-semibold uppercase tracking-wide text-gray-400">
+                          {prov.charAt(0).toUpperCase() + prov.slice(1)}
+                        </div>
+                        {opts.map(m => (
+                          <button
+                            key={m.id}
+                            onClick={() => { setModel(m.id); try { localStorage.setItem(`chatbot-${agentId}-model`, m.id); } catch {}; setShowModelPicker(false); }}
+                            className={`w-full text-left px-4 py-1.5 text-[13px] hover:bg-gray-50 ${model === m.id ? "bg-blue-50 text-blue-700 font-medium" : "text-gray-700"}`}
+                          >{m.id}</button>
+                        ))}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+            {/* 🎤 single voice message: record → transcribe → send */}
+            <button
+              type="button"
+              onClick={() => {
+                if (voiceState === "listening") stopListening();
+                else startListening();
+              }}
+              disabled={thinking || !activeSession || voiceState === "thinking" || continuousVoice}
+              className={`w-9 h-9 rounded-full flex items-center justify-center text-[14px] shrink-0 disabled:opacity-40 ${
+                voiceState === "listening"
+                  ? "bg-red-500 text-white animate-pulse"
+                  : voiceState === "thinking"
+                  ? "bg-amber-500 text-white"
+                  : "bg-gray-100 hover:bg-gray-200 text-gray-700"
+              }`}
+              title={voiceState === "listening" ? "Stop recording" : "Record voice message"}
+            >🎤</button>
+            {/* ● continuous voice mode: full conversation by voice */}
+            <button
+              type="button"
+              onClick={() => {
+                if (continuousVoice) endContinuousVoice();
+                else startContinuousVoice();
+              }}
+              disabled={thinking || !activeSession || voiceState === "thinking"}
+              className={`w-9 h-9 rounded-full flex items-center justify-center text-[14px] shrink-0 disabled:opacity-40 ${
+                continuousVoice
+                  ? "bg-green-500 text-white"
+                  : "bg-gray-100 hover:bg-gray-200 text-gray-700"
+              }`}
+              title={continuousVoice ? "Stop continuous voice mode" : "Start continuous voice conversation"}
+            >●</button>
+            <button
+              onClick={() => send()}
+              disabled={!prompt.trim() || thinking || !activeSession}
+              className="w-10 h-10 rounded-xl bg-gradient-to-br from-blue-600 to-violet-600 hover:from-blue-700 hover:to-violet-700 text-white flex items-center justify-center text-[16px] disabled:opacity-40 shrink-0 shadow-sm"
+              title="Send"
+            >↑</button>
+            </div>
+            <div className="mt-1.5 text-center text-[10px] text-gray-400">
+              The Assistant can read this page, your uploaded files, and the conversation above.
             </div>
           </div>
         </div>
