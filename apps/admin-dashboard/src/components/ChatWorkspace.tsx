@@ -3,6 +3,9 @@
 /**
  * ChatWorkspace — full-page chat experience inspired by the Law Agent UI:
  *
+ * Adapted for Vite + React Router (Stock Advisor uses these instead of
+ * Next.js): "use client" removed, useRouter → useNavigate.
+ *
  *   ┌─────────────┬───────────────────────────────────────┐
  *   │ Folders /   │     YOUR QUESTION Q1                  │
  *   │ Sessions    │     <user msg>                        │
@@ -427,7 +430,7 @@ export default function ChatWorkspace({ apiBase, agentId, agentLabel }: Props) {
       const action = data.action;
       if (action?.type === "navigate" && action.to) {
         if (action.external) { try { window.open(action.to, "_blank", "noopener,noreferrer"); } catch {} }
-        else { try { router.push(action.to); } catch {} }
+        else { try { router.push(action.to); } catch { /* ignore nav errors */ } }
       }
       // In continuous voice mode, speak the reply, then go back to listening.
       // In single-mic mode (no continuous), do NOT auto-speak — user already
@@ -640,12 +643,30 @@ export default function ChatWorkspace({ apiBase, agentId, agentLabel }: Props) {
     sessionsByFolder[fid].push(s);
   }
 
+  // Suggested starter prompts for the empty state — agent-specific so
+  // the Stock workspace shows "Show me today's investor flow" while
+  // VIP shows "Open the dashboard". Localized 2-language hints.
+  const examplePrompts: string[] = (() => {
+    const id = agentId.toLowerCase();
+    if (id === "stock") return ["What moved the market today?", "오늘 외국인 순매수 상위 종목 알려줘", "Should I buy NVDA right now?", "내 거래일지 분석해줘"];
+    if (id === "realty") return ["향남 에듀스퀘어 시세 알려줘", "Show me the market dashboard", "현금흐름 계산해줘", "Open evaluate page"];
+    if (id === "asset") return ["내 총 자산 알려줘", "Whose lease expires this week?", "Show this month's cashflow", "Any overdue payments?"];
+    if (id === "aiglass") return ["Show me today's listings", "고객 리드 상위 5개", "Open dashboard", "Compare properties"];
+    return ["What can you do?", "Show me what's on this page", "Summarize my uploaded files", "Help me with my data"];
+  })();
+
   return (
-    <div data-assistant-ui="workspace" className="flex border border-gray-200 rounded-2xl overflow-hidden bg-white" style={{ height: "calc(100vh - 180px)", minHeight: 500 }}>
-      {/* === Sidebar === */}
-      <aside className="hidden md:flex w-64 flex-col border-r border-gray-200 bg-gray-50">
-        <div className="px-4 py-3 border-b border-gray-200 flex items-center gap-2">
-          <span className="text-[13px] font-bold text-gray-900">💬 {agentLabel || agentId}</span>
+    <div data-assistant-ui="workspace" className="flex border border-gray-200 rounded-2xl overflow-hidden bg-white shadow-sm" style={{ height: "calc(100vh - 180px)", minHeight: 560 }}>
+      {/* ========================================================== */}
+      {/* === Sidebar: folder/session tree                       === */}
+      {/* ========================================================== */}
+      <aside className="hidden md:flex w-[260px] shrink-0 flex-col border-r border-gray-200 bg-gradient-to-b from-gray-50 to-white">
+        <div className="px-4 py-3.5 border-b border-gray-200 flex items-center gap-2">
+          <span className="w-7 h-7 rounded-lg bg-gradient-to-br from-blue-500 to-violet-500 text-white flex items-center justify-center text-[14px] shrink-0">💬</span>
+          <div className="min-w-0">
+            <div className="text-[13px] font-bold text-gray-900 truncate">{agentLabel || agentId}</div>
+            <div className="text-[10px] text-gray-500">{store.sessions.length} chat{store.sessions.length === 1 ? "" : "s"}</div>
+          </div>
         </div>
         <div className="flex-1 overflow-y-auto p-2 space-y-1">
           {store.folders.map(f => (
@@ -671,64 +692,86 @@ export default function ChatWorkspace({ apiBase, agentId, agentLabel }: Props) {
                   )}
                 </div>
               </div>
-              <div className="ml-2 mt-0.5 space-y-0.5">
+              <div className="ml-1 mt-0.5 space-y-0.5">
                 {(sessionsByFolder[f.id] || []).map(s => {
                   const active = s.id === store.activeSessionId;
+                  const lastTurn = s.turns[s.turns.length - 1];
                   return (
                     <div
                       key={s.id}
-                      className={`group flex items-center gap-1 px-2 py-1.5 rounded cursor-pointer text-[12px] ${
-                        active ? "bg-blue-100 text-blue-700 font-medium" : "text-gray-700 hover:bg-gray-100"
+                      className={`group flex flex-col gap-0.5 px-2.5 py-2 rounded-lg cursor-pointer transition-all ${
+                        active
+                          ? "bg-blue-50 border-l-2 border-blue-500 shadow-sm"
+                          : "border-l-2 border-transparent hover:bg-gray-100"
                       }`}
                       onClick={() => update(prev => ({ ...prev, activeSessionId: s.id }))}
                     >
-                      <span>📄</span>
-                      {editingSessionId === s.id ? (
-                        <input
-                          autoFocus
-                          defaultValue={s.name}
-                          onClick={e => e.stopPropagation()}
-                          onBlur={e => { renameSession(s.id, e.target.value); setEditingSessionId(null); }}
-                          onKeyDown={e => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
-                          className="flex-1 bg-white border border-blue-400 rounded px-1 py-0 text-[12px] outline-none"
-                        />
-                      ) : (
-                        <span className="flex-1 truncate">{s.name}</span>
-                      )}
-                      <div className="opacity-0 group-hover:opacity-100 flex gap-0.5">
-                        <button onClick={e => { e.stopPropagation(); setEditingSessionId(s.id); }} className="hover:text-blue-600 w-5 h-5 flex items-center justify-center" title="Rename">✏️</button>
-                        <button onClick={e => { e.stopPropagation(); deleteSession(s.id); }} className="hover:text-red-500 w-5 h-5 flex items-center justify-center" title="Delete">🗑️</button>
+                      <div className="flex items-center gap-1.5">
+                        {editingSessionId === s.id ? (
+                          <input
+                            autoFocus
+                            defaultValue={s.name}
+                            onClick={e => e.stopPropagation()}
+                            onBlur={e => { renameSession(s.id, e.target.value); setEditingSessionId(null); }}
+                            onKeyDown={e => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
+                            className="flex-1 bg-white border border-blue-400 rounded px-1 py-0 text-[13px] outline-none"
+                          />
+                        ) : (
+                          <span className={`flex-1 truncate text-[13px] ${active ? "font-semibold text-gray-900" : "text-gray-800"}`}>{s.name}</span>
+                        )}
+                        <div className="opacity-0 group-hover:opacity-100 flex gap-0.5 shrink-0">
+                          <button onClick={e => { e.stopPropagation(); setEditingSessionId(s.id); }} className="hover:text-blue-600 w-5 h-5 flex items-center justify-center text-[12px]" title="Rename">✏️</button>
+                          <button onClick={e => { e.stopPropagation(); deleteSession(s.id); }} className="hover:text-red-500 w-5 h-5 flex items-center justify-center text-[12px]" title="Delete">🗑️</button>
+                        </div>
                       </div>
+                      {lastTurn && (
+                        <div className="text-[11px] text-gray-500 truncate">
+                          {lastTurn.who === "user" ? "You: " : ""}{lastTurn.text}
+                        </div>
+                      )}
                     </div>
                   );
                 })}
+                {(sessionsByFolder[f.id] || []).length === 0 && (
+                  <div className="px-2.5 py-1.5 text-[11px] text-gray-400 italic">No chats yet</div>
+                )}
               </div>
             </div>
           ))}
         </div>
-        <div className="border-t border-gray-200 p-2 flex gap-1">
+        <div className="border-t border-gray-200 p-2.5 flex gap-1.5">
           <button
             onClick={() => createSession()}
-            className="flex-1 py-1.5 px-2 bg-blue-600 text-white text-[12px] font-medium rounded-lg hover:bg-blue-700"
+            className="flex-1 py-2 px-3 bg-gradient-to-r from-blue-600 to-violet-600 hover:from-blue-700 hover:to-violet-700 text-white text-[12px] font-semibold rounded-lg shadow-sm flex items-center justify-center gap-1.5"
             title="New chat"
-          >+ New chat</button>
+          ><span className="text-[14px]">+</span> New chat</button>
           <button
             onClick={createFolder}
-            className="py-1.5 px-2 bg-white text-gray-700 text-[12px] font-medium rounded-lg border border-gray-300 hover:bg-gray-50"
+            className="py-2 px-2.5 bg-white text-gray-700 text-[12px] font-medium rounded-lg border border-gray-300 hover:bg-gray-50"
             title="New folder"
           >+ Folder</button>
         </div>
       </aside>
 
-      {/* === Main: Q/A flow === */}
-      <main className="flex-1 flex flex-col min-w-0">
-        <div className="px-4 py-2.5 border-b border-gray-200 flex items-center justify-between gap-2">
-          <div className="min-w-0 flex-1">
-            <div className="text-[14px] font-semibold text-gray-900 truncate">
-              {activeSession?.name || "Select a chat"}
-            </div>
-            <div className="text-[10px] text-gray-500">
-              {activeSession ? `${activeSession.turns.length} turns` : ""}
+      {/* ========================================================== */}
+      {/* === Main: conversation flow + composer                === */}
+      {/* ========================================================== */}
+      <main className="flex-1 flex flex-col min-w-0 bg-white">
+        {/* Conversation header */}
+        <div className="px-5 py-3 border-b border-gray-200 flex items-center justify-between gap-3 bg-gradient-to-r from-white to-gray-50">
+          <div className="min-w-0 flex-1 flex items-center gap-3">
+            <button
+              onClick={() => createSession()}
+              className="md:hidden w-9 h-9 rounded-lg bg-blue-600 text-white text-[16px] flex items-center justify-center shrink-0"
+              title="New chat"
+            >+</button>
+            <div className="min-w-0">
+              <div className="text-[15px] font-semibold text-gray-900 truncate">
+                {activeSession?.name || "Select a chat"}
+              </div>
+              <div className="text-[11px] text-gray-500">
+                {activeSession ? `${activeSession.turns.length} turn${activeSession.turns.length === 1 ? "" : "s"} · ${agentLabel || agentId}` : ""}
+              </div>
             </div>
           </div>
           {activeSession && activeSession.turns.length > 0 && (
@@ -740,126 +783,179 @@ export default function ChatWorkspace({ apiBase, agentId, agentLabel }: Props) {
                 ⬇ Download ▾
               </button>
               {showDownload === activeSession.id && (
-                <div className="absolute right-0 top-full mt-1 min-w-[200px] bg-white border border-gray-200 rounded-lg shadow-xl z-50 py-1">
+                <div className="absolute right-0 top-full mt-1 min-w-[220px] bg-white border border-gray-200 rounded-xl shadow-2xl z-50 py-1.5">
                   <button
                     onClick={() => { downloadAsWord(activeSession.turns, activeSession.name); setShowDownload(null); }}
-                    className="w-full text-left px-3 py-2 hover:bg-gray-50 text-[12px] text-gray-700"
-                  >📄 Download as Word (.doc)</button>
+                    className="w-full text-left px-4 py-2 hover:bg-gray-50 text-[13px] text-gray-700 flex items-center gap-2"
+                  >📄 Word (.doc)</button>
                   <button
                     onClick={() => { downloadAsPdf(activeSession.turns, activeSession.name); setShowDownload(null); }}
-                    className="w-full text-left px-3 py-2 hover:bg-gray-50 text-[12px] text-gray-700"
-                  >📕 Download as PDF (Print)</button>
+                    className="w-full text-left px-4 py-2 hover:bg-gray-50 text-[13px] text-gray-700 flex items-center gap-2"
+                  >📕 PDF (Print)</button>
                 </div>
               )}
             </div>
           )}
         </div>
 
-        <div ref={scrollRef} className="flex-1 overflow-y-auto p-4 md:p-6 space-y-4">
+        {/* Conversation scroll area */}
+        <div ref={scrollRef} className="flex-1 overflow-y-auto bg-gradient-to-b from-white via-gray-50/30 to-white">
+          {/* No session yet */}
           {!activeSession && (
-            <div className="text-center py-12 text-[13px] text-gray-500">
-              Pick a chat from the sidebar or click <b>+ New chat</b>.
+            <div className="h-full flex items-center justify-center px-6">
+              <div className="text-center max-w-md">
+                <div className="text-5xl mb-3">💬</div>
+                <h3 className="text-[16px] font-semibold text-gray-900 mb-1">Pick a chat</h3>
+                <p className="text-[13px] text-gray-500">Choose a chat from the sidebar or start a new one.</p>
+              </div>
             </div>
           )}
+          {/* Empty session — welcome + example prompts */}
           {activeSession && activeSession.turns.length === 0 && (
-            <div className="text-center py-12 text-[13px] text-gray-500">
-              Ask anything to start the conversation.
+            <div className="h-full flex flex-col items-center justify-center px-6 py-10">
+              <div className="text-center max-w-2xl">
+                <div className="w-16 h-16 mx-auto mb-4 rounded-2xl bg-gradient-to-br from-blue-500 to-violet-500 text-white flex items-center justify-center text-[28px] shadow-lg">
+                  🤖
+                </div>
+                <h2 className="text-[22px] font-bold text-gray-900 mb-2">
+                  Ask {agentLabel || agentId} anything
+                </h2>
+                <p className="text-[14px] text-gray-500 mb-6">
+                  I can read what&apos;s on your page, search your uploaded files, and reply in voice if you switch on the mic.
+                </p>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 mb-2">
+                  {examplePrompts.map((p, idx) => (
+                    <button
+                      key={idx}
+                      type="button"
+                      onClick={() => { setPrompt(p); setTimeout(() => { void send(p); }, 0); }}
+                      className="text-left px-4 py-3 rounded-xl border border-gray-200 hover:border-blue-300 hover:bg-blue-50/30 text-[13px] text-gray-700 transition-colors"
+                    >
+                      {p}
+                    </button>
+                  ))}
+                </div>
+              </div>
             </div>
           )}
-          {activeSession?.turns.map((t, i) => {
-            const qIdx = Math.floor(i / 2) + 1;
-            return (
-              <div key={i} className={`flex ${t.who === "user" ? "justify-end" : "justify-start"}`}>
-                <div className={`max-w-[88%] ${t.who === "user" ? "items-end" : "items-start"} flex flex-col gap-1.5`}>
-                  <div className="flex items-center gap-2 text-[10px] font-bold tracking-wide text-gray-500">
-                    {t.who === "user" ? (
-                      <>
-                        <span>YOUR QUESTION</span>
-                        <span className="bg-gray-900 text-white px-1.5 py-0.5 rounded">Q{qIdx}</span>
-                      </>
-                    ) : (
-                      <span>{(agentLabel || agentId).toUpperCase()} · ANSWER</span>
-                    )}
-                  </div>
-                  <div className={`rounded-2xl px-4 py-3 text-[13px] leading-relaxed whitespace-pre-wrap ${
-                    t.who === "user" ? "bg-blue-600 text-white rounded-br-md" : "bg-gray-100 text-gray-900 rounded-bl-md"
-                  }`}>
-                    {t.text}
-                    {t.who === "assistant" && (t.intent || t.tool_used) && (
-                      <div className="text-[9px] opacity-50 mt-1.5">
-                        {t.intent}{t.tool_used ? ` · ${t.tool_used}` : ""}
+          {/* Conversation turns — centered column, ChatGPT-style */}
+          {activeSession && activeSession.turns.length > 0 && (
+            <div className="max-w-3xl mx-auto px-4 md:px-6 py-6 space-y-6">
+              {activeSession.turns.map((t, i) => {
+                const qIdx = Math.floor(i / 2) + 1;
+                if (t.who === "user") {
+                  return (
+                    <div key={i} className="flex justify-end gap-3">
+                      <div className="flex flex-col items-end gap-1.5 min-w-[120px] max-w-[85%]">
+                        <div className="flex items-center gap-2 text-[10px] font-bold tracking-wide text-gray-400">
+                          <span>YOU</span>
+                          <span className="bg-gray-900 text-white px-1.5 py-0.5 rounded-md">Q{qIdx}</span>
+                        </div>
+                        <div className="bg-gradient-to-br from-blue-600 to-blue-700 text-white rounded-2xl rounded-tr-md px-4 py-3 text-[15px] leading-relaxed whitespace-pre-wrap shadow-sm">
+                          {t.text}
+                        </div>
+                        <button
+                          onClick={() => copyText(t.text)}
+                          className="text-[10px] text-gray-400 hover:text-gray-600 flex items-center gap-1 px-1 py-0.5"
+                          title="Copy"
+                        >📋 Copy</button>
                       </div>
-                    )}
-                  </div>
-                  <div className="flex gap-1 text-[10px]">
-                    <button
-                      onClick={() => copyText(t.text)}
-                      className="px-2 py-1 rounded text-gray-500 hover:bg-gray-100 hover:text-gray-700 flex items-center gap-1"
-                      title="Copy"
-                    >📋 Copy</button>
-                    {t.who === "assistant" && (
-                      <>
+                      <div className="w-9 h-9 rounded-full bg-gray-200 text-gray-700 flex items-center justify-center text-[15px] shrink-0 mt-6">
+                        🙂
+                      </div>
+                    </div>
+                  );
+                }
+                // Assistant turn
+                return (
+                  <div key={i} className="flex justify-start gap-3">
+                    <div className="w-9 h-9 rounded-full bg-gradient-to-br from-blue-500 to-violet-500 text-white flex items-center justify-center text-[15px] shrink-0 mt-6 shadow-sm">
+                      🤖
+                    </div>
+                    <div className="flex flex-col items-start gap-1.5 max-w-[85%] min-w-[120px] flex-1">
+                      <div className="flex items-center gap-2 text-[10px] font-bold tracking-wide text-gray-400 uppercase">
+                        <span>{(agentLabel || agentId)} · Answer</span>
+                      </div>
+                      <div className="bg-white border border-gray-200 rounded-2xl rounded-tl-md px-4 py-3 text-[15px] leading-relaxed whitespace-pre-wrap text-gray-900 shadow-sm w-full">
+                        {t.text}
+                        {(t.intent || t.tool_used) && (
+                          <div className="text-[10px] text-gray-400 mt-2 pt-2 border-t border-gray-100">
+                            {t.intent}{t.tool_used ? ` · ${t.tool_used}` : ""}
+                          </div>
+                        )}
+                      </div>
+                      <div className="flex gap-1 text-[11px] flex-wrap">
+                        <button
+                          onClick={() => copyText(t.text)}
+                          className="px-2 py-1 rounded-md text-gray-500 hover:bg-gray-100 hover:text-gray-700 flex items-center gap-1"
+                          title="Copy"
+                        >📋 Copy</button>
                         <button
                           onClick={() => {
-                            const pair = i > 0 && activeSession.turns[i - 1].who === "user"
-                              ? [activeSession.turns[i - 1], t]
-                              : [t];
+                            const prev = i > 0 ? activeSession.turns[i - 1] : undefined;
+                            const pair: AssistantTurn[] = prev && prev.who === "user" ? [prev, t] : [t];
                             downloadAsWord(pair, `${activeSession.name} - Q${qIdx}`);
                           }}
-                          className="px-2 py-1 rounded text-gray-500 hover:bg-gray-100 hover:text-gray-700 flex items-center gap-1"
+                          className="px-2 py-1 rounded-md text-gray-500 hover:bg-gray-100 hover:text-gray-700 flex items-center gap-1"
                           title="Download this Q&A as Word"
                         >📄 .doc</button>
                         <button
                           onClick={() => {
-                            const pair = i > 0 && activeSession.turns[i - 1].who === "user"
-                              ? [activeSession.turns[i - 1], t]
-                              : [t];
+                            const prev = i > 0 ? activeSession.turns[i - 1] : undefined;
+                            const pair: AssistantTurn[] = prev && prev.who === "user" ? [prev, t] : [t];
                             downloadAsPdf(pair, `${activeSession.name} - Q${qIdx}`);
                           }}
-                          className="px-2 py-1 rounded text-gray-500 hover:bg-gray-100 hover:text-gray-700 flex items-center gap-1"
+                          className="px-2 py-1 rounded-md text-gray-500 hover:bg-gray-100 hover:text-gray-700 flex items-center gap-1"
                           title="Print as PDF"
                         >📕 PDF</button>
-                      </>
-                    )}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+              {thinking && (
+                <div className="flex justify-start gap-3">
+                  <div className="w-9 h-9 rounded-full bg-gradient-to-br from-blue-500 to-violet-500 text-white flex items-center justify-center text-[15px] shrink-0 mt-6 shadow-sm animate-pulse">
+                    🤖
+                  </div>
+                  <div className="bg-white border border-gray-200 px-4 py-3 rounded-2xl rounded-tl-md mt-6 shadow-sm">
+                    <div className="flex gap-1.5">
+                      <span className="w-2 h-2 bg-blue-500 rounded-full animate-bounce" />
+                      <span className="w-2 h-2 bg-blue-500 rounded-full animate-bounce" style={{ animationDelay: "150ms" }} />
+                      <span className="w-2 h-2 bg-blue-500 rounded-full animate-bounce" style={{ animationDelay: "300ms" }} />
+                    </div>
                   </div>
                 </div>
-              </div>
-            );
-          })}
-          {thinking && (
-            <div className="flex justify-start">
-              <div className="bg-gray-100 px-3.5 py-2.5 rounded-2xl rounded-bl-md">
-                <div className="flex gap-1">
-                  <span className="w-1.5 h-1.5 bg-amber-500 rounded-full animate-bounce" />
-                  <span className="w-1.5 h-1.5 bg-amber-500 rounded-full animate-bounce" style={{ animationDelay: "150ms" }} />
-                  <span className="w-1.5 h-1.5 bg-amber-500 rounded-full animate-bounce" style={{ animationDelay: "300ms" }} />
-                </div>
-              </div>
+              )}
+              {error && (
+                <div className="text-[12px] text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{error}</div>
+              )}
             </div>
           )}
-          {error && <div className="text-[12px] text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{error}</div>}
         </div>
 
-        <div className="border-t border-gray-200 p-3 md:p-4">
-          <div className="flex items-center gap-2 rounded-full border border-gray-300 bg-white px-2 py-1.5 hover:border-gray-400 focus-within:border-blue-400">
-            <button
-              type="button"
-              onClick={() => fileInputRef.current?.click()}
-              className="w-9 h-9 rounded-full hover:bg-gray-100 flex items-center justify-center text-[20px] text-gray-600 shrink-0"
-              title="Attach a file"
-            >+</button>
-            <input ref={fileInputRef} type="file" multiple className="hidden" />
-            <input
-              type="text"
-              value={prompt}
-              onChange={e => setPrompt(e.target.value)}
-              onKeyDown={e => { if (e.key === "Enter") send(); }}
-              placeholder={activeSession?.turns.length === 0
-                ? "Ask anything …"
-                : "Ask a follow-up (e.g. more detail, why?, is this correct?)"}
-              className="flex-1 bg-transparent border-none outline-none px-2 text-[14px] min-w-0"
-              disabled={thinking || !activeSession}
-            />
+        {/* Composer */}
+        <div className="border-t border-gray-200 bg-white px-4 md:px-6 py-3 md:py-4">
+          <div className="max-w-3xl mx-auto">
+            <div className="flex items-center gap-2 rounded-2xl border-2 border-gray-200 bg-white px-2 py-1.5 hover:border-gray-300 focus-within:border-blue-500 focus-within:shadow-md transition-all">
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                className="w-10 h-10 rounded-xl hover:bg-gray-100 flex items-center justify-center text-[22px] text-gray-500 shrink-0"
+                title="Attach a file"
+              >+</button>
+              <input ref={fileInputRef} type="file" multiple className="hidden" />
+              <input
+                type="text"
+                value={prompt}
+                onChange={e => setPrompt(e.target.value)}
+                onKeyDown={e => { if (e.key === "Enter") send(); }}
+                placeholder={activeSession?.turns.length === 0
+                  ? "Ask anything …"
+                  : "Ask a follow-up — more detail, why, is this correct?"}
+                className="flex-1 bg-transparent border-none outline-none px-2 text-[15px] text-gray-900 placeholder:text-gray-400 min-w-0 py-1"
+                disabled={thinking || !activeSession}
+              />
             <div className="relative shrink-0" data-llm-picker>
               <button
                 type="button"
@@ -939,9 +1035,13 @@ export default function ChatWorkspace({ apiBase, agentId, agentLabel }: Props) {
             <button
               onClick={() => send()}
               disabled={!prompt.trim() || thinking || !activeSession}
-              className="w-9 h-9 rounded-full bg-blue-600 hover:bg-blue-700 text-white flex items-center justify-center text-[14px] disabled:opacity-40"
+              className="w-10 h-10 rounded-xl bg-gradient-to-br from-blue-600 to-violet-600 hover:from-blue-700 hover:to-violet-700 text-white flex items-center justify-center text-[16px] disabled:opacity-40 shrink-0 shadow-sm"
               title="Send"
             >↑</button>
+            </div>
+            <div className="mt-1.5 text-center text-[10px] text-gray-400">
+              The Assistant can read this page, your uploaded files, and the conversation above.
+            </div>
           </div>
         </div>
       </main>
