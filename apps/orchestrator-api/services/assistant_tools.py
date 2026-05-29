@@ -96,19 +96,30 @@ def tool_navigate(path: str, query: Any = "", **_kw) -> dict[str, Any]:
         for p in get_all_pages():
             if path_lower in p["path"].lower() or path_lower in p["name"].lower():
                 match = p["path"]; break
-        if not match:
+        if match:
+            target_path = match
+        elif isinstance(path, str) and path.startswith("/") and len(path) <= 200:
+            # Permissive fallback — accept any well-formed path. The
+            # global manifest is VIP-centric; Stock / Realty / Asset /
+            # AIGlass have their own routes (see AGENT_PROFILES in
+            # assistant_agent.py). Rather than centralize per-agent
+            # route validation here, we trust the LLM's choice when the
+            # path starts with / and is short, and let the frontend
+            # router decide if it resolves (real page) or 404s.
+            target_path = path
+        else:
             return {
                 "ok": False,
                 "error": f"Unknown path '{path}'. See list_pages() for valid options.",
             }
-        target_path = match
     final_url = target_path + (f"?{query_str}" if query_str else "")
     page = get_page_by_path(target_path)
+    page_label = page["name"] if page else target_path
     filter_msg = f" (filter: {query_str})" if query_str else ""
     return {
         "ok": True,
         "action": {"type": "navigate", "to": final_url},
-        "message": f"Opening {page['name']}{filter_msg}.",
+        "message": f"Opening {page_label}{filter_msg}.",
     }
 
 
