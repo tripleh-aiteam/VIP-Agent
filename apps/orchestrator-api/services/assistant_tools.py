@@ -2798,6 +2798,17 @@ TOOL_REGISTRY["delete_knowledge_file"] = Tool(
 )
 
 
+# --- Stock Advisor live-data tools -----------------------------------------
+# Registered from a separate module (passing TOOL_REGISTRY + Tool to avoid a
+# circular import). These give the OASIS Stock agent real-time access to its
+# backend (recommendations, intraday signals, market flows, portfolio, …).
+try:
+    from services.stock_data_tools import register_stock_data_tools
+    register_stock_data_tools(TOOL_REGISTRY, Tool)
+except Exception as _e:  # never let a tool-pack failure break the assistant
+    log.warning(f"stock_data_tools registration skipped: {_e}")
+
+
 def list_tool_schemas() -> list[dict]:
     """Return all tool schemas for the LLM."""
     return [t.schema() for t in TOOL_REGISTRY.values()]
