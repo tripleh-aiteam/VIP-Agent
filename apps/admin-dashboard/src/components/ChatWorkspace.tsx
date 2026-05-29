@@ -200,6 +200,20 @@ export default function ChatWorkspace({ apiBase, agentId, agentLabel }: Props) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  // --- Voice state ---
+  type VoiceState = "idle" | "listening" | "thinking" | "speaking";
+  const [voiceState, setVoiceState] = useState<VoiceState>("idle");
+  const [continuousVoice, setContinuousVoice] = useState(false);
+  const continuousVoiceRef = useRef(false);
+  useEffect(() => { continuousVoiceRef.current = continuousVoice; }, [continuousVoice]);
+  const mediaRef = useRef<MediaRecorder | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+  const stopTimerRef = useRef<number | null>(null);
+  const audioCtxRef = useRef<AudioContext | null>(null);
+  const analyserRef = useRef<AnalyserNode | null>(null);
+  const vadRafRef = useRef<number | null>(null);
+  const silenceStartRef = useRef<number | null>(null);
+
   // Auto-create a session if none exist
   useEffect(() => {
     if (store.sessions.length === 0) {
@@ -325,12 +339,12 @@ export default function ChatWorkspace({ apiBase, agentId, agentLabel }: Props) {
     update(prev => ({ ...prev, folders: prev.folders.map(f => f.id === id ? { ...f, name: name || f.name } : f) }));
   }
 
-  async function send() {
-    const q = prompt.trim();
+  async function send(textOverride?: string) {
+    const q = (textOverride ?? prompt).trim();
     if (!q || thinking || !activeSession) return;
     setThinking(true);
     setError(null);
-    setPrompt("");
+    if (textOverride === undefined) setPrompt("");
 
     const userTurn: AssistantTurn = { who: "user", text: q, ts: Date.now() };
     update(prev => ({
@@ -358,9 +372,10 @@ export default function ChatWorkspace({ apiBase, agentId, agentLabel }: Props) {
       });
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       const data: AgentResponse = await r.json();
+      const replyText = data.reply || "";
       const assistantTurn: AssistantTurn = {
         who: "assistant",
-        text: data.reply || "",
+        text: replyText,
         ts: Date.now(),
         intent: data.intent,
         tool_used: data.tool_used,
@@ -376,11 +391,203 @@ export default function ChatWorkspace({ apiBase, agentId, agentLabel }: Props) {
         if (action.external) { try { window.open(action.to, "_blank", "noopener,noreferrer"); } catch {} }
         else { try { router.push(action.to); } catch {} }
       }
+      // In continuous voice mode, speak the reply, then go back to listening.
+      // In single-mic mode (no continuous), do NOT auto-speak — user already
+      // sees the text reply on screen.
+      if (continuousVoiceRef.current && replyText) {
+        speak(replyText, () => {
+          if (continuousVoiceRef.current) {
+            setTimeout(() => { if (continuousVoiceRef.current) startListening(); }, 400);
+          }
+        });
+      }
     } catch (e) {
       setError(`Failed: ${(e as Error).message || e}`);
     } finally {
       setThinking(false);
     }
+  }
+
+  // ---------------------------------------------------------------
+  //  Voice: TTS
+  // ---------------------------------------------------------------
+
+  function speak(text: string, onDone?: () => void) {
+    if (typeof window === "undefined" || !("speechSynthesis" in window)) {
+      onDone?.();
+      return;
+    }
+    setVoiceState("speaking");
+    try { speechSynthesis.cancel(); } catch {}
+    const u = new SpeechSynthesisUtterance(text);
+    const hasKo = /[가-힣]/.test(text);
+    u.lang = hasKo ? "ko-KR" : "en-US";
+    u.rate = 1.05;
+    const v = speechSynthesis.getVoices().find(x => x.lang.startsWith(u.lang));
+    if (v) u.voice = v;
+    const finish = () => { setVoiceState("idle"); onDone?.(); };
+    u.onend = finish;
+    u.onerror = finish;
+    speechSynthesis.speak(u);
+  }
+
+  function stopSpeaking() {
+    try { speechSynthesis.cancel(); } catch {}
+    setVoiceState("idle");
+  }
+
+  // ---------------------------------------------------------------
+  //  Voice: Activity Detection + Recording
+  // ---------------------------------------------------------------
+
+  const SILENCE_THRESHOLD = 0.012;
+  const SILENCE_MS = 2500;
+  const HARD_MAX_MS = 60000;
+  const MIN_SPEECH_MS = 800;
+
+  function cleanupVad() {
+    if (vadRafRef.current) { cancelAnimationFrame(vadRafRef.current); vadRafRef.current = null; }
+    try { audioCtxRef.current?.close(); } catch {}
+    audioCtxRef.current = null;
+    analyserRef.current = null;
+    silenceStartRef.current = null;
+  }
+
+  function startVad(stream: MediaStream, onSilence: () => void) {
+    try {
+      const Ctx = (window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext);
+      const ctx = new Ctx();
+      const source = ctx.createMediaStreamSource(stream);
+      const analyser = ctx.createAnalyser();
+      analyser.fftSize = 1024;
+      source.connect(analyser);
+      audioCtxRef.current = ctx;
+      analyserRef.current = analyser;
+      const buf = new Uint8Array(analyser.fftSize);
+      const startedAt = performance.now();
+      let everSpoke = false;
+      const tick = () => {
+        if (!analyserRef.current) return;
+        analyserRef.current.getByteTimeDomainData(buf);
+        let sum = 0;
+        for (let i = 0; i < buf.length; i++) {
+          const sample = buf[i];
+          if (sample === undefined) continue;
+          const v = (sample - 128) / 128;
+          sum += v * v;
+        }
+        const rms = Math.sqrt(sum / buf.length);
+        const now = performance.now();
+        const elapsed = now - startedAt;
+        if (rms >= SILENCE_THRESHOLD) {
+          everSpoke = true;
+          silenceStartRef.current = null;
+        } else if (everSpoke && elapsed > MIN_SPEECH_MS) {
+          if (silenceStartRef.current == null) silenceStartRef.current = now;
+          else if (now - silenceStartRef.current > SILENCE_MS) {
+            onSilence();
+            return;
+          }
+        }
+        vadRafRef.current = requestAnimationFrame(tick);
+      };
+      vadRafRef.current = requestAnimationFrame(tick);
+    } catch (e) {
+      console.warn("VAD setup failed:", e);
+    }
+  }
+
+  async function startListening() {
+    setError(null);
+    if (typeof navigator === "undefined" || !navigator.mediaDevices || !("MediaRecorder" in window)) {
+      setError("Voice recording not supported in this browser.");
+      return;
+    }
+    let stream: MediaStream;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({
+        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+      });
+    } catch {
+      setError("Microphone access denied.");
+      return;
+    }
+    streamRef.current = stream;
+    const mimeOpts = ["audio/webm;codecs=opus", "audio/webm", "audio/ogg;codecs=opus", ""];
+    const mime = mimeOpts.find(m => !m || MediaRecorder.isTypeSupported(m)) || "";
+    const recorder = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
+    mediaRef.current = recorder;
+    const chunks: Blob[] = [];
+    recorder.ondataavailable = (e) => { if (e.data?.size) chunks.push(e.data); };
+    recorder.onstop = async () => {
+      try { stream.getTracks().forEach(t => t.stop()); } catch {}
+      streamRef.current = null;
+      mediaRef.current = null;
+      cleanupVad();
+      if (stopTimerRef.current) { clearTimeout(stopTimerRef.current); stopTimerRef.current = null; }
+      const blob = new Blob(chunks, { type: mime || "audio/webm" });
+      if (blob.size < 1000) {
+        if (continuousVoiceRef.current) {
+          setVoiceState("idle");
+          setTimeout(() => { if (continuousVoiceRef.current) startListening(); }, 300);
+        } else {
+          setError("Audio too short.");
+          setVoiceState("idle");
+        }
+        return;
+      }
+      setVoiceState("thinking");
+      try {
+        const fd = new FormData();
+        fd.append("file", blob, "voice.webm");
+        const r = await fetch(`${base}/chatbot/transcribe`, { method: "POST", body: fd });
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        const data = await r.json();
+        const transcript = (data.transcript || "").trim();
+        if (!transcript) {
+          if (continuousVoiceRef.current) {
+            setVoiceState("idle");
+            setTimeout(() => { if (continuousVoiceRef.current) startListening(); }, 300);
+          } else {
+            setError("I didn't catch that.");
+            setVoiceState("idle");
+          }
+          return;
+        }
+        setVoiceState("idle");
+        await send(transcript);
+      } catch (e: unknown) {
+        setError(`Transcription failed: ${(e as Error).message || e}`);
+        setVoiceState("idle");
+      }
+    };
+    setVoiceState("listening");
+    recorder.start();
+    startVad(stream, () => {
+      if (recorder.state === "recording") { try { recorder.stop(); } catch {} }
+    });
+    stopTimerRef.current = window.setTimeout(() => {
+      if (recorder.state === "recording") { try { recorder.stop(); } catch {} }
+    }, HARD_MAX_MS);
+  }
+
+  function stopListening() {
+    try { mediaRef.current?.stop(); } catch {}
+    cleanupVad();
+    if (voiceState === "listening") setVoiceState("idle");
+  }
+
+  function startContinuousVoice() {
+    setContinuousVoice(true);
+    continuousVoiceRef.current = true;
+    setTimeout(() => startListening(), 100);
+  }
+
+  function endContinuousVoice() {
+    setContinuousVoice(false);
+    continuousVoiceRef.current = false;
+    stopListening();
+    stopSpeaking();
   }
 
   function copyText(text: string) {
@@ -659,8 +866,40 @@ export default function ChatWorkspace({ apiBase, agentId, agentLabel }: Props) {
                 </div>
               )}
             </div>
+            {/* 🎤 single voice message: record → transcribe → send */}
             <button
-              onClick={send}
+              type="button"
+              onClick={() => {
+                if (voiceState === "listening") stopListening();
+                else startListening();
+              }}
+              disabled={thinking || !activeSession || voiceState === "thinking" || continuousVoice}
+              className={`w-9 h-9 rounded-full flex items-center justify-center text-[14px] shrink-0 disabled:opacity-40 ${
+                voiceState === "listening"
+                  ? "bg-red-500 text-white animate-pulse"
+                  : voiceState === "thinking"
+                  ? "bg-amber-500 text-white"
+                  : "bg-gray-100 hover:bg-gray-200 text-gray-700"
+              }`}
+              title={voiceState === "listening" ? "Stop recording" : "Record voice message"}
+            >🎤</button>
+            {/* ● continuous voice mode: full conversation by voice */}
+            <button
+              type="button"
+              onClick={() => {
+                if (continuousVoice) endContinuousVoice();
+                else startContinuousVoice();
+              }}
+              disabled={thinking || !activeSession || voiceState === "thinking"}
+              className={`w-9 h-9 rounded-full flex items-center justify-center text-[14px] shrink-0 disabled:opacity-40 ${
+                continuousVoice
+                  ? "bg-green-500 text-white"
+                  : "bg-gray-100 hover:bg-gray-200 text-gray-700"
+              }`}
+              title={continuousVoice ? "Stop continuous voice mode" : "Start continuous voice conversation"}
+            >●</button>
+            <button
+              onClick={() => send()}
               disabled={!prompt.trim() || thinking || !activeSession}
               className="w-9 h-9 rounded-full bg-blue-600 hover:bg-blue-700 text-white flex items-center justify-center text-[14px] disabled:opacity-40"
               title="Send"
@@ -668,6 +907,39 @@ export default function ChatWorkspace({ apiBase, agentId, agentLabel }: Props) {
           </div>
         </div>
       </main>
+
+      {/* Continuous voice mode — fullscreen overlay */}
+      {continuousVoice && (
+        <div className="fixed inset-0 z-[210] flex flex-col items-center justify-center bg-black/80 backdrop-blur-sm">
+          <div className="text-white text-center">
+            <div className="text-[16px] uppercase tracking-widest opacity-70 mb-3">
+              Voice mode
+            </div>
+            <div className="text-[60px] mb-4">
+              {voiceState === "listening" ? "🎙️"
+                : voiceState === "thinking" ? "💭"
+                : voiceState === "speaking" ? "🔊"
+                : "🤖"}
+            </div>
+            <div className="text-[24px] font-medium mb-8">
+              {voiceState === "listening" ? "Listening…"
+                : voiceState === "thinking" ? "Thinking…"
+                : voiceState === "speaking" ? "Speaking…"
+                : "Ready"}
+            </div>
+            <div className="text-[12px] opacity-70 max-w-md px-4">
+              Talk naturally — pause for ~2 seconds when you&apos;re done and the
+              assistant will reply. The full conversation is also written into
+              your chat history.
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={endContinuousVoice}
+            className="mt-10 px-6 py-2.5 rounded-full bg-white text-gray-900 text-[14px] font-medium hover:bg-gray-100"
+          >End voice</button>
+        </div>
+      )}
     </div>
   );
 }
