@@ -37,6 +37,7 @@ import { API } from "../../components/api";
 import TwinGroupsHub from "../../components/TwinGroupsHub";
 import ChatWorkspace from "../../components/ChatWorkspace";
 import { AssistantCard } from "../../components/AssistantCard";
+import InsightsView from "../../components/InsightsView";
 import { vipConfig } from "../../chatbot.config";
 import { VoiceDashboard } from "@triple-h/chatbot/voice-ui";
 import type { CallEvent, DailyReportSummary } from "@triple-h/chatbot/voice-ui";
@@ -90,7 +91,7 @@ interface KnowledgeFile {
   uploaded_by: string | null;
 }
 
-type Tab = "assistant" | "messages" | "calls" | "knowledge";
+type Tab = "assistant" | "messages" | "calls" | "insights" | "knowledge";
 
 const LIVE_VOICE = process.env.NEXT_PUBLIC_VOICE_LIVE_MODE === "true";
 
@@ -117,45 +118,45 @@ export default function VipChatbotPage() {
   return (
     <div className="space-y-4">
       {/* Page header */}
-      <div>
-        <h1 className="text-[20px] font-bold text-[var(--text-primary)] flex items-center gap-2">
-          💬 Chatbot
-        </h1>
-        <p className="text-[12px] text-[var(--text-muted)] mt-0.5">
-          Assistant is the default. Tabs for Messages, Calls and Add
-          knowledge are one click away — the Assistant follows along.
-        </p>
-      </div>
-
-      {/* === 4 tabs (Assistant default) === */}
-      <div className="flex gap-1.5 border-b border-[var(--border-default)] overflow-x-auto">
-        {([
-          { id: "assistant", label: "🤖 Assistant" },
-          { id: "messages",  label: "💬 Messages" },
-          { id: "calls",     label: "📞 Calls" },
-          { id: "knowledge", label: "📚 Add knowledge" },
-        ] as const).map(t => {
-          const active = tab === t.id;
-          return (
-            <button
-              key={t.id}
-              type="button"
-              onClick={() => setTab(t.id)}
-              className={`px-4 py-2 text-[13px] font-medium border-b-2 -mb-px transition-colors whitespace-nowrap ${
-                active
-                  ? "border-indigo-600 text-indigo-700"
-                  : "border-transparent text-gray-600 hover:text-gray-900 hover:border-gray-300"
-              }`}
-            >
-              {t.label}
-            </button>
-          );
-        })}
+      <div className="flex flex-col gap-3 border-b border-[var(--border-default)] pb-3 lg:flex-row lg:items-end lg:justify-between">
+        <div>
+          <h1 className="text-[22px] font-bold tracking-tight text-[var(--text-primary)]">
+            Chatbot
+          </h1>
+          <p className="mt-1 max-w-3xl text-[13px] leading-5 text-[var(--text-muted)]">
+            Assistant workspace for stock questions, customer messages, calls, and uploaded knowledge.
+          </p>
+        </div>
+        <div className="inline-flex w-full gap-1 rounded-lg border border-[var(--border-default)] bg-white p-1 shadow-sm sm:w-auto">
+          {([
+            { id: "assistant", label: "Assistant" },
+            { id: "messages", label: "Messages" },
+            { id: "calls", label: "Calls" },
+            { id: "insights", label: "AI Insights" },
+            { id: "knowledge", label: "Knowledge" },
+          ] as const).map(t => {
+            const active = tab === t.id;
+            return (
+              <button
+                key={t.id}
+                type="button"
+                onClick={() => setTab(t.id)}
+                className={`min-h-9 flex-1 rounded-md px-3 text-[13px] font-semibold transition-colors sm:flex-none ${
+                  active
+                    ? "bg-gray-900 text-white shadow-sm"
+                    : "text-gray-600 hover:bg-gray-100 hover:text-gray-900"
+                }`}
+              >
+                {t.label}
+              </button>
+            );
+          })}
+        </div>
       </div>
 
       {/* === Tab content === */}
       {tab === "assistant" && (
-        <div className="h-[calc(100vh-220px)] min-h-[600px]">
+        <div className="h-[calc(100vh-205px)] min-h-[560px]">
           <ChatWorkspace
             apiBase={vipConfig.apiBase}
             agentId={vipConfig.agentId}
@@ -165,6 +166,7 @@ export default function VipChatbotPage() {
       )}
       {tab === "messages" && <MessagesPanel />}
       {tab === "calls" && <CallsPanel />}
+      {tab === "insights" && <InsightsView />}
       {tab === "knowledge" && <KnowledgePanel />}
 
       {/* AssistantCard "follows" the boss into Messages/Calls/Knowledge
