@@ -304,13 +304,23 @@ export function AssistantCard({ floating = true }: Props = {}) {
   //     attaches a file, or the assistant is mid-reply.
   const [inputFocused, setInputFocused] = useState(false);
   const [pillExpanded, setPillExpanded] = useState(false);
+  // Voice state declared here (before hasActivity, which references it).
+  type VoiceState = "idle" | "listening" | "thinking" | "speaking";
+  const [voiceState, setVoiceState] = useState<VoiceState>("idle");
+  const [continuousVoice, setContinuousVoice] = useState(false);
+  const continuousVoiceRef = useRef(false);
+  useEffect(() => { continuousVoiceRef.current = continuousVoice; }, [continuousVoice]);
   const hasActivity =
     prompt.trim().length > 0 ||
     attachments.length > 0 ||
     thinking ||
     inputFocused ||
     pillExpanded ||
-    showModelPicker;
+    showModelPicker ||
+    continuousVoice ||
+    voiceState === "listening" ||
+    voiceState === "speaking" ||
+    voiceState === "thinking";
   // Compact pill applies only to the global floating card. When idle (no
   // activity) shrink to a corner pill so page content stays visible.
   // The conversation isn't lost — it lives in the AssistantContext and
@@ -376,11 +386,6 @@ export function AssistantCard({ floating = true }: Props = {}) {
   }, [turns.length]);
 
   // --- Voice state ---
-  type VoiceState = "idle" | "listening" | "thinking" | "speaking";
-  const [voiceState, setVoiceState] = useState<VoiceState>("idle");
-  const [continuousVoice, setContinuousVoice] = useState(false);
-  const continuousVoiceRef = useRef(false);
-  useEffect(() => { continuousVoiceRef.current = continuousVoice; }, [continuousVoice]);
   const mediaRef = useRef<MediaRecorder | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const stopTimerRef = useRef<number | null>(null);
@@ -727,18 +732,31 @@ export function AssistantCard({ floating = true }: Props = {}) {
         pendingAction,
       }]);
       if (!pendingAction && data.action) executeAction(data.action);
-      // Auto-TTS is OFF by design — replies are text-only. In continuous
-      // voice mode we still want the mic to re-open after a reply lands,
-      // so schedule that directly (no speak() round-trip). Followup-silence
-      // timer is the same one we used to wire to speak()'s finish hook.
+      // In continuous voice mode the assistant SPEAKS its reply back, then
+      // re-opens the mic once it finishes talking. speak() auto-picks the
+      // Korean voice when the reply contains Hangul and the English voice
+      // otherwise — so if you spoke Korean (Whisper transcribed Korean →
+      // the agent replied in Korean) you hear Korean back, and English ↔
+      // English. The mic only reopens after speech ends so the assistant
+      // never talks over itself or records its own voice.
       if (continuousVoiceRef.current) {
-        setTimeout(() => { if (continuousVoiceRef.current) startListening(); }, 800);
-        if (idleFollowupTimerRef.current) clearTimeout(idleFollowupTimerRef.current);
-        idleFollowupTimerRef.current = window.setTimeout(() => {
-          if (continuousVoiceRef.current && (voiceState === "listening" || voiceState === "idle")) {
-            void ask("[silence] The user has not responded for a while. Gently ask a friendly, open-ended follow-up question to keep the conversation going — relate to what was just discussed or ask how they're doing. Keep it short (1 sentence) and warm.");
-          }
-        }, 6000);
+        const replyText = String(data.reply || "");
+        const reopen = () => {
+          if (!continuousVoiceRef.current) return;
+          startListening();
+          if (idleFollowupTimerRef.current) clearTimeout(idleFollowupTimerRef.current);
+          idleFollowupTimerRef.current = window.setTimeout(() => {
+            if (continuousVoiceRef.current && (voiceState === "listening" || voiceState === "idle")) {
+              void ask("[silence] The user has not responded for a while. Gently ask a friendly, open-ended follow-up question to keep the conversation going — relate to what was just discussed or ask how they're doing. Keep it short (1 sentence) and warm. Reply in the SAME language as the conversation so far.");
+            }
+          }, 6000);
+        };
+        if (replyText.trim()) {
+          // speak() sets voiceState="speaking" and calls reopen() on end/error.
+          speak(replyText, reopen);
+        } else {
+          setTimeout(reopen, 600);
+        }
       }
     } catch (e) {
       setError(`Failed: ${(e as Error).message || e}`);
