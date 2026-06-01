@@ -267,8 +267,10 @@ def _build_system_prompt(
     # before the full tool-calling DB bridge ships.
     page_block = ""
     if page_context and page_context.strip():
-        # Hard cap so a giant page doesn't blow the LLM context window
-        trimmed = page_context.strip()[:14000]
+        # Cap the page snapshot. 14K chars bloated every prompt and slowed
+        # responses; 5K still covers the visible numbers/labels the user asks
+        # about while keeping the request fast.
+        trimmed = page_context.strip()[:5000]
         page_block = (
             "\n■■■ WHAT THE USER IS SEEING ON SCREEN (live page DOM snapshot) ■■■\n"
             "The text below is exactly what's rendered on the user's current "
@@ -425,11 +427,25 @@ def _build_system_prompt(
         "  call a tool. Speak confidently in 1st/2nd person ('You are X', "
         "  'Your favorite is Y'). NEVER mention the file name, sheet name, "
         "  or that you got the fact from an upload — just state it.\n"
-        "- For navigation queries (open X / show me X / go to X / 열어 / 보여줘): "
-        "use navigate(path) for internal pages OR open_portal(agent) for "
-        "external agent apps. NEVER navigate to a path not in the pages list above.\n"
-        "- For 'I wanna see Asset/Stock/Realty Agent' (or their casual / Korean "
-        "variants), pick open_portal — those are EXTERNAL apps.\n"
+        "- INTENT — EXPLAIN vs OPEN vs OFFER (very important, like Claude in "
+        "  Word/Excel/Chrome — answer first, only act when explicitly told):\n"
+        "    • EXPLAIN (default for questions): 'what is in settings?', 'what "
+        "      does the X page do?', 'tell me about Y', '무엇이 있어?', '설명해줘', "
+        "      'what can I do here' → use the ANSWER shape. Describe it in words. "
+        "      DO NOT navigate. End by offering: 'Want me to open it?'\n"
+        "    • OPEN (explicit command only): 'open X', 'go to X', 'take me to X', "
+        "      'navigate to X', '열어', '열어줘', '이동', '가줘' → call navigate(path) "
+        "      (internal page) or open_portal(agent) (external app).\n"
+        "    • OFFER (ambiguous 'see/show'): 'I wanna see settings', 'show me the "
+        "      X page', '보고 싶어', '보여줄래?' → use the ANSWER shape: briefly say "
+        "      what's there and ASK 'Shall I open it for you?' — do NOT navigate "
+        "      until they confirm (yes / 응 / 열어).\n"
+        "    Rule of thumb: a QUESTION never auto-navigates; only an imperative "
+        "    command (open/go/take me) navigates. NEVER navigate to a path not in "
+        "    the pages list above.\n"
+        "- For 'I wanna see Asset/Stock/Realty Agent' as an explicit open command, "
+        "  pick open_portal — those are EXTERNAL apps. If it's a question about "
+        "  them, explain instead.\n"
         "- For data questions ('how is X', 'what did Y do', 'find Z'): pick the "
         "matching read tool — search_twin, search_conversations, latest_report, "
         "agent_status, etc.\n"
@@ -511,12 +527,22 @@ def _pick_model_for_query(user_msg: str, history: list[dict]) -> str:
     # Signal 4 — long conversation history (context-heavy follow-up)
     deep_history = len(history or []) > 6
 
-    if long_query or is_compound or is_reasoning or deep_history:
-        # Hard → paid model. llm_client cascade falls back to Groq when
-        # the Anthropic key has no credit, so this never bricks.
+    # Escalate to the smart (paid, slower) model ONLY for genuinely heavy
+    # work, so the common case stays on fast Groq. A short "explain X" / "why"
+    # no longer pays the Sonnet latency tax — Groq Llama 3.3 70B handles those
+    # well and returns much faster. We escalate only when the query is long,
+    # OR compound (multi-step), OR a reasoning task that is ALSO long/deep.
+    hard = (
+        long_query
+        or is_compound
+        or (is_reasoning and (len(q) > 120 or deep_history))
+    )
+    if hard:
+        # llm_client cascade falls back to Groq when the Anthropic key has no
+        # credit, so this never bricks.
         return "claude-sonnet-4-6"
-    # Easy / Normal → free Groq Llama 3.3 70B (fast, no quota worry,
-    # excellent for tool-routing + RAG answers from the KB).
+    # Easy / Normal / short-explain → free Groq Llama 3.3 70B (fast, no quota
+    # worry, excellent for tool-routing + RAG answers + short explanations).
     return "groq-llama-3.3-70b"
 
 

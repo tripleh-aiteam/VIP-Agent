@@ -129,6 +129,15 @@ def tool_stock_volume_spikes(**_kw) -> dict[str, Any]:
     return _get("/market/volume-spikes")
 
 
+def tool_stock_price_history(limit: int = 60, hours: int | None = None, **_kw) -> dict[str, Any]:
+    """Recorded 5-minute price snapshots (time series) the agent stores silently.
+    Use to analyze trends over time, compare to a few minutes/hours ago."""
+    params: dict[str, Any] = {"limit": limit}
+    if hours is not None:
+        params["hours"] = hours
+    return _get("/market/snapshots", params)
+
+
 def tool_stock_watchlist(**_kw) -> dict[str, Any]:
     """The symbols the user is actively tracking."""
     return _get("/watchlist")
@@ -213,6 +222,17 @@ _TOOL_DEFS: list[tuple[str, Callable, str, dict]] = [
         "OASIS Stock Advisor — stocks showing unusual trading-VOLUME spikes right now. "
         "Use for 'unusual volume', 'what's moving', 'volume leaders'.",
         {"type": "object", "properties": {}, "required": []},
+    ),
+    (
+        "stock_get_price_history", tool_stock_price_history,
+        "OASIS Stock Advisor — recorded 5-minute PRICE SNAPSHOTS over time (a time "
+        "series of KOSPI/KOSDAQ, 삼성, SK하이닉스, NVDA, AAPL, TSLA, BTC, USD/KRW, etc.). "
+        "Use to analyze trends, momentum, or compare now vs earlier ('how has X moved "
+        "today', 'trend over the last hour', '추세'). Each row has captured_at + prices.",
+        {"type": "object", "properties": {
+            "limit": {"type": "integer", "description": "how many snapshots (newest first, 1-1000)"},
+            "hours": {"type": "integer", "description": "only snapshots from the last N hours (optional)"},
+        }, "required": []},
     ),
     (
         "stock_get_watchlist", tool_stock_watchlist,
