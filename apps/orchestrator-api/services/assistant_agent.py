@@ -1394,7 +1394,49 @@ def run_agent(
             intent=result.get("intent"),
             tool_used=result.get("tool_used"),
         )
+
+    # --- Self-improvement instrumentation (#12 + #13 + #15) ---
+    # Log the answered turn and, if it looks low-confidence, kick off background
+    # web research so the next time this is asked the KB has an answer. All
+    # best-effort — never blocks or breaks the response.
+    try:
+        reply_text = str(result.get("reply") or "")
+        skip = {"empty", "multimodal_failed", "multimodal_missing", "chain_empty", "error"}
+        if (transcript or "").strip() and result.get("intent") not in skip and reply_text:
+            from services.assistant_learning import is_low_confidence, log_qa
+            low = is_low_confidence(reply_text)
+            log_qa(db, agent_id=agent_id, question=transcript or "", answer=reply_text,
+                   intent=result.get("intent"), tool_used=result.get("tool_used"),
+                   low_conf=low, user_id=user_id)
+            if low and not (confirmed_tool):
+                _spawn_background_research(agent_id, transcript or "")
+    except Exception as _e:
+        log.warning(f"self-improve instrumentation skipped: {str(_e)[:120]}")
+
     return result
+
+
+def _spawn_background_research(agent_id: str, question: str) -> None:
+    """Research a low-confidence question on its own DB session + thread so the
+    user's reply isn't delayed. Stores a verified note into the agent KB."""
+    import threading
+
+    def _work():
+        try:
+            from db.base import SessionLocal
+            from services.assistant_learning import research_and_learn
+            db2 = SessionLocal()
+            try:
+                research_and_learn(db2, agent_id=agent_id, question=question)
+            finally:
+                db2.close()
+        except Exception as e:
+            log.warning(f"background research failed: {str(e)[:120]}")
+
+    try:
+        threading.Thread(target=_work, daemon=True).start()
+    except Exception as e:
+        log.warning(f"could not spawn research thread: {str(e)[:120]}")
 
 
 def _run_agent_impl(

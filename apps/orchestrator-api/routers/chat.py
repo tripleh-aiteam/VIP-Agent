@@ -229,6 +229,42 @@ def agent_feedback(body: FeedbackBody, db: Session = Depends(get_db)):
         return _JSON(status_code=200, content={"ok": False, "learned": False, "error": str(e)[:300]})
 
 
+# ---------------------------------------------------------------------------
+#  Self-improvement insights — knowledge gaps, quality metrics, manual cycle
+# ---------------------------------------------------------------------------
+
+@router.get("/insights/gaps")
+def insights_gaps(agentId: str = Query("vip"), days: int = Query(30, ge=1, le=180), db: Session = Depends(get_db)):
+    """Clusters of low-confidence questions → what knowledge to upload (#13)."""
+    try:
+        from services.assistant_learning import knowledge_gaps
+        return knowledge_gaps(db, agent_id=agentId.lower(), days=days)
+    except Exception as e:
+        return {"ok": False, "error": str(e)[:300], "clusters": []}
+
+
+@router.get("/insights/metrics")
+def insights_metrics(agentId: str = Query("vip"), days: int = Query(30, ge=1, le=180), db: Session = Depends(get_db)):
+    """Quality metrics for the self-improvement dashboard (#15)."""
+    try:
+        from services.assistant_learning import quality_metrics
+        return quality_metrics(db, agent_id=agentId.lower(), days=days)
+    except Exception as e:
+        return {"ok": False, "error": str(e)[:300]}
+
+
+@router.post("/insights/improve-now")
+def insights_improve_now(agentId: Optional[str] = Query(None), db: Session = Depends(get_db)):
+    """Manually trigger the self-improvement cycle (#14) — research the top
+    recurring low-confidence questions and learn them. Omit agentId for all."""
+    try:
+        from services.assistant_learning import nightly_improve_cycle
+        agents = [agentId.lower()] if agentId else None
+        return nightly_improve_cycle(db, agents=agents)
+    except Exception as e:
+        return {"ok": False, "error": str(e)[:300]}
+
+
 @router.get("/agent/manifest")
 def agent_manifest():
     """Expose the assistant manifest (pages + external agents) as JSON so

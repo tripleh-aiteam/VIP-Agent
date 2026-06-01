@@ -635,6 +635,29 @@ export default function ChatWorkspace({ apiBase, agentId, agentLabel }: Props) {
     try { navigator.clipboard?.writeText(text); } catch {}
   }
 
+  // --- Self-improvement feedback (👍/👎) ---
+  const [feedbackGiven, setFeedbackGiven] = useState<Record<number, "up" | "down">>({});
+  async function sendFeedback(turnIdx: number, verdict: "up" | "down") {
+    const t = activeSession?.turns[turnIdx];
+    if (!t || t.who !== "assistant") return;
+    const prev = turnIdx > 0 ? activeSession?.turns[turnIdx - 1] : undefined;
+    const question = prev && prev.who === "user" ? prev.text : "";
+    let correction: string | undefined;
+    if (verdict === "down") {
+      correction = window.prompt(
+        "What should the answer have been? (helps the assistant learn — leave blank to just flag it)",
+      ) || undefined;
+    }
+    setFeedbackGiven(prevState => ({ ...prevState, [t.ts]: verdict }));
+    try {
+      await fetch(`${base}/chat/feedback`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ agentId, question, answer: t.text, verdict, correction }),
+      });
+    } catch { /* best-effort */ }
+  }
+
   const sessionsByFolder: Record<string, Session[]> = {};
   for (const f of store.folders) sessionsByFolder[f.id] = [];
   for (const s of store.sessions) {
@@ -656,19 +679,23 @@ export default function ChatWorkspace({ apiBase, agentId, agentLabel }: Props) {
   })();
 
   return (
-    <div data-assistant-ui="workspace" className="flex border border-gray-200 rounded-2xl overflow-hidden bg-white shadow-sm" style={{ height: "calc(100vh - 180px)", minHeight: 560 }}>
+    <div
+      data-assistant-ui="workspace"
+      className="flex w-full overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm"
+      style={{ height: "100%", minHeight: 560 }}
+    >
       {/* ========================================================== */}
       {/* === Sidebar: folder/session tree                       === */}
       {/* ========================================================== */}
-      <aside className="hidden md:flex w-[260px] shrink-0 flex-col border-r border-gray-200 bg-gradient-to-b from-gray-50 to-white">
-        <div className="px-4 py-3.5 border-b border-gray-200 flex items-center gap-2">
-          <span className="w-7 h-7 rounded-lg bg-gradient-to-br from-blue-500 to-violet-500 text-white flex items-center justify-center text-[14px] shrink-0">💬</span>
+      <aside className="hidden md:flex w-[280px] shrink-0 flex-col border-r border-gray-200 bg-gray-50">
+        <div className="px-4 py-3.5 border-b border-gray-200 flex items-center gap-2 bg-white">
+          <span className="w-8 h-8 rounded-lg bg-gray-900 text-white flex items-center justify-center text-[14px] shrink-0">💬</span>
           <div className="min-w-0">
             <div className="text-[13px] font-bold text-gray-900 truncate">{agentLabel || agentId}</div>
             <div className="text-[10px] text-gray-500">{store.sessions.length} chat{store.sessions.length === 1 ? "" : "s"}</div>
           </div>
         </div>
-        <div className="flex-1 overflow-y-auto p-2 space-y-1">
+        <div className="flex-1 overflow-y-auto p-2.5 space-y-1">
           {store.folders.map(f => (
             <div key={f.id}>
               <div className="group flex items-center gap-1 px-2 py-1.5 text-[11px] font-semibold uppercase tracking-wide text-gray-500 hover:bg-gray-100 rounded">
@@ -685,10 +712,10 @@ export default function ChatWorkspace({ apiBase, agentId, agentLabel }: Props) {
                   <span className="flex-1 truncate">{f.name}</span>
                 )}
                 <div className="opacity-0 group-hover:opacity-100 flex gap-0.5">
-                  <button onClick={() => createSession(f.id)} className="hover:text-blue-600 w-5 h-5 flex items-center justify-center" title="New chat in folder">📝</button>
-                  <button onClick={() => setEditingFolderId(f.id)} className="hover:text-blue-600 w-5 h-5 flex items-center justify-center" title="Rename folder">✏️</button>
+                  <button type="button" onClick={() => createSession(f.id)} className="hover:text-blue-600 w-5 h-5 flex items-center justify-center" title="New chat in folder">📝</button>
+                  <button type="button" onClick={() => setEditingFolderId(f.id)} className="hover:text-blue-600 w-5 h-5 flex items-center justify-center" title="Rename folder">✏️</button>
                   {f.id !== DEFAULT_FOLDER_ID && (
-                    <button onClick={() => deleteFolder(f.id)} className="hover:text-red-500 w-5 h-5 flex items-center justify-center" title="Delete folder">🗑️</button>
+                    <button type="button" onClick={() => deleteFolder(f.id)} className="hover:text-red-500 w-5 h-5 flex items-center justify-center" title="Delete folder">🗑️</button>
                   )}
                 </div>
               </div>
@@ -699,10 +726,10 @@ export default function ChatWorkspace({ apiBase, agentId, agentLabel }: Props) {
                   return (
                     <div
                       key={s.id}
-                      className={`group flex flex-col gap-0.5 px-2.5 py-2 rounded-lg cursor-pointer transition-all ${
+                      className={`group flex flex-col gap-0.5 px-3 py-2.5 rounded-md cursor-pointer transition-all ${
                         active
-                          ? "bg-blue-50 border-l-2 border-blue-500 shadow-sm"
-                          : "border-l-2 border-transparent hover:bg-gray-100"
+                          ? "bg-white text-gray-950 shadow-sm ring-1 ring-gray-200"
+                          : "text-gray-700 hover:bg-white hover:shadow-sm"
                       }`}
                       onClick={() => update(prev => ({ ...prev, activeSessionId: s.id }))}
                     >
@@ -720,8 +747,8 @@ export default function ChatWorkspace({ apiBase, agentId, agentLabel }: Props) {
                           <span className={`flex-1 truncate text-[13px] ${active ? "font-semibold text-gray-900" : "text-gray-800"}`}>{s.name}</span>
                         )}
                         <div className="opacity-0 group-hover:opacity-100 flex gap-0.5 shrink-0">
-                          <button onClick={e => { e.stopPropagation(); setEditingSessionId(s.id); }} className="hover:text-blue-600 w-5 h-5 flex items-center justify-center text-[12px]" title="Rename">✏️</button>
-                          <button onClick={e => { e.stopPropagation(); deleteSession(s.id); }} className="hover:text-red-500 w-5 h-5 flex items-center justify-center text-[12px]" title="Delete">🗑️</button>
+                          <button type="button" onClick={e => { e.stopPropagation(); setEditingSessionId(s.id); }} className="hover:text-blue-600 w-5 h-5 flex items-center justify-center text-[12px]" title="Rename">✏️</button>
+                          <button type="button" onClick={e => { e.stopPropagation(); deleteSession(s.id); }} className="hover:text-red-500 w-5 h-5 flex items-center justify-center text-[12px]" title="Delete">🗑️</button>
                         </div>
                       </div>
                       {lastTurn && (
@@ -739,17 +766,21 @@ export default function ChatWorkspace({ apiBase, agentId, agentLabel }: Props) {
             </div>
           ))}
         </div>
-        <div className="border-t border-gray-200 p-2.5 flex gap-1.5">
-          <button
-            onClick={() => createSession()}
-            className="flex-1 py-2 px-3 bg-gradient-to-r from-blue-600 to-violet-600 hover:from-blue-700 hover:to-violet-700 text-white text-[12px] font-semibold rounded-lg shadow-sm flex items-center justify-center gap-1.5"
-            title="New chat"
-          ><span className="text-[14px]">+</span> New chat</button>
-          <button
-            onClick={createFolder}
-            className="py-2 px-2.5 bg-white text-gray-700 text-[12px] font-medium rounded-lg border border-gray-300 hover:bg-gray-50"
-            title="New folder"
-          >+ Folder</button>
+        <div className="border-t border-gray-200 bg-white p-3">
+          <div className="grid grid-cols-[1fr_auto] gap-2">
+            <button
+              type="button"
+              onClick={() => createSession()}
+              className="min-h-9 rounded-md bg-gray-900 px-3 text-[12px] font-semibold text-white shadow-sm transition-colors hover:bg-gray-800"
+              title="New chat"
+            >+ New chat</button>
+            <button
+              type="button"
+              onClick={createFolder}
+              className="min-h-9 rounded-md border border-gray-300 bg-white px-3 text-[12px] font-semibold text-gray-700 transition-colors hover:bg-gray-50"
+              title="New folder"
+            >+ Folder</button>
+          </div>
         </div>
       </aside>
 
@@ -758,7 +789,7 @@ export default function ChatWorkspace({ apiBase, agentId, agentLabel }: Props) {
       {/* ========================================================== */}
       <main className="flex-1 flex flex-col min-w-0 bg-white">
         {/* Conversation header */}
-        <div className="px-5 py-3 border-b border-gray-200 flex items-center justify-between gap-3 bg-gradient-to-r from-white to-gray-50">
+        <div className="px-5 py-3 border-b border-gray-200 flex items-center justify-between gap-3 bg-white">
           <div className="min-w-0 flex-1 flex items-center gap-3">
             <button
               onClick={() => createSession()}
@@ -799,7 +830,7 @@ export default function ChatWorkspace({ apiBase, agentId, agentLabel }: Props) {
         </div>
 
         {/* Conversation scroll area */}
-        <div ref={scrollRef} className="flex-1 overflow-y-auto bg-gradient-to-b from-white via-gray-50/30 to-white">
+        <div ref={scrollRef} className="flex-1 overflow-y-auto bg-gray-50/50">
           {/* No session yet */}
           {!activeSession && (
             <div className="h-full flex items-center justify-center px-6">
@@ -813,14 +844,14 @@ export default function ChatWorkspace({ apiBase, agentId, agentLabel }: Props) {
           {/* Empty session — welcome + example prompts */}
           {activeSession && activeSession.turns.length === 0 && (
             <div className="h-full flex flex-col items-center justify-center px-6 py-10">
-              <div className="text-center max-w-2xl">
-                <div className="w-16 h-16 mx-auto mb-4 rounded-2xl bg-gradient-to-br from-blue-500 to-violet-500 text-white flex items-center justify-center text-[28px] shadow-lg">
+              <div className="w-full max-w-3xl text-center">
+                <div className="w-16 h-16 mx-auto mb-4 rounded-xl bg-gray-900 text-white flex items-center justify-center text-[28px] shadow-lg">
                   🤖
                 </div>
                 <h2 className="text-[22px] font-bold text-gray-900 mb-2">
                   Ask {agentLabel || agentId} anything
                 </h2>
-                <p className="text-[14px] text-gray-500 mb-6">
+                <p className="mx-auto mb-6 max-w-xl text-[14px] leading-6 text-gray-500">
                   I can read what&apos;s on your page, search your uploaded files, and reply in voice if you switch on the mic.
                 </p>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 mb-2">
@@ -829,7 +860,7 @@ export default function ChatWorkspace({ apiBase, agentId, agentLabel }: Props) {
                       key={idx}
                       type="button"
                       onClick={() => { setPrompt(p); setTimeout(() => { void send(p); }, 0); }}
-                      className="text-left px-4 py-3 rounded-xl border border-gray-200 hover:border-blue-300 hover:bg-blue-50/30 text-[13px] text-gray-700 transition-colors"
+                      className="min-h-11 rounded-full border border-gray-200 bg-white px-4 py-2 text-left text-[13px] text-gray-700 shadow-sm transition-colors hover:border-gray-300 hover:bg-gray-50"
                     >
                       {p}
                     </button>
@@ -908,6 +939,26 @@ export default function ChatWorkspace({ apiBase, agentId, agentLabel }: Props) {
                           className="px-2 py-1 rounded-md text-gray-500 hover:bg-gray-100 hover:text-gray-700 flex items-center gap-1"
                           title="Print as PDF"
                         >📕 PDF</button>
+                        <span className="w-px h-4 bg-gray-200 self-center mx-0.5" />
+                        <button
+                          onClick={() => sendFeedback(i, "up")}
+                          disabled={!!feedbackGiven[t.ts]}
+                          className={`px-2 py-1 rounded-md flex items-center gap-1 ${
+                            feedbackGiven[t.ts] === "up" ? "text-green-600 bg-green-50" : "text-gray-500 hover:bg-gray-100 hover:text-gray-700"
+                          }`}
+                          title="Good answer — the assistant will remember this"
+                        >👍</button>
+                        <button
+                          onClick={() => sendFeedback(i, "down")}
+                          disabled={!!feedbackGiven[t.ts]}
+                          className={`px-2 py-1 rounded-md flex items-center gap-1 ${
+                            feedbackGiven[t.ts] === "down" ? "text-red-600 bg-red-50" : "text-gray-500 hover:bg-gray-100 hover:text-gray-700"
+                          }`}
+                          title="Wrong — tell it the correct answer so it learns"
+                        >👎</button>
+                        {feedbackGiven[t.ts] && (
+                          <span className="self-center text-[10px] text-gray-400">Thanks — learning from this</span>
+                        )}
                       </div>
                     </div>
                   </div>
@@ -935,13 +986,13 @@ export default function ChatWorkspace({ apiBase, agentId, agentLabel }: Props) {
         </div>
 
         {/* Composer */}
-        <div className="border-t border-gray-200 bg-white px-4 md:px-6 py-3 md:py-4">
-          <div className="max-w-3xl mx-auto">
-            <div className="flex items-center gap-2 rounded-2xl border-2 border-gray-200 bg-white px-2 py-1.5 hover:border-gray-300 focus-within:border-blue-500 focus-within:shadow-md transition-all">
+        <div className="border-t border-gray-200 bg-white px-4 py-3 md:px-6">
+          <div className="mx-auto max-w-3xl">
+            <div className="flex min-h-[48px] items-center gap-2 rounded-xl border border-gray-200 bg-white px-2 py-1.5 shadow-sm transition-all hover:border-gray-300 focus-within:border-blue-500 focus-within:ring-4 focus-within:ring-blue-50">
               <button
                 type="button"
                 onClick={() => fileInputRef.current?.click()}
-                className="w-10 h-10 rounded-xl hover:bg-gray-100 flex items-center justify-center text-[22px] text-gray-500 shrink-0"
+                className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-[20px] text-gray-500 transition-colors hover:bg-gray-100"
                 title="Attach a file"
               >+</button>
               <input ref={fileInputRef} type="file" multiple className="hidden" />
@@ -953,14 +1004,14 @@ export default function ChatWorkspace({ apiBase, agentId, agentLabel }: Props) {
                 placeholder={activeSession?.turns.length === 0
                   ? "Ask anything …"
                   : "Ask a follow-up — more detail, why, is this correct?"}
-                className="flex-1 bg-transparent border-none outline-none px-2 text-[15px] text-gray-900 placeholder:text-gray-400 min-w-0 py-1"
+                className="min-w-0 flex-1 border-none bg-transparent px-2 py-2 text-[15px] text-gray-900 outline-none placeholder:text-gray-400"
                 disabled={thinking || !activeSession}
               />
             <div className="relative shrink-0" data-llm-picker>
               <button
                 type="button"
                 onClick={() => setShowModelPicker(v => !v)}
-                className="h-9 px-3 rounded-full bg-gray-100 hover:bg-gray-200 text-[11px] font-medium text-gray-700 flex items-center gap-1.5"
+                className="flex h-9 items-center gap-1.5 rounded-lg bg-gray-100 px-3 text-[11px] font-semibold text-gray-700 transition-colors hover:bg-gray-200"
                 title={model ? `Pinned to ${model}` : "Auto (Smart router)"}
               >
                 🧠 LLM
@@ -1008,7 +1059,7 @@ export default function ChatWorkspace({ apiBase, agentId, agentLabel }: Props) {
                 else startListening();
               }}
               disabled={thinking || !activeSession || voiceState === "thinking" || continuousVoice}
-              className={`w-9 h-9 rounded-full flex items-center justify-center text-[14px] shrink-0 disabled:opacity-40 ${
+              className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-[14px] transition-colors disabled:opacity-40 ${
                 voiceState === "listening"
                   ? "bg-red-500 text-white animate-pulse"
                   : voiceState === "thinking"
@@ -1025,7 +1076,7 @@ export default function ChatWorkspace({ apiBase, agentId, agentLabel }: Props) {
                 else startContinuousVoice();
               }}
               disabled={thinking || !activeSession || voiceState === "thinking"}
-              className={`w-9 h-9 rounded-full flex items-center justify-center text-[14px] shrink-0 disabled:opacity-40 ${
+              className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-[14px] transition-colors disabled:opacity-40 ${
                 continuousVoice
                   ? "bg-green-500 text-white"
                   : "bg-gray-100 hover:bg-gray-200 text-gray-700"
@@ -1033,13 +1084,14 @@ export default function ChatWorkspace({ apiBase, agentId, agentLabel }: Props) {
               title={continuousVoice ? "Stop continuous voice mode" : "Start continuous voice conversation"}
             >●</button>
             <button
+              type="button"
               onClick={() => send()}
               disabled={!prompt.trim() || thinking || !activeSession}
-              className="w-10 h-10 rounded-xl bg-gradient-to-br from-blue-600 to-violet-600 hover:from-blue-700 hover:to-violet-700 text-white flex items-center justify-center text-[16px] disabled:opacity-40 shrink-0 shadow-sm"
+              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-gray-900 text-[16px] text-white shadow-sm transition-colors hover:bg-gray-800 disabled:opacity-40"
               title="Send"
             >↑</button>
             </div>
-            <div className="mt-1.5 text-center text-[10px] text-gray-400">
+            <div className="mt-2 text-center text-[10px] text-gray-400">
               The Assistant can read this page, your uploaded files, and the conversation above.
             </div>
           </div>

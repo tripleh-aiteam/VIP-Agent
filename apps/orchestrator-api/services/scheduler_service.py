@@ -835,8 +835,41 @@ def init_scheduler():
             extra={"action": "scheduler.chatbot_email_poll_registered"},
         )
 
+    # Assistant self-improvement — nightly cycle that researches the top
+    # recurring low-confidence questions and learns them into each agent's KB.
+    # 17:00 UTC = 02:00 KST (quiet hours). Best-effort.
+    try:
+        _scheduler.add_job(
+            _run_assistant_improvement,
+            CronTrigger.from_crontab("0 17 * * *"),
+            id="assistant-self-improve",
+            replace_existing=True,
+        )
+        log.info("scheduler: assistant self-improvement registered (17:00 UTC = 02:00 KST)",
+                 extra={"action": "scheduler.assistant_improve_registered"})
+    except Exception as _e:
+        log.warning(f"scheduler: could not register assistant self-improve: {_e}")
+
     _scheduler.start()
     log.info("scheduler: started", extra={"action": "scheduler.started"})
+
+
+def _run_assistant_improvement():
+    """Scheduler entry — runs the assistant self-improvement cycle on its own DB
+    session. Never raises (scheduler jobs must not crash the loop)."""
+    try:
+        from db.base import SessionLocal
+        from services.assistant_learning import nightly_improve_cycle
+        db = SessionLocal()
+        try:
+            result = nightly_improve_cycle(db)
+            log.info(f"scheduler: assistant self-improve done -> {result.get('summary')}",
+                     extra={"action": "scheduler.assistant_improve_done"})
+        finally:
+            db.close()
+    except Exception as e:
+        log.warning(f"scheduler: assistant self-improve failed: {e}",
+                    extra={"action": "scheduler.assistant_improve_failed"})
 
     # === Phase 3: Restart-safe catch-up ===
     # If we were down when a daily job should have fired, run it now (delayed 30s
