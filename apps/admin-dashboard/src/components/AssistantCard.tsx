@@ -27,6 +27,7 @@ import {
   useRef,
   useState,
   type ReactNode,
+  type PointerEvent as ReactPointerEvent,
 } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { vipConfig } from "../chatbot.config";
@@ -206,6 +207,95 @@ export function AssistantCard({ floating = true }: Props = {}) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+
+  // ----------------------------------------------------------------------
+  //  Draggable + resizable floating panel
+  // ----------------------------------------------------------------------
+  // Drag anywhere (via the header) and resize (via the bottom-left grip).
+  // Position + size persist per agent in localStorage, clamped to viewport.
+  const FLOAT_KEY = `assistant-float-${vipConfig.agentId}`;
+  const MIN_W = 320, MIN_H = 260;
+  const [floatRect, setFloatRect] = useState<
+    { x: number; y: number; w: number; h: number } | null
+  >(() => {
+    if (typeof window === "undefined") return null;
+    try {
+      const raw = localStorage.getItem(FLOAT_KEY);
+      if (raw) return JSON.parse(raw);
+    } catch {}
+    return null;
+  });
+  const floatRef = useRef<HTMLDivElement>(null);
+  const dragState = useRef<
+    | { mode: "move" | "resize"; startX: number; startY: number; origX: number; origY: number; origW: number; origH: number }
+    | null
+  >(null);
+
+  const persistRect = useCallback((r: { x: number; y: number; w: number; h: number } | null) => {
+    try {
+      if (r) localStorage.setItem(FLOAT_KEY, JSON.stringify(r));
+      else localStorage.removeItem(FLOAT_KEY);
+    } catch {}
+  }, [FLOAT_KEY]);
+
+  const clamp = (x: number, y: number, w: number, h: number) => {
+    const vw = window.innerWidth, vh = window.innerHeight;
+    const cw = Math.min(Math.max(w, MIN_W), vw - 16);
+    const ch = Math.min(Math.max(h, MIN_H), vh - 16);
+    const cx = Math.min(Math.max(x, 8), Math.max(8, vw - cw - 8));
+    const cy = Math.min(Math.max(y, 8), Math.max(8, vh - ch - 8));
+    return { x: cx, y: cy, w: cw, h: ch };
+  };
+
+  const onPointerMove = useCallback((e: PointerEvent) => {
+    const st = dragState.current;
+    if (!st) return;
+    const dx = e.clientX - st.startX;
+    const dy = e.clientY - st.startY;
+    if (st.mode === "move") {
+      setFloatRect(clamp(st.origX + dx, st.origY + dy, st.origW, st.origH));
+    } else {
+      const newW = st.origW - dx;
+      const newH = st.origH + dy;
+      const grew = clamp(st.origX + dx, st.origY, newW, newH);
+      grew.x = Math.max(8, Math.min(st.origX + dx, st.origX + st.origW - MIN_W));
+      setFloatRect(grew);
+    }
+  }, []);
+
+  const endDrag = useCallback(() => {
+    dragState.current = null;
+    window.removeEventListener("pointermove", onPointerMove);
+    window.removeEventListener("pointerup", endDrag);
+    setFloatRect((r) => { persistRect(r); return r; });
+  }, [onPointerMove, persistRect]);
+
+  const beginDrag = (mode: "move" | "resize") => (e: ReactPointerEvent) => {
+    if (typeof window === "undefined") return;
+    e.preventDefault();
+    const el = floatRef.current;
+    const rect = el?.getBoundingClientRect();
+    const cur = floatRect || (rect
+      ? { x: rect.left, y: rect.top, w: rect.width, h: rect.height }
+      : { x: window.innerWidth - 840, y: window.innerHeight - 480, w: 820, h: 460 });
+    dragState.current = {
+      mode,
+      startX: e.clientX, startY: e.clientY,
+      origX: cur.x, origY: cur.y, origW: cur.w, origH: cur.h,
+    };
+    setFloatRect(cur);
+    window.addEventListener("pointermove", onPointerMove);
+    window.addEventListener("pointerup", endDrag);
+  };
+
+  const resetFloat = () => { setFloatRect(null); persistRect(null); };
+
+  useEffect(() => {
+    if (!floatRect) return;
+    const onResize = () => setFloatRect((r) => (r ? clamp(r.x, r.y, r.w, r.h) : r));
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, [floatRect]);
 
   // --- Smart-shrink: auto-collapse the floating bar to a small pill in
   //     the bottom-right corner when nothing is happening, so it stops
@@ -672,9 +762,17 @@ export function AssistantCard({ floating = true }: Props = {}) {
   // ---------------------------------------------------------------
 
   const card = (
-    <div data-assistant-ui="card" className={`rounded-2xl border border-gray-200 bg-white shadow-${floating ? "2xl" : "sm"} p-3 md:p-4 space-y-2`}>
-      {/* Header (collapsible) */}
-      <div className="flex items-center justify-between gap-3 px-1">
+    <div
+      data-assistant-ui="card"
+      className={`rounded-2xl border border-gray-200 bg-white shadow-${floating ? "2xl" : "sm"} p-3 md:p-4 space-y-2 ${
+        floating && floatRect ? "flex flex-col h-full w-full overflow-hidden" : ""
+      }`}
+    >
+      {/* Header — doubles as the drag handle when floating. */}
+      <div
+        onPointerDown={floating ? beginDrag("move") : undefined}
+        className={`flex items-center justify-between gap-3 px-1 ${floating ? "cursor-move touch-none" : ""}`}
+      >
         <div className="flex items-center gap-2">
           <span className="text-[18px]">🤖</span>
           <span className="text-[14px] font-semibold text-gray-900">Assistant</span>
@@ -682,7 +780,7 @@ export function AssistantCard({ floating = true }: Props = {}) {
             <span className="text-[11px] text-gray-500">· {turns.length} turn{turns.length === 1 ? "" : "s"}</span>
           )}
         </div>
-        <div className="flex items-center gap-1">
+        <div className="flex items-center gap-1" onPointerDown={(e) => e.stopPropagation()}>
           {turns.length > 0 && (
             <button
               type="button"
@@ -690,6 +788,14 @@ export function AssistantCard({ floating = true }: Props = {}) {
               className="text-[11px] text-gray-500 hover:text-gray-800 px-2 py-1 rounded hover:bg-gray-100"
               title="Clear conversation"
             >Clear</button>
+          )}
+          {floating && floatRect && (
+            <button
+              type="button"
+              onClick={resetFloat}
+              className="w-8 h-8 rounded-lg text-gray-500 hover:bg-gray-100 flex items-center justify-center text-[13px]"
+              title="Reset position & size (dock to bottom)"
+            >⤢</button>
           )}
           {floating && (
             <>
@@ -714,9 +820,14 @@ export function AssistantCard({ floating = true }: Props = {}) {
         </div>
       </div>
 
-      {/* Conversation */}
+      {/* Conversation — flex-grows when resized (floatRect set). */}
       {!(floating && collapsed) && turns.length > 0 && (
-        <div ref={scrollRef} className={`overflow-y-auto space-y-2 pr-1 ${floating ? "max-h-[240px]" : "max-h-[360px]"}`}>
+        <div
+          ref={scrollRef}
+          className={`overflow-y-auto space-y-2 pr-1 ${
+            floating && floatRect ? "flex-1 min-h-0" : floating ? "max-h-[240px]" : "max-h-[360px]"
+          }`}
+        >
           {turns.map((t, i) => (
             <div key={i} className={`flex ${t.who === "user" ? "justify-end" : "justify-start"}`}>
               <div className={`max-w-[85%] flex flex-col gap-1.5 ${t.who === "user" ? "items-end" : "items-start"}`}>
@@ -991,8 +1102,31 @@ export function AssistantCard({ floating = true }: Props = {}) {
             <span className="text-[13px] font-medium text-gray-700">Ask</span>
           </button>
         ) : (
-          <div data-assistant-ui="float" className="fixed z-[100] left-1/2 -translate-x-1/2 bottom-2 sm:bottom-4 w-[min(96vw,820px)]">
+          <div
+            ref={floatRef}
+            data-assistant-ui="float"
+            className={
+              floatRect
+                ? "fixed z-[100] flex flex-col"
+                : "fixed z-[100] left-1/2 -translate-x-1/2 bottom-2 sm:bottom-4 w-[min(96vw,820px)]"
+            }
+            style={
+              floatRect
+                ? { left: floatRect.x, top: floatRect.y, width: floatRect.w, height: floatRect.h }
+                : undefined
+            }
+          >
             {card}
+            <div
+              onPointerDown={beginDrag("resize")}
+              className="absolute bottom-1 left-1 w-4 h-4 cursor-nesw-resize text-gray-400 hover:text-gray-600 select-none"
+              title="Drag to resize"
+              aria-label="Resize assistant"
+            >
+              <svg viewBox="0 0 16 16" className="w-4 h-4 rotate-90" fill="none" stroke="currentColor" strokeWidth="1.5">
+                <path d="M3 11h10M6 14h7M9 17h4" />
+              </svg>
+            </div>
           </div>
         )
       ) : (
