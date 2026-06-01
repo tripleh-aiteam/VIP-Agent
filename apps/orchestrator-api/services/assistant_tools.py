@@ -2856,6 +2856,37 @@ TOOL_REGISTRY["delete_knowledge_file"] = Tool(
 )
 
 
+# --- Web search tool --------------------------------------------------------
+# Lets the assistant look up live information on the public web when its
+# knowledge base + the LLM's own knowledge don't cover the question. Powers
+# part of the self-improvement loop (researching knowledge gaps).
+def tool_web_search(query: str, num_results: int = 5, **_kw) -> dict[str, Any]:
+    """Search the public web for `query`. Returns top results (title/url/snippet)."""
+    from services.web_search import search_web
+    return search_web(query, num_results=num_results)
+
+
+TOOL_REGISTRY["web_search"] = Tool(
+    name="web_search", kind="read",
+    description=(
+        "Search the public web (Google) for current information when the "
+        "knowledge base and your own knowledge don't cover the question — "
+        "recent news, prices, facts, definitions, 'look this up', '검색해줘'. "
+        "Returns ranked results with title, url and snippet. Cite the sources "
+        "in your reply."
+    ),
+    parameters={
+        "type": "object",
+        "properties": {
+            "query": {"type": "string", "description": "What to search for"},
+            "num_results": {"type": "integer", "description": "How many results (1-10)"},
+        },
+        "required": ["query"],
+    },
+    fn=tool_web_search,
+)
+
+
 # --- Stock Advisor live-data tools -----------------------------------------
 # Registered from a separate module (passing TOOL_REGISTRY + Tool to avoid a
 # circular import). These give the OASIS Stock agent real-time access to its

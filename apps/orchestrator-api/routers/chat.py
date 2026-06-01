@@ -192,6 +192,43 @@ def agent_command_stream(body: AgentCommandBody, db: Session = Depends(get_db)):
     )
 
 
+# ---------------------------------------------------------------------------
+#  Self-improvement: feedback on assistant replies (👍/👎 + correction)
+# ---------------------------------------------------------------------------
+
+class FeedbackBody(BaseModel):
+    agentId: str = Field("vip", description="Which agent the feedback is for (scopes learning to its KB)")
+    question: str = Field("", description="The user's question that produced the reply")
+    answer: str = Field("", description="The assistant reply being rated")
+    verdict: str = Field(..., description="'up' (👍) or 'down' (👎)")
+    correction: Optional[str] = Field(None, description="For 👎: what the right answer/behaviour was")
+    user_id: Optional[str] = Field(None, description="Caller id for attribution")
+
+
+@router.post("/feedback")
+def agent_feedback(body: FeedbackBody, db: Session = Depends(get_db)):
+    """Record thumbs feedback on an assistant reply and feed the self-improvement
+    loop: 👍 saves a verified exemplar, 👎 + correction is judged then (if sound)
+    stored as a lesson in the agent's knowledge base so the mistake isn't
+    repeated. Never raises — returns {ok, learned, ...}."""
+    try:
+        from services.assistant_learning import learn_from_feedback
+        verdict = "up" if str(body.verdict).lower() in ("up", "👍", "good", "yes") else "down"
+        result = learn_from_feedback(
+            db,
+            agent_id=(body.agentId or "vip").lower(),
+            question=body.question or "",
+            answer=body.answer or "",
+            verdict=verdict,
+            correction=body.correction,
+            user_id=body.user_id,
+        )
+        return {"ok": True, **result}
+    except Exception as e:
+        from fastapi.responses import JSONResponse as _JSON
+        return _JSON(status_code=200, content={"ok": False, "learned": False, "error": str(e)[:300]})
+
+
 @router.get("/agent/manifest")
 def agent_manifest():
     """Expose the assistant manifest (pages + external agents) as JSON so
