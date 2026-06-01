@@ -7,6 +7,9 @@ Provider precedence (first configured wins):
   1. Serper.dev      — env SERPER_API_KEY        (simplest, generous free tier)
   2. Google PSE      — env GOOGLE_CSE_KEY + GOOGLE_CSE_CX (Programmable Search)
   3. Tavily          — env TAVILY_API_KEY        (LLM-oriented results)
+  4. Gemini grounding— env GEMINI_API_KEY / GOOGLE_API_KEY / GOOGLE_GENERATIVE_AI_API_KEY
+                       (reuses the key already configured for Gemini models —
+                       uses Google Search "grounding" so NO new key is needed)
 
 If none are configured the helper returns ok:false with a clear message, so
 the caller can fall back to LLM knowledge rather than crashing. Never raises.
@@ -18,6 +21,14 @@ import os
 from typing import Any
 
 from services.logger import log
+
+
+def _gemini_key() -> str | None:
+    return (
+        os.environ.get("GEMINI_API_KEY")
+        or os.environ.get("GOOGLE_API_KEY")
+        or os.environ.get("GOOGLE_GENERATIVE_AI_API_KEY")
+    )
 
 
 def _serper(query: str, n: int) -> list[dict[str, Any]]:
@@ -88,6 +99,44 @@ def _tavily(query: str, n: int) -> list[dict[str, Any]]:
     ]
 
 
+def _gemini_grounded(query: str, n: int) -> list[dict[str, Any]]:
+    """Use Gemini's built-in Google Search grounding. Reuses the Gemini API key
+    already configured for the chatbot — no extra signup. Returns the grounding
+    web sources (title/url) plus a synthesized snippet as the first result."""
+    import httpx
+    key = _gemini_key()
+    if not key:
+        return []
+    # gemini-2.0-flash supports the google_search grounding tool.
+    model = os.environ.get("GEMINI_SEARCH_MODEL", "gemini-2.0-flash")
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={key}"
+    payload = {
+        "contents": [{"role": "user", "parts": [{"text": query}]}],
+        "tools": [{"google_search": {}}],
+    }
+    with httpx.Client(timeout=20.0) as c:
+        r = c.post(url, json=payload, headers={"Content-Type": "application/json"})
+        r.raise_for_status()
+        data = r.json()
+
+    cand = (data.get("candidates") or [{}])[0]
+    # Synthesized answer text
+    answer = ""
+    for part in (cand.get("content", {}).get("parts") or []):
+        if part.get("text"):
+            answer += part["text"]
+    out: list[dict[str, Any]] = []
+    if answer.strip():
+        out.append({"title": "Answer (Gemini + Google Search)", "url": "", "snippet": answer.strip()[:1200]})
+    # Grounding source links
+    gm = cand.get("groundingMetadata") or {}
+    for chunk in (gm.get("groundingChunks") or [])[:n]:
+        web = chunk.get("web") or {}
+        if web.get("uri"):
+            out.append({"title": web.get("title", ""), "url": web.get("uri", ""), "snippet": ""})
+    return out
+
+
 def search_web(query: str, num_results: int = 5) -> dict[str, Any]:
     """Run a live web search. Returns {ok, provider, results:[{title,url,snippet}]}.
     Never raises — returns ok:false with a reason if no provider is configured
@@ -96,7 +145,12 @@ def search_web(query: str, num_results: int = 5) -> dict[str, Any]:
     if not query:
         return {"ok": False, "error": "empty query", "results": []}
     n = max(1, min(num_results, 10))
-    for name, fn in (("serper", _serper), ("google_pse", _google_pse), ("tavily", _tavily)):
+    for name, fn in (
+        ("serper", _serper),
+        ("google_pse", _google_pse),
+        ("tavily", _tavily),
+        ("gemini_grounded", _gemini_grounded),
+    ):
         try:
             hits = fn(query, n)
         except Exception as e:
@@ -107,9 +161,9 @@ def search_web(query: str, num_results: int = 5) -> dict[str, Any]:
     return {
         "ok": False,
         "error": (
-            "No web-search provider configured. Set SERPER_API_KEY (or "
-            "GOOGLE_CSE_KEY+GOOGLE_CSE_CX, or TAVILY_API_KEY) on the orchestrator "
-            "to enable live web search."
+            "No web-search provider available. Set SERPER_API_KEY (or "
+            "GOOGLE_CSE_KEY+GOOGLE_CSE_CX, or TAVILY_API_KEY, or GEMINI_API_KEY "
+            "for Google-Search grounding) on the orchestrator."
         ),
         "results": [],
     }
