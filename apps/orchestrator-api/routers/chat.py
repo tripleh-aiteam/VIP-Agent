@@ -238,6 +238,8 @@ def agent_feedback(body: FeedbackBody, db: Session = Depends(get_db)):
             user_id=body.user_id,
         )
         return {"ok": True, **result}
+    except HTTPException:
+        raise  # let agentId-allowlist 400 propagate
     except Exception as e:
         from fastapi.responses import JSONResponse as _JSON
         return _JSON(status_code=200, content={"ok": False, "learned": False, "error": str(e)[:300]})
