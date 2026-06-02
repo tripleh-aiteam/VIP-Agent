@@ -395,6 +395,26 @@ export function AssistantCard({ floating = true }: Props = {}) {
   const vadRafRef = useRef<number | null>(null);
   const silenceStartRef = useRef<number | null>(null);
   const idleFollowupTimerRef = useRef<number | null>(null);
+  const startingRef = useRef(false);  // re-entrancy guard for startListening
+
+  // Unmount cleanup — stop the mic, close AudioContext, clear timers, cancel
+  // TTS, and remove drag listeners. Without this, navigating away from the
+  // chatbot (which unmounts this card) leaves the mic HOT, TTS talking, and
+  // timers firing setState on an unmounted component.
+  useEffect(() => {
+    return () => {
+      try { mediaRef.current?.stop(); } catch {}
+      try { streamRef.current?.getTracks().forEach(t => t.stop()); } catch {}
+      try { cleanupVad(); } catch {}
+      if (stopTimerRef.current) { clearTimeout(stopTimerRef.current); }
+      if (idleFollowupTimerRef.current) { clearTimeout(idleFollowupTimerRef.current); }
+      try { if (typeof window !== "undefined") window.speechSynthesis?.cancel(); } catch {}
+      try { window.removeEventListener("pointermove", onPointerMove); } catch {}
+      try { window.removeEventListener("pointerup", endDrag); } catch {}
+      continuousVoiceRef.current = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // ---------------------------------------------------------------
   //  Attachments
@@ -561,6 +581,11 @@ export function AssistantCard({ floating = true }: Props = {}) {
   }
 
   async function startListening() {
+    // Re-entrancy guard: never start a second recorder while one is live or
+    // being set up — overlapping recorders overwrite mediaRef/streamRef and
+    // leak the previous stream/AudioContext (and can spin in continuous mode).
+    if (mediaRef.current || startingRef.current) return;
+    startingRef.current = true;
     // Cancel any pending idle-followup the moment the user starts talking
     if (idleFollowupTimerRef.current) {
       clearTimeout(idleFollowupTimerRef.current);
@@ -569,6 +594,7 @@ export function AssistantCard({ floating = true }: Props = {}) {
     setError(null);
     if (!navigator.mediaDevices || !window.MediaRecorder) {
       setError("Voice recording not supported in this browser.");
+      startingRef.current = false;
       return;
     }
     let stream: MediaStream;
@@ -578,6 +604,7 @@ export function AssistantCard({ floating = true }: Props = {}) {
       });
     } catch {
       setError("Microphone access denied.");
+      startingRef.current = false;
       return;
     }
     streamRef.current = stream;
@@ -633,6 +660,7 @@ export function AssistantCard({ floating = true }: Props = {}) {
     };
     setVoiceState("listening");
     recorder.start();
+    startingRef.current = false;  // recorder live — clear the start guard
     // VAD-based stop: silence > 1.5s → end the turn
     startVad(stream, () => {
       if (recorder.state === "recording") { try { recorder.stop(); } catch {} }

@@ -1442,10 +1442,31 @@ def run_agent(
     return result
 
 
+# Bounded background-research executor. Previously every low-confidence reply
+# spawned an unbounded daemon thread, each opening its own DB session — a burst
+# of "I don't know" answers could exhaust the connection pool and starve the
+# request path. Now: at most 2 concurrent research jobs (max_workers), a small
+# queue cap, and an in-flight set so the SAME question isn't researched twice
+# concurrently.
+import threading as _threading
+from concurrent.futures import ThreadPoolExecutor as _ThreadPoolExecutor
+
+_research_executor = _ThreadPoolExecutor(max_workers=2, thread_name_prefix="research")
+_research_inflight: set[str] = set()
+_research_lock = _threading.Lock()
+_RESEARCH_MAX_INFLIGHT = 8  # hard cap on queued+running jobs
+
+
 def _spawn_background_research(agent_id: str, question: str) -> None:
-    """Research a low-confidence question on its own DB session + thread so the
-    user's reply isn't delayed. Stores a verified note into the agent KB."""
-    import threading
+    """Research a low-confidence question off the request path, bounded + deduped.
+    Drops the job (rather than piling up) if too many are already in flight."""
+    key = f"{agent_id}::{(question or '').strip().lower()[:200]}"
+    with _research_lock:
+        if key in _research_inflight:
+            return  # already researching this exact question
+        if len(_research_inflight) >= _RESEARCH_MAX_INFLIGHT:
+            return  # backpressure — skip rather than exhaust resources
+        _research_inflight.add(key)
 
     def _work():
         try:
@@ -1458,11 +1479,16 @@ def _spawn_background_research(agent_id: str, question: str) -> None:
                 db2.close()
         except Exception as e:
             log.warning(f"background research failed: {str(e)[:120]}")
+        finally:
+            with _research_lock:
+                _research_inflight.discard(key)
 
     try:
-        threading.Thread(target=_work, daemon=True).start()
+        _research_executor.submit(_work)
     except Exception as e:
-        log.warning(f"could not spawn research thread: {str(e)[:120]}")
+        with _research_lock:
+            _research_inflight.discard(key)
+        log.warning(f"could not submit research job: {str(e)[:120]}")
 
 
 def _run_agent_impl(

@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 from db.base import get_db
 from services import chat_service
 from services.intent_service import classify, classify_batch
+from services.api_security import rate_limit_compose
 
 router = APIRouter(prefix="/chat", tags=["chat"])
 
@@ -196,6 +197,18 @@ def agent_command_stream(body: AgentCommandBody, db: Session = Depends(get_db)):
 #  Self-improvement: feedback on assistant replies (👍/👎 + correction)
 # ---------------------------------------------------------------------------
 
+# Allowlist of known agents. Insights/feedback endpoints validate agentId
+# against this so a caller can't read or write an arbitrary namespace (C1).
+KNOWN_AGENTS = {"vip", "stock", "realty", "asset", "aiglass"}
+
+
+def _valid_agent(agent_id: Optional[str]) -> str:
+    a = (agent_id or "vip").strip().lower()
+    if a not in KNOWN_AGENTS:
+        raise HTTPException(status_code=400, detail=f"unknown agentId '{a}'")
+    return a
+
+
 class FeedbackBody(BaseModel):
     agentId: str = Field("vip", description="Which agent the feedback is for (scopes learning to its KB)")
     question: str = Field("", description="The user's question that produced the reply")
@@ -213,10 +226,11 @@ def agent_feedback(body: FeedbackBody, db: Session = Depends(get_db)):
     repeated. Never raises — returns {ok, learned, ...}."""
     try:
         from services.assistant_learning import learn_from_feedback
+        agent_id = _valid_agent(body.agentId)
         verdict = "up" if str(body.verdict).lower() in ("up", "👍", "good", "yes") else "down"
         result = learn_from_feedback(
             db,
-            agent_id=(body.agentId or "vip").lower(),
+            agent_id=agent_id,
             question=body.question or "",
             answer=body.answer or "",
             verdict=verdict,
@@ -238,7 +252,9 @@ def insights_gaps(agentId: str = Query("vip"), days: int = Query(30, ge=1, le=18
     """Clusters of low-confidence questions → what knowledge to upload (#13)."""
     try:
         from services.assistant_learning import knowledge_gaps
-        return knowledge_gaps(db, agent_id=agentId.lower(), days=days)
+        return knowledge_gaps(db, agent_id=_valid_agent(agentId), days=days)
+    except HTTPException:
+        raise
     except Exception as e:
         return {"ok": False, "error": str(e)[:300], "clusters": []}
 
@@ -248,19 +264,24 @@ def insights_metrics(agentId: str = Query("vip"), days: int = Query(30, ge=1, le
     """Quality metrics for the self-improvement dashboard (#15)."""
     try:
         from services.assistant_learning import quality_metrics
-        return quality_metrics(db, agent_id=agentId.lower(), days=days)
+        return quality_metrics(db, agent_id=_valid_agent(agentId), days=days)
+    except HTTPException:
+        raise
     except Exception as e:
         return {"ok": False, "error": str(e)[:300]}
 
 
-@router.post("/insights/improve-now")
+@router.post("/insights/improve-now", dependencies=[Depends(rate_limit_compose)])
 def insights_improve_now(agentId: Optional[str] = Query(None), db: Session = Depends(get_db)):
     """Manually trigger the self-improvement cycle (#14) — research the top
-    recurring low-confidence questions and learn them. Omit agentId for all."""
+    recurring low-confidence questions and learn them. Omit agentId for all.
+    Rate-limited (10/min/IP) to prevent cost-DoS via repeated LLM+web spend."""
     try:
         from services.assistant_learning import nightly_improve_cycle
-        agents = [agentId.lower()] if agentId else None
+        agents = [_valid_agent(agentId)] if agentId else None
         return nightly_improve_cycle(db, agents=agents)
+    except HTTPException:
+        raise
     except Exception as e:
         return {"ok": False, "error": str(e)[:300]}
 

@@ -844,6 +844,8 @@ def init_scheduler():
             CronTrigger.from_crontab("0 17 * * *"),
             id="assistant-self-improve",
             replace_existing=True,
+            max_instances=1,   # never overlap a long-running cycle
+            coalesce=True,     # collapse missed runs into one
         )
         log.info("scheduler: assistant self-improvement registered (17:00 UTC = 02:00 KST)",
                  extra={"action": "scheduler.assistant_improve_registered"})
