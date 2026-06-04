@@ -1601,6 +1601,36 @@ def _offline_basic_answer(qlc: str, lang: str, agent_id: str) -> Optional[str]:
     # Goodbye
     if any_word("bye", "goodbye", "ㅂㅂ", "잘가") or any_sub("see you", "안녕히", "잘 가"):
         return ("안녕히 가세요! 필요하면 언제든 불러주세요." if ko else "Goodbye! Call me anytime you need help.")
+    # Menu / page listing — "what menus / pages / features do I have?".
+    # Skip when there's a navigation verb (that's an "open X" command, handled
+    # by the navigation step) so "open the agents menu" still navigates.
+    nav_in_q = any_sub("open", "go to", "navigate", "show me", "열어", "이동", "가줘", "보여줘")
+    if (not nav_in_q and (
+            any_word("menu", "menus", "메뉴", "page", "pages", "페이지", "sections", "tabs")
+            or any_sub("what menu", "which menu", "list menu", "메뉴 목록", "어떤 메뉴",
+                       "what do i have", "what features", "어떤 기능", "메뉴 알려"))):
+        try:
+            from services.assistant_agent import AGENT_PROFILES
+            prof = AGENT_PROFILES.get((agent_id or "").lower())
+            items = []
+            if prof:
+                for entry in prof.get("pages", []):
+                    path, _, lab = str(entry).partition(" — ")
+                    path = path.strip()
+                    lab = lab.strip()
+                    if path:
+                        items.append((path, lab or path))
+            else:
+                from services.assistant_manifest import get_all_pages
+                for p in get_all_pages(include_hidden=False):
+                    items.append((p["path"], p.get("name") or p["path"]))
+            if items:
+                body = "\n".join(f"• {lab} — {path}" for path, lab in items[:20])
+                return ((f"사용 가능한 메뉴입니다 (이동하려면 \"열어 [메뉴]\"라고 하세요):\n\n{body}")
+                        if ko else
+                        (f"Here are your menus (say \"open [menu]\" to go there):\n\n{body}"))
+        except Exception:
+            pass
     # Capabilities / identity / help
     if (any_word("help", "도와줘", "도와", "기능", "누구", "뭐야", "capabilities")
             or any_sub("what can you do", "who are you", "what are you", "무엇을 도와",
@@ -1711,15 +1741,18 @@ def _offline_answer(db, *, transcript: str, lang: str, agent_id: str,
     from_learned = False
     try:
         if kb_context:
-            # 2a. FIRST prefer a VERIFIED / LEARNED note (from the 👍 + feedback
-            #     self-improvement loop). These are clean, human-approved answers
-            #     stored as learned/<agent>/{good,fix,web}-*.md — they answer even
-            #     reasoning questions offline because a human already vetted them.
+            # 2a. FIRST prefer a VERIFIED / LEARNED *answer* (from the 👍 +
+            #     web-research self-improvement loop). Only `good-` (human
+            #     approved Q&A) and `web-` (researched answer) notes are real
+            #     answers — `fix-` notes are BEHAVIOURAL corrections ("avoid
+            #     starting responses with…") and must NOT be surfaced as
+            #     answers. Require a STRONG match (0.58) so an unrelated note
+            #     never poses as the answer to a different question.
             for hit in kb_context[:5]:
                 fname = (hit.get("filename") or hit.get("location") or "").lower()
-                is_learned = ("learned/" in fname or fname.startswith("good-")
-                              or fname.startswith("fix-") or fname.startswith("web-"))
-                if is_learned and (hit.get("similarity", 0) or 0) >= 0.34:
+                base = fname.rsplit("/", 1)[-1]
+                is_answer_note = base.startswith("good-") or base.startswith("web-")
+                if is_answer_note and (hit.get("similarity", 0) or 0) >= 0.58:
                     ans = _extract_clean_answer(hit.get("content") or "")
                     if ans:
                         best_snip = ans[:900]
@@ -1759,8 +1792,8 @@ def _offline_answer(db, *, transcript: str, lang: str, agent_id: str,
             footer = ("\n\n— 오프라인 · 학습된 답변" if lang == "ko"
                       else "\n\n— offline · from learned answers")
             return _frame(best_snip + footer)
-        prefix = ("화면/지식에서 찾은 내용입니다 (AI 미사용):\n\n"
-                  if lang == "ko" else "Here's what I found in your data (no AI used):\n\n")
+        prefix = ("자료에서 찾았습니다:\n\n"
+                  if lang == "ko" else "From your data:\n\n")
         return _frame(prefix + best_snip)
 
     # --- 3. Needs the LLM ---
