@@ -1465,7 +1465,10 @@ def run_agent(
         skip = {"empty", "multimodal_failed", "multimodal_missing", "chain_empty", "error"}
         if (transcript or "").strip() and result.get("intent") not in skip and reply_text:
             from services.assistant_learning import is_low_confidence, log_qa
-            low = is_low_confidence(reply_text)
+            # An offline turn that couldn't be answered is a real knowledge gap —
+            # treat it as low-confidence so the gap report + background research
+            # pick it up (research runs server-side; it doesn't break offline UX).
+            low = is_low_confidence(reply_text) or bool(result.get("needs_llm"))
             log_qa(db, agent_id=agent_id, question=transcript or "", answer=reply_text,
                    intent=result.get("intent"), tool_used=result.get("tool_used"),
                    low_conf=low, user_id=user_id)
@@ -1533,6 +1536,36 @@ def _spawn_background_research(agent_id: str, question: str) -> None:
 _NAV_VERBS = ("open", "go to", "take me", "navigate", "show me",
               "열어", "열어줘", "이동", "가줘", "보여줘")
 
+import re as _re
+
+
+def _extract_clean_answer(content: str) -> str:
+    """Pull a presentable answer out of a KB chunk.
+
+    Learned/self-improvement notes are markdown with structured markers
+    (**Good answer:** / **Correct answer / behaviour:** / **Answer:**) — return
+    just that answer text. For ordinary uploaded chunks, strip parser noise
+    like a leading '[Sheet: …]' tag and the '# heading' line so the user sees
+    clean prose, not a raw dump.
+    """
+    if not content:
+        return ""
+    text = content.strip()
+    # 1. Learned-note answer markers (most authoritative — these are verified).
+    for marker in ("**Good answer:**", "**Correct answer / behaviour:**",
+                   "**Answer:**", "**Correct answer:**"):
+        idx = text.find(marker)
+        if idx >= 0:
+            ans = text[idx + len(marker):].strip()
+            # cut at the next markdown marker / source footer if present
+            ans = _re.split(r"\n\s*(?:\*\*|_Sources?:|_\(Learned)", ans)[0].strip()
+            if ans:
+                return ans
+    # 2. Ordinary chunk — drop a leading [Sheet: …] tag and markdown headings.
+    text = _re.sub(r"^\[[^\]]+\]\s*", "", text)           # leading [Sheet: X]
+    text = _re.sub(r"(?m)^#{1,6}\s.*$", "", text).strip()  # markdown headings
+    return text
+
 
 def _offline_answer(db, *, transcript: str, lang: str, agent_id: str,
                     page_context: Optional[str], kb_context) -> dict[str, Any]:
@@ -1599,14 +1632,33 @@ def _offline_answer(db, *, transcript: str, lang: str, agent_id: str,
         "요약", "왜", "비교", "추천", "분석",
     ))
     best_snip = ""
+    from_learned = False
     try:
-        # Require a stronger similarity (0.42) so only genuinely relevant KB
-        # snippets are returned — a loose match shouldn't pose as an answer.
-        if kb_context and not reasoning_q:
-            top = kb_context[0]
-            content = (top.get("content") or "").strip()
-            if content and (top.get("similarity", 0) or 0) >= 0.42:
-                best_snip = content[:700]
+        if kb_context:
+            # 2a. FIRST prefer a VERIFIED / LEARNED note (from the 👍 + feedback
+            #     self-improvement loop). These are clean, human-approved answers
+            #     stored as learned/<agent>/{good,fix,web}-*.md — they answer even
+            #     reasoning questions offline because a human already vetted them.
+            for hit in kb_context[:5]:
+                fname = (hit.get("filename") or hit.get("location") or "").lower()
+                is_learned = ("learned/" in fname or fname.startswith("good-")
+                              or fname.startswith("fix-") or fname.startswith("web-"))
+                if is_learned and (hit.get("similarity", 0) or 0) >= 0.34:
+                    ans = _extract_clean_answer(hit.get("content") or "")
+                    if ans:
+                        best_snip = ans[:900]
+                        from_learned = True
+                        break
+
+            # 2b. Otherwise a strong ordinary KB hit (0.42 floor), cleaned up.
+            #     Reasoning/synthesis queries are skipped here — a raw uploaded
+            #     chunk can't synthesise; those need the LLM.
+            if not best_snip and not reasoning_q:
+                top = kb_context[0]
+                if (top.get("similarity", 0) or 0) >= 0.42:
+                    cleaned = _extract_clean_answer(top.get("content") or "")
+                    if cleaned:
+                        best_snip = cleaned[:700]
     except Exception:
         pass
 
@@ -1625,15 +1677,26 @@ def _offline_answer(db, *, transcript: str, lang: str, agent_id: str,
             best_snip = "\n".join(ln for _h, ln in scored[:4])[:700]
 
     if best_snip:
+        if from_learned:
+            # A real, verified answer — present it AS the answer, with no "raw
+            # dump" framing. A small footer notes it's offline + learned.
+            footer = ("\n\n— 오프라인 · 학습된 답변" if lang == "ko"
+                      else "\n\n— offline · from learned answers")
+            return _frame(best_snip + footer)
         prefix = ("화면/지식에서 찾은 내용입니다 (AI 미사용):\n\n"
                   if lang == "ko" else "Here's what I found in your data (no AI used):\n\n")
         return _frame(prefix + best_snip)
 
     # --- 3. Needs the LLM ---
-    return _frame(
-        "이 질문은 AI(LLM)가 필요합니다. LLM을 켜주세요."
+    # Flag it so run_agent's instrumentation logs this as a knowledge GAP and
+    # kicks off background research (server-side, no live LLM call to the user).
+    # Next time this is asked, the KB has a learned answer → answerable offline.
+    out = _frame(
+        "이 질문은 지금 가진 자료로는 답하기 어렵습니다. (학습 중 — 다음엔 답할 수 있어요. 지금 바로 답하려면 LLM을 켜주세요.)"
         if lang == "ko" else
-        "I couldn't answer this from your knowledge base or this page. This needs the AI — turn the LLM on to answer it.")
+        "I couldn't find this in your knowledge base or this page yet. (Learning it now — I should be able to answer next time. Turn the LLM on for an instant answer.)")
+    out["needs_llm"] = True
+    return out
 
 
 def _run_agent_impl(
