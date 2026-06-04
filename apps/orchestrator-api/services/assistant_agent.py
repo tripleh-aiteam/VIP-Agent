@@ -1526,6 +1526,107 @@ def _spawn_background_research(agent_id: str, question: str) -> None:
         log.warning(f"could not submit research job: {str(e)[:120]}")
 
 
+# ---------------------------------------------------------------------------
+#  No-LLM (offline) answer path
+# ---------------------------------------------------------------------------
+
+_NAV_VERBS = ("open", "go to", "take me", "navigate", "show me",
+              "열어", "열어줘", "이동", "가줘", "보여줘")
+
+
+def _offline_answer(db, *, transcript: str, lang: str, agent_id: str,
+                    page_context: Optional[str], kb_context) -> dict[str, Any]:
+    """Answer WITHOUT calling any LLM — knowledge base + current page only.
+
+    1. If it's a navigation command (open/go to/열어 + a page name) → navigate.
+    2. Else if the KB or the page has a relevant snippet → return it verbatim.
+    3. Else → tell the user this needs the AI (LLM) turned on.
+
+    Pure string/embedding matching; private, instant, no network LLM call.
+    """
+    q = (transcript or "").strip()
+    qlc = q.lower()
+
+    def _frame(reply: str, action=None, intent="offline"):
+        return {
+            "intent": intent, "language": lang if lang in ("ko", "en") else "en",
+            "reply": reply, "action": action, "speak": True,
+            "transcript": q, "tool_used": None, "tool_result": None,
+            "offline": True,
+        }
+
+    if not q:
+        return _frame("무엇을 도와드릴까요?" if lang == "ko" else "How can I help?")
+
+    # --- 1. Navigation by keyword (per-agent pages from the profile) ---
+    try:
+        from services.assistant_agent import AGENT_PROFILES  # self-ref ok at call time
+        prof = AGENT_PROFILES.get((agent_id or "").lower())
+        pages = []
+        if prof:
+            for entry in prof.get("pages", []):
+                path, _, label = str(entry).partition(" — ")
+                pages.append((path.strip(), label.strip().lower(), str(entry).lower()))
+        else:
+            from services.assistant_manifest import get_all_pages
+            for p in get_all_pages(include_hidden=False):
+                pages.append((p["path"], (p.get("name") or "").lower(), (p.get("name", "") + " " + p.get("path", "")).lower()))
+
+        if any(v in qlc for v in _NAV_VERBS):
+            # find the page whose name/path appears in the query
+            best = None
+            for path, label, blob in pages:
+                # match on the page name words or the path slug
+                name_words = [w for w in label.replace("/", " ").split() if len(w) > 1]
+                slug = path.strip("/").split("/")[-1]
+                if (slug and slug in qlc) or any(w in qlc for w in name_words[:3]):
+                    best = path
+                    break
+            if best:
+                return _frame(
+                    (f"{best} 페이지를 엽니다." if lang == "ko" else f"Opening {best}."),
+                    action={"type": "navigate", "to": best}, intent="navigate")
+    except Exception as e:
+        log.warning(f"offline nav match failed: {str(e)[:100]}")
+
+    # --- 2. Best matching snippet from KB or the current page ---
+    # KB hits (already retrieved upstream via local embeddings — no network).
+    best_snip = ""
+    try:
+        if kb_context:
+            top = kb_context[0]
+            content = (top.get("content") or "").strip()
+            if content and (top.get("similarity", 0) or 0) >= 0.28:
+                best_snip = content[:700]
+    except Exception:
+        pass
+
+    # Page context keyword scan — find the line(s) mentioning the query terms.
+    if not best_snip and page_context:
+        terms = [w for w in qlc.split() if len(w) > 1][:6]
+        lines = [ln.strip() for ln in page_context.splitlines() if ln.strip()]
+        scored = []
+        for ln in lines:
+            llc = ln.lower()
+            hits = sum(1 for t in terms if t in llc)
+            if hits:
+                scored.append((hits, ln))
+        scored.sort(key=lambda x: x[0], reverse=True)
+        if scored:
+            best_snip = "\n".join(ln for _h, ln in scored[:4])[:700]
+
+    if best_snip:
+        prefix = ("화면/지식에서 찾은 내용입니다 (AI 미사용):\n\n"
+                  if lang == "ko" else "Here's what I found in your data (no AI used):\n\n")
+        return _frame(prefix + best_snip)
+
+    # --- 3. Needs the LLM ---
+    return _frame(
+        "이 질문은 AI(LLM)가 필요합니다. LLM을 켜주세요."
+        if lang == "ko" else
+        "I couldn't answer this from your knowledge base or this page. This needs the AI — turn the LLM on to answer it.")
+
+
 def _run_agent_impl(
     db: Session,
     transcript: str,
@@ -1726,6 +1827,16 @@ def _run_agent_impl(
     # Auto-fill ID args from selected_id when the LLM picks a tool that
     # needs an ID but the user said "this" (LLM may not include the ID).
     # Done after LLM decision, see below.
+
+    # ===== No-LLM (offline) mode =====
+    # When the user pins model="none"/"offline", answer purely from the
+    # knowledge base + the current page — NO cloud LLM call. Returns the best
+    # matching snippet, resolves simple navigation by keyword, and otherwise
+    # tells the user to turn the LLM on. Private, cheap, LLM-free.
+    if (forced_model or "").strip().lower() in ("none", "offline", "no-llm", "nollm"):
+        return _offline_answer(db, transcript=transcript, lang=lang,
+                               agent_id=agent_id, page_context=page_context,
+                               kb_context=kb_hits)
 
     # ===== Turn 1: decision =====
     decision = _call_llm_for_decision(system, transcript, history or [], forced_model=forced_model)

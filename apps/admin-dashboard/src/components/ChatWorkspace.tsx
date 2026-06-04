@@ -1014,8 +1014,8 @@ export default function ChatWorkspace({ apiBase, agentId, agentLabel }: Props) {
                 className="flex h-9 items-center gap-1.5 rounded-lg bg-gray-100 px-3 text-[11px] font-semibold text-gray-700 transition-colors hover:bg-gray-200"
                 title={model ? `Pinned to ${model}` : "Auto (Smart router)"}
               >
-                🧠 LLM
-                {model && (
+                {model === "none" ? "⚡ Offline" : "🧠 LLM"}
+                {model && model !== "none" && (
                   <span className="text-[9px] bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded-full font-semibold truncate max-w-[80px]">
                     {model.replace(/^(claude-|gpt-|gemini-|groq-)/, "")}
                   </span>
@@ -1029,6 +1029,13 @@ export default function ChatWorkspace({ apiBase, agentId, agentLabel }: Props) {
                   >
                     <div className="font-medium">Auto (Smart router)</div>
                     <div className="text-[10px] opacity-70">easy → DB only · normal → free LLM · hard → paid LLM</div>
+                  </button>
+                  <button
+                    onClick={() => { setModel("none"); try { localStorage.setItem(`chatbot-${agentId}-model`, "none"); } catch {}; setShowModelPicker(false); }}
+                    className={`w-full text-left px-4 py-2 text-[13px] hover:bg-gray-50 border-t border-gray-100 mt-1 ${model === "none" ? "bg-amber-50 text-amber-800 font-medium" : "text-gray-700"}`}
+                  >
+                    <div className="font-medium">⚡ No LLM (offline)</div>
+                    <div className="text-[10px] opacity-70">knowledge base + this page only · no AI, no internet</div>
                   </button>
                   {["anthropic", "gemini", "openai", "groq", "ollama"].map(prov => {
                     const opts = available.filter(m => m.provider === prov);
