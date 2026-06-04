@@ -999,9 +999,9 @@ export function AssistantCard({ floating = true }: Props = {}) {
             className="h-11 px-4 rounded-full bg-gray-100 hover:bg-gray-200 border-none text-[12px] font-medium text-gray-700 flex items-center gap-1.5 max-w-[180px]"
             title={model ? `Pinned to ${model}` : "Auto (Smart router)"}
           >
-            <span>🧠</span>
-            <span>LLM</span>
-            {model && (
+            <span>{model === "none" ? "⚡" : "🧠"}</span>
+            <span>{model === "none" ? "Offline" : "LLM"}</span>
+            {model && model !== "none" && (
               <span className="text-[10px] bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded-full font-semibold truncate max-w-[90px]">
                 {model.replace(/^(claude-|gpt-|gemini-|groq-)/, "")}
               </span>
@@ -1018,6 +1018,14 @@ export function AssistantCard({ floating = true }: Props = {}) {
                 <div className="text-[10px] opacity-70 mt-0.5">
                   easy → DB only · normal → free LLM · hard → paid LLM
                 </div>
+              </button>
+              <button
+                type="button"
+                onClick={() => { setModel("none"); setShowModelPicker(false); }}
+                className={`w-full text-left px-4 py-2 hover:bg-gray-50 border-t border-gray-100 mt-1 ${model === "none" ? "bg-amber-50 text-amber-800 font-medium" : "text-gray-700"}`}
+              >
+                <div className="font-medium">⚡ No LLM (offline)</div>
+                <div className="text-[10px] opacity-70 mt-0.5">knowledge base + this page only · no AI, no internet</div>
               </button>
               {available.length === 0 && (
                 <div className="px-4 py-1.5 text-gray-400">(loading…)</div>

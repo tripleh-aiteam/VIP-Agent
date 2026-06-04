@@ -29,6 +29,7 @@ import {
   useState,
 } from "react";
 import { useRouter } from "next/navigation";
+import { jsPDF } from "jspdf";
 
 // Inline so ChatWorkspace can be dropped into any of the 3 agent apps
 // (VIP, Realty, Asset) without cross-importing AssistantCard.
@@ -153,31 +154,69 @@ function downloadAsWord(turns: AssistantTurn[], title: string) {
 }
 
 function downloadAsPdf(turns: AssistantTurn[], title: string) {
-  const html = turnsToHtml(turns, title);
-  // Use a Blob URL + iframe (safer than document.write) so the browser
-  // renders the document, then trigger its print dialog. Users pick
-  // 'Save as PDF' in the print dialog.
-  const blob = new Blob([html], { type: "text/html" });
-  const url = URL.createObjectURL(blob);
-  const iframe = document.createElement("iframe");
-  iframe.style.position = "fixed";
-  iframe.style.right = "0";
-  iframe.style.bottom = "0";
-  iframe.style.width = "0";
-  iframe.style.height = "0";
-  iframe.style.border = "0";
-  iframe.src = url;
-  iframe.onload = () => {
-    try {
-      iframe.contentWindow?.focus();
-      iframe.contentWindow?.print();
-    } catch {}
-    setTimeout(() => {
-      try { document.body.removeChild(iframe); } catch {}
-      URL.revokeObjectURL(url);
-    }, 1000);
-  };
-  document.body.appendChild(iframe);
+  // Build a REAL .pdf (selectable text) with jsPDF and OPEN it in a new tab
+  // so the user immediately SEES the document — no print dialog. Falls back
+  // to a direct file download if the browser blocks the popup.
+  const doc = new jsPDF({ unit: "pt", format: "a4" });
+  const pageW = doc.internal.pageSize.getWidth();
+  const pageH = doc.internal.pageSize.getHeight();
+  const margin = 48;
+  const maxW = pageW - margin * 2;
+  let y = margin;
+
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(18);
+  const titleLines = doc.splitTextToSize(title, maxW);
+  if (y + titleLines.length * 22 + 12 > pageH - margin) { doc.addPage(); y = margin; }
+  doc.text(titleLines, margin, y);
+  y += titleLines.length * 22;
+  doc.setDrawColor(229, 231, 235);
+  doc.setLineWidth(1.5);
+  doc.line(margin, y, pageW - margin, y);
+  y += 22;
+
+  turns.forEach((t, i) => {
+    const idx = Math.floor(i / 2) + 1;
+    const label = t.who === "user" ? `YOUR QUESTION Q${idx}` : "ASSISTANT · ANSWER";
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(9);
+    doc.setTextColor(107, 114, 128);
+    if (y + 16 > pageH - margin) { doc.addPage(); y = margin; }
+    doc.text(label, margin, y);
+    y += 14;
+
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(11);
+    const lineH = 16;
+    const lines = doc.splitTextToSize(t.text || "", maxW - 24);
+    if (t.who === "user") { doc.setTextColor(255, 255, 255); doc.setFillColor(59, 130, 246); }
+    else { doc.setTextColor(17, 17, 17); doc.setFillColor(243, 244, 246); }
+    let li = 0;
+    while (li < lines.length) {
+      const remaining = pageH - margin - y;
+      let fit = Math.max(1, Math.floor((remaining - 16) / lineH));
+      if (fit <= 0) { doc.addPage(); y = margin; fit = Math.max(1, Math.floor((pageH - margin * 2 - 16) / lineH)); }
+      const chunk = lines.slice(li, li + fit);
+      const boxH = chunk.length * lineH + 14;
+      doc.roundedRect(margin, y, maxW, boxH, 8, 8, "F");
+      doc.text(chunk, margin + 12, y + 18);
+      y += boxH;
+      li += fit;
+    }
+    doc.setTextColor(17, 17, 17);
+    y += 16;
+  });
+
+  const safeName = (title || "chat").replace(/[^a-z0-9\-_]+/gi, "_").slice(0, 80);
+  // Open the generated PDF in a new tab so the user SEES it right away;
+  // if the popup is blocked, fall back to a direct download.
+  try {
+    const blobUrl = doc.output("bloburl") as unknown as string;
+    const win = window.open(blobUrl, "_blank");
+    if (!win) doc.save(`${safeName}.pdf`);
+  } catch {
+    doc.save(`${safeName}.pdf`);
+  }
 }
 
 // ----------------------------------------------------------------------
@@ -822,7 +861,7 @@ export default function ChatWorkspace({ apiBase, agentId, agentLabel }: Props) {
                   <button
                     onClick={() => { downloadAsPdf(activeSession.turns, activeSession.name); setShowDownload(null); }}
                     className="w-full text-left px-4 py-2 hover:bg-gray-50 text-[13px] text-gray-700 flex items-center gap-2"
-                  >📕 PDF (Print)</button>
+                  >📕 PDF</button>
                 </div>
               )}
             </div>
@@ -937,7 +976,7 @@ export default function ChatWorkspace({ apiBase, agentId, agentLabel }: Props) {
                             downloadAsPdf(pair, `${activeSession.name} - Q${qIdx}`);
                           }}
                           className="px-2 py-1 rounded-md text-gray-500 hover:bg-gray-100 hover:text-gray-700 flex items-center gap-1"
-                          title="Print as PDF"
+                          title="Open as PDF"
                         >📕 PDF</button>
                         <span className="w-px h-4 bg-gray-200 self-center mx-0.5" />
                         <button
