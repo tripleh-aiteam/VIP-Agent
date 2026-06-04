@@ -1591,18 +1591,27 @@ def _offline_answer(db, *, transcript: str, lang: str, agent_id: str,
 
     # --- 2. Best matching snippet from KB or the current page ---
     # KB hits (already retrieved upstream via local embeddings — no network).
+    # Reasoning/synthesis verbs can't be answered offline — if the query is one
+    # of these, don't surface a weak KB match; tell the user to turn the LLM on.
+    reasoning_q = any(m in qlc for m in (
+        "summarize", "summary", "explain", "why", "compare", "recommend",
+        "suggest", "analyze", "draft", "write a", "pros and cons",
+        "요약", "왜", "비교", "추천", "분석",
+    ))
     best_snip = ""
     try:
-        if kb_context:
+        # Require a stronger similarity (0.42) so only genuinely relevant KB
+        # snippets are returned — a loose match shouldn't pose as an answer.
+        if kb_context and not reasoning_q:
             top = kb_context[0]
             content = (top.get("content") or "").strip()
-            if content and (top.get("similarity", 0) or 0) >= 0.28:
+            if content and (top.get("similarity", 0) or 0) >= 0.42:
                 best_snip = content[:700]
     except Exception:
         pass
 
     # Page context keyword scan — find the line(s) mentioning the query terms.
-    if not best_snip and page_context:
+    if not best_snip and page_context and not reasoning_q:
         terms = [w for w in qlc.split() if len(w) > 1][:6]
         lines = [ln.strip() for ln in page_context.splitlines() if ln.strip()]
         scored = []
