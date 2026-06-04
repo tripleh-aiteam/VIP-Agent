@@ -440,9 +440,17 @@ def _build_system_prompt(
         "      X page', '보고 싶어', '보여줄래?' → use the ANSWER shape: briefly say "
         "      what's there and ASK 'Shall I open it for you?' — do NOT navigate "
         "      until they confirm (yes / 응 / 열어).\n"
+        "    • CONFIRM (yes/sure/응/네/그래/open it/do it) right after YOU offered "
+        "      to open a page: navigate to the EXACT page YOU just offered in your "
+        "      previous message — read the conversation history above to find it. "
+        "      e.g. you said 'The Agents page lists… Shall I open it?' and the user "
+        "      says 'yes, open it' → navigate('/agents'), NOT the current page. If "
+        "      you genuinely can't tell what was offered, ASK 'Which page?' — never "
+        "      guess the current page.\n"
         "    Rule of thumb: a QUESTION never auto-navigates; only an imperative "
-        "    command (open/go/take me) navigates. NEVER navigate to a path not in "
-        "    the pages list above.\n"
+        "    command (open/go/take me) OR a confirmation of your own offer "
+        "    navigates. NEVER navigate to a path not in the pages list above, and "
+        "    NEVER default to the page the user is already on.\n"
         "- For 'I wanna see Asset/Stock/Realty Agent' as an explicit open command, "
         "  pick open_portal — those are EXTERNAL apps. If it's a question about "
         "  them, explain instead.\n"
@@ -527,15 +535,28 @@ def _pick_model_for_query(user_msg: str, history: list[dict]) -> str:
     # Signal 4 — long conversation history (context-heavy follow-up)
     deep_history = len(history or []) > 6
 
+    # Signal 5 — short follow-up that DEPENDS on context (confirmation, "it",
+    # "that one", "yes"). These are short so they'd otherwise stay on the fast
+    # model, but resolving them correctly (which page did I offer? what does
+    # 'it' refer to?) needs the stronger reasoner. Only when there's history.
+    short_followup_markers = (
+        "yes", "yeah", "yep", "sure", "ok", "okay", "do it", "open it",
+        "that one", "go ahead", "please do", "응", "네", "그래", "열어", "해줘",
+        "그거", "맞아",
+    )
+    is_context_followup = bool(history) and (
+        len(q) <= 40 and any(m in qlc for m in short_followup_markers)
+    )
+
     # Escalate to the smart (paid, slower) model ONLY for genuinely heavy
     # work, so the common case stays on fast Groq. A short "explain X" / "why"
     # no longer pays the Sonnet latency tax — Groq Llama 3.3 70B handles those
-    # well and returns much faster. We escalate only when the query is long,
-    # OR compound (multi-step), OR a reasoning task that is ALSO long/deep.
+    # well and returns much faster.
     hard = (
         long_query
         or is_compound
         or (is_reasoning and (len(q) > 120 or deep_history))
+        or is_context_followup
     )
     if hard:
         # llm_client cascade falls back to Groq when the Anthropic key has no
@@ -562,8 +583,20 @@ def _call_llm_for_decision(
     `forced_model` (optional) bypasses the smart router — used by the
     in-overlay model picker dropdown to pin a specific LLM per request.
     """
-    messages = [{"role": h["role"], "content": (h.get("content") or "")[:400]}
-                for h in (history or []) if h.get("content")]
+    # History turns come from the frontends as {role, text, intent}. Accept
+    # BOTH `text` (what every chatbot frontend actually sends) and `content`
+    # (the OpenAI-style field) — previously we only read `content`, so the
+    # whole conversation was silently dropped and the assistant had no memory
+    # of what it just said. That broke follow-ups like "yes, open it" after an
+    # offer (it forgot WHICH page it offered). Normalize the role too.
+    messages = []
+    for h in (history or []):
+        body = (h.get("content") or h.get("text") or "").strip()
+        if not body:
+            continue
+        raw_role = (h.get("role") or h.get("who") or "user").lower()
+        role = "assistant" if raw_role in ("assistant", "ai", "bot") else "user"
+        messages.append({"role": role, "content": body[:700]})
     messages.append({"role": "user", "content": user_msg})
 
     # Honor an explicit per-request model override (from the overlay's
@@ -1151,9 +1184,11 @@ def _run_multimodal_path(
         "이 파일에 대해 알려주세요." if lang == "ko" else "Tell me what's in this."
     )
     if history:
-        recent = [h for h in history[-3:] if (h.get("role") == "user")]
+        recent = [h for h in history[-3:] if ((h.get("role") or h.get("who")) == "user")]
         if recent:
-            user_text = (recent[-1].get("content") or "").strip()[:400] + "\n\n" + user_text
+            prev = (recent[-1].get("content") or recent[-1].get("text") or "").strip()
+            if prev:
+                user_text = prev[:400] + "\n\n" + user_text
 
     context_block = ""
     if text_blocks:
