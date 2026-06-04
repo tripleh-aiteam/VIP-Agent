@@ -1567,13 +1567,84 @@ def _extract_clean_answer(content: str) -> str:
     return text
 
 
+def _offline_basic_answer(qlc: str, lang: str, agent_id: str) -> Optional[str]:
+    """Answer everyday small-talk / capability questions WITHOUT an LLM.
+
+    These are the questions a user expects ANY assistant to handle even in
+    offline mode — greetings, thanks, "what can you do", goodbye. Returning a
+    friendly canned reply here (instead of "I couldn't find this") makes the
+    offline mode feel usable. Matched on whole words so "this" doesn't trip
+    the "hi" greeting.
+    """
+    words = set(_re.findall(r"[a-z0-9가-힣]+", qlc))
+    has_hangul = any("가" <= ch <= "힣" for ch in qlc)
+    ko = lang == "ko" or has_hangul
+
+    def any_word(*ws: str) -> bool:
+        return any(w in words for w in ws)
+
+    def any_sub(*ss: str) -> bool:
+        return any(s in qlc for s in ss)
+
+    # Greeting
+    if (any_word("hi", "hello", "hey", "hiya", "yo", "하이", "헬로", "안녕")
+            or any_sub("안녕하", "good morning", "good afternoon", "good evening", "반가")):
+        return ("안녕하세요! 무엇을 도와드릴까요? 메뉴 이동, 업로드된 자료나 현재 화면 내용을 도와드릴 수 있어요."
+                if ko else
+                "Hi! How can I help? I can open menus for you and answer from your uploaded knowledge and the current page.")
+    # Thanks
+    if any_word("thanks", "thank", "thx", "감사", "고마워", "고맙") or any_sub("thank you", "감사합니다", "고맙습니다"):
+        return ("천만에요! 더 도와드릴 일이 있을까요?" if ko else "You're welcome! Anything else I can help with?")
+    # How are you
+    if any_sub("how are you", "how's it going", "how is it going", "잘 지내", "잘지내", "어떻게 지내"):
+        return ("잘 지내고 있어요, 감사합니다! 무엇을 도와드릴까요?" if ko else "I'm doing well, thanks! What can I help you with?")
+    # Goodbye
+    if any_word("bye", "goodbye", "ㅂㅂ", "잘가") or any_sub("see you", "안녕히", "잘 가"):
+        return ("안녕히 가세요! 필요하면 언제든 불러주세요." if ko else "Goodbye! Call me anytime you need help.")
+    # Capabilities / identity / help
+    if (any_word("help", "도와줘", "도와", "기능", "누구", "뭐야", "capabilities")
+            or any_sub("what can you do", "who are you", "what are you", "무엇을 도와",
+                       "뭐 할 수", "무엇을 할 수", "어떤 걸 할 수", "사용법", "what do you do")):
+        pages_hint = ""
+        try:
+            from services.assistant_agent import AGENT_PROFILES
+            prof = AGENT_PROFILES.get((agent_id or "").lower())
+            if prof:
+                labels = []
+                for entry in prof.get("pages", [])[:6]:
+                    _p, _, lab = str(entry).partition(" — ")
+                    if lab.strip():
+                        labels.append(lab.strip())
+                if labels:
+                    pages_hint = ("\n• 이동 가능한 메뉴: " if ko else "\n• Menus I can open: ") + ", ".join(labels)
+        except Exception:
+            pass
+        if ko:
+            return ("저는 오프라인(LLM 미사용) 모드에서도 다음을 할 수 있어요:\n"
+                    "• 메뉴 열기/이동\n"
+                    "• 업로드한 지식자료에서 찾아 답변\n"
+                    "• 지금 보고 있는 화면 내용 안내\n"
+                    "• 이전에 학습한(👍) 답변 제공"
+                    + pages_hint +
+                    "\n\n복잡한 분석·요약·작성은 LLM을 켜시면 가능합니다.")
+        return ("Even in offline (no-LLM) mode I can:\n"
+                "• Open / navigate menus\n"
+                "• Answer from your uploaded knowledge\n"
+                "• Explain what's on the current screen\n"
+                "• Give answers I've previously learned (👍)"
+                + pages_hint +
+                "\n\nFor deeper reasoning, summaries or drafting, turn the LLM on.")
+    return None
+
+
 def _offline_answer(db, *, transcript: str, lang: str, agent_id: str,
                     page_context: Optional[str], kb_context) -> dict[str, Any]:
     """Answer WITHOUT calling any LLM — knowledge base + current page only.
 
-    1. If it's a navigation command (open/go to/열어 + a page name) → navigate.
-    2. Else if the KB or the page has a relevant snippet → return it verbatim.
-    3. Else → tell the user this needs the AI (LLM) turned on.
+    1. Everyday small-talk / capability questions → friendly canned reply.
+    2. If it's a navigation command (open/go to/열어 + a page name) → navigate.
+    3. Else if the KB or the page has a relevant snippet → return it.
+    4. Else → tell the user this needs the AI (LLM) turned on.
 
     Pure string/embedding matching; private, instant, no network LLM call.
     """
@@ -1590,6 +1661,11 @@ def _offline_answer(db, *, transcript: str, lang: str, agent_id: str,
 
     if not q:
         return _frame("무엇을 도와드릴까요?" if lang == "ko" else "How can I help?")
+
+    # --- 0. Everyday small-talk / capability questions (instant, no LLM) ---
+    basic = _offline_basic_answer(qlc, lang, agent_id)
+    if basic:
+        return _frame(basic)
 
     # --- 1. Navigation by keyword (per-agent pages from the profile) ---
     try:

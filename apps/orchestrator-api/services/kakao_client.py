@@ -40,12 +40,18 @@ def _api_base() -> str:
 
 def _access_token(agent_id: str) -> str:
     """Per-agent access token. The channel mapping table tells us which
-    env var holds the token for this specific agent."""
+    env var holds the token for this specific agent.
+
+    Falls back to a shared `KAKAO_ACCESS_TOKEN` so that when several agents
+    are served by the SAME Kakao app/channel (e.g. the 부동산 channel moved
+    from vip → aiglass), one token works for all of them without having to
+    duplicate it per agent."""
     var_name = f"KAKAO_ACCESS_TOKEN_{agent_id.upper()}"
-    token = os.getenv(var_name, "")
+    token = os.getenv(var_name, "") or os.getenv("KAKAO_ACCESS_TOKEN", "")
     if not token:
         raise KakaoClientError(
-            f"{var_name} env var not set — register the agent's Kakao access token first"
+            f"{var_name} (or KAKAO_ACCESS_TOKEN) env var not set — "
+            f"register the agent's Kakao access token first"
         )
     return token
 

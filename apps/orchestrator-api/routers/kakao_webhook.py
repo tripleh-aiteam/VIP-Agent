@@ -205,6 +205,21 @@ async def kakao_webhook(request: Request, db: Session = Depends(get_db)):
     user_id = user.get("id") or ""
     user_phone = user.get("phone")            # may be absent unless customer shared
 
+    # Customer display name. Kakao's skill payload usually carries only an
+    # anonymized user.id; a real nickname appears under user.properties ONLY
+    # when the channel collects profile info (i 오픈빌더 → 봇 설정 → 사용자
+    # 정보). Use it when present, else fall back to a friendly, stable label
+    # so the inbox shows something nicer than "Customer".
+    user_props = user.get("properties") or {}
+    cust_name = (
+        user_props.get("nickname")
+        or user_props.get("name")
+        or user_props.get("profile_nickname")
+        or ""
+    ).strip()
+    if not cust_name and user_id:
+        cust_name = f"카카오 고객 {user_id[-4:]}"
+
     utterance = (user_request.get("utterance") or "").strip()
     attachment_type = (user_request.get("type") or "text").lower()
 
@@ -212,6 +227,7 @@ async def kakao_webhook(request: Request, db: Session = Depends(get_db)):
     customer = conv_service.find_or_create_customer(
         db,
         agent_id,
+        name=cust_name or None,
         kakao_user_id=user_id,
         phone=user_phone,
     )
