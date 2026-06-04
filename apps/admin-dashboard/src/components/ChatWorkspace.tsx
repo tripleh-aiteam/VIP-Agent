@@ -220,6 +220,68 @@ function downloadAsPdf(turns: AssistantTurn[], title: string) {
 }
 
 // ----------------------------------------------------------------------
+//  Browser-local offline answer — works with NO internet (no server call)
+// ----------------------------------------------------------------------
+// The orchestrator-side "No-LLM" mode still needs the network. When the
+// connection is actually down we answer right here in the browser from:
+//   1. basic small-talk (greetings / capabilities / thanks)
+//   2. the page's own rendered menu links (for "open X" navigation)
+//   3. a keyword scan of whatever is currently on screen
+function localBasicAnswer(qlc: string, ko: boolean): string | null {
+  const words = new Set(qlc.match(/[a-z0-9가-힣]+/g) || []);
+  const w = (...xs: string[]) => xs.some(x => words.has(x));
+  const sub = (...xs: string[]) => xs.some(x => qlc.includes(x));
+  if (w("hi", "hello", "hey", "하이", "헬로", "안녕") || sub("안녕하", "good morning", "good afternoon", "good evening", "반가"))
+    return ko
+      ? "안녕하세요! 인터넷 연결이 없어 오프라인 모드예요. 메뉴 이동이나 현재 화면 내용을 도와드릴 수 있어요."
+      : "Hi! I'm in offline mode (no internet). I can open menus and answer from what's on this screen.";
+  if (w("thanks", "thank", "thx", "감사", "고마워", "고맙") || sub("thank you", "감사합니다"))
+    return ko ? "천만에요!" : "You're welcome!";
+  if (w("bye", "goodbye", "잘가") || sub("see you", "안녕히"))
+    return ko ? "안녕히 가세요!" : "Goodbye!";
+  if (w("help", "도와줘", "도와", "기능", "누구") || sub("what can you do", "who are you", "무엇을 도와", "뭐 할 수", "사용법"))
+    return ko
+      ? "오프라인에서는 메뉴 열기, 현재 화면 내용 안내, 기본 질문 답변을 할 수 있어요. 인터넷이 연결되면 지식베이스와 AI로 더 자세히 답변드려요."
+      : "Offline I can open menus, read the current screen, and answer basic questions. Once you're back online I'll use your knowledge base and the AI.";
+  return null;
+}
+
+function localOfflineAnswer(q: string, pageCtx: string): { reply: string; navTo?: string } {
+  const qlc = q.toLowerCase().trim();
+  const ko = /[가-힣]/.test(q);
+  const basic = localBasicAnswer(qlc, ko);
+  if (basic) return { reply: basic };
+  // Navigate using the page's own rendered links (works with no network).
+  const navVerb = /\b(open|go to|go|navigate|show)\b/.test(qlc) || /(열어|이동|보여|가줘|가자)/.test(q);
+  if (navVerb && typeof document !== "undefined") {
+    const links = Array.from(document.querySelectorAll("a[href]")) as HTMLAnchorElement[];
+    for (const a of links) {
+      const label = (a.textContent || "").trim().toLowerCase();
+      const href = a.getAttribute("href") || "";
+      if (label.length > 1 && href && qlc.includes(label))
+        return { reply: ko ? `${label} 페이지로 이동합니다.` : `Opening ${label}.`, navTo: href };
+    }
+  }
+  // Keyword scan of the current screen.
+  if (pageCtx) {
+    const terms = qlc.split(/\s+/).filter(t => t.length > 1).slice(0, 6);
+    const scored = pageCtx.split("\n").map(l => l.trim()).filter(Boolean)
+      .map(l => ({ l, h: terms.filter(t => l.toLowerCase().includes(t)).length }))
+      .filter(x => x.h > 0).sort((a, b) => b.h - a.h);
+    if (scored.length)
+      return {
+        reply: (ko ? "현재 화면에서 찾은 내용입니다 (오프라인):\n\n" : "From this page (offline):\n\n")
+          + scored.slice(0, 4).map(x => x.l).join("\n").slice(0, 700),
+      };
+  }
+  return {
+    reply: ko
+      ? "지금은 인터넷 연결이 없어 이 화면과 기본 정보만 사용할 수 있어요. 연결되면 더 자세히 답변드릴게요."
+      : "I'm offline right now, so I can only use this page and basic info. I'll answer in full once you're back online.",
+  };
+}
+
+// ----------------------------------------------------------------------
 //  Workspace
 // ----------------------------------------------------------------------
 
@@ -236,6 +298,19 @@ export default function ChatWorkspace({ apiBase, agentId, agentLabel }: Props) {
   const [prompt, setPrompt] = useState("");
   const [thinking, setThinking] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Live connectivity — drives the automatic switch to no-internet mode.
+  const [online, setOnline] = useState<boolean>(() => (typeof navigator === "undefined" ? true : navigator.onLine));
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const goOnline = () => setOnline(true);
+    const goOffline = () => setOnline(false);
+    window.addEventListener("online", goOnline);
+    window.addEventListener("offline", goOffline);
+    return () => {
+      window.removeEventListener("online", goOnline);
+      window.removeEventListener("offline", goOffline);
+    };
+  }, []);
   const [editingFolderId, setEditingFolderId] = useState<string | null>(null);
   const [editingSessionId, setEditingSessionId] = useState<string | null>(null);
   const [showDownload, setShowDownload] = useState<string | null>(null);
@@ -435,6 +510,21 @@ export default function ChatWorkspace({ apiBase, agentId, agentLabel }: Props) {
         } catch {}
       }
 
+      // No internet → answer locally in the browser (no server call). The
+      // server-side "No-LLM" mode can't help here because it's unreachable.
+      if (typeof navigator !== "undefined" && !navigator.onLine) {
+        const ans = localOfflineAnswer(q, pageCtx);
+        const offTurn: AssistantTurn = { who: "assistant", text: ans.reply, ts: Date.now(), intent: "offline-local" };
+        update(prev => ({
+          ...prev,
+          sessions: prev.sessions.map(s => s.id === activeSession.id
+            ? { ...s, turns: [...s.turns, offTurn], updatedAt: Date.now() } : s),
+        }));
+        if (ans.navTo) { try { router.push(ans.navTo); } catch {} }
+        setThinking(false);
+        return;
+      }
+
       const r = await fetch(`${base}/chat/agent`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -482,7 +572,20 @@ export default function ChatWorkspace({ apiBase, agentId, agentLabel }: Props) {
         });
       }
     } catch (e) {
-      setError(`Failed: ${(e as Error).message || e}`);
+      // A fetch failure with no connection → fall back to the browser-local
+      // offline answer instead of showing an error.
+      if (typeof navigator !== "undefined" && !navigator.onLine) {
+        const ans = localOfflineAnswer(q, "");
+        const offTurn: AssistantTurn = { who: "assistant", text: `${ans.reply}\n\n(📴 offline)`, ts: Date.now(), intent: "offline-local" };
+        update(prev => ({
+          ...prev,
+          sessions: prev.sessions.map(s => s.id === activeSession.id
+            ? { ...s, turns: [...s.turns, offTurn], updatedAt: Date.now() } : s),
+        }));
+        if (ans.navTo) { try { router.push(ans.navTo); } catch {} }
+      } else {
+        setError(`Failed: ${(e as Error).message || e}`);
+      }
     } finally {
       setThinking(false);
     }
@@ -1027,6 +1130,12 @@ export default function ChatWorkspace({ apiBase, agentId, agentLabel }: Props) {
         {/* Composer */}
         <div className="border-t border-gray-200 bg-white px-4 py-3 md:px-6">
           <div className="mx-auto max-w-3xl">
+            {!online && (
+              <div className="mb-2 flex items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-1.5 text-[12px] text-amber-800">
+                <span>📴</span>
+                <span>No internet — offline mode. I can open menus, read this page, and answer basic questions. Full answers resume when you&apos;re back online.</span>
+              </div>
+            )}
             <div className="flex min-h-[48px] items-center gap-2 rounded-xl border border-gray-200 bg-white px-2 py-1.5 shadow-sm transition-all hover:border-gray-300 focus-within:border-blue-500 focus-within:ring-4 focus-within:ring-blue-50">
               <button
                 type="button"
