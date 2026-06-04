@@ -71,7 +71,10 @@ async def handle_incoming_message(
     Returns a dict describing what happened:
       {"mode": "in"|"out", "action": "wait"|"sent"|"escalated", "reply": "..."}
     """
-    mode, auto_detected = chatbot_mode_detector.get_mode(agent_id)
+    # Pass the existing db session so get_mode reuses it instead of opening a
+    # brand-new SessionLocal — one fewer connection round-trip on the Kakao
+    # hot path, which is racing a ~5s skill timeout.
+    mode, auto_detected = chatbot_mode_detector.get_mode(agent_id, db=db)
     is_urgent = chatbot_mode_detector.is_urgent_keyword(incoming_text)
 
     # Boss-IN: hands off. Just mark it as needing the boss's attention.
