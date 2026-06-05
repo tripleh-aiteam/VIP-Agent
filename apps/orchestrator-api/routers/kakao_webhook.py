@@ -223,6 +223,43 @@ async def kakao_webhook(request: Request, db: Session = Depends(get_db)):
     utterance = (user_request.get("utterance") or "").strip()
     attachment_type = (user_request.get("type") or "text").lower()
 
+    # ── FAST PATH: plain text + auto-reply (Boss-OUT), no callback ─────────
+    # The full pipeline does several cross-region DB round-trips before the
+    # reply, pushing total time to ~4.5-5.5s — past Kakao's ~5s skill timeout —
+    # so LLM answers were computed (visible in the dashboard) but never reached
+    # the customer's phone. Here we compute the reply with essentially NO DB
+    # work (one mode check + cached KB + one Groq call) and return it
+    # immediately, then persist customer/conversation/messages in the
+    # background. Callback requests and non-text messages use the full path.
+    _callback_url_fp = (
+        user_request.get("callbackUrl") or payload.get("callbackUrl") or ""
+    )
+    if attachment_type == "text" and utterance and not _callback_url_fp:
+        try:
+            from services import chatbot_mode_detector
+            _mode, _ = chatbot_mode_detector.get_mode(agent_id, db=db)
+        except Exception:
+            _mode = "out"
+        if _mode == "out":
+            from services.chatbot_reply_service import generate_quick_reply
+            _pid = (
+                payload.get("message_id") or payload.get("messageId")
+                or (user_request.get("message") or {}).get("id")
+            )
+            reply_text = await generate_quick_reply(agent_id, utterance)
+            asyncio.create_task(_persist_text_exchange_bg(
+                agent_id=agent_id, kakao_user_id=user_id, phone=user_phone,
+                name=cust_name or None, utterance=utterance,
+                reply_text=reply_text, provider_msg_id=_pid,
+            ))
+            if reply_text:
+                return {
+                    "version": "2.0",
+                    "template": {"outputs": [{"simpleText": {"text": reply_text}}]},
+                }
+            return {"ok": True}
+    # ── end fast path ──────────────────────────────────────────────────────
+
     # Step 4 — Find or create customer + conversation
     customer = conv_service.find_or_create_customer(
         db,
@@ -372,6 +409,55 @@ async def kakao_webhook(request: Request, db: Session = Depends(get_db)):
 # ============================================================================
 #  Per-message-type handlers
 # ============================================================================
+
+async def _persist_text_exchange_bg(
+    *, agent_id: str, kakao_user_id: str, phone, name,
+    utterance: str, reply_text: str, provider_msg_id,
+) -> None:
+    """Persist a FAST-PATH text exchange AFTER the reply was already returned
+    to Kakao. Best-effort, off the hot path: creates the customer +
+    conversation, appends the customer's message and the bot's reply, and
+    broadcasts to the dashboard so the inbox stays accurate."""
+    from db.base import SessionLocal
+    db_bg = SessionLocal()
+    try:
+        customer = conv_service.find_or_create_customer(
+            db_bg, agent_id, name=name, kakao_user_id=kakao_user_id, phone=phone,
+        )
+        conv = conv_service.find_or_create_conversation(
+            db_bg, agent_id, channel="kakao", customer_id=customer.id,
+        )
+        conv_service.append_message(
+            db_bg, agent_id, conv.id, author="customer", kind="text",
+            text=utterance, provider_message_id=provider_msg_id,
+        )
+        if reply_text:
+            conv_service.append_message(
+                db_bg, agent_id, conv.id, author="bot", kind="text",
+                text=reply_text, bot_meta={"status": "auto", "source": "fast-path"},
+            )
+            try:
+                conv_service.patch_conversation(
+                    db_bg, agent_id, conv.id,
+                    status="bot_handling", suggested_reply_json=None,
+                )
+            except Exception:
+                pass
+        try:
+            from routers.chatbot_inbox import get_broker
+            updated = conv_service.get_conversation(db_bg, agent_id, conv.id)
+            cust_obj = conv_service.get_customer(db_bg, agent_id, updated.customer_id)
+            get_broker().publish_sync(agent_id, {
+                "type": "conversation.updated",
+                "conversation": conv_service.serialize_conversation(updated, customer=cust_obj),
+            })
+        except Exception as e:
+            log.warning(f"kakao.fastpath: broadcast failed: {e}")
+    except Exception as e:
+        log.warning(f"kakao.fastpath: persist failed: {e}")
+    finally:
+        db_bg.close()
+
 
 async def _process_text_message(
     db: Session, agent_id: str, conv, customer, utterance: str

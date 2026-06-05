@@ -689,6 +689,60 @@ async def _generate_reply(
             db2.close()
 
 
+async def generate_quick_reply(agent_id: str, incoming_text: str) -> str:
+    """Fast reply for the Kakao hot path — NO database queries.
+
+    Kakao's skill webhook must answer within ~5s. The full pipeline does
+    several cross-region DB round-trips (customer/conversation/history/mode)
+    that push it to ~4.5-5.5s, so LLM answers time out before reaching the
+    phone. This computes the reply from ONLY: a local template check, the
+    in-process-cached realty KB, and one Groq LLM call — no conversation
+    history, no persistence. The webhook persists everything separately in
+    the background. Language is mirrored (KO↔EN) just like the full path.
+    """
+    cached = _check_fast_reply(incoming_text)
+    if cached:
+        return cached
+    try:
+        from services.chatbot_talk import _triple_h_realty_knowledge_base
+        from services.llm_client import chat_completion_sync
+    except Exception as e:
+        log.warning(f"generate_quick_reply: imports failed: {e}")
+        return _pick_conversational_fallback()
+    try:
+        realty_kb = _triple_h_realty_knowledge_base()  # cached, no Excel re-parse
+        lang = _detect_lang(incoming_text)
+        lang_rule = (
+            "■ 언어 규칙 (절대 어기지 마세요)\n"
+            "고객이 한국어로 질문했습니다. 반드시 한국어로만 답변하세요. "
+            "영어 단어는 사용하지 마세요 (매물 번호 'B-201호' 같은 고유명사 제외).\n\n"
+            if lang == "ko" else
+            "■ Language Rule (strict)\n"
+            "The customer wrote in English. You MUST reply in English only. "
+            "Do not switch to Korean.\n\n"
+        )
+        system_prompt = lang_rule + _build_realty_system_prompt(realty_kb)
+        messages = [{"role": "user", "content": incoming_text}]
+        try:
+            reply_text = await asyncio.wait_for(
+                asyncio.to_thread(
+                    chat_completion_sync,
+                    system_prompt, messages, 180, 0.7, "groq-llama-3.3-70b",
+                ),
+                timeout=3.2,
+            )
+        except asyncio.TimeoutError:
+            log.warning("generate_quick_reply: LLM >3.2s — conversational fallback")
+            return _pick_conversational_fallback()
+        reply = (reply_text or "").strip()
+        if not reply or reply.startswith("[LLM unavailable"):
+            return _pick_conversational_fallback()
+        return reply
+    except Exception as e:
+        log.warning(f"generate_quick_reply failed: {e}")
+        return _pick_conversational_fallback()
+
+
 def _detect_lang(text: str) -> str:
     """Detect whether the customer's message is Korean or English.
     Returns 'ko' if any Hangul characters are present, else 'en'.
