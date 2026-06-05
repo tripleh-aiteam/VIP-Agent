@@ -167,6 +167,14 @@ async def _chatbot_tenant_isolation(request, call_next):
             seg = rest.split("/", 1)[0]
             if seg and "/" in rest and seg not in _ISOLATION_RESERVED:
                 agent_id = seg
+                # Only enforce isolation for MANAGED tenants (linked to a realty
+                # -app account via app_tenant_id) — i.e. the multi-tenant buyers
+                # + the connected owner. Standalone agents (vip, stock, asset,
+                # realty, …) are exempt so they keep working without tokens.
+                from services import tenant_config as _tc
+                _cfg = _tc.get_tenant_config(agent_id)
+                if not (_cfg and _cfg.get("app_tenant_id")):
+                    return await call_next(request)
                 ok = False
                 admin = os.getenv("ADMIN_API_TOKEN", "")
                 xadmin = request.headers.get("x-admin-token", "")
