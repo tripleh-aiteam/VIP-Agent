@@ -33,10 +33,18 @@ def _public_base_url() -> str:
 
 
 def require_admin(x_admin_token: Optional[str] = Header(default=None)) -> None:
+    # Fail CLOSED: the admin API is disabled until ADMIN_API_TOKEN is set on the
+    # orchestrator. This prevents an accidentally-open admin surface (creating /
+    # deleting businesses) if the env var is missing.
     expected = os.getenv("ADMIN_API_TOKEN", "")
-    if expected and x_admin_token != expected:
+    if not expected:
+        raise HTTPException(
+            status_code=503,
+            detail="Admin API disabled: set ADMIN_API_TOKEN on the orchestrator to enable it",
+        )
+    # Constant-time compare to avoid a token timing side-channel.
+    if not x_admin_token or not secrets.compare_digest(x_admin_token, expected):
         raise HTTPException(status_code=403, detail="Admin token required")
-    # No token configured → allow (dev). Production must set ADMIN_API_TOKEN.
 
 
 class BusinessBody(BaseModel):
