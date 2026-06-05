@@ -155,7 +155,8 @@ def _vip_intent_list() -> list[dict[str, Any]]:
 
 _REALTY_KB_CACHE: dict[str, Any] = {}
 _REALTY_KB_CACHE_AT: float = 0.0
-_REALTY_KB_TTL = 600.0  # 10 min — listings change rarely
+_REALTY_KB_TTL = 3600.0  # 1 hour — listings change rarely; avoids re-parsing
+                         # the Excel workbook on the Kakao hot path
 
 
 def _triple_h_realty_knowledge_base() -> dict[str, Any]:

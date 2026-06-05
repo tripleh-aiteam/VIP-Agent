@@ -727,12 +727,12 @@ async def generate_quick_reply(agent_id: str, incoming_text: str) -> str:
             reply_text = await asyncio.wait_for(
                 asyncio.to_thread(
                     chat_completion_sync,
-                    system_prompt, messages, 180, 0.7, "groq-llama-3.3-70b",
+                    system_prompt, messages, 160, 0.7, "groq-llama-3.3-70b",
                 ),
-                timeout=3.2,
+                timeout=2.8,
             )
         except asyncio.TimeoutError:
-            log.warning("generate_quick_reply: LLM >3.2s — conversational fallback")
+            log.warning("generate_quick_reply: LLM >2.8s — conversational fallback")
             return _pick_conversational_fallback()
         reply = (reply_text or "").strip()
         if not reply or reply.startswith("[LLM unavailable"):
