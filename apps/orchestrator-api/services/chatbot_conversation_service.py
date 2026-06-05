@@ -22,6 +22,7 @@ from uuid import UUID
 from sqlalchemy import and_, desc, func, or_
 from sqlalchemy.orm import Session
 
+from db.base import SessionLocal
 from db.models import (
     ChatbotChannelMapping,
     ChatbotConversation,
@@ -34,6 +35,56 @@ from db.models import (
 # ============================================================================
 #  Channel mapping — webhook handler resolves agent_id via this
 # ============================================================================
+
+import time as _time
+
+# Per-agent Kakao credential cache (DB row -> creds). Avoids a DB hit on every
+# outbound send / signature check. agent_id -> (fetched_at, creds_dict)
+_CRED_CACHE: dict[str, tuple[float, dict]] = {}
+_CRED_TTL = 120.0
+
+
+def get_agent_kakao_credentials(agent_id: str, db: Optional[Session] = None) -> dict:
+    """Return {webhook_secret, access_token, rest_api_key} for an agent's Kakao
+    channel from the DB (cached). Empty strings when not set — callers then
+    fall back to env vars, so existing agents (aiglass via env) keep working."""
+    if not agent_id:
+        return {}
+    hit = _CRED_CACHE.get(agent_id)
+    if hit and (_time.time() - hit[0]) < _CRED_TTL:
+        return hit[1]
+    owns = db is None
+    if owns:
+        db = SessionLocal()
+    creds: dict = {}
+    try:
+        row = (
+            db.query(ChatbotChannelMapping)
+            .filter(
+                ChatbotChannelMapping.agent_id == agent_id,
+                ChatbotChannelMapping.channel == "kakao",
+                ChatbotChannelMapping.active.is_(True),
+            )
+            .first()
+        )
+        if row:
+            creds = {
+                "webhook_secret": row.webhook_secret or "",
+                "access_token": row.kakao_access_token or "",
+                "rest_api_key": row.kakao_rest_api_key or "",
+            }
+    except Exception:
+        creds = {}
+    finally:
+        if owns:
+            db.close()
+    _CRED_CACHE[agent_id] = (_time.time(), creds)
+    return creds
+
+
+def invalidate_credentials(agent_id: str) -> None:
+    _CRED_CACHE.pop(agent_id, None)
+
 
 def resolve_agent_id_from_channel(
     db: Session, channel: str, provider_channel_id: str

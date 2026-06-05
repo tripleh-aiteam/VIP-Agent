@@ -71,6 +71,14 @@ def _mode_cached(db: Session, agent_id: str) -> str:
     return mode
 
 
+def invalidate_business_caches() -> None:
+    """Clear the channel→agent and mode caches so a newly-added/edited business
+    routes immediately (instead of waiting for the TTL). Called by the admin
+    'Add business' endpoint."""
+    _CHANNEL_AGENT_CACHE.clear()
+    _MODE_CACHE.clear()
+
+
 def warm_kakao_caches(db: Session) -> None:
     """Force-refresh the fast-path caches (channel→agent, mode, realty KB).
 
@@ -130,9 +138,17 @@ def _verify_kakao_signature(
         # the initial dispatch (before resolution), use a global fallback.
         secret = os.getenv("KAKAO_WEBHOOK_SECRET", "")
     else:
-        secret = os.getenv(f"KAKAO_WEBHOOK_SECRET_{agent_id.upper()}", "") or os.getenv(
-            "KAKAO_WEBHOOK_SECRET", ""
-        )
+        # Multi-tenant: per-tenant secret stored in DB (buyer self-entered)
+        # takes priority; env vars remain the fallback for existing agents.
+        secret = ""
+        try:
+            secret = (conv_service.get_agent_kakao_credentials(agent_id) or {}).get("webhook_secret", "")
+        except Exception:
+            secret = ""
+        if not secret:
+            secret = os.getenv(f"KAKAO_WEBHOOK_SECRET_{agent_id.upper()}", "") or os.getenv(
+                "KAKAO_WEBHOOK_SECRET", ""
+            )
     if not secret:
         return True
     if not signature:

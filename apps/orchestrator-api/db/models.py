@@ -1183,6 +1183,11 @@ class ChatbotChannelMapping(Base):
     display_name = Column(String(120))                         # for UI ("@triple-h-realestate")
     api_key_env_var = Column(String(80))                       # name of env var holding the API key
     webhook_secret_env_var = Column(String(80))                # name of env var holding webhook secret
+    # Multi-tenant: credentials stored directly in DB (buyers self-enter them).
+    # All optional — env vars are used as a fallback when these are NULL.
+    kakao_access_token = Column(Text)                          # OAuth token for outbound push (optional)
+    kakao_rest_api_key = Column(String(200))                   # Kakao REST API key (optional)
+    webhook_secret = Column(String(200))                       # webhook HMAC secret value (optional)
     active = Column(Boolean, default=True, nullable=False)
     created_at = _now()
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

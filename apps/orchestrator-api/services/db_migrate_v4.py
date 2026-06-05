@@ -38,6 +38,14 @@ _NEW_COLUMNS: list[tuple[str, str, str]] = [
     ("meeting_participants", "left_at", "TIMESTAMP"),
     ("meeting_participants", "escalation_count", "INTEGER DEFAULT 0 NOT NULL"),
     ("meeting_participants", "commitment_count", "INTEGER DEFAULT 0 NOT NULL"),
+
+    # Multi-tenant / white-label — per-channel Kakao credentials stored in DB
+    # (so buyers self-enter them instead of the owner setting env vars). All
+    # optional; the webhook/kakao_client fall back to env vars when absent, so
+    # existing agents (aiglass via env) are unaffected.
+    ("chatbot_channel_mappings", "kakao_access_token", "TEXT"),
+    ("chatbot_channel_mappings", "kakao_rest_api_key", "VARCHAR(200)"),
+    ("chatbot_channel_mappings", "webhook_secret", "VARCHAR(200)"),
 ]
 
 

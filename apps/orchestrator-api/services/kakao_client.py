@@ -46,12 +46,19 @@ def _access_token(agent_id: str) -> str:
     are served by the SAME Kakao app/channel (e.g. the 부동산 channel moved
     from vip → aiglass), one token works for all of them without having to
     duplicate it per agent."""
+    # Multi-tenant: a per-tenant token stored in DB (buyer self-entered) takes
+    # priority; env vars remain the fallback for existing agents (aiglass).
+    try:
+        from services import chatbot_conversation_service as _conv
+        db_token = (_conv.get_agent_kakao_credentials(agent_id) or {}).get("access_token", "")
+    except Exception:
+        db_token = ""
     var_name = f"KAKAO_ACCESS_TOKEN_{agent_id.upper()}"
-    token = os.getenv(var_name, "") or os.getenv("KAKAO_ACCESS_TOKEN", "")
+    token = db_token or os.getenv(var_name, "") or os.getenv("KAKAO_ACCESS_TOKEN", "")
     if not token:
         raise KakaoClientError(
-            f"{var_name} (or KAKAO_ACCESS_TOKEN) env var not set — "
-            f"register the agent's Kakao access token first"
+            f"No Kakao access token for '{agent_id}' (DB credential or "
+            f"{var_name} / KAKAO_ACCESS_TOKEN env var) — register it first"
         )
     return token
 
