@@ -120,12 +120,36 @@ def resolve_or_provision_by_app_tenant(
     another tenant's agent."""
     if not app_tenant_id:
         raise ValueError("app_tenant_id required")
+    import os
+    legacy_name = os.getenv("AUTO_CLAIM_LEGACY_AGENT", "aiglass").strip().lower()
+
     row = (
         db.query(ChatbotTenant)
         .filter(ChatbotTenant.app_tenant_id == app_tenant_id)
         .first()
     )
     if row:
+        # Self-heal: if this tenant landed on an EMPTY auto-provisioned agent
+        # (t_*, no persona, no business name) but the legacy agent is still
+        # unclaimed, migrate them onto it so the owner keeps their existing
+        # data. (Happens if a blank workspace was created before connecting.)
+        if (
+            legacy_name and row.agent_id != legacy_name
+            and row.agent_id.startswith("t_")
+            and not (row.persona or "").strip()
+            and not (row.business_name or "").strip()
+        ):
+            legacy_row = (
+                db.query(ChatbotTenant).filter(ChatbotTenant.agent_id == legacy_name).first()
+            )
+            if legacy_row and not legacy_row.app_tenant_id:
+                row.app_tenant_id = None
+                legacy_row.app_tenant_id = app_tenant_id
+                db.commit()
+                db.refresh(legacy_row)
+                invalidate(row.agent_id)
+                invalidate(legacy_name)
+                return _serialize(legacy_row)
         return _serialize(row)
     # Transparent owner-connect: if a legacy agent (e.g. 'aiglass' with the
     # existing Kakao channel + data) is still UNCLAIMED, link THIS tenant to it
