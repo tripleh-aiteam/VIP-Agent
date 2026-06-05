@@ -25,8 +25,19 @@ import os
 import time
 from typing import Optional
 
-from fastapi import Header, HTTPException, Path
+from fastapi import Depends, Header, HTTPException, Path
+from sqlalchemy.orm import Session
+
+from db.base import get_db
 from services.logger import log
+
+
+def _public_agents() -> set:
+    return {
+        a.strip().lower()
+        for a in os.getenv("CHATBOT_PUBLIC_AGENTS", "vip,stock,asset,realty,aiglass").split(",")
+        if a.strip()
+    }
 
 
 def _secret() -> str:
@@ -61,16 +72,28 @@ def tenant_guard(
     agent_id: str = Path(...),
     authorization: Optional[str] = Header(default=None),
     x_admin_token: Optional[str] = Header(default=None),
+    db: Session = Depends(get_db),
 ) -> str:
     """FastAPI dependency for /api/chatbot/{agent_id}/* data endpoints.
+    Conditional + deny-by-default (mirrors the global middleware):
 
-    - If CHATBOT_API_SECRET is unset → DISABLED (allow) so current use is
-      unaffected until isolation is turned on.
-    - Super-admin (matching ADMIN_API_TOKEN) → allowed for any agent.
-    - Otherwise require a valid Bearer token whose agent_id == the path agent_id.
+    - CHATBOT_API_SECRET unset → DISABLED (allow) — unaffected until turned on.
+    - MANAGED tenant (linked to an app account via app_tenant_id) → require a
+      valid Bearer token whose agent_id matches (or a super-admin token).
+    - Known chatbot tenant not yet app-linked, OR an allowlisted standalone
+      agent (CHATBOT_PUBLIC_AGENTS) → allow.
+    - UNKNOWN agent id → 404 (no fail-open to arbitrary ids).
     """
     if not _secret():
         return agent_id  # isolation disabled — backward compatible
+
+    from services import tenant_config
+    cfg = tenant_config.get_tenant_config(agent_id, db=db)
+    managed = bool(cfg and cfg.get("app_tenant_id"))
+    if not managed:
+        if cfg is not None or agent_id in _public_agents():
+            return agent_id
+        raise HTTPException(status_code=404, detail="Unknown or unauthorized business")
 
     admin = os.getenv("ADMIN_API_TOKEN", "")
     if admin and x_admin_token and hmac.compare_digest(x_admin_token, admin):

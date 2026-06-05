@@ -167,14 +167,28 @@ async def _chatbot_tenant_isolation(request, call_next):
             seg = rest.split("/", 1)[0]
             if seg and "/" in rest and seg not in _ISOLATION_RESERVED:
                 agent_id = seg
-                # Only enforce isolation for MANAGED tenants (linked to a realty
-                # -app account via app_tenant_id) — i.e. the multi-tenant buyers
-                # + the connected owner. Standalone agents (vip, stock, asset,
-                # realty, …) are exempt so they keep working without tokens.
                 from services import tenant_config as _tc
                 _cfg = _tc.get_tenant_config(agent_id)
-                if not (_cfg and _cfg.get("app_tenant_id")):
-                    return await call_next(request)
+                managed = bool(_cfg and _cfg.get("app_tenant_id"))
+                if not managed:
+                    # NOT a managed (app-linked) tenant. Exempt ONLY:
+                    #  - explicitly-public standalone agents (allowlist), or
+                    #  - a known chatbot tenant not yet linked to an app account
+                    #    (e.g. legacy 'aiglass' before the owner connects).
+                    # DENY unknown agent ids — no fail-open to arbitrary ids.
+                    _public = {
+                        a.strip().lower()
+                        for a in os.getenv(
+                            "CHATBOT_PUBLIC_AGENTS", "vip,stock,asset,realty,aiglass"
+                        ).split(",")
+                        if a.strip()
+                    }
+                    if _cfg is not None or agent_id in _public:
+                        return await call_next(request)
+                    return _JSONResponse(
+                        {"detail": "Unknown or unauthorized business"}, status_code=404
+                    )
+                # Managed tenant → require a valid token (or super-admin) below.
                 ok = False
                 admin = os.getenv("ADMIN_API_TOKEN", "")
                 xadmin = request.headers.get("x-admin-token", "")

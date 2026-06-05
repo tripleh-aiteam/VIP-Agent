@@ -137,7 +137,6 @@ def resolve_or_provision_by_app_tenant(
             legacy_name and row.agent_id != legacy_name
             and row.agent_id.startswith("t_")
             and not (row.persona or "").strip()
-            and not (row.business_name or "").strip()
         ):
             legacy_row = (
                 db.query(ChatbotTenant).filter(ChatbotTenant.agent_id == legacy_name).first()
