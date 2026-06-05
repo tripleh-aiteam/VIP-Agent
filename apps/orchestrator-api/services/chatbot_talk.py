@@ -153,7 +153,27 @@ def _vip_intent_list() -> list[dict[str, Any]]:
     ]
 
 
+_REALTY_KB_CACHE: dict[str, Any] = {}
+_REALTY_KB_CACHE_AT: float = 0.0
+_REALTY_KB_TTL = 600.0  # 10 min — listings change rarely
+
+
 def _triple_h_realty_knowledge_base() -> dict[str, Any]:
+    """Cached wrapper — the underlying KB reads + parses an Excel workbook,
+    which is far too slow to do on every inbound Kakao message (racing a ~5s
+    skill timeout). Cache the built KB in-process for 10 minutes."""
+    import time as _time
+    global _REALTY_KB_CACHE, _REALTY_KB_CACHE_AT
+    now = _time.time()
+    if _REALTY_KB_CACHE and (now - _REALTY_KB_CACHE_AT) < _REALTY_KB_TTL:
+        return _REALTY_KB_CACHE
+    kb = _build_triple_h_realty_knowledge_base()
+    _REALTY_KB_CACHE = kb
+    _REALTY_KB_CACHE_AT = now
+    return kb
+
+
+def _build_triple_h_realty_knowledge_base() -> dict[str, Any]:
     """Knowledge base for the Triple H Real Estate customer-facing chatbot
     (`@부동산에이전트챗봇` on KakaoTalk).
 

@@ -113,6 +113,7 @@ async def handle_incoming_message(
         incoming_text=incoming_text,
         customer=customer,
         conversation=conversation,
+        db=db,
     )
 
     if not reply_text:
@@ -569,6 +570,7 @@ async def _generate_reply(
     incoming_text: str,
     customer: ChatbotCustomer,
     conversation: ChatbotConversation,
+    db: Optional[Session] = None,
 ) -> tuple[str, Optional[str]]:
     """Hybrid reply generation. Three layers, descending speed but ascending
     intelligence:
@@ -599,7 +601,11 @@ async def _generate_reply(
         log.warning(f"chatbot_reply: LLM imports failed: {e}")
         return _pick_conversational_fallback(), "template-fallback-import-error"
 
-    db2 = SessionLocal()
+    # Reuse the caller's session when given (saves a connection checkout +
+    # pool_pre_ping round-trip on the hot path); only open our own as a
+    # fallback for callers that didn't pass one.
+    db2 = db or SessionLocal()
+    owns_db = db is None
     try:
         # Build conversation history for pronoun resolution + continuity
         recent_msgs = conv_service.list_messages(db2, agent_id, conversation.id, limit=8)
@@ -679,7 +685,8 @@ async def _generate_reply(
         log.warning(f"chatbot_reply: generate failed: {e}")
         return _pick_conversational_fallback(), "template-fallback-exception"
     finally:
-        db2.close()
+        if owns_db:
+            db2.close()
 
 
 def _detect_lang(text: str) -> str:
