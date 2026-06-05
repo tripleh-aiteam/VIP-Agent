@@ -127,6 +127,22 @@ def resolve_or_provision_by_app_tenant(
     )
     if row:
         return _serialize(row)
+    # Transparent owner-connect: if a legacy agent (e.g. 'aiglass' with the
+    # existing Kakao channel + data) is still UNCLAIMED, link THIS tenant to it
+    # on first visit — so the owner keeps their data with no manual step. Once
+    # claimed, every later buyer falls through to a fresh isolated agent.
+    import os
+    legacy = os.getenv("AUTO_CLAIM_LEGACY_AGENT", "aiglass").strip().lower()
+    if legacy:
+        legacy_row = (
+            db.query(ChatbotTenant).filter(ChatbotTenant.agent_id == legacy).first()
+        )
+        if legacy_row and not legacy_row.app_tenant_id:
+            legacy_row.app_tenant_id = app_tenant_id
+            db.commit()
+            db.refresh(legacy_row)
+            invalidate(legacy)
+            return _serialize(legacy_row)
     # Provision a fresh, isolated agent for this app tenant.
     agent_id = _slug_for_app_tenant(app_tenant_id)
     existing = db.query(ChatbotTenant).filter(ChatbotTenant.agent_id == agent_id).first()
