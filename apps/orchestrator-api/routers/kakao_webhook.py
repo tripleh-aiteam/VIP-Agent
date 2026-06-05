@@ -478,6 +478,40 @@ async def kakao_webhook(request: Request, db: Session = Depends(get_db)):
 #  Per-message-type handlers
 # ============================================================================
 
+import re as _re
+
+
+def _extract_customer_name(text: str) -> Optional[str]:
+    """Best-effort: pull a name out of a customer's self-introduction so the
+    inbox can show a real name instead of '카카오 고객 ab12'. Conservative — only
+    fires on clear 'my name is …' / '저는 …입니다' style intros."""
+    t = (text or "").strip()
+    if not t or len(t) > 60:
+        return None
+    # English: "my name is David", "I'm David Kim", "this is David", "call me David"
+    m = _re.search(
+        r"(?:my name is|i am|i'm|this is|call me|name's)\s+([A-Z][a-zA-Z]+(?:\s+[A-Z][a-zA-Z]+)?)",
+        t, _re.IGNORECASE,
+    )
+    if m:
+        return m.group(1).strip()[:40]
+    # Korean self-intro + ending: "저는 김철수입니다", "제 이름은 박영희예요"
+    m = _re.search(
+        r"(?:제\s*이름은|저는|나는|이름은)\s*([가-힣]{2,4})"
+        r"(?:입니다|이에요|예요|이라고\s*합니다|라고\s*합니다|이라고|라고|이고|임|야)", t)
+    if m:
+        return m.group(1).strip()
+    # Korean self-intro, name at end (no ending): "저는 김철수", "제 이름은 박영희"
+    m = _re.search(r"(?:제\s*이름은|저는|나는|이름은)\s*([가-힣]{2,4})\s*$", t)
+    if m:
+        return m.group(1).strip()
+    # Bare "김철수입니다" / "김철수라고 합니다"
+    m = _re.search(r"^([가-힣]{2,4})\s*(?:입니다|이에요|예요|라고\s*합니다|이라고\s*합니다)$", t)
+    if m:
+        return m.group(1).strip()
+    return None
+
+
 async def _persist_text_exchange_bg(
     *, agent_id: str, kakao_user_id: str, phone, name,
     utterance: str, reply_text: str, provider_msg_id,
@@ -492,6 +526,15 @@ async def _persist_text_exchange_bg(
         customer = conv_service.find_or_create_customer(
             db_bg, agent_id, name=name, kakao_user_id=kakao_user_id, phone=phone,
         )
+        # If the customer introduced themselves ("저는 김철수입니다" / "my name is
+        # David"), upgrade the placeholder name to the real one.
+        try:
+            real_name = _extract_customer_name(utterance)
+            if real_name:
+                conv_service.maybe_capture_customer_name(
+                    db_bg, agent_id, customer.id, real_name)
+        except Exception:
+            pass
         conv = conv_service.find_or_create_conversation(
             db_bg, agent_id, channel="kakao", customer_id=customer.id,
         )

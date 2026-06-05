@@ -144,6 +144,26 @@ def daily_report(agent_id: str, db: Session = Depends(get_db)):
     return conv_service.daily_report_summary(db, agent_id)
 
 
+class CustomerNameBody(BaseModel):
+    name: str = Field(..., min_length=1, max_length=120)
+
+
+@router.post("/{agent_id}/customers/{customer_id}/name")
+def set_customer_name(
+    agent_id: str,
+    customer_id: UUID,
+    body: CustomerNameBody,
+    db: Session = Depends(get_db),
+):
+    """Boss renames a Kakao customer so they can recognise them in the inbox.
+    Kakao's webhook only sends an anonymized user id (no real name unless the
+    channel collects profile info), so the boss can set a name here."""
+    cust = conv_service.update_customer_name(db, agent_id, customer_id, body.name)
+    if not cust:
+        raise HTTPException(status_code=404, detail="Customer not found")
+    return conv_service.serialize_customer(cust)
+
+
 @router.get("/{agent_id}/mode")
 def get_mode(agent_id: str, db: Session = Depends(get_db)):
     """Returns the current mode + reason + expiry for the dashboard banner."""

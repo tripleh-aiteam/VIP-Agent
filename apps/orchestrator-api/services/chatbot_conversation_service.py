@@ -184,6 +184,40 @@ def update_customer_tags(
     return cust
 
 
+def update_customer_name(
+    db: Session, agent_id: str, customer_id: UUID | str, name: str
+) -> Optional[ChatbotCustomer]:
+    """Set a customer's display name (boss renames a Kakao customer in the
+    inbox so they can recognise them)."""
+    cust = get_customer(db, agent_id, customer_id)
+    if not cust:
+        return None
+    cust.name = (name or "").strip()[:120]
+    db.commit()
+    db.refresh(cust)
+    return cust
+
+
+def _is_placeholder_name(name: Optional[str]) -> bool:
+    """True when the stored name is empty or our auto fallback (so it's safe to
+    auto-upgrade to a real name the customer introduces in chat)."""
+    n = (name or "").strip()
+    return (not n) or n.startswith("카카오 고객") or n.lower() in ("customer", "고객")
+
+
+def maybe_capture_customer_name(
+    db: Session, agent_id: str, customer_id: UUID | str, extracted_name: str
+) -> None:
+    """Upgrade a placeholder name to a real one the customer stated in chat.
+    Never overwrites a name the boss set manually."""
+    if not extracted_name:
+        return
+    cust = get_customer(db, agent_id, customer_id)
+    if cust and _is_placeholder_name(cust.name):
+        cust.name = extracted_name.strip()[:120]
+        db.commit()
+
+
 # ============================================================================
 #  Conversation — list / get / open / close / patch
 # ============================================================================
