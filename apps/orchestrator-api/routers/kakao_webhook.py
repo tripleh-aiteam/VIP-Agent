@@ -33,6 +33,41 @@ from services.logger import log
 router = APIRouter(prefix="/api/chatbot", tags=["chatbot"])
 
 
+# In-process caches for the fast path — eliminate per-message cross-region DB
+# round-trips. The channel→agent mapping changes rarely; mode changes are rare
+# and fine to apply within a few seconds. This keeps the Kakao reply well
+# inside the ~5s skill timeout (the DB queries were eating the LLM's budget).
+import time as _time
+
+_CHANNEL_AGENT_CACHE: dict[str, tuple[float, str]] = {}
+_CHANNEL_AGENT_TTL = 300.0   # 5 minutes
+_MODE_CACHE: dict[str, tuple[float, str]] = {}
+_MODE_TTL = 20.0             # 20 seconds
+
+
+def _resolve_agent_cached(db: Session, channel: str, channel_id: str) -> Optional[str]:
+    key = f"{channel}:{channel_id}"
+    hit = _CHANNEL_AGENT_CACHE.get(key)
+    if hit and (_time.time() - hit[0]) < _CHANNEL_AGENT_TTL:
+        return hit[1] or None
+    agent_id = conv_service.resolve_agent_id_from_channel(db, channel, channel_id)
+    _CHANNEL_AGENT_CACHE[key] = (_time.time(), agent_id or "")
+    return agent_id
+
+
+def _mode_cached(db: Session, agent_id: str) -> str:
+    hit = _MODE_CACHE.get(agent_id)
+    if hit and (_time.time() - hit[0]) < _MODE_TTL:
+        return hit[1]
+    try:
+        from services import chatbot_mode_detector
+        mode, _ = chatbot_mode_detector.get_mode(agent_id, db=db)
+    except Exception:
+        mode = "out"
+    _MODE_CACHE[agent_id] = (_time.time(), mode)
+    return mode
+
+
 # ============================================================================
 #  HMAC signature verification — Kakao signs every webhook payload
 # ============================================================================
@@ -183,7 +218,7 @@ async def kakao_webhook(request: Request, db: Session = Depends(get_db)):
         or (payload.get("bot") or {}).get("id")
         or ""
     )
-    agent_id = conv_service.resolve_agent_id_from_channel(db, "kakao", channel_id)
+    agent_id = _resolve_agent_cached(db, "kakao", channel_id)
     if not agent_id:
         log.warning(
             f"kakao.webhook: unknown channel {channel_id}",
@@ -235,11 +270,7 @@ async def kakao_webhook(request: Request, db: Session = Depends(get_db)):
         user_request.get("callbackUrl") or payload.get("callbackUrl") or ""
     )
     if attachment_type == "text" and utterance and not _callback_url_fp:
-        try:
-            from services import chatbot_mode_detector
-            _mode, _ = chatbot_mode_detector.get_mode(agent_id, db=db)
-        except Exception:
-            _mode = "out"
+        _mode = _mode_cached(db, agent_id)
         if _mode == "out":
             from services.chatbot_reply_service import generate_quick_reply
             _pid = (
