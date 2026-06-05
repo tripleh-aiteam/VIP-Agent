@@ -40,6 +40,7 @@ from db.base import get_db
 from services import chatbot_conversation_service as conv_service
 from services import chatbot_mode_detector
 from services import chatbot_reply_service
+from services.chatbot_auth import tenant_guard as _tenant_guard
 from services.logger import log
 
 
@@ -112,6 +113,7 @@ def list_conversations(
     status: Optional[str] = None,
     channel: Optional[str] = None,
     db: Session = Depends(get_db),
+    _tg: str = Depends(_tenant_guard),
 ):
     convs = conv_service.list_conversations(
         db, agent_id, status=status, channel=channel, limit=limit
@@ -126,7 +128,8 @@ def list_conversations(
 
 @router.get("/{agent_id}/conversations/{conversation_id}")
 def get_conversation(
-    agent_id: str, conversation_id: UUID, db: Session = Depends(get_db)
+    agent_id: str, conversation_id: UUID, db: Session = Depends(get_db),
+    _tg: str = Depends(_tenant_guard),
 ):
     conv = conv_service.get_conversation(db, agent_id, conversation_id)
     if not conv:
