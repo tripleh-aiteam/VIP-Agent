@@ -144,6 +144,28 @@ def daily_report(agent_id: str, db: Session = Depends(get_db)):
     return conv_service.daily_report_summary(db, agent_id)
 
 
+class ResolveTenantBody(BaseModel):
+    app_tenant_id: str
+    email: Optional[str] = None
+    business_name: Optional[str] = None
+
+
+@router.post("/resolve-tenant")
+def resolve_tenant(body: ResolveTenantBody, db: Session = Depends(get_db)):
+    """Map a logged-in realty-app tenant (session.user.tenantId) to its chatbot
+    agent_id. Auto-provisions a fresh isolated chatbot for a new tenant so each
+    buyer's dashboard shows only their own data."""
+    from services import tenant_config
+    try:
+        row = tenant_config.resolve_or_provision_by_app_tenant(
+            db, (body.app_tenant_id or "").strip(),
+            email=body.email, business_name=body.business_name,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"agent_id": row["agent_id"], "business_name": row.get("business_name")}
+
+
 class TenantConfigBody(BaseModel):
     business_name: Optional[str] = None
     bot_display_name: Optional[str] = None

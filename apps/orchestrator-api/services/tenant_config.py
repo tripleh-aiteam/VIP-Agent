@@ -30,6 +30,7 @@ _TTL = 120.0  # 2 minutes — long enough for the hot path, short enough that
 def _serialize(t: ChatbotTenant) -> dict[str, Any]:
     return {
         "agent_id": t.agent_id,
+        "app_tenant_id": t.app_tenant_id,
         "business_name": t.business_name,
         "bot_display_name": t.bot_display_name,
         "industry": t.industry,
@@ -97,6 +98,75 @@ def upsert_tenant_config(db: Session, agent_id: str, **fields: Any) -> dict[str,
             setattr(row, k, v)
         elif k == "features":
             row.features_json = v
+    db.commit()
+    db.refresh(row)
+    invalidate(agent_id)
+    return _serialize(row)
+
+
+def _slug_for_app_tenant(app_tenant_id: str) -> str:
+    """Derive a stable chatbot agent_id from an app tenant uuid."""
+    clean = "".join(c for c in (app_tenant_id or "") if c.isalnum())[:12]
+    return f"t_{clean}" if clean else "t_unknown"
+
+
+def resolve_or_provision_by_app_tenant(
+    db: Session, app_tenant_id: str, *, email: Optional[str] = None,
+    business_name: Optional[str] = None,
+) -> dict[str, Any]:
+    """Map a logged-in app tenant → its chatbot agent. If already linked, return
+    it. Otherwise auto-provision a FRESH isolated chatbot agent for this tenant
+    (so a new buyer immediately gets their own empty chatbot). Never returns
+    another tenant's agent."""
+    if not app_tenant_id:
+        raise ValueError("app_tenant_id required")
+    row = (
+        db.query(ChatbotTenant)
+        .filter(ChatbotTenant.app_tenant_id == app_tenant_id)
+        .first()
+    )
+    if row:
+        return _serialize(row)
+    # Provision a fresh, isolated agent for this app tenant.
+    agent_id = _slug_for_app_tenant(app_tenant_id)
+    existing = db.query(ChatbotTenant).filter(ChatbotTenant.agent_id == agent_id).first()
+    if existing:
+        # agent_id slug collision with an unlinked row — link it.
+        existing.app_tenant_id = app_tenant_id
+        if business_name and not existing.business_name:
+            existing.business_name = business_name
+        db.commit()
+        db.refresh(existing)
+        invalidate(agent_id)
+        return _serialize(existing)
+    row = ChatbotTenant(
+        agent_id=agent_id,
+        app_tenant_id=app_tenant_id,
+        business_name=business_name or (email.split("@")[0] if email else None),
+        language_default="auto",
+        features_json={"assistant": True, "kakao": True, "insights": True, "knowledge": True, "calls": False},
+        active=True,
+    )
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    invalidate(agent_id)
+    return _serialize(row)
+
+
+def link_app_tenant(db: Session, app_tenant_id: str, agent_id: str) -> dict[str, Any]:
+    """Super-admin: link an app tenant to an EXISTING agent (e.g. the owner's
+    app tenant → 'aiglass' so they keep their existing chatbot + data)."""
+    # Clear any other row that currently claims this app_tenant_id.
+    db.query(ChatbotTenant).filter(
+        ChatbotTenant.app_tenant_id == app_tenant_id,
+        ChatbotTenant.agent_id != agent_id,
+    ).update({ChatbotTenant.app_tenant_id: None})
+    row = db.query(ChatbotTenant).filter(ChatbotTenant.agent_id == agent_id).first()
+    if not row:
+        row = ChatbotTenant(agent_id=agent_id, active=True)
+        db.add(row)
+    row.app_tenant_id = app_tenant_id
     db.commit()
     db.refresh(row)
     invalidate(agent_id)

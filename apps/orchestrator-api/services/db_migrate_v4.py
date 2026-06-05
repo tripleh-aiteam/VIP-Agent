@@ -46,6 +46,9 @@ _NEW_COLUMNS: list[tuple[str, str, str]] = [
     ("chatbot_channel_mappings", "kakao_access_token", "TEXT"),
     ("chatbot_channel_mappings", "kakao_rest_api_key", "VARCHAR(200)"),
     ("chatbot_channel_mappings", "webhook_secret", "VARCHAR(200)"),
+
+    # Link a chatbot tenant to the realty app's NextAuth tenant (per-buyer login)
+    ("chatbot_tenants", "app_tenant_id", "VARCHAR(64)"),
 ]
 
 

@@ -1206,6 +1206,11 @@ class ChatbotTenant(Base):
 
     id = _uuid()
     agent_id = Column(String(40), nullable=False, unique=True, index=True)
+    # Link to the realty app's NextAuth tenant (session.user.tenantId). Lets the
+    # buyer's logged-in dashboard resolve to THEIR chatbot. NULL for agents not
+    # tied to an app account (e.g. internal). Set via resolve/link, not by
+    # reading the app's DB.
+    app_tenant_id = Column(String(64), index=True)
 
     business_name = Column(String(160))            # "트리플에이치 부동산"
     bot_display_name = Column(String(160))          # what the bot calls itself

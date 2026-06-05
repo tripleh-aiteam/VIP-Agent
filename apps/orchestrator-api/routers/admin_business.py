@@ -63,6 +63,23 @@ class BusinessBody(BaseModel):
     auto_reply: bool = True                        # Boss-OUT = bot answers customers
 
 
+class LinkTenantBody(BaseModel):
+    app_tenant_id: str
+    agent_id: str
+
+
+@router.post("/link-tenant")
+def link_tenant(
+    body: LinkTenantBody,
+    db: Session = Depends(get_db),
+    _: None = Depends(require_admin),
+):
+    """Super-admin: link a realty-app tenant to an EXISTING chatbot agent — e.g.
+    link the owner's app tenant to 'aiglass' so they keep their data."""
+    row = tenant_config.link_app_tenant(db, body.app_tenant_id.strip(), body.agent_id.strip().lower())
+    return {"ok": True, **row}
+
+
 @router.get("/businesses")
 def list_businesses(db: Session = Depends(get_db), _: None = Depends(require_admin)):
     """All businesses with their Kakao channel + connection status."""
