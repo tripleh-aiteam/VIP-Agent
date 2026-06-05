@@ -195,6 +195,16 @@ def claim_legacy_agent(body: ClaimLegacyBody, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="chatbot not found")
     if row.app_tenant_id and row.app_tenant_id != app_tid:
         raise HTTPException(status_code=409, detail="Already connected to another account")
+    # Release any OTHER row (e.g. an auto-provisioned t_xxx) that points at this
+    # account, so resolution is unambiguous after claiming.
+    others = (
+        db.query(ChatbotTenant)
+        .filter(ChatbotTenant.app_tenant_id == app_tid, ChatbotTenant.agent_id != aid)
+        .all()
+    )
+    for o in others:
+        o.app_tenant_id = None
+        tenant_config.invalidate(o.agent_id)
     row.app_tenant_id = app_tid
     db.commit()
     tenant_config.invalidate(aid)
