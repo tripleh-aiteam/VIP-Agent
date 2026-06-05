@@ -144,6 +144,37 @@ def daily_report(agent_id: str, db: Session = Depends(get_db)):
     return conv_service.daily_report_summary(db, agent_id)
 
 
+class TenantConfigBody(BaseModel):
+    business_name: Optional[str] = None
+    bot_display_name: Optional[str] = None
+    industry: Optional[str] = None
+    persona: Optional[str] = None
+    language_default: Optional[str] = None
+    service_area: Optional[str] = None
+    greeting: Optional[str] = None
+    logo_url: Optional[str] = None
+    primary_color: Optional[str] = None
+
+
+@router.get("/{agent_id}/tenant")
+def get_tenant(agent_id: str, db: Session = Depends(get_db)):
+    """The business 'profile card' for this agent (white-label settings)."""
+    from services import tenant_config
+    cfg = tenant_config.get_tenant_config(agent_id, db=db)
+    return cfg or {"agent_id": agent_id, "exists": False}
+
+
+@router.post("/{agent_id}/tenant")
+def save_tenant(agent_id: str, body: TenantConfigBody, db: Session = Depends(get_db)):
+    """Create/update the business profile card. Empty 'persona' keeps the
+    legacy hardcoded behaviour; a non-empty persona switches this business to
+    its own white-label identity + uploaded knowledge."""
+    from services import tenant_config
+    fields = {k: v for k, v in body.model_dump().items() if v is not None}
+    cfg = tenant_config.upsert_tenant_config(db, agent_id, **fields)
+    return cfg
+
+
 class CustomerNameBody(BaseModel):
     name: str = Field(..., min_length=1, max_length=120)
 
