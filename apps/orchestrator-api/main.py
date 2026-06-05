@@ -146,6 +146,45 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+
+# ── Multi-tenant data isolation for the chatbot API ──────────────────────────
+# Guards every /api/chatbot/<agent_id>/<...> data path so a logged-in buyer can
+# only reach THEIR business. DISABLED until CHATBOT_API_SECRET is set (so single
+# -tenant use is unaffected). Added BEFORE CORS so 401s still carry CORS headers.
+import hmac as _hmac
+from starlette.responses import JSONResponse as _JSONResponse
+
+_ISOLATION_RESERVED = {"admin", "resolve-tenant", "claim-legacy-agent", "webhook", "security"}
+
+
+@app.middleware("http")
+async def _chatbot_tenant_isolation(request, call_next):
+    secret = os.getenv("CHATBOT_API_SECRET", "")
+    if secret and request.method != "OPTIONS":
+        path = request.url.path
+        if path.startswith("/api/chatbot/"):
+            rest = path[len("/api/chatbot/"):]
+            seg = rest.split("/", 1)[0]
+            if seg and "/" in rest and seg not in _ISOLATION_RESERVED:
+                agent_id = seg
+                ok = False
+                admin = os.getenv("ADMIN_API_TOKEN", "")
+                xadmin = request.headers.get("x-admin-token", "")
+                if admin and xadmin and _hmac.compare_digest(xadmin, admin):
+                    ok = True
+                else:
+                    authz = request.headers.get("authorization", "")
+                    tok = authz[7:].strip() if authz.lower().startswith("bearer ") else ""
+                    from services.chatbot_auth import verify_token
+                    p = verify_token(tok)
+                    if p and p.get("agent_id") == agent_id:
+                        ok = True
+                if not ok:
+                    return _JSONResponse(
+                        {"detail": "Not authorized for this business"}, status_code=401
+                    )
+    return await call_next(request)
+
 _cors_origins_env = os.getenv("CORS_ALLOWED_ORIGINS", "")
 _cors_origins = [o.strip() for o in _cors_origins_env.split(",") if o.strip()] if _cors_origins_env else ["*"]
 
