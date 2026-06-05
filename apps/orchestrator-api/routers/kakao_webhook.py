@@ -40,9 +40,12 @@ router = APIRouter(prefix="/api/chatbot", tags=["chatbot"])
 import time as _time
 
 _CHANNEL_AGENT_CACHE: dict[str, tuple[float, str]] = {}
-_CHANNEL_AGENT_TTL = 300.0   # 5 minutes
+_CHANNEL_AGENT_TTL = 3600.0  # 1 hour — channel→agent mapping never changes
+                             # mid-session; keeps post-pause messages fast.
 _MODE_CACHE: dict[str, tuple[float, str]] = {}
-_MODE_TTL = 20.0             # 20 seconds
+_MODE_TTL = 120.0            # 2 minutes — long enough that a paused customer's
+                             # next message skips the mode DB query, short
+                             # enough that a boss mode change still applies fast.
 
 
 def _resolve_agent_cached(db: Session, channel: str, channel_id: str) -> Optional[str]:
@@ -66,6 +69,40 @@ def _mode_cached(db: Session, agent_id: str) -> str:
         mode = "out"
     _MODE_CACHE[agent_id] = (_time.time(), mode)
     return mode
+
+
+def warm_kakao_caches(db: Session) -> None:
+    """Force-refresh the fast-path caches (channel→agent, mode, realty KB).
+
+    Called by /health, which UptimeRobot pings every 5 minutes — so the caches
+    stay perpetually warm and a customer's FIRST message after ANY pause still
+    hits warm caches and replies inside Kakao's 5s window. Best-effort."""
+    from sqlalchemy import text as _sa_text
+    now = _time.time()
+    try:
+        rows = db.execute(_sa_text(
+            "SELECT channel, provider_channel_id, agent_id "
+            "FROM chatbot_channel_mappings WHERE active = true"
+        )).fetchall()
+        seen_agents = set()
+        for ch, pid, agent in rows:
+            _CHANNEL_AGENT_CACHE[f"{ch}:{pid}"] = (now, agent or "")
+            if agent and agent not in seen_agents:
+                seen_agents.add(agent)
+                try:
+                    from services import chatbot_mode_detector
+                    mode, _ = chatbot_mode_detector.get_mode(agent, db=db)
+                    _MODE_CACHE[agent] = (now, mode)
+                except Exception:
+                    pass
+    except Exception as e:
+        log.warning(f"warm_kakao_caches: channel/mode warm failed: {e}")
+    try:
+        # Warm the realty KB (Excel parse) so it isn't re-parsed on the hot path.
+        from services.chatbot_talk import _triple_h_realty_knowledge_base
+        _triple_h_realty_knowledge_base()
+    except Exception as e:
+        log.warning(f"warm_kakao_caches: KB warm failed: {e}")
 
 
 # ============================================================================

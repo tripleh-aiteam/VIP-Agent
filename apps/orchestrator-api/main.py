@@ -227,12 +227,21 @@ async def root():
 
 @app.api_route("/health", methods=["GET", "HEAD"], tags=["health"])
 def health(db: Session = Depends(get_db)):
-    """Health check — confirms DB connectivity."""
+    """Health check — confirms DB connectivity AND keeps the Kakao fast-path
+    caches warm (UptimeRobot pings this every 5 min), so a customer's first
+    message after a pause still replies inside Kakao's 5s window."""
     try:
         result = db.execute(text("SELECT 1")).scalar()
         db_status = "connected" if result == 1 else "error"
     except Exception as e:
         db_status = f"error: {e}"
+
+    # Keep Kakao caches warm (best-effort, never affects health status).
+    try:
+        from routers.kakao_webhook import warm_kakao_caches
+        warm_kakao_caches(db)
+    except Exception:
+        pass
 
     return {
         "status": "ok" if db_status == "connected" else "degraded",
