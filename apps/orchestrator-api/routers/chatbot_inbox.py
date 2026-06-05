@@ -166,6 +166,41 @@ def resolve_tenant(body: ResolveTenantBody, db: Session = Depends(get_db)):
     return {"agent_id": row["agent_id"], "business_name": row.get("business_name")}
 
 
+class ClaimLegacyBody(BaseModel):
+    app_tenant_id: str
+    agent_id: str
+
+
+@router.post("/claim-legacy-agent")
+def claim_legacy_agent(body: ClaimLegacyBody, db: Session = Depends(get_db)):
+    """One-time, safe self-link: an owner connects their app account to a
+    pre-existing chatbot (e.g. 'aiglass') so they keep their data. Only agents
+    in CLAIMABLE_LEGACY_AGENTS (default 'aiglass') are claimable, and only while
+    UNCLAIMED — so once the owner claims it, no buyer can ever take it."""
+    claimable = {
+        a.strip().lower()
+        for a in os.getenv("CLAIMABLE_LEGACY_AGENTS", "aiglass").split(",")
+        if a.strip()
+    }
+    aid = (body.agent_id or "").strip().lower()
+    app_tid = (body.app_tenant_id or "").strip()
+    if aid not in claimable:
+        raise HTTPException(status_code=403, detail="This chatbot is not claimable")
+    if not app_tid:
+        raise HTTPException(status_code=400, detail="app_tenant_id required")
+    from db.models import ChatbotTenant
+    from services import tenant_config
+    row = db.query(ChatbotTenant).filter(ChatbotTenant.agent_id == aid).first()
+    if not row:
+        raise HTTPException(status_code=404, detail="chatbot not found")
+    if row.app_tenant_id and row.app_tenant_id != app_tid:
+        raise HTTPException(status_code=409, detail="Already connected to another account")
+    row.app_tenant_id = app_tid
+    db.commit()
+    tenant_config.invalidate(aid)
+    return {"ok": True, "agent_id": aid, "app_tenant_id": app_tid}
+
+
 class TenantConfigBody(BaseModel):
     business_name: Optional[str] = None
     bot_display_name: Optional[str] = None
