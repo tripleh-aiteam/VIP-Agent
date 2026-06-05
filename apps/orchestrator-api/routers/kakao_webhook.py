@@ -95,6 +95,13 @@ def warm_kakao_caches(db: Session) -> None:
                     _MODE_CACHE[agent] = (now, mode)
                 except Exception:
                     pass
+                try:
+                    # Warm the per-tenant profile-card cache so the fast path
+                    # stays DB-free for white-label tenants too.
+                    from services import tenant_config
+                    tenant_config.get_tenant_config(agent, db=db)
+                except Exception:
+                    pass
     except Exception as e:
         log.warning(f"warm_kakao_caches: channel/mode warm failed: {e}")
     try:

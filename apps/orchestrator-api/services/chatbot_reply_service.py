@@ -617,22 +617,31 @@ async def _generate_reply(
             role = "user" if m.author == "customer" else "assistant"
             history_msgs.append({"role": role, "content": text[:400]})
 
-        realty_kb = _triple_h_realty_knowledge_base()
-        # Detect the customer's language in code and prepend a STRICT rule to
-        # the system prompt. The LLM (Llama 3.3 70B via Groq) was sometimes
-        # ignoring a soft "respond in same language" hint and replying in
-        # English to Korean queries. A hard rule at the top fixes this.
         lang = _detect_lang(incoming_text)
-        lang_rule = (
-            "■ 언어 규칙 (절대 어기지 마세요)\n"
-            "고객이 한국어로 질문했습니다. 반드시 한국어로만 답변하세요. "
-            "영어 단어는 사용하지 마세요 (매물 번호 'B-201호' 같은 고유명사 제외).\n\n"
-            if lang == "ko" else
-            "■ Language Rule (strict)\n"
-            "The customer wrote in English. You MUST reply in English only. "
-            "Do not switch to Korean.\n\n"
-        )
-        system_prompt = lang_rule + _build_realty_system_prompt(realty_kb)
+        # White-label tenants use THEIR profile card + uploaded knowledge;
+        # legacy agents ('aiglass'/Triple H) keep the byte-identical hardcoded
+        # prompt below.
+        from services import tenant_config as _tc
+        _cfg = _tc.get_tenant_config(agent_id, db=db2)
+        if _tc.has_custom_persona(_cfg):
+            _knowledge = _retrieve_tenant_knowledge(agent_id, incoming_text)
+            system_prompt = _tc.build_tenant_system_prompt(_cfg, _knowledge, lang)
+        else:
+            realty_kb = _triple_h_realty_knowledge_base()
+            # Detect the customer's language in code and prepend a STRICT rule
+            # to the system prompt. The LLM (Llama 3.3 70B via Groq) was
+            # sometimes ignoring a soft "respond in same language" hint and
+            # replying in English to Korean queries. A hard rule fixes this.
+            lang_rule = (
+                "■ 언어 규칙 (절대 어기지 마세요)\n"
+                "고객이 한국어로 질문했습니다. 반드시 한국어로만 답변하세요. "
+                "영어 단어는 사용하지 마세요 (매물 번호 'B-201호' 같은 고유명사 제외).\n\n"
+                if lang == "ko" else
+                "■ Language Rule (strict)\n"
+                "The customer wrote in English. You MUST reply in English only. "
+                "Do not switch to Korean.\n\n"
+            )
+            system_prompt = lang_rule + _build_realty_system_prompt(realty_kb)
 
         # Build the messages list: system → history → current user message
         messages: list[dict[str, str]] = list(history_msgs)
@@ -689,6 +698,29 @@ async def _generate_reply(
             db2.close()
 
 
+def _retrieve_tenant_knowledge(agent_id: str, query: str) -> str:
+    """Pull a NEW tenant's uploaded knowledge (RAG) as a text blob for the
+    prompt. Only used for white-label tenants — legacy agents use their
+    hardcoded KB and never hit this."""
+    try:
+        from services.knowledge_ingest import rag_retrieve
+        from db.base import SessionLocal
+        db = SessionLocal()
+        try:
+            hits = rag_retrieve(db, agent_id=agent_id, query=query, top_k=6, min_sim=0.3)
+        finally:
+            db.close()
+        lines = []
+        for h in (hits or []):
+            c = (h.get("content") or "").strip()
+            if c:
+                lines.append(f"- {c[:400]}")
+        return "\n".join(lines)
+    except Exception as e:
+        log.warning(f"tenant knowledge retrieval failed for {agent_id}: {e}")
+        return ""
+
+
 async def generate_quick_reply(agent_id: str, incoming_text: str) -> str:
     """Fast reply for the Kakao hot path — NO database queries.
 
@@ -704,24 +736,34 @@ async def generate_quick_reply(agent_id: str, incoming_text: str) -> str:
     if cached:
         return cached
     try:
-        from services.chatbot_talk import _triple_h_realty_knowledge_base
         from services.llm_client import chat_completion_sync
+        from services import tenant_config
     except Exception as e:
         log.warning(f"generate_quick_reply: imports failed: {e}")
         return _pick_conversational_fallback()
     try:
-        realty_kb = _triple_h_realty_knowledge_base()  # cached, no Excel re-parse
         lang = _detect_lang(incoming_text)
-        lang_rule = (
-            "■ 언어 규칙 (절대 어기지 마세요)\n"
-            "고객이 한국어로 질문했습니다. 반드시 한국어로만 답변하세요. "
-            "영어 단어는 사용하지 마세요 (매물 번호 'B-201호' 같은 고유명사 제외).\n\n"
-            if lang == "ko" else
-            "■ Language Rule (strict)\n"
-            "The customer wrote in English. You MUST reply in English only. "
-            "Do not switch to Korean.\n\n"
-        )
-        system_prompt = lang_rule + _build_realty_system_prompt(realty_kb)
+        cfg = tenant_config.get_tenant_config(agent_id)
+        if tenant_config.has_custom_persona(cfg):
+            # NEW tenant (white-label): build the prompt from THEIR profile card
+            # + THEIR uploaded knowledge (RAG). Legacy agents skip this entirely.
+            knowledge = _retrieve_tenant_knowledge(agent_id, incoming_text)
+            system_prompt = tenant_config.build_tenant_system_prompt(cfg, knowledge, lang)
+        else:
+            # LEGACY path — Triple H / 'aiglass'. Byte-identical to before so the
+            # live bot is unchanged.
+            from services.chatbot_talk import _triple_h_realty_knowledge_base
+            realty_kb = _triple_h_realty_knowledge_base()  # cached, no Excel re-parse
+            lang_rule = (
+                "■ 언어 규칙 (절대 어기지 마세요)\n"
+                "고객이 한국어로 질문했습니다. 반드시 한국어로만 답변하세요. "
+                "영어 단어는 사용하지 마세요 (매물 번호 'B-201호' 같은 고유명사 제외).\n\n"
+                if lang == "ko" else
+                "■ Language Rule (strict)\n"
+                "The customer wrote in English. You MUST reply in English only. "
+                "Do not switch to Korean.\n\n"
+            )
+            system_prompt = lang_rule + _build_realty_system_prompt(realty_kb)
         messages = [{"role": "user", "content": incoming_text}]
         try:
             reply_text = await asyncio.wait_for(

@@ -1186,3 +1186,41 @@ class ChatbotChannelMapping(Base):
     active = Column(Boolean, default=True, nullable=False)
     created_at = _now()
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class ChatbotTenant(Base):
+    """Per-BUSINESS configuration — the 'profile card' that makes the whole
+    chatbot product white-label / multi-tenant. One row per agent_id.
+
+    Backward-compatible by design: when no row exists (or `persona` is NULL),
+    the reply pipeline uses the original hardcoded behaviour, so existing
+    agents like 'aiglass' (Triple H) are completely unaffected. A NEW buyer
+    gets a row with their own persona + knowledge and the pipeline serves
+    THEIR business instead."""
+    __tablename__ = "chatbot_tenants"
+
+    id = _uuid()
+    agent_id = Column(String(40), nullable=False, unique=True, index=True)
+
+    business_name = Column(String(160))            # "트리플에이치 부동산"
+    bot_display_name = Column(String(160))          # what the bot calls itself
+    industry = Column(String(40))                   # "real_estate" | "clinic" | "retail" | ...
+    # When set, the reply pipeline builds a generic prompt from THIS persona +
+    # the tenant's uploaded knowledge (RAG). When NULL, it uses the legacy
+    # hardcoded prompt (keeps existing agents byte-identical).
+    persona = Column(Text)
+    language_default = Column(String(8), default="auto")  # "auto" | "ko" | "en"
+    service_area = Column(Text)                     # "의정부, 파주, 향남 ..."
+    greeting = Column(Text)                          # optional custom greeting
+
+    # White-label branding (used by the buyer-facing dashboard later)
+    logo_url = Column(Text)
+    primary_color = Column(String(16))
+
+    # Which product tabs this tenant has enabled / paid for
+    # {"assistant": true, "kakao": true, "calls": false, "insights": true, "knowledge": true}
+    features_json = Column(JSONB, default=dict)
+
+    active = Column(Boolean, default=True, nullable=False)
+    created_at = _now()
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
