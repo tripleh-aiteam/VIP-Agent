@@ -2919,21 +2919,40 @@ try:
     TOOL_REGISTRY["onbid_search"] = Tool(
         name="onbid_search", kind="read",
         description=(
-            "Look up live OnBid (온비드 / 한국자산관리공사 KAMCO) public-auction "
-            "items (공매 물건). Use whenever the user asks about OnBid, 온비드, "
-            "공매, public auctions / 압류재산 / 국유재산, or wants to see auction "
-            "listings (real estate, vehicles, equipment) with their minimum bid, "
-            "appraisal price, bid open/close dates and status. Pass a `keyword` "
-            "to filter by item name, address/region, or category "
-            "(e.g. 'apartment', '아파트', '대전', '승용차', 'car'). "
-            "Returns current auction items — present them clearly and cite OnBid."
+            "Search LIVE OnBid (온비드 / 한국자산관리공사 KAMCO) public-auction "
+            "listings (공매 물건). This is the data source for ANY question about "
+            "buying/auctioned real estate, buildings, apartments, land, vehicles, "
+            "or equipment in Korea — use it for OnBid / 온비드 / 공매 / 경매 / "
+            "압류재산 / 국유재산 questions AND for general property/auction queries "
+            "like 'expensive buildings in Jeju', '제주 부동산 매물', 'cars for "
+            "auction', '서울 아파트 공매'. Prefer this over web_search for Korean "
+            "property/auction lookups. "
+            "Pass `region` (e.g. '제주'/'Jeju'/'서울'/'Seoul'), `category` "
+            "(e.g. 'real estate'/'부동산', 'car'/'자동차', 'construction'), "
+            "`sort` ('expensive' = most expensive first, 'cheap' = cheapest), "
+            "`keyword` (item name/detail) and `limit`. Returns items with minimum "
+            "bid, appraisal price, bid open/close dates and status. Present the "
+            "results clearly and cite OnBid. If `note` is set, relay it honestly "
+            "(OnBid only lists assets currently up for auction, not all properties)."
         ),
         parameters={
             "type": "object",
             "properties": {
+                "region": {
+                    "type": "string",
+                    "description": "Province/city filter, KO or EN (제주, Jeju, 서울, Seoul, 부산…)",
+                },
+                "category": {
+                    "type": "string",
+                    "description": "Item type: 'real estate'/'부동산', 'car'/'자동차', 'construction', 'rights', 'transport'",
+                },
+                "sort": {
+                    "type": "string",
+                    "description": "'expensive' (most expensive first) or 'cheap' (cheapest first)",
+                },
                 "keyword": {
                     "type": "string",
-                    "description": "Optional filter: item name, region/address, or category",
+                    "description": "Optional free-text filter on item name/detail (e.g. '아파트', 'E300')",
                 },
                 "limit": {
                     "type": "integer",

@@ -12,6 +12,15 @@
 - **Why:** user request — "API key please implement it to my VIP chatbot and assistant so if I ask question related to Onbid it must answer."
 - **Next:** user must set `ONBID_SERVICE_KEY` on Render (orchestrator) for it to return live data; otherwise the tool replies "OnBid is not configured."
 
+### [later v2] OnBid real SEARCH — region + category + price sort
+
+- **Problem:** v1 only pulled ~20 popular items, so "Top 10 expensive buildings in Jeju" went to `web_search` (no key → failed) and couldn't search by region/price.
+- **API findings (verified):** OnBid `SIDO` region filter does NOT work with this key (rejects every code/name) and the code service exposes no region codes; `CTGR_HIRK_ID` category filter DOES work server-side (10000=부동산, 12000=자동차, 16000=건축/건설, 11000=권리/증권, 32000=운송 …). So region is filtered CLIENT-side on the item address.
+- **What:** rewrote [apps/orchestrator-api/services/onbid_tools.py](apps/orchestrator-api/services/onbid_tools.py) — `onbid_search(region, category, sort, keyword, limit)`. Pools current items from 5 active "highlight" lists (50%체감/마감임박/관심·클릭 top20/새물건) fetched in parallel, tops up from the category-filtered KAMCO catalogue (`getKamcoPbctCltrList`) only when needed, then client-filters by region (KO/EN aliases) + category (CTGR_FULL_NM fragments) + keyword and sorts by appraisal/min-bid for "expensive"/"cheap". ~9-10s.
+- **Routing:** strengthened the `onbid_search` description in [apps/orchestrator-api/services/assistant_tools.py](apps/orchestrator-api/services/assistant_tools.py) so the LLM uses it (over `web_search`) for ANY Korean property/building/land/vehicle/auction query — not only when "OnBid" is named.
+- **Verified live:** Jeju real estate sorted 241M→29M (주거/토지/호텔, no securities), cars all 자동차/승용차, Busan land works.
+- **Honest scope:** OnBid only lists assets currently up for public auction; tool returns a `note` when a region/keyword has no current matches.
+
 ### Goal
 
 Multi-day push (2026-06-04 → 06-08): make the chatbot usable offline, get the KakaoTalk channel answering reliably, turn the product into a sellable multi-tenant SaaS (the user keeps using their own instance in parallel), and fix voice/text language mirroring across all 5 agents.
