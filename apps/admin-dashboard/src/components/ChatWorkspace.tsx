@@ -27,9 +27,71 @@ import {
   useEffect,
   useRef,
   useState,
+  type ReactNode,
 } from "react";
 import { useRouter } from "next/navigation";
 import { jsPDF } from "jspdf";
+
+// ── Lightweight markdown renderer (no deps) ───────────────────────────────
+// Renders GitHub-flavored tables, **bold**, `code`, bullet lists and line
+// breaks so "make a table" actually shows a table (not raw pipes).
+function inlineFmt(s: string): ReactNode[] {
+  const out: ReactNode[] = [];
+  const re = /(\*\*[^*]+\*\*|`[^`]+`)/g;
+  let last = 0, k = 0, m: RegExpExecArray | null;
+  while ((m = re.exec(s))) {
+    if (m.index > last) out.push(s.slice(last, m.index));
+    const tok = m[0];
+    if (tok.startsWith("**")) out.push(<strong key={k++}>{tok.slice(2, -2)}</strong>);
+    else out.push(<code key={k++} className="px-1 py-0.5 bg-gray-100 rounded text-[13px] font-mono">{tok.slice(1, -1)}</code>);
+    last = m.index + tok.length;
+  }
+  if (last < s.length) out.push(s.slice(last));
+  return out;
+}
+
+function MarkdownLite({ text }: { text: string }) {
+  const lines = (text || "").replace(/\r/g, "").split("\n");
+  const isRow = (l: string) => /^\s*\|.*\|\s*$/.test(l);
+  const isSep = (l: string) => /^\s*\|?[\s:|-]+\|?\s*$/.test(l) && l.includes("-");
+  const cells = (l: string) => l.replace(/^\s*\|/, "").replace(/\|\s*$/, "").split("|").map(c => c.trim());
+  const blocks: ReactNode[] = [];
+  let i = 0, key = 0;
+  while (i < lines.length) {
+    const line = lines[i];
+    if (isRow(line) && i + 1 < lines.length && isSep(lines[i + 1])) {
+      const header = cells(line);
+      i += 2;
+      const rows: string[][] = [];
+      while (i < lines.length && isRow(lines[i])) { rows.push(cells(lines[i])); i++; }
+      blocks.push(
+        <div key={key++} className="overflow-x-auto my-2">
+          <table className="w-full text-[13px] border-collapse">
+            <thead><tr>{header.map((h, hi) => (
+              <th key={hi} className="border border-gray-200 bg-gray-50 px-2.5 py-1.5 text-left font-semibold text-gray-700">{inlineFmt(h)}</th>
+            ))}</tr></thead>
+            <tbody>{rows.map((r, ri) => (
+              <tr key={ri} className={ri % 2 ? "bg-gray-50/50" : ""}>{r.map((c, ci) => (
+                <td key={ci} className="border border-gray-200 px-2.5 py-1.5">{inlineFmt(c)}</td>
+              ))}</tr>
+            ))}</tbody>
+          </table>
+        </div>
+      );
+      continue;
+    }
+    if (/^\s*[-*]\s+/.test(line)) {
+      const items: string[] = [];
+      while (i < lines.length && /^\s*[-*]\s+/.test(lines[i])) { items.push(lines[i].replace(/^\s*[-*]\s+/, "")); i++; }
+      blocks.push(<ul key={key++} className="list-disc ml-5 my-1 space-y-0.5">{items.map((it, ii) => <li key={ii}>{inlineFmt(it)}</li>)}</ul>);
+      continue;
+    }
+    if (line.trim() === "") { blocks.push(<div key={key++} className="h-2" />); i++; continue; }
+    blocks.push(<div key={key++} className="whitespace-pre-wrap">{inlineFmt(line)}</div>);
+    i++;
+  }
+  return <div>{blocks}</div>;
+}
 
 // Inline so ChatWorkspace can be dropped into any of the 3 agent apps
 // (VIP, Realty, Asset) without cross-importing AssistantCard.
@@ -1049,8 +1111,8 @@ export default function ChatWorkspace({ apiBase, agentId, agentLabel }: Props) {
                       <div className="flex items-center gap-2 text-[10px] font-bold tracking-wide text-gray-400 uppercase">
                         <span>{(agentLabel || agentId)} · Answer</span>
                       </div>
-                      <div className="bg-white border border-gray-200 rounded-2xl rounded-tl-md px-4 py-3 text-[15px] leading-relaxed whitespace-pre-wrap text-gray-900 shadow-sm w-full">
-                        {t.text}
+                      <div className="bg-white border border-gray-200 rounded-2xl rounded-tl-md px-4 py-3 text-[15px] leading-relaxed text-gray-900 shadow-sm w-full">
+                        <MarkdownLite text={t.text} />
                         {(t.intent || t.tool_used) && (
                           <div className="text-[10px] text-gray-400 mt-2 pt-2 border-t border-gray-100">
                             {t.intent}{t.tool_used ? ` · ${t.tool_used}` : ""}

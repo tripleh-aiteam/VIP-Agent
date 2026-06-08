@@ -862,14 +862,16 @@ def _run_chain(
         res = execute_tool(s["tool"], s["args"], db=db, agent_id=agent_id)
         step_results.append({"tool": s["tool"], "result": res})
 
-    # Compose final answer from all step results
+    # Compose final answer from all step results — honour table/list requests.
+    _fmt_line, _max_tok, _cap = _output_format_directive(transcript)
     follow_system = (
-        "You just ran the following tools sequentially. Summarize what you "
-        "found for the boss in 2-4 sentences (same language as their question). "
-        "Use specific names and numbers from the results. Be conversational."
+        "You just ran the following tools sequentially (same language as the "
+        "user's question).\n" + _fmt_line +
+        "Use specific names and numbers from the results verbatim. Do NOT wrap a "
+        "table in code fences or add a 'summary for the boss' preamble."
     )
     import json as _json
-    summary_input = _json.dumps(step_results, ensure_ascii=False)[:3000]
+    summary_input = _json.dumps(step_results, ensure_ascii=False)[:max(_cap, 3000)]
     try:
         reply = chat_completion_sync(
             system_prompt=follow_system,
@@ -877,7 +879,7 @@ def _run_chain(
                 {"role": "user", "content": f"Question: {transcript}"},
                 {"role": "user", "content": f"Tool chain results:\n{summary_input}"},
             ],
-            max_tokens=400, temperature=0.5,
+            max_tokens=max(_max_tok, 400), temperature=0.4,
             model="groq-llama-3.3-70b",
         )
     except Exception:
@@ -1092,6 +1094,38 @@ def _compose_write_preview(tool_name: str, args: dict) -> dict[str, Any]:
     return {"message": f"Run {tool_name}({args})?"}
 
 
+def _output_format_directive(user_msg: str) -> tuple[str, int, int]:
+    """Decide the reply FORMAT from what the user asked for. Returns
+    (instruction_line, max_tokens, data_char_cap). Honours table/list requests
+    (KO+EN) — model-agnostic, so 'make a table' yields a real Markdown table."""
+    u = (user_msg or "").lower()
+    wants_table = ("표" in (user_msg or "")) or any(
+        k in u for k in ("table", "tabular", "spreadsheet", "grid", "테이블",
+                         "표로", "표 만", "칸으로", "행과 열", "도표"))
+    wants_list = any(k in u for k in ("list", "bullet", "목록", "리스트",
+                                      "나열", "항목별", "불릿"))
+    if wants_table:
+        return (
+            "Format the answer as a clean GitHub-flavored MARKDOWN TABLE.\n"
+            "- Choose sensible column headers from the data.\n"
+            "- One row per item; include EVERY row present in the result "
+            "(don't truncate); order newest/most-relevant first.\n"
+            "- Use the real numbers/dates from the result. At most ONE short "
+            "line of text before the table.\n",
+            1300, 6000,
+        )
+    if wants_list:
+        return (
+            "Format the answer as a concise MARKDOWN bullet list — one bullet per "
+            "item with its key fields and real values. No long prose.\n",
+            900, 5000,
+        )
+    return (
+        "Summarize it for the boss in 1-3 sentences. Be conversational.\n",
+        300, 1500,
+    )
+
+
 def _compose_final_answer(
     system: str,
     user_msg: str,
@@ -1105,24 +1139,26 @@ def _compose_final_answer(
         "반드시 한국어로만 답변하세요 (이전 대화 언어 무시).\n" if _u_has_ko
         else "Reply in English ONLY (ignore the language of earlier turns).\n"
     )
+    # Honour the OUTPUT FORMAT the user asked for (table / list / prose).
+    fmt_line, _max_tokens, _data_cap = _output_format_directive(user_msg)
     follow_system = (
         "You just called the tool '" + tool_name + "' and got back this result.\n"
-        + _lang_line +
-        "Summarize it for the boss in 1-3 sentences.\n"
-        "Be conversational. Use specific numbers/names from the tool result. "
+        + _lang_line + fmt_line +
+        "Use specific numbers/names from the tool result verbatim. "
         "If the result has ok=false or an error, apologize and explain briefly.\n"
-        "Do NOT return JSON — just plain prose for the user."
+        "Do NOT return JSON or code fences around a table — output the table/text "
+        "directly. Do NOT add a 'summary for the boss' preamble."
     )
     summary_messages = [
         {"role": "user", "content": f"My question: {user_msg}"},
-        {"role": "user", "content": f"Tool '{tool_name}' returned:\n{json.dumps(tool_result, ensure_ascii=False)[:1500]}"},
+        {"role": "user", "content": f"Tool '{tool_name}' returned:\n{json.dumps(tool_result, ensure_ascii=False)[:_data_cap]}"},
     ]
     try:
         reply = chat_completion_sync(
             system_prompt=follow_system,
             messages=summary_messages,
-            max_tokens=300,
-            temperature=0.5,
+            max_tokens=_max_tokens,
+            temperature=0.4,
             model="groq-llama-3.3-70b",
         )
         return (reply or "").strip() or "(no reply)"

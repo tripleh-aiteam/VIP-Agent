@@ -21,6 +21,13 @@
 - **Verified live:** Jeju real estate sorted 241M→29M (주거/토지/호텔, no securities), cars all 자동차/승용차, Busan land works.
 - **Honest scope:** OnBid only lists assets currently up for public auction; tool returns a `note` when a region/keyword has no current matches.
 
+### [later] Honour output FORMAT — "make a table" now returns a real table
+
+- **Problem:** asking "...make it table" returned a prose report — the compose step hardcoded "Summarize for the boss in 1-3 sentences / plain prose", and the chat UI rendered plain text (no markdown), so even a table would show as raw pipes.
+- **Backend:** [apps/orchestrator-api/services/assistant_agent.py](apps/orchestrator-api/services/assistant_agent.py) — new `_output_format_directive(user_msg)` detects table/표/테이블 or list/목록 (KO+EN) and switches the compose instruction to emit a GitHub-flavored Markdown table (or bullet list), with more tokens + a larger data cap (so all rows survive, not truncated at 1500 chars). Applied to BOTH the single-tool compose (`_compose_final_answer`) and the multi-tool chain compose. Model-agnostic (works whatever LLM composes).
+- **Frontend:** [apps/admin-dashboard/src/components/ChatWorkspace.tsx](apps/admin-dashboard/src/components/ChatWorkspace.tsx) — added a dependency-free `MarkdownLite` renderer (tables, **bold**, `code`, bullet lists, line breaks) and render assistant bubbles through it, so a Markdown table displays as a styled HTML table.
+- **Note:** only the VIP admin-dashboard ChatWorkspace got the renderer; the other agent frontends can get the same `MarkdownLite` when needed.
+
 ### [later] Cross-agent ROUTING + stock quote — fix "SK Hynix price went to web_search"
 
 - **Problem:** "what is the current cost of SK Hynix" in VIP went to `web_search` (broken, no key) instead of the Stock agent; AND even the Stock agent couldn't answer it (its tools had no by-name quote, `stock_get_price_history` returned 0).
