@@ -991,9 +991,15 @@ def _compose_final_answer(
     history: list[dict],
 ) -> str:
     """Second LLM turn: tool data → natural-language answer."""
+    _u_has_ko = any(0xAC00 <= ord(c) <= 0xD7A3 for c in (user_msg or ""))
+    _lang_line = (
+        "반드시 한국어로만 답변하세요 (이전 대화 언어 무시).\n" if _u_has_ko
+        else "Reply in English ONLY (ignore the language of earlier turns).\n"
+    )
     follow_system = (
         "You just called the tool '" + tool_name + "' and got back this result.\n"
-        "Summarize it for the boss in 1-3 sentences (same language as their question).\n"
+        + _lang_line +
+        "Summarize it for the boss in 1-3 sentences.\n"
         "Be conversational. Use specific numbers/names from the tool result. "
         "If the result has ok=false or an error, apologize and explain briefly.\n"
         "Do NOT return JSON — just plain prose for the user."
@@ -1990,6 +1996,18 @@ def _run_agent_impl(
         agent_id=agent_id,
         page_context=page_context,
     )
+    # STRICT per-turn language lock. The soft "match the user's language" hint
+    # was being overridden by conversation history (replies drifting to Korean
+    # on the 2nd turn, or answering Korean to English). This hard rule, based on
+    # the CURRENT message's detected language, fixes voice + text replies.
+    _lang_rule = (
+        "■ 언어 규칙(필수): 사용자의 이번 메시지는 한국어입니다. 이전 대화 언어와 "
+        "상관없이 반드시 한국어로만 답변하세요.\n\n"
+        if lang == "ko" else
+        "■ LANGUAGE RULE (strict): The user's CURRENT message is in English. "
+        "Reply in English ONLY — ignore the language of earlier turns.\n\n"
+    )
+    system = _lang_rule + system
     _debug_kb = {
         "agent_id": agent_id,
         "hit_count": len(kb_hits),
