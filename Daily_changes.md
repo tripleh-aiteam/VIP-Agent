@@ -21,6 +21,15 @@
 - **Verified live:** Jeju real estate sorted 241M→29M (주거/토지/호텔, no securities), cars all 자동차/승용차, Busan land works.
 - **Honest scope:** OnBid only lists assets currently up for public auction; tool returns a `note` when a region/keyword has no current matches.
 
+### [later v3] 국토교통부 실거래가 (real property prices) — for valuation questions
+
+- **Why:** OnBid only lists assets currently at auction, so "how much is 거여동 178-30 단독주택?" / "most expensive buildings" (valuation questions) can't be answered from OnBid. Added the MOLIT actual-sale-price API as a second tool.
+- **Files added:** [apps/orchestrator-api/services/molit_tools.py](apps/orchestrator-api/services/molit_tools.py) (`realprice_search(region, dong, property_type, sort, months, limit)` — queries data.go.kr RTMS 실거래가 for 아파트/단독다가구/연립다세대/오피스텔/토지, parses KO+EN field names, aggregates avg/min/max, sorts by price) and [apps/orchestrator-api/services/molit_lawd.py](apps/orchestrator-api/services/molit_lawd.py) (시군구 LAWD_CD table + `resolve_lawd()` — Seoul 25구, metros, Sejong, Gyeonggi 시, KO/EN aliases).
+- **Files updated:** [apps/orchestrator-api/services/assistant_tools.py](apps/orchestrator-api/services/assistant_tools.py) — registered `realprice_search` for 시세/실거래가/얼마/"how much" property questions (routes there instead of onbid_search/web_search).
+- **Also fixed (v2.1):** onbid_search district/dong filter was silently disabled when a region was set (`_region_term` returned truthy for any text) — fixed so 송파/거여 filter correctly and the keyword now also matches the address.
+- **Key:** reads `MOLIT_SERVICE_KEY`, falls back to `ONBID_SERVICE_KEY` (data.go.kr keys are account-wide).
+- **NEXT (user action):** subscribe (활용신청) the RTMS 실거래가 services on data.go.kr (아파트/단독·다가구/연립·다세대/오피스텔/토지 매매) — until then the API returns Forbidden and the tool says so. Same key works once subscribed.
+
 ### Goal
 
 Multi-day push (2026-06-04 → 06-08): make the chatbot usable offline, get the KakaoTalk channel answering reliably, turn the product into a sellable multi-tenant SaaS (the user keeps using their own instance in parallel), and fix voice/text language mirroring across all 5 agents.

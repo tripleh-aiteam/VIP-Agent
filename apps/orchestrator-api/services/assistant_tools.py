@@ -2967,6 +2967,42 @@ except Exception as _e:  # never let a tool-pack failure break the assistant
     log.warning(f"onbid_tools registration skipped: {_e}")
 
 
+# --- MOLIT 실거래가 (real property sale prices) tool ------------------------
+try:
+    from services.molit_tools import tool_realprice_search
+    TOOL_REGISTRY["realprice_search"] = Tool(
+        name="realprice_search", kind="read",
+        description=(
+            "Look up ACTUAL recorded property sale prices (국토교통부 실거래가) for "
+            "a Korean area — use this for 'how much is/was X property', 시세, "
+            "실거래가, 얼마, 매매가, 'price of a house/apartment in <area>', or to "
+            "value/compare property NOT at auction. (For auction items use "
+            "onbid_search instead.) Give `region` = the 시군구 (송파구/Songpa/수원시), "
+            "optional `dong` (법정동 e.g. 거여동), `property_type` "
+            "('apartment'/'아파트', 'house'/'단독주택', 'villa'/'연립다세대', "
+            "'officetel'/'오피스텔', 'land'/'토지'), and optional `sort` "
+            "('expensive'/'cheap'). Returns recent real transactions with price, "
+            "area, build year, floor and date, plus avg/min/max. Relay `note` "
+            "honestly if no sales are found."
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "region": {"type": "string", "description": "시군구 — 송파구, Songpa, 수원시 (required)"},
+                "dong": {"type": "string", "description": "Optional 법정동 within the 시군구 (거여동)"},
+                "property_type": {"type": "string", "description": "apartment/아파트, house/단독주택, villa/연립다세대, officetel/오피스텔, land/토지"},
+                "sort": {"type": "string", "description": "'expensive' or 'cheap' (default: most recent)"},
+                "months": {"type": "integer", "description": "Recent months to scan (default 4)"},
+                "limit": {"type": "integer", "description": "Max transactions (1-20, default 8)"},
+            },
+            "required": ["region"],
+        },
+        fn=tool_realprice_search,
+    )
+except Exception as _e:
+    log.warning(f"molit_tools registration skipped: {_e}")
+
+
 # --- Stock Advisor live-data tools -----------------------------------------
 # Registered from a separate module (passing TOOL_REGISTRY + Tool to avoid a
 # circular import). These give the OASIS Stock agent real-time access to its
