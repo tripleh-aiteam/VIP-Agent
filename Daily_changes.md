@@ -21,6 +21,13 @@
 - **Verified live:** Jeju real estate sorted 241M→29M (주거/토지/호텔, no securities), cars all 자동차/승용차, Busan land works.
 - **Honest scope:** OnBid only lists assets currently up for public auction; tool returns a `note` when a region/keyword has no current matches.
 
+### [later] Cross-agent hub — VIP assistant can query the other agents
+
+- **Why:** user wants to ask an Asset/Stock/Realty question while inside VIP and have the VIP assistant fetch the answer from that agent (and any future agent) and compose a report — not navigate away or guess.
+- **How:** all agents are served by the same orchestrator scoped by `agent_id`, so [apps/orchestrator-api/services/cross_agent_tools.py](apps/orchestrator-api/services/cross_agent_tools.py) adds `ask_agent(agent, question)` that runs `run_agent(agent_id=<target>)` in-process and returns that agent's own answer. Targets resolve dynamically from `AGENT_PROFILES` (+ KO/EN domain-word hints), so a newly-added agent is reachable automatically; `agent='all'` fans out to every agent for a combined report. A `contextvars` depth guard prevents recursive loops.
+- **Files updated:** [apps/orchestrator-api/services/assistant_tools.py](apps/orchestrator-api/services/assistant_tools.py) — registered `ask_agent`; [apps/orchestrator-api/services/assistant_agent.py](apps/orchestrator-api/services/assistant_agent.py) — added a CROSS-AGENT DATA routing rule so the VIP assistant calls `ask_agent` for another agent's data instead of navigating/guessing.
+- **Verified (local):** resolver maps asset/Asset Agent/자산→asset, 부동산 매물→realty, all→[realty,asset,stock,aiglass], unknown→helpful error.
+
 ### [later v4] OnBid full item DETAIL (물건 상세)
 
 - **Why:** user wants the chatbot to know EVERYTHING about each OnBid item (the mvmnCltrDtl.do detail page), not just the list — "analyze and answer any question, I don't want to search manually."

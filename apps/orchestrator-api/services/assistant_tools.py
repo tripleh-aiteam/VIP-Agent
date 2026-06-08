@@ -3032,6 +3032,39 @@ except Exception as _e:
     log.warning(f"molit_tools registration skipped: {_e}")
 
 
+# --- Cross-agent query (VIP hub → other agents) ----------------------------
+try:
+    from services.cross_agent_tools import tool_ask_agent
+    TOOL_REGISTRY["ask_agent"] = Tool(
+        name="ask_agent", kind="read",
+        description=(
+            "Ask ANOTHER of the boss's agents a question and get its answer using "
+            "THAT agent's own data, knowledge base and tools — use this whenever "
+            "the user (while in VIP) asks about another agent's domain instead of "
+            "guessing or just navigating. Targets: 'asset' (자산 — portfolio, "
+            "occupancy, rental income, valuation, leases, tenants), 'stock' (주식 — "
+            "KOSPI/KOSDAQ, watchlist, P&L, market), 'realty' (부동산 — listings/매물 "
+            "search), 'aiglass', or any future agent — pass 'all' to ask every "
+            "agent and build a combined report. Examples: 'what's my total asset "
+            "value?' → ask_agent('asset', …); 'how's my stock portfolio?' → "
+            "ask_agent('stock', …); 'give me a report across all my agents about "
+            "X' → ask_agent('all', 'X'). Then compose the answer/report and cite "
+            "which agent each fact came from."
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "agent": {"type": "string", "description": "Target agent: asset/stock/realty/aiglass, a domain word (자산/주식/부동산), or 'all'"},
+                "question": {"type": "string", "description": "The question to ask that agent (in the user's language)"},
+            },
+            "required": ["agent", "question"],
+        },
+        fn=tool_ask_agent,
+    )
+except Exception as _e:
+    log.warning(f"cross_agent_tools registration skipped: {_e}")
+
+
 # --- Stock Advisor live-data tools -----------------------------------------
 # Registered from a separate module (passing TOOL_REGISTRY + Tool to avoid a
 # circular import). These give the OASIS Stock agent real-time access to its
