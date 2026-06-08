@@ -460,11 +460,29 @@ def tool_agent_status(name: str, db: Session = None, **_kw) -> dict[str, Any]:
         from db.models import CoreAgent
         from adapters import get_adapter
         name_lower = (name or "").lower().strip()
-        # Map friendly names → agent.type
-        type_map = {"asset": "asset", "stock": "stock", "realty": "realty",
-                    "real estate": "realty", "자산": "asset", "주식": "stock",
-                    "부동산": "realty"}
-        agent_type = type_map.get(name_lower)
+        # Resolve friendly names → agent.type by SUBSTRING (so "Asset Agent",
+        # "the asset agent", "자산 에이전트" all work — not just exact "asset").
+        agent_type = None
+        for key, t in (
+            ("asset", "asset"), ("자산", "asset"),
+            ("stock", "stock"), ("주식", "stock"),
+            ("real estate", "realty"), ("real-estate", "realty"),
+            ("realty", "realty"), ("부동산", "realty"),
+        ):
+            if key in name_lower:
+                agent_type = t
+                break
+        if not agent_type:
+            # Fall back to matching a registered agent by its name.
+            rows = db.query(CoreAgent).filter(CoreAgent.status == "active").all()
+            m = next(
+                (a for a in rows
+                 if name_lower and ((a.name or "").lower() in name_lower
+                                    or name_lower in (a.name or "").lower())),
+                None,
+            )
+            if m:
+                agent_type = m.type
         if not agent_type:
             return {"ok": False, "error": f"Unknown agent '{name}'. Use Asset/Stock/Realty."}
         ag = db.query(CoreAgent).filter(CoreAgent.type == agent_type,
@@ -582,16 +600,24 @@ def tool_count(entity: str, db: Session = None, **_kw) -> dict[str, Any]:
             return {"ok": True, "entity": "meetings", "count": n}
         if e in ("agents", "agent", "core_agents"):
             from db.models import CoreAgent
-            agents = db.query(CoreAgent).all()
-            active = [a for a in agents if a.status == "active"]
+            all_rows = db.query(CoreAgent).all()
+            # Exclude seed/test junk (mock OR removed) entirely — the user only
+            # counts their REAL agents. Headline count = active agents.
+            real = [a for a in all_rows
+                    if not bool(getattr(a, "is_mock", False)) and a.status != "removed"]
+            active = [a for a in real if a.status == "active"]
+            errored = [a for a in real if a.status == "error"]
             return {
-                "ok": True, "entity": "agents", "count": len(agents),
+                "ok": True, "entity": "agents",
+                "count": len(active),               # what "how many agents" should report
                 "active_count": len(active),
+                "error_count": len(errored),
                 "list": [
-                    {"name": a.name, "type": a.type, "status": a.status,
-                     "is_mock": bool(getattr(a, "is_mock", False))}
-                    for a in agents
+                    {"name": a.name, "type": a.type, "status": a.status}
+                    for a in active
                 ],
+                "errored": [a.name for a in errored],
+                "note": "count = your active agents (mock/removed seed agents excluded)",
             }
         return {"ok": False, "error": f"Unknown entity '{entity}'. Try: twins, conversations, tasks, reports, approvals, meetings, agents."}
     except Exception as ex:
