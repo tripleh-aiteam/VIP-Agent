@@ -124,15 +124,34 @@ def _detect_category_key(text: str) -> str | None:
     return None
 
 
+# 시도 short forms used to recognise province-level region words.
+_SIDO_SHORTS = ("서울", "부산", "대구", "인천", "광주", "대전", "울산", "세종",
+                "경기", "강원", "충북", "충남", "전북", "전남", "경북", "경남", "제주")
+
+
+def _looks_like_region(s: str) -> bool:
+    """True only for province-level region words (시도) — NOT districts/dongs.
+    Districts (송파구) and dongs (거여동) are handled as keyword/address filters."""
+    t = (s or "").strip().lower()
+    if not t:
+        return False
+    if any(en in t for en in _REGION_ALIASES):
+        return True
+    raw = s.strip()
+    if any(short in raw for short in _SIDO_SHORTS):
+        return True
+    return raw.endswith(("특별자치도", "특별자치시", "광역시", "특별시")) or raw in ("도", "시")
+
+
 def _region_term(region: str) -> str:
-    """Normalise a region argument to a Korean substring to match in addresses."""
-    r = (region or "").strip().lower()
-    if not r:
+    """Normalise a province-level region to a Korean substring for address matching.
+    Returns '' for non-region text (so it never silently swallows a keyword)."""
+    if not _looks_like_region(region):
         return ""
+    r = (region or "").strip().lower()
     for en, ko in _REGION_ALIASES.items():
         if en in r:
             return ko
-    # Already Korean (or unknown) — strip common suffixes for loose matching.
     raw = region.strip()
     for suf in ("특별자치도", "특별자치시", "광역시", "특별시", "도", "시"):
         if raw.endswith(suf) and len(raw) > len(suf):
@@ -225,12 +244,18 @@ def tool_onbid_search(
     cat_key = _detect_category_key(f"{category} {keyword}")
     cat_code = _CATEGORY_CODES.get(cat_key) if cat_key else None
     cat_frags = _CATEGORY_FRAGMENTS.get(cat_key, ()) if cat_key else ()
-    rterm = _region_term(region) or _region_term(keyword)
-    kw = (keyword or "").strip().lower()
-    # If the keyword was purely a region/category cue, don't also name-filter on it.
-    if kw and (kw == (region or "").strip().lower() or _detect_category_key(keyword)
-               or _region_term(keyword)):
+    rterm = _region_term(region)
+    kw = (keyword or "").strip()
+    # If no explicit region but the keyword IS a province-level region, use it as
+    # the region (and don't also name-filter on it).
+    if not rterm and kw and _looks_like_region(kw):
+        rterm = _region_term(kw)
         kw = ""
+    # If the keyword is purely a category cue (e.g. 'car', '아파트'), the category
+    # filter already handles it — don't also name-filter on it.
+    if kw and _detect_category_key(kw):
+        kw = ""
+    kw = kw.lower()
 
     try:
         lim = max(1, min(int(limit or 8), 20))
@@ -261,7 +286,8 @@ def tool_onbid_search(
         if cat_frags and not any(f in (it.get("category") or "") for f in cat_frags):
             return False
         if kw:
-            hay = f"{it.get('name','')} {it.get('detail','')} {it.get('category','')}".lower()
+            hay = (f"{it.get('name','')} {it.get('detail','')} "
+                   f"{it.get('category','')} {it.get('address','')}").lower()
             if kw not in hay:
                 return False
         return True
