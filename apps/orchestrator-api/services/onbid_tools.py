@@ -190,6 +190,13 @@ def _parse_items(xml_text: str) -> list[dict[str, Any]]:
             "status": g("PBCT_CLTR_STAT_NM"),
             "fail_count": g("USCBD_CNT"),
             "detail": g("GOODS_NM"),
+            "mgmt_no": g("CLTR_MNMT_NO"),
+            # IDs needed to pull the full 물건 상세 (onbid_detail / BasicInfoDetail)
+            "plnm_no": g("PLNM_NO"),
+            "pbct_no": g("PBCT_NO"),
+            "cltr_no": g("CLTR_NO"),
+            "cltr_hstr_no": g("CLTR_HSTR_NO"),
+            "pbct_cdtn_no": g("PBCT_CDTN_NO"),
         })
     return out
 
@@ -344,4 +351,121 @@ def tool_onbid_search(
         "total_scanned": len(pool),
         "items": out_items,
         "note": note,
+    }
+
+
+# ===========================================================================
+#  Full item detail (the 물건 상세 page)
+# ===========================================================================
+
+_DETAIL_BASIC = "ThingInfoInquireSvc/getUnifyUsageCltrBasicInfoDetail"
+
+# BasicInfoDetail field → clean English-ish key (the full 상세 record).
+_DETAIL_FIELDS: dict[str, str] = {
+    "CLTR_NM": "name", "CTGR_FULL_NM": "category", "CTGR_TYPE_NM": "category_type",
+    "DPSL_MTD_NM": "dispose_method", "BID_MTD_NM": "bid_method",
+    "PBCT_CLTR_STAT_NM": "status", "PRPT_DVSN_NM": "asset_type",
+    "ORG_NM": "agency", "RGST_DEPT_NM": "agency_dept", "PSCG_NM": "team",
+    "PSCG_TPNO": "contact_phone", "DLGT_ORG_NM": "delegating_org",
+    "LDNM_ADRS": "address_jibun", "NMRD_ADRS": "address_road",
+    "CLTR_MNMT_NO": "mgmt_no", "LAND_SQMS": "land_area", "BLD_SQMS": "building_area",
+    "POSI_ENV_PSCD": "location_desc", "UTLZ_PSCD": "usage_status",
+    "ETC_DTL_CNTN": "etc", "ICDL_CDTN": "special_conditions",
+    "MIN_BID_PRC": "min_bid_raw", "PCMT_PYMT_EPDT_CNTN": "payment_term",
+    "DLVR_RSBY": "delivery_responsibility", "BLD_NM": "building_name",
+    "DONG": "dong", "FLR": "floor", "ELVT_YN": "elevator", "PKLT_YN": "parking",
+}
+
+
+def _fetch_detail_basic(ids: dict[str, str]) -> dict[str, Any] | None:
+    """Pull the full 물건 기본정보 상세 for one item given its IDs."""
+    key = _service_key()
+    if not key:
+        return None
+    params = {"serviceKey": key}
+    for f in ("PLNM_NO", "PBCT_NO", "CLTR_NO", "CLTR_HSTR_NO", "PBCT_CDTN_NO"):
+        v = ids.get(f.lower())
+        if v:
+            params[f] = v
+    try:
+        with httpx.Client(timeout=10) as c:
+            r = c.get(f"{_BASE}/{_DETAIL_BASIC}", params=params)
+        if r.status_code != 200 or "<resultCode>00</resultCode>" not in r.text:
+            return None
+        root = ET.fromstring(r.text)
+    except Exception as e:
+        log.warning(f"onbid detail failed: {e}")
+        return None
+    item = next(root.iter("item"), None)
+    if item is None:
+        return None
+    rec: dict[str, Any] = {}
+    for tag, key_name in _DETAIL_FIELDS.items():
+        val = (item.findtext(tag) or "").strip()
+        if not val:
+            continue
+        if key_name == "min_bid_raw":
+            rec["min_bid"] = _fmt_won(_to_int(val))
+        else:
+            rec[key_name] = val
+    return rec or None
+
+
+def tool_onbid_detail(
+    query: str = "",
+    region: str = "",
+    cltr_no: str = "",
+    cltr_hstr_no: str = "",
+    plnm_no: str = "",
+    pbct_no: str = "",
+    pbct_cdtn_no: str = "",
+    limit: int = 1,
+    db=None,
+    **_kw,
+) -> dict[str, Any]:
+    """Get the FULL OnBid detail (물건 상세) for an item — agency & phone, full
+    jibun/road address, land/building area, location & usage description, minimum
+    bid, payment term, delivery responsibility and special conditions (e.g. 전입세대).
+
+    Provide EITHER explicit IDs (cltr_no + cltr_hstr_no, ideally also plnm_no /
+    pbct_no — e.g. from a previous onbid_search result) OR a `query` (item name /
+    keyword) plus optional `region` to find the item first, then detail it.
+    """
+    if not _service_key():
+        return {"ok": False, "error": "OnBid is not configured — set ONBID_SERVICE_KEY."}
+
+    targets: list[dict[str, str]] = []
+    if cltr_no and cltr_hstr_no:
+        targets.append({"plnm_no": plnm_no, "pbct_no": pbct_no, "cltr_no": cltr_no,
+                        "cltr_hstr_no": cltr_hstr_no, "pbct_cdtn_no": pbct_cdtn_no})
+    else:
+        # Find the item via search, then detail the top match(es).
+        try:
+            lim = max(1, min(int(limit or 1), 3))
+        except Exception:
+            lim = 1
+        found = tool_onbid_search(keyword=query, region=region, limit=max(lim, 3))
+        for it in found.get("items", []):
+            if it.get("cltr_no") and it.get("cltr_hstr_no"):
+                targets.append({k: it.get(k, "") for k in
+                                ("plnm_no", "pbct_no", "cltr_no", "cltr_hstr_no",
+                                 "pbct_cdtn_no")})
+            if len(targets) >= lim:
+                break
+        if not targets:
+            return {"ok": True, "count": 0, "details": [],
+                    "note": found.get("note") or
+                    f"Couldn't find an OnBid item matching '{query}'"
+                    f"{(' in '+region) if region else ''}."}
+
+    from concurrent.futures import ThreadPoolExecutor
+    with ThreadPoolExecutor(max_workers=3) as ex:
+        details = [d for d in ex.map(_fetch_detail_basic, targets) if d]
+
+    return {
+        "ok": True,
+        "source": "OnBid (온비드 / 한국자산관리공사) 물건 상세",
+        "count": len(details),
+        "details": details,
+        "note": None if details else "No detail record returned for that item.",
     }

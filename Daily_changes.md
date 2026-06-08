@@ -21,6 +21,13 @@
 - **Verified live:** Jeju real estate sorted 241M→29M (주거/토지/호텔, no securities), cars all 자동차/승용차, Busan land works.
 - **Honest scope:** OnBid only lists assets currently up for public auction; tool returns a `note` when a region/keyword has no current matches.
 
+### [later v4] OnBid full item DETAIL (물건 상세)
+
+- **Why:** user wants the chatbot to know EVERYTHING about each OnBid item (the mvmnCltrDtl.do detail page), not just the list — "analyze and answer any question, I don't want to search manually."
+- **What:** added `onbid_detail(query|ids…)` in [apps/orchestrator-api/services/onbid_tools.py](apps/orchestrator-api/services/onbid_tools.py) → calls OnBid `getUnifyUsageCltrBasicInfoDetail` (verified resultCode 00 with the key) and returns the full record: 담당기관·부서·전화, 지번+도로명 주소, 토지/건물면적, 위치환경·이용현황, 최저입찰가, 대금납부기한, 인도책임, 특이조건(전입세대/임차보증금), 위임기관, 재산구분. Works by explicit IDs OR by `query`+`region` (searches first, then details the top match). `onbid_search` items now carry the detail IDs (PLNM_NO/PBCT_NO/CLTR_NO/CLTR_HSTR_NO/PBCT_CDTN_NO).
+- **Note:** the sub-detail ops (감정평가서/공매일정/입찰이력/권리) return 0 items for this key across param combos — BasicInfoDetail is the comprehensive one and is used.
+- **Registered:** `onbid_detail` in [apps/orchestrator-api/services/assistant_tools.py](apps/orchestrator-api/services/assistant_tools.py). Now 3 property tools: onbid_search (list), onbid_detail (full 상세), realprice_search (실거래가 valuation).
+
 ### [later v3] 국토교통부 실거래가 (real property prices) — for valuation questions
 
 - **Why:** OnBid only lists assets currently at auction, so "how much is 거여동 178-30 단독주택?" / "most expensive buildings" (valuation questions) can't be answered from OnBid. Added the MOLIT actual-sale-price API as a second tool.

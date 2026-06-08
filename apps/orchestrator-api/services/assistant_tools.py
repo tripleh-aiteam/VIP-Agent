@@ -2963,6 +2963,35 @@ try:
         },
         fn=tool_onbid_search,
     )
+    from services.onbid_tools import tool_onbid_detail
+    TOOL_REGISTRY["onbid_detail"] = Tool(
+        name="onbid_detail", kind="read",
+        description=(
+            "Get the FULL detail of ONE OnBid auction item (the 물건 상세 page) — "
+            "managing agency & phone number, full jibun + road address, land & "
+            "building area, location/usage description, minimum bid, payment term "
+            "(대금납부기한), delivery responsibility (인도책임) and special "
+            "conditions like 전입세대/임차인. Use when the user wants EVERYTHING / "
+            "the full details about a specific item ('이 물건 상세', 'tell me "
+            "everything about <item>', '자세히'). Pass a `query` (the item name or "
+            "keyword, e.g. '마곡동 단독주택') with optional `region`, OR the exact "
+            "IDs (cltr_no + cltr_hstr_no, ideally plnm_no/pbct_no) returned by a "
+            "previous onbid_search."
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "Item name/keyword to find the item (e.g. '마곡동 단독주택')"},
+                "region": {"type": "string", "description": "Optional region to disambiguate (제주, 서울…)"},
+                "cltr_no": {"type": "string", "description": "물건번호 (from a prior onbid_search item)"},
+                "cltr_hstr_no": {"type": "string", "description": "물건이력번호 (from a prior onbid_search item)"},
+                "plnm_no": {"type": "string", "description": "공고번호 (optional, improves the lookup)"},
+                "pbct_no": {"type": "string", "description": "공매번호 (optional)"},
+            },
+            "required": [],
+        },
+        fn=tool_onbid_detail,
+    )
 except Exception as _e:  # never let a tool-pack failure break the assistant
     log.warning(f"onbid_tools registration skipped: {_e}")
 
