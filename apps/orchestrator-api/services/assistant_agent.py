@@ -727,9 +727,57 @@ def _call_llm_for_decision(
     # (useful for telemetry — the overlay can show 'groq' / 'gemini' chip).
     parsed = _extract_json(raw)
     if not isinstance(parsed, dict):
+        # Some models (Llama via Groq) emit tool calls as '<|python_tag|>name(args)'
+        # instead of JSON — parse that so the call isn't leaked as raw text.
+        call = _parse_pythonic_call(raw)
+        if call:
+            call["_model"] = primary
+            return call
         return {"answer": raw[:500], "_model": primary}
     parsed["_model"] = primary
     return parsed
+
+
+def _parse_pythonic_call(text: str) -> Optional[dict]:
+    """Parse a Llama-style tool call ('<|python_tag|>name(arg=val, …)' or a bare
+    'name(kw=val, …)') into {'tool': name, 'args': {...}}. Returns None unless it
+    cleanly resolves to a KNOWN tool — so prose is never misread as a call."""
+    if not text:
+        return None
+    import ast
+    import re as _re
+    t = text.strip()
+    for marker in ("<|python_tag|>", "<|python_end|>", "<|eom_id|>", "```python", "```"):
+        t = t.replace(marker, "")
+    t = t.strip()
+    # Accept an optional surrounding list: [name(...)]
+    if t.startswith("[") and t.endswith("]"):
+        t = t[1:-1].strip()
+    m = _re.match(r"^([a-zA-Z_][a-zA-Z0-9_]*)\s*\((.*)\)\s*$", t, _re.S)
+    if not m:
+        return None
+    name, argstr = m.group(1), m.group(2)
+    if name not in TOOL_REGISTRY:
+        return None
+    args: dict[str, Any] = {}
+    try:
+        node = ast.parse(f"_f({argstr})", mode="eval").body
+        for kw in node.keywords:  # type: ignore[attr-defined]
+            try:
+                args[kw.arg] = ast.literal_eval(kw.value)
+            except Exception:
+                args[kw.arg] = None
+        if node.args:  # type: ignore[attr-defined]
+            props = list((TOOL_REGISTRY[name].parameters.get("properties") or {}).keys())
+            for i, a in enumerate(node.args):  # positional → param order
+                if i < len(props):
+                    try:
+                        args[props[i]] = ast.literal_eval(a)
+                    except Exception:
+                        pass
+    except Exception:
+        return None
+    return {"tool": name, "args": args}
 
 
 def _extract_json(text: str) -> Any:
