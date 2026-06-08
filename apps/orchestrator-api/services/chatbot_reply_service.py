@@ -786,13 +786,18 @@ async def generate_quick_reply(agent_id: str, incoming_text: str) -> str:
 
 
 def _detect_lang(text: str) -> str:
-    """Detect whether the customer's message is Korean or English.
-    Returns 'ko' if any Hangul characters are present, else 'en'.
-    Treats messages with mixed content as Korean (since Korean is the
-    primary language for this Kakao channel)."""
+    """Detect the QUESTION's language (not the data's).
+
+    A message with ≥2 English words is treated as English even when it mentions
+    Korean proper nouns (property/place names like '의정부한양파크뷰') — which
+    previously forced a Korean reply. Only Korean when there's Hangul and it's
+    not an English sentence. Empty → 'ko' (Korean-first channel default)."""
     if not text:
         return "ko"
-    # Count Hangul syllables (U+AC00–U+D7A3) and Hangul jamo (U+3131–U+318E)
+    import re as _re2
+    eng_words = len(_re2.findall(r"[A-Za-z]{2,}", text))
+    if eng_words >= 2:
+        return "en"
     for ch in text:
         cp = ord(ch)
         if 0xAC00 <= cp <= 0xD7A3 or 0x3131 <= cp <= 0x318E:

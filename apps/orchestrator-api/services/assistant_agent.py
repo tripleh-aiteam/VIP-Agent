@@ -1863,13 +1863,22 @@ def _run_agent_impl(
 
     transcript = (transcript or "").strip()
 
-    # Detect language for the output frame (LLM matches it itself)
+    # Detect the QUESTION's language (not the data's). A pinned language wins.
+    # Otherwise: if the message has ≥2 English words it's an English question —
+    # even when it mentions Korean proper nouns (property/place names like
+    # '의정부한양파크뷰'), which previously forced a Korean reply. Only treat it
+    # as Korean when there's Hangul and it's not an English sentence.
     if language in ("ko", "en"):
         lang = language
     else:
-        # Count Hangul
+        eng_words = len(_re.findall(r"[A-Za-z]{2,}", transcript))
         hangul = sum(1 for c in transcript if 0xAC00 <= ord(c) <= 0xD7A3)
-        lang = "ko" if hangul > 0 else "en"
+        if eng_words >= 2:
+            lang = "en"
+        elif hangul > 0:
+            lang = "ko"
+        else:
+            lang = "en"
 
     # === Multimodal handling (Slice 3) ===
     # When the user attached files, we now have TWO possible flows:
@@ -2001,11 +2010,14 @@ def _run_agent_impl(
     # on the 2nd turn, or answering Korean to English). This hard rule, based on
     # the CURRENT message's detected language, fixes voice + text replies.
     _lang_rule = (
-        "■ 언어 규칙(필수): 사용자의 이번 메시지는 한국어입니다. 이전 대화 언어와 "
-        "상관없이 반드시 한국어로만 답변하세요.\n\n"
+        "■ 언어 규칙(필수): 사용자의 이번 메시지는 한국어입니다. 이전 대화 언어나 "
+        "지식자료(영어일 수 있음)와 상관없이 반드시 한국어로만 답변하세요. 필요하면 "
+        "자료 내용을 한국어로 번역해서 답변하세요.\n\n"
         if lang == "ko" else
         "■ LANGUAGE RULE (strict): The user's CURRENT message is in English. "
-        "Reply in English ONLY — ignore the language of earlier turns.\n\n"
+        "Reply in English ONLY — ignore the language of earlier turns AND of the "
+        "knowledge base. If the source data is in Korean, TRANSLATE the facts "
+        "into English in your reply (keep proper nouns/IDs as-is).\n\n"
     )
     system = _lang_rule + system
     _debug_kb = {
