@@ -309,6 +309,12 @@ def tool_onbid_search(
     with ThreadPoolExecutor(max_workers=6) as ex:
         for items in ex.map(lambda op: _fetch(op, {"numOfRows": 500}), _ACTIVE_OPS):
             add(items)
+    # OnBid occasionally returns empty/timeout under load — one quick retry so a
+    # transient hiccup doesn't surface as a false "no results found".
+    if not pool:
+        with ThreadPoolExecutor(max_workers=6) as ex:
+            for items in ex.map(lambda op: _fetch(op, {"numOfRows": 500}), _ACTIVE_OPS):
+                add(items)
 
     # 2) Top up from the big KAMCO catalogue ONLY if we still need more.
     #    It is slow, so fetch several pages in parallel with a short timeout.
