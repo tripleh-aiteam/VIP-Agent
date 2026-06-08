@@ -2139,6 +2139,14 @@ def _run_agent_impl(
     if action and tool_result.get("message"):
         # Navigation tools have a clean canned message — skip a 2nd LLM call
         reply = tool_result["message"]
+        # The canned navigate message is English; localize it for Korean users
+        # so voice/text confirmations match the spoken language.
+        if lang == "ko" and isinstance(action, dict) and action.get("type") == "navigate":
+            if action.get("external"):
+                reply = "새 탭에서 페이지를 엽니다. 🙂"
+            else:
+                _to = action.get("to") or ""
+                reply = (f"{_to} 페이지를 엽니다." if _to else "페이지를 엽니다.")
     else:
         reply = _compose_final_answer(system, transcript, tool_name, tool_result, history or [])
 
