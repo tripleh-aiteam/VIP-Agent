@@ -2913,6 +2913,41 @@ TOOL_REGISTRY["web_search"] = Tool(
 )
 
 
+# --- OnBid (온비드 / KAMCO public-auction) live-data tool -------------------
+try:
+    from services.onbid_tools import tool_onbid_search
+    TOOL_REGISTRY["onbid_search"] = Tool(
+        name="onbid_search", kind="read",
+        description=(
+            "Look up live OnBid (온비드 / 한국자산관리공사 KAMCO) public-auction "
+            "items (공매 물건). Use whenever the user asks about OnBid, 온비드, "
+            "공매, public auctions / 압류재산 / 국유재산, or wants to see auction "
+            "listings (real estate, vehicles, equipment) with their minimum bid, "
+            "appraisal price, bid open/close dates and status. Pass a `keyword` "
+            "to filter by item name, address/region, or category "
+            "(e.g. 'apartment', '아파트', '대전', '승용차', 'car'). "
+            "Returns current auction items — present them clearly and cite OnBid."
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "keyword": {
+                    "type": "string",
+                    "description": "Optional filter: item name, region/address, or category",
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Max items to return (1-20, default 8)",
+                },
+            },
+            "required": [],
+        },
+        fn=tool_onbid_search,
+    )
+except Exception as _e:  # never let a tool-pack failure break the assistant
+    log.warning(f"onbid_tools registration skipped: {_e}")
+
+
 # --- Stock Advisor live-data tools -----------------------------------------
 # Registered from a separate module (passing TOOL_REGISTRY + Tool to avoid a
 # circular import). These give the OASIS Stock agent real-time access to its

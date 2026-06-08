@@ -17,3 +17,5 @@ olefile==0.47
 # fastembed pulled out — Render free tier (512MB) can't load the model.
 # Default retrieval now uses pgroonga full-text search on Supabase. Add
 # fastembed back here and set EMBED_PROVIDER=local if you upgrade Render to >=1GB.
+
+defusedxml>=0.7.1

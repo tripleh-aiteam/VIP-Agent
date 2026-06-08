@@ -2,6 +2,70 @@
 
 ---
 
+## 2026-06-08 (Monday) — No-LLM offline mode, Kakao reliability, white-label multi-tenant SaaS, language mirroring
+
+### [later] OnBid (온비드 / KAMCO 공매) integration into the VIP assistant
+
+- **What:** the assistant can now answer OnBid / 온비드 / 공매 (public-auction) questions with live data — listings with category, address, minimum bid, appraisal price, bid open/close dates and status; optional keyword filter by name / region / category.
+- **How:** new [apps/orchestrator-api/services/onbid_tools.py](apps/orchestrator-api/services/onbid_tools.py) wraps the **next-gen** OnBid OpenAPI `http://openapi.onbid.co.kr/newopenapi/services/ThingInfoInquireSvc/` (`getInterestTop20` + `getUnifyNewCltrList`, both verified resultCode 00). Parses XML with `defusedxml` (XXE-safe), dedupes, formats 원/dates. Registered as read tool `onbid_search` in [apps/orchestrator-api/services/assistant_tools.py](apps/orchestrator-api/services/assistant_tools.py) — visible to all agents via `list_tool_schemas()`, so the VIP assistant routes OnBid questions to it automatically.
+- **Security:** API key read ONLY from env `ONBID_SERVICE_KEY` — never hardcoded/committed. Added `defusedxml>=0.7.1` to requirements.
+- **Why:** user request — "API key please implement it to my VIP chatbot and assistant so if I ask question related to Onbid it must answer."
+- **Next:** user must set `ONBID_SERVICE_KEY` on Render (orchestrator) for it to return live data; otherwise the tool replies "OnBid is not configured."
+
+### Goal
+
+Multi-day push (2026-06-04 → 06-08): make the chatbot usable offline, get the KakaoTalk channel answering reliably, turn the product into a sellable multi-tenant SaaS (the user keeps using their own instance in parallel), and fix voice/text language mirroring across all 5 agents.
+
+### No-LLM "offline" mode (server-side + true browser-local)
+
+- [apps/orchestrator-api/services/assistant_agent.py](apps/orchestrator-api/services/assistant_agent.py) — `_offline_answer()` rewritten: `_extract_clean_answer()` pulls the clean answer out of learned notes (`**Good answer:**` etc.) instead of dumping raw `[Sheet:]` chunks; prefers verified `good-`/`web-` learned notes (≥0.58 sim, excludes behavioural `fix-` notes); `_offline_basic_answer()` handles greetings/thanks/capabilities/"what menus do I have" (EN+KO) so offline answers basics instead of "I couldn't find this"; unanswered offline turns flagged `needs_llm` → logged as a knowledge gap → background research.
+- [stock_advisor_agent/web/src/components/assistant/ChatWorkspace.tsx], the 4 VIP-family `ChatWorkspace.tsx` (VIP/AIGlass/Asset/Realty), all 5 `AssistantCard.tsx`, Stock `ModelPicker.tsx` — added the **⚡ No-LLM (offline)** picker option AND a `localOfflineAnswer()` that works with NO internet (basic Q&A + on-screen menu-link navigation + current-page keyword scan); auto-switches on `navigator.onLine`/fetch-failure with a "📴 No internet" banner; falls back to `aiglass`/legacy so nothing breaks.
+
+### PDF download
+
+- The 4 VIP-family `ChatWorkspace.tsx` — replaced the iframe `print()` "PDF" with a real **jsPDF** document that opens in a new tab (was triggering the print dialog). Added `jspdf` dep to VIP/AIGlass/Realty (Asset/Stock already had it).
+
+### KakaoTalk channel (customer chatbot)
+
+- DB (Oasis VIP Agent Supabase) — re-pointed channel `6a056ecafa4a4cb40f036cd7` (@부동산에이전트챗봇) from `vip` → `aiglass`; set `aiglass` to auto-reply (Boss-OUT).
+- [apps/orchestrator-api/routers/kakao_webhook.py](apps/orchestrator-api/routers/kakao_webhook.py) — **fast path**: plain-text auto-reply computed with NO DB queries (cached channel→agent + mode + KB) and returned immediately; persistence + dashboard broadcast moved to a background task (`_persist_text_exchange_bg`). Dropped reply time ~5s → ~3s (was timing out past Kakao's 5s skill limit). Customer-name extraction (`_extract_customer_name`) from self-intros ("저는 X입니다" / "my name is X").
+- [apps/orchestrator-api/services/chatbot_reply_service.py](apps/orchestrator-api/services/chatbot_reply_service.py) — `generate_quick_reply()` (no-DB Groq reply over cached realty KB); reuse caller's DB session; pass `db` to `get_mode`.
+- [apps/orchestrator-api/services/chatbot_talk.py](apps/orchestrator-api/services/chatbot_talk.py) — cache the Triple H realty KB in-process (1h) instead of re-parsing the Excel every message.
+- [apps/orchestrator-api/services/chatbot_conversation_service.py](apps/orchestrator-api/services/chatbot_conversation_service.py) — `update_customer_name` + auto-capture; cached per-agent Kakao credentials.
+- [apps/orchestrator-api/routers/chatbot_inbox.py](apps/orchestrator-api/routers/chatbot_inbox.py) — `POST /{agent}/customers/{id}/name`; `GET/POST /{agent}/tenant`; `resolve-tenant`, `claim-legacy-agent`.
+- [.github/workflows/keep-orchestrator-warm.yml](.github/workflows/keep-orchestrator-warm.yml) — keep-alive (later found user already runs UptimeRobot; `/health` now also warms the Kakao caches).
+- [aiglass-realestate-agent .../chatbot/page.tsx] — replaced the Messages placeholder with a live Kakao inbox (list + thread + ✏️ rename customer).
+- **NOTE for user:** enable **콜백(callback)** in i오픈빌더 for guaranteed delivery past 5s.
+
+### White-label multi-tenant SaaS (sellable; owner = Tenant #1)
+
+- [apps/orchestrator-api/db/models.py](apps/orchestrator-api/db/models.py) — new `ChatbotTenant` table (profile card: persona, language, branding, features, `app_tenant_id` link); per-channel Kakao credential columns on `chatbot_channel_mappings`.
+- [apps/orchestrator-api/services/tenant_config.py](apps/orchestrator-api/services/tenant_config.py) — NEW: cached read, persona-driven prompt, `resolve_or_provision_by_app_tenant` (per-buyer auto-provision + self-heal of empty workspaces), `link_app_tenant`.
+- [apps/orchestrator-api/routers/admin_business.py](apps/orchestrator-api/routers/admin_business.py) — NEW super-admin API to onboard a business in one call (fail-closed on `ADMIN_API_TOKEN`, constant-time compare).
+- [apps/orchestrator-api/services/chatbot_auth.py](apps/orchestrator-api/services/chatbot_auth.py) — NEW: HMAC token verify + `tenant_guard` (conditional, deny-by-default).
+- [apps/orchestrator-api/main.py](apps/orchestrator-api/main.py) — isolation middleware for `/api/chatbot/{agent}/*` (off until `CHATBOT_API_SECRET` set; only enforces MANAGED tenants; allowlist `CHATBOT_PUBLIC_AGENTS`; unknown agent → 404).
+- AIGlass app (other dev's repo — only NEW files/components I own): `/admin/businesses` page, `⚙️ Business` settings tab, `useChatbotAgent` hook + `/api/chatbot-agent` route (reads NextAuth session read-only), `/api/chatbot-token` + `chatbotFetch` (per-tenant token), `🥽 AIGlass` nav link restored before 챗봇.
+- Reply pipeline branches: tenant WITH persona → generic prompt + their RAG knowledge; else legacy hardcoded Triple H (aiglass byte-identical).
+
+### Language mirroring (all 5 agents)
+
+- [apps/orchestrator-api/services/assistant_agent.py](apps/orchestrator-api/services/assistant_agent.py) + [apps/orchestrator-api/services/chatbot_reply_service.py](apps/orchestrator-api/services/chatbot_reply_service.py) — detect the QUESTION's language by **word count** (≥2 English words → English even with Korean proper nouns like 의정부한양파크뷰), not "any Hangul → Korean"; strict per-turn language lock prepended to the prompt (overrides history + KB language, translate facts, keep proper nouns); navigation confirmations localized ("…페이지를 엽니다.").
+
+### Verified (live, on the Render orchestrator)
+
+- Offline mode answers basics + lists menus; learned-note junk no longer surfaces.
+- Multi-tenant: a throwaway clinic tenant replied as a dental clinic while aiglass stayed real-estate; isolation guards (401/403/404) tested off+on.
+- Kakao reply ~3s, routes to aiglass, auto-replies; customer name auto-captured (김민수).
+- Language: English-with-Korean-noun question → English reply (verifying final case at session end).
+
+### Next
+
+- User action: set `CHATBOT_API_SECRET` (same on Render + Vercel) + `ADMIN_API_TOKEN` to turn isolation/admin on; ensure `CHATBOT_PUBLIC_AGENTS` lists standalone agents; enable Kakao 콜백.
+- Extend data isolation to `/chat/agent` + `/assistant/knowledge/*` (conditional, needs token wiring in all 5 frontends).
+- Deferred: Meeting_Agent integration into VIP; Calls/voice per tenant; billing.
+
+---
+
 ## 2026-05-22 (Friday) — Notion-AI-style Assistant: Slice 1 + Slice 2
 
 ### Goal
