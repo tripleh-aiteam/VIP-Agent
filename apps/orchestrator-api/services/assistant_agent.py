@@ -196,6 +196,50 @@ def _agent_profile_block(agent_id: Optional[str]) -> str:
 #  System prompt builder
 # ============================================================================
 
+def _cross_agent_route_hint(transcript: Optional[str], agent_id: Optional[str]) -> str:
+    """Deterministic pre-router. When the VIP assistant gets a question that
+    clearly belongs to another agent's domain (stock / asset), prepend a
+    MANDATORY directive so the LLM routes via ask_agent(...) instead of
+    web_search or guessing. Keeps VIP as the smart hub. Realty property
+    auctions/prices are already handled by onbid_search / realprice_search."""
+    if (agent_id or "vip").lower() != "vip":
+        return ""
+    t = (transcript or "").strip().lower()
+    if not t:
+        return ""
+
+    # --- STOCK ---
+    stock_kw = ("주가", "kospi", "kosdaq", "코스피", "코스닥", "증시", "종목", "시세",
+                "현재가", "ticker", "watchlist", "관심종목", "주식", "stock", "shares",
+                "순매수", "수급", "증권", "배당", "dividend", "etf", "나스닥", "nasdaq",
+                "s&p", "dow")
+    is_stock = any(k in t for k in stock_kw)
+    if not is_stock:
+        try:
+            from services.stock_data_tools import _NAME_TO_TICKER
+            is_stock = any(name in t for name in _NAME_TO_TICKER if len(name) >= 3)
+        except Exception:
+            pass
+    if is_stock:
+        return ("■ [ROUTING — MANDATORY] This is a STOCK question. You MUST call "
+                "ask_agent(agent='stock', question=<the user's exact question>) to "
+                "get the answer from the Stock agent (it has live quotes & market "
+                "data). Do NOT use web_search. Do NOT guess. After it returns, "
+                "state the answer and cite the Stock agent.\n\n")
+
+    # --- ASSET ---
+    asset_kw = ("portfolio", "자산", "임대수익", "rental income", "occupancy",
+                "점유율", "임차인", "tenant", "asset value", "수익률", "yield",
+                "보유 자산", "valuation", "임대료")
+    if any(k in t for k in asset_kw):
+        return ("■ [ROUTING — MANDATORY] This is an ASSET-management question. You "
+                "MUST call ask_agent(agent='asset', question=<the user's exact "
+                "question>) to get the answer from the Asset agent. Do NOT use "
+                "web_search. Cite the Asset agent.\n\n")
+
+    return ""
+
+
 def _build_system_prompt(
     current_path: Optional[str] = None,
     selected_id: Optional[str] = None,
@@ -2037,6 +2081,11 @@ def _run_agent_impl(
         "into English in your reply (keep proper nouns/IDs as-is).\n\n"
     )
     system = _lang_rule + system
+    # Deterministic cross-agent pre-router (VIP only): force ask_agent for clear
+    # stock/asset questions so they never fall through to web_search.
+    _route_hint = _cross_agent_route_hint(transcript, agent_id)
+    if _route_hint:
+        system = _route_hint + system
     _debug_kb = {
         "agent_id": agent_id,
         "hit_count": len(kb_hits),

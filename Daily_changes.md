@@ -21,6 +21,13 @@
 - **Verified live:** Jeju real estate sorted 241M→29M (주거/토지/호텔, no securities), cars all 자동차/승용차, Busan land works.
 - **Honest scope:** OnBid only lists assets currently up for public auction; tool returns a `note` when a region/keyword has no current matches.
 
+### [later] Cross-agent ROUTING + stock quote — fix "SK Hynix price went to web_search"
+
+- **Problem:** "what is the current cost of SK Hynix" in VIP went to `web_search` (broken, no key) instead of the Stock agent; AND even the Stock agent couldn't answer it (its tools had no by-name quote, `stock_get_price_history` returned 0).
+- **Fix 1 — deterministic router:** `_cross_agent_route_hint()` in [apps/orchestrator-api/services/assistant_agent.py](apps/orchestrator-api/services/assistant_agent.py) detects stock/asset domain (keywords + a major-company name list) on the VIP turn and prepends a MANDATORY directive to call `ask_agent('stock'|'asset', …)` — never web_search. Injected next to the language rule. Verified: SK Hynix/삼성전자 주가/portfolio→stock, asset value/rental→asset, 제주 공매→left for onbid, weather→none.
+- **Fix 2 — stock_quote tool:** [apps/orchestrator-api/services/stock_data_tools.py](apps/orchestrator-api/services/stock_data_tools.py) adds `stock_quote(query)` — resolves a company name (SK Hynix/SK하이닉스/삼성전자/…) or 6-digit ticker via a `_NAME_TO_TICKER` map, then pulls the live price from the backend `/intraday/orderbook` (best bid/ask). Registered FIRST in the stock tool list so the Stock agent uses it for single-stock price questions. Verified live: SK Hynix→SK하이닉스 1,911,000원, 삼성전자→295,500원.
+- **Flow now:** VIP question → router classifies agent → ask_agent(stock) → Stock agent uses stock_quote → live price → back to VIP.
+
 ### [later] Cross-agent hub — VIP assistant can query the other agents
 
 - **Why:** user wants to ask an Asset/Stock/Realty question while inside VIP and have the VIP assistant fetch the answer from that agent (and any future agent) and compose a report — not navigate away or guess.

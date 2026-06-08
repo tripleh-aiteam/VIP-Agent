@@ -159,11 +159,116 @@ def tool_stock_news(**_kw) -> dict[str, Any]:
 
 
 # ============================================================================
+#  Current quote by name/ticker (resolves a company name → ticker → live price)
+# ============================================================================
+
+# Major KR names (KO + EN aliases) → 6-digit ticker. The backend symbol-search
+# only matches by ticker code, so we map common names here. Extend as needed.
+_NAME_TO_TICKER: dict[str, str] = {
+    "삼성전자": "005930", "samsung electronics": "005930", "samsung": "005930",
+    "sk하이닉스": "000660", "하이닉스": "000660", "sk hynix": "000660", "hynix": "000660",
+    "lg에너지솔루션": "373220", "lg energy": "373220", "lges": "373220",
+    "삼성바이오로직스": "207940", "samsung biologics": "207940",
+    "현대차": "005380", "현대자동차": "005380", "hyundai motor": "005380", "hyundai": "005380",
+    "기아": "000270", "kia": "000270",
+    "셀트리온": "068270", "celltrion": "068270",
+    "naver": "035420", "네이버": "035420",
+    "카카오": "035720", "kakao": "035720",
+    "posco홀딩스": "005490", "posco": "005490", "포스코": "005490",
+    "lg화학": "051910", "lg chem": "051910",
+    "삼성sdi": "006400", "samsung sdi": "006400",
+    "현대모비스": "012330", "hyundai mobis": "012330",
+    "kb금융": "105560", "kb financial": "105560",
+    "신한지주": "055550", "shinhan": "055550",
+    "삼성물산": "028260",
+    "카카오뱅크": "323410", "kakaobank": "323410",
+    "크래프톤": "259960", "krafton": "259960",
+    "한화에어로스페이스": "012450", "hanwha aerospace": "012450",
+    "hmm": "011200",
+    "두산에너빌리티": "034020", "doosan enerbility": "034020",
+    "lg전자": "066570", "lg electronics": "066570",
+    "sk이노베이션": "096770", "sk innovation": "096770",
+    "한국전력": "015760", "kepco": "015760",
+    "현대로템": "064350", "hyundai rotem": "064350",
+    "삼성생명": "032830", "lg유플러스": "032640", "kt": "030200",
+}
+
+
+def _resolve_ticker(query: str) -> tuple[str | None, str | None]:
+    """Return (ticker, matched_name) for a name or 6-digit code."""
+    q = (query or "").strip()
+    if q.isdigit() and len(q) == 6:
+        return q, None
+    low = q.lower()
+    if low in _NAME_TO_TICKER:
+        return _NAME_TO_TICKER[low], q
+    # loose contains-match (longest alias first)
+    for name in sorted(_NAME_TO_TICKER, key=len, reverse=True):
+        if name in low or low in name:
+            return _NAME_TO_TICKER[name], name
+    return None, None
+
+
+def tool_stock_quote(query: str = "", ticker: str = "", **_kw) -> dict[str, Any]:
+    """Current price of ONE named stock. Resolves a company name (SK Hynix /
+    SK하이닉스 / 삼성전자 / Samsung) or a 6-digit ticker to a live quote via the
+    backend orderbook (best bid/ask)."""
+    q = (ticker or query or "").strip()
+    code, matched = _resolve_ticker(q)
+    if not code:
+        return {"ok": False, "fetched_at": _now_kst_iso(),
+                "error": f"Couldn't resolve '{q}' to a ticker. Give the 6-digit "
+                         "code (e.g. 000660) or a major KR company name."}
+    res = _get("/intraday/orderbook", {"ticker": code})
+    if not res.get("ok"):
+        return res
+    items = (res.get("data") or {}).get("items") or []
+    if not items:
+        return {"ok": False, "fetched_at": res.get("fetched_at"),
+                "error": f"No live quote available for {matched or code} ({code}) right now."}
+    it = items[0]
+    levels = it.get("levels") or []
+    def best(side: str):
+        ls = [l for l in levels if l.get("side") == side]
+        if not ls:
+            return None
+        l1 = min(ls, key=lambda x: x.get("level", 99))
+        return abs(int(l1.get("price") or 0)) or None
+    bid, ask = best("buy"), best("sell")
+    current = bid or ask
+    return {
+        "ok": True,
+        "fetched_at": res.get("fetched_at"),
+        "ticker": code,
+        "name": it.get("ticker_name") or matched,
+        "market": it.get("market"),
+        "current_price": current,
+        "current_price_won": f"{current:,}원" if current else None,
+        "best_bid": bid, "best_ask": ask,
+        "captured_at": it.get("captured_at"),
+        "source": "OASIS Stock Advisor (live orderbook)",
+    }
+
+
+# ============================================================================
 #  Registration
 # ============================================================================
 
 # (name, fn, description, parameters) — parameters use JSON-schema style.
 _TOOL_DEFS: list[tuple[str, Callable, str, dict]] = [
+    (
+        "stock_quote", tool_stock_quote,
+        "OASIS Stock Advisor — the CURRENT PRICE / 현재가 / 시세 of ONE specific "
+        "stock by name or ticker. USE THIS FIRST for 'what is the price/cost of "
+        "X', 'X 주가', 'how much is X', 'X 얼마' where X is a company (SK Hynix / "
+        "SK하이닉스 / 삼성전자 / Samsung / 카카오 …) or a 6-digit code (000660). "
+        "Returns live current price (best bid/ask) in KRW with the ticker name. "
+        "Do NOT use stock_get_price_history or web search for a single stock's "
+        "current price — use this.",
+        {"type": "object", "properties": {
+            "query": {"type": "string", "description": "Company name or 6-digit ticker (SK Hynix, 삼성전자, 000660)"},
+        }, "required": ["query"]},
+    ),
     (
         "stock_get_recommendations", tool_stock_recommendations,
         "OASIS Stock Advisor — fetch the LIVE current stock recommendations (buy/sell picks) with up-to-the-moment returns. "
