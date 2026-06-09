@@ -2,8 +2,16 @@
 
 import { useEffect, useState, useRef } from "react";
 import { useSearchParams } from "next/navigation";
+import Link from "next/link";
 import { api, apiPost } from "@/components/api";
 import Badge from "@/components/Badge";
+
+// Sub-pages moved under Agents (buttons instead of separate sidebar items).
+const AGENT_SUBPAGES = [
+  { href: "/a2a", label: "A2A Monitor", icon: "🔗" },
+  { href: "/judgement", label: "Judgement", icon: "⚖️" },
+  { href: "/workflows", label: "Workflows", icon: "🔄" },
+];
 
 export default function AgentsPage() {
   // Assistant can deep-link to a specific agent card:
@@ -32,7 +40,20 @@ export default function AgentsPage() {
 
   return (
     <div>
-      <h1 className="text-[28px] font-semibold tracking-tight mb-6">Agents</h1>
+      <div className="flex items-center justify-between flex-wrap gap-3 mb-6">
+        <h1 className="text-[28px] font-semibold tracking-tight">Agents</h1>
+        <div className="flex items-center gap-2">
+          {AGENT_SUBPAGES.map((p) => (
+            <Link
+              key={p.href}
+              href={p.href}
+              className="px-3 py-1.5 rounded-lg bg-[var(--bg-elevated)] border border-[var(--border-default)] text-[13px] font-medium text-[var(--text-primary)] hover:border-[var(--border-active)] hover:bg-[var(--bg-hover)] transition-colors flex items-center gap-1.5"
+            >
+              <span>{p.icon}</span>{p.label}
+            </Link>
+          ))}
+        </div>
+      </div>
 
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
         {agents.map((a: any) => {
