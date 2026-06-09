@@ -2346,7 +2346,10 @@ def _run_agent_impl(
     action = tool_result.get("action") if isinstance(tool_result, dict) else None
 
     # Compose the natural-language reply from tool data
-    if action and tool_result.get("message"):
+    if tool_result.get("_offer") and tool_result.get("message"):
+        # Use the clean canned offer message verbatim (no 2nd LLM rephrase).
+        reply = tool_result["message"]
+    elif action and tool_result.get("message"):
         # Navigation tools have a clean canned message — skip a 2nd LLM call
         reply = tool_result["message"]
         # The canned navigate message is English; localize it for Korean users
