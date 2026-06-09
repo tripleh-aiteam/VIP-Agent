@@ -25,6 +25,27 @@ _scheduler: BackgroundScheduler | None = None
 # Job execution
 # ---------------------------------------------------------------------------
 
+def _mark_rule_run(rule_id, status: str = "completed"):
+    """Record that a schedule fired — last_run_at + status + run_count, so the
+    Workflows page shows real execution history."""
+    if not rule_id:
+        return
+    try:
+        from db.models import OrchScheduleRule
+        db = SessionLocal()
+        try:
+            rule = db.query(OrchScheduleRule).filter(OrchScheduleRule.id == rule_id).first()
+            if rule:
+                rule.last_run_at = datetime.utcnow()
+                rule.last_run_status = status
+                rule.run_count = (rule.run_count or 0) + 1
+                db.commit()
+        finally:
+            db.close()
+    except Exception as e:
+        log.warning(f"scheduler: mark_rule_run failed: {e}")
+
+
 def _execute_scheduled_job(rule_id: str, rule_name: str, task_type: str, target_agent_type: str, retry: bool = True):
     """Execute a scheduled job — creates a task, dispatches it. Retries once on failure."""
     from services.task_service import create_task, dispatch_task
@@ -50,6 +71,7 @@ def _execute_scheduled_job(rule_id: str, rule_name: str, task_type: str, target_
         )
 
         run = dispatch_task(db, run.id)
+        _mark_rule_run(rule_id, run.status or "completed")
 
         log.info(
             f"scheduler: {rule_name} completed -> {run.status}",
@@ -57,6 +79,7 @@ def _execute_scheduled_job(rule_id: str, rule_name: str, task_type: str, target_
         )
 
     except Exception as e:
+        _mark_rule_run(rule_id, "failed")
         log.warning(
             f"scheduler: {rule_name} failed: {e}",
             extra={"trace_id": trace_id, "action": "scheduler.failed"},
@@ -72,7 +95,7 @@ def _execute_scheduled_job(rule_id: str, rule_name: str, task_type: str, target_
         db.close()
 
 
-def _execute_report_job(rule_name: str, report_type: str, hours_back: int = 24):
+def _execute_report_job(rule_name: str, report_type: str, hours_back: int = 24, rule_id=None):
     """Execute a scheduled report composition."""
     from services.report_service import compose_report
 
@@ -83,8 +106,10 @@ def _execute_report_job(rule_name: str, report_type: str, hours_back: int = 24):
 
     try:
         compose_report(db, report_type=report_type, hours_back=hours_back, trace_id=trace_id)
+        _mark_rule_run(rule_id, "completed")
         log.info(f"scheduler: {report_type} report done", extra={"action": "scheduler.report.done"})
     except Exception as e:
+        _mark_rule_run(rule_id, "failed")
         log.warning(f"scheduler: report failed: {e}", extra={"action": "scheduler.report.failed"})
     finally:
         db.close()
@@ -909,7 +934,7 @@ def _load_rules_from_db():
                     CronTrigger.from_crontab(rule.cron_expr),
                     id=job_id,
                     replace_existing=True,
-                    args=[rule.name, report_type, hours],
+                    args=[rule.name, report_type, hours, str(rule.id)],
                 )
             else:
                 _scheduler.add_job(
@@ -986,6 +1011,9 @@ def list_rules(db: Session) -> list[dict]:
             "task_type": task_def.task_type if task_def else None,
             "target_agent_type": task_def.target_agent_type if task_def else None,
             "next_fire_time": next_fire,
+            "last_run_at": r.last_run_at.isoformat() if getattr(r, "last_run_at", None) else None,
+            "last_run_status": getattr(r, "last_run_status", None),
+            "run_count": getattr(r, "run_count", 0) or 0,
             "created_at": r.created_at.isoformat() if r.created_at else None,
         })
     return result

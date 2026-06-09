@@ -77,63 +77,69 @@ class RealRealtyAdapter(BaseAdapter):
         }
 
     def _fallback_response(self, trace_id: str, input_payload: dict[str, Any]) -> AdapterResult:
-        """Structured fallback when real backend is unavailable — uses realistic mock data."""
-        from adapters.mock_data import get_mock_summary
-        region = input_payload.get("region", "Seoul-Gangnam")
+        """Serve REAL realty data from the Triple H listing workbook + live OnBid
+        (same source the daily report uses) — the Vercel app has no JSON API, so
+        this is the canonical data path (NOT mock)."""
+        def _num(v):
+            try:
+                return float(str(v).replace(",", "").strip())
+            except Exception:
+                return 0.0
 
-        mock = get_mock_summary("realty")
-        output = {
-            **mock,
-            "source": "realty-adapter-fallback",
-            "fallback": True,
-            "region": region,
-            "portal_url": "https://realestate-tripleh.vercel.app",
+        try:
+            from services.realty_kb_loader import load_real_listings
+            listings = load_real_listings() or []
+        except Exception:
+            listings = []
+
+        total = len(listings)
+        total_value = sum(_num(p.get("official_value")) for p in listings)
+        cats: dict[str, int] = {}
+        regions: dict[str, int] = {}
+        for p in listings:
+            c = (p.get("category") or "기타").strip() or "기타"
+            r = (p.get("sheet") or "—").strip() or "—"
+            cats[c] = cats.get(c, 0) + 1
+            regions[r] = regions.get(r, 0) + 1
+        top = sorted(listings, key=lambda p: _num(p.get("official_value")), reverse=True)[:10]
+        properties = [{
+            "name": p.get("title"), "type": (p.get("category") or "기타"),
+            "address": p.get("address"), "region": p.get("sheet"),
+            "size_pyeong": p.get("size_pyeong"),
+            "official_value": _num(p.get("official_value")),
+        } for p in top]
+
+        output: dict[str, Any] = {
+            "source": "real-realty-kb" if listings else "realty-unavailable",
+            "fallback": not bool(listings),
+            "total_listings": total,
+            "market_value_krw": total_value,
+            "categories": cats,
+            "regions": len(regions),
+            "properties": properties,
+            "risk_level": "Low",
             "risk_factors": [],
+            "portal_url": "https://realestate-tripleh.vercel.app/chatbot",
         }
 
-        # Risk assessment
-        risks = []
-        if output["avg_vacancy_pct"] > 10:
-            risks.append(f"High vacancy rate ({output['avg_vacancy_pct']}%)")
-        output["risk_factors"] = risks
-        risk_level = "Medium" if risks else "Low"
-        output["risk_level"] = risk_level
+        # Live OnBid (공매) opportunities — real auction data.
+        try:
+            from services.onbid_tools import tool_onbid_search
+            ob = tool_onbid_search(category="real estate", limit=3)
+            output["onbid_active"] = ob.get("total_scanned", 0)
+            output["onbid_samples"] = [it.get("address") for it in (ob.get("items") or [])[:3]]
+        except Exception:
+            pass
 
-        total_rent = sum(p.get("monthly_rent", 0) for p in output["properties"])
-
-        report_lines = [
-            "━━━ Real Estate Portfolio Report ━━━",
-            "",
-            f"Region: {region}",
-            f"Total Properties: {output['total_listings']}",
-            f"Average Vacancy: {output['avg_vacancy_pct']}%",
-            f"Average Yield: {output['avg_yield_pct']}%",
-            f"Market Trend: {output['market_trend']}",
-            "",
-            "━━━ Top Properties ━━━",
-            "",
-        ]
-        for p in output["properties"]:
-            rent = p.get("monthly_rent", 0)
-            report_lines.append(f"  • {p['name']} ({p['type']}) | Vacancy: {p.get('vacancy_pct', 0)}% | Rent: {rent:,.0f} KRW/mo")
-
-        report_lines += [
-            "",
-            f"Total Monthly Rent: {total_rent:,.0f} KRW",
-            f"Risk Level: {risk_level}",
-            "",
-            "Note: Data from portfolio fallback. Real-time data pending backend API fix.",
-            f"Portal: {output['portal_url']}",
-        ]
-
-        summary = "\n".join(report_lines)
-        output["report_text"] = summary
+        report = (f"Real Estate portfolio: {total} listings, total official value "
+                  f"{total_value:,.0f} KRW across {len(regions)} regions.")
+        output["report_text"] = report
 
         return AdapterResult(
             success=True,
             status="completed",
             agent_id=self.agent_name,
-            summary=summary,
+            summary=report,
             output_payload=output,
         )
 

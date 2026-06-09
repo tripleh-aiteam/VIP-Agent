@@ -181,6 +181,9 @@ class OrchScheduleRule(Base):
     cron_expr = Column(String(60), nullable=False)
     target_task_definition_id = Column(UUID(as_uuid=True), ForeignKey("orch_task_definitions.id"), nullable=False)
     enabled = Column(Boolean, default=True)
+    last_run_at = Column(DateTime(timezone=True), nullable=True)
+    last_run_status = Column(String(20), nullable=True)
+    run_count = Column(Integer, default=0)
     created_at = _now()
 
     target_task_definition = relationship("OrchTaskDefinition", back_populates="schedule_rules")

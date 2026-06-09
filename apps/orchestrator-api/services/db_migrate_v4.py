@@ -49,6 +49,11 @@ _NEW_COLUMNS: list[tuple[str, str, str]] = [
 
     # Link a chatbot tenant to the realty app's NextAuth tenant (per-buyer login)
     ("chatbot_tenants", "app_tenant_id", "VARCHAR(64)"),
+
+    # Schedule run tracking — so the Workflows page shows real last-run/run-count.
+    ("orch_schedule_rules", "last_run_at", "TIMESTAMP"),
+    ("orch_schedule_rules", "last_run_status", "VARCHAR(20)"),
+    ("orch_schedule_rules", "run_count", "INTEGER DEFAULT 0"),
 ]
 
 
