@@ -341,8 +341,10 @@ export function AssistantCard({ floating = true }: Props = {}) {
   // activity) shrink to a corner pill so page content stays visible.
   // The conversation isn't lost — it lives in the AssistantContext and
   // reappears when the boss clicks the pill to expand again.
-  // closed (manual X or route change) forces the corner pill regardless of focus.
-  const compactPill = floating && (closed || !hasActivity);
+  // Shrink to the corner pill ONLY when the user closed it (× / route change) or
+  // when there's no conversation yet and nothing is happening. Once a chat is
+  // going (turns > 0) it STAYS OPEN until the user closes it — no auto-collapse.
+  const compactPill = floating && (closed || (!hasActivity && turns.length === 0));
 
   // Close the assistant to the corner pill whenever the menu/route changes.
   // The conversation is NOT lost (turns persist in context + localStorage);
