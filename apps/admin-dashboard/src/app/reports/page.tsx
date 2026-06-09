@@ -44,6 +44,41 @@ function mdToHtml(md: string): string {
   return html;
 }
 
+// ── PREVIEW sample data for the 3 new market-analysis report sources ────────
+// (UI preview only — replaced by real Kiwoom / Newspaper / YouTube feeds in the
+// deep-dive phase. Marked _demo so the page renders them without an API fetch.)
+const _demoMd = (en: string, ko: string) => ({
+  executive_summary: en.split("\n")[0],
+  report: { summary_en: en.split("\n")[0], summary_ko: ko.split("\n")[0], detail_en: en, detail_ko: ko },
+  sections: [],
+});
+const DEMO_MARKET_REPORTS: any[] = [
+  {
+    id: "demo-kiwoom-1", _demo: true, report_type: "kiwoom_report",
+    executive_summary: "키움증권 데이터 기반 한국·미국·국제 시장 일일 분석 — KOSPI/KOSDAQ, 수급, 주요 종목.",
+    created_at: new Date().toISOString(), source_run_count: 0,
+    content: _demoMd(
+      "# Kiwoom Market Analysis — Daily\n## Korean Market\nKOSPI 7,484 (-8.3%), KOSDAQ 911 (-9.1%). Foreign net selling led by 삼성전자, SK하이닉스.\n## US & International\nNASDAQ +0.9%, S&P +0.3%, USD/KRW 1,531. Mixed overnight.\n## Daily Summary\nDomestic weakness vs. firmer US; watch chip names and FX.\n## Recommended Actions\n- Review high-beta KR exposure\n- Watch USD/KRW above 1,530",
+      "# 키움 시장 분석 — 일일\n## 한국 시장\nKOSPI 7,484 (-8.3%), KOSDAQ 911 (-9.1%). 외국인 순매도(삼성전자·SK하이닉스 중심).\n## 미국·국제\nNASDAQ +0.9%, S&P +0.3%, 원/달러 1,531.\n## 일일 요약\n국내 약세 대비 미국 견조 — 반도체·환율 주시.\n## 권장 조치\n- 고변동 국내 노출 점검\n- 원/달러 1,530 상단 주시"),
+  },
+  {
+    id: "demo-news-1", _demo: true, report_type: "newspaper_report",
+    executive_summary: "신문·뉴스 기반 시장 분석 — 주요 헤드라인, 미국/국제/한국 시장 코멘터리, 일일 요약.",
+    created_at: new Date(Date.now() - 3600e3).toISOString(), source_run_count: 0,
+    content: _demoMd(
+      "# Newspaper Market Analysis — Daily\n## Top Headlines\n- Chip stocks slide on demand worries\n- Won weakens past 1,530\n## US & International\nWall Street steadies; oil down 2%.\n## Korean Market\nInstitutions net buy defensives.\n## Daily Summary\nRisk-off tone in KR; global mixed.",
+      "# 신문 시장 분석 — 일일\n## 주요 헤드라인\n- 반도체株, 수요 우려에 하락\n- 원화 1,530 돌파 약세\n## 미국·국제\n월가 보합; 유가 -2%.\n## 한국 시장\n기관, 방어주 순매수.\n## 일일 요약\n국내 위험회피, 글로벌 혼조."),
+  },
+  {
+    id: "demo-youtube-1", _demo: true, report_type: "youtube_report",
+    executive_summary: "유튜브 분석 영상 요약 — 시장 심리, 미국/국제/한국 증시 전망, 일일 요약.",
+    created_at: new Date(Date.now() - 7200e3).toISOString(), source_run_count: 0,
+    content: _demoMd(
+      "# YouTube Stock Analysis — Daily\n## Market Sentiment\nCreators cautious on KR chips; constructive on US AI names.\n## US & International\nConsensus: dip-buying NASDAQ leaders.\n## Korean Market\nMixed views on 삼성전자 entry levels.\n## Daily Summary\nSentiment split — selective on KR, positive US tech.",
+      "# 유튜브 주식 분석 — 일일\n## 시장 심리\n국내 반도체 신중, 미국 AI주 긍정적.\n## 미국·국제\n나스닥 주도주 저가매수 컨센서스.\n## 한국 시장\n삼성전자 진입가 의견 혼재.\n## 일일 요약\n심리 분화 — 국내 선별, 미국 기술주 긍정."),
+  },
+];
+
 export default function ReportsPage() {
   // Read ?filter= from URL so the assistant can deep-link to a specific tab:
   //   /reports?filter=daily   → opens with Daily tab active
@@ -54,7 +89,7 @@ export default function ReportsPage() {
   const searchParams = useSearchParams();
   const initialFilter = (() => {
     const f = (searchParams?.get("filter") || "").toLowerCase();
-    return ["all", "daily", "weekly", "monthly", "cross", "alerts"].includes(f) ? f : "all";
+    return ["all", "daily", "weekly", "monthly", "cross", "alerts", "kiwoom", "newspaper", "youtube"].includes(f) ? f : "all";
   })();
 
   const [reports, setReports] = useState<any[]>([]);
@@ -79,25 +114,36 @@ export default function ReportsPage() {
   }, []);
 
 
-  const openDetail = async (id: string) => {
-    const data = await api<any>(`/reports/${id}`);
+  const openDetail = async (r: any) => {
+    // Preview demo reports carry their content locally — no API fetch.
+    if (r?._demo) { setDetail(r); setViewMode(null); return; }
+    const data = await api<any>(`/reports/${r.id ?? r}`);
     setDetail(data);
     setViewMode(null);
   };
 
   const closeDetail = () => { setDetail(null); setViewMode(null); };
 
-  const dailyReports = reports.filter((r) => r.report_type === "daily_summary" || r.report_type?.startsWith("agent_daily_"));
-  const weeklyReports = reports.filter((r) => r.report_type === "weekly_summary");
-  const monthlyReports = reports.filter((r) => r.report_type === "monthly_summary");
-  const alertReports = reports.filter((r) => r.report_type === "urgent_alert_summary");
-  const crossAgentReports = reports.filter((r) => r.report_type === "cross_agent_summary");
+  // Real reports + preview demo entries for the new market-analysis sources.
+  const baseReports = [...reports, ...DEMO_MARKET_REPORTS];
 
-  const filteredReports = activeType === "all" ? reports
+  const dailyReports = baseReports.filter((r) => r.report_type === "daily_summary" || r.report_type?.startsWith("agent_daily_"));
+  const weeklyReports = baseReports.filter((r) => r.report_type === "weekly_summary");
+  const monthlyReports = baseReports.filter((r) => r.report_type === "monthly_summary");
+  const alertReports = baseReports.filter((r) => r.report_type === "urgent_alert_summary");
+  const crossAgentReports = baseReports.filter((r) => r.report_type === "cross_agent_summary");
+  const kiwoomReports = baseReports.filter((r) => r.report_type === "kiwoom_report");
+  const newspaperReports = baseReports.filter((r) => r.report_type === "newspaper_report");
+  const youtubeReports = baseReports.filter((r) => r.report_type === "youtube_report");
+
+  const filteredReports = activeType === "all" ? baseReports
     : activeType === "daily" ? dailyReports
     : activeType === "weekly" ? weeklyReports
     : activeType === "monthly" ? monthlyReports
     : activeType === "cross" ? crossAgentReports
+    : activeType === "kiwoom" ? kiwoomReports
+    : activeType === "newspaper" ? newspaperReports
+    : activeType === "youtube" ? youtubeReports
     : alertReports;
 
   // Convert UTC to KST for display
@@ -116,6 +162,9 @@ export default function ReportsPage() {
     agent_daily_stock: { label: "Stock Daily", color: "text-sky-500", bg: "bg-sky-50", border: "border-sky-200" },
     agent_daily_realty: { label: "Realty Daily", color: "text-orange-500", bg: "bg-orange-50", border: "border-orange-200" },
     cross_agent_summary: { label: "Cross-Agent", color: "text-purple-500", bg: "bg-purple-50", border: "border-purple-200" },
+    kiwoom_report: { label: "Kiwoom", color: "text-indigo-500", bg: "bg-indigo-50", border: "border-indigo-200" },
+    newspaper_report: { label: "Newspaper", color: "text-amber-600", bg: "bg-amber-50", border: "border-amber-200" },
+    youtube_report: { label: "YouTube", color: "text-rose-500", bg: "bg-rose-50", border: "border-rose-200" },
   };
 
   const parseSections = (sections: any[]) => {
@@ -242,7 +291,10 @@ td{padding:8px 12px;border:1px solid #e2e8f0;font-size:10pt}
     type === "cross_agent_summary" ? "Cross-Agent Report" :
     type === "daily_summary" ? "Daily Executive Summary" :
     type === "weekly_summary" ? "Weekly Executive Summary" :
-    type === "monthly_summary" ? "Monthly Executive Summary" : "Urgent Alert Report";
+    type === "monthly_summary" ? "Monthly Executive Summary" :
+    type === "kiwoom_report" ? "Kiwoom Market Analysis" :
+    type === "newspaper_report" ? "Newspaper Market Analysis" :
+    type === "youtube_report" ? "YouTube Stock Analysis" : "Urgent Alert Report";
 
   return (
     <div>
@@ -257,7 +309,9 @@ td{padding:8px 12px;border:1px solid #e2e8f0;font-size:10pt}
         </div>
       </div>
 
-      <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-6">
+      {/* Agent reports */}
+      <p className="text-[11px] font-bold text-[var(--text-muted)] uppercase tracking-wider mb-2">Agent Reports</p>
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-5">
         <StatCard label="Daily Reports" value={dailyReports.length} color="blue" sub={dailyReports[0] ? `Latest: ${toKST(dailyReports[0].created_at)}` : "None yet"} />
         <StatCard label="Weekly Reports" value={weeklyReports.length} color="green" sub={weeklyReports[0] ? `Latest: ${toKST(weeklyReports[0].created_at)}` : "None yet"} />
         <StatCard label="Monthly Reports" value={monthlyReports.length} color="green" sub={monthlyReports[0] ? `Latest: ${toKST(monthlyReports[0].created_at)}` : "None yet"} />
@@ -265,17 +319,31 @@ td{padding:8px 12px;border:1px solid #e2e8f0;font-size:10pt}
         <StatCard label="Cross-Agent" value={crossAgentReports.length} color="purple" sub={crossAgentReports[0] ? `Latest: ${toKST(crossAgentReports[0].created_at)}` : "None yet"} />
       </div>
 
-      <div className="flex gap-1 mb-4 border-b border-[var(--border-default)]">
+      {/* Market analysis (new sources) */}
+      <div className="flex items-center gap-2 mb-2">
+        <p className="text-[11px] font-bold text-[var(--text-muted)] uppercase tracking-wider">Market Analysis</p>
+        <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-amber-50 text-amber-600 border border-amber-200 font-semibold">PREVIEW</span>
+      </div>
+      <div className="grid grid-cols-2 md:grid-cols-3 gap-4 mb-6">
+        <StatCard label="Kiwoom" value={kiwoomReports.length} color="blue" sub="키움 · KR/US/Intl market" />
+        <StatCard label="Newspaper" value={newspaperReports.length} color="green" sub="News-based analysis" />
+        <StatCard label="YouTube" value={youtubeReports.length} color="red" sub="Video stock analysis" />
+      </div>
+
+      <div className="flex gap-1 mb-4 border-b border-[var(--border-default)] overflow-x-auto">
         {[
-          { key: "all", label: `All (${reports.length})` },
+          { key: "all", label: `All (${baseReports.length})` },
           { key: "daily", label: `Daily (${dailyReports.length})` },
           { key: "weekly", label: `Weekly (${weeklyReports.length})` },
           { key: "monthly", label: `Monthly (${monthlyReports.length})` },
           { key: "alert", label: `Alerts (${alertReports.length})` },
           { key: "cross", label: `Cross-Agent (${crossAgentReports.length})` },
+          { key: "kiwoom", label: `Kiwoom (${kiwoomReports.length})` },
+          { key: "newspaper", label: `Newspaper (${newspaperReports.length})` },
+          { key: "youtube", label: `YouTube (${youtubeReports.length})` },
         ].map((f) => (
           <button key={f.key} onClick={() => setActiveType(f.key)}
-            className={`px-4 py-2 text-xs font-medium transition-colors ${
+            className={`px-4 py-2 text-xs font-medium whitespace-nowrap transition-colors ${
               activeType === f.key
                 ? "text-[var(--brand-blue)] border-b-2 border-[var(--border-active)]"
                 : "text-[var(--text-muted)] hover:text-[var(--text-primary)]"
@@ -292,7 +360,7 @@ td{padding:8px 12px;border:1px solid #e2e8f0;font-size:10pt}
           const isSelected = detail?.id === r.id;
           return (
             <div key={r.id}>
-              <div onClick={() => openDetail(r.id)}
+              <div onClick={() => openDetail(r)}
                 className={`border rounded-lg bg-[var(--bg-card)] cursor-pointer hover:border-[var(--brand-blue)] transition-colors ${
                   isSelected ? "border-[var(--brand-blue)] ring-1 ring-[var(--brand-blue)]" : "border-[var(--border-default)]"
                 }`}>
