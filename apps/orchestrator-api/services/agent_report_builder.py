@@ -477,6 +477,32 @@ def _safe(fn, db, trace_id: str) -> dict:
                 "summary": "", "actions": [], "source": "error"}
 
 
+def build_combined_report(reps: list[dict], kst: str) -> dict:
+    """Aggregate the 3 agent reports into ONE combined VIP daily report that
+    carries the per-agent bilingual detail (so the dashboard's EN/한국어 toggle
+    shows each agent's detailed summary)."""
+    det_en = [f"# VIP Daily Report\n*{kst}*\n"]
+    det_ko = [f"# VIP 일일 종합 보고서\n*{kst}*\n"]
+    sections: list[dict] = []
+    for r in reps:
+        if r.get("detail_en"):
+            det_en += [r["detail_en"], "\n---\n"]
+        if r.get("detail_ko"):
+            det_ko += [r["detail_ko"], "\n---\n"]
+        sections += report_sections(r)
+    ex = " ".join(
+        f"{r['name']}: {(r.get('summary') or r.get('status') or '').strip()}."
+        for r in reps
+    )
+    return {
+        "name": "VIP Daily Summary",
+        "detail_en": "\n".join(det_en).strip(),
+        "detail_ko": "\n".join(det_ko).strip(),
+        "executive_summary": ex[:600],
+        "sections": sections,
+    }
+
+
 def build_all_reports(db, trace_id: str, prefer_saved_stock: bool = True) -> list[dict]:
     """Build all 3 agent reports (best-effort each). For Stock, prefer the
     market-close snapshot captured at 15:30 KST if one exists (so the 8 AM

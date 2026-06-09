@@ -32,8 +32,7 @@ export default function AgentsPage() {
 
   return (
     <div>
-      <h1 className="text-[28px] font-semibold tracking-tight mb-1">Agents</h1>
-      <p className="text-[14px] text-[var(--text-muted)] mb-6">Registered agents — mock and real</p>
+      <h1 className="text-[28px] font-semibold tracking-tight mb-6">Agents</h1>
 
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
         {agents.map((a: any) => {

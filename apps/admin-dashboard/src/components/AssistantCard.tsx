@@ -120,20 +120,6 @@ const AssistantContext = createContext<AssistantState | null>(null);
 
 const _TURNS_KEY = `assistant-turns-${vipConfig.agentId}`;
 
-/** Collapses the assistant whenever the route (menu) changes, so opening a new
- * menu closes the open conversation. Chat is NOT cleared — turns persist. */
-function RouteCollapser({ onNav }: { onNav: () => void }) {
-  const pathname = usePathname();
-  const prev = useRef(pathname);
-  useEffect(() => {
-    if (prev.current !== pathname) {
-      prev.current = pathname;
-      onNav();
-    }
-  }, [pathname, onNav]);
-  return null;
-}
-
 export function AssistantProvider({ children }: { children: ReactNode }) {
   // Restore chat from localStorage so navigating away / refreshing never loses it.
   const [turns, setTurnsState] = useState<AssistantTurn[]>(() => {
@@ -165,7 +151,6 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
 
   return (
     <AssistantContext.Provider value={{ turns, setTurns, model, setModel, collapsed, setCollapsed }}>
-      <RouteCollapser onNav={() => setCollapsed(true)} />
       {children}
     </AssistantContext.Provider>
   );
@@ -356,6 +341,23 @@ export function AssistantCard({ floating = true }: Props = {}) {
   // The conversation isn't lost — it lives in the AssistantContext and
   // reappears when the boss clicks the pill to expand again.
   const compactPill = floating && !hasActivity;
+
+  // Close the assistant to the corner pill whenever the menu/route changes.
+  // The conversation is NOT lost (turns persist in context + localStorage);
+  // the boss clicks the 🤖 pill to reopen it manually.
+  const _prevPath = useRef(pathname);
+  useEffect(() => {
+    if (_prevPath.current !== pathname) {
+      _prevPath.current = pathname;
+      setPillExpanded(false);
+      setInputFocused(false);
+      setShowModelPicker(false);
+      setCollapsed(false);        // so the chat is visible again when reopened
+      setPrompt("");              // drop any half-typed text so the pill shows
+      try { inputRef.current?.blur(); } catch {}
+    }
+  }, [pathname, setCollapsed]);
+
   // Auto-collapse pillExpanded after blur if user didn't type or send.
   useEffect(() => {
     if (!pillExpanded) return;

@@ -155,8 +155,29 @@ def _auto_daily_reports():
                 log.warning(f"auto-report: {rep.get('name')} send failed: {e}",
                             extra={"action": "auto_report.agent.failed"})
 
-        # Step 2: Compose combined daily report (also saved to DB by compose_report)
-        report = compose_report(db, report_type="daily_summary", hours_back=24, trace_id=base_trace)
+        # Step 2: Build the combined daily report from the 3 agent reports — it
+        # carries each agent's REAL data + bilingual (EN/KO) detail, so the
+        # dashboard's language toggle works (replaces the old empty composer).
+        from services.agent_report_builder import build_combined_report
+        combined = build_combined_report(reports, kst_now)
+        combined_report = OrchReport(
+            report_type="daily_summary",
+            source_run_ids_json=[],
+            content_json={
+                "report_type": "daily_summary",
+                "executive_summary": combined["executive_summary"],
+                "sections": combined["sections"],
+                "report": {
+                    "detail_en": combined["detail_en"],
+                    "detail_ko": combined["detail_ko"],
+                },
+                "generated_at": datetime.utcnow().isoformat(),
+                "kst_time": kst_now,
+            },
+            delivery_channel="auto",
+        )
+        db.add(combined_report)
+        db.flush()
 
         # Step 3: Send combined summary to Telegram
         completed = len([r for r in agent_results if r["status"] in ("ok", "partial", "completed")])
@@ -171,19 +192,10 @@ def _auto_daily_reports():
         for r in agent_results:
             icon = {"ok": "✅", "partial": "⚠️", "completed": "✅"}.get(r["status"], "❌")
             combined_lines.append(f"  {icon} {r['agent']}: {r['status']}")
-
-        summary = report.get("executive_summary", "")
-        if summary:
-            combined_lines.append(f"\n<b>Executive Summary</b>")
-            combined_lines.append(summary[:400])
-
-        # Phase 3: report quality footer
-        quality = report.get("quality") or {}
-        if quality and quality.get("grade"):
-            grade_emoji = {"A": "🟢", "B": "🟢", "C": "🟡", "D": "🟠", "F": "🔴"}.get(quality["grade"], "⚪")
-            combined_lines.append(f"\n{grade_emoji} <i>Quality: {quality['grade']} ({quality.get('score', 0)}/100)</i>")
-
-        combined_lines.append(f"<i>View on dashboard → Reports</i>")
+        if combined.get("executive_summary"):
+            combined_lines.append("\n<b>Executive Summary</b>")
+            combined_lines.append(combined["executive_summary"][:400])
+        combined_lines.append("\n<i>View full EN/한국어 report on dashboard → Reports</i>")
 
         send_alert("\n".join(combined_lines))
 

@@ -21,6 +21,13 @@
 - **Verified live:** Jeju real estate sorted 241M→29M (주거/토지/호텔, no securities), cars all 자동차/승용차, Busan land works.
 - **Honest scope:** OnBid only lists assets currently up for public auction; tool returns a `note` when a region/keyword has no current matches.
 
+### [later] Fixes: combined report bilingual detail, assistant真close-on-nav, agents subtitle
+
+- **Combined daily report was the old empty composer** (showed "0 KRW / 0 stocks / No realty data" and had no detail_en/ko, so the EN/KO toggle did nothing). Replaced `compose_report` in `_auto_daily_reports` with `build_combined_report(reps, kst)` ([apps/orchestrator-api/services/agent_report_builder.py](apps/orchestrator-api/services/agent_report_builder.py)) which aggregates the 3 agents' REAL data + bilingual detail into `content.report.detail_en/detail_ko` — so opening the VIP daily summary and toggling EN/한국어 now shows each agent's detailed summary with real numbers.
+- **Assistant now truly closes on menu change:** the earlier `collapsed` approach only hid the chat panel (input bar stayed). Removed the provider RouteCollapser; added a `usePathname` effect in [apps/admin-dashboard/src/components/AssistantCard.tsx](apps/admin-dashboard/src/components/AssistantCard.tsx) that resets activity (pillExpanded/inputFocused/modelPicker/prompt) on route change → the assistant collapses to the 🤖 corner pill; the boss reopens it manually; chat persists (localStorage).
+- **Removed the "Registered agents — mock and real" subtitle** from the Agents page.
+- **Rechecked:** `npm run build` green; `build_combined_report` verified (EN has both agents, KO has 자산/주식).
+
 ### [later] Reports detail (EN/KO toggle), assistant close-on-nav, remove Ask-VIP box
 
 - **Reports — bilingual 1-page detail:** each agent report now carries `detail_en` + `detail_ko` (LLM 1-page narrative, with a structured markdown fallback when the LLM is down) — [apps/orchestrator-api/services/agent_report_builder.py](apps/orchestrator-api/services/agent_report_builder.py) `_attach_detail()` / `_fallback_detail()`, attached in `build_all_reports` + the 15:30 capture. Frontend: [apps/admin-dashboard/src/app/reports/page.tsx](apps/admin-dashboard/src/app/reports/page.tsx) detailed modal now has an **EN / 한국어 toggle** and renders the per-agent 1-page via a new dependency-free [apps/admin-dashboard/src/components/MarkdownLite.tsx](apps/admin-dashboard/src/components/MarkdownLite.tsx) (tables/headings/bold/lists). Short summary view unchanged (Telegram-style). Combined daily_summary still uses the overview table.
