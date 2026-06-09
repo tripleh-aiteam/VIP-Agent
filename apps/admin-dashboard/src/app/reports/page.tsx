@@ -4,7 +4,6 @@ import { useEffect, useState, useRef } from "react";
 import { useSearchParams } from "next/navigation";
 import { api } from "@/components/api";
 import Badge from "@/components/Badge";
-import StatCard from "@/components/StatCard";
 import { API } from "@/components/api";
 import MarkdownLite from "@/components/MarkdownLite";
 
@@ -87,15 +86,16 @@ export default function ReportsPage() {
   //   /reports?filter=alerts  → Alerts
   // Defaults to "all" if no param or invalid.
   const searchParams = useSearchParams();
-  const initialFilter = (() => {
-    const f = (searchParams?.get("filter") || "").toLowerCase();
-    return ["all", "daily", "weekly", "monthly", "cross", "alerts", "kiwoom", "newspaper", "youtube"].includes(f) ? f : "all";
+  const initialSource = (() => {
+    const f = (searchParams?.get("source") || "").toLowerCase();
+    return ["agents", "kiwoom", "newspaper", "youtube"].includes(f) ? f : "agents";
   })();
 
   const [reports, setReports] = useState<any[]>([]);
   const [detail, setDetail] = useState<any>(null);
   const [viewMode, setViewMode] = useState<ViewMode>(null);
-  const [activeType, setActiveType] = useState<string>(initialFilter);
+  const [source, setSource] = useState<string>(initialSource);   // Agents / Kiwoom / Newspaper / YouTube
+  const [period, setPeriod] = useState<string>("daily");          // daily / weekly / monthly / cross / alert
   const [copied, setCopied] = useState(false);
   const [dlOpen, setDlOpen] = useState(false);
   const [lang, setLang] = useState<"en" | "ko">("en");
@@ -127,24 +127,37 @@ export default function ReportsPage() {
   // Real reports + preview demo entries for the new market-analysis sources.
   const baseReports = [...reports, ...DEMO_MARKET_REPORTS];
 
-  const dailyReports = baseReports.filter((r) => r.report_type === "daily_summary" || r.report_type?.startsWith("agent_daily_"));
-  const weeklyReports = baseReports.filter((r) => r.report_type === "weekly_summary");
-  const monthlyReports = baseReports.filter((r) => r.report_type === "monthly_summary");
-  const alertReports = baseReports.filter((r) => r.report_type === "urgent_alert_summary");
-  const crossAgentReports = baseReports.filter((r) => r.report_type === "cross_agent_summary");
-  const kiwoomReports = baseReports.filter((r) => r.report_type === "kiwoom_report");
-  const newspaperReports = baseReports.filter((r) => r.report_type === "newspaper_report");
-  const youtubeReports = baseReports.filter((r) => r.report_type === "youtube_report");
+  // Classify every report into a SOURCE (Agents/Kiwoom/Newspaper/YouTube) and a
+  // PERIOD (daily/weekly/monthly/cross/alert).
+  const classify = (r: any): { source: string; period: string } => {
+    const t = r.report_type || "";
+    if (t === "kiwoom_report") return { source: "kiwoom", period: r.period || "daily" };
+    if (t === "newspaper_report") return { source: "newspaper", period: r.period || "daily" };
+    if (t === "youtube_report") return { source: "youtube", period: r.period || "daily" };
+    if (t === "weekly_summary") return { source: "agents", period: "weekly" };
+    if (t === "monthly_summary") return { source: "agents", period: "monthly" };
+    if (t === "cross_agent_summary") return { source: "agents", period: "cross" };
+    if (t === "urgent_alert_summary") return { source: "agents", period: "alert" };
+    return { source: "agents", period: "daily" }; // daily_summary + agent_daily_*
+  };
+  const countFor = (src: string, per: string) =>
+    baseReports.filter((r) => { const c = classify(r); return c.source === src && c.period === per; }).length;
 
-  const filteredReports = activeType === "all" ? baseReports
-    : activeType === "daily" ? dailyReports
-    : activeType === "weekly" ? weeklyReports
-    : activeType === "monthly" ? monthlyReports
-    : activeType === "cross" ? crossAgentReports
-    : activeType === "kiwoom" ? kiwoomReports
-    : activeType === "newspaper" ? newspaperReports
-    : activeType === "youtube" ? youtubeReports
-    : alertReports;
+  const filteredReports = baseReports.filter((r) => {
+    const c = classify(r);
+    return c.source === source && c.period === period;
+  });
+
+  const SOURCES = [
+    { key: "agents", label: "Agents", icon: "🤖" },
+    { key: "kiwoom", label: "Kiwoom", icon: "📈" },
+    { key: "newspaper", label: "Newspaper", icon: "📰" },
+    { key: "youtube", label: "YouTube", icon: "▶️" },
+  ];
+  // Period tabs depend on the source (Agents has extra Cross-Agent + Alerts).
+  const PERIODS = source === "agents"
+    ? [{ key: "daily", label: "Daily" }, { key: "weekly", label: "Weekly" }, { key: "monthly", label: "Monthly" }, { key: "cross", label: "Cross-Agent" }, { key: "alert", label: "Alerts" }]
+    : [{ key: "daily", label: "Daily" }, { key: "weekly", label: "Weekly" }, { key: "monthly", label: "Monthly" }];
 
   // Convert UTC to KST for display
   const toKST = (utcStr: string) => {
@@ -298,57 +311,45 @@ td{padding:8px 12px;border:1px solid #e2e8f0;font-size:10pt}
 
   return (
     <div>
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between mb-6 gap-3">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between mb-4 gap-3">
         <div>
           <h1 className="text-[28px] font-semibold tracking-tight mb-1">Reports</h1>
           <p className="text-sm text-[var(--text-muted)]">Executive summaries and alerts</p>
         </div>
         <div className="flex items-center gap-2 text-[12px] text-[var(--text-muted)]">
           <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
-          Generated automatically — daily, weekly, monthly &amp; cross-agent
+          Generated automatically
         </div>
       </div>
 
-      {/* Agent reports */}
-      <p className="text-[11px] font-bold text-[var(--text-muted)] uppercase tracking-wider mb-2">Agent Reports</p>
-      <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-5">
-        <StatCard label="Daily Reports" value={dailyReports.length} color="blue" sub={dailyReports[0] ? `Latest: ${toKST(dailyReports[0].created_at)}` : "None yet"} />
-        <StatCard label="Weekly Reports" value={weeklyReports.length} color="green" sub={weeklyReports[0] ? `Latest: ${toKST(weeklyReports[0].created_at)}` : "None yet"} />
-        <StatCard label="Monthly Reports" value={monthlyReports.length} color="green" sub={monthlyReports[0] ? `Latest: ${toKST(monthlyReports[0].created_at)}` : "None yet"} />
-        <StatCard label="Alerts" value={alertReports.length} color="red" sub={alertReports[0] ? `Latest: ${toKST(alertReports[0].created_at)}` : "None yet"} />
-        <StatCard label="Cross-Agent" value={crossAgentReports.length} color="purple" sub={crossAgentReports[0] ? `Latest: ${toKST(crossAgentReports[0].created_at)}` : "None yet"} />
+      {/* SOURCE buttons — Agents / Kiwoom / Newspaper / YouTube */}
+      <div className="flex gap-2 mb-4 flex-wrap">
+        {SOURCES.map((s) => {
+          const active = source === s.key;
+          return (
+            <button key={s.key} onClick={() => { setSource(s.key); setPeriod("daily"); closeDetail(); }}
+              className={`px-5 py-2.5 rounded-xl text-[14px] font-semibold flex items-center gap-2 transition-all border ${
+                active
+                  ? "bg-[var(--brand-blue)] text-white border-transparent shadow-sm"
+                  : "bg-[var(--bg-card)] text-[var(--text-primary)] border-[var(--border-default)] hover:border-[var(--border-active)] hover:bg-[var(--bg-hover)]"
+              }`}>
+              <span>{s.icon}</span>{s.label}
+              {s.key !== "agents" && <span className={`text-[9px] px-1.5 py-0.5 rounded-full font-semibold ${active ? "bg-white/20 text-white" : "bg-amber-50 text-amber-600 border border-amber-200"}`}>PREVIEW</span>}
+            </button>
+          );
+        })}
       </div>
 
-      {/* Market analysis (new sources) */}
-      <div className="flex items-center gap-2 mb-2">
-        <p className="text-[11px] font-bold text-[var(--text-muted)] uppercase tracking-wider">Market Analysis</p>
-        <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-amber-50 text-amber-600 border border-amber-200 font-semibold">PREVIEW</span>
-      </div>
-      <div className="grid grid-cols-2 md:grid-cols-3 gap-4 mb-6">
-        <StatCard label="Kiwoom" value={kiwoomReports.length} color="blue" sub="키움 · KR/US/Intl market" />
-        <StatCard label="Newspaper" value={newspaperReports.length} color="green" sub="News-based analysis" />
-        <StatCard label="YouTube" value={youtubeReports.length} color="red" sub="Video stock analysis" />
-      </div>
-
+      {/* PERIOD tabs — Daily / Weekly / Monthly (+ Cross-Agent / Alerts for Agents) */}
       <div className="flex gap-1 mb-4 border-b border-[var(--border-default)] overflow-x-auto">
-        {[
-          { key: "all", label: `All (${baseReports.length})` },
-          { key: "daily", label: `Daily (${dailyReports.length})` },
-          { key: "weekly", label: `Weekly (${weeklyReports.length})` },
-          { key: "monthly", label: `Monthly (${monthlyReports.length})` },
-          { key: "alert", label: `Alerts (${alertReports.length})` },
-          { key: "cross", label: `Cross-Agent (${crossAgentReports.length})` },
-          { key: "kiwoom", label: `Kiwoom (${kiwoomReports.length})` },
-          { key: "newspaper", label: `Newspaper (${newspaperReports.length})` },
-          { key: "youtube", label: `YouTube (${youtubeReports.length})` },
-        ].map((f) => (
-          <button key={f.key} onClick={() => setActiveType(f.key)}
+        {PERIODS.map((p) => (
+          <button key={p.key} onClick={() => { setPeriod(p.key); closeDetail(); }}
             className={`px-4 py-2 text-xs font-medium whitespace-nowrap transition-colors ${
-              activeType === f.key
+              period === p.key
                 ? "text-[var(--brand-blue)] border-b-2 border-[var(--border-active)]"
                 : "text-[var(--text-muted)] hover:text-[var(--text-primary)]"
             }`}>
-            {f.label}
+            {p.label} ({countFor(source, p.key)})
           </button>
         ))}
       </div>
@@ -433,7 +434,7 @@ td{padding:8px 12px;border:1px solid #e2e8f0;font-size:10pt}
           );
         })}
         {filteredReports.length === 0 && (
-          <p className="text-center text-[var(--text-muted)] py-10 text-sm">No {activeType === "all" ? "" : activeType} reports yet. Click compose to generate.</p>
+          <p className="text-center text-[var(--text-muted)] py-10 text-sm">No {SOURCES.find((s) => s.key === source)?.label} {period} reports yet — they appear here automatically{source !== "agents" ? " (coming in the deep-dive)" : ""}.</p>
         )}
       </div>
 
