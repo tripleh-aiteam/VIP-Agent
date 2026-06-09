@@ -196,6 +196,24 @@ def _agent_profile_block(agent_id: Optional[str]) -> str:
 #  System prompt builder
 # ============================================================================
 
+def _is_open_intent(transcript: Optional[str]) -> bool:
+    """True only when the user EXPLICITLY wants to open/navigate (a command) or
+    confirms an open offer. Questions are NOT open intents."""
+    t = (transcript or "").strip().lower()
+    if not t:
+        return False
+    open_cmds = ("open ", "go to", "take me", "navigate", "launch ", "bring up",
+                 "열어", "열어줘", "이동", "가줘", "가자", "띄워", "페이지로",
+                 "open it", "open the", "go there")
+    if t.startswith("open") or any(c in t for c in open_cmds):
+        return True
+    confirms = ("yes", "yeah", "yep", "sure", "ok", "okay", "do it", "go ahead",
+                "please do", "응", "네", "그래", "해줘", "좋아", "open it")
+    if len(t.split()) <= 3 and any(t == c or t.startswith(c + " ") or t == c + "." for c in confirms):
+        return True
+    return False
+
+
 def _cross_agent_route_hint(transcript: Optional[str], agent_id: Optional[str]) -> str:
     """Deterministic pre-router. When the VIP assistant gets a question that
     clearly belongs to another agent's domain (stock / asset), prepend a
@@ -2303,6 +2321,22 @@ def _run_agent_impl(
     if tool_name == "recall_history" and user_id and "user_id" not in args:
         args["user_id"] = user_id
     tool_result = execute_tool(tool_name, args, db=db, agent_id=agent_id)
+
+    # ANSWER-FIRST guard: never auto-navigate for a QUESTION. If the LLM chose
+    # navigate/open_portal but the user didn't explicitly ask to open (or confirm
+    # an offer), turn it into an OFFER instead of moving the page.
+    if (tool_name in ("navigate", "open_portal")
+            and isinstance(tool_result, dict) and tool_result.get("action")
+            and not _is_open_intent(transcript)):
+        to = (tool_result.get("action") or {}).get("to") or ""
+        if lang == "ko":
+            msg = (f"원하시면 {to + ' ' if to else ''}페이지를 열어드릴까요? "
+                   f"'열어'라고 말씀해 주세요.")
+        else:
+            msg = (f"I can open {to or 'that page'} for you — just say "
+                   f"\"open it\" and I will.")
+        tool_result = {"ok": True, "message": msg, "action": None, "_offer": True}
+        tool_name = "offer"
 
     # === Phase 6: Build inline result card ===
     card = _build_card(tool_name, tool_result)
