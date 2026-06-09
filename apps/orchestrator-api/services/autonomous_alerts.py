@@ -43,12 +43,17 @@ def _to_num(v: Any) -> float:
 
 
 def _emit(db, trace_id, sender, target, purpose, payload, title, body, severity="info"):
-    """Send the A2A message + dashboard notification + (high sev) Telegram."""
+    """Send the A2A message + dashboard notification + (high sev) Telegram.
+    Uses message_type='risk_alert' and a valid purpose; the human description
+    rides in the payload. Sender/target must be REAL agents."""
     try:
         from services import a2a_service
         a2a_service.send_message(
             db, trace_id=trace_id, sender_agent_id=sender, target_agent_id=target,
-            message_type="alert", purpose=purpose, payload=payload,
+            message_type="risk_alert",
+            purpose=("escalate" if severity in ("warning", "critical") else "inform"),
+            payload={**payload, "summary": purpose, "title": title, "body": body,
+                     "severity": severity},
         )
     except Exception as e:
         log.warning(f"autonomous alert send_message failed: {e}")
@@ -101,7 +106,7 @@ def _check_stock(db, trace_id: str) -> None:
     for key, label in (("samsung", "삼성전자"), ("skhynix", "SK하이닉스")):
         c = _to_num(ch.get(key))
         if c <= -5 and _should_send(f"stock-{key}-drop-{day}"):
-            _emit(db, trace_id, "Stock Agent", "VIP",
+            _emit(db, trace_id, "Stock Agent", "Asset Agent",
                   purpose=f"{label} dropped {c:.2f}% today",
                   payload={"alert": "stock_drop", "stock": label, "change_pct": c, "price": pr.get(key)},
                   title=f"⚠️ {label} {c:.2f}%",
@@ -125,7 +130,7 @@ def _check_asset(db, trace_id: str) -> None:
     day = datetime.utcnow().strftime("%Y%m%d")
     for a in (rep.get("alerts") or [])[:3]:
         if _should_send(f"asset-{a[:32]}-{day}"):
-            _emit(db, trace_id, "Asset Agent", "VIP",
+            _emit(db, trace_id, "Asset Agent", "Stock Agent",
                   purpose=a, payload={"alert": "asset", "detail": a},
                   title="🏢 Asset alert", body=a, severity="warning")
 
@@ -144,7 +149,7 @@ def _check_realty(db, trace_id: str) -> None:
     it = items[0]
     key = f"realty-onbid-{it.get('id') or it.get('name', '')[:24]}"
     if _should_send(key):
-        _emit(db, trace_id, "Real Estate Agent", "VIP",
+        _emit(db, trace_id, "Real Estate Agent", "Asset Agent",
               purpose=f"OnBid opportunity: {it.get('name', '')[:40]}",
               payload={"alert": "onbid", "item": it},
               title="🏠 OnBid opportunity",
