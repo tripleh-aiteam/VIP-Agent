@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useRef } from "react";
 import { useSearchParams } from "next/navigation";
-import { api, apiPost } from "@/components/api";
+import { api } from "@/components/api";
 import Badge from "@/components/Badge";
 import StatCard from "@/components/StatCard";
 import { API } from "@/components/api";
@@ -54,11 +54,10 @@ export default function ReportsPage() {
   const searchParams = useSearchParams();
   const initialFilter = (() => {
     const f = (searchParams?.get("filter") || "").toLowerCase();
-    return ["all", "daily", "weekly", "cross", "alerts"].includes(f) ? f : "all";
+    return ["all", "daily", "weekly", "monthly", "cross", "alerts"].includes(f) ? f : "all";
   })();
 
   const [reports, setReports] = useState<any[]>([]);
-  const [composing, setComposing] = useState(false);
   const [detail, setDetail] = useState<any>(null);
   const [viewMode, setViewMode] = useState<ViewMode>(null);
   const [activeType, setActiveType] = useState<string>(initialFilter);
@@ -79,24 +78,6 @@ export default function ReportsPage() {
     return () => document.removeEventListener("mousedown", handler);
   }, []);
 
-  const compose = async (type: string) => {
-    setComposing(true);
-    if (type === "auto-daily") {
-      await apiPost("/reports/compose/auto-daily");
-      // Wait for background processing
-      await new Promise((r) => setTimeout(r, 15000));
-    } else if (type === "cross-agent") {
-      await apiPost("/reports/compose/cross-agent", {
-        agent_types: ["asset", "stock"],
-        report_type: "cross_agent_summary",
-        trace_id: `tr-report-${Date.now()}`,
-      });
-    } else {
-      await apiPost(`/reports/compose/${type}`, { hours_back: 48 });
-    }
-    load();
-    setComposing(false);
-  };
 
   const openDetail = async (id: string) => {
     const data = await api<any>(`/reports/${id}`);
@@ -108,12 +89,14 @@ export default function ReportsPage() {
 
   const dailyReports = reports.filter((r) => r.report_type === "daily_summary" || r.report_type?.startsWith("agent_daily_"));
   const weeklyReports = reports.filter((r) => r.report_type === "weekly_summary");
+  const monthlyReports = reports.filter((r) => r.report_type === "monthly_summary");
   const alertReports = reports.filter((r) => r.report_type === "urgent_alert_summary");
   const crossAgentReports = reports.filter((r) => r.report_type === "cross_agent_summary");
 
   const filteredReports = activeType === "all" ? reports
     : activeType === "daily" ? dailyReports
     : activeType === "weekly" ? weeklyReports
+    : activeType === "monthly" ? monthlyReports
     : activeType === "cross" ? crossAgentReports
     : alertReports;
 
@@ -127,6 +110,7 @@ export default function ReportsPage() {
   const typeConfig: Record<string, { label: string; color: string; bg: string; border: string }> = {
     daily_summary: { label: "Daily", color: "text-blue-500", bg: "bg-blue-50", border: "border-blue-200" },
     weekly_summary: { label: "Weekly", color: "text-green-500", bg: "bg-green-50", border: "border-green-200" },
+    monthly_summary: { label: "Monthly", color: "text-teal-500", bg: "bg-teal-50", border: "border-teal-200" },
     urgent_alert_summary: { label: "Alert", color: "text-red-500", bg: "bg-red-50", border: "border-red-200" },
     agent_daily_asset: { label: "Asset Daily", color: "text-emerald-500", bg: "bg-emerald-50", border: "border-emerald-200" },
     agent_daily_stock: { label: "Stock Daily", color: "text-sky-500", bg: "bg-sky-50", border: "border-sky-200" },
@@ -257,7 +241,8 @@ td{padding:8px 12px;border:1px solid #e2e8f0;font-size:10pt}
   const reportTitle = (type: string) =>
     type === "cross_agent_summary" ? "Cross-Agent Report" :
     type === "daily_summary" ? "Daily Executive Summary" :
-    type === "weekly_summary" ? "Weekly Executive Summary" : "Urgent Alert Report";
+    type === "weekly_summary" ? "Weekly Executive Summary" :
+    type === "monthly_summary" ? "Monthly Executive Summary" : "Urgent Alert Report";
 
   return (
     <div>
@@ -266,24 +251,17 @@ td{padding:8px 12px;border:1px solid #e2e8f0;font-size:10pt}
           <h1 className="text-[28px] font-semibold tracking-tight mb-1">Reports</h1>
           <p className="text-sm text-[var(--text-muted)]">Executive summaries and alerts</p>
         </div>
-        <div className="flex gap-2 flex-wrap">
-          <button onClick={() => compose("auto-daily")} disabled={composing}
-            className="px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold transition-colors disabled:opacity-50">
-            {composing ? "..." : "Auto Daily (3 Agents)"}
-          </button>
-          {["daily", "weekly", "alert", "cross-agent"].map((t) => (
-            <button key={t} onClick={() => compose(t)} disabled={composing}
-              className="px-4 py-2 rounded-lg bg-[var(--text-primary)] hover:bg-[var(--text-secondary)] text-white text-xs font-semibold transition-colors disabled:opacity-50 capitalize">
-              {composing ? "..." : `Compose ${t}`}
-            </button>
-          ))}
+        <div className="flex items-center gap-2 text-[12px] text-[var(--text-muted)]">
+          <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
+          Generated automatically — daily, weekly, monthly &amp; cross-agent
         </div>
       </div>
 
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-6">
         <StatCard label="Daily Reports" value={dailyReports.length} color="blue" sub={dailyReports[0] ? `Latest: ${toKST(dailyReports[0].created_at)}` : "None yet"} />
         <StatCard label="Weekly Reports" value={weeklyReports.length} color="green" sub={weeklyReports[0] ? `Latest: ${toKST(weeklyReports[0].created_at)}` : "None yet"} />
-        <StatCard label="Urgent Alerts" value={alertReports.length} color="red" sub={alertReports[0] ? `Latest: ${toKST(alertReports[0].created_at)}` : "None yet"} />
+        <StatCard label="Monthly Reports" value={monthlyReports.length} color="green" sub={monthlyReports[0] ? `Latest: ${toKST(monthlyReports[0].created_at)}` : "None yet"} />
+        <StatCard label="Alerts" value={alertReports.length} color="red" sub={alertReports[0] ? `Latest: ${toKST(alertReports[0].created_at)}` : "None yet"} />
         <StatCard label="Cross-Agent" value={crossAgentReports.length} color="purple" sub={crossAgentReports[0] ? `Latest: ${toKST(crossAgentReports[0].created_at)}` : "None yet"} />
       </div>
 
@@ -292,6 +270,7 @@ td{padding:8px 12px;border:1px solid #e2e8f0;font-size:10pt}
           { key: "all", label: `All (${reports.length})` },
           { key: "daily", label: `Daily (${dailyReports.length})` },
           { key: "weekly", label: `Weekly (${weeklyReports.length})` },
+          { key: "monthly", label: `Monthly (${monthlyReports.length})` },
           { key: "alert", label: `Alerts (${alertReports.length})` },
           { key: "cross", label: `Cross-Agent (${crossAgentReports.length})` },
         ].map((f) => (

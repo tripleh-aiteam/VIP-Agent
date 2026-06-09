@@ -663,6 +663,51 @@ def _chatbot_self_improvement():
         db.close()
 
 
+@with_retry(max_attempts=2, backoff_seconds=(60, 300), job_name="auto_monthly_report")
+def _auto_monthly_report():
+    """Automatic monthly report — 1st of the month, last ~30 days."""
+    from services.report_service import compose_report
+    from services.telegram_service import send_alert
+
+    db = SessionLocal()
+    trace_id = f"tr-auto-monthly-{int(datetime.utcnow().timestamp())}"
+    try:
+        report = compose_report(db, report_type="monthly_summary", hours_back=720, trace_id=trace_id)
+        summary = report.get("executive_summary", "Monthly report generated.")
+        send_alert(
+            f"🗓️ <b>VIP Monthly Report</b>\n<i>{datetime.utcnow().strftime('%Y-%m')}</i>\n\n"
+            f"{summary[:600]}\n\n<i>View on dashboard → Reports → Monthly</i>"
+        )
+        log.info("auto-report: monthly done", extra={"trace_id": trace_id, "action": "auto_report.monthly.done"})
+    except Exception as e:
+        log.warning(f"auto-report: monthly failed: {e}", extra={"action": "auto_report.monthly.failed"})
+    finally:
+        db.close()
+
+
+@with_retry(max_attempts=2, backoff_seconds=(60, 300), job_name="auto_cross_agent_report")
+def _auto_cross_agent_report():
+    """Automatic cross-agent report — daily; pulls live data from all 3 agents."""
+    from services.report_service import compose_cross_agent_report
+    from services.telegram_service import send_alert
+
+    db = SessionLocal()
+    trace_id = f"tr-auto-cross-{int(datetime.utcnow().timestamp())}"
+    try:
+        report = compose_cross_agent_report(
+            db, agent_types=["asset", "stock", "realty"], trace_id=trace_id)
+        summary = report.get("executive_summary", "Cross-agent report generated.")
+        send_alert(
+            f"🔗 <b>VIP Cross-Agent Report</b>\n<i>{datetime.utcnow().strftime('%Y-%m-%d')}</i>\n\n"
+            f"{summary[:500]}\n\n<i>View on dashboard → Reports → Cross-Agent</i>"
+        )
+        log.info("auto-report: cross-agent done", extra={"trace_id": trace_id, "action": "auto_report.cross.done"})
+    except Exception as e:
+        log.warning(f"auto-report: cross-agent failed: {e}", extra={"action": "auto_report.cross.failed"})
+    finally:
+        db.close()
+
+
 def init_scheduler():
     """Initialize the scheduler and load enabled rules from DB."""
     global _scheduler
@@ -712,6 +757,24 @@ def init_scheduler():
         replace_existing=True,
     )
     log.info("scheduler: autonomous A2A alerts registered (hourly, KST business hrs)", extra={"action": "scheduler.auto_alerts_registered"})
+
+    # Auto monthly report — 1st of the month, 23:00 UTC (= 8 AM KST on the 1st)
+    _scheduler.add_job(
+        _auto_monthly_report,
+        CronTrigger.from_crontab("0 23 1 * *"),
+        id="auto-monthly-report",
+        replace_existing=True,
+    )
+    log.info("scheduler: auto monthly report registered (1st of month, 8 AM KST)", extra={"action": "scheduler.auto_monthly_registered"})
+
+    # Auto cross-agent report — daily 23:30 UTC (after the daily pipeline)
+    _scheduler.add_job(
+        _auto_cross_agent_report,
+        CronTrigger.from_crontab("30 23 * * *"),
+        id="auto-cross-agent-report",
+        replace_existing=True,
+    )
+    log.info("scheduler: auto cross-agent report registered (daily 23:30 UTC)", extra={"action": "scheduler.auto_cross_registered"})
 
     # Auto weekly report — Friday 6:30 PM KST = 09:30 UTC Friday
     _scheduler.add_job(
