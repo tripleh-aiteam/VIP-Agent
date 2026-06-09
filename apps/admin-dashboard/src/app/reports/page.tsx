@@ -10,6 +10,40 @@ import MarkdownLite from "@/components/MarkdownLite";
 
 type ViewMode = null | "summary" | "detailed";
 
+// --- Markdown → HTML for the MS Word export (keeps tables intact) ----------
+const _esc = (s: string) => (s || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+const _inline = (s: string) => _esc(s)
+  .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
+  .replace(/`([^`]+)`/g, "<code>$1</code>");
+function mdToHtml(md: string): string {
+  const lines = (md || "").replace(/\r/g, "").split("\n");
+  const isRow = (l: string) => /^\s*\|.*\|\s*$/.test(l);
+  const isSep = (l: string) => /^\s*\|?[\s:|-]+\|?\s*$/.test(l) && l.includes("-");
+  const cells = (l: string) => l.replace(/^\s*\|/, "").replace(/\|\s*$/, "").split("|").map(c => c.trim());
+  let html = "", i = 0;
+  while (i < lines.length) {
+    const line = lines[i];
+    if (isRow(line) && i + 1 < lines.length && isSep(lines[i + 1])) {
+      const header = cells(line); i += 2; const rows: string[][] = [];
+      while (i < lines.length && isRow(lines[i])) { rows.push(cells(lines[i])); i++; }
+      html += "<table>";
+      if (header.some(h => h)) html += "<tr>" + header.map(h => `<th>${_inline(h)}</th>`).join("") + "</tr>";
+      rows.forEach(r => { html += "<tr>" + r.map(c => `<td>${_inline(c)}</td>`).join("") + "</tr>"; });
+      html += "</table>"; continue;
+    }
+    const h = line.match(/^(#{1,4})\s+(.*)$/);
+    if (h) { const lvl = Math.min(h[1].length, 3); html += `<h${lvl}>${_inline(h[2])}</h${lvl}>`; i++; continue; }
+    if (/^\s*[-*]\s+/.test(line)) {
+      html += "<ul>";
+      while (i < lines.length && /^\s*[-*]\s+/.test(lines[i])) { html += `<li>${_inline(lines[i].replace(/^\s*[-*]\s+/, ""))}</li>`; i++; }
+      html += "</ul>"; continue;
+    }
+    if (line.trim() === "") { i++; continue; }
+    html += `<p>${_inline(line)}</p>`; i++;
+  }
+  return html;
+}
+
 export default function ReportsPage() {
   // Read ?filter= from URL so the assistant can deep-link to a specific tab:
   //   /reports?filter=daily   → opens with Daily tab active
@@ -153,30 +187,37 @@ td{padding:8px 12px;border:1px solid #e2e8f0;font-size:10pt}
 .summary{background:#f8fafc;padding:16px;border-left:4px solid #2563eb;margin:16px 0}
 .meta{font-size:9pt;color:#94a3b8}</style></head><body>`;
 
-    html += `<h1>${title}</h1><p class="meta">Generated: ${date} | Sources: ${detail.source_run_ids?.length || 0}</p>`;
-    html += `<div class="summary"><strong>Executive Summary</strong><br/>${detail.content?.executive_summary || ""}</div>`;
+    const rep = detail.content?.report;
+    const exec = (lang === "ko"
+      ? (rep?.summary_ko || rep?.summary_en)
+      : rep?.summary_en) || detail.content?.executive_summary || "";
+    const bodyMd = rep ? (lang === "ko" ? (rep.detail_ko || rep.detail_en) : rep.detail_en) : "";
 
-    // Summary table
-    html += `<h2>Report Overview</h2><table><tr><th>Section</th><th>Key Finding</th><th>Status</th></tr>`;
-    sections.forEach((s: any) => {
-      const status = (s.data?.risk_level) || (s.data?.complete === false ? "Incomplete" : "OK");
-      html += `<tr><td><strong>${s.title}</strong></td><td>${(s.content || "").slice(0, 120)}</td><td>${status}</td></tr>`;
-    });
-    html += `</table>`;
+    html += `<h1>${_esc(title)}</h1><p class="meta">Generated: ${date} | Sources: ${detail.source_run_ids?.length || 0}</p>`;
+    html += `<div class="summary"><strong>${lang === "ko" ? "핵심 요약" : "Executive Summary"}</strong><br/>${_inline(exec)}</div>`;
 
-    sections.forEach((s: any) => {
-      html += `<h2>${s.title}</h2>`;
-      const lines = (s.content || "").split("\n");
-      lines.forEach((line: string) => {
-        const t = line.trim();
-        if (!t || t.startsWith("━")) return;
-        if (t.startsWith("•") || t.startsWith("- ")) {
-          html += `<p style="margin-left:20px">${t}</p>`;
-        } else {
-          html += `<p>${t}</p>`;
-        }
+    if (bodyMd) {
+      // Export EXACTLY what the modal shows (tables intact), in the chosen language.
+      html += mdToHtml(bodyMd);
+    } else {
+      // Fallback for reports without a markdown detail (older / combined-less).
+      html += `<h2>Report Overview</h2><table><tr><th>Section</th><th>Key Finding</th><th>Status</th></tr>`;
+      sections.forEach((s: any) => {
+        const status = (s.data?.risk_level) || (s.data?.complete === false ? "Incomplete" : "OK");
+        html += `<tr><td><strong>${_esc(s.title)}</strong></td><td>${_esc((s.content || "").slice(0, 120))}</td><td>${status}</td></tr>`;
       });
-    });
+      html += `</table>`;
+      sections.forEach((s: any) => {
+        html += `<h2>${_esc(s.title)}</h2>`;
+        (s.content || "").split("\n").forEach((line: string) => {
+          const t = line.trim();
+          if (!t || t.startsWith("━")) return;
+          html += t.startsWith("•") || t.startsWith("- ")
+            ? `<p style="margin-left:20px">${_inline(t.replace(/^[•\-]\s*/, ""))}</p>`
+            : `<p>${_inline(t)}</p>`;
+        });
+      });
+    }
 
     html += `<hr/><p class="meta">VIP Agent Platform | Report ID: ${detail.id?.slice(0, 8)}</p></body></html>`;
 

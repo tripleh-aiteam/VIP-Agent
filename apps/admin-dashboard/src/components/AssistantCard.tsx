@@ -319,6 +319,7 @@ export function AssistantCard({ floating = true }: Props = {}) {
   //     attaches a file, or the assistant is mid-reply.
   const [inputFocused, setInputFocused] = useState(false);
   const [pillExpanded, setPillExpanded] = useState(false);
+  const [closed, setClosed] = useState(false);   // user explicitly closed → show pill only
   // Voice state declared here (before hasActivity, which references it).
   type VoiceState = "idle" | "listening" | "thinking" | "speaking";
   const [voiceState, setVoiceState] = useState<VoiceState>("idle");
@@ -340,7 +341,8 @@ export function AssistantCard({ floating = true }: Props = {}) {
   // activity) shrink to a corner pill so page content stays visible.
   // The conversation isn't lost — it lives in the AssistantContext and
   // reappears when the boss clicks the pill to expand again.
-  const compactPill = floating && !hasActivity;
+  // closed (manual X or route change) forces the corner pill regardless of focus.
+  const compactPill = floating && (closed || !hasActivity);
 
   // Close the assistant to the corner pill whenever the menu/route changes.
   // The conversation is NOT lost (turns persist in context + localStorage);
@@ -349,11 +351,12 @@ export function AssistantCard({ floating = true }: Props = {}) {
   useEffect(() => {
     if (_prevPath.current !== pathname) {
       _prevPath.current = pathname;
+      setClosed(true);            // force the corner pill on menu change
       setPillExpanded(false);
       setInputFocused(false);
       setShowModelPicker(false);
       setCollapsed(false);        // so the chat is visible again when reopened
-      setPrompt("");              // drop any half-typed text so the pill shows
+      setPrompt("");              // drop any half-typed text
       try { inputRef.current?.blur(); } catch {}
     }
   }, [pathname, setCollapsed]);
@@ -859,14 +862,13 @@ export function AssistantCard({ floating = true }: Props = {}) {
           )}
         </div>
         <div className="flex items-center gap-1" onPointerDown={(e) => e.stopPropagation()}>
-          {turns.length > 0 && (
-            <button
-              type="button"
-              onClick={() => setTurns(() => [])}
-              className="text-[11px] text-gray-500 hover:text-gray-800 px-2 py-1 rounded hover:bg-gray-100"
-              title="Clear conversation"
-            >Clear</button>
-          )}
+          {/* New chat — clears the conversation for a fresh start */}
+          <button
+            type="button"
+            onClick={() => { setTurns(() => []); setPrompt(""); inputRef.current?.focus(); }}
+            className="text-[11px] text-gray-600 hover:text-gray-900 px-2 py-1 rounded hover:bg-gray-100 flex items-center gap-1"
+            title="New chat — clear this conversation"
+          >🗑️ New</button>
           {floating && floatRect && (
             <button
               type="button"
@@ -883,16 +885,19 @@ export function AssistantCard({ floating = true }: Props = {}) {
                 className="w-8 h-8 rounded-lg text-gray-500 hover:bg-gray-100 flex items-center justify-center text-[14px]"
                 title={collapsed ? "Show conversation" : "Hide conversation"}
               >{collapsed ? "▴" : "▾"}</button>
+              {/* Close — collapses the assistant to the corner pill */}
               <button
                 type="button"
                 onClick={() => {
+                  setClosed(true);
                   setPillExpanded(false);
                   setShowModelPicker(false);
-                  inputRef.current?.blur();
+                  setInputFocused(false);
+                  try { inputRef.current?.blur(); } catch {}
                 }}
-                className="w-8 h-8 rounded-lg text-gray-500 hover:bg-gray-100 flex items-center justify-center text-[14px]"
-                title="Minimize to corner — page content stays visible"
-              >–</button>
+                className="w-8 h-8 rounded-lg text-gray-500 hover:bg-gray-100 hover:text-red-600 flex items-center justify-center text-[18px] leading-none"
+                title="Close assistant (click the 🤖 pill to reopen)"
+              >×</button>
             </>
           )}
         </div>
@@ -1178,6 +1183,7 @@ export function AssistantCard({ floating = true }: Props = {}) {
             type="button"
             data-assistant-ui="pill"
             onClick={() => {
+              setClosed(false);
               setPillExpanded(true);
               setTimeout(() => inputRef.current?.focus(), 50);
             }}
