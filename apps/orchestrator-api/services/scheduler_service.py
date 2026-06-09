@@ -118,115 +118,24 @@ def _auto_daily_reports():
     agent_results = []
 
     try:
-        # Step 1: Fetch data from EACH agent, save report, send Telegram
-        for agent_info in AGENT_REPORTS:
-            trace_id = f"{base_trace}-{agent_info['agent_type']}"
+        # Step 1: Build a meaningful, formatted report PER AGENT from its own
+        # live data (Asset/Stock backends + real Realty workbook + OnBid), save
+        # to the dashboard, and send to Telegram. Each builder is best-effort.
+        from services.agent_report_builder import (
+            build_all_reports, format_telegram, report_sections,
+        )
+        reports = build_all_reports(db, base_trace)
+        for rep in reports:
             try:
-                run = create_task(
-                    db=db, trace_id=trace_id,
-                    task_type=agent_info["task_type"],
-                    target_agent_type=agent_info["agent_type"],
-                    initiator_type="system_scheduler",
-                    initiator_id="auto-daily-report",
-                    source_channel="scheduler",
-                    input_payload={"auto_report": True},
-                )
-                run = dispatch_task(db, run.id)
-
-                output = run.output_payload or {}
-                status_icon = "✅" if run.status == "completed" else "❌"
-
-                # Build per-agent report content
-                agent_summary = f"{agent_info['name']} Daily Report — {kst_now}"
-                sections = []
-                telegram_lines = [
-                    f"{agent_info['emoji']} <b>{agent_info['name']} — Daily Report</b>",
-                    f"<i>{kst_now}</i>",
-                    "",
-                ]
-
-                if run.status == "completed" and output:
-                    highlights = []  # 1-2 sentence narrative — Phase 2 data + Phase 1 polish
-                    if agent_info["agent_type"] == "asset":
-                        portfolio = output.get("portfolio", {})
-                        contracts = output.get("contracts", {})
-                        metrics = {
-                            "Properties": portfolio.get("total_properties", 0),
-                            "Occupancy": f"{100 - portfolio.get('vacancy_rate', 0):.1f}%",
-                            "Contracts": contracts.get("total", 0),
-                            "Cash Balance": f"{output.get('cash', {}).get('total_balance', 0):,.0f} KRW",
-                            "Risk": output.get("risk_level", "N/A"),
-                        }
-                        # Highlight: total portfolio value if available
-                        if output.get("portfolio_value_krw"):
-                            highlights.append(f"💰 Portfolio value: {output['portfolio_value_krw']/1e9:.1f}B KRW")
-                        if contracts.get("expiring_within_30d", 0) > 0:
-                            highlights.append(f"⏰ {contracts['expiring_within_30d']} contract(s) expiring in 30 days")
-                        if contracts.get("overdue_payment", 0) > 0:
-                            highlights.append(f"🚨 {contracts['overdue_payment']} overdue payment(s)")
-                    elif agent_info["agent_type"] == "stock":
-                        metrics = {
-                            "Stocks Analyzed": output.get("symbols_analyzed", output.get("news_count", "N/A")),
-                            "Sentiment": output.get("market_sentiment", "N/A"),
-                            "Risk Score": output.get("risk_score", "N/A"),
-                        }
-                        # Phase 2: Yahoo live data — show portfolio value + KOSPI + top movers
-                        portfolio = output.get("portfolio", {})
-                        if portfolio.get("total_value_krw"):
-                            pnl_pct = portfolio.get("unrealized_pnl_pct", 0)
-                            highlights.append(f"💰 Portfolio: {portfolio['total_value_krw']/1e9:.1f}B KRW ({pnl_pct:+.2f}%)")
-                        market = output.get("market_summary", {})
-                        if market.get("value"):
-                            highlights.append(f"📊 KOSPI: {market['value']} ({market.get('change_pct', 0):+.2f}%)")
-                        high_risk = output.get("high_risk_holdings", [])
-                        if high_risk:
-                            top = high_risk[0]
-                            highlights.append(f"⚠️ Big mover: {top.get('name', '?')} {top.get('change_pct', 0):+.2f}%")
-                    else:
-                        metrics = {
-                            "Listings": output.get("total_listings", 0),
-                            "Avg Vacancy": f"{output.get('avg_vacancy_pct', 0)}%",
-                            "Avg Yield": f"{output.get('avg_yield_pct', 0)}%",
-                            "Trend": output.get("market_trend", "N/A"),
-                        }
-                        if output.get("market_value_krw"):
-                            highlights.append(f"💰 Market value: {output['market_value_krw']/1e9:.1f}B KRW")
-                        high_vac = output.get("high_vacancy_listings", [])
-                        if high_vac:
-                            highlights.append(f"⚠️ {len(high_vac)} listing(s) with vacancy >15%")
-
-                    for k, v in metrics.items():
-                        telegram_lines.append(f"{k}: {v}")
-
-                    if highlights:
-                        telegram_lines.append("")
-                        telegram_lines.append("<b>Highlights</b>")
-                        for h in highlights[:3]:
-                            telegram_lines.append(h)
-
-                    sections.append({
-                        "title": agent_info["name"],
-                        "content": "\n".join(f"{k}: {v}" for k, v in metrics.items()),
-                        "data": metrics,
-                    })
-                    agent_summary = f"{agent_info['name']}: " + ", ".join(f"{k}={v}" for k, v in list(metrics.items())[:3])
-                else:
-                    telegram_lines.append(f"Status: {run.status}")
-                    if run.error_message:
-                        telegram_lines.append(f"Error: {run.error_message[:100]}")
-                    sections.append({"title": agent_info["name"], "content": f"Status: {run.status}", "data": {}})
-
-                telegram_lines.append(f"\n{status_icon} Status: {run.status}")
-
-                # Save per-agent report to DB (appears on Reports page)
                 agent_report = OrchReport(
-                    report_type=f"agent_daily_{agent_info['agent_type']}",
-                    source_run_ids_json=[str(run.id)],
+                    report_type=f"agent_daily_{rep['agent_type']}",
+                    source_run_ids_json=[],
                     content_json={
-                        "report_type": f"agent_daily_{agent_info['agent_type']}",
-                        "executive_summary": agent_summary,
-                        "sections": sections,
-                        "agent": agent_info["name"],
+                        "report_type": f"agent_daily_{rep['agent_type']}",
+                        "executive_summary": rep.get("summary") or f"{rep['name']} daily report",
+                        "sections": report_sections(rep),
+                        "agent": rep["name"],
+                        "status": rep["status"],
                         "generated_at": datetime.utcnow().isoformat(),
                         "kst_time": kst_now,
                     },
@@ -235,30 +144,31 @@ def _auto_daily_reports():
                 db.add(agent_report)
                 db.flush()
 
-                send_alert("\n".join(telegram_lines))
-                agent_results.append({"agent": agent_info["name"], "status": run.status, "report_id": str(agent_report.id)})
-
-                log.info(f"auto-report: {agent_info['name']} saved + sent", extra={"trace_id": trace_id, "action": "auto_report.agent"})
-
+                send_alert(format_telegram(rep, kst_now))
+                agent_results.append({"agent": rep["name"], "status": rep["status"],
+                                      "report_id": str(agent_report.id)})
+                log.info(f"auto-report: {rep['name']} saved + sent ({rep['status']})",
+                         extra={"trace_id": base_trace, "action": "auto_report.agent"})
             except Exception as e:
-                agent_results.append({"agent": agent_info["name"], "status": "failed", "error": str(e)})
-                log.warning(f"auto-report: {agent_info['name']} failed: {e}", extra={"action": "auto_report.agent.failed"})
+                agent_results.append({"agent": rep.get("name", "?"), "status": "failed", "error": str(e)})
+                log.warning(f"auto-report: {rep.get('name')} send failed: {e}",
+                            extra={"action": "auto_report.agent.failed"})
 
         # Step 2: Compose combined daily report (also saved to DB by compose_report)
         report = compose_report(db, report_type="daily_summary", hours_back=24, trace_id=base_trace)
 
         # Step 3: Send combined summary to Telegram
-        completed = len([r for r in agent_results if r["status"] == "completed"])
+        completed = len([r for r in agent_results if r["status"] in ("ok", "partial", "completed")])
         total = len(agent_results)
 
         combined_lines = [
             f"📊 <b>VIP Daily Summary</b>",
             f"<i>{kst_now}</i>",
             f"",
-            f"Agents: {completed}/{total} reported successfully",
+            f"Agents: {completed}/{total} reported",
         ]
         for r in agent_results:
-            icon = "✅" if r["status"] == "completed" else "❌"
+            icon = {"ok": "✅", "partial": "⚠️", "completed": "✅"}.get(r["status"], "❌")
             combined_lines.append(f"  {icon} {r['agent']}: {r['status']}")
 
         summary = report.get("executive_summary", "")

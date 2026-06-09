@@ -21,6 +21,16 @@
 - **Verified live:** Jeju real estate sorted 241M→29M (주거/토지/호텔, no securities), cars all 자동차/승용차, Busan land works.
 - **Honest scope:** OnBid only lists assets currently up for public auction; tool returns a `note` when a region/keyword has no current matches.
 
+### [later] Rebuilt per-agent daily REPORTS (meaningful, formatted, reliable)
+
+- **Problem:** Asset report was thin/unformatted; Stock returned `review_required` (judgement gate blanked the data); Real Estate returned `Failed` (its Vercel backend has no JSON API — all /api/* redirect to HTML). Reports had no consistent format.
+- **New:** [apps/orchestrator-api/services/agent_report_builder.py](apps/orchestrator-api/services/agent_report_builder.py) builds a domain-specific, consistently-formatted report per agent with Key Metrics + Highlights + Alerts + an AI 1-line summary + Action items:
+  - **Asset** — value, occupancy, monthly rent, cash, contracts, risk (from the Asset backend; uses `output_payload` regardless of judgement status).
+  - **Stock** — portfolio P&L + KOSPI (live from the stock backend), sentiment, risk score, foreign flow, news; uses the fetched data EVEN IF the task is flagged `review_required` (that was the bug).
+  - **Real Estate** — built from the REAL Triple H listing workbook (108 listings, total official value, categories, regions, top properties) + live OnBid 공매 opportunities. No more `Failed`.
+- **Files updated:** [apps/orchestrator-api/services/scheduler_service.py](apps/orchestrator-api/services/scheduler_service.py) — `_auto_daily_reports()` now calls `build_all_reports()` + `format_telegram()`; statuses are ok/partial/unavailable; combined VIP summary updated. Still 8 AM KST daily, all sent to Telegram + saved to the Reports dashboard.
+- **Verified (local):** Real Estate report renders real data — 108 listings, 40.6억원 total value, top properties. (AI summary + OnBid populate live where the keys exist.)
+
 ### [later] Honour output FORMAT — "make a table" now returns a real table
 
 - **Problem:** asking "...make it table" returned a prose report — the compose step hardcoded "Summarize for the boss in 1-3 sentences / plain prose", and the chat UI rendered plain text (no markdown), so even a table would show as raw pipes.
