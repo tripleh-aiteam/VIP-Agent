@@ -5,7 +5,6 @@ import { useSearchParams } from "next/navigation";
 import { api, apiPost } from "@/components/api";
 import Badge from "@/components/Badge";
 import StatCard from "@/components/StatCard";
-import { AskVIPBar } from "@/components/AskVIP";
 import { API } from "@/components/api";
 import MarkdownLite from "@/components/MarkdownLite";
 
@@ -240,15 +239,6 @@ td{padding:8px 12px;border:1px solid #e2e8f0;font-size:10pt}
         </div>
       </div>
 
-      <div className="mb-6">
-        <AskVIPBar suggestions={[
-          { label: "Explain latest report", prompt: "explain today's summary" },
-          { label: "What's the biggest risk?", prompt: "what is the biggest risk" },
-          { label: "Compare stock & realty", prompt: "compare stock and real estate view" },
-          { label: "What needs approval?", prompt: "what needs approval" },
-        ]} />
-      </div>
-
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
         <StatCard label="Daily Reports" value={dailyReports.length} color="blue" sub={dailyReports[0] ? `Latest: ${toKST(dailyReports[0].created_at)}` : "None yet"} />
         <StatCard label="Weekly Reports" value={weeklyReports.length} color="green" sub={weeklyReports[0] ? `Latest: ${toKST(weeklyReports[0].created_at)}` : "None yet"} />
@@ -434,11 +424,14 @@ td{padding:8px 12px;border:1px solid #e2e8f0;font-size:10pt}
 
               <hr className="border-gray-200 mb-6" />
 
-              {/* Executive Summary */}
+              {/* Executive Summary (localised EN / 한국어) */}
               <div className="mb-8 bg-gray-50 rounded-lg p-5 border border-gray-100">
-                <h2 className="text-[11px] font-bold text-gray-400 uppercase tracking-widest mb-3">Executive Summary</h2>
+                <h2 className="text-[11px] font-bold text-gray-400 uppercase tracking-widest mb-3">{lang === "ko" ? "핵심 요약" : "Executive Summary"}</h2>
                 <p className="text-[15px] text-gray-700 leading-[1.8]">
-                  {detail.content?.executive_summary || "No summary available."}
+                  {(lang === "ko"
+                    ? (detail.content?.report?.summary_ko || detail.content?.report?.summary_en)
+                    : (detail.content?.report?.summary_en))
+                    || detail.content?.executive_summary || "No summary available."}
                 </p>
               </div>
 

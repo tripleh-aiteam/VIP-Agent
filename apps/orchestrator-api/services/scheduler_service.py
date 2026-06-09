@@ -170,6 +170,8 @@ def _auto_daily_reports():
                 "report": {
                     "detail_en": combined["detail_en"],
                     "detail_ko": combined["detail_ko"],
+                    "summary_en": combined.get("summary_en", ""),
+                    "summary_ko": combined.get("summary_ko", ""),
                 },
                 "generated_at": datetime.utcnow().isoformat(),
                 "kst_time": kst_now,

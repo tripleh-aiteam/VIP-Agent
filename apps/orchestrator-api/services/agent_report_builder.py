@@ -391,10 +391,21 @@ def _fallback_detail(rep: dict, lang: str) -> str:
     return "\n".join(out)
 
 
+def _split_tags(text: str, tags: list[str]) -> dict[str, str]:
+    """Split LLM output delimited by ===TAG=== markers into {TAG: content}."""
+    import re
+    out: dict[str, str] = {}
+    parts = re.split(r"===\s*([A-Z_]+)\s*===", text or "")
+    for i in range(1, len(parts) - 1, 2):
+        out[parts[i].strip()] = parts[i + 1].strip()
+    return out
+
+
 def _attach_detail(rep: dict) -> None:
-    """Generate a ~1-page DETAILED report in English AND Korean from the rep's
-    facts → rep['detail_en'] / rep['detail_ko']. Falls back to a structured
-    render if the LLM is unavailable, so the detail is never empty/an error."""
+    """Generate a SHORT bilingual exec summary AND a COMPREHENSIVE bilingual
+    detailed report from the rep's facts. Stores summary_en/ko (1 sentence) and
+    detail_en/ko (multi-section analysis, clearly longer than the short view).
+    Falls back to a structured render if the LLM is unavailable."""
     if rep.get("detail_en"):
         return
     facts = "\n".join(
@@ -409,40 +420,44 @@ def _attach_detail(rep: dict) -> None:
         try:
             from services.llm_client import chat_completion_sync
             sys = (
-                f"You are the {rep['name']} writing the boss's DETAILED daily report "
-                "(about one page). Use ONLY the facts provided — do not invent "
-                "numbers. Include a short overview, an interpretation of the key "
-                "metrics with the REAL numbers, notable changes/risks, and clear "
-                "recommended actions. Use markdown (a heading, bullets, a small "
-                "table where it helps). Write the SAME report TWICE — first in "
-                "English, then in natural Korean. Output EXACTLY:\n===EN===\n"
-                "<english markdown>\n===KO===\n<korean markdown>"
+                f"You are the {rep['name']} preparing the boss's reports from the "
+                "facts below. Produce FOUR parts. Use ONLY the facts — never invent "
+                "numbers.\n"
+                "1) SUM_EN: a ONE-sentence executive summary in English.\n"
+                "2) SUM_KO: the same one sentence in natural Korean.\n"
+                "3) EN: a COMPREHENSIVE, DETAILED English report (250-400 words, "
+                "much longer than the one-liner). Markdown with these sections: "
+                "## Overview, ## Detailed Analysis (interpret EACH key metric with "
+                "its real number and what it means), ## Risks & Watch-items, "
+                "## Opportunities, ## Recommended Actions (with the reason for each), "
+                "## Outlook. Include a markdown table of the metrics.\n"
+                "4) KO: the SAME comprehensive report in natural Korean.\n"
+                "Output EXACTLY:\n===SUM_EN===\n<one sentence>\n===SUM_KO===\n"
+                "<한 문장>\n===EN===\n<long english markdown>\n===KO===\n"
+                "<long korean markdown>"
             )
             out = chat_completion_sync(
                 system_prompt=sys,
-                messages=[{"role": "user", "content": facts[:1800]}],
-                max_tokens=1200, temperature=0.5, model="groq-llama-3.3-70b",
+                messages=[{"role": "user", "content": facts[:1900]}],
+                max_tokens=2000, temperature=0.5, model="groq-llama-3.3-70b",
             ) or ""
         except Exception as e:
             log.warning(f"detail gen failed for {rep.get('name')}: {e}")
             out = ""
 
-    # Reject error sentinels / empties → structured fallback.
     bad = (not out.strip()) or out.lstrip().startswith(("[LLM unavailable]", "[server error]"))
     if bad:
+        rep["summary_en"] = rep.get("summary") or ""
+        rep["summary_ko"] = rep.get("summary") or ""
         rep["detail_en"] = _fallback_detail(rep, "en")
         rep["detail_ko"] = _fallback_detail(rep, "ko")
         return
 
-    en, ko = out, ""
-    if "===KO===" in out:
-        a, b = out.split("===KO===", 1)
-        en = a.replace("===EN===", "").strip()
-        ko = b.strip()
-    else:
-        en = out.replace("===EN===", "").strip()
-    rep["detail_en"] = en or _fallback_detail(rep, "en")
-    rep["detail_ko"] = ko or en or _fallback_detail(rep, "ko")
+    sec = _split_tags(out, ["SUM_EN", "SUM_KO", "EN", "KO"])
+    rep["summary_en"] = sec.get("SUM_EN") or rep.get("summary") or ""
+    rep["summary_ko"] = sec.get("SUM_KO") or rep["summary_en"]
+    rep["detail_en"] = sec.get("EN") or _fallback_detail(rep, "en")
+    rep["detail_ko"] = sec.get("KO") or rep["detail_en"]
 
 
 def load_latest_stock_close(db, hours: int = 18) -> dict | None:
@@ -484,21 +499,28 @@ def build_combined_report(reps: list[dict], kst: str) -> dict:
     det_en = [f"# VIP Daily Report\n*{kst}*\n"]
     det_ko = [f"# VIP 일일 종합 보고서\n*{kst}*\n"]
     sections: list[dict] = []
+    sum_en, sum_ko = [], []
     for r in reps:
         if r.get("detail_en"):
             det_en += [r["detail_en"], "\n---\n"]
         if r.get("detail_ko"):
             det_ko += [r["detail_ko"], "\n---\n"]
         sections += report_sections(r)
-    ex = " ".join(
-        f"{r['name']}: {(r.get('summary') or r.get('status') or '').strip()}."
-        for r in reps
-    )
+        se = r.get("summary_en") or r.get("summary") or r.get("status") or ""
+        sk = r.get("summary_ko") or se
+        if se:
+            sum_en.append(f"{r['name']}: {se}")
+        if sk:
+            sum_ko.append(f"{r['name']}: {sk}")
+    ex_en = " ".join(sum_en)[:700]
+    ex_ko = " ".join(sum_ko)[:700]
     return {
         "name": "VIP Daily Summary",
         "detail_en": "\n".join(det_en).strip(),
         "detail_ko": "\n".join(det_ko).strip(),
-        "executive_summary": ex[:600],
+        "summary_en": ex_en,
+        "summary_ko": ex_ko,
+        "executive_summary": ex_en,
         "sections": sections,
     }
 
