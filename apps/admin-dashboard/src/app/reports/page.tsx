@@ -7,6 +7,7 @@ import Badge from "@/components/Badge";
 import StatCard from "@/components/StatCard";
 import { AskVIPBar } from "@/components/AskVIP";
 import { API } from "@/components/api";
+import MarkdownLite from "@/components/MarkdownLite";
 
 type ViewMode = null | "summary" | "detailed";
 
@@ -30,6 +31,7 @@ export default function ReportsPage() {
   const [activeType, setActiveType] = useState<string>(initialFilter);
   const [copied, setCopied] = useState(false);
   const [dlOpen, setDlOpen] = useState(false);
+  const [lang, setLang] = useState<"en" | "ko">("en");
   const dlRef = useRef<HTMLDivElement>(null);
 
   const load = () => api<any[]>("/reports/").then(setReports).catch(() => {});
@@ -397,6 +399,14 @@ td{padding:8px 12px;border:1px solid #e2e8f0;font-size:10pt}
                     </div>
                   )}
                 </div>
+
+                {/* EN / 한국어 language toggle */}
+                <div className="flex items-center rounded-lg border border-gray-200 overflow-hidden ml-1">
+                  <button onClick={() => setLang("en")}
+                    className={`px-2.5 py-1.5 text-[12px] font-medium transition-colors ${lang === "en" ? "bg-blue-600 text-white" : "bg-white text-gray-600 hover:bg-gray-50"}`}>EN</button>
+                  <button onClick={() => setLang("ko")}
+                    className={`px-2.5 py-1.5 text-[12px] font-medium transition-colors ${lang === "ko" ? "bg-blue-600 text-white" : "bg-white text-gray-600 hover:bg-gray-50"}`}>한국어</button>
+                </div>
               </div>
               <button onClick={() => setViewMode("summary")}
                 className="w-8 h-8 flex items-center justify-center rounded-full hover:bg-gray-100 text-gray-400 hover:text-gray-700 text-[18px]">
@@ -432,6 +442,15 @@ td{padding:8px 12px;border:1px solid #e2e8f0;font-size:10pt}
                 </p>
               </div>
 
+              {/* ===== Per-agent 1-page DETAIL (English / 한국어 togglable) ===== */}
+              {detail.content?.report?.detail_en ? (
+                <div className="mb-8">
+                  <MarkdownLite text={lang === "ko"
+                    ? (detail.content.report.detail_ko || detail.content.report.detail_en)
+                    : detail.content.report.detail_en} />
+                </div>
+              ) : (
+              <>
               {/* ===== Summary Table ===== */}
               <div className="mb-8">
                 <h2 className="text-[11px] font-bold text-gray-400 uppercase tracking-widest mb-3">Report Overview</h2>
@@ -571,6 +590,8 @@ td{padding:8px 12px;border:1px solid #e2e8f0;font-size:10pt}
                   </div>
                 );
               })}
+              </>
+              )}
 
               {/* Traces */}
               {detail.content?.trace_references?.length > 0 && (

@@ -21,6 +21,13 @@
 - **Verified live:** Jeju real estate sorted 241M→29M (주거/토지/호텔, no securities), cars all 자동차/승용차, Busan land works.
 - **Honest scope:** OnBid only lists assets currently up for public auction; tool returns a `note` when a region/keyword has no current matches.
 
+### [later] Reports detail (EN/KO toggle), assistant close-on-nav, remove Ask-VIP box
+
+- **Reports — bilingual 1-page detail:** each agent report now carries `detail_en` + `detail_ko` (LLM 1-page narrative, with a structured markdown fallback when the LLM is down) — [apps/orchestrator-api/services/agent_report_builder.py](apps/orchestrator-api/services/agent_report_builder.py) `_attach_detail()` / `_fallback_detail()`, attached in `build_all_reports` + the 15:30 capture. Frontend: [apps/admin-dashboard/src/app/reports/page.tsx](apps/admin-dashboard/src/app/reports/page.tsx) detailed modal now has an **EN / 한국어 toggle** and renders the per-agent 1-page via a new dependency-free [apps/admin-dashboard/src/components/MarkdownLite.tsx](apps/admin-dashboard/src/components/MarkdownLite.tsx) (tables/headings/bold/lists). Short summary view unchanged (Telegram-style). Combined daily_summary still uses the overview table.
+- **Assistant close-on-nav + no lost chat:** [apps/admin-dashboard/src/components/AssistantCard.tsx](apps/admin-dashboard/src/components/AssistantCard.tsx) — `RouteCollapser` collapses the assistant when the menu/route changes; turns are now persisted to `localStorage` (`assistant-turns-<agentId>`) and restored on mount, so the conversation survives navigation + refresh.
+- **Removed the inline "Ask VIP anything…" box** from the Agents page ([apps/admin-dashboard/src/app/agents/page.tsx](apps/admin-dashboard/src/app/agents/page.tsx)).
+- **Tested:** `npm run build` green (all routes), backend detail fallback verified (EN + Korean headings + metrics table).
+
 ### [later] Stock report = real prices + change% + market-close capture
 
 - **What:** the Stock report now lists **actual prices with up/down %** per instrument from the live market snapshot (`/market/snapshots`): KOSPI, KOSDAQ, 삼성전자, SK하이닉스, NASDAQ, S&P 500, USD/KRW — each `price ▲/▼ %` — plus KOSPI-based sentiment, top gainer, big-drop alerts, foreign-buy + news context. (Replaces the old sentiment/news-only stock report.)

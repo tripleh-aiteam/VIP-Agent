@@ -363,6 +363,88 @@ def build_realty_report(db, trace_id: str) -> dict:
     }
 
 
+def _fallback_detail(rep: dict, lang: str) -> str:
+    """A structured 1-page detail built from the rep's own data — used when the
+    LLM is unavailable, so the detailed page is always meaningful."""
+    ko = lang == "ko"
+    H = {
+        "title": "상세 리포트" if ko else "Detailed Report",
+        "overview": "개요" if ko else "Overview",
+        "metrics": "주요 지표" if ko else "Key Metrics",
+        "highlights": "주요 내용" if ko else "Highlights",
+        "alerts": "주의 사항" if ko else "Alerts",
+        "actions": "권장 조치" if ko else "Recommended Actions",
+    }
+    out = [f"## {rep['name']} — {H['title']}", ""]
+    if rep.get("summary"):
+        out += [f"### {H['overview']}", rep["summary"], ""]
+    if rep.get("metrics"):
+        out += [f"### {H['metrics']}", "", "| | |", "|---|---|"]
+        out += [f"| {k} | {v} |" for k, v in rep["metrics"].items()]
+        out += [""]
+    if rep.get("highlights"):
+        out += [f"### {H['highlights']}"] + [f"- {h}" for h in rep["highlights"]] + [""]
+    if rep.get("alerts"):
+        out += [f"### {H['alerts']}"] + [f"- {a}" for a in rep["alerts"]] + [""]
+    if rep.get("actions"):
+        out += [f"### {H['actions']}"] + [f"- {a}" for a in rep["actions"]] + [""]
+    return "\n".join(out)
+
+
+def _attach_detail(rep: dict) -> None:
+    """Generate a ~1-page DETAILED report in English AND Korean from the rep's
+    facts → rep['detail_en'] / rep['detail_ko']. Falls back to a structured
+    render if the LLM is unavailable, so the detail is never empty/an error."""
+    if rep.get("detail_en"):
+        return
+    facts = "\n".join(
+        [f"{k}: {v}" for k, v in (rep.get("metrics") or {}).items()]
+        + [f"highlight: {h}" for h in (rep.get("highlights") or [])]
+        + [f"alert: {a}" for a in (rep.get("alerts") or [])]
+        + ([f"overview: {rep['summary']}"] if rep.get("summary") else [])
+        + ([f"action: {a}" for a in (rep.get("actions") or [])])
+    )
+    out = ""
+    if facts.strip():
+        try:
+            from services.llm_client import chat_completion_sync
+            sys = (
+                f"You are the {rep['name']} writing the boss's DETAILED daily report "
+                "(about one page). Use ONLY the facts provided — do not invent "
+                "numbers. Include a short overview, an interpretation of the key "
+                "metrics with the REAL numbers, notable changes/risks, and clear "
+                "recommended actions. Use markdown (a heading, bullets, a small "
+                "table where it helps). Write the SAME report TWICE — first in "
+                "English, then in natural Korean. Output EXACTLY:\n===EN===\n"
+                "<english markdown>\n===KO===\n<korean markdown>"
+            )
+            out = chat_completion_sync(
+                system_prompt=sys,
+                messages=[{"role": "user", "content": facts[:1800]}],
+                max_tokens=1200, temperature=0.5, model="groq-llama-3.3-70b",
+            ) or ""
+        except Exception as e:
+            log.warning(f"detail gen failed for {rep.get('name')}: {e}")
+            out = ""
+
+    # Reject error sentinels / empties → structured fallback.
+    bad = (not out.strip()) or out.lstrip().startswith(("[LLM unavailable]", "[server error]"))
+    if bad:
+        rep["detail_en"] = _fallback_detail(rep, "en")
+        rep["detail_ko"] = _fallback_detail(rep, "ko")
+        return
+
+    en, ko = out, ""
+    if "===KO===" in out:
+        a, b = out.split("===KO===", 1)
+        en = a.replace("===EN===", "").strip()
+        ko = b.strip()
+    else:
+        en = out.replace("===EN===", "").strip()
+    rep["detail_en"] = en or _fallback_detail(rep, "en")
+    rep["detail_ko"] = ko or en or _fallback_detail(rep, "ko")
+
+
 def load_latest_stock_close(db, hours: int = 18) -> dict | None:
     """Return the stock report captured at the most recent market close (15:30
     KST) within `hours`, so the 8 AM send delivers the close-of-day numbers."""
@@ -403,4 +485,6 @@ def build_all_reports(db, trace_id: str, prefer_saved_stock: bool = True) -> lis
     stock = (load_latest_stock_close(db) if prefer_saved_stock else None) \
         or _safe(build_stock_report, db, trace_id)
     realty = _safe(build_realty_report, db, trace_id)
+    for rep in (asset, stock, realty):
+        _attach_detail(rep)  # 1-page EN+KO detail (skipped if already present)
     return [asset, stock, realty]

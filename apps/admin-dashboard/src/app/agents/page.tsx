@@ -4,7 +4,6 @@ import { useEffect, useState, useRef } from "react";
 import { useSearchParams } from "next/navigation";
 import { api, apiPost } from "@/components/api";
 import Badge from "@/components/Badge";
-import { AskVIPBar } from "@/components/AskVIP";
 
 export default function AgentsPage() {
   // Assistant can deep-link to a specific agent card:
@@ -35,14 +34,6 @@ export default function AgentsPage() {
     <div>
       <h1 className="text-[28px] font-semibold tracking-tight mb-1">Agents</h1>
       <p className="text-[14px] text-[var(--text-muted)] mb-6">Registered agents — mock and real</p>
-
-      <div className="mb-6">
-        <AskVIPBar suggestions={[
-          { label: "Unhealthy agents?", prompt: "which agents are unhealthy" },
-          { label: "Agent reliability", prompt: "show agents" },
-          { label: "Run asset summary", prompt: "run asset summary" },
-        ]} />
-      </div>
 
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
         {agents.map((a: any) => {

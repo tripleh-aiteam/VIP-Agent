@@ -201,13 +201,14 @@ def _capture_stock_market_close():
     """Build the Stock report at Korean market close (15:30 KST) and SAVE it
     (no Telegram). The 8 AM daily pipeline then delivers this close-of-day
     snapshot to the boss. Idea: capture at close, report in the morning."""
-    from services.agent_report_builder import build_stock_report, report_sections
+    from services.agent_report_builder import build_stock_report, report_sections, _attach_detail
     from db.models import OrchReport
 
     db = SessionLocal()
     try:
         trace = f"tr-stock-close-{int(datetime.utcnow().timestamp())}"
         rep = build_stock_report(db, trace)
+        _attach_detail(rep)  # bilingual 1-page detail captured at close
         kst = datetime.utcnow().strftime("%Y-%m-%d") + " 15:30 KST"
         r = OrchReport(
             report_type="agent_daily_stock",

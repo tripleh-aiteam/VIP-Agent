@@ -118,13 +118,42 @@ interface AssistantState {
 
 const AssistantContext = createContext<AssistantState | null>(null);
 
+const _TURNS_KEY = `assistant-turns-${vipConfig.agentId}`;
+
+/** Collapses the assistant whenever the route (menu) changes, so opening a new
+ * menu closes the open conversation. Chat is NOT cleared — turns persist. */
+function RouteCollapser({ onNav }: { onNav: () => void }) {
+  const pathname = usePathname();
+  const prev = useRef(pathname);
+  useEffect(() => {
+    if (prev.current !== pathname) {
+      prev.current = pathname;
+      onNav();
+    }
+  }, [pathname, onNav]);
+  return null;
+}
+
 export function AssistantProvider({ children }: { children: ReactNode }) {
-  const [turns, setTurnsState] = useState<AssistantTurn[]>([]);
+  // Restore chat from localStorage so navigating away / refreshing never loses it.
+  const [turns, setTurnsState] = useState<AssistantTurn[]>(() => {
+    if (typeof window === "undefined") return [];
+    try {
+      const raw = localStorage.getItem(_TURNS_KEY);
+      const parsed = raw ? JSON.parse(raw) : [];
+      return Array.isArray(parsed) ? parsed : [];
+    } catch { return []; }
+  });
   const [model, setModelState] = useState<string>(() => {
     if (typeof window === "undefined") return "";
     return localStorage.getItem(`chatbot-${vipConfig.agentId}-model`) || "";
   });
   const [collapsed, setCollapsed] = useState(false);
+
+  // Persist the conversation (cap at last 100 turns to bound storage).
+  useEffect(() => {
+    try { localStorage.setItem(_TURNS_KEY, JSON.stringify(turns.slice(-100))); } catch {}
+  }, [turns]);
 
   const setTurns = useCallback((updater: (prev: AssistantTurn[]) => AssistantTurn[]) => {
     setTurnsState(prev => updater(prev));
@@ -136,6 +165,7 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
 
   return (
     <AssistantContext.Provider value={{ turns, setTurns, model, setModel, collapsed, setCollapsed }}>
+      <RouteCollapser onNav={() => setCollapsed(true)} />
       {children}
     </AssistantContext.Provider>
   );
