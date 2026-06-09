@@ -91,6 +91,15 @@ def get_triggers():
     }
 
 
+@router.post("/run-alerts")
+def run_alerts_now():
+    """Run the autonomous A2A alert watchers immediately (also runs on schedule).
+    Agents check their live data and proactively alert each other / the boss."""
+    from services.autonomous_alerts import run_autonomous_alerts
+    run_autonomous_alerts()
+    return {"triggered": True, "message": "Autonomous A2A alerts checked."}
+
+
 @router.get("/notifications")
 def get_a2a_notifications(
     limit: int = Query(50, ge=1, le=200),

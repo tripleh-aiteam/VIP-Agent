@@ -701,6 +701,18 @@ def init_scheduler():
     )
     log.info("scheduler: stock market-close capture registered (06:30 UTC = 15:30 KST)", extra={"action": "scheduler.stock_close_registered"})
 
+    # Autonomous A2A alerts — agents watch their own live data and proactively
+    # warn each other / the boss. Hourly during business hours (UTC 0-10 =
+    # KST 9-19), weekdays. De-duplicated so it doesn't spam.
+    from services.autonomous_alerts import run_autonomous_alerts
+    _scheduler.add_job(
+        run_autonomous_alerts,
+        CronTrigger.from_crontab("0 0-10 * * 1-5"),
+        id="autonomous-alerts",
+        replace_existing=True,
+    )
+    log.info("scheduler: autonomous A2A alerts registered (hourly, KST business hrs)", extra={"action": "scheduler.auto_alerts_registered"})
+
     # Auto weekly report — Friday 6:30 PM KST = 09:30 UTC Friday
     _scheduler.add_job(
         _auto_weekly_report,
