@@ -196,53 +196,111 @@ def build_asset_report(db, trace_id: str) -> dict:
     }
 
 
+# Instruments to show in the stock report: (snapshot_key, label, kind).
+_STOCK_DISPLAY: list[tuple[str, str, str]] = [
+    ("kospi", "KOSPI", "idx"),
+    ("kosdaq", "KOSDAQ", "idx"),
+    ("samsung", "삼성전자", "won"),
+    ("skhynix", "SK하이닉스", "won"),
+    ("nasdaq", "NASDAQ", "idx"),
+    ("sp500", "S&P 500", "idx"),
+    ("usdkrw", "USD/KRW", "fx"),
+]
+
+
+def _latest_snapshot() -> dict | None:
+    try:
+        from services.stock_data_tools import tool_stock_price_history
+        data = (tool_stock_price_history(limit=1) or {}).get("data")
+        if isinstance(data, list) and data:
+            return data[0]
+        if isinstance(data, dict):
+            for k in ("items", "snapshots", "data"):
+                if isinstance(data.get(k), list) and data[k]:
+                    return data[k][0]
+            if "prices" in data:
+                return data
+    except Exception as e:
+        log.warning(f"stock snapshot fetch failed: {e}")
+    return None
+
+
+def _fmt_inst(val: Any, chg: Any, kind: str) -> str | None:
+    try:
+        v = float(val)
+    except Exception:
+        return None
+    if kind == "won":
+        price = f"{v:,.0f}원"
+    elif kind == "fx":
+        price = f"{v:,.2f}"
+    else:
+        price = f"{v:,.2f}" if v < 10000 else f"{v:,.0f}"
+    try:
+        c = float(chg)
+    except Exception:
+        return price
+    arrow = "▲" if c > 0 else ("▼" if c < 0 else "—")
+    return f"{price}  {arrow}{abs(c):.2f}%"
+
+
 def build_stock_report(db, trace_id: str) -> dict:
-    """Company Stocks (auto/smart trading): P&L, positions, signals, market."""
-    d = _dispatch(db, "stock_analysis", "stock", trace_id + "-stock")
-    o = d["output"]  # used regardless of review_required status
+    """Company Stocks (auto/smart trading): real prices + up/down % per stock &
+    index, from the live market snapshot, plus foreign-flow + news context."""
     metrics: dict[str, Any] = {}
     highlights, alerts = [], []
 
-    # Live enrichment: portfolio P&L + market summary from the stock backend.
+    snap = _latest_snapshot()
+    captured = market_status = None
+    if snap:
+        pr, ch = snap.get("prices", {}) or {}, snap.get("changes", {}) or {}
+        captured = snap.get("captured_at")
+        market_status = snap.get("market_status")
+        for key, label, kind in _STOCK_DISPLAY:
+            cell = _fmt_inst(pr.get(key), ch.get(key), kind)
+            if cell:
+                metrics[label] = cell
+        # sentiment from KOSPI direction
+        kchg = ch.get("kospi")
+        if kchg is not None:
+            metrics["Sentiment"] = ("bullish 📈" if _to_num(kchg) > 0
+                                    else "bearish 📉" if _to_num(kchg) < 0 else "flat")
+        # movers / alerts among the displayed instruments
+        moves = [(label, _to_num(ch.get(key)))
+                 for key, label, _k in _STOCK_DISPLAY if ch.get(key) is not None]
+        for label, c in sorted(moves, key=lambda x: x[1], reverse=True)[:1]:
+            if c > 0:
+                highlights.append(f"Top gainer: {label} ▲{c:.2f}%")
+        for label, c in sorted(moves, key=lambda x: x[1])[:2]:
+            if c <= -3:
+                alerts.append(f"{label} dropped {c:.2f}%")
+    else:
+        alerts.append("Live market snapshot unavailable right now.")
+
+    # Foreign-flow + news context (real backend data).
     try:
-        from services.stock_data_tools import tool_stock_portfolio, tool_stock_market_summary
-        pf = (tool_stock_portfolio() or {}).get("data") or {}
-        if isinstance(pf, dict) and pf.get("total_value_krw"):
-            metrics["Portfolio value"] = (
-                f"{_won(pf['total_value_krw'])} ({_to_num(pf.get('unrealized_pnl_pct', 0)):+.2f}%)")
-        mkt = (tool_stock_market_summary() or {}).get("data") or {}
-        if isinstance(mkt, dict) and (mkt.get("kospi") or mkt.get("value")):
-            kospi = mkt.get("kospi") or mkt.get("value")
-            metrics["KOSPI"] = f"{kospi} ({_to_num(mkt.get('change_pct', 0)):+.2f}%)"
+        from services.stock_data_tools import tool_stock_foreign_flow, tool_stock_news
+        fb = (tool_stock_foreign_flow(direction="buy") or {}).get("data") or []
+        names = [f.get("name") or f.get("ticker") for f in fb[:3] if isinstance(f, dict)]
+        if names:
+            highlights.append("외국인 순매수: " + ", ".join(n for n in names if n))
+        news = (tool_stock_news() or {}).get("data") or {}
+        ncount = news.get("count") or len(news.get("articles", []) or [])
+        if ncount:
+            metrics["Market news"] = ncount
     except Exception as e:
-        log.warning(f"stock live enrich failed: {e}")
+        log.warning(f"stock context fetch failed: {e}")
 
-    metrics["Sentiment"] = o.get("market_sentiment", "—")
-    metrics["Risk score"] = o.get("risk_score", "—")
-    metrics["Symbols tracked"] = o.get("symbols_analyzed",
-                                       (o.get("watchlist", {}) or {}).get("count", "—"))
-    metrics["Market news"] = (o.get("news", {}) or {}).get("count", "—")
-
-    for f in (o.get("foreign_buy_top") or [])[:2]:
-        if isinstance(f, dict):
-            highlights.append(f"외국인 순매수: {f.get('name', f.get('ticker', '?'))}")
-    for f in (o.get("foreign_sell_top") or [])[:2]:
-        if isinstance(f, dict):
-            alerts.append(f"외국인 순매도: {f.get('name', f.get('ticker', '?'))}")
-    if str(o.get("market_sentiment", "")).lower() == "bearish":
-        alerts.append("Market sentiment is bearish today")
-    if d["status"] == "review_required":
-        highlights.append("(Flagged for review — data shown is live)")
-
-    fb = o.get("fallback")
-    status = "ok" if (o and not fb) else ("partial" if o else "unavailable")
+    status = "ok" if snap else "partial"
+    src = ("Stock Advisor live"
+           + (f" · {market_status}" if market_status else "")
+           + (f" · {captured} KST" if captured else ""))
     summary, actions = _ai_takeaway("Stock Agent", "stock-market / smart-trading",
                                     metrics, highlights, alerts)
     return {
         "agent_type": "stock", "name": "Stock Agent", "emoji": "📈",
         "status": status, "metrics": metrics, "highlights": highlights,
-        "alerts": alerts, "summary": summary, "actions": actions,
-        "source": "Stock Advisor backend" + (" (fallback data)" if fb else ""),
+        "alerts": alerts, "summary": summary, "actions": actions, "source": src,
     }
 
 
@@ -305,17 +363,44 @@ def build_realty_report(db, trace_id: str) -> dict:
     }
 
 
-def build_all_reports(db, trace_id: str) -> list[dict]:
-    """Build all 3 agent reports (best-effort each — one failure never blocks
-    the others)."""
-    out = []
-    for fn in (build_asset_report, build_stock_report, build_realty_report):
-        try:
-            out.append(fn(db, trace_id))
-        except Exception as e:
-            log.warning(f"report builder {fn.__name__} crashed: {e}")
-            out.append({"agent_type": fn.__name__, "name": fn.__name__,
-                        "emoji": "🤖", "status": "unavailable", "metrics": {},
-                        "highlights": [], "alerts": [f"Report build error: {str(e)[:120]}"],
-                        "summary": "", "actions": [], "source": "error"})
-    return out
+def load_latest_stock_close(db, hours: int = 18) -> dict | None:
+    """Return the stock report captured at the most recent market close (15:30
+    KST) within `hours`, so the 8 AM send delivers the close-of-day numbers."""
+    try:
+        from datetime import timedelta
+        from db.models import OrchReport
+        cutoff = datetime.utcnow() - timedelta(hours=hours)
+        row = (db.query(OrchReport)
+               .filter(OrchReport.report_type == "agent_daily_stock")
+               .filter(OrchReport.created_at >= cutoff)
+               .order_by(OrchReport.created_at.desc())
+               .first())
+        if row and isinstance(row.content_json, dict) and row.content_json.get("market_close"):
+            rep = row.content_json.get("report")
+            if isinstance(rep, dict) and rep.get("metrics"):
+                return rep
+    except Exception as e:
+        log.warning(f"load_latest_stock_close failed: {e}")
+    return None
+
+
+def _safe(fn, db, trace_id: str) -> dict:
+    try:
+        return fn(db, trace_id)
+    except Exception as e:
+        log.warning(f"report builder {fn.__name__} crashed: {e}")
+        return {"agent_type": fn.__name__, "name": fn.__name__, "emoji": "🤖",
+                "status": "unavailable", "metrics": {}, "highlights": [],
+                "alerts": [f"Report build error: {str(e)[:120]}"],
+                "summary": "", "actions": [], "source": "error"}
+
+
+def build_all_reports(db, trace_id: str, prefer_saved_stock: bool = True) -> list[dict]:
+    """Build all 3 agent reports (best-effort each). For Stock, prefer the
+    market-close snapshot captured at 15:30 KST if one exists (so the 8 AM
+    delivery shows close-of-day prices), else build fresh."""
+    asset = _safe(build_asset_report, db, trace_id)
+    stock = (load_latest_stock_close(db) if prefer_saved_stock else None) \
+        or _safe(build_stock_report, db, trace_id)
+    realty = _safe(build_realty_report, db, trace_id)
+    return [asset, stock, realty]

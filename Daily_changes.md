@@ -21,6 +21,13 @@
 - **Verified live:** Jeju real estate sorted 241M→29M (주거/토지/호텔, no securities), cars all 자동차/승용차, Busan land works.
 - **Honest scope:** OnBid only lists assets currently up for public auction; tool returns a `note` when a region/keyword has no current matches.
 
+### [later] Stock report = real prices + change% + market-close capture
+
+- **What:** the Stock report now lists **actual prices with up/down %** per instrument from the live market snapshot (`/market/snapshots`): KOSPI, KOSDAQ, 삼성전자, SK하이닉스, NASDAQ, S&P 500, USD/KRW — each `price ▲/▼ %` — plus KOSPI-based sentiment, top gainer, big-drop alerts, foreign-buy + news context. (Replaces the old sentiment/news-only stock report.)
+- **Market-close → morning idea:** new `_capture_stock_market_close()` job builds + SAVES the stock report at **15:30 KST (06:30 UTC, weekdays)** with `market_close=True`; the 8 AM pipeline now prefers that saved close-of-day snapshot (`load_latest_stock_close`) so the boss gets the market-close numbers in the morning, else builds fresh.
+- **Files:** [apps/orchestrator-api/services/agent_report_builder.py](apps/orchestrator-api/services/agent_report_builder.py) (rebuilt `build_stock_report`, `load_latest_stock_close`, `_safe`, snapshot helpers), [apps/orchestrator-api/services/scheduler_service.py](apps/orchestrator-api/services/scheduler_service.py) (capture job + 15:30 cron + store full `report` dict).
+- **Verified local:** Stock report renders KOSPI 7,484 ▼8.29%, 삼성전자 295,500원 ▼10.18%, SK하이닉스 1,911,000원 ▼7.68%, NASDAQ ▲0.86%, sentiment bearish, drop alerts. Realty + Asset still meaningful.
+
 ### [later] Rebuilt per-agent daily REPORTS (meaningful, formatted, reliable)
 
 - **Problem:** Asset report was thin/unformatted; Stock returned `review_required` (judgement gate blanked the data); Real Estate returned `Failed` (its Vercel backend has no JSON API — all /api/* redirect to HTML). Reports had no consistent format.

@@ -136,6 +136,7 @@ def _auto_daily_reports():
                         "sections": report_sections(rep),
                         "agent": rep["name"],
                         "status": rep["status"],
+                        "report": rep,
                         "generated_at": datetime.utcnow().isoformat(),
                         "kst_time": kst_now,
                     },
@@ -191,6 +192,45 @@ def _auto_daily_reports():
 
     except Exception as e:
         log.warning(f"auto-report: daily pipeline failed: {e}", extra={"trace_id": base_trace, "action": "auto_report.daily.failed"})
+    finally:
+        db.close()
+
+
+@with_retry(max_attempts=2, backoff_seconds=(60, 300), job_name="stock_market_close")
+def _capture_stock_market_close():
+    """Build the Stock report at Korean market close (15:30 KST) and SAVE it
+    (no Telegram). The 8 AM daily pipeline then delivers this close-of-day
+    snapshot to the boss. Idea: capture at close, report in the morning."""
+    from services.agent_report_builder import build_stock_report, report_sections
+    from db.models import OrchReport
+
+    db = SessionLocal()
+    try:
+        trace = f"tr-stock-close-{int(datetime.utcnow().timestamp())}"
+        rep = build_stock_report(db, trace)
+        kst = datetime.utcnow().strftime("%Y-%m-%d") + " 15:30 KST"
+        r = OrchReport(
+            report_type="agent_daily_stock",
+            source_run_ids_json=[],
+            content_json={
+                "report_type": "agent_daily_stock",
+                "executive_summary": rep.get("summary") or "Stock market close report",
+                "sections": report_sections(rep),
+                "agent": rep["name"],
+                "status": rep["status"],
+                "market_close": True,
+                "report": rep,
+                "generated_at": datetime.utcnow().isoformat(),
+                "kst_time": kst,
+            },
+            delivery_channel="capture",
+        )
+        db.add(r)
+        db.commit()
+        log.info(f"stock-close: captured market-close report ({rep['status']})",
+                 extra={"trace_id": trace, "action": "stock_close.capture"})
+    except Exception as e:
+        log.warning(f"stock-close: capture failed: {e}", extra={"action": "stock_close.failed"})
     finally:
         db.close()
 
@@ -611,6 +651,15 @@ def init_scheduler():
         replace_existing=True,
     )
     log.info("scheduler: auto daily reports registered (23:00 UTC = 8:00 AM KST)", extra={"action": "scheduler.auto_daily_registered"})
+
+    # Stock market-close capture — 15:30 KST = 06:30 UTC, weekdays (KRX trading days)
+    _scheduler.add_job(
+        _capture_stock_market_close,
+        CronTrigger.from_crontab("30 6 * * 1-5"),
+        id="stock-market-close",
+        replace_existing=True,
+    )
+    log.info("scheduler: stock market-close capture registered (06:30 UTC = 15:30 KST)", extra={"action": "scheduler.stock_close_registered"})
 
     # Auto weekly report — Friday 6:30 PM KST = 09:30 UTC Friday
     _scheduler.add_job(
