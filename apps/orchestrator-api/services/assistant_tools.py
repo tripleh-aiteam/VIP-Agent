@@ -3076,9 +3076,44 @@ except Exception as _e:  # never let a tool-pack failure break the assistant
     log.warning(f"stock_data_tools registration skipped: {_e}")
 
 
-def list_tool_schemas() -> list[dict]:
-    """Return all tool schemas for the LLM."""
-    return [t.schema() for t in TOOL_REGISTRY.values()]
+# ============================================================================
+#  Per-agent tool scoping — data isolation
+# ============================================================================
+# Each agent's assistant must only see ITS OWN domain tools so it can't read or
+# act on another agent's data. VIP is the boss hub and keeps everything.
+# Everything NOT in an agent's allow-set is hidden AND blocked at execution.
+
+# Safe, per-agent-scoped tools every agent may use (own KB, own pages, web).
+_GENERIC_TOOLS = {
+    "navigate", "open_portal", "find_page", "list_pages", "open_item",
+    "what_can_you_do", "web_search",
+    "search_knowledge", "search_knowledge_base", "list_knowledge_files",
+    "add_knowledge", "update_knowledge", "delete_knowledge", "delete_knowledge_file",
+    "semantic_search",
+}
+_PROPERTY_TOOLS = {"onbid_search", "onbid_detail", "realprice_search"}
+
+
+def allowed_tool_names(agent_id: Optional[str]) -> set[str]:
+    """The set of tool names a given agent's assistant may see/use."""
+    aid = (agent_id or "vip").lower()
+    if aid == "vip":
+        return set(TOOL_REGISTRY.keys())          # VIP hub = everything
+    allowed = set(_GENERIC_TOOLS)
+    if aid == "stock":
+        allowed |= {n for n in TOOL_REGISTRY if n.startswith("stock_")}
+    elif aid in ("realty", "aiglass"):
+        allowed |= _PROPERTY_TOOLS
+    # asset (and any unknown agent) = generic only — no cross-domain tools.
+    return {n for n in allowed if n in TOOL_REGISTRY}
+
+
+def list_tool_schemas(agent_id: Optional[str] = None) -> list[dict]:
+    """Return the tool schemas this agent may use (VIP=all; others scoped)."""
+    if agent_id is None:
+        return [t.schema() for t in TOOL_REGISTRY.values()]
+    names = allowed_tool_names(agent_id)
+    return [t.schema() for n, t in TOOL_REGISTRY.items() if n in names]
 
 
 def get_tool(name: str) -> Optional[Tool]:
@@ -3109,6 +3144,11 @@ def execute_tool(name: str, args: dict, db: Session = None, agent_id: str = "vip
     tool = get_tool(name)
     if not tool:
         return {"ok": False, "error": f"Unknown tool '{name}'"}
+    # Data isolation: block tools outside this agent's domain (defence in depth —
+    # the LLM shouldn't even see them, but never execute one if it tries).
+    if name not in allowed_tool_names(agent_id):
+        return {"ok": False,
+                "error": f"Tool '{name}' is not available to this agent."}
     try:
         call_args = dict(args or {})
         if _fn_accepts(tool.fn, "agent_id"):

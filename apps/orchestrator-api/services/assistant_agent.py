@@ -259,7 +259,7 @@ def _build_system_prompt(
       - Strict rules to prevent intent hallucination
     """
     tool_lines: list[str] = []
-    for s in list_tool_schemas():
+    for s in list_tool_schemas(agent_id):
         param_names = list((s.get("parameters") or {}).get("properties", {}).keys())
         param_str = ", ".join(param_names) if param_names else "(no args)"
         tool_lines.append(
@@ -2165,6 +2165,20 @@ def _run_agent_impl(
         "into English in your reply (keep proper nouns/IDs as-is).\n\n"
     )
     system = _lang_rule + system
+    # ANSWER-FIRST rule (all agents): a question must be ANSWERED, never auto-open
+    # a menu. Navigation only on an explicit open command. Prepended so the model
+    # cannot drift into opening pages instead of replying.
+    _intent_rule = (
+        "■ ANSWER-FIRST (critical): If the user asks a QUESTION or requests "
+        "INFORMATION (what / how / why / how much / 얼마 / 뭐 / 무엇 / 어디 / 있어 / "
+        "알려줘 / 보여줘-as-question), you MUST ANSWER it in words using your tools "
+        "and knowledge. Do NOT call navigate() or open_portal() for a question. "
+        "Navigate ONLY when the user gives an explicit OPEN command (open / go to / "
+        "take me to / 열어 / 열어줘 / 이동 / 가줘) or confirms an open offer you made. "
+        "If you cannot fully answer, say what you found and OFFER 'Want me to open "
+        "it?' — never open it unasked.\n\n"
+    )
+    system = _intent_rule + system
     # Deterministic cross-agent pre-router (VIP only): force ask_agent for clear
     # stock/asset questions so they never fall through to web_search.
     _route_hint = _cross_agent_route_hint(transcript, agent_id)
