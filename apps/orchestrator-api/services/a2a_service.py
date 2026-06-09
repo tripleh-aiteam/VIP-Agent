@@ -241,7 +241,10 @@ def check_agent_webhook(agent: CoreAgent) -> dict:
         return {
             "agent": agent.name,
             "webhook_url": webhook_url,
-            "reachable": resp.status_code in (200, 201, 202, 400, 405, 422),
+            # Any real HTTP response (incl. 401/403 auth-protected, 422 payload
+            # rejected) means the webhook endpoint EXISTS and is reachable. Only a
+            # connection error or 404/5xx means genuinely unreachable.
+            "reachable": resp.status_code in (200, 201, 202, 400, 401, 403, 405, 422),
             "status_code": resp.status_code,
         }
     except Exception as e:
