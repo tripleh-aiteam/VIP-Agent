@@ -492,35 +492,68 @@ def _safe(fn, db, trace_id: str) -> dict:
                 "summary": "", "actions": [], "source": "error"}
 
 
+# Fixed daily order + exact section titles for the combined VIP report.
+_COMBINED_ORDER = ["asset", "stock", "realty"]
+_AGENT_TITLE_EN = {"asset": "Asset Report", "stock": "Stock Report",
+                   "realty": "Real Estate Report"}
+_AGENT_TITLE_KO = {"asset": "자산 리포트", "stock": "주식 리포트",
+                   "realty": "부동산 리포트"}
+_AGENT_EMOJI = {"asset": "🏢", "stock": "📈", "realty": "🏠"}
+
+
+def _nest_detail(md: str) -> str:
+    """Drop the agent's own top-level '# heading' (and a following *date* line)
+    and demote its '## sections' to '###' so it nests cleanly under the combined
+    report's per-agent heading."""
+    lines = (md or "").lstrip().split("\n")
+    out: list[str] = []
+    dropped_h1 = False
+    for ln in lines:
+        s = ln.strip()
+        if not dropped_h1 and s.startswith("# "):
+            dropped_h1 = True
+            continue
+        if not out and (s.startswith("*") and s.endswith("*")):
+            continue  # leading italic date line
+        if s.startswith("## "):
+            ln = ln.replace("## ", "### ", 1)
+        out.append(ln)
+    return "\n".join(out).strip()
+
+
 def build_combined_report(reps: list[dict], kst: str) -> dict:
-    """Aggregate the 3 agent reports into ONE combined VIP daily report that
-    carries the per-agent bilingual detail (so the dashboard's EN/한국어 toggle
-    shows each agent's detailed summary)."""
-    det_en = [f"# VIP Daily Report\n*{kst}*\n"]
-    det_ko = [f"# VIP 일일 종합 보고서\n*{kst}*\n"]
+    """Aggregate the 3 agent reports into ONE clean, consistently-organised VIP
+    daily report: header → Asset Report → Stock Report → Real Estate Report,
+    each labelled with its exact name, bilingual (EN/KO)."""
+    by_type = {r.get("agent_type"): r for r in reps}
+    ordered = [by_type[t] for t in _COMBINED_ORDER if t in by_type]
+    ordered += [r for r in reps if r.get("agent_type") not in _COMBINED_ORDER]
+
+    det_en = [f"# VIP Daily Report", f"*{kst}*", ""]
+    det_ko = [f"# VIP 일일 종합 보고서", f"*{kst}*", ""]
     sections: list[dict] = []
     sum_en, sum_ko = [], []
-    for r in reps:
-        if r.get("detail_en"):
-            det_en += [r["detail_en"], "\n---\n"]
-        if r.get("detail_ko"):
-            det_ko += [r["detail_ko"], "\n---\n"]
+    for r in ordered:
+        t = r.get("agent_type")
+        title_en = _AGENT_TITLE_EN.get(t, r.get("name", "Report"))
+        title_ko = _AGENT_TITLE_KO.get(t, r.get("name", "리포트"))
+        emoji = _AGENT_EMOJI.get(t, "•")
+        det_en += [f"## {emoji} {title_en}", "", _nest_detail(r.get("detail_en", "")), "", "---", ""]
+        det_ko += [f"## {emoji} {title_ko}", "", _nest_detail(r.get("detail_ko", "")), "", "---", ""]
         sections += report_sections(r)
         se = r.get("summary_en") or r.get("summary") or r.get("status") or ""
         sk = r.get("summary_ko") or se
         if se:
-            sum_en.append(f"{r['name']}: {se}")
+            sum_en.append(f"{title_en}: {se}")
         if sk:
-            sum_ko.append(f"{r['name']}: {sk}")
-    ex_en = " ".join(sum_en)[:700]
-    ex_ko = " ".join(sum_ko)[:700]
+            sum_ko.append(f"{title_ko}: {sk}")
     return {
         "name": "VIP Daily Summary",
         "detail_en": "\n".join(det_en).strip(),
         "detail_ko": "\n".join(det_ko).strip(),
-        "summary_en": ex_en,
-        "summary_ko": ex_ko,
-        "executive_summary": ex_en,
+        "summary_en": " ".join(sum_en)[:700],
+        "summary_ko": " ".join(sum_ko)[:700],
+        "executive_summary": " ".join(sum_en)[:700],
         "sections": sections,
     }
 
