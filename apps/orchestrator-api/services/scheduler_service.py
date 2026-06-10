@@ -748,6 +748,34 @@ def _kiwoom_daily_report():
             log.warning(f"kiwoom telegram format failed: {te}")
             send_alert(f"📈 <b>Kiwoom Daily Report</b>\n<i>{kst}</i>\n\n"
                        f"{rep.get('summary_en', '')[:300]}\n\n<i>View → Reports → Kiwoom</i>")
+
+        # Email the report as a Word (.docx) attachment (best-effort; no-op if
+        # SMTP / recipient not configured).
+        try:
+            from services.report_docx import markdown_to_docx
+            from services.report_email import send_email_with_docx, is_configured as _email_ok
+            to_addr = (os.getenv("KIWOOM_REPORT_EMAIL") or os.getenv("REPORT_EMAIL_TO")
+                       or os.getenv("SMTP_USER"))
+            if _email_ok() and to_addr:
+                body_md = rep.get("detail_ko") or ""
+                if len(body_md.strip()) < 200 or "same report in korean" in body_md.lower():
+                    body_md = rep.get("detail_en") or ""
+                docx_bytes = markdown_to_docx(body_md, "Kiwoom Daily Market Report", kst)
+                fname = f"Kiwoom_Report_{datetime.utcnow().strftime('%Y%m%d')}.docx"
+                res = send_email_with_docx(
+                    to_addr, f"[Kiwoom] 일일 시장 리포트 — {kst}",
+                    "키움 일일 시장 리포트입니다. 첨부된 Word 파일을 확인해 주세요.\n\n"
+                    "(Kiwoom daily market report attached as a Word document.)",
+                    fname, docx_bytes)
+                log.info(f"kiwoom: email {'sent' if res.get('ok') else 'skipped'} -> {to_addr}"
+                         f" ({res.get('reason', 'ok')})",
+                         extra={"trace_id": trace, "action": "kiwoom.email"})
+            else:
+                log.info("kiwoom: email skipped (SMTP not configured or no recipient)",
+                         extra={"action": "kiwoom.email.skip"})
+        except Exception as ee:
+            log.warning(f"kiwoom: email step failed: {ee}", extra={"action": "kiwoom.email.failed"})
+
         log.info(f"kiwoom: daily report saved + sent ({rep['status']})",
                  extra={"trace_id": trace, "action": "kiwoom.daily.done"})
     except Exception as e:
