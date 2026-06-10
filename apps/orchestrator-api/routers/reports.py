@@ -65,24 +65,22 @@ def trigger_kiwoom_report(email: Optional[str] = Query(None, description="Option
 
 @router.get("/email-config")
 def email_config():
-    """Diagnostic: report whether the email sender is configured — BOOLEANS ONLY.
-    Returns no addresses, host, or recipient values (avoids info disclosure on
-    this unauthenticated route); only the sender domain is surfaced to help
-    confirm the right account, and the password is never read."""
+    """Diagnostic health-check for the report email sender — BOOLEANS ONLY, and
+    gated behind EXPOSE_DIAGNOSTICS=1 (off in production → 404). Returns no
+    addresses, host, recipient values, or the password."""
+    if os.getenv("EXPOSE_DIAGNOSTICS") != "1":
+        raise HTTPException(404, "Not found")
     from services import report_email
-    user = os.getenv("SMTP_USER") or ""
     return {
         "smtp_configured": report_email.is_configured(),
         "smtp_host_set": bool(os.getenv("SMTP_HOST")),
-        "sender_set": bool(user),
-        "sender_domain": (user.split("@")[-1] if "@" in user else None),
+        "sender_set": bool(os.getenv("SMTP_USER")),
         "password_set": bool(os.getenv("SMTP_PASSWORD")),
         "from_name_set": bool(os.getenv("SMTP_FROM_NAME")),
         "use_tls": os.getenv("SMTP_USE_TLS", "1"),
         "recipient_set": bool(os.getenv("KIWOOM_REPORT_EMAIL")),
-        "allowed_recipient_count": len(_allowed_report_recipients()),
-        "note": "If smtp_configured is false, set SMTP_HOST / SMTP_USER / "
-                "SMTP_PASSWORD (Gmail app password) on Render.",
+        "note": "Booleans only. If smtp_configured is false, set SMTP_HOST / "
+                "SMTP_USER / SMTP_PASSWORD on Render.",
     }
 
 
