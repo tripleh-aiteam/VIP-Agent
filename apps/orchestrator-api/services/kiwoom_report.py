@@ -133,25 +133,55 @@ def _build_table(rows: list[dict], ko: bool) -> str:
 
 
 def _facts(rows: list[dict]) -> str:
-    """Detailed per-ticker facts (KRW + technicals) for deep analysis."""
+    """Rich per-ticker facts (KRW prices + intraday range + MA trend structure)
+    so the LLM can write a deep, name-by-name Detailed Analysis."""
     out = []
     for r in rows:
-        def pa(v):  # price-vs-MA in % (currency-agnostic)
+        if not r.get("ok"):
+            out.append(f"- {r['en']} ({r['ko']}, {r['t']}, {r['mkt']}): NO DATA this session.")
+            continue
+
+        def pa(v):  # close vs a moving average, in %
             try:
-                return f"{(r['close'] - v) / v * 100:+.1f}%" if (v and r.get('close')) else "—"
+                return f"{(r['close'] - v) / v * 100:+.1f}%" if (v and r.get('close')) else "n/a"
             except Exception:
-                return "—"
+                return "n/a"
+
+        rng = "n/a"
+        try:
+            if r.get("high") and r.get("low") and r.get("open"):
+                rng = f"{(r['high'] - r['low']) / r['open'] * 100:.1f}%"
+        except Exception:
+            pass
+        chg = r.get("change_pct")
+        chg_s = f"{chg:+.2f}%" if chg is not None else "n/a"
+
+        # Trend structure from the moving-average stack.
+        ma5, ma20, ma60, cl = r.get("ma5"), r.get("ma20"), r.get("ma60"), r.get("close")
+        trend = "n/a"
+        if cl and ma5 and ma20 and ma60:
+            if cl > ma5 > ma20 > ma60:
+                trend = "full uptrend (close>MA5>MA20>MA60, bullish stack)"
+            elif cl < ma5 < ma20 < ma60:
+                trend = "full downtrend (close<MA5<MA20<MA60, bearish stack)"
+            elif cl > ma60 > ma20 and cl < ma5:
+                trend = "pullback within an uptrend (above MA60, below MA5)"
+            elif cl < ma60 and cl > ma5 > ma20:
+                trend = "early bottoming (reclaiming MA5/MA20, still under MA60)"
+            elif cl > ma60:
+                trend = "above long-term MA60 (longer-term bullish, short-term mixed)"
+            else:
+                trend = "below long-term MA60 (longer-term bearish, short-term mixed)"
+
+        vol = f"{int(r['volume']):,}" if r.get("volume") is not None else "n/a"
         out.append(
-            f"{r['en']} ({r['ko']}, {r['t']}, {r['mkt']}): "
+            f"- {r['en']} ({r['ko']}, {r['t']}, {r['mkt']}, ETF:{r['etf']}): "
             f"open={_won(r.get('open_krw'))}, close={_won(r.get('close_krw'))}, "
-            f"change={r.get('change_pct'):+.2f}% " if r.get('change_pct') is not None else
-            f"{r['en']} ({r['ko']}): no data; "
+            f"high={_won(r.get('high_krw'))}, low={_won(r.get('low_krw'))}, "
+            f"intraday_range={rng}, change_vs_prev_close={chg_s}, volume={vol}; "
+            f"close_vs_MA5={pa(ma5)}, close_vs_MA20={pa(ma20)}, close_vs_MA60={pa(ma60)}; "
+            f"trend={trend}."
         )
-        if r.get("ok"):
-            out[-1] += (f"volume={r.get('volume'):,}, "
-                        f"price_vs_MA5={pa(r.get('ma5'))}, price_vs_MA20={pa(r.get('ma20'))}, "
-                        f"price_vs_MA60={pa(r.get('ma60'))} "
-                        f"(MA5={r.get('ma5')}, MA20={r.get('ma20')}, MA60={r.get('ma60')})")
     return "\n".join(out)
 
 
@@ -164,6 +194,8 @@ def build_kiwoom_report(db, trace_id: str) -> dict:
         mult = rate if r["mkt"] == "US" else 1.0
         r["open_krw"] = (r["open"] * mult) if r.get("open") is not None else None
         r["close_krw"] = (r["close"] * mult) if r.get("close") is not None else None
+        r["high_krw"] = (r["high"] * mult) if r.get("high") is not None else None
+        r["low_krw"] = (r["low"] * mult) if r.get("low") is not None else None
     ok_rows = [r for r in rows if r.get("ok")]
     kst_date = datetime.utcnow().strftime("%Y-%m-%d")
     table_en, table_ko = _build_table(rows, ko=False), _build_table(rows, ko=True)
@@ -192,14 +224,24 @@ def build_kiwoom_report(db, trace_id: str) -> dict:
             "## 4. Risks & Watch-items\n## 5. Opportunities\n## 6. Recommended Actions\n\n"
             "Rules:\n"
             "- Section 2: insert the provided data table VERBATIM.\n"
-            "- Section 3 (DETAILED — write 4-6 substantial paragraphs, the deepest "
-            "section): analyse EACH sector AND the key individual names using the "
-            "technicals — the change%, the VOLUME (heavy vs light), and the price "
-            "position vs the moving averages (price_vs_MA5 / MA20 / MA60: above = "
-            "uptrend, below = downtrend; note golden/dead-cross setups and momentum). "
-            "Compare KR memory/semis (SK Hynix, Samsung) vs US semis (AMD, Micron, "
-            "Broadcom, SanDisk, SOXX), telecom/IT (SK Telecom, Samsung SDS, Naver), "
-            "and the KODEX 200 ETF. Cite the real numbers.\n"
+            "- Section 3 (DETAILED ANALYSIS — this is the CORE of the report and MUST "
+            "be long and substantive: AT LEAST ~750 words. Structure it as:\n"
+            "  (a) a sub-heading '### Memory & KR Semiconductors' with a DEDICATED "
+            "paragraph for SK Hynix AND for Samsung Electronics;\n"
+            "  (b) '### US Semiconductors' with a dedicated paragraph for AMD, Micron, "
+            "Broadcom, SanDisk, and the SOXX (Philadelphia Semi) index;\n"
+            "  (c) '### Telecom & IT' with a dedicated paragraph for SK Telecom, "
+            "Samsung SDS, and Naver;\n"
+            "  (d) '### Broad Market — KODEX 200' on the ETF;\n"
+            "  (e) '### Cross-Market Read' tying US semis → KR memory read-through and "
+            "the overall risk tone.\n"
+            "For EVERY name discuss ALL of: change vs prior close, the intraday range "
+            "(high/low — wide=volatile/contested, narrow=quiet), the VOLUME (heavy = "
+            "conviction/institutional, light = low participation), and the TREND "
+            "STRUCTURE from the MA stack (close vs MA5/MA20/MA60 — above=uptrend, "
+            "below=downtrend; explicitly name pullbacks-in-uptrend, bottoming, bullish/"
+            "bearish stacks, and golden/dead-cross setups). Quote the REAL KRW prices "
+            "and percentages throughout — never be vague, never invent.\n"
             "- Section 6: FIRST a Markdown table | Stock | Action | Reason | where "
             "Action is BUY / SELL / HOLD; THEN, AFTER the table, add a '### Rationale' "
             "subsection with a paragraph per recommendation explaining IN DETAIL why "
@@ -212,8 +254,8 @@ def build_kiwoom_report(db, trace_id: str) -> dict:
                 f"ENGLISH TABLE:\n{table_en}\n\nKOREAN TABLE:\n{table_ko}\n\n"
                 f"DATA + TECHNICALS:\n{_facts(rows)}")
         out = chat_completion_sync(
-            system_prompt=sysmsg, messages=[{"role": "user", "content": user[:4500]}],
-            max_tokens=3200, temperature=0.5, model="groq-llama-3.3-70b") or ""
+            system_prompt=sysmsg, messages=[{"role": "user", "content": user[:9000]}],
+            max_tokens=7000, temperature=0.5, model="groq-llama-3.3-70b") or ""
         bad = (not out.strip()) or out.lstrip().startswith(("[LLM unavailable]", "[server error]"))
         if not bad:
             if "===KO===" in out:
