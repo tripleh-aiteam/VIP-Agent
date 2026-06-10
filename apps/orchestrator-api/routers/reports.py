@@ -87,6 +87,32 @@ def email_config():
     }
 
 
+@router.post("/test-email", dependencies=[Depends(rate_limit_compose)])
+def test_email_send():
+    """Synchronous SMTP self-test: send a tiny .docx to the DEFAULT recipient
+    and return the ACTUAL SMTP result (ok + reason) so delivery failures are
+    visible inline (e.g. Gmail rejecting a non-App-Password). No user input —
+    recipient is the server-side default only."""
+    from services import report_email
+    from services.report_docx import markdown_to_docx
+    if not report_email.is_configured():
+        return {"ok": False,
+                "reason": "SMTP not configured — need SMTP_EMAIL (or SMTP_USER) + SMTP_PASSWORD",
+                "sender_set": bool(report_email.sender_address()),
+                "password_set": bool(os.getenv("SMTP_PASSWORD"))}
+    docx = markdown_to_docx(
+        "# Email Test\n\nIf you received this, report email delivery works.\n\n"
+        "| Check | Result |\n|---|---|\n| SMTP | OK |",
+        "TripleH Email Test", "diagnostic")
+    res = report_email.send_email_with_docx(
+        report_email.DEFAULT_RECIPIENT,
+        "[TripleH] Email delivery test",
+        "This is a delivery test from the VIP orchestrator. "
+        "If you see this with the attached .docx, report email works.",
+        "TripleH_Email_Test.docx", docx)
+    return res
+
+
 @router.post("/compose/daily", dependencies=[Depends(rate_limit_compose)])
 def compose_daily(body: ComposeBody, db: Session = Depends(get_db)):
     """Compose a daily executive summary from the last 24h of task runs."""
