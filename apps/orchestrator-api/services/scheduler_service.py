@@ -830,21 +830,29 @@ def _newspaper_daily_report(email_override: str | None = None):
         # Email the report as a Word (.docx) attachment.
         try:
             from services.report_docx import markdown_to_docx
-            from services.report_email import (send_email_with_docx,
+            from services.report_email import (send_email_with_docs,
                                                is_configured as _email_ok, DEFAULT_RECIPIENT)
             to_addr = (email_override or os.getenv("NEWSPAPER_REPORT_EMAIL")
                        or os.getenv("REPORT_EMAIL_TO") or DEFAULT_RECIPIENT)
             if _email_ok() and to_addr:
-                body_md = rep.get("detail_ko") or ""
-                if len(body_md.strip()) < 200 or "same report in korean" in body_md.lower():
-                    body_md = rep.get("detail_en") or ""
-                docx_bytes = markdown_to_docx(body_md, "Newspaper Market Analysis", kst)
-                fname = f"Newspaper_Report_{datetime.utcnow().strftime('%Y%m%d')}.docx"
-                res = send_email_with_docx(
+                ymd = datetime.utcnow().strftime("%Y%m%d")
+                en_md = rep.get("detail_en") or ""
+                ko_md = rep.get("detail_ko") or en_md
+                if len(ko_md.strip()) < 200 or "same report in korean" in ko_md.lower():
+                    ko_md = en_md
+                # Attach BOTH Korean and English (English for testing/verification).
+                files = []
+                if ko_md:
+                    files.append((f"Newspaper_Report_KO_{ymd}.docx",
+                                  markdown_to_docx(ko_md, "Newspaper Market Analysis (한국어)", kst)))
+                if en_md:
+                    files.append((f"Newspaper_Report_EN_{ymd}.docx",
+                                  markdown_to_docx(en_md, "Newspaper Market Analysis (English)", kst)))
+                res = send_email_with_docs(
                     to_addr, f"[Newspaper] 일일 뉴스 분석 — {kst}",
-                    "일일 뉴스 시장 분석 리포트입니다. 첨부된 Word 파일을 확인해 주세요.\n\n"
-                    "(Daily newspaper market-news analysis attached as a Word document.)",
-                    fname, docx_bytes)
+                    "일일 뉴스 시장 분석 리포트입니다. 첨부된 Word 파일(한국어/영문)을 확인해 주세요.\n\n"
+                    "(Daily newspaper market-news analysis — Korean + English Word documents attached.)",
+                    files)
                 log.info(f"newspaper: email {'sent' if res.get('ok') else 'skipped'} -> {to_addr}"
                          f" ({res.get('reason', 'ok')})",
                          extra={"trace_id": trace, "action": "newspaper.email"})

@@ -46,18 +46,21 @@ def is_configured() -> bool:
     return bool(sender_address() and os.getenv("SMTP_PASSWORD"))
 
 
-def send_email_with_docx(
+def send_email_with_docs(
     to_email: str,
     subject: str,
     body_text: str,
-    filename: str,
-    docx_bytes: bytes,
+    files: list[tuple[str, bytes]],
 ) -> dict:
-    """Send `body_text` with a .docx attachment. Returns {ok, to, reason?}."""
+    """Send `body_text` with one or more .docx attachments. `files` is a list of
+    (filename, bytes). Returns {ok, to, reason?}."""
     if not is_configured():
         return {"ok": False, "reason": "SMTP not configured — set SMTP_EMAIL (or SMTP_USER) + SMTP_PASSWORD"}
     if not to_email:
         return {"ok": False, "reason": "no recipient (set KIWOOM_REPORT_EMAIL or REPORT_EMAIL_TO)"}
+    files = [f for f in (files or []) if f and f[1]]
+    if not files:
+        return {"ok": False, "reason": "no attachments"}
 
     host = smtp_host()
     port = int(os.getenv("SMTP_PORT", "587") or "587")
@@ -71,19 +74,30 @@ def send_email_with_docx(
     msg["To"] = to_email
     msg["Subject"] = subject or "(no subject)"
     msg.set_content(body_text or "")
-    msg.add_attachment(
-        docx_bytes, maintype="application", subtype=_DOCX_MIME, filename=filename,
-    )
+    for filename, docx_bytes in files:
+        msg.add_attachment(docx_bytes, maintype="application", subtype=_DOCX_MIME, filename=filename)
 
     try:
         ctx = ssl.create_default_context()
-        with smtplib.SMTP(host, port, timeout=25) as smtp:
+        with smtplib.SMTP(host, port, timeout=30) as smtp:
             if use_tls:
                 smtp.starttls(context=ctx)
             smtp.login(user, password)
             smtp.send_message(msg)
-        log.info(f"report_email: sent to {to_email} ({filename})", extra={"action": "report_email.sent"})
+        names = ", ".join(f[0] for f in files)
+        log.info(f"report_email: sent to {to_email} ({names})", extra={"action": "report_email.sent"})
         return {"ok": True, "to": to_email}
     except Exception as e:
         log.warning(f"report_email: send failed: {e}")
         return {"ok": False, "reason": str(e)[:200]}
+
+
+def send_email_with_docx(
+    to_email: str,
+    subject: str,
+    body_text: str,
+    filename: str,
+    docx_bytes: bytes,
+) -> dict:
+    """Single-attachment wrapper around send_email_with_docs."""
+    return send_email_with_docs(to_email, subject, body_text, [(filename, docx_bytes)])

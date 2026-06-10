@@ -37,14 +37,24 @@ _KR_KEYWORDS = "SK하이닉스 OR 삼성전자 OR 네이버 OR SK텔레콤 OR �
 _US_KEYWORDS = "Samsung OR SK Hynix OR Nvidia OR AMD OR Micron OR Broadcom OR semiconductor OR Naver"
 
 
-def _query_for(paper: dict) -> str:
-    kw = _KR_KEYWORDS if paper["region"] == "KR" else _US_KEYWORDS
-    return f"site:{paper['site']} ({kw}) stock market news today"
+def _queries_for(paper: dict) -> list[str]:
+    """Two scoped queries per outlet — watchlist names + broad market/economy —
+    so we capture ALL stock-relevant reporting, not only watchlist mentions.
+    Each query is still 1 Serper credit (returns up to 10 results)."""
+    if paper["region"] == "KR":
+        kw, macro = _KR_KEYWORDS, "증시 OR 코스피 OR 경제 OR 금리 OR 환율 OR 반도체 OR 실적"
+    else:
+        kw, macro = _US_KEYWORDS, ("stock market OR Nasdaq OR economy OR Fed OR "
+                                   "interest rates OR semiconductor OR AI OR earnings")
+    return [
+        f"site:{paper['site']} ({kw}) stock news today",
+        f"site:{paper['site']} ({macro}) today",
+    ]
 
 
-def _gather_news_by_source(per_source: int = 4) -> dict[str, list[dict]]:
-    """For each newspaper, fetch its latest watchlist news. Returns
-    {newspaper_name: [{title,url,snippet}]}. Empty lists if no provider/results."""
+def _gather_news_by_source(per_query: int = 10, cap_per_source: int = 12) -> dict[str, list[dict]]:
+    """For each newspaper, run its queries and collect up to `cap_per_source`
+    deduped articles. Returns {newspaper_name: [{title,url,snippet}]}."""
     try:
         from services.web_search import search_web
     except Exception as e:
@@ -54,20 +64,27 @@ def _gather_news_by_source(per_source: int = 4) -> dict[str, list[dict]]:
     grouped: dict[str, list[dict]] = {}
     for paper in NEWSPAPERS:
         hits: list[dict] = []
-        try:
-            res = search_web(_query_for(paper), num_results=per_source)
-            if res.get("ok"):
-                seen: set[str] = set()
-                for h in res.get("results", []):
-                    title = (h.get("title") or "").strip()
-                    snippet = (h.get("snippet") or "").strip()
-                    key = (title or snippet)[:80].lower()
-                    if not key or key in seen:
-                        continue
-                    seen.add(key)
-                    hits.append({"title": title, "url": h.get("url", ""), "snippet": snippet})
-        except Exception as e:
-            log.warning(f"newspaper: search {paper['site']} failed: {e}")
+        seen: set[str] = set()
+        for q in _queries_for(paper):
+            if len(hits) >= cap_per_source:
+                break
+            try:
+                res = search_web(q, num_results=per_query)
+            except Exception as e:
+                log.warning(f"newspaper: search {paper['site']} failed: {e}")
+                continue
+            if not res.get("ok"):
+                continue
+            for h in res.get("results", []):
+                title = (h.get("title") or "").strip()
+                snippet = (h.get("snippet") or "").strip()
+                key = (title or snippet)[:80].lower()
+                if not key or key in seen:
+                    continue
+                seen.add(key)
+                hits.append({"title": title, "url": h.get("url", ""), "snippet": snippet})
+                if len(hits) >= cap_per_source:
+                    break
         grouped[paper["name"]] = hits
     return grouped
 
@@ -124,11 +141,17 @@ def build_newspaper_report(db, trace_id: str) -> dict:
             "## 4. Company-Specific Analysis\n## 5. Recommendations\n\n"
             "Rules:\n"
             "- Section 2: insert the provided data table VERBATIM.\n"
-            "- Section 3 (News by Newspaper): for EACH newspaper, a '### <Newspaper "
-            "Name>' sub-heading followed by (a) that paper's STOCK/MARKET take and "
-            "(b) its COMPANY-SPECIFIC news for our watchlist — cite the actual "
-            "headlines provided for that source. If a source returned nothing, say "
-            "'No fresh items today' for it.\n"
+            "- Section 3 (News by Newspaper) — the CORE section, must be DETAILED. "
+            "For EACH newspaper a '### <Newspaper Name>' sub-heading with a "
+            "SUBSTANTIAL analysis of AT LEAST 5-7 sentences (2-3 paragraphs) that "
+            "uses ALL the headlines provided for that source — do NOT compress it to "
+            "one line. Cover, for that paper: (a) its overall MARKET / MACRO / "
+            "ECONOMY view (indices, FX, rates, policy, foreign flows), (b) its "
+            "SECTOR view (semiconductors, AI, memory), and (c) its COMPANY-SPECIFIC "
+            "reporting on our watchlist — name the companies and quote the concrete "
+            "facts/figures each headline carries (e.g. 'reported SK Hynix joined the "
+            "$1T club, up 3x YTD'). Reference MULTIPLE headlines per outlet. If a "
+            "source returned nothing, write 'No fresh items today' for it.\n"
             "- Section 4 (Company-Specific Analysis): a DEDICATED paragraph per key "
             "name (SK Hynix, Samsung, AMD, Micron, Broadcom, SanDisk, SOXX, SK "
             "Telecom, Samsung SDS, Naver, KODEX 200) — synthesise what the combined "
@@ -146,8 +169,8 @@ def build_newspaper_report(db, trace_id: str) -> dict:
                 f"PRICE TECHNICALS:\n{_kr._facts(rows)}\n\n"
                 f"NEWS BY NEWSPAPER:\n{_news_block_by_source(grouped)}")
         out = chat_completion_sync(
-            system_prompt=sysmsg, messages=[{"role": "user", "content": user[:13000]}],
-            max_tokens=7500, temperature=0.5, model="groq-llama-3.3-70b") or ""
+            system_prompt=sysmsg, messages=[{"role": "user", "content": user[:18000]}],
+            max_tokens=8000, temperature=0.5, model="groq-llama-3.3-70b") or ""
         bad = (not out.strip()) or out.lstrip().startswith(("[LLM unavailable]", "[server error]"))
         if not bad:
             detail_en = out.strip()
