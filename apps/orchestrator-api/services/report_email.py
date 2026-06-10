@@ -24,6 +24,11 @@ from services.logger import log
 
 _DOCX_MIME = "vnd.openxmlformats-officedocument.wordprocessingml.document"
 
+# Default recipient for report emails when no env override is set. Change here
+# (or override per-report via KIWOOM_REPORT_EMAIL / NEWSPAPER_REPORT_EMAIL /
+# YOUTUBE_REPORT_EMAIL on Render) when the real recipient is decided.
+DEFAULT_RECIPIENT = "davronbekmalikov96@gmail.com"
+
 
 def sender_address() -> str:
     """The 'From' address. Accepts SMTP_USER or SMTP_EMAIL (some deploys named

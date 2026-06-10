@@ -45,6 +45,12 @@ def _allowed_report_recipients() -> set[str]:
         v = os.getenv(ev)
         if v:
             allowed.add(v.strip().lower())
+    try:
+        from services.report_email import DEFAULT_RECIPIENT
+        if DEFAULT_RECIPIENT:
+            allowed.add(DEFAULT_RECIPIENT.strip().lower())
+    except Exception:
+        pass
     return allowed
 
 

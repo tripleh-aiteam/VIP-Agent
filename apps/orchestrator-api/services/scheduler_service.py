@@ -755,10 +755,11 @@ def _kiwoom_daily_report(email_override: str | None = None):
         # SMTP / recipient not configured).
         try:
             from services.report_docx import markdown_to_docx
-            from services.report_email import send_email_with_docx, is_configured as _email_ok
+            from services.report_email import (send_email_with_docx,
+                                               is_configured as _email_ok, DEFAULT_RECIPIENT)
+            # Recipient: explicit test override → per-report env → hardcoded default.
             to_addr = (email_override or os.getenv("KIWOOM_REPORT_EMAIL")
-                       or os.getenv("REPORT_EMAIL_TO") or os.getenv("SMTP_USER")
-                       or os.getenv("SMTP_EMAIL"))
+                       or os.getenv("REPORT_EMAIL_TO") or DEFAULT_RECIPIENT)
             if _email_ok() and to_addr:
                 body_md = rep.get("detail_ko") or ""
                 if len(body_md.strip()) < 200 or "same report in korean" in body_md.lower():
