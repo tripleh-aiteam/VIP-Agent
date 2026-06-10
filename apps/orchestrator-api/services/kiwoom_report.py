@@ -213,7 +213,8 @@ def build_kiwoom_report(db, trace_id: str) -> dict:
         r["high_krw"] = (r["high"] * mult) if r.get("high") is not None else None
         r["low_krw"] = (r["low"] * mult) if r.get("low") is not None else None
     ok_rows = [r for r in rows if r.get("ok")]
-    kst_date = datetime.utcnow().strftime("%Y-%m-%d")
+    from services.kst import kst_date as _kst_date
+    kst_date = _kst_date()
     table_en, table_ko = _build_table(rows, ko=False), _build_table(rows, ko=True)
 
     # One-line summary (deterministic fallback)

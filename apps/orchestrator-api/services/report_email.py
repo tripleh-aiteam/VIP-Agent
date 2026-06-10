@@ -24,10 +24,23 @@ from services.logger import log
 
 _DOCX_MIME = "vnd.openxmlformats-officedocument.wordprocessingml.document"
 
-# Default recipient for report emails when no env override is set. Change here
-# (or override per-report via KIWOOM_REPORT_EMAIL / NEWSPAPER_REPORT_EMAIL /
-# YOUTUBE_REPORT_EMAIL on Render) when the real recipient is decided.
-DEFAULT_RECIPIENT = "davronbekmalikov96@gmail.com"
+# Default recipients for report emails when no env override is set. Override via
+# REPORT_RECIPIENTS env (comma-separated) or per-report *_REPORT_EMAIL on Render.
+DEFAULT_RECIPIENTS = [
+    "davronbekmalikov96@gmail.com",
+    "marklee@tripleh.co.kr",
+    "koreastone710404@gmail.com",
+]
+# Single fallback kept for back-compat with existing call sites.
+DEFAULT_RECIPIENT = DEFAULT_RECIPIENTS[0]
+
+
+def default_recipients() -> list[str]:
+    """The recipient list: REPORT_RECIPIENTS env (comma-separated) if set, else
+    the hardcoded DEFAULT_RECIPIENTS."""
+    env = os.getenv("REPORT_RECIPIENTS") or ""
+    lst = [e.strip() for e in env.split(",") if e.strip()]
+    return lst or list(DEFAULT_RECIPIENTS)
 
 
 def sender_address() -> str:
@@ -47,17 +60,20 @@ def is_configured() -> bool:
 
 
 def send_email_with_docs(
-    to_email: str,
+    to_email,
     subject: str,
     body_text: str,
     files: list[tuple[str, bytes]],
 ) -> dict:
-    """Send `body_text` with one or more .docx attachments. `files` is a list of
-    (filename, bytes). Returns {ok, to, reason?}."""
+    """Send `body_text` with one or more .docx attachments. `to_email` may be a
+    single address or a list of addresses. `files` is a list of (filename, bytes).
+    Returns {ok, to, reason?}."""
     if not is_configured():
         return {"ok": False, "reason": "SMTP not configured — set SMTP_EMAIL (or SMTP_USER) + SMTP_PASSWORD"}
-    if not to_email:
-        return {"ok": False, "reason": "no recipient (set KIWOOM_REPORT_EMAIL or REPORT_EMAIL_TO)"}
+    recipients = [to_email] if isinstance(to_email, str) else [r for r in (to_email or []) if r]
+    recipients = [r.strip() for r in recipients if r and r.strip()]
+    if not recipients:
+        return {"ok": False, "reason": "no recipient"}
     files = [f for f in (files or []) if f and f[1]]
     if not files:
         return {"ok": False, "reason": "no attachments"}
@@ -71,7 +87,7 @@ def send_email_with_docs(
 
     msg = EmailMessage()
     msg["From"] = f"{from_name} <{user}>"
-    msg["To"] = to_email
+    msg["To"] = ", ".join(recipients)
     msg["Subject"] = subject or "(no subject)"
     msg.set_content(body_text or "")
     for filename, docx_bytes in files:
@@ -79,14 +95,15 @@ def send_email_with_docs(
 
     try:
         ctx = ssl.create_default_context()
-        with smtplib.SMTP(host, port, timeout=30) as smtp:
+        with smtplib.SMTP(host, port, timeout=40) as smtp:
             if use_tls:
                 smtp.starttls(context=ctx)
             smtp.login(user, password)
-            smtp.send_message(msg)
+            smtp.send_message(msg, to_addrs=recipients)
         names = ", ".join(f[0] for f in files)
-        log.info(f"report_email: sent to {to_email} ({names})", extra={"action": "report_email.sent"})
-        return {"ok": True, "to": to_email}
+        log.info(f"report_email: sent to {len(recipients)} recipient(s) ({names})",
+                 extra={"action": "report_email.sent"})
+        return {"ok": True, "to": recipients}
     except Exception as e:
         log.warning(f"report_email: send failed: {e}")
         return {"ok": False, "reason": str(e)[:200]}

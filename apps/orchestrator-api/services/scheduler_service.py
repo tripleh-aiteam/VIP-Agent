@@ -17,6 +17,7 @@ from db.base import SessionLocal
 from db.models import OrchScheduleRule, OrchTaskDefinition
 from services.logger import log
 from services.resilience import with_retry, alert, detect_missed_runs
+from services.kst import kst_label
 
 _scheduler: BackgroundScheduler | None = None
 
@@ -720,7 +721,7 @@ def _kiwoom_daily_report(email_override: str | None = None):
 
     db = SessionLocal()
     trace = f"tr-kiwoom-{int(datetime.utcnow().timestamp())}"
-    kst = datetime.utcnow().strftime("%Y-%m-%d") + " 06:30 KST"
+    kst = kst_label()
     try:
         rep = build_kiwoom_report(db, trace)
         r = OrchReport(
@@ -760,7 +761,7 @@ def _kiwoom_daily_report(email_override: str | None = None):
             # Recipient: explicit test override → per-report env → hardcoded default.
             to_addr = (email_override or os.getenv("KIWOOM_REPORT_EMAIL")
                        or os.getenv("REPORT_EMAIL_TO") or DEFAULT_RECIPIENT)
-            if _email_ok() and to_addr:
+            if os.getenv("SEND_INDIVIDUAL_EMAILS") == "1" and _email_ok() and to_addr:
                 body_md = rep.get("detail_ko") or ""
                 if len(body_md.strip()) < 200 or "same report in korean" in body_md.lower():
                     body_md = rep.get("detail_en") or ""
@@ -799,7 +800,7 @@ def _newspaper_daily_report(email_override: str | None = None):
 
     db = SessionLocal()
     trace = f"tr-news-{int(datetime.utcnow().timestamp())}"
-    kst = datetime.utcnow().strftime("%Y-%m-%d") + " 06:30 KST"
+    kst = kst_label()
     try:
         rep = build_newspaper_report(db, trace)
         r = OrchReport(
@@ -834,7 +835,7 @@ def _newspaper_daily_report(email_override: str | None = None):
                                                is_configured as _email_ok, DEFAULT_RECIPIENT)
             to_addr = (email_override or os.getenv("NEWSPAPER_REPORT_EMAIL")
                        or os.getenv("REPORT_EMAIL_TO") or DEFAULT_RECIPIENT)
-            if _email_ok() and to_addr:
+            if os.getenv("SEND_INDIVIDUAL_EMAILS") == "1" and _email_ok() and to_addr:
                 ymd = datetime.utcnow().strftime("%Y%m%d")
                 en_md = rep.get("detail_en") or ""
                 ko_md = rep.get("detail_ko") or en_md
@@ -881,7 +882,7 @@ def _youtube_daily_report(email_override: str | None = None):
 
     db = SessionLocal()
     trace = f"tr-yt-{int(datetime.utcnow().timestamp())}"
-    kst = datetime.utcnow().strftime("%Y-%m-%d") + " 06:30 KST"
+    kst = kst_label()
     try:
         rep = build_youtube_report(db, trace)
         r = OrchReport(
@@ -914,7 +915,7 @@ def _youtube_daily_report(email_override: str | None = None):
                                                is_configured as _email_ok, DEFAULT_RECIPIENT)
             to_addr = (email_override or os.getenv("YOUTUBE_REPORT_EMAIL")
                        or os.getenv("REPORT_EMAIL_TO") or DEFAULT_RECIPIENT)
-            if _email_ok() and to_addr:
+            if os.getenv("SEND_INDIVIDUAL_EMAILS") == "1" and _email_ok() and to_addr:
                 ymd = datetime.utcnow().strftime("%Y%m%d")
                 en_md = rep.get("detail_en") or ""
                 ko_md = rep.get("detail_ko") or en_md
@@ -960,7 +961,7 @@ def _master_daily_report(email_override: str | None = None):
 
     db = SessionLocal()
     trace = f"tr-master-{int(datetime.utcnow().timestamp())}"
-    kst = datetime.utcnow().strftime("%Y-%m-%d") + " 06:50 KST"
+    kst = kst_label()
     try:
         rep = build_master_report(db, trace)
         r = OrchReport(
@@ -980,40 +981,68 @@ def _master_daily_report(email_override: str | None = None):
 
         try:
             for chunk in format_report_telegram(rep, kst, lang="ko",
-                                                title="Master Daily Summary", emoji="🧠"):
+                                                title="Daily Recommendation", emoji="💡"):
                 send_alert(chunk)
         except Exception as te:
             log.warning(f"master telegram format failed: {te}")
-            send_alert(f"🧠 <b>Master Daily Summary</b>\n<i>{kst}</i>\n\n"
+            send_alert(f"💡 <b>Daily Recommendation</b>\n<i>{kst}</i>\n\n"
                        f"{rep.get('summary_en', '')[:300]}\n\n<i>View → Reports</i>")
 
+        # Consolidated 'Hello Boss' email: ALL 4 reports (Korean) in one message
+        # with a brief intro. This is the single daily delivery.
         try:
             from services.report_docx import markdown_to_docx
             from services.report_email import (send_email_with_docs,
-                                               is_configured as _email_ok, DEFAULT_RECIPIENT)
-            to_addr = (email_override or os.getenv("MASTER_REPORT_EMAIL")
-                       or os.getenv("REPORT_EMAIL_TO") or DEFAULT_RECIPIENT)
-            if _email_ok() and to_addr:
-                ymd = datetime.utcnow().strftime("%Y%m%d")
-                en_md = rep.get("detail_en") or ""
-                ko_md = rep.get("detail_ko") or en_md
-                if len(ko_md.strip()) < 200 or "same report in korean" in ko_md.lower():
-                    ko_md = en_md
+                                               is_configured as _email_ok, default_recipients)
+            from services.master_report import _latest_report
+            if email_override:
+                recipients = [email_override]   # safe single-recipient test
+            elif os.getenv("MASTER_REPORT_EMAIL"):
+                recipients = [os.getenv("MASTER_REPORT_EMAIL")]
+            else:
+                recipients = default_recipients()
+
+            if _email_ok() and recipients:
+                ymd = (datetime.utcnow().strftime("%Y%m%d"))
+
+                def _ko(rp):
+                    md = (rp or {}).get("detail_ko") or (rp or {}).get("detail_en") or ""
+                    if len(md.strip()) < 200 or "same report in korean" in md.lower():
+                        md = (rp or {}).get("detail_en") or md
+                    return md
+
+                kiwoom_rp = _latest_report(db, "kiwoom_report")
+                news_rp = _latest_report(db, "newspaper_report")
+                youtube_rp = _latest_report(db, "youtube_report")
+                pieces = [
+                    ("1_키움_Kiwoom", "키움 데일리 리포트", kiwoom_rp),
+                    ("2_신문_Newspaper", "신문 요약 리포트", news_rp),
+                    ("3_유튜브_YouTube", "유튜브 요약 리포트", youtube_rp),
+                    ("4_추천_Recommendation", "종합 추천 리포트", rep),
+                ]
                 files = []
-                if ko_md:
-                    files.append((f"Master_Summary_KO_{ymd}.docx",
-                                  markdown_to_docx(ko_md, "Master Daily Summary (한국어)", kst)))
-                if en_md:
-                    files.append((f"Master_Summary_EN_{ymd}.docx",
-                                  markdown_to_docx(en_md, "Master Daily Summary (English)", kst)))
+                for fn, title, rp in pieces:
+                    md = _ko(rp)
+                    if md:
+                        files.append((f"{fn}_{ymd}.docx", markdown_to_docx(md, title, kst)))
+
+                intro = (
+                    "안녕하세요 사장님,\n\n"
+                    f"오늘({kst}) 데일리 리포트 4건을 보내드립니다:\n"
+                    "1. 키움 데일리 리포트 — 시세·기술적 분석\n"
+                    "2. 신문 요약 리포트 — 주요 신문사 뉴스 분석\n"
+                    "3. 유튜브 요약 리포트 — 금융 유튜브 채널 분석\n"
+                    "4. 종합 추천 리포트 — 위 3개 리포트를 종합한 투자 의견 및 일정매매 포인트\n\n"
+                    "각 리포트는 첨부된 Word 파일에서 확인하실 수 있습니다.\n\n"
+                    "감사합니다.\nTripleH AI\n\n"
+                    "— (Today's 4 daily reports attached: Kiwoom, Newspaper, YouTube, "
+                    "and the consolidated Recommendation.)"
+                )
                 res = send_email_with_docs(
-                    to_addr, f"[Master] 통합 일일 요약 — {kst}",
-                    "3개 리포트(키움·신문·유튜브)를 종합한 통합 요약입니다. 첨부된 Word 파일(한국어/영문)을 확인해 주세요.\n\n"
-                    "(Consolidated master summary of the Kiwoom + Newspaper + YouTube reports — "
-                    "Korean + English Word documents attached.)",
-                    files)
-                log.info(f"master: email {'sent' if res.get('ok') else 'skipped'} -> {to_addr}"
-                         f" ({res.get('reason', 'ok')})",
+                    recipients, f"[TripleH] 데일리 리포트 4건 — {kst}", intro, files)
+                log.info(f"master: consolidated email {'sent' if res.get('ok') else 'skipped'} "
+                         f"({len(files)} files, {len(recipients)} recipient(s)) "
+                         f"({res.get('reason', 'ok')})",
                          extra={"trace_id": trace, "action": "master.email"})
             else:
                 log.info("master: email skipped (SMTP not configured or no recipient)",

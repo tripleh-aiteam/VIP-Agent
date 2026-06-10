@@ -141,7 +141,7 @@ export default function ReportsPage() {
     { key: "kiwoom", label: "Kiwoom", icon: "📈" },
     { key: "newspaper", label: "Newspaper", icon: "📰" },
     { key: "youtube", label: "YouTube", icon: "▶️" },
-    { key: "master", label: "Summary", icon: "🧠" },
+    { key: "master", label: "Recommendation", icon: "💡" },
   ];
   // Period tabs depend on the source (Agents has extra Cross-Agent + Alerts).
   const PERIODS = source === "agents"
@@ -167,7 +167,7 @@ export default function ReportsPage() {
     kiwoom_report: { label: "Kiwoom", color: "text-indigo-500", bg: "bg-indigo-50", border: "border-indigo-200" },
     newspaper_report: { label: "Newspaper", color: "text-amber-600", bg: "bg-amber-50", border: "border-amber-200" },
     youtube_report: { label: "YouTube", color: "text-rose-500", bg: "bg-rose-50", border: "border-rose-200" },
-    master_report: { label: "Master Summary", color: "text-violet-600", bg: "bg-violet-50", border: "border-violet-200" },
+    master_report: { label: "Recommendation", color: "text-violet-600", bg: "bg-violet-50", border: "border-violet-200" },
   };
 
   const parseSections = (sections: any[]) => {
@@ -298,7 +298,7 @@ td{padding:8px 12px;border:1px solid #e2e8f0;font-size:10pt}
     type === "kiwoom_report" ? "Kiwoom Market Analysis" :
     type === "newspaper_report" ? "Newspaper Market Analysis" :
     type === "youtube_report" ? "YouTube Stock Analysis" :
-    type === "master_report" ? "Master Daily Summary" : "Urgent Alert Report";
+    type === "master_report" ? "Daily Recommendation Report" : "Urgent Alert Report";
 
   return (
     <div>

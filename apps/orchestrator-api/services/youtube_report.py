@@ -230,7 +230,8 @@ def build_youtube_report(db, trace_id: str) -> dict:
     channels = _gather_channels()
     catalysts = _cat.gather_catalysts()
     n_transcripts = sum(1 for c in channels if c["has_transcript"])
-    kst_date = datetime.utcnow().strftime("%Y-%m-%d")
+    from services.kst import kst_date as _kst_date
+    kst_date = _kst_date()
 
     movers = sorted([r for r in ok_rows if r.get("change_pct") is not None],
                     key=lambda r: r["change_pct"])

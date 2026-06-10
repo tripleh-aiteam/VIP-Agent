@@ -75,9 +75,10 @@ def build_master_report(db, trace_id: str) -> dict:
         rows, table_en, table_ko, _ = _kr.gather_priced_rows()
 
     have = [name for name, r in (("Kiwoom", kiwoom), ("Newspaper", news), ("YouTube", youtube)) if r]
-    kst_date = datetime.utcnow().strftime("%Y-%m-%d")
-    sum_en = f"Master summary — consolidated from {len(have)}/3 sources ({', '.join(have) or 'none'})."
-    sum_ko = f"통합 요약 — {len(have)}/3개 소스 종합 ({', '.join(have) or '없음'})."
+    from services.kst import kst_date as _kst_date
+    kst_date = _kst_date()
+    sum_en = f"Daily recommendation — consolidated from {len(have)}/3 sources ({', '.join(have) or 'none'})."
+    sum_ko = f"일일 투자 추천 — {len(have)}/3개 소스 종합 ({', '.join(have) or '없음'})."
 
     detail_en = detail_ko = ""
     try:
@@ -161,7 +162,7 @@ def build_master_report(db, trace_id: str) -> dict:
         log.warning(f"master LLM compose failed: {e}")
 
     if not detail_en:
-        detail_en = (f"# Master Daily Summary\n*{kst_date}*\n\n## 1. Executive Summary\n{sum_en}\n\n"
+        detail_en = (f"# Daily Recommendation Report\n*{kst_date}*\n\n## 1. Executive Summary\n{sum_en}\n\n"
                      f"## 2. Smart Signal Table\n{table_en}\n\n"
                      f"## 3. Signal Explanations (per stock)\n- See the three source reports.\n\n"
                      f"## 4. Where the Sources Agree & Disagree\n- See the three source reports.\n\n"
@@ -172,7 +173,7 @@ def build_master_report(db, trace_id: str) -> dict:
         detail_ko = detail_en
 
     return {
-        "agent_type": "master", "name": "Master Daily Summary", "emoji": "🧠",
+        "agent_type": "master", "name": "Daily Recommendation Report", "emoji": "💡",
         "status": "ok" if have else "partial",
         "summary_en": sum_en, "summary_ko": sum_ko,
         "detail_en": detail_en, "detail_ko": detail_ko,

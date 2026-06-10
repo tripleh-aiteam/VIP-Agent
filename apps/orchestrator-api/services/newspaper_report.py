@@ -114,7 +114,8 @@ def build_newspaper_report(db, trace_id: str) -> dict:
     grouped = _gather_news_by_source()
     catalysts = _cat.gather_catalysts()
     total_news = sum(len(v) for v in grouped.values())
-    kst_date = datetime.utcnow().strftime("%Y-%m-%d")
+    from services.kst import kst_date as _kst_date
+    kst_date = _kst_date()
 
     movers = sorted([r for r in ok_rows if r.get("change_pct") is not None],
                     key=lambda r: r["change_pct"])
