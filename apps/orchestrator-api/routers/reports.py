@@ -41,7 +41,7 @@ def _allowed_report_recipients() -> set[str]:
     recipients — so an attacker cannot exfiltrate a report to an arbitrary inbox
     or abuse our SMTP to send mail to third parties."""
     allowed = {a.strip().lower() for a in (os.getenv("REPORT_ALLOWED_RECIPIENTS") or "").split(",") if a.strip()}
-    for ev in ("KIWOOM_REPORT_EMAIL", "REPORT_EMAIL_TO", "SMTP_USER"):
+    for ev in ("KIWOOM_REPORT_EMAIL", "REPORT_EMAIL_TO", "SMTP_USER", "SMTP_EMAIL"):
         v = os.getenv(ev)
         if v:
             allowed.add(v.strip().lower())
@@ -73,14 +73,14 @@ def email_config():
     from services import report_email
     return {
         "smtp_configured": report_email.is_configured(),
-        "smtp_host_set": bool(os.getenv("SMTP_HOST")),
-        "sender_set": bool(os.getenv("SMTP_USER")),
+        "smtp_host_set": bool(os.getenv("SMTP_HOST")),  # host defaults to gmail if unset
+        "sender_set": bool(report_email.sender_address()),  # SMTP_USER or SMTP_EMAIL
         "password_set": bool(os.getenv("SMTP_PASSWORD")),
         "from_name_set": bool(os.getenv("SMTP_FROM_NAME")),
         "use_tls": os.getenv("SMTP_USE_TLS", "1"),
         "recipient_set": bool(os.getenv("KIWOOM_REPORT_EMAIL")),
-        "note": "Booleans only. If smtp_configured is false, set SMTP_HOST / "
-                "SMTP_USER / SMTP_PASSWORD on Render.",
+        "note": "Booleans only. Sender = SMTP_USER or SMTP_EMAIL; host defaults to "
+                "smtp.gmail.com. If smtp_configured is false, set SMTP_EMAIL + SMTP_PASSWORD.",
     }
 
 

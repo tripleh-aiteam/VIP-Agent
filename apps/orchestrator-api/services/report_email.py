@@ -25,8 +25,20 @@ from services.logger import log
 _DOCX_MIME = "vnd.openxmlformats-officedocument.wordprocessingml.document"
 
 
+def sender_address() -> str:
+    """The 'From' address. Accepts SMTP_USER or SMTP_EMAIL (some deploys named
+    it SMTP_EMAIL)."""
+    return os.getenv("SMTP_USER") or os.getenv("SMTP_EMAIL") or ""
+
+
+def smtp_host() -> str:
+    """SMTP host; defaults to Gmail when unset (the common case here)."""
+    return os.getenv("SMTP_HOST") or "smtp.gmail.com"
+
+
 def is_configured() -> bool:
-    return bool(os.getenv("SMTP_HOST") and os.getenv("SMTP_USER") and os.getenv("SMTP_PASSWORD"))
+    # Host has a safe default, so we only require a sender + password.
+    return bool(sender_address() and os.getenv("SMTP_PASSWORD"))
 
 
 def send_email_with_docx(
@@ -38,13 +50,13 @@ def send_email_with_docx(
 ) -> dict:
     """Send `body_text` with a .docx attachment. Returns {ok, to, reason?}."""
     if not is_configured():
-        return {"ok": False, "reason": "SMTP not configured — set SMTP_HOST/SMTP_USER/SMTP_PASSWORD"}
+        return {"ok": False, "reason": "SMTP not configured — set SMTP_EMAIL (or SMTP_USER) + SMTP_PASSWORD"}
     if not to_email:
         return {"ok": False, "reason": "no recipient (set KIWOOM_REPORT_EMAIL or REPORT_EMAIL_TO)"}
 
-    host = os.getenv("SMTP_HOST", "smtp.gmail.com")
+    host = smtp_host()
     port = int(os.getenv("SMTP_PORT", "587") or "587")
-    user = os.getenv("SMTP_USER", "")
+    user = sender_address()
     password = os.getenv("SMTP_PASSWORD", "")
     from_name = os.getenv("SMTP_FROM_NAME", "VIP AI Platform")
     use_tls = os.getenv("SMTP_USE_TLS", "1") == "1"
