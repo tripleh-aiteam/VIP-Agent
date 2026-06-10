@@ -41,13 +41,20 @@ def _allowed_report_recipients() -> set[str]:
     recipients — so an attacker cannot exfiltrate a report to an arbitrary inbox
     or abuse our SMTP to send mail to third parties."""
     allowed = {a.strip().lower() for a in (os.getenv("REPORT_ALLOWED_RECIPIENTS") or "").split(",") if a.strip()}
-    for ev in ("KIWOOM_REPORT_EMAIL", "REPORT_EMAIL_TO", "SMTP_USER", "SMTP_EMAIL"):
+    for ev in ("KIWOOM_REPORT_EMAIL", "NEWSPAPER_REPORT_EMAIL", "YOUTUBE_REPORT_EMAIL",
+               "MASTER_REPORT_EMAIL", "REPORT_EMAIL_TO", "SMTP_USER", "SMTP_EMAIL"):
         v = os.getenv(ev)
         if v:
             allowed.add(v.strip().lower())
-    # NOTE: DEFAULT_RECIPIENT is intentionally NOT allowlisted — the default-send
-    # path (scheduled / no-arg trigger) bypasses this check; only operator-chosen
-    # env recipients may be targeted via the ?email override.
+    # The configured distribution list (REPORT_RECIPIENTS / DEFAULT_RECIPIENTS) is
+    # allowlisted — these are the intended recipients, so a ?email test may target
+    # one of them. This does NOT permit arbitrary third-party addresses.
+    try:
+        from services.report_email import default_recipients
+        for r in default_recipients():
+            allowed.add(r.strip().lower())
+    except Exception:
+        pass
     return allowed
 
 
