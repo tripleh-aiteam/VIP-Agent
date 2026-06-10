@@ -132,13 +132,18 @@ def test_news_provider():
     """Diagnostic: run one live web search and report which provider answered
     (or that none is configured). Returns provider name + result count + which
     search keys are present — no query content, no secrets."""
-    from services.web_search import search_web
+    from services.web_search import search_web, gemini_search_models
     res = search_web("KOSPI stock market news today", num_results=3)
+    try:
+        gmodels = gemini_search_models()[:12]
+    except Exception:
+        gmodels = []
     return {
         "ok": bool(res.get("ok")),
         "provider": res.get("provider"),
         "result_count": len(res.get("results", [])),
         "error": res.get("error"),
+        "gemini_models_available": gmodels,
         "keys_present": {
             "SERPER_API_KEY": bool(os.getenv("SERPER_API_KEY")),
             "TAVILY_API_KEY": bool(os.getenv("TAVILY_API_KEY")),

@@ -99,6 +99,33 @@ def _tavily(query: str, n: int) -> list[dict[str, Any]]:
     ]
 
 
+def _gemini_list_models(key: str) -> tuple[list[str], str | None]:
+    """Ask the key which models it can actually use for generateContent. Returns
+    (model_names, error). Different keys expose different models, so we discover
+    rather than hardcode."""
+    import httpx
+    try:
+        with httpx.Client(timeout=12.0) as c:
+            r = c.get(f"https://generativelanguage.googleapis.com/v1beta/models?key={key}")
+        if r.status_code >= 400:
+            return [], f"ListModels HTTP {r.status_code} {r.text[:120]}"
+        names = []
+        for m in (r.json().get("models") or []):
+            if "generateContent" in (m.get("supportedGenerationMethods") or []):
+                names.append((m.get("name") or "").replace("models/", ""))
+        return names, None
+    except Exception as e:
+        return [], f"ListModels {str(e)[:120]}"
+
+
+def gemini_search_models(key: str | None = None) -> list[str]:
+    """Public helper for diagnostics — the discovered generateContent models."""
+    key = key or _gemini_key()
+    if not key:
+        return []
+    return _gemini_list_models(key)[0]
+
+
 def _gemini_grounded(query: str, n: int) -> list[dict[str, Any]]:
     """Use Gemini's built-in Google Search grounding. Reuses the Gemini API key
     already configured for the chatbot — no extra signup. Returns the grounding
@@ -113,7 +140,17 @@ def _gemini_grounded(query: str, n: int) -> list[dict[str, Any]]:
     if not key:
         return []
     forced = os.environ.get("GEMINI_SEARCH_MODEL")
-    models = [forced] if forced else ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"]
+    if forced:
+        models = [forced]
+    else:
+        discovered, derr = _gemini_list_models(key)
+        if derr and not discovered:
+            raise RuntimeError(derr)  # surface "API not enabled / key invalid"
+        # Prefer flash models (cheap + support search grounding), newest first.
+        flash = [m for m in discovered if "flash" in m and "lite" not in m and "8b" not in m]
+        flash.sort(reverse=True)  # 2.5 > 2.0 > 1.5 lexically
+        models = (flash + [m for m in discovered if "flash" in m]
+                  + ["gemini-2.0-flash"])[:4]
     last_err = None
     with httpx.Client(timeout=20.0) as c:
         for model in models:
