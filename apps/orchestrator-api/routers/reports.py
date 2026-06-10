@@ -127,6 +127,29 @@ def test_email_send():
     return res
 
 
+@router.post("/test-news", dependencies=[Depends(rate_limit_compose)])
+def test_news_provider():
+    """Diagnostic: run one live web search and report which provider answered
+    (or that none is configured). Returns provider name + result count + which
+    search keys are present — no query content, no secrets."""
+    from services.web_search import search_web
+    res = search_web("KOSPI stock market news today", num_results=3)
+    return {
+        "ok": bool(res.get("ok")),
+        "provider": res.get("provider"),
+        "result_count": len(res.get("results", [])),
+        "error": res.get("error"),
+        "keys_present": {
+            "SERPER_API_KEY": bool(os.getenv("SERPER_API_KEY")),
+            "TAVILY_API_KEY": bool(os.getenv("TAVILY_API_KEY")),
+            "GOOGLE_CSE_KEY": bool(os.getenv("GOOGLE_CSE_KEY")),
+            "GEMINI_or_GOOGLE_API_KEY": bool(os.getenv("GEMINI_API_KEY")
+                                             or os.getenv("GOOGLE_API_KEY")
+                                             or os.getenv("GOOGLE_GENERATIVE_AI_API_KEY")),
+        },
+    }
+
+
 @router.post("/compose/daily", dependencies=[Depends(rate_limit_compose)])
 def compose_daily(body: ComposeBody, db: Session = Depends(get_db)):
     """Compose a daily executive summary from the last 24h of task runs."""
