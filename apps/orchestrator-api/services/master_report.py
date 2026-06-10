@@ -85,41 +85,55 @@ def build_master_report(db, trace_id: str) -> dict:
         sysmsg = (
             "You are TripleH's chief strategist writing the MASTER daily report — "
             "ONE consolidated view built from THREE source reports: Kiwoom "
-            "(price/technical), Newspaper (news), and YouTube (video). Use ONLY the "
-            "provided material — NEVER invent. ALL prices are Korean Won (KRW). "
-            "Produce this EXACT structure:\n"
+            "(price/technical), Newspaper (news), and YouTube (video). The reader's "
+            "strategy is 일정매매 (event-driven): KNOW FUTURE EVENTS → POSITION EARLY "
+            "→ SELL WHEN PUBLIC ATTENTION ARRIVES. Frame the whole report around that. "
+            "Use ONLY the provided material — NEVER invent. ALL prices are KRW. "
+            "TODAY'S DATE is given at the top of the user message: treat every "
+            "'catalyst' as FUTURE-ONLY (after today) — DISCARD any past-dated event; "
+            "if a date is unknown write 'upcoming (TBC)' or a quarter, NEVER a past "
+            "date. Produce this EXACT structure (this is a ~4-PAGE report):\n"
             "## 1. Executive Summary\n## 2. Smart Signal Table\n"
-            "## 3. Where the Sources Agree & Disagree\n"
-            "## 4. Consolidated Catalysts & Schedule (일정매매)\n"
-            "## 5. Final Consensus Recommendations\n\n"
+            "## 3. Signal Explanations (per stock)\n"
+            "## 4. Where the Sources Agree & Disagree\n"
+            "## 5. Upcoming Catalysts & Schedule (일정매매 · FUTURE ONLY)\n"
+            "## 6. Final Consensus Recommendations\n\n"
             "Rules:\n"
-            "- Section 1: a sharp 1-2 paragraph consensus read of the day.\n"
-            "- Section 2 (Smart Signal Table) — the CENTREPIECE. A Markdown table with "
-            "columns | Stock | Close (KRW) | Change | Kiwoom | News | YouTube | "
-            "Consensus | Key Catalyst | — ONE ROW per watchlist stock (SK Hynix, "
-            "Samsung, AMD, Micron, SOXX, SanDisk, Broadcom, SK Telecom, Samsung SDS, "
-            "Naver, KODEX 200). Fill Kiwoom/News/YouTube with that source's stance "
-            "(BUY / HOLD / SELL / —) inferred from its recommendations; Consensus = the "
-            "combined call (note agreement strength); Key Catalyst = the nearest "
-            "relevant event. Use the real Close/Change from the data table.\n"
-            "- Section 3: where the 3 sources AGREE (high-confidence) vs DISAGREE "
-            "(watch) — name the stocks.\n"
-            "- Section 4: merge the catalysts from News + YouTube into one schedule "
-            "(date/timing, event, stock, early-position note) for 일정매매.\n"
-            "- Section 5: final BUY/HOLD/SELL table | Stock | Action | Confidence | "
-            "Reason | where Confidence reflects cross-source agreement; THEN a short "
-            "'### Top Conviction Ideas' paragraph on the 2-3 strongest setups.\n"
-            "Be decisive and specific; ~1200-1700 words. Output ONLY the English "
-            "Markdown report — no preamble."
+            "- Section 1: a sharp 2-3 paragraph consensus read of the day + the key "
+            "future setups to watch.\n"
+            "- Section 2 (Smart Signal Table) — the at-a-glance grid. Markdown table "
+            "| Stock | Close (KRW) | Change | Kiwoom | News | YouTube | Consensus | "
+            "Confidence | — ONE ROW per watchlist stock (SK Hynix, Samsung, AMD, "
+            "Micron, SOXX, SanDisk, Broadcom, SK Telecom, Samsung SDS, Naver, KODEX "
+            "200). Kiwoom/News/YouTube = that source's stance (BUY/HOLD/SELL/—); "
+            "Consensus = combined call; Confidence = High/Med/Low by agreement. Use "
+            "the real Close/Change from the data table.\n"
+            "- Section 3 (Signal Explanations) — IMPORTANT, the deepest section: a "
+            "DEDICATED paragraph (3-5 sentences) for EACH stock EXPLAINING the "
+            "consensus — WHY the three sources land where they do, what the technical "
+            "+ news + video evidence says, and the 일정매매 PLAY: which FUTURE catalyst "
+            "to position before and when to sell into the attention. Be concrete.\n"
+            "- Section 4: where the 3 sources AGREE (high-confidence) vs DISAGREE "
+            "(watch) — name the stocks and what the disagreement means.\n"
+            "- Section 5: merge ONLY FUTURE catalysts into a table | Date / Timing | "
+            "Event | Stock(s) | Likely impact | Early-position play | — every date "
+            "AFTER today; then 2-3 bullet 'positioning plays' (buy before <future "
+            "event> → sell when the crowd arrives).\n"
+            "- Section 6: final | Stock | Action | Confidence | Reason | (BUY/HOLD/"
+            "SELL); THEN '### Top Conviction Ideas' — the 2-3 strongest event-driven "
+            "setups with the entry-before / exit-on-attention logic.\n"
+            "Be decisive and specific. The whole report must be ~2200-2800 words "
+            "(about 4 pages); Section 3 alone ~900 words. Never truncate. Output ONLY "
+            "the English Markdown report — no preamble."
         )
-        user = (f"Date (KST): {kst_date}\n\n"
+        user = (f"TODAY'S DATE (KST): {kst_date}  ← every catalyst MUST be dated AFTER this.\n\n"
                 f"PRICE TABLE (use for Close/Change in Section 2):\n{table_en}\n\n"
                 f"{_digest(kiwoom, 'KIWOOM (price/technical) report')}\n\n"
                 f"{_digest(news, 'NEWSPAPER report')}\n\n"
                 f"{_digest(youtube, 'YOUTUBE report')}")
         out = chat_completion_sync(
-            system_prompt=sysmsg, messages=[{"role": "user", "content": user[:24000]}],
-            max_tokens=9000, temperature=0.4, model="groq-llama-3.3-70b") or ""
+            system_prompt=sysmsg, messages=[{"role": "user", "content": user[:26000]}],
+            max_tokens=12000, temperature=0.4, model="groq-llama-3.3-70b") or ""
         bad = (not out.strip()) or out.lstrip().startswith(("[LLM unavailable]", "[server error]"))
         if not bad:
             detail_en = out.strip()
@@ -134,8 +148,8 @@ def build_master_report(db, trace_id: str) -> dict:
                     "Output ONLY the Korean Markdown report.")
                 ko_out = chat_completion_sync(
                     system_prompt=ko_sys,
-                    messages=[{"role": "user", "content": detail_en[:20000]}],
-                    max_tokens=9000, temperature=0.3, model="groq-llama-3.3-70b") or ""
+                    messages=[{"role": "user", "content": detail_en[:26000]}],
+                    max_tokens=12000, temperature=0.3, model="groq-llama-3.3-70b") or ""
                 ko_bad = ((not ko_out.strip())
                           or ko_out.lstrip().startswith(("[LLM unavailable]", "[server error]"))
                           or len(ko_out.strip()) < 400)
@@ -149,9 +163,10 @@ def build_master_report(db, trace_id: str) -> dict:
     if not detail_en:
         detail_en = (f"# Master Daily Summary\n*{kst_date}*\n\n## 1. Executive Summary\n{sum_en}\n\n"
                      f"## 2. Smart Signal Table\n{table_en}\n\n"
-                     f"## 3. Where the Sources Agree & Disagree\n- See the three source reports.\n\n"
-                     f"## 4. Consolidated Catalysts & Schedule (일정매매)\n- See News/YouTube catalysts.\n\n"
-                     f"## 5. Final Consensus Recommendations\n| Stock | Action | Confidence | Reason |\n"
+                     f"## 3. Signal Explanations (per stock)\n- See the three source reports.\n\n"
+                     f"## 4. Where the Sources Agree & Disagree\n- See the three source reports.\n\n"
+                     f"## 5. Upcoming Catalysts & Schedule (일정매매 · FUTURE ONLY)\n- See News/YouTube catalysts.\n\n"
+                     f"## 6. Final Consensus Recommendations\n| Stock | Action | Confidence | Reason |\n"
                      f"|---|---|---|---|\n| — | HOLD | low | LLM unavailable — manual review |")
     if not detail_ko:
         detail_ko = detail_en

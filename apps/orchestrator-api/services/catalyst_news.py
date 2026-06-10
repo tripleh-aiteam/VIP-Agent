@@ -20,13 +20,14 @@ from services.logger import log
 
 # Catalyst-hunting queries (global, watchlist-aware). Each is 1 search credit.
 CATALYST_QUERIES = [
-    "Samsung SK Hynix Micron Nvidia AMD Broadcom upcoming earnings date schedule",
-    "Nvidia GTC CES semiconductor AI chip product launch event schedule upcoming",
-    "FOMC interest rate decision CPI jobs report schedule upcoming this week",
-    "Trump tariff semiconductor chips Korea export policy executive order news",
-    "Jensen Huang Nvidia Korea visit Samsung SK Hynix Naver partnership investment",
-    "SK Hynix ADR US listing IPO schedule MSCI index rebalance semiconductor",
-    "한국 증시 반도체 실적 발표 일정 정책 이벤트 일정 삼성전자 SK하이닉스 네이버",
+    "Samsung SK Hynix Micron Nvidia AMD Broadcom next earnings date upcoming 2026",
+    "Nvidia GTC CES semiconductor AI chip upcoming product launch event date 2026",
+    "FOMC meeting CPI jobs report economic calendar upcoming next week 2026",
+    "Trump tariff semiconductor chips Korea export policy upcoming decision 2026",
+    "Jensen Huang Nvidia Korea Samsung SK Hynix Naver partnership announcement latest",
+    "SK Hynix ADR US listing schedule MSCI index rebalance upcoming date 2026",
+    "한국 증시 반도체 실적 발표 예정 일정 향후 이벤트 삼성전자 SK하이닉스 네이버 2026",
+    "upcoming stock market catalysts this week semiconductor AI events calendar",
 ]
 
 
@@ -77,8 +78,13 @@ def catalyst_block(items: list[dict]) -> str:
 # the newspaper and youtube reports so the wording stays consistent.
 CATALYST_SECTION_RULE = (
     "This section is the CORE of 일정매매 (schedule-based / event-driven trading): "
-    "identify catalysts EARLY so the reader can position BEFORE the crowd. Provide "
-    "THREE parts:\n"
+    "identify catalysts EARLY so the reader can position BEFORE the crowd. "
+    "CRITICAL — FUTURE ONLY: include ONLY events dated AFTER today's date (given at "
+    "the top of the prompt). NEVER list an event with a date earlier than or equal "
+    "to today — discard all past events. If you don't know the exact future date, "
+    "write 'upcoming (date TBC)' or a quarter (e.g. 'late June', 'Q3 2026') — NEVER "
+    "invent a specific past date. Every row's timing must be in the future.\n"
+    "Provide THREE parts:\n"
     "(a) an UPCOMING CATALYST TABLE — Markdown | Date / Timing | Catalyst / Event | "
     "Affected stock(s) | Likely impact | Early-position note | — listing real "
     "scheduled or expected events (earnings dates, product launches, GTC/CES, "
