@@ -146,11 +146,18 @@ def _gemini_grounded(query: str, n: int) -> list[dict[str, Any]]:
         discovered, derr = _gemini_list_models(key)
         if derr and not discovered:
             raise RuntimeError(derr)  # surface "API not enabled / key invalid"
-        # Prefer flash models (cheap + support search grounding), newest first.
-        flash = [m for m in discovered if "flash" in m and "lite" not in m and "8b" not in m]
-        flash.sort(reverse=True)  # 2.5 > 2.0 > 1.5 lexically
-        models = (flash + [m for m in discovered if "flash" in m]
-                  + ["gemini-2.0-flash"])[:4]
+        # Use only proper TEXT flash models — exclude image/tts/vision/embedding/
+        # preview/lite/gemma variants that don't do text grounding.
+        _BAD = ("image", "vision", "tts", "audio", "embedding", "gemma",
+                "aqa", "learnlm", "preview", "lite", "8b", "thinking")
+        flash = [m for m in discovered
+                 if "flash" in m and not any(b in m for b in _BAD)]
+        # Prefer known-good stable text models first.
+        _PREF = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-2.0-flash-001",
+                 "gemini-flash-latest"]
+        models = ([m for m in _PREF if m in discovered]
+                  + [m for m in flash if m not in _PREF]
+                  + ["gemini-2.0-flash"])[:3]
     last_err = None
     with httpx.Client(timeout=20.0) as c:
         for model in models:
