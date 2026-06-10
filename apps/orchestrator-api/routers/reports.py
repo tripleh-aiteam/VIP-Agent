@@ -35,12 +35,14 @@ def trigger_auto_daily(db: Session = Depends(get_db)):
 
 
 @router.post("/compose/kiwoom", dependencies=[Depends(rate_limit_compose)])
-def trigger_kiwoom_report(db: Session = Depends(get_db)):
-    """Manually trigger the Kiwoom daily market report (also runs 6:30 AM KST)."""
+def trigger_kiwoom_report(email: Optional[str] = Query(None, description="Optional recipient for the .docx email (testing). Scheduled run uses KIWOOM_REPORT_EMAIL env."), db: Session = Depends(get_db)):
+    """Manually trigger the Kiwoom daily market report (also runs 6:30 AM KST).
+    Pass ?email=<addr> to send the Word attachment to a specific address."""
     from services.scheduler_service import _kiwoom_daily_report
     import threading
-    threading.Thread(target=_kiwoom_daily_report, daemon=True).start()
-    return {"triggered": True, "message": "Kiwoom daily report running in background. Check Reports → Kiwoom in ~30s."}
+    threading.Thread(target=lambda: _kiwoom_daily_report(email_override=email), daemon=True).start()
+    return {"triggered": True, "email": email or "(env KIWOOM_REPORT_EMAIL)",
+            "message": "Kiwoom daily report running in background. Check Reports → Kiwoom in ~30s."}
 
 
 @router.post("/compose/daily", dependencies=[Depends(rate_limit_compose)])

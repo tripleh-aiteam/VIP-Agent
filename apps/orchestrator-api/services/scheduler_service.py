@@ -709,9 +709,11 @@ def _auto_cross_agent_report():
 
 
 @with_retry(max_attempts=2, backoff_seconds=(60, 300), job_name="kiwoom_daily_report")
-def _kiwoom_daily_report():
+def _kiwoom_daily_report(email_override: str | None = None):
     """Daily Kiwoom market report — runs ~6:30 AM KST (after the US close).
-    Real OHLCV for the watchlist + LLM structured analysis (EN/KO)."""
+    Real OHLCV for the watchlist + LLM structured analysis (EN/KO).
+    `email_override` lets the manual trigger send the .docx to a specific
+    address for testing; the scheduled run uses KIWOOM_REPORT_EMAIL env."""
     from services.kiwoom_report import build_kiwoom_report, format_kiwoom_telegram
     from services.telegram_service import send_alert
     from db.models import OrchReport
@@ -754,8 +756,8 @@ def _kiwoom_daily_report():
         try:
             from services.report_docx import markdown_to_docx
             from services.report_email import send_email_with_docx, is_configured as _email_ok
-            to_addr = (os.getenv("KIWOOM_REPORT_EMAIL") or os.getenv("REPORT_EMAIL_TO")
-                       or os.getenv("SMTP_USER"))
+            to_addr = (email_override or os.getenv("KIWOOM_REPORT_EMAIL")
+                       or os.getenv("REPORT_EMAIL_TO") or os.getenv("SMTP_USER"))
             if _email_ok() and to_addr:
                 body_md = rep.get("detail_ko") or ""
                 if len(body_md.strip()) < 200 or "same report in korean" in body_md.lower():
