@@ -4,6 +4,7 @@ POST /reports/compose/daily, /reports/compose/weekly, /reports/compose/alert
 GET /reports/{id}, GET /reports/{id}/markdown
 """
 
+import os
 from uuid import UUID
 from pydantic import BaseModel, Field
 from typing import Optional
@@ -34,10 +35,27 @@ def trigger_auto_daily(db: Session = Depends(get_db)):
     return {"triggered": True, "message": "Auto daily reports running in background. Check Reports page in ~30 seconds."}
 
 
+def _allowed_report_recipients() -> set[str]:
+    """Allowlist of addresses the manual trigger may email. Built from
+    REPORT_ALLOWED_RECIPIENTS (comma-separated) plus the configured server-side
+    recipients — so an attacker cannot exfiltrate a report to an arbitrary inbox
+    or abuse our SMTP to send mail to third parties."""
+    allowed = {a.strip().lower() for a in (os.getenv("REPORT_ALLOWED_RECIPIENTS") or "").split(",") if a.strip()}
+    for ev in ("KIWOOM_REPORT_EMAIL", "REPORT_EMAIL_TO", "SMTP_USER"):
+        v = os.getenv(ev)
+        if v:
+            allowed.add(v.strip().lower())
+    return allowed
+
+
 @router.post("/compose/kiwoom", dependencies=[Depends(rate_limit_compose)])
-def trigger_kiwoom_report(email: Optional[str] = Query(None, description="Optional recipient for the .docx email (testing). Scheduled run uses KIWOOM_REPORT_EMAIL env."), db: Session = Depends(get_db)):
+def trigger_kiwoom_report(email: Optional[str] = Query(None, description="Optional recipient for the .docx email — must be on the REPORT_ALLOWED_RECIPIENTS allowlist (or a configured server recipient). Scheduled run uses KIWOOM_REPORT_EMAIL env."), db: Session = Depends(get_db)):
     """Manually trigger the Kiwoom daily market report (also runs 6:30 AM KST).
-    Pass ?email=<addr> to send the Word attachment to a specific address."""
+    Pass ?email=<addr> to send the Word attachment to an ALLOWLISTED address."""
+    if email:
+        if email.strip().lower() not in _allowed_report_recipients():
+            raise HTTPException(403, "recipient not allowed — add it to REPORT_ALLOWED_RECIPIENTS env")
+        email = email.strip()
     from services.scheduler_service import _kiwoom_daily_report
     import threading
     threading.Thread(target=lambda: _kiwoom_daily_report(email_override=email), daemon=True).start()
