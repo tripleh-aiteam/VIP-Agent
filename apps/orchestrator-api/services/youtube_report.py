@@ -137,7 +137,7 @@ def _latest_uploads(channel_id: str, n: int = 4) -> list[dict]:
         return []
 
 
-def _search_channel(query: str, n: int = 6) -> list[dict]:
+def _search_channel(query: str, n: int = 8) -> list[dict]:
     try:
         from services.web_search import search_web
         res = search_web(query, num_results=n)
@@ -167,7 +167,7 @@ def _gather_channels() -> list[dict]:
                     break
         live_title = _oembed_title(vid) if vid else ""
         # Latest uploaded videos (VODs) for this channel via RSS.
-        uploads = _latest_uploads(_channel_id(vid)) if vid else []
+        uploads = _latest_uploads(_channel_id(vid), n=6) if vid else []
         # Try a transcript on the newest non-live upload (best real content).
         transcript = ""
         for up in uploads:
@@ -197,7 +197,7 @@ def _channel_block(channels: list[dict]) -> str:
         # Latest uploaded videos (titles + real descriptions) — daily-fresh.
         if ch.get("uploads"):
             parts.append("LATEST UPLOADED VIDEOS (real titles + descriptions):")
-            for up in ch["uploads"][:4]:
+            for up in ch["uploads"][:6]:
                 t = (up.get("title") or "")[:150]
                 dsc = (up.get("description") or "").replace("\n", " ")[:350]
                 line = f"- {t}"
@@ -213,7 +213,7 @@ def _channel_block(channels: list[dict]) -> str:
                          "analyse from the real upload titles + descriptions + coverage.")
         if ch.get("hits"):
             parts.append("RECENT RELATED COVERAGE (web):")
-            for h in ch["hits"][:6]:
+            for h in ch["hits"][:8]:
                 t = h["title"][:130]
                 s = h["snippet"][:200]
                 parts.append(f"- {t} — {s}" if s else f"- {t}")
@@ -258,18 +258,24 @@ def build_youtube_report(db, trace_id: str) -> dict:
             "Rules:\n"
             "- Section 2: insert the provided data table VERBATIM.\n"
             "- Section 3 (Channel-by-Channel) — the CORE section. For EACH channel a "
-            "'### <Channel>' sub-heading with a DEEP-DIVE of 250-330 words (3-4 "
-            "paragraphs): what the channel/host discussed, their market & sector view, "
-            "their take on our watchlist companies (name them with the real figures), "
-            "and any forward calls. Quote concrete points from the transcript/coverage. "
-            "If no transcript, note it and use the real title + coverage.\n"
+            "'### <Channel>' sub-heading with a DEEP-DIVE of 350-450 words (about "
+            "HALF a page, 4-5 full paragraphs): (1) what the channel/host covered in "
+            "its latest uploads (use the real upload TITLES + DESCRIPTIONS), (2) its "
+            "market & macro view, (3) its sector/semiconductor view, (4) its take on "
+            "our watchlist companies — name them with the real figures — and (5) any "
+            "forward calls or sentiment. Quote concrete points from the transcript / "
+            "upload descriptions / coverage. If no transcript, note it briefly and "
+            "analyse fully from the real upload titles, descriptions and coverage — "
+            "do NOT make the section short just because there is no transcript.\n"
             "- Section 4 (Company-Specific): a dedicated paragraph per name (SK Hynix, "
             "Samsung, AMD, Micron, Broadcom, SanDisk, SOXX, SK Telecom, Samsung SDS, "
             "Naver, KODEX 200) — combine what the channels said with the real change%.\n"
             "- Section 5 (Recommendations): FIRST a table | Stock | Action | Reason | "
             "(BUY/HOLD/SELL); THEN a '### Rationale' subsection explaining each call "
             "from the videos + price action.\n"
-            "Aim for ~1500-1900 words (about 3 pages). Never truncate.\n"
+            "The WHOLE report must be at LEAST 3 pages — aim for 2200-2800 words; "
+            "Section 3 alone should be ~1700 words (≈half a page × 4 channels). "
+            "Never truncate a section.\n"
             "Output ONLY the finished English Markdown report — no preamble."
         )
         user = (f"Date (KST): {kst_date} · USD/KRW: {rate:,.0f}\n\n"
@@ -277,8 +283,8 @@ def build_youtube_report(db, trace_id: str) -> dict:
                 f"PRICE TECHNICALS:\n{_kr._facts(rows)}\n\n"
                 f"CHANNELS (real data):\n{_channel_block(channels)}")
         out = chat_completion_sync(
-            system_prompt=sysmsg, messages=[{"role": "user", "content": user[:22000]}],
-            max_tokens=9000, temperature=0.5, model="groq-llama-3.3-70b") or ""
+            system_prompt=sysmsg, messages=[{"role": "user", "content": user[:24000]}],
+            max_tokens=11000, temperature=0.5, model="groq-llama-3.3-70b") or ""
         bad = (not out.strip()) or out.lstrip().startswith(("[LLM unavailable]", "[server error]"))
         if not bad:
             detail_en = out.strip()
@@ -293,8 +299,8 @@ def build_youtube_report(db, trace_id: str) -> dict:
                     "Output ONLY the Korean Markdown report.")
                 ko_out = chat_completion_sync(
                     system_prompt=ko_sys,
-                    messages=[{"role": "user", "content": detail_en[:20000]}],
-                    max_tokens=9000, temperature=0.3, model="groq-llama-3.3-70b") or ""
+                    messages=[{"role": "user", "content": detail_en[:24000]}],
+                    max_tokens=11000, temperature=0.3, model="groq-llama-3.3-70b") or ""
                 ko_bad = ((not ko_out.strip())
                           or ko_out.lstrip().startswith(("[LLM unavailable]", "[server error]"))
                           or len(ko_out.strip()) < 400)
