@@ -63,6 +63,26 @@ def trigger_kiwoom_report(email: Optional[str] = Query(None, description="Option
             "message": "Kiwoom daily report running in background. Check Reports → Kiwoom in ~30s."}
 
 
+@router.get("/email-config")
+def email_config():
+    """Diagnostic: show how the report email sender is configured on the server
+    (sender address + whether each piece is set). NEVER returns the password."""
+    from services import report_email
+    return {
+        "smtp_configured": report_email.is_configured(),
+        "smtp_host": os.getenv("SMTP_HOST"),
+        "smtp_port": os.getenv("SMTP_PORT", "587"),
+        "sender_email": os.getenv("SMTP_USER"),  # the From address (not secret)
+        "from_name": os.getenv("SMTP_FROM_NAME", "VIP AI Platform"),
+        "use_tls": os.getenv("SMTP_USE_TLS", "1"),
+        "password_set": bool(os.getenv("SMTP_PASSWORD")),
+        "kiwoom_report_email": os.getenv("KIWOOM_REPORT_EMAIL"),
+        "allowed_recipients": sorted(_allowed_report_recipients()),
+        "note": "sender_email = SMTP_USER on Render. If smtp_configured is false, "
+                "set SMTP_HOST / SMTP_USER / SMTP_PASSWORD (Gmail app password).",
+    }
+
+
 @router.post("/compose/daily", dependencies=[Depends(rate_limit_compose)])
 def compose_daily(body: ComposeBody, db: Session = Depends(get_db)):
     """Compose a daily executive summary from the last 24h of task runs."""
