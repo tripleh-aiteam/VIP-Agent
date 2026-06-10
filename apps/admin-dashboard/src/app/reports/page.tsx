@@ -399,6 +399,23 @@ td{padding:8px 12px;border:1px solid #e2e8f0;font-size:10pt}
                       <button onClick={closeDetail} className="text-[var(--text-muted)] hover:text-[var(--text-primary)] text-xs ml-2">Close</button>
                     </div>
                   </div>
+                  {detail.content?.report?.detail_en ? (
+                    /* Rich reports (Kiwoom/agents): render the full report with the
+                       table properly + EN/한국어 toggle (no more mashed markdown). */
+                    <div>
+                      <div className="flex items-center justify-between mb-3">
+                        <p className="text-[13px] text-[var(--text-secondary)] leading-relaxed flex-1">{(lang === "ko" ? (detail.content?.report?.summary_ko || detail.content?.report?.summary_en) : detail.content?.report?.summary_en) || detail.content?.executive_summary}</p>
+                        <div className="flex items-center rounded-lg border border-[var(--border-default)] overflow-hidden ml-3 shrink-0">
+                          <button onClick={() => setLang("en")} className={`px-2.5 py-1 text-[11px] font-medium ${lang === "en" ? "bg-[var(--brand-blue)] text-white" : "text-[var(--text-muted)]"}`}>EN</button>
+                          <button onClick={() => setLang("ko")} className={`px-2.5 py-1 text-[11px] font-medium ${lang === "ko" ? "bg-[var(--brand-blue)] text-white" : "text-[var(--text-muted)]"}`}>한국어</button>
+                        </div>
+                      </div>
+                      <div className="bg-white rounded-lg p-4 border border-gray-200 overflow-x-auto">
+                        <MarkdownLite text={lang === "ko" ? (detail.content.report.detail_ko || detail.content.report.detail_en) : detail.content.report.detail_en} />
+                      </div>
+                    </div>
+                  ) : (
+                  <>
                   <div className="mb-4 p-3 rounded-lg bg-[var(--bg-elevated)] border border-[var(--border-default)]">
                     <p className="text-[13px] text-[var(--text-primary)] leading-relaxed">{detail.content?.executive_summary || "No summary available."}</p>
                   </div>
@@ -420,6 +437,8 @@ td{padding:8px 12px;border:1px solid #e2e8f0;font-size:10pt}
                       </div>
                     ))}
                   </div>
+                  </>
+                  )}
                 </div>
               )}
             </div>

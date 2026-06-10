@@ -74,36 +74,42 @@ def _fmt_chg(c: float | None) -> str:
 
 
 def _fetch_daily(spec: dict) -> dict:
-    """Fetch the latest daily candle + previous close for one ticker."""
+    """Fetch the latest daily candle + previous close for one ticker. Retries a
+    few times — the backend's Yahoo/Kiwoom fetch is intermittently slow/empty,
+    which was leaving blank rows."""
+    import time as _t
     row = {**spec, "open": None, "close": None, "high": None, "low": None,
            "volume": None, "change_pct": None, "ok": False}
-    try:
-        with httpx.Client(timeout=15) as c:
-            r = c.get(f"{_BACKEND}/intraday/daily-chart", params={"ticker": spec["t"], "days": 20})
-        if r.status_code != 200:
-            return row
-        candles = (r.json() or {}).get("candles") or []
-        if not candles:
-            return row
-        last = candles[-1]
-        prev_close = candles[-2].get("close") if len(candles) >= 2 else None
-        close = last.get("close")
-        chg = ((close - prev_close) / prev_close * 100) if (prev_close and close) else None
-        row.update({
-            "open": last.get("open"), "close": close, "high": last.get("high"),
-            "low": last.get("low"), "volume": last.get("volume"),
-            "prev_close": prev_close, "change_pct": chg, "date": last.get("date"),
-            "ma5": last.get("ma5"), "ma20": last.get("ma20"), "ma60": last.get("ma60"),
-            "ok": True,
-        })
-    except Exception as e:
-        log.warning(f"kiwoom fetch {spec['t']} failed: {e}")
+    for attempt in range(3):
+        try:
+            with httpx.Client(timeout=30) as c:
+                r = c.get(f"{_BACKEND}/intraday/daily-chart",
+                          params={"ticker": spec["t"], "days": 20})
+            candles = (r.json() or {}).get("candles") or [] if r.status_code == 200 else []
+            if candles:
+                last = candles[-1]
+                prev_close = candles[-2].get("close") if len(candles) >= 2 else None
+                close = last.get("close")
+                chg = ((close - prev_close) / prev_close * 100) if (prev_close and close) else None
+                row.update({
+                    "open": last.get("open"), "close": close, "high": last.get("high"),
+                    "low": last.get("low"), "volume": last.get("volume"),
+                    "prev_close": prev_close, "change_pct": chg, "date": last.get("date"),
+                    "ma5": last.get("ma5"), "ma20": last.get("ma20"), "ma60": last.get("ma60"),
+                    "ok": True,
+                })
+                return row
+        except Exception as e:
+            log.warning(f"kiwoom fetch {spec['t']} attempt {attempt+1} failed: {e}")
+        if attempt < 2:
+            _t.sleep(1.5)
+    log.warning(f"kiwoom fetch {spec['t']}: no data after retries")
     return row
 
 
 def _gather() -> list[dict]:
     from concurrent.futures import ThreadPoolExecutor
-    with ThreadPoolExecutor(max_workers=8) as ex:
+    with ThreadPoolExecutor(max_workers=5) as ex:
         return list(ex.map(_fetch_daily, KIWOOM_TICKERS))
 
 
