@@ -34,6 +34,15 @@ def trigger_auto_daily(db: Session = Depends(get_db)):
     return {"triggered": True, "message": "Auto daily reports running in background. Check Reports page in ~30 seconds."}
 
 
+@router.post("/compose/kiwoom", dependencies=[Depends(rate_limit_compose)])
+def trigger_kiwoom_report(db: Session = Depends(get_db)):
+    """Manually trigger the Kiwoom daily market report (also runs 6:30 AM KST)."""
+    from services.scheduler_service import _kiwoom_daily_report
+    import threading
+    threading.Thread(target=_kiwoom_daily_report, daemon=True).start()
+    return {"triggered": True, "message": "Kiwoom daily report running in background. Check Reports → Kiwoom in ~30s."}
+
+
 @router.post("/compose/daily", dependencies=[Depends(rate_limit_compose)])
 def compose_daily(body: ComposeBody, db: Session = Depends(get_db)):
     """Compose a daily executive summary from the last 24h of task runs."""

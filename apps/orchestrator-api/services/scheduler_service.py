@@ -708,6 +708,45 @@ def _auto_cross_agent_report():
         db.close()
 
 
+@with_retry(max_attempts=2, backoff_seconds=(60, 300), job_name="kiwoom_daily_report")
+def _kiwoom_daily_report():
+    """Daily Kiwoom market report — runs ~6:30 AM KST (after the US close).
+    Real OHLCV for the watchlist + LLM structured analysis (EN/KO)."""
+    from services.kiwoom_report import build_kiwoom_report
+    from services.telegram_service import send_alert
+    from db.models import OrchReport
+
+    db = SessionLocal()
+    trace = f"tr-kiwoom-{int(datetime.utcnow().timestamp())}"
+    kst = datetime.utcnow().strftime("%Y-%m-%d") + " 06:30 KST"
+    try:
+        rep = build_kiwoom_report(db, trace)
+        r = OrchReport(
+            report_type="kiwoom_report",
+            source_run_ids_json=[],
+            content_json={
+                "report_type": "kiwoom_report", "period": "daily",
+                "executive_summary": rep.get("summary_en") or "Kiwoom daily report",
+                "sections": [{"title": "Kiwoom Daily", "content": rep.get("table_en", ""), "data": {}}],
+                "report": rep,
+                "generated_at": datetime.utcnow().isoformat(), "kst_time": kst,
+            },
+            delivery_channel="auto",
+        )
+        db.add(r)
+        db.commit()
+        send_alert(
+            f"📈 <b>Kiwoom Daily Report</b>\n<i>{kst}</i>\n\n{rep.get('summary_en', '')[:300]}\n\n"
+            f"<i>View → Reports → Kiwoom → Daily</i>"
+        )
+        log.info(f"kiwoom: daily report saved + sent ({rep['status']})",
+                 extra={"trace_id": trace, "action": "kiwoom.daily.done"})
+    except Exception as e:
+        log.warning(f"kiwoom: daily report failed: {e}", extra={"action": "kiwoom.daily.failed"})
+    finally:
+        db.close()
+
+
 def init_scheduler():
     """Initialize the scheduler and load enabled rules from DB."""
     global _scheduler
@@ -775,6 +814,16 @@ def init_scheduler():
         replace_existing=True,
     )
     log.info("scheduler: auto cross-agent report registered (daily 23:30 UTC)", extra={"action": "scheduler.auto_cross_registered"})
+
+    # Kiwoom daily report — 6:30 AM KST (after US close) = 21:30 UTC, weekdays KST
+    # (UTC Sun-Thu 21:30 = Mon-Fri 06:30 KST).
+    _scheduler.add_job(
+        _kiwoom_daily_report,
+        CronTrigger.from_crontab("30 21 * * 0-4"),
+        id="kiwoom-daily-report",
+        replace_existing=True,
+    )
+    log.info("scheduler: Kiwoom daily report registered (21:30 UTC = 6:30 AM KST)", extra={"action": "scheduler.kiwoom_registered"})
 
     # Auto weekly report — Friday 6:30 PM KST = 09:30 UTC Friday
     _scheduler.add_job(

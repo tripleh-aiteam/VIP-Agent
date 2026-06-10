@@ -53,14 +53,6 @@ const _demoMd = (en: string, ko: string) => ({
 });
 const DEMO_MARKET_REPORTS: any[] = [
   {
-    id: "demo-kiwoom-1", _demo: true, report_type: "kiwoom_report",
-    executive_summary: "키움증권 데이터 기반 한국·미국·국제 시장 일일 분석 — KOSPI/KOSDAQ, 수급, 주요 종목.",
-    created_at: new Date().toISOString(), source_run_count: 0,
-    content: _demoMd(
-      "# Kiwoom Market Analysis — Daily\n## Korean Market\nKOSPI 7,484 (-8.3%), KOSDAQ 911 (-9.1%). Foreign net selling led by 삼성전자, SK하이닉스.\n## US & International\nNASDAQ +0.9%, S&P +0.3%, USD/KRW 1,531. Mixed overnight.\n## Daily Summary\nDomestic weakness vs. firmer US; watch chip names and FX.\n## Recommended Actions\n- Review high-beta KR exposure\n- Watch USD/KRW above 1,530",
-      "# 키움 시장 분석 — 일일\n## 한국 시장\nKOSPI 7,484 (-8.3%), KOSDAQ 911 (-9.1%). 외국인 순매도(삼성전자·SK하이닉스 중심).\n## 미국·국제\nNASDAQ +0.9%, S&P +0.3%, 원/달러 1,531.\n## 일일 요약\n국내 약세 대비 미국 견조 — 반도체·환율 주시.\n## 권장 조치\n- 고변동 국내 노출 점검\n- 원/달러 1,530 상단 주시"),
-  },
-  {
     id: "demo-news-1", _demo: true, report_type: "newspaper_report",
     executive_summary: "신문·뉴스 기반 시장 분석 — 주요 헤드라인, 미국/국제/한국 시장 코멘터리, 일일 요약.",
     created_at: new Date(Date.now() - 3600e3).toISOString(), source_run_count: 0,
