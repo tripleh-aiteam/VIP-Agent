@@ -11,6 +11,16 @@ type ViewMode = null | "summary" | "detailed";
 
 // --- Markdown → HTML for the MS Word export (keeps tables intact) ----------
 const _esc = (s: string) => (s || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+
+// Pick the Korean body only when it's a real translation — older reports stubbed
+// it as "( Same report in Korean )", so fall back to English for short/placeholder KO.
+function koOrEn(rep: any, lang: string): string {
+  const en = rep?.detail_en || "";
+  const ko = (rep?.detail_ko || "").trim();
+  if (lang !== "ko") return en;
+  if (ko.length < 200 || /same report in korean|same as english/i.test(ko)) return en;
+  return ko;
+}
 const _inline = (s: string) => _esc(s)
   .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
   .replace(/`([^`]+)`/g, "<code>$1</code>");
@@ -229,7 +239,7 @@ td{padding:8px 12px;border:1px solid #e2e8f0;font-size:10pt}
     const exec = (lang === "ko"
       ? (rep?.summary_ko || rep?.summary_en)
       : rep?.summary_en) || detail.content?.executive_summary || "";
-    const bodyMd = rep ? (lang === "ko" ? (rep.detail_ko || rep.detail_en) : rep.detail_en) : "";
+    const bodyMd = rep ? koOrEn(rep, lang) : "";
 
     html += `<h1>${_esc(title)}</h1><p class="meta">Generated: ${date} | Sources: ${detail.source_run_ids?.length || 0}</p>`;
     html += `<div class="summary"><strong>${lang === "ko" ? "핵심 요약" : "Executive Summary"}</strong><br/>${_inline(exec)}</div>`;
@@ -411,7 +421,7 @@ td{padding:8px 12px;border:1px solid #e2e8f0;font-size:10pt}
                         </div>
                       </div>
                       <div className="bg-white rounded-lg p-4 border border-gray-200 overflow-x-auto">
-                        <MarkdownLite text={lang === "ko" ? (detail.content.report.detail_ko || detail.content.report.detail_en) : detail.content.report.detail_en} />
+                        <MarkdownLite text={koOrEn(detail.content.report, lang)} />
                       </div>
                     </div>
                   ) : (
@@ -538,9 +548,7 @@ td{padding:8px 12px;border:1px solid #e2e8f0;font-size:10pt}
               {/* ===== Per-agent 1-page DETAIL (English / 한국어 togglable) ===== */}
               {detail.content?.report?.detail_en ? (
                 <div className="mb-8">
-                  <MarkdownLite text={lang === "ko"
-                    ? (detail.content.report.detail_ko || detail.content.report.detail_en)
-                    : detail.content.report.detail_en} />
+                  <MarkdownLite text={koOrEn(detail.content.report, lang)} />
                 </div>
               ) : (
               <>

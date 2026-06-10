@@ -246,24 +246,47 @@ def build_kiwoom_report(db, trace_id: str) -> dict:
             "Action is BUY / SELL / HOLD; THEN, AFTER the table, add a '### Rationale' "
             "subsection with a paragraph per recommendation explaining IN DETAIL why "
             "(the technical + momentum reasoning behind each BUY / SELL / HOLD).\n"
-            "Write the SAME report TWICE: first English (ENGLISH table), then natural "
-            "Korean (KOREAN table). Output EXACTLY:\n===EN===\n<english md>\n===KO===\n"
-            "<korean md>"
+            "Output ONLY the finished English Markdown report — no preamble, no "
+            "placeholders, no notes about a translation."
         )
         user = (f"Date (KST): {kst_date} · USD/KRW used for US tickers: {rate:,.0f}\n\n"
-                f"ENGLISH TABLE:\n{table_en}\n\nKOREAN TABLE:\n{table_ko}\n\n"
+                f"DATA TABLE (insert verbatim in Section 2):\n{table_en}\n\n"
                 f"DATA + TECHNICALS:\n{_facts(rows)}")
         out = chat_completion_sync(
             system_prompt=sysmsg, messages=[{"role": "user", "content": user[:9000]}],
             max_tokens=7000, temperature=0.5, model="groq-llama-3.3-70b") or ""
         bad = (not out.strip()) or out.lstrip().startswith(("[LLM unavailable]", "[server error]"))
         if not bad:
-            if "===KO===" in out:
-                a, b = out.split("===KO===", 1)
-                detail_en = a.replace("===EN===", "").strip()
-                detail_ko = b.strip()
-            else:
-                detail_en = out.replace("===EN===", "").strip()
+            detail_en = out.replace("===EN===", "").strip()
+            # Korean: a DEDICATED translation call (the single-shot "write it twice"
+            # approach made the model stub the KO half). Translate the FULL English
+            # report and swap in the ready-made Korean data table.
+            try:
+                ko_sys = (
+                    "You are a professional Korean financial translator. Translate the "
+                    "ENTIRE English market report below into natural, professional "
+                    "Korean (존댓말) for an investor audience. Rules:\n"
+                    "- Translate EVERYTHING — every section and paragraph. NEVER "
+                    "abbreviate, summarise, or write a placeholder like '(same as "
+                    "English)'. The Korean must be as long as the English.\n"
+                    "- Preserve ALL Markdown structure, heading levels, and tables.\n"
+                    "- Keep every number, %, 원 amount, ticker code and MA value "
+                    "IDENTICAL — translate only the words.\n"
+                    "- Replace the Section 2 data table with this EXACT Korean table:\n"
+                    f"{table_ko}\n"
+                    "Output ONLY the Korean Markdown report."
+                )
+                ko_out = chat_completion_sync(
+                    system_prompt=ko_sys,
+                    messages=[{"role": "user", "content": detail_en[:14000]}],
+                    max_tokens=7000, temperature=0.3, model="groq-llama-3.3-70b") or ""
+                ko_bad = ((not ko_out.strip())
+                          or ko_out.lstrip().startswith(("[LLM unavailable]", "[server error]"))
+                          or len(ko_out.strip()) < 400)
+                if not ko_bad:
+                    detail_ko = ko_out.strip()
+            except Exception as e:
+                log.warning(f"kiwoom KO translation failed: {e}")
     except Exception as e:
         log.warning(f"kiwoom LLM compose failed: {e}")
 
