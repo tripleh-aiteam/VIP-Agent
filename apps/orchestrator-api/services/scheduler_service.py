@@ -712,7 +712,7 @@ def _auto_cross_agent_report():
 def _kiwoom_daily_report():
     """Daily Kiwoom market report — runs ~6:30 AM KST (after the US close).
     Real OHLCV for the watchlist + LLM structured analysis (EN/KO)."""
-    from services.kiwoom_report import build_kiwoom_report
+    from services.kiwoom_report import build_kiwoom_report, format_kiwoom_telegram
     from services.telegram_service import send_alert
     from db.models import OrchReport
 
@@ -735,10 +735,19 @@ def _kiwoom_daily_report():
         )
         db.add(r)
         db.commit()
-        send_alert(
-            f"📈 <b>Kiwoom Daily Report</b>\n<i>{kst}</i>\n\n{rep.get('summary_en', '')[:300]}\n\n"
-            f"<i>View → Reports → Kiwoom → Daily</i>"
-        )
+        # Send the FULL report (same content + table as the dashboard), split into
+        # Telegram-sized chunks. Korean by default; falls back to EN if KO is thin.
+        try:
+            chunks = format_kiwoom_telegram(rep, kst, lang="ko")
+            for chunk in chunks:
+                send_alert(chunk)
+            log.info(f"kiwoom: telegram sent in {len(chunks)} message(s)",
+                     extra={"trace_id": trace, "action": "kiwoom.telegram"})
+        except Exception as te:
+            # Never let a formatting issue lose the alert — fall back to a summary.
+            log.warning(f"kiwoom telegram format failed: {te}")
+            send_alert(f"📈 <b>Kiwoom Daily Report</b>\n<i>{kst}</i>\n\n"
+                       f"{rep.get('summary_en', '')[:300]}\n\n<i>View → Reports → Kiwoom</i>")
         log.info(f"kiwoom: daily report saved + sent ({rep['status']})",
                  extra={"trace_id": trace, "action": "kiwoom.daily.done"})
     except Exception as e:

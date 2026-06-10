@@ -15,7 +15,10 @@ Saved as report_type='kiwoom_report' (period='daily'); also sent to Telegram.
 
 from __future__ import annotations
 
+import html as _html
 import os
+import re
+import unicodedata
 from datetime import datetime
 from typing import Any
 
@@ -310,3 +313,118 @@ def build_kiwoom_report(db, trace_id: str) -> dict:
         "table_en": table_en, "table_ko": table_ko,
         "rows": rows, "source": "Kiwoom / Stock Advisor (live daily OHLCV)",
     }
+
+
+# ---------------------------------------------------------------------------
+# Telegram rendering — send the SAME full report (incl. table) as the dashboard
+# ---------------------------------------------------------------------------
+
+def _dw(s: str) -> int:
+    """Display width: CJK glyphs occupy ~2 monospace cells."""
+    return sum(2 if unicodedata.east_asian_width(ch) in ("W", "F") else 1 for ch in s)
+
+
+def _pad(s: str, w: int) -> str:
+    return s + " " * max(0, w - _dw(s))
+
+
+def _inline_tg(s: str) -> str:
+    """Escape HTML, then convert inline **bold** / `code` to Telegram tags."""
+    s = _html.escape(s)
+    s = re.sub(r"\*\*([^*]+)\*\*", r"<b>\1</b>", s)
+    s = re.sub(r"`([^`]+)`", r"<code>\1</code>", s)
+    return s
+
+
+def _table_to_pre(block: list[str]) -> str:
+    """Render a Markdown table as an aligned monospace <pre> block (CJK-aware)."""
+    rows: list[list[str]] = []
+    for ln in block:
+        cells = [c.strip() for c in ln.strip().strip("|").split("|")]
+        if cells and all(set(c) <= set("-: ") for c in cells):
+            continue  # separator row |---|---|
+        rows.append(cells)
+    if not rows:
+        return ""
+    ncol = max(len(r) for r in rows)
+    rows = [r + [""] * (ncol - len(r)) for r in rows]
+    widths = [max(_dw(r[c]) for r in rows) for c in range(ncol)]
+    out = [" │ ".join(_pad(r[c], widths[c]) for c in range(ncol)) for r in rows]
+    return "<pre>" + _html.escape("\n".join(out)) + "</pre>"
+
+
+def _md_to_tg_blocks(md: str) -> list[str]:
+    """Convert report Markdown into a list of atomic Telegram-HTML blocks
+    (headings → bold, tables → <pre>, bullets → •). Blocks are never split."""
+    lines = md.split("\n")
+    blocks: list[str] = []
+    buf: list[str] = []
+
+    def flush():
+        if buf:
+            blocks.append("\n".join(buf).strip())
+            buf.clear()
+
+    i, n = 0, len(lines)
+    while i < n:
+        line = lines[i]
+        is_tbl = (line.lstrip().startswith("|") and i + 1 < n
+                  and set(lines[i + 1].replace("|", "").replace(" ", "")) <= set("-:"))
+        if is_tbl:
+            flush()
+            tbl = []
+            while i < n and lines[i].lstrip().startswith("|"):
+                tbl.append(lines[i]); i += 1
+            blocks.append(_table_to_pre(tbl))
+            continue
+        m = re.match(r"^(#{1,6})\s*(.*)$", line)
+        if m:
+            flush()
+            blocks.append(f"<b>{_inline_tg(m.group(2).strip())}</b>")
+            i += 1
+            continue
+        if re.match(r"^\s*[-*]\s+", line):
+            buf.append("• " + _inline_tg(re.sub(r"^\s*[-*]\s+", "", line)))
+            i += 1
+            continue
+        if line.strip() == "":
+            flush()
+        else:
+            buf.append(_inline_tg(line))
+        i += 1
+    flush()
+    return [b for b in blocks if b]
+
+
+def format_kiwoom_telegram(rep: dict, kst: str, lang: str = "ko", limit: int = 3900) -> list[str]:
+    """Build the FULL Kiwoom report (same content + table as the dashboard) as a
+    list of Telegram-HTML messages, each under the 4096-char limit."""
+    body = rep.get("detail_ko") if lang == "ko" else rep.get("detail_en")
+    if not body or (lang == "ko" and (len(body.strip()) < 200
+                                      or "same report in korean" in body.lower())):
+        body = rep.get("detail_en") or ""
+    # Drop a leading "# Kiwoom Daily Report" H1 (we add our own header).
+    body = re.sub(r"^\s*#\s+.*\n", "", body, count=1)
+
+    header = f"📈 <b>Kiwoom Daily Report</b>\n<i>{_html.escape(kst)}</i>"
+    blocks = _md_to_tg_blocks(body)
+
+    chunks: list[str] = []
+    cur = header
+    for blk in blocks:
+        if len(blk) > limit:  # oversized single block — hard-split on newlines
+            for part in blk.split("\n"):
+                if len(cur) + len(part) + 1 > limit:
+                    chunks.append(cur); cur = ""
+                cur += ("\n" if cur else "") + part
+            continue
+        if len(cur) + len(blk) + 2 > limit:
+            chunks.append(cur); cur = ""
+        cur += ("\n\n" if cur else "") + blk
+    if cur.strip():
+        chunks.append(cur)
+
+    total = len(chunks)
+    if total > 1:
+        chunks = [f"{c}\n\n<i>({i + 1}/{total})</i>" for i, c in enumerate(chunks)]
+    return chunks
