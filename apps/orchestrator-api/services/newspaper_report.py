@@ -19,6 +19,7 @@ from datetime import datetime
 
 from services.logger import log
 from services import kiwoom_report as _kr
+from services import catalyst_news as _cat
 
 # Named newspapers — each searched with a site: filter so the news really comes
 # from that outlet. (name, domain, region)
@@ -111,6 +112,7 @@ def build_newspaper_report(db, trace_id: str) -> dict:
     rows, table_en, table_ko, rate = _kr.gather_priced_rows()
     ok_rows = [r for r in rows if r.get("ok")]
     grouped = _gather_news_by_source()
+    catalysts = _cat.gather_catalysts()
     total_news = sum(len(v) for v in grouped.values())
     kst_date = datetime.utcnow().strftime("%Y-%m-%d")
 
@@ -138,7 +140,8 @@ def build_newspaper_report(db, trace_id: str) -> dict:
             "NEVER invent quotes or numbers. ALL prices are Korean Won (KRW). "
             "Produce this EXACT structure:\n"
             "## 1. General Overview\n## 2. Market Data\n## 3. News by Newspaper\n"
-            "## 4. Company-Specific Analysis\n## 5. Recommendations\n\n"
+            "## 4. Company-Specific Analysis\n## 5. Catalysts & Schedule (일정매매)\n"
+            "## 6. Recommendations\n\n"
             "Rules:\n"
             "- Section 2: insert the provided data table VERBATIM.\n"
             "- Section 3 (News by Newspaper) — the CORE, longest section. For EACH "
@@ -162,10 +165,13 @@ def build_newspaper_report(db, trace_id: str) -> dict:
             "add the technical read (price vs MA5/MA20/MA60, volume) and a forward "
             "view. Be SPECIFIC per name — never reuse a generic line like 'affected "
             "by the broader sector' for multiple companies.\n"
-            "- Section 5 (Recommendations): FIRST a Markdown table | Stock | Action | "
+            f"- Section 5 (Catalysts & Schedule / 일정매매): {_cat.CATALYST_SECTION_RULE}\n"
+            "- Section 6 (Recommendations): FIRST a Markdown table | Stock | Action | "
             "Reason | with Action = BUY / HOLD / SELL; THEN a '### Rationale' "
-            "subsection with a paragraph per recommendation explaining — grounded in "
-            "the NEWS above + the price/technicals — WHY to buy, hold, or sell.\n"
+            "subsection with a paragraph per recommendation. TIE each call to a "
+            "CATALYST and TIMING where possible (event-driven / 일정매매 — e.g. 'BUY "
+            "before <event/date>, sell into the attention') grounded in the news + "
+            "price/technicals.\n"
             "Be specific, cite the newspapers by name. The WHOLE report should be "
             "LONG and thorough — aim for ~3200-3600 words (about 7 pages); Section 3 "
             "alone should be ~2200 words. Never truncate a section.\n"
@@ -174,10 +180,11 @@ def build_newspaper_report(db, trace_id: str) -> dict:
         user = (f"Date (KST): {kst_date} · USD/KRW: {rate:,.0f}\n\n"
                 f"DATA TABLE (insert verbatim in Section 2):\n{table_en}\n\n"
                 f"PRICE TECHNICALS:\n{_kr._facts(rows)}\n\n"
-                f"NEWS BY NEWSPAPER:\n{_news_block_by_source(grouped)}")
+                f"NEWS BY NEWSPAPER:\n{_news_block_by_source(grouped)}\n\n"
+                f"CATALYST / EVENT DATA (for Section 5):\n{_cat.catalyst_block(catalysts)}")
         out = chat_completion_sync(
-            system_prompt=sysmsg, messages=[{"role": "user", "content": user[:22000]}],
-            max_tokens=12000, temperature=0.5, model="groq-llama-3.3-70b") or ""
+            system_prompt=sysmsg, messages=[{"role": "user", "content": user[:26000]}],
+            max_tokens=13000, temperature=0.5, model="groq-llama-3.3-70b") or ""
         bad = (not out.strip()) or out.lstrip().startswith(("[LLM unavailable]", "[server error]"))
         if not bad:
             detail_en = out.strip()
@@ -214,7 +221,9 @@ def build_newspaper_report(db, trace_id: str) -> dict:
                      f"## 1. General Overview\n{sum_en}\n\n## 2. Market Data\n{table_en}\n\n"
                      f"## 3. News by Newspaper\n" + "\n".join(src_lines) + "\n\n"
                      f"## 4. Company-Specific Analysis\nSee headlines above.\n\n"
-                     f"## 5. Recommendations\n| Stock | Action | Reason |\n|---|---|---|\n"
+                     f"## 5. Catalysts & Schedule (일정매매)\n"
+                     + _cat.catalyst_block(catalysts) + "\n\n"
+                     f"## 6. Recommendations\n| Stock | Action | Reason |\n|---|---|---|\n"
                      f"| — | HOLD | LLM unavailable — manual review |")
     if not detail_ko:
         detail_ko = detail_en

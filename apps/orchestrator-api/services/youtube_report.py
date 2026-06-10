@@ -26,6 +26,7 @@ import httpx
 
 from services.logger import log
 from services import kiwoom_report as _kr
+from services import catalyst_news as _cat
 
 # (name, video_id|None, search query to find recent real coverage)
 YT_CHANNELS: list[dict] = [
@@ -227,6 +228,7 @@ def build_youtube_report(db, trace_id: str) -> dict:
     rows, table_en, table_ko, rate = _kr.gather_priced_rows()
     ok_rows = [r for r in rows if r.get("ok")]
     channels = _gather_channels()
+    catalysts = _cat.gather_catalysts()
     n_transcripts = sum(1 for c in channels if c["has_transcript"])
     kst_date = datetime.utcnow().strftime("%Y-%m-%d")
 
@@ -254,7 +256,8 @@ def build_youtube_report(db, trace_id: str) -> dict:
             "had no transcript (live stream), say so and analyse from its real title "
             "+ recent coverage. ALL prices are Korean Won (KRW). Produce EXACTLY:\n"
             "## 1. General Overview\n## 2. Market Data\n## 3. Channel-by-Channel Analysis\n"
-            "## 4. Company-Specific Analysis\n## 5. Recommendations\n\n"
+            "## 4. Company-Specific Analysis\n## 5. Catalysts & Schedule (일정매매)\n"
+            "## 6. Recommendations\n\n"
             "Rules:\n"
             "- Section 2: insert the provided data table VERBATIM.\n"
             "- Section 3 (Channel-by-Channel) — the CORE section. For EACH channel a "
@@ -270,21 +273,24 @@ def build_youtube_report(db, trace_id: str) -> dict:
             "- Section 4 (Company-Specific): a dedicated paragraph per name (SK Hynix, "
             "Samsung, AMD, Micron, Broadcom, SanDisk, SOXX, SK Telecom, Samsung SDS, "
             "Naver, KODEX 200) — combine what the channels said with the real change%.\n"
-            "- Section 5 (Recommendations): FIRST a table | Stock | Action | Reason | "
-            "(BUY/HOLD/SELL); THEN a '### Rationale' subsection explaining each call "
-            "from the videos + price action.\n"
-            "The WHOLE report must be at LEAST 3 pages — aim for 2200-2800 words; "
-            "Section 3 alone should be ~1700 words (≈half a page × 4 channels). "
-            "Never truncate a section.\n"
+            f"- Section 5 (Catalysts & Schedule / 일정매매): {_cat.CATALYST_SECTION_RULE}\n"
+            "- Section 6 (Recommendations): FIRST a table | Stock | Action | Reason | "
+            "(BUY/HOLD/SELL); THEN a '### Rationale' subsection. TIE each call to a "
+            "CATALYST and TIMING where possible (event-driven / 일정매매 — 'BUY before "
+            "<event/date>, sell into the attention') from the videos + price action.\n"
+            "The WHOLE report must be at LEAST 3 pages — aim for 2600-3200 words; "
+            "Section 3 alone ~1700 words (≈half a page × 4 channels) and Section 5 "
+            "(Catalysts) a full, detailed section. Never truncate a section.\n"
             "Output ONLY the finished English Markdown report — no preamble."
         )
         user = (f"Date (KST): {kst_date} · USD/KRW: {rate:,.0f}\n\n"
                 f"DATA TABLE (insert verbatim in Section 2):\n{table_en}\n\n"
                 f"PRICE TECHNICALS:\n{_kr._facts(rows)}\n\n"
-                f"CHANNELS (real data):\n{_channel_block(channels)}")
+                f"CHANNELS (real data):\n{_channel_block(channels)}\n\n"
+                f"CATALYST / EVENT DATA (for Section 5):\n{_cat.catalyst_block(catalysts)}")
         out = chat_completion_sync(
-            system_prompt=sysmsg, messages=[{"role": "user", "content": user[:24000]}],
-            max_tokens=11000, temperature=0.5, model="groq-llama-3.3-70b") or ""
+            system_prompt=sysmsg, messages=[{"role": "user", "content": user[:26000]}],
+            max_tokens=12000, temperature=0.5, model="groq-llama-3.3-70b") or ""
         bad = (not out.strip()) or out.lstrip().startswith(("[LLM unavailable]", "[server error]"))
         if not bad:
             detail_en = out.strip()
@@ -321,7 +327,9 @@ def build_youtube_report(db, trace_id: str) -> dict:
                      f"## 1. General Overview\n{sum_en}\n\n## 2. Market Data\n{table_en}\n\n"
                      f"## 3. Channel-by-Channel Analysis\n" + "\n".join(cl) + "\n\n"
                      f"## 4. Company-Specific Analysis\nSee channel notes above.\n\n"
-                     f"## 5. Recommendations\n| Stock | Action | Reason |\n|---|---|---|\n"
+                     f"## 5. Catalysts & Schedule (일정매매)\n"
+                     + _cat.catalyst_block(catalysts) + "\n\n"
+                     f"## 6. Recommendations\n| Stock | Action | Reason |\n|---|---|---|\n"
                      f"| — | HOLD | LLM unavailable — manual review |")
     if not detail_ko:
         detail_ko = detail_en
