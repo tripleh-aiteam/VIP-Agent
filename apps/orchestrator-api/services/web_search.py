@@ -102,39 +102,55 @@ def _tavily(query: str, n: int) -> list[dict[str, Any]]:
 def _gemini_grounded(query: str, n: int) -> list[dict[str, Any]]:
     """Use Gemini's built-in Google Search grounding. Reuses the Gemini API key
     already configured for the chatbot — no extra signup. Returns the grounding
-    web sources (title/url) plus a synthesized snippet as the first result."""
+    web sources (title/url) plus a synthesized snippet as the first result.
+
+    Tries several model + grounding-tool variants because the right combo differs
+    by API version: newer models want `google_search`, older (1.5) want
+    `google_search_retrieval`. Raises an informative error if all variants fail
+    so the caller can surface WHY (e.g. key not enabled for the API)."""
     import httpx
     key = _gemini_key()
     if not key:
         return []
-    # gemini-2.0-flash supports the google_search grounding tool.
-    model = os.environ.get("GEMINI_SEARCH_MODEL", "gemini-2.0-flash")
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={key}"
-    payload = {
-        "contents": [{"role": "user", "parts": [{"text": query}]}],
-        "tools": [{"google_search": {}}],
-    }
+    forced = os.environ.get("GEMINI_SEARCH_MODEL")
+    models = [forced] if forced else ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"]
+    last_err = None
     with httpx.Client(timeout=20.0) as c:
-        r = c.post(url, json=payload, headers={"Content-Type": "application/json"})
-        r.raise_for_status()
-        data = r.json()
+        for model in models:
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={key}"
+            # Newer models: google_search; legacy 1.5: google_search_retrieval.
+            tools = [{"google_search": {}}] if not model.startswith("gemini-1.5") \
+                else [{"google_search_retrieval": {}}]
+            try:
+                r = c.post(url, json={
+                    "contents": [{"role": "user", "parts": [{"text": query}]}],
+                    "tools": tools,
+                }, headers={"Content-Type": "application/json"})
+                if r.status_code >= 400:
+                    last_err = f"{model}: HTTP {r.status_code} {r.text[:140]}"
+                    continue
+                data = r.json()
+            except Exception as e:
+                last_err = f"{model}: {str(e)[:140]}"
+                continue
 
-    cand = (data.get("candidates") or [{}])[0]
-    # Synthesized answer text
-    answer = ""
-    for part in (cand.get("content", {}).get("parts") or []):
-        if part.get("text"):
-            answer += part["text"]
-    out: list[dict[str, Any]] = []
-    if answer.strip():
-        out.append({"title": "Answer (Gemini + Google Search)", "url": "", "snippet": answer.strip()[:1200]})
-    # Grounding source links
-    gm = cand.get("groundingMetadata") or {}
-    for chunk in (gm.get("groundingChunks") or [])[:n]:
-        web = chunk.get("web") or {}
-        if web.get("uri"):
-            out.append({"title": web.get("title", ""), "url": web.get("uri", ""), "snippet": ""})
-    return out
+            cand = (data.get("candidates") or [{}])[0]
+            answer = "".join(p.get("text", "") for p in (cand.get("content", {}).get("parts") or []))
+            out: list[dict[str, Any]] = []
+            if answer.strip():
+                out.append({"title": "Answer (Gemini + Google Search)", "url": "",
+                            "snippet": answer.strip()[:1200]})
+            gm = cand.get("groundingMetadata") or {}
+            for chunk in (gm.get("groundingChunks") or [])[:n]:
+                web = chunk.get("web") or {}
+                if web.get("uri"):
+                    out.append({"title": web.get("title", ""), "url": web.get("uri", ""), "snippet": ""})
+            if out:
+                return out
+            last_err = f"{model}: empty grounding response"
+    if last_err:
+        raise RuntimeError(last_err)
+    return []
 
 
 def search_web(query: str, num_results: int = 5) -> dict[str, Any]:
@@ -145,6 +161,7 @@ def search_web(query: str, num_results: int = 5) -> dict[str, Any]:
     if not query:
         return {"ok": False, "error": "empty query", "results": []}
     n = max(1, min(num_results, 10))
+    errors: list[str] = []
     for name, fn in (
         ("serper", _serper),
         ("google_pse", _google_pse),
@@ -154,16 +171,17 @@ def search_web(query: str, num_results: int = 5) -> dict[str, Any]:
         try:
             hits = fn(query, n)
         except Exception as e:
-            log.warning(f"web_search {name} failed: {str(e)[:120]}")
+            msg = f"{name}: {str(e)[:160]}"
+            errors.append(msg)
+            log.warning(f"web_search {msg}")
             continue
         if hits:
             return {"ok": True, "provider": name, "results": hits}
     return {
         "ok": False,
-        "error": (
-            "No web-search provider available. Set SERPER_API_KEY (or "
-            "GOOGLE_CSE_KEY+GOOGLE_CSE_CX, or TAVILY_API_KEY, or GEMINI_API_KEY "
-            "for Google-Search grounding) on the orchestrator."
-        ),
+        "error": ("; ".join(errors) if errors else
+                  "No web-search provider available. Set SERPER_API_KEY (or "
+                  "GOOGLE_CSE_KEY+GOOGLE_CSE_CX, or TAVILY_API_KEY, or GEMINI_API_KEY "
+                  "for Google-Search grounding) on the orchestrator."),
         "results": [],
     }
