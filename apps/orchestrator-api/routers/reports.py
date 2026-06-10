@@ -94,6 +94,21 @@ def trigger_youtube_report(email: Optional[str] = Query(None, description="Optio
             "message": "YouTube report running in background. Check Reports → YouTube in ~60s."}
 
 
+@router.post("/compose/master", dependencies=[Depends(rate_limit_compose)])
+def trigger_master_report(email: Optional[str] = Query(None, description="Optional recipient for the .docx email — must be on the allowlist. Scheduled run uses MASTER_REPORT_EMAIL env."), db: Session = Depends(get_db)):
+    """Manually trigger the Master synthesis report (consolidates the latest
+    Kiwoom + Newspaper + YouTube reports). Also runs 6:50 AM KST."""
+    if email:
+        if email.strip().lower() not in _allowed_report_recipients():
+            raise HTTPException(403, "recipient not allowed — add it to REPORT_ALLOWED_RECIPIENTS env")
+        email = email.strip()
+    from services.scheduler_service import _master_daily_report
+    import threading
+    threading.Thread(target=lambda: _master_daily_report(email_override=email), daemon=True).start()
+    return {"triggered": True, "email": email or "(env MASTER_REPORT_EMAIL)",
+            "message": "Master report running in background. Check Reports in ~40s."}
+
+
 @router.get("/email-config")
 def email_config():
     """Diagnostic health-check for the report email sender — BOOLEANS ONLY, and
