@@ -66,6 +66,20 @@ def trigger_kiwoom_report(email: Optional[str] = Query(None, description="Option
             "message": "Kiwoom daily report running in background. Check Reports → Kiwoom in ~30s."}
 
 
+@router.post("/compose/newspaper", dependencies=[Depends(rate_limit_compose)])
+def trigger_newspaper_report(email: Optional[str] = Query(None, description="Optional recipient for the .docx email — must be on the allowlist. Scheduled run uses NEWSPAPER_REPORT_EMAIL env."), db: Session = Depends(get_db)):
+    """Manually trigger the Newspaper (news analysis) report (also runs 7:00 AM KST)."""
+    if email:
+        if email.strip().lower() not in _allowed_report_recipients():
+            raise HTTPException(403, "recipient not allowed — add it to REPORT_ALLOWED_RECIPIENTS env")
+        email = email.strip()
+    from services.scheduler_service import _newspaper_daily_report
+    import threading
+    threading.Thread(target=lambda: _newspaper_daily_report(email_override=email), daemon=True).start()
+    return {"triggered": True, "email": email or "(env NEWSPAPER_REPORT_EMAIL)",
+            "message": "Newspaper report running in background. Check Reports → Newspaper in ~40s."}
+
+
 @router.get("/email-config")
 def email_config():
     """Diagnostic health-check for the report email sender — BOOLEANS ONLY, and

@@ -788,6 +788,80 @@ def _kiwoom_daily_report(email_override: str | None = None):
         db.close()
 
 
+@with_retry(max_attempts=2, backoff_seconds=(60, 300), job_name="newspaper_daily_report")
+def _newspaper_daily_report(email_override: str | None = None):
+    """Daily newspaper (news analysis) report — runs ~7:00 AM KST. Live-news +
+    the same price table as Kiwoom. `email_override` is for manual test sends."""
+    from services.newspaper_report import build_newspaper_report
+    from services.kiwoom_report import format_report_telegram
+    from services.telegram_service import send_alert
+    from db.models import OrchReport
+
+    db = SessionLocal()
+    trace = f"tr-news-{int(datetime.utcnow().timestamp())}"
+    kst = datetime.utcnow().strftime("%Y-%m-%d") + " 07:00 KST"
+    try:
+        rep = build_newspaper_report(db, trace)
+        r = OrchReport(
+            report_type="newspaper_report",
+            source_run_ids_json=[],
+            content_json={
+                "report_type": "newspaper_report", "period": "daily",
+                "executive_summary": rep.get("summary_en") or "Newspaper market analysis",
+                "sections": [{"title": "Newspaper Daily", "content": rep.get("table_en", ""), "data": {}}],
+                "report": rep,
+                "generated_at": datetime.utcnow().isoformat(), "kst_time": kst,
+            },
+            delivery_channel="auto",
+        )
+        db.add(r)
+        db.commit()
+
+        # Telegram — full report (newspaper-branded), chunked.
+        try:
+            for chunk in format_report_telegram(rep, kst, lang="ko",
+                                                title="Newspaper Market Analysis", emoji="📰"):
+                send_alert(chunk)
+        except Exception as te:
+            log.warning(f"newspaper telegram format failed: {te}")
+            send_alert(f"📰 <b>Newspaper Market Analysis</b>\n<i>{kst}</i>\n\n"
+                       f"{rep.get('summary_en', '')[:300]}\n\n<i>View → Reports → Newspaper</i>")
+
+        # Email the report as a Word (.docx) attachment.
+        try:
+            from services.report_docx import markdown_to_docx
+            from services.report_email import (send_email_with_docx,
+                                               is_configured as _email_ok, DEFAULT_RECIPIENT)
+            to_addr = (email_override or os.getenv("NEWSPAPER_REPORT_EMAIL")
+                       or os.getenv("REPORT_EMAIL_TO") or DEFAULT_RECIPIENT)
+            if _email_ok() and to_addr:
+                body_md = rep.get("detail_ko") or ""
+                if len(body_md.strip()) < 200 or "same report in korean" in body_md.lower():
+                    body_md = rep.get("detail_en") or ""
+                docx_bytes = markdown_to_docx(body_md, "Newspaper Market Analysis", kst)
+                fname = f"Newspaper_Report_{datetime.utcnow().strftime('%Y%m%d')}.docx"
+                res = send_email_with_docx(
+                    to_addr, f"[Newspaper] 일일 뉴스 분석 — {kst}",
+                    "일일 뉴스 시장 분석 리포트입니다. 첨부된 Word 파일을 확인해 주세요.\n\n"
+                    "(Daily newspaper market-news analysis attached as a Word document.)",
+                    fname, docx_bytes)
+                log.info(f"newspaper: email {'sent' if res.get('ok') else 'skipped'} -> {to_addr}"
+                         f" ({res.get('reason', 'ok')})",
+                         extra={"trace_id": trace, "action": "newspaper.email"})
+            else:
+                log.info("newspaper: email skipped (SMTP not configured or no recipient)",
+                         extra={"action": "newspaper.email.skip"})
+        except Exception as ee:
+            log.warning(f"newspaper: email step failed: {ee}", extra={"action": "newspaper.email.failed"})
+
+        log.info(f"newspaper: daily report saved + sent ({rep['status']})",
+                 extra={"trace_id": trace, "action": "newspaper.daily.done"})
+    except Exception as e:
+        log.warning(f"newspaper: daily report failed: {e}", extra={"action": "newspaper.daily.failed"})
+    finally:
+        db.close()
+
+
 def init_scheduler():
     """Initialize the scheduler and load enabled rules from DB."""
     global _scheduler
@@ -865,6 +939,15 @@ def init_scheduler():
         replace_existing=True,
     )
     log.info("scheduler: Kiwoom daily report registered (21:30 UTC = 6:30 AM KST)", extra={"action": "scheduler.kiwoom_registered"})
+
+    # Newspaper (news analysis) report — 7:00 AM KST = 22:00 UTC, weekdays KST.
+    _scheduler.add_job(
+        _newspaper_daily_report,
+        CronTrigger.from_crontab("0 22 * * 0-4"),
+        id="newspaper-daily-report",
+        replace_existing=True,
+    )
+    log.info("scheduler: Newspaper report registered (22:00 UTC = 7:00 AM KST)", extra={"action": "scheduler.newspaper_registered"})
 
     # Auto weekly report — Friday 6:30 PM KST = 09:30 UTC Friday
     _scheduler.add_job(

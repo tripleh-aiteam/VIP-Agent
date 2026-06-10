@@ -62,14 +62,7 @@ const _demoMd = (en: string, ko: string) => ({
   sections: [],
 });
 const DEMO_MARKET_REPORTS: any[] = [
-  {
-    id: "demo-news-1", _demo: true, report_type: "newspaper_report",
-    executive_summary: "신문·뉴스 기반 시장 분석 — 주요 헤드라인, 미국/국제/한국 시장 코멘터리, 일일 요약.",
-    created_at: new Date(Date.now() - 3600e3).toISOString(), source_run_count: 0,
-    content: _demoMd(
-      "# Newspaper Market Analysis — Daily\n## Top Headlines\n- Chip stocks slide on demand worries\n- Won weakens past 1,530\n## US & International\nWall Street steadies; oil down 2%.\n## Korean Market\nInstitutions net buy defensives.\n## Daily Summary\nRisk-off tone in KR; global mixed.",
-      "# 신문 시장 분석 — 일일\n## 주요 헤드라인\n- 반도체株, 수요 우려에 하락\n- 원화 1,530 돌파 약세\n## 미국·국제\n월가 보합; 유가 -2%.\n## 한국 시장\n기관, 방어주 순매수.\n## 일일 요약\n국내 위험회피, 글로벌 혼조."),
-  },
+  // Newspaper demo removed — real newspaper_report reports now populate this tab.
   {
     id: "demo-youtube-1", _demo: true, report_type: "youtube_report",
     executive_summary: "유튜브 분석 영상 요약 — 시장 심리, 미국/국제/한국 증시 전망, 일일 요약.",

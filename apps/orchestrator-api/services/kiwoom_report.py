@@ -188,6 +188,19 @@ def _facts(rows: list[dict]) -> str:
     return "\n".join(out)
 
 
+def gather_priced_rows() -> tuple[list[dict], str, str, float]:
+    """Shared price layer for any report: fetch the 11 tickers, convert all
+    prices to KRW, and build the EN/KO Markdown tables. Returns
+    (rows, table_en, table_ko, usdkrw_rate)."""
+    rows = _gather()
+    rate = _usdkrw_rate()
+    for r in rows:
+        mult = rate if r["mkt"] == "US" else 1.0
+        for k in ("open", "close", "high", "low"):
+            r[f"{k}_krw"] = (r[k] * mult) if r.get(k) is not None else None
+    return rows, _build_table(rows, ko=False), _build_table(rows, ko=True), rate
+
+
 def build_kiwoom_report(db, trace_id: str) -> dict:
     """Build the daily Kiwoom report (real data table + LLM narrative, EN+KO)."""
     rows = _gather()
@@ -396,17 +409,19 @@ def _md_to_tg_blocks(md: str) -> list[str]:
     return [b for b in blocks if b]
 
 
-def format_kiwoom_telegram(rep: dict, kst: str, lang: str = "ko", limit: int = 3900) -> list[str]:
-    """Build the FULL Kiwoom report (same content + table as the dashboard) as a
-    list of Telegram-HTML messages, each under the 4096-char limit."""
+def format_report_telegram(rep: dict, kst: str, lang: str = "ko", limit: int = 3900,
+                           title: str = "Kiwoom Daily Report", emoji: str = "📈") -> list[str]:
+    """Build the FULL report (same content + table as the dashboard) as a list of
+    Telegram-HTML messages, each under the 4096-char limit. Generic across report
+    types — pass title/emoji to brand the header."""
     body = rep.get("detail_ko") if lang == "ko" else rep.get("detail_en")
     if not body or (lang == "ko" and (len(body.strip()) < 200
                                       or "same report in korean" in body.lower())):
         body = rep.get("detail_en") or ""
-    # Drop a leading "# Kiwoom Daily Report" H1 (we add our own header).
+    # Drop a leading "# <title>" H1 (we add our own header).
     body = re.sub(r"^\s*#\s+.*\n", "", body, count=1)
 
-    header = f"📈 <b>Kiwoom Daily Report</b>\n<i>{_html.escape(kst)}</i>"
+    header = f"{emoji} <b>{_html.escape(title)}</b>\n<i>{_html.escape(kst)}</i>"
     blocks = _md_to_tg_blocks(body)
 
     chunks: list[str] = []
@@ -428,3 +443,8 @@ def format_kiwoom_telegram(rep: dict, kst: str, lang: str = "ko", limit: int = 3
     if total > 1:
         chunks = [f"{c}\n\n<i>({i + 1}/{total})</i>" for i, c in enumerate(chunks)]
     return chunks
+
+
+def format_kiwoom_telegram(rep: dict, kst: str, lang: str = "ko", limit: int = 3900) -> list[str]:
+    """Back-compat wrapper — Kiwoom-branded Telegram chunks."""
+    return format_report_telegram(rep, kst, lang, limit, "Kiwoom Daily Report", "📈")
