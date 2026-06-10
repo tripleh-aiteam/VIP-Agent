@@ -83,6 +83,7 @@ export default function ReportsPage() {
   const [viewMode, setViewMode] = useState<ViewMode>(null);
   const [source, setSource] = useState<string>(initialSource);   // Agents / Kiwoom / Newspaper / YouTube
   const [period, setPeriod] = useState<string>("daily");          // daily / weekly / monthly / cross / alert
+  const [agent, setAgent] = useState<string>("all");              // within Agents: all / asset / stock / realty
   const [copied, setCopied] = useState(false);
   const [dlOpen, setDlOpen] = useState(false);
   const [lang, setLang] = useState<"en" | "ko">("en");
@@ -121,7 +122,7 @@ export default function ReportsPage() {
     if (t === "kiwoom_report") return { source: "kiwoom", period: r.period || "daily" };
     if (t === "newspaper_report") return { source: "newspaper", period: r.period || "daily" };
     if (t === "youtube_report") return { source: "youtube", period: r.period || "daily" };
-    if (t === "master_report") return { source: "master", period: "daily" };
+    if (t === "master_report") return { source: "master", period: r.period || "daily" };
     if (t === "weekly_summary") return { source: "agents", period: "weekly" };
     if (t === "monthly_summary") return { source: "agents", period: "monthly" };
     if (t === "cross_agent_summary") return { source: "agents", period: "cross" };
@@ -131,9 +132,26 @@ export default function ReportsPage() {
   const countFor = (src: string, per: string) =>
     baseReports.filter((r) => { const c = classify(r); return c.source === src && c.period === per; }).length;
 
+  // Which agent a report belongs to (within the Agents source).
+  const AGENTS = [
+    { key: "all", label: "All" },
+    { key: "asset", label: "Asset" },
+    { key: "stock", label: "Stock" },
+    { key: "realty", label: "Realty" },
+  ];
+  const agentOf = (r: any): string => {
+    const t = r.report_type || "";
+    if (t.includes("asset")) return "asset";
+    if (t.includes("stock")) return "stock";
+    if (t.includes("realty")) return "realty";
+    return "combined"; // daily_summary / cross_agent_summary etc.
+  };
+
   const filteredReports = baseReports.filter((r) => {
     const c = classify(r);
-    return c.source === source && c.period === period;
+    if (c.source !== source || c.period !== period) return false;
+    if (source === "agents" && agent !== "all" && agentOf(r) !== agent) return false;
+    return true;
   });
 
   const SOURCES = [
@@ -148,10 +166,15 @@ export default function ReportsPage() {
     ? [{ key: "daily", label: "Daily" }, { key: "weekly", label: "Weekly" }, { key: "monthly", label: "Monthly" }, { key: "cross", label: "Cross-Agent" }, { key: "alert", label: "Alerts" }]
     : [{ key: "daily", label: "Daily" }, { key: "weekly", label: "Weekly" }, { key: "monthly", label: "Monthly" }];
 
-  // Convert UTC to KST for display
+  // Convert UTC to KST for display. The backend stores naive UTC and its ISO
+  // string has no timezone suffix, so the browser would parse it as LOCAL time
+  // (showing the UTC wall-clock). Append 'Z' when no tz is present so it's read
+  // as UTC and correctly converted to Asia/Seoul.
   const toKST = (utcStr: string) => {
     if (!utcStr) return "";
-    const d = new Date(utcStr);
+    let s = utcStr;
+    if (!/(Z|[+-]\d{2}:?\d{2})$/.test(s)) s = s + "Z";
+    const d = new Date(s);
     return d.toLocaleString("ko-KR", { timeZone: "Asia/Seoul" });
   };
 
@@ -344,6 +367,29 @@ td{padding:8px 12px;border:1px solid #e2e8f0;font-size:10pt}
           </button>
         ))}
       </div>
+
+      {/* AGENT sub-tabs — only under Agents: pick which agent's reports to view */}
+      {source === "agents" && (
+        <div className="flex gap-2 mb-4 flex-wrap">
+          {AGENTS.map((a) => {
+            const n = baseReports.filter((r) => {
+              const c = classify(r);
+              return c.source === "agents" && c.period === period &&
+                (a.key === "all" || agentOf(r) === a.key);
+            }).length;
+            return (
+              <button key={a.key} onClick={() => { setAgent(a.key); closeDetail(); }}
+                className={`px-3 py-1.5 rounded-full text-xs font-medium border transition-colors ${
+                  agent === a.key
+                    ? "bg-[var(--brand-blue)] text-white border-[var(--brand-blue)]"
+                    : "text-[var(--text-muted)] border-[var(--border-default)] hover:text-[var(--text-primary)]"
+                }`}>
+                {a.label} ({n})
+              </button>
+            );
+          })}
+        </div>
+      )}
 
       {/* Report List */}
       <div className="space-y-2">

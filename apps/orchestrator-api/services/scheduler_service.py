@@ -710,7 +710,7 @@ def _auto_cross_agent_report():
 
 
 @with_retry(max_attempts=2, backoff_seconds=(60, 300), job_name="kiwoom_daily_report")
-def _kiwoom_daily_report(email_override: str | None = None):
+def _kiwoom_daily_report(email_override: str | None = None, period: str = "daily"):
     """Daily Kiwoom market report — runs ~6:30 AM KST (after the US close).
     Real OHLCV for the watchlist + LLM structured analysis (EN/KO).
     `email_override` lets the manual trigger send the .docx to a specific
@@ -728,7 +728,7 @@ def _kiwoom_daily_report(email_override: str | None = None):
             report_type="kiwoom_report",
             source_run_ids_json=[],
             content_json={
-                "report_type": "kiwoom_report", "period": "daily",
+                "report_type": "kiwoom_report", "period": period,
                 "executive_summary": rep.get("summary_en") or "Kiwoom daily report",
                 "sections": [{"title": "Kiwoom Daily", "content": rep.get("table_en", ""), "data": {}}],
                 "report": rep,
@@ -790,7 +790,7 @@ def _kiwoom_daily_report(email_override: str | None = None):
 
 
 @with_retry(max_attempts=2, backoff_seconds=(60, 300), job_name="newspaper_daily_report")
-def _newspaper_daily_report(email_override: str | None = None):
+def _newspaper_daily_report(email_override: str | None = None, period: str = "daily"):
     """Daily newspaper (news analysis) report — runs ~7:00 AM KST. Live-news +
     the same price table as Kiwoom. `email_override` is for manual test sends."""
     from services.newspaper_report import build_newspaper_report
@@ -807,7 +807,7 @@ def _newspaper_daily_report(email_override: str | None = None):
             report_type="newspaper_report",
             source_run_ids_json=[],
             content_json={
-                "report_type": "newspaper_report", "period": "daily",
+                "report_type": "newspaper_report", "period": period,
                 "executive_summary": rep.get("summary_en") or "Newspaper market analysis",
                 "sections": [{"title": "Newspaper Daily", "content": rep.get("table_en", ""), "data": {}}],
                 "report": rep,
@@ -872,7 +872,7 @@ def _newspaper_daily_report(email_override: str | None = None):
 
 
 @with_retry(max_attempts=2, backoff_seconds=(60, 300), job_name="youtube_daily_report")
-def _youtube_daily_report(email_override: str | None = None):
+def _youtube_daily_report(email_override: str | None = None, period: str = "daily"):
     """Daily YouTube (video analysis) report — runs ~6:30 AM KST. Real channel
     transcripts/coverage + the same watchlist table. `email_override` for tests."""
     from services.youtube_report import build_youtube_report
@@ -889,7 +889,7 @@ def _youtube_daily_report(email_override: str | None = None):
             report_type="youtube_report",
             source_run_ids_json=[],
             content_json={
-                "report_type": "youtube_report", "period": "daily",
+                "report_type": "youtube_report", "period": period,
                 "executive_summary": rep.get("summary_en") or "YouTube market analysis",
                 "sections": [{"title": "YouTube Daily", "content": rep.get("table_en", ""), "data": {}}],
                 "report": rep,
@@ -951,7 +951,7 @@ def _youtube_daily_report(email_override: str | None = None):
 
 
 @with_retry(max_attempts=2, backoff_seconds=(60, 300), job_name="master_daily_report")
-def _master_daily_report(email_override: str | None = None):
+def _master_daily_report(email_override: str | None = None, period: str = "daily"):
     """Master synthesis report — reads the day's Kiwoom + Newspaper + YouTube
     reports and produces one consolidated smart summary. Runs ~6:50 AM KST."""
     from services.master_report import build_master_report
@@ -968,7 +968,7 @@ def _master_daily_report(email_override: str | None = None):
             report_type="master_report",
             source_run_ids_json=[],
             content_json={
-                "report_type": "master_report", "period": "cross",
+                "report_type": "master_report", "period": period,
                 "executive_summary": rep.get("summary_en") or "Master daily summary",
                 "sections": [{"title": "Master Summary", "content": rep.get("table_en", ""), "data": {}}],
                 "report": rep,
@@ -1026,20 +1026,21 @@ def _master_daily_report(email_override: str | None = None):
                     if md:
                         files.append((f"{fn}_{ymd}.docx", markdown_to_docx(md, title, kst)))
 
+                _kor = {"daily": "데일리", "weekly": "주간", "monthly": "월간"}.get(period, "데일리")
                 intro = (
                     "안녕하세요 사장님,\n\n"
-                    f"오늘({kst}) 데일리 리포트 4건을 보내드립니다:\n"
-                    "1. 키움 데일리 리포트 — 시세·기술적 분석\n"
+                    f"{kst} 기준 {_kor} 리포트 4건을 보내드립니다:\n"
+                    f"1. 키움 {_kor} 리포트 — 시세·기술적 분석\n"
                     "2. 신문 요약 리포트 — 주요 신문사 뉴스 분석\n"
                     "3. 유튜브 요약 리포트 — 금융 유튜브 채널 분석\n"
                     "4. 종합 추천 리포트 — 위 3개 리포트를 종합한 투자 의견 및 일정매매 포인트\n\n"
                     "각 리포트는 첨부된 Word 파일에서 확인하실 수 있습니다.\n\n"
                     "감사합니다.\nTripleH AI\n\n"
-                    "— (Today's 4 daily reports attached: Kiwoom, Newspaper, YouTube, "
+                    f"— (Today's 4 {period} reports attached: Kiwoom, Newspaper, YouTube, "
                     "and the consolidated Recommendation.)"
                 )
                 res = send_email_with_docs(
-                    recipients, f"[TripleH] 데일리 리포트 4건 — {kst}", intro, files)
+                    recipients, f"[TripleH] {_kor} 리포트 4건 — {kst}", intro, files)
                 log.info(f"master: consolidated email {'sent' if res.get('ok') else 'skipped'} "
                          f"({len(files)} files, {len(recipients)} recipient(s)) "
                          f"({res.get('reason', 'ok')})",
@@ -1163,6 +1164,30 @@ def init_scheduler():
         replace_existing=True,
     )
     log.info("scheduler: Master report registered (21:50 UTC = 6:50 AM KST)", extra={"action": "scheduler.master_registered"})
+
+    # ---- Weekly reports — Friday 5:00 PM KST = 08:00 UTC (sources), master 08:20.
+    for jid, fn in (("kiwoom", _kiwoom_daily_report), ("newspaper", _newspaper_daily_report),
+                    ("youtube", _youtube_daily_report)):
+        _scheduler.add_job(fn, CronTrigger.from_crontab("0 8 * * 5"),
+                           kwargs={"period": "weekly"}, id=f"{jid}-weekly-report",
+                           replace_existing=True)
+    _scheduler.add_job(_master_daily_report, CronTrigger.from_crontab("20 8 * * 5"),
+                       kwargs={"period": "weekly"}, id="master-weekly-report",
+                       replace_existing=True)
+    log.info("scheduler: Weekly reports registered (Fri 08:00/08:20 UTC = 5:00 PM KST)",
+             extra={"action": "scheduler.weekly_registered"})
+
+    # ---- Monthly reports — last day of month 5:00 PM KST = 08:00 UTC, master 08:20.
+    for jid, fn in (("kiwoom", _kiwoom_daily_report), ("newspaper", _newspaper_daily_report),
+                    ("youtube", _youtube_daily_report)):
+        _scheduler.add_job(fn, CronTrigger(day="last", hour=8, minute=0),
+                           kwargs={"period": "monthly"}, id=f"{jid}-monthly-report",
+                           replace_existing=True)
+    _scheduler.add_job(_master_daily_report, CronTrigger(day="last", hour=8, minute=20),
+                       kwargs={"period": "monthly"}, id="master-monthly-report",
+                       replace_existing=True)
+    log.info("scheduler: Monthly reports registered (month-end 08:00/08:20 UTC = 5:00 PM KST)",
+             extra={"action": "scheduler.monthly_registered"})
 
     # Auto weekly report — Friday 6:30 PM KST = 09:30 UTC Friday
     _scheduler.add_job(
