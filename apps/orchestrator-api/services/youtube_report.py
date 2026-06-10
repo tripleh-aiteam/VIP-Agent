@@ -89,6 +89,54 @@ def _transcript(video_id: str, max_chars: int = 6000) -> str:
         return ""
 
 
+def _channel_id(video_id: str) -> str | None:
+    """Resolve the channelId from a video's watch page (public HTML, not the
+    IP-blocked transcript API)."""
+    if not video_id:
+        return None
+    try:
+        with httpx.Client(timeout=10, headers={"User-Agent": "Mozilla/5.0"}) as c:
+            r = c.get(f"https://www.youtube.com/watch?v={video_id}")
+        m = re.search(r'"channelId":"(UC[\w-]{20,})"', r.text)
+        return m.group(1) if m else None
+    except Exception:
+        return None
+
+
+def _latest_uploads(channel_id: str, n: int = 4) -> list[dict]:
+    """Latest uploads for a channel via the free YouTube RSS feed (real titles +
+    descriptions, daily-fresh, no API key, not IP-blocked)."""
+    if not channel_id:
+        return []
+    try:
+        import defusedxml.ElementTree as ET
+        with httpx.Client(timeout=10) as c:
+            r = c.get("https://www.youtube.com/feeds/videos.xml",
+                      params={"channel_id": channel_id})
+        if r.status_code != 200:
+            return []
+        root = ET.fromstring(r.text)
+        ns = {"a": "http://www.w3.org/2005/Atom",
+              "m": "http://search.yahoo.com/mrss/",
+              "yt": "http://www.youtube.com/xml/schemas/2015"}
+        out = []
+        for e in root.findall("a:entry", ns)[:n]:
+            vid = e.find("yt:videoId", ns)
+            title = e.find("a:title", ns)
+            pub = e.find("a:published", ns)
+            desc = e.find("m:group/m:description", ns)
+            out.append({
+                "video_id": vid.text if vid is not None else "",
+                "title": title.text if title is not None else "",
+                "published": pub.text if pub is not None else "",
+                "description": ((desc.text or "")[:700] if desc is not None else ""),
+            })
+        return out
+    except Exception as e:
+        log.warning(f"youtube: RSS {channel_id} failed: {str(e)[:100]}")
+        return []
+
+
 def _search_channel(query: str, n: int = 6) -> list[dict]:
     try:
         from services.web_search import search_web
@@ -104,24 +152,35 @@ def _search_channel(query: str, n: int = 6) -> list[dict]:
 
 
 def _gather_channels() -> list[dict]:
-    """Collect REAL data per channel: title, transcript, recent search hits."""
+    """Collect REAL data per channel: the channel's LATEST UPLOADS (titles +
+    descriptions via free RSS) + a transcript of the newest upload when one is
+    available + recent related search coverage. The given URLs are usually live
+    streams (no transcript), so we analyse the latest VODs instead."""
     out = []
     for ch in YT_CHANNELS:
         vid = ch.get("video_id")
-        # WSJ has no fixed video — resolve a recent video from search results.
         hits = _search_channel(ch["query"])
-        if not vid:
+        if not vid:  # WSJ — resolve a recent video from search results.
             for h in hits:
                 vid = _video_id_from_url(h.get("url", ""))
                 if vid:
                     break
-        title = _oembed_title(vid) if vid else ""
-        transcript = _transcript(vid) if vid else ""
+        live_title = _oembed_title(vid) if vid else ""
+        # Latest uploaded videos (VODs) for this channel via RSS.
+        uploads = _latest_uploads(_channel_id(vid)) if vid else []
+        # Try a transcript on the newest non-live upload (best real content).
+        transcript = ""
+        for up in uploads:
+            transcript = _transcript(up.get("video_id", ""))
+            if transcript:
+                up["transcribed"] = True
+                break
         out.append({
             "name": ch["name"],
             "video_id": vid,
             "video_url": f"https://www.youtube.com/watch?v={vid}" if vid else "",
-            "title": title,
+            "title": live_title,
+            "uploads": uploads,
             "transcript": transcript,
             "has_transcript": bool(transcript),
             "hits": hits,
@@ -134,14 +193,26 @@ def _channel_block(channels: list[dict]) -> str:
     for ch in channels:
         parts.append(f"### {ch['name']}")
         if ch.get("title"):
-            parts.append(f"Video: {ch['title']} ({ch['video_url']})")
+            parts.append(f"Live/feed: {ch['title']} ({ch['video_url']})")
+        # Latest uploaded videos (titles + real descriptions) — daily-fresh.
+        if ch.get("uploads"):
+            parts.append("LATEST UPLOADED VIDEOS (real titles + descriptions):")
+            for up in ch["uploads"][:4]:
+                t = (up.get("title") or "")[:150]
+                dsc = (up.get("description") or "").replace("\n", " ")[:350]
+                line = f"- {t}"
+                if up.get("published"):
+                    line += f"  [{up['published'][:10]}]"
+                if dsc:
+                    line += f" — {dsc}"
+                parts.append(line)
         if ch.get("transcript"):
-            parts.append(f"TRANSCRIPT (real spoken content, excerpt):\n{ch['transcript'][:4000]}")
+            parts.append(f"TRANSCRIPT of newest upload (real spoken content, excerpt):\n{ch['transcript'][:4500]}")
         else:
-            parts.append("TRANSCRIPT: (none available — likely a live stream; use the "
-                         "real title + recent coverage below)")
+            parts.append("TRANSCRIPT: none (live stream / captions unavailable) — "
+                         "analyse from the real upload titles + descriptions + coverage.")
         if ch.get("hits"):
-            parts.append("RECENT RELATED COVERAGE:")
+            parts.append("RECENT RELATED COVERAGE (web):")
             for h in ch["hits"][:6]:
                 t = h["title"][:130]
                 s = h["snippet"][:200]
