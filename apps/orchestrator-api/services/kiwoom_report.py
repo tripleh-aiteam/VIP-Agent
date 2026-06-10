@@ -42,10 +42,28 @@ KIWOOM_TICKERS: list[dict[str, Any]] = [
 ]
 
 
-def _fmt_price(v: float | None, mkt: str) -> str:
+def _won(v: float | None) -> str:
+    """Format a value as Korean Won (all instruments shown in KRW)."""
     if v is None:
         return "—"
-    return f"${v:,.2f}" if mkt == "US" else f"{v:,.0f}원"
+    return f"{v:,.0f}원"
+
+
+def _usdkrw_rate() -> float:
+    """Current USD/KRW from the live market snapshot (fallback 1,530)."""
+    try:
+        with httpx.Client(timeout=12) as c:
+            r = c.get(f"{_BACKEND}/market/snapshots", params={"limit": 1})
+        data = r.json() if r.status_code == 200 else None
+        snap = None
+        if isinstance(data, list) and data:
+            snap = data[0]
+        elif isinstance(data, dict):
+            snap = data if "prices" in data else (data.get("items") or [{}])[0]
+        rate = float((snap or {}).get("prices", {}).get("usdkrw") or 0)
+        return rate if rate > 500 else 1530.0
+    except Exception:
+        return 1530.0
 
 
 def _fmt_chg(c: float | None) -> str:
@@ -90,39 +108,56 @@ def _gather() -> list[dict]:
 
 
 def _build_table(rows: list[dict], ko: bool) -> str:
-    """Deterministic Markdown data table with the REAL numbers."""
+    """Deterministic Markdown data table with the REAL numbers — all in KRW."""
     if ko:
-        head = ("| 종목 | 시가 | 종가 | 대비·등락 | 거래량 | 공매도 | ETF 추적 |\n"
-                "|---|---|---|---|---|---|---|")
+        head = ("| 종목 | 시가 | 종가 | 대비·등락 | 거래량 | ETF 추적 |\n"
+                "|---|---|---|---|---|---|")
     else:
-        head = ("| Stock | Open | Close | Change | Volume | Short(공매도) | ETF |\n"
-                "|---|---|---|---|---|---|---|")
+        head = ("| Stock | Open (KRW) | Close (KRW) | Change | Volume | ETF |\n"
+                "|---|---|---|---|---|---|")
     lines = [head]
     for r in rows:
         name = r["ko"] if ko else r["en"]
         vol = f"{int(r['volume']):,}" if r.get("volume") is not None else "—"
         lines.append(
-            f"| {name} | {_fmt_price(r.get('open'), r['mkt'])} | "
-            f"{_fmt_price(r.get('close'), r['mkt'])} | {_fmt_chg(r.get('change_pct'))} | "
-            f"{vol} | N/A | {r['etf']} |"
+            f"| {name} | {_won(r.get('open_krw'))} | {_won(r.get('close_krw'))} | "
+            f"{_fmt_chg(r.get('change_pct'))} | {vol} | {r['etf']} |"
         )
     return "\n".join(lines)
 
 
 def _facts(rows: list[dict]) -> str:
+    """Detailed per-ticker facts (KRW + technicals) for deep analysis."""
     out = []
     for r in rows:
+        def pa(v):  # price-vs-MA in % (currency-agnostic)
+            try:
+                return f"{(r['close'] - v) / v * 100:+.1f}%" if (v and r.get('close')) else "—"
+            except Exception:
+                return "—"
         out.append(
-            f"{r['en']} ({r['ko']}, {r['t']}, {r['mkt']}): open={r.get('open')}, "
-            f"close={r.get('close')}, change_pct={r.get('change_pct')}, "
-            f"volume={r.get('volume')}, ma5={r.get('ma5')}, ma20={r.get('ma20')}, ma60={r.get('ma60')}"
+            f"{r['en']} ({r['ko']}, {r['t']}, {r['mkt']}): "
+            f"open={_won(r.get('open_krw'))}, close={_won(r.get('close_krw'))}, "
+            f"change={r.get('change_pct'):+.2f}% " if r.get('change_pct') is not None else
+            f"{r['en']} ({r['ko']}): no data; "
         )
+        if r.get("ok"):
+            out[-1] += (f"volume={r.get('volume'):,}, "
+                        f"price_vs_MA5={pa(r.get('ma5'))}, price_vs_MA20={pa(r.get('ma20'))}, "
+                        f"price_vs_MA60={pa(r.get('ma60'))} "
+                        f"(MA5={r.get('ma5')}, MA20={r.get('ma20')}, MA60={r.get('ma60')})")
     return "\n".join(out)
 
 
 def build_kiwoom_report(db, trace_id: str) -> dict:
     """Build the daily Kiwoom report (real data table + LLM narrative, EN+KO)."""
     rows = _gather()
+    # Convert ALL prices to Korean Won (US tickers × USD/KRW; KR as-is).
+    rate = _usdkrw_rate()
+    for r in rows:
+        mult = rate if r["mkt"] == "US" else 1.0
+        r["open_krw"] = (r["open"] * mult) if r.get("open") is not None else None
+        r["close_krw"] = (r["close"] * mult) if r.get("close") is not None else None
     ok_rows = [r for r in rows if r.get("ok")]
     kst_date = datetime.utcnow().strftime("%Y-%m-%d")
     table_en, table_ko = _build_table(rows, ko=False), _build_table(rows, ko=True)
@@ -143,25 +178,36 @@ def build_kiwoom_report(db, trace_id: str) -> dict:
     try:
         from services.llm_client import chat_completion_sync
         sysmsg = (
-            "You are Kiwoom's market analyst writing the DAILY report after the US "
-            "market close (~6:30 AM KST). Use ONLY the data provided — NEVER invent "
-            "numbers. Note: 공매도 (short-selling) data is not available (mark N/A). "
-            "Produce the report in this EXACT section structure:\n"
+            "You are Kiwoom's senior market analyst writing the DAILY report after "
+            "the US market close (~6:30 AM KST). Use ONLY the data provided — NEVER "
+            "invent numbers. ALL prices are in Korean Won (KRW). Produce the report "
+            "in this EXACT section structure:\n"
             "## 1. General Overview\n## 2. Market Data\n## 3. Detailed Analysis\n"
             "## 4. Risks & Watch-items\n## 5. Opportunities\n## 6. Recommended Actions\n\n"
-            "Rules: In section 2, insert the provided data table VERBATIM. In section "
-            "3, interpret by sector (KR memory/semis, US semis, telecom/IT, ETFs) using "
-            "the real change%/volume. In section 6, give a Markdown table with columns "
-            "| Stock | Action | Reason | where Action is BUY / SELL / HOLD with a concrete "
-            "reason from the data. Write the SAME report TWICE: first English (use the "
-            "ENGLISH table), then natural Korean (use the KOREAN table). "
-            "Output EXACTLY:\n===EN===\n<english md>\n===KO===\n<korean md>"
+            "Rules:\n"
+            "- Section 2: insert the provided data table VERBATIM.\n"
+            "- Section 3 (DETAILED — write 4-6 substantial paragraphs, the deepest "
+            "section): analyse EACH sector AND the key individual names using the "
+            "technicals — the change%, the VOLUME (heavy vs light), and the price "
+            "position vs the moving averages (price_vs_MA5 / MA20 / MA60: above = "
+            "uptrend, below = downtrend; note golden/dead-cross setups and momentum). "
+            "Compare KR memory/semis (SK Hynix, Samsung) vs US semis (AMD, Micron, "
+            "Broadcom, SanDisk, SOXX), telecom/IT (SK Telecom, Samsung SDS, Naver), "
+            "and the KODEX 200 ETF. Cite the real numbers.\n"
+            "- Section 6: FIRST a Markdown table | Stock | Action | Reason | where "
+            "Action is BUY / SELL / HOLD; THEN, AFTER the table, add a '### Rationale' "
+            "subsection with a paragraph per recommendation explaining IN DETAIL why "
+            "(the technical + momentum reasoning behind each BUY / SELL / HOLD).\n"
+            "Write the SAME report TWICE: first English (ENGLISH table), then natural "
+            "Korean (KOREAN table). Output EXACTLY:\n===EN===\n<english md>\n===KO===\n"
+            "<korean md>"
         )
-        user = (f"Date (KST): {kst_date}\n\nENGLISH TABLE:\n{table_en}\n\n"
-                f"KOREAN TABLE:\n{table_ko}\n\nRAW DATA:\n{_facts(rows)}")
+        user = (f"Date (KST): {kst_date} · USD/KRW used for US tickers: {rate:,.0f}\n\n"
+                f"ENGLISH TABLE:\n{table_en}\n\nKOREAN TABLE:\n{table_ko}\n\n"
+                f"DATA + TECHNICALS:\n{_facts(rows)}")
         out = chat_completion_sync(
-            system_prompt=sysmsg, messages=[{"role": "user", "content": user[:4000]}],
-            max_tokens=2600, temperature=0.5, model="groq-llama-3.3-70b") or ""
+            system_prompt=sysmsg, messages=[{"role": "user", "content": user[:4500]}],
+            max_tokens=3200, temperature=0.5, model="groq-llama-3.3-70b") or ""
         bad = (not out.strip()) or out.lstrip().startswith(("[LLM unavailable]", "[server error]"))
         if not bad:
             if "===KO===" in out:
@@ -178,7 +224,7 @@ def build_kiwoom_report(db, trace_id: str) -> dict:
         detail_en = (f"# Kiwoom Daily Report\n*{kst_date} (after US close)*\n\n"
                      f"## 1. General Overview\n{sum_en}\n\n## 2. Market Data\n{table_en}\n\n"
                      f"## 3. Detailed Analysis\nSee the table above for open/close/change/volume.\n\n"
-                     f"## 4. Risks & Watch-items\n- 공매도 data not available (N/A).\n\n"
+                     f"## 4. Risks & Watch-items\n- Review the weakest movers above.\n\n"
                      f"## 5. Opportunities\n- Review the strongest/weakest movers above.\n\n"
                      f"## 6. Recommended Actions\n| Stock | Action | Reason |\n|---|---|---|\n"
                      f"| — | HOLD | LLM unavailable — manual review recommended |")
