@@ -65,21 +65,24 @@ def trigger_kiwoom_report(email: Optional[str] = Query(None, description="Option
 
 @router.get("/email-config")
 def email_config():
-    """Diagnostic: show how the report email sender is configured on the server
-    (sender address + whether each piece is set). NEVER returns the password."""
+    """Diagnostic: report whether the email sender is configured — BOOLEANS ONLY.
+    Returns no addresses, host, or recipient values (avoids info disclosure on
+    this unauthenticated route); only the sender domain is surfaced to help
+    confirm the right account, and the password is never read."""
     from services import report_email
+    user = os.getenv("SMTP_USER") or ""
     return {
         "smtp_configured": report_email.is_configured(),
-        "smtp_host": os.getenv("SMTP_HOST"),
-        "smtp_port": os.getenv("SMTP_PORT", "587"),
-        "sender_email": os.getenv("SMTP_USER"),  # the From address (not secret)
-        "from_name": os.getenv("SMTP_FROM_NAME", "VIP AI Platform"),
-        "use_tls": os.getenv("SMTP_USE_TLS", "1"),
+        "smtp_host_set": bool(os.getenv("SMTP_HOST")),
+        "sender_set": bool(user),
+        "sender_domain": (user.split("@")[-1] if "@" in user else None),
         "password_set": bool(os.getenv("SMTP_PASSWORD")),
-        "kiwoom_report_email": os.getenv("KIWOOM_REPORT_EMAIL"),
-        "allowed_recipients": sorted(_allowed_report_recipients()),
-        "note": "sender_email = SMTP_USER on Render. If smtp_configured is false, "
-                "set SMTP_HOST / SMTP_USER / SMTP_PASSWORD (Gmail app password).",
+        "from_name_set": bool(os.getenv("SMTP_FROM_NAME")),
+        "use_tls": os.getenv("SMTP_USE_TLS", "1"),
+        "recipient_set": bool(os.getenv("KIWOOM_REPORT_EMAIL")),
+        "allowed_recipient_count": len(_allowed_report_recipients()),
+        "note": "If smtp_configured is false, set SMTP_HOST / SMTP_USER / "
+                "SMTP_PASSWORD (Gmail app password) on Render.",
     }
 
 
