@@ -141,27 +141,34 @@ def build_newspaper_report(db, trace_id: str) -> dict:
             "## 4. Company-Specific Analysis\n## 5. Recommendations\n\n"
             "Rules:\n"
             "- Section 2: insert the provided data table VERBATIM.\n"
-            "- Section 3 (News by Newspaper) — the CORE section, must be DETAILED. "
-            "For EACH newspaper a '### <Newspaper Name>' sub-heading with a "
-            "SUBSTANTIAL analysis of AT LEAST 5-7 sentences (2-3 paragraphs) that "
-            "uses ALL the headlines provided for that source — do NOT compress it to "
-            "one line. Cover, for that paper: (a) its overall MARKET / MACRO / "
-            "ECONOMY view (indices, FX, rates, policy, foreign flows), (b) its "
-            "SECTOR view (semiconductors, AI, memory), and (c) its COMPANY-SPECIFIC "
-            "reporting on our watchlist — name the companies and quote the concrete "
-            "facts/figures each headline carries (e.g. 'reported SK Hynix joined the "
-            "$1T club, up 3x YTD'). Reference MULTIPLE headlines per outlet. If a "
-            "source returned nothing, write 'No fresh items today' for it.\n"
-            "- Section 4 (Company-Specific Analysis): a DEDICATED paragraph per key "
-            "name (SK Hynix, Samsung, AMD, Micron, Broadcom, SanDisk, SOXX, SK "
-            "Telecom, Samsung SDS, Naver, KODEX 200) — synthesise what the combined "
-            "newspaper coverage says and connect it to the real change% (e.g. "
-            "'Nvidia CEO visits Korea to meet Naver → Naver +X%').\n"
+            "- Section 3 (News by Newspaper) — the CORE, longest section. For EACH "
+            "newspaper a '### <Newspaper Name>' sub-heading with a DEEP-DIVE of "
+            "200-300 words (3-4 FULL paragraphs) per outlet. Write flowing ANALYTICAL "
+            "prose — do NOT write a flat list of 'the newspaper also reported X; also "
+            "reported Y'. Vary the sentence structure. For each outlet cover, in "
+            "separate paragraphs: (1) its MARKET / MACRO framing (indices, FX, rates, "
+            "policy, foreign-investor flows) and what it implies; (2) its SECTOR view "
+            "(semiconductors, AI, memory super-cycle) with the figures; (3) its "
+            "COMPANY-SPECIFIC reporting on our watchlist — name each company and the "
+            "concrete numbers (PER, profit, % moves, $1T club, ADR filing, etc.); and "
+            "(4) a short SO-WHAT line on what this outlet's coverage means for an "
+            "investor. Integrate the numbers into the analysis; EXPLAIN significance, "
+            "don't just relay headlines. Use ALL provided items for that source. If a "
+            "source returned nothing, write 'No fresh items today.'\n"
+            "- Section 4 (Company-Specific Analysis) — a DEDICATED paragraph of 4-6 "
+            "sentences for EACH name (SK Hynix, Samsung, AMD, Micron, Broadcom, "
+            "SanDisk, SOXX, SK Telecom, Samsung SDS, Naver, KODEX 200). For each: tie "
+            "the SPECIFIC news (from the newspapers above) to its real change%, then "
+            "add the technical read (price vs MA5/MA20/MA60, volume) and a forward "
+            "view. Be SPECIFIC per name — never reuse a generic line like 'affected "
+            "by the broader sector' for multiple companies.\n"
             "- Section 5 (Recommendations): FIRST a Markdown table | Stock | Action | "
             "Reason | with Action = BUY / HOLD / SELL; THEN a '### Rationale' "
             "subsection with a paragraph per recommendation explaining — grounded in "
             "the NEWS above + the price/technicals — WHY to buy, hold, or sell.\n"
-            "Be specific, cite the newspapers by name, ~800+ words.\n"
+            "Be specific, cite the newspapers by name. The WHOLE report should be "
+            "LONG and thorough — aim for 1800-2400 words; Section 3 alone should be "
+            "~1500 words. Never truncate a section.\n"
             "Output ONLY the finished English Markdown report — no preamble."
         )
         user = (f"Date (KST): {kst_date} · USD/KRW: {rate:,.0f}\n\n"
@@ -169,8 +176,8 @@ def build_newspaper_report(db, trace_id: str) -> dict:
                 f"PRICE TECHNICALS:\n{_kr._facts(rows)}\n\n"
                 f"NEWS BY NEWSPAPER:\n{_news_block_by_source(grouped)}")
         out = chat_completion_sync(
-            system_prompt=sysmsg, messages=[{"role": "user", "content": user[:18000]}],
-            max_tokens=8000, temperature=0.5, model="groq-llama-3.3-70b") or ""
+            system_prompt=sysmsg, messages=[{"role": "user", "content": user[:22000]}],
+            max_tokens=12000, temperature=0.5, model="groq-llama-3.3-70b") or ""
         bad = (not out.strip()) or out.lstrip().startswith(("[LLM unavailable]", "[server error]"))
         if not bad:
             detail_en = out.strip()
@@ -185,8 +192,8 @@ def build_newspaper_report(db, trace_id: str) -> dict:
                     "Output ONLY the Korean Markdown report.")
                 ko_out = chat_completion_sync(
                     system_prompt=ko_sys,
-                    messages=[{"role": "user", "content": detail_en[:15000]}],
-                    max_tokens=7500, temperature=0.3, model="groq-llama-3.3-70b") or ""
+                    messages=[{"role": "user", "content": detail_en[:22000]}],
+                    max_tokens=12000, temperature=0.3, model="groq-llama-3.3-70b") or ""
                 ko_bad = ((not ko_out.strip())
                           or ko_out.lstrip().startswith(("[LLM unavailable]", "[server error]"))
                           or len(ko_out.strip()) < 400)
