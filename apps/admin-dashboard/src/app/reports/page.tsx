@@ -62,15 +62,7 @@ const _demoMd = (en: string, ko: string) => ({
   sections: [],
 });
 const DEMO_MARKET_REPORTS: any[] = [
-  // Newspaper demo removed — real newspaper_report reports now populate this tab.
-  {
-    id: "demo-youtube-1", _demo: true, report_type: "youtube_report",
-    executive_summary: "유튜브 분석 영상 요약 — 시장 심리, 미국/국제/한국 증시 전망, 일일 요약.",
-    created_at: new Date(Date.now() - 7200e3).toISOString(), source_run_count: 0,
-    content: _demoMd(
-      "# YouTube Stock Analysis — Daily\n## Market Sentiment\nCreators cautious on KR chips; constructive on US AI names.\n## US & International\nConsensus: dip-buying NASDAQ leaders.\n## Korean Market\nMixed views on 삼성전자 entry levels.\n## Daily Summary\nSentiment split — selective on KR, positive US tech.",
-      "# 유튜브 주식 분석 — 일일\n## 시장 심리\n국내 반도체 신중, 미국 AI주 긍정적.\n## 미국·국제\n나스닥 주도주 저가매수 컨센서스.\n## 한국 시장\n삼성전자 진입가 의견 혼재.\n## 일일 요약\n심리 분화 — 국내 선별, 미국 기술주 긍정."),
-  },
+  // Newspaper + YouTube demos removed — real reports now populate those tabs.
 ];
 
 export default function ReportsPage() {

@@ -1,0 +1,262 @@
+"""
+youtube_report — daily market analysis built from REAL content of 4 finance
+YouTube channels. For each channel the agent pulls the video's actual transcript
+(youtube-transcript-api, no key) plus the real title (oEmbed) and recent related
+coverage (Serper search), then the LLM writes a per-channel deep analysis of the
+watchlist companies + BUY/HOLD/SELL suggestions.
+
+Channels (user-specified):
+  1. Bloomberg TV          — https://www.youtube.com/watch?v=iEpJwprxDdk
+  2. WSJ News              — (resolved via search)
+  3. 한국경제TV (hkwow)     — https://www.youtube.com/watch?v=bRBtOPYU414
+  4. 매일경제 (매경)        — https://www.youtube.com/watch?v=s9xL1DpBsfQ
+
+Reuses the Kiwoom price layer for the watchlist table. Saved as
+report_type='youtube_report' (period='daily'); also Telegram + Word email.
+NEVER mocks — if a transcript is unavailable (e.g. a live stream), it uses the
+real title + real search snippets and says so.
+"""
+
+from __future__ import annotations
+
+import re
+from datetime import datetime
+
+import httpx
+
+from services.logger import log
+from services import kiwoom_report as _kr
+
+# (name, video_id|None, search query to find recent real coverage)
+YT_CHANNELS: list[dict] = [
+    {"name": "Bloomberg TV", "video_id": "iEpJwprxDdk",
+     "query": "Bloomberg TV semiconductor Nvidia Samsung SK Hynix AMD stock market today"},
+    {"name": "WSJ News", "video_id": None,
+     "query": "Wall Street Journal markets video semiconductor Nvidia Samsung Micron today"},
+    {"name": "한국경제TV (한경 와우)", "video_id": "bRBtOPYU414",
+     "query": "한국경제TV 반도체 삼성전자 SK하이닉스 네이버 증시 전망 today"},
+    {"name": "매일경제 (매경)", "video_id": "s9xL1DpBsfQ",
+     "query": "매일경제 MBN 증시 반도체 삼성전자 SK하이닉스 코스피 전망 today"},
+]
+
+
+def _video_id_from_url(url: str) -> str | None:
+    m = re.search(r"(?:v=|youtu\.be/|/live/|/embed/)([A-Za-z0-9_-]{11})", url or "")
+    return m.group(1) if m else None
+
+
+def _oembed_title(video_id: str) -> str:
+    """Real video title + channel via YouTube oEmbed (no API key)."""
+    try:
+        with httpx.Client(timeout=10) as c:
+            r = c.get("https://www.youtube.com/oembed",
+                      params={"url": f"https://www.youtube.com/watch?v={video_id}", "format": "json"})
+        if r.status_code == 200:
+            j = r.json()
+            return f"{j.get('title', '')} — {j.get('author_name', '')}".strip(" —")
+    except Exception:
+        pass
+    return ""
+
+
+def _transcript(video_id: str, max_chars: int = 6000) -> str:
+    """Fetch the real transcript text (Korean or English). Empty string if the
+    video has no transcript (e.g. a live stream) or YouTube blocks the fetch."""
+    if not video_id:
+        return ""
+    try:
+        from youtube_transcript_api import YouTubeTranscriptApi
+        segs = None
+        for langs in (["ko"], ["en"], ["ko", "en", "en-US"]):
+            try:
+                segs = YouTubeTranscriptApi.get_transcript(video_id, languages=langs)
+                if segs:
+                    break
+            except Exception:
+                continue
+        if not segs:
+            try:
+                segs = YouTubeTranscriptApi.get_transcript(video_id)
+            except Exception:
+                segs = None
+        if not segs:
+            return ""
+        text = " ".join(s.get("text", "") for s in segs if s.get("text"))
+        text = re.sub(r"\s+", " ", text).strip()
+        return text[:max_chars]
+    except Exception as e:
+        log.warning(f"youtube: transcript {video_id} failed: {str(e)[:100]}")
+        return ""
+
+
+def _search_channel(query: str, n: int = 6) -> list[dict]:
+    try:
+        from services.web_search import search_web
+        res = search_web(query, num_results=n)
+        if res.get("ok"):
+            return [{"title": (h.get("title") or "").strip(),
+                     "url": h.get("url", ""),
+                     "snippet": (h.get("snippet") or "").strip()}
+                    for h in res.get("results", [])]
+    except Exception as e:
+        log.warning(f"youtube: search failed: {str(e)[:100]}")
+    return []
+
+
+def _gather_channels() -> list[dict]:
+    """Collect REAL data per channel: title, transcript, recent search hits."""
+    out = []
+    for ch in YT_CHANNELS:
+        vid = ch.get("video_id")
+        # WSJ has no fixed video — resolve a recent video from search results.
+        hits = _search_channel(ch["query"])
+        if not vid:
+            for h in hits:
+                vid = _video_id_from_url(h.get("url", ""))
+                if vid:
+                    break
+        title = _oembed_title(vid) if vid else ""
+        transcript = _transcript(vid) if vid else ""
+        out.append({
+            "name": ch["name"],
+            "video_id": vid,
+            "video_url": f"https://www.youtube.com/watch?v={vid}" if vid else "",
+            "title": title,
+            "transcript": transcript,
+            "has_transcript": bool(transcript),
+            "hits": hits,
+        })
+    return out
+
+
+def _channel_block(channels: list[dict]) -> str:
+    parts = []
+    for ch in channels:
+        parts.append(f"### {ch['name']}")
+        if ch.get("title"):
+            parts.append(f"Video: {ch['title']} ({ch['video_url']})")
+        if ch.get("transcript"):
+            parts.append(f"TRANSCRIPT (real spoken content, excerpt):\n{ch['transcript'][:4000]}")
+        else:
+            parts.append("TRANSCRIPT: (none available — likely a live stream; use the "
+                         "real title + recent coverage below)")
+        if ch.get("hits"):
+            parts.append("RECENT RELATED COVERAGE:")
+            for h in ch["hits"][:6]:
+                t = h["title"][:130]
+                s = h["snippet"][:200]
+                parts.append(f"- {t} — {s}" if s else f"- {t}")
+        parts.append("")
+    return "\n".join(parts)
+
+
+def build_youtube_report(db, trace_id: str) -> dict:
+    """Build the daily YouTube analysis report — real channel content + the same
+    watchlist table as Kiwoom + per-channel deep analysis + suggestions, EN/KO."""
+    rows, table_en, table_ko, rate = _kr.gather_priced_rows()
+    ok_rows = [r for r in rows if r.get("ok")]
+    channels = _gather_channels()
+    n_transcripts = sum(1 for c in channels if c["has_transcript"])
+    kst_date = datetime.utcnow().strftime("%Y-%m-%d")
+
+    movers = sorted([r for r in ok_rows if r.get("change_pct") is not None],
+                    key=lambda r: r["change_pct"])
+    sum_en = (f"YouTube analysis ({len(channels)} channels, {n_transcripts} transcripts): "
+              + (f"weakest {movers[0]['en']} {_kr._fmt_chg(movers[0]['change_pct'])}, "
+                 f"strongest {movers[-1]['en']} {_kr._fmt_chg(movers[-1]['change_pct'])}."
+                 if movers else "data limited."))
+    sum_ko = (f"유튜브 분석 ({len(channels)}개 채널, 자막 {n_transcripts}건): "
+              + (f"최약 {movers[0]['ko']} {_kr._fmt_chg(movers[0]['change_pct'])}, "
+                 f"최강 {movers[-1]['ko']} {_kr._fmt_chg(movers[-1]['change_pct'])}."
+                 if movers else "데이터 제한."))
+
+    chan_names = ", ".join(c["name"] for c in channels)
+    detail_en = detail_ko = ""
+    try:
+        from services.llm_client import chat_completion_sync
+        sysmsg = (
+            "You are TripleH's market-video analyst writing the DAILY YouTube report "
+            "after the US close (~6:30 AM KST). You watch 4 finance channels "
+            f"({chan_names}) and summarise what they say about the watchlist, then "
+            "give BUY/HOLD/SELL suggestions. Use ONLY the provided transcripts / "
+            "titles / coverage + the price data — NEVER invent quotes. If a channel "
+            "had no transcript (live stream), say so and analyse from its real title "
+            "+ recent coverage. ALL prices are Korean Won (KRW). Produce EXACTLY:\n"
+            "## 1. General Overview\n## 2. Market Data\n## 3. Channel-by-Channel Analysis\n"
+            "## 4. Company-Specific Analysis\n## 5. Recommendations\n\n"
+            "Rules:\n"
+            "- Section 2: insert the provided data table VERBATIM.\n"
+            "- Section 3 (Channel-by-Channel) — the CORE section. For EACH channel a "
+            "'### <Channel>' sub-heading with a DEEP-DIVE of 250-330 words (3-4 "
+            "paragraphs): what the channel/host discussed, their market & sector view, "
+            "their take on our watchlist companies (name them with the real figures), "
+            "and any forward calls. Quote concrete points from the transcript/coverage. "
+            "If no transcript, note it and use the real title + coverage.\n"
+            "- Section 4 (Company-Specific): a dedicated paragraph per name (SK Hynix, "
+            "Samsung, AMD, Micron, Broadcom, SanDisk, SOXX, SK Telecom, Samsung SDS, "
+            "Naver, KODEX 200) — combine what the channels said with the real change%.\n"
+            "- Section 5 (Recommendations): FIRST a table | Stock | Action | Reason | "
+            "(BUY/HOLD/SELL); THEN a '### Rationale' subsection explaining each call "
+            "from the videos + price action.\n"
+            "Aim for ~1500-1900 words (about 3 pages). Never truncate.\n"
+            "Output ONLY the finished English Markdown report — no preamble."
+        )
+        user = (f"Date (KST): {kst_date} · USD/KRW: {rate:,.0f}\n\n"
+                f"DATA TABLE (insert verbatim in Section 2):\n{table_en}\n\n"
+                f"PRICE TECHNICALS:\n{_kr._facts(rows)}\n\n"
+                f"CHANNELS (real data):\n{_channel_block(channels)}")
+        out = chat_completion_sync(
+            system_prompt=sysmsg, messages=[{"role": "user", "content": user[:22000]}],
+            max_tokens=9000, temperature=0.5, model="groq-llama-3.3-70b") or ""
+        bad = (not out.strip()) or out.lstrip().startswith(("[LLM unavailable]", "[server error]"))
+        if not bad:
+            detail_en = out.strip()
+            try:
+                ko_sys = (
+                    "You are a professional Korean financial translator. Translate the "
+                    "ENTIRE English YouTube report into natural, professional Korean "
+                    "(존댓말). Translate EVERYTHING — never summarise or stub. Preserve "
+                    "ALL Markdown, headings, sub-headings and tables; keep every number, "
+                    "%, 원, ticker and channel name IDENTICAL. Replace the Section 2 "
+                    f"table with this EXACT Korean table:\n{table_ko}\n"
+                    "Output ONLY the Korean Markdown report.")
+                ko_out = chat_completion_sync(
+                    system_prompt=ko_sys,
+                    messages=[{"role": "user", "content": detail_en[:20000]}],
+                    max_tokens=9000, temperature=0.3, model="groq-llama-3.3-70b") or ""
+                ko_bad = ((not ko_out.strip())
+                          or ko_out.lstrip().startswith(("[LLM unavailable]", "[server error]"))
+                          or len(ko_out.strip()) < 400)
+                if not ko_bad:
+                    detail_ko = ko_out.strip()
+            except Exception as e:
+                log.warning(f"youtube KO translation failed: {e}")
+    except Exception as e:
+        log.warning(f"youtube LLM compose failed: {e}")
+
+    if not detail_en:
+        cl = []
+        for c in channels:
+            cl.append(f"### {c['name']}")
+            cl.append(f"- {c.get('title') or '(title unavailable)'}")
+            cl += [f"- {h['title']}" for h in c.get("hits", [])[:4]]
+        detail_en = (f"# YouTube Market Analysis\n*{kst_date} (after US close)*\n\n"
+                     f"## 1. General Overview\n{sum_en}\n\n## 2. Market Data\n{table_en}\n\n"
+                     f"## 3. Channel-by-Channel Analysis\n" + "\n".join(cl) + "\n\n"
+                     f"## 4. Company-Specific Analysis\nSee channel notes above.\n\n"
+                     f"## 5. Recommendations\n| Stock | Action | Reason |\n|---|---|---|\n"
+                     f"| — | HOLD | LLM unavailable — manual review |")
+    if not detail_ko:
+        detail_ko = detail_en
+
+    return {
+        "agent_type": "youtube", "name": "YouTube Market Analysis", "emoji": "📺",
+        "status": "ok" if ok_rows else "partial",
+        "summary_en": sum_en, "summary_ko": sum_ko,
+        "detail_en": detail_en, "detail_ko": detail_ko,
+        "table_en": table_en, "table_ko": table_ko,
+        "rows": rows,
+        "channels": [{"name": c["name"], "video_url": c["video_url"],
+                      "title": c["title"], "has_transcript": c["has_transcript"]} for c in channels],
+        "source": "TripleH YouTube Analysis (Bloomberg TV / WSJ / 한국경제TV / 매일경제 + OHLCV)",
+    }

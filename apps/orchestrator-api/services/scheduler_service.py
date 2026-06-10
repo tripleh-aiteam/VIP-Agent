@@ -799,7 +799,7 @@ def _newspaper_daily_report(email_override: str | None = None):
 
     db = SessionLocal()
     trace = f"tr-news-{int(datetime.utcnow().timestamp())}"
-    kst = datetime.utcnow().strftime("%Y-%m-%d") + " 07:00 KST"
+    kst = datetime.utcnow().strftime("%Y-%m-%d") + " 06:30 KST"
     try:
         rep = build_newspaper_report(db, trace)
         r = OrchReport(
@@ -866,6 +866,85 @@ def _newspaper_daily_report(email_override: str | None = None):
                  extra={"trace_id": trace, "action": "newspaper.daily.done"})
     except Exception as e:
         log.warning(f"newspaper: daily report failed: {e}", extra={"action": "newspaper.daily.failed"})
+    finally:
+        db.close()
+
+
+@with_retry(max_attempts=2, backoff_seconds=(60, 300), job_name="youtube_daily_report")
+def _youtube_daily_report(email_override: str | None = None):
+    """Daily YouTube (video analysis) report — runs ~6:30 AM KST. Real channel
+    transcripts/coverage + the same watchlist table. `email_override` for tests."""
+    from services.youtube_report import build_youtube_report
+    from services.kiwoom_report import format_report_telegram
+    from services.telegram_service import send_alert
+    from db.models import OrchReport
+
+    db = SessionLocal()
+    trace = f"tr-yt-{int(datetime.utcnow().timestamp())}"
+    kst = datetime.utcnow().strftime("%Y-%m-%d") + " 06:30 KST"
+    try:
+        rep = build_youtube_report(db, trace)
+        r = OrchReport(
+            report_type="youtube_report",
+            source_run_ids_json=[],
+            content_json={
+                "report_type": "youtube_report", "period": "daily",
+                "executive_summary": rep.get("summary_en") or "YouTube market analysis",
+                "sections": [{"title": "YouTube Daily", "content": rep.get("table_en", ""), "data": {}}],
+                "report": rep,
+                "generated_at": datetime.utcnow().isoformat(), "kst_time": kst,
+            },
+            delivery_channel="auto",
+        )
+        db.add(r)
+        db.commit()
+
+        try:
+            for chunk in format_report_telegram(rep, kst, lang="ko",
+                                                title="YouTube Market Analysis", emoji="📺"):
+                send_alert(chunk)
+        except Exception as te:
+            log.warning(f"youtube telegram format failed: {te}")
+            send_alert(f"📺 <b>YouTube Market Analysis</b>\n<i>{kst}</i>\n\n"
+                       f"{rep.get('summary_en', '')[:300]}\n\n<i>View → Reports → YouTube</i>")
+
+        try:
+            from services.report_docx import markdown_to_docx
+            from services.report_email import (send_email_with_docs,
+                                               is_configured as _email_ok, DEFAULT_RECIPIENT)
+            to_addr = (email_override or os.getenv("YOUTUBE_REPORT_EMAIL")
+                       or os.getenv("REPORT_EMAIL_TO") or DEFAULT_RECIPIENT)
+            if _email_ok() and to_addr:
+                ymd = datetime.utcnow().strftime("%Y%m%d")
+                en_md = rep.get("detail_en") or ""
+                ko_md = rep.get("detail_ko") or en_md
+                if len(ko_md.strip()) < 200 or "same report in korean" in ko_md.lower():
+                    ko_md = en_md
+                files = []
+                if ko_md:
+                    files.append((f"YouTube_Report_KO_{ymd}.docx",
+                                  markdown_to_docx(ko_md, "YouTube Market Analysis (한국어)", kst)))
+                if en_md:
+                    files.append((f"YouTube_Report_EN_{ymd}.docx",
+                                  markdown_to_docx(en_md, "YouTube Market Analysis (English)", kst)))
+                res = send_email_with_docs(
+                    to_addr, f"[YouTube] 일일 영상 분석 — {kst}",
+                    "일일 유튜브 영상 시장 분석 리포트입니다. 첨부된 Word 파일(한국어/영문)을 확인해 주세요.\n\n"
+                    "(Daily YouTube market-video analysis — Korean + English Word documents attached.)",
+                    files)
+                log.info(f"youtube: email {'sent' if res.get('ok') else 'skipped'} -> {to_addr}"
+                         f" ({res.get('reason', 'ok')})",
+                         extra={"trace_id": trace, "action": "youtube.email"})
+            else:
+                log.info("youtube: email skipped (SMTP not configured or no recipient)",
+                         extra={"action": "youtube.email.skip"})
+        except Exception as ee:
+            log.warning(f"youtube: email step failed: {ee}", extra={"action": "youtube.email.failed"})
+
+        log.info(f"youtube: daily report saved + sent ({rep['status']})",
+                 extra={"trace_id": trace, "action": "youtube.daily.done"})
+    except Exception as e:
+        log.warning(f"youtube: daily report failed: {e}", extra={"action": "youtube.daily.failed"})
     finally:
         db.close()
 
@@ -948,14 +1027,24 @@ def init_scheduler():
     )
     log.info("scheduler: Kiwoom daily report registered (21:30 UTC = 6:30 AM KST)", extra={"action": "scheduler.kiwoom_registered"})
 
-    # Newspaper (news analysis) report — 7:00 AM KST = 22:00 UTC, weekdays KST.
+    # Newspaper (news analysis) report — 6:30 AM KST = 21:30 UTC, weekdays KST
+    # (same time as the Kiwoom report).
     _scheduler.add_job(
         _newspaper_daily_report,
-        CronTrigger.from_crontab("0 22 * * 0-4"),
+        CronTrigger.from_crontab("30 21 * * 0-4"),
         id="newspaper-daily-report",
         replace_existing=True,
     )
-    log.info("scheduler: Newspaper report registered (22:00 UTC = 7:00 AM KST)", extra={"action": "scheduler.newspaper_registered"})
+    log.info("scheduler: Newspaper report registered (21:30 UTC = 6:30 AM KST)", extra={"action": "scheduler.newspaper_registered"})
+
+    # YouTube (video analysis) report — 6:30 AM KST = 21:30 UTC, weekdays KST.
+    _scheduler.add_job(
+        _youtube_daily_report,
+        CronTrigger.from_crontab("30 21 * * 0-4"),
+        id="youtube-daily-report",
+        replace_existing=True,
+    )
+    log.info("scheduler: YouTube report registered (21:30 UTC = 6:30 AM KST)", extra={"action": "scheduler.youtube_registered"})
 
     # Auto weekly report — Friday 6:30 PM KST = 09:30 UTC Friday
     _scheduler.add_job(
