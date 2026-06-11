@@ -95,10 +95,13 @@ def _fetch_daily(spec: dict) -> dict:
                 r = c.get(f"{_BACKEND}/intraday/daily-chart",
                           params={"ticker": spec["t"], "days": 20})
             candles = (r.json() or {}).get("candles") or [] if r.status_code == 200 else []
-            # Keep only settled sessions (date strictly before today KST). Fall
-            # back to the raw list only if every candle is dated today.
-            settled = [c for c in candles if (c.get("date") or "0000-00-00") < today]
-            candles = settled or candles
+            # Use the latest FULLY-SETTLED session that actually has a finalized
+            # close: drop today's candle (still forming) AND any candle whose close
+            # is null/None (the backend sometimes returns an incomplete latest
+            # candle, e.g. US tickers with close=None — that was leaving blank rows).
+            valid = [c for c in candles if c.get("close") is not None]
+            settled = [c for c in valid if (c.get("date") or "0000-00-00") < today]
+            candles = settled or valid or candles
             if candles:
                 last = candles[-1]
                 prev_close = candles[-2].get("close") if len(candles) >= 2 else None
