@@ -136,18 +136,18 @@ def _gather() -> list[dict]:
 def _build_table(rows: list[dict], ko: bool) -> str:
     """Deterministic Markdown data table with the REAL numbers — all in KRW."""
     if ko:
-        head = ("| 종목 | 시가 | 종가 | 대비·등락 | 거래량 | ETF 추적 |\n"
-                "|---|---|---|---|---|---|")
+        head = ("| 종목 | 시가 | 종가 | 대비·등락 | 거래량 |\n"
+                "|---|---|---|---|---|")
     else:
-        head = ("| Stock | Open (KRW) | Close (KRW) | Change | Volume | ETF |\n"
-                "|---|---|---|---|---|---|")
+        head = ("| Stock | Open (KRW) | Close (KRW) | Change | Volume |\n"
+                "|---|---|---|---|---|")
     lines = [head]
     for r in rows:
         name = r["ko"] if ko else r["en"]
         vol = f"{int(r['volume']):,}" if r.get("volume") is not None else "—"
         lines.append(
             f"| {name} | {_won(r.get('open_krw'))} | {_won(r.get('close_krw'))} | "
-            f"{_fmt_chg(r.get('change_pct'))} | {vol} | {r['etf']} |"
+            f"{_fmt_chg(r.get('change_pct'))} | {vol} |"
         )
     return "\n".join(lines)
 
