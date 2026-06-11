@@ -152,38 +152,81 @@ def _search_channel(query: str, n: int = 8) -> list[dict]:
     return []
 
 
-def _gather_channels() -> list[dict]:
-    """Collect REAL data per channel: the channel's LATEST UPLOADS (titles +
-    descriptions via free RSS) + a transcript of the newest upload when one is
-    available + recent related search coverage. The given URLs are usually live
-    streams (no transcript), so we analyse the latest VODs instead."""
+def _within_24h(published: str) -> bool:
+    """True if an Atom 'published' timestamp is within the last 24 hours."""
+    if not published:
+        return False
+    try:
+        from datetime import datetime, timedelta, timezone
+        dt = datetime.fromisoformat(published.replace("Z", "+00:00"))
+        if not dt.tzinfo:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt >= datetime.now(timezone.utc) - timedelta(hours=24)
+    except Exception:
+        return False
+
+
+def _split_enko(out: str) -> tuple[str, str]:
+    out = (out or "").strip()
+    if (not out) or out.lstrip().startswith(("[LLM unavailable]", "[server error]")):
+        return "", ""
+    if "===KO===" in out:
+        a, b = out.split("===KO===", 1)
+        return a.replace("===EN===", "").strip(), b.strip()
+    return out.replace("===EN===", "").strip(), ""
+
+
+def _video_links_md(clips: list[dict]) -> str:
+    """Clickable youtube.com video links (with publish time) for verification."""
+    lines = []
+    for c in clips:
+        u = c.get("url") or ""
+        if "youtube.com" not in u and "youtu.be" not in u:
+            continue
+        t = (c.get("title") or u).replace("[", "(").replace("]", ")")[:120]
+        pub = c.get("published")
+        when = f" — {pub[:16].replace('T', ' ')}" if pub else ""
+        tag = " 🎙️자막" if c.get("has_transcript") else ""
+        lines.append(f"- [{t}]({u}){when}{tag}")
+    return "\n".join(lines) if lines else "- (no videos in the last 24h)"
+
+
+def _gather_channels(per_channel: int = 3, max_seconds: int = 1500) -> list[dict]:
+    """Per channel: the last-24h UPLOADED clips (RSS, timestamped) with a REAL
+    Whisper transcript of each (yt-dlp + Groq) when obtainable; falls back to the
+    video description. Live streams / long / IP-blocked clips → description only."""
+    from services import audio_transcribe
     out = []
     for ch in YT_CHANNELS:
         vid = ch.get("video_id")
         hits = _search_channel(ch["query"])
-        if not vid:  # WSJ — resolve a recent video from search results.
+        if not vid:  # resolve a channel video from search if no fixed id
             for h in hits:
                 vid = _video_id_from_url(h.get("url", ""))
                 if vid:
                     break
-        live_title = _oembed_title(vid) if vid else ""
-        # Latest uploaded videos (VODs) for this channel via RSS.
-        uploads = _latest_uploads(_channel_id(vid), n=6) if vid else []
-        # Try a transcript on the newest non-live upload (best real content).
-        transcript = ""
-        for up in uploads:
-            transcript = _transcript(up.get("video_id", ""))
-            if transcript:
-                up["transcribed"] = True
-                break
+        chan_id = _channel_id(vid) if vid else None
+        uploads = _latest_uploads(chan_id, n=15) if chan_id else []
+        recent = [u for u in uploads if _within_24h(u.get("published"))][:per_channel]
+        clips = []
+        n_trans = 0
+        for u in recent:
+            vidid = u.get("video_id", "")
+            tx = audio_transcribe.transcribe_youtube(vidid, max_seconds=max_seconds)
+            if tx:
+                n_trans += 1
+            clips.append({
+                "video_id": vidid,
+                "title": u.get("title", ""),
+                "url": f"https://www.youtube.com/watch?v={vidid}",
+                "published": u.get("published", ""),
+                "description": u.get("description", ""),
+                "transcript": tx, "has_transcript": bool(tx),
+            })
         out.append({
-            "name": ch["name"],
-            "video_id": vid,
+            "name": ch["name"], "video_id": vid,
             "video_url": f"https://www.youtube.com/watch?v={vid}" if vid else "",
-            "title": live_title,
-            "uploads": uploads,
-            "transcript": transcript,
-            "has_transcript": bool(transcript),
+            "clips": clips, "n_transcripts": n_trans, "uploads_24h": len(recent),
             "hits": hits,
         })
     return out
@@ -222,119 +265,150 @@ def _channel_block(channels: list[dict]) -> str:
     return "\n".join(parts)
 
 
+_WATCHLIST = ("SK Hynix, Samsung Electronics, Naver, SK Telecom, Samsung SDS, "
+              "AMD, Micron, Broadcom, SanDisk, SOXX, KODEX 200")
+
+
 def build_youtube_report(db, trace_id: str) -> dict:
-    """Build the daily YouTube analysis report — real channel content + the same
-    watchlist table as Kiwoom + per-channel deep analysis + suggestions, EN/KO."""
+    """Daily YouTube report — for each channel, the last-24h uploaded clips with
+    REAL Whisper transcripts (yt-dlp + Groq) where obtainable; a dedicated deep
+    per-channel analysis; clickable video links; bilingual EN/KO."""
     rows, table_en, table_ko, rate = _kr.gather_priced_rows()
     ok_rows = [r for r in rows if r.get("ok")]
     channels = _gather_channels()
     catalysts = _cat.gather_catalysts()
-    n_transcripts = sum(1 for c in channels if c["has_transcript"])
+    n_transcripts = sum(c.get("n_transcripts", 0) for c in channels)
     from services.kst import kst_date as _kst_date
     kst_date = _kst_date()
 
+    transcript_stats = {c["name"]: {"clips_24h": c.get("uploads_24h", 0),
+                                    "transcribed": c.get("n_transcripts", 0)}
+                        for c in channels}
+
     movers = sorted([r for r in ok_rows if r.get("change_pct") is not None],
                     key=lambda r: r["change_pct"])
-    sum_en = (f"YouTube analysis ({len(channels)} channels, {n_transcripts} transcripts): "
+    sum_en = (f"YouTube analysis ({len(channels)} channels, {n_transcripts} real transcripts): "
               + (f"weakest {movers[0]['en']} {_kr._fmt_chg(movers[0]['change_pct'])}, "
                  f"strongest {movers[-1]['en']} {_kr._fmt_chg(movers[-1]['change_pct'])}."
                  if movers else "data limited."))
-    sum_ko = (f"유튜브 분석 ({len(channels)}개 채널, 자막 {n_transcripts}건): "
+    sum_ko = (f"유튜브 분석 ({len(channels)}개 채널, 실제 자막 {n_transcripts}건): "
               + (f"최약 {movers[0]['ko']} {_kr._fmt_chg(movers[0]['change_pct'])}, "
                  f"최강 {movers[-1]['ko']} {_kr._fmt_chg(movers[-1]['change_pct'])}."
                  if movers else "데이터 제한."))
 
-    chan_names = ", ".join(c["name"] for c in channels)
     detail_en = detail_ko = ""
     try:
         from services.llm_client import chat_completion_sync
-        sysmsg = (
-            "You are TripleH's market-video analyst writing the DAILY YouTube report "
-            "after the US close (~6:30 AM KST). You watch 4 finance channels "
-            f"({chan_names}) and summarise what they say about the watchlist, then "
-            "give BUY/HOLD/SELL suggestions. Use ONLY the provided transcripts / "
-            "titles / coverage + the price data — NEVER invent quotes. If a channel "
-            "had no transcript (live stream), say so and analyse from its real title "
-            "+ recent coverage. ALL prices are Korean Won (KRW). Produce EXACTLY (do "
-            "NOT include a price/market-data table — that lives only in the Kiwoom "
-            "report):\n"
-            "## 1. General Overview\n## 2. Channel-by-Channel Analysis\n"
-            "## 3. Company-Specific Analysis\n## 4. Catalysts & Schedule (일정매매)\n"
-            "## 5. Recommendations\n\n"
-            "Rules:\n"
-            "- Section 2 (Channel-by-Channel) — the CORE section. For EACH channel a "
-            "'### <Channel>' sub-heading with a DEEP-DIVE of 350-450 words (about "
-            "HALF a page, 4-5 full paragraphs): (1) what the channel/host covered in "
-            "its latest uploads (use the real upload TITLES + DESCRIPTIONS), (2) its "
-            "market & macro view, (3) its sector/semiconductor view, (4) its take on "
-            "our watchlist companies — name them with the real figures — and (5) any "
-            "forward calls or sentiment. Quote concrete points from the transcript / "
-            "upload descriptions / coverage. If no transcript, note it briefly and "
-            "analyse fully from the real upload titles, descriptions and coverage — "
-            "do NOT make the section short just because there is no transcript.\n"
-            "- Section 3 (Company-Specific): a dedicated paragraph per name (SK Hynix, "
-            "Samsung, AMD, Micron, Broadcom, SanDisk, SOXX, SK Telecom, Samsung SDS, "
-            "Naver, KODEX 200) — combine what the channels said with the real change%.\n"
-            f"- Section 4 (Catalysts & Schedule / 일정매매): {_cat.CATALYST_SECTION_RULE}\n"
-            "- Section 5 (Recommendations): FIRST a table | Stock | Action | Reason | "
-            "(BUY/HOLD/SELL); THEN a '### Rationale' subsection. TIE each call to a "
-            "CATALYST and TIMING where possible (event-driven / 일정매매 — 'BUY before "
-            "<event/date>, sell into the attention') from the videos + price action.\n"
-            "The WHOLE report must be at LEAST 3 pages — aim for 2600-3200 words; "
-            "Section 2 (Channel-by-Channel) ~1700 words (≈half a page × 4 channels) and "
-            "Section 4 (Catalysts) a full, detailed section. Never truncate a section.\n"
-            "Output ONLY the finished English Markdown report — no preamble."
-        )
-        user = (f"Date (KST): {kst_date} · USD/KRW: {rate:,.0f}\n\n"
-                f"PRICE CONTEXT (for your analysis only — do NOT print a table):\n{_kr._facts(rows)}\n\n"
-                f"CHANNELS (real data):\n{_channel_block(channels)}\n\n"
-                f"CATALYST / EVENT DATA (for Section 4):\n{_cat.catalyst_block(catalysts)}")
-        out = chat_completion_sync(
-            system_prompt=sysmsg, messages=[{"role": "user", "content": user[:26000]}],
-            max_tokens=12000, temperature=0.5, model="groq-llama-3.3-70b") or ""
-        bad = (not out.strip()) or out.lstrip().startswith(("[LLM unavailable]", "[server error]"))
-        if not bad:
-            detail_en = out.strip()
+        import time as _t
+
+        sec_en, sec_ko = {}, {}
+        for ch in channels:
+            name = ch["name"]
+            clips = ch.get("clips", [])
+            if not clips:
+                sec_en[name] = f"### {name}\nNo uploads in the last 24 hours."
+                sec_ko[name] = f"### {name}\n지난 24시간 내 업로드가 없습니다."
+                continue
+            has_tx = any(c.get("has_transcript") for c in clips)
+            corpus = "\n\n".join(
+                (f"[TRANSCRIPT] {c.get('title','')}\n{(c.get('transcript') or '')[:5000]}"
+                 if c.get("has_transcript")
+                 else f"[DESCRIPTION ONLY] {c.get('title','')}\n{(c.get('description') or '')[:700]}")
+                for c in clips)
+            cov = "\n".join(f"- {h.get('title','')[:120]}" for h in ch.get("hits", [])[:5])
+            if has_tx:
+                length = "700-1000 words (a deep analysis of what was actually said)"
+                note = ("[TRANSCRIPT] items are the REAL spoken words — analyse them in "
+                        "depth and quote concrete points.")
+            else:
+                length = "180-260 words (only titles/descriptions are available)"
+                note = ("No transcript was obtainable (live/blocked) — analyse honestly "
+                        "from the real titles + descriptions; do NOT invent.")
+            sysd = (
+                f"You are TripleH's market-video analyst. Below are {name}'s videos "
+                "UPLOADED in the LAST 24 HOURS. Write " + length + " covering what the "
+                "channel said about: the market, market-moving politics/policy, the "
+                f"semiconductor sector, and the watchlist ({_WATCHLIST}). Explain the "
+                f"price impact in flowing prose. {note} Use ONLY the provided content; "
+                "NEVER invent quotes or numbers. Do NOT put URLs in your text (a "
+                f"verified video-link list is appended separately). Begin with '### {name}'. "
+                "Output EXACTLY:\n===EN===\n<english>\n===KO===\n<korean 존댓말, same depth>")
             try:
-                ko_sys = (
-                    "You are a professional Korean financial translator. Translate the "
-                    "ENTIRE English YouTube report into natural, professional Korean "
-                    "(존댓말). Translate EVERYTHING — never summarise or stub. Preserve "
-                    "ALL Markdown, headings, sub-headings and tables; keep every number, "
-                    "%, 원, ticker and channel name IDENTICAL. Replace the Section 2 "
-                    f"table with this EXACT Korean table:\n{table_ko}\n"
-                    "Output ONLY the Korean Markdown report.")
-                ko_out = chat_completion_sync(
-                    system_prompt=ko_sys,
-                    messages=[{"role": "user", "content": detail_en[:24000]}],
-                    max_tokens=11000, temperature=0.3, model="groq-llama-3.3-70b") or ""
-                ko_bad = ((not ko_out.strip())
-                          or ko_out.lstrip().startswith(("[LLM unavailable]", "[server error]"))
-                          or len(ko_out.strip()) < 400)
-                if not ko_bad:
-                    detail_ko = ko_out.strip()
+                out = chat_completion_sync(
+                    system_prompt=sysd, messages=[{"role": "user", "content": (corpus + "\n\nRECENT COVERAGE:\n" + cov)[:20000]}],
+                    max_tokens=6000, temperature=0.45, model="groq-llama-3.3-70b") or ""
+                en, ko = _split_enko(out)
+                sec_en[name] = en or (f"### {name}\n" + "\n".join(f"- {c.get('title','')}" for c in clips))
+                sec_ko[name] = ko or sec_en[name]
             except Exception as e:
-                log.warning(f"youtube KO translation failed: {e}")
+                log.warning(f"youtube channel {name} failed: {str(e)[:100]}")
+                sec_en[name] = f"### {name}\n" + "\n".join(f"- {c.get('title','')}" for c in clips)
+                sec_ko[name] = sec_en[name]
+            links = _video_links_md(clips)
+            sec_en[name] = sec_en[name].rstrip() + f"\n\n**🔗 Source videos (click to verify):**\n{links}"
+            sec_ko[name] = sec_ko[name].rstrip() + f"\n\n**🔗 출처 영상 (클릭하여 확인):**\n{links}"
+            _t.sleep(0.4)
+
+        chan_en = "\n\n".join(sec_en[c["name"]] for c in channels)
+        chan_ko = "\n\n".join(sec_ko[c["name"]] for c in channels)
+
+        digest = "\n\n".join(f"[{c['name']}] " + sec_en.get(c["name"], "")[:600] for c in channels)
+        ssys = (
+            "You are TripleH's chief market analyst. Using the per-channel YouTube "
+            "summaries + price + catalyst data, write these sections (do NOT write a "
+            "'Channel-by-Channel' section — added separately; do NOT print a price "
+            "table). ALL prices KRW. Sections:\n"
+            "## 1. General Overview\n## 3. Company-Specific Analysis\n"
+            "## 4. Catalysts & Schedule (일정매매)\n## 5. Recommendations\n\n"
+            "- Section 1: 2-3 paragraph read of what the channels covered in the last 24h.\n"
+            f"- Section 3: a 4-6 sentence paragraph per name ({_WATCHLIST}) tying the "
+            "video commentary to the real change% + technicals.\n"
+            f"- Section 4 (일정매매): {_cat.CATALYST_SECTION_RULE}\n"
+            "- Section 5: table | Stock | Action | Reason | (BUY/HOLD/SELL) THEN '### "
+            "Rationale' tying each to a catalyst + timing.\n"
+            "Use ONLY provided data. Output EXACTLY:\n===EN===\n<english>\n===KO===\n<korean 존댓말>")
+        suser = (f"TODAY (KST): {kst_date} · USD/KRW: {rate:,.0f}\n\n"
+                 f"PRICE CONTEXT (no table):\n{_kr._facts(rows)}\n\n"
+                 f"PER-CHANNEL SUMMARIES:\n{digest}\n\nCATALYST DATA:\n{_cat.catalyst_block(catalysts)}")
+        syn_en = syn_ko = ""
+        try:
+            out = chat_completion_sync(
+                system_prompt=ssys, messages=[{"role": "user", "content": suser[:22000]}],
+                max_tokens=9000, temperature=0.45, model="groq-llama-3.3-70b") or ""
+            syn_en, syn_ko = _split_enko(out)
+        except Exception as e:
+            log.warning(f"youtube synthesis failed: {str(e)[:100]}")
+
+        def _assemble(syn: str, chans: str) -> str:
+            syn = syn or ""
+            parts = re.split(r"(?=##\s*3\.)", syn, maxsplit=1)
+            overview = parts[0].strip() if parts else ""
+            rest = parts[1].strip() if len(parts) > 1 else ""
+            return (f"# YouTube Market Analysis\n*{kst_date} (last 24h uploads)*\n\n"
+                    f"{overview}\n\n## 2. Channel-by-Channel Analysis\n{chans}\n\n{rest}").strip()
+
+        if chan_en.strip() and syn_en.strip():
+            detail_en = _assemble(syn_en, chan_en)
+            detail_ko = _assemble(syn_ko or syn_en, chan_ko or chan_en)
     except Exception as e:
-        log.warning(f"youtube LLM compose failed: {e}")
+        log.warning(f"youtube compose failed: {e}")
 
     if not detail_en:
         cl = []
         for c in channels:
             cl.append(f"### {c['name']}")
-            cl.append(f"- {c.get('title') or '(title unavailable)'}")
-            cl += [f"- {h['title']}" for h in c.get("hits", [])[:4]]
-        detail_en = (f"# YouTube Market Analysis\n*{kst_date} (after US close)*\n\n"
-                     f"## 1. General Overview\n{sum_en}\n\n"
+            cl += [f"- {x.get('title','')}" for x in c.get("clips", [])[:4]] or ["- No uploads in 24h"]
+        detail_en = (f"# YouTube Market Analysis\n*{kst_date}*\n\n## 1. General Overview\n{sum_en}\n\n"
                      f"## 2. Channel-by-Channel Analysis\n" + "\n".join(cl) + "\n\n"
                      f"## 3. Company-Specific Analysis\nSee channel notes above.\n\n"
-                     f"## 4. Catalysts & Schedule (일정매매)\n"
-                     + _cat.catalyst_block(catalysts) + "\n\n"
+                     f"## 4. Catalysts & Schedule (일정매매)\n" + _cat.catalyst_block(catalysts) + "\n\n"
                      f"## 5. Recommendations\n| Stock | Action | Reason |\n|---|---|---|\n"
                      f"| — | HOLD | LLM unavailable — manual review |")
     if not detail_ko:
         detail_ko = detail_en
 
+    src = [{"title": c.get("title", ""), "url": c.get("url", ""), "channel": ch["name"]}
+           for ch in channels for c in ch.get("clips", [])]
     return {
         "agent_type": "youtube", "name": "YouTube Market Analysis", "emoji": "📺",
         "status": "ok" if ok_rows else "partial",
@@ -343,6 +417,9 @@ def build_youtube_report(db, trace_id: str) -> dict:
         "table_en": table_en, "table_ko": table_ko,
         "rows": rows,
         "channels": [{"name": c["name"], "video_url": c["video_url"],
-                      "title": c["title"], "has_transcript": c["has_transcript"]} for c in channels],
-        "source": "TripleH YouTube Analysis (Bloomberg TV / WSJ / 한국경제TV / 매일경제 + OHLCV)",
+                      "n_transcripts": c.get("n_transcripts", 0)} for c in channels],
+        "video_sources": src[:40],
+        "transcript_stats": transcript_stats,
+        "source": "TripleH YouTube Analysis (last-24h uploads + Whisper transcripts: "
+                  "Bloomberg TV / WSJ / 한국경제TV / 매일경제 + OHLCV)",
     }

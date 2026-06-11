@@ -25,3 +25,6 @@ youtube-transcript-api>=0.6.2
 
 # Full article-text extraction for the deep newspaper report
 trafilatura>=1.8.0
+
+# YouTube audio download for Whisper transcription (A+ youtube report)
+yt-dlp>=2024.0.0
