@@ -761,7 +761,7 @@ def _kiwoom_daily_report(email_override: str | None = None, period: str = "daily
             # Recipient: explicit test override → per-report env → hardcoded default.
             to_addr = (email_override or os.getenv("KIWOOM_REPORT_EMAIL")
                        or os.getenv("REPORT_EMAIL_TO") or DEFAULT_RECIPIENT)
-            if os.getenv("SEND_INDIVIDUAL_EMAILS") == "1" and _email_ok() and to_addr:
+            if (email_override or os.getenv("SEND_INDIVIDUAL_EMAILS") == "1") and _email_ok() and to_addr:
                 body_md = rep.get("detail_ko") or ""
                 if len(body_md.strip()) < 200 or "same report in korean" in body_md.lower():
                     body_md = rep.get("detail_en") or ""
@@ -835,7 +835,7 @@ def _newspaper_daily_report(email_override: str | None = None, period: str = "da
                                                is_configured as _email_ok, DEFAULT_RECIPIENT)
             to_addr = (email_override or os.getenv("NEWSPAPER_REPORT_EMAIL")
                        or os.getenv("REPORT_EMAIL_TO") or DEFAULT_RECIPIENT)
-            if os.getenv("SEND_INDIVIDUAL_EMAILS") == "1" and _email_ok() and to_addr:
+            if (email_override or os.getenv("SEND_INDIVIDUAL_EMAILS") == "1") and _email_ok() and to_addr:
                 ymd = datetime.utcnow().strftime("%Y%m%d")
                 en_md = rep.get("detail_en") or ""
                 ko_md = rep.get("detail_ko") or en_md
@@ -915,7 +915,7 @@ def _youtube_daily_report(email_override: str | None = None, period: str = "dail
                                                is_configured as _email_ok, DEFAULT_RECIPIENT)
             to_addr = (email_override or os.getenv("YOUTUBE_REPORT_EMAIL")
                        or os.getenv("REPORT_EMAIL_TO") or DEFAULT_RECIPIENT)
-            if os.getenv("SEND_INDIVIDUAL_EMAILS") == "1" and _email_ok() and to_addr:
+            if (email_override or os.getenv("SEND_INDIVIDUAL_EMAILS") == "1") and _email_ok() and to_addr:
                 ymd = datetime.utcnow().strftime("%Y%m%d")
                 en_md = rep.get("detail_en") or ""
                 ko_md = rep.get("detail_ko") or en_md

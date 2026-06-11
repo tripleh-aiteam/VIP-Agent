@@ -25,12 +25,12 @@ from services import catalyst_news as _cat
 # Named newspapers — each searched with a site: filter so the news really comes
 # from that outlet. (name, domain, region)
 NEWSPAPERS: list[dict] = [
-    {"name": "Bloomberg", "site": "bloomberg.com", "region": "US"},
-    {"name": "The Wall Street Journal", "site": "wsj.com", "region": "US"},
     {"name": "Maeil Business (매일경제)", "site": "mk.co.kr", "region": "KR"},
     {"name": "Korea Economic Daily (한국경제)", "site": "hankyung.com", "region": "KR"},
     {"name": "MoneyToday (머니투데이)", "site": "mt.co.kr", "region": "KR"},
     {"name": "SBS Biz", "site": "biz.sbs.co.kr", "region": "KR"},
+    {"name": "Bloomberg", "site": "bloomberg.com", "region": "US"},
+    {"name": "The Wall Street Journal", "site": "wsj.com", "region": "US"},
 ]
 
 # Hidden sources — searched and used in the Company Analysis + Recommendations,
@@ -98,7 +98,7 @@ def _gather_news_by_source(cap_kr: int = 7, cap_paid: int = 8) -> dict[str, list
         if paid:
             for h in _recency_search(site, kr, per_query=cap_paid + 2)[:cap_paid]:
                 arts.append({"title": h["title"], "url": h["url"], "text": h["snippet"],
-                             "full": False, "paid": True})
+                             "full": False, "paid": True, "pub": None})
         else:
             # Korean free outlet — RSS list (last 24h), with search fallback.
             items = news_fetch.rss_items(name, hours=24, cap=cap_kr + 6)
@@ -118,7 +118,7 @@ def _gather_news_by_source(cap_kr: int = 7, cap_paid: int = 8) -> dict[str, list
                 body = news_fetch.fetch_fulltext(it["url"], max_chars=3000)
                 arts.append({"title": it.get("title", ""), "url": it.get("url", ""),
                              "text": body or it.get("summary", ""),
-                             "full": bool(body), "paid": False})
+                             "full": bool(body), "paid": False, "pub": it.get("pub")})
         grouped[name] = arts
     return grouped
 
@@ -173,6 +173,21 @@ def _gather_hidden(per_query: int = 10, cap: int = 14) -> list[dict]:
                 if len(out) >= cap:
                     break
     return out
+
+
+def _sources_md(arts: list[dict]) -> str:
+    """Clickable source links (with publish date when known) so the reader can
+    verify each article is real and published within the last day."""
+    lines = []
+    for a in arts:
+        u = (a.get("url") or "").strip()
+        if not u:
+            continue
+        t = (a.get("title") or u).strip().replace("[", "(").replace("]", ")")[:120]
+        pub = a.get("pub")
+        when = f" — {pub[:16].replace('T', ' ')}" if pub else ""
+        lines.append(f"- [{t}]({u}){when}")
+    return "\n".join(lines) if lines else "- (no source links available)"
 
 
 def _split_enko(out: str) -> tuple[str, str]:
@@ -275,6 +290,10 @@ def build_newspaper_report(db, trace_id: str) -> dict:
                 log.warning(f"newspaper outlet {name} failed: {str(e)[:100]}")
                 sec_en[name] = f"### {name}\n" + "\n".join(f"- {a.get('title','')}" for a in arts)
                 sec_ko[name] = sec_en[name]
+            # Append clickable source links (proof of real, within-24h articles).
+            links = _sources_md(arts)
+            sec_en[name] = sec_en[name].rstrip() + f"\n\n**🔗 Sources (click to verify):**\n{links}"
+            sec_ko[name] = sec_ko[name].rstrip() + f"\n\n**🔗 출처 (클릭하여 확인):**\n{links}"
             _t.sleep(0.5)
 
         news_en = "\n\n".join(sec_en[p["name"]] for p in NEWSPAPERS)
