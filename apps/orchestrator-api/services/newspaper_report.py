@@ -24,12 +24,17 @@ from services import catalyst_news as _cat
 # Named newspapers — each searched with a site: filter so the news really comes
 # from that outlet. (name, domain, region)
 NEWSPAPERS: list[dict] = [
-    {"name": "Korea Economic Daily (KED Global)", "site": "kedglobal.com", "region": "KR"},
-    {"name": "Pulse by Maeil Business", "site": "pulsenews.co.kr", "region": "KR"},
-    {"name": "Seoul Economic Daily", "site": "sedaily.com", "region": "KR"},
-    {"name": "The Wall Street Journal", "site": "wsj.com", "region": "US"},
     {"name": "Bloomberg", "site": "bloomberg.com", "region": "US"},
-    {"name": "Barron's", "site": "barrons.com", "region": "US"},
+    {"name": "The Wall Street Journal", "site": "wsj.com", "region": "US"},
+    {"name": "Maeil Business (매일경제)", "site": "mk.co.kr", "region": "KR"},
+    {"name": "Korea Economic Daily (한국경제)", "site": "hankyung.com", "region": "KR"},
+    {"name": "MoneyToday (머니투데이)", "site": "mt.co.kr", "region": "KR"},
+    {"name": "SBS Biz", "site": "biz.sbs.co.kr", "region": "KR"},
+]
+
+# Hidden sources — searched and used in the Company Analysis + Recommendations,
+# but NEVER named or given their own section in the report (per request).
+HIDDEN_SOURCES: list[dict] = [
     {"name": "Yahoo Finance", "site": "finance.yahoo.com", "region": "US"},
 ]
 
@@ -106,12 +111,53 @@ def _news_block_by_source(grouped: dict[str, list[dict]]) -> str:
     return "\n".join(parts)
 
 
+def _gather_hidden(per_query: int = 10, cap: int = 14) -> list[dict]:
+    """Gather HIDDEN-source results (e.g. Yahoo) — fed to the analysis but never
+    named or given a section in the report."""
+    try:
+        from services.web_search import search_web
+    except Exception:
+        return []
+    out: list[dict] = []
+    seen: set[str] = set()
+    for src in HIDDEN_SOURCES:
+        for q in _queries_for(src):
+            if len(out) >= cap:
+                break
+            try:
+                res = search_web(q, num_results=per_query)
+            except Exception:
+                continue
+            if not res.get("ok"):
+                continue
+            for h in res.get("results", []):
+                title = (h.get("title") or "").strip()
+                snippet = (h.get("snippet") or "").strip()
+                key = (title or snippet)[:80].lower()
+                if not key or key in seen:
+                    continue
+                seen.add(key)
+                out.append({"title": title, "snippet": snippet})
+                if len(out) >= cap:
+                    break
+    return out
+
+
+def _hidden_block(items: list[dict]) -> str:
+    if not items:
+        return "(none)"
+    return "\n".join(
+        (f"- {n['title'][:140]} — {n['snippet'][:220]}" if n.get("snippet") else f"- {n['title'][:140]}")
+        for n in items)
+
+
 def build_newspaper_report(db, trace_id: str) -> dict:
     """Build the daily per-newspaper news report — same price table as Kiwoom +
     per-outlet news analysis + a BUY/HOLD/SELL recommendation, bilingual EN/KO."""
     rows, table_en, table_ko, rate = _kr.gather_priced_rows()
     ok_rows = [r for r in rows if r.get("ok")]
     grouped = _gather_news_by_source()
+    hidden = _gather_hidden()
     catalysts = _cat.gather_catalysts()
     total_news = sum(len(v) for v in grouped.values())
     from services.kst import kst_date as _kst_date
@@ -165,7 +211,11 @@ def build_newspaper_report(db, trace_id: str) -> dict:
             "the SPECIFIC news (from the newspapers above) to its real change%, then "
             "add the technical read (price vs MA5/MA20/MA60, volume) and a forward "
             "view. Be SPECIFIC per name — never reuse a generic line like 'affected "
-            "by the broader sector' for multiple companies.\n"
+            "by the broader sector' for multiple companies. You MAY also draw on the "
+            "ADDITIONAL UNATTRIBUTED MARKET DATA here — but NEVER name its source.\n"
+            "- IMPORTANT: ONLY the named newspapers above get a '### ' section in "
+            "Section 2. The ADDITIONAL UNATTRIBUTED MARKET DATA must NOT get a section "
+            "and its source must NEVER be named anywhere in the report.\n"
             f"- Section 4 (Catalysts & Schedule / 일정매매): {_cat.CATALYST_SECTION_RULE}\n"
             "- Section 5 (Recommendations): FIRST a Markdown table | Stock | Action | "
             "Reason | with Action = BUY / HOLD / SELL; THEN a '### Rationale' "
@@ -181,6 +231,9 @@ def build_newspaper_report(db, trace_id: str) -> dict:
         user = (f"Date (KST): {kst_date} · USD/KRW: {rate:,.0f}\n\n"
                 f"PRICE CONTEXT (for your analysis only — do NOT print a table):\n{_kr._facts(rows)}\n\n"
                 f"NEWS BY NEWSPAPER:\n{_news_block_by_source(grouped)}\n\n"
+                f"ADDITIONAL UNATTRIBUTED MARKET DATA (use ONLY in Section 3 Company "
+                f"Analysis and Section 5 Recommendations — do NOT name the source and "
+                f"do NOT give it a '### ' section):\n{_hidden_block(hidden)}\n\n"
                 f"CATALYST / EVENT DATA (for Section 4):\n{_cat.catalyst_block(catalysts)}")
         out = chat_completion_sync(
             system_prompt=sysmsg, messages=[{"role": "user", "content": user[:26000]}],
