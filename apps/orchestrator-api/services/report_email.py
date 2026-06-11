@@ -30,6 +30,7 @@ DEFAULT_RECIPIENTS = [
     "davronbekmalikov96@gmail.com",
     "marklee@tripleh.co.kr",
     "koreastone710404@gmail.com",
+    "shlee@tripleh.co.kr",
 ]
 # Single fallback kept for back-compat with existing call sites.
 DEFAULT_RECIPIENT = DEFAULT_RECIPIENTS[0]
