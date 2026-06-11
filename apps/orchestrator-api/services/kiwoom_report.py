@@ -85,8 +85,9 @@ def _fetch_daily(spec: dict) -> dict:
     after-hours figure), we drop any candle dated today (KST) — that session may
     still be forming/unsettled — and use the most recent prior, settled session."""
     import time as _t
-    from services.kst import kst_date as _kst_date
+    from services.kst import kst_date as _kst_date, kst_now
     today = _kst_date()
+    kst_hour = kst_now().hour
     row = {**spec, "open": None, "close": None, "high": None, "low": None,
            "volume": None, "change_pct": None, "ok": False}
     for attempt in range(3):
@@ -95,13 +96,16 @@ def _fetch_daily(spec: dict) -> dict:
                 r = c.get(f"{_BACKEND}/intraday/daily-chart",
                           params={"ticker": spec["t"], "days": 20})
             candles = (r.json() or {}).get("candles") or [] if r.status_code == 200 else []
-            # Use the latest FULLY-SETTLED session that actually has a finalized
-            # close: drop today's candle (still forming) AND any candle whose close
-            # is null/None (the backend sometimes returns an incomplete latest
-            # candle, e.g. US tickers with close=None — that was leaving blank rows).
+            # Use the latest candle that has a real (non-null) finalized close.
+            # Today's candle is only PROVISIONAL while the KR market is still
+            # trading (before ~16:00 KST) — drop it then so we don't show an
+            # intraday price. After the close (or a pre-open morning run, when no
+            # today candle exists yet), today's settled close IS used.
             valid = [c for c in candles if c.get("close") is not None]
-            settled = [c for c in valid if (c.get("date") or "0000-00-00") < today]
-            candles = settled or valid or candles
+            if kst_hour < 16:
+                pre = [c for c in valid if (c.get("date") or "0000-00-00") < today]
+                valid = pre or valid
+            candles = valid or candles
             if candles:
                 last = candles[-1]
                 prev_close = candles[-2].get("close") if len(candles) >= 2 else None
