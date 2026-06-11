@@ -15,6 +15,7 @@ report_type='newspaper_report' (period='daily'); also Telegram + Word email.
 
 from __future__ import annotations
 
+import re
 from datetime import datetime
 
 from services.logger import log
@@ -174,6 +175,17 @@ def _gather_hidden(per_query: int = 10, cap: int = 14) -> list[dict]:
     return out
 
 
+def _split_enko(out: str) -> tuple[str, str]:
+    """Split an LLM response on ===EN=== / ===KO=== markers → (en, ko)."""
+    out = (out or "").strip()
+    if (not out) or out.lstrip().startswith(("[LLM unavailable]", "[server error]")):
+        return "", ""
+    if "===KO===" in out:
+        a, b = out.split("===KO===", 1)
+        return a.replace("===EN===", "").strip(), b.strip()
+    return out.replace("===EN===", "").strip(), ""
+
+
 def _hidden_block(items: list[dict]) -> str:
     if not items:
         return "(none)"
@@ -206,94 +218,116 @@ def build_newspaper_report(db, trace_id: str) -> dict:
                  f"최강 {movers[-1]['ko']} {_kr._fmt_chg(movers[-1]['change_pct'])}."
                  if movers else "데이터 제한."))
 
-    papers_list = ", ".join(p["name"] for p in NEWSPAPERS)
+    # Fetch stats (how much real full text we got per outlet) — for verification.
+    fetch_stats = {name: {"n": len(arts),
+                          "full": sum(1 for a in arts if a.get("full")),
+                          "chars": sum(len(a.get("text", "") or "") for a in arts)}
+                   for name, arts in grouped.items()}
+
+    _WATCHLIST = ("SK Hynix, Samsung Electronics, Naver, SK Telecom, Samsung SDS, "
+                  "AMD, Micron, Broadcom, SanDisk, SOXX, KODEX 200")
     detail_en = detail_ko = ""
     try:
         from services.llm_client import chat_completion_sync
-        sysmsg = (
-            "You are TripleH's market-news analyst writing the DAILY NEWSPAPER "
-            "report after the US close (~7:00 AM KST). You read a fixed set of "
-            f"financial newspapers ({papers_list}) and tie their reporting to the "
-            "price action of the watchlist. Use ONLY the provided data + news — "
-            "NEVER invent quotes or numbers. ALL prices are Korean Won (KRW). "
-            "Produce this EXACT structure (do NOT include a price/market-data table — "
-            "the price table lives only in the Kiwoom report):\n"
-            "## 1. General Overview\n## 2. News by Newspaper\n"
-            "## 3. Company-Specific Analysis\n## 4. Catalysts & Schedule (일정매매)\n"
-            "## 5. Recommendations\n\n"
-            "All material provided was published in the LAST 24 HOURS. Cover ALL of "
-            "it that can MOVE STOCK PRICES — direct stock/market news AND market-moving "
-            "POLITICS/policy (Trump, tariffs, Iran, Fed, elections), macro (FX, rates), "
-            "sector, and the watchlist.\n"
-            "Rules:\n"
-            "- Section 2 (News by Newspaper) — the CORE, longest section. For EACH "
-            "newspaper a '### <Newspaper Name>' sub-heading. DEPTH DEPENDS ON THE DATA:\n"
-            "  • Outlets whose items are marked [FULL ARTICLE] — you have the full "
-            "text. Write a DEEP 3-4 PAGE analysis (700-1000 words) per such outlet: "
-            "synthesise every price-relevant article (stock + political + macro), cite "
-            "concrete facts/figures from the BODY text, and explain the price impact in "
-            "flowing analytical prose (not a headline list).\n"
-            "  • Outlets whose items are marked [HEADLINE] (Bloomberg, WSJ — paywalled, "
-            "headline+summary only) — write a HONEST ~½ PAGE (150-200 words) from the "
-            "headlines/summaries only. Do NOT fabricate article detail you don't have.\n"
-            "  • If an outlet has no items, write 'No fresh items in the last 24 hours.'\n"
-            "  Use ONLY the provided text; NEVER invent quotes or numbers.\n"
-            "- Section 3 (Company-Specific Analysis) — a DEDICATED paragraph of 4-6 "
-            "sentences for EACH name (SK Hynix, Samsung, AMD, Micron, Broadcom, "
-            "SanDisk, SOXX, SK Telecom, Samsung SDS, Naver, KODEX 200). For each: tie "
-            "the SPECIFIC news (from the newspapers above) to its real change%, then "
-            "add the technical read (price vs MA5/MA20/MA60, volume) and a forward "
-            "view. Be SPECIFIC per name — never reuse a generic line like 'affected "
-            "by the broader sector' for multiple companies. You MAY also draw on the "
-            "ADDITIONAL UNATTRIBUTED MARKET DATA here — but NEVER name its source.\n"
-            "- IMPORTANT: ONLY the named newspapers above get a '### ' section in "
-            "Section 2. The ADDITIONAL UNATTRIBUTED MARKET DATA must NOT get a section "
-            "and its source must NEVER be named anywhere in the report.\n"
-            f"- Section 4 (Catalysts & Schedule / 일정매매): {_cat.CATALYST_SECTION_RULE}\n"
-            "- Section 5 (Recommendations): FIRST a Markdown table | Stock | Action | "
-            "Reason | with Action = BUY / HOLD / SELL; THEN a '### Rationale' "
-            "subsection with a paragraph per recommendation. TIE each call to a "
-            "CATALYST and TIMING where possible (event-driven / 일정매매 — e.g. 'BUY "
-            "before <event/date>, sell into the attention') grounded in the news + "
-            "price/technicals.\n"
-            "Be specific, cite the newspapers by name. This is a LONG report — the "
-            "full-text Korean outlets each get 3-4 pages, so Section 2 alone is very "
-            "long (4000+ words). Never truncate a section.\n"
-            "Output ONLY the finished English Markdown report — no preamble."
-        )
-        user = (f"Date (KST): {kst_date} · USD/KRW: {rate:,.0f}\n\n"
-                f"PRICE CONTEXT (for your analysis only — do NOT print a table):\n{_kr._facts(rows)}\n\n"
-                f"NEWS BY NEWSPAPER:\n{_news_block_by_source(grouped)}\n\n"
-                f"ADDITIONAL UNATTRIBUTED MARKET DATA (use ONLY in Section 3 Company "
-                f"Analysis and Section 5 Recommendations — do NOT name the source and "
-                f"do NOT give it a '### ' section):\n{_hidden_block(hidden)}\n\n"
-                f"CATALYST / EVENT DATA (for Section 4):\n{_cat.catalyst_block(catalysts)}")
-        out = chat_completion_sync(
-            system_prompt=sysmsg, messages=[{"role": "user", "content": user[:60000]}],
-            max_tokens=16000, temperature=0.5, model="groq-llama-3.3-70b") or ""
-        bad = (not out.strip()) or out.lstrip().startswith(("[LLM unavailable]", "[server error]"))
-        if not bad:
-            detail_en = out.strip()
+        import time as _t
+
+        # ---- 1) Per-outlet sections (each its OWN call → guaranteed depth) ----
+        sec_en: dict[str, str] = {}
+        sec_ko: dict[str, str] = {}
+        for paper in NEWSPAPERS:
+            name = paper["name"]
+            arts = grouped.get(name, [])
+            paid = name in ("Bloomberg", "The Wall Street Journal")
+            if not arts:
+                sec_en[name] = f"### {name}\nNo fresh items in the last 24 hours."
+                sec_ko[name] = f"### {name}\n지난 24시간 내 신규 기사가 없습니다."
+                continue
+            has_full = any(a.get("full") for a in arts)
+            corpus = "\n\n".join(
+                f"[{'FULL ARTICLE' if a.get('full') else 'HEADLINE/SUMMARY'}] {a.get('title','')}\n{(a.get('text') or '')[:3000]}"
+                for a in arts)
+            if paid or not has_full:
+                length = "150-220 words (about half a page)"
+                note = ("These are paywalled HEADLINE/SUMMARY only — analyse what is "
+                        "there, do NOT fabricate article detail you don't have.")
+            else:
+                length = "700-1100 words (a deep 3-4 page analysis)"
+                note = ("[FULL ARTICLE] items give you the full body — read it and cite "
+                        "concrete facts/figures.")
+            sysd = (
+                "You are TripleH's market-news analyst. Below are articles from ONE "
+                f"newspaper — {name} — published in the LAST 24 HOURS. Write {length} "
+                "covering EVERYTHING that can move stock prices: direct stock/market "
+                "news, market-moving POLITICS/policy (Trump, tariffs, Iran, Fed, "
+                "elections), macro (FX, rates), the semiconductor sector, and the "
+                f"watchlist ({_WATCHLIST}). Flowing analytical prose — explain the price "
+                f"impact, not a headline list. {note} Use ONLY the provided text; NEVER "
+                f"invent quotes or numbers. Begin with the heading '### {name}'. "
+                "Output EXACTLY:\n===EN===\n<english>\n===KO===\n<korean 존댓말, same depth>")
             try:
-                ko_sys = (
-                    "You are a professional Korean financial translator. Translate the "
-                    "ENTIRE English newspaper report into natural, professional Korean "
-                    "(존댓말). Translate EVERYTHING — never summarise or stub. Preserve "
-                    "ALL Markdown, headings and sub-headings; keep every number, %, 원, "
-                    "ticker and newspaper name IDENTICAL. Output ONLY the Korean Markdown.")
-                ko_out = chat_completion_sync(
-                    system_prompt=ko_sys,
-                    messages=[{"role": "user", "content": detail_en[:45000]}],
-                    max_tokens=16000, temperature=0.3, model="groq-llama-3.3-70b") or ""
-                ko_bad = ((not ko_out.strip())
-                          or ko_out.lstrip().startswith(("[LLM unavailable]", "[server error]"))
-                          or len(ko_out.strip()) < 400)
-                if not ko_bad:
-                    detail_ko = ko_out.strip()
+                out = chat_completion_sync(
+                    system_prompt=sysd, messages=[{"role": "user", "content": corpus[:20000]}],
+                    max_tokens=7000, temperature=0.45, model="groq-llama-3.3-70b") or ""
+                en, ko = _split_enko(out)
+                sec_en[name] = en or (f"### {name}\n" + "\n".join(f"- {a.get('title','')}" for a in arts))
+                sec_ko[name] = ko or sec_en[name]
             except Exception as e:
-                log.warning(f"newspaper KO translation failed: {e}")
+                log.warning(f"newspaper outlet {name} failed: {str(e)[:100]}")
+                sec_en[name] = f"### {name}\n" + "\n".join(f"- {a.get('title','')}" for a in arts)
+                sec_ko[name] = sec_en[name]
+            _t.sleep(0.5)
+
+        news_en = "\n\n".join(sec_en[p["name"]] for p in NEWSPAPERS)
+        news_ko = "\n\n".join(sec_ko[p["name"]] for p in NEWSPAPERS)
+
+        # ---- 2) Synthesis: Overview + Company + Catalysts + Recommendations ----
+        digest = "\n\n".join(f"[{p['name']}] " + (sec_en.get(p["name"], "")[:650]) for p in NEWSPAPERS)
+        ssys = (
+            "You are TripleH's chief market analyst. Using the per-newspaper summaries "
+            "+ price data + catalyst data below, write these sections (do NOT write a "
+            "'News by Newspaper' section — it is added separately; do NOT print a price "
+            "table). ALL prices are KRW. Sections:\n"
+            "## 1. General Overview\n## 3. Company-Specific Analysis\n"
+            "## 4. Catalysts & Schedule (일정매매)\n## 5. Recommendations\n\n"
+            "- Section 1: 2-3 paragraph consensus read of the last 24h across the "
+            "newspapers (stock + market-moving politics + macro).\n"
+            "- Section 3 (Company-Specific): a dedicated 4-6 sentence paragraph for EACH "
+            f"name ({_WATCHLIST}) tying the news to its real change% + the technical read "
+            "(price vs MA5/MA20/MA60, volume). You MAY use the UNATTRIBUTED data here but "
+            "NEVER name its source.\n"
+            f"- Section 4 (Catalysts & Schedule / 일정매매): {_cat.CATALYST_SECTION_RULE}\n"
+            "- Section 5 (Recommendations): a table | Stock | Action | Reason | (BUY/HOLD/"
+            "SELL); THEN '### Rationale' tying each to a catalyst + timing.\n"
+            "Use ONLY provided data; never invent. Output EXACTLY:\n===EN===\n<english>\n"
+            "===KO===\n<korean 존댓말>")
+        suser = (f"TODAY (KST): {kst_date} · USD/KRW: {rate:,.0f}\n\n"
+                 f"PRICE CONTEXT (do NOT print a table):\n{_kr._facts(rows)}\n\n"
+                 f"PER-NEWSPAPER SUMMARIES:\n{digest}\n\n"
+                 f"UNATTRIBUTED MARKET DATA (use, NEVER name):\n{_hidden_block(hidden)}\n\n"
+                 f"CATALYST DATA:\n{_cat.catalyst_block(catalysts)}")
+        syn_en = syn_ko = ""
+        try:
+            out = chat_completion_sync(
+                system_prompt=ssys, messages=[{"role": "user", "content": suser[:22000]}],
+                max_tokens=9000, temperature=0.45, model="groq-llama-3.3-70b") or ""
+            syn_en, syn_ko = _split_enko(out)
+        except Exception as e:
+            log.warning(f"newspaper synthesis failed: {str(e)[:100]}")
+
+        # ---- 3) Assemble: overview → News by Newspaper → rest ----
+        def _assemble(syn: str, news: str) -> str:
+            syn = syn or ""
+            parts = re.split(r"(?=##\s*3\.)", syn, maxsplit=1)
+            overview = parts[0].strip() if parts else ""
+            rest = parts[1].strip() if len(parts) > 1 else ""
+            return (f"# Newspaper Market Analysis\n*{kst_date} (last 24h)*\n\n"
+                    f"{overview}\n\n## 2. News by Newspaper\n{news}\n\n{rest}").strip()
+
+        if news_en.strip() and syn_en.strip():
+            detail_en = _assemble(syn_en, news_en)
+            detail_ko = _assemble(syn_ko or syn_en, news_ko or news_en)
     except Exception as e:
-        log.warning(f"newspaper LLM compose failed: {e}")
+        log.warning(f"newspaper compose failed: {e}")
 
     if not detail_en:
         src_lines = []
@@ -323,6 +357,7 @@ def build_newspaper_report(db, trace_id: str) -> dict:
         "rows": rows,
         "news_sources": sources_flat[:50],
         "newspapers": [p["name"] for p in NEWSPAPERS],
+        "fetch_stats": fetch_stats,
         "source": "TripleH Newspaper Analysis (last-24h full-text: 매일경제·한국경제·머니투데이·SBS Biz; "
                   "headlines: Bloomberg·WSJ + OHLCV)",
     }
