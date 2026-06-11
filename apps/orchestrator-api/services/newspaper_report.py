@@ -83,6 +83,18 @@ def _recency_search(site: str, kr: bool, per_query: int = 10) -> list[dict]:
     return out
 
 
+def _domain_ok(url: str, site: str) -> bool:
+    """True only if the URL belongs to the outlet's own domain — so every
+    reference link is from that newspaper, never an external site."""
+    try:
+        from urllib.parse import urlparse
+        host = urlparse(url).netloc.lower().lstrip("www.")
+        base = (site or "").lower().split("/")[0].lstrip("www.")
+        return bool(base) and (host == base or host.endswith("." + base) or host.endswith(base))
+    except Exception:
+        return False
+
+
 def _gather_news_by_source(cap_kr: int = 7, cap_paid: int = 8) -> dict[str, list[dict]]:
     """Collect last-24h articles per outlet.
       - Korean (free) outlets: RSS list (timestamped) + FULL article text
@@ -96,9 +108,13 @@ def _gather_news_by_source(cap_kr: int = 7, cap_paid: int = 8) -> dict[str, list
         paid = name in ("Bloomberg", "The Wall Street Journal")
         arts: list[dict] = []
         if paid:
-            for h in _recency_search(site, kr, per_query=cap_paid + 2)[:cap_paid]:
+            for h in _recency_search(site, kr, per_query=cap_paid + 4):
+                if not _domain_ok(h.get("url", ""), site):
+                    continue  # only this outlet's own domain
                 arts.append({"title": h["title"], "url": h["url"], "text": h["snippet"],
                              "full": False, "paid": True, "pub": None})
+                if len(arts) >= cap_paid:
+                    break
         else:
             # Korean free outlet — RSS list (last 24h), with search fallback.
             items = news_fetch.rss_items(name, hours=24, cap=cap_kr + 6)
@@ -108,8 +124,8 @@ def _gather_news_by_source(cap_kr: int = 7, cap_paid: int = 8) -> dict[str, list
             seen: set[str] = set()
             for it in items:
                 u = it.get("url", "")
-                if not u or u in seen:
-                    continue
+                if not u or u in seen or not _domain_ok(u, site):
+                    continue  # only this outlet's own domain
                 seen.add(u)
                 picked.append(it)
                 if len(picked) >= cap_kr:
@@ -277,7 +293,9 @@ def build_newspaper_report(db, trace_id: str) -> dict:
                 "elections), macro (FX, rates), the semiconductor sector, and the "
                 f"watchlist ({_WATCHLIST}). Flowing analytical prose — explain the price "
                 f"impact, not a headline list. {note} Use ONLY the provided text; NEVER "
-                f"invent quotes or numbers. Begin with the heading '### {name}'. "
+                f"invent quotes or numbers. Do NOT put any URLs or hyperlinks in your "
+                "analysis text (a verified source-link list is appended separately). "
+                f"Begin with the heading '### {name}'. "
                 "Output EXACTLY:\n===EN===\n<english>\n===KO===\n<korean 존댓말, same depth>")
             try:
                 out = chat_completion_sync(
