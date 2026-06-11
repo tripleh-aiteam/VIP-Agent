@@ -116,6 +116,24 @@ def trigger_master_report(email: Optional[str] = Query(None, description="Option
             "message": "Master report running in background. Check Reports in ~40s."}
 
 
+@router.post("/compose/all", dependencies=[Depends(rate_limit_compose)])
+def trigger_all_reports(email: Optional[str] = Query(None, description="Optional single recipient (allowlisted) for a test; omit to email the full recipient list."), db: Session = Depends(get_db)):
+    """On-demand 'Generate Now': build ALL 4 reports with the freshest data and
+    email the consolidated set to every recipient. Runs in the background
+    (~8-12 min). Used by the Reports page button."""
+    if email:
+        if email.strip().lower() not in _allowed_report_recipients():
+            raise HTTPException(403, "recipient not allowed — add it to REPORT_ALLOWED_RECIPIENTS env")
+        email = email.strip()
+    from services.scheduler_service import run_all_reports_now
+    import threading
+    threading.Thread(target=lambda: run_all_reports_now(email_override=email), daemon=True).start()
+    return {"triggered": True,
+            "email": email or "(all recipients)",
+            "message": "Generating all 4 reports with current data — the consolidated email "
+                       "will arrive in ~8-12 minutes."}
+
+
 @router.get("/email-config")
 def email_config():
     """Diagnostic health-check for the report email sender — BOOLEANS ONLY, and

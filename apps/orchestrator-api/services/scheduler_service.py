@@ -1059,6 +1059,27 @@ def _master_daily_report(email_override: str | None = None, period: str = "daily
         db.close()
 
 
+def run_all_reports_now(email_override: str | None = None):
+    """On-demand: generate ALL 4 reports with the freshest data RIGHT NOW, then
+    the master sends the consolidated email. Runs the sources first (so the master
+    reads fresh ones), then the master. Used by the 'Generate Now' button.
+    `email_override` (optional) sends only to that address (test); otherwise the
+    master emails the full recipient list."""
+    log.info("run-all: on-demand generation started", extra={"action": "runall.start"})
+    for fn, label in ((_kiwoom_daily_report, "kiwoom"),
+                      (_newspaper_daily_report, "newspaper"),
+                      (_youtube_daily_report, "youtube")):
+        try:
+            fn()  # sources save to dashboard (individual email stays off)
+        except Exception as e:
+            log.warning(f"run-all: {label} failed: {str(e)[:120]}", extra={"action": "runall.src.failed"})
+    try:
+        _master_daily_report(email_override=email_override)  # emails the consolidated 4-file
+    except Exception as e:
+        log.warning(f"run-all: master failed: {str(e)[:120]}", extra={"action": "runall.master.failed"})
+    log.info("run-all: on-demand generation done", extra={"action": "runall.done"})
+
+
 def init_scheduler():
     """Initialize the scheduler and load enabled rules from DB."""
     global _scheduler

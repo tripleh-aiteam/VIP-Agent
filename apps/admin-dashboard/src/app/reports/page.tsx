@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useRef } from "react";
 import { useSearchParams } from "next/navigation";
-import { api } from "@/components/api";
+import { api, apiPost } from "@/components/api";
 import Badge from "@/components/Badge";
 import { API } from "@/components/api";
 import MarkdownLite from "@/components/MarkdownLite";
@@ -84,6 +84,22 @@ export default function ReportsPage() {
   const [source, setSource] = useState<string>(initialSource);   // Agents / Kiwoom / Newspaper / YouTube
   const [period, setPeriod] = useState<string>("daily");          // daily / weekly / monthly / cross / alert
   const [agent, setAgent] = useState<string>("all");              // within Agents: all / asset / stock / realty
+  const [gen, setGen] = useState<{ busy: boolean; msg: string }>({ busy: false, msg: "" });
+
+  const generateNow = async () => {
+    if (gen.busy) return;
+    if (!window.confirm(
+      "지금 4개 리포트(키움·신문·유튜브·추천)를 최신 데이터로 생성하고 모든 수신자에게 이메일을 전송합니다.\n계속하시겠습니까? (약 8~12분 소요)\n\nGenerate all 4 reports with current data and email ALL recipients? (~8-12 min)"
+    )) return;
+    setGen({ busy: true, msg: "생성 중… 8~12분 후 이메일이 전송됩니다 (generating…)" });
+    try {
+      await apiPost("/reports/compose/all");
+      setGen({ busy: true, msg: "✅ 생성 시작됨 — 완료되면 모든 수신자에게 이메일 전송 (~8-12 min)" });
+      setTimeout(() => setGen({ busy: false, msg: "" }), 60000);
+    } catch (e: any) {
+      setGen({ busy: false, msg: "❌ " + (e?.message || "failed") });
+    }
+  };
   const [copied, setCopied] = useState(false);
   const [dlOpen, setDlOpen] = useState(false);
   const [lang, setLang] = useState<"en" | "ko">("en");
@@ -330,9 +346,20 @@ td{padding:8px 12px;border:1px solid #e2e8f0;font-size:10pt}
           <h1 className="text-[28px] font-semibold tracking-tight mb-1">Reports</h1>
           <p className="text-sm text-[var(--text-muted)]">Executive summaries and alerts</p>
         </div>
-        <div className="flex items-center gap-2 text-[12px] text-[var(--text-muted)]">
-          <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
-          Generated automatically
+        <div className="flex flex-col items-end gap-1">
+          <button
+            onClick={generateNow}
+            disabled={gen.busy}
+            title="지금 4개 리포트를 생성하고 모든 수신자에게 이메일 전송"
+            className="inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold bg-[var(--brand-blue)] text-white shadow-sm hover:opacity-90 disabled:opacity-60 transition">
+            {gen.busy
+              ? <span className="w-3.5 h-3.5 rounded-full border-2 border-white/40 border-t-white animate-spin" />
+              : <span>⚡</span>}
+            {gen.busy ? "생성 중…" : "지금 리포트 생성 & 전송"}
+          </button>
+          {gen.msg
+            ? <span className="text-[11px] text-[var(--text-muted)] max-w-[280px] text-right">{gen.msg}</span>
+            : <span className="text-[11px] text-[var(--text-muted)]">Auto Report Generator · 매일 06:50 자동 전송</span>}
         </div>
       </div>
 
