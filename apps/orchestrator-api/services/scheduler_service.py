@@ -1115,6 +1115,12 @@ def _single_agent_report(agent_type: str):
         db.close()
 
 
+def _master_daily_all():
+    """Scheduled 6:50 AM KST consolidated email — ALWAYS to the full recipient
+    list (default_recipients / REPORT_RECIPIENTS), never a single test address."""
+    _master_daily_report(email_override="*ALL*")
+
+
 def run_all_reports_now(email_override: str | None = None):
     """On-demand: generate ALL 4 reports with the freshest data RIGHT NOW, then
     the master sends the consolidated email. Runs the sources first (so the master
@@ -1235,7 +1241,7 @@ def init_scheduler():
 
     # Master synthesis report — 6:50 AM KST = 21:50 UTC, weekdays (after the 3).
     _scheduler.add_job(
-        _master_daily_report,
+        _master_daily_all,   # forces the full recipient list (ignores any single-address test env)
         CronTrigger.from_crontab("50 21 * * 0-4"),
         id="master-daily-report",
         replace_existing=True,
