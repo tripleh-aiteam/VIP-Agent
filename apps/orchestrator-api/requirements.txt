@@ -22,3 +22,6 @@ defusedxml>=0.7.1
 
 # YouTube transcript fetching for the youtube_report (no API key needed)
 youtube-transcript-api>=0.6.2
+
+# Full article-text extraction for the deep newspaper report
+trafilatura>=1.8.0

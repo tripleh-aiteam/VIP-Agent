@@ -31,16 +31,19 @@ def _gemini_key() -> str | None:
     )
 
 
-def _serper(query: str, n: int) -> list[dict[str, Any]]:
+def _serper(query: str, n: int, recency: str | None = None) -> list[dict[str, Any]]:
     import httpx
     key = os.environ.get("SERPER_API_KEY")
     if not key:
         return []
+    body: dict[str, Any] = {"q": query, "num": n}
+    if recency:  # 'd' = past day, 'w' = past week, 'h' = past hour
+        body["tbs"] = f"qdr:{recency}"
     with httpx.Client(timeout=12.0) as c:
         r = c.post(
             "https://google.serper.dev/search",
             headers={"X-API-KEY": key, "Content-Type": "application/json"},
-            json={"q": query, "num": n},
+            json=body,
         )
         r.raise_for_status()
         data = r.json()
@@ -197,10 +200,9 @@ def _gemini_grounded(query: str, n: int) -> list[dict[str, Any]]:
     return []
 
 
-def search_web(query: str, num_results: int = 5) -> dict[str, Any]:
+def search_web(query: str, num_results: int = 5, recency: str | None = None) -> dict[str, Any]:
     """Run a live web search. Returns {ok, provider, results:[{title,url,snippet}]}.
-    Never raises — returns ok:false with a reason if no provider is configured
-    or the call fails."""
+    `recency`: 'd' = past day, 'w' = past week (Serper only). Never raises."""
     query = (query or "").strip()
     if not query:
         return {"ok": False, "error": "empty query", "results": []}
@@ -213,7 +215,7 @@ def search_web(query: str, num_results: int = 5) -> dict[str, Any]:
         ("gemini_grounded", _gemini_grounded),
     ):
         try:
-            hits = fn(query, n)
+            hits = fn(query, n, recency) if name == "serper" else fn(query, n)
         except Exception as e:
             msg = f"{name}: {str(e)[:160]}"
             errors.append(msg)

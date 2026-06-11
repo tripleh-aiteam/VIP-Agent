@@ -58,56 +58,87 @@ def _queries_for(paper: dict) -> list[str]:
     ]
 
 
-def _gather_news_by_source(per_query: int = 10, cap_per_source: int = 12) -> dict[str, list[dict]]:
-    """For each newspaper, run its queries and collect up to `cap_per_source`
-    deduped articles. Returns {newspaper_name: [{title,url,snippet}]}."""
+def _recency_search(site: str, kr: bool, per_query: int = 10) -> list[dict]:
+    """Last-24h site-scoped search → [{title,url,snippet}]."""
     try:
         from services.web_search import search_web
+    except Exception:
+        return []
+    kw = (_KR_KEYWORDS + " OR 정책 OR 트럼프 OR 금리 OR 환율") if kr else \
+         (_US_KEYWORDS + " OR Fed OR tariff OR Trump OR Iran OR policy")
+    out: list[dict] = []
+    seen: set[str] = set()
+    try:
+        res = search_web(f"site:{site} ({kw})", num_results=per_query, recency="d")
+        for h in (res.get("results") or []):
+            t = (h.get("title") or "").strip()
+            key = t[:80].lower()
+            if not t or key in seen:
+                continue
+            seen.add(key)
+            out.append({"title": t, "url": h.get("url", ""), "snippet": (h.get("snippet") or "").strip()})
     except Exception as e:
-        log.warning(f"newspaper: web_search import failed: {e}")
-        return {p["name"]: [] for p in NEWSPAPERS}
+        log.warning(f"newspaper: recency search {site} failed: {str(e)[:80]}")
+    return out
 
+
+def _gather_news_by_source(cap_kr: int = 7, cap_paid: int = 8) -> dict[str, list[dict]]:
+    """Collect last-24h articles per outlet.
+      - Korean (free) outlets: RSS list (timestamped) + FULL article text
+        (trafilatura); paywalled premium → its RSS summary.
+      - Paid (WSJ/Bloomberg): last-24h headlines + free snippets only (no body).
+    Returns {name: [{title,url,text,full,paid}]}."""
+    from services import news_fetch
     grouped: dict[str, list[dict]] = {}
     for paper in NEWSPAPERS:
-        hits: list[dict] = []
-        seen: set[str] = set()
-        for q in _queries_for(paper):
-            if len(hits) >= cap_per_source:
-                break
-            try:
-                res = search_web(q, num_results=per_query)
-            except Exception as e:
-                log.warning(f"newspaper: search {paper['site']} failed: {e}")
-                continue
-            if not res.get("ok"):
-                continue
-            for h in res.get("results", []):
-                title = (h.get("title") or "").strip()
-                snippet = (h.get("snippet") or "").strip()
-                key = (title or snippet)[:80].lower()
-                if not key or key in seen:
+        name, site, kr = paper["name"], paper["site"], paper["region"] == "KR"
+        paid = name in ("Bloomberg", "The Wall Street Journal")
+        arts: list[dict] = []
+        if paid:
+            for h in _recency_search(site, kr, per_query=cap_paid + 2)[:cap_paid]:
+                arts.append({"title": h["title"], "url": h["url"], "text": h["snippet"],
+                             "full": False, "paid": True})
+        else:
+            # Korean free outlet — RSS list (last 24h), with search fallback.
+            items = news_fetch.rss_items(name, hours=24, cap=cap_kr + 6)
+            if len(items) < 4:
+                items += _recency_search(site, kr, per_query=10)
+            picked: list[dict] = []
+            seen: set[str] = set()
+            for it in items:
+                u = it.get("url", "")
+                if not u or u in seen:
                     continue
-                seen.add(key)
-                hits.append({"title": title, "url": h.get("url", ""), "snippet": snippet})
-                if len(hits) >= cap_per_source:
+                seen.add(u)
+                picked.append(it)
+                if len(picked) >= cap_kr:
                     break
-        grouped[paper["name"]] = hits
+            for it in picked:
+                body = news_fetch.fetch_fulltext(it["url"], max_chars=3000)
+                arts.append({"title": it.get("title", ""), "url": it.get("url", ""),
+                             "text": body or it.get("summary", ""),
+                             "full": bool(body), "paid": False})
+        grouped[name] = arts
     return grouped
 
 
 def _news_block_by_source(grouped: dict[str, list[dict]]) -> str:
-    """Per-newspaper text block for the LLM, grouped under each outlet name."""
+    """Per-newspaper corpus for the LLM. Korean outlets carry FULL article text;
+    paid outlets carry HEADLINE+summary only."""
     parts = []
     for paper in NEWSPAPERS:
-        items = grouped.get(paper["name"], [])
-        parts.append(f"### {paper['name']} ({paper['region']})")
+        name = paper["name"]
+        items = grouped.get(name, [])
+        parts.append(f"### {name} ({paper['region']})")
         if not items:
-            parts.append("(no fresh items returned for this source)")
+            parts.append("(no fresh items in the last 24 hours)")
         else:
             for n in items:
-                t = n["title"][:140]
-                s = n["snippet"][:240]
-                parts.append(f"- {t} — {s}" if s else f"- {t}")
+                tag = "FULL ARTICLE" if n.get("full") else ("HEADLINE" if n.get("paid") else "SUMMARY")
+                t = (n.get("title") or "")[:170]
+                body = (n.get("text") or "")[:2600]
+                parts.append(f"[{tag}] {t}\n{body}" if body else f"[{tag}] {t}")
+        parts.append("")
     return "\n".join(parts)
 
 
@@ -190,21 +221,23 @@ def build_newspaper_report(db, trace_id: str) -> dict:
             "## 1. General Overview\n## 2. News by Newspaper\n"
             "## 3. Company-Specific Analysis\n## 4. Catalysts & Schedule (일정매매)\n"
             "## 5. Recommendations\n\n"
+            "All material provided was published in the LAST 24 HOURS. Cover ALL of "
+            "it that can MOVE STOCK PRICES — direct stock/market news AND market-moving "
+            "POLITICS/policy (Trump, tariffs, Iran, Fed, elections), macro (FX, rates), "
+            "sector, and the watchlist.\n"
             "Rules:\n"
             "- Section 2 (News by Newspaper) — the CORE, longest section. For EACH "
-            "newspaper a '### <Newspaper Name>' sub-heading with a DEEP-DIVE of "
-            "300-380 words (4-5 FULL paragraphs) per outlet. Write flowing ANALYTICAL "
-            "prose — do NOT write a flat list of 'the newspaper also reported X; also "
-            "reported Y'. Vary the sentence structure. For each outlet cover, in "
-            "separate paragraphs: (1) its MARKET / MACRO framing (indices, FX, rates, "
-            "policy, foreign-investor flows) and what it implies; (2) its SECTOR view "
-            "(semiconductors, AI, memory super-cycle) with the figures; (3) its "
-            "COMPANY-SPECIFIC reporting on our watchlist — name each company and the "
-            "concrete numbers (PER, profit, % moves, $1T club, ADR filing, etc.); and "
-            "(4) a short SO-WHAT line on what this outlet's coverage means for an "
-            "investor. Integrate the numbers into the analysis; EXPLAIN significance, "
-            "don't just relay headlines. Use ALL provided items for that source. If a "
-            "source returned nothing, write 'No fresh items today.'\n"
+            "newspaper a '### <Newspaper Name>' sub-heading. DEPTH DEPENDS ON THE DATA:\n"
+            "  • Outlets whose items are marked [FULL ARTICLE] — you have the full "
+            "text. Write a DEEP 3-4 PAGE analysis (700-1000 words) per such outlet: "
+            "synthesise every price-relevant article (stock + political + macro), cite "
+            "concrete facts/figures from the BODY text, and explain the price impact in "
+            "flowing analytical prose (not a headline list).\n"
+            "  • Outlets whose items are marked [HEADLINE] (Bloomberg, WSJ — paywalled, "
+            "headline+summary only) — write a HONEST ~½ PAGE (150-200 words) from the "
+            "headlines/summaries only. Do NOT fabricate article detail you don't have.\n"
+            "  • If an outlet has no items, write 'No fresh items in the last 24 hours.'\n"
+            "  Use ONLY the provided text; NEVER invent quotes or numbers.\n"
             "- Section 3 (Company-Specific Analysis) — a DEDICATED paragraph of 4-6 "
             "sentences for EACH name (SK Hynix, Samsung, AMD, Micron, Broadcom, "
             "SanDisk, SOXX, SK Telecom, Samsung SDS, Naver, KODEX 200). For each: tie "
@@ -223,9 +256,9 @@ def build_newspaper_report(db, trace_id: str) -> dict:
             "CATALYST and TIMING where possible (event-driven / 일정매매 — e.g. 'BUY "
             "before <event/date>, sell into the attention') grounded in the news + "
             "price/technicals.\n"
-            "Be specific, cite the newspapers by name. The WHOLE report should be "
-            "LONG and thorough — aim for ~3200-3600 words (about 7 pages); Section 2 "
-            "(News by Newspaper) alone should be ~2200 words. Never truncate a section.\n"
+            "Be specific, cite the newspapers by name. This is a LONG report — the "
+            "full-text Korean outlets each get 3-4 pages, so Section 2 alone is very "
+            "long (4000+ words). Never truncate a section.\n"
             "Output ONLY the finished English Markdown report — no preamble."
         )
         user = (f"Date (KST): {kst_date} · USD/KRW: {rate:,.0f}\n\n"
@@ -236,8 +269,8 @@ def build_newspaper_report(db, trace_id: str) -> dict:
                 f"do NOT give it a '### ' section):\n{_hidden_block(hidden)}\n\n"
                 f"CATALYST / EVENT DATA (for Section 4):\n{_cat.catalyst_block(catalysts)}")
         out = chat_completion_sync(
-            system_prompt=sysmsg, messages=[{"role": "user", "content": user[:26000]}],
-            max_tokens=13000, temperature=0.5, model="groq-llama-3.3-70b") or ""
+            system_prompt=sysmsg, messages=[{"role": "user", "content": user[:60000]}],
+            max_tokens=16000, temperature=0.5, model="groq-llama-3.3-70b") or ""
         bad = (not out.strip()) or out.lstrip().startswith(("[LLM unavailable]", "[server error]"))
         if not bad:
             detail_en = out.strip()
@@ -246,14 +279,12 @@ def build_newspaper_report(db, trace_id: str) -> dict:
                     "You are a professional Korean financial translator. Translate the "
                     "ENTIRE English newspaper report into natural, professional Korean "
                     "(존댓말). Translate EVERYTHING — never summarise or stub. Preserve "
-                    "ALL Markdown, headings, sub-headings and tables; keep every number, "
-                    "%, 원, ticker and newspaper name IDENTICAL. Replace the Section 2 "
-                    f"table with this EXACT Korean table:\n{table_ko}\n"
-                    "Output ONLY the Korean Markdown report.")
+                    "ALL Markdown, headings and sub-headings; keep every number, %, 원, "
+                    "ticker and newspaper name IDENTICAL. Output ONLY the Korean Markdown.")
                 ko_out = chat_completion_sync(
                     system_prompt=ko_sys,
-                    messages=[{"role": "user", "content": detail_en[:22000]}],
-                    max_tokens=12000, temperature=0.3, model="groq-llama-3.3-70b") or ""
+                    messages=[{"role": "user", "content": detail_en[:45000]}],
+                    max_tokens=16000, temperature=0.3, model="groq-llama-3.3-70b") or ""
                 ko_bad = ((not ko_out.strip())
                           or ko_out.lstrip().startswith(("[LLM unavailable]", "[server error]"))
                           or len(ko_out.strip()) < 400)
@@ -290,7 +321,8 @@ def build_newspaper_report(db, trace_id: str) -> dict:
         "detail_en": detail_en, "detail_ko": detail_ko,
         "table_en": table_en, "table_ko": table_ko,
         "rows": rows,
-        "news_sources": sources_flat[:40],
+        "news_sources": sources_flat[:50],
         "newspapers": [p["name"] for p in NEWSPAPERS],
-        "source": "TripleH Newspaper Analysis (KED/Pulse/Seoul Econ/WSJ/Bloomberg/Barron's/Yahoo + OHLCV)",
+        "source": "TripleH Newspaper Analysis (last-24h full-text: 매일경제·한국경제·머니투데이·SBS Biz; "
+                  "headlines: Bloomberg·WSJ + OHLCV)",
     }
