@@ -77,10 +77,16 @@ def _fmt_chg(c: float | None) -> str:
 
 
 def _fetch_daily(spec: dict) -> dict:
-    """Fetch the latest daily candle + previous close for one ticker. Retries a
-    few times — the backend's Yahoo/Kiwoom fetch is intermittently slow/empty,
-    which was leaving blank rows."""
+    """Fetch the latest FULLY-SETTLED daily candle + previous close for one ticker.
+    Retries a few times — the backend's Yahoo/Kiwoom fetch is intermittently
+    slow/empty, which was leaving blank rows.
+
+    To report the FINALIZED official close (not a provisional/intraday or
+    after-hours figure), we drop any candle dated today (KST) — that session may
+    still be forming/unsettled — and use the most recent prior, settled session."""
     import time as _t
+    from services.kst import kst_date as _kst_date
+    today = _kst_date()
     row = {**spec, "open": None, "close": None, "high": None, "low": None,
            "volume": None, "change_pct": None, "ok": False}
     for attempt in range(3):
@@ -89,6 +95,10 @@ def _fetch_daily(spec: dict) -> dict:
                 r = c.get(f"{_BACKEND}/intraday/daily-chart",
                           params={"ticker": spec["t"], "days": 20})
             candles = (r.json() or {}).get("candles") or [] if r.status_code == 200 else []
+            # Keep only settled sessions (date strictly before today KST). Fall
+            # back to the raw list only if every candle is dated today.
+            settled = [c for c in candles if (c.get("date") or "0000-00-00") < today]
+            candles = settled or candles
             if candles:
                 last = candles[-1]
                 prev_close = candles[-2].get("close") if len(candles) >= 2 else None
