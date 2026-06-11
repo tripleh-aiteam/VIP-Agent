@@ -757,10 +757,14 @@ def _kiwoom_daily_report(email_override: str | None = None, period: str = "daily
         try:
             from services.report_docx import markdown_to_docx
             from services.report_email import (send_email_with_docx,
-                                               is_configured as _email_ok, DEFAULT_RECIPIENT)
-            # Recipient: explicit test override → per-report env → hardcoded default.
-            to_addr = (email_override or os.getenv("KIWOOM_REPORT_EMAIL")
-                       or os.getenv("REPORT_EMAIL_TO") or DEFAULT_RECIPIENT)
+                                               is_configured as _email_ok, DEFAULT_RECIPIENT,
+                                               default_recipients)
+            # Recipient: "*ALL*" → full list (manual dropdown) → test override → env → default.
+            if email_override == "*ALL*":
+                to_addr = default_recipients()
+            else:
+                to_addr = (email_override or os.getenv("KIWOOM_REPORT_EMAIL")
+                           or os.getenv("REPORT_EMAIL_TO") or DEFAULT_RECIPIENT)
             if (email_override or os.getenv("SEND_INDIVIDUAL_EMAILS") == "1") and _email_ok() and to_addr:
                 body_md = rep.get("detail_ko") or ""
                 if len(body_md.strip()) < 200 or "same report in korean" in body_md.lower():
@@ -832,9 +836,13 @@ def _newspaper_daily_report(email_override: str | None = None, period: str = "da
         try:
             from services.report_docx import markdown_to_docx
             from services.report_email import (send_email_with_docs,
-                                               is_configured as _email_ok, DEFAULT_RECIPIENT)
-            to_addr = (email_override or os.getenv("NEWSPAPER_REPORT_EMAIL")
-                       or os.getenv("REPORT_EMAIL_TO") or DEFAULT_RECIPIENT)
+                                               is_configured as _email_ok, DEFAULT_RECIPIENT,
+                                               default_recipients)
+            if email_override == "*ALL*":
+                to_addr = default_recipients()
+            else:
+                to_addr = (email_override or os.getenv("NEWSPAPER_REPORT_EMAIL")
+                           or os.getenv("REPORT_EMAIL_TO") or DEFAULT_RECIPIENT)
             if (email_override or os.getenv("SEND_INDIVIDUAL_EMAILS") == "1") and _email_ok() and to_addr:
                 ymd = datetime.utcnow().strftime("%Y%m%d")
                 en_md = rep.get("detail_en") or ""
@@ -912,9 +920,13 @@ def _youtube_daily_report(email_override: str | None = None, period: str = "dail
         try:
             from services.report_docx import markdown_to_docx
             from services.report_email import (send_email_with_docs,
-                                               is_configured as _email_ok, DEFAULT_RECIPIENT)
-            to_addr = (email_override or os.getenv("YOUTUBE_REPORT_EMAIL")
-                       or os.getenv("REPORT_EMAIL_TO") or DEFAULT_RECIPIENT)
+                                               is_configured as _email_ok, DEFAULT_RECIPIENT,
+                                               default_recipients)
+            if email_override == "*ALL*":
+                to_addr = default_recipients()
+            else:
+                to_addr = (email_override or os.getenv("YOUTUBE_REPORT_EMAIL")
+                           or os.getenv("REPORT_EMAIL_TO") or DEFAULT_RECIPIENT)
             if (email_override or os.getenv("SEND_INDIVIDUAL_EMAILS") == "1") and _email_ok() and to_addr:
                 ymd = datetime.utcnow().strftime("%Y%m%d")
                 en_md = rep.get("detail_en") or ""
@@ -995,7 +1007,9 @@ def _master_daily_report(email_override: str | None = None, period: str = "daily
             from services.report_email import (send_email_with_docs,
                                                is_configured as _email_ok, default_recipients)
             from services.master_report import _latest_report
-            if email_override:
+            if email_override == "*ALL*":
+                recipients = default_recipients()
+            elif email_override:
                 recipients = [email_override]   # safe single-recipient test
             elif os.getenv("MASTER_REPORT_EMAIL"):
                 recipients = [os.getenv("MASTER_REPORT_EMAIL")]
@@ -1055,6 +1069,48 @@ def _master_daily_report(email_override: str | None = None, period: str = "daily
                  extra={"trace_id": trace, "action": "master.daily.done"})
     except Exception as e:
         log.warning(f"master: daily report failed: {e}", extra={"action": "master.daily.failed"})
+    finally:
+        db.close()
+
+
+def _single_agent_report(agent_type: str):
+    """Generate ONE agent's daily report (asset / stock / realty) on demand and
+    save it to the dashboard + Telegram. Used by the Agents submenu."""
+    from services.agent_report_builder import (build_asset_report, build_stock_report,
+                                               build_realty_report, report_sections, format_telegram)
+    from services.telegram_service import send_alert
+    from db.models import OrchReport
+    builders = {"asset": build_asset_report, "stock": build_stock_report, "realty": build_realty_report}
+    fn = builders.get(agent_type)
+    if not fn:
+        log.warning(f"single-agent: unknown agent {agent_type}")
+        return
+    db = SessionLocal()
+    trace = f"tr-agent-{agent_type}-{int(datetime.utcnow().timestamp())}"
+    kst = kst_label()
+    try:
+        rep = fn(db, trace)
+        r = OrchReport(
+            report_type=f"agent_daily_{agent_type}",
+            source_run_ids_json=[],
+            content_json={
+                "report_type": f"agent_daily_{agent_type}",
+                "executive_summary": rep.get("summary") or f"{rep.get('name', agent_type)} report",
+                "sections": report_sections(rep), "agent": rep.get("name"),
+                "status": rep.get("status"), "report": rep,
+                "generated_at": datetime.utcnow().isoformat(), "kst_time": kst,
+            },
+            delivery_channel="auto",
+        )
+        db.add(r)
+        db.commit()
+        try:
+            send_alert(format_telegram(rep, kst))
+        except Exception:
+            pass
+        log.info(f"single-agent: {agent_type} report generated", extra={"trace_id": trace, "action": "agent.single.done"})
+    except Exception as e:
+        log.warning(f"single-agent: {agent_type} failed: {str(e)[:120]}", extra={"action": "agent.single.failed"})
     finally:
         db.close()
 

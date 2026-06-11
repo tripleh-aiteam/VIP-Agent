@@ -81,28 +81,37 @@ def _fetch_daily(spec: dict) -> dict:
     Retries a few times — the backend's Yahoo/Kiwoom fetch is intermittently
     slow/empty, which was leaving blank rows.
 
-    To report the FINALIZED official close (not a provisional/intraday or
-    after-hours figure), we drop any candle dated today (KST) — that session may
-    still be forming/unsettled — and use the most recent prior, settled session."""
+    Time-aware price selection (so the number always matches WHEN the report is
+    made, and is NEVER yesterday's data mislabelled as today's):
+      • KR trading hours (09:00–15:30 KST) and a candle dated today exists →
+        use today's RUNNING candle = the CURRENT/LIVE price. price_kind="live".
+      • After the close (≥15:30 KST) with today's candle → today's FINALIZED
+        close. price_kind="close".
+      • Pre-open (before 09:00, e.g. the 6:50 AM run) or when the freshest
+        candle is older than today (source lag, common for US) → the latest
+        SETTLED prior session, honestly labelled. price_kind="prev_close".
+    Every row carries `price_kind` + `data_date` so the table can label it."""
     import time as _t
     from services.kst import kst_date as _kst_date, kst_now
+    _now = kst_now()
     today = _kst_date()
-    kst_hour = kst_now().hour
+    kst_hour = _now.hour
+    kst_minute = _now.minute
+    # KR regular session closes 15:30; treat ≥15:30 as "after close".
+    after_close = (kst_hour > 15) or (kst_hour == 15 and kst_minute >= 30)
+    pre_open = kst_hour < 9
     row = {**spec, "open": None, "close": None, "high": None, "low": None,
-           "volume": None, "change_pct": None, "ok": False}
+           "volume": None, "change_pct": None, "ok": False,
+           "price_kind": None, "data_date": None, "data_time": None}
     for attempt in range(3):
         try:
             with httpx.Client(timeout=30) as c:
                 r = c.get(f"{_BACKEND}/intraday/daily-chart",
                           params={"ticker": spec["t"], "days": 20})
             candles = (r.json() or {}).get("candles") or [] if r.status_code == 200 else []
-            # Use the latest candle that has a real (non-null) finalized close.
-            # Today's candle is only PROVISIONAL while the KR market is still
-            # trading (before ~16:00 KST) — drop it then so we don't show an
-            # intraday price. After the close (or a pre-open morning run, when no
-            # today candle exists yet), today's settled close IS used.
             valid = [c for c in candles if c.get("close") is not None]
-            if kst_hour < 16:
+            # Pre-open: today's candle (if any) is meaningless → use prior session.
+            if pre_open:
                 pre = [c for c in valid if (c.get("date") or "0000-00-00") < today]
                 valid = pre or valid
             candles = valid or candles
@@ -111,11 +120,19 @@ def _fetch_daily(spec: dict) -> dict:
                 prev_close = candles[-2].get("close") if len(candles) >= 2 else None
                 close = last.get("close")
                 chg = ((close - prev_close) / prev_close * 100) if (prev_close and close) else None
+                d = last.get("date")
+                # Honest label based on what the freshest candle actually IS.
+                if d == today and not pre_open:
+                    price_kind = "close" if after_close else "live"
+                else:
+                    price_kind = "prev_close"   # freshest available is an earlier session
                 row.update({
                     "open": last.get("open"), "close": close, "high": last.get("high"),
                     "low": last.get("low"), "volume": last.get("volume"),
-                    "prev_close": prev_close, "change_pct": chg, "date": last.get("date"),
+                    "prev_close": prev_close, "change_pct": chg, "date": d,
                     "ma5": last.get("ma5"), "ma20": last.get("ma20"), "ma60": last.get("ma60"),
+                    "price_kind": price_kind, "data_date": d,
+                    "data_time": _now.strftime("%H:%M") if price_kind == "live" else None,
                     "ok": True,
                 })
                 return row
@@ -133,21 +150,90 @@ def _gather() -> list[dict]:
         return list(ex.map(_fetch_daily, KIWOOM_TICKERS))
 
 
+def _expected_us_session() -> str:
+    """The most recent COMPLETED US trading session date (ISO), in ET terms.
+    Used to detect when the backend's US data is more than the timezone-expected
+    one session behind. June = EDT (UTC-4) → KST(UTC+9) is 13h ahead."""
+    from datetime import timedelta
+    from services.kst import kst_now
+    et = kst_now() - timedelta(hours=13)
+    d = et.date()
+    if et.hour < 16:          # today's US close hasn't happened yet
+        d = d - timedelta(days=1)
+    while d.weekday() >= 5:    # skip Sat/Sun
+        d = d - timedelta(days=1)
+    return d.isoformat()
+
+
+def _backfill_us(rows: list[dict]) -> int:
+    """Replace stale/empty US rows with Google's latest price — best-effort."""
+    try:
+        from services.price_validate import backfill_stale_us
+        return backfill_stale_us(rows, _expected_us_session())
+    except Exception as e:
+        log.warning(f"kiwoom US backfill skipped: {e}")
+        return 0
+
+
+def _run_cross_check(rows: list[dict]) -> dict:
+    """Independent Google (Serper) price cross-check — best-effort. Never raises;
+    if Serper is unavailable the rows just carry g_flag='—'/'확인불가'."""
+    try:
+        from services.price_validate import cross_check_rows
+        return cross_check_rows(rows)
+    except Exception as e:
+        log.warning(f"kiwoom cross-check skipped: {e}")
+        for r in rows:
+            r.setdefault("g_flag", "—")
+        return {"checked": 0, "matched": 0, "flagged": 0, "unverified": 0}
+
+
+def _basis(r: dict, ko: bool) -> str:
+    """Honest label for WHAT the price is: live intraday / final close / prior
+    session — so a stale number can never masquerade as today's."""
+    kind = r.get("price_kind")
+    d = (r.get("data_date") or "")[5:]  # MM-DD
+    t = r.get("data_time")
+    if kind == "google":
+        # Sourced from Google when the backend lagged — but the REPORT stays clean:
+        # show it as the plain session close, never expose the provider.
+        return (f"종가 {d}" if d else "종가") if ko else (f"Close {d}" if d else "Close")
+    if kind == "live":
+        return (f"현재가 {t}" if t else "현재가") if ko else (f"Live {t}" if t else "Live")
+    if kind == "close":
+        return f"종가 {d}" if ko else f"Close {d}"
+    if kind == "prev_close":
+        return f"전일 {d}" if ko else f"Prev {d}"
+    return "—"
+
+
+def _verify_cell(r: dict, ko: bool) -> str:
+    """Google cross-check result for this row."""
+    flag = r.get("g_flag") or "—"
+    if flag == "⚠":
+        gp = r.get("g_price")
+        gtxt = f"{gp:,.0f}" if (gp and r.get("mkt") == "KR") else (f"{gp:,.2f}" if gp else "?")
+        return f"⚠ G:{gtxt}"
+    return flag  # ✓ / 확인불가 / —
+
+
 def _build_table(rows: list[dict], ko: bool) -> str:
-    """Deterministic Markdown data table with the REAL numbers — all in KRW."""
+    """Deterministic Markdown data table with the REAL numbers (all in KRW) plus a
+    clean basis label (현재가/종가 + date). The Google cross-check runs behind the
+    scenes for correctness/logging — it is NOT shown in the report."""
     if ko:
-        head = ("| 종목 | 시가 | 종가 | 대비·등락 | 거래량 |\n"
-                "|---|---|---|---|---|")
+        head = ("| 종목 | 시가 | 가격 | 기준 | 대비·등락 | 거래량 |\n"
+                "|---|---|---|---|---|---|")
     else:
-        head = ("| Stock | Open (KRW) | Close (KRW) | Change | Volume |\n"
-                "|---|---|---|---|---|")
+        head = ("| Stock | Open (KRW) | Price (KRW) | Basis | Change | Volume |\n"
+                "|---|---|---|---|---|---|")
     lines = [head]
     for r in rows:
         name = r["ko"] if ko else r["en"]
         vol = f"{int(r['volume']):,}" if r.get("volume") is not None else "—"
         lines.append(
             f"| {name} | {_won(r.get('open_krw'))} | {_won(r.get('close_krw'))} | "
-            f"{_fmt_chg(r.get('change_pct'))} | {vol} |"
+            f"{_basis(r, ko)} | {_fmt_chg(r.get('change_pct'))} | {vol} |"
         )
     return "\n".join(lines)
 
@@ -210,17 +296,20 @@ def gather_priced_rows() -> tuple[list[dict], str, str, float]:
     prices to KRW, and build the EN/KO Markdown tables. Returns
     (rows, table_en, table_ko, usdkrw_rate)."""
     rows = _gather()
+    _backfill_us(rows)          # fix backend US lag before pricing
     rate = _usdkrw_rate()
     for r in rows:
         mult = rate if r["mkt"] == "US" else 1.0
         for k in ("open", "close", "high", "low"):
             r[f"{k}_krw"] = (r[k] * mult) if r.get(k) is not None else None
+    _run_cross_check(rows)
     return rows, _build_table(rows, ko=False), _build_table(rows, ko=True), rate
 
 
 def build_kiwoom_report(db, trace_id: str) -> dict:
     """Build the daily Kiwoom report (real data table + LLM narrative, EN+KO)."""
     rows = _gather()
+    _backfill_us(rows)          # fix backend US lag before pricing
     # Convert ALL prices to Korean Won (US tickers × USD/KRW; KR as-is).
     rate = _usdkrw_rate()
     for r in rows:
@@ -229,6 +318,7 @@ def build_kiwoom_report(db, trace_id: str) -> dict:
         r["close_krw"] = (r["close"] * mult) if r.get("close") is not None else None
         r["high_krw"] = (r["high"] * mult) if r.get("high") is not None else None
         r["low_krw"] = (r["low"] * mult) if r.get("low") is not None else None
+    _run_cross_check(rows)
     ok_rows = [r for r in rows if r.get("ok")]
     from services.kst import kst_date as _kst_date
     kst_date = _kst_date()

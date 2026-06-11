@@ -86,15 +86,41 @@ export default function ReportsPage() {
   const [agent, setAgent] = useState<string>("all");              // within Agents: all / asset / stock / realty
   const [gen, setGen] = useState<{ busy: boolean; msg: string }>({ busy: false, msg: "" });
 
-  const generateNow = async () => {
+  const [genOpen, setGenOpen] = useState(false);       // dropdown open
+  const [agentsOpen, setAgentsOpen] = useState(false);  // Agents submenu open
+  const genRef = useRef<HTMLDivElement>(null);
+
+  // Each menu item → endpoint. `emails:true` items send to ALL recipients (send_all=true).
+  const GEN_REPORTS = [
+    { key: "all",       emoji: "⚡", label: "전체 4종 (All 4)",       endpoint: "/reports/compose/all",                 emails: true, slow: true },
+    { key: "kiwoom",    emoji: "📈", label: "키움 (Kiwoom)",          endpoint: "/reports/compose/kiwoom?send_all=true", emails: true },
+    { key: "newspaper", emoji: "📰", label: "신문 (Newspaper)",       endpoint: "/reports/compose/newspaper?send_all=true", emails: true },
+    { key: "youtube",   emoji: "📺", label: "유튜브 (YouTube)",       endpoint: "/reports/compose/youtube?send_all=true", emails: true },
+    { key: "master",    emoji: "💡", label: "추천 (Recommendation)",  endpoint: "/reports/compose/master?send_all=true", emails: true },
+  ];
+  const GEN_AGENTS = [
+    { key: "agents-all", emoji: "🤖", label: "전체 에이전트 (All agents)", endpoint: "/reports/compose/auto-daily" },
+    { key: "asset",      emoji: "🏢", label: "자산 (Asset)",              endpoint: "/reports/compose/agent?type=asset" },
+    { key: "stock",      emoji: "📈", label: "주식 (Stock)",              endpoint: "/reports/compose/agent?type=stock" },
+    { key: "realty",     emoji: "🏠", label: "부동산 (Realty)",           endpoint: "/reports/compose/agent?type=realty" },
+  ];
+
+  const generate = async (item: { emoji: string; label: string; endpoint: string; emails?: boolean; slow?: boolean }) => {
     if (gen.busy) return;
-    if (!window.confirm(
-      "지금 4개 리포트(키움·신문·유튜브·추천)를 최신 데이터로 생성하고 모든 수신자에게 이메일을 전송합니다.\n계속하시겠습니까? (약 8~12분 소요)\n\nGenerate all 4 reports with current data and email ALL recipients? (~8-12 min)"
-    )) return;
-    setGen({ busy: true, msg: "생성 중… 8~12분 후 이메일이 전송됩니다 (generating…)" });
+    setGenOpen(false); setAgentsOpen(false);
+    const confirmMsg = item.emails
+      ? `"${item.label}" 리포트를 최신 데이터로 생성하고 모든 수신자에게 이메일을 전송합니다.\n계속하시겠습니까?${item.slow ? " (약 8~12분 소요)" : ""}\n\nGenerate "${item.label}" with current data and email ALL recipients?`
+      : `"${item.label}" 리포트를 생성합니다 (대시보드에 저장).\n계속하시겠습니까?\n\nGenerate "${item.label}" report (saved to dashboard)?`;
+    if (!window.confirm(confirmMsg)) return;
+    setGen({ busy: true, msg: `${item.emoji} ${item.label} 생성 중… (generating…)` });
     try {
-      await apiPost("/reports/compose/all");
-      setGen({ busy: true, msg: "✅ 생성 시작됨 — 완료되면 모든 수신자에게 이메일 전송 (~8-12 min)" });
+      await apiPost(item.endpoint);
+      setGen({
+        busy: true,
+        msg: item.emails
+          ? `✅ ${item.label} 생성 시작 — 완료 후 모든 수신자에게 이메일 전송${item.slow ? " (~8-12분)" : " (~수 분)"}`
+          : `✅ ${item.label} 생성 시작 — 완료되면 Reports에서 확인 (~30-60초)`,
+      });
       setTimeout(() => setGen({ busy: false, msg: "" }), 60000);
     } catch (e: any) {
       setGen({ busy: false, msg: "❌ " + (e?.message || "failed") });
@@ -112,6 +138,7 @@ export default function ReportsPage() {
   useEffect(() => {
     const handler = (e: MouseEvent) => {
       if (dlRef.current && !dlRef.current.contains(e.target as Node)) setDlOpen(false);
+      if (genRef.current && !genRef.current.contains(e.target as Node)) { setGenOpen(false); setAgentsOpen(false); }
     };
     document.addEventListener("mousedown", handler);
     return () => document.removeEventListener("mousedown", handler);
@@ -346,17 +373,55 @@ td{padding:8px 12px;border:1px solid #e2e8f0;font-size:10pt}
           <h1 className="text-[28px] font-semibold tracking-tight mb-1">Reports</h1>
           <p className="text-sm text-[var(--text-muted)]">Executive summaries and alerts</p>
         </div>
-        <div className="flex flex-col items-end gap-1">
-          <button
-            onClick={generateNow}
-            disabled={gen.busy}
-            title="지금 4개 리포트를 생성하고 모든 수신자에게 이메일 전송"
-            className="inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold bg-[var(--brand-blue)] text-white shadow-sm hover:opacity-90 disabled:opacity-60 transition">
-            {gen.busy
-              ? <span className="w-3.5 h-3.5 rounded-full border-2 border-white/40 border-t-white animate-spin" />
-              : <span>⚡</span>}
-            {gen.busy ? "생성 중…" : "지금 리포트 생성 & 전송"}
-          </button>
+        <div className="flex flex-col items-end gap-1" ref={genRef}>
+          <div className="relative">
+            <button
+              onClick={() => { setGenOpen(!genOpen); setAgentsOpen(false); }}
+              disabled={gen.busy}
+              title="생성할 리포트를 선택하세요 (Select which report to generate)"
+              className="inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold bg-[var(--brand-blue)] text-white shadow-sm hover:opacity-90 disabled:opacity-60 transition">
+              {gen.busy
+                ? <span className="w-3.5 h-3.5 rounded-full border-2 border-white/40 border-t-white animate-spin" />
+                : <span>⚡</span>}
+              {gen.busy ? "생성 중…" : "지금 리포트 생성 & 전송"}
+              {!gen.busy && <span className={`transition-transform ${genOpen ? "rotate-180" : ""}`}>▾</span>}
+            </button>
+
+            {genOpen && !gen.busy && (
+              <div className="absolute right-0 mt-2 w-72 z-30 rounded-xl border border-[var(--border)] bg-[var(--surface)] shadow-lg py-1.5 text-sm">
+                <div className="px-3 py-1 text-[11px] font-semibold text-[var(--text-muted)] uppercase tracking-wide">생성할 리포트 선택</div>
+                {GEN_REPORTS.map((it) => (
+                  <button key={it.key} onClick={() => generate(it)}
+                    className="w-full flex items-center gap-2.5 px-3 py-2 hover:bg-[var(--brand-blue)]/10 transition text-left">
+                    <span className="w-5 text-center">{it.emoji}</span>
+                    <span className="flex-1 font-medium">{it.label}</span>
+                    <span className="text-[10px] text-[var(--text-muted)]">📧</span>
+                  </button>
+                ))}
+
+                <div className="my-1 border-t border-[var(--border)]" />
+
+                {/* Agents — expandable */}
+                <button onClick={() => setAgentsOpen(!agentsOpen)}
+                  className="w-full flex items-center gap-2.5 px-3 py-2 hover:bg-[var(--brand-blue)]/10 transition text-left">
+                  <span className="w-5 text-center">🤖</span>
+                  <span className="flex-1 font-medium">에이전트 (Agents)</span>
+                  <span className={`text-xs transition-transform ${agentsOpen ? "rotate-90" : ""}`}>▸</span>
+                </button>
+                {agentsOpen && (
+                  <div className="pl-3">
+                    {GEN_AGENTS.map((it) => (
+                      <button key={it.key} onClick={() => generate(it)}
+                        className="w-full flex items-center gap-2.5 px-3 py-2 hover:bg-[var(--brand-blue)]/10 transition text-left">
+                        <span className="w-5 text-center">{it.emoji}</span>
+                        <span className="flex-1">{it.label}</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
           {gen.msg
             ? <span className="text-[11px] text-[var(--text-muted)] max-w-[280px] text-right">{gen.msg}</span>
             : <span className="text-[11px] text-[var(--text-muted)]">Auto Report Generator · 매일 06:50 자동 전송</span>}

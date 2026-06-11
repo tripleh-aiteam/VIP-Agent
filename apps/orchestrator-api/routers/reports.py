@@ -59,13 +59,15 @@ def _allowed_report_recipients() -> set[str]:
 
 
 @router.post("/compose/kiwoom", dependencies=[Depends(rate_limit_compose)])
-def trigger_kiwoom_report(email: Optional[str] = Query(None, description="Optional recipient for the .docx email — must be on the REPORT_ALLOWED_RECIPIENTS allowlist (or a configured server recipient). Scheduled run uses KIWOOM_REPORT_EMAIL env."), db: Session = Depends(get_db)):
+def trigger_kiwoom_report(email: Optional[str] = Query(None, description="Optional recipient for the .docx email — must be on the REPORT_ALLOWED_RECIPIENTS allowlist (or a configured server recipient). Scheduled run uses KIWOOM_REPORT_EMAIL env."), send_all: bool = Query(False, description="Email the report to ALL configured recipients (dropdown 'generate & send')."), db: Session = Depends(get_db)):
     """Manually trigger the Kiwoom daily market report (also runs 6:30 AM KST).
     Pass ?email=<addr> to send the Word attachment to an ALLOWLISTED address."""
     if email:
         if email.strip().lower() not in _allowed_report_recipients():
             raise HTTPException(403, "recipient not allowed — add it to REPORT_ALLOWED_RECIPIENTS env")
         email = email.strip()
+    elif send_all:
+        email = "*ALL*"
     from services.scheduler_service import _kiwoom_daily_report
     import threading
     threading.Thread(target=lambda: _kiwoom_daily_report(email_override=email), daemon=True).start()
@@ -74,12 +76,14 @@ def trigger_kiwoom_report(email: Optional[str] = Query(None, description="Option
 
 
 @router.post("/compose/newspaper", dependencies=[Depends(rate_limit_compose)])
-def trigger_newspaper_report(email: Optional[str] = Query(None, description="Optional recipient for the .docx email — must be on the allowlist. Scheduled run uses NEWSPAPER_REPORT_EMAIL env."), db: Session = Depends(get_db)):
+def trigger_newspaper_report(email: Optional[str] = Query(None, description="Optional recipient for the .docx email — must be on the allowlist. Scheduled run uses NEWSPAPER_REPORT_EMAIL env."), send_all: bool = Query(False, description="Email the report to ALL configured recipients (dropdown 'generate & send')."), db: Session = Depends(get_db)):
     """Manually trigger the Newspaper (news analysis) report (also runs 7:00 AM KST)."""
     if email:
         if email.strip().lower() not in _allowed_report_recipients():
             raise HTTPException(403, "recipient not allowed — add it to REPORT_ALLOWED_RECIPIENTS env")
         email = email.strip()
+    elif send_all:
+        email = "*ALL*"
     from services.scheduler_service import _newspaper_daily_report
     import threading
     threading.Thread(target=lambda: _newspaper_daily_report(email_override=email), daemon=True).start()
@@ -88,12 +92,14 @@ def trigger_newspaper_report(email: Optional[str] = Query(None, description="Opt
 
 
 @router.post("/compose/youtube", dependencies=[Depends(rate_limit_compose)])
-def trigger_youtube_report(email: Optional[str] = Query(None, description="Optional recipient for the .docx email — must be on the allowlist. Scheduled run uses YOUTUBE_REPORT_EMAIL env."), db: Session = Depends(get_db)):
+def trigger_youtube_report(email: Optional[str] = Query(None, description="Optional recipient for the .docx email — must be on the allowlist. Scheduled run uses YOUTUBE_REPORT_EMAIL env."), send_all: bool = Query(False, description="Email the report to ALL configured recipients (dropdown 'generate & send')."), db: Session = Depends(get_db)):
     """Manually trigger the YouTube (video analysis) report (also runs 6:30 AM KST)."""
     if email:
         if email.strip().lower() not in _allowed_report_recipients():
             raise HTTPException(403, "recipient not allowed — add it to REPORT_ALLOWED_RECIPIENTS env")
         email = email.strip()
+    elif send_all:
+        email = "*ALL*"
     from services.scheduler_service import _youtube_daily_report
     import threading
     threading.Thread(target=lambda: _youtube_daily_report(email_override=email), daemon=True).start()
@@ -102,13 +108,15 @@ def trigger_youtube_report(email: Optional[str] = Query(None, description="Optio
 
 
 @router.post("/compose/master", dependencies=[Depends(rate_limit_compose)])
-def trigger_master_report(email: Optional[str] = Query(None, description="Optional recipient for the .docx email — must be on the allowlist. Scheduled run uses MASTER_REPORT_EMAIL env."), db: Session = Depends(get_db)):
+def trigger_master_report(email: Optional[str] = Query(None, description="Optional recipient for the .docx email — must be on the allowlist. Scheduled run uses MASTER_REPORT_EMAIL env."), send_all: bool = Query(False, description="Email the report to ALL configured recipients (dropdown 'generate & send')."), db: Session = Depends(get_db)):
     """Manually trigger the Master synthesis report (consolidates the latest
     Kiwoom + Newspaper + YouTube reports). Also runs 6:50 AM KST."""
     if email:
         if email.strip().lower() not in _allowed_report_recipients():
             raise HTTPException(403, "recipient not allowed — add it to REPORT_ALLOWED_RECIPIENTS env")
         email = email.strip()
+    elif send_all:
+        email = "*ALL*"
     from services.scheduler_service import _master_daily_report
     import threading
     threading.Thread(target=lambda: _master_daily_report(email_override=email), daemon=True).start()
@@ -132,6 +140,19 @@ def trigger_all_reports(email: Optional[str] = Query(None, description="Optional
             "email": email or "(all recipients)",
             "message": "Generating all 4 reports with current data — the consolidated email "
                        "will arrive in ~8-12 minutes."}
+
+
+@router.post("/compose/agent", dependencies=[Depends(rate_limit_compose)])
+def trigger_agent_report(type: str = Query(..., description="Agent type: asset | stock | realty"), db: Session = Depends(get_db)):
+    """Generate ONE agent's report on demand (saved to the dashboard + Telegram)."""
+    atype = (type or "").strip().lower()
+    if atype not in ("asset", "stock", "realty"):
+        raise HTTPException(400, "type must be asset, stock, or realty")
+    from services.scheduler_service import _single_agent_report
+    import threading
+    threading.Thread(target=lambda: _single_agent_report(atype), daemon=True).start()
+    return {"triggered": True, "agent": atype,
+            "message": f"{atype} agent report generating — check Reports → Agents in ~30-60s."}
 
 
 @router.get("/email-config")
