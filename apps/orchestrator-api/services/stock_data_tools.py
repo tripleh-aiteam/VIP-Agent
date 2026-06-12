@@ -238,6 +238,8 @@ def tool_stock_quote(query: str = "", ticker: str = "", user_transcript: str = "
     is_kr = quote["market"] == "KR"
     kind = {"live": "현재가(장중)", "close": "종가", "prev_close": "전일 종가",
             "google": "최근 종가"}.get(quote.get("price_kind"), "")
+    chg = quote.get("change_pct")
+    chg_r = round(chg, 2) if isinstance(chg, (int, float)) else None
     return {
         "ok": True,
         "fetched_at": _now_kst_iso(),
@@ -246,7 +248,8 @@ def tool_stock_quote(query: str = "", ticker: str = "", user_transcript: str = "
         "market": quote["market"],
         "current_price": price,
         "current_price_won": (f"{price:,.0f}원" if is_kr else f"${price:,.2f}"),
-        "change_pct": quote.get("change_pct"),
+        "change_pct": chg_r,
+        "change": (f"{chg_r:+.2f}%" if chg_r is not None else None),  # pre-formatted for the reply
         "basis": kind, "as_of": quote.get("as_of"),
         "source": "Kiwoom / Stock-Advisor (settled/live close)",
     }
