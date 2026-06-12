@@ -50,8 +50,11 @@ def _allowed_report_recipients() -> set[str]:
     # allowlisted — these are the intended recipients, so a ?email test may target
     # one of them. This does NOT permit arbitrary third-party addresses.
     try:
-        from services.report_email import default_recipients
+        from services.report_email import default_recipients, EXTRA_ALLOWED_RECIPIENTS
         for r in default_recipients():
+            allowed.add(r.strip().lower())
+        # On-demand-only recipients (sendable via ?email=, not on the daily list).
+        for r in EXTRA_ALLOWED_RECIPIENTS:
             allowed.add(r.strip().lower())
     except Exception:
         pass

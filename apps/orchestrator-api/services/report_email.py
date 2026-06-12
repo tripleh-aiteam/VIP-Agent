@@ -31,9 +31,17 @@ DEFAULT_RECIPIENTS = [
     "marklee@tripleh.co.kr",
     "koreastone710404@gmail.com",
     "shlee@tripleh.co.kr",
+    "hskim@tripleh.co.kr",
+    "shaha3428@tripleh.co.kr",
 ]
 # Single fallback kept for back-compat with existing call sites.
 DEFAULT_RECIPIENT = DEFAULT_RECIPIENTS[0]
+
+# Addresses that are NOT on the daily distribution list but ARE allowed as an
+# on-demand (?email=) target — so a report can be sent to them when requested,
+# without them receiving the automatic 6:50 email.
+EXTRA_ALLOWED_RECIPIENTS: list[str] = [
+]
 
 
 def default_recipients() -> list[str]:
