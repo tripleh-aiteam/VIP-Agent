@@ -61,8 +61,11 @@ def _digest(rep: dict, label: str) -> str:
     return "\n".join(parts)
 
 
+_NO_BROKER = "## Korean Securities Firms — analyst consensus\n(No broker consensus available today.)"
+
+
 def build_master_report(db, trace_id: str) -> dict:
-    """Synthesise the 3 source reports into one consolidated smart summary."""
+    """Synthesise the 3 source reports + Korean broker consensus into one summary."""
     kiwoom = _latest_report(db, "kiwoom_report")
     news = _latest_report(db, "newspaper_report")
     youtube = _latest_report(db, "youtube_report")
@@ -73,6 +76,16 @@ def build_master_report(db, trace_id: str) -> dict:
     table_ko = kiwoom.get("table_ko") or news.get("table_ko") or youtube.get("table_ko")
     if not rows or not table_en:
         rows, table_en, table_ko, _ = _kr.gather_priced_rows()
+
+    # 4th input: Korean securities-firm analyst consensus (목표주가/투자의견 + recent
+    # broker reports) for the KR tickers — real published calls, not LLM opinion.
+    broker_facts = ""
+    try:
+        from services import broker_research
+        broker_rows = broker_research.gather_kr_consensus(rows or [])
+        broker_facts = broker_research.consensus_facts(broker_rows, ko=False)
+    except Exception as e:
+        log.warning(f"master broker consensus failed: {e}")
 
     have = [name for name, r in (("Kiwoom", kiwoom), ("Newspaper", news), ("YouTube", youtube)) if r]
     from services.kst import kst_date as _kst_date
@@ -86,7 +99,9 @@ def build_master_report(db, trace_id: str) -> dict:
         sysmsg = (
             "You are TripleH's chief strategist writing the MASTER daily report — "
             "ONE consolidated view built from THREE source reports: Kiwoom "
-            "(price/technical), Newspaper (news), and YouTube (video). The reader's "
+            "(price/technical), Newspaper (news), and YouTube (video) — PLUS the "
+            "Korean securities firms' analyst consensus (목표주가/투자의견 + recent "
+            "broker reports) when provided. The reader's "
             "strategy is 일정매매 (event-driven): KNOW FUTURE EVENTS → POSITION EARLY "
             "→ SELL WHEN PUBLIC ATTENTION ARRIVES. Frame the whole report around that. "
             "Use ONLY the provided material — NEVER invent. ALL prices are KRW. "
@@ -99,7 +114,8 @@ def build_master_report(db, trace_id: str) -> dict:
             "## 1. Executive Summary\n## 2. Signal Explanations (per stock)\n"
             "## 3. Where the Sources Agree & Disagree\n"
             "## 4. Upcoming Catalysts & Schedule (일정매매 · FUTURE ONLY)\n"
-            "## 5. Final Consensus Recommendations\n\n"
+            "## 5. 증권사 추천 (Korean Securities Firms' Analyst Calls)\n"
+            "## 6. Final Consensus Recommendations\n\n"
             "Rules:\n"
             "- Section 1: a sharp 2-3 paragraph consensus read of the day + the key "
             "future setups to watch.\n"
@@ -117,9 +133,17 @@ def build_master_report(db, trace_id: str) -> dict:
             "Event | Stock(s) | Likely impact | Early-position play | — every date "
             "AFTER today; then 2-3 bullet 'positioning plays' (buy before <future "
             "event> → sell when the crowd arrives).\n"
-            "- Section 5: final | Stock | Action | Confidence | Reason | (BUY/HOLD/"
-            "SELL); THEN '### Top Conviction Ideas' — the 2-3 strongest event-driven "
-            "setups with the entry-before / exit-on-attention logic.\n"
+            "- Section 5 (증권사 추천): use ONLY the 'Korean Securities Firms' "
+            "consensus' material provided. Lead with a table | 종목 | 컨센서스 목표주가 | "
+            "상승여력 | 투자의견 | for the KR stocks that have data, then a 2-3 paragraph "
+            "synthesis: what the brokerages collectively favour, notable target-price "
+            "moves, and cite SPECIFIC recent reports by firm (e.g. '미래에셋: <title>', "
+            "'한국투자: <title>'). If no broker data was provided, write one line saying "
+            "so and skip the table. NEVER invent a target price or a firm's call.\n"
+            "- Section 6: final | Stock | Action | Confidence | Reason | (BUY/HOLD/"
+            "SELL) — let the brokerage consensus INFORM these; THEN '### Top Conviction "
+            "Ideas' — the 2-3 strongest event-driven setups with the entry-before / "
+            "exit-on-attention logic.\n"
             "Be decisive and specific. The whole report must be ~2200-2800 words "
             "(about 4 pages); Section 2 alone ~1000 words. Never truncate. Output ONLY "
             "the English Markdown report — no preamble."
@@ -128,7 +152,8 @@ def build_master_report(db, trace_id: str) -> dict:
                 f"PRICE CONTEXT (for the prose only — do NOT print a table):\n{table_en}\n\n"
                 f"{_digest(kiwoom, 'KIWOOM (price/technical) report')}\n\n"
                 f"{_digest(news, 'NEWSPAPER report')}\n\n"
-                f"{_digest(youtube, 'YOUTUBE report')}")
+                f"{_digest(youtube, 'YOUTUBE report')}\n\n"
+                f"{broker_facts or _NO_BROKER}")
         out = chat_completion_sync(
             system_prompt=sysmsg, messages=[{"role": "user", "content": user[:26000]}],
             max_tokens=12000, temperature=0.4, model="groq-llama-3.3-70b") or ""
