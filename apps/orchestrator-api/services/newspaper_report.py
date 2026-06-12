@@ -296,12 +296,44 @@ def _stats_block(rows: list[dict]) -> str:
     return "\n".join(lines) if lines else "(no stats)"
 
 
+def _merge_hourly_news(db, grouped: dict[str, list[dict]], cap_per_outlet: int = 12) -> dict[str, list[dict]]:
+    """Fold the day's hourly newspaper snapshots into the fresh fetch (dedupe by
+    URL, cap per outlet). Fresh full-text articles are kept first; accumulated
+    snapshot headlines fill the rest so the day's full coverage is represented."""
+    try:
+        from services import hourly_capture
+        acc = hourly_capture.accumulated(db, "newspaper", hours=26)
+    except Exception as e:
+        log.warning(f"newspaper hourly merge skipped: {str(e)[:80]}")
+        return grouped
+    by_outlet: dict[str, list[dict]] = {}
+    for it in acc:
+        by_outlet.setdefault(it.get("outlet", ""), []).append(it)
+    for paper in NEWSPAPERS:
+        name = paper["name"]
+        cur = grouped.get(name, [])
+        urls = {a.get("url") for a in cur}
+        for it in by_outlet.get(name, []):
+            if len(cur) >= cap_per_outlet:
+                break
+            if it.get("url") and it["url"] not in urls:
+                urls.add(it["url"])
+                cur.append({"title": it.get("title", ""), "url": it.get("url", ""),
+                            "text": it.get("snippet", ""), "full": False,
+                            "paid": False, "pub": it.get("pub")})
+        grouped[name] = cur[:cap_per_outlet]
+    return grouped
+
+
 def build_newspaper_report(db, trace_id: str) -> dict:
     """Build the daily per-newspaper news report — same price table as Kiwoom +
     per-outlet news analysis + a BUY/HOLD/SELL recommendation, bilingual EN/KO."""
     rows, table_en, table_ko, rate = _kr.gather_priced_rows()
     ok_rows = [r for r in rows if r.get("ok")]
     grouped = _gather_news_by_source()
+    # Merge in the day's hourly snapshots (the '24 parts') so the morning report
+    # synthesises the WHOLE day/night of news, not just this fetch.
+    grouped = _merge_hourly_news(db, grouped)
     hidden = _gather_hidden()
     catalysts = _cat.gather_catalysts()
     total_news = sum(len(v) for v in grouped.values())
@@ -404,6 +436,8 @@ def build_newspaper_report(db, trace_id: str) -> dict:
             f"- Section 4 (Catalysts & Schedule / 일정매매): {_cat.CATALYST_SECTION_RULE}\n"
             "- Section 5 (Recommendations): a DETAILED table with EXACTLY these columns: "
             "| 종목 | 의견 | 일일 등락 | 일일 거래량 | 주간 등락 | 주간 거래량 | 핵심 근거 | — "
+            "use the KOREAN stock names EXACTLY as written in STOCK STATS (삼성전자, "
+            "SK하이닉스, 네이버, 마이크론, 브로드컴, 샌디스크 …), never English. "
             "fill the volume/change columns from the STOCK STATS (NEVER invent them). "
             "핵심 근거 MUST be a SPECIFIC concrete reason — cite an actual news item, an "
             "earnings/HBM/AI catalyst, or the volume-vs-price trend (e.g. '주간 거래량 급증 + "

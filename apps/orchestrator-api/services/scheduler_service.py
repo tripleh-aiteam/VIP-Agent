@@ -1173,6 +1173,19 @@ def init_scheduler():
     )
     log.info("scheduler: health check registered (every 5 min)", extra={"action": "scheduler.health_registered"})
 
+    # Hourly snapshot capture — every hour at :05. Saves one 'part' per report
+    # type (newspaper/youtube/kiwoom) WITHOUT emailing; the 6 AM build reads all
+    # ~24 parts of the day and synthesises the big report. Plus daily cleanup.
+    from services.hourly_capture import capture_hourly as _capture_hourly
+    _scheduler.add_job(
+        _capture_hourly,
+        CronTrigger.from_crontab("5 * * * *"),
+        id="hourly-snapshot-capture",
+        replace_existing=True,
+    )
+    log.info("scheduler: hourly snapshot capture registered (every hour :05)",
+             extra={"action": "scheduler.hourly_registered"})
+
     # Auto daily reports — 8:00 AM KST = 23:00 UTC (previous day)
     # Sends 3 individual agent reports + 1 combined summary
     _scheduler.add_job(

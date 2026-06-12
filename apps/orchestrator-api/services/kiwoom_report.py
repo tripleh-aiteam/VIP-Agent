@@ -416,6 +416,49 @@ def get_quote(ticker: str, ko: str = "", en: str = "", mkt: str | None = None) -
     }
 
 
+def _intraday_journey(db) -> str:
+    """Per-ticker intraday path from the day's hourly price snapshots (the '24
+    parts'): hourly close sequence + high/low through the day. '' if none."""
+    try:
+        from services import hourly_capture
+        snaps = hourly_capture.accumulated(db, "kiwoom", hours=26)
+    except Exception:
+        return ""
+    if not snaps:
+        return ""
+    # accumulated() dedupes by ticker (one entry per ticker = latest); for a real
+    # journey we need the time series, so read raw snapshots instead.
+    try:
+        from datetime import datetime, timedelta
+        from db.models import OrchReport
+        since = datetime.utcnow() - timedelta(hours=26)
+        recs = (db.query(OrchReport).filter(OrchReport.report_type == "kiwoom_snapshot")
+                .filter(OrchReport.created_at >= since)
+                .order_by(OrchReport.created_at.asc()).limit(30).all())
+    except Exception:
+        return ""
+    series: dict[str, list] = {}
+    names: dict[str, str] = {}
+    for rec in recs:
+        c = rec.content_json or {}
+        hour = (c.get("hour") or "")[-9:-4]  # HH:00
+        for it in (c.get("items") or []):
+            t = it.get("t")
+            if t and it.get("close") is not None:
+                series.setdefault(t, []).append((hour, it["close"]))
+                names[t] = it.get("ko", t)
+    if not series:
+        return ""
+    lines = []
+    for t, pts in series.items():
+        if len(pts) < 2:
+            continue
+        closes = [p[1] for p in pts]
+        path = " → ".join(f"{h} {c:,.0f}" for h, c in pts[-8:])
+        lines.append(f"- {names.get(t, t)}: 고가 {max(closes):,.0f} / 저가 {min(closes):,.0f} | {path}")
+    return "\n".join(lines)
+
+
 def build_kiwoom_report(db, trace_id: str) -> dict:
     """Build the daily Kiwoom report (real data table + LLM narrative, EN+KO)."""
     rows = _gather()
@@ -483,9 +526,12 @@ def build_kiwoom_report(db, trace_id: str) -> dict:
             "Output ONLY the finished English Markdown report — no preamble, no "
             "placeholders, no notes about a translation."
         )
+        journey = _intraday_journey(db)
         user = (f"Date (KST): {kst_date} · USD/KRW used for US tickers: {rate:,.0f}\n\n"
                 f"DATA TABLE (insert verbatim in Section 2):\n{table_en}\n\n"
-                f"DATA + TECHNICALS:\n{_facts(rows)}")
+                f"DATA + TECHNICALS:\n{_facts(rows)}"
+                + (f"\n\nINTRADAY JOURNEY (hourly snapshots through the day — weave the "
+                   f"day's price path into Section 3):\n{journey}" if journey else ""))
         out = chat_completion_sync(
             system_prompt=sysmsg, messages=[{"role": "user", "content": user[:9000]}],
             max_tokens=7000, temperature=0.5, model="groq-llama-3.3-70b") or ""

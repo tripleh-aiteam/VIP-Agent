@@ -163,6 +163,16 @@ def trigger_agent_report(type: str = Query(..., description="Agent type: asset |
             "message": f"{atype} agent report generating — check Reports → Agents in ~30-60s."}
 
 
+@router.post("/capture-hourly", dependencies=[Depends(rate_limit_compose)])
+def trigger_capture_hourly(db: Session = Depends(get_db)):
+    """Manually capture one hourly snapshot 'part' (newspaper + youtube + kiwoom)
+    right now — same as the automatic :05 hourly job. Saved, NOT emailed."""
+    from services.hourly_capture import capture_hourly
+    import threading
+    threading.Thread(target=capture_hourly, daemon=True).start()
+    return {"triggered": True, "message": "Hourly snapshot captured in background (saved, not emailed)."}
+
+
 @router.get("/email-config")
 def email_config():
     """Diagnostic health-check for the report email sender — BOOLEANS ONLY, and

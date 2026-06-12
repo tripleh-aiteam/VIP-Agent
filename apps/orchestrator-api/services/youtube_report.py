@@ -270,6 +270,36 @@ _WATCHLIST = ("SK Hynix, Samsung Electronics, Naver, SK Telecom, Samsung SDS, "
               "AMD, Micron, Broadcom, SanDisk, SOXX, KODEX 200")
 
 
+def _merge_hourly_videos(db, channels: list[dict], cap_per_channel: int = 8) -> list[dict]:
+    """Fold the day's hourly YouTube snapshots into the fresh gather (dedupe by
+    video id, cap per channel) so the morning report covers the whole day's
+    uploads, not just the latest fetch."""
+    try:
+        from services import hourly_capture
+        acc = hourly_capture.accumulated(db, "youtube", hours=26)
+    except Exception as e:
+        log.warning(f"youtube hourly merge skipped: {str(e)[:80]}")
+        return channels
+    by_ch: dict[str, list[dict]] = {}
+    for it in acc:
+        by_ch.setdefault(it.get("channel", ""), []).append(it)
+    for ch in channels:
+        clips = ch.get("clips", [])
+        vids = {c.get("video_id") for c in clips}
+        for it in by_ch.get(ch["name"], []):
+            if len(clips) >= cap_per_channel:
+                break
+            if it.get("video_id") and it["video_id"] not in vids:
+                vids.add(it["video_id"])
+                clips.append({"video_id": it["video_id"], "title": it.get("title", ""),
+                              "url": it.get("url", ""), "published": it.get("published"),
+                              "description": it.get("description", ""),
+                              "transcript": "", "has_transcript": False})
+        ch["clips"] = clips[:cap_per_channel]
+        ch["uploads_24h"] = len(ch["clips"])
+    return channels
+
+
 def build_youtube_report(db, trace_id: str) -> dict:
     """Daily YouTube report — for each channel, the last-24h uploaded clips with
     REAL Whisper transcripts (yt-dlp + Groq) where obtainable; a dedicated deep
@@ -277,6 +307,8 @@ def build_youtube_report(db, trace_id: str) -> dict:
     rows, table_en, table_ko, rate = _kr.gather_priced_rows()
     ok_rows = [r for r in rows if r.get("ok")]
     channels = _gather_channels()
+    # Merge the day's hourly video snapshots (the '24 parts').
+    channels = _merge_hourly_videos(db, channels)
     catalysts = _cat.gather_catalysts()
     n_transcripts = sum(c.get("n_transcripts", 0) for c in channels)
     from services.kst import kst_date as _kst_date
