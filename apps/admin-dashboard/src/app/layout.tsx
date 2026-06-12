@@ -11,6 +11,7 @@ import UpdateBanner from "@/components/UpdateBanner";
 // (router.push from an LLM-issued action) doesn't drop the conversation.
 // The legacy slim chat-bar via VipChatbotMount is no longer mounted.
 import { AssistantProvider, AssistantCardGlobal } from "@/components/AssistantCard";
+import { LanguageProvider } from "@/components/i18n";
 import PageSnapshotter from "@/components/PageSnapshotter";
 import { vipConfig } from "@/chatbot.config";
 
@@ -45,6 +46,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html lang="en">
       <body className="bg-[var(--bg-app)] text-[var(--text-primary)] antialiased">
         <AuthGuard>
+          <LanguageProvider>
           <AssistantProvider>
             <div className="flex">
               <Sidebar />
@@ -64,6 +66,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                 /chatbot (where ChatWorkspace has its own composer) */}
             <AssistantCardGlobal />
           </AssistantProvider>
+          </LanguageProvider>
         </AuthGuard>
       </body>
     </html>

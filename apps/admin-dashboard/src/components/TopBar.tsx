@@ -1,6 +1,6 @@
 "use client";
 
-import NotificationBell from "./NotificationBell";
+import LanguageToggle from "./LanguageToggle";
 
 export default function TopBar() {
   // On mobile the Sidebar renders a fixed top bar (z-50) with a hamburger
@@ -9,8 +9,8 @@ export default function TopBar() {
   // bell sits above the mobile header bar. On md+ it returns to the
   // top-right corner of the main content area.
   return (
-    <div className="fixed top-2 right-12 md:top-4 md:right-6 z-[60]">
-      <NotificationBell />
+    <div className="fixed top-2 right-12 md:top-4 md:right-6 z-[60] flex items-center gap-2">
+      <LanguageToggle />
     </div>
   );
 }
