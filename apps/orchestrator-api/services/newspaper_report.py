@@ -84,6 +84,30 @@ def _recency_search(site: str, kr: bool, per_query: int = 10) -> list[dict]:
     return out
 
 
+# Keep only stock/market/economy articles (drop sports/society/entertainment that
+# leak in from general RSS feeds, esp. with the wider time window).
+_MARKET_KW = (
+    "증시", "주식", "주가", "코스피", "코스닥", "나스닥", "다우", "s&p", "반도체", "삼성",
+    "하이닉스", "네이버", "텔레콤", "sds", "경제", "금리", "환율", "실적", "엔비디아", "증권",
+    "투자", "달러", "무역", "관세", "수출", "연준", "fed", "기업", "상장", "배당", "인수",
+    "합병", "공시", "매출", "영업이익", "메모리", "hbm", "트럼프", "유가", "원유", "채권",
+    "펀드", "ipo", "비트코인", "전기차", "배터리", "바이오", "코스피", "외국인", "기관", "마감",
+    "stock", "market", "nasdaq", "fed", "semiconductor", "earnings", "tariff", "chip",
+)
+_OFFTOPIC_PATHS = ("/sports", "/society", "/entertain", "/culture", "/life", "/people",
+                   "/travel", "/health/", "/opinion")
+
+
+def _is_market_relevant(it: dict) -> bool:
+    """True only for stock/market/economy articles (filters out sports/society)."""
+    url = (it.get("url") or "").lower()
+    if any(p in url for p in _OFFTOPIC_PATHS):
+        return False
+    blob = ((it.get("title") or "") + " " + (it.get("summary") or "")
+            + " " + (it.get("text") or "")).lower()
+    return any(k in blob for k in _MARKET_KW)
+
+
 def _domain_ok(url: str, site: str) -> bool:
     """True only if the URL belongs to the outlet's own domain — so every
     reference link is from that newspaper, never an external site."""
@@ -127,6 +151,8 @@ def _gather_news_by_source(cap_kr: int = 9, cap_paid: int = 9) -> dict[str, list
                 u = it.get("url", "")
                 if not u or u in seen or not _domain_ok(u, site):
                     continue  # only this outlet's own domain
+                if not _is_market_relevant(it):
+                    continue  # drop sports/society/etc. — stock & market news only
                 seen.add(u)
                 picked.append(it)
                 if len(picked) >= cap_kr:
@@ -378,8 +404,11 @@ def build_newspaper_report(db, trace_id: str) -> dict:
             f"- Section 4 (Catalysts & Schedule / 일정매매): {_cat.CATALYST_SECTION_RULE}\n"
             "- Section 5 (Recommendations): a DETAILED table with EXACTLY these columns: "
             "| 종목 | 의견 | 일일 등락 | 일일 거래량 | 주간 등락 | 주간 거래량 | 핵심 근거 | — "
-            "fill the volume/change columns from the STOCK STATS (NEVER invent them), and "
-            "make 핵심 근거 a concrete one-line reason. 의견 = 매수/보유/매도. THEN a "
+            "fill the volume/change columns from the STOCK STATS (NEVER invent them). "
+            "핵심 근거 MUST be a SPECIFIC concrete reason — cite an actual news item, an "
+            "earnings/HBM/AI catalyst, or the volume-vs-price trend (e.g. '주간 거래량 급증 + "
+            "HBM 수요'). NEVER write a generic placeholder like '기술적 분석' or '근거'. "
+            "의견 = 매수/보유/매도. THEN a "
             "'### 근거 상세' subsection: for EACH stock, 2-3 sentences explaining the call "
             "from (a) the news, (b) the daily vs weekly volume & price trend, (c) a "
             "catalyst + timing.\n"
