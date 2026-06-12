@@ -211,42 +211,39 @@ def _resolve_ticker(query: str) -> tuple[str | None, str | None]:
 
 def tool_stock_quote(query: str = "", ticker: str = "", **_kw) -> dict[str, Any]:
     """Current price of ONE named stock. Resolves a company name (SK Hynix /
-    SK하이닉스 / 삼성전자 / Samsung) or a 6-digit ticker to a live quote via the
-    backend orderbook (best bid/ask)."""
+    SK하이닉스 / 삼성전자 / Samsung) or a 6-digit ticker, then quotes through the
+    SAME Kiwoom price layer the reports use (KST-aware settled/live close + US
+    fallback) — so every chatbot returns the SAME correct price, even off-hours."""
     q = (ticker or query or "").strip()
     code, matched = _resolve_ticker(q)
     if not code:
         return {"ok": False, "fetched_at": _now_kst_iso(),
                 "error": f"Couldn't resolve '{q}' to a ticker. Give the 6-digit "
                          "code (e.g. 000660) or a major KR company name."}
-    res = _get("/intraday/orderbook", {"ticker": code})
-    if not res.get("ok"):
-        return res
-    items = (res.get("data") or {}).get("items") or []
-    if not items:
-        return {"ok": False, "fetched_at": res.get("fetched_at"),
-                "error": f"No live quote available for {matched or code} ({code}) right now."}
-    it = items[0]
-    levels = it.get("levels") or []
-    def best(side: str):
-        ls = [l for l in levels if l.get("side") == side]
-        if not ls:
-            return None
-        l1 = min(ls, key=lambda x: x.get("level", 99))
-        return abs(int(l1.get("price") or 0)) or None
-    bid, ask = best("buy"), best("sell")
-    current = bid or ask
+    try:
+        from services import kiwoom_report
+        quote = kiwoom_report.get_quote(code, ko=(matched or ""))
+    except Exception as e:
+        quote = None
+        log.warning(f"stock_quote get_quote failed for {code}: {e}")
+    if not quote or quote.get("price") is None:
+        return {"ok": False, "fetched_at": _now_kst_iso(),
+                "error": f"No price available for {matched or code} ({code}) right now."}
+    price = quote["price"]
+    is_kr = quote["market"] == "KR"
+    kind = {"live": "현재가(장중)", "close": "종가", "prev_close": "전일 종가",
+            "google": "최근 종가"}.get(quote.get("price_kind"), "")
     return {
         "ok": True,
-        "fetched_at": res.get("fetched_at"),
+        "fetched_at": _now_kst_iso(),
         "ticker": code,
-        "name": it.get("ticker_name") or matched,
-        "market": it.get("market"),
-        "current_price": current,
-        "current_price_won": f"{current:,}원" if current else None,
-        "best_bid": bid, "best_ask": ask,
-        "captured_at": it.get("captured_at"),
-        "source": "OASIS Stock Advisor (live orderbook)",
+        "name": matched or quote.get("name_ko") or code,
+        "market": quote["market"],
+        "current_price": price,
+        "current_price_won": (f"{price:,.0f}원" if is_kr else f"${price:,.2f}"),
+        "change_pct": quote.get("change_pct"),
+        "basis": kind, "as_of": quote.get("as_of"),
+        "source": "Kiwoom / Stock-Advisor (settled/live close)",
     }
 
 

@@ -306,6 +306,37 @@ def gather_priced_rows() -> tuple[list[dict], str, str, float]:
     return rows, _build_table(rows, ko=False), _build_table(rows, ko=True), rate
 
 
+def get_quote(ticker: str, ko: str = "", en: str = "", mkt: str | None = None) -> dict | None:
+    """SINGLE SOURCE OF TRUTH for one stock's current price — the same daily-chart
+    layer (KST-aware live/close + US Google fallback) the reports use. Chatbots /
+    assistants across ALL agents call this so every surface quotes the SAME price.
+    Returns a clean quote dict, or None if no price could be fetched."""
+    code = (ticker or "").strip()
+    if not code:
+        return None
+    if mkt is None:  # 6-digit numeric → KR (KRX), otherwise treat as US
+        mkt = "KR" if (code.isdigit() and len(code) == 6) else "US"
+    spec = {"t": code, "ko": ko or code, "en": en or code, "mkt": mkt, "etf": ""}
+    row = _fetch_daily(spec)
+    if mkt == "US":
+        try:
+            _backfill_us([row])   # replace stale/empty US with the latest real close
+        except Exception:
+            pass
+    if not row.get("ok") or row.get("close") is None:
+        return None
+    return {
+        "ticker": code, "name_ko": ko or code, "name_en": en or code,
+        "market": mkt, "currency": "KRW" if mkt == "KR" else "USD",
+        "price": row.get("close"), "open": row.get("open"),
+        "high": row.get("high"), "low": row.get("low"),
+        "change_pct": row.get("change_pct"), "volume": row.get("volume"),
+        "price_kind": row.get("price_kind"), "as_of": row.get("data_date"),
+        "data_time": row.get("data_time"),
+        "source": "Kiwoom / Stock-Advisor (daily-chart)",
+    }
+
+
 def build_kiwoom_report(db, trace_id: str) -> dict:
     """Build the daily Kiwoom report (real data table + LLM narrative, EN+KO)."""
     rows = _gather()
