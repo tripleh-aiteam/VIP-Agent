@@ -877,7 +877,7 @@ def _run_chain(
     # Read-only chain — execute all and compose a final answer
     step_results = []
     for s in validated_steps:
-        res = execute_tool(s["tool"], s["args"], db=db, agent_id=agent_id)
+        res = execute_tool(s["tool"], s["args"], db=db, agent_id=agent_id, transcript=transcript)
         step_results.append({"tool": s["tool"], "result": res})
 
     # Compose final answer from all step results — honour table/list requests.
@@ -2007,7 +2007,7 @@ def _run_agent_impl(
         # Carry the path through if the tool wants it
         if current_path and "current_path" not in args:
             args["current_path"] = current_path
-        tool_result = execute_tool(confirmed_tool, args, db=db, agent_id=agent_id)
+        tool_result = execute_tool(confirmed_tool, args, db=db, agent_id=agent_id, transcript=transcript)
         action = tool_result.get("action") if isinstance(tool_result, dict) else None
         reply = tool_result.get("message") if isinstance(tool_result, dict) else "Done."
         if not reply:
@@ -2320,7 +2320,7 @@ def _run_agent_impl(
     # recall_history needs to know whose history to search — inject user_id
     if tool_name == "recall_history" and user_id and "user_id" not in args:
         args["user_id"] = user_id
-    tool_result = execute_tool(tool_name, args, db=db, agent_id=agent_id)
+    tool_result = execute_tool(tool_name, args, db=db, agent_id=agent_id, transcript=transcript)
 
     # ANSWER-FIRST guard: never auto-navigate for a QUESTION. If the LLM chose
     # navigate/open_portal but the user didn't explicitly ask to open (or confirm

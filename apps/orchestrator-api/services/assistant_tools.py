@@ -3136,7 +3136,8 @@ def _fn_accepts(fn, param: str) -> bool:
     return False
 
 
-def execute_tool(name: str, args: dict, db: Session = None, agent_id: str = "vip") -> dict[str, Any]:
+def execute_tool(name: str, args: dict, db: Session = None, agent_id: str = "vip",
+                 transcript: str = "") -> dict[str, Any]:
     """Execute a tool by name with the given args. Returns the tool's
     structured result. NEVER raises — always returns a dict with 'ok' key.
 
@@ -3156,6 +3157,10 @@ def execute_tool(name: str, args: dict, db: Session = None, agent_id: str = "vip
         call_args = dict(args or {})
         if _fn_accepts(tool.fn, "agent_id"):
             call_args["agent_id"] = agent_id  # authoritative — overrides any LLM-supplied value
+        if _fn_accepts(tool.fn, "user_transcript"):
+            # Original user message — lets a tool recover when the LLM passes a
+            # garbage/hallucinated arg (e.g. a bad ticker-name string).
+            call_args.setdefault("user_transcript", transcript)
         result = tool.fn(**call_args, db=db)
         if not isinstance(result, dict):
             return {"ok": False, "error": f"Tool '{name}' returned non-dict"}

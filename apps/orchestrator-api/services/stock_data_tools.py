@@ -202,20 +202,25 @@ def _resolve_ticker(query: str) -> tuple[str | None, str | None]:
     low = q.lower()
     if low in _NAME_TO_TICKER:
         return _NAME_TO_TICKER[low], q
-    # loose contains-match (longest alias first)
-    for name in sorted(_NAME_TO_TICKER, key=len, reverse=True):
-        if name in low or low in name:
-            return _NAME_TO_TICKER[name], name
+    # loose contains-match (longest alias first). Require ≥2 chars so an empty or
+    # 1-char query can't false-match (an empty string is a substring of every name).
+    if len(low) >= 2:
+        for name in sorted(_NAME_TO_TICKER, key=len, reverse=True):
+            if name in low or low in name:
+                return _NAME_TO_TICKER[name], name
     return None, None
 
 
-def tool_stock_quote(query: str = "", ticker: str = "", **_kw) -> dict[str, Any]:
+def tool_stock_quote(query: str = "", ticker: str = "", user_transcript: str = "", **_kw) -> dict[str, Any]:
     """Current price of ONE named stock. Resolves a company name (SK Hynix /
     SK하이닉스 / 삼성전자 / Samsung) or a 6-digit ticker, then quotes through the
     SAME Kiwoom price layer the reports use (KST-aware settled/live close + US
     fallback) — so every chatbot returns the SAME correct price, even off-hours."""
     q = (ticker or query or "").strip()
     code, matched = _resolve_ticker(q)
+    if not code and user_transcript:
+        # The LLM sometimes passes a garbage arg — recover from the real message.
+        code, matched = _resolve_ticker(user_transcript)
     if not code:
         return {"ok": False, "fetched_at": _now_kst_iso(),
                 "error": f"Couldn't resolve '{q}' to a ticker. Give the 6-digit "
