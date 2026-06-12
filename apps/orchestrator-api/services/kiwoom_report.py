@@ -76,6 +76,53 @@ def _fmt_chg(c: float | None) -> str:
     return f"{arrow}{abs(c):.2f}%"
 
 
+def _kr_live_price(code: str) -> tuple[float, str] | None:
+    """Real-time KR current price (mid of best bid/ask) from the live orderbook,
+    with the capture time as KST 'HH:MM'. This is the TRUE generate-time price
+    during trading hours — the daily-chart candle is intermittently null/stale
+    mid-session. None if no fresh quote (older than ~20 min → not 'now')."""
+    try:
+        with httpx.Client(timeout=12) as c:
+            r = c.get(f"{_BACKEND}/intraday/orderbook", params={"ticker": code})
+        if r.status_code != 200:
+            return None
+        items = (r.json() or {}).get("items") or []
+        if not items:
+            return None
+        it = items[0]
+        levels = it.get("levels") or []
+
+        def best(side: str):
+            ls = [l for l in levels if l.get("side") == side]
+            if not ls:
+                return None
+            l1 = min(ls, key=lambda x: x.get("level", 99))
+            return abs(int(l1.get("price") or 0)) or None
+
+        bid, ask = best("buy"), best("sell")
+        mid = (bid + ask) / 2 if (bid and ask) else (bid or ask)
+        if not mid:
+            return None
+        # Freshness: only treat as 'now' if captured within ~20 min.
+        from datetime import datetime, timezone, timedelta
+        from services.kst import kst_now
+        cap = it.get("captured_at") or ""
+        hhmm = kst_now().strftime("%H:%M")
+        try:
+            dt = datetime.fromisoformat(str(cap).replace("Z", "+00:00"))
+            kst = dt.astimezone(timezone(timedelta(hours=9)))
+            age_min = (kst_now() - kst.replace(tzinfo=None)).total_seconds() / 60
+            if age_min > 20:
+                return None
+            hhmm = kst.strftime("%H:%M")
+        except Exception:
+            pass
+        return round(mid), hhmm
+    except Exception as e:
+        log.warning(f"kr live price {code}: {str(e)[:80]}")
+        return None
+
+
 def _fetch_daily(spec: dict) -> dict:
     """Fetch the latest FULLY-SETTLED daily candle + previous close for one ticker.
     Retries a few times — the backend's Yahoo/Kiwoom fetch is intermittently
@@ -100,9 +147,13 @@ def _fetch_daily(spec: dict) -> dict:
     # KR regular session closes 15:30; treat ≥15:30 as "after close".
     after_close = (kst_hour > 15) or (kst_hour == 15 and kst_minute >= 30)
     pre_open = kst_hour < 9
+    # KR equities trade 09:00–15:30 KST → during that window the live orderbook,
+    # not the daily candle, is the real generate-time price.
+    kr_trading = (spec.get("mkt") == "KR") and (not pre_open) and (not after_close)
     row = {**spec, "open": None, "close": None, "high": None, "low": None,
            "volume": None, "change_pct": None, "ok": False,
            "price_kind": None, "data_date": None, "data_time": None}
+    daily_done = False
     for attempt in range(3):
         try:
             with httpx.Client(timeout=30) as c:
@@ -135,12 +186,30 @@ def _fetch_daily(spec: dict) -> dict:
                     "data_time": _now.strftime("%H:%M") if price_kind == "live" else None,
                     "ok": True,
                 })
-                return row
+                daily_done = True
+                break
         except Exception as e:
             log.warning(f"kiwoom fetch {spec['t']} attempt {attempt+1} failed: {e}")
         if attempt < 2:
             _t.sleep(1.5)
-    log.warning(f"kiwoom fetch {spec['t']}: no data after retries")
+    if not daily_done:
+        log.warning(f"kiwoom fetch {spec['t']}: no daily data after retries")
+
+    # During KR trading hours, OVERRIDE with the real-time orderbook price so the
+    # report reflects the price AT GENERATION TIME (e.g. a 10:40 run = 10:40 price),
+    # not a stale/null daily candle. Keep the daily-chart open/prev_close/volume.
+    if kr_trading:
+        live = _kr_live_price(spec["t"])
+        if live:
+            price, hhmm = live
+            prev_close = row.get("prev_close")
+            row.update({
+                "close": price,
+                "open": row.get("open") if row.get("open") is not None else None,
+                "change_pct": ((price - prev_close) / prev_close * 100) if prev_close else row.get("change_pct"),
+                "price_kind": "live", "data_date": today, "data_time": hhmm,
+                "ok": True,
+            })
     return row
 
 
