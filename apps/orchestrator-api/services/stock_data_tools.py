@@ -255,6 +255,50 @@ def tool_stock_quote(query: str = "", ticker: str = "", user_transcript: str = "
     }
 
 
+def tool_stock_price_history(query: str = "", ticker: str = "", days: int = 14,
+                             user_transcript: str = "", db=None, **_kw) -> dict[str, Any]:
+    """Historical daily closing prices for ONE stock from our STORED daily reports
+    + hourly snapshots — so the agent REMEMBERS past days ('지난주 삼성전자 주가',
+    'last week's SK Hynix price'). Returns a date→close series."""
+    q = (ticker or query or "").strip()
+    code, matched = _resolve_ticker(q)
+    if not code and user_transcript:
+        code, matched = _resolve_ticker(user_transcript)
+    if not code:
+        return {"ok": False, "error": f"Couldn't resolve '{q}' to a ticker."}
+    if db is None:
+        return {"ok": False, "error": "history unavailable"}
+    try:
+        from db.models import OrchReport
+        from datetime import datetime, timedelta
+        try:
+            days = max(1, min(int(days or 14), 90))
+        except Exception:
+            days = 14
+        since = datetime.utcnow() - timedelta(days=days + 3)
+        recs = (db.query(OrchReport)
+                .filter(OrchReport.report_type.in_(["kiwoom_report", "kiwoom_snapshot"]))
+                .filter(OrchReport.created_at >= since)
+                .order_by(OrchReport.created_at.asc()).limit(300).all())
+        hist: dict[str, float] = {}
+        for rec in recs:
+            c = rec.content_json or {}
+            rows = (c.get("report") or {}).get("rows") or c.get("items") or []
+            for r in rows:
+                if r.get("t") == code and r.get("close") is not None:
+                    d = r.get("data_date") or (rec.created_at.strftime("%Y-%m-%d") if rec.created_at else "")
+                    if d:
+                        hist[d] = r.get("close")
+        series = [{"date": d, "close": hist[d]} for d in sorted(hist)][-days:]
+        if not series:
+            return {"ok": False, "error": f"No stored price history yet for {matched or code} ({code})."}
+        return {"ok": True, "fetched_at": _now_kst_iso(), "ticker": code,
+                "name": matched or code, "days": len(series), "history": series,
+                "source": "Stored daily Kiwoom reports + hourly snapshots"}
+    except Exception as e:
+        return {"ok": False, "error": str(e)[:200]}
+
+
 # ============================================================================
 #  Registration
 # ============================================================================
@@ -272,6 +316,17 @@ _TOOL_DEFS: list[tuple[str, Callable, str, dict]] = [
         "current price — use this.",
         {"type": "object", "properties": {
             "query": {"type": "string", "description": "Company name or 6-digit ticker (SK Hynix, 삼성전자, 000660)"},
+        }, "required": ["query"]},
+    ),
+    (
+        "stock_price_history", tool_stock_price_history,
+        "Historical daily CLOSING prices of ONE stock from our stored records — use "
+        "for 'last week's price', '지난주 X 주가', 'how did X move over the past days', "
+        "or any past-date price question. Returns a date→close series the agent "
+        "remembers across days.",
+        {"type": "object", "properties": {
+            "query": {"type": "string", "description": "Company name or 6-digit ticker"},
+            "days": {"type": "integer", "description": "How many recent days (default 14)"},
         }, "required": ["query"]},
     ),
     (

@@ -1039,12 +1039,17 @@ def _master_daily_report(email_override: str | None = None, period: str = "daily
                 kiwoom_rp = _latest_report(db, "kiwoom_report")
                 news_rp = _latest_report(db, "newspaper_report")
                 youtube_rp = _latest_report(db, "youtube_report")
+                # On weekends (Sat/Sun KST) markets are closed and YouTube finance
+                # coverage is thin → skip the YouTube part; send Kiwoom+Newspaper+추천.
+                from services.kst import kst_now as _kst_now
+                is_weekend = _kst_now().weekday() >= 5
                 pieces = [
                     ("1_키움_Kiwoom", "키움 데일리 리포트", kiwoom_rp),
                     ("2_신문_Newspaper", "신문 요약 리포트", news_rp),
-                    ("3_유튜브_YouTube", "유튜브 요약 리포트", youtube_rp),
-                    ("4_추천_Recommendation", "종합 추천 리포트", rep),
                 ]
+                if not is_weekend:
+                    pieces.append(("3_유튜브_YouTube", "유튜브 요약 리포트", youtube_rp))
+                pieces.append(("4_추천_Recommendation", "종합 추천 리포트", rep))
                 files = []
                 for fn, title, rp in pieces:
                     md = _ko(rp)
@@ -1052,20 +1057,22 @@ def _master_daily_report(email_override: str | None = None, period: str = "daily
                         files.append((f"{fn}_{ymd}.docx", markdown_to_docx(md, title, kst)))
 
                 _kor = {"daily": "데일리", "weekly": "주간", "monthly": "월간"}.get(period, "데일리")
+                n_rep = len(files)
+                _yt_line = "" if is_weekend else "3. 유튜브 요약 리포트 — 금융 유튜브 채널 분석\n"
+                _rec_no = "3" if is_weekend else "4"
                 intro = (
                     "안녕하세요 사장님,\n\n"
-                    f"{kst} 기준 {_kor} 리포트 4건을 보내드립니다:\n"
+                    f"{kst} 기준 {_kor} 리포트 {n_rep}건을 보내드립니다:\n"
                     f"1. 키움 {_kor} 리포트 — 시세·기술적 분석\n"
                     "2. 신문 요약 리포트 — 주요 신문사 뉴스 분석\n"
-                    "3. 유튜브 요약 리포트 — 금융 유튜브 채널 분석\n"
-                    "4. 종합 추천 리포트 — 위 3개 리포트를 종합한 투자 의견 및 일정매매 포인트\n\n"
-                    "각 리포트는 첨부된 Word 파일에서 확인하실 수 있습니다.\n\n"
+                    f"{_yt_line}"
+                    f"{_rec_no}. 종합 추천 리포트 — 위 리포트를 종합한 투자 의견 및 일정매매 포인트\n\n"
+                    + ("※ 주말에는 시장 휴장으로 유튜브 요약은 제외됩니다.\n\n" if is_weekend else "")
+                    + "각 리포트는 첨부된 Word 파일에서 확인하실 수 있습니다.\n\n"
                     "감사합니다.\nTripleH AI"
-                    + (f"\n\n— (Today's 4 {period} reports attached: Kiwoom, Newspaper, "
-                       "YouTube, and the consolidated Recommendation.)" if lang == "en" else "")
                 )
                 res = send_email_with_docs(
-                    recipients, f"[TripleH] {_kor} 리포트 4건 — {kst}", intro, files)
+                    recipients, f"[TripleH] {_kor} 리포트 {n_rep}건 — {kst}", intro, files)
                 log.info(f"master: consolidated email {'sent' if res.get('ok') else 'skipped'} "
                          f"({len(files)} files, {len(recipients)} recipient(s)) "
                          f"({res.get('reason', 'ok')})",
@@ -1239,7 +1246,7 @@ def init_scheduler():
     # (UTC Sun-Thu 21:30 = Mon-Fri 06:30 KST).
     _scheduler.add_job(
         _kiwoom_daily_report,
-        CronTrigger.from_crontab("30 21 * * 0-4"),
+        CronTrigger.from_crontab("30 21 * * *"),   # every day (incl Sat/Sun KST)
         id="kiwoom-daily-report",
         replace_existing=True,
     )
@@ -1249,7 +1256,7 @@ def init_scheduler():
     # (same time as the Kiwoom report).
     _scheduler.add_job(
         _newspaper_daily_report,
-        CronTrigger.from_crontab("30 21 * * 0-4"),
+        CronTrigger.from_crontab("30 21 * * *"),   # every day (incl Sat/Sun KST)
         id="newspaper-daily-report",
         replace_existing=True,
     )
@@ -1267,7 +1274,7 @@ def init_scheduler():
     # Master synthesis report — 6:50 AM KST = 21:50 UTC, weekdays (after the 3).
     _scheduler.add_job(
         _master_daily_all,   # forces the full recipient list (ignores any single-address test env)
-        CronTrigger.from_crontab("50 21 * * 0-4"),
+        CronTrigger.from_crontab("50 21 * * *"),   # every day (incl Sat/Sun KST)
         id="master-daily-report",
         replace_existing=True,
     )

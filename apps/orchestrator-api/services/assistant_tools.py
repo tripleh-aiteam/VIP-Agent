@@ -3092,7 +3092,7 @@ _GENERIC_TOOLS = {
     "semantic_search",
     # Read-only single-stock price lookup — safe cross-domain so EVERY agent's
     # chatbot quotes the SAME correct Kiwoom price (no hallucinated figures).
-    "stock_quote",
+    "stock_quote", "stock_price_history",
 }
 _PROPERTY_TOOLS = {"onbid_search", "onbid_detail", "realprice_search"}
 

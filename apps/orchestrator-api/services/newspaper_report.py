@@ -439,13 +439,17 @@ def build_newspaper_report(db, trace_id: str) -> dict:
             "use the KOREAN stock names EXACTLY as written in STOCK STATS (삼성전자, "
             "SK하이닉스, 네이버, 마이크론, 브로드컴, 샌디스크 …), never English. "
             "fill the volume/change columns from the STOCK STATS (NEVER invent them). "
-            "핵심 근거 MUST be a SPECIFIC concrete reason — cite an actual news item, an "
-            "earnings/HBM/AI catalyst, or the volume-vs-price trend (e.g. '주간 거래량 급증 + "
-            "HBM 수요'). NEVER write a generic placeholder like '기술적 분석' or '근거'. "
-            "의견 = 매수/보유/매도. THEN a "
-            "'### 근거 상세' subsection: for EACH stock, 2-3 sentences explaining the call "
-            "from (a) the news, (b) the daily vs weekly volume & price trend, (c) a "
-            "catalyst + timing.\n"
+            "핵심 근거 MUST be a SPECIFIC concrete reason WITH A SOURCE CITATION — name the "
+            "newspaper/article it came from in brackets, e.g. '주간 거래량 급증 + HBM 수요 "
+            "[출처: 한국경제]' or '외국인 순매수 전환 [출처: 매일경제]'. NEVER write a generic "
+            "placeholder like '기술적 분석' or '근거'. 의견 = 매수/보유/매도. THEN a "
+            "'### 근거 상세' subsection: for EACH stock, 3-4 sentences explaining the call "
+            "from (a) the news (WITH the source outlet named), (b) the daily vs weekly "
+            "volume & price trend, (c) a catalyst + timing. Every '매도/매수' claim MUST "
+            "state WHY and from WHICH source.\n"
+            "Write Korean section HEADINGS in the ===KO=== version: '## 1. 총평', "
+            "'## 3. 종목별 분석', '## 4. 일정·촉매 (일정매매)', '## 5. 추천'. NO English prose "
+            "anywhere in the Korean version.\n"
             "Use ONLY provided data; never invent a number. Output EXACTLY:\n===EN===\n"
             "<english>\n===KO===\n<korean 존댓말>")
         suser = (f"TODAY (KST): {kst_date} · USD/KRW: {rate:,.0f}\n\n"
@@ -470,8 +474,8 @@ def build_newspaper_report(db, trace_id: str) -> dict:
             parts = re.split(r"(?=##\s*3\.)", syn, maxsplit=1)
             overview = parts[0].strip() if parts else ""
             rest = parts[1].strip() if len(parts) > 1 else ""
-            return (f"# Newspaper Market Analysis\n*{kst_date} (최근 수일 / recent days)*\n\n"
-                    f"{overview}\n\n## 2. News by Newspaper\n{news}\n\n{rest}").strip()
+            return (f"# 신문 시장 분석 리포트\n*{kst_date} (최근 수일)*\n\n"
+                    f"{overview}\n\n## 2. 신문별 뉴스\n{news}\n\n{rest}").strip()
 
         if news_en.strip() and syn_en.strip():
             detail_en = _assemble(syn_en, news_en)

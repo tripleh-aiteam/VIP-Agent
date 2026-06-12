@@ -223,10 +223,48 @@ def _fetch_daily(spec: dict) -> dict:
     return row
 
 
+def _enrich_kr_rows(rows: list[dict]) -> None:
+    """For KR tickers, add Naver NXT (after-market) close + investor flows
+    (외국인/기관/개인 순매수). When NOT in trading hours, the user wants the
+    NXT after-market close shown as the closing price."""
+    from services.kst import kst_now
+    h = kst_now().hour
+    trading = 9 <= h < 16
+    for r in rows:
+        if r.get("mkt") != "KR":
+            continue
+        try:
+            from services import naver_stock
+            e = naver_stock.enrich_kr(r["t"])
+        except Exception:
+            continue
+        nxt = e.get("nxt_price")
+        if nxt:
+            r["nxt_price"] = nxt
+            # After the regular close / pre-open, show the NXT after-market close.
+            if not trading and r.get("close") is not None:
+                prev = r.get("prev_close")
+                wk = r.get("weekly_base")
+                r["close"] = nxt
+                r["change_pct"] = ((nxt - prev) / prev * 100) if prev else r.get("change_pct")
+                r["weekly_change_pct"] = ((nxt - wk) / wk * 100) if wk else r.get("weekly_change_pct")
+                r["price_kind"] = "nxt"
+        fl = e.get("flow") or {}
+        r["foreign_net"] = fl.get("foreign")
+        r["organ_net"] = fl.get("organ")
+        r["individual_net"] = fl.get("individual")
+        r["foreign_hold"] = fl.get("foreign_hold")
+
+
 def _gather() -> list[dict]:
     from concurrent.futures import ThreadPoolExecutor
     with ThreadPoolExecutor(max_workers=5) as ex:
-        return list(ex.map(_fetch_daily, KIWOOM_TICKERS))
+        rows = list(ex.map(_fetch_daily, KIWOOM_TICKERS))
+    try:
+        _enrich_kr_rows(rows)
+    except Exception as e:
+        log.warning(f"kiwoom KR enrich skipped: {str(e)[:80]}")
+    return rows
 
 
 def _expected_us_session() -> str:
@@ -279,11 +317,24 @@ def _basis(r: dict, ko: bool) -> str:
         return (f"종가 {d}" if d else "종가") if ko else (f"Close {d}" if d else "Close")
     if kind == "live":
         return (f"현재가 {t}" if t else "현재가") if ko else (f"Live {t}" if t else "Live")
+    if kind == "nxt":
+        return "종가(시간외/NXT)" if ko else "NXT close"
     if kind == "close":
         return f"종가 {d}" if ko else f"Close {d}"
     if kind == "prev_close":
         return f"전일 {d}" if ko else f"Prev {d}"
     return "—"
+
+
+def _net(v) -> str:
+    """Investor net-buy quantity with sign (외국인/기관 순매수)."""
+    if v is None:
+        return "—"
+    try:
+        n = int(v)
+    except Exception:
+        return "—"
+    return f"+{n:,}" if n > 0 else (f"−{abs(n):,}" if n < 0 else "0")
 
 
 def _verify_cell(r: dict, ko: bool) -> str:
@@ -297,23 +348,44 @@ def _verify_cell(r: dict, ko: bool) -> str:
 
 
 def _build_table(rows: list[dict], ko: bool) -> str:
-    """Deterministic Markdown data table with the REAL numbers (all in KRW) plus a
-    clean basis label (현재가/종가 + date). The Google cross-check runs behind the
-    scenes for correctness/logging — it is NOT shown in the report."""
+    """Price table with daily + weekly change% & volume. KR 종가 uses the NXT
+    after-market close when available. (Google cross-check runs silently.)"""
+    def vol(v):
+        return f"{int(v):,}" if v is not None else "—"
     if ko:
-        head = ("| 종목 | 시가 | 가격 | 기준 | 대비·등락 | 거래량 |\n"
-                "|---|---|---|---|---|---|")
+        head = ("| 종목 | 시가 | 종가 | 기준 | 일일 등락 | 일일 거래량 | 주간 등락 | 주간 거래량 |\n"
+                "|---|---|---|---|---|---|---|---|")
     else:
-        head = ("| Stock | Open (KRW) | Price (KRW) | Basis | Change | Volume |\n"
-                "|---|---|---|---|---|---|")
+        head = ("| Stock | Open | Close | Basis | Daily Chg | Daily Vol | Weekly Chg | Weekly Vol |\n"
+                "|---|---|---|---|---|---|---|---|")
     lines = [head]
     for r in rows:
         name = r["ko"] if ko else r["en"]
-        vol = f"{int(r['volume']):,}" if r.get("volume") is not None else "—"
         lines.append(
             f"| {name} | {_won(r.get('open_krw'))} | {_won(r.get('close_krw'))} | "
-            f"{_basis(r, ko)} | {_fmt_chg(r.get('change_pct'))} | {vol} |"
+            f"{_basis(r, ko)} | {_fmt_chg(r.get('change_pct'))} | {vol(r.get('volume'))} | "
+            f"{_fmt_chg(r.get('weekly_change_pct'))} | {vol(r.get('weekly_volume'))} |"
         )
+    return "\n".join(lines)
+
+
+def _flows_table(rows: list[dict], ko: bool) -> str:
+    """투자자별 순매수 (foreign / institutional / individual) — KR stocks only."""
+    kr = [r for r in rows if r.get("mkt") == "KR" and (r.get("foreign_net") is not None
+          or r.get("organ_net") is not None)]
+    if not kr:
+        return ""
+    if ko:
+        head = ("| 종목 | 외국인 순매수 | 기관 순매수 | 개인 순매수 | 외국인 보유율 |\n"
+                "|---|---|---|---|---|")
+    else:
+        head = ("| Stock | Foreign net | Institution net | Individual net | Foreign hold |\n"
+                "|---|---|---|---|---|")
+    lines = [head]
+    for r in kr:
+        name = r["ko"] if ko else r["en"]
+        lines.append(f"| {name} | {_net(r.get('foreign_net'))} | {_net(r.get('organ_net'))} | "
+                     f"{_net(r.get('individual_net'))} | {r.get('foreign_hold') or '—'} |")
     return "\n".join(lines)
 
 
@@ -359,11 +431,22 @@ def _facts(rows: list[dict]) -> str:
                 trend = "below long-term MA60 (longer-term bearish, short-term mixed)"
 
         vol = f"{int(r['volume']):,}" if r.get("volume") is not None else "n/a"
+        wchg = r.get("weekly_change_pct")
+        wchg_s = f"{wchg:+.2f}%" if wchg is not None else "n/a"
+        wvol = f"{int(r['weekly_volume']):,}" if r.get("weekly_volume") is not None else "n/a"
+        # Investor flows (KR only) — for the recommendation analysis.
+        flow_s = ""
+        if r.get("foreign_net") is not None or r.get("organ_net") is not None:
+            flow_s = (f" 수급: 외국인순매수={_net(r.get('foreign_net'))}, "
+                      f"기관순매수={_net(r.get('organ_net'))}, "
+                      f"개인순매수={_net(r.get('individual_net'))}, "
+                      f"외국인보유율={r.get('foreign_hold') or 'n/a'};")
         out.append(
             f"- {r['en']} ({r['ko']}, {r['t']}, {r['mkt']}, ETF:{r['etf']}): "
             f"open={_won(r.get('open_krw'))}, close={_won(r.get('close_krw'))}, "
             f"high={_won(r.get('high_krw'))}, low={_won(r.get('low_krw'))}, "
-            f"intraday_range={rng}, change_vs_prev_close={chg_s}, volume={vol}; "
+            f"intraday_range={rng}, change_vs_prev_close={chg_s}, volume={vol}, "
+            f"weekly_change={wchg_s}, weekly_volume={wvol};{flow_s} "
             f"close_vs_MA5={pa(ma5)}, close_vs_MA20={pa(ma20)}, close_vs_MA60={pa(ma60)}; "
             f"trend={trend}."
         )
@@ -476,6 +559,11 @@ def build_kiwoom_report(db, trace_id: str) -> dict:
     from services.kst import kst_date as _kst_date
     kst_date = _kst_date()
     table_en, table_ko = _build_table(rows, ko=False), _build_table(rows, ko=True)
+    # Append the investor-flows (수급) table for KR stocks, when available.
+    _fl_ko, _fl_en = _flows_table(rows, ko=True), _flows_table(rows, ko=False)
+    if _fl_ko:
+        table_ko = table_ko + "\n\n**투자자별 순매수 (수급, 단위: 주)**\n" + _fl_ko
+        table_en = table_en + "\n\n**Investor net-buy (shares)**\n" + _fl_en
 
     # One-line summary (deterministic fallback)
     movers = sorted([r for r in ok_rows if r.get("change_pct") is not None],
@@ -521,8 +609,13 @@ def build_kiwoom_report(db, trace_id: str) -> dict:
             "and percentages throughout — never be vague, never invent.\n"
             "- Section 6: FIRST a Markdown table | Stock | Action | Reason | where "
             "Action is BUY / SELL / HOLD; THEN, AFTER the table, add a '### Rationale' "
-            "subsection with a paragraph per recommendation explaining IN DETAIL why "
-            "(the technical + momentum reasoning behind each BUY / SELL / HOLD).\n"
+            "subsection with a paragraph per recommendation explaining IN DETAIL why. "
+            "For KR stocks you are GIVEN investor flows (외국인/기관/개인 순매수) — you MUST "
+            "weave these into the reasoning (e.g. heavy foreign buying = institutional "
+            "conviction → supports BUY; heavy foreign selling → caution). Cite the SPECIFIC "
+            "number that drives each call (a change%, a volume, a net-buy figure). Note "
+            "that KR closes are the NXT after-market (시간외) price. (Futures/options "
+            "trading values and short-selling data are not available in this feed.)\n"
             "Output ONLY the finished English Markdown report — no preamble, no "
             "placeholders, no notes about a translation."
         )
@@ -546,9 +639,13 @@ def build_kiwoom_report(db, trace_id: str) -> dict:
                     "You are a professional Korean financial translator. Translate the "
                     "ENTIRE English market report below into natural, professional "
                     "Korean (존댓말) for an investor audience. Rules:\n"
-                    "- Translate EVERYTHING — every section and paragraph. NEVER "
-                    "abbreviate, summarise, or write a placeholder like '(same as "
-                    "English)'. The Korean must be as long as the English.\n"
+                    "- Translate EVERYTHING — every section, heading and paragraph. The "
+                    "output must contain NO English prose or English headings. Translate "
+                    "the SECTION HEADINGS too (e.g. '## 1. General Overview' → "
+                    "'## 1. 시장 개요', 'Detailed Analysis' → '상세 분석', 'Risks' → '리스크', "
+                    "'Opportunities' → '기회', 'Recommended Actions' → '추천 액션'). "
+                    "Translate BUY/HOLD/SELL → 매수/보유/매도. NEVER abbreviate or stub; "
+                    "the Korean must be as long as the English.\n"
                     "- Preserve ALL Markdown structure, heading levels, and tables.\n"
                     "- Keep every number, %, 원 amount, ticker code and MA value "
                     "IDENTICAL — translate only the words.\n"
