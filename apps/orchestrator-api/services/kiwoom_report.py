@@ -173,6 +173,11 @@ def _fetch_daily(spec: dict) -> dict:
                 close = last.get("close")
                 chg = ((close - prev_close) / prev_close * 100) if (prev_close and close) else None
                 d = last.get("date")
+                # Weekly stats (≈5 trading days) for the recommendation rationale.
+                recent5 = candles[-5:]
+                weekly_volume = sum((c.get("volume") or 0) for c in recent5) or None
+                wk_base = candles[-6].get("close") if len(candles) >= 6 else (candles[0].get("close") if candles else None)
+                weekly_change = ((close - wk_base) / wk_base * 100) if (wk_base and close) else None
                 # Honest label based on what the freshest candle actually IS.
                 if d == today and not pre_open:
                     price_kind = "close" if after_close else "live"
@@ -183,6 +188,8 @@ def _fetch_daily(spec: dict) -> dict:
                     "low": last.get("low"), "volume": last.get("volume"),
                     "prev_close": prev_close, "change_pct": chg, "date": d,
                     "ma5": last.get("ma5"), "ma20": last.get("ma20"), "ma60": last.get("ma60"),
+                    "weekly_volume": weekly_volume, "weekly_change_pct": weekly_change,
+                    "weekly_base": wk_base,
                     "price_kind": price_kind, "data_date": d,
                     "data_time": _now.strftime("%H:%M") if price_kind == "live" else None,
                     "ok": True,
@@ -204,10 +211,12 @@ def _fetch_daily(spec: dict) -> dict:
         if live:
             price, hhmm = live
             prev_close = row.get("prev_close")
+            wk_base = row.get("weekly_base")
             row.update({
                 "close": price,
                 "open": row.get("open") if row.get("open") is not None else None,
                 "change_pct": ((price - prev_close) / prev_close * 100) if prev_close else row.get("change_pct"),
+                "weekly_change_pct": ((price - wk_base) / wk_base * 100) if wk_base else row.get("weekly_change_pct"),
                 "price_kind": "live", "data_date": today, "data_time": hhmm,
                 "ok": True,
             })

@@ -60,7 +60,8 @@ def _queries_for(paper: dict) -> list[str]:
 
 
 def _recency_search(site: str, kr: bool, per_query: int = 10) -> list[dict]:
-    """Last-24h site-scoped search → [{title,url,snippet}]."""
+    """Recent (past-week) site-scoped search → [{title,url,snippet}]. Past-week
+    so we cover news from ALL days/times, not only this morning."""
     try:
         from services.web_search import search_web
     except Exception:
@@ -70,7 +71,7 @@ def _recency_search(site: str, kr: bool, per_query: int = 10) -> list[dict]:
     out: list[dict] = []
     seen: set[str] = set()
     try:
-        res = search_web(f"site:{site} ({kw})", num_results=per_query, recency="d")
+        res = search_web(f"site:{site} ({kw})", num_results=per_query, recency="w")
         for h in (res.get("results") or []):
             t = (h.get("title") or "").strip()
             key = t[:80].lower()
@@ -95,11 +96,11 @@ def _domain_ok(url: str, site: str) -> bool:
         return False
 
 
-def _gather_news_by_source(cap_kr: int = 7, cap_paid: int = 8) -> dict[str, list[dict]]:
-    """Collect last-24h articles per outlet.
+def _gather_news_by_source(cap_kr: int = 9, cap_paid: int = 9) -> dict[str, list[dict]]:
+    """Collect recent (last ~72h, all times of day) articles per outlet.
       - Korean (free) outlets: RSS list (timestamped) + FULL article text
         (trafilatura); paywalled premium → its RSS summary.
-      - Paid (WSJ/Bloomberg): last-24h headlines + free snippets only (no body).
+      - Paid (WSJ/Bloomberg): recent headlines + free snippets only (no body).
     Returns {name: [{title,url,text,full,paid}]}."""
     from services import news_fetch
     grouped: dict[str, list[dict]] = {}
@@ -108,7 +109,7 @@ def _gather_news_by_source(cap_kr: int = 7, cap_paid: int = 8) -> dict[str, list
         paid = name in ("Bloomberg", "The Wall Street Journal")
         arts: list[dict] = []
         if paid:
-            for h in _recency_search(site, kr, per_query=cap_paid + 4):
+            for h in _recency_search(site, kr, per_query=cap_paid + 5):
                 if not _domain_ok(h.get("url", ""), site):
                     continue  # only this outlet's own domain
                 arts.append({"title": h["title"], "url": h["url"], "text": h["snippet"],
@@ -116,9 +117,9 @@ def _gather_news_by_source(cap_kr: int = 7, cap_paid: int = 8) -> dict[str, list
                 if len(arts) >= cap_paid:
                     break
         else:
-            # Korean free outlet — RSS list (last 24h), with search fallback.
-            items = news_fetch.rss_items(name, hours=24, cap=cap_kr + 6)
-            if len(items) < 4:
+            # Korean free outlet — RSS list (last ~72h = all days/times), search fallback.
+            items = news_fetch.rss_items(name, hours=72, cap=cap_kr + 8)
+            if len(items) < 5:
                 items += _recency_search(site, kr, per_query=10)
             picked: list[dict] = []
             seen: set[str] = set()
@@ -225,6 +226,50 @@ def _hidden_block(items: list[dict]) -> str:
         for n in items)
 
 
+def _parse_numbered(text: str) -> dict[int, str]:
+    """Parse an LLM block of '[1] summary\\n[2] summary …' → {n: summary}."""
+    out: dict[int, str] = {}
+    if not text:
+        return out
+    for m in re.finditer(r"\[(\d+)\]\s*(.*?)(?=\n\s*\[\d+\]|\Z)", text, re.S):
+        out[int(m.group(1))] = m.group(2).strip()
+    return out
+
+
+def _article_section(name: str, arts: list[dict], summaries: dict[int, str]) -> str:
+    """Per-article layout: each article = clickable TITLE (link) + its SUMMARY.
+    Falls back to the raw snippet when the LLM gave no summary for that article."""
+    lines = [f"### {name}"]
+    for i, a in enumerate(arts, 1):
+        title = (a.get("title") or "").strip().replace("[", "(").replace("]", ")")[:170] or "(제목 없음)"
+        url = (a.get("url") or "").strip()
+        pub = a.get("pub")
+        when = f" · {pub[:16].replace('T', ' ')}" if pub else ""
+        s = summaries.get(i) or (a.get("text") or "")[:400]
+        head = f"#### [{title}]({url}){when}" if url else f"#### {title}{when}"
+        lines.append(head)
+        if s:
+            lines.append(s.strip())
+        lines.append("")
+    return "\n".join(lines).rstrip()
+
+
+def _stats_block(rows: list[dict]) -> str:
+    """Per-ticker daily + weekly volume & price-change — feeds the richer
+    recommendation table's rationale."""
+    lines = []
+    for r in rows:
+        if not r.get("ok"):
+            continue
+        dvol = f"{int(r['volume']):,}" if r.get("volume") is not None else "—"
+        wvol = f"{int(r['weekly_volume']):,}" if r.get("weekly_volume") is not None else "—"
+        dchg = _kr._fmt_chg(r.get("change_pct"))
+        wchg = _kr._fmt_chg(r.get("weekly_change_pct"))
+        lines.append(f"- {r['ko']} ({r['t']}): 일일 등락 {dchg} · 일일 거래량 {dvol} · "
+                     f"주간 등락 {wchg} · 주간 거래량 {wvol}")
+    return "\n".join(lines) if lines else "(no stats)"
+
+
 def build_newspaper_report(db, trace_id: str) -> dict:
     """Build the daily per-newspaper news report — same price table as Kiwoom +
     per-outlet news analysis + a BUY/HOLD/SELL recommendation, bilingual EN/KO."""
@@ -262,7 +307,9 @@ def build_newspaper_report(db, trace_id: str) -> dict:
         from services.llm_client import chat_completion_sync
         import time as _t
 
-        # ---- 1) Per-outlet sections (each its OWN call → guaranteed depth) ----
+        # ---- 1) Per-outlet sections: a SUMMARY PER ARTICLE under its title+link.
+        #         One LLM call per outlet returns a numbered summary for every
+        #         article; we then lay out  #### [title](link)  +  summary.  ----
         sec_en: dict[str, str] = {}
         sec_ko: dict[str, str] = {}
         for paper in NEWSPAPERS:
@@ -270,83 +317,86 @@ def build_newspaper_report(db, trace_id: str) -> dict:
             arts = grouped.get(name, [])
             paid = name in ("Bloomberg", "The Wall Street Journal")
             if not arts:
-                sec_en[name] = f"### {name}\nNo fresh items in the last 24 hours."
-                sec_ko[name] = f"### {name}\n지난 24시간 내 신규 기사가 없습니다."
+                sec_en[name] = f"### {name}\nNo fresh items in the recent window."
+                sec_ko[name] = f"### {name}\n최근 신규 기사가 없습니다."
                 continue
             has_full = any(a.get("full") for a in arts)
+            # Number each article so the model's summaries map back 1:1.
             corpus = "\n\n".join(
-                f"[{'FULL ARTICLE' if a.get('full') else 'HEADLINE/SUMMARY'}] {a.get('title','')}\n{(a.get('text') or '')[:3000]}"
-                for a in arts)
+                f"[{i}] ({'FULL ARTICLE' if a.get('full') else 'HEADLINE/SNIPPET'}) "
+                f"{a.get('title','')}\n{(a.get('text') or '')[:3200]}"
+                for i, a in enumerate(arts, 1))
             if paid or not has_full:
-                length = "150-220 words (about half a page)"
-                note = ("These are paywalled HEADLINE/SUMMARY only — analyse what is "
-                        "there, do NOT fabricate article detail you don't have.")
+                per = "4-6 sentences (work only with the headline/snippet — do NOT fabricate detail)"
             else:
-                length = "700-1100 words (a deep 3-4 page analysis)"
-                note = ("[FULL ARTICLE] items give you the full body — read it and cite "
-                        "concrete facts/figures.")
+                per = "6-10 sentences, citing concrete facts/figures from the full body"
             sysd = (
-                "You are TripleH's market-news analyst. Below are articles from ONE "
-                f"newspaper — {name} — published in the LAST 24 HOURS. Write {length} "
-                "covering EVERYTHING that can move stock prices: direct stock/market "
-                "news, market-moving POLITICS/policy (Trump, tariffs, Iran, Fed, "
-                "elections), macro (FX, rates), the semiconductor sector, and the "
-                f"watchlist ({_WATCHLIST}). Flowing analytical prose — explain the price "
-                f"impact, not a headline list. {note} Use ONLY the provided text; NEVER "
-                f"invent quotes or numbers. Do NOT put any URLs or hyperlinks in your "
-                "analysis text (a verified source-link list is appended separately). "
-                f"Begin with the heading '### {name}'. "
-                "Output EXACTLY:\n===EN===\n<english>\n===KO===\n<korean 존댓말, same depth>")
+                "You are TripleH's market-news analyst. Below are NUMBERED recent news "
+                f"articles from {name}. For EVERY numbered article, write a DETAILED "
+                f"summary ({per}) — what happened and WHY it matters for stocks/markets "
+                f"(watchlist: {_WATCHLIST}; semiconductors; macro FX/rates; market-moving "
+                "politics — Trump/tariffs/Fed/Iran). Use ONLY the provided text; NEVER "
+                "invent quotes or numbers; do NOT include any URLs. Write a block for "
+                "EVERY article number, in order, never skipping one. Output EXACTLY:\n"
+                "===EN===\n[1] <summary>\n[2] <summary>\n…\n===KO===\n"
+                "[1] <한국어 요약 존댓말>\n[2] <한국어 요약>\n…")
+            en_sum: dict[int, str] = {}
+            ko_sum: dict[int, str] = {}
             try:
                 out = chat_completion_sync(
-                    system_prompt=sysd, messages=[{"role": "user", "content": corpus[:20000]}],
-                    max_tokens=7000, temperature=0.45, model="groq-llama-3.3-70b") or ""
-                en, ko = _split_enko(out)
-                sec_en[name] = en or (f"### {name}\n" + "\n".join(f"- {a.get('title','')}" for a in arts))
-                sec_ko[name] = ko or sec_en[name]
+                    system_prompt=sysd, messages=[{"role": "user", "content": corpus[:22000]}],
+                    max_tokens=8000, temperature=0.45, model="groq-llama-3.3-70b") or ""
+                en_txt, ko_txt = _split_enko(out)
+                en_sum = _parse_numbered(en_txt)
+                ko_sum = _parse_numbered(ko_txt)
             except Exception as e:
                 log.warning(f"newspaper outlet {name} failed: {str(e)[:100]}")
-                sec_en[name] = f"### {name}\n" + "\n".join(f"- {a.get('title','')}" for a in arts)
-                sec_ko[name] = sec_en[name]
-            # Append clickable source links (proof of real, within-24h articles).
-            links = _sources_md(arts)
-            sec_en[name] = sec_en[name].rstrip() + f"\n\n**🔗 Sources (click to verify):**\n{links}"
-            sec_ko[name] = sec_ko[name].rstrip() + f"\n\n**🔗 출처 (클릭하여 확인):**\n{links}"
+            # Lay out per-article: title (clickable) + its summary.
+            sec_en[name] = _article_section(name, arts, en_sum)
+            sec_ko[name] = _article_section(name, arts, ko_sum or en_sum)
             _t.sleep(0.5)
 
         news_en = "\n\n".join(sec_en[p["name"]] for p in NEWSPAPERS)
         news_ko = "\n\n".join(sec_ko[p["name"]] for p in NEWSPAPERS)
 
         # ---- 2) Synthesis: Overview + Company + Catalysts + Recommendations ----
-        digest = "\n\n".join(f"[{p['name']}] " + (sec_en.get(p["name"], "")[:650]) for p in NEWSPAPERS)
+        digest = "\n\n".join(f"[{p['name']}]\n" + (sec_en.get(p["name"], "")[:1100]) for p in NEWSPAPERS)
+        stats = _stats_block(rows)
         ssys = (
             "You are TripleH's chief market analyst. Using the per-newspaper summaries "
-            "+ price data + catalyst data below, write these sections (do NOT write a "
+            "+ stock stats + catalyst data below, write these sections (do NOT write a "
             "'News by Newspaper' section — it is added separately; do NOT print a price "
             "table). ALL prices are KRW. Sections:\n"
             "## 1. General Overview\n## 3. Company-Specific Analysis\n"
             "## 4. Catalysts & Schedule (일정매매)\n## 5. Recommendations\n\n"
-            "- Section 1: 2-3 paragraph consensus read of the last 24h across the "
-            "newspapers (stock + market-moving politics + macro).\n"
-            "- Section 3 (Company-Specific): a dedicated 4-6 sentence paragraph for EACH "
-            f"name ({_WATCHLIST}) tying the news to its real change% + the technical read "
-            "(price vs MA5/MA20/MA60, volume). You MAY use the UNATTRIBUTED data here but "
-            "NEVER name its source.\n"
+            "- Section 1: a RICH 3-4 paragraph consensus read of the recent news across "
+            "the newspapers (stock moves + market-moving politics + macro + sector).\n"
+            "- Section 3 (Company-Specific): a dedicated 5-7 sentence paragraph for EACH "
+            f"name ({_WATCHLIST}) tying the news to its daily & weekly change% and "
+            "volume trend + the technical read (price vs MA5/MA20/MA60). Use the STOCK "
+            "STATS provided. You MAY use the UNATTRIBUTED data but NEVER name its source.\n"
             f"- Section 4 (Catalysts & Schedule / 일정매매): {_cat.CATALYST_SECTION_RULE}\n"
-            "- Section 5 (Recommendations): a table | Stock | Action | Reason | (BUY/HOLD/"
-            "SELL); THEN '### Rationale' tying each to a catalyst + timing.\n"
-            "Use ONLY provided data; never invent. Output EXACTLY:\n===EN===\n<english>\n"
-            "===KO===\n<korean 존댓말>")
+            "- Section 5 (Recommendations): a DETAILED table with EXACTLY these columns: "
+            "| 종목 | 의견 | 일일 등락 | 일일 거래량 | 주간 등락 | 주간 거래량 | 핵심 근거 | — "
+            "fill the volume/change columns from the STOCK STATS (NEVER invent them), and "
+            "make 핵심 근거 a concrete one-line reason. 의견 = 매수/보유/매도. THEN a "
+            "'### 근거 상세' subsection: for EACH stock, 2-3 sentences explaining the call "
+            "from (a) the news, (b) the daily vs weekly volume & price trend, (c) a "
+            "catalyst + timing.\n"
+            "Use ONLY provided data; never invent a number. Output EXACTLY:\n===EN===\n"
+            "<english>\n===KO===\n<korean 존댓말>")
         suser = (f"TODAY (KST): {kst_date} · USD/KRW: {rate:,.0f}\n\n"
-                 f"PRICE CONTEXT (do NOT print a table):\n{_kr._facts(rows)}\n\n"
+                 f"STOCK STATS (daily & weekly volume + change% — use these EXACT numbers "
+                 f"in the Section 5 table):\n{stats}\n\n"
+                 f"PRICE/TECHNICAL CONTEXT:\n{_kr._facts(rows)}\n\n"
                  f"PER-NEWSPAPER SUMMARIES:\n{digest}\n\n"
                  f"UNATTRIBUTED MARKET DATA (use, NEVER name):\n{_hidden_block(hidden)}\n\n"
                  f"CATALYST DATA:\n{_cat.catalyst_block(catalysts)}")
         syn_en = syn_ko = ""
         try:
             out = chat_completion_sync(
-                system_prompt=ssys, messages=[{"role": "user", "content": suser[:22000]}],
-                max_tokens=9000, temperature=0.45, model="groq-llama-3.3-70b") or ""
+                system_prompt=ssys, messages=[{"role": "user", "content": suser[:24000]}],
+                max_tokens=10000, temperature=0.45, model="groq-llama-3.3-70b") or ""
             syn_en, syn_ko = _split_enko(out)
         except Exception as e:
             log.warning(f"newspaper synthesis failed: {str(e)[:100]}")
@@ -357,7 +407,7 @@ def build_newspaper_report(db, trace_id: str) -> dict:
             parts = re.split(r"(?=##\s*3\.)", syn, maxsplit=1)
             overview = parts[0].strip() if parts else ""
             rest = parts[1].strip() if len(parts) > 1 else ""
-            return (f"# Newspaper Market Analysis\n*{kst_date} (last 24h)*\n\n"
+            return (f"# Newspaper Market Analysis\n*{kst_date} (최근 수일 / recent days)*\n\n"
                     f"{overview}\n\n## 2. News by Newspaper\n{news}\n\n{rest}").strip()
 
         if news_en.strip() and syn_en.strip():
