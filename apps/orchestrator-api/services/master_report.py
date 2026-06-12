@@ -164,10 +164,13 @@ def build_master_report(db, trace_id: str) -> dict:
                 ko_sys = (
                     "You are a professional Korean financial translator. Translate the "
                     "ENTIRE English master report into natural, professional Korean "
-                    "(존댓말). Translate EVERYTHING — never summarise or stub. Preserve "
-                    "ALL Markdown, headings and tables; keep every number, %, 원, ticker "
-                    "and BUY/HOLD/SELL IDENTICAL. Replace the price columns' table with "
-                    f"values consistent with this Korean table:\n{table_ko}\n"
+                    "(존댓말). Translate EVERYTHING — never summarise or stub — including "
+                    "ALL section headings and English words. The output must contain NO "
+                    "English prose. Translate the action verbs: BUY→매수, HOLD→보유, "
+                    "SELL→매도, Strong Buy→적극 매수. Keep ONLY numbers, %, 원, and ticker "
+                    "symbols identical; English company names may keep a Korean label. "
+                    "Preserve ALL Markdown structure and tables. Replace the price "
+                    f"columns' table with values consistent with this Korean table:\n{table_ko}\n"
                     "Output ONLY the Korean Markdown report.")
                 ko_out = chat_completion_sync(
                     system_prompt=ko_sys,

@@ -710,7 +710,7 @@ def _auto_cross_agent_report():
 
 
 @with_retry(max_attempts=2, backoff_seconds=(60, 300), job_name="kiwoom_daily_report")
-def _kiwoom_daily_report(email_override: str | None = None, period: str = "daily"):
+def _kiwoom_daily_report(email_override: str | None = None, period: str = "daily", lang: str = "ko"):
     """Daily Kiwoom market report — runs ~6:30 AM KST (after the US close).
     Real OHLCV for the watchlist + LLM structured analysis (EN/KO).
     `email_override` lets the manual trigger send the .docx to a specific
@@ -766,15 +766,20 @@ def _kiwoom_daily_report(email_override: str | None = None, period: str = "daily
                 to_addr = (email_override or os.getenv("KIWOOM_REPORT_EMAIL")
                            or os.getenv("REPORT_EMAIL_TO") or DEFAULT_RECIPIENT)
             if (email_override or os.getenv("SEND_INDIVIDUAL_EMAILS") == "1") and _email_ok() and to_addr:
-                body_md = rep.get("detail_ko") or ""
-                if len(body_md.strip()) < 200 or "same report in korean" in body_md.lower():
-                    body_md = rep.get("detail_en") or ""
-                docx_bytes = markdown_to_docx(body_md, "Kiwoom Daily Market Report", kst)
+                # Default Korean; English only when explicitly requested.
+                if lang == "en":
+                    body_md = rep.get("detail_en") or rep.get("detail_ko") or ""
+                    title = "Kiwoom Daily Market Report"
+                else:
+                    body_md = rep.get("detail_ko") or ""
+                    if len(body_md.strip()) < 200 or "same report in korean" in body_md.lower():
+                        body_md = rep.get("detail_en") or ""
+                    title = "키움 일일 시장 리포트"
+                docx_bytes = markdown_to_docx(body_md, title, kst)
                 fname = f"Kiwoom_Report_{datetime.utcnow().strftime('%Y%m%d')}.docx"
                 res = send_email_with_docx(
                     to_addr, f"[Kiwoom] 일일 시장 리포트 — {kst}",
-                    "키움 일일 시장 리포트입니다. 첨부된 Word 파일을 확인해 주세요.\n\n"
-                    "(Kiwoom daily market report attached as a Word document.)",
+                    "키움 일일 시장 리포트입니다. 첨부된 Word 파일을 확인해 주세요.",
                     fname, docx_bytes)
                 log.info(f"kiwoom: email {'sent' if res.get('ok') else 'skipped'} -> {to_addr}"
                          f" ({res.get('reason', 'ok')})",
@@ -794,7 +799,7 @@ def _kiwoom_daily_report(email_override: str | None = None, period: str = "daily
 
 
 @with_retry(max_attempts=2, backoff_seconds=(60, 300), job_name="newspaper_daily_report")
-def _newspaper_daily_report(email_override: str | None = None, period: str = "daily"):
+def _newspaper_daily_report(email_override: str | None = None, period: str = "daily", lang: str = "ko"):
     """Daily newspaper (news analysis) report — runs ~7:00 AM KST. Live-news +
     the same price table as Kiwoom. `email_override` is for manual test sends."""
     from services.newspaper_report import build_newspaper_report
@@ -849,18 +854,19 @@ def _newspaper_daily_report(email_override: str | None = None, period: str = "da
                 ko_md = rep.get("detail_ko") or en_md
                 if len(ko_md.strip()) < 200 or "same report in korean" in ko_md.lower():
                     ko_md = en_md
-                # Attach BOTH Korean and English (English for testing/verification).
+                # Attach ONLY the chosen language (default Korean — no English).
                 files = []
-                if ko_md:
-                    files.append((f"Newspaper_Report_KO_{ymd}.docx",
-                                  markdown_to_docx(ko_md, "Newspaper Market Analysis (한국어)", kst)))
-                if en_md:
+                if lang == "en" and en_md:
                     files.append((f"Newspaper_Report_EN_{ymd}.docx",
                                   markdown_to_docx(en_md, "Newspaper Market Analysis (English)", kst)))
+                else:
+                    md = ko_md or en_md
+                    if md:
+                        files.append((f"Newspaper_Report_{ymd}.docx",
+                                      markdown_to_docx(md, "신문 시장 분석 리포트", kst)))
                 res = send_email_with_docs(
                     to_addr, f"[Newspaper] 일일 뉴스 분석 — {kst}",
-                    "일일 뉴스 시장 분석 리포트입니다. 첨부된 Word 파일(한국어/영문)을 확인해 주세요.\n\n"
-                    "(Daily newspaper market-news analysis — Korean + English Word documents attached.)",
+                    "일일 뉴스 시장 분석 리포트입니다. 첨부된 Word 파일을 확인해 주세요.",
                     files)
                 log.info(f"newspaper: email {'sent' if res.get('ok') else 'skipped'} -> {to_addr}"
                          f" ({res.get('reason', 'ok')})",
@@ -880,7 +886,7 @@ def _newspaper_daily_report(email_override: str | None = None, period: str = "da
 
 
 @with_retry(max_attempts=2, backoff_seconds=(60, 300), job_name="youtube_daily_report")
-def _youtube_daily_report(email_override: str | None = None, period: str = "daily"):
+def _youtube_daily_report(email_override: str | None = None, period: str = "daily", lang: str = "ko"):
     """Daily YouTube (video analysis) report — runs ~6:30 AM KST. Real channel
     transcripts/coverage + the same watchlist table. `email_override` for tests."""
     from services.youtube_report import build_youtube_report
@@ -933,17 +939,19 @@ def _youtube_daily_report(email_override: str | None = None, period: str = "dail
                 ko_md = rep.get("detail_ko") or en_md
                 if len(ko_md.strip()) < 200 or "same report in korean" in ko_md.lower():
                     ko_md = en_md
+                # Attach ONLY the chosen language (default Korean — no English).
                 files = []
-                if ko_md:
-                    files.append((f"YouTube_Report_KO_{ymd}.docx",
-                                  markdown_to_docx(ko_md, "YouTube Market Analysis (한국어)", kst)))
-                if en_md:
+                if lang == "en" and en_md:
                     files.append((f"YouTube_Report_EN_{ymd}.docx",
                                   markdown_to_docx(en_md, "YouTube Market Analysis (English)", kst)))
+                else:
+                    md = ko_md or en_md
+                    if md:
+                        files.append((f"YouTube_Report_{ymd}.docx",
+                                      markdown_to_docx(md, "유튜브 영상 분석 리포트", kst)))
                 res = send_email_with_docs(
                     to_addr, f"[YouTube] 일일 영상 분석 — {kst}",
-                    "일일 유튜브 영상 시장 분석 리포트입니다. 첨부된 Word 파일(한국어/영문)을 확인해 주세요.\n\n"
-                    "(Daily YouTube market-video analysis — Korean + English Word documents attached.)",
+                    "일일 유튜브 영상 시장 분석 리포트입니다. 첨부된 Word 파일을 확인해 주세요.",
                     files)
                 log.info(f"youtube: email {'sent' if res.get('ok') else 'skipped'} -> {to_addr}"
                          f" ({res.get('reason', 'ok')})",
@@ -963,7 +971,7 @@ def _youtube_daily_report(email_override: str | None = None, period: str = "dail
 
 
 @with_retry(max_attempts=2, backoff_seconds=(60, 300), job_name="master_daily_report")
-def _master_daily_report(email_override: str | None = None, period: str = "daily"):
+def _master_daily_report(email_override: str | None = None, period: str = "daily", lang: str = "ko"):
     """Master synthesis report — reads the day's Kiwoom + Newspaper + YouTube
     reports and produces one consolidated smart summary. Runs ~6:50 AM KST."""
     from services.master_report import build_master_report
@@ -1020,6 +1028,9 @@ def _master_daily_report(email_override: str | None = None, period: str = "daily
                 ymd = (datetime.utcnow().strftime("%Y%m%d"))
 
                 def _ko(rp):
+                    # Default Korean; English only when explicitly requested (lang=en).
+                    if lang == "en":
+                        return (rp or {}).get("detail_en") or (rp or {}).get("detail_ko") or ""
                     md = (rp or {}).get("detail_ko") or (rp or {}).get("detail_en") or ""
                     if len(md.strip()) < 200 or "same report in korean" in md.lower():
                         md = (rp or {}).get("detail_en") or md
@@ -1049,9 +1060,9 @@ def _master_daily_report(email_override: str | None = None, period: str = "daily
                     "3. 유튜브 요약 리포트 — 금융 유튜브 채널 분석\n"
                     "4. 종합 추천 리포트 — 위 3개 리포트를 종합한 투자 의견 및 일정매매 포인트\n\n"
                     "각 리포트는 첨부된 Word 파일에서 확인하실 수 있습니다.\n\n"
-                    "감사합니다.\nTripleH AI\n\n"
-                    f"— (Today's 4 {period} reports attached: Kiwoom, Newspaper, YouTube, "
-                    "and the consolidated Recommendation.)"
+                    "감사합니다.\nTripleH AI"
+                    + (f"\n\n— (Today's 4 {period} reports attached: Kiwoom, Newspaper, "
+                       "YouTube, and the consolidated Recommendation.)" if lang == "en" else "")
                 )
                 res = send_email_with_docs(
                     recipients, f"[TripleH] {_kor} 리포트 4건 — {kst}", intro, files)
@@ -1121,22 +1132,23 @@ def _master_daily_all():
     _master_daily_report(email_override="*ALL*")
 
 
-def run_all_reports_now(email_override: str | None = None):
+def run_all_reports_now(email_override: str | None = None, lang: str = "ko"):
     """On-demand: generate ALL 4 reports with the freshest data RIGHT NOW, then
     the master sends the consolidated email. Runs the sources first (so the master
     reads fresh ones), then the master. Used by the 'Generate Now' button.
     `email_override` (optional) sends only to that address (test); otherwise the
-    master emails the full recipient list."""
+    master emails the full recipient list. `lang` controls the email language
+    (default 'ko' = Korean only; 'en' for English)."""
     log.info("run-all: on-demand generation started", extra={"action": "runall.start"})
     for fn, label in ((_kiwoom_daily_report, "kiwoom"),
                       (_newspaper_daily_report, "newspaper"),
                       (_youtube_daily_report, "youtube")):
         try:
-            fn()  # sources save to dashboard (individual email stays off)
+            fn(lang=lang)  # sources save to dashboard (individual email stays off)
         except Exception as e:
             log.warning(f"run-all: {label} failed: {str(e)[:120]}", extra={"action": "runall.src.failed"})
     try:
-        _master_daily_report(email_override=email_override)  # emails the consolidated 4-file
+        _master_daily_report(email_override=email_override, lang=lang)  # emails the consolidated 4-file
     except Exception as e:
         log.warning(f"run-all: master failed: {str(e)[:120]}", extra={"action": "runall.master.failed"})
     log.info("run-all: on-demand generation done", extra={"action": "runall.done"})

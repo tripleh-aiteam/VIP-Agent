@@ -62,7 +62,7 @@ def _allowed_report_recipients() -> set[str]:
 
 
 @router.post("/compose/kiwoom", dependencies=[Depends(rate_limit_compose)])
-def trigger_kiwoom_report(email: Optional[str] = Query(None, description="Optional recipient for the .docx email — must be on the REPORT_ALLOWED_RECIPIENTS allowlist (or a configured server recipient). Scheduled run uses KIWOOM_REPORT_EMAIL env."), send_all: bool = Query(False, description="Email the report to ALL configured recipients (dropdown 'generate & send')."), db: Session = Depends(get_db)):
+def trigger_kiwoom_report(email: Optional[str] = Query(None, description="Optional recipient for the .docx email — must be on the REPORT_ALLOWED_RECIPIENTS allowlist (or a configured server recipient). Scheduled run uses KIWOOM_REPORT_EMAIL env."), send_all: bool = Query(False, description="Email the report to ALL configured recipients (dropdown 'generate & send')."), lang: str = Query("ko", description="Report language: 'ko' (default, Korean only) or 'en' (English)."), db: Session = Depends(get_db)):
     """Manually trigger the Kiwoom daily market report (also runs 6:30 AM KST).
     Pass ?email=<addr> to send the Word attachment to an ALLOWLISTED address."""
     if email:
@@ -71,15 +71,16 @@ def trigger_kiwoom_report(email: Optional[str] = Query(None, description="Option
         email = email.strip()
     elif send_all:
         email = "*ALL*"
+    lang = "en" if (lang or "ko").strip().lower() == "en" else "ko"
     from services.scheduler_service import _kiwoom_daily_report
     import threading
-    threading.Thread(target=lambda: _kiwoom_daily_report(email_override=email), daemon=True).start()
+    threading.Thread(target=lambda: _kiwoom_daily_report(email_override=email, lang=lang), daemon=True).start()
     return {"triggered": True, "email": email or "(env KIWOOM_REPORT_EMAIL)",
             "message": "Kiwoom daily report running in background. Check Reports → Kiwoom in ~30s."}
 
 
 @router.post("/compose/newspaper", dependencies=[Depends(rate_limit_compose)])
-def trigger_newspaper_report(email: Optional[str] = Query(None, description="Optional recipient for the .docx email — must be on the allowlist. Scheduled run uses NEWSPAPER_REPORT_EMAIL env."), send_all: bool = Query(False, description="Email the report to ALL configured recipients (dropdown 'generate & send')."), db: Session = Depends(get_db)):
+def trigger_newspaper_report(email: Optional[str] = Query(None, description="Optional recipient for the .docx email — must be on the allowlist. Scheduled run uses NEWSPAPER_REPORT_EMAIL env."), send_all: bool = Query(False, description="Email the report to ALL configured recipients (dropdown 'generate & send')."), lang: str = Query("ko", description="Report language: 'ko' (default, Korean only) or 'en' (English)."), db: Session = Depends(get_db)):
     """Manually trigger the Newspaper (news analysis) report (also runs 7:00 AM KST)."""
     if email:
         if email.strip().lower() not in _allowed_report_recipients():
@@ -87,15 +88,16 @@ def trigger_newspaper_report(email: Optional[str] = Query(None, description="Opt
         email = email.strip()
     elif send_all:
         email = "*ALL*"
+    lang = "en" if (lang or "ko").strip().lower() == "en" else "ko"
     from services.scheduler_service import _newspaper_daily_report
     import threading
-    threading.Thread(target=lambda: _newspaper_daily_report(email_override=email), daemon=True).start()
+    threading.Thread(target=lambda: _newspaper_daily_report(email_override=email, lang=lang), daemon=True).start()
     return {"triggered": True, "email": email or "(env NEWSPAPER_REPORT_EMAIL)",
             "message": "Newspaper report running in background. Check Reports → Newspaper in ~40s."}
 
 
 @router.post("/compose/youtube", dependencies=[Depends(rate_limit_compose)])
-def trigger_youtube_report(email: Optional[str] = Query(None, description="Optional recipient for the .docx email — must be on the allowlist. Scheduled run uses YOUTUBE_REPORT_EMAIL env."), send_all: bool = Query(False, description="Email the report to ALL configured recipients (dropdown 'generate & send')."), db: Session = Depends(get_db)):
+def trigger_youtube_report(email: Optional[str] = Query(None, description="Optional recipient for the .docx email — must be on the allowlist. Scheduled run uses YOUTUBE_REPORT_EMAIL env."), send_all: bool = Query(False, description="Email the report to ALL configured recipients (dropdown 'generate & send')."), lang: str = Query("ko", description="Report language: 'ko' (default, Korean only) or 'en' (English)."), db: Session = Depends(get_db)):
     """Manually trigger the YouTube (video analysis) report (also runs 6:30 AM KST)."""
     if email:
         if email.strip().lower() not in _allowed_report_recipients():
@@ -103,15 +105,16 @@ def trigger_youtube_report(email: Optional[str] = Query(None, description="Optio
         email = email.strip()
     elif send_all:
         email = "*ALL*"
+    lang = "en" if (lang or "ko").strip().lower() == "en" else "ko"
     from services.scheduler_service import _youtube_daily_report
     import threading
-    threading.Thread(target=lambda: _youtube_daily_report(email_override=email), daemon=True).start()
+    threading.Thread(target=lambda: _youtube_daily_report(email_override=email, lang=lang), daemon=True).start()
     return {"triggered": True, "email": email or "(env YOUTUBE_REPORT_EMAIL)",
             "message": "YouTube report running in background. Check Reports → YouTube in ~60s."}
 
 
 @router.post("/compose/master", dependencies=[Depends(rate_limit_compose)])
-def trigger_master_report(email: Optional[str] = Query(None, description="Optional recipient for the .docx email — must be on the allowlist. Scheduled run uses MASTER_REPORT_EMAIL env."), send_all: bool = Query(False, description="Email the report to ALL configured recipients (dropdown 'generate & send')."), db: Session = Depends(get_db)):
+def trigger_master_report(email: Optional[str] = Query(None, description="Optional recipient for the .docx email — must be on the allowlist. Scheduled run uses MASTER_REPORT_EMAIL env."), send_all: bool = Query(False, description="Email the report to ALL configured recipients (dropdown 'generate & send')."), lang: str = Query("ko", description="Report language: 'ko' (default, Korean only) or 'en' (English)."), db: Session = Depends(get_db)):
     """Manually trigger the Master synthesis report (consolidates the latest
     Kiwoom + Newspaper + YouTube reports). Also runs 6:50 AM KST."""
     if email:
@@ -120,15 +123,16 @@ def trigger_master_report(email: Optional[str] = Query(None, description="Option
         email = email.strip()
     elif send_all:
         email = "*ALL*"
+    lang = "en" if (lang or "ko").strip().lower() == "en" else "ko"
     from services.scheduler_service import _master_daily_report
     import threading
-    threading.Thread(target=lambda: _master_daily_report(email_override=email), daemon=True).start()
+    threading.Thread(target=lambda: _master_daily_report(email_override=email, lang=lang), daemon=True).start()
     return {"triggered": True, "email": email or "(env MASTER_REPORT_EMAIL)",
             "message": "Master report running in background. Check Reports in ~40s."}
 
 
 @router.post("/compose/all", dependencies=[Depends(rate_limit_compose)])
-def trigger_all_reports(email: Optional[str] = Query(None, description="Optional single recipient (allowlisted) for a test; omit to email the full recipient list."), db: Session = Depends(get_db)):
+def trigger_all_reports(email: Optional[str] = Query(None, description="Optional single recipient (allowlisted) for a test; omit to email the full recipient list."), lang: str = Query("ko", description="Report language: 'ko' (default, Korean only) or 'en' (English)."), db: Session = Depends(get_db)):
     """On-demand 'Generate Now': build ALL 4 reports with the freshest data and
     email the consolidated set to every recipient. Runs in the background
     (~8-12 min). Used by the Reports page button."""
@@ -136,9 +140,10 @@ def trigger_all_reports(email: Optional[str] = Query(None, description="Optional
         if email.strip().lower() not in _allowed_report_recipients():
             raise HTTPException(403, "recipient not allowed — add it to REPORT_ALLOWED_RECIPIENTS env")
         email = email.strip()
+    lang = "en" if (lang or "ko").strip().lower() == "en" else "ko"
     from services.scheduler_service import run_all_reports_now
     import threading
-    threading.Thread(target=lambda: run_all_reports_now(email_override=email), daemon=True).start()
+    threading.Thread(target=lambda: run_all_reports_now(email_override=email, lang=lang), daemon=True).start()
     return {"triggered": True,
             "email": email or "(all recipients)",
             "message": "Generating all 4 reports with current data — the consolidated email "

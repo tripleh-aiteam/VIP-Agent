@@ -90,6 +90,7 @@ export default function ReportsPage() {
   const [agentsOpen, setAgentsOpen] = useState(false);  // Agents submenu open
   const [testMode, setTestMode] = useState(false);      // send only to test address
   const [testEmail, setTestEmail] = useState("davronbekmalikov96@gmail.com");
+  const [reportLang, setReportLang] = useState<"ko" | "en">("ko");  // report language (Korean default)
   const genRef = useRef<HTMLDivElement>(null);
 
   // `base` = compose endpoint; query is built at click time based on test mode.
@@ -127,12 +128,18 @@ export default function ReportsPage() {
       endpoint = `${item.base}${sep}send_all=true`;
       dest = "all";
     }
+    // Report language (default Korean). Agents (dashboard-only) don't take it.
+    if (!item.agent) {
+      const sepL = endpoint.includes("?") ? "&" : "?";
+      endpoint = `${endpoint}${sepL}lang=${reportLang}`;
+    }
 
+    const langMsg = reportLang === "en" ? "영문(English)" : "한국어";
     const destMsg = dest === "test" ? `테스트 — ${testEmail.trim()} 에게만 전송`
       : dest === "all" ? "모든 수신자에게 이메일 전송"
       : "대시보드에 저장 (이메일 없음)";
     if (!window.confirm(
-      `"${item.label}" 리포트를 생성합니다.\n수신: ${destMsg}\n계속하시겠습니까?${item.slow ? " (약 8~12분 소요)" : ""}`
+      `"${item.label}" 리포트를 생성합니다.${item.agent ? "" : `\n언어: ${langMsg}`}\n수신: ${destMsg}\n계속하시겠습니까?${item.slow ? " (약 8~12분 소요)" : ""}`
     )) return;
 
     setGen({ busy: true, msg: `${item.emoji} ${item.label} 생성 중… (generating…)` });
@@ -411,6 +418,17 @@ td{padding:8px 12px;border:1px solid #e2e8f0;font-size:10pt}
             {genOpen && !gen.busy && (
               <div className="absolute right-0 mt-2 w-80 z-50 rounded-xl border border-[var(--border-default)] bg-[var(--bg-card)] shadow-xl py-1.5 text-sm text-[var(--text-primary)]">
                 <div className="px-3 py-1.5 text-[11px] font-semibold text-[var(--text-muted)] uppercase tracking-wide">생성할 리포트 선택</div>
+
+                {/* Report language — Korean by default; switch to English if wanted */}
+                <div className="mx-2 mb-1 px-2.5 py-2 rounded-lg bg-[var(--bg-elevated)] flex items-center justify-between">
+                  <span className="text-[12px] font-semibold">🌐 리포트 언어</span>
+                  <div className="inline-flex items-center rounded-md border border-[var(--border-default)] overflow-hidden text-[11px] font-semibold bg-[var(--bg-card)]">
+                    <button onClick={(e) => { e.stopPropagation(); setReportLang("ko"); }}
+                      className={`px-2 py-0.5 transition-colors ${reportLang === "ko" ? "bg-[var(--brand-blue)] text-white" : "text-[var(--text-muted)] hover:bg-[var(--bg-hover)]"}`}>한국어</button>
+                    <button onClick={(e) => { e.stopPropagation(); setReportLang("en"); }}
+                      className={`px-2 py-0.5 transition-colors ${reportLang === "en" ? "bg-[var(--brand-blue)] text-white" : "text-[var(--text-muted)] hover:bg-[var(--bg-hover)]"}`}>EN</button>
+                  </div>
+                </div>
 
                 {/* Test-mode toggle — when ON, single reports go only to the test address */}
                 <div className="mx-2 mb-1 px-2.5 py-2 rounded-lg bg-[var(--bg-elevated)]">

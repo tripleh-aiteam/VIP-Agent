@@ -30,14 +30,15 @@ from services import catalyst_news as _cat
 
 # (name, video_id|None, search query to find recent real coverage)
 YT_CHANNELS: list[dict] = [
-    {"name": "Bloomberg TV", "video_id": "iEpJwprxDdk",
-     "query": "Bloomberg TV semiconductor Nvidia Samsung SK Hynix AMD stock market today"},
-    {"name": "WSJ News", "video_id": None,
-     "query": "Wall Street Journal markets video semiconductor Nvidia Samsung Micron today"},
+    # Korean channels FIRST (한국 채널 우선), then US/overseas.
     {"name": "한국경제TV (한경 와우)", "video_id": "bRBtOPYU414",
      "query": "한국경제TV 반도체 삼성전자 SK하이닉스 네이버 증시 전망 today"},
     {"name": "매일경제 (매경)", "video_id": "s9xL1DpBsfQ",
      "query": "매일경제 MBN 증시 반도체 삼성전자 SK하이닉스 코스피 전망 today"},
+    {"name": "Bloomberg TV", "video_id": "iEpJwprxDdk",
+     "query": "Bloomberg TV semiconductor Nvidia Samsung SK Hynix AMD stock market today"},
+    {"name": "WSJ News", "video_id": None,
+     "query": "Wall Street Journal markets video semiconductor Nvidia Samsung Micron today"},
 ]
 
 
