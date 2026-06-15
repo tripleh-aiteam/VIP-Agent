@@ -275,6 +275,25 @@ _DISPLAY_KO = {
 }
 
 
+def _is_article_url(url: str) -> bool:
+    """True only for a DEEP article URL (not an outlet homepage/section page),
+    so we never present a link that lands on the front page."""
+    try:
+        from urllib.parse import urlparse
+        p = urlparse(url or "")
+        if not p.netloc:
+            return False
+        path = (p.path or "").strip("/")
+        if not path:
+            return False  # homepage
+        segs = [s for s in path.split("/") if s]
+        # Real articles have a deep path or a numeric id; a single short
+        # section word (e.g. /economy) is treated as a section page → no link.
+        return len(segs) >= 2 or any(ch.isdigit() for ch in path) or len(path) >= 20
+    except Exception:
+        return False
+
+
 def _article_section(name: str, arts: list[dict], summaries: dict[int, str]) -> str:
     """Per-article layout: clickable Korean TITLE (link) + its Korean SUMMARY.
     The LLM returns each block as '<한국어 제목> @@@ <한국어 요약>' so even foreign
@@ -290,7 +309,8 @@ def _article_section(name: str, arts: list[dict], summaries: dict[int, str]) -> 
             ko_title, body = [p.strip() for p in raw.split("@@@", 1)]
         title = _html.unescape(ko_title or a.get("title") or "").strip().replace("[", "(").replace("]", ")")[:170] or "(제목 없음)"
         body = _html.unescape(body or (a.get("text") or "")[:400])
-        head = f"#### [{title}]({url}){when}" if url else f"#### {title}{when}"
+        # Only link DEEP article URLs — never a homepage/section page.
+        head = f"#### [{title}]({url}){when}" if (url and _is_article_url(url)) else f"#### {title}{when}"
         lines.append(head)
         if body:
             lines.append(body.strip())
@@ -510,7 +530,9 @@ def build_newspaper_report(db, trace_id: str) -> dict:
                     f"{overview}\n\n## 2. 신문별 뉴스\n{news}\n\n{rest}").strip()
 
         if news_ko.strip() and syn_ko.strip():
-            detail_ko = _linkify_sources(_assemble(syn_ko, news_ko))
+            # Do NOT linkify 출처 to outlet homepages (misleading). The real,
+            # deep article links live in the per-article 신문별 뉴스 section.
+            detail_ko = _assemble(syn_ko, news_ko)
             detail_en = detail_ko   # Korean-only report; keep field populated for master
     except Exception as e:
         log.warning(f"newspaper compose failed: {e}")
