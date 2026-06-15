@@ -285,6 +285,15 @@ def _enrich_kr_rows(rows: list[dict]) -> None:
         r["organ_net"] = fl.get("organ")
         r["individual_net"] = fl.get("individual")
         r["foreign_hold"] = fl.get("foreign_hold")
+        # 공매도 (short-selling) via Kiwoom REST — best-effort, T+1 data.
+        try:
+            from services import kiwoom_rest
+            ss = kiwoom_rest.short_selling(r["t"])
+            if ss:
+                r["short_volume"] = ss.get("short_volume")
+                r["short_ratio"] = ss.get("short_ratio")
+        except Exception:
+            pass
 
 
 def _gather() -> list[dict]:
@@ -388,6 +397,14 @@ def _build_table(rows: list[dict], ko: bool) -> str:
         return f"{int(v):,}" if v is not None else "—"
     def naver_c(r):
         return _won(r.get("naver_close")) if (r.get("mkt") == "KR" and r.get("naver_close")) else "—"
+    def short_c(r):
+        sr = r.get("short_ratio")
+        if sr is None or r.get("mkt") != "KR":
+            return "—"
+        try:
+            return f"{float(sr):.2f}%"
+        except Exception:
+            return f"{sr}%"
 
     mode = _price_mode()
     if mode == "market":
@@ -399,8 +416,8 @@ def _build_table(rows: list[dict], ko: bool) -> str:
                       ("종가(시간외)" if ko else "Close (NXT)", naver_c)]
 
     name_h, open_h = ("종목", "시가") if ko else ("Stock", "Open")
-    tail_h = (["일일 등락", "일일 거래량", "주간 등락", "주간 거래량"] if ko
-              else ["Daily Chg", "Daily Vol", "Weekly Chg", "Weekly Vol"])
+    tail_h = (["일일 등락", "일일 거래량", "주간 등락", "주간 거래량", "공매도 비중(전일)"] if ko
+              else ["Daily Chg", "Daily Vol", "Weekly Chg", "Weekly Vol", "Short% (T-1)"])
     cols = [name_h, open_h] + [h for h, _ in price_cols] + tail_h
     head = "| " + " | ".join(cols) + " |\n|" + "---|" * len(cols)
     lines = [head]
@@ -409,7 +426,8 @@ def _build_table(rows: list[dict], ko: bool) -> str:
         cells = ([name, _won(r.get("open_krw"))]
                  + [fn(r) for _, fn in price_cols]
                  + [_fmt_chg(r.get("change_pct")), vol(r.get("volume")),
-                    _fmt_chg(r.get("weekly_change_pct")), vol(r.get("weekly_volume"))])
+                    _fmt_chg(r.get("weekly_change_pct")), vol(r.get("weekly_volume")),
+                    short_c(r)])
         lines.append("| " + " | ".join(cells) + " |")
     return "\n".join(lines)
 

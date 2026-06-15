@@ -390,14 +390,12 @@ def build_newspaper_report(db, trace_id: str) -> dict:
         # ---- 1) Per-outlet sections: a SUMMARY PER ARTICLE under its title+link.
         #         One LLM call per outlet returns a numbered summary for every
         #         article; we then lay out  #### [title](link)  +  summary.  ----
-        sec_en: dict[str, str] = {}
         sec_ko: dict[str, str] = {}
         for paper in NEWSPAPERS:
             name = paper["name"]
             arts = grouped.get(name, [])
             paid = name in ("Bloomberg", "The Wall Street Journal")
             if not arts:
-                sec_en[name] = f"### {name}\nNo fresh items in the recent window."
                 sec_ko[name] = f"### {name}\n최근 신규 기사가 없습니다."
                 continue
             has_full = any(a.get("full") for a in arts)
@@ -415,93 +413,73 @@ def build_newspaper_report(db, trace_id: str) -> dict:
                        "the body, the companies/sectors affected, the cause, and the market "
                        "impact & outlook. Be substantial, never one short paragraph")
             sysd = (
-                "You are TripleH's market-news analyst. Below are NUMBERED recent news "
-                f"articles from {name}. For EVERY numbered article, write a DETAILED "
-                f"summary — {per}. Explain WHY it matters for stocks/markets "
-                f"(watchlist: {_WATCHLIST}; semiconductors; macro FX/rates; market-moving "
-                "politics — Trump/tariffs/Fed/Iran). Use ONLY the provided text; NEVER "
-                "invent quotes or numbers; do NOT include any URLs. Write a block for "
-                "EVERY article number, in order, never skipping one, and never truncate. "
-                "CRITICAL: the ===KO=== block MUST be fully in KOREAN (존댓말) for EVERY "
-                "article — INCLUDING English-language outlets like Bloomberg and WSJ: "
-                "translate those into natural Korean, never leave English in the KO block. "
-                "Output EXACTLY:\n"
-                "===EN===\n[1] <summary>\n[2] <summary>\n…\n===KO===\n"
-                "[1] <한국어 요약 존댓말>\n[2] <한국어 요약>\n…")
-            en_sum: dict[int, str] = {}
+                "당신은 TripleH의 시장 뉴스 애널리스트입니다. 아래는 "
+                f"{name}의 최근 뉴스 기사(번호 매김)입니다. 모든 번호의 기사에 대해 "
+                f"상세한 한국어 요약(존댓말)을 작성하세요 — {per}. 주식·시장에 왜 중요한지 "
+                f"설명하세요(관심종목: {_WATCHLIST}; 반도체; 거시 환율/금리; 시장을 움직이는 "
+                "정치 — 트럼프/관세/연준/이란). 제공된 텍스트만 사용하고, 인용·수치를 절대 "
+                "지어내지 마세요. URL은 넣지 마세요. 영어 원문 기사(Bloomberg/WSJ 등)도 "
+                "반드시 한국어로 번역해 요약하세요 — 출력에 영어 문장이 있으면 안 됩니다. "
+                "모든 번호의 기사를 순서대로 빠짐없이 작성하세요. "
+                "출력 형식(정확히):\n[1] <한국어 요약>\n[2] <한국어 요약>\n…")
             ko_sum: dict[int, str] = {}
             try:
                 out = chat_completion_sync(
                     system_prompt=sysd, messages=[{"role": "user", "content": corpus[:18000]}],
                     max_tokens=10000, temperature=0.45, model="groq-llama-3.3-70b", prefer_paid=True) or ""
-                en_txt, ko_txt = _split_enko(out)
-                en_sum = _parse_numbered(en_txt)
-                ko_sum = _parse_numbered(ko_txt)
+                if out and not out.lstrip().startswith(("[LLM unavailable]", "[server error]")):
+                    ko_sum = _parse_numbered(out)
             except Exception as e:
                 log.warning(f"newspaper outlet {name} failed: {str(e)[:100]}")
-            # Lay out per-article: title (clickable) + its summary.
-            sec_en[name] = _article_section(name, arts, en_sum)
-            sec_ko[name] = _article_section(name, arts, ko_sum or en_sum)
+            # Lay out per-article: title (clickable) + its Korean summary.
+            sec_ko[name] = _article_section(name, arts, ko_sum)
             _t.sleep(1.5)   # space outlet calls so we stay under Groq's TPM limit
 
-        news_en = "\n\n".join(sec_en[p["name"]] for p in NEWSPAPERS)
         news_ko = "\n\n".join(sec_ko[p["name"]] for p in NEWSPAPERS)
 
-        # ---- 2) Synthesis: Overview + Company + Catalysts + Recommendations ----
-        digest = "\n\n".join(f"[{p['name']}]\n" + (sec_en.get(p["name"], "")[:1100]) for p in NEWSPAPERS)
+        # ---- 2) Synthesis: Overview + Company + Catalysts + Recommendations (Korean) ----
+        digest = "\n\n".join(f"[{p['name']}]\n" + (sec_ko.get(p["name"], "")[:1100]) for p in NEWSPAPERS)
         stats = _stats_block(rows)
         ssys = (
-            "You are TripleH's chief market analyst. Using the per-newspaper summaries "
-            "+ stock stats + catalyst data below, write these sections (do NOT write a "
-            "'News by Newspaper' section — it is added separately; do NOT print a price "
-            "table). ALL prices are KRW. Sections:\n"
-            "## 1. General Overview\n## 3. Company-Specific Analysis\n"
-            "## 4. Catalysts & Schedule (일정매매)\n## 5. Recommendations\n\n"
-            "- Section 1: a RICH 3-4 paragraph consensus read of the recent news across "
-            "the newspapers (stock moves + market-moving politics + macro + sector).\n"
-            "- Section 3 (Company-Specific): a dedicated 5-7 sentence paragraph for EACH "
-            f"name ({_WATCHLIST}) tying the news to its daily & weekly change% and "
-            "volume trend + the technical read (price vs MA5/MA20/MA60). Use the STOCK "
-            "STATS provided. You MAY use the UNATTRIBUTED data but NEVER name its source.\n"
-            f"- Section 4 (Catalysts & Schedule / 일정매매): {_cat.CATALYST_SECTION_RULE}\n"
-            "- Section 5 (Recommendations): a DETAILED table with EXACTLY these columns: "
-            "| 종목 | 의견 | 일일 등락 | 일일 거래량 | 주간 등락 | 주간 거래량 | 핵심 근거 | — "
-            "use the KOREAN stock names EXACTLY as written in STOCK STATS (삼성전자, "
-            "SK하이닉스, 네이버, 마이크론, 브로드컴, 샌디스크 …), never English. "
-            "fill the volume/change columns from the STOCK STATS (NEVER invent them). "
-            "핵심 근거 MUST be a SPECIFIC concrete reason WITH A SOURCE CITATION — name the "
-            "newspaper/article it came from in brackets, e.g. '주간 거래량 급증 + HBM 수요 "
-            "[출처: 한국경제]' or '외국인 순매수 전환 [출처: 매일경제]'. NEVER write a generic "
-            "placeholder like '기술적 분석' or '근거'. 의견 = 매수/보유/매도. THEN a "
-            "'### 근거 상세' subsection: for EACH stock a DETAILED paragraph of 5-7 "
-            "sentences (NOT one short line) explaining the call from (a) the specific "
-            "news with the SOURCE OUTLET cited in brackets like [출처: 한국경제], (b) the "
-            "daily vs weekly volume & price trend with the real numbers, (c) the "
-            "외국인/기관 수급, and (d) a catalyst + timing. Each stock's paragraph must be "
-            "DISTINCT in wording (no copy-paste template) and END with the source citation "
-            "[출처: <매체>]. Every '매도/매수/보유' claim MUST state WHY with its source.\n"
-            "Write Korean section HEADINGS in the ===KO=== version: '## 1. 총평', "
-            "'## 3. 종목별 분석', '## 4. 일정·촉매 (일정매매)', '## 5. 추천'. NO English prose "
-            "anywhere in the Korean version.\n"
-            "Use ONLY provided data; never invent a number. Output EXACTLY:\n===EN===\n"
-            "<english>\n===KO===\n<korean 존댓말>")
-        suser = (f"TODAY (KST): {kst_date} · USD/KRW: {rate:,.0f}\n\n"
-                 f"STOCK STATS (daily & weekly volume + change% — use these EXACT numbers "
-                 f"in the Section 5 table):\n{stats}\n\n"
-                 f"PRICE/TECHNICAL CONTEXT:\n{_kr._facts(rows)}\n\n"
-                 f"PER-NEWSPAPER SUMMARIES:\n{digest}\n\n"
-                 f"UNATTRIBUTED MARKET DATA (use, NEVER name):\n{_hidden_block(hidden)}\n\n"
-                 f"CATALYST DATA:\n{_cat.catalyst_block(catalysts)}")
-        syn_en = syn_ko = ""
+            "당신은 TripleH의 수석 시장 애널리스트입니다. 아래의 신문별 요약 + 종목 통계 + "
+            "촉매 데이터를 사용해 다음 섹션을 모두 한국어(존댓말)로 작성하세요. 출력에 영어 "
+            "문장이 있으면 절대 안 됩니다('General Overview' 같은 영어 제목도 금지). "
+            "'신문별 뉴스' 섹션은 따로 추가되니 쓰지 말고, 시세 표도 출력하지 마세요. "
+            "모든 가격은 원(KRW). 섹션 제목은 정확히 이렇게:\n"
+            "## 1. 총평\n## 3. 종목별 분석\n## 4. 일정·촉매 (일정매매)\n## 5. 추천\n\n"
+            "- ## 1. 총평: 최근 뉴스에 대한 풍부한 3-4단락 종합(종목 움직임 + 시장을 움직이는 "
+            "정치 + 거시 + 섹터).\n"
+            f"- ## 3. 종목별 분석: 각 종목({_WATCHLIST})마다 5-7문장 단락으로, 뉴스를 일일·주간 "
+            "등락%와 거래량 추세 + 기술적 분석(MA5/MA20/MA60 대비)에 연결하세요. STOCK STATS를 "
+            "사용하고, UNATTRIBUTED 데이터는 출처를 밝히지 말고 활용만 하세요. 종목명은 한국어로.\n"
+            f"- ## 4. 일정·촉매 (일정매매): {_cat.CATALYST_SECTION_RULE}\n"
+            "- ## 5. 추천: 정확히 이 컬럼의 표: | 종목 | 의견 | 일일 등락 | 일일 거래량 | "
+            "주간 등락 | 주간 거래량 | 핵심 근거 | — 종목명은 STOCK STATS의 한국어 이름 그대로"
+            "(삼성전자, SK하이닉스, 네이버, 마이크론, 브로드컴, 샌디스크 …), 영어 금지. "
+            "등락/거래량 컬럼은 STOCK STATS 값을 그대로(지어내지 말 것). 핵심 근거는 구체적 "
+            "사유 + 출처를 대괄호로(예: '주간 거래량 급증 + HBM 수요 [출처: 한국경제]'). "
+            "'기술적 분석' 같은 막연한 표현 금지. 의견 = 매수/보유/매도. 그 다음 "
+            "'### 근거 상세' 소제목: 각 종목마다 5-7문장의 상세 단락(① 구체적 뉴스+출처, "
+            "② 일일·주간 거래량·가격 추세를 실제 숫자로, ③ 외국인/기관 수급, ④ 촉매+시점). "
+            "각 종목 단락은 서로 다른 문체로(템플릿 복붙 금지), 끝에 [출처: <매체>]를 붙이세요.\n"
+            "제공된 데이터만 사용하고 숫자를 지어내지 마세요. 한국어 마크다운만 출력하세요.")
+        suser = (f"오늘(KST): {kst_date} · USD/KRW: {rate:,.0f}\n\n"
+                 f"STOCK STATS (일일·주간 거래량·등락% — 5번 표에 이 숫자 그대로 사용):\n{stats}\n\n"
+                 f"가격/기술적 컨텍스트:\n{_kr._facts(rows)}\n\n"
+                 f"신문별 요약:\n{digest}\n\n"
+                 f"UNATTRIBUTED 시장 데이터 (활용하되 출처 언급 금지):\n{_hidden_block(hidden)}\n\n"
+                 f"촉매 데이터:\n{_cat.catalyst_block(catalysts)}")
+        syn_ko = ""
         try:
             out = chat_completion_sync(
                 system_prompt=ssys, messages=[{"role": "user", "content": suser[:24000]}],
                 max_tokens=10000, temperature=0.45, model="groq-llama-3.3-70b", prefer_paid=True) or ""
-            syn_en, syn_ko = _split_enko(out)
+            if out and not out.lstrip().startswith(("[LLM unavailable]", "[server error]")):
+                syn_ko = out.replace("===KO===", "").replace("===EN===", "").strip()
         except Exception as e:
             log.warning(f"newspaper synthesis failed: {str(e)[:100]}")
 
-        # ---- 3) Assemble: overview → News by Newspaper → rest ----
+        # ---- 3) Assemble (Korean only): overview → 신문별 뉴스 → rest ----
         def _assemble(syn: str, news: str) -> str:
             syn = syn or ""
             parts = re.split(r"(?=##\s*3\.)", syn, maxsplit=1)
@@ -510,9 +488,9 @@ def build_newspaper_report(db, trace_id: str) -> dict:
             return (f"# 신문 시장 분석 리포트\n*{kst_date} (최근 수일)*\n\n"
                     f"{overview}\n\n## 2. 신문별 뉴스\n{news}\n\n{rest}").strip()
 
-        if news_en.strip() and syn_en.strip():
-            detail_en = _linkify_sources(_assemble(syn_en, news_en))
-            detail_ko = _linkify_sources(_assemble(syn_ko or syn_en, news_ko or news_en))
+        if news_ko.strip() and syn_ko.strip():
+            detail_ko = _linkify_sources(_assemble(syn_ko, news_ko))
+            detail_en = detail_ko   # Korean-only report; keep field populated for master
     except Exception as e:
         log.warning(f"newspaper compose failed: {e}")
 
