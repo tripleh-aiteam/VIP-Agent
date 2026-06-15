@@ -173,10 +173,25 @@ def trigger_capture_hourly(db: Session = Depends(get_db)):
     return {"triggered": True, "message": "Hourly snapshot captured in background (saved, not emailed)."}
 
 
+def _safe_msg(text: str) -> str:
+    """Extract ONLY the non-secret error/status message from an upstream auth
+    body — never the token itself or the raw body."""
+    import json as _json
+    try:
+        j = _json.loads(text or "{}")
+        for k in ("return_msg", "error_description", "msg1", "msg", "error_code", "return_code", "rt_cd"):
+            if k in j:
+                return str({k: j[k] for k in j if k in ("return_msg", "return_code",
+                           "error_description", "error_code", "msg1", "msg", "rt_cd")})[:200]
+    except Exception:
+        pass
+    return "(non-JSON / empty)"
+
+
 @router.get("/kiwoom-short-check")
 def kiwoom_short_check():
-    """Verbose diagnostic for Kiwoom 공매도: env presence, raw token call, raw
-    ka10014 call — shows the actual Kiwoom response so failures are debuggable."""
+    """Diagnostic for Kiwoom 공매도: env presence + token/data STATUS + sanitized
+    error message only (never returns tokens or raw bodies)."""
     import os as _os, httpx as _hx
     from datetime import datetime as _dt, timedelta as _td
     out = {"key_present": bool(_os.getenv("KIWOOM_APP_KEY")),
@@ -187,8 +202,8 @@ def kiwoom_short_check():
                             "appkey": _os.getenv("KIWOOM_APP_KEY", ""),
                             "secretkey": _os.getenv("KIWOOM_APP_SECRET", "")}, timeout=15)
         out["token_status"] = tr.status_code
+        out["token_msg"] = _safe_msg(tr.text)
         tj = tr.json() if tr.headers.get("content-type", "").startswith("application/json") else {}
-        out["token_resp"] = (tr.text or "")[:200]
         tok = tj.get("token") or tj.get("access_token")
         if tok:
             d2 = _dt.utcnow().strftime("%Y%m%d")
@@ -199,9 +214,14 @@ def kiwoom_short_check():
                                    "cont-yn": "N", "next-key": ""},
                           json={"stk_cd": "005930", "tm_tp": "1", "strt_dt": d1, "end_dt": d2}, timeout=20)
             out["data_status"] = dr.status_code
-            out["data_resp"] = (dr.text or "")[:600]
+            out["data_msg"] = _safe_msg(dr.text)
+            try:
+                dj = dr.json()
+                out["data_has_rows"] = any(isinstance(v, list) and v for v in dj.values())
+            except Exception:
+                pass
     except Exception as e:
-        out["error"] = str(e)[:300]
+        out["error"] = str(e)[:200]
     return out
 
 
@@ -218,7 +238,7 @@ def kis_deriv_check():
                             "appkey": _os.getenv("KIS_APP_KEY", ""),
                             "appsecret": _os.getenv("KIS_APP_SECRET", "")}, timeout=15)
         out["token_status"] = tr.status_code
-        out["token_resp"] = (tr.text or "")[:200]
+        out["token_msg"] = _safe_msg(tr.text)
         tj = tr.json() if tr.headers.get("content-type", "").startswith("application/json") else {}
         tok = tj.get("access_token")
         if tok:
@@ -230,9 +250,9 @@ def kis_deriv_check():
                          params={"FID_COND_MRKT_DIV_CODE": "F", "FID_COND_SCR_DIV_CODE": "20503",
                                  "FID_INPUT_ISCD": "", "FID_INPUT_DATE_1": ""}, timeout=20)
             out["data_status"] = dr.status_code
-            out["data_resp"] = (dr.text or "")[:600]
+            out["data_msg"] = _safe_msg(dr.text)
     except Exception as e:
-        out["error"] = str(e)[:300]
+        out["error"] = str(e)[:200]
     return out
 
 
