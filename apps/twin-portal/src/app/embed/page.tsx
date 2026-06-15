@@ -1,29 +1,38 @@
 "use client";
 
 /**
- * Admin embed entry — lets the VIP boss dashboard open ANY twin's portal
- * without a worker password.
+ * Admin embed entry — lets the VIP boss dashboard open ANY twin's portal.
  *
- * The boss dashboard iframes:
- *   /embed?twin_id=<id>&as=<bossEmail>&name=<twinName>&k=<ADMIN_TOKEN>
+ * The dashboard mints a short-lived, server-signed token (POST /auth/embed-token,
+ * authorized by the boss's admin session) and iframes:
  *
- * We validate the shared token, seed the same localStorage keys the normal
- * worker login writes, then render the real Dashboard. The backend authorizes
- * every twin because `as` is an admin/operator email (see _check_twin_access).
+ *     /embed?t=<signedToken>
  *
- * Worker login (/) is untouched — workers still sign in with email + password
- * and only reach their own twin.
+ * The token is opaque and self-describing: it is signed by the orchestrator
+ * (EMBED_SIGNING_SECRET, server-only) and bound to {twin_id, principal, exp}.
+ * We decode it here ONLY to know which twin to render; all real authorization
+ * happens on the backend, which re-verifies the signature on every twin API
+ * call (sent as the X-Embed-Token header). Nothing sensitive is trusted from
+ * the client, and there is no shared secret in the browser bundle.
  *
- * NOTE: the token is a soft gate (NEXT_PUBLIC, visible client-side). It blocks
- * casual access; it is not a hard security boundary. The platform's twin access
- * is already permissive in "boss mode". Harden to a server-minted token later.
+ * Worker login (/) is untouched — workers sign in with email + password and
+ * reach only their own twin.
  */
 
 import { useEffect, useState } from "react";
 import { DashboardView as Dashboard } from "../dashboard/DashboardView";
 
-// Fail closed: no hardcoded fallback. If unset, the embed refuses to render.
-const EMBED_TOKEN = process.env.NEXT_PUBLIC_TWIN_EMBED_TOKEN || "";
+/** Decode the (unverified) payload of the signed token to learn the twin id. */
+function decodePayload(token: string): { tid?: string; sub?: string } | null {
+  try {
+    const body = token.split(".")[0];
+    const b64 = body.replace(/-/g, "+").replace(/_/g, "/");
+    const pad = "=".repeat((4 - (b64.length % 4)) % 4);
+    return JSON.parse(atob(b64 + pad));
+  } catch {
+    return null;
+  }
+}
 
 export default function EmbedPage() {
   const [state, setState] = useState<"loading" | "ready" | "error">("loading");
@@ -31,26 +40,28 @@ export default function EmbedPage() {
 
   useEffect(() => {
     try {
-      // Frame-only: refuse direct navigation. This page is meant to be iframed
-      // by the VIP dashboard (whose origin is constrained by the CSP header).
-      if (window.top === window.self) { setMessage("This page must be opened from the VIP dashboard."); setState("error"); return; }
-      if (!EMBED_TOKEN) { setMessage("Embed is not configured (missing token)."); setState("error"); return; }
+      // Frame-only: this page is meant to be iframed by the VIP dashboard
+      // (whose origin is constrained by the CSP frame-ancestors header).
+      if (window.top === window.self) {
+        setMessage("This page must be opened from the VIP dashboard.");
+        setState("error");
+        return;
+      }
 
-      const sp = new URLSearchParams(window.location.search);
-      const twinId = sp.get("twin_id");
-      const as = sp.get("as") || "boss@vip";
-      const k = sp.get("k") || "";
-      const name = sp.get("name") || "Twin";
+      const t = new URLSearchParams(window.location.search).get("t") || "";
+      if (!t) { setMessage("Missing embed token"); setState("error"); return; }
 
-      if (!twinId) { setMessage("Missing twin_id"); setState("error"); return; }
-      if (k !== EMBED_TOKEN) { setMessage("Unauthorized embed"); setState("error"); return; }
+      const payload = decodePayload(t);
+      if (!payload?.tid) { setMessage("Invalid embed token"); setState("error"); return; }
 
-      localStorage.setItem("twin_id", twinId);
-      localStorage.setItem("twin_name", name);
+      // Seed the session the DashboardView expects. Authorization is the signed
+      // token (sent as X-Embed-Token by the portal's api layer), NOT the email.
+      localStorage.setItem("twin_id", payload.tid);
+      localStorage.setItem("embed_token", t);
+      localStorage.setItem("worker_email", payload.sub || "");  // attribution only
       localStorage.setItem("worker_name", "VIP Boss");
-      localStorage.setItem("worker_email", as);   // admin email → backend grants any twin
-      localStorage.setItem("twin_token", "boss-embed");
-      localStorage.setItem("vip_embed", "1");      // marks boss-embedded session
+      localStorage.setItem("twin_token", "");                    // unused in embed
+      localStorage.setItem("vip_embed", "1");
       setState("ready");
     } catch (e: any) {
       setMessage(e?.message || "Failed to initialize embed");
@@ -78,7 +89,5 @@ export default function EmbedPage() {
     );
   }
 
-  // Boss-embedded: render the real worker dashboard. Logout just reloads the
-  // embed (the boss closes it from the dashboard, not from inside).
   return <Dashboard onLogout={() => window.location.reload()} />;
 }

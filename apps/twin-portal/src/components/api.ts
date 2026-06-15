@@ -28,6 +28,14 @@ export const API = resolveApiBase();
 
 function getAuthHeaders(): Record<string, string> {
   if (typeof window === "undefined") return {};
+  // Boss-embed sessions authorize via the server-signed embed token. This is
+  // the authoritative credential for that twin (backend re-verifies it).
+  const embed = localStorage.getItem("embed_token") || "";
+  if (embed) {
+    const email = localStorage.getItem("worker_email") || "";
+    return email ? { "X-Embed-Token": embed, "X-User-Email": email } : { "X-Embed-Token": embed };
+  }
+  // Worker sessions authorize via their verifiable login token.
   const email = localStorage.getItem("worker_email") || "";
   const token = localStorage.getItem("twin_token") || "";
   if (!email) return {};

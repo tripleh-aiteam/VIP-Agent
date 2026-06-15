@@ -29,6 +29,29 @@ def _verify_password(password: str, password_hash: str) -> bool:
     return _hash_password(password) == password_hash
 
 
+def session_token_for(user) -> str:
+    """The login session token for a user — must match what login() returns."""
+    return _hash_password(f"{user.id}:{user.email}")
+
+
+def verify_session_token(db: Session, email: str, token: str):
+    """Return the PlatformUser if (email, token) is a valid login session, else None.
+
+    The login token is deterministic (SHA256 over a fixed salt + id:email), so we
+    verify by recomputing and comparing in constant time. This turns the existing
+    session token into something the backend can actually enforce.
+    """
+    if not email or not token:
+        return None
+    user = db.query(PlatformUser).filter(PlatformUser.email == email).first()
+    if not user:
+        return None
+    import hmac as _hmac
+    if _hmac.compare_digest(token, session_token_for(user)):
+        return user
+    return None
+
+
 def _get_or_create_admin(db: Session) -> PlatformUser:
     """Get admin user or create default one."""
     user = db.query(PlatformUser).filter(PlatformUser.email == DEFAULT_ADMIN_EMAIL).first()
@@ -85,7 +108,7 @@ def login(db: Session, email: str, password: str) -> dict:
             "name": user.name,
             "role": user.role,
         },
-        "token": _hash_password(f"{user.id}:{user.email}"),  # simple session token
+        "token": session_token_for(user),  # verifiable session token (see verify_session_token)
         "name": user.name,
         "twin_id": twin_id,
         "twin_name": twin_name,

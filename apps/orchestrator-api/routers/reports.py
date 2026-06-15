@@ -209,19 +209,31 @@ def kiwoom_short_check():
     from datetime import datetime as _dt, timedelta as _td
     out = {"key_present": bool(_os.getenv("KIWOOM_APP_KEY")),
            "secret_present": bool(_os.getenv("KIWOOM_APP_SECRET"))}
+    # Try real first, then mock — Kiwoom 8030 = 실전/모의 env mismatch, so a key
+    # for the other environment still works once we hit the matching base.
+    bases = ["https://api.kiwoom.com", "https://mockapi.kiwoom.com"]
     try:
-        tr = _hx.post("https://api.kiwoom.com/oauth2/token",
-                      json={"grant_type": "client_credentials",
-                            "appkey": _os.getenv("KIWOOM_APP_KEY", ""),
-                            "secretkey": _os.getenv("KIWOOM_APP_SECRET", "")}, timeout=15)
-        out["token_status"] = tr.status_code
-        out["token_msg"] = _safe_msg(tr.text)
-        tj = tr.json() if tr.headers.get("content-type", "").startswith("application/json") else {}
-        tok = tj.get("token") or tj.get("access_token")
+        tok = None
+        for base in bases:
+            tr = _hx.post(f"{base}/oauth2/token",
+                          json={"grant_type": "client_credentials",
+                                "appkey": _os.getenv("KIWOOM_APP_KEY", ""),
+                                "secretkey": _os.getenv("KIWOOM_APP_SECRET", "")}, timeout=15)
+            out["token_status"] = tr.status_code
+            out["token_msg"] = _safe_msg(tr.text)
+            tj = tr.json() if tr.headers.get("content-type", "").startswith("application/json") else {}
+            tok = tj.get("token") or tj.get("access_token")
+            if tok:
+                out["env"] = "real" if base == bases[0] else "mock"
+                break
+            # Only fall through to the next base on an 8030 env-mismatch.
+            if "8030" not in (out.get("token_msg") or ""):
+                break
         if tok:
+            base = bases[0] if out.get("env") == "real" else bases[1]
             d2 = _dt.utcnow().strftime("%Y%m%d")
             d1 = (_dt.utcnow() - _td(days=10)).strftime("%Y%m%d")
-            dr = _hx.post("https://api.kiwoom.com/api/dostk/shsa",
+            dr = _hx.post(f"{base}/api/dostk/shsa",
                           headers={"authorization": f"Bearer {tok}", "api-id": "ka10014",
                                    "content-type": "application/json;charset=UTF-8",
                                    "cont-yn": "N", "next-key": ""},

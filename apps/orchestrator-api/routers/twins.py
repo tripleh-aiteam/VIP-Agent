@@ -3,6 +3,7 @@ VIP AI Platform — Digital Twin Router
 CRUD, mode switching, tasks, knowledge, activity, and chat endpoints.
 """
 
+import os
 from datetime import datetime
 from typing import Optional
 from uuid import UUID, uuid4
@@ -18,6 +19,8 @@ from db.base import get_db
 from db.models import PlatformUser, TwinTask
 from services import twin_service
 from services import twin_brain
+from services import auth_service, embed_auth
+from services.logger import log
 from contracts.twin import (
     TwinCreate, TwinUpdate, TwinModeSwitch,
     TwinTaskCreate, TwinTaskUpdate, TwinTaskReview,
@@ -68,18 +71,56 @@ async def upload_file(twin_id: UUID, file: UploadFile = File(...), db: Session =
     }
 
 
-def _check_twin_access(twin_id: UUID, x_user_email: Optional[str] = Header(None), db: Session = Depends(get_db)):
-    """Block workers from accessing twins that aren't theirs."""
-    if not x_user_email:
-        return  # No header = boss mode
-    user = db.query(PlatformUser).filter(PlatformUser.email == x_user_email).first()
-    if not user:
-        return
-    if user.role in ("admin", "operator", "viewer"):
-        return  # Boss can access any twin
-    if user.role == "worker":
-        if not user.twin_id or str(user.twin_id) != str(twin_id):
-            raise HTTPException(status_code=403, detail="You can only access your own twin")
+def _auth_enforced() -> bool:
+    """AUTH_ENFORCE gates the transition from grace mode to hard enforcement."""
+    return os.getenv("AUTH_ENFORCE", "off").strip().lower() in ("on", "1", "true", "yes")
+
+
+def _check_twin_access(
+    twin_id: UUID,
+    x_user_email: Optional[str] = Header(None),
+    x_user_token: Optional[str] = Header(None),
+    x_embed_token: Optional[str] = Header(None),
+    db: Session = Depends(get_db),
+):
+    """Authorize access to a specific twin.
+
+    Accepted principals:
+      - A signed boss-embed token (X-Embed-Token) scoped to THIS twin.
+      - A verified admin/operator/viewer login session → any twin.
+      - A verified worker login session → only their own twin.
+
+    Unauthenticated / unverified callers are denied once AUTH_ENFORCE is on.
+    During rollout (AUTH_ENFORCE off, the default) they are allowed but logged,
+    so we can confirm every legitimate caller authenticates before enforcing.
+    """
+    # 1. Boss-embed signed token, scoped to this specific twin.
+    payload = embed_auth.verify_embed_token(x_embed_token)
+    if payload is not None:
+        if str(payload.get("tid")) == str(twin_id):
+            return
+        raise HTTPException(status_code=403, detail="Embed token does not authorize this twin")
+
+    # 2. Verified login session (worker or admin).
+    if x_user_email and x_user_token:
+        user = auth_service.verify_session_token(db, x_user_email, x_user_token)
+        if user:
+            if user.role in ("admin", "operator", "viewer"):
+                return  # Boss roles can access any twin
+            if user.role == "worker":
+                if user.twin_id and str(user.twin_id) == str(twin_id):
+                    return
+                raise HTTPException(status_code=403, detail="You can only access your own twin")
+            raise HTTPException(status_code=403, detail="Not authorized for this twin")
+
+    # 3. No valid principal.
+    if _auth_enforced():
+        raise HTTPException(status_code=401, detail="Authentication required")
+    log.warning(
+        f"[auth-grace] unauthenticated twin access allowed (would 401 under AUTH_ENFORCE): "
+        f"twin={twin_id} email={x_user_email or '-'} embed={'y' if x_embed_token else 'n'}"
+    )
+    return
 
 
 # ---------------------------------------------------------------------------
