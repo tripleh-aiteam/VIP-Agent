@@ -349,15 +349,20 @@ def _verify_cell(r: dict, ko: bool) -> str:
 
 
 def _build_table(rows: list[dict], ko: bool) -> str:
-    """Real-time price table: 종가(real-time) + 시간외(NXT after-market) + daily &
-    weekly change% / volume. (No 기준 column. Google cross-check runs silently.)"""
+    """Price table: price + 시간외(NXT after-market) + daily & weekly change% /
+    volume. The price column header is DYNAMIC — during KR trading it is 현재가
+    (current price, the close isn't known yet); after the close / the 6:50 run it
+    is 종가 (closing price). (No 기준 column. Google cross-check runs silently.)"""
     def vol(v):
         return f"{int(v):,}" if v is not None else "—"
+    # If any KR ticker is still live (intraday), this is a during-market run.
+    live_now = any(r.get("price_kind") == "live" for r in rows if r.get("mkt") == "KR")
+    price_hdr = ("현재가(실시간)" if live_now else "종가") if ko else ("Price (live)" if live_now else "Close")
     if ko:
-        head = ("| 종목 | 시가 | 종가(실시간) | 시간외(NXT) | 일일 등락 | 일일 거래량 | 주간 등락 | 주간 거래량 |\n"
+        head = (f"| 종목 | 시가 | {price_hdr} | 시간외(NXT) | 일일 등락 | 일일 거래량 | 주간 등락 | 주간 거래량 |\n"
                 "|---|---|---|---|---|---|---|---|")
     else:
-        head = ("| Stock | Open | Price (live) | After-mkt (NXT) | Daily Chg | Daily Vol | Weekly Chg | Weekly Vol |\n"
+        head = (f"| Stock | Open | {price_hdr} | After-mkt (NXT) | Daily Chg | Daily Vol | Weekly Chg | Weekly Vol |\n"
                 "|---|---|---|---|---|---|---|---|")
     lines = [head]
     for r in rows:
@@ -610,14 +615,21 @@ def build_kiwoom_report(db, trace_id: str) -> dict:
             "bearish stacks, and golden/dead-cross setups). Quote the REAL KRW prices "
             "and percentages throughout — never be vague, never invent.\n"
             "- Section 6: FIRST a Markdown table | Stock | Action | Reason | where "
-            "Action is BUY / SELL / HOLD; THEN, AFTER the table, add a '### Rationale' "
-            "subsection with a paragraph per recommendation explaining IN DETAIL why. "
-            "For KR stocks you are GIVEN investor flows (외국인/기관/개인 순매수) — you MUST "
-            "weave these into the reasoning (e.g. heavy foreign buying = institutional "
-            "conviction → supports BUY; heavy foreign selling → caution). Cite the SPECIFIC "
-            "number that drives each call (a change%, a volume, a net-buy figure). Note "
-            "that KR closes are the NXT after-market (시간외) price. (Futures/options "
-            "trading values and short-selling data are not available in this feed.)\n"
+            "Action is BUY / SELL / HOLD. The Reason cell MUST be UNIQUE for every "
+            "stock and 2-3 full sentences — NEVER reuse the same phrase across rows "
+            "(do NOT write generic boilerplate like '강한 상승 추세, 불리시 추세 구조' on "
+            "multiple lines). Each Reason MUST cite THAT stock's OWN specific numbers: "
+            "its daily change%, its weekly change%, its volume, its 외국인/기관/개인 순매수 "
+            "figure, and where its price sits vs MA5/MA20/MA60 — and explain what those "
+            "specific numbers imply for the call. THEN, AFTER the table, add a "
+            "'### Rationale' subsection with a DETAILED 4-6 sentence paragraph per stock "
+            "that goes deeper: the catalyst, the supply/demand (수급) read from the "
+            "investor flows, the trend structure, and the risk to the thesis. For KR "
+            "stocks you are GIVEN investor flows (외국인/기관/개인 순매수) — weave them in "
+            "(heavy foreign buying = institutional conviction → supports BUY; heavy "
+            "foreign selling → caution). Every stock's reasoning must be DISTINCT and "
+            "grounded in its own data. (Futures/options trading values and short-selling "
+            "data are not available in this feed.)\n"
             "Output ONLY the finished English Markdown report — no preamble, no "
             "placeholders, no notes about a translation."
         )
