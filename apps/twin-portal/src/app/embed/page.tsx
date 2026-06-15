@@ -22,7 +22,8 @@
 import { useEffect, useState } from "react";
 import { DashboardView as Dashboard } from "../dashboard/DashboardView";
 
-const EMBED_TOKEN = process.env.NEXT_PUBLIC_TWIN_EMBED_TOKEN || "vip-embed-2026";
+// Fail closed: no hardcoded fallback. If unset, the embed refuses to render.
+const EMBED_TOKEN = process.env.NEXT_PUBLIC_TWIN_EMBED_TOKEN || "";
 
 export default function EmbedPage() {
   const [state, setState] = useState<"loading" | "ready" | "error">("loading");
@@ -30,6 +31,11 @@ export default function EmbedPage() {
 
   useEffect(() => {
     try {
+      // Frame-only: refuse direct navigation. This page is meant to be iframed
+      // by the VIP dashboard (whose origin is constrained by the CSP header).
+      if (window.top === window.self) { setMessage("This page must be opened from the VIP dashboard."); setState("error"); return; }
+      if (!EMBED_TOKEN) { setMessage("Embed is not configured (missing token)."); setState("error"); return; }
+
       const sp = new URLSearchParams(window.location.search);
       const twinId = sp.get("twin_id");
       const as = sp.get("as") || "boss@vip";

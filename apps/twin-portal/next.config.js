@@ -1,10 +1,13 @@
 /** @type {import('next').NextConfig} */
 
 // Origins allowed to iframe the Twin Portal (the VIP boss dashboard).
-// Override/extend in prod with FRAME_ANCESTORS (space-separated origins).
+// Prod default is the boss dashboard only; localhost is added in dev so local
+// embedding works without extra config. Override fully with FRAME_ANCESTORS.
 const FRAME_ANCESTORS =
   process.env.FRAME_ANCESTORS ||
-  "'self' http://localhost:3000 https://oasisvip.vercel.app";
+  (process.env.NODE_ENV !== "production"
+    ? "'self' http://localhost:3000 https://oasisvip.vercel.app"
+    : "'self' https://oasisvip.vercel.app");
 
 const nextConfig = {
   async headers() {
@@ -17,6 +20,9 @@ const nextConfig = {
             key: "Content-Security-Policy",
             value: `frame-ancestors ${FRAME_ANCESTORS};`,
           },
+          // Don't leak the embed URL (token + email in query) to any external
+          // resource via the Referer header — defense in depth.
+          { key: "Referrer-Policy", value: "no-referrer" },
         ],
       },
     ];
