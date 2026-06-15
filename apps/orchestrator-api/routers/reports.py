@@ -186,6 +186,20 @@ def kiwoom_short_check():
         return {"ok": False, "error": str(e)[:300]}
 
 
+@router.get("/kis-deriv-check")
+def kis_deriv_check():
+    """Diagnostic: verify KIS derivatives — 선물옵션 거래대금 + 개별주식선물 (삼성/하이닉스).
+    Confirms KIS_APP_KEY/KIS_APP_SECRET work + the response mapping."""
+    try:
+        from services import kis_derivatives
+        return {"ok": True,
+                "derivatives_turnover": kis_derivatives.derivatives_turnover(),
+                "stock_futures_005930": kis_derivatives.stock_futures("005930"),
+                "stock_futures_000660": kis_derivatives.stock_futures("000660")}
+    except Exception as e:
+        return {"ok": False, "error": str(e)[:300]}
+
+
 @router.get("/llm-check")
 def llm_check():
     """Diagnostic: do a tiny prefer_paid test call and report which provider
