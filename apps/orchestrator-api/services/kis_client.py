@@ -89,8 +89,29 @@ _token_lock = threading.Lock()
 # Env / helpers
 # --------------------------------------------------------------------------- #
 def _creds() -> tuple[Optional[str], Optional[str]]:
-    """Read KIS credentials from env *at call time* (per CLAUDE.md)."""
-    return os.getenv("KIS_APP_KEY"), os.getenv("KIS_APP_SECRET")
+    """Read KIS credentials from env *at call time* (per CLAUDE.md).
+
+    The AppSecret contains '+' and '/' characters which some env-var input paths
+    URL-decode (turning '+' into a space, then stripping it) — corrupting the
+    secret. To bypass that, KIS_APP_SECRET_B64 (URL-safe OR standard base64 of
+    the secret) is accepted as an override: it contains no characters that get
+    mangled, and we decode it here. Falls back to the raw KIS_APP_SECRET.
+    """
+    app_key = os.getenv("KIS_APP_KEY")
+    b64 = (os.getenv("KIS_APP_SECRET_B64") or "").strip()
+    if b64:
+        import base64
+        # Pad to a multiple of 4, then try URL-safe then standard base64.
+        padded = b64 + "=" * ((4 - len(b64) % 4) % 4)
+        for dec in (base64.urlsafe_b64decode, base64.b64decode):
+            try:
+                secret = dec(padded).decode("ascii").strip()
+                if secret:
+                    return app_key, secret
+            except Exception:
+                continue
+        logger.warning("kis_client: KIS_APP_SECRET_B64 set but could not be decoded.")
+    return app_key, os.getenv("KIS_APP_SECRET")
 
 
 def _parse_expiry(data: dict) -> float:

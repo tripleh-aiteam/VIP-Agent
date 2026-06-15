@@ -639,6 +639,87 @@ def _futures_sentiment() -> str:
         return ""
 
 
+def _krw_big(v) -> str:
+    """Format a large KRW amount as 조원 / 억원 for readability ('—' if None)."""
+    if v is None:
+        return "—"
+    try:
+        v = float(v)
+    except (TypeError, ValueError):
+        return "—"
+    if abs(v) >= 1e12:
+        return f"{v / 1e12:,.2f}조원"
+    if abs(v) >= 1e8:
+        return f"{v / 1e8:,.0f}억원"
+    return f"{v:,.0f}원"
+
+
+def _derivatives_block(rows: list[dict]) -> tuple[str, str, str]:
+    """KOSPI200 지수선물·콜/풋 옵션 거래대금 (+ Put/Call ratio) and watchlist
+    개별주식선물 (KIS Developers). Fetches KIS ONCE and returns
+    (ko_block, en_block, facts) — facts is a compact one-paragraph summary for the
+    LLM. All '' if KIS is unavailable (e.g. creds not yet valid) so the report
+    simply omits derivatives — never fabricated."""
+    try:
+        from services import kis_derivatives
+    except Exception:
+        return "", "", ""
+    ko_lines: list[str] = []
+    en_lines: list[str] = []
+    facts: list[str] = []
+
+    try:
+        turn = kis_derivatives.derivatives_turnover()
+    except Exception as e:
+        log.warning(f"kiwoom derivatives turnover: {str(e)[:80]}")
+        turn = None
+    if turn and (turn.get("futures_value") or turn.get("call_value")
+                 or turn.get("put_value")):
+        fv, cv, pv = turn.get("futures_value"), turn.get("call_value"), turn.get("put_value")
+        pcr = (pv / cv) if (cv and pv and cv > 0) else None
+        ko_lines += ["**지수 파생 거래대금 (KOSPI200, 전일)**",
+                     "| 구분 | 거래대금 |\n|---|---|",
+                     f"| 지수선물 | {_krw_big(fv)} |",
+                     f"| 콜옵션 | {_krw_big(cv)} |",
+                     f"| 풋옵션 | {_krw_big(pv)} |"]
+        en_lines += ["**Index derivatives turnover (KOSPI200, T-1)**",
+                     "| Type | Turnover |\n|---|---|",
+                     f"| Index futures | {_krw_big(fv)} |",
+                     f"| Call options | {_krw_big(cv)} |",
+                     f"| Put options | {_krw_big(pv)} |"]
+        if pcr is not None:
+            ko_lines.append(f"| 풋/콜 비율 | {pcr:.2f} |")
+            en_lines.append(f"| Put/Call ratio | {pcr:.2f} |")
+        facts.append(
+            f"KOSPI200 파생 거래대금(전일): 지수선물={_krw_big(fv)}, 콜옵션={_krw_big(cv)}, "
+            f"풋옵션={_krw_big(pv)}" + (f", 풋/콜={pcr:.2f} "
+            "(>1=풋 우위/헤지·약세심리, <1=콜 우위/강세심리)" if pcr is not None else ""))
+
+    kr_codes = [r["t"] for r in rows if r.get("mkt") == "KR" and not r.get("etf")]
+    name_ko = {r["t"]: r["ko"] for r in rows}
+    name_en = {r["t"]: r["en"] for r in rows}
+    try:
+        sf = kis_derivatives.stock_futures_all(kr_codes) if kr_codes else {}
+    except Exception as e:
+        log.warning(f"kiwoom stock-futures: {str(e)[:80]}")
+        sf = {}
+    sf_rows = [(c, d) for c, d in sf.items() if d and (d.get("volume") or d.get("value"))]
+    if sf_rows:
+        ko_lines += ["\n**개별주식선물 (전일, 종목별)**",
+                     "| 종목 | 거래량(계약) | 거래대금 | 미결제약정 |\n|---|---|---|---|"]
+        en_lines += ["\n**Single-stock futures (T-1, by name)**",
+                     "| Stock | Volume(contracts) | Turnover | Open interest |\n|---|---|---|---|"]
+        for c, d in sf_rows:
+            vol = f"{int(d['volume']):,}" if d.get("volume") is not None else "—"
+            oi = f"{int(d['open_interest']):,}" if d.get("open_interest") is not None else "—"
+            ko_lines.append(f"| {name_ko.get(c, c)} | {vol} | {_krw_big(d.get('value'))} | {oi} |")
+            en_lines.append(f"| {name_en.get(c, c)} | {vol} | {_krw_big(d.get('value'))} | {oi} |")
+        facts.append("개별주식선물(전일): "
+                     + ", ".join(f"{name_ko.get(c, c)} {_krw_big(d.get('value'))}"
+                                 for c, d in sf_rows))
+    return "\n".join(ko_lines), "\n".join(en_lines), " | ".join(facts)
+
+
 def _market_news() -> str:
     """Latest news & catalysts (semis / AI / macro / policy) for the narrative and
     for sourcing fresh buy ideas. Returns a bulleted block ('' if unavailable)."""
@@ -728,6 +809,13 @@ def build_kiwoom_report(db, trace_id: str) -> dict:
     if _fl_ko:
         table_ko = table_ko + "\n\n**투자자별 순매수 (수급, 단위: 주)**\n" + _fl_ko
         table_en = table_en + "\n\n**Investor net-buy (shares)**\n" + _fl_en
+    # Derivatives (선물 + 콜/풋 옵션 + 개별주식선물) via KIS — appears once the KIS
+    # creds are valid; otherwise these are '' and the report omits derivatives.
+    _dv_ko, _dv_en, _dv_facts = _derivatives_block(rows)
+    if _dv_ko:
+        table_ko = table_ko + "\n\n" + _dv_ko
+    if _dv_en:
+        table_en = table_en + "\n\n" + _dv_en
 
     # One-line summary (deterministic fallback)
     movers = sorted([r for r in ok_rows if r.get("change_pct") is not None],
@@ -812,6 +900,11 @@ def build_kiwoom_report(db, trace_id: str) -> dict:
         user = (f"Date (KST): {kst_date} · USD/KRW used for US tickers: {rate:,.0f}\n\n"
                 + (f"파생/선물 동향 (market futures positioning — weave into the overview "
                    f"& direction read): {futures}\n\n" if futures else "")
+                + (f"선물·옵션 거래대금 (KOSPI200 지수선물/콜/풋 옵션 + 개별주식선물 — interpret "
+                   f"in the overview & direction read: a high Put/Call ratio signals "
+                   f"hedging / bearish positioning, a low one bullish; rising "
+                   f"개별주식선물 거래대금 = leveraged interest in that name):\n{_dv_facts}\n\n"
+                   if _dv_facts else "")
                 + f"DATA TABLE (insert verbatim in Section 2):\n{table_en}\n\n"
                 f"DATA + TECHNICALS (incl. 수급 flows & 공매도 short-selling per KR stock):\n{_facts(rows)}"
                 + (f"\n\nLATEST NEWS & MARKET DEVELOPMENTS (use for Section 1 news synthesis, "

@@ -255,14 +255,28 @@ def kis_deriv_check():
     """Verbose diagnostic for KIS: env presence, raw token call, and one raw
     futures quotation — shows the actual KIS response for debugging."""
     import os as _os, httpx as _hx
-    _k = _os.getenv("KIS_APP_KEY", "") or ""
-    _s = _os.getenv("KIS_APP_SECRET", "") or ""
+    # Resolve via the client so a KIS_APP_SECRET_B64 override is reflected here too.
+    try:
+        from services.kis_client import _creds as _kis_creds
+        _k, _s = _kis_creds()
+        _k, _s = _k or "", _s or ""
+    except Exception:
+        _k = _os.getenv("KIS_APP_KEY", "") or ""
+        _s = _os.getenv("KIS_APP_SECRET", "") or ""
     out = {"key_present": bool(_k), "secret_present": bool(_s),
+           "b64_override": bool((_os.getenv("KIS_APP_SECRET_B64") or "").strip()),
            # Lengths only (NOT the values) — a real KIS AppKey is ~36 chars and the
            # AppSecret is ~180 chars; a short secret_len means it was truncated on
            # paste into Render. trailing_ws flags an accidental space/newline.
            "key_len": len(_k), "secret_len": len(_s),
-           "key_trailing_ws": _k != _k.strip(), "secret_trailing_ws": _s != _s.strip()}
+           "key_trailing_ws": _k != _k.strip(), "secret_trailing_ws": _s != _s.strip(),
+           # Diagnostics to pinpoint corruption WITHOUT revealing the secret:
+           # the real AppSecret has 3 '+' chars and ends in 'k='. If plus<3 the
+           # '+' were stripped (URL-decoded to spaces); if tail2!='k=' it was
+           # truncated at the end.
+           "secret_plus": _s.count("+"), "secret_slash": _s.count("/"),
+           "secret_tail2": _s[-2:] if len(_s) >= 2 else _s,
+           "secret_has_space": " " in _s}
     # Try real (실전) first, then mock (모의/VTS) — EGW00105 'invalid AppSecret'
     # on the wrong domain means the key belongs to the other environment.
     bases = ["https://openapi.koreainvestment.com:9443",
@@ -272,8 +286,7 @@ def kis_deriv_check():
         for base in bases:
             tr = _hx.post(f"{base}/oauth2/tokenP",
                           json={"grant_type": "client_credentials",
-                                "appkey": _os.getenv("KIS_APP_KEY", ""),
-                                "appsecret": _os.getenv("KIS_APP_SECRET", "")}, timeout=15)
+                                "appkey": _k, "appsecret": _s}, timeout=15)
             out["token_status"] = tr.status_code
             out["token_msg"] = _safe_msg(tr.text)
             tj = tr.json() if tr.headers.get("content-type", "").startswith("application/json") else {}
@@ -287,8 +300,7 @@ def kis_deriv_check():
             base = bases[0] if out.get("env") == "real" else bases[1]
             dr = _hx.get(f"{base}/uapi/domestic-futureoption/v1/quotations/display-board-top",
                          headers={"authorization": f"Bearer {tok}",
-                                  "appkey": _os.getenv("KIS_APP_KEY", ""),
-                                  "appsecret": _os.getenv("KIS_APP_SECRET", ""),
+                                  "appkey": _k, "appsecret": _s,
                                   "tr_id": "FHPIF05030000", "custtype": "P"},
                          params={"FID_COND_MRKT_DIV_CODE": "F", "FID_COND_SCR_DIV_CODE": "20503",
                                  "FID_INPUT_ISCD": "", "FID_INPUT_DATE_1": ""}, timeout=20)
