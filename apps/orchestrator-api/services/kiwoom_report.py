@@ -224,12 +224,10 @@ def _fetch_daily(spec: dict) -> dict:
 
 
 def _enrich_kr_rows(rows: list[dict]) -> None:
-    """For KR tickers, add Naver NXT (after-market) close + investor flows
-    (외국인/기관/개인 순매수). When NOT in trading hours, the user wants the
-    NXT after-market close shown as the closing price."""
-    from services.kst import kst_now
-    h = kst_now().hour
-    trading = 9 <= h < 16
+    """For KR tickers, take the REAL-TIME price + change% from Naver (fresher
+    than the daily candle), add the NXT (시간외/after-market) price as a separate
+    field, and attach investor flows (외국인/기관/개인 순매수). Weekly stats, MAs
+    and volume stay from the daily-chart layer."""
     for r in rows:
         if r.get("mkt") != "KR":
             continue
@@ -238,17 +236,20 @@ def _enrich_kr_rows(rows: list[dict]) -> None:
             e = naver_stock.enrich_kr(r["t"])
         except Exception:
             continue
-        nxt = e.get("nxt_price")
-        if nxt:
-            r["nxt_price"] = nxt
-            # After the regular close / pre-open, show the NXT after-market close.
-            if not trading and r.get("close") is not None:
-                prev = r.get("prev_close")
-                wk = r.get("weekly_base")
-                r["close"] = nxt
-                r["change_pct"] = ((nxt - prev) / prev * 100) if prev else r.get("change_pct")
-                r["weekly_change_pct"] = ((nxt - wk) / wk * 100) if wk else r.get("weekly_change_pct")
-                r["price_kind"] = "nxt"
+        # Real-time price + change% (replaces a possibly-stale candle figure).
+        price = e.get("price")
+        if price:
+            wk = r.get("weekly_base")
+            r["close"] = price
+            if e.get("change_pct") is not None:
+                r["change_pct"] = e["change_pct"]
+            r["weekly_change_pct"] = ((price - wk) / wk * 100) if wk else r.get("weekly_change_pct")
+            r["price_kind"] = "live" if (e.get("market_status") == "OPEN") else "close"
+            if e.get("as_of"):
+                r["data_time"] = e["as_of"]
+        # NXT / after-market (시간외) — separate column.
+        r["nxt_price"] = e.get("nxt_price")
+        r["nxt_change_pct"] = e.get("nxt_change_pct")
         fl = e.get("flow") or {}
         r["foreign_net"] = fl.get("foreign")
         r["organ_net"] = fl.get("organ")
@@ -348,22 +349,23 @@ def _verify_cell(r: dict, ko: bool) -> str:
 
 
 def _build_table(rows: list[dict], ko: bool) -> str:
-    """Price table with daily + weekly change% & volume. KR 종가 uses the NXT
-    after-market close when available. (Google cross-check runs silently.)"""
+    """Real-time price table: 종가(real-time) + 시간외(NXT after-market) + daily &
+    weekly change% / volume. (No 기준 column. Google cross-check runs silently.)"""
     def vol(v):
         return f"{int(v):,}" if v is not None else "—"
     if ko:
-        head = ("| 종목 | 시가 | 종가 | 기준 | 일일 등락 | 일일 거래량 | 주간 등락 | 주간 거래량 |\n"
+        head = ("| 종목 | 시가 | 종가(실시간) | 시간외(NXT) | 일일 등락 | 일일 거래량 | 주간 등락 | 주간 거래량 |\n"
                 "|---|---|---|---|---|---|---|---|")
     else:
-        head = ("| Stock | Open | Close | Basis | Daily Chg | Daily Vol | Weekly Chg | Weekly Vol |\n"
+        head = ("| Stock | Open | Price (live) | After-mkt (NXT) | Daily Chg | Daily Vol | Weekly Chg | Weekly Vol |\n"
                 "|---|---|---|---|---|---|---|---|")
     lines = [head]
     for r in rows:
         name = r["ko"] if ko else r["en"]
+        nxt = _won(r.get("nxt_price")) if (r.get("mkt") == "KR" and r.get("nxt_price")) else "—"
         lines.append(
-            f"| {name} | {_won(r.get('open_krw'))} | {_won(r.get('close_krw'))} | "
-            f"{_basis(r, ko)} | {_fmt_chg(r.get('change_pct'))} | {vol(r.get('volume'))} | "
+            f"| {name} | {_won(r.get('open_krw'))} | {_won(r.get('close_krw'))} | {nxt} | "
+            f"{_fmt_chg(r.get('change_pct'))} | {vol(r.get('volume'))} | "
             f"{_fmt_chg(r.get('weekly_change_pct'))} | {vol(r.get('weekly_volume'))} |"
         )
     return "\n".join(lines)

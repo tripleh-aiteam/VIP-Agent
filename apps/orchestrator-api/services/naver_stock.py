@@ -23,20 +23,46 @@ def _num(s) -> float | None:
         return None
 
 
-def nxt_close(code: str) -> dict | None:
-    """Regular close + NXT/after-market (시간외) price for a KR ticker."""
+def _signed(ratio, direction) -> float | None:
+    """Apply +/- sign to an unsigned fluctuation ratio using the direction code."""
+    v = _num(ratio)
+    if v is None:
+        return None
+    name = ((direction or {}).get("name") or "").upper()
+    if name in ("FALLING", "LOWER_LIMIT") or "하락" in ((direction or {}).get("text") or ""):
+        return -abs(v)
+    return abs(v)
+
+
+def realtime_quote(code: str) -> dict | None:
+    """REAL-TIME current price + change% for a KR ticker (Naver, ~live during
+    trading) PLUS the NXT / after-market (시간외) price. The Naver `basic`
+    endpoint's closePrice tracks the live price intra-session (localTradedAt is
+    the actual trade time), so it's fresher than the daily candle."""
     try:
         b = httpx.get(f"{_BASE}/{code}/basic", headers=_H, timeout=12).json()
     except Exception as e:
-        log.warning(f"naver nxt_close {code}: {str(e)[:80]}")
+        log.warning(f"naver realtime {code}: {str(e)[:80]}")
         return None
     om = b.get("overMarketPriceInfo") or {}
     return {
-        "regular_close": _num(b.get("closePrice")),
+        "price": _num(b.get("closePrice")),
+        "change_pct": _signed(b.get("fluctuationsRatio"), b.get("compareToPreviousPrice")),
+        "market_status": b.get("marketStatus") or "",       # OPEN / CLOSE
+        "as_of": (b.get("localTradedAt") or "")[11:16],     # HH:MM
         "nxt_price": _num(om.get("overPrice")),
-        "nxt_session": om.get("tradingSessionType") or "",
-        "nxt_status": om.get("overMarketStatus") or "",
+        "nxt_change_pct": _signed(om.get("fluctuationsRatio"), om.get("compareToPreviousPrice")),
+        "nxt_status": om.get("overMarketStatus") or "",     # OPEN / CLOSE
     }
+
+
+def nxt_close(code: str) -> dict | None:
+    """Backwards-compatible thin wrapper around realtime_quote()."""
+    q = realtime_quote(code)
+    if not q:
+        return None
+    return {"regular_close": q.get("price"), "nxt_price": q.get("nxt_price"),
+            "nxt_session": "", "nxt_status": q.get("nxt_status")}
 
 
 def investor_flows(code: str, days: int = 2) -> list[dict]:
@@ -59,11 +85,11 @@ def investor_flows(code: str, days: int = 2) -> list[dict]:
 
 
 def enrich_kr(code: str) -> dict:
-    """Combined NXT + latest investor flows for one KR ticker (best-effort)."""
+    """Combined real-time quote + NXT + latest investor flows for one KR ticker."""
     out: dict = {}
-    nx = nxt_close(code)
-    if nx:
-        out.update(nx)
+    q = realtime_quote(code)
+    if q:
+        out.update(q)
     fl = investor_flows(code, days=1)
     if fl:
         out["flow"] = fl[0]
