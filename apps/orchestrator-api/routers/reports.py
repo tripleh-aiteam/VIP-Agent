@@ -173,6 +173,19 @@ def trigger_capture_hourly(db: Session = Depends(get_db)):
     return {"triggered": True, "message": "Hourly snapshot captured in background (saved, not emailed)."}
 
 
+@router.get("/llm-check")
+def llm_check():
+    """Diagnostic: do a tiny prefer_paid test call and report which provider
+    actually answered (confirms the OpenAI key + budget pipeline)."""
+    from services.llm_client import chat_completion_sync, get_last_provider, get_budget_status
+    reply = chat_completion_sync(
+        "You are a connectivity test.",
+        [{"role": "user", "content": "Reply with the single word OK."}],
+        max_tokens=5, temperature=0, prefer_paid=True)
+    return {"provider_used": get_last_provider(), "budget": get_budget_status(),
+            "reply": (reply or "")[:80]}
+
+
 @router.get("/email-config")
 def email_config():
     """Diagnostic health-check for the report email sender — BOOLEANS ONLY, and
