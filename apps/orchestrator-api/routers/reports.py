@@ -175,29 +175,65 @@ def trigger_capture_hourly(db: Session = Depends(get_db)):
 
 @router.get("/kiwoom-short-check")
 def kiwoom_short_check():
-    """Diagnostic: verify Kiwoom REST short-selling (공매도) — token + ka10014 for
-    Samsung/SK Hynix. Confirms KIWOOM_APP_KEY/KIWOOM_APP_SECRET work + the
-    response field mapping."""
+    """Verbose diagnostic for Kiwoom 공매도: env presence, raw token call, raw
+    ka10014 call — shows the actual Kiwoom response so failures are debuggable."""
+    import os as _os, httpx as _hx
+    from datetime import datetime as _dt, timedelta as _td
+    out = {"key_present": bool(_os.getenv("KIWOOM_APP_KEY")),
+           "secret_present": bool(_os.getenv("KIWOOM_APP_SECRET"))}
     try:
-        from services import kiwoom_rest
-        return {"ok": True, "samsung_005930": kiwoom_rest.short_selling("005930"),
-                "skhynix_000660": kiwoom_rest.short_selling("000660")}
+        tr = _hx.post("https://api.kiwoom.com/oauth2/token",
+                      json={"grant_type": "client_credentials",
+                            "appkey": _os.getenv("KIWOOM_APP_KEY", ""),
+                            "secretkey": _os.getenv("KIWOOM_APP_SECRET", "")}, timeout=15)
+        out["token_status"] = tr.status_code
+        tj = tr.json() if tr.headers.get("content-type", "").startswith("application/json") else {}
+        out["token_resp"] = (tr.text or "")[:200]
+        tok = tj.get("token") or tj.get("access_token")
+        if tok:
+            d2 = _dt.utcnow().strftime("%Y%m%d")
+            d1 = (_dt.utcnow() - _td(days=10)).strftime("%Y%m%d")
+            dr = _hx.post("https://api.kiwoom.com/api/dostk/shsa",
+                          headers={"authorization": f"Bearer {tok}", "api-id": "ka10014",
+                                   "content-type": "application/json;charset=UTF-8",
+                                   "cont-yn": "N", "next-key": ""},
+                          json={"stk_cd": "005930", "tm_tp": "1", "strt_dt": d1, "end_dt": d2}, timeout=20)
+            out["data_status"] = dr.status_code
+            out["data_resp"] = (dr.text or "")[:600]
     except Exception as e:
-        return {"ok": False, "error": str(e)[:300]}
+        out["error"] = str(e)[:300]
+    return out
 
 
 @router.get("/kis-deriv-check")
 def kis_deriv_check():
-    """Diagnostic: verify KIS derivatives — 선물옵션 거래대금 + 개별주식선물 (삼성/하이닉스).
-    Confirms KIS_APP_KEY/KIS_APP_SECRET work + the response mapping."""
+    """Verbose diagnostic for KIS: env presence, raw token call, and one raw
+    futures quotation — shows the actual KIS response for debugging."""
+    import os as _os, httpx as _hx
+    out = {"key_present": bool(_os.getenv("KIS_APP_KEY")),
+           "secret_present": bool(_os.getenv("KIS_APP_SECRET"))}
     try:
-        from services import kis_derivatives
-        return {"ok": True,
-                "derivatives_turnover": kis_derivatives.derivatives_turnover(),
-                "stock_futures_005930": kis_derivatives.stock_futures("005930"),
-                "stock_futures_000660": kis_derivatives.stock_futures("000660")}
+        tr = _hx.post("https://openapi.koreainvestment.com:9443/oauth2/tokenP",
+                      json={"grant_type": "client_credentials",
+                            "appkey": _os.getenv("KIS_APP_KEY", ""),
+                            "appsecret": _os.getenv("KIS_APP_SECRET", "")}, timeout=15)
+        out["token_status"] = tr.status_code
+        out["token_resp"] = (tr.text or "")[:200]
+        tj = tr.json() if tr.headers.get("content-type", "").startswith("application/json") else {}
+        tok = tj.get("access_token")
+        if tok:
+            dr = _hx.get("https://openapi.koreainvestment.com:9443/uapi/domestic-futureoption/v1/quotations/display-board-top",
+                         headers={"authorization": f"Bearer {tok}",
+                                  "appkey": _os.getenv("KIS_APP_KEY", ""),
+                                  "appsecret": _os.getenv("KIS_APP_SECRET", ""),
+                                  "tr_id": "FHPIF05030000", "custtype": "P"},
+                         params={"FID_COND_MRKT_DIV_CODE": "F", "FID_COND_SCR_DIV_CODE": "20503",
+                                 "FID_INPUT_ISCD": "", "FID_INPUT_DATE_1": ""}, timeout=20)
+            out["data_status"] = dr.status_code
+            out["data_resp"] = (dr.text or "")[:600]
     except Exception as e:
-        return {"ok": False, "error": str(e)[:300]}
+        out["error"] = str(e)[:300]
+    return out
 
 
 @router.get("/llm-check")
