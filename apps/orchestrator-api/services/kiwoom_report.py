@@ -223,11 +223,29 @@ def _fetch_daily(spec: dict) -> dict:
     return row
 
 
+def _price_mode() -> str:
+    """Which price columns the report shows, by KST time of generation:
+      • 'market'    09:00–15:30 → 시가 + 현재가(실시간)
+      • 'afterclose' 15:30–24:00 → 시가 + 시간외(실시간, Naver after-market)
+      • 'premarket'  00:00–09:00 (the 6:50 run) → 시가 + 종가(키움) + 종가(Naver)"""
+    from services.kst import kst_now
+    now = kst_now()
+    mins = now.hour * 60 + now.minute
+    if 9 * 60 <= mins < 15 * 60 + 30:
+        return "market"
+    if 15 * 60 + 30 <= mins <= 23 * 60 + 59:
+        return "afterclose"
+    return "premarket"
+
+
 def _enrich_kr_rows(rows: list[dict]) -> None:
-    """For KR tickers, take the REAL-TIME price + change% from Naver (fresher
-    than the daily candle), add the NXT (시간외/after-market) price as a separate
-    field, and attach investor flows (외국인/기관/개인 순매수). Weekly stats, MAs
-    and volume stay from the daily-chart layer."""
+    """For KR tickers, set the displayed price by the time-of-day MODE, using
+    Kiwoom (daily-chart, regular session) + Naver (real-time / after-market):
+      market    → close = Naver live price (현재가)
+      afterclose → close = Naver after-market price (시간외 실시간)
+      premarket  → close = Kiwoom regular close; naver_close = Naver 시간외 close
+    Also attaches investor flows. Weekly stats / MAs / volume stay daily-chart."""
+    mode = _price_mode()
     for r in rows:
         if r.get("mkt") != "KR":
             continue
@@ -236,20 +254,32 @@ def _enrich_kr_rows(rows: list[dict]) -> None:
             e = naver_stock.enrich_kr(r["t"])
         except Exception:
             continue
-        # Real-time price + change% (replaces a possibly-stale candle figure).
-        price = e.get("price")
-        if price:
-            wk = r.get("weekly_base")
-            r["close"] = price
+        kiwoom_close = r.get("close")        # daily-chart regular-session close
+        live = e.get("price")                # Naver live (regular) price
+        nxt = e.get("nxt_price")             # Naver after-market (시간외)
+        prev = r.get("prev_close")
+        wk = r.get("weekly_base")
+        r["kiwoom_close"] = kiwoom_close
+        r["naver_close"] = nxt
+        if mode == "market" and live:
+            r["close"] = live
+            r["price_kind"] = "live"
             if e.get("change_pct") is not None:
                 r["change_pct"] = e["change_pct"]
-            r["weekly_change_pct"] = ((price - wk) / wk * 100) if wk else r.get("weekly_change_pct")
-            r["price_kind"] = "live" if (e.get("market_status") == "OPEN") else "close"
             if e.get("as_of"):
                 r["data_time"] = e["as_of"]
-        # NXT / after-market (시간외) — separate column.
-        r["nxt_price"] = e.get("nxt_price")
-        r["nxt_change_pct"] = e.get("nxt_change_pct")
+        elif mode == "afterclose" and (nxt or live):
+            p = nxt or live
+            r["close"] = p
+            r["price_kind"] = "afterhours"
+            r["change_pct"] = ((p - prev) / prev * 100) if prev else r.get("change_pct")
+            if e.get("as_of"):
+                r["data_time"] = e["as_of"]
+        else:  # premarket → Kiwoom regular close (already r["close"]); show both closes
+            r["price_kind"] = "close"
+        # Weekly change vs the displayed price.
+        if r.get("close") and wk:
+            r["weekly_change_pct"] = (r["close"] - wk) / wk * 100
         fl = e.get("flow") or {}
         r["foreign_net"] = fl.get("foreign")
         r["organ_net"] = fl.get("organ")
@@ -349,30 +379,38 @@ def _verify_cell(r: dict, ko: bool) -> str:
 
 
 def _build_table(rows: list[dict], ko: bool) -> str:
-    """Price table: price + 시간외(NXT after-market) + daily & weekly change% /
-    volume. The price column header is DYNAMIC — during KR trading it is 현재가
-    (current price, the close isn't known yet); after the close / the 6:50 run it
-    is 종가 (closing price). (No 기준 column. Google cross-check runs silently.)"""
+    """Price table whose PRICE COLUMNS depend on the time-of-day mode:
+      • market    → 시가 + 현재가(실시간)
+      • afterclose → 시가 + 시간외(실시간)
+      • premarket  → 시가 + 종가(키움) + 종가(시간외)
+    plus daily & weekly change% / volume. No duplicate prices, no 기준 column."""
     def vol(v):
         return f"{int(v):,}" if v is not None else "—"
-    # If any KR ticker is still live (intraday), this is a during-market run.
-    live_now = any(r.get("price_kind") == "live" for r in rows if r.get("mkt") == "KR")
-    price_hdr = ("현재가(실시간)" if live_now else "종가") if ko else ("Price (live)" if live_now else "Close")
-    if ko:
-        head = (f"| 종목 | 시가 | {price_hdr} | 시간외(NXT) | 일일 등락 | 일일 거래량 | 주간 등락 | 주간 거래량 |\n"
-                "|---|---|---|---|---|---|---|---|")
-    else:
-        head = (f"| Stock | Open | {price_hdr} | After-mkt (NXT) | Daily Chg | Daily Vol | Weekly Chg | Weekly Vol |\n"
-                "|---|---|---|---|---|---|---|---|")
+    def naver_c(r):
+        return _won(r.get("naver_close")) if (r.get("mkt") == "KR" and r.get("naver_close")) else "—"
+
+    mode = _price_mode()
+    if mode == "market":
+        price_cols = [("현재가(실시간)" if ko else "Price (live)", lambda r: _won(r.get("close_krw")))]
+    elif mode == "afterclose":
+        price_cols = [("시간외(실시간)" if ko else "After-mkt (live)", lambda r: _won(r.get("close_krw")))]
+    else:  # premarket (the 6:50 run) — show both closes
+        price_cols = [("종가(키움)" if ko else "Close (KRX)", lambda r: _won(r.get("close_krw"))),
+                      ("종가(시간외)" if ko else "Close (NXT)", naver_c)]
+
+    name_h, open_h = ("종목", "시가") if ko else ("Stock", "Open")
+    tail_h = (["일일 등락", "일일 거래량", "주간 등락", "주간 거래량"] if ko
+              else ["Daily Chg", "Daily Vol", "Weekly Chg", "Weekly Vol"])
+    cols = [name_h, open_h] + [h for h, _ in price_cols] + tail_h
+    head = "| " + " | ".join(cols) + " |\n|" + "---|" * len(cols)
     lines = [head]
     for r in rows:
         name = r["ko"] if ko else r["en"]
-        nxt = _won(r.get("nxt_price")) if (r.get("mkt") == "KR" and r.get("nxt_price")) else "—"
-        lines.append(
-            f"| {name} | {_won(r.get('open_krw'))} | {_won(r.get('close_krw'))} | {nxt} | "
-            f"{_fmt_chg(r.get('change_pct'))} | {vol(r.get('volume'))} | "
-            f"{_fmt_chg(r.get('weekly_change_pct'))} | {vol(r.get('weekly_volume'))} |"
-        )
+        cells = ([name, _won(r.get("open_krw"))]
+                 + [fn(r) for _, fn in price_cols]
+                 + [_fmt_chg(r.get("change_pct")), vol(r.get("volume")),
+                    _fmt_chg(r.get("weekly_change_pct")), vol(r.get("weekly_volume"))])
+        lines.append("| " + " | ".join(cells) + " |")
     return "\n".join(lines)
 
 
@@ -615,21 +653,21 @@ def build_kiwoom_report(db, trace_id: str) -> dict:
             "bearish stacks, and golden/dead-cross setups). Quote the REAL KRW prices "
             "and percentages throughout — never be vague, never invent.\n"
             "- Section 6: FIRST a Markdown table | Stock | Action | Reason | where "
-            "Action is BUY / SELL / HOLD. The Reason cell MUST be UNIQUE for every "
-            "stock and 2-3 full sentences — NEVER reuse the same phrase across rows "
-            "(do NOT write generic boilerplate like '강한 상승 추세, 불리시 추세 구조' on "
-            "multiple lines). Each Reason MUST cite THAT stock's OWN specific numbers: "
-            "its daily change%, its weekly change%, its volume, its 외국인/기관/개인 순매수 "
-            "figure, and where its price sits vs MA5/MA20/MA60 — and explain what those "
-            "specific numbers imply for the call. THEN, AFTER the table, add a "
-            "'### Rationale' subsection with a DETAILED 4-6 sentence paragraph per stock "
-            "that goes deeper: the catalyst, the supply/demand (수급) read from the "
-            "investor flows, the trend structure, and the risk to the thesis. For KR "
-            "stocks you are GIVEN investor flows (외국인/기관/개인 순매수) — weave them in "
-            "(heavy foreign buying = institutional conviction → supports BUY; heavy "
-            "foreign selling → caution). Every stock's reasoning must be DISTINCT and "
-            "grounded in its own data. (Futures/options trading values and short-selling "
-            "data are not available in this feed.)\n"
+            "Action is BUY / SELL / HOLD. CRITICAL — each Reason must be written in a "
+            "DIFFERENT STYLE and sentence STRUCTURE; do NOT use the same template/opening "
+            "for every row. Vary the angle per stock: lead one with its CATALYST, another "
+            "with its 수급(외국인/기관 flow), another with its TECHNICAL setup (MA stack), "
+            "another with a RISK/contrarian note, another with its weekly momentum. The "
+            "rows must read like they were written individually, not filled from a "
+            "template. NEVER reuse phrases like '강한 상승 추세, 불리시 추세 구조' across "
+            "rows. Each Reason cites THAT stock's OWN numbers (its change%, weekly%, "
+            "volume, 외국인/기관/개인 순매수, MA position). THEN, AFTER the table, a "
+            "'### Rationale' subsection: a DETAILED 4-6 sentence paragraph per stock, "
+            "each ALSO in its own distinct style, going deeper into the catalyst, the "
+            "수급 read, the trend structure, and the risk to the thesis. For KR stocks "
+            "weave in the investor flows (heavy foreign buying = conviction → BUY; heavy "
+            "foreign selling → caution). Every stock must read DISTINCTLY. (Futures/"
+            "options trading values and short-selling data are not available in this feed.)\n"
             "Output ONLY the finished English Markdown report — no preamble, no "
             "placeholders, no notes about a translation."
         )
