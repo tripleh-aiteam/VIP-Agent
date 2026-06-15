@@ -41,6 +41,7 @@ DEFAULT_RECIPIENT = DEFAULT_RECIPIENTS[0]
 # on-demand (?email=) target — so a report can be sent to them when requested,
 # without them receiving the automatic 6:50 email.
 EXTRA_ALLOWED_RECIPIENTS: list[str] = [
+    "tripleh.agents@gmail.com",
 ]
 
 

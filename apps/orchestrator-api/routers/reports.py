@@ -61,14 +61,28 @@ def _allowed_report_recipients() -> set[str]:
     return allowed
 
 
+def _resolve_recipients(email: str):
+    """Validate the ?email= param, which may be a single address or a
+    comma-separated list. Every address must be on the allowlist. Returns a
+    single string (one address) or a list (several) for email_override, or
+    raises HTTPException(403) if any address is not allowed."""
+    addrs = [e.strip() for e in (email or "").split(",") if e.strip()]
+    allowed = _allowed_report_recipients()
+    for a in addrs:
+        if a.lower() not in allowed:
+            raise HTTPException(403, f"recipient not allowed: {a} — add it to REPORT_ALLOWED_RECIPIENTS env or EXTRA_ALLOWED_RECIPIENTS")
+    if not addrs:
+        raise HTTPException(400, "no valid recipient in ?email=")
+    return addrs[0] if len(addrs) == 1 else addrs
+
+
 @router.post("/compose/kiwoom", dependencies=[Depends(rate_limit_compose)])
 def trigger_kiwoom_report(email: Optional[str] = Query(None, description="Optional recipient for the .docx email — must be on the REPORT_ALLOWED_RECIPIENTS allowlist (or a configured server recipient). Scheduled run uses KIWOOM_REPORT_EMAIL env."), send_all: bool = Query(False, description="Email the report to ALL configured recipients (dropdown 'generate & send')."), lang: str = Query("ko", description="Report language: 'ko' (default, Korean only) or 'en' (English)."), db: Session = Depends(get_db)):
     """Manually trigger the Kiwoom daily market report (also runs 6:30 AM KST).
-    Pass ?email=<addr> to send the Word attachment to an ALLOWLISTED address."""
+    Pass ?email=<addr> (or a comma-separated list) to send the Word attachment
+    to ALLOWLISTED address(es)."""
     if email:
-        if email.strip().lower() not in _allowed_report_recipients():
-            raise HTTPException(403, "recipient not allowed — add it to REPORT_ALLOWED_RECIPIENTS env")
-        email = email.strip()
+        email = _resolve_recipients(email)
     elif send_all:
         email = "*ALL*"
     lang = "en" if (lang or "ko").strip().lower() == "en" else "ko"
@@ -81,11 +95,10 @@ def trigger_kiwoom_report(email: Optional[str] = Query(None, description="Option
 
 @router.post("/compose/newspaper", dependencies=[Depends(rate_limit_compose)])
 def trigger_newspaper_report(email: Optional[str] = Query(None, description="Optional recipient for the .docx email — must be on the allowlist. Scheduled run uses NEWSPAPER_REPORT_EMAIL env."), send_all: bool = Query(False, description="Email the report to ALL configured recipients (dropdown 'generate & send')."), lang: str = Query("ko", description="Report language: 'ko' (default, Korean only) or 'en' (English)."), db: Session = Depends(get_db)):
-    """Manually trigger the Newspaper (news analysis) report (also runs 7:00 AM KST)."""
+    """Manually trigger the Newspaper (news analysis) report (also runs 7:00 AM KST).
+    ?email= may be a single address or a comma-separated allowlisted list."""
     if email:
-        if email.strip().lower() not in _allowed_report_recipients():
-            raise HTTPException(403, "recipient not allowed — add it to REPORT_ALLOWED_RECIPIENTS env")
-        email = email.strip()
+        email = _resolve_recipients(email)
     elif send_all:
         email = "*ALL*"
     lang = "en" if (lang or "ko").strip().lower() == "en" else "ko"

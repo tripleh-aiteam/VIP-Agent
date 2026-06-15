@@ -77,7 +77,15 @@ logger = logging.getLogger(__name__)
 # --------------------------------------------------------------------------- #
 # Constants
 # --------------------------------------------------------------------------- #
-_BASE_URL = "https://api.kiwoom.com"
+_REAL_BASE = "https://api.kiwoom.com"
+_MOCK_BASE = "https://mockapi.kiwoom.com"
+# Default to the real (실전) endpoint, overridable via KIWOOM_API_BASE. If the
+# supplied key is for the *other* environment, _token() auto-falls back to the
+# alternate base (Kiwoom error 8030 = 실전/모의 mismatch) and caches the winner.
+_BASE_URL = os.getenv("KIWOOM_API_BASE", _REAL_BASE).rstrip("/")
+# The base that last successfully minted a token; _request() reuses it so data
+# calls hit the same environment as the token.
+_active_base: Optional[str] = None
 _TOKEN_PATH = "/oauth2/token"
 _SHSA_PATH = "/api/dostk/shsa"        # 공매도 endpoints category
 _SHORT_TREND_API_ID = "ka10014"       # 공매도추이요청
@@ -219,45 +227,65 @@ def _token(force: bool = False) -> Optional[str]:
         )
         return None
 
+    global _active_base
     with _token_lock:
         # Re-check under lock (another thread may have just refreshed).
         tok, exp = _token_cache
         if not force and tok and now < exp - _TOKEN_SKEW_SEC:
             return tok
-        try:
-            resp = httpx.post(
-                f"{_BASE_URL}{_TOKEN_PATH}",
-                json={
-                    "grant_type": "client_credentials",
-                    "appkey": app_key,
-                    "secretkey": app_secret,
-                },
-                headers={"Content-Type": "application/json;charset=UTF-8"},
-                timeout=_TIMEOUT,
-            )
-            resp.raise_for_status()
-            data = resp.json()
-        except (httpx.HTTPError, ValueError) as exc:
-            logger.error("kiwoom_rest: token request failed: %s", exc)
-            return None
 
-        if data.get("return_code", 0) not in (0, None):
-            logger.error(
-                "kiwoom_rest: token error return_code=%s msg=%s",
-                data.get("return_code"), data.get("return_msg"),
-            )
-            return None
+        # Try the configured base first; if the key is for the *other*
+        # environment (Kiwoom 8030 = 실전/모의 mismatch), fall back to the
+        # alternate base. The base that works is cached in _active_base so
+        # subsequent data calls hit the same environment.
+        alt = _MOCK_BASE if _BASE_URL == _REAL_BASE else _REAL_BASE
+        for base in (_BASE_URL, alt):
+            try:
+                resp = httpx.post(
+                    f"{base}{_TOKEN_PATH}",
+                    json={
+                        "grant_type": "client_credentials",
+                        "appkey": app_key,
+                        "secretkey": app_secret,
+                    },
+                    headers={"Content-Type": "application/json;charset=UTF-8"},
+                    timeout=_TIMEOUT,
+                )
+                resp.raise_for_status()
+                data = resp.json()
+            except (httpx.HTTPError, ValueError) as exc:
+                logger.error("kiwoom_rest: token request failed (%s): %s",
+                             base, exc)
+                continue
 
-        token = data.get("token")
-        if not token:
-            logger.error("kiwoom_rest: token response had no 'token' field: %s",
-                         {k: v for k, v in data.items() if k != "token"})
-            return None
+            rc = data.get("return_code", 0)
+            if rc not in (0, None):
+                msg = str(data.get("return_msg") or "")
+                # 8030 = environment mismatch -> try the alternate base.
+                if "8030" in msg or "실전" in msg or "모의" in msg:
+                    logger.warning(
+                        "kiwoom_rest: env mismatch on %s (%s) — trying alternate",
+                        base, msg,
+                    )
+                    continue
+                logger.error("kiwoom_rest: token error return_code=%s msg=%s",
+                             rc, msg)
+                return None
 
-        _token_cache = (token, _parse_expiry(data.get("expires_dt")))
-        logger.info("kiwoom_rest: obtained bearer token (expires_dt=%s)",
-                    data.get("expires_dt"))
-        return token
+            token = data.get("token")
+            if not token:
+                logger.error(
+                    "kiwoom_rest: token response had no 'token' field: %s",
+                    {k: v for k, v in data.items() if k != "token"})
+                continue
+
+            _active_base = base
+            _token_cache = (token, _parse_expiry(data.get("expires_dt")))
+            logger.info("kiwoom_rest: obtained bearer token via %s (expires_dt=%s)",
+                        base, data.get("expires_dt"))
+            return token
+
+        return None
 
 
 # --------------------------------------------------------------------------- #
@@ -274,7 +302,7 @@ def _request(api_id: str, body: dict, cont_yn: str = "N",
     if not token:
         return None
 
-    url = f"{_BASE_URL}{_SHSA_PATH}"
+    url = f"{_active_base or _BASE_URL}{_SHSA_PATH}"
     for attempt in range(1, _RETRIES + 1):
         headers = {
             "Content-Type": "application/json;charset=UTF-8",
