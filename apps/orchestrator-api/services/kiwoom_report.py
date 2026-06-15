@@ -514,12 +514,20 @@ def _facts(rows: list[dict]) -> str:
                       f"기관순매수={_net(r.get('organ_net'))}, "
                       f"개인순매수={_net(r.get('individual_net'))}, "
                       f"외국인보유율={r.get('foreign_hold') or 'n/a'};")
+        # 공매도 (short-selling, KR only, T-1) — for short-pressure analysis.
+        short_s = ""
+        sv, sr = r.get("short_volume"), r.get("short_ratio")
+        if sv is not None or sr is not None:
+            short_s = (f" 공매도(전일): 거래량={int(sv):,}주" if sv is not None else " 공매도(전일):")
+            if sr is not None:
+                short_s += f", 비중={sr}%"
+            short_s += ";"
         out.append(
             f"- {r['en']} ({r['ko']}, {r['t']}, {r['mkt']}, ETF:{r['etf']}): "
             f"open={_won(r.get('open_krw'))}, close={_won(r.get('close_krw'))}, "
             f"high={_won(r.get('high_krw'))}, low={_won(r.get('low_krw'))}, "
             f"intraday_range={rng}, change_vs_prev_close={chg_s}, volume={vol}, "
-            f"weekly_change={wchg_s}, weekly_volume={wvol};{flow_s} "
+            f"weekly_change={wchg_s}, weekly_volume={wvol};{flow_s}{short_s} "
             f"close_vs_MA5={pa(ma5)}, close_vs_MA20={pa(ma20)}, close_vs_MA60={pa(ma60)}; "
             f"trend={trend}."
         )
@@ -631,6 +639,24 @@ def _futures_sentiment() -> str:
         return ""
 
 
+def _market_news() -> str:
+    """Latest news & catalysts (semis / AI / macro / policy) for the narrative and
+    for sourcing fresh buy ideas. Returns a bulleted block ('' if unavailable)."""
+    try:
+        from services import catalyst_news
+        items = catalyst_news.gather_catalysts(per_query=5, cap=24)
+        if not items:
+            return ""
+        return "\n".join(
+            (f"- {n['title'][:160]} — {n['snippet'][:220]}" if n.get("snippet")
+             else f"- {n['title'][:160]}")
+            for n in items
+        )
+    except Exception as e:
+        log.warning(f"kiwoom market news: {str(e)[:80]}")
+        return ""
+
+
 def build_kiwoom_report(db, trace_id: str) -> dict:
     """Build the daily Kiwoom report (real data table + LLM narrative, EN+KO)."""
     rows = _gather()
@@ -675,8 +701,13 @@ def build_kiwoom_report(db, trace_id: str) -> dict:
             "invent numbers. ALL prices are in Korean Won (KRW). Produce the report "
             "in this EXACT section structure:\n"
             "## 1. General Overview\n## 2. Market Data\n## 3. Detailed Analysis\n"
-            "## 4. Risks & Watch-items\n## 5. Opportunities\n## 6. Recommended Actions\n\n"
+            "## 4. Risks & Watch-items\n## 5. Opportunities\n## 6. Recommended Actions\n"
+            "## 7. New Daily Buy Ideas (5 fresh picks)\n\n"
             "Rules:\n"
+            "- Section 1: open with the overall tape, THEN a '### Latest News & Market "
+            "Developments' paragraph that synthesizes the LATEST NEWS provided below "
+            "(earnings, product launches, policy/tariffs, executive moves, macro) and "
+            "what it means for the watchlist — cite the concrete items, not generic talk.\n"
             "- Section 2: insert the provided data table VERBATIM.\n"
             "- Section 3 (DETAILED ANALYSIS — this is the CORE of the report and MUST "
             "be long and substantive: AT LEAST ~750 words. Structure it as:\n"
@@ -694,8 +725,14 @@ def build_kiwoom_report(db, trace_id: str) -> dict:
             "conviction/institutional, light = low participation), and the TREND "
             "STRUCTURE from the MA stack (close vs MA5/MA20/MA60 — above=uptrend, "
             "below=downtrend; explicitly name pullbacks-in-uptrend, bottoming, bullish/"
-            "bearish stacks, and golden/dead-cross setups). Quote the REAL KRW prices "
-            "and percentages throughout — never be vague, never invent.\n"
+            "bearish stacks, golden/dead-cross setups, and where the 5/20/60-day MAs sit "
+            "as support/resistance). Quote the REAL KRW prices and percentages "
+            "throughout — never be vague, never invent.\n"
+            "  For KR stocks ALSO read the 공매도 (short-selling, 전일/T-1) data given in "
+            "the facts: rising or high 공매도 거래량/비중 = bearish pressure or a squeeze "
+            "setup if price holds; pair it with the 수급(외국인/기관) flow to judge whether "
+            "shorts are pressing into selling or fading a rally. Tie each name's news/"
+            "catalyst (from the LATEST NEWS block) into its read where relevant.\n"
             "- Section 6: FIRST a Markdown table | Stock | Action | Reason | where "
             "Action is BUY / SELL / HOLD. CRITICAL — each Reason must be written in a "
             "DIFFERENT STYLE and sentence STRUCTURE; do NOT use the same template/opening "
@@ -706,31 +743,49 @@ def build_kiwoom_report(db, trace_id: str) -> dict:
             "template. NEVER reuse phrases like '강한 상승 추세, 불리시 추세 구조' across "
             "rows. Each Reason cites THAT stock's OWN numbers (its change%, weekly%, "
             "volume, 외국인/기관/개인 순매수, MA position). THEN, AFTER the table, a "
-            "'### Rationale' subsection: a DETAILED 4-6 sentence paragraph per stock, "
-            "each ALSO in its own distinct style, going deeper into the catalyst, the "
-            "수급 read, the trend structure, and the risk to the thesis. For KR stocks "
-            "weave in the investor flows (heavy foreign buying = conviction → BUY; heavy "
-            "foreign selling → caution). Every stock must read DISTINCTLY. When market "
-            "futures positioning (선물) is provided, factor it into the overall direction "
-            "read. KR-stock short-selling (공매도, 전일/T-1) is in the price table — "
-            "when a stock shows notable 공매도, weave it into its read (heavy 공매도 = "
-            "bearish pressure / squeeze risk). (Options trading values are not available "
-            "in the current data feed.)\n"
+            "'### Rationale' subsection: a DETAILED 5-7 sentence paragraph per stock, "
+            "each ALSO in its own distinct style, that MUST cover (1) the precise "
+            "TECHNICAL picture (price vs MA5/MA20/MA60, the support/resistance levels, "
+            "trend structure, volume confirmation), (2) the 수급 read (외국인/기관/개인 "
+            "순매수) AND the 공매도 (short-selling) trend for KR stocks — explicitly state "
+            "whether shorts are building or covering and what that implies, (3) the "
+            "specific NEWS/CATALYST behind the call (from the LATEST NEWS block), and "
+            "(4) the key RISK that would invalidate the thesis. For KR stocks weave in "
+            "the investor flows (heavy foreign buying = conviction → BUY; heavy foreign "
+            "selling → caution) and the 공매도 pressure. Every stock must read DISTINCTLY. "
+            "When market futures positioning (선물) is provided, factor it into the "
+            "overall direction read. (Options trading values are not available.)\n"
+            "- Section 7 (NEW DAILY BUY IDEAS): propose EXACTLY 5 FRESH buy candidates "
+            "that are NOT in the watchlist/data table above — new ideas for TODAY, chosen "
+            "from the LATEST NEWS & market developments provided. Prefer Korean (KOSPI/"
+            "KOSDAQ) names first, then US, focused on semiconductors, AI, and their supply "
+            "chain / adjacent beneficiaries surfaced by today's news. Output a Markdown "
+            "table | 종목(티커) | 매수 근거 | 촉매/뉴스 | 리스크 | followed by a 2-3 sentence "
+            "paragraph per pick. Each '매수 근거' MUST cite the SPECIFIC news item / "
+            "catalyst driving it (paraphrase the real headline) and give a concrete, "
+            "differentiated thesis — never generic. Do NOT fabricate exact prices or "
+            "figures for these names; ground every pick in a real item from the news "
+            "block. If fewer than 5 distinct ideas are supportable from the news, still "
+            "give 5 but clearly tie each to its strongest available catalyst.\n"
             "Output ONLY the finished English Markdown report — no preamble, no "
             "placeholders, no notes about a translation."
         )
         journey = _intraday_journey(db)
         futures = _futures_sentiment()
+        news = _market_news()
         user = (f"Date (KST): {kst_date} · USD/KRW used for US tickers: {rate:,.0f}\n\n"
                 + (f"파생/선물 동향 (market futures positioning — weave into the overview "
                    f"& direction read): {futures}\n\n" if futures else "")
                 + f"DATA TABLE (insert verbatim in Section 2):\n{table_en}\n\n"
-                f"DATA + TECHNICALS:\n{_facts(rows)}"
+                f"DATA + TECHNICALS (incl. 수급 flows & 공매도 short-selling per KR stock):\n{_facts(rows)}"
+                + (f"\n\nLATEST NEWS & MARKET DEVELOPMENTS (use for Section 1 news synthesis, "
+                   f"per-stock catalysts, AND for sourcing the 5 NEW buy ideas in Section 7):\n{news}"
+                   if news else "")
                 + (f"\n\nINTRADAY JOURNEY (hourly snapshots through the day — weave the "
                    f"day's price path into Section 3):\n{journey}" if journey else ""))
         out = chat_completion_sync(
-            system_prompt=sysmsg, messages=[{"role": "user", "content": user[:9000]}],
-            max_tokens=7000, temperature=0.5, model="groq-llama-3.3-70b", prefer_paid=True) or ""
+            system_prompt=sysmsg, messages=[{"role": "user", "content": user[:14000]}],
+            max_tokens=8500, temperature=0.5, model="groq-llama-3.3-70b", prefer_paid=True) or ""
         bad = (not out.strip()) or out.lstrip().startswith(("[LLM unavailable]", "[server error]"))
         if not bad:
             detail_en = out.replace("===EN===", "").strip()
@@ -745,10 +800,14 @@ def build_kiwoom_report(db, trace_id: str) -> dict:
                     "- Translate EVERYTHING — every section, heading and paragraph. The "
                     "output must contain NO English prose or English headings. Translate "
                     "the SECTION HEADINGS too (e.g. '## 1. General Overview' → "
-                    "'## 1. 시장 개요', 'Detailed Analysis' → '상세 분석', 'Risks' → '리스크', "
-                    "'Opportunities' → '기회', 'Recommended Actions' → '추천 액션'). "
-                    "Translate BUY/HOLD/SELL → 매수/보유/매도. NEVER abbreviate or stub; "
-                    "the Korean must be as long as the English.\n"
+                    "'## 1. 시장 개요', 'Latest News & Market Developments' → "
+                    "'최신 뉴스 및 시장 동향', 'Detailed Analysis' → '상세 분석', 'Risks' → "
+                    "'리스크', 'Opportunities' → '기회', 'Recommended Actions' → '추천 액션', "
+                    "'Rationale' → '근거', 'New Daily Buy Ideas' → '오늘의 신규 매수 추천 5종목'). "
+                    "Korean table headers for Section 7: | 종목(티커) | 매수 근거 | 촉매/뉴스 | "
+                    "리스크 |. Translate BUY/HOLD/SELL → 매수/보유/매도. NEVER abbreviate or "
+                    "stub; the Korean must be as long as the English and include ALL 7 "
+                    "sections incl. the 5 new buy ideas.\n"
                     "- Preserve ALL Markdown structure, heading levels, and tables.\n"
                     "- Keep every number, %, 원 amount, ticker code and MA value "
                     "IDENTICAL — translate only the words.\n"
@@ -758,8 +817,8 @@ def build_kiwoom_report(db, trace_id: str) -> dict:
                 )
                 ko_out = chat_completion_sync(
                     system_prompt=ko_sys,
-                    messages=[{"role": "user", "content": detail_en[:14000]}],
-                    max_tokens=7000, temperature=0.3, model="groq-llama-3.3-70b", prefer_paid=True) or ""
+                    messages=[{"role": "user", "content": detail_en[:18000]}],
+                    max_tokens=9000, temperature=0.3, model="groq-llama-3.3-70b", prefer_paid=True) or ""
                 ko_bad = ((not ko_out.strip())
                           or ko_out.lstrip().startswith(("[LLM unavailable]", "[server error]"))
                           or len(ko_out.strip()) < 400)
@@ -778,7 +837,9 @@ def build_kiwoom_report(db, trace_id: str) -> dict:
                      f"## 4. Risks & Watch-items\n- Review the weakest movers above.\n\n"
                      f"## 5. Opportunities\n- Review the strongest/weakest movers above.\n\n"
                      f"## 6. Recommended Actions\n| Stock | Action | Reason |\n|---|---|---|\n"
-                     f"| — | HOLD | LLM unavailable — manual review recommended |")
+                     f"| — | HOLD | LLM unavailable — manual review recommended |\n\n"
+                     f"## 7. New Daily Buy Ideas (5 fresh picks)\n"
+                     f"_LLM unavailable — fresh buy ideas could not be generated this run._")
     if not detail_ko:
         detail_ko = detail_en
 
