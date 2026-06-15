@@ -262,20 +262,37 @@ def _parse_numbered(text: str) -> dict[int, str]:
     return out
 
 
+# Korean display names for the outlet section headers (the NEWSPAPERS "name"
+# keys carry English for search/RSS; show Korean in the report).
+_DISPLAY_KO = {
+    "Maeil Business (매일경제)": "매일경제",
+    "Korea Economic Daily (한국경제)": "한국경제",
+    "MoneyToday (머니투데이)": "머니투데이",
+    "SBS Biz": "SBS Biz",
+    "Bloomberg": "블룸버그",
+    "The Wall Street Journal": "월스트리트저널(WSJ)",
+}
+
+
 def _article_section(name: str, arts: list[dict], summaries: dict[int, str]) -> str:
-    """Per-article layout: each article = clickable TITLE (link) + its SUMMARY.
-    Falls back to the raw snippet when the LLM gave no summary for that article."""
-    lines = [f"### {name}"]
+    """Per-article layout: clickable Korean TITLE (link) + its Korean SUMMARY.
+    The LLM returns each block as '<한국어 제목> @@@ <한국어 요약>' so even foreign
+    (WSJ/Bloomberg) headlines display in Korean. Falls back to the raw title."""
+    lines = [f"### {_DISPLAY_KO.get(name, name)}"]
     for i, a in enumerate(arts, 1):
-        title = (a.get("title") or "").strip().replace("[", "(").replace("]", ")")[:170] or "(제목 없음)"
         url = (a.get("url") or "").strip()
         pub = a.get("pub")
         when = f" · {pub[:16].replace('T', ' ')}" if pub else ""
-        s = summaries.get(i) or (a.get("text") or "")[:400]
+        raw = (summaries.get(i) or "").strip()
+        ko_title, body = "", raw
+        if "@@@" in raw:
+            ko_title, body = [p.strip() for p in raw.split("@@@", 1)]
+        title = (ko_title or a.get("title") or "").strip().replace("[", "(").replace("]", ")")[:170] or "(제목 없음)"
+        body = body or (a.get("text") or "")[:400]
         head = f"#### [{title}]({url}){when}" if url else f"#### {title}{when}"
         lines.append(head)
-        if s:
-            lines.append(s.strip())
+        if body:
+            lines.append(body.strip())
         lines.append("")
     return "\n".join(lines).rstrip()
 
@@ -415,13 +432,16 @@ def build_newspaper_report(db, trace_id: str) -> dict:
             sysd = (
                 "당신은 TripleH의 시장 뉴스 애널리스트입니다. 아래는 "
                 f"{name}의 최근 뉴스 기사(번호 매김)입니다. 모든 번호의 기사에 대해 "
-                f"상세한 한국어 요약(존댓말)을 작성하세요 — {per}. 주식·시장에 왜 중요한지 "
-                f"설명하세요(관심종목: {_WATCHLIST}; 반도체; 거시 환율/금리; 시장을 움직이는 "
-                "정치 — 트럼프/관세/연준/이란). 제공된 텍스트만 사용하고, 인용·수치를 절대 "
-                "지어내지 마세요. URL은 넣지 마세요. 영어 원문 기사(Bloomberg/WSJ 등)도 "
-                "반드시 한국어로 번역해 요약하세요 — 출력에 영어 문장이 있으면 안 됩니다. "
-                "모든 번호의 기사를 순서대로 빠짐없이 작성하세요. "
-                "출력 형식(정확히):\n[1] <한국어 요약>\n[2] <한국어 요약>\n…")
+                f"한국어 제목과 상세한 한국어 요약(존댓말)을 작성하세요 — {per}. 주식·시장에 "
+                f"왜 중요한지 설명하세요(관심종목: {_WATCHLIST}; 반도체; 거시 환율/금리; 시장을 "
+                "움직이는 정치 — 트럼프/관세/연준/이란). 제공된 텍스트만 사용하고 수치를 "
+                "지어내지 마세요. URL 금지. 영어로 된 원문 기사(Bloomberg/WSJ 등)도 제목과 "
+                "본문을 모두 한국어로 번역하세요. 회사·기관명도 한국어로(삼성전자, SK하이닉스, "
+                "엔비디아, 마이크론, 브로드컴, 연준 등). 출력 어디에도 영어 문장이 있으면 안 됩니다. "
+                "모든 번호의 기사를 순서대로 빠짐없이 작성하세요. 각 기사는 '한국어 제목 @@@ "
+                "한국어 요약' 형식으로.\n"
+                "출력 형식(정확히):\n[1] <한국어 제목> @@@ <한국어 요약>\n"
+                "[2] <한국어 제목> @@@ <한국어 요약>\n…")
             ko_sum: dict[int, str] = {}
             try:
                 out = chat_completion_sync(
