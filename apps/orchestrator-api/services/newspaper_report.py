@@ -15,6 +15,7 @@ report_type='newspaper_report' (period='daily'); also Telegram + Word email.
 
 from __future__ import annotations
 
+import html as _html
 import re
 from datetime import datetime
 
@@ -287,8 +288,8 @@ def _article_section(name: str, arts: list[dict], summaries: dict[int, str]) -> 
         ko_title, body = "", raw
         if "@@@" in raw:
             ko_title, body = [p.strip() for p in raw.split("@@@", 1)]
-        title = (ko_title or a.get("title") or "").strip().replace("[", "(").replace("]", ")")[:170] or "(제목 없음)"
-        body = body or (a.get("text") or "")[:400]
+        title = _html.unescape(ko_title or a.get("title") or "").strip().replace("[", "(").replace("]", ")")[:170] or "(제목 없음)"
+        body = _html.unescape(body or (a.get("text") or "")[:400])
         head = f"#### [{title}]({url}){when}" if url else f"#### {title}{when}"
         lines.append(head)
         if body:
@@ -419,7 +420,7 @@ def build_newspaper_report(db, trace_id: str) -> dict:
             # Number each article so the model's summaries map back 1:1.
             corpus = "\n\n".join(
                 f"[{i}] ({'FULL ARTICLE' if a.get('full') else 'HEADLINE/SNIPPET'}) "
-                f"{a.get('title','')}\n{(a.get('text') or '')[:3200]}"
+                f"{_html.unescape(a.get('title','') or '')}\n{_html.unescape((a.get('text') or '')[:3200])}"
                 for i, a in enumerate(arts, 1))
             if paid or not has_full:
                 per = ("a solid 8-10 sentence summary — work only with the headline/snippet, "
