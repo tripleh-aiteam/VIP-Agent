@@ -28,6 +28,7 @@ _DOCX_MIME = "vnd.openxmlformats-officedocument.wordprocessingml.document"
 # REPORT_RECIPIENTS env (comma-separated) or per-report *_REPORT_EMAIL on Render.
 DEFAULT_RECIPIENTS = [
     "davronbekmalikov96@gmail.com",
+    "tripleh.agents@gmail.com",
     "marklee@tripleh.co.kr",
     "koreastone710404@gmail.com",
     "shlee@tripleh.co.kr",
@@ -41,7 +42,7 @@ DEFAULT_RECIPIENT = DEFAULT_RECIPIENTS[0]
 # on-demand (?email=) target — so a report can be sent to them when requested,
 # without them receiving the automatic 6:50 email.
 EXTRA_ALLOWED_RECIPIENTS: list[str] = [
-    "tripleh.agents@gmail.com",
+    # (tripleh.agents@gmail.com is now on the daily list above.)
 ]
 
 
