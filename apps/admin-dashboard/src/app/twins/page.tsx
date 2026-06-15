@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, useRef } from "react";
-import { useSearchParams } from "next/navigation";
+import { useSearchParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { API } from "../../components/api";
 import TwinMeetingPanel from "../../components/TwinMeetingPanel";
@@ -60,6 +60,7 @@ export default function TwinsPage() {
   // Assistant can deep-link to a specific twin:
   //   /twins?highlight=Davronbek → scrolls to + highlights that twin's card
   const searchParams = useSearchParams();
+  const router = useRouter();
   const highlight = (searchParams?.get("highlight") || "").toLowerCase();
   const highlightRef = useRef<HTMLDivElement | null>(null);
 
@@ -71,6 +72,15 @@ export default function TwinsPage() {
       highlightRef.current.scrollIntoView({ behavior: "smooth", block: "center" });
     }
   }, [highlight, twins.length]);
+
+  // Deep-link from the twin detail page: /twins?edit=<id> opens the edit modal
+  useEffect(() => {
+    const editId = searchParams?.get("edit");
+    if (editId && twins.length) {
+      const t = twins.find(x => x.id === editId);
+      if (t) openEdit(t);
+    }
+  }, [searchParams, twins.length]);
   const [loading, setLoading] = useState(true);
   const [showCreate, setShowCreate] = useState(false);
   const [editTwin, setEditTwin] = useState<Twin | null>(null);
@@ -965,7 +975,7 @@ export default function TwinsPage() {
                   : "border-[var(--card-border)] hover:border-[var(--text-primary)]"
               }`}
               style={{ boxShadow: "var(--shadow-sm)" }}
-              onClick={() => openEdit(twin)}
+              onClick={() => router.push(`/twins/${twin.id}`)}
             >
               {/* Top: Avatar + Name + Status */}
               <div className="flex items-start gap-3 mb-4">
