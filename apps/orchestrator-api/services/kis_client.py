@@ -63,8 +63,15 @@ logger = logging.getLogger(__name__)
 # --------------------------------------------------------------------------- #
 # Constants
 # --------------------------------------------------------------------------- #
-# Real-trading domain. (Paper/모의투자 lives at ...:29443 — out of scope here.)
-_BASE_URL = "https://openapi.koreainvestment.com:9443"
+# Real-trading (실전) domain; paper/모의투자 lives at ...:29443. We default to
+# real but auto-fall back to the mock domain if the supplied key is a 모의투자
+# key (KIS rejects it with EGW00105 'invalid AppSecret' on the wrong domain).
+_REAL_BASE = "https://openapi.koreainvestment.com:9443"
+_MOCK_BASE = "https://openapivts.koreainvestment.com:29443"
+_BASE_URL = (os.getenv("KIS_API_BASE") or _REAL_BASE).rstrip("/")
+# The base that last successfully minted a token; _get() reuses it so data calls
+# hit the same environment as the token.
+_active_base: Optional[str] = None
 _TOKEN_PATH = "/oauth2/tokenP"
 
 _TIMEOUT = 15.0
@@ -121,7 +128,7 @@ def get_token(force: bool = False) -> Optional[str]:
     (double-checked locking). Returns ``None`` (never raises) if creds are
     missing or the request fails.
     """
-    global _token_cache
+    global _token_cache, _active_base
     now = time.time()
 
     if not force:
@@ -141,38 +148,46 @@ def get_token(force: bool = False) -> Optional[str]:
         tok, exp = _token_cache
         if not force and tok and now < exp - _TOKEN_SKEW_SEC:
             return tok
-        try:
-            resp = httpx.post(
-                f"{_BASE_URL}{_TOKEN_PATH}",
-                json={
-                    "grant_type": "client_credentials",
-                    "appkey": app_key,
-                    "appsecret": app_secret,
-                },
-                headers={"content-type": "application/json"},
-                timeout=_TIMEOUT,
-            )
-            resp.raise_for_status()
-            data = resp.json()
-        except (httpx.HTTPError, ValueError) as exc:
-            logger.error("kis_client: token request failed: %s", exc)
-            return None
 
-        token = data.get("access_token")
-        if not token:
-            logger.error(
-                "kis_client: token response had no 'access_token': %s",
-                {k: v for k, v in data.items() if "token" not in k.lower()},
-            )
-            return None
+        # Try the configured base first; if the key belongs to the *other*
+        # environment (EGW00105 invalid AppSecret on the wrong domain), fall back
+        # to the alternate base. The base that works is cached in _active_base.
+        alt = _MOCK_BASE if _BASE_URL == _REAL_BASE else _REAL_BASE
+        for base in (_BASE_URL, alt):
+            try:
+                resp = httpx.post(
+                    f"{base}{_TOKEN_PATH}",
+                    json={
+                        "grant_type": "client_credentials",
+                        "appkey": app_key,
+                        "appsecret": app_secret,
+                    },
+                    headers={"content-type": "application/json"},
+                    timeout=_TIMEOUT,
+                )
+                data = resp.json() if resp.headers.get(
+                    "content-type", "").startswith("application/json") else {}
+            except (httpx.HTTPError, ValueError) as exc:
+                logger.error("kis_client: token request failed (%s): %s", base, exc)
+                continue
 
-        _token_cache = (token, _parse_expiry(data))
-        logger.info(
-            "kis_client: obtained access_token (expires_in=%s, expired_at=%s)",
-            data.get("expires_in"),
-            data.get("access_token_token_expired"),
-        )
-        return token
+            token = data.get("access_token")
+            if token:
+                _active_base = base
+                _token_cache = (token, _parse_expiry(data))
+                logger.info(
+                    "kis_client: obtained access_token via %s (expires_in=%s)",
+                    base, data.get("expires_in"),
+                )
+                return token
+
+            # No token — log the sanitized error and try the alternate domain.
+            ecode = str(data.get("error_code") or data.get("msg_cd") or "")
+            logger.warning(
+                "kis_client: no token from %s (error_code=%s) — trying alternate",
+                base, ecode,
+            )
+        return None
 
 
 # --------------------------------------------------------------------------- #
@@ -217,7 +232,7 @@ def _get(path: str, tr_id: str, params: dict,
     if not token:
         return None
 
-    url = f"{_BASE_URL}{path}"
+    url = f"{_active_base or _BASE_URL}{path}"
     for attempt in range(1, _RETRIES + 1):
         try:
             resp = httpx.get(

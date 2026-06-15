@@ -257,17 +257,29 @@ def kis_deriv_check():
     import os as _os, httpx as _hx
     out = {"key_present": bool(_os.getenv("KIS_APP_KEY")),
            "secret_present": bool(_os.getenv("KIS_APP_SECRET"))}
+    # Try real (실전) first, then mock (모의/VTS) — EGW00105 'invalid AppSecret'
+    # on the wrong domain means the key belongs to the other environment.
+    bases = ["https://openapi.koreainvestment.com:9443",
+             "https://openapivts.koreainvestment.com:29443"]
     try:
-        tr = _hx.post("https://openapi.koreainvestment.com:9443/oauth2/tokenP",
-                      json={"grant_type": "client_credentials",
-                            "appkey": _os.getenv("KIS_APP_KEY", ""),
-                            "appsecret": _os.getenv("KIS_APP_SECRET", "")}, timeout=15)
-        out["token_status"] = tr.status_code
-        out["token_msg"] = _safe_msg(tr.text)
-        tj = tr.json() if tr.headers.get("content-type", "").startswith("application/json") else {}
-        tok = tj.get("access_token")
+        tok = None
+        for base in bases:
+            tr = _hx.post(f"{base}/oauth2/tokenP",
+                          json={"grant_type": "client_credentials",
+                                "appkey": _os.getenv("KIS_APP_KEY", ""),
+                                "appsecret": _os.getenv("KIS_APP_SECRET", "")}, timeout=15)
+            out["token_status"] = tr.status_code
+            out["token_msg"] = _safe_msg(tr.text)
+            tj = tr.json() if tr.headers.get("content-type", "").startswith("application/json") else {}
+            tok = tj.get("access_token")
+            if tok:
+                out["env"] = "real" if base == bases[0] else "mock"
+                break
+            if "EGW00105" not in (out.get("token_msg") or ""):
+                break
         if tok:
-            dr = _hx.get("https://openapi.koreainvestment.com:9443/uapi/domestic-futureoption/v1/quotations/display-board-top",
+            base = bases[0] if out.get("env") == "real" else bases[1]
+            dr = _hx.get(f"{base}/uapi/domestic-futureoption/v1/quotations/display-board-top",
                          headers={"authorization": f"Bearer {tok}",
                                   "appkey": _os.getenv("KIS_APP_KEY", ""),
                                   "appsecret": _os.getenv("KIS_APP_SECRET", ""),
