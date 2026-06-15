@@ -18,6 +18,7 @@ Default model: gpt-4o-mini (set via LLM_MODEL env var).
 """
 
 import os
+import time
 import httpx
 
 # ---------------------------------------------------------------------------
@@ -62,9 +63,55 @@ GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta"
 
 _last_used = {"provider": "none", "model": "none"}  # reload tag v2
 
+# Budget-aware "smart-first" pipeline state. When OpenAI (the paid, smarter
+# model) reports it's out of money/quota, we set a cooldown and automatically
+# use Groq (free) until the cooldown expires — then we retry OpenAI (money may
+# have been topped up). This makes the switch fully automatic in both directions.
+_paid_state = {"cooldown_until": 0.0, "reason": ""}
+
 
 def get_last_provider() -> str:
     return f"{_last_used['provider']} ({_last_used['model']})"
+
+
+def _smart_model_name() -> str:
+    """The paid, smarter model to prefer. Configurable via SMART_LLM_MODEL on
+    Render (e.g. 'gpt-4o', 'gpt-5', 'o3') — defaults to gpt-4o."""
+    return _env("SMART_LLM_MODEL") or "gpt-4o"
+
+
+def _smart_enabled() -> bool:
+    """Smart-first ON when SMART_LLM_ENABLED is truthy, or (default) whenever an
+    OpenAI key is present. Set SMART_LLM_ENABLED=0 to force Groq-only."""
+    v = _env("SMART_LLM_ENABLED").strip().lower()
+    if v in ("0", "false", "no", "off"):
+        return False
+    if v in ("1", "true", "yes", "on"):
+        return True
+    return bool(_env("OPENAI_API_KEY") or _env("LLM_API_KEY"))
+
+
+def _is_no_money(text: str) -> bool:
+    """Detect 'budget finished' style failures from OpenAI."""
+    t = (text or "").lower()
+    return any(k in t for k in (
+        "insufficient_quota", "exceeded your current quota", "quota",
+        "billing", "insufficient funds", "payment required", " 402",
+    ))
+
+
+def get_budget_status() -> dict:
+    """For diagnostics: is the paid model active, or are we in Groq-fallback?"""
+    now = time.time()
+    in_cooldown = now < _paid_state["cooldown_until"]
+    return {
+        "smart_enabled": _smart_enabled(),
+        "smart_model": _smart_model_name(),
+        "paid_active": _smart_enabled() and not in_cooldown,
+        "using": "groq (budget cooldown)" if in_cooldown else ("openai (paid)" if _smart_enabled() else "default"),
+        "cooldown_seconds_left": max(0, int(_paid_state["cooldown_until"] - now)),
+        "reason": _paid_state.get("reason", ""),
+    }
 
 
 def list_available_models() -> list[dict]:
@@ -476,6 +523,27 @@ def chat_completion_sync(
     # Track every fallback attempt so a final failure can explain WHICH
     # providers we tried and what they said.
     attempt_log: list[str] = []
+
+    # === BUDGET-AWARE SMART PIPELINE ===
+    # If we have money (OpenAI key + not in budget cooldown), use the SMARTER
+    # paid model FIRST regardless of the requested model. When OpenAI says it's
+    # out of quota/budget, set a 1-hour cooldown and fall through to Groq — and
+    # automatically retry OpenAI after the cooldown (in case money was added).
+    if _smart_enabled() and openai_key and time.time() >= _paid_state["cooldown_until"]:
+        smart = _smart_model_name()
+        ok, result = _call_openai_compatible(openai_base, openai_key, smart,
+                                             full_messages_with_sys, max_tokens, temperature, 90.0)
+        if ok:
+            _last_used.update({"provider": "openai", "model": f"{smart} (smart)"})
+            _paid_state["reason"] = ""
+            return result
+        if _is_no_money(result):
+            _paid_state["cooldown_until"] = time.time() + 3600   # 1h on Groq, then retry OpenAI
+            _paid_state["reason"] = f"budget finished → Groq ({str(result)[:80]})"
+        else:
+            _paid_state["cooldown_until"] = time.time() + 300    # 5min for transient/other errors
+            _paid_state["reason"] = f"OpenAI error → Groq briefly ({str(result)[:80]})"
+        attempt_log.append(f"{smart} (smart primary): {str(result)[:180]}")
 
     # -- Try the requested model first --
     if chosen in MODEL_CATALOG:
