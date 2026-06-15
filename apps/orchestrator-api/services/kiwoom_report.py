@@ -587,6 +587,22 @@ def _intraday_journey(db) -> str:
     return "\n".join(lines)
 
 
+def _futures_sentiment() -> str:
+    """Market-level futures positioning (외국인 선물 순매수) from the Kiwoom backend
+    — a real-time derivatives/direction signal. '' if unavailable."""
+    try:
+        with httpx.Client(timeout=12) as c:
+            r = c.get(f"{_BACKEND}/market/futures-positions")
+        if r.status_code != 200:
+            return ""
+        d = r.json() or {}
+        desc = d.get("description") or ""
+        return desc.strip()
+    except Exception as e:
+        log.warning(f"kiwoom futures sentiment: {str(e)[:80]}")
+        return ""
+
+
 def build_kiwoom_report(db, trace_id: str) -> dict:
     """Build the daily Kiwoom report (real data table + LLM narrative, EN+KO)."""
     rows = _gather()
@@ -666,14 +682,19 @@ def build_kiwoom_report(db, trace_id: str) -> dict:
             "each ALSO in its own distinct style, going deeper into the catalyst, the "
             "수급 read, the trend structure, and the risk to the thesis. For KR stocks "
             "weave in the investor flows (heavy foreign buying = conviction → BUY; heavy "
-            "foreign selling → caution). Every stock must read DISTINCTLY. (Futures/"
-            "options trading values and short-selling data are not available in this feed.)\n"
+            "foreign selling → caution). Every stock must read DISTINCTLY. When market "
+            "futures positioning (선물) is provided, factor it into the overall direction "
+            "read. (Options trading values and short-selling/공매도 are not available in "
+            "the current data feed.)\n"
             "Output ONLY the finished English Markdown report — no preamble, no "
             "placeholders, no notes about a translation."
         )
         journey = _intraday_journey(db)
+        futures = _futures_sentiment()
         user = (f"Date (KST): {kst_date} · USD/KRW used for US tickers: {rate:,.0f}\n\n"
-                f"DATA TABLE (insert verbatim in Section 2):\n{table_en}\n\n"
+                + (f"파생/선물 동향 (market futures positioning — weave into the overview "
+                   f"& direction read): {futures}\n\n" if futures else "")
+                + f"DATA TABLE (insert verbatim in Section 2):\n{table_en}\n\n"
                 f"DATA + TECHNICALS:\n{_facts(rows)}"
                 + (f"\n\nINTRADAY JOURNEY (hourly snapshots through the day — weave the "
                    f"day's price path into Section 3):\n{journey}" if journey else ""))
