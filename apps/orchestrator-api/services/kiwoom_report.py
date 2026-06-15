@@ -657,6 +657,55 @@ def _market_news() -> str:
         return ""
 
 
+_WATCHLIST_NAMES = ("SK Hynix", "Samsung Electronics", "SK Telecom", "Samsung SDS",
+                    "Naver", "KODEX 200", "AMD", "Micron", "Broadcom", "SanDisk", "SOXX")
+
+
+def _new_buy_ideas(news: str, kst_date: str) -> str:
+    """Dedicated LLM call → '## 7. New Daily Buy Ideas' (English markdown). Kept as
+    its OWN call so it is never crowded out of the main report by token limits.
+    Returns '' on failure (the report still ships sections 1-6)."""
+    try:
+        from services.llm_client import chat_completion_sync
+        sysmsg = (
+            "You are Kiwoom's senior equity analyst. Produce ONLY this one section, "
+            "exactly starting with the heading '## 7. New Daily Buy Ideas (5 fresh "
+            "picks)':\n"
+            "Propose EXACTLY 5 FRESH BUY candidates for TODAY that are NOT in the core "
+            f"watchlist ({', '.join(_WATCHLIST_NAMES)}). Prefer Korean (KOSPI/KOSDAQ) "
+            "names FIRST, then US — focused on semiconductors, AI, and their supply "
+            "chain / adjacent beneficiaries surfaced by today's news. Output a Markdown "
+            "table with EXACTLY these columns: | Stock (Ticker) | Buy Thesis | Catalyst/"
+            "News | Risk | — then, after the table, a 2-3 sentence paragraph per pick "
+            "going deeper. Each Buy Thesis MUST cite the SPECIFIC catalyst/news driving "
+            "it (paraphrase the real headline) and give a concrete, DIFFERENTIATED "
+            "thesis — never generic, never the same opening twice. Do NOT fabricate "
+            "exact prices or figures. Ground every pick in a real item from the news "
+            "when provided. Write in ENGLISH (it will be translated to Korean). Output "
+            "ONLY this section — no other text."
+        )
+        if news:
+            user = (f"Date (KST): {kst_date}\n\nLATEST NEWS & MARKET DEVELOPMENTS "
+                    f"(source your 5 picks from these real items):\n{news}")
+        else:
+            user = (f"Date (KST): {kst_date}\n\n(No live news feed this run — choose 5 "
+                    "high-conviction Korea-first semiconductor / AI / supply-chain names "
+                    "and justify each with a real, well-known ongoing catalyst; do not "
+                    "invent specific dates or prices.)")
+        out = chat_completion_sync(
+            system_prompt=sysmsg, messages=[{"role": "user", "content": user[:8000]}],
+            max_tokens=2600, temperature=0.6, model="groq-llama-3.3-70b",
+            prefer_paid=True) or ""
+        if out.strip() and not out.lstrip().startswith(("[LLM unavailable]", "[server error]")):
+            sec = out.strip()
+            if not sec.lstrip().startswith("#"):
+                sec = "## 7. New Daily Buy Ideas (5 fresh picks)\n\n" + sec
+            return sec
+    except Exception as e:
+        log.warning(f"kiwoom new-buy-ideas failed: {str(e)[:80]}")
+    return ""
+
+
 def build_kiwoom_report(db, trace_id: str) -> dict:
     """Build the daily Kiwoom report (real data table + LLM narrative, EN+KO)."""
     rows = _gather()
@@ -701,8 +750,7 @@ def build_kiwoom_report(db, trace_id: str) -> dict:
             "invent numbers. ALL prices are in Korean Won (KRW). Produce the report "
             "in this EXACT section structure:\n"
             "## 1. General Overview\n## 2. Market Data\n## 3. Detailed Analysis\n"
-            "## 4. Risks & Watch-items\n## 5. Opportunities\n## 6. Recommended Actions\n"
-            "## 7. New Daily Buy Ideas (5 fresh picks)\n\n"
+            "## 4. Risks & Watch-items\n## 5. Opportunities\n## 6. Recommended Actions\n\n"
             "Rules:\n"
             "- Section 1: open with the overall tape, THEN a '### Latest News & Market "
             "Developments' paragraph that synthesizes the LATEST NEWS provided below "
@@ -755,20 +803,8 @@ def build_kiwoom_report(db, trace_id: str) -> dict:
             "selling → caution) and the 공매도 pressure. Every stock must read DISTINCTLY. "
             "When market futures positioning (선물) is provided, factor it into the "
             "overall direction read. (Options trading values are not available.)\n"
-            "- Section 7 (NEW DAILY BUY IDEAS): propose EXACTLY 5 FRESH buy candidates "
-            "that are NOT in the watchlist/data table above — new ideas for TODAY, chosen "
-            "from the LATEST NEWS & market developments provided. Prefer Korean (KOSPI/"
-            "KOSDAQ) names first, then US, focused on semiconductors, AI, and their supply "
-            "chain / adjacent beneficiaries surfaced by today's news. Output a Markdown "
-            "table | 종목(티커) | 매수 근거 | 촉매/뉴스 | 리스크 | followed by a 2-3 sentence "
-            "paragraph per pick. Each '매수 근거' MUST cite the SPECIFIC news item / "
-            "catalyst driving it (paraphrase the real headline) and give a concrete, "
-            "differentiated thesis — never generic. Do NOT fabricate exact prices or "
-            "figures for these names; ground every pick in a real item from the news "
-            "block. If fewer than 5 distinct ideas are supportable from the news, still "
-            "give 5 but clearly tie each to its strongest available catalyst.\n"
-            "Output ONLY the finished English Markdown report — no preamble, no "
-            "placeholders, no notes about a translation."
+            "Output ONLY the finished English Markdown report (Sections 1-6) — no "
+            "preamble, no placeholders, no notes about a translation."
         )
         journey = _intraday_journey(db)
         futures = _futures_sentiment()
@@ -785,10 +821,16 @@ def build_kiwoom_report(db, trace_id: str) -> dict:
                    f"day's price path into Section 3):\n{journey}" if journey else ""))
         out = chat_completion_sync(
             system_prompt=sysmsg, messages=[{"role": "user", "content": user[:14000]}],
-            max_tokens=8500, temperature=0.5, model="groq-llama-3.3-70b", prefer_paid=True) or ""
+            max_tokens=9000, temperature=0.5, model="groq-llama-3.3-70b", prefer_paid=True) or ""
         bad = (not out.strip()) or out.lstrip().startswith(("[LLM unavailable]", "[server error]"))
         if not bad:
             detail_en = out.replace("===EN===", "").strip()
+            # Section 7 (5 fresh daily buy ideas) — a DEDICATED call so the user's
+            # required new-ideas section is never truncated by the main report's
+            # token budget. Appended before the KO translation so it gets localized.
+            sec7 = _new_buy_ideas(news, kst_date)
+            if sec7:
+                detail_en = detail_en.rstrip() + "\n\n" + sec7
             # Korean: a DEDICATED translation call (the single-shot "write it twice"
             # approach made the model stub the KO half). Translate the FULL English
             # report and swap in the ready-made Korean data table.
@@ -817,8 +859,8 @@ def build_kiwoom_report(db, trace_id: str) -> dict:
                 )
                 ko_out = chat_completion_sync(
                     system_prompt=ko_sys,
-                    messages=[{"role": "user", "content": detail_en[:18000]}],
-                    max_tokens=9000, temperature=0.3, model="groq-llama-3.3-70b", prefer_paid=True) or ""
+                    messages=[{"role": "user", "content": detail_en[:20000]}],
+                    max_tokens=11000, temperature=0.3, model="groq-llama-3.3-70b", prefer_paid=True) or ""
                 ko_bad = ((not ko_out.strip())
                           or ko_out.lstrip().startswith(("[LLM unavailable]", "[server error]"))
                           or len(ko_out.strip()) < 400)
