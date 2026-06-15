@@ -506,6 +506,7 @@ def chat_completion_sync(
     max_tokens: int = 500,
     temperature: float = 0.7,
     model: str | None = None,
+    prefer_paid: bool = False,
 ) -> str:
     """
     Smart LLM call with provider routing + fallback chain.
@@ -524,12 +525,13 @@ def chat_completion_sync(
     # providers we tried and what they said.
     attempt_log: list[str] = []
 
-    # === BUDGET-AWARE SMART PIPELINE ===
-    # If we have money (OpenAI key + not in budget cooldown), use the SMARTER
-    # paid model FIRST regardless of the requested model. When OpenAI says it's
-    # out of quota/budget, set a 1-hour cooldown and fall through to Groq — and
-    # automatically retry OpenAI after the cooldown (in case money was added).
-    if _smart_enabled() and openai_key and time.time() >= _paid_state["cooldown_until"]:
+    # === BUDGET-AWARE SMART PIPELINE (REPORTS ONLY) ===
+    # Only when the caller opts in with prefer_paid=True (the daily reports do;
+    # the realtime chatbot/assistant stays on fast Groq). If we have money
+    # (OpenAI key + not in budget cooldown), use the SMARTER paid model FIRST.
+    # When OpenAI is out of quota/budget, set a 1-hour cooldown and fall through
+    # to Groq — and automatically retry OpenAI after the cooldown.
+    if prefer_paid and _smart_enabled() and openai_key and time.time() >= _paid_state["cooldown_until"]:
         smart = _smart_model_name()
         ok, result = _call_openai_compatible(openai_base, openai_key, smart,
                                              full_messages_with_sys, max_tokens, temperature, 90.0)

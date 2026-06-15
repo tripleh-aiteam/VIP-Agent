@@ -156,7 +156,7 @@ def build_master_report(db, trace_id: str) -> dict:
                 f"{broker_facts or _NO_BROKER}")
         out = chat_completion_sync(
             system_prompt=sysmsg, messages=[{"role": "user", "content": user[:26000]}],
-            max_tokens=12000, temperature=0.4, model="groq-llama-3.3-70b") or ""
+            max_tokens=12000, temperature=0.4, model="groq-llama-3.3-70b", prefer_paid=True) or ""
         bad = (not out.strip()) or out.lstrip().startswith(("[LLM unavailable]", "[server error]"))
         if not bad:
             detail_en = out.strip()
@@ -175,7 +175,7 @@ def build_master_report(db, trace_id: str) -> dict:
                 ko_out = chat_completion_sync(
                     system_prompt=ko_sys,
                     messages=[{"role": "user", "content": detail_en[:26000]}],
-                    max_tokens=12000, temperature=0.3, model="groq-llama-3.3-70b") or ""
+                    max_tokens=12000, temperature=0.3, model="groq-llama-3.3-70b", prefer_paid=True) or ""
                 ko_bad = ((not ko_out.strip())
                           or ko_out.lstrip().startswith(("[LLM unavailable]", "[server error]"))
                           or len(ko_out.strip()) < 400)

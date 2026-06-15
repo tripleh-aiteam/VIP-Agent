@@ -369,7 +369,7 @@ def build_youtube_report(db, trace_id: str) -> dict:
             try:
                 out = chat_completion_sync(
                     system_prompt=sysd, messages=[{"role": "user", "content": (corpus + "\n\nRECENT COVERAGE:\n" + cov)[:20000]}],
-                    max_tokens=6000, temperature=0.45, model="groq-llama-3.3-70b") or ""
+                    max_tokens=6000, temperature=0.45, model="groq-llama-3.3-70b", prefer_paid=True) or ""
                 en, ko = _split_enko(out)
                 sec_en[name] = en or (f"### {name}\n" + "\n".join(f"- {c.get('title','')}" for c in clips))
                 sec_ko[name] = ko or sec_en[name]
@@ -407,7 +407,7 @@ def build_youtube_report(db, trace_id: str) -> dict:
         try:
             out = chat_completion_sync(
                 system_prompt=ssys, messages=[{"role": "user", "content": suser[:22000]}],
-                max_tokens=9000, temperature=0.45, model="groq-llama-3.3-70b") or ""
+                max_tokens=9000, temperature=0.45, model="groq-llama-3.3-70b", prefer_paid=True) or ""
             syn_en, syn_ko = _split_enko(out)
         except Exception as e:
             log.warning(f"youtube synthesis failed: {str(e)[:100]}")

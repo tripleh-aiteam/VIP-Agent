@@ -408,7 +408,7 @@ def build_newspaper_report(db, trace_id: str) -> dict:
             try:
                 out = chat_completion_sync(
                     system_prompt=sysd, messages=[{"role": "user", "content": corpus[:18000]}],
-                    max_tokens=10000, temperature=0.45, model="groq-llama-3.3-70b") or ""
+                    max_tokens=10000, temperature=0.45, model="groq-llama-3.3-70b", prefer_paid=True) or ""
                 en_txt, ko_txt = _split_enko(out)
                 en_sum = _parse_numbered(en_txt)
                 ko_sum = _parse_numbered(ko_txt)
@@ -468,7 +468,7 @@ def build_newspaper_report(db, trace_id: str) -> dict:
         try:
             out = chat_completion_sync(
                 system_prompt=ssys, messages=[{"role": "user", "content": suser[:24000]}],
-                max_tokens=10000, temperature=0.45, model="groq-llama-3.3-70b") or ""
+                max_tokens=10000, temperature=0.45, model="groq-llama-3.3-70b", prefer_paid=True) or ""
             syn_en, syn_ko = _split_enko(out)
         except Exception as e:
             log.warning(f"newspaper synthesis failed: {str(e)[:100]}")
