@@ -255,8 +255,14 @@ def kis_deriv_check():
     """Verbose diagnostic for KIS: env presence, raw token call, and one raw
     futures quotation — shows the actual KIS response for debugging."""
     import os as _os, httpx as _hx
-    out = {"key_present": bool(_os.getenv("KIS_APP_KEY")),
-           "secret_present": bool(_os.getenv("KIS_APP_SECRET"))}
+    _k = _os.getenv("KIS_APP_KEY", "") or ""
+    _s = _os.getenv("KIS_APP_SECRET", "") or ""
+    out = {"key_present": bool(_k), "secret_present": bool(_s),
+           # Lengths only (NOT the values) — a real KIS AppKey is ~36 chars and the
+           # AppSecret is ~180 chars; a short secret_len means it was truncated on
+           # paste into Render. trailing_ws flags an accidental space/newline.
+           "key_len": len(_k), "secret_len": len(_s),
+           "key_trailing_ws": _k != _k.strip(), "secret_trailing_ws": _s != _s.strip()}
     # Try real (실전) first, then mock (모의/VTS) — EGW00105 'invalid AppSecret'
     # on the wrong domain means the key belongs to the other environment.
     bases = ["https://openapi.koreainvestment.com:9443",
