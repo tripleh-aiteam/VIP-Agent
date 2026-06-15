@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { API } from "@/components/api";
-import Dashboard from "./dashboard/page";
+import { DashboardView as Dashboard } from "./dashboard/DashboardView";
 
 export default function TwinPortal() {
   const [isLoggedIn, setIsLoggedIn] = useState(false);

@@ -17,7 +17,7 @@ interface TwinProfile {
 }
 
 interface Props {
-  onLogout: () => void;
+  onLogout?: () => void;
 }
 
 const AVATAR_COLORS = ["#6366f1", "#8b5cf6", "#ec4899", "#f59e0b", "#10b981", "#3b82f6", "#ef4444", "#14b8a6"];
@@ -38,7 +38,7 @@ const MODE_LABELS: Record<string, { text: string; color: string }> = {
   handoff: { text: "Handoff Mode — Preparing morning report", color: "text-amber-700 bg-amber-100" },
 };
 
-export default function Dashboard({ onLogout }: Props) {
+export function DashboardView({ onLogout }: Props) {
   const [twin, setTwin] = useState<TwinProfile | null>(null);
   const [knowledge, setKnowledge] = useState<any[]>([]);
   const [tasks, setTasks] = useState<any[]>([]);
