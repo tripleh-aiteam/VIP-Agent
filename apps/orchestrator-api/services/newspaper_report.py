@@ -120,7 +120,7 @@ def _domain_ok(url: str, site: str) -> bool:
         return False
 
 
-def _gather_news_by_source(cap_kr: int = 9, cap_paid: int = 9) -> dict[str, list[dict]]:
+def _gather_news_by_source(cap_kr: int = 7, cap_paid: int = 8) -> dict[str, list[dict]]:
     """Collect recent (last ~72h, all times of day) articles per outlet.
       - Korean (free) outlets: RSS list (timestamped) + FULL article text
         (trafilatura); paywalled premium → its RSS summary.
@@ -296,7 +296,7 @@ def _stats_block(rows: list[dict]) -> str:
     return "\n".join(lines) if lines else "(no stats)"
 
 
-def _merge_hourly_news(db, grouped: dict[str, list[dict]], cap_per_outlet: int = 12) -> dict[str, list[dict]]:
+def _merge_hourly_news(db, grouped: dict[str, list[dict]], cap_per_outlet: int = 8) -> dict[str, list[dict]]:
     """Fold the day's hourly newspaper snapshots into the fresh fetch (dedupe by
     URL, cap per outlet). Fresh full-text articles are kept first; accumulated
     snapshot headlines fill the rest so the day's full coverage is represented."""
@@ -385,17 +385,22 @@ def build_newspaper_report(db, trace_id: str) -> dict:
                 f"{a.get('title','')}\n{(a.get('text') or '')[:3200]}"
                 for i, a in enumerate(arts, 1))
             if paid or not has_full:
-                per = "4-6 sentences (work only with the headline/snippet — do NOT fabricate detail)"
+                per = ("a solid 8-10 sentence summary — work only with the headline/snippet, "
+                       "do NOT fabricate detail you don't have")
             else:
-                per = "6-10 sentences, citing concrete facts/figures from the full body"
+                per = ("AT LEAST HALF A PAGE (250-380 words, ~14-20 sentences) — a thorough, "
+                       "in-depth summary: what happened, ALL the key facts/figures/quotes from "
+                       "the body, the companies/sectors affected, the cause, and the market "
+                       "impact & outlook. Be substantial, never one short paragraph")
             sysd = (
                 "You are TripleH's market-news analyst. Below are NUMBERED recent news "
                 f"articles from {name}. For EVERY numbered article, write a DETAILED "
-                f"summary ({per}) — what happened and WHY it matters for stocks/markets "
+                f"summary — {per}. Explain WHY it matters for stocks/markets "
                 f"(watchlist: {_WATCHLIST}; semiconductors; macro FX/rates; market-moving "
                 "politics — Trump/tariffs/Fed/Iran). Use ONLY the provided text; NEVER "
                 "invent quotes or numbers; do NOT include any URLs. Write a block for "
-                "EVERY article number, in order, never skipping one. Output EXACTLY:\n"
+                "EVERY article number, in order, never skipping one, and never truncate. "
+                "Output EXACTLY:\n"
                 "===EN===\n[1] <summary>\n[2] <summary>\n…\n===KO===\n"
                 "[1] <한국어 요약 존댓말>\n[2] <한국어 요약>\n…")
             en_sum: dict[int, str] = {}
@@ -403,7 +408,7 @@ def build_newspaper_report(db, trace_id: str) -> dict:
             try:
                 out = chat_completion_sync(
                     system_prompt=sysd, messages=[{"role": "user", "content": corpus[:22000]}],
-                    max_tokens=8000, temperature=0.45, model="groq-llama-3.3-70b") or ""
+                    max_tokens=16000, temperature=0.45, model="groq-llama-3.3-70b") or ""
                 en_txt, ko_txt = _split_enko(out)
                 en_sum = _parse_numbered(en_txt)
                 ko_sum = _parse_numbered(ko_txt)
