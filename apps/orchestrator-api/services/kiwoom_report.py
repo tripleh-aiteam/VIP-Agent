@@ -398,13 +398,23 @@ def _build_table(rows: list[dict], ko: bool) -> str:
     def naver_c(r):
         return _won(r.get("naver_close")) if (r.get("mkt") == "KR" and r.get("naver_close")) else "—"
     def short_c(r):
-        sr = r.get("short_ratio")
-        if sr is None or r.get("mkt") != "KR":
+        if r.get("mkt") != "KR":
             return "—"
-        try:
-            return f"{float(sr):.2f}%"
-        except Exception:
-            return f"{sr}%"
+        sr = r.get("short_ratio")
+        if sr is not None:
+            try:
+                return f"{float(sr):.2f}%"
+            except Exception:
+                return f"{sr}%"
+        # No 비중 available — fall back to the raw 공매도 거래량 so the real
+        # short-selling figure still shows instead of a dash.
+        sv = r.get("short_volume")
+        if sv is not None:
+            try:
+                return f"{int(sv):,}주"
+            except Exception:
+                return f"{sv}주"
+        return "—"
 
     mode = _price_mode()
     if mode == "market":
@@ -416,8 +426,8 @@ def _build_table(rows: list[dict], ko: bool) -> str:
                       ("종가(시간외)" if ko else "Close (NXT)", naver_c)]
 
     name_h, open_h = ("종목", "시가") if ko else ("Stock", "Open")
-    tail_h = (["일일 등락", "일일 거래량", "주간 등락", "주간 거래량", "공매도 비중(전일)"] if ko
-              else ["Daily Chg", "Daily Vol", "Weekly Chg", "Weekly Vol", "Short% (T-1)"])
+    tail_h = (["일일 등락", "일일 거래량", "주간 등락", "주간 거래량", "공매도(전일)"] if ko
+              else ["Daily Chg", "Daily Vol", "Weekly Chg", "Weekly Vol", "Short (T-1)"])
     cols = [name_h, open_h] + [h for h, _ in price_cols] + tail_h
     head = "| " + " | ".join(cols) + " |\n|" + "---|" * len(cols)
     lines = [head]
@@ -702,8 +712,10 @@ def build_kiwoom_report(db, trace_id: str) -> dict:
             "weave in the investor flows (heavy foreign buying = conviction → BUY; heavy "
             "foreign selling → caution). Every stock must read DISTINCTLY. When market "
             "futures positioning (선물) is provided, factor it into the overall direction "
-            "read. (Options trading values and short-selling/공매도 are not available in "
-            "the current data feed.)\n"
+            "read. KR-stock short-selling (공매도, 전일/T-1) is in the price table — "
+            "when a stock shows notable 공매도, weave it into its read (heavy 공매도 = "
+            "bearish pressure / squeeze risk). (Options trading values are not available "
+            "in the current data feed.)\n"
             "Output ONLY the finished English Markdown report — no preamble, no "
             "placeholders, no notes about a translation."
         )

@@ -116,7 +116,13 @@ _KEYS_SHORT_VAL = (
     "short_value",
 )
 _KEYS_SHORT_RATIO = (
-    "shrts_wght", "cvsrtsell_wght", "shrts_trde_wght", "공매도비중", "short_ratio",
+    "shrts_wght", "cvsrtsell_wght", "shrts_trde_wght", "vol_rt", "trde_wght",
+    "shrts_vol_rt", "공매도비중", "short_ratio",
+)
+# Total trading volume for the day — used to COMPUTE 공매도 비중 when the API
+# does not return a ratio field directly (공매도량 / 거래량 × 100).
+_KEYS_TOTAL_VOL = (
+    "trde_qty", "tot_trde_qty", "acc_trde_qty", "trqu", "거래량",
 )
 # Possible names for the list that holds the per-day rows.
 _KEYS_OUTPUT_LIST = ("shrts_trnsn", "shrts", "output", "out", "data")
@@ -364,11 +370,17 @@ def _parse_short_row(row: dict) -> Optional[dict]:
     vol = _to_int(_first(row, _KEYS_SHORT_VOL))
     if vol is None:
         return None
+    ratio = _to_float(_first(row, _KEYS_SHORT_RATIO))
+    total_vol = _to_int(_first(row, _KEYS_TOTAL_VOL))
+    # Compute 공매도 비중 (= 공매도량 / 거래량 × 100) if the API gave no ratio field.
+    if ratio is None and total_vol and total_vol > 0:
+        ratio = round(vol / total_vol * 100, 2)
     return {
         "date": _date_to_iso(_first(row, _KEYS_DATE)),
         "short_volume": vol,
         "short_value": _to_int(_first(row, _KEYS_SHORT_VAL)),
-        "short_ratio": _to_float(_first(row, _KEYS_SHORT_RATIO)),
+        "short_ratio": ratio,
+        "total_volume": total_vol,
     }
 
 
