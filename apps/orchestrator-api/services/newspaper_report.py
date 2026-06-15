@@ -296,6 +296,28 @@ def _stats_block(rows: list[dict]) -> str:
     return "\n".join(lines) if lines else "(no stats)"
 
 
+# Outlet name → homepage, for turning [출처: 매체] citations into clickable links.
+_SOURCE_URLS = {
+    "한국경제": "https://www.hankyung.com", "매일경제": "https://www.mk.co.kr",
+    "머니투데이": "https://www.mt.co.kr", "SBS Biz": "https://biz.sbs.co.kr",
+    "SBS": "https://biz.sbs.co.kr", "Bloomberg": "https://www.bloomberg.com",
+    "블룸버그": "https://www.bloomberg.com", "WSJ": "https://www.wsj.com",
+    "월스트리트저널": "https://www.wsj.com", "월스트리트": "https://www.wsj.com",
+}
+
+
+def _linkify_sources(md: str) -> str:
+    """Turn plain [출처: 매체] citations into clickable [출처: 매체](url) links."""
+    def repl(m):
+        inner = m.group(1)
+        for name, url in _SOURCE_URLS.items():
+            if name in inner:
+                return f"[{inner}]({url})"
+        return m.group(0)
+    # Match [출처: ...] that is NOT already followed by '(' (i.e. not yet a link).
+    return re.sub(r"\[(출처[:：][^\]]+)\](?!\()", repl, md or "")
+
+
 def _merge_hourly_news(db, grouped: dict[str, list[dict]], cap_per_outlet: int = 6) -> dict[str, list[dict]]:
     """Fold the day's hourly newspaper snapshots into the fresh fetch (dedupe by
     URL, cap per outlet). Fresh full-text articles are kept first; accumulated
@@ -400,6 +422,9 @@ def build_newspaper_report(db, trace_id: str) -> dict:
                 "politics — Trump/tariffs/Fed/Iran). Use ONLY the provided text; NEVER "
                 "invent quotes or numbers; do NOT include any URLs. Write a block for "
                 "EVERY article number, in order, never skipping one, and never truncate. "
+                "CRITICAL: the ===KO=== block MUST be fully in KOREAN (존댓말) for EVERY "
+                "article — INCLUDING English-language outlets like Bloomberg and WSJ: "
+                "translate those into natural Korean, never leave English in the KO block. "
                 "Output EXACTLY:\n"
                 "===EN===\n[1] <summary>\n[2] <summary>\n…\n===KO===\n"
                 "[1] <한국어 요약 존댓말>\n[2] <한국어 요약>\n…")
@@ -448,10 +473,13 @@ def build_newspaper_report(db, trace_id: str) -> dict:
             "newspaper/article it came from in brackets, e.g. '주간 거래량 급증 + HBM 수요 "
             "[출처: 한국경제]' or '외국인 순매수 전환 [출처: 매일경제]'. NEVER write a generic "
             "placeholder like '기술적 분석' or '근거'. 의견 = 매수/보유/매도. THEN a "
-            "'### 근거 상세' subsection: for EACH stock, 3-4 sentences explaining the call "
-            "from (a) the news (WITH the source outlet named), (b) the daily vs weekly "
-            "volume & price trend, (c) a catalyst + timing. Every '매도/매수' claim MUST "
-            "state WHY and from WHICH source.\n"
+            "'### 근거 상세' subsection: for EACH stock a DETAILED paragraph of 5-7 "
+            "sentences (NOT one short line) explaining the call from (a) the specific "
+            "news with the SOURCE OUTLET cited in brackets like [출처: 한국경제], (b) the "
+            "daily vs weekly volume & price trend with the real numbers, (c) the "
+            "외국인/기관 수급, and (d) a catalyst + timing. Each stock's paragraph must be "
+            "DISTINCT in wording (no copy-paste template) and END with the source citation "
+            "[출처: <매체>]. Every '매도/매수/보유' claim MUST state WHY with its source.\n"
             "Write Korean section HEADINGS in the ===KO=== version: '## 1. 총평', "
             "'## 3. 종목별 분석', '## 4. 일정·촉매 (일정매매)', '## 5. 추천'. NO English prose "
             "anywhere in the Korean version.\n"
@@ -483,8 +511,8 @@ def build_newspaper_report(db, trace_id: str) -> dict:
                     f"{overview}\n\n## 2. 신문별 뉴스\n{news}\n\n{rest}").strip()
 
         if news_en.strip() and syn_en.strip():
-            detail_en = _assemble(syn_en, news_en)
-            detail_ko = _assemble(syn_ko or syn_en, news_ko or news_en)
+            detail_en = _linkify_sources(_assemble(syn_en, news_en))
+            detail_ko = _linkify_sources(_assemble(syn_ko or syn_en, news_ko or news_en))
     except Exception as e:
         log.warning(f"newspaper compose failed: {e}")
 

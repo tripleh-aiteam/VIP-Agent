@@ -120,7 +120,15 @@ def markdown_to_docx(md: str, title: str, subtitle: str = "") -> bytes:
                 continue
             m = re.match(r"^(#{1,6})\s*(.*)$", line)
             if m:
-                doc.add_heading(m.group(2).strip(), level=min(len(m.group(1)), 4))
+                htext = m.group(2).strip()
+                lvl = min(len(m.group(1)), 4)
+                if "](" in htext:
+                    # Heading contains a markdown link → render as a heading-styled
+                    # paragraph with a CLICKABLE hyperlink (add_heading can't do links).
+                    h = doc.add_heading("", level=lvl)
+                    _add_runs(h, htext)
+                else:
+                    doc.add_heading(htext, level=lvl)
                 i += 1
                 continue
             if re.match(r"^\s*[-*]\s+", line):
