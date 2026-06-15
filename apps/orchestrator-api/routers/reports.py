@@ -173,6 +173,19 @@ def trigger_capture_hourly(db: Session = Depends(get_db)):
     return {"triggered": True, "message": "Hourly snapshot captured in background (saved, not emailed)."}
 
 
+@router.get("/kiwoom-short-check")
+def kiwoom_short_check():
+    """Diagnostic: verify Kiwoom REST short-selling (공매도) — token + ka10014 for
+    Samsung/SK Hynix. Confirms KIWOOM_APP_KEY/KIWOOM_APP_SECRET work + the
+    response field mapping."""
+    try:
+        from services import kiwoom_rest
+        return {"ok": True, "samsung_005930": kiwoom_rest.short_selling("005930"),
+                "skhynix_000660": kiwoom_rest.short_selling("000660")}
+    except Exception as e:
+        return {"ok": False, "error": str(e)[:300]}
+
+
 @router.get("/llm-check")
 def llm_check():
     """Diagnostic: do a tiny prefer_paid test call and report which provider
