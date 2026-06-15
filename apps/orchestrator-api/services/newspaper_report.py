@@ -120,7 +120,7 @@ def _domain_ok(url: str, site: str) -> bool:
         return False
 
 
-def _gather_news_by_source(cap_kr: int = 7, cap_paid: int = 8) -> dict[str, list[dict]]:
+def _gather_news_by_source(cap_kr: int = 5, cap_paid: int = 6) -> dict[str, list[dict]]:
     """Collect recent (last ~72h, all times of day) articles per outlet.
       - Korean (free) outlets: RSS list (timestamped) + FULL article text
         (trafilatura); paywalled premium → its RSS summary.
@@ -296,7 +296,7 @@ def _stats_block(rows: list[dict]) -> str:
     return "\n".join(lines) if lines else "(no stats)"
 
 
-def _merge_hourly_news(db, grouped: dict[str, list[dict]], cap_per_outlet: int = 8) -> dict[str, list[dict]]:
+def _merge_hourly_news(db, grouped: dict[str, list[dict]], cap_per_outlet: int = 6) -> dict[str, list[dict]]:
     """Fold the day's hourly newspaper snapshots into the fresh fetch (dedupe by
     URL, cap per outlet). Fresh full-text articles are kept first; accumulated
     snapshot headlines fill the rest so the day's full coverage is represented."""
@@ -407,8 +407,8 @@ def build_newspaper_report(db, trace_id: str) -> dict:
             ko_sum: dict[int, str] = {}
             try:
                 out = chat_completion_sync(
-                    system_prompt=sysd, messages=[{"role": "user", "content": corpus[:22000]}],
-                    max_tokens=16000, temperature=0.45, model="groq-llama-3.3-70b") or ""
+                    system_prompt=sysd, messages=[{"role": "user", "content": corpus[:18000]}],
+                    max_tokens=10000, temperature=0.45, model="groq-llama-3.3-70b") or ""
                 en_txt, ko_txt = _split_enko(out)
                 en_sum = _parse_numbered(en_txt)
                 ko_sum = _parse_numbered(ko_txt)
@@ -417,7 +417,7 @@ def build_newspaper_report(db, trace_id: str) -> dict:
             # Lay out per-article: title (clickable) + its summary.
             sec_en[name] = _article_section(name, arts, en_sum)
             sec_ko[name] = _article_section(name, arts, ko_sum or en_sum)
-            _t.sleep(0.5)
+            _t.sleep(1.5)   # space outlet calls so we stay under Groq's TPM limit
 
         news_en = "\n\n".join(sec_en[p["name"]] for p in NEWSPAPERS)
         news_ko = "\n\n".join(sec_ko[p["name"]] for p in NEWSPAPERS)
