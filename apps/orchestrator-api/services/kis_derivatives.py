@@ -228,8 +228,9 @@ def _newest_daily_row(data: dict) -> Optional[dict]:
         parsed.append({
             "date": d,
             "volume": vol,
-            # KIS reports 거래대금 (acml_tr_pbmn) in 천원 → ×1000 for real KRW.
-            "value": (val * _TURNOVER_KRW) if val is not None else None,
+            # Raw value as reported. Unit differs by product (index futures =
+            # 천원, stock futures = 원), so scaling is applied by the caller.
+            "value": val,
             "open_interest": _to_int(_first(r, _KEY_OI)),
         })
     if not parsed:
@@ -403,9 +404,10 @@ def derivatives_turnover() -> Optional[dict]:
     fut_code = _active_futures_code()
     if fut_code:
         fut = _instrument_turnover(_MKT_FUTURES, fut_code)
-        if fut:
+        if fut and fut.get("value") is not None:
             result["date"] = fut.get("date")
-            result["futures_value"] = fut.get("value")
+            # Index-futures 거래대금 is reported in 천원 → ×1000 for real KRW.
+            result["futures_value"] = fut["value"] * _TURNOVER_KRW
 
     call_val, put_val = _callput_values()
     result["call_value"] = call_val
