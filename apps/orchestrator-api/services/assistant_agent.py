@@ -362,6 +362,8 @@ def _format_price_reply(res: dict, lang: str) -> Optional[str]:
     if not isinstance(res, dict) or not res.get("ok"):
         return None
     name = res.get("name") or res.get("ticker") or ""
+    # Display latin prefixes upper-cased (sk하이닉스 → SK하이닉스, naver → NAVER).
+    name = _re.sub(r"[A-Za-z]+", lambda m: m.group(0).upper(), name)
     won = res.get("current_price_won")
     if not won:
         return None
