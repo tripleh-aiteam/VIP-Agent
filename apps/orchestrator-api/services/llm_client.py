@@ -33,13 +33,11 @@ MODEL_CATALOG = {
     "claude-haiku-4-5":  ("anthropic", "claude-haiku-4-5"),
     # --- OpenAI (5.x lineup — newest, updated 2026-06-16) ---
     "gpt-5.5":      ("openai", "gpt-5.5"),         # flagship: complex multi-domain reasoning/coding, 1M context
-    "gpt-5.5-pro":  ("openai", "gpt-5.5-pro"),     # research-tier, deeper compute (may require the Responses API)
     "gpt-5.4":      ("openai", "gpt-5.4"),         # prev-gen frontier
     "gpt-5.4-mini": ("openai", "gpt-5.4-mini"),    # fast/low-cost, multimodal, 400k context
     "gpt-5.4-nano": ("openai", "gpt-5.4-nano"),    # smallest/cheapest, classification/extraction
     # --- Google Gemini (3.x lineup — newest, updated 2026-06-16) ---
     "gemini-3.5-flash":          ("gemini", "gemini-3.5-flash"),           # GA: token-efficient, high intelligence/$, multi-turn agentic
-    "gemini-3.5-live-translate": ("gemini", "gemini-3.5-live-translate"),  # low-latency natural voice translation (Live API)
     "gemini-3.1-pro":            ("gemini", "gemini-3.1-pro-preview"),     # most capable: complex reasoning/coding (Preview)
     "gemini-3.1-flash-lite":     ("gemini", "gemini-3.1-flash-lite"),      # high-volume, max speed, very low cost
     "gemini-3.1-flash-image":    ("gemini", "gemini-3.1-flash-image"),     # native fast multimodal / image understanding
@@ -147,14 +145,12 @@ def ping_model(model: str, timeout: float = 45.0) -> dict:
     never falls back to another provider — so a broken/typo'd model id surfaces
     as ok=False instead of being masked by a fallback response.
     """
-    provider, real = MODEL_CATALOG.get(model, (None, model))
-    if provider is None:
-        if model.startswith(("gpt", "o1", "o3", "o4")): provider = "openai"
-        elif model.startswith("gemini"): provider = "gemini"
-        elif model.startswith("claude"): provider = "anthropic"
-        elif model.startswith("groq"): provider = "groq"
-        else: provider = "ollama"
-        real = model
+    # Only catalog models may be pinged — never forward an arbitrary, caller-
+    # supplied model id to a paid provider API.
+    if model not in MODEL_CATALOG:
+        return {"model": model, "provider": None, "real_model": None, "ok": False,
+                "latency_ms": 0, "sample": None, "error": "unknown model (not in catalog)"}
+    provider, real = MODEL_CATALOG[model]
 
     sys = "You are a health check. Reply with exactly: OK"
     msgs = [{"role": "user", "content": "Reply with the single word: OK"}]
@@ -200,17 +196,25 @@ def ping_model(model: str, timeout: float = 45.0) -> dict:
 
 def _call_openai_compatible(base_url: str, api_key: str, model: str, messages: list[dict],
                             max_tokens: int, temperature: float, timeout: float) -> tuple[bool, str]:
-    """OpenAI-style /chat/completions (works for OpenAI + Ollama)."""
+    """OpenAI-style /chat/completions (works for OpenAI + Groq + Ollama)."""
     try:
         headers = {"Content-Type": "application/json"}
         if api_key:
             headers["Authorization"] = f"Bearer {api_key}"
+        payload: dict = {"model": model, "messages": messages}
+        # OpenAI's gpt-5.x / o-series reasoning models renamed the token cap to
+        # `max_completion_tokens` and only accept the default temperature. Older
+        # models (gpt-4o) and Groq/Ollama still use `max_tokens` + temperature.
+        if model.startswith(("gpt-5", "o1", "o3", "o4")):
+            payload["max_completion_tokens"] = max_tokens
+        else:
+            payload["max_tokens"] = max_tokens
+            payload["temperature"] = temperature
         with httpx.Client(timeout=timeout) as client:
             resp = client.post(
                 f"{base_url}/chat/completions",
                 headers=headers,
-                json={"model": model, "messages": messages,
-                      "max_tokens": max_tokens, "temperature": temperature},
+                json=payload,
             )
             if resp.status_code == 200:
                 return True, resp.json()["choices"][0]["message"]["content"]
