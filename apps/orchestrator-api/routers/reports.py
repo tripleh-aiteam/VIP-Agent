@@ -324,6 +324,8 @@ def kiwoom_deriv_check():
     try:
         from services import kiwoom_report as kr, kis_derivatives as kd
         rows, _te, _tk, _rate = kr.gather_priced_rows()
+        out["rows_debug"] = [{"t": r.get("t"), "mkt": r.get("mkt"),
+                              "etf": r.get("etf"), "ko": r.get("ko")} for r in rows]
         kr_codes = [r["t"] for r in rows if r.get("mkt") == "KR" and not r.get("etf")]
         out["kr_codes"] = kr_codes
         sf = kd.stock_futures_all(kr_codes)
