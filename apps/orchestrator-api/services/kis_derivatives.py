@@ -123,6 +123,8 @@ _FO_MASTER_URL = (
 
 _TIMEOUT = 20.0
 _LOOKBACK_DAYS = 10
+# KIS reports 선물옵션 누적거래대금 in 천원; multiply to get real KRW.
+_TURNOVER_KRW = 1000
 
 # Cached underlying-equity -> stock-futures-symbol map: {equity6: [futsym, ...]}.
 _sf_map_cache: Optional[dict[str, list[str]]] = None
@@ -355,7 +357,9 @@ def _callput_values(expiry: Optional[str] = None) -> tuple[Optional[int], Option
     def _sum(rows: list[dict]) -> Optional[int]:
         vals = [_to_int(_first(r, _KEY_VAL)) for r in rows]
         vals = [v for v in vals if v is not None]
-        return sum(vals) if vals else None
+        # KIS reports option 누적거래대금 (acml_tr_pbmn) in 천원 (= 프리미엄포인트
+        # × 250 × 계약수); the real KRW turnover is ×1000.
+        return sum(vals) * _TURNOVER_KRW if vals else None
 
     call_rows = _rows(data, "output1", "output")
     put_rows = _rows(data, "output2")
