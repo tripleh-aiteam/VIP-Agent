@@ -365,6 +365,8 @@ def kis_deriv_live(expiry: str = Query(""), fcode: str = Query(""),
                 ("callput_values", lambda: kd._callput_values()),
                 ("derivatives_turnover", lambda: kd.derivatives_turnover()),
                 ("stock_futures_005930", lambda: kd.stock_futures("005930")),
+                ("stock_futures_all", lambda: kd.stock_futures_all(
+                    ["000660", "005930", "017670", "018260", "035420"])),
             ):
                 try:
                     out[label] = fn()

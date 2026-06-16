@@ -130,6 +130,11 @@ _TURNOVER_KRW = 1000
 # Cached underlying-equity -> stock-futures-symbol map: {equity6: [futsym, ...]}.
 _sf_map_cache: Optional[dict[str, list[str]]] = None
 _sf_map_lock = threading.Lock()
+# Per-stock futures RESULT cache {equity6: (epoch, data)} — 6h TTL. Lets the
+# report's heavy call burst reuse a value instead of re-hitting (and being
+# throttled by) KIS, and falls back to the last good value on a transient miss.
+_sf_result_cache: dict[str, tuple[float, dict]] = {}
+_SF_RESULT_TTL = 6 * 3600
 
 # Response keys (verified vs official chk_*.py COLUMN_MAPPING). First present wins.
 _KEY_DATE = ("stck_bsop_date", "bsop_date", "stnd_date")
@@ -524,14 +529,19 @@ def stock_futures(equity_code: str) -> Optional[dict]:
         미결제약정 계약수), summed across the underlying's contract months.
         ``None`` if creds missing / no listed futures / API error. Never faked.
     """
-    if kis_client.get_token() is None:
-        return None
+    code6 = str(equity_code).strip().zfill(6)
+    # Serve a fresh cached value (avoids re-hitting KIS in the report's call burst).
+    cached = _sf_result_cache.get(code6)
+    if cached and (time.time() - cached[0]) < _SF_RESULT_TTL:
+        return cached[1]
 
-    symbols = _stock_futures_symbols(equity_code)
+    if kis_client.get_token() is None:
+        return cached[1] if cached else None
+
+    symbols = _stock_futures_symbols(code6)
     if not symbols:
-        logger.debug("kis_derivatives: no stock-futures symbol for %s",
-                     equity_code)
-        return None
+        logger.debug("kis_derivatives: no stock-futures symbol for %s", code6)
+        return cached[1] if cached else None
 
     date: Optional[str] = None
     vol_sum = 0
@@ -552,13 +562,16 @@ def stock_futures(equity_code: str) -> Optional[dict]:
             oi_sum += row["open_interest"]
 
     if not got_any:
-        return None
-    return {
+        # Transient failure (rate limit) — fall back to the last good value.
+        return cached[1] if cached else None
+    out = {
         "date": date,
         "volume": vol_sum or None,
         "value": val_sum or None,
         "open_interest": oi_sum or None,
     }
+    _sf_result_cache[code6] = (time.time(), out)
+    return out
 
 
 def stock_futures_all(codes: list[str]) -> dict[str, dict]:
@@ -579,11 +592,13 @@ def stock_futures_all(codes: list[str]) -> dict[str, dict]:
     result: dict[str, dict] = {}
     if kis_client.get_token() is None:
         return result
-    for code in codes:
+    for i, code in enumerate(codes):
         c = str(code).strip().zfill(6)
         row = stock_futures(c)
         if row is not None:
             result[c] = row
+        if i < len(codes) - 1:
+            time.sleep(0.3)   # space calls to stay under KIS burst limits
     return result
 
 
