@@ -299,6 +299,39 @@ def tool_stock_price_history(query: str = "", ticker: str = "", days: int = 14,
         return {"ok": False, "error": str(e)[:200]}
 
 
+def tool_stock_daily_history(query: str = "", ticker: str = "", days: int = 14,
+                             user_transcript: str = "", **_kw) -> dict[str, Any]:
+    """Daily OHLCV history (open/high/low/close/volume per day) for ONE Korean
+    stock, fetched LIVE from Naver — works for ANY KR ticker (not just the
+    watchlist) and goes back weeks/months. The authority for past-date price
+    questions ('어제 종가', '10일 전 주가', '지난주') and for computing technicals."""
+    q = (ticker or query or "").strip()
+    code, matched = _resolve_ticker(q)
+    if not code and user_transcript:
+        code, matched = _resolve_ticker(user_transcript)
+    if not code:
+        return {"ok": False, "error": f"Couldn't resolve '{q}' to a ticker."}
+    # Naver daily history is for Korean (6-digit) tickers only.
+    if not code.isdigit():
+        return {"ok": False,
+                "error": f"Daily history is available for Korean stocks only "
+                         f"(got {matched or code}). For US names I only have the live price."}
+    try:
+        days = max(1, min(int(days or 14), 120))
+    except Exception:
+        days = 14
+    try:
+        from services import naver_stock
+        rows = naver_stock.daily_history(code, days=days)
+    except Exception as e:
+        return {"ok": False, "error": str(e)[:200]}
+    if not rows:
+        return {"ok": False, "error": f"No daily history available for {matched or code} ({code})."}
+    return {"ok": True, "fetched_at": _now_kst_iso(), "ticker": code,
+            "name": matched or code, "days": len(rows), "history": rows,
+            "source": "Naver Finance daily OHLCV (live)"}
+
+
 # ============================================================================
 #  Registration
 # ============================================================================
@@ -324,11 +357,24 @@ _TOOL_DEFS: list[tuple[str, Callable, str, dict]] = [
         }, "required": ["query"]},
     ),
     (
+        "stock_get_daily_history", tool_stock_daily_history,
+        "LIVE daily OHLCV history (open/high/low/close/volume per day) for ONE "
+        "KOREAN stock from Naver — works for ANY KR ticker (not just the watchlist) "
+        "and goes back weeks/months. ⚠ USE THIS for EVERY past-date price question — "
+        "'yesterday's close', 'X 어제 종가', '10 days ago', 'X 10일 전 주가', "
+        "'last week', 'X 지난주 주가', 'how did X move over the past N days'. NEVER "
+        "answer a past-date price from memory — ALWAYS call this. Pass days=N for how "
+        "far back (default 14, max 120). Korean stocks only.",
+        {"type": "object", "properties": {
+            "query": {"type": "string", "description": "Company name or 6-digit ticker (삼성전자, 005930)"},
+            "days": {"type": "integer", "description": "How many trading days back (default 14, max 120)"},
+        }, "required": ["query"]},
+    ),
+    (
         "stock_price_history", tool_stock_price_history,
-        "Historical daily CLOSING prices of ONE stock from our stored records — use "
-        "for 'last week's price', '지난주 X 주가', 'how did X move over the past days', "
-        "or any past-date price question. Returns a date→close series the agent "
-        "remembers across days.",
+        "Historical daily CLOSING prices of ONE stock from our stored daily reports "
+        "(watchlist only, limited depth). Prefer stock_get_daily_history for past-date "
+        "price questions; use this only as a fallback for stored-report closes.",
         {"type": "object", "properties": {
             "query": {"type": "string", "description": "Company name or 6-digit ticker"},
             "days": {"type": "integer", "description": "How many recent days (default 14)"},

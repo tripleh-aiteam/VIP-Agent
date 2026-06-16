@@ -299,6 +299,42 @@ def _is_stock_advice(transcript: Optional[str], agent_id: Optional[str]) -> bool
     return _stock_in_query(transcript) is not None
 
 
+# Past-date markers + price words → a factual PAST-price lookup (never from memory).
+_PAST_DATE_KW = (
+    "어제", "전일", "전날", "엊그제", "그저께", "지난주", "지난 주", "지난달", "지난 달",
+    "일 전", "일전", "주 전", "달 전", "개월 전", "전 종가", "전 주가",
+    "yesterday", "last week", "last month", "days ago", "day ago", "weeks ago",
+    "week ago", "month ago",
+)
+_PRICEY_KW = ("주가", "종가", "가격", "시세", "얼마", "price", "close", "closing", "cost", "거래량")
+
+
+def _is_past_price(transcript: Optional[str]) -> bool:
+    """True when the user asks for a PAST-date price/volume of a specific stock —
+    e.g. '삼성전자 어제 종가', 'X 10일 전 주가', 'last week's SK Hynix price'. These
+    MUST be answered from real daily history, never the LLM's memory."""
+    t = (transcript or "").strip().lower()
+    if not t:
+        return False
+    if not any(k in t for k in _PAST_DATE_KW) or not any(k in t for k in _PRICEY_KW):
+        return False
+    return _stock_in_query(transcript) is not None
+
+
+def _history_days_for(transcript: Optional[str]) -> int:
+    """How many trading days of history to pull for a past-date question."""
+    m = _re.search(r"(\d+)\s*일", transcript or "")
+    if m:
+        try:
+            return max(5, min(int(m.group(1)) + 6, 120))
+        except Exception:
+            pass
+    t = (transcript or "").lower()
+    if any(k in t for k in ("지난달", "지난 달", "달 전", "개월", "month")):
+        return 45
+    return 30
+
+
 def _build_system_prompt(
     current_path: Optional[str] = None,
     selected_id: Optional[str] = None,
@@ -2305,6 +2341,32 @@ def _run_agent_impl(
         return _offline_answer(db, transcript=transcript, lang=lang,
                                agent_id=agent_id, page_context=page_context,
                                kb_context=kb_hits)
+
+    # ===== Deterministic PAST-DATE price routing =====
+    # 'X 어제 종가 / 10일 전 주가 / last week's price' MUST come from real daily
+    # history, never the LLM's memory (it otherwise hallucinates a number). Force
+    # the live Naver daily-history tool (stock agent) or relay to Stock (VIP).
+    if not confirmed_tool and _is_past_price(transcript):
+        aid = (agent_id or "vip").lower()
+        if aid == "stock" and "stock_get_daily_history" in TOOL_REGISTRY:
+            hist_steps = [{"tool": "stock_get_daily_history",
+                           "args": {"query": transcript, "days": _history_days_for(transcript)}}]
+            return _run_chain(db, transcript, lang, hist_steps, current_path,
+                              selected_id, system, history or [], agent_id=agent_id)
+        elif aid != "stock" and "ask_agent" in TOOL_REGISTRY:
+            res = execute_tool("ask_agent", {"agent": "stock", "question": transcript},
+                               db=db, agent_id=agent_id, transcript=transcript)
+            ans = None
+            if isinstance(res, dict):
+                for a in (res.get("answers") or []):
+                    if a.get("answer"):
+                        ans = a["answer"]
+                        break
+            if ans:
+                return {"intent": "stock_history", "language": lang,
+                        "reply": str(ans)[:1400], "action": None, "speak": True,
+                        "transcript": transcript, "tool_used": "ask_agent",
+                        "tool_result": res}
 
     # ===== Deterministic STOCK-ADVICE routing =====
     # The LLM (especially for Korean) tends to answer 'should I buy X / X 어때?'

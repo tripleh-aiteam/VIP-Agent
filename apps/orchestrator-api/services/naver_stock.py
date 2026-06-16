@@ -84,6 +84,40 @@ def investor_flows(code: str, days: int = 2) -> list[dict]:
     return out
 
 
+def daily_history(code: str, days: int = 20) -> list[dict]:
+    """Daily OHLCV history for a KR ticker from Naver Finance (free, no key).
+
+    Returns a NEWEST-FIRST list of
+    ``{date, open, high, low, close, change_pct, volume}`` (up to ``days`` rows,
+    capped at 120). ``[]`` on any failure. Works for ANY KR ticker and goes back
+    weeks/months — the basis for past-date price questions + technicals."""
+    try:
+        n = max(1, min(int(days or 20), 120))
+    except Exception:
+        n = 20
+    try:
+        r = httpx.get(f"{_BASE}/{code}/price?pageSize={n}&page=1",
+                      headers=_H, timeout=12).json()
+    except Exception as e:
+        log.warning(f"naver daily {code}: {str(e)[:80]}")
+        return []
+    out: list[dict] = []
+    for d in (r or []):
+        close = _num(d.get("closePrice"))
+        if close is None:
+            continue
+        out.append({
+            "date": (d.get("localTradedAt") or "")[:10],
+            "open": _num(d.get("openPrice")),
+            "high": _num(d.get("highPrice")),
+            "low": _num(d.get("lowPrice")),
+            "close": close,
+            "change_pct": _signed(d.get("fluctuationsRatio"), d.get("compareToPreviousPrice")),
+            "volume": _num(d.get("accumulatedTradingVolume")),
+        })
+    return out
+
+
 def enrich_kr(code: str) -> dict:
     """Combined real-time quote + NXT + latest investor flows for one KR ticker."""
     out: dict = {}
