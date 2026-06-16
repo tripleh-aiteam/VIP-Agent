@@ -2214,6 +2214,29 @@ def _run_agent_impl(
         else:
             lang = "en"
 
+    # === Stock agent = relay the Stock-Advisor app (single source of truth) ===
+    # The stock agent's answers (and therefore VIP's delegated answers) come from
+    # the SAME backend that powers the Stock app's "주식 AI" box, so every surface
+    # shows identical data + structure. On failure we fall through to the
+    # in-process stock engine below.
+    if (not confirmed_tool and not attachment_ids
+            and (agent_id or "").lower() == "stock"):
+        try:
+            from services import stock_advisor_chat
+            ext = stock_advisor_chat.ask(transcript, lang=lang, history=history or [])
+        except Exception as e:
+            log.warning(f"stock-advisor relay failed: {str(e)[:120]}")
+            ext = None
+        if ext and ext.get("reply"):
+            return {
+                "intent": ext.get("intent") or "stock_advisor",
+                "language": lang, "reply": str(ext["reply"])[:1800],
+                "action": ext.get("action"), "speak": True,
+                "transcript": transcript,
+                "tool_used": ext.get("tool_used") or "stock_advisor",
+                "source": "stock_advisor",
+            }
+
     # === Multimodal handling (Slice 3) ===
     # When the user attached files, we now have TWO possible flows:
     #
