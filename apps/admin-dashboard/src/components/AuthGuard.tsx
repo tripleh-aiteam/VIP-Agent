@@ -65,11 +65,16 @@ export default function AuthGuard({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     if (typeof window === "undefined") return;
     if ((window as any).__vipFetchPatched) return;
+    // Exact-origin match (NOT startsWith): a prefix check would leak the session
+    // token to look-alike hosts like `orchestrator.onrender.com.evil.com` or
+    // `orchestrator.onrender.com@evil.com`.
+    let apiOrigin = "";
+    try { apiOrigin = new URL(API).origin; } catch { /* relative/invalid API base */ }
     const orig = window.fetch.bind(window);
     window.fetch = (input: RequestInfo | URL, init?: RequestInit) => {
       try {
         const url = typeof input === "string" ? input : input instanceof URL ? input.href : (input as Request).url;
-        if (url && url.startsWith(API)) {
+        if (url && apiOrigin && new URL(url, window.location.href).origin === apiOrigin) {
           const h = authHeaders();
           if (Object.keys(h).length) {
             init = { ...(init || {}), headers: { ...((init && init.headers) || {}), ...h } };
