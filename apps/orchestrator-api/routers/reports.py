@@ -377,10 +377,21 @@ def kis_deriv_live(expiry: str = Query(""), fcode: str = Query(""),
             ft = _hx.get(f"{base}/uapi/domestic-futureoption/v1/quotations/display-board-top",
                          headers=_hdr("FHPIF05030000"),
                          params={"FID_COND_MRKT_DIV_CODE": "F", "FID_INPUT_ISCD": fcode or "101W09",
-                                 "FID_COND_SCR_DIV_CODE": "20105"}, timeout=20)
+                                 "FID_COND_MRKT_DIV_CODE1": "", "FID_COND_SCR_DIV_CODE": "20105",
+                                 "FID_MTRT_CNT": "", "FID_COND_MRKT_CLS_CODE": ""}, timeout=20)
             out["futures_raw"] = _shape(ft.json()) if ft.headers.get("content-type","").startswith("application/json") else {"status": ft.status_code, "text": _safe_msg(ft.text)}
         except Exception as e:
             out["futures_raw_err"] = str(e)[:200]
+        # Also probe the single-instrument 시세 (FHMIF10000000) for the front-month
+        # futures code — carries 누적거래대금 (acml_tr_pbmn) directly.
+        try:
+            ip = _hx.get(f"{base}/uapi/domestic-futureoption/v1/quotations/inquire-price",
+                         headers=_hdr("FHMIF10000000"),
+                         params={"FID_COND_MRKT_DIV_CODE": "F", "FID_INPUT_ISCD": fcode or "101W09"},
+                         timeout=20)
+            out["inquire_price_raw"] = _shape(ip.json()) if ip.headers.get("content-type","").startswith("application/json") else {"status": ip.status_code, "text": _safe_msg(ip.text)}
+        except Exception as e:
+            out["inquire_price_raw_err"] = str(e)[:200]
     except Exception as e:
         out["error"] = str(e)[:200]
     return out

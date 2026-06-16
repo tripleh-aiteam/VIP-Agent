@@ -172,6 +172,25 @@ def _date_range() -> tuple[str, str]:
     return start.strftime("%Y%m%d"), today.strftime("%Y%m%d")
 
 
+def _second_thursday(year: int, month: int) -> _dt.date:
+    """KOSPI200 monthly futures/options expire on the 2nd Thursday."""
+    d = _dt.date(year, month, 1)
+    first_thu = d + _dt.timedelta(days=(3 - d.weekday()) % 7)  # Thu=3
+    return first_thu + _dt.timedelta(days=7)
+
+
+def _front_expiry() -> str:
+    """Front (near) monthly KOSPI200 option/futures expiry as 'YYYYMM'.
+
+    If this month's 2nd-Thursday expiry has already passed, roll to next month —
+    that's where the liquid near-month contracts trade."""
+    today = _dt.date.today()
+    if today > _second_thursday(today.year, today.month):
+        y, m = (today.year + (today.month // 12), (today.month % 12) + 1)
+        return f"{y}{m:02d}"
+    return f"{today.year}{today.month:02d}"
+
+
 def _rows(data: dict, *keys: str) -> list[dict]:
     """Pull the first non-empty list-of-dicts from the named output keys."""
     for k in keys:
@@ -292,7 +311,7 @@ def _callput_values(expiry: Optional[str] = None) -> tuple[Optional[int], Option
         "FID_COND_MRKT_DIV_CODE": _MKT_OPTION,
         "FID_COND_SCR_DIV_CODE": "20503",
         "FID_MRKT_CLS_CODE": "CO",   # Call
-        "FID_MTRT_CNT": expiry or "",
+        "FID_MTRT_CNT": expiry or _front_expiry(),   # 만기 YYYYMM (required)
         "FID_MRKT_CLS_CODE1": "PO",  # Put
         "FID_COND_MRKT_CLS_CODE": "",
     }
