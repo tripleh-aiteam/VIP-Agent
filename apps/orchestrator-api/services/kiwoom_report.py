@@ -699,7 +699,10 @@ def _derivatives_block(rows: list[dict]) -> tuple[str, str, str]:
             f"풋옵션={_krw_big(pv)}" + (f", 풋/콜={pcr:.2f} "
             "(>1=풋 우위/헤지·약세심리, <1=콜 우위/강세심리)" if pcr is not None else ""))
 
-    kr_codes = [r["t"] for r in rows if r.get("mkt") == "KR" and not r.get("etf")]
+    # NOTE: r["etf"] is the RELATED-ETF name string (e.g. "KODEX 200"), not a
+    # boolean — actual ETFs are tagged "(ETF)". So filter on that, not truthiness.
+    kr_codes = [r["t"] for r in rows
+                if r.get("mkt") == "KR" and r.get("etf") != "(ETF)"]
     name_ko = {r["t"]: r["ko"] for r in rows}
     name_en = {r["t"]: r["en"] for r in rows}
     try:
