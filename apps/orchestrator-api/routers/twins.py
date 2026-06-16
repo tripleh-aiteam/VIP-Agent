@@ -48,15 +48,29 @@ def list_llm_models():
 
 
 @router.get("/llm/ping")
-def ping_llm_model(model: Optional[str] = None):
-    """Health-check a model (or all catalog models) by calling it directly with
-    NO fallback. Returns per-model ok/error so a broken model id is visible.
-    Usage: /twins/llm/ping?model=gpt-5.5  — or no model to ping the whole catalog.
+def ping_llm_model(
+    model: Optional[str] = None,
+    x_user_email: Optional[str] = Header(default=None),
+    x_user_token: Optional[str] = Header(default=None),
+    db: Session = Depends(get_db),
+):
+    """ADMIN-ONLY diagnostic. Health-check a model (or all available catalog
+    models) by calling it directly with NO fallback, so a broken model id is
+    visible instead of masked. Each ping triggers a real (tiny) paid API call,
+    so it requires an admin/operator login session.
+    Usage: /twins/llm/ping?model=gpt-5.5  — or no model to ping available models.
     """
-    from services.llm_client import ping_model, MODEL_CATALOG
+    user = auth_service.verify_session_token(db, x_user_email or "", x_user_token or "")
+    if not user or user.role not in ("admin", "operator"):
+        raise HTTPException(status_code=403, detail="Admin session required")
+
+    from services.llm_client import ping_model, list_available_models
     if model:
         return ping_model(model)
-    results = [ping_model(m) for m in MODEL_CATALOG.keys()]
+    # ping-all: only models whose API key is configured, capped — avoids pointless
+    # calls and bounds the work per request.
+    available = [m["id"] for m in list_available_models() if m.get("available")][:25]
+    results = [ping_model(m) for m in available]
     return {
         "total": len(results),
         "ok": sum(1 for r in results if r["ok"]),
