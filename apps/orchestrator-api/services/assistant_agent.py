@@ -321,6 +321,26 @@ def _is_past_price(transcript: Optional[str]) -> bool:
     return _stock_in_query(transcript) is not None
 
 
+# Clear stock-domain keywords (besides a specific stock name).
+_STOCK_Q_KW = (
+    "주가", "종가", "현재가", "시세", "코스피", "코스닥", "kospi", "kosdaq", "증시",
+    "종목", "주식", "stock", "shares", "수급", "순매수", "공매도", "배당", "dividend",
+    "etf", "목표주가", "상한가", "하한가", "나스닥", "nasdaq", "s&p", "실적", "per ", "pbr",
+)
+
+
+def _is_stock_question(transcript: Optional[str]) -> bool:
+    """True when the message is clearly about stocks — a resolvable stock name/code
+    OR a stock-domain keyword. Used to make VIP delegate EVERY stock question to
+    the Stock agent so the two agents always give the same answer."""
+    t = (transcript or "").strip().lower()
+    if not t:
+        return False
+    if _stock_in_query(transcript) is not None:
+        return True
+    return any(k in t for k in _STOCK_Q_KW)
+
+
 def _history_days_for(transcript: Optional[str]) -> int:
     """How many trading days of history to pull for a past-date question."""
     m = _re.search(r"(\d+)\s*일", transcript or "")
@@ -2341,6 +2361,27 @@ def _run_agent_impl(
         return _offline_answer(db, transcript=transcript, lang=lang,
                                agent_id=agent_id, page_context=page_context,
                                kb_context=kb_hits)
+
+    # ===== VIP → Stock delegation (single source of truth) =====
+    # ANY stock question asked in VIP (or another non-stock agent) is answered by
+    # the Stock agent itself — verbatim transcript, same engine — so VIP and Stock
+    # ALWAYS give the same answer. Runs before the per-topic short-circuits below.
+    if (not confirmed_tool and (agent_id or "vip").lower() != "stock"
+            and "ask_agent" in TOOL_REGISTRY and _is_stock_question(transcript)):
+        res = execute_tool("ask_agent", {"agent": "stock", "question": transcript},
+                           db=db, agent_id=agent_id, transcript=transcript)
+        ans = None
+        if isinstance(res, dict):
+            for a in (res.get("answers") or []):
+                if a.get("answer"):
+                    ans = a["answer"]
+                    break
+        if ans:
+            return {"intent": "stock_delegated", "language": lang,
+                    "reply": str(ans)[:1600], "action": None, "speak": True,
+                    "transcript": transcript, "tool_used": "ask_agent",
+                    "tool_result": res}
+        # If the Stock agent gave nothing, fall through to the normal VIP path.
 
     # ===== Deterministic PAST-DATE price routing =====
     # 'X 어제 종가 / 10일 전 주가 / last week's price' MUST come from real daily
