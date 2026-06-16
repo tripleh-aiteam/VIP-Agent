@@ -347,7 +347,7 @@ export default function TwinsPage() {
 
   // Priority twins shown at the top of the list. The order in this array
   // is the order they appear (after applying any filter).
-  const PRIORITY_TWIN_NAMES = ["김현성", "이승현", "이승준", "Shakhzod", "Davronbek Twin"];
+  const PRIORITY_TWIN_NAMES = ["Boss Twin", "Vice President Twin", "김현성", "Shakhzod", "이승현", "Davronbek Twin"];
   function priorityRank(name: string): number {
     const idx = PRIORITY_TWIN_NAMES.indexOf(name);
     return idx === -1 ? 999 : idx;
