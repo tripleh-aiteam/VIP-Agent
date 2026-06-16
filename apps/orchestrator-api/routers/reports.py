@@ -323,6 +323,7 @@ def kis_deriv_master():
     out = {}
     masters = {
         "fo_idx": "https://new.real.download.dws.co.kr/common/master/fo_idx_code.mst.zip",
+        "fo_stk": "https://new.real.download.dws.co.kr/common/master/fo_stk_code.mst.zip",
         "fo_com": "https://new.real.download.dws.co.kr/common/master/fo_com_code.mst.zip",
     }
     for name, url in masters.items():

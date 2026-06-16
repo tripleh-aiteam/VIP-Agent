@@ -227,7 +227,8 @@ def _newest_daily_row(data: dict) -> Optional[dict]:
         parsed.append({
             "date": d,
             "volume": vol,
-            "value": val,
+            # KIS reports 거래대금 (acml_tr_pbmn) in 천원 → ×1000 for real KRW.
+            "value": (val * _TURNOVER_KRW) if val is not None else None,
             "open_interest": _to_int(_first(r, _KEY_OI)),
         })
     if not parsed:
@@ -305,10 +306,13 @@ def _active_futures_code() -> Optional[str]:
             logger.warning("kis_derivatives: no KOSPI200 futures in index master.")
             return None
         candidates.sort()
-        chosen = candidates[0][1]
+        master_code = candidates[0][1]
+        # The master 단축코드 is like '1A01609'; the API's FID_INPUT_ISCD wants it
+        # WITHOUT the leading market digit -> 'A01609' (verified live).
+        chosen = master_code[1:] if master_code.startswith("1") else master_code
         _idx_fut_cache = (chosen, time.time())
-        logger.info("kis_derivatives: front-month KOSPI200 futures code=%s (expiry=%s)",
-                    chosen, candidates[0][0])
+        logger.info("kis_derivatives: front-month KOSPI200 futures code=%s "
+                    "(master=%s, expiry=%s)", chosen, master_code, candidates[0][0])
         return chosen
 
 
