@@ -1373,7 +1373,7 @@ def _run_multimodal_path(
             system_prompt=sys,
             user_text=full_user,
             attachments=image_or_pdf,
-            model="gemini-2.5-pro",
+            model="gemini-3.1-pro-preview",
             max_tokens=800,
             temperature=0.4,
         )

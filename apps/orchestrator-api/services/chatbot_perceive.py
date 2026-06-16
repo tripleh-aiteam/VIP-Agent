@@ -64,7 +64,7 @@ async def perceive_image(file_bytes: bytes, content_type: str, user_hint: str = 
     try:
         async with httpx.AsyncClient(timeout=60) as client:
             r = await client.post(
-                f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={gemini_key}",
+                f"https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent?key={gemini_key}",
                 json=body,
             )
             if r.status_code != 200:
@@ -72,7 +72,7 @@ async def perceive_image(file_bytes: bytes, content_type: str, user_hint: str = 
                         "meta": {"error": r.text[:200]}}
             j = r.json()
             text = j["candidates"][0]["content"]["parts"][0]["text"].strip()
-            return {"content": text, "kind": "image", "meta": {"size_bytes": len(file_bytes), "engine": "gemini-2.5-flash"}}
+            return {"content": text, "kind": "image", "meta": {"size_bytes": len(file_bytes), "engine": "gemini-3.5-flash"}}
     except Exception as e:
         return {"content": f"[Vision call failed: {e}]", "kind": "image", "meta": {"error": str(e)}}
 

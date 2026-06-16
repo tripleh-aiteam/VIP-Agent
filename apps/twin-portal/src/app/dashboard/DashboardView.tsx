@@ -1525,8 +1525,11 @@ export function DashboardView({ onLogout }: Props) {
       "claude-haiku-4-5":  "Haiku 4.5",
       "gpt-4o":            "GPT-4o",
       "gpt-4o-mini":       "GPT-4o mini",
-      "gemini-2.0-flash":  "Gemini 2.0",
-      "gemini-1.5-pro":    "Gemini 1.5",
+      "gemini-3.5-flash":          "Gemini 3.5 Flash",
+      "gemini-3.5-live-translate": "Gemini 3.5 Live Translate",
+      "gemini-3.1-pro":            "Gemini 3.1 Pro",
+      "gemini-3.1-flash-lite":     "Gemini 3.1 Flash-Lite",
+      "gemini-3.1-flash-image":    "Gemini 3.1 Flash Image",
       "llama3":            "Llama 3",
       "qwen2.5":           "Qwen 2.5",
       "gemma3":            "Gemma 3",
@@ -1676,7 +1679,7 @@ export function DashboardView({ onLogout }: Props) {
                       {[
                         { group: "Cloud — Claude", provider: "anthropic", models: ["claude-opus-4-7", "claude-sonnet-4-6", "claude-haiku-4-5"] },
                         { group: "Cloud — OpenAI", provider: "openai", models: ["gpt-4o", "gpt-4o-mini"] },
-                        { group: "Cloud — Gemini", provider: "gemini", models: ["gemini-2.0-flash", "gemini-1.5-pro"] },
+                        { group: "Cloud — Gemini", provider: "gemini", models: ["gemini-3.5-flash", "gemini-3.5-live-translate", "gemini-3.1-pro", "gemini-3.1-flash-lite", "gemini-3.1-flash-image"] },
                         { group: "Local — Ollama", provider: "ollama", models: ["llama3", "qwen2.5", "gemma3", "phi-4"] },
                       ].map(group => (
                         <div key={group.group}>

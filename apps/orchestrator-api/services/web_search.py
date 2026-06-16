@@ -156,11 +156,11 @@ def _gemini_grounded(query: str, n: int) -> list[dict[str, Any]]:
         flash = [m for m in discovered
                  if "flash" in m and not any(b in m for b in _BAD)]
         # Prefer known-good stable text models first.
-        _PREF = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-2.0-flash-001",
+        _PREF = ["gemini-3.5-flash", "gemini-3.1-flash-lite",
                  "gemini-flash-latest"]
         models = ([m for m in _PREF if m in discovered]
                   + [m for m in flash if m not in _PREF]
-                  + ["gemini-2.0-flash"])[:3]
+                  + ["gemini-flash-latest"])[:3]
     last_err = None
     with httpx.Client(timeout=20.0) as c:
         for model in models:

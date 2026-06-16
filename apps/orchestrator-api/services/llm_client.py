@@ -5,7 +5,7 @@ Routes chat requests to the right provider based on model name.
 Supported providers (all called over HTTP ??no extra SDKs needed):
 - Anthropic Claude: claude-opus-4-7, claude-sonnet-4-6, claude-haiku-4-5
 - OpenAI: gpt-4o, gpt-4o-mini
-- Google Gemini: gemini-2.0-flash, gemini-1.5-pro
+- Google Gemini: gemini-3.5-flash, gemini-3.1-pro, gemini-3.1-flash-lite
 - Local Ollama: llama3, qwen2.5, gemma3, phi-4 (and any ollama tag)
 
 Env vars:
@@ -34,11 +34,12 @@ MODEL_CATALOG = {
     # --- OpenAI ---
     "gpt-4o":      ("openai", "gpt-4o"),
     "gpt-4o-mini": ("openai", "gpt-4o-mini"),
-    # --- Google Gemini ---
-    "gemini-2.0-flash": ("gemini", "gemini-2.5-flash"),     # 2.0 deprecated; route to 2.5
-    "gemini-1.5-pro":   ("gemini", "gemini-2.5-pro"),       # 1.5 deprecated; route to 2.5
-    "gemini-2.5-flash": ("gemini", "gemini-2.5-flash"),     # current name
-    "gemini-2.5-pro":   ("gemini", "gemini-2.5-pro"),       # current name (Pro plan)
+    # --- Google Gemini (3.x lineup — newest, updated 2026-06-16) ---
+    "gemini-3.5-flash":          ("gemini", "gemini-3.5-flash"),           # GA: token-efficient, high intelligence/$, multi-turn agentic
+    "gemini-3.5-live-translate": ("gemini", "gemini-3.5-live-translate"),  # low-latency natural voice translation (Live API)
+    "gemini-3.1-pro":            ("gemini", "gemini-3.1-pro-preview"),     # most capable: complex reasoning/coding (Preview)
+    "gemini-3.1-flash-lite":     ("gemini", "gemini-3.1-flash-lite"),      # high-volume, max speed, very low cost
+    "gemini-3.1-flash-image":    ("gemini", "gemini-3.1-flash-image"),     # native fast multimodal / image understanding
     # --- Groq (LPU-based, 200-500ms latency, OpenAI-compatible API) ---
     # Free tier on console.groq.com. Fastest option for latency-sensitive
     # Kakao chatbot. Set GROQ_API_KEY env var to enable.
@@ -354,7 +355,7 @@ def gemini_multimodal_sync(
     user_text: str,
     attachments: list[dict],
     *,
-    model: str = "gemini-2.5-pro",
+    model: str = "gemini-3.1-pro-preview",
     max_tokens: int = 800,
     temperature: float = 0.4,
     timeout: float = 90.0,
@@ -368,9 +369,9 @@ def gemini_multimodal_sync(
     failure. Use this from assistant_agent when the user uploaded files —
     Gemini's inlineData accepts images directly without intermediate hosting.
 
-    Model defaults to gemini-2.5-pro because the cheap Flash tier
+    Model defaults to gemini-3.1-pro-preview because the cheap Flash tier
     frequently refuses to describe images of UI/data; Pro reliably returns
-    a useful response. Pass `model="gemini-2.5-flash"` to override for
+    a useful response. Pass `model="gemini-3.5-flash"` to override for
     cost/latency-sensitive use cases.
     """
     import base64 as _b64
@@ -596,12 +597,12 @@ def chat_completion_sync(
 
     # Free tier #2 — Gemini 2.5 Flash (free, 15 RPM / 1.5M TPM)
     if _env("GEMINI_API_KEY") or _env("GOOGLE_API_KEY"):
-        ok, result = _call_gemini("gemini-2.5-flash", system_prompt, messages,
+        ok, result = _call_gemini("gemini-3.5-flash", system_prompt, messages,
                                   max_tokens, temperature)
         if ok:
-            _last_used.update({"provider": "gemini", "model": "gemini-2.5-flash (free fallback)"})
+            _last_used.update({"provider": "gemini", "model": "gemini-3.5-flash (free fallback)"})
             return result
-        attempt_log.append(f"gemini-2.5-flash (free fallback): {str(result)[:200]}")
+        attempt_log.append(f"gemini-3.5-flash (free fallback): {str(result)[:200]}")
 
     # Paid tier — OpenAI gpt-4o-mini (only fires if you've topped up credits)
     if openai_key:

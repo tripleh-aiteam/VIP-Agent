@@ -43,7 +43,7 @@ SUPPORTED_CLIENT_RANGE = "1.x"
 # Frontend then includes `attachment_ids` in the next /chat/agent request.
 # The assistant_agent reads each attachment, builds a Gemini multimodal
 # message (image/pdf/text inlineData), and runs the query against
-# gemini-2.5-pro (auto-promoted whenever an attachment is present).
+# gemini-3.1-pro-preview (auto-promoted whenever an attachment is present).
 #
 # Storage is filesystem for now — fine for the boss-side Assistant. If we
 # expose this to many customers later, swap in S3/GCS via env var.
@@ -569,7 +569,7 @@ async def transcribe_audio(file: UploadFile = File(...)):
         }
         async with httpx.AsyncClient(timeout=60) as client:
             resp = await client.post(
-                f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={gemini_key}",
+                f"https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent?key={gemini_key}",
                 json=gem_body,
             )
             if resp.status_code != 200:

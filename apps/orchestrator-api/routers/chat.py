@@ -391,7 +391,7 @@ async def transcribe_audio(file: UploadFile = File(...)):
         # (Lite has a tendency to hallucinate "here's the transcript:" loops)
         async with httpx.AsyncClient(timeout=60) as client:
             resp = await client.post(
-                f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={gemini_key}",
+                f"https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent?key={gemini_key}",
                 json=body,
             )
             if resp.status_code != 200:
