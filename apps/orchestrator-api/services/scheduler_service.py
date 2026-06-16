@@ -885,87 +885,46 @@ def _newspaper_daily_report(email_override: str | None = None, period: str = "da
         db.close()
 
 
-@with_retry(max_attempts=2, backoff_seconds=(60, 300), job_name="youtube_daily_report")
+@with_retry(max_attempts=2, backoff_seconds=(60, 300), job_name="youtube_grounded_deliver")
 def _youtube_daily_report(email_override: str | None = None, period: str = "daily", lang: str = "ko"):
-    """Daily YouTube (video analysis) report — runs ~6:30 AM KST. Real channel
-    transcripts/coverage + the same watchlist table. `email_override` for tests."""
-    from services.youtube_report import build_youtube_report
-    from services.kiwoom_report import format_report_telegram
+    """Deliver the GROUNDED YouTube report produced by the colleague's GPU
+    pipeline (read-only — we never regenerate it). Always fetches the LATEST
+    gpu_youtube row from orch_reports and emails its EXACT subject/body + the 4
+    pre-rendered files BYTE-FOR-BYTE. Used by the 6:50 schedule (all members) and
+    the on-demand button. `email_override`: "*ALL*" / a single address / a list —
+    controls recipients (default = the full recipient list)."""
+    from services import youtube_grounded
+    from services.report_email import is_configured as _email_ok, default_recipients
     from services.telegram_service import send_alert
-    from db.models import OrchReport
 
     db = SessionLocal()
     trace = f"tr-yt-{int(datetime.utcnow().timestamp())}"
-    kst = kst_label()
     try:
-        rep = build_youtube_report(db, trace)
-        r = OrchReport(
-            report_type="youtube_report",
-            source_run_ids_json=[],
-            content_json={
-                "report_type": "youtube_report", "period": period,
-                "executive_summary": rep.get("summary_en") or "YouTube market analysis",
-                "sections": [{"title": "YouTube Daily", "content": rep.get("table_en", ""), "data": {}}],
-                "report": rep,
-                "generated_at": datetime.utcnow().isoformat(), "kst_time": kst,
-            },
-            delivery_channel="auto",
-        )
-        db.add(r)
-        db.commit()
+        if email_override == "*ALL*" or email_override is None:
+            recipients = default_recipients()
+        elif isinstance(email_override, list):
+            recipients = email_override
+        else:
+            recipients = [email_override]
 
+        if not _email_ok():
+            log.info("youtube(grounded): email skipped (SMTP not configured)",
+                     extra={"action": "youtube.grounded.skip"})
+            return
+        res = youtube_grounded.deliver(db, recipients, lang=lang)
+        log.info(f"youtube(grounded): {'sent' if res.get('ok') else 'skipped'} -> "
+                 f"{recipients} ({res.get('reason', 'ok')})",
+                 extra={"trace_id": trace, "action": "youtube.grounded.email"})
         try:
-            for chunk in format_report_telegram(rep, kst, lang="ko",
-                                                title="YouTube Market Analysis", emoji="📺"):
-                send_alert(chunk)
-        except Exception as te:
-            log.warning(f"youtube telegram format failed: {te}")
-            send_alert(f"📺 <b>YouTube Market Analysis</b>\n<i>{kst}</i>\n\n"
-                       f"{rep.get('summary_en', '')[:300]}\n\n<i>View → Reports → YouTube</i>")
-
-        try:
-            from services.report_docx import markdown_to_docx
-            from services.report_email import (send_email_with_docs,
-                                               is_configured as _email_ok, DEFAULT_RECIPIENT,
-                                               default_recipients)
-            if email_override == "*ALL*":
-                to_addr = default_recipients()
-            else:
-                to_addr = (email_override or os.getenv("YOUTUBE_REPORT_EMAIL")
-                           or os.getenv("REPORT_EMAIL_TO") or DEFAULT_RECIPIENT)
-            if (email_override or os.getenv("SEND_INDIVIDUAL_EMAILS") == "1") and _email_ok() and to_addr:
-                ymd = datetime.utcnow().strftime("%Y%m%d")
-                en_md = rep.get("detail_en") or ""
-                ko_md = rep.get("detail_ko") or en_md
-                if len(ko_md.strip()) < 200 or "same report in korean" in ko_md.lower():
-                    ko_md = en_md
-                # Attach ONLY the chosen language (default Korean — no English).
-                files = []
-                if lang == "en" and en_md:
-                    files.append((f"YouTube_Report_EN_{ymd}.docx",
-                                  markdown_to_docx(en_md, "YouTube Market Analysis (English)", kst)))
-                else:
-                    md = ko_md or en_md
-                    if md:
-                        files.append((f"YouTube_Report_{ymd}.docx",
-                                      markdown_to_docx(md, "유튜브 영상 분석 리포트", kst)))
-                res = send_email_with_docs(
-                    to_addr, f"[YouTube] 일일 영상 분석 — {kst}",
-                    "일일 유튜브 영상 시장 분석 리포트입니다. 첨부된 Word 파일을 확인해 주세요.",
-                    files)
-                log.info(f"youtube: email {'sent' if res.get('ok') else 'skipped'} -> {to_addr}"
-                         f" ({res.get('reason', 'ok')})",
-                         extra={"trace_id": trace, "action": "youtube.email"})
-            else:
-                log.info("youtube: email skipped (SMTP not configured or no recipient)",
-                         extra={"action": "youtube.email.skip"})
-        except Exception as ee:
-            log.warning(f"youtube: email step failed: {ee}", extra={"action": "youtube.email.failed"})
-
-        log.info(f"youtube: daily report saved + sent ({rep['status']})",
-                 extra={"trace_id": trace, "action": "youtube.daily.done"})
+            if res.get("ok"):
+                send_alert("📺 <b>YouTube 그라운드 리포트 발송</b>\n"
+                           f"<i>{res.get('subject', '')}</i>\n"
+                           f"{res.get('n_files', 0)}개 파일 · {len(recipients)}명 수신")
+        except Exception:
+            pass
     except Exception as e:
-        log.warning(f"youtube: daily report failed: {e}", extra={"action": "youtube.daily.failed"})
+        log.warning(f"youtube(grounded): delivery failed: {e}",
+                    extra={"action": "youtube.grounded.failed"})
     finally:
         db.close()
 
@@ -1047,9 +1006,10 @@ def _master_daily_report(email_override: str | None = None, period: str = "daily
                     ("1_키움_Kiwoom", "키움 데일리 리포트", kiwoom_rp),
                     ("2_신문_Newspaper", "신문 요약 리포트", news_rp),
                 ]
-                if not is_weekend:
-                    pieces.append(("3_유튜브_YouTube", "유튜브 요약 리포트", youtube_rp))
-                pieces.append(("4_추천_Recommendation", "종합 추천 리포트", rep))
+                # The grounded YouTube report is delivered as its OWN email
+                # (_youtube_daily_report → colleague's exact files), so it is NOT
+                # re-rendered into this consolidated email.
+                pieces.append(("3_추천_Recommendation", "종합 추천 리포트", rep))
                 files = []
                 for fn, title, rp in pieces:
                     md = _ko(rp)
@@ -1058,16 +1018,13 @@ def _master_daily_report(email_override: str | None = None, period: str = "daily
 
                 _kor = {"daily": "데일리", "weekly": "주간", "monthly": "월간"}.get(period, "데일리")
                 n_rep = len(files)
-                _yt_line = "" if is_weekend else "3. 유튜브 요약 리포트 — 금융 유튜브 채널 분석\n"
-                _rec_no = "3" if is_weekend else "4"
                 intro = (
                     "안녕하세요 사장님,\n\n"
                     f"{kst} 기준 {_kor} 리포트 {n_rep}건을 보내드립니다:\n"
                     f"1. 키움 {_kor} 리포트 — 시세·기술적 분석\n"
                     "2. 신문 요약 리포트 — 주요 신문사 뉴스 분석\n"
-                    f"{_yt_line}"
-                    f"{_rec_no}. 종합 추천 리포트 — 위 리포트를 종합한 투자 의견 및 일정매매 포인트\n\n"
-                    + ("※ 주말에는 시장 휴장으로 유튜브 요약은 제외됩니다.\n\n" if is_weekend else "")
+                    "3. 종합 추천 리포트 — 위 리포트를 종합한 투자 의견 및 일정매매 포인트\n\n"
+                    + "※ 유튜브 그라운드 리포트는 별도 메일로 발송됩니다.\n\n"
                     + "각 리포트는 첨부된 Word 파일에서 확인하실 수 있습니다.\n\n"
                     "감사합니다.\nTripleH AI"
                 )
@@ -1148,12 +1105,17 @@ def run_all_reports_now(email_override: str | None = None, lang: str = "ko"):
     (default 'ko' = Korean only; 'en' for English)."""
     log.info("run-all: on-demand generation started", extra={"action": "runall.start"})
     for fn, label in ((_kiwoom_daily_report, "kiwoom"),
-                      (_newspaper_daily_report, "newspaper"),
-                      (_youtube_daily_report, "youtube")):
+                      (_newspaper_daily_report, "newspaper")):
         try:
             fn(lang=lang)  # sources save to dashboard (individual email stays off)
         except Exception as e:
             log.warning(f"run-all: {label} failed: {str(e)[:120]}", extra={"action": "runall.src.failed"})
+    # Grounded YouTube delivers its OWN email (latest gpu_youtube files). Respect a
+    # test override; None → full recipient list.
+    try:
+        _youtube_daily_report(email_override=email_override, lang=lang)
+    except Exception as e:
+        log.warning(f"run-all: youtube failed: {str(e)[:120]}", extra={"action": "runall.src.failed"})
     try:
         _master_daily_report(email_override=email_override, lang=lang)  # emails the consolidated 4-file
     except Exception as e:
@@ -1262,14 +1224,17 @@ def init_scheduler():
     )
     log.info("scheduler: Newspaper report registered (21:30 UTC = 6:30 AM KST)", extra={"action": "scheduler.newspaper_registered"})
 
-    # YouTube (video analysis) report — 6:30 AM KST = 21:30 UTC, weekdays KST.
+    # Grounded YouTube report (colleague's GPU pipeline) — delivered as its OWN
+    # email to ALL members at 6:50 AM KST = 21:50 UTC, every day. It only READS
+    # the latest gpu_youtube row + attaches the pre-rendered files byte-for-byte.
     _scheduler.add_job(
         _youtube_daily_report,
-        CronTrigger.from_crontab("30 21 * * 0-4"),
+        CronTrigger.from_crontab("50 21 * * *"),   # every day (incl Sat/Sun KST)
+        kwargs={"email_override": "*ALL*"},
         id="youtube-daily-report",
         replace_existing=True,
     )
-    log.info("scheduler: YouTube report registered (21:30 UTC = 6:30 AM KST)", extra={"action": "scheduler.youtube_registered"})
+    log.info("scheduler: grounded YouTube delivery registered (21:50 UTC = 6:50 AM KST)", extra={"action": "scheduler.youtube_registered"})
 
     # Master synthesis report — 6:50 AM KST = 21:50 UTC, weekdays (after the 3).
     _scheduler.add_job(

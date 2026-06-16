@@ -468,6 +468,19 @@ def kis_deriv_live(expiry: str = Query(""), fcode: str = Query(""),
     return out
 
 
+@router.get("/youtube/latest")
+def youtube_latest(db: Session = Depends(get_db)):
+    """Latest GROUNDED YouTube report (delivery_channel='gpu_youtube') for the web
+    UI tab — structured rows/recommendations/summaries/sources + the 4 file URLs +
+    the 'generated_at_kst' so the UI can show it's a morning snapshot. Returns
+    {available: false} if the colleague's pipeline hasn't written a row yet."""
+    from services import youtube_grounded
+    payload = youtube_grounded.latest_payload(db)
+    if not payload:
+        return {"available": False}
+    return {"available": True, **payload}
+
+
 @router.get("/llm-check")
 def llm_check():
     """Diagnostic: do a tiny prefer_paid test call and report which provider
