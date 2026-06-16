@@ -498,12 +498,14 @@ def reindex_all_knowledge(
     x_user_token: Optional[str] = Header(default=None),
     db: Session = Depends(get_db),
 ):
-    """Admin: embed missing vectors for EVERY twin (one-time backfill)."""
+    """Admin: embed missing vectors for EVERY twin (one-time backfill).
+
+    Always requires an admin/operator session — never fails open (this triggers
+    paid embedding calls). For per-twin backfill use POST /{id}/knowledge/reindex.
+    """
     user = auth_service.verify_session_token(db, x_user_email or "", x_user_token or "")
     if not user or user.role not in ("admin", "operator"):
-        # Allow in grace mode (no enforcement) so the boss can backfill before lockdown.
-        if _auth_enforced():
-            raise HTTPException(status_code=403, detail="Admin session required")
+        raise HTTPException(status_code=403, detail="Admin session required")
     results = []
     for tw in twin_service.list_twins(db):
         try:
