@@ -276,7 +276,11 @@ def kis_deriv_check():
            # truncated at the end.
            "secret_plus": _s.count("+"), "secret_slash": _s.count("/"),
            "secret_tail2": _s[-2:] if len(_s) >= 2 else _s,
-           "secret_has_space": " " in _s}
+           "secret_has_space": " " in _s,
+           # AppKey head/tail (4 chars each) to confirm it matches the issued key
+           # (PS5t…Ok4B) — rules out a wrong/mismatched AppKey vs the secret.
+           "key_head4": _k[:4], "key_tail4": _k[-4:] if len(_k) >= 4 else _k,
+           "key_has_space": " " in _k}
     # Try real (실전) first, then mock (모의/VTS) — EGW00105 'invalid AppSecret'
     # on the wrong domain means the key belongs to the other environment.
     bases = ["https://openapi.koreainvestment.com:9443",
