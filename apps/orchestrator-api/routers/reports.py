@@ -316,24 +316,71 @@ def kis_deriv_check():
 
 
 @router.get("/kis-deriv-live")
-def kis_deriv_live():
-    """Exercise the REAL kis_derivatives functions live and report their outputs
-    (+ sanitized errors) so the futures/option TR params can be pinned."""
+def kis_deriv_live(expiry: str = Query(""), fcode: str = Query(""),
+                   raw: bool = Query(False)):
+    """Exercise the REAL kis_derivatives functions live, or (raw=1) probe the
+    board endpoints directly with ?expiry=YYYYMM&fcode=<futures code> so the TR
+    params can be pinned without redeploying. Derivatives quotes are not secret."""
     out = {}
     try:
         from services import kis_client, kis_derivatives as kd
-        out["token_ok"] = kis_client.get_token() is not None
-        out["active_base"] = getattr(kis_client, "_active_base", None)
-        for label, fn in (
-            ("active_futures_code", lambda: kd._active_futures_code()),
-            ("callput_values", lambda: kd._callput_values()),
-            ("derivatives_turnover", lambda: kd.derivatives_turnover()),
-            ("stock_futures_005930", lambda: kd.stock_futures("005930")),
-        ):
-            try:
-                out[label] = fn()
-            except Exception as e:
-                out[label + "_err"] = str(e)[:200]
+        import httpx as _hx
+        tok = kis_client.get_token()
+        out["token_ok"] = tok is not None
+        base = getattr(kis_client, "_active_base", None) or "https://openapi.koreainvestment.com:9443"
+        out["active_base"] = base
+        if not raw:
+            for label, fn in (
+                ("active_futures_code", lambda: kd._active_futures_code()),
+                ("callput_values", lambda: kd._callput_values()),
+                ("derivatives_turnover", lambda: kd.derivatives_turnover()),
+                ("stock_futures_005930", lambda: kd.stock_futures("005930")),
+            ):
+                try:
+                    out[label] = fn()
+                except Exception as e:
+                    out[label + "_err"] = str(e)[:200]
+            return out
+
+        # raw probes — show rt_cd/msg + output shapes for the two board TRs.
+        def _hdr(tr_id):
+            k, s = kis_client._creds()
+            return {"authorization": f"Bearer {tok}", "appkey": k or "", "appsecret": s or "",
+                    "tr_id": tr_id, "custtype": "P", "content-type": "application/json; charset=UTF-8"}
+
+        def _shape(d):
+            r = {"rt_cd": d.get("rt_cd"), "msg_cd": d.get("msg_cd"), "msg1": d.get("msg1")}
+            for key in ("output", "output1", "output2"):
+                v = d.get(key)
+                if isinstance(v, list):
+                    r[key + "_len"] = len(v)
+                    if v and isinstance(v[0], dict):
+                        r[key + "_keys"] = list(v[0].keys())
+                        r[key + "_row0"] = v[0]
+                elif isinstance(v, dict):
+                    r[key + "_keys"] = list(v.keys())
+                    r[key + "_obj"] = v
+            return r
+
+        # callput board (콜/풋) — needs FID_MTRT_CNT = expiry YYYYMM
+        try:
+            cp = _hx.get(f"{base}/uapi/domestic-futureoption/v1/quotations/display-board-callput",
+                         headers=_hdr("FHPIF05030100"),
+                         params={"FID_COND_MRKT_DIV_CODE": "O", "FID_COND_SCR_DIV_CODE": "20503",
+                                 "FID_MRKT_CLS_CODE": "CO", "FID_MTRT_CNT": expiry or "",
+                                 "FID_MRKT_CLS_CODE1": "PO", "FID_COND_MRKT_CLS_CODE": ""}, timeout=20)
+            out["callput_raw"] = _shape(cp.json()) if cp.headers.get("content-type","").startswith("application/json") else {"status": cp.status_code, "text": _safe_msg(cp.text)}
+        except Exception as e:
+            out["callput_raw_err"] = str(e)[:200]
+        # futures board (선물) — needs FID_INPUT_ISCD = contract code (e.g. 101W09)
+        try:
+            ft = _hx.get(f"{base}/uapi/domestic-futureoption/v1/quotations/display-board-top",
+                         headers=_hdr("FHPIF05030000"),
+                         params={"FID_COND_MRKT_DIV_CODE": "F", "FID_INPUT_ISCD": fcode or "101W09",
+                                 "FID_COND_SCR_DIV_CODE": "20105"}, timeout=20)
+            out["futures_raw"] = _shape(ft.json()) if ft.headers.get("content-type","").startswith("application/json") else {"status": ft.status_code, "text": _safe_msg(ft.text)}
+        except Exception as e:
+            out["futures_raw_err"] = str(e)[:200]
     except Exception as e:
         out["error"] = str(e)[:200]
     return out
