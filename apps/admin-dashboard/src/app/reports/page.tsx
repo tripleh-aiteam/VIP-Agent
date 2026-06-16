@@ -5,6 +5,7 @@ import { useSearchParams } from "next/navigation";
 import { api, apiPost } from "@/components/api";
 import Badge from "@/components/Badge";
 import { API } from "@/components/api";
+import GroundedYouTube from "@/components/GroundedYouTube";
 import MarkdownLite from "@/components/MarkdownLite";
 
 type ViewMode = null | "summary" | "detailed";
@@ -539,6 +540,9 @@ td{padding:8px 12px;border:1px solid #e2e8f0;font-size:10pt}
           })}
         </div>
       )}
+
+      {/* Grounded YouTube report (colleague's GPU pipeline) — only on the YouTube tab */}
+      {source === "youtube" && <GroundedYouTube />}
 
       {/* Report List */}
       <div className="space-y-2">
