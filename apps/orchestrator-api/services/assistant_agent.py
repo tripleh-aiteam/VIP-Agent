@@ -948,11 +948,18 @@ def _run_chain(
         "Use specific names and numbers from the results verbatim. Do NOT wrap a "
         "table in code fences or add a 'summary for the boss' preamble.\n"
         "If the user asked for ADVICE or an OPINION on a stock (should I buy/sell, "
-        "어때, 전망, is it a good buy): synthesize the evidence into a real analyst "
-        "answer — state the current price/level, the 수급(외국인/기관) direction, the "
-        "momentum/technical read, any live recommendation/news, then END with a clear "
-        "stance (매수 / 보유 / 매도 — BUY / HOLD / SELL) and the single biggest risk. "
-        "Do NOT just restate the price."
+        "어때, 전망, is it a good buy), use EXACTLY this two-part shape:\n"
+        "  (1) FIRST line = the VERDICT in ONE sentence: your stance + the single "
+        "biggest risk. English example: 'I would recommend a BUY stance, with the "
+        "single biggest risk being a potential reversal in foreign investor "
+        "sentiment.' Korean example: '매수(BUY)를 추천합니다. 가장 큰 리스크는 외국인 "
+        "수급의 반전 가능성입니다.' Use BUY/HOLD/SELL (매수/보유/매도).\n"
+        "  (2) Then a line 'Because:' (Korean: '근거:') followed by a NUMBERED list "
+        "(1. 2. 3. …) of the concrete supporting reasons — current price/level, "
+        "수급(외국인/기관) direction, momentum/technical read, live recommendation/"
+        "news — EACH with the real numbers from the results. Keep each item to one "
+        "line, no repetition. Do NOT restate the price as the whole answer, and do "
+        "NOT add a preamble before the verdict sentence."
     )
     import json as _json
     summary_input = _json.dumps(step_results, ensure_ascii=False)[:max(_cap, 3000)]
@@ -963,7 +970,7 @@ def _run_chain(
                 {"role": "user", "content": f"Question: {transcript}"},
                 {"role": "user", "content": f"Tool chain results:\n{summary_input}"},
             ],
-            max_tokens=max(_max_tok, 400), temperature=0.4,
+            max_tokens=max(_max_tok, 650), temperature=0.4,
             model="groq-llama-3.3-70b",
         )
     except Exception:
