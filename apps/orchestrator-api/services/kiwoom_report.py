@@ -925,12 +925,9 @@ def build_kiwoom_report(db, trace_id: str) -> dict:
         bad = (not out.strip()) or out.lstrip().startswith(("[LLM unavailable]", "[server error]"))
         if not bad:
             detail_en = out.replace("===EN===", "").strip()
-            # Section 7 (5 fresh daily buy ideas) — a DEDICATED call so the user's
-            # required new-ideas section is never truncated by the main report's
-            # token budget. Appended before the KO translation so it gets localized.
-            sec7 = _new_buy_ideas(news, kst_date)
-            if sec7:
-                detail_en = detail_en.rstrip() + "\n\n" + sec7
+            # (Section 7 — the detailed daily buy recommendations — is now produced
+            # by recommendation_engine AFTER the KO translation, in Korean, so it
+            # follows the full spec with real 매수가/매도가 and the writing rules.)
             # Korean: a DEDICATED translation call (the single-shot "write it twice"
             # approach made the model stub the KO half). Translate the FULL English
             # report and swap in the ready-made Korean data table.
@@ -984,6 +981,22 @@ def build_kiwoom_report(db, trace_id: str) -> dict:
                      f"_LLM unavailable — fresh buy ideas could not be generated this run._")
     if not detail_ko:
         detail_ko = detail_en
+
+    # === Section 7 — detailed daily buy recommendations (Kiwoom: price/수급/공매도) ===
+    # Real 매수가/매도가 + 핵심 요약 + 3 points + writing rules; upserted to history.
+    try:
+        from services import recommendation_engine
+        rec = recommendation_engine.build(
+            db, source="kiwoom", news=news,
+            emphasis="이 추천은 키움 가격·거래 데이터와 변동성, 그리고 수급(외국인/기관)·"
+                     "공매도 동향을 중심으로 작성하세요.")
+        if rec.get("section_ko"):
+            detail_ko = detail_ko.rstrip() + "\n\n" + rec["section_ko"]
+            detail_en = detail_en.rstrip() + "\n\n" + rec["section_ko"]
+            recommendation_engine.upsert_history(db, rec["date"], rec["picks"],
+                                                 rec["section_ko"], source="kiwoom")
+    except Exception as e:
+        log.warning(f"kiwoom: recommendation engine skipped: {str(e)[:90]}")
 
     return {
         "agent_type": "kiwoom", "name": "Kiwoom Market Analysis", "emoji": "📈",

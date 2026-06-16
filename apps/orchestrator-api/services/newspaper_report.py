@@ -554,6 +554,21 @@ def build_newspaper_report(db, trace_id: str) -> dict:
     if not detail_ko:
         detail_ko = detail_en
 
+    # === Detailed daily buy recommendations (Newspaper: news-catalyst driven) ===
+    # Real 매수가/매도가 + 핵심 요약 + 3 points + writing rules; upserted to history.
+    try:
+        from services import recommendation_engine
+        rec = recommendation_engine.build(
+            db, source="newspaper",
+            emphasis="이 추천은 최근 뉴스·기업 공시 등 뉴스 촉매와 시장 동향을 중심으로 작성하세요.")
+        if rec.get("section_ko"):
+            detail_ko = detail_ko.rstrip() + "\n\n" + rec["section_ko"]
+            detail_en = detail_en.rstrip() + "\n\n" + rec["section_ko"]
+            recommendation_engine.upsert_history(db, rec["date"], rec["picks"],
+                                                 rec["section_ko"], source="newspaper")
+    except Exception as e:
+        log.warning(f"newspaper: recommendation engine skipped: {str(e)[:90]}")
+
     sources_flat = [{"title": n["title"], "url": n["url"], "newspaper": name}
                     for name, items in grouped.items() for n in items]
     return {

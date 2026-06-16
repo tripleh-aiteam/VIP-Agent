@@ -201,11 +201,11 @@ def build_master_report(db, trace_id: str) -> dict:
     # strict writing rules. Upserted into the recommendation history (one row/day).
     try:
         from services import recommendation_engine
-        rec = recommendation_engine.build(db)
+        rec = recommendation_engine.build(db, source="master")
         if rec.get("section_ko"):
             detail_ko = detail_ko.rstrip() + "\n\n" + rec["section_ko"]
             detail_en = detail_en.rstrip() + "\n\n" + rec["section_ko"]  # KO section (recs are KR-only)
-            recommendation_engine.upsert_history(db, rec["date"], rec["picks"], rec["section_ko"])
+            recommendation_engine.upsert_history(db, rec["date"], rec["picks"], rec["section_ko"], source="master")
     except Exception as e:
         log.warning(f"master: recommendation engine skipped: {str(e)[:90]}")
 

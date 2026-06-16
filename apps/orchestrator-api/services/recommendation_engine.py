@@ -111,20 +111,26 @@ _RULES = (
 )
 
 
-def build(db) -> dict[str, Any]:
-    """Build the detailed 5-stock recommendation. Returns
-    {section_ko, picks:[{ticker,name,close,buy,sell,...}], date}. Empty section on
-    failure (caller proceeds without it)."""
+def build(db, source: str = "master", news: Optional[str] = None,
+          extra_facts: str = "", emphasis: str = "") -> dict[str, Any]:
+    """Build the detailed 5-stock recommendation grounded in ``source``'s data.
+
+    source: 'kiwoom' (price/수급/공매도 driven) | 'newspaper' (news driven) |
+    'master' (synthesis). ``news`` lets the caller pass its own news (else we
+    fetch). ``extra_facts`` is appended to the LLM facts (e.g. Kiwoom 수급/공매도);
+    ``emphasis`` adds a source-specific instruction. Returns
+    {section_ko, picks, date, source}."""
     from services.kst import kst_date as _kst_date
     kst_date = _kst_date()
     universe = _universe()
     if not universe:
-        return {"section_ko": "", "picks": [], "date": kst_date}
-    try:
-        from services.kiwoom_report import _market_news
-        news = _market_news()
-    except Exception:
-        news = ""
+        return {"section_ko": "", "picks": [], "date": kst_date, "source": source}
+    if news is None:
+        try:
+            from services.kiwoom_report import _market_news
+            news = _market_news()
+        except Exception:
+            news = ""
 
     codes = _pick_codes(news, universe, kst_date)
     picks: list[dict] = []
@@ -155,11 +161,13 @@ def build(db) -> dict[str, Any]:
         "공급계약·정책 수혜·신제품·주주환원 등), 둘째는 그 촉매가 매출·마진·현금흐름·수급·"
         "밸류에이션을 어떻게 개선하는지, 셋째는 뉴스/공시/가격/수급에 근거한 추가 점검 포인트와 "
         "리스크. '실적 영향'·'검증된 근거'·'투자 위험' 같은 고정 라벨은 쓰지 마세요.\n"
-        "반드시 실제 제공된 숫자(종가·매수가·매도가)를 인용하세요. 가격을 임의로 지어내지 마세요.\n\n"
+        "반드시 실제 제공된 숫자(종가·매수가·매도가)를 인용하세요. 가격을 임의로 지어내지 마세요.\n"
+        + (f"{emphasis}\n" if emphasis else "")
         + _RULES +
         "\n출력은 이 섹션 마크다운만. 다른 설명 금지.")
     user = (f"날짜(KST): {kst_date}\n\n종목별 실제 가격/변동성 데이터:\n"
             + "\n".join(facts_lines)
+            + (f"\n\n추가 데이터(해당 종목 수급/공매도 등):\n{extra_facts}" if extra_facts else "")
             + f"\n\n최근 뉴스/시장 동향:\n{(news or '(라이브 뉴스 없음 — 한계를 밝히고 일반적 촉매로 작성)')[:5000]}")
 
     section_ko = ""
@@ -176,23 +184,26 @@ def build(db) -> dict[str, Any]:
     except Exception as e:
         log.warning(f"recommendation_engine: LLM failed: {str(e)[:90]}")
 
-    return {"section_ko": section_ko, "picks": picks, "date": kst_date}
+    return {"section_ko": section_ko, "picks": picks, "date": kst_date, "source": source}
 
 
-def upsert_history(db, date: str, picks: list[dict], section_ko: str) -> Optional[str]:
-    """Upsert the day's picks into the recommendation history (one orch_reports row
-    per KST date). Re-running the same day updates that row; new days accumulate."""
+def upsert_history(db, date: str, picks: list[dict], section_ko: str,
+                   source: str = "master") -> Optional[str]:
+    """Upsert the day's picks into the recommendation history — one orch_reports
+    row per (KST date, source). Re-running the same day/source updates that row;
+    new days (or other sources) accumulate."""
     try:
         from db.models import OrchReport
         from sqlalchemy import desc
     except Exception:
         return None
     content = {"report_type": "recommendation_daily", "kst_date": date,
-               "picks": picks, "section_ko": section_ko,
+               "source": source, "picks": picks, "section_ko": section_ko,
                "generated_at": datetime.utcnow().isoformat()}
     try:
         row = (db.query(OrchReport)
                .filter(OrchReport.report_type == "recommendation_daily")
+               .filter(OrchReport.content_json["source"].astext == source)
                .order_by(desc(OrchReport.created_at)).first())
         if row and (row.content_json or {}).get("kst_date") == date:
             row.content_json = content                      # upsert today's row
