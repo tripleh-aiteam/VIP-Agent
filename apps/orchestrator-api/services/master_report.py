@@ -196,6 +196,19 @@ def build_master_report(db, trace_id: str) -> dict:
     if not detail_ko:
         detail_ko = detail_en
 
+    # === Detailed daily 5-stock buy recommendations (per spec) ===
+    # 핵심 요약 · 추천 매수가 · 추천 매도가 · 추천 포인트 1/2/3, real buy/sell prices,
+    # strict writing rules. Upserted into the recommendation history (one row/day).
+    try:
+        from services import recommendation_engine
+        rec = recommendation_engine.build(db)
+        if rec.get("section_ko"):
+            detail_ko = detail_ko.rstrip() + "\n\n" + rec["section_ko"]
+            detail_en = detail_en.rstrip() + "\n\n" + rec["section_ko"]  # KO section (recs are KR-only)
+            recommendation_engine.upsert_history(db, rec["date"], rec["picks"], rec["section_ko"])
+    except Exception as e:
+        log.warning(f"master: recommendation engine skipped: {str(e)[:90]}")
+
     return {
         "agent_type": "master", "name": "Daily Recommendation Report", "emoji": "💡",
         "status": "ok" if have else "partial",
