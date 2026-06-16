@@ -315,6 +315,30 @@ def kis_deriv_check():
     return out
 
 
+@router.get("/kis-deriv-live")
+def kis_deriv_live():
+    """Exercise the REAL kis_derivatives functions live and report their outputs
+    (+ sanitized errors) so the futures/option TR params can be pinned."""
+    out = {}
+    try:
+        from services import kis_client, kis_derivatives as kd
+        out["token_ok"] = kis_client.get_token() is not None
+        out["active_base"] = getattr(kis_client, "_active_base", None)
+        for label, fn in (
+            ("active_futures_code", lambda: kd._active_futures_code()),
+            ("callput_values", lambda: kd._callput_values()),
+            ("derivatives_turnover", lambda: kd.derivatives_turnover()),
+            ("stock_futures_005930", lambda: kd.stock_futures("005930")),
+        ):
+            try:
+                out[label] = fn()
+            except Exception as e:
+                out[label + "_err"] = str(e)[:200]
+    except Exception as e:
+        out["error"] = str(e)[:200]
+    return out
+
+
 @router.get("/llm-check")
 def llm_check():
     """Diagnostic: do a tiny prefer_paid test call and report which provider
