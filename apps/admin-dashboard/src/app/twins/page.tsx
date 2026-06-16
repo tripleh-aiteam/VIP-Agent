@@ -5,6 +5,7 @@ import { useSearchParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { API } from "../../components/api";
 import TwinMeetingPanel from "../../components/TwinMeetingPanel";
+import { useLanguage } from "../../components/i18n";
 
 interface Twin {
   id: string;
@@ -59,6 +60,7 @@ function getInitials(name: string) {
 export default function TwinsPage() {
   // Assistant can deep-link to a specific twin:
   //   /twins?highlight=Davronbek → scrolls to + highlights that twin's card
+  const { t: tr } = useLanguage();
   const searchParams = useSearchParams();
   const router = useRouter();
   const highlight = (searchParams?.get("highlight") || "").toLowerCase();
@@ -167,10 +169,10 @@ export default function TwinsPage() {
     try {
       const res = await fetch(`${API}/twins/admin/autopilot/run-now`, { method: "POST" });
       const data = await res.json();
-      alert(`Autopilot finished: ${data.twins_processed} twins processed.`);
+      alert(`${tr("자동 운항 완료", "Autopilot finished")}: ${data.twins_processed} ${tr("개 트윈 처리됨", "twins processed")}.`);
       fetchReadiness();
     } catch (e: any) {
-      alert(`Autopilot failed: ${e.message || e}`);
+      alert(`${tr("자동 운항 실패", "Autopilot failed")}: ${e.message || e}`);
     } finally {
       setAutopilotBusy(false);
     }
@@ -240,7 +242,7 @@ export default function TwinsPage() {
       fetchWorkers();
     } catch (e) {
       console.error("Failed to create worker:", e);
-      alert("Failed to create worker. Email may already exist.");
+      alert(tr("작업자 계정 생성에 실패했습니다. 이미 존재하는 이메일일 수 있습니다.", "Failed to create worker. Email may already exist."));
     } finally {
       setWSaving(false);
     }
@@ -296,7 +298,7 @@ export default function TwinsPage() {
   }
 
   async function handleDelete(twinId: string) {
-    if (!confirm("Delete this twin?")) return;
+    if (!confirm(tr("이 트윈을 삭제하시겠습니까?", "Delete this twin?"))) return;
     try {
       await fetch(`${API}/twins/${twinId}`, { method: "DELETE" });
       fetchTwins();
@@ -337,9 +339,9 @@ export default function TwinsPage() {
         body: JSON.stringify({ message: msg }),
       });
       const data = await res.json();
-      setChatMessages(prev => [...prev, { role: "assistant", content: data.response || "No response" }]);
+      setChatMessages(prev => [...prev, { role: "assistant", content: data.response || tr("응답 없음", "No response") }]);
     } catch (e) {
-      setChatMessages(prev => [...prev, { role: "assistant", content: "[Error] Could not reach twin brain." }]);
+      setChatMessages(prev => [...prev, { role: "assistant", content: tr("[오류] 트윈 브레인에 연결할 수 없습니다.", "[Error] Could not reach twin brain.") }]);
     } finally {
       setChatLoading(false);
     }
@@ -375,7 +377,7 @@ export default function TwinsPage() {
         <div className="mb-4 rounded-xl border border-gray-200 bg-white p-3 flex flex-wrap items-center gap-3 text-xs">
           {readinessSummary && (
             <>
-              <span className="text-gray-500">Fleet readiness:</span>
+              <span className="text-gray-500">{tr("전체 준비도", "Fleet readiness")}:</span>
               <span className={`font-bold ${
                 readinessSummary.average_score_pct >= 80 ? "text-emerald-700"
                 : readinessSummary.average_score_pct >= 50 ? "text-amber-700"
@@ -384,17 +386,17 @@ export default function TwinsPage() {
                 {readinessSummary.average_score_pct}%
               </span>
               <span className="text-gray-500">
-                · {readinessSummary.ready_for_production} of {readinessSummary.total_twins} production-ready
+                · {readinessSummary.total_twins}{tr("개 중 ", " ")}{readinessSummary.ready_for_production}{tr("개 프로덕션 준비 완료", " production-ready")}
               </span>
             </>
           )}
           <span className="ml-auto flex items-center gap-2">
             <span className="text-gray-500">
-              Autopilot: {autopilotStatus?.installed ? (
+              {tr("자동 운항", "Autopilot")}: {autopilotStatus?.installed ? (
                 <span className="text-emerald-700 font-medium">
-                  ON — every {autopilotStatus.interval_hours}h
+                  {tr("켜짐", "ON")} — {tr(`${autopilotStatus.interval_hours}시간마다`, `every ${autopilotStatus.interval_hours}h`)}
                 </span>
-              ) : <span className="text-gray-400">off</span>}
+              ) : <span className="text-gray-400">{tr("꺼짐", "off")}</span>}
             </span>
             {!autopilotStatus?.installed && (
               <button
@@ -402,7 +404,7 @@ export default function TwinsPage() {
                 disabled={autopilotBusy}
                 className="bg-emerald-600 text-white rounded px-2 py-1 disabled:opacity-50"
               >
-                Install
+                {tr("설치", "Install")}
               </button>
             )}
             <button
@@ -410,7 +412,7 @@ export default function TwinsPage() {
               disabled={autopilotBusy}
               className="bg-indigo-600 text-white rounded px-2 py-1 disabled:opacity-50"
             >
-              {autopilotBusy ? "Running…" : "Run cycle now"}
+              {autopilotBusy ? tr("실행 중…", "Running…") : tr("지금 사이클 실행", "Run cycle now")}
             </button>
           </span>
         </div>
@@ -419,21 +421,21 @@ export default function TwinsPage() {
       {/* Header */}
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 mb-6">
         <div>
-          <h1 className="text-[28px] font-semibold text-[var(--text-primary)]">Digital Twins</h1>
-          <p className="text-[13px] text-[var(--text-muted)] mt-1">Manage your team's digital twins — they work when your team sleeps</p>
+          <h1 className="text-[28px] font-semibold text-[var(--text-primary)]">{tr("디지털 트윈", "Digital Twins")}</h1>
+          <p className="text-[13px] text-[var(--text-muted)] mt-1">{tr("팀의 디지털 트윈을 관리하세요 — 팀원이 잠든 동안에도 트윈이 일합니다", "Manage your team's digital twins — they work when your team sleeps")}</p>
         </div>
         <div className="flex gap-2 flex-wrap">
-          <Link href="/task-board" className="px-3 py-2.5 rounded-lg bg-[var(--bg-elevated)] border border-[var(--border-default)] text-[13px] font-medium text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors flex items-center gap-1.5">📋 Task Board</Link>
-          <Link href="/control-room" className="px-3 py-2.5 rounded-lg bg-[var(--bg-elevated)] border border-[var(--border-default)] text-[13px] font-medium text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors flex items-center gap-1.5">🎛️ Control Room</Link>
+          <Link href="/task-board" className="px-3 py-2.5 rounded-lg bg-[var(--bg-elevated)] border border-[var(--border-default)] text-[13px] font-medium text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors flex items-center gap-1.5">📋 {tr("작업 보드", "Task Board")}</Link>
+          <Link href="/control-room" className="px-3 py-2.5 rounded-lg bg-[var(--bg-elevated)] border border-[var(--border-default)] text-[13px] font-medium text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors flex items-center gap-1.5">🎛️ {tr("컨트롤 룸", "Control Room")}</Link>
           {pageTab === "twins" ? (
             <button onClick={openCreate} className="px-4 py-2.5 bg-blue-600 text-white rounded-lg text-[13px] font-medium hover:opacity-90 transition-opacity flex items-center gap-2">
               <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" /></svg>
-              Create New Twin
+              {tr("새 트윈 만들기", "Create New Twin")}
             </button>
           ) : (
             <button onClick={() => setShowCreateWorker(true)} className="px-4 py-2.5 bg-blue-600 text-white rounded-lg text-[13px] font-medium hover:opacity-90 transition-opacity flex items-center gap-2">
               <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" /></svg>
-              Create Worker Account
+              {tr("작업자 계정 만들기", "Create Worker Account")}
             </button>
           )}
         </div>
@@ -443,15 +445,15 @@ export default function TwinsPage() {
       <div className="flex gap-2 mb-6">
         <button onClick={() => setPageTab("twins")}
           className={`px-4 py-2 rounded-lg text-[13px] font-medium transition-all ${pageTab === "twins" ? "bg-blue-600 text-white" : "bg-[var(--card-bg)] text-[var(--text-muted)] border border-[var(--card-border)]"}`}>
-          Twins ({twins.length})
+          {tr("트윈", "Twins")} ({twins.length})
         </button>
         <button onClick={() => setPageTab("workers")}
           className={`px-4 py-2 rounded-lg text-[13px] font-medium transition-all ${pageTab === "workers" ? "bg-blue-600 text-white" : "bg-[var(--card-bg)] text-[var(--text-muted)] border border-[var(--card-border)]"}`}>
-          Workers ({workers.length})
+          {tr("작업자", "Workers")} ({workers.length})
         </button>
         <button onClick={() => { setPageTab("intelligence"); fetchProgress(); }}
           className={`px-4 py-2 rounded-lg text-[13px] font-medium transition-all ${pageTab === "intelligence" ? "bg-blue-600 text-white" : "bg-[var(--card-bg)] text-[var(--text-muted)] border border-[var(--card-border)]"}`}>
-          Progress
+          {tr("성장 현황", "Progress")}
         </button>
       </div>
 
@@ -461,9 +463,9 @@ export default function TwinsPage() {
           {workers.length === 0 ? (
             <div className="text-center py-20 bg-[var(--card-bg)] rounded-xl border border-[var(--card-border)]">
               <div className="text-[48px] mb-3">👤</div>
-              <div className="text-[var(--text-primary)] text-[16px] font-semibold mb-1">No worker accounts yet</div>
-              <div className="text-[var(--text-muted)] text-[13px] mb-4">Create accounts so workers can access their digital twin portal</div>
-              <button onClick={() => setShowCreateWorker(true)} className="px-5 py-2.5 bg-blue-600 text-white rounded-lg text-[13px] font-medium">Create First Worker</button>
+              <div className="text-[var(--text-primary)] text-[16px] font-semibold mb-1">{tr("아직 작업자 계정이 없습니다", "No worker accounts yet")}</div>
+              <div className="text-[var(--text-muted)] text-[13px] mb-4">{tr("작업자가 디지털 트윈 포털에 접속할 수 있도록 계정을 만드세요", "Create accounts so workers can access their digital twin portal")}</div>
+              <button onClick={() => setShowCreateWorker(true)} className="px-5 py-2.5 bg-blue-600 text-white rounded-lg text-[13px] font-medium">{tr("첫 작업자 만들기", "Create First Worker")}</button>
             </div>
           ) : (
             <div className="space-y-3">
@@ -474,7 +476,7 @@ export default function TwinsPage() {
                       {(w.name || "W").charAt(0).toUpperCase()}
                     </div>
                     <div>
-                      <div className="text-[14px] font-semibold text-[var(--text-primary)]">{w.name || "Unnamed"}</div>
+                      <div className="text-[14px] font-semibold text-[var(--text-primary)]">{w.name || tr("이름 없음", "Unnamed")}</div>
                       <div className="text-[12px] text-[var(--text-muted)]">{w.email}</div>
                     </div>
                   </div>
@@ -483,9 +485,9 @@ export default function TwinsPage() {
                       <span className="px-2 py-0.5 bg-blue-50 text-blue-600 rounded-full text-[11px] font-medium">{w.department}</span>
                     )}
                     {w.has_twin ? (
-                      <span className="px-2 py-0.5 bg-green-50 text-green-600 rounded-full text-[11px] font-medium">Twin Linked</span>
+                      <span className="px-2 py-0.5 bg-green-50 text-green-600 rounded-full text-[11px] font-medium">{tr("트윈 연결됨", "Twin Linked")}</span>
                     ) : (
-                      <span className="px-2 py-0.5 bg-amber-50 text-amber-600 rounded-full text-[11px] font-medium">No Twin</span>
+                      <span className="px-2 py-0.5 bg-amber-50 text-amber-600 rounded-full text-[11px] font-medium">{tr("트윈 없음", "No Twin")}</span>
                     )}
                     <span className="text-[11px] text-[var(--text-muted)]">{w.role}</span>
                   </div>
@@ -500,54 +502,54 @@ export default function TwinsPage() {
               <div className="absolute inset-0 bg-black/50" />
               <div className="relative bg-white rounded-2xl border border-gray-200 w-full max-w-md" style={{ boxShadow: "0 20px 60px rgba(0,0,0,0.2)" }} onClick={e => e.stopPropagation()}>
                 <div className="p-5 border-b border-gray-200">
-                  <h2 className="text-[16px] font-semibold text-[var(--text-primary)]">Create Worker Account</h2>
-                  <p className="text-[12px] text-[var(--text-muted)] mt-1">Worker will use these credentials to access their Digital Twin Portal</p>
+                  <h2 className="text-[16px] font-semibold text-[var(--text-primary)]">{tr("작업자 계정 만들기", "Create Worker Account")}</h2>
+                  <p className="text-[12px] text-[var(--text-muted)] mt-1">{tr("작업자는 이 자격 증명으로 디지털 트윈 포털에 접속합니다", "Worker will use these credentials to access their Digital Twin Portal")}</p>
                 </div>
                 <div className="p-5 space-y-4">
                   <div>
-                    <label className="block text-[12px] font-medium text-[var(--text-secondary)] mb-1">Full Name</label>
+                    <label className="block text-[12px] font-medium text-[var(--text-secondary)] mb-1">{tr("이름", "Full Name")}</label>
                     <input type="text" value={wName} onChange={e => setWName(e.target.value)}
-                      placeholder="e.g. Kim Minjun"
+                      placeholder={tr("예: 김민준", "e.g. Kim Minjun")}
                       className="w-full px-3 py-2.5 bg-[var(--bg-secondary)] border border-[var(--card-border)] rounded-lg text-[13px] text-[var(--text-primary)] placeholder:text-[var(--text-muted)] focus:outline-none focus:border-blue-400" />
                   </div>
                   <div>
-                    <label className="block text-[12px] font-medium text-[var(--text-secondary)] mb-1">Email</label>
+                    <label className="block text-[12px] font-medium text-[var(--text-secondary)] mb-1">{tr("이메일", "Email")}</label>
                     <input type="email" value={wEmail} onChange={e => setWEmail(e.target.value)}
-                      placeholder="e.g. kim@company.com"
+                      placeholder={tr("예: kim@company.com", "e.g. kim@company.com")}
                       className="w-full px-3 py-2.5 bg-[var(--bg-secondary)] border border-[var(--card-border)] rounded-lg text-[13px] text-[var(--text-primary)] placeholder:text-[var(--text-muted)] focus:outline-none focus:border-blue-400" />
                   </div>
                   <div>
-                    <label className="block text-[12px] font-medium text-[var(--text-secondary)] mb-1">Password</label>
+                    <label className="block text-[12px] font-medium text-[var(--text-secondary)] mb-1">{tr("비밀번호", "Password")}</label>
                     <input type="text" value={wPassword} onChange={e => setWPassword(e.target.value)}
-                      placeholder="Set a password for the worker"
+                      placeholder={tr("작업자의 비밀번호를 설정하세요", "Set a password for the worker")}
                       className="w-full px-3 py-2.5 bg-[var(--bg-secondary)] border border-[var(--card-border)] rounded-lg text-[13px] text-[var(--text-primary)] placeholder:text-[var(--text-muted)] focus:outline-none focus:border-blue-400" />
                   </div>
                   <div>
-                    <label className="block text-[12px] font-medium text-[var(--text-secondary)] mb-1">Department</label>
+                    <label className="block text-[12px] font-medium text-[var(--text-secondary)] mb-1">{tr("부서", "Department")}</label>
                     <select value={wDept} onChange={e => setWDept(e.target.value)}
                       className="w-full px-3 py-2.5 bg-[var(--bg-secondary)] border border-[var(--card-border)] rounded-lg text-[13px] text-[var(--text-primary)] focus:outline-none focus:border-blue-400">
-                      <option value="">Select department</option>
-                      <option value="Executive">Executive</option>
-                      <option value="AI Team">AI Team</option>
-                      <option value="Business">Business</option>
-                      <option value="Asset">Asset</option>
-                      <option value="Investment">Investment</option>
+                      <option value="">{tr("부서 선택", "Select department")}</option>
+                      <option value="Executive">{tr("경영진", "Executive")}</option>
+                      <option value="AI Team">{tr("AI 팀", "AI Team")}</option>
+                      <option value="Business">{tr("비즈니스", "Business")}</option>
+                      <option value="Asset">{tr("자산", "Asset")}</option>
+                      <option value="Investment">{tr("투자", "Investment")}</option>
                     </select>
                   </div>
                   <div>
-                    <label className="block text-[12px] font-medium text-[var(--text-secondary)] mb-1">Link to Twin</label>
+                    <label className="block text-[12px] font-medium text-[var(--text-secondary)] mb-1">{tr("트윈 연결", "Link to Twin")}</label>
                     <select value={wTwinId} onChange={e => setWTwinId(e.target.value)}
                       className="w-full px-3 py-2.5 bg-[var(--bg-secondary)] border border-[var(--card-border)] rounded-lg text-[13px] text-[var(--text-primary)] focus:outline-none focus:border-blue-400">
-                      <option value="">No twin (assign later)</option>
+                      <option value="">{tr("트윈 없음 (나중에 지정)", "No twin (assign later)")}</option>
                       {twins.map(t => <option key={t.id} value={t.id}>{t.name} — {t.role}</option>)}
                     </select>
                   </div>
                 </div>
                 <div className="p-5 border-t border-gray-200 flex gap-3 justify-end">
-                  <button onClick={() => setShowCreateWorker(false)} className="px-4 py-2.5 text-[13px] text-[var(--text-muted)]">Cancel</button>
+                  <button onClick={() => setShowCreateWorker(false)} className="px-4 py-2.5 text-[13px] text-[var(--text-muted)]">{tr("취소", "Cancel")}</button>
                   <button onClick={handleCreateWorker} disabled={!wName || !wEmail || !wPassword || wSaving}
                     className="px-5 py-2.5 bg-blue-600 text-white rounded-lg text-[13px] font-medium hover:opacity-90 disabled:opacity-50">
-                    {wSaving ? "Creating..." : "Create Account"}
+                    {wSaving ? tr("생성 중...", "Creating...") : tr("계정 만들기", "Create Account")}
                   </button>
                 </div>
               </div>
@@ -564,8 +566,8 @@ export default function TwinsPage() {
             <div className="flex items-center gap-3">
               <span className="text-[24px]">🧠</span>
               <div>
-                <div className="text-[14px] font-semibold text-purple-900">Self-Improvement</div>
-                <div className="text-[11px] text-purple-600">Twins improve themselves every 6 hours automatically. Or trigger manually.</div>
+                <div className="text-[14px] font-semibold text-purple-900">{tr("자가 개선", "Self-Improvement")}</div>
+                <div className="text-[11px] text-purple-600">{tr("트윈은 6시간마다 자동으로 스스로 개선됩니다. 수동으로 실행할 수도 있습니다.", "Twins improve themselves every 6 hours automatically. Or trigger manually.")}</div>
               </div>
             </div>
             <button
@@ -578,34 +580,34 @@ export default function TwinsPage() {
               }}
               className="px-4 py-2 bg-purple-600 text-white rounded-lg text-[12px] font-medium hover:bg-purple-700 transition-colors"
             >
-              Improve All Twins Now
+              {tr("모든 트윈 지금 개선", "Improve All Twins Now")}
             </button>
             <button onClick={async () => {
               const res = await fetch(`${API}/twins/reports/weekly`);
               setWeeklyReport(await res.json());
               setShowWeekly(true);
             }} className="px-4 py-2 bg-blue-600 text-white rounded-lg text-[12px] font-medium hover:bg-blue-700">
-              Send Weekly Update
+              {tr("주간 업데이트 보내기", "Send Weekly Update")}
             </button>
             <button onClick={async () => {
               const res = await fetch(`${API}/twins/reports/monthly`);
               setMonthlyReport(await res.json());
               setShowMonthly(true);
             }} className="px-4 py-2 bg-[var(--card-bg)] border border-[var(--card-border)] text-[var(--text-secondary)] rounded-lg text-[12px] font-medium hover:bg-[var(--bg-secondary)]">
-              Monthly Report
+              {tr("월간 리포트", "Monthly Report")}
             </button>
           </div>
 
           {intelligenceData.length === 0 ? (
             <div className="text-center py-20 bg-[var(--card-bg)] rounded-xl border border-[var(--card-border)]">
               <div className="text-[48px] mb-3">🧠</div>
-              <div className="text-[var(--text-muted)]">No progress data yet. Twins need to learn first.</div>
+              <div className="text-[var(--text-muted)]">{tr("아직 성장 데이터가 없습니다. 트윈이 먼저 학습해야 합니다.", "No progress data yet. Twins need to learn first.")}</div>
             </div>
           ) : (
             <>
               {/* Ranking Bar Chart */}
               <div className="bg-[var(--card-bg)] rounded-2xl border border-[var(--card-border)] p-5 mb-5" style={{ boxShadow: "var(--shadow-sm)" }}>
-                <h2 className="text-[16px] font-semibold text-[var(--text-primary)] mb-4">Twins Learning Progress</h2>
+                <h2 className="text-[16px] font-semibold text-[var(--text-primary)] mb-4">{tr("트윈 학습 진행도", "Twins Learning Progress")}</h2>
                 <div className="space-y-3">
                   {intelligenceData.map((t: any, i: number) => (
                     <div key={t.twin_id} className="flex items-center gap-3 cursor-pointer hover:bg-[var(--bg-secondary)] rounded-lg p-2 -m-2 transition-all" onClick={() => fetchTimeline(t.twin_id)}>
@@ -625,9 +627,9 @@ export default function TwinsPage() {
                           }} />
                         </div>
                         <div className="flex gap-3 mt-1 text-[10px] text-[var(--text-muted)]">
-                          <span>{t.total_knowledge} knowledge</span>
-                          <span>{t.tasks_completed} tasks</span>
-                          <span>{t.approval_rate}% approval</span>
+                          <span>{t.total_knowledge} {tr("지식", "knowledge")}</span>
+                          <span>{t.tasks_completed} {tr("작업", "tasks")}</span>
+                          <span>{t.approval_rate}% {tr("승인", "approval")}</span>
                         </div>
                       </div>
                     </div>
@@ -637,19 +639,19 @@ export default function TwinsPage() {
 
               {/* Knowledge Breakdown Comparison */}
               <div className="bg-[var(--card-bg)] rounded-2xl border border-[var(--card-border)] p-5 mb-5" style={{ boxShadow: "var(--shadow-sm)" }}>
-                <h2 className="text-[16px] font-semibold text-[var(--text-primary)] mb-4">Knowledge Breakdown</h2>
+                <h2 className="text-[16px] font-semibold text-[var(--text-primary)] mb-4">{tr("지식 분석", "Knowledge Breakdown")}</h2>
                 <div className="overflow-x-auto">
                   <table className="w-full text-[12px]">
                     <thead>
                       <tr className="border-b border-[var(--card-border)]">
-                        <th className="text-left py-2 pr-3 text-[var(--text-muted)] font-medium">Twin</th>
-                        <th className="text-center py-2 px-2 text-[var(--text-muted)] font-medium">Docs</th>
-                        <th className="text-center py-2 px-2 text-[var(--text-muted)] font-medium">Rules</th>
-                        <th className="text-center py-2 px-2 text-[var(--text-muted)] font-medium">Chat</th>
-                        <th className="text-center py-2 px-2 text-[var(--text-muted)] font-medium">Corrections</th>
-                        <th className="text-center py-2 px-2 text-[var(--text-muted)] font-medium">Approvals</th>
-                        <th className="text-center py-2 px-2 text-[var(--text-muted)] font-medium">Tasks</th>
-                        <th className="text-center py-2 px-2 font-medium text-blue-600">Score</th>
+                        <th className="text-left py-2 pr-3 text-[var(--text-muted)] font-medium">{tr("트윈", "Twin")}</th>
+                        <th className="text-center py-2 px-2 text-[var(--text-muted)] font-medium">{tr("문서", "Docs")}</th>
+                        <th className="text-center py-2 px-2 text-[var(--text-muted)] font-medium">{tr("규칙", "Rules")}</th>
+                        <th className="text-center py-2 px-2 text-[var(--text-muted)] font-medium">{tr("대화", "Chat")}</th>
+                        <th className="text-center py-2 px-2 text-[var(--text-muted)] font-medium">{tr("수정", "Corrections")}</th>
+                        <th className="text-center py-2 px-2 text-[var(--text-muted)] font-medium">{tr("승인", "Approvals")}</th>
+                        <th className="text-center py-2 px-2 text-[var(--text-muted)] font-medium">{tr("작업", "Tasks")}</th>
+                        <th className="text-center py-2 px-2 font-medium text-blue-600">{tr("점수", "Score")}</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -675,9 +677,9 @@ export default function TwinsPage() {
                 <div className="bg-[var(--card-bg)] rounded-2xl border border-[var(--card-border)] p-5" style={{ boxShadow: "var(--shadow-sm)" }}>
                   <div className="flex items-center justify-between mb-4">
                     <h2 className="text-[16px] font-semibold text-[var(--text-primary)]">
-                      Learning Timeline — {intelligenceData.find((t: any) => t.twin_id === selectedTwinTimeline)?.twin_name || ""}
+                      {tr("학습 타임라인", "Learning Timeline")} — {intelligenceData.find((t: any) => t.twin_id === selectedTwinTimeline)?.twin_name || ""}
                     </h2>
-                    <button onClick={() => setSelectedTwinTimeline(null)} className="text-[var(--text-muted)] text-[12px] hover:text-[var(--text-primary)]">Close</button>
+                    <button onClick={() => setSelectedTwinTimeline(null)} className="text-[var(--text-muted)] text-[12px] hover:text-[var(--text-primary)]">{tr("닫기", "Close")}</button>
                   </div>
                   {/* Simple visual timeline */}
                   <div className="flex items-end gap-[2px] h-[120px] mb-2">
@@ -689,7 +691,7 @@ export default function TwinsPage() {
                           <div
                             className={`w-full rounded-t transition-all ${hasActivity ? "bg-blue-500 hover:bg-blue-600" : "bg-gray-200"}`}
                             style={{ height: `${height}px` }}
-                            title={`${d.date}: ${d.intelligence_pct}% (${d.day_score > 0 ? '+' + d.day_score + ' pts' : 'no activity'})`}
+                            title={`${d.date}: ${d.intelligence_pct}% (${d.day_score > 0 ? '+' + d.day_score + tr(' 점', ' pts') : tr('활동 없음', 'no activity')})`}
                           />
                         </div>
                       );
@@ -697,16 +699,16 @@ export default function TwinsPage() {
                   </div>
                   <div className="flex justify-between text-[9px] text-[var(--text-muted)]">
                     <span>{timelineData[0]?.date}</span>
-                    <span>Today: {timelineData[timelineData.length - 1]?.intelligence_pct}%</span>
+                    <span>{tr("오늘", "Today")}: {timelineData[timelineData.length - 1]?.intelligence_pct}%</span>
                   </div>
                   {/* Daily breakdown */}
                   <div className="mt-4 grid grid-cols-5 gap-3 text-center">
                     {[
-                      { label: "Knowledge Added", value: timelineData.reduce((s: number, d: any) => s + d.knowledge_added, 0), color: "text-blue-600" },
-                      { label: "Chat Learned", value: timelineData.reduce((s: number, d: any) => s + d.chat_learned, 0), color: "text-purple-600" },
-                      { label: "Corrections", value: timelineData.reduce((s: number, d: any) => s + d.corrections, 0), color: "text-red-600" },
-                      { label: "Approvals", value: timelineData.reduce((s: number, d: any) => s + d.approvals, 0), color: "text-green-600" },
-                      { label: "Tasks Done", value: timelineData.reduce((s: number, d: any) => s + d.tasks_done, 0), color: "text-amber-600" },
+                      { label: tr("추가된 지식", "Knowledge Added"), value: timelineData.reduce((s: number, d: any) => s + d.knowledge_added, 0), color: "text-blue-600" },
+                      { label: tr("대화 학습", "Chat Learned"), value: timelineData.reduce((s: number, d: any) => s + d.chat_learned, 0), color: "text-purple-600" },
+                      { label: tr("수정", "Corrections"), value: timelineData.reduce((s: number, d: any) => s + d.corrections, 0), color: "text-red-600" },
+                      { label: tr("승인", "Approvals"), value: timelineData.reduce((s: number, d: any) => s + d.approvals, 0), color: "text-green-600" },
+                      { label: tr("완료한 작업", "Tasks Done"), value: timelineData.reduce((s: number, d: any) => s + d.tasks_done, 0), color: "text-amber-600" },
                     ].map(s => (
                       <div key={s.label}>
                         <div className={`text-[18px] font-bold ${s.color}`}>{s.value}</div>
@@ -727,35 +729,35 @@ export default function TwinsPage() {
           <div className="absolute inset-0 bg-black/50" />
           <div className="relative bg-white rounded-2xl border border-gray-200 w-full max-w-lg max-h-[85vh] overflow-y-auto" style={{ boxShadow: "0 20px 60px rgba(0,0,0,0.2)" }} onClick={e => e.stopPropagation()}>
             <div className="p-5 border-b border-gray-200">
-              <h2 className="text-[16px] font-semibold text-[var(--text-primary)]">Send Weekly Update to All Workers</h2>
-              <p className="text-[12px] text-[var(--text-muted)] mt-1">Week: {weeklyReport.week_start} → {weeklyReport.week_end}</p>
+              <h2 className="text-[16px] font-semibold text-[var(--text-primary)]">{tr("모든 작업자에게 주간 업데이트 보내기", "Send Weekly Update to All Workers")}</h2>
+              <p className="text-[12px] text-[var(--text-muted)] mt-1">{tr("주간", "Week")}: {weeklyReport.week_start} → {weeklyReport.week_end}</p>
             </div>
             <div className="p-5 space-y-4">
               {/* Company Stats */}
               <div className="grid grid-cols-3 gap-3">
                 <div className="bg-blue-50 rounded-xl px-3 py-2.5 text-center">
                   <div className="text-[20px] font-bold text-blue-600">{weeklyReport.company_stats?.total_tasks_completed || 0}</div>
-                  <div className="text-[9px] text-[var(--text-muted)]">Tasks Done</div>
+                  <div className="text-[9px] text-[var(--text-muted)]">{tr("완료한 작업", "Tasks Done")}</div>
                 </div>
                 <div className="bg-green-50 rounded-xl px-3 py-2.5 text-center">
                   <div className="text-[20px] font-bold text-green-600">{weeklyReport.company_stats?.total_new_knowledge || 0}</div>
-                  <div className="text-[9px] text-[var(--text-muted)]">New Knowledge</div>
+                  <div className="text-[9px] text-[var(--text-muted)]">{tr("신규 지식", "New Knowledge")}</div>
                 </div>
                 <div className="bg-purple-50 rounded-xl px-3 py-2.5 text-center">
                   <div className="text-[20px] font-bold text-purple-600">{weeklyReport.company_stats?.average_progress || 0}%</div>
-                  <div className="text-[9px] text-[var(--text-muted)]">Avg Progress</div>
+                  <div className="text-[9px] text-[var(--text-muted)]">{tr("평균 진행도", "Avg Progress")}</div>
                 </div>
               </div>
 
               {/* Top Performers */}
               {weeklyReport.top_performers?.length > 0 && (
                 <div>
-                  <h3 className="text-[12px] font-semibold text-green-600 mb-2">Top Performers</h3>
+                  <h3 className="text-[12px] font-semibold text-green-600 mb-2">{tr("최고 성과자", "Top Performers")}</h3>
                   {weeklyReport.top_performers.map((t: any, i: number) => (
                     <div key={t.twin_id} className="flex items-center gap-2 mb-1.5 text-[12px]">
                       <span className="text-[14px]">{i === 0 ? "🥇" : i === 1 ? "🥈" : "🥉"}</span>
                       <span className="font-medium text-[var(--text-primary)]">{t.name}</span>
-                      <span className="text-[var(--text-muted)]">— {t.tasks_done} tasks, {t.approval_rate}% approval</span>
+                      <span className="text-[var(--text-muted)]">— {t.tasks_done} {tr("작업", "tasks")}, {t.approval_rate}% {tr("승인", "approval")}</span>
                     </div>
                   ))}
                 </div>
@@ -764,10 +766,10 @@ export default function TwinsPage() {
               {/* Needs Improvement */}
               {weeklyReport.needs_improvement?.length > 0 && (
                 <div>
-                  <h3 className="text-[12px] font-semibold text-amber-600 mb-2">Needs Improvement</h3>
+                  <h3 className="text-[12px] font-semibold text-amber-600 mb-2">{tr("개선 필요", "Needs Improvement")}</h3>
                   {weeklyReport.needs_improvement.map((t: any) => (
                     <div key={t.twin_id} className="text-[12px] text-[var(--text-muted)] mb-1">
-                      • {t.name} — {t.tasks_done} tasks, {t.self_improvements} self-improvements
+                      • {t.name} — {t.tasks_done} {tr("작업", "tasks")}, {t.self_improvements} {tr("자가 개선", "self-improvements")}
                     </div>
                   ))}
                 </div>
@@ -775,14 +777,14 @@ export default function TwinsPage() {
 
               {/* Boss Message */}
               <div>
-                <label className="block text-[12px] font-medium text-[var(--text-secondary)] mb-1">Your Message to the Team</label>
+                <label className="block text-[12px] font-medium text-[var(--text-secondary)] mb-1">{tr("팀에게 보내는 메시지", "Your Message to the Team")}</label>
                 <textarea value={weeklyMsg} onChange={e => setWeeklyMsg(e.target.value)} rows={3}
-                  placeholder="e.g. Great work this week! Focus on Q2 report next week. Client presentation on Wednesday."
+                  placeholder={tr("예: 이번 주 정말 수고하셨습니다! 다음 주에는 2분기 리포트에 집중해 주세요. 수요일에 고객 발표가 있습니다.", "e.g. Great work this week! Focus on Q2 report next week. Client presentation on Wednesday.")}
                   className="w-full px-4 py-3 bg-[var(--bg-secondary)] border border-[var(--card-border)] rounded-xl text-[13px] text-[var(--text-primary)] placeholder:text-[var(--text-muted)] focus:outline-none focus:border-blue-400 resize-none" />
               </div>
             </div>
             <div className="p-5 border-t border-gray-200 flex gap-3 justify-end">
-              <button onClick={() => setShowWeekly(false)} className="px-4 py-2.5 text-[13px] text-[var(--text-muted)]">Cancel</button>
+              <button onClick={() => setShowWeekly(false)} className="px-4 py-2.5 text-[13px] text-[var(--text-muted)]">{tr("취소", "Cancel")}</button>
               <button onClick={async () => {
                 setSendingWeekly(true);
                 try {
@@ -791,11 +793,11 @@ export default function TwinsPage() {
                     body: JSON.stringify({ message: weeklyMsg }),
                   });
                   setShowWeekly(false); setWeeklyMsg("");
-                  alert("Weekly update sent to all workers!");
+                  alert(tr("주간 업데이트를 모든 작업자에게 보냈습니다!", "Weekly update sent to all workers!"));
                 } catch {} finally { setSendingWeekly(false); }
               }} disabled={sendingWeekly}
                 className="px-5 py-2.5 bg-blue-600 text-white rounded-lg text-[13px] font-medium hover:opacity-90 disabled:opacity-50">
-                {sendingWeekly ? "Sending..." : "Send to All Workers"}
+                {sendingWeekly ? tr("보내는 중...", "Sending...") : tr("모든 작업자에게 보내기", "Send to All Workers")}
               </button>
             </div>
           </div>
@@ -808,17 +810,17 @@ export default function TwinsPage() {
           <div className="absolute inset-0 bg-black/50" />
           <div className="relative bg-white rounded-2xl border border-gray-200 w-full max-w-2xl max-h-[85vh] overflow-y-auto" style={{ boxShadow: "0 20px 60px rgba(0,0,0,0.2)" }} onClick={e => e.stopPropagation()}>
             <div className="p-5 border-b border-gray-200">
-              <h2 className="text-[16px] font-semibold text-[var(--text-primary)]">Monthly Twin Report</h2>
+              <h2 className="text-[16px] font-semibold text-[var(--text-primary)]">{tr("월간 트윈 리포트", "Monthly Twin Report")}</h2>
               <p className="text-[12px] text-[var(--text-muted)] mt-1">{monthlyReport.period}</p>
             </div>
             <div className="p-5 space-y-5">
               {/* Company Summary */}
               <div className="grid grid-cols-4 gap-3">
                 {[
-                  { label: "Total Twins", value: monthlyReport.company_summary?.total_twins || 0, color: "text-[var(--text-primary)]", bg: "bg-gray-50" },
-                  { label: "Avg Progress", value: `${monthlyReport.company_summary?.avg_intelligence || 0}%`, color: "text-purple-600", bg: "bg-purple-50" },
-                  { label: "Tasks Done", value: monthlyReport.company_summary?.total_tasks_completed || 0, color: "text-green-600", bg: "bg-green-50" },
-                  { label: "Knowledge Added", value: monthlyReport.company_summary?.total_knowledge_added || 0, color: "text-blue-600", bg: "bg-blue-50" },
+                  { label: tr("전체 트윈", "Total Twins"), value: monthlyReport.company_summary?.total_twins || 0, color: "text-[var(--text-primary)]", bg: "bg-gray-50" },
+                  { label: tr("평균 진행도", "Avg Progress"), value: `${monthlyReport.company_summary?.avg_intelligence || 0}%`, color: "text-purple-600", bg: "bg-purple-50" },
+                  { label: tr("완료한 작업", "Tasks Done"), value: monthlyReport.company_summary?.total_tasks_completed || 0, color: "text-green-600", bg: "bg-green-50" },
+                  { label: tr("추가된 지식", "Knowledge Added"), value: monthlyReport.company_summary?.total_knowledge_added || 0, color: "text-blue-600", bg: "bg-blue-50" },
                 ].map(s => (
                   <div key={s.label} className={`${s.bg} rounded-xl px-3 py-2.5 text-center`}>
                     <div className={`text-[20px] font-bold ${s.color}`}>{s.value}</div>
@@ -832,16 +834,16 @@ export default function TwinsPage() {
                 <div className="grid grid-cols-2 gap-3">
                   {monthlyReport.highlights.most_active && (
                     <div className="bg-green-50 rounded-xl p-3 border border-green-200">
-                      <div className="text-[10px] font-medium text-green-600 mb-1">Most Active</div>
+                      <div className="text-[10px] font-medium text-green-600 mb-1">{tr("가장 활발한 트윈", "Most Active")}</div>
                       <div className="text-[14px] font-bold text-green-800">{monthlyReport.highlights.most_active.name}</div>
-                      <div className="text-[11px] text-green-600">{monthlyReport.highlights.most_active.tasks} tasks completed</div>
+                      <div className="text-[11px] text-green-600">{monthlyReport.highlights.most_active.tasks} {tr("개 작업 완료", "tasks completed")}</div>
                     </div>
                   )}
                   {monthlyReport.highlights.most_improved && (
                     <div className="bg-blue-50 rounded-xl p-3 border border-blue-200">
-                      <div className="text-[10px] font-medium text-blue-600 mb-1">Most Improved</div>
+                      <div className="text-[10px] font-medium text-blue-600 mb-1">{tr("가장 많이 성장한 트윈", "Most Improved")}</div>
                       <div className="text-[14px] font-bold text-blue-800">{monthlyReport.highlights.most_improved.name}</div>
-                      <div className="text-[11px] text-blue-600">+{monthlyReport.highlights.most_improved.knowledge} knowledge items</div>
+                      <div className="text-[11px] text-blue-600">+{monthlyReport.highlights.most_improved.knowledge} {tr("개 지식 항목", "knowledge items")}</div>
                     </div>
                   )}
                 </div>
@@ -849,19 +851,19 @@ export default function TwinsPage() {
 
               {/* Twin Rankings Table */}
               <div>
-                <h3 className="text-[13px] font-semibold text-[var(--text-primary)] mb-3">All Twins — Monthly Performance</h3>
+                <h3 className="text-[13px] font-semibold text-[var(--text-primary)] mb-3">{tr("전체 트윈 — 월간 성과", "All Twins — Monthly Performance")}</h3>
                 <div className="overflow-x-auto">
                   <table className="w-full text-[11px]">
                     <thead>
                       <tr className="border-b border-gray-200">
                         <th className="text-left py-2 pr-2 text-[var(--text-muted)] font-medium">#</th>
-                        <th className="text-left py-2 pr-2 text-[var(--text-muted)] font-medium">Twin</th>
-                        <th className="text-center py-2 px-1 text-[var(--text-muted)] font-medium">Progress</th>
-                        <th className="text-center py-2 px-1 text-[var(--text-muted)] font-medium">Tasks</th>
-                        <th className="text-center py-2 px-1 text-[var(--text-muted)] font-medium">Knowledge</th>
-                        <th className="text-center py-2 px-1 text-[var(--text-muted)] font-medium">Self-Imp</th>
-                        <th className="text-center py-2 px-1 text-[var(--text-muted)] font-medium">Chats</th>
-                        <th className="text-center py-2 px-1 text-[var(--text-muted)] font-medium">Trend</th>
+                        <th className="text-left py-2 pr-2 text-[var(--text-muted)] font-medium">{tr("트윈", "Twin")}</th>
+                        <th className="text-center py-2 px-1 text-[var(--text-muted)] font-medium">{tr("진행도", "Progress")}</th>
+                        <th className="text-center py-2 px-1 text-[var(--text-muted)] font-medium">{tr("작업", "Tasks")}</th>
+                        <th className="text-center py-2 px-1 text-[var(--text-muted)] font-medium">{tr("지식", "Knowledge")}</th>
+                        <th className="text-center py-2 px-1 text-[var(--text-muted)] font-medium">{tr("자가개선", "Self-Imp")}</th>
+                        <th className="text-center py-2 px-1 text-[var(--text-muted)] font-medium">{tr("대화", "Chats")}</th>
+                        <th className="text-center py-2 px-1 text-[var(--text-muted)] font-medium">{tr("추세", "Trend")}</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -891,7 +893,7 @@ export default function TwinsPage() {
 
               {/* Sparklines */}
               <div>
-                <h3 className="text-[13px] font-semibold text-[var(--text-primary)] mb-3">30-Day Activity</h3>
+                <h3 className="text-[13px] font-semibold text-[var(--text-primary)] mb-3">{tr("30일 활동", "30-Day Activity")}</h3>
                 <div className="space-y-2">
                   {monthlyReport.twins?.slice(0, 5).map((t: any) => (
                     <div key={t.twin_id} className="flex items-center gap-3">
@@ -911,7 +913,7 @@ export default function TwinsPage() {
               </div>
             </div>
             <div className="p-5 border-t border-gray-200 flex justify-end">
-              <button onClick={() => setShowMonthly(false)} className="px-4 py-2.5 bg-blue-600 text-white rounded-lg text-[13px] font-medium">Close</button>
+              <button onClick={() => setShowMonthly(false)} className="px-4 py-2.5 bg-blue-600 text-white rounded-lg text-[13px] font-medium">{tr("닫기", "Close")}</button>
             </div>
           </div>
         </div>
@@ -923,11 +925,11 @@ export default function TwinsPage() {
       {/* Stats Bar */}
       <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 mb-6">
         {[
-          { label: "Total Twins", value: stats.total, color: "text-[var(--text-primary)]" },
-          { label: "Active Mode", value: stats.active, color: "text-green-600" },
-          { label: "Shadow Mode", value: stats.shadow, color: "text-gray-500" },
-          { label: "Working", value: stats.working, color: "text-blue-600" },
-          { label: "Idle", value: stats.idle, color: "text-yellow-600" },
+          { label: tr("전체 트윈", "Total Twins"), value: stats.total, color: "text-[var(--text-primary)]" },
+          { label: tr("활성 모드", "Active Mode"), value: stats.active, color: "text-green-600" },
+          { label: tr("섀도우 모드", "Shadow Mode"), value: stats.shadow, color: "text-gray-500" },
+          { label: tr("작업 중", "Working"), value: stats.working, color: "text-blue-600" },
+          { label: tr("대기 중", "Idle"), value: stats.idle, color: "text-yellow-600" },
         ].map(s => (
           <div key={s.label} className="bg-[var(--card-bg)] rounded-xl border border-[var(--card-border)] px-4 py-3 text-center" style={{ boxShadow: "var(--shadow-sm)" }}>
             <div className={`text-[22px] font-bold ${s.color}`}>{s.value}</div>
@@ -948,18 +950,21 @@ export default function TwinsPage() {
                 : "bg-[var(--card-bg)] text-[var(--text-muted)] border border-[var(--card-border)] hover:border-[var(--text-primary)]"
             }`}
           >
-            {f.charAt(0).toUpperCase() + f.slice(1)}
+            {tr(
+              f === "all" ? "전체" : f === "active" ? "활성" : f === "shadow" ? "섀도우" : f === "working" ? "작업 중" : f === "idle" ? "대기 중" : f === "offline" ? "오프라인" : f,
+              f.charAt(0).toUpperCase() + f.slice(1)
+            )}
           </button>
         ))}
       </div>
 
       {/* Twin Grid */}
       {loading ? (
-        <div className="text-center py-20 text-[var(--text-muted)]">Loading twins...</div>
+        <div className="text-center py-20 text-[var(--text-muted)]">{tr("트윈을 불러오는 중...", "Loading twins...")}</div>
       ) : filteredTwins.length === 0 ? (
         <div className="text-center py-20">
           <div className="text-[48px] mb-3">👥</div>
-          <div className="text-[var(--text-muted)] text-[14px]">No twins yet. Create your first digital twin!</div>
+          <div className="text-[var(--text-muted)] text-[14px]">{tr("아직 트윈이 없습니다. 첫 디지털 트윈을 만들어 보세요!", "No twins yet. Create your first digital twin!")}</div>
         </div>
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -988,7 +993,10 @@ export default function TwinsPage() {
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2">
                     <h3 className="text-[15px] font-semibold text-[var(--text-primary)] truncate">{twin.name}</h3>
-                    <span className={`w-2.5 h-2.5 rounded-full shrink-0 ${STATUS_COLORS[twin.status] || "bg-gray-400"}`} title={twin.status} />
+                    <span className={`w-2.5 h-2.5 rounded-full shrink-0 ${STATUS_COLORS[twin.status] || "bg-gray-400"}`} title={tr(
+                      twin.status === "working" ? "작업 중" : twin.status === "online" ? "온라인" : twin.status === "idle" ? "대기 중" : twin.status === "in_meeting" ? "회의 중" : twin.status === "offline" ? "오프라인" : twin.status,
+                      twin.status
+                    )} />
                   </div>
                   <p className="text-[12px] text-[var(--text-muted)] truncate">{twin.role}</p>
                 </div>
@@ -997,7 +1005,10 @@ export default function TwinsPage() {
               {/* Mode + Department badges */}
               <div className="flex items-center gap-2 mb-3 flex-wrap">
                 <span className={`px-2 py-0.5 rounded-full text-[11px] font-medium ${MODE_BADGES[twin.mode]?.bg || "bg-gray-100 text-gray-700"}`}>
-                  {MODE_BADGES[twin.mode]?.text || twin.mode}
+                  {tr(
+                    twin.mode === "shadow" ? "섀도우" : twin.mode === "active" ? "활성" : twin.mode === "handoff" ? "핸드오프" : (MODE_BADGES[twin.mode]?.text || twin.mode),
+                    MODE_BADGES[twin.mode]?.text || twin.mode
+                  )}
                 </span>
                 {twin.department && (
                   <span className={`px-2 py-0.5 rounded-full text-[11px] font-medium ${DEPARTMENT_COLORS[twin.department] || "bg-gray-100 text-gray-600"}`}>
@@ -1025,10 +1036,10 @@ export default function TwinsPage() {
 
               {/* Status line */}
               <div className="text-[11px] text-[var(--text-muted)] mb-3">
-                {twin.status === "working" ? "Currently working on a task..." :
-                 twin.status === "in_meeting" ? "In a meeting..." :
-                 twin.status === "idle" ? "Ready for tasks" :
-                 "Offline"}
+                {twin.status === "working" ? tr("현재 작업을 진행 중...", "Currently working on a task...") :
+                 twin.status === "in_meeting" ? tr("회의 중...", "In a meeting...") :
+                 twin.status === "idle" ? tr("작업 준비됨", "Ready for tasks") :
+                 tr("오프라인", "Offline")}
               </div>
 
               {/* v4-B: Readiness pill — at a glance, how production-ready is this twin */}
@@ -1039,16 +1050,16 @@ export default function TwinsPage() {
                     : readiness[twin.id].score_pct >= 50 ? "text-amber-700"
                     : "text-rose-700"
                   }`}
-                  title={readiness[twin.id].missing.map(m => "• " + m.label).join("\n") || "Production-ready"}
+                  title={readiness[twin.id].missing.map(m => "• " + m.label).join("\n") || tr("프로덕션 준비 완료", "Production-ready")}
                 >
                   <span className={`inline-block w-2 h-2 rounded-full ${
                     readiness[twin.id].score_pct >= 80 ? "bg-emerald-500"
                     : readiness[twin.id].score_pct >= 50 ? "bg-amber-500"
                     : "bg-rose-500"
                   }`} />
-                  Readiness: {readiness[twin.id].score_pct}% — {readiness[twin.id].tier}
+                  {tr("준비도", "Readiness")}: {readiness[twin.id].score_pct}% — {readiness[twin.id].tier}
                   {readiness[twin.id].missing.length > 0 && (
-                    <span className="text-gray-500 ml-1">({readiness[twin.id].missing.length} missing)</span>
+                    <span className="text-gray-500 ml-1">({readiness[twin.id].missing.length}{tr("개 부족", " missing")})</span>
                   )}
                 </div>
               )}
@@ -1059,20 +1070,20 @@ export default function TwinsPage() {
                   onClick={() => openChat(twin)}
                   className="flex-1 py-1.5 bg-blue-50 text-blue-700 rounded-lg text-[11px] font-medium hover:bg-blue-100 transition-colors"
                 >
-                  Chat
+                  {tr("채팅", "Chat")}
                 </button>
                 <button
                   onClick={() => setMeetingTwin(twin)}
                   className="flex-1 py-1.5 bg-indigo-50 text-indigo-700 rounded-lg text-[11px] font-medium hover:bg-indigo-100 transition-colors"
                 >
-                  Meeting
+                  {tr("회의", "Meeting")}
                 </button>
                 {twin.mode !== "active" && (
                   <button
                     onClick={() => handleModeSwitch(twin.id, "active")}
                     className="flex-1 py-1.5 bg-green-50 text-green-700 rounded-lg text-[11px] font-medium hover:bg-green-100 transition-colors"
                   >
-                    Activate
+                    {tr("활성화", "Activate")}
                   </button>
                 )}
                 {twin.mode !== "shadow" && (
@@ -1080,14 +1091,14 @@ export default function TwinsPage() {
                     onClick={() => handleModeSwitch(twin.id, "shadow")}
                     className="flex-1 py-1.5 bg-gray-50 text-gray-700 rounded-lg text-[11px] font-medium hover:bg-gray-100 transition-colors"
                   >
-                    Shadow
+                    {tr("섀도우", "Shadow")}
                   </button>
                 )}
                 <button
                   onClick={() => handleDelete(twin.id)}
                   className="py-1.5 px-3 bg-red-50 text-red-600 rounded-lg text-[11px] font-medium hover:bg-red-100 transition-colors"
                 >
-                  Delete
+                  {tr("삭제", "Delete")}
                 </button>
               </div>
             </div>
@@ -1109,81 +1120,81 @@ export default function TwinsPage() {
           >
             <div className="p-6 border-b border-[var(--card-border)]">
               <h2 className="text-[18px] font-semibold text-[var(--text-primary)]">
-                {editTwin ? `Edit ${editTwin.name}` : "Create New Twin"}
+                {editTwin ? tr(`${editTwin.name} 편집`, `Edit ${editTwin.name}`) : tr("새 트윈 만들기", "Create New Twin")}
               </h2>
               <p className="text-[12px] text-[var(--text-muted)] mt-1">
-                {editTwin ? "Update this twin's profile" : "Set up a new digital twin for your team"}
+                {editTwin ? tr("이 트윈의 프로필을 수정합니다", "Update this twin's profile") : tr("팀을 위한 새 디지털 트윈을 설정하세요", "Set up a new digital twin for your team")}
               </p>
             </div>
 
             <div className="p-6 space-y-4">
               {/* Name */}
               <div>
-                <label className="block text-[12px] font-medium text-[var(--text-secondary)] mb-1.5">Name</label>
+                <label className="block text-[12px] font-medium text-[var(--text-secondary)] mb-1.5">{tr("이름", "Name")}</label>
                 <input
                   type="text" value={formName} onChange={e => setFormName(e.target.value)}
-                  placeholder="e.g. Dev Kim, Stock Park"
+                  placeholder={tr("예: 김개발, 박주식", "e.g. Dev Kim, Stock Park")}
                   className="w-full px-3 py-2.5 bg-[var(--bg-secondary)] border border-[var(--card-border)] rounded-lg text-[13px] text-[var(--text-primary)] placeholder:text-[var(--text-muted)] focus:outline-none focus:border-[var(--text-primary)]"
                 />
               </div>
 
               {/* Role */}
               <div>
-                <label className="block text-[12px] font-medium text-[var(--text-secondary)] mb-1.5">Role</label>
+                <label className="block text-[12px] font-medium text-[var(--text-secondary)] mb-1.5">{tr("직무", "Role")}</label>
                 <input
                   type="text" value={formRole} onChange={e => setFormRole(e.target.value)}
-                  placeholder="e.g. Backend Developer, Stock Analyst"
+                  placeholder={tr("예: 백엔드 개발자, 주식 분석가", "e.g. Backend Developer, Stock Analyst")}
                   className="w-full px-3 py-2.5 bg-[var(--bg-secondary)] border border-[var(--card-border)] rounded-lg text-[13px] text-[var(--text-primary)] placeholder:text-[var(--text-muted)] focus:outline-none focus:border-[var(--text-primary)]"
                 />
               </div>
 
               {/* Department */}
               <div>
-                <label className="block text-[12px] font-medium text-[var(--text-secondary)] mb-1.5">Department</label>
+                <label className="block text-[12px] font-medium text-[var(--text-secondary)] mb-1.5">{tr("부서", "Department")}</label>
                 <select
                   value={formDept} onChange={e => setFormDept(e.target.value)}
                   className="w-full px-3 py-2.5 bg-[var(--bg-secondary)] border border-[var(--card-border)] rounded-lg text-[13px] text-[var(--text-primary)] focus:outline-none focus:border-[var(--text-primary)]"
                 >
-                  <option value="">Select department</option>
-                  <option value="AI Team">AI Team</option>
-                  <option value="Business">Business</option>
-                  <option value="Asset">Asset</option>
-                  <option value="Investment">Investment</option>
+                  <option value="">{tr("부서 선택", "Select department")}</option>
+                  <option value="AI Team">{tr("AI 팀", "AI Team")}</option>
+                  <option value="Business">{tr("비즈니스", "Business")}</option>
+                  <option value="Asset">{tr("자산", "Asset")}</option>
+                  <option value="Investment">{tr("투자", "Investment")}</option>
                 </select>
               </div>
 
               {/* Skills */}
               <div>
-                <label className="block text-[12px] font-medium text-[var(--text-secondary)] mb-1.5">Skills (comma separated)</label>
+                <label className="block text-[12px] font-medium text-[var(--text-secondary)] mb-1.5">{tr("스킬 (쉼표로 구분)", "Skills (comma separated)")}</label>
                 <input
                   type="text" value={formSkills} onChange={e => setFormSkills(e.target.value)}
-                  placeholder="e.g. Python, FastAPI, Market Analysis"
+                  placeholder={tr("예: Python, FastAPI, 시장 분석", "e.g. Python, FastAPI, Market Analysis")}
                   className="w-full px-3 py-2.5 bg-[var(--bg-secondary)] border border-[var(--card-border)] rounded-lg text-[13px] text-[var(--text-primary)] placeholder:text-[var(--text-muted)] focus:outline-none focus:border-[var(--text-primary)]"
                 />
               </div>
 
               {/* Personality Prompt */}
               <div>
-                <label className="block text-[12px] font-medium text-[var(--text-secondary)] mb-1.5">Personality Prompt</label>
+                <label className="block text-[12px] font-medium text-[var(--text-secondary)] mb-1.5">{tr("성격 프롬프트", "Personality Prompt")}</label>
                 <textarea
                   value={formPersonality} onChange={e => setFormPersonality(e.target.value)}
                   rows={3}
-                  placeholder="Describe how this twin should think and communicate..."
+                  placeholder={tr("이 트윈이 어떻게 사고하고 소통해야 하는지 설명하세요...", "Describe how this twin should think and communicate...")}
                   className="w-full px-3 py-2.5 bg-[var(--bg-secondary)] border border-[var(--card-border)] rounded-lg text-[13px] text-[var(--text-primary)] placeholder:text-[var(--text-muted)] focus:outline-none focus:border-[var(--text-primary)] resize-none"
                 />
               </div>
 
               {/* Permission Level */}
               <div>
-                <label className="block text-[12px] font-medium text-[var(--text-secondary)] mb-1.5">Permission Level</label>
+                <label className="block text-[12px] font-medium text-[var(--text-secondary)] mb-1.5">{tr("권한 수준", "Permission Level")}</label>
                 <select
                   value={formPermission} onChange={e => setFormPermission(e.target.value)}
                   className="w-full px-3 py-2.5 bg-[var(--bg-secondary)] border border-[var(--card-border)] rounded-lg text-[13px] text-[var(--text-primary)] focus:outline-none focus:border-[var(--text-primary)]"
                 >
-                  <option value="observe">Observe — watch only, cannot act</option>
-                  <option value="suggest">Suggest — drafts work, needs review</option>
-                  <option value="act">Act — executes, flags important items</option>
-                  <option value="act_unsupervised">Act Unsupervised — fully autonomous</option>
+                  <option value="observe">{tr("관찰 — 보기만 가능, 실행 불가", "Observe — watch only, cannot act")}</option>
+                  <option value="suggest">{tr("제안 — 초안 작성, 검토 필요", "Suggest — drafts work, needs review")}</option>
+                  <option value="act">{tr("실행 — 작업 수행, 중요 항목 표시", "Act — executes, flags important items")}</option>
+                  <option value="act_unsupervised">{tr("자율 실행 — 완전 자율", "Act Unsupervised — fully autonomous")}</option>
                 </select>
               </div>
             </div>
@@ -1194,14 +1205,14 @@ export default function TwinsPage() {
                 onClick={() => setShowCreate(false)}
                 className="px-4 py-2.5 text-[13px] font-medium text-[var(--text-muted)] hover:text-[var(--text-primary)] transition-colors"
               >
-                Cancel
+                {tr("취소", "Cancel")}
               </button>
               <button
                 onClick={handleSave}
                 disabled={!formName || !formRole || saving}
                 className="px-5 py-2.5 bg-blue-600 text-white rounded-lg text-[13px] font-medium hover:opacity-90 transition-opacity disabled:opacity-50"
               >
-                {saving ? "Saving..." : editTwin ? "Update Twin" : "Create Twin"}
+                {saving ? tr("저장 중...", "Saving...") : editTwin ? tr("트윈 수정", "Update Twin") : tr("트윈 만들기", "Create Twin")}
               </button>
             </div>
           </div>
@@ -1235,7 +1246,7 @@ export default function TwinsPage() {
               </div>
               <div className="flex-1">
                 <div className="text-[15px] font-semibold text-[var(--text-primary)]">{chatTwin.name}</div>
-                <div className="text-[11px] text-[var(--text-muted)]">{chatTwin.role} — {chatTwin.department || "General"}</div>
+                <div className="text-[11px] text-[var(--text-muted)]">{chatTwin.role} — {chatTwin.department || tr("일반", "General")}</div>
               </div>
               <button onClick={() => setChatTwin(null)} className="text-[var(--text-muted)] hover:text-[var(--text-primary)]">
                 <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
@@ -1247,8 +1258,8 @@ export default function TwinsPage() {
               {chatMessages.length === 0 && (
                 <div className="text-center py-10">
                   <div className="text-[36px] mb-2">💬</div>
-                  <div className="text-[var(--text-muted)] text-[13px]">Start a conversation with {chatTwin.name}</div>
-                  <div className="text-[var(--text-muted)] text-[11px] mt-1">Try: "What can you do?" or "Give me a status report"</div>
+                  <div className="text-[var(--text-muted)] text-[13px]">{chatTwin.name}{tr("와(과) 대화를 시작하세요", " — start a conversation")}</div>
+                  <div className="text-[var(--text-muted)] text-[11px] mt-1">{tr('예: "무엇을 할 수 있나요?" 또는 "상태 보고서를 보여줘"', 'Try: "What can you do?" or "Give me a status report"')}</div>
                 </div>
               )}
               {chatMessages.map((msg, i) => (
@@ -1282,7 +1293,7 @@ export default function TwinsPage() {
                   value={chatInput}
                   onChange={e => setChatInput(e.target.value)}
                   onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendChatMessage(); } }}
-                  placeholder={`Message ${chatTwin.name}... (Shift+Enter for new line)`}
+                  placeholder={tr(`${chatTwin.name}에게 메시지 보내기... (Shift+Enter로 줄바꿈)`, `Message ${chatTwin.name}... (Shift+Enter for new line)`)}
                   className="flex-1 px-4 py-3 bg-[var(--bg-secondary)] border border-[var(--card-border)] rounded-xl text-[13px] text-[var(--text-primary)] placeholder:text-[var(--text-muted)] focus:outline-none focus:border-blue-400 resize-none"
                   disabled={chatLoading}
                   rows={3}
@@ -1292,10 +1303,10 @@ export default function TwinsPage() {
                   disabled={!chatInput.trim() || chatLoading}
                   className="px-4 py-3 bg-blue-600 text-white rounded-xl text-[13px] font-medium hover:opacity-90 transition-opacity disabled:opacity-50 shrink-0"
                 >
-                  Send
+                  {tr("보내기", "Send")}
                 </button>
               </div>
-              <div className="text-[9px] text-[var(--text-muted)] mt-1">Enter to send · Shift+Enter for new line</div>
+              <div className="text-[9px] text-[var(--text-muted)] mt-1">{tr("Enter로 전송 · Shift+Enter로 줄바꿈", "Enter to send · Shift+Enter for new line")}</div>
             </div>
           </div>
         </div>

@@ -3,19 +3,22 @@
 import { useEffect, useState, useRef } from "react";
 import { api, apiPost, apiPatch } from "@/components/api";
 import { ChatResponseCard } from "@/components/ChatCards";
-
-const QUICK_ACTIONS = [
-  { label: "Overview", message: "status", icon: "M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" },
-  { label: "Reports", message: "show daily report", icon: "M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" },
-  { label: "Agents", message: "show agents", icon: "M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z" },
-  { label: "Approvals", message: "pending approvals", icon: "M3 6l3 1m0 0l-3 9a5.002 5.002 0 006.001 0M6 7l3 9M6 7l6-2m6 2l3-1m-3 1l-3 9a5.002 5.002 0 006.001 0M18 7l3 9m-3-9l-6-2m0-2v2m0 16V5" },
-  { label: "Compare", message: "compare asset vs stock", icon: "M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" },
-  { label: "Refresh Data", message: "run full executive summary", icon: "M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" },
-];
+import { useLanguage } from "../../components/i18n";
 
 // Mode info kept for internal use only — not shown to users
 
 export default function ChatPage() {
+  const { t } = useLanguage();
+
+  const QUICK_ACTIONS = [
+    { label: t("개요", "Overview"), message: "status", icon: "M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" },
+    { label: t("리포트", "Reports"), message: "show daily report", icon: "M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" },
+    { label: t("에이전트", "Agents"), message: "show agents", icon: "M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z" },
+    { label: t("승인", "Approvals"), message: "pending approvals", icon: "M3 6l3 1m0 0l-3 9a5.002 5.002 0 006.001 0M6 7l3 9M6 7l6-2m6 2l3-1m-3 1l-3 9a5.002 5.002 0 006.001 0M18 7l3 9m-3-9l-6-2m0-2v2m0 16V5" },
+    { label: t("비교", "Compare"), message: "compare asset vs stock", icon: "M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" },
+    { label: t("데이터 새로고침", "Refresh Data"), message: "run full executive summary", icon: "M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" },
+  ];
+
   const [sessions, setSessions] = useState<any[]>([]);
   const [activeSession, setActiveSession] = useState<string | null>(null);
   const [activeMode, setActiveMode] = useState<string>("structured");
@@ -32,7 +35,7 @@ export default function ChatPage() {
   // Voice input
   const startVoice = () => {
     const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-    if (!SR) { alert("Voice input not supported in this browser."); return; }
+    if (!SR) { alert(t("이 브라우저에서는 음성 입력이 지원되지 않습니다.", "Voice input not supported in this browser.")); return; }
     const recognition = new SR();
     recognition.lang = "auto";
     recognition.interimResults = false;
@@ -236,28 +239,28 @@ export default function ChatPage() {
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50" onClick={() => { setShowNewFolder(false); setNewFolderName(""); }}>
           <div className="bg-[var(--bg-card)] rounded-2xl w-[90vw] max-w-[400px] p-6" style={{boxShadow: "var(--shadow-lg)"}} onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center justify-between mb-4">
-              <h3 className="text-[16px] font-semibold text-[var(--text-primary)]">Create folder</h3>
+              <h3 className="text-[16px] font-semibold text-[var(--text-primary)]">{t("폴더 만들기", "Create folder")}</h3>
               <button onClick={() => { setShowNewFolder(false); setNewFolderName(""); }} className="p-1 rounded-lg hover:bg-[var(--bg-elevated)] text-[var(--text-muted)]">
                 <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
               </button>
             </div>
-            <label className="text-[13px] font-medium text-[var(--text-secondary)] mb-1.5 block">Folder name</label>
+            <label className="text-[13px] font-medium text-[var(--text-secondary)] mb-1.5 block">{t("폴더 이름", "Folder name")}</label>
             <input
               autoFocus
               value={newFolderName}
               onChange={(e) => setNewFolderName(e.target.value)}
               onKeyDown={(e) => { if (e.key === "Enter" && newFolderName.trim()) { addFolder(newFolderName.trim()); setShowNewFolder(false); setNewFolderName(""); } if (e.key === "Escape") { setShowNewFolder(false); setNewFolderName(""); } }}
-              placeholder="e.g. Asset Reports"
+              placeholder={t("예: 자산 리포트", "e.g. Asset Reports")}
               className="w-full px-3 py-2.5 text-[14px] rounded-xl bg-[var(--bg-elevated)] border border-[var(--border-default)] focus:outline-none focus:border-[var(--brand-blue)] text-[var(--text-primary)] placeholder:text-[var(--text-muted)] mb-4"
             />
-            <p className="text-[12px] text-[var(--text-muted)] mb-5">Folders keep chats organized. Use them for ongoing work or to keep things tidy.</p>
+            <p className="text-[12px] text-[var(--text-muted)] mb-5">{t("폴더로 대화를 체계적으로 정리할 수 있습니다. 진행 중인 작업을 모아두거나 깔끔하게 관리하는 데 사용하세요.", "Folders keep chats organized. Use them for ongoing work or to keep things tidy.")}</p>
             <div className="flex justify-end">
               <button
                 onClick={() => { if (newFolderName.trim()) { addFolder(newFolderName.trim()); setShowNewFolder(false); setNewFolderName(""); } }}
                 disabled={!newFolderName.trim()}
                 className="px-4 py-2 rounded-xl bg-[var(--text-primary)] text-white text-[13px] font-medium disabled:opacity-30 hover:opacity-80 transition-opacity"
               >
-                Create folder
+                {t("폴더 만들기", "Create folder")}
               </button>
             </div>
           </div>
@@ -270,11 +273,11 @@ export default function ChatPage() {
         <div className="space-y-1 mb-2">
           <button onClick={() => createSession()} className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-[13px] text-[var(--text-secondary)] hover:bg-[var(--bg-elevated)] transition-colors">
             <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" /></svg>
-            New chat
+            {t("새 대화", "New chat")}
           </button>
           <button onClick={() => setShowNewFolder(true)} className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-[13px] text-[var(--text-secondary)] hover:bg-[var(--bg-elevated)] transition-colors">
             <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}><path strokeLinecap="round" strokeLinejoin="round" d="M9 13h6m-3-3v6m-9 1V7a2 2 0 012-2h6l2 2h6a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2z" /></svg>
-            New folder
+            {t("새 폴더", "New folder")}
           </button>
         </div>
 
@@ -283,7 +286,7 @@ export default function ChatPage() {
           <div className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg bg-[var(--bg-elevated)] border border-[var(--border-default)]">
             <svg className="w-3.5 h-3.5 text-[var(--text-muted)] shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>
             <input value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Search chats..."
+              placeholder={t("대화 검색...", "Search chats...")}
               className="flex-1 bg-transparent text-[12px] text-[var(--text-primary)] placeholder:text-[var(--text-muted)] focus:outline-none" />
             {searchQuery && (
               <button onClick={() => setSearchQuery("")} className="text-[var(--text-muted)] hover:text-[var(--text-primary)]">
@@ -327,10 +330,10 @@ export default function ChatPage() {
                 )}
                 {/* Hover actions */}
                 <div className="hidden group-hover:flex items-center gap-0.5 shrink-0">
-                  <button onClick={(e) => { e.stopPropagation(); setRenaming(s.id); }} className="p-1 rounded hover:bg-[var(--bg-hover)] text-[var(--text-muted)]" title="Rename">
+                  <button onClick={(e) => { e.stopPropagation(); setRenaming(s.id); }} className="p-1 rounded hover:bg-[var(--bg-hover)] text-[var(--text-muted)]" title={t("이름 변경", "Rename")}>
                     <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" /></svg>
                   </button>
-                  <button onClick={(e) => { e.stopPropagation(); deleteSession(s.id); }} className="p-1 rounded hover:bg-[var(--badge-error-bg)] text-[var(--text-muted)] hover:text-[var(--error)]" title="Delete">
+                  <button onClick={(e) => { e.stopPropagation(); deleteSession(s.id); }} className="p-1 rounded hover:bg-[var(--badge-error-bg)] text-[var(--text-muted)] hover:text-[var(--error)]" title={t("삭제", "Delete")}>
                     <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
                   </button>
                 </div>
@@ -343,7 +346,7 @@ export default function ChatPage() {
                 {foldersLoaded && savedFolders.length > 0 && (
                 <div className="mb-2">
                   <div className="px-2 mb-1">
-                    <span className="text-[11px] font-semibold text-[var(--text-muted)] uppercase tracking-wider">Folders</span>
+                    <span className="text-[11px] font-semibold text-[var(--text-muted)] uppercase tracking-wider">{t("폴더", "Folders")}</span>
                   </div>
 
                   {/* Render all saved folders */}
@@ -371,11 +374,11 @@ export default function ChatPage() {
                           {/* Folder hover actions */}
                           <div className="hidden group-hover:flex items-center gap-0.5">
                             <button onClick={(e) => { e.stopPropagation(); setRenamingFolder(folderName); }}
-                              className="p-0.5 rounded hover:bg-[var(--bg-hover)] text-[var(--text-muted)]" title="Rename folder">
+                              className="p-0.5 rounded hover:bg-[var(--bg-hover)] text-[var(--text-muted)]" title={t("폴더 이름 변경", "Rename folder")}>
                               <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" /></svg>
                             </button>
                             <button onClick={(e) => { e.stopPropagation(); removeFolder(folderName); }}
-                              className="p-0.5 rounded hover:bg-[var(--badge-error-bg)] text-[var(--text-muted)] hover:text-[var(--error)]" title="Delete folder">
+                              className="p-0.5 rounded hover:bg-[var(--badge-error-bg)] text-[var(--text-muted)] hover:text-[var(--error)]" title={t("폴더 삭제", "Delete folder")}>
                               <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
                             </button>
                           </div>
@@ -384,7 +387,7 @@ export default function ChatPage() {
                         {expandedFolders.has(folderName) && (
                           <div className="ml-5 space-y-0.5">
                             {folderSessions.length > 0 ? folderSessions.map(renderChat) : (
-                              <p className="px-3 py-1.5 text-[11px] text-[var(--text-muted)] italic">Empty folder</p>
+                              <p className="px-3 py-1.5 text-[11px] text-[var(--text-muted)] italic">{t("빈 폴더", "Empty folder")}</p>
                             )}
                           </div>
                         )}
@@ -397,7 +400,7 @@ export default function ChatPage() {
                 {/* Recents */}
                 {unfiled.length > 0 && (
                   <div>
-                    {(savedFolders.length > 0 || folders.size > 0) && <div className="px-2 mb-1 text-[11px] font-semibold text-[var(--text-muted)] uppercase tracking-wider">Recents</div>}
+                    {(savedFolders.length > 0 || folders.size > 0) && <div className="px-2 mb-1 text-[11px] font-semibold text-[var(--text-muted)] uppercase tracking-wider">{t("최근 항목", "Recents")}</div>}
                     {unfiled.map(renderChat)}
                   </div>
                 )}
@@ -413,10 +416,10 @@ export default function ChatPage() {
           <>
             {/* Chat Header */}
             <div className="px-4 py-2.5 border-b border-[var(--border-default)] flex items-center justify-between">
-              <h2 className="text-sm font-semibold text-[var(--text-primary)]">VIP Assistant</h2>
+              <h2 className="text-sm font-semibold text-[var(--text-primary)]">{t("VIP 어시스턴트", "VIP Assistant")}</h2>
               <button onClick={() => {
                 const chatText = messages.filter((m: any) => m.role !== "system").map((m: any) => {
-                  const role = m.role === "user" ? "You" : "VIP Agent";
+                  const role = m.role === "user" ? t("나", "You") : t("VIP 에이전트", "VIP Agent");
                   const time = m.created_at ? new Date(m.created_at).toLocaleString("ko-KR", { timeZone: "Asia/Seoul" }) : "";
                   return `[${time}] ${role}:\n${m.content?.text || ""}\n`;
                 }).join("\n");
@@ -429,7 +432,7 @@ export default function ChatPage() {
                 URL.revokeObjectURL(url);
               }}
                 className="px-2.5 py-1 rounded-lg text-[10px] text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-elevated)] border border-[var(--border-default)] transition-colors">
-                Export
+                {t("내보내기", "Export")}
               </button>
             </div>
 
@@ -446,7 +449,7 @@ export default function ChatPage() {
                   return (
                     <div key={m.id} className="mr-8">
                       <div className="rounded-lg p-3 bg-[var(--bg-elevated)] border border-[var(--border-default)]/30">
-                        <span className="text-[9px] font-semibold text-green-400 mb-1.5 block">VIP Agent</span>
+                        <span className="text-[9px] font-semibold text-green-400 mb-1.5 block">{t("VIP 에이전트", "VIP Agent")}</span>
                         <div className="flex items-center gap-1.5">
                           <div className="w-1.5 h-1.5 rounded-full bg-[var(--text-muted)] animate-bounce" style={{ animationDelay: "0ms" }} />
                           <div className="w-1.5 h-1.5 rounded-full bg-[var(--text-muted)] animate-bounce" style={{ animationDelay: "150ms" }} />
@@ -468,7 +471,7 @@ export default function ChatPage() {
                         <span className={`text-[9px] font-semibold ${
                           isUser ? "text-blue-400" : isAssistant ? "text-green-400" : "text-[var(--text-muted)]"
                         }`}>
-                          {isUser ? "You" : isAssistant ? "VIP Agent" : "System"}
+                          {isUser ? t("나", "You") : isAssistant ? t("VIP 에이전트", "VIP Agent") : t("시스템", "System")}
                         </span>
                         <span className="text-[8px] text-[var(--text-muted)]">
                           {m.created_at ? new Date(m.created_at).toLocaleTimeString() : ""}
@@ -494,7 +497,7 @@ export default function ChatPage() {
                       {m.content?.details && (
                         <details className="mt-2">
                           <summary className="text-[10px] text-[var(--text-muted)] cursor-pointer hover:text-[var(--text-secondary)] select-none">
-                            Show details
+                            {t("자세히 보기", "Show details")}
                           </summary>
                           <pre className="mt-1.5 text-[10px] text-[var(--text-muted)] bg-[var(--bg-card)] border border-[var(--border-default)] rounded-lg p-2.5 overflow-x-auto whitespace-pre-wrap">{m.content.details}</pre>
                         </details>
@@ -520,12 +523,12 @@ export default function ChatPage() {
                           {isUser && (
                             <button onClick={() => { setInput(m.content?.text || ""); }}
                               className="text-[9px] px-2 py-0.5 rounded bg-blue-500/10 text-blue-500 hover:bg-blue-500/20 transition-colors">
-                              Re-ask
+                              {t("다시 질문", "Re-ask")}
                             </button>
                           )}
                           <button onClick={() => navigator.clipboard.writeText(m.content?.text || "")}
                             className="text-[9px] px-2 py-0.5 rounded bg-[var(--bg-card)] text-[var(--text-muted)] hover:text-[var(--text-primary)] border border-[var(--border-default)] transition-colors">
-                            Copy
+                            {t("복사", "Copy")}
                           </button>
                         </div>
                       )}
@@ -567,7 +570,7 @@ export default function ChatPage() {
               <div className="flex items-center gap-1.5 bg-[var(--bg-elevated)] border border-[var(--border-default)] rounded-xl px-2 focus-within:border-[var(--brand-blue)] transition-colors">
                 <button onClick={() => fileInputRef.current?.click()}
                   className="p-2 rounded-lg text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors shrink-0"
-                  title="Attach file">
+                  title={t("파일 첨부", "Attach file")}>
                   <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
                     <path strokeLinecap="round" strokeLinejoin="round" d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
                   </svg>
@@ -578,7 +581,7 @@ export default function ChatPage() {
                   value={input}
                   onChange={(e) => setInput(e.target.value)}
                   onKeyDown={(e) => e.key === "Enter" && !e.shiftKey && sendMessage()}
-                  placeholder="Ask anything..."
+                  placeholder={t("무엇이든 물어보세요...", "Ask anything...")}
                   className="flex-1 bg-transparent py-2.5 text-sm focus:outline-none text-[var(--text-primary)] placeholder:text-[var(--text-muted)]"
                   disabled={sending}
                 />
@@ -588,7 +591,7 @@ export default function ChatPage() {
                   className={`p-2 rounded-lg transition-colors shrink-0 ${
                     listening ? "text-red-500 bg-red-50 dark:bg-red-900/20 animate-pulse" : "text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)]"
                   }`}
-                  title={listening ? "Listening..." : "Voice input"}>
+                  title={listening ? t("듣는 중...", "Listening...") : t("음성 입력", "Voice input")}>
                   <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
                     <path strokeLinecap="round" strokeLinejoin="round" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
                   </svg>
@@ -597,7 +600,7 @@ export default function ChatPage() {
                 {/* Send */}
                 <button onClick={() => sendMessage()} disabled={sending || !input.trim()}
                   className="p-2 rounded-lg bg-[var(--brand-blue)] text-white disabled:opacity-30 hover:bg-[var(--brand-blue-deep)] transition-colors shrink-0"
-                  title="Send">
+                  title={t("전송", "Send")}>
                   <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                     <path strokeLinecap="round" strokeLinejoin="round" d="M5 12h14M12 5l7 7-7 7" />
                   </svg>
@@ -610,19 +613,19 @@ export default function ChatPage() {
             <div className="w-full max-w-lg px-4">
               {/* Greeting */}
               <div className="text-center mb-8">
-                <h2 className="text-[24px] font-semibold text-[var(--text-primary)] mb-2">Good {new Date().getHours() < 12 ? "morning" : new Date().getHours() < 18 ? "afternoon" : "evening"}</h2>
-                <p className="text-[14px] text-[var(--text-muted)]">What would you like to do today?</p>
+                <h2 className="text-[24px] font-semibold text-[var(--text-primary)] mb-2">{new Date().getHours() < 12 ? t("좋은 아침입니다", "Good morning") : new Date().getHours() < 18 ? t("좋은 오후입니다", "Good afternoon") : t("좋은 저녁입니다", "Good evening")}</h2>
+                <p className="text-[14px] text-[var(--text-muted)]">{t("오늘 무엇을 도와드릴까요?", "What would you like to do today?")}</p>
               </div>
 
               {/* Task cards — 2x3 grid */}
               <div className="grid grid-cols-2 gap-2.5 mb-6">
                 {[
-                  { label: "Today's overview", desc: "Status & key metrics", message: "status", icon: "M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" },
-                  { label: "Urgent items", desc: "Approvals & risks", message: "pending approvals", icon: "M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" },
-                  { label: "Latest report", desc: "Daily summary", message: "show daily report", icon: "M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" },
-                  { label: "Refresh data", desc: "Fetch from all agents", message: "run full executive summary", icon: "M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" },
-                  { label: "Compare", desc: "Asset vs Stock", message: "compare asset vs stock", icon: "M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" },
-                  { label: "Ask anything", desc: "Natural language", message: "", icon: "M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" },
+                  { label: t("오늘의 개요", "Today's overview"), desc: t("현황 및 핵심 지표", "Status & key metrics"), message: "status", icon: "M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" },
+                  { label: t("긴급 항목", "Urgent items"), desc: t("승인 및 리스크", "Approvals & risks"), message: "pending approvals", icon: "M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" },
+                  { label: t("최신 리포트", "Latest report"), desc: t("일일 요약", "Daily summary"), message: "show daily report", icon: "M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" },
+                  { label: t("데이터 새로고침", "Refresh data"), desc: t("모든 에이전트에서 가져오기", "Fetch from all agents"), message: "run full executive summary", icon: "M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" },
+                  { label: t("비교", "Compare"), desc: t("자산 vs 주식", "Asset vs Stock"), message: "compare asset vs stock", icon: "M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" },
+                  { label: t("무엇이든 질문", "Ask anything"), desc: t("자연어 입력", "Natural language"), message: "", icon: "M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" },
                 ].map((task) => (
                   <button key={task.label}
                     onClick={() => task.message ? handleQuickAction(task.message) : document.querySelector<HTMLInputElement>("#chat-empty-input")?.focus()}
@@ -664,14 +667,14 @@ export default function ChatPage() {
                       setAttachedFile(null);
                     }
                   }}
-                  placeholder="Type, speak, or attach a file..."
+                  placeholder={t("입력하거나, 말하거나, 파일을 첨부하세요...", "Type, speak, or attach a file...")}
                   className="w-full px-4 py-3.5 text-[14px] bg-transparent focus:outline-none text-[var(--text-primary)] placeholder:text-[var(--text-muted)]"
                 />
                 <div className="px-3 pb-2.5 flex items-center justify-between">
                   <div className="flex items-center gap-1">
                     <button onClick={() => fileInputRef.current?.click()}
                       className="p-1.5 rounded-lg text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-elevated)] transition-colors"
-                      title="Attach file">
+                      title={t("파일 첨부", "Attach file")}>
                       <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
                         <path strokeLinecap="round" strokeLinejoin="round" d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
                       </svg>
@@ -680,7 +683,7 @@ export default function ChatPage() {
                       className={`p-1.5 rounded-lg transition-colors ${
                         listening ? "text-red-500 bg-red-50 dark:bg-red-900/20 animate-pulse" : "text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-elevated)]"
                       }`}
-                      title={listening ? "Listening..." : "Voice input"}>
+                      title={listening ? t("듣는 중...", "Listening...") : t("음성 입력", "Voice input")}>
                       <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
                         <path strokeLinecap="round" strokeLinejoin="round" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
                       </svg>

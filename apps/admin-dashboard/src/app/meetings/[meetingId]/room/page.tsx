@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { API, api, apiPost } from "../../../../components/api";
+import { useLanguage } from "../../../../components/i18n";
 
 interface Participant {
   participant_id: string;
@@ -43,6 +44,7 @@ interface Hand {
 }
 
 export default function HybridMeetingRoomPage() {
+  const { t } = useLanguage();
   const params = useParams();
   const router = useRouter();
   const meetingId = (params?.meetingId as string) || "";
@@ -72,7 +74,7 @@ export default function HybridMeetingRoomPage() {
         const m: any = await api(`/meetings/${meetingId}`);
         setMeeting(m);
         setParticipants(m.participants || []);
-      } catch (e: any) { setError(`Couldn't load meeting: ${e.message}`); }
+      } catch (e: any) { setError(`${t("회의를 불러올 수 없습니다", "Couldn't load meeting")}: ${e.message}`); }
     })();
   }, [meetingId]);
 
@@ -113,7 +115,7 @@ export default function HybridMeetingRoomPage() {
       mediaRecorderRef.current = recorder;
       setRecording(true);
     } catch (e: any) {
-      setError(`Microphone denied: ${e.message}`);
+      setError(`${t("마이크 사용이 거부되었습니다", "Microphone denied")}: ${e.message}`);
     }
   };
   const stopRecording = () => {
@@ -134,7 +136,7 @@ export default function HybridMeetingRoomPage() {
         { method: "POST", body: form },
       );
       const data = await r.json();
-      if (!r.ok) throw new Error(data.detail || "Transcription failed");
+      if (!r.ok) throw new Error(data.detail || t("음성 변환에 실패했습니다", "Transcription failed"));
     } catch (e: any) { setError(e.message); }
     finally { setUploading(false); }
   };
@@ -178,7 +180,7 @@ export default function HybridMeetingRoomPage() {
   // ----- finalize -----
 
   const finalizeMeeting = async () => {
-    if (!confirm("End meeting? Twins get summary in knowledge base + email is sent.")) return;
+    if (!confirm(t("회의를 종료할까요? 트윈들이 지식 베이스에 요약을 받고 이메일이 발송됩니다.", "End meeting? Twins get summary in knowledge base + email is sent."))) return;
     setFinalizing(true);
     try {
       const r: any = await apiPost(`/twins/meetings/${meetingId}/finalize`);
@@ -195,7 +197,7 @@ export default function HybridMeetingRoomPage() {
     if (p) handsByParticipant[p.participant_id] = h;
   });
 
-  if (!meetingId) return <div className="p-6">No meeting selected.</div>;
+  if (!meetingId) return <div className="p-6">{t("선택된 회의가 없습니다.", "No meeting selected.")}</div>;
   const isScheduled = meeting?.status === "scheduled";
 
   return (
@@ -206,14 +208,14 @@ export default function HybridMeetingRoomPage() {
       <div className="flex justify-between items-start mb-4">
         <div>
           <button onClick={() => router.push("/meetings")} className="text-xs text-indigo-600 underline mb-1">
-            ← Back to meetings
+            {t("← 회의 목록으로", "← Back to meetings")}
           </button>
-          <h1 className="text-2xl font-bold">{meeting?.title || "Meeting room"}</h1>
+          <h1 className="text-2xl font-bold">{meeting?.title || t("회의실", "Meeting room")}</h1>
           <p className="text-sm text-gray-500">
-            Status: <span className="font-semibold">{meeting?.status}</span>
+            {t("상태", "Status")}: <span className="font-semibold">{meeting?.status}</span>
             {isScheduled && meeting?.scheduled_at && (
               <span className="ml-2 text-amber-700">
-                Starts at {new Date(meeting.scheduled_at).toLocaleTimeString()} — twins are waiting.
+                {t("시작 시각", "Starts at")} {new Date(meeting.scheduled_at).toLocaleTimeString()} — {t("트윈들이 대기 중입니다.", "twins are waiting.")}
               </span>
             )}
           </p>
@@ -225,14 +227,14 @@ export default function HybridMeetingRoomPage() {
               disabled={uploading || meeting?.status === "ended"}
               className="bg-emerald-600 text-white rounded-lg px-3 py-2 text-sm disabled:opacity-50"
             >
-              🎙 Record
+              🎙 {t("녹음", "Record")}
             </button>
           ) : (
             <button
               onClick={stopRecording}
               className="bg-rose-600 text-white rounded-lg px-3 py-2 text-sm animate-pulse"
             >
-              ■ Stop + transcribe
+              ■ {t("중지 + 변환", "Stop + transcribe")}
             </button>
           )}
           <button
@@ -240,7 +242,7 @@ export default function HybridMeetingRoomPage() {
             disabled={finalizing || meeting?.status === "ended"}
             className="bg-gray-900 text-white rounded-lg px-3 py-2 text-sm disabled:opacity-50"
           >
-            {finalizing ? "Ending…" : "End meeting"}
+            {finalizing ? t("종료 중…", "Ending…") : t("회의 종료", "End meeting")}
           </button>
         </div>
       </div>
@@ -255,7 +257,7 @@ export default function HybridMeetingRoomPage() {
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 mb-4">
         {participants.length === 0 && (
           <div className="col-span-full bg-gray-50 rounded-xl p-8 text-center text-sm text-gray-500">
-            No attendees yet. {isScheduled && "Twins will appear here when the meeting starts."}
+            {t("아직 참석자가 없습니다.", "No attendees yet.")} {isScheduled && t("회의가 시작되면 트윈들이 여기에 표시됩니다.", "Twins will appear here when the meeting starts.")}
           </div>
         )}
         {participants.map(p => {
@@ -286,7 +288,7 @@ export default function HybridMeetingRoomPage() {
               {/* Waiting badge */}
               {isWaiting && (
                 <div className="absolute top-2 left-2 bg-blue-500 text-white rounded-full px-2 py-0.5 text-[10px]">
-                  waiting
+                  {t("대기 중", "waiting")}
                 </div>
               )}
 
@@ -294,13 +296,13 @@ export default function HybridMeetingRoomPage() {
               <div className="text-xs">
                 <div className="font-semibold truncate">{p.name}</div>
                 <div className="text-[10px] opacity-70 truncate">
-                  {p.is_proxy ? `proxying ${p.worker_name || "worker"}` : p.role || "twin"}
+                  {p.is_proxy ? `${t("대행 중", "proxying")} ${p.worker_name || t("직원", "worker")}` : p.role || t("트윈", "twin")}
                 </div>
                 {hand && grantBusy === hand.raise_id && (
-                  <div className="text-[10px] text-amber-300 mt-1">Twin speaking…</div>
+                  <div className="text-[10px] text-amber-300 mt-1">{t("트윈이 발언 중…", "Twin speaking…")}</div>
                 )}
                 {hand && grantBusy !== hand.raise_id && (
-                  <div className="text-[10px] text-amber-300 mt-1">Click to grant floor</div>
+                  <div className="text-[10px] text-amber-300 mt-1">{t("클릭하여 발언권 부여", "Click to grant floor")}</div>
                 )}
               </div>
             </div>
@@ -314,7 +316,7 @@ export default function HybridMeetingRoomPage() {
           value={question}
           onChange={e => setQuestion(e.target.value)}
           onKeyDown={e => e.key === "Enter" && handleAsk()}
-          placeholder='Ask the room (e.g. "What is the status of the Q2 report?" or "Davronbek, can you brief us?")'
+          placeholder={t('회의에 질문하기 (예: "2분기 보고서 진행 상황은?" 또는 "Davronbek, 브리핑해 주시겠어요?")', 'Ask the room (e.g. "What is the status of the Q2 report?" or "Davronbek, can you brief us?")')}
           className="flex-1 border rounded px-3 py-2 text-sm"
           disabled={askBusy}
         />
@@ -323,21 +325,21 @@ export default function HybridMeetingRoomPage() {
           disabled={askBusy || !question.trim()}
           className="bg-indigo-600 text-white rounded px-4 py-2 text-sm disabled:opacity-50"
         >
-          {askBusy ? "Asking…" : "Ask"}
+          {askBusy ? t("질문 중…", "Asking…") : t("질문", "Ask")}
         </button>
       </div>
 
       {/* Live transcript */}
       <section className="bg-white rounded-xl border border-gray-200 p-4">
-        <h2 className="font-semibold text-sm mb-2">Live transcript ({utterances.length})</h2>
+        <h2 className="font-semibold text-sm mb-2">{t("실시간 대화 기록", "Live transcript")} ({utterances.length})</h2>
         <div className="bg-gray-50 rounded p-3 max-h-[280px] overflow-y-auto space-y-2">
           {utterances.length === 0 && (
-            <p className="text-xs text-gray-400">No utterances yet. Record audio or ask a question.</p>
+            <p className="text-xs text-gray-400">{t("아직 발언 기록이 없습니다. 음성을 녹음하거나 질문하세요.", "No utterances yet. Record audio or ask a question.")}</p>
           )}
           {utterances.map(u => (
             <div key={u.id} className={`p-2 rounded text-sm ${u.speaker_role === "twin" ? "bg-sky-50" : "bg-white border"}`}>
               <span className="font-semibold text-xs mr-2">{u.speaker_label || u.speaker_role}</span>
-              {u.is_commitment && <span className="text-xs bg-amber-200 text-amber-800 px-1 rounded mr-1">COMMIT</span>}
+              {u.is_commitment && <span className="text-xs bg-amber-200 text-amber-800 px-1 rounded mr-1">{t("약속", "COMMIT")}</span>}
               <span>{u.text}</span>
               {u.audio_url && (
                 <audio src={`${API}${u.audio_url}`} controls className="block mt-1 w-full h-7" />
@@ -350,17 +352,17 @@ export default function HybridMeetingRoomPage() {
       {/* Finalize result */}
       {finalResult && (
         <section className="mt-4 bg-emerald-50 border border-emerald-200 rounded-xl p-4">
-          <h2 className="font-semibold mb-1">Meeting ended</h2>
-          <p className="text-sm text-gray-600 mb-2">Saved to {finalResult.saved_to_twin_knowledge?.length || 0} twin knowledge bases.</p>
+          <h2 className="font-semibold mb-1">{t("회의가 종료되었습니다", "Meeting ended")}</h2>
+          <p className="text-sm text-gray-600 mb-2">{finalResult.saved_to_twin_knowledge?.length || 0}{t("개의 트윈 지식 베이스에 저장되었습니다.", " twin knowledge bases saved.")}</p>
           {finalResult.summary?.korean_summary && (
             <details>
-              <summary className="cursor-pointer text-sm font-medium">한국어 요약</summary>
+              <summary className="cursor-pointer text-sm font-medium">{t("한국어 요약", "Korean summary")}</summary>
               <pre className="whitespace-pre-wrap text-xs bg-white rounded p-3 mt-2">{finalResult.summary.korean_summary}</pre>
             </details>
           )}
           {finalResult.summary?.english_summary && (
             <details>
-              <summary className="cursor-pointer text-sm font-medium">English summary</summary>
+              <summary className="cursor-pointer text-sm font-medium">{t("영어 요약", "English summary")}</summary>
               <pre className="whitespace-pre-wrap text-xs bg-white rounded p-3 mt-2">{finalResult.summary.english_summary}</pre>
             </details>
           )}

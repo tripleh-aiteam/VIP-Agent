@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { API } from "../../components/api";
+import { useLanguage } from "../../components/i18n";
 
 interface TwinCard {
   id: string;
@@ -104,6 +105,7 @@ function timeAgo(ts: string): string {
 }
 
 export default function ControlRoomPage() {
+  const { t } = useLanguage();
   const [data, setData] = useState<ControlRoomData | null>(null);
   const [loading, setLoading] = useState(true);
   const [watchTwinId, setWatchTwinId] = useState<string | null>(null);
@@ -206,7 +208,7 @@ export default function ControlRoomPage() {
   }
 
   if (loading) {
-    return <div className="p-6 text-center text-[var(--text-muted)]">Loading Control Room...</div>;
+    return <div className="p-6 text-center text-[var(--text-muted)]">{t("컨트롤 룸 불러오는 중...", "Loading Control Room...")}</div>;
   }
 
   return (
@@ -214,7 +216,7 @@ export default function ControlRoomPage() {
       {/* Header */}
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 mb-5">
         <div>
-          <h1 className="text-[28px] font-semibold text-[var(--text-primary)]">Control Room</h1>
+          <h1 className="text-[28px] font-semibold text-[var(--text-primary)]">{t("컨트롤 룸", "Control Room")}</h1>
           {data?.time && (
             <p className="text-[13px] text-[var(--text-muted)] mt-1">
               {data.time.current_time} {data.time.timezone} — {data.time.mode_label}
@@ -227,7 +229,7 @@ export default function ControlRoomPage() {
             className="px-4 py-2.5 bg-blue-600 text-white rounded-lg text-[13px] font-medium hover:opacity-90 transition-opacity flex items-center gap-2"
           >
             <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M11 5.882V19.24a1.76 1.76 0 01-3.417.592l-2.147-6.15M18 13a3 3 0 100-6M5.436 13.683A4.001 4.001 0 017 6h1.832c4.1 0 7.625-1.234 9.168-3v14c-1.543-1.766-5.067-3-9.168-3H7a3.988 3.988 0 01-1.564-.317z" /></svg>
-            Call All-Hands Meeting
+            {t("전체 회의 소집", "Call All-Hands Meeting")}
           </button>
         </div>
       </div>
@@ -255,12 +257,12 @@ export default function ControlRoomPage() {
       {data?.stats && (
         <div className="grid grid-cols-3 sm:grid-cols-6 gap-3 mb-5">
           {[
-            { label: "Total", value: data.stats.total_twins, color: "text-[var(--text-primary)]" },
-            { label: "Active", value: data.stats.active_mode, color: "text-green-600" },
-            { label: "Shadow", value: data.stats.shadow_mode, color: "text-gray-500" },
-            { label: "Working", value: data.stats.working, color: "text-blue-600" },
-            { label: "Idle", value: data.stats.idle, color: "text-yellow-600" },
-            { label: "Meeting", value: data.stats.in_meeting, color: "text-purple-600" },
+            { label: t("전체", "Total"), value: data.stats.total_twins, color: "text-[var(--text-primary)]" },
+            { label: t("활성", "Active"), value: data.stats.active_mode, color: "text-green-600" },
+            { label: t("섀도우", "Shadow"), value: data.stats.shadow_mode, color: "text-gray-500" },
+            { label: t("작업 중", "Working"), value: data.stats.working, color: "text-blue-600" },
+            { label: t("대기 중", "Idle"), value: data.stats.idle, color: "text-yellow-600" },
+            { label: t("회의 중", "Meeting"), value: data.stats.in_meeting, color: "text-purple-600" },
           ].map(s => (
             <div key={s.label} className="bg-[var(--card-bg)] rounded-xl border border-[var(--card-border)] px-3 py-2.5 text-center" style={{ boxShadow: "var(--shadow-sm)" }}>
               <div className={`text-[20px] font-bold ${s.color}`}>{s.value}</div>
@@ -306,7 +308,10 @@ export default function ControlRoomPage() {
                       <p className="text-[11px] text-[var(--text-muted)] truncate">{twin.role}</p>
                     </div>
                     <span className={`px-2 py-0.5 rounded-full text-[10px] font-medium ${MODE_BADGES[twin.mode]?.bg || "bg-gray-100"}`}>
-                      {MODE_BADGES[twin.mode]?.text || twin.mode}
+                      {twin.mode === "shadow" ? t("섀도우", "Shadow")
+                        : twin.mode === "active" ? t("활성", "Active")
+                        : twin.mode === "handoff" ? t("인계", "Handoff")
+                        : (MODE_BADGES[twin.mode]?.text || twin.mode)}
                     </span>
                   </div>
 
@@ -314,7 +319,7 @@ export default function ControlRoomPage() {
                   <div className="bg-[var(--bg-secondary)] rounded-lg px-3 py-2 mb-3 min-h-[44px]">
                     {twin.current_task ? (
                       <div>
-                        <div className="text-[11px] text-[var(--text-muted)]">Working on:</div>
+                        <div className="text-[11px] text-[var(--text-muted)]">{t("작업 중:", "Working on:")}</div>
                         <div className="text-[12px] font-medium text-[var(--text-primary)] truncate">{twin.current_task.title}</div>
                       </div>
                     ) : twin.last_activity ? (
@@ -324,7 +329,7 @@ export default function ControlRoomPage() {
                       </div>
                     ) : (
                       <div className="text-[12px] text-[var(--text-muted)]">
-                        {twin.status === "idle" ? "Ready for tasks" : "No recent activity"}
+                        {twin.status === "idle" ? t("작업 대기 중", "Ready for tasks") : t("최근 활동 없음", "No recent activity")}
                       </div>
                     )}
                   </div>
@@ -342,7 +347,7 @@ export default function ControlRoomPage() {
                       <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
                       <path strokeLinecap="round" strokeLinejoin="round" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
                     </svg>
-                    {watchTwinId === twin.id ? "Watching" : "Watch"}
+                    {watchTwinId === twin.id ? t("관찰 중", "Watching") : t("관찰하기", "Watch")}
                   </button>
                 </div>
               ))}
@@ -350,8 +355,8 @@ export default function ControlRoomPage() {
           ) : (
             <div className="text-center py-20">
               <div className="text-[48px] mb-3">🎮</div>
-              <div className="text-[var(--text-muted)]">No twins in the system yet.</div>
-              <a href="/twins" className="text-blue-500 text-[13px] hover:underline mt-2 inline-block">Create twins first →</a>
+              <div className="text-[var(--text-muted)]">{t("아직 시스템에 트윈이 없습니다.", "No twins in the system yet.")}</div>
+              <a href="/twins" className="text-blue-500 text-[13px] hover:underline mt-2 inline-block">{t("먼저 트윈 만들기 →", "Create twins first →")}</a>
             </div>
           )}
         </div>
@@ -374,7 +379,7 @@ export default function ControlRoomPage() {
               <div className="flex gap-1">
                 <button onClick={() => setPanelTab("chat")}
                   className={`flex-1 py-1.5 rounded-lg text-[11px] font-medium transition-all ${panelTab === "chat" ? "bg-blue-600 text-white" : "text-[var(--text-muted)] hover:bg-[var(--bg-secondary)]"}`}>
-                  Chat
+                  {t("채팅", "Chat")}
                   {chatMessages.filter(m => m.sender_type === "worker" && !m.is_read).length > 0 && (
                     <span className="ml-1 w-4 h-4 inline-flex items-center justify-center rounded-full bg-red-500 text-white text-[9px]">
                       {chatMessages.filter(m => m.sender_type === "worker" && !m.is_read).length}
@@ -383,7 +388,7 @@ export default function ControlRoomPage() {
                 </button>
                 <button onClick={() => setPanelTab("activity")}
                   className={`flex-1 py-1.5 rounded-lg text-[11px] font-medium transition-all ${panelTab === "activity" ? "bg-blue-600 text-white" : "text-[var(--text-muted)] hover:bg-[var(--bg-secondary)]"}`}>
-                  Activity
+                  {t("활동", "Activity")}
                 </button>
               </div>
             </div>
@@ -393,7 +398,7 @@ export default function ControlRoomPage() {
               <>
                 <div className="flex-1 overflow-y-auto px-4 py-3 space-y-2">
                   {chatMessages.length === 0 ? (
-                    <div className="text-center py-10 text-[var(--text-muted)] text-[12px]">No messages yet. Send a message to this worker.</div>
+                    <div className="text-center py-10 text-[var(--text-muted)] text-[12px]">{t("아직 메시지가 없습니다. 이 작업자에게 메시지를 보내세요.", "No messages yet. Send a message to this worker.")}</div>
                   ) : (
                     chatMessages.map(msg => (
                       <div key={msg.id} className={`flex ${msg.sender_type === "boss" ? "justify-end" : "justify-start"}`}>
@@ -402,7 +407,7 @@ export default function ControlRoomPage() {
                             ? "bg-blue-600 text-white rounded-br-md"
                             : "bg-blue-50 text-blue-900 border border-blue-200 rounded-bl-md"
                         }`}>
-                          {msg.sender_type === "worker" && <div className="text-[9px] font-medium text-blue-500 mb-0.5">Worker Reply</div>}
+                          {msg.sender_type === "worker" && <div className="text-[9px] font-medium text-blue-500 mb-0.5">{t("작업자 답변", "Worker Reply")}</div>}
                           {msg.content}
                           <div className={`text-[9px] mt-0.5 ${msg.sender_type === "boss" ? "text-gray-400" : "text-blue-400"}`}>
                             {new Date(msg.created_at).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" })}
@@ -416,12 +421,12 @@ export default function ControlRoomPage() {
                   <div className="flex gap-2 items-end">
                     <textarea value={interruptMsg} onChange={e => setInterruptMsg(e.target.value)}
                       onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSendMessage(); } }}
-                      placeholder={`Message ${watchTwinName}... (Shift+Enter for new line)`}
+                      placeholder={t(`${watchTwinName}에게 메시지... (줄바꿈은 Shift+Enter)`, `Message ${watchTwinName}... (Shift+Enter for new line)`)}
                       rows={2}
                       className="flex-1 px-3 py-2 bg-[var(--bg-secondary)] border border-[var(--card-border)] rounded-lg text-[12px] text-[var(--text-primary)] placeholder:text-[var(--text-muted)] focus:outline-none focus:border-blue-400 resize-none" />
                     <button onClick={handleSendMessage} disabled={!interruptMsg.trim()}
                       className="px-3 py-2 bg-blue-600 text-white rounded-lg text-[12px] font-medium hover:opacity-90 disabled:opacity-50 shrink-0">
-                      Send
+                      {t("전송", "Send")}
                     </button>
                   </div>
                 </div>
@@ -432,7 +437,7 @@ export default function ControlRoomPage() {
             {panelTab === "activity" && (
               <div className="flex-1 overflow-y-auto px-4 py-3 space-y-2">
                 {activityFeed.length === 0 ? (
-                  <div className="text-center py-10 text-[var(--text-muted)] text-[12px]">No activity yet</div>
+                  <div className="text-center py-10 text-[var(--text-muted)] text-[12px]">{t("아직 활동이 없습니다", "No activity yet")}</div>
                 ) : (
                   activityFeed.map(entry => (
                     <div key={entry.id} className="flex gap-2 items-start">

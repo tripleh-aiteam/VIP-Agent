@@ -7,6 +7,7 @@ import { useRealtimeEvents } from "@/components/useRealtimeEvents";
 import { apiPost } from "@/components/api";
 import dynamic from "next/dynamic";
 import Link from "next/link";
+import { useLanguage } from "@/components/i18n";
 
 const AgentHealthPanel = dynamic(() => import("@/components/AgentHealthPanel"), { ssr: false });
 const SummaryDrilldown = dynamic(() => import("@/components/SummaryDrilldown"), { ssr: false });
@@ -17,6 +18,7 @@ const QuickCommandResult = dynamic(() => import("@/components/QuickCommandResult
 const ReportCard = dynamic(() => import("@/components/ReportCard"), { ssr: false });
 
 export default function Dashboard() {
+  const { t } = useLanguage();
   const [stats, setStats] = useState({
     agents: 0, activeRuns: 0, failedRuns: 0, pendingJudgement: 0,
     latestDaily: "", latestWeekly: "", telegramStatus: "active", aiGlassStatus: "planned",
@@ -42,10 +44,10 @@ export default function Dashboard() {
       // Create a temp session and send the command
       const session = await apiPost<any>("/chat/sessions", { user_id: "dashboard", channel: "web" });
       const result = await apiPost<any>(`/chat/sessions/${session.id}/messages`, { content: prompt });
-      const text = result?.assistant_message?.content?.text || "No response";
+      const text = result?.assistant_message?.content?.text || t("응답 없음", "No response");
       setQuickResult({ title: label, text, loading: false });
     } catch {
-      setQuickResult({ title: label, text: "Failed to fetch. Please try again.", loading: false });
+      setQuickResult({ title: label, text: t("불러오기에 실패했습니다. 다시 시도해 주세요.", "Failed to fetch. Please try again."), loading: false });
     }
   };
 
@@ -73,8 +75,8 @@ export default function Dashboard() {
         activeRuns: runs.filter((r: any) => ["pending", "dispatched", "running"].includes(r.status)).length,
         failedRuns: runs.filter((r: any) => r.status === "failed").length,
         pendingJudgement: pending.length,
-        latestDaily: daily?.executive_summary?.slice(0, 120) || "No daily report yet",
-        latestWeekly: weekly?.executive_summary?.slice(0, 120) || "No weekly report yet",
+        latestDaily: daily?.executive_summary?.slice(0, 120) || t("아직 일일 보고서가 없습니다", "No daily report yet"),
+        latestWeekly: weekly?.executive_summary?.slice(0, 120) || t("아직 주간 보고서가 없습니다", "No weekly report yet"),
         telegramStatus: telegram?.status || "unknown",
         aiGlassStatus: glass?.status || "unknown",
         eventBus: a2aStatus?.event_bus || "unknown",
@@ -117,14 +119,14 @@ export default function Dashboard() {
     <div>
       <div className="flex items-center justify-between mb-6">
         <div>
-          <h1 className="text-[28px] font-semibold tracking-tight">Command Center</h1>
-          <p className="text-[14px] text-[var(--text-muted)]">VIP Agent Platform Overview</p>
+          <h1 className="text-[28px] font-semibold tracking-tight">{t("관제 센터", "Command Center")}</h1>
+          <p className="text-[14px] text-[var(--text-muted)]">{t("VIP 에이전트 플랫폼 개요", "VIP Agent Platform Overview")}</p>
         </div>
         <div className="flex items-center gap-2">
           <button onClick={() => setShowBroadcast(true)}
             className="px-4 py-2 bg-blue-600 text-white rounded-lg text-[12px] font-medium hover:bg-blue-700 flex items-center gap-1.5">
             <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M11 5.882V19.24a1.76 1.76 0 01-3.417.592l-2.147-6.15M18 13a3 3 0 100-6M5.436 13.683A4.001 4.001 0 017 6h1.832c4.1 0 7.625-1.234 9.168-3v14c-1.543-1.766-5.067-3-9.168-3H7a3.988 3.988 0 01-1.564-.317z" /></svg>
-            Broadcast
+            {t("공지 발송", "Broadcast")}
           </button>
           {health && (
             <div className="flex gap-2">
@@ -140,32 +142,32 @@ export default function Dashboard() {
           <div className="absolute inset-0 bg-black/50" />
           <div className="relative bg-white rounded-2xl border border-gray-200 w-full max-w-md" style={{ boxShadow: "0 20px 60px rgba(0,0,0,0.2)" }} onClick={e => e.stopPropagation()}>
             <div className="p-5 border-b border-gray-200">
-              <h2 className="text-[16px] font-semibold text-[var(--text-primary)]">Broadcast to All Workers</h2>
-              <p className="text-[12px] text-[var(--text-muted)] mt-1">Send a message to all 10 workers at once</p>
+              <h2 className="text-[16px] font-semibold text-[var(--text-primary)]">{t("전체 직원에게 공지", "Broadcast to All Workers")}</h2>
+              <p className="text-[12px] text-[var(--text-muted)] mt-1">{t("10명의 직원 모두에게 한 번에 메시지를 보냅니다", "Send a message to all 10 workers at once")}</p>
             </div>
             <div className="p-5 space-y-4">
               <div>
-                <label className="block text-[12px] font-medium text-[var(--text-secondary)] mb-1">Priority</label>
+                <label className="block text-[12px] font-medium text-[var(--text-secondary)] mb-1">{t("우선순위", "Priority")}</label>
                 <div className="flex gap-2">
                   <button onClick={() => setBroadcastPriority("normal")}
                     className={`flex-1 py-2 rounded-lg text-[12px] font-medium ${broadcastPriority === "normal" ? "bg-blue-600 text-white" : "bg-gray-100 text-gray-600"}`}>
-                    Normal
+                    {t("일반", "Normal")}
                   </button>
                   <button onClick={() => setBroadcastPriority("urgent")}
                     className={`flex-1 py-2 rounded-lg text-[12px] font-medium ${broadcastPriority === "urgent" ? "bg-red-500 text-white" : "bg-gray-100 text-gray-600"}`}>
-                    🚨 Urgent
+                    🚨 {t("긴급", "Urgent")}
                   </button>
                 </div>
               </div>
               <div>
-                <label className="block text-[12px] font-medium text-[var(--text-secondary)] mb-1">Message</label>
+                <label className="block text-[12px] font-medium text-[var(--text-secondary)] mb-1">{t("메시지", "Message")}</label>
                 <textarea value={broadcastMsg} onChange={e => setBroadcastMsg(e.target.value)} rows={4}
-                  placeholder="e.g. Team meeting at 3 PM today. Please prepare your weekly updates."
+                  placeholder={t("예: 오늘 오후 3시 팀 미팅이 있습니다. 주간 업데이트를 준비해 주세요.", "e.g. Team meeting at 3 PM today. Please prepare your weekly updates.")}
                   className="w-full px-4 py-3 bg-[var(--bg-secondary)] border border-[var(--card-border)] rounded-xl text-[13px] text-[var(--text-primary)] placeholder:text-[var(--text-muted)] focus:outline-none focus:border-blue-400 resize-none" />
               </div>
             </div>
             <div className="p-5 border-t border-gray-200 flex gap-3 justify-end">
-              <button onClick={() => setShowBroadcast(false)} className="px-4 py-2.5 text-[13px] text-[var(--text-muted)]">Cancel</button>
+              <button onClick={() => setShowBroadcast(false)} className="px-4 py-2.5 text-[13px] text-[var(--text-muted)]">{t("취소", "Cancel")}</button>
               <button onClick={async () => {
                 if (!broadcastMsg.trim()) return;
                 setBroadcasting(true);
@@ -176,11 +178,11 @@ export default function Dashboard() {
                   });
                   const data = await res.json();
                   setShowBroadcast(false); setBroadcastMsg(""); setBroadcastPriority("normal");
-                  alert(`Message sent to ${data.twins_notified} workers!`);
+                  alert(t(`${data.twins_notified}명의 직원에게 메시지를 보냈습니다!`, `Message sent to ${data.twins_notified} workers!`));
                 } catch {} finally { setBroadcasting(false); }
               }} disabled={!broadcastMsg.trim() || broadcasting}
                 className={`px-5 py-2.5 rounded-lg text-[13px] font-medium disabled:opacity-50 ${broadcastPriority === "urgent" ? "bg-red-500 text-white hover:bg-red-600" : "bg-blue-600 text-white hover:bg-blue-700"}`}>
-                {broadcasting ? "Sending..." : `Send to All Workers`}
+                {broadcasting ? t("전송 중...", "Sending...") : t("전체 직원에게 보내기", "Send to All Workers")}
               </button>
             </div>
           </div>
@@ -193,14 +195,14 @@ export default function Dashboard() {
           <div className="flex items-center gap-3">
             <span className="text-[24px]">🌅</span>
             <div>
-              <div className="text-[14px] font-semibold text-amber-900">Morning Handoff</div>
+              <div className="text-[14px] font-semibold text-amber-900">{t("아침 인수인계", "Morning Handoff")}</div>
               <div className="text-[12px] text-amber-700">
-                {handoff.stats.twins_worked} twins worked overnight — {handoff.stats.tasks_completed} tasks completed, {handoff.stats.items_need_review} items need review
+                {t(`트윈 ${handoff.stats.twins_worked}개가 밤사이 작업했습니다 — 작업 ${handoff.stats.tasks_completed}건 완료, ${handoff.stats.items_need_review}건 검토 필요`, `${handoff.stats.twins_worked} twins worked overnight — ${handoff.stats.tasks_completed} tasks completed, ${handoff.stats.items_need_review} items need review`)}
               </div>
             </div>
           </div>
           <Link href="/handoff" className="px-4 py-2 bg-amber-600 text-white rounded-lg text-[12px] font-medium hover:bg-amber-700 transition-colors">
-            Review Now →
+            {t("지금 검토", "Review Now")} →
           </Link>
         </div>
       )}
@@ -210,10 +212,10 @@ export default function Dashboard() {
         <div className="mb-4 bg-[var(--card-bg)] rounded-xl border border-[var(--card-border)] p-5" style={{ boxShadow: "var(--shadow-sm)" }}>
           <div className="flex items-center justify-between mb-3">
             <h2 className="text-[15px] font-semibold text-[var(--text-primary)] flex items-center gap-2">
-              <span>📊</span> Daily Twin Briefing
+              <span>📊</span> {t("일일 트윈 브리핑", "Daily Twin Briefing")}
             </h2>
             <span className="text-[10px] text-[var(--text-muted)]">
-              {new Date().toLocaleDateString("en-US", { weekday: "long", month: "short", day: "numeric" })}
+              {new Date().toLocaleDateString(t("ko-KR", "en-US"), { weekday: "long", month: "short", day: "numeric" })}
             </span>
           </div>
 
@@ -221,19 +223,19 @@ export default function Dashboard() {
           <div className="grid grid-cols-4 gap-3 mb-3">
             <div className="bg-blue-50 rounded-lg px-3 py-2 text-center">
               <div className="text-[18px] font-bold text-blue-600">{bossBriefing.summary?.twins_worked || 0}</div>
-              <div className="text-[9px] text-[var(--text-muted)]">Twins Worked</div>
+              <div className="text-[9px] text-[var(--text-muted)]">{t("작업한 트윈", "Twins Worked")}</div>
             </div>
             <div className="bg-green-50 rounded-lg px-3 py-2 text-center">
               <div className="text-[18px] font-bold text-green-600">{bossBriefing.summary?.total_completed || 0}</div>
-              <div className="text-[9px] text-[var(--text-muted)]">Completed</div>
+              <div className="text-[9px] text-[var(--text-muted)]">{t("완료", "Completed")}</div>
             </div>
             <div className="bg-amber-50 rounded-lg px-3 py-2 text-center">
               <div className="text-[18px] font-bold text-amber-600">{bossBriefing.summary?.total_review || 0}</div>
-              <div className="text-[9px] text-[var(--text-muted)]">Need Review</div>
+              <div className="text-[9px] text-[var(--text-muted)]">{t("검토 필요", "Need Review")}</div>
             </div>
             <div className={`rounded-lg px-3 py-2 text-center ${(bossBriefing.summary?.total_failed || 0) > 0 ? "bg-red-50" : "bg-green-50"}`}>
               <div className={`text-[18px] font-bold ${(bossBriefing.summary?.total_failed || 0) > 0 ? "text-red-600" : "text-green-600"}`}>{bossBriefing.summary?.total_failed || 0}</div>
-              <div className="text-[9px] text-[var(--text-muted)]">Failed</div>
+              <div className="text-[9px] text-[var(--text-muted)]">{t("실패", "Failed")}</div>
             </div>
           </div>
 
@@ -251,9 +253,9 @@ export default function Dashboard() {
 
           {/* Top twins (compact) */}
           <div className="flex gap-2 flex-wrap">
-            {bossBriefing.twins?.filter((t: any) => t.tasks_done > 0).slice(0, 5).map((t: any) => (
-              <span key={t.twin_id} className="px-2.5 py-1 bg-[var(--bg-secondary)] rounded-full text-[10px] text-[var(--text-secondary)]">
-                {t.name}: {t.tasks_done} done
+            {bossBriefing.twins?.filter((tw: any) => tw.tasks_done > 0).slice(0, 5).map((tw: any) => (
+              <span key={tw.twin_id} className="px-2.5 py-1 bg-[var(--bg-secondary)] rounded-full text-[10px] text-[var(--text-secondary)]">
+                {tw.name}: {tw.tasks_done} {t("완료", "done")}
               </span>
             ))}
           </div>
@@ -265,7 +267,7 @@ export default function Dashboard() {
         <div className="mb-4 bg-red-50 rounded-xl border border-red-200 p-4">
           <div className="flex items-center gap-2 mb-2">
             <span className="text-[16px]">⚠️</span>
-            <span className="text-[13px] font-semibold text-red-800">{absences.count} worker{absences.count > 1 ? "s" : ""} absent (no login for 24h+)</span>
+            <span className="text-[13px] font-semibold text-red-800">{t(`직원 ${absences.count}명 결근 (24시간 이상 미접속)`, `${absences.count} worker${absences.count > 1 ? "s" : ""} absent (no login for 24h+)`)}</span>
           </div>
           <div className="space-y-1.5">
             {absences.absent_workers.map((w: any) => (
@@ -273,12 +275,12 @@ export default function Dashboard() {
                 <div className="flex items-center gap-2">
                   <span className="text-red-500">•</span>
                   <span className="font-medium text-red-900">{w.worker_name}</span>
-                  <span className="text-red-600">— {w.days_absent === 999 ? "never logged in" : `${w.days_absent} day${w.days_absent > 1 ? "s" : ""} absent`}</span>
+                  <span className="text-red-600">— {w.days_absent === 999 ? t("접속 기록 없음", "never logged in") : t(`${w.days_absent}일 결근`, `${w.days_absent} day${w.days_absent > 1 ? "s" : ""} absent`)}</span>
                 </div>
                 <div className="flex items-center gap-2">
-                  <span className="text-[10px] text-red-500">Twin: {w.twin_name} ({w.twin_mode})</span>
+                  <span className="text-[10px] text-red-500">{t("트윈", "Twin")}: {w.twin_name} ({w.twin_mode})</span>
                   {w.twin_tasks_done_while_absent > 0 && (
-                    <span className="px-2 py-0.5 bg-green-100 text-green-700 rounded text-[9px]">{w.twin_tasks_done_while_absent} tasks done by twin</span>
+                    <span className="px-2 py-0.5 bg-green-100 text-green-700 rounded text-[9px]">{t(`트윈이 작업 ${w.twin_tasks_done_while_absent}건 완료`, `${w.twin_tasks_done_while_absent} tasks done by twin`)}</span>
                   )}
                 </div>
               </div>
@@ -290,10 +292,10 @@ export default function Dashboard() {
       {/* Stats Grid — clickable for drilldown */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
         {([
-          { key: "agents" as const, label: "Total Agents", value: stats.agents, color: "blue" as const },
-          { key: "active" as const, label: "Active Runs", value: stats.activeRuns, color: "green" as const },
-          { key: "failed" as const, label: "Failed Runs", value: stats.failedRuns, color: "red" as const },
-          { key: "judgement" as const, label: "Pending Judgement", value: stats.pendingJudgement, color: "yellow" as const },
+          { key: "agents" as const, label: t("전체 에이전트", "Total Agents"), value: stats.agents, color: "blue" as const },
+          { key: "active" as const, label: t("진행 중 작업", "Active Runs"), value: stats.activeRuns, color: "green" as const },
+          { key: "failed" as const, label: t("실패한 작업", "Failed Runs"), value: stats.failedRuns, color: "red" as const },
+          { key: "judgement" as const, label: t("심사 대기", "Pending Judgement"), value: stats.pendingJudgement, color: "yellow" as const },
         ]).map((card) => {
           const valColor: Record<string, string> = { blue: "text-[var(--brand-blue)]", green: "text-[var(--brand-green)]", red: "text-[var(--error)]", yellow: "text-[var(--warning)]" };
           const isActive = drilldown === card.key;
@@ -304,7 +306,7 @@ export default function Dashboard() {
               }`} style={{ boxShadow: "var(--shadow-sm)" }}>
               <p className="text-[12px] text-[var(--text-muted)] mb-1 font-medium">{card.label}</p>
               <p className={`text-[24px] font-semibold tracking-tight ${valColor[card.color]}`}>{card.value}</p>
-              <p className="text-[9px] text-[var(--text-muted)] mt-1">{isActive ? "Click to close" : "Click to explore"}</p>
+              <p className="text-[9px] text-[var(--text-muted)] mt-1">{isActive ? t("닫으려면 클릭", "Click to close") : t("자세히 보려면 클릭", "Click to explore")}</p>
             </button>
           );
         })}
@@ -314,8 +316,8 @@ export default function Dashboard() {
       {drilldown && (
         <div className="mb-8 border border-[var(--border-default)] rounded-xl bg-[var(--bg-card)] p-5" style={{ boxShadow: "var(--shadow-sm)" }}>
           <div className="flex items-center justify-between mb-4">
-            <h3 className="text-[14px] font-semibold text-[var(--text-primary)] capitalize">{drilldown === "judgement" ? "Pending Judgement" : drilldown === "agents" ? "Total Agents" : drilldown === "active" ? "Active Runs" : "Failed Runs"} — Analytics</h3>
-            <button onClick={() => setDrilldown(null)} className="text-[var(--text-muted)] hover:text-[var(--text-primary)] text-xs">Close</button>
+            <h3 className="text-[14px] font-semibold text-[var(--text-primary)] capitalize">{drilldown === "judgement" ? t("심사 대기", "Pending Judgement") : drilldown === "agents" ? t("전체 에이전트", "Total Agents") : drilldown === "active" ? t("진행 중 작업", "Active Runs") : t("실패한 작업", "Failed Runs")} — {t("분석", "Analytics")}</h3>
+            <button onClick={() => setDrilldown(null)} className="text-[var(--text-muted)] hover:text-[var(--text-primary)] text-xs">{t("닫기", "Close")}</button>
           </div>
           <SummaryDrilldown panel={drilldown} />
         </div>
@@ -333,9 +335,9 @@ export default function Dashboard() {
               </svg>
             </div>
             <div className="text-left">
-              <h3 className="text-[14px] font-semibold text-[var(--text-primary)]">Agent Health</h3>
+              <h3 className="text-[14px] font-semibold text-[var(--text-primary)]">{t("에이전트 상태", "Agent Health")}</h3>
               <p className="text-[11px] text-[var(--text-muted)]">
-                {stats.agents} agents | {stats.webhooksReachable}/{stats.webhooksTotal} webhooks | {stats.eventBus}
+                {t(`에이전트 ${stats.agents}개`, `${stats.agents} agents`)} | {t(`웹훅 ${stats.webhooksReachable}/${stats.webhooksTotal}`, `${stats.webhooksReachable}/${stats.webhooksTotal} webhooks`)} | {stats.eventBus}
               </p>
             </div>
           </div>
@@ -360,10 +362,10 @@ export default function Dashboard() {
       {/* Infrastructure — clickable for drilldown */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
         {([
-          { key: "telegram" as const, label: "Telegram", status: stats.telegramStatus, detail: "" },
-          { key: "eventbus" as const, label: "Event Bus", status: stats.eventBus === "redis" ? "active" : "in-memory", detail: stats.eventBus },
-          { key: "webhooks" as const, label: "A2A Webhooks", status: stats.webhooksReachable === stats.webhooksTotal ? "active" : "warning", detail: `${stats.webhooksReachable}/${stats.webhooksTotal} reachable` },
-          { key: "web" as const, label: "Web Channel", status: "active", detail: "" },
+          { key: "telegram" as const, label: t("텔레그램", "Telegram"), status: stats.telegramStatus, detail: "" },
+          { key: "eventbus" as const, label: t("이벤트 버스", "Event Bus"), status: stats.eventBus === "redis" ? "active" : "in-memory", detail: stats.eventBus },
+          { key: "webhooks" as const, label: t("A2A 웹훅", "A2A Webhooks"), status: stats.webhooksReachable === stats.webhooksTotal ? "active" : "warning", detail: t(`${stats.webhooksReachable}/${stats.webhooksTotal} 연결됨`, `${stats.webhooksReachable}/${stats.webhooksTotal} reachable`) },
+          { key: "web" as const, label: t("웹 채널", "Web Channel"), status: "active", detail: "" },
         ]).map(card => {
           const isActive = infraPanel === card.key;
           return (
@@ -374,7 +376,7 @@ export default function Dashboard() {
               <p className="text-[10px] text-gray-500 mb-1">{card.label}</p>
               <Badge text={card.status} />
               {card.detail && <span className="text-[9px] text-[var(--text-muted)] ml-1">{card.detail}</span>}
-              <p className="text-[8px] text-[var(--text-muted)] mt-1">{isActive ? "Click to close" : "Click to explore"}</p>
+              <p className="text-[8px] text-[var(--text-muted)] mt-1">{isActive ? t("닫으려면 클릭", "Click to close") : t("자세히 보려면 클릭", "Click to explore")}</p>
             </button>
           );
         })}
@@ -385,9 +387,9 @@ export default function Dashboard() {
         <div className="mb-8 border border-[var(--border-default)] rounded-xl bg-[var(--bg-card)] p-5" style={{ boxShadow: "var(--shadow-sm)" }}>
           <div className="flex items-center justify-between mb-4">
             <h3 className="text-[14px] font-semibold text-[var(--text-primary)]">
-              {infraPanel === "telegram" ? "Telegram" : infraPanel === "eventbus" ? "Event Bus" : infraPanel === "webhooks" ? "A2A Webhooks" : "Web Channel"} — Analytics
+              {infraPanel === "telegram" ? t("텔레그램", "Telegram") : infraPanel === "eventbus" ? t("이벤트 버스", "Event Bus") : infraPanel === "webhooks" ? t("A2A 웹훅", "A2A Webhooks") : t("웹 채널", "Web Channel")} — {t("분석", "Analytics")}
             </h3>
-            <button onClick={() => setInfraPanel(null)} className="text-[var(--text-muted)] hover:text-[var(--text-primary)] text-xs">Close</button>
+            <button onClick={() => setInfraPanel(null)} className="text-[var(--text-muted)] hover:text-[var(--text-primary)] text-xs">{t("닫기", "Close")}</button>
           </div>
           <InfrastructureDrilldown panel={infraPanel} />
         </div>
@@ -395,15 +397,15 @@ export default function Dashboard() {
 
       {/* Quick Commands — results show inline */}
       <div className="mb-8">
-        <h2 className="text-[14px] font-semibold text-[var(--text-primary)] mb-3">Quick Commands</h2>
+        <h2 className="text-[14px] font-semibold text-[var(--text-primary)] mb-3">{t("빠른 명령", "Quick Commands")}</h2>
         <div className="grid grid-cols-3 md:grid-cols-6 gap-2">
           {[
-            { label: "System Status", prompt: "status", icon: "M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" },
-            { label: "Latest Report", prompt: "show daily report", icon: "M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" },
-            { label: "Agent Health", prompt: "show agents", icon: "M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z" },
-            { label: "Approvals", prompt: "pending approvals", icon: "M3 6l3 1m0 0l-3 9a5.002 5.002 0 006.001 0M6 7l3 9M6 7l6-2m6 2l3-1m-3 1l-3 9a5.002 5.002 0 006.001 0M18 7l3 9m-3-9l-6-2m0-2v2m0 16V5" },
-            { label: "Check Risk", prompt: "high risk cases", icon: "M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" },
-            { label: "Run All", prompt: "run full executive summary", icon: "M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" },
+            { label: "System Status", display: t("시스템 상태", "System Status"), prompt: "status", icon: "M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" },
+            { label: "Latest Report", display: t("최신 보고서", "Latest Report"), prompt: "show daily report", icon: "M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" },
+            { label: "Agent Health", display: t("에이전트 상태", "Agent Health"), prompt: "show agents", icon: "M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z" },
+            { label: "Approvals", display: t("승인 대기", "Approvals"), prompt: "pending approvals", icon: "M3 6l3 1m0 0l-3 9a5.002 5.002 0 006.001 0M6 7l3 9M6 7l6-2m6 2l3-1m-3 1l-3 9a5.002 5.002 0 006.001 0M18 7l3 9m-3-9l-6-2m0-2v2m0 16V5" },
+            { label: "Check Risk", display: t("리스크 점검", "Check Risk"), prompt: "high risk cases", icon: "M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" },
+            { label: "Run All", display: t("전체 실행", "Run All"), prompt: "run full executive summary", icon: "M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" },
           ].map((cmd) => (
             <button key={cmd.label} onClick={() => runQuickCommand(cmd.label, cmd.prompt)}
               disabled={quickResult?.loading}
@@ -412,7 +414,7 @@ export default function Dashboard() {
               <svg className="w-5 h-5 text-[var(--text-muted)] group-hover:text-[var(--brand-blue)] transition-colors" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
                 <path strokeLinecap="round" strokeLinejoin="round" d={cmd.icon} />
               </svg>
-              <span className="text-[11px] text-[var(--text-secondary)] group-hover:text-[var(--brand-blue)] font-medium">{cmd.label}</span>
+              <span className="text-[11px] text-[var(--text-secondary)] group-hover:text-[var(--brand-blue)] font-medium">{cmd.display}</span>
             </button>
           ))}
         </div>

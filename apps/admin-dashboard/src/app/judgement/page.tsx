@@ -5,8 +5,10 @@ import { api, apiPost } from "@/components/api";
 import Badge from "@/components/Badge";
 import StatCard from "@/components/StatCard";
 import { AskVIPBar } from "@/components/AskVIP";
+import { useLanguage } from "../../components/i18n";
 
 export default function JudgementPage() {
+  const { t } = useLanguage();
   const [cases, setCases] = useState<any[]>([]);
   const [selectedCase, setSelectedCase] = useState<any>(null);
 
@@ -24,38 +26,38 @@ export default function JudgementPage() {
 
   return (
     <div>
-      <h1 className="text-[28px] font-semibold tracking-tight mb-1">Judgement</h1>
-      <p className="text-[14px] text-[var(--text-muted)] mb-6">Risk evaluation and approval workflow</p>
+      <h1 className="text-[28px] font-semibold tracking-tight mb-1">{t("심사", "Judgement")}</h1>
+      <p className="text-[14px] text-[var(--text-muted)] mb-6">{t("리스크 평가 및 승인 워크플로우", "Risk evaluation and approval workflow")}</p>
 
       <div className="mb-6">
         <AskVIPBar suggestions={[
-          { label: "Pending approvals", prompt: "show pending approvals" },
-          { label: "High risk cases", prompt: "show high risk cases" },
-          { label: "Why was case rejected?", prompt: "why was the last case rejected" },
+          { label: t("대기 중인 승인", "Pending approvals"), prompt: "show pending approvals" },
+          { label: t("고위험 건", "High risk cases"), prompt: "show high risk cases" },
+          { label: t("이 건은 왜 반려되었나요?", "Why was case rejected?"), prompt: "why was the last case rejected" },
         ]} />
       </div>
 
       <div className="grid grid-cols-3 gap-4 mb-6">
-        <StatCard label="Pending Review" value={pending.length} color="yellow" />
-        <StatCard label="Approved" value={approved.length} color="green" />
-        <StatCard label="Rejected" value={rejected.length} color="red" />
+        <StatCard label={t("검토 대기", "Pending Review")} value={pending.length} color="yellow" />
+        <StatCard label={t("승인됨", "Approved")} value={approved.length} color="green" />
+        <StatCard label={t("반려됨", "Rejected")} value={rejected.length} color="red" />
       </div>
 
       <div className="border border-[var(--border-default)] rounded-lg bg-[var(--bg-card)]">
         <div className="px-4 py-3 border-b border-[var(--border-default)]">
-          <h2 className="text-sm font-semibold text-[var(--text-primary)]">All Cases</h2>
+          <h2 className="text-sm font-semibold text-[var(--text-primary)]">{t("전체 건", "All Cases")}</h2>
         </div>
         <div className="overflow-x-auto">
           <table className="w-full text-[13px]">
             <thead>
               <tr className="text-[var(--text-muted)] border-b border-[var(--border-default)]/50">
-                <th className="text-left px-4 py-2">Case</th>
-                <th className="text-left px-4 py-2">Risk Score</th>
-                <th className="text-left px-4 py-2">Rules</th>
-                <th className="text-left px-4 py-2">Decision</th>
-                <th className="text-left px-4 py-2">Reasoning</th>
-                <th className="text-left px-4 py-2">Time</th>
-                <th className="text-left px-4 py-2">Actions</th>
+                <th className="text-left px-4 py-2">{t("건", "Case")}</th>
+                <th className="text-left px-4 py-2">{t("리스크 점수", "Risk Score")}</th>
+                <th className="text-left px-4 py-2">{t("규칙", "Rules")}</th>
+                <th className="text-left px-4 py-2">{t("판정", "Decision")}</th>
+                <th className="text-left px-4 py-2">{t("판단 근거", "Reasoning")}</th>
+                <th className="text-left px-4 py-2">{t("시간", "Time")}</th>
+                <th className="text-left px-4 py-2">{t("작업", "Actions")}</th>
               </tr>
             </thead>
             <tbody>
@@ -80,8 +82,8 @@ export default function JudgementPage() {
                     <td className="px-4 py-2.5">
                       {isPending ? (
                         <div className="flex gap-1">
-                          <button onClick={() => handleAction(c.id, "approve")} className="px-2 py-1 text-[10px] rounded bg-[var(--text-primary)] hover:bg-[var(--text-secondary)] text-white">Approve</button>
-                          <button onClick={() => handleAction(c.id, "reject")} className="px-2 py-1 text-[10px] rounded bg-[var(--text-primary)] hover:bg-[var(--text-secondary)] text-white">Reject</button>
+                          <button onClick={() => handleAction(c.id, "approve")} className="px-2 py-1 text-[10px] rounded bg-[var(--text-primary)] hover:bg-[var(--text-secondary)] text-white">{t("승인", "Approve")}</button>
+                          <button onClick={() => handleAction(c.id, "reject")} className="px-2 py-1 text-[10px] rounded bg-[var(--text-primary)] hover:bg-[var(--text-secondary)] text-white">{t("반려", "Reject")}</button>
                         </div>
                       ) : <span className="text-[10px] text-[var(--text-muted)]">—</span>}
                     </td>
@@ -90,7 +92,7 @@ export default function JudgementPage() {
               })}
             </tbody>
           </table>
-          {cases.length === 0 && <p className="text-center text-[var(--text-muted)] py-8 text-xs">No judgement cases. Dispatch a stock_analysis task to trigger one.</p>}
+          {cases.length === 0 && <p className="text-center text-[var(--text-muted)] py-8 text-xs">{t("심사 건이 없습니다. stock_analysis 작업을 디스패치하면 생성됩니다.", "No judgement cases. Dispatch a stock_analysis task to trigger one.")}</p>}
         </div>
       </div>
 
@@ -99,7 +101,7 @@ export default function JudgementPage() {
         <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4" onClick={() => setSelectedCase(null)}>
           <div className="bg-white rounded-xl w-full max-w-[600px] shadow-2xl" onClick={(e) => e.stopPropagation()}>
             <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
-              <h3 className="text-[16px] font-semibold text-gray-900">Case Detail</h3>
+              <h3 className="text-[16px] font-semibold text-gray-900">{t("건 상세", "Case Detail")}</h3>
               <button onClick={() => setSelectedCase(null)} className="text-gray-400 hover:text-gray-700 text-lg">x</button>
             </div>
             <div className="px-6 py-5 space-y-4 max-h-[70vh] overflow-y-auto">
@@ -115,25 +117,25 @@ export default function JudgementPage() {
                   <>
                     <div className="grid grid-cols-2 gap-3">
                       <div className="p-3 rounded-lg bg-gray-50 border border-gray-100">
-                        <p className="text-[10px] text-gray-400 mb-1">Risk Score</p>
+                        <p className="text-[10px] text-gray-400 mb-1">{t("리스크 점수", "Risk Score")}</p>
                         <p className={`text-[20px] font-bold ${riskPct >= 70 ? "text-red-500" : riskPct >= 40 ? "text-amber-500" : "text-green-500"}`}>{riskPct}%</p>
                       </div>
                       <div className="p-3 rounded-lg bg-gray-50 border border-gray-100">
-                        <p className="text-[10px] text-gray-400 mb-1">Decision</p>
+                        <p className="text-[10px] text-gray-400 mb-1">{t("판정", "Decision")}</p>
                         <Badge text={c.decision} />
                       </div>
                     </div>
 
                     {evidence.reasoning && (
                       <div>
-                        <p className="text-[11px] text-gray-400 font-medium mb-1">Reasoning</p>
+                        <p className="text-[11px] text-gray-400 font-medium mb-1">{t("판단 근거", "Reasoning")}</p>
                         <p className="text-[13px] text-gray-700 bg-gray-50 rounded-lg p-3 border border-gray-100">{evidence.reasoning}</p>
                       </div>
                     )}
 
                     {failedRules.length > 0 && (
                       <div>
-                        <p className="text-[11px] text-gray-400 font-medium mb-2">Failed Rules ({failedRules.length})</p>
+                        <p className="text-[11px] text-gray-400 font-medium mb-2">{t("위반 규칙", "Failed Rules")} ({failedRules.length})</p>
                         {failedRules.map((r: any, i: number) => (
                           <div key={i} className="flex items-start gap-2 mb-1.5 text-[12px]">
                             <span className="text-red-500 mt-0.5">x</span>
@@ -149,7 +151,7 @@ export default function JudgementPage() {
 
                     {factors.length > 0 && (
                       <div>
-                        <p className="text-[11px] text-gray-400 font-medium mb-2">Risk Factors</p>
+                        <p className="text-[11px] text-gray-400 font-medium mb-2">{t("리스크 요인", "Risk Factors")}</p>
                         {factors.map((f: any, i: number) => (
                           <div key={i} className="flex items-center justify-between py-1.5 text-[12px] border-b border-gray-50">
                             <span className="text-gray-700">{f.factor}</span>
@@ -163,8 +165,8 @@ export default function JudgementPage() {
                     )}
 
                     <div className="text-[10px] text-gray-400 pt-2 border-t border-gray-100">
-                      <p>Case ID: {c.id}</p>
-                      <p>Created: {c.created_at ? new Date(c.created_at).toLocaleString("ko-KR", { timeZone: "Asia/Seoul" }) : "-"}</p>
+                      <p>{t("건 ID", "Case ID")}: {c.id}</p>
+                      <p>{t("생성", "Created")}: {c.created_at ? new Date(c.created_at).toLocaleString("ko-KR", { timeZone: "Asia/Seoul" }) : "-"}</p>
                     </div>
                   </>
                 );

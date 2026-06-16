@@ -40,12 +40,14 @@ import {
   markCallUrgent,
 } from "@triple-h/chatbot/engine";
 import { vipConfig } from "@/chatbot.config";
+import { useLanguage } from "../../components/i18n";
 
 type CallsTab = "live" | "history" | "outbound";
 
 const LIVE_MODE = process.env.NEXT_PUBLIC_VOICE_LIVE_MODE === "true";
 
 export default function CallsPage() {
+  const { t } = useLanguage();
   const searchParams = useSearchParams();
   const initialTab = (searchParams.get("tab") as CallsTab | null) || "live";
 
@@ -53,9 +55,9 @@ export default function CallsPage() {
     return (
       <div className="rounded-2xl border border-gray-200 bg-white p-12 text-center">
         <div className="text-3xl mb-3">⚠️</div>
-        <h3 className="text-base font-semibold text-gray-900">Voice config missing</h3>
+        <h3 className="text-base font-semibold text-gray-900">{t("음성 설정 누락", "Voice config missing")}</h3>
         <p className="text-sm text-gray-500 mt-1 max-w-md mx-auto">
-          The agent doesn&apos;t have a <code className="font-mono text-xs bg-gray-100 px-1 py-0.5 rounded">voice</code> block in its AgentConfig — add one to chatbot.config.ts to enable the Calling Agent.
+          {t("에이전트의 AgentConfig에 ", "The agent doesn't have a ")}<code className="font-mono text-xs bg-gray-100 px-1 py-0.5 rounded">voice</code>{t(" 블록이 없습니다 — 콜링 에이전트를 활성화하려면 chatbot.config.ts에 추가하세요.", " block in its AgentConfig — add one to chatbot.config.ts to enable the Calling Agent.")}
         </p>
       </div>
     );

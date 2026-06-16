@@ -7,6 +7,7 @@ import Badge from "@/components/Badge";
 import { API } from "@/components/api";
 import GroundedYouTube from "@/components/GroundedYouTube";
 import MarkdownLite from "@/components/MarkdownLite";
+import { useLanguage } from "../../components/i18n";
 
 type ViewMode = null | "summary" | "detailed";
 
@@ -67,6 +68,7 @@ const DEMO_MARKET_REPORTS: any[] = [
 ];
 
 export default function ReportsPage() {
+  const { t } = useLanguage();
   // Read ?filter= from URL so the assistant can deep-link to a specific tab:
   //   /reports?filter=daily   → opens with Daily tab active
   //   /reports?filter=weekly  → Weekly
@@ -96,17 +98,17 @@ export default function ReportsPage() {
 
   // `base` = compose endpoint; query is built at click time based on test mode.
   const GEN_REPORTS = [
-    { key: "all",       emoji: "⚡", label: "전체 4종 (All 4)",      base: "/reports/compose/all",       slow: true },
-    { key: "kiwoom",    emoji: "📈", label: "키움 (Kiwoom)",         base: "/reports/compose/kiwoom" },
-    { key: "newspaper", emoji: "📰", label: "신문 (Newspaper)",      base: "/reports/compose/newspaper" },
-    { key: "youtube",   emoji: "📺", label: "유튜브 (YouTube)",      base: "/reports/compose/youtube" },
-    { key: "master",    emoji: "💡", label: "추천 (Recommendation)", base: "/reports/compose/master" },
+    { key: "all",       emoji: "⚡", label: t("전체 4종", "All 4"),          base: "/reports/compose/all",       slow: true },
+    { key: "kiwoom",    emoji: "📈", label: t("키움", "Kiwoom"),            base: "/reports/compose/kiwoom" },
+    { key: "newspaper", emoji: "📰", label: t("신문", "Newspaper"),         base: "/reports/compose/newspaper" },
+    { key: "youtube",   emoji: "📺", label: t("유튜브", "YouTube"),         base: "/reports/compose/youtube" },
+    { key: "master",    emoji: "💡", label: t("추천", "Recommendation"),    base: "/reports/compose/master" },
   ];
   const GEN_AGENTS = [
-    { key: "agents-all", emoji: "🤖", label: "전체 에이전트 (All agents)", base: "/reports/compose/auto-daily", agent: true },
-    { key: "asset",      emoji: "🏢", label: "자산 (Asset)",              base: "/reports/compose/agent?type=asset", agent: true },
-    { key: "stock",      emoji: "📈", label: "주식 (Stock)",              base: "/reports/compose/agent?type=stock", agent: true },
-    { key: "realty",     emoji: "🏠", label: "부동산 (Realty)",           base: "/reports/compose/agent?type=realty", agent: true },
+    { key: "agents-all", emoji: "🤖", label: t("전체 에이전트", "All agents"),  base: "/reports/compose/auto-daily", agent: true },
+    { key: "asset",      emoji: "🏢", label: t("자산", "Asset"),                base: "/reports/compose/agent?type=asset", agent: true },
+    { key: "stock",      emoji: "📈", label: t("주식", "Stock"),                base: "/reports/compose/agent?type=stock", agent: true },
+    { key: "realty",     emoji: "🏠", label: t("부동산", "Realty"),             base: "/reports/compose/agent?type=realty", agent: true },
   ];
 
   const generate = async (item: { key: string; emoji: string; label: string; base: string; slow?: boolean; agent?: boolean }) => {
@@ -135,24 +137,27 @@ export default function ReportsPage() {
       endpoint = `${endpoint}${sepL}lang=${reportLang}`;
     }
 
-    const langMsg = reportLang === "en" ? "영문(English)" : "한국어";
-    const destMsg = dest === "test" ? `테스트 — ${testEmail.trim()} 에게만 전송`
-      : dest === "all" ? "모든 수신자에게 이메일 전송"
-      : "대시보드에 저장 (이메일 없음)";
+    const langMsg = reportLang === "en" ? t("영문(English)", "English") : t("한국어", "Korean");
+    const destMsg = dest === "test" ? t(`테스트 — ${testEmail.trim()} 에게만 전송`, `Test — send only to ${testEmail.trim()}`)
+      : dest === "all" ? t("모든 수신자에게 이메일 전송", "Email to all recipients")
+      : t("대시보드에 저장 (이메일 없음)", "Save to dashboard (no email)");
     if (!window.confirm(
-      `"${item.label}" 리포트를 생성합니다.${item.agent ? "" : `\n언어: ${langMsg}`}\n수신: ${destMsg}\n계속하시겠습니까?${item.slow ? " (약 8~12분 소요)" : ""}`
+      t(
+        `"${item.label}" 리포트를 생성합니다.${item.agent ? "" : `\n언어: ${langMsg}`}\n수신: ${destMsg}\n계속하시겠습니까?${item.slow ? " (약 8~12분 소요)" : ""}`,
+        `Generate the "${item.label}" report.${item.agent ? "" : `\nLanguage: ${langMsg}`}\nRecipients: ${destMsg}\nContinue?${item.slow ? " (takes about 8–12 min)" : ""}`
+      )
     )) return;
 
-    setGen({ busy: true, msg: `${item.emoji} ${item.label} 생성 중… (generating…)` });
+    setGen({ busy: true, msg: t(`${item.emoji} ${item.label} 생성 중…`, `${item.emoji} Generating ${item.label}…`) });
     try {
       await apiPost(endpoint);
-      const okMsg = dest === "test" ? `✅ ${item.label} 생성 — ${testEmail.trim()} 에게만 전송`
-        : dest === "all" ? `✅ ${item.label} 생성 — 완료 후 모든 수신자에게 전송${item.slow ? " (~8-12분)" : ""}`
-        : `✅ ${item.label} 생성 — Reports에서 확인 (~30-60초)`;
+      const okMsg = dest === "test" ? t(`✅ ${item.label} 생성 — ${testEmail.trim()} 에게만 전송`, `✅ ${item.label} generated — sent only to ${testEmail.trim()}`)
+        : dest === "all" ? t(`✅ ${item.label} 생성 — 완료 후 모든 수신자에게 전송${item.slow ? " (~8-12분)" : ""}`, `✅ ${item.label} generated — sent to all recipients when done${item.slow ? " (~8-12 min)" : ""}`)
+        : t(`✅ ${item.label} 생성 — Reports에서 확인 (~30-60초)`, `✅ ${item.label} generated — check Reports (~30-60s)`);
       setGen({ busy: true, msg: okMsg });
       setTimeout(() => setGen({ busy: false, msg: "" }), 60000);
     } catch (e: any) {
-      setGen({ busy: false, msg: "❌ " + (e?.message || "failed") });
+      setGen({ busy: false, msg: "❌ " + (e?.message || t("실패", "failed")) });
     }
   };
   const [copied, setCopied] = useState(false);
@@ -206,10 +211,10 @@ export default function ReportsPage() {
 
   // Which agent a report belongs to (within the Agents source).
   const AGENTS = [
-    { key: "all", label: "All" },
-    { key: "asset", label: "Asset" },
-    { key: "stock", label: "Stock" },
-    { key: "realty", label: "Realty" },
+    { key: "all", label: t("전체", "All") },
+    { key: "asset", label: t("자산", "Asset") },
+    { key: "stock", label: t("주식", "Stock") },
+    { key: "realty", label: t("부동산", "Realty") },
   ];
   const agentOf = (r: any): string => {
     const t = r.report_type || "";
@@ -227,16 +232,16 @@ export default function ReportsPage() {
   });
 
   const SOURCES = [
-    { key: "agents", label: "Agents", icon: "🤖" },
-    { key: "kiwoom", label: "Kiwoom", icon: "📈" },
-    { key: "newspaper", label: "Newspaper", icon: "📰" },
-    { key: "youtube", label: "YouTube", icon: "▶️" },
-    { key: "master", label: "Recommendation", icon: "💡" },
+    { key: "agents", label: t("에이전트", "Agents"), icon: "🤖" },
+    { key: "kiwoom", label: t("키움", "Kiwoom"), icon: "📈" },
+    { key: "newspaper", label: t("신문", "Newspaper"), icon: "📰" },
+    { key: "youtube", label: t("유튜브", "YouTube"), icon: "▶️" },
+    { key: "master", label: t("추천", "Recommendation"), icon: "💡" },
   ];
   // Period tabs depend on the source (Agents has extra Cross-Agent + Alerts).
   const PERIODS = source === "agents"
-    ? [{ key: "daily", label: "Daily" }, { key: "weekly", label: "Weekly" }, { key: "monthly", label: "Monthly" }, { key: "cross", label: "Cross-Agent" }, { key: "alert", label: "Alerts" }]
-    : [{ key: "daily", label: "Daily" }, { key: "weekly", label: "Weekly" }, { key: "monthly", label: "Monthly" }];
+    ? [{ key: "daily", label: t("일간", "Daily") }, { key: "weekly", label: t("주간", "Weekly") }, { key: "monthly", label: t("월간", "Monthly") }, { key: "cross", label: t("교차 에이전트", "Cross-Agent") }, { key: "alert", label: t("알림", "Alerts") }]
+    : [{ key: "daily", label: t("일간", "Daily") }, { key: "weekly", label: t("주간", "Weekly") }, { key: "monthly", label: t("월간", "Monthly") }];
 
   // Convert UTC to KST for display. The backend stores naive UTC and its ISO
   // string has no timezone suffix, so the browser would parse it as LOCAL time
@@ -251,18 +256,18 @@ export default function ReportsPage() {
   };
 
   const typeConfig: Record<string, { label: string; color: string; bg: string; border: string }> = {
-    daily_summary: { label: "Daily", color: "text-blue-500", bg: "bg-blue-50", border: "border-blue-200" },
-    weekly_summary: { label: "Weekly", color: "text-green-500", bg: "bg-green-50", border: "border-green-200" },
-    monthly_summary: { label: "Monthly", color: "text-teal-500", bg: "bg-teal-50", border: "border-teal-200" },
-    urgent_alert_summary: { label: "Alert", color: "text-red-500", bg: "bg-red-50", border: "border-red-200" },
-    agent_daily_asset: { label: "Asset Daily", color: "text-emerald-500", bg: "bg-emerald-50", border: "border-emerald-200" },
-    agent_daily_stock: { label: "Stock Daily", color: "text-sky-500", bg: "bg-sky-50", border: "border-sky-200" },
-    agent_daily_realty: { label: "Realty Daily", color: "text-orange-500", bg: "bg-orange-50", border: "border-orange-200" },
-    cross_agent_summary: { label: "Cross-Agent", color: "text-purple-500", bg: "bg-purple-50", border: "border-purple-200" },
-    kiwoom_report: { label: "Kiwoom", color: "text-indigo-500", bg: "bg-indigo-50", border: "border-indigo-200" },
-    newspaper_report: { label: "Newspaper", color: "text-amber-600", bg: "bg-amber-50", border: "border-amber-200" },
-    youtube_report: { label: "YouTube", color: "text-rose-500", bg: "bg-rose-50", border: "border-rose-200" },
-    master_report: { label: "Recommendation", color: "text-violet-600", bg: "bg-violet-50", border: "border-violet-200" },
+    daily_summary: { label: t("일간", "Daily"), color: "text-blue-500", bg: "bg-blue-50", border: "border-blue-200" },
+    weekly_summary: { label: t("주간", "Weekly"), color: "text-green-500", bg: "bg-green-50", border: "border-green-200" },
+    monthly_summary: { label: t("월간", "Monthly"), color: "text-teal-500", bg: "bg-teal-50", border: "border-teal-200" },
+    urgent_alert_summary: { label: t("긴급 알림", "Alert"), color: "text-red-500", bg: "bg-red-50", border: "border-red-200" },
+    agent_daily_asset: { label: t("자산 일간", "Asset Daily"), color: "text-emerald-500", bg: "bg-emerald-50", border: "border-emerald-200" },
+    agent_daily_stock: { label: t("주식 일간", "Stock Daily"), color: "text-sky-500", bg: "bg-sky-50", border: "border-sky-200" },
+    agent_daily_realty: { label: t("부동산 일간", "Realty Daily"), color: "text-orange-500", bg: "bg-orange-50", border: "border-orange-200" },
+    cross_agent_summary: { label: t("교차 에이전트", "Cross-Agent"), color: "text-purple-500", bg: "bg-purple-50", border: "border-purple-200" },
+    kiwoom_report: { label: t("키움", "Kiwoom"), color: "text-indigo-500", bg: "bg-indigo-50", border: "border-indigo-200" },
+    newspaper_report: { label: t("신문", "Newspaper"), color: "text-amber-600", bg: "bg-amber-50", border: "border-amber-200" },
+    youtube_report: { label: t("유튜브", "YouTube"), color: "text-rose-500", bg: "bg-rose-50", border: "border-rose-200" },
+    master_report: { label: t("추천", "Recommendation"), color: "text-violet-600", bg: "bg-violet-50", border: "border-violet-200" },
   };
 
   const parseSections = (sections: any[]) => {
@@ -275,7 +280,7 @@ export default function ReportsPage() {
         let display = String(v);
         if (typeof v === "number" && v > 10000) display = v.toLocaleString();
         if (typeof v === "number" && k.includes("pct")) display = `${v}%`;
-        if (typeof v === "boolean") display = v ? "Yes" : "No";
+        if (typeof v === "boolean") display = v ? t("예", "Yes") : t("아니오", "No");
         metrics.push({ label, value: display });
       });
       return { ...s, metrics };
@@ -386,43 +391,43 @@ td{padding:8px 12px;border:1px solid #e2e8f0;font-size:10pt}
   };
 
   const reportTitle = (type: string) =>
-    type === "cross_agent_summary" ? "Cross-Agent Report" :
-    type === "daily_summary" ? "Daily Executive Summary" :
-    type === "weekly_summary" ? "Weekly Executive Summary" :
-    type === "monthly_summary" ? "Monthly Executive Summary" :
-    type === "kiwoom_report" ? "Kiwoom Market Analysis" :
-    type === "newspaper_report" ? "Newspaper Market Analysis" :
-    type === "youtube_report" ? "YouTube Stock Analysis" :
-    type === "master_report" ? "Daily Recommendation Report" : "Urgent Alert Report";
+    type === "cross_agent_summary" ? t("교차 에이전트 리포트", "Cross-Agent Report") :
+    type === "daily_summary" ? t("일간 핵심 요약", "Daily Executive Summary") :
+    type === "weekly_summary" ? t("주간 핵심 요약", "Weekly Executive Summary") :
+    type === "monthly_summary" ? t("월간 핵심 요약", "Monthly Executive Summary") :
+    type === "kiwoom_report" ? t("키움 시장 분석", "Kiwoom Market Analysis") :
+    type === "newspaper_report" ? t("신문 시장 분석", "Newspaper Market Analysis") :
+    type === "youtube_report" ? t("유튜브 주식 분석", "YouTube Stock Analysis") :
+    type === "master_report" ? t("일간 추천 리포트", "Daily Recommendation Report") : t("긴급 알림 리포트", "Urgent Alert Report");
 
   return (
     <div>
       <div className="flex flex-col sm:flex-row sm:items-center justify-between mb-4 gap-3">
         <div>
-          <h1 className="text-[28px] font-semibold tracking-tight mb-1">Reports</h1>
-          <p className="text-sm text-[var(--text-muted)]">Executive summaries and alerts</p>
+          <h1 className="text-[28px] font-semibold tracking-tight mb-1">{t("리포트", "Reports")}</h1>
+          <p className="text-sm text-[var(--text-muted)]">{t("핵심 요약 및 알림", "Executive summaries and alerts")}</p>
         </div>
         <div className="flex flex-col items-end gap-1" ref={genRef}>
           <div className="relative">
             <button
               onClick={() => { setGenOpen(!genOpen); setAgentsOpen(false); }}
               disabled={gen.busy}
-              title="생성할 리포트를 선택하세요 (Select which report to generate)"
+              title={t("생성할 리포트를 선택하세요", "Select which report to generate")}
               className="inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold bg-[var(--brand-blue)] text-white shadow-sm hover:opacity-90 disabled:opacity-60 transition">
               {gen.busy
                 ? <span className="w-3.5 h-3.5 rounded-full border-2 border-white/40 border-t-white animate-spin" />
                 : <span>⚡</span>}
-              {gen.busy ? "생성 중…" : "지금 리포트 생성 & 전송"}
+              {gen.busy ? t("생성 중…", "Generating…") : t("지금 리포트 생성 & 전송", "Generate & send report now")}
               {!gen.busy && <span className={`transition-transform ${genOpen ? "rotate-180" : ""}`}>▾</span>}
             </button>
 
             {genOpen && !gen.busy && (
               <div className="absolute right-0 mt-2 w-80 z-50 rounded-xl border border-[var(--border-default)] bg-[var(--bg-card)] shadow-xl py-1.5 text-sm text-[var(--text-primary)]">
-                <div className="px-3 py-1.5 text-[11px] font-semibold text-[var(--text-muted)] uppercase tracking-wide">생성할 리포트 선택</div>
+                <div className="px-3 py-1.5 text-[11px] font-semibold text-[var(--text-muted)] uppercase tracking-wide">{t("생성할 리포트 선택", "Select a report to generate")}</div>
 
                 {/* Report language — Korean by default; switch to English if wanted */}
                 <div className="mx-2 mb-1 px-2.5 py-2 rounded-lg bg-[var(--bg-elevated)] flex items-center justify-between">
-                  <span className="text-[12px] font-semibold">🌐 리포트 언어</span>
+                  <span className="text-[12px] font-semibold">🌐 {t("리포트 언어", "Report language")}</span>
                   <div className="inline-flex items-center rounded-md border border-[var(--border-default)] overflow-hidden text-[11px] font-semibold bg-[var(--bg-card)]">
                     <button onClick={(e) => { e.stopPropagation(); setReportLang("ko"); }}
                       className={`px-2 py-0.5 transition-colors ${reportLang === "ko" ? "bg-[var(--brand-blue)] text-white" : "text-[var(--text-muted)] hover:bg-[var(--bg-hover)]"}`}>한국어</button>
@@ -436,7 +441,7 @@ td{padding:8px 12px;border:1px solid #e2e8f0;font-size:10pt}
                   <label className="flex items-center gap-2 cursor-pointer select-none">
                     <input type="checkbox" checked={testMode} onChange={(e) => setTestMode(e.target.checked)}
                       className="w-4 h-4 accent-[var(--brand-blue)]" />
-                    <span className="text-[12px] font-semibold">🧪 테스트 모드 — 나에게만 전송</span>
+                    <span className="text-[12px] font-semibold">🧪 {t("테스트 모드 — 나에게만 전송", "Test mode — send only to me")}</span>
                   </label>
                   {testMode && (
                     <input type="email" value={testEmail} onChange={(e) => setTestEmail(e.target.value)}
@@ -451,7 +456,7 @@ td{padding:8px 12px;border:1px solid #e2e8f0;font-size:10pt}
                     <span className="w-5 text-center">{it.emoji}</span>
                     <span className="flex-1 font-medium">{it.label}</span>
                     <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded ${testMode ? "bg-amber-500/15 text-amber-600" : "bg-[var(--brand-blue)]/12 text-[var(--brand-blue)]"}`}>
-                      {testMode ? "나만" : "전체"}
+                      {testMode ? t("나만", "Me only") : t("전체", "All")}
                     </span>
                   </button>
                 ))}
@@ -462,7 +467,7 @@ td{padding:8px 12px;border:1px solid #e2e8f0;font-size:10pt}
                 <button onClick={() => setAgentsOpen(!agentsOpen)}
                   className="w-full flex items-center gap-2.5 px-3 py-2 hover:bg-[var(--bg-hover)] transition text-left">
                   <span className="w-5 text-center">🤖</span>
-                  <span className="flex-1 font-medium">에이전트 (Agents)</span>
+                  <span className="flex-1 font-medium">{t("에이전트", "Agents")}</span>
                   <span className={`text-xs transition-transform ${agentsOpen ? "rotate-90" : ""}`}>▸</span>
                 </button>
                 {agentsOpen && (
@@ -472,7 +477,7 @@ td{padding:8px 12px;border:1px solid #e2e8f0;font-size:10pt}
                         className="w-full flex items-center gap-2.5 px-3 py-2 hover:bg-[var(--bg-hover)] transition text-left">
                         <span className="w-5 text-center">{it.emoji}</span>
                         <span className="flex-1">{it.label}</span>
-                        <span className="text-[10px] text-[var(--text-muted)]">대시보드</span>
+                        <span className="text-[10px] text-[var(--text-muted)]">{t("대시보드", "Dashboard")}</span>
                       </button>
                     ))}
                   </div>
@@ -482,7 +487,7 @@ td{padding:8px 12px;border:1px solid #e2e8f0;font-size:10pt}
           </div>
           {gen.msg
             ? <span className="text-[11px] text-[var(--text-muted)] max-w-[280px] text-right">{gen.msg}</span>
-            : <span className="text-[11px] text-[var(--text-muted)]">Auto Report Generator · 매일 06:50 자동 전송</span>}
+            : <span className="text-[11px] text-[var(--text-muted)]">{t("자동 리포트 생성기 · 매일 06:50 자동 전송", "Auto Report Generator · auto-sent daily at 06:50")}</span>}
         </div>
       </div>
 
@@ -498,7 +503,7 @@ td{padding:8px 12px;border:1px solid #e2e8f0;font-size:10pt}
                   : "bg-[var(--bg-card)] text-[var(--text-primary)] border-[var(--border-default)] hover:border-[var(--border-active)] hover:bg-[var(--bg-hover)]"
               }`}>
               <span>{s.icon}</span>{s.label}
-              {s.key !== "agents" && <span className={`text-[9px] px-1.5 py-0.5 rounded-full font-semibold ${active ? "bg-white/20 text-white" : "bg-amber-50 text-amber-600 border border-amber-200"}`}>PREVIEW</span>}
+              {s.key !== "agents" && <span className={`text-[9px] px-1.5 py-0.5 rounded-full font-semibold ${active ? "bg-white/20 text-white" : "bg-amber-50 text-amber-600 border border-amber-200"}`}>{t("미리보기", "PREVIEW")}</span>}
             </button>
           );
         })}
@@ -558,7 +563,7 @@ td{padding:8px 12px;border:1px solid #e2e8f0;font-size:10pt}
                 <div className="px-4 py-3 flex items-center justify-between">
                   <div className="flex items-center gap-3 flex-1 min-w-0">
                     <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium ${cfg.color} ${cfg.bg} border ${cfg.border}`}>{cfg.label}</span>
-                    <span className="text-xs text-[var(--text-secondary)]">{r.source_run_count} runs</span>
+                    <span className="text-xs text-[var(--text-secondary)]">{t(`실행 ${r.source_run_count}회`, `${r.source_run_count} runs`)}</span>
                     <span className="text-[10px] text-[var(--text-muted)]">{r.created_at ? toKST(r.created_at) : ""}</span>
                   </div>
                   <svg className={`w-4 h-4 text-[var(--text-muted)] transition-transform ${isSelected ? "rotate-90" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -573,10 +578,10 @@ td{padding:8px 12px;border:1px solid #e2e8f0;font-size:10pt}
               {isSelected && detail && viewMode === null && (
                 <div className="flex gap-3 mt-2 mb-4 pl-2">
                   <button onClick={() => setViewMode("summary")} className="flex-1 py-3 rounded-lg bg-[var(--brand-blue)] text-white text-[14px] font-semibold hover:opacity-90 transition-colors">
-                    Summary
+                    {t("요약", "Summary")}
                   </button>
                   <button onClick={() => setViewMode("detailed")} className="flex-1 py-3 rounded-lg bg-[var(--bg-elevated)] border border-[var(--border-default)] text-[var(--text-primary)] text-[14px] font-semibold hover:bg-[var(--bg-hover)] transition-colors">
-                    Detailed Report
+                    {t("상세 리포트", "Detailed Report")}
                   </button>
                 </div>
               )}
@@ -586,15 +591,15 @@ td{padding:8px 12px;border:1px solid #e2e8f0;font-size:10pt}
                 <div className="mt-2 mb-4 border border-[var(--border-default)] rounded-lg bg-[var(--bg-card)] p-5">
                   <div className="flex items-center justify-between mb-4">
                     <div className="flex items-center gap-3">
-                      <h3 className="text-[16px] font-semibold text-[var(--text-primary)]">Report Summary</h3>
+                      <h3 className="text-[16px] font-semibold text-[var(--text-primary)]">{t("리포트 요약", "Report Summary")}</h3>
                       <Badge text={detail.report_type} />
                     </div>
                     <div className="flex items-center gap-2">
                       <button onClick={copyReport} className="px-3 py-1.5 text-[11px] rounded-lg bg-[var(--bg-elevated)] hover:bg-[var(--bg-hover)] border border-[var(--border-default)] text-[var(--text-primary)] font-medium">
-                        {copied ? "Copied!" : "Copy"}
+                        {copied ? t("복사됨!", "Copied!") : t("복사", "Copy")}
                       </button>
-                      <button onClick={() => setViewMode("detailed")} className="px-3 py-1.5 text-[11px] rounded-lg bg-[var(--bg-elevated)] hover:bg-[var(--bg-hover)] border border-[var(--border-default)] text-[var(--text-primary)] font-medium">Expand</button>
-                      <button onClick={closeDetail} className="text-[var(--text-muted)] hover:text-[var(--text-primary)] text-xs ml-2">Close</button>
+                      <button onClick={() => setViewMode("detailed")} className="px-3 py-1.5 text-[11px] rounded-lg bg-[var(--bg-elevated)] hover:bg-[var(--bg-hover)] border border-[var(--border-default)] text-[var(--text-primary)] font-medium">{t("펼치기", "Expand")}</button>
+                      <button onClick={closeDetail} className="text-[var(--text-muted)] hover:text-[var(--text-primary)] text-xs ml-2">{t("닫기", "Close")}</button>
                     </div>
                   </div>
                   {detail.content?.report?.detail_en ? (
@@ -615,7 +620,7 @@ td{padding:8px 12px;border:1px solid #e2e8f0;font-size:10pt}
                   ) : (
                   <>
                   <div className="mb-4 p-3 rounded-lg bg-[var(--bg-elevated)] border border-[var(--border-default)]">
-                    <p className="text-[13px] text-[var(--text-primary)] leading-relaxed">{detail.content?.executive_summary || "No summary available."}</p>
+                    <p className="text-[13px] text-[var(--text-primary)] leading-relaxed">{detail.content?.executive_summary || t("요약이 없습니다.", "No summary available.")}</p>
                   </div>
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                     {parseSections(detail.content?.sections).map((s: any, i: number) => (
@@ -643,7 +648,10 @@ td{padding:8px 12px;border:1px solid #e2e8f0;font-size:10pt}
           );
         })}
         {filteredReports.length === 0 && (
-          <p className="text-center text-[var(--text-muted)] py-10 text-sm">No {SOURCES.find((s) => s.key === source)?.label} {period} reports yet — they appear here automatically{source !== "agents" ? " (coming in the deep-dive)" : ""}.</p>
+          <p className="text-center text-[var(--text-muted)] py-10 text-sm">{t(
+            `아직 ${SOURCES.find((s) => s.key === source)?.label} ${PERIODS.find((p) => p.key === period)?.label} 리포트가 없습니다 — 생성되면 여기에 자동으로 표시됩니다${source !== "agents" ? " (심층 분석 단계에서 제공 예정)" : ""}.`,
+            `No ${SOURCES.find((s) => s.key === source)?.label} ${PERIODS.find((p) => p.key === period)?.label} reports yet — they appear here automatically${source !== "agents" ? " (coming in the deep-dive)" : ""}.`
+          )}</p>
         )}
       </div>
 
@@ -658,31 +666,31 @@ td{padding:8px 12px;border:1px solid #e2e8f0;font-size:10pt}
               <div className="flex items-center gap-2">
                 <button onClick={copyReport}
                   className="px-3 py-1.5 text-[12px] rounded-lg bg-gray-100 hover:bg-gray-200 text-gray-700 font-medium transition-colors">
-                  {copied ? "Copied!" : "Copy"}
+                  {copied ? t("복사됨!", "Copied!") : t("복사", "Copy")}
                 </button>
 
                 {/* Download dropdown */}
                 <div className="relative" ref={dlRef}>
                   <button onClick={() => setDlOpen(!dlOpen)}
                     className="px-3 py-1.5 text-[12px] rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-medium flex items-center gap-1.5 transition-colors">
-                    Download
+                    {t("다운로드", "Download")}
                     <svg className={`w-3.5 h-3.5 transition-transform ${dlOpen ? "rotate-180" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
                   </button>
                   {dlOpen && (
                     <div className="absolute top-full left-0 mt-1 bg-white rounded-lg shadow-lg border border-gray-200 py-1 w-48 z-20">
                       <button onClick={downloadDocx} className="w-full text-left px-4 py-2.5 text-[13px] text-gray-700 hover:bg-gray-50 flex items-center gap-3">
                         <span className="w-8 h-8 rounded-lg bg-blue-100 text-blue-600 flex items-center justify-center text-[10px] font-bold">W</span>
-                        <div><div className="font-medium">MS Word</div><div className="text-[10px] text-gray-400">.doc format</div></div>
+                        <div><div className="font-medium">MS Word</div><div className="text-[10px] text-gray-400">{t(".doc 형식", ".doc format")}</div></div>
                       </button>
                       <button onClick={() => { downloadFile(detail.content?.markdown || "", `report-${detail.id.slice(0,8)}.md`, "text/markdown"); setDlOpen(false); }}
                         className="w-full text-left px-4 py-2.5 text-[13px] text-gray-700 hover:bg-gray-50 flex items-center gap-3">
                         <span className="w-8 h-8 rounded-lg bg-gray-100 text-gray-600 flex items-center justify-center text-[10px] font-bold">MD</span>
-                        <div><div className="font-medium">Markdown</div><div className="text-[10px] text-gray-400">.md format</div></div>
+                        <div><div className="font-medium">Markdown</div><div className="text-[10px] text-gray-400">{t(".md 형식", ".md format")}</div></div>
                       </button>
                       <button onClick={() => { downloadFile(JSON.stringify(detail.content, null, 2), `report-${detail.id.slice(0,8)}.json`, "application/json"); setDlOpen(false); }}
                         className="w-full text-left px-4 py-2.5 text-[13px] text-gray-700 hover:bg-gray-50 flex items-center gap-3">
                         <span className="w-8 h-8 rounded-lg bg-green-100 text-green-600 flex items-center justify-center text-[10px] font-bold">{"{}"}</span>
-                        <div><div className="font-medium">JSON</div><div className="text-[10px] text-gray-400">.json format</div></div>
+                        <div><div className="font-medium">JSON</div><div className="text-[10px] text-gray-400">{t(".json 형식", ".json format")}</div></div>
                       </button>
                     </div>
                   )}
@@ -715,7 +723,7 @@ td{padding:8px 12px;border:1px solid #e2e8f0;font-size:10pt}
                 </div>
                 <div className="flex items-center gap-4 text-[12px] text-gray-400">
                   <span>{detail.created_at ? toKST(detail.created_at) : ""}</span>
-                  <span>{detail.source_run_ids?.length || 0} data sources</span>
+                  <span>{t(`데이터 소스 ${detail.source_run_ids?.length || 0}개`, `${detail.source_run_ids?.length || 0} data sources`)}</span>
                   <span>ID: {detail.id?.slice(0, 8)}</span>
                 </div>
               </div>
@@ -729,7 +737,7 @@ td{padding:8px 12px;border:1px solid #e2e8f0;font-size:10pt}
                   {(lang === "ko"
                     ? (detail.content?.report?.summary_ko || detail.content?.report?.summary_en)
                     : (detail.content?.report?.summary_en))
-                    || detail.content?.executive_summary || "No summary available."}
+                    || detail.content?.executive_summary || t("요약이 없습니다.", "No summary available.")}
                 </p>
               </div>
 
@@ -742,14 +750,14 @@ td{padding:8px 12px;border:1px solid #e2e8f0;font-size:10pt}
               <>
               {/* ===== Summary Table ===== */}
               <div className="mb-8">
-                <h2 className="text-[11px] font-bold text-gray-400 uppercase tracking-widest mb-3">Report Overview</h2>
+                <h2 className="text-[11px] font-bold text-gray-400 uppercase tracking-widest mb-3">{t("리포트 개요", "Report Overview")}</h2>
                 <table className="w-full border-collapse">
                   <thead>
                     <tr className="bg-gray-50">
-                      <th className="text-left px-4 py-2.5 text-[11px] font-semibold text-gray-500 uppercase tracking-wider border border-gray-200">Section</th>
-                      <th className="text-left px-4 py-2.5 text-[11px] font-semibold text-gray-500 uppercase tracking-wider border border-gray-200">Key Finding</th>
-                      <th className="text-center px-4 py-2.5 text-[11px] font-semibold text-gray-500 uppercase tracking-wider border border-gray-200">Highlight</th>
-                      <th className="text-center px-4 py-2.5 text-[11px] font-semibold text-gray-500 uppercase tracking-wider border border-gray-200">Status</th>
+                      <th className="text-left px-4 py-2.5 text-[11px] font-semibold text-gray-500 uppercase tracking-wider border border-gray-200">{t("섹션", "Section")}</th>
+                      <th className="text-left px-4 py-2.5 text-[11px] font-semibold text-gray-500 uppercase tracking-wider border border-gray-200">{t("핵심 내용", "Key Finding")}</th>
+                      <th className="text-center px-4 py-2.5 text-[11px] font-semibold text-gray-500 uppercase tracking-wider border border-gray-200">{t("주요 지표", "Highlight")}</th>
+                      <th className="text-center px-4 py-2.5 text-[11px] font-semibold text-gray-500 uppercase tracking-wider border border-gray-200">{t("상태", "Status")}</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -829,22 +837,22 @@ td{padding:8px 12px;border:1px solid #e2e8f0;font-size:10pt}
                     {/* Data table if contracts/properties exist */}
                     {data.contracts?.list && data.contracts.list.length > 0 && (
                       <div className="mt-5">
-                        <h3 className="text-[13px] font-semibold text-gray-700 mb-2">Active Contracts ({data.contracts.total})</h3>
+                        <h3 className="text-[13px] font-semibold text-gray-700 mb-2">{t("진행 중인 계약", "Active Contracts")} ({data.contracts.total})</h3>
                         <table className="w-full border-collapse text-[12px]">
                           <thead>
                             <tr className="bg-gray-50">
-                              <th className="text-left px-3 py-2 border border-gray-200 text-gray-500 font-medium">Tenant</th>
-                              <th className="text-right px-3 py-2 border border-gray-200 text-gray-500 font-medium">Monthly Rent</th>
-                              <th className="text-right px-3 py-2 border border-gray-200 text-gray-500 font-medium">Deposit</th>
-                              <th className="text-left px-3 py-2 border border-gray-200 text-gray-500 font-medium">End Date</th>
+                              <th className="text-left px-3 py-2 border border-gray-200 text-gray-500 font-medium">{t("임차인", "Tenant")}</th>
+                              <th className="text-right px-3 py-2 border border-gray-200 text-gray-500 font-medium">{t("월세", "Monthly Rent")}</th>
+                              <th className="text-right px-3 py-2 border border-gray-200 text-gray-500 font-medium">{t("보증금", "Deposit")}</th>
+                              <th className="text-left px-3 py-2 border border-gray-200 text-gray-500 font-medium">{t("종료일", "End Date")}</th>
                             </tr>
                           </thead>
                           <tbody>
                             {data.contracts.list.map((c: any, ci: number) => (
                               <tr key={ci} className="hover:bg-blue-50/20">
                                 <td className="px-3 py-2 border border-gray-200 font-medium text-gray-800">{c.tenant}</td>
-                                <td className="px-3 py-2 border border-gray-200 text-right text-gray-600">{(c.monthly_rent || 0).toLocaleString()} KRW</td>
-                                <td className="px-3 py-2 border border-gray-200 text-right text-gray-600">{(c.deposit || 0).toLocaleString()} KRW</td>
+                                <td className="px-3 py-2 border border-gray-200 text-right text-gray-600">{(c.monthly_rent || 0).toLocaleString()} {t("원", "KRW")}</td>
+                                <td className="px-3 py-2 border border-gray-200 text-right text-gray-600">{(c.deposit || 0).toLocaleString()} {t("원", "KRW")}</td>
                                 <td className="px-3 py-2 border border-gray-200 text-gray-500">{c.end_date}</td>
                               </tr>
                             ))}
@@ -855,20 +863,20 @@ td{padding:8px 12px;border:1px solid #e2e8f0;font-size:10pt}
 
                     {data.expiring_leases?.list && data.expiring_leases.list.length > 0 && (
                       <div className="mt-5">
-                        <h3 className="text-[13px] font-semibold text-red-600 mb-2">Expiring Leases ({data.expiring_leases.total})</h3>
+                        <h3 className="text-[13px] font-semibold text-red-600 mb-2">{t("만료 예정 임대차", "Expiring Leases")} ({data.expiring_leases.total})</h3>
                         <table className="w-full border-collapse text-[12px]">
                           <thead>
                             <tr className="bg-red-50/50">
-                              <th className="text-left px-3 py-2 border border-gray-200 text-gray-500 font-medium">Tenant</th>
-                              <th className="text-right px-3 py-2 border border-gray-200 text-gray-500 font-medium">Monthly Rent</th>
-                              <th className="text-left px-3 py-2 border border-gray-200 text-red-400 font-medium">Expires</th>
+                              <th className="text-left px-3 py-2 border border-gray-200 text-gray-500 font-medium">{t("임차인", "Tenant")}</th>
+                              <th className="text-right px-3 py-2 border border-gray-200 text-gray-500 font-medium">{t("월세", "Monthly Rent")}</th>
+                              <th className="text-left px-3 py-2 border border-gray-200 text-red-400 font-medium">{t("만료일", "Expires")}</th>
                             </tr>
                           </thead>
                           <tbody>
                             {data.expiring_leases.list.map((e: any, ei: number) => (
                               <tr key={ei} className="hover:bg-red-50/20">
                                 <td className="px-3 py-2 border border-gray-200 font-medium text-gray-800">{e.tenant}</td>
-                                <td className="px-3 py-2 border border-gray-200 text-right text-gray-600">{(e.monthly_rent || 0).toLocaleString()} KRW</td>
+                                <td className="px-3 py-2 border border-gray-200 text-right text-gray-600">{(e.monthly_rent || 0).toLocaleString()} {t("원", "KRW")}</td>
                                 <td className="px-3 py-2 border border-gray-200 text-red-600 font-medium">{e.end_date}</td>
                               </tr>
                             ))}
@@ -885,7 +893,7 @@ td{padding:8px 12px;border:1px solid #e2e8f0;font-size:10pt}
               {/* Traces */}
               {detail.content?.trace_references?.length > 0 && (
                 <div className="mt-6 pt-4 border-t border-gray-100">
-                  <h2 className="text-[11px] font-bold text-gray-400 uppercase tracking-widest mb-2">Trace References</h2>
+                  <h2 className="text-[11px] font-bold text-gray-400 uppercase tracking-widest mb-2">{t("트레이스 참조", "Trace References")}</h2>
                   <div className="flex flex-wrap gap-2">
                     {detail.content.trace_references.slice(0, 10).map((t: string) => (
                       <code key={t} className="text-[11px] px-2 py-1 bg-gray-50 rounded text-gray-500 border border-gray-100">{t}</code>
@@ -897,7 +905,7 @@ td{padding:8px 12px;border:1px solid #e2e8f0;font-size:10pt}
               {/* Footer */}
               <div className="mt-8 pt-4 border-t border-gray-200 text-[11px] text-gray-400 flex items-center justify-between">
                 <span>VIP Agent Platform | Report ID: {detail.id?.slice(0, 8)}</span>
-                <a href={`${API}/reports/${detail.id}/markdown`} target="_blank" rel="noreferrer" className="text-purple-500 hover:underline">Raw Markdown</a>
+                <a href={`${API}/reports/${detail.id}/markdown`} target="_blank" rel="noreferrer" className="text-purple-500 hover:underline">{t("원본 마크다운", "Raw Markdown")}</a>
               </div>
             </div>
           </div>

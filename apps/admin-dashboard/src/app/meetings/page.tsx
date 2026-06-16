@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useRef } from "react";
 import { API } from "../../components/api";
+import { useLanguage } from "../../components/i18n";
 import MeetingsTabs from "@/components/MeetingsTabs";
 import MeetingOpsBar from "../../components/MeetingOpsBar";
 
@@ -67,6 +68,7 @@ const STATUS_COLORS: Record<string, string> = {
 };
 
 export default function MeetingsPage() {
+  const { t } = useLanguage();
   const [meetings, setMeetings] = useState<Meeting[]>([]);
   const [twins, setTwins] = useState<Twin[]>([]);
   const [loading, setLoading] = useState(true);
@@ -210,18 +212,18 @@ export default function MeetingsPage() {
               <h1 className="text-[20px] font-semibold text-[var(--text-primary)]">{activeMeeting.title}</h1>
               <div className="flex items-center gap-2 text-[12px] text-[var(--text-muted)]">
                 <span className={`px-2 py-0.5 rounded-full text-[10px] font-medium ${STATUS_COLORS[activeMeeting.status]}`}>{activeMeeting.status}</span>
-                <span>{participants.length} participants</span>
-                <span>{messages.length} messages</span>
+                <span>{participants.length} {t("명 참석", "participants")}</span>
+                <span>{messages.length} {t("개 메시지", "messages")}</span>
               </div>
             </div>
           </div>
           <div className="flex gap-2">
             <button onClick={fetchMinutes} className="px-3 py-2 bg-[var(--card-bg)] border border-[var(--card-border)] rounded-lg text-[12px] font-medium text-[var(--text-secondary)] hover:bg-[var(--bg-secondary)]">
-              Minutes
+              {t("회의록", "Minutes")}
             </button>
             {activeMeeting.status === "active" && (
               <button onClick={handleEndMeeting} className="px-3 py-2 bg-red-500 text-white rounded-lg text-[12px] font-medium hover:bg-red-600">
-                End Meeting
+                {t("회의 종료", "End Meeting")}
               </button>
             )}
           </div>
@@ -232,7 +234,7 @@ export default function MeetingsPage() {
           {/* Boss */}
           <div className="flex items-center gap-1.5 px-3 py-1.5 bg-[var(--card-bg)] border border-[var(--card-border)] rounded-full">
             <div className="w-6 h-6 rounded-full bg-black flex items-center justify-center text-white text-[9px] font-bold">VIP</div>
-            <span className="text-[11px] font-medium text-[var(--text-primary)] whitespace-nowrap">Boss</span>
+            <span className="text-[11px] font-medium text-[var(--text-primary)] whitespace-nowrap">{t("대표님", "Boss")}</span>
           </div>
           {participants.map(p => (
             <div key={p.twin_id} className="flex items-center gap-1.5 px-3 py-1.5 bg-[var(--card-bg)] border border-[var(--card-border)] rounded-full">
@@ -250,7 +252,7 @@ export default function MeetingsPage() {
             {/* Messages */}
             <div className="flex-1 overflow-y-auto px-5 py-4 space-y-3">
               {messages.length === 0 && (
-                <div className="text-center py-10 text-[var(--text-muted)] text-[13px]">Meeting started. Send a message to begin.</div>
+                <div className="text-center py-10 text-[var(--text-muted)] text-[13px]">{t("회의가 시작되었습니다. 메시지를 보내 시작하세요.", "Meeting started. Send a message to begin.")}</div>
               )}
               {messages.map((msg, i) => (
                 <div key={msg.id || i} className={`flex gap-3 ${msg.sender_type === "vip" ? "flex-row-reverse" : ""}`}>
@@ -290,7 +292,7 @@ export default function MeetingsPage() {
                       <span className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: "300ms" }} />
                     </div>
                   </div>
-                  <div className="px-4 py-2.5 bg-[var(--bg-secondary)] rounded-2xl rounded-bl-md text-[12px] text-[var(--text-muted)]">Twins are thinking...</div>
+                  <div className="px-4 py-2.5 bg-[var(--bg-secondary)] rounded-2xl rounded-bl-md text-[12px] text-[var(--text-muted)]">{t("트윈들이 생각 중입니다...", "Twins are thinking...")}</div>
                 </div>
               )}
               <div ref={messagesEndRef} />
@@ -302,21 +304,21 @@ export default function MeetingsPage() {
                 <div className="flex gap-2 items-end">
                   <textarea value={msgInput} onChange={e => setMsgInput(e.target.value)}
                     onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSendMessage(); } }}
-                    placeholder="Type your message to the team... (Shift+Enter for new line)"
+                    placeholder={t("팀에게 보낼 메시지를 입력하세요... (Shift+Enter로 줄바꿈)", "Type your message to the team... (Shift+Enter for new line)")}
                     disabled={sending}
                     rows={2}
                     className="flex-1 px-4 py-3 bg-[var(--bg-secondary)] border border-[var(--card-border)] rounded-xl text-[13px] text-[var(--text-primary)] placeholder:text-[var(--text-muted)] focus:outline-none focus:border-blue-400 resize-none" />
                   <button onClick={handleSendMessage} disabled={!msgInput.trim() || sending}
                     className="px-5 py-3 bg-blue-600 text-white rounded-xl text-[13px] font-medium hover:opacity-90 disabled:opacity-50 shrink-0">
-                    Send
+                    {t("전송", "Send")}
                   </button>
                 </div>
-                <div className="text-[9px] text-[var(--text-muted)] mt-1">Enter to send · Shift+Enter for new line</div>
+                <div className="text-[9px] text-[var(--text-muted)] mt-1">{t("Enter로 전송 · Shift+Enter로 줄바꿈", "Enter to send · Shift+Enter for new line")}</div>
               </div>
             )}
             {activeMeeting.status === "ended" && (
               <div className="px-5 py-3 border-t border-[var(--card-border)] text-center text-[12px] text-[var(--text-muted)]">
-                Meeting ended. View minutes for summary.
+                {t("회의가 종료되었습니다. 회의록에서 요약을 확인하세요.", "Meeting ended. View minutes for summary.")}
               </div>
             )}
           </div>
@@ -325,30 +327,30 @@ export default function MeetingsPage() {
           {showMinutes && minutes && (
             <div className="w-[300px] shrink-0 bg-[var(--card-bg)] rounded-xl border border-[var(--card-border)] flex flex-col max-h-full" style={{ boxShadow: "var(--shadow-sm)" }}>
               <div className="px-4 py-3 border-b border-[var(--card-border)] flex items-center justify-between">
-                <span className="text-[13px] font-semibold text-[var(--text-primary)]">Meeting Minutes</span>
+                <span className="text-[13px] font-semibold text-[var(--text-primary)]">{t("회의록", "Meeting Minutes")}</span>
                 <button onClick={() => setShowMinutes(false)} className="text-[var(--text-muted)] hover:text-[var(--text-primary)]">
                   <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
                 </button>
               </div>
               <div className="flex-1 overflow-y-auto px-4 py-3 space-y-4">
                 {minutes.summary && (
-                  <div><div className="text-[11px] font-medium text-[var(--text-muted)] mb-1">Summary</div><div className="text-[12px] text-[var(--text-primary)]">{minutes.summary}</div></div>
+                  <div><div className="text-[11px] font-medium text-[var(--text-muted)] mb-1">{t("요약", "Summary")}</div><div className="text-[12px] text-[var(--text-primary)]">{minutes.summary}</div></div>
                 )}
                 {minutes.decisions.length > 0 && (
                   <div>
-                    <div className="text-[11px] font-medium text-green-600 mb-1">Decisions Made</div>
+                    <div className="text-[11px] font-medium text-green-600 mb-1">{t("결정 사항", "Decisions Made")}</div>
                     {minutes.decisions.map((d, i) => <div key={i} className="text-[12px] text-[var(--text-primary)] flex gap-1.5 mb-1"><span className="text-green-500">✓</span>{d}</div>)}
                   </div>
                 )}
                 {minutes.tasks_assigned.length > 0 && (
                   <div>
-                    <div className="text-[11px] font-medium text-blue-600 mb-1">Tasks Assigned</div>
+                    <div className="text-[11px] font-medium text-blue-600 mb-1">{t("배정된 작업", "Tasks Assigned")}</div>
                     {minutes.tasks_assigned.map((t, i) => <div key={i} className="text-[12px] text-[var(--text-primary)] flex gap-1.5 mb-1"><span className="text-blue-500">→</span>{t.task}</div>)}
                   </div>
                 )}
                 {minutes.open_questions.length > 0 && (
                   <div>
-                    <div className="text-[11px] font-medium text-amber-600 mb-1">Open Questions</div>
+                    <div className="text-[11px] font-medium text-amber-600 mb-1">{t("미해결 질문", "Open Questions")}</div>
                     {minutes.open_questions.map((q, i) => <div key={i} className="text-[12px] text-[var(--text-primary)] flex gap-1.5 mb-1"><span className="text-amber-500">?</span>{q}</div>)}
                   </div>
                 )}
@@ -371,31 +373,31 @@ export default function MeetingsPage() {
       {/* Header */}
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 mb-6">
         <div>
-          <h1 className="text-[28px] font-semibold text-[var(--text-primary)]">Meetings</h1>
-          <p className="text-[13px] text-[var(--text-muted)] mt-1">Meet with your digital twins anytime</p>
+          <h1 className="text-[28px] font-semibold text-[var(--text-primary)]">{t("회의", "Meetings")}</h1>
+          <p className="text-[13px] text-[var(--text-muted)] mt-1">{t("언제든지 디지털 트윈과 회의를 진행하세요", "Meet with your digital twins anytime")}</p>
         </div>
         <div className="flex gap-2">
           <button onClick={handleQuickStart}
             className="px-4 py-2.5 bg-blue-600 text-white rounded-lg text-[13px] font-medium hover:opacity-90 flex items-center gap-2">
             <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M11 5.882V19.24a1.76 1.76 0 01-3.417.592l-2.147-6.15M18 13a3 3 0 100-6M5.436 13.683A4.001 4.001 0 017 6h1.832c4.1 0 7.625-1.234 9.168-3v14c-1.543-1.766-5.067-3-9.168-3H7a3.988 3.988 0 01-1.564-.317z" /></svg>
-            Start Now (All-Hands)
+            {t("바로 시작 (전체 회의)", "Start Now (All-Hands)")}
           </button>
           <button onClick={() => setShowCreate(true)}
             className="px-4 py-2.5 bg-[var(--card-bg)] border border-[var(--card-border)] rounded-lg text-[13px] font-medium text-[var(--text-secondary)] hover:bg-[var(--bg-secondary)]">
-            Schedule Meeting
+            {t("회의 예약", "Schedule Meeting")}
           </button>
         </div>
       </div>
 
       {loading ? (
-        <div className="text-center py-20 text-[var(--text-muted)]">Loading meetings...</div>
+        <div className="text-center py-20 text-[var(--text-muted)]">{t("회의를 불러오는 중...", "Loading meetings...")}</div>
       ) : meetings.length === 0 ? (
         <div className="text-center py-20 bg-[var(--card-bg)] rounded-xl border border-[var(--card-border)]">
           <div className="text-[48px] mb-3">🤝</div>
-          <div className="text-[var(--text-primary)] text-[16px] font-semibold mb-1">No meetings yet</div>
-          <div className="text-[var(--text-muted)] text-[13px] mb-4">Start an all-hands meeting or schedule one</div>
+          <div className="text-[var(--text-primary)] text-[16px] font-semibold mb-1">{t("아직 회의가 없습니다", "No meetings yet")}</div>
+          <div className="text-[var(--text-muted)] text-[13px] mb-4">{t("전체 회의를 시작하거나 회의를 예약하세요", "Start an all-hands meeting or schedule one")}</div>
           <button onClick={handleQuickStart} className="px-5 py-2.5 bg-blue-600 text-white rounded-lg text-[13px] font-medium">
-            Start Now
+            {t("바로 시작", "Start Now")}
           </button>
         </div>
       ) : (
@@ -416,8 +418,8 @@ export default function MeetingsPage() {
                   <div className="flex items-center gap-2 text-[11px] text-[var(--text-muted)] mt-0.5">
                     <span className={`px-2 py-0.5 rounded-full text-[10px] font-medium ${STATUS_COLORS[m.status]}`}>{m.status}</span>
                     <span>{TYPE_LABELS[m.meeting_type] || m.meeting_type}</span>
-                    <span>{m.participant_count} twins</span>
-                    <span>{m.message_count} messages</span>
+                    <span>{m.participant_count} {t("트윈", "twins")}</span>
+                    <span>{m.message_count} {t("개 메시지", "messages")}</span>
                   </div>
                 </div>
               </div>
@@ -435,32 +437,32 @@ export default function MeetingsPage() {
           <div className="absolute inset-0 bg-black/50" />
           <div className="relative bg-white rounded-2xl border border-gray-200 w-full max-w-md" style={{ boxShadow: "0 20px 60px rgba(0,0,0,0.2)" }} onClick={e => e.stopPropagation()}>
             <div className="p-5 border-b border-[var(--card-border)]">
-              <h2 className="text-[16px] font-semibold text-[var(--text-primary)]">Schedule Meeting</h2>
+              <h2 className="text-[16px] font-semibold text-[var(--text-primary)]">{t("회의 예약", "Schedule Meeting")}</h2>
             </div>
             <div className="p-5 space-y-4">
               <div>
-                <label className="block text-[12px] font-medium text-[var(--text-secondary)] mb-1">Title</label>
+                <label className="block text-[12px] font-medium text-[var(--text-secondary)] mb-1">{t("제목", "Title")}</label>
                 <input type="text" value={newTitle} onChange={e => setNewTitle(e.target.value)}
-                  placeholder="e.g. Weekly Review, Strategy Meeting"
+                  placeholder={t("예: 주간 리뷰, 전략 회의", "e.g. Weekly Review, Strategy Meeting")}
                   className="w-full px-3 py-2.5 bg-[var(--bg-secondary)] border border-[var(--card-border)] rounded-lg text-[13px] text-[var(--text-primary)] placeholder:text-[var(--text-muted)] focus:outline-none focus:border-[var(--text-primary)]" />
               </div>
               <div>
-                <label className="block text-[12px] font-medium text-[var(--text-secondary)] mb-1">Type</label>
+                <label className="block text-[12px] font-medium text-[var(--text-secondary)] mb-1">{t("유형", "Type")}</label>
                 <select value={newType} onChange={e => setNewType(e.target.value)}
                   className="w-full px-3 py-2.5 bg-[var(--bg-secondary)] border border-[var(--card-border)] rounded-lg text-[13px] text-[var(--text-primary)] focus:outline-none">
-                  <option value="all_hands">All-Hands</option>
-                  <option value="team">Team</option>
-                  <option value="standup">Standup</option>
-                  <option value="weekly_review">Weekly Review</option>
-                  <option value="one_on_one">1-on-1</option>
+                  <option value="all_hands">{t("전체 회의", "All-Hands")}</option>
+                  <option value="team">{t("팀 회의", "Team")}</option>
+                  <option value="standup">{t("스탠드업", "Standup")}</option>
+                  <option value="weekly_review">{t("주간 리뷰", "Weekly Review")}</option>
+                  <option value="one_on_one">{t("1:1 회의", "1-on-1")}</option>
                 </select>
               </div>
             </div>
             <div className="p-5 border-t border-[var(--card-border)] flex gap-3 justify-end">
-              <button onClick={() => setShowCreate(false)} className="px-4 py-2.5 text-[13px] text-[var(--text-muted)]">Cancel</button>
+              <button onClick={() => setShowCreate(false)} className="px-4 py-2.5 text-[13px] text-[var(--text-muted)]">{t("취소", "Cancel")}</button>
               <button onClick={handleCreateMeeting} disabled={!newTitle}
                 className="px-5 py-2.5 bg-blue-600 text-white rounded-lg text-[13px] font-medium hover:opacity-90 disabled:opacity-50">
-                Create
+                {t("생성", "Create")}
               </button>
             </div>
           </div>

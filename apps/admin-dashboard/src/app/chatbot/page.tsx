@@ -34,6 +34,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { API } from "../../components/api";
+import { useLanguage } from "../../components/i18n";
 import TwinGroupsHub from "../../components/TwinGroupsHub";
 import ChatWorkspace from "../../components/ChatWorkspace";
 import { AssistantCard } from "../../components/AssistantCard";
@@ -113,6 +114,7 @@ export default function VipChatbotPage() {
   // of them keeps a slim AssistantCard pinned at the bottom so the
   // boss can keep chatting with the Assistant while reviewing/sending DMs,
   // call logs, or uploading knowledge files.
+  const { t } = useLanguage();
   const [tab, setTab] = useState<Tab>("assistant");
 
   return (
@@ -121,33 +123,33 @@ export default function VipChatbotPage() {
       <div className="flex flex-col gap-3 border-b border-[var(--border-default)] pb-3 lg:flex-row lg:items-end lg:justify-between">
         <div>
           <h1 className="text-[22px] font-bold tracking-tight text-[var(--text-primary)]">
-            Chatbot
+            {t("챗봇", "Chatbot")}
           </h1>
           <p className="mt-1 max-w-3xl text-[13px] leading-5 text-[var(--text-muted)]">
-            Assistant workspace for stock questions, customer messages, calls, and uploaded knowledge.
+            {t("주식 질문, 고객 메시지, 통화, 업로드된 지식을 위한 어시스턴트 워크스페이스입니다.", "Assistant workspace for stock questions, customer messages, calls, and uploaded knowledge.")}
           </p>
         </div>
         <div className="inline-flex w-full gap-1 rounded-lg border border-[var(--border-default)] bg-white p-1 shadow-sm sm:w-auto">
           {([
-            { id: "assistant", label: "Assistant" },
-            { id: "messages", label: "Messages" },
-            { id: "calls", label: "Calls" },
-            { id: "insights", label: "AI Insights" },
-            { id: "knowledge", label: "Knowledge" },
-          ] as const).map(t => {
-            const active = tab === t.id;
+            { id: "assistant", label: t("어시스턴트", "Assistant") },
+            { id: "messages", label: t("메시지", "Messages") },
+            { id: "calls", label: t("통화", "Calls") },
+            { id: "insights", label: t("AI 인사이트", "AI Insights") },
+            { id: "knowledge", label: t("지식", "Knowledge") },
+          ] as const).map(tabItem => {
+            const active = tab === tabItem.id;
             return (
               <button
-                key={t.id}
+                key={tabItem.id}
                 type="button"
-                onClick={() => setTab(t.id)}
+                onClick={() => setTab(tabItem.id)}
                 className={`min-h-9 flex-1 rounded-md px-3 text-[13px] font-semibold transition-colors sm:flex-none ${
                   active
                     ? "bg-gray-900 text-white shadow-sm"
                     : "text-gray-600 hover:bg-gray-100 hover:text-gray-900"
                 }`}
               >
-                {t.label}
+                {tabItem.label}
               </button>
             );
           })}
@@ -184,6 +186,7 @@ export default function VipChatbotPage() {
 // ============================================================================
 
 function MessagesPanel() {
+  const { t } = useLanguage();
   const [subTab, setSubTab] = useState<"direct" | "groups">("direct");
   const [threads, setThreads] = useState<ThreadInfo[]>([]);
   const [activeTwinId, setActiveTwinId] = useState<string | null>(null);
@@ -235,7 +238,7 @@ function MessagesPanel() {
       const first = infos.find(i => i.lastMessage) || infos[0];
       if (first && !activeTwinId) setActiveTwinId(first.twin.id);
     } catch (e: unknown) {
-      setError(`Couldn't load threads: ${(e as Error)?.message || e}`);
+      setError(`${t("스레드를 불러오지 못했습니다", "Couldn't load threads")}: ${(e as Error)?.message || e}`);
     } finally {
       setLoading(false);
     }
@@ -257,7 +260,7 @@ function MessagesPanel() {
       setTimeout(() => scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" }), 100);
       fetch(`${API}/twins/${twinId}/messages/read`, { method: "POST" }).catch(() => {});
     } catch (e: unknown) {
-      setError(`Couldn't load messages: ${(e as Error)?.message || e}`);
+      setError(`${t("메시지를 불러오지 못했습니다", "Couldn't load messages")}: ${(e as Error)?.message || e}`);
     }
   }
 
@@ -277,7 +280,7 @@ function MessagesPanel() {
       await loadMessages(activeTwinId);
       void loadAllThreads();
     } catch (e: unknown) {
-      setError(`Send failed: ${(e as Error)?.message || e}`);
+      setError(`${t("전송 실패", "Send failed")}: ${(e as Error)?.message || e}`);
       setDraft(body);
     } finally {
       setSending(false);
@@ -292,11 +295,11 @@ function MessagesPanel() {
         <button
           onClick={() => setSubTab("direct")}
           className={`px-3 py-1.5 rounded-lg font-medium ${subTab === "direct" ? "bg-indigo-600 text-white" : "bg-gray-100 text-gray-700 hover:bg-gray-200"}`}
-        >Direct</button>
+        >{t("1:1 대화", "Direct")}</button>
         <button
           onClick={() => setSubTab("groups")}
           className={`px-3 py-1.5 rounded-lg font-medium ${subTab === "groups" ? "bg-indigo-600 text-white" : "bg-gray-100 text-gray-700 hover:bg-gray-200"}`}
-        >Groups</button>
+        >{t("그룹", "Groups")}</button>
       </div>
 
       {error && (
@@ -309,11 +312,11 @@ function MessagesPanel() {
         <div className="grid grid-cols-1 md:grid-cols-[280px_1fr] gap-3 min-h-[500px]">
           <div className="bg-[var(--bg-card)] border border-[var(--border-default)] rounded-lg overflow-y-auto max-h-[500px]">
             <div className="px-3 py-2.5 border-b border-[var(--border-default)] text-[11px] font-semibold uppercase tracking-wide text-[var(--text-muted)]">
-              Workers ({threads.length})
+              {t("직원", "Workers")} ({threads.length})
             </div>
-            {loading && <div className="p-4 text-[12px] text-[var(--text-muted)]">Loading...</div>}
+            {loading && <div className="p-4 text-[12px] text-[var(--text-muted)]">{t("불러오는 중...", "Loading...")}</div>}
             {!loading && threads.length === 0 && (
-              <div className="p-4 text-[12px] text-[var(--text-muted)]">No twins yet.</div>
+              <div className="p-4 text-[12px] text-[var(--text-muted)]">{t("아직 트윈이 없습니다.", "No twins yet.")}</div>
             )}
             {threads.map(({ twin, lastMessage, unread }) => {
               const isActive = twin.id === activeTwinId;
@@ -338,14 +341,14 @@ function MessagesPanel() {
                         lastMessage.sender_type === "assistant" ? "text-purple-600" :
                         "text-emerald-600"
                       }>
-                        {lastMessage.sender_type === "boss" ? "You: " :
-                         lastMessage.sender_type === "assistant" ? "Assistant: " :
-                         "Them: "}
+                        {lastMessage.sender_type === "boss" ? t("나: ", "You: ") :
+                         lastMessage.sender_type === "assistant" ? t("어시스턴트: ", "Assistant: ") :
+                         t("상대: ", "Them: ")}
                       </span>
                       <span className="truncate">{lastMessage.content}</span>
                     </div>
                   ) : (
-                    <div className="mt-1 text-[11px] text-[var(--text-muted)] italic">No messages yet</div>
+                    <div className="mt-1 text-[11px] text-[var(--text-muted)] italic">{t("아직 메시지가 없습니다", "No messages yet")}</div>
                   )}
                 </button>
               );
@@ -355,16 +358,16 @@ function MessagesPanel() {
           <div className="bg-[var(--bg-card)] border border-[var(--border-default)] rounded-lg flex flex-col max-h-[500px]">
             <div className="px-4 py-3 border-b border-[var(--border-default)] flex items-center justify-between">
               <div>
-                <div className="text-[14px] font-bold text-[var(--text-primary)]">{activeTwin ? activeTwin.name : "Select a twin"}</div>
+                <div className="text-[14px] font-bold text-[var(--text-primary)]">{activeTwin ? activeTwin.name : t("트윈을 선택하세요", "Select a twin")}</div>
                 {activeTwin && (
-                  <div className="text-[11px] text-[var(--text-muted)]">Mode: {activeTwin.mode || "—"} · Status: {activeTwin.status || "—"}</div>
+                  <div className="text-[11px] text-[var(--text-muted)]">{t("모드", "Mode")}: {activeTwin.mode || "—"} · {t("상태", "Status")}: {activeTwin.status || "—"}</div>
                 )}
               </div>
             </div>
             <div ref={scrollRef} className="flex-1 overflow-y-auto p-4 space-y-2 min-h-[300px]">
-              {!activeTwin && <div className="text-center py-12 text-[12px] text-[var(--text-muted)]">Pick a twin from the left.</div>}
+              {!activeTwin && <div className="text-center py-12 text-[12px] text-[var(--text-muted)]">{t("왼쪽에서 트윈을 선택하세요.", "Pick a twin from the left.")}</div>}
               {activeTwin && messages.length === 0 && (
-                <div className="text-center py-12 text-[12px] text-[var(--text-muted)]">No messages yet — say hi below.</div>
+                <div className="text-center py-12 text-[12px] text-[var(--text-muted)]">{t("아직 메시지가 없습니다 — 아래에서 인사를 건네보세요.", "No messages yet — say hi below.")}</div>
               )}
               {messages.map((m, i) => {
                 const fromBoss = m.sender_type === "boss" || m.sender_type === "assistant";
@@ -373,7 +376,7 @@ function MessagesPanel() {
                     <div className={`max-w-[75%] rounded-2xl px-3.5 py-2 text-[13px] leading-relaxed ${
                       fromBoss ? "bg-blue-600 text-white rounded-br-md" : "bg-[var(--bg-elevated)] text-[var(--text-primary)] rounded-bl-md"
                     }`}>
-                      {m.sender_type === "assistant" && <div className="text-[9px] opacity-80 mb-0.5 font-semibold">Sent by Assistant</div>}
+                      {m.sender_type === "assistant" && <div className="text-[9px] opacity-80 mb-0.5 font-semibold">{t("어시스턴트가 전송함", "Sent by Assistant")}</div>}
                       {m.content}
                       <div className={`mt-1 text-[9px] ${fromBoss ? "opacity-75" : "text-[var(--text-muted)]"}`}>
                         {new Date(m.created_at).toLocaleString()}
@@ -390,7 +393,7 @@ function MessagesPanel() {
                   value={draft}
                   onChange={e => setDraft(e.target.value)}
                   onKeyDown={e => { if (e.key === "Enter") send(); }}
-                  placeholder={`Message ${activeTwin.name}...`}
+                  placeholder={t(`${activeTwin.name}에게 메시지...`, `Message ${activeTwin.name}...`)}
                   className="flex-1 px-3 py-2 bg-[var(--bg-elevated)] border border-[var(--border-default)] rounded-lg text-[13px] focus:outline-none focus:border-blue-400"
                   disabled={sending}
                 />
@@ -398,7 +401,7 @@ function MessagesPanel() {
                   onClick={send}
                   disabled={!draft.trim() || sending}
                   className="px-4 py-2 bg-blue-600 text-white text-[13px] font-medium rounded-lg hover:bg-blue-700 disabled:opacity-50"
-                >{sending ? "..." : "Send"}</button>
+                >{sending ? "..." : t("전송", "Send")}</button>
               </div>
             )}
           </div>
@@ -413,13 +416,14 @@ function MessagesPanel() {
 // ============================================================================
 
 function CallsPanel() {
+  const { t } = useLanguage();
   if (!vipConfig.voice) {
     return (
       <div className="rounded-2xl border border-gray-200 bg-white p-12 text-center">
         <div className="text-3xl mb-3">⚠️</div>
-        <h3 className="text-base font-semibold text-gray-900">Voice config missing</h3>
+        <h3 className="text-base font-semibold text-gray-900">{t("음성 설정 누락", "Voice config missing")}</h3>
         <p className="text-sm text-gray-500 mt-1 max-w-md mx-auto">
-          The agent doesn&apos;t have a <code className="font-mono text-xs bg-gray-100 px-1 py-0.5 rounded">voice</code> block in its AgentConfig.
+          {t("이 에이전트의 AgentConfig에 ", "The agent doesn't have a ")}<code className="font-mono text-xs bg-gray-100 px-1 py-0.5 rounded">voice</code>{t(" 블록이 없습니다.", " block in its AgentConfig.")}
         </p>
       </div>
     );
@@ -517,6 +521,7 @@ function LiveCalls() {
 const KNOWLEDGE_ACCEPT = ".xlsx,.xls,.csv,.pdf,.docx,.pptx,.txt,.md,.json";
 
 function KnowledgePanel() {
+  const { t } = useLanguage();
   const base = vipConfig.apiBase.replace(/\/$/, "");
   const [files, setFiles] = useState<KnowledgeFile[]>([]);
   const [pending, setPending] = useState<{ id: string; name: string; size: number; state: "uploading" | "done" | "error"; message?: string }[]>([]);
@@ -533,7 +538,7 @@ function KnowledgePanel() {
       const data = await res.json();
       setFiles(data.files || []);
     } catch (e) {
-      setError(`Couldn't load files: ${(e as Error).message || e}`);
+      setError(`${t("파일을 불러오지 못했습니다", "Couldn't load files")}: ${(e as Error).message || e}`);
     } finally {
       setLoading(false);
     }
@@ -550,7 +555,7 @@ function KnowledgePanel() {
       const res = await fetch(`${base}/assistant/knowledge/upload`, { method: "POST", body: fd });
       const data = await res.json().catch(() => ({}));
       if (!res.ok || !data.ok) throw new Error(data?.detail || data?.error || `HTTP ${res.status}`);
-      setPending(prev => prev.map(x => x.id === pid ? { ...x, state: "done", message: `${data.chunk_count} chunks` } : x));
+      setPending(prev => prev.map(x => x.id === pid ? { ...x, state: "done", message: t(`${data.chunk_count}개 청크`, `${data.chunk_count} chunks`) } : x));
       void refresh();
     } catch (e) {
       setPending(prev => prev.map(x => x.id === pid ? { ...x, state: "error", message: (e as Error).message || String(e) } : x));
@@ -562,13 +567,13 @@ function KnowledgePanel() {
   }
 
   async function deleteFile(f: KnowledgeFile) {
-    if (!window.confirm(`Delete "${f.filename}"?\n\nThe Assistant will lose access to this content.`)) return;
+    if (!window.confirm(t(`"${f.filename}"을(를) 삭제하시겠습니까?\n\n어시스턴트가 이 콘텐츠에 더 이상 접근할 수 없게 됩니다.`, `Delete "${f.filename}"?\n\nThe Assistant will lose access to this content.`))) return;
     try {
       const res = await fetch(`${base}/assistant/knowledge/files/${f.id}?agentId=${encodeURIComponent(vipConfig.agentId)}`, { method: "DELETE" });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       setFiles(prev => prev.filter(x => x.id !== f.id));
     } catch (e) {
-      setError(`Delete failed: ${(e as Error).message || e}`);
+      setError(`${t("삭제 실패", "Delete failed")}: ${(e as Error).message || e}`);
     }
   }
 
@@ -591,8 +596,8 @@ function KnowledgePanel() {
         }`}
       >
         <div className="text-[34px] mb-2">📁</div>
-        <div className="text-[14px] text-gray-700">Drag files here or <span className="text-blue-600 underline">browse</span></div>
-        <div className="text-[11px] text-gray-400 mt-1">xlsx · pdf · docx · pptx · csv · txt · 50MB each max</div>
+        <div className="text-[14px] text-gray-700">{t("여기에 파일을 드래그하거나 ", "Drag files here or ")}<span className="text-blue-600 underline">{t("찾아보기", "browse")}</span></div>
+        <div className="text-[11px] text-gray-400 mt-1">{t("xlsx · pdf · docx · pptx · csv · txt · 각 최대 50MB", "xlsx · pdf · docx · pptx · csv · txt · 50MB each max")}</div>
         <input
           ref={inputRef}
           type="file"
@@ -618,7 +623,7 @@ function KnowledgePanel() {
               <div className="text-[13px] font-medium text-gray-800 truncate">{p.name}</div>
               <div className="text-[11px] text-gray-500 truncate">
                 {fmtBytes(p.size)}
-                {p.state === "uploading" && " · uploading…"}
+                {p.state === "uploading" && t(" · 업로드 중…", " · uploading…")}
                 {p.state === "done" && ` · ${p.message}`}
                 {p.state === "error" && ` · ${p.message}`}
               </div>
@@ -626,9 +631,9 @@ function KnowledgePanel() {
           </div>
         ))}
         {loading ? (
-          <div className="text-[12px] text-gray-400 py-2">Loading files…</div>
+          <div className="text-[12px] text-gray-400 py-2">{t("파일을 불러오는 중…", "Loading files…")}</div>
         ) : files.length === 0 && pending.length === 0 ? (
-          <div className="text-[12px] text-gray-400 py-2">No files yet — drop one above to teach the Assistant.</div>
+          <div className="text-[12px] text-gray-400 py-2">{t("아직 파일이 없습니다 — 위에 파일을 올려 어시스턴트를 학습시키세요.", "No files yet — drop one above to teach the Assistant.")}</div>
         ) : (
           files.map(f => (
             <div key={f.id} className="flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 py-2">
@@ -636,12 +641,12 @@ function KnowledgePanel() {
               <div className="flex-1 min-w-0">
                 <div className="text-[13px] font-medium text-gray-800 truncate">{f.filename}</div>
                 <div className="text-[11px] text-gray-500 truncate">
-                  {fmtBytes(f.size_bytes)} · {f.chunk_count} chunks
+                  {fmtBytes(f.size_bytes)} · {t(`${f.chunk_count}개 청크`, `${f.chunk_count} chunks`)}
                   {f.status === "error" && f.error_msg ? ` · ${f.error_msg}` : ""}
-                  {f.uploaded_by ? ` · by ${f.uploaded_by}` : ""}
+                  {f.uploaded_by ? t(` · ${f.uploaded_by}`, ` · by ${f.uploaded_by}`) : ""}
                 </div>
               </div>
-              <button onClick={() => deleteFile(f)} className="text-gray-400 hover:text-red-500 w-8 h-8 flex items-center justify-center text-[16px]" title="Delete">×</button>
+              <button onClick={() => deleteFile(f)} className="text-gray-400 hover:text-red-500 w-8 h-8 flex items-center justify-center text-[16px]" title={t("삭제", "Delete")}>×</button>
             </div>
           ))
         )}
