@@ -91,7 +91,14 @@ _SHSA_PATH = "/api/dostk/shsa"        # 공매도 endpoints category
 _SHORT_TREND_API_ID = "ka10014"       # 공매도추이요청
 
 _TIMEOUT = 15.0
-_RETRIES = 2
+_RETRIES = 4   # extra attempts so a 모의(mock) rate-limit burst eventually clears
+
+# Short-selling result cache: {code: (epoch, data)}. 공매도 is T-1 daily data that
+# only changes once a day, so caching avoids re-hitting the rate-limited mock API
+# for every report/chatbot call, AND lets a transient failure fall back to the
+# last good value instead of a blank column.
+_short_cache: dict[str, tuple[float, dict]] = {}
+_SHORT_TTL = 6 * 3600
 # Look back this many calendar days when picking a start date for the range.
 _LOOKBACK_DAYS = 14
 # Refresh the cached token this many seconds before its real expiry.
@@ -412,23 +419,35 @@ def short_selling(code: str) -> Optional[dict]:
         API error. Never fabricated.
     """
     code = str(code).strip().zfill(6)
+
+    # Serve a fresh cached value if we have one (avoids hammering the mock API).
+    cached = _short_cache.get(code)
+    if cached and (time.time() - cached[0]) < _SHORT_TTL:
+        return cached[1]
+
     strt_dt, end_dt = _date_range()
     body = {"stk_cd": code, "tm_tp": "1", "strt_dt": strt_dt, "end_dt": end_dt}
 
     data = _request(_SHORT_TREND_API_ID, body)
     if data is None:
-        return None
+        # Transient failure (rate limit / timeout) — fall back to the last good
+        # value if we have one, rather than returning a blank.
+        return cached[1] if cached else None
 
     rows = _extract_rows(data)
     if not rows:
         logger.debug("kiwoom_rest: ka10014 returned no rows for %s. keys=%s",
                      code, list(data.keys()))
-        return None
+        return cached[1] if cached else None
 
     # Log the raw shape once so the exact response keys can be confirmed live.
     logger.debug("kiwoom_rest: ka10014 sample row for %s: %s", code, rows[0])
 
-    return _newest_row(rows)
+    parsed = _newest_row(rows)
+    if parsed:
+        _short_cache[code] = (time.time(), parsed)
+        return parsed
+    return cached[1] if cached else None
 
 
 def short_selling_all(codes: list[str]) -> dict[str, dict]:

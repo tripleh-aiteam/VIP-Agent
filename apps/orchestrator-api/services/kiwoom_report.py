@@ -18,6 +18,7 @@ from __future__ import annotations
 import html as _html
 import os
 import re
+import time
 import unicodedata
 from datetime import datetime
 from typing import Any
@@ -285,13 +286,16 @@ def _enrich_kr_rows(rows: list[dict]) -> None:
         r["organ_net"] = fl.get("organ")
         r["individual_net"] = fl.get("individual")
         r["foreign_hold"] = fl.get("foreign_hold")
-        # 공매도 (short-selling) via Kiwoom REST — best-effort, T+1 data.
+        # 공매도 (short-selling) via Kiwoom REST — best-effort, T-1 data. The
+        # 모의(mock) endpoint rate-limits bursts, so space the calls out; the
+        # client caches results + falls back to the last good value on failure.
         try:
             from services import kiwoom_rest
             ss = kiwoom_rest.short_selling(r["t"])
             if ss:
                 r["short_volume"] = ss.get("short_volume")
                 r["short_ratio"] = ss.get("short_ratio")
+            time.sleep(0.5)   # stay under the mock per-second request limit
         except Exception:
             pass
 
