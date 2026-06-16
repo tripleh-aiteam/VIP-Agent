@@ -111,10 +111,11 @@ def deliver(db, recipients, *, lang: str = "ko") -> dict[str, Any]:
         return {"ok": False, "reason": "no grounded youtube report row yet"}
     c = row.content_json or {}
     subject = c.get("email_subject") or "유튜브 시장 리포트"
-    # Strip YouTube links from the body (no Gmail video cards — files only).
-    body = _strip_video_links(c.get("email_body_ko") or "")
-    if not body:
-        body = "유튜브 시장 분석 리포트입니다. 첨부된 한글 리포트(.docx)를 확인해 주세요."
+    # SHORT body only (per request) — no long 핵심 포인트/투자의견 text, no video
+    # links. The full analysis lives in the attached file.
+    asof = str(c.get("generated_at_kst") or "")[:16].replace("T", " ")
+    body = ("유튜브 시장 분석 리포트입니다. 첨부된 한글 리포트(.docx)를 확인해 주세요."
+            + (f"\n\n생성: {asof} KST" if asof else ""))
     # Email attaches ONLY the Korean .docx (per request — no PDF, no EN files).
     files: list[tuple[str, bytes]] = []
     ko_docx_url = (c.get("files") or {}).get("docx_ko_url")

@@ -1005,26 +1005,42 @@ def _master_daily_report(email_override: str | None = None, period: str = "daily
                 pieces = [
                     ("1_키움_Kiwoom", "키움 데일리 리포트", kiwoom_rp),
                     ("2_신문_Newspaper", "신문 요약 리포트", news_rp),
+                    ("4_추천_Recommendation", "종합 추천 리포트", rep),
                 ]
-                # The grounded YouTube report is delivered as its OWN email
-                # (_youtube_daily_report → colleague's exact files), so it is NOT
-                # re-rendered into this consolidated email.
-                pieces.append(("3_추천_Recommendation", "종합 추천 리포트", rep))
                 files = []
                 for fn, title, rp in pieces:
                     md = _ko(rp)
                     if md:
                         files.append((f"{fn}_{ymd}.docx", markdown_to_docx(md, title, kst)))
 
+                # Attach the grounded YouTube report (colleague's KO .docx,
+                # byte-for-byte) as #3 — so ALL 4 reports go in ONE email.
+                yt_attached = False
+                try:
+                    from services import youtube_grounded
+                    yt_row = youtube_grounded.latest_row(db)
+                    ko_url = (((yt_row.content_json if yt_row else None) or {}).get("files") or {}).get("docx_ko_url")
+                    yt_bytes = youtube_grounded._download(ko_url) if ko_url else None
+                    if yt_bytes:
+                        files.append((f"3_유튜브_YouTube_{ymd}.docx", yt_bytes))
+                        yt_attached = True
+                except Exception as _e:
+                    log.warning(f"master: youtube attach failed: {str(_e)[:80]}")
+                files.sort(key=lambda f: f[0])   # order 1,2,3,4 by filename prefix
+
                 _kor = {"daily": "데일리", "weekly": "주간", "monthly": "월간"}.get(period, "데일리")
                 n_rep = len(files)
+                _lines = ["1. 키움 데일리 리포트 — 시세·기술적 분석",
+                          "2. 신문 요약 리포트 — 주요 신문사 뉴스 분석"]
+                _n = 3
+                if yt_attached:
+                    _lines.append(f"{_n}. 유튜브 그라운드 리포트 — 한국 금융 유튜브 분석")
+                    _n += 1
+                _lines.append(f"{_n}. 종합 추천 리포트 — 위 리포트를 종합한 투자 의견 및 일정매매 포인트")
                 intro = (
                     "안녕하세요 사장님,\n\n"
                     f"{kst} 기준 {_kor} 리포트 {n_rep}건을 보내드립니다:\n"
-                    f"1. 키움 {_kor} 리포트 — 시세·기술적 분석\n"
-                    "2. 신문 요약 리포트 — 주요 신문사 뉴스 분석\n"
-                    "3. 종합 추천 리포트 — 위 리포트를 종합한 투자 의견 및 일정매매 포인트\n\n"
-                    + "※ 유튜브 그라운드 리포트는 별도 메일로 발송됩니다.\n\n"
+                    + "\n".join(_lines) + "\n\n"
                     + "각 리포트는 첨부된 Word 파일에서 확인하실 수 있습니다.\n\n"
                     "감사합니다.\nTripleH AI"
                 )
@@ -1110,12 +1126,8 @@ def run_all_reports_now(email_override: str | None = None, lang: str = "ko"):
             fn(lang=lang)  # sources save to dashboard (individual email stays off)
         except Exception as e:
             log.warning(f"run-all: {label} failed: {str(e)[:120]}", extra={"action": "runall.src.failed"})
-    # Grounded YouTube delivers its OWN email (latest gpu_youtube files). Respect a
-    # test override; None → full recipient list.
-    try:
-        _youtube_daily_report(email_override=email_override, lang=lang)
-    except Exception as e:
-        log.warning(f"run-all: youtube failed: {str(e)[:120]}", extra={"action": "runall.src.failed"})
+    # (The grounded YouTube report is now bundled INTO the consolidated master
+    # email below — no separate YouTube email.)
     try:
         _master_daily_report(email_override=email_override, lang=lang)  # emails the consolidated 4-file
     except Exception as e:
@@ -1224,17 +1236,9 @@ def init_scheduler():
     )
     log.info("scheduler: Newspaper report registered (21:30 UTC = 6:30 AM KST)", extra={"action": "scheduler.newspaper_registered"})
 
-    # Grounded YouTube report (colleague's GPU pipeline) — delivered as its OWN
-    # email to ALL members at 6:50 AM KST = 21:50 UTC, every day. It only READS
-    # the latest gpu_youtube row + attaches the pre-rendered files byte-for-byte.
-    _scheduler.add_job(
-        _youtube_daily_report,
-        CronTrigger.from_crontab("50 21 * * *"),   # every day (incl Sat/Sun KST)
-        kwargs={"email_override": "*ALL*"},
-        id="youtube-daily-report",
-        replace_existing=True,
-    )
-    log.info("scheduler: grounded YouTube delivery registered (21:50 UTC = 6:50 AM KST)", extra={"action": "scheduler.youtube_registered"})
+    # NOTE: the grounded YouTube report is NO LONGER a separate email — it is
+    # bundled into the consolidated master email below (all 4 reports together),
+    # so there is no standalone youtube-daily-report cron anymore.
 
     # Master synthesis report — 6:50 AM KST = 21:50 UTC, weekdays (after the 3).
     _scheduler.add_job(
