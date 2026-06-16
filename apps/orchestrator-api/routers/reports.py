@@ -315,6 +315,31 @@ def kis_deriv_check():
     return out
 
 
+@router.get("/kiwoom-deriv-check")
+def kiwoom_deriv_check():
+    """Replicate the report's derivatives path: build priced rows, compute the KR
+    codes exactly as _derivatives_block does, and run it — to see why the
+    개별주식선물 sub-table may be missing in the report."""
+    out = {}
+    try:
+        from services import kiwoom_report as kr, kis_derivatives as kd
+        rows, _te, _tk, _rate = kr.gather_priced_rows()
+        kr_codes = [r["t"] for r in rows if r.get("mkt") == "KR" and not r.get("etf")]
+        out["kr_codes"] = kr_codes
+        sf = kd.stock_futures_all(kr_codes)
+        out["stock_futures_all_keys"] = list(sf.keys())
+        ko, en, facts = kr._derivatives_block(rows)
+        out["block_has_stock_table"] = "개별주식선물" in ko
+        out["block_has_index_table"] = "지수 파생" in ko
+        out["facts"] = facts[:400]
+        out["ko_tail"] = ko[-600:]
+    except Exception as e:
+        import traceback
+        out["error"] = str(e)[:200]
+        out["trace"] = traceback.format_exc()[-600:]
+    return out
+
+
 @router.get("/kis-deriv-master")
 def kis_deriv_master():
     """Download the KIS derivative master files and surface sample lines + lines
