@@ -93,9 +93,16 @@ def deliver(db, recipients, *, lang: str = "ko") -> dict[str, Any]:
     subject = c.get("email_subject") or "유튜브 시장 리포트"
     body = (c.get("email_body_ko")
             or "유튜브 시장 분석 리포트입니다. 첨부된 파일을 확인해 주세요.")
-    files = fetch_files(c)
+    # Email attaches ONLY the Korean .docx (per request — no PDF, no EN files).
+    files: list[tuple[str, bytes]] = []
+    ko_docx_url = (c.get("files") or {}).get("docx_ko_url")
+    if ko_docx_url:
+        data = _download(ko_docx_url)
+        if data:
+            fname = ko_docx_url.rstrip("/").split("/")[-1] or "youtube_report_ko.docx"
+            files.append((fname, data))
     if not files:
-        return {"ok": False, "reason": "no downloadable files in the latest row"}
+        return {"ok": False, "reason": "Korean .docx not available in the latest row"}
     try:
         from services.report_email import send_email_with_docs
         res = send_email_with_docs(recipients, subject, body, files)
