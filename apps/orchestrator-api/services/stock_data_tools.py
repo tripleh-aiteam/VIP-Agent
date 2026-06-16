@@ -308,15 +308,10 @@ _TOOL_DEFS: list[tuple[str, Callable, str, dict]] = [
     (
         "stock_quote", tool_stock_quote,
         "OASIS Stock Advisor — the CURRENT PRICE / 현재가 / 시세 of ONE specific "
-        "stock by name or ticker. Use this ONLY when the user explicitly asks for the "
-        "PRICE and nothing else: 'what is the price of X', 'X 주가', 'how much is X', "
-        "'X 얼마', 'X 시세' where X is a company (SK Hynix / SK하이닉스 / 삼성전자 / "
-        "Samsung / 카카오 …) or a 6-digit code (000660). Returns live current price "
-        "(best bid/ask) in KRW with the ticker name. "
-        "⚠ Do NOT use this alone for ADVICE questions ('should I buy X', 'X 어때', "
-        "'is X a good buy', 'X 살까/전망/분석') — those need analysis: combine this with "
-        "stock_get_investor_flow + stock_get_intraday_signals + stock_get_recommendations "
-        "+ stock_get_news and give a reasoned BUY/HOLD/SELL view. "
+        "stock by name or ticker. USE THIS FIRST for 'what is the price/cost of "
+        "X', 'X 주가', 'how much is X', 'X 얼마' where X is a company (SK Hynix / "
+        "SK하이닉스 / 삼성전자 / Samsung / 카카오 …) or a 6-digit code (000660). "
+        "Returns live current price (best bid/ask) in KRW with the ticker name. "
         "Do NOT use stock_get_price_history or web search for a single stock's "
         "current price — use this.",
         {"type": "object", "properties": {
