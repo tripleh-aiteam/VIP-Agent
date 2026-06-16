@@ -598,6 +598,25 @@ def handle_talk(
     else:
         lang = "ko" if language == "ko" else "en"
 
+    # === Stock questions → live tool engine (assistant_agent) ===
+    # The /talk intent engine has no live-market tools, so the Stock app's
+    # chatbot used to fail ("I don't have real-time data"). Route stock questions
+    # through assistant_agent.run_agent (same engine VIP uses) so /talk returns
+    # real prices/history/analysis and MATCHES the VIP answer. Scoped to the
+    # Stock agent so the Kakao (realty) 3s-SLA path is untouched.
+    if (agent_id or "").lower() == "stock":
+        try:
+            from services.assistant_agent import run_agent as _ra, _is_stock_question as _isq
+            if _isq(query):
+                r = _ra(db, transcript=query, agent_id="stock", language=language,
+                        history=history, current_path=current_path, user_id=user_id)
+                rep = (r.get("reply") or "").strip()
+                if rep and not rep.startswith("{"):
+                    return _make_response(rep, lang, intent=r.get("intent") or "stock",
+                                          action=r.get("action"), source="assistant_agent")
+        except Exception as e:
+            log.warning(f"talk: stock delegation failed: {str(e)[:120]}")
+
     # Use whatever the agent's config sent in. Fall back to VIP's hardcoded
     # defaults only if the caller didn't provide them (legacy support).
     if intents is None:
