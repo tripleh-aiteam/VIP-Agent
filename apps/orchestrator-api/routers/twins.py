@@ -574,12 +574,18 @@ def chat_with_twin(twin_id: UUID, body: TwinChatMessage, x_user_email: Optional[
 
     db.commit()
 
+    # Which provider/model ACTUALLY answered. If a picked model (e.g. a Gemini
+    # one) failed and the fallback chain kicked in, this reveals the real source
+    # instead of the requested model — so "Gemini answered" can be verified.
+    from services.llm_client import last_used
     return {
         "twin_id": str(twin_id),
         "twin_name": twin.name,
         "twin_role": twin.role,
         "message": body.message,
         "response": response,
+        "requested_model": body.model,
+        "answered_by": last_used(),
     }
 
 
