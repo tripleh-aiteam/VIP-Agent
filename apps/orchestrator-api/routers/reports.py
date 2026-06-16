@@ -315,6 +315,35 @@ def kis_deriv_check():
     return out
 
 
+@router.get("/kis-deriv-master")
+def kis_deriv_master():
+    """Download the KIS derivative master files and surface sample lines + lines
+    matching KOSPI200 / 삼성전자(005930) so the futures short codes can be pinned."""
+    import io as _io, zipfile as _zip, httpx as _hx
+    out = {}
+    masters = {
+        "fo_idx": "https://new.real.download.dws.co.kr/common/master/fo_idx_code.mst.zip",
+        "fo_com": "https://new.real.download.dws.co.kr/common/master/fo_com_code.mst.zip",
+    }
+    for name, url in masters.items():
+        try:
+            resp = _hx.get(url, timeout=25)
+            zf = _zip.ZipFile(_io.BytesIO(resp.content))
+            fn = next((n for n in zf.namelist() if n.endswith(".mst")), zf.namelist()[0])
+            raw = zf.read(fn).decode("cp949", errors="replace")
+            lines = [ln for ln in raw.splitlines() if ln.strip()]
+            info = {"file": fn, "total_lines": len(lines),
+                    "samples": [ln[:120] for ln in lines[:3]]}
+            needles = ["KOSPI200", "코스피200", "K200"] if name == "fo_idx" else ["005930", "삼성전자"]
+            hits = [ln[:140] for ln in lines if any(nd in ln for nd in needles)]
+            info["match_count"] = len(hits)
+            info["matches"] = hits[:6]
+            out[name] = info
+        except Exception as e:
+            out[name + "_err"] = str(e)[:200]
+    return out
+
+
 @router.get("/kis-deriv-live")
 def kis_deriv_live(expiry: str = Query(""), fcode: str = Query(""),
                    raw: bool = Query(False)):
