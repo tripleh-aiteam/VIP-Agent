@@ -341,6 +341,44 @@ def _is_stock_question(transcript: Optional[str]) -> bool:
     return any(k in t for k in _STOCK_Q_KW)
 
 
+_PRICE_ONLY_KW = ("현재가", "주가", "시세", "얼마", "가격", "price", "quote", "how much", "cost")
+
+
+def _is_price_question(transcript: Optional[str]) -> bool:
+    """True for a PURE current-price question on a specific stock — 'X 현재가/얼마/
+    주가/시세'. Excludes advice and past-date questions so only the bare-price ask
+    matches. Answered deterministically (no LLM) so it can never garble/leak."""
+    t = (transcript or "").strip().lower()
+    if not t or not any(k in t for k in _PRICE_ONLY_KW):
+        return False
+    if _is_past_price(transcript) or _is_stock_advice(transcript, None):
+        return False
+    return _stock_in_query(transcript) is not None
+
+
+def _format_price_reply(res: dict, lang: str) -> Optional[str]:
+    """Deterministically format a stock_quote result into a clean one-line reply
+    (no LLM → identical on Stock and VIP, never garbled)."""
+    if not isinstance(res, dict) or not res.get("ok"):
+        return None
+    name = res.get("name") or res.get("ticker") or ""
+    won = res.get("current_price_won")
+    if not won:
+        return None
+    basis = res.get("basis") or ("현재가" if lang == "ko" else "price")
+    extra = []
+    if res.get("change"):
+        extra.append((f"전일 대비 {res['change']}" if lang == "ko"
+                      else f"{res['change']} vs prev close"))
+    if res.get("as_of"):
+        extra.append((f"기준 {res['as_of']} KST" if lang == "ko"
+                      else f"as of {res['as_of']} KST"))
+    tail = f" ({', '.join(extra)})" if extra else ""
+    if lang == "ko":
+        return f"{name} {basis}는 {won}입니다{tail}. (출처: NAVER/키움 실시간 시세)"
+    return f"{name} {basis} is {won}{tail}. (source: NAVER/Kiwoom live quote)"
+
+
 def _history_days_for(transcript: Optional[str]) -> int:
     """How many trading days of history to pull for a past-date question."""
     m = _re.search(r"(\d+)\s*일", transcript or "")
@@ -2373,15 +2411,30 @@ def _run_agent_impl(
         ans = None
         if isinstance(res, dict):
             for a in (res.get("answers") or []):
-                if a.get("answer"):
-                    ans = a["answer"]
+                cand = (a.get("answer") or "").strip()
+                # Guard: never relay a raw decision-JSON leak ('{"tool": ...}').
+                if cand and not cand.startswith("{"):
+                    ans = cand
                     break
         if ans:
             return {"intent": "stock_delegated", "language": lang,
                     "reply": str(ans)[:1600], "action": None, "speak": True,
                     "transcript": transcript, "tool_used": "ask_agent",
                     "tool_result": res}
-        # If the Stock agent gave nothing, fall through to the normal VIP path.
+        # If the Stock agent gave nothing usable, fall through to the normal path.
+
+    # ===== Deterministic CURRENT-PRICE (stock agent) =====
+    # Bare price questions are answered by formatting the quote directly — no LLM,
+    # so it never garbles or leaks raw JSON, and is byte-identical to VIP's relay.
+    if (not confirmed_tool and (agent_id or "vip").lower() == "stock"
+            and _is_price_question(transcript) and "stock_quote" in TOOL_REGISTRY):
+        res = execute_tool("stock_quote", {"query": transcript},
+                           db=db, agent_id=agent_id, transcript=transcript)
+        reply = _format_price_reply(res, lang)
+        if reply:
+            return {"intent": "stock_price", "language": lang, "reply": reply,
+                    "action": None, "speak": True, "transcript": transcript,
+                    "tool_used": "stock_quote", "tool_result": res}
 
     # ===== Deterministic PAST-DATE price routing =====
     # 'X 어제 종가 / 10일 전 주가 / last week's price' MUST come from real daily
