@@ -14,7 +14,7 @@ from services.intent_service import classify, IntentResult
 from services.logger import log
 
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
-OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-5.4-mini")
 LLM_MODE_ENABLED = os.getenv("LLM_MODE_ENABLED", os.getenv("LLM_MODE_ENABLED", "true")).lower() == "true"
 
 # Intents that MUST remain deterministic — OpenAI cannot override these

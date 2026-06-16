@@ -1523,8 +1523,11 @@ export function DashboardView({ onLogout }: Props) {
       "claude-opus-4-7":   "Opus 4.7",
       "claude-sonnet-4-6": "Sonnet 4.6",
       "claude-haiku-4-5":  "Haiku 4.5",
-      "gpt-4o":            "GPT-4o",
-      "gpt-4o-mini":       "GPT-4o mini",
+      "gpt-5.5":           "GPT-5.5",
+      "gpt-5.5-pro":       "GPT-5.5 Pro",
+      "gpt-5.4":           "GPT-5.4",
+      "gpt-5.4-mini":      "GPT-5.4 mini",
+      "gpt-5.4-nano":      "GPT-5.4 nano",
       "gemini-3.5-flash":          "Gemini 3.5 Flash",
       "gemini-3.5-live-translate": "Gemini 3.5 Live Translate",
       "gemini-3.1-pro":            "Gemini 3.1 Pro",
@@ -1678,7 +1681,7 @@ export function DashboardView({ onLogout }: Props) {
                     <div className="absolute right-0 top-full mt-1 w-[280px] bg-[var(--card-bg)] border border-[var(--card-border)] rounded-xl z-50 overflow-hidden" style={{ boxShadow: "0 10px 40px rgba(0,0,0,0.15)" }}>
                       {[
                         { group: "Cloud — Claude", provider: "anthropic", models: ["claude-opus-4-7", "claude-sonnet-4-6", "claude-haiku-4-5"] },
-                        { group: "Cloud — OpenAI", provider: "openai", models: ["gpt-4o", "gpt-4o-mini"] },
+                        { group: "Cloud — OpenAI", provider: "openai", models: ["gpt-5.5", "gpt-5.5-pro", "gpt-5.4", "gpt-5.4-mini", "gpt-5.4-nano"] },
                         { group: "Cloud — Gemini", provider: "gemini", models: ["gemini-3.5-flash", "gemini-3.5-live-translate", "gemini-3.1-pro", "gemini-3.1-flash-lite", "gemini-3.1-flash-image"] },
                         { group: "Local — Ollama", provider: "ollama", models: ["llama3", "qwen2.5", "gemma3", "phi-4"] },
                       ].map(group => (

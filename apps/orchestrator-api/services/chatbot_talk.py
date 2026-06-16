@@ -878,7 +878,7 @@ def _generate_script_action(query: str, lang: str) -> Optional[dict]:
             messages=[{"role": "user", "content": query}],
             max_tokens=400,
             temperature=0.2,
-            model="gpt-4o-mini",
+            model="gpt-5.4-mini",
         )
     except Exception as e:
         log.warning(f"chatbot.talk script-gen LLM error: {e}")

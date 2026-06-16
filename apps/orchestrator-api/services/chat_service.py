@@ -967,7 +967,7 @@ def _llm_conversation(user_input: str, db: Session, session) -> dict:
                 "https://api.openai.com/v1/chat/completions",
                 headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
                 json={
-                    "model": os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
+                    "model": os.getenv("OPENAI_MODEL", "gpt-5.4-mini"),
                     "messages": conversation,
                     "temperature": 0.5,
                     "max_tokens": 200,

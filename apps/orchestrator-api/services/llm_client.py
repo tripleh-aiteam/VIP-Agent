@@ -4,7 +4,7 @@ Routes chat requests to the right provider based on model name.
 
 Supported providers (all called over HTTP ??no extra SDKs needed):
 - Anthropic Claude: claude-opus-4-7, claude-sonnet-4-6, claude-haiku-4-5
-- OpenAI: gpt-4o, gpt-4o-mini
+- OpenAI: gpt-5.5, gpt-5.4, gpt-5.4-mini, gpt-5.4-nano
 - Google Gemini: gemini-3.5-flash, gemini-3.1-pro, gemini-3.1-flash-lite
 - Local Ollama: llama3, qwen2.5, gemma3, phi-4 (and any ollama tag)
 
@@ -14,7 +14,7 @@ Env vars:
 - GEMINI_API_KEY (for gemini-* models)
 - OLLAMA_URL (default http://localhost:11434)
 
-Default model: gpt-4o-mini (set via LLM_MODEL env var).
+Default model: gpt-5.4-mini (set via LLM_MODEL env var).
 """
 
 import os
@@ -31,9 +31,12 @@ MODEL_CATALOG = {
     "claude-opus-4-7":   ("anthropic", "claude-opus-4-5"),
     "claude-sonnet-4-6": ("anthropic", "claude-sonnet-4-5"),
     "claude-haiku-4-5":  ("anthropic", "claude-haiku-4-5"),
-    # --- OpenAI ---
-    "gpt-4o":      ("openai", "gpt-4o"),
-    "gpt-4o-mini": ("openai", "gpt-4o-mini"),
+    # --- OpenAI (5.x lineup — newest, updated 2026-06-16) ---
+    "gpt-5.5":      ("openai", "gpt-5.5"),         # flagship: complex multi-domain reasoning/coding, 1M context
+    "gpt-5.5-pro":  ("openai", "gpt-5.5-pro"),     # research-tier, deeper compute (may require the Responses API)
+    "gpt-5.4":      ("openai", "gpt-5.4"),         # prev-gen frontier
+    "gpt-5.4-mini": ("openai", "gpt-5.4-mini"),    # fast/low-cost, multimodal, 400k context
+    "gpt-5.4-nano": ("openai", "gpt-5.4-nano"),    # smallest/cheapest, classification/extraction
     # --- Google Gemini (3.x lineup — newest, updated 2026-06-16) ---
     "gemini-3.5-flash":          ("gemini", "gemini-3.5-flash"),           # GA: token-efficient, high intelligence/$, multi-turn agentic
     "gemini-3.5-live-translate": ("gemini", "gemini-3.5-live-translate"),  # low-latency natural voice translation (Live API)
@@ -57,7 +60,7 @@ MODEL_CATALOG = {
 def _env(key: str, fallback: str = "") -> str:
     return os.getenv(key, fallback)
 
-DEFAULT_MODEL_NAME = "gpt-4o-mini"
+DEFAULT_MODEL_NAME = "gpt-5.4-mini"
 
 ANTHROPIC_BASE = "https://api.anthropic.com/v1"
 GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta"
@@ -77,8 +80,8 @@ def get_last_provider() -> str:
 
 def _smart_model_name() -> str:
     """The paid, smarter model to prefer. Configurable via SMART_LLM_MODEL on
-    Render (e.g. 'gpt-4o', 'gpt-5', 'o3') — defaults to gpt-4o."""
-    return _env("SMART_LLM_MODEL") or "gpt-4o"
+    Render (e.g. 'gpt-5.5', 'gpt-5.4') — defaults to gpt-5.5 (flagship)."""
+    return _env("SMART_LLM_MODEL") or "gpt-5.5"
 
 
 def _smart_enabled() -> bool:
@@ -208,7 +211,7 @@ def _openai_vision_fallback_sync(
     user_text: str,
     attachments: list[dict],
     *,
-    model: str = "gpt-4o",
+    model: str = "gpt-5.4-mini",
     max_tokens: int = 800,
     temperature: float = 0.4,
     timeout: float = 60.0,
@@ -604,14 +607,14 @@ def chat_completion_sync(
             return result
         attempt_log.append(f"gemini-3.5-flash (free fallback): {str(result)[:200]}")
 
-    # Paid tier — OpenAI gpt-4o-mini (only fires if you've topped up credits)
+    # Paid tier — OpenAI gpt-5.4-mini (only fires if you've topped up credits)
     if openai_key:
-        ok, result = _call_openai_compatible(openai_base, openai_key, "gpt-4o-mini",
+        ok, result = _call_openai_compatible(openai_base, openai_key, "gpt-5.4-mini",
                                              full_messages_with_sys, max_tokens, temperature, 30.0)
         if ok:
-            _last_used.update({"provider": "openai", "model": "gpt-4o-mini (fallback)"})
+            _last_used.update({"provider": "openai", "model": "gpt-5.4-mini (fallback)"})
             return result
-        attempt_log.append(f"gpt-4o-mini (openai fallback): {str(result)[:200]}")
+        attempt_log.append(f"gpt-5.4-mini (openai fallback): {str(result)[:200]}")
 
     # Free tier #3 — local Ollama (only useful when running on a dev box
     # with Ollama installed; on Render this always 'Connection refused'd)

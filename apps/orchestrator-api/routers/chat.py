@@ -418,7 +418,7 @@ def debug_openai():
     import httpx
 
     api_key = os.getenv("OPENAI_API_KEY", "")
-    model = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+    model = os.getenv("OPENAI_MODEL", "gpt-5.4-mini")
 
     if not api_key:
         return {"status": "error", "reason": "OPENAI_API_KEY not set", "key_length": 0}
@@ -478,7 +478,7 @@ def chat_health():
         "default_mode": os.getenv("CHAT_DEFAULT_MODE", "structured"),
         "llm_mode_enabled": ai_enabled,
         "openai_configured": has_key,
-        "openai_model": os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
+        "openai_model": os.getenv("OPENAI_MODEL", "gpt-5.4-mini"),
     }
 
 

@@ -692,7 +692,7 @@ def _call_llm_for_decision(
     elif primary.startswith("gemini"):
         fallback = "claude-haiku-4-5"
     else:
-        fallback = "gpt-4o-mini"
+        fallback = "gpt-5.4-mini"
 
     def _try(model: str) -> tuple[str, Optional[str]]:
         """Returns (usable_text, error_reason). usable_text is empty when
