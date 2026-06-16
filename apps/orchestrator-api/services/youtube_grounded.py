@@ -12,10 +12,30 @@ and writes a newer row, VIP picks it up automatically.
 
 from __future__ import annotations
 
+import re
 from typing import Any, Optional
 
 import httpx
 from sqlalchemy import desc
+
+# Lines that are (or contain) a YouTube link — Gmail renders these as video
+# preview cards, which we DON'T want in the email body (files only).
+_YT_LINK_RE = re.compile(r"https?://(?:www\.)?(?:youtube\.com|youtu\.be)\S*", re.I)
+
+
+def _strip_video_links(text: str) -> str:
+    """Remove YouTube URLs (and now-empty bullet lines) from the email body so
+    Gmail doesn't embed video cards. Keeps the analysis text intact."""
+    out: list[str] = []
+    for ln in (text or "").split("\n"):
+        cleaned = _YT_LINK_RE.sub("", ln).rstrip()
+        # Drop lines that were ONLY a link / a bare ▶ marker after stripping.
+        if cleaned.strip() in ("", "▶", "-", "•"):
+            if _YT_LINK_RE.search(ln):
+                continue
+        out.append(cleaned)
+    body = "\n".join(out)
+    return re.sub(r"\n{3,}", "\n\n", body).strip()
 
 from services.logger import log
 from db.models import OrchReport
@@ -91,8 +111,10 @@ def deliver(db, recipients, *, lang: str = "ko") -> dict[str, Any]:
         return {"ok": False, "reason": "no grounded youtube report row yet"}
     c = row.content_json or {}
     subject = c.get("email_subject") or "유튜브 시장 리포트"
-    body = (c.get("email_body_ko")
-            or "유튜브 시장 분석 리포트입니다. 첨부된 파일을 확인해 주세요.")
+    # Strip YouTube links from the body (no Gmail video cards — files only).
+    body = _strip_video_links(c.get("email_body_ko") or "")
+    if not body:
+        body = "유튜브 시장 분석 리포트입니다. 첨부된 한글 리포트(.docx)를 확인해 주세요."
     # Email attaches ONLY the Korean .docx (per request — no PDF, no EN files).
     files: list[tuple[str, bytes]] = []
     ko_docx_url = (c.get("files") or {}).get("docx_ko_url")
