@@ -263,6 +263,42 @@ def _cross_agent_route_hint(transcript: Optional[str], agent_id: Optional[str]) 
     return ""
 
 
+# Advice/opinion markers that mean the user wants ANALYSIS, not just a price.
+_STOCK_ADVICE_KW = (
+    "어때", "어떄", "사도", "살까", "팔까", "사야", "팔아야", "매수", "매도", "전망",
+    "추천해", "추천 해", "괜찮", "들어가도", "진입", "보유해", "담아", "의견", "분석해",
+    "사면", "팔면", "투자해", "사도돼", "사도 돼",
+    "should i buy", "should i sell", "should i hold", "worth buying", "worth it",
+    "good buy", "good time to", "entry point", "buy or sell", "sell or hold",
+    "hold or sell", "is it a good", "invest in", "go long", "thoughts on", "a good buy",
+)
+
+
+def _stock_in_query(transcript: Optional[str]) -> Optional[str]:
+    """Return a known stock name / 6-digit code found in the text, else None."""
+    t = (transcript or "").lower()
+    try:
+        from services.stock_data_tools import _NAME_TO_TICKER
+        for name in _NAME_TO_TICKER:
+            if len(name) >= 2 and name in t:
+                return name
+    except Exception:
+        pass
+    m = _re.search(r"\b\d{6}\b", transcript or "")
+    return m.group(0) if m else None
+
+
+def _is_stock_advice(transcript: Optional[str], agent_id: Optional[str]) -> bool:
+    """True when the user wants ADVICE on a SPECIFIC stock (not just its price).
+
+    Requires BOTH an advice verb AND a resolvable stock name/code, so pure
+    price questions ('X 현재가/얼마') and generic market chat never trigger it."""
+    t = (transcript or "").strip().lower()
+    if not t or not any(k in t for k in _STOCK_ADVICE_KW):
+        return False
+    return _stock_in_query(transcript) is not None
+
+
 def _build_system_prompt(
     current_path: Optional[str] = None,
     selected_id: Optional[str] = None,
@@ -2260,6 +2296,46 @@ def _run_agent_impl(
         return _offline_answer(db, transcript=transcript, lang=lang,
                                agent_id=agent_id, page_context=page_context,
                                kb_context=kb_hits)
+
+    # ===== Deterministic STOCK-ADVICE routing =====
+    # The LLM (especially for Korean) tends to answer 'should I buy X / X 어때?'
+    # with the bare current price. For a clear single-stock ADVICE question we
+    # force the analysis path instead — chain the live tools (stock agent) or
+    # relay to the Stock agent verbatim (VIP / others) so the user always gets a
+    # reasoned 매수/보유/매도 view, never just a number.
+    if not confirmed_tool and _is_stock_advice(transcript, agent_id):
+        aid = (agent_id or "vip").lower()
+        if aid == "stock":
+            advice_steps = [
+                {"tool": "stock_quote", "args": {"query": transcript}},
+                {"tool": "stock_get_investor_flow", "args": {}},
+                {"tool": "stock_get_intraday_signals", "args": {}},
+                {"tool": "stock_get_recommendations", "args": {}},
+                {"tool": "stock_get_news", "args": {}},
+            ]
+            advice_steps = [s for s in advice_steps if s["tool"] in TOOL_REGISTRY]
+            if advice_steps:
+                return _run_chain(db, transcript, lang, advice_steps, current_path,
+                                  selected_id, system, history or [], agent_id=agent_id)
+        elif "ask_agent" in TOOL_REGISTRY:
+            # Pass the user's EXACT question (verbatim) so nothing is garbled, and
+            # let the Stock agent run its own advice chain.
+            res = execute_tool("ask_agent", {"agent": "stock", "question": transcript},
+                               db=db, agent_id=agent_id, transcript=transcript)
+            ans = None
+            if isinstance(res, dict):
+                for a in (res.get("answers") or []):
+                    if a.get("answer"):
+                        ans = a["answer"]
+                        break
+            if ans:
+                return {
+                    "intent": "stock_advice", "language": lang,
+                    "reply": str(ans)[:1400], "action": None, "speak": True,
+                    "transcript": transcript, "tool_used": "ask_agent",
+                    "tool_result": res,
+                }
+        # else: fall through to the normal LLM path
 
     # ===== Turn 1: decision =====
     decision = _call_llm_for_decision(system, transcript, history or [], forced_model=forced_model)
