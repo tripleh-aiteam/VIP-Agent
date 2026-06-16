@@ -116,9 +116,10 @@ _MKT_FUTURES = "F"   # 지수선물
 _MKT_OPTION = "O"    # 지수옵션
 _MKT_STOCK_FUT = "JF"  # 주식선물 (documented; logged + confirmable live)
 
-# Single-stock-futures master file (단축코드 ↔ 기초자산 단축코드).
+# Single-stock-futures master file (단축코드 ↔ 기초자산 단축코드). NOTE: stock
+# futures live in fo_stk_code.mst — fo_com_code.mst is bond/commodity futures.
 _FO_MASTER_URL = (
-    "https://new.real.download.dws.co.kr/common/master/fo_com_code.mst.zip"
+    "https://new.real.download.dws.co.kr/common/master/fo_stk_code.mst.zip"
 )
 
 _TIMEOUT = 20.0
@@ -455,24 +456,27 @@ def _load_stock_futures_map() -> dict[str, list[str]]:
         import re
         lines = raw.splitlines()
         if lines:
-            logger.debug("kis_derivatives: fo master sample line=%r", lines[0])
+            logger.debug("kis_derivatives: fo_stk sample line=%r", lines[0])
+        # Each FUTURES line looks like:
+        #   1A11607  KR4A11670002삼성전자  F 202607 (  10) ...001005930   삼성전자
+        # -> 단축코드=1A11607, type F, 만기=202607, 기초자산(underlying)=005930.
+        # Stock OPTIONS rows carry 'C'/'P' instead of 'F' and are skipped.
         for line in lines:
             if not line.strip():
                 continue
-            # Stock-futures short codes start with the product-type digit; the
-            # underlying equity appears as a 6-digit numeric token on the line.
+            m_exp = re.search(r"\sF\s+(\d{6})\b", line)        # futures + 만기
+            if not m_exp:
+                continue
+            expiry = int(m_exp.group(1))
             tokens = line.split()
             short_code = tokens[0].strip() if tokens else ""
-            # Find a plausible 6-digit underlying equity code on the line.
-            underlying = None
-            for m in re.findall(r"\b\d{6}\b", line):
-                underlying = m
-                break
-            if not short_code or not underlying:
+            m_und = re.search(r"(\d{6})\s+\S+\s*$", line)      # underlying before name
+            if not short_code or not m_und:
                 continue
-            mapping.setdefault(underlying, [])
-            if short_code not in mapping[underlying]:
-                mapping[underlying].append(short_code)
+            underlying = m_und.group(1)
+            # API FID_INPUT_ISCD drops the leading market digit (1A11607 -> A11607).
+            api_code = short_code[1:] if short_code.startswith("1") else short_code
+            mapping.setdefault(underlying, []).append((expiry, api_code))
 
         _sf_map_cache = mapping
         logger.info("kis_derivatives: loaded stock-futures map for %d underlyings",
@@ -481,9 +485,23 @@ def _load_stock_futures_map() -> dict[str, list[str]]:
 
 
 def _stock_futures_symbols(equity_code: str) -> list[str]:
-    """Stock-futures short code(s) listed on one underlying equity (6-digit)."""
+    """Front-month stock-futures API code for one underlying equity (6-digit).
+
+    Returns a single-element list with the nearest non-expired contract's API
+    code (or [] if none). Front-month only keeps it to one API call per stock."""
     code6 = str(equity_code).strip().zfill(6)
-    return _load_stock_futures_map().get(code6, [])
+    contracts = _load_stock_futures_map().get(code6, [])
+    if not contracts:
+        return []
+    today = _dt.date.today()
+    cur_ym = today.year * 100 + today.month
+    front_passed = today > _second_thursday(today.year, today.month)
+    future = [(ym, c) for ym, c in contracts
+              if ym > cur_ym or (ym == cur_ym and not front_passed)]
+    if not future:
+        return []
+    future.sort()
+    return [future[0][1]]
 
 
 def stock_futures(equity_code: str) -> Optional[dict]:
