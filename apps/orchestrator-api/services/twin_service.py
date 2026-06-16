@@ -67,9 +67,41 @@ def update_twin(db: Session, twin_id: UUID, **kwargs) -> Optional[DigitalTwin]:
 
 
 def delete_twin(db: Session, twin_id: UUID) -> bool:
+    """Delete a twin and all its data.
+
+    Bulk-deletes child rows with one SQL statement per table instead of the
+    ORM's row-by-row cascade (which hangs on data-heavy twins — hundreds of
+    knowledge/activity/message rows). Workers and meeting messages reference a
+    twin nullably, so we unlink those rather than delete the parent rows.
+    """
     twin = get_twin(db, twin_id)
     if not twin:
         return False
+
+    from db.models import (
+        MeetingParticipant, MeetingMessage, DirectMessage, TwinSnapshot,
+        TwinNotification, MeetingHandRaise, TwinGroupMember, TwinGroupMessage,
+        PlatformUser,
+    )
+
+    # Clear the twin's own pointer to a task we're about to delete.
+    twin.current_task_id = None
+    db.flush()
+
+    # Hard-delete rows that belong to this twin (twin_id NOT NULL).
+    for Model in (TwinKnowledge, TwinActivityLog, TwinTask, TwinHandoff,
+                  MeetingParticipant, DirectMessage, TwinSnapshot,
+                  TwinNotification, MeetingHandRaise, TwinGroupMember):
+        db.query(Model).filter(Model.twin_id == twin_id).delete(synchronize_session=False)
+
+    # Nullable references → unlink (never delete the worker account).
+    db.query(PlatformUser).filter(PlatformUser.twin_id == twin_id).update(
+        {"twin_id": None}, synchronize_session=False)
+    db.query(MeetingMessage).filter(MeetingMessage.sender_twin_id == twin_id).update(
+        {"sender_twin_id": None}, synchronize_session=False)
+    db.query(TwinGroupMessage).filter(TwinGroupMessage.sender_twin_id == twin_id).update(
+        {"sender_twin_id": None}, synchronize_session=False)
+
     db.delete(twin)
     db.flush()
     return True
