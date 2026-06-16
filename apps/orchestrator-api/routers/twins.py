@@ -483,6 +483,38 @@ def get_twin_knowledge(twin_id: UUID, db: Session = Depends(get_db), _ac=Depends
     ]
 
 
+@router.post("/{twin_id}/knowledge/reindex")
+def reindex_twin_knowledge(twin_id: UUID, db: Session = Depends(get_db), _ac=Depends(_check_twin_access)):
+    """Embed all of this twin's knowledge that lacks a vector (semantic memory).
+    Idempotent — safe to re-run; only embeds what's missing."""
+    if not twin_service.get_twin(db, twin_id):
+        raise HTTPException(status_code=404, detail="Twin not found")
+    return twin_service.reindex_twin(db, twin_id)
+
+
+@router.post("/admin/reindex-all")
+def reindex_all_knowledge(
+    x_user_email: Optional[str] = Header(default=None),
+    x_user_token: Optional[str] = Header(default=None),
+    db: Session = Depends(get_db),
+):
+    """Admin: embed missing vectors for EVERY twin (one-time backfill)."""
+    user = auth_service.verify_session_token(db, x_user_email or "", x_user_token or "")
+    if not user or user.role not in ("admin", "operator"):
+        # Allow in grace mode (no enforcement) so the boss can backfill before lockdown.
+        if _auth_enforced():
+            raise HTTPException(status_code=403, detail="Admin session required")
+    results = []
+    for tw in twin_service.list_twins(db):
+        try:
+            r = twin_service.reindex_twin(db, tw.id)
+            results.append({"twin": tw.name, **r})
+        except Exception as e:
+            results.append({"twin": tw.name, "ok": False, "error": str(e)[:200]})
+    total = sum(r.get("embedded", 0) for r in results)
+    return {"total_embedded": total, "twins": results}
+
+
 @router.post("/{twin_id}/knowledge", status_code=201)
 def add_twin_knowledge(twin_id: UUID, body: TwinKnowledgeCreate, db: Session = Depends(get_db), _ac=Depends(_check_twin_access)):
     """Add a knowledge document to a twin."""

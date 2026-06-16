@@ -21,6 +21,8 @@ from db.models import (
     ChatMessage, ChatSession, CoreAgent,
 )
 from services import twin_service
+from services import embeddings_service
+from services.embeddings_service import cosine as _emb_cosine
 from services.llm_client import chat_completion_sync
 
 
@@ -33,6 +35,8 @@ def _select_relevant_knowledge(
     user_message: str,
     max_docs: int = 5,
     max_chars: int = 2000,
+    emb_map: dict | None = None,
+    query_vec: list | None = None,
 ) -> list[TwinKnowledge]:
     """
     Smart selection with priority weighting (from colleague.skill approach).
@@ -86,13 +90,25 @@ def _select_relevant_knowledge(
         elif doc.source_type == "style":
             score += 5
 
-        # === RELEVANCE BOOST (keyword matching) ===
-        words = [w for w in message_lower.split() if len(w) > 2]
-        title_matches = sum(1 for w in words if w in title_lower)
-        content_matches = sum(1 for w in words if w in content_lower)
-
-        score += title_matches * 4  # Title match is very important
-        score += min(content_matches, 5) * 1  # Content match is a boost, capped at 5
+        # === RELEVANCE: semantic (preferred) or keyword (fallback) ===
+        # When embeddings are available we score by MEANING (cosine), so a query
+        # about "deployment" matches a doc about "shipping to prod" even with no
+        # shared words. Cosine is ~[0,1] for related text; ×20 makes a strong
+        # semantic match comparable to a hard rule.
+        sem = 0.0
+        if query_vec and emb_map:
+            dv = emb_map.get(str(doc.id))
+            if dv:
+                sem = _emb_cosine(query_vec, dv)
+        if sem > 0:
+            score += sem * 20
+        else:
+            # Keyword fallback (no embedding for this doc / no query vector).
+            words = [w for w in message_lower.split() if len(w) > 2]
+            title_matches = sum(1 for w in words if w in title_lower)
+            content_matches = sum(1 for w in words if w in content_lower)
+            score += title_matches * 4
+            score += min(content_matches, 5) * 1
 
         # === RECENCY BOOST ===
         if doc.created_at:
@@ -456,9 +472,18 @@ def think(
     # #24 — Load conversation memory
     memory = _load_conversation_history(db, twin_id, limit=5)
 
-    # #25 — Smart knowledge selection based on message content
+    # #25 — Smart knowledge selection — semantic (vector) when available.
     all_knowledge = twin_service.get_knowledge(db, twin_id)
-    relevant_knowledge = _select_relevant_knowledge(all_knowledge, user_message)
+    emb_map = None
+    query_vec = None
+    try:
+        if embeddings_service.available():
+            emb_map = twin_service.get_twin_embeddings(db, twin_id)
+            query_vec = embeddings_service.embed_text(user_message) if emb_map else None
+    except Exception:
+        emb_map, query_vec = None, None
+    relevant_knowledge = _select_relevant_knowledge(
+        all_knowledge, user_message, emb_map=emb_map, query_vec=query_vec)
 
     # Build system prompt with tools (#26)
     system_prompt = build_system_prompt(twin, relevant_knowledge, available_tools=True)

@@ -406,6 +406,23 @@ class TwinKnowledge(Base):
     twin = relationship("DigitalTwin", back_populates="knowledge")
 
 
+class TwinKnowledgeEmbedding(Base):
+    """Semantic vector for a TwinKnowledge row — lets twins retrieve by meaning.
+
+    Separate table (not a column on twin_knowledge) so it auto-creates via
+    create_all with no ALTER on the existing table. One row per knowledge item.
+    """
+    __tablename__ = "twin_knowledge_embeddings"
+
+    id = _uuid()
+    knowledge_id = Column(UUID(as_uuid=True), ForeignKey("twin_knowledge.id"), nullable=False, unique=True, index=True)
+    twin_id = Column(UUID(as_uuid=True), ForeignKey("digital_twins.id"), nullable=False, index=True)
+    embedding = Column(JSONB, nullable=False)   # list[float]
+    model = Column(String(60), default="text-embedding-3-small")
+    dim = Column(Integer, default=1536)
+    created_at = _now()
+
+
 class TwinActivityLog(Base):
     __tablename__ = "twin_activity_logs"
 

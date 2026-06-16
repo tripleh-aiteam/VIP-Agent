@@ -11,7 +11,10 @@ from sqlalchemy.orm import Session
 
 from db.models import (
     DigitalTwin, TwinKnowledge, TwinActivityLog, TwinTask, TwinHandoff, WorkerStatus,
+    TwinKnowledgeEmbedding,
 )
+from services import embeddings_service
+from services.logger import log
 
 
 # ---------------------------------------------------------------------------
@@ -154,7 +157,82 @@ def add_knowledge(
     )
     db.add(knowledge)
     db.flush()
+    # Best-effort: embed for semantic recall. Never let it break the insert.
+    try:
+        _embed_and_store(db, knowledge)
+    except Exception as e:
+        log.warning(f"add_knowledge: embed failed (will backfill later): {e}")
     return knowledge
+
+
+# ---------------------------------------------------------------------------
+#  Semantic memory (vector embeddings for knowledge)
+# ---------------------------------------------------------------------------
+
+def _embed_and_store(db: Session, k: TwinKnowledge) -> bool:
+    """Embed a knowledge row's title+content and upsert its vector. Best-effort."""
+    if not embeddings_service.available():
+        return False
+    text = f"{k.title or ''}\n{k.content or ''}".strip()
+    vec = embeddings_service.embed_text(text)
+    if not vec:
+        return False
+    existing = db.query(TwinKnowledgeEmbedding).filter(
+        TwinKnowledgeEmbedding.knowledge_id == k.id).first()
+    if existing:
+        existing.embedding = vec
+    else:
+        db.add(TwinKnowledgeEmbedding(
+            knowledge_id=k.id, twin_id=k.twin_id, embedding=vec,
+            model=embeddings_service.EMBED_MODEL, dim=len(vec),
+        ))
+    db.flush()
+    return True
+
+
+def get_twin_embeddings(db: Session, twin_id: UUID) -> dict:
+    """Return {knowledge_id(str): vector} for a twin — used at retrieval time."""
+    rows = db.query(TwinKnowledgeEmbedding).filter(
+        TwinKnowledgeEmbedding.twin_id == twin_id).all()
+    return {str(r.knowledge_id): r.embedding for r in rows}
+
+
+def reindex_twin(db: Session, twin_id: UUID, limit: int = 2000) -> dict:
+    """Embed all of a twin's knowledge rows that don't yet have a vector.
+
+    Batched for speed/cost. Returns counts. Safe to re-run (idempotent).
+    """
+    if not embeddings_service.available():
+        return {"ok": False, "reason": "no embedding key", "embedded": 0, "skipped": 0}
+
+    have = {str(kid) for (kid,) in db.query(TwinKnowledgeEmbedding.knowledge_id)
+            .filter(TwinKnowledgeEmbedding.twin_id == twin_id).all()}
+    docs = (db.query(TwinKnowledge)
+            .filter(TwinKnowledge.twin_id == twin_id)
+            .order_by(TwinKnowledge.created_at.desc())
+            .limit(limit).all())
+    todo = [d for d in docs if str(d.id) not in have]
+
+    embedded = 0
+    BATCH = 64
+    for i in range(0, len(todo), BATCH):
+        chunk = todo[i:i + BATCH]
+        texts = [f"{d.title or ''}\n{d.content or ''}".strip() for d in chunk]
+        vecs = embeddings_service.embed_texts(texts)
+        if not vecs or len(vecs) != len(chunk):
+            continue
+        for d, v in zip(chunk, vecs):
+            if not v:
+                continue
+            db.add(TwinKnowledgeEmbedding(
+                knowledge_id=d.id, twin_id=d.twin_id, embedding=v,
+                model=embeddings_service.EMBED_MODEL, dim=len(v),
+            ))
+            embedded += 1
+        db.flush()
+    db.commit()
+    return {"ok": True, "embedded": embedded, "already_had": len(have),
+            "total_knowledge": len(docs)}
 
 
 def get_knowledge(db: Session, twin_id: UUID) -> list[TwinKnowledge]:
