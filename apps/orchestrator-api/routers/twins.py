@@ -47,6 +47,24 @@ def list_llm_models():
     return {"models": list_available_models()}
 
 
+@router.get("/llm/ping")
+def ping_llm_model(model: Optional[str] = None):
+    """Health-check a model (or all catalog models) by calling it directly with
+    NO fallback. Returns per-model ok/error so a broken model id is visible.
+    Usage: /twins/llm/ping?model=gpt-5.5  — or no model to ping the whole catalog.
+    """
+    from services.llm_client import ping_model, MODEL_CATALOG
+    if model:
+        return ping_model(model)
+    results = [ping_model(m) for m in MODEL_CATALOG.keys()]
+    return {
+        "total": len(results),
+        "ok": sum(1 for r in results if r["ok"]),
+        "failed": [r for r in results if not r["ok"]],
+        "results": results,
+    }
+
+
 @router.post("/{twin_id}/upload")
 async def upload_file(twin_id: UUID, file: UploadFile = File(...), db: Session = Depends(get_db)):
     """Upload a file (PDF/Excel/DOCX/text) and extract its text for chat context."""

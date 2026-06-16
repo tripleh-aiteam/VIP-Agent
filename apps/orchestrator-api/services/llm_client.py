@@ -140,6 +140,60 @@ def list_available_models() -> list[dict]:
     return catalog
 
 
+def ping_model(model: str, timeout: float = 45.0) -> dict:
+    """Call ONE model directly with NO fallback, to verify it actually works.
+
+    Used by the /twins/llm/ping diagnostic. Unlike chat_completion_sync, this
+    never falls back to another provider — so a broken/typo'd model id surfaces
+    as ok=False instead of being masked by a fallback response.
+    """
+    provider, real = MODEL_CATALOG.get(model, (None, model))
+    if provider is None:
+        if model.startswith(("gpt", "o1", "o3", "o4")): provider = "openai"
+        elif model.startswith("gemini"): provider = "gemini"
+        elif model.startswith("claude"): provider = "anthropic"
+        elif model.startswith("groq"): provider = "groq"
+        else: provider = "ollama"
+        real = model
+
+    sys = "You are a health check. Reply with exactly: OK"
+    msgs = [{"role": "user", "content": "Reply with the single word: OK"}]
+    t0 = time.monotonic()
+    ok, result = False, "unsupported provider"
+    try:
+        if provider == "openai":
+            key = _env("OPENAI_API_KEY") or _env("LLM_API_KEY")
+            base = _env("LLM_BASE_URL") or "https://api.openai.com/v1"
+            if not key:
+                ok, result = False, "OPENAI_API_KEY not set"
+            else:
+                ok, result = _call_openai_compatible(
+                    base, key, real, [{"role": "system", "content": sys}] + msgs, 16, 0.0, timeout)
+        elif provider == "gemini":
+            ok, result = _call_gemini(real, sys, msgs, 16, 0.0, timeout)
+        elif provider == "anthropic":
+            ok, result = _call_anthropic(real, sys, msgs, 16, 0.0, timeout)
+        elif provider == "groq":
+            key = _env("GROQ_API_KEY")
+            if not key:
+                ok, result = False, "GROQ_API_KEY not set"
+            else:
+                ok, result = _call_openai_compatible(
+                    "https://api.groq.com/openai/v1", key, real,
+                    [{"role": "system", "content": sys}] + msgs, 16, 0.0, timeout)
+        elif provider == "ollama":
+            ok, result = False, "ollama not reachable from server diagnostic"
+    except Exception as e:
+        ok, result = False, str(e)
+
+    return {
+        "model": model, "provider": provider, "real_model": real, "ok": bool(ok),
+        "latency_ms": int((time.monotonic() - t0) * 1000),
+        "sample": (str(result)[:80] if ok else None),
+        "error": (None if ok else str(result)[:300]),
+    }
+
+
 # ---------------------------------------------------------------------------
 # Provider call functions
 # ---------------------------------------------------------------------------
