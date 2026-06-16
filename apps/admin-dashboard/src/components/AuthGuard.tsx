@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { apiPost, API } from "./api";
+import { apiPost, API, authHeaders } from "./api";
 
 const AUTH_KEY = "vip-auth";
 const AUTH_TIME_KEY = "vip-auth-time";
@@ -54,6 +54,32 @@ export default function AuthGuard({ children }: { children: React.ReactNode }) {
   const [loading, setLoading] = useState(false);
 
   const [hasResetToken, setHasResetToken] = useState(false);
+
+  // Attach the boss's auth headers to EVERY orchestrator request, once.
+  // Many dashboard components call fetch(`${API}/...`) directly rather than via
+  // the api() helper, so we patch window.fetch (browser only) to inject the
+  // verified session headers for any request to the orchestrator base. This is
+  // what lets the backend move from grace mode to AUTH_ENFORCE without breaking
+  // the dashboard. Cross-origin requests (e.g. the twin-portal iframe) are
+  // untouched — they only match when the URL starts with API.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    if ((window as any).__vipFetchPatched) return;
+    const orig = window.fetch.bind(window);
+    window.fetch = (input: RequestInfo | URL, init?: RequestInit) => {
+      try {
+        const url = typeof input === "string" ? input : input instanceof URL ? input.href : (input as Request).url;
+        if (url && url.startsWith(API)) {
+          const h = authHeaders();
+          if (Object.keys(h).length) {
+            init = { ...(init || {}), headers: { ...((init && init.headers) || {}), ...h } };
+          }
+        }
+      } catch { /* never let header injection break a request */ }
+      return orig(input as any, init);
+    };
+    (window as any).__vipFetchPatched = true;
+  }, []);
 
   useEffect(() => {
     // A reset-link token in the URL always wins — even over an existing session,
