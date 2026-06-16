@@ -237,44 +237,77 @@ def _newest_daily_row(data: dict) -> Optional[dict]:
 # --------------------------------------------------------------------------- #
 # Instrument code resolution
 # --------------------------------------------------------------------------- #
-def _active_futures_code() -> Optional[str]:
-    """Resolve the active (front-month) KOSPI200 지수선물 short code at runtime.
+# KOSPI200 index-futures master (단축코드 ↔ 만기). Cached (code, epoch).
+_FO_IDX_MASTER_URL = (
+    "https://new.real.download.dws.co.kr/common/master/fo_idx_code.mst.zip"
+)
+_idx_fut_cache: tuple[Optional[str], float] = (None, 0.0)
+_idx_fut_lock = threading.Lock()
+_IDX_FUT_TTL = 12 * 3600
 
-    Uses display-board-top, which the HTS exposes as the futures board. We pull
-    the futures short code out of the response (logged raw on first call so the
-    exact key can be pinned). Returns None if it can't be determined — callers
-    then skip the futures leg rather than guessing.
-    """
-    # FID_INPUT_ISCD on the board endpoint is the underlying index marker; the
-    # board returns the listed contract rows. Per the official example the call
-    # is FID_COND_MRKT_DIV_CODE=F. The seed ISCD below is the KOSPI200 index
-    # marker used in the official sample (101 family); the *active* contract code
-    # comes back in the rows.
-    params = {
-        "FID_COND_MRKT_DIV_CODE": _MKT_FUTURES,
-        "FID_COND_SCR_DIV_CODE": "20105",
-        "FID_INPUT_ISCD": "101",
-        "FID_COND_MRKT_CLS_CODE": "",
-        "FID_MTRT_CNT": "",
-        "FID_COND_MRKT_DIV_CODE1": "",
-    }
-    data = kis_client._get(_PATH_BOARD_TOP, _TR_BOARD_TOP, params)
-    if data is None:
-        return None
-    logger.debug("kis_derivatives: board-top keys=%s", list(data.keys()))
-    rows = _rows(data, "output2", "output1", "output")
-    for r in rows:
-        code = _first(r, _KEY_FUTS_CODE)
-        if code:
-            return str(code).strip()
-    obj = _obj(data, "output1", "output")
-    if obj:
-        code = _first(obj, _KEY_FUTS_CODE)
-        if code:
-            return str(code).strip()
-    logger.debug("kis_derivatives: could not resolve active futures code; "
-                 "rows sample=%s", rows[0] if rows else None)
-    return None
+
+def _active_futures_code() -> Optional[str]:
+    """Resolve the active (front-month) KOSPI200 지수선물 단축코드 from the KIS
+    index master file (fo_idx_code.mst). The file lists every listed contract as
+    e.g. ``1A01609 ... F 202609 ... KOSPI200`` (short code, type F, expiry YYYYMM).
+    We pick the nearest non-expired quarterly contract. Cached 12h. Returns None
+    if it can't be resolved (caller then skips the futures leg)."""
+    global _idx_fut_cache
+    code, exp = _idx_fut_cache
+    if code and (time.time() - exp) < _IDX_FUT_TTL:
+        return code
+
+    with _idx_fut_lock:
+        code, exp = _idx_fut_cache
+        if code and (time.time() - exp) < _IDX_FUT_TTL:
+            return code
+        try:
+            resp = httpx.get(_FO_IDX_MASTER_URL, timeout=_TIMEOUT)
+            resp.raise_for_status()
+            zf = zipfile.ZipFile(io.BytesIO(resp.content))
+            name = next((n for n in zf.namelist() if n.endswith(".mst")),
+                        zf.namelist()[0])
+            raw = zf.read(name).decode("cp949", errors="replace")
+        except (httpx.HTTPError, zipfile.BadZipFile, OSError, ValueError) as exc:
+            logger.error("kis_derivatives: index master fetch failed: %s", exc)
+            return None
+
+        import re
+        today = _dt.date.today()
+        cur_ym = today.year * 100 + today.month
+        # If this month is a quarterly expiry and it has already passed, the front
+        # contract is the next quarter — handled naturally by ">= cur_ym" plus the
+        # 2nd-Thursday check below.
+        front_passed = today > _second_thursday(today.year, today.month)
+        candidates: list[tuple[int, str]] = []
+        for line in raw.splitlines():
+            if "KOSPI200" not in line:
+                continue
+            tokens = line.split()
+            if not tokens:
+                continue
+            short = tokens[0].strip()
+            # Index FUTURES short codes look like 1A01YMM (e.g. 1A01609); options
+            # have different prefixes. Require the F product-type marker on the line.
+            if not re.match(r"^1A01\d{3}$", short):
+                continue
+            m = re.search(r"\b(20\d{4})\b", line)   # expiry YYYYMM
+            if not m:
+                continue
+            ym = int(m.group(1))
+            # Keep contracts whose expiry month is in the future, or this month if
+            # this month's expiry hasn't passed yet.
+            if ym > cur_ym or (ym == cur_ym and not front_passed):
+                candidates.append((ym, short))
+        if not candidates:
+            logger.warning("kis_derivatives: no KOSPI200 futures in index master.")
+            return None
+        candidates.sort()
+        chosen = candidates[0][1]
+        _idx_fut_cache = (chosen, time.time())
+        logger.info("kis_derivatives: front-month KOSPI200 futures code=%s (expiry=%s)",
+                    chosen, candidates[0][0])
+        return chosen
 
 
 # --------------------------------------------------------------------------- #

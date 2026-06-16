@@ -421,6 +421,18 @@ def kis_deriv_live(expiry: str = Query(""), fcode: str = Query(""),
             out["inquire_price_raw"] = _shape(ip.json()) if ip.headers.get("content-type","").startswith("application/json") else {"status": ip.status_code, "text": _safe_msg(ip.text)}
         except Exception as e:
             out["inquire_price_raw_err"] = str(e)[:200]
+        # daily-chart (FHKIF03020100) — what _instrument_turnover uses (acml_tr_pbmn)
+        try:
+            from datetime import datetime as _dt2, timedelta as _td2
+            d2 = _dt2.utcnow().strftime("%Y%m%d"); d1 = (_dt2.utcnow() - _td2(days=10)).strftime("%Y%m%d")
+            dc = _hx.get(f"{base}/uapi/domestic-futureoption/v1/quotations/inquire-daily-fuopchartprice",
+                         headers=_hdr("FHKIF03020100"),
+                         params={"FID_COND_MRKT_DIV_CODE": "F", "FID_INPUT_ISCD": fcode or "1A01609",
+                                 "FID_INPUT_DATE_1": d1, "FID_INPUT_DATE_2": d2, "FID_PERIOD_DIV_CODE": "D"},
+                         timeout=20)
+            out["daily_chart_raw"] = _shape(dc.json()) if dc.headers.get("content-type","").startswith("application/json") else {"status": dc.status_code, "text": _safe_msg(dc.text)}
+        except Exception as e:
+            out["daily_chart_raw_err"] = str(e)[:200]
     except Exception as e:
         out["error"] = str(e)[:200]
     return out
