@@ -11,7 +11,7 @@ set "TWIN_API=https://vip-orchestrator.onrender.com"
 echo.
 echo  ===  Twin Capture  ===
 echo  This sends your AI work to your twin so it learns.
-echo  (Watch & Learn must be ON in your Twin - Settings.)
+echo  (Watch and Learn must be ON in your Twin - Settings.)
 echo.
 
 set /p TWIN_EMAIL="  Your twin login email: "

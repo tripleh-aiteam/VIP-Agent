@@ -91,9 +91,17 @@ export function DashboardView({ onLogout }: Props) {
     } catch { /* leave as null; UI shows loading */ }
   }
 
-  async function toggleConsent() {
+  const [showConsentTerms, setShowConsentTerms] = useState(false);
+
+  // Toggle: turning ON opens the agreement popup first; turning OFF applies immediately.
+  function toggleConsent() {
     if (!twinId || consentSaving) return;
-    const next = !consent;
+    if (!consent) { setShowConsentTerms(true); return; }
+    applyConsent(false);
+  }
+
+  async function applyConsent(next: boolean) {
+    if (!twinId) return;
     setConsentSaving(true);
     try {
       const res = await apiFetch(`/twins/${twinId}/consent`, {
@@ -102,7 +110,7 @@ export function DashboardView({ onLogout }: Props) {
       });
       const d = await res.json().catch(() => ({}));
       if (res.ok) setConsent(!!d.learning_consent);
-    } catch { /* ignore */ } finally { setConsentSaving(false); }
+    } catch { /* ignore */ } finally { setConsentSaving(false); setShowConsentTerms(false); }
   }
 
   useEffect(() => { if (page === "settings" && consent === null) loadConsent(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [page]);
@@ -2702,6 +2710,40 @@ export function DashboardView({ onLogout }: Props) {
   if (page === "settings") return (
     <div className="min-h-screen bg-[var(--bg-app)] flex flex-col">
       {nav}
+
+      {/* Watch & Learn agreement popup */}
+      {showConsentTerms && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={() => setShowConsentTerms(false)}>
+          <div className="bg-[var(--card-bg)] rounded-2xl border border-[var(--card-border)] max-w-[480px] w-full p-6" style={{ boxShadow: "var(--shadow-lg, 0 20px 60px rgba(0,0,0,0.3))" }} onClick={e => e.stopPropagation()}>
+            <div className="flex items-center gap-2 mb-3">
+              <span className="text-[22px]">🧠</span>
+              <h2 className="text-[17px] font-bold text-[var(--text-primary)]">Allow your twin to learn?</h2>
+            </div>
+            <p className="text-[13px] text-[var(--text-muted)] leading-relaxed mb-3">
+              By turning this on, you allow your digital twin to learn from your AI work so it can work like you. It may learn from:
+            </p>
+            <div className="text-[12px] text-[var(--text-primary)] bg-[var(--bg-secondary)] rounded-xl px-4 py-3 mb-3 leading-relaxed">
+              Claude Code · Claude AI · ChatGPT · Gemini · Manus · Google Drive · Google Calendar · Notion
+            </div>
+            <ul className="text-[12px] text-[var(--text-muted)] leading-relaxed mb-4 space-y-1.5">
+              <li>🔒 <span className="font-semibold text-[var(--text-primary)]">Private to you</span> — only your own twin sees it.</li>
+              <li>📄 It learns from your <span className="font-semibold text-[var(--text-primary)]">work content</span>, not your screen, passwords, or personal browsing.</li>
+              <li>⏹️ You can turn it <span className="font-semibold text-[var(--text-primary)]">off anytime</span> — learning stops immediately.</li>
+            </ul>
+            <div className="flex gap-2">
+              <button onClick={() => setShowConsentTerms(false)} disabled={consentSaving}
+                className="flex-1 px-4 py-2.5 rounded-xl text-[13px] font-semibold border border-[var(--card-border)] text-[var(--text-muted)] hover:bg-[var(--bg-secondary)] disabled:opacity-50">
+                Not now
+              </button>
+              <button onClick={() => applyConsent(true)} disabled={consentSaving}
+                className="flex-1 px-4 py-2.5 rounded-xl text-[13px] font-semibold text-white bg-gradient-to-r from-blue-500 to-purple-600 hover:opacity-90 disabled:opacity-50">
+                {consentSaving ? "Saving…" : "I Agree — start learning"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="flex-1 max-w-[700px] mx-auto w-full p-4 md:p-6">
         <h1 className="text-[22px] font-bold text-[var(--text-primary)] mb-1">⚙ Settings</h1>
         <p className="text-[13px] text-[var(--text-muted)] mb-5">Manage your account and twin preferences.</p>
