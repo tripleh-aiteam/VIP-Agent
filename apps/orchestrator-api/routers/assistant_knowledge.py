@@ -17,7 +17,7 @@ from __future__ import annotations
 import logging
 from typing import Optional
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
@@ -124,23 +124,39 @@ def search_knowledge(req: SearchRequest, db: Session = Depends(get_db)):
     return {"ok": True, "hits": hits, "count": len(hits)}
 
 
-@router.post("/sync")
-def sync_knowledge(agentId: str = "stock", reset: bool = False,
-                   db: Session = Depends(get_db)):
-    """Populate the RAG knowledge base (Phase 2): ingest the stable data-dictionary
-    seed + recent orch_reports for the agent. Idempotent — re-running only adds new
-    reports. Also seeds the 'vip' agent so VIP retrieves the same knowledge.
-    Pass reset=true to first delete prior auto-synced chunks and re-ingest (use
-    after switching EMBED_PROVIDER=openai so chunks get embeddings)."""
+def _run_kb_sync(reset: bool) -> None:
+    """Heavy KB sync, run in a background thread so the HTTP call can't time out
+    (ingesting 60 reports x 2 agents — slower still when embeddings are on)."""
+    from db.base import SessionLocal
     from services.knowledge_sync import (seed_data_dictionary, sync_reports_to_kb,
                                           reset_synced_kb)
-    reset_info = reset_synced_kb(db, agent_ids=("stock", "vip")) if reset else None
-    seed = seed_data_dictionary(db, agent_ids=("stock", "vip"))
-    # Ingest reports for BOTH the stock agent AND vip — VIP answers general
-    # market questions itself (rag_retrieve agent_id='vip'), so it needs the
-    # report content under its own agent scope, not only 'stock'.
-    reports = {aid: sync_reports_to_kb(db, agent_id=aid) for aid in ("stock", "vip")}
-    return {"ok": True, "reset": reset_info, "seed": seed.get("seed"), "reports": reports}
+    db = SessionLocal()
+    try:
+        if reset:
+            reset_synced_kb(db, agent_ids=("stock", "vip"))
+        seed_data_dictionary(db, agent_ids=("stock", "vip"))
+        for aid in ("stock", "vip"):
+            sync_reports_to_kb(db, agent_id=aid)
+    finally:
+        db.close()
+
+
+@router.post("/sync")
+def sync_knowledge(reset: bool = False, wait: bool = False,
+                   background_tasks: BackgroundTasks = None,
+                   db: Session = Depends(get_db)):
+    """Populate the RAG knowledge base (Phase 2): ingest the stable data-dictionary
+    seed + recent orch_reports for BOTH the stock and vip agents. Idempotent.
+    reset=true first deletes prior auto-synced chunks and re-ingests (use after
+    switching EMBED_PROVIDER=openai so chunks get embeddings). By default runs in
+    the background (returns immediately); pass wait=true to run synchronously."""
+    if wait:
+        _run_kb_sync(reset)
+        from services.knowledge_ingest import rag_retrieve
+        n = len(rag_retrieve(db, agent_id="vip", query="추천 종목", top_k=5, min_sim=0.1))
+        return {"ok": True, "mode": "sync", "vip_sample_hits": n}
+    background_tasks.add_task(_run_kb_sync, reset)
+    return {"ok": True, "mode": "background", "note": "KB sync started; poll /search to confirm."}
 
 
 # ---------------------------------------------------------------------------
