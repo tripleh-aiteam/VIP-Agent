@@ -676,9 +676,12 @@ def google_oauth_callback(code: str = "", state: str = "", db: Session = Depends
     from services import cloud_sources
     portal = os.getenv("WORKER_APP_URL", "https://vip-twin-portal.vercel.app").rstrip("/")
     ok = False
-    if code and state:
+    # state is a signed, expiring token minted only by the owner-gated auth-url
+    # endpoint — never trust a raw twin_id from this public callback.
+    verified_twin_id = cloud_sources.verify_state(state) if state else None
+    if code and verified_twin_id:
         try:
-            ok = cloud_sources.google_exchange_and_store(db, code, state)
+            ok = cloud_sources.google_exchange_and_store(db, code, verified_twin_id)
         except Exception:
             ok = False
     return RedirectResponse(f"{portal}/dashboard?google={'connected' if ok else 'failed'}")

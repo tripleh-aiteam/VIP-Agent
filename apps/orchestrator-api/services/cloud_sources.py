@@ -17,6 +17,11 @@ NOTION_CLIENT_SECRET (Notion). Safe to deploy with no keys — it simply no-ops.
 """
 
 import os
+import time
+import hmac
+import base64
+import hashlib
+import secrets
 from datetime import datetime, timedelta
 from uuid import UUID
 from typing import Optional
@@ -58,6 +63,39 @@ def provider_status() -> dict:
 # --------------------------------------------------------------------------- #
 #  Google OAuth
 # --------------------------------------------------------------------------- #
+def _state_secret() -> bytes:
+    # Server-only secret. GOOGLE_CLIENT_SECRET is a fine HMAC key (never leaves
+    # the server); fall back to SECRET_KEY so signing still works if needed.
+    return (GOOGLE_CLIENT_SECRET or os.getenv("SECRET_KEY", "vip-twins-state-key")).encode()
+
+
+def make_state(twin_id: str, ttl_seconds: int = 600) -> str:
+    """Sign an expiring state token for `twin_id`. Only callers that know the
+    server secret (i.e. the owner-gated auth-url endpoint) can mint a valid one,
+    so the public callback never trusts a raw twin_id from the URL."""
+    nonce = secrets.token_urlsafe(9)
+    exp = str(int(time.time()) + ttl_seconds)
+    msg = f"{twin_id}:{nonce}:{exp}"
+    sig = hmac.new(_state_secret(), msg.encode(), hashlib.sha256).hexdigest()[:32]
+    return base64.urlsafe_b64encode(f"{msg}:{sig}".encode()).decode()
+
+
+def verify_state(state: str) -> Optional[str]:
+    """Return the twin_id from a valid, unexpired state, else None."""
+    try:
+        raw = base64.urlsafe_b64decode(state.encode()).decode()
+        twin_id, nonce, exp, sig = raw.split(":")
+        msg = f"{twin_id}:{nonce}:{exp}"
+        good = hmac.new(_state_secret(), msg.encode(), hashlib.sha256).hexdigest()[:32]
+        if not hmac.compare_digest(good, sig):
+            return None
+        if int(exp) < int(time.time()):
+            return None
+        return twin_id
+    except Exception:
+        return None
+
+
 def google_auth_url(twin_id: str) -> str:
     from urllib.parse import urlencode
     q = urlencode({
@@ -67,7 +105,7 @@ def google_auth_url(twin_id: str) -> str:
         "scope": GOOGLE_SCOPES,
         "access_type": "offline",
         "prompt": "consent",
-        "state": str(twin_id),
+        "state": make_state(str(twin_id)),   # signed + expiring, not a raw twin_id
     })
     return f"https://accounts.google.com/o/oauth2/v2/auth?{q}"
 
