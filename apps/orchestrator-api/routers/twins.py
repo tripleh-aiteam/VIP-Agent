@@ -615,13 +615,21 @@ def get_learning_sources(twin_id: UUID, db: Session = Depends(get_db), _ac=Depen
         raise HTTPException(status_code=404, detail="Twin not found")
     from services.watch_learn import SUPPORTED_SOURCES
     from db.models import TwinKnowledge
+    from sqlalchemy import or_
     total = db.query(TwinKnowledge).filter(TwinKnowledge.twin_id == twin_id).count()
     sources = []
     counted = 0
     for key, label in SUPPORTED_SOURCES.items():
+        cond = TwinKnowledge.title.like(f"[{key}]%")
+        # Legacy items (imported before source-tagging) were Claude Code sessions
+        # tagged "[claude auto]" / "Consolidated guide:" — count them as claude-code
+        # so existing knowledge isn't shown as 0.
+        if key == "claude-code":
+            cond = or_(cond,
+                       TwinKnowledge.title.like("%[claude auto]%"),
+                       TwinKnowledge.title.like("Consolidated guide:%"))
         n = db.query(TwinKnowledge).filter(
-            TwinKnowledge.twin_id == twin_id,
-            TwinKnowledge.title.like(f"[{key}]%"),
+            TwinKnowledge.twin_id == twin_id, cond,
         ).count()
         counted += n
         sources.append({"source": key, "label": label, "items": n})
