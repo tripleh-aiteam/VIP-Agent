@@ -155,6 +155,28 @@ def _check_twin_access(
     return
 
 
+def _check_twin_owner_access(
+    twin_id: UUID,
+    x_user_email: Optional[str] = Header(None),
+    x_user_token: Optional[str] = Header(None),
+    db: Session = Depends(get_db),
+):
+    """PRIVACY WALL — owner-only. A twin's knowledge, chats and messages are
+    PRIVATE to the worker who owns that twin (the person it learns from).
+
+    NOT accessible by the boss, by admin role, or via an embed token — by design,
+    so workers teach freely knowing the boss can't read it. The boss still sees
+    status/readiness/activity via the (admin-allowed) monitoring endpoints.
+    Always enforced, independent of AUTH_ENFORCE (privacy is never in 'grace').
+    The boss can own + access their own Boss Twin if their account is linked to it.
+    """
+    if x_user_email and x_user_token:
+        user = auth_service.verify_session_token(db, x_user_email, x_user_token)
+        if user and user.twin_id and str(user.twin_id) == str(twin_id):
+            return  # the owner
+    raise HTTPException(status_code=403, detail="Private to the twin's owner")
+
+
 # ---------------------------------------------------------------------------
 #  Twin CRUD
 # ---------------------------------------------------------------------------
@@ -467,7 +489,7 @@ def reject_task(twin_id: UUID, task_id: UUID, body: TwinTaskReview, db: Session 
 # ---------------------------------------------------------------------------
 
 @router.get("/{twin_id}/knowledge")
-def get_twin_knowledge(twin_id: UUID, db: Session = Depends(get_db), _ac=Depends(_check_twin_access)):
+def get_twin_knowledge(twin_id: UUID, db: Session = Depends(get_db), _ac=Depends(_check_twin_owner_access)):
     """Get all knowledge documents for a twin."""
     knowledge = twin_service.get_knowledge(db, twin_id)
     return [
@@ -518,7 +540,7 @@ def reindex_all_knowledge(
 
 
 @router.post("/{twin_id}/knowledge", status_code=201)
-def add_twin_knowledge(twin_id: UUID, body: TwinKnowledgeCreate, db: Session = Depends(get_db), _ac=Depends(_check_twin_access)):
+def add_twin_knowledge(twin_id: UUID, body: TwinKnowledgeCreate, db: Session = Depends(get_db), _ac=Depends(_check_twin_owner_access)):
     """Add a knowledge document to a twin."""
     twin = twin_service.get_twin(db, twin_id)
     if not twin:
@@ -535,7 +557,7 @@ def add_twin_knowledge(twin_id: UUID, body: TwinKnowledgeCreate, db: Session = D
 
 
 @router.delete("/{twin_id}/knowledge/{knowledge_id}")
-def delete_twin_knowledge(twin_id: UUID, knowledge_id: UUID, db: Session = Depends(get_db), _ac=Depends(_check_twin_access)):
+def delete_twin_knowledge(twin_id: UUID, knowledge_id: UUID, db: Session = Depends(get_db), _ac=Depends(_check_twin_owner_access)):
     """Delete a knowledge document."""
     success = twin_service.delete_knowledge(db, knowledge_id)
     if not success:
@@ -579,7 +601,7 @@ def get_twin_summary(twin_id: UUID, db: Session = Depends(get_db), _ac=Depends(_
 # ---------------------------------------------------------------------------
 
 @router.post("/{twin_id}/chat")
-def chat_with_twin(twin_id: UUID, body: TwinChatMessage, x_user_email: Optional[str] = Header(None), db: Session = Depends(get_db), _ac=Depends(_check_twin_access)):
+def chat_with_twin(twin_id: UUID, body: TwinChatMessage, x_user_email: Optional[str] = Header(None), db: Session = Depends(get_db), _ac=Depends(_check_twin_owner_access)):
     """Send a message to a twin and get an intelligent response."""
     twin = twin_service.get_twin(db, twin_id)
     if not twin:
@@ -650,8 +672,8 @@ class SendMessageBody(BaseModel):
 
 
 @router.get("/{twin_id}/messages")
-def get_messages(twin_id: UUID, limit: int = 50, db: Session = Depends(get_db)):
-    """Get conversation between boss and worker for a specific twin."""
+def get_messages(twin_id: UUID, limit: int = 50, db: Session = Depends(get_db), _ac=Depends(_check_twin_owner_access)):
+    """Get the private worker↔twin conversation. Owner-only (privacy wall)."""
     from db.models import DirectMessage, DigitalTwin
 
     twin = db.query(DigitalTwin).filter(DigitalTwin.id == twin_id).first()
@@ -684,7 +706,7 @@ def get_messages(twin_id: UUID, limit: int = 50, db: Session = Depends(get_db)):
 
 
 @router.post("/{twin_id}/messages")
-def send_message(twin_id: UUID, body: SendMessageBody, db: Session = Depends(get_db), _ac=Depends(_check_twin_access)):
+def send_message(twin_id: UUID, body: SendMessageBody, db: Session = Depends(get_db), _ac=Depends(_check_twin_owner_access)):
     """Send a message (boss → worker or worker → boss). v4-K: if the boss
     message contains both a meeting intent and a time, auto-schedule a
     meeting with THIS twin invited and reply with the room link.

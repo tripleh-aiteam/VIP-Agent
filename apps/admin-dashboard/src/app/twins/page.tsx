@@ -1064,14 +1064,9 @@ export default function TwinsPage() {
                 </div>
               )}
 
-              {/* Action buttons (visible on hover) */}
+              {/* Action buttons (visible on hover). No "Chat" — a twin's chat
+                  is private to its worker (privacy wall); the boss monitors only. */}
               <div className="flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity" onClick={e => e.stopPropagation()}>
-                <button
-                  onClick={() => openChat(twin)}
-                  className="flex-1 py-1.5 bg-blue-50 text-blue-700 rounded-lg text-[11px] font-medium hover:bg-blue-100 transition-colors"
-                >
-                  {tr("채팅", "Chat")}
-                </button>
                 <button
                   onClick={() => setMeetingTwin(twin)}
                   className="flex-1 py-1.5 bg-indigo-50 text-indigo-700 rounded-lg text-[11px] font-medium hover:bg-indigo-100 transition-colors"

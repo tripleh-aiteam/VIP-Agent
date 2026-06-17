@@ -1,15 +1,13 @@
 "use client";
 
 /**
- * Twin "home" — opens a single twin from the VIP side.
+ * Twin MONITORING view (boss side) — privacy-respecting.
  *
- * The body is the REAL Twin Portal (apps/twin-portal) embedded in an iframe,
- * scoped to this twin via the admin /embed entry. The boss gets the full
- * Home / Teach / Chat / Review / Messages / Reports experience with full
- * control. A thin VIP header on top provides back-nav + Activate/Shadow/Edit.
- *
- * Workers still use the portal's own email+password login for their own twin;
- * this admin path is an overlay, not a replacement.
+ * The boss sees WHETHER a twin is working and HOW trained it is — status, mode,
+ * readiness %, knowledge COUNTS, activity heartbeat, and task output. The boss
+ * does NOT see the twin's knowledge CONTENT or chats: those are private to the
+ * worker (enforced by the backend owner-only "privacy wall"). Workers teach
+ * their own twin in the Twin Portal with their own login.
  */
 
 import { useEffect, useState } from "react";
@@ -19,41 +17,16 @@ import { API, authHeaders } from "../../../components/api";
 import { useLanguage } from "../../../components/i18n";
 
 interface Twin {
-  id: string;
-  name: string;
-  role: string;
-  department: string | null;
-  mode: string;
-  permission_level: string;
-  status: string;
+  id: string; name: string; role: string; department: string | null;
+  mode: string; permission_level: string; status: string;
+  personality_prompt: string | null; skills: string[];
+  created_at: string | null; updated_at: string | null;
 }
 
-const MODE_BADGES: Record<string, { bg: string; text: string }> = {
-  shadow: { bg: "bg-gray-100 text-gray-700", text: "Shadow" },
-  active: { bg: "bg-green-100 text-green-700", text: "Active" },
-  handoff: { bg: "bg-amber-100 text-amber-700", text: "Handoff" },
-};
 const STATUS_COLORS: Record<string, string> = {
   working: "bg-green-500", online: "bg-green-400", idle: "bg-yellow-400",
   in_meeting: "bg-blue-500", offline: "bg-gray-400",
 };
-
-type T = (ko: string, en: string) => string;
-// Localized labels resolved at render with the active t(). MODE_BADGES/STATUS_COLORS
-// stay as plain style maps; these provide the translated display text.
-const MODE_LABELS: Record<string, (t: T) => string> = {
-  shadow: (t) => t("섀도우", "Shadow"),
-  active: (t) => t("활성", "Active"),
-  handoff: (t) => t("핸드오프", "Handoff"),
-};
-const STATUS_LABELS: Record<string, (t: T) => string> = {
-  working: (t) => t("작업 중", "Working"),
-  online: (t) => t("온라인", "Online"),
-  idle: (t) => t("대기 중", "Idle"),
-  in_meeting: (t) => t("회의 중", "In meeting"),
-  offline: (t) => t("오프라인", "Offline"),
-};
-
 const AVATAR_COLORS = ["#6366f1", "#8b5cf6", "#ec4899", "#f59e0b", "#10b981", "#3b82f6", "#ef4444", "#14b8a6"];
 function getAvatarColor(name: string) {
   let hash = 0;
@@ -64,61 +37,35 @@ function getInitials(name: string) {
   return (name || "?").split(" ").map(w => w[0]).join("").slice(0, 2).toUpperCase();
 }
 
-/** Resolve the Twin Portal base URL: env wins, localhost in dev, prod URL otherwise. */
-function portalBase(): string {
-  const env = process.env.NEXT_PUBLIC_TWIN_PORTAL_URL;
-  if (env && /^https?:\/\//.test(env)) return env.replace(/\/$/, "");
-  if (typeof window !== "undefined" && (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1")) {
-    return "http://localhost:3001";
-  }
-  // Prod default — updated to the deployed portal URL via env after the Vercel project exists.
-  return "https://vip-twin-portal.vercel.app";
-}
-
-export default function TwinHomePage() {
+export default function TwinMonitorPage() {
   const { t } = useLanguage();
   const params = useParams();
   const router = useRouter();
   const twinId = String(params?.id || "");
 
   const [twin, setTwin] = useState<Twin | null>(null);
+  const [intel, setIntel] = useState<any>(null);
+  const [activity, setActivity] = useState<any[]>([]);
+  const [tasks, setTasks] = useState<any[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [embedUrl, setEmbedUrl] = useState<string>("");
 
   useEffect(() => {
     if (!twinId) return;
-    let cancelled = false;
+    let cancel = false;
     (async () => {
       try {
         const res = await fetch(`${API}/twins/${twinId}`, { headers: authHeaders() });
-        if (!res.ok) throw new Error(res.status === 404 ? t("트윈을 찾을 수 없습니다", "Twin not found") : t(`불러오기 실패 (${res.status})`, `Failed (${res.status})`));
-        const twinData: Twin = await res.json();
-        if (cancelled) return;
-        setTwin(twinData);
-
-        // Mint a short-lived, server-signed embed token (authorized by the boss
-        // session). The portal/backend verify it — nothing sensitive in the URL.
-        const mint = await fetch(`${API}/auth/embed-token`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json", ...authHeaders() },
-          body: JSON.stringify({ twin_id: twinId }),
-        });
-        if (!mint.ok) {
-          throw new Error(
-            mint.status === 403 ? t("현재 세션으로는 트윈 포털을 열 수 없습니다 — 관리자로 로그인하세요.", "Your session can't open twin portals — sign in as an admin.")
-            : mint.status === 503 ? t("서버에 트윈 포털이 아직 설정되지 않았습니다 (서명 시크릿 누락).", "Twin portal isn't configured on the server yet (missing signing secret).")
-            : t(`트윈 포털을 인증할 수 없습니다 (${mint.status}).`, `Could not authorize the twin portal (${mint.status}).`)
-          );
-        }
-        const { token } = await mint.json();
-        if (cancelled) return;
-        setEmbedUrl(`${portalBase()}/embed?t=${encodeURIComponent(token)}`);
-      } catch (e: any) {
-        if (!cancelled) setError(e.message || t("트윈을 불러오지 못했습니다", "Failed to load twin"));
-      }
+        if (!res.ok) throw new Error(res.status === 404 ? t("트윈을 찾을 수 없습니다", "Twin not found") : `Failed (${res.status})`);
+        if (cancel) return;
+        setTwin(await res.json());
+        // Monitoring-only endpoints (counts + heartbeat — NOT content):
+        fetch(`${API}/twins/${twinId}/intelligence`, { headers: authHeaders() }).then(r => r.ok && r.json()).then(d => d && !cancel && setIntel(d)).catch(() => {});
+        fetch(`${API}/twins/${twinId}/activity?limit=20`, { headers: authHeaders() }).then(r => r.ok && r.json()).then(d => d && !cancel && setActivity(d)).catch(() => {});
+        fetch(`${API}/twins/${twinId}/tasks`, { headers: authHeaders() }).then(r => r.ok && r.json()).then(d => d && !cancel && setTasks(d)).catch(() => {});
+      } catch (e: any) { if (!cancel) setError(e.message); }
     })();
-    return () => { cancelled = true; };
+    return () => { cancel = true; };
   }, [twinId]);
 
   async function switchMode(mode: string) {
@@ -133,63 +80,115 @@ export default function TwinHomePage() {
     } finally { setBusy(false); }
   }
 
-  if (error) {
-    return (
-      <div className="p-6 max-w-2xl mx-auto text-center">
-        <div className="text-[48px] mb-3">🤖</div>
-        <div className="text-[var(--text-primary)] text-[16px] font-semibold mb-2">{error}</div>
-        <Link href="/twins" className="text-blue-600 text-[13px] hover:underline">{t("← 전체 트윈으로 돌아가기", "← Back to all twins")}</Link>
-      </div>
-    );
+  function timeAgo(iso: string | null) {
+    if (!iso) return "—";
+    const m = Math.floor((Date.now() - new Date(iso).getTime()) / 60000);
+    if (m < 1) return t("방금", "just now");
+    if (m < 60) return t(`${m}분 전`, `${m}m ago`);
+    const h = Math.floor(m / 60);
+    if (h < 24) return t(`${h}시간 전`, `${h}h ago`);
+    return t(`${Math.floor(h / 24)}일 전`, `${Math.floor(h / 24)}d ago`);
   }
 
+  if (error) return (
+    <div className="p-6 max-w-2xl mx-auto text-center">
+      <div className="text-[48px] mb-3">🤖</div>
+      <div className="text-[16px] font-semibold mb-2 text-[var(--text-primary)]">{error}</div>
+      <Link href="/twins" className="text-blue-600 text-[13px] hover:underline">{t("← 전체 트윈", "← All twins")}</Link>
+    </div>
+  );
+  if (!twin) return <div className="p-6 text-center text-[var(--text-muted)]">{t("불러오는 중…", "Loading…")}</div>;
+
+  const lastActive = activity[0]?.timestamp || null;
+  const b = intel?.breakdown || {};
+
   return (
-    <div className="flex flex-col h-[calc(100vh-110px)] min-h-[640px] rounded-xl overflow-hidden border border-[var(--card-border)]" style={{ boxShadow: "var(--shadow-sm)" }}>
-      {/* Thin VIP header */}
-      <div className="flex items-center gap-3 px-4 py-2.5 border-b border-[var(--card-border)] bg-[var(--card-bg)] shrink-0">
-        <button onClick={() => router.push("/twins")} className="text-[13px] text-[var(--text-muted)] hover:text-[var(--text-primary)] flex items-center gap-1 shrink-0">
-          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" /></svg>
-          {t("전체 트윈", "All Twins")}
-        </button>
-        <div className="w-px h-5 bg-[var(--card-border)]" />
-        {twin && (
-          <>
-            <div className="w-7 h-7 rounded-lg flex items-center justify-center text-white font-bold text-[11px] shrink-0" style={{ backgroundColor: getAvatarColor(twin.name) }}>
-              {getInitials(twin.name)}
+    <div className="p-2 md:p-4 max-w-[1100px] mx-auto">
+      <button onClick={() => router.push("/twins")} className="text-[13px] text-[var(--text-muted)] hover:text-[var(--text-primary)] mb-3 flex items-center gap-1">
+        <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" /></svg>
+        {t("전체 트윈", "All Twins")}
+      </button>
+
+      {/* Header */}
+      <div className="bg-[var(--card-bg)] rounded-2xl border border-[var(--card-border)] p-5 mb-4" style={{ boxShadow: "var(--shadow-sm)" }}>
+        <div className="flex items-start gap-4 flex-wrap">
+          <div className="w-14 h-14 rounded-2xl flex items-center justify-center text-white font-bold text-[20px] shrink-0" style={{ backgroundColor: getAvatarColor(twin.name) }}>{getInitials(twin.name)}</div>
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2 flex-wrap">
+              <h1 className="text-[22px] font-semibold text-[var(--text-primary)]">{twin.name}</h1>
+              <span className={`w-3 h-3 rounded-full ${STATUS_COLORS[twin.status] || "bg-gray-400"}`} />
+              <span className="text-[12px] text-[var(--text-muted)]">{twin.status === "working" ? t("작업 중", "working") : twin.status === "idle" ? t("대기 중", "idle") : twin.status}</span>
             </div>
-            <div className="flex items-center gap-2 min-w-0">
-              <span className="text-[14px] font-semibold text-[var(--text-primary)] truncate">{twin.name}</span>
-              <span className={`w-2 h-2 rounded-full shrink-0 ${STATUS_COLORS[twin.status] || "bg-gray-400"}`} title={STATUS_LABELS[twin.status]?.(t) || twin.status} />
-              <span className="text-[12px] text-[var(--text-muted)] hidden sm:inline">{twin.role}</span>
-              <span className={`px-2 py-0.5 rounded-full text-[10px] font-medium hidden sm:inline ${MODE_BADGES[twin.mode]?.bg || "bg-gray-100 text-gray-700"}`}>
-                {MODE_LABELS[twin.mode]?.(t) || twin.mode}
-              </span>
+            <p className="text-[14px] text-[var(--text-muted)] mt-0.5">{twin.role}{twin.department ? ` · ${twin.department}` : ""}</p>
+            <div className="flex items-center gap-2 mt-2 flex-wrap text-[11px]">
+              <span className="px-2.5 py-0.5 rounded-full bg-gray-100 text-gray-700">{twin.mode}</span>
+              <span className="px-2.5 py-0.5 rounded-full bg-gray-50 text-gray-600 border border-gray-200">{twin.permission_level}</span>
+              {intel?.intelligence_pct != null && <span className="px-2.5 py-0.5 rounded-full bg-blue-50 text-blue-700">{t("준비도", "Readiness")} {intel.intelligence_pct}%</span>}
+              <span className="text-[var(--text-muted)]">· {t("마지막 활동", "last active")} {timeAgo(lastActive)}</span>
             </div>
-            <div className="ml-auto flex items-center gap-2 shrink-0">
-              {twin.mode !== "active" && (
-                <button onClick={() => switchMode("active")} disabled={busy} className="px-2.5 py-1.5 bg-green-50 text-green-700 rounded-lg text-[11px] font-medium hover:bg-green-100 disabled:opacity-50">{t("활성화", "Activate")}</button>
-              )}
-              {twin.mode !== "shadow" && (
-                <button onClick={() => switchMode("shadow")} disabled={busy} className="px-2.5 py-1.5 bg-gray-50 text-gray-700 rounded-lg text-[11px] font-medium hover:bg-gray-100 disabled:opacity-50">{t("섀도우", "Shadow")}</button>
-              )}
-              <Link href={`/twins?edit=${twin.id}`} className="px-2.5 py-1.5 bg-[var(--bg-secondary)] border border-[var(--card-border)] text-[var(--text-secondary)] rounded-lg text-[11px] font-medium hover:bg-[var(--bg-hover)]">{t("편집", "Edit")}</Link>
-            </div>
-          </>
-        )}
+          </div>
+          <div className="flex gap-2 flex-wrap">
+            {twin.mode !== "active" && <button onClick={() => switchMode("active")} disabled={busy} className="px-3 py-2 bg-green-50 text-green-700 rounded-lg text-[12px] font-medium hover:bg-green-100 disabled:opacity-50">{t("활성화", "Activate")}</button>}
+            {twin.mode !== "shadow" && <button onClick={() => switchMode("shadow")} disabled={busy} className="px-3 py-2 bg-gray-50 text-gray-700 rounded-lg text-[12px] font-medium hover:bg-gray-100 disabled:opacity-50">{t("섀도우", "Shadow")}</button>}
+            <Link href={`/twins?edit=${twin.id}`} className="px-3 py-2 bg-[var(--bg-secondary)] border border-[var(--card-border)] text-[var(--text-secondary)] rounded-lg text-[12px] font-medium hover:bg-[var(--bg-hover)]">{t("편집", "Edit")}</Link>
+          </div>
+        </div>
       </div>
 
-      {/* Embedded Twin Portal */}
-      <div className="flex-1 min-h-0 bg-[var(--bg-app)]">
-        {embedUrl ? (
-          <iframe
-            src={embedUrl}
-            title={twin?.name ? t(`${twin.name} — 트윈 포털`, `${twin.name} — Twin Portal`) : t("트윈 포털", "Twin Portal")}
-            className="w-full h-full border-0"
-            allow="clipboard-write; microphone"
-          />
-        ) : (
-          <div className="h-full flex items-center justify-center text-[var(--text-muted)] text-[13px]">{t("트윈 포털을 여는 중…", "Opening twin portal…")}</div>
-        )}
+      {/* Privacy notice */}
+      <div className="flex items-center gap-2 mb-4 px-4 py-2.5 rounded-xl bg-amber-50 border border-amber-200 text-[12px] text-amber-800">
+        🔒 {t("이 트윈의 지식과 대화는 담당 직원에게만 비공개로 보입니다. 여기서는 상태와 학습 진행도만 확인할 수 있습니다.",
+              "This twin's knowledge and chats are private to its worker. Here you can see status and training progress only.")}
+      </div>
+
+      {/* Counts strip (numbers only — no content) */}
+      <div className="grid grid-cols-3 sm:grid-cols-6 gap-2 mb-4">
+        {[
+          { label: t("문서", "Docs"), value: b.documents },
+          { label: t("규칙", "Rules"), value: b.decision_rules },
+          { label: t("대화 학습", "Chat learned"), value: b.chat_learned },
+          { label: t("교정", "Corrections"), value: b.corrections },
+          { label: t("승인", "Approvals"), value: b.approvals },
+          { label: t("완료 작업", "Tasks done"), value: b.tasks_completed },
+        ].map(s => (
+          <div key={s.label} className="bg-[var(--card-bg)] rounded-xl border border-[var(--card-border)] px-3 py-3 text-center" style={{ boxShadow: "var(--shadow-sm)" }}>
+            <div className="text-[20px] font-bold text-[var(--text-primary)]">{s.value ?? 0}</div>
+            <div className="text-[10px] text-[var(--text-muted)]">{s.label}</div>
+          </div>
+        ))}
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        {/* Activity heartbeat (action type + time — NOT descriptions) */}
+        <div className="bg-[var(--card-bg)] rounded-2xl border border-[var(--card-border)] p-5" style={{ boxShadow: "var(--shadow-sm)" }}>
+          <h3 className="text-[14px] font-semibold text-[var(--text-primary)] mb-3">{t("활동 (학습 중인지)", "Activity (is it learning?)")}</h3>
+          {activity.length === 0 ? <div className="text-[12px] text-[var(--text-muted)] py-6 text-center">{t("아직 활동 없음", "No activity yet")}</div> :
+            <div className="space-y-2.5">
+              {activity.slice(0, 12).map(a => (
+                <div key={a.id} className="flex items-center gap-3">
+                  <span className="w-2 h-2 rounded-full bg-blue-400 shrink-0" />
+                  <span className="text-[12px] text-[var(--text-primary)] capitalize">{(a.action_type || "").replace(/_/g, " ")}</span>
+                  <span className="text-[10px] text-[var(--text-muted)] ml-auto">{timeAgo(a.timestamp)}</span>
+                </div>
+              ))}
+            </div>}
+        </div>
+
+        {/* Tasks (work output for the company — title + status, not content) */}
+        <div className="bg-[var(--card-bg)] rounded-2xl border border-[var(--card-border)] p-5" style={{ boxShadow: "var(--shadow-sm)" }}>
+          <h3 className="text-[14px] font-semibold text-[var(--text-primary)] mb-3">{t("작업", "Tasks")} ({tasks.length})</h3>
+          {tasks.length === 0 ? <div className="text-[12px] text-[var(--text-muted)] py-6 text-center">{t("작업 없음", "No tasks")}</div> :
+            <div className="space-y-2">
+              {tasks.slice(0, 12).map(tk => (
+                <div key={tk.id} className="flex items-center justify-between gap-2 border border-[var(--card-border)] rounded-lg px-3 py-2">
+                  <span className="text-[12px] text-[var(--text-primary)] truncate">{tk.title}</span>
+                  <span className={`px-2 py-0.5 rounded-full text-[10px] font-medium shrink-0 ${
+                    tk.status === "completed" ? "bg-green-50 text-green-600" : tk.status === "in_progress" ? "bg-blue-50 text-blue-600" :
+                    tk.status === "blocked" ? "bg-red-50 text-red-600" : "bg-gray-50 text-gray-500"}`}>{tk.status}</span>
+                </div>
+              ))}
+            </div>}
+        </div>
       </div>
     </div>
   );
