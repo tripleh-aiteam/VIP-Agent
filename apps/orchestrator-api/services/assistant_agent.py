@@ -2421,6 +2421,18 @@ def _run_agent_impl(
         "it?' — never open it unasked.\n\n"
     )
     system = _intent_rule + system
+    # CURRENT DATE — without this the LLM defaults to its training-cutoff year and
+    # wrongly treats recent/past dates as 'the future', refusing answerable
+    # questions (e.g. calling a date 7 days ago '12 months in the future').
+    from datetime import datetime as _dt2, timezone as _tz2, timedelta as _td2
+    _today = _dt2.now(_tz2(_td2(hours=9))).strftime("%Y-%m-%d")
+    _date_rule = (
+        f"■ TODAY (current date, KST) is {_today}. Treat THIS as 'now' — NOT your "
+        f"training cutoff. Any date on or before {_today} is the PAST and you CAN "
+        f"answer it from real data; only dates strictly AFTER {_today} are the "
+        f"future. Never call a date that is on/before {_today} 'the future'.\n\n"
+    )
+    system = _date_rule + system
     # Deterministic cross-agent pre-router (VIP only): force ask_agent for clear
     # stock/asset questions so they never fall through to web_search.
     _route_hint = _cross_agent_route_hint(transcript, agent_id)

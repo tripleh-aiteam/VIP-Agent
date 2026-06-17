@@ -30,8 +30,13 @@ def ask(transcript: str, lang: str = "ko",
     q = (transcript or "").strip()
     if not q:
         return None
+    # Tell the backend's LLM the real current date so it doesn't default to its
+    # training-cutoff year and treat recent/past dates as 'the future'.
+    from datetime import datetime as _dt, timezone as _tz, timedelta as _td
+    _today = _dt.now(_tz(_td(hours=9))).strftime("%Y-%m-%d")
+    q_dated = f"(오늘 날짜: {_today} KST) {q}"
     payload: dict[str, Any] = {
-        "transcript": q,
+        "transcript": q_dated,
         "language": lang or "auto",
         "agentId": "stock",
     }
