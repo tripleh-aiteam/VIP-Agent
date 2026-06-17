@@ -2716,7 +2716,7 @@ export function DashboardView({ onLogout }: Props) {
               </div>
               <p className="text-[12px] text-[var(--text-muted)] leading-relaxed">
                 Let your twin learn automatically from your AI work (Claude Code, ChatGPT, notes you share).
-                Everything stays <span className="font-semibold text-[var(--text-primary)]">private to you</span> — your boss can never see what your twin learns.
+                Everything stays <span className="font-semibold text-[var(--text-primary)]">private to you</span>.
                 Capture only runs when this is ON, and you can turn it off anytime.
               </p>
             </div>
