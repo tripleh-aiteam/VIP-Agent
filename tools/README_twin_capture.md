@@ -6,10 +6,19 @@ machine and sends them to **your** twin, which distills them into reusable
 knowledge. **Only you can see what your twin learns — your boss cannot** (the
 server enforces a privacy wall).
 
-## What it captures
-1. **Claude Code sessions** — `~/.claude/projects/**/*.jsonl` (automatic)
-2. **An inbox folder** — `~/twin_capture_inbox/` — drop **ChatGPT exports**,
-   notes, or any work text (`.txt` / `.md`) here; it's sent, then archived.
+## What it captures (5 sources, each tagged so your twin knows the origin)
+1. **Claude Code** — `~/.claude/projects/**/*.jsonl` (automatic)
+2. **ChatGPT** — drop chat exports into `~/twin_capture_inbox/chatgpt/` (`.txt`/`.md`/`.json`)
+3. **Claude Cowork** — drop exported text into `~/twin_capture_inbox/claude-cowork/`
+4. **Notion** — export pages as Markdown/HTML into `~/twin_capture_inbox/notion/`
+5. **Google Drive** — set `TWIN_GDRIVE_DIR` to your Google-Drive-for-Desktop synced
+   folder. It is **read-only** — files there are never moved or changed.
+
+Plus a general **inbox** — `~/twin_capture_inbox/` — for any other work text.
+Inbox files are sent, then archived to a `_sent/` subfolder so they aren't re-sent.
+
+> Capture only works when **Watch & Learn is ON** in your Twin → **Settings**.
+> If it's off, the client tells you and sends nothing.
 
 ## Setup (2 minutes)
 1. Make sure you have **Python 3** (`python --version`).

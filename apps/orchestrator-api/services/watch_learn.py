@@ -43,6 +43,32 @@ def _source_type(t: str) -> str:
     return t if t in ("decision", "instruction", "style", "document") else "document"
 
 
+# Phase 1 — supported learning sources. The capture client tags each push with
+# one of these; we record it in the knowledge title ("[source] …") so origin is
+# traceable and a per-source breakdown can be shown without a schema change.
+SUPPORTED_SOURCES = {
+    "claude-code": "Claude Code",
+    "chatgpt": "ChatGPT",
+    "claude-cowork": "Claude Cowork",
+    "google-drive": "Google Drive",
+    "notion": "Notion",
+    "notes": "Notes",
+}
+
+
+def norm_source(s: str) -> str:
+    """Normalize a free-form source label to a known key (defaults to 'notes')."""
+    k = (s or "").strip().lower().replace("_", "-").replace(" ", "-")
+    aliases = {
+        "claude": "claude-code", "claudecode": "claude-code", "claude-code": "claude-code",
+        "cowork": "claude-cowork", "claude-cowork": "claude-cowork", "claude-desktop": "claude-cowork",
+        "gpt": "chatgpt", "openai": "chatgpt", "chat-gpt": "chatgpt", "chatgpt": "chatgpt",
+        "gdrive": "google-drive", "drive": "google-drive", "google-drive": "google-drive",
+        "notion": "notion", "session": "claude-code", "ai_session": "claude-code",
+    }
+    return aliases.get(k, k if k in SUPPORTED_SOURCES else "notes")
+
+
 def distill(raw_text: str, source: str = "session") -> list:
     """LLM-distill raw session text → list of {title, content, type}. [] on failure."""
     text = (raw_text or "").strip()
@@ -101,20 +127,25 @@ def observe_and_learn(db: Session, twin_id, raw_text: str, source: str = "sessio
 
     Returns {ok, learned, items:[titles]}. Best-effort; never raises.
     """
+    src = norm_source(source)
+    tag = f"[{src}] "
     items = distill(raw_text, source=source)
     stored = 0
     titles = []
     for it in items:
         try:
-            # Tag the source so it's traceable and de-dupable.
+            # Prefix the origin source so it's traceable + a per-source breakdown
+            # is possible (e.g. "[chatgpt] …", "[notion] …"). Keep title <= 255.
+            base = it["title"]
+            title = base if base.startswith(tag) else (tag + base)[:255]
             twin_service.add_knowledge(
                 db, twin_id,
-                title=it["title"],
+                title=title,
                 content=it["content"],
                 source_type=it["type"],
             )
             stored += 1
-            titles.append(it["title"])
+            titles.append(title)
         except Exception as e:
             log.warning(f"observe_and_learn: store failed: {e}")
     if stored:

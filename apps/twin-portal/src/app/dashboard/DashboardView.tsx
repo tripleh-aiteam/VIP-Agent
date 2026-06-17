@@ -107,6 +107,18 @@ export function DashboardView({ onLogout }: Props) {
 
   useEffect(() => { if (page === "settings" && consent === null) loadConsent(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [page]);
 
+  // Phase 1 — learning sources breakdown (Teach → Connected Tools)
+  const [sources, setSources] = useState<{ total: number; untagged: number; consent: boolean; sources: { source: string; label: string; items: number }[] } | null>(null);
+
+  async function loadSources() {
+    if (!twinId) return;
+    try {
+      const res = await apiFetch(`/twins/${twinId}/sources`);
+      const d = await res.json().catch(() => null);
+      if (res.ok && d) setSources(d);
+    } catch { /* ignore */ }
+  }
+
   // Reports state
   const [morningReport, setMorningReport] = useState<any>(null);
   const [reportLoading, setReportLoading] = useState(false);
@@ -168,6 +180,7 @@ export function DashboardView({ onLogout }: Props) {
 
   // Teach state
   const [teachTab, setTeachTab] = useState<"upload" | "rules" | "import" | "connections" | "knowledge">("upload");
+  useEffect(() => { if (page === "teach" && teachTab === "connections") loadSources(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [page, teachTab]);
   const [importSource, setImportSource] = useState<"claude" | "chatgpt" | "gemini">("claude");
   const [importText, setImportText] = useState("");
   const [importTitle, setImportTitle] = useState("");
@@ -1458,80 +1471,72 @@ export function DashboardView({ onLogout }: Props) {
           </div>
         )}
 
-        {teachTab === "connections" && (
+        {teachTab === "connections" && (() => {
+          const cnt = (key: string) => sources?.sources.find(s => s.source === key)?.items ?? 0;
+          const CARDS = [
+            { key: "claude-code",   icon: "🤖", color: "bg-indigo-50", title: "Claude Code", desc: "Your AI coding sessions",
+              setup: "Automatic — the capture client reads ~/.claude/projects on your computer." },
+            { key: "chatgpt",       icon: "💬", color: "bg-green-50", title: "ChatGPT", desc: "Your ChatGPT conversations",
+              setup: "Export a chat and drop the file into  twin_capture_inbox/chatgpt  on your computer." },
+            { key: "claude-cowork", icon: "🧩", color: "bg-orange-50", title: "Claude Cowork", desc: "Your Claude workspace notes",
+              setup: "Drop exported text into  twin_capture_inbox/claude-cowork  on your computer." },
+            { key: "google-drive",  icon: "📁", color: "bg-blue-50", title: "Google Drive", desc: "Your documents & notes",
+              setup: "Install Google Drive for Desktop, then set TWIN_GDRIVE_DIR to your synced folder (read-only)." },
+            { key: "notion",        icon: "📝", color: "bg-purple-50", title: "Notion", desc: "Your Notion pages & docs",
+              setup: "Export pages as Markdown and drop them into  twin_capture_inbox/notion  on your computer." },
+          ];
+          return (
           <div className="space-y-4">
-            {/* Google Drive */}
+            {/* Header: how learning works + overall status */}
             <div className="bg-[var(--card-bg)] rounded-2xl border border-[var(--card-border)] p-5" style={{ boxShadow: "var(--shadow-sm)" }}>
-              <div className="flex items-center justify-between mb-3">
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-xl bg-blue-50 flex items-center justify-center text-[20px]">📁</div>
-                  <div>
-                    <div className="text-[14px] font-semibold text-[var(--text-primary)]">Google Drive</div>
-                    <div className="text-[11px] text-[var(--text-muted)]">Auto-pull your documents, sheets, and presentations</div>
+              <div className="flex items-center justify-between">
+                <div>
+                  <div className="text-[14px] font-semibold text-[var(--text-primary)]">Learning sources</div>
+                  <div className="text-[12px] text-[var(--text-muted)] mt-0.5">
+                    Your twin learns from these via the capture client running on your computer.
                   </div>
                 </div>
-                <button
-                  onClick={async () => {
-                    try {
-                      const res = await apiFetch(`/twins/${twinId}/gdrive/auth-url`);
-                      const data = await res.json();
-                      if (data.auth_url) window.open(data.auth_url, "_blank");
-                      else alert(data.detail || "Google Drive not configured by admin");
-                    } catch { alert("Google Drive not configured. Ask admin to set up Google API credentials."); }
-                  }}
-                  className="px-4 py-2 bg-blue-600 text-white rounded-lg text-[12px] font-medium hover:bg-blue-700 transition-colors"
-                >
-                  Connect
-                </button>
+                <div className="text-right">
+                  <div className="text-[22px] font-bold text-[var(--text-primary)] leading-none">{sources?.total ?? "—"}</div>
+                  <div className="text-[10px] text-[var(--text-muted)]">items learned</div>
+                </div>
               </div>
-              <div className="text-[11px] text-[var(--text-muted)] bg-[var(--bg-secondary)] rounded-lg px-3 py-2">
-                When connected, your twin reads your Google Drive documents every 2 hours automatically. No manual upload needed.
-              </div>
+              {sources && !sources.consent && (
+                <div className="mt-3 text-[12px] px-3 py-2 rounded-lg bg-amber-500/10 text-amber-600 border border-amber-500/30">
+                  Watch &amp; Learn is OFF — turn it on in <span className="font-semibold">Settings</span> or no source will be captured.
+                </div>
+              )}
             </div>
 
-            {/* GitHub */}
-            <div className="bg-[var(--card-bg)] rounded-2xl border border-[var(--card-border)] p-5" style={{ boxShadow: "var(--shadow-sm)" }}>
-              <div className="flex items-center justify-between mb-3">
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-xl bg-gray-100 flex items-center justify-center text-[20px]">🐙</div>
-                  <div>
-                    <div className="text-[14px] font-semibold text-[var(--text-primary)]">GitHub</div>
-                    <div className="text-[11px] text-[var(--text-muted)]">Learn from your code commits and pull requests</div>
+            {CARDS.map(c => {
+              const n = cnt(c.key);
+              return (
+                <div key={c.key} className="bg-[var(--card-bg)] rounded-2xl border border-[var(--card-border)] p-5" style={{ boxShadow: "var(--shadow-sm)" }}>
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="flex items-center gap-3">
+                      <div className={`w-10 h-10 rounded-xl ${c.color} flex items-center justify-center text-[20px]`}>{c.icon}</div>
+                      <div>
+                        <div className="text-[14px] font-semibold text-[var(--text-primary)]">{c.title}</div>
+                        <div className="text-[11px] text-[var(--text-muted)]">{c.desc}</div>
+                      </div>
+                    </div>
+                    <span className={`px-3 py-1.5 rounded-lg text-[11px] font-semibold ${n > 0 ? "bg-green-500/15 text-green-600" : "bg-[var(--bg-secondary)] text-[var(--text-muted)]"}`}>
+                      {n > 0 ? `${n} learned` : "No data yet"}
+                    </span>
+                  </div>
+                  <div className="text-[11px] text-[var(--text-muted)] bg-[var(--bg-secondary)] rounded-lg px-3 py-2">
+                    {c.setup}
                   </div>
                 </div>
-                <span className="px-3 py-1.5 bg-gray-100 text-gray-500 rounded-lg text-[11px] font-medium">Coming Soon</span>
-              </div>
-            </div>
+              );
+            })}
 
-            {/* Slack */}
-            <div className="bg-[var(--card-bg)] rounded-2xl border border-[var(--card-border)] p-5" style={{ boxShadow: "var(--shadow-sm)" }}>
-              <div className="flex items-center justify-between mb-3">
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-xl bg-purple-50 flex items-center justify-center text-[20px]">💬</div>
-                  <div>
-                    <div className="text-[14px] font-semibold text-[var(--text-primary)]">Slack / Teams</div>
-                    <div className="text-[11px] text-[var(--text-muted)]">Learn from your messages and discussions</div>
-                  </div>
-                </div>
-                <span className="px-3 py-1.5 bg-gray-100 text-gray-500 rounded-lg text-[11px] font-medium">Coming Soon</span>
-              </div>
-            </div>
-
-            {/* Notion */}
-            <div className="bg-[var(--card-bg)] rounded-2xl border border-[var(--card-border)] p-5" style={{ boxShadow: "var(--shadow-sm)" }}>
-              <div className="flex items-center justify-between mb-3">
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-xl bg-orange-50 flex items-center justify-center text-[20px]">📝</div>
-                  <div>
-                    <div className="text-[14px] font-semibold text-[var(--text-primary)]">Notion</div>
-                    <div className="text-[11px] text-[var(--text-muted)]">Pull your notes, docs, and databases</div>
-                  </div>
-                </div>
-                <span className="px-3 py-1.5 bg-gray-100 text-gray-500 rounded-lg text-[11px] font-medium">Coming Soon</span>
-              </div>
+            <div className="text-[11px] text-[var(--text-muted)] text-center px-4">
+              Don’t have the capture client yet? Ask your admin for <span className="font-mono">twin_capture.py</span> — it’s one small file, no install.
             </div>
           </div>
-        )}
+          );
+        })()}
 
         {teachTab === "knowledge" && (
           <div className="space-y-3">

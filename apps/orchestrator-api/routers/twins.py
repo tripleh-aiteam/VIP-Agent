@@ -605,6 +605,34 @@ def set_learning_consent(twin_id: UUID, body: ConsentBody, db: Session = Depends
     }
 
 
+@router.get("/{twin_id}/sources")
+def get_learning_sources(twin_id: UUID, db: Session = Depends(get_db), _ac=Depends(_check_twin_owner_access)):
+    """Phase 1 — per-source breakdown of what the twin has learned. Owner-only.
+    Counts are derived from the "[source]" tag the capture client puts on each
+    learned item, so the portal can show ChatGPT / Claude Code / Notion / etc."""
+    twin = twin_service.get_twin(db, twin_id)
+    if not twin:
+        raise HTTPException(status_code=404, detail="Twin not found")
+    from services.watch_learn import SUPPORTED_SOURCES
+    from db.models import TwinKnowledge
+    total = db.query(TwinKnowledge).filter(TwinKnowledge.twin_id == twin_id).count()
+    sources = []
+    counted = 0
+    for key, label in SUPPORTED_SOURCES.items():
+        n = db.query(TwinKnowledge).filter(
+            TwinKnowledge.twin_id == twin_id,
+            TwinKnowledge.title.like(f"[{key}]%"),
+        ).count()
+        counted += n
+        sources.append({"source": key, "label": label, "items": n})
+    return {
+        "total": total,
+        "untagged": max(0, total - counted),
+        "consent": bool(getattr(twin, "learning_consent", False)),
+        "sources": sources,
+    }
+
+
 class ProposeActionBody(BaseModel):
     action_type: str
     summary: Optional[str] = ""
