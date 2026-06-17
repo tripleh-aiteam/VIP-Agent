@@ -41,7 +41,7 @@ NOTION_SECRET = os.getenv("NOTION_CLIENT_SECRET", "") or os.getenv("NOTION_SECRE
 
 GOOGLE_SCOPES = " ".join([
     "https://www.googleapis.com/auth/drive.readonly",
-    "https://www.googleapis.com/auth/calendar.readonly",
+    "https://www.googleapis.com/auth/calendar.events",   # read + create events
     "https://www.googleapis.com/auth/gmail.readonly",
     "openid", "email",
 ])
@@ -347,6 +347,39 @@ def pull_twin(db: Session, twin_id: UUID) -> dict:
         conn.last_pull_at = datetime.utcnow()
     db.commit()
     return {"ok": True, "learned": learned}
+
+
+def create_calendar_event(db: Session, twin_id, summary: str, start_iso: str,
+                          end_iso: str, description: str = "", attendees=None) -> dict:
+    """Create a Google Calendar event on the twin owner's primary calendar.
+    Requires the twin to have a Google connection. Returns {ok, link?, error?}."""
+    import httpx
+    conn = (db.query(OAuthConnection)
+            .filter(OAuthConnection.twin_id == twin_id,
+                    OAuthConnection.provider == "google",
+                    OAuthConnection.status == "active").first())
+    if not conn:
+        return {"ok": False, "error": "Google not connected for this twin"}
+    token = _google_valid_token(db, conn)
+    if not token:
+        return {"ok": False, "error": "Google token unavailable"}
+    body = {
+        "summary": summary or "(no title)",
+        "description": description or "",
+        "start": {"dateTime": start_iso},
+        "end": {"dateTime": end_iso or start_iso},
+    }
+    if attendees:
+        body["attendees"] = [{"email": e} for e in attendees if e]
+    try:
+        r = httpx.post("https://www.googleapis.com/calendar/v3/calendars/primary/events",
+                       headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+                       json=body, timeout=30)
+        if r.status_code in (200, 201):
+            return {"ok": True, "link": r.json().get("htmlLink", "")}
+        return {"ok": False, "error": f"calendar API {r.status_code}: {r.text[:160]}"}
+    except Exception as e:
+        return {"ok": False, "error": str(e)[:160]}
 
 
 def pull_all_due(db: Session) -> dict:

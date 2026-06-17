@@ -60,6 +60,41 @@ def _exec_add_note(db: Session, twin_id, payload: dict) -> str:
     return f"Saved note '{title}'"
 
 
+def _exec_send_email(db: Session, twin_id, payload: dict) -> str:
+    """Send a real email via the company SMTP. Approval-gated: a human approved
+    this exact recipient/subject/body before it sends."""
+    from services import report_email
+    to = payload.get("to") or payload.get("to_email")
+    subject = (payload.get("subject") or "").strip()
+    body = (payload.get("body") or payload.get("content") or "").strip()
+    if not to:
+        raise ValueError("send_email needs a 'to' recipient")
+    if not body:
+        raise ValueError("send_email needs a 'body'")
+    res = report_email.send_plain_email(to, subject or "(no subject)", body)
+    if not res.get("ok"):
+        raise RuntimeError(f"email send failed: {res.get('reason')}")
+    return f"Email sent to {', '.join(res.get('to', [to] if isinstance(to, str) else to))}"
+
+
+def _exec_calendar_event(db: Session, twin_id, payload: dict) -> str:
+    """Create a Google Calendar event on the twin owner's calendar (needs the
+    twin to have connected Google). Approval-gated."""
+    from services import cloud_sources
+    summary = (payload.get("summary") or payload.get("title") or "").strip()
+    start = (payload.get("start") or payload.get("start_iso") or "").strip()
+    end = (payload.get("end") or payload.get("end_iso") or start).strip()
+    if not summary or not start:
+        raise ValueError("calendar_event needs 'summary' and 'start' (ISO datetime)")
+    res = cloud_sources.create_calendar_event(
+        db, twin_id, summary, start, end,
+        description=payload.get("description", ""),
+        attendees=payload.get("attendees"))
+    if not res.get("ok"):
+        raise RuntimeError(f"calendar event failed: {res.get('error')}")
+    return f"Calendar event '{summary}' created" + (f" ({res['link']})" if res.get("link") else "")
+
+
 def _exec_needs_integration(db: Session, twin_id, payload: dict) -> str:
     raise RuntimeError("This action type needs an integration (OAuth) that isn't configured yet")
 
@@ -69,9 +104,9 @@ ACTION_REGISTRY = {
     "create_task":  (_exec_create_task, False),
     "send_message": (_exec_send_message, False),
     "add_note":     (_exec_add_note, False),
+    "send_email":   (_exec_send_email, False),       # real SMTP send (approval-gated)
+    "calendar_event": (_exec_calendar_event, False), # real Google Calendar (approval-gated)
     # Registered but not yet wired — ready for when their credentials are added.
-    "send_email":   (_exec_needs_integration, True),
-    "calendar_event": (_exec_needs_integration, True),
     "post_slack":   (_exec_needs_integration, True),
 }
 

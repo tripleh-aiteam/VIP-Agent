@@ -70,6 +70,42 @@ def is_configured() -> bool:
     return bool(sender_address() and os.getenv("SMTP_PASSWORD"))
 
 
+def send_plain_email(to_email, subject: str, body_text: str) -> dict:
+    """Send a plain-text email (no attachment). Used by twin actions. Returns
+    {ok, to, reason?}. Same SMTP block as the report emails."""
+    if not is_configured():
+        return {"ok": False, "reason": "SMTP not configured — set SMTP_EMAIL (or SMTP_USER) + SMTP_PASSWORD"}
+    recipients = [to_email] if isinstance(to_email, str) else [r for r in (to_email or []) if r]
+    recipients = [r.strip() for r in recipients if r and r.strip()]
+    if not recipients:
+        return {"ok": False, "reason": "no recipient"}
+    host = smtp_host()
+    port = int(os.getenv("SMTP_PORT", "587") or "587")
+    user = sender_address()
+    password = os.getenv("SMTP_PASSWORD", "")
+    from_name = os.getenv("SMTP_FROM_NAME", "VIP AI Platform")
+    use_tls = os.getenv("SMTP_USE_TLS", "1") == "1"
+
+    msg = EmailMessage()
+    msg["From"] = f"{from_name} <{user}>"
+    msg["To"] = ", ".join(recipients)
+    msg["Subject"] = subject or "(no subject)"
+    msg.set_content(body_text or "")
+    try:
+        ctx = ssl.create_default_context()
+        with smtplib.SMTP(host, port, timeout=40) as smtp:
+            if use_tls:
+                smtp.starttls(context=ctx)
+            smtp.login(user, password)
+            smtp.send_message(msg, to_addrs=recipients)
+        log.info(f"report_email: plain email sent to {len(recipients)} recipient(s)",
+                 extra={"action": "report_email.sent_plain"})
+        return {"ok": True, "to": recipients}
+    except Exception as e:
+        log.warning(f"report_email: plain send failed: {e}")
+        return {"ok": False, "reason": str(e)[:200]}
+
+
 def send_email_with_docs(
     to_email,
     subject: str,
