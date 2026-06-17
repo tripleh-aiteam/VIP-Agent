@@ -539,6 +539,24 @@ def reindex_all_knowledge(
     return {"total_embedded": total, "twins": results}
 
 
+class ObserveBody(BaseModel):
+    content: str                       # raw session text / code diff / notes
+    source: Optional[str] = "session"  # e.g. "claude-code", "chatgpt", "git", "notes"
+    kind: Optional[str] = "ai_session"
+
+
+@router.post("/{twin_id}/observe")
+def observe_twin(twin_id: UUID, body: ObserveBody, db: Session = Depends(get_db), _ac=Depends(_check_twin_owner_access)):
+    """Watch & Learn: push a raw work session/observation; the twin distills it
+    into reusable knowledge (auto-embedded). Owner-only — only the worker feeds
+    their own twin; the boss never sees this content (privacy wall)."""
+    if not twin_service.get_twin(db, twin_id):
+        raise HTTPException(status_code=404, detail="Twin not found")
+    from services import watch_learn
+    return watch_learn.observe_and_learn(
+        db, twin_id, body.content, source=body.source or "session", kind=body.kind or "ai_session")
+
+
 @router.post("/{twin_id}/knowledge", status_code=201)
 def add_twin_knowledge(twin_id: UUID, body: TwinKnowledgeCreate, db: Session = Depends(get_db), _ac=Depends(_check_twin_owner_access)):
     """Add a knowledge document to a twin."""
