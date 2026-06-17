@@ -44,7 +44,39 @@ export function DashboardView({ onLogout }: Props) {
   const [tasks, setTasks] = useState<any[]>([]);
   const [activity, setActivity] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
-  const [page, setPage] = useState<"home" | "teach" | "chat" | "review" | "messages" | "reports">("home");
+  const [page, setPage] = useState<"home" | "teach" | "chat" | "review" | "messages" | "reports" | "settings">("home");
+
+  // Settings → change password
+  const [pwCurrent, setPwCurrent] = useState("");
+  const [pwNew, setPwNew] = useState("");
+  const [pwConfirm, setPwConfirm] = useState("");
+  const [pwSaving, setPwSaving] = useState(false);
+  const [pwMsg, setPwMsg] = useState<{ ok: boolean; text: string } | null>(null);
+
+  async function handleChangePassword() {
+    setPwMsg(null);
+    if (!pwCurrent || !pwNew) { setPwMsg({ ok: false, text: "Fill in all fields." }); return; }
+    if (pwNew.length < 6) { setPwMsg({ ok: false, text: "New password must be at least 6 characters." }); return; }
+    if (pwNew !== pwConfirm) { setPwMsg({ ok: false, text: "New passwords do not match." }); return; }
+    const email = typeof window !== "undefined" ? localStorage.getItem("worker_email") || "" : "";
+    if (!email) { setPwMsg({ ok: false, text: "Could not find your account email — please re-login." }); return; }
+    setPwSaving(true);
+    try {
+      const res = await fetch(`${API}/auth/change-password`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, current_password: pwCurrent, new_password: pwNew }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || data.success === false) {
+        setPwMsg({ ok: false, text: data.error || data.detail || "Could not change password." });
+      } else {
+        setPwMsg({ ok: true, text: "Password changed successfully." });
+        setPwCurrent(""); setPwNew(""); setPwConfirm("");
+      }
+    } catch {
+      setPwMsg({ ok: false, text: "Cannot reach the server. Try again." });
+    } finally { setPwSaving(false); }
+  }
 
   // Reports state
   const [morningReport, setMorningReport] = useState<any>(null);
@@ -593,12 +625,12 @@ export function DashboardView({ onLogout }: Props) {
         </button>
       </div>
       <div className="flex gap-1">
-        {(["home", "messages", "reports", "teach", "chat", "review"] as const).map(p => (
+        {(["home", "messages", "reports", "teach", "chat", "review", "settings"] as const).map(p => (
           <button key={p} onClick={() => { setPage(p); if (p === "messages" && twinId) { apiFetch(`/twins/${twinId}/messages/read?reader=worker`, { method: "POST" }); setUnreadCount(0); } }}
             className={`px-3 py-1.5 rounded-lg text-[12px] font-medium transition-all flex items-center gap-1 ${
               page === p ? "bg-blue-600 text-white" : "text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-secondary)]"
             }`}>
-            {p === "home" ? "My Twin" : p === "messages" ? "Messages" : p === "reports" ? "Reports" : p === "teach" ? "Teach" : p === "chat" ? "Chat" : "Review"}
+            {p === "home" ? "My Twin" : p === "messages" ? "Messages" : p === "reports" ? "Reports" : p === "teach" ? "Teach" : p === "chat" ? "Chat" : p === "review" ? "Review" : "⚙ Settings"}
             {p === "messages" && unreadCount > 0 && (
               <span className="w-4 h-4 rounded-full bg-red-500 text-white text-[9px] flex items-center justify-center">{unreadCount}</span>
             )}
@@ -2627,6 +2659,64 @@ export function DashboardView({ onLogout }: Props) {
                 Send
               </button>
             </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+
+  if (page === "settings") return (
+    <div className="min-h-screen bg-[var(--bg-app)] flex flex-col">
+      {nav}
+      <div className="flex-1 max-w-[700px] mx-auto w-full p-4 md:p-6">
+        <h1 className="text-[22px] font-bold text-[var(--text-primary)] mb-1">⚙ Settings</h1>
+        <p className="text-[13px] text-[var(--text-muted)] mb-5">Manage your account and twin preferences.</p>
+
+        {/* Change Password */}
+        <div className="bg-[var(--card-bg)] rounded-2xl border border-[var(--card-border)] p-5 md:p-6 mb-4" style={{ boxShadow: "var(--shadow-sm)" }}>
+          <div className="flex items-center gap-2 mb-1">
+            <span className="text-[16px]">🔒</span>
+            <h2 className="text-[15px] font-bold text-[var(--text-primary)]">Change Password</h2>
+          </div>
+          <p className="text-[12px] text-[var(--text-muted)] mb-4">Set a new password for your twin login. Minimum 6 characters.</p>
+
+          <div className="space-y-3 max-w-[420px]">
+            <div>
+              <label className="block text-[12px] font-medium text-[var(--text-muted)] mb-1">Current password</label>
+              <input type="password" value={pwCurrent} onChange={e => setPwCurrent(e.target.value)} autoComplete="current-password"
+                className="w-full px-4 py-2.5 bg-[var(--bg-input)] border border-[var(--card-border)] rounded-xl text-[13px] text-[var(--text-primary)] placeholder:text-[var(--text-muted)] focus:outline-none focus:border-blue-400" />
+            </div>
+            <div>
+              <label className="block text-[12px] font-medium text-[var(--text-muted)] mb-1">New password</label>
+              <input type="password" value={pwNew} onChange={e => setPwNew(e.target.value)} autoComplete="new-password"
+                className="w-full px-4 py-2.5 bg-[var(--bg-input)] border border-[var(--card-border)] rounded-xl text-[13px] text-[var(--text-primary)] placeholder:text-[var(--text-muted)] focus:outline-none focus:border-blue-400" />
+            </div>
+            <div>
+              <label className="block text-[12px] font-medium text-[var(--text-muted)] mb-1">Confirm new password</label>
+              <input type="password" value={pwConfirm} onChange={e => setPwConfirm(e.target.value)} autoComplete="new-password"
+                onKeyDown={e => { if (e.key === "Enter" && !pwSaving) handleChangePassword(); }}
+                className="w-full px-4 py-2.5 bg-[var(--bg-input)] border border-[var(--card-border)] rounded-xl text-[13px] text-[var(--text-primary)] placeholder:text-[var(--text-muted)] focus:outline-none focus:border-blue-400" />
+            </div>
+
+            {pwMsg && (
+              <div className={`text-[12px] px-3 py-2 rounded-lg ${pwMsg.ok ? "bg-green-500/10 text-green-600 border border-green-500/30" : "bg-red-500/10 text-red-600 border border-red-500/30"}`}>
+                {pwMsg.ok ? "✓ " : "⚠ "}{pwMsg.text}
+              </div>
+            )}
+
+            <button onClick={handleChangePassword} disabled={pwSaving}
+              className="px-5 py-2.5 bg-gradient-to-r from-blue-500 to-purple-600 text-white rounded-xl text-[13px] font-semibold hover:opacity-90 disabled:opacity-50">
+              {pwSaving ? "Saving…" : "Change Password"}
+            </button>
+          </div>
+        </div>
+
+        {/* Account info (read-only) */}
+        <div className="bg-[var(--card-bg)] rounded-2xl border border-[var(--card-border)] p-5 md:p-6" style={{ boxShadow: "var(--shadow-sm)" }}>
+          <h2 className="text-[15px] font-bold text-[var(--text-primary)] mb-3">Account</h2>
+          <div className="space-y-2 text-[13px]">
+            <div className="flex justify-between"><span className="text-[var(--text-muted)]">Email</span><span className="text-[var(--text-primary)] font-medium">{typeof window !== "undefined" ? localStorage.getItem("worker_email") || "—" : "—"}</span></div>
+            <div className="flex justify-between"><span className="text-[var(--text-muted)]">Twin</span><span className="text-[var(--text-primary)] font-medium">{twin.name}</span></div>
           </div>
         </div>
       </div>
