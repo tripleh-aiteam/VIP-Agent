@@ -2475,7 +2475,8 @@ def _run_agent_impl(
                    or (_recent_stock_context(history) and any(
                        k in (transcript or "").lower() for k in _STOCK_FOLLOWUP_KW)))
     if (not confirmed_tool and (agent_id or "vip").lower() != "stock"
-            and "ask_agent" in TOOL_REGISTRY and _stock_turn):
+            and "ask_agent" in TOOL_REGISTRY and _stock_turn
+            and not _is_past_price(transcript)):
         # Pass recent history so the Stock agent can resolve follow-ups
         # ('should I buy it?', 'predict today') to the stock just discussed.
         res = execute_tool("ask_agent",
@@ -2510,30 +2511,28 @@ def _run_agent_impl(
                     "tool_used": "stock_quote", "tool_result": res}
 
     # ===== Deterministic PAST-DATE price routing =====
-    # 'X 어제 종가 / 10일 전 주가 / last week's price' MUST come from real daily
-    # history, never the LLM's memory (it otherwise hallucinates a number). Force
-    # the live Naver daily-history tool (stock agent) or relay to Stock (VIP).
+    # 'X 어제 종가 / 10일 전 주가 / June 10 close' MUST come from real daily history,
+    # never the LLM's memory (it otherwise hallucinates a number). The live Naver
+    # daily-history tool is the authority and is the SAME tool for VIP & Stock, so
+    # both give identical answers. If there is no KR daily data (US stock, ticker
+    # unresolved, or the date is out of range), fall back to web-search grounding so
+    # we still answer past dates like a general assistant would (with sources) —
+    # i.e. the same behavior as Google AI Mode, instead of relaying a "can't" reply.
     if not confirmed_tool and _is_past_price(transcript):
-        aid = (agent_id or "vip").lower()
-        if aid == "stock" and "stock_get_daily_history" in TOOL_REGISTRY:
-            hist_steps = [{"tool": "stock_get_daily_history",
-                           "args": {"query": transcript, "days": _history_days_for(transcript)}}]
-            return _run_chain(db, transcript, lang, hist_steps, current_path,
+        days = _history_days_for(transcript)
+        if "stock_get_daily_history" in TOOL_REGISTRY:
+            probe = execute_tool("stock_get_daily_history",
+                                 {"query": transcript, "days": days},
+                                 db=db, agent_id=agent_id, transcript=transcript)
+            if isinstance(probe, dict) and probe.get("ok") and probe.get("history"):
+                hist_steps = [{"tool": "stock_get_daily_history",
+                               "args": {"query": transcript, "days": days}}]
+                return _run_chain(db, transcript, lang, hist_steps, current_path,
+                                  selected_id, system, history or [], agent_id=agent_id)
+        if "web_search" in TOOL_REGISTRY:
+            ws_steps = [{"tool": "web_search", "args": {"query": transcript}}]
+            return _run_chain(db, transcript, lang, ws_steps, current_path,
                               selected_id, system, history or [], agent_id=agent_id)
-        elif aid != "stock" and "ask_agent" in TOOL_REGISTRY:
-            res = execute_tool("ask_agent", {"agent": "stock", "question": transcript},
-                               db=db, agent_id=agent_id, transcript=transcript)
-            ans = None
-            if isinstance(res, dict):
-                for a in (res.get("answers") or []):
-                    if a.get("answer"):
-                        ans = a["answer"]
-                        break
-            if ans:
-                return {"intent": "stock_history", "language": lang,
-                        "reply": str(ans)[:1400], "action": None, "speak": True,
-                        "transcript": transcript, "tool_used": "ask_agent",
-                        "tool_result": res}
 
     # ===== Deterministic STOCK-ADVICE routing =====
     # The LLM (especially for Korean) tends to answer 'should I buy X / X 어때?'
