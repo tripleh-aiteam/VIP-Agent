@@ -387,6 +387,10 @@ class DigitalTwin(Base):
     # default is OFF; the worker flips it on from Settings. Gates POST /observe.
     learning_consent = Column(Boolean, default=False)
     learning_consent_at = Column(DateTime, nullable=True)
+    # Peer help — owner opt-in for this twin to answer OTHER twins' questions
+    # (Twin Network). Default OFF: a twin never exposes answers derived from its
+    # private knowledge to colleagues/boss unless the owner turns this on.
+    peer_help_enabled = Column(Boolean, default=False)
     created_at = _now()
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 

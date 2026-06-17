@@ -182,14 +182,13 @@ def _require_admin(
     x_user_token: Optional[str] = Header(None),
     db: Session = Depends(get_db),
 ):
-    """Boss-only (admin/operator). Used for cross-twin orchestration (discussions)."""
+    """Boss-only (admin/operator). Used for cross-twin orchestration (discussions).
+    Always enforced (no grace fail-open) — this can reach twins' private brains."""
     if x_user_email and x_user_token:
         user = auth_service.verify_session_token(db, x_user_email, x_user_token)
         if user and user.role in ("admin", "operator"):
             return
-    if _auth_enforced():
-        raise HTTPException(status_code=403, detail="Admin only")
-    return  # grace mode during rollout
+    raise HTTPException(status_code=403, detail="Admin only")
 
 
 # ---------------------------------------------------------------------------
@@ -758,9 +757,34 @@ def ask_another_twin(twin_id: UUID, body: AskTwinBody, db: Session = Depends(get
 @router.post("/discuss")
 def twins_discuss(body: DiscussBody, db: Session = Depends(get_db), _ac=Depends(_require_admin)):
     """Boss-only: have several twins discuss a topic, each in their own voice,
-    seeing what the others said. Returns the transcript."""
+    seeing what the others said. Only twins whose owners enabled 'Help other
+    twins' participate (privacy wall). Returns the transcript."""
     from services import twin_comms
     return twin_comms.discuss(db, body.topic, body.twin_ids, rounds=body.rounds or 1)
+
+
+class PeerHelpBody(BaseModel):
+    peer_help_enabled: bool
+
+
+@router.get("/{twin_id}/peer-help")
+def get_peer_help(twin_id: UUID, db: Session = Depends(get_db), _ac=Depends(_check_twin_owner_access)):
+    """Whether this twin will answer other twins' questions. Owner-only."""
+    twin = twin_service.get_twin(db, twin_id)
+    if not twin:
+        raise HTTPException(404, "Twin not found")
+    return {"peer_help_enabled": bool(getattr(twin, "peer_help_enabled", False))}
+
+
+@router.post("/{twin_id}/peer-help")
+def set_peer_help(twin_id: UUID, body: PeerHelpBody, db: Session = Depends(get_db), _ac=Depends(_check_twin_owner_access)):
+    """Owner opts this twin in/out of answering other twins (privacy-default OFF)."""
+    twin = twin_service.get_twin(db, twin_id)
+    if not twin:
+        raise HTTPException(404, "Twin not found")
+    twin.peer_help_enabled = bool(body.peer_help_enabled)
+    db.commit()
+    return {"ok": True, "peer_help_enabled": bool(twin.peer_help_enabled)}
 
 
 class ProposeActionBody(BaseModel):

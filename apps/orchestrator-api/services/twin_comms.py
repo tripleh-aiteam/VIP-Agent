@@ -29,6 +29,11 @@ def _name(db: Session, twin_id) -> str:
     return t.name if t else "Unknown twin"
 
 
+def _peer_help_on(db: Session, twin_id) -> bool:
+    t = db.query(DigitalTwin).filter(DigitalTwin.id == twin_id).first()
+    return bool(t and getattr(t, "peer_help_enabled", False))
+
+
 def send_message(db: Session, from_twin_id, to_twin_id, content: str,
                  attachment_name: Optional[str] = None, attachment_text: Optional[str] = None,
                  kind: str = "message", thread_id=None) -> TwinPeerMessage:
@@ -57,6 +62,11 @@ def ask_twin(db: Session, from_twin_id, to_twin_id, question: str) -> dict:
     question = (question or "").strip()
     if not question:
         return {"ok": False, "error": "empty question"}
+    # Privacy wall: a twin only answers peer questions if its owner opted in.
+    if not _peer_help_on(db, to_twin_id):
+        return {"ok": False,
+                "error": f"{_name(db, to_twin_id)} hasn't enabled helping other twins. "
+                         "Their owner can turn on 'Help other twins' in Settings."}
     thread_id = _uuidlib.uuid4()
     asker = _name(db, from_twin_id)
     # Store the question (asker -> target)
@@ -79,8 +89,10 @@ def ask_twin(db: Session, from_twin_id, to_twin_id, question: str) -> dict:
 def discuss(db: Session, topic: str, twin_ids: list, rounds: int = 1) -> dict:
     """Each twin responds to `topic`, seeing prior responses. Returns the thread."""
     topic = (topic or "").strip()
+    # Privacy wall: only twins whose owners opted in may participate.
+    twin_ids = [t for t in (twin_ids or [])[:8] if _peer_help_on(db, t)]
     if not topic or len(twin_ids) < 2:
-        return {"ok": False, "error": "need a topic and at least 2 twins"}
+        return {"ok": False, "error": "Need a topic and at least 2 twins that have enabled 'Help other twins'."}
     thread_id = _uuidlib.uuid4()
     transcript = []
     for _ in range(max(1, min(rounds, 3))):

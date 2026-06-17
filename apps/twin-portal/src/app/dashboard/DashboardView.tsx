@@ -115,6 +115,32 @@ export function DashboardView({ onLogout }: Props) {
 
   useEffect(() => { if (page === "settings" && consent === null) loadConsent(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [page]);
 
+  // Settings → "Help other twins" (peer help opt-in, privacy-default OFF)
+  const [peerHelp, setPeerHelp] = useState<boolean | null>(null);
+  const [peerHelpSaving, setPeerHelpSaving] = useState(false);
+  async function loadPeerHelp() {
+    if (!twinId) return;
+    try {
+      const res = await apiFetch(`/twins/${twinId}/peer-help`);
+      const d = await res.json().catch(() => ({}));
+      if (res.ok) setPeerHelp(!!d.peer_help_enabled);
+    } catch { /* ignore */ }
+  }
+  async function togglePeerHelp() {
+    if (!twinId || peerHelpSaving) return;
+    const next = !peerHelp;
+    setPeerHelpSaving(true);
+    try {
+      const res = await apiFetch(`/twins/${twinId}/peer-help`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ peer_help_enabled: next }),
+      });
+      const d = await res.json().catch(() => ({}));
+      if (res.ok) setPeerHelp(!!d.peer_help_enabled);
+    } catch { /* ignore */ } finally { setPeerHelpSaving(false); }
+  }
+  useEffect(() => { if (page === "settings" && peerHelp === null) loadPeerHelp(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [page]);
+
   // Phase 1 — learning sources breakdown (Teach → Connected Tools)
   const [sources, setSources] = useState<{ total: number; untagged: number; consent: boolean; sources: { source: string; label: string; items: number }[] } | null>(null);
 
@@ -2954,6 +2980,31 @@ export function DashboardView({ onLogout }: Props) {
               Learning is off — your twin won’t improve from your work until you turn this on.
             </div>
           )}
+        </div>
+
+        {/* Help other twins (peer help) */}
+        <div className="bg-[var(--card-bg)] rounded-2xl border border-[var(--card-border)] p-5 md:p-6 mb-4" style={{ boxShadow: "var(--shadow-sm)" }}>
+          <div className="flex items-start justify-between gap-4">
+            <div className="flex-1">
+              <div className="flex items-center gap-2 mb-1">
+                <span className="text-[16px]">🤝</span>
+                <h2 className="text-[15px] font-bold text-[var(--text-primary)]">Help other twins</h2>
+                {peerHelp !== null && (
+                  <span className={`px-2 py-0.5 rounded-full text-[10px] font-semibold ${peerHelp ? "bg-green-500/15 text-green-600" : "bg-[var(--bg-secondary)] text-[var(--text-muted)]"}`}>
+                    {peerHelp ? "ON" : "OFF"}
+                  </span>
+                )}
+              </div>
+              <p className="text-[12px] text-[var(--text-muted)] leading-relaxed">
+                Allow your twin to answer questions from other teammates’ twins (the Network tab).
+                When OFF, no one else can query what your twin knows. You stay in control.
+              </p>
+            </div>
+            <button onClick={togglePeerHelp} disabled={peerHelp === null || peerHelpSaving} aria-label="Toggle helping other twins"
+              className={`relative shrink-0 w-12 h-7 rounded-full transition-all ${peerHelp ? "bg-green-500" : "bg-[var(--card-border)]"} ${(peerHelp === null || peerHelpSaving) ? "opacity-50" : ""}`}>
+              <span className={`absolute top-0.5 left-0.5 w-6 h-6 rounded-full bg-white shadow transition-transform ${peerHelp ? "translate-x-5" : ""}`} />
+            </button>
+          </div>
         </div>
 
         {/* Change Password */}
