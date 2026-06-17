@@ -44,7 +44,7 @@ export function DashboardView({ onLogout }: Props) {
   const [tasks, setTasks] = useState<any[]>([]);
   const [activity, setActivity] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
-  const [page, setPage] = useState<"home" | "teach" | "chat" | "review" | "messages" | "reports" | "settings">("home");
+  const [page, setPage] = useState<"home" | "teach" | "chat" | "review" | "messages" | "reports" | "settings" | "network">("home");
 
   // Settings → change password
   const [pwCurrent, setPwCurrent] = useState("");
@@ -161,6 +161,42 @@ export function DashboardView({ onLogout }: Props) {
       else alert(d.error === "no consent" ? "Turn on Watch & Learn first." : "Nothing new to pull yet.");
     } catch { /* ignore */ } finally { setCloudBusy(false); }
   }
+
+  // Phase 3 — Twin Network (twin-to-twin)
+  const [allTwins, setAllTwins] = useState<{ id: string; name: string; role?: string }[]>([]);
+  const [peerMsgs, setPeerMsgs] = useState<{ id: string; kind: string; from_name: string; content: string; direction: string; created_at?: string }[]>([]);
+  const [askTarget, setAskTarget] = useState("");
+  const [askQuestion, setAskQuestion] = useState("");
+  const [askBusy, setAskBusy] = useState(false);
+  const [askResult, setAskResult] = useState<{ question: string; answer: string; to: string } | null>(null);
+
+  async function loadNetwork() {
+    if (!twinId) return;
+    try {
+      const [tw, pm] = await Promise.all([
+        apiFetch(`/twins`).then(r => r.json()).catch(() => []),
+        apiFetch(`/twins/${twinId}/peer-messages`).then(r => r.json()).catch(() => ({ messages: [] })),
+      ]);
+      if (Array.isArray(tw)) setAllTwins(tw.filter((t: any) => t.id !== twinId));
+      setPeerMsgs(pm.messages || []);
+    } catch { /* ignore */ }
+  }
+
+  async function askTwin() {
+    if (!twinId || !askTarget || !askQuestion.trim() || askBusy) return;
+    setAskBusy(true); setAskResult(null);
+    try {
+      const res = await apiFetch(`/twins/${twinId}/ask-twin`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ to_twin_id: askTarget, question: askQuestion.trim() }),
+      });
+      const d = await res.json().catch(() => ({}));
+      if (res.ok && d.ok) { setAskResult({ question: d.question, answer: d.answer, to: d.to }); setAskQuestion(""); await loadNetwork(); }
+      else alert(d.error || d.detail || "Could not reach that twin.");
+    } catch { alert("Network error."); } finally { setAskBusy(false); }
+  }
+
+  useEffect(() => { if (page === "network") loadNetwork(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [page]);
 
   // Reports state
   const [morningReport, setMorningReport] = useState<any>(null);
@@ -722,12 +758,12 @@ export function DashboardView({ onLogout }: Props) {
         </button>
       </div>
       <div className="flex gap-1">
-        {(["home", "messages", "reports", "teach", "chat", "review", "settings"] as const).map(p => (
+        {(["home", "messages", "reports", "teach", "chat", "review", "network", "settings"] as const).map(p => (
           <button key={p} onClick={() => { setPage(p); if (p === "messages" && twinId) { apiFetch(`/twins/${twinId}/messages/read?reader=worker`, { method: "POST" }); setUnreadCount(0); } }}
             className={`px-3 py-1.5 rounded-lg text-[12px] font-medium transition-all flex items-center gap-1 ${
               page === p ? "bg-blue-600 text-white" : "text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-secondary)]"
             }`}>
-            {p === "home" ? "My Twin" : p === "messages" ? "Messages" : p === "reports" ? "Reports" : p === "teach" ? "Teach" : p === "chat" ? "Chat" : p === "review" ? "Review" : "⚙ Settings"}
+            {p === "home" ? "My Twin" : p === "messages" ? "Messages" : p === "reports" ? "Reports" : p === "teach" ? "Teach" : p === "chat" ? "Chat" : p === "review" ? "Review" : p === "network" ? "🤝 Network" : "⚙ Settings"}
             {p === "messages" && unreadCount > 0 && (
               <span className="w-4 h-4 rounded-full bg-red-500 text-white text-[9px] flex items-center justify-center">{unreadCount}</span>
             )}
@@ -2787,6 +2823,62 @@ export function DashboardView({ onLogout }: Props) {
               </button>
             </div>
           </div>
+        </div>
+      </div>
+    </div>
+  );
+
+  if (page === "network") return (
+    <div className="min-h-screen bg-[var(--bg-app)] flex flex-col">
+      {nav}
+      <div className="flex-1 max-w-[760px] mx-auto w-full p-4 md:p-6">
+        <h1 className="text-[22px] font-bold text-[var(--text-primary)] mb-1">🤝 Twin Network</h1>
+        <p className="text-[13px] text-[var(--text-muted)] mb-5">Your twin can ask other team members’ twins for help — they answer from what they know.</p>
+
+        {/* Ask another twin */}
+        <div className="bg-[var(--card-bg)] rounded-2xl border border-[var(--card-border)] p-5 md:p-6 mb-4" style={{ boxShadow: "var(--shadow-sm)" }}>
+          <h2 className="text-[15px] font-bold text-[var(--text-primary)] mb-3">Ask another twin</h2>
+          <div className="space-y-3">
+            <select value={askTarget} onChange={e => setAskTarget(e.target.value)}
+              className="w-full px-4 py-2.5 bg-[var(--bg-input)] border border-[var(--card-border)] rounded-xl text-[13px] text-[var(--text-primary)] focus:outline-none focus:border-blue-400">
+              <option value="">Choose a twin to ask…</option>
+              {allTwins.map(t => <option key={t.id} value={t.id}>{t.name}{t.role ? ` — ${t.role}` : ""}</option>)}
+            </select>
+            <textarea value={askQuestion} onChange={e => setAskQuestion(e.target.value)} rows={3}
+              placeholder="e.g. What did we decide about the Q3 pricing model?"
+              className="w-full px-4 py-3 bg-[var(--bg-input)] border border-[var(--card-border)] rounded-xl text-[13px] text-[var(--text-primary)] placeholder:text-[var(--text-muted)] focus:outline-none focus:border-blue-400 resize-none" />
+            <button onClick={askTwin} disabled={askBusy || !askTarget || !askQuestion.trim()}
+              className="px-5 py-2.5 bg-gradient-to-r from-blue-500 to-purple-600 text-white rounded-xl text-[13px] font-semibold hover:opacity-90 disabled:opacity-50">
+              {askBusy ? "Asking…" : "Ask"}
+            </button>
+          </div>
+          {askResult && (
+            <div className="mt-4 rounded-xl border border-[var(--card-border)] overflow-hidden">
+              <div className="px-4 py-2 bg-[var(--bg-secondary)] text-[12px] text-[var(--text-muted)]">You asked {askResult.to}: <span className="text-[var(--text-primary)]">{askResult.question}</span></div>
+              <div className="px-4 py-3 text-[13px] text-[var(--text-primary)] whitespace-pre-wrap">{askResult.answer}</div>
+            </div>
+          )}
+        </div>
+
+        {/* Recent conversations */}
+        <div className="bg-[var(--card-bg)] rounded-2xl border border-[var(--card-border)] p-5 md:p-6" style={{ boxShadow: "var(--shadow-sm)" }}>
+          <h2 className="text-[15px] font-bold text-[var(--text-primary)] mb-3">Recent conversations</h2>
+          {peerMsgs.length === 0 ? (
+            <div className="text-[12px] text-[var(--text-muted)] text-center py-6">No twin-to-twin messages yet. Ask a twin above to start.</div>
+          ) : (
+            <div className="space-y-2">
+              {peerMsgs.map(m => (
+                <div key={m.id} className={`flex ${m.direction === "out" ? "justify-end" : "justify-start"}`}>
+                  <div className={`max-w-[85%] px-3 py-2 rounded-xl text-[13px] ${m.direction === "out" ? "bg-blue-600 text-white" : "bg-[var(--bg-secondary)] text-[var(--text-primary)]"}`}>
+                    <div className={`text-[10px] mb-0.5 ${m.direction === "out" ? "text-blue-100" : "text-[var(--text-muted)]"}`}>
+                      {m.direction === "out" ? "Your twin" : m.from_name}{m.kind !== "message" ? ` · ${m.kind}` : ""}
+                    </div>
+                    {m.content}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       </div>
     </div>
