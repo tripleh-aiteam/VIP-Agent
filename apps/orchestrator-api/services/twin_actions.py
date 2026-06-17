@@ -109,8 +109,10 @@ def list_actions(db: Session, twin_id, status: Optional[str] = None, limit: int 
     return q.order_by(ProposedAction.created_at.desc()).limit(limit).all()
 
 
-def reject_action(db: Session, action_id, reviewer_email: str, comment: str = "") -> Optional[ProposedAction]:
-    a = db.query(ProposedAction).filter(ProposedAction.id == action_id).first()
+def reject_action(db: Session, twin_id, action_id, reviewer_email: str, comment: str = "") -> Optional[ProposedAction]:
+    # Scope to twin_id (IDOR guard): an owner may only review THEIR twin's actions.
+    a = db.query(ProposedAction).filter(
+        ProposedAction.id == action_id, ProposedAction.twin_id == twin_id).first()
     if not a or a.status != "pending":
         return a
     a.status = "rejected"
@@ -120,10 +122,11 @@ def reject_action(db: Session, action_id, reviewer_email: str, comment: str = ""
     return a
 
 
-def approve_action(db: Session, action_id, reviewer_email: str) -> Optional[ProposedAction]:
+def approve_action(db: Session, twin_id, action_id, reviewer_email: str) -> Optional[ProposedAction]:
     """Approve a pending action and execute it immediately. The row records the
-    full audit (approver + result + timestamp)."""
-    a = db.query(ProposedAction).filter(ProposedAction.id == action_id).first()
+    full audit (approver + result + timestamp). Scoped to twin_id (IDOR guard)."""
+    a = db.query(ProposedAction).filter(
+        ProposedAction.id == action_id, ProposedAction.twin_id == twin_id).first()
     if not a or a.status != "pending":
         return a
     a.reviewed_by = reviewer_email

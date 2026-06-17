@@ -601,7 +601,7 @@ def approve_twin_action(twin_id: UUID, action_id: UUID, x_user_email: Optional[s
                         db: Session = Depends(get_db), _ac=Depends(_check_twin_owner_access)):
     """Approve a pending action → executes it immediately (audited)."""
     from services import twin_actions
-    a = twin_actions.approve_action(db, action_id, x_user_email or "owner")
+    a = twin_actions.approve_action(db, twin_id, action_id, x_user_email or "owner")
     if not a:
         raise HTTPException(status_code=404, detail="Action not found")
     return _action_dict(a)
@@ -613,7 +613,7 @@ def reject_twin_action(twin_id: UUID, action_id: UUID, body: ReviewActionBody,
                        db: Session = Depends(get_db), _ac=Depends(_check_twin_owner_access)):
     """Reject a pending action (it never executes)."""
     from services import twin_actions
-    a = twin_actions.reject_action(db, action_id, x_user_email or "owner", body.comment or "")
+    a = twin_actions.reject_action(db, twin_id, action_id, x_user_email or "owner", body.comment or "")
     if not a:
         raise HTTPException(status_code=404, detail="Action not found")
     return _action_dict(a)
