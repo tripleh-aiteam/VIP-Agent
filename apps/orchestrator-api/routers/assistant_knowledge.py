@@ -124,6 +124,22 @@ def search_knowledge(req: SearchRequest, db: Session = Depends(get_db)):
     return {"ok": True, "hits": hits, "count": len(hits)}
 
 
+@router.post("/sync")
+def sync_knowledge(agentId: str = "stock", reset: bool = False,
+                   db: Session = Depends(get_db)):
+    """Populate the RAG knowledge base (Phase 2): ingest the stable data-dictionary
+    seed + recent orch_reports for the agent. Idempotent — re-running only adds new
+    reports. Also seeds the 'vip' agent so VIP retrieves the same knowledge.
+    Pass reset=true to first delete prior auto-synced chunks and re-ingest (use
+    after switching EMBED_PROVIDER=openai so chunks get embeddings)."""
+    from services.knowledge_sync import (seed_data_dictionary, sync_reports_to_kb,
+                                          reset_synced_kb)
+    reset_info = reset_synced_kb(db, agent_ids=("stock", "vip")) if reset else None
+    seed = seed_data_dictionary(db, agent_ids=("stock", "vip"))
+    rep = sync_reports_to_kb(db, agent_id=agentId)
+    return {"ok": True, "reset": reset_info, "seed": seed.get("seed"), "reports": rep}
+
+
 # ---------------------------------------------------------------------------
 # File management
 # ---------------------------------------------------------------------------

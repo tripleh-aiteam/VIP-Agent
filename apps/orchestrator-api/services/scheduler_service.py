@@ -1112,6 +1112,22 @@ def _master_daily_all():
     _master_daily_report(email_override="*ALL*")
 
 
+def _knowledge_sync_job():
+    """Feed the RAG knowledge base with the day's fresh reports (Phase 2), so the
+    chatbot grounds answers in real content. Runs after the morning reports."""
+    from db.base import SessionLocal
+    db = SessionLocal()
+    try:
+        from services.knowledge_sync import seed_data_dictionary, sync_reports_to_kb
+        seed_data_dictionary(db, agent_ids=("stock", "vip"))
+        res = sync_reports_to_kb(db, agent_id="stock")
+        log.info(f"scheduler: knowledge sync done {res}", extra={"action": "scheduler.knowledge_sync"})
+    except Exception as e:
+        log.warning(f"scheduler: knowledge sync failed: {str(e)[:120]}", extra={"action": "scheduler.knowledge_sync_failed"})
+    finally:
+        db.close()
+
+
 def run_all_reports_now(email_override: str | None = None, lang: str = "ko"):
     """On-demand: generate ALL 4 reports with the freshest data RIGHT NOW, then
     the master sends the consolidated email. Runs the sources first (so the master
@@ -1248,6 +1264,16 @@ def init_scheduler():
         replace_existing=True,
     )
     log.info("scheduler: Master report registered (21:50 UTC = 6:50 AM KST)", extra={"action": "scheduler.master_registered"})
+
+    # Knowledge-base sync (RAG / Phase 2) — 7:10 AM KST = 22:10 UTC, after the
+    # morning reports are written, so the chatbot grounds answers in fresh content.
+    _scheduler.add_job(
+        _knowledge_sync_job,
+        CronTrigger.from_crontab("10 22 * * *"),
+        id="knowledge-sync",
+        replace_existing=True,
+    )
+    log.info("scheduler: knowledge sync registered (22:10 UTC = 7:10 AM KST)", extra={"action": "scheduler.knowledge_sync_registered"})
 
     # ---- Weekly reports — Friday 5:00 PM KST = 08:00 UTC (sources), master 08:20.
     for jid, fn in (("kiwoom", _kiwoom_daily_report), ("newspaper", _newspaper_daily_report),

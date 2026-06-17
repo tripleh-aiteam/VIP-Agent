@@ -2455,6 +2455,18 @@ def _run_agent_impl(
         f"future. Never call a date that is on/before {_today} 'the future'.\n\n"
     )
     system = _date_rule + system
+    # Anti-hallucination grounding (Phase 2 / RAG): never invent specific facts;
+    # ground them in retrieved knowledge or a tool, else say so / search.
+    _ground_rule = (
+        "■ GROUNDING (avoid hallucination): Never invent specific facts — prices, "
+        "dates, figures, ownership, events, quotes. State such facts ONLY from (a) a "
+        "tool result, (b) the KNOWLEDGE BASE excerpts, or (c) a web_search result. If "
+        "you cannot ground a factual claim in one of those, say you are not certain or "
+        "use web_search — do NOT guess from memory. For past-date stock prices use the "
+        "history tool, never recall. You MAY briefly note the basis (e.g. '실시간 시세 기준', "
+        "'최근 리포트 기준', 'per web search') without exposing internal filenames.\n\n"
+    )
+    system = _ground_rule + system
     # Deterministic cross-agent pre-router (VIP only): force ask_agent for clear
     # stock/asset questions so they never fall through to web_search.
     _route_hint = _cross_agent_route_hint(transcript, agent_id)
