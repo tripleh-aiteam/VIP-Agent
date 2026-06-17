@@ -308,15 +308,37 @@ _PAST_DATE_KW = (
 )
 _PRICEY_KW = ("주가", "종가", "가격", "시세", "얼마", "price", "close", "closing", "cost", "거래량")
 
+# An EXPLICIT calendar date — '2026년 6월 10일', '2026-06-10', '6월 10일', 'June 10',
+# '10th June' — also marks a past-date price question (the relative _PAST_DATE_KW
+# list above does NOT cover these). Compiled lazily (the `re` alias is imported
+# later in this module).
+_EXPLICIT_DATE_PATTERN = (
+    r"(20\d{2}\s*[-./년]\s*\d{1,2}\s*[-./월]\s*\d{1,2})"
+    r"|(\d{1,2}\s*월\s*\d{1,2}\s*일)"
+    r"|((?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\.?\s+\d{1,2})"
+    r"|(\d{1,2}(?:st|nd|rd|th)?\s+(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*)"
+)
+_EXPLICIT_DATE_RE = None
+
+
+def _has_explicit_date(transcript: Optional[str]) -> bool:
+    global _EXPLICIT_DATE_RE
+    if _EXPLICIT_DATE_RE is None:
+        import re as _re2
+        _EXPLICIT_DATE_RE = _re2.compile(_EXPLICIT_DATE_PATTERN, _re2.IGNORECASE)
+    return bool(_EXPLICIT_DATE_RE.search(transcript or ""))
+
 
 def _is_past_price(transcript: Optional[str]) -> bool:
     """True when the user asks for a PAST-date price/volume of a specific stock —
-    e.g. '삼성전자 어제 종가', 'X 10일 전 주가', 'last week's SK Hynix price'. These
-    MUST be answered from real daily history, never the LLM's memory."""
+    e.g. '삼성전자 어제 종가', 'X 10일 전 주가', '2026년 6월 10일 SK하이닉스 종가',
+    'last week's SK Hynix price'. These MUST be answered from real daily history,
+    never the LLM's memory."""
     t = (transcript or "").strip().lower()
     if not t:
         return False
-    if not any(k in t for k in _PAST_DATE_KW) or not any(k in t for k in _PRICEY_KW):
+    has_past = any(k in t for k in _PAST_DATE_KW) or _has_explicit_date(transcript)
+    if not has_past or not any(k in t for k in _PRICEY_KW):
         return False
     return _stock_in_query(transcript) is not None
 
