@@ -382,6 +382,11 @@ class DigitalTwin(Base):
     status = Column(String(20), default="idle")               # online | working | idle | offline | in_meeting
     current_task_id = Column(UUID(as_uuid=True), nullable=True)
     linked_agent_id = Column(UUID(as_uuid=True), ForeignKey("core_agents.id"), nullable=True)
+    # Watch-&-Learn consent — worker must explicitly opt in before any AI-work
+    # capture (Claude Code / ChatGPT / etc.) is distilled into the twin. Privacy
+    # default is OFF; the worker flips it on from Settings. Gates POST /observe.
+    learning_consent = Column(Boolean, default=False)
+    learning_consent_at = Column(DateTime, nullable=True)
     created_at = _now()
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 

@@ -549,12 +549,60 @@ class ObserveBody(BaseModel):
 def observe_twin(twin_id: UUID, body: ObserveBody, db: Session = Depends(get_db), _ac=Depends(_check_twin_owner_access)):
     """Watch & Learn: push a raw work session/observation; the twin distills it
     into reusable knowledge (auto-embedded). Owner-only — only the worker feeds
-    their own twin; the boss never sees this content (privacy wall)."""
-    if not twin_service.get_twin(db, twin_id):
+    their own twin; the boss never sees this content (privacy wall).
+
+    Gated on the worker's Watch-&-Learn consent: if the worker has not opted in
+    from Settings, capture is refused (403). Consent is privacy-default OFF."""
+    twin = twin_service.get_twin(db, twin_id)
+    if not twin:
         raise HTTPException(status_code=404, detail="Twin not found")
+    if not getattr(twin, "learning_consent", False):
+        raise HTTPException(
+            status_code=403,
+            detail="Watch-&-Learn is off. Turn on learning consent in your Twin → Settings to let your twin learn from your AI work.")
     from services import watch_learn
     return watch_learn.observe_and_learn(
         db, twin_id, body.content, source=body.source or "session", kind=body.kind or "ai_session")
+
+
+class ConsentBody(BaseModel):
+    learning_consent: bool
+
+
+@router.get("/{twin_id}/consent")
+def get_learning_consent(twin_id: UUID, db: Session = Depends(get_db), _ac=Depends(_check_twin_owner_access)):
+    """Read the worker's Watch-&-Learn consent state. Owner-only."""
+    twin = twin_service.get_twin(db, twin_id)
+    if not twin:
+        raise HTTPException(status_code=404, detail="Twin not found")
+    return {
+        "learning_consent": bool(getattr(twin, "learning_consent", False)),
+        "learning_consent_at": twin.learning_consent_at.isoformat() if getattr(twin, "learning_consent_at", None) else None,
+    }
+
+
+@router.post("/{twin_id}/consent")
+def set_learning_consent(twin_id: UUID, body: ConsentBody, db: Session = Depends(get_db), _ac=Depends(_check_twin_owner_access)):
+    """Worker opts in/out of Watch-&-Learn capture. Owner-only. Privacy-default
+    OFF — nothing is captured until the worker turns this on here."""
+    twin = twin_service.get_twin(db, twin_id)
+    if not twin:
+        raise HTTPException(status_code=404, detail="Twin not found")
+    twin.learning_consent = bool(body.learning_consent)
+    twin.learning_consent_at = datetime.utcnow() if body.learning_consent else None
+    db.commit()
+    try:
+        twin_service.log_activity(
+            db, twin_id, "consent",
+            f"Worker {'enabled' if body.learning_consent else 'disabled'} Watch-&-Learn", {})
+        db.commit()
+    except Exception:
+        pass
+    return {
+        "ok": True,
+        "learning_consent": bool(twin.learning_consent),
+        "learning_consent_at": twin.learning_consent_at.isoformat() if twin.learning_consent_at else None,
+    }
 
 
 class ProposeActionBody(BaseModel):

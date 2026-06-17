@@ -78,6 +78,35 @@ export function DashboardView({ onLogout }: Props) {
     } finally { setPwSaving(false); }
   }
 
+  // Settings → Watch-&-Learn consent (privacy-default OFF; worker opts in here)
+  const [consent, setConsent] = useState<boolean | null>(null);
+  const [consentSaving, setConsentSaving] = useState(false);
+
+  async function loadConsent() {
+    if (!twinId) return;
+    try {
+      const res = await apiFetch(`/twins/${twinId}/consent`);
+      const d = await res.json().catch(() => ({}));
+      if (res.ok) setConsent(!!d.learning_consent);
+    } catch { /* leave as null; UI shows loading */ }
+  }
+
+  async function toggleConsent() {
+    if (!twinId || consentSaving) return;
+    const next = !consent;
+    setConsentSaving(true);
+    try {
+      const res = await apiFetch(`/twins/${twinId}/consent`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ learning_consent: next }),
+      });
+      const d = await res.json().catch(() => ({}));
+      if (res.ok) setConsent(!!d.learning_consent);
+    } catch { /* ignore */ } finally { setConsentSaving(false); }
+  }
+
+  useEffect(() => { if (page === "settings" && consent === null) loadConsent(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [page]);
+
   // Reports state
   const [morningReport, setMorningReport] = useState<any>(null);
   const [reportLoading, setReportLoading] = useState(false);
@@ -2671,6 +2700,37 @@ export function DashboardView({ onLogout }: Props) {
       <div className="flex-1 max-w-[700px] mx-auto w-full p-4 md:p-6">
         <h1 className="text-[22px] font-bold text-[var(--text-primary)] mb-1">⚙ Settings</h1>
         <p className="text-[13px] text-[var(--text-muted)] mb-5">Manage your account and twin preferences.</p>
+
+        {/* Watch & Learn consent */}
+        <div className="bg-[var(--card-bg)] rounded-2xl border border-[var(--card-border)] p-5 md:p-6 mb-4" style={{ boxShadow: "var(--shadow-sm)" }}>
+          <div className="flex items-start justify-between gap-4">
+            <div className="flex-1">
+              <div className="flex items-center gap-2 mb-1">
+                <span className="text-[16px]">🧠</span>
+                <h2 className="text-[15px] font-bold text-[var(--text-primary)]">Watch &amp; Learn</h2>
+                {consent !== null && (
+                  <span className={`px-2 py-0.5 rounded-full text-[10px] font-semibold ${consent ? "bg-green-500/15 text-green-600" : "bg-[var(--bg-secondary)] text-[var(--text-muted)]"}`}>
+                    {consent ? "ON" : "OFF"}
+                  </span>
+                )}
+              </div>
+              <p className="text-[12px] text-[var(--text-muted)] leading-relaxed">
+                Let your twin learn automatically from your AI work (Claude Code, ChatGPT, notes you share).
+                Everything stays <span className="font-semibold text-[var(--text-primary)]">private to you</span> — your boss can never see what your twin learns.
+                Capture only runs when this is ON, and you can turn it off anytime.
+              </p>
+            </div>
+            <button onClick={toggleConsent} disabled={consent === null || consentSaving} aria-label="Toggle Watch and Learn"
+              className={`relative shrink-0 w-12 h-7 rounded-full transition-all ${consent ? "bg-green-500" : "bg-[var(--card-border)]"} ${(consent === null || consentSaving) ? "opacity-50" : ""}`}>
+              <span className={`absolute top-0.5 left-0.5 w-6 h-6 rounded-full bg-white shadow transition-transform ${consent ? "translate-x-5" : ""}`} />
+            </button>
+          </div>
+          {consent === false && (
+            <div className="mt-3 text-[12px] px-3 py-2 rounded-lg bg-amber-500/10 text-amber-600 border border-amber-500/30">
+              Learning is off — your twin won’t improve from your work until you turn this on.
+            </div>
+          )}
+        </div>
 
         {/* Change Password */}
         <div className="bg-[var(--card-bg)] rounded-2xl border border-[var(--card-border)] p-5 md:p-6 mb-4" style={{ boxShadow: "var(--shadow-sm)" }}>
