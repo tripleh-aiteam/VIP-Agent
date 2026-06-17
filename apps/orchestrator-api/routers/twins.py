@@ -619,6 +619,16 @@ def reject_twin_action(twin_id: UUID, action_id: UUID, body: ReviewActionBody,
     return _action_dict(a)
 
 
+@router.post("/{twin_id}/eval")
+def run_twin_eval(twin_id: UUID, n: int = 5, db: Session = Depends(get_db), _ac=Depends(_check_twin_owner_access)):
+    """Owner-only fidelity eval — measures how well the twin recalls & uses what
+    it has learned (0-100), with per-question detail. Trust check before acting."""
+    if not twin_service.get_twin(db, twin_id):
+        raise HTTPException(status_code=404, detail="Twin not found")
+    from services import twin_eval
+    return twin_eval.run_eval(db, twin_id, n=min(max(n, 1), 10))
+
+
 @router.post("/{twin_id}/knowledge", status_code=201)
 def add_twin_knowledge(twin_id: UUID, body: TwinKnowledgeCreate, db: Session = Depends(get_db), _ac=Depends(_check_twin_owner_access)):
     """Add a knowledge document to a twin."""
