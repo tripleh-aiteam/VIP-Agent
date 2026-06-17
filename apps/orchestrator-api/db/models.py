@@ -423,6 +423,27 @@ class TwinKnowledgeEmbedding(Base):
     created_at = _now()
 
 
+class ProposedAction(Base):
+    """An action a twin wants to take in the real world — proposed, then approved
+    by the owner before it runs. The row is also the AUDIT record (who/what/when/
+    result). Auto-creates via create_all. Safe-by-default: nothing executes until
+    status='approved'."""
+    __tablename__ = "twin_proposed_actions"
+
+    id = _uuid()
+    twin_id = Column(UUID(as_uuid=True), ForeignKey("digital_twins.id"), nullable=False, index=True)
+    action_type = Column(String(40), nullable=False)   # create_task | send_message | add_note | send_email | ...
+    summary = Column(String(300), default="")          # human-readable "what it wants to do"
+    payload = Column(JSONB, default=dict)              # action args
+    status = Column(String(20), default="pending", index=True)  # pending|approved|rejected|executed|failed
+    proposed_by = Column(String(40), default="twin")   # twin | system | worker
+    reviewed_by = Column(String(120), nullable=True)   # email of approver/rejecter
+    review_comment = Column(Text, nullable=True)
+    result = Column(Text, nullable=True)               # execution result / error
+    created_at = _now()
+    executed_at = Column(DateTime, nullable=True)
+
+
 class TwinActivityLog(Base):
     __tablename__ = "twin_activity_logs"
 

@@ -557,6 +557,68 @@ def observe_twin(twin_id: UUID, body: ObserveBody, db: Session = Depends(get_db)
         db, twin_id, body.content, source=body.source or "session", kind=body.kind or "ai_session")
 
 
+class ProposeActionBody(BaseModel):
+    action_type: str
+    summary: Optional[str] = ""
+    payload: Optional[dict] = None
+    proposed_by: Optional[str] = "twin"
+
+
+class ReviewActionBody(BaseModel):
+    comment: Optional[str] = ""
+
+
+def _action_dict(a) -> dict:
+    return {
+        "id": str(a.id), "action_type": a.action_type, "summary": a.summary,
+        "status": a.status, "proposed_by": a.proposed_by, "reviewed_by": a.reviewed_by,
+        "result": a.result, "payload": a.payload,
+        "created_at": a.created_at.isoformat() if a.created_at else None,
+        "executed_at": a.executed_at.isoformat() if a.executed_at else None,
+    }
+
+
+@router.post("/{twin_id}/actions/propose")
+def propose_twin_action(twin_id: UUID, body: ProposeActionBody, db: Session = Depends(get_db), _ac=Depends(_check_twin_owner_access)):
+    """Propose an action the twin wants to take. It stays PENDING until approved."""
+    from services import twin_actions
+    if not twin_actions.is_known(body.action_type):
+        raise HTTPException(status_code=400, detail=f"Unknown action_type. Known: {list(twin_actions.ACTION_REGISTRY)}")
+    a = twin_actions.propose_action(db, twin_id, body.action_type, body.summary or body.action_type,
+                                    body.payload, body.proposed_by or "twin")
+    return _action_dict(a)
+
+
+@router.get("/{twin_id}/actions")
+def list_twin_actions(twin_id: UUID, status: Optional[str] = None, db: Session = Depends(get_db), _ac=Depends(_check_twin_owner_access)):
+    """List a twin's proposed/executed actions (the approval queue + audit trail)."""
+    from services import twin_actions
+    return [_action_dict(a) for a in twin_actions.list_actions(db, twin_id, status)]
+
+
+@router.post("/{twin_id}/actions/{action_id}/approve")
+def approve_twin_action(twin_id: UUID, action_id: UUID, x_user_email: Optional[str] = Header(None),
+                        db: Session = Depends(get_db), _ac=Depends(_check_twin_owner_access)):
+    """Approve a pending action → executes it immediately (audited)."""
+    from services import twin_actions
+    a = twin_actions.approve_action(db, action_id, x_user_email or "owner")
+    if not a:
+        raise HTTPException(status_code=404, detail="Action not found")
+    return _action_dict(a)
+
+
+@router.post("/{twin_id}/actions/{action_id}/reject")
+def reject_twin_action(twin_id: UUID, action_id: UUID, body: ReviewActionBody,
+                       x_user_email: Optional[str] = Header(None),
+                       db: Session = Depends(get_db), _ac=Depends(_check_twin_owner_access)):
+    """Reject a pending action (it never executes)."""
+    from services import twin_actions
+    a = twin_actions.reject_action(db, action_id, x_user_email or "owner", body.comment or "")
+    if not a:
+        raise HTTPException(status_code=404, detail="Action not found")
+    return _action_dict(a)
+
+
 @router.post("/{twin_id}/knowledge", status_code=201)
 def add_twin_knowledge(twin_id: UUID, body: TwinKnowledgeCreate, db: Session = Depends(get_db), _ac=Depends(_check_twin_owner_access)):
     """Add a knowledge document to a twin."""
