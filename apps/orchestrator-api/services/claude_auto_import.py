@@ -250,14 +250,26 @@ def import_recent_sessions(
 
 
 def auto_import_all_twins(db: Session) -> list[dict]:
-    """Called by scheduler — auto-import for all twins linked to workers."""
+    """Called by scheduler — auto-import for all twins linked to workers.
+
+    Respects Watch-&-Learn consent: a twin is only fed if its owner has opted in
+    (learning_consent = True). This closes the gap where the hourly job could
+    ingest the host machine's Claude Code sessions into twins that never opted
+    in — the consent toggle now gates this internal path too, not just /observe.
+    """
     twins = db.query(DigitalTwin).all()
     results = []
+    skipped = 0
     for twin in twins:
+        if not getattr(twin, "learning_consent", False):
+            skipped += 1
+            continue
         try:
             result = import_recent_sessions(db, twin.id, hours=6, max_sessions=3)
             if result.get("imported_count", 0) > 0:
                 results.append(result)
         except Exception as e:
             log.warning(f"claude_auto: failed for {twin.name}: {e}")
+    if skipped:
+        log.info(f"claude_auto: skipped {skipped} twin(s) without learning consent")
     return results
