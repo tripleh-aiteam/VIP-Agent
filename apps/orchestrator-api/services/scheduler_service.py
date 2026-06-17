@@ -1120,7 +1120,7 @@ def _knowledge_sync_job():
     try:
         from services.knowledge_sync import seed_data_dictionary, sync_reports_to_kb
         seed_data_dictionary(db, agent_ids=("stock", "vip"))
-        res = sync_reports_to_kb(db, agent_id="stock")
+        res = {aid: sync_reports_to_kb(db, agent_id=aid) for aid in ("stock", "vip")}
         log.info(f"scheduler: knowledge sync done {res}", extra={"action": "scheduler.knowledge_sync"})
     except Exception as e:
         log.warning(f"scheduler: knowledge sync failed: {str(e)[:120]}", extra={"action": "scheduler.knowledge_sync_failed"})
