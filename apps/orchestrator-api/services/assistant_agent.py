@@ -2376,13 +2376,17 @@ def _run_agent_impl(
     kb_hits: list[dict] = []
     rag_error: Optional[str] = None
     try:
-        from services.knowledge_ingest import rag_retrieve
+        from services.knowledge_ingest import rag_retrieve, EMBED_PROVIDER as _EMB
+        # Embedding cosine scores run lower than keyword scores (and lower still
+        # cross-lingual EN<->KO), so use a lower floor in semantic mode to avoid
+        # filtering valid matches; keyword scores are high so keep 0.35 there.
+        _min_sim = 0.25 if _EMB != "none" else 0.35
         kb_hits = rag_retrieve(
             db,
             agent_id=agent_id,
             query=transcript,
             top_k=8,
-            min_sim=0.35,
+            min_sim=_min_sim,
         )
         if kb_hits:
             log.info(
