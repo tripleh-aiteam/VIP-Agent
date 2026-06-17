@@ -544,6 +544,22 @@ def _auto_import_claude_sessions():
         db.close()
 
 
+@with_retry(max_attempts=2, backoff_seconds=(30, 120), job_name="cloud_pull", alert_on_final_failure=False)
+def _auto_cloud_pull():
+    """Phase 2 — pull connected cloud sources (Google Drive/Calendar/Gmail, Notion)
+    for every twin that has consent + a connection. No-op if no provider keys set."""
+    db = SessionLocal()
+    try:
+        from services.cloud_sources import pull_all_due
+        res = pull_all_due(db)
+        log.info(f"cloud-pull: {res}", extra={"action": "twin.cloud_pull"})
+    except Exception as e:
+        db.rollback()
+        log.error(f"cloud-pull: error {e}", extra={"action": "twin.cloud_pull_error"})
+    finally:
+        db.close()
+
+
 @with_retry(max_attempts=2, backoff_seconds=(60, 300), job_name="daily_standing_tasks")
 def _auto_assign_daily_standing_tasks():
     """
@@ -1335,6 +1351,15 @@ def init_scheduler():
         replace_existing=True,
     )
     log.info("scheduler: twin self-improvement registered (every 6 hours)", extra={"action": "scheduler.twin_self_improve_registered"})
+
+    # Cloud auto-pull (Google/Notion) — every 2 hours, offset 20 min
+    _scheduler.add_job(
+        _auto_cloud_pull,
+        CronTrigger.from_crontab("20 */2 * * *"),
+        id="twin-cloud-pull",
+        replace_existing=True,
+    )
+    log.info("scheduler: cloud auto-pull registered (every 2 hours)", extra={"action": "scheduler.cloud_pull_registered"})
 
     # Chatbot self-improvement — runs every 6 hours, offset 30 min from twin
     _scheduler.add_job(

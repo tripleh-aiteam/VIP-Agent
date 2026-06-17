@@ -641,6 +641,56 @@ def get_learning_sources(twin_id: UUID, db: Session = Depends(get_db), _ac=Depen
     }
 
 
+# ---------------------------------------------------------------------------
+#  Phase 2 — cloud auto-pull (Google Drive/Calendar/Gmail, Notion)
+# ---------------------------------------------------------------------------
+@router.get("/{twin_id}/cloud/status")
+def cloud_status(twin_id: UUID, db: Session = Depends(get_db), _ac=Depends(_check_twin_owner_access)):
+    """Which cloud providers are configured + which this twin has connected. Owner-only."""
+    from services import cloud_sources
+    from db.models import OAuthConnection
+    conns = db.query(OAuthConnection).filter(OAuthConnection.twin_id == twin_id).all()
+    connected = {c.provider: {"email": c.connected_email, "status": c.status,
+                              "last_pull_at": c.last_pull_at.isoformat() if c.last_pull_at else None}
+                 for c in conns}
+    return {"providers": cloud_sources.provider_status(), "connected": connected}
+
+
+@router.get("/{twin_id}/oauth/google/auth-url")
+def google_auth_url_ep(twin_id: UUID, db: Session = Depends(get_db), _ac=Depends(_check_twin_owner_access)):
+    """OAuth URL for the worker to authorize Google (Drive+Calendar+Gmail). Owner-only."""
+    from services import cloud_sources
+    if not cloud_sources.google_configured():
+        raise HTTPException(400, "Google not configured by admin (GOOGLE_CLIENT_ID/SECRET).")
+    if not twin_service.get_twin(db, twin_id):
+        raise HTTPException(404, "Twin not found")
+    return {"auth_url": cloud_sources.google_auth_url(str(twin_id))}
+
+
+@router.get("/oauth/google/callback")
+def google_oauth_callback(code: str = "", state: str = "", db: Session = Depends(get_db)):
+    """Google redirects here after the worker authorizes. Public (browser redirect):
+    exchanges the code, stores tokens for the twin (state=twin_id), then bounces
+    back to the portal."""
+    from fastapi.responses import RedirectResponse
+    from services import cloud_sources
+    portal = os.getenv("WORKER_APP_URL", "https://vip-twin-portal.vercel.app").rstrip("/")
+    ok = False
+    if code and state:
+        try:
+            ok = cloud_sources.google_exchange_and_store(db, code, state)
+        except Exception:
+            ok = False
+    return RedirectResponse(f"{portal}/dashboard?google={'connected' if ok else 'failed'}")
+
+
+@router.post("/{twin_id}/cloud/pull")
+def cloud_pull_now(twin_id: UUID, db: Session = Depends(get_db), _ac=Depends(_check_twin_owner_access)):
+    """Manually trigger a cloud pull for this twin (owner-only). Consent-gated."""
+    from services import cloud_sources
+    return cloud_sources.pull_twin(db, twin_id)
+
+
 class ProposeActionBody(BaseModel):
     action_type: str
     summary: Optional[str] = ""

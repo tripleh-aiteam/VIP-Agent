@@ -1280,3 +1280,23 @@ class ChatbotTenant(Base):
     active = Column(Boolean, default=True, nullable=False)
     created_at = _now()
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class OAuthConnection(Base):
+    """Per-twin OAuth tokens for cloud learning sources (Google, Notion).
+    One row per (twin, provider). Auto-pull uses these to fetch the worker's
+    docs/calendar/mail/notes on a schedule. Created when the worker clicks
+    "Connect" in the portal; gated by the twin's learning_consent at pull time."""
+    __tablename__ = "oauth_connections"
+    id = _uuid()
+    twin_id = Column(UUID(as_uuid=True), ForeignKey("digital_twins.id"), nullable=False, index=True)
+    provider = Column(String(20), nullable=False)            # google | notion
+    connected_email = Column(String(200))                    # the account that authorized
+    access_token = Column(Text)
+    refresh_token = Column(Text)
+    scopes = Column(Text)
+    expires_at = Column(DateTime, nullable=True)             # access-token expiry
+    status = Column(String(20), default="active")           # active | revoked | error
+    last_pull_at = Column(DateTime, nullable=True)
+    created_at = _now()
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

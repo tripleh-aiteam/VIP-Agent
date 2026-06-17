@@ -51,6 +51,8 @@ SUPPORTED_SOURCES = {
     "chatgpt": "ChatGPT",
     "claude-cowork": "Claude Cowork",
     "google-drive": "Google Drive",
+    "google-calendar": "Google Calendar",
+    "gmail": "Gmail",
     "notion": "Notion",
     "notes": "Notes",
 }
@@ -64,6 +66,8 @@ def norm_source(s: str) -> str:
         "cowork": "claude-cowork", "claude-cowork": "claude-cowork", "claude-desktop": "claude-cowork",
         "gpt": "chatgpt", "openai": "chatgpt", "chat-gpt": "chatgpt", "chatgpt": "chatgpt",
         "gdrive": "google-drive", "drive": "google-drive", "google-drive": "google-drive",
+        "calendar": "google-calendar", "gcal": "google-calendar", "google-calendar": "google-calendar",
+        "mail": "gmail", "email": "gmail", "gmail": "gmail",
         "notion": "notion", "session": "claude-code", "ai_session": "claude-code",
     }
     return aliases.get(k, k if k in SUPPORTED_SOURCES else "notes")
