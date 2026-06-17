@@ -155,7 +155,7 @@ def forgot_password(db: Session, email: str) -> dict:
     user.reset_token_expires = datetime.utcnow() + timedelta(hours=RESET_TOKEN_HOURS)
     db.commit()
 
-    email_sent, err = _send_recovery_email(user.email, token)
+    email_sent, err = _send_recovery_email(user.email, token, is_worker=(user.role == "worker"))
 
     if email_sent:
         log.info(f"auth: recovery email sent to {user.email}", extra={"action": "auth.reset_requested"})
@@ -230,14 +230,20 @@ def reset_via_telegram(db: Session, email: str) -> dict:
     return {"success": True, "message": "Temporary password sent to Telegram! Check @vip_agentbot_bot."}
 
 
-def _send_recovery_email(to_email: str, token: str) -> tuple[bool, str | None]:
+def _send_recovery_email(to_email: str, token: str, is_worker: bool = False) -> tuple[bool, str | None]:
     """Send password recovery email via Gmail SMTP. Returns (success, error_message)."""
     import smtplib
     from email.mime.text import MIMEText
 
     smtp_user = (os.getenv("SMTP_EMAIL", "") or "").strip()
     smtp_pass = (os.getenv("SMTP_PASSWORD", "") or "").replace(" ", "")
-    app_url = os.getenv("APP_URL", "http://localhost:3000").rstrip("/")
+    # Workers reset on the Twin Portal; admins on the dashboard (APP_URL). Both
+    # apps read ?token= from the root and show the reset form. WORKER_APP_URL can
+    # override the portal default if needed.
+    if is_worker:
+        app_url = os.getenv("WORKER_APP_URL", "https://vip-twin-portal.vercel.app").rstrip("/")
+    else:
+        app_url = os.getenv("APP_URL", "http://localhost:3000").rstrip("/")
 
     if not smtp_user or not smtp_pass:
         return False, "Email service not configured (SMTP_EMAIL / SMTP_PASSWORD missing)"
