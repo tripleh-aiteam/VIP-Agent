@@ -243,6 +243,12 @@ def _cross_agent_route_hint(transcript: Optional[str], agent_id: Optional[str]) 
             is_stock = any(name in t for name in _NAME_TO_TICKER if len(name) >= 3)
         except Exception:
             pass
+    if is_stock and _is_report_question(transcript):
+        return ("■ [ROUTING] This asks about OUR reports / past analysis / knowledge "
+                "base. ANSWER FROM THE KNOWLEDGE BASE excerpts provided in this "
+                "prompt — synthesize the concrete report findings (companies, "
+                "numbers, recommendations). Do NOT call ask_agent; do NOT delegate; "
+                "do NOT say you cannot access internal reports.\n\n")
     if is_stock:
         return ("■ [ROUTING — MANDATORY] This is a STOCK question. You MUST call "
                 "ask_agent(agent='stock', question=<the user's exact question>) to "
@@ -341,6 +347,24 @@ def _is_past_price(transcript: Optional[str]) -> bool:
     if not has_past or not any(k in t for k in _PRICEY_KW):
         return False
     return _stock_in_query(transcript) is not None
+
+
+# A question ABOUT our reports / knowledge base / past analysis — answer from VIP's
+# own RAG (the report KB lives here), NOT by delegating to the Stock backend (which
+# has only live data, no reports).
+_REPORT_KW = (
+    "리포트", "레포트", "보고서", "report", "우리 분석", "우리 리포트", "우리가 분석",
+    "our report", "our analysis", "최근 분석에서", "분석에서", "분석했", "뭐라고 했",
+    "어떻게 봤", "어떻게 분석", "추천 종목", "추천한 종목", "추천했", "코멘트",
+    "knowledge base", "데이터 사전", "지식베이스",
+)
+
+
+def _is_report_question(transcript: Optional[str]) -> bool:
+    """True when the user asks about OUR reports / past analysis / knowledge base —
+    these are answered from VIP's RAG, not delegated to the live-only Stock agent."""
+    t = (transcript or "").strip().lower()
+    return bool(t) and any(k in t for k in _REPORT_KW)
 
 
 # Clear stock-domain keywords (besides a specific stock name).
@@ -2510,7 +2534,8 @@ def _run_agent_impl(
                        k in (transcript or "").lower() for k in _STOCK_FOLLOWUP_KW)))
     if (not confirmed_tool and (agent_id or "vip").lower() != "stock"
             and "ask_agent" in TOOL_REGISTRY and _stock_turn
-            and not _is_past_price(transcript)):
+            and not _is_past_price(transcript)
+            and not _is_report_question(transcript)):
         # Pass recent history so the Stock agent can resolve follow-ups
         # ('should I buy it?', 'predict today') to the stock just discussed.
         res = execute_tool("ask_agent",
