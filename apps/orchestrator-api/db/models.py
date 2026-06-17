@@ -1300,3 +1300,20 @@ class OAuthConnection(Base):
     last_pull_at = Column(DateTime, nullable=True)
     created_at = _now()
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class TwinPeerMessage(Base):
+    """Twin-to-twin (person-to-person twin) messages. Lets twins talk to each
+    other: plain messages, an autonomous question+answer, or a group discussion
+    (grouped by thread_id). Distinct from DirectMessage (boss<->worker)."""
+    __tablename__ = "twin_peer_messages"
+    id = _uuid()
+    from_twin_id = Column(UUID(as_uuid=True), ForeignKey("digital_twins.id"), nullable=False, index=True)
+    to_twin_id = Column(UUID(as_uuid=True), ForeignKey("digital_twins.id"), nullable=True, index=True)  # null = broadcast/discussion
+    thread_id = Column(UUID(as_uuid=True), nullable=True, index=True)   # groups a Q&A / discussion
+    kind = Column(String(20), default="message")    # message | question | answer | discussion
+    content = Column(Text, nullable=False)
+    attachment_name = Column(String(255), nullable=True)
+    attachment_text = Column(Text, nullable=True)    # extracted text of an attached doc
+    is_read = Column(Boolean, default=False)
+    created_at = _now()

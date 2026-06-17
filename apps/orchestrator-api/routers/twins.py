@@ -177,6 +177,21 @@ def _check_twin_owner_access(
     raise HTTPException(status_code=403, detail="Private to the twin's owner")
 
 
+def _require_admin(
+    x_user_email: Optional[str] = Header(None),
+    x_user_token: Optional[str] = Header(None),
+    db: Session = Depends(get_db),
+):
+    """Boss-only (admin/operator). Used for cross-twin orchestration (discussions)."""
+    if x_user_email and x_user_token:
+        user = auth_service.verify_session_token(db, x_user_email, x_user_token)
+        if user and user.role in ("admin", "operator"):
+            return
+    if _auth_enforced():
+        raise HTTPException(status_code=403, detail="Admin only")
+    return  # grace mode during rollout
+
+
 # ---------------------------------------------------------------------------
 #  Twin CRUD
 # ---------------------------------------------------------------------------
@@ -692,6 +707,60 @@ def cloud_pull_now(twin_id: UUID, db: Session = Depends(get_db), _ac=Depends(_ch
     """Manually trigger a cloud pull for this twin (owner-only). Consent-gated."""
     from services import cloud_sources
     return cloud_sources.pull_twin(db, twin_id)
+
+
+# ---------------------------------------------------------------------------
+#  Phase 3 — twin-to-twin communication
+# ---------------------------------------------------------------------------
+class PeerMessageBody(BaseModel):
+    to_twin_id: UUID
+    content: str
+
+
+class AskTwinBody(BaseModel):
+    to_twin_id: UUID
+    question: str
+
+
+class DiscussBody(BaseModel):
+    topic: str
+    twin_ids: list[UUID]
+    rounds: Optional[int] = 1
+
+
+@router.get("/{twin_id}/peer-messages")
+def get_peer_messages(twin_id: UUID, db: Session = Depends(get_db), _ac=Depends(_check_twin_owner_access)):
+    """This twin's conversations with other twins. Owner-only."""
+    from services import twin_comms
+    return {"messages": twin_comms.inbox(db, twin_id)}
+
+
+@router.post("/{twin_id}/peer-messages")
+def post_peer_message(twin_id: UUID, body: PeerMessageBody, db: Session = Depends(get_db), _ac=Depends(_check_twin_owner_access)):
+    """This twin sends a message to another twin. Owner-only (you act as your twin)."""
+    from services import twin_comms
+    if not twin_service.get_twin(db, body.to_twin_id):
+        raise HTTPException(404, "Recipient twin not found")
+    m = twin_comms.send_message(db, twin_id, body.to_twin_id, body.content)
+    return {"ok": True, "id": str(m.id)}
+
+
+@router.post("/{twin_id}/ask-twin")
+def ask_another_twin(twin_id: UUID, body: AskTwinBody, db: Session = Depends(get_db), _ac=Depends(_check_twin_owner_access)):
+    """This twin asks another twin a question; that twin's brain answers from its
+    own knowledge. Owner-only (you trigger your twin to ask)."""
+    from services import twin_comms
+    if not twin_service.get_twin(db, body.to_twin_id):
+        raise HTTPException(404, "Target twin not found")
+    return twin_comms.ask_twin(db, twin_id, body.to_twin_id, body.question)
+
+
+@router.post("/discuss")
+def twins_discuss(body: DiscussBody, db: Session = Depends(get_db), _ac=Depends(_require_admin)):
+    """Boss-only: have several twins discuss a topic, each in their own voice,
+    seeing what the others said. Returns the transcript."""
+    from services import twin_comms
+    return twin_comms.discuss(db, body.topic, body.twin_ids, rounds=body.rounds or 1)
 
 
 class ProposeActionBody(BaseModel):
