@@ -127,6 +127,41 @@ export function DashboardView({ onLogout }: Props) {
     } catch { /* ignore */ }
   }
 
+  // Phase 2 — cloud connections (Google/Notion)
+  const [cloudStatus, setCloudStatus] = useState<{ providers: { google: boolean; notion: boolean }; connected: Record<string, { email?: string; status?: string; last_pull_at?: string }> } | null>(null);
+  const [cloudBusy, setCloudBusy] = useState(false);
+
+  async function loadCloudStatus() {
+    if (!twinId) return;
+    try {
+      const res = await apiFetch(`/twins/${twinId}/cloud/status`);
+      const d = await res.json().catch(() => null);
+      if (res.ok && d) setCloudStatus(d);
+    } catch { /* ignore */ }
+  }
+
+  async function connectGoogle() {
+    if (!twinId || cloudBusy) return;
+    setCloudBusy(true);
+    try {
+      const res = await apiFetch(`/twins/${twinId}/oauth/google/auth-url`);
+      const d = await res.json().catch(() => ({}));
+      if (res.ok && d.auth_url) { window.location.href = d.auth_url; return; }
+      alert(d.detail || "Google isn't configured yet.");
+    } catch { alert("Could not start Google connection."); } finally { setCloudBusy(false); }
+  }
+
+  async function cloudPullNow() {
+    if (!twinId || cloudBusy) return;
+    setCloudBusy(true);
+    try {
+      const res = await apiFetch(`/twins/${twinId}/cloud/pull`, { method: "POST" });
+      const d = await res.json().catch(() => ({}));
+      if (res.ok && d.ok) { await loadSources(); await loadCloudStatus(); alert("Pulled! Your twin learned from your connected accounts."); }
+      else alert(d.error === "no consent" ? "Turn on Watch & Learn first." : "Nothing new to pull yet.");
+    } catch { /* ignore */ } finally { setCloudBusy(false); }
+  }
+
   // Reports state
   const [morningReport, setMorningReport] = useState<any>(null);
   const [reportLoading, setReportLoading] = useState(false);
@@ -188,7 +223,19 @@ export function DashboardView({ onLogout }: Props) {
 
   // Teach state
   const [teachTab, setTeachTab] = useState<"upload" | "rules" | "import" | "connections" | "knowledge">("upload");
-  useEffect(() => { if (page === "teach" && teachTab === "connections") loadSources(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [page, teachTab]);
+  useEffect(() => { if (page === "teach" && teachTab === "connections") { loadSources(); loadCloudStatus(); } /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [page, teachTab]);
+
+  // After Google OAuth, the callback redirects back with ?google=connected
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const g = new URLSearchParams(window.location.search).get("google");
+    if (!g) return;
+    setPage("teach"); setTeachTab("connections");
+    window.history.replaceState({}, "", window.location.pathname);
+    setTimeout(() => alert(g === "connected"
+      ? "✓ Google connected — your twin will now auto-learn from Drive, Calendar & Gmail."
+      : "Google connection didn’t complete. Please try again."), 400);
+  /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, []);
   const [importSource, setImportSource] = useState<"claude" | "chatgpt" | "gemini">("claude");
   const [importText, setImportText] = useState("");
   const [importTitle, setImportTitle] = useState("");
@@ -1489,10 +1536,15 @@ export function DashboardView({ onLogout }: Props) {
             { key: "claude-cowork", icon: "🧩", color: "bg-orange-50", title: "Claude Cowork", desc: "Your Claude workspace notes",
               setup: "Drop exported text into  twin_capture_inbox/claude-cowork  on your computer." },
             { key: "google-drive",  icon: "📁", color: "bg-blue-50", title: "Google Drive", desc: "Your documents & notes",
-              setup: "Install Google Drive for Desktop, then set TWIN_GDRIVE_DIR to your synced folder (read-only)." },
+              setup: "Connect Google above — Drive is pulled automatically every couple of hours." },
+            { key: "google-calendar", icon: "📅", color: "bg-sky-50", title: "Google Calendar", desc: "Your meetings & events",
+              setup: "Connect Google above — your calendar is read automatically." },
+            { key: "gmail",         icon: "✉️", color: "bg-red-50", title: "Gmail", desc: "Your sent mail (your writing style)",
+              setup: "Connect Google above — recent sent mail is learned automatically." },
             { key: "notion",        icon: "📝", color: "bg-purple-50", title: "Notion", desc: "Your Notion pages & docs",
               setup: "Export pages as Markdown and drop them into  twin_capture_inbox/notion  on your computer." },
           ];
+          const googleConn = cloudStatus?.connected?.google;
           return (
           <div className="space-y-4">
             {/* Header: how learning works + overall status */}
@@ -1515,6 +1567,39 @@ export function DashboardView({ onLogout }: Props) {
                 </div>
               )}
             </div>
+
+            {/* Connect Google — one click covers Drive + Calendar + Gmail */}
+            {cloudStatus?.providers?.google && (
+              <div className="bg-gradient-to-r from-blue-500/10 to-purple-500/10 rounded-2xl border border-blue-300/40 p-5">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-xl bg-white flex items-center justify-center text-[20px] shadow-sm">🔗</div>
+                    <div>
+                      <div className="text-[14px] font-semibold text-[var(--text-primary)]">
+                        {googleConn ? "Google connected" : "Connect Google (automatic)"}
+                      </div>
+                      <div className="text-[11px] text-[var(--text-muted)]">
+                        {googleConn ? `Auto-learning from Drive, Calendar & Gmail${googleConn.email ? ` · ${googleConn.email}` : ""}` : "One click → learns from Drive, Calendar & Gmail automatically. No files to drop."}
+                      </div>
+                    </div>
+                  </div>
+                  {googleConn ? (
+                    <div className="flex gap-2 shrink-0">
+                      <span className="px-3 py-1.5 rounded-lg text-[11px] font-semibold bg-green-500/15 text-green-600 self-center">Connected</span>
+                      <button onClick={cloudPullNow} disabled={cloudBusy}
+                        className="px-4 py-2 rounded-lg text-[12px] font-semibold border border-[var(--card-border)] text-[var(--text-primary)] hover:bg-[var(--bg-secondary)] disabled:opacity-50">
+                        {cloudBusy ? "Pulling…" : "Pull now"}
+                      </button>
+                    </div>
+                  ) : (
+                    <button onClick={connectGoogle} disabled={cloudBusy}
+                      className="px-5 py-2.5 rounded-xl text-[13px] font-semibold text-white bg-gradient-to-r from-blue-500 to-purple-600 hover:opacity-90 disabled:opacity-50 shrink-0">
+                      {cloudBusy ? "…" : "Connect Google"}
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
 
             {CARDS.map(c => {
               const n = cnt(c.key);
