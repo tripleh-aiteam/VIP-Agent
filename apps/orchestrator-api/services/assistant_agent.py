@@ -341,6 +341,28 @@ def _is_stock_question(transcript: Optional[str]) -> bool:
     return any(k in t for k in _STOCK_Q_KW)
 
 
+# Follow-up phrasings that, after a stock turn, still concern that stock
+# (no explicit name) — 'should I buy it', 'predict today', '얼마나 오를까'.
+_STOCK_FOLLOWUP_KW = (
+    "사야", "팔아야", "살까", "팔까", "사도", "매수", "매도", "보유", "사면", "팔면",
+    "오를", "내릴", "오를까", "떨어질", "예측", "전망", "목표가", "얼마나",
+    "buy", "sell", "hold", "predict", "forecast", "go up", "go down", "rise", "fall",
+    "target", "upside", "downside", "should i", "how much will",
+)
+
+
+def _recent_stock_context(history: Optional[list[dict]]) -> bool:
+    """True if the recent conversation was about a specific stock — so a bare
+    follow-up ('should I buy?', 'predict today') belongs to the Stock agent."""
+    if not history:
+        return False
+    for h in list(history)[-4:]:
+        body = (h.get("content") or h.get("text") or "")
+        if _stock_in_query(body) is not None or any(k in body.lower() for k in _STOCK_Q_KW):
+            return True
+    return False
+
+
 _PRICE_ONLY_KW = ("현재가", "주가", "시세", "얼마", "가격", "price", "quote", "how much", "cost")
 
 
@@ -859,7 +881,9 @@ def _call_llm_for_decision(
             out = chat_completion_sync(
                 system_prompt=system_prompt,
                 messages=messages,
-                max_tokens=400,
+                # Big enough that a multi-step {"steps":[...]} decision is never
+                # truncated mid-JSON (truncation → unparseable → raw-JSON leak).
+                max_tokens=1100,
                 temperature=0.2,
                 model=model,
             )
@@ -907,6 +931,12 @@ def _call_llm_for_decision(
         if call:
             call["_model"] = primary
             return call
+        # The model tried to emit a {"tool":...}/{"steps":[...]} decision but it
+        # didn't parse cleanly (usually truncated). NEVER leak raw JSON/braces as
+        # the user-facing answer — flag it so the caller can recover gracefully.
+        s = raw.lstrip()
+        if s.startswith(("{", "[")) or '"steps"' in raw or '"tool"' in raw or '"args"' in raw:
+            return {"_unparsed_decision": True, "_model": primary}
         return {"answer": raw[:500], "_model": primary}
     parsed["_model"] = primary
     return parsed
@@ -2429,16 +2459,22 @@ def _run_agent_impl(
     # ANY stock question asked in VIP (or another non-stock agent) is answered by
     # the Stock agent itself — verbatim transcript, same engine — so VIP and Stock
     # ALWAYS give the same answer. Runs before the per-topic short-circuits below.
+    _stock_turn = (_is_stock_question(transcript)
+                   or (_recent_stock_context(history) and any(
+                       k in (transcript or "").lower() for k in _STOCK_FOLLOWUP_KW)))
     if (not confirmed_tool and (agent_id or "vip").lower() != "stock"
-            and "ask_agent" in TOOL_REGISTRY and _is_stock_question(transcript)):
-        res = execute_tool("ask_agent", {"agent": "stock", "question": transcript},
+            and "ask_agent" in TOOL_REGISTRY and _stock_turn):
+        # Pass recent history so the Stock agent can resolve follow-ups
+        # ('should I buy it?', 'predict today') to the stock just discussed.
+        res = execute_tool("ask_agent",
+                           {"agent": "stock", "question": transcript, "history": history or []},
                            db=db, agent_id=agent_id, transcript=transcript)
         ans = None
         if isinstance(res, dict):
             for a in (res.get("answers") or []):
                 cand = (a.get("answer") or "").strip()
                 # Guard: never relay a raw decision-JSON leak ('{"tool": ...}').
-                if cand and not cand.startswith("{"):
+                if cand and not cand.startswith(("{", "[")):
                     ans = cand
                     break
         if ans:
@@ -2529,6 +2565,27 @@ def _run_agent_impl(
 
     # ===== Turn 1: decision =====
     decision = _call_llm_for_decision(system, transcript, history or [], forced_model=forced_model)
+
+    # Safety net: the model emitted a tool/steps decision that didn't parse
+    # (usually truncated). NEVER show raw JSON — retry once forcing a direct
+    # natural-language answer on the stronger model.
+    if decision.get("_unparsed_decision"):
+        decision = _call_llm_for_decision(
+            system + "\n\n■ Your previous output was unparseable. Reply with the "
+            "{\"answer\": \"...\"} shape ONLY — a direct, complete natural-language "
+            "answer in the user's language. Do NOT use tools or steps.",
+            transcript, history or [], forced_model="claude-sonnet-4-6")
+        if decision.get("_unparsed_decision") or (not decision.get("answer")
+                                                  and not decision.get("tool")
+                                                  and not decision.get("steps")):
+            return {
+                "intent": "llm_chat", "language": lang,
+                "reply": ("죄송합니다, 방금 질문을 처리하지 못했습니다. 조금만 다르게 다시 "
+                          "물어봐 주시겠어요?" if lang == "ko" else
+                          "Sorry — I couldn't process that just now. Could you rephrase it?"),
+                "action": None, "speak": True, "transcript": transcript,
+                "tool_used": None,
+            }
 
     # ===== Phase 5: Multi-step chain =====
     steps = decision.get("steps")

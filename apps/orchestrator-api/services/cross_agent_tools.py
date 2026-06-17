@@ -87,7 +87,7 @@ def _resolve_targets(agent: str, current: str) -> list[str]:
     return out
 
 
-def tool_ask_agent(agent: str = "", question: str = "", db=None,
+def tool_ask_agent(agent: str = "", question: str = "", history=None, db=None,
                    agent_id: str = "vip", **_kw) -> dict[str, Any]:
     """Ask another of your agents (Asset / Stock / Realty / AIGlass / any future
     agent) a question and get its answer, using that agent's own data & tools.
@@ -116,7 +116,7 @@ def tool_ask_agent(agent: str = "", question: str = "", db=None,
         for t in targets[:4]:
             try:
                 res = run_agent(db, transcript=q, agent_id=t, language="auto",
-                                user_id=None)
+                                history=history or None, user_id=None)
                 answers.append({
                     "agent": t,
                     "agent_label": _known_agents().get(t, t),
