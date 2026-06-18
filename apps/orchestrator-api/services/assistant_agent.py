@@ -2785,23 +2785,12 @@ def _run_agent_impl(
                                agent_id=agent_id, page_context=page_context,
                                kb_context=kb_hits)
 
-    # ===== VIP LOCAL current-price (Kiwoom during market / Naver after) =====
-    # Bare '현재가/시세/주가/얼마' questions are answered HERE (fast, no delegation):
-    # Kiwoom REST during the KRX session, Naver after-market. Falls through to the
-    # normal delegation if the stock can't be resolved or both sources fail.
-    if not confirmed_tool and _is_vip_current_price_q(transcript, agent_id):
-        _vp = _vip_live_price_reply(transcript, lang)
-        if _vp:
-            return _vp
-
-    # ===== 공매도 (short-selling) — answer LOCALLY from Kiwoom (VIP holds the key).
-    # Runs BEFORE stock delegation so VIP doesn't hand it to the Stock backend (which
-    # has no 공매도 source). The Stock app reaches the same data via the relay tool. =====
-    if (not confirmed_tool and (agent_id or "vip").lower() != "stock"
-            and _is_short_selling_q(transcript)):
-        ss = _vip_short_selling_reply(transcript, lang)
-        if ss:
-            return ss
+    # NOTE: current-price and 공매도 are NOT answered locally anymore — they DELEGATE
+    # to the Stock backend below (single source of truth), so VIP and the AI Advisor
+    # read identically and VIP inherits every Stock feature (공매도/선물/multi-stock).
+    # The local Kiwoom price path survives only as: (a) the /chat/price/live endpoint
+    # the Stock backend relays during market, and (b) the stock-agent emergency
+    # fallback further down when the Stock relay is unreachable.
 
     # ===== VIP → Stock delegation (single source of truth) =====
     # ANY stock question asked in VIP (or another non-stock agent) is answered by
