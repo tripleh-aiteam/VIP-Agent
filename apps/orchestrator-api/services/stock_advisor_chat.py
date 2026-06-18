@@ -30,13 +30,13 @@ def ask(transcript: str, lang: str = "ko",
     q = (transcript or "").strip()
     if not q:
         return None
-    # Tell the backend's LLM the real current date so it doesn't default to its
-    # training-cutoff year and treat recent/past dates as 'the future'.
-    from datetime import datetime as _dt, timezone as _tz, timedelta as _td
-    _today = _dt.now(_tz(_td(hours=9))).strftime("%Y-%m-%d")
-    q_dated = f"(오늘 날짜: {_today} KST) {q}"
+    # NOTE: do NOT prepend a "(오늘 날짜: …)" prefix here. The Stock backend already
+    # injects the current date via its own system prompt (system_prompt_with_date),
+    # and a date in the transcript makes its _is_past_date_query match every message
+    # — routing simple "현재가" questions to the slow historical/LLM path instead of
+    # the fast direct-quote path. Send the raw question.
     payload: dict[str, Any] = {
-        "transcript": q_dated,
+        "transcript": q,
         "language": lang or "auto",
         "agentId": "stock",
     }
