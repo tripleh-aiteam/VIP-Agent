@@ -409,31 +409,49 @@ def _dt_now_kst():
 
 def _all_stocks_in_query(transcript: Optional[str]) -> list[tuple[str, str]]:
     """All KR stocks (6-digit code, display name) named in the text, in order,
-    deduped. Splits on commas / and / 와·과·그리고 so 'A, B and C' all resolve."""
+    deduped. SCANS for every known stock name (so space-separated 'SK하이닉스 네이버'
+    all resolve, not just comma/and), matches 6-digit codes, and fuzzy-matches
+    leftover words to catch typos like 'Skhynoix' → SK하이닉스."""
     import re as _re
-    try:
-        from services.stock_data_tools import _resolve_ticker
-    except Exception:
-        return []
+    t = transcript or ""
+    low = t.lower()
     out: list[tuple[str, str]] = []
     seen: set[str] = set()
-    parts = _re.split(r"[,/&]|\band\b|\bvs\b|그리고|및|와\s|과\s", transcript or "",
-                      flags=_re.IGNORECASE)
-    for part in parts:
-        try:
-            code, name = _resolve_ticker(part)
-        except Exception:
-            code, name = None, None
-        if code and str(code).isdigit() and code not in seen:
-            seen.add(code)
-            out.append((code, (name or code)))
-    if not out:  # nothing split out — try the whole string once
-        try:
-            code, name = _resolve_ticker(transcript or "")
-            if code and str(code).isdigit():
-                out.append((code, (name or code)))
-        except Exception:
-            pass
+    try:
+        from services.stock_data_tools import _NAME_TO_TICKER
+        names = sorted(_NAME_TO_TICKER, key=len, reverse=True)
+    except Exception:
+        _NAME_TO_TICKER, names = {}, []
+
+    consumed = low
+    for name in names:
+        nl = name.lower()
+        if len(nl) >= 2 and nl in consumed:
+            code = str(_NAME_TO_TICKER[name])
+            if code.isdigit() and code not in seen:
+                seen.add(code)
+                out.append((code, name))
+            consumed = consumed.replace(nl, " ")  # so 'SK' inside 'SK Hynix' won't re-match
+    for m in _re.findall(r"\b(\d{6})\b", t):
+        if m not in seen:
+            seen.add(m)
+            out.append((m, m))
+    # Fuzzy fallback for typos on leftover words (e.g. 'skhynoix', '삼송전자').
+    if names:
+        import difflib
+        norm = {_re.sub(r"\s+", "", n.lower()): n for n in names}  # spaceless name -> name
+        keys = list(norm.keys())
+        for w in _re.split(r"[\s,/&]+", consumed):
+            w = w.strip()
+            if len(w) < 4:
+                continue
+            hit = difflib.get_close_matches(w, keys, n=1, cutoff=0.82)
+            if hit:
+                name = norm[hit[0]]
+                code = str(_NAME_TO_TICKER[name])
+                if code.isdigit() and code not in seen:
+                    seen.add(code)
+                    out.append((code, name))
     return out
 
 
