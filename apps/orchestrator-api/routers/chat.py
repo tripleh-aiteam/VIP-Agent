@@ -36,6 +36,19 @@ def voice_command(body: VoiceCommandBody, db: Session = Depends(get_db)):
     return result
 
 
+@router.get("/price/live")
+def live_price(codes: str = Query(..., description="Comma-separated KR 6-digit codes, e.g. 000660,035420")):
+    """Live KR price(s) — Kiwoom during the KRX session (09:00–15:30 KST), Naver
+    after-market. VIP holds the Kiwoom key, so the Stock-advisor backend calls this
+    to show the SAME Kiwoom price as VIP — centralizing Kiwoom on one key (no token
+    contention) without needing creds on the Stock side. Each quote:
+    {code, name, price, change_pct, source}."""
+    from services.assistant_agent import _live_price_for_code
+    wanted = [c.strip() for c in (codes or "").split(",") if c.strip().isdigit()][:12]
+    quotes = [q for q in (_live_price_for_code(c, None) for c in wanted) if q]
+    return {"ok": bool(quotes), "count": len(quotes), "quotes": quotes}
+
+
 # ---------------------------------------------------------------------------
 # /chat/agent — Tool-calling agent (Notion-AI-style)
 #
