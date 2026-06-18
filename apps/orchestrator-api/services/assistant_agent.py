@@ -367,6 +367,23 @@ def _is_report_question(transcript: Optional[str]) -> bool:
     return bool(t) and any(k in t for k in _REPORT_KW)
 
 
+# 'What is X / explain X' CONCEPT questions with NO specific stock — answer directly
+# from VIP's own RAG+LLM (fast, the data-dictionary seed has these) instead of the
+# slow round-trip to the Stock backend (which runs a full analysis).
+_CONCEPT_DEF_KW = (
+    "뭐야", "뭔가요", "뭡니까", "뭔데", "무엇", "뜻", "의미", "개념", "설명",
+    "차이", "what is", "what's", "what are", "explain", "define", "meaning",
+    "difference between",
+)
+
+
+def _is_concept_question(transcript: Optional[str]) -> bool:
+    t = (transcript or "").strip().lower()
+    if not t or not any(k in t for k in _CONCEPT_DEF_KW):
+        return False
+    return _stock_in_query(transcript) is None
+
+
 # Clear stock-domain keywords (besides a specific stock name).
 _STOCK_Q_KW = (
     "주가", "종가", "현재가", "시세", "코스피", "코스닥", "kospi", "kosdaq", "증시",
@@ -2539,9 +2556,28 @@ def _run_agent_impl(
     if (not confirmed_tool and (agent_id or "vip").lower() != "stock"
             and "ask_agent" in TOOL_REGISTRY and _stock_turn
             and not _is_past_price(transcript)
-            and not _is_report_question(transcript)):
-        # Pass recent history so the Stock agent can resolve follow-ups
-        # ('should I buy it?', 'predict today') to the stock just discussed.
+            and not _is_report_question(transcript)
+            and not _is_concept_question(transcript)):
+        # FAST PATH (latency): the Stock backend is the single source of truth, so
+        # call it DIRECTLY instead of the heavier nested run_agent(agent_id='stock')
+        # (which re-runs RAG + an LLM decision before reaching the same backend).
+        # Same answer, ~5-6s faster. Falls back to ask_agent if it returns nothing.
+        ans = None
+        try:
+            from services.stock_advisor_chat import ask as _stock_direct
+            _d = _stock_direct(transcript, lang, history or [])
+            if isinstance(_d, dict):
+                cand = (_d.get("reply") or "").strip()
+                if cand and not cand.startswith(("{", "[")):
+                    ans = cand
+        except Exception as _e:
+            log.warning(f"stock direct fast-path failed: {str(_e)[:120]}")
+        if ans:
+            return {"intent": "stock_delegated", "language": lang,
+                    "reply": str(ans)[:1600], "action": None, "speak": True,
+                    "transcript": transcript, "tool_used": "ask_agent",
+                    "tool_result": {"direct": True}}
+        # Fallback: nested ask_agent (internal stock engine + its own fallbacks).
         res = execute_tool("ask_agent",
                            {"agent": "stock", "question": transcript, "history": history or []},
                            db=db, agent_id=agent_id, transcript=transcript)
