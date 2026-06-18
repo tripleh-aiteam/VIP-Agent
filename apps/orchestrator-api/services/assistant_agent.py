@@ -384,9 +384,13 @@ def _is_concept_question(transcript: Optional[str]) -> bool:
     return _stock_in_query(transcript) is None
 
 
-# Bare CURRENT-PRICE question (현재가/시세/주가/얼마/price) about a specific KR stock —
-# VIP answers it LOCALLY (Kiwoom during market, Naver after) instead of delegating.
+# Bare CURRENT-PRICE question (현재가/시세/주가/얼마/price) — VIP answers it LOCALLY
+# (Kiwoom during market, Naver after). Handles ONE stock, MULTIPLE stocks, and a
+# bare 'what is the current stock price' (→ default watchlist).
 _PRICE_WORDS = ("현재가", "시세", "주가", "얼마", "price", "quote")
+# Generic stock-price phrasing with NO specific company → show the watchlist.
+_GENERIC_STOCK_WORDS = ("stock", "주가", "주식", "종목", "시세", "현재가")
+_DEFAULT_WATCHLIST = (("000660", "SK하이닉스"), ("005930", "삼성전자"), ("035420", "NAVER"))
 
 
 def _kr_market_open_now() -> bool:
@@ -403,6 +407,36 @@ def _dt_now_kst():
     return _d.now(_z(_t(hours=9)))
 
 
+def _all_stocks_in_query(transcript: Optional[str]) -> list[tuple[str, str]]:
+    """All KR stocks (6-digit code, display name) named in the text, in order,
+    deduped. Splits on commas / and / 와·과·그리고 so 'A, B and C' all resolve."""
+    import re as _re
+    try:
+        from services.stock_data_tools import _resolve_ticker
+    except Exception:
+        return []
+    out: list[tuple[str, str]] = []
+    seen: set[str] = set()
+    parts = _re.split(r"[,/&]|\band\b|\bvs\b|그리고|및|와\s|과\s", transcript or "",
+                      flags=_re.IGNORECASE)
+    for part in parts:
+        try:
+            code, name = _resolve_ticker(part)
+        except Exception:
+            code, name = None, None
+        if code and str(code).isdigit() and code not in seen:
+            seen.add(code)
+            out.append((code, (name or code)))
+    if not out:  # nothing split out — try the whole string once
+        try:
+            code, name = _resolve_ticker(transcript or "")
+            if code and str(code).isdigit():
+                out.append((code, (name or code)))
+        except Exception:
+            pass
+    return out
+
+
 def _is_vip_current_price_q(transcript: Optional[str], agent_id: Optional[str]) -> bool:
     if (agent_id or "vip").lower() == "stock":
         return False
@@ -413,22 +447,15 @@ def _is_vip_current_price_q(transcript: Optional[str], agent_id: Optional[str]) 
         return False
     if any(w in t for w in ("뉴스", "news", "유튜브", "youtube", "리포트", "report")):
         return False
-    return _stock_in_query(transcript) is not None
+    # Fire if a specific stock is named OR it's a generic stock-price ask (→ watchlist).
+    return (_stock_in_query(transcript) is not None
+            or any(w in t for w in _GENERIC_STOCK_WORDS))
 
 
-def _vip_live_price_reply(transcript: Optional[str], lang: str) -> Optional[dict]:
-    """VIP current-price answered locally: Kiwoom REST during KRX market hours,
-    Naver after-market. Returns a reply dict, or None to fall back to delegation
-    (e.g. US ticker / unresolved / both sources failed)."""
-    try:
-        from services.stock_data_tools import _resolve_ticker
-        code, name = _resolve_ticker(transcript or "")
-    except Exception:
-        code, name = None, None
-    if not code or not str(code).isdigit():
-        return None  # not a resolvable KR 6-digit stock → let delegation handle it
-
+def _live_price_for_code(code: str, fallback_name: Optional[str]) -> Optional[dict]:
+    """One stock's live price: Kiwoom REST during market, Naver after. None on fail."""
     price = chg = None
+    name = fallback_name
     source = None
     if _kr_market_open_now():
         try:
@@ -441,31 +468,75 @@ def _vip_live_price_reply(transcript: Optional[str], lang: str) -> Optional[dict
                     name = kq.get("name") or name
                     source = "키움증권 실시간 시세"
         except Exception as e:
-            log.warning(f"vip kiwoom price failed: {str(e)[:120]}")
+            log.warning(f"vip kiwoom price {code} failed: {str(e)[:120]}")
     if price is None:  # after-market / weekend / Kiwoom miss → Naver
         try:
             from services import naver_stock
             nq = naver_stock.realtime_quote(code)
             if nq and nq.get("price"):
-                price, chg = nq["price"], nq.get("change_pct")
-                source = "NAVER 실시간 시세"
+                # After the regular session, show the 시간외(NXT) price when that
+                # after-market session is active; otherwise the regular close.
+                if (not _kr_market_open_now() and nq.get("nxt_price")
+                        and (nq.get("nxt_status") or "").upper() == "OPEN"):
+                    price, chg = nq["nxt_price"], nq.get("nxt_change_pct")
+                    source = "NAVER 시간외(NXT) 시세"
+                else:
+                    price, chg = nq["price"], nq.get("change_pct")
+                    source = "NAVER 실시간 시세"
         except Exception as e:
-            log.warning(f"vip naver price failed: {str(e)[:120]}")
+            log.warning(f"vip naver price {code} failed: {str(e)[:120]}")
     if price is None:
+        return None
+    return {"code": code, "name": (name or code).upper(), "price": float(price),
+            "change_pct": chg, "source": source}
+
+
+def _vip_live_price_reply(transcript: Optional[str], lang: str) -> Optional[dict]:
+    """VIP current-price answered locally (Kiwoom during market / Naver after).
+    Handles one stock, several stocks, or a bare ask (→ default watchlist).
+    Returns a reply dict, or None to fall back to delegation."""
+    stocks = _all_stocks_in_query(transcript)
+    used_watchlist = False
+    if not stocks:
+        t = (transcript or "").lower()
+        if any(w in t for w in _GENERIC_STOCK_WORDS):
+            stocks = list(_DEFAULT_WATCHLIST)  # 'what is the current stock price'
+            used_watchlist = True
+        else:
+            return None  # US / unresolved → let delegation handle it
+
+    quotes = [q for q in (_live_price_for_code(c, n) for c, n in stocks) if q]
+    if not quotes:
         return None
 
     now = _dt_now_kst()
-    nm = (name or code).upper()  # 'sk하이닉스' -> 'SK하이닉스' (Korean unaffected)
-    price_s = f"{int(round(float(price))):,}원"
-    chg_s = ""
-    if chg is not None:
-        chg_s = f", 전일 대비 {'+' if chg >= 0 else ''}{chg}%"
     ts = f"{now.year}년 {now.month}월 {now.day}일 {now.hour:02d}:{now.minute:02d}"
-    reply = (f"{nm} 현재가는 {price_s}{chg_s}입니다. 기준 시각은 {ts} (한국시간)입니다. "
-             f"출처는 {source}입니다.")
+    sources = sorted({q["source"] for q in quotes})
+    src_label = " / ".join(sources)
+
+    def _chg(q):
+        c = q["change_pct"]
+        if c is None:
+            return ""
+        return f" ({'▲' if c >= 0 else '▼'} {'+' if c >= 0 else ''}{c}%)"
+
+    if len(quotes) == 1:
+        q = quotes[0]
+        reply = (f"{q['name']} 현재가는 {int(round(q['price'])):,}원"
+                 f"{(', 전일 대비 ' + _chg(q).strip(' ()')) if q['change_pct'] is not None else ''}"
+                 f"입니다. 기준 시각은 {ts} (한국시간)입니다. 출처는 {src_label}입니다.")
+    else:
+        head = "관심 종목 현재가입니다" if used_watchlist else "요청하신 종목 현재가입니다"
+        lines = [f"{head} (기준 {ts} 한국시간):"]
+        for q in quotes:
+            lines.append(f"- {q['name']}: {int(round(q['price'])):,}원{_chg(q)}")
+        lines.append(f"출처: {src_label}")
+        reply = "\n".join(lines)
+
     return {"intent": "stock_price", "language": lang, "reply": reply,
             "action": None, "speak": True, "transcript": transcript,
-            "tool_used": "stock_quote", "tool_result": {"price": price, "source": source}}
+            "tool_used": "stock_quote",
+            "tool_result": {"quotes": quotes, "sources": sources}}
 
 
 # Clear stock-domain keywords (besides a specific stock name).
