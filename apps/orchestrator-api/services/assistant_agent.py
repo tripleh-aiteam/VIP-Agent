@@ -2840,6 +2840,16 @@ def _run_agent_impl(
                     "reply": str(ans)[:1600], "action": None, "speak": True,
                     "transcript": transcript, "tool_used": "ask_agent",
                     "tool_result": res}
+        # Resilience: the Stock backend returned nothing usable (down, mid-deploy, or a
+        # query type it currently fails on). Answer current-price and 공매도 from VIP's
+        # OWN Kiwoom so the user never sees a blank reply.
+        if _is_short_selling_q(transcript):
+            _ss_fb = _vip_short_selling_reply(transcript, lang)
+            if _ss_fb:
+                return _ss_fb
+        _vp_fb = _vip_live_price_reply(transcript, lang)
+        if _vp_fb:
+            return _vp_fb
         # If the Stock agent gave nothing usable, fall through to the normal path.
 
     # ===== Deterministic CURRENT-PRICE (stock agent) =====
