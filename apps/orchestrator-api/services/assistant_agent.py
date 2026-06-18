@@ -2785,12 +2785,20 @@ def _run_agent_impl(
                                agent_id=agent_id, page_context=page_context,
                                kb_context=kb_hits)
 
-    # NOTE: current-price and 공매도 are NOT answered locally anymore — they DELEGATE
-    # to the Stock backend below (single source of truth), so VIP and the AI Advisor
-    # read identically and VIP inherits every Stock feature (공매도/선물/multi-stock).
-    # The local Kiwoom price path survives only as: (a) the /chat/price/live endpoint
-    # the Stock backend relays during market, and (b) the stock-agent emergency
-    # fallback further down when the Stock relay is unreachable.
+    # NOTE: current-price is NOT answered locally anymore — it DELEGATES to the Stock
+    # backend below (single source of truth), so VIP and the AI Advisor read identically
+    # and VIP inherits the Stock current-price/past/선물 features. The local Kiwoom price
+    # path survives only as (a) the /chat/price/live endpoint the Stock backend relays
+    # during market, and (b) the stock-agent emergency fallback further down.
+
+    # ===== 공매도 (short-selling) — answer LOCALLY from VIP's Kiwoom (ka10014). The
+    # Stock backend's 공매도 tool currently returns '확인 불가' (no data), but VIP's Kiwoom
+    # key returns REAL short-selling figures, so VIP serves this one itself. =====
+    if (not confirmed_tool and (agent_id or "vip").lower() != "stock"
+            and _is_short_selling_q(transcript)):
+        ss = _vip_short_selling_reply(transcript, lang)
+        if ss:
+            return ss
 
     # ===== VIP → Stock delegation (single source of truth) =====
     # ANY stock question asked in VIP (or another non-stock agent) is answered by
