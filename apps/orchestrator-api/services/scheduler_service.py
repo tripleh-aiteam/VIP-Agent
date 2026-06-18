@@ -1428,6 +1428,29 @@ def init_scheduler():
     log.info("scheduler: voice campaign runner registered (every 30s)",
              extra={"action": "scheduler.voice_runner_registered"})
 
+    # Keep-warm — ping the Stock-Advisor backend every 12 min so Render's free tier
+    # doesn't spin it down. A cold start makes the first chat answer fail ("don't
+    # know"); this keeps the peer warm while the orchestrator is up. Best-effort.
+    def _keep_warm_ping():
+        import httpx as _hx, os as _os
+        base = (_os.getenv("STOCK_BACKEND_URL")
+                or "https://stock-advisor-agent-9qwi.onrender.com").rstrip("/")
+        for _p in ("/health", "/"):
+            try:
+                _hx.get(f"{base}{_p}", timeout=20)
+                return
+            except Exception:
+                continue
+    _scheduler.add_job(
+        _keep_warm_ping,
+        "interval",
+        minutes=12,
+        id="stock-backend-keep-warm",
+        replace_existing=True,
+    )
+    log.info("scheduler: stock backend keep-warm registered (every 12min)",
+             extra={"action": "scheduler.keep_warm_registered"})
+
     # Voice recording retention — daily at 03:00 UTC = 12:00 KST
     # Deletes Storage objects + DB rows past retention_expires_at.
     from services.voice_storage import cleanup_expired_recordings as _voice_retention

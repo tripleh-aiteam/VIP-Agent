@@ -43,10 +43,33 @@ def live_price(codes: str = Query(..., description="Comma-separated KR 6-digit c
     to show the SAME Kiwoom price as VIP — centralizing Kiwoom on one key (no token
     contention) without needing creds on the Stock side. Each quote:
     {code, name, price, change_pct, source}."""
-    from services.assistant_agent import _live_price_for_code
+    from services.assistant_agent import _live_price_for_code, _canon_price_src
     wanted = [c.strip() for c in (codes or "").split(",") if c.strip().isdigit()][:12]
-    quotes = [q for q in (_live_price_for_code(c, None) for c in wanted) if q]
+    quotes = []
+    for c in wanted:
+        q = _live_price_for_code(c, None)
+        if q:
+            # Canonical source token (kiwoom / naver_nxt / naver) so the Stock app
+            # relays the SAME source label as VIP without re-deriving it.
+            q["src"] = _canon_price_src(q.get("source"))
+            quotes.append(q)
     return {"ok": bool(quotes), "count": len(quotes), "quotes": quotes}
+
+
+@router.get("/shortselling/live")
+def live_short_selling(codes: str = Query(..., description="Comma-separated KR 6-digit codes")):
+    """Latest 공매도 (short-selling) figures via Kiwoom ka10014 — VIP holds the Kiwoom
+    key, so the Stock-advisor backend relays this to show the SAME data without creds.
+    Each item: {name, short_volume, short_ratio, short_value, date}."""
+    from services.assistant_agent import _short_selling_for_code, _fmt_short_date
+    wanted = [c.strip() for c in (codes or "").split(",") if c.strip().isdigit()][:12]
+    items = []
+    for c in wanted:
+        it = _short_selling_for_code(c, None)
+        if it:
+            it["date"] = _fmt_short_date(it.get("date"))
+            items.append(it)
+    return {"ok": bool(items), "count": len(items), "items": items}
 
 
 # ---------------------------------------------------------------------------

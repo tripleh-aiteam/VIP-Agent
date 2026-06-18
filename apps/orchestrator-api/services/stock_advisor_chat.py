@@ -42,15 +42,25 @@ def ask(transcript: str, lang: str = "ko",
     }
     if history:
         payload["history"] = history[-8:]
-    try:
-        with httpx.Client(timeout=timeout) as c:
-            r = c.post(f"{_BASE}/chat/agent", json=payload)
-        if r.status_code != 200:
-            log.warning(f"stock_advisor_chat: HTTP {r.status_code}")
-            return None
-        d = r.json()
-    except Exception as e:
-        log.warning(f"stock_advisor_chat: {str(e)[:140]}")
+    # Retry once: on Render's free tier the backend may be spun down, so the first
+    # request wakes it (and can error mid-boot) while the second succeeds. Without
+    # this the user sees a cold-start 'don't know'. When the peer is warm the first
+    # attempt succeeds and there is no extra latency.
+    d = None
+    for attempt in range(2):
+        try:
+            with httpx.Client(timeout=timeout) as c:
+                r = c.post(f"{_BASE}/chat/agent", json=payload)
+            if r.status_code == 200:
+                d = r.json()
+                break
+            log.warning(f"stock_advisor_chat: HTTP {r.status_code} (attempt {attempt + 1})")
+        except Exception as e:
+            log.warning(f"stock_advisor_chat: {str(e)[:140]} (attempt {attempt + 1})")
+        if attempt == 0:
+            import time as _t
+            _t.sleep(1.5)
+    if d is None:
         return None
     reply = (d.get("reply") or "").strip()
     # Guard against a raw decision-JSON leak or empty answer.

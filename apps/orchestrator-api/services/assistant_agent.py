@@ -509,6 +509,18 @@ def _live_price_for_code(code: str, fallback_name: Optional[str]) -> Optional[di
             "change_pct": chg, "source": source}
 
 
+def _canon_price_src(s: Optional[str]) -> str:
+    """VIP's Korean source label → the small canonical vocabulary the shared
+    price_format formatter understands (kiwoom / naver_nxt / naver). Keeps VIP and
+    the Stock app reading IDENTICALLY (Stock maps its own codes to the same set)."""
+    s = s or ""
+    if "키움" in s:
+        return "kiwoom"
+    if "시간외" in s or "NXT" in s.upper():
+        return "naver_nxt"
+    return "naver"
+
+
 def _vip_live_price_reply(transcript: Optional[str], lang: str) -> Optional[dict]:
     """VIP current-price answered locally (Kiwoom during market / Naver after).
     Handles one stock, several stocks, or a bare ask (→ default watchlist).
@@ -537,47 +549,15 @@ def _vip_live_price_reply(transcript: Optional[str], lang: str) -> Optional[dict
             and _re.search(r"[a-zA-Z]", transcript or ""):
         _en = True
 
-    def _chg(q):
-        c = q["change_pct"]
-        if c is None:
-            return ""
-        return f" ({'▲' if c >= 0 else '▼'} {'+' if c >= 0 else ''}{c}%)"
-
-    if _en:
-        def _src_en(s):
-            if "키움" in s:
-                return "Kiwoom (real-time)"
-            if "시간외" in s or "NXT" in s.upper():
-                return "Naver after-hours (NXT)"
-            return "Naver (real-time)"
-        src_label = " / ".join(sorted({_src_en(s) for s in sources}))
-        ts = f"{now.year}-{now.month:02d}-{now.day:02d} {now.hour:02d}:{now.minute:02d} KST"
-        if len(quotes) == 1:
-            q = quotes[0]
-            reply = (f"{q['name']} is currently ₩{int(round(q['price'])):,}{_chg(q)}, "
-                     f"as of {ts}. Source: {src_label}.")
-        else:
-            head = "Current watchlist prices" if used_watchlist else "Current prices"
-            lines = [f"{head} (as of {ts}):"]
-            for q in quotes:
-                lines.append(f"- {q['name']}: ₩{int(round(q['price'])):,}{_chg(q)}")
-            lines.append(f"Source: {src_label}")
-            reply = "\n".join(lines)
-    else:
-        src_label = " / ".join(sources)
-        ts = f"{now.year}년 {now.month}월 {now.day}일 {now.hour:02d}:{now.minute:02d}"
-        if len(quotes) == 1:
-            q = quotes[0]
-            reply = (f"{q['name']} 현재가는 {int(round(q['price'])):,}원"
-                     f"{(', 전일 대비 ' + _chg(q).strip(' ()')) if q['change_pct'] is not None else ''}"
-                     f"입니다. 기준 시각은 {ts} (한국시간)입니다. 출처는 {src_label}입니다.")
-        else:
-            head = "관심 종목 현재가입니다" if used_watchlist else "요청하신 종목 현재가입니다"
-            lines = [f"{head} (기준 {ts} 한국시간):"]
-            for q in quotes:
-                lines.append(f"- {q['name']}: {int(round(q['price'])):,}원{_chg(q)}")
-            lines.append(f"출처: {src_label}")
-            reply = "\n".join(lines)
+    # Format via the SHARED canonical formatter (byte-identical file in the Stock
+    # repo) so the VIP agent and the AI Advisor phrase the answer the same way.
+    from services import price_format
+    fmt_quotes = [{"name": q["name"], "price": q["price"],
+                   "change_pct": q["change_pct"], "market": "KR",
+                   "source": _canon_price_src(q["source"])} for q in quotes]
+    reply = price_format.format_current(
+        fmt_quotes, lang=("en" if _en else "ko"),
+        used_watchlist=used_watchlist, as_of=now)
 
     return {"intent": "stock_price", "language": lang, "reply": reply,
             "action": None, "speak": True, "transcript": transcript,
@@ -585,11 +565,69 @@ def _vip_live_price_reply(transcript: Optional[str], lang: str) -> Optional[dict
             "tool_result": {"quotes": quotes, "sources": sources}}
 
 
+# ===== 공매도 (short-selling) — VIP holds the Kiwoom key, so it answers locally
+# (Kiwoom ka10014) AND exposes /chat/shortselling/live for the Stock app to relay,
+# mirroring the price architecture (one key, identical answers). =====
+_SHORT_KW = ("공매도", "short selling", "short-selling", "short sale", "공매도량", "공매도비중")
+
+
+def _is_short_selling_q(transcript: Optional[str]) -> bool:
+    return bool(transcript) and any(k in transcript.lower() for k in _SHORT_KW)
+
+
+def _fmt_short_date(d) -> str:
+    """Normalize a Kiwoom date ('20260617' or '2026-06-17') to 'YYYY-MM-DD'."""
+    s = str(d or "").strip()
+    if len(s) == 8 and s.isdigit():
+        return f"{s[:4]}-{s[4:6]}-{s[6:]}"
+    return s
+
+
+def _short_selling_for_code(code: str, name: Optional[str]) -> Optional[dict]:
+    """One stock's latest short-selling figures via Kiwoom ka10014. None on fail."""
+    try:
+        from services import kiwoom_rest
+        k, s = kiwoom_rest._creds()
+        if not (k and s):
+            return None
+        d = kiwoom_rest.short_selling(code)
+        if d and d.get("short_volume") is not None:
+            disp = _re.sub(r"[A-Za-z]+", lambda m: m.group(0).upper(), name or code)
+            return {"code": code, "name": disp, "short_volume": d.get("short_volume"),
+                    "short_ratio": d.get("short_ratio"), "short_value": d.get("short_value"),
+                    "date": d.get("date")}
+    except Exception as e:
+        log.warning(f"vip short_selling {code} failed: {str(e)[:120]}")
+    return None
+
+
+def _vip_short_selling_reply(transcript: Optional[str], lang: str) -> Optional[dict]:
+    """공매도 answered locally from Kiwoom, via the shared formatter (identical on
+    both surfaces). None → caller falls back to delegation."""
+    stocks = _all_stocks_in_query(transcript)
+    if not stocks:
+        return None
+    items = [it for it in (_short_selling_for_code(c, n) for c, n in stocks) if it]
+    if not items:
+        return None
+    from services import price_format
+    _en = (lang or "").lower().startswith("en")
+    if not _en and not _re.search(r"[가-힣]", transcript or "") \
+            and _re.search(r"[a-zA-Z]", transcript or ""):
+        _en = True
+    date = _fmt_short_date(next((it.get("date") for it in items if it.get("date")), ""))
+    reply = price_format.format_short_selling(items, date=date, lang=("en" if _en else "ko"))
+    return {"intent": "short_selling", "language": lang, "reply": reply,
+            "action": None, "speak": True, "transcript": transcript,
+            "tool_used": "short_selling", "tool_result": {"items": items}}
+
+
 # Clear stock-domain keywords (besides a specific stock name).
 _STOCK_Q_KW = (
     "주가", "종가", "현재가", "시세", "코스피", "코스닥", "kospi", "kosdaq", "증시",
     "종목", "주식", "stock", "shares", "수급", "순매수", "공매도", "배당", "dividend",
     "etf", "목표주가", "상한가", "하한가", "나스닥", "nasdaq", "s&p", "실적", "per ", "pbr",
+    "선물", "futures", "옵션", "파생",
 )
 
 
@@ -2756,6 +2794,15 @@ def _run_agent_impl(
         if _vp:
             return _vp
 
+    # ===== 공매도 (short-selling) — answer LOCALLY from Kiwoom (VIP holds the key).
+    # Runs BEFORE stock delegation so VIP doesn't hand it to the Stock backend (which
+    # has no 공매도 source). The Stock app reaches the same data via the relay tool. =====
+    if (not confirmed_tool and (agent_id or "vip").lower() != "stock"
+            and _is_short_selling_q(transcript)):
+        ss = _vip_short_selling_reply(transcript, lang)
+        if ss:
+            return ss
+
     # ===== VIP → Stock delegation (single source of truth) =====
     # ANY stock question asked in VIP (or another non-stock agent) is answered by
     # the Stock agent itself — verbatim transcript, same engine — so VIP and Stock
@@ -2810,14 +2857,13 @@ def _run_agent_impl(
     # Bare price questions are answered by formatting the quote directly — no LLM,
     # so it never garbles or leaks raw JSON, and is byte-identical to VIP's relay.
     if (not confirmed_tool and (agent_id or "vip").lower() == "stock"
-            and _is_price_question(transcript) and "stock_quote" in TOOL_REGISTRY):
-        res = execute_tool("stock_quote", {"query": transcript},
-                           db=db, agent_id=agent_id, transcript=transcript)
-        reply = _format_price_reply(res, lang)
-        if reply:
-            return {"intent": "stock_price", "language": lang, "reply": reply,
-                    "action": None, "speak": True, "transcript": transcript,
-                    "tool_used": "stock_quote", "tool_result": res}
+            and _is_price_question(transcript)):
+        # Use the SAME canonical live-price path as the VIP agent (Kiwoom during
+        # market / Naver after, shared formatter) so this stock-agent fallback —
+        # reached only when the Stock backend relay is down — still reads identically.
+        vp = _vip_live_price_reply(transcript, lang)
+        if vp:
+            return vp
 
     # ===== Deterministic PAST-DATE price routing =====
     # 'X 어제 종가 / 10일 전 주가 / June 10 close' MUST come from real daily history,
@@ -2828,6 +2874,22 @@ def _run_agent_impl(
     # we still answer past dates like a general assistant would (with sources) —
     # i.e. the same behavior as Google AI Mode, instead of relaying a "can't" reply.
     if not confirmed_tool and _is_past_price(transcript):
+        # Delegate past-date prices to the Stock backend FIRST (single deterministic
+        # source of truth) so VIP and the AI Advisor give the IDENTICAL concise
+        # answer. Fall back to the local daily-history chain / web search only if the
+        # relay returns nothing usable.
+        try:
+            from services.stock_advisor_chat import ask as _stock_past
+            _p = _stock_past(transcript, lang, history or [])
+            if isinstance(_p, dict):
+                cand = (_p.get("reply") or "").strip()
+                if cand and not cand.startswith(("{", "[")):
+                    return {"intent": "stock_past_price", "language": lang,
+                            "reply": str(cand)[:1600], "action": None, "speak": True,
+                            "transcript": transcript, "tool_used": "stock_advisor",
+                            "tool_result": {"direct": True}}
+        except Exception as _e:
+            log.warning(f"stock past relay failed: {str(_e)[:120]}")
         days = _history_days_for(transcript)
         if "stock_get_daily_history" in TOOL_REGISTRY:
             probe = execute_tool("stock_get_daily_history",
