@@ -544,6 +544,21 @@ def _auto_import_claude_sessions():
         db.close()
 
 
+@with_retry(max_attempts=2, backoff_seconds=(30, 120), job_name="feed_daily", alert_on_final_failure=False)
+def _auto_feed_summaries():
+    """Each opted-in twin posts a short daily summary to the Twin Feed."""
+    db = SessionLocal()
+    try:
+        from services.twin_feed import post_daily_summaries
+        res = post_daily_summaries(db)
+        log.info(f"feed-daily: {res}", extra={"action": "twin.feed_daily"})
+    except Exception as e:
+        db.rollback()
+        log.error(f"feed-daily: error {e}", extra={"action": "twin.feed_daily_error"})
+    finally:
+        db.close()
+
+
 @with_retry(max_attempts=2, backoff_seconds=(30, 120), job_name="cloud_pull", alert_on_final_failure=False)
 def _auto_cloud_pull():
     """Phase 2 — pull connected cloud sources (Google Drive/Calendar/Gmail, Notion)
@@ -1360,6 +1375,15 @@ def init_scheduler():
         replace_existing=True,
     )
     log.info("scheduler: cloud auto-pull registered (every 2 hours)", extra={"action": "scheduler.cloud_pull_registered"})
+
+    # Twin Feed daily summaries — 6 PM KST = 09:00 UTC, Mon-Fri
+    _scheduler.add_job(
+        _auto_feed_summaries,
+        CronTrigger.from_crontab("0 9 * * 1-5"),
+        id="twin-feed-daily",
+        replace_existing=True,
+    )
+    log.info("scheduler: twin feed daily summaries registered (09:00 UTC, Mon-Fri)", extra={"action": "scheduler.feed_daily_registered"})
 
     # Chatbot self-improvement — runs every 6 hours, offset 30 min from twin
     _scheduler.add_job(

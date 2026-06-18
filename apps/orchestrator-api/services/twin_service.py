@@ -375,6 +375,12 @@ def review_task(
     task.review_comment = comment
     if review_status == "approved":
         task.status = "done"
+        # Auto-post a high-level milestone to the Twin Feed (only if owner opted in).
+        try:
+            from services import twin_feed
+            twin_feed.autopost(db, task.twin_id, f"✅ Finished: {task.title}", kind="win")
+        except Exception:
+            pass
 
     # --- Feedback → Knowledge Loop ---
     # When rejected: save the correction so twin never repeats the mistake

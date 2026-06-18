@@ -833,6 +833,30 @@ def like_feed_post(twin_id: UUID, post_id: UUID, db: Session = Depends(get_db), 
     return {"ok": True, "likes": likes}
 
 
+class FeedAutopostBody(BaseModel):
+    feed_autopost_enabled: bool
+
+
+@router.get("/{twin_id}/feed-autopost")
+def get_feed_autopost(twin_id: UUID, db: Session = Depends(get_db), _ac=Depends(_check_twin_owner_access)):
+    """Whether this twin auto-posts updates to the feed. Owner-only."""
+    twin = twin_service.get_twin(db, twin_id)
+    if not twin:
+        raise HTTPException(404, "Twin not found")
+    return {"feed_autopost_enabled": bool(getattr(twin, "feed_autopost_enabled", False))}
+
+
+@router.post("/{twin_id}/feed-autopost")
+def set_feed_autopost(twin_id: UUID, body: FeedAutopostBody, db: Session = Depends(get_db), _ac=Depends(_check_twin_owner_access)):
+    """Owner opts this twin in/out of auto-posting safe updates (default OFF)."""
+    twin = twin_service.get_twin(db, twin_id)
+    if not twin:
+        raise HTTPException(404, "Twin not found")
+    twin.feed_autopost_enabled = bool(body.feed_autopost_enabled)
+    db.commit()
+    return {"ok": True, "feed_autopost_enabled": bool(twin.feed_autopost_enabled)}
+
+
 class ProposeActionBody(BaseModel):
     action_type: str
     summary: Optional[str] = ""

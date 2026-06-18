@@ -74,6 +74,49 @@ def _post_dict(db: Session, p: TwinFeedPost, with_comments: bool = True) -> dict
     return d
 
 
+def autopost(db: Session, twin_id, content: str, kind: str = "update") -> Optional[TwinFeedPost]:
+    """Post to the feed ONLY if the twin's owner enabled auto-posting. High-level,
+    privacy-safe content only (titles/counts — never raw knowledge). Best-effort."""
+    t = db.query(DigitalTwin).filter(DigitalTwin.id == twin_id).first()
+    if not t or not getattr(t, "feed_autopost_enabled", False):
+        return None
+    try:
+        return create_post(db, twin_id, content, kind=kind)
+    except Exception as e:
+        log.warning(f"twin_feed.autopost failed: {e}")
+        return None
+
+
+def post_daily_summaries(db: Session) -> dict:
+    """Scheduler entry — each opted-in twin posts a short daily summary from its
+    last-24h activity counts (no content, just numbers). Returns {posted}."""
+    from datetime import datetime, timedelta
+    from db.models import TwinActivity, TwinTask
+    since = datetime.utcnow() - timedelta(hours=24)
+    twins = db.query(DigitalTwin).filter(DigitalTwin.feed_autopost_enabled.is_(True)).all()
+    posted = 0
+    for t in twins:
+        try:
+            done = (db.query(TwinTask)
+                    .filter(TwinTask.twin_id == t.id, TwinTask.status == "done",
+                            TwinTask.created_at >= since).count())
+            learned = (db.query(TwinActivity)
+                       .filter(TwinActivity.twin_id == t.id, TwinActivity.action_type == "watch_learn",
+                               TwinActivity.timestamp >= since).count())
+            if done == 0 and learned == 0:
+                continue  # nothing to report — stay quiet
+            bits = []
+            if done:
+                bits.append(f"{done} task{'s' if done != 1 else ''} done")
+            if learned:
+                bits.append(f"learned {learned} new thing{'s' if learned != 1 else ''}")
+            create_post(db, t.id, "🌅 Daily: " + ", ".join(bits) + ".", kind="update")
+            posted += 1
+        except Exception as e:
+            log.warning(f"daily summary failed for {t.id}: {e}")
+    return {"posted": posted}
+
+
 def list_feed(db: Session, limit: int = 40) -> list:
     posts = (db.query(TwinFeedPost)
              .filter(TwinFeedPost.parent_id.is_(None))

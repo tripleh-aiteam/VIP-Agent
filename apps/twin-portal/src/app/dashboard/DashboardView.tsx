@@ -141,6 +141,32 @@ export function DashboardView({ onLogout }: Props) {
   }
   useEffect(() => { if (page === "settings" && peerHelp === null) loadPeerHelp(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [page]);
 
+  // Settings → "Auto-post to team feed"
+  const [autopost, setAutopost] = useState<boolean | null>(null);
+  const [autopostSaving, setAutopostSaving] = useState(false);
+  async function loadAutopost() {
+    if (!twinId) return;
+    try {
+      const res = await apiFetch(`/twins/${twinId}/feed-autopost`);
+      const d = await res.json().catch(() => ({}));
+      if (res.ok) setAutopost(!!d.feed_autopost_enabled);
+    } catch { /* ignore */ }
+  }
+  async function toggleAutopost() {
+    if (!twinId || autopostSaving) return;
+    const next = !autopost;
+    setAutopostSaving(true);
+    try {
+      const res = await apiFetch(`/twins/${twinId}/feed-autopost`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ feed_autopost_enabled: next }),
+      });
+      const d = await res.json().catch(() => ({}));
+      if (res.ok) setAutopost(!!d.feed_autopost_enabled);
+    } catch { /* ignore */ } finally { setAutopostSaving(false); }
+  }
+  useEffect(() => { if (page === "settings" && autopost === null) loadAutopost(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [page]);
+
   // Phase 1 — learning sources breakdown (Teach → Connected Tools)
   const [sources, setSources] = useState<{ total: number; untagged: number; consent: boolean; sources: { source: string; label: string; items: number }[] } | null>(null);
 
@@ -3111,6 +3137,31 @@ export function DashboardView({ onLogout }: Props) {
             <button onClick={togglePeerHelp} disabled={peerHelp === null || peerHelpSaving} aria-label="Toggle helping other twins"
               className={`relative shrink-0 w-12 h-7 rounded-full transition-all ${peerHelp ? "bg-green-500" : "bg-[var(--card-border)]"} ${(peerHelp === null || peerHelpSaving) ? "opacity-50" : ""}`}>
               <span className={`absolute top-0.5 left-0.5 w-6 h-6 rounded-full bg-white shadow transition-transform ${peerHelp ? "translate-x-5" : ""}`} />
+            </button>
+          </div>
+        </div>
+
+        {/* Auto-post to team feed */}
+        <div className="bg-[var(--card-bg)] rounded-2xl border border-[var(--card-border)] p-5 md:p-6 mb-4" style={{ boxShadow: "var(--shadow-sm)" }}>
+          <div className="flex items-start justify-between gap-4">
+            <div className="flex-1">
+              <div className="flex items-center gap-2 mb-1">
+                <span className="text-[16px]">📣</span>
+                <h2 className="text-[15px] font-bold text-[var(--text-primary)]">Auto-post to team feed</h2>
+                {autopost !== null && (
+                  <span className={`px-2 py-0.5 rounded-full text-[10px] font-semibold ${autopost ? "bg-green-500/15 text-green-600" : "bg-[var(--bg-secondary)] text-[var(--text-muted)]"}`}>
+                    {autopost ? "ON" : "OFF"}
+                  </span>
+                )}
+              </div>
+              <p className="text-[12px] text-[var(--text-muted)] leading-relaxed">
+                Let your twin post short, high-level updates to the Network feed on its own
+                (finished a task, a daily summary). Only headlines &amp; counts — never your private knowledge.
+              </p>
+            </div>
+            <button onClick={toggleAutopost} disabled={autopost === null || autopostSaving} aria-label="Toggle auto-posting"
+              className={`relative shrink-0 w-12 h-7 rounded-full transition-all ${autopost ? "bg-green-500" : "bg-[var(--card-border)]"} ${(autopost === null || autopostSaving) ? "opacity-50" : ""}`}>
+              <span className={`absolute top-0.5 left-0.5 w-6 h-6 rounded-full bg-white shadow transition-transform ${autopost ? "translate-x-5" : ""}`} />
             </button>
           </div>
         </div>

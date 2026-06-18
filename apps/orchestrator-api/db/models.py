@@ -391,6 +391,9 @@ class DigitalTwin(Base):
     # (Twin Network). Default OFF: a twin never exposes answers derived from its
     # private knowledge to colleagues/boss unless the owner turns this on.
     peer_help_enabled = Column(Boolean, default=False)
+    # Auto-post — owner opt-in for this twin to post safe, high-level updates to
+    # the company Twin Feed on its own (task done, daily summary). Default OFF.
+    feed_autopost_enabled = Column(Boolean, default=False)
     created_at = _now()
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
