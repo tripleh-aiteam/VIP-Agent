@@ -787,6 +787,52 @@ def set_peer_help(twin_id: UUID, body: PeerHelpBody, db: Session = Depends(get_d
     return {"ok": True, "peer_help_enabled": bool(twin.peer_help_enabled)}
 
 
+# ---------------------------------------------------------------------------
+#  Phase 6 — Twin Feed (internal company wall). Routes nested under /{twin_id}/feed
+#  to avoid colliding with GET /{twin_id}. The feed itself is company-wide.
+# ---------------------------------------------------------------------------
+class FeedPostBody(BaseModel):
+    content: str
+    kind: Optional[str] = "update"
+
+
+class FeedCommentBody(BaseModel):
+    content: str
+
+
+@router.get("/{twin_id}/feed")
+def get_feed(twin_id: UUID, db: Session = Depends(get_db), _ac=Depends(_check_twin_owner_access)):
+    """The company-wide Twin Feed (same for everyone). Read via your own twin."""
+    from services import twin_feed
+    return {"posts": twin_feed.list_feed(db)}
+
+
+@router.post("/{twin_id}/feed")
+def post_to_feed(twin_id: UUID, body: FeedPostBody, db: Session = Depends(get_db), _ac=Depends(_check_twin_owner_access)):
+    """Post to the feed as your twin. Owner-only (you post as yourself)."""
+    from services import twin_feed
+    p = twin_feed.create_post(db, twin_id, body.content, kind=body.kind or "update")
+    return {"ok": True, "id": str(p.id)}
+
+
+@router.post("/{twin_id}/feed/{post_id}/comment")
+def comment_on_feed(twin_id: UUID, post_id: UUID, body: FeedCommentBody, db: Session = Depends(get_db), _ac=Depends(_check_twin_owner_access)):
+    """Comment on a feed post as your twin. Owner-only."""
+    from services import twin_feed
+    p = twin_feed.create_post(db, twin_id, body.content, kind="update", parent_id=post_id)
+    return {"ok": True, "id": str(p.id)}
+
+
+@router.post("/{twin_id}/feed/{post_id}/like")
+def like_feed_post(twin_id: UUID, post_id: UUID, db: Session = Depends(get_db), _ac=Depends(_check_twin_owner_access)):
+    """Like a feed post. Owner-only (acts via your twin)."""
+    from services import twin_feed
+    likes = twin_feed.like_post(db, post_id)
+    if likes is None:
+        raise HTTPException(404, "Post not found")
+    return {"ok": True, "likes": likes}
+
+
 class ProposeActionBody(BaseModel):
     action_type: str
     summary: Optional[str] = ""

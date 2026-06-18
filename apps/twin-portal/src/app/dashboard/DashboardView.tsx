@@ -222,7 +222,50 @@ export function DashboardView({ onLogout }: Props) {
     } catch { alert("Network error."); } finally { setAskBusy(false); }
   }
 
-  useEffect(() => { if (page === "network") loadNetwork(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [page]);
+  // Phase 6 — Twin Feed
+  type FeedPost = { id: string; kind: string; content: string; likes: number; author: { name: string; role: string }; created_at?: string; comments?: FeedPost[]; comment_count?: number };
+  const [feed, setFeed] = useState<FeedPost[]>([]);
+  const [feedText, setFeedText] = useState("");
+  const [feedKind, setFeedKind] = useState("update");
+  const [feedBusy, setFeedBusy] = useState(false);
+  const [commentOn, setCommentOn] = useState<string | null>(null);
+  const [commentText, setCommentText] = useState("");
+
+  async function loadFeed() {
+    if (!twinId) return;
+    try {
+      const res = await apiFetch(`/twins/${twinId}/feed`);
+      const d = await res.json().catch(() => ({ posts: [] }));
+      if (res.ok) setFeed(d.posts || []);
+    } catch { /* ignore */ }
+  }
+  async function postToFeed() {
+    if (!twinId || !feedText.trim() || feedBusy) return;
+    setFeedBusy(true);
+    try {
+      const res = await apiFetch(`/twins/${twinId}/feed`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ content: feedText.trim(), kind: feedKind }),
+      });
+      if (res.ok) { setFeedText(""); await loadFeed(); }
+    } catch { /* ignore */ } finally { setFeedBusy(false); }
+  }
+  async function likeFeed(postId: string) {
+    if (!twinId) return;
+    try { await apiFetch(`/twins/${twinId}/feed/${postId}/like`, { method: "POST" }); await loadFeed(); } catch { /* ignore */ }
+  }
+  async function submitComment(postId: string) {
+    if (!twinId || !commentText.trim()) return;
+    try {
+      await apiFetch(`/twins/${twinId}/feed/${postId}/comment`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ content: commentText.trim() }),
+      });
+      setCommentText(""); setCommentOn(null); await loadFeed();
+    } catch { /* ignore */ }
+  }
+
+  useEffect(() => { if (page === "network") { loadNetwork(); loadFeed(); } /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [page]);
 
   // Reports state
   const [morningReport, setMorningReport] = useState<any>(null);
@@ -2859,7 +2902,72 @@ export function DashboardView({ onLogout }: Props) {
       {nav}
       <div className="flex-1 max-w-[760px] mx-auto w-full p-4 md:p-6">
         <h1 className="text-[22px] font-bold text-[var(--text-primary)] mb-1">🤝 Twin Network</h1>
-        <p className="text-[13px] text-[var(--text-muted)] mb-5">Your twin can ask other team members’ twins for help — they answer from what they know.</p>
+        <p className="text-[13px] text-[var(--text-muted)] mb-5">A shared feed where twins post updates and help each other.</p>
+
+        {/* Twin Feed — compose */}
+        <div className="bg-[var(--card-bg)] rounded-2xl border border-[var(--card-border)] p-5 mb-4" style={{ boxShadow: "var(--shadow-sm)" }}>
+          <div className="flex items-center gap-2 mb-2">
+            <span className="text-[16px]">📣</span>
+            <h2 className="text-[15px] font-bold text-[var(--text-primary)]">Twin Feed</h2>
+          </div>
+          <textarea value={feedText} onChange={e => setFeedText(e.target.value)} rows={2}
+            placeholder="Share an update, a win, an insight, or ask the team…"
+            className="w-full px-4 py-3 bg-[var(--bg-input)] border border-[var(--card-border)] rounded-xl text-[13px] text-[var(--text-primary)] placeholder:text-[var(--text-muted)] focus:outline-none focus:border-blue-400 resize-none" />
+          <div className="flex items-center justify-between mt-2">
+            <select value={feedKind} onChange={e => setFeedKind(e.target.value)}
+              className="px-3 py-1.5 bg-[var(--bg-input)] border border-[var(--card-border)] rounded-lg text-[12px] text-[var(--text-primary)] focus:outline-none">
+              <option value="update">📝 Update</option>
+              <option value="win">🎉 Win</option>
+              <option value="insight">💡 Insight</option>
+              <option value="ask">🙋 Ask</option>
+            </select>
+            <button onClick={postToFeed} disabled={feedBusy || !feedText.trim()}
+              className="px-5 py-2 bg-gradient-to-r from-blue-500 to-purple-600 text-white rounded-lg text-[12px] font-semibold hover:opacity-90 disabled:opacity-50">
+              {feedBusy ? "Posting…" : "Post"}
+            </button>
+          </div>
+        </div>
+
+        {/* Twin Feed — posts */}
+        <div className="space-y-3 mb-6">
+          {feed.length === 0 ? (
+            <div className="text-[12px] text-[var(--text-muted)] text-center py-6">No posts yet. Be the first to share something with the team.</div>
+          ) : feed.map(p => {
+            const badge = p.kind === "win" ? "🎉" : p.kind === "insight" ? "💡" : p.kind === "ask" ? "🙋" : "📝";
+            return (
+              <div key={p.id} className="bg-[var(--card-bg)] rounded-2xl border border-[var(--card-border)] p-4" style={{ boxShadow: "var(--shadow-sm)" }}>
+                <div className="flex items-center gap-2 mb-1.5">
+                  <div className="w-7 h-7 rounded-full bg-gradient-to-br from-blue-400 to-purple-500 flex items-center justify-center text-white text-[11px] font-bold">{getInitials(p.author.name)}</div>
+                  <div className="flex-1">
+                    <span className="text-[13px] font-semibold text-[var(--text-primary)]">{p.author.name}</span>
+                    {p.author.role ? <span className="text-[11px] text-[var(--text-muted)]"> · {p.author.role}</span> : null}
+                  </div>
+                  <span className="text-[11px]">{badge}</span>
+                </div>
+                <div className="text-[13px] text-[var(--text-primary)] whitespace-pre-wrap mb-2">{p.content}</div>
+                <div className="flex items-center gap-4 text-[12px] text-[var(--text-muted)]">
+                  <button onClick={() => likeFeed(p.id)} className="hover:text-blue-500 transition-colors">👍 {p.likes || 0}</button>
+                  <button onClick={() => { setCommentOn(commentOn === p.id ? null : p.id); setCommentText(""); }} className="hover:text-blue-500 transition-colors">💬 {p.comment_count || 0}</button>
+                </div>
+                {(p.comments && p.comments.length > 0) && (
+                  <div className="mt-2 pl-4 border-l-2 border-[var(--card-border)] space-y-1.5">
+                    {p.comments.map(c => (
+                      <div key={c.id} className="text-[12px]"><span className="font-semibold text-[var(--text-primary)]">{c.author.name}:</span> <span className="text-[var(--text-muted)]">{c.content}</span></div>
+                    ))}
+                  </div>
+                )}
+                {commentOn === p.id && (
+                  <div className="mt-2 flex gap-2">
+                    <input value={commentText} onChange={e => setCommentText(e.target.value)} onKeyDown={e => { if (e.key === "Enter") submitComment(p.id); }}
+                      placeholder="Write a comment…"
+                      className="flex-1 px-3 py-1.5 bg-[var(--bg-input)] border border-[var(--card-border)] rounded-lg text-[12px] text-[var(--text-primary)] focus:outline-none focus:border-blue-400" />
+                    <button onClick={() => submitComment(p.id)} disabled={!commentText.trim()} className="px-3 py-1.5 bg-blue-600 text-white rounded-lg text-[12px] font-semibold disabled:opacity-50">Send</button>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
 
         {/* Ask another twin */}
         <div className="bg-[var(--card-bg)] rounded-2xl border border-[var(--card-border)] p-5 md:p-6 mb-4" style={{ boxShadow: "var(--shadow-sm)" }}>

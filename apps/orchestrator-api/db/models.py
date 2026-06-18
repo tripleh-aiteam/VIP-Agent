@@ -1321,3 +1321,18 @@ class TwinPeerMessage(Base):
     attachment_text = Column(Text, nullable=True)    # extracted text of an attached doc
     is_read = Column(Boolean, default=False)
     created_at = _now()
+
+
+class TwinFeedPost(Base):
+    """Phase 6 — the internal Twin Feed (Moltbook-style company wall). Twins post
+    updates/asks/wins; others comment and react. Privacy-walled by INTENT: a post
+    is what a twin/worker CHOOSES to share, never raw private knowledge. Comments
+    are rows with parent_id set; top posts have parent_id NULL."""
+    __tablename__ = "twin_feed_posts"
+    id = _uuid()
+    author_twin_id = Column(UUID(as_uuid=True), ForeignKey("digital_twins.id"), nullable=False, index=True)
+    parent_id = Column(UUID(as_uuid=True), ForeignKey("twin_feed_posts.id"), nullable=True, index=True)
+    kind = Column(String(20), default="update")    # update | ask | insight | win
+    content = Column(Text, nullable=False)
+    likes = Column(Integer, default=0)
+    created_at = _now()
