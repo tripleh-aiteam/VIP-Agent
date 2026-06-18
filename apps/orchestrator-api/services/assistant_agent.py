@@ -384,6 +384,90 @@ def _is_concept_question(transcript: Optional[str]) -> bool:
     return _stock_in_query(transcript) is None
 
 
+# Bare CURRENT-PRICE question (현재가/시세/주가/얼마/price) about a specific KR stock —
+# VIP answers it LOCALLY (Kiwoom during market, Naver after) instead of delegating.
+_PRICE_WORDS = ("현재가", "시세", "주가", "얼마", "price", "quote")
+
+
+def _kr_market_open_now() -> bool:
+    """KRX regular session: Mon-Fri 09:00-15:30 KST."""
+    now = _dt_now_kst()
+    if now.weekday() >= 5:
+        return False
+    cur = now.hour * 100 + now.minute
+    return 900 <= cur <= 1530
+
+
+def _dt_now_kst():
+    from datetime import datetime as _d, timezone as _z, timedelta as _t
+    return _d.now(_z(_t(hours=9)))
+
+
+def _is_vip_current_price_q(transcript: Optional[str], agent_id: Optional[str]) -> bool:
+    if (agent_id or "vip").lower() == "stock":
+        return False
+    t = (transcript or "").lower()
+    if not any(w in t for w in _PRICE_WORDS):
+        return False
+    if _is_past_price(transcript) or _is_stock_advice(transcript, agent_id):
+        return False
+    if any(w in t for w in ("뉴스", "news", "유튜브", "youtube", "리포트", "report")):
+        return False
+    return _stock_in_query(transcript) is not None
+
+
+def _vip_live_price_reply(transcript: Optional[str], lang: str) -> Optional[dict]:
+    """VIP current-price answered locally: Kiwoom REST during KRX market hours,
+    Naver after-market. Returns a reply dict, or None to fall back to delegation
+    (e.g. US ticker / unresolved / both sources failed)."""
+    try:
+        from services.stock_data_tools import _resolve_ticker
+        code, name = _resolve_ticker(transcript or "")
+    except Exception:
+        code, name = None, None
+    if not code or not str(code).isdigit():
+        return None  # not a resolvable KR 6-digit stock → let delegation handle it
+
+    price = chg = None
+    source = None
+    if _kr_market_open_now():
+        try:
+            from services import kiwoom_rest
+            _k, _s = kiwoom_rest._creds()
+            if _k and _s:
+                kq = kiwoom_rest.current_price(code)
+                if kq and kq.get("price"):
+                    price, chg = kq["price"], kq.get("change_pct")
+                    name = kq.get("name") or name
+                    source = "키움증권 실시간 시세"
+        except Exception as e:
+            log.warning(f"vip kiwoom price failed: {str(e)[:120]}")
+    if price is None:  # after-market / weekend / Kiwoom miss → Naver
+        try:
+            from services import naver_stock
+            nq = naver_stock.realtime_quote(code)
+            if nq and nq.get("price"):
+                price, chg = nq["price"], nq.get("change_pct")
+                source = "NAVER 실시간 시세"
+        except Exception as e:
+            log.warning(f"vip naver price failed: {str(e)[:120]}")
+    if price is None:
+        return None
+
+    now = _dt_now_kst()
+    nm = (name or code).upper()  # 'sk하이닉스' -> 'SK하이닉스' (Korean unaffected)
+    price_s = f"{int(round(float(price))):,}원"
+    chg_s = ""
+    if chg is not None:
+        chg_s = f", 전일 대비 {'+' if chg >= 0 else ''}{chg}%"
+    ts = f"{now.year}년 {now.month}월 {now.day}일 {now.hour:02d}:{now.minute:02d}"
+    reply = (f"{nm} 현재가는 {price_s}{chg_s}입니다. 기준 시각은 {ts} (한국시간)입니다. "
+             f"출처는 {source}입니다.")
+    return {"intent": "stock_price", "language": lang, "reply": reply,
+            "action": None, "speak": True, "transcript": transcript,
+            "tool_used": "stock_quote", "tool_result": {"price": price, "source": source}}
+
+
 # Clear stock-domain keywords (besides a specific stock name).
 _STOCK_Q_KW = (
     "주가", "종가", "현재가", "시세", "코스피", "코스닥", "kospi", "kosdaq", "증시",
@@ -2545,6 +2629,15 @@ def _run_agent_impl(
         return _offline_answer(db, transcript=transcript, lang=lang,
                                agent_id=agent_id, page_context=page_context,
                                kb_context=kb_hits)
+
+    # ===== VIP LOCAL current-price (Kiwoom during market / Naver after) =====
+    # Bare '현재가/시세/주가/얼마' questions are answered HERE (fast, no delegation):
+    # Kiwoom REST during the KRX session, Naver after-market. Falls through to the
+    # normal delegation if the stock can't be resolved or both sources fail.
+    if not confirmed_tool and _is_vip_current_price_q(transcript, agent_id):
+        _vp = _vip_live_price_reply(transcript, lang)
+        if _vp:
+            return _vp
 
     # ===== VIP → Stock delegation (single source of truth) =====
     # ANY stock question asked in VIP (or another non-stock agent) is answered by

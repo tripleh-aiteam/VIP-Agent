@@ -305,17 +305,19 @@ def _token(force: bool = False) -> Optional[str]:
 # Low-level request
 # --------------------------------------------------------------------------- #
 def _request(api_id: str, body: dict, cont_yn: str = "N",
-             next_key: str = "") -> Optional[dict]:
+             next_key: str = "", path: Optional[str] = None) -> Optional[dict]:
     """POST to a Kiwoom REST endpoint with the standard header set + retries.
 
     Returns the parsed JSON dict, or ``None`` on any failure. Refreshes the
     token once on a 401. Honors the ``return_code != 0`` error contract.
+    ``path`` defaults to the short-selling endpoint; pass another (e.g.
+    ``/api/dostk/stkinfo`` for ka10001 current-price) to reuse this transport.
     """
     token = _token()
     if not token:
         return None
 
-    url = f"{_active_base or _BASE_URL}{_SHSA_PATH}"
+    url = f"{_active_base or _BASE_URL}{path or _SHSA_PATH}"
     for attempt in range(1, _RETRIES + 1):
         headers = {
             "Content-Type": "application/json;charset=UTF-8",
@@ -403,6 +405,33 @@ def _newest_row(rows: list[dict]) -> Optional[dict]:
 # --------------------------------------------------------------------------- #
 # Public API — short selling
 # --------------------------------------------------------------------------- #
+_CP_PRICE_KEYS = ("cur_prc", "stck_prpr", "prpr")
+_CP_PREV_KEYS = ("base_pric", "stck_sdpr", "pred_close_pric")
+_CP_NAME_KEYS = ("stk_nm", "hts_kor_isnm", "isnm")
+
+
+def current_price(code: str) -> Optional[dict]:
+    """LIVE current price for a KR 6-digit code via Kiwoom REST (ka10001,
+    /api/dostk/stkinfo). Returns ``{price, prev_close, change_pct, name}`` or
+    ``None`` on any failure (caller falls back to Naver). Reads creds from env."""
+    code = (code or "").strip()
+    if not code.isdigit():
+        return None
+    data = _request("ka10001", {"stk_cd": code}, path="/api/dostk/stkinfo")
+    if not isinstance(data, dict):
+        return None
+    price = _to_float(_first(data, _CP_PRICE_KEYS))
+    if price is None:
+        return None
+    price = abs(price)
+    prev = _to_float(_first(data, _CP_PREV_KEYS))
+    prev = abs(prev) if prev is not None else None
+    change_pct = round((price - prev) / prev * 100, 2) if prev else None
+    name = _first(data, _CP_NAME_KEYS)
+    return {"price": price, "prev_close": prev, "change_pct": change_pct,
+            "name": (str(name).strip() if name else None)}
+
+
 def short_selling(code: str) -> Optional[dict]:
     """Most recent completed day's short-selling for one ticker.
 
