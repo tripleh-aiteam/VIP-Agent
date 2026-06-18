@@ -528,9 +528,14 @@ def _vip_live_price_reply(transcript: Optional[str], lang: str) -> Optional[dict
         return None
 
     now = _dt_now_kst()
-    ts = f"{now.year}년 {now.month}월 {now.day}일 {now.hour:02d}:{now.minute:02d}"
     sources = sorted({q["source"] for q in quotes})
-    src_label = " / ".join(sources)
+
+    # Answer in the user's language: English if lang='en' OR the question is
+    # English (latin letters, no Hangul); Korean otherwise.
+    _en = (lang or "").lower().startswith("en")
+    if not _en and not _re.search(r"[가-힣]", transcript or "") \
+            and _re.search(r"[a-zA-Z]", transcript or ""):
+        _en = True
 
     def _chg(q):
         c = q["change_pct"]
@@ -538,18 +543,41 @@ def _vip_live_price_reply(transcript: Optional[str], lang: str) -> Optional[dict
             return ""
         return f" ({'▲' if c >= 0 else '▼'} {'+' if c >= 0 else ''}{c}%)"
 
-    if len(quotes) == 1:
-        q = quotes[0]
-        reply = (f"{q['name']} 현재가는 {int(round(q['price'])):,}원"
-                 f"{(', 전일 대비 ' + _chg(q).strip(' ()')) if q['change_pct'] is not None else ''}"
-                 f"입니다. 기준 시각은 {ts} (한국시간)입니다. 출처는 {src_label}입니다.")
+    if _en:
+        def _src_en(s):
+            if "키움" in s:
+                return "Kiwoom (real-time)"
+            if "시간외" in s or "NXT" in s.upper():
+                return "Naver after-hours (NXT)"
+            return "Naver (real-time)"
+        src_label = " / ".join(sorted({_src_en(s) for s in sources}))
+        ts = f"{now.year}-{now.month:02d}-{now.day:02d} {now.hour:02d}:{now.minute:02d} KST"
+        if len(quotes) == 1:
+            q = quotes[0]
+            reply = (f"{q['name']} is currently ₩{int(round(q['price'])):,}{_chg(q)}, "
+                     f"as of {ts}. Source: {src_label}.")
+        else:
+            head = "Current watchlist prices" if used_watchlist else "Current prices"
+            lines = [f"{head} (as of {ts}):"]
+            for q in quotes:
+                lines.append(f"- {q['name']}: ₩{int(round(q['price'])):,}{_chg(q)}")
+            lines.append(f"Source: {src_label}")
+            reply = "\n".join(lines)
     else:
-        head = "관심 종목 현재가입니다" if used_watchlist else "요청하신 종목 현재가입니다"
-        lines = [f"{head} (기준 {ts} 한국시간):"]
-        for q in quotes:
-            lines.append(f"- {q['name']}: {int(round(q['price'])):,}원{_chg(q)}")
-        lines.append(f"출처: {src_label}")
-        reply = "\n".join(lines)
+        src_label = " / ".join(sources)
+        ts = f"{now.year}년 {now.month}월 {now.day}일 {now.hour:02d}:{now.minute:02d}"
+        if len(quotes) == 1:
+            q = quotes[0]
+            reply = (f"{q['name']} 현재가는 {int(round(q['price'])):,}원"
+                     f"{(', 전일 대비 ' + _chg(q).strip(' ()')) if q['change_pct'] is not None else ''}"
+                     f"입니다. 기준 시각은 {ts} (한국시간)입니다. 출처는 {src_label}입니다.")
+        else:
+            head = "관심 종목 현재가입니다" if used_watchlist else "요청하신 종목 현재가입니다"
+            lines = [f"{head} (기준 {ts} 한국시간):"]
+            for q in quotes:
+                lines.append(f"- {q['name']}: {int(round(q['price'])):,}원{_chg(q)}")
+            lines.append(f"출처: {src_label}")
+            reply = "\n".join(lines)
 
     return {"intent": "stock_price", "language": lang, "reply": reply,
             "action": None, "speak": True, "transcript": transcript,
