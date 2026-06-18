@@ -31,7 +31,7 @@ MOCK_AGENTS = [
         "description": "Mock asset management agent for development",
     },
     {
-        "name": "Stock Agent",
+        "name": "AI Advisor",
         "type": "stock",
         "version": "0.1.0",
         "owner_team": "vip-core",
