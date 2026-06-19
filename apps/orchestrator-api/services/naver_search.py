@@ -84,24 +84,55 @@ def naver_search(query: str, *, kind: str = "web", num_results: int = 5,
             res["realestate"] = realestate
             return res
 
-    # 2) Fallback: web search scoped to Naver (no Naver key needed).
-    from services.web_search import search_web
+    # 2) Direct Serper (Google) scoped to NAVER — returns REAL naver.com /
+    # land.naver.com links (clickable proof), avoiding the Gemini-grounding fallback
+    # whose URLs are opaque redirects.
     if realestate:
-        # Try Naver 부동산 listing pages first; if empty, a broad Naver 부동산 query.
-        scoped = f"{q} 매물 site:land.naver.com"
-        res = search_web(scoped, num_results=n)
-        if not (res.get("ok") and res.get("results")):
-            scoped = f"{q} 네이버부동산 매물"
-            res = search_web(scoped, num_results=n)
+        variants = [
+            f"{q} 매물 site:land.naver.com",
+            f"site:new.land.naver.com {q}",
+            f"{q} 네이버 부동산 매물",
+        ]
     else:
-        scoped = f"{q} site:naver.com"
-        res = search_web(scoped, num_results=n)
-    res["provider"] = f"naver(web-scoped:{res.get('provider')})"
+        variants = [f"{q} site:naver.com", f"{q} 네이버"]
+    for scoped in variants:
+        hits = _serper(scoped, n)
+        if hits:
+            return {"ok": True, "provider": "serper:naver", "results": hits,
+                    "query": scoped, "realestate": realestate}
+
+    # 3) Last resort: the generic web-search chain (may include other providers).
+    from services.web_search import search_web
+    scoped = (f"{q} 네이버 부동산 매물" if realestate else f"{q} site:naver.com")
+    res = search_web(scoped, num_results=n)
+    res["provider"] = f"naver(web:{res.get('provider')})"
     res["query"] = scoped
     res["realestate"] = realestate
-    if not res.get("ok"):
-        log.info("naver_search fallback empty for %r", scoped[:80])
     return res
+
+
+def _serper(query: str, n: int) -> list[dict[str, Any]]:
+    """Direct Serper (Google) call, biased to Korea (gl=kr, hl=ko). [] if no key /
+    no results. Returns real source links — no grounding-redirect URLs."""
+    import httpx
+    key = os.environ.get("SERPER_API_KEY")
+    if not key:
+        return []
+    try:
+        with httpx.Client(timeout=12.0) as c:
+            r = c.post("https://google.serper.dev/search",
+                       headers={"X-API-KEY": key, "Content-Type": "application/json"},
+                       json={"q": query, "num": n, "gl": "kr", "hl": "ko"})
+            r.raise_for_status()
+            data = r.json()
+    except Exception as e:
+        log.warning("naver_search serper failed: %s", str(e)[:120])
+        return []
+    out: list[dict[str, Any]] = []
+    for it in (data.get("organic") or [])[:n]:
+        out.append({"title": it.get("title", ""), "url": it.get("link", ""),
+                    "snippet": it.get("snippet", "")})
+    return out
 
 
 __all__ = ["naver_search"]

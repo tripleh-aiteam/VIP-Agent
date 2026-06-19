@@ -1012,14 +1012,17 @@ def _is_naver_search_q(transcript: Optional[str]) -> bool:
 
 
 def _naver_subject(transcript: Optional[str]) -> str:
-    """Strip Naver-search filler, keep the property/address/subject terms."""
+    """Reduce the question to just the property/address subject (e.g. '낙하리') so the
+    Naver search isn't polluted by filler like '부동산 매물이 올라와 있는지 확인해줘'."""
     t = transcript or ""
-    t = _re.sub(r"(네이버에서|네이버|naver|검색해줘|검색해|검색|확인해줘|확인|알려줘|알려|"
-                r"해줘|해주세요|올라와\s*있는지|올라와|올라온|등록\s*되어|등록|있는지요|있는지|있나|있어|"
-                r"매물로|좀|찾아봐줘|찾아봐|찾아|광고|please|search|for|on|is|are|our|whether|"
-                r"우리|the|check)", " ", t, flags=_re.I)
-    # Drop dangling 1-char Korean particles and punctuation left after stripping.
-    t = _re.sub(r"(?<=\s)(에|에서|이|가|을|를|은|는|도|의)(?=\s|$)", " ", t)
+    # Strip search/listing filler + generic real-estate words (부동산/매물 — the search
+    # itself scopes to Naver 부동산, so keep only the property NAME/ADDRESS + type).
+    t = _re.sub(r"(네이버에서|네이버|naver|부동산에|부동산|매물이|매물로|매물|광고|"
+                r"검색해줘|검색해|검색|확인해줘|확인|알려줘|알려|해줘|해주세요|"
+                r"올라와\s*있는지|올라와|올라온|등록\s*되어|등록|있는지요|있는지|있나요|있나|있어요|있어|"
+                r"좀|찾아봐줘|찾아봐|찾아|please|search|for|on|in|is|are|our|whether|listed|"
+                r"advertis\w*|우리|the|check|real\s*estate)", " ", t, flags=_re.I)
+    t = _re.sub(r"(?<=\s)(에|에서|이|가|을|를|은|는|도|의|로)(?=\s|$)", " ", t)
     t = _re.sub(r"[?!.,]+", " ", t)
     return _re.sub(r"\s+", " ", t).strip()
 
@@ -1032,30 +1035,38 @@ def _vip_naver_search_reply(transcript: Optional[str], lang: str) -> Optional[di
     res = naver_search(subject, realestate=re_estate, num_results=6)
     results = res.get("results") or []
     _en = (lang or "").lower().startswith("en")
-    if not results:
-        if re_estate:
-            reply = (f"네이버 부동산에서 '{subject}' 관련 매물을 찾지 못했습니다. 현재 네이버 부동산에 "
+
+    def _fmt(rs):
+        out = []
+        for r in rs:
+            title = (r.get("title") or "").strip()
+            url = (r.get("url") or "").strip()
+            snip = (r.get("snippet") or "").strip()[:120]
+            out.append(f"• {title}" + (f"\n  🔗 {url}" if url else "") + (f"\n  {snip}" if snip else ""))
+        return out
+
+    if re_estate:
+        # Real Naver 부동산 listing links = proof the property IS advertised.
+        naver_hits = [r for r in results if "land.naver.com" in (r.get("url") or "")]
+        proof = naver_hits or results
+        if proof:
+            verdict = (f"✅ '{subject}'은(는) 네이버 부동산에 매물로 올라와 있는 것으로 확인됩니다. "
+                       f"아래 링크에서 직접 확인하실 수 있습니다:" if not _en else
+                       f"✅ '{subject}' appears to be listed on NAVER 부동산. Verify via the links below:")
+            reply = verdict + "\n\n" + "\n".join(_fmt(proof[:5]))
+        else:
+            reply = (f"❌ 네이버 부동산에서 '{subject}' 매물을 찾지 못했습니다. 현재 네이버 부동산에 "
                      f"광고/매물로 등록되어 있지 않은 것으로 보입니다." if not _en else
-                     f"No NAVER 부동산 listings found for '{subject}' — it doesn't appear to be "
+                     f"❌ No NAVER 부동산 listing found for '{subject}' — it doesn't appear to be "
                      f"advertised on Naver right now.")
+    else:
+        if results:
+            head = (f"네이버 검색 결과 — '{subject}':" if not _en else f"NAVER results for '{subject}':")
+            reply = head + "\n\n" + "\n".join(_fmt(results[:6]))
         else:
             reply = (f"네이버에서 '{subject}' 검색 결과를 찾지 못했습니다." if not _en else
                      f"No Naver results found for '{subject}'.")
-        return {"intent": "naver_search", "language": lang, "reply": reply, "action": None,
-                "speak": True, "transcript": transcript, "tool_used": "naver_search",
-                "tool_result": res}
-    if re_estate:
-        head = (f"네이버 부동산에서 '{subject}' 검색 결과입니다 (매물/광고로 보이는 항목):" if not _en
-                else f"NAVER 부동산 results for '{subject}' (looks listed/advertised):")
-    else:
-        head = (f"네이버 검색 결과 — '{subject}':" if not _en else f"NAVER results for '{subject}':")
-    lines = [head]
-    for r in results[:6]:
-        title = (r.get("title") or "").strip()
-        url = (r.get("url") or "").strip()
-        snip = (r.get("snippet") or "").strip()[:110]
-        lines.append(f"- {title}" + (f"\n  {url}" if url else "") + (f"\n  {snip}" if snip else ""))
-    return {"intent": "naver_search", "language": lang, "reply": "\n".join(lines)[:1800],
+    return {"intent": "naver_search", "language": lang, "reply": reply[:1900],
             "action": None, "speak": True, "transcript": transcript,
             "tool_used": "naver_search", "tool_result": res}
 
