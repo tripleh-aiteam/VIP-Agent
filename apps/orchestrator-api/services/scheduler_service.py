@@ -1085,6 +1085,88 @@ def _asset_daily_report(email_override: str | None = None, period: str = "daily"
         db.close()
 
 
+@_single_flight("realty")
+@with_retry(max_attempts=2, backoff_seconds=(60, 300), job_name="realty_daily_report")
+def _realty_daily_report(email_override: str | None = None, period: str = "daily", lang: str = "ko"):
+    """Detailed Real Estate Agent report — listings workbook + OnBid 공매, saved to
+    the dashboard + Telegram, and sent as its OWN standalone email with BOTH Korean
+    and English .docx (scheduled ~7:05 AM KST to all recipients via _realty_daily_all)."""
+    from services.realty_report import build_realty_report
+    from services.kiwoom_report import format_report_telegram
+    from services.telegram_service import send_alert
+    from db.models import OrchReport
+
+    db = SessionLocal()
+    trace = f"tr-realty-{int(datetime.utcnow().timestamp())}"
+    kst = kst_label()
+    try:
+        rep = build_realty_report(db, trace)
+        r = OrchReport(
+            report_type="realty_report",
+            source_run_ids_json=[],
+            content_json={
+                "report_type": "realty_report", "period": period,
+                "executive_summary": rep.get("summary_ko") or rep.get("summary_en") or "Real estate daily report",
+                "sections": [{"title": "Real Estate Daily", "content": rep.get("table_ko", ""), "data": {}}],
+                "report": rep,
+                "generated_at": datetime.utcnow().isoformat(), "kst_time": kst,
+            },
+            delivery_channel="auto",
+        )
+        db.add(r)
+        db.commit()
+
+        try:
+            for chunk in format_report_telegram(rep, kst, lang="ko",
+                                                title="Real Estate Agent Report", emoji="🏠"):
+                send_alert(chunk)
+        except Exception as te:
+            log.warning(f"realty telegram format failed: {te}")
+
+        try:
+            from services.report_docx import markdown_to_docx
+            from services.report_email import (send_email_with_docs,
+                                               is_configured as _email_ok, DEFAULT_RECIPIENT,
+                                               default_recipients)
+            if email_override == "*ALL*":
+                to_addr = default_recipients()
+            else:
+                to_addr = (email_override or os.getenv("REALTY_REPORT_EMAIL")
+                           or os.getenv("REPORT_EMAIL_TO") or DEFAULT_RECIPIENT)
+            if (email_override or os.getenv("SEND_INDIVIDUAL_EMAILS") == "1") and _email_ok() and to_addr:
+                ymd = datetime.utcnow().strftime("%Y%m%d")
+                ko_md = rep.get("detail_ko") or rep.get("detail_en") or ""
+                en_md = rep.get("detail_en") or rep.get("detail_ko") or ""
+                files = []
+                if ko_md:
+                    files.append((f"부동산리포트_RealEstate_KO_{ymd}.docx",
+                                  markdown_to_docx(ko_md, "부동산 에이전트 상세 리포트 (한국어)", kst)))
+                if en_md:
+                    files.append((f"RealEstate_Report_EN_{ymd}.docx",
+                                  markdown_to_docx(en_md, "Real Estate Agent Detailed Report (English)", kst)))
+                res = send_email_with_docs(
+                    to_addr, f"[Real Estate] 부동산 에이전트 상세 리포트 (한/영) — {kst}",
+                    "부동산 에이전트 상세 리포트입니다 — 한국어·영문 2개 파일을 첨부합니다.\n\n"
+                    "The detailed Real Estate Agent report is attached in Korean and English.",
+                    files)
+                log.info(f"realty: email {'sent' if res.get('ok') else 'skipped'} -> "
+                         f"{len(to_addr) if isinstance(to_addr, list) else 1} recipient(s), "
+                         f"{len(files)} file(s) ({res.get('reason', 'ok')})",
+                         extra={"trace_id": trace, "action": "realty.email"})
+            else:
+                log.info("realty: email skipped (SMTP not configured or no recipient)",
+                         extra={"action": "realty.email.skip"})
+        except Exception as ee:
+            log.warning(f"realty: email step failed: {ee}", extra={"action": "realty.email.failed"})
+
+        log.info(f"realty: detailed report saved + sent ({rep['status']})",
+                 extra={"trace_id": trace, "action": "realty.daily.done"})
+    except Exception as e:
+        log.warning(f"realty: daily report failed: {e}", extra={"action": "realty.daily.failed"})
+    finally:
+        db.close()
+
+
 @_single_flight("master")
 @with_retry(max_attempts=2, backoff_seconds=(60, 300), job_name="master_daily_report")
 def _master_daily_report(email_override: str | None = None, period: str = "daily", lang: str = "ko"):
@@ -1277,6 +1359,12 @@ def _asset_daily_all():
     _asset_daily_report(email_override="*ALL*")
 
 
+def _realty_daily_all():
+    """Scheduled 7:05 AM KST — build the detailed Real Estate report and send it as
+    its OWN standalone email (Korean + English .docx) to the FULL recipient list."""
+    _realty_daily_report(email_override="*ALL*")
+
+
 def _knowledge_sync_job():
     """Feed the RAG knowledge base with the day's fresh reports (Phase 2), so the
     chatbot grounds answers in real content. Runs after the morning reports."""
@@ -1427,6 +1515,16 @@ def init_scheduler():
         replace_existing=True,
     )
     log.info("scheduler: Asset detailed report registered (22:00 UTC = 7:00 AM KST, all recipients, KO+EN)", extra={"action": "scheduler.asset_registered"})
+
+    # Real Estate Agent detailed report — its OWN standalone email at 7:05 AM KST =
+    # 22:05 UTC, to ALL recipients, with BOTH Korean + English .docx (after Asset).
+    _scheduler.add_job(
+        _realty_daily_all,
+        CronTrigger.from_crontab("5 22 * * *"),
+        id="realty-daily-report",
+        replace_existing=True,
+    )
+    log.info("scheduler: Real Estate detailed report registered (22:05 UTC = 7:05 AM KST, all recipients, KO+EN)", extra={"action": "scheduler.realty_registered"})
 
     # NOTE: the grounded YouTube report is NO LONGER a separate email — it is
     # bundled into the consolidated master email below (all 4 reports together),
