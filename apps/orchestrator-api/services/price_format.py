@@ -100,12 +100,43 @@ def _src_line(quotes, english: bool) -> str:
     return " / ".join(labels)
 
 
-def format_current(quotes, *, lang, used_watchlist: bool = False, as_of: datetime | None = None) -> str:
-    """Current-price answer. `quotes`: list of quote dicts (see module docstring)."""
+_FIELD_EN = {"open": "open", "high": "high", "low": "low", "price": "current"}
+_FIELD_KO = {"open": "시가", "high": "고가", "low": "저가", "price": "현재가"}
+
+
+def _value_segment(q, fields, english: bool) -> str:
+    """Per-stock value string. Only-price → '₩X (▲ +Y%)'. Multi-field (e.g. open +
+    current) → 'open ₩A, current ₩B (▲ +Y%)' so 'opening AND current' is answered."""
+    market = q.get("market")
+    simple = (not fields) or list(fields) == ["price"]
+    if not simple:
+        labels = _FIELD_EN if english else _FIELD_KO
+        parts = []
+        for f in fields:
+            v = q.get(f)
+            if v is None:
+                continue
+            seg = f"{labels.get(f, f)} {_price_str(v, market, english)}"
+            if f == "price":
+                seg += _chg(q.get("change_pct"))
+            parts.append(seg)
+        if parts:
+            return ", ".join(parts)
+    # only-price (or requested fields all missing)
+    return f"{_price_str(q.get('price'), market, english)}{_chg(q.get('change_pct'))}"
+
+
+def format_current(quotes, *, lang, used_watchlist: bool = False,
+                   as_of: datetime | None = None, fields=None) -> str:
+    """Current-price answer. `quotes`: list of quote dicts (see module docstring).
+    `fields`: which values to show, e.g. ['open','price'] for 'opening and current'.
+    Defaults to ['price']. The source label (Kiwoom / Naver) is ALWAYS shown."""
     english = _is_en(lang)
     dt = as_of or now_kst()
+    fields = list(fields) if fields else ["price"]
     avail = [q for q in quotes if q.get("price") is not None]
     src = _src_line(avail or quotes, english)
+    multi_field = fields != ["price"]
 
     if english:
         ts = _ts_en(dt)
@@ -114,9 +145,10 @@ def format_current(quotes, *, lang, used_watchlist: bool = False, as_of: datetim
             name = q.get("name") or "the stock"
             if q.get("price") is None:
                 return f"Couldn't fetch a quote for {name}. Please check the ticker or data availability."
-            price = _price_str(q["price"], q.get("market"), True)
             tail = f" Source: {src}." if src else ""
-            return f"{name} is currently {price}{_chg(q.get('change_pct'))}, as of {ts}.{tail}"
+            if multi_field:
+                return f"{name} — {_value_segment(q, fields, True)}, as of {ts}.{tail}"
+            return f"{name} is currently {_value_segment(q, fields, True)}, as of {ts}.{tail}"
         head = "Current watchlist prices" if used_watchlist else "Current prices"
         lines = [f"{head} (as of {ts}):"]
         for q in quotes:
@@ -124,7 +156,7 @@ def format_current(quotes, *, lang, used_watchlist: bool = False, as_of: datetim
             if q.get("price") is None:
                 lines.append(f"- {name}: quote unavailable")
             else:
-                lines.append(f"- {name}: {_price_str(q['price'], q.get('market'), True)}{_chg(q.get('change_pct'))}")
+                lines.append(f"- {name}: {_value_segment(q, fields, True)}")
         if src:
             lines.append(f"Source: {src}")
         return "\n".join(lines)
@@ -136,10 +168,12 @@ def format_current(quotes, *, lang, used_watchlist: bool = False, as_of: datetim
         name = q.get("name") or "해당 종목"
         if q.get("price") is None:
             return f"{name} 시세를 조회하지 못했습니다. 종목 코드나 데이터 제공 상태를 확인해 주세요."
-        price = _price_str(q["price"], q.get("market"), False)
+        tail = f" 출처는 {src}입니다." if src else ""
+        if multi_field:
+            return f"{name} — {_value_segment(q, fields, False)}. 기준 시각은 {ts} (한국시간)입니다.{tail}"
         chg = _chg(q.get("change_pct"))
         chg_txt = f", 전일 대비 {chg.strip(' ()')}" if chg else ""
-        tail = f" 출처는 {src}입니다." if src else ""
+        price = _price_str(q["price"], q.get("market"), False)
         return f"{name} 현재가는 {price}{chg_txt}입니다. 기준 시각은 {ts} (한국시간)입니다.{tail}"
     head = "관심 종목 현재가입니다" if used_watchlist else "요청하신 종목 현재가입니다"
     lines = [f"{head} (기준 {ts} 한국시간):"]
@@ -148,7 +182,7 @@ def format_current(quotes, *, lang, used_watchlist: bool = False, as_of: datetim
         if q.get("price") is None:
             lines.append(f"- {name}: 시세 조회 실패")
         else:
-            lines.append(f"- {name}: {_price_str(q['price'], q.get('market'), False)}{_chg(q.get('change_pct'))}")
+            lines.append(f"- {name}: {_value_segment(q, fields, False)}")
     if src:
         lines.append(f"출처: {src}")
     return "\n".join(lines)

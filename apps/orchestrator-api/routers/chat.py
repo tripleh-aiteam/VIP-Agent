@@ -56,6 +56,20 @@ def live_price(codes: str = Query(..., description="Comma-separated KR 6-digit c
     return {"ok": bool(quotes), "count": len(quotes), "quotes": quotes}
 
 
+@router.get("/price/answer")
+def price_answer(q: str = Query(..., description="The user's price question, verbatim"),
+                 lang: str = Query("auto", description="'en', 'ko', or 'auto'")):
+    """Fully-FORMATTED current-price answer (opening/current/high/low as asked, Kiwoom
+    during market / Naver after, with source label). VIP owns the Kiwoom key, so the
+    Stock app relays this string for price questions → both surfaces read identically.
+    Returns {ok, reply}."""
+    from services.assistant_agent import _vip_live_price_reply
+    r = _vip_live_price_reply(q or "", lang or "auto")
+    if r and r.get("reply"):
+        return {"ok": True, "reply": r["reply"]}
+    return {"ok": False, "reply": ""}
+
+
 @router.get("/shortselling/live")
 def live_short_selling(codes: str = Query(..., description="Comma-separated KR 6-digit codes")):
     """Latest 공매도 (short-selling) figures via Kiwoom ka10014 — VIP holds the Kiwoom

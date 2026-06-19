@@ -387,7 +387,8 @@ def _is_concept_question(transcript: Optional[str]) -> bool:
 # Bare CURRENT-PRICE question (현재가/시세/주가/얼마/price) — VIP answers it LOCALLY
 # (Kiwoom during market, Naver after). Handles ONE stock, MULTIPLE stocks, and a
 # bare 'what is the current stock price' (→ default watchlist).
-_PRICE_WORDS = ("현재가", "시세", "주가", "얼마", "price", "quote")
+_PRICE_WORDS = ("현재가", "시세", "주가", "얼마", "price", "quote",
+                "시가", "고가", "저가", "opening", "open price", "high price", "low price")
 # Generic stock-price phrasing with NO specific company → show the watchlist.
 _GENERIC_STOCK_WORDS = ("stock", "주가", "주식", "종목", "시세", "현재가")
 _DEFAULT_WATCHLIST = (("000660", "SK하이닉스"), ("005930", "삼성전자"), ("035420", "NAVER"))
@@ -455,6 +456,25 @@ def _all_stocks_in_query(transcript: Optional[str]) -> list[tuple[str, str]]:
     return out
 
 
+def _requested_price_fields(transcript: Optional[str]) -> list[str]:
+    """Which quote values the user asked for, in display order. 'opening and current
+    price' -> ['open','price']; 'high and low' -> ['high','low']; bare price -> ['price'].
+    Lets the answer cover MULTIPLE fields, not just current."""
+    t = (transcript or "").lower()
+    fields: list[str] = []
+    if "시가" in t or "open price" in t or "opening" in t or _re.search(r"\bop\w*ning\b", t):
+        fields.append("open")
+    if "고가" in t or "highest" in t or "high price" in t or "day high" in t or "intraday high" in t:
+        fields.append("high")
+    if "저가" in t or "lowest" in t or "low price" in t or "day low" in t or "intraday low" in t:
+        fields.append("low")
+    cur = (any(k in t for k in ("current", "현재", "지금", "real-time", "실시간", "latest", "now"))
+           or any(k in t for k in ("price", "주가", "시세", "얼마", "quote")))
+    if cur or not fields:
+        fields.append("price")
+    return fields
+
+
 def _is_vip_current_price_q(transcript: Optional[str], agent_id: Optional[str]) -> bool:
     if (agent_id or "vip").lower() == "stock":
         return False
@@ -471,8 +491,10 @@ def _is_vip_current_price_q(transcript: Optional[str], agent_id: Optional[str]) 
 
 
 def _live_price_for_code(code: str, fallback_name: Optional[str]) -> Optional[dict]:
-    """One stock's live price: Kiwoom REST during market, Naver after. None on fail."""
+    """One stock's live quote (price + open/high/low): Kiwoom REST during market,
+    Naver after. None on fail."""
     price = chg = None
+    open_ = high = low = None
     name = fallback_name
     source = None
     if _kr_market_open_now():
@@ -483,6 +505,7 @@ def _live_price_for_code(code: str, fallback_name: Optional[str]) -> Optional[di
                 kq = kiwoom_rest.current_price(code)
                 if kq and kq.get("price"):
                     price, chg = kq["price"], kq.get("change_pct")
+                    open_, high, low = kq.get("open"), kq.get("high"), kq.get("low")
                     name = kq.get("name") or name
                     source = "키움증권 실시간 시세"
         except Exception as e:
@@ -492,6 +515,7 @@ def _live_price_for_code(code: str, fallback_name: Optional[str]) -> Optional[di
             from services import naver_stock
             nq = naver_stock.realtime_quote(code)
             if nq and nq.get("price"):
+                open_, high, low = nq.get("open"), nq.get("high"), nq.get("low")
                 # After the regular session, show the 시간외(NXT) price when that
                 # after-market session is active; otherwise the regular close.
                 if (not _kr_market_open_now() and nq.get("nxt_price")
@@ -506,7 +530,8 @@ def _live_price_for_code(code: str, fallback_name: Optional[str]) -> Optional[di
     if price is None:
         return None
     return {"code": code, "name": (name or code).upper(), "price": float(price),
-            "change_pct": chg, "source": source}
+            "change_pct": chg, "source": source,
+            "open": open_, "high": high, "low": low}
 
 
 def _canon_price_src(s: Optional[str]) -> str:
@@ -549,15 +574,19 @@ def _vip_live_price_reply(transcript: Optional[str], lang: str) -> Optional[dict
             and _re.search(r"[a-zA-Z]", transcript or ""):
         _en = True
 
-    # Format via the SHARED canonical formatter (byte-identical file in the Stock
-    # repo) so the VIP agent and the AI Advisor phrase the answer the same way.
+    # Which values did the user ask for? ('opening and current' -> [open, price]).
+    fields = _requested_price_fields(transcript)
+
+    # Format via the shared canonical formatter so VIP and the AI Advisor (which
+    # relays this answer) phrase it the same way.
     from services import price_format
     fmt_quotes = [{"name": q["name"], "price": q["price"],
                    "change_pct": q["change_pct"], "market": "KR",
+                   "open": q.get("open"), "high": q.get("high"), "low": q.get("low"),
                    "source": _canon_price_src(q["source"])} for q in quotes]
     reply = price_format.format_current(
         fmt_quotes, lang=("en" if _en else "ko"),
-        used_watchlist=used_watchlist, as_of=now)
+        used_watchlist=used_watchlist, as_of=now, fields=fields)
 
     return {"intent": "stock_price", "language": lang, "reply": reply,
             "action": None, "speak": True, "transcript": transcript,
@@ -2785,11 +2814,15 @@ def _run_agent_impl(
                                agent_id=agent_id, page_context=page_context,
                                kb_context=kb_hits)
 
-    # NOTE: current-price is NOT answered locally anymore — it DELEGATES to the Stock
-    # backend below (single source of truth), so VIP and the AI Advisor read identically
-    # and VIP inherits the Stock current-price/past/선물 features. The local Kiwoom price
-    # path survives only as (a) the /chat/price/live endpoint the Stock backend relays
-    # during market, and (b) the stock-agent emergency fallback further down.
+    # ===== VIP LOCAL current-price (the rich single source) =====
+    # VIP holds the Kiwoom key, so it answers current-price HERE — Kiwoom during market
+    # / Naver after, with opening/high/low when asked and an always-on source label.
+    # The AI Advisor relays this exact answer (via /chat/price/answer), so both surfaces
+    # read identically. Falls through to delegation only if no stock resolves.
+    if not confirmed_tool and _is_vip_current_price_q(transcript, agent_id):
+        _vp = _vip_live_price_reply(transcript, lang)
+        if _vp:
+            return _vp
 
     # ===== 공매도 (short-selling) — answer LOCALLY from VIP's Kiwoom (ka10014). The
     # Stock backend's 공매도 tool currently returns '확인 불가' (no data), but VIP's Kiwoom

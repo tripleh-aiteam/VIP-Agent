@@ -48,6 +48,9 @@ def realtime_quote(code: str) -> dict | None:
     return {
         "price": _num(b.get("closePrice")),
         "change_pct": _signed(b.get("fluctuationsRatio"), b.get("compareToPreviousPrice")),
+        "open": _num(b.get("openPrice")),
+        "high": _num(b.get("highPrice")),
+        "low": _num(b.get("lowPrice")),
         "market_status": b.get("marketStatus") or "",       # OPEN / CLOSE
         "as_of": (b.get("localTradedAt") or "")[11:16],     # HH:MM
         "nxt_price": _num(om.get("overPrice")),
