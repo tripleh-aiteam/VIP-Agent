@@ -220,7 +220,12 @@ def _agent_command_impl(body: AgentCommandBody, db: Session):
 
 
 @router.post("/agent/stream")
-def agent_command_stream(body: AgentCommandBody, db: Session = Depends(get_db)):
+def agent_command_stream(
+    body: AgentCommandBody,
+    db: Session = Depends(get_db),
+    x_user_email: Optional[str] = Header(None),
+    x_user_token: Optional[str] = Header(None),
+):
     """Same as /chat/agent but returns the reply as a Server-Sent Events
     stream so the overlay renders it Notion-AI-style — text appearing
     word-by-word instead of all at once.
@@ -236,27 +241,31 @@ def agent_command_stream(body: AgentCommandBody, db: Session = Depends(get_db)):
       {"done": true, ...rest}           # final event with metadata
     """
     from fastapi.responses import StreamingResponse
-    from services.assistant_agent import run_agent
     import json as _json
     import time as _time
 
     # Run the agent synchronously — the bulk of latency is here; LLM tool
     # decision + (maybe) compose. We then stream out the produced reply.
-    result = run_agent(
-        db,
-        transcript=body.transcript or "",
-        language=body.language or "auto",
-        current_path=body.current_path,
-        selected_id=body.selected_id,
-        history=body.history,
-        confirmed_tool=body.confirmed_tool,
-        confirmed_args=body.confirmed_args,
-        attachment_ids=body.attachment_ids,
-        forced_model=body.model,
-        user_id=body.user_id or "boss",
-        agent_id=body.agentId or "vip",
-        page_context=body.page_context,
-    )
+    if (body.agentId or "").startswith("twin:"):
+        # Twin work-assistant: owner-auth'd route to the twin's own brain.
+        result = _twin_agent_reply(body, db, x_user_email, x_user_token)
+    else:
+        from services.assistant_agent import run_agent
+        result = run_agent(
+            db,
+            transcript=body.transcript or "",
+            language=body.language or "auto",
+            current_path=body.current_path,
+            selected_id=body.selected_id,
+            history=body.history,
+            confirmed_tool=body.confirmed_tool,
+            confirmed_args=body.confirmed_args,
+            attachment_ids=body.attachment_ids,
+            forced_model=body.model,
+            user_id=body.user_id or "boss",
+            agent_id=body.agentId or "vip",
+            page_context=body.page_context,
+        )
 
     reply = str(result.get("reply") or "")
     # Chunk the reply word-by-word so it feels natural; pad short replies.
