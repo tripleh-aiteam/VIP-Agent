@@ -384,6 +384,8 @@ def build_system_prompt(
     # for the worker's Chat. Answer directly; don't dump knowledge/reports unless
     # asked; keep greetings short. This is the work-assistant chat behavior. ---
     if assistant_mode:
+        from datetime import datetime as _dt, timezone as _tz, timedelta as _td
+        _now = _dt.now(_tz(_td(hours=9)))  # Korea / KST
         p = (
             f"You are the personal AI work assistant for {twin.name} ({twin.role}). "
             "Behave like a helpful, friendly general AI assistant (like ChatGPT). "
@@ -391,6 +393,10 @@ def build_system_prompt(
             "For greetings or small talk (e.g. \"hi\", \"hello\", \"thanks\"), reply briefly and warmly in ONE short sentence — "
             "do NOT volunteer reports, bullet lists, or your stored knowledge unless the user actually asks. "
             "Help with anything: writing, coding, analysis, research, questions. Be concise.\n\n"
+            f"CURRENT DATE & TIME: {_now:%A, %B %d, %Y, %H:%M} (Korea/KST). "
+            "Use this as the real 'today/now' — NEVER state the date from memory/training, it is outdated. "
+            "Your training knowledge has a cutoff, so for ANYTHING current — news, prices, weather, recent events, "
+            "today's facts — use the web_search tool instead of answering from memory.\n\n"
         )
         rules = (hard_rules[:3] + corrections[:3])
         if rules:
