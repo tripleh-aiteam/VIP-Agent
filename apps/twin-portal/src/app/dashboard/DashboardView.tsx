@@ -854,7 +854,7 @@ export function DashboardView({ onLogout }: Props) {
       </div>
       <div className="flex gap-1">
         {(["home", "messages", "reports", "teach", "chat", "review", "network", "settings"] as const).map(p => (
-          <button key={p} onClick={() => { setPage(p); if (p === "messages" && twinId) { apiFetch(`/twins/${twinId}/messages/read?reader=worker`, { method: "POST" }); setUnreadCount(0); } }}
+          <button key={p} onClick={() => { setPage(p); if (p === "chat" && typeof window !== "undefined") { window.dispatchEvent(new Event("twin:open-assistant")); } if (p === "messages" && twinId) { apiFetch(`/twins/${twinId}/messages/read?reader=worker`, { method: "POST" }); setUnreadCount(0); } }}
             className={`px-3 py-1.5 rounded-lg text-[12px] font-medium transition-all flex items-center gap-1 ${
               page === p ? "bg-blue-600 text-white" : "text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-secondary)]"
             }`}>
