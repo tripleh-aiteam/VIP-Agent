@@ -548,6 +548,21 @@ def _dt_now_kst():
     return _d.now(_z(_t(hours=9)))
 
 
+# Generic words that must NOT identify a company on their own — they appear inside
+# many company names ('Samsung Electronics', 'LG Electronics', 'POSCO Holdings'), so
+# fuzzy-matching them adds the WRONG stock (e.g. 'electronics' from 'samsung
+# electronics' wrongly resolving to LG전자).
+_STOCK_FUZZY_STOP = {
+    "electronics", "electronic", "electric", "elec", "stock", "stocks", "share",
+    "shares", "price", "prices", "quote", "current", "today", "value", "corp",
+    "corporation", "inc", "incorporated", "group", "holdings", "holding", "company",
+    "co", "ltd", "limited", "industries", "industry", "tech", "technology",
+    "technologies", "motors", "motor", "chemical", "chem", "energy", "solution",
+    "solutions", "전자", "전기", "주식", "주가", "현재가", "시세", "가격", "그룹",
+    "지주", "화학", "에너지", "현재",
+}
+
+
 def _all_stocks_in_query(transcript: Optional[str]) -> list[tuple[str, str]]:
     """All KR stocks (6-digit code, display name) named in the text, in order,
     deduped. SCANS for every known stock name (so space-separated 'SK하이닉스 네이버'
@@ -584,7 +599,7 @@ def _all_stocks_in_query(transcript: Optional[str]) -> list[tuple[str, str]]:
         keys = list(norm.keys())
         for w in _re.split(r"[\s,/&]+", consumed):
             w = w.strip()
-            if len(w) < 4:
+            if len(w) < 4 or w in _STOCK_FUZZY_STOP:
                 continue
             hit = difflib.get_close_matches(w, keys, n=1, cutoff=0.82)
             if hit:
