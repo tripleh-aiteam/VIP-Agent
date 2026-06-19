@@ -611,6 +611,8 @@ def _requested_price_fields(transcript: Optional[str]) -> list[str]:
            or any(k in t for k in ("price", "주가", "시세", "얼마", "quote")))
     if cur or not fields:
         fields.append("price")
+    if "거래량" in t or "volume" in t or "거래대금" in t:
+        fields.append("volume")
     return fields
 
 
@@ -649,10 +651,10 @@ def _is_vip_current_price_q(transcript: Optional[str], agent_id: Optional[str]) 
 
 
 def _live_price_for_code(code: str, fallback_name: Optional[str]) -> Optional[dict]:
-    """One stock's live quote (price + open/high/low): Kiwoom REST during market,
-    Naver after. None on fail."""
+    """One stock's live quote (price + open/high/low + volume): Kiwoom REST during
+    market, Naver after. None on fail."""
     price = chg = None
-    open_ = high = low = None
+    open_ = high = low = volume = None
     name = fallback_name
     source = None
     if _kr_market_open_now():
@@ -664,6 +666,7 @@ def _live_price_for_code(code: str, fallback_name: Optional[str]) -> Optional[di
                 if kq and kq.get("price"):
                     price, chg = kq["price"], kq.get("change_pct")
                     open_, high, low = kq.get("open"), kq.get("high"), kq.get("low")
+                    volume = kq.get("volume")
                     name = kq.get("name") or name
                     source = "키움증권 실시간 시세"
         except Exception as e:
@@ -674,6 +677,7 @@ def _live_price_for_code(code: str, fallback_name: Optional[str]) -> Optional[di
             nq = naver_stock.realtime_quote(code)
             if nq and nq.get("price"):
                 open_, high, low = nq.get("open"), nq.get("high"), nq.get("low")
+                volume = nq.get("volume")
                 # After the regular session, show the 시간외(NXT) price when that
                 # after-market session is active; otherwise the regular close.
                 if (not _kr_market_open_now() and nq.get("nxt_price")
@@ -689,7 +693,7 @@ def _live_price_for_code(code: str, fallback_name: Optional[str]) -> Optional[di
         return None
     return {"code": code, "name": (name or code).upper(), "price": float(price),
             "change_pct": chg, "source": source,
-            "open": open_, "high": high, "low": low}
+            "open": open_, "high": high, "low": low, "volume": volume}
 
 
 def _canon_price_src(s: Optional[str]) -> str:
@@ -741,6 +745,7 @@ def _vip_live_price_reply(transcript: Optional[str], lang: str) -> Optional[dict
     fmt_quotes = [{"name": q["name"], "price": q["price"],
                    "change_pct": q["change_pct"], "market": "KR",
                    "open": q.get("open"), "high": q.get("high"), "low": q.get("low"),
+                   "volume": q.get("volume"),
                    "source": _canon_price_src(q["source"])} for q in quotes]
     reply = price_format.format_current(
         fmt_quotes, lang=("en" if _en else "ko"),
@@ -750,6 +755,111 @@ def _vip_live_price_reply(transcript: Optional[str], lang: str) -> Optional[dict
             "action": None, "speak": True, "transcript": transcript,
             "tool_used": "stock_quote",
             "tool_result": {"quotes": quotes, "sources": sources}}
+
+
+def _requested_history_dates(q: Optional[str]):
+    """What PAST dates the question wants. Returns ('range', n_days) for 'last 4 days',
+    ('dates', [date,...]) for specific days ('18th, 17th, 16th and 15th of June' or a
+    single past date), or None for a non-history question."""
+    from datetime import date as _date
+    t = (q or "").lower()
+    today = _dt_now_kst().date()
+    m = _re.search(r"(?:last|past|recent|지난|최근)\s*(\d+)\s*(day|days|week|weeks|일|주)", t)
+    if m:
+        n, unit = int(m.group(1)), m.group(2)
+        days = n * 7 if (unit.startswith("w") or unit == "주") else n
+        return ("range", max(1, min(days, 40)))
+    month = None
+    for tok in _re.finditer(r"[a-z]{3,}", t):
+        w = tok.group()
+        if w in _MONTH_STOP:
+            continue
+        mm = _fuzzy_num(w, _MONTHS, 0.75)
+        if mm:
+            month = mm
+            break
+    if month:
+        dnums = sorted({int(d) for d in _re.findall(r"\b(\d{1,2})(?:st|nd|rd|th)?\b", t)
+                        if 1 <= int(d) <= 31}, reverse=True)
+        if dnums:
+            ym = _re.search(r"\b(20\d{2})\b", t)
+            yr = int(ym.group(1)) if ym else today.year
+            dates = []
+            for dd in dnums:
+                try:
+                    d = _date(yr, month, dd)
+                    if not ym and d > today:
+                        d = _date(yr - 1, month, dd)
+                    dates.append(d)
+                except ValueError:
+                    pass
+            if dates:
+                return ("dates", dates)
+    if _is_history_range_query(q):
+        return ("range", 7)
+    iso = _relative_date_iso(q)
+    if iso:
+        try:
+            return ("dates", [_date.fromisoformat(iso)])
+        except ValueError:
+            pass
+    return None
+
+
+def _vip_history_reply(transcript: Optional[str], lang: str, hist=None) -> Optional[str]:
+    """Deterministic multi-day OHLCV table from Naver daily history — past specific
+    dates AND ranges ('last 4 days'). Single source, so VIP and the relaying AI Advisor
+    read IDENTICALLY. None → caller falls through."""
+    hist = hist or _requested_history_dates(transcript)
+    if not hist:
+        return None
+    stocks = _all_stocks_in_query(transcript)
+    if not stocks:
+        return None
+    from services import naver_stock, price_format
+    _en = (lang or "").lower().startswith("en")
+    if not _en and not _re.search(r"[가-힣]", transcript or "") \
+            and _re.search(r"[a-zA-Z]", transcript or ""):
+        _en = True
+    kind, payload = hist
+    out = []
+    for code, name in stocks[:6]:
+        try:
+            rows = naver_stock.daily_history(code, days=(payload + 3 if kind == "range" else 60))
+        except Exception as e:
+            log.warning(f"vip history {code} failed: {str(e)[:120]}")
+            rows = []
+        sel = []
+        if rows:
+            if kind == "range":
+                sel = rows[:payload]
+            else:
+                for ds in sorted({d.isoformat() for d in payload}, reverse=True):
+                    row = next((r for r in rows if r.get("date") == ds), None)
+                    if not row:
+                        earlier = [r for r in rows if r.get("date") and r["date"] <= ds]
+                        row = earlier[0] if earlier else None
+                    if row:
+                        sel.append(row)
+        out.append({"name": (name or code).upper(), "code": code, "rows": sel})
+    if not any(s["rows"] for s in out):
+        return None
+    return price_format.format_history(out, lang=("en" if _en else "ko"))
+
+
+def _vip_stock_data_reply(transcript: Optional[str], lang: str) -> Optional[str]:
+    """Unified VIP stock-data answer (the single source the AI Advisor relays): a
+    history table for past/range questions, else the live current price (with volume
+    and any requested fields). None when no stock/data resolves."""
+    h = _requested_history_dates(transcript)
+    if h:
+        r = _vip_history_reply(transcript, lang, h)
+        if r:
+            return r
+    cur = _vip_live_price_reply(transcript, lang)
+    if cur and cur.get("reply"):
+        return cur["reply"]
+    return None
 
 
 # ===== 공매도 (short-selling) — VIP holds the Kiwoom key, so it answers locally
@@ -2996,11 +3106,22 @@ def _run_agent_impl(
                                agent_id=agent_id, page_context=page_context,
                                kb_context=kb_hits)
 
+    # ===== VIP LOCAL history (past dates / ranges) — deterministic OHLCV table =====
+    # 'naver price on 18th/17th/16th of June', 'last 4 days' → a fixed table from VIP's
+    # Naver daily data (no LLM), so VIP and the relaying AI Advisor read IDENTICALLY.
+    # Falls through (US / unresolved) to the LLM/web-search past path below.
+    if (not confirmed_tool and (agent_id or "vip").lower() != "stock"
+            and _requested_history_dates(transcript)):
+        _hist = _vip_history_reply(transcript, lang)
+        if _hist:
+            return {"intent": "stock_history", "language": lang, "reply": _hist,
+                    "action": None, "speak": True, "transcript": transcript,
+                    "tool_used": "stock_history"}
+
     # ===== VIP LOCAL current-price (the rich single source) =====
     # VIP holds the Kiwoom key, so it answers current-price HERE — Kiwoom during market
-    # / Naver after, with opening/high/low when asked and an always-on source label.
-    # The AI Advisor relays this exact answer (via /chat/price/answer), so both surfaces
-    # read identically. Falls through to delegation only if no stock resolves.
+    # / Naver after, with opening/high/low/volume when asked and an always-on source
+    # label. The AI Advisor relays this exact answer, so both surfaces read identically.
     if not confirmed_tool and _is_vip_current_price_q(transcript, agent_id):
         _vp = _vip_live_price_reply(transcript, lang)
         if _vp:

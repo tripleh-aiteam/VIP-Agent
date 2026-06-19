@@ -103,13 +103,14 @@ def _src_line(quotes, english: bool) -> str:
     return " / ".join(labels)
 
 
-_FIELD_EN = {"open": "open", "high": "high", "low": "low", "price": "current"}
-_FIELD_KO = {"open": "시가", "high": "고가", "low": "저가", "price": "현재가"}
+_FIELD_EN = {"open": "open", "high": "high", "low": "low", "price": "current", "volume": "volume"}
+_FIELD_KO = {"open": "시가", "high": "고가", "low": "저가", "price": "현재가", "volume": "거래량"}
 
 
 def _value_segment(q, fields, english: bool) -> str:
     """Per-stock value string. Only-price → '₩X (▲ +Y%)'. Multi-field (e.g. open +
-    current) → 'open ₩A, current ₩B (▲ +Y%)' so 'opening AND current' is answered."""
+    current + volume) → 'open ₩A, current ₩B (▲ +Y%), volume N shares' so multi-part
+    questions ('current price AND volume') are answered together."""
     market = q.get("market")
     simple = (not fields) or list(fields) == ["price"]
     if not simple:
@@ -119,10 +120,13 @@ def _value_segment(q, fields, english: bool) -> str:
             v = q.get(f)
             if v is None:
                 continue
-            seg = f"{labels.get(f, f)} {_price_str(v, market, english)}"
-            if f == "price":
-                # 'vs prev close' so the % isn't misread as open→current change.
-                seg += _chg(q.get("change_pct"), english=english, basis=True)
+            if f == "volume":
+                seg = f"{labels[f]} {_int_str(v)}" + (" shares" if english else "주")
+            else:
+                seg = f"{labels.get(f, f)} {_price_str(v, market, english)}"
+                if f == "price":
+                    # 'vs prev close' so the % isn't misread as open→current change.
+                    seg += _chg(q.get("change_pct"), english=english, basis=True)
             parts.append(seg)
         if parts:
             return ", ".join(parts)
@@ -319,4 +323,64 @@ def format_short_selling(items, *, date: str = "", lang) -> str:
     return "\n".join(lines)
 
 
-__all__ = ["format_current", "format_past", "format_short_selling", "now_kst"]
+_WD_EN = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+_WD_KO = ["월", "화", "수", "목", "금", "토", "일"]
+
+
+def _fmt_day(date_str: str, english: bool) -> str:
+    """'2026-06-18' -> 'Jun 18 (Thu)' / '06-18 (목)'."""
+    try:
+        y, m, d = (int(x) for x in date_str.split("-"))
+        from datetime import date as _date
+        wd = _date(y, m, d).weekday()
+        if english:
+            mon = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep",
+                   "Oct", "Nov", "Dec"][m - 1]
+            return f"{mon} {d} ({_WD_EN[wd]})"
+        return f"{m:02d}-{d:02d} ({_WD_KO[wd]})"
+    except Exception:
+        return date_str
+
+
+def format_history(stocks, *, lang) -> str:
+    """Deterministic multi-day OHLCV table(s) — one per stock — for past-date and
+    range questions ('18th/17th/16th/15th of June', 'last 4 days'). `stocks`: list of
+    {"name","code"(opt),"rows"} where rows are newest-first
+    {date, open, high, low, close, change_pct, volume}. No LLM → VIP and the AI Advisor
+    (which relays this) read IDENTICALLY."""
+    english = _is_en(lang)
+    stocks = [s for s in stocks if s and s.get("rows")]
+    if not stocks:
+        return ("No daily price data found for the requested dates."
+                if english else "요청하신 날짜의 일별 시세 데이터를 찾지 못했습니다.")
+    blocks = []
+    for s in stocks:
+        name = s.get("name") or s.get("code") or ("the stock" if english else "해당 종목")
+        code = s.get("code")
+        head = f"{name} ({code})" if code else f"{name}"
+        if english:
+            lines = [f"{head} — daily prices:",
+                     "| Date | Open | High | Low | Close | Change | Volume |",
+                     "|---|---|---|---|---|---|---|"]
+        else:
+            lines = [f"{head} 일별 시세:",
+                     "| 날짜 | 시가 | 고가 | 저가 | 종가 | 등락 | 거래량 |",
+                     "|---|---|---|---|---|---|---|"]
+        for r in s["rows"]:
+            chg = _chg(r.get("change_pct")).strip(" ()")  # '▲ +1.8%' or ''
+            lines.append(
+                f"| {_fmt_day(str(r.get('date') or ''), english)} "
+                f"| {_price_str(r.get('open'), 'KR', english)} "
+                f"| {_price_str(r.get('high'), 'KR', english)} "
+                f"| {_price_str(r.get('low'), 'KR', english)} "
+                f"| {_price_str(r.get('close'), 'KR', english)} "
+                f"| {chg or '-'} "
+                f"| {_int_str(r.get('volume'))} |")
+        blocks.append("\n".join(lines))
+    src = ("Source: Naver Finance (daily OHLCV)" if english
+           else "출처: 네이버 금융 (일봉 OHLCV)")
+    return "\n\n".join(blocks) + "\n" + src
+
+
+__all__ = ["format_current", "format_past", "format_short_selling",
+           "format_history", "now_kst"]

@@ -70,6 +70,21 @@ def price_answer(q: str = Query(..., description="The user's price question, ver
     return {"ok": False, "reply": ""}
 
 
+@router.get("/stock/answer")
+def stock_data_answer(q: str = Query(..., description="The user's stock-data question, verbatim"),
+                      lang: str = Query("auto", description="'en', 'ko', or 'auto'")):
+    """Unified, fully-FORMATTED stock-data answer — current price (Kiwoom/Naver, with
+    volume + any requested fields) OR a deterministic multi-day history table (past
+    dates / ranges like 'last 4 days'). VIP is the single source, so the AI Advisor
+    relays this for ALL data questions → both surfaces read IDENTICALLY. Returns
+    {ok, reply}."""
+    from services.assistant_agent import _vip_stock_data_reply
+    reply = _vip_stock_data_reply(q or "", lang or "auto")
+    if reply:
+        return {"ok": True, "reply": reply}
+    return {"ok": False, "reply": ""}
+
+
 @router.get("/shortselling/live")
 def live_short_selling(codes: str = Query(..., description="Comma-separated KR 6-digit codes")):
     """Latest 공매도 (short-selling) figures via Kiwoom ka10014 — VIP holds the Kiwoom

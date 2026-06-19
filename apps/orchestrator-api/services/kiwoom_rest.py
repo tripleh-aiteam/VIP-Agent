@@ -411,6 +411,7 @@ _CP_NAME_KEYS = ("stk_nm", "hts_kor_isnm", "isnm")
 _CP_OPEN_KEYS = ("open_pric", "opngpric", "stck_oprc", "oprc")
 _CP_HIGH_KEYS = ("high_pric", "hgpr", "stck_hgpr")
 _CP_LOW_KEYS = ("low_pric", "lwpr", "stck_lwpr")
+_CP_VOL_KEYS = ("trde_qty", "acc_trde_qty", "tot_trde_qty", "trqu", "거래량")
 
 
 def current_price(code: str) -> Optional[dict]:
@@ -434,11 +435,13 @@ def current_price(code: str) -> Optional[dict]:
     _o = _to_float(_first(data, _CP_OPEN_KEYS))
     _h = _to_float(_first(data, _CP_HIGH_KEYS))
     _l = _to_float(_first(data, _CP_LOW_KEYS))
+    _v = _to_float(_first(data, _CP_VOL_KEYS))
     return {"price": price, "prev_close": prev, "change_pct": change_pct,
             "name": (str(name).strip() if name else None),
             "open": abs(_o) if _o is not None else None,
             "high": abs(_h) if _h is not None else None,
-            "low": abs(_l) if _l is not None else None}
+            "low": abs(_l) if _l is not None else None,
+            "volume": abs(_v) if _v is not None else None}
 
 
 def short_selling(code: str) -> Optional[dict]:
