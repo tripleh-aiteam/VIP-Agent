@@ -1582,6 +1582,48 @@ def tool_asset_search(query: str, db: Session = None, **_kw) -> dict[str, Any]:
     return {"ok": True, "matches": len(units) + len(pf), "units": units, "portfolio_items": pf}
 
 
+def tool_asset_top(metric: str = "area", order: str = "desc", limit: int = 5,
+                   db: Session = None, **_kw) -> dict[str, Any]:
+    """Rank company assets/units by a numeric field — for SUPERLATIVES (biggest /
+    smallest by size, most/least valuable, highest/lowest rent). Computed from the
+    structured table so the comparison is EXACT (never guessed from text)."""
+    from sqlalchemy import text as _text
+    col = {"area": "area_m2", "size": "area_m2", "면적": "area_m2",
+           "value": "price", "price": "price", "가치": "price", "매입가": "price", "분양가": "price",
+           "market": "market_value", "현시세": "market_value",
+           "rent": "monthly_rent", "월세": "monthly_rent",
+           "deposit": "deposit", "보증금": "deposit"}.get((metric or "area").strip().lower(), "area_m2")
+    od = "ASC" if str(order or "desc").lower().startswith("a") else "DESC"
+    try:
+        lim = max(1, min(int(limit or 5), 20))
+    except Exception:
+        lim = 5
+    rows = []
+    try:
+        for r in db.execute(_text(
+            f"SELECT property, unit_no, address, category, area_m2, area_pyeong, price, "
+            f"market_value, monthly_rent, deposit, status FROM asset_units "
+            f"WHERE {col} IS NOT NULL ORDER BY {col} {od} LIMIT :lim"), {"lim": lim}):
+            rows.append(dict(r._mapping))
+    except Exception as e:
+        try:
+            db.rollback()
+        except Exception:
+            pass
+        return {"ok": False, "error": str(e)[:150]}
+
+    def f(x):
+        try:
+            return round(float(x), 2)
+        except Exception:
+            return x
+    for r in rows:
+        for k in ("area_m2", "area_pyeong", "price", "market_value", "monthly_rent", "deposit"):
+            if r.get(k) is not None:
+                r[k] = f(r[k])
+    return {"ok": True, "ranked_by": col, "order": od, "results": rows}
+
+
 TOOL_REGISTRY: dict[str, Tool] = {
     # --- Phase 1: Universal navigation tools ---
     "navigate": Tool(
@@ -1669,6 +1711,30 @@ TOOL_REGISTRY: dict[str, Tool] = {
             "required": ["query"],
         },
         fn=tool_asset_search,
+    ),
+    "asset_top": Tool(
+        name="asset_top",
+        description=(
+            "Rank the company's assets/units by a NUMBER to answer SUPERLATIVE / "
+            "comparison questions — biggest/largest or smallest by size (면적), "
+            "most/least valuable (가치/매입가), highest/lowest 월세(rent) or 보증금. "
+            "ALWAYS use this (not knowledge-base text search) for 'which is biggest', "
+            "'가장 큰 자산', '면적 제일 넓은', '제일 비싼 자산', '월세 가장 높은', "
+            "'most expensive', 'largest property' — it computes the exact ranking from "
+            "the data. metric: area|value|rent|deposit|market; order: desc (biggest/"
+            "highest) or asc (smallest/lowest)."
+        ),
+        kind="read",
+        parameters={
+            "type": "object",
+            "properties": {
+                "metric": {"type": "string", "description": "area (size/면적) | value (가치/매입가) | rent (월세) | deposit (보증금) | market (현시세)"},
+                "order": {"type": "string", "description": "'desc' for biggest/highest (default), 'asc' for smallest/lowest"},
+                "limit": {"type": "integer", "description": "How many to return (1-20, default 5)"},
+            },
+            "required": [],
+        },
+        fn=tool_asset_top,
     ),
 
     # --- Phase 2: READ tools (Notion-AI-style search) ---
@@ -2780,12 +2846,13 @@ def tool_search_knowledge_base(
         hits = rag_retrieve(db, agent_id=agent_id, query=query, top_k=top_k, min_sim=0.30)
         # Trim content for the tool-result envelope; the LLM already has the
         # top hits in its system prompt — this is for "deeper" queries.
+        # NOTE: do NOT expose the source filename or similarity score to the LLM —
+        # the user does not want answers like 'from "...xlsx" with similarity 0.92'.
+        # Keep only the human-meaningful location label + the excerpt text.
         compact = [
             {
-                "filename":   h["filename"],
-                "location":   h["location"],
-                "similarity": round(h["similarity"], 3),
-                "excerpt":    (h["content"] or "")[:600],
+                "location": h.get("location") or "",
+                "excerpt":  (h["content"] or "")[:600],
             } for h in hits
         ]
         return {"ok": True, "count": len(compact), "hits": compact}
