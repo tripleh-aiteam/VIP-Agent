@@ -1046,19 +1046,32 @@ def _vip_naver_search_reply(transcript: Optional[str], lang: str) -> Optional[di
         return out
 
     if re_estate:
-        # Real Naver 부동산 listing links = proof the property IS advertised.
-        naver_hits = [r for r in results if "land.naver.com" in (r.get("url") or "")]
-        proof = naver_hits or results
-        if proof:
-            verdict = (f"✅ '{subject}'은(는) 네이버 부동산에 매물로 올라와 있는 것으로 확인됩니다. "
+        from urllib.parse import quote
+        # A direct Naver 부동산 search link the user can ALWAYS click to verify themselves.
+        verify_url = f"https://m.land.naver.com/search/result/{quote(subject)}"
+        # A "deep" listing link (specific article/complex) is real proof the property is
+        # advertised. A bare land.naver.com homepage is NOT — Serper just matched the site.
+        def _is_deep(u: str) -> bool:
+            u = (u or "").lower()
+            if "land.naver.com" not in u:
+                return False
+            tail = u.split("land.naver.com", 1)[1].lstrip("/")
+            return len(tail) > 1 and any(k in u for k in (
+                "articleno", "outlinkbridge", "/complexes", "/offices", "/article", "/search"))
+        deep = [r for r in results if _is_deep(r.get("url") or "")]
+        verify_line = (f"\n\n🔎 직접 확인: {verify_url}" if not _en
+                       else f"\n\n🔎 Verify yourself: {verify_url}")
+        if deep:
+            verdict = (f"✅ '{subject}' 매물이 네이버 부동산에 올라와 있는 것으로 확인됩니다. "
                        f"아래 링크에서 직접 확인하실 수 있습니다:" if not _en else
                        f"✅ '{subject}' appears to be listed on NAVER 부동산. Verify via the links below:")
-            reply = verdict + "\n\n" + "\n".join(_fmt(proof[:5]))
+            reply = verdict + "\n\n" + "\n".join(_fmt(deep[:5])) + verify_line
         else:
-            reply = (f"❌ 네이버 부동산에서 '{subject}' 매물을 찾지 못했습니다. 현재 네이버 부동산에 "
-                     f"광고/매물로 등록되어 있지 않은 것으로 보입니다." if not _en else
-                     f"❌ No NAVER 부동산 listing found for '{subject}' — it doesn't appear to be "
-                     f"advertised on Naver right now.")
+            verdict = (f"⚠️ 네이버 부동산에서 '{subject}'의 특정 매물 링크는 확인하지 못했습니다. "
+                       f"아래 검색 링크에서 직접 확인해 주세요 — 등록된 매물이 없을 수도 있습니다:" if not _en else
+                       f"⚠️ Could not confirm a specific NAVER 부동산 listing for '{subject}'. "
+                       f"Check the search link below directly — there may be no listing:")
+            reply = verdict + verify_line
     else:
         if results:
             head = (f"네이버 검색 결과 — '{subject}':" if not _en else f"NAVER results for '{subject}':")
