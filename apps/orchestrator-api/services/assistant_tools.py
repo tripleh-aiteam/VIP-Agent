@@ -3340,7 +3340,9 @@ def allowed_tool_names(agent_id: Optional[str]) -> set[str]:
         allowed |= {n for n in TOOL_REGISTRY if n.startswith("stock_")}
     elif aid in ("realty", "aiglass"):
         allowed |= _PROPERTY_TOOLS
-    # asset (and any unknown agent) = generic only — no cross-domain tools.
+    elif aid == "asset":
+        # The Asset agent owns the company real-estate portfolio tools.
+        allowed |= {"asset_summary", "asset_search", "asset_top"}
     return {n for n in allowed if n in TOOL_REGISTRY}
 
 
