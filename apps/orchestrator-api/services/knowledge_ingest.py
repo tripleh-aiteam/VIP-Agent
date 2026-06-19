@@ -836,6 +836,67 @@ def _clean_pgroonga_query(q: str) -> str:
     return " ".join(deduped)
 
 
+def _keyword_retrieve(db: Session, *, agent_id: str, q: str, top_k: int) -> list[dict]:
+    """Pgroonga full-text retrieval (no embeddings needed). Used directly when
+    EMBED_PROVIDER=none, AND as a supplement/fallback in the vector path so chunks
+    that have NO embedding (uploaded before embeddings were enabled — e.g. the Asset
+    Excel) are still findable, and Korean exact-term lookups always work."""
+    cleaned = _clean_pgroonga_query(q)
+    if not cleaned:
+        return []
+    tokens = cleaned.split()
+    try:
+        title_rows = db.execute(sa_text("""
+            SELECT DISTINCT title FROM assistant_knowledge_chunks
+            WHERE agent_id = :agent_id AND title IS NOT NULL
+        """), {"agent_id": agent_id}).fetchall()
+    except Exception:
+        title_rows = []
+    matched_titles: list[str] = []
+    for r in title_rows:
+        tl = (r.title or "").lower().replace(" ", "")
+        for tok in tokens:
+            if len(tok) >= 2 and (tok.lower() in tl or tl.startswith(tok.lower())):
+                if r.title not in matched_titles:
+                    matched_titles.append(r.title)
+                break
+    or_form = " OR ".join(tokens) if len(tokens) > 1 else cleaned
+    passes: list[tuple[str, Optional[list[str]]]] = []
+    if matched_titles:
+        passes.append((cleaned, matched_titles))
+    passes.append((cleaned, None))
+    if matched_titles and or_form != cleaned:
+        passes.append((or_form, matched_titles))
+    if or_form != cleaned:
+        passes.append((or_form, None))
+    for query_variant, title_filter in passes:
+        try:
+            if title_filter:
+                rows = db.execute(sa_text("""
+                    SELECT c.id AS chunk_id, c.file_id, f.filename, c.location, c.title,
+                           c.content,
+                           (1.0 - 1.0 / (1.0 + pgroonga_score(c.tableoid, c.ctid)))::float AS similarity
+                    FROM assistant_knowledge_chunks c
+                    JOIN assistant_knowledge_files f ON f.id = c.file_id
+                    WHERE c.agent_id = :agent_id AND c.title = ANY(:titles)
+                      AND c.content &@~ :query
+                    ORDER BY pgroonga_score(c.tableoid, c.ctid) DESC LIMIT :top_k
+                """), {"agent_id": agent_id, "titles": title_filter,
+                       "query": query_variant, "top_k": top_k}).fetchall()
+            else:
+                rows = db.execute(sa_text("""
+                    SELECT * FROM search_assistant_knowledge_text(:agent_id, :query, :top_k)
+                """), {"agent_id": agent_id, "query": query_variant, "top_k": top_k}).fetchall()
+        except Exception as e:
+            log.warning("pgroonga retrieve failed (%s) — trying next pass", e)
+            continue
+        if rows:
+            return [{"chunk_id": str(r.chunk_id), "file_id": str(r.file_id),
+                     "filename": r.filename, "location": r.location, "title": r.title,
+                     "content": r.content, "similarity": float(r.similarity)} for r in rows]
+    return []
+
+
 def rag_retrieve(
     db: Session,
     *,
@@ -851,140 +912,42 @@ def rag_retrieve(
     if not q:
         return []
 
-    # --- Text-only path (pgroonga, no embedding API needed) ---
+    # Keyword (pgroonga) only — no embeddings configured.
     if EMBED_PROVIDER == "none":
-        cleaned = _clean_pgroonga_query(q)
-        if not cleaned:
-            return []
-        tokens = cleaned.split()
+        return _keyword_retrieve(db, agent_id=agent_id, q=q, top_k=top_k)
 
-        # Pre-filter: if any cleaned token matches a sheet/title in this
-        # agent's KB, restrict the search to those titles. This stops
-        # cross-property noise (asking '향남 203호' matched 의정부 rows
-        # because they had more occurrences of '203' under OR-fallback).
-        try:
-            title_rows = db.execute(sa_text("""
-                SELECT DISTINCT title
-                FROM assistant_knowledge_chunks
-                WHERE agent_id = :agent_id AND title IS NOT NULL
-            """), {"agent_id": agent_id}).fetchall()
-        except Exception:
-            title_rows = []
-        titles = [r.title for r in title_rows]
-        matched_titles: list[str] = []
-        for t in titles:
-            tl = t.lower().replace(" ", "")
-            for tok in tokens:
-                if len(tok) < 2:
-                    continue
-                if tok.lower() in tl or tl.startswith(tok.lower()):
-                    if t not in matched_titles:
-                        matched_titles.append(t)
-                    break
-
-        # 4-pass retrieval, return the first non-empty result:
-        #   1. strict AND, restricted to matched titles (most specific)
-        #   2. strict AND, all titles (no property name in query)
-        #   3. OR variant, restricted to matched titles
-        #   4. OR variant, all titles (broadest)
-        or_form = " OR ".join(tokens) if len(tokens) > 1 else cleaned
-        passes: list[tuple[str, Optional[list[str]]]] = []
-        if matched_titles:
-            passes.append((cleaned, matched_titles))
-        passes.append((cleaned, None))
-        if matched_titles and or_form != cleaned:
-            passes.append((or_form, matched_titles))
-        if or_form != cleaned:
-            passes.append((or_form, None))
-
-        for query_variant, title_filter in passes:
-            try:
-                if title_filter:
-                    rows = db.execute(sa_text("""
-                        SELECT c.id   AS chunk_id,
-                               c.file_id,
-                               f.filename,
-                               c.location,
-                               c.title,
-                               c.content,
-                               (1.0 - 1.0 / (1.0 + pgroonga_score(c.tableoid, c.ctid)))::float
-                                 AS similarity
-                        FROM assistant_knowledge_chunks c
-                        JOIN assistant_knowledge_files  f ON f.id = c.file_id
-                        WHERE c.agent_id = :agent_id
-                          AND c.title    = ANY(:titles)
-                          AND c.content &@~ :query
-                        ORDER BY pgroonga_score(c.tableoid, c.ctid) DESC
-                        LIMIT :top_k
-                    """), {
-                        "agent_id": agent_id,
-                        "titles":   title_filter,
-                        "query":    query_variant,
-                        "top_k":    top_k,
-                    }).fetchall()
-                else:
-                    rows = db.execute(sa_text("""
-                        SELECT * FROM search_assistant_knowledge_text(
-                            :agent_id, :query, :top_k
-                        )
-                    """), {
-                        "agent_id": agent_id,
-                        "query":    query_variant,
-                        "top_k":    top_k,
-                    }).fetchall()
-            except Exception as e:
-                log.warning("pgroonga retrieve failed (%s) — trying next pass", e)
-                continue
-            if rows:
-                log.info(
-                    "rag: %d hits via variant=%r title_filter=%r",
-                    len(rows), query_variant[:60], title_filter,
-                )
-                return [
-                    {
-                        "chunk_id":   str(r.chunk_id),
-                        "file_id":    str(r.file_id),
-                        "filename":   r.filename,
-                        "location":   r.location,
-                        "title":      r.title,
-                        "content":    r.content,
-                        "similarity": float(r.similarity),
-                    }
-                    for r in rows
-                ]
-        return []
-
-    # --- Vector path (when embeddings are configured) ---
+    # --- HYBRID: vector + keyword supplement ---
+    # Vector finds semantically-similar chunks; the keyword pass also surfaces chunks
+    # with NO embedding (uploaded before embeddings were enabled — e.g. the Asset
+    # Excel) and exact Korean term matches. Merge so nothing in the KB is invisible.
     q_input = ("query: " + q) if (EMBED_PROVIDER == "local" and "e5" in EMBED_MODEL.lower()) else q
+    vec_hits: list[dict] = []
     try:
         vec = embed_batch([q_input])[0]
+        rows = db.execute(sa_text("""
+            SELECT * FROM search_assistant_knowledge(
+                :agent_id, CAST(:embedding AS vector), :top_k, :min_sim
+            )
+        """), {
+            "agent_id":  agent_id,
+            "embedding": _vec_to_pg(vec),
+            "top_k":     top_k,
+            "min_sim":   min_sim,
+        }).fetchall()
+        vec_hits = [
+            {"chunk_id": str(r.chunk_id), "file_id": str(r.file_id), "filename": r.filename,
+             "location": r.location, "title": r.title, "content": r.content,
+             "similarity": float(r.similarity)}
+            for r in rows
+        ]
     except Exception as e:
-        log.warning("rag_retrieve: embedding failed (%s) — returning empty", e)
-        return []
+        # No API key / provider down → fall back to keyword entirely.
+        log.warning("rag_retrieve: vector path failed (%s) — keyword fallback", e)
 
-    rows = db.execute(sa_text("""
-        SELECT * FROM search_assistant_knowledge(
-            :agent_id, CAST(:embedding AS vector), :top_k, :min_sim
-        )
-    """), {
-        "agent_id":  agent_id,
-        "embedding": _vec_to_pg(vec),
-        "top_k":     top_k,
-        "min_sim":   min_sim,
-    }).fetchall()
-
-    return [
-        {
-            "chunk_id":   str(r.chunk_id),
-            "file_id":    str(r.file_id),
-            "filename":   r.filename,
-            "location":   r.location,
-            "title":      r.title,
-            "content":    r.content,
-            "similarity": float(r.similarity),
-        }
-        for r in rows
-    ]
+    kw_hits = _keyword_retrieve(db, agent_id=agent_id, q=q, top_k=top_k)
+    seen = {h["chunk_id"] for h in vec_hits}
+    merged = vec_hits + [h for h in kw_hits if h["chunk_id"] not in seen]
+    return merged[:top_k]
 
 
 def list_files(db: Session, *, agent_id: str) -> list[dict]:
