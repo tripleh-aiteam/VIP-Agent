@@ -7,7 +7,7 @@ POST /chat/sessions/{id}/messages, GET /chat/sessions/{id}/messages, GET /chat/h
 from uuid import UUID
 from pydantic import BaseModel, Field
 from typing import Optional
-from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File
+from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File, Header
 from sqlalchemy.orm import Session
 
 from db.base import get_db
@@ -112,11 +112,20 @@ class AgentCommandBody(BaseModel):
 
 
 @router.post("/agent")
-def agent_command(body: AgentCommandBody, db: Session = Depends(get_db)):
+def agent_command(
+    body: AgentCommandBody,
+    db: Session = Depends(get_db),
+    x_user_email: Optional[str] = Header(None),
+    x_user_token: Optional[str] = Header(None),
+):
     # Wrap the implementation so unhandled exceptions surface to the
     # browser as JSON errors (not the opaque 'Internal Server Error') —
     # makes the network tab actually useful when something explodes.
     try:
+        # Twin work-assistant: agentId "twin:<uuid>" routes to that worker's
+        # OWN private twin brain (owner-auth required — privacy wall).
+        if (body.agentId or "").startswith("twin:"):
+            return _twin_agent_reply(body, db, x_user_email, x_user_token)
         return _agent_command_impl(body, db)
     except Exception as e:
         import traceback as _tb
@@ -132,6 +141,40 @@ def agent_command(body: AgentCommandBody, db: Session = Depends(get_db)):
                 "traceback": tb,
             },
         )
+
+
+def _twin_agent_reply(body: AgentCommandBody, db: Session, x_user_email, x_user_token):
+    """Route an Assistant-widget request to the worker's own twin brain.
+    Owner-only (privacy wall). Returns the widget's expected {reply, ...} shape."""
+    from uuid import UUID as _UUID
+    from services import auth_service, twin_brain
+    twin_id_str = (body.agentId or "").split(":", 1)[1].strip()
+    lang = body.language or "en"
+    # Privacy wall: only the twin's owner may use it.
+    user = auth_service.verify_session_token(db, x_user_email, x_user_token) if (x_user_email and x_user_token) else None
+    if not (user and getattr(user, "twin_id", None) and str(user.twin_id) == twin_id_str):
+        return {"reply": "You can only use your own twin.", "language": lang, "intent": "error", "source": "fallback"}
+    twin_id = _UUID(twin_id_str)
+    message = body.transcript or ""
+    # Pull text from any uploaded attachments so the twin can use the files.
+    if body.attachment_ids:
+        try:
+            from routers.chatbot import load_attachment
+            from services.assistant_agent import _extract_attachment_text
+            parts = []
+            for aid in body.attachment_ids[:5]:
+                a = load_attachment(aid)
+                if not a:
+                    continue
+                txt = _extract_attachment_text(a.get("filename", ""), a.get("mime_type", ""), a.get("blob", b""))
+                if txt:
+                    parts.append(f"[file: {a.get('filename','')}]\n{txt[:6000]}")
+            if parts:
+                message = (message + "\n\n" + "\n\n".join(parts)).strip()
+        except Exception:
+            pass
+    reply = twin_brain.think(db, twin_id, message, model=body.model)
+    return {"reply": reply or "", "language": lang, "intent": None, "source": "llm"}
 
 
 def _agent_command_impl(body: AgentCommandBody, db: Session):
