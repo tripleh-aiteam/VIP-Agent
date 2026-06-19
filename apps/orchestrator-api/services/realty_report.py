@@ -142,6 +142,12 @@ def build_realty_report(db, trace_id: str) -> dict:
     from services.kst import kst_date as _kst_date
     kst_date = _kst_date()
     listings, onbid = _load()
+    # Drop spreadsheet subtotal / total rows that the loader picked up as listings
+    # (e.g. '소 계', '301-7 창고 소계', '토지, 건물 합계') so the category breakdown is clean.
+    _JUNK = ("소계", "소 계", "합계", "합 계", "총계", "소 계")
+    listings = [p for p in listings
+                if not any(j in str(p.get("category") or "") for j in _JUNK)
+                and not any(j in str(p.get("title") or "") for j in _JUNK)]
     agg = _aggregate(listings)
     have = bool(listings)
     status = "ok" if have else ("partial" if onbid else "unavailable")
