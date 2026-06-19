@@ -707,6 +707,62 @@ def ingest_file(
     return {"file_id": file_id, "chunk_count": inserted, "status": "indexed"}
 
 
+def backfill_embeddings(
+    db: Session,
+    *,
+    agent_id: Optional[str] = None,
+    file_id: Optional[str] = None,
+    limit: int = 5000,
+) -> dict:
+    """Embed existing chunks that were ingested WITHOUT an embedding (uploaded while
+    EMBED_PROVIDER=none, then embeddings were turned on). Vector search ignores
+    NULL-embedding chunks, so those files are invisible until back-filled — that's why
+    a re-uploaded Excel 'can't be found'. Updates the embedding column in place; no
+    re-upload needed. Scope by agent_id and/or file_id."""
+    if EMBED_PROVIDER == "none":
+        return {"ok": False, "reason": "EMBED_PROVIDER=none — embeddings are not configured"}
+
+    where = "embedding IS NULL"
+    params: dict = {"lim": limit}
+    if agent_id:
+        where += " AND agent_id = :agent_id"
+        params["agent_id"] = agent_id
+    if file_id:
+        where += " AND file_id = :file_id"
+        params["file_id"] = file_id
+    rows = db.execute(sa_text(
+        f"SELECT id, content FROM assistant_knowledge_chunks WHERE {where} LIMIT :lim"
+    ), params).fetchall()
+    total = len(rows)
+    if not total:
+        return {"ok": True, "total_null": 0, "updated": 0, "note": "nothing to backfill"}
+
+    passage_prefix = "passage: " if (EMBED_PROVIDER == "local" and "e5" in EMBED_MODEL.lower()) else ""
+    updated = 0
+    bs = EMBED_BATCH
+    for start in range(0, total, bs):
+        batch = rows[start:start + bs]
+        texts = [passage_prefix + (r.content or "") for r in batch]
+        try:
+            vecs = embed_batch(texts)
+        except Exception as e:
+            log.warning("backfill_embeddings: embed batch failed: %s", e)
+            break
+        for r, v in zip(batch, vecs):
+            if v is None:
+                continue
+            db.execute(sa_text("""
+                UPDATE assistant_knowledge_chunks
+                   SET embedding = CAST(:e AS vector)
+                 WHERE id = :id
+            """), {"e": _vec_to_pg(v), "id": str(r.id)})
+            updated += 1
+        db.commit()
+    log.info("backfill_embeddings: agent=%s file=%s embedded %d/%d chunks",
+             agent_id, file_id, updated, total)
+    return {"ok": True, "total_null": total, "updated": updated, "provider": EMBED_PROVIDER}
+
+
 # ---------------------------------------------------------------------------
 # Retrieval
 # ---------------------------------------------------------------------------

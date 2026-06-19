@@ -163,6 +163,17 @@ def sync_knowledge(reset: bool = False, wait: bool = False,
 # File management
 # ---------------------------------------------------------------------------
 
+@router.post("/reembed")
+def reembed_knowledge(agentId: str = None, fileId: str = None,
+                      db: Session = Depends(get_db)):
+    """Back-fill embeddings for chunks that were ingested WITHOUT one (uploaded while
+    EMBED_PROVIDER=none, before embeddings were enabled). Those chunks are invisible to
+    vector search until embedded — this fixes 'my uploaded Excel can't be found'. Scope
+    by agentId and/or fileId. Returns {updated, total_null}. Idempotent."""
+    from services.knowledge_ingest import backfill_embeddings
+    return backfill_embeddings(db, agent_id=agentId, file_id=fileId)
+
+
 @router.get("/files")
 def list_knowledge_files(agentId: str, db: Session = Depends(get_db)):
     return {"ok": True, "files": list_files(db, agent_id=agentId)}
