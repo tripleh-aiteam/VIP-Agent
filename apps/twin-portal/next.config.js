@@ -10,6 +10,8 @@ const FRAME_ANCESTORS =
     : "'self' https://oasisvip.vercel.app");
 
 const nextConfig = {
+  // @triple-h/chatbot ships TypeScript source, so Next must transpile it.
+  transpilePackages: ["@triple-h/chatbot"],
   async headers() {
     return [
       {
