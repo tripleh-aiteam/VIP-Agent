@@ -23,6 +23,25 @@ from services.logger import log
 from services import kiwoom_report as _kr
 from services import catalyst_news as _cat
 
+
+def _with_timeout(label: str, fn, timeout_s: float, default):
+    """Run fn() but never let it stall the whole report. If it exceeds timeout_s,
+    log and return `default` (the slow worker thread is abandoned). This hard
+    ceiling is what stops a single slow/stuck news source or page fetch from
+    hanging the entire Newspaper build."""
+    from concurrent.futures import ThreadPoolExecutor, TimeoutError as _FTO
+    ex = ThreadPoolExecutor(max_workers=1)
+    try:
+        return ex.submit(fn).result(timeout=timeout_s)
+    except _FTO:
+        log.warning(f"newspaper: '{label}' exceeded {timeout_s}s — proceeding without it")
+        return default
+    except Exception as e:
+        log.warning(f"newspaper: '{label}' failed: {str(e)[:100]}")
+        return default
+    finally:
+        ex.shutdown(wait=False)
+
 # Named newspapers — each searched with a site: filter so the news really comes
 # from that outlet. (name, domain, region)
 NEWSPAPERS: list[dict] = [
@@ -412,12 +431,14 @@ def build_newspaper_report(db, trace_id: str) -> dict:
     auth_changes = _auth_changes(rows)
     auth_ref_ko = (f"공식 기준 수치(이 값만 신뢰, 기사 본문 수치보다 우선): "
                    f"지수 — {idx_ko or '제공 안 됨'}; 종목 일일 등락 — {auth_changes or '제공 안 됨'}.")
-    grouped = _gather_news_by_source()
+    # Hard ceilings on every network-heavy phase so one slow/stuck source can
+    # never stall the whole build (the cause of the Newspaper hang).
+    grouped = _with_timeout("news gather", _gather_news_by_source, 150, {})
     # Merge in the day's hourly snapshots (the '24 parts') so the morning report
     # synthesises the WHOLE day/night of news, not just this fetch.
     grouped = _merge_hourly_news(db, grouped)
-    hidden = _gather_hidden()
-    catalysts = _cat.gather_catalysts()
+    hidden = _with_timeout("hidden sources", _gather_hidden, 45, [])
+    catalysts = _with_timeout("catalysts", _cat.gather_catalysts, 60, [])
     total_news = sum(len(v) for v in grouped.values())
     from services.kst import kst_date as _kst_date
     kst_date = _kst_date()
@@ -588,9 +609,11 @@ def build_newspaper_report(db, trace_id: str) -> dict:
     # Real 매수가/매도가 + 핵심 요약 + 3 points + writing rules; upserted to history.
     try:
         from services import recommendation_engine
-        rec = recommendation_engine.build(
-            db, source="newspaper",
-            emphasis="이 추천은 최근 뉴스·기업 공시 등 뉴스 촉매와 시장 동향을 중심으로 작성하세요.")
+        rec = _with_timeout(
+            "recommendation", lambda: recommendation_engine.build(
+                db, source="newspaper",
+                emphasis="이 추천은 최근 뉴스·기업 공시 등 뉴스 촉매와 시장 동향을 중심으로 작성하세요."),
+            150, {})
         if rec.get("section_ko"):
             detail_ko = detail_ko.rstrip() + "\n\n" + rec["section_ko"]
             detail_en = detail_en.rstrip() + "\n\n" + rec["section_ko"]
