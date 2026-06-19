@@ -598,9 +598,12 @@ export default function ChatWorkspace({ apiBase, agentId, agentLabel }: Props) {
         return;
       }
 
-      const r = await fetch(`${base}/chat/agent`, {
+      // Stream the reply (keeps the connection alive so slow models like opus
+      // don't get dropped → "Failed to fetch"). Falls back to the same JSON
+      // shape on the final event.
+      const r = await fetch(`${base}/chat/agent/stream`, {
         method: "POST",
-        headers: { "Content-Type": "application/json", ...twinAuthHeaders() },
+        headers: { "Content-Type": "application/json", Accept: "text/event-stream", ...twinAuthHeaders() },
         body: JSON.stringify({
           transcript: q,
           language: "auto",
@@ -613,23 +616,48 @@ export default function ChatWorkspace({ apiBase, agentId, agentLabel }: Props) {
           page_context: pageCtx || undefined,
         }),
       });
-      if (!r.ok) throw new Error(`HTTP ${r.status}`);
-      const data: AgentResponse = await r.json();
-      const replyText = data.reply || "";
-      const assistantTurn: AssistantTurn = {
-        who: "assistant",
-        text: replyText,
-        ts: Date.now(),
-        intent: data.intent,
-        tool_used: data.tool_used,
-      };
-      update(prev => ({
+      if (!r.ok || !r.body) throw new Error(`HTTP ${r.status}`);
+
+      const turnTs = Date.now();
+      let meta: AgentResponse = {} as AgentResponse;
+      const writeText = (txt: string) => update(prev => ({
         ...prev,
         sessions: prev.sessions.map(s => s.id === activeSession.id
-          ? { ...s, turns: [...s.turns, assistantTurn], updatedAt: Date.now() }
+          ? {
+              ...s, updatedAt: Date.now(),
+              turns: s.turns.some(t => t.ts === turnTs && t.who === "assistant")
+                ? s.turns.map(t => (t.ts === turnTs && t.who === "assistant")
+                    ? { ...t, text: txt, intent: meta.intent, tool_used: meta.tool_used } : t)
+                : [...s.turns, { who: "assistant", text: txt, ts: turnTs, intent: meta.intent } as AssistantTurn],
+            }
           : s),
       }));
-      const action = data.action;
+
+      const reader = r.body.getReader();
+      const dec = new TextDecoder();
+      let buf = "";
+      let acc = "";
+      writeText("");
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += dec.decode(value, { stream: true });
+        const lines = buf.split("\n");
+        buf = lines.pop() || "";
+        for (const line of lines) {
+          const ln = line.trim();
+          if (!ln.startsWith("data:")) continue;
+          const payload = ln.slice(5).trim();
+          if (!payload || payload === "[DONE]") continue;
+          let obj: any;
+          try { obj = JSON.parse(payload); } catch { continue; }
+          if (typeof obj.delta === "string") { acc += obj.delta; writeText(acc); }
+          else if (obj.done) { meta = obj; if (!acc && obj.reply) { acc = obj.reply; } writeText(acc); }
+          else if (obj.intent) { meta.intent = obj.intent; }
+        }
+      }
+      const replyText = acc;
+      const action = meta.action;
       if (action?.type === "navigate" && action.to) {
         if (action.external) { try { window.open(action.to, "_blank", "noopener,noreferrer"); } catch {} }
         else { try { router.push(action.to); } catch { /* ignore nav errors */ } }
