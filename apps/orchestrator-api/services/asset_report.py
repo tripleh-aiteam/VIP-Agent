@@ -258,8 +258,8 @@ def build_asset_report(db, trace_id: str) -> dict:
                     "Output ONLY the Korean Markdown report.")
                 ko_out = chat_completion_sync(
                     system_prompt=ko_sys,
-                    messages=[{"role": "user", "content": detail_en[:16000]}],
-                    max_tokens=8000, temperature=0.3, model="groq-llama-3.3-70b", prefer_paid=True) or ""
+                    messages=[{"role": "user", "content": detail_en[:22000]}],
+                    max_tokens=13000, temperature=0.3, model="groq-llama-3.3-70b", prefer_paid=True) or ""
                 if ko_out.strip() and not ko_out.lstrip().startswith(("[LLM unavailable]", "[server error]")) \
                         and len(ko_out.strip()) > 400:
                     detail_ko = ko_out.strip()
