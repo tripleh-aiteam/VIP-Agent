@@ -614,13 +614,32 @@ def _requested_price_fields(transcript: Optional[str]) -> list[str]:
     return fields
 
 
+_HISTORY_RANGE_RE = _re.compile(
+    r"(?:last|past|recent|over\s+the\s+(?:last|past))\s+(?:\d+\s+)?(?:few\s+)?"
+    r"(?:day|days|week|weeks|month|months)\b"
+    r"|(?:지난|최근)\s*\d*\s*(?:일|주|개월|달)\s*(?:간|동안|치)?"
+    r"|\d+\s*(?:일|days?)\s*(?:간|동안|치)"
+    r"|최근\s*(?:며칠|몇\s*일|몇\s*주)"
+    r"|(?:trend|history|movement|추이|흐름|동향|며칠)",
+    _re.IGNORECASE)
+
+
+def _is_history_range_query(transcript: Optional[str]) -> bool:
+    """A RANGE / over-time question — 'last 4 days', 'past 3 weeks', '최근 5일',
+    'price trend', '4일간'. These want a multi-day history, so they go to the
+    history/LLM path (which reasons over the range), not the single current-price
+    shortcut. NOT triggered by 'last price' (no time unit) or a single date."""
+    return bool(transcript) and bool(_HISTORY_RANGE_RE.search(transcript))
+
+
 def _is_vip_current_price_q(transcript: Optional[str], agent_id: Optional[str]) -> bool:
     if (agent_id or "vip").lower() == "stock":
         return False
     t = (transcript or "").lower()
     if not any(w in t for w in _PRICE_WORDS):
         return False
-    if _is_past_price(transcript) or _is_stock_advice(transcript, agent_id):
+    if (_is_past_price(transcript) or _is_stock_advice(transcript, agent_id)
+            or _is_history_range_query(transcript)):
         return False
     if any(w in t for w in ("뉴스", "news", "유튜브", "youtube", "리포트", "report")):
         return False
