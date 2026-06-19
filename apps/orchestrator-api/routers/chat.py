@@ -244,47 +244,60 @@ def agent_command_stream(
     import json as _json
     import time as _time
 
-    # Run the agent synchronously — the bulk of latency is here; LLM tool
-    # decision + (maybe) compose. We then stream out the produced reply.
-    if (body.agentId or "").startswith("twin:"):
-        # Twin work-assistant: owner-auth'd route to the twin's own brain.
-        result = _twin_agent_reply(body, db, x_user_email, x_user_token)
-    else:
-        from services.assistant_agent import run_agent
-        result = run_agent(
-            db,
-            transcript=body.transcript or "",
-            language=body.language or "auto",
-            current_path=body.current_path,
-            selected_id=body.selected_id,
-            history=body.history,
-            confirmed_tool=body.confirmed_tool,
-            confirmed_args=body.confirmed_args,
-            attachment_ids=body.attachment_ids,
-            forced_model=body.model,
-            user_id=body.user_id or "boss",
-            agent_id=body.agentId or "vip",
-            page_context=body.page_context,
-        )
-
-    reply = str(result.get("reply") or "")
-    # Chunk the reply word-by-word so it feels natural; pad short replies.
-    chunks: list[str] = []
-    if reply:
-        # Split keeping whitespace so the joined reassembly is identical
-        words = reply.split(" ")
-        for i, w in enumerate(words):
-            chunks.append(w + (" " if i < len(words) - 1 else ""))
+    _is_twin = (body.agentId or "").startswith("twin:")
 
     def gen():
-        # Surface the intent up-front so the host can render a "thinking
-        # via X" hint before the prose starts arriving
+        # Compute in a worker thread (its own DB session) while emitting SSE
+        # keepalive comments, so the connection stays alive during slow model
+        # work and the browser never reports "Failed to fetch".
+        import threading
+        from db.base import SessionLocal as _SL
+        box: dict = {}
+
+        def _compute():
+            s = _SL()
+            try:
+                if _is_twin:
+                    box["r"] = _twin_agent_reply(body, s, x_user_email, x_user_token)
+                else:
+                    from services.assistant_agent import run_agent
+                    box["r"] = run_agent(
+                        s,
+                        transcript=body.transcript or "",
+                        language=body.language or "auto",
+                        current_path=body.current_path,
+                        selected_id=body.selected_id,
+                        history=body.history,
+                        confirmed_tool=body.confirmed_tool,
+                        confirmed_args=body.confirmed_args,
+                        attachment_ids=body.attachment_ids,
+                        forced_model=body.model,
+                        user_id=body.user_id or "boss",
+                        agent_id=body.agentId or "vip",
+                        page_context=body.page_context,
+                    )
+            except Exception as e:
+                box["r"] = {"reply": f"[error] {e.__class__.__name__}: {str(e)[:200]}",
+                            "intent": "error", "language": body.language or "en"}
+            finally:
+                s.close()
+
+        th = threading.Thread(target=_compute, daemon=True)
+        th.start()
+        while th.is_alive():
+            yield ": keepalive\n\n"   # SSE comment — clients ignore it
+            _time.sleep(2)
+        th.join(timeout=1)
+
+        result = box.get("r") or {"reply": ""}
+        reply = str(result.get("reply") or "")
         if result.get("intent"):
             yield f"data: {_json.dumps({'intent': result['intent']})}\n\n"
-        for c in chunks:
-            yield f"data: {_json.dumps({'delta': c})}\n\n"
-            _time.sleep(0.012)  # ~80 wpm — fast but visibly streaming
-        # Final event carries all the metadata + signals end of stream
+        words = reply.split(" ")
+        for i, w in enumerate(words):
+            chunk = w + (" " if i < len(words) - 1 else "")
+            yield f"data: {_json.dumps({'delta': chunk})}\n\n"
+            _time.sleep(0.01)
         trailing = {
             "done": True,
             "intent": result.get("intent"),

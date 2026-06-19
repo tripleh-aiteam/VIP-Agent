@@ -395,8 +395,9 @@ def build_system_prompt(
             "Help with anything: writing, coding, analysis, research, questions. Be concise.\n\n"
             f"CURRENT DATE & TIME: {_now:%A, %B %d, %Y, %H:%M} (Korea/KST). "
             "Use this as the real 'today/now' — NEVER state the date from memory/training, it is outdated. "
-            "Your training knowledge has a cutoff, so for ANYTHING current — news, prices, weather, recent events, "
-            "today's facts — use the web_search tool instead of answering from memory.\n\n"
+            "Answer general knowledge (facts, capitals, definitions, math, history, coding) DIRECTLY and quickly "
+            "from what you know. ONLY use the web_search tool for time-sensitive/changing info — today's news, "
+            "live prices, weather, or recent events your training wouldn't know.\n\n"
         )
         rules = (hard_rules[:3] + corrections[:3])
         if rules:
