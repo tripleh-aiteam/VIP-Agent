@@ -567,11 +567,37 @@ _STOCK_FUZZY_STOP = {
 }
 
 
+# Curated English / short-form aliases for common stocks the resolver's Korean-name
+# scan + fuzzy (≥4 chars) would otherwise miss — e.g. bare 'lg', 'sk', or English
+# 'samsung electronics'. Longest alias wins (so 'lg electronics'/'lg화학' beat bare
+# 'lg' → LG전자 default). Multi-word aliases are consumed whole so leftover words
+# ('electronics') can't fuzzy-match the wrong company.
+_STOCK_ALIASES = {
+    "lg electronics": ("066570", "LG전자"), "엘지전자": ("066570", "LG전자"),
+    "lg전자": ("066570", "LG전자"), "엘지": ("066570", "LG전자"), "lg": ("066570", "LG전자"),
+    "lg화학": ("051910", "LG화학"), "lg chem": ("051910", "LG화학"),
+    "lg에너지솔루션": ("373220", "LG에너지솔루션"), "lg energy": ("373220", "LG에너지솔루션"),
+    "samsung electronics": ("005930", "삼성전자"), "samsung": ("005930", "삼성전자"),
+    "삼성": ("005930", "삼성전자"),
+    "samsung sdi": ("006400", "삼성SDI"), "samsung biologics": ("207940", "삼성바이오로직스"),
+    "sk hynix": ("000660", "SK하이닉스"), "skhynix": ("000660", "SK하이닉스"),
+    "hynix": ("000660", "SK하이닉스"), "하이닉스": ("000660", "SK하이닉스"),
+    "sk telecom": ("017670", "SK텔레콤"),
+    "naver": ("035420", "NAVER"), "네이버": ("035420", "NAVER"),
+    "kakao": ("035720", "카카오"), "카카오": ("035720", "카카오"),
+    "hyundai motor": ("005380", "현대차"), "hyundai": ("005380", "현대차"),
+    "현대차": ("005380", "현대차"), "kia": ("000270", "기아"), "기아": ("000270", "기아"),
+    "posco": ("005490", "POSCO홀딩스"), "포스코": ("005490", "POSCO홀딩스"),
+    "celltrion": ("068270", "셀트리온"), "셀트리온": ("068270", "셀트리온"),
+}
+
+
 def _all_stocks_in_query(transcript: Optional[str]) -> list[tuple[str, str]]:
     """All KR stocks (6-digit code, display name) named in the text, in order,
     deduped. SCANS for every known stock name (so space-separated 'SK하이닉스 네이버'
-    all resolve, not just comma/and), matches 6-digit codes, and fuzzy-matches
-    leftover words to catch typos like 'Skhynoix' → SK하이닉스."""
+    all resolve, not just comma/and), applies curated English/short aliases ('lg',
+    'samsung electronics'), matches 6-digit codes, and fuzzy-matches leftover words
+    to catch typos like 'Skhynoix' → SK하이닉스."""
     import re as _re
     t = transcript or ""
     low = t.lower()
@@ -592,6 +618,14 @@ def _all_stocks_in_query(transcript: Optional[str]) -> list[tuple[str, str]]:
                 seen.add(code)
                 out.append((code, name))
             consumed = consumed.replace(nl, " ")  # so 'SK' inside 'SK Hynix' won't re-match
+    # Curated aliases (whole-word), longest first so multi-word aliases consume fully.
+    for alias, (code, dname) in sorted(_STOCK_ALIASES.items(), key=lambda kv: -len(kv[0])):
+        pat = rf"(?<![a-z0-9가-힣]){_re.escape(alias)}(?![a-z0-9가-힣])"
+        if _re.search(pat, consumed):
+            if code not in seen:
+                seen.add(code)
+                out.append((code, dname))
+            consumed = _re.sub(pat, " ", consumed)
     for m in _re.findall(r"\b(\d{6})\b", t):
         if m not in seen:
             seen.add(m)
