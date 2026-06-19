@@ -207,6 +207,10 @@ def _load_conversation_history(db: Session, twin_id: UUID, limit: int = 20) -> l
 # ---------------------------------------------------------------------------
 
 AVAILABLE_TOOLS = {
+    "web_search": {
+        "description": "Search the live web for current information, facts, news, docs",
+        "params": ["query"],
+    },
     "fetch_agent_data": {
         "description": "Fetch real data from an agent (asset, stock, realty)",
         "params": ["agent_type"],
@@ -234,7 +238,10 @@ def _execute_tool(db: Session, twin_id: UUID, tool_name: str, params: dict) -> s
     """Execute a tool and return the result."""
     twin = twin_service.get_twin(db, twin_id)
 
-    if tool_name == "fetch_agent_data":
+    if tool_name == "web_search":
+        return _tool_web_search(params.get("query", ""))
+
+    elif tool_name == "fetch_agent_data":
         return _tool_fetch_agent_data(db, params.get("agent_type", "asset"))
 
     elif tool_name == "search_knowledge":
@@ -250,6 +257,24 @@ def _execute_tool(db: Session, twin_id: UUID, tool_name: str, params: dict) -> s
         return _tool_write_report(db, twin_id, params)
 
     return f"Unknown tool: {tool_name}"
+
+
+def _tool_web_search(query: str) -> str:
+    """Live web search via services.web_search (Serper/Google/Tavily/Gemini)."""
+    query = (query or "").strip()
+    if not query:
+        return "No search query provided."
+    try:
+        from services.web_search import search_web
+        res = search_web(query, num_results=5)
+        if not res.get("ok"):
+            return f"Web search unavailable: {res.get('error', 'no provider configured')}"
+        lines = []
+        for r in res.get("results", [])[:5]:
+            lines.append(f"- {r.get('title', '')}: {r.get('snippet', '')} ({r.get('url', '')})")
+        return ("Web results:\n" + "\n".join(lines)) if lines else "No results found."
+    except Exception as e:
+        return f"Web search error: {e}"
 
 
 def _tool_fetch_agent_data(db: Session, agent_type: str) -> str:
@@ -400,12 +425,41 @@ def build_system_prompt(
     }
     prompt += perm.get(twin.permission_level, perm["suggest"])
 
+    # Tools — make the twin a real work assistant. The LLM emits a tool call on
+    # its own line; the server executes it and feeds the results back for a final
+    # answer. Only use a tool when fresh/external info is actually needed.
+    if available_tools:
+        prompt += (
+            "\n\nTOOLS YOU CAN USE (emit on its own line, then stop and wait for results):\n"
+            "- Current info from the web: [TOOL: web_search | query=YOUR SEARCH]\n"
+            "- Your own saved knowledge: [TOOL: search_knowledge | query=...]\n"
+            "- Live data from a company agent: [TOOL: fetch_agent_data | agent_type=stock]\n"
+            "Rules: use a tool ONLY when you truly need fresh or external facts. "
+            "If you can answer from what you know, just answer directly — no tool. "
+            "For coding, writing, analysis and reports, answer directly without tools.\n"
+        )
+
     return prompt
 
 
 # ---------------------------------------------------------------------------
 #  Tool Call Parser
 # ---------------------------------------------------------------------------
+
+def _extract_tool_calls(response: str) -> list:
+    """Return [(tool_name, params_dict), ...] found in the LLM response."""
+    import re
+    out = []
+    for tool_name, params_str in re.findall(r'\[TOOL:\s*(\w+)(?:\s*\|([^\]]*))?\]', response or ""):
+        params = {}
+        if params_str:
+            for param in params_str.split("|"):
+                if "=" in param:
+                    k, v = param.split("=", 1)
+                    params[k.strip()] = v.strip()
+        out.append((tool_name, params))
+    return out
+
 
 def _parse_and_execute_tools(db: Session, twin_id: UUID, response: str) -> str:
     """Parse tool calls from LLM response and execute them."""
@@ -514,8 +568,28 @@ def think(
         model=model,
     )
 
-    # #26 — Parse and execute any tool calls in the response
-    response = _parse_and_execute_tools(db, twin_id, response)
+    # #26 — Tool loop: if the LLM asked for tools, run them and let it answer
+    # again with the results (one round, so it stays fast and can't loop).
+    tool_calls = _extract_tool_calls(response)
+    if tool_calls:
+        results = []
+        for name, params in tool_calls[:4]:
+            twin_service.log_activity(db, twin_id, "tool_call", f"Using tool: {name}({params})")
+            try:
+                results.append(f"[{name}] {_execute_tool(db, twin_id, name, params)}")
+            except Exception as e:
+                results.append(f"[{name}] error: {e}")
+        tool_block = "\n\n".join(results)
+        followup = messages + [
+            {"role": "assistant", "content": response},
+            {"role": "user", "content": f"Tool results:\n{tool_block}\n\nNow write your final answer using these results. Do not call any more tools."},
+        ]
+        response = chat_completion_sync(
+            system_prompt=build_system_prompt(twin, relevant_knowledge, available_tools=False),
+            messages=followup[-8:], max_tokens=1500, temperature=0.7, model=model,
+        )
+        # Safety: strip any stray tool tags the model may still emit.
+        response = _parse_and_execute_tools(db, twin_id, response)
 
     # Log: response generated
     twin_service.log_activity(
@@ -550,7 +624,13 @@ def _auto_extract_knowledge(db: Session, twin_id: UUID, question: str, answer: s
     Automatically save useful Q&A pairs as twin knowledge.
     Skips trivial messages (greetings, short replies).
     This is how chatting with twin = training twin.
+    Gated on Watch-&-Learn consent: if the worker hasn't opted in, the twin still
+    answers but does NOT save the conversation as knowledge.
     """
+    twin = twin_service.get_twin(db, twin_id)
+    if not twin or not getattr(twin, "learning_consent", False):
+        return
+
     q_lower = question.lower().strip()
 
     # Skip trivial messages
