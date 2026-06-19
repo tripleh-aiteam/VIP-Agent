@@ -335,10 +335,64 @@ def _has_explicit_date(transcript: Optional[str]) -> bool:
     return bool(_EXPLICIT_DATE_RE.search(transcript or ""))
 
 
+_WDAYS = {"monday": 0, "tuesday": 1, "wednesday": 2, "thursday": 3, "friday": 4,
+          "saturday": 5, "sunday": 6, "월요일": 0, "화요일": 1, "수요일": 2,
+          "목요일": 3, "금요일": 4, "토요일": 5, "일요일": 6,
+          "mon": 0, "tue": 1, "wed": 2, "thu": 3, "fri": 4, "sat": 5, "sun": 6}
+
+
+def _relative_date_iso(text: Optional[str]) -> Optional[str]:
+    """Resolve a RELATIVE date phrase to 'YYYY-MM-DD' (KST): weekday names
+    ('this/last week monday', 'on monday', '지난주 월요일'), 'N days/weeks ago',
+    '어제/그제', '지난주/지난달'. None if no relative phrase. So 'this week monday'
+    routes to history instead of being mistaken for a current-price question."""
+    from datetime import timedelta as _td
+    t = (text or "").lower()
+    today = _dt_now_kst().date()
+    for name in sorted(_WDAYS, key=len, reverse=True):
+        if _re.search(rf"(?<![a-z]){_re.escape(name)}(?![a-z])", t):
+            wd = _WDAYS[name]
+            base_monday = today - _td(days=today.weekday())
+            d = base_monday + _td(days=wd)
+            before = t.split(name)[0]
+            if ("last week" in t or "지난주" in t or "지난 주" in t
+                    or "last " in before[-7:] or "지난" in before[-4:]):
+                d -= _td(days=7)
+            elif d > today:
+                d -= _td(days=7)
+            return d.isoformat()
+    m = _re.search(r"(\d{1,3})\s*일\s*전", t) or _re.search(r"(\d{1,3})\s*days?\s*ago", t)
+    if m:
+        return (today - _td(days=int(m.group(1)))).isoformat()
+    m = _re.search(r"(\d{1,2})\s*주\s*전", t) or _re.search(r"(\d{1,2})\s*weeks?\s*ago", t)
+    if m:
+        return (today - _td(weeks=int(m.group(1)))).isoformat()
+    if "그제" in t or "그저께" in t or "엊그제" in t:
+        return (today - _td(days=2)).isoformat()
+    if "어제" in t or "yesterday" in t or "전날" in t:
+        return (today - _td(days=1)).isoformat()
+    if "지난주" in t or "last week" in t:
+        return (today - _td(days=7)).isoformat()
+    if "지난달" in t or "지난 달" in t or "last month" in t:
+        return (today - _td(days=30)).isoformat()
+    return None
+
+
+def _inject_relative_date(transcript: Optional[str]) -> Optional[str]:
+    """If a stock question uses a relative date with no explicit date, append the
+    resolved 'YYYY-MM-DD' so past-price routing + history lookup work consistently."""
+    if not transcript or _has_explicit_date(transcript):
+        return transcript
+    if not _is_stock_question(transcript):
+        return transcript
+    iso = _relative_date_iso(transcript)
+    return f"{transcript} ({iso})" if iso else transcript
+
+
 def _is_past_price(transcript: Optional[str]) -> bool:
     """True when the user asks for a PAST-date price/volume of a specific stock —
     e.g. '삼성전자 어제 종가', 'X 10일 전 주가', '2026년 6월 10일 SK하이닉스 종가',
-    'last week's SK Hynix price'. These MUST be answered from real daily history,
+    'this week monday SK Hynix price'. These MUST be answered from real daily history,
     never the LLM's memory."""
     t = (transcript or "").strip().lower()
     if not t:
@@ -2575,6 +2629,12 @@ def _run_agent_impl(
         }
 
     transcript = (transcript or "").strip()
+
+    # Resolve relative dates ('this week monday', 'last monday', '지난주 화요일') to an
+    # explicit date up front, so a past-date question isn't mistaken for a live-price
+    # one (and history lookup gets a real date). No-op when a date is already present
+    # or it isn't a stock question.
+    transcript = _inject_relative_date(transcript) or transcript
 
     # Detect the QUESTION's language (not the data's). A pinned language wins.
     # Otherwise: if the message has ≥2 English words it's an English question —
