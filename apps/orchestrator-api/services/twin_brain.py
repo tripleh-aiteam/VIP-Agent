@@ -598,12 +598,30 @@ def think(
         {"response_preview": response[:200]},
     )
 
-    # #33 — Chat-to-knowledge extraction (auto-learn from conversation)
-    _auto_extract_knowledge(db, twin_id, user_message, response)
-
     # Update twin status
     twin_service.set_status(db, twin_id, "idle")
     db.flush()
+
+    # #33 — Chat-to-knowledge extraction (auto-learn). Run AFTER returning, in a
+    # background thread with its own DB session, so the user isn't kept waiting
+    # for the extra distill+embed LLM work (keeps chat fast + avoids gateway
+    # timeouts on slow models).
+    try:
+        import threading
+        from db.base import SessionLocal as _SL
+
+        def _bg_learn(tid, q, a):
+            _bg = _SL()
+            try:
+                _auto_extract_knowledge(_bg, tid, q, a)
+            except Exception:
+                pass
+            finally:
+                _bg.close()
+
+        threading.Thread(target=_bg_learn, args=(twin_id, user_message, response), daemon=True).start()
+    except Exception:
+        pass
 
     return response
 
