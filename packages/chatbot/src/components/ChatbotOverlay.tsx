@@ -1126,6 +1126,24 @@ export function ChatbotOverlay({
                       </div>
                     )}
                   </div>
+                  {t.who === "assistant" && t.text && !t.ack && (
+                    <div className="flex gap-3 mt-0.5 px-1">
+                      <button type="button" title="Copy"
+                        onClick={() => { try { navigator.clipboard.writeText(t.text); } catch {} }}
+                        className="text-[10px] text-gray-400 hover:text-gray-700">⧉ Copy</button>
+                      <button type="button" title="Download"
+                        onClick={() => {
+                          try {
+                            const blob = new Blob([t.text], { type: "text/plain;charset=utf-8" });
+                            const url = URL.createObjectURL(blob);
+                            const a = document.createElement("a");
+                            a.href = url; a.download = "assistant-reply.txt"; a.click();
+                            URL.revokeObjectURL(url);
+                          } catch {}
+                        }}
+                        className="text-[10px] text-gray-400 hover:text-gray-700">⬇ Download</button>
+                    </div>
+                  )}
                   {t.who === "assistant" && t.suggestions && t.suggestions.length > 0 && !t.pendingAction && (
                     <div className="flex flex-wrap gap-1.5 mt-2 max-w-full">
                       {t.suggestions.map((s, si) => (
