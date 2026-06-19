@@ -23,7 +23,7 @@ _BASE = (os.getenv("STOCK_BACKEND_URL")
 
 def ask(transcript: str, lang: str = "ko",
         history: Optional[list[dict]] = None,
-        timeout: float = 60.0) -> Optional[dict[str, Any]]:
+        timeout: float = 45.0) -> Optional[dict[str, Any]]:
     """POST the question to the Stock-Advisor assistant and return
     ``{reply, tool_used, intent, action}`` — or ``None`` if it can't answer
     (caller then falls back to the in-process stock engine)."""
@@ -42,24 +42,29 @@ def ask(transcript: str, lang: str = "ko",
     }
     if history:
         payload["history"] = history[-8:]
-    # Retry once: on Render's free tier the backend may be spun down, so the first
-    # request wakes it (and can error mid-boot) while the second succeeds. Without
-    # this the user sees a cold-start 'don't know'. When the peer is warm the first
-    # attempt succeeds and there is no extra latency.
+    # Retry ONCE, but only on a CONNECTION error (cold start — first request wakes a
+    # spun-down peer). A read/response timeout means the peer is just slow; retrying
+    # would DOUBLE the wait (and could push VIP past the proxy timeout → 502), so we
+    # don't retry those. `timeout` bounds the total wait so VIP never hangs.
     d = None
     for attempt in range(2):
         try:
-            with httpx.Client(timeout=timeout) as c:
+            with httpx.Client(timeout=httpx.Timeout(timeout, connect=8.0)) as c:
                 r = c.post(f"{_BASE}/chat/agent", json=payload)
             if r.status_code == 200:
                 d = r.json()
-                break
-            log.warning(f"stock_advisor_chat: HTTP {r.status_code} (attempt {attempt + 1})")
+            else:
+                log.warning(f"stock_advisor_chat: HTTP {r.status_code}")
+            break  # got a response (200 or not) — never retry
+        except (httpx.ConnectError, httpx.ConnectTimeout) as e:
+            log.warning(f"stock_advisor_chat connect: {str(e)[:120]} (attempt {attempt + 1})")
+            if attempt == 0:
+                import time as _t
+                _t.sleep(1.5)
+                continue
         except Exception as e:
-            log.warning(f"stock_advisor_chat: {str(e)[:140]} (attempt {attempt + 1})")
-        if attempt == 0:
-            import time as _t
-            _t.sleep(1.5)
+            log.warning(f"stock_advisor_chat: {str(e)[:140]}")
+            break  # read timeout / other — slow peer, retrying won't help
     if d is None:
         return None
     reply = (d.get("reply") or "").strip()

@@ -657,7 +657,7 @@ def _is_vip_current_price_q(transcript: Optional[str], agent_id: Optional[str]) 
     if not any(w in t for w in _PRICE_WORDS):
         return False
     if (_is_past_price(transcript) or _is_stock_advice(transcript, agent_id)
-            or _is_history_range_query(transcript)):
+            or _is_history_range_query(transcript) or _is_us_stock_query(transcript)):
         return False
     if any(w in t for w in ("뉴스", "news", "유튜브", "youtube", "리포트", "report")):
         return False
@@ -867,9 +867,13 @@ def _vip_history_reply(transcript: Optional[str], lang: str, hist=None) -> Optio
 
 
 def _vip_stock_data_reply(transcript: Optional[str], lang: str) -> Optional[str]:
-    """Unified VIP stock-data answer (the single source the AI Advisor relays): a
-    history table for past/range questions, else the live current price (with volume
-    and any requested fields). None when no stock/data resolves."""
+    """Unified VIP stock-data answer (the single source the AI Advisor relays):
+    공매도 (Kiwoom ka10014) → history table (past/range) → live current price (with
+    volume / requested fields). None when no stock/data resolves."""
+    if _is_short_selling_q(transcript):
+        ss = _vip_short_selling_reply(transcript, lang)
+        if ss and ss.get("reply"):
+            return ss["reply"]
     h = _requested_history_dates(transcript)
     if h:
         r = _vip_history_reply(transcript, lang, h)
@@ -947,14 +951,32 @@ _STOCK_Q_KW = (
 )
 
 
+# US stocks VIP can't price locally (no Kiwoom/Naver KR data) — detect them so the
+# question DELEGATES to the Stock backend (which handles US tickers) instead of
+# falling into a KR-only tool that errors ("couldn't resolve 'Apple'").
+_US_STOCK_NAMES = (
+    "apple", "aapl", "tesla", "tsla", "nvidia", "nvda", "microsoft", "msft",
+    "alphabet", "google", "googl", "amazon", "amzn", "meta", "facebook", "netflix",
+    "nflx", "palantir", "pltr", "broadcom", "avgo", "amd", "intel", "intc",
+    "coinbase", "coin", "costco", "cost", "walmart", "wmt", "disney", "nike", "nke",
+    "boeing", "starbucks", "sbux", "qualcomm", "qcom", "micron", "mu", "berkshire",
+    "s&p 500", "sp500", "nasdaq", "dow jones",
+)
+
+
+def _is_us_stock_query(transcript: Optional[str]) -> bool:
+    t = (transcript or "").lower()
+    return any(_re.search(rf"(?<![a-z]){_re.escape(n)}(?![a-z])", t) for n in _US_STOCK_NAMES)
+
+
 def _is_stock_question(transcript: Optional[str]) -> bool:
-    """True when the message is clearly about stocks — a resolvable stock name/code
-    OR a stock-domain keyword. Used to make VIP delegate EVERY stock question to
-    the Stock agent so the two agents always give the same answer."""
+    """True when the message is clearly about stocks — a resolvable stock name/code,
+    a US ticker/name, OR a stock-domain keyword. Used to make VIP delegate EVERY stock
+    question to the Stock agent so the two agents always give the same answer."""
     t = (transcript or "").strip().lower()
     if not t:
         return False
-    if _stock_in_query(transcript) is not None:
+    if _stock_in_query(transcript) is not None or _is_us_stock_query(transcript):
         return True
     return any(k in t for k in _STOCK_Q_KW)
 
