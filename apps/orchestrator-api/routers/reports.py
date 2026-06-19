@@ -656,21 +656,39 @@ def get_report_markdown(report_id: UUID, db: Session = Depends(get_db)):
     return md
 
 
+# Internal/non-user-facing report rows. These are written frequently (hourly
+# snapshots) or are bookkeeping (recommendation history) — if they're returned in
+# the default list they bury the once-daily Kiwoom/Newspaper/YouTube/Master
+# reports out of the window, so the dashboard tabs show "(0)". Hidden unless a
+# caller asks for that exact report_type.
+_INTERNAL_REPORT_TYPES = (
+    "kiwoom_snapshot", "newspaper_snapshot", "youtube_snapshot",
+    "recommendation_daily",
+)
+
+
 @router.get("/")
 def list_reports(
     report_type: Optional[str] = Query(None),
-    limit: int = Query(20, ge=1, le=100),
+    limit: int = Query(100, ge=1, le=300),
     db: Session = Depends(get_db),
 ):
-    """List all reports."""
+    """List reports (newest first). Excludes internal hourly snapshots +
+    recommendation history unless a specific report_type is requested, so the
+    daily reports always stay visible in the dashboard tabs."""
     q = db.query(OrchReport)
     if report_type:
         q = q.filter(OrchReport.report_type == report_type)
+    else:
+        q = q.filter(OrchReport.report_type.notin_(_INTERNAL_REPORT_TYPES))
     reports = q.order_by(OrchReport.created_at.desc()).limit(limit).all()
     return [
         {
             "id": str(r.id),
             "report_type": r.report_type,
+            # Expose the period (daily/weekly/monthly) so the dashboard can sort a
+            # report into the right tab; it lives inside content_json, defaults daily.
+            "period": (r.content_json or {}).get("period", "daily"),
             "delivery_channel": r.delivery_channel,
             "source_run_count": len(r.source_run_ids_json) if r.source_run_ids_json else 0,
             "executive_summary": (r.content_json or {}).get("executive_summary", ""),
