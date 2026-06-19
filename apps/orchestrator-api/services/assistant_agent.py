@@ -335,25 +335,69 @@ def _has_explicit_date(transcript: Optional[str]) -> bool:
     return bool(_EXPLICIT_DATE_RE.search(transcript or ""))
 
 
+# ── Smart date understanding (shared logic, kept identical on the Stock side) ──
 _WDAYS = {"monday": 0, "tuesday": 1, "wednesday": 2, "thursday": 3, "friday": 4,
           "saturday": 5, "sunday": 6, "월요일": 0, "화요일": 1, "수요일": 2,
           "목요일": 3, "금요일": 4, "토요일": 5, "일요일": 6,
           "mon": 0, "tue": 1, "wed": 2, "thu": 3, "fri": 4, "sat": 5, "sun": 6}
+_MONTHS = {"january": 1, "february": 2, "march": 3, "april": 4, "may": 5, "june": 6,
+           "july": 7, "august": 8, "september": 9, "october": 10, "november": 11,
+           "december": 12, "jan": 1, "feb": 2, "mar": 3, "apr": 4, "jun": 6, "jul": 7,
+           "aug": 8, "sep": 9, "sept": 9, "oct": 10, "nov": 11, "dec": 12}
+_MONTH_STOP = {"maybe", "mayor", "mayer", "marche", "augment", "octopus"}
+_ORD = {"first": 1, "second": 2, "third": 3, "fourth": 4, "fifth": 5, "sixth": 6,
+        "seventh": 7, "eighth": 8, "ninth": 9, "tenth": 10, "eleventh": 11,
+        "twelfth": 12, "thirteenth": 13, "fourteenth": 14, "fifteenth": 15,
+        "sixteenth": 16, "seventeenth": 17, "eighteenth": 18, "nineteenth": 19,
+        "twentieth": 20, "twenty-first": 21, "twenty-second": 22, "twenty-third": 23,
+        "twenty-fourth": 24, "twenty-fifth": 25, "twenty-sixth": 26,
+        "twenty-seventh": 27, "twenty-eighth": 28, "twenty-ninth": 29,
+        "thirtieth": 30, "thirty-first": 31}
+_CARD = {"a": 1, "an": 1, "one": 1, "two": 2, "three": 3, "four": 4, "five": 5,
+         "six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10, "eleven": 11,
+         "twelve": 12}
+
+
+def _fuzzy_num(w: str, table: dict, cutoff: float):
+    if w in table:
+        return table[w]
+    import difflib
+    hit = difflib.get_close_matches(w, list(table.keys()), n=1, cutoff=cutoff)
+    return table[hit[0]] if hit else None
 
 
 def _relative_date_iso(text: Optional[str]) -> Optional[str]:
-    """Resolve a RELATIVE date phrase to 'YYYY-MM-DD' (KST): weekday names
-    ('this/last week monday', 'on monday', '지난주 월요일'), 'N days/weeks ago',
-    '어제/그제', '지난주/지난달'. None if no relative phrase. So 'this week monday'
-    routes to history instead of being mistaken for a current-price question."""
-    from datetime import timedelta as _td
-    t = (text or "").lower()
+    """Resolve almost any date phrase to 'YYYY-MM-DD' (KST). Understands:
+      • 'N days/weeks/months ago|past|before|earlier' (digit OR word — 'one week ago',
+        '7 days past', '2주 전')
+      • weekday names ('this/last week monday', 'on monday', '지난주 화요일')
+      • month + day, typo-tolerant, optional year ('12th of June', 'twelfth of June',
+        'tweleve th of Juni', 'June 12', '15th may 2026')
+      • numeric ('2026-06-12', '2026년 6월 12일') and '어제/그제/지난주/지난달'.
+    Returns None when there's no date (e.g. 'current price', 'now')."""
+    from datetime import date as _date, timedelta as _td
+    t = (text or "").lower().strip()
+    if not t:
+        return None
     today = _dt_now_kst().date()
+    # 1) N (days/weeks/months) ago/past — digit or word number
+    m = (_re.search(r"\b(\d{1,3}|[a-z]+)\s+(day|days|week|weeks|month|months|일|주|개월)\s*"
+                    r"(ago|past|before|earlier|prior|back|전)\b", t)
+         or _re.search(r"\b(\d{1,3})\s*(일|주|개월)\s*전", t))
+    if m:
+        nraw, unit = m.group(1), m.group(2)
+        n = int(nraw) if nraw.isdigit() else _fuzzy_num(nraw, _CARD, 0.8)
+        if n:
+            if unit.startswith("w") or unit == "주":
+                return (today - _td(weeks=n)).isoformat()
+            if unit.startswith("m") or unit == "개월":
+                return (today - _td(days=30 * n)).isoformat()
+            return (today - _td(days=n)).isoformat()
+    # 2) weekday (+ this/last week)
     for name in sorted(_WDAYS, key=len, reverse=True):
         if _re.search(rf"(?<![a-z]){_re.escape(name)}(?![a-z])", t):
             wd = _WDAYS[name]
-            base_monday = today - _td(days=today.weekday())
-            d = base_monday + _td(days=wd)
+            d = (today - _td(days=today.weekday())) + _td(days=wd)
             before = t.split(name)[0]
             if ("last week" in t or "지난주" in t or "지난 주" in t
                     or "last " in before[-7:] or "지난" in before[-4:]):
@@ -361,12 +405,50 @@ def _relative_date_iso(text: Optional[str]) -> Optional[str]:
             elif d > today:
                 d -= _td(days=7)
             return d.isoformat()
-    m = _re.search(r"(\d{1,3})\s*일\s*전", t) or _re.search(r"(\d{1,3})\s*days?\s*ago", t)
+    # 3) month name (typo-tolerant) + day (digit / ordinal word / cardinal word)
+    month = None
+    for tok in _re.finditer(r"[a-z]{3,}", t):
+        w = tok.group()
+        if w in _MONTH_STOP:
+            continue
+        mm = _fuzzy_num(w, _MONTHS, 0.75)
+        if mm:
+            month = mm
+            break
+    if month:
+        day = None
+        dm = _re.search(r"\b(\d{1,2})(?:st|nd|rd|th)?\b", t)
+        if dm and 1 <= int(dm.group(1)) <= 31:
+            day = int(dm.group(1))
+        if day is None:
+            for w in _re.findall(r"[a-z\-]{3,}", t):
+                day = _fuzzy_num(w, _ORD, 0.82)
+                if day:
+                    break
+        if day is None:
+            for w in _re.findall(r"[a-z]{2,}", t):
+                c = _fuzzy_num(w, _CARD, 0.82)
+                if c:
+                    day = c
+                    break
+        if day:
+            ym = _re.search(r"\b(20\d{2})\b", t)
+            yr = int(ym.group(1)) if ym else today.year
+            try:
+                d = _date(yr, month, day)
+                if not ym and d > today:
+                    d = _date(yr - 1, month, day)
+                return d.isoformat()
+            except ValueError:
+                pass
+    # 4) numeric explicit
+    m = _re.search(r"(20\d{2})[.\-/년\s]+(\d{1,2})[.\-/월\s]+(\d{1,2})", t)
     if m:
-        return (today - _td(days=int(m.group(1)))).isoformat()
-    m = _re.search(r"(\d{1,2})\s*주\s*전", t) or _re.search(r"(\d{1,2})\s*weeks?\s*ago", t)
-    if m:
-        return (today - _td(weeks=int(m.group(1)))).isoformat()
+        try:
+            return _date(int(m.group(1)), int(m.group(2)), int(m.group(3))).isoformat()
+        except ValueError:
+            pass
+    # 5) single relative keywords
     if "그제" in t or "그저께" in t or "엊그제" in t:
         return (today - _td(days=2)).isoformat()
     if "어제" in t or "yesterday" in t or "전날" in t:
@@ -379,10 +461,13 @@ def _relative_date_iso(text: Optional[str]) -> Optional[str]:
 
 
 def _inject_relative_date(transcript: Optional[str]) -> Optional[str]:
-    """If a stock question uses a relative date with no explicit date, append the
-    resolved 'YYYY-MM-DD' so past-price routing + history lookup work consistently."""
-    if not transcript or _has_explicit_date(transcript):
+    """For a stock question with a date phrase (relative OR worded, no explicit ISO
+    date yet), append the resolved 'YYYY-MM-DD' so past-price routing + history lookup
+    work for any phrasing ('12th of June', 'one week ago', 'this week monday')."""
+    if not transcript:
         return transcript
+    if _re.search(r"20\d{2}[.\-/]\s*\d{1,2}[.\-/]\s*\d{1,2}", transcript):
+        return transcript  # already has an explicit ISO date
     if not _is_stock_question(transcript):
         return transcript
     iso = _relative_date_iso(transcript)
