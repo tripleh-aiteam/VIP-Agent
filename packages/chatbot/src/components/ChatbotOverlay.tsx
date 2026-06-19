@@ -397,6 +397,7 @@ export function ChatbotOverlay({
       if (hasGreeted) return;
       setHasGreeted(true);
       localStorage.setItem(greetingKey, "1");
+      if (theme.hideGreeting) return;  // host wants a clean start — no greeting bubble
       const lang = language === "ko" ? "ko" : "en";
       const text = pick(config.identity.greeting, lang as "en" | "ko",
         `Hi! I'm ${config.identity.name}. How can I help?` as string);

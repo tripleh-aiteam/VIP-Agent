@@ -153,6 +153,8 @@ export interface AgentTheme {
   darkMode?: "auto" | "light" | "dark";
   /** Hide the panel header (name + state + selects + close). Opt-in. */
   hideHeader?: boolean;
+  /** Skip the initial greeting bubble — start with an empty conversation. Opt-in. */
+  hideGreeting?: boolean;
 }
 
 /**
