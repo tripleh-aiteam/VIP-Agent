@@ -1234,59 +1234,24 @@ def _master_daily_report(email_override: str | None = None, period: str = "daily
                         md = (rp or {}).get("detail_en") or md
                     return md
 
-                kiwoom_rp = _latest_report(db, "kiwoom_report")
-                news_rp = _latest_report(db, "newspaper_report")
-                youtube_rp = _latest_report(db, "youtube_report")
-                # On weekends (Sat/Sun KST) markets are closed and YouTube finance
-                # coverage is thin → skip the YouTube part; send Kiwoom+Newspaper+추천.
-                # (The Asset report is NOT bundled here — it goes out as its own
-                # standalone 7:00 AM email in Korean + English.)
-                from services.kst import kst_now as _kst_now
-                is_weekend = _kst_now().weekday() >= 5
-                pieces = [
-                    ("1_키움_Kiwoom", "키움 데일리 리포트", kiwoom_rp),
-                    ("2_신문_Newspaper", "신문 요약 리포트", news_rp),
-                    ("4_추천_Recommendation", "종합 추천 리포트", rep),
-                ]
-                files = []
-                for fn, title, rp in pieces:
-                    md = _ko(rp)
-                    if md:
-                        files.append((f"{fn}_{ymd}.docx", markdown_to_docx(md, title, kst)))
-
-                # Attach the grounded YouTube report (colleague's KO .docx,
-                # byte-for-byte) as #3 — so ALL 4 reports go in ONE email.
-                yt_attached = False
-                try:
-                    from services import youtube_grounded
-                    yt_row = youtube_grounded.latest_row(db)
-                    ko_url = (((yt_row.content_json if yt_row else None) or {}).get("files") or {}).get("docx_ko_url")
-                    yt_bytes = youtube_grounded._download(ko_url) if ko_url else None
-                    if yt_bytes:
-                        files.append((f"3_유튜브_YouTube_{ymd}.docx", yt_bytes))
-                        yt_attached = True
-                except Exception as _e:
-                    log.warning(f"master: youtube attach failed: {str(_e)[:80]}")
-                files.sort(key=lambda f: f[0])   # order 1,2,3,4 by filename prefix
-
+                # Each report now goes out as its OWN separate email — Kiwoom,
+                # Newspaper and YouTube are emailed by their own jobs. This master
+                # email carries ONLY the consolidated Recommendation report (which
+                # still synthesizes all of them in its content).
                 _kor = {"daily": "데일리", "weekly": "주간", "monthly": "월간"}.get(period, "데일리")
-                n_rep = len(files)
-                _lines = ["1. 키움 데일리 리포트 — 시세·기술적 분석",
-                          "2. 신문 요약 리포트 — 주요 신문사 뉴스 분석"]
-                _n = 3
-                if yt_attached:
-                    _lines.append(f"{_n}. 유튜브 그라운드 리포트 — 한국 금융 유튜브 분석")
-                    _n += 1
-                _lines.append(f"{_n}. 종합 추천 리포트 — 위 리포트를 종합한 투자 의견 및 일정매매 포인트")
+                md = _ko(rep)
+                files = []
+                if md:
+                    files.append((f"추천_Recommendation_{ymd}.docx",
+                                  markdown_to_docx(md, "종합 추천 리포트", kst)))
                 intro = (
                     "안녕하세요 사장님,\n\n"
-                    f"{kst} 기준 {_kor} 리포트 {n_rep}건을 보내드립니다:\n"
-                    + "\n".join(_lines) + "\n\n"
-                    + "각 리포트는 첨부된 Word 파일에서 확인하실 수 있습니다.\n\n"
-                    "감사합니다.\nTripleH AI"
+                    f"{kst} 기준 {_kor} 종합 추천 리포트를 보내드립니다 — 키움·신문·유튜브 리포트를 "
+                    "종합한 투자 의견 및 일정매매(이벤트 기반) 포인트입니다.\n\n"
+                    "첨부된 Word 파일을 확인해 주세요.\n\n감사합니다.\nTripleH AI"
                 )
                 res = send_email_with_docs(
-                    recipients, f"[TripleH] {_kor} 리포트 {n_rep}건 — {kst}", intro, files)
+                    recipients, f"[TripleH] {_kor} 종합 추천 리포트 — {kst}", intro, files)
                 log.info(f"master: consolidated email {'sent' if res.get('ok') else 'skipped'} "
                          f"({len(files)} files, {len(recipients)} recipient(s)) "
                          f"({res.get('reason', 'ok')})",
@@ -1363,6 +1328,21 @@ def _realty_daily_all():
     """Scheduled 7:05 AM KST — build the detailed Real Estate report and send it as
     its OWN standalone email (Korean + English .docx) to the FULL recipient list."""
     _realty_daily_report(email_override="*ALL*")
+
+
+def _kiwoom_daily_all():
+    """Kiwoom report as its OWN email to the full recipient list."""
+    _kiwoom_daily_report(email_override="*ALL*")
+
+
+def _newspaper_daily_all():
+    """Newspaper report as its OWN email to the full recipient list."""
+    _newspaper_daily_report(email_override="*ALL*")
+
+
+def _youtube_daily_all():
+    """YouTube grounded report as its OWN email to the full recipient list."""
+    _youtube_daily_report(email_override="*ALL*")
 
 
 def _knowledge_sync_job():
@@ -1486,25 +1466,32 @@ def init_scheduler():
     )
     log.info("scheduler: auto cross-agent report registered (daily 23:30 UTC)", extra={"action": "scheduler.auto_cross_registered"})
 
-    # Kiwoom daily report — 6:30 AM KST (after US close) = 21:30 UTC, weekdays KST
-    # (UTC Sun-Thu 21:30 = Mon-Fri 06:30 KST).
+    # Kiwoom daily report — its OWN email at 6:30 AM KST = 21:30 UTC, all recipients.
     _scheduler.add_job(
-        _kiwoom_daily_report,
-        CronTrigger.from_crontab("30 21 * * *"),   # every day (incl Sat/Sun KST)
+        _kiwoom_daily_all,
+        CronTrigger.from_crontab("30 21 * * *"),
         id="kiwoom-daily-report",
         replace_existing=True,
     )
-    log.info("scheduler: Kiwoom daily report registered (21:30 UTC = 6:30 AM KST)", extra={"action": "scheduler.kiwoom_registered"})
+    log.info("scheduler: Kiwoom daily report registered (21:30 UTC = 6:30 AM KST, own email, all recipients)", extra={"action": "scheduler.kiwoom_registered"})
 
-    # Newspaper (news analysis) report — 6:30 AM KST = 21:30 UTC, weekdays KST
-    # (same time as the Kiwoom report).
+    # Newspaper report — its OWN email at 6:32 AM KST = 21:32 UTC, all recipients.
     _scheduler.add_job(
-        _newspaper_daily_report,
-        CronTrigger.from_crontab("30 21 * * *"),   # every day (incl Sat/Sun KST)
+        _newspaper_daily_all,
+        CronTrigger.from_crontab("32 21 * * *"),
         id="newspaper-daily-report",
         replace_existing=True,
     )
-    log.info("scheduler: Newspaper report registered (21:30 UTC = 6:30 AM KST)", extra={"action": "scheduler.newspaper_registered"})
+    log.info("scheduler: Newspaper report registered (21:32 UTC = 6:32 AM KST, own email, all recipients)", extra={"action": "scheduler.newspaper_registered"})
+
+    # YouTube grounded report — its OWN email at 6:40 AM KST = 21:40 UTC, all recipients.
+    _scheduler.add_job(
+        _youtube_daily_all,
+        CronTrigger.from_crontab("40 21 * * *"),
+        id="youtube-daily-report",
+        replace_existing=True,
+    )
+    log.info("scheduler: YouTube report registered (21:40 UTC = 6:40 AM KST, own email, all recipients)", extra={"action": "scheduler.youtube_registered"})
 
     # Asset Agent detailed report — its OWN standalone email at 7:00 AM KST =
     # 22:00 UTC, to ALL recipients, with BOTH Korean + English .docx attached.
