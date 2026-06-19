@@ -1428,19 +1428,26 @@ def init_scheduler():
     log.info("scheduler: voice campaign runner registered (every 30s)",
              extra={"action": "scheduler.voice_runner_registered"})
 
-    # Keep-warm — ping the Stock-Advisor backend every 12 min so Render's free tier
-    # doesn't spin it down. A cold start makes the first chat answer fail ("don't
-    # know"); this keeps the peer warm while the orchestrator is up. Best-effort.
+    # Keep-warm — every 12 min (< Render's 15-min idle-spin-down), ping BOTH this
+    # orchestrator's OWN public URL and the Stock-Advisor backend. The self-ping is an
+    # INBOUND request to Render's router, which keeps VIP itself awake (so the first
+    # chat after login isn't a cold start → no intermittent "I don't know"); the Stock
+    # ping keeps the peer warm too. Best-effort; failures ignored.
     def _keep_warm_ping():
         import httpx as _hx, os as _os
-        base = (_os.getenv("STOCK_BACKEND_URL")
-                or "https://stock-advisor-agent-9qwi.onrender.com").rstrip("/")
-        for _p in ("/health", "/"):
-            try:
-                _hx.get(f"{base}{_p}", timeout=20)
-                return
-            except Exception:
-                continue
+        targets = []
+        _self = (_os.getenv("VIP_PUBLIC_URL") or _os.getenv("RENDER_EXTERNAL_URL")
+                 or "https://vip-orchestrator.onrender.com").rstrip("/")
+        _stock = (_os.getenv("STOCK_BACKEND_URL")
+                  or "https://stock-advisor-agent-9qwi.onrender.com").rstrip("/")
+        for base in (_self, _stock):
+            for _p in ("/health", "/chat/health", "/"):
+                try:
+                    r = _hx.get(f"{base}{_p}", timeout=20)
+                    if r.status_code < 500:
+                        break
+                except Exception:
+                    continue
     _scheduler.add_job(
         _keep_warm_ping,
         "interval",
@@ -1448,7 +1455,7 @@ def init_scheduler():
         id="stock-backend-keep-warm",
         replace_existing=True,
     )
-    log.info("scheduler: stock backend keep-warm registered (every 12min)",
+    log.info("scheduler: keep-warm registered (self + stock backend, every 12min)",
              extra={"action": "scheduler.keep_warm_registered"})
 
     # Voice recording retention — daily at 03:00 UTC = 12:00 KST
