@@ -989,6 +989,77 @@ _STOCK_Q_KW = (
 )
 
 
+# ===== NAVER search — every agent can check Naver (web + 네이버 부동산 매물). Answered
+# DETERMINISTICALLY so the LLM can't mis-delegate it to another agent. =====
+_NAVER_KW = ("네이버", "naver")
+_NAVER_INTENT_KW = ("검색", "찾아", "올라", "매물", "부동산", "광고", "advertis", "listed",
+                    "real estate", "search", "조회", "등록")
+_NAVER_RE_KW = ("부동산", "매물", "땅", "집", "건물", "아파트", "상가", "토지", "오피스텔",
+                "property", "real estate", "land", "house", "building", "apartment")
+
+
+def _is_naver_search_q(transcript: Optional[str]) -> bool:
+    t = (transcript or "").lower()
+    if not any(k in t for k in _NAVER_KW):
+        return False
+    # A search/listing intent OR a property word (property + naver = a Naver listing check).
+    if not (any(k in t for k in _NAVER_INTENT_KW) or any(k in t for k in _NAVER_RE_KW)):
+        return False
+    # Don't hijack 'NAVER 주가/현재가' (the STOCK) — unless real-estate words are present.
+    price_only = (any(w in t for w in ("주가", "현재가", "시세", "stock price", "주식"))
+                  and not any(w in t for w in _NAVER_RE_KW))
+    return not price_only
+
+
+def _naver_subject(transcript: Optional[str]) -> str:
+    """Strip Naver-search filler, keep the property/address/subject terms."""
+    t = transcript or ""
+    t = _re.sub(r"(네이버에서|네이버|naver|검색해줘|검색해|검색|확인해줘|확인|알려줘|알려|"
+                r"해줘|해주세요|올라와\s*있는지|올라와|올라온|등록\s*되어|등록|있는지요|있는지|있나|있어|"
+                r"매물로|좀|찾아봐줘|찾아봐|찾아|광고|please|search|for|on|is|are|our|whether|"
+                r"우리|the|check)", " ", t, flags=_re.I)
+    # Drop dangling 1-char Korean particles and punctuation left after stripping.
+    t = _re.sub(r"(?<=\s)(에|에서|이|가|을|를|은|는|도|의)(?=\s|$)", " ", t)
+    t = _re.sub(r"[?!.,]+", " ", t)
+    return _re.sub(r"\s+", " ", t).strip()
+
+
+def _vip_naver_search_reply(transcript: Optional[str], lang: str) -> Optional[dict]:
+    from services.naver_search import naver_search
+    tl = (transcript or "").lower()
+    re_estate = any(k in tl for k in _NAVER_RE_KW)
+    subject = _naver_subject(transcript) or (transcript or "")
+    res = naver_search(subject, realestate=re_estate, num_results=6)
+    results = res.get("results") or []
+    _en = (lang or "").lower().startswith("en")
+    if not results:
+        if re_estate:
+            reply = (f"네이버 부동산에서 '{subject}' 관련 매물을 찾지 못했습니다. 현재 네이버 부동산에 "
+                     f"광고/매물로 등록되어 있지 않은 것으로 보입니다." if not _en else
+                     f"No NAVER 부동산 listings found for '{subject}' — it doesn't appear to be "
+                     f"advertised on Naver right now.")
+        else:
+            reply = (f"네이버에서 '{subject}' 검색 결과를 찾지 못했습니다." if not _en else
+                     f"No Naver results found for '{subject}'.")
+        return {"intent": "naver_search", "language": lang, "reply": reply, "action": None,
+                "speak": True, "transcript": transcript, "tool_used": "naver_search",
+                "tool_result": res}
+    if re_estate:
+        head = (f"네이버 부동산에서 '{subject}' 검색 결과입니다 (매물/광고로 보이는 항목):" if not _en
+                else f"NAVER 부동산 results for '{subject}' (looks listed/advertised):")
+    else:
+        head = (f"네이버 검색 결과 — '{subject}':" if not _en else f"NAVER results for '{subject}':")
+    lines = [head]
+    for r in results[:6]:
+        title = (r.get("title") or "").strip()
+        url = (r.get("url") or "").strip()
+        snip = (r.get("snippet") or "").strip()[:110]
+        lines.append(f"- {title}" + (f"\n  {url}" if url else "") + (f"\n  {snip}" if snip else ""))
+    return {"intent": "naver_search", "language": lang, "reply": "\n".join(lines)[:1800],
+            "action": None, "speak": True, "transcript": transcript,
+            "tool_used": "naver_search", "tool_result": res}
+
+
 # US stocks VIP can't price locally (no Kiwoom/Naver KR data) — detect them so the
 # question DELEGATES to the Stock backend (which handles US tickers) instead of
 # falling into a KR-only tool that errors ("couldn't resolve 'Apple'").
@@ -3184,6 +3255,14 @@ def _run_agent_impl(
         return _offline_answer(db, transcript=transcript, lang=lang,
                                agent_id=agent_id, page_context=page_context,
                                kb_context=kb_hits)
+
+    # ===== NAVER search (web + 네이버 부동산) — deterministic, any agent. Runs BEFORE
+    # stock/delegation routing so '네이버에 우리 땅 매물 있어?' isn't handed to the Stock
+    # agent. =====
+    if not confirmed_tool and _is_naver_search_q(transcript):
+        _nr = _vip_naver_search_reply(transcript, lang)
+        if _nr:
+            return _nr
 
     # ===== VIP LOCAL history (past dates / ranges) — deterministic OHLCV table =====
     # 'naver price on 18th/17th/16th of June', 'last 4 days' → a fixed table from VIP's

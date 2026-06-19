@@ -87,10 +87,15 @@ def naver_search(query: str, *, kind: str = "web", num_results: int = 5,
     # 2) Fallback: web search scoped to Naver (no Naver key needed).
     from services.web_search import search_web
     if realestate:
-        scoped = f'"{q}" 매물 (site:land.naver.com OR site:new.land.naver.com OR 네이버부동산)'
+        # Try Naver 부동산 listing pages first; if empty, a broad Naver 부동산 query.
+        scoped = f"{q} 매물 site:land.naver.com"
+        res = search_web(scoped, num_results=n)
+        if not (res.get("ok") and res.get("results")):
+            scoped = f"{q} 네이버부동산 매물"
+            res = search_web(scoped, num_results=n)
     else:
         scoped = f"{q} site:naver.com"
-    res = search_web(scoped, num_results=n)
+        res = search_web(scoped, num_results=n)
     res["provider"] = f"naver(web-scoped:{res.get('provider')})"
     res["query"] = scoped
     res["realestate"] = realestate
