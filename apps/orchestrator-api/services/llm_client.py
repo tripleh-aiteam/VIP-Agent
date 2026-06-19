@@ -533,6 +533,11 @@ def _call_gemini(model: str, system_prompt: str, messages: list[dict],
             continue
         role = "model" if m.get("role") == "assistant" else "user"
         contents.append({"role": role, "parts": [{"text": m["content"]}]})
+    # Thinking models (gemini *pro* / *preview*) spend output budget on internal
+    # reasoning, so a low ceiling yields an empty text part. Give them headroom.
+    out_tokens = max_tokens
+    if "pro" in model or "preview" in model:
+        out_tokens = max(max_tokens, 8192)
     try:
         with httpx.Client(timeout=timeout) as client:
             resp = client.post(
@@ -542,7 +547,7 @@ def _call_gemini(model: str, system_prompt: str, messages: list[dict],
                     "system_instruction": {"parts": [{"text": system_prompt}]},
                     "contents": contents,
                     "generationConfig": {
-                        "maxOutputTokens": max_tokens,
+                        "maxOutputTokens": out_tokens,
                         "temperature": temperature,
                     },
                 },
@@ -550,9 +555,16 @@ def _call_gemini(model: str, system_prompt: str, messages: list[dict],
             if resp.status_code == 200:
                 data = resp.json()
                 cands = data.get("candidates") or []
-                if cands and cands[0].get("content", {}).get("parts"):
-                    return True, "".join(p.get("text", "") for p in cands[0]["content"]["parts"])
-                return False, "Empty Gemini response"
+                # Extract any text parts (thinking models may also include
+                # non-text 'thought' parts which we skip).
+                if cands:
+                    parts = (cands[0].get("content", {}) or {}).get("parts") or []
+                    text = "".join(p.get("text", "") for p in parts if isinstance(p, dict) and p.get("text"))
+                    if text.strip():
+                        return True, text
+                    finish = cands[0].get("finishReason")
+                    return False, f"Empty Gemini response (finishReason={finish})"
+                return False, "Empty Gemini response (no candidates)"
             return False, f"HTTP {resp.status_code}: {resp.text[:200]}"
     except Exception as e:
         return False, str(e)
