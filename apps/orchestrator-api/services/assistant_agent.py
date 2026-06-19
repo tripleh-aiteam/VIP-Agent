@@ -1347,6 +1347,13 @@ def _build_system_prompt(
             "  5. Quote specific numbers, names, and amounts verbatim.",
             "Only call a tool if the question needs CURRENT LIVE data (today's",
             "price, live status) that is NOT in the excerpts below.",
+            "⚠ HARD EXCEPTION — COMPANY ASSETS (자산/부동산/포트폴리오): for ANY asset",
+            "question involving a NUMBER, TOTAL, COUNT, 면적/size, 월세/rent, 가치/value,",
+            "보증금, 공실/occupancy, or a COMPARISON (biggest/smallest/most/least/가장 큰/",
+            "제일 비싼/월세 높은), you MUST call the asset_summary / asset_search /",
+            "asset_top tools and answer ONLY from their exact results. The excerpts",
+            "below are fuzzy text and are WRONG for asset totals/rankings — NEVER",
+            "compute 'biggest / total / which / how many' for assets from the excerpts.",
             "─── excerpts (internal — do NOT mention filenames in your reply) ───",
         ]
         for i, c in enumerate(kb_context[:8], start=1):
