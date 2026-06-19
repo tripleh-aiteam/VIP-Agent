@@ -93,6 +93,26 @@ async def lifespan(app: FastAPI):
 
     init_scheduler()
 
+    # Warm up the LLM provider connection in the background so the FIRST chat request
+    # after a deploy/restart isn't cold (a cold first call was a source of the
+    # intermittent "I don't know"). Best-effort, non-blocking — never delays startup.
+    async def _warmup_llm():
+        try:
+            from services.llm_client import chat_completion_sync
+            await asyncio.to_thread(
+                chat_completion_sync,
+                system_prompt="ping",
+                messages=[{"role": "user", "content": "ping"}],
+                max_tokens=1,
+                temperature=0.0,
+            )
+        except Exception:
+            pass
+    try:
+        asyncio.create_task(_warmup_llm())
+    except Exception:
+        pass
+
     # v4-A: install the Twin Autopilot cron so twins self-improve every N hours.
     try:
         from services.twin_autopilot import register_with_scheduler as _install_autopilot

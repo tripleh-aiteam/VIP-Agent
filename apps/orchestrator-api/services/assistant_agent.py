@@ -1207,25 +1207,41 @@ def _call_llm_for_decision(
         """Returns (usable_text, error_reason). usable_text is empty when
         the LLM call failed; the error_reason contains either the exception
         message OR the LLM's own '[LLM unavailable] …' sentinel so the
-        caller can surface the real problem (404 model id, quota, etc.)."""
-        try:
-            out = chat_completion_sync(
-                system_prompt=system_prompt,
-                messages=messages,
-                # Big enough that a multi-step {"steps":[...]} decision is never
-                # truncated mid-JSON (truncation → unparseable → raw-JSON leak).
-                max_tokens=1100,
-                temperature=0.2,
-                model=model,
-            )
-            text = (out or "").strip()
-            # llm_client returns "[LLM unavailable] <reason>" on provider
-            # failure — propagate that reason instead of pretending success.
-            if not text or text.startswith("[LLM unavailable") or text.startswith("["):
-                return "", (text or "empty response from provider")
-            return text, None
-        except Exception as e:
-            return "", str(e)
+        caller can surface the real problem (404 model id, quota, etc.).
+
+        Retries TRANSIENT failures (timeout, rate-limit, 5xx, cold connection,
+        empty) up to 3 attempts with backoff — these blips are the #1 cause of the
+        intermittent 'I don't know' replies. Permanent errors (bad key, 404 model)
+        fail fast so they surface immediately."""
+        import time as _t
+        transient = ("timeout", "timed out", "429", "rate limit", "ratelimit",
+                     "503", "502", "500", "overloaded", "unavailable", "connection",
+                     "connect", "reset", "temporarily", "empty response", "read timed")
+        last_err: Optional[str] = None
+        for attempt in range(3):
+            try:
+                out = chat_completion_sync(
+                    system_prompt=system_prompt,
+                    messages=messages,
+                    # Big enough that a multi-step {"steps":[...]} decision is never
+                    # truncated mid-JSON (truncation → unparseable → raw-JSON leak).
+                    max_tokens=1100,
+                    temperature=0.2,
+                    model=model,
+                )
+                text = (out or "").strip()
+                # llm_client returns "[LLM unavailable] <reason>" on provider
+                # failure — propagate that reason instead of pretending success.
+                if text and not text.startswith("[LLM unavailable") and not text.startswith("["):
+                    return text, None
+                last_err = (text or "empty response from provider")
+            except Exception as e:
+                last_err = str(e)
+            if attempt < 2 and any(k in (last_err or "").lower() for k in transient):
+                _t.sleep(0.7 * (attempt + 1))  # 0.7s, 1.4s backoff
+                continue
+            break
+        return "", last_err
 
     # NB: _try used to reference `system` (out of scope here). Pin to
     # `system_prompt` since this nested helper closes over the caller's
@@ -1241,14 +1257,16 @@ def _call_llm_for_decision(
         # Surface BOTH errors so the boss can see what's actually broken.
         # The previous opaque "Sorry, unavailable" hid quota / key / model
         # issues for hours of head-scratching.
-        log.warning(f"assistant_agent: both LLM tiers failed — "
+        log.warning(f"assistant_agent: both LLM tiers failed (after retries) — "
                     f"primary {primary}: {err_primary} | "
                     f"fallback {fallback}: {err_fallback}")
+        # Graceful user-facing message (the technical reason is in the logs above).
+        # Both tiers failed even after transient retries → a real outage, so we ask
+        # the user to retry rather than dumping provider errors at them.
         return {
             "answer": (
-                f"Sorry — LLM unavailable. Primary ({primary}): "
-                f"{err_primary or 'no output'}. Fallback ({fallback}): "
-                f"{err_fallback or 'no output'}."
+                "일시적으로 응답을 생성하지 못했어요. 잠시 후 다시 한 번 시도해 주세요. "
+                "(Sorry — I couldn't generate a response just now. Please try again in a moment.)"
             )
         }
 
