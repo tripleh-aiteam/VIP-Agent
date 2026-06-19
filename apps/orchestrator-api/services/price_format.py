@@ -57,8 +57,10 @@ def _price_str(price, market: str, english: bool) -> str:
     return f"₩{won}" if english else f"{won}원"
 
 
-def _chg(change_pct) -> str:
-    """' (▲ +4.04%)' / ' (▼ -3.49%)' / '' — mirrors VIP's original wording."""
+def _chg(change_pct, *, english: bool = True, basis: bool = False) -> str:
+    """' (▲ +4.04%)' / ' (▼ -3.49%)' / ''. `basis=True` clarifies the % is vs the
+    PREVIOUS day's close (not vs the opening), e.g. ' (▲ +1.38% vs prev close)' —
+    used when the opening price is shown alongside, to avoid 'open→current' confusion."""
     if change_pct is None:
         return ""
     try:
@@ -67,7 +69,8 @@ def _chg(change_pct) -> str:
         return ""
     arrow = "▲" if c >= 0 else "▼"
     sign = "+" if c >= 0 else ""
-    return f" ({arrow} {sign}{c}%)"
+    tag = (" vs prev close" if english else " 전일대비") if basis else ""
+    return f" ({arrow} {sign}{c}%{tag})"
 
 
 def _ts_en(dt: datetime) -> str:
@@ -118,7 +121,8 @@ def _value_segment(q, fields, english: bool) -> str:
                 continue
             seg = f"{labels.get(f, f)} {_price_str(v, market, english)}"
             if f == "price":
-                seg += _chg(q.get("change_pct"))
+                # 'vs prev close' so the % isn't misread as open→current change.
+                seg += _chg(q.get("change_pct"), english=english, basis=True)
             parts.append(seg)
         if parts:
             return ", ".join(parts)
