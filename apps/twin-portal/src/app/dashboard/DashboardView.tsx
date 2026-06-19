@@ -1807,7 +1807,7 @@ export function DashboardView({ onLogout }: Props) {
           className="px-6 py-3 bg-gradient-to-r from-blue-500 to-purple-600 text-white rounded-xl text-[14px] font-semibold hover:opacity-90" style={{ boxShadow: "var(--shadow-sm)" }}>
           Open Assistant
         </button>
-        <div className="text-[11px] text-[var(--text-muted)] mt-3">…or use the floating button at the bottom-right.</div>
+        <div className="text-[11px] text-[var(--text-muted)] mt-3">The assistant opens as a chat bar at the bottom of your screen — type to start.</div>
       </div>
     </div>
   );
