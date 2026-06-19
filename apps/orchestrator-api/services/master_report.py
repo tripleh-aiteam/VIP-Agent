@@ -146,9 +146,15 @@ def build_master_report(db, trace_id: str) -> dict:
             "exit-on-attention logic.\n"
             "Be decisive and specific. The whole report must be ~2200-2800 words "
             "(about 4 pages); Section 2 alone ~1000 words. Never truncate. Output ONLY "
-            "the English Markdown report — no preamble."
+            "the English Markdown report — no preamble.\n\n"
+            + _kr.GROUNDING_RULE_EN
         )
-        user = (f"TODAY'S DATE (KST): {kst_date}  ← every catalyst MUST be dated AFTER this.\n\n"
+        idx_ko, idx_en = _kr.market_index_facts()
+        user = (f"TODAY'S DATE (KST): {kst_date}  ← every catalyst MUST be dated AFTER this.\n"
+                + (f"CANONICAL INDEX LEVELS (the ONLY index values you may state): {idx_en}\n"
+                   if idx_en else
+                   "CANONICAL INDEX LEVELS: (unavailable — do NOT state any specific index point value)\n")
+                + "\n"
                 f"PRICE CONTEXT (for the prose only — do NOT print a table):\n{table_en}\n\n"
                 f"{_digest(kiwoom, 'KIWOOM (price/technical) report')}\n\n"
                 f"{_digest(news, 'NEWSPAPER report')}\n\n"

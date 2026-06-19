@@ -385,11 +385,27 @@ def _merge_hourly_news(db, grouped: dict[str, list[dict]], cap_per_outlet: int =
     return grouped
 
 
+def _auth_changes(rows: list[dict]) -> str:
+    """Authoritative per-stock daily %-change (from the real OHLCV table) — the
+    ONLY change figures the LLM may cite. Keeps news summaries from parroting a
+    stale % buried in an article body."""
+    parts = []
+    for r in rows:
+        if r.get("change_pct") is not None:
+            parts.append(f"{r['ko']} {_kr._fmt_chg(r['change_pct'])}")
+    return ", ".join(parts)
+
+
 def build_newspaper_report(db, trace_id: str) -> dict:
     """Build the daily per-newspaper news report — same price table as Kiwoom +
     per-outlet news analysis + a BUY/HOLD/SELL recommendation, bilingual EN/KO."""
     rows, table_en, table_ko, rate = _kr.gather_priced_rows()
     ok_rows = [r for r in rows if r.get("ok")]
+    # Canonical figures — the single source of truth the LLM must defer to.
+    idx_ko, _idx_en = _kr.market_index_facts()
+    auth_changes = _auth_changes(rows)
+    auth_ref_ko = (f"공식 기준 수치(이 값만 신뢰, 기사 본문 수치보다 우선): "
+                   f"지수 — {idx_ko or '제공 안 됨'}; 종목 일일 등락 — {auth_changes or '제공 안 됨'}.")
     grouped = _gather_news_by_source()
     # Merge in the day's hourly snapshots (the '24 parts') so the morning report
     # synthesises the WHOLE day/night of news, not just this fetch.
@@ -451,6 +467,7 @@ def build_newspaper_report(db, trace_id: str) -> dict:
                        "the body, the companies/sectors affected, the cause, and the market "
                        "impact & outlook. Be substantial, never one short paragraph")
             sysd = (
+                auth_ref_ko + "\n" + _kr.GROUNDING_RULE_KO + "\n\n"
                 "당신은 TripleH의 시장 뉴스 애널리스트입니다. 아래는 "
                 f"{name}의 최근 뉴스 기사(번호 매김)입니다. 모든 번호의 기사에 대해 "
                 f"한국어 제목과 상세한 한국어 요약(존댓말)을 작성하세요 — {per}. 주식·시장에 "
@@ -503,8 +520,13 @@ def build_newspaper_report(db, trace_id: str) -> dict:
             "'### 근거 상세' 소제목: 각 종목마다 5-7문장의 상세 단락(① 구체적 뉴스+출처, "
             "② 일일·주간 거래량·가격 추세를 실제 숫자로, ③ 외국인/기관 수급, ④ 촉매+시점). "
             "각 종목 단락은 서로 다른 문체로(템플릿 복붙 금지), 끝에 [출처: <매체>]를 붙이세요.\n"
-            "제공된 데이터만 사용하고 숫자를 지어내지 마세요. 한국어 마크다운만 출력하세요.")
-        suser = (f"오늘(KST): {kst_date} · USD/KRW: {rate:,.0f}\n\n"
+            "제공된 데이터만 사용하고 숫자를 지어내지 마세요.\n\n"
+            + _kr.GROUNDING_RULE_KO + "\n\n" + _kr.ATTRIBUTION_RULE_KO + "\n\n"
+            "한국어 마크다운만 출력하세요.")
+        suser = (f"오늘(KST): {kst_date} · USD/KRW: {rate:,.0f}\n"
+                 + (f"공식 지수 레벨(이 값만 사용): {idx_ko}\n" if idx_ko else
+                    "공식 지수 레벨: (제공 안 됨 — 특정 지수 포인트 값을 쓰지 마세요)\n")
+                 + "\n"
                  f"STOCK STATS (일일·주간 거래량·등락% — 5번 표에 이 숫자 그대로 사용):\n{stats}\n\n"
                  f"가격/기술적 컨텍스트:\n{_kr._facts(rows)}\n\n"
                  f"신문별 요약:\n{digest}\n\n"

@@ -794,6 +794,95 @@ def _new_buy_ideas(news: str, kst_date: str) -> str:
     return ""
 
 
+# ---------------------------------------------------------------------------
+# Numeric consistency — SINGLE SOURCE OF TRUTH across ALL report sections.
+#
+# The price TABLE (real OHLCV) and the index SNAPSHOT are the only authoritative
+# numbers. News-article bodies routinely quote figures from a DIFFERENT day or
+# outlet (a stale KOSPI level, an old % move); repeating them verbatim is what
+# made the reports contradict themselves (e.g. table +4.62% vs article +1.02%).
+# These shared helpers/rules are imported by newspaper_report + master_report so
+# every LLM layer is grounded the same way.
+# ---------------------------------------------------------------------------
+
+def market_index_facts() -> tuple[str, str]:
+    """The ONE canonical market-index line (KO, EN) from the live snapshot —
+    KOSPI / KOSDAQ / Nasdaq / S&P with their % change. '' if the snapshot is
+    unavailable, in which case reports must NOT state any specific index level."""
+    try:
+        from services.agent_report_builder import _latest_snapshot
+        snap = _latest_snapshot()
+    except Exception:
+        snap = None
+    if not snap:
+        return "", ""
+    pr = snap.get("prices", {}) or {}
+    ch = snap.get("changes", {}) or {}
+
+    def _line(key: str, label: str) -> str | None:
+        v = pr.get(key)
+        if v is None:
+            return None
+        try:
+            vs = f"{float(v):,.2f}"
+        except Exception:
+            return None
+        try:
+            cf = float(ch.get(key))
+            arrow = "▲" if cf > 0 else ("▼" if cf < 0 else "—")
+            return f"{label} {vs} ({arrow}{abs(cf):.2f}%)"
+        except Exception:
+            return f"{label} {vs}"
+
+    ko = [p for p in (_line("kospi", "코스피"), _line("kosdaq", "코스닥"),
+                      _line("nasdaq", "나스닥"), _line("sp500", "S&P500")) if p]
+    en = [p for p in (_line("kospi", "KOSPI"), _line("kosdaq", "KOSDAQ"),
+                      _line("nasdaq", "Nasdaq"), _line("sp500", "S&P 500")) if p]
+    return ", ".join(ko), ", ".join(en)
+
+
+GROUNDING_RULE_EN = (
+    "⚠ NUMERIC CONSISTENCY — SINGLE SOURCE OF TRUTH (this overrides any temptation "
+    "to quote article figures):\n"
+    "- The ONLY authoritative prices and %-changes are the ones in the DATA TABLE; "
+    "the ONLY authoritative index levels (KOSPI/KOSDAQ/Nasdaq/S&P) are the canonical "
+    "values given at the top of the prompt.\n"
+    "- News/article/snippet text often quotes numbers from a DIFFERENT day or "
+    "source. NEVER reproduce a stock price, a stock %-change, or an index point "
+    "level taken from article text. If an article number conflicts with the "
+    "authoritative value, use the authoritative value or describe the move "
+    "qualitatively (rose/fell/surged) with NO number.\n"
+    "- If no canonical index level was provided, do NOT state any specific index "
+    "point value at all.\n"
+    "- Market tone words (bull/bear, strong/weak, boom/downturn) MUST match the "
+    "actual sign of the index change and the table's movers — never call an up day "
+    "a 'downturn'.\n"
+    "- An event listed in the upcoming-catalyst schedule is in the FUTURE: describe "
+    "it as upcoming, never as something that already happened."
+)
+
+GROUNDING_RULE_KO = (
+    "⚠ 수치 일관성 — 단일 진실 원천(SINGLE SOURCE OF TRUTH). 기사 본문 수치보다 항상 우선합니다:\n"
+    "- 가격·등락률의 유일한 기준은 프롬프트에 제공된 공식 수치(데이터 표 및 종목 일일 등락)이고, "
+    "지수(코스피/코스닥/나스닥/S&P) 레벨의 유일한 기준은 프롬프트에 제공된 공식 지수 값입니다.\n"
+    "- 신문 기사·스니펫에는 다른 날짜·다른 매체의 수치가 자주 섞여 있습니다. 기사에서 가져온 "
+    "개별 종목 가격·등락률이나 지수 포인트 값을 절대 그대로 다시 쓰지 마세요. 기사 수치가 공식 "
+    "값과 다르면, 공식 값을 쓰거나 숫자 없이 방향만(상승/하락/급등) 서술하세요.\n"
+    "- 공식 지수 레벨이 제공되지 않았다면 특정 지수 포인트 값을 절대 명시하지 마세요.\n"
+    "- 시장 분위기·방향 표현(강세/약세, 상승장/하락장)은 실제 지수 등락 부호 및 표의 등락과 "
+    "반드시 일치해야 합니다 — 오른 날을 '하락장'이라 쓰지 마세요.\n"
+    "- 다가오는 촉매 일정(향후 이벤트)에 있는 사건은 미래의 일입니다. 이미 일어난 일처럼 쓰지 "
+    "말고 '예정/다가오는'으로 서술하세요."
+)
+
+ATTRIBUTION_RULE_KO = (
+    "⚠ 출처 표기 규칙: [출처: <매체>]는 그 매체의 '신문별 뉴스' 섹션에 실제로 그 내용이 있을 "
+    "때만 다세요. 어느 매체가 보도했는지 확실하지 않으면 출처 태그를 생략하세요 — 매체명을 "
+    "추측하거나 임의로 붙이지 마세요(예: 매일경제가 보도하지 않은 내용을 [출처: 매일경제]로 "
+    "표기 금지)."
+)
+
+
 def build_kiwoom_report(db, trace_id: str) -> dict:
     """Build the daily Kiwoom report (real data table + LLM narrative, EN+KO)."""
     rows = _gather()
@@ -889,12 +978,18 @@ def build_kiwoom_report(db, trace_id: str) -> dict:
             "a BUY/SELL/HOLD action table — the daily buy recommendations are produced "
             "separately. (Options trading values are not available.)\n"
             "Output ONLY the finished English Markdown report (Sections 1-5) — no "
-            "preamble, no placeholders, no notes about a translation."
+            "preamble, no placeholders, no notes about a translation.\n\n"
+            + GROUNDING_RULE_EN
         )
         journey = _intraday_journey(db)
         futures = _futures_sentiment()
         news = _market_news()
-        user = (f"Date (KST): {kst_date} · USD/KRW used for US tickers: {rate:,.0f}\n\n"
+        idx_ko, idx_en = market_index_facts()
+        user = (f"Date (KST): {kst_date} · USD/KRW used for US tickers: {rate:,.0f}\n"
+                + (f"CANONICAL INDEX LEVELS (the ONLY index values you may state): {idx_en}\n"
+                   if idx_en else
+                   "CANONICAL INDEX LEVELS: (unavailable — do NOT state any specific index point value)\n")
+                + "\n"
                 + (f"파생/선물 동향 (market futures positioning — weave into the overview "
                    f"& direction read): {futures}\n\n" if futures else "")
                 + (f"선물·옵션 거래대금 (KOSPI200 지수선물/콜/풋 옵션 + 개별주식선물 — interpret "
