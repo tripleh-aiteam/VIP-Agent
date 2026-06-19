@@ -780,7 +780,10 @@ def _requested_history_dates(q: Optional[str]):
             month = mm
             break
     if month:
-        dnums = sorted({int(d) for d in _re.findall(r"\b(\d{1,2})(?:st|nd|rd|th)?\b", t)
+        # Strip any explicit/injected ISO date ('(2026-06-18)') first so its digits
+        # (06/18) aren't mistaken for extra requested days.
+        t_days = _re.sub(r"\b20\d{2}[-/.]\s*\d{1,2}[-/.]\s*\d{1,2}\b", " ", t)
+        dnums = sorted({int(d) for d in _re.findall(r"\b(\d{1,2})(?:st|nd|rd|th)?\b", t_days)
                         if 1 <= int(d) <= 31}, reverse=True)
         if dnums:
             ym = _re.search(r"\b(20\d{2})\b", t)
