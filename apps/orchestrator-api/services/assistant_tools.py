@@ -1486,6 +1486,76 @@ def tool_latest_meeting_notes(count: int = 3, db: Session = None, **_kw) -> dict
 #  Registry
 # ============================================================================
 
+def tool_asset_summary(db: Session = None, **_kw) -> dict[str, Any]:
+    """Company real-estate asset PORTFOLIO overview from the real workbook
+    (자산관리.xlsx → Supabase): total value, rent, deposits, occupancy, by category."""
+    from services import asset_data as _ad
+    d = _ad.load_asset_data(db)
+    if not d.get("available"):
+        return {"ok": False, "error": "자산 데이터가 아직 로드되지 않았습니다 (asset workbook not imported yet)."}
+    t, o = d["totals"], d["occupancy"]
+
+    def f(x):
+        try:
+            return round(float(x))
+        except Exception:
+            return x
+    return {
+        "ok": True,
+        "총자산가치_원": f(t.get("value")), "총자산가치_억": round(float(t.get("value", 0)) / 1e8, 1),
+        "총보증금_원": f(t.get("deposit")), "월임대수입_원": f(t.get("monthly_rent")),
+        "포트폴리오_항목수": t.get("items"), "세부자산수": t.get("units"),
+        "점유": o.get("occupied"), "공실": o.get("vacant"), "공실률_퍼센트": o.get("vacancy_rate"),
+        "구분별": [{"구분": c["category"], "건수": c["count"],
+                  "자산가치_억": round(c["value"] / 1e8, 1), "월세_원": f(c["monthly_rent"])}
+                 for c in d.get("by_category", [])],
+    }
+
+
+def tool_asset_search(query: str, db: Session = None, **_kw) -> dict[str, Any]:
+    """Look up specific company assets/units by keyword — building name, 호수(unit),
+    주소(address), category (구분), status (상태) or tenant (임차인)."""
+    from sqlalchemy import text as _text
+    q = f"%{(query or '').strip()}%"
+    units, pf = [], []
+    try:
+        for r in db.execute(_text(
+            "SELECT property, category, unit_no, address, area_pyeong, price, market_value, "
+            "deposit, monthly_rent, status, tenant FROM asset_units "
+            "WHERE property ILIKE :q OR unit_no ILIKE :q OR address ILIKE :q "
+            "OR category ILIKE :q OR status ILIKE :q OR tenant ILIKE :q "
+            "ORDER BY monthly_rent DESC NULLS LAST LIMIT 25"), {"q": q}):
+            units.append(dict(r._mapping))
+        for r in db.execute(_text(
+            "SELECT category, description, sale_price, deposit, monthly_rent FROM asset_portfolio "
+            "WHERE category ILIKE :q OR description ILIKE :q "
+            "ORDER BY sale_price DESC NULLS LAST LIMIT 15"), {"q": q}):
+            pf.append(dict(r._mapping))
+    except Exception as e:
+        try:
+            db.rollback()
+        except Exception:
+            pass
+        return {"ok": False, "error": str(e)[:150]}
+
+    def f(x):
+        try:
+            return round(float(x))
+        except Exception:
+            return x
+    for r in units:
+        for k in ("area_pyeong", "price", "market_value", "deposit", "monthly_rent"):
+            if r.get(k) is not None:
+                r[k] = f(r[k])
+    for r in pf:
+        for k in ("sale_price", "deposit", "monthly_rent"):
+            if r.get(k) is not None:
+                r[k] = f(r[k])
+    if not units and not pf:
+        return {"ok": True, "matches": 0, "note": f"'{query}'에 해당하는 자산을 찾지 못했습니다."}
+    return {"ok": True, "matches": len(units) + len(pf), "units": units, "portfolio_items": pf}
+
+
 TOOL_REGISTRY: dict[str, Tool] = {
     # --- Phase 1: Universal navigation tools ---
     "navigate": Tool(
@@ -1541,6 +1611,38 @@ TOOL_REGISTRY: dict[str, Tool] = {
         kind="read",
         parameters={"type": "object", "properties": {}, "required": []},
         fn=tool_what_can_you_do,
+    ),
+    "asset_summary": Tool(
+        name="asset_summary",
+        description=(
+            "Company REAL-ESTATE ASSET PORTFOLIO overview from the company's asset "
+            "workbook (자산관리). Returns total portfolio value (억원), total monthly rent "
+            "(월세), deposits (보증금), occupancy/vacancy (공실), and a breakdown by category "
+            "(토지/상가/도생/생숙/아파트/창고/공장/태양광). Use for '총 자산 가치 얼마야', "
+            "'우리 자산 얼마', 'how much are our assets worth', '공실 현황', '구분별 자산 비중', "
+            "'월세 수입 합계'."
+        ),
+        kind="read",
+        parameters={"type": "object", "properties": {}, "required": []},
+        fn=tool_asset_summary,
+    ),
+    "asset_search": Tool(
+        name="asset_search",
+        description=(
+            "Look up SPECIFIC company assets/units by keyword — building name, 호수(unit no), "
+            "주소(address), category(구분), status(상태) or tenant(임차인). Returns each match's "
+            "분양가/매입가, 보증금, 월세 and 상태. Use for '의정부 B1 월세 얼마', '낙하리 자산', "
+            "'공실인 상가 알려줘', '의정부 한양파크뷰 303호', 'rent on unit X'."
+        ),
+        kind="read",
+        parameters={
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "Keyword: building/unit/address/category/status/tenant, e.g. '의정부 B1', '낙하리', '공실', '상가'"},
+            },
+            "required": ["query"],
+        },
+        fn=tool_asset_search,
     ),
 
     # --- Phase 2: READ tools (Notion-AI-style search) ---
