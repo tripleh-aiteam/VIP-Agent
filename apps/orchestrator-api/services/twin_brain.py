@@ -556,21 +556,30 @@ def think(
     # Log: thinking started
     twin_service.log_activity(db, twin_id, "thinking", f"Processing: {user_message[:80]}...")
 
-    # #24 — Load conversation memory
-    memory = _load_conversation_history(db, twin_id, limit=5)
+    # Assistant chat = lean context for speed + clean behavior. The session
+    # history is supplied by the frontend (conversation_history); we do NOT pull
+    # the twin's global memory (it adds latency and bleeds unrelated past answers
+    # into greetings). Knowledge is retrieved ONLY for real questions — small talk
+    # skips the heavy 2k-item load + embedding entirely, so "hello" is fast.
+    memory = []
+    _msg = user_message.strip().lower()
+    _SMALLTALK = ("hi", "hello", "hey", "yo", "sup", "thanks", "thank you", "ok", "okay",
+                  "good morning", "good afternoon", "good evening", "how are you", "what's up")
+    is_smalltalk = len(user_message.strip()) < 20 or any(_msg == g or _msg.startswith(g + " ") or _msg.startswith(g + "!") for g in _SMALLTALK)
 
-    # #25 — Smart knowledge selection — semantic (vector) when available.
-    all_knowledge = twin_service.get_knowledge(db, twin_id)
-    emb_map = None
-    query_vec = None
-    try:
-        if embeddings_service.available():
-            emb_map = twin_service.get_twin_embeddings(db, twin_id)
-            query_vec = embeddings_service.embed_text(user_message) if emb_map else None
-    except Exception:
-        emb_map, query_vec = None, None
-    relevant_knowledge = _select_relevant_knowledge(
-        all_knowledge, user_message, emb_map=emb_map, query_vec=query_vec)
+    relevant_knowledge: list = []
+    if not is_smalltalk:
+        all_knowledge = twin_service.get_knowledge(db, twin_id)
+        emb_map = None
+        query_vec = None
+        try:
+            if embeddings_service.available():
+                emb_map = twin_service.get_twin_embeddings(db, twin_id)
+                query_vec = embeddings_service.embed_text(user_message) if emb_map else None
+        except Exception:
+            emb_map, query_vec = None, None
+        relevant_knowledge = _select_relevant_knowledge(
+            all_knowledge, user_message, emb_map=emb_map, query_vec=query_vec)[:3]
 
     # Build system prompt with tools (#26) — conversational work-assistant behavior
     system_prompt = build_system_prompt(twin, relevant_knowledge, available_tools=True, assistant_mode=True)
