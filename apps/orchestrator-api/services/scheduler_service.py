@@ -999,6 +999,81 @@ def _youtube_daily_report(email_override: str | None = None, period: str = "dail
         db.close()
 
 
+@_single_flight("asset")
+@with_retry(max_attempts=2, backoff_seconds=(60, 300), job_name="asset_daily_report")
+def _asset_daily_report(email_override: str | None = None, period: str = "daily", lang: str = "ko"):
+    """Detailed Asset Agent report — built from the live Asset backend, saved to the
+    dashboard + Telegram, and bundled into the 6:50 master email. `email_override`
+    sends the .docx to a test address."""
+    from services.asset_report import build_asset_report
+    from services.kiwoom_report import format_report_telegram
+    from services.telegram_service import send_alert
+    from db.models import OrchReport
+
+    db = SessionLocal()
+    trace = f"tr-asset-{int(datetime.utcnow().timestamp())}"
+    kst = kst_label()
+    try:
+        rep = build_asset_report(db, trace)
+        r = OrchReport(
+            report_type="asset_report",
+            source_run_ids_json=[],
+            content_json={
+                "report_type": "asset_report", "period": period,
+                "executive_summary": rep.get("summary_ko") or rep.get("summary_en") or "Asset daily report",
+                "sections": [{"title": "Asset Daily", "content": rep.get("table_ko", ""), "data": {}}],
+                "report": rep,
+                "generated_at": datetime.utcnow().isoformat(), "kst_time": kst,
+            },
+            delivery_channel="auto",
+        )
+        db.add(r)
+        db.commit()
+
+        # Telegram — the FULL detailed report (asset-branded), chunked.
+        try:
+            for chunk in format_report_telegram(rep, kst, lang="ko",
+                                                title="Asset Agent Report", emoji="🏢"):
+                send_alert(chunk)
+        except Exception as te:
+            log.warning(f"asset telegram format failed: {te}")
+
+        # Email the .docx (test override, or when individual emails are enabled).
+        try:
+            from services.report_docx import markdown_to_docx
+            from services.report_email import (send_email_with_docx,
+                                               is_configured as _email_ok, DEFAULT_RECIPIENT,
+                                               default_recipients)
+            if email_override == "*ALL*":
+                to_addr = default_recipients()
+            else:
+                to_addr = (email_override or os.getenv("ASSET_REPORT_EMAIL")
+                           or os.getenv("REPORT_EMAIL_TO") or DEFAULT_RECIPIENT)
+            if (email_override or os.getenv("SEND_INDIVIDUAL_EMAILS") == "1") and _email_ok() and to_addr:
+                body_md = rep.get("detail_ko") or rep.get("detail_en") or ""
+                docx_bytes = markdown_to_docx(body_md, "자산 에이전트 리포트", kst)
+                fname = f"Asset_Report_{datetime.utcnow().strftime('%Y%m%d')}.docx"
+                res = send_email_with_docx(
+                    to_addr, f"[Asset] 자산 에이전트 상세 리포트 — {kst}",
+                    "자산 에이전트 상세 리포트입니다. 첨부된 Word 파일을 확인해 주세요.",
+                    fname, docx_bytes)
+                log.info(f"asset: email {'sent' if res.get('ok') else 'skipped'} -> {to_addr}"
+                         f" ({res.get('reason', 'ok')})",
+                         extra={"trace_id": trace, "action": "asset.email"})
+            else:
+                log.info("asset: email skipped (SMTP not configured or no recipient)",
+                         extra={"action": "asset.email.skip"})
+        except Exception as ee:
+            log.warning(f"asset: email step failed: {ee}", extra={"action": "asset.email.failed"})
+
+        log.info(f"asset: detailed report saved + sent ({rep['status']})",
+                 extra={"trace_id": trace, "action": "asset.daily.done"})
+    except Exception as e:
+        log.warning(f"asset: daily report failed: {e}", extra={"action": "asset.daily.failed"})
+    finally:
+        db.close()
+
+
 @_single_flight("master")
 @with_retry(max_attempts=2, backoff_seconds=(60, 300), job_name="master_daily_report")
 def _master_daily_report(email_override: str | None = None, period: str = "daily", lang: str = "ko"):
@@ -1069,6 +1144,7 @@ def _master_daily_report(email_override: str | None = None, period: str = "daily
                 kiwoom_rp = _latest_report(db, "kiwoom_report")
                 news_rp = _latest_report(db, "newspaper_report")
                 youtube_rp = _latest_report(db, "youtube_report")
+                asset_rp = _latest_report(db, "asset_report")
                 # On weekends (Sat/Sun KST) markets are closed and YouTube finance
                 # coverage is thin → skip the YouTube part; send Kiwoom+Newspaper+추천.
                 from services.kst import kst_now as _kst_now
@@ -1077,6 +1153,7 @@ def _master_daily_report(email_override: str | None = None, period: str = "daily
                     ("1_키움_Kiwoom", "키움 데일리 리포트", kiwoom_rp),
                     ("2_신문_Newspaper", "신문 요약 리포트", news_rp),
                     ("4_추천_Recommendation", "종합 추천 리포트", rep),
+                    ("5_자산_Asset", "자산 에이전트 상세 리포트", asset_rp),
                 ]
                 files = []
                 for fn, title, rp in pieces:
@@ -1108,6 +1185,9 @@ def _master_daily_report(email_override: str | None = None, period: str = "daily
                     _lines.append(f"{_n}. 유튜브 그라운드 리포트 — 한국 금융 유튜브 분석")
                     _n += 1
                 _lines.append(f"{_n}. 종합 추천 리포트 — 위 리포트를 종합한 투자 의견 및 일정매매 포인트")
+                _n += 1
+                if _ko(asset_rp):
+                    _lines.append(f"{_n}. 자산 에이전트 상세 리포트 — 포트폴리오·임대·계약·현금흐름·리스크")
                 intro = (
                     "안녕하세요 사장님,\n\n"
                     f"{kst} 기준 {_kor} 리포트 {n_rep}건을 보내드립니다:\n"
@@ -1209,7 +1289,8 @@ def run_all_reports_now(email_override: str | None = None, lang: str = "ko"):
     (default 'ko' = Korean only; 'en' for English)."""
     log.info("run-all: on-demand generation started", extra={"action": "runall.start"})
     for fn, label in ((_kiwoom_daily_report, "kiwoom"),
-                      (_newspaper_daily_report, "newspaper")):
+                      (_newspaper_daily_report, "newspaper"),
+                      (_asset_daily_report, "asset")):
         try:
             fn(lang=lang)  # sources save to dashboard (individual email stays off)
         except Exception as e:
@@ -1323,6 +1404,16 @@ def init_scheduler():
         replace_existing=True,
     )
     log.info("scheduler: Newspaper report registered (21:30 UTC = 6:30 AM KST)", extra={"action": "scheduler.newspaper_registered"})
+
+    # Asset Agent detailed report — 6:30 AM KST = 21:30 UTC, so the 6:50 master
+    # email can bundle it next to Kiwoom / Newspaper / YouTube / Recommendation.
+    _scheduler.add_job(
+        _asset_daily_report,
+        CronTrigger.from_crontab("30 21 * * *"),
+        id="asset-daily-report",
+        replace_existing=True,
+    )
+    log.info("scheduler: Asset detailed report registered (21:30 UTC = 6:30 AM KST)", extra={"action": "scheduler.asset_registered"})
 
     # NOTE: the grounded YouTube report is NO LONGER a separate email — it is
     # bundled into the consolidated master email below (all 4 reports together),

@@ -144,6 +144,24 @@ def trigger_master_report(email: Optional[str] = Query(None, description="Option
             "message": "Master report running in background. Check Reports in ~40s."}
 
 
+@router.post("/compose/asset", dependencies=[Depends(rate_limit_compose)])
+def trigger_asset_report(email: Optional[str] = Query(None, description="Optional recipient for the .docx email — must be on the allowlist. Scheduled run uses ASSET_REPORT_EMAIL env."), send_all: bool = Query(False, description="Email the report to ALL configured recipients."), lang: str = Query("ko", description="Report language: 'ko' (default) or 'en'."), db: Session = Depends(get_db)):
+    """Manually trigger the DETAILED Asset Agent report (also runs 6:30 AM KST and
+    is bundled into the 6:50 consolidated email)."""
+    if email:
+        if email.strip().lower() not in _allowed_report_recipients():
+            raise HTTPException(403, "recipient not allowed — add it to REPORT_ALLOWED_RECIPIENTS env")
+        email = email.strip()
+    elif send_all:
+        email = "*ALL*"
+    lang = "en" if (lang or "ko").strip().lower() == "en" else "ko"
+    from services.scheduler_service import _asset_daily_report
+    import threading
+    threading.Thread(target=lambda: _asset_daily_report(email_override=email, lang=lang), daemon=True).start()
+    return {"triggered": True, "email": email or "(env ASSET_REPORT_EMAIL)",
+            "message": "Detailed Asset report running in background. Check Reports in ~1-2 min."}
+
+
 @router.post("/compose/all", dependencies=[Depends(rate_limit_compose)])
 def trigger_all_reports(email: Optional[str] = Query(None, description="Optional single recipient (allowlisted) for a test; omit to email the full recipient list."), lang: str = Query("ko", description="Report language: 'ko' (default, Korean only) or 'en' (English)."), db: Session = Depends(get_db)):
     """On-demand 'Generate Now': build ALL 4 reports with the freshest data and
