@@ -21,6 +21,42 @@ from services.kst import kst_label
 
 _scheduler: BackgroundScheduler | None = None
 
+# ---------------------------------------------------------------------------
+# Single-flight guard — only ONE run of a given report job at a time.
+# Overlapping manual triggers (the dashboard button clicked repeatedly, or a
+# manual run landing on top of the scheduled one) used to pile concurrent,
+# network+LLM-heavy builds onto one instance, starving the slow Newspaper step
+# so the run never reached Master/email. This makes a second trigger a no-op
+# while the first is still running — which is what keeps generation consistent.
+# ---------------------------------------------------------------------------
+import threading as _threading
+import functools as _functools
+
+_run_locks: dict[str, "_threading.Lock"] = {}
+_run_locks_guard = _threading.Lock()
+
+
+def _single_flight(name: str):
+    """Decorator: skip the call (return None) if another run of `name` is active."""
+    def deco(fn):
+        @_functools.wraps(fn)
+        def wrapper(*a, **kw):
+            with _run_locks_guard:
+                lk = _run_locks.setdefault(name, _threading.Lock())
+            if not lk.acquire(blocking=False):
+                log.info(f"{name}: skipped — a run is already in progress",
+                         extra={"action": f"{name}.skip_busy"})
+                return None
+            try:
+                return fn(*a, **kw)
+            finally:
+                try:
+                    lk.release()
+                except RuntimeError:
+                    pass
+        return wrapper
+    return deco
+
 
 # ---------------------------------------------------------------------------
 # Job execution
@@ -740,6 +776,7 @@ def _auto_cross_agent_report():
         db.close()
 
 
+@_single_flight("kiwoom")
 @with_retry(max_attempts=2, backoff_seconds=(60, 300), job_name="kiwoom_daily_report")
 def _kiwoom_daily_report(email_override: str | None = None, period: str = "daily", lang: str = "ko"):
     """Daily Kiwoom market report — runs ~6:30 AM KST (after the US close).
@@ -829,6 +866,7 @@ def _kiwoom_daily_report(email_override: str | None = None, period: str = "daily
         db.close()
 
 
+@_single_flight("newspaper")
 @with_retry(max_attempts=2, backoff_seconds=(60, 300), job_name="newspaper_daily_report")
 def _newspaper_daily_report(email_override: str | None = None, period: str = "daily", lang: str = "ko"):
     """Daily newspaper (news analysis) report — runs ~7:00 AM KST. Live-news +
@@ -916,6 +954,7 @@ def _newspaper_daily_report(email_override: str | None = None, period: str = "da
         db.close()
 
 
+@_single_flight("youtube")
 @with_retry(max_attempts=2, backoff_seconds=(60, 300), job_name="youtube_grounded_deliver")
 def _youtube_daily_report(email_override: str | None = None, period: str = "daily", lang: str = "ko"):
     """Deliver the GROUNDED YouTube report produced by the colleague's GPU
@@ -960,6 +999,7 @@ def _youtube_daily_report(email_override: str | None = None, period: str = "dail
         db.close()
 
 
+@_single_flight("master")
 @with_retry(max_attempts=2, backoff_seconds=(60, 300), job_name="master_daily_report")
 def _master_daily_report(email_override: str | None = None, period: str = "daily", lang: str = "ko"):
     """Master synthesis report — reads the day's Kiwoom + Newspaper + YouTube
@@ -1159,6 +1199,7 @@ def _knowledge_sync_job():
         db.close()
 
 
+@_single_flight("allreports")
 def run_all_reports_now(email_override: str | None = None, lang: str = "ko"):
     """On-demand: generate ALL 4 reports with the freshest data RIGHT NOW, then
     the master sends the consolidated email. Runs the sources first (so the master

@@ -128,8 +128,9 @@ def _gather_news_by_source(cap_kr: int = 5, cap_paid: int = 6) -> dict[str, list
       - Paid (WSJ/Bloomberg): recent headlines + free snippets only (no body).
     Returns {name: [{title,url,text,full,paid}]}."""
     from services import news_fetch
-    grouped: dict[str, list[dict]] = {}
-    for paper in NEWSPAPERS:
+    from concurrent.futures import ThreadPoolExecutor
+
+    def _one_outlet(paper: dict) -> tuple[str, list[dict]]:
         name, site, kr = paper["name"], paper["site"], paper["region"] == "KR"
         paid = name in ("Bloomberg", "The Wall Street Journal")
         arts: list[dict] = []
@@ -163,8 +164,13 @@ def _gather_news_by_source(cap_kr: int = 5, cap_paid: int = 6) -> dict[str, list
                 arts.append({"title": it.get("title", ""), "url": it.get("url", ""),
                              "text": body or it.get("summary", ""),
                              "full": bool(body), "paid": False, "pub": it.get("pub")})
-        grouped[name] = arts
-    return grouped
+        return name, arts
+
+    # Outlets are independent network I/O — gather them CONCURRENTLY so the whole
+    # fetch is bounded by the slowest single outlet, not the sum of all six.
+    with ThreadPoolExecutor(max_workers=len(NEWSPAPERS) or 1) as ex:
+        results = list(ex.map(_one_outlet, NEWSPAPERS))
+    return {name: arts for name, arts in results}
 
 
 def _news_block_by_source(grouped: dict[str, list[dict]]) -> str:
@@ -439,19 +445,18 @@ def build_newspaper_report(db, trace_id: str) -> dict:
     detail_en = detail_ko = ""
     try:
         from services.llm_client import chat_completion_sync
-        import time as _t
 
         # ---- 1) Per-outlet sections: a SUMMARY PER ARTICLE under its title+link.
         #         One LLM call per outlet returns a numbered summary for every
-        #         article; we then lay out  #### [title](link)  +  summary.  ----
-        sec_ko: dict[str, str] = {}
-        for paper in NEWSPAPERS:
+        #         article; the outlets run CONCURRENTLY (bounded pool) so this whole
+        #         step takes seconds, not minutes — the old sequential loop with
+        #         sleeps was the main reason a run stalled.  ----
+        def _summarize_outlet(paper: dict) -> tuple[str, str]:
             name = paper["name"]
             arts = grouped.get(name, [])
             paid = name in ("Bloomberg", "The Wall Street Journal")
             if not arts:
-                sec_ko[name] = f"### {name}\n최근 신규 기사가 없습니다."
-                continue
+                return name, f"### {name}\n최근 신규 기사가 없습니다."
             has_full = any(a.get("full") for a in arts)
             # Number each article so the model's summaries map back 1:1.
             corpus = "\n\n".join(
@@ -489,9 +494,13 @@ def build_newspaper_report(db, trace_id: str) -> dict:
                     ko_sum = _parse_numbered(out)
             except Exception as e:
                 log.warning(f"newspaper outlet {name} failed: {str(e)[:100]}")
-            # Lay out per-article: title (clickable) + its Korean summary.
-            sec_ko[name] = _article_section(name, arts, ko_sum)
-            _t.sleep(1.5)   # space outlet calls so we stay under Groq's TPM limit
+            return name, _article_section(name, arts, ko_sum)
+
+        from concurrent.futures import ThreadPoolExecutor
+        sec_ko: dict[str, str] = {}
+        with ThreadPoolExecutor(max_workers=3) as _ex:
+            for name, section in _ex.map(_summarize_outlet, NEWSPAPERS):
+                sec_ko[name] = section
 
         news_ko = "\n\n".join(sec_ko[p["name"]] for p in NEWSPAPERS)
 
