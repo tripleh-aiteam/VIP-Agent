@@ -2,6 +2,9 @@
 
 import { useEffect, useState } from "react";
 import { API, apiFetch } from "@/components/api";
+import { ChatbotOverlay } from "@triple-h/chatbot";
+import type { AgentConfig } from "@triple-h/chatbot";
+import { buildTwinConfig } from "@/chatbot.config";
 
 interface TwinProfile {
   id: string;
@@ -382,6 +385,18 @@ export function DashboardView({ onLogout }: Props) {
 
   const twinId = typeof window !== "undefined" ? localStorage.getItem("twin_id") : null;
   const workerName = typeof window !== "undefined" ? localStorage.getItem("worker_name") || "Worker" : "Worker";
+
+  // Rich work assistant (the VIP chatbot widget) — opens right in the Chat tab.
+  const [assistantConfig, setAssistantConfig] = useState<AgentConfig | null>(null);
+  const [assistantOpen, setAssistantOpen] = useState(true);
+  useEffect(() => {
+    const tid = localStorage.getItem("twin_id");
+    if (!tid) return;
+    const name = localStorage.getItem("twin_name") || localStorage.getItem("worker_name") || "Your Twin";
+    setAssistantConfig(buildTwinConfig(tid, name));
+  }, []);
+  // Re-open the assistant each time the worker enters the Chat tab.
+  useEffect(() => { if (page === "chat") setAssistantOpen(true); }, [page]);
 
   useEffect(() => { if (twinId) fetchAll(); }, [twinId]);
 
@@ -1803,12 +1818,17 @@ export function DashboardView({ onLogout }: Props) {
           Ask anything — search the web, draft, summarize, write code, read your files.
           Voice in &amp; out, attachments, and your twin learns from every conversation.
         </p>
-        <button onClick={() => { if (typeof window !== "undefined") window.dispatchEvent(new Event("twin:open-assistant")); }}
-          className="px-6 py-3 bg-gradient-to-r from-blue-500 to-purple-600 text-white rounded-xl text-[14px] font-semibold hover:opacity-90" style={{ boxShadow: "var(--shadow-sm)" }}>
-          Open Assistant
-        </button>
-        <div className="text-[11px] text-[var(--text-muted)] mt-3">The assistant opens as a chat bar at the bottom of your screen — type to start.</div>
+        {!assistantOpen && (
+          <button onClick={() => setAssistantOpen(true)}
+            className="px-6 py-3 bg-gradient-to-r from-blue-500 to-purple-600 text-white rounded-xl text-[14px] font-semibold hover:opacity-90" style={{ boxShadow: "var(--shadow-sm)" }}>
+            Open Assistant
+          </button>
+        )}
+        <div className="text-[11px] text-[var(--text-muted)] mt-3">Type in the chat bar at the bottom of the screen to start.</div>
       </div>
+      {assistantConfig && (
+        <ChatbotOverlay config={assistantConfig} open={assistantOpen} onOpenChange={setAssistantOpen} />
+      )}
     </div>
   );
 
