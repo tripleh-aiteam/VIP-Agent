@@ -2913,6 +2913,44 @@ TOOL_REGISTRY["web_search"] = Tool(
 )
 
 
+# --- NAVER (네이버) search — incl. checking if OUR property is on Naver 부동산 ------
+def tool_naver_search(query: str, kind: str = "web", realestate: bool = False,
+                      num_results: int = 5, **_kw) -> dict[str, Any]:
+    """Search NAVER. realestate=True checks NAVER 부동산 listings for a property."""
+    from services.naver_search import naver_search
+    return naver_search(query, kind=kind, num_results=num_results, realestate=realestate)
+
+
+TOOL_REGISTRY["naver_search"] = Tool(
+    name="naver_search", kind="read",
+    description=(
+        "Search NAVER (네이버) — web / news / blog / local, AND NAVER 부동산 real-estate "
+        "listings. Use this whenever the user asks about NAVER specifically, OR wants "
+        "to know whether one of OUR properties (land / house / building / 매물) is "
+        "ADVERTISED / LISTED on NAVER 부동산 — e.g. '우리 낙하리 땅 네이버에 올라와 있어?', "
+        "'is our Hyangnam apartment on Naver?', '네이버 부동산에 우리 건물 매물 있는지 "
+        "확인해줘'. For a property check, set realestate=true and pass the address or "
+        "name (e.g. '낙하리 301-7', '향남에일린의뜰'). If listings are found, the "
+        "property IS on Naver; if none, report that it doesn't appear to be listed. "
+        "Always cite the result links."
+    ),
+    parameters={
+        "type": "object",
+        "properties": {
+            "query": {"type": "string",
+                      "description": "Search terms — for a property, its address or name (e.g. '낙하리 301-7')"},
+            "realestate": {"type": "boolean",
+                           "description": "true to check NAVER 부동산 property listings"},
+            "kind": {"type": "string", "enum": ["web", "news", "blog", "local"],
+                     "description": "Naver search type (ignored when realestate=true). Default web."},
+            "num_results": {"type": "integer", "description": "How many results (1-10)"},
+        },
+        "required": ["query"],
+    },
+    fn=tool_naver_search,
+)
+
+
 # --- OnBid (온비드 / KAMCO public-auction) live-data tool -------------------
 try:
     from services.onbid_tools import tool_onbid_search
@@ -3086,7 +3124,7 @@ except Exception as _e:  # never let a tool-pack failure break the assistant
 # Safe, per-agent-scoped tools every agent may use (own KB, own pages, web).
 _GENERIC_TOOLS = {
     "navigate", "open_portal", "find_page", "list_pages", "open_item",
-    "what_can_you_do", "web_search",
+    "what_can_you_do", "web_search", "naver_search",
     "search_knowledge", "search_knowledge_base", "list_knowledge_files",
     "add_knowledge", "update_knowledge", "delete_knowledge", "delete_knowledge_file",
     "semantic_search",
