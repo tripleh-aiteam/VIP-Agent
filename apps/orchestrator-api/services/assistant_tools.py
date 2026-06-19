@@ -1514,22 +1514,31 @@ def tool_asset_summary(db: Session = None, **_kw) -> dict[str, Any]:
 
 def tool_asset_search(query: str, db: Session = None, **_kw) -> dict[str, Any]:
     """Look up specific company assets/units by keyword — building name, 호수(unit),
-    주소(address), category (구분), status (상태) or tenant (임차인)."""
+    주소(address), category (구분), status (상태) or tenant (임차인). Multi-word
+    queries ('의정부 상가 B1') match when EACH word appears somewhere in the row."""
+    import re as _re
     from sqlalchemy import text as _text
-    q = f"%{(query or '').strip()}%"
+    toks = [t for t in _re.split(r"\s+", (query or "").strip()) if t]
+    if not toks:
+        return {"ok": True, "matches": 0, "note": "빈 검색어"}
     units, pf = [], []
+    # Concatenate all searchable fields into one blob; require EVERY token to
+    # appear in it (token-AND) so '의정부 상가 B1' matches 의정부상가 + B1.
+    u_blob = ("(coalesce(property,'')||' '||coalesce(unit_no,'')||' '||coalesce(address,'')"
+              "||' '||coalesce(category,'')||' '||coalesce(status,'')||' '||coalesce(tenant,''))")
+    p_blob = "(coalesce(category,'')||' '||coalesce(description,''))"
+    params = {f"t{i}": f"%{t}%" for i, t in enumerate(toks)}
+    u_where = " AND ".join(f"{u_blob} ILIKE :t{i}" for i in range(len(toks)))
+    p_where = " AND ".join(f"{p_blob} ILIKE :t{i}" for i in range(len(toks)))
     try:
         for r in db.execute(_text(
             "SELECT property, category, unit_no, address, area_pyeong, price, market_value, "
             "deposit, monthly_rent, status, tenant FROM asset_units "
-            "WHERE property ILIKE :q OR unit_no ILIKE :q OR address ILIKE :q "
-            "OR category ILIKE :q OR status ILIKE :q OR tenant ILIKE :q "
-            "ORDER BY monthly_rent DESC NULLS LAST LIMIT 25"), {"q": q}):
+            f"WHERE {u_where} ORDER BY monthly_rent DESC NULLS LAST LIMIT 25"), params):
             units.append(dict(r._mapping))
         for r in db.execute(_text(
             "SELECT category, description, sale_price, deposit, monthly_rent FROM asset_portfolio "
-            "WHERE category ILIKE :q OR description ILIKE :q "
-            "ORDER BY sale_price DESC NULLS LAST LIMIT 15"), {"q": q}):
+            f"WHERE {p_where} ORDER BY sale_price DESC NULLS LAST LIMIT 15"), params):
             pf.append(dict(r._mapping))
     except Exception as e:
         try:
