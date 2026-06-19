@@ -1025,6 +1025,7 @@ export function ChatbotOverlay({
           }}
         >
           {/* Header */}
+          {!theme.hideHeader && (
           <div className="px-4 py-2.5 border-b border-gray-100 flex items-center justify-between text-[12px] gap-2">
             <div className="flex items-center gap-2 min-w-0 flex-1">
               <div
@@ -1079,6 +1080,7 @@ export function ChatbotOverlay({
               aria-label="Collapse"
             >×</button>
           </div>
+          )}
 
           {/* Conversation */}
           <div className="flex-1 overflow-y-auto px-4 py-3 space-y-2 min-h-[100px]">

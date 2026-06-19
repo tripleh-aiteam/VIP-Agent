@@ -25,6 +25,7 @@ export function buildTwinConfig(twinId: string, twinName: string): AgentConfig {
     apiBase: API,
     endpointMode: "agent",
     authHeaders: twinAuthHeaders,
+    theme: { hideHeader: true },
     identity: {
       name: `${twinName} · Assistant`,
       greeting: {

@@ -151,6 +151,8 @@ export interface AgentTheme {
   position?: "bottom-right" | "bottom-left" | "top-right" | "top-left";
   /** "auto" = follow OS, "light"/"dark" = forced */
   darkMode?: "auto" | "light" | "dark";
+  /** Hide the panel header (name + state + selects + close). Opt-in. */
+  hideHeader?: boolean;
 }
 
 /**
