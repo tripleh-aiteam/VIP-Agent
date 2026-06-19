@@ -1518,9 +1518,26 @@ def tool_asset_search(query: str, db: Session = None, **_kw) -> dict[str, Any]:
     queries ('의정부 상가 B1') match when EACH word appears somewhere in the row."""
     import re as _re
     from sqlalchemy import text as _text
-    toks = [t for t in _re.split(r"\s+", (query or "").strip()) if t]
+    # Strip natural-language filler + Korean particle suffixes so queries like
+    # '공실인 자산 알려줘' reduce to the meaningful keyword '공실'.
+    _STOP = {"자산", "정보", "알려줘", "알려", "보여줘", "보여", "얼마", "얼마야", "현황", "대해",
+             "관해", "대한", "좀", "해줘", "뭐야", "어때", "목록", "리스트", "전부", "모두", "관련",
+             "property", "asset", "assets", "tell", "me", "about", "the", "is", "what", "show", "of", "all"}
+
+    def _stem(t: str) -> str:
+        for suf in ("인", "은", "는", "이", "가", "을", "를", "의", "에서", "에", "과", "와", "도", "만"):
+            if len(t) > len(suf) + 1 and t.endswith(suf):
+                return t[:-len(suf)]
+        return t
+
+    toks = []
+    for t in _re.split(r"\s+", (query or "").strip()):
+        t = t.strip()
+        if not t or t.lower() in _STOP:
+            continue
+        toks.append(_stem(t))
     if not toks:
-        return {"ok": True, "matches": 0, "note": "빈 검색어"}
+        return {"ok": True, "matches": 0, "note": "검색어를 구체적으로 주세요 (예: '의정부 B1', '공실', '낙하리', '상가')."}
     units, pf = [], []
     # Concatenate all searchable fields into one blob; require EVERY token to
     # appear in it (token-AND) so '의정부 상가 B1' matches 의정부상가 + B1.
