@@ -521,6 +521,10 @@ def _is_concept_question(transcript: Optional[str]) -> bool:
     t = (transcript or "").strip().lower()
     if not t or not any(k in t for k in _CONCEPT_DEF_KW):
         return False
+    # 'what is the price of apple' is a US-stock DATA question, not a concept — let it
+    # delegate to the Stock backend (real price) instead of an LLM general answer.
+    if _is_us_stock_query(transcript) or any(w in t for w in _PRICE_WORDS):
+        return False
     return _stock_in_query(transcript) is None
 
 
