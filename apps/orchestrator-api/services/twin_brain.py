@@ -346,6 +346,7 @@ def build_system_prompt(
     twin: DigitalTwin,
     knowledge_docs: list[TwinKnowledge],
     available_tools: bool = True,
+    assistant_mode: bool = False,
 ) -> str:
     """
     Build a 6-layer personality system prompt.
@@ -378,6 +379,38 @@ def build_system_prompt(
             hard_rules.append(content)
         else:
             documents.append(content)
+
+    # --- Assistant mode: behave like a normal, helpful general LLM (ChatGPT-like)
+    # for the worker's Chat. Answer directly; don't dump knowledge/reports unless
+    # asked; keep greetings short. This is the work-assistant chat behavior. ---
+    if assistant_mode:
+        p = (
+            f"You are the personal AI work assistant for {twin.name} ({twin.role}). "
+            "Behave like a helpful, friendly general AI assistant (like ChatGPT). "
+            "Answer the user's message DIRECTLY and naturally, matching their language and length. "
+            "For greetings or small talk (e.g. \"hi\", \"hello\", \"thanks\"), reply briefly and warmly in ONE short sentence — "
+            "do NOT volunteer reports, bullet lists, or your stored knowledge unless the user actually asks. "
+            "Help with anything: writing, coding, analysis, research, questions. Be concise.\n\n"
+        )
+        rules = (hard_rules[:3] + corrections[:3])
+        if rules:
+            p += "Keep in mind (the worker's preferences/corrections):\n"
+            for r in rules:
+                clean = r.replace("CORRECTION from worker:", "").replace("CORRECTION from vip:", "").replace("RULE:", "").strip()
+                p += f"- {clean[:160]}\n"
+            p += "\n"
+        if documents:
+            p += "Reference notes — use ONLY if relevant to the user's question, otherwise ignore them:\n"
+            for d in documents[:2]:
+                p += f"- {d[:200]}\n"
+            p += "\n"
+        if available_tools:
+            p += (
+                "TOOLS (emit on its own line only when you truly need fresh/external facts, then wait for results):\n"
+                "- Current info from the web: [TOOL: web_search | query=YOUR SEARCH]\n"
+                "Otherwise just answer directly — for greetings, writing, coding, and reasoning, never use a tool.\n"
+            )
+        return p
 
     # Build natural, non-labeled prompt (small models work better with flowing text)
     prompt = f"You are {twin.name}, {twin.role} at VIP company.\n\n"
@@ -539,8 +572,8 @@ def think(
     relevant_knowledge = _select_relevant_knowledge(
         all_knowledge, user_message, emb_map=emb_map, query_vec=query_vec)
 
-    # Build system prompt with tools (#26)
-    system_prompt = build_system_prompt(twin, relevant_knowledge, available_tools=True)
+    # Build system prompt with tools (#26) — conversational work-assistant behavior
+    system_prompt = build_system_prompt(twin, relevant_knowledge, available_tools=True, assistant_mode=True)
 
     # Build message history: memory + explicit history + current message
     messages = []
@@ -585,7 +618,7 @@ def think(
             {"role": "user", "content": f"Tool results:\n{tool_block}\n\nNow write your final answer using these results. Do not call any more tools."},
         ]
         response = chat_completion_sync(
-            system_prompt=build_system_prompt(twin, relevant_knowledge, available_tools=False),
+            system_prompt=build_system_prompt(twin, relevant_knowledge, available_tools=False, assistant_mode=True),
             messages=followup[-8:], max_tokens=1500, temperature=0.7, model=model,
         )
         # Safety: strip any stray tool tags the model may still emit.
