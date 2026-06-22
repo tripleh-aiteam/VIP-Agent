@@ -1018,10 +1018,11 @@ def _naver_subject(transcript: Optional[str]) -> str:
     # Strip search/listing filler + generic real-estate words (부동산/매물 — the search
     # itself scopes to Naver 부동산, so keep only the property NAME/ADDRESS + type).
     t = _re.sub(r"(네이버에서|네이버|naver|부동산에|부동산|매물이|매물로|매물|광고|"
-                r"검색해줘|검색해|검색|확인해줘|확인|알려줘|알려|해줘|해주세요|"
+                r"검색해줘|검색해|검색|조회해줘|조회|확인해줘|확인|알려줘|알려|해줘|해주세요|"
+                r"시세는|시세|매매가|가격은|가격|얼마예요|얼마야|얼마|현재가|어때\??|"
                 r"올라와\s*있는지|올라와|올라온|등록\s*되어|등록|있는지요|있는지|있나요|있나|있어요|있어|"
-                r"좀|찾아봐줘|찾아봐|찾아|please|search|for|on|in|is|are|our|whether|listed|"
-                r"advertis\w*|우리|the|check|real\s*estate)", " ", t, flags=_re.I)
+                r"좀|찾아봐줘|찾아봐|찾아|please|search|for|on|in|is|are|our|whether|listed|price|"
+                r"advertis\w*|우리|저희|the|check|real\s*estate)", " ", t, flags=_re.I)
     t = _re.sub(r"(?<=\s)(에|에서|이|가|을|를|은|는|도|의|로)(?=\s|$)", " ", t)
     t = _re.sub(r"[?!.,]+", " ", t)
     return _re.sub(r"\s+", " ", t).strip()
@@ -1061,16 +1062,29 @@ def _vip_naver_search_reply(transcript: Optional[str], lang: str) -> Optional[di
         deep = [r for r in results if _is_deep(r.get("url") or "")]
         verify_line = (f"\n\n🔎 직접 확인: {verify_url}" if not _en
                        else f"\n\n🔎 Verify yourself: {verify_url}")
+        # Ownership check ('우리/저희/our 낙하리 땅 네이버에 올라와 있어?') vs a generic
+        # listing search ('향남 아파트 매물 검색'). Only the ownership case gets the
+        # ✅/❌ "is it listed yet" verdict — a generic search just shows the listings.
+        owns = any(w in tl for w in ("우리", "저희", "our", "내 ", "제 "))
         if deep:
-            verdict = (f"✅ '{subject}'은(는) 현재 네이버 부동산에 매물로 등록되어 있습니다. "
-                       f"아래 매물 링크에서 자세한 내용을 확인하실 수 있습니다:" if not _en else
-                       f"✅ '{subject}' IS currently listed on NAVER 부동산. See the listing(s) below:")
+            if owns:
+                verdict = (f"✅ '{subject}'은(는) 네이버 부동산에 매물로 올라와 있습니다. "
+                           f"아래 링크에서 확인하세요:" if not _en else
+                           f"✅ '{subject}' IS listed on NAVER 부동산. See the listing(s) below:")
+            else:
+                verdict = (f"네이버 부동산에서 '{subject}' 매물입니다:" if not _en else
+                           f"NAVER 부동산 listings for '{subject}':")
             reply = verdict + "\n\n" + "\n".join(_fmt(deep[:5])) + verify_line
         else:
-            # Definitive, confident: no listing found = simply not uploaded to Naver yet.
-            verdict = (f"'{subject}'은(는) 아직 네이버 부동산에 올라오지 않았습니다."
-                       if not _en else
-                       f"'{subject}' has not been uploaded to NAVER 부동산 yet.")
+            if owns:
+                # Confident: our property simply isn't on Naver yet.
+                verdict = (f"'{subject}'은(는) 아직 네이버 부동산에 올라오지 않았습니다."
+                           if not _en else
+                           f"'{subject}' has not been uploaded to NAVER 부동산 yet.")
+            else:
+                verdict = (f"네이버 부동산에서 '{subject}' 매물을 찾지 못했습니다."
+                           if not _en else
+                           f"No NAVER 부동산 listings found for '{subject}'.")
             reply = verdict + verify_line
     else:
         if results:
