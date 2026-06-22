@@ -1062,15 +1062,17 @@ def _vip_naver_search_reply(transcript: Optional[str], lang: str) -> Optional[di
         verify_line = (f"\n\n🔎 직접 확인: {verify_url}" if not _en
                        else f"\n\n🔎 Verify yourself: {verify_url}")
         if deep:
-            verdict = (f"✅ '{subject}' 매물이 네이버 부동산에 올라와 있는 것으로 확인됩니다. "
-                       f"아래 링크에서 직접 확인하실 수 있습니다:" if not _en else
-                       f"✅ '{subject}' appears to be listed on NAVER 부동산. Verify via the links below:")
+            verdict = (f"✅ '{subject}'은(는) 현재 네이버 부동산에 매물로 등록되어 있습니다. "
+                       f"아래 매물 링크에서 자세한 내용을 확인하실 수 있습니다:" if not _en else
+                       f"✅ '{subject}' IS currently listed on NAVER 부동산. See the listing(s) below:")
             reply = verdict + "\n\n" + "\n".join(_fmt(deep[:5])) + verify_line
         else:
-            verdict = (f"⚠️ 네이버 부동산에서 '{subject}'의 특정 매물 링크는 확인하지 못했습니다. "
-                       f"아래 검색 링크에서 직접 확인해 주세요 — 등록된 매물이 없을 수도 있습니다:" if not _en else
-                       f"⚠️ Could not confirm a specific NAVER 부동산 listing for '{subject}'. "
-                       f"Check the search link below directly — there may be no listing:")
+            # Definitive: no listing found = not (yet) advertised on Naver.
+            verdict = (f"❌ 현재 '{subject}'은(는) 네이버 부동산에 매물로 등록되어 있지 않습니다. "
+                       f"(아직 네이버에 올라오지 않았습니다.)\n혹시 몰라 직접 확인하시려면 아래 링크를 눌러 보세요:"
+                       if not _en else
+                       f"❌ '{subject}' is NOT currently listed on NAVER 부동산 (not uploaded yet).\n"
+                       f"To double-check yourself, tap the link below:")
             reply = verdict + verify_line
     else:
         if results:
@@ -1888,7 +1890,7 @@ def _run_chain(
         "NOT add a preamble before the verdict sentence."
     )
     import json as _json
-    summary_input = _json.dumps(step_results, ensure_ascii=False)[:max(_cap, 3000)]
+    summary_input = _json.dumps(step_results, ensure_ascii=False, default=str)[:max(_cap, 3000)]
     try:
         reply = chat_completion_sync(
             system_prompt=follow_system,
@@ -2168,7 +2170,7 @@ def _compose_final_answer(
     )
     summary_messages = [
         {"role": "user", "content": f"My question: {user_msg}"},
-        {"role": "user", "content": f"Tool '{tool_name}' returned:\n{json.dumps(tool_result, ensure_ascii=False)[:_data_cap]}"},
+        {"role": "user", "content": f"Tool '{tool_name}' returned:\n{json.dumps(tool_result, ensure_ascii=False, default=str)[:_data_cap]}"},
     ]
     try:
         reply = chat_completion_sync(
@@ -2496,11 +2498,20 @@ def _suggest_followups(
     # Pull useful entities out of the tool result for personalised chips
     name = None
     if isinstance(tool_result, dict):
+        # `matches` is a list of dicts for twin tools but an int *count* for
+        # others (e.g. asset_search → {"matches": 3, ...}). Only subscript it
+        # when it's actually a non-empty list of dicts, else we'd crash with
+        # "'int' object is not subscriptable".
+        m = tool_result.get("matches")
+        first_match_name = (
+            m[0].get("name")
+            if isinstance(m, list) and m and isinstance(m[0], dict)
+            else None
+        )
         name = (
             tool_result.get("twin_name")
             or tool_result.get("name")
-            or (tool_result.get("matches") or [{}])[0].get("name")
-            if tool_result.get("matches") else tool_result.get("twin_name")
+            or first_match_name
         )
 
     def en_or_ko(en_text: str, ko_text: str) -> str:
