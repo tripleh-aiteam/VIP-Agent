@@ -216,8 +216,10 @@ def build_breaking_report(db, trace_id: str, focus: str | None = None,
             "ALSO: in Section 2 (event-by-event), end each event with its source(s) as "
             "'출처: [매체/제목](URL) · 게재: <date>' so every event is traceable.\n"
             "Use ONLY the provided news for facts; do not fabricate a deal that isn't there. "
-            "Be decisive but mark every number as an estimate. Output ONLY the finished "
-            "English Markdown report (Sections 1-9)."
+            "Be decisive but mark every number as an estimate.\n"
+            "Begin your output with ONE line exactly: 'TOP_SEVERITY: <N>' where <N> is the "
+            "highest single event severity (1-10) in this report. Then output the finished "
+            "English Markdown report (Sections 1-9) and nothing else."
         )
         user = (f"DATE (KST): {kst}\n" + (f"FOCUS EVENT: {focus}\n" if focus else "") + "\n"
                 f"NEWS:\n{news}")
@@ -254,15 +256,22 @@ def build_breaking_report(db, trace_id: str, focus: str | None = None,
     if not detail_ko:
         detail_ko = detail_en
 
-    # severity = max event severity mentioned (best-effort parse, fallback 6)
+    # severity = the model's explicit TOP_SEVERITY line; fall back to max 'N/10'.
     sev = 6
     try:
-        nums = [int(x) for x in re.findall(r"(?:severity|심각도|중요도)\D{0,4}(\d{1,2})", detail_en + detail_ko, re.I)]
-        nums = [n for n in nums if 1 <= n <= 10]
-        if nums:
-            sev = max(nums)
+        m = re.search(r"TOP_SEVERITY:\s*(\d{1,2})", (detail_en or "") + "\n" + (detail_ko or ""))
+        if m and 1 <= int(m.group(1)) <= 10:
+            sev = int(m.group(1))
+        else:
+            nums = [int(x) for x in re.findall(r"(\d{1,2})\s*/\s*10", (detail_en or "") + (detail_ko or ""))]
+            nums = [n for n in nums if 1 <= n <= 10]
+            if nums:
+                sev = max(nums)
     except Exception:
         pass
+    # strip the marker line so it doesn't show in the report
+    detail_en = re.sub(r"(?m)^\s*TOP_SEVERITY:.*\n?", "", detail_en).strip()
+    detail_ko = re.sub(r"(?m)^\s*TOP_SEVERITY:.*\n?", "", detail_ko).strip()
 
     return {
         "agent_type": "breaking", "name": "Breaking Market-Impact Report", "emoji": "🚨",
