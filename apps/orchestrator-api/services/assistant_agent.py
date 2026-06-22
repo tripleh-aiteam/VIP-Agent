@@ -1149,7 +1149,34 @@ def _naver_provider_authoritative(provider: Optional[str]) -> bool:
     return (provider or "").startswith("serper:naver")
 
 
+# Words that signal a result really is a property listing/ad (not just a mention).
+_LISTING_KW = ("매물", "임대", "매매", "전세", "월세", "보증금", "분양", "평", "㎡",
+               "공장", "창고", "사옥", "상가", "오피스텔", "아파트", "토지", "부동산", "중개")
+# Our own surfaces — never cite these back as a "Naver listing".
+_OWN_NAVER_EXCLUDE = ("assetagent.vercel.app", "oasisvip", "vip-orchestrator", "onrender.com")
+
+
+def _looks_like_listing(r: dict) -> bool:
+    hay = ((r.get("title") or "") + " " + (r.get("snippet") or "")).lower()
+    return any(k in hay for k in _LISTING_KW)
+
+
+def _own_naver_domain(url: str) -> bool:
+    u = (url or "").lower()
+    return any(d in u for d in _OWN_NAVER_EXCLUDE)
+
+
 def _vip_naver_search_reply(transcript: Optional[str], lang: str, db=None) -> Optional[dict]:
+    """Answer 'is <property> on Naver?' / 'search Naver for <X>'.
+
+    Key principle (anti-hallucination): "네이버에 올라와 있어?" means FINDABLE VIA NAVER
+    SEARCH — web + 부동산 — not only land.naver.com. Many of our properties are
+    advertised on brokerage sites (e.g. 창고연구소.com) that surface in Naver search.
+    So we search broadly, surface any real listing we find (with its link), and NEVER
+    claim a property "is not listed" (search can't prove absence) — instead we always
+    hand back a clickable Naver search link the user can verify in one tap.
+    """
+    import urllib.parse as _up
     from services.naver_search import naver_search
     tl = (transcript or "").lower()
     re_estate = any(k in tl for k in _NAVER_RE_KW)
@@ -1165,104 +1192,64 @@ def _vip_naver_search_reply(transcript: Optional[str], lang: str, db=None) -> Op
             out.append(f"• {title}" + (f"\n  🔗 {url}" if url else "") + (f"\n  {snip}" if snip else ""))
         return out
 
-    # ===== Step 1: resolve the address from OUR uploaded asset file first =====
-    # '낙하리' → ['낙하리 301-7', '낙하리 301-9', ...]. If we own matching properties we
-    # Naver-check each PRECISE address; otherwise it's a generic Naver search.
+    # Confirm whether this matches one of OUR uploaded properties (framing only).
     our_addrs = _our_property_addresses(db, subject) if re_estate else []
 
-    if our_addrs:
-        # ===== Step 2: Naver-check each of our addresses (cap 5 for latency) =====
-        listed, missing, unverified, last_res = [], [], [], None
-        for addr in our_addrs[:5]:
-            r = naver_search(addr, realestate=True, num_results=5)
-            last_res = r
-            # Count as listed ONLY when a deep Naver link ALSO genuinely matches this
-            # address (area/lot), so we never link an unrelated complex as "proof".
-            deep = [x for x in (r.get("results") or [])
-                    if _is_deep_naver_url(x.get("url") or "") and _addr_on_naver(addr, x)]
-            if deep:
-                listed.append((addr, (deep[0].get("url") or "").strip()))
-            elif _naver_provider_authoritative(r.get("provider")):
-                missing.append(addr)   # an authoritative source genuinely found none
-            else:
-                unverified.append(addr)  # only the weak fallback ran — don't claim "not listed"
-        # ===== Step 3/4: short answer — link only for the ones actually on Naver =====
-        lines = []
-        if listed:
-            lines.append("✅ 네이버 부동산에 올라와 있는 자산:" if not _en else "✅ Listed on NAVER 부동산:")
-            for addr, url in listed:
-                lines.append(f"• {addr}\n  🔗 {url}")
-        if missing:
-            joined = ", ".join(missing)
-            lines.append(
-                (f"아직 네이버 부동산에 올라오지 않은 자산: {joined}" if not _en
-                 else f"Not yet uploaded to NAVER 부동산: {joined}"))
-        if unverified and not listed and not missing:
-            # Provider degraded for the whole batch — be honest, don't fake a verdict.
-            lines.append(
-                ("네이버 매물 조회 서비스가 일시적으로 제한되어 지금은 확인할 수 없습니다 "
-                 "(검색 API 키 필요)." if not _en else
-                 "Couldn't check NAVER right now — the listing search provider is "
-                 "unavailable (search API key needed)."))
-        elif unverified:
-            joined = ", ".join(unverified)
-            lines.append(
-                (f"확인 불가(조회 제한): {joined}" if not _en
-                 else f"Could not verify (provider limited): {joined}"))
-        reply = "\n\n".join(lines)
-        return {"intent": "naver_search", "language": lang, "reply": reply[:1900],
-                "action": None, "speak": True, "transcript": transcript,
-                "tool_used": "naver_search",
-                "tool_result": {"ok": True, "our_assets": our_addrs,
-                                "listed": [a for a, _ in listed], "missing": missing,
-                                "unverified": unverified, "last": last_res}}
-
-    # ===== No matching asset in our file → plain Naver search =====
-    res = naver_search(subject, realestate=re_estate, num_results=6)
-    results = res.get("results") or []
-    if re_estate:
-        prov = (res.get("provider") or "")
-        deep = [r for r in results if _is_deep_naver_url(r.get("url") or "")]
-        # Usable = real results from naver_api/serper (NOT the opaque Gemini fallback),
-        # excluding bare land.naver.com homepages (which prove nothing).
-        def _bare_home(u: str) -> bool:
-            u = (u or "").lower()
-            return "land.naver.com" in u and not _is_deep_naver_url(u)
-        usable = [r for r in results
-                  if prov.startswith(("naver_api", "serper"))
-                  and (r.get("title") or r.get("url"))
-                  and not _bare_home(r.get("url") or "")]
-        # A one-click Naver 부동산 search link the user can always verify with.
-        verify_url = "https://m.land.naver.com/search/result/" + subject.strip().replace(" ", "%20")
-        if deep:
-            head = (f"네이버 부동산에서 '{subject}' 매물입니다:" if not _en else
-                    f"NAVER 부동산 listings for '{subject}':")
-            reply = head + "\n\n" + "\n".join(_fmt(deep[:5]))
-        elif usable:
-            # No confirmed deep listing link, but Naver returned real web/news info —
-            # show it. NOTE: search can't PROVE a property isn't listed (Naver's listing
-            # pages are dynamic / not indexed), so we never claim "not listed" here.
-            head = (f"네이버에서 찾은 '{subject}' 관련 정보입니다 (부동산 매물은 아래 링크에서 직접 확인):"
-                    if not _en else
-                    f"NAVER info for '{subject}' (check 부동산 listings via the link below):")
-            reply = head + "\n\n" + "\n".join(_fmt(usable[:4])) + f"\n\n🔎 직접 확인: {verify_url}"
-        else:
-            # Found no usable result. Don't claim "not listed" — just give the
-            # clickable Naver 부동산 search link so the user verifies in one tap.
-            reply = ((f"'{subject}'의 등록된 매물 링크를 바로 찾지 못했습니다. 네이버 부동산에서 직접 확인해 보세요:\n\n"
-                      f"🔎 {verify_url}") if not _en else
-                     (f"Couldn't find a direct listing link for '{subject}'. "
-                      f"Check NAVER 부동산 directly:\n\n🔎 {verify_url}"))
-    else:
+    # ===== General (non-real-estate) Naver search → just show results =====
+    if not re_estate:
+        res = naver_search(subject, realestate=False, num_results=6)
+        results = [r for r in (res.get("results") or [])
+                   if (res.get("provider") or "").startswith(("naver_api", "serper"))
+                   and (r.get("title") or r.get("url"))]
         if results:
             head = (f"네이버 검색 결과 — '{subject}':" if not _en else f"NAVER results for '{subject}':")
             reply = head + "\n\n" + "\n".join(_fmt(results[:6]))
         else:
-            reply = (f"네이버에서 '{subject}' 검색 결과를 찾지 못했습니다." if not _en else
-                     f"No Naver results found for '{subject}'.")
+            web = "https://search.naver.com/search.naver?query=" + _up.quote(subject)
+            reply = (f"네이버에서 '{subject}' 검색 결과를 직접 확인해 보세요:\n\n🔎 {web}" if not _en
+                     else f"Check NAVER search for '{subject}':\n\n🔎 {web}")
+        return {"intent": "naver_search", "language": lang, "reply": reply[:1900],
+                "action": None, "speak": True, "transcript": transcript,
+                "tool_used": "naver_search", "tool_result": res}
+
+    # ===== Real-estate: find listings across Naver (web + 부동산), never claim absence =====
+    q = subject if "매물" in subject else f"{subject} 매물"
+    # General web search (Naver Open API is free) finds brokerage-site listings that
+    # land.naver.com-only scoping would miss.
+    res = naver_search(q, realestate=False, num_results=8)
+    prov = (res.get("provider") or "")
+    web_url = "https://search.naver.com/search.naver?query=" + _up.quote(q)
+
+    listings, seen = [], set()
+    for r in (res.get("results") or []):
+        url = (r.get("url") or "").strip()
+        if not (r.get("title") or url):
+            continue
+        if not prov.startswith(("naver_api", "serper")):
+            continue
+        if _own_naver_domain(url) or url in seen:
+            continue
+        if _is_deep_naver_url(url) or _looks_like_listing(r):
+            seen.add(url)
+            listings.append(r)
+
+    owns_note = ("\n(보유 자산: " + ", ".join(our_addrs[:5]) + ")") if our_addrs else ""
+    if listings:
+        head = (f"네이버에서 '{subject}' 관련 매물·정보를 찾았습니다:" if not _en else
+                f"Found '{subject}' listings/info on NAVER:")
+        reply = (head + "\n\n" + "\n".join(_fmt(listings[:5]))
+                 + f"\n\n🔎 네이버에서 더 보기: {web_url}" + owns_note)
+    else:
+        # Never claim "not listed" — hand back the clickable Naver search link.
+        reply = ((f"'{subject}' 매물을 네이버에서 직접 확인해 보세요 — 검색 결과에서 최신 매물을 보실 수 있습니다:\n\n🔎 {web_url}"
+                  + owns_note) if not _en else
+                 (f"Check NAVER search for '{subject}' listings:\n\n🔎 {web_url}" + owns_note))
     return {"intent": "naver_search", "language": lang, "reply": reply[:1900],
             "action": None, "speak": True, "transcript": transcript,
-            "tool_used": "naver_search", "tool_result": res}
+            "tool_used": "naver_search",
+            "tool_result": {"ok": True, "our_assets": our_addrs, "provider": prov,
+                            "found": len(listings), "query": q,
+                            "results": (res.get("results") or [])[:8]}}
 
 
 # US stocks VIP can't price locally (no Kiwoom/Naver KR data) — detect them so the
