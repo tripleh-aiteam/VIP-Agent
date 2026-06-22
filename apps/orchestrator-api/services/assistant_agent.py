@@ -1027,12 +1027,16 @@ def _naver_subject(transcript: Optional[str]) -> str:
                 r"검색해줘|검색해|검색|조회해줘|조회|확인해줘|확인|알려줘|알려|해줘|해주세요|"
                 r"시세는|시세|매매가|가격은|가격|얼마예요|얼마야|얼마|현재가|어때\??|"
                 r"정보를|정보|관련된|관련|어떤지|어디야|어디|뭐야|보여줘|보여|좀|"
+                r"더\s*보여줘|더\s*보여|더\s*보기|더\s*줘|더\s*알려|다른\s*매물|더|"
                 r"올라와\s*있는지|올라와|올라온|등록\s*되어|등록|있는지요|있는지|있나요|있나|있어요|있어|"
                 r"좀|찾아봐줘|찾아봐|찾아|please|search|for|on|in|is|are|our|whether|listed|price|"
                 r"advertis\w*|우리|저희|the|check|real\s*estate)", " ", t, flags=_re.I)
     t = _re.sub(r"(?<=\s)(에|에서|이|가|을|를|은|는|도|의|로)(?=\s|$)", " ", t)
     t = _re.sub(r"[?!.,]+", " ", t)
-    return _re.sub(r"\s+", " ", t).strip()
+    t = _re.sub(r"\s+", " ", t).strip()
+    # Dedupe repeated tokens (a 'more' follow-up reuses the prior query → '낙하리 낙하리').
+    _seen: set = set()
+    return " ".join(w for w in t.split() if not (w in _seen or _seen.add(w)))
 
 
 def _is_deep_naver_url(u: str) -> bool:
@@ -3574,9 +3578,9 @@ def _run_agent_impl(
     # agent. =====
     _naver_prev = None if _is_naver_search_q(transcript) else _naver_more_followup(transcript, history)
     if not confirmed_tool and (_is_naver_search_q(transcript) or _naver_prev):
-        # For a bare 'more' follow-up, prepend the previous query so the subject + the
-        # 'show more' intent are both present for the reply builder.
-        _tx = transcript if _is_naver_search_q(transcript) else f"{_naver_prev} {transcript}"
+        # For a bare 'more' follow-up, reuse the PREVIOUS query for the subject and add a
+        # clean more-marker (avoids duplicating the subject / leaking '더' into it).
+        _tx = transcript if _is_naver_search_q(transcript) else f"{_naver_prev} 더 보여줘"
         _nr = _vip_naver_search_reply(_tx, lang, db)
         if _nr:
             return _nr
