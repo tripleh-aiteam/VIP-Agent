@@ -39,6 +39,17 @@ def _strip(s: str) -> str:
     return _TAG_RE.sub("", s or "").replace("&quot;", '"').replace("&amp;", "&").strip()
 
 
+def _is_deep_land_url(u: str) -> bool:
+    """A specific land.naver.com listing/article/complex page (real proof) vs a bare
+    section homepage like m.land.naver.com/ (which proves nothing)."""
+    u = (u or "").lower()
+    if "land.naver.com" not in u:
+        return False
+    tail = u.split("land.naver.com", 1)[1].lstrip("/")
+    return len(tail) > 1 and any(k in u for k in (
+        "articleno", "outlinkbridge", "/complexes", "/offices", "/article", "/search"))
+
+
 def _naver_api(query: str, kind: str, n: int, cid: str, csec: str) -> dict[str, Any]:
     import httpx
     typ = _TYPE_MAP.get((kind or "web").lower(), "webkr")
@@ -87,13 +98,23 @@ def naver_search(query: str, *, kind: str = "web", num_results: int = 5,
     if realestate:
         # Only 2 variants (was 5) to conserve Serper credits — each property check
         # already fans out over several addresses, so 5×N calls drained the quota.
-        # `site:land.naver.com` already matches the m.land / new.land subdomains in
-        # Google, so one scoped query covers them; one broader query is the fallback.
+        # `site:land.naver.com` matches m.land/new.land subdomains; the broader query
+        # surfaces deep article/outlink pages. PREFER a variant that returns a deep
+        # listing link (real proof) over one that only returns land.naver.com
+        # homepages — otherwise famous complexes (은마/반포자이) look "not listed".
+        best = None
         for scoped in (f"{q} 매물 site:land.naver.com", f"{q} 네이버 부동산 매물"):
             hits = _serper(scoped, n)
-            if hits:
+            if not hits:
+                continue
+            if any(_is_deep_land_url(h.get("url", "")) for h in hits):
                 return {"ok": True, "provider": "serper:naver", "results": hits,
                         "query": scoped, "realestate": realestate}
+            if best is None:
+                best = {"ok": True, "provider": "serper:naver", "results": hits,
+                        "query": scoped, "realestate": realestate}
+        if best is not None:
+            return best
 
     # 2) Official Naver API — authoritative for GENERAL search (web/news/blog/local).
     if cid and csec:

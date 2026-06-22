@@ -1026,6 +1026,7 @@ def _naver_subject(transcript: Optional[str]) -> str:
     t = _re.sub(r"(네이버에서|네이버|naver|부동산에서|부동산에|부동산|매물이|매물로|매물|광고|"
                 r"검색해줘|검색해|검색|조회해줘|조회|확인해줘|확인|알려줘|알려|해줘|해주세요|"
                 r"시세는|시세|매매가|가격은|가격|얼마예요|얼마야|얼마|현재가|어때\??|"
+                r"정보를|정보|관련된|관련|어떤지|어디야|어디|뭐야|보여줘|보여|좀|"
                 r"올라와\s*있는지|올라와|올라온|등록\s*되어|등록|있는지요|있는지|있나요|있나|있어요|있어|"
                 r"좀|찾아봐줘|찾아봐|찾아|please|search|for|on|in|is|are|our|whether|listed|price|"
                 r"advertis\w*|우리|저희|the|check|real\s*estate)", " ", t, flags=_re.I)
@@ -1220,34 +1221,38 @@ def _vip_naver_search_reply(transcript: Optional[str], lang: str, db=None) -> Op
     res = naver_search(subject, realestate=re_estate, num_results=6)
     results = res.get("results") or []
     if re_estate:
+        prov = (res.get("provider") or "")
         deep = [r for r in results if _is_deep_naver_url(r.get("url") or "")]
-        # `naver_api:*` / `serper:*` give real results worth showing; the opaque
-        # Gemini-grounding fallback ('naver(web:...)') has redirect URLs — not useful.
+        # Usable = real results from naver_api/serper (NOT the opaque Gemini fallback),
+        # excluding bare land.naver.com homepages (which prove nothing).
+        def _bare_home(u: str) -> bool:
+            u = (u or "").lower()
+            return "land.naver.com" in u and not _is_deep_naver_url(u)
         usable = [r for r in results
-                  if (res.get("provider") or "").startswith(("naver_api", "serper"))
-                  and (r.get("url") or r.get("title"))]
+                  if prov.startswith(("naver_api", "serper"))
+                  and (r.get("title") or r.get("url"))
+                  and not _bare_home(r.get("url") or "")]
+        # A one-click Naver 부동산 search link the user can always verify with.
+        verify_url = "https://m.land.naver.com/search/result/" + subject.strip().replace(" ", "%20")
         if deep:
             head = (f"네이버 부동산에서 '{subject}' 매물입니다:" if not _en else
                     f"NAVER 부동산 listings for '{subject}':")
             reply = head + "\n\n" + "\n".join(_fmt(deep[:5]))
-        elif _naver_provider_authoritative(res.get("provider")):
-            # Serper genuinely found no land.naver.com listing → confident, NO link.
-            reply = (f"'{subject}'은(는) 아직 네이버 부동산에 올라오지 않았습니다."
-                     if not _en else
-                     f"'{subject}' has not been uploaded to NAVER 부동산 yet.")
         elif usable:
-            # No confirmed 부동산 listing, but Naver search returned real info — show it
-            # (the free Naver Open API can't confirm 매물 listings, only web/news/blog).
-            head = (f"네이버 검색 결과 — '{subject}' (부동산 매물 등록 여부는 직접 확인 필요):"
+            # No confirmed deep listing link, but Naver returned real web/news info —
+            # show it. NOTE: search can't PROVE a property isn't listed (Naver's listing
+            # pages are dynamic / not indexed), so we never claim "not listed" here.
+            head = (f"네이버에서 찾은 '{subject}' 관련 정보입니다 (부동산 매물은 아래 링크에서 직접 확인):"
                     if not _en else
-                    f"NAVER results for '{subject}' (listing status needs manual check):")
-            reply = head + "\n\n" + "\n".join(_fmt(usable[:5]))
+                    f"NAVER info for '{subject}' (check 부동산 listings via the link below):")
+            reply = head + "\n\n" + "\n".join(_fmt(usable[:4])) + f"\n\n🔎 직접 확인: {verify_url}"
         else:
-            # Nothing usable — be honest instead of claiming "not listed".
-            reply = ("네이버 매물 조회 서비스가 일시적으로 제한되어 지금은 확인할 수 없습니다 "
-                     "(검색 API 키 필요)." if not _en else
-                     "Couldn't check NAVER right now — the listing search provider is "
-                     "unavailable (search API key needed).")
+            # Found no usable result. Don't claim "not listed" — just give the
+            # clickable Naver 부동산 search link so the user verifies in one tap.
+            reply = ((f"'{subject}'의 등록된 매물 링크를 바로 찾지 못했습니다. 네이버 부동산에서 직접 확인해 보세요:\n\n"
+                      f"🔎 {verify_url}") if not _en else
+                     (f"Couldn't find a direct listing link for '{subject}'. "
+                      f"Check NAVER 부동산 directly:\n\n🔎 {verify_url}"))
     else:
         if results:
             head = (f"네이버 검색 결과 — '{subject}':" if not _en else f"NAVER results for '{subject}':")
