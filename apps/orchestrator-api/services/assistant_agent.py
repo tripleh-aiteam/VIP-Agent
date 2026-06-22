@@ -1221,18 +1221,29 @@ def _vip_naver_search_reply(transcript: Optional[str], lang: str, db=None) -> Op
     results = res.get("results") or []
     if re_estate:
         deep = [r for r in results if _is_deep_naver_url(r.get("url") or "")]
-        # We don't own it (or couldn't resolve it) — report listings generically.
+        # `naver_api:*` / `serper:*` give real results worth showing; the opaque
+        # Gemini-grounding fallback ('naver(web:...)') has redirect URLs — not useful.
+        usable = [r for r in results
+                  if (res.get("provider") or "").startswith(("naver_api", "serper"))
+                  and (r.get("url") or r.get("title"))]
         if deep:
             head = (f"네이버 부동산에서 '{subject}' 매물입니다:" if not _en else
                     f"NAVER 부동산 listings for '{subject}':")
             reply = head + "\n\n" + "\n".join(_fmt(deep[:5]))
         elif _naver_provider_authoritative(res.get("provider")):
-            # An authoritative source genuinely found nothing → confident, NO link.
+            # Serper genuinely found no land.naver.com listing → confident, NO link.
             reply = (f"'{subject}'은(는) 아직 네이버 부동산에 올라오지 않았습니다."
                      if not _en else
                      f"'{subject}' has not been uploaded to NAVER 부동산 yet.")
+        elif usable:
+            # No confirmed 부동산 listing, but Naver search returned real info — show it
+            # (the free Naver Open API can't confirm 매물 listings, only web/news/blog).
+            head = (f"네이버 검색 결과 — '{subject}' (부동산 매물 등록 여부는 직접 확인 필요):"
+                    if not _en else
+                    f"NAVER results for '{subject}' (listing status needs manual check):")
+            reply = head + "\n\n" + "\n".join(_fmt(usable[:5]))
         else:
-            # Only the weak fallback ran — be honest instead of claiming "not listed".
+            # Nothing usable — be honest instead of claiming "not listed".
             reply = ("네이버 매물 조회 서비스가 일시적으로 제한되어 지금은 확인할 수 없습니다 "
                      "(검색 API 키 필요)." if not _en else
                      "Couldn't check NAVER right now — the listing search provider is "
