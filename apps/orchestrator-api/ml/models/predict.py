@@ -48,9 +48,11 @@ def _conf(prob: float) -> str:
     return "낮음"
 
 
-def _decide(direction: int, conf: str, edge: float) -> str:
-    """Honest decision: only act when the model has real edge AND decent confidence."""
-    if edge is None or edge <= 0.0:        # no proven edge -> never act
+def _decide(direction: int, conf: str, acc_edge: float, econ_edge: float) -> str:
+    """Honest decision: only act when the model is actually PROFITABLE (economic edge
+    vs buy&hold after costs) AND confident. Falls back to accuracy edge if no backtest."""
+    gate = econ_edge if econ_edge is not None else acc_edge
+    if gate is None or gate <= 0.0:        # not profitable / no edge -> never act
         return "HOLD"
     if conf == "낮음":
         return "HOLD"
@@ -101,7 +103,9 @@ def predict_ticker(conn, ticker: str, horizon: int) -> dict | None:
 
     conf = _conf(prob)
     edge = metrics.get("edge")
-    advice = _decide(direction, conf, edge)
+    econ_edge = metrics.get("econ_edge")
+    win_rate = metrics.get("econ_win_rate")
+    advice = _decide(direction, conf, edge, econ_edge)
 
     # 1-sigma 5-day move estimate from the stock's own volatility (추정)
     band = (rvol / 100.0) / math.sqrt(252) * math.sqrt(horizon) * 100 if rvol else 2.0
@@ -118,8 +122,10 @@ def predict_ticker(conn, ticker: str, horizon: int) -> dict | None:
         sell_px = round(close * (1 + 0.003 * band))
         buy_px = round(close * (1 - band / 100))
 
-    reason = (f"{NAMES.get(ticker, ticker)} · {model_name} 모델 (백테스트 정확도 "
-              f"{metrics.get('accuracy', 0)*100:.1f}%, 엣지 {edge:+.3f}) · 5일 방향 {dlabel} "
+    econ_txt = (f"백테스트 수익엣지 {econ_edge:+.2f}%/거래·승률 {win_rate:.0f}%"
+                if econ_edge is not None else f"정확도엣지 {edge:+.3f}")
+    reason = (f"{NAMES.get(ticker, ticker)} · {model_name} 모델 (정확도 "
+              f"{metrics.get('accuracy', 0)*100:.1f}%, {econ_txt}) · 5일 방향 {dlabel} "
               f"(확률 {prob*100:.0f}%, 신뢰도 {conf}) · RSI {rsi:.0f} · 예상 변동폭 ±{band}%(추정)")
 
     return {
