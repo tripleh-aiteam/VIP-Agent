@@ -1522,7 +1522,11 @@ def tool_asset_search(query: str, db: Session = None, **_kw) -> dict[str, Any]:
     # '공실인 자산 알려줘' reduce to the meaningful keyword '공실'.
     _STOP = {"자산", "정보", "알려줘", "알려", "보여줘", "보여", "얼마", "얼마야", "현황", "대해",
              "관해", "대한", "좀", "해줘", "뭐야", "어때", "목록", "리스트", "전부", "모두", "관련",
-             "property", "asset", "assets", "tell", "me", "about", "the", "is", "what", "show", "of", "all"}
+             # field/question words the user wants ABOUT a property — not search keys
+             "월세", "월세하고", "보증금", "가격", "시세", "매매가", "분양가", "면적", "평수",
+             "수입", "임대", "하고", "그리고", "및",
+             "property", "asset", "assets", "tell", "me", "about", "the", "is", "what",
+             "show", "of", "all", "and", "rent", "deposit", "price", "value"}
 
     def _stem(t: str) -> str:
         for suf in ("인", "은", "는", "이", "가", "을", "를", "의", "에서", "에", "과", "와", "도", "만"):
@@ -1535,7 +1539,13 @@ def tool_asset_search(query: str, db: Session = None, **_kw) -> dict[str, Any]:
         t = t.strip()
         if not t or t.lower() in _STOP:
             continue
-        toks.append(_stem(t))
+        t = _stem(t)
+        # Unit numbers vary as 'B1호' / 'B1' / '301호' / '301' across sheets — index the
+        # bare form so 'B1호' still matches a stored 'B1'.
+        if _re.search(r"\d", t) and t.endswith("호") and len(t) > 1:
+            t = t[:-1]
+        if t:
+            toks.append(t)
     if not toks:
         return {"ok": True, "matches": 0, "note": "검색어를 구체적으로 주세요 (예: '의정부 B1', '공실', '낙하리', '상가')."}
     units, pf = [], []
