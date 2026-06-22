@@ -90,8 +90,10 @@ def naver_search(query: str, *, kind: str = "web", num_results: int = 5,
     if realestate:
         variants = [
             f"{q} 매물 site:land.naver.com",
+            f"{q} site:m.land.naver.com",
             f"site:new.land.naver.com {q}",
             f"{q} 네이버 부동산 매물",
+            f"{q} 부동산 매물 시세",
         ]
     else:
         variants = [f"{q} site:naver.com", f"{q} 네이버"]

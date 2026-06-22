@@ -1577,6 +1577,52 @@ def tool_asset_search(query: str, db: Session = None, **_kw) -> dict[str, Any]:
         for k in ("sale_price", "deposit", "monthly_rent"):
             if r.get(k) is not None:
                 r[k] = f(r[k])
+    if not units and not pf and len(toks) > 1:
+        # Relaxed fallback: a property is named differently across sheets
+        # ('의정부역 한양수자인파크뷰 B1호' vs '의정부상가 B1호'), so strict token-AND
+        # can miss it. Rank every row by how many query tokens it contains and
+        # return the best partial matches (must hit >= half the tokens).
+        need = max(1, (len(toks) + 1) // 2)
+        or_u = " OR ".join(f"{u_blob} ILIKE :t{i}" for i in range(len(toks)))
+        or_p = " OR ".join(f"{p_blob} ILIKE :t{i}" for i in range(len(toks)))
+        try:
+            cand_u = [dict(r._mapping) for r in db.execute(_text(
+                "SELECT property, category, unit_no, address, area_pyeong, price, market_value, "
+                "deposit, monthly_rent, status, tenant FROM asset_units "
+                f"WHERE {or_u} LIMIT 60"), params)]
+            cand_p = [dict(r._mapping) for r in db.execute(_text(
+                "SELECT category, description, sale_price, deposit, monthly_rent "
+                f"FROM asset_portfolio WHERE {or_p} LIMIT 40"), params)]
+        except Exception as e:
+            try:
+                db.rollback()
+            except Exception:
+                pass
+            return {"ok": False, "error": str(e)[:150]}
+
+        def _score(blob: str) -> int:
+            b = (blob or "").lower()
+            return sum(1 for t in toks if t.lower() in b)
+        scored_u = sorted(
+            ((_score(" ".join(str(r.get(k) or "") for k in
+                               ("property", "unit_no", "address", "category", "status", "tenant"))), r)
+             for r in cand_u), key=lambda x: x[0], reverse=True)
+        scored_p = sorted(
+            ((_score(" ".join(str(r.get(k) or "") for k in ("category", "description"))), r)
+             for r in cand_p), key=lambda x: x[0], reverse=True)
+        units = [r for s, r in scored_u if s >= need][:10]
+        pf = [r for s, r in scored_p if s >= need][:8]
+        for r in units:
+            for k in ("area_pyeong", "price", "market_value", "deposit", "monthly_rent"):
+                if r.get(k) is not None:
+                    r[k] = f(r[k])
+        for r in pf:
+            for k in ("sale_price", "deposit", "monthly_rent"):
+                if r.get(k) is not None:
+                    r[k] = f(r[k])
+        if units or pf:
+            return {"ok": True, "matches": len(units) + len(pf), "units": units,
+                    "portfolio_items": pf, "match": "partial"}
     if not units and not pf:
         return {"ok": True, "matches": 0, "note": f"'{query}'에 해당하는 자산을 찾지 못했습니다."}
     return {"ok": True, "matches": len(units) + len(pf), "units": units, "portfolio_items": pf}
@@ -1593,11 +1639,19 @@ def tool_asset_top(metric: str = "area", order: str = "desc", limit: int = 5,
            "market": "market_value", "현시세": "market_value",
            "rent": "monthly_rent", "월세": "monthly_rent",
            "deposit": "deposit", "보증금": "deposit"}.get((metric or "area").strip().lower(), "area_m2")
-    od = "ASC" if str(order or "desc").lower().startswith("a") else "DESC"
+    desc = not str(order or "desc").lower().startswith("a")
+    od = "DESC" if desc else "ASC"
     try:
         lim = max(1, min(int(limit or 5), 20))
     except Exception:
         lim = 5
+
+    def f(x):
+        try:
+            return round(float(x), 2)
+        except Exception:
+            return x
+
     rows = []
     try:
         for r in db.execute(_text(
@@ -1605,6 +1659,26 @@ def tool_asset_top(metric: str = "area", order: str = "desc", limit: int = 5,
             f"market_value, monthly_rent, deposit, status FROM asset_units "
             f"WHERE {col} IS NOT NULL ORDER BY {col} {od} LIMIT :lim"), {"lim": lim}):
             rows.append(dict(r._mapping))
+        # Rent / value / deposit superlatives must ALSO consider the 총괄 portfolio
+        # line items (asset_portfolio) — e.g. the 도생 40-호실 line (월세 17.63M) is a
+        # single portfolio asset, not in asset_units. Without this, 'highest rent'
+        # wrongly returns the biggest single unit (B1, 5.5M).
+        p_col = {"monthly_rent": "monthly_rent", "price": "sale_price",
+                 "market_value": "sale_price", "deposit": "deposit"}.get(col)
+        if p_col:
+            for r in db.execute(_text(
+                f"SELECT category, description, {p_col} AS metric_val, monthly_rent, "
+                f"sale_price, deposit FROM asset_portfolio "
+                f"WHERE {p_col} IS NOT NULL ORDER BY {p_col} {od} LIMIT :lim"), {"lim": lim}):
+                m = dict(r._mapping)
+                rows.append({
+                    "property": m.get("description"), "unit_no": None, "address": None,
+                    "category": m.get("category"), "area_m2": None, "area_pyeong": None,
+                    "price": m.get("sale_price"),
+                    "market_value": m.get("sale_price"),
+                    "monthly_rent": m.get("monthly_rent"), "deposit": m.get("deposit"),
+                    "status": None, "_source": "portfolio",
+                })
     except Exception as e:
         try:
             db.rollback()
@@ -1612,11 +1686,11 @@ def tool_asset_top(metric: str = "area", order: str = "desc", limit: int = 5,
             pass
         return {"ok": False, "error": str(e)[:150]}
 
-    def f(x):
-        try:
-            return round(float(x), 2)
-        except Exception:
-            return x
+    # Re-rank the merged unit + portfolio candidates by the requested metric.
+    rows = [r for r in rows if r.get(col) is not None]
+    rows.sort(key=lambda r: f(r.get(col)) if isinstance(f(r.get(col)), (int, float)) else 0,
+              reverse=desc)
+    rows = rows[:lim]
     for r in rows:
         for k in ("area_m2", "area_pyeong", "price", "market_value", "monthly_rent", "deposit"):
             if r.get(k) is not None:

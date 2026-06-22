@@ -1046,9 +1046,9 @@ def _vip_naver_search_reply(transcript: Optional[str], lang: str) -> Optional[di
         return out
 
     if re_estate:
-        from urllib.parse import quote
         # A direct Naver 부동산 search link the user can ALWAYS click to verify themselves.
-        verify_url = f"https://m.land.naver.com/search/result/{quote(subject)}"
+        # Encode only spaces — keep Korean readable (browsers handle raw Hangul in paths).
+        verify_url = "https://m.land.naver.com/search/result/" + subject.strip().replace(" ", "%20")
         # A "deep" listing link (specific article/complex) is real proof the property is
         # advertised. A bare land.naver.com homepage is NOT — Serper just matched the site.
         def _is_deep(u: str) -> bool:
