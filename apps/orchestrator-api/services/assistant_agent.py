@@ -1196,6 +1196,30 @@ def _is_naver_domain(url: str) -> bool:
     return "naver.com" in (url or "").lower()
 
 
+# "Show more" follow-up phrases after a Naver listing answer.
+_NAVER_MORE_KW = ("더 보", "더보", "더 줘", "더줘", "더 알려", "다른 매물", "다른거", "다른 거",
+                  "전부", "모두", "목록", "여러", "리스트", "more", "show more", "list them", "show all")
+
+
+def _naver_more_followup(transcript: Optional[str], history: Optional[list[dict]]) -> Optional[str]:
+    """If the user says 'more' right after a Naver listing answer, return the PREVIOUS
+    Naver/property query so we can re-run the search (with more results). None otherwise.
+    Lets '우리 낙하리 매물 더 보여줘' (no '네이버') still reach the Naver path."""
+    t = (transcript or "").lower().strip()
+    if not any(k in t for k in _NAVER_MORE_KW):
+        return None
+    for h in reversed(history or []):
+        if (h.get("role") or h.get("who") or "") == "user":
+            prev = (h.get("text") or h.get("content") or "")
+            pl = prev.lower()
+            if prev and (_is_naver_search_q(prev)
+                         or any(k in pl for k in _NAVER_RE_KW)
+                         or any(k in pl for k in ("네이버", "naver", "올라", "매물"))):
+                return prev
+            break  # only the immediately-preceding user turn counts
+    return None
+
+
 def _vip_naver_search_reply(transcript: Optional[str], lang: str, db=None) -> Optional[dict]:
     """Answer 'is <property> on Naver?' / 'search Naver for <X>'.
 
@@ -3548,8 +3572,12 @@ def _run_agent_impl(
     # ===== NAVER search (web + 네이버 부동산) — deterministic, any agent. Runs BEFORE
     # stock/delegation routing so '네이버에 우리 땅 매물 있어?' isn't handed to the Stock
     # agent. =====
-    if not confirmed_tool and _is_naver_search_q(transcript):
-        _nr = _vip_naver_search_reply(transcript, lang, db)
+    _naver_prev = None if _is_naver_search_q(transcript) else _naver_more_followup(transcript, history)
+    if not confirmed_tool and (_is_naver_search_q(transcript) or _naver_prev):
+        # For a bare 'more' follow-up, prepend the previous query so the subject + the
+        # 'show more' intent are both present for the reply builder.
+        _tx = transcript if _is_naver_search_q(transcript) else f"{_naver_prev} {transcript}"
+        _nr = _vip_naver_search_reply(_tx, lang, db)
         if _nr:
             return _nr
 
