@@ -1156,6 +1156,9 @@ _LISTING_KW = ("매물", "임대", "매매", "전세", "월세", "보증금", "�
 _STRONG_LISTING_KW = ("보증금", "월세", "전세", "매매가", "분양가", "평", "㎡", "억", "만원", "임대")
 # Our own surfaces — never cite these back as a "Naver listing".
 _OWN_NAVER_EXCLUDE = ("assetagent.vercel.app", "oasisvip", "vip-orchestrator", "onrender.com")
+# Non-listing sources the user doesn't want (video / social) — skip entirely.
+_SKIP_DOMAINS = ("youtube.com", "youtu.be", "instagram.com", "facebook.com",
+                 "tiktok.com", "twitter.com", "x.com", "pinterest.")
 # News/article domains — about a property, not a listing of it. Filtered out.
 _NEWS_DOMAINS = ("hankyung.com", "joongang.co.kr", "chosun.com", "mk.co.kr", "donga.com",
                  "hani.co.kr", "khan.co.kr", "mt.co.kr", "edaily.co.kr", "sedaily.com",
@@ -1182,6 +1185,15 @@ def _own_naver_domain(url: str) -> bool:
 def _is_news_url(url: str) -> bool:
     u = (url or "").lower()
     return any(d in u for d in _NEWS_DOMAINS)
+
+
+def _is_skip_url(url: str) -> bool:
+    u = (url or "").lower()
+    return any(d in u for d in _SKIP_DOMAINS)
+
+
+def _is_naver_domain(url: str) -> bool:
+    return "naver.com" in (url or "").lower()
 
 
 def _vip_naver_search_reply(transcript: Optional[str], lang: str, db=None) -> Optional[dict]:
@@ -1247,26 +1259,27 @@ def _vip_naver_search_reply(transcript: Optional[str], lang: str, db=None) -> Op
             continue
         if not prov.startswith(("naver_api", "serper")):
             continue
-        # Drop our own surfaces and news articles (about a property, not a listing).
-        if _own_naver_domain(url) or _is_news_url(url) or url in seen:
+        # Drop our own surfaces, news articles, and video/social (YouTube etc.).
+        if _own_naver_domain(url) or _is_news_url(url) or _is_skip_url(url) or url in seen:
             continue
         if _is_deep_naver_url(url) or _looks_like_listing(r):
             seen.add(url)
             listings.append(r)
-    # Best listings first: real ads (price/size signals) and land.naver.com pages on top.
-    listings.sort(key=lambda r: (_is_deep_naver_url(r.get("url") or ""), _listing_score(r)),
-                  reverse=True)
+    # Pick the single BEST listing: a real Naver listing first (land.naver.com / a
+    # naver.com page), then by ad-strength (price/size signals). User wants ONE link.
+    listings.sort(key=lambda r: (_is_deep_naver_url(r.get("url") or ""),
+                                 _is_naver_domain(r.get("url") or ""),
+                                 _listing_score(r)), reverse=True)
 
-    owns_note = ("\n(보유 자산: " + ", ".join(our_addrs[:5]) + ")") if our_addrs else ""
+    owns_note = ("\n\n(보유 자산: " + ", ".join(our_addrs[:5]) + ")") if our_addrs else ""
     if listings:
-        head = (f"네이버에서 '{subject}' 관련 매물·정보를 찾았습니다:" if not _en else
-                f"Found '{subject}' listings/info on NAVER:")
-        reply = (head + "\n\n" + "\n".join(_fmt(listings[:5]))
-                 + f"\n\n🔎 네이버에서 더 보기: {web_url}" + owns_note)
+        head = (f"네이버에서 '{subject}' 매물을 찾았습니다:" if not _en else
+                f"Found a '{subject}' listing on NAVER:")
+        reply = head + "\n\n" + "\n".join(_fmt(listings[:1])) + owns_note
     else:
-        # Never claim "not listed" — hand back the clickable Naver search link.
-        reply = ((f"'{subject}' 매물을 네이버에서 직접 확인해 보세요 — 검색 결과에서 최신 매물을 보실 수 있습니다:\n\n🔎 {web_url}"
-                  + owns_note) if not _en else
+        # Never claim "not listed" — hand back the single clickable Naver search link.
+        reply = ((f"'{subject}' 매물을 네이버에서 직접 확인해 보세요:\n\n🔎 {web_url}" + owns_note)
+                 if not _en else
                  (f"Check NAVER search for '{subject}' listings:\n\n🔎 {web_url}" + owns_note))
     return {"intent": "naver_search", "language": lang, "reply": reply[:1900],
             "action": None, "speak": True, "transcript": transcript,
