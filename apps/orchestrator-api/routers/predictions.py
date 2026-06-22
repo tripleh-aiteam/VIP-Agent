@@ -31,6 +31,14 @@ def predictions_list(horizon: int = Query(5), advice: Optional[str] = Query(None
     return {"predictions": ps.list_predictions(db, horizon=horizon, advice=advice)}
 
 
+@router.post("/collect-news")
+def collect_news(limit: int = Query(5, description="how many stocks to collect (test small)"),
+                 db: Session = Depends(get_db)):
+    """Manually run the news+sentiment collector -> raw_news (normally a daily cron)."""
+    from services.news_sentiment_collector import collect_all
+    return collect_all(db, limit=limit)
+
+
 @router.get("/{ticker}")
 def prediction_ticker(ticker: str, horizon: int = Query(5), db: Session = Depends(get_db)):
     p = ps.get_ticker(db, ticker, horizon)

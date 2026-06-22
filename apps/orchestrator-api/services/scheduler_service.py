@@ -1325,6 +1325,27 @@ def _master_daily_report(email_override: str | None = None, period: str = "daily
                 # still synthesizes all of them in its content).
                 _kor = {"daily": "데일리", "weekly": "주간", "monthly": "월간"}.get(period, "데일리")
                 md = _ko(rep)
+                # Prepend the ML model's BUY/SELL picks (read-only from model_predictions).
+                try:
+                    from services import prediction_service as _ps
+                    _s = _ps.summary(db)
+                    if _s.get("buys") or _s.get("sells"):
+                        ln = [f"## 🤖 AI 예측 — 오늘의 매매 신호 (5일 모델, {_s.get('as_of')})",
+                              "_per-stock ML 모델 추정치 · 투자 권유 아님 · 모델이 기준선을 이긴 종목만 표시 · "
+                              "각 종목 백테스트 정확도 병기_", ""]
+                        if _s.get("buys"):
+                            ln.append("**📈 매수 후보 (BUY):**")
+                            for p in _s["buys"]:
+                                ln.append(f"- {p['name']} — 신뢰도 {p['confidence']} · 예상 ±{p.get('expected_high_pct')}%(추정)"
+                                          f" · 백테스트 정확도 {round((p.get('backtest_acc') or 0)*100,1)}%")
+                        if _s.get("sells"):
+                            ln.append("\n**📉 매도/주의 (SELL):**")
+                            for p in _s["sells"]:
+                                ln.append(f"- {p['name']} — 신뢰도 {p['confidence']}"
+                                          f" · 백테스트 정확도 {round((p.get('backtest_acc') or 0)*100,1)}%")
+                        md = "\n".join(ln) + "\n\n---\n\n" + (md or "")
+                except Exception as _pe:
+                    log.warning(f"master: ML picks section skipped: {str(_pe)[:80]}")
                 files = []
                 if md:
                     files.append((f"추천_Recommendation_{ymd}.docx",
@@ -1428,6 +1449,21 @@ def _newspaper_daily_all():
 def _youtube_daily_all():
     """YouTube grounded report as its OWN email to the full recipient list."""
     _youtube_daily_report(email_override="*ALL*")
+
+
+@_single_flight("news_sentiment")
+def _news_sentiment_daily():
+    """Daily: collect per-stock news + LLM sentiment into raw_news — accumulates the
+    ML training data we currently lack (so we can later retrain WITH the news edge)."""
+    db = SessionLocal()
+    try:
+        from services.news_sentiment_collector import collect_all
+        res = collect_all(db)
+        log.info(f"news-sentiment daily done: {res}", extra={"action": "news_sentiment.daily"})
+    except Exception as e:
+        log.warning(f"news-sentiment daily failed: {str(e)[:100]}")
+    finally:
+        db.close()
 
 
 # --- Breaking-news monitor: every 15 min, fire on genuinely big NEW events ---
@@ -1655,6 +1691,18 @@ def init_scheduler():
         coalesce=True,
     )
     log.info("scheduler: breaking-news monitor registered (every 15 min, 24/7, severity-gated)", extra={"action": "scheduler.breaking_registered"})
+
+    # Daily per-stock news + sentiment collector -> raw_news (ML training data).
+    # 07:20 UTC = 16:20 KST (after KR market close + news settles).
+    _scheduler.add_job(
+        _news_sentiment_daily,
+        CronTrigger.from_crontab("20 7 * * *"),
+        id="news-sentiment-daily",
+        replace_existing=True,
+        max_instances=1,
+        coalesce=True,
+    )
+    log.info("scheduler: news-sentiment collector registered (16:20 KST daily -> raw_news)", extra={"action": "scheduler.news_sentiment_registered"})
 
     # NOTE: the grounded YouTube report is NO LONGER a separate email — it is
     # bundled into the consolidated master email below (all 4 reports together),
