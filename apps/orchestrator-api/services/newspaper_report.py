@@ -49,8 +49,12 @@ NEWSPAPERS: list[dict] = [
     {"name": "Korea Economic Daily (한국경제)", "site": "hankyung.com", "region": "KR"},
     {"name": "MoneyToday (머니투데이)", "site": "mt.co.kr", "region": "KR"},
     {"name": "SBS Biz", "site": "biz.sbs.co.kr", "region": "KR"},
+    {"name": "Edaily (이데일리)", "site": "edaily.co.kr", "region": "KR"},
+    {"name": "Seoul Economic Daily (서울경제)", "site": "sedaily.com", "region": "KR"},
     {"name": "Bloomberg", "site": "bloomberg.com", "region": "US"},
+    {"name": "Reuters", "site": "reuters.com", "region": "US"},
     {"name": "The Wall Street Journal", "site": "wsj.com", "region": "US"},
+    {"name": "Nikkei Asia", "site": "asia.nikkei.com", "region": "US"},
 ]
 
 # Hidden sources — searched and used in the Company Analysis + Recommendations,
@@ -151,7 +155,7 @@ def _gather_news_by_source(cap_kr: int = 5, cap_paid: int = 6) -> dict[str, list
 
     def _one_outlet(paper: dict) -> tuple[str, list[dict]]:
         name, site, kr = paper["name"], paper["site"], paper["region"] == "KR"
-        paid = name in ("Bloomberg", "The Wall Street Journal")
+        paid = name in ("Bloomberg", "The Wall Street Journal", "Reuters", "Nikkei Asia")
         arts: list[dict] = []
         if paid:
             for h in _recency_search(site, kr, per_query=cap_paid + 5):
@@ -475,7 +479,7 @@ def build_newspaper_report(db, trace_id: str) -> dict:
         def _summarize_outlet(paper: dict) -> tuple[str, str]:
             name = paper["name"]
             arts = grouped.get(name, [])
-            paid = name in ("Bloomberg", "The Wall Street Journal")
+            paid = name in ("Bloomberg", "The Wall Street Journal", "Reuters", "Nikkei Asia")
             if not arts:
                 return name, f"### {name}\n최근 신규 기사가 없습니다."
             has_full = any(a.get("full") for a in arts)

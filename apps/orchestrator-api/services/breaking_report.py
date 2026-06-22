@@ -57,6 +57,17 @@ _BASE_QUERIES = [
     "site:financialpost.com Korea OR Hanwha OR submarine OR shipbuilding",
     "Fed rate decision war tariff geopolitics impact Korea market",
     "삼성전자 SK하이닉스 HBM 엔비디아 반도체 수요 뉴스",
+    "site:asia.nikkei.com Korea OR semiconductor OR shipbuilding OR battery",
+    "연합인포맥스 이데일리 서울경제 증시 속보 종목 급등 급락",
+    "site:defensenews.com Korea OR Hanwha OR KAI OR submarine",
+    "Korea won dollar FX oil price KOSPI foreign investor flow news today",
+]
+
+# Lighter query set for the every-15-min detector (keeps search cost down).
+_TRIAGE_QUERIES = [
+    "South Korea stock market breaking news biggest market mover now",
+    "한국 증시 속보 급등 급락 주요 뉴스 오늘",
+    "site:reuters.com OR site:asia.nikkei.com South Korea market OR chips OR defense",
 ]
 
 
@@ -67,7 +78,8 @@ def _search(q: str, n: int = 6, recency: str | None = "d") -> list[dict]:
         if res.get("ok"):
             return [{"title": (h.get("title") or "").strip(),
                      "url": h.get("url", ""),
-                     "snippet": (h.get("snippet") or "").strip()}
+                     "snippet": (h.get("snippet") or "").strip(),
+                     "date": (h.get("date") or "").strip()}
                     for h in res.get("results", [])]
     except Exception as e:
         log.warning(f"breaking: search '{q[:40]}' failed: {str(e)[:80]}")
@@ -110,8 +122,9 @@ def gather_breaking(focus: str | None = None, seed_urls: list[str] | None = None
         except Exception:
             body = ""
         if body:
-            title = next((h["title"] for h in headlines if h.get("url") == u), u)
-            articles.append({"title": title, "url": u, "text": body})
+            hm = next((h for h in headlines if h.get("url") == u), None)
+            articles.append({"title": (hm or {}).get("title") or u, "url": u,
+                             "text": body, "date": (hm or {}).get("date", "")})
         if len(articles) >= 8:
             break
 
@@ -121,14 +134,16 @@ def gather_breaking(focus: str | None = None, seed_urls: list[str] | None = None
 def _news_block(g: dict) -> str:
     parts = []
     if g.get("articles"):
-        parts.append("=== FULL ARTICLES (substance) ===")
+        parts.append("=== FULL ARTICLES (substance) — cite URL + published time ===")
         for a in g["articles"]:
-            parts.append(f"[{a['title'][:140]}] ({a['url']})\n{a['text'][:2600]}")
-    parts.append("\n=== HEADLINES (titles + snippets) ===")
+            when = f" · 게재: {a['date']}" if a.get("date") else ""
+            parts.append(f"[{a['title'][:140]}] (URL: {a['url']}{when})\n{a['text'][:2600]}")
+    parts.append("\n=== HEADLINES (title · published time · URL · snippet) ===")
     for h in g.get("headlines", [])[:30]:
-        s = f"- {h['title'][:150]}"
+        when = f" · {h['date']}" if h.get("date") else ""
+        s = f"- {h['title'][:150]}{when} · {h.get('url', '')}"
         if h.get("snippet"):
-            s += f" — {h['snippet'][:200]}"
+            s += f"\n    {h['snippet'][:200]}"
         parts.append(s)
     return "\n".join(parts)
 
@@ -190,7 +205,12 @@ def build_breaking_report(db, trace_id: str, focus: str | None = None,
             "## 8. 체크포인트 & 일정 (What to watch next)\n"
             "   - upcoming catalysts/decisions tied to these events.\n"
             "## 9. 출처 (Sources)\n"
-            "   - clickable source links used.\n"
+            "   - a list of the source articles used, EACH as a clickable Markdown link "
+            "WITH its published time: '- [제목](URL) · 게재시각: <date>'. Use the exact URL "
+            "and the published time given in the news block (write '시각 미상' only if truly "
+            "absent). NEVER invent a URL or a time.\n"
+            "ALSO: in Section 2 (event-by-event), end each event with its source(s) as "
+            "'출처: [매체/제목](URL) · 게재: <date>' so every event is traceable.\n"
             "Use ONLY the provided news for facts; do not fabricate a deal that isn't there. "
             "Be decisive but mark every number as an estimate. Output ONLY the finished "
             "English Markdown report (Sections 1-9)."
@@ -209,7 +229,8 @@ def build_breaking_report(db, trace_id: str, focus: str | None = None,
                     "(존댓말). Translate EVERYTHING incl. section headings; NO English prose "
                     "except ticker codes/company tickers. Keep every number, %, and '추정/예상' "
                     "labels IDENTICAL. Preserve ALL Markdown structure and tables. Keep the "
-                    "강/중/약, 호재/악재, 높음/보통/낮음 labels. Output ONLY the Korean Markdown report.")
+                    "강/중/약, 호재/악재, 높음/보통/낮음 labels. Keep ALL source URLs and "
+                    "published times (게재시각/dates) EXACTLY as-is. Output ONLY the Korean Markdown report.")
                 ko_out = chat_completion_sync(
                     system_prompt=ko_sys, messages=[{"role": "user", "content": detail_en[:24000]}],
                     max_tokens=13000, temperature=0.3, model="groq-llama-3.3-70b", prefer_paid=True) or ""
@@ -222,7 +243,8 @@ def build_breaking_report(db, trace_id: str, focus: str | None = None,
         log.warning(f"breaking: LLM compose failed: {str(e)[:120]}")
 
     if not detail_en:
-        src = "\n".join(f"- [{h['title'][:90]}]({h['url']})" for h in g["headlines"][:10] if h.get("url"))
+        src = "\n".join(f"- [{h['title'][:90]}]({h['url']})" + (f" · 게재: {h['date']}" if h.get("date") else "")
+                        for h in g["headlines"][:12] if h.get("url"))
         detail_en = (f"# 🚨 Breaking Market-Impact Report\n*{kst}*\n\n## 1. 핵심 요약\n{sum_en}\n\n"
                      f"## 9. 출처\n{src or '- (no sources)'}")
     if not detail_ko:
@@ -246,6 +268,61 @@ def build_breaking_report(db, trace_id: str, focus: str | None = None,
         "detail_en": detail_en, "detail_ko": detail_ko,
         "table_en": "", "table_ko": "",
         "focus": focus,
-        "sources": [{"title": h["title"], "url": h["url"]} for h in g["headlines"][:30] if h.get("url")],
+        "sources": [{"title": h["title"], "url": h["url"], "date": h.get("date", "")}
+                    for h in g["headlines"][:30] if h.get("url")],
         "source": "TripleH Breaking News Impact (Korean + international outlets)",
     }
+
+
+def triage_events(seen_keys: set | None = None, min_sev: int = 7, max_events: int = 5) -> list[dict]:
+    """CHEAP detector for the 15-min monitor: a light news scan + one short LLM
+    triage call → NEW market-moving events (severity ≥ min_sev) for the KR market,
+    excluding anything matching `seen_keys`. Returns [{title, severity, theme, key}]."""
+    seen_keys = set(seen_keys or [])
+    heads: list[dict] = []
+    seen_titles: set[str] = set()
+    for q in _TRIAGE_QUERIES:
+        for h in _search(q, n=6, recency="h"):
+            k = (h.get("title") or "")[:90].lower()
+            if k and k not in seen_titles:
+                seen_titles.add(k)
+                heads.append(h)
+    if not heads:
+        return []
+    block = "\n".join(f"- {h['title'][:170]} — {h.get('snippet', '')[:170]}" for h in heads[:30])
+    try:
+        from services.llm_client import chat_completion_sync
+        sysmsg = (
+            "You triage breaking financial news for KOREAN-stock-market impact. From the "
+            "headlines, list ONLY NEW, genuinely market-moving events (severity ≥ 7 of 10) "
+            "that would move Korean stocks (any type: earnings, M&A, foreign/defense deals, "
+            "policy/tariffs, Fed/rates, FX, oil, geopolitics, chip demand, halts…). For each: "
+            "a short title, severity 1-10, theme, and a short stable 'key' (lowercase slug of "
+            "the core event). Output STRICT JSON array only: "
+            '[{"title":"","severity":7,"theme":"","key":""}]. Use [] if nothing major/new.')
+        user = f"ALREADY ALERTED (exclude these keys/topics): {sorted(seen_keys)[:40]}\n\nHEADLINES:\n{block}"
+        out = chat_completion_sync(
+            system_prompt=sysmsg, messages=[{"role": "user", "content": user[:9000]}],
+            max_tokens=700, temperature=0.2, model="groq-llama-3.3-70b", prefer_paid=True) or ""
+    except Exception as e:
+        log.warning(f"breaking triage LLM failed: {str(e)[:90]}")
+        return []
+    m = re.search(r"\[.*\]", out, re.S)
+    if not m:
+        return []
+    try:
+        import json as _json
+        events = _json.loads(m.group(0))
+    except Exception:
+        return []
+    res = []
+    for e in events if isinstance(events, list) else []:
+        try:
+            sev = int(e.get("severity", 0))
+        except Exception:
+            sev = 0
+        key = (str(e.get("key") or e.get("title", ""))[:50]).lower().strip()
+        if sev >= min_sev and key and key not in seen_keys:
+            res.append({"title": str(e.get("title", ""))[:160], "severity": sev,
+                        "theme": str(e.get("theme", "")), "key": key})
+    return sorted(res, key=lambda x: -x["severity"])[:max_events]

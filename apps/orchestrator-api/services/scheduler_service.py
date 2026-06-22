@@ -1430,6 +1430,51 @@ def _youtube_daily_all():
     _youtube_daily_report(email_override="*ALL*")
 
 
+# --- Breaking-news monitor: every 15 min, fire on genuinely big NEW events ---
+_BREAKING_SEEN: dict[str, float] = {}      # event key -> last-alerted epoch
+_BREAKING_SEEN_TTL = 12 * 3600             # don't re-alert the same event within 12h
+_BREAKING_DAY = {"day": "", "count": 0}    # per-KST-day email counter
+_BREAKING_CAP = 3                          # max immediate emails per day (anti-spam)
+_BREAKING_MIN_SEV = 7                      # only fire on severity >= this
+
+
+def _breaking_monitor():
+    """Every 15 min: cheap-detect NEW market-moving events (Korean + international
+    news). When one scores >= the severity threshold, build the FULL breaking
+    report and email ALL recipients + Telegram — de-duplicated (12h TTL) and capped
+    per day so it stays high-signal, not spam."""
+    import time as _t
+    try:
+        from services.breaking_report import triage_events
+        from services.kst import kst_date as _kd
+        # Env-tunable at call time (no redeploy needed):
+        #   BREAKING_MIN_SEV (default 7), BREAKING_CAP (default 3),
+        #   BREAKING_MONITOR_EMAIL (default '*ALL*' = all 7; set a single address to validate).
+        min_sev = int(os.getenv("BREAKING_MIN_SEV", "7") or 7)
+        cap = int(os.getenv("BREAKING_CAP", "3") or 3)
+        target = os.getenv("BREAKING_MONITOR_EMAIL") or "*ALL*"
+        now = _t.time()
+        for k in [k for k, ts in list(_BREAKING_SEEN.items()) if now - ts > _BREAKING_SEEN_TTL]:
+            _BREAKING_SEEN.pop(k, None)
+        day = _kd()
+        if _BREAKING_DAY["day"] != day:
+            _BREAKING_DAY.update(day=day, count=0)
+        if _BREAKING_DAY["count"] >= cap:
+            return  # already sent today's cap — stay quiet
+        events = triage_events(seen_keys=set(_BREAKING_SEEN.keys()), min_sev=min_sev)
+        if not events:
+            return
+        top = events[0]
+        _BREAKING_SEEN[top["key"]] = now
+        _BREAKING_DAY["count"] += 1
+        log.info(f"breaking-monitor: NEW event sev {top['severity']} — {top['title'][:70]} -> {target}",
+                 extra={"action": "breaking.monitor.fire"})
+        _breaking_report(email_override=target, focus=top["title"])
+    except Exception as e:
+        log.warning(f"breaking-monitor failed: {str(e)[:120]}",
+                    extra={"action": "breaking.monitor.failed"})
+
+
 def _knowledge_sync_job():
     """Feed the RAG knowledge base with the day's fresh reports (Phase 2), so the
     chatbot grounds answers in real content. Runs after the morning reports."""
@@ -1597,6 +1642,19 @@ def init_scheduler():
         replace_existing=True,
     )
     log.info("scheduler: Real Estate detailed report registered (22:05 UTC = 7:05 AM KST, all recipients, KO+EN)", extra={"action": "scheduler.realty_registered"})
+
+    # Breaking-news monitor — every 15 min, 24/7. Detects big NEW market-moving
+    # events and fires the impact report to ALL recipients (severity-gated, deduped,
+    # capped per day). Catches overnight global events (e.g. foreign defense deals).
+    _scheduler.add_job(
+        _breaking_monitor,
+        CronTrigger.from_crontab("*/15 * * * *"),
+        id="breaking-monitor",
+        replace_existing=True,
+        max_instances=1,   # never overlap a scan
+        coalesce=True,
+    )
+    log.info("scheduler: breaking-news monitor registered (every 15 min, 24/7, severity-gated)", extra={"action": "scheduler.breaking_registered"})
 
     # NOTE: the grounded YouTube report is NO LONGER a separate email — it is
     # bundled into the consolidated master email below (all 4 reports together),

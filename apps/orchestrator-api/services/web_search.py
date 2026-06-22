@@ -53,6 +53,15 @@ def _serper(query: str, n: int, recency: str | None = None) -> list[dict[str, An
             "title": item.get("title", ""),
             "url": item.get("link", ""),
             "snippet": item.get("snippet", ""),
+            "date": item.get("date", ""),   # published time when Serper provides it
+        })
+    # Dedicated 'news' block carries the freshest dated items — include them too.
+    for item in (data.get("news") or [])[:n]:
+        out.append({
+            "title": item.get("title", ""),
+            "url": item.get("link", ""),
+            "snippet": item.get("snippet", ""),
+            "date": item.get("date", ""),
         })
     # Answer box / knowledge graph give a quick direct answer when present.
     if data.get("answerBox"):
