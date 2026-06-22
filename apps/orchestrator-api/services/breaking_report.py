@@ -61,13 +61,17 @@ _BASE_QUERIES = [
     "연합인포맥스 이데일리 서울경제 증시 속보 종목 급등 급락",
     "site:defensenews.com Korea OR Hanwha OR KAI OR submarine",
     "Korea won dollar FX oil price KOSPI foreign investor flow news today",
+    "South Korea defense export deal Poland Romania Middle East Canada Hanwha KAI Hyundai Rotem K2 K9 FA-50 contract",
+    "site:politico.com Korea OR defense OR arms OR Poland OR submarine OR Hanwha OR shipbuilding",
+    "site:breakingdefense.com OR site:janes.com South Korea OR Hanwha OR KAI export",
 ]
 
 # Lighter query set for the every-15-min detector (keeps search cost down).
 _TRIAGE_QUERIES = [
     "South Korea stock market breaking news biggest market mover now",
     "한국 증시 속보 급등 급락 주요 뉴스 오늘",
-    "site:reuters.com OR site:asia.nikkei.com South Korea market OR chips OR defense",
+    "site:reuters.com OR site:asia.nikkei.com OR site:politico.com South Korea market OR chips OR defense",
+    "South Korea defense export arms deal Poland Canada Middle East billion contract latest",
 ]
 
 
