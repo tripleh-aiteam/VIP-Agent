@@ -1056,9 +1056,11 @@ _RE_TYPE_WORDS = {
 
 
 def _our_property_addresses(db, subject: str) -> list[str]:
-    """Resolve `subject` against OUR uploaded asset file (asset_units) and return the
-    distinct real addresses (e.g. '낙하리 301-7', '낙하리 301-9'). Empty list if we
-    own nothing matching — then the caller treats it as a generic Naver search."""
+    """Resolve `subject` against OUR uploaded asset file and return the distinct real
+    addresses / property names (e.g. '낙하리 301-7', '의정부역 한양수자인파크뷰 B1호').
+    Searches BOTH asset_units (address/property) and asset_portfolio (description, where
+    portfolio rows like 의정부 live). Empty list if we own nothing matching — then the
+    caller treats it as a generic Naver search."""
     if db is None or not (subject or "").strip():
         return []
     from sqlalchemy import text as _text
@@ -1068,17 +1070,26 @@ def _our_property_addresses(db, subject: str) -> list[str]:
         toks = [w for w in _re.split(r"\s+", subject.strip()) if w]
     if not toks:
         return []
-    blob = "(coalesce(address,'')||' '||coalesce(property,''))"
-    where = " AND ".join(f"{blob} ILIKE :t{i}" for i in range(len(toks)))
     params = {f"t{i}": f"%{t}%" for i, t in enumerate(toks)}
     out: list[str] = []
     try:
+        u_blob = "(coalesce(address,'')||' '||coalesce(property,''))"
+        u_where = " AND ".join(f"{u_blob} ILIKE :t{i}" for i in range(len(toks)))
         rows = db.execute(_text(
             f"SELECT DISTINCT coalesce(nullif(trim(address),''), property) AS a "
-            f"FROM asset_units WHERE {where} "
+            f"FROM asset_units WHERE {u_where} "
             f"AND coalesce(nullif(trim(address),''), property) IS NOT NULL LIMIT 8"), params)
         for r in rows:
             a = (r._mapping.get("a") or "").strip()
+            if a and a not in out:
+                out.append(a)
+        # Portfolio rows (의정부 등): the property name lives in `description`.
+        p_where = " AND ".join(f"coalesce(description,'') ILIKE :t{i}" for i in range(len(toks)))
+        prows = db.execute(_text(
+            f"SELECT DISTINCT trim(description) AS a FROM asset_portfolio "
+            f"WHERE {p_where} AND coalesce(trim(description),'') <> '' LIMIT 8"), params)
+        for r in prows:
+            a = _clean_portfolio_name(r._mapping.get("a") or "")
             if a and a not in out:
                 out.append(a)
     except Exception:
@@ -1087,10 +1098,44 @@ def _our_property_addresses(db, subject: str) -> list[str]:
         except Exception:
             pass
         return []
-    # Prefer specific addresses (with a lot/번지 number like '낙하리 301-7') over the
-    # bare area name — a Naver check on just '낙하리' is too broad to be meaningful.
-    specific = [a for a in out if _re.search(r"\d", a)]
-    return specific or out
+    # Drop a bare area name when a MORE specific entry extends it (e.g. drop '낙하리'
+    # when '낙하리 301-7' exists) — but keep named complexes like '의정부역 한양수자인
+    # 파크뷰' that have no lot number. A Naver check on just '낙하리' is too broad.
+    pruned = [a for a in out if not any(b != a and b.startswith(a) for b in out)]
+    return pruned or out
+
+
+def _clean_portfolio_name(desc: str) -> str:
+    """Reduce a portfolio description to a Naver-searchable property name:
+    '의정부역 한양수자인파크뷰 5개 호실' → '의정부역 한양수자인파크뷰'. Strips trailing
+    count/unit phrases and parenthetical area notes."""
+    d = (desc or "").strip()
+    d = _re.sub(r"\(.*?\)", " ", d)                       # drop '(45.37평)'
+    d = _re.sub(r"\s*\d+\s*개\s*호실.*$", "", d)           # '5개 호실'
+    d = _re.sub(r"\s+(B?\d+호|[가-힣]?\d+호)\s*$", "", d)  # trailing 'B1호'
+    return _re.sub(r"\s+", " ", d).strip()
+
+
+def _addr_on_naver(addr: str, result: dict) -> bool:
+    """True only if a Naver result genuinely corresponds to `addr` — its title /
+    snippet / decoded URL must mention the property's area token (e.g. '상신리',
+    '낙하리') OR its lot number. Prevents false 'listed' verdicts from generic
+    land.naver.com/article links Serper matched (e.g. 반포센트럴자이 for 상신리)."""
+    import urllib.parse as _up
+    parts = (addr or "").split()
+    area = parts[0] if parts else (addr or "")
+    nums = _re.findall(r"\d+(?:-\d+)?", addr or "")
+    hay = " ".join([
+        (result.get("title") or ""), (result.get("snippet") or ""),
+        _up.unquote(result.get("url") or ""),
+    ])
+    if area and area in hay:
+        return True
+    # A distinctive complex name token (≥4 chars, e.g. '한양수자인파크뷰') is strong proof.
+    if any(len(t) >= 4 and t in hay for t in parts):
+        return True
+    # A lot number WITH a dash ('301-7') is distinctive; bare short numbers aren't.
+    return any("-" in n and n in hay for n in nums)
 
 
 def _vip_naver_search_reply(transcript: Optional[str], lang: str, db=None) -> Optional[dict]:
@@ -1118,9 +1163,12 @@ def _vip_naver_search_reply(transcript: Optional[str], lang: str, db=None) -> Op
         # ===== Step 2: Naver-check each of our addresses (cap 5 for latency) =====
         listed, missing, last_res = [], [], None
         for addr in our_addrs[:5]:
-            r = naver_search(addr, realestate=True, num_results=4)
+            r = naver_search(addr, realestate=True, num_results=5)
             last_res = r
-            deep = [x for x in (r.get("results") or []) if _is_deep_naver_url(x.get("url") or "")]
+            # Count as listed ONLY when a deep Naver link ALSO genuinely matches this
+            # address (area/lot), so we never link an unrelated complex as "proof".
+            deep = [x for x in (r.get("results") or [])
+                    if _is_deep_naver_url(x.get("url") or "") and _addr_on_naver(addr, x)]
             if deep:
                 listed.append((addr, (deep[0].get("url") or "").strip()))
             else:
