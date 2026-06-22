@@ -1265,10 +1265,19 @@ def _vip_naver_search_reply(transcript: Optional[str], lang: str, db=None) -> Op
         if _is_deep_naver_url(url) or _looks_like_listing(r):
             seen.add(url)
             listings.append(r)
-    # Pick the single BEST listing: a real Naver listing first (land.naver.com / a
-    # naver.com page), then by ad-strength (price/size signals). User wants ONE link.
-    listings.sort(key=lambda r: (_is_deep_naver_url(r.get("url") or ""),
-                                 _is_naver_domain(r.get("url") or ""),
+    # Pick the single BEST listing. RELEVANCE first: the result must actually be about
+    # this property — area mentions in the TITLE weigh most (a '갈현리' post that just
+    # keyword-stuffs '낙하리' in its body must NOT win over a real '낙하리' listing).
+    # Then deep land.naver.com listing, then ad-strength.
+    area = (subject.split() or [subject])[0]
+
+    def _relevance(r: dict) -> int:
+        title = r.get("title") or ""
+        snippet = r.get("snippet") or ""
+        return title.count(area) * 3 + min(snippet.count(area), 2)
+
+    listings.sort(key=lambda r: (_relevance(r),
+                                 _is_deep_naver_url(r.get("url") or ""),
                                  _listing_score(r)), reverse=True)
 
     owns_note = ("\n\n(보유 자산: " + ", ".join(our_addrs[:5]) + ")") if our_addrs else ""
