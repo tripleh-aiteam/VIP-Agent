@@ -1023,7 +1023,7 @@ def _naver_subject(transcript: Optional[str]) -> str:
     t = transcript or ""
     # Strip search/listing filler + generic real-estate words (부동산/매물 — the search
     # itself scopes to Naver 부동산, so keep only the property NAME/ADDRESS + type).
-    t = _re.sub(r"(네이버에서|네이버|naver|부동산에|부동산|매물이|매물로|매물|광고|"
+    t = _re.sub(r"(네이버에서|네이버|naver|부동산에서|부동산에|부동산|매물이|매물로|매물|광고|"
                 r"검색해줘|검색해|검색|조회해줘|조회|확인해줘|확인|알려줘|알려|해줘|해주세요|"
                 r"시세는|시세|매매가|가격은|가격|얼마예요|얼마야|얼마|현재가|어때\??|"
                 r"올라와\s*있는지|올라와|올라온|등록\s*되어|등록|있는지요|있는지|있나요|있나|있어요|있어|"
@@ -1138,6 +1138,15 @@ def _addr_on_naver(addr: str, result: dict) -> bool:
     return any("-" in n and n in hay for n in nums)
 
 
+def _naver_provider_authoritative(provider: Optional[str]) -> bool:
+    """True only for providers that return REAL, verifiable Naver listing links —
+    the official Naver API or Serper scoped to land.naver.com. The last-resort
+    Gemini-grounded web search (provider 'naver(web:...)') returns opaque redirect
+    URLs we can't verify, so a "not listed" claim from it would be a lie."""
+    p = (provider or "")
+    return p.startswith("serper:naver") or p.startswith("naver_api")
+
+
 def _vip_naver_search_reply(transcript: Optional[str], lang: str, db=None) -> Optional[dict]:
     from services.naver_search import naver_search
     tl = (transcript or "").lower()
@@ -1161,7 +1170,7 @@ def _vip_naver_search_reply(transcript: Optional[str], lang: str, db=None) -> Op
 
     if our_addrs:
         # ===== Step 2: Naver-check each of our addresses (cap 5 for latency) =====
-        listed, missing, last_res = [], [], None
+        listed, missing, unverified, last_res = [], [], [], None
         for addr in our_addrs[:5]:
             r = naver_search(addr, realestate=True, num_results=5)
             last_res = r
@@ -1171,8 +1180,10 @@ def _vip_naver_search_reply(transcript: Optional[str], lang: str, db=None) -> Op
                     if _is_deep_naver_url(x.get("url") or "") and _addr_on_naver(addr, x)]
             if deep:
                 listed.append((addr, (deep[0].get("url") or "").strip()))
+            elif _naver_provider_authoritative(r.get("provider")):
+                missing.append(addr)   # an authoritative source genuinely found none
             else:
-                missing.append(addr)
+                unverified.append(addr)  # only the weak fallback ran — don't claim "not listed"
         # ===== Step 3/4: short answer — link only for the ones actually on Naver =====
         lines = []
         if listed:
@@ -1184,13 +1195,25 @@ def _vip_naver_search_reply(transcript: Optional[str], lang: str, db=None) -> Op
             lines.append(
                 (f"아직 네이버 부동산에 올라오지 않은 자산: {joined}" if not _en
                  else f"Not yet uploaded to NAVER 부동산: {joined}"))
+        if unverified and not listed and not missing:
+            # Provider degraded for the whole batch — be honest, don't fake a verdict.
+            lines.append(
+                ("네이버 매물 조회 서비스가 일시적으로 제한되어 지금은 확인할 수 없습니다 "
+                 "(검색 API 키 필요)." if not _en else
+                 "Couldn't check NAVER right now — the listing search provider is "
+                 "unavailable (search API key needed)."))
+        elif unverified:
+            joined = ", ".join(unverified)
+            lines.append(
+                (f"확인 불가(조회 제한): {joined}" if not _en
+                 else f"Could not verify (provider limited): {joined}"))
         reply = "\n\n".join(lines)
         return {"intent": "naver_search", "language": lang, "reply": reply[:1900],
                 "action": None, "speak": True, "transcript": transcript,
                 "tool_used": "naver_search",
                 "tool_result": {"ok": True, "our_assets": our_addrs,
                                 "listed": [a for a, _ in listed], "missing": missing,
-                                "last": last_res}}
+                                "unverified": unverified, "last": last_res}}
 
     # ===== No matching asset in our file → plain Naver search =====
     res = naver_search(subject, realestate=re_estate, num_results=6)
@@ -1202,11 +1225,17 @@ def _vip_naver_search_reply(transcript: Optional[str], lang: str, db=None) -> Op
             head = (f"네이버 부동산에서 '{subject}' 매물입니다:" if not _en else
                     f"NAVER 부동산 listings for '{subject}':")
             reply = head + "\n\n" + "\n".join(_fmt(deep[:5]))
-        else:
-            # Not found → confident statement, NO link (per product spec).
+        elif _naver_provider_authoritative(res.get("provider")):
+            # An authoritative source genuinely found nothing → confident, NO link.
             reply = (f"'{subject}'은(는) 아직 네이버 부동산에 올라오지 않았습니다."
                      if not _en else
                      f"'{subject}' has not been uploaded to NAVER 부동산 yet.")
+        else:
+            # Only the weak fallback ran — be honest instead of claiming "not listed".
+            reply = ("네이버 매물 조회 서비스가 일시적으로 제한되어 지금은 확인할 수 없습니다 "
+                     "(검색 API 키 필요)." if not _en else
+                     "Couldn't check NAVER right now — the listing search provider is "
+                     "unavailable (search API key needed).")
     else:
         if results:
             head = (f"네이버 검색 결과 — '{subject}':" if not _en else f"NAVER results for '{subject}':")
