@@ -88,12 +88,13 @@ def naver_search(query: str, *, kind: str = "web", num_results: int = 5,
     # land.naver.com links (clickable proof), avoiding the Gemini-grounding fallback
     # whose URLs are opaque redirects.
     if realestate:
+        # Only 2 variants (was 5) to conserve Serper credits — each property check
+        # already fans out over several addresses, so 5×N calls drained the quota.
+        # `site:land.naver.com` already matches the m.land / new.land subdomains in
+        # Google, so one scoped query covers them; one broader query is the fallback.
         variants = [
             f"{q} 매물 site:land.naver.com",
-            f"{q} site:m.land.naver.com",
-            f"site:new.land.naver.com {q}",
             f"{q} 네이버 부동산 매물",
-            f"{q} 부동산 매물 시세",
         ]
     else:
         variants = [f"{q} site:naver.com", f"{q} 네이버"]
