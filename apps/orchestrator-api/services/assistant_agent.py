@@ -1217,10 +1217,12 @@ def _vip_naver_search_reply(transcript: Optional[str], lang: str, db=None) -> Op
         out = []
         for r in rs:
             title = (r.get("title") or "매물").strip()
+            if len(title) > 48:
+                title = title[:48].rstrip() + "…"
             url = (r.get("url") or "").strip()
             snip = (r.get("snippet") or "").strip()[:110]
-            # Clickable markdown link (frontend renders [label](url) as <a>).
-            head = f"• **[{title}]({url})**" if url else f"• {title}"
+            # Clickable markdown link — NOT wrapped in ** (bold swallows the link).
+            head = f"• [{title}]({url})" if url else f"• {title}"
             out.append(head + (f"\n  {snip}" if snip else ""))
         return out
 
