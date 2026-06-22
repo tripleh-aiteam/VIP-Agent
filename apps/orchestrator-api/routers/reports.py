@@ -162,6 +162,30 @@ def trigger_asset_report(email: Optional[str] = Query(None, description="Optiona
             "message": "Detailed Asset report running in background. Check Reports in ~1-2 min."}
 
 
+@router.post("/compose/breaking", dependencies=[Depends(rate_limit_compose)])
+def trigger_breaking_report(
+    email: Optional[str] = Query(None, description="Recipient for the .docx email — must be on the allowlist."),
+    send_all: bool = Query(False, description="Email to ALL configured recipients."),
+    focus: Optional[str] = Query(None, description="Optional focus event, e.g. 'Canada submarine contract Korea defense shipbuilding'."),
+    urls: Optional[str] = Query(None, description="Optional comma-separated seed article URLs to read in full."),
+    db: Session = Depends(get_db),
+):
+    """Manually trigger the 🚨 Breaking market-impact report (news → affected KR
+    stocks with direction/강도/예상밴드/신뢰도)."""
+    if email:
+        if email.strip().lower() not in _allowed_report_recipients():
+            raise HTTPException(403, "recipient not allowed — add it to REPORT_ALLOWED_RECIPIENTS env")
+        email = email.strip()
+    elif send_all:
+        email = "*ALL*"
+    seed = [u.strip() for u in (urls or "").split(",") if u.strip()] or None
+    from services.scheduler_service import _breaking_report
+    import threading
+    threading.Thread(target=lambda: _breaking_report(email_override=email, focus=focus, seed_urls=seed), daemon=True).start()
+    return {"triggered": True, "email": email or "(env BREAKING_REPORT_EMAIL)", "focus": focus,
+            "message": "Breaking market-impact report running in background (~2-4 min)."}
+
+
 @router.post("/compose/realty", dependencies=[Depends(rate_limit_compose)])
 def trigger_realty_report(email: Optional[str] = Query(None, description="Optional recipient for the .docx email — must be on the allowlist. Scheduled run uses REALTY_REPORT_EMAIL env."), send_all: bool = Query(False, description="Email the report to ALL configured recipients."), lang: str = Query("ko", description="Report language: 'ko' (default) or 'en'."), db: Session = Depends(get_db)):
     """Manually trigger the DETAILED Real Estate Agent report (also runs ~7:05 AM KST,

@@ -1167,6 +1167,91 @@ def _realty_daily_report(email_override: str | None = None, period: str = "daily
         db.close()
 
 
+@_single_flight("breaking")
+@with_retry(max_attempts=2, backoff_seconds=(60, 300), job_name="breaking_report", alert_on_final_failure=False)
+def _breaking_report(email_override: str | None = None, focus: str | None = None,
+                     seed_urls: list[str] | None = None, lang: str = "ko"):
+    """Event-driven 🚨 속보 market-impact report — maps news (Korean + international)
+    to affected KR stocks with direction/강도/예상밴드/신뢰도. Saved + Telegram +
+    (when email_override set or '*ALL*') emailed KO+EN."""
+    from services.breaking_report import build_breaking_report
+    from services.kiwoom_report import format_report_telegram
+    from services.telegram_service import send_alert
+    from db.models import OrchReport
+
+    db = SessionLocal()
+    trace = f"tr-breaking-{int(datetime.utcnow().timestamp())}"
+    kst = kst_label()
+    try:
+        rep = build_breaking_report(db, trace, focus=focus, seed_urls=seed_urls)
+        r = OrchReport(
+            report_type="breaking_report",
+            source_run_ids_json=[],
+            content_json={
+                "report_type": "breaking_report", "period": "event",
+                "executive_summary": rep.get("summary_ko") or rep.get("summary_en") or "속보 리포트",
+                "sections": [{"title": "Breaking", "content": "", "data": {"severity": rep.get("severity")}}],
+                "report": rep,
+                "severity": rep.get("severity"),
+                "generated_at": datetime.utcnow().isoformat(), "kst_time": kst,
+            },
+            delivery_channel="auto",
+        )
+        db.add(r)
+        db.commit()
+
+        try:
+            for chunk in format_report_telegram(rep, kst, lang="ko",
+                                                title=f"속보 — 시장영향 (severity {rep.get('severity')}/10)",
+                                                emoji="🚨"):
+                send_alert(chunk)
+        except Exception as te:
+            log.warning(f"breaking telegram format failed: {te}")
+
+        try:
+            from services.report_docx import markdown_to_docx
+            from services.report_email import (send_email_with_docs,
+                                               is_configured as _email_ok, DEFAULT_RECIPIENT,
+                                               default_recipients)
+            if email_override == "*ALL*":
+                to_addr = default_recipients()
+            else:
+                to_addr = (email_override or os.getenv("BREAKING_REPORT_EMAIL")
+                           or os.getenv("REPORT_EMAIL_TO") or DEFAULT_RECIPIENT)
+            if (email_override or os.getenv("SEND_INDIVIDUAL_EMAILS") == "1") and _email_ok() and to_addr:
+                ymd = datetime.utcnow().strftime("%Y%m%d_%H%M")
+                ko_md = rep.get("detail_ko") or rep.get("detail_en") or ""
+                en_md = rep.get("detail_en") or rep.get("detail_ko") or ""
+                files = []
+                if ko_md:
+                    files.append((f"속보_Breaking_KO_{ymd}.docx",
+                                  markdown_to_docx(ko_md, "🚨 속보 — 시장영향 리포트 (한국어)", kst)))
+                if en_md:
+                    files.append((f"Breaking_Report_EN_{ymd}.docx",
+                                  markdown_to_docx(en_md, "Breaking Market-Impact Report (English)", kst)))
+                res = send_email_with_docs(
+                    to_addr, f"🚨 [속보] 시장영향 리포트 (severity {rep.get('severity')}/10) — {kst}",
+                    "시장을 움직일 수 있는 이벤트가 감지되었습니다. 영향받는 종목·방향·강도·예상 변동폭"
+                    "(추정)을 정리한 상세 리포트를 첨부합니다 (한/영).\n\n"
+                    "A market-moving event was detected — see the attached detailed impact report.",
+                    files)
+                log.info(f"breaking: email {'sent' if res.get('ok') else 'skipped'} -> "
+                         f"{len(to_addr) if isinstance(to_addr, list) else 1} recipient(s) "
+                         f"(sev {rep.get('severity')}, {res.get('reason', 'ok')})",
+                         extra={"trace_id": trace, "action": "breaking.email"})
+        except Exception as ee:
+            log.warning(f"breaking: email step failed: {ee}", extra={"action": "breaking.email.failed"})
+
+        log.info(f"breaking: report saved + sent (sev {rep.get('severity')}, {rep['status']})",
+                 extra={"trace_id": trace, "action": "breaking.done"})
+        return rep
+    except Exception as e:
+        log.warning(f"breaking: report failed: {e}", extra={"action": "breaking.failed"})
+        return None
+    finally:
+        db.close()
+
+
 @_single_flight("master")
 @with_retry(max_attempts=2, backoff_seconds=(60, 300), job_name="master_daily_report")
 def _master_daily_report(email_override: str | None = None, period: str = "daily", lang: str = "ko"):
