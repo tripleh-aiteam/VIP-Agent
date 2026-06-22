@@ -1152,8 +1152,15 @@ def _naver_provider_authoritative(provider: Optional[str]) -> bool:
 # Words that signal a result really is a property listing/ad (not just a mention).
 _LISTING_KW = ("매물", "임대", "매매", "전세", "월세", "보증금", "분양", "평", "㎡",
                "공장", "창고", "사옥", "상가", "오피스텔", "아파트", "토지", "부동산", "중개")
+# Strong listing signals (an actual ad has a price / size) — used to rank results.
+_STRONG_LISTING_KW = ("보증금", "월세", "전세", "매매가", "분양가", "평", "㎡", "억", "만원", "임대")
 # Our own surfaces — never cite these back as a "Naver listing".
 _OWN_NAVER_EXCLUDE = ("assetagent.vercel.app", "oasisvip", "vip-orchestrator", "onrender.com")
+# News/article domains — about a property, not a listing of it. Filtered out.
+_NEWS_DOMAINS = ("hankyung.com", "joongang.co.kr", "chosun.com", "mk.co.kr", "donga.com",
+                 "hani.co.kr", "khan.co.kr", "mt.co.kr", "edaily.co.kr", "sedaily.com",
+                 "newsis.com", "yna.co.kr", "ytn.co.kr", "kbs.co.kr", "sbs.co.kr",
+                 "news.", "/article/", "mbn.co.kr", "asiae.co.kr", "fnnews.com")
 
 
 def _looks_like_listing(r: dict) -> bool:
@@ -1161,9 +1168,20 @@ def _looks_like_listing(r: dict) -> bool:
     return any(k in hay for k in _LISTING_KW)
 
 
+def _listing_score(r: dict) -> int:
+    """Higher = more likely a real ad (has price/size signals)."""
+    hay = ((r.get("title") or "") + " " + (r.get("snippet") or "")).lower()
+    return sum(1 for k in _STRONG_LISTING_KW if k in hay)
+
+
 def _own_naver_domain(url: str) -> bool:
     u = (url or "").lower()
     return any(d in u for d in _OWN_NAVER_EXCLUDE)
+
+
+def _is_news_url(url: str) -> bool:
+    u = (url or "").lower()
+    return any(d in u for d in _NEWS_DOMAINS)
 
 
 def _vip_naver_search_reply(transcript: Optional[str], lang: str, db=None) -> Optional[dict]:
@@ -1186,10 +1204,12 @@ def _vip_naver_search_reply(transcript: Optional[str], lang: str, db=None) -> Op
     def _fmt(rs):
         out = []
         for r in rs:
-            title = (r.get("title") or "").strip()
+            title = (r.get("title") or "매물").strip()
             url = (r.get("url") or "").strip()
-            snip = (r.get("snippet") or "").strip()[:120]
-            out.append(f"• {title}" + (f"\n  🔗 {url}" if url else "") + (f"\n  {snip}" if snip else ""))
+            snip = (r.get("snippet") or "").strip()[:110]
+            # Clickable markdown link (frontend renders [label](url) as <a>).
+            head = f"• **[{title}]({url})**" if url else f"• {title}"
+            out.append(head + (f"\n  {snip}" if snip else ""))
         return out
 
     # Confirm whether this matches one of OUR uploaded properties (framing only).
@@ -1227,11 +1247,15 @@ def _vip_naver_search_reply(transcript: Optional[str], lang: str, db=None) -> Op
             continue
         if not prov.startswith(("naver_api", "serper")):
             continue
-        if _own_naver_domain(url) or url in seen:
+        # Drop our own surfaces and news articles (about a property, not a listing).
+        if _own_naver_domain(url) or _is_news_url(url) or url in seen:
             continue
         if _is_deep_naver_url(url) or _looks_like_listing(r):
             seen.add(url)
             listings.append(r)
+    # Best listings first: real ads (price/size signals) and land.naver.com pages on top.
+    listings.sort(key=lambda r: (_is_deep_naver_url(r.get("url") or ""), _listing_score(r)),
+                  reverse=True)
 
     owns_note = ("\n(보유 자산: " + ", ".join(our_addrs[:5]) + ")") if our_addrs else ""
     if listings:

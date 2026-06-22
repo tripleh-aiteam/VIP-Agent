@@ -37,13 +37,23 @@ import { jsPDF } from "jspdf";
 // breaks so "make a table" actually shows a table (not raw pipes).
 function inlineFmt(s: string): ReactNode[] {
   const out: ReactNode[] = [];
-  const re = /(\*\*[^*]+\*\*|`[^`]+`)/g;
+  // Tokens: **bold**, `code`, [label](url) markdown links, and bare http(s) URLs.
+  const re = /(\*\*[^*]+\*\*|`[^`]+`|\[[^\]]+\]\(https?:\/\/[^\s)]+\)|https?:\/\/[^\s)]+)/g;
+  const link = (href: string, label: string, k: number) => (
+    <a key={k} href={href} target="_blank" rel="noopener noreferrer"
+       className="text-blue-600 underline break-all hover:text-blue-700">{label}</a>
+  );
   let last = 0, k = 0, m: RegExpExecArray | null;
   while ((m = re.exec(s))) {
     if (m.index > last) out.push(s.slice(last, m.index));
     const tok = m[0];
     if (tok.startsWith("**")) out.push(<strong key={k++}>{tok.slice(2, -2)}</strong>);
-    else out.push(<code key={k++} className="px-1 py-0.5 bg-gray-100 rounded text-[13px] font-mono">{tok.slice(1, -1)}</code>);
+    else if (tok.startsWith("`")) out.push(<code key={k++} className="px-1 py-0.5 bg-gray-100 rounded text-[13px] font-mono">{tok.slice(1, -1)}</code>);
+    else if (tok.startsWith("[")) {
+      const mm = /^\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)$/.exec(tok);
+      if (mm) out.push(link(mm[2], mm[1], k++));
+      else out.push(tok);
+    } else out.push(link(tok, tok, k++));  // bare URL
     last = m.index + tok.length;
   }
   if (last < s.length) out.push(s.slice(last));
