@@ -1226,11 +1226,15 @@ def _vip_naver_search_reply(transcript: Optional[str], lang: str, db=None) -> Op
             out.append(head + (f"\n  {snip}" if snip else ""))
         return out
 
-    # Confirm whether this matches one of OUR uploaded properties (framing only).
-    our_addrs = _our_property_addresses(db, subject) if re_estate else []
+    # Resolve against OUR uploaded properties. This also decides intent: '우리 낙하리
+    # 네이버에 올라와 있어?' has NO real-estate keyword, but if 낙하리 is one of our
+    # assets it's clearly a property-listing question — route it there, not to a
+    # generic web search that dumps 맛집/위키 results.
+    our_addrs = _our_property_addresses(db, subject)
+    is_property = re_estate or bool(our_addrs)
 
-    # ===== General (non-real-estate) Naver search → just show results =====
-    if not re_estate:
+    # ===== General (non-property) Naver search → just show results =====
+    if not is_property:
         res = naver_search(subject, realestate=False, num_results=6)
         results = [r for r in (res.get("results") or [])
                    if (res.get("provider") or "").startswith(("naver_api", "serper"))
@@ -1282,11 +1286,25 @@ def _vip_naver_search_reply(transcript: Optional[str], lang: str, db=None) -> Op
                                  _is_deep_naver_url(r.get("url") or ""),
                                  _listing_score(r)), reverse=True)
 
+    # Default: ONE best ad link. If the user asks for more ('더 보여줘'), show several.
+    want_more = any(w in tl for w in (
+        "더 보", "더보", "더 알려", "더 줘", "더줘", "다른 매물", "다른거", "다른 거",
+        "전부", "모두", "목록", "여러", "리스트", "more", "other listing", "list them", "show all"))
+    n_show = 5 if want_more else 1
     owns_note = ("\n\n(보유 자산: " + ", ".join(our_addrs[:5]) + ")") if our_addrs else ""
     if listings:
-        head = (f"네이버에서 '{subject}' 매물을 찾았습니다:" if not _en else
-                f"Found a '{subject}' listing on NAVER:")
-        reply = head + "\n\n" + "\n".join(_fmt(listings[:1])) + owns_note
+        head = (f"네이버에서 '{subject}' 매물입니다:" if not _en else
+                f"'{subject}' listing on NAVER:")
+        body = "\n".join(_fmt(listings[:n_show]))
+        if want_more:
+            extra = (f"\n\n🔎 네이버에서 더 보기: {web_url}" if not _en
+                     else f"\n\n🔎 More on NAVER: {web_url}")
+        elif len(listings) > 1:
+            extra = ("\n\n더 보시려면 \"더 보여줘\"라고 말씀해 주세요." if not _en
+                     else "\n\nSay \"show more\" to see more listings.")
+        else:
+            extra = ""
+        reply = head + "\n\n" + body + extra + owns_note
     else:
         # Never claim "not listed" — hand back the single clickable Naver search link.
         reply = ((f"'{subject}' 매물을 네이버에서 직접 확인해 보세요:\n\n🔎 {web_url}" + owns_note)
