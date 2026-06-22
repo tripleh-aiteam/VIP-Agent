@@ -573,6 +573,38 @@ def debug_openai():
         return {"status": "error", "exception": str(e), "key_prefix": api_key[:12] + "..."}
 
 
+@router.get("/debug/serper")
+def debug_serper(q: str = "은마아파트 매물 site:land.naver.com"):
+    """Debug: is SERPER_API_KEY visible to THIS service and does a live call work?
+    Returns only key length + HTTP status + result count (never the key value)."""
+    import os
+    import httpx
+
+    key = os.environ.get("SERPER_API_KEY", "")
+    if not key:
+        return {"status": "error", "reason": "SERPER_API_KEY not set in this service",
+                "key_length": 0}
+    try:
+        with httpx.Client(timeout=12) as client:
+            resp = client.post(
+                "https://google.serper.dev/search",
+                headers={"X-API-KEY": key, "Content-Type": "application/json"},
+                json={"q": q, "num": 5, "gl": "kr", "hl": "ko"},
+            )
+        organic = []
+        try:
+            organic = resp.json().get("organic", []) or []
+        except Exception:
+            pass
+        return {"status": "ok" if resp.status_code == 200 else "error",
+                "http_status": resp.status_code, "key_length": len(key),
+                "results": len(organic),
+                "first_url": (organic[0].get("link") if organic else None),
+                "body": (None if resp.status_code == 200 else resp.text[:300])}
+    except Exception as e:
+        return {"status": "error", "exception": str(e)[:300], "key_length": len(key)}
+
+
 class CreateSessionBody(BaseModel):
     user_id: str = Field(default="operator")
     channel: str = Field(default="web", description="web | telegram | api")
