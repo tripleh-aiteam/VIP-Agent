@@ -342,11 +342,63 @@ def _tool_write_report(db: Session, twin_id: UUID, params: dict) -> str:
 #  System Prompt Builder (Enhanced)
 # ---------------------------------------------------------------------------
 
+def twin_self_profile(db: Session, twin: DigitalTwin) -> str:
+    """A compact, CHEAP (count-only) self-summary so the chat assistant knows
+    about its OWN twin — what it includes, how much, how it has grown. Used to
+    answer 'what do you know', 'how much have you learned', 'how improved', etc."""
+    from datetime import datetime as _dt, timedelta as _tdelta
+    from sqlalchemy import or_ as _or
+    from db.models import TwinKnowledge as _TK, TwinTask as _TT
+    from services.watch_learn import SUPPORTED_SOURCES as _SRC
+    tid = twin.id
+    try:
+        k_total = db.query(_TK).filter(_TK.twin_id == tid).count()
+        srcs = []
+        for key, label in _SRC.items():
+            cond = _TK.title.like(f"[{key}]%")
+            if key == "claude-code":
+                cond = _or(cond, _TK.title.like("%[claude auto]%"), _TK.title.like("Consolidated guide:%"))
+            n = db.query(_TK).filter(_TK.twin_id == tid, cond).count()
+            if n:
+                srcs.append(f"{label} {n}")
+        wk = _dt.utcnow() - _tdelta(days=7)
+        k_week = db.query(_TK).filter(_TK.twin_id == tid, _TK.created_at >= wk).count()
+        t_total = db.query(_TT).filter(_TT.twin_id == tid).count()
+        t_done = db.query(_TT).filter(_TT.twin_id == tid, _TT.status == "done").count()
+    except Exception:
+        return ""
+    if k_total == 0:
+        tier = "brand new — nothing learned yet"
+    elif k_total < 50:
+        tier = "just starting to learn"
+    elif k_total < 200:
+        tier = "developing"
+    elif k_total < 600:
+        tier = "solid knowledge"
+    else:
+        tier = "well-trained"
+    created = twin.created_at.strftime("%b %d, %Y") if getattr(twin, "created_at", None) else "—"
+    lines = [
+        f"- You are {twin.name}, {twin.role}" + (f", {twin.department}" if getattr(twin, "department", None) else ""),
+        f"- Knowledge: {k_total} items learned" + (f" (sources: {', '.join(srcs)})" if srcs else "") + f"; +{k_week} new in the last 7 days",
+        f"- Tasks: {t_done} completed out of {t_total}",
+        f"- Readiness: {tier}",
+        f"- Watch & Learn: {'ON' if getattr(twin, 'learning_consent', False) else 'OFF'} · "
+        f"Help-other-twins: {'ON' if getattr(twin, 'peer_help_enabled', False) else 'OFF'} · "
+        f"Auto-post: {'ON' if getattr(twin, 'feed_autopost_enabled', False) else 'OFF'}",
+        f"- Created: {created}",
+    ]
+    return ("ABOUT YOU (your own twin — use these REAL facts to answer questions about "
+            "yourself, what you know, how much you've learned, how you've improved):\n"
+            + "\n".join(lines) + "\n\n")
+
+
 def build_system_prompt(
     twin: DigitalTwin,
     knowledge_docs: list[TwinKnowledge],
     available_tools: bool = True,
     assistant_mode: bool = False,
+    self_profile: str = "",
 ) -> str:
     """
     Build a 6-layer personality system prompt.
@@ -399,6 +451,8 @@ def build_system_prompt(
             "from what you know. ONLY use the web_search tool for time-sensitive/changing info — today's news, "
             "live prices, weather, or recent events your training wouldn't know.\n\n"
         )
+        if self_profile:
+            p += self_profile
         rules = (hard_rules[:3] + corrections[:3])
         if rules:
             p += "Keep in mind (the worker's preferences/corrections):\n"
@@ -588,8 +642,12 @@ def think(
         relevant_knowledge = _select_relevant_knowledge(
             all_knowledge, user_message, emb_map=emb_map, query_vec=query_vec)[:3]
 
+    # Self-awareness: a cheap profile of the twin's own stats so it can answer
+    # "what do you know / how much have you learned / how improved".
+    self_profile = twin_self_profile(db, twin)
+
     # Build system prompt with tools (#26) — conversational work-assistant behavior
-    system_prompt = build_system_prompt(twin, relevant_knowledge, available_tools=True, assistant_mode=True)
+    system_prompt = build_system_prompt(twin, relevant_knowledge, available_tools=True, assistant_mode=True, self_profile=self_profile)
 
     # Build message history: memory + explicit history + current message
     messages = []
@@ -634,7 +692,7 @@ def think(
             {"role": "user", "content": f"Tool results:\n{tool_block}\n\nNow write your final answer using these results. Do not call any more tools."},
         ]
         response = chat_completion_sync(
-            system_prompt=build_system_prompt(twin, relevant_knowledge, available_tools=False, assistant_mode=True),
+            system_prompt=build_system_prompt(twin, relevant_knowledge, available_tools=False, assistant_mode=True, self_profile=self_profile),
             messages=followup[-8:], max_tokens=1500, temperature=0.7, model=model,
         )
         # Safety: strip any stray tool tags the model may still emit.
