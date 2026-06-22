@@ -1587,12 +1587,13 @@ def tool_asset_search(query: str, db: Session = None, **_kw) -> dict[str, Any]:
         for k in ("sale_price", "deposit", "monthly_rent"):
             if r.get(k) is not None:
                 r[k] = f(r[k])
-    if not units and not pf and len(toks) > 1:
-        # Relaxed fallback: a property is named differently across sheets
-        # ('의정부역 한양수자인파크뷰 B1호' vs '의정부상가 B1호'), so strict token-AND
-        # can miss it. Rank every row by how many query tokens it contains and
-        # return the best partial matches (must hit >= half the tokens).
-        need = max(1, (len(toks) + 1) // 2)
+    if not units and not pf and len(toks) >= 3:
+        # Relaxed fallback ONLY for specific multi-word queries: a property is named
+        # differently across sheets ('의정부역 한양수자인파크뷰 B1호' vs '의정부상가 B1호'),
+        # so strict token-AND can miss it. Require all-but-one token to match
+        # (need = len-1) so a single shared category word (e.g. '창고','상가') can NEVER
+        # pull an unrelated asset — that previously made '제주도 리조트' return 낙하리 창고.
+        need = len(toks) - 1
         or_u = " OR ".join(f"{u_blob} ILIKE :t{i}" for i in range(len(toks)))
         or_p = " OR ".join(f"{p_blob} ILIKE :t{i}" for i in range(len(toks)))
         try:
@@ -1603,33 +1604,33 @@ def tool_asset_search(query: str, db: Session = None, **_kw) -> dict[str, Any]:
             cand_p = [dict(r._mapping) for r in db.execute(_text(
                 "SELECT category, description, sale_price, deposit, monthly_rent "
                 f"FROM asset_portfolio WHERE {or_p} LIMIT 40"), params)]
+
+            def _score(blob: str) -> int:
+                b = (blob or "").lower()
+                return sum(1 for t in toks if t.lower() in b)
+            scored_u = sorted(
+                ((_score(" ".join(str(r.get(k) or "") for k in
+                                   ("property", "unit_no", "address", "category", "status", "tenant"))), r)
+                 for r in cand_u), key=lambda x: x[0], reverse=True)
+            scored_p = sorted(
+                ((_score(" ".join(str(r.get(k) or "") for k in ("category", "description"))), r)
+                 for r in cand_p), key=lambda x: x[0], reverse=True)
+            units = [r for s, r in scored_u if s >= need][:10]
+            pf = [r for s, r in scored_p if s >= need][:8]
+            for r in units:
+                for k in ("area_pyeong", "price", "market_value", "deposit", "monthly_rent"):
+                    if r.get(k) is not None:
+                        r[k] = f(r[k])
+            for r in pf:
+                for k in ("sale_price", "deposit", "monthly_rent"):
+                    if r.get(k) is not None:
+                        r[k] = f(r[k])
         except Exception as e:
             try:
                 db.rollback()
             except Exception:
                 pass
             return {"ok": False, "error": str(e)[:150]}
-
-        def _score(blob: str) -> int:
-            b = (blob or "").lower()
-            return sum(1 for t in toks if t.lower() in b)
-        scored_u = sorted(
-            ((_score(" ".join(str(r.get(k) or "") for k in
-                               ("property", "unit_no", "address", "category", "status", "tenant"))), r)
-             for r in cand_u), key=lambda x: x[0], reverse=True)
-        scored_p = sorted(
-            ((_score(" ".join(str(r.get(k) or "") for k in ("category", "description"))), r)
-             for r in cand_p), key=lambda x: x[0], reverse=True)
-        units = [r for s, r in scored_u if s >= need][:10]
-        pf = [r for s, r in scored_p if s >= need][:8]
-        for r in units:
-            for k in ("area_pyeong", "price", "market_value", "deposit", "monthly_rent"):
-                if r.get(k) is not None:
-                    r[k] = f(r[k])
-        for r in pf:
-            for k in ("sale_price", "deposit", "monthly_rent"):
-                if r.get(k) is not None:
-                    r[k] = f(r[k])
         if units or pf:
             return {"ok": True, "matches": len(units) + len(pf), "units": units,
                     "portfolio_items": pf, "match": "partial"}
@@ -1706,6 +1707,28 @@ def tool_asset_top(metric: str = "area", order: str = "desc", limit: int = 5,
             if r.get(k) is not None:
                 r[k] = f(r[k])
     return {"ok": True, "ranked_by": col, "order": od, "results": rows}
+
+
+def tool_stock_predictions(advice: str = "BUY", ticker: str = None, limit: int = 5,
+                           db: Session = None, **_kw) -> dict[str, Any]:
+    """Our ML model's daily stock calls (BUY/SELL/HOLD) from the per-stock trained
+    models. Use for 'what should I buy', '뭐 사야 돼', '매수 추천 종목', 'sell?',
+    or a specific ticker. Honest: only stocks whose model beats its baseline get
+    BUY/SELL; everything else is HOLD, and each pick shows its backtest accuracy."""
+    from services import prediction_service as ps
+    if ticker:
+        p = ps.get_ticker(db, ticker.strip())
+        return {"ok": bool(p), "prediction": p} if p else {"ok": False, "error": f"{ticker} 예측 없음"}
+    a = (advice or "BUY").strip().upper()
+    if a in ("ALL", "SUMMARY", ""):
+        return {"ok": True, **ps.summary(db)}
+    try:
+        n = max(1, min(int(limit or 5), 15))
+    except Exception:
+        n = 5
+    picks = ps.top_picks(db, a if a in ("BUY", "SELL", "HOLD") else "BUY", n)
+    return {"ok": True, "advice": a, "picks": picks,
+            "disclaimer": "ML 추정치이며 투자 권유가 아닙니다. 각 종목의 백테스트 정확도(backtest_acc)를 함께 확인하세요."}
 
 
 TOOL_REGISTRY: dict[str, Tool] = {
@@ -1819,6 +1842,29 @@ TOOL_REGISTRY: dict[str, Tool] = {
             "required": [],
         },
         fn=tool_asset_top,
+    ),
+    "stock_predictions": Tool(
+        name="stock_predictions",
+        description=(
+            "Our ML model's DAILY STOCK CALLS — BUY / SELL / HOLD for Korean stocks, "
+            "from per-stock trained models. ALWAYS use this for '뭐 사야 돼', '어떤 주식 "
+            "살까', '매수 추천', 'what should I buy', 'which stocks to buy/sell', 'today's "
+            "picks', 'AI 추천 종목'. advice: BUY|SELL|HOLD|ALL. Pass a ticker (e.g. 005930) "
+            "for one stock. Returns ranked picks WITH each model's backtest accuracy + a "
+            "'this is an estimate, not investment advice' disclaimer. Honest by design: "
+            "only stocks whose model beats its baseline get BUY/SELL."
+        ),
+        kind="read",
+        parameters={
+            "type": "object",
+            "properties": {
+                "advice": {"type": "string", "description": "BUY (default) | SELL | HOLD | ALL (full summary)"},
+                "ticker": {"type": "string", "description": "Optional 6-digit KR ticker for one stock, e.g. 005930"},
+                "limit": {"type": "integer", "description": "How many picks (1-15, default 5)"},
+            },
+            "required": [],
+        },
+        fn=tool_stock_predictions,
     ),
 
     # --- Phase 2: READ tools (Notion-AI-style search) ---

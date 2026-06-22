@@ -57,6 +57,7 @@ from routers.chatbot_inbox import router as chatbot_inbox_router, ws_router as c
 from routers.kakao_webhook import router as kakao_webhook_router
 from routers.admin_business import router as admin_business_router
 from routers.assistant_knowledge import router as assistant_knowledge_router
+from routers.predictions import router as predictions_router
 from services.scheduler_service import init_scheduler
 from services.event_bus import init_event_bus
 from services.a2a_triggers import init_triggers
@@ -297,6 +298,7 @@ app.include_router(chatbot_ws_router)
 app.include_router(kakao_webhook_router)
 app.include_router(admin_business_router)
 app.include_router(assistant_knowledge_router)
+app.include_router(predictions_router)
 
 
 # ---------------------------------------------------------------------------
