@@ -1113,7 +1113,22 @@ def _is_stock_question(transcript: Optional[str]) -> bool:
         return False
     if _stock_in_query(transcript) is not None or _is_us_stock_query(transcript):
         return True
+    # Real-estate guard: a clearly-property question ('향남 아파트 시세', '제주 토지
+    # 매물') shares price words like 시세/가격/얼마 with stocks. When it carries a
+    # real-estate keyword but resolves to NO specific stock, it is NOT a stock
+    # question — don't let stock delegation hijack it from naver_search/onbid_search.
+    if any(k in t for k in _REALESTATE_Q_KW):
+        return False
     return any(k in t for k in _STOCK_Q_KW)
+
+
+# Real-estate domain keywords that disqualify a "시세/가격/얼마" query from being
+# treated as a stock question (when no specific stock name is present).
+_REALESTATE_Q_KW = (
+    "부동산", "매물", "아파트", "토지", "땅", "상가", "오피스텔", "빌라", "주택",
+    "임야", "전세", "월세", "분양", "재건축", "재개발", "평당",
+    "real estate", "property", "apartment", "officetel", "land plot",
+)
 
 
 # Follow-up phrasings that, after a stock turn, still concern that stock
