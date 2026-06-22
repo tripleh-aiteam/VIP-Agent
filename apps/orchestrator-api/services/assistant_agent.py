@@ -699,6 +699,12 @@ def _is_vip_current_price_q(transcript: Optional[str], agent_id: Optional[str]) 
         return False
     if any(w in t for w in ("뉴스", "news", "유튜브", "youtube", "리포트", "report")):
         return False
+    # Real-estate guard: '제주 토지 시세', '향남 아파트 가격' share price words with
+    # stocks. When a property keyword is present and NO specific stock resolves, it's
+    # a real-estate question — don't answer it with the stock watchlist.
+    if (any(k in t for k in _REALESTATE_Q_KW)
+            and _stock_in_query(transcript) is None):
+        return False
     # Fire if a specific stock is named OR it's a generic stock-price ask (→ watchlist).
     return (_stock_in_query(transcript) is not None
             or any(w in t for w in _GENERIC_STOCK_WORDS))
@@ -1028,13 +1034,70 @@ def _naver_subject(transcript: Optional[str]) -> str:
     return _re.sub(r"\s+", " ", t).strip()
 
 
-def _vip_naver_search_reply(transcript: Optional[str], lang: str) -> Optional[dict]:
+def _is_deep_naver_url(u: str) -> bool:
+    """A "deep" Naver 부동산 link (specific article/complex/search) is real proof a
+    property is advertised. A bare land.naver.com homepage is NOT — Serper just
+    matched the site."""
+    u = (u or "").lower()
+    if "land.naver.com" not in u:
+        return False
+    tail = u.split("land.naver.com", 1)[1].lstrip("/")
+    return len(tail) > 1 and any(k in u for k in (
+        "articleno", "outlinkbridge", "/complexes", "/offices", "/article", "/search"))
+
+
+# Generic property-TYPE words — stripped when picking the address key to look up in
+# our asset file, so '낙하리 땅' resolves on the area token '낙하리'.
+_RE_TYPE_WORDS = {
+    "땅", "집", "건물", "매물", "부동산", "아파트", "상가", "토지", "오피스텔", "빌라",
+    "주택", "임야", "도로", "공장", "창고", "property", "land", "house", "building",
+    "apartment", "officetel",
+}
+
+
+def _our_property_addresses(db, subject: str) -> list[str]:
+    """Resolve `subject` against OUR uploaded asset file (asset_units) and return the
+    distinct real addresses (e.g. '낙하리 301-7', '낙하리 301-9'). Empty list if we
+    own nothing matching — then the caller treats it as a generic Naver search."""
+    if db is None or not (subject or "").strip():
+        return []
+    from sqlalchemy import text as _text
+    toks = [w for w in _re.split(r"\s+", subject.strip())
+            if w and w.lower() not in _RE_TYPE_WORDS]
+    if not toks:
+        toks = [w for w in _re.split(r"\s+", subject.strip()) if w]
+    if not toks:
+        return []
+    blob = "(coalesce(address,'')||' '||coalesce(property,''))"
+    where = " AND ".join(f"{blob} ILIKE :t{i}" for i in range(len(toks)))
+    params = {f"t{i}": f"%{t}%" for i, t in enumerate(toks)}
+    out: list[str] = []
+    try:
+        rows = db.execute(_text(
+            f"SELECT DISTINCT coalesce(nullif(trim(address),''), property) AS a "
+            f"FROM asset_units WHERE {where} "
+            f"AND coalesce(nullif(trim(address),''), property) IS NOT NULL LIMIT 8"), params)
+        for r in rows:
+            a = (r._mapping.get("a") or "").strip()
+            if a and a not in out:
+                out.append(a)
+    except Exception:
+        try:
+            db.rollback()
+        except Exception:
+            pass
+        return []
+    # Prefer specific addresses (with a lot/번지 number like '낙하리 301-7') over the
+    # bare area name — a Naver check on just '낙하리' is too broad to be meaningful.
+    specific = [a for a in out if _re.search(r"\d", a)]
+    return specific or out
+
+
+def _vip_naver_search_reply(transcript: Optional[str], lang: str, db=None) -> Optional[dict]:
     from services.naver_search import naver_search
     tl = (transcript or "").lower()
     re_estate = any(k in tl for k in _NAVER_RE_KW)
     subject = _naver_subject(transcript) or (transcript or "")
-    res = naver_search(subject, realestate=re_estate, num_results=6)
-    results = res.get("results") or []
     _en = (lang or "").lower().startswith("en")
 
     def _fmt(rs):
@@ -1046,46 +1109,56 @@ def _vip_naver_search_reply(transcript: Optional[str], lang: str) -> Optional[di
             out.append(f"• {title}" + (f"\n  🔗 {url}" if url else "") + (f"\n  {snip}" if snip else ""))
         return out
 
+    # ===== Step 1: resolve the address from OUR uploaded asset file first =====
+    # '낙하리' → ['낙하리 301-7', '낙하리 301-9', ...]. If we own matching properties we
+    # Naver-check each PRECISE address; otherwise it's a generic Naver search.
+    our_addrs = _our_property_addresses(db, subject) if re_estate else []
+
+    if our_addrs:
+        # ===== Step 2: Naver-check each of our addresses (cap 5 for latency) =====
+        listed, missing, last_res = [], [], None
+        for addr in our_addrs[:5]:
+            r = naver_search(addr, realestate=True, num_results=4)
+            last_res = r
+            deep = [x for x in (r.get("results") or []) if _is_deep_naver_url(x.get("url") or "")]
+            if deep:
+                listed.append((addr, (deep[0].get("url") or "").strip()))
+            else:
+                missing.append(addr)
+        # ===== Step 3/4: short answer — link only for the ones actually on Naver =====
+        lines = []
+        if listed:
+            lines.append("✅ 네이버 부동산에 올라와 있는 자산:" if not _en else "✅ Listed on NAVER 부동산:")
+            for addr, url in listed:
+                lines.append(f"• {addr}\n  🔗 {url}")
+        if missing:
+            joined = ", ".join(missing)
+            lines.append(
+                (f"아직 네이버 부동산에 올라오지 않은 자산: {joined}" if not _en
+                 else f"Not yet uploaded to NAVER 부동산: {joined}"))
+        reply = "\n\n".join(lines)
+        return {"intent": "naver_search", "language": lang, "reply": reply[:1900],
+                "action": None, "speak": True, "transcript": transcript,
+                "tool_used": "naver_search",
+                "tool_result": {"ok": True, "our_assets": our_addrs,
+                                "listed": [a for a, _ in listed], "missing": missing,
+                                "last": last_res}}
+
+    # ===== No matching asset in our file → plain Naver search =====
+    res = naver_search(subject, realestate=re_estate, num_results=6)
+    results = res.get("results") or []
     if re_estate:
-        # A direct Naver 부동산 search link the user can ALWAYS click to verify themselves.
-        # Encode only spaces — keep Korean readable (browsers handle raw Hangul in paths).
-        verify_url = "https://m.land.naver.com/search/result/" + subject.strip().replace(" ", "%20")
-        # A "deep" listing link (specific article/complex) is real proof the property is
-        # advertised. A bare land.naver.com homepage is NOT — Serper just matched the site.
-        def _is_deep(u: str) -> bool:
-            u = (u or "").lower()
-            if "land.naver.com" not in u:
-                return False
-            tail = u.split("land.naver.com", 1)[1].lstrip("/")
-            return len(tail) > 1 and any(k in u for k in (
-                "articleno", "outlinkbridge", "/complexes", "/offices", "/article", "/search"))
-        deep = [r for r in results if _is_deep(r.get("url") or "")]
-        verify_line = (f"\n\n🔎 직접 확인: {verify_url}" if not _en
-                       else f"\n\n🔎 Verify yourself: {verify_url}")
-        # Ownership check ('우리/저희/our 낙하리 땅 네이버에 올라와 있어?') vs a generic
-        # listing search ('향남 아파트 매물 검색'). Only the ownership case gets the
-        # ✅/❌ "is it listed yet" verdict — a generic search just shows the listings.
-        owns = any(w in tl for w in ("우리", "저희", "our", "내 ", "제 "))
+        deep = [r for r in results if _is_deep_naver_url(r.get("url") or "")]
+        # We don't own it (or couldn't resolve it) — report listings generically.
         if deep:
-            if owns:
-                verdict = (f"✅ '{subject}'은(는) 네이버 부동산에 매물로 올라와 있습니다. "
-                           f"아래 링크에서 확인하세요:" if not _en else
-                           f"✅ '{subject}' IS listed on NAVER 부동산. See the listing(s) below:")
-            else:
-                verdict = (f"네이버 부동산에서 '{subject}' 매물입니다:" if not _en else
-                           f"NAVER 부동산 listings for '{subject}':")
-            reply = verdict + "\n\n" + "\n".join(_fmt(deep[:5])) + verify_line
+            head = (f"네이버 부동산에서 '{subject}' 매물입니다:" if not _en else
+                    f"NAVER 부동산 listings for '{subject}':")
+            reply = head + "\n\n" + "\n".join(_fmt(deep[:5]))
         else:
-            if owns:
-                # Confident: our property simply isn't on Naver yet.
-                verdict = (f"'{subject}'은(는) 아직 네이버 부동산에 올라오지 않았습니다."
-                           if not _en else
-                           f"'{subject}' has not been uploaded to NAVER 부동산 yet.")
-            else:
-                verdict = (f"네이버 부동산에서 '{subject}' 매물을 찾지 못했습니다."
-                           if not _en else
-                           f"No NAVER 부동산 listings found for '{subject}'.")
-            reply = verdict + verify_line
+            # Not found → confident statement, NO link (per product spec).
+            reply = (f"'{subject}'은(는) 아직 네이버 부동산에 올라오지 않았습니다."
+                     if not _en else
+                     f"'{subject}' has not been uploaded to NAVER 부동산 yet.")
     else:
         if results:
             head = (f"네이버 검색 결과 — '{subject}':" if not _en else f"NAVER results for '{subject}':")
@@ -3329,7 +3402,7 @@ def _run_agent_impl(
     # stock/delegation routing so '네이버에 우리 땅 매물 있어?' isn't handed to the Stock
     # agent. =====
     if not confirmed_tool and _is_naver_search_q(transcript):
-        _nr = _vip_naver_search_reply(transcript, lang)
+        _nr = _vip_naver_search_reply(transcript, lang, db)
         if _nr:
             return _nr
 
