@@ -1067,12 +1067,10 @@ def _vip_naver_search_reply(transcript: Optional[str], lang: str) -> Optional[di
                        f"✅ '{subject}' IS currently listed on NAVER 부동산. See the listing(s) below:")
             reply = verdict + "\n\n" + "\n".join(_fmt(deep[:5])) + verify_line
         else:
-            # Definitive: no listing found = not (yet) advertised on Naver.
-            verdict = (f"❌ 현재 '{subject}'은(는) 네이버 부동산에 매물로 등록되어 있지 않습니다. "
-                       f"(아직 네이버에 올라오지 않았습니다.)\n혹시 몰라 직접 확인하시려면 아래 링크를 눌러 보세요:"
+            # Definitive, confident: no listing found = simply not uploaded to Naver yet.
+            verdict = (f"'{subject}'은(는) 아직 네이버 부동산에 올라오지 않았습니다."
                        if not _en else
-                       f"❌ '{subject}' is NOT currently listed on NAVER 부동산 (not uploaded yet).\n"
-                       f"To double-check yourself, tap the link below:")
+                       f"'{subject}' has not been uploaded to NAVER 부동산 yet.")
             reply = verdict + verify_line
     else:
         if results:
