@@ -83,7 +83,8 @@ def _search(q: str, n: int = 6, recency: str | None = "d") -> list[dict]:
             return [{"title": (h.get("title") or "").strip(),
                      "url": h.get("url", ""),
                      "snippet": (h.get("snippet") or "").strip(),
-                     "date": (h.get("date") or "").strip()}
+                     "date": (h.get("date") or "").strip(),
+                     "window": recency or "d"}   # which recency pass it came from
                     for h in res.get("results", [])]
     except Exception as e:
         log.warning(f"breaking: search '{q[:40]}' failed: {str(e)[:80]}")
@@ -133,24 +134,31 @@ def gather_breaking(focus: str | None = None, seed_urls: list[str] | None = None
         if body:
             hm = next((h for h in headlines if h.get("url") == u), None)
             articles.append({"title": (hm or {}).get("title") or u, "url": u,
-                             "text": body, "date": (hm or {}).get("date", "")})
+                             "text": body, "date": (hm or {}).get("date", ""),
+                             "window": (hm or {}).get("window", "d")})
         if len(articles) >= 8:
             break
 
     return {"headlines": headlines, "articles": articles, "focus": focus}
 
 
+def _freshness(h: dict) -> str:
+    """Always return a time/freshness string — never blank.
+    Explicit publisher date if present, else the recency window it was found in."""
+    if h.get("date"):
+        return h["date"]
+    return "최근 1시간 이내 수집" if h.get("window") == "h" else "최근 24시간 이내 수집"
+
+
 def _news_block(g: dict) -> str:
     parts = []
     if g.get("articles"):
-        parts.append("=== FULL ARTICLES (substance) — cite URL + published time ===")
+        parts.append("=== FULL ARTICLES (substance) — cite URL + published/collected time ===")
         for a in g["articles"]:
-            when = f" · 게재: {a['date']}" if a.get("date") else ""
-            parts.append(f"[{a['title'][:140]}] (URL: {a['url']}{when})\n{a['text'][:2600]}")
-    parts.append("\n=== HEADLINES (title · published time · URL · snippet) ===")
+            parts.append(f"[{a['title'][:140]}] (URL: {a['url']} · 게재/수집: {_freshness(a)})\n{a['text'][:2600]}")
+    parts.append("\n=== HEADLINES (title · published/collected time · URL · snippet) ===")
     for h in g.get("headlines", [])[:30]:
-        when = f" · {h['date']}" if h.get("date") else ""
-        s = f"- {h['title'][:150]}{when} · {h.get('url', '')}"
+        s = f"- {h['title'][:150]} · {_freshness(h)} · {h.get('url', '')}"
         if h.get("snippet"):
             s += f"\n    {h['snippet'][:200]}"
         parts.append(s)
@@ -214,8 +222,10 @@ def build_breaking_report(db, trace_id: str, focus: str | None = None,
             "ALWAYS label buy/sell as 추정/참고 — never a guarantee.\n"
             "## 4. 체크포인트 & 출처\n"
             "   - 2-4 bullets on what to watch next, then a short source list: "
-            "'- [제목](URL) · 게재시각: <time>'. Use the EXACT URLs + times from the news block; "
-            "never invent a URL or a time.\n"
+            "'- [제목](URL) · 게재시각: <time>'. EVERY source MUST show a time — use the "
+            "publisher time from the news block, and if a line only has a freshness window "
+            "(e.g. '최근 1시간 이내 수집') use that EXACTLY. NEVER leave the time blank, and "
+            "NEVER write '미상'. Never invent a URL or a time.\n"
             "Use ONLY provided facts; mark every price/% as an estimate.\n"
             "Begin output with ONE line 'TOP_SEVERITY: <N>' (highest event severity 1-10), then "
             "the English Markdown report (Sections 1-4) and nothing else."
@@ -250,12 +260,22 @@ def build_breaking_report(db, trace_id: str, focus: str | None = None,
         log.warning(f"breaking: LLM compose failed: {str(e)[:120]}")
 
     if not detail_en:
-        src = "\n".join(f"- [{h['title'][:90]}]({h['url']})" + (f" · 게재: {h['date']}" if h.get("date") else "")
+        src = "\n".join(f"- [{h['title'][:90]}]({h['url']}) · {_freshness(h)}"
                         for h in g["headlines"][:12] if h.get("url"))
         detail_en = (f"# 🚨 Breaking Market-Impact Report\n*{kst}*\n\n## 1. 핵심 요약\n{sum_en}\n\n"
                      f"## 9. 출처\n{src or '- (no sources)'}")
     if not detail_ko:
         detail_ko = detail_en
+
+    # Guaranteed freshness banner (always present, regardless of the LLM) —
+    # proves when we scanned and that items are within the monitoring window.
+    n_h = sum(1 for h in g.get("headlines", []) if h.get("window") == "h")
+    banner_ko = (f"🕐 **스캔 시각(KST): {kst}** · 뉴스 신선도: 최근 1시간 이내 수집 "
+                 f"(15분 주기 자동 모니터링) · 1시간 이내 기사 {n_h}건\n\n---\n\n")
+    banner_en = (f"🕐 **Scan time (KST): {kst}** · Freshness: collected within the last hour "
+                 f"(15-min auto-monitor) · {n_h} items from the last hour\n\n---\n\n")
+    detail_ko = banner_ko + detail_ko
+    detail_en = banner_en + detail_en
 
     # severity = the model's explicit TOP_SEVERITY line; fall back to max 'N/10'.
     sev = 6
