@@ -75,7 +75,27 @@ def naver_search(query: str, *, kind: str = "web", num_results: int = 5,
     cid = os.environ.get("NAVER_CLIENT_ID")
     csec = os.environ.get("NAVER_CLIENT_SECRET")
 
-    # 1) Official Naver API. For real-estate we bias the query toward 매물 listings.
+    # IMPORTANT: 부동산 매물 listings live on land.naver.com, which ONLY Serper (Google
+    # scoped to that domain) can return. Naver's official Open API searches web/news/
+    # blog — NOT 부동산 listings — so for real-estate it must NOT be used to decide
+    # "is this property listed?" (it would return news articles and we'd falsely say
+    # "not listed"). Provider order therefore differs by intent:
+    #   • real-estate  → Serper first (real listings); Naver API/web only as fallback
+    #   • general      → Naver API first (free, great for web/news/blog)
+
+    # 1) Real-estate: Serper scoped to land.naver.com FIRST.
+    if realestate:
+        # Only 2 variants (was 5) to conserve Serper credits — each property check
+        # already fans out over several addresses, so 5×N calls drained the quota.
+        # `site:land.naver.com` already matches the m.land / new.land subdomains in
+        # Google, so one scoped query covers them; one broader query is the fallback.
+        for scoped in (f"{q} 매물 site:land.naver.com", f"{q} 네이버 부동산 매물"):
+            hits = _serper(scoped, n)
+            if hits:
+                return {"ok": True, "provider": "serper:naver", "results": hits,
+                        "query": scoped, "realestate": realestate}
+
+    # 2) Official Naver API — authoritative for GENERAL search (web/news/blog/local).
     if cid and csec:
         api_q = f"{q} 매물 네이버부동산" if realestate else q
         res = _naver_api(api_q, kind, n, cid, csec)
@@ -84,25 +104,13 @@ def naver_search(query: str, *, kind: str = "web", num_results: int = 5,
             res["realestate"] = realestate
             return res
 
-    # 2) Direct Serper (Google) scoped to NAVER — returns REAL naver.com /
-    # land.naver.com links (clickable proof), avoiding the Gemini-grounding fallback
-    # whose URLs are opaque redirects.
-    if realestate:
-        # Only 2 variants (was 5) to conserve Serper credits — each property check
-        # already fans out over several addresses, so 5×N calls drained the quota.
-        # `site:land.naver.com` already matches the m.land / new.land subdomains in
-        # Google, so one scoped query covers them; one broader query is the fallback.
-        variants = [
-            f"{q} 매물 site:land.naver.com",
-            f"{q} 네이버 부동산 매물",
-        ]
-    else:
-        variants = [f"{q} site:naver.com", f"{q} 네이버"]
-    for scoped in variants:
-        hits = _serper(scoped, n)
-        if hits:
-            return {"ok": True, "provider": "serper:naver", "results": hits,
-                    "query": scoped, "realestate": realestate}
+    # 3) Serper for general (non-real-estate) queries.
+    if not realestate:
+        for scoped in (f"{q} site:naver.com", f"{q} 네이버"):
+            hits = _serper(scoped, n)
+            if hits:
+                return {"ok": True, "provider": "serper:naver", "results": hits,
+                        "query": scoped, "realestate": realestate}
 
     # 3) Last resort: the generic web-search chain (may include other providers).
     from services.web_search import search_web

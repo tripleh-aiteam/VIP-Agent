@@ -1139,12 +1139,13 @@ def _addr_on_naver(addr: str, result: dict) -> bool:
 
 
 def _naver_provider_authoritative(provider: Optional[str]) -> bool:
-    """True only for providers that return REAL, verifiable Naver listing links —
-    the official Naver API or Serper scoped to land.naver.com. The last-resort
-    Gemini-grounded web search (provider 'naver(web:...)') returns opaque redirect
-    URLs we can't verify, so a "not listed" claim from it would be a lie."""
-    p = (provider or "")
-    return p.startswith("serper:naver") or p.startswith("naver_api")
+    """True only for a provider that can actually confirm/deny a 부동산 LISTING —
+    i.e. Serper scoped to land.naver.com. The official Naver Open API
+    (provider 'naver_api:*') searches web/news/blog, NOT 부동산 listings, and the
+    Gemini-grounded fallback ('naver(web:...)') returns opaque redirects — so a
+    "not listed" claim from either would be a lie. Only serper:naver lets us say
+    a property is genuinely not on Naver 부동산."""
+    return (provider or "").startswith("serper:naver")
 
 
 def _vip_naver_search_reply(transcript: Optional[str], lang: str, db=None) -> Optional[dict]:
