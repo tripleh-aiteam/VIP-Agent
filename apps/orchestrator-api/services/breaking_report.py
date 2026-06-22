@@ -100,14 +100,19 @@ def gather_breaking(focus: str | None = None, seed_urls: list[str] | None = None
 
     headlines: list[dict] = []
     seen: set[str] = set()
-    for q in queries[:10]:
-        for h in _search(q):
-            key = (h.get("title") or h.get("url") or "")[:90].lower()
-            if not key or key in seen:
-                continue
-            seen.add(key)
-            headlines.append(h)
-        if len(headlines) >= 40:
+    # Freshest first: past-HOUR results, then top up with past-day only if thin
+    # (so the report reflects 'now', not 2-hours-ago news).
+    for rec in ("h", "d"):
+        for q in queries[:10]:
+            for h in _search(q, recency=rec):
+                key = (h.get("title") or h.get("url") or "")[:90].lower()
+                if not key or key in seen:
+                    continue
+                seen.add(key)
+                headlines.append(h)
+            if len(headlines) >= 40:
+                break
+        if len(headlines) >= 15:   # enough fresh items — skip the day-wide top-up
             break
 
     # Pull FULL text for the most relevant articles (seed URLs first, then a few
@@ -161,6 +166,16 @@ def build_breaking_report(db, trace_id: str, focus: str | None = None,
     news = _news_block(g)
     universe = "\n".join(f"  - {k}: {v}" for k, v in SECTOR_UNIVERSE.items())
 
+    # Live Kiwoom watchlist prices (current price + change%) so the report can give
+    # real 현재가 + 매수가/매도가 advice for affected names we can actually price.
+    price_ctx = ""
+    try:
+        from services import kiwoom_report as _kr
+        _rows, _te, _price_ko, _rate = _kr.gather_priced_rows()
+        price_ctx = _price_ko or ""
+    except Exception as e:
+        log.warning(f"breaking: kiwoom price ctx failed: {str(e)[:80]}")
+
     sum_en = (f"Breaking market-impact scan ({len(g['headlines'])} headlines, "
               f"{len(g['articles'])} full articles)" + (f" — focus: {focus}" if focus else "") + ".")
     sum_ko = (f"속보 시장영향 스캔 (헤드라인 {len(g['headlines'])}건, 본문 {len(g['articles'])}건)"
@@ -170,62 +185,48 @@ def build_breaking_report(db, trace_id: str, focus: str | None = None,
     try:
         from services.llm_client import chat_completion_sync
         sysmsg = (
-            "You are TripleH's senior market strategist writing a DETAILED, event-driven "
-            "BREAKING-NEWS IMPACT report for the boss. From the NEWS provided (Korean AND "
-            "international outlets), identify the market-moving EVENTS and analyse how each "
-            "affects KOREAN stocks. Foreign news matters (e.g. a Canadian submarine/ship "
-            "order lifts Korean defense & shipbuilding names). Ground every stock call in "
-            "the SECTOR UNIVERSE below (real KR tickers) — you may add other real KR names "
-            "you know.\n\nSECTOR UNIVERSE:\n" + universe + "\n\n"
-            "⚠ NOT limited to any fixed event type. RANK EVERY market-moving factor in the "
-            "news by its impact on the KOREAN market (severity 1-10) and cover the TOP ~10 "
-            "(fewer only if there truly aren't that many). They can be ANYTHING moving "
-            "prices: earnings surprises, M&A, foreign export/defense deals, policy & "
-            "tariffs, Fed/rates, FX(원/달러), oil, geopolitics/war, chip demand(HBM/엔비디아), "
-            "trading halts, index rebalances, regulation, etc. (war/submarine deals are just "
-            "examples, NOT the scope). Order events strongest-impact first.\n\n"
-            "For EACH affected stock give: 방향(호재 ▲ / 악재 ▼), 강도(강/중/약), "
-            "예상 변동폭(% 밴드 — 반드시 '추정치'로 표기, 확정 아님), 신뢰도(높음/보통/낮음), "
-            "그리고 한두 문장의 인과 사슬(왜 오르고/내리는지). NEVER present the % as a promise — "
-            "always label it 추정/예상.\n\n"
-            "Produce this EXACT structure (substantial, ~2-3 pages):\n"
-            "## 1. 핵심 요약 (Executive Summary)\n"
-            "   - a RANKED top-events table | 순위 | 이벤트 | 심각도(1-10) | 핵심 영향 종목 | 방향 | — "
-            "the most market-moving events first (aim for ~10), then a 2-3 sentence overall read.\n"
-            "## 2. 이벤트별 영향 분석 (Event-by-event, ranked)\n"
-            "   - for EACH ranked event (top ~10): 무슨 일인지(사실), 출처 국가/매체, 영향받는 종목 표:\n"
-            "     | 종목 | 방향 | 강도 | 예상 변동폭(추정) | 신뢰도 | 근거(인과) |\n"
-            "   - then 2-3 sentences of deeper reasoning per event.\n"
-            "## 3. 호재 종목 (Bullish ▲, ranked by impact)\n"
-            "   - a ranked list/table of the BUY-side names with 강도·예상밴드·이유.\n"
-            "## 4. 악재 종목 (Bearish ▼, ranked)\n"
-            "   - the SELL/avoid-side names (write '해당 없음' if none).\n"
-            "## 5. 테마별 분류 (By theme)\n"
-            "   - group impacts by 방산/조선/반도체/2차전지/매크로 etc.\n"
-            "## 6. 해외 뉴스 → 한국 증시 (Foreign news read-through)\n"
-            "   - explicitly connect the INTERNATIONAL articles to Korean tickers.\n"
-            "## 7. 우리 보유·관심 종목 영향 (Our watchlist)\n"
-            f"   - impact on: {OUR_WATCHLIST}. If none material, say so honestly.\n"
-            "## 8. 체크포인트 & 일정 (What to watch next)\n"
-            "   - upcoming catalysts/decisions tied to these events.\n"
-            "## 9. 출처 (Sources)\n"
-            "   - a list of the source articles used, EACH as a clickable Markdown link "
-            "WITH its published time: '- [제목](URL) · 게재시각: <date>'. Use the exact URL "
-            "and the published time given in the news block (write '시각 미상' only if truly "
-            "absent). NEVER invent a URL or a time.\n"
-            "ALSO: in Section 2 (event-by-event), end each event with its source(s) as "
-            "'출처: [매체/제목](URL) · 게재: <date>' so every event is traceable.\n"
-            "Use ONLY the provided news for facts; do not fabricate a deal that isn't there. "
-            "Be decisive but mark every number as an estimate.\n"
-            "Begin your output with ONE line exactly: 'TOP_SEVERITY: <N>' where <N> is the "
-            "highest single event severity (1-10) in this report. Then output the finished "
-            "English Markdown report (Sections 1-9) and nothing else."
+            "You are TripleH's senior market strategist writing a CONCISE, event-driven "
+            "🚨 BREAKING-NEWS IMPACT report for the boss. Use the NEWS (Korean + international) "
+            "AND the live KIWOOM PRICE TABLE provided. Foreign news matters (a Canadian "
+            "submarine or Polish arms deal lifts Korean defense/shipbuilding names). Ground "
+            "stock calls in the SECTOR UNIVERSE (real KR tickers); you may add others you know.\n\n"
+            "SECTOR UNIVERSE:\n" + universe + "\n\n"
+            "⚠ LENGTH: MAXIMUM 3 PAGES (~1100-1400 words). Tight and high-signal — no padding.\n"
+            "⚠ DO NOT START WITH A TABLE — start with a short PROSE summary.\n"
+            "⚠ NOT limited to any event type. RANK every market-moving factor by KR-market "
+            "impact (severity 1-10) and cover the TOP 5 (the biggest only). Types can be "
+            "anything: earnings, M&A, export/defense deals, policy/tariffs, Fed/rates, FX, oil, "
+            "war, chip demand, halts… (war/submarine are just examples).\n"
+            "For each affected stock: 방향(호재▲/악재▼) · 강도(강/중/약) · 예상 변동폭(% 추정) · "
+            "신뢰도(높음/보통/낮음) + a one-sentence 근거. NEVER present % as a promise — mark 추정.\n\n"
+            "Produce EXACTLY this structure:\n"
+            "## 1. 핵심 요약\n"
+            "   - 3-5 sentences of PROSE (NO table): the single most important read right now, "
+            "overall market direction, and the highest severity present.\n"
+            "## 2. 상위 이벤트 & 종목 영향 (Top 5, ranked)\n"
+            "   - for each of the top ~5 events: a one-line fact, then per affected stock the "
+            "방향·강도·예상밴드(추정)·신뢰도 + one-sentence 근거 (compact bullets, NOT a giant table). "
+            "End EACH event with '출처: [매체](URL) · 게재: <time>'.\n"
+            "## 3. 가격 분석 & 매매 전략 (Kiwoom price)\n"
+            "   - for the KEY affected stocks (especially watchlist names in the price table): "
+            "현재가(키움 표 기준) · 추천 매수가(좋은 진입가) · 추천 매도가(목표가) + 근거. Use the REAL "
+            "current price from the table where listed; for others give a level marked '추정'. "
+            "ALWAYS label buy/sell as 추정/참고 — never a guarantee.\n"
+            "## 4. 체크포인트 & 출처\n"
+            "   - 2-4 bullets on what to watch next, then a short source list: "
+            "'- [제목](URL) · 게재시각: <time>'. Use the EXACT URLs + times from the news block; "
+            "never invent a URL or a time.\n"
+            "Use ONLY provided facts; mark every price/% as an estimate.\n"
+            "Begin output with ONE line 'TOP_SEVERITY: <N>' (highest event severity 1-10), then "
+            "the English Markdown report (Sections 1-4) and nothing else."
         )
-        user = (f"DATE (KST): {kst}\n" + (f"FOCUS EVENT: {focus}\n" if focus else "") + "\n"
-                f"NEWS:\n{news}")
+        user = (f"DATE (KST): {kst}\n" + (f"FOCUS EVENT: {focus}\n" if focus else "")
+                + (f"\nKIWOOM PRICE TABLE (current prices — use for 현재가/매수가/매도가):\n{price_ctx}\n"
+                   if price_ctx else "")
+                + f"\nNEWS (freshest first):\n{news}")
         out = chat_completion_sync(
-            system_prompt=sysmsg, messages=[{"role": "user", "content": user[:24000]}],
-            max_tokens=9000, temperature=0.5, model="groq-llama-3.3-70b", prefer_paid=True) or ""
+            system_prompt=sysmsg, messages=[{"role": "user", "content": user[:22000]}],
+            max_tokens=5200, temperature=0.5, model="groq-llama-3.3-70b", prefer_paid=True) or ""
         if out.strip() and not out.lstrip().startswith(("[LLM unavailable]", "[server error]")):
             detail_en = out.strip()
             try:
@@ -238,8 +239,8 @@ def build_breaking_report(db, trace_id: str, focus: str | None = None,
                     "강/중/약, 호재/악재, 높음/보통/낮음 labels. Keep ALL source URLs and "
                     "published times (게재시각/dates) EXACTLY as-is. Output ONLY the Korean Markdown report.")
                 ko_out = chat_completion_sync(
-                    system_prompt=ko_sys, messages=[{"role": "user", "content": detail_en[:24000]}],
-                    max_tokens=13000, temperature=0.3, model="groq-llama-3.3-70b", prefer_paid=True) or ""
+                    system_prompt=ko_sys, messages=[{"role": "user", "content": detail_en[:16000]}],
+                    max_tokens=7000, temperature=0.3, model="groq-llama-3.3-70b", prefer_paid=True) or ""
                 if ko_out.strip() and not ko_out.lstrip().startswith(("[LLM unavailable]", "[server error]")) \
                         and len(ko_out.strip()) > 400:
                     detail_ko = ko_out.strip()
@@ -287,7 +288,7 @@ def build_breaking_report(db, trace_id: str, focus: str | None = None,
     }
 
 
-def triage_events(seen_keys: set | None = None, min_sev: int = 7, max_events: int = 5) -> list[dict]:
+def triage_events(seen_keys: set | None = None, min_sev: int = 5, max_events: int = 5) -> list[dict]:
     """CHEAP detector for the 15-min monitor: a light news scan + one short LLM
     triage call → NEW market-moving events (severity ≥ min_sev) for the KR market,
     excluding anything matching `seen_keys`. Returns [{title, severity, theme, key}]."""

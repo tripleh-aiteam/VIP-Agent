@@ -1450,7 +1450,7 @@ def _breaking_monitor():
         # Env-tunable at call time (no redeploy needed):
         #   BREAKING_MIN_SEV (default 7), BREAKING_CAP (default 3),
         #   BREAKING_MONITOR_EMAIL (default '*ALL*' = all 7; set a single address to validate).
-        min_sev = int(os.getenv("BREAKING_MIN_SEV", "7") or 7)
+        min_sev = int(os.getenv("BREAKING_MIN_SEV", "5") or 5)
         cap = int(os.getenv("BREAKING_CAP", "3") or 3)
         target = os.getenv("BREAKING_MONITOR_EMAIL") or "*ALL*"
         now = _t.time()
