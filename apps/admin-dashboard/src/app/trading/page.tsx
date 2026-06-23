@@ -5,7 +5,27 @@ import { api } from "@/components/api";
 import { useLanguage } from "@/components/i18n";
 
 // ---- types (mirror trading_brief.brief) ----
-type Levels = { close?: number; open?: number; support?: number; resistance?: number; entry?: number; target?: number; stop?: number; rr?: number };
+type Levels = { close?: number; open?: number; support?: number; resistance?: number; entry?: number; target?: number; stop?: number; rr?: number; buy_lo?: number; buy_hi?: number; sell_lo?: number; sell_hi?: number };
+
+// Buy/Sell as an interval (from–to), plus a single Stop. Used by both methods.
+function PlanRows({ L, t }: { L: Levels; t: (ko: string, en: string) => string }) {
+  const Range = ({ label, lo, hi, color }: { label: string; lo?: number; hi?: number; color: string }) => (
+    <div className="flex items-center justify-between rounded-lg bg-[var(--bg-elevated)] px-2.5 py-1.5">
+      <span className="text-[10px] text-[var(--text-muted)]">{label}</span>
+      <span className="text-[12.5px] font-bold" style={{ color }}>{lo != null ? `${fmt(lo)} ~ ${fmt(hi)}` : "-"}</span>
+    </div>
+  );
+  return (
+    <div className="space-y-1 mb-2">
+      <Range label={t("매수 구간", "Buy zone")} lo={L.buy_lo} hi={L.buy_hi} color="var(--text-primary)" />
+      <Range label={t("매도 구간(목표)", "Sell zone")} lo={L.sell_lo} hi={L.sell_hi} color="var(--badge-success-text)" />
+      <div className="flex items-center justify-between px-2.5">
+        <span className="text-[10px] text-[var(--text-muted)]">{t("손절가", "Stop")}</span>
+        <span className="text-[12px] font-bold" style={{ color: "var(--error)" }}>{fmt(L.stop)}</span>
+      </div>
+    </div>
+  );
+}
 
 // 시가 / 현재가 row shown on every card
 function PriceRow({ open, current, t }: { open?: number; current?: number; t: (ko: string, en: string) => string }) {
@@ -179,11 +199,7 @@ function MLCard({ c, t }: { c: Card; t: (ko: string, en: string) => string }) {
         )}
       </div>
       <PriceRow open={L.open} current={L.close} t={t} />
-      <div className="grid grid-cols-3 gap-1.5 text-center mb-2">
-        <Level label={t("매수가", "Buy")} v={L.entry} color="var(--text-primary)" />
-        <Level label={t("매도가(목표)", "Sell")} v={L.target} color="var(--badge-success-text)" />
-        <Level label={t("손절가", "Stop")} v={L.stop} color="var(--error)" />
-      </div>
+      <PlanRows L={L} t={t} />
       <div className="flex items-center justify-between text-[10.5px] text-[var(--text-muted)]">
         <span>{t("박스권", "Box")} {fmt(L.support)} ~ {fmt(L.resistance)}</span>
         {L.rr != null && <span>{t("손익비", "R:R")} {L.rr}</span>}
@@ -335,12 +351,8 @@ function AnalysisCard({ c, an, t }: { c: Card; an?: AN; t: (ko: string, en: stri
         </div>
       )}
 
-      {/* trade levels (analysis signal) */}
-      <div className="grid grid-cols-3 gap-1.5 text-center mb-1">
-        <Level label={t("매수가", "Buy")} v={L.entry} color="var(--text-primary)" />
-        <Level label={t("매도가(목표)", "Sell")} v={L.target} color="var(--badge-success-text)" />
-        <Level label={t("손절가", "Stop")} v={L.stop} color="var(--error)" />
-      </div>
+      {/* trade levels (analysis signal) — buy/sell INTERVALS */}
+      <PlanRows L={L} t={t} />
       <TimingLine tm={an?.timing} t={t} />
 
       {/* daily 수급 */}

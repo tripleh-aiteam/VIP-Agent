@@ -103,7 +103,18 @@ def _ml_levels(db, ticker: str, advice: str, exp_low, exp_high) -> dict[str, Any
         out["target"] = round(res)                 # 참고: 저항 목표
         out["stop"] = round(sup * 0.97)
     out["rr"] = _rr(out.get("entry"), out.get("target"), out.get("stop"))
+    _add_zones_around(out)                          # buy/sell price INTERVALS around entry/target
     return out
+
+
+def _add_zones_around(out: dict, buy_band: float = 0.008, sell_band: float = 0.008):
+    """Turn the single entry/target points into BUY and SELL price intervals (±band%)."""
+    e, t = out.get("entry"), out.get("target")
+    if e:
+        out["buy_lo"], out["buy_hi"] = round(e * (1 - buy_band)), round(e * (1 + buy_band * 0.4))
+    if t:
+        lo, hi = sorted([round(t * (1 - sell_band * 0.4)), round(t * (1 + sell_band))])
+        out["sell_lo"], out["sell_hi"] = lo, hi
 
 
 def _box_levels(db, ticker: str, signal: str) -> dict[str, Any]:
@@ -125,6 +136,10 @@ def _box_levels(db, ticker: str, signal: str) -> dict[str, Any]:
         out["target"] = round(res)                        # 저항 목표
         out["stop"] = round(sup * 0.97)                   # 지지 이탈 손절
     out["rr"] = _rr(out.get("entry"), out.get("target"), out.get("stop"))
+    # Analysis price INTERVALS = box thirds: buy in lower third, sell in upper third.
+    size = res - sup
+    out["buy_lo"], out["buy_hi"] = round(sup), round(sup + 0.34 * size)
+    out["sell_lo"], out["sell_hi"] = round(res - 0.34 * size), round(res)
     return out
 
 
@@ -243,29 +258,24 @@ def timing_plan(levels: dict, advice: str, as_of: Optional[str], horizon: int) -
     """Turn a signal into WHEN to act, not just at what price. For a daily/5d model the
     grain is days; live intraday refines this once 실전 keys feed minute data."""
     L = levels or {}
-    close, entry = L.get("close"), L.get("entry")
+    entry = L.get("entry")
     if not entry:                     # no actionable plan (e.g. ML HOLD)
         return {"buy_time": "신호 대기 (관망)", "buy_time_en": "Awaiting signal (watch)",
                 "sell_time": None, "sell_time_en": None, "by": None}
-    by = _add_trading_days(as_of, horizon)
-    if advice == "SELL":
-        buy_time = "반등(진입가) 부근 분할 매도/청산"
-        buy_time_en = "Scale out near entry on a bounce"
-        sell_time = f"지지(목표) 도달 시 · 예상 ~{horizon}거래일(≈{by})"
-        sell_time_en = f"On reaching support · ~{horizon} trading days (≈{by})"
-    elif advice == "BUY":
-        if close and entry >= close:
-            buy_time, buy_time_en = "지금~익일 시가 진입", "Now / next open"
-        else:
-            buy_time, buy_time_en = "진입가 도달 시 매수", "Buy when entry is hit"
-        sell_time = f"목표 도달 시 청산 · 예상 ~{horizon}거래일(≈{by})"
-        sell_time_en = f"On target · ~{horizon} trading days (≈{by})"
-    else:                             # WATCH — analysis box plan (accumulate at support)
-        buy_time, buy_time_en = "지지(진입가) 부근 매수 대기", "Wait to buy near support"
-        sell_time = f"저항(목표) 도달 시 청산 · ~{horizon}거래일(≈{by})"
-        sell_time_en = f"On resistance target · ~{horizon} trading days (≈{by})"
+    # TIME INTERVALS (windows), not single points.
+    buy_from = _add_trading_days(as_of, 1)                       # next session
+    buy_to = _add_trading_days(as_of, 2)
+    sell_from = _add_trading_days(as_of, max(2, horizon - 2))    # back half of the horizon
+    sell_to = _add_trading_days(as_of, horizon)
+    md = lambda d: d[5:]                                         # MM-DD
+    buy_time = f"{md(buy_from)}~{md(buy_to)} 매수"
+    buy_time_en = f"Buy {md(buy_from)}~{md(buy_to)}"
+    sell_time = f"{md(sell_from)}~{md(sell_to)} 매도(목표 도달 시)"
+    sell_time_en = f"Sell {md(sell_from)}~{md(sell_to)} (on target)"
     return {"buy_time": buy_time, "buy_time_en": buy_time_en,
-            "sell_time": sell_time, "sell_time_en": sell_time_en, "by": by}
+            "sell_time": sell_time, "sell_time_en": sell_time_en,
+            "buy_from": buy_from, "buy_to": buy_to,
+            "sell_from": sell_from, "sell_to": sell_to, "by": sell_to}
 
 
 # ---- per-stock card ------------------------------------------------------------
