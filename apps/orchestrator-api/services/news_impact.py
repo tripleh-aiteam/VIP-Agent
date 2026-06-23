@@ -94,9 +94,11 @@ def learn_priors(db, lookback_days: int = 120) -> dict[str, float]:
 
 
 def effective_news(db, ticker: Optional[str] = None, limit: int = 8,
-                   min_impact: float = 0.35, lookback_days: int = 5) -> list[dict]:
-    """Recent, HIGH-impact news only (noise hidden). Market-wide if ticker is None."""
-    priors = learn_priors(db)
+                   min_impact: float = 0.35, lookback_days: int = 5,
+                   priors: Optional[dict[str, float]] = None) -> list[dict]:
+    """Recent, HIGH-impact news only (noise hidden). Market-wide if ticker is None.
+    NOTE: learn_priors() (per-row price lookups) is NOT called here — it added ~2.5s to
+    every page load. Static rule priors are used; pass `priors` to refine if precomputed."""
     q = ("SELECT ticker, ts, source, url, title, snippet, sentiment FROM raw_news "
          "WHERE ts > now() - (:days || ' days')::interval ")
     params: dict[str, Any] = {"days": lookback_days}

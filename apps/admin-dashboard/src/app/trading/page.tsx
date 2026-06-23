@@ -16,10 +16,10 @@ function PriceRow({ open, current, t }: { open?: number; current?: number; t: (k
     </div>
   );
 }
-type Timing = { buy_time?: string; sell_time?: string; by?: string };
-type Flow = { date?: string; foreign?: string; inst?: string; foreign_net?: number; inst_net?: number; foreign_5d?: number; inst_5d?: number; foreign_hold_pct?: number; tag?: string };
+type Timing = { buy_time?: string; buy_time_en?: string; sell_time?: string; sell_time_en?: string; by?: string };
+type Flow = { date?: string; foreign?: string; inst?: string; foreign_net?: number; inst_net?: number; foreign_5d?: number; inst_5d?: number; foreign_hold_pct?: number; tag?: string; tag_en?: string };
 type Card = { ticker: string; name: string; advice: string; confidence?: string; direction?: string; model?: string; backtest_acc?: number; expected_low_pct?: number; expected_high_pct?: number; reasoning?: string; levels: Levels; timing?: Timing; flow?: Flow };
-type Heat = { ticker: string; name: string; foreign: string; inst: string; foreign_net: number; inst_net: number; tag: string };
+type Heat = { ticker: string; name: string; foreign: string; inst: string; foreign_net: number; inst_net: number; tag: string; tag_en?: string };
 type News = { ticker?: string; name?: string; ts: string; source?: string; url?: string; title: string; type: string; impact: number; direction: number };
 type Regime = { date?: string; tone: string; label_ko: string; kospi_ret5?: number; kospi_vs_sma20?: number; usdkrw_ret5?: number; breadth?: number; won?: string };
 type Brief = { as_of?: string; horizon: number; regime: Regime; counts: Record<string, number>; picks?: Card[]; buys: Card[]; sells: Card[]; flow_heatmap: Heat[]; news: News[]; disclaimer: string };
@@ -28,7 +28,7 @@ type Brief = { as_of?: string; horizon: number; regime: Regime; counts: Record<s
 const PRIORITY = ["000660", "035420", "005930"];
 const pickList = (b: Brief): Card[] => b.picks ?? [...b.buys, ...b.sells];
 const adviceColor = (a: string) => (a === "BUY" ? "var(--badge-success-text)" : a === "SELL" ? "var(--error)" : "var(--text-muted)");
-type RT = { live?: boolean; env?: string; imbalance?: number; pressure?: string; best_bid?: number; best_ask?: number; foreign?: number; institution?: number; fin_invest?: number; program_net?: number; price?: number; as_of?: string };
+type RT = { live?: boolean; env?: string; imbalance?: number; pressure?: string; pressure_en?: string; best_bid?: number; best_ask?: number; foreign?: number; institution?: number; fin_invest?: number; program_net?: number; price?: number; as_of?: string };
 
 const fmt = (n?: number) => (n == null ? "-" : n.toLocaleString());
 const pct = (n?: number) => (n == null ? "-" : `${n > 0 ? "+" : ""}${n.toFixed(1)}%`);
@@ -116,7 +116,7 @@ function MethodSelector({ onPick, t, counts }: { onPick: (m: Method) => void; t:
           <div className="text-[12px] text-[var(--text-muted)] mt-0.5 mb-3">{t("전문가 방식 — 실시간 수급·호가", "Expert method — live flows & order book")}</div>
           <ul className="text-[12.5px] text-[var(--text-secondary)] space-y-1 leading-relaxed">
             <li>• {t("실시간 호가 매수/매도 압력 + 프로그램 매매", "Live order-book pressure + program trades")}</li>
-            <li>• {t("외국인·기관·금투 수급 (누가 사는가)", "Foreign/inst/금투 flows (who's buying)")}</li>
+            <li>• {t("외국인·기관·금투 수급 (누가 사는가)", "Foreign/inst/fin-inv flows (who's buying)")}</li>
             <li>• {t("박스권 지지·저항 + 영향있는 뉴스", "Box support/resistance + effective news")}</li>
           </ul>
           <div className="mt-4 flex items-center gap-2">
@@ -190,21 +190,21 @@ function MLCard({ c, t }: { c: Card; t: (ko: string, en: string) => string }) {
         {(c.expected_low_pct != null && c.expected_high_pct != null) && <span>{t("예상", "exp")} {c.expected_low_pct}~{c.expected_high_pct}%</span>}
       </div>
       <TimingLine tm={c.timing} t={t} />
-      {c.reasoning && <div className="mt-2 pt-2 border-t border-[var(--border-default)] text-[10.5px] text-[var(--text-secondary)] leading-snug line-clamp-3">{c.reasoning}</div>}
+      {c.reasoning && t(c.reasoning, "") && <div className="mt-2 pt-2 border-t border-[var(--border-default)] text-[10.5px] text-[var(--text-secondary)] leading-snug line-clamp-3">{t(c.reasoning, "")}</div>}
     </div>
   );
 }
 
 // ============================ Method 2: Analysis view ============================
-type AN = { signal?: string; label?: string; score?: number; reasons?: string[]; realtime?: RT; levels?: Levels; timing?: Timing; market_open?: boolean };
+type AN = { signal?: string; label?: string; label_en?: string; score?: number; reasons?: string[]; reasons_en?: string[]; realtime?: RT; levels?: Levels; timing?: Timing; market_open?: boolean };
 
 // Shared buy/sell timing line (price was shown above; this adds WHEN)
 function TimingLine({ tm, t }: { tm?: Timing; t: (ko: string, en: string) => string }) {
   if (!tm || (!tm.buy_time && !tm.sell_time)) return null;
   return (
     <div className="mt-2 pt-2 border-t border-[var(--border-default)] text-[10.5px] leading-snug">
-      <div className="flex gap-1.5"><span className="text-[var(--text-muted)]">⏱ {t("매수", "Buy")}</span><span className="text-[var(--text-primary)]">{tm.buy_time}</span></div>
-      {tm.sell_time && <div className="flex gap-1.5 mt-0.5"><span className="text-[var(--text-muted)]">⏱ {t("매도", "Sell")}</span><span className="text-[var(--text-primary)]">{tm.sell_time}</span></div>}
+      <div className="flex gap-1.5"><span className="text-[var(--text-muted)]">⏱ {t("매수", "Buy")}</span><span className="text-[var(--text-primary)]">{t(tm.buy_time || "", tm.buy_time_en || tm.buy_time || "")}</span></div>
+      {tm.sell_time && <div className="flex gap-1.5 mt-0.5"><span className="text-[var(--text-muted)]">⏱ {t("매도", "Sell")}</span><span className="text-[var(--text-primary)]">{t(tm.sell_time || "", tm.sell_time_en || tm.sell_time || "")}</span></div>}
     </div>
   );
 }
@@ -241,7 +241,7 @@ function AnalysisView({ brief, t }: { brief: Brief; t: (ko: string, en: string) 
         <Section title={t("💰 수급 — 누가 사고있나 (외국인 / 기관)", "💰 Flows — who's buying (Foreign / Inst)")}>
           <div className="rounded-xl border border-[var(--border-default)] bg-[var(--bg-card)] overflow-hidden">
             <div className="grid grid-cols-[1fr_auto_auto_auto] text-[11px] text-[var(--text-muted)] px-3 py-2 border-b border-[var(--border-default)] bg-[var(--bg-table-header)]">
-              <span>{t("종목", "Stock")}</span><span className="px-2">외국인</span><span className="px-2">기관</span><span className="pl-2">{t("판정", "Tag")}</span>
+              <span>{t("종목", "Stock")}</span><span className="px-2">{t("외국인", "Frgn")}</span><span className="px-2">{t("기관", "Inst")}</span><span className="pl-2">{t("판정", "Tag")}</span>
             </div>
             <div className="max-h-[360px] overflow-y-auto">
               {[...brief.flow_heatmap.filter((h) => PRIORITY.includes(h.ticker)).sort((a, b) => PRIORITY.indexOf(a.ticker) - PRIORITY.indexOf(b.ticker)),
@@ -250,7 +250,7 @@ function AnalysisView({ brief, t }: { brief: Brief; t: (ko: string, en: string) 
                   <span className="text-[var(--text-primary)] truncate">{h.name}</span>
                   <span className="px-2 font-bold" style={{ color: arrowColor(h.foreign) }}>{h.foreign}</span>
                   <span className="px-2 font-bold" style={{ color: arrowColor(h.inst) }}>{h.inst}</span>
-                  <span className="pl-2 text-[11px]" style={{ color: h.tag === "강력매집" ? "var(--badge-success-text)" : h.tag === "분산매도" ? "var(--error)" : "var(--text-muted)" }}>{h.tag}</span>
+                  <span className="pl-2 text-[11px]" style={{ color: h.tag === "강력매집" ? "var(--badge-success-text)" : h.tag === "분산매도" ? "var(--error)" : "var(--text-muted)" }}>{t(h.tag, h.tag_en || h.tag)}</span>
                 </div>
               ))}
             </div>
@@ -295,7 +295,7 @@ function AnalysisCard({ c, an, t }: { c: Card; an?: AN; t: (ko: string, en: stri
     <div className="rounded-xl border bg-[var(--bg-card)] p-3.5" style={{ borderColor: accent + "55", boxShadow: "var(--shadow-sm)" }}>
       <div className="flex items-center gap-2 mb-2">
         <span className="text-[15px] font-bold text-[var(--text-primary)]">{c.name}</span>
-        <span className="text-[11px] px-2 py-0.5 rounded-full font-bold" style={{ color: "#fff", background: accent }}>{an?.label || t("관망", "Watch")}</span>
+        <span className="text-[11px] px-2 py-0.5 rounded-full font-bold" style={{ color: "#fff", background: accent }}>{an ? t(an.label || "", an.label_en || an.label || "") : t("관망", "Watch")}</span>
         {c.advice !== signal && <span className="text-[9px] text-[var(--text-muted)]">ML: {c.advice}</span>}
         <span className="ml-auto text-[10px] text-[var(--text-muted)]">{t("박스권", "Box")} {fmt(L.support)}~{fmt(L.resistance)}</span>
       </div>
@@ -304,7 +304,7 @@ function AnalysisCard({ c, an, t }: { c: Card; an?: AN; t: (ko: string, en: stri
       {/* analysis reasons (the WHY — distinct from ML) */}
       {an?.reasons && an.reasons.length > 0 && (
         <div className="text-[10.5px] text-[var(--text-secondary)] mb-2 leading-snug">
-          {an.reasons.map((r, i) => <span key={i} className="inline-block mr-1.5">· {r}</span>)}
+          {an.reasons.map((r, i) => <span key={i} className="inline-block mr-1.5">· {t(r, an.reasons_en?.[i] || r)}</span>)}
         </div>
       )}
 
@@ -316,15 +316,15 @@ function AnalysisCard({ c, an, t }: { c: Card; an?: AN; t: (ko: string, en: stri
             {rt.env && <span className="text-[9px] px-1 py-0.5 rounded font-bold" style={{ color: rt.env === "실전" ? "var(--badge-success-text)" : "var(--text-muted)", background: rt.env === "실전" ? "var(--badge-success-bg)" : "var(--bg-hover)" }}>{rt.env}</span>}
             <span className="text-[var(--text-muted)]">{t("호가", "Book")}</span>
             <span className="font-bold" style={{ color: (rt.imbalance ?? 0) > 0.15 ? "var(--badge-success-text)" : (rt.imbalance ?? 0) < -0.15 ? "var(--error)" : "var(--text-muted)" }}>
-              {rt.pressure} {rt.imbalance != null ? `(${(rt.imbalance * 100).toFixed(0)}%)` : ""}
+              {t(rt.pressure || "", rt.pressure_en || rt.pressure || "")} {rt.imbalance != null ? `(${(rt.imbalance * 100).toFixed(0)}%)` : ""}
             </span>
             {rt.best_bid != null && <span className="ml-auto text-[10px] text-[var(--text-muted)]">{fmt(rt.best_bid)}/{fmt(rt.best_ask)}</span>}
           </div>
           <div className="flex items-center gap-3 text-[11px]">
             <span className="text-[var(--text-muted)]">{t("실시간수급", "Live")}</span>
-            <span style={{ color: signColor(rt.foreign) }}>외국인 {fmt(rt.foreign)}</span>
-            <span style={{ color: signColor(rt.institution) }}>기관 {fmt(rt.institution)}</span>
-            {rt.fin_invest != null && rt.fin_invest !== 0 && <span style={{ color: signColor(rt.fin_invest) }}>금투 {fmt(rt.fin_invest)}</span>}
+            <span style={{ color: signColor(rt.foreign) }}>{t("외국인", "Foreign")} {fmt(rt.foreign)}</span>
+            <span style={{ color: signColor(rt.institution) }}>{t("기관", "Inst")} {fmt(rt.institution)}</span>
+            {rt.fin_invest != null && rt.fin_invest !== 0 && <span style={{ color: signColor(rt.fin_invest) }}>{t("금투", "FinInv")} {fmt(rt.fin_invest)}</span>}
           </div>
         </div>
       ) : (
@@ -347,9 +347,9 @@ function AnalysisCard({ c, an, t }: { c: Card; an?: AN; t: (ko: string, en: stri
       {f && (
         <div className="flex items-center gap-3 text-[11px] pt-2 border-t border-[var(--border-default)]">
           <span className="text-[var(--text-muted)]">{t("수급(일)", "Flow(d)")}</span>
-          <span style={{ color: arrowColor(f.foreign) }}>외국인 {f.foreign}</span>
-          <span style={{ color: arrowColor(f.inst) }}>기관 {f.inst}</span>
-          <span className="ml-auto font-semibold" style={{ color: f.tag === "강력매집" ? "var(--badge-success-text)" : f.tag === "분산매도" ? "var(--error)" : "var(--text-muted)" }}>{f.tag}</span>
+          <span style={{ color: arrowColor(f.foreign) }}>{t("외국인", "Frgn")} {f.foreign}</span>
+          <span style={{ color: arrowColor(f.inst) }}>{t("기관", "Inst")} {f.inst}</span>
+          <span className="ml-auto font-semibold" style={{ color: f.tag === "강력매집" ? "var(--badge-success-text)" : f.tag === "분산매도" ? "var(--error)" : "var(--text-muted)" }}>{t(f.tag || "", f.tag_en || f.tag || "")}</span>
         </div>
       )}
     </div>

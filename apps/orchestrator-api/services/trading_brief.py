@@ -150,7 +150,44 @@ def _flow(db, ticker: str) -> dict[str, Any]:
             "foreign_net": int(fn), "inst_net": int(inn),
             "foreign_5d": int(f5), "inst_5d": int(i5),
             "foreign_hold_pct": float(r.foreign_hold_pct) if r.foreign_hold_pct else None,
-            "tag": tag}
+            "tag": tag, "tag_en": TAG_EN.get(tag, tag)}
+
+
+# Tag enum -> English (so the heatmap isn't mixed-language in EN mode)
+TAG_EN = {"강력매집": "Strong accumulation", "분산매도": "Distribution", "혼조": "Mixed"}
+
+
+def _heatmap_batch(db) -> list[dict]:
+    """Whole-universe 수급 in TWO queries (latest + 5d net per ticker) instead of 37
+    per-ticker calls — the main page-load speedup. Featured stocks pinned first."""
+    latest = {r.ticker: r for r in db.execute(text(
+        "SELECT DISTINCT ON (ticker) ticker, foreign_net, inst_net "
+        "FROM raw_investor_flows ORDER BY ticker, date DESC"))}
+    sums = {r.ticker: r for r in db.execute(text(
+        "SELECT ticker, SUM(foreign_net) f5, SUM(inst_net) i5 FROM ("
+        "  SELECT ticker, foreign_net, inst_net, ROW_NUMBER() OVER "
+        "  (PARTITION BY ticker ORDER BY date DESC) rn FROM raw_investor_flows) q "
+        "WHERE rn <= 5 GROUP BY ticker"))}
+
+    def arrow(v): return "▲" if v > 0 else ("▼" if v < 0 else "－")
+    order = PRIORITY + [tk for tk in NAMES if tk not in PRIORITY]
+    heat = []
+    for tk in order:
+        r = latest.get(tk)
+        if not r:
+            continue
+        fn, inn = float(r.foreign_net or 0), float(r.inst_net or 0)
+        s = sums.get(tk)
+        f5 = float(s.f5 or 0) if s else 0
+        i5 = float(s.i5 or 0) if s else 0
+        smart5 = f5 + i5
+        tag = ("강력매집" if smart5 > 0 and f5 > 0 and i5 > 0 else
+               "분산매도" if smart5 < 0 and f5 < 0 and i5 < 0 else "혼조")
+        heat.append({"ticker": tk, "name": NAMES[tk],
+                     "foreign": arrow(fn), "inst": arrow(inn),
+                     "foreign_net": int(fn), "inst_net": int(inn),
+                     "tag": tag, "tag_en": TAG_EN.get(tag, tag)})
+    return heat
 
 
 # ---- LIVE real-time signals (Kiwoom) — the day-trading layer --------------------
@@ -172,11 +209,13 @@ def _realtime_impl(ticker: str, with_program: bool = True) -> dict[str, Any] | N
         imb = ob.get("imbalance")
         pressure = ("매수우위" if imb is not None and imb > 0.15 else
                     "매도우위" if imb is not None and imb < -0.15 else "균형")
+        pressure_en = ("Bid-heavy" if imb is not None and imb > 0.15 else
+                       "Ask-heavy" if imb is not None and imb < -0.15 else "Balanced")
         base = getattr(kr, "_active_base", "") or ""        # which env actually authed
         env = "모의" if "mockapi" in base else "실전"
         return {
             "live": True, "env": env, "as_of": fl.get("date"),
-            "imbalance": imb, "pressure": pressure,
+            "imbalance": imb, "pressure": pressure, "pressure_en": pressure_en,
             "best_bid": ob.get("best_bid"), "best_ask": ob.get("best_ask"),
             "foreign": fl.get("foreign"), "institution": fl.get("institution"),
             "fin_invest": fl.get("fin_invest"), "individual": fl.get("individual"),
@@ -206,19 +245,27 @@ def timing_plan(levels: dict, advice: str, as_of: Optional[str], horizon: int) -
     L = levels or {}
     close, entry = L.get("close"), L.get("entry")
     if not entry:                     # no actionable plan (e.g. ML HOLD)
-        return {"buy_time": "신호 대기 (관망)", "sell_time": None, "by": None}
+        return {"buy_time": "신호 대기 (관망)", "buy_time_en": "Awaiting signal (watch)",
+                "sell_time": None, "sell_time_en": None, "by": None}
     by = _add_trading_days(as_of, horizon)
     if advice == "SELL":
         buy_time = "반등(진입가) 부근 분할 매도/청산"
+        buy_time_en = "Scale out near entry on a bounce"
         sell_time = f"지지(목표) 도달 시 · 예상 ~{horizon}거래일(≈{by})"
+        sell_time_en = f"On reaching support · ~{horizon} trading days (≈{by})"
     elif advice == "BUY":
-        buy_time = ("지금~익일 시가 진입" if (close and entry >= close)
-                    else "진입가 도달 시 매수")
+        if close and entry >= close:
+            buy_time, buy_time_en = "지금~익일 시가 진입", "Now / next open"
+        else:
+            buy_time, buy_time_en = "진입가 도달 시 매수", "Buy when entry is hit"
         sell_time = f"목표 도달 시 청산 · 예상 ~{horizon}거래일(≈{by})"
+        sell_time_en = f"On target · ~{horizon} trading days (≈{by})"
     else:                             # WATCH — analysis box plan (accumulate at support)
-        buy_time = "지지(진입가) 부근 매수 대기"
+        buy_time, buy_time_en = "지지(진입가) 부근 매수 대기", "Wait to buy near support"
         sell_time = f"저항(목표) 도달 시 청산 · ~{horizon}거래일(≈{by})"
-    return {"buy_time": buy_time, "sell_time": sell_time, "by": by}
+        sell_time_en = f"On resistance target · ~{horizon} trading days (≈{by})"
+    return {"buy_time": buy_time, "buy_time_en": buy_time_en,
+            "sell_time": sell_time, "sell_time_en": sell_time_en, "by": by}
 
 
 # ---- per-stock card ------------------------------------------------------------
@@ -251,46 +298,54 @@ def analysis_signal(card: dict, rt: dict | None) -> dict[str, Any]:
     L = card.get("levels") or {}
     flow = card.get("flow") or {}
     score = 0
-    reasons: list[str] = []
+    reasons: list[str] = []       # Korean
+    reasons_en: list[str] = []    # English (so the EN UI isn't mixed)
+
+    def add(pts, ko, en):
+        nonlocal score
+        score += pts
+        reasons.append(ko); reasons_en.append(en)
 
     # 1) 호가 매수/매도 압력 (live order book) — strongest intraday tell
     imb = (rt or {}).get("imbalance")
     if imb is not None:
         if imb > 0.15:
-            score += 2; reasons.append(f"호가 매수우위 {round(imb*100)}%")
+            add(2, f"호가 매수우위 {round(imb*100)}%", f"Order book bid-heavy {round(imb*100)}%")
         elif imb < -0.15:
-            score -= 2; reasons.append(f"호가 매도우위 {round(abs(imb)*100)}%")
+            add(-2, f"호가 매도우위 {round(abs(imb)*100)}%", f"Order book ask-heavy {round(abs(imb)*100)}%")
 
     # 2) 실시간 수급 (외국인+기관+금투 net)
     if rt:
         net = (rt.get("foreign") or 0) + (rt.get("institution") or 0) + (rt.get("fin_invest") or 0)
         if net > 0:
-            score += 1; reasons.append("실시간 수급 순매수")
+            add(1, "실시간 수급 순매수", "Live flows net buying")
         elif net < 0:
-            score -= 1; reasons.append("실시간 수급 순매도")
+            add(-1, "실시간 수급 순매도", "Live flows net selling")
 
     # 3) 일별 수급 판정 (외국인/기관 누적)
     tag = flow.get("tag")
     if tag == "강력매집":
-        score += 2; reasons.append("외국인+기관 강력매집")
+        add(2, "외국인+기관 강력매집", "Foreign+inst strong accumulation")
     elif tag == "분산매도":
-        score -= 2; reasons.append("외국인+기관 분산매도")
+        add(-2, "외국인+기관 분산매도", "Foreign+inst distribution")
 
     # 4) 박스권 위치 — 저점은 매수, 고점은 매도(분할) 구간
     close, sup, res = L.get("close"), L.get("support"), L.get("resistance")
     if close and sup and res and res > sup:
         pos = (close - sup) / (res - sup)
         if pos < 0.33:
-            score += 1; reasons.append("박스권 저점(지지) 매수구간")
+            add(1, "박스권 저점(지지) 매수구간", "Near box support (buy zone)")
         elif pos > 0.67:
-            score -= 1; reasons.append("박스권 고점(저항) 매도구간")
+            add(-1, "박스권 고점(저항) 매도구간", "Near box resistance (sell zone)")
 
     # ±2 threshold so EOD-only data (daily 수급 + box, no live order book after market)
     # still produces actionable 매수/매도, not everything stuck on 관망.
     sig = "BUY" if score >= 2 else "SELL" if score <= -2 else "WATCH"
     label = {"BUY": "매수", "SELL": "매도", "WATCH": "관망"}[sig]
-    return {"signal": sig, "label": label, "score": score,
-            "reasons": reasons[:3] or ["뚜렷한 신호 없음 (관망)"]}
+    label_en = {"BUY": "Buy", "SELL": "Sell", "WATCH": "Watch"}[sig]
+    return {"signal": sig, "label": label, "label_en": label_en, "score": score,
+            "reasons": reasons[:3] or ["뚜렷한 신호 없음 (관망)"],
+            "reasons_en": reasons_en[:3] or ["No clear signal (watch)"]}
 
 
 def analysis_batch(db, tickers: list[str], horizon: int = 5) -> dict[str, Any]:
@@ -333,7 +388,23 @@ def analysis_batch(db, tickers: list[str], horizon: int = 5) -> dict[str, Any]:
 
 
 # ---- the full brief ------------------------------------------------------------
+# Short server-side cache: the ML brief is daily data (changes once/day), so caching
+# it makes the page open instantly instead of re-querying ~50 rows every load.
+_brief_cache: dict[int, tuple[float, dict]] = {}
+_BRIEF_TTL = 60.0
+
+
 def brief(db, horizon: int = 5) -> dict[str, Any]:
+    import time as _t
+    hit = _brief_cache.get(horizon)
+    if hit and (_t.time() - hit[0]) < _BRIEF_TTL:
+        return hit[1]
+    out = _build_brief(db, horizon)
+    _brief_cache[horizon] = (_t.time(), out)
+    return out
+
+
+def _build_brief(db, horizon: int = 5) -> dict[str, Any]:
     summ = ps.summary(db, horizon=horizon)
     buy_tk = [p["ticker"] for p in summ.get("buys", [])]
     sell_tk = [p["ticker"] for p in summ.get("sells", [])]
@@ -349,17 +420,8 @@ def brief(db, horizon: int = 5) -> dict[str, Any]:
     picks_buy = [c for c in picks if c["advice"] == "BUY"]
     picks_sell = [c for c in picks if c["advice"] == "SELL"]
 
-    # 수급 heatmap across the whole universe (who's buying today). Featured stocks
-    # (PRIORITY) listed first, then the rest in the universe order.
-    heat = []
-    heat_order = PRIORITY + [tk for tk in NAMES if tk not in PRIORITY]
-    for tk in heat_order:
-        f = _flow(db, tk)
-        if f:
-            heat.append({"ticker": tk, "name": NAMES[tk],
-                         "foreign": f["foreign"], "inst": f["inst"],
-                         "foreign_net": f["foreign_net"], "inst_net": f["inst_net"],
-                         "tag": f["tag"]})
+    # 수급 heatmap — ONE batched query (latest + 5d net per ticker) instead of 37 calls.
+    heat = _heatmap_batch(db)
 
     # effective news (impact-scored) + live DART disclosures
     news: list[dict] = []
