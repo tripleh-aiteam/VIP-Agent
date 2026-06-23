@@ -97,8 +97,36 @@ def _flow(db, ticker: str) -> dict[str, Any]:
             "tag": tag}
 
 
+# ---- LIVE real-time signals (Kiwoom) — the day-trading layer --------------------
+def realtime_for(ticker: str) -> dict[str, Any] | None:
+    """Live order-book imbalance + intraday 수급 + program net from Kiwoom REST.
+    Returns None if Kiwoom keys aren't set or the call fails — the brief still works
+    without it (graceful degradation). Cached 20s inside kiwoom_rest."""
+    try:
+        from services import kiwoom_rest as kr
+        if kr._token() is None:          # no creds / unreachable -> skip cleanly
+            return None
+        sig = kr.realtime_signals(ticker)
+        ob = sig.get("order_book") or {}
+        fl = sig.get("flows") or {}
+        pr = sig.get("program") or {}
+        imb = ob.get("imbalance")
+        pressure = ("매수우위" if imb is not None and imb > 0.15 else
+                    "매도우위" if imb is not None and imb < -0.15 else "균형")
+        return {
+            "live": True, "as_of": fl.get("date"),
+            "imbalance": imb, "pressure": pressure,
+            "best_bid": ob.get("best_bid"), "best_ask": ob.get("best_ask"),
+            "foreign": fl.get("foreign"), "institution": fl.get("institution"),
+            "fin_invest": fl.get("fin_invest"), "individual": fl.get("individual"),
+            "program_net": pr.get("net_amt"), "price": fl.get("price"),
+        }
+    except Exception:
+        return None
+
+
 # ---- per-stock card ------------------------------------------------------------
-def stock_card(db, ticker: str, horizon: int = 5) -> dict[str, Any]:
+def stock_card(db, ticker: str, horizon: int = 5, live: bool = False) -> dict[str, Any]:
     pred = ps.get_ticker(db, ticker, horizon) or {}
     advice = pred.get("advice", "HOLD")
     return {
@@ -111,6 +139,7 @@ def stock_card(db, ticker: str, horizon: int = 5) -> dict[str, Any]:
         "reasoning": pred.get("reasoning"),
         "levels": _levels(db, ticker, advice),
         "flow": _flow(db, ticker),
+        "realtime": realtime_for(ticker) if live else None,
     }
 
 

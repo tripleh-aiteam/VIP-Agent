@@ -55,6 +55,16 @@ def collect_dart(days: int = Query(1), db: Session = Depends(get_db)):
     return collect(db, days=days)
 
 
+@router.get("/realtime/{ticker}")
+def realtime_signals(ticker: str):
+    """LIVE Kiwoom signals for one stock (order-book imbalance + intraday 수급 +
+    program net). Fetched lazily by the Daily Trading UI per pick card so the main
+    brief stays fast. Returns {live: false} when Kiwoom keys aren't set."""
+    from services.trading_brief import realtime_for
+    rt = realtime_for(ticker)
+    return rt or {"live": False, "ticker": ticker}
+
+
 @router.get("/{ticker}")
 def prediction_ticker(ticker: str, horizon: int = Query(5), db: Session = Depends(get_db)):
     p = ps.get_ticker(db, ticker, horizon)

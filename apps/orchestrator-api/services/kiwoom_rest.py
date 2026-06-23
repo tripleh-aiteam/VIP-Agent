@@ -444,6 +444,111 @@ def current_price(code: str) -> Optional[dict]:
             "volume": abs(_v) if _v is not None else None}
 
 
+# --------------------------------------------------------------------------- #
+# Real-time signals (the day-trading layer) — order book, 수급, program trades.
+# Verified live (api-id + path + field names) against the Kiwoom REST API.
+# Short TTL cache so enriching a brief doesn't hammer the rate-limited endpoint.
+# --------------------------------------------------------------------------- #
+_rt_cache: dict[str, tuple[float, Any]] = {}
+_RT_TTL = 20.0   # seconds — intraday signals refresh fast but not per-call
+
+
+def _rt_cached(key: str, fn):
+    hit = _rt_cache.get(key)
+    if hit and (time.time() - hit[0]) < _RT_TTL:
+        return hit[1]
+    val = fn()
+    if val is not None:
+        _rt_cache[key] = (time.time(), val)
+    return val
+
+
+def order_book(code: str) -> Optional[dict]:
+    """LIVE order book (호가, ka10004) -> bid/ask imbalance. The microstructure
+    signal the day-trader reads: tot_buy_req >> tot_sel_req = buying pressure.
+    Returns {best_bid, best_ask, bid_qty, ask_qty, tot_bid, tot_ask, imbalance}."""
+    code = str(code).strip().zfill(6)
+
+    def _f():
+        d = _request("ka10004", {"stk_cd": code}, path="/api/dostk/mrkcond")
+        if not isinstance(d, dict):
+            return None
+        tot_bid = _to_int(d.get("tot_buy_req"))
+        tot_ask = _to_int(d.get("tot_sel_req"))
+        imb = None
+        if tot_bid is not None and tot_ask is not None and (tot_bid + tot_ask) > 0:
+            imb = round((tot_bid - tot_ask) / (tot_bid + tot_ask), 3)
+        bb, ba = _to_int(d.get("buy_fpr_bid")), _to_int(d.get("sel_fpr_bid"))
+        return {
+            "best_bid": abs(bb) if bb is not None else None,
+            "best_ask": abs(ba) if ba is not None else None,
+            "bid_qty": _to_int(d.get("buy_fpr_req")),
+            "ask_qty": _to_int(d.get("sel_fpr_req")),
+            "tot_bid": tot_bid, "tot_ask": tot_ask, "imbalance": imb,
+        }
+    return _rt_cached(f"ob:{code}", _f)
+
+
+def investor_flows(code: str) -> Optional[dict]:
+    """LIVE intraday 수급 (종목별 투자자/기관, ka10059) -> net buying by investor
+    type INCLUDING 금투 (financial-investment) — richer than Naver's foreign/inst.
+    Returns the latest row {date, individual, foreign, institution, fin_invest, price}.
+    Net values are buy-minus-sell (negative = net selling)."""
+    code = str(code).strip().zfill(6)
+
+    def _f():
+        today = _dt.date.today().strftime("%Y%m%d")
+        d = _request("ka10059", {"stk_cd": code, "dt": today, "amt_qty_tp": "2",
+                                 "trde_tp": "0", "unit_tp": "1000"},
+                     path="/api/dostk/stkinfo")
+        if not isinstance(d, dict):
+            return None
+        rows = d.get("stk_invsr_orgn") or []
+        if not rows:
+            return None
+        r = rows[0]                                   # most recent day/point
+        cp = _to_int(r.get("cur_prc"))
+        return {
+            "date": _date_to_iso(r.get("dt")),
+            "individual": _to_int(r.get("ind_invsr")),
+            "foreign": _to_int(r.get("frgnr_invsr")),
+            "institution": _to_int(r.get("orgn")),
+            "fin_invest": _to_int(r.get("fnnc_invt")),   # 금투 — the analyst's signal
+            "price": abs(cp) if cp is not None else None,
+        }
+    return _rt_cached(f"inv:{code}", _f)
+
+
+def program_trade(code: str) -> Optional[dict]:
+    """LIVE program-trading net (종목별 프로그램매매, ka90013) -> {date, net_amt,
+    net_qty}. Positive = program net buying (index/basket inflow)."""
+    code = str(code).strip().zfill(6)
+
+    def _f():
+        d = _request("ka90013", {"stk_cd": code}, path="/api/dostk/mrkcond")
+        if not isinstance(d, dict):
+            return None
+        rows = d.get("stk_daly_prm_trde_trnsn") or []
+        if not rows:
+            return None
+        r = rows[0]
+        return {"date": _date_to_iso(r.get("dt")),
+                "net_amt": _to_int(r.get("prm_netprps_amt")),
+                "net_qty": _to_int(r.get("prm_netprps_qty"))}
+    return _rt_cached(f"prm:{code}", _f)
+
+
+def realtime_signals(code: str) -> dict:
+    """Bundle the live day-trading signals for one stock (order book + 수급 +
+    program). Each piece is None if unavailable; never raises. Reads creds at
+    call time, so it no-ops cleanly without Kiwoom keys."""
+    return {
+        "order_book": order_book(code),
+        "flows": investor_flows(code),
+        "program": program_trade(code),
+    }
+
+
 def short_selling(code: str) -> Optional[dict]:
     """Most recent completed day's short-selling for one ticker.
 

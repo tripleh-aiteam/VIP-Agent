@@ -154,11 +154,22 @@ function Empty({ text }: { text: string }) {
   return <div className="px-4 py-6 text-center text-[12px] text-[var(--text-muted)]">{text}</div>;
 }
 
+type RT = { live?: boolean; imbalance?: number; pressure?: string; best_bid?: number; best_ask?: number; foreign?: number; institution?: number; fin_invest?: number; program_net?: number; as_of?: string };
+
 function PickCard({ c, t }: { c: Card; t: (ko: string, en: string) => string }) {
   const isBuy = c.advice === "BUY";
   const accent = isBuy ? "var(--badge-success-text)" : "var(--error)";
   const L = c.levels || {};
   const f = c.flow;
+  const [rt, setRt] = useState<RT | null>(null);
+
+  useEffect(() => {
+    let on = true;
+    const load = () => api<RT>(`/predictions/realtime/${c.ticker}`).then((r) => { if (on) setRt(r); }).catch(() => {});
+    load();
+    const i = setInterval(load, 20000);
+    return () => { on = false; clearInterval(i); };
+  }, [c.ticker]);
   return (
     <div className="rounded-xl border bg-[var(--bg-card)] p-3.5" style={{ borderColor: accent + "55", boxShadow: "var(--shadow-sm)" }}>
       <div className="flex items-center gap-2 mb-2">
@@ -186,13 +197,33 @@ function PickCard({ c, t }: { c: Card; t: (ko: string, en: string) => string }) 
         )}
       </div>
 
-      {/* 수급 */}
+      {/* 수급 (daily EOD) */}
       {f && (
         <div className="flex items-center gap-3 text-[11px] pt-2 border-t border-[var(--border-default)]">
-          <span className="text-[var(--text-muted)]">{t("수급", "Flow")}</span>
+          <span className="text-[var(--text-muted)]">{t("수급(일)", "Flow(d)")}</span>
           <span style={{ color: arrowColor(f.foreign) }}>외국인 {f.foreign}</span>
           <span style={{ color: arrowColor(f.inst) }}>기관 {f.inst}</span>
           <span className="ml-auto font-semibold" style={{ color: f.tag === "강력매집" ? "var(--badge-success-text)" : f.tag === "분산매도" ? "var(--error)" : "var(--text-muted)" }}>{f.tag}</span>
+        </div>
+      )}
+
+      {/* LIVE Kiwoom real-time block — order book imbalance + intraday 수급 */}
+      {rt?.live && (
+        <div className="mt-2 pt-2 border-t border-dashed border-[var(--border-strong)]">
+          <div className="flex items-center gap-2 text-[11px] mb-1">
+            <span className="text-[10px] px-1.5 py-0.5 rounded-full font-bold animate-pulse" style={{ color: "#fff", background: "var(--error)" }}>🔴 실시간</span>
+            <span className="text-[var(--text-muted)]">{t("호가", "Book")}</span>
+            <span className="font-bold" style={{ color: (rt.imbalance ?? 0) > 0.15 ? "var(--badge-success-text)" : (rt.imbalance ?? 0) < -0.15 ? "var(--error)" : "var(--text-muted)" }}>
+              {rt.pressure} {rt.imbalance != null ? `(${(rt.imbalance * 100).toFixed(0)}%)` : ""}
+            </span>
+            {rt.best_bid != null && <span className="ml-auto text-[10px] text-[var(--text-muted)]">{fmt(rt.best_bid)}/{fmt(rt.best_ask)}</span>}
+          </div>
+          <div className="flex items-center gap-3 text-[11px]">
+            <span className="text-[var(--text-muted)]">{t("실시간수급", "Live")}</span>
+            <span style={{ color: arrowColor((rt.foreign ?? 0) > 0 ? "▲" : (rt.foreign ?? 0) < 0 ? "▼" : "") }}>외국인 {fmt(rt.foreign)}</span>
+            <span style={{ color: arrowColor((rt.institution ?? 0) > 0 ? "▲" : (rt.institution ?? 0) < 0 ? "▼" : "") }}>기관 {fmt(rt.institution)}</span>
+            {rt.fin_invest != null && rt.fin_invest !== 0 && <span style={{ color: arrowColor(rt.fin_invest > 0 ? "▲" : "▼") }}>금투 {fmt(rt.fin_invest)}</span>}
+          </div>
         </div>
       )}
     </div>

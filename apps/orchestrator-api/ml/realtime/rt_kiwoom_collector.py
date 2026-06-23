@@ -154,11 +154,19 @@ class KiwoomRealtime:
 
 
 def main() -> int:
-    appkey, secret = os.getenv("KIWOOM_APPKEY"), os.getenv("KIWOOM_SECRET")
+    # Accept either naming convention (KIWOOM_APP_KEY is the orchestrator standard;
+    # KIWOOM_APPKEY is the legacy jarvis name) so one set of creds works everywhere.
+    appkey = os.getenv("KIWOOM_APP_KEY") or os.getenv("KIWOOM_APPKEY")
+    secret = os.getenv("KIWOOM_APP_SECRET") or os.getenv("KIWOOM_SECRET")
     if not appkey or not secret:
-        print("ERROR: set KIWOOM_APPKEY / KIWOOM_SECRET (and KIWOOM_MOCK).")
+        print("ERROR: set KIWOOM_APP_KEY / KIWOOM_APP_SECRET (and KIWOOM_MOCK=0 for live).")
         return 2
-    mock = os.getenv("KIWOOM_MOCK", "1") not in ("0", "false", "False", "")
+    # Live unless explicitly mocked. Honor KIWOOM_API_BASE (kiwoom_rest's switch) too.
+    _base = os.getenv("KIWOOM_API_BASE", "")
+    if "mockapi" in _base:
+        mock = True
+    else:
+        mock = os.getenv("KIWOOM_MOCK", "0") not in ("0", "false", "False", "")
     rest_base, ws_url = _bases(mock)
     print(f"[rt_kiwoom] env: {'MOCK' if mock else 'LIVE'} ({rest_base})")
     syms = [c for c, _ in STARTER_KR]
