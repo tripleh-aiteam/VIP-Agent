@@ -55,6 +55,17 @@ def collect_dart(days: int = Query(1), db: Session = Depends(get_db)):
     return collect(db, days=days)
 
 
+@router.get("/analysis-batch")
+def analysis_batch(tickers: str = Query(..., description="comma-separated tickers"),
+                   horizon: int = Query(5), db: Session = Depends(get_db)):
+    """METHOD 2 (Analysis) for many stocks in ONE server-side call — rule-based
+    매수/관망/매도 from 호가+수급+박스권. Sequential + cached so the mock API isn't
+    rate-limited by parallel client fetches (fixes the 'Awaiting live flows' gaps)."""
+    from services.trading_brief import analysis_batch as _ab
+    tk = [t.strip() for t in tickers.split(",") if t.strip()][:20]
+    return {"results": _ab(db, tk, horizon)}
+
+
 @router.get("/realtime/{ticker}")
 def realtime_signals(ticker: str):
     """LIVE Kiwoom signals for one stock (order-book imbalance + intraday 수급 +

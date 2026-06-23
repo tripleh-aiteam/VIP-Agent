@@ -106,14 +106,17 @@ def realtime_for(ticker: str) -> dict[str, Any] | None:
     """Live order-book imbalance + intraday 수급 + program net from Kiwoom REST.
     Returns None if Kiwoom keys aren't set or the call fails — the brief still works
     without it (graceful degradation). Cached 20s inside kiwoom_rest."""
+    return _realtime_impl(ticker, with_program=True)
+
+
+def _realtime_impl(ticker: str, with_program: bool = True) -> dict[str, Any] | None:
     try:
         from services import kiwoom_rest as kr
         if kr._token() is None:          # no creds / unreachable -> skip cleanly
             return None
-        sig = kr.realtime_signals(ticker)
-        ob = sig.get("order_book") or {}
-        fl = sig.get("flows") or {}
-        pr = sig.get("program") or {}
+        ob = kr.order_book(ticker) or {}
+        fl = kr.investor_flows(ticker) or {}
+        pr = (kr.program_trade(ticker) or {}) if with_program else {}
         imb = ob.get("imbalance")
         pressure = ("매수우위" if imb is not None and imb > 0.15 else
                     "매도우위" if imb is not None and imb < -0.15 else "균형")
@@ -147,6 +150,67 @@ def stock_card(db, ticker: str, horizon: int = 5, live: bool = False) -> dict[st
         "flow": _flow(db, ticker),
         "realtime": realtime_for(ticker) if live else None,
     }
+
+
+# ---- METHOD 2: rule-based analysis signal (the analyst's brain) -----------------
+# Independent of the ML model. Scores each stock from the signals the day-trader in
+# the video actually reads: 호가 imbalance + 실시간/일별 수급 + 박스권 position.
+def analysis_signal(card: dict, rt: dict | None) -> dict[str, Any]:
+    L = card.get("levels") or {}
+    flow = card.get("flow") or {}
+    score = 0
+    reasons: list[str] = []
+
+    # 1) 호가 매수/매도 압력 (live order book) — strongest intraday tell
+    imb = (rt or {}).get("imbalance")
+    if imb is not None:
+        if imb > 0.15:
+            score += 2; reasons.append(f"호가 매수우위 {round(imb*100)}%")
+        elif imb < -0.15:
+            score -= 2; reasons.append(f"호가 매도우위 {round(abs(imb)*100)}%")
+
+    # 2) 실시간 수급 (외국인+기관+금투 net)
+    if rt:
+        net = (rt.get("foreign") or 0) + (rt.get("institution") or 0) + (rt.get("fin_invest") or 0)
+        if net > 0:
+            score += 1; reasons.append("실시간 수급 순매수")
+        elif net < 0:
+            score -= 1; reasons.append("실시간 수급 순매도")
+
+    # 3) 일별 수급 판정 (외국인/기관 누적)
+    tag = flow.get("tag")
+    if tag == "강력매집":
+        score += 2; reasons.append("외국인+기관 강력매집")
+    elif tag == "분산매도":
+        score -= 2; reasons.append("외국인+기관 분산매도")
+
+    # 4) 박스권 위치 — 저점은 매수, 고점은 매도(분할) 구간
+    close, sup, res = L.get("close"), L.get("support"), L.get("resistance")
+    if close and sup and res and res > sup:
+        pos = (close - sup) / (res - sup)
+        if pos < 0.33:
+            score += 1; reasons.append("박스권 저점(지지) 매수구간")
+        elif pos > 0.67:
+            score -= 1; reasons.append("박스권 고점(저항) 매도구간")
+
+    sig = "BUY" if score >= 3 else "SELL" if score <= -3 else "WATCH"
+    label = {"BUY": "매수", "SELL": "매도", "WATCH": "관망"}[sig]
+    return {"signal": sig, "label": label, "score": score,
+            "reasons": reasons[:3] or ["뚜렷한 신호 없음 (관망)"]}
+
+
+def analysis_batch(db, tickers: list[str], horizon: int = 5) -> dict[str, Any]:
+    """METHOD 2 payload for a set of tickers — computed SERVER-SIDE sequentially so
+    the mock API's rate limit isn't hammered by N parallel client calls (the cause of
+    the 'Awaiting live flows' gaps). Each result = {realtime, signal, label, reasons}."""
+    out: dict[str, Any] = {}
+    for tk in tickers:
+        card = stock_card(db, tk, horizon, live=False)     # levels + daily flow (DB)
+        rt = _realtime_impl(tk, with_program=False)        # live 호가 + 수급 (2 calls, cached)
+        sig = analysis_signal(card, rt)
+        out[tk] = {"realtime": rt, "levels": card.get("levels"),
+                   "flow": card.get("flow"), **sig}
+    return out
 
 
 # ---- the full brief ------------------------------------------------------------

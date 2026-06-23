@@ -182,12 +182,33 @@ function MLCard({ c, t }: { c: Card; t: (ko: string, en: string) => string }) {
 }
 
 // ============================ Method 2: Analysis view ============================
+type AN = { signal?: string; label?: string; score?: number; reasons?: string[]; realtime?: RT };
+
 function AnalysisView({ brief, t }: { brief: Brief; t: (ko: string, en: string) => string }) {
+  const cards = pickList(brief);
+  const [anMap, setAnMap] = useState<Record<string, AN>>({});
+  const [loadingAn, setLoadingAn] = useState(true);
+  const tickerKey = cards.map((c) => c.ticker).join(",");
+
+  // ONE server-side batch call (sequential + cached) instead of N parallel per-card
+  // fetches — this is what fixes the "Awaiting live flows" gaps on the mock API.
+  useEffect(() => {
+    if (!tickerKey) return;
+    let on = true;
+    const load = () => api<{ results: Record<string, AN> }>(`/predictions/analysis-batch?tickers=${tickerKey}`)
+      .then((r) => { if (on) { setAnMap(r.results || {}); setLoadingAn(false); } })
+      .catch(() => { if (on) setLoadingAn(false); });
+    load();
+    const i = setInterval(load, 25000);
+    return () => { on = false; clearInterval(i); };
+  }, [tickerKey]);
+
   return (
     <>
-      <Section title={t("📊 분석 기반 — 실시간 수급·호가로 본 매매 신호", "📊 Analysis — signals from live flows & order book")}>
+      <Section title={t("📊 분석 기반 — 수급·호가·박스권 자체 분석 (ML과 독립)", "📊 Analysis — own 수급/호가/box signal (independent of ML)")}>
+        {loadingAn && Object.keys(anMap).length === 0 && <div className="text-[12px] text-[var(--text-muted)] mb-2">{t("실시간 분석 계산중… (키움)", "Computing live analysis… (Kiwoom)")}</div>}
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
-          {pickList(brief).map((c) => <AnalysisCard key={c.ticker} c={c} t={t} />)}
+          {cards.map((c) => <AnalysisCard key={c.ticker} c={c} an={anMap[c.ticker]} t={t} />)}
         </div>
       </Section>
 
@@ -238,27 +259,28 @@ function AnalysisView({ brief, t }: { brief: Brief; t: (ko: string, en: string) 
   );
 }
 
-function AnalysisCard({ c, t }: { c: Card; t: (ko: string, en: string) => string }) {
-  const accent = adviceColor(c.advice);
+function AnalysisCard({ c, an, t }: { c: Card; an?: AN; t: (ko: string, en: string) => string }) {
+  const signal = an?.signal || "WATCH";
+  const accent = adviceColor(signal);
   const L = c.levels || {};
   const f = c.flow;
-  const [rt, setRt] = useState<RT | null>(null);
-
-  useEffect(() => {
-    let on = true;
-    const load = () => api<RT>(`/predictions/realtime/${c.ticker}`).then((r) => { if (on) setRt(r); }).catch(() => {});
-    load();
-    const i = setInterval(load, 20000);
-    return () => { on = false; clearInterval(i); };
-  }, [c.ticker]);
+  const rt = an?.realtime || null;
 
   return (
     <div className="rounded-xl border bg-[var(--bg-card)] p-3.5" style={{ borderColor: accent + "55", boxShadow: "var(--shadow-sm)" }}>
       <div className="flex items-center gap-2 mb-2">
         <span className="text-[15px] font-bold text-[var(--text-primary)]">{c.name}</span>
-        <span className="text-[11px] px-2 py-0.5 rounded-full font-bold" style={{ color: "#fff", background: accent }}>{c.advice}</span>
+        <span className="text-[11px] px-2 py-0.5 rounded-full font-bold" style={{ color: "#fff", background: accent }}>{an?.label || t("관망", "Watch")}</span>
+        {c.advice !== signal && <span className="text-[9px] text-[var(--text-muted)]">ML: {c.advice}</span>}
         <span className="ml-auto text-[10px] text-[var(--text-muted)]">{t("박스권", "Box")} {fmt(L.support)}~{fmt(L.resistance)}</span>
       </div>
+
+      {/* analysis reasons (the WHY — distinct from ML) */}
+      {an?.reasons && an.reasons.length > 0 && (
+        <div className="text-[10.5px] text-[var(--text-secondary)] mb-2 leading-snug">
+          {an.reasons.map((r, i) => <span key={i} className="inline-block mr-1.5">· {r}</span>)}
+        </div>
+      )}
 
       {/* LIVE order book + realtime 수급 (the analyst's core) */}
       {rt?.live ? (
