@@ -14,6 +14,7 @@ when Kiwoom is connected — this brief is the daily-resolution version of it.
 """
 from __future__ import annotations
 
+from datetime import date, timedelta
 from typing import Any, Optional
 
 from sqlalchemy import text
@@ -134,19 +135,55 @@ def _realtime_impl(ticker: str, with_program: bool = True) -> dict[str, Any] | N
         return None
 
 
+# ---- buy/sell TIMING (price + when) — both methods ------------------------------
+def _add_trading_days(start_iso: Optional[str], n: int) -> str:
+    try:
+        d = date.fromisoformat(start_iso) if start_iso else date.today()
+    except (ValueError, TypeError):
+        d = date.today()
+    added = 0
+    while added < n:
+        d += timedelta(days=1)
+        if d.weekday() < 5:           # skip Sat/Sun
+            added += 1
+    return d.isoformat()
+
+
+def timing_plan(levels: dict, advice: str, as_of: Optional[str], horizon: int) -> dict[str, Any]:
+    """Turn a signal into WHEN to act, not just at what price. For a daily/5d model the
+    grain is days; live intraday refines this once 실전 keys feed minute data."""
+    L = levels or {}
+    if advice not in ("BUY", "SELL"):
+        return {"buy_time": "신호 대기 (관망)", "sell_time": None, "by": None}
+    by = _add_trading_days(as_of, horizon)
+    close, entry = L.get("close"), L.get("entry")
+    if advice == "BUY":
+        buy_time = ("지금~익일 시가 진입" if (close and entry and entry >= close)
+                    else "눌림목(진입가) 도달 시 매수")
+        sell_time = f"목표 도달 시 청산 · 예상 ~{horizon}거래일(≈{by})"
+    else:  # SELL
+        buy_time = "반등(진입가) 부근 분할 매도/청산"
+        sell_time = f"목표 하락 도달 시 · 예상 ~{horizon}거래일(≈{by})"
+    return {"buy_time": buy_time, "sell_time": sell_time, "by": by}
+
+
 # ---- per-stock card ------------------------------------------------------------
-def stock_card(db, ticker: str, horizon: int = 5, live: bool = False) -> dict[str, Any]:
+def stock_card(db, ticker: str, horizon: int = 5, live: bool = False,
+               as_of: Optional[str] = None) -> dict[str, Any]:
     pred = ps.get_ticker(db, ticker, horizon) or {}
     advice = pred.get("advice", "HOLD")
+    levels = _levels(db, ticker, advice)
     return {
         "ticker": ticker, "name": NAMES.get(ticker, ticker),
         "advice": advice, "confidence": pred.get("confidence"),
         "direction": pred.get("direction"),
+        "model": pred.get("model"),                       # best algorithm for THIS stock
         "backtest_acc": pred.get("backtest_acc"),
         "expected_low_pct": pred.get("expected_low_pct"),
         "expected_high_pct": pred.get("expected_high_pct"),
         "reasoning": pred.get("reasoning"),
-        "levels": _levels(db, ticker, advice),
+        "levels": levels,
+        "timing": timing_plan(levels, advice, as_of, horizon),
         "flow": _flow(db, ticker),
         "realtime": realtime_for(ticker) if live else None,
     }
@@ -203,13 +240,17 @@ def analysis_batch(db, tickers: list[str], horizon: int = 5) -> dict[str, Any]:
     """METHOD 2 payload for a set of tickers — computed SERVER-SIDE sequentially so
     the mock API's rate limit isn't hammered by N parallel client calls (the cause of
     the 'Awaiting live flows' gaps). Each result = {realtime, signal, label, reasons}."""
+    as_of = ps._latest_as_of(db, horizon)
     out: dict[str, Any] = {}
     for tk in tickers:
-        card = stock_card(db, tk, horizon, live=False)     # levels + daily flow (DB)
+        card = stock_card(db, tk, horizon, live=False, as_of=as_of)   # base levels + flow
         rt = _realtime_impl(tk, with_program=False)        # live 호가 + 수급 (2 calls, cached)
         sig = analysis_signal(card, rt)
-        out[tk] = {"realtime": rt, "levels": card.get("levels"),
-                   "flow": card.get("flow"), **sig}
+        # entry/target/stop + timing for THIS method's own signal (not the ML advice)
+        an_levels = _levels(db, tk, sig["signal"])
+        timing = timing_plan(an_levels, sig["signal"], as_of, horizon)
+        out[tk] = {"realtime": rt, "levels": an_levels,
+                   "flow": card.get("flow"), "timing": timing, **sig}
     return out
 
 
@@ -226,7 +267,7 @@ def brief(db, horizon: int = 5) -> dict[str, Any]:
         if tk in NAMES and tk not in seen:
             ordered.append(tk)
             seen.add(tk)
-    picks = [stock_card(db, tk, horizon) for tk in ordered]
+    picks = [stock_card(db, tk, horizon, as_of=summ.get("as_of")) for tk in ordered]
     picks_buy = [c for c in picks if c["advice"] == "BUY"]
     picks_sell = [c for c in picks if c["advice"] == "SELL"]
 

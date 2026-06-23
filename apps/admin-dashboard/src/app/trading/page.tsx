@@ -6,8 +6,9 @@ import { useLanguage } from "@/components/i18n";
 
 // ---- types (mirror trading_brief.brief) ----
 type Levels = { close?: number; support?: number; resistance?: number; entry?: number; target?: number; stop?: number; rr?: number };
+type Timing = { buy_time?: string; sell_time?: string; by?: string };
 type Flow = { date?: string; foreign?: string; inst?: string; foreign_net?: number; inst_net?: number; foreign_5d?: number; inst_5d?: number; foreign_hold_pct?: number; tag?: string };
-type Card = { ticker: string; name: string; advice: string; confidence?: string; direction?: string; backtest_acc?: number; expected_low_pct?: number; expected_high_pct?: number; reasoning?: string; levels: Levels; flow?: Flow };
+type Card = { ticker: string; name: string; advice: string; confidence?: string; direction?: string; model?: string; backtest_acc?: number; expected_low_pct?: number; expected_high_pct?: number; reasoning?: string; levels: Levels; timing?: Timing; flow?: Flow };
 type Heat = { ticker: string; name: string; foreign: string; inst: string; foreign_net: number; inst_net: number; tag: string };
 type News = { ticker?: string; name?: string; ts: string; source?: string; url?: string; title: string; type: string; impact: number; direction: number };
 type Regime = { date?: string; tone: string; label_ko: string; kospi_ret5?: number; kospi_vs_sma20?: number; usdkrw_ret5?: number; breadth?: number; won?: string };
@@ -86,8 +87,8 @@ function MethodSelector({ onPick, t, counts }: { onPick: (m: Method) => void; t:
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <button onClick={() => onPick("ml")} className="text-left rounded-2xl border-2 p-5 transition-all hover:scale-[1.01]" style={{ borderColor: "var(--badge-blue-text)", background: "var(--bg-card)", boxShadow: "var(--shadow-sm)" }}>
           <div className="text-[28px] mb-2">🤖</div>
-          <div className="text-[17px] font-extrabold text-[var(--text-primary)]">{t("머신러닝 예측", "Machine Learning")}</div>
-          <div className="text-[12px] text-[var(--text-muted)] mt-0.5 mb-3">{t("11개 알고리즘 학습 모델", "11-algorithm trained model")}</div>
+          <div className="text-[17px] font-extrabold text-[var(--text-primary)]">{t("머신러닝 알고리즘", "Machine Learning Algorithms")}</div>
+          <div className="text-[12px] text-[var(--text-muted)] mt-0.5 mb-3">{t("종목별 최적 알고리즘 (11개 비교)", "Best algorithm per stock (11 compared)")}</div>
           <ul className="text-[12.5px] text-[var(--text-secondary)] space-y-1 leading-relaxed">
             <li>• {t("종목별 최적 모델이 BUY/SELL/HOLD 예측", "Per-stock best model predicts BUY/SELL/HOLD")}</li>
             <li>• {t("진입·목표·손절가 + 예상 변동폭", "Entry/target/stop + expected move")}</li>
@@ -143,7 +144,7 @@ function RegimeStrip({ r, counts, t }: { r: Regime; counts: Record<string, numbe
 // ============================ Method 1: ML view ============================
 function MLView({ brief, t }: { brief: Brief; t: (ko: string, en: string) => string }) {
   return (
-    <Section title={t("🤖 머신러닝 예측 — 주요 종목 + 검증된 신호", "🤖 ML predictions — featured + validated signals")}>
+    <Section title={t("🤖 머신러닝 알고리즘 — 종목별 최적 모델 예측", "🤖 Machine Learning Algorithms — best-model prediction per stock")}>
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
         {pickList(brief).map((c) => <MLCard key={c.ticker} c={c} t={t} />)}
       </div>
@@ -156,9 +157,10 @@ function MLCard({ c, t }: { c: Card; t: (ko: string, en: string) => string }) {
   const L = c.levels || {};
   return (
     <div className="rounded-xl border bg-[var(--bg-card)] p-3.5" style={{ borderColor: accent + "55", boxShadow: "var(--shadow-sm)" }}>
-      <div className="flex items-center gap-2 mb-2">
+      <div className="flex items-center gap-2 mb-2 flex-wrap">
         <span className="text-[15px] font-bold text-[var(--text-primary)]">{c.name}</span>
         <span className="text-[11px] px-2 py-0.5 rounded-full font-bold" style={{ color: "#fff", background: accent }}>{c.advice}</span>
+        {c.model && <span className="text-[9.5px] px-1.5 py-0.5 rounded font-bold" style={{ color: "var(--badge-blue-text)", background: "var(--badge-blue-bg)" }} title={t("이 종목 최적 알고리즘", "best algorithm for this stock")}>⚙ {c.model}</span>}
         {c.confidence && <span className="text-[10px] text-[var(--text-muted)]">{t("신뢰도", "conf")} {c.confidence}</span>}
         {c.backtest_acc != null && (
           <span className="ml-auto text-[10px] px-1.5 py-0.5 rounded" style={{ color: "var(--text-muted)", background: "var(--bg-hover)" }}>
@@ -167,8 +169,8 @@ function MLCard({ c, t }: { c: Card; t: (ko: string, en: string) => string }) {
         )}
       </div>
       <div className="grid grid-cols-3 gap-1.5 text-center mb-2">
-        <Level label={t("진입가", "Entry")} v={L.entry} color="var(--text-primary)" />
-        <Level label={t("목표가", "Target")} v={L.target} color="var(--badge-success-text)" />
+        <Level label={t("매수가", "Buy")} v={L.entry} color="var(--text-primary)" />
+        <Level label={t("매도가(목표)", "Sell")} v={L.target} color="var(--badge-success-text)" />
         <Level label={t("손절가", "Stop")} v={L.stop} color="var(--error)" />
       </div>
       <div className="flex items-center justify-between text-[10.5px] text-[var(--text-muted)]">
@@ -176,13 +178,25 @@ function MLCard({ c, t }: { c: Card; t: (ko: string, en: string) => string }) {
         {L.rr != null && <span>{t("손익비", "R:R")} {L.rr}</span>}
         {(c.expected_low_pct != null && c.expected_high_pct != null) && <span>{t("예상", "exp")} {c.expected_low_pct}~{c.expected_high_pct}%</span>}
       </div>
+      <TimingLine tm={c.timing} t={t} />
       {c.reasoning && <div className="mt-2 pt-2 border-t border-[var(--border-default)] text-[10.5px] text-[var(--text-secondary)] leading-snug line-clamp-3">{c.reasoning}</div>}
     </div>
   );
 }
 
 // ============================ Method 2: Analysis view ============================
-type AN = { signal?: string; label?: string; score?: number; reasons?: string[]; realtime?: RT };
+type AN = { signal?: string; label?: string; score?: number; reasons?: string[]; realtime?: RT; levels?: Levels; timing?: Timing };
+
+// Shared buy/sell timing line (price was shown above; this adds WHEN)
+function TimingLine({ tm, t }: { tm?: Timing; t: (ko: string, en: string) => string }) {
+  if (!tm || (!tm.buy_time && !tm.sell_time)) return null;
+  return (
+    <div className="mt-2 pt-2 border-t border-[var(--border-default)] text-[10.5px] leading-snug">
+      <div className="flex gap-1.5"><span className="text-[var(--text-muted)]">⏱ {t("매수", "Buy")}</span><span className="text-[var(--text-primary)]">{tm.buy_time}</span></div>
+      {tm.sell_time && <div className="flex gap-1.5 mt-0.5"><span className="text-[var(--text-muted)]">⏱ {t("매도", "Sell")}</span><span className="text-[var(--text-primary)]">{tm.sell_time}</span></div>}
+    </div>
+  );
+}
 
 function AnalysisView({ brief, t }: { brief: Brief; t: (ko: string, en: string) => string }) {
   const cards = pickList(brief);
@@ -262,7 +276,7 @@ function AnalysisView({ brief, t }: { brief: Brief; t: (ko: string, en: string) 
 function AnalysisCard({ c, an, t }: { c: Card; an?: AN; t: (ko: string, en: string) => string }) {
   const signal = an?.signal || "WATCH";
   const accent = adviceColor(signal);
-  const L = c.levels || {};
+  const L = an?.levels || c.levels || {};   // analysis signal's own levels
   const f = c.flow;
   const rt = an?.realtime || null;
 
@@ -305,12 +319,13 @@ function AnalysisCard({ c, an, t }: { c: Card; an?: AN; t: (ko: string, en: stri
         <div className="rounded-lg bg-[var(--bg-elevated)] p-2 mb-2 text-[10.5px] text-[var(--text-muted)]">{t("실시간 수급 대기중… (키움)", "Awaiting live flows… (Kiwoom)")}</div>
       )}
 
-      {/* trade levels */}
-      <div className="grid grid-cols-3 gap-1.5 text-center mb-2">
-        <Level label={t("진입가", "Entry")} v={L.entry} color="var(--text-primary)" />
-        <Level label={t("목표가", "Target")} v={L.target} color="var(--badge-success-text)" />
+      {/* trade levels (analysis signal) */}
+      <div className="grid grid-cols-3 gap-1.5 text-center mb-1">
+        <Level label={t("매수가", "Buy")} v={L.entry} color="var(--text-primary)" />
+        <Level label={t("매도가(목표)", "Sell")} v={L.target} color="var(--badge-success-text)" />
         <Level label={t("손절가", "Stop")} v={L.stop} color="var(--error)" />
       </div>
+      <TimingLine tm={an?.timing} t={t} />
 
       {/* daily 수급 */}
       {f && (
