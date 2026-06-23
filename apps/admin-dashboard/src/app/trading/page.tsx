@@ -154,7 +154,7 @@ function Empty({ text }: { text: string }) {
   return <div className="px-4 py-6 text-center text-[12px] text-[var(--text-muted)]">{text}</div>;
 }
 
-type RT = { live?: boolean; imbalance?: number; pressure?: string; best_bid?: number; best_ask?: number; foreign?: number; institution?: number; fin_invest?: number; program_net?: number; as_of?: string };
+type RT = { live?: boolean; env?: string; imbalance?: number; pressure?: string; best_bid?: number; best_ask?: number; foreign?: number; institution?: number; fin_invest?: number; program_net?: number; as_of?: string };
 
 function PickCard({ c, t }: { c: Card; t: (ko: string, en: string) => string }) {
   const isBuy = c.advice === "BUY";
@@ -212,6 +212,7 @@ function PickCard({ c, t }: { c: Card; t: (ko: string, en: string) => string }) 
         <div className="mt-2 pt-2 border-t border-dashed border-[var(--border-strong)]">
           <div className="flex items-center gap-2 text-[11px] mb-1">
             <span className="text-[10px] px-1.5 py-0.5 rounded-full font-bold animate-pulse" style={{ color: "#fff", background: "var(--error)" }}>🔴 실시간</span>
+            {rt.env && <span className="text-[9px] px-1 py-0.5 rounded font-bold" style={{ color: rt.env === "실전" ? "var(--badge-success-text)" : "var(--text-muted)", background: rt.env === "실전" ? "var(--badge-success-bg)" : "var(--bg-hover)" }} title={rt.env === "실전" ? "실전 라이브 데이터" : "모의투자 데이터 (실전 키 필요)"}>{rt.env}</span>}
             <span className="text-[var(--text-muted)]">{t("호가", "Book")}</span>
             <span className="font-bold" style={{ color: (rt.imbalance ?? 0) > 0.15 ? "var(--badge-success-text)" : (rt.imbalance ?? 0) < -0.15 ? "var(--error)" : "var(--text-muted)" }}>
               {rt.pressure} {rt.imbalance != null ? `(${(rt.imbalance * 100).toFixed(0)}%)` : ""}

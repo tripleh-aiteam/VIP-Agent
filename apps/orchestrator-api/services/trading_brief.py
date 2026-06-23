@@ -113,8 +113,10 @@ def realtime_for(ticker: str) -> dict[str, Any] | None:
         imb = ob.get("imbalance")
         pressure = ("매수우위" if imb is not None and imb > 0.15 else
                     "매도우위" if imb is not None and imb < -0.15 else "균형")
+        base = getattr(kr, "_active_base", "") or ""        # which env actually authed
+        env = "모의" if "mockapi" in base else "실전"
         return {
-            "live": True, "as_of": fl.get("date"),
+            "live": True, "env": env, "as_of": fl.get("date"),
             "imbalance": imb, "pressure": pressure,
             "best_bid": ob.get("best_bid"), "best_ask": ob.get("best_ask"),
             "foreign": fl.get("foreign"), "institution": fl.get("institution"),
