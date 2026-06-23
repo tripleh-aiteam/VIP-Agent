@@ -1346,6 +1346,19 @@ def _master_daily_report(email_override: str | None = None, period: str = "daily
                         md = "\n".join(ln) + "\n\n---\n\n" + (md or "")
                 except Exception as _pe:
                     log.warning(f"master: ML picks section skipped: {str(_pe)[:80]}")
+                # Prepend overnight notable events that did NOT warrant a separate email
+                # (sev < 7 or over the daily cap) — folded into the morning report instead.
+                try:
+                    from services.breaking_report import recent_events_digest
+                    _evs = [e for e in recent_events_digest(db, hours=20) if not e["emailed"]]
+                    if _evs:
+                        bl = ["## 📰 간밤 주요 이벤트 요약 (개별 속보 미발송분)",
+                              "_심각도 7 미만 또는 일일 발송 한도 초과로 즉시 발송하지 않은 시장 이벤트입니다._", ""]
+                        for e in _evs[:10]:
+                            bl.append(f"- (severity {e['severity']}/10) {e['title']}")
+                        md = "\n".join(bl) + "\n\n---\n\n" + (md or "")
+                except Exception as _be:
+                    log.warning(f"master: breaking digest skipped: {str(_be)[:80]}")
                 files = []
                 if md:
                     files.append((f"추천_Recommendation_{ymd}.docx",
@@ -1512,13 +1525,15 @@ def _breaking_monitor():
     per day so it stays high-signal, not spam."""
     import time as _t
     try:
-        from services.breaking_report import triage_events
+        from services.breaking_report import triage_events, record_event, mark_emailed
         from services.kst import kst_date as _kd
-        # Env-tunable at call time (no redeploy needed):
-        #   BREAKING_MIN_SEV (default 7), BREAKING_CAP (default 3),
-        #   BREAKING_MONITOR_EMAIL (default '*ALL*' = all 7; set a single address to validate).
-        min_sev = int(os.getenv("BREAKING_MIN_SEV", "5") or 5)
-        cap = int(os.getenv("BREAKING_CAP", "3") or 3)
+        # Env-tunable at call time (no redeploy needed). Defaults: EMAIL only on BIG
+        # events (sev>=7), max 2/day. EVERYTHING notable (sev>=collect) is still RECORDED
+        # for the morning digest + data — the medium events ride the morning report, not
+        # a separate email.
+        email_sev = int(os.getenv("BREAKING_MIN_SEV", "7") or 7)
+        cap = int(os.getenv("BREAKING_CAP", "2") or 2)
+        collect_sev = int(os.getenv("BREAKING_COLLECT_SEV", "5") or 5)
         target = os.getenv("BREAKING_MONITOR_EMAIL") or "*ALL*"
         now = _t.time()
         for k in [k for k, ts in list(_BREAKING_SEEN.items()) if now - ts > _BREAKING_SEEN_TTL]:
@@ -1526,17 +1541,30 @@ def _breaking_monitor():
         day = _kd()
         if _BREAKING_DAY["day"] != day:
             _BREAKING_DAY.update(day=day, count=0)
-        if _BREAKING_DAY["count"] >= cap:
-            return  # already sent today's cap — stay quiet
-        events = triage_events(seen_keys=set(_BREAKING_SEEN.keys()), min_sev=min_sev)
+
+        events = triage_events(seen_keys=set(_BREAKING_SEEN.keys()), min_sev=collect_sev)
         if not events:
             return
-        top = events[0]
-        _BREAKING_SEEN[top["key"]] = now
-        _BREAKING_DAY["count"] += 1
-        log.info(f"breaking-monitor: NEW event sev {top['severity']} — {top['title'][:70]} -> {target}",
-                 extra={"action": "breaking.monitor.fire"})
-        _breaking_report(email_override=target, focus=top["title"])
+
+        db = SessionLocal()
+        try:
+            # 1) RECORD every new notable event (for the morning digest + data history).
+            for ev in events:
+                _BREAKING_SEEN[ev["key"]] = now
+                record_event(db, day, ev, emailed=False)
+            # 2) EMAIL only the BIG ones (sev >= email_sev), up to the daily cap.
+            for ev in events:
+                if _BREAKING_DAY["count"] >= cap:
+                    break
+                if ev["severity"] >= email_sev:
+                    _BREAKING_DAY["count"] += 1
+                    mark_emailed(db, ev["key"])
+                    log.info(f"breaking-monitor: BIG event sev {ev['severity']} — "
+                             f"{ev['title'][:70]} -> {target}",
+                             extra={"action": "breaking.monitor.fire"})
+                    _breaking_report(email_override=target, focus=ev["title"])
+        finally:
+            db.close()
     except Exception as e:
         log.warning(f"breaking-monitor failed: {str(e)[:120]}",
                     extra={"action": "breaking.monitor.failed"})

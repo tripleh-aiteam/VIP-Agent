@@ -360,3 +360,50 @@ def triage_events(seen_keys: set | None = None, min_sev: int = 5, max_events: in
             res.append({"title": str(e.get("title", ""))[:160], "severity": sev,
                         "theme": str(e.get("theme", "")), "key": key})
     return sorted(res, key=lambda x: -x["severity"])[:max_events]
+
+
+# ---------------------------------------------------------------------------
+# Breaking-events store — record EVERY notable event (sev >= collect threshold)
+# for (a) the morning digest and (b) data. Emails only fire on big ones (sev>=7,
+# capped); the rest are summarized in the morning master report instead of spamming.
+# ---------------------------------------------------------------------------
+def _ensure_events_table(db):
+    from sqlalchemy import text
+    db.execute(text(
+        "CREATE TABLE IF NOT EXISTS breaking_events ("
+        "id BIGSERIAL PRIMARY KEY, kst_date DATE, ts TIMESTAMPTZ DEFAULT now(), "
+        "severity INT, title TEXT, theme TEXT, event_key TEXT UNIQUE, "
+        "emailed BOOLEAN DEFAULT false)"))
+    db.commit()
+
+
+def record_event(db, kst_date, ev: dict, emailed: bool = False):
+    from sqlalchemy import text
+    _ensure_events_table(db)
+    db.execute(text(
+        "INSERT INTO breaking_events (kst_date, severity, title, theme, event_key, emailed) "
+        "VALUES (:d,:s,:t,:th,:k,:e) ON CONFLICT (event_key) DO NOTHING"),
+        {"d": kst_date, "s": int(ev.get("severity", 0)), "t": ev.get("title", ""),
+         "th": ev.get("theme", ""), "k": ev.get("key", ""), "e": emailed})
+    db.commit()
+
+
+def mark_emailed(db, key: str):
+    from sqlalchemy import text
+    db.execute(text("UPDATE breaking_events SET emailed=true WHERE event_key=:k"), {"k": key})
+    db.commit()
+
+
+def recent_events_digest(db, hours: int = 20) -> list[dict]:
+    """Notable events seen in the last ~20h (overnight window) for the morning digest."""
+    from sqlalchemy import text
+    try:
+        _ensure_events_table(db)
+        rows = db.execute(text(
+            "SELECT severity, title, theme, emailed FROM breaking_events "
+            "WHERE ts > now() - (:h || ' hours')::interval "
+            "ORDER BY severity DESC, ts DESC LIMIT 15"), {"h": hours}).fetchall()
+        return [{"severity": r.severity, "title": r.title, "theme": r.theme,
+                 "emailed": r.emailed} for r in rows]
+    except Exception:
+        return []
