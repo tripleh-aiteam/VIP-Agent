@@ -185,7 +185,7 @@ function MLCard({ c, t }: { c: Card; t: (ko: string, en: string) => string }) {
 }
 
 // ============================ Method 2: Analysis view ============================
-type AN = { signal?: string; label?: string; score?: number; reasons?: string[]; realtime?: RT; levels?: Levels; timing?: Timing };
+type AN = { signal?: string; label?: string; score?: number; reasons?: string[]; realtime?: RT; levels?: Levels; timing?: Timing; market_open?: boolean };
 
 // Shared buy/sell timing line (price was shown above; this adds WHEN)
 function TimingLine({ tm, t }: { tm?: Timing; t: (ko: string, en: string) => string }) {
@@ -276,7 +276,7 @@ function AnalysisView({ brief, t }: { brief: Brief; t: (ko: string, en: string) 
 function AnalysisCard({ c, an, t }: { c: Card; an?: AN; t: (ko: string, en: string) => string }) {
   const signal = an?.signal || "WATCH";
   const accent = adviceColor(signal);
-  const L = an?.levels || c.levels || {};   // analysis signal's own levels
+  const L = an?.levels || {};               // ALWAYS the analysis box levels (never ML)
   const f = c.flow;
   const rt = an?.realtime || null;
 
@@ -316,7 +316,11 @@ function AnalysisCard({ c, an, t }: { c: Card; an?: AN; t: (ko: string, en: stri
           </div>
         </div>
       ) : (
-        <div className="rounded-lg bg-[var(--bg-elevated)] p-2 mb-2 text-[10.5px] text-[var(--text-muted)]">{t("실시간 수급 대기중… (키움)", "Awaiting live flows… (Kiwoom)")}</div>
+        <div className="rounded-lg bg-[var(--bg-elevated)] p-2 mb-2 text-[10.5px] text-[var(--text-muted)]">
+          {an?.market_open
+            ? t("실시간 수급 계산중… (키움)", "Computing live flows… (Kiwoom)")
+            : t("장 마감 · 일별 수급(Naver) 기준 분석", "Market closed · analysis on daily flows (Naver)")}
+        </div>
       )}
 
       {/* trade levels (analysis signal) */}

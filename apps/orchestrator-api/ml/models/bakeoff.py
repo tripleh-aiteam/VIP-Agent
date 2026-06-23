@@ -64,33 +64,37 @@ def _models():
     from sklearn.neural_network import MLPClassifier
 
     bal = "balanced"
+    RS = 42   # fixed seed -> daily retrains are REPRODUCIBLE (no winner wobble between runs)
     m = {
-        "logreg": (LogisticRegression(max_iter=1000, C=0.5, class_weight=bal), True),
+        "logreg": (LogisticRegression(max_iter=1000, C=0.5, class_weight=bal,
+                                      random_state=RS), True),
         "decision_tree": (DecisionTreeClassifier(max_depth=5, min_samples_leaf=30,
-                                                 class_weight=bal), False),
+                                                 class_weight=bal, random_state=RS), False),
         "random_forest": (RandomForestClassifier(n_estimators=300, max_depth=8,
                                                  min_samples_leaf=20, n_jobs=-1,
-                                                 class_weight=bal), False),
-        "grad_boost": (GradientBoostingClassifier(n_estimators=200, max_depth=3), False),
-        "adaboost": (AdaBoostClassifier(n_estimators=200), False),
+                                                 class_weight=bal, random_state=RS), False),
+        "grad_boost": (GradientBoostingClassifier(n_estimators=200, max_depth=3,
+                                                  random_state=RS), False),
+        "adaboost": (AdaBoostClassifier(n_estimators=200, random_state=RS), False),
         "knn": (KNeighborsClassifier(n_neighbors=25), True),
         "gaussian_nb": (GaussianNB(), True),
-        "svm_rbf": (SVC(C=1.0, kernel="rbf", class_weight=bal), True),
+        "svm_rbf": (SVC(C=1.0, kernel="rbf", class_weight=bal, random_state=RS), True),
         "mlp": (MLPClassifier(hidden_layer_sizes=(64, 32), max_iter=400,
-                              early_stopping=True), True),
+                              early_stopping=True, random_state=RS), True),
     }
     try:
         from xgboost import XGBClassifier
         m["xgboost"] = (XGBClassifier(n_estimators=300, max_depth=4, learning_rate=0.05,
                                       subsample=0.8, colsample_bytree=0.8,
-                                      eval_metric="mlogloss", n_jobs=-1), False)
+                                      eval_metric="mlogloss", n_jobs=-1,
+                                      random_state=RS), False)
     except Exception:
         pass
     try:
         from lightgbm import LGBMClassifier
         m["lightgbm"] = (LGBMClassifier(n_estimators=400, max_depth=5, learning_rate=0.05,
                                         subsample=0.8, colsample_bytree=0.8,
-                                        n_jobs=-1, verbose=-1), False)
+                                        n_jobs=-1, verbose=-1, random_state=RS), False)
     except Exception:
         pass
     return m

@@ -52,29 +52,72 @@ def market_regime(db) -> dict[str, Any]:
 
 
 # ---- 박스권 levels (support/resistance trade plan) ------------------------------
-def _levels(db, ticker: str, advice: str) -> dict[str, Any]:
+def _kr_market_open() -> bool:
+    """KRX regular session: Mon-Fri 09:00-15:30 KST. During → Kiwoom live; after → Naver/EOD."""
+    from datetime import datetime, timezone, timedelta
+    n = datetime.now(timezone(timedelta(hours=9)))
+    return n.weekday() < 5 and 540 <= (n.hour * 60 + n.minute) <= 930
+
+
+def _recent_box(db, ticker: str):
+    """(close, support, resistance) from the last 20 daily bars, or None."""
     rows = db.execute(text(
         "SELECT high, low, close FROM raw_daily_prices WHERE ticker=:t "
         "ORDER BY date DESC LIMIT 20"), {"t": ticker}).fetchall()
     if not rows:
-        return {}
-    close = float(rows[0].close)
-    hi = max(float(r.high) for r in rows)     # 20d resistance (박스권 상단)
-    lo = min(float(r.low) for r in rows)      # 20d support   (박스권 하단)
-    entry = target = stop = None
-    if advice == "BUY":
-        entry = round(close)                              # at/just-below market
-        target = round(hi)                                # box top
-        stop = round(max(lo, close * 0.97))               # box bottom or -3%
-    elif advice == "SELL":
-        entry = round(close)
-        target = round(lo)
-        stop = round(min(hi, close * 1.03))
-    rr = None
+        return None
+    return (float(rows[0].close),
+            min(float(r.low) for r in rows),      # support (박스권 하단)
+            max(float(r.high) for r in rows))     # resistance (박스권 상단)
+
+
+def _rr(entry, target, stop):
     if entry and target and stop and entry != stop:
-        rr = round(abs(target - entry) / abs(entry - stop), 2)   # reward:risk
-    return {"close": round(close), "support": round(lo), "resistance": round(hi),
-            "entry": entry, "target": target, "stop": stop, "rr": rr}
+        return round(abs(target - entry) / abs(entry - stop), 2)
+    return None
+
+
+def _ml_levels(db, ticker: str, advice: str, exp_low, exp_high) -> dict[str, Any]:
+    """METHOD 1 (ML): trade plan from the MODEL's expected move (not the chart box).
+    Entry = market, Target = close ± expected-move%, Stop = half-band risk."""
+    box = _recent_box(db, ticker)
+    if not box:
+        return {}
+    close, sup, res = box
+    out = {"close": round(close), "support": round(sup), "resistance": round(res)}
+    band_up = abs(exp_high) if exp_high else 3.0
+    band_dn = abs(exp_low) if exp_low else 3.0
+    if advice == "BUY":
+        out["entry"] = round(close)
+        out["target"] = round(close * (1 + band_up / 100))            # model's upside
+        out["stop"] = round(close * (1 - band_dn / 100 * 0.5))        # half-band risk
+    elif advice == "SELL":
+        out["entry"] = round(close)
+        out["target"] = round(close * (1 - band_dn / 100))
+        out["stop"] = round(close * (1 + band_up / 100 * 0.5))
+    out["rr"] = _rr(out.get("entry"), out.get("target"), out.get("stop"))
+    return out
+
+
+def _box_levels(db, ticker: str, signal: str) -> dict[str, Any]:
+    """METHOD 2 (Analysis): trade plan from 박스권 지지/저항 — ALWAYS returns levels
+    (even for WATCH = accumulate-near-support plan), so every stock shows a result and
+    the numbers differ from the ML method's expected-move plan."""
+    box = _recent_box(db, ticker)
+    if not box:
+        return {}
+    close, sup, res = box
+    out = {"close": round(close), "support": round(sup), "resistance": round(res)}
+    if signal == "SELL":
+        out["entry"] = round(close)                       # 매도/청산 now
+        out["target"] = round(sup)                        # 지지까지 하락 목표
+        out["stop"] = round(res * 1.02)                   # 저항 돌파 시 손절
+    else:                                                 # BUY or WATCH: buy-the-dip-at-support
+        out["entry"] = round(min(close, sup * 1.03))      # 지지 부근 매수
+        out["target"] = round(res)                        # 저항 목표
+        out["stop"] = round(sup * 0.97)                   # 지지 이탈 손절
+    out["rr"] = _rr(out.get("entry"), out.get("target"), out.get("stop"))
+    return out
 
 
 # ---- 수급 (who's buying) -------------------------------------------------------
@@ -153,17 +196,20 @@ def timing_plan(levels: dict, advice: str, as_of: Optional[str], horizon: int) -
     """Turn a signal into WHEN to act, not just at what price. For a daily/5d model the
     grain is days; live intraday refines this once 실전 keys feed minute data."""
     L = levels or {}
-    if advice not in ("BUY", "SELL"):
+    close, entry = L.get("close"), L.get("entry")
+    if not entry:                     # no actionable plan (e.g. ML HOLD)
         return {"buy_time": "신호 대기 (관망)", "sell_time": None, "by": None}
     by = _add_trading_days(as_of, horizon)
-    close, entry = L.get("close"), L.get("entry")
-    if advice == "BUY":
-        buy_time = ("지금~익일 시가 진입" if (close and entry and entry >= close)
-                    else "눌림목(진입가) 도달 시 매수")
-        sell_time = f"목표 도달 시 청산 · 예상 ~{horizon}거래일(≈{by})"
-    else:  # SELL
+    if advice == "SELL":
         buy_time = "반등(진입가) 부근 분할 매도/청산"
-        sell_time = f"목표 하락 도달 시 · 예상 ~{horizon}거래일(≈{by})"
+        sell_time = f"지지(목표) 도달 시 · 예상 ~{horizon}거래일(≈{by})"
+    elif advice == "BUY":
+        buy_time = ("지금~익일 시가 진입" if (close and entry >= close)
+                    else "진입가 도달 시 매수")
+        sell_time = f"목표 도달 시 청산 · 예상 ~{horizon}거래일(≈{by})"
+    else:                             # WATCH — analysis box plan (accumulate at support)
+        buy_time = "지지(진입가) 부근 매수 대기"
+        sell_time = f"저항(목표) 도달 시 청산 · ~{horizon}거래일(≈{by})"
     return {"buy_time": buy_time, "sell_time": sell_time, "by": by}
 
 
@@ -172,7 +218,8 @@ def stock_card(db, ticker: str, horizon: int = 5, live: bool = False,
                as_of: Optional[str] = None) -> dict[str, Any]:
     pred = ps.get_ticker(db, ticker, horizon) or {}
     advice = pred.get("advice", "HOLD")
-    levels = _levels(db, ticker, advice)
+    levels = _ml_levels(db, ticker, advice,
+                        pred.get("expected_low_pct"), pred.get("expected_high_pct"))
     return {
         "ticker": ticker, "name": NAMES.get(ticker, ticker),
         "advice": advice, "confidence": pred.get("confidence"),
@@ -230,27 +277,50 @@ def analysis_signal(card: dict, rt: dict | None) -> dict[str, Any]:
         elif pos > 0.67:
             score -= 1; reasons.append("박스권 고점(저항) 매도구간")
 
-    sig = "BUY" if score >= 3 else "SELL" if score <= -3 else "WATCH"
+    # ±2 threshold so EOD-only data (daily 수급 + box, no live order book after market)
+    # still produces actionable 매수/매도, not everything stuck on 관망.
+    sig = "BUY" if score >= 2 else "SELL" if score <= -2 else "WATCH"
     label = {"BUY": "매수", "SELL": "매도", "WATCH": "관망"}[sig]
     return {"signal": sig, "label": label, "score": score,
             "reasons": reasons[:3] or ["뚜렷한 신호 없음 (관망)"]}
 
 
 def analysis_batch(db, tickers: list[str], horizon: int = 5) -> dict[str, Any]:
-    """METHOD 2 payload for a set of tickers — computed SERVER-SIDE sequentially so
-    the mock API's rate limit isn't hammered by N parallel client calls (the cause of
-    the 'Awaiting live flows' gaps). Each result = {realtime, signal, label, reasons}."""
+    """METHOD 2 (Analysis) — its OWN signal + 박스권 levels, independent of ML.
+
+    Reliability: the signal + levels are computed from DB data (daily 수급 + 박스권 =
+    Naver/EOD) which ALWAYS works, so every stock shows a result even after market /
+    when Kiwoom is slow. DURING market hours we additionally fetch Kiwoom live 호가/수급
+    in PARALLEL (best-effort, short timeout) to sharpen it — that's the only API work,
+    and it can never block the result. This is what fixes the blank cards + the
+    'both methods identical' fallback."""
     as_of = ps._latest_as_of(db, horizon)
+    flows = {tk: _flow(db, tk) for tk in tickers}          # DB (Naver EOD) — always present
+
+    # During market only: live Kiwoom 호가/수급, fetched in parallel, best-effort.
+    rts: dict[str, Any] = {}
+    if _kr_market_open():
+        try:
+            from concurrent.futures import ThreadPoolExecutor, as_completed
+            with ThreadPoolExecutor(max_workers=5) as ex:
+                futs = {ex.submit(_realtime_impl, tk, False): tk for tk in tickers}
+                for f in as_completed(futs, timeout=12):
+                    try:
+                        rts[futs[f]] = f.result()
+                    except Exception:
+                        rts[futs[f]] = None
+        except Exception:
+            pass
+
     out: dict[str, Any] = {}
     for tk in tickers:
-        card = stock_card(db, tk, horizon, live=False, as_of=as_of)   # base levels + flow
-        rt = _realtime_impl(tk, with_program=False)        # live 호가 + 수급 (2 calls, cached)
+        rt = rts.get(tk)
+        card = {"levels": _box_levels(db, tk, "WATCH"), "flow": flows.get(tk)}  # for box pos
         sig = analysis_signal(card, rt)
-        # entry/target/stop + timing for THIS method's own signal (not the ML advice)
-        an_levels = _levels(db, tk, sig["signal"])
-        timing = timing_plan(an_levels, sig["signal"], as_of, horizon)
-        out[tk] = {"realtime": rt, "levels": an_levels,
-                   "flow": card.get("flow"), "timing": timing, **sig}
+        levels = _box_levels(db, tk, sig["signal"])        # OWN levels for the signal
+        timing = timing_plan(levels, sig["signal"], as_of, horizon)
+        out[tk] = {"realtime": rt, "levels": levels, "flow": flows.get(tk),
+                   "timing": timing, "market_open": _kr_market_open(), **sig}
     return out
 
 
