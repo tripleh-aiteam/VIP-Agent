@@ -92,9 +92,9 @@ export default function TradingPage() {
       {loading && <div className="text-[var(--text-muted)]">{t("불러오는 중…", "Loading…")}</div>}
       {!loading && (err || !brief) && <div className="text-[var(--error)]">{t("데이터를 불러오지 못했습니다", "Failed to load")}: {err}</div>}
 
-      {/* Step 1 — method selector + track record */}
+      {/* Step 1 — method selector */}
       {!method && brief && <MethodSelector onPick={setMethod} t={t} counts={brief.counts} />}
-      {!method && <Scoreboard t={t} />}
+      {/* Scoreboard panel hidden for now (still logged/graded in the background; re-enable: <Scoreboard t={t} />) */}
 
       {/* Step 2 — the chosen method */}
       {method && brief && <RegimeStrip r={brief.regime} counts={brief.counts} t={t} />}
