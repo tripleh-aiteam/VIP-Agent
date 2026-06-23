@@ -11,7 +11,12 @@ type Card = { ticker: string; name: string; advice: string; confidence?: string;
 type Heat = { ticker: string; name: string; foreign: string; inst: string; foreign_net: number; inst_net: number; tag: string };
 type News = { ticker?: string; name?: string; ts: string; source?: string; url?: string; title: string; type: string; impact: number; direction: number };
 type Regime = { date?: string; tone: string; label_ko: string; kospi_ret5?: number; kospi_vs_sma20?: number; usdkrw_ret5?: number; breadth?: number; won?: string };
-type Brief = { as_of?: string; horizon: number; regime: Regime; counts: Record<string, number>; buys: Card[]; sells: Card[]; flow_heatmap: Heat[]; news: News[]; disclaimer: string };
+type Brief = { as_of?: string; horizon: number; regime: Regime; counts: Record<string, number>; picks?: Card[]; buys: Card[]; sells: Card[]; flow_heatmap: Heat[]; news: News[]; disclaimer: string };
+
+// Featured stocks pinned first (matches backend PRIORITY): SK하이닉스, NAVER, 삼성전자
+const PRIORITY = ["000660", "035420", "005930"];
+const pickList = (b: Brief): Card[] => b.picks ?? [...b.buys, ...b.sells];
+const adviceColor = (a: string) => (a === "BUY" ? "var(--badge-success-text)" : a === "SELL" ? "var(--error)" : "var(--text-muted)");
 type RT = { live?: boolean; env?: string; imbalance?: number; pressure?: string; best_bid?: number; best_ask?: number; foreign?: number; institution?: number; fin_invest?: number; program_net?: number; as_of?: string };
 
 const fmt = (n?: number) => (n == null ? "-" : n.toLocaleString());
@@ -138,21 +143,16 @@ function RegimeStrip({ r, counts, t }: { r: Regime; counts: Record<string, numbe
 // ============================ Method 1: ML view ============================
 function MLView({ brief, t }: { brief: Brief; t: (ko: string, en: string) => string }) {
   return (
-    <Section title={t("🤖 머신러닝 예측 — 검증된 신호만 (수익엣지 통과)", "🤖 ML predictions — economically-validated only")}>
-      {brief.buys.length === 0 && brief.sells.length === 0 ? (
-        <Empty text={t("오늘은 검증 통과한 매매 신호가 없습니다 (전부 관망).", "No validated signals today (all HOLD).")} />
-      ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
-          {[...brief.buys, ...brief.sells].map((c) => <MLCard key={c.ticker} c={c} t={t} />)}
-        </div>
-      )}
+    <Section title={t("🤖 머신러닝 예측 — 주요 종목 + 검증된 신호", "🤖 ML predictions — featured + validated signals")}>
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+        {pickList(brief).map((c) => <MLCard key={c.ticker} c={c} t={t} />)}
+      </div>
     </Section>
   );
 }
 
 function MLCard({ c, t }: { c: Card; t: (ko: string, en: string) => string }) {
-  const isBuy = c.advice === "BUY";
-  const accent = isBuy ? "var(--badge-success-text)" : "var(--error)";
+  const accent = adviceColor(c.advice);
   const L = c.levels || {};
   return (
     <div className="rounded-xl border bg-[var(--bg-card)] p-3.5" style={{ borderColor: accent + "55", boxShadow: "var(--shadow-sm)" }}>
@@ -186,13 +186,9 @@ function AnalysisView({ brief, t }: { brief: Brief; t: (ko: string, en: string) 
   return (
     <>
       <Section title={t("📊 분석 기반 — 실시간 수급·호가로 본 매매 신호", "📊 Analysis — signals from live flows & order book")}>
-        {brief.buys.length === 0 && brief.sells.length === 0 ? (
-          <Empty text={t("오늘은 신호 종목이 없습니다.", "No signal stocks today.")} />
-        ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
-            {[...brief.buys, ...brief.sells].map((c) => <AnalysisCard key={c.ticker} c={c} t={t} />)}
-          </div>
-        )}
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+          {pickList(brief).map((c) => <AnalysisCard key={c.ticker} c={c} t={t} />)}
+        </div>
       </Section>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
@@ -202,7 +198,8 @@ function AnalysisView({ brief, t }: { brief: Brief; t: (ko: string, en: string) 
               <span>{t("종목", "Stock")}</span><span className="px-2">외국인</span><span className="px-2">기관</span><span className="pl-2">{t("판정", "Tag")}</span>
             </div>
             <div className="max-h-[360px] overflow-y-auto">
-              {[...brief.flow_heatmap].sort((a, b) => (b.foreign_net + b.inst_net) - (a.foreign_net + a.inst_net)).map((h) => (
+              {[...brief.flow_heatmap.filter((h) => PRIORITY.includes(h.ticker)).sort((a, b) => PRIORITY.indexOf(a.ticker) - PRIORITY.indexOf(b.ticker)),
+                ...brief.flow_heatmap.filter((h) => !PRIORITY.includes(h.ticker)).sort((a, b) => (b.foreign_net + b.inst_net) - (a.foreign_net + a.inst_net))].map((h) => (
                 <div key={h.ticker} className="grid grid-cols-[1fr_auto_auto_auto] items-center text-[12px] px-3 py-1.5 border-b border-[var(--border-default)] last:border-0">
                   <span className="text-[var(--text-primary)] truncate">{h.name}</span>
                   <span className="px-2 font-bold" style={{ color: arrowColor(h.foreign) }}>{h.foreign}</span>
@@ -242,8 +239,7 @@ function AnalysisView({ brief, t }: { brief: Brief; t: (ko: string, en: string) 
 }
 
 function AnalysisCard({ c, t }: { c: Card; t: (ko: string, en: string) => string }) {
-  const isBuy = c.advice === "BUY";
-  const accent = isBuy ? "var(--badge-success-text)" : "var(--error)";
+  const accent = adviceColor(c.advice);
   const L = c.levels || {};
   const f = c.flow;
   const [rt, setRt] = useState<RT | null>(null);

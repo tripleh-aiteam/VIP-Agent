@@ -21,6 +21,10 @@ from sqlalchemy import text
 from services import prediction_service as ps
 from services.prediction_service import NAMES
 
+# Featured stocks pinned to the FRONT of every list (both methods), in this order,
+# even when the model says HOLD — the big names the user always wants to watch.
+PRIORITY = ["000660", "035420", "005930"]   # SK하이닉스, NAVER, 삼성전자
+
 
 # ---- market regime -------------------------------------------------------------
 def market_regime(db) -> dict[str, Any]:
@@ -148,12 +152,25 @@ def stock_card(db, ticker: str, horizon: int = 5, live: bool = False) -> dict[st
 # ---- the full brief ------------------------------------------------------------
 def brief(db, horizon: int = 5) -> dict[str, Any]:
     summ = ps.summary(db, horizon=horizon)
-    picks_buy = [stock_card(db, p["ticker"], horizon) for p in summ.get("buys", [])]
-    picks_sell = [stock_card(db, p["ticker"], horizon) for p in summ.get("sells", [])]
+    buy_tk = [p["ticker"] for p in summ.get("buys", [])]
+    sell_tk = [p["ticker"] for p in summ.get("sells", [])]
 
-    # 수급 heatmap across the whole universe (who's buying today)
+    # Ordered display list: PRIORITY featured stocks first (always, even HOLD),
+    # then BUY picks, then SELL picks. Deduped. Both method views render this.
+    ordered, seen = [], set()
+    for tk in PRIORITY + buy_tk + sell_tk:
+        if tk in NAMES and tk not in seen:
+            ordered.append(tk)
+            seen.add(tk)
+    picks = [stock_card(db, tk, horizon) for tk in ordered]
+    picks_buy = [c for c in picks if c["advice"] == "BUY"]
+    picks_sell = [c for c in picks if c["advice"] == "SELL"]
+
+    # 수급 heatmap across the whole universe (who's buying today). Featured stocks
+    # (PRIORITY) listed first, then the rest in the universe order.
     heat = []
-    for tk in NAMES:
+    heat_order = PRIORITY + [tk for tk in NAMES if tk not in PRIORITY]
+    for tk in heat_order:
         f = _flow(db, tk)
         if f:
             heat.append({"ticker": tk, "name": NAMES[tk],
@@ -180,6 +197,7 @@ def brief(db, horizon: int = 5) -> dict[str, Any]:
         "horizon": horizon,
         "regime": market_regime(db),
         "counts": summ.get("counts", {}),
+        "picks": picks,                 # ordered: featured first, then BUY, then SELL
         "buys": picks_buy,
         "sells": picks_sell,
         "flow_heatmap": heat,
