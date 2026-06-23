@@ -60,15 +60,17 @@ def _kr_market_open() -> bool:
 
 
 def _recent_box(db, ticker: str):
-    """(close, support, resistance) from the last 20 daily bars, or None."""
+    """(close, support, resistance, open) from the last 20 daily bars, or None."""
     rows = db.execute(text(
-        "SELECT high, low, close FROM raw_daily_prices WHERE ticker=:t "
+        "SELECT high, low, close, open FROM raw_daily_prices WHERE ticker=:t "
         "ORDER BY date DESC LIMIT 20"), {"t": ticker}).fetchall()
     if not rows:
         return None
+    opn = float(rows[0].open) if rows[0].open is not None else None
     return (float(rows[0].close),
             min(float(r.low) for r in rows),      # support (박스권 하단)
-            max(float(r.high) for r in rows))     # resistance (박스권 상단)
+            max(float(r.high) for r in rows),     # resistance (박스권 상단)
+            opn)                                  # latest day's open (시가)
 
 
 def _rr(entry, target, stop):
@@ -83,8 +85,9 @@ def _ml_levels(db, ticker: str, advice: str, exp_low, exp_high) -> dict[str, Any
     box = _recent_box(db, ticker)
     if not box:
         return {}
-    close, sup, res = box
-    out = {"close": round(close), "support": round(sup), "resistance": round(res)}
+    close, sup, res, opn = box
+    out = {"close": round(close), "open": round(opn) if opn else None,
+           "support": round(sup), "resistance": round(res)}
     band_up = abs(exp_high) if exp_high else 3.0
     band_dn = abs(exp_low) if exp_low else 3.0
     if advice == "BUY":
@@ -95,6 +98,10 @@ def _ml_levels(db, ticker: str, advice: str, exp_low, exp_high) -> dict[str, Any
         out["entry"] = round(close)
         out["target"] = round(close * (1 - band_dn / 100))
         out["stop"] = round(close * (1 + band_up / 100 * 0.5))
+    else:                                          # HOLD — range reference (지지/저항)
+        out["entry"] = round(sup)                  # 참고: 지지 부근 매수
+        out["target"] = round(res)                 # 참고: 저항 목표
+        out["stop"] = round(sup * 0.97)
     out["rr"] = _rr(out.get("entry"), out.get("target"), out.get("stop"))
     return out
 
@@ -106,8 +113,9 @@ def _box_levels(db, ticker: str, signal: str) -> dict[str, Any]:
     box = _recent_box(db, ticker)
     if not box:
         return {}
-    close, sup, res = box
-    out = {"close": round(close), "support": round(sup), "resistance": round(res)}
+    close, sup, res, opn = box
+    out = {"close": round(close), "open": round(opn) if opn else None,
+           "support": round(sup), "resistance": round(res)}
     if signal == "SELL":
         out["entry"] = round(close)                       # 매도/청산 now
         out["target"] = round(sup)                        # 지지까지 하락 목표

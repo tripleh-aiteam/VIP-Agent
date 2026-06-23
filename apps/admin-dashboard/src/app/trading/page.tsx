@@ -5,7 +5,17 @@ import { api } from "@/components/api";
 import { useLanguage } from "@/components/i18n";
 
 // ---- types (mirror trading_brief.brief) ----
-type Levels = { close?: number; support?: number; resistance?: number; entry?: number; target?: number; stop?: number; rr?: number };
+type Levels = { close?: number; open?: number; support?: number; resistance?: number; entry?: number; target?: number; stop?: number; rr?: number };
+
+// 시가 / 현재가 row shown on every card
+function PriceRow({ open, current, t }: { open?: number; current?: number; t: (ko: string, en: string) => string }) {
+  return (
+    <div className="flex items-center gap-4 text-[11px] mb-2 pb-2 border-b border-[var(--border-default)]">
+      <span><span className="text-[var(--text-muted)]">{t("시가", "Open")}</span> <span className="font-semibold text-[var(--text-primary)]">{fmt(open)}</span></span>
+      <span><span className="text-[var(--text-muted)]">{t("현재가", "Now")}</span> <span className="font-bold text-[var(--text-primary)]">{fmt(current)}</span></span>
+    </div>
+  );
+}
 type Timing = { buy_time?: string; sell_time?: string; by?: string };
 type Flow = { date?: string; foreign?: string; inst?: string; foreign_net?: number; inst_net?: number; foreign_5d?: number; inst_5d?: number; foreign_hold_pct?: number; tag?: string };
 type Card = { ticker: string; name: string; advice: string; confidence?: string; direction?: string; model?: string; backtest_acc?: number; expected_low_pct?: number; expected_high_pct?: number; reasoning?: string; levels: Levels; timing?: Timing; flow?: Flow };
@@ -18,7 +28,7 @@ type Brief = { as_of?: string; horizon: number; regime: Regime; counts: Record<s
 const PRIORITY = ["000660", "035420", "005930"];
 const pickList = (b: Brief): Card[] => b.picks ?? [...b.buys, ...b.sells];
 const adviceColor = (a: string) => (a === "BUY" ? "var(--badge-success-text)" : a === "SELL" ? "var(--error)" : "var(--text-muted)");
-type RT = { live?: boolean; env?: string; imbalance?: number; pressure?: string; best_bid?: number; best_ask?: number; foreign?: number; institution?: number; fin_invest?: number; program_net?: number; as_of?: string };
+type RT = { live?: boolean; env?: string; imbalance?: number; pressure?: string; best_bid?: number; best_ask?: number; foreign?: number; institution?: number; fin_invest?: number; program_net?: number; price?: number; as_of?: string };
 
 const fmt = (n?: number) => (n == null ? "-" : n.toLocaleString());
 const pct = (n?: number) => (n == null ? "-" : `${n > 0 ? "+" : ""}${n.toFixed(1)}%`);
@@ -168,6 +178,7 @@ function MLCard({ c, t }: { c: Card; t: (ko: string, en: string) => string }) {
           </span>
         )}
       </div>
+      <PriceRow open={L.open} current={L.close} t={t} />
       <div className="grid grid-cols-3 gap-1.5 text-center mb-2">
         <Level label={t("매수가", "Buy")} v={L.entry} color="var(--text-primary)" />
         <Level label={t("매도가(목표)", "Sell")} v={L.target} color="var(--badge-success-text)" />
@@ -288,6 +299,7 @@ function AnalysisCard({ c, an, t }: { c: Card; an?: AN; t: (ko: string, en: stri
         {c.advice !== signal && <span className="text-[9px] text-[var(--text-muted)]">ML: {c.advice}</span>}
         <span className="ml-auto text-[10px] text-[var(--text-muted)]">{t("박스권", "Box")} {fmt(L.support)}~{fmt(L.resistance)}</span>
       </div>
+      <PriceRow open={L.open} current={rt?.price ?? L.close} t={t} />
 
       {/* analysis reasons (the WHY — distinct from ML) */}
       {an?.reasons && an.reasons.length > 0 && (
