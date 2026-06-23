@@ -10,7 +10,7 @@ import UpdateBanner from "@/components/UpdateBanner";
 // page. State (turns, model) lives in AssistantProvider so navigation
 // (router.push from an LLM-issued action) doesn't drop the conversation.
 // The legacy slim chat-bar via VipChatbotMount is no longer mounted.
-import { AssistantProvider, AssistantCardGlobal } from "@/components/AssistantCard";
+import { AssistantProvider } from "@/components/AssistantCard";
 import { LanguageProvider } from "@/components/i18n";
 import PageSnapshotter from "@/components/PageSnapshotter";
 import { vipConfig } from "@/chatbot.config";
@@ -50,7 +50,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           <AssistantProvider>
             <div className="flex">
               <Sidebar />
-              <main className="flex-1 min-w-0 min-h-screen overflow-x-hidden relative pb-[280px]">
+              <main className="flex-1 min-w-0 min-h-screen overflow-x-hidden relative pb-10">
                 <TopBar />
                 <div className="p-3 md:p-6 max-w-7xl mx-auto w-full">{children}</div>
               </main>
@@ -62,9 +62,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                 Assistant (floating + workspace) sees the same data
                 whichever surface the user is in. */}
             <PageSnapshotter agentId={vipConfig.agentId} />
-            {/* Global centered Assistant — same card on every page except
-                /chatbot (where ChatWorkspace has its own composer) */}
-            <AssistantCardGlobal />
+            {/* Global centered Assistant hidden per user request (was on every page).
+                Re-enable: <AssistantCardGlobal /> */}
+            {/* <AssistantCardGlobal /> */}
           </AssistantProvider>
           </LanguageProvider>
         </AuthGuard>
