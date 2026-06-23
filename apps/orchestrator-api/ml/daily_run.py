@@ -19,13 +19,17 @@ ROOT = HERE.parent                              # orchestrator-api/
 
 STEPS = [
     ([sys.executable, str(HERE / "data" / "backfill_prices.py"), "--start", "2024-01-01"],
-     "1/3 update prices"),
+     "1/6 update prices"),
+    ([sys.executable, str(HERE / "data" / "backfill_flows.py"), "--pages", "3"],
+     "2/6 update 수급/investor flows"),
     ([sys.executable, str(HERE / "features" / "build_features.py")],
-     "2/4 rebuild features"),
+     "3/6 rebuild features"),
     ([sys.executable, str(HERE / "features" / "market_features.py")],
-     "3/4 add market/macro features"),
+     "4/6 add market/macro features"),
+    ([sys.executable, str(HERE / "features" / "flow_features.py")],
+     "5/6 add 수급/flow features"),
     ([sys.executable, str(HERE / "models" / "predict.py"), "--horizon", "5"],
-     "4/4 predict BUY/SELL/HOLD"),
+     "6/6 predict BUY/SELL/HOLD"),
 ]
 
 

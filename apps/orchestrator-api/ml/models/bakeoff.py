@@ -40,6 +40,15 @@ FEATURES_X = [
     # market/macro regime context (same across stocks per date) — gives each model
     # awareness of market-wide moves the per-stock technicals can't see.
     "mkt_kospi_ret5", "mkt_kospi_vs_sma20", "mkt_usdkrw_ret5", "mkt_breadth",
+    # 수급 / investor-flow features are collected (raw_investor_flows + flow_features.py)
+    # but DISABLED from the live model: an isolated ablation on real-flow rows showed
+    # daily 외국인/기관 net buying adds ~0 at 5d (Δacc -0.003, Δbuy +0.07%) and only a
+    # weak edge at 1d (helped 22/33 stocks, +0.06%/trade — below the 0.3% cost). With
+    # full-history imputation it slightly HURT the live model (17→15 beat b&h). We keep
+    # collecting flows daily to build real history; revisit once we have program-trading/
+    # 금투 + intraday flows (Kiwoom), which the YouTube method actually relies on. Re-enable:
+    # "flow_for_net1", "flow_inst_net1", "flow_for_net5", "flow_inst_net5",
+    # "flow_smart_net5", "flow_for_hold_chg20",
 ]
 
 

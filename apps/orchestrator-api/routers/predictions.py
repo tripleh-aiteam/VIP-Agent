@@ -31,12 +31,28 @@ def predictions_list(horizon: int = Query(5), advice: Optional[str] = Query(None
     return {"predictions": ps.list_predictions(db, horizon=horizon, advice=advice)}
 
 
+@router.get("/trading-brief")
+def trading_brief(horizon: int = Query(5), db: Session = Depends(get_db)):
+    """The full short-term (단타) brief the Daily Trading UI renders:
+    market regime + BUY/SELL picks with 박스권 trade levels + 수급 (who's buying) +
+    impact-scored effective news + DART disclosures. All from data we already have."""
+    from services.trading_brief import brief
+    return brief(db, horizon=horizon)
+
+
 @router.post("/collect-news")
 def collect_news(limit: int = Query(5, description="how many stocks to collect (test small)"),
                  db: Session = Depends(get_db)):
     """Manually run the news+sentiment collector -> raw_news (normally a daily cron)."""
     from services.news_sentiment_collector import collect_all
     return collect_all(db, limit=limit)
+
+
+@router.post("/collect-dart")
+def collect_dart(days: int = Query(1), db: Session = Depends(get_db)):
+    """Pull recent DART disclosures -> raw_disclosures (needs DART_API_KEY)."""
+    from services.dart_collector import collect
+    return collect(db, days=days)
 
 
 @router.get("/{ticker}")

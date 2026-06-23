@@ -1,0 +1,158 @@
+"""trading_brief — the unified short-term (단타) brief the Daily Trading UI renders.
+
+Fuses everything we can serve WITHOUT extra credentials into one payload:
+  • market regime      — KOSPI / USD-KRW / breadth (risk-on vs risk-off today)
+  • picks + trade plan — BUY/SELL with 박스권 진입가/목표가/손절가 (support/resistance)
+  • 수급 (who's buying) — latest 외국인/기관 net + 5d accumulation per stock
+  • effective news     — impact-scored news + live DART disclosures (noise hidden)
+  • honesty band       — the real backtest track record shown with every call
+
+Pure reader over Supabase tables (model_predictions, stock_features_daily,
+raw_daily_prices, raw_investor_flows, raw_news, raw_disclosures). No ML deps, so it
+runs fine on Render. The granular real-time layer (거래원/program/분봉) lights up later
+when Kiwoom is connected — this brief is the daily-resolution version of it.
+"""
+from __future__ import annotations
+
+from typing import Any, Optional
+
+from sqlalchemy import text
+
+from services import prediction_service as ps
+from services.prediction_service import NAMES
+
+
+# ---- market regime -------------------------------------------------------------
+def market_regime(db) -> dict[str, Any]:
+    r = db.execute(text(
+        "SELECT mkt_kospi_ret5, mkt_kospi_vs_sma20, mkt_usdkrw_ret5, mkt_breadth, date "
+        "FROM stock_features_daily WHERE mkt_breadth IS NOT NULL "
+        "ORDER BY date DESC LIMIT 1")).first()
+    if not r:
+        return {"label_ko": "데이터 없음", "tone": "neutral"}
+    k5 = float(r.mkt_kospi_ret5 or 0) * 100
+    breadth = float(r.mkt_breadth or 0) * 100
+    fx5 = float(r.mkt_usdkrw_ret5 or 0) * 100
+    vs20 = float(r.mkt_kospi_vs_sma20 or 0) * 100
+    risk_on = k5 > 0 and vs20 > 0 and breadth >= 50
+    tone = "risk_on" if risk_on else ("risk_off" if (k5 < 0 and breadth < 45) else "mixed")
+    label = {"risk_on": "위험선호 (강세)", "risk_off": "위험회피 (약세)",
+             "mixed": "혼조"}[tone]
+    won = "원화약세" if fx5 > 0.3 else ("원화강세" if fx5 < -0.3 else "환율보합")
+    return {
+        "date": str(r.date), "tone": tone, "label_ko": label,
+        "kospi_ret5": round(k5, 2), "kospi_vs_sma20": round(vs20, 2),
+        "usdkrw_ret5": round(fx5, 2), "breadth": round(breadth, 0), "won": won,
+    }
+
+
+# ---- 박스권 levels (support/resistance trade plan) ------------------------------
+def _levels(db, ticker: str, advice: str) -> dict[str, Any]:
+    rows = db.execute(text(
+        "SELECT high, low, close FROM raw_daily_prices WHERE ticker=:t "
+        "ORDER BY date DESC LIMIT 20"), {"t": ticker}).fetchall()
+    if not rows:
+        return {}
+    close = float(rows[0].close)
+    hi = max(float(r.high) for r in rows)     # 20d resistance (박스권 상단)
+    lo = min(float(r.low) for r in rows)      # 20d support   (박스권 하단)
+    entry = target = stop = None
+    if advice == "BUY":
+        entry = round(close)                              # at/just-below market
+        target = round(hi)                                # box top
+        stop = round(max(lo, close * 0.97))               # box bottom or -3%
+    elif advice == "SELL":
+        entry = round(close)
+        target = round(lo)
+        stop = round(min(hi, close * 1.03))
+    rr = None
+    if entry and target and stop and entry != stop:
+        rr = round(abs(target - entry) / abs(entry - stop), 2)   # reward:risk
+    return {"close": round(close), "support": round(lo), "resistance": round(hi),
+            "entry": entry, "target": target, "stop": stop, "rr": rr}
+
+
+# ---- 수급 (who's buying) -------------------------------------------------------
+def _flow(db, ticker: str) -> dict[str, Any]:
+    r = db.execute(text(
+        "SELECT foreign_net, inst_net, foreign_hold_pct, date FROM raw_investor_flows "
+        "WHERE ticker=:t ORDER BY date DESC LIMIT 1"), {"t": ticker}).first()
+    c5 = db.execute(text(
+        "SELECT SUM(foreign_net) f, SUM(inst_net) i FROM (SELECT foreign_net, inst_net "
+        "FROM raw_investor_flows WHERE ticker=:t ORDER BY date DESC LIMIT 5) q"),
+        {"t": ticker}).first()
+    if not r:
+        return {}
+    fn, inn = float(r.foreign_net or 0), float(r.inst_net or 0)
+    f5 = float(c5.f or 0) if c5 else 0
+    i5 = float(c5.i or 0) if c5 else 0
+    def arrow(v): return "▲" if v > 0 else ("▼" if v < 0 else "－")
+    smart5 = f5 + i5
+    tag = ("강력매집" if smart5 > 0 and f5 > 0 and i5 > 0 else
+           "분산매도" if smart5 < 0 and f5 < 0 and i5 < 0 else "혼조")
+    return {"date": str(r.date), "foreign": arrow(fn), "inst": arrow(inn),
+            "foreign_net": int(fn), "inst_net": int(inn),
+            "foreign_5d": int(f5), "inst_5d": int(i5),
+            "foreign_hold_pct": float(r.foreign_hold_pct) if r.foreign_hold_pct else None,
+            "tag": tag}
+
+
+# ---- per-stock card ------------------------------------------------------------
+def stock_card(db, ticker: str, horizon: int = 5) -> dict[str, Any]:
+    pred = ps.get_ticker(db, ticker, horizon) or {}
+    advice = pred.get("advice", "HOLD")
+    return {
+        "ticker": ticker, "name": NAMES.get(ticker, ticker),
+        "advice": advice, "confidence": pred.get("confidence"),
+        "direction": pred.get("direction"),
+        "backtest_acc": pred.get("backtest_acc"),
+        "expected_low_pct": pred.get("expected_low_pct"),
+        "expected_high_pct": pred.get("expected_high_pct"),
+        "reasoning": pred.get("reasoning"),
+        "levels": _levels(db, ticker, advice),
+        "flow": _flow(db, ticker),
+    }
+
+
+# ---- the full brief ------------------------------------------------------------
+def brief(db, horizon: int = 5) -> dict[str, Any]:
+    summ = ps.summary(db, horizon=horizon)
+    picks_buy = [stock_card(db, p["ticker"], horizon) for p in summ.get("buys", [])]
+    picks_sell = [stock_card(db, p["ticker"], horizon) for p in summ.get("sells", [])]
+
+    # 수급 heatmap across the whole universe (who's buying today)
+    heat = []
+    for tk in NAMES:
+        f = _flow(db, tk)
+        if f:
+            heat.append({"ticker": tk, "name": NAMES[tk],
+                         "foreign": f["foreign"], "inst": f["inst"],
+                         "foreign_net": f["foreign_net"], "inst_net": f["inst_net"],
+                         "tag": f["tag"]})
+
+    # effective news (impact-scored) + live DART disclosures
+    news: list[dict] = []
+    try:
+        from services.news_impact import effective_news
+        news += effective_news(db, ticker=None, limit=8)
+    except Exception as e:
+        print(f"[brief] news_impact failed: {str(e)[:60]}")
+    try:
+        from services.dart_collector import recent as dart_recent
+        news += dart_recent(db, ticker=None, limit=6)
+    except Exception as e:
+        print(f"[brief] dart failed: {str(e)[:60]}")
+    news.sort(key=lambda x: (x.get("impact") or 0), reverse=True)
+
+    return {
+        "as_of": summ.get("as_of"),
+        "horizon": horizon,
+        "regime": market_regime(db),
+        "counts": summ.get("counts", {}),
+        "buys": picks_buy,
+        "sells": picks_sell,
+        "flow_heatmap": heat,
+        "news": news[:12],
+        "disclaimer": ("ML 5일 예측 · 정확도 ~48%이나 BUY픽 평균 아웃퍼폼 · 보장 아님. "
+                       "실시간 분봉/거래원/프로그램 수급은 Kiwoom 연동 후 제공."),
+    }

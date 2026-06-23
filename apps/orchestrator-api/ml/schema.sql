@@ -75,6 +75,23 @@ CREATE TABLE IF NOT EXISTS raw_youtube (
     UNIQUE (video_id)
 );
 
+-- Investor-type flows (수급) — daily foreign/institution net buying per ticker.
+-- The Korean day-trader's core signal: who (smart money) is accumulating/distributing.
+-- Source: Naver Finance frgn page (KRX investor endpoints are blocked; OHLCV still works).
+CREATE TABLE IF NOT EXISTS raw_investor_flows (
+    ticker          TEXT        NOT NULL,
+    date            DATE        NOT NULL,
+    inst_net        BIGINT,                        -- 기관 순매매량 (shares; +buy / -sell)
+    foreign_net     BIGINT,                        -- 외국인 순매매량 (shares)
+    foreign_hold_pct NUMERIC,                      -- 외국인 보유율 (%)
+    close           NUMERIC,                       -- source close (sanity/join check)
+    volume          BIGINT,                        -- source day volume
+    source          TEXT        DEFAULT 'naver',
+    ingested_at     TIMESTAMPTZ DEFAULT now(),
+    PRIMARY KEY (ticker, date)
+);
+CREATE INDEX IF NOT EXISTS idx_raw_flows_date ON raw_investor_flows (date);
+
 -- DART official disclosures (highest-signal company events). Optional, high value.
 CREATE TABLE IF NOT EXISTS raw_disclosures (
     id          BIGSERIAL   PRIMARY KEY,
@@ -151,6 +168,16 @@ CREATE TABLE IF NOT EXISTS stock_features_daily (
     youtube_sentiment   NUMERIC,
     breaking_severity   INTEGER,               -- from our breaking engine (0-10)
     disclosure_flag     INTEGER DEFAULT 0,     -- 1 if a DART filing that day
+
+    -- 수급 / investor-flow features (the day-trader's smart-money signal).
+    -- Net shares normalized by 20d avg volume -> stationary, cross-stock comparable.
+    -- Added idempotently by ml/features/flow_features.py.
+    flow_for_net1       NUMERIC,               -- foreign net today / avg_vol20
+    flow_inst_net1      NUMERIC,               -- institution net today / avg_vol20
+    flow_for_net5       NUMERIC,               -- foreign 5d net / 5d volume
+    flow_inst_net5      NUMERIC,               -- institution 5d net / 5d volume
+    flow_smart_net5     NUMERIC,               -- (foreign+inst) 5d net / 5d volume
+    flow_for_hold_chg20 NUMERIC,               -- foreign holding % change over 20d
 
     -- LABELS (forward-looking targets)
     fwd_ret_1d      NUMERIC,
