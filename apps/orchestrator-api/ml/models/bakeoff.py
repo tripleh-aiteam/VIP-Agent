@@ -37,6 +37,9 @@ FEATURES_X = [
     "ret_1d", "ret_5d", "ret_20d", "gap_open", "price_vs_sma20",
     "rsi_14", "stoch_k", "stoch_d", "roc_10", "bb_pct",
     "macd", "macd_signal", "atr_14", "realized_vol_20", "volume_z_20",
+    # market/macro regime context (same across stocks per date) — gives each model
+    # awareness of market-wide moves the per-stock technicals can't see.
+    "mkt_kospi_ret5", "mkt_kospi_vs_sma20", "mkt_usdkrw_ret5", "mkt_breadth",
 ]
 
 

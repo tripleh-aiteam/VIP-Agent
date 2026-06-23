@@ -71,12 +71,63 @@ def test_ticker(conn, ticker: str, algo: str, cutoff, horizon: int = 5) -> dict 
     }
 
 
+def _multi(n: int, horizon: int) -> int:
+    """Run the forward test across N cutoffs (~every 10 trading days) and average —
+    a stable read instead of one noisy week."""
+    conn = get_conn(); cur = conn.cursor()
+    cur.execute(f"SELECT DISTINCT date FROM stock_features_daily WHERE fwd_ret_{horizon}d IS NOT NULL "
+                f"ORDER BY date DESC LIMIT %s", (n * 10,))
+    ds = [r[0] for r in cur.fetchall()]
+    cutoffs = ds[::10][:n]                       # every ~10 trading days
+    cur.execute("SELECT ticker, model_name FROM model_registry WHERE horizon=%s AND is_active",
+                (horizon,))
+    pairs = cur.fetchall()
+
+    print(f"\n=== MULTI-WINDOW FORWARD TEST — {len(cutoffs)} cutoffs ({horizon}d) ===\n")
+    print(f"{'cutoff':<12}{'dir_hit':>9}{'up_calls':>10}{'up_correct':>12}{'up_avg_ret':>12}{'mkt_avg':>10}")
+    print("-" * 65)
+    agg_hit, agg_up_ok, agg_up_n, agg_up_ret, agg_mkt = [], 0, 0, [], []
+    for cutoff in cutoffs:
+        rows = []
+        for t, algo in pairs:
+            try:
+                r = test_ticker(conn, t, algo, str(cutoff), horizon)
+            except Exception:
+                continue
+            if r:
+                rows.append(r)
+        if not rows:
+            continue
+        hit = sum(x["dir_hit"] for x in rows) / len(rows)
+        ups = [x for x in rows if x["pred_up"]]
+        up_ok = sum(x["up_call_correct"] for x in ups)
+        up_ret = np.mean([x["actual_ret"] for x in ups]) if ups else 0.0
+        mkt = np.mean([x["actual_ret"] for x in rows])
+        agg_hit.append(hit); agg_up_ok += up_ok; agg_up_n += len(ups)
+        agg_up_ret += [x["actual_ret"] for x in ups]; agg_mkt.append(mkt)
+        print(f"{str(cutoff):<12}{hit*100:>8.0f}%{len(ups):>10}{up_ok:>12}"
+              f"{up_ret:>+11.2f}%{mkt:>+9.2f}%")
+    conn.close()
+    if agg_hit:
+        print("-" * 65)
+        print(f"AVG direction hit: {np.mean(agg_hit)*100:.0f}%  |  "
+              f"UP-call win rate: {agg_up_ok}/{agg_up_n} = {agg_up_ok/max(agg_up_n,1)*100:.0f}%  |  "
+              f"UP-call avg ret {np.mean(agg_up_ret):+.2f}% vs market {np.mean(agg_mkt):+.2f}% "
+              f"(edge {np.mean(agg_up_ret)-np.mean(agg_mkt):+.2f}%)")
+    return 0
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--cutoff", default=None)
     ap.add_argument("--days-back", type=int, default=None)
     ap.add_argument("--horizon", type=int, default=5)
+    ap.add_argument("--multi", type=int, default=0,
+                    help="run across N cutoffs (every ~10 trading days) and average")
     args = ap.parse_args()
+
+    if args.multi:
+        return _multi(args.multi, args.horizon)
 
     conn = get_conn(); cur = conn.cursor()
     if args.cutoff:
