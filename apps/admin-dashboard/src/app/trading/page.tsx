@@ -92,8 +92,9 @@ export default function TradingPage() {
       {loading && <div className="text-[var(--text-muted)]">{t("불러오는 중…", "Loading…")}</div>}
       {!loading && (err || !brief) && <div className="text-[var(--error)]">{t("데이터를 불러오지 못했습니다", "Failed to load")}: {err}</div>}
 
-      {/* Step 1 — method selector */}
+      {/* Step 1 — method selector + track record */}
       {!method && brief && <MethodSelector onPick={setMethod} t={t} counts={brief.counts} />}
+      {!method && <Scoreboard t={t} />}
 
       {/* Step 2 — the chosen method */}
       {method && brief && <RegimeStrip r={brief.regime} counts={brief.counts} t={t} />}
@@ -145,6 +146,43 @@ function MethodSelector({ onPick, t, counts }: { onPick: (m: Method) => void; t:
           </div>
         </button>
       </div>
+    </div>
+  );
+}
+
+// ============================ Scoreboard (track record) ============================
+type MethodStat = { graded: number; win_rate?: number | null; profit_rate?: number | null; avg_return?: number | null; wins: number; losses: number; flats: number };
+type SB = { by_method: Record<string, MethodStat>; open_signals: number; recent: { name: string; method: string; signal: string; outcome: string; actual_ret: number; logged_date: string }[] };
+
+function Scoreboard({ t }: { t: (ko: string, en: string) => string }) {
+  const [sb, setSb] = useState<SB | null>(null);
+  useEffect(() => { api<SB>("/predictions/scoreboard").then(setSb).catch(() => {}); }, []);
+  if (!sb) return null;
+  const ml = sb.by_method.ml, an = sb.by_method.analysis;
+  const Row = ({ label, mlv, anv, color }: { label: string; mlv: React.ReactNode; anv: React.ReactNode; color?: (v: number | null | undefined) => string }) => (
+    <div className="grid grid-cols-3 items-center text-[12.5px] px-3 py-2 border-b border-[var(--border-default)] last:border-0">
+      <span className="text-[var(--text-muted)]">{label}</span>
+      <span className="text-center font-semibold text-[var(--text-primary)]">{mlv}</span>
+      <span className="text-center font-semibold text-[var(--text-primary)]">{anv}</span>
+    </div>
+  );
+  const pctRet = (v?: number | null) => v == null ? "-" : <span style={{ color: v >= 0 ? "var(--badge-success-text)" : "var(--error)" }}>{v > 0 ? "+" : ""}{v}%</span>;
+  return (
+    <div className="mt-5">
+      <h2 className="text-[13px] font-bold text-[var(--text-secondary)] mb-2">{t("📊 성적표 — 신호 추적 (실거래 아님)", "📊 Track record — signal tracking (not live trades)")}</h2>
+      <div className="rounded-xl border border-[var(--border-default)] bg-[var(--bg-card)] overflow-hidden" style={{ boxShadow: "var(--shadow-sm)" }}>
+        <div className="grid grid-cols-3 text-[11px] text-[var(--text-muted)] px-3 py-2 bg-[var(--bg-table-header)] border-b border-[var(--border-default)]">
+          <span></span><span className="text-center">🤖 {t("머신러닝", "ML")}</span><span className="text-center">📊 {t("분석", "Analysis")}</span>
+        </div>
+        <Row label={t("검증된 콜", "Graded calls")} mlv={ml?.graded ?? 0} anv={an?.graded ?? 0} />
+        <Row label={t("평균 수익률", "Avg return")} mlv={pctRet(ml?.avg_return)} anv={pctRet(an?.avg_return)} />
+        <Row label={t("수익 확률", "Profit rate")} mlv={ml?.profit_rate != null ? `${ml.profit_rate}%` : "-"} anv={an?.profit_rate != null ? `${an.profit_rate}%` : "-"} />
+        <Row label={t("목표 달성률", "Target-hit")} mlv={ml?.win_rate != null ? `${ml.win_rate}%` : "-"} anv={an?.win_rate != null ? `${an.win_rate}%` : "-"} />
+      </div>
+      <p className="text-[11px] text-[var(--text-muted)] mt-1.5 leading-relaxed">
+        {t(`ML은 누적 중 (예측 후 채점까지 ~7거래일). 미채점 신호 ${sb.open_signals}건. 가정: 진입가 매수 → 목표 먼저 도달=수익, 손절 먼저=손실, 기간 내 미달=중립.`,
+           `ML accumulating (graded ~7 trading days after a call). ${sb.open_signals} open signals. Assumes: buy at entry → target before stop = win, stop first = loss, neither = flat.`)}
+      </p>
     </div>
   );
 }

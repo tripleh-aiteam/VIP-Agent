@@ -1451,6 +1451,22 @@ def _youtube_daily_all():
     _youtube_daily_report(email_override="*ALL*")
 
 
+@_single_flight("scorekeeper")
+def _scorekeeper_daily():
+    """Daily: log today's BUY/SELL calls (both methods) + grade matured ones -> the
+    track record (win rate / avg return) the scoreboard shows. Builds the evidence base."""
+    db = SessionLocal()
+    try:
+        from services.scorekeeper_service import log_today, grade_matured
+        lg = log_today(db)
+        gr = grade_matured(db)
+        log.info(f"scorekeeper daily: log={lg} grade={gr}", extra={"action": "scorekeeper.daily"})
+    except Exception as e:
+        log.warning(f"scorekeeper daily failed: {str(e)[:100]}")
+    finally:
+        db.close()
+
+
 @_single_flight("dart_disclosures")
 def _dart_disclosures_daily():
     """Daily: pull official DART disclosures (실적/수주/유증) -> raw_disclosures. The
@@ -1730,6 +1746,18 @@ def init_scheduler():
         coalesce=True,
     )
     log.info("scheduler: DART disclosures collector registered (16:35 KST daily -> raw_disclosures)", extra={"action": "scheduler.dart_registered"})
+
+    # Scorekeeper — log today's BUY/SELL calls + grade matured ones. 07:45 UTC = 16:45 KST
+    # (after predict + the daily collectors). Builds the per-method track record.
+    _scheduler.add_job(
+        _scorekeeper_daily,
+        CronTrigger.from_crontab("45 7 * * *"),
+        id="scorekeeper-daily",
+        replace_existing=True,
+        max_instances=1,
+        coalesce=True,
+    )
+    log.info("scheduler: scorekeeper registered (16:45 KST daily -> signal_log track record)", extra={"action": "scheduler.scorekeeper_registered"})
 
     # NOTE: the grounded YouTube report is NO LONGER a separate email — it is
     # bundled into the consolidated master email below (all 4 reports together),

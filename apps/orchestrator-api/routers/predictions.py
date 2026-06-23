@@ -66,6 +66,21 @@ def analysis_batch(tickers: str = Query(..., description="comma-separated ticker
     return {"results": _ab(db, tk, horizon)}
 
 
+@router.get("/scoreboard")
+def scoreboard(db: Session = Depends(get_db)):
+    """Track record per method — win rate, profit rate, avg return + recent graded calls.
+    This is the honest 'does it actually work' panel; accumulates as days pass."""
+    from services.scorekeeper_service import scoreboard as _sb
+    return _sb(db)
+
+
+@router.post("/scorekeeper/run")
+def scorekeeper_run(db: Session = Depends(get_db)):
+    """Manually log today's signals + grade matured ones (normally a daily cron)."""
+    from services.scorekeeper_service import log_today, grade_matured
+    return {"log": log_today(db), "grade": grade_matured(db)}
+
+
 @router.get("/realtime/{ticker}")
 def realtime_signals(ticker: str):
     """LIVE Kiwoom signals for one stock (order-book imbalance + intraday 수급 +
