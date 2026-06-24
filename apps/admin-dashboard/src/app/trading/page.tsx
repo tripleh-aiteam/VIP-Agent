@@ -642,9 +642,9 @@ function NetVal({ v }: { v?: number }) {
 }
 function DRow({ label, children }: { label: string; children: ReactNode }) {
   return (
-    <div className="flex items-center justify-between px-3 py-2 border-b border-[var(--border-default)] text-[12.5px]">
-      <span className="text-[var(--text-muted)]">{label}</span>
-      <span className="font-semibold text-[var(--text-primary)] text-right">{children}</span>
+    <div className="flex items-center justify-between gap-3 px-3.5 py-2.5 border-b border-[var(--border-default)] odd:bg-[var(--bg-elevated)]">
+      <span className="text-[13.5px] font-semibold text-[var(--text-secondary)]">{label}</span>
+      <span className="text-[15.5px] font-extrabold text-[var(--text-primary)] text-right whitespace-nowrap">{children}</span>
     </div>
   );
 }
@@ -757,7 +757,7 @@ function StockDetailDrawer({ t }: { t: (ko: string, en: string) => string }) {
 
             {/* real-time table */}
             <div className="rounded-xl border border-[var(--border-default)] overflow-hidden">
-              <div className="px-3 py-2 border-b border-[var(--border-default)] bg-[var(--bg-elevated)] text-[12px] font-bold text-[var(--text-primary)]">📊 {t("실시간 시세표", "Real-time table")}</div>
+              <div className="px-3.5 py-2.5 border-b border-[var(--border-default)] bg-[var(--bg-elevated)] text-[14.5px] font-extrabold text-[var(--text-primary)]">📊 {t("실시간 시세표", "Real-time table")}</div>
               <DRow label={t("현재가", "Price")}><span className="text-[15px]">{fmt(d.price)}</span> <Pct v={d.change_pct} /></DRow>
               <DRow label={t("시가 / 전일종가", "Open / Prev close")}>{fmt(d.open)} / {fmt(d.prev_close)}</DRow>
               <DRow label={t("고가 / 저가", "High / Low")}><span style={{ color: POS }}>{fmt(d.high)}</span> / <span style={{ color: NEG }}>{fmt(d.low)}</span></DRow>
