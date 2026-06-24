@@ -92,7 +92,9 @@ export default function TradingPage() {
         <span className="ml-auto text-[11px] px-2 py-0.5 rounded-full font-semibold" style={{ color: "var(--badge-success-text)", background: "var(--badge-success-bg)" }}>● LIVE</span>
       </div>
 
-      {loading && <LoadingRow text={t("불러오는 중… 예측·시세 데이터 준비 중", "Loading… preparing predictions & prices")} />}
+      {loading && <BigLoading
+        title={t("데일리 트레이딩 불러오는 중…", "Loading Daily Trading…")}
+        sub={t("예측·시세·수급 데이터 준비 중 (잠시만요)", "Preparing predictions, prices & flows (one moment)")} />}
       {!loading && (err || !brief) && <div className="text-[var(--error)]">{t("데이터를 불러오지 못했습니다", "Failed to load")}: {err}</div>}
 
       {/* Step 1 — method selector + consensus highlight */}
@@ -329,14 +331,15 @@ function AnalysisView({ brief, t }: { brief: Brief; t: (ko: string, en: string) 
           title={t("이 방식은 무엇인가요?", "What is this method?")}
           body={t("분석 기반은 전문가(머니업) 방식입니다 — 실시간 호가(매수/매도 압력), 수급(외국인·기관·금투가 지금 누구를 사고있는지), 박스권 지지/저항을 읽어 '누가 사고있나'를 판단합니다. 시장이 약하면(위험회피) 자동으로 더 신중해집니다. 머신러닝과 완전히 독립적인 신호입니다.",
                   "Analysis is the expert (MoneyUp) method — it reads live order-book pressure, who's buying now (foreign/institution/금투 flows), and box support/resistance to judge 'who's accumulating.' It auto-gets more cautious when the market is weak (risk-off). Fully independent from ML.")} />
-        {loadingAn && Object.keys(anMap).length === 0 && (
-          <div className="rounded-xl border border-[var(--border-default)] bg-[var(--bg-card)] px-4 py-3 mb-2">
-            <LoadingRow text={t("실시간 분석 계산중… 키움 호가·수급 불러오는 중 (몇 초 소요)", "Computing live analysis… fetching Kiwoom order-book & flows (a few seconds)")} />
+        {loadingAn && Object.keys(anMap).length === 0 ? (
+          <BigLoading
+            title={t("실시간 분석 불러오는 중…", "Loading live analysis…")}
+            sub={t("키움 실전 호가·수급 + 박스권 계산 중 (보통 2~3초)", "Fetching Kiwoom 실전 order-book & flows + box levels (usually 2–3s)")} />
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+            {cards.map((c) => <AnalysisCard key={c.ticker} c={c} an={anMap[c.ticker]} t={t} />)}
           </div>
         )}
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
-          {cards.map((c) => <AnalysisCard key={c.ticker} c={c} an={anMap[c.ticker]} t={t} />)}
-        </div>
       </Section>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
@@ -484,6 +487,25 @@ function LoadingRow({ text }: { text: string }) {
   return (
     <div className="flex items-center gap-2 text-[12px] text-[var(--text-secondary)] py-1">
       <Spinner /> <span className="animate-pulse">{text}</span>
+    </div>
+  );
+}
+
+// Big, unmistakable loading screen — so a 2-3s delay never looks broken.
+function BigLoading({ title, sub }: { title: string; sub?: string }) {
+  return (
+    <div className="flex flex-col items-center justify-center gap-4 py-16 rounded-2xl border-2 border-dashed border-[var(--border-strong)] bg-[var(--bg-card)]">
+      <Spinner size={48} />
+      <div className="text-center">
+        <div className="text-[18px] font-extrabold text-[var(--text-primary)] animate-pulse">{title}</div>
+        {sub && <div className="text-[12.5px] text-[var(--text-muted)] mt-1">{sub}</div>}
+      </div>
+      <div className="flex gap-1.5">
+        {[0, 1, 2].map((i) => (
+          <span key={i} className="w-2.5 h-2.5 rounded-full bg-[var(--badge-blue-text)] animate-bounce"
+            style={{ animationDelay: `${i * 0.15}s` }} />
+        ))}
+      </div>
     </div>
   );
 }
