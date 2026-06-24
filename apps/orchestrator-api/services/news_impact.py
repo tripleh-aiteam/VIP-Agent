@@ -32,6 +32,12 @@ NEWS_TYPES: list[tuple[str, str, float, int]] = [
     ("자사주",    r"자사주|자기주식|소각|buyback|repurchase", 0.60, +1),
     ("배당",     r"배당|dividend|주주환원|payout", 0.45, +1),
     ("정책/규제", r"규제|정책|관세|제재|보조금|법안|tariff|sanction|subsidy|policy", 0.65, 0),
+    # Market-wide macro / geopolitics (war, oil, regional disputes, trade war) — moves
+    # the whole market / oil-sensitive names, not just one ticker. High base impact.
+    ("지정학/매크로", r"전쟁|war\b|conflict|이란|iran|이스라엘|israel|레바논|lebanon|"
+                  r"시리아|syria|우크라이나|ukraine|러시아|russia|중동|middle\s*east|"
+                  r"호르무즈|hormuz|opec|유가|oil\s*price|crude|brent|wti|원유|"
+                  r"무역분쟁|무역전쟁|trade\s*war|geopolit|지정학|hezbollah|gulf", 0.75, 0),
     ("리포트",    r"목표가|투자의견|매수의견|상향|하향|리포트|analyst|target\s*price|upgrade|downgrade", 0.40, 0),
     ("외국인",    r"외국인|기관|순매수|순매도|수급|foreign|institution", 0.50, 0),
     ("소송/사고", r"소송|리콜|화재|사고|결함|lawsuit|recall|defect|probe", 0.55, -1),

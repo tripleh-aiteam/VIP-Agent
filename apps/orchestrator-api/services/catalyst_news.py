@@ -28,6 +28,12 @@ CATALYST_QUERIES = [
     "SK Hynix ADR US listing schedule MSCI index rebalance upcoming date 2026",
     "한국 증시 반도체 실적 발표 예정 일정 향후 이벤트 삼성전자 SK하이닉스 네이버 2026",
     "upcoming stock market catalysts this week semiconductor AI events calendar",
+    # --- macro / geopolitics (market-wide, oil-sensitive) ---
+    "Iran US war latest news Israel Lebanon strike ceasefire 2026",
+    "oil price crude Brent WTI surge crash Strait of Hormuz OPEC latest 2026",
+    "Russia Ukraine war latest developments 2026",
+    "Trump tariff trade war China Korea semiconductor Section 301 latest 2026",
+    "Middle East conflict regional dispute Gulf market impact stocks oil latest 2026",
 ]
 
 

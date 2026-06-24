@@ -43,6 +43,7 @@ DEFAULT_RECIPIENT = DEFAULT_RECIPIENTS[0]
 # without them receiving the automatic 6:50 email.
 EXTRA_ALLOWED_RECIPIENTS: list[str] = [
     # (tripleh.agents@gmail.com is now on the daily list above.)
+    "davronbekmalikov96@gmail.com",   # on-demand recipient (breaking-news tests)
 ]
 
 

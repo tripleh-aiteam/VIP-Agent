@@ -26,6 +26,22 @@ class ComposeBody(BaseModel):
     hours_back: int = Field(default=24, ge=1, le=720, description="How many hours back to look for data")
 
 
+class SendTextBody(BaseModel):
+    to: str = Field(..., description="Recipient — must be on the report allowlist")
+    subject: str = Field(..., max_length=300)
+    body: str = Field(..., description="Plain-text email body (markdown-ish)")
+
+
+@router.post("/send-text", dependencies=[Depends(rate_limit_compose)])
+def send_text_email(body: SendTextBody):
+    """Send a plain-text email (e.g. a composed breaking-news report) to an ALLOWLISTED
+    recipient via the server's SMTP. Guarded by the same allowlist as ?email= so SMTP
+    can't be abused to mail third parties."""
+    to = _resolve_recipients(body.to)   # raises 403 if not allowlisted
+    from services.report_email import send_plain_email
+    return send_plain_email(to, body.subject, body.body)
+
+
 @router.post("/compose/auto-daily", dependencies=[Depends(rate_limit_compose)])
 def trigger_auto_daily(db: Session = Depends(get_db)):
     """Manually trigger the auto daily report pipeline (3 agent reports + combined)."""
