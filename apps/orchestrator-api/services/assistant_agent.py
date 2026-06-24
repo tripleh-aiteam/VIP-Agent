@@ -2415,8 +2415,12 @@ def _output_format_directive(user_msg: str) -> tuple[str, int, int]:
             900, 5000,
         )
     return (
-        "Summarize it for the boss in 1-3 sentences. Be conversational.\n",
-        300, 1500,
+        "Answer like a knowledgeable consultant: give the full reasoning and the "
+        "specifics the question needs — usually one to three short paragraphs (more if "
+        "the question is complex), using the real numbers/names from the data. Be "
+        "thorough, clear and consistent every turn (a follow-up deserves the same depth "
+        "as the first answer); don't cut it short, but don't pad with filler.\n",
+        750, 2600,
     )
 
 
@@ -2443,7 +2447,15 @@ def _compose_final_answer(
         "Do NOT return JSON or code fences around a table — output the table/text "
         "directly. Do NOT add a 'summary for the boss' preamble."
     )
-    summary_messages = [
+    # Carry the recent conversation so a follow-up keeps context (and the same depth)
+    # instead of being answered in isolation.
+    summary_messages = []
+    for h in (history or [])[-4:]:
+        role = "assistant" if (h.get("role") or h.get("sender")) in ("assistant", "ai", "bot") else "user"
+        content = h.get("content") or h.get("text") or h.get("message") or ""
+        if content:
+            summary_messages.append({"role": role, "content": str(content)[:1200]})
+    summary_messages += [
         {"role": "user", "content": f"My question: {user_msg}"},
         {"role": "user", "content": f"Tool '{tool_name}' returned:\n{json.dumps(tool_result, ensure_ascii=False, default=str)[:_data_cap]}"},
     ]
@@ -2451,7 +2463,7 @@ def _compose_final_answer(
         reply = chat_completion_sync(
             system_prompt=follow_system,
             messages=summary_messages,
-            max_tokens=_max_tokens,
+            max_tokens=max(_max_tokens, 650),   # same depth floor as the multi-tool path
             temperature=0.4,
             model="groq-llama-3.3-70b",
         )
