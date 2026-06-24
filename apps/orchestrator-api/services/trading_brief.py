@@ -254,6 +254,100 @@ def _read_snapshots(db, tickers, max_age_sec: int = 240) -> dict[str, Any]:
     return out
 
 
+def stock_detail(db, ticker: str) -> dict[str, Any]:
+    """Rich single-stock detail for the click-through detail view (both methods).
+    OHLC / 등락% / 거래량 / 52주 고저 / NXT 시간외 from Naver (works on Render, ~live during
+    market, EOD after). LIVE 호가·수급·program from Kiwoom 실전 via the PC snapshot (the
+    real edge). Plus 개별주식 선물·옵션 when available. Source label: market hours = 키움
+    실전+네이버, after = 네이버."""
+    from services import naver_stock
+    from services import prediction_service as ps
+    raw = str(ticker or "").strip()
+    code = raw if (raw.isdigit() and len(raw) == 6) else None
+    if not code:
+        rev = {v: k for k, v in ps.NAMES.items()}
+        code = rev.get(raw) or next((c for nm, c in rev.items() if raw and (raw in nm or nm in raw)), None)
+    if not code:
+        return {"ok": False, "error": f"'{raw}' 종목을 찾지 못했습니다"}
+    name = ps.NAMES.get(code, code)
+    import time as _t
+
+    def _naver(fn, *a):                                   # space calls — Naver throttles rapid-fire
+        for attempt in range(2):
+            try:
+                r = fn(*a)
+                if r:
+                    return r
+            except Exception:
+                pass
+            _t.sleep(0.35)
+        return fn(*a)
+    hist = _naver(naver_stock.daily_history, code, 60) or []   # Naver /price rejects >~90
+    _t.sleep(0.25)
+    q = naver_stock.realtime_quote(code) or {}
+    _t.sleep(0.25)
+    flows = naver_stock.investor_flows(code, 1) or []
+    rt = realtime_for(code, db=db) or {}
+    today = hist[0] if hist else {}                      # today's full candle (OHLCV)
+    highs = [h["high"] for h in hist if h.get("high") is not None]
+    lows = [h["low"] for h in hist if h.get("low") is not None]
+    # live price from realtime_quote (fresher), OHLC/volume from today's candle (the
+    # basic endpoint leaves intraday O/H/L/V null, but the daily candle has them).
+    price = q.get("price") if q.get("price") is not None else today.get("close")
+    chg = q.get("change_pct") if q.get("change_pct") is not None else today.get("change_pct")
+    _open = q.get("open") if q.get("open") is not None else today.get("open")
+    _high = q.get("high") if q.get("high") is not None else today.get("high")
+    _low = q.get("low") if q.get("low") is not None else today.get("low")
+    _vol = q.get("volume") if q.get("volume") is not None else today.get("volume")
+    prev_close = None
+    if price is not None and chg not in (None, 0):
+        try:
+            prev_close = round(price / (1 + chg / 100.0))
+        except Exception:
+            prev_close = None
+    mopen = _kr_market_open()
+    fl0 = flows[0] if flows else {}
+    return {
+        "ok": True, "ticker": code, "name": name, "market_open": mopen,
+        "source": ("키움 실전 + 네이버" if mopen else "네이버 (장마감)"),
+        "as_of": q.get("as_of"),
+        # price block
+        "price": price, "change_pct": chg, "prev_close": prev_close,
+        "open": _open, "high": _high, "low": _low,
+        "volume": _vol,
+        "period_high": max(highs) if highs else None,        # ~3개월 (Naver 60일)
+        "period_low": min(lows) if lows else None,
+        "period_label": "최근 3개월",
+        "nxt_price": q.get("nxt_price"), "nxt_change_pct": q.get("nxt_change_pct"),
+        "nxt_status": q.get("nxt_status"),
+        # supply/demand (daily, Naver)
+        "foreign_net": fl0.get("foreign"), "organ_net": fl0.get("organ"),
+        "individual_net": fl0.get("individual"), "foreign_hold": fl0.get("foreign_hold"),
+        # LIVE Kiwoom signals (snapshot)
+        "live": rt.get("live", False), "env": rt.get("env"),
+        "best_bid": rt.get("best_bid"), "best_ask": rt.get("best_ask"),
+        "imbalance": rt.get("imbalance"), "pressure": rt.get("pressure"),
+        "rt_foreign": rt.get("foreign"), "rt_institution": rt.get("institution"),
+        "rt_fin_invest": rt.get("fin_invest"), "program_net": rt.get("program_net"),
+        # derivatives (per-stock, when available)
+        "derivatives": _stock_derivatives(code),
+    }
+
+
+def _stock_derivatives(code: str) -> dict[str, Any]:
+    """개별주식 선물·옵션 for this stock when listed (major stocks only). Best-effort via
+    Kiwoom; returns {available: False} when the stock has no listed single-stock
+    derivatives or the data can't be fetched."""
+    try:
+        from services import kiwoom_rest as kr
+        fut = kr.stock_futures(code) if hasattr(kr, "stock_futures") else None
+        if isinstance(fut, dict) and fut.get("ok"):
+            return {"available": True, **fut}
+    except Exception:
+        pass
+    return {"available": False, "note": "개별주식 선물·옵션 미상장 또는 데이터 없음"}
+
+
 def realtime_for(ticker: str, db=None) -> dict[str, Any] | None:
     """Live signals for ONE stock — snapshot table first (works on Render), then direct
     Kiwoom (works on the registered PC). Returns None if neither is available."""

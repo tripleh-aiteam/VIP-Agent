@@ -91,6 +91,15 @@ def realtime_signals(ticker: str, db: Session = Depends(get_db)):
     return rt or {"live": False, "ticker": ticker}
 
 
+@router.get("/stock-detail/{ticker}")
+def stock_detail(ticker: str, db: Session = Depends(get_db)):
+    """Rich single-stock detail for the click-through detail view — OHLC, 등락%, 거래량,
+    기간 고저, NXT 시간외, 수급, LIVE 호가/수급 (Kiwoom 실전 via snapshot), and 개별주식
+    선물·옵션 when available. Kiwoom 실전 during market, Naver after."""
+    from services.trading_brief import stock_detail as _detail
+    return _detail(db, ticker)
+
+
 @router.get("/{ticker}")
 def prediction_ticker(ticker: str, horizon: int = Query(5), db: Session = Depends(get_db)):
     p = ps.get_ticker(db, ticker, horizon)
