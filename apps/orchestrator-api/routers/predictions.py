@@ -82,12 +82,12 @@ def scorekeeper_run(db: Session = Depends(get_db)):
 
 
 @router.get("/realtime/{ticker}")
-def realtime_signals(ticker: str):
-    """LIVE Kiwoom signals for one stock (order-book imbalance + intraday 수급 +
-    program net). Fetched lazily by the Daily Trading UI per pick card so the main
-    brief stays fast. Returns {live: false} when Kiwoom keys aren't set."""
+def realtime_signals(ticker: str, db: Session = Depends(get_db)):
+    """LIVE signals for one stock (order-book imbalance + intraday 수급 + program net),
+    read from the realtime_snapshot table the PC collector writes. Returns {live: false}
+    when no fresh snapshot exists (collector off / after market)."""
     from services.trading_brief import realtime_for
-    rt = realtime_for(ticker)
+    rt = realtime_for(ticker, db=db)
     return rt or {"live": False, "ticker": ticker}
 
 

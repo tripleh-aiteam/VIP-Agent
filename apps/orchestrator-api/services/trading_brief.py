@@ -220,11 +220,47 @@ def _heatmap_batch(db) -> list[dict]:
     return heat
 
 
-# ---- LIVE real-time signals (Kiwoom) — the day-trading layer --------------------
-def realtime_for(ticker: str) -> dict[str, Any] | None:
-    """Live order-book imbalance + intraday 수급 + program net from Kiwoom REST.
-    Returns None if Kiwoom keys aren't set or the call fails — the brief still works
-    without it (graceful degradation). Cached 20s inside kiwoom_rest."""
+# ---- LIVE real-time signals — read PC-collected snapshot, fallback direct Kiwoom ---
+def _read_snapshots(db, tickers, max_age_sec: int = 240) -> dict[str, Any]:
+    """Read fresh live signals from realtime_snapshot (written by the PC collector that
+    has the 실전/registered IP). This is how the WEBSITE (Render) gets live data without
+    calling Kiwoom itself. Stale rows (collector stopped / after market) are skipped."""
+    try:
+        rows = db.execute(text(
+            "SELECT ticker, price, imbalance, best_bid, best_ask, foreign_net, inst_net, "
+            "fin_invest, program_net, env, ts, EXTRACT(EPOCH FROM (now()-ts)) AS age "
+            "FROM realtime_snapshot WHERE ticker = ANY(:t)"), {"t": list(tickers)}).fetchall()
+    except Exception:
+        return {}
+    out = {}
+    for r in rows:
+        if r.age is None or r.age > max_age_sec:
+            continue
+        imb = float(r.imbalance) if r.imbalance is not None else None
+        pressure = ("매수우위" if imb is not None and imb > 0.15 else
+                    "매도우위" if imb is not None and imb < -0.15 else "균형")
+        pressure_en = ("Bid-heavy" if imb is not None and imb > 0.15 else
+                       "Ask-heavy" if imb is not None and imb < -0.15 else "Balanced")
+        ii = lambda v: int(v) if v is not None else None
+        out[r.ticker] = {
+            "live": True, "env": r.env, "imbalance": imb,
+            "pressure": pressure, "pressure_en": pressure_en,
+            "best_bid": ii(r.best_bid), "best_ask": ii(r.best_ask),
+            "foreign": ii(r.foreign_net), "institution": ii(r.inst_net),
+            "fin_invest": ii(r.fin_invest), "program_net": ii(r.program_net),
+            "price": float(r.price) if r.price is not None else None,
+            "as_of": str(r.ts)[11:16],
+        }
+    return out
+
+
+def realtime_for(ticker: str, db=None) -> dict[str, Any] | None:
+    """Live signals for ONE stock — snapshot table first (works on Render), then direct
+    Kiwoom (works on the registered PC). Returns None if neither is available."""
+    if db is not None:
+        snap = _read_snapshots(db, [ticker]).get(ticker)
+        if snap:
+            return snap
     return _realtime_impl(ticker, with_program=True)
 
 
@@ -419,9 +455,11 @@ def analysis_batch(db, tickers: list[str], horizon: int = 5) -> dict[str, Any]:
     regime_tone = market_regime(db).get("tone", "mixed")   # #4 regime filter
     news = _news_scores(db)                                 # #3 news/DART signal
 
-    # During market only: live Kiwoom 호가/수급, fetched in parallel, best-effort.
-    rts: dict[str, Any] = {}
-    if _kr_market_open():
+    # Live signals: read the PC-collected snapshot (works on Render, no Kiwoom call,
+    # no IP issue, fast). Stale/empty after market -> falls back to EOD signal.
+    rts: dict[str, Any] = _read_snapshots(db, tickers)
+    if not rts and _kr_market_open():
+        # local fallback: direct Kiwoom (only works on the registered PC)
         try:
             from concurrent.futures import ThreadPoolExecutor, as_completed
             with ThreadPoolExecutor(max_workers=5) as ex:
