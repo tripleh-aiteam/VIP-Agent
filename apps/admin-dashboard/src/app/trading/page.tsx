@@ -558,6 +558,8 @@ type Detail = {
   live?: boolean; env?: string; best_bid?: number; best_ask?: number; imbalance?: number; pressure?: string;
   rt_foreign?: number; rt_institution?: number; rt_fin_invest?: number; program_net?: number;
   derivatives?: { available?: boolean; note?: string; type?: string; source?: string; date?: string; volume?: number; value?: number; open_interest?: number; options?: string };
+  short_selling?: { available?: boolean; note?: string; source?: string; short_volume?: number; short_value?: number; short_ratio?: number; date?: string };
+  market?: { wti?: { price?: number; change_pct?: number } | null; brent?: { price?: number; change_pct?: number } | null; usdkrw?: { price?: number; change_pct?: number } | null };
   candles?: Candle[];
 };
 type Candle = { time: string; open: number; high: number; low: number; close: number; volume?: number };
@@ -795,7 +797,22 @@ function StockDetailDrawer({ t }: { t: (ko: string, en: string) => string }) {
               {dv?.available && dv.value != null && (
                 <DRow label={t("선물 거래대금", "Futures value")}>{(dv.value / 1e8).toLocaleString(undefined, { maximumFractionDigits: 0 })} {t("억원", "억")}</DRow>
               )}
+              <DRow label={t("공매도 (잔량/비중)", "Short selling (vol/ratio)")}>
+                {d.short_selling?.available
+                  ? <span>{d.short_selling.short_volume?.toLocaleString()} {t("주", "sh")}{d.short_selling.short_ratio != null ? ` · ${d.short_selling.short_ratio}%` : ""}</span>
+                  : <span className="text-[var(--text-muted)]" title={d.short_selling?.note || ""}>{t("장중 표시", "live only")}</span>}
+              </DRow>
             </div>
+
+            {/* market-wide context — oil + FX (affects oil/export names) */}
+            {d.market && (
+              <div className="rounded-xl border border-[var(--border-default)] overflow-hidden">
+                <div className="px-3.5 py-2.5 border-b border-[var(--border-default)] bg-[var(--bg-elevated)] text-[14.5px] font-extrabold text-[var(--text-primary)]">🌍 {t("시장 환경 (실시간)", "Market context (live)")}</div>
+                <DRow label={t("국제유가 WTI", "Oil — WTI")}>{d.market.wti?.price != null ? <>${d.market.wti.price} <Pct v={d.market.wti.change_pct} /></> : "-"}</DRow>
+                <DRow label={t("국제유가 Brent", "Oil — Brent")}>{d.market.brent?.price != null ? <>${d.market.brent.price} <Pct v={d.market.brent.change_pct} /></> : "-"}</DRow>
+                <DRow label={t("환율 USD/KRW", "FX USD/KRW")}>{d.market.usdkrw?.price != null ? <>₩{d.market.usdkrw.price?.toLocaleString()} <Pct v={d.market.usdkrw.change_pct} /></> : "-"}</DRow>
+              </div>
+            )}
 
             <div className="text-[10.5px] text-[var(--text-muted)] leading-relaxed">ⓘ {t("AI 참고 자료이며 투자 권유가 아닙니다. 장중 키움 실전, 장마감 후 네이버 기준. 20초마다 갱신.", "Reference only, not investment advice. Kiwoom 실전 during market, Naver after. Refreshes every 20s.")}</div>
           </div>
