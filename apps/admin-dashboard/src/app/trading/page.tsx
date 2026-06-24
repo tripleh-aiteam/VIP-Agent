@@ -548,7 +548,7 @@ type Detail = {
   foreign_net?: number; organ_net?: number; individual_net?: number; foreign_hold?: number;
   live?: boolean; env?: string; best_bid?: number; best_ask?: number; imbalance?: number; pressure?: string;
   rt_foreign?: number; rt_institution?: number; rt_fin_invest?: number; program_net?: number;
-  derivatives?: { available?: boolean; note?: string } & Record<string, unknown>;
+  derivatives?: { available?: boolean; note?: string; type?: string; date?: string; volume?: number; value?: number; open_interest?: number; options?: string };
   candles?: Candle[];
 };
 type Candle = { time: string; open: number; high: number; low: number; close: number; volume?: number };
@@ -774,9 +774,14 @@ function StockDetailDrawer({ t }: { t: (ko: string, en: string) => string }) {
               </DRow>
               <DRow label={t("프로그램 순매수", "Program net")}><NetVal v={d.program_net} /></DRow>
               <DRow label={t("시간외 (NXT)", "After-hours (NXT)")}>{d.nxt_price != null ? <>{fmt(d.nxt_price)} <Pct v={d.nxt_change_pct} /></> : <span className="text-[var(--text-muted)]">-</span>}</DRow>
-              <DRow label={t("개별주식 선물·옵션", "Single-stock futures/options")}>
-                {dv?.available ? <span style={{ color: "var(--text-primary)" }}>{t("상장", "listed")}</span> : <span className="text-[var(--text-muted)]">{t("해당 없음", "n/a")}</span>}
+              <DRow label={t("개별주식선물 (옵션 미지원)", "Single-stock futures (options n/a)")}>
+                {dv?.available
+                  ? <span style={{ color: "var(--text-primary)" }}>{t("거래량", "Vol")} {dv.volume?.toLocaleString()} {t("계약", "ct")} · {t("미결제", "OI")} {dv.open_interest?.toLocaleString()}</span>
+                  : <span className="text-[var(--text-muted)]" title={dv?.note || ""}>{t("해당 없음", "n/a")}</span>}
               </DRow>
+              {dv?.available && dv.value != null && (
+                <DRow label={t("선물 거래대금", "Futures value")}>{(dv.value / 1e8).toLocaleString(undefined, { maximumFractionDigits: 0 })} {t("억원", "억")}</DRow>
+              )}
             </div>
 
             <div className="text-[10.5px] text-[var(--text-muted)] leading-relaxed">ⓘ {t("AI 참고 자료이며 투자 권유가 아닙니다. 장중 키움 실전, 장마감 후 네이버 기준. 20초마다 갱신.", "Reference only, not investment advice. Kiwoom 실전 during market, Naver after. Refreshes every 20s.")}</div>

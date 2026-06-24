@@ -344,17 +344,28 @@ def stock_detail(db, ticker: str) -> dict[str, Any]:
 
 
 def _stock_derivatives(code: str) -> dict[str, Any]:
-    """개별주식 선물·옵션 for this stock when listed (major stocks only). Best-effort via
-    Kiwoom; returns {available: False} when the stock has no listed single-stock
-    derivatives or the data can't be fetched."""
+    """개별주식선물 (single-stock futures) daily summary for this underlying — REAL data
+    from KRX (data.krx.co.kr) via services/krx_stock_futures, summed across contract
+    months: 거래량(계약), 거래대금(원), 미결제약정(계약). Needs KRX_ID/KRX_PW (a free KRX
+    정보데이터시스템 account) on the server; returns {available: False} without creds or when
+    the stock has no listed single-stock futures. NOTE: per-stock 옵션(call/put) is listed
+    for only ~40 stocks and has no fetcher yet → reported as 미지원."""
     try:
-        from services import kiwoom_rest as kr
-        fut = kr.stock_futures(code) if hasattr(kr, "stock_futures") else None
-        if isinstance(fut, dict) and fut.get("ok"):
-            return {"available": True, **fut}
+        from services import krx_stock_futures as ksf
+        fut = ksf.stock_futures(code)        # None without KRX login / no futures listed
+        if isinstance(fut, dict):
+            return {
+                "available": True, "type": "개별주식선물",
+                "date": fut.get("date"),
+                "volume": fut.get("volume"),             # 거래량 (계약수)
+                "value": fut.get("value"),               # 거래대금 (원)
+                "open_interest": fut.get("open_interest"),  # 미결제약정 (계약수)
+                "options": "미지원",                      # per-stock options not fetched
+            }
     except Exception:
         pass
-    return {"available": False, "note": "개별주식 선물·옵션 미상장 또는 데이터 없음"}
+    return {"available": False, "note": "개별주식선물 미상장 또는 KRX 미연동 (KRX_ID/KRX_PW 필요)",
+            "options": "미지원"}
 
 
 def realtime_for(ticker: str, db=None) -> dict[str, Any] | None:
