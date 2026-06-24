@@ -44,7 +44,8 @@ type Heat = { ticker: string; name: string; foreign: string; inst: string; forei
 type News = { ticker?: string; name?: string; ts: string; source?: string; url?: string; title: string; type: string; impact: number; direction: number };
 type Regime = { date?: string; tone: string; label_ko: string; kospi_ret5?: number; kospi_vs_sma20?: number; usdkrw_ret5?: number; breadth?: number; won?: string };
 type Consensus = { ticker: string; name: string; signal: string; label?: string; label_en?: string; confidence?: string; model?: string; levels: Levels; timing?: Timing };
-type Brief = { as_of?: string; horizon: number; regime: Regime; counts: Record<string, number>; picks?: Card[]; buys: Card[]; sells: Card[]; consensus?: Consensus[]; flow_heatmap: Heat[]; news: News[]; disclaimer: string };
+type Freshness = { model_as_of?: string; model_days_old?: number; stale?: boolean; price_data_as_of?: string; live_snapshot_age_sec?: number; live_fresh?: boolean; warning?: string | null };
+type Brief = { as_of?: string; horizon: number; freshness?: Freshness; regime: Regime; counts: Record<string, number>; picks?: Card[]; buys: Card[]; sells: Card[]; consensus?: Consensus[]; flow_heatmap: Heat[]; news: News[]; disclaimer: string };
 
 // Featured stocks pinned first (matches backend PRIORITY): SK하이닉스, NAVER, 삼성전자
 const PRIORITY = ["000660", "035420", "005930"];
@@ -99,6 +100,14 @@ export default function TradingPage() {
         sub={t("예측·시세·수급 데이터 준비 중 (잠시만요)", "Preparing predictions, prices & flows (one moment)")} />}
       {!loading && (err || !brief) && <div className="text-[var(--error)]">{t("데이터를 불러오지 못했습니다", "Failed to load")}: {err}</div>}
 
+      {/* Staleness warning — never silently trust an old model / stopped collector */}
+      {brief?.freshness?.stale && (
+        <div className="rounded-xl border-2 px-4 py-2.5 text-[13px] font-semibold flex items-center gap-2"
+          style={{ borderColor: "var(--warning)", background: "var(--badge-warning-bg, #fff7ed)", color: "var(--warning)" }}>
+          ⚠️ {t(`모델 데이터가 ${brief.freshness.model_days_old}일 지났습니다 — PC 재학습 파이프라인을 확인하세요`,
+                `Model data is ${brief.freshness.model_days_old} day(s) old — check the PC retrain pipeline`)}
+        </div>
+      )}
       {/* Step 1 — method selector + consensus highlight */}
       {!method && brief && <ConsensusBanner items={brief.consensus} t={t} />}
       {!method && brief && <MethodSelector onPick={setMethod} t={t} counts={brief.counts} />}
