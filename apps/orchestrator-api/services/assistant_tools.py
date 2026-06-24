@@ -1731,6 +1731,71 @@ def tool_stock_predictions(advice: str = "BUY", ticker: str = None, limit: int =
             "disclaimer": "ML 추정치이며 투자 권유가 아닙니다. 각 종목의 백테스트 정확도(backtest_acc)를 함께 확인하세요."}
 
 
+def tool_two_method_view(ticker: str = None, db: Session = None, **_kw) -> dict[str, Any]:
+    """BOTH decision methods for ONE stock, side by side — so the answer can say
+    'Method 1 (ML) says X; Method 2 (Analysis) says Y'.
+      • Method 1 = Machine-Learning Algorithms — our per-stock trained model (best algo,
+        BUY/SELL/HOLD, expected 5-day move, backtest accuracy).
+      • Method 2 = Analysis (MoneyUp 수급/호가/박스권) — live order-book pressure +
+        외국인/기관 flows + box support/resistance, independent of ML.
+    Plus the LIVE current price. Use for ANY advice/outlook/analysis on a specific stock
+    ('should I buy X', 'X 어때', 'X 분석/전망', 'is X a good buy', 'compare the two methods
+    for X', '두 방법으로 X 분석')."""
+    from services import prediction_service as ps
+    from services import trading_brief as tb
+    if not ticker:
+        return {"ok": False, "error": "종목을 알려주세요 (ticker / 종목명)"}
+    raw = str(ticker).strip()
+    code = raw if (raw.isdigit() and len(raw) == 6) else None
+    if not code:                                   # name -> code (exact, then contains)
+        rev = {v: k for k, v in ps.NAMES.items()}
+        code = rev.get(raw)
+        if not code:
+            for nm, c in rev.items():
+                if raw and (raw in nm or nm in raw):
+                    code = c
+                    break
+    if not code:
+        return {"ok": False, "error": f"'{raw}' 종목 코드를 찾지 못했습니다 (등록 종목만 2-방법 분석 가능)"}
+    name = ps.NAMES.get(code, code)
+    ml = ps.get_ticker(db, code) or {}
+    try:
+        an = (tb.analysis_batch(db, [code], horizon=5) or {}).get(code, {})
+    except Exception:
+        an = {}
+    try:
+        live = tb.realtime_for(code, db=db) or {}
+    except Exception:
+        live = {}
+    ml_adv = (ml.get("advice") or "").upper()
+    an_sig = (an.get("signal") or "").upper()
+    consensus = bool(ml_adv and an_sig and ml_adv == an_sig and ml_adv in ("BUY", "SELL"))
+    return {
+        "ok": True, "ticker": code, "name": name,
+        "method1_ml": {
+            "advice": ml.get("advice"), "confidence": ml.get("confidence"),
+            "best_algorithm": ml.get("model"),
+            "backtest_accuracy_pct": (round(ml["backtest_acc"] * 100, 1)
+                                      if ml.get("backtest_acc") is not None else None),
+            "expected_move_pct": ml.get("expected_move_pct"),
+            "expected_low_pct": ml.get("expected_low_pct"), "expected_high_pct": ml.get("expected_high_pct"),
+            "as_of": ml.get("as_of"), "reasoning": ml.get("reasoning"),
+        } if ml else {"advice": None, "note": "이 종목의 ML 예측이 아직 없습니다"},
+        "method2_analysis": {
+            "signal": an.get("signal"), "label": an.get("label"), "label_en": an.get("label_en"),
+            "levels": an.get("levels"), "reasons": an.get("reasons"), "reasons_en": an.get("reasons_en"),
+            "timing": an.get("timing"), "market_open": an.get("market_open"),
+        } if an else {"signal": None, "note": "분석 신호 없음"},
+        "live_price": live.get("price") or live.get("current"),
+        "live_source": live.get("env") or live.get("source") or live.get("src"),
+        "live": live.get("live"),
+        "consensus": consensus,
+        "note": ("두 방법은 완전히 독립적입니다 — ML은 과거 수치 패턴을 학습하고, Analysis는 "
+                 "실시간 수급/호가/박스권 규칙으로 판단합니다. 둘 다 추정이며 투자 권유가 아닙니다. "
+                 "두 방법이 같은 방향이면(consensus) 더 높은 확신입니다."),
+    }
+
+
 TOOL_REGISTRY: dict[str, Tool] = {
     # --- Phase 1: Universal navigation tools ---
     "navigate": Tool(
@@ -1865,6 +1930,29 @@ TOOL_REGISTRY: dict[str, Tool] = {
             "required": [],
         },
         fn=tool_stock_predictions,
+    ),
+    "two_method_view": Tool(
+        name="two_method_view",
+        description=(
+            "BOTH decision methods for ONE stock, side by side — call this for ANY "
+            "advice / opinion / outlook / analysis on a specific stock ('should I buy X', "
+            "'X 어때', 'X 분석', 'X 전망', 'is X a good buy', 'X 살까/팔까', or 'compare the "
+            "two methods for X' / '두 방법으로 분석'). Returns Method 1 = Machine-Learning "
+            "Algorithms (best algo, BUY/SELL/HOLD, expected 5-day move, backtest accuracy) "
+            "AND Method 2 = Analysis (MoneyUp 수급/호가/박스권 signal + buy/sell levels + "
+            "timing) AND the live current price + whether the two methods agree (consensus). "
+            "Present BOTH methods in the answer: 'Method 1 (ML) says …; Method 2 (Analysis) "
+            "says …'. Accepts a 6-digit code OR a Korean name."
+        ),
+        kind="read",
+        parameters={
+            "type": "object",
+            "properties": {
+                "ticker": {"type": "string", "description": "6-digit KR code (e.g. 005930) OR Korean name (e.g. 삼성전자)"},
+            },
+            "required": ["ticker"],
+        },
+        fn=tool_two_method_view,
     ),
 
     # --- Phase 2: READ tools (Notion-AI-style search) ---
