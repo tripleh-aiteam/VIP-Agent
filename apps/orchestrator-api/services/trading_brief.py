@@ -350,21 +350,34 @@ def _stock_derivatives(code: str) -> dict[str, Any]:
     정보데이터시스템 account) on the server; returns {available: False} without creds or when
     the stock has no listed single-stock futures. NOTE: per-stock 옵션(call/put) is listed
     for only ~40 stocks and has no fetcher yet → reported as 미지원."""
+    fut, src = None, None
+    # 1) KIS (한국투자증권) — no KRX login needed; already used by the Kiwoom report.
     try:
-        from services import krx_stock_futures as ksf
-        fut = ksf.stock_futures(code)        # None without KRX login / no futures listed
-        if isinstance(fut, dict):
-            return {
-                "available": True, "type": "개별주식선물",
-                "date": fut.get("date"),
-                "volume": fut.get("volume"),             # 거래량 (계약수)
-                "value": fut.get("value"),               # 거래대금 (원)
-                "open_interest": fut.get("open_interest"),  # 미결제약정 (계약수)
-                "options": "미지원",                      # per-stock options not fetched
-            }
+        from services import kis_derivatives as kisd
+        fut = kisd.stock_futures(code)
+        if fut:
+            src = "KIS"
     except Exception:
-        pass
-    return {"available": False, "note": "개별주식선물 미상장 또는 KRX 미연동 (KRX_ID/KRX_PW 필요)",
+        fut = None
+    # 2) Fallback: KRX 정보데이터시스템 (needs KRX_ID/KRX_PW).
+    if not fut:
+        try:
+            from services import krx_stock_futures as ksf
+            fut = ksf.stock_futures(code)
+            if fut:
+                src = "KRX"
+        except Exception:
+            fut = None
+    if isinstance(fut, dict) and (fut.get("volume") or fut.get("open_interest")):
+        return {
+            "available": True, "type": "개별주식선물", "source": src,
+            "date": fut.get("date"),
+            "volume": fut.get("volume"),                 # 거래량 (계약수)
+            "value": fut.get("value"),                   # 거래대금 (원)
+            "open_interest": fut.get("open_interest"),   # 미결제약정 (계약수)
+            "options": "미지원",                          # per-stock options not fetched
+        }
+    return {"available": False, "note": "개별주식선물 미상장 또는 데이터 미연동 (KIS/KRX)",
             "options": "미지원"}
 
 
