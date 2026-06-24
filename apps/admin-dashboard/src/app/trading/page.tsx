@@ -584,6 +584,26 @@ function StockDetailDrawer({ t }: { t: (ko: string, en: string) => string }) {
   const [nm, setNm] = useState("");
   const [d, setD] = useState<Detail | null>(null);
   const [iv, setIv] = useState<"D" | "5">("D");
+  const [width, setWidth] = useState(700);      // drawer width (drag left edge)
+  const [chartH, setChartH] = useState(380);    // chart height (drag bottom edge)
+  const [drag, setDrag] = useState<null | "w" | "h">(null);
+
+  // generic mouse-drag resize — uses relative movement so no absolute-position math.
+  const startDrag = (kind: "w" | "h") => (e: React.MouseEvent) => {
+    e.preventDefault();
+    setDrag(kind);
+    const onMove = (ev: MouseEvent) => {
+      if (kind === "w") setWidth((w) => Math.max(460, Math.min(w - ev.movementX, window.innerWidth - 32)));
+      else setChartH((hh) => Math.max(220, Math.min(hh + ev.movementY, 860)));
+    };
+    const onUp = () => {
+      setDrag(null);
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    };
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+  };
 
   useEffect(() => {
     const h = (e: Event) => {
@@ -612,7 +632,13 @@ function StockDetailDrawer({ t }: { t: (ko: string, en: string) => string }) {
   return (
     <div className="fixed inset-0 z-[90] flex justify-end">
       <div className="absolute inset-0 bg-black/40" onClick={() => setOpen(false)} />
-      <div className="relative w-full max-w-[660px] h-full bg-[var(--bg-card)] shadow-2xl overflow-y-auto">
+      {/* transparent overlay during drag so the chart iframe doesn't swallow the mouse */}
+      {drag && <div className="fixed inset-0 z-[120]" style={{ cursor: drag === "w" ? "ew-resize" : "ns-resize" }} />}
+      <div className="relative h-full bg-[var(--bg-card)] shadow-2xl overflow-y-auto" style={{ width, maxWidth: "97vw" }}>
+        {/* left-edge drag handle — drag to enlarge the whole panel */}
+        <div onMouseDown={startDrag("w")} title={t("드래그하여 크기 조절", "drag to resize")}
+          className="absolute left-0 top-0 h-full w-2 z-30 cursor-ew-resize hover:bg-[var(--badge-blue-text)] active:bg-[var(--badge-blue-text)] transition-colors"
+          style={{ background: drag === "w" ? "var(--badge-blue-text)" : "transparent" }} />
         {/* header */}
         <div className="sticky top-0 z-10 flex items-center gap-3 px-4 py-3 bg-[var(--bg-card)] border-b border-[var(--border-default)]">
           <div className="flex items-baseline gap-2">
@@ -646,7 +672,13 @@ function StockDetailDrawer({ t }: { t: (ko: string, en: string) => string }) {
                   ))}
                 </div>
               </div>
-              <iframe key={iv} src={tvUrl} title="chart" className="w-full" style={{ height: 360, border: 0 }} />
+              <iframe key={iv} src={tvUrl} title="chart" className="w-full" style={{ height: chartH, border: 0 }} />
+              {/* bottom drag handle — drag down to enlarge the graph */}
+              <div onMouseDown={startDrag("h")} title={t("드래그하여 차트 크기 조절", "drag to resize chart")}
+                className="h-2.5 flex items-center justify-center cursor-ns-resize bg-[var(--bg-elevated)] hover:bg-[var(--badge-blue-bg)] border-t border-[var(--border-default)] select-none"
+                style={{ background: drag === "h" ? "var(--badge-blue-bg)" : undefined }}>
+                <span className="text-[9px] text-[var(--text-muted)] tracking-widest leading-none">⠿</span>
+              </div>
             </div>
 
             {/* real-time table */}
