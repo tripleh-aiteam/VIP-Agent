@@ -64,6 +64,7 @@ export default function TradingPage() {
   const [brief, setBrief] = useState<Brief | null>(null);
   const [err, setErr] = useState<string>("");
   const [loading, setLoading] = useState(true);
+  const [urgentSeen, setUrgentSeen] = useState(false);
 
   useEffect(() => {
     const load = () =>
@@ -78,6 +79,7 @@ export default function TradingPage() {
 
   return (
     <div className="p-4 md:p-6 max-w-[1200px] mx-auto space-y-5">
+      {brief && !urgentSeen && <UrgentModal items={brief.consensus} t={t} onClose={() => setUrgentSeen(true)} />}
       {/* Header */}
       <div className="flex items-center gap-3 flex-wrap">
         <h1 className="text-[22px] font-extrabold text-[var(--text-primary)]">{t("단타 · 데일리 트레이딩", "Daily Trading")}</h1>
@@ -90,7 +92,7 @@ export default function TradingPage() {
         <span className="ml-auto text-[11px] px-2 py-0.5 rounded-full font-semibold" style={{ color: "var(--badge-success-text)", background: "var(--badge-success-bg)" }}>● LIVE</span>
       </div>
 
-      {loading && <div className="text-[var(--text-muted)]">{t("불러오는 중…", "Loading…")}</div>}
+      {loading && <LoadingRow text={t("불러오는 중… 예측·시세 데이터 준비 중", "Loading… preparing predictions & prices")} />}
       {!loading && (err || !brief) && <div className="text-[var(--error)]">{t("데이터를 불러오지 못했습니다", "Failed to load")}: {err}</div>}
 
       {/* Step 1 — method selector + consensus highlight */}
@@ -251,6 +253,10 @@ function RegimeStrip({ r, counts, t }: { r: Regime; counts: Record<string, numbe
 function MLView({ brief, t }: { brief: Brief; t: (ko: string, en: string) => string }) {
   return (
     <Section title={t("🤖 머신러닝 알고리즘 — 종목별 최적 모델 예측", "🤖 Machine Learning Algorithms — best-model prediction per stock")}>
+      <InfoPanel emoji="🤖"
+        title={t("이 방식은 무엇인가요?", "What is this method?")}
+        body={t("머신러닝 모델은 모든 주식 데이터를 '숫자'로 바라봅니다. 가격·거래량·지표 등 모든 것이 숫자이며, 과거의 숫자 패턴을 학습해 그 패턴으로 매수/매도 가격과 시점을 예측합니다. 종목마다 가장 잘 맞는 알고리즘(11개 중)을 자동 선택합니다. ⚠ 정확도가 낮으면(빨강) 참고용으로만 보세요.",
+                "The ML model treats every stock data point as a number — price, volume, indicators, all numbers. It learns past number-patterns and uses them to predict the buy/sell price and time. It auto-picks the best-fitting algorithm (of 11) per stock. ⚠ When accuracy is low (red), treat it as reference only.")} />
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
         {pickList(brief).map((c) => <MLCard key={c.ticker} c={c} t={t} />)}
       </div>
@@ -268,11 +274,7 @@ function MLCard({ c, t }: { c: Card; t: (ko: string, en: string) => string }) {
         <span className="text-[11px] px-2 py-0.5 rounded-full font-bold" style={{ color: "#fff", background: accent }}>{c.advice}</span>
         {c.model && <span className="text-[9.5px] px-1.5 py-0.5 rounded font-bold" style={{ color: "var(--badge-blue-text)", background: "var(--badge-blue-bg)" }} title={t("이 종목 최적 알고리즘", "best algorithm for this stock")}>⚙ {c.model}</span>}
         {c.confidence && <span className="text-[10px] text-[var(--text-muted)]">{t("신뢰도", "conf")} {c.confidence}</span>}
-        {c.backtest_acc != null && (
-          <span className="ml-auto text-[10px] px-1.5 py-0.5 rounded" style={{ color: "var(--text-muted)", background: "var(--bg-hover)" }}>
-            {t("정확도", "acc")} {(c.backtest_acc * 100).toFixed(0)}%
-          </span>
-        )}
+        {c.backtest_acc != null && <AccBadge acc={c.backtest_acc} t={t} />}
       </div>
       <PriceRow open={L.open} current={L.close} t={t} />
       <PlanRows L={L} t={t} />
@@ -323,7 +325,15 @@ function AnalysisView({ brief, t }: { brief: Brief; t: (ko: string, en: string) 
   return (
     <>
       <Section title={t("📊 분석 기반 — 수급·호가·박스권 자체 분석 (ML과 독립)", "📊 Analysis — own 수급/호가/box signal (independent of ML)")}>
-        {loadingAn && Object.keys(anMap).length === 0 && <div className="text-[12px] text-[var(--text-muted)] mb-2">{t("실시간 분석 계산중… (키움)", "Computing live analysis… (Kiwoom)")}</div>}
+        <InfoPanel emoji="📊"
+          title={t("이 방식은 무엇인가요?", "What is this method?")}
+          body={t("분석 기반은 전문가(머니업) 방식입니다 — 실시간 호가(매수/매도 압력), 수급(외국인·기관·금투가 지금 누구를 사고있는지), 박스권 지지/저항을 읽어 '누가 사고있나'를 판단합니다. 시장이 약하면(위험회피) 자동으로 더 신중해집니다. 머신러닝과 완전히 독립적인 신호입니다.",
+                  "Analysis is the expert (MoneyUp) method — it reads live order-book pressure, who's buying now (foreign/institution/금투 flows), and box support/resistance to judge 'who's accumulating.' It auto-gets more cautious when the market is weak (risk-off). Fully independent from ML.")} />
+        {loadingAn && Object.keys(anMap).length === 0 && (
+          <div className="rounded-xl border border-[var(--border-default)] bg-[var(--bg-card)] px-4 py-3 mb-2">
+            <LoadingRow text={t("실시간 분석 계산중… 키움 호가·수급 불러오는 중 (몇 초 소요)", "Computing live analysis… fetching Kiwoom order-book & flows (a few seconds)")} />
+          </div>
+        )}
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
           {cards.map((c) => <AnalysisCard key={c.ticker} c={c} an={anMap[c.ticker]} t={t} />)}
         </div>
@@ -445,11 +455,91 @@ function AnalysisCard({ c, an, t }: { c: Card; an?: AN; t: (ko: string, en: stri
 }
 
 // ============================ small shared bits ============================
+// Color-coded accuracy: <60% red + ⚠ warning, ≥60% green. Never invisible.
+function AccBadge({ acc, t }: { acc: number; t: (ko: string, en: string) => string }) {
+  const pct = acc * 100;
+  const low = pct < 60;
+  const color = low ? "var(--badge-error-text)" : "var(--badge-success-text)";
+  const bg = low ? "var(--badge-error-bg)" : "var(--badge-success-bg)";
+  return (
+    <span className="ml-auto inline-flex items-center gap-1 text-[10.5px] px-2 py-0.5 rounded-full font-bold"
+      style={{ color, background: bg }}
+      title={low ? t("정확도 낮음 — 맹신 금지, 참고용", "Low accuracy — do not over-trust, reference only")
+                 : t("정확도 양호", "Accuracy OK")}>
+      {low && "⚠"} {t("정확도", "acc")} {pct.toFixed(0)}%
+    </span>
+  );
+}
+
+function Spinner({ size = 14 }: { size?: number }) {
+  return (
+    <span className="inline-block animate-spin rounded-full border-2 border-[var(--border-strong)] border-t-[var(--badge-blue-text)]"
+      style={{ width: size, height: size }} />
+  );
+}
+
+function LoadingRow({ text }: { text: string }) {
+  return (
+    <div className="flex items-center gap-2 text-[12px] text-[var(--text-secondary)] py-1">
+      <Spinner /> <span className="animate-pulse">{text}</span>
+    </div>
+  );
+}
+
+// Plain-language explanation of a method (shown inside each method view).
+function InfoPanel({ emoji, title, body }: { emoji: string; title: string; body: string }) {
+  return (
+    <div className="mb-3 rounded-xl border border-[var(--border-default)] bg-[var(--bg-elevated)] px-4 py-3 flex gap-3">
+      <span className="text-[20px] shrink-0">{emoji}</span>
+      <div>
+        <div className="text-[12.5px] font-bold text-[var(--text-primary)]">{title}</div>
+        <div className="text-[11.5px] text-[var(--text-secondary)] leading-relaxed mt-0.5">{body}</div>
+      </div>
+    </div>
+  );
+}
+
 function Stat({ label, value, good }: { label: string; value: string; good: boolean }) {
   return (
     <div className="flex flex-col">
       <span className="text-[10px] text-[var(--text-muted)]">{label}</span>
       <span className="text-[13px] font-semibold" style={{ color: good ? "var(--badge-success-text)" : "var(--error)" }}>{value}</span>
+    </div>
+  );
+}
+
+// Urgent popup: when both methods agree (high-conviction BUY/SELL), warn before acting.
+function UrgentModal({ items, t, onClose }: { items?: Consensus[]; t: (ko: string, en: string) => string; onClose: () => void }) {
+  if (!items || items.length === 0) return null;
+  return (
+    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 p-4" onClick={onClose}>
+      <div className="w-full max-w-md rounded-2xl bg-[var(--bg-card)] border-2 p-5" style={{ borderColor: "var(--warning)", boxShadow: "var(--shadow-lg, 0 10px 40px rgba(0,0,0,.3))" }} onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center gap-2 mb-1">
+          <span className="text-[22px]">⚠️</span>
+          <h3 className="text-[16px] font-extrabold text-[var(--text-primary)]">{t("매매 주의 — 고확신 신호", "Trade alert — high-conviction signals")}</h3>
+        </div>
+        <p className="text-[12px] text-[var(--text-secondary)] mb-3 leading-relaxed">
+          {t("아래 종목은 머신러닝과 분석 기반이 모두 같은 방향에 동의했습니다 (가장 강한 신호). 매수/매도 전 반드시 직접 확인하세요 — 투자 권유나 보장이 아닙니다.",
+             "Both methods (ML + Analysis) agree on these — the strongest signal. Always verify yourself before buying/selling — not investment advice or a guarantee.")}
+        </p>
+        <div className="space-y-2 mb-4 max-h-[40vh] overflow-y-auto">
+          {items.map((c) => {
+            const isBuy = c.signal === "BUY";
+            const accent = isBuy ? "var(--badge-success-text)" : "var(--error)";
+            const L = c.levels || {};
+            return (
+              <div key={c.ticker} className="flex items-center gap-2 rounded-lg bg-[var(--bg-elevated)] px-3 py-2">
+                <span className="text-[13px] font-bold text-[var(--text-primary)]">{c.name}</span>
+                <span className="text-[10px] px-2 py-0.5 rounded-full font-bold" style={{ color: "#fff", background: accent }}>{c.signal}</span>
+                <span className="ml-auto text-[11px] text-[var(--text-secondary)]">{t("매수", "Buy")} {fmt(L.buy_lo)}~{fmt(L.buy_hi)} · {t("매도", "Sell")} {fmt(L.sell_lo)}~{fmt(L.sell_hi)}</span>
+              </div>
+            );
+          })}
+        </div>
+        <button onClick={onClose} className="w-full py-2.5 rounded-xl font-bold text-[13px]" style={{ color: "#fff", background: "var(--warning)" }}>
+          {t("확인했습니다", "Got it")}
+        </button>
+      </div>
     </div>
   );
 }
