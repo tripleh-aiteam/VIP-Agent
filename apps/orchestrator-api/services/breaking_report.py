@@ -72,6 +72,10 @@ _TRIAGE_QUERIES = [
     "한국 증시 속보 급등 급락 주요 뉴스 오늘",
     "site:reuters.com OR site:asia.nikkei.com OR site:politico.com South Korea market OR chips OR defense",
     "South Korea defense export arms deal Poland Canada Middle East billion contract latest",
+    # macro / geopolitics — surfaced so the monitor catches them (sent uncapped)
+    "Iran US Israel Lebanon war ceasefire strike breaking latest",
+    "oil price crude Brent WTI surge crash Strait of Hormuz OPEC breaking latest",
+    "Russia Ukraine war Trump tariff trade war China Korea breaking latest",
 ]
 
 

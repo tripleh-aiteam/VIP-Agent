@@ -1559,10 +1559,38 @@ def _breaking_monitor():
             for ev in events:
                 record_event(db, day, ev, emailed=False)
             # 2) EMAIL big ones, DB-counted cap (normal 2, very-urgent up to 4).
+            #    MACRO/geopolitical events (Iran/Israel/oil/Ukraine/trade war) are
+            #    UNCAPPED + a lower bar (user wants them sent whenever they appear);
+            #    dedup (12h key) still prevents resending the SAME event.
+            import re as _re
+            _MACRO_RE = _re.compile(
+                r"iran|israel|lebanon|hezbollah|hormuz|gaza|syria|시리아|중동|"
+                r"oil|crude|brent|wti|유가|원유|opec|"
+                r"ukraine|russia|우크라이나|러시아|전쟁|\bwar\b|geopolit|지정학|"
+                r"tariff|관세|trade\s*war|무역분쟁|무역전쟁", _re.I)
+            macro_min_sev = int(os.getenv("BREAKING_MACRO_MIN_SEV", "5") or 5)
+
+            def _is_macro(ev):
+                return bool(_MACRO_RE.search(ev.get("title", "") + " " + ev.get("theme", "")))
+            macro_events = [e for e in events if _is_macro(e) and e["severity"] >= macro_min_sev]
+            stock_events = [e for e in events if not _is_macro(e)]
+
+            # MACRO/geopolitical: ONE consolidated KO+EN report covering all NEW macro
+            # events together (no separate spam), UNCAPPED, to all 7. Dedup (12h key)
+            # stops resending the same event.
+            if macro_events:
+                for ev in macro_events:
+                    mark_emailed(db, ev["key"])
+                focus = "MACRO/지정학·유가·무역 속보 — " + " | ".join(e["title"] for e in macro_events[:5])
+                log.info(f"breaking-monitor: MACRO consolidated ({len(macro_events)} events) -> {target}",
+                         extra={"action": "breaking.monitor.macro"})
+                _breaking_report(email_override=target, focus=focus)
+
+            # STOCK events: keep the high-signal daily cap (normal 2, very-urgent 4).
             emailed_today = db.execute(_text(
                 "SELECT count(*) FROM breaking_events WHERE kst_date=:d AND emailed=true"),
                 {"d": day}).scalar() or 0
-            for ev in events:
+            for ev in stock_events:
                 if ev["severity"] < email_sev:
                     continue
                 limit = urgent_cap if ev["severity"] >= urgent_sev else cap
