@@ -661,6 +661,7 @@ function DRow({ label, children }: { label: string; children: ReactNode }) {
 }
 
 function StockDetailDrawer({ t }: { t: (ko: string, en: string) => string }) {
+  const { lang, toggle } = useLanguage();
   const [open, setOpen] = useState(false);
   const [code, setCode] = useState("");
   const [nm, setNm] = useState("");
@@ -729,7 +730,8 @@ function StockDetailDrawer({ t }: { t: (ko: string, en: string) => string }) {
           </div>
           {d && <span className="text-[20px] font-extrabold text-[var(--text-primary)]">{fmt(d.price)}</span>}
           {d && <Pct v={d.change_pct} size={15} />}
-          <button onClick={() => setOpen(false)} className="ml-auto text-[20px] text-[var(--text-muted)] hover:text-[var(--text-primary)] leading-none px-1">✕</button>
+          <button onClick={toggle} className="ml-auto text-[12px] font-bold px-2 py-1 rounded-lg border border-[var(--border-default)] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)]">🌐 {lang === "ko" ? "EN" : "한국어"}</button>
+          <button onClick={() => setOpen(false)} className="text-[20px] text-[var(--text-muted)] hover:text-[var(--text-primary)] leading-none px-1">✕</button>
         </div>
 
         {!d && <div className="p-6"><BigLoading title={t("종목 상세 불러오는 중…", "Loading stock detail…")} sub={t("실시간 시세·수급·차트", "Live quote, flows & chart")} /></div>}
