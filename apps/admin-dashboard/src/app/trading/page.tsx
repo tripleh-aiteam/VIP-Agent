@@ -513,11 +513,11 @@ function BigLoading({ title, sub }: { title: string; sub?: string }) {
 // Plain-language explanation of a method (shown inside each method view).
 function InfoPanel({ emoji, title, body }: { emoji: string; title: string; body: string }) {
   return (
-    <div className="mb-3 rounded-xl border border-[var(--border-default)] bg-[var(--bg-elevated)] px-4 py-3 flex gap-3">
-      <span className="text-[20px] shrink-0">{emoji}</span>
+    <div className="mb-3 rounded-xl border border-[var(--border-default)] bg-[var(--bg-elevated)] px-4 py-4 flex gap-3">
+      <span className="text-[26px] shrink-0">{emoji}</span>
       <div>
-        <div className="text-[12.5px] font-bold text-[var(--text-primary)]">{title}</div>
-        <div className="text-[11.5px] text-[var(--text-secondary)] leading-relaxed mt-0.5">{body}</div>
+        <div className="text-[16px] font-extrabold text-[var(--text-primary)]">{title}</div>
+        <div className="text-[14px] text-[var(--text-secondary)] leading-relaxed mt-1">{body}</div>
       </div>
     </div>
   );
