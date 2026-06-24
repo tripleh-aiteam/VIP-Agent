@@ -457,10 +457,26 @@ def timing_plan(levels: dict, advice: str, as_of: Optional[str], horizon: int) -
 
 
 # ---- per-stock card ------------------------------------------------------------
+_regime_cache: dict[str, Any] = {"t": 0.0, "tone": None}
+
+
+def _regime_tone(db) -> str:
+    import time as _t
+    if (_t.time() - _regime_cache["t"]) < 60 and _regime_cache["tone"]:
+        return _regime_cache["tone"]
+    tone = market_regime(db).get("tone", "mixed")
+    _regime_cache.update(t=_t.time(), tone=tone)
+    return tone
+
+
 def stock_card(db, ticker: str, horizon: int = 5, live: bool = False,
                as_of: Optional[str] = None) -> dict[str, Any]:
     pred = ps.get_ticker(db, ticker, horizon) or {}
     advice = pred.get("advice", "HOLD")
+    # TREND GATE: don't surface an ML SELL in a strong (risk-on) market — those
+    # short calls systematically lose. Demote to HOLD.
+    if advice == "SELL" and _regime_tone(db) == "risk_on":
+        advice = "HOLD"
     levels = _ml_levels(db, ticker, advice,
                         pred.get("expected_low_pct"), pred.get("expected_high_pct"))
     return {
@@ -538,6 +554,12 @@ def analysis_signal(card: dict, rt: dict | None, news: int = 0,
     buy_t, sell_t = ({"risk_on": (1, -3), "risk_off": (3, -1)}
                      .get(regime_tone, (2, -2)))
     sig = "BUY" if score >= buy_t else "SELL" if score <= sell_t else "WATCH"
+    # TREND GATE: don't SELL/short a strong (risk-on) market — those calls
+    # systematically lose (verified 0-win SELLs). Demote to WATCH.
+    if sig == "SELL" and regime_tone == "risk_on":
+        sig = "WATCH"
+        reasons.append("강세장 — 매도(공매) 보류")
+        reasons_en.append("SELL suppressed in a risk-on market (trend gate)")
     label = {"BUY": "매수", "SELL": "매도", "WATCH": "관망"}[sig]
     label_en = {"BUY": "Buy", "SELL": "Sell", "WATCH": "Watch"}[sig]
     return {"signal": sig, "label": label, "label_en": label_en, "score": score,
@@ -660,6 +682,36 @@ def brief(db, horizon: int = 5) -> dict[str, Any]:
     return out
 
 
+def _freshness(db, model_as_of) -> dict[str, Any]:
+    """Surface staleness so an old model / stopped PC collector is never silently
+    trusted. Reports the model date age, the latest price-data date, and whether a
+    fresh live snapshot exists (PC collector running)."""
+    out: dict[str, Any] = {"model_as_of": str(model_as_of) if model_as_of else None}
+    try:
+        days = db.execute(text(
+            "SELECT (CURRENT_DATE - max(as_of)) FROM model_predictions")).scalar()
+        out["model_days_old"] = int(days) if days is not None else None
+        out["stale"] = (days is not None and days >= 2)   # >=2 trading-ish days behind
+    except Exception:
+        out["model_days_old"] = None; out["stale"] = None
+    try:
+        dprice = db.execute(text("SELECT max(date) FROM raw_daily_prices")).scalar()
+        out["price_data_as_of"] = str(dprice) if dprice else None
+    except Exception:
+        out["price_data_as_of"] = None
+    try:
+        age = db.execute(text(
+            "SELECT EXTRACT(EPOCH FROM (now()-max(ts))) FROM realtime_snapshot")).scalar()
+        out["live_snapshot_age_sec"] = int(age) if age is not None else None
+        out["live_fresh"] = (age is not None and age < 600 and _kr_market_open())
+    except Exception:
+        out["live_snapshot_age_sec"] = None; out["live_fresh"] = False
+    out["warning"] = (
+        "⚠️ 모델/데이터가 최신이 아닙니다 — PC 재학습 파이프라인 확인 필요" if out.get("stale")
+        else None)
+    return out
+
+
 def _build_brief(db, horizon: int = 5) -> dict[str, Any]:
     summ = ps.summary(db, horizon=horizon)
     buy_tk = [p["ticker"] for p in summ.get("buys", [])]
@@ -696,6 +748,7 @@ def _build_brief(db, horizon: int = 5) -> dict[str, Any]:
     return {
         "as_of": summ.get("as_of"),
         "horizon": horizon,
+        "freshness": _freshness(db, summ.get("as_of")),
         "regime": market_regime(db),
         "counts": summ.get("counts", {}),
         "picks": picks,                 # ordered: featured first, then BUY, then SELL
