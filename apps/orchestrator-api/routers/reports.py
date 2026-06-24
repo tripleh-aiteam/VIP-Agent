@@ -42,6 +42,28 @@ def send_text_email(body: SendTextBody):
     return send_plain_email(to, body.subject, body.body)
 
 
+class SendDocxBody(BaseModel):
+    to: str = Field(..., description="Recipient — must be on the report allowlist")
+    subject: str = Field(..., max_length=300)
+    title: str = Field(..., max_length=200, description="Document title (first page heading)")
+    body: str = Field(..., description="Markdown body rendered into the .docx")
+    filename: str = Field(default="breaking_news.docx", max_length=120)
+
+
+@router.post("/send-docx", dependencies=[Depends(rate_limit_compose)])
+def send_docx_email(body: SendDocxBody):
+    """Render the markdown body into a Word .docx and email it as an ATTACHMENT to an
+    ALLOWLISTED recipient (same allowlist guard as ?email=). Use for breaking-news /
+    report files the user wants as a downloadable document."""
+    to = _resolve_recipients(body.to)
+    from services.report_docx import markdown_to_docx
+    from services.report_email import send_email_with_docx
+    fn = body.filename if body.filename.lower().endswith(".docx") else body.filename + ".docx"
+    docx_bytes = markdown_to_docx(body.body, title=body.title)
+    return send_email_with_docx(to, body.subject,
+                                "Attached: " + body.title, fn, docx_bytes)
+
+
 @router.post("/compose/auto-daily", dependencies=[Depends(rate_limit_compose)])
 def trigger_auto_daily(db: Session = Depends(get_db)):
     """Manually trigger the auto daily report pipeline (3 agent reports + combined)."""
