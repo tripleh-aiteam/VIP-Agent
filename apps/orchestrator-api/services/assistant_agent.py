@@ -688,6 +688,22 @@ def _is_history_range_query(transcript: Optional[str]) -> bool:
     return bool(transcript) and bool(_HISTORY_RANGE_RE.search(transcript))
 
 
+# FUTURE-outlook markers. A question like '앞으로 5일 전망' / 'outlook for next week' is
+# about the FUTURE — it must go to the two-method FORECAST path, NOT be parsed as a past
+# history range (the '5일' was wrongly read as a past window → stale single-row table).
+_FUTURE_OUTLOOK_KW = (
+    "앞으로", "향후", "전망", "다음 주", "다음주", "내일", "모레", "이번 주 남은",
+    "오를까", "내릴까", "오를", "내릴", "상승할", "하락할", "예상돼", "예상되",
+    "forecast", "outlook", "next week", "coming days", "going to", "will it",
+    "expect", "predict", "future",
+)
+
+
+def _is_future_outlook(transcript: Optional[str]) -> bool:
+    t = (transcript or "").lower()
+    return any(k in t for k in _FUTURE_OUTLOOK_KW)
+
+
 def _is_vip_current_price_q(transcript: Optional[str], agent_id: Optional[str]) -> bool:
     if (agent_id or "vip").lower() == "stock":
         return False
@@ -3691,6 +3707,7 @@ def _run_agent_impl(
     # Naver daily data (no LLM), so VIP and the relaying AI Advisor read IDENTICALLY.
     # Falls through (US / unresolved) to the LLM/web-search past path below.
     if (not confirmed_tool and (agent_id or "vip").lower() != "stock"
+            and not _is_future_outlook(transcript)        # '앞으로 5일 전망' is a FORECAST, not history
             and _requested_history_dates(transcript)):
         _hist = _vip_history_reply(transcript, lang)
         if _hist:
@@ -3726,6 +3743,7 @@ def _run_agent_impl(
     if (not confirmed_tool and (agent_id or "vip").lower() != "stock"
             and "ask_agent" in TOOL_REGISTRY and _stock_turn
             and not _is_past_price(transcript)
+            and not _is_future_outlook(transcript)        # forecast → local two-method, not delegate
             and not _is_report_question(transcript)
             and not _is_concept_question(transcript)):
         # FAST PATH (latency): the Stock backend is the single source of truth, so
