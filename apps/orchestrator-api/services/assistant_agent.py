@@ -3783,6 +3783,21 @@ def _run_agent_impl(
     # relay to the Stock agent verbatim (VIP / others) so the user always gets a
     # reasoned 매수/보유/매도 view, never just a number.
     if not confirmed_tool and _is_stock_advice(transcript, agent_id):
+        # TWO-METHOD FIRST: for advice on a stock that's in OUR model universe, force
+        # our own ML + Analysis view (+ chart) so the answer ALWAYS shows BOTH methods
+        # explicitly — the LLM tended to pick read_chart alone and merge them.
+        try:
+            from services import prediction_service as _ps
+            _found = _all_stocks_in_query(transcript)         # [(code, name), ...]
+            _code = next((c for (c, _n) in _found if c in _ps.NAMES), None)
+        except Exception:
+            _code = None
+        if _code and "two_method_view" in TOOL_REGISTRY:
+            tm_steps = [{"tool": "two_method_view", "args": {"ticker": _code}}]
+            if "read_chart" in TOOL_REGISTRY:
+                tm_steps.append({"tool": "read_chart", "args": {"ticker": _code}})
+            return _run_chain(db, transcript, lang, tm_steps, current_path,
+                              selected_id, system, history or [], agent_id=agent_id)
         aid = (agent_id or "vip").lower()
         if aid == "stock":
             advice_steps = [
