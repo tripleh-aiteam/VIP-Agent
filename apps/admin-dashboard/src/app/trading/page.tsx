@@ -540,28 +540,28 @@ function UrgentModal({ items, t, onClose }: { items?: Consensus[]; t: (ko: strin
       <div className="w-full max-w-md rounded-2xl bg-[var(--bg-card)] border-2 p-5" style={{ borderColor: "var(--warning)", boxShadow: "var(--shadow-lg, 0 10px 40px rgba(0,0,0,.3))" }} onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center gap-2 mb-1">
           <span className="text-[22px]">⚠️</span>
-          <h3 className="text-[16px] font-extrabold text-[var(--text-primary)]">{t("매매 주의 — 고확신 신호", "Trade alert — high-conviction signals")}</h3>
+          <h3 className="text-[16px] font-extrabold text-[var(--text-primary)]">매매 주의 — 고확신 신호</h3>
         </div>
         <p className="text-[12px] text-[var(--text-secondary)] mb-3 leading-relaxed">
-          {t("아래 종목은 머신러닝과 분석 기반이 모두 같은 방향에 동의했습니다 (가장 강한 신호). 매수/매도 전 반드시 직접 확인하세요 — 투자 권유나 보장이 아닙니다.",
-             "Both methods (ML + Analysis) agree on these — the strongest signal. Always verify yourself before buying/selling — not investment advice or a guarantee.")}
+          아래 종목은 머신러닝과 분석 기반이 모두 같은 방향에 동의했습니다 (가장 강한 신호). 매수/매도 전 반드시 직접 확인하세요 — 투자 권유나 수익 보장이 아닙니다.
         </p>
         <div className="space-y-2 mb-4 max-h-[40vh] overflow-y-auto">
           {items.map((c) => {
             const isBuy = c.signal === "BUY";
             const accent = isBuy ? "var(--badge-success-text)" : "var(--error)";
+            const sigKo = isBuy ? "매수" : "매도";
             const L = c.levels || {};
             return (
               <div key={c.ticker} className="flex items-center gap-2 rounded-lg bg-[var(--bg-elevated)] px-3 py-2">
                 <span className="text-[13px] font-bold text-[var(--text-primary)]">{c.name}</span>
-                <span className="text-[10px] px-2 py-0.5 rounded-full font-bold" style={{ color: "#fff", background: accent }}>{c.signal}</span>
-                <span className="ml-auto text-[11px] text-[var(--text-secondary)]">{t("매수", "Buy")} {fmt(L.buy_lo)}~{fmt(L.buy_hi)} · {t("매도", "Sell")} {fmt(L.sell_lo)}~{fmt(L.sell_hi)}</span>
+                <span className="text-[10px] px-2 py-0.5 rounded-full font-bold" style={{ color: "#fff", background: accent }}>{sigKo}</span>
+                <span className="ml-auto text-[11px] text-[var(--text-secondary)]">매수 {fmt(L.buy_lo)}~{fmt(L.buy_hi)} · 매도 {fmt(L.sell_lo)}~{fmt(L.sell_hi)}</span>
               </div>
             );
           })}
         </div>
         <button onClick={onClose} className="w-full py-2.5 rounded-xl font-bold text-[13px]" style={{ color: "#fff", background: "var(--warning)" }}>
-          {t("확인했습니다", "Got it")}
+          확인했습니다
         </button>
       </div>
     </div>
