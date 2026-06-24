@@ -28,6 +28,30 @@ PRIORITY = ["000660", "035420", "005930"]   # SK하이닉스, NAVER, 삼성전�
 
 
 # ---- market regime -------------------------------------------------------------
+def macro_signal(db, lookback_days: int = 3) -> dict[str, Any]:
+    """Market-wide geopolitics/macro risk from recent '지정학/매크로' news (war, oil,
+    Iran/Israel, trade war…). Conservative: only flags caution, never aggression."""
+    try:
+        from services.news_impact import classify
+        rows = db.execute(text(
+            "SELECT title, snippet, sentiment FROM raw_news "
+            "WHERE ts > now() - (:d || ' days')::interval ORDER BY ts DESC LIMIT 150"),
+            {"d": lookback_days}).fetchall()
+    except Exception:
+        return {"risk": "none", "count": 0, "headlines": []}
+    macro = []
+    for r in rows:
+        name, _imp, _d = classify(r.title or "", r.snippet or "")
+        if name == "지정학/매크로":
+            macro.append((r.title or "", float(r.sentiment or 0)))
+    if not macro:
+        return {"risk": "none", "count": 0, "headlines": []}
+    neg = sum(1 for _t, s in macro if s < -0.1)
+    risk = ("high" if neg >= 4 else "elevated" if (neg >= 2 or len(macro) >= 4) else "low")
+    return {"risk": risk, "count": len(macro), "neg": neg,
+            "headlines": [t[:90] for t, _s in macro[:5]]}
+
+
 def market_regime(db) -> dict[str, Any]:
     r = db.execute(text(
         "SELECT mkt_kospi_ret5, mkt_kospi_vs_sma20, mkt_usdkrw_ret5, mkt_breadth, date "
@@ -41,6 +65,11 @@ def market_regime(db) -> dict[str, Any]:
     vs20 = float(r.mkt_kospi_vs_sma20 or 0) * 100
     risk_on = k5 > 0 and vs20 > 0 and breadth >= 50
     tone = "risk_on" if risk_on else ("risk_off" if (k5 < 0 and breadth < 45) else "mixed")
+    # MACRO/GEOPOLITICAL nudge: high geopolitical stress -> be cautious (downgrade a
+    # would-be risk_on to mixed). Conservative — it only raises BUY conviction bars.
+    macro = macro_signal(db)
+    if macro.get("risk") == "high" and tone == "risk_on":
+        tone = "mixed"
     label = {"risk_on": "위험선호 (강세)", "risk_off": "위험회피 (약세)",
              "mixed": "혼조"}[tone]
     won = "원화약세" if fx5 > 0.3 else ("원화강세" if fx5 < -0.3 else "환율보합")
@@ -48,6 +77,7 @@ def market_regime(db) -> dict[str, Any]:
         "date": str(r.date), "tone": tone, "label_ko": label,
         "kospi_ret5": round(k5, 2), "kospi_vs_sma20": round(vs20, 2),
         "usdkrw_ret5": round(fx5, 2), "breadth": round(breadth, 0), "won": won,
+        "macro": macro,
     }
 
 
