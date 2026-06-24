@@ -548,7 +548,7 @@ type Detail = {
   foreign_net?: number; organ_net?: number; individual_net?: number; foreign_hold?: number;
   live?: boolean; env?: string; best_bid?: number; best_ask?: number; imbalance?: number; pressure?: string;
   rt_foreign?: number; rt_institution?: number; rt_fin_invest?: number; program_net?: number;
-  derivatives?: { available?: boolean; note?: string; type?: string; date?: string; volume?: number; value?: number; open_interest?: number; options?: string };
+  derivatives?: { available?: boolean; note?: string; type?: string; source?: string; date?: string; volume?: number; value?: number; open_interest?: number; options?: string };
   candles?: Candle[];
 };
 type Candle = { time: string; open: number; high: number; low: number; close: number; volume?: number };
@@ -776,7 +776,11 @@ function StockDetailDrawer({ t }: { t: (ko: string, en: string) => string }) {
               <DRow label={t("시간외 (NXT)", "After-hours (NXT)")}>{d.nxt_price != null ? <>{fmt(d.nxt_price)} <Pct v={d.nxt_change_pct} /></> : <span className="text-[var(--text-muted)]">-</span>}</DRow>
               <DRow label={t("개별주식선물 (옵션 미지원)", "Single-stock futures (options n/a)")}>
                 {dv?.available
-                  ? <span style={{ color: "var(--text-primary)" }}>{t("거래량", "Vol")} {dv.volume?.toLocaleString()} {t("계약", "ct")} · {t("미결제", "OI")} {dv.open_interest?.toLocaleString()}</span>
+                  ? <span style={{ color: "var(--text-primary)" }}>
+                      {t("거래량", "Vol")} {dv.volume?.toLocaleString()} {t("계약", "ct")}
+                      {dv.open_interest != null ? ` · ${t("미결제", "OI")} ${dv.open_interest.toLocaleString()}` : ""}
+                      {dv.source ? <span className="text-[9px] text-[var(--text-muted)]"> · {dv.source}</span> : null}
+                    </span>
                   : <span className="text-[var(--text-muted)]" title={dv?.note || ""}>{t("해당 없음", "n/a")}</span>}
               </DRow>
               {dv?.available && dv.value != null && (
