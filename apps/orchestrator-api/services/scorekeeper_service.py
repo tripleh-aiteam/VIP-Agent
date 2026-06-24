@@ -84,6 +84,10 @@ def log_today(db, horizon: int = 5) -> dict[str, Any]:
     for tk, r in an.items():
         _store("analysis", tk, r.get("signal"), r.get("levels") or {})
 
+    # Consensus — stocks where BOTH methods agree (high conviction)
+    for c in tb.consensus_picks(db, horizon):
+        _store("consensus", c["ticker"], c["signal"], c.get("levels") or {})
+
     db.commit()
     return {"ok": True, "as_of": str(as_of), "logged": n}
 
@@ -124,11 +128,23 @@ def _signal_asof(db, ticker, asof):
     sig = "BUY" if score >= 2 else "SELL" if score <= -2 else None
     if not sig:
         return None
-    size = res - sup
+    # REALISTIC vol-based target (matches trading_brief._box_levels): 1σ horizon move
+    # from realized_vol AS-OF this date (no look-ahead), capped by the box edge.
+    import math
+    vr = db.execute(text(
+        "SELECT realized_vol_20 FROM stock_features_daily WHERE ticker=:t AND date<=:d "
+        "AND realized_vol_20 IS NOT NULL ORDER BY date DESC LIMIT 1"),
+        {"t": ticker, "d": asof}).first()
+    vol = float(vr[0]) if vr and vr[0] is not None else 25.0
+    mv = max(1.5, min(12.0, vol * math.sqrt(5 / 252.0))) / 100.0
     if sig == "SELL":
-        entry, target, stop = round(close), round(sup), round(res * 1.02)
+        entry = round(close)
+        target = round(max(sup, close * (1 - 0.9 * mv)))
+        stop = round(min(res * 1.02, close * (1 + 0.6 * mv)))
     else:
-        entry, target, stop = round(min(close, sup * 1.03)), round(res), round(sup * 0.97)
+        entry = round(min(close, sup * 1.03))
+        target = round(min(res, entry * (1 + 0.9 * mv)))
+        stop = round(max(sup * 0.97, entry * (1 - 0.6 * mv)))
     return {"signal": sig, "ref": round(close), "entry": entry, "target": target, "stop": stop}
 
 
@@ -222,7 +238,7 @@ def grade_matured(db) -> dict[str, Any]:
 def scoreboard(db) -> dict[str, Any]:
     ensure(db)
     stats = {}
-    for m in ("ml", "analysis"):
+    for m in ("ml", "analysis", "consensus"):
         r = db.execute(text(
             "SELECT count(*) n, "
             "  count(*) FILTER (WHERE outcome='win') wins, "

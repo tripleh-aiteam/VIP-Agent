@@ -42,7 +42,8 @@ type Card = { ticker: string; name: string; advice: string; confidence?: string;
 type Heat = { ticker: string; name: string; foreign: string; inst: string; foreign_net: number; inst_net: number; tag: string; tag_en?: string };
 type News = { ticker?: string; name?: string; ts: string; source?: string; url?: string; title: string; type: string; impact: number; direction: number };
 type Regime = { date?: string; tone: string; label_ko: string; kospi_ret5?: number; kospi_vs_sma20?: number; usdkrw_ret5?: number; breadth?: number; won?: string };
-type Brief = { as_of?: string; horizon: number; regime: Regime; counts: Record<string, number>; picks?: Card[]; buys: Card[]; sells: Card[]; flow_heatmap: Heat[]; news: News[]; disclaimer: string };
+type Consensus = { ticker: string; name: string; signal: string; label?: string; label_en?: string; confidence?: string; model?: string; levels: Levels; timing?: Timing };
+type Brief = { as_of?: string; horizon: number; regime: Regime; counts: Record<string, number>; picks?: Card[]; buys: Card[]; sells: Card[]; consensus?: Consensus[]; flow_heatmap: Heat[]; news: News[]; disclaimer: string };
 
 // Featured stocks pinned first (matches backend PRIORITY): SK하이닉스, NAVER, 삼성전자
 const PRIORITY = ["000660", "035420", "005930"];
@@ -92,7 +93,8 @@ export default function TradingPage() {
       {loading && <div className="text-[var(--text-muted)]">{t("불러오는 중…", "Loading…")}</div>}
       {!loading && (err || !brief) && <div className="text-[var(--error)]">{t("데이터를 불러오지 못했습니다", "Failed to load")}: {err}</div>}
 
-      {/* Step 1 — method selector */}
+      {/* Step 1 — method selector + consensus highlight */}
+      {!method && brief && <ConsensusBanner items={brief.consensus} t={t} />}
       {!method && brief && <MethodSelector onPick={setMethod} t={t} counts={brief.counts} />}
       {/* Scoreboard panel hidden for now (still logged/graded in the background; re-enable: <Scoreboard t={t} />) */}
 
@@ -145,6 +147,42 @@ function MethodSelector({ onPick, t, counts }: { onPick: (m: Method) => void; t:
             <span className="text-[11px] text-[var(--text-muted)]">{t("실시간 키움", "Live Kiwoom")}</span>
           </div>
         </button>
+      </div>
+    </div>
+  );
+}
+
+// ============================ Consensus (both methods agree) ============================
+function ConsensusBanner({ items, t }: { items?: Consensus[]; t: (ko: string, en: string) => string }) {
+  if (!items || items.length === 0) return null;
+  return (
+    <div className="mb-4 rounded-2xl border-2 p-4" style={{ borderColor: "var(--badge-success-text)", background: "var(--bg-card)", boxShadow: "var(--shadow-sm)" }}>
+      <div className="flex items-center gap-2 mb-2">
+        <span className="text-[18px]">🤝</span>
+        <h2 className="text-[15px] font-extrabold text-[var(--text-primary)]">{t("컨센서스 — 두 방식 모두 동의 (고확신)", "Consensus — both methods agree (high conviction)")}</h2>
+        <span className="ml-auto text-[11px] text-[var(--text-muted)]">{items.length} {t("종목", "stocks")}</span>
+      </div>
+      <p className="text-[11px] text-[var(--text-muted)] mb-3">{t("머신러닝과 분석 기반이 같은 방향을 가리키는 종목 — 단일 방식보다 신뢰도 높음.", "Stocks where ML and Analysis point the same way — stronger than either alone.")}</p>
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-2.5">
+        {items.map((c) => {
+          const isBuy = c.signal === "BUY";
+          const accent = isBuy ? "var(--badge-success-text)" : "var(--error)";
+          const L = c.levels || {};
+          return (
+            <div key={c.ticker} className="rounded-xl border bg-[var(--bg-elevated)] p-3" style={{ borderColor: accent + "55" }}>
+              <div className="flex items-center gap-2 mb-1.5">
+                <span className="text-[14px] font-bold text-[var(--text-primary)]">{c.name}</span>
+                <span className="text-[10px] px-2 py-0.5 rounded-full font-bold" style={{ color: "#fff", background: accent }}>{c.signal}</span>
+                {c.model && <span className="text-[9px] px-1 py-0.5 rounded" style={{ color: "var(--badge-blue-text)", background: "var(--badge-blue-bg)" }}>⚙ {c.model}</span>}
+              </div>
+              <div className="flex items-center justify-between text-[11px]">
+                <span className="text-[var(--text-muted)]">{t("매수", "Buy")} <b className="text-[var(--text-primary)]">{fmt(L.buy_lo)}~{fmt(L.buy_hi)}</b></span>
+                <span className="text-[var(--text-muted)]">{t("매도", "Sell")} <b style={{ color: "var(--badge-success-text)" }}>{fmt(L.sell_lo)}~{fmt(L.sell_hi)}</b></span>
+              </div>
+              {c.timing?.sell_time && <div className="text-[10px] text-[var(--text-muted)] mt-1">⏱ {t(c.timing.buy_time || "", c.timing.buy_time_en || "")} → {t(c.timing.sell_time || "", c.timing.sell_time_en || "")}</div>}
+            </div>
+          );
+        })}
       </div>
     </div>
   );

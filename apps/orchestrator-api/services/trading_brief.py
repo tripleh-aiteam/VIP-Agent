@@ -79,6 +79,19 @@ def _rr(entry, target, stop):
     return None
 
 
+def _move_pct(db, ticker: str, horizon: int = 5) -> float:
+    """Realistic expected move over `horizon` days, as a % — from the stock's own
+    realized volatility (realized_vol_20 is annualized %). Used to set ACHIEVABLE
+    targets instead of the far box edge (the scorekeeper showed full-box targets are
+    hit only ~12% of the time in 5 days)."""
+    import math
+    r = db.execute(text(
+        "SELECT realized_vol_20 FROM stock_features_daily WHERE ticker=:t "
+        "AND realized_vol_20 IS NOT NULL ORDER BY date DESC LIMIT 1"), {"t": ticker}).first()
+    vol = float(r[0]) if r and r[0] is not None else 25.0          # annualized %
+    return max(1.5, min(12.0, vol * math.sqrt(horizon / 252.0)))   # 1σ horizon move %, clamped
+
+
 def _ml_levels(db, ticker: str, advice: str, exp_low, exp_high) -> dict[str, Any]:
     """METHOD 1 (ML): trade plan from the MODEL's expected move (not the chart box).
     Entry = market, Target = close ± expected-move%, Stop = half-band risk."""
@@ -127,19 +140,21 @@ def _box_levels(db, ticker: str, signal: str) -> dict[str, Any]:
     close, sup, res, opn = box
     out = {"close": round(close), "open": round(opn) if opn else None,
            "support": round(sup), "resistance": round(res)}
+    # REALISTIC target: a 1σ horizon move (vol-based), capped by the box edge — so it's
+    # actually reachable in the window (fixes the ~12% target-hit problem).
+    mv = _move_pct(db, ticker) / 100.0
+    entry = round(min(close, sup * 1.03))                  # 지지 부근 매수 (buy near support)
     if signal == "SELL":
-        out["entry"] = round(close)                       # 매도/청산 now
-        out["target"] = round(sup)                        # 지지까지 하락 목표
-        out["stop"] = round(res * 1.02)                   # 저항 돌파 시 손절
-    else:                                                 # BUY or WATCH: buy-the-dip-at-support
-        out["entry"] = round(min(close, sup * 1.03))      # 지지 부근 매수
-        out["target"] = round(res)                        # 저항 목표
-        out["stop"] = round(sup * 0.97)                   # 지지 이탈 손절
+        out["entry"] = round(close)
+        out["target"] = round(max(sup, close * (1 - 0.9 * mv)))   # realistic down move, floored at support
+        out["stop"] = round(min(res * 1.02, close * (1 + 0.6 * mv)))
+    else:                                                 # BUY or WATCH
+        out["entry"] = entry
+        out["target"] = round(min(res, entry * (1 + 0.9 * mv)))   # realistic up move, capped at resistance
+        out["stop"] = round(max(sup * 0.97, entry * (1 - 0.6 * mv)))
     out["rr"] = _rr(out.get("entry"), out.get("target"), out.get("stop"))
-    # Analysis price INTERVALS = box thirds: buy in lower third, sell in upper third.
-    size = res - sup
-    out["buy_lo"], out["buy_hi"] = round(sup), round(sup + 0.34 * size)
-    out["sell_lo"], out["sell_hi"] = round(res - 0.34 * size), round(res)
+    # Price INTERVALS: tight zones around the (now realistic) entry/target.
+    _add_zones_around(out, buy_band=0.008, sell_band=0.008)
     return out
 
 
@@ -397,6 +412,35 @@ def analysis_batch(db, tickers: list[str], horizon: int = 5) -> dict[str, Any]:
     return out
 
 
+# ---- CONSENSUS: stocks where BOTH methods agree (highest conviction) ------------
+def consensus_picks(db, horizon: int = 5) -> list[dict[str, Any]]:
+    """High-conviction list: stocks where the ML model AND the Analysis signal point
+    the SAME way (both BUY or both SELL). Agreement of two independent methods is a
+    stronger signal than either alone. Analysis uses the DB/EOD path (no Kiwoom), so
+    it's deterministic and works after market."""
+    as_of = ps._latest_as_of(db, horizon)
+    out = []
+    for tk in NAMES:
+        pred = ps.get_ticker(db, tk, horizon) or {}
+        ml_adv = pred.get("advice", "HOLD")
+        if ml_adv not in ("BUY", "SELL"):
+            continue
+        levels = _box_levels(db, tk, ml_adv)              # realistic 박스권 levels
+        sig = analysis_signal({"levels": levels, "flow": _flow(db, tk)}, None)
+        if sig["signal"] != ml_adv:                        # must AGREE
+            continue
+        out.append({
+            "ticker": tk, "name": NAMES.get(tk, tk), "signal": ml_adv,
+            "ml": ml_adv, "analysis": sig["signal"], "label": sig["label"],
+            "label_en": sig.get("label_en"), "confidence": pred.get("confidence"),
+            "backtest_acc": pred.get("backtest_acc"), "model": pred.get("model"),
+            "levels": levels, "timing": timing_plan(levels, ml_adv, as_of, horizon),
+            "reasons": sig["reasons"], "reasons_en": sig.get("reasons_en"),
+            "flow": _flow(db, tk),
+        })
+    return out
+
+
 # ---- the full brief ------------------------------------------------------------
 # Short server-side cache: the ML brief is daily data (changes once/day), so caching
 # it makes the page open instantly instead of re-querying ~50 rows every load.
@@ -455,6 +499,7 @@ def _build_brief(db, horizon: int = 5) -> dict[str, Any]:
         "picks": picks,                 # ordered: featured first, then BUY, then SELL
         "buys": picks_buy,
         "sells": picks_sell,
+        "consensus": consensus_picks(db, horizon),   # both methods agree = high conviction
         "flow_heatmap": heat,
         "news": news[:12],
         "disclaimer": ("ML 5일 예측 · 정확도 ~48%이나 BUY픽 평균 아웃퍼폼 · 보장 아님. "
