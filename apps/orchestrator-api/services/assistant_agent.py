@@ -2190,16 +2190,11 @@ def _run_chain(
         "news — EACH with the real numbers from the results. Keep each item to one "
         "line, no repetition. Do NOT restate the price as the whole answer, and do "
         "NOT add a preamble before the verdict sentence.\n"
-        "TWO-METHOD RULE: if a tool result contains 'method1_ml' and 'method2_analysis' "
-        "(the two_method_view tool), you MUST first show the TWO methods as separate "
-        "labeled lines BEFORE your verdict — do NOT merge them:\n"
-        "  '🤖 방법 1 — 머신러닝 알고리즘: <advice>, 최적 알고리즘 <best_algorithm>, 예상 "
-        "변동 <expected_move_pct>%, 백테스트 정확도 <backtest_accuracy_pct>%'\n"
-        "  '📊 방법 2 — 분석(수급/호가/박스권): <label>, 매수구간 <buy_lo~buy_hi>, 매도구간 "
-        "<sell_lo~sell_hi>, 근거 <reasons>'\n"
-        "Then give YOUR combined verdict + the single biggest risk, and state whether the "
-        "two methods AGREE (consensus=true → 높은 확신) or DISAGREE (둘이 엇갈림 → 주의). "
-        "Use the real values from the tool result; if a field is null say '데이터 없음'."
+        "TWO-METHOD NOTE: if a tool result contains 'method1_ml' and 'method2_analysis' "
+        "(two_method_view), a labeled '방법 1 / 방법 2' summary block is added ABOVE your "
+        "answer automatically — do NOT repeat those two lines yourself. Just give your "
+        "combined verdict + biggest risk in the 근거 list, and refer to the two methods "
+        "naturally (e.g. 'ML은 보유, 분석은 관망이라 신호가 엇갈립니다')."
     )
     import json as _json
     summary_input = _json.dumps(step_results, ensure_ascii=False, default=str)[:max(_cap, 3000)]
@@ -2215,6 +2210,14 @@ def _run_chain(
         )
     except Exception:
         reply = "Done — checked the data."
+
+    # Deterministic two-method header — guarantee BOTH methods show (방법1/방법2),
+    # regardless of whether the LLM formatted them.
+    _tm = next((s.get("result") for s in step_results
+                if s.get("tool") == "two_method_view"
+                and isinstance(s.get("result"), dict) and s["result"].get("ok")), None)
+    if _tm:
+        reply = _two_method_header(_tm) + "\n\n" + (reply or "").strip()
 
     # If any step returned an action (navigate / open_portal), surface the LAST one
     action = None
@@ -2459,6 +2462,55 @@ def _output_format_directive(user_msg: str) -> tuple[str, int, int]:
         "as the first answer); don't cut it short, but don't pad with filler.\n",
         750, 2600,
     )
+
+
+def _two_method_header(tm: dict) -> str:
+    """Build the deterministic '방법 1 / 방법 2' block from a two_method_view result, so
+    the user ALWAYS sees both decision methods explicitly (the LLM is unreliable here)."""
+    m1 = tm.get("method1_ml") or {}
+    m2 = tm.get("method2_analysis") or {}
+    lv = m2.get("levels") or {}
+    name = tm.get("name") or tm.get("ticker") or ""
+
+    def _fmt(x):
+        try:
+            return f"{int(round(float(x))):,}"
+        except Exception:
+            return None
+    adv_ko = {"BUY": "매수", "SELL": "매도", "HOLD": "보유"}.get((m1.get("advice") or "").upper())
+    label = m2.get("label") or {"BUY": "매수", "SELL": "매도", "WATCH": "관망", "HOLD": "관망"}.get(
+        (m2.get("signal") or "").upper())
+    acc, em, algo = m1.get("backtest_accuracy_pct"), m1.get("expected_move_pct"), m1.get("best_algorithm")
+    buy = (f"{_fmt(lv.get('buy_lo'))}~{_fmt(lv.get('buy_hi'))}원"
+           if lv.get("buy_lo") and lv.get("buy_hi") else None)
+    sell = (f"{_fmt(lv.get('sell_lo'))}~{_fmt(lv.get('sell_hi'))}원"
+            if lv.get("sell_lo") and lv.get("sell_hi") else None)
+    price = _fmt(tm.get("live_price"))
+    src = tm.get("live_source")
+
+    m1_bits = [adv_ko or "데이터 없음"]
+    if algo:
+        m1_bits.append(f"최적 알고리즘 {algo}")
+    if em is not None:
+        m1_bits.append(f"예상 5일 변동 {em}%")
+    if acc is not None:
+        m1_bits.append(f"백테스트 정확도 {acc}%")
+    m2_bits = [label or "데이터 없음"]
+    if buy:
+        m2_bits.append(f"매수구간 {buy}")
+    if sell:
+        m2_bits.append(f"매도구간 {sell}")
+
+    head = f"**📊 {name} — 두 가지 방법 분석**"
+    if price:
+        head += f"  ·  현재가 {price}원" + (f" ({src})" if src else "")
+    agree = "🤝 두 방법 **일치** — 높은 확신" if tm.get("consensus") else "⚠️ 두 방법 **엇갈림** — 신중히 접근"
+    return "\n".join([
+        head,
+        f"🤖 **방법 1 — 머신러닝 알고리즘:** " + " · ".join(m1_bits),
+        f"📈 **방법 2 — 분석(수급/호가/박스권):** " + " · ".join(m2_bits),
+        agree,
+    ])
 
 
 def _compose_final_answer(
