@@ -1796,6 +1796,81 @@ def tool_two_method_view(ticker: str = None, db: Session = None, **_kw) -> dict[
     }
 
 
+def tool_read_chart(ticker: str = None, days: int = 60, db: Session = None, **_kw) -> dict[str, Any]:
+    """Read the price CHART for a stock — the SAME daily OHLCV candles the TradingView
+    chart on the AI Advisor page plots — and return a technical read: trend, moving
+    averages (5/20/60), support/resistance, distance from the recent high, the last few
+    candles, and a volume read. Use whenever the user asks about the CHART / 차트 / 캔들 /
+    candle / 'what does the chart show', 'read the graph', technical pattern, trend,
+    support/resistance, 추세/지지/저항. Accepts a 6-digit code OR a Korean name."""
+    from services import prediction_service as ps
+    from services import naver_stock
+    if not ticker:
+        return {"ok": False, "error": "종목을 알려주세요 (ticker / 종목명)"}
+    raw = str(ticker).strip()
+    code = raw if (raw.isdigit() and len(raw) == 6) else None
+    if not code:
+        rev = {v: k for k, v in ps.NAMES.items()}
+        code = rev.get(raw) or next((c for nm, c in rev.items() if raw and (raw in nm or nm in raw)), None)
+    if not code:
+        return {"ok": False, "error": f"'{raw}' 종목 코드를 찾지 못했습니다"}
+    name = ps.NAMES.get(code, code)
+    try:
+        d = max(20, min(int(days or 60), 120))
+    except Exception:
+        d = 60
+    hist = naver_stock.daily_history(code, days=d)        # newest-first
+    if not hist or len(hist) < 5:
+        return {"ok": False, "error": f"{name} 차트 데이터를 가져오지 못했습니다"}
+    chron = list(reversed(hist))                          # oldest-first
+    closes = [r["close"] for r in chron if r.get("close") is not None]
+    vols = [r["volume"] for r in chron if r.get("volume") is not None]
+    cur = closes[-1]
+
+    def _ma(n):
+        return round(sum(closes[-n:]) / n) if len(closes) >= n else None
+    ma5, ma20, ma60 = _ma(5), _ma(20), _ma(60)
+    hi = max(r["high"] for r in chron if r.get("high") is not None)
+    lo = min(r["low"] for r in chron if r.get("low") is not None)
+    from_high = round((cur - hi) / hi * 100, 1) if hi else None
+    from_low = round((cur - lo) / lo * 100, 1) if lo else None
+    # trend read
+    if ma20 and ma60:
+        if cur > ma20 > ma60:
+            trend, trend_ko = "uptrend", "상승 추세"
+        elif cur < ma20 < ma60:
+            trend, trend_ko = "downtrend", "하락 추세"
+        else:
+            trend, trend_ko = "sideways", "횡보/혼조"
+    else:
+        trend, trend_ko = "unclear", "불명확"
+    above_ma20 = (cur > ma20) if ma20 else None
+    # recent candles (last 5, newest-first)
+    recent = [{"date": r["date"], "close": r["close"], "change_pct": r.get("change_pct"),
+               "candle": ("양봉" if (r.get("close") or 0) >= (r.get("open") or 0) else "음봉")}
+              for r in hist[:5]]
+    up_days = sum(1 for r in hist[:5] if (r.get("change_pct") or 0) > 0)
+    # volume read
+    vol_now = vols[-1] if vols else None
+    vol_avg = round(sum(vols[-20:]) / min(len(vols), 20)) if vols else None
+    vol_note = None
+    if vol_now and vol_avg:
+        vol_note = ("거래량 급증" if vol_now > vol_avg * 1.5
+                    else "거래량 위축" if vol_now < vol_avg * 0.6 else "거래량 보통")
+    return {
+        "ok": True, "ticker": code, "name": name, "window_days": d,
+        "current_price": cur, "ma5": ma5, "ma20": ma20, "ma60": ma60,
+        "above_ma20": above_ma20,
+        "trend": trend, "trend_ko": trend_ko,
+        "resistance_recent_high": hi, "support_recent_low": lo,
+        "pct_from_recent_high": from_high, "pct_from_recent_low": from_low,
+        "last_5_candles": recent, "up_days_of_last_5": up_days,
+        "volume_latest": vol_now, "volume_avg20": vol_avg, "volume_note": vol_note,
+        "note": ("일봉 차트(캔들)를 데이터로 읽은 기술적 요약입니다 — TradingView 차트와 동일한 "
+                 "OHLCV 기준. 투자 권유가 아닙니다."),
+    }
+
+
 TOOL_REGISTRY: dict[str, Tool] = {
     # --- Phase 1: Universal navigation tools ---
     "navigate": Tool(
@@ -1953,6 +2028,29 @@ TOOL_REGISTRY: dict[str, Tool] = {
             "required": ["ticker"],
         },
         fn=tool_two_method_view,
+    ),
+    "read_chart": Tool(
+        name="read_chart",
+        description=(
+            "Read the price CHART (the same daily candles the TradingView chart on the "
+            "AI Advisor page plots) and return a technical summary: trend, moving averages "
+            "(5/20/60), support/resistance, distance from the recent high, the last 5 "
+            "candles (양봉/음봉), and a volume read. Call this for ANY chart/technical "
+            "question: 'what does the chart show', 'read the graph/chart', '차트 봐줘', "
+            "'캔들 분석', 'X 차트 어때', 'is it above the moving average', 'support/resistance "
+            "for X', '추세/지지/저항'. Then describe what the chart shows in words. Accepts a "
+            "6-digit code OR a Korean name."
+        ),
+        kind="read",
+        parameters={
+            "type": "object",
+            "properties": {
+                "ticker": {"type": "string", "description": "6-digit KR code (e.g. 005930) OR Korean name (e.g. 삼성전자)"},
+                "days": {"type": "integer", "description": "Lookback window in trading days (20-120, default 60)"},
+            },
+            "required": ["ticker"],
+        },
+        fn=tool_read_chart,
     ),
 
     # --- Phase 2: READ tools (Notion-AI-style search) ---
