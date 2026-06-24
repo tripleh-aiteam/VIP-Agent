@@ -318,6 +318,15 @@ def stock_detail(db, ticker: str) -> dict[str, Any]:
         "period_high": max(highs) if highs else None,        # ~3개월 (Naver 60일)
         "period_low": min(lows) if lows else None,
         "period_label": "최근 3개월",
+        # daily OHLCV series (oldest-first) for our own candlestick chart — always works
+        # for KR stocks (no TradingView symbol-access popup).
+        "candles": [
+            {"time": h["date"], "open": h.get("open"), "high": h.get("high"),
+             "low": h.get("low"), "close": h.get("close"), "volume": h.get("volume")}
+            for h in reversed(hist)
+            if h.get("date") and h.get("close") is not None
+            and h.get("open") is not None and h.get("high") is not None and h.get("low") is not None
+        ],
         "nxt_price": q.get("nxt_price"), "nxt_change_pct": q.get("nxt_change_pct"),
         "nxt_status": q.get("nxt_status"),
         # supply/demand (daily, Naver)

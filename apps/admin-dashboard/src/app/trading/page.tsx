@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useState, useRef, type ReactNode } from "react";
+import { createChart, type IChartApi, type ISeriesApi, type CandlestickData, type UTCTimestamp } from "lightweight-charts";
 import { api } from "@/components/api";
 import { useLanguage } from "@/components/i18n";
 
@@ -548,7 +549,77 @@ type Detail = {
   live?: boolean; env?: string; best_bid?: number; best_ask?: number; imbalance?: number; pressure?: string;
   rt_foreign?: number; rt_institution?: number; rt_fin_invest?: number; program_net?: number;
   derivatives?: { available?: boolean; note?: string } & Record<string, unknown>;
+  candles?: Candle[];
 };
+type Candle = { time: string; open: number; high: number; low: number; close: number; volume?: number };
+
+// Aggregate daily candles to weekly / monthly (client-side) for the 일/주/월 toggle.
+function aggregate(c: Candle[], tf: "D" | "W" | "M"): Candle[] {
+  if (tf === "D" || !c.length) return c;
+  const keyOf = (iso: string) => {
+    if (tf === "M") return iso.slice(0, 7);
+    const d = new Date(iso + "T00:00:00");
+    const jan1 = new Date(d.getFullYear(), 0, 1);
+    const wk = Math.ceil(((d.getTime() - jan1.getTime()) / 86400000 + jan1.getDay() + 1) / 7);
+    return `${d.getFullYear()}-W${wk}`;
+  };
+  const out: Candle[] = [];
+  let cur: Candle | null = null, curKey = "";
+  for (const x of c) {
+    const k = keyOf(x.time);
+    if (k !== curKey) {
+      if (cur) out.push(cur);
+      cur = { ...x }; curKey = k;
+    } else if (cur) {
+      cur.high = Math.max(cur.high, x.high);
+      cur.low = Math.min(cur.low, x.low);
+      cur.close = x.close;
+    }
+  }
+  if (cur) out.push(cur);
+  return out;
+}
+
+// Our own candlestick chart (TradingView lightweight-charts) — renders instantly from
+// our OHLCV, no symbol-access popup, zoom/pan with the mouse. Korea colors: 상승=red, 하락=blue.
+function CandleChart({ candles, height }: { candles: Candle[]; height: number }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const chartRef = useRef<IChartApi | null>(null);
+  const seriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
+
+  useEffect(() => {
+    if (!ref.current) return;
+    const chart = createChart(ref.current, {
+      height,
+      layout: { background: { color: "transparent" }, textColor: "#888", fontSize: 11 },
+      grid: { vertLines: { color: "rgba(150,150,150,0.12)" }, horzLines: { color: "rgba(150,150,150,0.12)" } },
+      rightPriceScale: { borderColor: "rgba(150,150,150,0.25)" },
+      timeScale: { borderColor: "rgba(150,150,150,0.25)", timeVisible: false, rightOffset: 4 },
+      crosshair: { mode: 1 },
+      handleScroll: true, handleScale: true,
+    });
+    const series = chart.addCandlestickSeries({
+      upColor: "#e53935", downColor: "#1e88e5", borderVisible: false,
+      wickUpColor: "#e53935", wickDownColor: "#1e88e5",
+    });
+    chartRef.current = chart;
+    seriesRef.current = series;
+    const ro = new ResizeObserver(() => { if (ref.current) chart.applyOptions({ width: ref.current.clientWidth }); });
+    ro.observe(ref.current);
+    chart.applyOptions({ width: ref.current.clientWidth });
+    return () => { ro.disconnect(); chart.remove(); chartRef.current = null; seriesRef.current = null; };
+  }, []);
+
+  useEffect(() => {
+    if (!seriesRef.current || !candles?.length) return;
+    seriesRef.current.setData(candles as unknown as CandlestickData<UTCTimestamp>[]);
+    chartRef.current?.timeScale().fitContent();
+  }, [candles]);
+
+  useEffect(() => { chartRef.current?.applyOptions({ height }); }, [height]);
+
+  return <div ref={ref} style={{ width: "100%" }} />;
+}
 
 // Cards dispatch this to open the drawer — no prop threading needed.
 function openStockDetail(ticker: string, name: string) {
@@ -583,7 +654,7 @@ function StockDetailDrawer({ t }: { t: (ko: string, en: string) => string }) {
   const [code, setCode] = useState("");
   const [nm, setNm] = useState("");
   const [d, setD] = useState<Detail | null>(null);
-  const [iv, setIv] = useState<"D" | "5">("D");
+  const [iv, setIv] = useState<"D" | "W" | "M">("D");
   const [width, setWidth] = useState(700);      // drawer width (drag left edge)
   const [chartH, setChartH] = useState(380);    // chart height (drag bottom edge)
   const [drag, setDrag] = useState<null | "w" | "h">(null);
@@ -626,7 +697,7 @@ function StockDetailDrawer({ t }: { t: (ko: string, en: string) => string }) {
   }, [open, code]);
 
   if (!open) return null;
-  const tvUrl = `https://s.tradingview.com/widgetembed/?symbol=${encodeURIComponent("KRX:" + code)}&interval=${iv}&theme=light&style=1&locale=kr&hide_side_toolbar=1&hide_top_toolbar=0&withdateranges=0&allow_symbol_change=0&save_image=0`;
+  const series = aggregate(d?.candles || [], iv);
   const dv = d?.derivatives;
 
   return (
@@ -661,18 +732,21 @@ function StockDetailDrawer({ t }: { t: (ko: string, en: string) => string }) {
               <span className="text-[var(--text-muted)]">{t("출처", "src")}: {d.source}{d.as_of ? ` · ${d.as_of}` : ""}</span>
             </div>
 
-            {/* TradingView candle chart */}
+            {/* our own candlestick chart (renders instantly, zoom/pan with mouse) */}
             <div className="rounded-xl border border-[var(--border-default)] overflow-hidden">
               <div className="flex items-center gap-2 px-3 py-2 border-b border-[var(--border-default)] bg-[var(--bg-elevated)]">
                 <span className="text-[12px] font-bold text-[var(--text-primary)]">📈 {t("캔들 차트", "Candle chart")}</span>
+                <span className="text-[10px] text-[var(--text-muted)]">{t("마우스 휠로 확대·축소", "scroll to zoom")}</span>
                 <div className="ml-auto flex gap-1">
-                  {([["D", t("일봉", "Daily")], ["5", t("분봉(5분)", "5-min")]] as const).map(([k, lab]) => (
+                  {([["D", t("일봉", "Day")], ["W", t("주봉", "Week")], ["M", t("월봉", "Month")]] as const).map(([k, lab]) => (
                     <button key={k} onClick={() => setIv(k)} className="text-[11px] px-2 py-0.5 rounded-md font-semibold border"
                       style={{ color: iv === k ? "#fff" : "var(--text-secondary)", background: iv === k ? "var(--badge-blue-text)" : "transparent", borderColor: "var(--border-default)" }}>{lab}</button>
                   ))}
                 </div>
               </div>
-              <iframe key={iv} src={tvUrl} title="chart" className="w-full" style={{ height: chartH, border: 0 }} />
+              {series.length > 0
+                ? <CandleChart candles={series} height={chartH} />
+                : <div className="flex items-center justify-center text-[12px] text-[var(--text-muted)]" style={{ height: chartH }}>{t("차트 데이터 없음", "no chart data")}</div>}
               {/* bottom drag handle — drag down to enlarge the graph */}
               <div onMouseDown={startDrag("h")} title={t("드래그하여 차트 크기 조절", "drag to resize chart")}
                 className="h-2.5 flex items-center justify-center cursor-ns-resize bg-[var(--bg-elevated)] hover:bg-[var(--badge-blue-bg)] border-t border-[var(--border-default)] select-none"
