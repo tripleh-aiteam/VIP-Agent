@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { api } from "@/components/api";
 import { useLanguage } from "@/components/i18n";
 
@@ -79,6 +79,7 @@ export default function TradingPage() {
 
   return (
     <div className="p-4 md:p-6 max-w-[1200px] mx-auto space-y-5">
+      <StockDetailDrawer t={t} />
       {brief && !urgentSeen && <UrgentModal items={brief.consensus} t={t} onClose={() => setUrgentSeen(true)} />}
       {/* Header */}
       <div className="flex items-center gap-3 flex-wrap">
@@ -270,10 +271,13 @@ function MLCard({ c, t }: { c: Card; t: (ko: string, en: string) => string }) {
   const accent = adviceColor(c.advice);
   const L = c.levels || {};
   return (
-    <div className="rounded-xl border bg-[var(--bg-card)] p-3.5" style={{ borderColor: accent + "55", boxShadow: "var(--shadow-sm)" }}>
+    <div onClick={() => openStockDetail(c.ticker, c.name)}
+      className="rounded-xl border bg-[var(--bg-card)] p-3.5 cursor-pointer transition-all hover:shadow-md hover:scale-[1.01]"
+      style={{ borderColor: accent + "55", boxShadow: "var(--shadow-sm)" }}>
       <div className="flex items-center gap-2 mb-2 flex-wrap">
         <span className="text-[15px] font-bold text-[var(--text-primary)]">{c.name}</span>
         <span className="text-[11px] px-2 py-0.5 rounded-full font-bold" style={{ color: "#fff", background: accent }}>{c.advice}</span>
+        <span className="ml-auto text-[10px] text-[var(--text-muted)]">{t("자세히", "details")} ›</span>
         {c.model && <span className="text-[9.5px] px-1.5 py-0.5 rounded font-bold" style={{ color: "var(--badge-blue-text)", background: "var(--badge-blue-bg)" }} title={t("이 종목 최적 알고리즘", "best algorithm for this stock")}>⚙ {c.model}</span>}
         {c.confidence && <span className="text-[10px] text-[var(--text-muted)]">{t("신뢰도", "conf")} {c.confidence}</span>}
         {c.backtest_acc != null && <AccBadge acc={c.backtest_acc} t={t} />}
@@ -397,12 +401,14 @@ function AnalysisCard({ c, an, t }: { c: Card; an?: AN; t: (ko: string, en: stri
   const rt = an?.realtime || null;
 
   return (
-    <div className="rounded-xl border bg-[var(--bg-card)] p-3.5" style={{ borderColor: accent + "55", boxShadow: "var(--shadow-sm)" }}>
+    <div onClick={() => openStockDetail(c.ticker, c.name)}
+      className="rounded-xl border bg-[var(--bg-card)] p-3.5 cursor-pointer transition-all hover:shadow-md hover:scale-[1.01]"
+      style={{ borderColor: accent + "55", boxShadow: "var(--shadow-sm)" }}>
       <div className="flex items-center gap-2 mb-2">
         <span className="text-[15px] font-bold text-[var(--text-primary)]">{c.name}</span>
         <span className="text-[11px] px-2 py-0.5 rounded-full font-bold" style={{ color: "#fff", background: accent }}>{an ? t(an.label || "", an.label_en || an.label || "") : t("관망", "Watch")}</span>
         {c.advice !== signal && <span className="text-[9px] text-[var(--text-muted)]">ML: {c.advice}</span>}
-        <span className="ml-auto text-[10px] text-[var(--text-muted)]">{t("박스권", "Box")} {fmt(L.support)}~{fmt(L.resistance)}</span>
+        <span className="ml-auto text-[10px] text-[var(--text-muted)]">{t("박스권", "Box")} {fmt(L.support)}~{fmt(L.resistance)} · {t("자세히", "details")} ›</span>
       </div>
       <PriceRow open={L.open} current={rt?.price ?? L.close} t={t} />
 
@@ -528,6 +534,149 @@ function Stat({ label, value, good }: { label: string; value: string; good: bool
     <div className="flex flex-col">
       <span className="text-[10px] text-[var(--text-muted)]">{label}</span>
       <span className="text-[13px] font-semibold" style={{ color: good ? "var(--badge-success-text)" : "var(--error)" }}>{value}</span>
+    </div>
+  );
+}
+
+// ============================ Stock Detail Drawer ============================
+type Detail = {
+  ok?: boolean; ticker: string; name: string; market_open?: boolean; source?: string; as_of?: string;
+  price?: number; change_pct?: number; prev_close?: number; open?: number; high?: number; low?: number; volume?: number;
+  period_high?: number; period_low?: number; period_label?: string;
+  nxt_price?: number; nxt_change_pct?: number; nxt_status?: string;
+  foreign_net?: number; organ_net?: number; individual_net?: number; foreign_hold?: number;
+  live?: boolean; env?: string; best_bid?: number; best_ask?: number; imbalance?: number; pressure?: string;
+  rt_foreign?: number; rt_institution?: number; rt_fin_invest?: number; program_net?: number;
+  derivatives?: { available?: boolean; note?: string } & Record<string, unknown>;
+};
+
+// Cards dispatch this to open the drawer — no prop threading needed.
+function openStockDetail(ticker: string, name: string) {
+  window.dispatchEvent(new CustomEvent("open-stock-detail", { detail: { ticker, name } }));
+}
+
+const POS = "var(--badge-success-text)";
+const NEG = "var(--error)";
+// signed percent, number-only with arrow, green up / red down
+function Pct({ v, size = 13 }: { v?: number; size?: number }) {
+  if (v == null) return <span className="text-[var(--text-muted)]">-</span>;
+  const up = v >= 0;
+  return <span style={{ color: up ? POS : NEG, fontSize: size }} className="font-bold">{up ? "▲" : "▼"}{Math.abs(v)}%</span>;
+}
+// signed net-flow value (주), green buy / red sell
+function NetVal({ v }: { v?: number }) {
+  if (v == null) return <span className="text-[var(--text-muted)]">-</span>;
+  const buy = v >= 0;
+  return <span style={{ color: buy ? POS : NEG }} className="font-semibold">{buy ? "+" : ""}{v.toLocaleString()}</span>;
+}
+function DRow({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <div className="flex items-center justify-between px-3 py-2 border-b border-[var(--border-default)] text-[12.5px]">
+      <span className="text-[var(--text-muted)]">{label}</span>
+      <span className="font-semibold text-[var(--text-primary)] text-right">{children}</span>
+    </div>
+  );
+}
+
+function StockDetailDrawer({ t }: { t: (ko: string, en: string) => string }) {
+  const [open, setOpen] = useState(false);
+  const [code, setCode] = useState("");
+  const [nm, setNm] = useState("");
+  const [d, setD] = useState<Detail | null>(null);
+  const [iv, setIv] = useState<"D" | "5">("D");
+
+  useEffect(() => {
+    const h = (e: Event) => {
+      const det = (e as CustomEvent).detail as { ticker: string; name: string };
+      setCode(det.ticker); setNm(det.name); setD(null); setOpen(true);
+    };
+    window.addEventListener("open-stock-detail", h);
+    return () => window.removeEventListener("open-stock-detail", h);
+  }, []);
+
+  useEffect(() => {
+    if (!open || !code) return;
+    let alive = true;
+    const load = () => api<Detail>(`/predictions/stock-detail/${code}`).then((x) => { if (alive) setD(x); }).catch(() => {});
+    load();
+    const i = setInterval(load, 20000);
+    const esc = (e: KeyboardEvent) => { if (e.key === "Escape") setOpen(false); };
+    window.addEventListener("keydown", esc);
+    return () => { alive = false; clearInterval(i); window.removeEventListener("keydown", esc); };
+  }, [open, code]);
+
+  if (!open) return null;
+  const tvUrl = `https://s.tradingview.com/widgetembed/?symbol=${encodeURIComponent("KRX:" + code)}&interval=${iv}&theme=light&style=1&locale=kr&hide_side_toolbar=1&hide_top_toolbar=0&withdateranges=0&allow_symbol_change=0&save_image=0`;
+  const dv = d?.derivatives;
+
+  return (
+    <div className="fixed inset-0 z-[90] flex justify-end">
+      <div className="absolute inset-0 bg-black/40" onClick={() => setOpen(false)} />
+      <div className="relative w-full max-w-[660px] h-full bg-[var(--bg-card)] shadow-2xl overflow-y-auto">
+        {/* header */}
+        <div className="sticky top-0 z-10 flex items-center gap-3 px-4 py-3 bg-[var(--bg-card)] border-b border-[var(--border-default)]">
+          <div className="flex items-baseline gap-2">
+            <span className="text-[18px] font-extrabold text-[var(--text-primary)]">{nm}</span>
+            <span className="text-[12px] text-[var(--text-muted)]">{code}</span>
+          </div>
+          {d && <span className="text-[20px] font-extrabold text-[var(--text-primary)]">{fmt(d.price)}</span>}
+          {d && <Pct v={d.change_pct} size={15} />}
+          <button onClick={() => setOpen(false)} className="ml-auto text-[20px] text-[var(--text-muted)] hover:text-[var(--text-primary)] leading-none px-1">✕</button>
+        </div>
+
+        {!d && <div className="p-6"><BigLoading title={t("종목 상세 불러오는 중…", "Loading stock detail…")} sub={t("실시간 시세·수급·차트", "Live quote, flows & chart")} /></div>}
+
+        {d && (
+          <div className="p-4 space-y-4">
+            {/* source line */}
+            <div className="flex items-center gap-2 text-[11px]">
+              {d.live ? <span className="px-2 py-0.5 rounded-full font-bold" style={{ color: "#fff", background: NEG }}>🔴 {t("실시간", "LIVE")} {d.env}</span>
+                      : <span className="px-2 py-0.5 rounded-full font-semibold text-[var(--text-muted)] bg-[var(--bg-elevated)]">{t("장마감", "Closed")}</span>}
+              <span className="text-[var(--text-muted)]">{t("출처", "src")}: {d.source}{d.as_of ? ` · ${d.as_of}` : ""}</span>
+            </div>
+
+            {/* TradingView candle chart */}
+            <div className="rounded-xl border border-[var(--border-default)] overflow-hidden">
+              <div className="flex items-center gap-2 px-3 py-2 border-b border-[var(--border-default)] bg-[var(--bg-elevated)]">
+                <span className="text-[12px] font-bold text-[var(--text-primary)]">📈 {t("캔들 차트", "Candle chart")}</span>
+                <div className="ml-auto flex gap-1">
+                  {([["D", t("일봉", "Daily")], ["5", t("분봉(5분)", "5-min")]] as const).map(([k, lab]) => (
+                    <button key={k} onClick={() => setIv(k)} className="text-[11px] px-2 py-0.5 rounded-md font-semibold border"
+                      style={{ color: iv === k ? "#fff" : "var(--text-secondary)", background: iv === k ? "var(--badge-blue-text)" : "transparent", borderColor: "var(--border-default)" }}>{lab}</button>
+                  ))}
+                </div>
+              </div>
+              <iframe key={iv} src={tvUrl} title="chart" className="w-full" style={{ height: 360, border: 0 }} />
+            </div>
+
+            {/* real-time table */}
+            <div className="rounded-xl border border-[var(--border-default)] overflow-hidden">
+              <div className="px-3 py-2 border-b border-[var(--border-default)] bg-[var(--bg-elevated)] text-[12px] font-bold text-[var(--text-primary)]">📊 {t("실시간 시세표", "Real-time table")}</div>
+              <DRow label={t("현재가", "Price")}><span className="text-[15px]">{fmt(d.price)}</span> <Pct v={d.change_pct} /></DRow>
+              <DRow label={t("시가 / 전일종가", "Open / Prev close")}>{fmt(d.open)} / {fmt(d.prev_close)}</DRow>
+              <DRow label={t("고가 / 저가", "High / Low")}><span style={{ color: POS }}>{fmt(d.high)}</span> / <span style={{ color: NEG }}>{fmt(d.low)}</span></DRow>
+              <DRow label={t("거래량", "Volume")}>{d.volume != null ? d.volume.toLocaleString() : "-"}</DRow>
+              <DRow label={`${d.period_label || t("기간", "Period")} ${t("고가/저가", "high/low")}`}>{fmt(d.period_high)} / {fmt(d.period_low)}</DRow>
+              <DRow label={t("외국인 순매수", "Foreign net")}><NetVal v={d.foreign_net} /></DRow>
+              <DRow label={t("기관 순매수", "Institution net")}><NetVal v={d.organ_net} /></DRow>
+              <DRow label={t("개인 순매수", "Individual net")}><NetVal v={d.individual_net} /></DRow>
+              <DRow label={t("실시간 호가", "Live order book")}>
+                {d.best_bid != null ? <>{t("매수", "Bid")} {fmt(d.best_bid)} · {t("매도", "Ask")} {fmt(d.best_ask)} {d.pressure ? `· ${d.pressure}` : ""}</> : <span className="text-[var(--text-muted)]">{t("장마감", "closed")}</span>}
+              </DRow>
+              <DRow label={t("실시간 수급(외/기)", "Live flow (frn/inst)")}>
+                {d.rt_foreign != null ? <><NetVal v={d.rt_foreign} /> / <NetVal v={d.rt_institution} /></> : <span className="text-[var(--text-muted)]">-</span>}
+              </DRow>
+              <DRow label={t("프로그램 순매수", "Program net")}><NetVal v={d.program_net} /></DRow>
+              <DRow label={t("시간외 (NXT)", "After-hours (NXT)")}>{d.nxt_price != null ? <>{fmt(d.nxt_price)} <Pct v={d.nxt_change_pct} /></> : <span className="text-[var(--text-muted)]">-</span>}</DRow>
+              <DRow label={t("개별주식 선물·옵션", "Single-stock futures/options")}>
+                {dv?.available ? <span style={{ color: "var(--text-primary)" }}>{t("상장", "listed")}</span> : <span className="text-[var(--text-muted)]">{t("해당 없음", "n/a")}</span>}
+              </DRow>
+            </div>
+
+            <div className="text-[10.5px] text-[var(--text-muted)] leading-relaxed">ⓘ {t("AI 참고 자료이며 투자 권유가 아닙니다. 장중 키움 실전, 장마감 후 네이버 기준. 20초마다 갱신.", "Reference only, not investment advice. Kiwoom 실전 during market, Naver after. Refreshes every 20s.")}</div>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
