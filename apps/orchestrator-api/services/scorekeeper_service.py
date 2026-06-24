@@ -125,7 +125,19 @@ def _signal_asof(db, ticker, asof):
     if res > sup:
         pos = (close - sup) / (res - sup)
         score += 1 if pos < 0.33 else (-1 if pos > 0.67 else 0)
-    sig = "BUY" if score >= 2 else "SELL" if score <= -2 else None
+    # #4 regime filter (as-of date, no look-ahead): risk-off → BUY needs more conviction.
+    mr = db.execute(text(
+        "SELECT mkt_kospi_ret5, mkt_kospi_vs_sma20, mkt_breadth FROM stock_features_daily "
+        "WHERE date<=:d AND mkt_breadth IS NOT NULL ORDER BY date DESC LIMIT 1"),
+        {"d": asof}).first()
+    buy_t, sell_t = 2, -2
+    if mr:
+        k5 = float(mr[0] or 0) * 100; vs20 = float(mr[1] or 0) * 100; br = float(mr[2] or 0) * 100
+        if k5 > 0 and vs20 > 0 and br >= 50:
+            buy_t, sell_t = 1, -3                       # risk-on
+        elif k5 < 0 and br < 45:
+            buy_t, sell_t = 3, -1                       # risk-off
+    sig = "BUY" if score >= buy_t else "SELL" if score <= sell_t else None
     if not sig:
         return None
     # REALISTIC vol-based target (matches trading_brief._box_levels): 1σ horizon move

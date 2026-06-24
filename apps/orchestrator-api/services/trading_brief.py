@@ -319,7 +319,8 @@ def stock_card(db, ticker: str, horizon: int = 5, live: bool = False,
 # ---- METHOD 2: rule-based analysis signal (the analyst's brain) -----------------
 # Independent of the ML model. Scores each stock from the signals the day-trader in
 # the video actually reads: 호가 imbalance + 실시간/일별 수급 + 박스권 position.
-def analysis_signal(card: dict, rt: dict | None) -> dict[str, Any]:
+def analysis_signal(card: dict, rt: dict | None, news: int = 0,
+                    regime_tone: str = "mixed") -> dict[str, Any]:
     L = card.get("levels") or {}
     flow = card.get("flow") or {}
     score = 0
@@ -363,14 +364,45 @@ def analysis_signal(card: dict, rt: dict | None) -> dict[str, Any]:
         elif pos > 0.67:
             add(-1, "박스권 고점(저항) 매도구간", "Near box resistance (sell zone)")
 
-    # ±2 threshold so EOD-only data (daily 수급 + box, no live order book after market)
-    # still produces actionable 매수/매도, not everything stuck on 관망.
-    sig = "BUY" if score >= 2 else "SELL" if score <= -2 else "WATCH"
+    # 5) 영향있는 뉴스/공시 (#3) — only fires when there IS impactful news for this stock
+    if news > 0:
+        add(1, "긍정 뉴스/공시", "Positive news/filing")
+    elif news < 0:
+        add(-1, "부정 뉴스/공시", "Negative news/filing")
+
+    # Regime-adjusted thresholds (#4): in a risk-off market, BUY needs more conviction
+    # and SELL fires easier; in risk-on, the reverse. Base ±2.
+    buy_t, sell_t = ({"risk_on": (1, -3), "risk_off": (3, -1)}
+                     .get(regime_tone, (2, -2)))
+    sig = "BUY" if score >= buy_t else "SELL" if score <= sell_t else "WATCH"
     label = {"BUY": "매수", "SELL": "매도", "WATCH": "관망"}[sig]
     label_en = {"BUY": "Buy", "SELL": "Sell", "WATCH": "Watch"}[sig]
     return {"signal": sig, "label": label, "label_en": label_en, "score": score,
             "reasons": reasons[:3] or ["뚜렷한 신호 없음 (관망)"],
             "reasons_en": reasons_en[:3] or ["No clear signal (watch)"]}
+
+
+def _news_scores(db, lookback_days: int = 3) -> dict[str, int]:
+    """Per-ticker news/DART direction: +1/0/-1 from impact-weighted recent news + DART.
+    Mostly 0 (no impactful news) — only adds signal when a stock actually has news."""
+    from services.news_impact import score as _nscore, classify as _classify
+    agg: dict[str, float] = {}
+    try:
+        for r in db.execute(text(
+            "SELECT ticker, title, snippet, sentiment FROM raw_news WHERE ticker IS NOT NULL "
+            "AND ts > now() - (:d||' days')::interval"), {"d": lookback_days}):
+            s = _nscore(r.title or "", r.snippet or "", r.sentiment)
+            if s["impact"] >= 0.4 and s["direction"]:
+                agg[r.ticker] = agg.get(r.ticker, 0) + s["impact"] * s["direction"]
+        for r in db.execute(text(
+            "SELECT ticker, title FROM raw_disclosures WHERE ticker IS NOT NULL "
+            "AND ts > now() - (:d||' days')::interval"), {"d": lookback_days}):
+            _, imp, ddir = _classify(r.title or "")
+            if imp >= 0.5 and ddir:
+                agg[r.ticker] = agg.get(r.ticker, 0) + imp * ddir * 0.5
+    except Exception:
+        return {}
+    return {tk: (1 if v > 0.3 else -1 if v < -0.3 else 0) for tk, v in agg.items()}
 
 
 def analysis_batch(db, tickers: list[str], horizon: int = 5) -> dict[str, Any]:
@@ -384,6 +416,8 @@ def analysis_batch(db, tickers: list[str], horizon: int = 5) -> dict[str, Any]:
     'both methods identical' fallback."""
     as_of = ps._latest_as_of(db, horizon)
     flows = {tk: _flow(db, tk) for tk in tickers}          # DB (Naver EOD) — always present
+    regime_tone = market_regime(db).get("tone", "mixed")   # #4 regime filter
+    news = _news_scores(db)                                 # #3 news/DART signal
 
     # During market only: live Kiwoom 호가/수급, fetched in parallel, best-effort.
     rts: dict[str, Any] = {}
@@ -404,7 +438,7 @@ def analysis_batch(db, tickers: list[str], horizon: int = 5) -> dict[str, Any]:
     for tk in tickers:
         rt = rts.get(tk)
         card = {"levels": _box_levels(db, tk, "WATCH"), "flow": flows.get(tk)}  # for box pos
-        sig = analysis_signal(card, rt)
+        sig = analysis_signal(card, rt, news=news.get(tk, 0), regime_tone=regime_tone)
         levels = _box_levels(db, tk, sig["signal"])        # OWN levels for the signal
         timing = timing_plan(levels, sig["signal"], as_of, horizon)
         out[tk] = {"realtime": rt, "levels": levels, "flow": flows.get(tk),
@@ -419,6 +453,8 @@ def consensus_picks(db, horizon: int = 5) -> list[dict[str, Any]]:
     stronger signal than either alone. Analysis uses the DB/EOD path (no Kiwoom), so
     it's deterministic and works after market."""
     as_of = ps._latest_as_of(db, horizon)
+    regime_tone = market_regime(db).get("tone", "mixed")
+    news = _news_scores(db)
     out = []
     for tk in NAMES:
         pred = ps.get_ticker(db, tk, horizon) or {}
@@ -426,7 +462,8 @@ def consensus_picks(db, horizon: int = 5) -> list[dict[str, Any]]:
         if ml_adv not in ("BUY", "SELL"):
             continue
         levels = _box_levels(db, tk, ml_adv)              # realistic 박스권 levels
-        sig = analysis_signal({"levels": levels, "flow": _flow(db, tk)}, None)
+        sig = analysis_signal({"levels": levels, "flow": _flow(db, tk)}, None,
+                              news=news.get(tk, 0), regime_tone=regime_tone)
         if sig["signal"] != ml_adv:                        # must AGREE
             continue
         out.append({
