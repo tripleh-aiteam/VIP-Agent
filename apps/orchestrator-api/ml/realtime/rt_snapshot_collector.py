@@ -48,7 +48,14 @@ CREATE TABLE IF NOT EXISTS realtime_snapshot (
     foreign_net BIGINT, inst_net BIGINT, fin_invest BIGINT, program_net BIGINT,
     env         TEXT
 );
+ALTER TABLE realtime_snapshot ADD COLUMN IF NOT EXISTS short_volume BIGINT;
+ALTER TABLE realtime_snapshot ADD COLUMN IF NOT EXISTS short_ratio NUMERIC;
 """
+
+# 공매도 (short-selling, ka10014) updates DAILY, not intraday — fetch every N passes
+# (not every 30s) to avoid hammering Kiwoom. _ss_cache holds the last good value per code.
+_ss_cache: dict = {}
+_ss_pass = {"n": 0}
 
 
 def _market_open() -> bool:
@@ -65,6 +72,8 @@ def _ensure(conn):
 def _one_pass(conn) -> int:
     base = getattr(kr, "_active_base", "") or ""
     env = "모의" if "mockapi" in base else "실전"
+    _ss_pass["n"] += 1
+    refresh_ss = (_ss_pass["n"] == 1 or _ss_pass["n"] % 20 == 0)   # 공매도 ~every 10 min
     rows = []
     for tk in UNIVERSE:
         sig = kr.realtime_signals(tk)               # order_book + flows + program
@@ -73,24 +82,33 @@ def _one_pass(conn) -> int:
         pr = sig.get("program") or {}
         if not ob and not fl:
             continue
+        if refresh_ss:
+            try:
+                ss = kr.short_selling(tk) or {}
+                if ss.get("short_volume") is not None:
+                    _ss_cache[tk] = (ss.get("short_volume"), ss.get("short_ratio"))
+            except Exception:
+                pass
+        sv, sr = _ss_cache.get(tk, (None, None))
         rows.append((tk, fl.get("price") or ob.get("best_bid"), ob.get("imbalance"),
                      ob.get("best_bid"), ob.get("best_ask"), fl.get("foreign"),
                      fl.get("institution"), fl.get("fin_invest"), pr.get("net_amt"),
-                     getattr(kr, "_active_base", "") and env))
+                     sv, sr, getattr(kr, "_active_base", "") and env))
     if not rows:
         return 0
     with conn.cursor() as cur:
         from psycopg2.extras import execute_values
         execute_values(cur,
             "INSERT INTO realtime_snapshot (ticker, price, imbalance, best_bid, best_ask, "
-            "foreign_net, inst_net, fin_invest, program_net, env) "
+            "foreign_net, inst_net, fin_invest, program_net, short_volume, short_ratio, env) "
             "VALUES %s "
             "ON CONFLICT (ticker) DO UPDATE SET price=EXCLUDED.price, "
             "imbalance=EXCLUDED.imbalance, best_bid=EXCLUDED.best_bid, "
             "best_ask=EXCLUDED.best_ask, foreign_net=EXCLUDED.foreign_net, "
             "inst_net=EXCLUDED.inst_net, fin_invest=EXCLUDED.fin_invest, "
-            "program_net=EXCLUDED.program_net, env=EXCLUDED.env, ts=now()",
-            [(r[0], r[1], r[2], r[3], r[4], r[5], r[6], r[7], r[8], r[9]) for r in rows])
+            "program_net=EXCLUDED.program_net, short_volume=EXCLUDED.short_volume, "
+            "short_ratio=EXCLUDED.short_ratio, env=EXCLUDED.env, ts=now()",
+            [(r[0], r[1], r[2], r[3], r[4], r[5], r[6], r[7], r[8], r[9], r[10], r[11]) for r in rows])
     conn.commit()
     return len(rows)
 

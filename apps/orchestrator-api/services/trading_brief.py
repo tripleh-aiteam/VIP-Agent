@@ -251,14 +251,59 @@ def _heatmap_batch(db) -> list[dict]:
 
 
 # ---- LIVE real-time signals — read PC-collected snapshot, fallback direct Kiwoom ---
+_SNAP_COLS_READY = {"done": False}
+
+
+def _ensure_snap_cols(db):
+    """Idempotently add the short-selling columns to realtime_snapshot (so Render can
+    read them once the PC collector starts writing them). Runs once per process."""
+    if _SNAP_COLS_READY["done"]:
+        return
+    try:
+        db.execute(text("ALTER TABLE realtime_snapshot ADD COLUMN IF NOT EXISTS short_volume BIGINT"))
+        db.execute(text("ALTER TABLE realtime_snapshot ADD COLUMN IF NOT EXISTS short_ratio NUMERIC"))
+        db.commit()
+    except Exception:
+        db.rollback()
+    _SNAP_COLS_READY["done"] = True
+
+
+_MX_CACHE: dict[str, Any] = {"t": 0.0, "v": None}
+
+
+def market_extras() -> dict[str, Any]:
+    """Market-wide context — international oil (WTI/Brent) + USD/KRW FX — via Yahoo
+    (pure httpx, works on Render; FinanceDataReader isn't installed there). 5-min cache."""
+    import time as _t
+    import httpx
+    if (_t.time() - _MX_CACHE["t"]) < 300 and _MX_CACHE["v"]:
+        return _MX_CACHE["v"]
+    out: dict[str, Any] = {}
+    for sym, key in (("CL=F", "wti"), ("BZ=F", "brent"), ("USDKRW=X", "usdkrw")):
+        try:
+            r = httpx.get(f"https://query1.finance.yahoo.com/v8/finance/chart/{sym}",
+                          params={"range": "5d", "interval": "1d"},
+                          headers={"User-Agent": "Mozilla/5.0"}, timeout=8).json()
+            m = r["chart"]["result"][0]["meta"]
+            p, pc = m.get("regularMarketPrice"), m.get("chartPreviousClose")
+            chg = round((p - pc) / pc * 100, 2) if (p and pc) else None
+            out[key] = {"price": round(p, 2) if p is not None else None, "change_pct": chg}
+        except Exception:
+            out[key] = None
+    _MX_CACHE.update(t=_t.time(), v=out)
+    return out
+
+
 def _read_snapshots(db, tickers, max_age_sec: int = 240) -> dict[str, Any]:
     """Read fresh live signals from realtime_snapshot (written by the PC collector that
     has the 실전/registered IP). This is how the WEBSITE (Render) gets live data without
     calling Kiwoom itself. Stale rows (collector stopped / after market) are skipped."""
+    _ensure_snap_cols(db)
     try:
         rows = db.execute(text(
             "SELECT ticker, price, imbalance, best_bid, best_ask, foreign_net, inst_net, "
-            "fin_invest, program_net, env, ts, EXTRACT(EPOCH FROM (now()-ts)) AS age "
+            "fin_invest, program_net, short_volume, short_ratio, env, ts, "
+            "EXTRACT(EPOCH FROM (now()-ts)) AS age "
             "FROM realtime_snapshot WHERE ticker = ANY(:t)"), {"t": list(tickers)}).fetchall()
     except Exception:
         return {}
@@ -278,6 +323,8 @@ def _read_snapshots(db, tickers, max_age_sec: int = 240) -> dict[str, Any]:
             "best_bid": ii(r.best_bid), "best_ask": ii(r.best_ask),
             "foreign": ii(r.foreign_net), "institution": ii(r.inst_net),
             "fin_invest": ii(r.fin_invest), "program_net": ii(r.program_net),
+            "short_volume": ii(getattr(r, "short_volume", None)),
+            "short_ratio": (float(r.short_ratio) if getattr(r, "short_ratio", None) is not None else None),
             "price": float(r.price) if r.price is not None else None,
             "as_of": str(r.ts)[11:16],
         }
@@ -368,9 +415,32 @@ def stock_detail(db, ticker: str) -> dict[str, Any]:
         "imbalance": rt.get("imbalance"), "pressure": rt.get("pressure"),
         "rt_foreign": rt.get("foreign"), "rt_institution": rt.get("institution"),
         "rt_fin_invest": rt.get("fin_invest"), "program_net": rt.get("program_net"),
+        # short-selling (공매도) — Kiwoom via PC snapshot during market; KIS/KRX otherwise
+        "short_selling": _short_selling_for(code, rt),
         # derivatives (per-stock, when available)
         "derivatives": _stock_derivatives(code),
+        # market-wide context — international oil + USD/KRW (affects oil/export names)
+        "market": market_extras(),
     }
+
+
+def _short_selling_for(code: str, rt: dict) -> dict[str, Any]:
+    """공매도 status. Prefer the live PC snapshot (Kiwoom 실전, registered IP); fall back to
+    a direct Kiwoom call (works only from the PC). Render can't call Kiwoom (IP block), so
+    on the website it shows when the PC collector is running."""
+    if rt and rt.get("short_volume") is not None:
+        return {"available": True, "source": "키움 실전(스냅샷)",
+                "short_volume": rt.get("short_volume"), "short_ratio": rt.get("short_ratio")}
+    try:
+        from services import kiwoom_rest as kr
+        s = kr.short_selling(code)
+        if isinstance(s, dict) and (s.get("short_volume") is not None):
+            return {"available": True, "source": "키움 실전", "date": s.get("date"),
+                    "short_volume": s.get("short_volume"), "short_value": s.get("short_value"),
+                    "short_ratio": s.get("short_ratio")}
+    except Exception:
+        pass
+    return {"available": False, "note": "장중 PC 키움 연동 시 표시 (공매도)"}
 
 
 def _stock_derivatives(code: str) -> dict[str, Any]:
