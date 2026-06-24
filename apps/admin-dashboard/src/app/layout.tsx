@@ -25,10 +25,10 @@ const DesktopUpdater = dynamic(() => import("@/components/DesktopUpdater"), { ss
 // wires it to Next.js's router and pathname + the mock 8-second demo trigger.
 // Once voice-client.ts is wired (Step 16), the mount swaps the mock trigger
 // for a real subscribeToCalls() WebSocket subscription.
-const IncomingCallToast = dynamic(
-  () => import("@/components/VipIncomingCallToastMount"),
-  { ssr: false },
-);
+// const IncomingCallToast = dynamic(
+//   () => import("@/components/VipIncomingCallToastMount"),
+//   { ssr: false },
+// );  // disabled per user request
 
 export const metadata: Metadata = {
   title: "VIP Agent Platform",
@@ -57,7 +57,8 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             </div>
             <UpdateBanner />
             <DesktopUpdater />
-            <IncomingCallToast />
+            {/* IncomingCallToast hidden per user request (the "LIVE NOW" call popup).
+                Re-enable: <IncomingCallToast /> */}
             {/* Captures each page's DOM into localStorage so the
                 Assistant (floating + workspace) sees the same data
                 whichever surface the user is in. */}
