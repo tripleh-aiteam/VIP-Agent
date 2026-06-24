@@ -1531,38 +1531,49 @@ def _breaking_monitor():
         # events (sev>=7), max 2/day. EVERYTHING notable (sev>=collect) is still RECORDED
         # for the morning digest + data — the medium events ride the morning report, not
         # a separate email.
+        # EMAIL only big events (sev>=7), max 2/day NORMALLY; very-urgent (sev>=9) can
+        # push the day's total up to 4. COLLECT everything notable (>=5) for the morning
+        # digest. Cap + dedup are DB-backed (breaking_events table) so they SURVIVE Render
+        # restarts — the old in-memory counter reset on every restart, which is why >6
+        # emails leaked through.
+        from sqlalchemy import text as _text
         email_sev = int(os.getenv("BREAKING_MIN_SEV", "7") or 7)
+        urgent_sev = int(os.getenv("BREAKING_URGENT_SEV", "9") or 9)
         cap = int(os.getenv("BREAKING_CAP", "2") or 2)
+        urgent_cap = int(os.getenv("BREAKING_URGENT_CAP", "4") or 4)
         collect_sev = int(os.getenv("BREAKING_COLLECT_SEV", "5") or 5)
         target = os.getenv("BREAKING_MONITOR_EMAIL") or "*ALL*"
-        now = _t.time()
-        for k in [k for k, ts in list(_BREAKING_SEEN.items()) if now - ts > _BREAKING_SEEN_TTL]:
-            _BREAKING_SEEN.pop(k, None)
         day = _kd()
-        if _BREAKING_DAY["day"] != day:
-            _BREAKING_DAY.update(day=day, count=0)
-
-        events = triage_events(seen_keys=set(_BREAKING_SEEN.keys()), min_sev=collect_sev)
-        if not events:
-            return
 
         db = SessionLocal()
         try:
-            # 1) RECORD every new notable event (for the morning digest + data history).
+            from services.breaking_report import _ensure_events_table
+            _ensure_events_table(db)
+            # DB-backed dedup: event keys seen in the last 12h (survives restarts).
+            seen = {r[0] for r in db.execute(_text(
+                "SELECT event_key FROM breaking_events WHERE ts > now() - interval '12 hours'"))}
+            events = triage_events(seen_keys=seen, min_sev=collect_sev)
+            if not events:
+                return
+            # 1) RECORD every new notable event (morning digest + data history).
             for ev in events:
-                _BREAKING_SEEN[ev["key"]] = now
                 record_event(db, day, ev, emailed=False)
-            # 2) EMAIL only the BIG ones (sev >= email_sev), up to the daily cap.
+            # 2) EMAIL big ones, DB-counted cap (normal 2, very-urgent up to 4).
+            emailed_today = db.execute(_text(
+                "SELECT count(*) FROM breaking_events WHERE kst_date=:d AND emailed=true"),
+                {"d": day}).scalar() or 0
             for ev in events:
-                if _BREAKING_DAY["count"] >= cap:
-                    break
-                if ev["severity"] >= email_sev:
-                    _BREAKING_DAY["count"] += 1
-                    mark_emailed(db, ev["key"])
-                    log.info(f"breaking-monitor: BIG event sev {ev['severity']} — "
-                             f"{ev['title'][:70]} -> {target}",
-                             extra={"action": "breaking.monitor.fire"})
-                    _breaking_report(email_override=target, focus=ev["title"])
+                if ev["severity"] < email_sev:
+                    continue
+                limit = urgent_cap if ev["severity"] >= urgent_sev else cap
+                if emailed_today >= limit:
+                    continue
+                mark_emailed(db, ev["key"])
+                emailed_today += 1
+                log.info(f"breaking-monitor: email sev {ev['severity']} ({emailed_today}/{limit}) — "
+                         f"{ev['title'][:70]} -> {target}",
+                         extra={"action": "breaking.monitor.fire"})
+                _breaking_report(email_override=target, focus=ev["title"])
         finally:
             db.close()
     except Exception as e:
