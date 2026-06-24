@@ -91,6 +91,15 @@ def realtime_signals(ticker: str, db: Session = Depends(get_db)):
     return rt or {"live": False, "ticker": ticker}
 
 
+@router.post("/scorekeeper/run")
+def scorekeeper_run(db: Session = Depends(get_db)):
+    """Log today's signals + grade matured ones (incl. beta-adjusted skill vs market).
+    Exposed so a FREE external cron (cron-job.org / GitHub Actions) can fire it daily —
+    Render's free tier sleeps, so the in-process 16:45 KST cron misses days. Idempotent."""
+    from services.scorekeeper_service import log_today, grade_matured
+    return {"logged": log_today(db), "graded": grade_matured(db)}
+
+
 @router.get("/stock-detail/{ticker}")
 def stock_detail(ticker: str, db: Session = Depends(get_db)):
     """Rich single-stock detail for the click-through detail view — OHLC, 등락%, 거래량,

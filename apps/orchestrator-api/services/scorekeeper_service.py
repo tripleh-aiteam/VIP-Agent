@@ -40,14 +40,38 @@ CREATE TABLE IF NOT EXISTS signal_log (
     UNIQUE (logged_date, method, ticker)
 );
 CREATE INDEX IF NOT EXISTS idx_signal_log_status ON signal_log (status, logged_date);
+-- beta-adjusted (skill vs market) columns
+ALTER TABLE signal_log ADD COLUMN IF NOT EXISTS mkt_ret NUMERIC;     -- market (KODEX200) % over window
+ALTER TABLE signal_log ADD COLUMN IF NOT EXISTS excess_ret NUMERIC;  -- signal's market-relative %
+ALTER TABLE signal_log ADD COLUMN IF NOT EXISTS beat_mkt BOOLEAN;    -- did it beat the market in its direction
 """
+
+# Market proxy for beta-adjustment: KODEX 200 ETF tracks KOSPI200, is in our universe,
+# and lives in raw_daily_prices — so it works on Render with no extra data source.
+_MKT_PROXY = "069500"
 
 
 def ensure(db):
     for stmt in DDL.strip().split(";"):
-        if stmt.strip():
-            db.execute(text(stmt))
+        # drop comment-only lines so a trailing '-- ...' never becomes an empty query
+        cleaned = "\n".join(ln for ln in stmt.splitlines()
+                            if not ln.strip().startswith("--")).strip()
+        if cleaned:
+            db.execute(text(cleaned))
     db.commit()
+
+
+def _mkt_window_ret(db, logged_date, horizon: int) -> Optional[float]:
+    """KODEX 200 % return over the same horizon window starting at logged_date."""
+    base = db.execute(text(
+        "SELECT close FROM raw_daily_prices WHERE ticker=:t AND date <= :d "
+        "ORDER BY date DESC LIMIT 1"), {"t": _MKT_PROXY, "d": logged_date}).first()
+    path = db.execute(text(
+        "SELECT close FROM raw_daily_prices WHERE ticker=:t AND date > :d "
+        "ORDER BY date LIMIT :h"), {"t": _MKT_PROXY, "d": logged_date, "h": horizon}).fetchall()
+    if not base or not base.close or len(path) < horizon:
+        return None
+    return (float(path[-1].close) - float(base.close)) / float(base.close) * 100.0
 
 
 # --------------------------------------------------------------------------- #
@@ -219,9 +243,24 @@ def _grade_one(db, row) -> Optional[dict]:
         ret = -abs(entry - stop) / entry * 100; outcome = "loss"
     else:
         ret = (last_close - entry) / entry * 100 * (1 if buy else -1); outcome = "flat"
+
+    # --- beta-adjusted (skill vs market) ---
+    # Raw directional window return of the underlying vs KODEX200 over the SAME window,
+    # both based at the call's ref_price/market close -> isolates alpha from beta.
+    mkt_ret = _mkt_window_ret(db, row.logged_date, row.horizon)
+    excess = beat = None
+    base = float(row.ref_price or entry or 0)
+    if mkt_ret is not None and base:
+        stock_win = (last_close - base) / base * 100.0          # raw stock move over window
+        # BUY wants to OUTPERFORM the market; SELL wants the stock to UNDERPERFORM it.
+        excess = (stock_win - mkt_ret) if buy else (mkt_ret - stock_win)
+        beat = excess > 0
     return {"status": "graded", "outcome": outcome, "actual_ret": round(ret, 2),
             "hit_target": hit_target, "hit_stop": hit_stop,
-            "graded_date": path[-1].date}
+            "graded_date": path[-1].date,
+            "mkt_ret": round(mkt_ret, 2) if mkt_ret is not None else None,
+            "excess_ret": round(excess, 2) if excess is not None else None,
+            "beat_mkt": beat}
 
 
 def grade_matured(db) -> dict[str, Any]:
@@ -236,12 +275,34 @@ def grade_matured(db) -> dict[str, Any]:
             continue
         db.execute(text(
             "UPDATE signal_log SET status='graded', outcome=:o, actual_ret=:r, "
-            "hit_target=:ht, hit_stop=:hs, graded_date=:gd WHERE id=:id"),
+            "hit_target=:ht, hit_stop=:hs, graded_date=:gd, "
+            "mkt_ret=:mr, excess_ret=:er, beat_mkt=:bm WHERE id=:id"),
             {"o": g["outcome"], "r": g["actual_ret"], "ht": g["hit_target"],
-             "hs": g["hit_stop"], "gd": g.get("graded_date"), "id": r.id})
+             "hs": g["hit_stop"], "gd": g.get("graded_date"), "id": r.id,
+             "mr": g.get("mkt_ret"), "er": g.get("excess_ret"), "bm": g.get("beat_mkt")})
         graded += 1
+    # Backfill beta-adjusted fields on rows graded BEFORE this feature existed.
+    back = db.execute(text(
+        "SELECT * FROM signal_log WHERE status='graded' AND excess_ret IS NULL "
+        "ORDER BY logged_date DESC LIMIT 800")).fetchall()
+    filled = 0
+    for r in back:
+        mkt = _mkt_window_ret(db, r.logged_date, r.horizon)
+        base = float(r.ref_price or r.entry or 0)
+        if mkt is None or not base:
+            continue
+        endp = db.execute(text(
+            "SELECT close FROM raw_daily_prices WHERE ticker=:t AND date > :d "
+            "ORDER BY date LIMIT :h"), {"t": r.ticker, "d": r.logged_date, "h": r.horizon}).fetchall()
+        if len(endp) < r.horizon:
+            continue
+        stock_win = (float(endp[-1].close) - base) / base * 100.0
+        ex = (stock_win - mkt) if r.signal == "BUY" else (mkt - stock_win)
+        db.execute(text("UPDATE signal_log SET mkt_ret=:mr, excess_ret=:er, beat_mkt=:bm WHERE id=:id"),
+                   {"mr": round(mkt, 2), "er": round(ex, 2), "bm": ex > 0, "id": r.id})
+        filled += 1
     db.commit()
-    return {"ok": True, "graded": graded}
+    return {"ok": True, "graded": graded, "beta_backfilled": filled}
 
 
 # --------------------------------------------------------------------------- #
@@ -257,15 +318,23 @@ def scoreboard(db) -> dict[str, Any]:
             "  count(*) FILTER (WHERE outcome='loss') losses, "
             "  count(*) FILTER (WHERE outcome='flat') flats, "
             "  avg(actual_ret) avg_ret, "
-            "  count(*) FILTER (WHERE actual_ret > 0) profitable "
+            "  count(*) FILTER (WHERE actual_ret > 0) profitable, "
+            "  count(*) FILTER (WHERE excess_ret IS NOT NULL) n_beta, "
+            "  count(*) FILTER (WHERE beat_mkt) beat, "
+            "  avg(excess_ret) avg_excess "
             "FROM signal_log WHERE method=:m AND status='graded'"), {"m": m}).first()
         n = r.n or 0
+        nb = r.n_beta or 0
         stats[m] = {
             "graded": n,
             "win_rate": round((r.wins or 0) / n * 100, 1) if n else None,
             "profit_rate": round((r.profitable or 0) / n * 100, 1) if n else None,
             "avg_return": round(float(r.avg_ret), 2) if r.avg_ret is not None else None,
             "wins": r.wins or 0, "losses": r.losses or 0, "flats": r.flats or 0,
+            # beta-adjusted (SKILL vs market) — the trustworthy metric
+            "beat_mkt_rate": round((r.beat or 0) / nb * 100, 1) if nb else None,
+            "avg_excess_return": round(float(r.avg_excess), 2) if r.avg_excess is not None else None,
+            "beta_graded": nb,
         }
     open_n = db.execute(text("SELECT count(*) FROM signal_log WHERE status='open'")).scalar()
     recent = [dict(ticker=r.ticker, name=NAMES.get(r.ticker, r.ticker), method=r.method,
