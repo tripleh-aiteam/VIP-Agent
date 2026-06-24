@@ -462,11 +462,13 @@ function AccBadge({ acc, t }: { acc: number; t: (ko: string, en: string) => stri
   const color = low ? "var(--badge-error-text)" : "var(--badge-success-text)";
   const bg = low ? "var(--badge-error-bg)" : "var(--badge-success-bg)";
   return (
-    <span className="ml-auto inline-flex items-center gap-1 text-[10.5px] px-2 py-0.5 rounded-full font-bold"
+    <span className="ml-auto inline-flex items-center gap-1 text-[15px] px-2.5 py-1 rounded-lg font-extrabold"
       style={{ color, background: bg }}
       title={low ? t("정확도 낮음 — 맹신 금지, 참고용", "Low accuracy — do not over-trust, reference only")
                  : t("정확도 양호", "Accuracy OK")}>
-      {low && "⚠"} {t("정확도", "acc")} {pct.toFixed(0)}%
+      {low && <span className="text-[16px]">⚠</span>}
+      <span className="text-[9px] font-bold opacity-80">{t("정확도", "ACC")}</span>
+      <span className="text-[17px] leading-none">{pct.toFixed(0)}%</span>
     </span>
   );
 }
