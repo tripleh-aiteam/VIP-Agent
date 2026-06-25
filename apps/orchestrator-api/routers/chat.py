@@ -593,15 +593,32 @@ def debug_kiwoom():
     if not (k and s):
         out["reason"] = "KIWOOM_APP_KEY / KIWOOM_APP_SECRET not visible to THIS service"
         return out
-    try:
-        tok = kiwoom_rest._token(force=True)
-        out["token_ok"] = bool(tok)
-        if not tok:
-            out["reason"] = "token request returned nothing (key may be wrong env / product)"
-            return out
-    except Exception as e:
-        out["token_ok"] = False
-        out["reason"] = f"token error: {str(e)[:140]}"
+    # Direct token POST to BOTH bases so we see Kiwoom's real return_code/return_msg
+    # (the normal _token() swallows it). No keys echoed — only Kiwoom's status text.
+    import httpx as _httpx
+    probes = []
+    for base in ("https://api.kiwoom.com", "https://mockapi.kiwoom.com"):
+        rec = {"base": base.replace("https://", "")}
+        try:
+            r = _httpx.post(f"{base}/oauth2/token",
+                            json={"grant_type": "client_credentials",
+                                  "appkey": k, "secretkey": s},
+                            headers={"Content-Type": "application/json;charset=UTF-8"},
+                            timeout=15.0)
+            rec["http"] = r.status_code
+            try:
+                d = r.json()
+                rec["return_code"] = d.get("return_code")
+                rec["return_msg"] = str(d.get("return_msg") or "")[:160]
+                rec["has_token"] = bool(d.get("token"))
+            except Exception:
+                rec["body"] = r.text[:160]
+        except Exception as e:
+            rec["error"] = f"{type(e).__name__}: {str(e)[:120]}"
+        probes.append(rec)
+    out["token_probe"] = probes
+    out["token_ok"] = any(p.get("has_token") for p in probes)
+    if not out["token_ok"]:
         return out
     try:
         q = kiwoom_rest.current_price("005930")  # 삼성전자 — public data
