@@ -24,9 +24,18 @@ Flags:
 """
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 from pathlib import Path
+
+# Force UTF-8 stdout so '—'/'·' etc. don't crash on a Korean (cp949) Windows console —
+# this was silently killing the scheduled retrain at the market-features step.
+try:
+    sys.stdout.reconfigure(encoding="utf-8")       # type: ignore[attr-defined]
+    sys.stderr.reconfigure(encoding="utf-8")       # type: ignore[attr-defined]
+except Exception:
+    pass
 
 HERE = Path(__file__).resolve().parent          # ml/
 ROOT = HERE.parent                              # orchestrator-api/
@@ -60,9 +69,12 @@ def main() -> int:
     retrain = "--no-retrain" not in sys.argv
     steps = DATA_STEPS + (RETRAIN_STEPS if retrain else []) + PREDICT_STEP
     total = len(steps)
+    # Make every subprocess (build_features / market_features / bakeoff / predict …)
+    # print as UTF-8 too, so a single '—' never aborts the whole pipeline on cp949.
+    env = {**os.environ, "PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1"}
     for i, (cmd, label) in enumerate(steps, 1):
         print(f"\n===== daily_run {i}/{total}: {label} =====", flush=True)
-        r = subprocess.run(cmd, cwd=str(ROOT))
+        r = subprocess.run(cmd, cwd=str(ROOT), env=env)
         if r.returncode != 0:
             print(f"[daily_run] STEP FAILED ({label}) rc={r.returncode}")
             return r.returncode
