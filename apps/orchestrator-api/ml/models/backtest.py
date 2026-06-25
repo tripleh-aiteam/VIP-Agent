@@ -30,7 +30,10 @@ COST = 0.003   # ~0.3% round-trip (fees+slippage) assumed per trade
 def backtest_ticker(conn, ticker: str, algo: str, horizon: int = 5) -> dict | None:
     from sklearn.model_selection import TimeSeriesSplit
     from sklearn.preprocessing import LabelEncoder
-    label, fwd = f"label_dir_{horizon}d", f"fwd_ret_{horizon}d"
+    # Train the signal on OUTPERFORMANCE (label_excess_5d) but measure profit on the
+    # ABSOLUTE forward return (fwd_ret) — select outperformers, gate on real P&L after cost.
+    label = "label_excess_5d" if horizon == 5 else f"label_dir_{horizon}d"
+    fwd = f"fwd_ret_{horizon}d"
     cols = ", ".join(FEATURES_X + [label, fwd])
     df = pd.read_sql(
         f"SELECT {cols} FROM stock_features_daily WHERE ticker=%s AND {label} IS NOT NULL "

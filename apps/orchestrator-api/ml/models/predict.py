@@ -111,7 +111,9 @@ def predict_ticker(conn, ticker: str, horizon: int) -> dict | None:
     band = (rvol / 100.0) / math.sqrt(252) * math.sqrt(horizon) * 100 if rvol else 2.0
     band = round(band, 2)
     exp_mid = round(direction * band / 2, 2)
-    dlabel = {1: "▲상승", 0: "→중립", -1: "▼하락"}[direction]
+    # model now predicts MARKET-RELATIVE (outperform/underperform vs KODEX200), not
+    # absolute up/down — label the call accordingly.
+    dlabel = {1: "▲아웃퍼폼(시장대비)", 0: "→시장수준", -1: "▼언더퍼폼(시장대비)"}[direction]
 
     # buy/sell levels (추정)
     buy_px = sell_px = None
@@ -124,8 +126,8 @@ def predict_ticker(conn, ticker: str, horizon: int) -> dict | None:
 
     econ_txt = (f"백테스트 수익엣지 {econ_edge:+.2f}%/거래·승률 {win_rate:.0f}%"
                 if econ_edge is not None else f"정확도엣지 {edge:+.3f}")
-    reason = (f"{NAMES.get(ticker, ticker)} · {model_name} 모델 (정확도 "
-              f"{metrics.get('accuracy', 0)*100:.1f}%, {econ_txt}) · 5일 방향 {dlabel} "
+    reason = (f"{NAMES.get(ticker, ticker)} · {model_name} 모델 (시장대비 정확도 "
+              f"{metrics.get('accuracy', 0)*100:.1f}%, {econ_txt}) · 5일 {dlabel} "
               f"(확률 {prob*100:.0f}%, 신뢰도 {conf}) · RSI {rsi:.0f} · 예상 변동폭 ±{band}%(추정)")
 
     return {

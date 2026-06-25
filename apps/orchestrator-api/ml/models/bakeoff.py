@@ -119,7 +119,9 @@ def _metrics(y_true, y_pred) -> dict:
 
 
 def _load(conn, ticker: str, horizon: int) -> pd.DataFrame:
-    label = f"label_dir_{horizon}d"
+    # BETA-ADJUSTED target at 5d: predict OUTPERFORMANCE vs KODEX200 (label_excess_5d)
+    # instead of absolute direction — removes beta so the model learns stock-picking skill.
+    label = "label_excess_5d" if horizon == 5 else f"label_dir_{horizon}d"
     cols = ", ".join(FEATURES_X + [label])
     df = pd.read_sql(
         f"SELECT date, {cols} FROM stock_features_daily WHERE ticker=%s "

@@ -26,6 +26,10 @@ from _db import get_conn, upsert  # noqa: E402
 
 # flat/up/down deadband per horizon (|fwd_ret| below -> FLAT(0))
 FLAT_BAND = {1: 0.005, 5: 0.015, 20: 0.03}
+# deadband for the MARKET-RELATIVE (excess vs KODEX200) 5-day label — smaller, since
+# excess returns are tighter. |excess| < 0.5% -> FLAT (in-line with the market).
+EXCESS_BAND = 0.005
+MARKET_PROXY = "069500"          # KODEX 200 ETF — tracks KOSPI200, in our universe
 
 FEATURE_COLS = [
     "ticker", "date", "close", "volume",
@@ -37,6 +41,9 @@ FEATURE_COLS = [
     "volume_z_20", "obv",
     "fwd_ret_1d", "fwd_ret_5d", "fwd_ret_20d",
     "label_dir_1d", "label_dir_5d", "label_dir_20d",
+    # market-relative (beta-adjusted) 5-day: stock fwd return MINUS KODEX200 fwd return.
+    # label_excess_5d = +1 outperform / 0 in-line / -1 underperform.
+    "fwd_excess_5d", "label_excess_5d",
 ]
 
 
@@ -67,7 +74,7 @@ def _dir(fwd: pd.Series, band: float) -> pd.Series:
     return out
 
 
-def compute(df: pd.DataFrame) -> pd.DataFrame:
+def compute(df: pd.DataFrame, mkt_fwd5: pd.Series | None = None) -> pd.DataFrame:
     """df: columns open,high,low,close,volume indexed/sorted by date ascending."""
     c, h, l, v = df["close"], df["high"], df["low"], df["volume"]
     out = pd.DataFrame(index=df.index)
@@ -117,6 +124,18 @@ def compute(df: pd.DataFrame) -> pd.DataFrame:
         out[f"fwd_ret_{hh_}d"] = fwd
         out[f"label_dir_{hh_}d"] = _dir(fwd, FLAT_BAND[hh_])
 
+    # market-relative (beta-adjusted) 5-day label: stock 5d forward return MINUS the
+    # market's (KODEX200) 5d forward return over the SAME window. Predicting THIS instead
+    # of absolute direction removes beta -> the model learns which stocks OUTPERFORM.
+    if mkt_fwd5 is not None:
+        mkt = mkt_fwd5.reindex(out.index)
+        excess = out["fwd_ret_5d"] - mkt
+        out["fwd_excess_5d"] = excess
+        out["label_excess_5d"] = _dir(excess, EXCESS_BAND)
+    else:
+        out["fwd_excess_5d"] = np.nan
+        out["label_excess_5d"] = np.nan
+
     return out.replace([np.inf, -np.inf], np.nan)
 
 
@@ -128,7 +147,7 @@ def _to_rows(ticker: str, feat: pd.DataFrame) -> list[tuple]:
             val = r.get(col)
             if val is None or (isinstance(val, float) and np.isnan(val)):
                 rec[col] = None
-            elif col.startswith("label_dir"):
+            elif col.startswith("label_dir") or col == "label_excess_5d":
                 rec[col] = int(val)
             elif col in ("volume", "obv"):
                 rec[col] = int(val)
@@ -146,12 +165,25 @@ def main() -> int:
 
     conn = get_conn()
     cur = conn.cursor()
+    # ensure the beta-adjusted columns exist (idempotent)
+    cur.execute("ALTER TABLE stock_features_daily ADD COLUMN IF NOT EXISTS fwd_excess_5d NUMERIC")
+    cur.execute("ALTER TABLE stock_features_daily ADD COLUMN IF NOT EXISTS label_excess_5d SMALLINT")
+    conn.commit()
+    # market (KODEX200) 5-day FORWARD return by date — the benchmark each stock is judged
+    # against for the excess/relative label.
+    cur.execute("SELECT date, close FROM raw_daily_prices WHERE ticker=%s ORDER BY date", (MARKET_PROXY,))
+    mrecs = cur.fetchall()
+    mkt_fwd5 = None
+    if len(mrecs) > 10:
+        ms = pd.DataFrame(mrecs, columns=["date", "close"]).set_index("date")["close"].astype(float)
+        mkt_fwd5 = ms.shift(-5) / ms - 1                     # forward 5d market return
     if args.tickers:
         tickers = args.tickers
     else:
         cur.execute("SELECT DISTINCT ticker FROM raw_daily_prices ORDER BY ticker")
         tickers = [r[0] for r in cur.fetchall()]
-    print(f"[features] {len(tickers)} tickers -> stock_features_daily")
+    print(f"[features] {len(tickers)} tickers -> stock_features_daily (market-relative label: "
+          f"{'on' if mkt_fwd5 is not None else 'OFF — no KODEX200 data'})")
 
     ok = skip = total = 0
     for i, t in enumerate(tickers, 1):
@@ -164,7 +196,7 @@ def main() -> int:
             continue
         df = pd.DataFrame(recs, columns=["date", "open", "high", "low", "close", "volume"])
         df = df.set_index("date").astype(float)
-        feat = compute(df)
+        feat = compute(df, mkt_fwd5=mkt_fwd5)
         # keep only rows with the core features present (warm-up drops first ~60)
         feat = feat[feat["sma_60"].notna()]
         rows = _to_rows(t, feat)
