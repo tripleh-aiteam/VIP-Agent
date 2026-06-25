@@ -973,10 +973,20 @@ def _vip_history_reply(transcript: Optional[str], lang: str, hist=None) -> Optio
             row, nm, (hh, mm) = sel[0], (name or code).upper(), tm
             close, d = row.get("close"), row.get("date")
             if tm >= _MKT_CLOSE:
-                notes.append(
-                    f"{nm}: {hh:02d}:{mm:02d}는 한국 증시 마감(15:30) 이후라, 그 시점 가격은 {d} 종가 {_won_str(close)}입니다."
-                    if not _en else
-                    f"{nm}: {hh:02d}:{mm:02d} is after the KRX close (15:30 KST) — the price then is the {d} close, {_won_str(close)}.")
+                if tm < (16, 0):
+                    # 15:30–16:00 시간외 종가 — trades AT the regular close, so it IS the close.
+                    notes.append(
+                        f"{nm}: {hh:02d}:{mm:02d}는 정규장 마감(15:30) 직후 시간외 종가 시간대로, 가격은 {d} 종가와 동일한 {_won_str(close)}입니다."
+                        if not _en else
+                        f"{nm}: {hh:02d}:{mm:02d} is the post-close session (trades at the close), so it equals the {d} close, {_won_str(close)}.")
+                else:
+                    # 16:00–20:00 시간외 단일가 / 넥스트레이드(NXT): prices MOVE after 15:30. We
+                    # only have the regular-session close on the free feed — be honest, don't
+                    # pretend the close is the after-hours price (so 6pm ≠ 7pm is acknowledged).
+                    notes.append(
+                        f"{nm}: 정규장은 15:30에 마감하지만 {hh:02d}:{mm:02d}에는 시간외 단일가·넥스트레이드(NXT) 거래로 가격이 변동됩니다. 다만 과거 특정 시각의 시간외 체결가는 무료 데이터로 제공되지 않아, 확보 가능한 값은 {d} 정규장 종가 {_won_str(close)}뿐입니다."
+                        if not _en else
+                        f"{nm}: the regular session closes at 15:30, but at {hh:02d}:{mm:02d} after-hours / NXT trading moves the price. The historical after-hours price for that exact time isn't on the free feed — the only figure we have is the {d} regular-session close, {_won_str(close)}.")
             elif tm < _MKT_OPEN:
                 try:
                     idx = rows.index(row)
