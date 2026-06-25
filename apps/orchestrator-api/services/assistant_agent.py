@@ -675,6 +675,30 @@ def _requested_price_fields(transcript: Optional[str]) -> list[str]:
     return fields
 
 
+def _is_price_field_followup(transcript: Optional[str]) -> bool:
+    """A pure quote-field request with NO stock named — e.g. '시가, 고가, 저가,
+    거래량' as a follow-up to a prior stock turn. Must borrow the stock from history."""
+    t = (transcript or "").lower()
+    if not any(w in t for w in _PRICE_WORDS):
+        return False
+    if _all_stocks_in_query(transcript):
+        return False  # already has its own stock
+    if _is_past_price(transcript) or _requested_history_dates(transcript):
+        return False  # a dated/history question, handled elsewhere
+    return True
+
+
+def _recent_stock_name(history: Optional[list[dict]]) -> Optional[str]:
+    """Most recent stock NAME mentioned in the conversation, for resolving a
+    field follow-up ('시가, 거래량 알려줘') that omits the stock."""
+    for h in reversed(history or []):
+        body = h.get("content") or h.get("text") or h.get("transcript") or ""
+        st = _all_stocks_in_query(body)
+        if st:
+            return st[0][1]
+    return None
+
+
 _HISTORY_RANGE_RE = _re.compile(
     r"(?:last|past|recent|over\s+the\s+(?:last|past))\s+(?:\d+\s+)?(?:few\s+)?"
     r"(?:day|days|week|weeks|month|months)\b"
@@ -820,17 +844,20 @@ def _vip_live_price_reply(transcript: Optional[str], lang: str) -> Optional[dict
     # Which values did the user ask for? ('opening and current' -> [open, price]).
     fields = _requested_price_fields(transcript)
 
-    # Volume backfill: Naver's realtime `basic` endpoint returns no
-    # accumulatedTradingVolume AFTER the close, so a '거래량' request would drop it.
-    # Pull the day's volume from the daily endpoint when it's missing.
-    if "volume" in fields and any(q.get("volume") is None for q in quotes):
+    # Backfill OHLCV from the daily endpoint when the realtime quote is missing
+    # them (Naver's realtime `basic` returns null open/high/low/volume pre-market
+    # and after the close), so '시가/고가/저가/거래량' aren't silently dropped.
+    _need = [f for f in ("open", "high", "low", "volume") if f in fields]
+    if _need and any(q.get(f) is None for q in quotes for f in _need):
         try:
             from services import naver_stock as _ns
             for q in quotes:
-                if q.get("volume") is None:
+                if any(q.get(f) is None for f in _need):
                     rows = _ns.daily_history(q["code"], days=1)
                     if rows:
-                        q["volume"] = rows[0].get("volume")
+                        for f in _need:
+                            if q.get(f) is None:
+                                q[f] = rows[0].get(f)
         except Exception:
             pass
 
@@ -3821,8 +3848,17 @@ def _run_agent_impl(
     # VIP holds the Kiwoom key, so it answers current-price HERE — Kiwoom during market
     # / Naver after, with opening/high/low/volume when asked and an always-on source
     # label. The AI Advisor relays this exact answer, so both surfaces read identically.
-    if not confirmed_tool and _is_vip_current_price_q(transcript, agent_id):
-        _vp = _vip_live_price_reply(transcript, lang)
+    # A bare field follow-up ('시가, 고가, 저가, 거래량' after '삼성전자 현재가') has no
+    # stock name → borrow it from the conversation so we answer the SAME stock's
+    # current-day fields, not a 5-day history dump.
+    _cp_tx = transcript
+    if (not confirmed_tool and not _is_vip_current_price_q(transcript, agent_id)
+            and _is_price_field_followup(transcript)):
+        _ps = _recent_stock_name(history)
+        if _ps:
+            _cp_tx = f"{_ps} {transcript}"
+    if not confirmed_tool and _is_vip_current_price_q(_cp_tx, agent_id):
+        _vp = _vip_live_price_reply(_cp_tx, lang)
         if _vp:
             return _vp
 
