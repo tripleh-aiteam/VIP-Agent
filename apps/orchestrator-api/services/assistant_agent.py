@@ -664,10 +664,14 @@ def _requested_price_fields(transcript: Optional[str]) -> list[str]:
         fields.append("low")
     cur = (any(k in t for k in ("current", "현재", "지금", "real-time", "실시간", "latest", "now"))
            or any(k in t for k in ("price", "주가", "시세", "얼마", "quote")))
-    if cur or not fields:
+    if cur:
         fields.append("price")
     if "거래량" in t or "volume" in t or "거래대금" in t:
         fields.append("volume")
+    # Only default to price when the user asked for NOTHING specific — a pure
+    # '거래량' (volume-only) question must NOT get the price tacked on.
+    if not fields:
+        fields.append("price")
     return fields
 
 
