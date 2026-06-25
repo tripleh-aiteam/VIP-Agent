@@ -39,6 +39,9 @@ FEATURE_COLS = [
     "rsi_14", "stoch_k", "stoch_d", "roc_10",
     "bb_upper", "bb_lower", "bb_pct", "atr_14", "realized_vol_20",
     "volume_z_20", "obv",
+    # RELATIVE-STRENGTH (stock vs KODEX200 market) — the momentum/leadership signal that
+    # complements the beta-adjusted target: which stocks are OUTPACING the market.
+    "rel_ret_5d", "rel_ret_20d", "rel_vs_sma20",
     "fwd_ret_1d", "fwd_ret_5d", "fwd_ret_20d",
     "label_dir_1d", "label_dir_5d", "label_dir_20d",
     # market-relative (beta-adjusted) 5-day: stock fwd return MINUS KODEX200 fwd return.
@@ -74,7 +77,8 @@ def _dir(fwd: pd.Series, band: float) -> pd.Series:
     return out
 
 
-def compute(df: pd.DataFrame, mkt_fwd5: pd.Series | None = None) -> pd.DataFrame:
+def compute(df: pd.DataFrame, mkt_fwd5: pd.Series | None = None,
+            mkt_ctx: pd.DataFrame | None = None) -> pd.DataFrame:
     """df: columns open,high,low,close,volume indexed/sorted by date ascending."""
     c, h, l, v = df["close"], df["high"], df["low"], df["volume"]
     out = pd.DataFrame(index=df.index)
@@ -117,6 +121,18 @@ def compute(df: pd.DataFrame, mkt_fwd5: pd.Series | None = None) -> pd.DataFrame
     vmean = v.rolling(20).mean(); vstd = v.rolling(20).std()
     out["volume_z_20"] = (v - vmean) / vstd.replace(0, np.nan)
     out["obv"] = (np.sign(c.diff()).fillna(0) * v).cumsum()
+
+    # RELATIVE STRENGTH vs the market (KODEX200): stock momentum/trend MINUS the market's.
+    # Positive = the stock is OUTPACING the market — directly predictive of outperformance.
+    if mkt_ctx is not None:
+        m = mkt_ctx.reindex(out.index)
+        out["rel_ret_5d"] = out["ret_5d"] - m["mkt_ret5"]
+        out["rel_ret_20d"] = out["ret_20d"] - m["mkt_ret20"]
+        out["rel_vs_sma20"] = out["price_vs_sma20"] - m["mkt_vs_sma20"]
+    else:
+        out["rel_ret_5d"] = np.nan
+        out["rel_ret_20d"] = np.nan
+        out["rel_vs_sma20"] = np.nan
 
     # labels (forward)
     for hh_ in (1, 5, 20):
@@ -166,17 +182,24 @@ def main() -> int:
     conn = get_conn()
     cur = conn.cursor()
     # ensure the beta-adjusted columns exist (idempotent)
-    cur.execute("ALTER TABLE stock_features_daily ADD COLUMN IF NOT EXISTS fwd_excess_5d NUMERIC")
-    cur.execute("ALTER TABLE stock_features_daily ADD COLUMN IF NOT EXISTS label_excess_5d SMALLINT")
+    for _col, _typ in (("fwd_excess_5d", "NUMERIC"), ("label_excess_5d", "SMALLINT"),
+                       ("rel_ret_5d", "NUMERIC"), ("rel_ret_20d", "NUMERIC"),
+                       ("rel_vs_sma20", "NUMERIC")):
+        cur.execute(f"ALTER TABLE stock_features_daily ADD COLUMN IF NOT EXISTS {_col} {_typ}")
     conn.commit()
-    # market (KODEX200) 5-day FORWARD return by date — the benchmark each stock is judged
-    # against for the excess/relative label.
+    # market (KODEX200) series → forward 5d return (excess label benchmark) + backward
+    # context (5d/20d return, vs-SMA20) for the relative-strength features.
     cur.execute("SELECT date, close FROM raw_daily_prices WHERE ticker=%s ORDER BY date", (MARKET_PROXY,))
     mrecs = cur.fetchall()
-    mkt_fwd5 = None
-    if len(mrecs) > 10:
+    mkt_fwd5 = mkt_ctx = None
+    if len(mrecs) > 30:
         ms = pd.DataFrame(mrecs, columns=["date", "close"]).set_index("date")["close"].astype(float)
         mkt_fwd5 = ms.shift(-5) / ms - 1                     # forward 5d market return
+        mkt_ctx = pd.DataFrame({
+            "mkt_ret5": ms.pct_change(5),
+            "mkt_ret20": ms.pct_change(20),
+            "mkt_vs_sma20": ms / ms.rolling(20).mean() - 1,
+        })
     if args.tickers:
         tickers = args.tickers
     else:
@@ -196,7 +219,7 @@ def main() -> int:
             continue
         df = pd.DataFrame(recs, columns=["date", "open", "high", "low", "close", "volume"])
         df = df.set_index("date").astype(float)
-        feat = compute(df, mkt_fwd5=mkt_fwd5)
+        feat = compute(df, mkt_fwd5=mkt_fwd5, mkt_ctx=mkt_ctx)
         # keep only rows with the core features present (warm-up drops first ~60)
         feat = feat[feat["sma_60"].notna()]
         rows = _to_rows(t, feat)
