@@ -582,13 +582,20 @@ def debug_kiwoom():
     if os.getenv("DEBUG_KIWOOM") != "1":
         from fastapi import HTTPException
         raise HTTPException(status_code=404, detail="Not Found")
+    import httpx as _hx
     from services import kiwoom_rest
     k, s = kiwoom_rest._creds()
+    egress_ip = None
+    try:
+        egress_ip = _hx.get("https://api.ipify.org", timeout=8.0).text.strip()
+    except Exception as e:
+        egress_ip = f"(lookup failed: {type(e).__name__})"
     out: dict = {
         "creds_present": bool(k and s),
         "KIWOOM_APP_KEY_seen": bool(os.getenv("KIWOOM_APP_KEY")),
         "KIWOOM_APP_SECRET_seen": bool(os.getenv("KIWOOM_APP_SECRET")),
         "api_base": os.getenv("KIWOOM_API_BASE") or "(default 실전)",
+        "server_outbound_ip": egress_ip,
     }
     if not (k and s):
         out["reason"] = "KIWOOM_APP_KEY / KIWOOM_APP_SECRET not visible to THIS service"
