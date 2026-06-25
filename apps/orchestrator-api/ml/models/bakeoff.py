@@ -40,9 +40,11 @@ FEATURES_X = [
     # market/macro regime context (same across stocks per date) — gives each model
     # awareness of market-wide moves the per-stock technicals can't see.
     "mkt_kospi_ret5", "mkt_kospi_vs_sma20", "mkt_usdkrw_ret5", "mkt_breadth",
-    # relative strength (stock vs KODEX200) — leadership/momentum signal that price-alone
-    # technicals miss; complements the beta-adjusted (outperformance) target.
-    "rel_ret_5d", "rel_ret_20d", "rel_vs_sma20",
+    # NOTE: relative-strength features (rel_ret_5d/20d, rel_vs_sma20) were TESTED and
+    # REVERTED — they gave 0 in-sample edge (mostly redundant: ret_5d & mkt_kospi_ret5 were
+    # already features, so the model already had them). The columns are still computed in
+    # build_features (cheap) but NOT fed to the model. Real new signal needs the NON-price
+    # data (intraday 수급/공매도/news) — see project_methods_beta_finding.
     # 수급 / investor-flow features are collected (raw_investor_flows + flow_features.py)
     # but DISABLED from the live model: an isolated ablation on real-flow rows showed
     # daily 외국인/기관 net buying adds ~0 at 5d (Δacc -0.003, Δbuy +0.07%) and only a
