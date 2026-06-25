@@ -122,29 +122,33 @@ def _move_pct(db, ticker: str, horizon: int = 5) -> float:
     return max(1.5, min(12.0, vol * math.sqrt(horizon / 252.0)))   # 1σ horizon move %, clamped
 
 
-def _ml_levels(db, ticker: str, advice: str, exp_low, exp_high) -> dict[str, Any]:
-    """METHOD 1 (ML): trade plan from the MODEL's expected move (not the chart box).
-    Entry = market, Target = close ± expected-move%, Stop = half-band risk."""
+def _ml_levels(db, ticker: str, advice: str, exp_low, exp_high,
+               anchor_price: float | None = None) -> dict[str, Any]:
+    """METHOD 1 (ML): trade plan anchored on the LIVE current price (so the buy/sell
+    zones move with the market intraday), sized by the stock's own volatility band.
+    anchor_price = live snapshot price; falls back to the EOD close after market."""
     box = _recent_box(db, ticker)
     if not box:
         return {}
     close, sup, res, opn = box
-    out = {"close": round(close), "open": round(opn) if opn else None,
+    price = float(anchor_price) if anchor_price else close   # LIVE price if available
+    out = {"close": round(price), "open": round(opn) if opn else None,
            "support": round(sup), "resistance": round(res)}
-    band_up = abs(exp_high) if exp_high else 3.0
+    band_up = abs(exp_high) if exp_high else 3.0             # 1σ 5-day move % (realized vol)
     band_dn = abs(exp_low) if exp_low else 3.0
     if advice == "BUY":
-        out["entry"] = round(close)
-        out["target"] = round(close * (1 + band_up / 100))            # model's upside
-        out["stop"] = round(close * (1 - band_dn / 100 * 0.5))        # half-band risk
+        out["entry"] = round(price)                                  # buy at/near now
+        out["target"] = round(price * (1 + band_up / 100))           # +1σ upside
+        out["stop"] = round(price * (1 - band_dn / 100 * 0.5))       # half-band risk
     elif advice == "SELL":
-        out["entry"] = round(close)
-        out["target"] = round(close * (1 - band_dn / 100))
-        out["stop"] = round(close * (1 + band_up / 100 * 0.5))
-    else:                                          # HOLD — range reference (지지/저항)
-        out["entry"] = round(sup)                  # 참고: 지지 부근 매수
-        out["target"] = round(res)                 # 참고: 저항 목표
-        out["stop"] = round(sup * 0.97)
+        out["entry"] = round(price)
+        out["target"] = round(price * (1 - band_dn / 100))
+        out["stop"] = round(price * (1 + band_up / 100 * 0.5))
+    else:                                          # HOLD — realistic zones AROUND the
+        # live price (buy on a small dip, take profit at +1σ) — NOT the wide box edges.
+        out["entry"] = round(price * (1 - band_dn / 100 * 0.4))      # small dip entry
+        out["target"] = round(price * (1 + band_up / 100 * 0.7))     # modest target
+        out["stop"] = round(price * (1 - band_dn / 100 * 0.7))
     out["rr"] = _rr(out.get("entry"), out.get("target"), out.get("stop"))
     _add_zones_around(out)                          # buy/sell price INTERVALS around entry/target
     return out
@@ -570,15 +574,17 @@ def _regime_tone(db) -> str:
 
 
 def stock_card(db, ticker: str, horizon: int = 5, live: bool = False,
-               as_of: Optional[str] = None) -> dict[str, Any]:
+               as_of: Optional[str] = None, live_price: float | None = None) -> dict[str, Any]:
     pred = ps.get_ticker(db, ticker, horizon) or {}
     advice = pred.get("advice", "HOLD")
     # TREND GATE: don't surface an ML SELL in a strong (risk-on) market — those
     # short calls systematically lose. Demote to HOLD.
     if advice == "SELL" and _regime_tone(db) == "risk_on":
         advice = "HOLD"
+    # anchor the buy/sell zones on the LIVE price so they move with the market
     levels = _ml_levels(db, ticker, advice,
-                        pred.get("expected_low_pct"), pred.get("expected_high_pct"))
+                        pred.get("expected_low_pct"), pred.get("expected_high_pct"),
+                        anchor_price=live_price)
     return {
         "ticker": ticker, "name": NAMES.get(ticker, ticker),
         "advice": advice, "confidence": pred.get("confidence"),
@@ -824,7 +830,11 @@ def _build_brief(db, horizon: int = 5) -> dict[str, Any]:
         if tk in NAMES and tk not in seen:
             ordered.append(tk)
             seen.add(tk)
-    picks = [stock_card(db, tk, horizon, as_of=summ.get("as_of")) for tk in ordered]
+    # LIVE prices (one batched snapshot read) so every card's 현재가 + buy/sell zones are
+    # anchored on the live market price, not the stale EOD close. Stale/after-market -> EOD.
+    snaps = _read_snapshots(db, ordered)
+    picks = [stock_card(db, tk, horizon, as_of=summ.get("as_of"),
+                        live_price=(snaps.get(tk) or {}).get("price")) for tk in ordered]
     picks_buy = [c for c in picks if c["advice"] == "BUY"]
     picks_sell = [c for c in picks if c["advice"] == "SELL"]
 
