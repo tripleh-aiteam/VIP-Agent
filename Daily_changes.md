@@ -2,7 +2,269 @@
 
 ---
 
-## 2026-06-08 (Monday) — No-LLM offline mode, Kakao reliability, white-label multi-tenant SaaS, language mirroring
+## 2026-06-25 (Thursday) — Asset Agent card disappeared: down backend + dashboard hid it
+
+### [17:00] Asset Agent vanished from /agents — diagnosed outage + made down agents visible
+
+- **What:** Asset Agent card disappeared from the VIP admin dashboard. Two root causes found:
+  1. **Backend down** — `https://asset-agent-s4tw.onrender.com` no longer responds (DNS resolves, TCP connects, but HTTP returns `000` after 90s = suspended Render free service, not a cold start; stock agent on same host answers `/health` in 0.36s for comparison). Live registry confirmed `Asset Agent` row still exists (`id 5d128484…`) but `status="error"`, `reliability_score=0.028` — the every-5-min health check ([scheduler_service.py:372](apps/orchestrator-api/services/scheduler_service.py#L372)) had been flipping it to `error` on each failed `/health` ping.
+  2. **Dashboard hid it** — `/agents` page filtered to `status === "active"` only, so a down agent silently vanished instead of showing as down.
+- **Why:** A transient/real backend outage should surface the agent as "down" (red dot + error badge — the card UI already supports this), not make the whole card disappear and look deleted.
+- **Files:** [apps/admin-dashboard/src/app/agents/page.tsx](apps/admin-dashboard/src/app/agents/page.tsx) — replaced the `status === "active"` filter with an `isReal` filter that shows every real registered agent regardless of health status, still hiding `removed` mocks, `is_mock` dev agents, and unconfigured `placeholder-*` slots.
+- **Next:**
+  - Deploy `oasisvip` (Vercel) to ship the dashboard fix.
+  - **User action (only they can):** Render → Asset-agent → `assetai-api` web service → Resume / Manual Deploy (it's `plan: free`, likely suspended on quota). Once `/health` returns 200 the health check auto-flips it `error → active`.
+  - Optional hardening: bump health-check timeout from 5s ([real_asset_adapter.py:283](../adapters/real_asset_adapter.py#L283)) so legit cold starts aren't falsely marked `error`; or upgrade asset agent to Render Starter to stay warm.
+
+---
+
+## 2026-06-25 (Thursday) — Real Estate daily report now sourced from the partner's Supabase feed
+
+### Goal
+
+Stop VIP self-scraping Real Estate data. The partner (Real Estate agent) now pushes one row per land/auction investigation into **VIP's own Supabase** (project `xgiwenlkmgxtmdctpwfs`, table `public.land_investigations`) every morning. VIP should READ that table and render the partner's 일일 현황 digest (KO+EN), then email it like the other agents' reports — mirroring the YouTube-grounded "read someone else's output, don't regenerate" pattern.
+
+### Files added
+
+- [apps/orchestrator-api/services/realty_supabase.py](apps/orchestrator-api/services/realty_supabase.py) — `build_realty_supabase_report(db, trace_id)` reads `land_investigations` through the orchestrator's **existing DB session** (no new credentials — DATABASE_URL already points at the same Supabase project). Computes 오늘 신규 (first_seen_at = today KST), 추적 중 100억+ (= `source_kind='onbid'` count, which reproduces the partner's figure exactly), and the 7-day new trend; renders KO+EN markdown that mirrors his digest (title + 💰 discount badge, 주소, 현재 입찰가/감정가 N%↓ · 유찰 N회, 입찰종료). No LLM — fast, numbers identical. Returns `status='unavailable'` if the table/query fails so the caller can skip the email.
+
+### Files updated
+
+- [apps/orchestrator-api/services/scheduler_service.py](apps/orchestrator-api/services/scheduler_service.py) — `_realty_daily_report` (7:05 AM KST job, line ~1090) now sources from `realty_supabase.build_realty_supabase_report` instead of the old self-scraped `services.realty_report`. Added a `source_ok` guard: if Supabase is unavailable it saves a dashboard placeholder but **skips Telegram + email** (never sends an empty "data unavailable" doc to the boss). Email subject/filenames changed to "부동산 일일 현황" / `부동산_일일현황_KO_*.docx` + `RealEstate_DailyStatus_EN_*.docx`.
+- [apps/orchestrator-api/routers/reports.py](apps/orchestrator-api/routers/reports.py) — `/reports/compose/realty` now uses `_resolve_recipients(email)` so `?email=` accepts a comma-separated allowlisted list (needed to test-send to two addresses at once).
+
+### Verified (read-only live query against the real VIP Supabase + a real test send)
+
+- Table exists, 820 rows, partner pushed today (max `first_seen_at` = 2026-06-25 06:24 UTC). Rendered listings match his pasted sample **exactly** (부산 우동 5,057.2억, 종로 육의전빌딩 364.3억 48%↓, 여수 돌산 300억 18%↓, etc.). 7-day trend matched his sample on the stable older days (5·2·0·18); newer days higher because his pipeline kept adding rows through the day → confirms the first_seen_at method is correct.
+- "추적 중 100억+": literal `minimum_bid_price ≥ 100억` = 721 (≠ his 188). `source_kind='onbid'` = 189 ≈ his 188 → adopted per user ("put whatever he said, do not change").
+- **Test email SENT** (KO+EN .docx) to hskim@tripleh.co.kr + davronbekmalikov96@gmail.com — `send result {ok: True}`.
+
+### What this unblocks
+
+From the next 7:05 AM KST run, `_realty_daily_all` (email_override="*ALL*") delivers this Supabase digest to all 7 recipients automatically — **once the code is deployed to Render**. No env vars needed (uses existing DB). The 6:50 master email is stock-only (키움·신문·유튜브) so there is no double/conflicting realty report.
+
+### Next
+
+- **Deploy these changes to Render** — the local test proved it works, but tomorrow's scheduled run uses the deployed code.
+- Optional: confirm the exact "추적 중 100억+" rule with the partner (we mirror his number via `source_kind='onbid'`; if his definition differs it's a one-line change in `_count_big`).
+- Old [services/realty_report.py](apps/orchestrator-api/services/realty_report.py) left intact (still used by the on-demand Agents-submenu button + 8 AM Telegram pipeline); can be retired later if desired.
+
+### [17:25] Realty digest v2 — clickable OnBid/source links + 3-page cap
+
+- **What:** Each listing title in [realty_supabase.py](apps/orchestrator-api/services/realty_supabase.py) is now a **clickable hyperlink** to its source (`raw_payload.detailUrl`/`sourceUrl` → OnBid `www.onbid.co.kr` for `source_kind='onbid'`, trust-company page for `trust`; `manual`/`lh`/`mixed` have no URL so stay plain). Capped today's-new list to `_MAX_LISTINGS = 15` (biggest min_bid first) with a "…외 N건 → 대시보드" note so the .docx stays ≤3 pages. `markdown_to_docx` already renders `[text](url)` headings as real hyperlinks (report_docx.py:125-129).
+- **Why:** User wanted the boss email to match his friend's card UI (clickable items) and to stop at ~3 pages (28 listings was ~4 pages).
+- **Verified:** live render = 15 listings, 15 clickable hyperlinks in the KO docx (sample = real OnBid URL), ~2.2 pages. Test v2 emailed (KO+EN) to hskim@tripleh.co.kr + davronbekmalikov96@gmail.com → `{ok: True}`.
+- **Next:** still needs Render deploy for the scheduled run; `_MAX_LISTINGS` is a one-line tweak if 3 pages should hold more/fewer.
+
+---
+
+## 2026-06-22 (Monday) — Twin Work Assistant: the full VIP chatbot inside every Twin
+
+### Goal
+
+Make each worker's Twin **Chat** the in-house, general-purpose work assistant (a ChatGPT replacement), identical to the VIP boss chatbot, but powered by the worker's **own** twin (its knowledge, never VIP's shared KB) — so workers stop using external ChatGPT, work data stays in-house, and the twin watches-&-learns from real work.
+
+### Files added
+
+- [apps/twin-portal/src/components/ChatWorkspace.tsx](apps/twin-portal/src/components/ChatWorkspace.tsx) — the full rich VIP chat workspace, copied from admin-dashboard (folders, sessions, Copy, Download .doc/.pdf via jsPDF, follow-up composer, model picker, voice, file upload). Added `twinAuthHeaders()` (X-User-Email/X-User-Token from localStorage) on the `/chat/agent` call so the owner-auth twin route authorizes; converted the call to **streaming** (`/chat/agent/stream` + SSE parse) so slow models don't drop.
+- [apps/twin-portal/src/chatbot.config.ts](apps/twin-portal/src/chatbot.config.ts), [apps/twin-portal/src/components/TwinAssistantMount.tsx](apps/twin-portal/src/components/TwinAssistantMount.tsx) — first approach (floating `@triple-h/chatbot` ChatbotOverlay) before switching to ChatWorkspace; now mostly superseded but harmless.
+
+### Files updated
+
+- [apps/orchestrator-api/routers/chat.py](apps/orchestrator-api/routers/chat.py) — `/chat/agent` and `/chat/agent/stream` now route `agentId="twin:<uuid>"` to `twin_brain.think` (owner-auth via `auth_service.verify_session_token` = privacy wall) + uploaded-file text. **Streaming rewritten** to compute in a worker thread (own DB session) while emitting SSE `: keepalive` heartbeats every 2s → slow models (opus) no longer "Failed to fetch".
+- [apps/orchestrator-api/services/twin_brain.py](apps/orchestrator-api/services/twin_brain.py) — activated the dormant tool system + added `web_search`; 2-pass tool loop; **`assistant_mode`** prompt (behaves like normal ChatGPT, brief greetings, no knowledge-dump); **lean context** (small talk skips the ~2.5k-item knowledge load + global memory → "hello" ~2s); **real current date/time (KST)** injected + "web-search for current info, answer general facts directly"; **`twin_self_profile()`** so the chat knows its own knowledge count/sources/tasks/readiness/growth; consent-gated + backgrounded auto-learn.
+- [apps/orchestrator-api/services/llm_client.py](apps/orchestrator-api/services/llm_client.py) — Gemini "thinking" models (gemini-3.1-pro-preview) returned empty; raise `maxOutputTokens` ≥8192 for pro/preview + skip non-text thought parts.
+- [apps/twin-portal/tailwind.config.ts](apps/twin-portal/tailwind.config.ts) — scan `../../packages/chatbot/src` so the widget's Tailwind classes are generated (it was rendering unstyled at the top of the page).
+- [apps/twin-portal/package.json](apps/twin-portal/package.json) — `@triple-h/chatbot` (file dep) + `jspdf`; [next.config.js](apps/twin-portal/next.config.js) `transpilePackages`; [layout.tsx](apps/twin-portal/src/app/layout.tsx), [DashboardView.tsx](apps/twin-portal/src/app/dashboard/DashboardView.tsx) — mount ChatWorkspace in the Chat tab.
+- [packages/chatbot/src/components/ChatbotOverlay.tsx](packages/chatbot/src/components/ChatbotOverlay.tsx) + [types.ts](packages/chatbot/src/types.ts) — opt-in `theme.hideHeader` / `theme.hideGreeting`; per-reply Copy + Download buttons (benefits VIP too).
+
+### Verified (live curl against Render + the twin owner token)
+
+All LLMs answer through the twin (Claude/GPT/Gemini/Groq); gemini-3.1-pro fixed; "hello" → short greeting in ~1.75s; date → "Friday, June 19, 2026"; "capital of Uzbekistan" on opus-4-7 → "Tashkent." with 5 keepalive heartbeats (no more "Failed to fetch"). twin-portal production build green.
+
+### Also this session (Smart Twins phases, deployed earlier in the week)
+
+Phase 0 consent toggle (+ wiped dev-noise from 6 worker twins, kept Davronbek) · Phase 1 multi-source learning · Phase 2 Google/Notion auto-pull + real email/calendar actions · Phase 3 twin↔twin (ask-twin/discuss + Network tab, opt-in) · Phase 6 Twin Feed + hybrid auto-posting · security fixes (OAuth state CSRF, privacy-wall on peer features).
+
+### Next
+
+- 🤖 Live Stock/Asset/Realty data tools + peer-twin help in the twin chat (so it pulls real numbers like VIP).
+- 🤖 Deeper twin self-awareness ("each corner") — specialties, recent activity, connected accounts (user's stated next requirement).
+- 👤 Phase 4 autonomy governance rules; Phase 5 GPU for voice cloning.
+
+---
+
+### [10:45] Asset-agent chatbot: HTTP 500 fix, stock/real-estate routing, Naver "is it on Naver?" via our asset file
+
+- **What:**
+  - **HTTP 500 on `/chat/agent`** — `_suggest_followups` did `tool_result["matches"][0]` assuming a list, but `asset_search` returns `matches` as an int count; any non-zero count → `TypeError: 'int' object is not subscriptable`. Now only subscripts `matches` when it's a non-empty list of dicts. (Repro'd live on `의정부…B1호 월세/보증금`, verified 500→200.)
+  - **Real-estate price queries hijacked by stock routing** — `'제주 토지 시세'` / `'향남 아파트 가격'` were answered with the stock watchlist. Two detectors matched the bare price word `시세`: added a real-estate guard to **both** `_is_stock_question` and `_is_vip_current_price_q` (property keyword present + no specific stock resolves → not a stock question). Stock-name resolution still runs first, so `삼성전자 주가` / `네이버 주가` are unaffected.
+  - **Naver property check now resolves the address from our uploaded asset file first** — `'우리 낙하리 네이버에 올라와 있어?'` → looks up `asset_units` + `asset_portfolio` (`낙하리 301-7/9/10/11/13`; `의정부역 한양수자인파크뷰`), Naver-checks each precise address, and reports per-address: ✅ listed → clickable `land.naver.com` link; missing → "아직 네이버 부동산에 올라오지 않았습니다" with **no link**. A result counts as "listed" only if it genuinely matches the address (area token / complex name / dashed lot number) — kills false-positive links (was linking 반포센트럴자이 as "proof" for 상신리 663). Subject cleaned of price/filler words so the verify link isn't polluted (`…/result/향남%20아파트`, not `…%20시세`).
+- **Why:** Boss-facing Asset chatbot was crashing on real property lookups, misrouting property questions to stocks, and giving an unhelpful "can't find" + bogus links for Naver checks instead of using our own asset data.
+- **Files:** [apps/orchestrator-api/services/assistant_agent.py](apps/orchestrator-api/services/assistant_agent.py) (`_suggest_followups`, `_is_stock_question`, `_is_vip_current_price_q`, `_REALESTATE_Q_KW`, new `_our_property_addresses` / `_clean_portfolio_name` / `_addr_on_naver` / `_is_deep_naver_url`, rewritten `_vip_naver_search_reply`)
+- **Verified (live curl against Render):** 500→200 on 의정부 B1호; 낙하리 resolves 5 lots → "not uploaded yet", no link; 의정부 resolves from portfolio; 향남 false-positive links gone; 제주 토지 시세 no longer stock; 삼성전자 주가 still stock. Commits `90c8ecb`, `76e1a87`, `4a1eae3`, `d636891`, `7520e48`, `999712f` on `main`.
+- **Next:** ✅-with-link branch only exercised in unit tests (no current property is actually on Naver yet) — real-world confirm when one appears. Optional: make property questions auto-resolve→Naver even without the word "naver" (currently the Naver fast-path requires it).
+
+---
+
+### [later] Naver search: providers live + "is it on Naver?" made accurate & honest
+
+- **What:** End-to-end fix of the Naver-search feature for the Asset chatbot, after live testing exposed several wrong/lying answers.
+  - **Providers configured on Render:** `NAVER_CLIENT_ID/SECRET` (free Naver Open API, 25k/day — general web/news/blog) and a fresh `SERPER_API_KEY` (Google→land.naver.com listing links; first key was `400 Not enough credits`). Diagnosed via a temporary `/chat/debug/serper` endpoint — **removed** after a security review flagged it as an unauthenticated open-proxy.
+  - **Intent-aware provider order** in [naver_search.py](apps/orchestrator-api/services/naver_search.py): real-estate → Serper (land.naver.com) first, prefer DEEP article links over homepages; general → Naver API first. Serper variants cut 5→2 to conserve credits (~25→~10 calls/question).
+  - **Never lies anymore.** "네이버에 올라와 있어?" now means *findable via Naver search* (web + 부동산), **not** only land.naver.com — our 낙하리 land is advertised on brokerage sites (내안애부동산 등) that land.naver.com-only scoping missed. Rewrote [`_vip_naver_search_reply`](apps/orchestrator-api/services/assistant_agent.py) to search broadly and NEVER claim "not listed" — worst case it returns one clickable `search.naver.com` link.
+  - **Clean output:** one clickable markdown link (`[title](url)`), no YouTube/social, no news articles; ranked by **area relevance in the title** (so a 갈현리 post that keyword-stuffs 낙하리 doesn't beat the real 낙하리 listing). Resolves the property from BOTH `asset_units` and `asset_portfolio`.
+  - **Frontend:** [ChatWorkspace.tsx](apps/admin-dashboard/src/components/ChatWorkspace.tsx) `inlineFmt` now renders `[label](url)` + bare URLs as clickable `<a target=_blank>` (was plain text). Deployed on Vercel (oasisvip / asset).
+- **Why:** The chatbot was falsely telling the boss his properties weren't on Naver, and cluttering answers with news/YouTube. For a VIP-facing tool, a confident false negative is the worst failure mode.
+- **Verified (live curl, Render):** `우리 낙하리 땅 네이버에 올라와 있어?` → one clickable 낙하리 창고 임대 listing + owned-asset note; `은마/반포자이` → honest "직접 확인" link, no false "not listed"; `삼성전자 주가` → stock (boundary intact). Commits `7520e48`→`65251b1` on `main`.
+- **Next:** No free Naver 부동산 listing API exists, so the auto "✅ exact land.naver.com listing link" is best-effort (depends on Google's index); the brokerage-site results + search link are the reliable path. Serper free credits (~2,500) deplete with heavy use — monitor.
+
+---
+
+### [later] Naver listings: clickable links, one-ad-default + more-on-ask, and the Asset-frontend repo
+
+- **What:** Polished the Naver property answer into a clean, clickable, smart UX after live boss feedback.
+  - **Providers verified working:** free Naver Open API (`naver_api:webkr`) for general search + the user's new Serper key (`serper:naver`) for land.naver.com. Real-estate path = Serper first (prefers DEEP article links over homepages); general = Naver API first.
+  - **Never lies + finds real ads:** "올라와 있어?" searches Naver broadly; our 낙하리 land IS advertised on brokerage sites (내안애부동산 / zippoom / 펜션매매) that land.naver.com-only scoping missed. Filter out news/YouTube/social; rank by **area mention in the title** (so a 갈현리 post keyword-stuffing 낙하리 doesn't win).
+  - **One ad link by default, more on ask:** resolve the subject against our asset file ALWAYS so '우리 낙하리 …' (no '땅'/'네이버') still routes to the listing path (not a generic web dump of 맛집/위키). Show ONE best ad; '더 보여줘' (detected via history even without '네이버') re-runs and shows up to 5 + the search link. Dedupe subject tokens / strip '더'.
+  - **Clickable links — required a SEPARATE repo.** The VIP `admin-dashboard` is hardcoded `agentId:"vip"` (oasisvip), NOT the Asset site. `assetagent.vercel.app` is its own repo `github.com/tripleh-aiteam/asset-agent.git`, whose `ChatWorkspace` rendered the reply as plain `{t.text}` → markdown links showed as literal `**[…](…)**`. Fixed there: render through the existing `Markdown` component ([asset-agent commit `cb0a035`]). Backend also stopped wrapping links in `**` (bold swallowed the link). **Local `asset-agent-repo` was 23 commits behind origin — fast-forwarded to live `d06fd60` before editing.**
+- **Why:** The boss tests this on the live Asset app; a confident false "not listed", uncloseable raw-markdown links, or a 6-item food/wiki dump all read as broken. Goal: one trustworthy clickable ad, expandable on request.
+- **Files:** VIP repo [assistant_agent.py](apps/orchestrator-api/services/assistant_agent.py) (`_vip_naver_search_reply`, `_naver_more_followup`, `_looks_like_listing`/`_listing_score`/news+skip filters, `_naver_subject` dedupe) + [naver_search.py](apps/orchestrator-api/services/naver_search.py); VIP frontend [ChatWorkspace.tsx](apps/admin-dashboard/src/components/ChatWorkspace.tsx) `inlineFmt` link support; **separate asset-agent repo** `apps/web/src/components/ChatWorkspace.tsx` (render via `Markdown`).
+- **Verified (live, Render + Vercel):** `우리 낙하리 네이버에 올라와 있어?` → ONE clickable 낙하리 ad + assets; `우리 낙하리 매물 더 보여줘` → 5 clickable zippoom 낙하리 listings; clean header. Commits `81d06a2`→`328309e` (VIP) and `cb0a035` (asset-agent).
+- **Next:** Asset-frontend changes must go in `asset-agent.git`, NOT the VIP `admin-dashboard`. Realty/Stock agents are likely separate repos too — confirm before frontend edits. Other 3 agents (VIP/Stock/Realty) not yet tested.
+
+---
+
+## 2026-06-19 (Friday) — Report numeric consistency: single source of truth across all sections
+
+### Goal
+
+The boss flagged that figures contradicted each other *within the same daily report*: Kiwoom table showed Samsung +4.62% / SK hynix +6.51%, but the SBS-Biz news summary in the same report said +1.02% / +5.84%; KOSPI was reported as 8,864 in one article and 9,063 in another; an up day was described as a "downturn"; NVIDIA GTC 2026 appeared as both already-happened and upcoming; and a Samsung–Apple story was mis-attributed to 매일경제 (it was 한국경제/머니투데이).
+
+### Root cause
+
+Every report mixed **two unreconciled number sources**: the authoritative price table (real OHLCV) vs. LLM summaries of *news-article body text*. The prompts only said "don't fabricate numbers," which made the model faithfully **repeat whatever figure was inside each article** (from a different day/outlet) — so the table and the narrative diverged, and articles disagreed with each other.
+
+### Files updated
+
+- [apps/orchestrator-api/services/kiwoom_report.py](apps/orchestrator-api/services/kiwoom_report.py) — added `market_index_facts()` (the single canonical KOSPI/KOSDAQ/Nasdaq line from the live snapshot) + shared `GROUNDING_RULE_EN` / `GROUNDING_RULE_KO` / `ATTRIBUTION_RULE_KO`. Wired `GROUNDING_RULE_EN` into the Kiwoom narrative system prompt and injected the canonical index into the user payload.
+- [apps/orchestrator-api/services/newspaper_report.py](apps/orchestrator-api/services/newspaper_report.py) — added `_auth_changes()`; prepend the authoritative per-stock change + canonical index + `GROUNDING_RULE_KO` to every per-article summary prompt; appended `GROUNDING_RULE_KO` + `ATTRIBUTION_RULE_KO` to the synthesis prompt and fed it the canonical index. Attribution rule = only tag `[출처: 매체]` when that outlet's section actually carried the story.
+- [apps/orchestrator-api/services/master_report.py](apps/orchestrator-api/services/master_report.py) — appended `GROUNDING_RULE_EN` to the master synthesis prompt + injected the canonical index.
+
+### Verified
+
+Deployed `a525d14` to Render, triggered a Kiwoom-only run to the test address (tripleh.agents@gmail.com). New report (2026-06-19): prose Samsung ▲1.79% / SK ▲5.03% **exactly match the table**, **no** contradictory KOSPI point value appears, and the tone is bullish/"risk-on" on an up day (no "downturn"). The newspaper attribution (#5) + GTC tense (#4) fixes ride in the newspaper/master reports.
+
+### Secondary finding (not yet addressed)
+
+Report generation is **slow** because `prefer_paid` routes the report LLM calls to OpenAI `gpt-5.5` (a reasoning model) — the full 4-report `compose/all` ran well past the "8-12 min" estimate (~30-45 min). Worth considering a faster model (e.g. Groq) for the bulk report prose to keep the morning pipeline on schedule.
+
+### Next
+
+- Watch tomorrow's 6:30/6:50 AM KST scheduled run to confirm the newspaper attribution + GTC-tense fixes in the real consolidated email.
+- Decide whether to switch report composition off `gpt-5.5` for speed.
+
+### [10:25] Dashboard Reports tabs showed "(0)" — internal snapshots buried the daily reports
+
+- **What:** [apps/orchestrator-api/routers/reports.py](apps/orchestrator-api/routers/reports.py) `GET /reports/` now (a) excludes internal rows (`kiwoom_snapshot` / `newspaper_snapshot` / `youtube_snapshot` / `recommendation_daily`) unless a specific `report_type` is requested, (b) raised default limit 20→100 (cap 300), and (c) exposes `period` in the response.
+- **Why:** The dashboard fetched a flat latest-20 across ALL report_types. Hourly snapshots (3/hour) + recommendation history dominated that window and pushed the once-daily Kiwoom/Newspaper/YouTube/Master reports out → tabs rendered "(0)" even though the rows existed. The missing `period` field also meant every report fell into the Daily tab, so Weekly/Monthly always showed 0. The reports themselves were generating fine (verified newspaper row saved today) — this was purely a list-visibility bug.
+- **Files:** `apps/orchestrator-api/routers/reports.py`
+- **Note:** The "email not arriving" for a manual *All-4* run is the gpt-5.5 slowness (the consolidated email sends only at the final master step, ~30-45 min in), NOT a failure — the Kiwoom-only email arrived fine. Deployed `071e9bc`.
+
+### [11:10] Report speed + tables-only-in-Kiwoom
+
+- **Speed:** user set `SMART_LLM_MODEL=gpt-5.4` on the **vip-orchestrator** Render env (confirmed deployed). Report composition now runs on OpenAI gpt-5.4 instead of the slow gpt-5.5 reasoning flagship — All-4 run should finish in minutes. No code change (env-only; `_smart_model_name()` reads it at call time).
+- **Tables:** per request, keep tables only in **Kiwoom**; **Newspaper** + **Master/Recommendation** are now all-prose/bullets. [catalyst_news.py](apps/orchestrator-api/services/catalyst_news.py) catalyst-schedule rule → bullets (used by Newspaper); [newspaper_report.py](apps/orchestrator-api/services/newspaper_report.py) synthesis forbids all tables + Section 5 추천 → prose; [master_report.py](apps/orchestrator-api/services/master_report.py) global no-table rule + Sections 4/5/6 → bullets + KO-translation no longer re-inserts a price table. Fallbacks de-tabled. Deployed `fd0662b`.
+- **YouTube caveat:** `build_youtube_report` is dead code (no callers); the delivered YouTube report is the colleague's **external GPU pipeline** (byte-for-byte .docx), so its tables can't be removed from this repo — needs a change in that pipeline.
+
+### [12:05] Manual report generation inconsistent — single-flight guard + parallel newspaper
+
+- **Symptom:** manual All-4 "felt broken" — Kiwoom kept regenerating (00:43→01:51→02:15) but Newspaper stayed frozen at 01:20 across runs, so Master/email never fired.
+- **Root cause:** no concurrency control. Repeated dashboard clicks + my test triggers spawned several overlapping All-4 threads; each does heavy network+LLM work and on one Render instance they starved the slow sequential Newspaper step (6 outlets × full-text fetch + 6 sequential LLM calls with sleeps). NOT the model (gpt-5.4 was healthy).
+- **Fix:** [scheduler_service.py](apps/orchestrator-api/services/scheduler_service.py) — `_single_flight(name)` decorator on `run_all_reports_now` + each `_{kiwoom,newspaper,youtube,master}_daily_report`; a second trigger of the same job is a no-op while one runs (different job names still run concurrently, preserving the 6:30 kiwoom+newspaper overlap). [newspaper_report.py](apps/orchestrator-api/services/newspaper_report.py) — parallelized outlet gathering (6 concurrent) + the 6 per-outlet LLM summaries (pool of 3), dropped the inter-call sleeps. Deploy restart also clears any stuck threads. Deployed `3187183`.
+- **Next:** after deploy, run ONE clean All-4 → confirm it completes end-to-end in minutes + email arrives + no tables in Newspaper/Master.
+
+### [15:25] Newspaper hang root-caused + fixed; Kiwoom Section 7 de-tabled
+
+- **Newspaper hang (the real blocker):** the single-flight guard helped concurrency but Newspaper still stalled — root cause was the live news-gathering blocking with no overall ceiling (a slow/stuck source or page fetch). Fix in [newspaper_report.py](apps/orchestrator-api/services/newspaper_report.py): `_with_timeout()` wraps every heavy phase (news gather 150s, hidden 45s, catalysts 60s, recommendation 150s) → the build ALWAYS completes within a bounded time. **Verified:** Newspaper completed in ~3.5 min (was hanging indefinitely), health stayed 200, and the output has **0 tables** (the LLM-generated '시세 (키움/KRX …)' price table is gone via the no-table grounding).
+- **Kiwoom Section 7:** [kiwoom_report.py](apps/orchestrator-api/services/kiwoom_report.py) `_new_buy_ideas` now emits the 5 picks as a numbered **prose** list (was a `| Stock | Buy Thesis | Catalyst | Risk |` table); KO-translation prompt told to keep it prose (was forcing a table). **Verified:** Section 7 has 0 table rows; main price/수급/파생 tables retained (34 rows).
+- Both regenerated + emailed to tripleh.agents@gmail.com. Deployed `118b186`.
+- **Note on instability:** saw repeated transient Render 502s during this session's many manual triggers/deploys; the single-flight guard + timeout fix should reduce the load that caused them, but if 502s persist under normal use it's worth checking the instance's memory headroom.
+
+### [16:05] Detailed Asset Agent report (new 5th report)
+
+- **What:** new [asset_report.py](apps/orchestrator-api/services/asset_report.py) builds a full ~5-page bilingual Asset report (8 sections: 포트폴리오 개요 / 임대·공실 / 임대수익·현금흐름 / 계약 / 만료 임대차 / 재무 / 리스크 / 추천 액션) from the live Asset backend (`asset_summary` task) — replacing the tiny ~6-metric Telegram card as the detailed deliverable. Deterministic data tables (summary + contracts + expiring leases) + an LLM analysis (EN compose → KO translation, KO cap raised to 13000 so all 8 sections survive).
+- **Wiring** ([scheduler_service.py](apps/orchestrator-api/services/scheduler_service.py)): `_asset_daily_report` job (single-flight + retry), scheduled **6:30 AM KST**, added to `run_all_reports_now`, and **bundled into the 6:50 master email as the 5th attachment** (`5_자산_Asset`) + Telegram. Manual trigger: `POST /reports/compose/asset` ([routers/reports.py](apps/orchestrator-api/routers/reports.py)).
+- **Verified:** generated ~5 pages / 2,905 words / 8 KO sections, emailed to davronbekmalikov96@gmail.com. Deployed `f423716` + `3fa7184`.
+- **Data caveat (asset BACKEND, not orchestrator):** the asset backend's `/api/dashboard/summary` returns 0 for total_properties/units/occupied even though contracts/expiries/vacancies/cash-flow have real data — so headline aggregates show 0. The report intelligently flags this. Fixing the headline numbers needs the asset backend (asset-agent-s4tw) dashboard-summary aggregation / data seed.
+- **Pending (frontend):** Asset isn't yet a dedicated SOURCE tab / generate-button in the admin-dashboard Reports page (Vercel) — it currently classifies under Agents/Daily. Add a tab + GEN_REPORTS entry when convenient.
+
+### [18:30] Asset Excel → Supabase + chatbot tools; Real Estate report; 6 separate daily emails
+
+**Asset data pipeline (the company 자산관리.xlsx → live in the system):**
+- [scripts/import_assets.py](scripts/import_assets.py) parses the 18-sheet workbook → Supabase tables `asset_portfolio` (23 총괄 line items) + `asset_units` (116 units/parcels), handling heterogeneous land/commercial/도생/생숙 layouts + `#REF!`. Re-run to refresh. Verified **812.1억** total (토지 632억/상가 113억/도생 48억…), 47 occupied / 2 vacant.
+- [services/asset_data.py](apps/orchestrator-api/services/asset_data.py) reads them; [services/asset_report.py](apps/orchestrator-api/services/asset_report.py) now builds the report from this real data (verified ~5-page EN report, 812억).
+- [scripts/dump_assets_text.py](scripts/dump_assets_text.py) → full-workbook text uploaded to the assistant KB (RAG, agent=vip) for free-text recall.
+
+**Chatbot knows the assets** ([services/assistant_tools.py](apps/orchestrator-api/services/assistant_tools.py)): added `asset_summary` (totals/by-category/occupancy), `asset_search` (per-unit lookup, tokenized for natural Korean), `asset_top` (biggest/smallest/most-valuable). Fixed: (a) the **Asset agent** wasn't granted these tools in `allowed_tool_names` — added; (b) `search_knowledge_base` no longer leaks the source filename/similarity; (c) [services/assistant_agent.py](apps/orchestrator-api/services/assistant_agent.py) HARD EXCEPTION forces asset number/comparison questions to the tools (RAG was giving wrong 'biggest'). **Verified on the asset agent:** "가장 큰 자산" → 낙하리 301-13, 6,295㎡; "총 자산 가치" → 812.1억.
+
+**Real Estate report (#6)** [services/realty_report.py](apps/orchestrator-api/services/realty_report.py): detailed report from `realty_kb_loader` (108 listings, ~41억) + OnBid; subtotal-row junk filtered. Standalone 7:05 AM email (KO+EN). Endpoint `POST /reports/compose/realty`.
+
+**6 separate daily emails** ([services/scheduler_service.py](apps/orchestrator-api/services/scheduler_service.py)) — un-bundled the 6:50 consolidated email. All to the 7-person list, every day (KST):
+`6:30 Kiwoom · 6:32 Newspaper · 6:40 YouTube · 6:50 Recommendation(추천, master now recommendation-only) · 7:00 Asset(KO+EN) · 7:05 Real Estate(KO+EN)`.
+Each report = own email via `_*_daily_all(email_override="*ALL*")`. Render kept awake 24/7 by the every-10-min keep-warm GitHub Action, so the in-process scheduler fires at those times.
+
+- **Verified today:** all 6 generate (kiwoom/newspaper/master/asset/realty saved today rows; YouTube delivered via colleague's grounded pipeline) and preview-emailed to davronbek. Deployed across a525d14…fc0a166.
+- **Caveats:** YouTube depends on the colleague's GPU pipeline producing a report; the new report jobs have NO missed-run catch-up, so if GitHub Actions is delayed and Render naps exactly at a slot, that one could miss (low risk). Realty report is ~2 pages (listing data thinner than the 812억 asset set).
+
+---
+
+## 2026-06-17 (Wednesday) — Chatbot smartness Phases 1–3: date/past-price, semantic RAG, VIP↔Stock consistency, Kiwoom real-time
+
+> Spans TWO repos: this orchestrator (`VIP-Agent`) and the separate Stock-advisor backend (`github.com/tripleh-aiteam/stock_advisor_agent`, local `C:\Users\TRIPLEH\Desktop\stock_advisor_agent`). The "주식 AI" chatbot runs on the Stock backend; VIP delegates stock questions to it. Bugs must be fixed in BOTH brains.
+
+### [Phase 1] Current-date awareness + past-date prices
+
+- **Date bug:** both bots thought it was 2025 (LLM training-cutoff). Inject the real KST date into the system prompt. Orchestrator: `_date_rule` in [apps/orchestrator-api/services/assistant_agent.py](apps/orchestrator-api/services/assistant_agent.py). Stock backend: `system_prompt_with_date()` in `backend/services/llm/system_prompt.py` + wired in `agent.py`. Verified both answer 2026; past dates treated as past.
+- **Past-date prices:** "June 10 close" returned today's price or hallucinated. VIP now answers from its OWN live Naver daily-history tool (`stock_get_daily_history`) instead of relaying the external backend; `_is_past_price` extended to detect explicit calendar dates (`_has_explicit_date`, KO/EN). Stock backend got a new `get_historical_price` tool (`backend/services/market_data/naver_history.py`, same Naver source) + past-date routing guard `_is_past_date_query`. Verified June 10 SK하이닉스 = **₩2,048,000** on both (matches Google AI Mode).
+
+### [Phase 2] Semantic RAG knowledge base + anti-hallucination
+
+### Files added
+
+- [apps/orchestrator-api/services/knowledge_sync.py](apps/orchestrator-api/services/knowledge_sync.py) — ingests `orch_reports` (Kiwoom/Newspaper/YouTube/Recommendation) + a stable data-dictionary seed into `assistant_knowledge_chunks` (dedup by report id; `reset_synced_kb` for re-embedding). Reuses the proven `ingest_file` pipeline.
+
+### Files updated
+
+- [apps/orchestrator-api/routers/assistant_knowledge.py](apps/orchestrator-api/routers/assistant_knowledge.py) — `POST /assistant/knowledge/sync` (backfill+seed, `reset=true`); ingests reports for BOTH `stock` and `vip` agents (VIP answers general market Qs itself).
+- [apps/orchestrator-api/services/scheduler_service.py](apps/orchestrator-api/services/scheduler_service.py) — daily KB sync at 7:10 AM KST (`_knowledge_sync_job`), after the morning reports.
+- [apps/orchestrator-api/services/assistant_agent.py](apps/orchestrator-api/services/assistant_agent.py) — always-on `_ground_rule` (never invent prices/dates/figures; ground in tool/KB/web_search); reframed the KB-injection block to synthesize report content (was boss-personal-facts only); `_is_report_question` routes report/knowledge Qs to VIP's RAG instead of delegating to the live-only Stock backend; lowered `rag_retrieve` floor to 0.25 in embedding mode.
+- **DB migration (Supabase `xgiwenlkmgxtmdctpwfs`):** `assistant_knowledge_chunks.embedding` was `vector(384)` but OpenAI is 1536-dim → embeddings silently failed, KB went empty. Migrated the column to `vector(1536)` (dropped/recreated the HNSW index; safe since all embeddings were NULL), then re-indexed. Now ~653 chunks embedded for stock+vip; English↔Korean cross-lingual retrieval works (sims 0.5–0.7).
+- **User action done:** set `EMBED_PROVIDER=openai` on the orchestrator's Render env (semantic mode).
+
+### [Phase 2 — Stock backend] KB bridge + consistency fixes
+
+- New `backend/services/knowledge_kb.py` `get_report_context` tool → queries the orchestrator's `/assistant/knowledge/search` (agent='stock'), so the Stock app answers report questions like VIP (was "I can't access internal reports"). Registered in `tool_definitions.py` + wired in `agent.py`; system prompt requires calling it. Floor lowered to 0.22 for semantic.
+- Fixed English KR ticker resolution (`backend/services/media/stock_intent_detector.py` `_KR_EN_ALIASES`: "SK Hynix"→000660, was mis-resolving to "SK"/034730 → wrong price).
+- Fixed past-date routing in the `/chat/agent` adapter (`backend/services/llm/stock_agent_adapter.handle_stock_agent_request`) — it classified past-date Qs as route=quote (today's price); added the `_is_past_date_query` guard → fallback → `get_historical_price`. (Separate code path from `stream_chat_response`.)
+- Verified VIP==Stock on report/current/past-date questions.
+
+### [Phase 3] Kiwoom REST real-time quote (production-gated)
+
+- [backend/services/market_data/stock_quote.py](backend/services/market_data/stock_quote.py) — wired the existing `KiwoomRealtimeQuoteAdapter` (REST `ka10001`) as the FIRST KR provider in `fetch_best_stock_quote`, BUT guarded by `_kiwoom_production_enabled()` (`KIWOOM_APP_KEY`+`SECRET` set AND `KIWOOM_SANDBOX=false`). `KIWOOM_SANDBOX` defaults to true → mock prices, so in the current default Kiwoom is skipped → Naver stays primary (verified no regression). Falls back to Naver on any error.
+
+### What this unblocks
+
+- Chatbot answers present, past, and report/knowledge questions accurately and consistently across VIP and Stock; semantic RAG grounds answers in real reports; live quotes ready to switch to real Kiwoom via one env change.
+
+### Next
+
+- **To activate real Kiwoom quotes:** set production `KIWOOM_APP_KEY`/`KIWOOM_APP_SECRET` + `KIWOOM_SANDBOX=false` on the **stock-advisor** Render service.
+- **Phase 3 polish (optional):** show after-market 시간외/NXT price in the Stock app quote (VIP already does via `naver_stock.realtime_quote`).
+- **Phase 4:** dedicated live YouTube/Newspaper chat tools (report content already in the RAG KB).
+- **Phase 5:** ML price-prediction model — needs user direction (model type, horizon, presentation) before building.
+
+---
 
 ### [later] OnBid (온비드 / KAMCO 공매) integration into the VIP assistant
 

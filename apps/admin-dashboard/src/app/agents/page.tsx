@@ -28,7 +28,16 @@ export default function AgentsPage() {
   const [pingResult, setPingResult] = useState<Record<string, string>>({});
 
   useEffect(() => {
-    const load = () => api<any[]>("/registry/agents").then((data) => setAgents(data.filter((a: any) => a.status === "active"))).catch(() => {});
+    // Show every real, registered agent — including ones the health check has
+    // flagged "error" (backend temporarily unreachable). Previously we filtered
+    // to status === "active", so a single failed /health ping made the whole card
+    // VANISH instead of showing it as down. We still hide deleted ("removed")
+    // entries, dev mocks, and the unconfigured "placeholder-*" slots.
+    const isReal = (a: any) =>
+      !a.is_mock &&
+      a.status !== "removed" &&
+      !(a.endpoint_url || "").includes("placeholder");
+    const load = () => api<any[]>("/registry/agents").then((data) => setAgents(data.filter(isReal))).catch(() => {});
     load();
     const i = setInterval(load, 5000);
     return () => clearInterval(i);
