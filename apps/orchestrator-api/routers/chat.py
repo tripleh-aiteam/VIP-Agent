@@ -573,6 +573,46 @@ def debug_openai():
         return {"status": "error", "exception": str(e), "key_prefix": api_key[:12] + "..."}
 
 
+@router.get("/debug/kiwoom")
+def debug_kiwoom():
+    """Gated diagnostic: WHY does the live price fall back to Naver during market hours?
+    Disabled (404) unless DEBUG_KIWOOM=1. Returns ONLY booleans + sanitized reasons —
+    never the key value, takes no user input."""
+    import os
+    if os.getenv("DEBUG_KIWOOM") != "1":
+        from fastapi import HTTPException
+        raise HTTPException(status_code=404, detail="Not Found")
+    from services import kiwoom_rest
+    k, s = kiwoom_rest._creds()
+    out: dict = {
+        "creds_present": bool(k and s),
+        "KIWOOM_APP_KEY_seen": bool(os.getenv("KIWOOM_APP_KEY")),
+        "KIWOOM_APP_SECRET_seen": bool(os.getenv("KIWOOM_APP_SECRET")),
+        "api_base": os.getenv("KIWOOM_API_BASE") or "(default 실전)",
+    }
+    if not (k and s):
+        out["reason"] = "KIWOOM_APP_KEY / KIWOOM_APP_SECRET not visible to THIS service"
+        return out
+    try:
+        tok = kiwoom_rest._token(force=True)
+        out["token_ok"] = bool(tok)
+        if not tok:
+            out["reason"] = "token request returned nothing (key may be wrong env / product)"
+            return out
+    except Exception as e:
+        out["token_ok"] = False
+        out["reason"] = f"token error: {str(e)[:140]}"
+        return out
+    try:
+        q = kiwoom_rest.current_price("005930")  # 삼성전자 — public data
+        out["price_ok"] = bool(q and q.get("price"))
+        out["sample_name"] = (q or {}).get("name")
+    except Exception as e:
+        out["price_ok"] = False
+        out["reason"] = f"price error: {str(e)[:140]}"
+    return out
+
+
 class CreateSessionBody(BaseModel):
     user_id: str = Field(default="operator")
     channel: str = Field(default="web", description="web | telegram | api")
