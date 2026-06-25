@@ -1088,10 +1088,12 @@ def _asset_daily_report(email_override: str | None = None, period: str = "daily"
 @_single_flight("realty")
 @with_retry(max_attempts=2, backoff_seconds=(60, 300), job_name="realty_daily_report")
 def _realty_daily_report(email_override: str | None = None, period: str = "daily", lang: str = "ko"):
-    """Detailed Real Estate Agent report — listings workbook + OnBid 공매, saved to
-    the dashboard + Telegram, and sent as its OWN standalone email with BOTH Korean
-    and English .docx (scheduled ~7:05 AM KST to all recipients via _realty_daily_all)."""
-    from services.realty_report import build_realty_report
+    """Daily Real Estate Agent report — now sourced from the PARTNER's Supabase
+    (table land_investigations). Renders his 일일 현황 digest, saves it to the
+    dashboard + Telegram, and sends it as its OWN standalone email with BOTH Korean
+    and English .docx (scheduled ~7:05 AM KST to all recipients via _realty_daily_all).
+    Replaces the old self-scraped listings+OnBid report (services.realty_report)."""
+    from services.realty_supabase import build_realty_supabase_report as build_realty_report
     from services.kiwoom_report import format_report_telegram
     from services.telegram_service import send_alert
     from db.models import OrchReport
@@ -1101,6 +1103,14 @@ def _realty_daily_report(email_override: str | None = None, period: str = "daily
     kst = kst_label()
     try:
         rep = build_realty_report(db, trace)
+        # The partner's Supabase is the only source now — if it's unreachable /
+        # unconfigured, save a placeholder but skip Telegram + email (never send an
+        # empty 'data unavailable' doc to the boss).
+        source_ok = rep.get("status") != "unavailable"
+        if not source_ok:
+            log.warning(f"realty: Supabase source unavailable ({rep.get('reason')}) — "
+                        f"saving placeholder, skipping Telegram + email",
+                        extra={"trace_id": trace, "action": "realty.source.unavailable"})
         r = OrchReport(
             report_type="realty_report",
             source_run_ids_json=[],
@@ -1116,12 +1126,13 @@ def _realty_daily_report(email_override: str | None = None, period: str = "daily
         db.add(r)
         db.commit()
 
-        try:
-            for chunk in format_report_telegram(rep, kst, lang="ko",
-                                                title="Real Estate Agent Report", emoji="🏠"):
-                send_alert(chunk)
-        except Exception as te:
-            log.warning(f"realty telegram format failed: {te}")
+        if source_ok:
+            try:
+                for chunk in format_report_telegram(rep, kst, lang="ko",
+                                                    title="Real Estate Agent Report", emoji="🏠"):
+                    send_alert(chunk)
+            except Exception as te:
+                log.warning(f"realty telegram format failed: {te}")
 
         try:
             from services.report_docx import markdown_to_docx
@@ -1133,21 +1144,21 @@ def _realty_daily_report(email_override: str | None = None, period: str = "daily
             else:
                 to_addr = (email_override or os.getenv("REALTY_REPORT_EMAIL")
                            or os.getenv("REPORT_EMAIL_TO") or DEFAULT_RECIPIENT)
-            if (email_override or os.getenv("SEND_INDIVIDUAL_EMAILS") == "1") and _email_ok() and to_addr:
+            if source_ok and (email_override or os.getenv("SEND_INDIVIDUAL_EMAILS") == "1") and _email_ok() and to_addr:
                 ymd = datetime.utcnow().strftime("%Y%m%d")
                 ko_md = rep.get("detail_ko") or rep.get("detail_en") or ""
                 en_md = rep.get("detail_en") or rep.get("detail_ko") or ""
                 files = []
                 if ko_md:
-                    files.append((f"부동산리포트_RealEstate_KO_{ymd}.docx",
-                                  markdown_to_docx(ko_md, "부동산 에이전트 상세 리포트 (한국어)", kst)))
+                    files.append((f"부동산_일일현황_KO_{ymd}.docx",
+                                  markdown_to_docx(ko_md, "부동산 일일 현황", kst)))
                 if en_md:
-                    files.append((f"RealEstate_Report_EN_{ymd}.docx",
-                                  markdown_to_docx(en_md, "Real Estate Agent Detailed Report (English)", kst)))
+                    files.append((f"RealEstate_DailyStatus_EN_{ymd}.docx",
+                                  markdown_to_docx(en_md, "Real Estate Daily Status (English)", kst)))
                 res = send_email_with_docs(
-                    to_addr, f"[Real Estate] 부동산 에이전트 상세 리포트 (한/영) — {kst}",
-                    "부동산 에이전트 상세 리포트입니다 — 한국어·영문 2개 파일을 첨부합니다.\n\n"
-                    "The detailed Real Estate Agent report is attached in Korean and English.",
+                    to_addr, f"[Real Estate] 부동산 일일 현황 (한/영) — {kst}",
+                    "부동산 일일 현황 리포트입니다 — 한국어·영문 2개 파일을 첨부합니다.\n\n"
+                    "The Real Estate daily status report is attached in Korean and English.",
                     files)
                 log.info(f"realty: email {'sent' if res.get('ok') else 'skipped'} -> "
                          f"{len(to_addr) if isinstance(to_addr, list) else 1} recipient(s), "

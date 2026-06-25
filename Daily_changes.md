@@ -56,6 +56,13 @@ From the next 7:05 AM KST run, `_realty_daily_all` (email_override="*ALL*") deli
 - **Verified:** live render = 15 listings, 15 clickable hyperlinks in the KO docx (sample = real OnBid URL), ~2.2 pages. Test v2 emailed (KO+EN) to hskim@tripleh.co.kr + davronbekmalikov96@gmail.com → `{ok: True}`.
 - **Next:** still needs Render deploy for the scheduled run; `_MAX_LISTINGS` is a one-line tweak if 3 pages should hold more/fewer.
 
+### [17:40] Drop scraper-junk rows + add LINK: prefix
+
+- **What:** (1) Each clickable title now reads `LINK: <title>` so the boss sees it's clickable. (2) Added `_is_junk(p)` filter in [realty_supabase.py](apps/orchestrator-api/services/realty_supabase.py) to drop the partner's crawler artifacts — rows with placeholder title `물건정보` (21 of them) or a boilerplate trust-services blurb as the address (`상품약관`/`신탁수수료`/`신탁사업 토지신탁`). These showed up as identical-looking duplicates in the email.
+- **Why:** boss reported "3 same data: 물건정보". They're nav/footer pages the scraper ingested, not real listings — his own UI excludes them.
+- **Verified:** after filter, 0 `물건정보` rows; 오늘 신규 28→13; trend now `…06-23:5 · 06-24:3 · 06-25:13` which **matches the partner's original sample exactly** (5·3) — strong confirmation the junk filter mirrors his logic. 13 listings, 13 LINK hyperlinks, ~2.0 pages. Test v4 emailed to the two test addresses → `{ok: True}`.
+- **Daily auto-send confirmed:** `_realty_daily_all` (cron `5 22 * * *` = 7:05 AM KST) → `_realty_daily_report(email_override="*ALL*")` → `default_recipients()` = all 7. Ready; only needs the Render deploy.
+
 ---
 
 ## 2026-06-22 (Monday) — Twin Work Assistant: the full VIP chatbot inside every Twin
