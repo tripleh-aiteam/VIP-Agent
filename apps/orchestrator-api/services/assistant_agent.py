@@ -885,6 +885,46 @@ def _requested_history_dates(q: Optional[str]):
     return None
 
 
+# KRX regular session — used to answer time-of-day price questions correctly.
+_MKT_OPEN = (9, 0)
+_MKT_CLOSE = (15, 30)
+
+
+def _requested_time_kst(q: Optional[str]) -> Optional[tuple[int, int]]:
+    """Parse a time-of-day from the question → (hour, minute) 24h KST, or None.
+    Handles '5pm', '6 pm', '오후 5시', '오전 9시 30분', '17:00', '15시 30분'."""
+    t = (q or "").lower()
+    m = _re.search(r"\b([01]?\d|2[0-3])\s*:\s*([0-5]\d)\b", t)
+    if m:
+        return (int(m.group(1)), int(m.group(2)))
+    m = _re.search(r"(\d{1,2})\s*시(?:\s*(\d{1,2})\s*분)?", t)
+    if m:
+        h, mi = int(m.group(1)), int(m.group(2) or 0)
+        if h < 12 and ("오후" in t or "pm" in t):
+            h += 12
+        if h == 12 and ("오전" in t or "am" in t):
+            h = 0
+        if 0 <= h <= 23 and 0 <= mi <= 59:
+            return (h, mi)
+    m = _re.search(r"\b(\d{1,2})\s*(a\.?m\.?|p\.?m\.?)\b", t)
+    if m:
+        h, ap = int(m.group(1)), m.group(2).replace(".", "")
+        if ap == "pm" and h < 12:
+            h += 12
+        if ap == "am" and h == 12:
+            h = 0
+        if 0 <= h <= 23:
+            return (h, 0)
+    return None
+
+
+def _won_str(v) -> str:
+    try:
+        return f"₩{int(round(float(v))):,}"
+    except Exception:
+        return str(v)
+
+
 def _vip_history_reply(transcript: Optional[str], lang: str, hist=None) -> Optional[str]:
     """Deterministic multi-day OHLCV table from Naver daily history — past specific
     dates AND ranges ('last 4 days'). Single source, so VIP and the relaying AI Advisor
@@ -901,6 +941,11 @@ def _vip_history_reply(transcript: Optional[str], lang: str, hist=None) -> Optio
             and _re.search(r"[a-zA-Z]", transcript or ""):
         _en = True
     kind, payload = hist
+    # A specific time-of-day on a single date ('yesterday at 5pm') needs a precise,
+    # honest answer — not just the daily table. KRX trades 09:00–15:30 KST.
+    tm = _requested_time_kst(transcript)
+    single_date = kind == "dates" and len({d.isoformat() for d in payload}) == 1
+    notes = []
     out = []
     for code, name in stocks[:6]:
         try:
@@ -921,9 +966,37 @@ def _vip_history_reply(transcript: Optional[str], lang: str, hist=None) -> Optio
                     if row:
                         sel.append(row)
         out.append({"name": (name or code).upper(), "code": code, "rows": sel})
+
+        # Time-aware precise line (after-close → that day's close; before open →
+        # previous close; intraday → no minute data on free feed).
+        if tm and single_date and sel:
+            row, nm, (hh, mm) = sel[0], (name or code).upper(), tm
+            close, d = row.get("close"), row.get("date")
+            if tm >= _MKT_CLOSE:
+                notes.append(
+                    f"{nm}: {hh:02d}:{mm:02d}는 한국 증시 마감(15:30) 이후라, 그 시점 가격은 {d} 종가 {_won_str(close)}입니다."
+                    if not _en else
+                    f"{nm}: {hh:02d}:{mm:02d} is after the KRX close (15:30 KST) — the price then is the {d} close, {_won_str(close)}.")
+            elif tm < _MKT_OPEN:
+                try:
+                    idx = rows.index(row)
+                    prev = rows[idx + 1] if idx + 1 < len(rows) else None
+                except ValueError:
+                    prev = None
+                pc, pd = (prev.get("close"), prev.get("date")) if prev else (close, d)
+                notes.append(
+                    f"{nm}: {hh:02d}:{mm:02d}는 장 시작(09:00) 전이라, 직전 거래일({pd}) 종가 {_won_str(pc)} 기준입니다."
+                    if not _en else
+                    f"{nm}: {hh:02d}:{mm:02d} is before the open (09:00) — it reflects the previous close ({pd}), {_won_str(pc)}.")
+            else:
+                notes.append(
+                    f"{nm}: {d} 장중 {hh:02d}:{mm:02d}의 분단위 시세는 무료 데이터로 제공되지 않습니다. 당일 종가 {_won_str(close)} (고가 {_won_str(row.get('high'))} / 저가 {_won_str(row.get('low'))})."
+                    if not _en else
+                    f"{nm}: minute-level price for {d} {hh:02d}:{mm:02d} isn't on the free feed. Day close {_won_str(close)} (H {_won_str(row.get('high'))} / L {_won_str(row.get('low'))}).")
     if not any(s["rows"] for s in out):
         return None
-    return price_format.format_history(out, lang=("en" if _en else "ko"))
+    table = price_format.format_history(out, lang=("en" if _en else "ko"))
+    return ("\n".join(notes) + "\n\n" + table) if notes else table
 
 
 def _vip_stock_data_reply(transcript: Optional[str], lang: str) -> Optional[str]:
