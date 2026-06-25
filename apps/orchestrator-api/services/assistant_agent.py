@@ -532,7 +532,8 @@ def _is_concept_question(transcript: Optional[str]) -> bool:
 # (Kiwoom during market, Naver after). Handles ONE stock, MULTIPLE stocks, and a
 # bare 'what is the current stock price' (→ default watchlist).
 _PRICE_WORDS = ("현재가", "시세", "주가", "얼마", "price", "quote",
-                "시가", "고가", "저가", "opening", "open price", "high price", "low price")
+                "시가", "고가", "저가", "opening", "open price", "high price", "low price",
+                "거래량", "거래대금", "volume")
 # Generic stock-price phrasing with NO specific company → show the watchlist.
 _GENERIC_STOCK_WORDS = ("stock", "주가", "주식", "종목", "시세", "현재가")
 _DEFAULT_WATCHLIST = (("000660", "SK하이닉스"), ("005930", "삼성전자"), ("035420", "NAVER"))
@@ -814,6 +815,20 @@ def _vip_live_price_reply(transcript: Optional[str], lang: str) -> Optional[dict
 
     # Which values did the user ask for? ('opening and current' -> [open, price]).
     fields = _requested_price_fields(transcript)
+
+    # Volume backfill: Naver's realtime `basic` endpoint returns no
+    # accumulatedTradingVolume AFTER the close, so a '거래량' request would drop it.
+    # Pull the day's volume from the daily endpoint when it's missing.
+    if "volume" in fields and any(q.get("volume") is None for q in quotes):
+        try:
+            from services import naver_stock as _ns
+            for q in quotes:
+                if q.get("volume") is None:
+                    rows = _ns.daily_history(q["code"], days=1)
+                    if rows:
+                        q["volume"] = rows[0].get("volume")
+        except Exception:
+            pass
 
     # Format via the shared canonical formatter so VIP and the AI Advisor (which
     # relays this answer) phrase it the same way.
