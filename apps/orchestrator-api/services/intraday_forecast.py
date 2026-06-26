@@ -110,26 +110,39 @@ def tick(db) -> dict[str, Any]:
     _ensure_table(db)
     import services.trading_brief as tb
     now = kst_now()
+    mkt = _market_open(now)
     uni = _universe()
     codes = [c for c, _ in uni]
+    name = dict(uni)
 
-    # ---- live prices + analysis signals (one batch) ----
-    try:
-        an = tb.analysis_batch(db, codes, horizon=5)
-    except Exception as e:
-        log.warning(f"analysis_batch: {str(e)[:80]}")
-        an = {}
-    live: dict[str, float] = {}
-    for c, n in uni:
-        rt = (an.get(c) or {}).get("realtime") or {}
-        p = rt.get("price")
-        live[c] = float(p) if p else (_live(c, n) or 0.0)
-
-    # ---- GRADE matured open forecasts ----
-    graded = 0
+    # ---- what actually needs work: matured open rows to grade + (in-market) predictions
     open_rows = db.execute(text(
         "SELECT id, ticker, base_price, pred_dir FROM intraday_forecasts "
         "WHERE status='open' AND target_at <= :now"), {"now": now}).fetchall()
+    if not open_rows and not mkt:                       # nothing to do — return fast
+        return {"graded": 0, "made": 0, "market_open": False, "kst": now.strftime("%Y-%m-%d %H:%M")}
+
+    # prices: ONE batched snapshot read (fast, no per-stock HTTP). analysis signals only
+    # when in-market (needed for predictions). Naver fallback ONLY in-market — after hours a
+    # 36-stock Naver storm would time the request out on Render (graded next pass instead).
+    snaps = tb._read_snapshots(db, codes)
+    an: dict = {}
+    if mkt:
+        try:
+            an = tb.analysis_batch(db, codes, horizon=5)
+        except Exception as e:
+            log.warning(f"analysis_batch: {str(e)[:80]}")
+            an = {}
+    need = {r[1] for r in open_rows} | (set(codes) if mkt else set())
+    live: dict[str, float] = {}
+    for c in need:
+        p = ((an.get(c) or {}).get("realtime") or {}).get("price") or (snaps.get(c) or {}).get("price")
+        if not p and mkt:
+            p = _live(c, name.get(c))
+        live[c] = float(p) if p else 0.0
+
+    # ---- GRADE matured open forecasts ----
+    graded = 0
     for row in open_rows:
         ap = live.get(row[1]) or 0.0
         if ap <= 0:
@@ -148,7 +161,7 @@ def tick(db) -> dict[str, Any]:
 
     # ---- PREDICT next hour (only during market) ----
     made = 0
-    if _market_open(now):
+    if mkt:
         target = now + timedelta(minutes=HORIZON_MIN)
         for c, n in uni:
             base = live.get(c) or 0.0
