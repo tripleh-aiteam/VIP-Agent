@@ -146,6 +146,15 @@ def minute_bars_view(ticker: str, db: Session = Depends(get_db)):
     return {"ticker": tk, "bars": read_bars(db, tk), "vol": intraday_vol(db, tk)}
 
 
+@router.get("/day-trade/{ticker}")
+def day_trade_feasibility(ticker: str, target: float = Query(1.0), db: Session = Depends(get_db)):
+    """Answers 'can I buy {stock} near its intraday bottom and sell +{target}% today?' with
+    a buy zone (near low / support wall), sell target, stop-loss, R:R and a feasible verdict —
+    all from today's measured intraday volatility + the remembered order-book support."""
+    from services.day_trade import feasibility
+    return feasibility(db, str(ticker).zfill(6), float(target))
+
+
 @router.get("/stock-detail/{ticker}")
 def stock_detail(ticker: str, db: Session = Depends(get_db)):
     """Rich single-stock detail for the click-through detail view — OHLC, 등락%, 거래량,
