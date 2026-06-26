@@ -1796,6 +1796,35 @@ def tool_two_method_view(ticker: str = None, db: Session = None, **_kw) -> dict[
     }
 
 
+def tool_day_trade(ticker: str = None, target_pct: float = 1.0, db: Session = None, **_kw) -> dict[str, Any]:
+    """Answer an intraday DAY-TRADE feasibility question for ONE stock: 'I want to buy X
+    near its intraday bottom and sell today for +N% — feasible? where's my stop?'. Uses
+    today's measured intraday volatility (per-minute candles) + the remembered large
+    order-book bid-wall (support). Returns a verdict (feasible yes/marginal/unlikely), a
+    BUY ZONE (near the low / support wall), the SELL TARGET (+N%), the STOP-LOSS, risk% and
+    R:R, with KO/EN reasoning. Use for: '오늘 단타 가능할까', 'X 1% 먹을 수 있을까', 'buy near
+    bottom sell 1% today', 'intraday', '손절 어디', day-trade feasibility. 6-digit code or
+    Korean name; target_pct defaults to 1.0."""
+    from services import prediction_service as ps
+    from services.day_trade import feasibility
+    if not ticker:
+        return {"ok": False, "error": "종목을 알려주세요 (ticker / 종목명)"}
+    raw = str(ticker).strip()
+    code = raw if (raw.isdigit() and len(raw) == 6) else None
+    if not code:
+        rev = {v: k for k, v in ps.NAMES.items()}
+        code = rev.get(raw) or next((c for nm, c in rev.items() if raw and (raw in nm or nm in raw)), None)
+    if not code:
+        return {"ok": False, "error": f"'{raw}' 종목 코드를 찾지 못했습니다 (모니터링 종목만 단타 분석 가능)"}
+    try:
+        tp = max(0.2, min(float(target_pct or 1.0), 10.0))
+    except Exception:
+        tp = 1.0
+    r = feasibility(db, code, target_pct=tp)
+    r["ok"] = True
+    return r
+
+
 def tool_read_chart(ticker: str = None, days: int = 60, db: Session = None, **_kw) -> dict[str, Any]:
     """Read the price CHART for a stock — the SAME daily OHLCV candles the TradingView
     chart on the AI Advisor page plots — and return a technical read: trend, moving
@@ -2051,6 +2080,29 @@ TOOL_REGISTRY: dict[str, Tool] = {
             "required": ["ticker"],
         },
         fn=tool_read_chart,
+    ),
+    "day_trade": Tool(
+        name="day_trade",
+        description=(
+            "Intraday DAY-TRADE feasibility for ONE stock — answers 'can I buy X near its "
+            "intraday bottom and sell today for +N%? where's my stop?'. Call for: '오늘 단타 "
+            "될까', 'X 1% 먹을 수 있어?', 'X 오늘 살까 (단타)', 'buy near the bottom and sell 1% "
+            "today, feasible?', 'intraday/scalp', '손절 어디로'. Uses TODAY's measured intraday "
+            "volatility (per-minute candles) + the remembered large bid-wall support. Returns "
+            "a verdict (feasible/ marginal/ unlikely), a BUY ZONE, SELL TARGET (+N%), STOP-"
+            "LOSS, risk% and R:R. Present the verdict + buy/target/stop. 6-digit code or "
+            "Korean name."
+        ),
+        kind="read",
+        parameters={
+            "type": "object",
+            "properties": {
+                "ticker": {"type": "string", "description": "6-digit KR code (e.g. 000660) OR Korean name (e.g. SK하이닉스)"},
+                "target_pct": {"type": "number", "description": "Intraday profit target in %, default 1.0"},
+            },
+            "required": ["ticker"],
+        },
+        fn=tool_day_trade,
     ),
 
     # --- Phase 2: READ tools (Notion-AI-style search) ---
@@ -3654,6 +3706,9 @@ def allowed_tool_names(agent_id: Optional[str]) -> set[str]:
     allowed = set(_GENERIC_TOOLS)
     if aid == "stock":
         allowed |= {n for n in TOOL_REGISTRY if n.startswith("stock_")}
+        # shared trading tools — the AI Advisor (stock) chatbot uses the SAME two-method,
+        # chart-read and intraday day-trade analysis as VIP.
+        allowed |= {"two_method_view", "read_chart", "day_trade"}
     elif aid in ("realty", "aiglass"):
         allowed |= _PROPERTY_TOOLS
     elif aid == "asset":
