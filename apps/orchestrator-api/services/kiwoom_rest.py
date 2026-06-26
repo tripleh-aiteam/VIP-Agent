@@ -463,10 +463,20 @@ def _rt_cached(key: str, fn):
     return val
 
 
+def _ob_field(side: str, level: int, kind: str) -> str:
+    """Kiwoom ka10004 호가 field name. side='sel'(ask)/'buy'(bid); level 1-10;
+    kind='bid'(price)/'req'(qty). Level 1 uses '_fpr_', levels 2-10 use '_Nth_pre_'."""
+    seg = "fpr" if level == 1 else f"{level}th_pre"
+    return f"{side}_{seg}_{kind}"
+
+
 def order_book(code: str) -> Optional[dict]:
-    """LIVE order book (호가, ka10004) -> bid/ask imbalance. The microstructure
-    signal the day-trader reads: tot_buy_req >> tot_sel_req = buying pressure.
-    Returns {best_bid, best_ask, bid_qty, ask_qty, tot_bid, tot_ask, imbalance}."""
+    """LIVE order book (호가, ka10004) -> ALL 10 bid + 10 ask levels + imbalance.
+    The microstructure signal the day-trader reads: tot_buy_req >> tot_sel_req =
+    buying pressure. The exchange only publishes 10 levels — the deeper 'memory' of
+    scrolled-out levels is assembled OVER TIME by the collector (orderbook_memory).
+    Returns {best_bid, best_ask, bid_qty, ask_qty, tot_bid, tot_ask, imbalance,
+             levels:[{side:'ask'/'bid', level:1-10, price, qty}]}."""
     code = str(code).strip().zfill(6)
 
     def _f():
@@ -478,6 +488,14 @@ def order_book(code: str) -> Optional[dict]:
         imb = None
         if tot_bid is not None and tot_ask is not None and (tot_bid + tot_ask) > 0:
             imb = round((tot_bid - tot_ask) / (tot_bid + tot_ask), 3)
+        levels = []
+        for lv in range(1, 11):                       # 10-deep, both sides
+            for kside, oside in (("sel", "ask"), ("buy", "bid")):
+                p = _to_int(d.get(_ob_field(kside, lv, "bid")))
+                q = _to_int(d.get(_ob_field(kside, lv, "req")))
+                if p:
+                    levels.append({"side": oside, "level": lv, "price": abs(p),
+                                   "qty": abs(q) if q is not None else 0})
         bb, ba = _to_int(d.get("buy_fpr_bid")), _to_int(d.get("sel_fpr_bid"))
         return {
             "best_bid": abs(bb) if bb is not None else None,
@@ -485,6 +503,7 @@ def order_book(code: str) -> Optional[dict]:
             "bid_qty": _to_int(d.get("buy_fpr_req")),
             "ask_qty": _to_int(d.get("sel_fpr_req")),
             "tot_bid": tot_bid, "tot_ask": tot_ask, "imbalance": imb,
+            "levels": levels,
         }
     return _rt_cached(f"ob:{code}", _f)
 

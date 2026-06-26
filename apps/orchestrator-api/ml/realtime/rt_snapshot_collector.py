@@ -32,6 +32,7 @@ except Exception:
     pass
 
 from services import kiwoom_rest as kr               # noqa: E402
+from services import orderbook_memory as obm          # noqa: E402
 from _db import get_conn                             # noqa: E402
 from universe import STARTER_KR                      # noqa: E402
 
@@ -67,6 +68,7 @@ def _ensure(conn):
     with conn.cursor() as cur:
         cur.execute(DDL)
     conn.commit()
+    obm.ensure_tables(conn)             # orderbook_levels + orderbook_memory (deep book)
 
 
 def _one_pass(conn) -> int:
@@ -90,6 +92,12 @@ def _one_pass(conn) -> int:
             except Exception:
                 pass
         sv, sr = _ss_cache.get(tk, (None, None))
+        # DEEP ORDER-BOOK MEMORY: persist the 10+10 levels + remember scrolled-out ones
+        try:
+            if ob.get("levels"):
+                obm.record(conn, tk, ob["levels"], datetime.now(timezone.utc))
+        except Exception as e:
+            print(f"  obm {tk}: {str(e)[:80]}")
         rows.append((tk, fl.get("price") or ob.get("best_bid"), ob.get("imbalance"),
                      ob.get("best_bid"), ob.get("best_ask"), fl.get("foreign"),
                      fl.get("institution"), fl.get("fin_invest"), pr.get("net_amt"),

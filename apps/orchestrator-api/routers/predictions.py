@@ -127,6 +127,15 @@ def intraday_scorecard(db: Session = Depends(get_db)):
     return _scorecard(db, last) if last else {"total": 0, "methods": {}}
 
 
+@router.get("/orderbook/{ticker}")
+def orderbook_depth(ticker: str, depth: int = Query(30), db: Session = Depends(get_db)):
+    """Deep order-book view: LIVE 10 bid/ask levels + the ±depth-level MEMORY of
+    levels that scrolled out over time (the 'disappearing levels' the agent remembers)
+    + large-order walls. 키움 실시간 during market, NAVER after. depth up to 30/side."""
+    from services.orderbook_memory import orderbook_view
+    return orderbook_view(db, str(ticker).zfill(6), min(max(depth, 5), 30))
+
+
 @router.get("/stock-detail/{ticker}")
 def stock_detail(ticker: str, db: Session = Depends(get_db)):
     """Rich single-stock detail for the click-through detail view — OHLC, 등락%, 거래량,

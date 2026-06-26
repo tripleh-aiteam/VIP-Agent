@@ -605,7 +605,7 @@ def stock_card(db, ticker: str, horizon: int = 5, live: bool = False,
 # Independent of the ML model. Scores each stock from the signals the day-trader in
 # the video actually reads: 호가 imbalance + 실시간/일별 수급 + 박스권 position.
 def analysis_signal(card: dict, rt: dict | None, news: int = 0,
-                    regime_tone: str = "mixed") -> dict[str, Any]:
+                    regime_tone: str = "mixed", wall: dict | None = None) -> dict[str, Any]:
     L = card.get("levels") or {}
     flow = card.get("flow") or {}
     score = 0
@@ -654,6 +654,13 @@ def analysis_signal(card: dict, rt: dict | None, news: int = 0,
         add(1, "긍정 뉴스/공시", "Positive news/filing")
     elif news < 0:
         add(-1, "부정 뉴스/공시", "Negative news/filing")
+
+    # 6) 대량 호가벽 (remembered large orders) — big bid wall = 지지(매수), 매도벽 = 저항
+    if wall and wall.get("bias"):
+        if wall["bias"] > 0:
+            add(1, "대량 매수벽(지지)", "Large bid wall (support)")
+        elif wall["bias"] < 0:
+            add(-1, "대량 매도벽(저항)", "Large ask wall (resistance)")
 
     # Regime-adjusted thresholds (#4): in a risk-off market, BUY needs more conviction
     # and SELL fires easier; in risk-on, the reverse. Base ±2.
@@ -731,11 +738,21 @@ def analysis_batch(db, tickers: list[str], horizon: int = 5) -> dict[str, Any]:
     for tk in tickers:
         rt = rts.get(tk)
         card = {"levels": _box_levels(db, tk, "WATCH"), "flow": flows.get(tk)}  # for box pos
-        sig = analysis_signal(card, rt, news=news.get(tk, 0), regime_tone=regime_tone)
+        try:
+            from services.orderbook_memory import wall_bias
+            wall = wall_bias(db, tk)
+        except Exception:
+            wall = None
+        sig = analysis_signal(card, rt, news=news.get(tk, 0), regime_tone=regime_tone, wall=wall)
+        if wall and wall.get("bias"):
+            out_wall = wall                                   # surface walls to the UI
+        else:
+            out_wall = None
         levels = _box_levels(db, tk, sig["signal"])        # OWN levels for the signal
         timing = timing_plan(levels, sig["signal"], as_of, horizon)
         out[tk] = {"realtime": rt, "levels": levels, "flow": flows.get(tk),
-                   "timing": timing, "market_open": _kr_market_open(), **sig}
+                   "timing": timing, "market_open": _kr_market_open(),
+                   "wall": out_wall, **sig}
     return out
 
 
