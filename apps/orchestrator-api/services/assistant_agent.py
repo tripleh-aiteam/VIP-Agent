@@ -531,7 +531,7 @@ def _is_concept_question(transcript: Optional[str]) -> bool:
 # Bare CURRENT-PRICE question (현재가/시세/주가/얼마/price) — VIP answers it LOCALLY
 # (Kiwoom during market, Naver after). Handles ONE stock, MULTIPLE stocks, and a
 # bare 'what is the current stock price' (→ default watchlist).
-_PRICE_WORDS = ("현재가", "시세", "주가", "얼마", "price", "quote",
+_PRICE_WORDS = ("현재가", "시세", "주가", "얼마", "가격", "price", "quote",
                 "시가", "고가", "저가", "opening", "open price", "high price", "low price",
                 "거래량", "거래대금", "volume")
 # Generic stock-price phrasing with NO specific company → show the watchlist.
@@ -665,7 +665,7 @@ def _requested_price_fields(transcript: Optional[str]) -> list[str]:
             or "intraday low" in t or _re.search(r"\blow\b", t)):
         fields.append("low")
     cur = (any(k in t for k in ("current", "현재", "지금", "real-time", "실시간", "latest", "now"))
-           or any(k in t for k in ("price", "주가", "시세", "얼마", "quote")))
+           or any(k in t for k in ("price", "주가", "시세", "얼마", "가격", "quote")))
     if cur:
         fields.append("price")
     if "거래량" in t or "volume" in t or "거래대금" in t:
@@ -874,6 +874,18 @@ def _vip_live_price_reply(transcript: Optional[str], lang: str) -> Optional[dict
     reply = price_format.format_current(
         fmt_quotes, lang=("en" if _en else "ko"),
         used_watchlist=used_watchlist, as_of=now, fields=fields)
+
+    # If the user asked for a SPECIFIC clock time (e.g. '9시 54분', 'at 9:54') we
+    # have no minute-bar (분봉) data — don't silently pass off the current price as
+    # that time's price. Say so honestly, then give the current price as closest.
+    _tm = _requested_time_kst(transcript)
+    if _tm and not _is_past_price(transcript):
+        hh, mm = _tm
+        note = (f"⚠️ {hh:02d}:{mm:02d} 시점의 분단위 시세는 제공되지 않습니다 (분봉 데이터 미연동). "
+                f"가장 가까운 현재가를 안내드립니다:\n\n" if not _en else
+                f"⚠️ Minute-level price at {hh:02d}:{mm:02d} isn't available (no intraday "
+                f"minute feed). Showing the closest current price instead:\n\n")
+        reply = note + reply
 
     return {"intent": "stock_price", "language": lang, "reply": reply,
             "action": None, "speak": True, "transcript": transcript,
