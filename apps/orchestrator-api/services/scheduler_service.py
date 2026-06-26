@@ -1491,6 +1491,35 @@ def _scorekeeper_daily():
         db.close()
 
 
+@_single_flight("intraday_forecast_tick")
+def _intraday_forecast_tick():
+    """Hourly during market: predict next ~1h with BOTH methods + grade matured ones.
+    Builds the per-method per-hour accuracy that the morning email reports."""
+    db = SessionLocal()
+    try:
+        from services.intraday_forecast import tick
+        r = tick(db)
+        log.info(f"intraday forecast tick: {r}", extra={"action": "intraday.tick"})
+    except Exception as e:
+        log.warning(f"intraday forecast tick failed: {str(e)[:120]}")
+    finally:
+        db.close()
+
+
+@_single_flight("intraday_morning_report")
+def _intraday_morning_report():
+    """Before market open: email yesterday's hourly accuracy scorecard (.docx)."""
+    db = SessionLocal()
+    try:
+        from services.intraday_forecast import morning_report
+        r = morning_report(db)
+        log.info(f"intraday morning report: {r}", extra={"action": "intraday.morning_report"})
+    except Exception as e:
+        log.warning(f"intraday morning report failed: {str(e)[:120]}")
+    finally:
+        db.close()
+
+
 @_single_flight("dart_disclosures")
 def _dart_disclosures_daily():
     """Daily: pull official DART disclosures (실적/수주/유증) -> raw_disclosures. The
@@ -1836,6 +1865,25 @@ def init_scheduler():
         coalesce=True,
     )
     log.info("scheduler: scorekeeper registered (16:45 KST daily -> signal_log track record)", extra={"action": "scheduler.scorekeeper_registered"})
+
+    # Intraday 2-method hourly forward test — every hour at :05 during KST market hours
+    # (09:05–15:05 KST = 00:05–06:05 UTC), Mon–Fri. Predicts next ~1h with BOTH methods +
+    # grades matured ones. (Also exposed at POST /predictions/intraday/tick for external cron
+    # so it survives Render free-tier sleep.)
+    _scheduler.add_job(
+        _intraday_forecast_tick,
+        CronTrigger.from_crontab("5 0-6 * * 1-5"),
+        id="intraday-forecast-tick",
+        replace_existing=True, max_instances=1, coalesce=True,
+    )
+    # Morning scorecard email — 08:00 KST = 23:00 UTC daily (before market open).
+    _scheduler.add_job(
+        _intraday_morning_report,
+        CronTrigger.from_crontab("0 23 * * *"),
+        id="intraday-morning-report",
+        replace_existing=True, max_instances=1, coalesce=True,
+    )
+    log.info("scheduler: intraday 2-method hourly forward test registered (hourly 09–15 KST + 08:00 KST email)", extra={"action": "scheduler.intraday_registered"})
 
     # NOTE: the grounded YouTube report is NO LONGER a separate email — it is
     # bundled into the consolidated master email below (all 4 reports together),

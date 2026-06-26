@@ -100,6 +100,33 @@ def scorekeeper_run(db: Session = Depends(get_db)):
     return {"logged": log_today(db), "graded": grade_matured(db)}
 
 
+@router.post("/intraday/tick")
+def intraday_tick(db: Session = Depends(get_db)):
+    """One market-hour pass of the 2-method hourly forward test: grade matured forecasts,
+    then predict the next ~1h with BOTH methods. Hit hourly during market (09–15 KST) by a
+    FREE external cron (cron-job.org) so it survives Render free-tier sleep. Idempotent."""
+    from services.intraday_forecast import tick
+    return tick(db)
+
+
+@router.post("/intraday/morning-report")
+def intraday_morning_report(email: str | None = Query(None), db: Session = Depends(get_db)):
+    """Email yesterday's hourly accuracy scorecard (.docx) to davronbekmalikov96@gmail.com
+    before market open. Fire daily ~08:00 KST via external cron (or the in-process job)."""
+    from services.intraday_forecast import morning_report
+    return morning_report(db, email)
+
+
+@router.get("/intraday/scorecard")
+def intraday_scorecard(db: Session = Depends(get_db)):
+    """Latest graded day's hourly accuracy (both methods) as JSON — for a dashboard panel."""
+    from services.intraday_forecast import _scorecard, _ensure_table
+    from sqlalchemy import text as _t
+    _ensure_table(db)
+    last = db.execute(_t("SELECT max(made_date) FROM intraday_forecasts WHERE status='graded'")).scalar()
+    return _scorecard(db, last) if last else {"total": 0, "methods": {}}
+
+
 @router.get("/stock-detail/{ticker}")
 def stock_detail(ticker: str, db: Session = Depends(get_db)):
     """Rich single-stock detail for the click-through detail view — OHLC, 등락%, 거래량,
