@@ -32,7 +32,7 @@ RECIPIENT = "davronbekmalikov96@gmail.com"
 
 
 def _universe() -> list[tuple[str, str]]:
-    from ml.models.predict import NAMES
+    from services.prediction_service import NAMES   # Render-safe (predict.py pulls numpy)
     return [(c, n) for c, n in NAMES.items() if c != "069500"]
 
 
