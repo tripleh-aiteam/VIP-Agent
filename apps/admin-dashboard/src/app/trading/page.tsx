@@ -660,6 +660,103 @@ function DRow({ label, children }: { label: string; children: ReactNode }) {
   );
 }
 
+type OBLevel = { price: number; qty?: number; last_qty?: number; max_qty?: number; is_large?: boolean; age_sec?: number; side?: string };
+type OBView = {
+  source: string;
+  live: { levels: OBLevel[]; fresh: boolean; age_sec?: number | null; as_of?: string | null };
+  memory: { asks: OBLevel[]; bids: OBLevel[]; mid?: number | null; threshold?: number | null };
+  walls: OBLevel[]; threshold?: number | null; mid?: number | null; naver_price?: number | null;
+};
+
+// Deep order-book panel: live 10 levels + a "30단계" button that reveals the remembered
+// (scrolled-out) levels. 🔥 marks unusually large orders (walls).
+function OrderBookPanel({ code, t }: { code: string; t: (ko: string, en: string) => string }) {
+  const [ob, setOb] = useState<OBView | null>(null);
+  const [deep, setDeep] = useState(false);
+
+  useEffect(() => {
+    if (!code) return;
+    let alive = true;
+    const load = () => api<OBView>(`/predictions/orderbook/${code}?depth=30`).then((x) => { if (alive) setOb(x); }).catch(() => {});
+    load();
+    const i = setInterval(load, 20000);
+    return () => { alive = false; clearInterval(i); };
+  }, [code]);
+
+  if (!ob) return null;
+  const liveAsks = (ob.live.levels || []).filter((l) => l.side === "ask").sort((a, b) => b.price - a.price); // high→low (top)
+  const liveBids = (ob.live.levels || []).filter((l) => l.side === "bid").sort((a, b) => b.price - a.price); // high→low (bottom)
+  const memAsks = [...(ob.memory.asks || [])].sort((a, b) => b.price - a.price); // high→low
+  const memBids = [...(ob.memory.bids || [])].sort((a, b) => b.price - a.price);
+  const maxQ = Math.max(1, ...liveAsks.concat(liveBids).map((l) => l.qty || 0),
+    ...memAsks.concat(memBids).map((l) => l.max_qty || l.last_qty || 0));
+
+  const Bar = ({ qty, max, side }: { qty: number; max: number; side: "ask" | "bid" }) => (
+    <div className="absolute inset-y-0 right-0 opacity-25 rounded"
+      style={{ width: `${Math.min(100, (qty / max) * 100)}%`, background: side === "ask" ? NEG : "var(--badge-blue-text)" }} />
+  );
+  const LiveRow = ({ l, side }: { l: OBLevel; side: "ask" | "bid" }) => (
+    <div className="relative flex items-center justify-between px-2.5 py-1 text-[12px] border-b border-[var(--border-default)]/40">
+      <Bar qty={l.qty || 0} max={maxQ} side={side} />
+      <span className="relative font-bold" style={{ color: side === "ask" ? NEG : "var(--badge-blue-text)" }}>{fmt(l.price)}</span>
+      <span className="relative tabular-nums text-[var(--text-secondary)]">{(l.qty || 0).toLocaleString()}{l.is_large ? " 🔥" : ""}</span>
+    </div>
+  );
+  const MemRow = ({ l, side }: { l: OBLevel; side: "ask" | "bid" }) => (
+    <div className="relative flex items-center justify-between px-2.5 py-1 text-[11px] border-b border-[var(--border-default)]/30">
+      <Bar qty={l.max_qty || l.last_qty || 0} max={maxQ} side={side} />
+      <span className="relative font-semibold" style={{ color: side === "ask" ? NEG : "var(--badge-blue-text)" }}>{fmt(l.price)}</span>
+      <span className="relative tabular-nums text-[var(--text-muted)]">
+        {(l.last_qty || 0).toLocaleString()}{l.is_large ? ` 🔥${(l.max_qty || 0).toLocaleString()}` : ""}
+        <span className="ml-1 text-[9px] text-[var(--text-muted)]">{l.age_sec != null ? `${Math.round((l.age_sec || 0) / 60)}m` : ""}</span>
+      </span>
+    </div>
+  );
+
+  return (
+    <div className="rounded-xl border border-[var(--border-default)] overflow-hidden">
+      <div className="flex items-center gap-2 px-3.5 py-2.5 border-b border-[var(--border-default)] bg-[var(--bg-elevated)]">
+        <span className="text-[14.5px] font-extrabold text-[var(--text-primary)]">📚 {t("호가창 (깊이)", "Order book (depth)")}</span>
+        <span className="text-[10px] px-1.5 py-0.5 rounded-full font-bold" style={{ color: ob.live.fresh ? "#fff" : "var(--text-muted)", background: ob.live.fresh ? NEG : "var(--bg-elevated)" }}>{ob.source}</span>
+        {ob.threshold ? <span className="text-[9.5px] text-[var(--text-muted)]">🔥 ≥ {ob.threshold.toLocaleString()}{t("주", "sh")}</span> : null}
+        <button onClick={() => setDeep((v) => !v)} className="ml-auto text-[11px] font-bold px-2.5 py-1 rounded-lg border"
+          style={{ color: deep ? "#fff" : "var(--text-secondary)", background: deep ? "var(--badge-blue-text)" : "transparent", borderColor: "var(--border-default)" }}>
+          {deep ? t("기본 10단계", "Top 10") : t("30단계 메모리 보기", "30-level memory")}
+        </button>
+      </div>
+      {/* column header */}
+      <div className="flex items-center justify-between px-2.5 py-1 text-[10px] font-bold text-[var(--text-muted)] bg-[var(--bg-elevated)]/50">
+        <span>{t("가격", "Price")}</span><span>{t("잔량", "Qty")}{deep ? ` · ${t("최대🔥 · 경과", "max🔥 · age")}` : ""}</span>
+      </div>
+      {!deep ? (
+        <>
+          {liveAsks.map((l, i) => <LiveRow key={`a${i}`} l={l} side="ask" />)}
+          <div className="px-2.5 py-1 text-center text-[11px] font-extrabold text-[var(--text-primary)] bg-[var(--bg-elevated)]">
+            {ob.mid ? `— ${t("중간", "mid")} ${fmt(Math.round(ob.mid))} —` : "—"}
+          </div>
+          {liveBids.map((l, i) => <LiveRow key={`b${i}`} l={l} side="bid" />)}
+          {!ob.live.fresh && <div className="px-2.5 py-1.5 text-[10px] text-[var(--text-muted)]">{t("장마감 — 마지막 캡처 기준", "Closed — last captured book")}</div>}
+        </>
+      ) : (
+        <>
+          <div className="px-2.5 py-1 text-[9.5px] text-[var(--text-muted)] bg-[var(--badge-blue-bg)]/30">{t("⏳ 시간이 지나며 사라진 호가까지 기억 (최대 30단계)", "⏳ remembers levels that scrolled out (up to 30/side)")}</div>
+          {memAsks.map((l, i) => <MemRow key={`ma${i}`} l={l} side="ask" />)}
+          <div className="px-2.5 py-1 text-center text-[11px] font-extrabold text-[var(--text-primary)] bg-[var(--bg-elevated)]">
+            {ob.mid ? `— ${t("중간", "mid")} ${fmt(Math.round(ob.mid))} —` : "—"}
+          </div>
+          {memBids.map((l, i) => <MemRow key={`mb${i}`} l={l} side="bid" />)}
+          {memAsks.length + memBids.length === 0 && <div className="px-2.5 py-2 text-[11px] text-[var(--text-muted)]">{t("메모리 수집 중 — 수집기 가동 후 누적됩니다", "Building memory — accumulates once the collector runs")}</div>}
+        </>
+      )}
+      {ob.walls && ob.walls.length > 0 && (
+        <div className="px-2.5 py-1.5 text-[10.5px] border-t border-[var(--border-default)] bg-[var(--bg-elevated)]/60">
+          🔥 {t("대량 호가벽", "Large walls")}: {ob.walls.slice(0, 4).map((w) => `${fmt(w.price)}(${(w.max_qty || 0).toLocaleString()})`).join(", ")}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function StockDetailDrawer({ t }: { t: (ko: string, en: string) => string }) {
   const { lang, toggle } = useLanguage();
   const [open, setOpen] = useState(false);
@@ -805,6 +902,9 @@ function StockDetailDrawer({ t }: { t: (ko: string, en: string) => string }) {
                   : <span className="text-[var(--text-muted)]" title={d.short_selling?.note || ""}>{t("장중 표시", "live only")}</span>}
               </DRow>
             </div>
+
+            {/* deep order-book panel — live 10 levels + 30-level memory + large walls */}
+            <OrderBookPanel code={code} t={t} />
 
             {/* market-wide context — oil + FX (affects oil/export names) */}
             {d.market && (
