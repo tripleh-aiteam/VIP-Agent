@@ -656,11 +656,13 @@ def _requested_price_fields(transcript: Optional[str]) -> list[str]:
     Lets the answer cover MULTIPLE fields, not just current."""
     t = (transcript or "").lower()
     fields: list[str] = []
-    if "시가" in t or "open price" in t or "opening" in t or _re.search(r"\bop\w*ning\b", t):
+    if "시가" in t or "open price" in t or "opening" in t or _re.search(r"\bopen\b", t):
         fields.append("open")
-    if "고가" in t or "highest" in t or "high price" in t or "day high" in t or "intraday high" in t:
+    if ("고가" in t or "highest" in t or "high price" in t or "day high" in t
+            or "intraday high" in t or _re.search(r"\bhigh\b", t)):
         fields.append("high")
-    if "저가" in t or "lowest" in t or "low price" in t or "day low" in t or "intraday low" in t:
+    if ("저가" in t or "lowest" in t or "low price" in t or "day low" in t
+            or "intraday low" in t or _re.search(r"\blow\b", t)):
         fields.append("low")
     cur = (any(k in t for k in ("current", "현재", "지금", "real-time", "실시간", "latest", "now"))
            or any(k in t for k in ("price", "주가", "시세", "얼마", "quote")))

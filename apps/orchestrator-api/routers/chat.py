@@ -573,6 +573,59 @@ def debug_openai():
         return {"status": "error", "exception": str(e), "key_prefix": api_key[:12] + "..."}
 
 
+@router.get("/debug/kiwoom")
+def debug_kiwoom():
+    """Gated diagnostic (404 unless DEBUG_KIWOOM=1). Reports creds/token/price +
+    outbound IP + Kiwoom's real return_msg. No keys echoed, no user input."""
+    import os
+    if os.getenv("DEBUG_KIWOOM") != "1":
+        from fastapi import HTTPException
+        raise HTTPException(status_code=404, detail="Not Found")
+    import httpx as _hx
+    from services import kiwoom_rest
+    k, s = kiwoom_rest._creds()
+    try:
+        egress = _hx.get("https://api.ipify.org", timeout=8.0).text.strip()
+    except Exception as e:
+        egress = f"(lookup failed: {type(e).__name__})"
+    out: dict = {"creds_present": bool(k and s), "server_outbound_ip": egress,
+                 "market_open_now": None}
+    try:
+        from services.assistant_agent import _kr_market_open_now
+        out["market_open_now"] = _kr_market_open_now()
+    except Exception:
+        pass
+    if not (k and s):
+        out["reason"] = "KIWOOM_APP_KEY/SECRET not visible to this service"
+        return out
+    probes = []
+    for base in ("https://api.kiwoom.com", "https://mockapi.kiwoom.com"):
+        rec = {"base": base.replace("https://", "")}
+        try:
+            r = _hx.post(f"{base}/oauth2/token",
+                         json={"grant_type": "client_credentials", "appkey": k, "secretkey": s},
+                         headers={"Content-Type": "application/json;charset=UTF-8"}, timeout=15.0)
+            rec["http"] = r.status_code
+            d = r.json()
+            rec["return_code"] = d.get("return_code")
+            rec["return_msg"] = str(d.get("return_msg") or "")[:160]
+            rec["has_token"] = bool(d.get("token"))
+        except Exception as e:
+            rec["error"] = f"{type(e).__name__}: {str(e)[:120]}"
+        probes.append(rec)
+    out["token_probe"] = probes
+    out["token_ok"] = any(p.get("has_token") for p in probes)
+    if out["token_ok"]:
+        try:
+            q = kiwoom_rest.current_price("005930")
+            out["price_ok"] = bool(q and q.get("price"))
+            out["sample"] = {"name": (q or {}).get("name"), "price": (q or {}).get("price")}
+        except Exception as e:
+            out["price_ok"] = False
+            out["price_err"] = str(e)[:140]
+    return out
+
+
 class CreateSessionBody(BaseModel):
     user_id: str = Field(default="operator")
     channel: str = Field(default="web", description="web | telegram | api")
