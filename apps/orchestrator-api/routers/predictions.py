@@ -136,6 +136,14 @@ def orderbook_depth(ticker: str, depth: int = Query(30), db: Session = Depends(g
     return orderbook_view(db, str(ticker).zfill(6), min(max(depth, 5), 30))
 
 
+@router.get("/investor-flows")
+def investor_flows():
+    """Market-wide 투자자별 매매 — net buying by investor type (개인/외국인/기관계 + 금융투자/
+    보험/투신/연기금/사모펀드…) for KOSPI + KOSDAQ. Source: Naver (works in/after market)."""
+    from services.market_investor_flows import market_flows
+    return market_flows()
+
+
 @router.get("/minute-bars/{ticker}")
 def minute_bars_view(ticker: str, db: Session = Depends(get_db)):
     """Today's per-minute candles + the day's VOLATILITY BASELINE (realized range,

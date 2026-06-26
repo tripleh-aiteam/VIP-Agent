@@ -60,6 +60,59 @@ const signColor = (n?: number) => ((n ?? 0) > 0 ? "var(--badge-success-text)" : 
 
 type Method = "ml" | "analysis" | null;
 
+type IFlow = {
+  unit: string; source: string; columns: string[]; columns_en: string[]; note?: string;
+  markets: { market: string; market_en: string; date: string | null; flows: Record<string, number | null> }[];
+};
+
+// Market-wide 투자자별 매매 — net buying by investor type across KOSPI/KOSDAQ (image-1 table).
+function InvestorFlowsPanel({ t }: { t: (ko: string, en: string) => string }) {
+  const { lang } = useLanguage();
+  const [d, setD] = useState<IFlow | null>(null);
+  const [open, setOpen] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    const load = () => api<IFlow>("/predictions/investor-flows").then((x) => { if (alive) setD(x); }).catch(() => {});
+    load(); const i = setInterval(load, 60000);
+    return () => { alive = false; clearInterval(i); };
+  }, []);
+  if (!d || !d.markets?.length) return null;
+  const cols = lang === "ko" ? d.columns : d.columns_en;
+  const Val = ({ v }: { v: number | null | undefined }) =>
+    v == null ? <span className="text-[var(--text-muted)]">-</span>
+      : <span style={{ color: v > 0 ? POS : v < 0 ? NEG : "var(--text-muted)" }}>{v > 0 ? "+" : ""}{v.toLocaleString()}</span>;
+  return (
+    <div className="rounded-xl border border-[var(--border-default)] overflow-hidden">
+      <button onClick={() => setOpen((v) => !v)} className="w-full flex items-center gap-2 px-3.5 py-2.5 bg-[var(--bg-elevated)] text-left">
+        <span className="text-[14px] font-extrabold text-[var(--text-primary)]">🏦 {t("투자자별 매매 (시장 수급)", "Investor flows (market)")}</span>
+        <span className="text-[10px] text-[var(--text-muted)]">{d.markets[0]?.date} · {t("단위", "unit")} {d.unit} · {d.source}</span>
+        <span className="ml-auto text-[12px] text-[var(--text-secondary)]">{open ? "▲" : "▼"}</span>
+      </button>
+      {open && (
+        <div className="overflow-x-auto">
+          <table className="w-full text-[12px]">
+            <thead>
+              <tr className="text-[var(--text-muted)] border-b border-[var(--border-default)]">
+                <th className="text-left px-3 py-1.5 font-bold">{t("투자자", "Investor")}</th>
+                {d.markets.map((m) => <th key={m.market} className="text-right px-3 py-1.5 font-bold">{lang === "ko" ? m.market : m.market_en}</th>)}
+              </tr>
+            </thead>
+            <tbody>
+              {d.columns.map((c, i) => (
+                <tr key={c} className="border-b border-[var(--border-default)]/40">
+                  <td className="px-3 py-1.5 font-semibold text-[var(--text-secondary)]">{cols[i]}</td>
+                  {d.markets.map((m) => <td key={m.market} className="text-right px-3 py-1.5 tabular-nums"><Val v={m.flows[c]} /></td>)}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {d.note && <div className="px-3 py-1.5 text-[10px] text-[var(--text-muted)]">ⓘ {d.note}</div>}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function TradingPage() {
   const { t } = useLanguage();
   const [method, setMethod] = useState<Method>(null);
@@ -94,6 +147,9 @@ export default function TradingPage() {
         {method && brief?.as_of && <span className="text-[12px] text-[var(--text-muted)]">{t("기준", "as of")} {brief.as_of}</span>}
         <span className="ml-auto text-[11px] px-2 py-0.5 rounded-full font-semibold" style={{ color: "var(--badge-success-text)", background: "var(--badge-success-bg)" }}>● LIVE</span>
       </div>
+
+      {/* market-wide 투자자별 매매 (collapsible) */}
+      <InvestorFlowsPanel t={t} />
 
       {loading && <BigLoading
         title={t("데일리 트레이딩 불러오는 중…", "Loading Daily Trading…")}
