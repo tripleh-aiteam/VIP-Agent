@@ -24,7 +24,7 @@ from services.prediction_service import NAMES
 
 # Featured stocks pinned to the FRONT of every list (both methods), in this order,
 # even when the model says HOLD — the big names the user always wants to watch.
-PRIORITY = ["000660", "035420", "005930"]   # SK하이닉스, NAVER, 삼성전자
+PRIORITY = ["000660", "005930", "009150", "402340", "035420"]   # day-trade targets: SK하이닉스·삼성전자·삼성전기·SK스퀘어 (+NAVER)
 
 
 # ---- market regime -------------------------------------------------------------
