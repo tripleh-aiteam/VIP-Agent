@@ -305,61 +305,40 @@ def build_stock_report(db, trace_id: str) -> dict:
 
 
 def build_realty_report(db, trace_id: str) -> dict:
-    """Company Real Estate: listings, value, categories/regions + OnBid 공매."""
-    metrics: dict[str, Any] = {}
-    highlights, alerts = [], []
-    source = "Triple H listing workbook"
-    try:
-        from services.realty_kb_loader import load_real_listings
-        listings = load_real_listings() or []
-    except Exception as e:
-        log.warning(f"realty listings load failed: {e}")
-        listings = []
+    """Company Real Estate — now sourced from the partner's Supabase feed
+    (table land_investigations) so the dashboard + Telegram show the SAME daily
+    공매/경매 현황 digest as the 7:05 AM email, not the old self-scraped workbook.
+    Maps the digest into this module's metrics/highlights/summary shape."""
+    from services.realty_supabase import build_realty_supabase_report
+    sb = build_realty_supabase_report(db, trace_id)
+    d = sb.get("data") or {}
+    new_today = d.get("new_today", 0)
+    big = d.get("tracking_big")
+    trend = d.get("trend") or []
 
-    if listings:
-        total_val = sum(_to_num(p.get("official_value")) for p in listings)
-        cats: dict[str, int] = {}
-        regions: dict[str, int] = {}
-        for p in listings:
-            c = (p.get("category") or "기타").strip() or "기타"
-            r = (p.get("sheet") or "—").strip() or "—"
-            cats[c] = cats.get(c, 0) + 1
-            regions[r] = regions.get(r, 0) + 1
-        top_cat = ", ".join(f"{k} {v}" for k, v in sorted(cats.items(), key=lambda x: -x[1])[:3])
-        metrics = {
-            "Total listings": len(listings),
-            "Total official value": _won(total_val),
-            "Categories": top_cat,
-            "Regions": len(regions),
-        }
-        big = sorted(listings, key=lambda p: _to_num(p.get("official_value")), reverse=True)[:2]
-        for p in big:
-            highlights.append(f"{p.get('title', '?')} — {_won(p.get('official_value'))}")
-    else:
-        metrics = {"Total listings": "data unavailable"}
-        alerts.append("Could not load the listing workbook — check the data file.")
-        source = "listing workbook (unavailable)"
+    metrics: dict[str, Any] = {"오늘 신규": f"{new_today}건"}
+    if big is not None:
+        metrics["추적 중 100억+"] = f"{big}건"
+    if trend:
+        metrics["최근 7일 추이"] = " · ".join(f"{x[0]}:{x[1]}" for x in trend)
 
-    # Live OnBid (공매) opportunities — real auction data.
-    try:
-        from services.onbid_tools import tool_onbid_search
-        ob = tool_onbid_search(category="real estate", sort="cheap", limit=3)
-        items = ob.get("items") or []
-        if items:
-            metrics["OnBid 공매 (active)"] = ob.get("total_scanned", len(items))
-            for it in items[:2]:
-                highlights.append(f"공매: {it.get('address', it.get('name', '?'))[:28]} · 최저 {it.get('min_bid', '?')}")
-    except Exception as e:
-        log.warning(f"realty onbid enrich failed: {e}")
+    highlights = []
+    for it in (d.get("top") or [])[:5]:
+        disc = f" ({it['discount']}%↓)" if it.get("discount") else ""
+        highlights.append(f"{it['title']} — 최저 {it['min_bid']}{disc}")
 
-    status = "ok" if listings else "partial"
-    summary, actions = _ai_takeaway("Real Estate Agent", "company real-estate portfolio",
-                                    metrics, highlights, alerts)
+    ok = sb.get("status") == "ok"
+    alerts = [] if ok else [sb.get("reason") or "real-estate data unavailable"]
     return {
         "agent_type": "realty", "name": "Real Estate Agent", "emoji": "🏠",
-        "status": status, "metrics": metrics, "highlights": highlights,
-        "alerts": alerts, "summary": summary, "actions": actions,
-        "source": source,
+        "status": "ok" if ok else "unavailable",
+        "metrics": metrics, "highlights": highlights, "alerts": alerts,
+        "summary": sb.get("summary_ko") or sb.get("summary_en") or "",
+        "actions": [],
+        # carry the full digest so the dashboard/combined report can show it
+        "detail_ko": sb.get("detail_ko", ""), "detail_en": sb.get("detail_en", ""),
+        "table_ko": sb.get("table_ko", ""),
+        "source": sb.get("source", "VIP Supabase (land_investigations)"),
     }
 
 

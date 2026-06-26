@@ -2,6 +2,48 @@
 
 ---
 
+## 2026-06-26 (Friday) — Live-anchored ML levels, hourly 2-method forward test, deep order-book memory
+
+### Goal
+
+Make the Daily Trading ML cards show **live** current price + buy/sell zones that recompute as the market moves; honestly improve/measure the two methods (tested + reverted a feature that didn't help); ship an hourly forward-accuracy test emailed each morning; and build a deep order-book "memory" that remembers the 10-level book's disappearing levels (→ 20–30 levels) with large-wall detection, on both VIP + AI Advisor.
+
+### Files added
+
+- [apps/orchestrator-api/services/intraday_forecast.py](apps/orchestrator-api/services/intraday_forecast.py) — hourly 2-method forward test. `tick()` predicts each stock's next ~1h direction with BOTH methods (ML daily lean + Analysis live 호가/수급) and grades matured forecasts vs the REAL price; `_scorecard` aggregates per-method/per-hour; `morning_report` builds a `.docx` (markdown_to_docx) and emails davronbekmalikov96@gmail.com before open. Tables `intraday_forecasts`. Live price via `assistant_agent._live_price_for_code` (Kiwoom in-market / Naver after).
+- [apps/orchestrator-api/services/orderbook_memory.py](apps/orchestrator-api/services/orderbook_memory.py) — deep order-book MEMORY. Tables `orderbook_levels` (per-pass 10+10 snapshot) + `orderbook_memory` (rolling per-(ticker,price) last/max qty + age, pruned to ±30/side around mid). Per-stock large-order thresholds (삼성전자≥10k, SK하이닉스≥1k, else ~300M KRW notional/price). `record` (collector write, psycopg2), `read_memory`/`live_book`/`orderbook_view`/`wall_bias` (endpoint read, SQLAlchemy). 키움 in-market / NAVER after.
+
+### Files updated
+
+- [apps/orchestrator-api/services/trading_brief.py](apps/orchestrator-api/services/trading_brief.py) — `_ml_levels` now anchors buy/sell/stop on the **LIVE snapshot price** (anchor_price), not the stale EOD close; HOLD gets realistic dip/target zones instead of box edges. `stock_card`+`_build_brief` pass the live price (one batched `_read_snapshots`). `analysis_signal` gains factor #6 (large bid wall = support +1 / ask wall = resistance −1), fed from `analysis_batch` via `wall_bias`.
+- [apps/orchestrator-api/services/kiwoom_rest.py](apps/orchestrator-api/services/kiwoom_rest.py) — `order_book` (ka10004) now returns ALL 10 bid + 10 ask levels (`levels:[{side,level,price,qty}]`), not just best. Field names verified live (삼성전자 returned 20 levels).
+- [apps/orchestrator-api/ml/realtime/rt_snapshot_collector.py](apps/orchestrator-api/ml/realtime/rt_snapshot_collector.py) — each pass persists the 10+10 levels and folds them into the memory (`obm.record`); `_ensure` creates the new tables.
+- [apps/orchestrator-api/routers/predictions.py](apps/orchestrator-api/routers/predictions.py) — new endpoints: `POST /intraday/tick`, `POST /intraday/morning-report`, `GET /intraday/scorecard`, `GET /orderbook/{ticker}?depth=30`.
+- [apps/orchestrator-api/services/scheduler_service.py](apps/orchestrator-api/services/scheduler_service.py) — registered `_intraday_forecast_tick` (hourly 09–15 KST, Mon–Fri) + `_intraday_morning_report` (08:00 KST).
+- [apps/orchestrator-api/ml/features/build_features.py](apps/orchestrator-api/ml/features/build_features.py) + [ml/models/bakeoff.py](apps/orchestrator-api/ml/models/bakeoff.py) — added relative-strength features (rel_ret_5d/20d, rel_vs_sma20 vs KODEX200), then **REVERTED from FEATURES_X** (0 in-sample edge — 2 of 3 redundant; columns still computed but unused). Lesson: price-derived features are tapped out.
+- [apps/admin-dashboard/src/app/trading/page.tsx](apps/admin-dashboard/src/app/trading/page.tsx) — `OrderBookPanel`: live 10 levels (qty bars, 🔥 large) + **"30단계 메모리 보기" button** revealing scrolled-out levels (price·last·max🔥·age) + large-walls summary + 키움/NAVER badge.
+- `stock_advisor_agent/web/src/features/daily-trading/DailyTradingView.tsx` (separate AI Advisor repo) — mirror of `OrderBookPanel` in inline styles (identical UX).
+
+### What this unblocks
+
+ML cards now show live, self-updating buy/sell zones. A daily forward-accuracy scorecard email starts tomorrow morning. The order-book depth feature is live + real-data verified (삼성전자 394,847-share bid wall; SK하이닉스 wall_bias=+1) on both surfaces.
+
+### Next
+
+- **User action:** restart the PC collector so it loads the new depth-capture code (live book + memory then populate on the site).
+- **Phase 3 (pending):** market-wide 투자자별 매매 table (image 1). Source chosen = Naver/KRX. KRX OTP handshake works but `download.cmd` returns empty (needs portal-session-matched request); Naver HTML returns 개인/외국인/기관 but needs a real table parse. Build `services/market_investor_flows.py` + endpoint + table UI both sides.
+- Intraday emails run in-process only (user declined external cron) → may miss on Render-sleep days.
+- Forward verdict on both methods (~beat-market %) accumulates over ~1–2 weeks.
+
+### [17:55] Market reports → weekday-only daily + weekend weekly; dashboard realty = Supabase digest
+
+- **Weekend scheduling:** KRX is closed Sat/Sun, so the 4 market reports (Kiwoom/Newspaper/YouTube/Master) now run the **daily** edition only on **KST Mon-Fri** and a **weekly** edition on **KST Sat+Sun**, all to the 7 recipients. Crons account for the 21:xx-UTC→next-day-KST rollover: daily = UTC dow `0-4`, weekend-weekly = UTC dow `5,6`. Added `_kiwoom_weekly_all`/`_newspaper_weekly_all`/`_youtube_weekly_all`/`_master_weekly_all` wrappers (period="weekly", all recipients). Asset + Real Estate stay daily every day. ([scheduler_service.py](apps/orchestrator-api/services/scheduler_service.py))
+- **Dashboard realty was still old:** `agent_report_builder.build_realty_report` (feeds the 8 AM auto pipeline + dashboard "Daily" realty card + Telegram) was still the self-scraped workbook. Rewrote it to delegate to `realty_supabase.build_realty_supabase_report` and map into the metrics/highlights/summary shape; added `data.top` to the Supabase builder so highlights reuse the same listings. Now both dashboard realty entries (orange `realty_report` + blue `agent_daily_realty`) show the 공매 현황 digest. ([agent_report_builder.py](apps/orchestrator-api/services/agent_report_builder.py), [realty_supabase.py](apps/orchestrator-api/services/realty_supabase.py))
+- **Immediate fix:** inserted 2 fresh OrchReport rows (realty_report + agent_daily_realty) into the live DB so the dashboard shows the new digest now (오늘 신규 6 · 추적 중 100억+ 193) instead of waiting for tomorrow's run.
+- **Note:** the "weekly" market build is currently the same content labelled weekly (no true 7-day aggregation yet) → weekend editions show the latest (Fri close) data; sent on both Sat & Sun per request.
+
+---
+
 ## 2026-06-25 (Thursday) — Asset Agent card disappeared: down backend + dashboard hid it
 
 ### [17:00] Asset Agent vanished from /agents — diagnosed outage + made down agents visible

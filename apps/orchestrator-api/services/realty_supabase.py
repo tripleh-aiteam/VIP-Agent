@@ -316,7 +316,15 @@ def build_realty_supabase_report(db=None, trace_id: str = "") -> dict:
         "table_ko": table_ko, "table_en": table_ko,
         "data": {"new_today": len(new_today),
                  "tracking_big": big_count,
-                 "trend": trend},
+                 "trend": trend,
+                 "top": [{
+                     "title": str(p.get("title") or "")[:40],
+                     "min_bid": _eok(p.get("minimum_bid_price")),
+                     "appraisal": _eok(p.get("appraisal_price")),
+                     "discount": _discount_pct(p.get("appraisal_price"), p.get("minimum_bid_price")),
+                     "bid_end": str(p.get("bid_end_date") or "")[:10],
+                     "link": _link(p),
+                 } for p in shown[:10]]},
         "source": f"VIP Supabase ({_TABLE})",
     }
 

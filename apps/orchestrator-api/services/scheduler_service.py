@@ -1475,6 +1475,25 @@ def _youtube_daily_all():
     _youtube_daily_report(email_override="*ALL*")
 
 
+# Weekend (KST Sat+Sun) WEEKLY editions of the 4 market reports — KRX is closed,
+# so instead of an empty daily snapshot the boss gets a weekly-labelled report
+# (latest available market data) to the full recipient list.
+def _kiwoom_weekly_all():
+    _kiwoom_daily_report(email_override="*ALL*", period="weekly")
+
+
+def _newspaper_weekly_all():
+    _newspaper_daily_report(email_override="*ALL*", period="weekly")
+
+
+def _youtube_weekly_all():
+    _youtube_daily_report(email_override="*ALL*", period="weekly")
+
+
+def _master_weekly_all():
+    _master_daily_report(email_override="*ALL*", period="weekly")
+
+
 @_single_flight("scorekeeper")
 def _scorekeeper_daily():
     """Daily: log today's BUY/SELL calls (both methods) + grade matured ones -> the
@@ -1770,32 +1789,57 @@ def init_scheduler():
     )
     log.info("scheduler: auto cross-agent report registered (daily 23:30 UTC)", extra={"action": "scheduler.auto_cross_registered"})
 
-    # Kiwoom daily report — its OWN email at 6:30 AM KST = 21:30 UTC, all recipients.
+    # ----- Market reports (Kiwoom / Newspaper / YouTube / Master) -----
+    # KRX is closed on weekends, so these run the DAILY edition only on KST
+    # weekdays (Mon-Fri) and a WEEKLY edition on KST Sat+Sun. Note the times are
+    # 21:xx UTC = 06:xx KST the NEXT day, so in UTC day-of-week:
+    #   KST Mon-Fri morning = UTC Sun-Thu = dow 0-4
+    #   KST Sat+Sun morning = UTC Fri+Sat = dow 5,6
+
+    # Kiwoom — 6:30 AM KST daily on weekdays; weekly edition on the weekend.
     _scheduler.add_job(
         _kiwoom_daily_all,
-        CronTrigger.from_crontab("30 21 * * *"),
+        CronTrigger.from_crontab("30 21 * * 0-4"),
         id="kiwoom-daily-report",
         replace_existing=True,
     )
-    log.info("scheduler: Kiwoom daily report registered (21:30 UTC = 6:30 AM KST, own email, all recipients)", extra={"action": "scheduler.kiwoom_registered"})
+    _scheduler.add_job(
+        _kiwoom_weekly_all,
+        CronTrigger.from_crontab("30 21 * * 5,6"),
+        id="kiwoom-weekend-weekly",
+        replace_existing=True,
+    )
+    log.info("scheduler: Kiwoom registered (6:30 KST — daily Mon-Fri, weekly Sat/Sun, all recipients)", extra={"action": "scheduler.kiwoom_registered"})
 
-    # Newspaper report — its OWN email at 6:32 AM KST = 21:32 UTC, all recipients.
+    # Newspaper — 6:32 AM KST daily on weekdays; weekly on the weekend.
     _scheduler.add_job(
         _newspaper_daily_all,
-        CronTrigger.from_crontab("32 21 * * *"),
+        CronTrigger.from_crontab("32 21 * * 0-4"),
         id="newspaper-daily-report",
         replace_existing=True,
     )
-    log.info("scheduler: Newspaper report registered (21:32 UTC = 6:32 AM KST, own email, all recipients)", extra={"action": "scheduler.newspaper_registered"})
+    _scheduler.add_job(
+        _newspaper_weekly_all,
+        CronTrigger.from_crontab("32 21 * * 5,6"),
+        id="newspaper-weekend-weekly",
+        replace_existing=True,
+    )
+    log.info("scheduler: Newspaper registered (6:32 KST — daily Mon-Fri, weekly Sat/Sun, all recipients)", extra={"action": "scheduler.newspaper_registered"})
 
-    # YouTube grounded report — its OWN email at 6:40 AM KST = 21:40 UTC, all recipients.
+    # YouTube grounded — 6:40 AM KST daily on weekdays; weekly on the weekend.
     _scheduler.add_job(
         _youtube_daily_all,
-        CronTrigger.from_crontab("40 21 * * *"),
+        CronTrigger.from_crontab("40 21 * * 0-4"),
         id="youtube-daily-report",
         replace_existing=True,
     )
-    log.info("scheduler: YouTube report registered (21:40 UTC = 6:40 AM KST, own email, all recipients)", extra={"action": "scheduler.youtube_registered"})
+    _scheduler.add_job(
+        _youtube_weekly_all,
+        CronTrigger.from_crontab("40 21 * * 5,6"),
+        id="youtube-weekend-weekly",
+        replace_existing=True,
+    )
+    log.info("scheduler: YouTube registered (6:40 KST — daily Mon-Fri, weekly Sat/Sun, all recipients)", extra={"action": "scheduler.youtube_registered"})
 
     # Asset Agent detailed report — its OWN standalone email at 7:00 AM KST =
     # 22:00 UTC, to ALL recipients, with BOTH Korean + English .docx attached.
@@ -1889,14 +1933,21 @@ def init_scheduler():
     # bundled into the consolidated master email below (all 4 reports together),
     # so there is no standalone youtube-daily-report cron anymore.
 
-    # Master synthesis report — 6:50 AM KST = 21:50 UTC, weekdays (after the 3).
+    # Master synthesis report — 6:50 AM KST. Daily on KST weekdays (UTC dow 0-4),
+    # weekly edition on KST Sat+Sun (UTC dow 5,6). All recipients.
     _scheduler.add_job(
         _master_daily_all,   # forces the full recipient list (ignores any single-address test env)
-        CronTrigger.from_crontab("50 21 * * *"),   # every day (incl Sat/Sun KST)
+        CronTrigger.from_crontab("50 21 * * 0-4"),
         id="master-daily-report",
         replace_existing=True,
     )
-    log.info("scheduler: Master report registered (21:50 UTC = 6:50 AM KST)", extra={"action": "scheduler.master_registered"})
+    _scheduler.add_job(
+        _master_weekly_all,
+        CronTrigger.from_crontab("50 21 * * 5,6"),
+        id="master-weekend-weekly",
+        replace_existing=True,
+    )
+    log.info("scheduler: Master report registered (6:50 KST — daily Mon-Fri, weekly Sat/Sun)", extra={"action": "scheduler.master_registered"})
 
     # Knowledge-base sync (RAG / Phase 2) — 7:10 AM KST = 22:10 UTC, after the
     # morning reports are written, so the chatbot grounds answers in fresh content.
