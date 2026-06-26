@@ -2364,7 +2364,7 @@ def _run_chain(
                 {"role": "user", "content": f"Question: {transcript}"},
                 {"role": "user", "content": f"Tool chain results:\n{summary_input}"},
             ],
-            max_tokens=max(_max_tok, 650), temperature=0.4,
+            max_tokens=max(_max_tok, 650), temperature=0.3,
             model="groq-llama-3.3-70b",
         )
     except Exception:
@@ -2712,7 +2712,7 @@ def _compose_final_answer(
             system_prompt=follow_system,
             messages=summary_messages,
             max_tokens=max(_max_tokens, 650),   # same depth floor as the multi-tool path
-            temperature=0.4,
+            temperature=0.3,   # match the Stock backend (0.3) for consistent detail
             model="groq-llama-3.3-70b",
         )
         return (reply or "").strip() or "(no reply)"
