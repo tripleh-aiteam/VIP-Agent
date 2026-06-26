@@ -136,6 +136,16 @@ def orderbook_depth(ticker: str, depth: int = Query(30), db: Session = Depends(g
     return orderbook_view(db, str(ticker).zfill(6), min(max(depth, 5), 30))
 
 
+@router.get("/minute-bars/{ticker}")
+def minute_bars_view(ticker: str, db: Session = Depends(get_db)):
+    """Today's per-minute candles + the day's VOLATILITY BASELINE (realized range,
+    1σ expected day move from minute vol, opening range, position-in-range). Feeds the
+    intraday chart + the day-trade feasibility answer. Populated by the PC collector."""
+    from services.minute_bars import read_bars, intraday_vol
+    tk = str(ticker).zfill(6)
+    return {"ticker": tk, "bars": read_bars(db, tk), "vol": intraday_vol(db, tk)}
+
+
 @router.get("/stock-detail/{ticker}")
 def stock_detail(ticker: str, db: Session = Depends(get_db)):
     """Rich single-stock detail for the click-through detail view — OHLC, 등락%, 거래량,

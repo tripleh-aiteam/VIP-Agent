@@ -414,6 +414,37 @@ _CP_LOW_KEYS = ("low_pric", "lwpr", "stck_lwpr")
 _CP_VOL_KEYS = ("trde_qty", "acc_trde_qty", "tot_trde_qty", "trqu", "거래량")
 
 
+def minute_bars(code: str, tic: str = "1", count: int = 120) -> Optional[list[dict]]:
+    """Intraday per-minute OHLCV candles (주식분봉차트, ka10080). tic = minutes per bar
+    ('1','3','5'...). Returns up to `count` most-recent bars, OLDEST→NEWEST:
+    [{ts:'YYYY-MM-DD HH:MM', open, high, low, close, volume}]. None on failure.
+    Kiwoom returns the day's bars incl. pre/after-market ticks where available."""
+    code = str(code).strip().zfill(6)
+
+    def _f():
+        d = _request("ka10080", {"stk_cd": code, "tic_scope": str(tic),
+                                  "upd_stkpc_tp": "1"}, path="/api/dostk/chart")
+        if not isinstance(d, dict):
+            return None
+        rows = d.get("stk_min_pole_chart_qry") or []
+        out = []
+        for r in rows:
+            tm = str(r.get("cntr_tm") or "")            # YYYYMMDDHHMMSS
+            if len(tm) < 12:
+                continue
+            ts = f"{tm[0:4]}-{tm[4:6]}-{tm[6:8]} {tm[8:10]}:{tm[10:12]}"
+            o, h = _to_int(r.get("open_pric")), _to_int(r.get("high_pric"))
+            lo, c = _to_int(r.get("low_pric")), _to_int(r.get("cur_prc"))
+            v = _to_int(r.get("trde_qty"))
+            if c is None:
+                continue
+            out.append({"ts": ts, "open": abs(o) if o else None, "high": abs(h) if h else None,
+                        "low": abs(lo) if lo else None, "close": abs(c), "volume": abs(v) if v else 0})
+        out = list(reversed(out))[-count:]              # API is newest-first → oldest→newest
+        return out or None
+    return _rt_cached(f"min:{code}:{tic}", _f)
+
+
 def current_price(code: str) -> Optional[dict]:
     """LIVE current price for a KR 6-digit code via Kiwoom REST (ka10001,
     /api/dostk/stkinfo). Returns ``{price, prev_close, change_pct, name}`` or

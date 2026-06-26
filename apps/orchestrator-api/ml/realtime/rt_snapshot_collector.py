@@ -33,6 +33,7 @@ except Exception:
 
 from services import kiwoom_rest as kr               # noqa: E402
 from services import orderbook_memory as obm          # noqa: E402
+from services import minute_bars as mb                # noqa: E402
 from _db import get_conn                             # noqa: E402
 from universe import STARTER_KR                      # noqa: E402
 
@@ -69,6 +70,7 @@ def _ensure(conn):
         cur.execute(DDL)
     conn.commit()
     obm.ensure_tables(conn)             # orderbook_levels + orderbook_memory (deep book)
+    mb.ensure_tables(conn)              # raw_minute_prices (intraday candles)
 
 
 def _one_pass(conn) -> int:
@@ -98,6 +100,15 @@ def _one_pass(conn) -> int:
                 obm.record(conn, tk, ob["levels"], datetime.now(timezone.utc))
         except Exception as e:
             print(f"  obm {tk}: {str(e)[:80]}")
+        # INTRADAY MINUTE CANDLES — only ~every 1 min (bars change once/min); the
+        # volatility baseline for day-trade feasibility reads these.
+        try:
+            if _ss_pass["n"] % 2 == 0:
+                bars = kr.minute_bars(tk, "1", count=200)
+                if bars:
+                    mb.record(conn, tk, bars)
+        except Exception as e:
+            print(f"  minbars {tk}: {str(e)[:80]}")
         rows.append((tk, fl.get("price") or ob.get("best_bid"), ob.get("imbalance"),
                      ob.get("best_bid"), ob.get("best_ask"), fl.get("foreign"),
                      fl.get("institution"), fl.get("fin_invest"), pr.get("net_amt"),
