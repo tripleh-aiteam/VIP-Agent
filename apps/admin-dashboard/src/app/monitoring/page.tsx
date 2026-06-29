@@ -27,6 +27,9 @@ type OBView = {
 const WATCH: { code: string; ko: string; en: string }[] = [
   { code: "005930", ko: "삼성전자", en: "Samsung Elec" },
   { code: "000660", ko: "SK하이닉스", en: "SK hynix" },
+  { code: "035420", ko: "NAVER", en: "NAVER" },
+  { code: "009150", ko: "삼성전기", en: "Samsung E-M" },
+  { code: "402340", ko: "SK스퀘어", en: "SK Square" },
 ];
 
 export default function MonitoringPage() {
@@ -88,7 +91,7 @@ export default function MonitoringPage() {
 
   const maxQ = Math.max(1, ...asks.concat(bids).map((l) => l.last_qty || l.qty || 0));
 
-  const Row = ({ l, side }: { l: OBLevel; side: "ask" | "bid" }) => {
+  const Row = ({ l, side, rank }: { l: OBLevel; side: "ask" | "bid"; rank: number }) => {
     const { q, dir, delta } = deltaInfo(l);
     const flashed = dir;
     const col = side === "ask" ? RED : BLUE;
@@ -96,6 +99,7 @@ export default function MonitoringPage() {
       <div className="relative flex items-center justify-between px-3 py-[4px] text-[12.5px] border-b border-[var(--border-default)]/30"
         style={{ background: flashed ? (flashed === "up" ? "rgba(255,235,59,0.45)" : "rgba(255,235,59,0.30)") : undefined }}>
         <div className="absolute inset-y-0 right-0 rounded" style={{ width: `${Math.min(100, (q / maxQ) * 100)}%`, background: col, opacity: 0.12 }} />
+        <span className="relative tabular-nums text-[11px] text-[var(--text-muted)] text-center" style={{ minWidth: 30 }}>{rank}</span>
         <span className="relative font-bold tabular-nums" style={{ color: col, minWidth: 78 }}>{fmt(l.price)}</span>
         <span className="relative tabular-nums text-[var(--text-secondary)] text-right" style={{ minWidth: 70 }}>
           {fmt(q)}{l.is_large ? " 🔥" : ""}
@@ -143,6 +147,7 @@ export default function MonitoringPage() {
         </div>
         {/* column header */}
         <div className="flex items-center justify-between px-3 py-1 text-[10px] font-bold text-[var(--text-muted)] bg-[var(--bg-elevated)]/50">
+          <span style={{ minWidth: 30 }} className="text-center">#</span>
           <span style={{ minWidth: 78 }}>{t("가격", "Price")}</span>
           <span style={{ minWidth: 70 }} className="text-right">{t("잔량", "Qty")}</span>
           <span style={{ minWidth: 96 }} className="text-right">{t("변동", "Δ")}</span>
@@ -153,16 +158,18 @@ export default function MonitoringPage() {
 
         {ob && (
           <>
-            {asks.map((l, i) => <Row key={`a${l.price}_${i}`} l={l} side="ask" />)}
+            {/* asks: best (nearest mid) = level 1 at the bottom, counting up away from mid */}
+            {asks.map((l, i) => <Row key={`a${l.price}_${i}`} l={l} side="ask" rank={asks.length - i} />)}
             <div className="px-3 py-1.5 text-center text-[12px] font-extrabold text-[var(--text-primary)] bg-[var(--bg-elevated)]">
-              {mid ? `— ${t("중간가", "mid")} ${fmt(Math.round(mid))} —` : "—"}
+              {mid ? `— ${t("중간가", "mid")} ${fmt(Math.round(mid))} · ${t("매도", "asks")} ${asks.length} / ${t("매수", "bids")} ${bids.length} —` : "—"}
             </div>
-            {bids.map((l, i) => <Row key={`b${l.price}_${i}`} l={l} side="bid" />)}
+            {/* bids: best (nearest mid) = level 1 at the top, counting down away from mid */}
+            {bids.map((l, i) => <Row key={`b${l.price}_${i}`} l={l} side="bid" rank={i + 1} />)}
             {asks.length + bids.length < 40 && (
               <div className="px-3 py-2 text-[10.5px] text-[var(--text-muted)] bg-[var(--badge-blue-bg)]/20">
                 {t(
-                  `📡 깊이는 수집기가 장중(09:00–15:30)에 가동되며 가격이 움직일수록 30단계까지 누적됩니다. 현재 ${asks.length + bids.length}단계 (대량만).`,
-                  `📡 Depth fills toward 30 levels as the collector runs in-market (09:00–15:30) and price moves. Currently ${asks.length + bids.length} levels (large only).`)}
+                  `📡 깊이는 수집기가 장중(09:00–15:30)에 가동되며 가격이 움직일수록 한쪽당 30단계까지 누적됩니다. 현재 매도 ${asks.length} · 매수 ${bids.length}단계 (대량만).`,
+                  `📡 Depth fills toward 30 levels per side as the collector runs in-market (09:00–15:30) and price moves. Currently asks ${asks.length} · bids ${bids.length} (large only).`)}
               </div>
             )}
             {!ob.live?.fresh && <div className="px-3 py-1.5 text-[10px] text-[var(--text-muted)]">{t("장마감 — 마지막 캡처 기준", "Closed — last captured book")}</div>}

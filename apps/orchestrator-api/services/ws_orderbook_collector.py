@@ -32,7 +32,10 @@ from websockets.exceptions import ConnectionClosed
 _KST = timezone(timedelta(hours=9))
 
 WS_URL = os.getenv("KIWOOM_WS_URL", "wss://api.kiwoom.com:10000/api/dostk/websocket")
-CODES = [c.strip() for c in os.getenv("WS_ORDERBOOK_CODES", "005930,000660").split(",") if c.strip()]
+CODES = [c.strip() for c in os.getenv(
+    "WS_ORDERBOOK_CODES",
+    "005930,000660,035420,009150,402340",  # 삼성전자 · SK하이닉스 · NAVER · 삼성전기 · SK스퀘어
+).split(",") if c.strip()]
 
 
 # --------------------------------------------------------------------------- #
