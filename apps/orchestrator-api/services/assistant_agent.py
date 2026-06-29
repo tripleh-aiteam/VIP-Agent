@@ -533,7 +533,10 @@ def _is_concept_question(transcript: Optional[str]) -> bool:
 # bare 'what is the current stock price' (→ default watchlist).
 _PRICE_WORDS = ("현재가", "시세", "주가", "얼마", "가격", "price", "quote",
                 "시가", "고가", "저가", "opening", "open price", "high price", "low price",
-                "거래량", "거래대금", "volume")
+                "거래량", "거래대금", "volume",
+                # English current-price phrasings (so 'what's X trading at' routes LOCAL,
+                # matching the Korean path — same detailed table both languages).
+                "trading at", "trade at", "how much", "worth", "going for", "trading for")
 # Generic stock-price phrasing with NO specific company → show the watchlist.
 _GENERIC_STOCK_WORDS = ("stock", "주가", "주식", "종목", "시세", "현재가")
 _DEFAULT_WATCHLIST = (("000660", "SK하이닉스"), ("005930", "삼성전자"), ("035420", "NAVER"))
@@ -584,6 +587,9 @@ _STOCK_ALIASES = {
     "sk hynix": ("000660", "SK하이닉스"), "skhynix": ("000660", "SK하이닉스"),
     "hynix": ("000660", "SK하이닉스"), "하이닉스": ("000660", "SK하이닉스"),
     "sk telecom": ("017670", "SK텔레콤"),
+    "samsung electro-mechanics": ("009150", "삼성전기"), "samsung electro mechanics": ("009150", "삼성전기"),
+    "samsung electromechanics": ("009150", "삼성전기"), "삼성전기": ("009150", "삼성전기"),
+    "sk square": ("402340", "SK스퀘어"), "sksquare": ("402340", "SK스퀘어"), "sk스퀘어": ("402340", "SK스퀘어"),
     "naver": ("035420", "NAVER"), "네이버": ("035420", "NAVER"),
     "kakao": ("035720", "카카오"), "카카오": ("035720", "카카오"),
     "hyundai motor": ("005380", "현대차"), "hyundai": ("005380", "현대차"),
@@ -866,7 +872,7 @@ def _vip_live_price_reply(transcript: Optional[str], lang: str) -> Optional[dict
     # Format via the shared canonical formatter so VIP and the AI Advisor (which
     # relays this answer) phrase it the same way.
     from services import price_format
-    fmt_quotes = [{"name": q["name"], "price": q["price"],
+    fmt_quotes = [{"name": q["name"], "code": q.get("code"), "price": q["price"],
                    "change_pct": q["change_pct"], "market": "KR",
                    "open": q.get("open"), "high": q.get("high"), "low": q.get("low"),
                    "volume": q.get("volume"),

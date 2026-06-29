@@ -167,6 +167,8 @@ def tool_stock_news(**_kw) -> dict[str, Any]:
 _NAME_TO_TICKER: dict[str, str] = {
     "삼성전자": "005930", "samsung electronics": "005930", "samsung": "005930",
     "sk하이닉스": "000660", "하이닉스": "000660", "sk hynix": "000660", "hynix": "000660",
+    "삼성전기": "009150", "samsung electro-mechanics": "009150", "samsung electro mechanics": "009150", "samsung electromechanics": "009150",
+    "sk스퀘어": "402340", "sk square": "402340", "sksquare": "402340",
     "lg에너지솔루션": "373220", "lg energy": "373220", "lges": "373220",
     "삼성바이오로직스": "207940", "samsung biologics": "207940",
     "현대차": "005380", "현대자동차": "005380", "hyundai motor": "005380", "hyundai": "005380",

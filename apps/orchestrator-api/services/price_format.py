@@ -134,66 +134,80 @@ def _value_segment(q, fields, english: bool) -> str:
     return f"{_price_str(q.get('price'), market, english)}{_chg(q.get('change_pct'))}"
 
 
+def _price_table(q, english: bool, ts: str, src: str) -> str:
+    """Detailed single-stock current-price TABLE — IDENTICAL structure in EN + KO so the
+    same question gets the same rich answer regardless of language."""
+    market = q.get("market")
+    price, chg = q.get("price"), q.get("change_pct")
+    prev = None
+    if price is not None and chg is not None:
+        try:
+            prev = round(float(price) / (1 + float(chg) / 100))
+        except Exception:
+            prev = None
+    name = q.get("name") or ("the stock" if english else "해당 종목")
+    code = q.get("code")
+    head = f"{name}" + (f" ({code})" if code else "")
+    def P(v):
+        return _price_str(v, market, english) if v is not None else "-"
+    chg_cell = (_chg(chg, english=english, basis=True).strip(" ()") or "-")
+    vol = q.get("volume")
+    vol_cell = (f"{_int_str(vol)} " + ("shares" if english else "주")) if vol is not None else "-"
+    if english:
+        title = f"**{head}** is currently {P(price)}{_chg(chg, english=True)}"
+        rows = [("Metric", "Value"), ("Current Price", P(price)), ("Change", chg_cell),
+                ("Open", P(q.get("open"))), ("High", P(q.get("high"))), ("Low", P(q.get("low"))),
+                ("Prev Close", P(prev)), ("Volume", vol_cell)]
+        tail = f"*Data as of {ts}" + (f" · {src}" if src else "") + "*"
+    else:
+        title = f"**{head}** 현재가 {P(price)}{_chg(chg, english=False)}"
+        rows = [("항목", "값"), ("현재가", P(price)), ("등락", chg_cell),
+                ("시가", P(q.get("open"))), ("고가", P(q.get("high"))), ("저가", P(q.get("low"))),
+                ("전일종가", P(prev)), ("거래량", vol_cell)]
+        tail = f"*기준 {ts} (한국시간)" + (f" · 출처 {src}" if src else "") + "*"
+    md = "| " + " | ".join(rows[0]) + " |\n| --- | --- |\n"
+    for label, val in rows[1:]:
+        md += f"| {label} | {val} |\n"
+    return f"{title}\n\n{md}\n{tail}"
+
+
 def format_current(quotes, *, lang, used_watchlist: bool = False,
                    as_of: datetime | None = None, fields=None) -> str:
-    """Current-price answer. `quotes`: list of quote dicts (see module docstring).
-    `fields`: which values to show, e.g. ['open','price'] for 'opening and current'.
-    Defaults to ['price']. The source label (Kiwoom / Naver) is ALWAYS shown."""
+    """Current-price answer — a DETAILED TABLE, identical in EN + KO (one stock = a
+    Metric/Value table; several = a Stock/Price/Change table). Source ALWAYS shown."""
     english = _is_en(lang)
     dt = as_of or now_kst()
-    fields = list(fields) if fields else ["price"]
     avail = [q for q in quotes if q.get("price") is not None]
     src = _src_line(avail or quotes, english)
-    multi_field = fields != ["price"]
+    ts = _ts_en(dt) if english else _ts_ko(dt)
 
-    if english:
-        ts = _ts_en(dt)
-        if len(quotes) == 1:
-            q = quotes[0]
-            name = q.get("name") or "the stock"
-            if q.get("price") is None:
-                return f"Couldn't fetch a quote for {name}. Please check the ticker or data availability."
-            tail = f" Source: {src}." if src else ""
-            if multi_field:
-                return f"{name} — {_value_segment(q, fields, True)}, as of {ts}.{tail}"
-            return f"{name} is currently {_value_segment(q, fields, True)}, as of {ts}.{tail}"
-        head = "Current watchlist prices" if used_watchlist else "Current prices"
-        lines = [f"{head} (as of {ts}):"]
-        for q in quotes:
-            name = q.get("name") or "the stock"
-            if q.get("price") is None:
-                lines.append(f"- {name}: quote unavailable")
-            else:
-                lines.append(f"- {name}: {_value_segment(q, fields, True)}")
-        if src:
-            lines.append(f"Source: {src}")
-        return "\n".join(lines)
-
-    # Korean
-    ts = _ts_ko(dt)
+    # SINGLE stock → full detailed table
     if len(quotes) == 1:
         q = quotes[0]
-        name = q.get("name") or "해당 종목"
         if q.get("price") is None:
-            return f"{name} 시세를 조회하지 못했습니다. 종목 코드나 데이터 제공 상태를 확인해 주세요."
-        tail = f" 출처는 {src}입니다." if src else ""
-        if multi_field:
-            return f"{name} — {_value_segment(q, fields, False)}. 기준 시각은 {ts} (한국시간)입니다.{tail}"
-        chg = _chg(q.get("change_pct"))
-        chg_txt = f", 전일 대비 {chg.strip(' ()')}" if chg else ""
-        price = _price_str(q["price"], q.get("market"), False)
-        return f"{name} 현재가는 {price}{chg_txt}입니다. 기준 시각은 {ts} (한국시간)입니다.{tail}"
-    head = "관심 종목 현재가입니다" if used_watchlist else "요청하신 종목 현재가입니다"
-    lines = [f"{head} (기준 {ts} 한국시간):"]
+            name = q.get("name") or ("the stock" if english else "해당 종목")
+            return (f"Couldn't fetch a quote for {name}. Please check the ticker or data availability."
+                    if english else
+                    f"{name} 시세를 조회하지 못했습니다. 종목 코드나 데이터 제공 상태를 확인해 주세요.")
+        return _price_table(q, english, ts, src)
+
+    # MULTIPLE stocks (watchlist) → compact Stock/Price/Change table
+    hdr = ("Stock", "Price", "Change") if english else ("종목", "현재가", "등락")
+    md = "| " + " | ".join(hdr) + " |\n| --- | --- | --- |\n"
     for q in quotes:
-        name = q.get("name") or "해당 종목"
+        name = q.get("name") or ("the stock" if english else "해당 종목")
         if q.get("price") is None:
-            lines.append(f"- {name}: 시세 조회 실패")
+            md += f"| {name} | - | - |\n"
         else:
-            lines.append(f"- {name}: {_value_segment(q, fields, False)}")
-    if src:
-        lines.append(f"출처: {src}")
-    return "\n".join(lines)
+            md += (f"| {name} | {_price_str(q['price'], q.get('market'), english)} "
+                   f"| {_chg(q.get('change_pct'), english=english).strip(' ()') or '-'} |\n")
+    if english:
+        title = "Current watchlist prices" if used_watchlist else "Current prices"
+        tail = f"*Data as of {ts}" + (f" · {src}" if src else "") + "*"
+    else:
+        title = "관심 종목 현재가" if used_watchlist else "요청하신 종목 현재가"
+        tail = f"*기준 {ts} (한국시간)" + (f" · 출처 {src}" if src else "") + "*"
+    return f"**{title}**\n\n{md}\n{tail}"
 
 
 def format_past(items, *, date: str, lang, intraday_note: bool = False) -> str:
