@@ -16,7 +16,7 @@ const fmt = (n?: number) => (n == null ? "-" : n.toLocaleString());
 const RED = "#d32f2f";   // 매도 / qty-up (Korean convention: up = red)
 const BLUE = "#1565c0";  // 매수 / qty-down
 
-type OBLevel = { price: number; qty?: number; last_qty?: number; max_qty?: number; is_large?: boolean; age_sec?: number; side?: string };
+type OBLevel = { price: number; qty?: number; last_qty?: number; max_qty?: number; is_large?: boolean; age_sec?: number; side?: string; placeholder?: boolean };
 type OBView = {
   source: string;
   live: { levels: OBLevel[]; fresh: boolean; age_sec?: number | null };
@@ -59,19 +59,39 @@ export default function MonitoringPage() {
   const name = WATCH.find((w) => w.code === code)?.[lang === "ko" ? "ko" : "en"] || code;
   const mid = ob?.memory?.mid ?? ob?.mid ?? null;
 
-  // Up to 30 levels per side, current session only (drop stale), best (nearest mid)
-  // FIRST. No size filter — show the whole book so the depth reaches 30.
-  const rowsFor = (side: "ask" | "bid"): OBLevel[] => {
+  // Observed levels from THIS session (drop only last session's stale book), best
+  // (nearest mid) FIRST. No size filter — every level counts, any quantity.
+  const observed = (side: "ask" | "bid"): OBLevel[] => {
     const src = side === "ask" ? ob?.memory?.asks : ob?.memory?.bids;
     return [...(src || [])]
-      .filter((l) => (l.age_sec == null || l.age_sec < 1800))
-      .sort((a, b) => (side === "ask" ? a.price - b.price : b.price - a.price)) // best first
+      .filter((l) => (l.age_sec == null || l.age_sec < 21600)) // < 6h = current session
+      .sort((a, b) => (side === "ask" ? a.price - b.price : b.price - a.price))
       .slice(0, 30);
   };
-  const asks = rowsFor("ask");
-  const bids = rowsFor("bid");
+  const obsAsks = observed("ask");
+  const obsBids = observed("bid");
+  // tick = smallest gap between observed prices (the KRX tick for this price band)
+  const allPrices = [...obsAsks, ...obsBids].map((l) => l.price).sort((a, b) => a - b);
+  let tick = Infinity;
+  for (let i = 1; i < allPrices.length; i++) { const g = allPrices[i] - allPrices[i - 1]; if (g > 0) tick = Math.min(tick, g); }
+  if (!isFinite(tick) || tick <= 0) tick = 0;
+  // pad each side to EXACTLY 30 with empty placeholder ticks, so it always shows 30/30;
+  // real quantities fill in as the price moves through those levels.
+  const padTo30 = (lv: OBLevel[], side: "ask" | "bid"): OBLevel[] => {
+    const out = [...lv];
+    let last = out.length ? out[out.length - 1].price : (mid ? Math.round(mid) : 0);
+    while (tick > 0 && out.length < 30 && last > 0) {
+      last = side === "ask" ? last + tick : last - tick;
+      if (last <= 0) break;
+      out.push({ price: last, qty: 0, placeholder: true });
+    }
+    return out;
+  };
+  const asks = padTo30(obsAsks, "ask");
+  const bids = padTo30(obsBids, "bid");
 
   const deltaInfo = (l: OBLevel) => {
+    if (l.placeholder) return { q: 0, dir: "" as const, delta: 0 };
     const q = l.last_qty || l.qty || 0;
     const p = prevQty.current[l.price];
     let dir: "up" | "down" | "" = "";
@@ -82,25 +102,26 @@ export default function MonitoringPage() {
   useEffect(() => {
     if (!ob) return;
     const snap: Record<number, number> = {};
-    [...asks, ...bids].forEach((l) => { snap[l.price] = l.last_qty || l.qty || 0; });
+    [...asks, ...bids].forEach((l) => { if (!l.placeholder) snap[l.price] = l.last_qty || l.qty || 0; });
     prevQty.current = snap;
   }, [ob]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const maxQ = Math.max(1, ...asks.concat(bids).map((l) => l.last_qty || l.qty || 0));
 
   const ColRow = ({ l, side, rank }: { l: OBLevel; side: "ask" | "bid"; rank: number }) => {
+    const ph = !!l.placeholder;
     const { q, dir, delta } = deltaInfo(l);
     const col = side === "ask" ? RED : BLUE;
     const barSide = side === "ask" ? "left-0" : "right-0";
     return (
       <div className="relative flex items-center gap-1 px-2 py-[3px] text-[12px] border-b border-[var(--border-default)]/25"
-        style={{ background: dir ? (dir === "up" ? "rgba(255,235,59,0.45)" : "rgba(255,235,59,0.30)") : undefined }}>
-        <div className={`absolute inset-y-0 ${barSide} rounded`} style={{ width: `${Math.min(100, (q / maxQ) * 100)}%`, background: col, opacity: 0.12 }} />
+        style={{ background: dir ? (dir === "up" ? "rgba(255,235,59,0.45)" : "rgba(255,235,59,0.30)") : undefined, opacity: ph ? 0.4 : 1 }}>
+        {!ph && <div className={`absolute inset-y-0 ${barSide} rounded`} style={{ width: `${Math.min(100, (q / maxQ) * 100)}%`, background: col, opacity: 0.12 }} />}
         <span className="relative tabular-nums text-[10px] text-[var(--text-muted)] text-center" style={{ minWidth: 20 }}>{rank}</span>
         <span className="relative font-bold tabular-nums" style={{ color: col, minWidth: 62 }}>{fmt(l.price)}</span>
-        <span className="relative tabular-nums text-[var(--text-secondary)] text-right flex-1">{fmt(q)}{l.is_large ? " 🔥" : ""}</span>
+        <span className="relative tabular-nums text-[var(--text-secondary)] text-right flex-1">{ph ? "—" : fmt(q)}{!ph && l.is_large ? " 🔥" : ""}</span>
         <span className="relative tabular-nums text-right text-[13px] font-extrabold" style={{ minWidth: 58, color: dir === "up" ? RED : dir === "down" ? BLUE : "var(--text-muted)" }}>
-          {dir ? `${dir === "up" ? "▲" : "▼"}${delta > 0 ? "+" : ""}${fmt(delta)}` : "·"}
+          {ph ? "" : (dir ? `${dir === "up" ? "▲" : "▼"}${delta > 0 ? "+" : ""}${fmt(delta)}` : "·")}
         </span>
       </div>
     );
@@ -161,7 +182,7 @@ export default function MonitoringPage() {
             {/* LEFT — 매도 / sellers (asks) */}
             <div className="flex-1 border-r border-[var(--border-default)]">
               <div className="px-2 py-1.5 text-center text-[12px] font-extrabold" style={{ color: RED, background: "var(--bg-elevated)" }}>
-                🔴 {t("매도 (매도자)", "Sellers (asks)")} · {asks.length}
+                🔴 {t("매도 (매도자)", "Sellers (asks)")} · {obsAsks.length}/30
               </div>
               <ColHead />
               {asks.map((l, i) => <ColRow key={`a${l.price}_${i}`} l={l} side="ask" rank={i + 1} />)}
@@ -170,7 +191,7 @@ export default function MonitoringPage() {
             {/* RIGHT — 매수 / buyers (bids) */}
             <div className="flex-1">
               <div className="px-2 py-1.5 text-center text-[12px] font-extrabold" style={{ color: BLUE, background: "var(--bg-elevated)" }}>
-                🔵 {t("매수 (매수자)", "Buyers (bids)")} · {bids.length}
+                🔵 {t("매수 (매수자)", "Buyers (bids)")} · {obsBids.length}/30
               </div>
               <ColHead />
               {bids.map((l, i) => <ColRow key={`b${l.price}_${i}`} l={l} side="bid" rank={i + 1} />)}
@@ -178,11 +199,11 @@ export default function MonitoringPage() {
             </div>
           </div>
         )}
-        {ob && asks.length + bids.length < 40 && (
+        {ob && (obsAsks.length < 30 || obsBids.length < 30) && (
           <div className="px-3 py-2 text-[10.5px] text-[var(--text-muted)] bg-[var(--badge-blue-bg)]/20 border-t border-[var(--border-default)]">
             {t(
-              `📡 가격이 움직이며 수집기가 가동될수록 한쪽당 30단계까지 채워집니다. 현재 매도 ${asks.length} · 매수 ${bids.length}단계.`,
-              `📡 Fills toward 30 levels per side as price moves and the collector runs. Currently sellers ${asks.length} · buyers ${bids.length}.`)}
+              `30/30 표시 · "—"는 아직 관측되지 않은 빈 호가이며 가격이 그 단계를 지나면 실제 잔량이 채워집니다. 실관측 매도 ${obsAsks.length} · 매수 ${obsBids.length}.`,
+              `Showing 30/30 · "—" are ticks not yet observed; real qty fills in as price passes through them. Observed sellers ${obsAsks.length} · buyers ${obsBids.length}.`)}
           </div>
         )}
         {ob && !ob.live?.fresh && <div className="px-3 py-1.5 text-[10px] text-[var(--text-muted)] border-t border-[var(--border-default)]">{t("장마감 — 마지막 캡처 기준", "Closed — last captured book")}</div>}
@@ -190,8 +211,8 @@ export default function MonitoringPage() {
 
       {/* legend */}
       <div className="mt-2 text-[10.5px] text-[var(--text-muted)]">
-        {t("🔴 ▲ = 잔량 증가 · 🔵 ▼ = 잔량 감소 · 노란 줄 = 이번 틱에 변동 · 🔥 = 대량 호가",
-          "🔴 ▲ = qty up · 🔵 ▼ = qty down · yellow = changed this tick · 🔥 = large order")}
+        {t("🔴 ▲ = 잔량 증가 · 🔵 ▼ = 잔량 감소 · 노란 줄 = 이번 틱에 변동 · 🔥 = 대량 호가 · — = 미관측 빈 호가",
+          "🔴 ▲ = qty up · 🔵 ▼ = qty down · yellow = changed this tick · 🔥 = large order · — = empty (not yet observed)")}
       </div>
     </div>
   );
