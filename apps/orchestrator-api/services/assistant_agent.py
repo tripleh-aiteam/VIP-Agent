@@ -913,14 +913,15 @@ def _vip_live_price_reply(transcript: Optional[str], lang: str, db=None) -> Opti
     # Render CAN read — so prefer that for a real Kiwoom price + label.
     if db is not None and _kr_market_open_now():
         try:
-            from services.trading_brief import realtime_for as _rt
+            from services.trading_brief import _read_snapshots as _rs
+            codes = [q["code"] for q in quotes if "키움" not in (q.get("source") or "")]
+            # 6-min window (not 4) so a brief collector gap doesn't flicker back to Naver.
+            snaps = _rs(db, codes, max_age_sec=360) if codes else {}
             for q in quotes:
-                if "키움" not in (q.get("source") or ""):       # Kiwoom REST didn't supply it
-                    snap = _rt(q["code"], db=db) or {}
-                    sp = snap.get("price")
-                    if sp and snap.get("live"):
-                        q["price"] = float(sp)
-                        q["source"] = "키움증권 실시간 시세"
+                sp = (snaps.get(q["code"]) or {}).get("price")
+                if sp:
+                    q["price"] = float(sp)
+                    q["source"] = "키움증권 실시간 시세"
         except Exception:
             pass
 
