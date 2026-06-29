@@ -775,6 +775,34 @@ def _is_market_flow_q(transcript: Optional[str]) -> bool:
     return any(k in t for k in _MFLOW_INV_KW) and _stock_in_query(transcript) is None
 
 
+# A BARE stock-switch follow-up ('how about NAVER?', '그럼 네이버는?', 'NAVER는?') — names a
+# new stock but carries NO intent of its own, so it should INHERIT the previous turn's
+# intent (price→price, outlook→outlook), not start a fresh long analysis.
+_SWITCH_PREFIX_RE = _re.compile(
+    r"^\s*(how about|what about|and how about|and what about|그럼|그러면|그리고|그 다음|다음으로|then|how about you)\b", _re.I)
+_BARE_STOCK_RE = _re.compile(r"^\s*\S{1,20}\s*(는|은|도)\s*[?？]?\s*$")   # 'X는?' / 'X은?' / 'X도?'
+
+
+def _prev_user_msg(history: Optional[list[dict]]) -> str:
+    for h in reversed(history or []):
+        if (h.get("role") or "") == "user":
+            return h.get("content") or h.get("text") or h.get("transcript") or ""
+    return ""
+
+
+def _is_bare_switch_followup(transcript: Optional[str]) -> bool:
+    t = (transcript or "").strip()
+    if not t or len(t.split()) > 6:
+        return False
+    tl = t.lower()
+    # if it carries its OWN explicit intent, it's not a bare switch — handle normally
+    if (any(w in tl for w in _PRICE_WORDS) or _is_past_price(t) or _is_future_outlook(t)
+            or _is_stock_advice(t, "vip") or _is_daytrade_followup(t)
+            or any(w in tl for w in ("news", "뉴스", "chart", "차트", "report", "리포트", "공매도"))):
+        return False
+    return bool(_SWITCH_PREFIX_RE.search(t) or _BARE_STOCK_RE.match(t))
+
+
 def _is_vip_current_price_q(transcript: Optional[str], agent_id: Optional[str]) -> bool:
     if (agent_id or "vip").lower() == "stock":
         return False
@@ -3940,6 +3968,30 @@ def _run_agent_impl(
     # 'naver price on 18th/17th/16th of June', 'last 4 days' → a fixed table from VIP's
     # Naver daily data (no LLM), so VIP and the relaying AI Advisor read IDENTICALLY.
     # Falls through (US / unresolved) to the LLM/web-search past path below.
+    # ===== BARE stock-switch follow-up ('how about NAVER?', '네이버는?') → INHERIT the
+    # previous turn's intent for the new stock, so a price→price follow-up stays a short
+    # price answer (not a fresh long analysis). =====
+    if not confirmed_tool and history and _is_bare_switch_followup(transcript):
+        _sw = _all_stocks_in_query(transcript)
+        if _sw:
+            _prev = _prev_user_msg(history)
+            if _is_vip_current_price_q(_prev, agent_id):           # prev was price → price
+                _vp = _vip_live_price_reply(transcript, lang)
+                if _vp:
+                    return _vp
+            elif _is_future_outlook(_prev) or _is_stock_advice(_prev, agent_id):  # prev was outlook/advice
+                try:
+                    from services import prediction_service as _ps2
+                    _c = next((c for (c, _n) in _sw if c in _ps2.NAMES), None)
+                    if _c and "two_method_view" in TOOL_REGISTRY:
+                        _st = [{"tool": "two_method_view", "args": {"ticker": _c}}]
+                        if "read_chart" in TOOL_REGISTRY:
+                            _st.append({"tool": "read_chart", "args": {"ticker": _c}})
+                        return _run_chain(db, transcript, lang, _st, current_path,
+                                          selected_id, system, history or [], agent_id=agent_id)
+                except Exception:
+                    pass
+
     if (not confirmed_tool and (agent_id or "vip").lower() != "stock"
             and not _is_future_outlook(transcript)        # '앞으로 5일 전망' is a FORECAST, not history
             and _requested_history_dates(transcript)):

@@ -88,6 +88,14 @@ CASES = [
     C("future_single", "FUTURE", "ko", "SK하이닉스 앞으로 5일 전망은?",
       [("method1", lambda r, i: has(r"방법 1|머신러닝", r)), ("method2", lambda r, i: has(r"방법 2|분석", r))]),
 
+    # ---- SWITCH FOLLOW-UP (inherits prior intent: price -> price, not a fresh analysis) ----
+    C("switch_followup", "SWITCH-FU", "en", "how about naver?",
+      [("price table", lambda r, i: i == "stock_price" and is_table(r)), ("naver", lambda r, i: has(r"naver|035420", r))],
+      setup="what is the current price of SK Hynix?"),
+    C("switch_followup", "SWITCH-FU", "ko", "그럼 네이버는?",
+      [("price table", lambda r, i: i == "stock_price" and is_table(r)), ("naver", lambda r, i: has(r"naver|네이버|035420", r))],
+      setup="SK하이닉스 지금 얼마야?"),
+
     # ---- MARKET FLOWS (who's buying — real Naver data, identical EN/KO) ----
     C("market_flow", "MFLOW", "en", "Who is buying the market today, foreign or institutions?",
       [("routed", lambda r, i: i in ("chain_completed", "market_flows")), ("number", NUM)]),
