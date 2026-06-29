@@ -911,6 +911,24 @@ def _requested_history_dates(q: Optional[str]):
         n, unit = int(m.group(1)), m.group(2)
         days = n * 7 if (unit.startswith("w") or unit == "주") else n
         return ("range", max(1, min(days, 40)))
+    # Korean explicit date(s): '6월 10일', '6월 10일·9일' — the English month scan below
+    # only matches a-z, so Korean dates need their own parse (else they mis-route to the
+    # current-price handler and answer TODAY's price instead of the asked date).
+    kdays = _re.findall(r"(\d{1,2})\s*월\s*(\d{1,2})\s*일", t)
+    if kdays:
+        ym = _re.search(r"\b(20\d{2})\b", t)
+        yr = int(ym.group(1)) if ym else today.year
+        kdates = []
+        for mo, dd in kdays:
+            try:
+                d = _date(yr, int(mo), int(dd))
+                if not ym and d > today:
+                    d = _date(yr - 1, int(mo), int(dd))
+                kdates.append(d)
+            except ValueError:
+                pass
+        if kdates:
+            return ("dates", sorted(set(kdates), reverse=True))
     month = None
     for tok in _re.finditer(r"[a-z]{3,}", t):
         w = tok.group()
