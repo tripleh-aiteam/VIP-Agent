@@ -731,8 +731,16 @@ def _is_history_range_query(transcript: Optional[str]) -> bool:
 _FUTURE_OUTLOOK_KW = (
     "앞으로", "향후", "전망", "다음 주", "다음주", "내일", "모레", "이번 주 남은",
     "오를까", "내릴까", "오를", "내릴", "상승할", "하락할", "예상돼", "예상되",
+    # soft future phrasings ('어떻게 될까/어떨까/N일 후') — these mean 'how WILL it do',
+    # so they must route to the two-method outlook like the English 'outlook', not to
+    # stock-delegation/history (the EN/KO inconsistency the user hit).
+    "어떻게 될까", "어떻게 될지", "어떨까", "어찌될까", "어찌 될까", "될까요", "될지",
+    "일 후", "일후", "이후 전망", "전망 어때", "전망은", "오를지", "내릴지", "갈까",
     "forecast", "outlook", "next week", "coming days", "going to", "will it",
     "expect", "predict", "future",
+    # soft EN future phrasings ('what will X do', 'over the next N days')
+    "what will", "over the next", "in the next", "next few", "days ahead",
+    "will rise", "will fall", "will go", "near future", "do next",
 )
 
 

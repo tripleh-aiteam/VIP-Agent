@@ -102,6 +102,12 @@ CASES = [
     C("market_flow", "MFLOW", "ko", "오늘 코스피 외국인 기관 순매수 어때?",
       [("routed", lambda r, i: i in ("chain_completed", "market_flows")), ("number", NUM)]),
 
+    # ---- FUTURE soft-phrasing KO (어떻게 될까/N일 후 must = two-method, like EN 'outlook') ----
+    C("future_soft", "FUTURE-SOFT", "ko", "SK하이닉스 5일 후 어떻게 될까?",
+      [("method1", lambda r, i: has(r"방법 1|머신러닝|method 1", r)), ("method2", lambda r, i: has(r"방법 2|분석|method 2", r))]),
+    C("future_soft", "FUTURE-SOFT", "en", "What will SK Hynix do over the next 5 days?",
+      [("method1", lambda r, i: has(r"method 1|machine learning|방법 1", r)), ("method2", lambda r, i: has(r"method 2|analysis|방법 2", r))]),
+
     # ---- OFF-TOPIC (should answer like a normal LLM, not refuse) ----
     C("offtopic", "OFFTOPIC", "en", "What's the capital of Uzbekistan?",
       [("answers", lambda r, i: has(r"tashkent|타슈켄트", r)), ("not refuse", lambda r, i: not has(r"can't help|cannot help|don't.*stock", r))]),
