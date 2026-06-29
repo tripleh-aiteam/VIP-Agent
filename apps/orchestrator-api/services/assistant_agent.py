@@ -889,7 +889,7 @@ def _canon_price_src(s: Optional[str]) -> str:
     return "naver"
 
 
-def _vip_live_price_reply(transcript: Optional[str], lang: str) -> Optional[dict]:
+def _vip_live_price_reply(transcript: Optional[str], lang: str, db=None) -> Optional[dict]:
     """VIP current-price answered locally (Kiwoom during market / Naver after).
     Handles one stock, several stocks, or a bare ask (→ default watchlist).
     Returns a reply dict, or None to fall back to delegation."""
@@ -907,6 +907,23 @@ def _vip_live_price_reply(transcript: Optional[str], lang: str) -> Optional[dict
     if not quotes:
         return None
 
+    # Kiwoom on Render: the chatbot runs on Render, whose IP often can't reach Kiwoom REST
+    # directly → _live_price_for_code falls back to Naver (price OK but null OHLCV). During
+    # market, the PC collector writes Kiwoom data to the snapshot (realtime_snapshot), which
+    # Render CAN read — so prefer that for a real Kiwoom price + label.
+    if db is not None and _kr_market_open_now():
+        try:
+            from services.trading_brief import realtime_for as _rt
+            for q in quotes:
+                if "키움" not in (q.get("source") or ""):       # Kiwoom REST didn't supply it
+                    snap = _rt(q["code"], db=db) or {}
+                    sp = snap.get("price")
+                    if sp and snap.get("live"):
+                        q["price"] = float(sp)
+                        q["source"] = "키움증권 실시간 시세"
+        except Exception:
+            pass
+
     now = _dt_now_kst()
     sources = sorted({q["source"] for q in quotes})
 
@@ -920,11 +937,12 @@ def _vip_live_price_reply(transcript: Optional[str], lang: str) -> Optional[dict
     # Which values did the user ask for? ('opening and current' -> [open, price]).
     fields = _requested_price_fields(transcript)
 
-    # Backfill OHLCV from the daily endpoint when the realtime quote is missing
-    # them (Naver's realtime `basic` returns null open/high/low/volume pre-market
-    # and after the close), so '시가/고가/저가/거래량' aren't silently dropped.
-    _need = [f for f in ("open", "high", "low", "volume") if f in fields]
-    if _need and any(q.get(f) is None for q in quotes for f in _need):
+    # Backfill OHLCV from the daily endpoint whenever the realtime quote is missing them
+    # (Naver's realtime `basic` returns null open/high/low/volume; the snapshot has none).
+    # ALWAYS backfill all four — the answer table always shows 시가/고가/저가/거래량, so they
+    # must never render as '-' when today's daily bar has the values.
+    _need = ["open", "high", "low", "volume"]
+    if any(q.get(f) is None for q in quotes for f in _need):
         try:
             from services import naver_stock as _ns
             for q in quotes:
@@ -4015,7 +4033,7 @@ def _run_agent_impl(
         if _ps:
             _cp_tx = f"{_ps} {transcript}"
     if not confirmed_tool and _is_vip_current_price_q(_cp_tx, agent_id):
-        _vp = _vip_live_price_reply(_cp_tx, lang)
+        _vp = _vip_live_price_reply(_cp_tx, lang, db)
         if _vp:
             return _vp
 

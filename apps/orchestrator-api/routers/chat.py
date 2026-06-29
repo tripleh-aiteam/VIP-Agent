@@ -58,13 +58,14 @@ def live_price(codes: str = Query(..., description="Comma-separated KR 6-digit c
 
 @router.get("/price/answer")
 def price_answer(q: str = Query(..., description="The user's price question, verbatim"),
-                 lang: str = Query("auto", description="'en', 'ko', or 'auto'")):
+                 lang: str = Query("auto", description="'en', 'ko', or 'auto'"),
+                 db: Session = Depends(get_db)):
     """Fully-FORMATTED current-price answer (opening/current/high/low as asked, Kiwoom
     during market / Naver after, with source label). VIP owns the Kiwoom key, so the
     Stock app relays this string for price questions → both surfaces read identically.
     Returns {ok, reply}."""
     from services.assistant_agent import _vip_live_price_reply
-    r = _vip_live_price_reply(q or "", lang or "auto")
+    r = _vip_live_price_reply(q or "", lang or "auto", db)
     if r and r.get("reply"):
         return {"ok": True, "reply": r["reply"]}
     return {"ok": False, "reply": ""}
