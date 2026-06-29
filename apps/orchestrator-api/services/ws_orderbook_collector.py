@@ -80,9 +80,9 @@ def _market_open_now() -> bool:
     return (9 * 60 - 5) <= mins <= (15 * 60 + 35)
 
 
-async def _get_token() -> str | None:
+async def _get_token(force: bool = False) -> str | None:
     from services import kiwoom_rest
-    return await asyncio.to_thread(kiwoom_rest._token)
+    return await asyncio.to_thread(kiwoom_rest._token, force)
 
 
 def _get_conn():
@@ -103,6 +103,7 @@ class WsOrderbookCollector:
         self.last_raw = None          # last raw 0D frame (to verify FIDs against live data)
         self.last_login = None        # raw LOGIN response
         self.writes = 0
+        self.force_token = False      # force a fresh token after a token/LOGIN failure
 
     def _conn_ok(self):
         if self._conn is None or getattr(self._conn, "closed", 1):
@@ -137,7 +138,8 @@ class WsOrderbookCollector:
 
     async def _session(self) -> None:
         self.state = "connecting"
-        token = await _get_token()
+        token = await _get_token(self.force_token)   # force-refresh if a prior login failed
+        self.force_token = False
         if not token:
             self.last_error = "no Kiwoom token (KIWOOM_APP_KEY/SECRET or whitelisted IP)"
             print("[ws-ob] " + self.last_error)
@@ -216,6 +218,9 @@ class WsOrderbookCollector:
                     break
                 self.connected = False
                 self.state, self.last_error = "error", f"{type(e).__name__}: {e}"
+                # stale/invalid token (e.g. 8005) -> mint a fresh one on the next attempt
+                if any(k in str(e).lower() for k in ("token", "login", "8005", "유효")):
+                    self.force_token = True
                 print(f"[ws-ob] error ({e!r}); retry in {backoff:.0f}s")
                 await self._sleep(backoff)
                 backoff = min(backoff * 2, 30.0)
