@@ -1,0 +1,45 @@
+name: Daily ML retrain
+
+# Retrains the per-stock models + refreshes BUY/SELL/HOLD predictions every morning
+# BEFORE market open, in the cloud (free GitHub runner) — so predictions never go
+# stale and the daily order-book/flow signals get banked. The daily pipeline uses
+# FinanceDataReader (not the Kiwoom API), so there is NO designated-terminal IP block
+# here — unlike the live order-book collector, this runs fine off any IP.
+#
+# Setup (one time): add repo secret DATABASE_URL = the Supabase Postgres URL
+# (Settings -> Secrets and variables -> Actions -> New repository secret).
+# Then it runs automatically; or trigger manually from the Actions tab to test.
+
+on:
+  schedule:
+    - cron: "0 20 * * *"   # 20:00 UTC = 05:00 KST (next day), daily, before the 09:00 open
+  workflow_dispatch: {}      # manual "Run workflow" button (test / force a refresh)
+
+# don't pile up overlapping retrains
+concurrency:
+  group: daily-ml-retrain
+  cancel-in-progress: false
+
+jobs:
+  retrain:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    defaults:
+      run:
+        working-directory: apps/orchestrator-api
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install ML deps
+        run: pip install -r ml/requirements.txt
+
+      - name: Retrain + re-predict (build features -> bake-off -> backtest -> predict)
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          PYTHONUTF8: "1"
+          PYTHONIOENCODING: "utf-8"
+        run: python ml/daily_run.py
