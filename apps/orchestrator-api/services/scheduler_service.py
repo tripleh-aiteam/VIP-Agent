@@ -1094,12 +1094,14 @@ def _asset_daily_report(email_override: str | None = None, period: str = "daily"
 
 @_single_flight("realty")
 @with_retry(max_attempts=2, backoff_seconds=(60, 300), job_name="realty_daily_report")
-def _realty_daily_report(email_override: str | None = None, period: str = "daily", lang: str = "ko"):
-    """Daily Real Estate Agent report — now sourced from the PARTNER's Supabase
-    (table land_investigations). Renders his 일일 현황 digest, saves it to the
-    dashboard + Telegram, and sends it as its OWN standalone email with BOTH Korean
-    and English .docx (scheduled ~7:05 AM KST to all recipients via _realty_daily_all).
-    Replaces the old self-scraped listings+OnBid report (services.realty_report)."""
+def _realty_daily_report(email_override: str | None = None, period: str = "daily",
+                         lang: str = "ko", notify: bool = True):
+    """Daily Real Estate Agent report — sourced from the PARTNER's Supabase
+    (table land_investigations). Renders his 일일 현황 digest and ALWAYS saves it to
+    the dashboard (VIP Reports menu). Telegram + email delivery happen ONLY when
+    `notify=True`. The scheduled 7:05 AM run uses notify=False (dashboard-only —
+    per the boss's request to stop emailing the real-estate report); a manual
+    trigger with an explicit ?email= can still send on demand."""
     from services.realty_supabase import build_realty_supabase_report as build_realty_report
     from services.kiwoom_report import format_report_telegram
     from services.telegram_service import send_alert
@@ -1133,13 +1135,17 @@ def _realty_daily_report(email_override: str | None = None, period: str = "daily
         db.add(r)
         db.commit()
 
-        if source_ok:
+        if source_ok and notify:
             try:
                 for chunk in format_report_telegram(rep, kst, lang="ko",
                                                     title="Real Estate Agent Report", emoji="🏠"):
                     send_alert(chunk)
             except Exception as te:
                 log.warning(f"realty telegram format failed: {te}")
+
+        if not notify:
+            log.info("realty: dashboard-only (notify=False) — Telegram + email skipped",
+                     extra={"trace_id": trace, "action": "realty.dashboard_only"})
 
         try:
             from services.report_docx import markdown_to_docx
@@ -1151,7 +1157,7 @@ def _realty_daily_report(email_override: str | None = None, period: str = "daily
             else:
                 to_addr = (email_override or os.getenv("REALTY_REPORT_EMAIL")
                            or os.getenv("REPORT_EMAIL_TO") or DEFAULT_RECIPIENT)
-            if source_ok and (email_override or os.getenv("SEND_INDIVIDUAL_EMAILS") == "1") and _email_ok() and to_addr:
+            if notify and source_ok and (email_override or os.getenv("SEND_INDIVIDUAL_EMAILS") == "1") and _email_ok() and to_addr:
                 ymd = datetime.utcnow().strftime("%Y%m%d")
                 ko_md = rep.get("detail_ko") or rep.get("detail_en") or ""
                 en_md = rep.get("detail_en") or rep.get("detail_ko") or ""
@@ -1462,9 +1468,10 @@ def _asset_daily_all():
 
 
 def _realty_daily_all():
-    """Scheduled 7:05 AM KST — build the detailed Real Estate report and send it as
-    its OWN standalone email (Korean + English .docx) to the FULL recipient list."""
-    _realty_daily_report(email_override="*ALL*")
+    """Scheduled 7:05 AM KST — build the Real Estate report and save it to the VIP
+    Reports dashboard ONLY. Per the boss's request the real-estate report is NOT
+    emailed (and not pushed to Telegram) — notify=False."""
+    _realty_daily_report(notify=False)
 
 
 def _kiwoom_daily_all():

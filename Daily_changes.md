@@ -20,6 +20,12 @@ APScheduler's `from_crontab` interprets day-of-week as **Monday=0 … Sunday=6**
 
 Today's (06-29) 4 market reports already went out as weekly before the fix — a one-time artifact. Asset + Real Estate were unaffected (they're `* * *` every-day, correctly daily for 06-29). From the next weekday run everything is correct. Boss can use the dashboard "Generate & send report now" if a fresh daily is wanted for today.
 
+### [10:10] Real Estate report = dashboard-only (no email, no Telegram)
+
+- **What:** added a `notify` flag to `_realty_daily_report` ([scheduler_service.py](apps/orchestrator-api/services/scheduler_service.py)); the dashboard OrchReport save always runs, but Telegram + email fire only when `notify=True`. The scheduled 7:05 AM wrapper `_realty_daily_all` now calls `notify=False` → the realty 일일 현황 report appears in the VIP Reports menu only and is no longer emailed to the 7 recipients (nor pushed to Telegram). Manual `/compose/realty?email=` can still send on demand.
+- **Why:** boss asked to stop emailing the real-estate report and keep it inside the VIP Report menu only.
+- **Unaffected:** the 8 AM combined auto-pipeline (agent_daily_realty) is Telegram+dashboard, never email; Master email is stock-only. Net result: zero automatic real-estate emails.
+
 ### [09:40] Self-healing safety net so reports always appear (no manual backfill)
 
 - **What:** added `_ensure_morning_reports()` ([scheduler_service.py](apps/orchestrator-api/services/scheduler_service.py)), scheduled **8:00 AM KST every day** (after the 6:30–7:05 runs). It checks whether today's expected reports exist on the dashboard and **generates any that are missing** — market reports as daily on KST weekdays / weekly on weekends, Asset + Real Estate daily every day. Idempotent: skips anything already present (verified against live DB — today all 5 present → all skipped), so it never duplicates or double-emails.
@@ -28,7 +34,15 @@ Today's (06-29) 4 market reports already went out as weekly before the fix — a
 
 ---
 
-## 2026-06-26 (Friday) — Live-anchored ML levels, hourly 2-method forward test, deep order-book memory
+### [11:50] Real-time Monitoring page + Kiwoom WebSocket order-book collector
+
+- **What:** Built a new **Monitoring** menu/page that shows a real-time 30-level order-book ladder (live 10 + remembered) with Δ change colors (🔴▲ qty up / 🔵▼ qty down) and yellow flash on the rows that change each tick — a VIP port of the user's `stock_test` Streamlit dashboard. Added a server-side Kiwoom **WebSocket** collector to feed it, plus a gated debug endpoint.
+- **Why:** the user needs more than the 10 live levels Kiwoom publishes, updating live "like the Kiwoom app." 30 levels only exist via the *remembered* book (KRX publishes 10 — confirmed by the user's own `fids.py`); the live feel comes from a WebSocket push feed (the 30s REST poll was too slow).
+- **Files added:** [`apps/admin-dashboard/src/app/monitoring/page.tsx`](apps/admin-dashboard/src/app/monitoring/page.tsx) (ladder UI, Δ/flash via prev-tick compare, big-only, current-book-only after a UI tweak: no age column, larger Δ icons); [`apps/orchestrator-api/services/ws_orderbook_collector.py`](apps/orchestrator-api/services/ws_orderbook_collector.py) (WS 0D collector → `obm.record`; FIDs 41-50/51-60/61-70/71-80 sign-stripped; reuses `kiwoom_rest._token()` + `ml._db.get_conn()`; market-hours gate; reconnect; PING echo; standalone `python -m`; `status()` for debug).
+- **Files updated:** [`Sidebar.tsx`](apps/admin-dashboard/src/components/Sidebar.tsx) (Monitoring nav); [`main.py`](apps/orchestrator-api/main.py) (auto-start collector in lifespan when creds set, `WS_ORDERBOOK_COLLECTOR=false` to disable); [`routers/predictions.py`](apps/orchestrator-api/routers/predictions.py) (`/predictions/ws-debug`, gated behind `DEBUG_KIWOOM`, login data sanitized — addresses commit-review findings); [`orderbook_memory.py`](apps/orchestrator-api/services/orderbook_memory.py) (thresholds 삼성전자→1000 / SK하이닉스→100; `live_book` age-0 freshness fix — `(age or 99999)` wrongly treated 0 as stale).
+- **VERIFIED LIVE (on PC, market open):** collector subscribed 0D for 005930/000660, parsed FIDs correctly, wrote to Supabase, memory filled 10→20+/side; SK하이닉스 showed `키움 실시간 fresh=true`. The FID map is **confirmed correct** against real Kiwoom payloads.
+- **⚠️ Blocker / state:** Render **ran out of monthly pipeline (build) minutes** (500/500 used) → backend commits (`0691fdd`, `27d8da7`, `5b058ea`, `53a0ca2`) are on `main` but **not deployed**; they go live when minutes reset (~July 1) or the user adds minutes. The **frontend** (Monitoring UI) deploys via Vercel regardless. As an interim, the collector runs **on the user's PC** (`python -m services.ws_orderbook_collector`) writing to the same Supabase the deployed endpoint reads — must keep the terminal open; market hours only.
+- **Next:** when Render minutes return, deploy backend so the collector runs server-side (no PC). Mirror the Monitoring UX into the AI Advisor app if wanted. Consider a single-instance guard if Render runs >1 worker.
 
 ### Goal
 
