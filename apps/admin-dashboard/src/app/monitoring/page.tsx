@@ -1,12 +1,12 @@
 "use client";
 
 // Real-time order-book monitor — a VIP port of the Streamlit "KR Stock Monitor".
-// Shows a top-30 ladder per side (LIVE 10 from Kiwoom + REMEMBERED levels assembled
-// over time), with a Δ column + yellow flash on rows whose resting qty changed this
-// tick (🔴▲ qty up / 🔵▼ qty down), depth bars, 🔥 large orders, and age for stale
-// levels. Data: GET /predictions/orderbook/{code}?depth=30 (live Kiwoom in-market,
-// Naver after close). KRX publishes only 10 live levels — the deeper rows are
-// genuinely-observed memory, marked stale with their age. Not fake depth.
+// Two side-by-side columns: LEFT = 매도/sellers (asks), RIGHT = 매수/buyers (bids).
+// Each shows up to 30 levels (live 10 + remembered, current session only), with a
+// level number (#), price, resting qty, and a Δ change vs the previous tick
+// (🔴▲ qty up / 🔵▼ qty down) + yellow flash on change. Data: GET
+// /predictions/orderbook/{code}?depth=30 (live Kiwoom in-market, Naver after close).
+// KRX publishes only 10 live levels; deeper rows are genuinely-observed memory.
 
 import { useEffect, useRef, useState } from "react";
 import { api } from "@/components/api";
@@ -57,29 +57,26 @@ export default function MonitoringPage() {
   }, [code, speed]);
 
   const name = WATCH.find((w) => w.code === code)?.[lang === "ko" ? "ko" : "en"] || code;
-  const thr = ob?.threshold || 0;
   const mid = ob?.memory?.mid ?? ob?.mid ?? null;
 
-  // Build the 30-deep ladder from the remembered book (includes live levels, age 0).
+  // Up to 30 levels per side, current session only (drop stale), best (nearest mid)
+  // FIRST. No size filter — show the whole book so the depth reaches 30.
   const rowsFor = (side: "ask" | "bid"): OBLevel[] => {
     const src = side === "ask" ? ob?.memory?.asks : ob?.memory?.bids;
     return [...(src || [])]
-      // big orders only, and CURRENT only — drop stale levels (e.g. last session's
-      // book) so everything shown is from the live session. Live levels are age ~0.
-      .filter((l) => (l.is_large || (l.last_qty || l.qty || 0) >= thr))
       .filter((l) => (l.age_sec == null || l.age_sec < 1800))
-      .sort((a, b) => b.price - a.price);
+      .sort((a, b) => (side === "ask" ? a.price - b.price : b.price - a.price)) // best first
+      .slice(0, 30);
   };
   const asks = rowsFor("ask");
   const bids = rowsFor("bid");
 
-  // compute Δ + flash against the previous tick, then remember current qty.
   const deltaInfo = (l: OBLevel) => {
     const q = l.last_qty || l.qty || 0;
     const p = prevQty.current[l.price];
     let dir: "up" | "down" | "" = "";
     if (p != null && q !== p) dir = q > p ? "up" : "down";
-    return { q, prev: p, dir, delta: p != null ? q - p : 0 };
+    return { q, dir, delta: p != null ? q - p : 0 };
   };
   // after render (Δ computed against the prior snapshot), record this tick's qtys
   useEffect(() => {
@@ -91,45 +88,55 @@ export default function MonitoringPage() {
 
   const maxQ = Math.max(1, ...asks.concat(bids).map((l) => l.last_qty || l.qty || 0));
 
-  const Row = ({ l, side, rank }: { l: OBLevel; side: "ask" | "bid"; rank: number }) => {
+  const ColRow = ({ l, side, rank }: { l: OBLevel; side: "ask" | "bid"; rank: number }) => {
     const { q, dir, delta } = deltaInfo(l);
-    const flashed = dir;
     const col = side === "ask" ? RED : BLUE;
+    const barSide = side === "ask" ? "left-0" : "right-0";
     return (
-      <div className="relative flex items-center justify-between px-3 py-[4px] text-[12.5px] border-b border-[var(--border-default)]/30"
-        style={{ background: flashed ? (flashed === "up" ? "rgba(255,235,59,0.45)" : "rgba(255,235,59,0.30)") : undefined }}>
-        <div className="absolute inset-y-0 right-0 rounded" style={{ width: `${Math.min(100, (q / maxQ) * 100)}%`, background: col, opacity: 0.12 }} />
-        <span className="relative tabular-nums text-[11px] text-[var(--text-muted)] text-center" style={{ minWidth: 30 }}>{rank}</span>
-        <span className="relative font-bold tabular-nums" style={{ color: col, minWidth: 78 }}>{fmt(l.price)}</span>
-        <span className="relative tabular-nums text-[var(--text-secondary)] text-right" style={{ minWidth: 70 }}>
-          {fmt(q)}{l.is_large ? " 🔥" : ""}
-        </span>
-        <span className="relative tabular-nums text-right text-[16px] font-extrabold" style={{ minWidth: 96, color: dir === "up" ? RED : dir === "down" ? BLUE : "var(--text-muted)" }}>
-          {dir ? `${dir === "up" ? "▲" : "▼"} ${delta > 0 ? "+" : ""}${fmt(delta)}` : "·"}
+      <div className="relative flex items-center gap-1 px-2 py-[3px] text-[12px] border-b border-[var(--border-default)]/25"
+        style={{ background: dir ? (dir === "up" ? "rgba(255,235,59,0.45)" : "rgba(255,235,59,0.30)") : undefined }}>
+        <div className={`absolute inset-y-0 ${barSide} rounded`} style={{ width: `${Math.min(100, (q / maxQ) * 100)}%`, background: col, opacity: 0.12 }} />
+        <span className="relative tabular-nums text-[10px] text-[var(--text-muted)] text-center" style={{ minWidth: 20 }}>{rank}</span>
+        <span className="relative font-bold tabular-nums" style={{ color: col, minWidth: 62 }}>{fmt(l.price)}</span>
+        <span className="relative tabular-nums text-[var(--text-secondary)] text-right flex-1">{fmt(q)}{l.is_large ? " 🔥" : ""}</span>
+        <span className="relative tabular-nums text-right text-[13px] font-extrabold" style={{ minWidth: 58, color: dir === "up" ? RED : dir === "down" ? BLUE : "var(--text-muted)" }}>
+          {dir ? `${dir === "up" ? "▲" : "▼"}${delta > 0 ? "+" : ""}${fmt(delta)}` : "·"}
         </span>
       </div>
     );
   };
 
+  const ColHead = () => (
+    <div className="flex items-center gap-1 px-2 py-1 text-[9.5px] font-bold text-[var(--text-muted)] bg-[var(--bg-elevated)]/50">
+      <span style={{ minWidth: 20 }} className="text-center">#</span>
+      <span style={{ minWidth: 62 }}>{t("가격", "Price")}</span>
+      <span className="text-right flex-1">{t("잔량", "Qty")}</span>
+      <span style={{ minWidth: 58 }} className="text-right">{t("변동", "Δ")}</span>
+    </div>
+  );
+
+  // stocks shown in the dropdown (include a custom code if one was entered)
+  const options = WATCH.some((w) => w.code === code) ? WATCH : [{ code, ko: code, en: code }, ...WATCH];
+
   return (
-    <div className="px-4 md:px-8 py-6 max-w-[760px] mx-auto">
+    <div className="px-4 md:px-8 py-6 max-w-[820px] mx-auto">
       <div className="flex items-center gap-2 flex-wrap mb-3">
         <h1 className="text-[22px] font-extrabold text-[var(--text-primary)]">{t("실시간 호가 모니터링", "Live Order-Book Monitor")}</h1>
-        <span className="text-[11px] text-[var(--text-muted)]">{t("상위 30단계 (실시간 10 + 기억) · 대량만", "Top 30 (live 10 + remembered) · large only")}</span>
+        <span className="text-[11px] text-[var(--text-muted)]">{t("매도 / 매수 각 30단계 (실시간 10 + 기억)", "Sellers / Buyers · 30 levels each (live 10 + remembered)")}</span>
       </div>
 
-      {/* stock + speed controls */}
+      {/* controls: dropdown + custom code + speed */}
       <div className="flex items-center gap-2 flex-wrap mb-3">
-        {WATCH.map((w) => (
-          <button key={w.code} onClick={() => setCode(w.code)}
-            className="text-[12.5px] font-bold px-3 py-1.5 rounded-lg border"
-            style={{ color: code === w.code ? "#fff" : "var(--text-secondary)", background: code === w.code ? "var(--badge-blue-text)" : "transparent", borderColor: "var(--border-default)" }}>
-            {w[lang === "ko" ? "ko" : "en"]}
-          </button>
-        ))}
+        <select value={code} onChange={(e) => setCode(e.target.value)}
+          className="text-[13px] font-bold px-3 py-1.5 rounded-lg border bg-[var(--bg-elevated)] text-[var(--text-primary)]"
+          style={{ borderColor: "var(--border-default)" }}>
+          {options.map((w) => (
+            <option key={w.code} value={w.code}>{w[lang === "ko" ? "ko" : "en"]} ({w.code})</option>
+          ))}
+        </select>
         <input value={custom} onChange={(e) => setCustom(e.target.value.replace(/\D/g, "").slice(0, 6))}
-          onKeyDown={(e) => { if (e.key === "Enter" && custom.length === 6) setCode(custom); }}
-          placeholder={t("종목코드 6자리", "6-digit code")} className="text-[12.5px] px-2.5 py-1.5 rounded-lg border bg-transparent" style={{ borderColor: "var(--border-default)", width: 120 }} />
+          onKeyDown={(e) => { if (e.key === "Enter" && custom.length === 6) { setCode(custom); setCustom(""); } }}
+          placeholder={t("다른 종목코드 6자리 ↵", "other 6-digit code ↵")} className="text-[12.5px] px-2.5 py-1.5 rounded-lg border bg-transparent" style={{ borderColor: "var(--border-default)", width: 160 }} />
         <span className="ml-auto text-[11px] text-[var(--text-muted)]">{t("속도", "speed")}</span>
         {[1, 2, 3].map((s) => (
           <button key={s} onClick={() => setSpeed(s)} className="text-[11px] font-bold px-2 py-1 rounded-md border"
@@ -138,58 +145,54 @@ export default function MonitoringPage() {
       </div>
 
       <div className="rounded-xl border border-[var(--border-default)] overflow-hidden">
-        {/* header */}
+        {/* header: name, code, source, mid */}
         <div className="flex items-center gap-2 px-3.5 py-2.5 border-b border-[var(--border-default)] bg-[var(--bg-elevated)]">
           <span className="text-[15px] font-extrabold text-[var(--text-primary)]">📚 {name}</span>
           <span className="text-[11px] text-[var(--text-muted)]">{code}</span>
           {ob && <span className="text-[10px] px-1.5 py-0.5 rounded-full font-bold" style={{ color: ob.live?.fresh ? "#fff" : "var(--text-muted)", background: ob.live?.fresh ? RED : "var(--bg-elevated)" }}>{ob.source}</span>}
-          {thr ? <span className="text-[9.5px] text-[var(--text-muted)]">🔥 ≥ {thr.toLocaleString()}{t("주", "sh")}</span> : null}
-        </div>
-        {/* column header */}
-        <div className="flex items-center justify-between px-3 py-1 text-[10px] font-bold text-[var(--text-muted)] bg-[var(--bg-elevated)]/50">
-          <span style={{ minWidth: 30 }} className="text-center">#</span>
-          <span style={{ minWidth: 78 }}>{t("가격", "Price")}</span>
-          <span style={{ minWidth: 70 }} className="text-right">{t("잔량", "Qty")}</span>
-          <span style={{ minWidth: 96 }} className="text-right">{t("변동", "Δ")}</span>
+          {mid ? <span className="ml-auto text-[12px] font-extrabold text-[var(--text-primary)]">{t("중간가", "mid")} {fmt(Math.round(mid))}</span> : null}
         </div>
 
         {!ob && !err && <div className="px-3 py-6 text-center text-[12px] text-[var(--text-muted)]">{t("불러오는 중…", "Loading…")}</div>}
         {err && <div className="px-3 py-6 text-center text-[12px] text-[var(--text-muted)]">{t("데이터를 불러오지 못했습니다.", "Could not load data.")}</div>}
 
         {ob && (
-          <>
-            {/* asks: best (nearest mid) = level 1 at the bottom, counting up away from mid */}
-            {asks.map((l, i) => <Row key={`a${l.price}_${i}`} l={l} side="ask" rank={asks.length - i} />)}
-            <div className="px-3 py-1.5 text-center text-[12px] font-extrabold text-[var(--text-primary)] bg-[var(--bg-elevated)]">
-              {mid ? `— ${t("중간가", "mid")} ${fmt(Math.round(mid))} · ${t("매도", "asks")} ${asks.length} / ${t("매수", "bids")} ${bids.length} —` : "—"}
-            </div>
-            {/* bids: best (nearest mid) = level 1 at the top, counting down away from mid */}
-            {bids.map((l, i) => <Row key={`b${l.price}_${i}`} l={l} side="bid" rank={i + 1} />)}
-            {asks.length + bids.length < 40 && (
-              <div className="px-3 py-2 text-[10.5px] text-[var(--text-muted)] bg-[var(--badge-blue-bg)]/20">
-                {t(
-                  `📡 깊이는 수집기가 장중(09:00–15:30)에 가동되며 가격이 움직일수록 한쪽당 30단계까지 누적됩니다. 현재 매도 ${asks.length} · 매수 ${bids.length}단계 (대량만).`,
-                  `📡 Depth fills toward 30 levels per side as the collector runs in-market (09:00–15:30) and price moves. Currently asks ${asks.length} · bids ${bids.length} (large only).`)}
+          <div className="flex">
+            {/* LEFT — 매도 / sellers (asks) */}
+            <div className="flex-1 border-r border-[var(--border-default)]">
+              <div className="px-2 py-1.5 text-center text-[12px] font-extrabold" style={{ color: RED, background: "var(--bg-elevated)" }}>
+                🔴 {t("매도 (매도자)", "Sellers (asks)")} · {asks.length}
               </div>
-            )}
-            {!ob.live?.fresh && <div className="px-3 py-1.5 text-[10px] text-[var(--text-muted)]">{t("장마감 — 마지막 캡처 기준", "Closed — last captured book")}</div>}
-          </>
+              <ColHead />
+              {asks.map((l, i) => <ColRow key={`a${l.price}_${i}`} l={l} side="ask" rank={i + 1} />)}
+              {asks.length === 0 && <div className="px-2 py-3 text-center text-[11px] text-[var(--text-muted)]">—</div>}
+            </div>
+            {/* RIGHT — 매수 / buyers (bids) */}
+            <div className="flex-1">
+              <div className="px-2 py-1.5 text-center text-[12px] font-extrabold" style={{ color: BLUE, background: "var(--bg-elevated)" }}>
+                🔵 {t("매수 (매수자)", "Buyers (bids)")} · {bids.length}
+              </div>
+              <ColHead />
+              {bids.map((l, i) => <ColRow key={`b${l.price}_${i}`} l={l} side="bid" rank={i + 1} />)}
+              {bids.length === 0 && <div className="px-2 py-3 text-center text-[11px] text-[var(--text-muted)]">—</div>}
+            </div>
+          </div>
         )}
+        {ob && asks.length + bids.length < 40 && (
+          <div className="px-3 py-2 text-[10.5px] text-[var(--text-muted)] bg-[var(--badge-blue-bg)]/20 border-t border-[var(--border-default)]">
+            {t(
+              `📡 가격이 움직이며 수집기가 가동될수록 한쪽당 30단계까지 채워집니다. 현재 매도 ${asks.length} · 매수 ${bids.length}단계.`,
+              `📡 Fills toward 30 levels per side as price moves and the collector runs. Currently sellers ${asks.length} · buyers ${bids.length}.`)}
+          </div>
+        )}
+        {ob && !ob.live?.fresh && <div className="px-3 py-1.5 text-[10px] text-[var(--text-muted)] border-t border-[var(--border-default)]">{t("장마감 — 마지막 캡처 기준", "Closed — last captured book")}</div>}
       </div>
 
-      {/* legend + walls */}
+      {/* legend */}
       <div className="mt-2 text-[10.5px] text-[var(--text-muted)]">
-        {t("🔴 ▲ = 잔량 증가 · 🔵 ▼ = 잔량 감소 · 노란 줄 = 이번 틱에 변동 · 🔥 = 대량 호가 (실시간 현재 호가만 표시)",
-          "🔴 ▲ = qty up · 🔵 ▼ = qty down · yellow = changed this tick · 🔥 = large order (current live book only)")}
+        {t("🔴 ▲ = 잔량 증가 · 🔵 ▼ = 잔량 감소 · 노란 줄 = 이번 틱에 변동 · 🔥 = 대량 호가",
+          "🔴 ▲ = qty up · 🔵 ▼ = qty down · yellow = changed this tick · 🔥 = large order")}
       </div>
-      {ob?.walls && ob.walls.length > 0 && (
-        <div className="mt-2 px-3 py-2 rounded-lg border border-[var(--border-default)] bg-[var(--bg-elevated)]/60 text-[11px]">
-          🔥 {t("대량 호가벽", "Large walls")}: {ob.walls.slice(0, 6).map((w) => `${fmt(w.price)}(${fmt(w.max_qty || 0)})`).join(", ")}
-        </div>
-      )}
-      <p className="mt-3 text-[10px] text-[var(--text-muted)]">{t(
-        "참고용 · 투자권유 아님. 실시간 10단계는 KRX 한도이며, 그 이상은 시간에 따라 기억된 호가입니다(과거 관측값, 변동 가능).",
-        "Reference only · not investment advice. Live 10 levels are the KRX limit; deeper rows are remembered over time (past observations, may have changed).")}</p>
     </div>
   );
 }
