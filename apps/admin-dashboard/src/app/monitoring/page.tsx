@@ -61,7 +61,10 @@ export default function MonitoringPage() {
   const rowsFor = (side: "ask" | "bid"): OBLevel[] => {
     const src = side === "ask" ? ob?.memory?.asks : ob?.memory?.bids;
     return [...(src || [])]
-      .filter((l) => (l.is_large || (l.last_qty || l.qty || 0) >= thr)) // big orders only
+      // big orders only, and CURRENT only — drop stale levels (e.g. last session's
+      // book) so everything shown is from the live session. Live levels are age ~0.
+      .filter((l) => (l.is_large || (l.last_qty || l.qty || 0) >= thr))
+      .filter((l) => (l.age_sec == null || l.age_sec < 1800))
       .sort((a, b) => b.price - a.price);
   };
   const asks = rowsFor("ask");
@@ -84,26 +87,21 @@ export default function MonitoringPage() {
   }, [ob]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const maxQ = Math.max(1, ...asks.concat(bids).map((l) => l.last_qty || l.qty || 0));
-  const isLive = (l: OBLevel) => (l.age_sec == null || l.age_sec <= (speed + 2));
 
   const Row = ({ l, side }: { l: OBLevel; side: "ask" | "bid" }) => {
     const { q, dir, delta } = deltaInfo(l);
     const flashed = dir;
-    const live = isLive(l);
     const col = side === "ask" ? RED : BLUE;
     return (
-      <div className="relative flex items-center justify-between px-3 py-[3px] text-[12.5px] border-b border-[var(--border-default)]/30"
-        style={{ background: flashed ? (flashed === "up" ? "rgba(255,235,59,0.35)" : "rgba(255,235,59,0.22)") : undefined, opacity: live ? 1 : 0.5 }}>
+      <div className="relative flex items-center justify-between px-3 py-[4px] text-[12.5px] border-b border-[var(--border-default)]/30"
+        style={{ background: flashed ? (flashed === "up" ? "rgba(255,235,59,0.45)" : "rgba(255,235,59,0.30)") : undefined }}>
         <div className="absolute inset-y-0 right-0 rounded" style={{ width: `${Math.min(100, (q / maxQ) * 100)}%`, background: col, opacity: 0.12 }} />
         <span className="relative font-bold tabular-nums" style={{ color: col, minWidth: 78 }}>{fmt(l.price)}</span>
         <span className="relative tabular-nums text-[var(--text-secondary)] text-right" style={{ minWidth: 70 }}>
           {fmt(q)}{l.is_large ? " 🔥" : ""}
         </span>
-        <span className="relative tabular-nums text-right text-[11px]" style={{ minWidth: 64, color: dir === "up" ? RED : dir === "down" ? BLUE : "var(--text-muted)" }}>
+        <span className="relative tabular-nums text-right text-[16px] font-extrabold" style={{ minWidth: 96, color: dir === "up" ? RED : dir === "down" ? BLUE : "var(--text-muted)" }}>
           {dir ? `${dir === "up" ? "▲" : "▼"} ${delta > 0 ? "+" : ""}${fmt(delta)}` : "·"}
-        </span>
-        <span className="relative text-right text-[10px] text-[var(--text-muted)]" style={{ minWidth: 38 }}>
-          {live ? t("실시간", "live") : `${Math.round((l.age_sec || 0) / 60)}m`}
         </span>
       </div>
     );
@@ -147,8 +145,7 @@ export default function MonitoringPage() {
         <div className="flex items-center justify-between px-3 py-1 text-[10px] font-bold text-[var(--text-muted)] bg-[var(--bg-elevated)]/50">
           <span style={{ minWidth: 78 }}>{t("가격", "Price")}</span>
           <span style={{ minWidth: 70 }} className="text-right">{t("잔량", "Qty")}</span>
-          <span style={{ minWidth: 64 }} className="text-right">{t("변동", "Δ")}</span>
-          <span style={{ minWidth: 38 }} className="text-right">{t("상태", "age")}</span>
+          <span style={{ minWidth: 96 }} className="text-right">{t("변동", "Δ")}</span>
         </div>
 
         {!ob && !err && <div className="px-3 py-6 text-center text-[12px] text-[var(--text-muted)]">{t("불러오는 중…", "Loading…")}</div>}
@@ -175,8 +172,8 @@ export default function MonitoringPage() {
 
       {/* legend + walls */}
       <div className="mt-2 text-[10.5px] text-[var(--text-muted)]">
-        {t("🔴 ▲ = 잔량 증가 · 🔵 ▼ = 잔량 감소 · 노란 줄 = 이번 틱에 변동 · 🔥 = 대량 호가 · 흐린 줄 = 기억(과거 관측)",
-          "🔴 ▲ = qty up · 🔵 ▼ = qty down · yellow = changed this tick · 🔥 = large order · dim = remembered (past)")}
+        {t("🔴 ▲ = 잔량 증가 · 🔵 ▼ = 잔량 감소 · 노란 줄 = 이번 틱에 변동 · 🔥 = 대량 호가 (실시간 현재 호가만 표시)",
+          "🔴 ▲ = qty up · 🔵 ▼ = qty down · yellow = changed this tick · 🔥 = large order (current live book only)")}
       </div>
       {ob?.walls && ob.walls.length > 0 && (
         <div className="mt-2 px-3 py-2 rounded-lg border border-[var(--border-default)] bg-[var(--bg-elevated)]/60 text-[11px]">
