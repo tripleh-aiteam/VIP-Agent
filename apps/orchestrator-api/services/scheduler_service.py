@@ -1501,6 +1501,59 @@ def _master_weekly_all():
     _master_daily_report(email_override="*ALL*", period="weekly")
 
 
+@with_retry(max_attempts=1, backoff_seconds=(), job_name="ensure_morning_reports",
+            alert_on_final_failure=False)
+def _ensure_morning_reports():
+    """Safety net — runs 8:00 AM KST daily, AFTER all the morning reports.
+    For each expected report, if today's row is NOT already on the dashboard
+    (i.e. the morning run failed / was missed), generate it now. Idempotent:
+    anything already present is skipped, so it never duplicates or double-emails.
+    This is what makes 'a report every day' self-correcting without manual help."""
+    from db.models import OrchReport
+    from services.kst import kst_date, kst_now
+
+    db = SessionLocal()
+    try:
+        today = kst_date()                      # 'YYYY-MM-DD' (KST)
+        weekend = kst_now().weekday() >= 5      # 5=Sat, 6=Sun
+        market_period = "weekly" if weekend else "daily"
+
+        def present(rtype: str, period: str | None) -> bool:
+            q = db.query(OrchReport).filter(
+                OrchReport.report_type == rtype,
+                OrchReport.content_json["kst_time"].astext.like(f"{today}%"),
+            )
+            if period:
+                q = q.filter(OrchReport.content_json["period"].astext == period)
+            return db.query(q.exists()).scalar()
+
+        # Market reports: daily on KST weekdays, weekly on KST weekends.
+        market = [
+            ("kiwoom_report", _kiwoom_daily_all, _kiwoom_weekly_all),
+            ("newspaper_report", _newspaper_daily_all, _newspaper_weekly_all),
+            ("master_report", _master_daily_all, _master_weekly_all),
+        ]
+        for rtype, daily_fn, weekly_fn in market:
+            if not present(rtype, market_period):
+                log.warning(f"ensure: {rtype} missing for {today} ({market_period}) — generating now",
+                            extra={"action": "ensure.backfill", "report": rtype})
+                (weekly_fn if weekend else daily_fn)()
+
+        # Asset + Real Estate: daily every day (incl. weekends).
+        for rtype, fn in (("asset_report", _asset_daily_all), ("realty_report", _realty_daily_all)):
+            if not present(rtype, "daily"):
+                log.warning(f"ensure: {rtype} missing for {today} — generating now",
+                            extra={"action": "ensure.backfill", "report": rtype})
+                fn()
+
+        log.info(f"ensure: morning-report check done for {today} ({'weekend' if weekend else 'weekday'})",
+                 extra={"action": "ensure.done"})
+    except Exception as e:
+        log.warning(f"ensure: morning-report safety net failed: {e}", extra={"action": "ensure.failed"})
+    finally:
+        db.close()
+
+
 @_single_flight("scorekeeper")
 def _scorekeeper_daily():
     """Daily: log today's BUY/SELL calls (both methods) + grade matured ones -> the
@@ -1953,6 +2006,17 @@ def init_scheduler():
         replace_existing=True,
     )
     log.info("scheduler: Master report registered (6:50 KST — daily Mon-Fri, weekly Sat/Sun)", extra={"action": "scheduler.master_registered"})
+
+    # Safety net — 8:00 AM KST daily: backfill ANY morning report missing from the
+    # dashboard (transient failure / missed run), so the boss always has today's
+    # set automatically and nobody has to ask. Idempotent (skips what's present).
+    _scheduler.add_job(
+        _ensure_morning_reports,
+        CronTrigger(day_of_week="*", hour=8, minute=0, timezone=_KST_TZ),
+        id="ensure-morning-reports",
+        replace_existing=True,
+    )
+    log.info("scheduler: morning-report safety net registered (8:00 AM KST daily)", extra={"action": "scheduler.ensure_registered"})
 
     # Knowledge-base sync (RAG / Phase 2) — 7:10 AM KST = 22:10 UTC, after the
     # morning reports are written, so the chatbot grounds answers in fresh content.

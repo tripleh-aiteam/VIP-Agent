@@ -20,6 +20,12 @@ APScheduler's `from_crontab` interprets day-of-week as **Monday=0 … Sunday=6**
 
 Today's (06-29) 4 market reports already went out as weekly before the fix — a one-time artifact. Asset + Real Estate were unaffected (they're `* * *` every-day, correctly daily for 06-29). From the next weekday run everything is correct. Boss can use the dashboard "Generate & send report now" if a fresh daily is wanted for today.
 
+### [09:40] Self-healing safety net so reports always appear (no manual backfill)
+
+- **What:** added `_ensure_morning_reports()` ([scheduler_service.py](apps/orchestrator-api/services/scheduler_service.py)), scheduled **8:00 AM KST every day** (after the 6:30–7:05 runs). It checks whether today's expected reports exist on the dashboard and **generates any that are missing** — market reports as daily on KST weekdays / weekly on weekends, Asset + Real Estate daily every day. Idempotent: skips anything already present (verified against live DB — today all 5 present → all skipped), so it never duplicates or double-emails.
+- **Why:** boss asked that daily reports appear automatically every day without having to ask for a backfill. This makes the pipeline self-correcting against transient failures/missed runs.
+- **Also:** backfilled today's 06-29 daily entries (kiwoom/newspaper/master cloned from the mislabeled weekly rows) so the dashboard Daily tab shows today now. (YouTube has no dashboard row — email-only by design.)
+
 ---
 
 ## 2026-06-26 (Friday) — Live-anchored ML levels, hourly 2-method forward test, deep order-book memory
