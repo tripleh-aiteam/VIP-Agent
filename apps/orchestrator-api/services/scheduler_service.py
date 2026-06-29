@@ -11,7 +11,14 @@ from typing import Any
 
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
+import pytz
 from sqlalchemy.orm import Session
+
+# Schedule the morning reports directly in Korea time so we never have to reason
+# about UTC↔KST day-of-week rollovers. NOTE: APScheduler's from_crontab uses
+# Monday=0..Sunday=6 (NOT standard cron's Sunday=0), so day-of-week math on
+# 21:xx-UTC crontabs is error-prone — we use named days in this tz instead.
+_KST_TZ = pytz.timezone("Asia/Seoul")
 
 from db.base import SessionLocal
 from db.models import OrchScheduleRule, OrchTaskDefinition
@@ -1790,22 +1797,20 @@ def init_scheduler():
     log.info("scheduler: auto cross-agent report registered (daily 23:30 UTC)", extra={"action": "scheduler.auto_cross_registered"})
 
     # ----- Market reports (Kiwoom / Newspaper / YouTube / Master) -----
-    # KRX is closed on weekends, so these run the DAILY edition only on KST
-    # weekdays (Mon-Fri) and a WEEKLY edition on KST Sat+Sun. Note the times are
-    # 21:xx UTC = 06:xx KST the NEXT day, so in UTC day-of-week:
-    #   KST Mon-Fri morning = UTC Sun-Thu = dow 0-4
-    #   KST Sat+Sun morning = UTC Fri+Sat = dow 5,6
+    # KRX is closed on weekends, so these run the DAILY edition on KST weekdays
+    # (Mon-Fri) and a WEEKLY edition on KST Sat+Sun. Scheduled in Asia/Seoul time
+    # with named days so there is NO UTC rollover / dow-numbering ambiguity.
 
     # Kiwoom — 6:30 AM KST daily on weekdays; weekly edition on the weekend.
     _scheduler.add_job(
         _kiwoom_daily_all,
-        CronTrigger.from_crontab("30 21 * * 0-4"),
+        CronTrigger(day_of_week="mon-fri", hour=6, minute=30, timezone=_KST_TZ),
         id="kiwoom-daily-report",
         replace_existing=True,
     )
     _scheduler.add_job(
         _kiwoom_weekly_all,
-        CronTrigger.from_crontab("30 21 * * 5,6"),
+        CronTrigger(day_of_week="sat,sun", hour=6, minute=30, timezone=_KST_TZ),
         id="kiwoom-weekend-weekly",
         replace_existing=True,
     )
@@ -1814,13 +1819,13 @@ def init_scheduler():
     # Newspaper — 6:32 AM KST daily on weekdays; weekly on the weekend.
     _scheduler.add_job(
         _newspaper_daily_all,
-        CronTrigger.from_crontab("32 21 * * 0-4"),
+        CronTrigger(day_of_week="mon-fri", hour=6, minute=32, timezone=_KST_TZ),
         id="newspaper-daily-report",
         replace_existing=True,
     )
     _scheduler.add_job(
         _newspaper_weekly_all,
-        CronTrigger.from_crontab("32 21 * * 5,6"),
+        CronTrigger(day_of_week="sat,sun", hour=6, minute=32, timezone=_KST_TZ),
         id="newspaper-weekend-weekly",
         replace_existing=True,
     )
@@ -1829,13 +1834,13 @@ def init_scheduler():
     # YouTube grounded — 6:40 AM KST daily on weekdays; weekly on the weekend.
     _scheduler.add_job(
         _youtube_daily_all,
-        CronTrigger.from_crontab("40 21 * * 0-4"),
+        CronTrigger(day_of_week="mon-fri", hour=6, minute=40, timezone=_KST_TZ),
         id="youtube-daily-report",
         replace_existing=True,
     )
     _scheduler.add_job(
         _youtube_weekly_all,
-        CronTrigger.from_crontab("40 21 * * 5,6"),
+        CronTrigger(day_of_week="sat,sun", hour=6, minute=40, timezone=_KST_TZ),
         id="youtube-weekend-weekly",
         replace_existing=True,
     )
@@ -1933,17 +1938,17 @@ def init_scheduler():
     # bundled into the consolidated master email below (all 4 reports together),
     # so there is no standalone youtube-daily-report cron anymore.
 
-    # Master synthesis report — 6:50 AM KST. Daily on KST weekdays (UTC dow 0-4),
-    # weekly edition on KST Sat+Sun (UTC dow 5,6). All recipients.
+    # Master synthesis report — 6:50 AM KST. Daily on KST weekdays, weekly edition
+    # on KST Sat+Sun. All recipients. (KST-named days — no UTC dow ambiguity.)
     _scheduler.add_job(
         _master_daily_all,   # forces the full recipient list (ignores any single-address test env)
-        CronTrigger.from_crontab("50 21 * * 0-4"),
+        CronTrigger(day_of_week="mon-fri", hour=6, minute=50, timezone=_KST_TZ),
         id="master-daily-report",
         replace_existing=True,
     )
     _scheduler.add_job(
         _master_weekly_all,
-        CronTrigger.from_crontab("50 21 * * 5,6"),
+        CronTrigger(day_of_week="sat,sun", hour=6, minute=50, timezone=_KST_TZ),
         id="master-weekend-weekly",
         replace_existing=True,
     )

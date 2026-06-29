@@ -2,6 +2,26 @@
 
 ---
 
+## 2026-06-29 (Monday) — Fix: market reports fired weekly on weekdays (APScheduler dow bug)
+
+### Goal
+
+The 06-26 weekend-scheduling change used `CronTrigger.from_crontab("... 0-4")` / `"... 5,6"` on 21:xx-UTC crontabs. Result: on Mon 06-29 the Kiwoom/Newspaper/Master reports were generated as `period=weekly` instead of daily (boss's dashboard Daily tab had no Monday report).
+
+### Root cause
+
+APScheduler's `from_crontab` interprets day-of-week as **Monday=0 … Sunday=6** (NOT standard cron's Sunday=0). Proven empirically: `"30 21 * * 5,6"` next-fires on a **Sunday** UTC. So `daily 0-4` = UTC Mon-Fri = **KST Tue-Sat**, and `weekly 5,6` = UTC Sat/Sun = **KST Sun/Mon** → KST Monday got the weekly edition.
+
+### Files updated
+
+- [apps/orchestrator-api/services/scheduler_service.py](apps/orchestrator-api/services/scheduler_service.py) — replaced the 8 market-report `from_crontab` triggers with timezone-aware `CronTrigger(day_of_week="mon-fri"/"sat,sun", hour=, minute=, timezone=Asia/Seoul)`. Scheduling directly in KST with named days removes all UTC-rollover + dow-numbering ambiguity. Added `import pytz` + `_KST_TZ`. Verified: daily now fires KST Mon-Fri, weekly KST Sat/Sun.
+
+### Note
+
+Today's (06-29) 4 market reports already went out as weekly before the fix — a one-time artifact. Asset + Real Estate were unaffected (they're `* * *` every-day, correctly daily for 06-29). From the next weekday run everything is correct. Boss can use the dashboard "Generate & send report now" if a fresh daily is wanted for today.
+
+---
+
 ## 2026-06-26 (Friday) — Live-anchored ML levels, hourly 2-method forward test, deep order-book memory
 
 ### Goal
@@ -41,6 +61,20 @@ ML cards now show live, self-updating buy/sell zones. A daily forward-accuracy s
 - **Dashboard realty was still old:** `agent_report_builder.build_realty_report` (feeds the 8 AM auto pipeline + dashboard "Daily" realty card + Telegram) was still the self-scraped workbook. Rewrote it to delegate to `realty_supabase.build_realty_supabase_report` and map into the metrics/highlights/summary shape; added `data.top` to the Supabase builder so highlights reuse the same listings. Now both dashboard realty entries (orange `realty_report` + blue `agent_daily_realty`) show the 공매 현황 digest. ([agent_report_builder.py](apps/orchestrator-api/services/agent_report_builder.py), [realty_supabase.py](apps/orchestrator-api/services/realty_supabase.py))
 - **Immediate fix:** inserted 2 fresh OrchReport rows (realty_report + agent_daily_realty) into the live DB so the dashboard shows the new digest now (오늘 신규 6 · 추적 중 100억+ 193) instead of waiting for tomorrow's run.
 - **Note:** the "weekly" market build is currently the same content labelled weekly (no true 7-day aggregation yet) → weekend editions show the latest (Fri close) data; sent on both Sat & Sun per request.
+
+---
+
+### [18:30] Stock-chatbot QA pass — Kiwoom live, bilingual fields, off-topic, consistency (VIP + AI Advisor)
+
+- **What:** A long QA/fix pass making the VIP + AI Advisor stock chat answer accurately and consistently in KO/EN. All verified live.
+  - **Kiwoom real-time during market** — was always falling back to Naver. Root cause: Kiwoom `8050 지정단말기` blocked Render's outbound IP (shared ranges `74.220.52.0/24` + `74.220.60.0/24`). Account owner registered both ranges → now shows "키움증권 실시간 시세" 09:00–15:30, Naver after. (No code bug — `_live_price_for_code` was correct; see [[project_kiwoom_render_ip]].)
+  - **Volume / fields** — `거래량` was dropped (after-close Naver realtime returns null volume → backfill from daily); volume-only no longer tacks on price; English bare `open/high/low` now matched (was KO-only); a bare field follow-up (`시가 고가 저가 거래량`) reuses the conversation's stock instead of a 5-day dump.
+  - **Intraday time** — `9시 54분 가격` no longer fakes the current price; honest "분봉 데이터 미연동" note (no minute feed on VIP). `가격` added to price-words.
+  - **General/off-topic** — Stock backend stopped emitting `현재가: 0원` for non-stock questions (KO + EN "is the market open?"); guarded metric/quote branches to require a resolved ticker.
+  - **Format consistency (issues 2/3)** — Stock backend: strict-Korean (no EN-mixing) + temperature 0.3; VIP answer temp 0.4→0.3 to match. Price→concise, advice→detailed, both clean Korean. Verified: price byte-identical VIP↔Advisor; advice same clean templated format.
+- **Files:** VIP `services/assistant_agent.py` (`_live_price_for_code`, `_requested_price_fields`, `_vip_live_price_reply` backfill + intraday note + field-followup, temps), `services/naver_search.py`; **stock_advisor_agent** repo `backend/services/llm/agent.py` (ticker guards, market-status guard, temp) + `system_prompt.py` (strict Korean). Asset frontend `asset-agent` repo `ChatWorkspace` (clickable markdown links).
+- **Verified (live curl):** Kiwoom in-market on both; KO+EN price/volume/fields/follow-up consistent; off-topic answers like an LLM; Korean no longer mixes English.
+- **Next (DEFERRED — needs user watching):** byte-identical VIP==AI Advisor advice via two-method relay has an **infinite-loop risk** (VIP delegates advice→Stock; Stock relays data→VIP). Safe recipe + collaborator-coordination notes saved in [[project_trading_advisor_roadmap]]. Also: VIP "is the market open?" gives a wrong LLM guess (says open after close) — should use real market status. Roadmap phases 1–5 (intraday/chart-read/memory/2-method advice) follow.
 
 ---
 
