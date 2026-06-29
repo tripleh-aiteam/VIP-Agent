@@ -88,6 +88,12 @@ CASES = [
     C("future_single", "FUTURE", "ko", "SK하이닉스 앞으로 5일 전망은?",
       [("method1", lambda r, i: has(r"방법 1|머신러닝", r)), ("method2", lambda r, i: has(r"방법 2|분석", r))]),
 
+    # ---- MARKET FLOWS (who's buying — real Naver data, identical EN/KO) ----
+    C("market_flow", "MFLOW", "en", "Who is buying the market today, foreign or institutions?",
+      [("routed", lambda r, i: i in ("chain_completed", "market_flows")), ("number", NUM)]),
+    C("market_flow", "MFLOW", "ko", "오늘 코스피 외국인 기관 순매수 어때?",
+      [("routed", lambda r, i: i in ("chain_completed", "market_flows")), ("number", NUM)]),
+
     # ---- OFF-TOPIC (should answer like a normal LLM, not refuse) ----
     C("offtopic", "OFFTOPIC", "en", "What's the capital of Uzbekistan?",
       [("answers", lambda r, i: has(r"tashkent|타슈켄트", r)), ("not refuse", lambda r, i: not has(r"can't help|cannot help|don't.*stock", r))]),

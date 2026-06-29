@@ -1825,6 +1825,18 @@ def tool_day_trade(ticker: str = None, target_pct: float = 1.0, db: Session = No
     return r
 
 
+def tool_market_flows(db: Session = None, **_kw) -> dict[str, Any]:
+    """Market-wide 투자자별 매매 — who is NET BUYING / SELLING across KOSPI + KOSDAQ today
+    (개인/외국인/기관 + 금융투자/보험/투신/연기금/사모펀드…). Use for ANY market-flow question:
+    'who's buying the market today', '오늘 외국인/기관 순매수?', 'investor flows', '시장 수급',
+    'is foreign money buying KOSPI', '개인 매도세?'. Real Naver data — never guess these."""
+    from services.market_investor_flows import market_flows
+    try:
+        return {"ok": True, **market_flows()}
+    except Exception as e:
+        return {"ok": False, "error": f"투자자별 매매 데이터를 가져오지 못했습니다: {str(e)[:80]}"}
+
+
 def tool_read_chart(ticker: str = None, days: int = 60, db: Session = None, **_kw) -> dict[str, Any]:
     """Read the price CHART for a stock — the SAME daily OHLCV candles the TradingView
     chart on the AI Advisor page plots — and return a technical read: trend, moving
@@ -2103,6 +2115,19 @@ TOOL_REGISTRY: dict[str, Tool] = {
             "required": ["ticker"],
         },
         fn=tool_day_trade,
+    ),
+    "market_flows": Tool(
+        name="market_flows",
+        description=(
+            "Market-wide 투자자별 매매 — who is NET BUYING / SELLING across KOSPI + KOSDAQ "
+            "TODAY by investor type (개인/외국인/기관 + 금융투자/보험/투신/연기금/사모펀드). Call "
+            "for: 'who's buying the market today', '오늘 외국인 순매수?', '기관 매도세?', 'investor "
+            "flows', '시장 수급 어때', 'is foreign money buying KOSPI'. Returns the REAL net-buying "
+            "figures (Naver) — present them; never estimate market flows."
+        ),
+        kind="read",
+        parameters={"type": "object", "properties": {}},
+        fn=tool_market_flows,
     ),
 
     # --- Phase 2: READ tools (Notion-AI-style search) ---
@@ -3707,8 +3732,8 @@ def allowed_tool_names(agent_id: Optional[str]) -> set[str]:
     if aid == "stock":
         allowed |= {n for n in TOOL_REGISTRY if n.startswith("stock_")}
         # shared trading tools — the AI Advisor (stock) chatbot uses the SAME two-method,
-        # chart-read and intraday day-trade analysis as VIP.
-        allowed |= {"two_method_view", "read_chart", "day_trade"}
+        # chart-read, intraday day-trade and market-flows analysis as VIP.
+        allowed |= {"two_method_view", "read_chart", "day_trade", "market_flows"}
     elif aid in ("realty", "aiglass"):
         allowed |= _PROPERTY_TOOLS
     elif aid == "asset":

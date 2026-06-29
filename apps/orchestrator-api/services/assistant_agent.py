@@ -756,11 +756,36 @@ def _is_daytrade_followup(transcript: Optional[str]) -> bool:
     return any(k in t for k in _DAYTRADE_FOLLOWUP_KW)
 
 
+# Market-WIDE investor flow question ('who's buying KOSPI today', '오늘 외국인 순매수?') —
+# answered from the real market_flows tool, identically in EN + KO (don't let it slip into
+# stock-delegation or an LLM guess). Per-stock flow ('삼성전자 외국인 순매수') is excluded.
+_MFLOW_KW = ("순매수", "순매도", "수급", "투자자별", "net buy", "net sell", "net buying",
+             "net selling", "buying the market", "who is buying", "who's buying")
+_MFLOW_MKT_KW = ("시장", "코스피", "코스닥", "market", "kospi", "kosdaq")
+_MFLOW_INV_KW = ("외국인", "기관", "개인", "foreign", "institution", "individual", "연기금", "금융투자")
+
+
+def _is_market_flow_q(transcript: Optional[str]) -> bool:
+    t = (transcript or "").lower()
+    if not any(k in t for k in _MFLOW_KW):
+        return False
+    if any(k in t for k in _MFLOW_MKT_KW):
+        return True
+    # investor-type word with NO specific stock named → market-wide
+    return any(k in t for k in _MFLOW_INV_KW) and _stock_in_query(transcript) is None
+
+
 def _is_vip_current_price_q(transcript: Optional[str], agent_id: Optional[str]) -> bool:
     if (agent_id or "vip").lower() == "stock":
         return False
     t = (transcript or "").lower()
-    if not any(w in t for w in _PRICE_WORDS):
+    # A multi-stock COMPARISON ('compare X, Y, Z now' / 'X vs Y / 비교') is a present-price
+    # ask even without an explicit price word — route it to the local comparison TABLE
+    # (deterministic) instead of letting it flake through stock-delegation.
+    _compare = (any(w in t for w in ("compare", "비교", " vs ", "versus", "대비"))
+                and not _is_future_outlook(transcript)
+                and len(_all_stocks_in_query(transcript)) >= 2)
+    if not any(w in t for w in _PRICE_WORDS) and not _compare:
         return False
     if (_is_past_price(transcript) or _is_stock_advice(transcript, agent_id)
             or _is_history_range_query(transcript) or _is_us_stock_query(transcript)):
@@ -3961,6 +3986,14 @@ def _run_agent_impl(
                                   current_path, selected_id, system, history or [], agent_id=agent_id)
         except Exception:
             pass
+
+    # ===== Market-wide investor flow ('who's buying KOSPI today', '오늘 외국인 순매수?')
+    # → real market_flows tool, IDENTICAL EN + KO (before stock-delegation, which would
+    # otherwise send KO to the Stock agent and EN to the LLM = inconsistent). =====
+    if (not confirmed_tool and "market_flows" in TOOL_REGISTRY
+            and _is_market_flow_q(transcript)):
+        return _run_chain(db, transcript, lang, [{"tool": "market_flows", "args": {}}],
+                          current_path, selected_id, system, history or [], agent_id=agent_id)
 
     # ===== 공매도 (short-selling) — answer LOCALLY from VIP's Kiwoom (ka10014). The
     # Stock backend's 공매도 tool currently returns '확인 불가' (no data), but VIP's Kiwoom
