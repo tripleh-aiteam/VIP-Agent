@@ -150,6 +150,29 @@ def ws_orderbook_debug():
     return status()
 
 
+@router.post("/story/seed-mega")
+def story_seed_mega(db: Session = Depends(get_db)):
+    """Seed the priority story: the 3 Mega Investment Projects (정부·삼성·SK하이닉스)."""
+    from services.story_tracker import seed_story, MEGA_PROJECTS as M
+    return seed_story(db, M["key"], M["topic"], M["queries"], M["tickers"])
+
+
+@router.post("/story/monitor")
+def story_monitor(email: bool = Query(False), db: Session = Depends(get_db)):
+    """Update every tracked story (raw_news + web search) and, if email=true, send an
+    executive brief of NEW developments to management. Fire daily via cron/scheduler."""
+    from services.story_tracker import daily_monitor
+    return daily_monitor(db, email=email)
+
+
+@router.get("/story/brief/{key}")
+def story_brief(key: str, lang: str = Query("ko"), db: Session = Depends(get_db)):
+    """The current executive brief for a tracked story (LLM summary of accumulated news)."""
+    from services.story_tracker import update_story, executive_brief
+    update_story(db, key)
+    return executive_brief(db, key, lang=lang)
+
+
 @router.get("/investor-flows")
 def investor_flows():
     """Market-wide 투자자별 매매 — net buying by investor type (개인/외국인/기관계 + 금융투자/

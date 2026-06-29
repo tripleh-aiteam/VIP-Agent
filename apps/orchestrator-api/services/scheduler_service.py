@@ -1606,6 +1606,22 @@ def _intraday_morning_report():
         db.close()
 
 
+@_single_flight("story_monitor")
+def _story_monitor_daily():
+    """Daily: track major-news stories (incl. the 3 Mega Projects) + email management an
+    executive brief when there are NEW developments."""
+    db = SessionLocal()
+    try:
+        from services.story_tracker import seed_story, daily_monitor, MEGA_PROJECTS as M
+        seed_story(db, M["key"], M["topic"], M["queries"], M["tickers"])   # idempotent
+        r = daily_monitor(db, email=True)
+        log.info(f"story monitor: {r}", extra={"action": "story.monitor"})
+    except Exception as e:
+        log.warning(f"story monitor failed: {str(e)[:120]}")
+    finally:
+        db.close()
+
+
 @_single_flight("dart_disclosures")
 def _dart_disclosures_daily():
     """Daily: pull official DART disclosures (실적/수주/유증) -> raw_disclosures. The
@@ -1994,6 +2010,16 @@ def init_scheduler():
         replace_existing=True, max_instances=1, coalesce=True,
     )
     log.info("scheduler: intraday 2-method hourly forward test registered (hourly 09–15 KST + 08:00 KST email)", extra={"action": "scheduler.intraday_registered"})
+
+    # Major-news story monitor — twice daily (09:00 + 16:00 KST = 00:00 + 07:00 UTC) so
+    # follow-ups (e.g. the 3 Mega Projects 2 PM announcement) are caught + emailed same day.
+    _scheduler.add_job(
+        _story_monitor_daily,
+        CronTrigger.from_crontab("0 0,7 * * *"),
+        id="story-monitor",
+        replace_existing=True, max_instances=1, coalesce=True,
+    )
+    log.info("scheduler: story monitor registered (09:00 + 16:00 KST)", extra={"action": "scheduler.story_registered"})
 
     # NOTE: the grounded YouTube report is NO LONGER a separate email — it is
     # bundled into the consolidated master email below (all 4 reports together),
