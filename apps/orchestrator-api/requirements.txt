@@ -14,9 +14,11 @@ python-pptx==1.0.2
 pypdf==5.1.0
 python-multipart==0.0.9
 olefile==0.47
-# fastembed pulled out — Render free tier (512MB) can't load the model.
-# Default retrieval now uses pgroonga full-text search on Supabase. Add
-# fastembed back here and set EMBED_PROVIDER=local if you upgrade Render to >=1GB.
+# fastembed — local ONNX multilingual embeddings (384-dim, ~120MB model, no API key).
+# Re-added 2026-06-29 after Render was upgraded to >=1GB. Powers semantic RAG when
+# EMBED_PROVIDER=local (Korean+English cross-language retrieval). Falls back to keyword
+# (pgroonga) if the model can't load. Was pulled earlier because the 512MB free tier OOM'd.
+fastembed>=0.8.0
 
 defusedxml>=0.7.1
 
