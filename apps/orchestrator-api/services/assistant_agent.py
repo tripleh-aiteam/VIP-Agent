@@ -2497,6 +2497,15 @@ def _run_chain(
     if _tm:
         reply = _two_method_header(_tm, lang) + "\n\n" + (reply or "").strip()
 
+    # decide tool: use its OWN language-correct reasoning verbatim (the LLM otherwise
+    # mixes EN/KO). The deterministic block already has the verdict + 3-factor breakdown.
+    _dec = next((s.get("result") for s in step_results
+                 if s.get("tool") == "decide"
+                 and isinstance(s.get("result"), dict) and s["result"].get("ok")), None)
+    if _dec:
+        _en = str(lang or "").lower().startswith("en")
+        reply = _dec.get("reasoning_en" if _en else "reasoning_ko") or reply
+
     # If any step returned an action (navigate / open_portal), surface the LAST one
     action = None
     for s in reversed(step_results):
@@ -4083,6 +4092,23 @@ def _run_agent_impl(
         if ss:
             return ss
 
+    # ===== BUY/SELL DECISION agent ('사야 할까/팔까', 'buy or sell', '종합 판단') → the
+    # comprehensive 3-factor decision (News + Flows + Technicals + ML). Runs BEFORE
+    # stock-delegation so it isn't swallowed by the generic Stock-agent path. =====
+    if not confirmed_tool and "decide" in TOOL_REGISTRY:
+        _dtl = (transcript or "").lower()
+        if any(k in _dtl for k in ("사야", "팔까", "팔아야", "사도 될", "매수해", "매도해",
+                                   "종합 판단", "종합판단", "buy or sell", "should i buy",
+                                   "should i sell", "is it a buy", "buy hold sell", "buy/sell")):
+            try:
+                from services import prediction_service as _psd
+                _dc = next((c for (c, _n) in _all_stocks_in_query(transcript) if c in _psd.NAMES), None)
+                if _dc:
+                    return _run_chain(db, transcript, lang, [{"tool": "decide", "args": {"ticker": _dc}}],
+                                      current_path, selected_id, system, history or [], agent_id=agent_id)
+            except Exception:
+                pass
+
     # ===== VIP → Stock delegation (single source of truth) =====
     # ANY stock question asked in VIP (or another non-stock agent) is answered by
     # the Stock agent itself — verbatim transcript, same engine — so VIP and Stock
@@ -4217,6 +4243,17 @@ def _run_agent_impl(
             _code = next((c for (c, _n) in _found if c in _ps.NAMES), None)
         except Exception:
             _code = None
+        # An explicit BUY/SELL DECISION question ('사야 할까/팔까', 'buy or sell', '종합 판단')
+        # → the comprehensive decision agent (News + Flows + Technicals + ML). General
+        # 'analyze/어때/outlook' → the two-method view.
+        _tl = (transcript or "").lower()
+        _decision_q = any(k in _tl for k in (
+            "사야", "팔까", "팔아야", "사도 될", "매수해", "매도해", "종합 판단", "종합판단",
+            "종합적으로", "buy or sell", "should i buy", "should i sell", "is it a buy",
+            "buy hold sell", "buy/sell", "결정해"))
+        if _code and _decision_q and "decide" in TOOL_REGISTRY:
+            return _run_chain(db, transcript, lang, [{"tool": "decide", "args": {"ticker": _code}}],
+                              current_path, selected_id, system, history or [], agent_id=agent_id)
         if _code and "two_method_view" in TOOL_REGISTRY:
             tm_steps = [{"tool": "two_method_view", "args": {"ticker": _code}}]
             if "read_chart" in TOOL_REGISTRY:

@@ -108,6 +108,14 @@ CASES = [
     C("future_soft", "FUTURE-SOFT", "en", "What will SK Hynix do over the next 5 days?",
       [("method1", lambda r, i: has(r"method 1|machine learning|방법 1", r)), ("method2", lambda r, i: has(r"method 2|analysis|방법 2", r))]),
 
+    # ---- DECISION agent (News + Flows + Technicals + ML → BUY/HOLD/SELL) ----
+    C("decide", "DECIDE", "en", "Should I buy or sell SK Hynix?",
+      [("decision", lambda r, i: has(r"Decision:\s*(BUY|HOLD|SELL)", r)),
+       ("3 factors", lambda r, i: has(r"News", r) and has(r"Flows", r) and has(r"Technical", r))]),
+    C("decide", "DECIDE", "ko", "SK하이닉스 사야 할까?",
+      [("decision", lambda r, i: has(r"종합 판단:\s*(매수|보유|매도|관망)", r)),
+       ("3 factors", lambda r, i: has(r"뉴스", r) and has(r"수급", r) and has(r"기술", r))]),
+
     # ---- OFF-TOPIC (should answer like a normal LLM, not refuse) ----
     C("offtopic", "OFFTOPIC", "en", "What's the capital of Uzbekistan?",
       [("answers", lambda r, i: has(r"tashkent|타슈켄트", r)), ("not refuse", lambda r, i: not has(r"can't help|cannot help|don't.*stock", r))]),

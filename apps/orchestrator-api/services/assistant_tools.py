@@ -1825,6 +1825,30 @@ def tool_day_trade(ticker: str = None, target_pct: float = 1.0, db: Session = No
     return r
 
 
+def tool_decide(ticker: str = None, db: Session = None, **_kw) -> dict[str, Any]:
+    """Comprehensive BUY / HOLD / SELL DECISION for ONE stock — fuses THREE factors into
+    one recommendation: (1) NEWS analysis (latest news + impact), (2) INVESTOR FLOWS
+    (외국인/기관 net buying + accumulation/distribution), (3) TECHNICALS (trend, MAs,
+    support/resistance, momentum) — plus the ML model. Call for: 'should I buy X', 'X 사야
+    할까/팔까', 'buy or sell X', 'X 매수/매도 결정', 'X 종합 판단', 'decide on X', 'is X a buy'.
+    Returns the decision + a factor-by-factor breakdown (news/flows/technicals/ML) with
+    confidence. Present the verdict + the 3 factors. 6-digit code or Korean name."""
+    from services import prediction_service as ps
+    from services.decision_agent import decide
+    if not ticker:
+        return {"ok": False, "error": "종목을 알려주세요 (ticker / 종목명)"}
+    raw = str(ticker).strip()
+    code = raw if (raw.isdigit() and len(raw) == 6) else None
+    if not code:
+        rev = {v: k for k, v in ps.NAMES.items()}
+        code = rev.get(raw) or next((c for nm, c in rev.items() if raw and (raw in nm or nm in raw)), None)
+    if not code:
+        return {"ok": False, "error": f"'{raw}' 종목 코드를 찾지 못했습니다"}
+    r = decide(db, code)
+    r["ok"] = True
+    return r
+
+
 def tool_market_flows(db: Session = None, **_kw) -> dict[str, Any]:
     """Market-wide 투자자별 매매 — who is NET BUYING / SELLING across KOSPI + KOSDAQ today
     (개인/외국인/기관 + 금융투자/보험/투신/연기금/사모펀드…). Use for ANY market-flow question:
@@ -2115,6 +2139,24 @@ TOOL_REGISTRY: dict[str, Tool] = {
             "required": ["ticker"],
         },
         fn=tool_day_trade,
+    ),
+    "decide": Tool(
+        name="decide",
+        description=(
+            "Comprehensive BUY / HOLD / SELL decision for ONE stock by fusing NEWS + "
+            "INVESTOR FLOWS (외국인/기관 매집·분산) + TECHNICALS (추세/지지·저항/모멘텀) + the ML "
+            "model. Call for: 'should I buy X', 'X 사야 할까', 'buy or sell X', 'X 매수/매도 "
+            "결정', 'X 종합 판단해줘', 'is X a buy?'. Returns the decision + a factor-by-factor "
+            "breakdown with confidence — present the verdict and the 3 factors. 6-digit code "
+            "or Korean name."
+        ),
+        kind="read",
+        parameters={
+            "type": "object",
+            "properties": {"ticker": {"type": "string", "description": "6-digit KR code or Korean name"}},
+            "required": ["ticker"],
+        },
+        fn=tool_decide,
     ),
     "market_flows": Tool(
         name="market_flows",
@@ -3733,7 +3775,7 @@ def allowed_tool_names(agent_id: Optional[str]) -> set[str]:
         allowed |= {n for n in TOOL_REGISTRY if n.startswith("stock_")}
         # shared trading tools — the AI Advisor (stock) chatbot uses the SAME two-method,
         # chart-read, intraday day-trade and market-flows analysis as VIP.
-        allowed |= {"two_method_view", "read_chart", "day_trade", "market_flows"}
+        allowed |= {"two_method_view", "read_chart", "day_trade", "market_flows", "decide"}
     elif aid in ("realty", "aiglass"):
         allowed |= _PROPERTY_TOOLS
     elif aid == "asset":
