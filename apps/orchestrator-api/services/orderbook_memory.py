@@ -169,7 +169,8 @@ def live_book(db, ticker: str, fresh_sec: int = 240) -> dict[str, Any]:
     age = db.execute(text("SELECT EXTRACT(EPOCH FROM (now()-:ts))::int"), {"ts": last_ts}).scalar()
     return {"levels": [dict(side=r[0], level=int(r[1]), price=int(r[2]),
                             qty=int(r[3] or 0), is_large=bool(r[4])) for r in rows],
-            "as_of": str(last_ts), "age_sec": int(age or 0), "fresh": (age or 99999) <= fresh_sec}
+            "as_of": str(last_ts), "age_sec": int(age or 0),
+            "fresh": (age if age is not None else 99999) <= fresh_sec}  # age 0 IS fresh (don't treat 0 as falsy)
 
 
 def orderbook_view(db, ticker: str, depth: int = 30) -> dict[str, Any]:

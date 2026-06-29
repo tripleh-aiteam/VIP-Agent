@@ -191,7 +191,7 @@ class WsOrderbookCollector:
 
     async def run(self) -> None:
         backoff = 1.0
-        print(f"[ws-ob] collector starting — {WS_URL} · codes={CODES}")
+        print(f"[ws-ob] collector starting - {WS_URL} codes={CODES}")
         while not self.stop.is_set():
             if not _market_open_now():
                 self.state, self.connected = "idle(closed)", False
@@ -265,6 +265,23 @@ async def start_in_process() -> None:
 
 
 def main() -> None:
+    # Korean Windows consoles default to cp949 and crash on non-Latin output —
+    # force UTF-8 like the user's config.py does.
+    import sys as _sys
+    for _s in (_sys.stdout, _sys.stderr):
+        try:
+            _s.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[union-attr]
+        except (AttributeError, ValueError):
+            pass
+    # Standalone (PC) run: load .env / .env.supabase so KIWOOM keys + the Supabase
+    # DATABASE_URL are present (the server loads these at startup; a bare `python -m`
+    # does not). Reuses the ML pipeline's loader (.env.supabase overrides .env).
+    try:
+        from ml._db import load_env
+        load_env()
+    except Exception as _e:
+        print(f"[ws-ob] env load warning: {_e!r}")
+    print(f"[ws-ob] standalone start - enabled={should_run()} market_open={_market_open_now()} codes={CODES}")
     try:
         asyncio.run(WsOrderbookCollector().run())
     except KeyboardInterrupt:
