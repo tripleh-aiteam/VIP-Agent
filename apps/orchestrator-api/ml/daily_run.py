@@ -52,6 +52,8 @@ DATA_STEPS = [
      "add market/macro features"),
     ([sys.executable, str(HERE / "features" / "flow_features.py")],
      "add 수급/flow features"),
+    ([sys.executable, str(HERE / "features" / "orderbook_features.py")],
+     "add order-book microstructure features (banks the signal; gated until enough history)"),
 ]
 RETRAIN_STEPS = [
     ([sys.executable, str(HERE / "models" / "bakeoff.py"), "--horizon", HORIZON],
