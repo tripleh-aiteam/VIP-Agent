@@ -741,6 +741,21 @@ def _is_future_outlook(transcript: Optional[str]) -> bool:
     return any(k in t for k in _FUTURE_OUTLOOK_KW)
 
 
+# A day-trade / stop follow-up ('손절은?', 'where's the stop', 'target?', 'buy zone?') —
+# usually asked WITHOUT re-naming the stock, so we borrow it from the recent context and
+# answer with the real day_trade stop/levels instead of an LLM guess.
+_DAYTRADE_FOLLOWUP_KW = (
+    "손절", "손절가", "익절", "목표가", "매수가", "매도가",
+    "stop", "stop-loss", "stop loss", "stoploss", "target", "buy zone", "sell zone",
+    "buy price", "sell price", "entry",
+)
+
+
+def _is_daytrade_followup(transcript: Optional[str]) -> bool:
+    t = (transcript or "").lower()
+    return any(k in t for k in _DAYTRADE_FOLLOWUP_KW)
+
+
 def _is_vip_current_price_q(transcript: Optional[str], agent_id: Optional[str]) -> bool:
     if (agent_id or "vip").lower() == "stock":
         return False
@@ -3917,6 +3932,26 @@ def _run_agent_impl(
         _vp = _vip_live_price_reply(_cp_tx, lang)
         if _vp:
             return _vp
+
+    # ===== Day-trade / stop follow-up ('손절은?', 'where's the stop?', 'target?') with NO
+    # stock named → borrow the stock from the recent context and answer with the REAL
+    # day_trade levels (stop / buy zone / target), never an LLM-guessed number. =====
+    if (not confirmed_tool and "day_trade" in TOOL_REGISTRY
+            and _is_daytrade_followup(transcript) and not _all_stocks_in_query(transcript)):
+        _dt_code = None
+        for _h in reversed(history or []):
+            _st = _all_stocks_in_query(_h.get("content") or _h.get("text") or _h.get("transcript") or "")
+            if _st:
+                _dt_code = _st[0][0]
+                break
+        try:
+            from services import prediction_service as _ps2
+            if _dt_code and _dt_code in _ps2.NAMES:
+                return _run_chain(db, transcript, lang,
+                                  [{"tool": "day_trade", "args": {"ticker": _dt_code}}],
+                                  current_path, selected_id, system, history or [], agent_id=agent_id)
+        except Exception:
+            pass
 
     # ===== 공매도 (short-selling) — answer LOCALLY from VIP's Kiwoom (ka10014). The
     # Stock backend's 공매도 tool currently returns '확인 불가' (no data), but VIP's Kiwoom
