@@ -2708,9 +2708,18 @@ def _two_method_header(tm: dict, lang: str = "ko") -> str:
         m2_bits.append((f"sell zone {sell}" if en else f"매도구간 {sell}"))
 
     if en:
-        head = f"**📊 {name} — Two-Method Analysis**"
+        # localize the Korean stock name + source tag for the English block
+        _EN_NAMES = {"SK하이닉스": "SK Hynix", "삼성전자": "Samsung Electronics",
+                     "삼성전기": "Samsung Electro-Mechanics", "SK스퀘어": "SK Square",
+                     "한미반도체": "Hanmi Semiconductor", "NAVER": "NAVER", "카카오": "Kakao"}
+        en_name = _EN_NAMES.get(name, name)
+        _s = src or ""
+        en_src = ("Kiwoom (live)" if ("실전" in _s or "키움" in _s)
+                  else "Naver" if ("naver" in _s.lower() or "네이버" in _s)
+                  else "sim" if "모의" in _s else _s)
+        head = f"**📊 {en_name} — Two-Method Analysis**"
         if price:
-            head += f"  ·  current {pfx}{price}" + (f" ({src})" if src else "")
+            head += f"  ·  current {pfx}{price}" + (f" ({en_src})" if en_src else "")
         agree = ("🤝 Both methods **AGREE** — higher conviction" if tm.get("consensus")
                  else "⚠️ The two methods **DISAGREE** — proceed carefully")
         return "\n".join([head,
