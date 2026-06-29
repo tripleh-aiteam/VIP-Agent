@@ -23,7 +23,7 @@ LARGE_ORDER_SHARES: dict[str, int] = {
 }
 # default = a ~300M KRW notional wall (shares = 3e8 / price), floored at 100.
 _DEFAULT_NOTIONAL = 300_000_000
-MEMORY_KEEP_EACH_SIDE = 30        # remember 30 levels above + 30 below the mid
+MEMORY_KEEP_EACH_SIDE = 60        # keep 60/side so the shown top-30 survives price drift
 
 
 def large_threshold(ticker: str, price: float | None) -> int:
@@ -124,13 +124,27 @@ def read_memory(db, ticker: str, depth: int = 30) -> dict[str, Any]:
     items = [dict(price=int(r[0]), side=r[1], last_qty=int(r[2] or 0), max_qty=int(r[3] or 0),
                   is_large=bool(r[4]), seen_count=int(r[5] or 0), age_sec=int(r[6] or 0))
              for r in rows]
-    bids = [x for x in items if x["side"] == "bid"]
-    asks = [x for x in items if x["side"] == "ask"]
-    mid = None
-    if bids and asks:
-        mid = (max(b["price"] for b in bids) + min(a["price"] for a in asks)) / 2
-    asks = sorted(asks, key=lambda x: x["price"])[:depth]                 # ascending
-    bids = sorted(bids, key=lambda x: -x["price"])[:depth]                # descending
+    # Classify ask/bid by the CURRENT live best-bid/best-ask (NOT the stored side, which
+    # goes stale: a level last seen as a bid stays 'bid' even after price crosses it).
+    # This is what lets a trending stock still fill 30 levels on BOTH sides — every
+    # remembered price above the live best-ask is an ask, every one below the bid is a bid.
+    snap = db.execute(text(
+        "SELECT side, price FROM orderbook_levels WHERE ticker=:t AND "
+        "ts=(SELECT max(ts) FROM orderbook_levels WHERE ticker=:t)"), {"t": ticker}).fetchall()
+    cur_asks = [int(p) for s, p in snap if s == "ask"]
+    cur_bids = [int(p) for s, p in snap if s == "bid"]
+    best_ask = min(cur_asks) if cur_asks else None
+    best_bid = max(cur_bids) if cur_bids else None
+    if best_ask and best_bid:
+        mid = (best_ask + best_bid) / 2
+        asks = [x for x in items if x["price"] >= best_ask]
+        bids = [x for x in items if x["price"] <= best_bid]
+    else:                                                       # no fresh snapshot → stored side
+        bids = [x for x in items if x["side"] == "bid"]
+        asks = [x for x in items if x["side"] == "ask"]
+        mid = (max(b["price"] for b in bids) + min(a["price"] for a in asks)) / 2 if bids and asks else None
+    asks = sorted(asks, key=lambda x: x["price"])[:depth]                 # ascending (best first)
+    bids = sorted(bids, key=lambda x: -x["price"])[:depth]                # descending (best first)
     thr = large_threshold(ticker, mid)
     return {"asks": asks, "bids": bids, "mid": mid, "threshold": thr}
 
