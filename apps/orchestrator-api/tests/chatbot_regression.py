@@ -116,6 +116,12 @@ CASES = [
       [("decision", lambda r, i: has(r"종합 판단:\s*(매수|보유|매도|관망)", r)),
        ("3 factors", lambda r, i: has(r"뉴스", r) and has(r"수급", r) and has(r"기술", r))]),
 
+    # ---- ADVICE with a history marker ('last week I bought... hold or sell?') = DECISION not history ----
+    C("advice_histmarker", "ADVICE-HX", "en", "Last week I bought SK Hynix at -4%, should I hold or sell?",
+      [("decision", lambda r, i: has(r"Decision:\s*(BUY|HOLD|SELL)", r)), ("not history", lambda r, i: i != "stock_history")]),
+    C("advice_histmarker", "ADVICE-HX", "ko", "지난주 SK하이닉스 샀는데 보유할까 팔까?",
+      [("decision", lambda r, i: has(r"종합 판단:\s*(매수|보유|매도|관망)", r)), ("not history", lambda r, i: i != "stock_history")]),
+
     # ---- OFF-TOPIC (should answer like a normal LLM, not refuse) ----
     C("offtopic", "OFFTOPIC", "en", "What's the capital of Uzbekistan?",
       [("answers", lambda r, i: has(r"tashkent|타슈켄트", r)), ("not refuse", lambda r, i: not has(r"can't help|cannot help|don't.*stock", r))]),

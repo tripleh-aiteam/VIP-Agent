@@ -798,6 +798,20 @@ def _prev_user_msg(history: Optional[list[dict]]) -> str:
     return ""
 
 
+# An explicit BUY/SELL/HOLD DECISION or advice ask ('사야 할까/팔까/hold or sell/advise').
+_DECISION_KW = (
+    "사야", "팔까", "팔아야", "사도 될", "매수해", "매도해", "보유할까", "보유 vs",
+    "종합 판단", "종합판단", "종합적으로", "조언", "추천해", "어떻게 할까", "어찌할까",
+    "buy or sell", "hold or sell", "sell or hold", "should i buy", "should i sell",
+    "should i hold", "is it a buy", "buy hold sell", "buy/sell", "your advice",
+    "your advise", "what should i do", "recommend",
+)
+
+
+def _is_decision_q(transcript: Optional[str]) -> bool:
+    return any(k in (transcript or "").lower() for k in _DECISION_KW)
+
+
 def _is_bare_switch_followup(transcript: Optional[str]) -> bool:
     t = (transcript or "").strip()
     if not t or len(t.split()) > 6:
@@ -4030,6 +4044,8 @@ def _run_agent_impl(
 
     if (not confirmed_tool and (agent_id or "vip").lower() != "stock"
             and not _is_future_outlook(transcript)        # '앞으로 5일 전망' is a FORECAST, not history
+            and not _is_stock_advice(transcript, agent_id)   # 'last week I bought X, hold or sell?' = ADVICE
+            and not _is_decision_q(transcript)               # not a price-history dump
             and _requested_history_dates(transcript)):
         _hist = _vip_history_reply(transcript, lang)
         if _hist:
@@ -4095,19 +4111,15 @@ def _run_agent_impl(
     # ===== BUY/SELL DECISION agent ('사야 할까/팔까', 'buy or sell', '종합 판단') → the
     # comprehensive 3-factor decision (News + Flows + Technicals + ML). Runs BEFORE
     # stock-delegation so it isn't swallowed by the generic Stock-agent path. =====
-    if not confirmed_tool and "decide" in TOOL_REGISTRY:
-        _dtl = (transcript or "").lower()
-        if any(k in _dtl for k in ("사야", "팔까", "팔아야", "사도 될", "매수해", "매도해",
-                                   "종합 판단", "종합판단", "buy or sell", "should i buy",
-                                   "should i sell", "is it a buy", "buy hold sell", "buy/sell")):
-            try:
-                from services import prediction_service as _psd
-                _dc = next((c for (c, _n) in _all_stocks_in_query(transcript) if c in _psd.NAMES), None)
-                if _dc:
-                    return _run_chain(db, transcript, lang, [{"tool": "decide", "args": {"ticker": _dc}}],
-                                      current_path, selected_id, system, history or [], agent_id=agent_id)
-            except Exception:
-                pass
+    if not confirmed_tool and "decide" in TOOL_REGISTRY and _is_decision_q(transcript):
+        try:
+            from services import prediction_service as _psd
+            _dc = next((c for (c, _n) in _all_stocks_in_query(transcript) if c in _psd.NAMES), None)
+            if _dc:
+                return _run_chain(db, transcript, lang, [{"tool": "decide", "args": {"ticker": _dc}}],
+                                  current_path, selected_id, system, history or [], agent_id=agent_id)
+        except Exception:
+            pass
 
     # ===== VIP → Stock delegation (single source of truth) =====
     # ANY stock question asked in VIP (or another non-stock agent) is answered by
