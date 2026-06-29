@@ -1916,15 +1916,16 @@ def init_scheduler():
     )
     log.info("scheduler: Asset detailed report registered (22:00 UTC = 7:00 AM KST, all recipients, KO+EN)", extra={"action": "scheduler.asset_registered"})
 
-    # Real Estate Agent detailed report — its OWN standalone email at 7:05 AM KST =
-    # 22:05 UTC, to ALL recipients, with BOTH Korean + English .docx (after Asset).
+    # Real Estate report — 7:05 AM KST (22:05 UTC) every day. DASHBOARD ONLY:
+    # saved to the VIP Reports menu, NOT emailed and NOT sent to Telegram
+    # (per boss request — _realty_daily_all uses notify=False).
     _scheduler.add_job(
         _realty_daily_all,
         CronTrigger.from_crontab("5 22 * * *"),
         id="realty-daily-report",
         replace_existing=True,
     )
-    log.info("scheduler: Real Estate detailed report registered (22:05 UTC = 7:05 AM KST, all recipients, KO+EN)", extra={"action": "scheduler.realty_registered"})
+    log.info("scheduler: Real Estate report registered (7:05 AM KST, DASHBOARD ONLY — no email/telegram)", extra={"action": "scheduler.realty_registered"})
 
     # Breaking-news monitor — every 15 min, 24/7. Detects big NEW market-moving
     # events and fires the impact report to ALL recipients (severity-gated, deduped,
