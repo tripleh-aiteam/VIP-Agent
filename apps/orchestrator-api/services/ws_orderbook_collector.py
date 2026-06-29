@@ -233,13 +233,17 @@ def status() -> dict:
         "running": s is not None,
     }
     if s is not None:
+        # sanitize the LOGIN frame to non-sensitive status fields only (never echo
+        # back tokens / session identifiers from the third-party response).
+        login = s.last_login if isinstance(s.last_login, dict) else {}
+        login_safe = {k: login.get(k) for k in ("trnm", "return_code", "return_msg") if k in login}
         out.update({
             "state": s.state, "connected": s.connected,
             "msgs": s.msgs, "writes": s.writes,
             "last_write_ts": s.last_write_ts,
             "last_error": s.last_error,
-            "last_login": s.last_login,
-            "last_raw_0d": s.last_raw,   # real frame → verify FIDs
+            "login": login_safe,
+            "last_raw_0d": s.last_raw,   # public market data (order book) — verify FIDs
         })
     return out
 

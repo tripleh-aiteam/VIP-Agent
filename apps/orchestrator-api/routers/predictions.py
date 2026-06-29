@@ -138,8 +138,14 @@ def orderbook_depth(ticker: str, depth: int = Query(30), db: Session = Depends(g
 
 @router.get("/ws-debug")
 def ws_orderbook_debug():
-    """Live state of the WebSocket order-book collector — is it connected, logged in,
-    receiving frames, writing? Includes a real 0D frame to verify FIDs. No secrets."""
+    """Live state of the WebSocket order-book collector — connected, logged in,
+    receiving, writing — plus a real 0D frame to verify FIDs. Gated behind
+    DEBUG_KIWOOM (operational diagnostics are not public). Login data is sanitized
+    to non-sensitive status fields; no tokens/secrets are returned."""
+    import os
+    from fastapi import HTTPException
+    if os.getenv("DEBUG_KIWOOM", "").lower() not in ("1", "true", "yes"):
+        raise HTTPException(status_code=404, detail="Not found")
     from services.ws_orderbook_collector import status
     return status()
 
