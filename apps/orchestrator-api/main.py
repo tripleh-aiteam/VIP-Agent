@@ -114,6 +114,17 @@ async def lifespan(app: FastAPI):
     except Exception:
         pass
 
+    # Real-time Kiwoom WebSocket order-book collector — feeds /monitoring's live
+    # 30-level ladder. Gated to market hours internally; reconnects on failure;
+    # disable with WS_ORDERBOOK_COLLECTOR=false. Best-effort — never blocks startup.
+    try:
+        from services.ws_orderbook_collector import should_run as _ws_ob_should_run, start_in_process as _ws_ob_start
+        if _ws_ob_should_run():
+            asyncio.create_task(_ws_ob_start())
+            print("[startup] WS order-book collector launched")
+    except Exception as _e:
+        print(f"[startup] WS order-book collector not started: {_e!r}")
+
     # v4-A: install the Twin Autopilot cron so twins self-improve every N hours.
     try:
         from services.twin_autopilot import register_with_scheduler as _install_autopilot
