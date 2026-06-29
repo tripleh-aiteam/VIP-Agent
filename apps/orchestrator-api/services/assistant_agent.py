@@ -2400,7 +2400,7 @@ def _run_chain(
                 if s.get("tool") == "two_method_view"
                 and isinstance(s.get("result"), dict) and s["result"].get("ok")), None)
     if _tm:
-        reply = _two_method_header(_tm) + "\n\n" + (reply or "").strip()
+        reply = _two_method_header(_tm, lang) + "\n\n" + (reply or "").strip()
 
     # If any step returned an action (navigate / open_portal), surface the LAST one
     action = None
@@ -2647,43 +2647,61 @@ def _output_format_directive(user_msg: str) -> tuple[str, int, int]:
     )
 
 
-def _two_method_header(tm: dict) -> str:
-    """Build the deterministic '방법 1 / 방법 2' block from a two_method_view result, so
-    the user ALWAYS sees both decision methods explicitly (the LLM is unreliable here)."""
+def _two_method_header(tm: dict, lang: str = "ko") -> str:
+    """Build the deterministic '방법 1 / 방법 2' (Method 1 / Method 2) block from a
+    two_method_view result — bilingual, so EN and KO get the SAME structured block in
+    the user's language (the LLM is unreliable at always showing both methods)."""
+    en = str(lang or "").lower().startswith("en")
     m1 = tm.get("method1_ml") or {}
     m2 = tm.get("method2_analysis") or {}
     lv = m2.get("levels") or {}
     name = tm.get("name") or tm.get("ticker") or ""
+    cur = "" if en else "원"
 
     def _fmt(x):
         try:
             return f"{int(round(float(x))):,}"
         except Exception:
             return None
-    adv_ko = {"BUY": "매수", "SELL": "매도", "HOLD": "보유"}.get((m1.get("advice") or "").upper())
-    label = m2.get("label") or {"BUY": "매수", "SELL": "매도", "WATCH": "관망", "HOLD": "관망"}.get(
-        (m2.get("signal") or "").upper())
+    adv_map = ({"BUY": "BUY", "SELL": "SELL", "HOLD": "HOLD"} if en
+               else {"BUY": "매수", "SELL": "매도", "HOLD": "보유"})
+    sig_map = ({"BUY": "BUY", "SELL": "SELL", "WATCH": "WATCH", "HOLD": "WATCH"} if en
+               else {"BUY": "매수", "SELL": "매도", "WATCH": "관망", "HOLD": "관망"})
+    adv = adv_map.get((m1.get("advice") or "").upper())
+    label = (m2.get("label_en") if en else m2.get("label")) or sig_map.get((m2.get("signal") or "").upper())
     acc, em, algo = m1.get("backtest_accuracy_pct"), m1.get("expected_move_pct"), m1.get("best_algorithm")
-    buy = (f"{_fmt(lv.get('buy_lo'))}~{_fmt(lv.get('buy_hi'))}원"
+    pfx = "₩" if en else ""
+    buy = (f"{pfx}{_fmt(lv.get('buy_lo'))}~{pfx if not en else ''}{_fmt(lv.get('buy_hi'))}{cur}"
            if lv.get("buy_lo") and lv.get("buy_hi") else None)
-    sell = (f"{_fmt(lv.get('sell_lo'))}~{_fmt(lv.get('sell_hi'))}원"
+    sell = (f"{pfx}{_fmt(lv.get('sell_lo'))}~{pfx if not en else ''}{_fmt(lv.get('sell_hi'))}{cur}"
             if lv.get("sell_lo") and lv.get("sell_hi") else None)
     price = _fmt(tm.get("live_price"))
     src = tm.get("live_source")
 
-    m1_bits = [adv_ko or "데이터 없음"]
+    none_txt = "no data" if en else "데이터 없음"
+    m1_bits = [adv or none_txt]
     if algo:
-        m1_bits.append(f"최적 알고리즘 {algo}")
+        m1_bits.append((f"best algorithm {algo}" if en else f"최적 알고리즘 {algo}"))
     if em is not None:
-        m1_bits.append(f"예상 5일 변동 {em}%")
+        m1_bits.append((f"expected 5-day move {em}%" if en else f"예상 5일 변동 {em}%"))
     if acc is not None:
-        m1_bits.append(f"백테스트 정확도 {acc}%")
-    m2_bits = [label or "데이터 없음"]
+        m1_bits.append((f"backtest accuracy {acc}%" if en else f"백테스트 정확도 {acc}%"))
+    m2_bits = [label or none_txt]
     if buy:
-        m2_bits.append(f"매수구간 {buy}")
+        m2_bits.append((f"buy zone {buy}" if en else f"매수구간 {buy}"))
     if sell:
-        m2_bits.append(f"매도구간 {sell}")
+        m2_bits.append((f"sell zone {sell}" if en else f"매도구간 {sell}"))
 
+    if en:
+        head = f"**📊 {name} — Two-Method Analysis**"
+        if price:
+            head += f"  ·  current {pfx}{price}" + (f" ({src})" if src else "")
+        agree = ("🤝 Both methods **AGREE** — higher conviction" if tm.get("consensus")
+                 else "⚠️ The two methods **DISAGREE** — proceed carefully")
+        return "\n".join([head,
+                          "🤖 **Method 1 — Machine Learning:** " + " · ".join(m1_bits),
+                          "📈 **Method 2 — Analysis (flows/orderbook/box):** " + " · ".join(m2_bits),
+                          agree])
     head = f"**📊 {name} — 두 가지 방법 분석**"
     if price:
         head += f"  ·  현재가 {price}원" + (f" ({src})" if src else "")
@@ -4028,7 +4046,12 @@ def _run_agent_impl(
     # force the analysis path instead — chain the live tools (stock agent) or
     # relay to the Stock agent verbatim (VIP / others) so the user always gets a
     # reasoned 매수/보유/매도 view, never just a number.
-    if not confirmed_tool and _is_stock_advice(transcript, agent_id):
+    # Advice ('살까/sell?') OR a future-outlook ('전망/outlook/5-day forecast') on a
+    # registered stock → force the deterministic two-method chain. Including outlook here
+    # keeps EN and KO IDENTICAL: KO '전망' matched advice, but EN 'outlook' did not, so EN
+    # fell to a prose LLM summary while KO got the structured 방법1/방법2 block.
+    if not confirmed_tool and (_is_stock_advice(transcript, agent_id)
+                               or _is_future_outlook(transcript)):
         # TWO-METHOD FIRST: for advice on a stock that's in OUR model universe, force
         # our own ML + Analysis view (+ chart) so the answer ALWAYS shows BOTH methods
         # explicitly — the LLM tended to pick read_chart alone and merge them.
