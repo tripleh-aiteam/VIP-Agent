@@ -136,6 +136,14 @@ def orderbook_depth(ticker: str, depth: int = Query(30), db: Session = Depends(g
     return orderbook_view(db, str(ticker).zfill(6), min(max(depth, 5), 30))
 
 
+@router.get("/ws-debug")
+def ws_orderbook_debug():
+    """Live state of the WebSocket order-book collector — is it connected, logged in,
+    receiving frames, writing? Includes a real 0D frame to verify FIDs. No secrets."""
+    from services.ws_orderbook_collector import status
+    return status()
+
+
 @router.get("/investor-flows")
 def investor_flows():
     """Market-wide 투자자별 매매 — net buying by investor type (개인/외국인/기관계 + 금융투자/

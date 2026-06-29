@@ -92,6 +92,14 @@ class WsOrderbookCollector:
         self.stop = asyncio.Event()
         self._conn = None
         self.msgs = 0
+        # diagnostics surfaced via status() / the ws-debug endpoint
+        self.state = "init"           # init|idle(closed)|connecting|logged_in|subscribed|recv|error
+        self.connected = False
+        self.last_error = None
+        self.last_write_ts = None
+        self.last_raw = None          # last raw 0D frame (to verify FIDs against live data)
+        self.last_login = None        # raw LOGIN response
+        self.writes = 0
 
     def _conn_ok(self):
         if self._conn is None or getattr(self._conn, "closed", 1):
@@ -107,6 +115,8 @@ class WsOrderbookCollector:
             conn = self._conn_ok()
             try:
                 obm.record(conn, ticker, levels, datetime.now(timezone.utc))
+                self.writes += 1
+                self.last_write_ts = datetime.now(timezone.utc).isoformat()
             except Exception:
                 try:
                     if self._conn:
@@ -123,20 +133,26 @@ class WsOrderbookCollector:
         await asyncio.to_thread(_do)
 
     async def _session(self) -> None:
+        self.state = "connecting"
         token = await _get_token()
         if not token:
-            print("[ws-ob] no Kiwoom token (check KIWOOM_APP_KEY/SECRET + whitelisted IP)")
+            self.last_error = "no Kiwoom token (KIWOOM_APP_KEY/SECRET or whitelisted IP)"
+            print("[ws-ob] " + self.last_error)
             await self._sleep(30)
             return
         async with websockets.connect(WS_URL, ping_interval=20, ping_timeout=20) as ws:
+            self.connected = True
             await ws.send(json.dumps({"trnm": "LOGIN", "token": token}))
             login = json.loads(await ws.recv())
+            self.last_login = login
             if login.get("trnm") == "LOGIN" and str(login.get("return_code")) not in ("0", "None"):
                 raise RuntimeError(f"LOGIN rejected: {login.get('return_msg')}")
+            self.state = "logged_in"
             await ws.send(json.dumps({
                 "trnm": "REG", "grp_no": "1", "refresh": "1",
                 "data": [{"item": CODES, "type": ["0D"]}],
             }))
+            self.state = "subscribed"
             print(f"[ws-ob] subscribed 0D for {CODES}")
             while not self.stop.is_set() and _market_open_now():
                 try:
@@ -155,9 +171,11 @@ class WsOrderbookCollector:
             await ws.send(raw if isinstance(raw, str) else json.dumps(msg))
             return
         if trnm == "REAL":
+            self.state = "recv"
             for el in msg.get("data", []) or []:
                 if el.get("type") != "0D":
                     continue
+                self.last_raw = el            # keep a real 0D frame to verify FIDs
                 levels = parse_0d(el.get("values") or {})
                 if levels:
                     await self._write(el.get("item"), levels)
@@ -176,6 +194,7 @@ class WsOrderbookCollector:
         print(f"[ws-ob] collector starting — {WS_URL} · codes={CODES}")
         while not self.stop.is_set():
             if not _market_open_now():
+                self.state, self.connected = "idle(closed)", False
                 await self._sleep(60)           # idle outside market hours
                 continue
             try:
@@ -184,18 +203,45 @@ class WsOrderbookCollector:
             except (ConnectionClosed, OSError, asyncio.TimeoutError) as e:
                 if self.stop.is_set():
                     break
+                self.connected = False
+                self.state, self.last_error = "error", f"{type(e).__name__}: {e}"
                 print(f"[ws-ob] disconnected ({e!r}); retry in {backoff:.0f}s")
                 await self._sleep(backoff)
                 backoff = min(backoff * 2, 30.0)
             except Exception as e:  # noqa: BLE001 — log & retry, never crash the app
                 if self.stop.is_set():
                     break
+                self.connected = False
+                self.state, self.last_error = "error", f"{type(e).__name__}: {e}"
                 print(f"[ws-ob] error ({e!r}); retry in {backoff:.0f}s")
                 await self._sleep(backoff)
                 backoff = min(backoff * 2, 30.0)
 
 
 _singleton: WsOrderbookCollector | None = None
+
+
+def status() -> dict:
+    """Live diagnostics for the ws-debug endpoint."""
+    s = _singleton
+    out = {
+        "enabled": should_run(),
+        "has_key": bool(os.getenv("KIWOOM_APP_KEY")),
+        "has_secret": bool(os.getenv("KIWOOM_APP_SECRET")),
+        "ws_url": WS_URL, "codes": CODES,
+        "market_open_now": _market_open_now(),
+        "running": s is not None,
+    }
+    if s is not None:
+        out.update({
+            "state": s.state, "connected": s.connected,
+            "msgs": s.msgs, "writes": s.writes,
+            "last_write_ts": s.last_write_ts,
+            "last_error": s.last_error,
+            "last_login": s.last_login,
+            "last_raw_0d": s.last_raw,   # real frame → verify FIDs
+        })
+    return out
 
 
 def should_run() -> bool:
