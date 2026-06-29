@@ -43,6 +43,8 @@ export default function MonitoringPage() {
   const [err, setErr] = useState(false);
   // previous resting qty by price, to compute Δ + flash between ticks.
   const prevQty = useRef<Record<number, number>>({});
+  // persistent last-change direction per price (▲/▼ stays visible until it changes again).
+  const lastMove = useRef<Record<number, { dir: "up" | "down"; delta: number }>>({});
 
   useEffect(() => {
     prevQty.current = {};
@@ -85,10 +87,17 @@ export default function MonitoringPage() {
     return { q, dir, delta: p != null ? q - p : 0 };
   };
   // after render (Δ computed against the prior snapshot), record this tick's qtys
+  // and remember each level's last change direction (persists for the triangle).
   useEffect(() => {
     if (!ob) return;
     const snap: Record<number, number> = {};
-    [...asks, ...bids].forEach((l) => { if (!l.placeholder) snap[l.price] = l.last_qty || l.qty || 0; });
+    [...asks, ...bids].forEach((l) => {
+      if (l.placeholder) return;
+      const q = l.last_qty || l.qty || 0;
+      const prev = prevQty.current[l.price];
+      if (prev != null && q !== prev) lastMove.current[l.price] = { dir: q > prev ? "up" : "down", delta: q - prev };
+      snap[l.price] = q;
+    });
     prevQty.current = snap;
   }, [ob]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -96,18 +105,24 @@ export default function MonitoringPage() {
 
   const ColRow = ({ l, side, rank }: { l: OBLevel; side: "ask" | "bid"; rank: number }) => {
     const ph = !!l.placeholder;
-    const { q, dir, delta } = deltaInfo(l);
+    const { q, dir } = deltaInfo(l);              // dir = changed THIS tick (→ flash)
+    const lm = lastMove.current[l.price];          // persistent last direction
+    const showDir = dir || (lm ? lm.dir : "");     // prefer this tick, else last known
+    const tri = showDir === "up" ? "▲" : showDir === "down" ? "▼" : "";
+    const triColor = showDir === "up" ? RED : showDir === "down" ? BLUE : "var(--text-muted)";
     const col = side === "ask" ? RED : BLUE;
     const barSide = side === "ask" ? "left-0" : "right-0";
+    const justChanged = !!dir;
     return (
       <div className="relative flex items-center gap-1 px-2 py-[3px] text-[12px] border-b border-[var(--border-default)]/25"
-        style={{ background: dir ? (dir === "up" ? "rgba(255,235,59,0.45)" : "rgba(255,235,59,0.30)") : undefined, opacity: ph ? 0.4 : 1 }}>
+        style={{ background: justChanged ? (dir === "up" ? "rgba(255,82,82,0.22)" : "rgba(41,121,255,0.20)") : undefined, opacity: ph ? 0.4 : 1 }}>
         {!ph && <div className={`absolute inset-y-0 ${barSide} rounded`} style={{ width: `${Math.min(100, (q / maxQ) * 100)}%`, background: col, opacity: 0.12 }} />}
         <span className="relative tabular-nums text-[10px] text-[var(--text-muted)] text-center" style={{ minWidth: 20 }}>{rank}</span>
         <span className="relative font-bold tabular-nums" style={{ color: col, minWidth: 62 }}>{fmt(l.price)}</span>
         <span className="relative tabular-nums text-[var(--text-secondary)] text-right flex-1">{ph ? "—" : fmt(q)}{!ph && l.is_large ? " 🔥" : ""}</span>
-        <span className="relative tabular-nums text-right text-[13px] font-extrabold" style={{ minWidth: 58, color: dir === "up" ? RED : dir === "down" ? BLUE : "var(--text-muted)" }}>
-          {ph ? "" : (dir ? `${dir === "up" ? "▲" : "▼"}${delta > 0 ? "+" : ""}${fmt(delta)}` : "·")}
+        <span className="relative flex items-center justify-end gap-0.5 tabular-nums text-right font-extrabold" style={{ minWidth: 62, color: triColor, opacity: ph ? 0 : justChanged ? 1 : tri ? 0.6 : 1 }}>
+          <span className="text-[16px] leading-none">{tri || "·"}</span>
+          {lm && tri ? <span className="text-[11px]">{lm.delta > 0 ? "+" : ""}{fmt(lm.delta)}</span> : null}
         </span>
       </div>
     );
@@ -197,8 +212,8 @@ export default function MonitoringPage() {
 
       {/* legend */}
       <div className="mt-2 text-[10.5px] text-[var(--text-muted)]">
-        {t("🔴 ▲ = 잔량 증가 · 🔵 ▼ = 잔량 감소 · 노란 줄 = 이번 틱에 변동 · 🔥 = 대량 호가 (모두 실제 관측 호가)",
-          "🔴 ▲ = qty up · 🔵 ▼ = qty down · yellow = changed this tick · 🔥 = large order (all real observed levels)")}
+        {t("🔺 ▲ = 잔량 증가(빨강) · 🔻 ▼ = 잔량 감소(파랑) · 진한 ▲▼ = 방금 변동, 흐린 ▲▼ = 직전 방향 유지 · 🔥 = 대량 호가 (모두 실제 관측)",
+          "▲ = qty up (red) · ▼ = qty down (blue) · bold ▲▼ = changed just now, faded ▲▼ = last direction · 🔥 = large order (all real)")}
       </div>
     </div>
   );
