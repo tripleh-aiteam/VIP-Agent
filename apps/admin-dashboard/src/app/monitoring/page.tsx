@@ -67,7 +67,7 @@ export default function MonitoringPage() {
     const src = side === "ask" ? ob?.memory?.asks : ob?.memory?.bids;
     return [...(src || [])]
       .filter((l) => (l.age_sec == null || l.age_sec < 21600)) // < 6h = current session
-      .sort((a, b) => (side === "ask" ? a.price - b.price : b.price - a.price))
+      .sort((a, b) => (b.last_qty || b.qty || 0) - (a.last_qty || a.qty || 0)) // highest qty → lowest
       .slice(0, 30);
   };
   // REAL levels only — the live 10 plus the scrolled-out levels we've remembered.
@@ -144,7 +144,7 @@ export default function MonitoringPage() {
     <div className="px-4 md:px-8 py-6 max-w-[820px] mx-auto">
       <div className="flex items-center gap-2 flex-wrap mb-3">
         <h1 className="text-[22px] font-extrabold text-[var(--text-primary)]">{t("실시간 호가 모니터링", "Live Order-Book Monitor")}</h1>
-        <span className="text-[11px] text-[var(--text-muted)]">{t("매도 / 매수 각 30단계 (실시간 10 + 기억)", "Sellers / Buyers · 30 levels each (live 10 + remembered)")}</span>
+        <span className="text-[11px] text-[var(--text-muted)]">{t("매도 / 매수 각 30단계 · 잔량 많은 순", "Sellers / Buyers · 30 levels · sorted by quantity (high → low)")}</span>
       </div>
 
       {/* controls: dropdown + custom code + speed */}
