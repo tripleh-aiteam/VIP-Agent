@@ -735,15 +735,18 @@ function OrderBookPanel({ code, t }: { code: string; t: (ko: string, en: string)
     let alive = true;
     const load = () => api<OBView>(`/predictions/orderbook/${code}?depth=30`).then((x) => { if (alive) setOb(x); }).catch(() => {});
     load();
-    const i = setInterval(load, 20000);
+    const i = setInterval(load, 2000);   // ~2s near-real-time (true cadence = collector rate)
     return () => { alive = false; clearInterval(i); };
   }, [code]);
 
   if (!ob) return null;
-  const liveAsks = (ob.live.levels || []).filter((l) => l.side === "ask").sort((a, b) => b.price - a.price); // high→low (top)
-  const liveBids = (ob.live.levels || []).filter((l) => l.side === "bid").sort((a, b) => b.price - a.price); // high→low (bottom)
-  const memAsks = [...(ob.memory.asks || [])].sort((a, b) => b.price - a.price); // high→low
-  const memBids = [...(ob.memory.bids || [])].sort((a, b) => b.price - a.price);
+  // Show ONLY large orders ("big players"): live levels ≥ the per-stock threshold,
+  // memory levels flagged is_large. Threshold: 삼성전자 ≥1,000 / SK하이닉스 ≥100 / others by notional.
+  const thr = ob.threshold || 0;
+  const liveAsks = (ob.live.levels || []).filter((l) => l.side === "ask" && (l.qty || 0) >= thr).sort((a, b) => b.price - a.price); // high→low (top)
+  const liveBids = (ob.live.levels || []).filter((l) => l.side === "bid" && (l.qty || 0) >= thr).sort((a, b) => b.price - a.price); // high→low (bottom)
+  const memAsks = [...(ob.memory.asks || [])].filter((l) => l.is_large).sort((a, b) => b.price - a.price); // big walls only
+  const memBids = [...(ob.memory.bids || [])].filter((l) => l.is_large).sort((a, b) => b.price - a.price);
   const maxQ = Math.max(1, ...liveAsks.concat(liveBids).map((l) => l.qty || 0),
     ...memAsks.concat(memBids).map((l) => l.max_qty || l.last_qty || 0));
 
@@ -801,7 +804,9 @@ function OrderBookPanel({ code, t }: { code: string; t: (ko: string, en: string)
             {ob.mid ? `— ${t("중간", "mid")} ${fmt(Math.round(ob.mid))} —` : "—"}
           </div>
           {memBids.map((l, i) => <MemRow key={`mb${i}`} l={l} side="bid" />)}
-          {memAsks.length + memBids.length === 0 && <div className="px-2.5 py-2 text-[11px] text-[var(--text-muted)]">{t("메모리 수집 중 — 수집기 가동 후 누적됩니다", "Building memory — accumulates once the collector runs")}</div>}
+          {memAsks.length + memBids.length < 40 && <div className="px-2.5 py-2 text-[10.5px] text-[var(--text-muted)] bg-[var(--badge-blue-bg)]/20">{t(
+            `📡 깊이는 수집기가 장중(09:00–15:30)에 가동되며 가격이 움직일수록 30단계까지 누적됩니다. 현재 ${memAsks.length + memBids.length}단계 (대량만).`,
+            `📡 Depth fills toward 30 levels as the collector runs in-market (09:00–15:30) and price moves. Currently ${memAsks.length + memBids.length} levels (large only).`)}</div>}
         </>
       )}
       {ob.walls && ob.walls.length > 0 && (

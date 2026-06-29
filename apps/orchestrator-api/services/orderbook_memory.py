@@ -18,8 +18,8 @@ from typing import Any
 
 # Per-stock large-order thresholds in SHARES (from the user's day-trading rules).
 LARGE_ORDER_SHARES: dict[str, int] = {
-    "005930": 10000,   # 삼성전자
-    "000660": 1000,    # SK하이닉스
+    "005930": 1000,    # 삼성전자  (user rule: show ≥1,000 shares)
+    "000660": 100,     # SK하이닉스 (user rule: show ≥100 — pricey stock, fewer shares)
 }
 # default = a ~300M KRW notional wall (shares = 3e8 / price), floored at 100.
 _DEFAULT_NOTIONAL = 300_000_000
