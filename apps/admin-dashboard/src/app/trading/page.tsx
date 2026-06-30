@@ -818,6 +818,51 @@ function OrderBookPanel({ code, t }: { code: string; t: (ko: string, en: string)
   );
 }
 
+// Method 3 — Wave: rule-based Elliott/Fibonacci deep-pullback verdict (from /predictions/wave)
+type WaveView = {
+  verdict: string; confidence?: string; wave_score?: number; amplitude?: number; retrace?: number;
+  entry?: number; stop?: number; target?: number; rr?: number; swing_low?: number; swing_high?: number;
+  reason?: string; max_hold_days?: number; risk_per_share?: number; fib?: Record<string, number>;
+};
+function WaveMethodPanel({ code, t }: { code: string; t: (ko: string, en: string) => string }) {
+  const [w, setW] = useState<WaveView | null>(null);
+  useEffect(() => {
+    if (!code) return;
+    let alive = true;
+    api<WaveView>(`/predictions/wave/${code}`).then((x) => { if (alive) setW(x); }).catch(() => {});
+    return () => { alive = false; };
+  }, [code]);
+  if (!w || !w.verdict) return null;
+  const vcol = w.verdict === "BUY" ? "var(--badge-blue-text)" : w.verdict === "AVOID" ? NEG : "var(--text-secondary)";
+  const vlabel = w.verdict === "BUY" ? t("매수", "BUY") : w.verdict === "WATCH" ? t("관망", "WATCH")
+    : w.verdict === "AVOID" ? t("회피", "AVOID") : w.verdict;
+  return (
+    <div className="rounded-xl border border-[var(--border-default)] overflow-hidden">
+      <div className="flex items-center gap-2 px-3.5 py-2.5 border-b border-[var(--border-default)] bg-[var(--bg-elevated)]">
+        <span className="text-[14.5px] font-extrabold text-[var(--text-primary)]">🌊 {t("방법 3 — 파동 (엘리엇·피보나치)", "Method 3 — Wave (Elliott·Fibonacci)")}</span>
+        <span className="ml-auto text-[13px] font-extrabold" style={{ color: vcol }}>{vlabel}{w.confidence ? ` · ${w.confidence}` : ""}</span>
+      </div>
+      {w.reason && <div className="px-3.5 py-2 text-[12px] text-[var(--text-secondary)] border-b border-[var(--border-default)]/40">{w.reason}</div>}
+      {w.verdict === "BUY" && w.entry ? (
+        <div className="grid grid-cols-4 text-center text-[12px]">
+          {([["진입/Entry", w.entry], ["손절/Stop", w.stop], ["목표/Target", w.target], ["R:R", w.rr]] as [string, number | undefined][]).map(([lbl, v]) => (
+            <div key={lbl} className="px-2 py-2 border-r last:border-r-0 border-[var(--border-default)]/40">
+              <div className="text-[9.5px] text-[var(--text-muted)]">{lbl}</div>
+              <div className="font-bold tabular-nums">{v != null ? v.toLocaleString() : "-"}</div>
+            </div>
+          ))}
+        </div>
+      ) : null}
+      <div className="px-3.5 py-1.5 text-[10px] text-[var(--text-muted)] flex flex-wrap gap-x-3">
+        {w.wave_score != null && <span>{t("파동점수", "wave score")} {w.wave_score}</span>}
+        {w.retrace != null && <span>{t("되돌림", "retrace")} {Math.round(w.retrace * 100)}%</span>}
+        {w.fib?.["0.618"] && <span>Fib 0.618 {Math.round(w.fib["0.618"]).toLocaleString()}</span>}
+        {w.max_hold_days && <span>{t("최대보유", "max hold")} {w.max_hold_days}d</span>}
+      </div>
+    </div>
+  );
+}
+
 function StockDetailDrawer({ t }: { t: (ko: string, en: string) => string }) {
   const { lang, toggle } = useLanguage();
   const [open, setOpen] = useState(false);
@@ -966,6 +1011,9 @@ function StockDetailDrawer({ t }: { t: (ko: string, en: string) => string }) {
 
             {/* deep order-book panel — live 10 levels + 30-level memory + large walls */}
             <OrderBookPanel code={code} t={t} />
+
+            {/* Method 3 — Wave (Elliott/Fibonacci deep-pullback) */}
+            <WaveMethodPanel code={code} t={t} />
 
             {/* market-wide context — oil + FX (affects oil/export names) */}
             {d.market && (

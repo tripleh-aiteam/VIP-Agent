@@ -2767,6 +2767,41 @@ def _output_format_directive(user_msg: str) -> tuple[str, int, int]:
     )
 
 
+def _fmt_wave_line(wv: dict, en: bool) -> Optional[str]:
+    """One-line Method 3 (Wave) summary for the header, or None if no wave data."""
+    if not wv or wv.get("verdict") in (None, "N/A"):
+        return None
+    v = wv.get("verdict")
+    vlabel = ({"BUY": "BUY", "WATCH": "WATCH", "AVOID": "AVOID"} if en
+              else {"BUY": "매수", "WATCH": "관망", "AVOID": "회피"}).get(v, v)
+    sc = wv.get("wave_score")
+    bits = [(f"{vlabel} (wave score {sc})" if en else f"{vlabel} (파동점수 {sc})")]
+    if v == "BUY" and wv.get("entry"):
+        bits.append((f"entry ~{wv['entry']:,} / stop {wv['stop']:,} / target {wv['target']:,} (R:R {wv.get('rr')})"
+                     if en else
+                     f"진입 ~{wv['entry']:,} / 손절 {wv['stop']:,} / 목표 {wv['target']:,} (R:R {wv.get('rr')})"))
+    elif wv.get("entry"):
+        bits.append((f"buy zone {wv['entry']:,} (Fib 0.618)" if en else f"매수구간 {wv['entry']:,} (피보 0.618)"))
+    return " · ".join(bits)
+
+
+def _wave_line_for(tm: dict, en: bool) -> Optional[str]:
+    """Fetch the Wave (Method 3) verdict for tm's ticker via a short-lived session."""
+    try:
+        from db.base import SessionLocal
+        from services.wave_method import wave_for
+        tkr = tm.get("ticker")
+        if not tkr:
+            return None
+        _db = SessionLocal()
+        try:
+            return _fmt_wave_line(wave_for(_db, str(tkr).zfill(6)), en)
+        finally:
+            _db.close()
+    except Exception:
+        return None
+
+
 def _two_method_header(tm: dict, lang: str = "ko") -> str:
     """Build the deterministic '방법 1 / 방법 2' (Method 1 / Method 2) block from a
     two_method_view result — bilingual, so EN and KO get the SAME structured block in
@@ -2836,20 +2871,28 @@ def _two_method_header(tm: dict, lang: str = "ko") -> str:
             head += f"  ·  current {pfx}{price}" + (f" ({en_src})" if en_src else "")
         agree = ("🤝 Both methods **AGREE** — higher conviction" if tm.get("consensus")
                  else "⚠️ The two methods **DISAGREE** — proceed carefully")
-        return "\n".join([head,
-                          "🤖 **Method 1 — Machine Learning:** " + " · ".join(m1_bits),
-                          "📈 **Method 2 — Analysis (flows/orderbook/box):** " + " · ".join(m2_bits),
-                          agree])
+        _wave = _wave_line_for(tm, True)
+        lines = [head,
+                 "🤖 **Method 1 — Machine Learning:** " + " · ".join(m1_bits),
+                 "📈 **Method 2 — Analysis (flows/orderbook/box):** " + " · ".join(m2_bits)]
+        if _wave:
+            lines.append("🌊 **Method 3 — Wave (Elliott/Fibonacci pullback):** " + _wave)
+        lines.append(agree)
+        return "\n".join(lines)
     head = f"**📊 {name} — 두 가지 방법 분석**"
     if price:
         head += f"  ·  현재가 {price}원" + (f" ({src})" if src else "")
     agree = "🤝 두 방법 **일치** — 높은 확신" if tm.get("consensus") else "⚠️ 두 방법 **엇갈림** — 신중히 접근"
-    return "\n".join([
+    _wave = _wave_line_for(tm, False)
+    lines = [
         head,
         f"🤖 **방법 1 — 머신러닝 알고리즘:** " + " · ".join(m1_bits),
         f"📈 **방법 2 — 분석(수급/호가/박스권):** " + " · ".join(m2_bits),
-        agree,
-    ])
+    ]
+    if _wave:
+        lines.append("🌊 **방법 3 — 파동(엘리엇/피보나치 눌림목):** " + _wave)
+    lines.append(agree)
+    return "\n".join(lines)
 
 
 def _compose_final_answer(
