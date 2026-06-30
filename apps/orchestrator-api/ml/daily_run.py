@@ -56,6 +56,13 @@ DATA_STEPS = [
      "add order-book microstructure features (banks the signal; gated until enough history)"),
     ([sys.executable, str(HERE / "features" / "news_features.py")],
      "add news/sentiment features (banks the signal; gated until enough history)"),
+    # Method 3 (Wave) covers a WIDER universe than Methods 1/2 — keep those extra
+    # stocks' daily prices fresh so their wave verdicts update each morning.
+    ([sys.executable, str(HERE / "data" / "backfill_prices.py"), "--tickers",
+      "066570", "036570", "352820", "259960", "323410", "003670",
+      "051900", "090430", "097950", "017670", "030200", "008770",
+      "--start", "2022-01-01"],
+     "update Method-3 extra (Wave-only) stocks' prices"),
     ([sys.executable, str(HERE / "features" / "wave_features.py")],
      "Method 3: wave-strength + Fibonacci levels (banked daily for the Wave verdict)"),
 ]

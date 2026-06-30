@@ -145,18 +145,34 @@ def wave_method(ticker: str, db: Session = Depends(get_db)):
     return wave_for(db, str(ticker).zfill(6))
 
 
+# Extra names covered by Method 3 (Wave) ONLY — not in Methods 1/2 (STARTER_KR/NAMES).
+# Method 3 is a wider scanner: it surfaces strong-rally pullbacks the other two don't track.
+WAVE_EXTRA_NAMES = {
+    "066570": "LG전자", "036570": "엔씨소프트", "352820": "하이브", "259960": "크래프톤",
+    "323410": "카카오뱅크", "003670": "포스코퓨처엠", "051900": "LG생활건강", "090430": "아모레퍼시픽",
+    "097950": "CJ제일제당", "017670": "SK텔레콤", "030200": "KT", "008770": "호텔신라",
+}
+
+
 @router.get("/wave-batch")
 def wave_batch(tickers: str = Query(""), db: Session = Depends(get_db)):
-    """METHOD 3 ("Wave") for the whole universe (or a comma list) — for the Daily
-    Trading 'Wave' view. Sorted by wave_score desc; drops names with no rally yet."""
+    """METHOD 3 ("Wave") for the FULL wave universe (or a comma list) — for the Daily
+    Trading 'Wave' view. Scans every stock with wave data (incl. names not in Methods
+    1/2). Sorted by wave_score desc; drops the index proxy + names with no rally yet."""
+    from sqlalchemy import text
     from services.wave_method import wave_for
     from services.prediction_service import NAMES
-    tk = [t.strip().zfill(6) for t in tickers.split(",") if t.strip()] or list(NAMES.keys())
+    if tickers.strip():
+        tk = [t.strip().zfill(6) for t in tickers.split(",") if t.strip()]
+    else:
+        tk = [r[0] for r in db.execute(text("SELECT DISTINCT ticker FROM wave_features_daily")).fetchall()]
     out = []
-    for t in tk[:50]:
+    for t in tk[:80]:
+        if t == "069500":           # KODEX 200 = index ETF, not a tradable pick
+            continue
         v = wave_for(db, t)
         if v.get("verdict") not in (None, "N/A"):
-            v["name"] = NAMES.get(t, t)
+            v["name"] = NAMES.get(t) or WAVE_EXTRA_NAMES.get(t, t)
             out.append(v)
     out.sort(key=lambda o: -(o.get("wave_score") or 0))
     return {"results": out}
