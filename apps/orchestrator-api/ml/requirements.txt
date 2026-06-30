@@ -8,7 +8,8 @@ pandas>=2.2.0
 numpy>=1.26.0
 pyarrow>=15.0.0
 finance-datareader>=0.9.50      # import name: FinanceDataReader
-pandas-ta>=0.3.14b0        # technical indicators
+# NOTE: pandas-ta removed — it's unused (build_features.py computes indicators manually
+# because pandas-ta breaks on numpy>=2) and its beta is no longer installable on PyPI.
 scikit-learn>=1.4.0
 xgboost>=2.0.0
 lightgbm>=4.3.0
