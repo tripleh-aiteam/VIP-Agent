@@ -853,19 +853,27 @@ function WaveMethodPanel({ code, t }: { code: string; t: (ko: string, en: string
   const vcol = w.verdict === "BUY" ? "var(--badge-blue-text)" : w.verdict === "AVOID" ? NEG : "var(--text-secondary)";
   const vlabel = w.verdict === "BUY" ? t("매수", "BUY") : w.verdict === "WATCH" ? t("관망", "WATCH")
     : w.verdict === "AVOID" ? t("회피", "AVOID") : w.verdict;
+  const plain = w.verdict === "BUY"
+    ? t("📈 강하게 오른 뒤 깊게 눌린 자리예요. 지금이 분할 매수 타이밍 — 아래 '살 가격'에 사고, '손절'까지 빠지면 정리, '목표'에서 익절하세요.",
+        "Rallied strong, now dipped deep — a buy-the-dip spot. Buy near the 'Buy' price, exit if it falls to 'Stop', take profit at 'Target'.")
+    : w.verdict === "WATCH"
+      ? t("👀 좋은 종목이지만 아직 살 자리는 아니에요. 더 내려와 아래 '살 가격(0.618)'에 닿으면 매수를 검토하세요.",
+          "Good stock, but not a buy yet — wait until it dips to the 'Buy price (0.618)' shown.")
+      : t("🚫 상승 흐름이 약하거나 추세가 깨졌어요. 지금은 매매에 적합하지 않습니다.",
+          "The uptrend is weak or broken — not a good time to trade this one.");
   return (
     <div className="rounded-xl border border-[var(--border-default)] overflow-hidden">
       <div className="flex items-center gap-2 px-3.5 py-2.5 border-b border-[var(--border-default)] bg-[var(--bg-elevated)]">
-        <span className="text-[14.5px] font-extrabold text-[var(--text-primary)]">🌊 {t("방법 3 — 파동 (엘리엇·피보나치)", "Method 3 — Wave (Elliott·Fibonacci)")}</span>
-        <span className="ml-auto text-[13px] font-extrabold" style={{ color: vcol }}>{vlabel}{w.confidence ? ` · ${w.confidence}` : ""}</span>
+        <span className="text-[15.5px] font-extrabold text-[var(--text-primary)]">🌊 {t("방법 3 — 파동 (엘리엇·피보나치)", "Method 3 — Wave (Elliott·Fibonacci)")}</span>
+        <span className="ml-auto text-[15px] font-extrabold" style={{ color: vcol }}>{vlabel}{w.confidence ? ` · ${w.confidence}` : ""}</span>
       </div>
-      {w.reason && <div className="px-3.5 py-2 text-[12px] text-[var(--text-secondary)] border-b border-[var(--border-default)]/40">{w.reason}</div>}
+      <div className="px-3.5 py-2.5 text-[13.5px] text-[var(--text-secondary)] leading-relaxed border-b border-[var(--border-default)]/40">{plain}</div>
       {w.verdict === "BUY" && w.entry ? (
-        <div className="grid grid-cols-4 text-center text-[12px]">
-          {([["진입/Entry", w.entry], ["손절/Stop", w.stop], ["목표/Target", w.target], ["R:R", w.rr]] as [string, number | undefined][]).map(([lbl, v]) => (
-            <div key={lbl} className="px-2 py-2 border-r last:border-r-0 border-[var(--border-default)]/40">
-              <div className="text-[9.5px] text-[var(--text-muted)]">{lbl}</div>
-              <div className="font-bold tabular-nums">{v != null ? v.toLocaleString() : "-"}</div>
+        <div className="grid grid-cols-4 text-center text-[13px]">
+          {([[t("살 가격", "Buy"), w.entry, "var(--text-primary)"], [t("손절", "Stop"), w.stop, NEG], [t("목표", "Target"), w.target, "var(--badge-blue-text)"], ["R:R", w.rr, "var(--text-primary)"]] as [string, number | undefined, string][]).map(([lbl, v, col]) => (
+            <div key={lbl} className="px-2 py-2.5 border-r last:border-r-0 border-[var(--border-default)]/40">
+              <div className="text-[10px] text-[var(--text-muted)]">{lbl}</div>
+              <div className="font-extrabold tabular-nums text-[14px]" style={{ color: col }}>{v != null ? v.toLocaleString() : "-"}</div>
             </div>
           ))}
         </div>
@@ -896,29 +904,38 @@ function WaveView({ t }: { t: (ko: string, en: string) => string }) {
       {!items && <div className="px-3 py-6 text-center text-[12px] text-[var(--text-muted)]">{t("불러오는 중…", "Loading…")}</div>}
       {items && items.length === 0 && <div className="px-3 py-6 text-center text-[12px] text-[var(--text-muted)]">{t("표시할 파동 신호가 없습니다.", "No wave signals.")}</div>}
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
-        {items?.map((w) => (
-          <div key={w.ticker} className="rounded-xl border border-[var(--border-default)] p-3.5" style={{ background: "var(--bg-card)" }}>
-            <div className="flex items-center gap-2 mb-1">
-              <span className="text-[14px] font-extrabold text-[var(--text-primary)]">{w.name || w.ticker}</span>
-              <span className="text-[10.5px] text-[var(--text-muted)]">{w.ticker}</span>
-              <span className="ml-auto text-[12.5px] font-extrabold" style={{ color: vcol(w.verdict) }}>{vlabel(w.verdict)}{w.confidence ? ` · ${w.confidence}` : ""}</span>
-            </div>
-            <div className="text-[10.5px] text-[var(--text-muted)] mb-1.5 flex flex-wrap gap-x-2">
-              <span>{t("파동점수", "score")} {w.wave_score}</span>
-              {w.retrace != null && <span>{t("되돌림", "retrace")} {Math.round(w.retrace * 100)}%</span>}
-              {w.rr != null && <span>R:R {w.rr}</span>}
-            </div>
-            {w.verdict === "BUY" && w.entry ? (
-              <div className="grid grid-cols-3 text-center text-[11.5px] border-t border-[var(--border-default)]/40 pt-1.5">
-                <div><div className="text-[9px] text-[var(--text-muted)]">{t("진입", "entry")}</div><div className="font-bold tabular-nums">{w.entry?.toLocaleString()}</div></div>
-                <div><div className="text-[9px] text-[var(--text-muted)]">{t("손절", "stop")}</div><div className="font-bold tabular-nums">{w.stop?.toLocaleString()}</div></div>
-                <div><div className="text-[9px] text-[var(--text-muted)]">{t("목표", "target")}</div><div className="font-bold tabular-nums">{w.target?.toLocaleString()}</div></div>
+        {items?.map((w) => {
+          const plain = w.verdict === "BUY"
+            ? t("📈 강하게 오른 뒤 깊게 눌린 자리예요 — 지금이 분할 매수 타이밍입니다.", "Rallied strong, now dipped deep — a buy-the-dip spot right now.")
+            : w.verdict === "WATCH"
+              ? t("👀 좋은 종목이지만 아직 살 자리는 아니에요 — 아래 '살 가격'까지 기다리세요.", "Good stock, but not a buy yet — wait for the 'buy price' below.")
+              : t("🚫 상승 흐름이 약해요 — 지금은 매매에 적합하지 않아요.", "The uptrend is weak — not a good time to trade.");
+          return (
+            <div key={w.ticker} onClick={() => openStockDetail(w.ticker!, w.name || w.ticker!)}
+              className="text-left rounded-2xl border-2 p-4 cursor-pointer transition-all hover:scale-[1.01]"
+              style={{ borderColor: vcol(w.verdict), background: "var(--bg-card)", boxShadow: "var(--shadow-sm)" }}>
+              <div className="flex items-center gap-2 mb-1.5">
+                <span className="text-[18px] font-extrabold text-[var(--text-primary)]">{w.name || w.ticker}</span>
+                <span className="text-[12px] text-[var(--text-muted)]">{w.ticker}</span>
+                <span className="ml-auto text-[16px] font-extrabold" style={{ color: vcol(w.verdict) }}>{vlabel(w.verdict)}</span>
               </div>
-            ) : (
-              <div className="text-[11px] text-[var(--text-secondary)] leading-snug">{w.reason}</div>
-            )}
-          </div>
-        ))}
+              <div className="text-[13.5px] text-[var(--text-secondary)] leading-snug mb-2">{plain}</div>
+              {w.verdict === "BUY" && w.entry ? (
+                <div className="grid grid-cols-3 text-center text-[13px] border-t border-[var(--border-default)]/40 pt-2">
+                  <div><div className="text-[10px] text-[var(--text-muted)]">{t("살 가격", "Buy")}</div><div className="font-extrabold tabular-nums">{w.entry?.toLocaleString()}</div></div>
+                  <div><div className="text-[10px] text-[var(--text-muted)]">{t("손절(빠지면 정리)", "Stop")}</div><div className="font-extrabold tabular-nums" style={{ color: NEG }}>{w.stop?.toLocaleString()}</div></div>
+                  <div><div className="text-[10px] text-[var(--text-muted)]">{t("목표(팔 가격)", "Target")}</div><div className="font-extrabold tabular-nums" style={{ color: "var(--badge-blue-text)" }}>{w.target?.toLocaleString()}</div></div>
+                </div>
+              ) : null}
+              <div className="mt-2 flex items-center gap-2 text-[10.5px] text-[var(--text-muted)]">
+                <span>{t("상승강도", "strength")} {Math.round((w.wave_score || 0) * 100)}%</span>
+                {w.retrace != null && <span>· {t("눌림", "dip")} {Math.round(w.retrace * 100)}%</span>}
+                {w.rr != null && <span>· {t("손익비", "R:R")} {w.rr}</span>}
+                <span className="ml-auto font-bold" style={{ color: "var(--badge-blue-text)" }}>{t("자세히 + 차트 →", "details + chart →")}</span>
+              </div>
+            </div>
+          );
+        })}
       </div>
     </Section>
   );
