@@ -33,6 +33,15 @@ def _price(db, ticker: str) -> Optional[float]:
     return float(r[0]) if r else None
 
 
+def _mkt_ret1d(db) -> Optional[float]:
+    """KODEX200 (069500) last 1-day return — for the index-plunge risk gate."""
+    rows = db.execute(text("SELECT close FROM raw_daily_prices WHERE ticker='069500' "
+                           "ORDER BY date DESC LIMIT 2")).fetchall()
+    if len(rows) == 2 and rows[1][0]:
+        return float(rows[0][0]) / float(rows[1][0]) - 1.0
+    return None
+
+
 def wave_for(db, ticker: str, price: Optional[float] = None) -> dict[str, Any]:
     """Method-3 verdict for one ticker, read from wave_features_daily."""
     ticker = str(ticker).zfill(6)
@@ -56,8 +65,12 @@ def wave_for(db, ticker: str, price: Optional[float] = None) -> dict[str, Any]:
             "wave_score": round(score, 3), "amplitude": round(float(ampl), 3),
             "duration": int(dur or 0), "swing_low": round(lo), "swing_high": round(hi),
             "price": round(px) if px else None, "retrace": round(retrace, 3),
+            "max_hold_days": 20,        # risk gate #5: time-based cap
             "fib": {"0.382": f382, "0.5": f500, "0.618": f618, "0.75": f750}}
 
+    # risk gate #1 (junk/penny): skip ultra-low-price names
+    if px is not None and px < 1000:
+        return {**base, "verdict": "AVOID", "confidence": "낮음", "reason": "저가/유동성 부적합 (junk filter)"}
     if score < MIN_SCORE:
         return {**base, "verdict": "AVOID", "confidence": "낮음",
                 "reason": f"약한 추세 (파동점수 {score:.2f}) — 매매 부적합"}
@@ -71,11 +84,18 @@ def wave_for(db, ticker: str, price: Optional[float] = None) -> dict[str, Any]:
     levels = {"entry": round(entry), "deeper_entry": round(float(f750)), "stop": stop,
               "target": target, "rr": rr}
 
+    levels["risk_per_share"] = round(entry - stop)     # gate #3 input: position sizing
     if ENTRY_LO <= retrace <= ENTRY_HI:
         if rr and rr >= MIN_RR:
+            # risk gate #2: index-plunge halt — no new entries on a sharp market drop
+            mret = _mkt_ret1d(db)
+            if mret is not None and mret <= -0.02:
+                return {**base, **levels, "verdict": "WATCH", "confidence": "낮음",
+                        "risk_gate": "index_plunge_halt",
+                        "reason": f"매수 신호이나 시장 급락(지수 {mret*100:.1f}%) → 신규 진입 보류"}
             return {**base, **levels, "verdict": "BUY", "confidence": conf,
                     "reason": (f"강한 파동(점수 {score:.2f}) + 깊은 눌림목(되돌림 {retrace*100:.0f}%, "
-                               f"피보 0.618) → 매수 / 손절 {stop:,} / 목표 {target:,} (R:R {rr})")}
+                               f"피보 0.618) → 매수 / 손절 {stop:,} / 목표 {target:,} (R:R {rr}) · 최대보유 20일")}
         return {**base, **levels, "verdict": "WATCH", "confidence": conf,
                 "reason": f"강한 파동 + 눌림 구간이나 R:R {rr} 부족 → 관망"}
     if retrace < WATCH_LO:

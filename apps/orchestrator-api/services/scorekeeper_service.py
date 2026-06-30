@@ -112,6 +112,17 @@ def log_today(db, horizon: int = 5) -> dict[str, Any]:
     for c in tb.consensus_picks(db, horizon):
         _store("consensus", c["ticker"], c["signal"], c.get("levels") or {})
 
+    # Wave method (Method 3) — BUY when price sits in the deep-pullback Fibonacci zone
+    try:
+        from services.wave_method import wave_for
+        for tk in tickers:
+            v = wave_for(db, tk)
+            if v.get("verdict") == "BUY" and v.get("entry"):
+                _store("wave", tk, "BUY", {"close": v.get("price"), "entry": v.get("entry"),
+                                           "target": v.get("target"), "stop": v.get("stop")})
+    except Exception:
+        pass  # wave is additive — never break the existing scorekeeper
+
     db.commit()
     return {"ok": True, "as_of": str(as_of), "logged": n}
 
