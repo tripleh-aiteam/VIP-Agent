@@ -275,9 +275,14 @@ _STOCK_ADVICE_KW = (
     "어때", "어떄", "사도", "살까", "팔까", "사야", "팔아야", "매수", "매도", "전망",
     "추천해", "추천 해", "괜찮", "들어가도", "진입", "보유해", "담아", "의견", "분석해",
     "사면", "팔면", "투자해", "사도돼", "사도 돼",
-    "should i buy", "should i sell", "should i hold", "worth buying", "worth it",
-    "good buy", "good time to", "entry point", "buy or sell", "sell or hold",
-    "hold or sell", "is it a good", "invest in", "go long", "thoughts on", "a good buy",
+    # buy/sell phrasings the old list missed ('사는 게 좋아?', '살 만해?', '담을까' …)
+    "사는 게 좋", "사는게 좋", "사는 것이 좋", "사는것이 좋", "사는 게 맞", "사는게 맞",
+    "살 만", "살만", "사길", "사 둘", "사둘", "사 둬", "담을까", "담아도", "들어갈까",
+    "들어갈 만", "좋을까", "매수 타이밍", "매도 타이밍", "팔 때", "팔아도", "사는 거",
+    "should i buy", "should i sell", "should i hold", "should i get", "worth buying", "worth it",
+    "good buy", "good to buy", "ok to buy", "good time to", "time to buy", "entry point",
+    "buy or sell", "sell or hold", "hold or sell", "is it a good", "is it good to",
+    "is now a good time", "invest in", "go long", "thoughts on", "a good buy", "worth a buy",
 )
 
 
@@ -2506,12 +2511,12 @@ def _run_chain(
                 if s.get("tool") == "two_method_view"
                 and isinstance(s.get("result"), dict) and s["result"].get("ok")), None)
     if _tm:
-        # Required answer shape: ① 직접 답변 (deterministic) → ② 3-method block (with WHY)
-        # → ③ LLM's detailed per-method reasoning (근거) → ④ 최종 추천 (deterministic).
+        # Required answer shape: ① 직접 답변 → ② 3-method block (each method's call + WHY)
+        # → ③ 최종 추천. Fully deterministic so all 3 methods + the verdict ALWAYS show
+        # (the LLM free-form was unreliable: it echoed labels and lacked the Wave data).
         _direct, _final = _direct_and_final(_tm, lang)
         _block = _two_method_header(_tm, lang)
-        _detail = (reply or "").strip()
-        reply = "\n\n".join(p for p in (_direct, _block, _detail, _final) if p)
+        reply = "\n\n".join(p for p in (_direct, _block, _final) if p)
 
     # decide tool: use its OWN language-correct reasoning verbatim (the LLM otherwise
     # mixes EN/KO). The deterministic block already has the verdict + 3-factor breakdown.
@@ -4267,6 +4272,8 @@ def _run_agent_impl(
             and "ask_agent" in TOOL_REGISTRY and _stock_turn
             and not _is_past_price(transcript)
             and not _is_future_outlook(transcript)        # forecast → local two-method, not delegate
+            and not _is_stock_advice(transcript, agent_id)  # advice ('살까/사는 게 좋아?') → local 3-method
+            and not _is_decision_q(transcript)              # 'buy or sell/사야 할까' → local decide (3-method)
             and not _is_report_question(transcript)
             and not _is_concept_question(transcript)):
         # FAST PATH (latency): the Stock backend is the single source of truth, so
