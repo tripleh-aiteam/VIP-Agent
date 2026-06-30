@@ -58,7 +58,7 @@ const pct = (n?: number) => (n == null ? "-" : `${n > 0 ? "+" : ""}${n.toFixed(1
 const arrowColor = (a?: string) => (a === "▲" ? "var(--badge-success-text)" : a === "▼" ? "var(--error)" : "var(--text-muted)");
 const signColor = (n?: number) => ((n ?? 0) > 0 ? "var(--badge-success-text)" : (n ?? 0) < 0 ? "var(--error)" : "var(--text-muted)");
 
-type Method = "ml" | "analysis" | null;
+type Method = "ml" | "analysis" | "wave" | null;
 
 type IFlow = {
   unit: string; source: string; columns: string[]; columns_en: string[]; note?: string;
@@ -173,6 +173,7 @@ export default function TradingPage() {
       {method && brief && <RegimeStrip r={brief.regime} counts={brief.counts} t={t} />}
       {method === "ml" && brief && <MLView brief={brief} t={t} />}
       {method === "analysis" && brief && <AnalysisView brief={brief} t={t} />}
+      {method === "wave" && <WaveView t={t} />}
 
       {method && brief && (
         <div className="rounded-xl border border-[var(--border-default)] bg-[var(--bg-elevated)] px-4 py-3 text-[11.5px] text-[var(--text-muted)] leading-relaxed">
@@ -187,8 +188,8 @@ export default function TradingPage() {
 function MethodSelector({ onPick, t, counts }: { onPick: (m: Method) => void; t: (ko: string, en: string) => string; counts: Record<string, number> }) {
   return (
     <div>
-      <p className="text-[13px] text-[var(--text-secondary)] mb-3">{t("분석 방식을 선택하세요 — 두 가지 접근을 모두 제공합니다.", "Choose an analysis method — both approaches are available.")}</p>
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+      <p className="text-[13px] text-[var(--text-secondary)] mb-3">{t("분석 방식을 선택하세요 — 세 가지 독립적인 접근을 제공합니다.", "Choose an analysis method — three independent approaches.")}</p>
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <button onClick={() => onPick("ml")} className="text-left rounded-2xl border-2 p-5 transition-all hover:scale-[1.01]" style={{ borderColor: "var(--badge-blue-text)", background: "var(--bg-card)", boxShadow: "var(--shadow-sm)" }}>
           <div className="text-[28px] mb-2">🤖</div>
           <div className="text-[17px] font-extrabold text-[var(--text-primary)]">{t("머신러닝 알고리즘", "Machine Learning Algorithms")}</div>
@@ -216,6 +217,21 @@ function MethodSelector({ onPick, t, counts }: { onPick: (m: Method) => void; t:
           <div className="mt-4 flex items-center gap-2">
             <span className="text-[12px] font-bold px-3 py-1.5 rounded-lg" style={{ color: "#fff", background: "var(--badge-success-text)" }}>{t("열기 →", "Open →")}</span>
             <span className="text-[11px] text-[var(--text-muted)]">{t("실시간 키움", "Live Kiwoom")}</span>
+          </div>
+        </button>
+
+        <button onClick={() => onPick("wave")} className="text-left rounded-2xl border-2 p-5 transition-all hover:scale-[1.01]" style={{ borderColor: "#7e57c2", background: "var(--bg-card)", boxShadow: "var(--shadow-sm)" }}>
+          <div className="text-[28px] mb-2">🌊</div>
+          <div className="text-[17px] font-extrabold text-[var(--text-primary)]">{t("파동 (엘리엇·피보나치)", "Wave (Elliott·Fibonacci)")}</div>
+          <div className="text-[12px] text-[var(--text-muted)] mt-0.5 mb-3">{t("규칙 기반 — 강한 상승 후 깊은 눌림목", "Rule-based — strong rally → deep pullback")}</div>
+          <ul className="text-[12.5px] text-[var(--text-secondary)] space-y-1 leading-relaxed">
+            <li>• {t("6차원 파동강도 점수로 강한 종목 선별", "6-D wave-strength score selects leaders")}</li>
+            <li>• {t("피보나치 깊은 눌림목 진입 + 손절/목표/R:R", "Fibonacci deep-pullback entry + stop/target/R:R")}</li>
+            <li>• {t("백테스트 검증 (승률 62% · 엣지 +4.9%)", "Backtested (62% win · +4.9% edge)")}</li>
+          </ul>
+          <div className="mt-4 flex items-center gap-2">
+            <span className="text-[12px] font-bold px-3 py-1.5 rounded-lg" style={{ color: "#fff", background: "#7e57c2" }}>{t("열기 →", "Open →")}</span>
+            <span className="text-[11px] text-[var(--text-muted)]">{t("방법 3 · 독립", "Method 3 · independent")}</span>
           </div>
         </button>
       </div>
@@ -819,17 +835,18 @@ function OrderBookPanel({ code, t }: { code: string; t: (ko: string, en: string)
 }
 
 // Method 3 — Wave: rule-based Elliott/Fibonacci deep-pullback verdict (from /predictions/wave)
-type WaveView = {
+type WaveData = {
+  ticker?: string; name?: string;
   verdict: string; confidence?: string; wave_score?: number; amplitude?: number; retrace?: number;
   entry?: number; stop?: number; target?: number; rr?: number; swing_low?: number; swing_high?: number;
   reason?: string; max_hold_days?: number; risk_per_share?: number; fib?: Record<string, number>;
 };
 function WaveMethodPanel({ code, t }: { code: string; t: (ko: string, en: string) => string }) {
-  const [w, setW] = useState<WaveView | null>(null);
+  const [w, setW] = useState<WaveData | null>(null);
   useEffect(() => {
     if (!code) return;
     let alive = true;
-    api<WaveView>(`/predictions/wave/${code}`).then((x) => { if (alive) setW(x); }).catch(() => {});
+    api<WaveData>(`/predictions/wave/${code}`).then((x) => { if (alive) setW(x); }).catch(() => {});
     return () => { alive = false; };
   }, [code]);
   if (!w || !w.verdict) return null;
@@ -860,6 +877,50 @@ function WaveMethodPanel({ code, t }: { code: string; t: (ko: string, en: string
         {w.max_hold_days && <span>{t("최대보유", "max hold")} {w.max_hold_days}d</span>}
       </div>
     </div>
+  );
+}
+
+// Method 3 — Wave list view (overview): all stocks' wave verdicts, sorted by score
+function WaveView({ t }: { t: (ko: string, en: string) => string }) {
+  const [items, setItems] = useState<WaveData[] | null>(null);
+  useEffect(() => {
+    let alive = true;
+    api<{ results: WaveData[] }>("/predictions/wave-batch")
+      .then((d) => { if (alive) setItems(d.results || []); }).catch(() => { if (alive) setItems([]); });
+    return () => { alive = false; };
+  }, []);
+  const vcol = (v: string) => v === "BUY" ? "var(--badge-blue-text)" : v === "AVOID" ? NEG : "var(--text-secondary)";
+  const vlabel = (v: string) => v === "BUY" ? t("매수", "BUY") : v === "WATCH" ? t("관망", "WATCH") : v === "AVOID" ? t("회피", "AVOID") : v;
+  return (
+    <Section title={t("🌊 파동 (엘리엇·피보나치) — 강한 추세 + 깊은 눌림목 (ML·분석과 독립)", "🌊 Wave (Elliott·Fibonacci) — strong trend + deep pullback (independent)")}>
+      {!items && <div className="px-3 py-6 text-center text-[12px] text-[var(--text-muted)]">{t("불러오는 중…", "Loading…")}</div>}
+      {items && items.length === 0 && <div className="px-3 py-6 text-center text-[12px] text-[var(--text-muted)]">{t("표시할 파동 신호가 없습니다.", "No wave signals.")}</div>}
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+        {items?.map((w) => (
+          <div key={w.ticker} className="rounded-xl border border-[var(--border-default)] p-3.5" style={{ background: "var(--bg-card)" }}>
+            <div className="flex items-center gap-2 mb-1">
+              <span className="text-[14px] font-extrabold text-[var(--text-primary)]">{w.name || w.ticker}</span>
+              <span className="text-[10.5px] text-[var(--text-muted)]">{w.ticker}</span>
+              <span className="ml-auto text-[12.5px] font-extrabold" style={{ color: vcol(w.verdict) }}>{vlabel(w.verdict)}{w.confidence ? ` · ${w.confidence}` : ""}</span>
+            </div>
+            <div className="text-[10.5px] text-[var(--text-muted)] mb-1.5 flex flex-wrap gap-x-2">
+              <span>{t("파동점수", "score")} {w.wave_score}</span>
+              {w.retrace != null && <span>{t("되돌림", "retrace")} {Math.round(w.retrace * 100)}%</span>}
+              {w.rr != null && <span>R:R {w.rr}</span>}
+            </div>
+            {w.verdict === "BUY" && w.entry ? (
+              <div className="grid grid-cols-3 text-center text-[11.5px] border-t border-[var(--border-default)]/40 pt-1.5">
+                <div><div className="text-[9px] text-[var(--text-muted)]">{t("진입", "entry")}</div><div className="font-bold tabular-nums">{w.entry?.toLocaleString()}</div></div>
+                <div><div className="text-[9px] text-[var(--text-muted)]">{t("손절", "stop")}</div><div className="font-bold tabular-nums">{w.stop?.toLocaleString()}</div></div>
+                <div><div className="text-[9px] text-[var(--text-muted)]">{t("목표", "target")}</div><div className="font-bold tabular-nums">{w.target?.toLocaleString()}</div></div>
+              </div>
+            ) : (
+              <div className="text-[11px] text-[var(--text-secondary)] leading-snug">{w.reason}</div>
+            )}
+          </div>
+        ))}
+      </div>
+    </Section>
   );
 }
 

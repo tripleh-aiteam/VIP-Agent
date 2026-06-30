@@ -145,6 +145,23 @@ def wave_method(ticker: str, db: Session = Depends(get_db)):
     return wave_for(db, str(ticker).zfill(6))
 
 
+@router.get("/wave-batch")
+def wave_batch(tickers: str = Query(""), db: Session = Depends(get_db)):
+    """METHOD 3 ("Wave") for the whole universe (or a comma list) — for the Daily
+    Trading 'Wave' view. Sorted by wave_score desc; drops names with no rally yet."""
+    from services.wave_method import wave_for
+    from services.prediction_service import NAMES
+    tk = [t.strip().zfill(6) for t in tickers.split(",") if t.strip()] or list(NAMES.keys())
+    out = []
+    for t in tk[:50]:
+        v = wave_for(db, t)
+        if v.get("verdict") not in (None, "N/A"):
+            v["name"] = NAMES.get(t, t)
+            out.append(v)
+    out.sort(key=lambda o: -(o.get("wave_score") or 0))
+    return {"results": out}
+
+
 @router.get("/ws-debug")
 def ws_orderbook_debug():
     """Live state of the WebSocket order-book collector — connected, logged in,
