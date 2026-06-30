@@ -3909,7 +3909,13 @@ def _run_agent_impl(
     # shows identical data + structure. On failure we fall through to the
     # in-process stock engine below.
     if (not confirmed_tool and not attachment_ids
-            and (agent_id or "").lower() == "stock"):
+            and (agent_id or "").lower() == "stock"
+            # ADVICE / DECISION / OUTLOOK are handled by OUR local 3-method 'decide'
+            # composer (same as VIP), so AI Advisor and VIP give the IDENTICAL answer.
+            # Everything else (price, general) still relays to the Stock backend.
+            and not _is_stock_advice(transcript, agent_id)
+            and not _is_decision_q(transcript)
+            and not _is_future_outlook(transcript)):
         try:
             from services import stock_advisor_chat
             ext = stock_advisor_chat.ask(transcript, lang=lang, history=history or [])
@@ -4397,15 +4403,12 @@ def _run_agent_impl(
             _code = next((c for (c, _n) in _found if c in _ps.NAMES), None)
         except Exception:
             _code = None
-        # An explicit BUY/SELL DECISION question ('사야 할까/팔까', 'buy or sell', '종합 판단')
-        # → the comprehensive decision agent (News + Flows + Technicals + ML). General
-        # 'analyze/어때/outlook' → the two-method view.
-        _tl = (transcript or "").lower()
-        _decision_q = any(k in _tl for k in (
-            "사야", "팔까", "팔아야", "사도 될", "매수해", "매도해", "종합 판단", "종합판단",
-            "종합적으로", "buy or sell", "should i buy", "should i sell", "is it a buy",
-            "buy hold sell", "buy/sell", "결정해"))
-        if _code and _decision_q and "decide" in TOOL_REGISTRY:
+        # ANY advice / decision / outlook on a registered stock → the SAME comprehensive
+        # 3-method decision report (decide: ML + Analysis + Wave + News/Flows/Technicals).
+        # Using ONE composer for all of them guarantees EN and KO (and VIP vs AI Advisor)
+        # are IDENTICAL — previously '사는 게 좋아?' went to two_method while 'should i buy'
+        # went to decide, so the two languages diverged.
+        if _code and "decide" in TOOL_REGISTRY:
             return _run_chain(db, transcript, lang, [{"tool": "decide", "args": {"ticker": _code}}],
                               current_path, selected_id, system, history or [], agent_id=agent_id)
         if _code and "two_method_view" in TOOL_REGISTRY:
