@@ -73,14 +73,15 @@ def price_answer(q: str = Query(..., description="The user's price question, ver
 
 @router.get("/stock/answer")
 def stock_data_answer(q: str = Query(..., description="The user's stock-data question, verbatim"),
-                      lang: str = Query("auto", description="'en', 'ko', or 'auto'")):
+                      lang: str = Query("auto", description="'en', 'ko', or 'auto'"),
+                      db: Session = Depends(get_db)):
     """Unified, fully-FORMATTED stock-data answer — current price (Kiwoom/Naver, with
     volume + any requested fields) OR a deterministic multi-day history table (past
     dates / ranges like 'last 4 days'). VIP is the single source, so the AI Advisor
     relays this for ALL data questions → both surfaces read IDENTICALLY. Returns
     {ok, reply}."""
     from services.assistant_agent import _vip_stock_data_reply
-    reply = _vip_stock_data_reply(q or "", lang or "auto")
+    reply = _vip_stock_data_reply(q or "", lang or "auto", db)
     if reply:
         return {"ok": True, "reply": reply}
     return {"ok": False, "reply": ""}

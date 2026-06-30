@@ -1202,10 +1202,12 @@ def _vip_history_reply(transcript: Optional[str], lang: str, hist=None) -> Optio
     return ("\n".join(notes) + "\n\n" + table) if notes else table
 
 
-def _vip_stock_data_reply(transcript: Optional[str], lang: str) -> Optional[str]:
+def _vip_stock_data_reply(transcript: Optional[str], lang: str, db=None) -> Optional[str]:
     """Unified VIP stock-data answer (the single source the AI Advisor relays):
     공매도 (Kiwoom ka10014) → history table (past/range) → live current price (with
-    volume / requested fields). None when no stock/data resolves."""
+    volume / requested fields). None when no stock/data resolves. `db` lets the live-price
+    path read the PC collector's Kiwoom snapshot → '키움 실시간' source during market (else
+    the AI Advisor relay shows Naver)."""
     if _is_short_selling_q(transcript):
         ss = _vip_short_selling_reply(transcript, lang)
         if ss and ss.get("reply"):
@@ -1215,7 +1217,7 @@ def _vip_stock_data_reply(transcript: Optional[str], lang: str) -> Optional[str]
         r = _vip_history_reply(transcript, lang, h)
         if r:
             return r
-    cur = _vip_live_price_reply(transcript, lang)
+    cur = _vip_live_price_reply(transcript, lang, db)
     if cur and cur.get("reply"):
         return cur["reply"]
     return None
@@ -2797,14 +2799,23 @@ def _two_method_header(tm: dict, lang: str = "ko") -> str:
     src = tm.get("live_source")
 
     none_txt = "no data" if en else "데이터 없음"
-    m1_bits = [adv or none_txt]
-    if algo:
-        m1_bits.append((f"best algorithm {algo}" if en else f"최적 알고리즘 {algo}"))
+    # METHOD 1 — the WHY behind the ML call (it predicts OUTPERFORMANCE vs the market).
+    _au = (m1.get("advice") or "").upper()
+    ml_why = ({"BUY": "predicts the stock will OUTPERFORM the market",
+               "SELL": "predicts the stock will UNDERPERFORM the market",
+               "HOLD": "no clear edge vs the market — weak/uncertain signal"} if en
+              else {"BUY": "시장 대비 상대강세(아웃퍼폼) 예측",
+                    "SELL": "시장 대비 상대약세(언더퍼폼) 예측",
+                    "HOLD": "시장 대비 뚜렷한 우위 없음 — 신호 약함"}).get(_au)
+    m1_bits = [(f"{adv} — {ml_why}" if (adv and ml_why) else (adv or none_txt))]
     if em is not None:
-        m1_bits.append((f"expected 5-day move {em}%" if en else f"예상 5일 변동 {em}%"))
+        m1_bits.append((f"expected 5-day move ±{abs(em)}%" if en else f"예상 5일 변동 ±{abs(em)}%"))
     if acc is not None:
-        m1_bits.append((f"backtest accuracy {acc}%" if en else f"백테스트 정확도 {acc}%"))
-    m2_bits = [label or none_txt]
+        m1_bits.append((f"accuracy {acc}%" if en else f"정확도 {acc}%"))
+    # METHOD 2 — the WHY behind the Analysis signal: the live 호가/수급/박스권 tells.
+    _reasons = (m2.get("reasons_en") if en else m2.get("reasons")) or []
+    why2 = ", ".join(str(x) for x in _reasons[:3])
+    m2_bits = [(f"{label} — {why2}" if (label and why2) else (label or none_txt))]
     if buy:
         m2_bits.append((f"buy zone {buy}" if en else f"매수구간 {buy}"))
     if sell:
