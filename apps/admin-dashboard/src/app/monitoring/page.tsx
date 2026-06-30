@@ -72,13 +72,27 @@ export default function MonitoringPage() {
       .sort((a, b) => (b.last_qty || b.qty || 0) - (a.last_qty || a.qty || 0)) // highest qty → lowest
       .slice(0, 30);
   };
-  // REAL levels only — the live 10 plus the scrolled-out levels we've remembered.
-  // Grows toward 30 per side as the price moves through more levels over time.
-  // No fake padding: we never invent a level Kiwoom hasn't actually shown.
   const obsAsks = observed("ask");
   const obsBids = observed("bid");
-  const asks = obsAsks;
-  const bids = obsBids;
+  // Always show 30/side: real observed levels first, then PAD with the KRX price grid
+  // beyond them — padded rows are clearly greyed with "—" (no quantity), NOT fake numbers.
+  const allP = [...obsAsks, ...obsBids].map((l) => l.price).sort((a, b) => a - b);
+  let tick = Infinity;
+  for (let i = 1; i < allP.length; i++) { const g = allP[i] - allP[i - 1]; if (g > 0) tick = Math.min(tick, g); }
+  if (!isFinite(tick) || tick <= 0) tick = mid ? Math.max(1, Math.round(mid * 0.001)) : 100;
+  const padTo30 = (lv: OBLevel[], side: "ask" | "bid"): OBLevel[] => {
+    const out = [...lv];
+    let edge = out.length ? (side === "ask" ? Math.max(...out.map((l) => l.price)) : Math.min(...out.map((l) => l.price)))
+      : (mid ? Math.round(mid) : 0);
+    while (out.length < 30 && edge > 0) {
+      edge = side === "ask" ? edge + tick : edge - tick;
+      if (edge <= 0) break;
+      out.push({ price: edge, qty: 0, placeholder: true });
+    }
+    return out;
+  };
+  const asks = padTo30(obsAsks, "ask");
+  const bids = padTo30(obsBids, "bid");
 
   const deltaInfo = (l: OBLevel) => {
     if (l.placeholder) return { q: 0, dir: "" as const, delta: 0 };
@@ -203,8 +217,8 @@ export default function MonitoringPage() {
         {ob && (obsAsks.length < 30 || obsBids.length < 30) && (
           <div className="px-3 py-2 text-[10.5px] text-[var(--text-muted)] bg-[var(--badge-blue-bg)]/20 border-t border-[var(--border-default)]">
             {t(
-              `실시간 10단계 + 사라진 호가를 기억해 쌓습니다. 가격이 더 움직일수록 한쪽당 30단계까지 (모두 실제 관측값). 현재 매도 ${obsAsks.length} · 매수 ${obsBids.length}.`,
-              `Live 10 + the levels that scrolled away, remembered & stacked. Grows toward 30 per side as price moves (all real observations). Now sellers ${obsAsks.length} · buyers ${obsBids.length}.`)}
+              `항상 30단계 표시 · 굵은 줄 = 실제 관측 호가, 흐린 "—" = 아직 주문 없는 가격(미관측). 실관측 매도 ${obsAsks.length} · 매수 ${obsBids.length} (가격이 움직이면 실제 값으로 채워집니다).`,
+              `Always 30 levels · bold = real observed orders, faded "—" = price with no order yet. Real sellers ${obsAsks.length} · buyers ${obsBids.length} (fills with real values as price moves).`)}
           </div>
         )}
         {ob && !ob.live?.fresh && <div className="px-3 py-1.5 text-[10px] text-[var(--text-muted)] border-t border-[var(--border-default)]">{t("장마감 — 마지막 캡처 기준", "Closed — last captured book")}</div>}
@@ -212,8 +226,8 @@ export default function MonitoringPage() {
 
       {/* legend */}
       <div className="mt-2 text-[10.5px] text-[var(--text-muted)]">
-        {t("화살표 = 잔량 변동 · 빨강 ▲ = 증가, 파랑 ▼ = 감소 (진하면 방금 변동, 흐리면 직전 방향) · 🔥 = 대량 호가 · 왼쪽=매도 오른쪽=매수 (모두 실제 관측)",
-          "Arrows = quantity change · red ▲ = up, blue ▼ = down (bold = just changed, faded = last direction) · 🔥 = large order · left=sellers, right=buyers (all real)")}
+        {t("화살표 = 잔량 변동 · 빨강 ▲ = 증가, 파랑 ▼ = 감소 · 🔥 = 대량 호가 · 흐린 \"—\" = 미관측 빈 호가 · 왼쪽=매도 오른쪽=매수",
+          "Arrows = quantity change · red ▲ = up, blue ▼ = down · 🔥 = large order · faded \"—\" = price with no order yet · left=sellers, right=buyers")}
       </div>
     </div>
   );
