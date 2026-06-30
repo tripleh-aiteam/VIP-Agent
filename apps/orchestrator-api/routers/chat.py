@@ -86,6 +86,23 @@ def stock_data_answer(q: str = Query(..., description="The user's stock-data que
     return {"ok": False, "reply": ""}
 
 
+@router.get("/advice/answer")
+def advice_answer(q: str = Query(..., description="A future-outlook or buy/sell-decision question"),
+                  lang: str = Query("auto"), db: Session = Depends(get_db)):
+    """VIP's full-agent answer for OUTLOOK / RECOMMENDATION questions — the deterministic
+    two-method block ('5-day outlook') or the decision agent ('buy or sell?'). The AI
+    Advisor relays this so future/decision answers read IDENTICALLY to VIP. {ok, reply}."""
+    from services.assistant_agent import run_agent
+    try:
+        r = run_agent(db, q or "", language=lang or "auto", agent_id="vip")
+        rep = (r.get("reply") or "").strip()
+        if rep and r.get("intent") in ("chain_completed", "two_method_view"):
+            return {"ok": True, "reply": rep, "intent": r.get("intent")}
+    except Exception:
+        pass
+    return {"ok": False, "reply": ""}
+
+
 @router.get("/shortselling/live")
 def live_short_selling(codes: str = Query(..., description="Comma-separated KR 6-digit codes")):
     """Latest 공매도 (short-selling) figures via Kiwoom ka10014 — VIP holds the Kiwoom
