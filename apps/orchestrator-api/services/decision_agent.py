@@ -189,19 +189,99 @@ def decide(db, ticker: str) -> dict[str, Any]:
     en_name = {"SK하이닉스": "SK Hynix", "삼성전자": "Samsung Electronics",
                "삼성전기": "Samsung Electro-Mechanics", "SK스퀘어": "SK Square",
                "한미반도체": "Hanmi Semiconductor", "카카오": "Kakao"}.get(name, name)
-    dec_ko = {"BUY": "매수", "SELL": "매도", "HOLD": "보유/관망"}[decision]
-    ko = (f"**🎯 {name} — 추천: {dec_ko}** (확신 {conf} · {consensus_ko})\n"
-          f"🤖 **방법 1 (머신러닝) → {ml_call_ko}**: {ml_why_ko}{em_ko}.\n"
-          f"📈 **방법 2 (분석·호가/수급/박스권) → {an_call_ko}**: {an_why_ko}.\n"
-          f"📰 **뉴스: {news_ko}**" + (f" — {top_news}" if top_news else "") + ".\n"
-          f"💡 **종합 추천:** {act_ko}\n"
-          f"⚠️ 두 방법과 뉴스·수급을 종합한 참고 의견이며, 투자 권유·수익 보장이 아닙니다.")
-    en = (f"**🎯 {en_name} — Recommendation: {decision}** (confidence {conf_en} · {consensus_en})\n"
-          f"🤖 **Method 1 (Machine Learning) → {ml_adv or 'HOLD'}**: {ml_why_en}{em_en}.\n"
-          f"📈 **Method 2 (Analysis · orderbook/flows/box) → {an_call_en}**: {an_why_en}.\n"
-          f"📰 **News: {news_en}**" + (f" — {top_news}" if top_news else "") + ".\n"
-          f"💡 **Bottom line:** {act_en}\n"
-          f"⚠️ A reasoned synthesis of both methods + news/flows — not investment advice or a guarantee.")
+
+    # extra data for the detailed write-up
+    algo = m1.get("best_algorithm")
+    lv = m2.get("levels") or {}
+    pos = tech.get("pos_in_range")
+
+    def _zone(lo, hi):
+        return f"{_pl(lo)}~{_pl(hi)}" if lo and hi else None
+    buy_zone, sell_zone = _zone(lv.get("buy_lo"), lv.get("buy_hi")), _zone(lv.get("sell_lo"), lv.get("sell_hi"))
+
+    def _clean(t):                                 # strip the 📈/📉/• prefix from a headline
+        return (t or "").lstrip("📈📉• ").strip()
+    heads = [_clean(t) for t in (news.get("titles") or [])][:3]
+
+    dec_full_ko = {"BUY": "매수 (BUY)", "SELL": "매도 (SELL)", "HOLD": "보유 (HOLD)"}[decision]
+    em_txt_ko = (f"예상 5일 변동 ±{abs(em)}%" if em is not None else "예상 변동 추정 불가")
+    em_txt_en = (f"expected 5-day move ±{abs(em)}%" if em is not None else "expected move n/a")
+
+    ko_lines = [
+        f"**추천: {dec_full_ko}**  ·  확신 {conf}  ·  {consensus_ko}",
+        "",
+        f"**요약** — 머신러닝은 '{ml_call_ko}', 분석은 '{an_call_ko}', 뉴스는 '{news_ko}'입니다. "
+        + ("두 방법이 같은 방향이라 신뢰도가 높습니다." if agree
+           else "신호가 엇갈리므로 한쪽으로 크게 베팅하기보다 신중한 접근이 필요합니다."),
+        "",
+        f"**방법 1 — 머신러닝 알고리즘" + (f" ({algo})" if algo else "") + "**",
+        f"· 판단: {ml_call_ko}",
+        f"· 근거: {ml_why_ko}",
+        f"· 수치: {em_txt_ko} · 백테스트 정확도 {acc_txt}",
+        "",
+        "**방법 2 — 분석 (호가·수급·박스권)**",
+        f"· 판단: {an_call_ko}",
+        f"· 근거: {an_why_ko}",
+    ]
+    if buy_zone or sell_zone:
+        ko_lines.append(f"· 거래 구간: " + " · ".join(filter(None, [
+            f"매수 {buy_zone}원" if buy_zone else None, f"매도 {sell_zone}원" if sell_zone else None])))
+    ko_lines += [
+        "",
+        "**기술적 지표**",
+        f"· {tech.get('summary_ko','중립')}",
+        f"· 지지 {_pl(sup)}원 / 저항 {_pl(res)}원" + (f" · 박스권 내 위치 {pos}%" if pos is not None else ""),
+        "",
+        f"**뉴스 — {news_ko}**",
+    ]
+    ko_lines += ([f"· {h}" for h in heads] if heads else ["· 특이 뉴스 없음"])
+    ko_lines += [
+        "",
+        f"**종합 추천** — {act_ko} "
+        + ("두 방법이 같은 방향이라 해당 시나리오의 신뢰도가 상대적으로 높습니다." if agree
+           else "머신러닝·분석·뉴스의 방향이 엇갈리므로, 한 신호만 보고 서두르기보다 추세 확인 후 대응하는 것이 안전합니다."),
+        "",
+        "※ 두 방법과 뉴스·수급·기술적 지표를 종합한 참고 의견이며, 투자 권유나 수익 보장이 아닙니다.",
+    ]
+    ko = "\n".join(ko_lines)
+
+    en_lines = [
+        f"**Recommendation: {decision}**  ·  confidence {conf_en}  ·  {consensus_en}",
+        "",
+        f"**Summary** — Machine Learning says '{ml_adv or 'HOLD'}', Analysis says '{an_call_en}', news is '{news_en}'. "
+        + ("Both methods point the same way, which raises conviction." if agree
+           else "The signals diverge, so a cautious stance beats betting heavily on one side."),
+        "",
+        f"**Method 1 — Machine Learning" + (f" ({algo})" if algo else "") + "**",
+        f"- Call: {ml_adv or 'HOLD'}",
+        f"- Why: {ml_why_en}",
+        f"- Figures: {em_txt_en} · backtest accuracy {acc_txt}",
+        "",
+        "**Method 2 — Analysis (orderbook · flows · box)**",
+        f"- Call: {an_call_en}",
+        f"- Why: {an_why_en}",
+    ]
+    if buy_zone or sell_zone:
+        en_lines.append("- Trade zones: " + " · ".join(filter(None, [
+            f"buy ₩{buy_zone}" if buy_zone else None, f"sell ₩{sell_zone}" if sell_zone else None])))
+    en_lines += [
+        "",
+        "**Technicals**",
+        f"- {tech.get('summary_en','neutral')}",
+        f"- support ₩{_pl(sup)} / resistance ₩{_pl(res)}" + (f" · {pos}% through the range" if pos is not None else ""),
+        "",
+        f"**News — {news_en}**",
+    ]
+    en_lines += ([f"- {h}" for h in heads] if heads else ["- no notable news"])
+    en_lines += [
+        "",
+        f"**Bottom line** — {act_en} "
+        + ("Both methods agree, so this scenario carries relatively higher conviction." if agree
+           else "ML, analysis and news diverge, so confirm the trend before acting rather than chasing one signal."),
+        "",
+        "Note: a reasoned synthesis of both methods + news/flows/technicals — not investment advice or a guarantee.",
+    ]
+    en = "\n".join(en_lines)
     return {"ticker": code, "name": name, "decision": decision, "score": round(total, 1),
             "confidence": conf_en, "news": news, "flows": flows, "technicals": tech,
             "method1_ml": {"call": ml_adv, "accuracy_pct": acc, "expected_move_pct": em},
