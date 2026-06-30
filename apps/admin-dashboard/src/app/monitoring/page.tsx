@@ -65,8 +65,10 @@ export default function MonitoringPage() {
   // (nearest mid) FIRST. No size filter — every level counts, any quantity.
   const observed = (side: "ask" | "bid"): OBLevel[] => {
     const src = side === "ask" ? ob?.memory?.asks : ob?.memory?.bids;
+    // show ALL real remembered levels the backend returns (up to 30/side); no age cut
+    // — the backend already keeps only levels near the current price. This is what fills
+    // both sides toward 30 (the 6h cut was hiding earlier-session remembered levels).
     return [...(src || [])]
-      .filter((l) => (l.age_sec == null || l.age_sec < 21600)) // < 6h = current session
       .sort((a, b) => (b.last_qty || b.qty || 0) - (a.last_qty || a.qty || 0)) // highest qty → lowest
       .slice(0, 30);
   };
@@ -105,27 +107,23 @@ export default function MonitoringPage() {
 
   const ColRow = ({ l, side, rank }: { l: OBLevel; side: "ask" | "bid"; rank: number }) => {
     const ph = !!l.placeholder;
-    const { q, dir, delta } = deltaInfo(l);        // this-tick change (dir + delta)
-    const lm = lastMove.current[l.price];          // persistent last change {dir, delta}
-    // arrow AND number come from the SAME change: this tick if it changed, else the last one
-    const useDir = dir || (lm ? lm.dir : "");
-    const useDelta = dir ? delta : (lm ? lm.delta : 0);
+    const { q, dir } = deltaInfo(l);               // dir = changed THIS tick
+    const lm = lastMove.current[l.price];          // persistent last direction
+    const useDir = dir || (lm ? lm.dir : "");      // this tick if it changed, else last known
     const tri = useDir === "up" ? "▲" : useDir === "down" ? "▼" : "";
+    // red/blue = CHANGE direction ONLY (▲ red = qty up, ▼ blue = qty down). Side is shown
+    // by the column (left=sellers, right=buyers) — price/bar are neutral to avoid the clash.
     const triColor = useDir === "up" ? RED : useDir === "down" ? BLUE : "var(--text-muted)";
-    const col = side === "ask" ? RED : BLUE;
     const barSide = side === "ask" ? "left-0" : "right-0";
     const justChanged = !!dir;
     return (
       <div className="relative flex items-center gap-1 px-2 py-[3px] text-[12px] border-b border-[var(--border-default)]/25"
         style={{ background: justChanged ? (dir === "up" ? "rgba(255,82,82,0.22)" : "rgba(41,121,255,0.20)") : undefined, opacity: ph ? 0.4 : 1 }}>
-        {!ph && <div className={`absolute inset-y-0 ${barSide} rounded`} style={{ width: `${Math.min(100, (q / maxQ) * 100)}%`, background: col, opacity: 0.12 }} />}
+        {!ph && <div className={`absolute inset-y-0 ${barSide} rounded`} style={{ width: `${Math.min(100, (q / maxQ) * 100)}%`, background: "var(--text-muted)", opacity: 0.16 }} />}
         <span className="relative tabular-nums text-[10px] text-[var(--text-muted)] text-center" style={{ minWidth: 20 }}>{rank}</span>
-        <span className="relative font-bold tabular-nums" style={{ color: col, minWidth: 62 }}>{fmt(l.price)}</span>
+        <span className="relative font-bold tabular-nums text-[var(--text-primary)]" style={{ minWidth: 62 }}>{fmt(l.price)}</span>
         <span className="relative tabular-nums text-[var(--text-secondary)] text-right flex-1">{ph ? "—" : fmt(q)}{!ph && l.is_large ? " 🔥" : ""}</span>
-        <span className="relative flex items-center justify-end gap-0.5 tabular-nums text-right font-extrabold" style={{ minWidth: 62, color: triColor, opacity: ph ? 0 : justChanged ? 1 : tri ? 0.6 : 1 }}>
-          <span className="text-[16px] leading-none">{tri || "·"}</span>
-          {tri ? <span className="text-[11px]">{useDelta > 0 ? "+" : ""}{fmt(useDelta)}</span> : null}
-        </span>
+        <span className="relative text-right text-[17px] font-extrabold leading-none" style={{ minWidth: 26, color: triColor, opacity: ph ? 0 : justChanged ? 1 : tri ? 0.5 : 1 }}>{tri || "·"}</span>
       </div>
     );
   };
@@ -184,8 +182,8 @@ export default function MonitoringPage() {
           <div className="flex">
             {/* LEFT — 매도 / sellers (asks) */}
             <div className="flex-1 border-r border-[var(--border-default)]">
-              <div className="px-2 py-1.5 text-center text-[12px] font-extrabold" style={{ color: RED, background: "var(--bg-elevated)" }}>
-                🔴 {t("매도 (매도자)", "Sellers (asks)")} · {obsAsks.length}/30
+              <div className="px-2 py-1.5 text-center text-[12px] font-extrabold text-[var(--text-primary)]" style={{ background: "var(--bg-elevated)" }}>
+                {t("◀ 매도 (매도자)", "◀ Sellers (asks)")} · {obsAsks.length}/30
               </div>
               <ColHead />
               {asks.map((l, i) => <ColRow key={`a${l.price}_${i}`} l={l} side="ask" rank={i + 1} />)}
@@ -193,8 +191,8 @@ export default function MonitoringPage() {
             </div>
             {/* RIGHT — 매수 / buyers (bids) */}
             <div className="flex-1">
-              <div className="px-2 py-1.5 text-center text-[12px] font-extrabold" style={{ color: BLUE, background: "var(--bg-elevated)" }}>
-                🔵 {t("매수 (매수자)", "Buyers (bids)")} · {obsBids.length}/30
+              <div className="px-2 py-1.5 text-center text-[12px] font-extrabold text-[var(--text-primary)]" style={{ background: "var(--bg-elevated)" }}>
+                {t("매수 (매수자) ▶", "Buyers (bids) ▶")} · {obsBids.length}/30
               </div>
               <ColHead />
               {bids.map((l, i) => <ColRow key={`b${l.price}_${i}`} l={l} side="bid" rank={i + 1} />)}
@@ -214,8 +212,8 @@ export default function MonitoringPage() {
 
       {/* legend */}
       <div className="mt-2 text-[10.5px] text-[var(--text-muted)]">
-        {t("🔺 ▲ = 잔량 증가(빨강) · 🔻 ▼ = 잔량 감소(파랑) · 진한 ▲▼ = 방금 변동, 흐린 ▲▼ = 직전 방향 유지 · 🔥 = 대량 호가 (모두 실제 관측)",
-          "▲ = qty up (red) · ▼ = qty down (blue) · bold ▲▼ = changed just now, faded ▲▼ = last direction · 🔥 = large order (all real)")}
+        {t("화살표 = 잔량 변동 · 빨강 ▲ = 증가, 파랑 ▼ = 감소 (진하면 방금 변동, 흐리면 직전 방향) · 🔥 = 대량 호가 · 왼쪽=매도 오른쪽=매수 (모두 실제 관측)",
+          "Arrows = quantity change · red ▲ = up, blue ▼ = down (bold = just changed, faded = last direction) · 🔥 = large order · left=sellers, right=buyers (all real)")}
       </div>
     </div>
   );
