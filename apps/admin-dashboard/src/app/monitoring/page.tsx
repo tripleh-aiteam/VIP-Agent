@@ -105,11 +105,13 @@ export default function MonitoringPage() {
 
   const ColRow = ({ l, side, rank }: { l: OBLevel; side: "ask" | "bid"; rank: number }) => {
     const ph = !!l.placeholder;
-    const { q, dir } = deltaInfo(l);              // dir = changed THIS tick (→ flash)
-    const lm = lastMove.current[l.price];          // persistent last direction
-    const showDir = dir || (lm ? lm.dir : "");     // prefer this tick, else last known
-    const tri = showDir === "up" ? "▲" : showDir === "down" ? "▼" : "";
-    const triColor = showDir === "up" ? RED : showDir === "down" ? BLUE : "var(--text-muted)";
+    const { q, dir, delta } = deltaInfo(l);        // this-tick change (dir + delta)
+    const lm = lastMove.current[l.price];          // persistent last change {dir, delta}
+    // arrow AND number come from the SAME change: this tick if it changed, else the last one
+    const useDir = dir || (lm ? lm.dir : "");
+    const useDelta = dir ? delta : (lm ? lm.delta : 0);
+    const tri = useDir === "up" ? "▲" : useDir === "down" ? "▼" : "";
+    const triColor = useDir === "up" ? RED : useDir === "down" ? BLUE : "var(--text-muted)";
     const col = side === "ask" ? RED : BLUE;
     const barSide = side === "ask" ? "left-0" : "right-0";
     const justChanged = !!dir;
@@ -122,7 +124,7 @@ export default function MonitoringPage() {
         <span className="relative tabular-nums text-[var(--text-secondary)] text-right flex-1">{ph ? "—" : fmt(q)}{!ph && l.is_large ? " 🔥" : ""}</span>
         <span className="relative flex items-center justify-end gap-0.5 tabular-nums text-right font-extrabold" style={{ minWidth: 62, color: triColor, opacity: ph ? 0 : justChanged ? 1 : tri ? 0.6 : 1 }}>
           <span className="text-[16px] leading-none">{tri || "·"}</span>
-          {lm && tri ? <span className="text-[11px]">{lm.delta > 0 ? "+" : ""}{fmt(lm.delta)}</span> : null}
+          {tri ? <span className="text-[11px]">{useDelta > 0 ? "+" : ""}{fmt(useDelta)}</span> : null}
         </span>
       </div>
     );
