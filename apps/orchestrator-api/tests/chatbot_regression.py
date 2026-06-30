@@ -108,19 +108,21 @@ CASES = [
     C("future_soft", "FUTURE-SOFT", "en", "What will SK Hynix do over the next 5 days?",
       [("method1", lambda r, i: has(r"method 1|machine learning|방법 1", r)), ("method2", lambda r, i: has(r"method 2|analysis|방법 2", r))]),
 
-    # ---- DECISION agent (News + Flows + Technicals + ML → BUY/HOLD/SELL) ----
+    # ---- DECISION agent (both methods + news → BUY/HOLD/SELL, advice-style) ----
     C("decide", "DECIDE", "en", "Should I buy or sell SK Hynix?",
-      [("decision", lambda r, i: has(r"Decision:\s*(BUY|HOLD|SELL)", r)),
-       ("3 factors", lambda r, i: has(r"News", r) and has(r"Flows", r) and has(r"Technical", r))]),
+      [("recommendation", lambda r, i: has(r"Recommendation:\s*(BUY|HOLD|SELL)", r)),
+       ("both methods", lambda r, i: has(r"Method 1", r) and has(r"Method 2", r) and has(r"News", r)),
+       ("has action", lambda r, i: has(r"Bottom line", r))]),
     C("decide", "DECIDE", "ko", "SK하이닉스 사야 할까?",
-      [("decision", lambda r, i: has(r"종합 판단:\s*(매수|보유|매도|관망)", r)),
-       ("3 factors", lambda r, i: has(r"뉴스", r) and has(r"수급", r) and has(r"기술", r))]),
+      [("recommendation", lambda r, i: has(r"추천:\s*(매수|보유|매도|관망)", r)),
+       ("both methods", lambda r, i: has(r"방법 1", r) and has(r"방법 2", r) and has(r"뉴스", r)),
+       ("has action", lambda r, i: has(r"종합 추천", r))]),
 
     # ---- ADVICE with a history marker ('last week I bought... hold or sell?') = DECISION not history ----
     C("advice_histmarker", "ADVICE-HX", "en", "Last week I bought SK Hynix at -4%, should I hold or sell?",
-      [("decision", lambda r, i: has(r"Decision:\s*(BUY|HOLD|SELL)", r)), ("not history", lambda r, i: i != "stock_history")]),
+      [("recommendation", lambda r, i: has(r"Recommendation:\s*(BUY|HOLD|SELL)", r)), ("not history", lambda r, i: i != "stock_history")]),
     C("advice_histmarker", "ADVICE-HX", "ko", "지난주 SK하이닉스 샀는데 보유할까 팔까?",
-      [("decision", lambda r, i: has(r"종합 판단:\s*(매수|보유|매도|관망)", r)), ("not history", lambda r, i: i != "stock_history")]),
+      [("recommendation", lambda r, i: has(r"추천:\s*(매수|보유|매도|관망)", r)), ("not history", lambda r, i: i != "stock_history")]),
 
     # ---- OFF-TOPIC (should answer like a normal LLM, not refuse) ----
     C("offtopic", "OFFTOPIC", "en", "What's the capital of Uzbekistan?",

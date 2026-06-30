@@ -111,8 +111,21 @@ def decide(db, ticker: str) -> dict[str, Any]:
     flows = _flows(db, code)
     tech = _technicals(code)
     ml = ps.get_ticker(db, code) or {}
-    ml_adv = (ml.get("advice") or "").upper()
+
+    # Pull the SAME two methods the outlook block shows, so the recommendation is built on
+    # BOTH consistently: Method 1 = ML, Method 2 = Analysis (호가/수급/박스권).
+    m1, m2 = {}, {}
+    try:
+        from services.assistant_tools import tool_two_method_view
+        tm = tool_two_method_view(ticker=code, db=db) or {}
+        m1 = tm.get("method1_ml") or {}
+        m2 = tm.get("method2_analysis") or {}
+    except Exception:
+        pass
+
+    ml_adv = (m1.get("advice") or ml.get("advice") or "").upper()
     ml_score = 1 if ml_adv == "BUY" else -1 if ml_adv == "SELL" else 0
+    an_sig = (m2.get("signal") or "").upper()
 
     # weighted fusion (news 1.0, flows 1.0, technicals 1.2, ML 1.0)
     total = news["score"] * 1.0 + flows["score"] * 1.0 + tech["score"] * 1.2 + ml_score * 1.0
@@ -120,26 +133,80 @@ def decide(db, ticker: str) -> dict[str, Any]:
     conf = "높음" if abs(total) >= 4 else "보통" if abs(total) >= 2 else "낮음"
     conf_en = {"높음": "high", "보통": "medium", "낮음": "low"}[conf]
 
+    acc = m1.get("backtest_accuracy_pct")
+    if acc is None and ml.get("backtest_acc") is not None:
+        acc = round(ml["backtest_acc"] * 100, 1)
+    acc_txt = f"{acc:.0f}%" if acc is not None else "n/a"
+    em = m1.get("expected_move_pct")
+    sup, res = tech.get("support"), tech.get("resistance")
+
+    # ---- Method 1 (ML) — verdict + WHY, in words ----
+    ml_call_ko = {"BUY": "매수", "SELL": "매도", "HOLD": "보유"}.get(ml_adv, "보유")
+    ml_why_ko = {"BUY": "시장 대비 상대강세(아웃퍼폼)를 예측합니다",
+                 "SELL": "시장 대비 상대약세(언더퍼폼)를 예측합니다",
+                 "HOLD": "시장 대비 뚜렷한 우위를 찾지 못했습니다(신호 약함)"}.get(ml_adv, "신호가 약합니다")
+    ml_why_en = {"BUY": "predicts the stock will outperform the market",
+                 "SELL": "predicts the stock will underperform the market",
+                 "HOLD": "finds no clear edge versus the market (weak signal)"}.get(ml_adv, "weak signal")
+    em_ko = f" (5일 예상 ±{abs(em)}%, 정확도 {acc_txt})" if em is not None else f" (정확도 {acc_txt})"
+    em_en = f" (5-day move ±{abs(em)}%, accuracy {acc_txt})" if em is not None else f" (accuracy {acc_txt})"
+
+    # ---- Method 2 (Analysis) — verdict + WHY (호가/수급/박스권), in words ----
+    an_call_ko = {"BUY": "매수 우위", "SELL": "매도 우위", "WATCH": "관망", "HOLD": "관망"}.get(an_sig, "관망")
+    an_call_en = {"BUY": "buy-side", "SELL": "sell-side", "WATCH": "neutral", "HOLD": "neutral"}.get(an_sig, "neutral")
+    an_why_ko = ", ".join((m2.get("reasons") or [])[:3]) or tech.get("summary_ko", "중립")
+    an_why_en = ", ".join((m2.get("reasons_en") or [])[:3]) or tech.get("summary_en", "neutral")
+
+    # ---- News in words ----
+    ns = news["score"]
+    news_ko = "호재 우세" if ns > 0 else "악재 우세" if ns < 0 else "중립"
+    news_en = "net positive" if ns > 0 else "net negative" if ns < 0 else "neutral"
+    top_news = news["titles"][0] if news.get("titles") else ""
+
+    agree = bool(ml_adv and an_sig in ("BUY", "SELL") and ml_adv == an_sig)
+    consensus_ko = "두 방법이 같은 방향" if agree else "두 방법이 다소 엇갈림"
+    consensus_en = "both methods agree" if agree else "the two methods diverge"
+
+    def _pl(v):                                   # plain price level (no +/- sign)
+        try:
+            return f"{int(v):,}"
+        except Exception:
+            return "-"
+
+    # ---- Bottom-line action, in words with trigger levels ----
+    if decision == "BUY":
+        act_ko = f"신규 매수·비중 확대를 고려할 만합니다. 손절은 지지선 {_pl(sup)}원 이탈 시로 잡으세요."
+        act_en = f"Worth a new buy / adding to the position; set a stop if it loses support at ₩{_pl(sup)}."
+    elif decision == "SELL":
+        act_ko = f"비중 축소·차익 실현을 고려하세요. 저항 {_pl(res)}원을 회복하기 전까지는 보수적으로 보는 게 좋습니다."
+        act_en = f"Consider trimming / taking profit; stay cautious until it reclaims resistance at ₩{_pl(res)}."
+    else:
+        act_ko = (f"지금은 서둘러 사기보다 보유·관망이 적절합니다. 저항 {_pl(res)}원을 강하게 돌파하면 비중 확대, "
+                  f"지지 {_pl(sup)}원이 깨지면 비중 축소로 대응하세요.")
+        act_en = (f"Hold / wait rather than chase. Add if it breaks resistance ₩{_pl(res)}; "
+                  f"reduce if it loses support ₩{_pl(sup)}.")
+
+    en_name = {"SK하이닉스": "SK Hynix", "삼성전자": "Samsung Electronics",
+               "삼성전기": "Samsung Electro-Mechanics", "SK스퀘어": "SK Square",
+               "한미반도체": "Hanmi Semiconductor", "카카오": "Kakao"}.get(name, name)
     dec_ko = {"BUY": "매수", "SELL": "매도", "HOLD": "보유/관망"}[decision]
-    acc = ml.get("backtest_acc")
-    acc_txt = f"{acc*100:.0f}%" if acc is not None else "n/a"
-    ko = (f"**🎯 {name} 종합 판단: {dec_ko}** (확신 {conf}, 종합점수 {total:+.1f})\n"
-          f"📰 뉴스({news['score']:+d}): " + (" / ".join(news["titles"]) if news["titles"] else "특이 뉴스 없음") + "\n"
-          f"💰 수급({flows['score']:+d}): 외국인5일 {(_w(flows['foreign_5d']))}, 기관5일 {(_w(flows['inst_5d']))}"
-          + (f" · {flows['tag']}" if flows.get("tag") else "") + "\n"
-          f"📈 기술적({tech['score']:+d}): {tech['summary_ko']} (지지 {_w(tech.get('support'))}, 저항 {_w(tech.get('resistance'))})\n"
-          f"🤖 ML 모델: {ml.get('advice','-')} (정확도 {acc_txt})\n"
-          f"⚠️ 세 요소(뉴스·수급·기술)와 ML을 종합한 판단이며 투자 권유·수익 보장이 아닙니다.")
-    en = (f"**🎯 {name} — Decision: {decision}** (confidence {conf_en}, score {total:+.1f})\n"
-          f"📰 News({news['score']:+d}): " + (" / ".join(news["titles"]) if news["titles"] else "no notable news") + "\n"
-          f"💰 Flows({flows['score']:+d}): foreign 5d {_w(flows['foreign_5d'])}, inst 5d {_w(flows['inst_5d'])}"
-          + (f" · {flows['tag_en']}" if flows.get("tag_en") else "") + "\n"
-          f"📈 Technicals({tech['score']:+d}): {tech['summary_en']} (support {_w(tech.get('support'))}, resistance {_w(tech.get('resistance'))})\n"
-          f"🤖 ML model: {ml.get('advice','-')} (accuracy {acc_txt})\n"
-          f"⚠️ A synthesis of News + Flows + Technicals + ML — not investment advice or a guarantee.")
+    ko = (f"**🎯 {name} — 추천: {dec_ko}** (확신 {conf} · {consensus_ko})\n"
+          f"🤖 **방법 1 (머신러닝) → {ml_call_ko}**: {ml_why_ko}{em_ko}.\n"
+          f"📈 **방법 2 (분석·호가/수급/박스권) → {an_call_ko}**: {an_why_ko}.\n"
+          f"📰 **뉴스: {news_ko}**" + (f" — {top_news}" if top_news else "") + ".\n"
+          f"💡 **종합 추천:** {act_ko}\n"
+          f"⚠️ 두 방법과 뉴스·수급을 종합한 참고 의견이며, 투자 권유·수익 보장이 아닙니다.")
+    en = (f"**🎯 {en_name} — Recommendation: {decision}** (confidence {conf_en} · {consensus_en})\n"
+          f"🤖 **Method 1 (Machine Learning) → {ml_adv or 'HOLD'}**: {ml_why_en}{em_en}.\n"
+          f"📈 **Method 2 (Analysis · orderbook/flows/box) → {an_call_en}**: {an_why_en}.\n"
+          f"📰 **News: {news_en}**" + (f" — {top_news}" if top_news else "") + ".\n"
+          f"💡 **Bottom line:** {act_en}\n"
+          f"⚠️ A reasoned synthesis of both methods + news/flows — not investment advice or a guarantee.")
     return {"ticker": code, "name": name, "decision": decision, "score": round(total, 1),
             "confidence": conf_en, "news": news, "flows": flows, "technicals": tech,
-            "ml": {"advice": ml.get("advice"), "accuracy_pct": (round(acc * 100, 1) if acc is not None else None)},
+            "method1_ml": {"call": ml_adv, "accuracy_pct": acc, "expected_move_pct": em},
+            "method2_analysis": {"signal": an_sig, "reasons": m2.get("reasons")},
+            "ml": {"advice": ml_adv, "accuracy_pct": acc},
             "reasoning_ko": ko, "reasoning_en": en}
 
 
