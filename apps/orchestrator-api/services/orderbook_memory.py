@@ -113,21 +113,28 @@ def record(conn, ticker: str, levels: list[dict], ts) -> dict[str, Any]:
 def read_memory(db, ticker: str, depth: int = 30) -> dict[str, Any]:
     """SQLAlchemy read for the endpoint: the remembered deep book around the mid.
     Returns {asks:[...], bids:[...], threshold, mid} — asks ascending, bids descending,
-    each level {price, last_qty, max_qty, is_large, age_sec, seen_count}."""
+    each level {price, last_qty, max_qty, is_large, age_sec}.
+
+    Source = the RAW orderbook_levels history (last ~2 days), NOT the rolling
+    orderbook_memory table. The rolling table prunes to the N levels nearest the
+    *current* mid, so on a stock that ranged far intraday (e.g. opened 359k, now 331k)
+    it deletes the higher asks and one side collapses. The raw history kept every
+    price the market ever showed, so taking the LAST-seen qty per price recovers the
+    full depth → 30 real levels on BOTH sides. Classify by the current best bid/ask."""
     from sqlalchemy import text
+    # last-seen qty + max qty + most-recent age per price, over the raw 2-day history
     rows = db.execute(text(
-        "SELECT price, side, last_qty, max_qty, is_large, seen_count, "
-        "EXTRACT(EPOCH FROM (now()-last_seen))::int AS age_sec "
-        "FROM orderbook_memory WHERE ticker=:t ORDER BY price"), {"t": ticker}).fetchall()
+        "SELECT price, "
+        "       (array_agg(qty ORDER BY ts DESC))[1] AS last_qty, "
+        "       max(qty) AS max_qty, "
+        "       bool_or(is_large) AS is_large, "
+        "       min(EXTRACT(EPOCH FROM (now()-ts))::int) AS age_sec "
+        "FROM orderbook_levels WHERE ticker=:t GROUP BY price"), {"t": ticker}).fetchall()
     if not rows:
         return {"asks": [], "bids": [], "mid": None, "threshold": None}
-    items = [dict(price=int(r[0]), side=r[1], last_qty=int(r[2] or 0), max_qty=int(r[3] or 0),
-                  is_large=bool(r[4]), seen_count=int(r[5] or 0), age_sec=int(r[6] or 0))
-             for r in rows]
-    # Classify ask/bid by the CURRENT live best-bid/best-ask (NOT the stored side, which
-    # goes stale: a level last seen as a bid stays 'bid' even after price crosses it).
-    # This is what lets a trending stock still fill 30 levels on BOTH sides — every
-    # remembered price above the live best-ask is an ask, every one below the bid is a bid.
+    items = [dict(price=int(r[0]), last_qty=int(r[1] or 0), max_qty=int(r[2] or 0),
+                  is_large=bool(r[3]), age_sec=int(r[4] or 0)) for r in rows]
+    # current live best bid/ask (classify by price vs these, not a stale stored side)
     snap = db.execute(text(
         "SELECT side, price FROM orderbook_levels WHERE ticker=:t AND "
         "ts=(SELECT max(ts) FROM orderbook_levels WHERE ticker=:t)"), {"t": ticker}).fetchall()
@@ -137,14 +144,12 @@ def read_memory(db, ticker: str, depth: int = 30) -> dict[str, Any]:
     best_bid = max(cur_bids) if cur_bids else None
     if best_ask and best_bid:
         mid = (best_ask + best_bid) / 2
-        asks = [x for x in items if x["price"] >= best_ask]
-        bids = [x for x in items if x["price"] <= best_bid]
-    else:                                                       # no fresh snapshot → stored side
-        bids = [x for x in items if x["side"] == "bid"]
-        asks = [x for x in items if x["side"] == "ask"]
-        mid = (max(b["price"] for b in bids) + min(a["price"] for a in asks)) / 2 if bids and asks else None
-    asks = sorted(asks, key=lambda x: x["price"])[:depth]                 # ascending (best first)
-    bids = sorted(bids, key=lambda x: -x["price"])[:depth]                # descending (best first)
+    else:                                       # no fresh snapshot (after close) → use median
+        prices = sorted(x["price"] for x in items)
+        mid = prices[len(prices) // 2] if prices else None
+        best_ask = best_bid = mid
+    asks = sorted([x for x in items if x["price"] >= best_ask], key=lambda x: x["price"])[:depth]
+    bids = sorted([x for x in items if x["price"] <= best_bid], key=lambda x: -x["price"])[:depth]
     thr = large_threshold(ticker, mid)
     return {"asks": asks, "bids": bids, "mid": mid, "threshold": thr}
 
