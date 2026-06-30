@@ -2470,25 +2470,20 @@ def _run_chain(
         "Use specific names and numbers from the results verbatim. Do NOT wrap a "
         "table in code fences or add a 'summary for the boss' preamble.\n"
         "If the user asked for ADVICE or an OPINION on a stock (should I buy/sell, "
-        "어때, 전망, is it a good buy), use EXACTLY this two-part shape — and your "
-        "VERY FIRST words MUST be the verdict sentence (NEVER open with a "
-        "descriptive paragraph or the price):\n"
-        "  (1) FIRST line = the VERDICT in ONE sentence: your stance + the single "
-        "biggest risk. English example: 'I would recommend a BUY stance, with the "
-        "single biggest risk being a potential reversal in foreign investor "
-        "sentiment.' Korean example: '매수(BUY)를 추천합니다. 가장 큰 리스크는 외국인 "
-        "수급의 반전 가능성입니다.' Use BUY/HOLD/SELL (매수/보유/매도).\n"
-        "  (2) Then a line 'Because:' (Korean: '근거:') followed by a NUMBERED list "
-        "(1. 2. 3. …) of the concrete supporting reasons — current price/level, "
-        "수급(외국인/기관) direction, momentum/technical read, live recommendation/"
-        "news — EACH with the real numbers from the results. Keep each item to one "
-        "line, no repetition. Do NOT restate the price as the whole answer, and do "
-        "NOT add a preamble before the verdict sentence.\n"
-        "TWO-METHOD NOTE: if a tool result contains 'method1_ml' and 'method2_analysis' "
-        "(two_method_view), a labeled '방법 1 / 방법 2' summary block is added ABOVE your "
-        "answer automatically — do NOT repeat those two lines yourself. Just give your "
-        "combined verdict + biggest risk in the 근거 list, and refer to the two methods "
-        "naturally (e.g. 'ML은 보유, 분석은 관망이라 신호가 엇갈립니다')."
+        "어때, 전망, is it a good buy) AND the results contain 'method1_ml'/'method2_analysis' "
+        "(two_method_view): a deterministic '✅ 직접 답변' line (TOP), a '방법 1/2/3' summary "
+        "block, and a '🎯 최종 추천' line (BOTTOM) are added AROUND your answer AUTOMATICALLY. "
+        "So do NOT write your own verdict sentence and do NOT write a final recommendation — "
+        "those are handled for you. YOUR job is ONLY the MIDDLE part: a line '근거:' "
+        "(English: 'Why each method says this:') followed by a NUMBERED list explaining, "
+        "FOR EACH of the 3 methods, WHY it gave its call, using the real numbers from the "
+        "results — one line each:\n"
+        "  1. 방법 1 (머신러닝): <call + 왜: 예상 변동/정확도/시장대비 강·약세>\n"
+        "  2. 방법 2 (분석·수급/호가/박스권): <call + 왜: 호가 압력, 외국인/기관 수급, 지지/저항>\n"
+        "  3. 방법 3 (파동·엘리엇/피보나치): <call + 왜: 파동 강도, 되돌림 %, 피보나치 진입대>\n"
+        "No preamble, no price-only answer, no repeating the verdict/recommendation. "
+        "If a stock question is NOT advice (or has no two-method data), instead lead with a "
+        "ONE-sentence verdict (매수/보유/매도 + biggest risk) then a '근거:' numbered list."
     )
     import json as _json
     summary_input = _json.dumps(step_results, ensure_ascii=False, default=str)[:max(_cap, 3000)]
@@ -2511,7 +2506,12 @@ def _run_chain(
                 if s.get("tool") == "two_method_view"
                 and isinstance(s.get("result"), dict) and s["result"].get("ok")), None)
     if _tm:
-        reply = _two_method_header(_tm, lang) + "\n\n" + (reply or "").strip()
+        # Required answer shape: ① 직접 답변 (deterministic) → ② 3-method block (with WHY)
+        # → ③ LLM's detailed per-method reasoning (근거) → ④ 최종 추천 (deterministic).
+        _direct, _final = _direct_and_final(_tm, lang)
+        _block = _two_method_header(_tm, lang)
+        _detail = (reply or "").strip()
+        reply = "\n\n".join(p for p in (_direct, _block, _detail, _final) if p)
 
     # decide tool: use its OWN language-correct reasoning verbatim (the LLM otherwise
     # mixes EN/KO). The deterministic block already has the verdict + 3-factor breakdown.
@@ -2802,6 +2802,92 @@ def _wave_line_for(tm: dict, en: bool) -> Optional[str]:
         return None
 
 
+def _wave_dict_for(tm: dict) -> dict:
+    """Raw Method-3 (Wave) verdict dict for tm's ticker (for the 3-method vote)."""
+    try:
+        from db.base import SessionLocal
+        from services.wave_method import wave_for
+        tkr = tm.get("ticker")
+        if not tkr:
+            return {}
+        _db = SessionLocal()
+        try:
+            return wave_for(_db, str(tkr).zfill(6)) or {}
+        finally:
+            _db.close()
+    except Exception:
+        return {}
+
+
+def _direct_and_final(tm: dict, lang: str = "ko") -> tuple[str, str]:
+    """Deterministic '✅ 직접 답변' (top) + '🎯 최종 추천' (bottom) for an advice answer,
+    synthesised by VOTING the 3 methods (ML advice + Analysis signal + Wave verdict).
+    Bilingual; advisory only. Returns (direct_line, final_line)."""
+    en = str(lang or "").lower().startswith("en")
+    m1 = (tm.get("method1_ml") or {}).get("advice") or ""
+    m2 = (tm.get("method2_analysis") or {}).get("signal") or ""
+    m3 = (_wave_dict_for(tm).get("verdict") or "")
+    calls = [c.upper() for c in (m1, m2, m3) if c and c.upper() != "N/A"]
+
+    def _d(x: str) -> int:
+        x = x.upper()
+        return 1 if x == "BUY" else (-1 if x in ("SELL", "AVOID") else 0)
+    buys = sum(1 for c in calls if _d(c) > 0)
+    sells = sum(1 for c in calls if _d(c) < 0)
+    n = len(calls)
+
+    if buys >= 2 and sells == 0:
+        stance = "buy"
+    elif sells >= 2 and buys == 0:
+        stance = "sell"
+    elif buys > 0 and sells > 0:
+        stance = "mixed"
+    elif buys == 1 and sells == 0:
+        stance = "weak_buy"
+    elif sells == 1 and buys == 0:
+        stance = "weak_sell"
+    else:
+        stance = "neutral"
+
+    if en:
+        direct = {
+            "buy": "✅ **Direct answer:** Leans **BUY** — the majority of the 3 methods are positive (consider a careful, scaled-in entry).",
+            "sell": "✅ **Direct answer:** Leans **SELL / AVOID** — the majority are negative (hold off on new buying).",
+            "mixed": "✅ **Direct answer:** **Signals conflict** — WATCH for now; wait for confirmation before entering.",
+            "weak_buy": "✅ **Direct answer:** **Weak BUY** — only a mild positive signal; watch, or enter small/scaled.",
+            "weak_sell": "✅ **Direct answer:** **Weak SELL** — trim if holding, hold off on new buys.",
+            "neutral": "✅ **Direct answer:** **No clear signal** — WATCH is the sensible stance right now.",
+        }[stance]
+        final = {
+            "buy": f"🎯 **Final recommendation:** {buys}/{n} methods say BUY, {sells} negative → **buy bias**. Scale in and set a stop to manage risk.",
+            "sell": f"🎯 **Final recommendation:** {sells}/{n} methods are negative, {buys} positive → **avoid / reduce**. Wait for a better setup.",
+            "mixed": f"🎯 **Final recommendation:** methods disagree ({buys} buy / {sells} negative) → **WATCH**. Act only if they align.",
+            "weak_buy": f"🎯 **Final recommendation:** only a weak edge ({buys}/{n} buy) → **watch or small position**, with a tight stop.",
+            "weak_sell": f"🎯 **Final recommendation:** a weak negative ({sells}/{n}) → **hold off on new buys**, trim if already in.",
+            "neutral": f"🎯 **Final recommendation:** no method has a clear edge → **WATCH** and wait.",
+        }[stance]
+        final += " ※ Reference only — not investment advice; verify before trading."
+    else:
+        direct = {
+            "buy": "✅ **직접 답변:** **매수**에 무게 — 3가지 방법 중 다수가 긍정적입니다 (신중히 분할 매수 고려).",
+            "sell": "✅ **직접 답변:** **매도/회피**에 무게 — 다수가 부정적입니다 (신규 매수 자제).",
+            "mixed": "✅ **직접 답변:** **신호가 엇갈립니다** — 지금은 관망, 정렬될 때까지 진입 보류.",
+            "weak_buy": "✅ **직접 답변:** **약한 매수 신호** — 관망하거나 소량·분할로 접근.",
+            "weak_sell": "✅ **직접 답변:** **약한 매도 신호** — 보유 시 비중 축소, 신규 매수 보류.",
+            "neutral": "✅ **직접 답변:** **뚜렷한 신호 없음** — 관망이 합리적입니다.",
+        }[stance]
+        final = {
+            "buy": f"🎯 **최종 추천:** 3가지 방법 중 {buys}개 매수·{sells}개 부정 → **매수 우세**. 분할 매수 + 손절 설정으로 리스크를 관리하세요.",
+            "sell": f"🎯 **최종 추천:** {sells}개 부정·{buys}개 긍정 → **회피/비중 축소**. 더 좋은 자리를 기다리세요.",
+            "mixed": f"🎯 **최종 추천:** 방법 간 엇갈림({buys} 매수 / {sells} 부정) → **관망**. 신호가 정렬될 때만 진입.",
+            "weak_buy": f"🎯 **최종 추천:** 엣지 약함({buys}/{n} 매수) → **관망 또는 소량**, 타이트한 손절.",
+            "weak_sell": f"🎯 **최종 추천:** 약한 부정({sells}/{n}) → **신규 매수 보류**, 보유 시 비중 축소.",
+            "neutral": f"🎯 **최종 추천:** 뚜렷한 우위 없음 → **관망** 후 대기.",
+        }[stance]
+        final += " ※ 참고용이며 투자 권유가 아닙니다. 매매 전 반드시 직접 확인하세요."
+    return direct, final
+
+
 def _two_method_header(tm: dict, lang: str = "ko") -> str:
     """Build the deterministic '방법 1 / 방법 2' (Method 1 / Method 2) block from a
     two_method_view result — bilingual, so EN and KO get the SAME structured block in
@@ -2866,23 +2952,19 @@ def _two_method_header(tm: dict, lang: str = "ko") -> str:
         en_src = ("Kiwoom (live)" if ("실전" in _s or "키움" in _s)
                   else "Naver" if ("naver" in _s.lower() or "네이버" in _s)
                   else "sim" if "모의" in _s else _s)
-        head = f"**📊 {en_name} — Two-Method Analysis**"
+        head = f"**📊 {en_name} — Three-Method Analysis**"
         if price:
             head += f"  ·  current {pfx}{price}" + (f" ({en_src})" if en_src else "")
-        agree = ("🤝 Both methods **AGREE** — higher conviction" if tm.get("consensus")
-                 else "⚠️ The two methods **DISAGREE** — proceed carefully")
         _wave = _wave_line_for(tm, True)
         lines = [head,
                  "🤖 **Method 1 — Machine Learning:** " + " · ".join(m1_bits),
                  "📈 **Method 2 — Analysis (flows/orderbook/box):** " + " · ".join(m2_bits)]
         if _wave:
             lines.append("🌊 **Method 3 — Wave (Elliott/Fibonacci pullback):** " + _wave)
-        lines.append(agree)
         return "\n".join(lines)
-    head = f"**📊 {name} — 두 가지 방법 분석**"
+    head = f"**📊 {name} — 3가지 방법 종합 분석**"
     if price:
         head += f"  ·  현재가 {price}원" + (f" ({src})" if src else "")
-    agree = "🤝 두 방법 **일치** — 높은 확신" if tm.get("consensus") else "⚠️ 두 방법 **엇갈림** — 신중히 접근"
     _wave = _wave_line_for(tm, False)
     lines = [
         head,
@@ -2891,7 +2973,6 @@ def _two_method_header(tm: dict, lang: str = "ko") -> str:
     ]
     if _wave:
         lines.append("🌊 **방법 3 — 파동(엘리엇/피보나치 눌림목):** " + _wave)
-    lines.append(agree)
     return "\n".join(lines)
 
 
