@@ -56,6 +56,8 @@ DATA_STEPS = [
      "add order-book microstructure features (banks the signal; gated until enough history)"),
     ([sys.executable, str(HERE / "features" / "news_features.py")],
      "add news/sentiment features (banks the signal; gated until enough history)"),
+    ([sys.executable, str(HERE / "features" / "wave_features.py")],
+     "Method 3: wave-strength + Fibonacci levels (banked daily for the Wave verdict)"),
 ]
 RETRAIN_STEPS = [
     ([sys.executable, str(HERE / "models" / "bakeoff.py"), "--horizon", HORIZON],

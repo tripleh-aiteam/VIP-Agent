@@ -136,6 +136,15 @@ def orderbook_depth(ticker: str, depth: int = Query(30), db: Session = Depends(g
     return orderbook_view(db, str(ticker).zfill(6), min(max(depth, 5), 30))
 
 
+@router.get("/wave/{ticker}")
+def wave_method(ticker: str, db: Session = Depends(get_db)):
+    """METHOD 3 ("Wave"): rule-based Elliott/Fibonacci deep-pullback verdict — strong
+    rally (6-D wave score) + current price in the deep-pullback Fib zone → BUY/WATCH/
+    AVOID with entry/stop/target/R:R. Read from wave_features_daily (banked off-Render)."""
+    from services.wave_method import wave_for
+    return wave_for(db, str(ticker).zfill(6))
+
+
 @router.get("/ws-debug")
 def ws_orderbook_debug():
     """Live state of the WebSocket order-book collector — connected, logged in,
