@@ -127,8 +127,19 @@ def decide(db, ticker: str) -> dict[str, Any]:
     ml_score = 1 if ml_adv == "BUY" else -1 if ml_adv == "SELL" else 0
     an_sig = (m2.get("signal") or "").upper()
 
-    # weighted fusion (news 1.0, flows 1.0, technicals 1.2, ML 1.0)
-    total = news["score"] * 1.0 + flows["score"] * 1.0 + tech["score"] * 1.2 + ml_score * 1.0
+    # Method 3 (Wave) — independent Elliott/Fibonacci deep-pullback verdict.
+    wave = {}
+    try:
+        from services.wave_method import wave_for
+        wave = wave_for(db, code) or {}
+    except Exception:
+        pass
+    wv = (wave.get("verdict") or "").upper()
+    wave_score = 1 if wv == "BUY" else -1 if wv == "AVOID" else 0
+
+    # weighted fusion (news 1.0, flows 1.0, technicals 1.2, ML 1.0, Wave 1.0)
+    total = (news["score"] * 1.0 + flows["score"] * 1.0 + tech["score"] * 1.2
+             + ml_score * 1.0 + wave_score * 1.0)
     decision = "BUY" if total >= 2.5 else "SELL" if total <= -2.5 else "HOLD"
     conf = "높음" if abs(total) >= 4 else "보통" if abs(total) >= 2 else "낮음"
     conf_en = {"높음": "high", "보통": "medium", "낮음": "low"}[conf]
@@ -139,6 +150,12 @@ def decide(db, ticker: str) -> dict[str, Any]:
     acc_txt = f"{acc:.0f}%" if acc is not None else "n/a"
     em = m1.get("expected_move_pct")
     sup, res = tech.get("support"), tech.get("resistance")
+
+    def _pl(v):                                   # plain price level (no +/- sign)
+        try:
+            return f"{int(v):,}"
+        except Exception:
+            return "-"
 
     # ---- Method 1 (ML) — verdict + WHY, in words ----
     ml_call_ko = {"BUY": "매수", "SELL": "매도", "HOLD": "보유"}.get(ml_adv, "보유")
@@ -157,6 +174,24 @@ def decide(db, ticker: str) -> dict[str, Any]:
     an_why_ko = ", ".join((m2.get("reasons") or [])[:3]) or tech.get("summary_ko", "중립")
     an_why_en = ", ".join((m2.get("reasons_en") or [])[:3]) or tech.get("summary_en", "neutral")
 
+    # ---- Method 3 (Wave) — verdict + WHY (Elliott/Fibonacci), in words ----
+    has_wave = wv in ("BUY", "WATCH", "AVOID")
+    wv_ko = {"BUY": "매수", "WATCH": "관망", "AVOID": "회피"}.get(wv, "데이터 없음")
+    wv_en = {"BUY": "BUY", "WATCH": "WATCH", "AVOID": "AVOID"}.get(wv, "no data")
+    _wsc = wave.get("wave_score")
+    _wret = wave.get("retrace")
+    wave_why_ko = wave.get("reason") or "유효한 상승 파동을 찾지 못했습니다"
+    wave_why_en = {
+        "BUY": f"strong rally (wave score {_wsc}) pulled back into the deep Fibonacci buy zone",
+        "WATCH": f"strong rally (wave score {_wsc}) but not yet in the buy zone"
+                 + (f" (pullback {round(_wret*100)}%)" if _wret is not None else ""),
+        "AVOID": "the uptrend is too weak or has broken down",
+    }.get(wv, "no valid rally detected")
+    wave_zone_ko = wave_zone_en = None
+    if wv == "BUY" and wave.get("entry"):
+        wave_zone_ko = f"진입 {_pl(wave['entry'])}원 / 손절 {_pl(wave['stop'])}원 / 목표 {_pl(wave['target'])}원 (R:R {wave.get('rr')})"
+        wave_zone_en = f"entry ₩{_pl(wave['entry'])} / stop ₩{_pl(wave['stop'])} / target ₩{_pl(wave['target'])} (R:R {wave.get('rr')})"
+
     # ---- News in words ----
     ns = news["score"]
     news_ko = "호재 우세" if ns > 0 else "악재 우세" if ns < 0 else "중립"
@@ -164,14 +199,11 @@ def decide(db, ticker: str) -> dict[str, Any]:
     top_news = news["titles"][0] if news.get("titles") else ""
 
     agree = bool(ml_adv and an_sig in ("BUY", "SELL") and ml_adv == an_sig)
-    consensus_ko = "두 방법이 같은 방향" if agree else "두 방법이 다소 엇갈림"
-    consensus_en = "both methods agree" if agree else "the two methods diverge"
-
-    def _pl(v):                                   # plain price level (no +/- sign)
-        try:
-            return f"{int(v):,}"
-        except Exception:
-            return "-"
+    # 3-method agreement tag for the headline (ML + Analysis + Wave)
+    _dirs = [d for d in (ml_score, (1 if an_sig == "BUY" else -1 if an_sig == "SELL" else 0), wave_score) if d != 0]
+    _all_same = len(_dirs) >= 2 and len(set(_dirs)) == 1
+    consensus_ko = "3가지 방법 방향 일치" if _all_same else "방법 간 신호 혼조"
+    consensus_en = "all methods align" if _all_same else "methods are mixed"
 
     # ---- Bottom-line action, in words with trigger levels ----
     if decision == "BUY":
@@ -207,12 +239,9 @@ def decide(db, ticker: str) -> dict[str, Any]:
     em_txt_ko = (f"예상 5일 변동 ±{abs(em)}%" if em is not None else "예상 변동 추정 불가")
     em_txt_en = (f"expected 5-day move ±{abs(em)}%" if em is not None else "expected move n/a")
 
+    # ① 추천(직접 답변) → ② 방법 1/2/3 + 기술적/뉴스 → ③ 종합 추천 → ④ 요약(끝)
     ko_lines = [
         f"**추천: {dec_full_ko}**  ·  확신 {conf}  ·  {consensus_ko}",
-        "",
-        f"**요약** — 머신러닝은 '{ml_call_ko}', 분석은 '{an_call_ko}', 뉴스는 '{news_ko}'입니다. "
-        + ("두 방법이 같은 방향이라 신뢰도가 높습니다." if agree
-           else "신호가 엇갈리므로 한쪽으로 크게 베팅하기보다 신중한 접근이 필요합니다."),
         "",
         f"**방법 1 — 머신러닝 알고리즘" + (f" ({algo})" if algo else "") + "**",
         f"· 판단: {ml_call_ko}",
@@ -226,6 +255,12 @@ def decide(db, ticker: str) -> dict[str, Any]:
     if buy_zone or sell_zone:
         ko_lines.append(f"· 거래 구간: " + " · ".join(filter(None, [
             f"매수 {buy_zone}원" if buy_zone else None, f"매도 {sell_zone}원" if sell_zone else None])))
+    if has_wave:
+        ko_lines += ["", "**방법 3 — 파동 (엘리엇·피보나치)**",
+                     f"· 판단: {wv_ko}" + (f" (파동점수 {_wsc})" if _wsc is not None else ""),
+                     f"· 근거: {wave_why_ko}"]
+        if wave_zone_ko:
+            ko_lines.append(f"· 거래 구간: {wave_zone_ko}")
     ko_lines += [
         "",
         "**기술적 지표**",
@@ -238,19 +273,20 @@ def decide(db, ticker: str) -> dict[str, Any]:
     ko_lines += [
         "",
         f"**종합 추천** — {act_ko} "
-        + ("두 방법이 같은 방향이라 해당 시나리오의 신뢰도가 상대적으로 높습니다." if agree
-           else "머신러닝·분석·뉴스의 방향이 엇갈리므로, 한 신호만 보고 서두르기보다 추세 확인 후 대응하는 것이 안전합니다."),
+        + ("세 방법의 방향이 일치해 해당 시나리오의 신뢰도가 상대적으로 높습니다." if _all_same
+           else "방법별 신호가 엇갈리므로, 한 신호만 보고 서두르기보다 추세 확인 후 대응하는 것이 안전합니다."),
         "",
-        "※ 두 방법과 뉴스·수급·기술적 지표를 종합한 참고 의견이며, 투자 권유나 수익 보장이 아닙니다.",
+        f"**요약** — 머신러닝 '{ml_call_ko}' · 분석 '{an_call_ko}'"
+        + (f" · 파동 '{wv_ko}'" if has_wave else "") + f" · 뉴스 '{news_ko}'. "
+        + ("세 방법이 같은 방향을 가리킵니다." if _all_same
+           else "신호가 엇갈리므로 신중한 접근이 필요합니다."),
+        "",
+        "※ 3가지 방법과 뉴스·수급·기술적 지표를 종합한 참고 의견이며, 투자 권유나 수익 보장이 아닙니다.",
     ]
     ko = "\n".join(ko_lines)
 
     en_lines = [
         f"**Recommendation: {decision}**  ·  confidence {conf_en}  ·  {consensus_en}",
-        "",
-        f"**Summary** — Machine Learning says '{ml_adv or 'HOLD'}', Analysis says '{an_call_en}', news is '{news_en}'. "
-        + ("Both methods point the same way, which raises conviction." if agree
-           else "The signals diverge, so a cautious stance beats betting heavily on one side."),
         "",
         f"**Method 1 — Machine Learning" + (f" ({algo})" if algo else "") + "**",
         f"- Call: {ml_adv or 'HOLD'}",
@@ -264,6 +300,12 @@ def decide(db, ticker: str) -> dict[str, Any]:
     if buy_zone or sell_zone:
         en_lines.append("- Trade zones: " + " · ".join(filter(None, [
             f"buy ₩{buy_zone}" if buy_zone else None, f"sell ₩{sell_zone}" if sell_zone else None])))
+    if has_wave:
+        en_lines += ["", "**Method 3 — Wave (Elliott · Fibonacci)**",
+                     f"- Call: {wv_en}" + (f" (wave score {_wsc})" if _wsc is not None else ""),
+                     f"- Why: {wave_why_en}"]
+        if wave_zone_en:
+            en_lines.append(f"- Trade zone: {wave_zone_en}")
     en_lines += [
         "",
         "**Technicals**",
@@ -276,16 +318,24 @@ def decide(db, ticker: str) -> dict[str, Any]:
     en_lines += [
         "",
         f"**Bottom line** — {act_en} "
-        + ("Both methods agree, so this scenario carries relatively higher conviction." if agree
-           else "ML, analysis and news diverge, so confirm the trend before acting rather than chasing one signal."),
+        + ("All methods point the same way, so this scenario carries relatively higher conviction." if _all_same
+           else "The methods diverge, so confirm the trend before acting rather than chasing one signal."),
         "",
-        "Note: a reasoned synthesis of both methods + news/flows/technicals — not investment advice or a guarantee.",
+        f"**Summary** — Machine Learning '{ml_adv or 'HOLD'}' · Analysis '{an_call_en}'"
+        + (f" · Wave '{wv_en}'" if has_wave else "") + f" · news '{news_en}'. "
+        + ("All three point the same way." if _all_same
+           else "The signals diverge, so a cautious stance beats betting heavily on one side."),
+        "",
+        "Note: a reasoned synthesis of all 3 methods + news/flows/technicals — not investment advice or a guarantee.",
     ]
     en = "\n".join(en_lines)
     return {"ticker": code, "name": name, "decision": decision, "score": round(total, 1),
             "confidence": conf_en, "news": news, "flows": flows, "technicals": tech,
             "method1_ml": {"call": ml_adv, "accuracy_pct": acc, "expected_move_pct": em},
             "method2_analysis": {"signal": an_sig, "reasons": m2.get("reasons")},
+            "method3_wave": {"verdict": wv or None, "wave_score": _wsc,
+                             "entry": wave.get("entry"), "stop": wave.get("stop"),
+                             "target": wave.get("target"), "rr": wave.get("rr")},
             "ml": {"advice": ml_adv, "accuracy_pct": acc},
             "reasoning_ko": ko, "reasoning_en": en}
 
