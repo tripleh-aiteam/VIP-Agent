@@ -23,7 +23,9 @@ LARGE_ORDER_SHARES: dict[str, int] = {
 }
 # default = a ~300M KRW notional wall (shares = 3e8 / price), floored at 100.
 _DEFAULT_NOTIONAL = 300_000_000
-MEMORY_KEEP_EACH_SIDE = 60        # keep 60/side so the shown top-30 survives price drift
+MEMORY_KEEP_EACH_SIDE = 200       # keep a WIDE band so levels accumulate over days/weeks
+                                  # (never forget within ~200 ticks of price) → calm stocks
+                                  # build up to 30/side over time and stay there.
 
 
 def large_threshold(ticker: str, price: float | None) -> int:
@@ -122,14 +124,12 @@ def read_memory(db, ticker: str, depth: int = 30) -> dict[str, Any]:
     price the market ever showed, so taking the LAST-seen qty per price recovers the
     full depth → 30 real levels on BOTH sides. Classify by the current best bid/ask."""
     from sqlalchemy import text
-    # last-seen qty + max qty + most-recent age per price, over the raw 2-day history
+    # source: the rolling orderbook_memory (one row per price, accumulates last-seen over
+    # time, pruned only to ±MEMORY_KEEP_EACH_SIDE of the mid). Cheap (hundreds of rows).
     rows = db.execute(text(
-        "SELECT price, "
-        "       (array_agg(qty ORDER BY ts DESC))[1] AS last_qty, "
-        "       max(qty) AS max_qty, "
-        "       bool_or(is_large) AS is_large, "
-        "       min(EXTRACT(EPOCH FROM (now()-ts))::int) AS age_sec "
-        "FROM orderbook_levels WHERE ticker=:t GROUP BY price"), {"t": ticker}).fetchall()
+        "SELECT price, last_qty, max_qty, is_large, "
+        "EXTRACT(EPOCH FROM (now()-last_seen))::int AS age_sec "
+        "FROM orderbook_memory WHERE ticker=:t"), {"t": ticker}).fetchall()
     if not rows:
         return {"asks": [], "bids": [], "mid": None, "threshold": None}
     items = [dict(price=int(r[0]), last_qty=int(r[1] or 0), max_qty=int(r[2] or 0),
@@ -152,6 +152,30 @@ def read_memory(db, ticker: str, depth: int = 30) -> dict[str, Any]:
     bids = sorted([x for x in items if x["price"] <= best_bid], key=lambda x: -x["price"])[:depth]
     thr = large_threshold(ticker, mid)
     return {"asks": asks, "bids": bids, "mid": mid, "threshold": thr}
+
+
+def backfill_from_raw(conn) -> dict[str, Any]:
+    """One-time (psycopg2): seed orderbook_memory from ALL raw orderbook_levels history,
+    so the deep book has its full accumulated depth immediately (then record() keeps
+    adding). Safe to re-run — upsert keeps the freshest/biggest per price."""
+    with conn.cursor() as cur:
+        cur.execute(
+            "INSERT INTO orderbook_memory "
+            "(ticker, price, side, last_qty, max_qty, last_seen, seen_count, is_large) "
+            "SELECT ticker, price, "
+            "       (array_agg(side ORDER BY ts DESC))[1], "
+            "       (array_agg(qty  ORDER BY ts DESC))[1], "
+            "       max(qty), max(ts), count(*), bool_or(is_large) "
+            "FROM orderbook_levels GROUP BY ticker, price "
+            "ON CONFLICT (ticker, price) DO UPDATE SET "
+            "  last_qty=EXCLUDED.last_qty, "
+            "  max_qty=GREATEST(orderbook_memory.max_qty, EXCLUDED.max_qty), "
+            "  last_seen=GREATEST(orderbook_memory.last_seen, EXCLUDED.last_seen), "
+            "  seen_count=GREATEST(orderbook_memory.seen_count, EXCLUDED.seen_count), "
+            "  is_large=orderbook_memory.is_large OR EXCLUDED.is_large")
+        n = cur.rowcount
+    conn.commit()
+    return {"upserted": n}
 
 
 def wall_bias(db, ticker: str, near_pct: float = 0.015) -> dict[str, Any]:
