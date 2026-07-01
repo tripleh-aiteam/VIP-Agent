@@ -6,6 +6,7 @@ import { api, apiPost } from "@/components/api";
 import Badge from "@/components/Badge";
 import { API } from "@/components/api";
 import GroundedYouTube from "@/components/GroundedYouTube";
+import StockNewsPanel from "@/components/StockNewsPanel";
 import MarkdownLite from "@/components/MarkdownLite";
 import { useLanguage } from "../../components/i18n";
 
@@ -490,6 +491,9 @@ td{padding:8px 12px;border:1px solid #e2e8f0;font-size:10pt}
             : <span className="text-[11px] text-[var(--text-muted)]">{t("자동 리포트 생성기 · 매일 06:50 자동 전송", "Auto Report Generator · auto-sent daily at 06:50")}</span>}
         </div>
       </div>
+
+      {/* Per-stock news + AI summary — pick a stock, see recent Korean news */}
+      <StockNewsPanel />
 
       {/* SOURCE buttons — Agents / Kiwoom / Newspaper / YouTube */}
       <div className="flex gap-2 mb-4 flex-wrap">

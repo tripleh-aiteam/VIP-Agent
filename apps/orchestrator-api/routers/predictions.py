@@ -178,6 +178,20 @@ def wave_batch(tickers: str = Query(""), db: Session = Depends(get_db)):
     return {"results": out}
 
 
+@router.get("/news-universe")
+def news_universe():
+    """Stocks for the Report → News dropdown: [{code, name}] (tracked + Wave-extra)."""
+    from services.stock_news import universe
+    return {"stocks": universe()}
+
+
+@router.get("/stock-news/{ticker}")
+def stock_news_ep(ticker: str, days: int = Query(7), limit: int = Query(15), db: Session = Depends(get_db)):
+    """Recent Korean news for one stock + an LLM summary (Report → News panel)."""
+    from services.stock_news import stock_news
+    return stock_news(db, str(ticker).zfill(6), days=days, limit=limit)
+
+
 @router.get("/scalp/{ticker}")
 def scalp(ticker: str, target: float = Query(1.0), db: Session = Depends(get_db)):
     """M3 live scalp signal: 진입/대기 + 매수가/목표(+target%)/손절/예상시간, gated by
