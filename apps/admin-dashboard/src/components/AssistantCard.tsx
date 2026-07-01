@@ -217,6 +217,9 @@ export function AssistantCard({ floating = true }: Props = {}) {
   const [prompt, setPrompt] = useState("");
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [thinking, setThinking] = useState(false);
+  // Question typed/sent while a previous answer is still generating → queued and fired the
+  // moment the current one finishes, so the user never waits to type/send the next one.
+  const queuedRef = useRef<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [showModelPicker, setShowModelPicker] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -720,7 +723,12 @@ export function AssistantCard({ floating = true }: Props = {}) {
 
   async function ask(text: string, confirmed = false, confirmedTool?: string, confirmedArgs?: Record<string, unknown>) {
     const q = (text || "").trim();
-    if ((!q && !confirmed && attachments.length === 0) || thinking) return;
+    if (!q && !confirmed && attachments.length === 0) return;
+    // Busy? Queue this question and send it when the current answer finishes — don't block.
+    if (thinking) {
+      if (q && !confirmed) { queuedRef.current = q; setPrompt(""); }
+      return;
+    }
     setThinking(true);
     setError(null);
 
@@ -827,6 +835,11 @@ export function AssistantCard({ floating = true }: Props = {}) {
       setError(`Failed: ${(e as Error).message || e}`);
     } finally {
       setThinking(false);
+      const nextQ = queuedRef.current;
+      if (nextQ) {
+        queuedRef.current = null;
+        setTimeout(() => ask(nextQ), 0);
+      }
     }
   }
 
@@ -1023,9 +1036,8 @@ export function AssistantCard({ floating = true }: Props = {}) {
           onFocus={() => setInputFocused(true)}
           onBlur={() => setInputFocused(false)}
           onKeyDown={e => { if (e.key === "Enter") ask(prompt); }}
-          placeholder={attachments.length > 0 ? `Ask about your ${attachments.length} file(s)…` : "Ask anything …"}
+          placeholder={attachments.length > 0 ? `Ask about your ${attachments.length} file(s)…` : (thinking ? "Answering — type your next question …" : "Ask anything …")}
           className="flex-1 bg-transparent border-none outline-none px-2 text-[15px] min-w-0"
-          disabled={thinking}
         />
 
         {/* LLM picker — button label is just 'LLM'. Popover shows the
@@ -1136,7 +1148,6 @@ export function AssistantCard({ floating = true }: Props = {}) {
           <button
             type="button"
             onClick={() => ask(prompt)}
-            disabled={thinking}
             className="w-11 h-11 rounded-full bg-blue-600 hover:bg-blue-700 text-white flex items-center justify-center text-[16px] disabled:opacity-50 shrink-0"
             title="Send"
           >↑</button>
