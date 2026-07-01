@@ -1945,6 +1945,28 @@ def init_scheduler():
     )
     log.info("scheduler: Recommendation report registered (7:30 KST Mon-Fri, full team)", extra={"action": "scheduler.recommendation_registered"})
 
+    # M1.2 — grade chatbot advice calls every 30 min during market (+ once after close),
+    # so the hit-rate (chatbot_scoreboard) matures. Idempotent; external cron can also hit
+    # POST /predictions/chatbot-grade in case Render is asleep.
+    def _grade_chatbot_calls():
+        from db.base import SessionLocal
+        from services.call_grader import grade_open
+        _db = SessionLocal()
+        try:
+            r = grade_open(_db)
+            if r.get("graded"):
+                log.info(f"scheduler: graded {r['graded']} chatbot calls", extra={"action": "scheduler.callgrade"})
+        except Exception as e:
+            log.warning(f"scheduler: chatbot grade failed: {e}", extra={"action": "scheduler.callgrade.failed"})
+        finally:
+            _db.close()
+    _scheduler.add_job(
+        _grade_chatbot_calls,
+        CronTrigger(day_of_week="mon-fri", hour="9-16", minute="*/30", timezone=_KST_TZ),
+        id="chatbot-call-grader", replace_existing=True,
+    )
+    log.info("scheduler: chatbot call-grader registered (every 30m, 9-16 KST)", extra={"action": "scheduler.callgrade_registered"})
+
     # Asset Agent detailed report — its OWN standalone email at 7:00 AM KST =
     # 22:00 UTC, to ALL recipients, with BOTH Korean + English .docx attached.
     _scheduler.add_job(

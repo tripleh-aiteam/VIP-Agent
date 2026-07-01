@@ -383,7 +383,7 @@ def decide(db, ticker: str) -> dict[str, Any]:
                  "Note: a reasoned synthesis of all 3 methods + news/flows/technicals — not investment advice or a guarantee."]
     en = "\n".join(en_lines)
     return {"ticker": code, "name": name, "decision": decision, "score": round(total, 1),
-            "confidence": conf_en, "news": news, "flows": flows, "technicals": tech,
+            "price": price, "confidence": conf_en, "news": news, "flows": flows, "technicals": tech,
             "method1_ml": {"call": ml_adv, "accuracy_pct": acc, "expected_move_pct": em},
             "method2_analysis": {"signal": an_sig, "reasons": m2.get("reasons")},
             "method3_wave": {"verdict": wv or None, "wave_score": _wsc,

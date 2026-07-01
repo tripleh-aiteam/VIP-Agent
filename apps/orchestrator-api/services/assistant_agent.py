@@ -2567,6 +2567,16 @@ def _run_chain(
     if _dec:
         _en = str(lang or "").lower().startswith("en")
         reply = _dec.get("reasoning_en" if _en else "reasoning_ko") or reply
+        # M1.2 — measure it: log this advice for grading after its horizon (60 min).
+        try:
+            from services.call_grader import log_call
+            _wv = _dec.get("method3_wave") or {}
+            log_call(db, ticker=_dec.get("ticker"), action=_dec.get("decision"),
+                     intent="decision", ref_price=_dec.get("price"),
+                     target=_wv.get("target"), stop=_wv.get("stop"), horizon_min=60,
+                     name=_dec.get("name"), agent_id=agent_id, lang=lang)
+        except Exception:
+            pass
 
     # If any step returned an action (navigate / open_portal), surface the LAST one
     action = None

@@ -178,6 +178,21 @@ def wave_batch(tickers: str = Query(""), db: Session = Depends(get_db)):
     return {"results": out}
 
 
+@router.post("/chatbot-grade")
+def chatbot_grade(db: Session = Depends(get_db)):
+    """Grade chatbot advice calls whose horizon elapsed (M1.2). Fire every ~20-30 min
+    during market via external cron so the hit-rate matures."""
+    from services.call_grader import grade_open
+    return grade_open(db)
+
+
+@router.get("/chatbot-scoreboard")
+def chatbot_scoreboard(days: int = Query(30), db: Session = Depends(get_db)):
+    """Chatbot advice hit-rate (overall + per intent) — the honest 'can I trust it' panel."""
+    from services.call_grader import scoreboard
+    return scoreboard(db, days=days)
+
+
 @router.post("/recommendation-report/run")
 def recommendation_report_run(email: bool = Query(True), db: Session = Depends(get_db)):
     """Build the daily 3-method Top-5 Recommendation Report (ML + Analysis + Wave +
