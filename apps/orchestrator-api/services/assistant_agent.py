@@ -294,6 +294,19 @@ _SCALP_KW = (
 )
 
 
+_WATCHLIST_KW = (
+    "단타 종목", "단타종목", "단타 추천", "단타할 종목", "오늘 뭐 살", "오늘 뭐살",
+    "뭐 살까", "추천 종목", "종목 추천", "오늘의 종목", "watchlist", "what to scalp",
+    "what to trade", "today's picks", "today picks", "which stock", "any picks",
+)
+
+
+def _is_watchlist_question(transcript: Optional[str]) -> bool:
+    """A 'what should I day-trade today?' question (no single stock needed)."""
+    t = (transcript or "").lower()
+    return any(k in t for k in _WATCHLIST_KW)
+
+
 def _is_scalp_question(transcript: Optional[str]) -> bool:
     t = (transcript or "").lower()
     if not any(k in t for k in _SCALP_KW):
@@ -4034,6 +4047,20 @@ def _run_agent_impl(
                             "tool_used": "position_advice"}
         except Exception as e:
             log.warning(f"position advice failed: {str(e)[:120]}")
+
+    # === M4 — SCALP WATCHLIST ("오늘 단타 종목 뭐가 좋아?") — no single ticker needed ===
+    if (not confirmed_tool and not attachment_ids and _is_watchlist_question(transcript)
+            and not _all_stocks_in_query(transcript)):     # a named stock → let scalp/advice handle it
+        try:
+            from services.scalp_watchlist import build as _wl_build
+            _wl = _wl_build(db, n=5)
+            _en = str(lang or "").lower().startswith("en")
+            return {"intent": "scalp_watchlist", "language": lang,
+                    "reply": _wl.get("reasoning_en" if _en else "reasoning_ko"),
+                    "action": None, "speak": True, "transcript": transcript,
+                    "tool_used": "scalp_watchlist"}
+        except Exception as e:
+            log.warning(f"scalp watchlist failed: {str(e)[:120]}")
 
     # === M3 — SCALP signal (live intraday entry / +X% / exit timing) ===
     # "삼성전자 지금 단타 1% 가능해?" → 진입/대기 + 매수가/목표/손절/예상시간, gated by M1&3 bias.
