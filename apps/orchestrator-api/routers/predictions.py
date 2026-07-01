@@ -178,6 +178,18 @@ def wave_batch(tickers: str = Query(""), db: Session = Depends(get_db)):
     return {"results": out}
 
 
+@router.post("/recommendation-report/run")
+def recommendation_report_run(email: bool = Query(True), db: Session = Depends(get_db)):
+    """Build the daily 3-method Top-5 Recommendation Report (ML + Analysis + Wave +
+    Kiwoom/Newspaper/YouTube backdrop). If email=true, sends the .docx to the pilot
+    recipient(s). Exposed so a FREE external cron can fire it at 07:30 KST (Render's
+    free tier sleeps). Pilot: owner-only until sign-off."""
+    from services.recommendation_report import send, build
+    if email:
+        return send(db)
+    return build(db)
+
+
 @router.get("/ws-debug")
 def ws_orderbook_debug():
     """Live state of the WebSocket order-book collector — connected, logged in,

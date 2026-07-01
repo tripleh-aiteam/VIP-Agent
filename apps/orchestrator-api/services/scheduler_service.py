@@ -1922,6 +1922,29 @@ def init_scheduler():
     )
     log.info("scheduler: YouTube registered (6:40 KST — daily Mon-Fri, weekly Sat/Sun, all recipients)", extra={"action": "scheduler.youtube_registered"})
 
+    # Daily 3-method Recommendation Report — 7:30 AM KST Mon-Fri, AFTER Kiwoom(6:30)/
+    # Newspaper(6:32)/YouTube(6:40) so their digests feed the market backdrop. PILOT:
+    # owner-only recipient (recommendation_report.TEST_RECIPIENTS) until sign-off.
+    def _recommendation_daily():
+        from db.base import SessionLocal
+        from services.recommendation_report import send
+        _db = SessionLocal()
+        try:
+            r = send(_db)
+            log.info(f"scheduler: recommendation report → {r.get('to')} (picks={len(r.get('picks', []))})",
+                     extra={"action": "scheduler.recommendation.done"})
+        except Exception as e:
+            log.warning(f"scheduler: recommendation report failed: {e}", extra={"action": "scheduler.recommendation.failed"})
+        finally:
+            _db.close()
+    _scheduler.add_job(
+        _recommendation_daily,
+        CronTrigger(day_of_week="mon-fri", hour=7, minute=30, timezone=_KST_TZ),
+        id="recommendation-daily-report",
+        replace_existing=True,
+    )
+    log.info("scheduler: Recommendation report registered (7:30 KST Mon-Fri, pilot owner-only)", extra={"action": "scheduler.recommendation_registered"})
+
     # Asset Agent detailed report — its OWN standalone email at 7:00 AM KST =
     # 22:00 UTC, to ALL recipients, with BOTH Korean + English .docx attached.
     _scheduler.add_job(
