@@ -187,9 +187,16 @@ def news_universe():
 
 @router.get("/stock-news/{ticker}")
 def stock_news_ep(ticker: str, days: int = Query(7), limit: int = Query(15), db: Session = Depends(get_db)):
-    """Recent Korean news for one stock + an LLM summary (Report → News panel)."""
+    """A LIST of recent Korean news for one stock (real headlines, clickable). Report panel."""
     from services.stock_news import stock_news
     return stock_news(db, str(ticker).zfill(6), days=days, limit=limit)
+
+
+@router.get("/stock-news/{ticker}/summary")
+def stock_news_summary_ep(ticker: str, days: int = Query(7), limit: int = Query(15), db: Session = Depends(get_db)):
+    """On-demand AI summary of the stock's recent news (the '요약 보기' button)."""
+    from services.stock_news import news_summary
+    return news_summary(db, str(ticker).zfill(6), days=days, limit=limit)
 
 
 @router.get("/scalp/{ticker}")

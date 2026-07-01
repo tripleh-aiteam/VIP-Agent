@@ -59,33 +59,59 @@ def _domain(url: str) -> str:
         return ""
 
 
-def stock_news(db, ticker: str, days: int = 7, limit: int = 15) -> dict[str, Any]:
-    """Recent Korean news for one stock + a Korean summary. Fetches LIVE via web search
-    (real headlines/snippets/links) because the stored raw_news has domain-only titles.
-    {ticker, name, count, items[], summary_ko, provider}."""
-    from services.web_search import search_web
+def _fetch_items(name: str, limit: int, days: int) -> list[dict]:
+    """A LIST of recent real Korean headlines for a stock. Naver News (clean Korean list)
+    first, then top up with Serper Google-News. Never returns a single 'Answer' blob."""
     from services.news_impact import classify
+    items: list[dict] = []
+    seen: set[str] = set()
+
+    def _add(hits):
+        for h in hits or []:
+            title = (h.get("title") or "").strip()
+            if not title or title.lower() == "answer" or title in seen:
+                continue
+            seen.add(title)
+            snip = (h.get("snippet") or "").strip()
+            ntype, _imp, ddir = classify(title, snip)
+            items.append({"title": title, "snippet": snip[:220], "url": h.get("url") or "",
+                          "source": _domain(h.get("url") or ""), "type": ntype,
+                          "direction": "▲" if ddir > 0 else "▼" if ddir < 0 else "•"})
+
+    # 1) Naver News API — authoritative Korean news list (real titles + links + dates).
+    try:
+        from services.naver_search import naver_search
+        _add((naver_search(f"{name} 주가", kind="news", num_results=max(limit, 10)) or {}).get("results"))
+    except Exception as e:
+        log.warning(f"stock_news naver: {str(e)[:100]}")
+    # 2) Top up with Serper Google-News (a LIST) — skip the gemini single-answer fallback.
+    if len(items) < limit:
+        try:
+            from services.web_search import search_web
+            ws = search_web(f"{name} 주가 뉴스", num_results=max(limit, 10),
+                            recency="d" if days <= 1 else "w")
+            if ws.get("provider") == "serper":     # only serper returns a real list
+                _add(ws.get("results"))
+        except Exception as e:
+            log.warning(f"stock_news serper: {str(e)[:100]}")
+    return items[:limit]
+
+
+def stock_news(db, ticker: str, days: int = 7, limit: int = 15) -> dict[str, Any]:
+    """A LIST of recent Korean news for one stock (real headlines, clickable). No summary
+    here — the summary is an on-demand button (news_summary). {ticker, name, count, items[]}."""
     from services.stock_resolver import display_name
     tk = str(ticker).zfill(6)
     name = display_name(tk)
-    recency = "d" if days <= 1 else "w" if days <= 8 else None
-    # Korean news query — Serper Google-News returns Korean outlets for a Korean name.
-    res = search_web(f"{name} 주가 뉴스", num_results=max(limit, 10), recency=recency)
-    hits = res.get("results") or []
-    seen: set[str] = set()
-    items = []
-    for h in hits:
-        title = (h.get("title") or "").strip()
-        if not title or title in seen:
-            continue
-        seen.add(title)
-        snip = (h.get("snippet") or "").strip()
-        ntype, _imp, ddir = classify(title, snip)
-        direction = "▲" if ddir > 0 else "▼" if ddir < 0 else "•"
-        items.append({"title": title, "snippet": snip[:220], "url": h.get("url"),
-                      "source": _domain(h.get("url") or ""), "type": ntype, "direction": direction})
-        if len(items) >= limit:
-            break
+    items = _fetch_items(name, limit, days)
     return {"ticker": tk, "name": name, "count": len(items), "items": items,
-            "summary_ko": _summary(name, items), "provider": res.get("provider"),
-            "configured": bool(res.get("ok")), "days": days}
+            "configured": bool(items), "days": days}
+
+
+def news_summary(db, ticker: str, days: int = 7, limit: int = 15) -> dict[str, Any]:
+    """On-demand AI summary of the stock's recent news (the '요약 보기' button)."""
+    from services.stock_resolver import display_name
+    tk = str(ticker).zfill(6)
+    name = display_name(tk)
+    items = _fetch_items(name, limit, days)
+    return {"ticker": tk, "name": name, "summary_ko": _summary(name, items), "count": len(items)}
