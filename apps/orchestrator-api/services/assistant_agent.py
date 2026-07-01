@@ -825,10 +825,15 @@ _RECO_ACTION_KW = (
     "살까", "팔까", "사야", "팔아야", "사도", "사도 돼", "사도돼", "사도 될", "매수", "매도",
     "보유할까", "담을까", "담아도", "들어갈까", "들어가도", "사는 게 좋", "사는게 좋", "사는 것이 좋",
     "살 만", "살만", "매수 타이밍", "매도 타이밍", "팔 때", "팔아도", "손절", "익절", "조언", "추천",
-    "should i buy", "should i sell", "should i hold", "should i get", "buy or sell", "sell or hold",
-    "hold or sell", "worth buying", "worth a buy", "good buy", "good to buy", "ok to buy",
-    "time to buy", "is it a buy", "invest in", "what should i do", "your advice", "your advise",
-    "recommend", "go long",
+    "팔면", "팔아", "더 살", "더 담", "이득일까", "이익일까", "손해일까", "물렸", "지금 팔",
+    "어떻게 하는 게", "어떻게 해야", "어쩌지", "어쩌면 좋",
+    "should i buy", "should i sell", "should i hold", "should i get", "should i add", "buy or sell",
+    "sell or hold", "hold or sell", "worth buying", "worth a buy", "good buy", "good to buy",
+    "ok to buy", "time to buy", "is it a buy", "invest in", "what should i do", "your advice",
+    "your advise", "recommend", "go long", "sell now", "sell it", "sell them", "if i sell",
+    "will i win", "will i profit", "will i make", "will i lose", "what do you advise",
+    "what do you recommend", "add more", "cut my loss", "cut the loss", "take profit",
+    "lock in", "get out", "hold it", "keep it", "dump it", "offload",
 )
 
 
@@ -3969,7 +3974,7 @@ def _run_agent_impl(
             # composer (same as VIP), so AI Advisor and VIP give the IDENTICAL answer.
             # Everything else (price, general) still relays to the Stock backend.
             and not _is_stock_advice(transcript, agent_id)
-            and not _is_decision_q(transcript)
+            and not _wants_recommendation(transcript)
             and not _is_future_outlook(transcript)):
         try:
             from services import stock_advisor_chat
@@ -4246,7 +4251,7 @@ def _run_agent_impl(
     if (not confirmed_tool and (agent_id or "vip").lower() != "stock"
             and not _is_future_outlook(transcript)        # '앞으로 5일 전망' is a FORECAST, not history
             and not _is_stock_advice(transcript, agent_id)   # 'last week I bought X, hold or sell?' = ADVICE
-            and not _is_decision_q(transcript)               # not a price-history dump
+            and not _wants_recommendation(transcript)               # not a price-history dump
             and _requested_history_dates(transcript)):
         _hist = _vip_history_reply(transcript, lang)
         if _hist:
@@ -4334,7 +4339,7 @@ def _run_agent_impl(
             and not _is_past_price(transcript)
             and not _is_future_outlook(transcript)        # forecast → local two-method, not delegate
             and not _is_stock_advice(transcript, agent_id)  # advice ('살까/사는 게 좋아?') → local 3-method
-            and not _is_decision_q(transcript)              # 'buy or sell/사야 할까' → local decide (3-method)
+            and not _wants_recommendation(transcript)              # 'buy or sell/사야 할까' → local decide (3-method)
             and not _is_report_question(transcript)
             and not _is_concept_question(transcript)):
         # FAST PATH (latency): the Stock backend is the single source of truth, so
@@ -4448,7 +4453,8 @@ def _run_agent_impl(
     # keeps EN and KO IDENTICAL: KO '전망' matched advice, but EN 'outlook' did not, so EN
     # fell to a prose LLM summary while KO got the structured 방법1/방법2 block.
     if not confirmed_tool and (_is_stock_advice(transcript, agent_id)
-                               or _is_future_outlook(transcript)):
+                               or _is_future_outlook(transcript)
+                               or _wants_recommendation(transcript)):   # situational: 'sell now?/팔면 이득?'
         # TWO-METHOD FIRST: for advice on a stock that's in OUR model universe, force
         # our own ML + Analysis view (+ chart) so the answer ALWAYS shows BOTH methods
         # explicitly — the LLM tended to pick read_chart alone and merge them.
