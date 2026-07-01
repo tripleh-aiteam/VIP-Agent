@@ -145,6 +145,23 @@ def decide(db, ticker: str) -> dict[str, Any]:
     conf = "높음" if abs(total) >= 4 else "보통" if abs(total) >= 2 else "낮음"
     conf_en = {"높음": "high", "보통": "medium", "낮음": "low"}[conf]
 
+    # --- Confidence gate (M1.3): a decisive BUY/SELL must be BACKED BY THE METHODS,
+    # not carried by news/technicals alone. Count how many of the 3 methods point the
+    # decision's way; if none do (or 2+ oppose), ABSTAIN → 관망(신호 불충분). This is the
+    # "only act when confident" rule — fewer but more trustworthy calls. ---
+    gated = False
+    _dir = 1 if decision == "BUY" else -1 if decision == "SELL" else 0
+    if _dir != 0:
+        _mdirs = [ml_score,
+                  (1 if an_sig == "BUY" else -1 if an_sig == "SELL" else 0),
+                  wave_score]
+        agree_n = sum(1 for d in _mdirs if d == _dir)
+        disagree_n = sum(1 for d in _mdirs if d == -_dir)
+        if agree_n == 0 or disagree_n >= 2:
+            decision, conf, conf_en, gated = "HOLD", "낮음", "low", True
+        elif agree_n == 1 and conf == "높음":
+            conf, conf_en = "보통", "medium"       # only 1 method backs it → cap confidence
+
     acc = m1.get("backtest_accuracy_pct")
     if acc is None and ml.get("backtest_acc") is not None:
         acc = round(ml["backtest_acc"] * 100, 1)
@@ -237,6 +254,10 @@ def decide(db, ticker: str) -> dict[str, Any]:
     heads = [_clean(t) for t in (news.get("titles") or [])][:3]
 
     dec_full_ko = {"BUY": "매수 (BUY)", "SELL": "매도 (SELL)", "HOLD": "보유 (HOLD)"}[decision]
+    dec_full_en = {"BUY": "BUY", "SELL": "SELL", "HOLD": "HOLD"}[decision]
+    if gated:                       # abstained: methods didn't back the fusion
+        dec_full_ko = "관망 (신호 불충분)"
+        dec_full_en = "WATCH (insufficient method backing)"
     em_txt_ko = (f"예상 5일 변동 ±{abs(em)}%" if em is not None else "예상 변동 추정 불가")
     em_txt_en = (f"expected 5-day move ±{abs(em)}%" if em is not None else "expected move n/a")
 
@@ -328,7 +349,7 @@ def decide(db, ticker: str) -> dict[str, Any]:
                 + f"뉴스 흐름은 '{news_ko}'입니다. 그래서 {act_ko} "
                 + ("방향이 한쪽으로 모이는 만큼 이 판단의 신뢰도는 상대적으로 높습니다."
                    if _all_same else "신호가 엇갈리는 만큼 한 번에 크게 베팅하기보다 추세를 확인하며 대응하는 것이 안전합니다."))
-    final_en = (f"Putting our 3 methods together, the final recommendation is **{decision}**. "
+    final_en = (f"Putting our 3 methods together, the final recommendation is **{dec_full_en}**. "
                 f"Machine Learning says '{ml_adv or 'HOLD'}', Analysis says '{an_call_en}'"
                 + (f", Wave says '{wv_en}'" if has_wave else "")
                 + (" — they mostly point the same way, " if _all_same else " — the signals are somewhat mixed, ")
@@ -360,7 +381,7 @@ def decide(db, ticker: str) -> dict[str, Any]:
                  "※ 3가지 방법과 뉴스·수급·기술적 지표를 종합한 참고 의견이며, 투자 권유나 수익 보장이 아닙니다."]
     ko = "\n".join(ko_lines)
 
-    en_lines = [f"**{head_en}**  ·  (Recommendation: {decision} · confidence {conf_en})", ""]
+    en_lines = [f"**{head_en}**  ·  (Recommendation: {dec_full_en} · confidence {conf_en})", ""]
     if decision == "BUY":
         en_lines += ["**How many?**", f"- {size_en}", ""]
     en_lines += [
