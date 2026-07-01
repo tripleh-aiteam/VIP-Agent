@@ -54,15 +54,30 @@ def _rank(db) -> list[dict]:
     return rows
 
 
-def _levels(d: dict) -> tuple[Optional[int], Optional[int], Optional[int]]:
-    """(buy, target, stop). Use Method-3 Wave levels ONLY when Wave says BUY (its
-    entry/target are for an active setup); otherwise use technicals support/resistance
-    — avoids showing a stale swing-high target for stocks Wave isn't buying."""
+def _cur_price(db, code: str) -> Optional[float]:
+    """Latest close for sanity-checking levels (guards stale/unadjusted old prices)."""
+    from sqlalchemy import text
+    try:
+        r = db.execute(text("SELECT close FROM raw_daily_prices WHERE ticker=:t "
+                            "ORDER BY date DESC LIMIT 1"), {"t": code}).fetchone()
+        return float(r[0]) if r and r[0] else None
+    except Exception:
+        return None
+
+
+def _levels(d: dict, cur: Optional[float] = None) -> tuple[Optional[int], Optional[int], Optional[int]]:
+    """(buy, target, stop). Wave levels ONLY when Wave says BUY; else technicals S/R.
+    Any level absurd vs the current price (>3× or <1/3×) is dropped — this kills the
+    stale swing-high bug (e.g. 삼성전기 목표 2,417,000원 on a ~340k stock)."""
     wv = d.get("method3_wave") or {}
     if (wv.get("verdict") or "").upper() == "BUY" and wv.get("entry"):
-        return (wv.get("entry"), wv.get("target"), wv.get("stop"))
-    tech = d.get("technicals") or {}
-    return (tech.get("support"), tech.get("resistance"), None)
+        lv = [wv.get("entry"), wv.get("target"), wv.get("stop")]
+    else:
+        tech = d.get("technicals") or {}
+        lv = [tech.get("support"), tech.get("resistance"), None]
+    if cur:
+        lv = [(v if (v and 0.33 * cur <= v <= 3.0 * cur) else None) for v in lv]
+    return (lv[0], lv[1], lv[2])
 
 
 def _backdrop(db) -> str:
@@ -78,32 +93,48 @@ def _backdrop(db) -> str:
     return "\n".join(parts)
 
 
-def _pick_block(rank: int, d: dict) -> str:
-    """Per-pick reasoning block (the 근거/proof) for one Top-5 stock."""
-    name = d.get("name") or d.get("ticker")
-    code = d.get("ticker")
-    dec = _DEC_KO.get((d.get("decision") or "").upper(), d.get("decision"))
-    score = d.get("score")
-    m1 = (d.get("method1_ml") or {}).get("call") or "-"
-    m1k = _DEC_KO.get((m1 or "").upper(), m1)
-    m2 = (d.get("method2_analysis") or {}).get("signal") or "-"
-    m2k = {"BUY": "매수 우위", "SELL": "매도 우위", "WATCH": "관망", "HOLD": "관망"}.get((m2 or "").upper(), m2)
-    wv = d.get("method3_wave") or {}
-    m3 = _VERD_KO.get((wv.get("verdict") or "").upper(), wv.get("verdict") or "-")
-    buy, target, stop = _levels(d)
+_ORD_KO = {1: "최우선", 2: "두 번째", 3: "세 번째", 4: "네 번째", 5: "다섯 번째"}
+
+
+def _pick_narrative(rank: int, d: dict, cur: Optional[float]) -> str:
+    """A professional PROSE explanation for one pick — why, per method, then a verdict.
+    Reads like an analyst note, not a bullet list."""
+    name, code = d.get("name") or d.get("ticker"), d.get("ticker")
+    dec = (d.get("decision") or "").upper(); deck = _DEC_KO.get(dec, dec)
+    score, conf = d.get("score"), d.get("confidence")
+    m1 = d.get("method1_ml") or {}; m1c = (m1.get("call") or "").upper()
+    m1k = _DEC_KO.get(m1c, "보유"); acc, em = m1.get("accuracy_pct"), m1.get("expected_move_pct")
+    m2 = d.get("method2_analysis") or {}; m2s = (m2.get("signal") or "").upper()
+    m2k = {"BUY": "매수 우위", "SELL": "매도 우위", "WATCH": "관망", "HOLD": "관망"}.get(m2s, "관망")
+    m2why = ", ".join((m2.get("reasons") or [])[:3]) or "뚜렷한 특이 신호 없음"
+    wv = d.get("method3_wave") or {}; wvv = (wv.get("verdict") or "").upper()
+    m3k = _VERD_KO.get(wvv, "데이터 없음")
+    tech = d.get("technicals") or {}; techk = tech.get("summary_ko", "중립")
+    sup, res = tech.get("support"), tech.get("resistance")
+    ns = (d.get("news") or {}).get("score") or 0
+    newsk = "호재 우세" if ns > 0 else "악재 우세" if ns < 0 else "중립"
+    buy, target, stop = _levels(d, cur)
 
     def _f(v):
         return f"{int(v):,}원" if isinstance(v, (int, float)) and v else "-"
-    lines = [
-        f"### {rank}. {name} ({code}) — {dec} · 점수 {score}",
-        f"- 🤖 **방법 1 (머신러닝):** {m1k}",
-        f"- 📈 **방법 2 (분석·수급/호가):** {m2k}",
-        f"- 🌊 **방법 3 (파동·엘리엇/피보나치):** {m3}"
-        + (f" · 진입 {_f(wv.get('entry'))} / 목표 {_f(wv.get('target'))} / 손절 {_f(wv.get('stop'))} (R:R {wv.get('rr')})"
-           if (wv.get("verdict") or "").upper() == "BUY" and wv.get("entry") else ""),
-        f"- 🎯 **매매 기준:** 살 가격 {_f(buy)} · 목표 {_f(target)} · 손절 {_f(stop)}",
-    ]
-    return "\n".join(lines)
+    m1why = {"BUY": "5일 기준 시장 대비 상대강세(아웃퍼폼)를 예측했습니다",
+             "SELL": "5일 기준 시장 대비 상대약세(언더퍼폼)를 예측했습니다",
+             "HOLD": "시장 대비 뚜렷한 우위를 찾지 못했습니다(신호 약함)"}.get(m1c, "신호가 약합니다")
+    wvwhy = {"BUY": "강한 상승 파동 이후 깊은 눌림목(피보나치 매수권)에 들어와 분할 매수 자리로 판단됩니다",
+             "WATCH": "상승 파동 자체는 강하지만 아직 매수 자리는 아니어서 눌림을 기다리는 구간입니다",
+             "AVOID": "상승 추세가 약하거나 무효화되어 매매에 부적합합니다"}.get(wvv, "유효한 상승 파동이 확인되지 않았습니다")
+    em_txt = (f" (5일 예상 변동 ±{abs(em)}%, 백테스트 정확도 {acc}%)" if em is not None else
+              (f" (정확도 {acc}%)" if acc is not None else ""))
+    return (
+        f"### {rank}. {name} ({code}) — 종합 **{deck}** · 점수 {score} · 확신 {conf}\n\n"
+        f"{name}은(는) 3가지 방법과 시장 자료를 종합한 결과 오늘 **{_ORD_KO.get(rank, str(rank)+'순위')} 후보**입니다. "
+        f"**머신러닝(방법 1)**은 '{m1k}'으로, {m1why}{em_txt}. "
+        f"**분석(방법 2)**은 실시간 호가·수급 기준 '{m2k}'이며, 그 근거는 {m2why}입니다. "
+        f"**파동(방법 3)**은 '{m3k}'으로, {wvwhy}. "
+        f"기술적으로는 {techk}(지지 {_f(sup)} / 저항 {_f(res)}), 뉴스 흐름은 {newsk}입니다.\n\n"
+        f"➡️ **결론:** 위 결과를 모두 반영하면 {name}은(는) 오늘 **{deck}** 관점이 우세합니다. "
+        f"매매 기준은 **살 가격 {_f(buy)} · 목표 {_f(target)} · 손절 {_f(stop)}**입니다."
+    )
 
 
 def build(db) -> dict[str, Any]:
@@ -113,12 +144,13 @@ def build(db) -> dict[str, Any]:
     ranked = _rank(db)
     top5 = ranked[:5]
     buys = sum(1 for d in ranked if (d.get("decision") or "").upper() == "BUY")
+    curs = {d.get("ticker"): _cur_price(db, d.get("ticker")) for d in top5}
 
-    # Top-5 summary table
+    # at-a-glance table
     tbl = ["| # | 종목 | 판단 | 점수 | 방법1 | 방법2 | 방법3 | 살 가격 | 목표 |",
            "|---|------|------|------|-------|-------|-------|---------|------|"]
     for i, d in enumerate(top5, 1):
-        buy, target, _stop = _levels(d)
+        buy, target, _stop = _levels(d, curs.get(d.get("ticker")))
         m1 = _DEC_KO.get(((d.get("method1_ml") or {}).get("call") or "").upper(), "-")
         m2 = {"BUY": "매수", "SELL": "매도", "WATCH": "관망", "HOLD": "관망"}.get(
             ((d.get("method2_analysis") or {}).get("signal") or "").upper(), "-")
@@ -130,22 +162,46 @@ def build(db) -> dict[str, Any]:
         tbl.append(f"| {i} | {d.get('name')} ({d.get('ticker')}) | {_mark} {_DEC_KO.get(_dec,'-')} "
                    f"| {d.get('score')} | {m1} | {m2} | {m3} | {_bf} | {_tf} |")
 
+    # market stance from the number of BUY signals
+    stance = ("전반적으로 **매수 우위의 강세 국면**입니다" if buys >= 5 else
+              "**선별적 매수가 유효한 중립 시장**입니다" if buys >= 2 else
+              "**신규 매수보다 관망·방어가 우선인 신중 국면**입니다")
+    t1 = top5[0] if top5 else {}
+    t2 = top5[1] if len(top5) > 1 else {}
+    final = (
+        "## 🧭 오늘의 최종 결론\n\n"
+        "이 추천은 다음 순서로 도출했습니다 — "
+        "① **키움 리포트**로 가격·기술적 시장 상황을 확인하고, "
+        "② **장 마감 후 네이버 시세**로 당일 종가와 수급을 반영했으며, "
+        "③ **신문·유튜브 리포트**로 뉴스 흐름과 시장 심리를 파악한 뒤, "
+        f"④ **3가지 방법(머신러닝·분석·파동)**으로 전체 {len(ranked)}개 종목을 정량 평가했습니다.\n\n"
+        f"이 모든 결과를 종합한 결과, 오늘 시장의 매수 신호는 **{buys}종목**으로 {stance}. "
+        + (f"최우선 후보는 **{t1.get('name')}**(종합 점수 {t1.get('score')})이며"
+           + (f", **{t2.get('name')}**(점수 {t2.get('score')})가 뒤를 잇습니다. " if t2 else ". ") if t1 else "")
+        + "신호가 제한적인 날에는 무리한 신규 매수보다, 상위 후보 중심의 **분할 매수와 손절 기준 준수**를 권장합니다."
+    )
+
     md = "\n".join([
         f"# 💡 데일리 추천 리포트 — {date}",
-        f"3가지 방법(머신러닝·분석·파동) + 키움·신문·유튜브를 종합한 오늘의 매수 후보 TOP 5입니다.",
+        "",
+        "본 리포트는 **키움 리포트(가격·기술) · 네이버 장마감 시세 · 신문(뉴스) · 유튜브(시장 심리)** 자료와 "
+        "**3가지 방법(① 머신러닝 · ② 분석[호가·수급·박스권] · ③ 파동[엘리엇·피보나치])**을 순서대로 종합해 "
+        "매일 아침 자동으로 작성됩니다. 아래는 오늘의 매수 후보 **TOP 5**와 그 상세 근거입니다.",
         f"(전체 {len(ranked)}종목 분석 · 매수 신호 {buys}종목)",
         "",
         _backdrop(db),
         "",
-        f"## 🏆 오늘의 TOP 5 후보 (종합 점수순 · 매수 신호 {buys}종목)",
-        "🟢 = 매수(BUY) · ⚪ = 보유/관심(HOLD). 오늘 매수 신호가 5개 미만이면 상위 관심 종목으로 채웁니다.",
+        f"## 🏆 오늘의 TOP 5 후보 (종합 점수순)",
+        "🟢 = 매수(BUY) · ⚪ = 보유/관심(HOLD). 매수 신호가 5개 미만인 날은 상위 관심 종목으로 채웁니다.",
         "\n".join(tbl),
         "",
-        "## 🔎 종목별 추천 근거 (왜 추천하는가)",
-        "\n\n".join(_pick_block(i, d) for i, d in enumerate(top5, 1)),
+        "## 🔎 종목별 상세 근거",
+        "\n\n".join(_pick_narrative(i, d, curs.get(d.get("ticker"))) for i, d in enumerate(top5, 1)),
+        "",
+        final,
         "",
         "---",
-        "※ 3가지 방법과 키움·뉴스·유튜브를 종합한 AI 참고 의견이며, 투자 권유나 수익 보장이 아닙니다. "
+        "※ 키움·네이버·신문·유튜브와 3가지 방법을 종합한 AI 참고 의견이며, 투자 권유나 수익 보장이 아닙니다. "
         "매매 전 반드시 직접 확인하세요.",
     ])
     picks = [{"rank": i, "ticker": d.get("ticker"), "name": d.get("name"),

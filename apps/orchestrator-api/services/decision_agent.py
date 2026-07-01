@@ -114,12 +114,13 @@ def decide(db, ticker: str) -> dict[str, Any]:
 
     # Pull the SAME two methods the outlook block shows, so the recommendation is built on
     # BOTH consistently: Method 1 = ML, Method 2 = Analysis (호가/수급/박스권).
-    m1, m2 = {}, {}
+    m1, m2, price = {}, {}, None
     try:
         from services.assistant_tools import tool_two_method_view
         tm = tool_two_method_view(ticker=code, db=db) or {}
         m1 = tm.get("method1_ml") or {}
         m2 = tm.get("method2_analysis") or {}
+        price = tm.get("live_price")
     except Exception:
         pass
 
@@ -239,10 +240,45 @@ def decide(db, ticker: str) -> dict[str, Any]:
     em_txt_ko = (f"예상 5일 변동 ±{abs(em)}%" if em is not None else "예상 변동 추정 불가")
     em_txt_en = (f"expected 5-day move ±{abs(em)}%" if em is not None else "expected move n/a")
 
-    # ① 추천(직접 답변) → ② 방법 1/2/3 + 기술적/뉴스 → ③ 종합 추천 → ④ 요약(끝)
+    # FRIEND-STYLE direct answer to 'should I buy?' + POSITION SIZING ('how many').
+    head_ko = {"BUY": "네 — 지금 분할로 매수하기 괜찮은 자리예요.",
+               "SELL": "아니요 — 지금은 사지 말고, 오히려 비중을 줄일 때예요.",
+               "HOLD": "지금 당장 사는 건 권하지 않아요 — 조금 더 확인하고 들어가는 게 좋아요."}[decision]
+    head_en = {"BUY": "Yes — this is a reasonable spot to start buying (in tranches).",
+               "SELL": "No — don't buy here; it's more a time to trim.",
+               "HOLD": "Not right now — better to wait for confirmation before buying."}[decision]
+    _pct = {"높음": 15, "보통": 10, "낮음": 5}.get(conf, 8) if decision == "BUY" else 0
+    _shares = None
+    if price and _pct:
+        try:
+            _shares = int(10_000_000 * _pct / 100 / float(price))
+        except Exception:
+            _shares = None
+    if decision == "BUY":
+        size_ko = (f"확신이 {conf}이라 종목당 투자금의 약 {_pct}%가 적당해요."
+                   + (f" 예를 들어 1,000만원을 굴린다면 약 {_shares}주"
+                      + (f" (현재가 {_pl(price)}원 기준)" if price else "")
+                      + "를 2~3회 나눠서 담으세요." if _shares else "")
+                   + f" 손절은 지지선 {_pl(sup)}원이 깨질 때로 잡으세요.")
+        size_en = (f"Confidence is {conf_en}, so about {_pct}% of your stock budget per position."
+                   + (f" e.g. on ₩10M that's ~{_shares} shares"
+                      + (f" (at ~₩{_pl(price)})" if price else "")
+                      + ", scaled in over 2–3 buys." if _shares else "")
+                   + f" Put a stop if it loses support ₩{_pl(sup)}.")
+    else:
+        size_ko = (f"지금은 신규 매수 0을 권해요. 저항 {_pl(res)}원을 확실히 돌파하면 그때 분할로 진입하거나, "
+                   f"지지 {_pl(sup)}원에서 반등을 확인한 뒤 소량부터 담으세요.")
+        size_en = (f"Hold off — 0 new buying for now. Only start scaling in if it clears resistance ₩{_pl(res)}, "
+                   f"or after it holds support ₩{_pl(sup)}.")
+
+    # ① 친구식 직접 답변 + ② 얼마나(사이징) → ③ 근거(방법1/2/3+기술적/뉴스) → ④ 종합 → ⑤ 요약
     ko_lines = [
-        f"**추천: {dec_full_ko}**  ·  확신 {conf}  ·  {consensus_ko}",
+        f"**{head_ko}**  ·  (추천: {dec_full_ko} · 확신 {conf})",
         "",
+        "**얼마나 살까?**",
+        f"· {size_ko}",
+        "",
+        f"**왜 그런가 — 근거 (확신 {conf} · {consensus_ko})**",
         f"**방법 1 — 머신러닝 알고리즘" + (f" ({algo})" if algo else "") + "**",
         f"· 판단: {ml_call_ko}",
         f"· 근거: {ml_why_ko}",
@@ -286,8 +322,12 @@ def decide(db, ticker: str) -> dict[str, Any]:
     ko = "\n".join(ko_lines)
 
     en_lines = [
-        f"**Recommendation: {decision}**  ·  confidence {conf_en}  ·  {consensus_en}",
+        f"**{head_en}**  ·  (Recommendation: {decision} · confidence {conf_en})",
         "",
+        "**How many?**",
+        f"- {size_en}",
+        "",
+        f"**Why — the evidence (confidence {conf_en} · {consensus_en})**",
         f"**Method 1 — Machine Learning" + (f" ({algo})" if algo else "") + "**",
         f"- Call: {ml_adv or 'HOLD'}",
         f"- Why: {ml_why_en}",
