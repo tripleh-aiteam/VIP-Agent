@@ -1923,8 +1923,8 @@ def init_scheduler():
     log.info("scheduler: YouTube registered (6:40 KST — daily Mon-Fri, weekly Sat/Sun, all recipients)", extra={"action": "scheduler.youtube_registered"})
 
     # Daily 3-method Recommendation Report — 7:30 AM KST Mon-Fri, AFTER Kiwoom(6:30)/
-    # Newspaper(6:32)/YouTube(6:40) so their digests feed the market backdrop. PILOT:
-    # owner-only recipient (recommendation_report.TEST_RECIPIENTS) until sign-off.
+    # Newspaper(6:32)/YouTube(6:40) so their digests feed the market backdrop.
+    # Owner signed off 2026-07-01 → sends to the full team (DEFAULT_RECIPIENTS).
     def _recommendation_daily():
         from db.base import SessionLocal
         from services.recommendation_report import send
@@ -1943,7 +1943,7 @@ def init_scheduler():
         id="recommendation-daily-report",
         replace_existing=True,
     )
-    log.info("scheduler: Recommendation report registered (7:30 KST Mon-Fri, pilot owner-only)", extra={"action": "scheduler.recommendation_registered"})
+    log.info("scheduler: Recommendation report registered (7:30 KST Mon-Fri, full team)", extra={"action": "scheduler.recommendation_registered"})
 
     # Asset Agent detailed report — its OWN standalone email at 7:00 AM KST =
     # 22:00 UTC, to ALL recipients, with BOTH Korean + English .docx attached.

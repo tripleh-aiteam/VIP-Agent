@@ -216,7 +216,7 @@ def send(db, recipients: Optional[list[str]] = None) -> dict[str, Any]:
     """Build + save + email the recommendation report as a .docx. Pilot → owner only."""
     from db.models import OrchReport
     from services.docx_export import markdown_to_docx
-    from services.report_email import send_email_with_docs
+    from services.report_email import send_email_with_docs, DEFAULT_RECIPIENTS
 
     rep = build(db)
     md = rep["markdown_ko"]
@@ -232,7 +232,8 @@ def send(db, recipients: Optional[list[str]] = None) -> dict[str, Any]:
         log.warning(f"rec-report: save failed: {str(e)[:120]}")
         db.rollback()
 
-    to = recipients or TEST_RECIPIENTS
+    # Pilot over (owner signed off 2026-07-01) → full team by default.
+    to = recipients or list(DEFAULT_RECIPIENTS)
     subject = f"[VIP] 데일리 추천 리포트 — {rep['date']}"
     # SHORT email body (3-4 lines) — the full report is the attached .docx.
     picks = rep.get("picks") or []
