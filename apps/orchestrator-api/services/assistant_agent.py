@@ -287,7 +287,15 @@ _STOCK_ADVICE_KW = (
 
 
 def _stock_in_query(transcript: Optional[str]) -> Optional[str]:
-    """Return a known stock name / 6-digit code found in the text, else None."""
+    """Return a known stock ticker/name found in the text, else None. Uses the
+    comprehensive resolver (all 51 tracked + slang like 하닉/삼전 + codes) first."""
+    try:
+        from services.stock_resolver import find_all
+        hits = find_all(transcript or "")
+        if hits:
+            return hits[0][0]
+    except Exception:
+        pass
     t = (transcript or "").lower()
     try:
         from services.stock_data_tools import _NAME_TO_TICKER
@@ -2536,12 +2544,11 @@ def _run_chain(
                 if s.get("tool") == "two_method_view"
                 and isinstance(s.get("result"), dict) and s["result"].get("ok")), None)
     if _tm:
-        # Required answer shape: ① 직접 답변 → ② 3-method block (each method's call + WHY)
-        # → ③ 최종 추천. Fully deterministic so all 3 methods + the verdict ALWAYS show
-        # (the LLM free-form was unreliable: it echoed labels and lacked the Wave data).
-        _direct, _final = _direct_and_final(_tm, lang)
-        _block = _two_method_header(_tm, lang)
-        reply = "\n\n".join(p for p in (_direct, _block, _final) if p)
+        # OUTLOOK = a pure FORECAST. two_method_view is the outlook tool (buy/sell ADVICE now
+        # goes to 'decide'), so it must NOT carry a buy/sell verdict or a '최종 추천' — that
+        # would make the outlook read like a recommendation. Show only the deterministic
+        # forecast block (direction + range + per-method forecast + scenarios).
+        reply = _two_method_header(_tm, lang)
 
     # decide tool: use its OWN language-correct reasoning verbatim (the LLM otherwise
     # mixes EN/KO). The deterministic block already has the verdict + 3-factor breakdown.
