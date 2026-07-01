@@ -38,9 +38,13 @@ def _universe() -> dict[str, str]:
 def _rank(db) -> list[dict]:
     """Run the 3-method decide on every tracked stock, ranked best-BUY first."""
     from services.decision_agent import decide
+    from services.data_health import price_health
     rows: list[dict] = []
     for code, name in _universe().items():
         try:
+            if not price_health(db, code)["ok"]:      # M5.1 — skip stocks with bad price data
+                log.warning(f"rec-report: skip {code} — daily/live price divergence")
+                continue
             d = decide(db, code)
             if isinstance(d, dict) and d.get("decision"):
                 rows.append(d)
