@@ -271,103 +271,112 @@ def decide(db, ticker: str) -> dict[str, Any]:
         size_en = (f"Hold off — 0 new buying for now. Only start scaling in if it clears resistance ₩{_pl(res)}, "
                    f"or after it holds support ₩{_pl(sup)}.")
 
-    # ① 친구식 직접 답변 + ② 얼마나(사이징) → ③ 근거(방법1/2/3+기술적/뉴스) → ④ 종합 → ⑤ 요약
-    ko_lines = [
-        f"**{head_ko}**  ·  (추천: {dec_full_ko} · 확신 {conf})",
-        "",
-        "**얼마나 살까?**",
-        f"· {size_ko}",
-        "",
-        f"**왜 그런가 — 근거 (확신 {conf} · {consensus_ko})**",
-        f"**방법 1 — 머신러닝 알고리즘" + (f" ({algo})" if algo else "") + "**",
-        f"· 판단: {ml_call_ko}",
-        f"· 근거: {ml_why_ko}",
-        f"· 수치: {em_txt_ko} · 백테스트 정확도 {acc_txt}",
-        "",
-        "**방법 2 — 분석 (호가·수급·박스권)**",
-        f"· 판단: {an_call_ko}",
-        f"· 근거: {an_why_ko}",
+    # ---- fuller, explanatory write-up per method (paragraphs, not terse bullets) ----
+    _vol_ko = ("움직임이 큰 편이라 방향이 맞으면 수익도 크지만 리스크도 함께 커집니다"
+               if em is not None and abs(em) >= 5 else "비교적 완만한 움직임이 예상됩니다")
+    _vol_en = ("a fairly wide swing — bigger reward if right, but bigger risk too"
+               if em is not None and abs(em) >= 5 else "a relatively mild move")
+    _acc_ko = ("정확도가 절반 안팎이라 이 신호 하나만 믿고 크게 베팅하긴 이릅니다"
+               if acc is not None and acc < 55 else "참고할 만한 수준입니다")
+    _acc_en = ("accuracy is near a coin-flip, so don't lean on this signal alone"
+               if acc is not None and acc < 55 else "a usable level of reliability")
+    ml_para_ko = (f"20년치 국내 시장 데이터로 학습한 모델이 앞으로 5일간 이 종목이 시장(코스피)을 이길지를 "
+                  f"판단합니다. 이번엔 **{ml_call_ko}** — {ml_why_ko}. "
+                  + (f"예상 변동폭은 ±{abs(em)}%로 {_vol_ko}. " if em is not None else "")
+                  + (f"백테스트 정확도는 {acc_txt}로 {_acc_ko}." if acc is not None else "")).strip()
+    ml_para_en = (f"A model trained on 20 years of Korean-market data judges whether this stock beats the market "
+                  f"(KOSPI) over the next 5 days. This time it says **{ml_adv or 'HOLD'}** — {ml_why_en}. "
+                  + (f"The expected swing is ±{abs(em)}% — {_vol_en}. " if em is not None else "")
+                  + (f"Backtest accuracy is {acc_txt}, {_acc_en}." if acc is not None else "")).strip()
+
+    if pos is None:
+        _box_ko = _box_en = ""
+    elif pos > 70:
+        _box_ko = f"현재가는 박스권의 {pos}% 지점(고점권)이라 추격 매수는 부담스럽고 눌림을 기다리는 편이 유리합니다."
+        _box_en = f"price sits at {pos}% of the box (upper end), so chasing is risky — better to wait for a pullback."
+    elif pos < 30:
+        _box_ko = f"현재가는 박스권의 {pos}% 지점(저점권)이라 반등 여지가 있는 자리입니다."
+        _box_en = f"price sits at {pos}% of the box (lower end), leaving room to bounce."
+    else:
+        _box_ko = f"현재가는 박스권의 {pos}% 지점(중간권)입니다."
+        _box_en = f"price is around {pos}% of the box (mid-range)."
+    _zones_ko = " ".join(filter(None, [f"매수 적정 구간은 {buy_zone}원," if buy_zone else None,
+                                        f"차익 실현(매도) 구간은 {sell_zone}원입니다." if sell_zone else None]))
+    _zones_en = " ".join(filter(None, [f"A reasonable buy zone is ₩{buy_zone};" if buy_zone else None,
+                                       f"a take-profit zone is ₩{sell_zone}." if sell_zone else None]))
+    an_para_ko = (f"실시간 호가 잔량, 외국인·기관 수급, 박스권 내 위치를 함께 봅니다. 지금은 **{an_call_ko}** 신호이며, "
+                  f"근거는 {an_why_ko}입니다. {_box_ko} {_zones_ko}").strip()
+    an_para_en = (f"This reads live order-book depth, foreign/institutional flows and box position. Right now it's "
+                  f"**{an_call_en}**, because {an_why_en}. {_box_en} {_zones_en}").strip()
+
+    wave_para_ko = (f"강한 상승 파동이 나온 뒤 얼마나 깊게 눌렸는지를 보고 매수 타이밍을 찾는 방법입니다(딥 풀백 전략). "
+                    f"이번엔 **{wv_ko}**" + (f" (파동점수 {_wsc})" if _wsc is not None else "") + f" — {wave_why_ko}."
+                    + (f" {wave_zone_ko}." if wave_zone_ko else "")).strip()
+    wave_para_en = (f"After a strong up-wave, it measures how deep the pullback is to time an entry (deep-pullback "
+                    f"strategy). This time **{wv_en}**" + (f" (wave score {_wsc})" if _wsc is not None else "")
+                    + f" — {wave_why_en}." + (f" {wave_zone_en}." if wave_zone_en else "")).strip()
+
+    # ---- the special FINAL synthesis paragraph the user asked for ----
+    final_ko = (f"저희 3가지 방법을 종합하면, 최종 추천은 **{dec_full_ko}**입니다. "
+                f"머신러닝은 '{ml_call_ko}', 분석은 '{an_call_ko}'"
+                + (f", 파동은 '{wv_ko}'" if has_wave else "")
+                + ("로 세 방법의 방향이 대체로 일치하고, " if _all_same else "로 방법별 신호가 다소 엇갈리고, ")
+                + f"뉴스 흐름은 '{news_ko}'입니다. 그래서 {act_ko} "
+                + ("방향이 한쪽으로 모이는 만큼 이 판단의 신뢰도는 상대적으로 높습니다."
+                   if _all_same else "신호가 엇갈리는 만큼 한 번에 크게 베팅하기보다 추세를 확인하며 대응하는 것이 안전합니다."))
+    final_en = (f"Putting our 3 methods together, the final recommendation is **{decision}**. "
+                f"Machine Learning says '{ml_adv or 'HOLD'}', Analysis says '{an_call_en}'"
+                + (f", Wave says '{wv_en}'" if has_wave else "")
+                + (" — they mostly point the same way, " if _all_same else " — the signals are somewhat mixed, ")
+                + f"and news is '{news_en}'. So {act_en} "
+                + ("Because the methods converge here, conviction in this call is relatively higher."
+                   if _all_same else "Because they diverge, it's safer to confirm the trend than to bet big all at once."))
+
+    # ① 친구식 직접 답변 → ②(매수일 때만) 얼마나 → ③ 근거(방법1/2/3+기술적/뉴스) → ④ 최종 종합 판단
+    ko_lines = [f"**{head_ko}**  ·  (추천: {dec_full_ko} · 확신 {conf})", ""]
+    if decision == "BUY":
+        ko_lines += ["**얼마나 살까?**", f"· {size_ko}", ""]
+    ko_lines += [
+        f"**왜 그런가 — 근거 (확신 {conf} · {consensus_ko})**", "",
+        f"**방법 1 — 머신러닝 알고리즘" + (f" ({algo})" if algo else "") + "**", ml_para_ko, "",
+        "**방법 2 — 분석 (호가·수급·박스권)**", an_para_ko,
     ]
-    if buy_zone or sell_zone:
-        ko_lines.append(f"· 거래 구간: " + " · ".join(filter(None, [
-            f"매수 {buy_zone}원" if buy_zone else None, f"매도 {sell_zone}원" if sell_zone else None])))
     if has_wave:
-        ko_lines += ["", "**방법 3 — 파동 (엘리엇·피보나치)**",
-                     f"· 판단: {wv_ko}" + (f" (파동점수 {_wsc})" if _wsc is not None else ""),
-                     f"· 근거: {wave_why_ko}"]
-        if wave_zone_ko:
-            ko_lines.append(f"· 거래 구간: {wave_zone_ko}")
+        ko_lines += ["", "**방법 3 — 파동 (엘리엇·피보나치)**", wave_para_ko]
     ko_lines += [
         "",
         "**기술적 지표**",
-        f"· {tech.get('summary_ko','중립')}",
-        f"· 지지 {_pl(sup)}원 / 저항 {_pl(res)}원" + (f" · 박스권 내 위치 {pos}%" if pos is not None else ""),
+        f"{tech.get('summary_ko','중립')} · 지지 {_pl(sup)}원 / 저항 {_pl(res)}원"
+        + (f" · 박스권 내 위치 {pos}%" if pos is not None else ""),
         "",
         f"**뉴스 — {news_ko}**",
     ]
     ko_lines += ([f"· {h}" for h in heads] if heads else ["· 특이 뉴스 없음"])
-    ko_lines += [
-        "",
-        f"**종합 추천** — {act_ko} "
-        + ("세 방법의 방향이 일치해 해당 시나리오의 신뢰도가 상대적으로 높습니다." if _all_same
-           else "방법별 신호가 엇갈리므로, 한 신호만 보고 서두르기보다 추세 확인 후 대응하는 것이 안전합니다."),
-        "",
-        f"**요약** — 머신러닝 '{ml_call_ko}' · 분석 '{an_call_ko}'"
-        + (f" · 파동 '{wv_ko}'" if has_wave else "") + f" · 뉴스 '{news_ko}'. "
-        + ("세 방법이 같은 방향을 가리킵니다." if _all_same
-           else "신호가 엇갈리므로 신중한 접근이 필요합니다."),
-        "",
-        "※ 3가지 방법과 뉴스·수급·기술적 지표를 종합한 참고 의견이며, 투자 권유나 수익 보장이 아닙니다.",
-    ]
+    ko_lines += ["", "**최종 종합 판단**", final_ko, "",
+                 "※ 3가지 방법과 뉴스·수급·기술적 지표를 종합한 참고 의견이며, 투자 권유나 수익 보장이 아닙니다."]
     ko = "\n".join(ko_lines)
 
-    en_lines = [
-        f"**{head_en}**  ·  (Recommendation: {decision} · confidence {conf_en})",
-        "",
-        "**How many?**",
-        f"- {size_en}",
-        "",
-        f"**Why — the evidence (confidence {conf_en} · {consensus_en})**",
-        f"**Method 1 — Machine Learning" + (f" ({algo})" if algo else "") + "**",
-        f"- Call: {ml_adv or 'HOLD'}",
-        f"- Why: {ml_why_en}",
-        f"- Figures: {em_txt_en} · backtest accuracy {acc_txt}",
-        "",
-        "**Method 2 — Analysis (orderbook · flows · box)**",
-        f"- Call: {an_call_en}",
-        f"- Why: {an_why_en}",
+    en_lines = [f"**{head_en}**  ·  (Recommendation: {decision} · confidence {conf_en})", ""]
+    if decision == "BUY":
+        en_lines += ["**How many?**", f"- {size_en}", ""]
+    en_lines += [
+        f"**Why — the evidence (confidence {conf_en} · {consensus_en})**", "",
+        f"**Method 1 — Machine Learning" + (f" ({algo})" if algo else "") + "**", ml_para_en, "",
+        "**Method 2 — Analysis (orderbook · flows · box)**", an_para_en,
     ]
-    if buy_zone or sell_zone:
-        en_lines.append("- Trade zones: " + " · ".join(filter(None, [
-            f"buy ₩{buy_zone}" if buy_zone else None, f"sell ₩{sell_zone}" if sell_zone else None])))
     if has_wave:
-        en_lines += ["", "**Method 3 — Wave (Elliott · Fibonacci)**",
-                     f"- Call: {wv_en}" + (f" (wave score {_wsc})" if _wsc is not None else ""),
-                     f"- Why: {wave_why_en}"]
-        if wave_zone_en:
-            en_lines.append(f"- Trade zone: {wave_zone_en}")
+        en_lines += ["", "**Method 3 — Wave (Elliott · Fibonacci)**", wave_para_en]
     en_lines += [
         "",
         "**Technicals**",
-        f"- {tech.get('summary_en','neutral')}",
-        f"- support ₩{_pl(sup)} / resistance ₩{_pl(res)}" + (f" · {pos}% through the range" if pos is not None else ""),
+        f"{tech.get('summary_en','neutral')} · support ₩{_pl(sup)} / resistance ₩{_pl(res)}"
+        + (f" · {pos}% through the range" if pos is not None else ""),
         "",
         f"**News — {news_en}**",
     ]
     en_lines += ([f"- {h}" for h in heads] if heads else ["- no notable news"])
-    en_lines += [
-        "",
-        f"**Bottom line** — {act_en} "
-        + ("All methods point the same way, so this scenario carries relatively higher conviction." if _all_same
-           else "The methods diverge, so confirm the trend before acting rather than chasing one signal."),
-        "",
-        f"**Summary** — Machine Learning '{ml_adv or 'HOLD'}' · Analysis '{an_call_en}'"
-        + (f" · Wave '{wv_en}'" if has_wave else "") + f" · news '{news_en}'. "
-        + ("All three point the same way." if _all_same
-           else "The signals diverge, so a cautious stance beats betting heavily on one side."),
-        "",
-        "Note: a reasoned synthesis of all 3 methods + news/flows/technicals — not investment advice or a guarantee.",
-    ]
+    en_lines += ["", "**Final call — all 3 methods**", final_en, "",
+                 "Note: a reasoned synthesis of all 3 methods + news/flows/technicals — not investment advice or a guarantee."]
     en = "\n".join(en_lines)
     return {"ticker": code, "name": name, "decision": decision, "score": round(total, 1),
             "confidence": conf_en, "news": news, "flows": flows, "technicals": tech,

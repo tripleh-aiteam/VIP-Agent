@@ -112,11 +112,11 @@ CASES = [
     C("decide", "DECIDE", "en", "Should I buy or sell SK Hynix?",
       [("recommendation", lambda r, i: has(r"Recommendation:\s*(BUY|HOLD|SELL)", r)),
        ("both methods", lambda r, i: has(r"Method 1", r) and has(r"Method 2", r) and has(r"News", r)),
-       ("has action", lambda r, i: has(r"Bottom line", r))]),
+       ("final para", lambda r, i: has(r"Final call|final recommendation is", r))]),
     C("decide", "DECIDE", "ko", "SK하이닉스 사야 할까?",
       [("recommendation", lambda r, i: has(r"추천:\s*(매수|보유|매도|관망)", r)),
        ("both methods", lambda r, i: has(r"방법 1", r) and has(r"방법 2", r) and has(r"뉴스", r)),
-       ("has action", lambda r, i: has(r"종합 추천", r))]),
+       ("final para", lambda r, i: has(r"최종 종합 판단|최종 추천은", r))]),
 
     # ---- ADVICE with a history marker ('last week I bought... hold or sell?') = DECISION not history ----
     C("advice_histmarker", "ADVICE-HX", "en", "Last week I bought SK Hynix at -4%, should I hold or sell?",
