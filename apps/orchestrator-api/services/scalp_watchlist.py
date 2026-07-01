@@ -53,16 +53,46 @@ def build(db, n: int = 5, target_pct: float = 1.0) -> dict[str, Any]:
 
     def _f(v):
         return f"{int(v):,}" if v else "-"
+
+    def _why(r, en=False):
+        """Short reason + direction for one pick (from the 3 methods + feasibility)."""
+        bits = []
+        if r.get("wave") == "BUY":
+            bits.append("Wave buy zone (deep pullback)" if en else "파동(엘리엇) 매수 자리")
+        if r.get("ml") == "BUY":
+            bits.append("ML predicts upside" if en else "머신러닝 상승 예측")
+        if not bits:
+            bits.append("uptrend intact (Methods 1 & 3)" if en else "중기 상승 추세 유지 (방법 1·3)")
+        f = r.get("feasible")
+        if f == "yes":
+            bits.append("today's volatility easily covers +1%" if en else "오늘 변동성 충분 — +1% 여유")
+        elif f == "marginal":
+            bits.append("+1% only marginally reachable" if en else "+1% 도달 제한적")
+        ent = ({"ENTER": "→ good to enter now", "WAIT": "→ wait for the pullback to the buy price",
+                "SKIP": "→ watch only"} if en else
+               {"ENTER": "→ 지금 진입 가능", "WAIT": "→ 매수가까지 눌림 대기", "SKIP": "→ 관찰만"}).get(r["entry"], "")
+        return " · ".join(bits) + " " + ent
+
     lines_ko, lines_en = [], []
     for i, r in enumerate(rows, 1):
         tag = {"ENTER": "🟢 진입가능", "WAIT": "🟡 눌림대기", "SKIP": "⚪ 관찰"}.get(r["entry"], "")
-        lines_ko.append(f"{i}. {r['name']} — {tag} · 매수 {_f(r['buy'])} · 목표(+{target_pct}%) {_f(r['target'])} · 손절 {_f(r['stop'])}"
-                        + (f" · ~{r['est']}분" if r.get("est") else ""))
+        lines_ko.append(
+            f"**{i}. {r['name']}**  {tag} · 방향 ▲상승 예상\n"
+            f"   • 왜: {_why(r)}\n"
+            f"   • 매수 {_f(r['buy'])} · 목표(+{target_pct}%) {_f(r['target'])} · 손절 {_f(r['stop'])}"
+            + (f" · ~{r['est']}분" if r.get("est") else ""))
         tag_en = {"ENTER": "🟢 enter", "WAIT": "🟡 wait-dip", "SKIP": "⚪ watch"}.get(r["entry"], "")
-        lines_en.append(f"{i}. {r.get('name_en') or r['name']} — {tag_en} · buy {_f(r['buy'])} · target(+{target_pct}%) {_f(r['target'])} · stop {_f(r['stop'])}"
-                        + (f" · ~{r['est']}min" if r.get("est") else ""))
-    reasoning_ko = ("**📈 오늘의 단타 후보 (상승 편향 + 장중 셋업)**\n\n" + ("\n".join(lines_ko) if lines_ko else "오늘은 적합한 단타 셋업이 없습니다.")
-                    + "\n\n※ 방법 1·3으로 상승 편향을 거르고, 방법 2+변동성으로 진입 자리를 잡았습니다. 비용 감안 실수익은 목표보다 ~0.25%p 낮습니다. 참고용.")
-    reasoning_en = ("**📈 Today's scalp watchlist (up-bias + intraday setup)**\n\n" + ("\n".join(lines_en) if lines_en else "No suitable scalp setups today.")
-                    + "\n\n※ Filtered for up-bias by Methods 1 & 3, entries from Method 2 + volatility. Net ≈ target − 0.25%p after costs. Reference only.")
+        lines_en.append(
+            f"**{i}. {r.get('name_en') or r['name']}**  {tag_en} · direction ▲up-bias\n"
+            f"   • Why: {_why(r, en=True)}\n"
+            f"   • Buy {_f(r['buy'])} · target(+{target_pct}%) {_f(r['target'])} · stop {_f(r['stop'])}"
+            + (f" · ~{r['est']}min" if r.get("est") else ""))
+    reasoning_ko = ("**📈 오늘의 단타 추천 (상승 편향 + 장중 셋업)**\n\n"
+                    + ("\n\n".join(lines_ko) if lines_ko else "오늘은 적합한 단타 셋업이 없습니다.")
+                    + "\n\n※ 방법 1·3(머신러닝·파동)으로 상승 방향을 거르고, 방법 2(호가·수급)+변동성으로 진입 자리를 잡았습니다. "
+                    "비용 감안 실수익은 목표보다 ~0.25%p 낮습니다. 참고용이며 투자 권유가 아닙니다.")
+    reasoning_en = ("**📈 Today's scalp picks (up-bias + intraday setup)**\n\n"
+                    + ("\n\n".join(lines_en) if lines_en else "No suitable scalp setups today.")
+                    + "\n\n※ Direction filtered by Methods 1 & 3 (ML·Wave), entries from Method 2 (orderbook/flows) + "
+                    "volatility. Net ≈ target − 0.25%p after costs. Reference only, not investment advice.")
     return {"picks": rows, "reasoning_ko": reasoning_ko, "reasoning_en": reasoning_en}
