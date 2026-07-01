@@ -286,6 +286,25 @@ _STOCK_ADVICE_KW = (
 )
 
 
+# Scalp / short-term intraday cues → the live Scalp Signal (M3).
+_SCALP_KW = (
+    "단타", "초단타", "스캘핑", "스켈핑", "지금 사서", "지금사서", "몇 분", "몇분",
+    "분 안에", "분안에", "분 뒤", "분뒤", "짧게 먹", "짧게 치", "30분", "빠르게 먹",
+    "scalp", "in 30 min", "in a few min", "quick trade", "quick 1", "right now and sell",
+)
+
+
+def _is_scalp_question(transcript: Optional[str]) -> bool:
+    t = (transcript or "").lower()
+    if not any(k in t for k in _SCALP_KW):
+        return False
+    try:
+        from services.stock_resolver import find_all
+        return bool(find_all(transcript or ""))
+    except Exception:
+        return False
+
+
 def _stock_in_query(transcript: Optional[str]) -> Optional[str]:
     """Return a known stock ticker/name found in the text, else None. Uses the
     comprehensive resolver (all 51 tracked + slang like 하닉/삼전 + codes) first."""
@@ -4015,6 +4034,32 @@ def _run_agent_impl(
                             "tool_used": "position_advice"}
         except Exception as e:
             log.warning(f"position advice failed: {str(e)[:120]}")
+
+    # === M3 — SCALP signal (live intraday entry / +X% / exit timing) ===
+    # "삼성전자 지금 단타 1% 가능해?" → 진입/대기 + 매수가/목표/손절/예상시간, gated by M1&3 bias.
+    if not confirmed_tool and not attachment_ids and _is_scalp_question(transcript):
+        try:
+            from services.stock_resolver import resolve_one
+            _c, _n = resolve_one(transcript or "")
+            if _c:
+                _m = _re.search(r"([\d.]+)\s*%", transcript or "")
+                _tgt = min(max(float(_m.group(1)) if _m else 1.0, 0.3), 5.0)
+                from services.day_trade import scalp_signal
+                _sig = scalp_signal(db, _c, _tgt)
+                _en = str(lang or "").lower().startswith("en")
+                _reply = _sig.get("reasoning_en" if _en else "reasoning_ko")
+                try:
+                    from services.call_grader import log_call
+                    _ga = {"ENTER": "BUY", "WAIT": "HOLD", "SKIP": "HOLD", "AVOID": "AVOID"}.get(_sig.get("entry"), "HOLD")
+                    log_call(db, ticker=_c, action=_ga, intent="scalp", ref_price=_sig.get("current"),
+                             target=_sig.get("target_price"), stop=_sig.get("stop_price"),
+                             horizon_min=_sig.get("est_minutes") or 30, name=_n, agent_id=agent_id, lang=lang)
+                except Exception:
+                    pass
+                return {"intent": "scalp", "language": lang, "reply": _reply, "action": None,
+                        "speak": True, "transcript": transcript, "tool_used": "scalp_signal"}
+        except Exception as e:
+            log.warning(f"scalp signal failed: {str(e)[:120]}")
 
     # === Stock agent = relay the Stock-Advisor app (single source of truth) ===
     # The stock agent's answers (and therefore VIP's delegated answers) come from

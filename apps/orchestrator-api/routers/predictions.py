@@ -178,6 +178,14 @@ def wave_batch(tickers: str = Query(""), db: Session = Depends(get_db)):
     return {"results": out}
 
 
+@router.get("/scalp/{ticker}")
+def scalp(ticker: str, target: float = Query(1.0), db: Session = Depends(get_db)):
+    """M3 live scalp signal: 진입/대기 + 매수가/목표(+target%)/손절/예상시간, gated by
+    Method 1 & 3 bias. Naver/daily fallback when the minute collector is off."""
+    from services.day_trade import scalp_signal
+    return scalp_signal(db, str(ticker).zfill(6), float(target))
+
+
 @router.post("/chatbot-grade")
 def chatbot_grade(db: Session = Depends(get_db)):
     """Grade chatbot advice calls whose horizon elapsed (M1.2). Fire every ~20-30 min

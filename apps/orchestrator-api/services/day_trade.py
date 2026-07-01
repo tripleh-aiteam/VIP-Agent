@@ -9,7 +9,139 @@ room for the target after a sensible stop. No promises — a feasibility read, n
 """
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Optional
+
+
+def _daily_vol_fallback(db, tk: str) -> Optional[dict]:
+    """When the live minute collector is OFF, approximate today's volatility budget from
+    recent DAILY candles (ATR%) + the live price — clearly labelled as a fallback."""
+    from sqlalchemy import text
+    rows = db.execute(text(
+        "SELECT high, low, close FROM raw_daily_prices WHERE ticker=:t "
+        "ORDER BY date DESC LIMIT 15"), {"t": tk}).fetchall()
+    if len(rows) < 5:
+        return None
+    trs = [float(r.high) - float(r.low) for r in rows if r.high and r.low]
+    closes = [float(r.close) for r in rows if r.close]
+    if not trs or not closes:
+        return None
+    atr_pct = round(sum(trs) / len(trs) / closes[0] * 100, 2)   # avg daily range %
+    live = None
+    try:
+        from services.assistant_agent import _live_price_for_code
+        from services.stock_resolver import display_name
+        q = _live_price_for_code(tk, display_name(tk))
+        live = float(q["price"]) if q and q.get("price") else None
+    except Exception:
+        pass
+    last = live or closes[0]
+    return {"available": True, "source": "daily_fallback", "last": last,
+            "day_open": last, "day_high": last, "day_low": round(last * (1 - atr_pct / 200)),
+            "expected_day_move_pct": atr_pct, "realized_range_pct": 0, "pos_in_range": 50}
+
+
+def scalp_signal(db, ticker: str, target_pct: float = 1.0) -> dict[str, Any]:
+    """M3.2 — live scalp read: 진입 NOW vs 대기 + 매수가/목표(+target%)/손절 + 예상 보유시간 +
+    가능성, gated by Method 1 & 3 bias (don't scalp-long a bearish stock). Falls back to
+    daily volatility (labelled) when the minute collector is off."""
+    from services.minute_bars import intraday_vol
+    from services.orderbook_memory import read_memory
+    from services.stock_resolver import display_name
+
+    tk = str(ticker).zfill(6)
+    name = display_name(tk)
+    v = intraday_vol(db, tk)
+    collector_off = not v.get("available")
+    if collector_off:
+        v = _daily_vol_fallback(db, tk)
+        if not v:
+            return {"ticker": tk, "name": name, "feasible": "unknown",
+                    "reasoning_ko": "실시간 분봉·일봉 데이터가 모두 부족합니다.",
+                    "reasoning_en": "No live minute or daily data available."}
+
+    last = v["last"]; exp_move = v.get("expected_day_move_pct") or 0
+    realized = v.get("realized_range_pct") or 0; pos = v.get("pos_in_range")
+
+    # support = nearest large bid wall below price (remembered), else day low
+    wall = None
+    try:
+        mem = read_memory(db, tk, depth=30)
+        walls = [b for b in mem.get("bids", []) if b.get("is_large") and b["price"] <= last]
+        wall = max(walls, key=lambda x: x["price"]) if walls else None
+    except Exception:
+        pass
+    support = wall["price"] if wall else v.get("day_low") or round(last * 0.99)
+    buy_lo = support; buy_hi = round(support * 1.002)
+    target_price = round(buy_hi * (1 + target_pct / 100)); stop_price = round(support * 0.997)
+    rr = round((target_price - buy_hi) / (buy_hi - stop_price), 2) if buy_hi > stop_price else None
+
+    # feasibility from today's volatility budget
+    if exp_move >= target_pct * 2.5:
+        feasible = "yes"
+    elif exp_move >= target_pct * 1.3:
+        feasible = "marginal"
+    else:
+        feasible = "unlikely"
+    est_min = max(10, min(240, round(target_pct * 390 / exp_move))) if exp_move else None
+
+    # Method 1 & 3 bias gate — don't recommend a scalp-LONG when the trend is bearish
+    ml_adv = wv = None
+    try:
+        from services import prediction_service as ps
+        ml_adv = (ps.get_ticker(db, tk) or {}).get("advice")
+    except Exception:
+        pass
+    try:
+        from services.wave_method import wave_for
+        wv = (wave_for(db, tk) or {}).get("verdict")
+    except Exception:
+        pass
+    bias_bearish = (ml_adv == "SELL") or (wv == "AVOID")
+    near_bottom = pos is not None and pos <= 35
+
+    if bias_bearish:
+        entry = "AVOID"
+    elif feasible == "unlikely":
+        entry = "SKIP"
+    elif near_bottom:
+        entry = "ENTER"
+    else:
+        entry = "WAIT"
+
+    net_pct = round(target_pct - 0.25, 2)     # ~0.25% round-trip cost (세금+수수료)
+    off_ko = " ⚠️ 실시간 수집기 꺼짐 — 일봉 변동성 기준(참고)." if collector_off else ""
+    off_en = " ⚠️ Live collector off — using daily volatility (reference)." if collector_off else ""
+    head = {"ENTER": "🟢 진입 적합", "WAIT": "🟡 대기 (눌림목까지)", "SKIP": "⚪ 오늘은 부적합",
+            "AVOID": "🔴 단타 롱 비권장 (상위 추세 약세)"}[entry]
+    head_en = {"ENTER": "🟢 Good entry now", "WAIT": "🟡 Wait (for a pullback)",
+               "SKIP": "⚪ Not suitable today", "AVOID": "🔴 Scalp-long not advised (bearish trend)"}[entry]
+    feas_ko = {"yes": "충분히 가능", "marginal": "제한적으로 가능", "unlikely": "오늘은 어려움"}[feasible]
+    feas_en = {"yes": "clearly feasible", "marginal": "marginally feasible", "unlikely": "unlikely today"}[feasible]
+
+    if entry == "AVOID":
+        ko = (f"{name} — {head}. 방법1/3 기준 상위 추세가 약세({'ML 매도' if ml_adv=='SELL' else ''}{' · 파동 회피' if wv=='AVOID' else ''})라 "
+              f"지금 단타 매수는 권하지 않습니다. 반등·추세 회복 확인 후 재검토.{off_ko}")
+        en = (f"{name} — {head_en}. The higher-timeframe trend is bearish, so a scalp-long isn't advised now. "
+              f"Reassess after a rebound/trend recovery.{off_en}")
+    else:
+        entry_word_ko = {"ENTER": "지금 진입 양호", "WAIT": "눌림목(매수구간)까지 대기", "SKIP": "오늘은 진입 보류"}[entry]
+        entry_word_en = {"ENTER": "good to enter now", "WAIT": "wait for a pullback to the buy zone", "SKIP": "hold off today"}[entry]
+        ko = (f"{name} — {head}. +{target_pct}% 목표는 오늘 {feas_ko}(변동폭이 목표의 {round(exp_move/target_pct,1)}배). "
+              f"매수 {buy_lo:,}~{buy_hi:,}{' (대량 매수벽)' if wall else ''} · 목표 {target_price:,} · 손절 {stop_price:,} (손익비 {rr}). "
+              f"{entry_word_ko}"
+              + (f", 목표까지 예상 ~{est_min}분." if est_min else ".")
+              + f" 비용 감안 실수익 ≈ +{net_pct}%.{off_ko}")
+        en = (f"{name} — {head_en}. A +{target_pct}% target is {feas_en} today ({round(exp_move/target_pct,1)}x the target). "
+              f"Buy {buy_lo:,}~{buy_hi:,}{' (bid wall)' if wall else ''} · target {target_price:,} · stop {stop_price:,} (R:R {rr}). "
+              f"{entry_word_en}"
+              + (f", ~{est_min} min to target." if est_min else ".")
+              + f" Net ≈ +{net_pct}% after costs.{off_en}")
+
+    return {"ticker": tk, "name": name, "entry": entry, "feasible": feasible,
+            "target_pct": target_pct, "current": last, "buy_zone": [buy_lo, buy_hi],
+            "target_price": target_price, "stop_price": stop_price, "rr": rr,
+            "est_minutes": est_min, "net_pct": net_pct, "ml_bias": ml_adv, "wave_bias": wv,
+            "collector_off": collector_off, "reasoning_ko": ko, "reasoning_en": en}
 
 
 def feasibility(db, ticker: str, target_pct: float = 1.0) -> dict[str, Any]:
