@@ -3989,6 +3989,33 @@ def _run_agent_impl(
         else:
             lang = "en"
 
+    # === M2 — POSITION-AWARE advice (a holding the user already has) ===
+    # "지난주 SK하이닉스 200주 -4% 어떡해?" → 버티기/손절/물타기/익절 with trigger prices,
+    # from the 3-method decide + the user's P&L. Runs BEFORE delegation so VIP + AI Advisor
+    # both use the SAME local advisor (identical answer). Logged to grading (position, 120m).
+    if not confirmed_tool and not attachment_ids:
+        try:
+            from services.position_parse import is_position_question, parse
+            if is_position_question(transcript):
+                from services.position_advice import advise as _pos_advise
+                _adv = _pos_advise(db, parse(transcript))
+                if _adv.get("ok"):
+                    _en = str(lang or "").lower().startswith("en")
+                    _reply = _adv.get("reasoning_en" if _en else "reasoning_ko")
+                    try:
+                        from services.call_grader import log_call
+                        _ga = {"CUT": "SELL", "TAKE_PROFIT": "SELL", "HOLD_OR_ADD": "BUY"}.get(_adv.get("action"), "HOLD")
+                        log_call(db, ticker=_adv["ticker"], action=_ga, intent="position",
+                                 ref_price=_adv.get("price"), stop=_adv.get("stop"), horizon_min=120,
+                                 name=_adv.get("name"), agent_id=agent_id, lang=lang)
+                    except Exception:
+                        pass
+                    return {"intent": "position_advice", "language": lang, "reply": _reply,
+                            "action": None, "speak": True, "transcript": transcript,
+                            "tool_used": "position_advice"}
+        except Exception as e:
+            log.warning(f"position advice failed: {str(e)[:120]}")
+
     # === Stock agent = relay the Stock-Advisor app (single source of truth) ===
     # The stock agent's answers (and therefore VIP's delegated answers) come from
     # the SAME backend that powers the Stock app's "주식 AI" box, so every surface
