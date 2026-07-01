@@ -20,6 +20,7 @@ TEST_RECIPIENTS = ["tripleh.agents@gmail.com"]
 
 _DEC_KO = {"BUY": "매수", "SELL": "매도", "HOLD": "보유"}
 _VERD_KO = {"BUY": "매수", "WATCH": "관망", "AVOID": "회피"}
+_CONF_KO = {"high": "높음", "medium": "보통", "low": "낮음", "높음": "높음", "보통": "보통", "낮음": "낮음"}
 
 
 def _universe() -> dict[str, str]:
@@ -88,7 +89,7 @@ def _backdrop(db) -> str:
                          ("newspaper_report", "신문 (뉴스)"),
                          ("youtube_report", "유튜브 (시장 심리)")):
         rep = _latest_report(db, rtype)
-        summ = (rep.get("summary") or rep.get("summary_en") or "").strip() if rep else ""
+        summ = (rep.get("summary_ko") or rep.get("summary") or "").strip() if rep else ""
         parts.append(f"- **{label}:** {summ[:320]}" if summ else f"- **{label}:** (오늘 리포트 없음)")
     return "\n".join(parts)
 
@@ -101,7 +102,7 @@ def _pick_narrative(rank: int, d: dict, cur: Optional[float]) -> str:
     Reads like an analyst note, not a bullet list."""
     name, code = d.get("name") or d.get("ticker"), d.get("ticker")
     dec = (d.get("decision") or "").upper(); deck = _DEC_KO.get(dec, dec)
-    score, conf = d.get("score"), d.get("confidence")
+    score = d.get("score"); conf = _CONF_KO.get(d.get("confidence"), d.get("confidence"))
     m1 = d.get("method1_ml") or {}; m1c = (m1.get("call") or "").upper()
     m1k = _DEC_KO.get(m1c, "보유"); acc, em = m1.get("accuracy_pct"), m1.get("expected_move_pct")
     m2 = d.get("method2_analysis") or {}; m2s = (m2.get("signal") or "").upper()
@@ -186,13 +187,13 @@ def build(db) -> dict[str, Any]:
         "",
         "본 리포트는 **키움 리포트(가격·기술) · 네이버 장마감 시세 · 신문(뉴스) · 유튜브(시장 심리)** 자료와 "
         "**3가지 방법(① 머신러닝 · ② 분석[호가·수급·박스권] · ③ 파동[엘리엇·피보나치])**을 순서대로 종합해 "
-        "매일 아침 자동으로 작성됩니다. 아래는 오늘의 매수 후보 **TOP 5**와 그 상세 근거입니다.",
+        "매일 아침 자동으로 작성됩니다. 아래는 오늘의 매수 후보 상위 5종목과 그 상세 근거입니다.",
         f"(전체 {len(ranked)}종목 분석 · 매수 신호 {buys}종목)",
         "",
         _backdrop(db),
         "",
-        f"## 🏆 오늘의 TOP 5 후보 (종합 점수순)",
-        "🟢 = 매수(BUY) · ⚪ = 보유/관심(HOLD). 매수 신호가 5개 미만인 날은 상위 관심 종목으로 채웁니다.",
+        f"## 🏆 오늘의 추천 후보 5종목 (종합 점수순)",
+        "🟢 = 매수 · ⚪ = 보유/관심. 매수 신호가 5개 미만인 날은 상위 관심 종목으로 채웁니다.",
         "\n".join(tbl),
         "",
         "## 🔎 종목별 상세 근거",
@@ -232,10 +233,21 @@ def send(db, recipients: Optional[list[str]] = None) -> dict[str, Any]:
         db.rollback()
 
     to = recipients or TEST_RECIPIENTS
-    subject = f"[VIP] 데일리 추천 리포트 — {rep['date']} (TOP 5 매수)"
+    subject = f"[VIP] 데일리 추천 리포트 — {rep['date']}"
+    # SHORT email body (3-4 lines) — the full report is the attached .docx.
+    picks = rep.get("picks") or []
+    top = picks[0] if picks else {}
+    top_line = (f"최우선 후보: {top.get('name')} ({_DEC_KO.get((top.get('decision') or '').upper(), '-')}, 점수 {top.get('score')})"
+                if top else "오늘 뚜렷한 매수 후보 없음")
+    body = (
+        f"{rep['date']} 데일리 추천 리포트입니다.\n"
+        f"키움·네이버·신문·유튜브 + 3가지 방법(머신러닝·분석·파동)을 종합한 오늘의 매수 후보 상위 5종목입니다.\n"
+        f"오늘 매수 신호 {rep['buys']}종목 · {top_line}.\n"
+        f"자세한 근거와 매매 기준(살 가격/목표/손절)은 첨부된 리포트를 확인해 주세요."
+    )
     try:
         docx = markdown_to_docx(title=f"데일리 추천 리포트 {rep['date']}", markdown_text=md)
-        res = send_email_with_docs(to, subject, md, [(f"recommendation_{rep['date']}.docx", docx)])
+        res = send_email_with_docs(to, subject, body, [(f"recommendation_{rep['date']}.docx", docx)])
     except Exception as e:
         log.warning(f"rec-report: email failed: {str(e)[:150]}")
         res = {"ok": False, "reason": str(e)[:150]}
