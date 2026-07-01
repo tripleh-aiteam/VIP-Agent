@@ -2562,7 +2562,9 @@ def _run_chain(
     return {
         "intent": "chain_completed",
         "language": lang,
-        "reply": (reply or "Done.")[:1500],
+        # 4000 (was 1500): the 3-method recommendation / forecast is intentionally detailed
+        # (per-method paragraphs + final synthesis) and was being cut mid-answer.
+        "reply": (reply or "Done.")[:4000],
         "action": action,
         "speak": True,
         "transcript": transcript,
@@ -3978,7 +3980,7 @@ def _run_agent_impl(
         if ext and ext.get("reply"):
             return {
                 "intent": ext.get("intent") or "stock_advisor",
-                "language": lang, "reply": str(ext["reply"])[:1800],
+                "language": lang, "reply": str(ext["reply"])[:4000],
                 "action": ext.get("action"), "speak": True,
                 "transcript": transcript,
                 "tool_used": ext.get("tool_used") or "stock_advisor",

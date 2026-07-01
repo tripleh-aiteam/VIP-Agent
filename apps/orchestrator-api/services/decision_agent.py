@@ -280,12 +280,13 @@ def decide(db, ticker: str) -> dict[str, Any]:
                if acc is not None and acc < 55 else "참고할 만한 수준입니다")
     _acc_en = ("accuracy is near a coin-flip, so don't lean on this signal alone"
                if acc is not None and acc < 55 else "a usable level of reliability")
-    ml_para_ko = (f"20년치 국내 시장 데이터로 학습한 모델이 앞으로 5일간 이 종목이 시장(코스피)을 이길지를 "
-                  f"판단합니다. 이번엔 **{ml_call_ko}** — {ml_why_ko}. "
+    ml_tag_ko = {"BUY": "매수", "SELL": "매도", "HOLD": "보유"}.get(ml_adv, "보유")
+    ml_para_ko = (f"**→ {ml_tag_ko} ({ml_adv or 'HOLD'})**. 20년치 국내 시장 데이터로 학습한 모델이 앞으로 5일간 이 "
+                  f"종목이 시장(코스피)을 이길지를 판단하는데, {ml_why_ko}. "
                   + (f"예상 변동폭은 ±{abs(em)}%로 {_vol_ko}. " if em is not None else "")
                   + (f"백테스트 정확도는 {acc_txt}로 {_acc_ko}." if acc is not None else "")).strip()
-    ml_para_en = (f"A model trained on 20 years of Korean-market data judges whether this stock beats the market "
-                  f"(KOSPI) over the next 5 days. This time it says **{ml_adv or 'HOLD'}** — {ml_why_en}. "
+    ml_para_en = (f"**→ {ml_adv or 'HOLD'}**. A model trained on 20 years of Korean-market data judges whether this "
+                  f"stock beats the market (KOSPI) over the next 5 days; {ml_why_en}. "
                   + (f"The expected swing is ±{abs(em)}% — {_vol_en}. " if em is not None else "")
                   + (f"Backtest accuracy is {acc_txt}, {_acc_en}." if acc is not None else "")).strip()
 
@@ -304,17 +305,20 @@ def decide(db, ticker: str) -> dict[str, Any]:
                                         f"차익 실현(매도) 구간은 {sell_zone}원입니다." if sell_zone else None]))
     _zones_en = " ".join(filter(None, [f"A reasonable buy zone is ₩{buy_zone};" if buy_zone else None,
                                        f"a take-profit zone is ₩{sell_zone}." if sell_zone else None]))
-    an_para_ko = (f"실시간 호가 잔량, 외국인·기관 수급, 박스권 내 위치를 함께 봅니다. 지금은 **{an_call_ko}** 신호이며, "
-                  f"근거는 {an_why_ko}입니다. {_box_ko} {_zones_ko}").strip()
-    an_para_en = (f"This reads live order-book depth, foreign/institutional flows and box position. Right now it's "
-                  f"**{an_call_en}**, because {an_why_en}. {_box_en} {_zones_en}").strip()
+    an_tag_ko = {"BUY": "매수", "SELL": "매도", "WATCH": "관망", "HOLD": "관망"}.get(an_sig, "관망")
+    an_tag_en = {"BUY": "BUY", "SELL": "SELL", "WATCH": "WATCH", "HOLD": "WATCH"}.get(an_sig, "WATCH")
+    an_para_ko = (f"**→ {an_tag_ko} ({an_tag_en})**. 실시간 호가 잔량, 외국인·기관 수급, 박스권 내 위치를 함께 보면 "
+                  f"{an_why_ko}. {_box_ko} {_zones_ko}").strip()
+    an_para_en = (f"**→ {an_tag_en}**. Reading live order-book depth, foreign/institutional flows and box position: "
+                  f"{an_why_en}. {_box_en} {_zones_en}").strip()
 
-    wave_para_ko = (f"강한 상승 파동이 나온 뒤 얼마나 깊게 눌렸는지를 보고 매수 타이밍을 찾는 방법입니다(딥 풀백 전략). "
-                    f"이번엔 **{wv_ko}**" + (f" (파동점수 {_wsc})" if _wsc is not None else "") + f" — {wave_why_ko}."
-                    + (f" {wave_zone_ko}." if wave_zone_ko else "")).strip()
-    wave_para_en = (f"After a strong up-wave, it measures how deep the pullback is to time an entry (deep-pullback "
-                    f"strategy). This time **{wv_en}**" + (f" (wave score {_wsc})" if _wsc is not None else "")
-                    + f" — {wave_why_en}." + (f" {wave_zone_en}." if wave_zone_en else "")).strip()
+    wv_tag_ko = {"BUY": "매수", "WATCH": "관망", "AVOID": "회피"}.get(wv, "관망")
+    wave_para_ko = (f"**→ {wv_tag_ko} ({wv or 'WATCH'})**" + (f" · 파동점수 {_wsc}" if _wsc is not None else "")
+                    + f". 강한 상승 파동이 나온 뒤 얼마나 깊게 눌렸는지를 보고 매수 타이밍을 찾는 방법인데(딥 풀백 전략), "
+                    f"{wave_why_ko}." + (f" {wave_zone_ko}." if wave_zone_ko else "")).strip()
+    wave_para_en = (f"**→ {wv or 'WATCH'}**" + (f" · wave score {_wsc}" if _wsc is not None else "")
+                    + f". After a strong up-wave it measures how deep the pullback is to time an entry "
+                    f"(deep-pullback strategy); {wave_why_en}." + (f" {wave_zone_en}." if wave_zone_en else "")).strip()
 
     # ---- the special FINAL synthesis paragraph the user asked for ----
     final_ko = (f"저희 3가지 방법을 종합하면, 최종 추천은 **{dec_full_ko}**입니다. "
