@@ -97,7 +97,11 @@ def advice_answer(q: str = Query(..., description="A future-outlook or buy/sell-
     try:
         r = run_agent(db, q or "", language=lang or "auto", agent_id="vip")
         rep = (r.get("reply") or "").strip()
-        if rep and r.get("intent") in ("chain_completed", "two_method_view"):
+        # Accept every trading-assistant intent (not just the two-method/decide chain) so
+        # position_advice / scalp / scalp_watchlist relay correctly to the AI Advisor —
+        # only genuinely empty/error turns return ok:false (caller then falls back locally).
+        _bad = {"empty", "error", "multimodal_failed", "multimodal_missing", "chain_empty"}
+        if rep and r.get("intent") not in _bad:
             return {"ok": True, "reply": rep, "intent": r.get("intent")}
     except Exception:
         pass
