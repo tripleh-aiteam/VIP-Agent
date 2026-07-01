@@ -39,7 +39,9 @@ def build(db, n: int = 5, target_pct: float = 1.0) -> dict[str, Any]:
             continue
         if sig.get("entry") in ("AVOID", None) or sig.get("feasible") == "unlikely":
             continue                                   # bearish bias or no room today → drop
+        from services.stock_resolver import display_name_en
         rows.append({"ticker": c["ticker"], "name": sig.get("name") or c.get("name"),
+                     "name_en": display_name_en(c["ticker"]),
                      "entry": sig.get("entry"), "feasible": sig.get("feasible"),
                      "buy": (sig.get("buy_zone") or [None])[0], "target": sig.get("target_price"),
                      "stop": sig.get("stop_price"), "est": sig.get("est_minutes"),
@@ -57,7 +59,7 @@ def build(db, n: int = 5, target_pct: float = 1.0) -> dict[str, Any]:
         lines_ko.append(f"{i}. {r['name']} — {tag} · 매수 {_f(r['buy'])} · 목표(+{target_pct}%) {_f(r['target'])} · 손절 {_f(r['stop'])}"
                         + (f" · ~{r['est']}분" if r.get("est") else ""))
         tag_en = {"ENTER": "🟢 enter", "WAIT": "🟡 wait-dip", "SKIP": "⚪ watch"}.get(r["entry"], "")
-        lines_en.append(f"{i}. {r['name']} — {tag_en} · buy {_f(r['buy'])} · target(+{target_pct}%) {_f(r['target'])} · stop {_f(r['stop'])}"
+        lines_en.append(f"{i}. {r.get('name_en') or r['name']} — {tag_en} · buy {_f(r['buy'])} · target(+{target_pct}%) {_f(r['target'])} · stop {_f(r['stop'])}"
                         + (f" · ~{r['est']}min" if r.get("est") else ""))
     reasoning_ko = ("**📈 오늘의 단타 후보 (상승 편향 + 장중 셋업)**\n\n" + ("\n".join(lines_ko) if lines_ko else "오늘은 적합한 단타 셋업이 없습니다.")
                     + "\n\n※ 방법 1·3으로 상승 편향을 거르고, 방법 2+변동성으로 진입 자리를 잡았습니다. 비용 감안 실수익은 목표보다 ~0.25%p 낮습니다. 참고용.")

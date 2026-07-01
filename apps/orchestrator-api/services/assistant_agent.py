@@ -296,8 +296,11 @@ _SCALP_KW = (
 
 _WATCHLIST_KW = (
     "단타 종목", "단타종목", "단타 추천", "단타할 종목", "오늘 뭐 살", "오늘 뭐살",
-    "뭐 살까", "추천 종목", "종목 추천", "오늘의 종목", "watchlist", "what to scalp",
-    "what to trade", "today's picks", "today picks", "which stock", "any picks",
+    "뭐 살까", "뭐 사면", "뭐 사야", "무슨 종목", "어떤 종목", "종목 추천", "추천 종목",
+    "종목 추천해", "오늘의 종목", "몇 주 살", "몇주 살",
+    "watchlist", "what to scalp", "what to trade", "what should i buy", "what stock",
+    "which stock", "what to buy", "today's picks", "today picks", "any picks",
+    "how many stock", "how many share", "short time trade", "short-term trade",
 )
 
 
@@ -3564,6 +3567,45 @@ def _suggest_followups(
     return []
 
 
+def _wanted_lang(language: Optional[str], transcript: Optional[str]) -> Optional[str]:
+    """What language the ANSWER should be in: explicit param wins, else detect the Q."""
+    l = (language or "auto").lower()
+    if l.startswith("en"):
+        return "en"
+    if l.startswith("ko"):
+        return "ko"
+    h = sum(1 for c in (transcript or "") if 0xAC00 <= ord(c) <= 0xD7A3)
+    a = sum(1 for c in (transcript or "") if "a" <= c.lower() <= "z")
+    if h > 0:
+        return "ko"
+    return "en" if a >= 3 else None
+
+
+def _enforce_reply_language(reply: str, language: Optional[str], transcript: Optional[str]) -> Optional[str]:
+    """If the reply's language doesn't match what the user asked in, translate it.
+    Only fires on a clear mismatch (so it costs nothing on normal turns)."""
+    want = _wanted_lang(language, transcript)
+    if not want or len(reply) < 15:
+        return None
+    h = sum(1 for c in reply if 0xAC00 <= ord(c) <= 0xD7A3)
+    a = sum(1 for c in reply if "a" <= c.lower() <= "z")
+    mismatch = (want == "en" and h > 12 and h > a) or (want == "ko" and h < 3 and a > 40)
+    if not mismatch:
+        return None
+    tgt = "English" if want == "en" else "Korean"
+    try:
+        out = chat_completion_sync(
+            system_prompt=(f"Translate the user's message into {tgt}. Keep ALL numbers, "
+                           f"prices, tickers, %/원/₩, markdown (**, #, tables), emojis and line "
+                           f"breaks EXACTLY. Output ONLY the translation, nothing else."),
+            messages=[{"role": "user", "content": reply}],
+            max_tokens=1200, temperature=0.0, model="groq-llama-3.3-70b",
+        )
+        return (out or "").strip() or None
+    except Exception:
+        return None
+
+
 def run_agent(
     db: Session,
     transcript: str,
@@ -3591,6 +3633,15 @@ def run_agent(
         user_id=user_id, agent_id=agent_id,
         page_context=page_context,
     )
+    # LANGUAGE GUARD — English question MUST get an English answer (and vice versa).
+    # Catches the case where a delegated (stock-backend) reply comes back in Korean.
+    try:
+        if isinstance(result, dict) and result.get("reply"):
+            fixed = _enforce_reply_language(str(result["reply"]), language, transcript)
+            if fixed:
+                result["reply"] = fixed
+    except Exception as _e:
+        log.warning(f"language guard skipped: {str(_e)[:120]}")
     # Persist meaningful turns only — skip empty / multimodal_failed / errors
     skip_intents = {"empty", "multimodal_failed", "multimodal_missing", "chain_empty"}
     if user_id and result.get("intent") not in skip_intents and result.get("reply"):

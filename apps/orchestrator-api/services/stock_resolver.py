@@ -113,6 +113,29 @@ def display_name(ticker: str) -> str:
     return _TICKER_NAME.get(str(ticker).zfill(6), str(ticker))
 
 
+_EN_NAMES = {
+    "005930": "Samsung Electronics", "000660": "SK Hynix", "005380": "Hyundai Motor",
+    "000270": "Kia", "035420": "NAVER", "035720": "Kakao", "009150": "Samsung Electro-Mechanics",
+    "042700": "Hanmi Semiconductor", "012450": "Hanwha Aerospace", "079550": "LIG Nex1",
+    "272210": "Hanwha Systems", "003490": "Korean Air", "034020": "Doosan Enerbility",
+    "052690": "KEPCO E&C", "015760": "KEPCO", "066570": "LG Electronics", "017670": "SK Telecom",
+    "030200": "KT", "005490": "POSCO Holdings", "006400": "Samsung SDI", "051910": "LG Chem",
+    "373220": "LG Energy Solution", "207940": "Samsung Biologics", "068270": "Celltrion",
+    "012330": "Hyundai Mobis", "105560": "KB Financial", "055550": "Shinhan", "402340": "SK Square",
+    "096770": "SK Innovation", "064350": "Hyundai Rotem", "009540": "HD Korea Shipbuilding",
+    "329180": "HD Hyundai Heavy", "010140": "Samsung Heavy", "042660": "Hanwha Ocean",
+    "247540": "Ecopro BM", "272450": "Jin Air", "039130": "Hana Tour", "018260": "Samsung SDS",
+    "010950": "S-OIL", "078930": "GS", "138040": "Meritz Financial", "036570": "NCSOFT",
+    "352820": "HYBE", "259960": "Krafton", "323410": "KakaoBank", "003670": "POSCO Future M",
+    "051900": "LG H&H", "090430": "AmorePacific", "097950": "CJ CheilJedang", "008770": "Hotel Shilla",
+}
+
+
+def display_name_en(ticker: str) -> str:
+    """English display name (falls back to the Korean name if none)."""
+    return _EN_NAMES.get(str(ticker).zfill(6)) or display_name(ticker)
+
+
 _ALIAS_BY_LEN = None
 
 

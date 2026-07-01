@@ -46,10 +46,10 @@ def scalp_signal(db, ticker: str, target_pct: float = 1.0) -> dict[str, Any]:
     daily volatility (labelled) when the minute collector is off."""
     from services.minute_bars import intraday_vol
     from services.orderbook_memory import read_memory
-    from services.stock_resolver import display_name
+    from services.stock_resolver import display_name, display_name_en
 
     tk = str(ticker).zfill(6)
-    name = display_name(tk)
+    name = display_name(tk); name_en = display_name_en(tk)
     v = intraday_vol(db, tk)
     collector_off = not v.get("available")
     if collector_off:
@@ -98,12 +98,13 @@ def scalp_signal(db, ticker: str, target_pct: float = 1.0) -> dict[str, Any]:
         pass
     bias_bearish = (ml_adv == "SELL") or (wv == "AVOID")
     near_bottom = pos is not None and pos <= 35
+    in_zone = last <= buy_hi * 1.002          # price already AT/below the buy zone → enter now
 
     if bias_bearish:
         entry = "AVOID"
     elif feasible == "unlikely":
         entry = "SKIP"
-    elif near_bottom:
+    elif near_bottom or in_zone:
         entry = "ENTER"
     else:
         entry = "WAIT"
@@ -121,7 +122,7 @@ def scalp_signal(db, ticker: str, target_pct: float = 1.0) -> dict[str, Any]:
     if entry == "AVOID":
         ko = (f"{name} — {head}. 방법1/3 기준 상위 추세가 약세({'ML 매도' if ml_adv=='SELL' else ''}{' · 파동 회피' if wv=='AVOID' else ''})라 "
               f"지금 단타 매수는 권하지 않습니다. 반등·추세 회복 확인 후 재검토.{off_ko}")
-        en = (f"{name} — {head_en}. The higher-timeframe trend is bearish, so a scalp-long isn't advised now. "
+        en = (f"{name_en} — {head_en}. The higher-timeframe trend is bearish, so a scalp-long isn't advised now. "
               f"Reassess after a rebound/trend recovery.{off_en}")
     else:
         entry_word_ko = {"ENTER": "지금 진입 양호", "WAIT": "눌림목(매수구간)까지 대기", "SKIP": "오늘은 진입 보류"}[entry]
@@ -131,7 +132,7 @@ def scalp_signal(db, ticker: str, target_pct: float = 1.0) -> dict[str, Any]:
               f"{entry_word_ko}"
               + (f", 목표까지 예상 ~{est_min}분." if est_min else ".")
               + f" 비용 감안 실수익 ≈ +{net_pct}%.{off_ko}")
-        en = (f"{name} — {head_en}. A +{target_pct}% target is {feas_en} today ({round(exp_move/target_pct,1)}x the target). "
+        en = (f"{name_en} — {head_en}. A +{target_pct}% target is {feas_en} today ({round(exp_move/target_pct,1)}x the target). "
               f"Buy {buy_lo:,}~{buy_hi:,}{' (bid wall)' if wall else ''} · target {target_price:,} · stop {stop_price:,} (R:R {rr}). "
               f"{entry_word_en}"
               + (f", ~{est_min} min to target." if est_min else ".")

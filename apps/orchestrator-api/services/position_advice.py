@@ -55,7 +55,14 @@ def advise(db, position: dict) -> dict[str, Any]:
     broken = (decision == "SELL") or (wv == "AVOID") or (bool(sup) and bool(cur) and cur < sup * 0.97)
     trend_ok = (decision in ("BUY", "HOLD")) and (wv != "AVOID") and (not sup or not cur or cur >= sup * 0.98)
     buyers_back = (m2 == "BUY") or (flows.get("tag") == "강력매집") or ((flows.get("foreign_5d") or 0) + (flows.get("inst_5d") or 0) > 0)
-    stop_lv = round(sup * 0.98) if sup else (round(cur * 0.97) if cur else None)
+    # ACTIONABLE levels: stop capped at ~3% below current (not the far 20-day low), and a
+    # realistic near-term target (nearest of resistance / +4%), so advice is tradable.
+    if cur:
+        stop_lv = round(max(sup * 0.98, cur * 0.97)) if sup else round(cur * 0.97)
+        near_target = round(min(res, cur * 1.04)) if (res and res > cur) else round(cur * 1.04)
+    else:
+        stop_lv = round(sup * 0.98) if sup else None
+        near_target = round(res) if res else None
 
     inprofit = pnl is not None and pnl >= 0.5
     inloss = pnl is not None and pnl <= -0.5
@@ -65,9 +72,9 @@ def advise(db, position: dict) -> dict[str, Any]:
         if trend_ok:
             action = "TAKE_PROFIT_PARTIAL"
             ko = (f"현재 +{pnl:.1f}% 수익 중이고 추세도 아직 살아 있습니다. **일부 익절 + 나머지 보유**를 권합니다 — "
-                  f"저항 {_f(res)}까지 노려보되, 지지 {_f(sup)} 이탈 시 전량 정리하세요.")
+                  f"다음 목표 {_f(near_target)}까지 노려보되, 손절선 {_f(stop_lv)}(약 -3%) 이탈 시 전량 정리하세요.")
             en = (f"You're up +{pnl:.1f}% and the trend is still intact. **Take partial profit and hold the rest** — "
-                  f"aim for resistance {_fe(res)}, but exit fully if it loses support {_fe(sup)}.")
+                  f"aim for {_fe(near_target)} next, but exit fully if it drops to {_fe(stop_lv)} (~-3%).")
         else:
             action = "TAKE_PROFIT"
             ko = (f"현재 +{pnl:.1f}% 수익이지만 추세가 약해지고 있습니다. **익절(차익 실현)**을 권합니다. 재진입은 지지 {_f(sup)} 확인 후.")
@@ -84,10 +91,10 @@ def advise(db, position: dict) -> dict[str, Any]:
                 action = "HOLD_OR_ADD"
                 ko = (f"현재 {pnl:.1f}% 손실이지만 추세는 유지 중이고 지지 {_f(sup)}에서 매수세가 들어오고 있습니다. "
                       f"**보유(버티기)**하되, 지지 {_f(sup)} 확인되면 **소량 물타기로 평단 낮추기**도 가능합니다. "
-                      f"손절선은 {_f(stop_lv)}(지지 이탈 시). 지지가 깨지면 물타기 금지.")
+                      f"손절선 {_f(stop_lv)}(약 -3%) 이탈 시 정리. 추세 깨지면 물타기 금지.")
                 en = (f"You're down {pnl:.1f}% but the trend holds and buyers are stepping in at support {_fe(sup)}. "
                       f"**Hold**; if support {_fe(sup)} confirms you may **add a small amount to lower your average**. "
-                      f"Stop at {_fe(stop_lv)} (on a support break). No averaging if support breaks.")
+                      f"Stop at {_fe(stop_lv)} (~-3%). No averaging if the trend breaks.")
             else:
                 action = "HOLD"
                 ko = (f"현재 {pnl:.1f}% 손실이나 추세는 아직 유지 중입니다. **보유(버티기)** — 지지 {_f(sup)}를 지키는지 지켜보세요. "
@@ -105,9 +112,11 @@ def advise(db, position: dict) -> dict[str, Any]:
     hold_head_en = {"CUT": "🔴 Cut (stop-loss)", "HOLD_OR_ADD": "🟡 Hold (add only if support holds)",
                     "HOLD": "🟡 Hold", "TAKE_PROFIT": "🟢 Take profit",
                     "TAKE_PROFIT_PARTIAL": "🟢 Take partial profit + hold"}.get(action, "🟡 Hold")
+    from services.stock_resolver import display_name_en
+    name_en = display_name_en(ticker)
     shares = position.get("shares")
     pos_ko = f"{name} {shares}주 보유" + (f" · 현재 {pnl:+.1f}%" if pnl is not None else "")
-    pos_en = f"Holding {name}" + (f" {shares} shares" if shares else "") + (f" · {pnl:+.1f}%" if pnl is not None else "")
+    pos_en = f"Holding {name_en}" + (f" {shares} shares" if shares else "") + (f" · {pnl:+.1f}%" if pnl is not None else "")
 
     reasoning_ko = (f"**📌 {pos_ko} — {hold_head_ko}**\n\n{ko}\n\n"
                     f"※ 3가지 방법(머신러닝·분석·파동)+뉴스·기술적 지표 종합. 참고용이며 투자 권유가 아닙니다.")
