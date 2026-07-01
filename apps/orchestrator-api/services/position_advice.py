@@ -115,7 +115,7 @@ def advise(db, position: dict) -> dict[str, Any]:
     from services.stock_resolver import display_name_en
     name_en = display_name_en(ticker)
     shares = position.get("shares")
-    pos_ko = f"{name} {shares}주 보유" + (f" · 현재 {pnl:+.1f}%" if pnl is not None else "")
+    pos_ko = f"{name}" + (f" {shares}주" if shares else "") + " 보유" + (f" · 현재 {pnl:+.1f}%" if pnl is not None else "")
     pos_en = f"Holding {name_en}" + (f" {shares} shares" if shares else "") + (f" · {pnl:+.1f}%" if pnl is not None else "")
 
     # --- 3-method breakdown (each method's read) so the advice shows its reasoning ---

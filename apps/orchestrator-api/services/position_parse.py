@@ -13,9 +13,11 @@ from typing import Any, Optional
 
 # "position" markers → this is about a holding the user already has (not a fresh query)
 _POSITION_KW = (
+    # ONLY real "I already hold this" markers. Pure decision verbs (팔까/팔아야/사야/살까) are
+    # NOT here — 'X 사야 할까 팔까?' is a fresh buy/sell DECISION (→ decide), not a position.
+    # A held position with those verbs is still caught by the implicit shares/P&L path below.
     "샀는데", "샀어", "샀다", "매수했", "매수 했", "보유", "가지고", "들고", "물렸", "물려",
-    "평단", "평균단가", "손실", "수익", "물타기", "손절할까", "팔까", "팔아야", "익절",
-    "지금 팔", "계속 들고", "계속 보유",
+    "평단", "평균단가", "물타기", "지금 팔", "계속 들고", "계속 보유",
     "bought", "i hold", "holding", "i own", "i'm holding", "im holding", "average price",
     "avg price", "my position", "underwater", "in the red", "in the green",
 )

@@ -118,11 +118,16 @@ CASES = [
        ("both methods", lambda r, i: has(r"방법 1", r) and has(r"방법 2", r) and has(r"뉴스", r)),
        ("final para", lambda r, i: has(r"최종 종합 판단|최종 추천은", r))]),
 
-    # ---- ADVICE with a history marker ('last week I bought... hold or sell?') = DECISION not history ----
+    # ---- ADVICE with a HOLDING marker ('last week I bought...') = POSITION advice (not history,
+    # not a fresh decide). Routes to the P&L-aware position_advice; shows the 3 methods. ----
     C("advice_histmarker", "ADVICE-HX", "en", "Last week I bought SK Hynix at -4%, should I hold or sell?",
-      [("recommendation", lambda r, i: has(r"Recommendation:\s*(BUY|HOLD|SELL)", r)), ("not history", lambda r, i: i != "stock_history")]),
+      [("advice route", lambda r, i: i in ("position_advice", "chain_completed")),
+       ("not history", lambda r, i: i != "stock_history"),
+       ("methods", lambda r, i: has(r"Method 1|방법 1|머신러닝|Machine Learning", r))]),
     C("advice_histmarker", "ADVICE-HX", "ko", "지난주 SK하이닉스 샀는데 보유할까 팔까?",
-      [("recommendation", lambda r, i: has(r"추천:\s*(매수|보유|매도|관망)", r)), ("not history", lambda r, i: i != "stock_history")]),
+      [("advice route", lambda r, i: i in ("position_advice", "chain_completed")),
+       ("not history", lambda r, i: i != "stock_history"),
+       ("methods", lambda r, i: has(r"방법 1|머신러닝", r))]),
 
     # ---- OFF-TOPIC (should answer like a normal LLM, not refuse) ----
     C("offtopic", "OFFTOPIC", "en", "What's the capital of Uzbekistan?",
