@@ -75,7 +75,11 @@ def _news(db, code: str) -> dict[str, Any]:
             dv = 1 if senti > 0.1 else -1 if senti < -0.1 else 0
         score += dv * (2 if imp and float(imp) >= 0.7 else 1)
         if n.get("title"):
-            titles.append(("📈" if dv > 0 else "📉" if dv < 0 else "•") + " " + n["title"][:50])
+            emoji = "📈" if dv > 0 else "📉" if dv < 0 else "•"
+            title = n["title"][:60].replace("]", "").replace("[", "")   # keep markdown link intact
+            url = (n.get("url") or "").strip()
+            # clickable headline (markdown link) when we have a URL, else plain text
+            titles.append(f"{emoji} [{title}]({url})" if url.startswith("http") else f"{emoji} {title}")
     score = max(-3, min(3, score))
     return {"score": score, "count": len(items), "titles": titles[:4]}
 
