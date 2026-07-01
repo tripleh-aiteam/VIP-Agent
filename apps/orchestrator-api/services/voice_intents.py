@@ -831,7 +831,7 @@ def handle_voice_command(db: Session, transcript: str, lang_pref: str = "auto") 
             elif intent == "nav_realty_agent":
                 portal_url = (_os.getenv("REAL_REALTY_AGENT_PORTAL_URL")
                               or _os.getenv("REAL_REALTY_AGENT_URL")
-                              or "https://realestate-tripleh.vercel.app")
+                              or "https://realestate.tripleh.co.kr")
                 ack_en, ack_ko = "Opening the Real Estate Agent in a new tab.", "부동산 에이전트를 새 탭에서 엽니다."
             reply = _voice(ack_en, ack_ko, lang)
             action = {"type": "navigate", "to": portal_url, "external": True}

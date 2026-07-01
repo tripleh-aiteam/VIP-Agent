@@ -372,9 +372,9 @@ EXTERNAL_AGENTS: list[dict] = [
         "name_ko": "부동산",
         "description": "Real Estate Agent — property listings, market data, listing search. The boss opens this for the property search/management UI.",
         "portal_url": (os.getenv("REAL_REALTY_AGENT_PORTAL_URL")
-                       or "https://realestate-tripleh.vercel.app"),
+                       or "https://realestate.tripleh.co.kr"),
         "backend_url": (os.getenv("REAL_REALTY_AGENT_URL")
-                        or "https://realestate-tripleh.vercel.app"),
+                        or "https://realestate.tripleh.co.kr"),
         "keywords": ["realty", "real estate", "realty agent", "real estate agent",
                      "realty app", "real estate app", "property", "property app",
                      "부동산", "부동산 에이전트", "부동산 앱"],

@@ -155,10 +155,18 @@ class BaseAdapter:
     def health_check(self) -> dict:
         """Check agent health endpoint."""
         try:
-            with httpx.Client(timeout=5) as client:
+            with httpx.Client(timeout=5, follow_redirects=True) as client:
                 resp = client.get(f"{self.endpoint_url}/health")
             if resp.status_code == 200:
-                return {"reachable": True, **resp.json()}
+                try:
+                    return {"reachable": True, **resp.json()}
+                except Exception:
+                    return {"reachable": True, "http_status": 200}
+            # 401/403 = the server IS up, it just requires auth (e.g. a
+            # bearer-protected partner agent). Treat as reachable so the
+            # dashboard doesn't show an auth-protected agent as "down".
+            if resp.status_code in (401, 403):
+                return {"reachable": True, "http_status": resp.status_code, "auth_protected": True}
             return {"reachable": False, "http_status": resp.status_code}
         except Exception as e:
             return {"reachable": False, "error": str(e)}

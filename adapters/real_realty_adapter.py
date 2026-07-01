@@ -2,7 +2,7 @@
 Real Estate Agent Adapter
 Tries the real backend first. If unavailable (returns HTML or errors),
 falls back to portal-sourced structured data.
-Portal: https://realestate-tripleh.vercel.app
+Portal: https://realestate.tripleh.co.kr
 Backend: (pending colleague fix — currently returns HTML)
 """
 
@@ -119,7 +119,7 @@ class RealRealtyAdapter(BaseAdapter):
             "properties": properties,
             "risk_level": "Low",
             "risk_factors": [],
-            "portal_url": "https://realestate-tripleh.vercel.app/chatbot",
+            "portal_url": "https://realestate.tripleh.co.kr/chatbot",
         }
 
         # Live OnBid (공매) opportunities — real auction data.

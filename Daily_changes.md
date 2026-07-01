@@ -2,6 +2,25 @@
 
 ---
 
+## 2026-07-01 (Wednesday) — Point Real Estate agent at its real domain (realestate.tripleh.co.kr)
+
+### Goal
+
+The Real Estate agent in VIP was pointing at placeholder/old URLs (registry `endpoint_url` = `vip-orchestrator.onrender.com`, `portal_url` = `realestate-tripleh.vercel.app`). The boss found the real domain — **`https://realestate.tripleh.co.kr/`** — and wanted VIP to use it.
+
+### Files updated
+
+- **Supabase `core_agents`** (Real Estate Agent row) — `endpoint_url` → `https://realestate.tripleh.co.kr`, `capabilities_json.portal_url` → `https://realestate.tripleh.co.kr/`. Live immediately (dashboard reads DB).
+- [adapters/base_adapter.py](apps/orchestrator-api/../../adapters/base_adapter.py) — `health_check` now treats **HTTP 401/403 as reachable** (server up, just auth-protected). Without this the 5-min health check would ping the new bearer-protected domain, get 401, and flip the agent to "down". Also tolerates non-JSON 200 + follows redirects.
+- Code fallback domain swapped `realestate-tripleh.vercel.app` → `realestate.tripleh.co.kr` in [adapters/real_realty_adapter.py](apps/orchestrator-api/../../adapters/real_realty_adapter.py), [assistant_manifest.py](apps/orchestrator-api/services/assistant_manifest.py), [chatbot_talk.py](apps/orchestrator-api/services/chatbot_talk.py), [voice_intents.py](apps/orchestrator-api/services/voice_intents.py).
+
+### Notes
+
+- The site is auth-gated (401 on every path incl. `/health`) — that's expected (agent uses bearer auth). The daily realty **report is unaffected** (it reads VIP's own Supabase `land_investigations`, not this endpoint).
+- Env overrides exist: `REAL_REALTY_AGENT_PORTAL_URL` / `REAL_REALTY_AGENT_URL` on Render would take precedence over the code fallback — if set to the old vercel URL, update or clear them.
+
+---
+
 ## 2026-06-29 (Monday) — Fix: market reports fired weekly on weekdays (APScheduler dow bug)
 
 ### Goal
