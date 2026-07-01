@@ -204,6 +204,14 @@ def _resolve_ticker(query: str) -> tuple[str | None, str | None]:
     low = q.lower()
     if low in _NAME_TO_TICKER:
         return _NAME_TO_TICKER[low], q
+    # comprehensive resolver (slang 하닉/삼전 + all-51 + fuzzy typo 삼썽전자→삼성전자)
+    try:
+        from services.stock_resolver import resolve_one
+        _c, _n = resolve_one(q)
+        if _c:
+            return _c, (_n or q)
+    except Exception:
+        pass
     # loose contains-match (longest alias first). Require ≥2 chars so an empty or
     # 1-char query can't false-match (an empty string is a substring of every name).
     if len(low) >= 2:

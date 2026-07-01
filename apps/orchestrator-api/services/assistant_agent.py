@@ -619,6 +619,15 @@ def _all_stocks_in_query(transcript: Optional[str]) -> list[tuple[str, str]]:
     'samsung electronics'), matches 6-digit codes, and fuzzy-matches leftover words
     to catch typos like 'Skhynoix' → SK하이닉스."""
     import re as _re
+    # Comprehensive resolver first (all 51 tracked names + slang 하닉/삼전/현차 + codes,
+    # longest-first with span-consumption so 'SKT'≠'KT'). Falls through if it finds none.
+    try:
+        from services.stock_resolver import find_all as _find_all
+        _hits = _find_all(transcript or "")
+        if _hits:
+            return _hits
+    except Exception:
+        pass
     t = transcript or ""
     low = t.lower()
     out: list[tuple[str, str]] = []
