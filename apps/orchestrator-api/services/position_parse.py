@@ -13,23 +13,40 @@ from typing import Any, Optional
 
 # "position" markers → this is about a holding the user already has (not a fresh query)
 _POSITION_KW = (
-    "샀는데", "샀어", "샀다", "매수했", "보유", "가지고", "들고", "물렸", "평단", "평균단가",
-    "손실", "수익", "물타기", "손절할까", "팔까", "팔아야", "익절", "지금 팔", "계속 들고",
+    "샀는데", "샀어", "샀다", "매수했", "매수 했", "보유", "가지고", "들고", "물렸", "물려",
+    "평단", "평균단가", "손실", "수익", "물타기", "손절할까", "팔까", "팔아야", "익절",
+    "지금 팔", "계속 들고", "계속 보유",
     "bought", "i hold", "holding", "i own", "i'm holding", "im holding", "average price",
-    "avg price", "my position", "down ", "up ", "underwater", "in the red", "in the green",
+    "avg price", "my position", "underwater", "in the red", "in the green",
 )
+# advice cues that, together with a stock + a P&L, mean "I hold this — what do I do?"
+_POS_ADVICE_CUE = (
+    "어떡해", "어떡하지", "어떻게 해", "어떻게해", "어떻할", "어쩌지", "어쩔", "어때",
+    "팔", "손절", "익절", "물타", "버텨", "버틸", "정리",
+    "what should i do", "should i sell", "should i hold", "hold or sell", "sell or hold",
+    "should i cut", "cut or hold", "take profit", "what do i do",
+)
+_PNL_RE = __import__("re").compile(r"[+\-]?\d+(?:\.\d+)?\s*%")
 
 
 def is_position_question(text: str) -> bool:
-    """True when the user is describing a stock they already hold + asking what to do."""
+    """True when the user describes a stock they HOLD + asks what to do. Detected either
+    by an explicit holding word, OR by (stock + a P&L%/shares + an advice cue) — so
+    '지난주 SK하이닉스 200주 -4%에 어떡해?' is caught even without the word '샀다'."""
     t = (text or "").lower()
-    if not any(k in t for k in _POSITION_KW):
-        return False
     try:
         from services.stock_resolver import find_all
-        return bool(find_all(text))
+        if not find_all(text):
+            return False
     except Exception:
         return False
+    if any(k in t for k in _POSITION_KW):
+        return True
+    # holding described implicitly: shares/P&L present AND an advice cue
+    has_pnl = bool(_PNL_RE.search(t))
+    has_shares = ("주" in t) or ("share" in t)
+    has_cue = any(c in t for c in _POS_ADVICE_CUE)
+    return (has_pnl or has_shares) and has_cue
 
 
 def _num(s: str) -> Optional[float]:
