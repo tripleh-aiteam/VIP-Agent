@@ -817,6 +817,26 @@ def _is_decision_q(transcript: Optional[str]) -> bool:
     return any(k in (transcript or "").lower() for k in _DECISION_KW)
 
 
+# A RECOMMENDATION ('should I buy?/살까/팔까') asks for a buy/sell/hold ACTION → the friend-
+# style 'decide' report. A pure OUTLOOK ('전망/향후/outlook/어때') asks WHERE it's headed → the
+# detailed forecast. '전망' + '어때' both live in the advice keywords, so we split explicitly:
+# only an ACTION word routes to a recommendation; everything else outlook → forecast.
+_RECO_ACTION_KW = (
+    "살까", "팔까", "사야", "팔아야", "사도", "사도 돼", "사도돼", "사도 될", "매수", "매도",
+    "보유할까", "담을까", "담아도", "들어갈까", "들어가도", "사는 게 좋", "사는게 좋", "사는 것이 좋",
+    "살 만", "살만", "매수 타이밍", "매도 타이밍", "팔 때", "팔아도", "손절", "익절", "조언", "추천",
+    "should i buy", "should i sell", "should i hold", "should i get", "buy or sell", "sell or hold",
+    "hold or sell", "worth buying", "worth a buy", "good buy", "good to buy", "ok to buy",
+    "time to buy", "is it a buy", "invest in", "what should i do", "your advice", "your advise",
+    "recommend", "go long",
+)
+
+
+def _wants_recommendation(transcript: Optional[str]) -> bool:
+    """True for a buy/sell/hold ACTION ask (→ friend-style decide). Pure outlook is False."""
+    return _is_decision_q(transcript) or any(k in (transcript or "").lower() for k in _RECO_ACTION_KW)
+
+
 def _is_bare_switch_followup(transcript: Optional[str]) -> bool:
     t = (transcript or "").strip()
     if not t or len(t.split()) > 6:
@@ -2897,88 +2917,121 @@ def _two_method_header(tm: dict, lang: str = "ko") -> str:
     """Build the deterministic '방법 1 / 방법 2' (Method 1 / Method 2) block from a
     two_method_view result — bilingual, so EN and KO get the SAME structured block in
     the user's language (the LLM is unreliable at always showing both methods)."""
+    # A detailed FORECAST (distinct from the buy/sell recommendation): where the stock is
+    # likely headed over ~5 days, each method's prediction, wave targets, and up/down
+    # scenarios with key levels. Bilingual + deterministic (EN==KO, VIP==AI Advisor).
     en = str(lang or "").lower().startswith("en")
     m1 = tm.get("method1_ml") or {}
     m2 = tm.get("method2_analysis") or {}
     lv = m2.get("levels") or {}
     name = tm.get("name") or tm.get("ticker") or ""
-    cur = "" if en else "원"
+    wave = _wave_dict_for(tm)
+    pfx = "₩" if en else ""
+    unit = "" if en else "원"
 
-    def _fmt(x):
+    def _f(x):
         try:
             return f"{int(round(float(x))):,}"
         except Exception:
             return None
-    adv_map = ({"BUY": "BUY", "SELL": "SELL", "HOLD": "HOLD"} if en
-               else {"BUY": "매수", "SELL": "매도", "HOLD": "보유"})
-    sig_map = ({"BUY": "BUY", "SELL": "SELL", "WATCH": "WATCH", "HOLD": "WATCH"} if en
-               else {"BUY": "매수", "SELL": "매도", "WATCH": "관망", "HOLD": "관망"})
-    adv = adv_map.get((m1.get("advice") or "").upper())
-    label = (m2.get("label_en") if en else m2.get("label")) or sig_map.get((m2.get("signal") or "").upper())
-    acc, em, algo = m1.get("backtest_accuracy_pct"), m1.get("expected_move_pct"), m1.get("best_algorithm")
-    pfx = "₩" if en else ""
-    buy = (f"{pfx}{_fmt(lv.get('buy_lo'))}~{pfx if not en else ''}{_fmt(lv.get('buy_hi'))}{cur}"
-           if lv.get("buy_lo") and lv.get("buy_hi") else None)
-    sell = (f"{pfx}{_fmt(lv.get('sell_lo'))}~{pfx if not en else ''}{_fmt(lv.get('sell_hi'))}{cur}"
-            if lv.get("sell_lo") and lv.get("sell_hi") else None)
-    price = _fmt(tm.get("live_price"))
-    src = tm.get("live_source")
 
-    none_txt = "no data" if en else "데이터 없음"
-    # METHOD 1 — the WHY behind the ML call (it predicts OUTPERFORMANCE vs the market).
-    _au = (m1.get("advice") or "").upper()
-    ml_why = ({"BUY": "predicts the stock will OUTPERFORM the market",
-               "SELL": "predicts the stock will UNDERPERFORM the market",
-               "HOLD": "no clear edge vs the market — weak/uncertain signal"} if en
-              else {"BUY": "시장 대비 상대강세(아웃퍼폼) 예측",
-                    "SELL": "시장 대비 상대약세(언더퍼폼) 예측",
-                    "HOLD": "시장 대비 뚜렷한 우위 없음 — 신호 약함"}).get(_au)
-    m1_bits = [(f"{adv} — {ml_why}" if (adv and ml_why) else (adv or none_txt))]
-    if em is not None:
-        m1_bits.append((f"expected 5-day move ±{abs(em)}%" if en else f"예상 5일 변동 ±{abs(em)}%"))
-    if acc is not None:
-        m1_bits.append((f"accuracy {acc}%" if en else f"정확도 {acc}%"))
-    # METHOD 2 — the WHY behind the Analysis signal: the live 호가/수급/박스권 tells.
-    _reasons = (m2.get("reasons_en") if en else m2.get("reasons")) or []
-    why2 = ", ".join(str(x) for x in _reasons[:3])
-    m2_bits = [(f"{label} — {why2}" if (label and why2) else (label or none_txt))]
-    if buy:
-        m2_bits.append((f"buy zone {buy}" if en else f"매수구간 {buy}"))
-    if sell:
-        m2_bits.append((f"sell zone {sell}" if en else f"매도구간 {sell}"))
+    def _w(x):
+        f = _f(x)
+        return f"{pfx}{f}{unit}" if f else None
+
+    _EN_NAMES = {"SK하이닉스": "SK Hynix", "삼성전자": "Samsung Electronics",
+                 "삼성전기": "Samsung Electro-Mechanics", "SK스퀘어": "SK Square",
+                 "한미반도체": "Hanmi Semiconductor", "NAVER": "NAVER", "카카오": "Kakao"}
+    disp = _EN_NAMES.get(name, name) if en else name
+    src = tm.get("live_source") or ""
+    src_tag = (("Kiwoom (live)" if ("실전" in src or "키움" in src)
+                else "Naver" if ("naver" in src.lower() or "네이버" in src) else src) if en else src)
+    price_num = tm.get("live_price")
+    price = _w(price_num)
+
+    adv = (m1.get("advice") or "").upper()
+    em = m1.get("expected_move_pct")
+    lo_pct, hi_pct = m1.get("expected_low_pct"), m1.get("expected_high_pct")
+    acc, algo = m1.get("backtest_accuracy_pct"), m1.get("best_algorithm")
+    rng = None
+    if price_num and lo_pct is not None and hi_pct is not None:
+        try:
+            rng = f"{_w(float(price_num) * (1 + float(lo_pct) / 100))} ~ {_w(float(price_num) * (1 + float(hi_pct) / 100))}"
+        except Exception:
+            rng = None
+    sig = (m2.get("signal") or "").upper()
+    reasons = ", ".join(str(x) for x in ((m2.get("reasons_en") if en else m2.get("reasons")) or [])[:3])
+    buy_lo, sell_hi = lv.get("buy_lo"), lv.get("sell_hi")
+    wv, wsc = (wave.get("verdict") or "").upper(), wave.get("wave_score")
+
+    dir_ko = {"BUY": "상승 우세 — 모델이 시장 대비 아웃퍼폼 예측",
+              "SELL": "하락 우세 — 시장 대비 언더퍼폼 예측",
+              "HOLD": "뚜렷한 방향성 약함 — 중립 신호"}.get(adv, "중립")
+    dir_en = {"BUY": "leaning UP — model sees market-outperformance",
+              "SELL": "leaning DOWN — underperformance",
+              "HOLD": "no strong direction — weak/neutral signal"}.get(adv, "neutral")
+    sig_ko = {"BUY": "매수 우위", "SELL": "매도 우위", "WATCH": "관망", "HOLD": "관망"}.get(sig, "관망")
+    sig_en = {"BUY": "buy-side", "SELL": "sell-side", "WATCH": "neutral", "HOLD": "neutral"}.get(sig, "neutral")
 
     if en:
-        # localize the Korean stock name + source tag for the English block
-        _EN_NAMES = {"SK하이닉스": "SK Hynix", "삼성전자": "Samsung Electronics",
-                     "삼성전기": "Samsung Electro-Mechanics", "SK스퀘어": "SK Square",
-                     "한미반도체": "Hanmi Semiconductor", "NAVER": "NAVER", "카카오": "Kakao"}
-        en_name = _EN_NAMES.get(name, name)
-        _s = src or ""
-        en_src = ("Kiwoom (live)" if ("실전" in _s or "키움" in _s)
-                  else "Naver" if ("naver" in _s.lower() or "네이버" in _s)
-                  else "sim" if "모의" in _s else _s)
-        head = f"**📊 {en_name} — Three-Method Analysis**"
-        if price:
-            head += f"  ·  current {pfx}{price}" + (f" ({en_src})" if en_src else "")
-        _wave = _wave_line_for(tm, True)
-        lines = [head,
-                 "🤖 **Method 1 — Machine Learning:** " + " · ".join(m1_bits),
-                 "📈 **Method 2 — Analysis (flows/orderbook/box):** " + " · ".join(m2_bits)]
-        if _wave:
-            lines.append("🌊 **Method 3 — Wave (Elliott/Fibonacci pullback):** " + _wave)
-        return "\n".join(lines)
-    head = f"**📊 {name} — 3가지 방법 종합 분석**"
-    if price:
-        head += f"  ·  현재가 {price}원" + (f" ({src})" if src else "")
-    _wave = _wave_line_for(tm, False)
-    lines = [
-        head,
-        f"🤖 **방법 1 — 머신러닝 알고리즘:** " + " · ".join(m1_bits),
-        f"📈 **방법 2 — 분석(수급/호가/박스권):** " + " · ".join(m2_bits),
-    ]
-    if _wave:
-        lines.append("🌊 **방법 3 — 파동(엘리엇/피보나치 눌림목):** " + _wave)
-    return "\n".join(lines)
+        L = [f"**📈 {disp} — Outlook (next ~5 days · 3 methods)**"
+             + (f"  ·  now {price}" + (f" ({src_tag})" if src_tag else "") if price else "")]
+        L += ["", "**Where it's likely headed**",
+              f"- Direction: {dir_en}" + (f" · expected move ±{abs(em)}%" if em is not None else "")]
+        if rng:
+            L.append(f"- Likely 5-day range: {rng}")
+        L += ["", f"**Method 1 — Machine Learning" + (f" ({algo})" if algo else "") + "**",
+              f"- Forecast: {dir_en}",
+              f"- Expected 5-day move ±{abs(em)}%" + (f" · backtest accuracy {acc}%" if acc is not None else "")
+              if em is not None else f"- Backtest accuracy {acc}%" if acc is not None else "- (no ML data)"]
+        L += ["", "**Method 2 — Analysis (orderbook · flows · box)**",
+              f"- Signal: {sig_en}" + (f" — {reasons}" if reasons else "")]
+        if buy_lo and sell_hi:
+            L.append(f"- Box: support ~{_w(buy_lo)} / resistance ~{_w(sell_hi)}")
+        if wv in ("BUY", "WATCH", "AVOID"):
+            L += ["", "**Method 3 — Wave (Elliott · Fibonacci)**",
+                  f"- Verdict: {wv}" + (f" (wave score {wsc})" if wsc is not None else "")]
+            if wave.get("target"):
+                L.append(f"- Upside target ₩{_f(wave['target'])}"
+                         + (f" · deep-pullback buy near ₩{_f(wave.get('entry'))}" if wave.get("entry") else ""))
+        L.append("")
+        L.append("**Scenarios**")
+        if sell_hi:
+            L.append(f"- Bullish: a clean break above ~{_w(sell_hi)} opens further upside")
+        if buy_lo:
+            L.append(f"- Bearish: losing ~{_w(buy_lo)} risks a deeper pullback")
+        L += ["", "_Forecast only — not a buy/sell call. Ask \"should I buy?\" for a recommendation._"]
+        return "\n".join(L)
+
+    L = [f"**📈 {disp} — 향후 전망 (향후 ~5일 · 3가지 방법)**"
+         + (f"  ·  현재가 {price}" + (f" ({src})" if src else "") if price else "")]
+    L += ["", "**어디로 향할까**",
+          f"· 방향: {dir_ko}" + (f" · 예상 변동 ±{abs(em)}%" if em is not None else "")]
+    if rng:
+        L.append(f"· 예상 5일 범위: {rng}")
+    L += ["", f"**방법 1 — 머신러닝 알고리즘" + (f" ({algo})" if algo else "") + "**",
+          f"· 예측: {dir_ko}",
+          f"· 예상 5일 변동 ±{abs(em)}%" + (f" · 백테스트 정확도 {acc}%" if acc is not None else "")
+          if em is not None else f"· 백테스트 정확도 {acc}%" if acc is not None else "· (ML 데이터 없음)"]
+    L += ["", "**방법 2 — 분석 (호가·수급·박스권)**",
+          f"· 신호: {sig_ko}" + (f" — {reasons}" if reasons else "")]
+    if buy_lo and sell_hi:
+        L.append(f"· 박스권: 지지 ~{_w(buy_lo)} / 저항 ~{_w(sell_hi)}")
+    if wv in ("BUY", "WATCH", "AVOID"):
+        L += ["", "**방법 3 — 파동 (엘리엇 · 피보나치)**",
+              f"· 판단: {({'BUY':'매수','WATCH':'관망','AVOID':'회피'}).get(wv, wv)}"
+              + (f" (파동점수 {wsc})" if wsc is not None else "")]
+        if wave.get("target"):
+            L.append(f"· 상단 목표 {_f(wave['target'])}원"
+                     + (f" · 깊은 눌림목 매수 {_f(wave.get('entry'))}원 부근" if wave.get("entry") else ""))
+    L.append("")
+    L.append("**시나리오**")
+    if sell_hi:
+        L.append(f"· 상승 시: 저항 ~{_w(sell_hi)}을 확실히 돌파하면 추가 상승 여력")
+    if buy_lo:
+        L.append(f"· 하락 시: 지지 ~{_w(buy_lo)}이 깨지면 추가 조정 위험")
+    L += ["", "_전망(예측)일 뿐 매수/매도 권유가 아닙니다. 매매 판단은 \"살까?\"로 물어보세요._"]
+    return "\n".join(L)
 
 
 def _compose_final_answer(
@@ -4403,12 +4456,11 @@ def _run_agent_impl(
             _code = next((c for (c, _n) in _found if c in _ps.NAMES), None)
         except Exception:
             _code = None
-        # ANY advice / decision / outlook on a registered stock → the SAME comprehensive
-        # 3-method decision report (decide: ML + Analysis + Wave + News/Flows/Technicals).
-        # Using ONE composer for all of them guarantees EN and KO (and VIP vs AI Advisor)
-        # are IDENTICAL — previously '사는 게 좋아?' went to two_method while 'should i buy'
-        # went to decide, so the two languages diverged.
-        if _code and "decide" in TOOL_REGISTRY:
+        # SPLIT (do not merge): a buy/sell/hold ACTION ('사야 할까/살까/should I buy') → the
+        # friend-style 'decide' recommendation (verdict + sizing + proof). A pure OUTLOOK
+        # ('전망/향후/outlook/어때') → the detailed forecast (two_method_view). Both composers
+        # keep EN==KO and VIP==AI Advisor, but the two answers are DIFFERENT by design.
+        if _code and _wants_recommendation(transcript) and "decide" in TOOL_REGISTRY:
             return _run_chain(db, transcript, lang, [{"tool": "decide", "args": {"ticker": _code}}],
                               current_path, selected_id, system, history or [], agent_id=agent_id)
         if _code and "two_method_view" in TOOL_REGISTRY:
