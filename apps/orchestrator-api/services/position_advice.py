@@ -118,9 +118,43 @@ def advise(db, position: dict) -> dict[str, Any]:
     pos_ko = f"{name} {shares}주 보유" + (f" · 현재 {pnl:+.1f}%" if pnl is not None else "")
     pos_en = f"Holding {name_en}" + (f" {shares} shares" if shares else "") + (f" · {pnl:+.1f}%" if pnl is not None else "")
 
-    reasoning_ko = (f"**📌 {pos_ko} — {hold_head_ko}**\n\n{ko}\n\n"
-                    f"※ 3가지 방법(머신러닝·분석·파동)+뉴스·기술적 지표 종합. 참고용이며 투자 권유가 아닙니다.")
-    reasoning_en = (f"**📌 {pos_en} — {hold_head_en}**\n\n{en}\n\n"
+    # --- 3-method breakdown (each method's read) so the advice shows its reasoning ---
+    m1c = (d.get("method1_ml") or {}).get("call") or "HOLD"
+    m1_ko = {"BUY": "매수", "SELL": "매도", "HOLD": "보유"}.get(m1c, "보유")
+    m1_why = {"BUY": "시장 대비 상대강세 예측", "SELL": "시장 대비 상대약세 예측",
+              "HOLD": "뚜렷한 우위 없음(신호 약함)"}.get(m1c, "신호 약함")
+    m2_ko = {"BUY": "매수 우위", "SELL": "매도 우위", "WATCH": "관망", "HOLD": "관망"}.get((m2 or "").upper(), "관망")
+    m2_reasons = " · ".join(((d.get("method2_analysis") or {}).get("reasons") or [])[:2])
+    wv_ko = {"BUY": "매수", "WATCH": "관망", "AVOID": "회피"}.get((wv or "").upper(), "데이터 없음")
+    wv_why = {"BUY": "강한 파동 후 눌림목 매수권", "WATCH": "상승 파동이나 아직 매수 자리 아님",
+              "AVOID": "추세 약화/무효"}.get((wv or "").upper(), "유효 파동 미검출")
+    techk = (d.get("technicals") or {}).get("summary_ko", "중립")
+    m1e = {"BUY": "outperformance expected", "SELL": "underperformance expected",
+           "HOLD": "no clear edge (weak signal)"}.get(m1c, "weak signal")
+    m2e = {"BUY": "buy-side", "SELL": "sell-side", "WATCH": "neutral", "HOLD": "neutral"}.get((m2 or "").upper(), "neutral")
+    m2re = " · ".join(((d.get("method2_analysis") or {}).get("reasons_en") or [])[:2])
+    wve = {"BUY": "buy (deep-pullback zone)", "WATCH": "watch (not a buy yet)",
+           "AVOID": "avoid (trend weak)"}.get((wv or "").upper(), "no data")
+    teche = (d.get("technicals") or {}).get("summary_en", "neutral")
+
+    methods_ko = ("**방법별 진단**\n"
+                  f"🤖 방법 1 (머신러닝): **{m1_ko}** — {m1_why}\n"
+                  f"📈 방법 2 (분석·수급/호가): **{m2_ko}**" + (f" — {m2_reasons}" if m2_reasons else "") + "\n"
+                  f"🌊 방법 3 (파동·엘리엇): **{wv_ko}** — {wv_why}\n"
+                  f"📉 기술적: {techk}")
+    methods_en = ("**Method-by-method**\n"
+                  f"🤖 Method 1 (ML): **{m1c}** — {m1e}\n"
+                  f"📈 Method 2 (Analysis): **{m2e}**" + (f" — {m2re}" if m2re else "") + "\n"
+                  f"🌊 Method 3 (Wave): **{wve}**\n"
+                  f"📉 Technicals: {teche}")
+
+    reasoning_ko = (f"**📌 {pos_ko} — {hold_head_ko}**\n\n"
+                    f"{methods_ko}\n\n"
+                    f"**➡️ 종합 결론:** {ko}\n\n"
+                    f"※ 3가지 방법(머신러닝·분석·파동) + 뉴스·기술적 지표를 종합한 참고 의견이며, 투자 권유가 아닙니다.")
+    reasoning_en = (f"**📌 {pos_en} — {hold_head_en}**\n\n"
+                    f"{methods_en}\n\n"
+                    f"**➡️ Bottom line:** {en}\n\n"
                     f"※ Synthesis of the 3 methods + news/technicals. Reference only, not investment advice.")
     return {"ok": True, "ticker": ticker, "name": name, "action": action,
             "pnl_pct": round(pnl, 2) if pnl is not None else None, "price": cur,
