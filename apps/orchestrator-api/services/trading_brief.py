@@ -573,6 +573,31 @@ def _regime_tone(db) -> str:
     return tone
 
 
+_mktret_cache: dict[str, Any] = {"t": 0.0, "v": None}
+
+
+def _mkt_ret_today(db) -> Optional[float]:
+    """Today's market move % (live KODEX200 vs its prior close) — for the plunge gate.
+    Cached 60s. Returns None if unavailable (gate then does nothing)."""
+    import time as _t
+    if (_t.time() - _mktret_cache["t"]) < 60 and _mktret_cache["v"] is not None:
+        return _mktret_cache["v"]
+    v = None
+    try:
+        row = db.execute(text("SELECT close FROM raw_daily_prices WHERE ticker='069500' "
+                              "ORDER BY date DESC LIMIT 1")).first()
+        prev = float(row.close) if row and row.close else None
+        from services.assistant_agent import _live_price_for_code
+        q = _live_price_for_code("069500", "KODEX 200")
+        live = float(q["price"]) if q and q.get("price") else None
+        if prev and live:
+            v = round((live - prev) / prev * 100, 2)
+    except Exception:
+        pass
+    _mktret_cache.update(t=_t.time(), v=v)
+    return v
+
+
 def stock_card(db, ticker: str, horizon: int = 5, live: bool = False,
                as_of: Optional[str] = None, live_price: float | None = None) -> dict[str, Any]:
     pred = ps.get_ticker(db, ticker, horizon) or {}
@@ -605,7 +630,8 @@ def stock_card(db, ticker: str, horizon: int = 5, live: bool = False,
 # Independent of the ML model. Scores each stock from the signals the day-trader in
 # the video actually reads: 호가 imbalance + 실시간/일별 수급 + 박스권 position.
 def analysis_signal(card: dict, rt: dict | None, news: int = 0,
-                    regime_tone: str = "mixed", wall: dict | None = None) -> dict[str, Any]:
+                    regime_tone: str = "mixed", wall: dict | None = None,
+                    mkt_ret: float | None = None) -> dict[str, Any]:
     L = card.get("levels") or {}
     flow = card.get("flow") or {}
     score = 0
@@ -673,6 +699,12 @@ def analysis_signal(card: dict, rt: dict | None, news: int = 0,
         sig = "WATCH"
         reasons.append("강세장 — 매도(공매) 보류")
         reasons_en.append("SELL suppressed in a risk-on market (trend gate)")
+    # INDEX-PLUNGE GATE (M5.5): don't buy into a sharply falling market — Method 2's BUY
+    # calls systematically lose on down-days (its main weakness). Demote BUY→WATCH.
+    if sig == "BUY" and mkt_ret is not None and mkt_ret <= -1.5:
+        sig = "WATCH"
+        reasons.append(f"시장 급락(지수 {mkt_ret:.1f}%) — 신규 매수 보류")
+        reasons_en.append(f"Market plunging ({mkt_ret:.1f}%) — hold off new buys")
     label = {"BUY": "매수", "SELL": "매도", "WATCH": "관망"}[sig]
     label_en = {"BUY": "Buy", "SELL": "Sell", "WATCH": "Watch"}[sig]
     return {"signal": sig, "label": label, "label_en": label_en, "score": score,
@@ -715,6 +747,7 @@ def analysis_batch(db, tickers: list[str], horizon: int = 5) -> dict[str, Any]:
     as_of = ps._latest_as_of(db, horizon)
     flows = {tk: _flow(db, tk) for tk in tickers}          # DB (Naver EOD) — always present
     regime_tone = market_regime(db).get("tone", "mixed")   # #4 regime filter
+    mkt_ret = _mkt_ret_today(db)                            # M5.5 index-plunge gate
     news = _news_scores(db)                                 # #3 news/DART signal
 
     # Live signals: read the PC-collected snapshot (works on Render, no Kiwoom call,
@@ -743,7 +776,7 @@ def analysis_batch(db, tickers: list[str], horizon: int = 5) -> dict[str, Any]:
             wall = wall_bias(db, tk)
         except Exception:
             wall = None
-        sig = analysis_signal(card, rt, news=news.get(tk, 0), regime_tone=regime_tone, wall=wall)
+        sig = analysis_signal(card, rt, news=news.get(tk, 0), regime_tone=regime_tone, wall=wall, mkt_ret=mkt_ret)
         if wall and wall.get("bias"):
             out_wall = wall                                   # surface walls to the UI
         else:
@@ -764,6 +797,7 @@ def consensus_picks(db, horizon: int = 5) -> list[dict[str, Any]]:
     it's deterministic and works after market."""
     as_of = ps._latest_as_of(db, horizon)
     regime_tone = market_regime(db).get("tone", "mixed")
+    mkt_ret = _mkt_ret_today(db)                            # M5.5 index-plunge gate
     news = _news_scores(db)
     out = []
     for tk in NAMES:
@@ -773,7 +807,7 @@ def consensus_picks(db, horizon: int = 5) -> list[dict[str, Any]]:
             continue
         levels = _box_levels(db, tk, ml_adv)              # realistic 박스권 levels
         sig = analysis_signal({"levels": levels, "flow": _flow(db, tk)}, None,
-                              news=news.get(tk, 0), regime_tone=regime_tone)
+                              news=news.get(tk, 0), regime_tone=regime_tone, mkt_ret=mkt_ret)
         if sig["signal"] != ml_adv:                        # must AGREE
             continue
         out.append({
