@@ -322,10 +322,13 @@ def _stock_in_query(transcript: Optional[str]) -> Optional[str]:
     """Return a known stock ticker/name found in the text, else None. Uses the
     comprehensive resolver (all 51 tracked + slang like 하닉/삼전 + codes) first."""
     try:
-        from services.stock_resolver import find_all
+        from services.stock_resolver import find_all, resolve_one
         hits = find_all(transcript or "")
         if hits:
             return hits[0][0]
+        c, _n = resolve_one(transcript or "")     # fuzzy fallback for typos (삼썽전자→삼성전자)
+        if c:
+            return c
     except Exception:
         pass
     t = (transcript or "").lower()
@@ -654,10 +657,13 @@ def _all_stocks_in_query(transcript: Optional[str]) -> list[tuple[str, str]]:
     # Comprehensive resolver first (all 51 tracked names + slang 하닉/삼전/현차 + codes,
     # longest-first with span-consumption so 'SKT'≠'KT'). Falls through if it finds none.
     try:
-        from services.stock_resolver import find_all as _find_all
+        from services.stock_resolver import find_all as _find_all, resolve_one as _resolve_one
         _hits = _find_all(transcript or "")
         if _hits:
             return _hits
+        _c, _n = _resolve_one(transcript or "")     # fuzzy fallback for typos
+        if _c:
+            return [(_c, _n)]
     except Exception:
         pass
     t = transcript or ""
