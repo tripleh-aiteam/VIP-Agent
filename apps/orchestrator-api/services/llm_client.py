@@ -416,7 +416,7 @@ def gemini_multimodal_sync(
     user_text: str,
     attachments: list[dict],
     *,
-    model: str = "gemini-3.1-pro-preview",
+    model: str = "gemini-3.5-flash",   # cost guard: Flash reads images fine; Pro-preview is ~10x pricier
     max_tokens: int = 800,
     temperature: float = 0.4,
     timeout: float = 90.0,

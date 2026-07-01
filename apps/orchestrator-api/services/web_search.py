@@ -217,12 +217,15 @@ def search_web(query: str, num_results: int = 5, recency: str | None = None) -> 
         return {"ok": False, "error": "empty query", "results": []}
     n = max(1, min(num_results, 10))
     errors: list[str] = []
-    for name, fn in (
-        ("serper", _serper),
-        ("google_pse", _google_pse),
-        ("tavily", _tavily),
-        ("gemini_grounded", _gemini_grounded),
-    ):
+    # COST GUARD: Gemini "grounded search" (Google Search tool) is billed per call and was
+    # firing as a fallback on every search Serper missed — across the daily newspaper report
+    # + per-stock collectors that's hundreds of paid Google calls/day. Disabled by default;
+    # set WEB_SEARCH_GEMINI_GROUNDED=1 to re-enable. Failed searches return empty and callers
+    # fall back locally.
+    providers = [("serper", _serper), ("google_pse", _google_pse), ("tavily", _tavily)]
+    if os.getenv("WEB_SEARCH_GEMINI_GROUNDED") == "1":
+        providers.append(("gemini_grounded", _gemini_grounded))
+    for name, fn in providers:
         try:
             hits = fn(query, n, recency) if name == "serper" else fn(query, n)
         except Exception as e:

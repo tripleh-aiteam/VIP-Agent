@@ -3345,7 +3345,7 @@ def _run_multimodal_path(
             system_prompt=sys,
             user_text=full_user,
             attachments=image_or_pdf,
-            model="gemini-3.1-pro-preview",
+            model="gemini-3.5-flash",   # cost guard: Flash reads images fine; Pro-preview is ~10x pricier
             max_tokens=800,
             temperature=0.4,
         )
