@@ -388,6 +388,8 @@ export default function ChatWorkspace({ apiBase, agentId, agentLabel }: Props) {
   const [showDownload, setShowDownload] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  // Message typed/sent while a previous answer is still generating → queued, fired when done.
+  const queuedRef = useRef<string | null>(null);
 
   // --- Voice state ---
   type VoiceState = "idle" | "listening" | "thinking" | "speaking";
@@ -530,7 +532,13 @@ export default function ChatWorkspace({ apiBase, agentId, agentLabel }: Props) {
 
   async function send(textOverride?: string) {
     const q = (textOverride ?? prompt).trim();
-    if (!q || thinking || !activeSession) return;
+    if (!q || !activeSession) return;
+    // Busy? Queue and send when the current answer finishes — don't block typing.
+    if (thinking) {
+      queuedRef.current = q;
+      if (textOverride === undefined) setPrompt("");
+      return;
+    }
     setThinking(true);
     setError(null);
     if (textOverride === undefined) setPrompt("");
@@ -660,6 +668,11 @@ export default function ChatWorkspace({ apiBase, agentId, agentLabel }: Props) {
       }
     } finally {
       setThinking(false);
+      const nextQ = queuedRef.current;
+      if (nextQ) {
+        queuedRef.current = null;
+        setTimeout(() => void send(nextQ), 0);
+      }
     }
   }
 
@@ -1225,7 +1238,7 @@ export default function ChatWorkspace({ apiBase, agentId, agentLabel }: Props) {
                   ? "Ask anything …"
                   : "Ask a follow-up — more detail, why, is this correct?"}
                 className="min-w-0 flex-1 border-none bg-transparent px-2 py-2 text-[15px] text-gray-900 outline-none placeholder:text-gray-400"
-                disabled={thinking || !activeSession}
+                disabled={!activeSession}
               />
             <div className="relative shrink-0" data-llm-picker>
               <button
@@ -1313,7 +1326,7 @@ export default function ChatWorkspace({ apiBase, agentId, agentLabel }: Props) {
             <button
               type="button"
               onClick={() => send()}
-              disabled={!prompt.trim() || thinking || !activeSession}
+              disabled={!prompt.trim() || !activeSession}
               className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-gray-900 text-[16px] text-white shadow-sm transition-colors hover:bg-gray-800 disabled:opacity-40"
               title="Send"
             >↑</button>
