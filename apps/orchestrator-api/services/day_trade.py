@@ -191,6 +191,19 @@ def scalp_signal(db, ticker: str, target_pct: float = 1.0,
     if stale_min:
         warns_ko.append(f"분봉이 {stale_min}분 전 데이터입니다 — PC 수집기 상태를 확인하세요.")
         warns_en.append(f"Minute data is {stale_min} min old — check the PC collector.")
+    # zone built from an OLD session's bars (collector hasn't run today) — say so even
+    # outside market hours; a plan anchored days back must never look like today's.
+    if not collector_off:
+        try:
+            from datetime import datetime as _dt
+            from zoneinfo import ZoneInfo as _ZI
+            _data_date = str(v.get("as_of") or "")[:10]
+            _today = _dt.now(_ZI("Asia/Seoul")).date().isoformat()
+            if _data_date and _data_date != _today:
+                warns_ko.append(f"매매 계획(매수 구간·손절)이 {_data_date} 세션 분봉 기준입니다 — 오늘 세션 데이터가 아직 없어요 (PC 수집기 확인). 현재가와 구간이 멀다면 이 때문입니다.")
+                warns_en.append(f"The plan (buy zone/stop) is based on the {_data_date} session's bars — no data for today's session yet (check the PC collector). If the zone looks far from the current price, this is why.")
+        except Exception:
+            pass
     if mkt is not None and mkt <= -1.5:
         warns_ko.append(f"오늘 시장이 급락 중(KODEX200 {mkt:+.2f}%)이라 반등 단타도 실패 확률이 평소보다 높습니다 — 수량을 줄이거나 쉬는 것도 전략입니다.")
         warns_en.append(f"The market is plunging today (KODEX200 {mkt:+.2f}%) — even bounce scalps fail more often; smaller size (or sitting out) is a valid play.")
