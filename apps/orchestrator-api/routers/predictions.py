@@ -102,6 +102,14 @@ def intraday_tick(db: Session = Depends(get_db)):
     return tick(db)
 
 
+@router.get("/readiness")
+def readiness(db: Session = Depends(get_db)):
+    """Phase C gate: is the chatbot's measured record good enough for real money?
+    (100+ decisive scalp calls at 58%+ win rate after costs.) GO / NO_GO / COLLECTING."""
+    from services.readiness import report
+    return report(db)
+
+
 @router.post("/intraday/bank")
 def intraday_bank(db: Session = Depends(get_db)):
     """B2 prep: append fresh order-flow snapshots to intraday_snapshot_history — the

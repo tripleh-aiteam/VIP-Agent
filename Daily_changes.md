@@ -24,6 +24,15 @@ Real Estate agent now `active` (rel 0.998) on `realestate.tripleh.co.kr` (401→
 
 - Deploy; next 23:30 UTC cross-agent run will be clean. Optionally regenerate today's cross-agent row so the boss sees a clean one immediately.
 
+### [15:10] Complete no-ticker buy answers + Phase C readiness gate
+
+- **What:**
+  1. **buy_picks** — new [buy_picks.py](apps/orchestrator-api/services/buy_picks.py): generic "what stock should I buy?" (recommendation wanted, NO stock named) used to fall through to a raw LLM chain that produced vague/truncated answers (boss's screenshot: "🎯 Final Recommendation" header with no body). Now deterministic: runs the full 3-method `decide()` in parallel (3 workers, own DB sessions) over the morning recommendation candidates, presents BUYs with per-method verdicts + entry/target/stop + news + per-pick sizing (remembered budget) + market line + track record; on a no-BUY day answers honestly and shows the WATCH setups with the trigger levels that would flip them to buys. KO==EN, VIP==AI Advisor. Routed in [assistant_agent.py](apps/orchestrator-api/services/assistant_agent.py) inside the advice block when `_wants_recommendation` and no ticker resolves (sell-timing excluded).
+  2. **Phase C readiness gate** — new [readiness.py](apps/orchestrator-api/services/readiness.py): automates the agreed real-money rule (100+ decisively-graded scalp calls at 58%+ win rate after ~0.25% costs) → GO/NO_GO/COLLECTING with progress %, chatbot per-intent record, and method-level beta-adjusted stats. `GET /predictions/readiness` + chat intent (`_READINESS_KW`: "실전 매매 준비됐어?", "are we ready for real money", "성적 어때", "track record").
+- **Why:** boss found the incomplete answer during testing and asked for complete/detailed answers in both bots+languages; Phase C needed its go/no-go decision automated so it's read off measured data.
+- **Files:** `services/buy_picks.py` (new), `services/readiness.py` (new), `services/assistant_agent.py`, `routers/predictions.py`
+- **Next:** evidence collection (daily use + collector + crons) until the readiness gate answers GO or NO_GO.
+
 ### [13:40] Phase B — live tape check, movers intent, snapshot banking (+ tilde display fix)
 
 - **What:**

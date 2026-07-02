@@ -310,6 +310,21 @@ def _is_watchlist_question(transcript: Optional[str]) -> bool:
     return any(k in t for k in _WATCHLIST_KW)
 
 
+# Phase C — the real-money readiness gate, askable in chat.
+_READINESS_KW = (
+    "실전 준비", "실전매매 준비", "실전 매매 준비", "준비됐어", "준비 됐어", "진짜 돈",
+    "실거래 시작", "실전 시작해도", "믿어도 돼", "믿을 수 있어", "성적 어때", "성적 얼마",
+    "승률 어때", "승률 얼마", "트랙레코드", "채점 결과",
+    "ready for real", "real money", "are we ready", "readiness", "track record",
+    "can i trust you", "how accurate are you", "your win rate",
+)
+
+
+def _is_readiness_question(transcript: Optional[str]) -> bool:
+    t = (transcript or "").lower()
+    return any(k in t for k in _READINESS_KW)
+
+
 # B3 — "what's moving RIGHT NOW" (live movers), distinct from the pick-based watchlist.
 _MOVERS_KW = (
     "지금 움직이는", "지금 움직이", "움직이는 종목", "급등주", "급등 종목", "오늘 급등",
@@ -4156,6 +4171,16 @@ def _run_agent_impl(
         except Exception as e:
             log.warning(f"position advice failed: {str(e)[:120]}")
 
+    # === Phase C — READINESS GATE ("실전 매매 준비됐어? / are we ready for real money?") ===
+    if not confirmed_tool and not attachment_ids and _is_readiness_question(transcript):
+        try:
+            from services.readiness import reply_text as _ready_text
+            return {"intent": "readiness", "language": lang,
+                    "reply": _ready_text(db, lang), "action": None, "speak": True,
+                    "transcript": transcript, "tool_used": "readiness"}
+        except Exception as e:
+            log.warning(f"readiness failed: {str(e)[:120]}")
+
     # === B3 — LIVE MOVERS ("지금 움직이는 종목?") — real-time move% + volume vs normal ===
     if (not confirmed_tool and not attachment_ids and _is_movers_question(transcript)
             and not _all_stocks_in_query(transcript)):     # a named stock → scalp/advice instead
@@ -4756,6 +4781,20 @@ def _run_agent_impl(
                 tm_steps.append({"tool": "read_chart", "args": {"ticker": _code}})
             return _run_chain(db, transcript, lang, tm_steps, current_path,
                               selected_id, system, history or [], agent_id=agent_id, user_id=user_id)
+        # GENERIC "what should I buy?" (recommendation wanted, NO stock named) →
+        # deterministic 3-method top-picks. This used to fall through to a raw LLM
+        # chain that gave vague/truncated answers ("Final Recommendation" with no body).
+        if _wants_recommendation(transcript) and not _code and not _is_sell_timing_q(transcript):
+            try:
+                from services.buy_picks import build as _bp_build
+                _bp = _bp_build(db, n=3, transcript=transcript,
+                                user_key=user_id or agent_id, lang=lang)
+                if _bp.get("reply"):
+                    return {"intent": "buy_picks", "language": lang, "reply": _bp["reply"],
+                            "action": None, "speak": True, "transcript": transcript,
+                            "tool_used": "buy_picks"}
+            except Exception as e:
+                log.warning(f"buy_picks failed: {str(e)[:160]}")
         aid = (agent_id or "vip").lower()
         if aid == "stock":
             advice_steps = [
