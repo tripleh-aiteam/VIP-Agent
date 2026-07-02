@@ -4417,10 +4417,15 @@ def _run_agent_impl(
                 _vp = _vip_live_price_reply(transcript, lang)
                 if _vp:
                     return _vp
-            elif _is_future_outlook(_prev) or _is_stock_advice(_prev, agent_id):  # prev was outlook/advice
+            elif _wants_recommendation(_prev) or _is_future_outlook(_prev) or _is_stock_advice(_prev, agent_id):
                 try:
                     from services import prediction_service as _ps2
                     _c = next((c for (c, _n) in _sw if c in _ps2.NAMES), None)
+                    # prev was a buy/sell RECOMMENDATION → keep recommending (decide); prev was a
+                    # pure OUTLOOK → keep forecasting (two_method). Mirrors the main routing split.
+                    if _c and _wants_recommendation(_prev) and "decide" in TOOL_REGISTRY:
+                        return _run_chain(db, transcript, lang, [{"tool": "decide", "args": {"ticker": _c}}],
+                                          current_path, selected_id, system, history or [], agent_id=agent_id)
                     if _c and "two_method_view" in TOOL_REGISTRY:
                         _st = [{"tool": "two_method_view", "args": {"ticker": _c}}]
                         if "read_chart" in TOOL_REGISTRY:
