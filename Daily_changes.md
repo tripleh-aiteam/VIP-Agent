@@ -24,6 +24,11 @@ Real Estate agent now `active` (rel 0.998) on `realestate.tripleh.co.kr` (401→
 
 - Deploy; next 23:30 UTC cross-agent run will be clean. Optionally regenerate today's cross-agent row so the boss sees a clean one immediately.
 
+### [18:20] Generic "what should I buy" → detailed buy_picks; watchlist enriched
+
+- **What:** boss's "I have money so what should I buy? which stock is good now" hit the compact scalp watchlist (generic buy keywords lived in `_WATCHLIST_KW`). Split in [assistant_agent.py](apps/orchestrator-api/services/assistant_agent.py): watchlist-matched questions WITHOUT 단타/scalp flavor now route to the detailed **buy_picks** (3-method verdicts, levels, sizing, market line, buy-trigger conditions); only explicitly 단타-flavored asks get the watchlist. The watchlist itself ([scalp_watchlist.py](apps/orchestrator-api/services/scalp_watchlist.py)) was also enriched: market-context line (KODEX200 + scalping-weather tone), per-pick 매매 계획 with stop-% and an 실행 (execution) line, "how these were chosen" + next-step footer, honest empty-day message; the route appends #1-pick sizing (labelled with the pick's name) and the scalp track record.
+- **Files:** `services/assistant_agent.py`, `services/scalp_watchlist.py`
+
 ### [17:40] Detailed sectioned scalp answer (boss: "too short")
 
 - **What:** rebuilt `scalp_signal`'s reply ([day_trade.py](apps/orchestrator-api/services/day_trade.py)) from one dense line into the decide-style sectioned format: title (live price + KODEX200) → ① 한 줄 결론 (why enter/wait in words) → ② +1% feasibility explained → ③ numbered trade plan (zone/target/stop with %s, time, net-after-cost) → ④ per-method evidence with the WHY + live tape + direction synthesis (순풍/역풍/중립) → ⑤ caution (collector/stale/market-plunge warnings + discipline rule). KO==EN; 💰 sizing and 📊 track-record still append; watchlist unaffected (uses fields, not strings). `_join()` keeps blank section lines while dropping skipped ones.

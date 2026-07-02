@@ -4197,15 +4197,53 @@ def _run_agent_impl(
         except Exception as e:
             log.warning(f"movers failed: {str(e)[:120]}")
 
-    # === M4 — SCALP WATCHLIST ("오늘 단타 종목 뭐가 좋아?") — no single ticker needed ===
+    # === M4 — "what should I buy?" with no ticker ===
+    # SPLIT: an explicitly 단타-flavored ask → the scalp watchlist; a GENERIC buy ask
+    # ("뭐 살까 / what should I buy / which stock is good") → the detailed 3-method
+    # buy_picks answer (per-method verdicts, levels, sizing, market line, triggers).
     if (not confirmed_tool and not attachment_ids and _is_watchlist_question(transcript)
             and not _all_stocks_in_query(transcript)):     # a named stock → let scalp/advice handle it
+        _scalpish = any(k in (transcript or "").lower()
+                        for k in ("단타", "초단타", "스캘", "scalp", "intraday"))
+        _en = str(lang or "").lower().startswith("en")
+        if not _scalpish:
+            try:
+                from services.buy_picks import build as _bp_build
+                _bp = _bp_build(db, n=3, transcript=transcript, user_key=user_id, lang=lang)
+                if _bp.get("reply"):
+                    return {"intent": "buy_picks", "language": lang, "reply": _bp["reply"],
+                            "action": None, "speak": True, "transcript": transcript,
+                            "tool_used": "buy_picks"}
+            except Exception as e:
+                log.warning(f"buy_picks (watchlist route) failed: {str(e)[:120]}")
         try:
             from services.scalp_watchlist import build as _wl_build
             _wl = _wl_build(db, n=5)
-            _en = str(lang or "").lower().startswith("en")
-            return {"intent": "scalp_watchlist", "language": lang,
-                    "reply": _wl.get("reasoning_en" if _en else "reasoning_ko"),
+            _reply = _wl.get("reasoning_en" if _en else "reasoning_ko")
+            # size the #1 pick when the budget is known — "how many" answered here too
+            try:
+                _p0 = (_wl.get("picks") or [None])[0]
+                if _p0 and _p0.get("buy"):
+                    from services.position_size import sizing_line
+                    _sl = sizing_line(db, transcript=transcript, user_key=user_id, lang=lang,
+                                      entry=float(_p0["buy"]),
+                                      stop=float(_p0["stop"]) if _p0.get("stop") else None)
+                    if _sl:
+                        if "수량" in _sl or "Sizing" in _sl:   # budget-based line → say WHICH pick
+                            _tag = (f" · for pick #1 {_p0.get('name_en') or _p0.get('name')}" if _en
+                                    else f" · 기준: 1번 {_p0.get('name')}")
+                            _sl = _sl.rstrip(".") + _tag + "."
+                        _reply = (_reply or "") + _sl
+            except Exception:
+                pass
+            try:
+                from services.call_grader import track_record_line
+                _tr = track_record_line(db, "scalp", lang)
+                if _tr:
+                    _reply = (_reply or "") + _tr
+            except Exception:
+                pass
+            return {"intent": "scalp_watchlist", "language": lang, "reply": _reply,
                     "action": None, "speak": True, "transcript": transcript,
                     "tool_used": "scalp_watchlist"}
         except Exception as e:

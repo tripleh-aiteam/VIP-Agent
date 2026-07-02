@@ -73,26 +73,66 @@ def build(db, n: int = 5, target_pct: float = 1.0) -> dict[str, Any]:
                {"ENTER": "→ 지금 진입 가능", "WAIT": "→ 매수가까지 눌림 대기", "SKIP": "→ 관찰만"}).get(r["entry"], "")
         return " · ".join(bits) + " " + ent
 
+    # market backdrop — a scalp list on a crash day must say so up front
+    mkt = None
+    try:
+        from services.trading_brief import _mkt_ret_today
+        mkt = _mkt_ret_today(db)
+    except Exception:
+        pass
+    mkt_ko = mkt_en = ""
+    if mkt is not None:
+        tone_ko = ("시장 우호적 — 단타에 유리한 흐름" if mkt >= 0.3 else
+                   "시장 급락 경계 — 반등 단타도 실패 확률 상승, 수량 축소 권장" if mkt <= -1.5 else
+                   "시장 약세 — 보수적으로" if mkt < 0 else "시장 중립")
+        tone_en = ("supportive tape — good scalping weather" if mkt >= 0.3 else
+                   "market plunging — even bounce scalps fail more; size down" if mkt <= -1.5 else
+                   "soft tape — be conservative" if mkt < 0 else "neutral tape")
+        mkt_ko = f"\n**시장 상황**: KODEX200 오늘 {mkt:+.2f}% — {tone_ko}\n"
+        mkt_en = f"\n**Market**: KODEX200 today {mkt:+.2f}% — {tone_en}\n"
+
     lines_ko, lines_en = [], []
     for i, r in enumerate(rows, 1):
+        risk_pct = None
+        try:
+            if r.get("buy") and r.get("stop"):
+                risk_pct = round((float(r["buy"]) - float(r["stop"])) / float(r["buy"]) * 100, 2)
+        except Exception:
+            pass
         tag = {"ENTER": "🟢 진입가능", "WAIT": "🟡 눌림대기", "SKIP": "⚪ 관찰"}.get(r["entry"], "")
         lines_ko.append(
             f"**{i}. {r['name']}**  {tag} · 방향 ▲상승 예상\n"
-            f"   • 왜: {_why(r)}\n"
-            f"   • 매수 {_f(r['buy'])} · 목표(+{target_pct}%) {_f(r['target'])} · 손절 {_f(r['stop'])}"
-            + (f" · ~{r['est']}분" if r.get("est") else ""))
+            f"   · 왜 이 종목인가: {_why(r)}\n"
+            f"   · 매매 계획: 매수 {_f(r['buy'])}원 → 목표 {_f(r['target'])}원(+{target_pct}%) → 손절 {_f(r['stop'])}원"
+            + (f"(−{risk_pct}%)" if risk_pct else "")
+            + (f" · 예상 ~{r['est']}분" if r.get("est") else "")
+            + f"\n   · 실행: {'지금 매수 구간입니다 — 분할로 진입하세요.' if r['entry']=='ENTER' else '매수가까지 기다렸다가 지정가로 받으세요 — 쫓아 사면 손절 폭이 커집니다.'}")
         tag_en = {"ENTER": "🟢 enter", "WAIT": "🟡 wait-dip", "SKIP": "⚪ watch"}.get(r["entry"], "")
         lines_en.append(
             f"**{i}. {r.get('name_en') or r['name']}**  {tag_en} · direction ▲up-bias\n"
-            f"   • Why: {_why(r, en=True)}\n"
-            f"   • Buy {_f(r['buy'])} · target(+{target_pct}%) {_f(r['target'])} · stop {_f(r['stop'])}"
-            + (f" · ~{r['est']}min" if r.get("est") else ""))
-    reasoning_ko = ("**📈 오늘의 단타 추천 (상승 편향 + 장중 셋업)**\n\n"
-                    + ("\n\n".join(lines_ko) if lines_ko else "오늘은 적합한 단타 셋업이 없습니다.")
-                    + "\n\n※ 방법 1·3(머신러닝·파동)으로 상승 방향을 거르고, 방법 2(호가·수급)+변동성으로 진입 자리를 잡았습니다. "
-                    "비용 감안 실수익은 목표보다 ~0.25%p 낮습니다. 참고용이며 투자 권유가 아닙니다.")
-    reasoning_en = ("**📈 Today's scalp picks (up-bias + intraday setup)**\n\n"
-                    + ("\n\n".join(lines_en) if lines_en else "No suitable scalp setups today.")
-                    + "\n\n※ Direction filtered by Methods 1 & 3 (ML·Wave), entries from Method 2 (orderbook/flows) + "
-                    "volatility. Net ≈ target − 0.25%p after costs. Reference only, not investment advice.")
+            f"   · Why this stock: {_why(r, en=True)}\n"
+            f"   · Plan: buy {_f(r['buy'])} → target {_f(r['target'])} (+{target_pct}%) → stop {_f(r['stop'])}"
+            + (f" (−{risk_pct}%)" if risk_pct else "")
+            + (f" · ~{r['est']}min" if r.get("est") else "")
+            + f"\n   · Execution: {'price is in the buy zone — scale in now.' if r['entry']=='ENTER' else 'set a limit order at the buy price and wait — chasing widens your stop.'}")
+
+    foot_ko = ("\n\n**어떻게 골랐나**: 방법 1·3(머신러닝·파동)으로 상승 방향인 종목만 거르고, "
+               "방법 2(호가·수급)와 오늘 변동성으로 진입 자리를 잡았습니다. 실수익은 세금·수수료 ~0.25%p 차감 기준입니다.\n"
+               "**다음 단계**: 종목별 자세한 계획(실시간 호가 체크·수량 계산 포함)은 \"[종목명] 단타 될까?\", "
+               "종합 매수 판단은 \"[종목명] 사도 돼?\"로 물어보세요. 참고용이며 투자 권유가 아닙니다.")
+    foot_en = ("\n\n**How these were chosen**: Methods 1 & 3 (ML·Wave) filter for up-bias; Method 2 "
+               "(orderbook/flows) + today's volatility set the entries. Net returns assume ~0.25%p costs.\n"
+               "**Next step**: for the full per-stock plan (live tape check + share count) ask \"Can I scalp [name]?\", "
+               "or \"Should I buy [name]?\" for the position view. Reference only, not investment advice.")
+
+    reasoning_ko = (f"**📈 오늘의 단타 추천 (상승 편향 + 장중 셋업 · 통과 {len(rows)}종목)**\n"
+                    + mkt_ko + "\n"
+                    + ("\n\n".join(lines_ko) if lines_ko else
+                       "오늘은 조건(상승 편향 + 변동성 여유)을 통과한 단타 셋업이 없습니다 — 무리해서 진입하기보다 쉬는 것도 전략입니다.")
+                    + foot_ko)
+    reasoning_en = (f"**📈 Today's scalp picks (up-bias + intraday setup · {len(rows)} passed)**\n"
+                    + mkt_en + "\n"
+                    + ("\n\n".join(lines_en) if lines_en else
+                       "No setup passed the filters today (up-bias + volatility headroom) — sitting out is also a strategy.")
+                    + foot_en)
     return {"picks": rows, "reasoning_ko": reasoning_ko, "reasoning_en": reasoning_en}
