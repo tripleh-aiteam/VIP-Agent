@@ -24,6 +24,11 @@ Real Estate agent now `active` (rel 0.998) on `realestate.tripleh.co.kr` (401→
 
 - Deploy; next 23:30 UTC cross-agent run will be clean. Optionally regenerate today's cross-agent row so the boss sees a clean one immediately.
 
+### [17:40] Detailed sectioned scalp answer (boss: "too short")
+
+- **What:** rebuilt `scalp_signal`'s reply ([day_trade.py](apps/orchestrator-api/services/day_trade.py)) from one dense line into the decide-style sectioned format: title (live price + KODEX200) → ① 한 줄 결론 (why enter/wait in words) → ② +1% feasibility explained → ③ numbered trade plan (zone/target/stop with %s, time, net-after-cost) → ④ per-method evidence with the WHY + live tape + direction synthesis (순풍/역풍/중립) → ⑤ caution (collector/stale/market-plunge warnings + discipline rule). KO==EN; 💰 sizing and 📊 track-record still append; watchlist unaffected (uses fields, not strings). `_join()` keeps blank section lines while dropping skipped ones.
+- **Verified live (commit e07d49f):** both languages render all 5 sections. Known artifact while the PC collector is off: after-hours quote (e.g. 339,500 NXT) vs buy zone from the last collected session (282,000) can look far apart — collector running daily fixes the zone freshness.
+
 ### [16:30] Self-audit of Phases A/B/C — 11 findings, all real ones fixed
 
 - **What:** boss asked for a full bug check before his final test. Ran an independent reviewer agent over the whole `557a945..HEAD` diff + own adversarial pass. Fixed:
