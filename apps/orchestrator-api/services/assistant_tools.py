@@ -1825,7 +1825,7 @@ def tool_day_trade(ticker: str = None, target_pct: float = 1.0, db: Session = No
     return r
 
 
-def tool_decide(ticker: str = None, db: Session = None, **_kw) -> dict[str, Any]:
+def tool_decide(ticker: str = None, db: Session = None, focus: str = None, **_kw) -> dict[str, Any]:
     """Comprehensive BUY / HOLD / SELL DECISION for ONE stock — fuses THREE factors into
     one recommendation: (1) NEWS analysis (latest news + impact), (2) INVESTOR FLOWS
     (외국인/기관 net buying + accumulation/distribution), (3) TECHNICALS (trend, MAs,
@@ -1844,7 +1844,7 @@ def tool_decide(ticker: str = None, db: Session = None, **_kw) -> dict[str, Any]
         code = rev.get(raw) or next((c for nm, c in rev.items() if raw and (raw in nm or nm in raw)), None)
     if not code:
         return {"ok": False, "error": f"'{raw}' 종목 코드를 찾지 못했습니다"}
-    r = decide(db, code)
+    r = decide(db, code, focus=focus)
     r["ok"] = True
     return r
 

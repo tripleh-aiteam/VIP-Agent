@@ -875,6 +875,21 @@ def _is_decision_q(transcript: Optional[str]) -> bool:
     return any(k in (transcript or "").lower() for k in _DECISION_KW)
 
 
+# A SELL-TIMING ask ('언제 팔아야 해?/when to sell?') → run decide() with focus='sell' so the
+# answer leads with EXIT levels (익절/손절), not the buy framing. Distinct from a fresh
+# buy/sell decision: here the user already holds (or plans to) and wants the exit plan.
+_SELL_TIMING_KW = (
+    "언제 팔", "언제 매도", "언제 파는", "언제쯤 팔", "팔 타이밍", "매도 타이밍", "매도 시점",
+    "매도시점", "익절 언제", "언제 익절", "팔 때", "언제 나와", "언제 나올", "언제 정리",
+    "when to sell", "when should i sell", "when do i sell", "when to exit", "exit timing",
+    "when to take profit", "sell target", "target to sell",
+)
+
+
+def _is_sell_timing_q(transcript: Optional[str]) -> bool:
+    return any(k in (transcript or "").lower() for k in _SELL_TIMING_KW)
+
+
 # A RECOMMENDATION ('should I buy?/살까/팔까') asks for a buy/sell/hold ACTION → the friend-
 # style 'decide' report. A pure OUTLOOK ('전망/향후/outlook/어때') asks WHERE it's headed → the
 # detailed forecast. '전망' + '어때' both live in the advice keywords, so we split explicitly:
@@ -4504,12 +4519,16 @@ def _run_agent_impl(
     # ===== BUY/SELL DECISION agent ('사야 할까/팔까', 'buy or sell', '종합 판단') → the
     # comprehensive 3-factor decision (News + Flows + Technicals + ML). Runs BEFORE
     # stock-delegation so it isn't swallowed by the generic Stock-agent path. =====
-    if not confirmed_tool and "decide" in TOOL_REGISTRY and _is_decision_q(transcript):
+    if not confirmed_tool and "decide" in TOOL_REGISTRY and (_is_decision_q(transcript)
+                                                             or _is_sell_timing_q(transcript)):
         try:
             from services import prediction_service as _psd
             _dc = next((c for (c, _n) in _all_stocks_in_query(transcript) if c in _psd.NAMES), None)
             if _dc:
-                return _run_chain(db, transcript, lang, [{"tool": "decide", "args": {"ticker": _dc}}],
+                _args = {"ticker": _dc}
+                if _is_sell_timing_q(transcript):
+                    _args["focus"] = "sell"
+                return _run_chain(db, transcript, lang, [{"tool": "decide", "args": _args}],
                                   current_path, selected_id, system, history or [], agent_id=agent_id)
         except Exception:
             pass
@@ -4656,7 +4675,10 @@ def _run_agent_impl(
         # ('전망/향후/outlook/어때') → the detailed forecast (two_method_view). Both composers
         # keep EN==KO and VIP==AI Advisor, but the two answers are DIFFERENT by design.
         if _code and _wants_recommendation(transcript) and "decide" in TOOL_REGISTRY:
-            return _run_chain(db, transcript, lang, [{"tool": "decide", "args": {"ticker": _code}}],
+            _args = {"ticker": _code}
+            if _is_sell_timing_q(transcript):
+                _args["focus"] = "sell"
+            return _run_chain(db, transcript, lang, [{"tool": "decide", "args": _args}],
                               current_path, selected_id, system, history or [], agent_id=agent_id)
         if _code and "two_method_view" in TOOL_REGISTRY:
             tm_steps = [{"tool": "two_method_view", "args": {"ticker": _code}}]

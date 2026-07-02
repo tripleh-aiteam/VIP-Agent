@@ -158,7 +158,9 @@ def _youtube(db, name: Optional[str]) -> dict[str, Any]:
             "note_ko": f"유튜브에서 언급 — 논조 {tag_ko}", "note_en": f"discussed on YouTube — {tag_en} tone"}
 
 
-def decide(db, ticker: str) -> dict[str, Any]:
+def decide(db, ticker: str, focus: Optional[str] = None) -> dict[str, Any]:
+    """focus=None → the buy/sell/hold recommendation. focus='sell' → lead with SELL/exit
+    timing (익절/손절 levels) for someone who already holds — same engine, exit framing."""
     from services import prediction_service as ps
     from services import trading_brief as tb
     code = str(ticker).zfill(6)
@@ -345,10 +347,41 @@ def decide(db, ticker: str) -> dict[str, Any]:
                       + ", scaled in over 2–3 buys." if _shares else "")
                    + f" Put a stop if it loses support ₩{_pl(sup)}.")
     else:
-        size_ko = (f"지금은 신규 매수 0을 권해요. 저항 {_pl(res)}원을 확실히 돌파하면 그때 분할로 진입하거나, "
-                   f"지지 {_pl(sup)}원에서 반등을 확인한 뒤 소량부터 담으세요.")
-        size_en = (f"Hold off — 0 new buying for now. Only start scaling in if it clears resistance ₩{_pl(res)}, "
-                   f"or after it holds support ₩{_pl(sup)}.")
+        # Even when we say "don't buy now", answer the '몇 주?' question directly with a
+        # REFERENCE size (10% of a ₩10M budget) so the user always gets a concrete number.
+        _ref_shares = None
+        if price:
+            try:
+                _ref_shares = int(10_000_000 * 0.10 / float(price))
+            except Exception:
+                _ref_shares = None
+        size_ko = ("지금은 신규 매수 보류를 권해요 (0주). "
+                   + (f"참고로 매수한다면 1,000만원 기준 약 {_ref_shares}주"
+                      + (f" (현재가 {_pl(price)}원)" if price else "") + " 정도가 적정 비중이에요. " if _ref_shares else "")
+                   + f"저항 {_pl(res)}원을 확실히 돌파하면 분할 진입하거나, 지지 {_pl(sup)}원에서 반등을 확인한 뒤 소량부터 담으세요.")
+        size_en = ("Hold off on new buying for now (0 shares). "
+                   + (f"For reference, if you did buy, ~{_ref_shares} shares on a ₩10M budget"
+                      + (f" (at ₩{_pl(price)})" if price else "") + " is a sensible size. " if _ref_shares else "")
+                   + f"Only scale in once it clears resistance ₩{_pl(res)}, or after it holds support ₩{_pl(sup)}.")
+
+    # SELL-TIMING focus ('언제 팔아야 해?'): override the headline + sizing block with an
+    # EXIT plan built from the same levels — take-profit at the sell zone / resistance,
+    # stop at support. So a holder gets 'when to sell', not the buy framing.
+    _sell_focus = (focus == "sell")
+    if _sell_focus:
+        _tp = sell_zone or (f"{_pl(res)}" if res else None)
+        head_ko = "매도(익절) 타이밍은 이렇게 잡으세요 — 목표가에서 분할 매도, 지지 이탈 시 손절."
+        head_en = "Here's how to time your exit — scale out at the target, cut if support breaks."
+        size_ko = ((f"1차 익절 목표 {_tp}원" if _tp else "1차 익절은 저항 부근") +
+                   f", 최종 목표는 저항 {_pl(res)}원 부근이에요. 목표 도달 시 분할로 매도하고, "
+                   f"지지 {_pl(sup)}원이 깨지면 미련 없이 손절하세요. "
+                   + ("추세가 아직 살아 있으니 서둘러 전량 팔 필요는 없어요." if decision in ("BUY", "HOLD")
+                      else "추세가 약해 반등 시 비중을 줄이는 걸 권해요."))
+        size_en = ((f"First take-profit around ₩{_tp}" if _tp else "First take-profit near resistance") +
+                   f", final target near resistance ₩{_pl(res)}. Scale out into the target and "
+                   f"cut without hesitation if support ₩{_pl(sup)} breaks. "
+                   + ("The trend still holds, so no need to dump it all at once." if decision in ("BUY", "HOLD")
+                      else "The trend is weak — trim into any bounce."))
 
     # ---- fuller, explanatory write-up per method (paragraphs, not terse bullets) ----
     _vol_ko = ("움직임이 큰 편이라 방향이 맞으면 수익도 크지만 리스크도 함께 커집니다"
@@ -417,7 +450,9 @@ def decide(db, ticker: str) -> dict[str, Any]:
 
     # ① 친구식 직접 답변 → ②(매수일 때만) 얼마나 → ③ 근거(방법1/2/3+기술적/뉴스) → ④ 최종 종합 판단
     ko_lines = [f"**{head_ko}**  ·  (추천: {dec_full_ko} · 확신 {conf})", ""]
-    if decision == "BUY":
+    if _sell_focus:
+        ko_lines += ["**언제 팔까? (매도 타이밍)**", f"· {size_ko}", ""]
+    elif decision != "SELL":
         ko_lines += ["**얼마나 살까?**", f"· {size_ko}", ""]
     ko_lines += [
         f"**왜 그런가 — 근거 (확신 {conf} · {consensus_ko})**", "",
@@ -442,7 +477,9 @@ def decide(db, ticker: str) -> dict[str, Any]:
     ko = "\n".join(ko_lines)
 
     en_lines = [f"**{head_en}**  ·  (Recommendation: {dec_full_en} · confidence {conf_en})", ""]
-    if decision == "BUY":
+    if _sell_focus:
+        en_lines += ["**When to sell? (exit timing)**", f"- {size_en}", ""]
+    elif decision != "SELL":
         en_lines += ["**How many?**", f"- {size_en}", ""]
     en_lines += [
         f"**Why — the evidence (confidence {conf_en} · {consensus_en})**", "",
