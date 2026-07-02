@@ -245,6 +245,50 @@ def _discover_and_register_all() -> None:
             continue
 
 
+_FAM_STOP = {"preview", "latest", "exp", "experimental", "beta", "stable"}
+
+
+def _family_version(mid: str) -> tuple:
+    """(family_key, version_tuple) for a model id. Family = tier words (mini/pro/flash/opus/
+    sonnet/haiku + sizes like 70b); version = the numbers. So 'claude-sonnet-4-6' and
+    'claude-sonnet-5' share family 'claude-sonnet' (keep higher version), while 'llama-70b'
+    vs 'llama-8b' stay separate tiers. 'preview'/'latest' are ignored (version modifiers)."""
+    s = mid.lower().replace("/", "-")
+    fam, ver = [], []
+    for t in re.split(r"[-_.]", s):
+        if not t or t in _FAM_STOP:
+            continue
+        if t.isdigit():
+            ver.append(int(t)); continue
+        m = re.fullmatch(r"(\d+)([a-z]+)", t)           # 4o / 70b / 16k
+        if m:
+            n, suf = int(m.group(1)), m.group(2)
+            if suf in ("b", "x"):
+                fam.append(t)                           # size tier → keep whole
+            else:
+                ver.append(n); fam.append(suf)          # 4o → version 4 + 'o'
+            continue
+        m = re.fullmatch(r"([a-z]+)(\d+)", t)           # o1 / o3 / qwen3
+        if m:
+            fam.append(m.group(1)); ver.append(int(m.group(2))); continue
+        fam.append(t)
+    return "-".join(fam), tuple(ver)
+
+
+def _collapse_to_latest(catalog: list[dict]) -> list[dict]:
+    """Keep only the NEWEST version per (provider, family): Sonnet 5 replaces Sonnet 4.x,
+    Gemini 3.1 Pro replaces 2.5 Pro. Capability/size tiers (pro/flash/mini/70b…) stay separate."""
+    best: dict = {}
+    for m in catalog:
+        fam, ver = _family_version(m["id"])
+        key = (m["provider"], fam)
+        cur = best.get(key)
+        if cur is None or ver > cur[1] or (ver == cur[1] and len(m["id"]) < len(cur[0]["id"])):
+            best[key] = (m, ver)
+    kept = {id(b[0]) for b in best.values()}
+    return [m for m in catalog if id(m) in kept]         # keep original order
+
+
 def list_available_models() -> list[dict]:
     """Return catalog of models with availability flags. Reads env vars at call time."""
     _discover_and_register_all()                        # auto-add newly-launched models (all providers)
@@ -265,7 +309,7 @@ def list_available_models() -> list[dict]:
             "id": friendly, "provider": provider, "real_model": real,
             "available": available,
         })
-    return catalog
+    return _collapse_to_latest(catalog)                 # keep only the newest per family
 
 
 def ping_model(model: str, timeout: float = 45.0) -> dict:
