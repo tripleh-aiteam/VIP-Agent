@@ -218,11 +218,26 @@ def scalp(ticker: str, target: float = Query(1.0), db: Session = Depends(get_db)
 
 
 @router.post("/chatbot-grade")
-def chatbot_grade(db: Session = Depends(get_db)):
+def chatbot_grade(void_graded_before: str | None = Query(None), db: Session = Depends(get_db)):
     """Grade chatbot advice calls whose horizon elapsed (M1.2). Fire every ~20-30 min
-    during market via external cron so the hit-rate matures."""
+    during market via external cron so the hit-rate matures.
+
+    void_graded_before (ISO date, one-time maintenance): mark rows graded BEFORE that
+    date as outcome='void' so calls graded under old, buggy logic stop polluting the
+    readiness gate — the track record restarts clean from the fixed grader."""
+    from sqlalchemy import text as _t
     from services.call_grader import grade_open
-    return grade_open(db)
+    voided = 0
+    if void_graded_before:
+        r = db.execute(_t(
+            "UPDATE chatbot_calls SET outcome='void' WHERE status='graded' "
+            "AND outcome != 'void' AND graded_ts < :d"), {"d": void_graded_before})
+        db.commit()
+        voided = r.rowcount or 0
+    out = grade_open(db)
+    if void_graded_before:
+        out["voided"] = voided
+    return out
 
 
 @router.get("/chatbot-scoreboard")

@@ -2659,7 +2659,7 @@ def _run_chain(
                 from services.position_size import sizing_line
                 _wv0 = _dec.get("method3_wave") or {}
                 _px = float(_dec["price"])
-                _sl = sizing_line(db, transcript=transcript, user_key=user_id or agent_id,
+                _sl = sizing_line(db, transcript=transcript, user_key=user_id,
                                   lang=lang, entry=_px,
                                   stop=float(_wv0.get("stop") or _px * 0.98))
                 if _sl:
@@ -4172,7 +4172,9 @@ def _run_agent_impl(
             log.warning(f"position advice failed: {str(e)[:120]}")
 
     # === Phase C — READINESS GATE ("실전 매매 준비됐어? / are we ready for real money?") ===
-    if not confirmed_tool and not attachment_ids and _is_readiness_question(transcript):
+    # A named stock means a stock question ("삼성전자 성적 어때?"), not the gate report.
+    if (not confirmed_tool and not attachment_ids and _is_readiness_question(transcript)
+            and not _all_stocks_in_query(transcript)):
         try:
             from services.readiness import reply_text as _ready_text
             return {"intent": "readiness", "language": lang,
@@ -4227,7 +4229,7 @@ def _run_agent_impl(
                     try:
                         from services.position_size import sizing_line
                         _bz = _sig.get("buy_zone") or []
-                        _sl = sizing_line(db, transcript=transcript, user_key=user_id or agent_id,
+                        _sl = sizing_line(db, transcript=transcript, user_key=user_id,
                                           lang=lang, entry=(_bz[1] if len(_bz) > 1 else _sig.get("current")),
                                           stop=_sig.get("stop_price"))
                         if _sl:
@@ -4788,7 +4790,7 @@ def _run_agent_impl(
             try:
                 from services.buy_picks import build as _bp_build
                 _bp = _bp_build(db, n=3, transcript=transcript,
-                                user_key=user_id or agent_id, lang=lang)
+                                user_key=user_id, lang=lang)
                 if _bp.get("reply"):
                     return {"intent": "buy_picks", "language": lang, "reply": _bp["reply"],
                             "action": None, "speak": True, "transcript": transcript,

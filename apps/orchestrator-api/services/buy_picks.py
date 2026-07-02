@@ -46,18 +46,20 @@ def _decide_many(tickers: list[str]) -> list[dict]:
             s.close()
 
     out = []
-    with ThreadPoolExecutor(max_workers=3) as ex:
+    ex = ThreadPoolExecutor(max_workers=3)         # no `with`: its exit would block on the
+    try:                                            # slow worker despite the timeout
         futs = {ex.submit(_one, tk): tk for tk in tickers}
-        try:
-            for f in as_completed(futs, timeout=75):
-                try:
-                    d = f.result()
-                    if d:
-                        out.append(d)
-                except Exception:
-                    pass
-        except Exception:
-            pass                                   # keep what finished in time
+        for f in as_completed(futs, timeout=75):
+            try:
+                d = f.result()
+                if d:
+                    out.append(d)
+            except Exception:
+                pass
+    except Exception:
+        pass                                       # keep what finished in time
+    finally:
+        ex.shutdown(wait=False, cancel_futures=True)
     return out
 
 
@@ -145,12 +147,13 @@ def build(db, n: int = 3, transcript: str = "", user_key: Optional[str] = None,
 
     budget = None
     try:
-        from services.position_size import parse_budget, recall_budget, remember_budget
-        budget = parse_budget(transcript)
-        if budget and user_key:
-            remember_budget(db, user_key, budget)
-        elif user_key:
-            budget = recall_budget(db, user_key)
+        from services.position_size import recall_budget, remember_budget, stated_budget
+        budget = stated_budget(transcript)       # cue-gated: a bare price is NOT a budget
+        if user_key:
+            if budget:
+                remember_budget(db, user_key, budget)
+            else:
+                budget = recall_budget(db, user_key)
     except Exception:
         pass
 

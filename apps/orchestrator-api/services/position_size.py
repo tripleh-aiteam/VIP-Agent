@@ -69,6 +69,26 @@ def parse_budget(msg: str) -> Optional[int]:
     return None
 
 
+_BUDGET_CUES = ("자금", "예산", "투자금", "가지고", "보유금", "budget", "capital", "i have")
+_BUY_CTX = ("사", "살", "매수", "단타", "투자", "담", "들어가", "buy", "scalp", "trade", "invest")
+
+
+def stated_budget(msg: str) -> Optional[int]:
+    """A budget the user actually STATED — not just any price mentioned. A bare amount
+    ("10만원 가면 팔까?" = a price target) must not overwrite the saved budget, so an
+    amount counts only with a budget cue (자금/예산/budget…) or the "<amount>으로 +
+    buy-context" pattern ("500만원으로 살까")."""
+    amt = parse_budget(msg)
+    if not amt:
+        return None
+    t = (msg or "").lower()
+    if any(c in t for c in _BUDGET_CUES):
+        return amt
+    if "으로" in t and any(c in t for c in _BUY_CTX):
+        return amt
+    return None
+
+
 def remember_budget(db, user_key: str, budget: int) -> None:
     try:
         _ensure(db)
@@ -121,11 +141,15 @@ def sizing_line(db, *, transcript: str, user_key: Optional[str], lang: Optional[
     """One appendable answer line: budget from the message (remembered) or from memory.
     Returns a hint line when no budget is known, so the user learns to state it."""
     en = str(lang or "").lower().startswith("en")
-    stated = parse_budget(transcript)
-    key = user_key or "default"
-    if stated:
-        remember_budget(db, key, stated)
-    budget = stated or recall_budget(db, key)
+    stated = stated_budget(transcript)
+    # No real user identity → use only what THIS message states; never remember/recall a
+    # shared row (users on the same agent must not inherit each other's capital).
+    if user_key:
+        if stated:
+            remember_budget(db, user_key, stated)
+        budget = stated or recall_budget(db, user_key)
+    else:
+        budget = stated
     if not budget:
         return ("\n\n💰 Tell me your budget (e.g. \"with 5 million won\") and I'll size the position too."
                 if en else

@@ -89,27 +89,34 @@ def _live_price(ticker: str) -> Optional[float]:
 
 
 def _bars_in_window(db, ticker: str, ts_utc: datetime, horizon_min: int) -> list:
-    """1-min bars (KST-naive table) covering [call time, call time + horizon]."""
+    """1-min bars (KST-naive table) covering [call time, call time + horizon].
+    Starts at the call's own minute (a stop touched seconds after the call must count)."""
     try:
         start = ts_utc.astimezone(_KST).replace(tzinfo=None)
         end = start + timedelta(minutes=int(horizon_min or 60))
         return db.execute(text(
             "SELECT ts, high, low, close FROM raw_minute_prices "
-            "WHERE ticker=:t AND ts > :s AND ts <= :e ORDER BY ts"),
-            {"t": ticker, "s": start, "e": end}).fetchall()
+            "WHERE ticker=:t AND ts >= :s AND ts <= :e ORDER BY ts"),
+            {"t": ticker, "s": start.replace(second=0, microsecond=0), "e": end}).fetchall()
     except Exception:
+        db.rollback()          # a failed SELECT must not abort the grading transaction
         return []
 
 
 def _daily_close_after(db, ticker: str, ts_utc: datetime) -> Optional[float]:
-    """Fallback exit for LATE grading with no minute data: the call day's daily close."""
+    """Fallback exit for LATE grading with no minute data: the call day's daily close —
+    or the NEXT session's close when the call itself came after the 15:30 close (an
+    evening call must not be graded against a price from before it was made)."""
     try:
-        d = ts_utc.astimezone(_KST).date()
+        kst = ts_utc.astimezone(_KST)
+        d = kst.date()
+        op = ">" if (kst.hour, kst.minute) >= (15, 30) else ">="
         row = db.execute(text(
-            "SELECT close FROM raw_daily_prices WHERE ticker=:t AND date >= :d "
+            f"SELECT close FROM raw_daily_prices WHERE ticker=:t AND date {op} :d "
             "ORDER BY date LIMIT 1"), {"t": ticker, "d": d}).fetchone()
         return float(row.close) if row and row.close else None
     except Exception:
+        db.rollback()
         return None
 
 
@@ -141,7 +148,10 @@ def grade_open(db) -> dict[str, Any]:
         outcome = None
         exit_px = None
         if bars:
-            if act == "BUY" and tgt and stp:
+            # Path grading only when the levels are COHERENT vs the price at call time
+            # (stop below ref below target). A WAIT whose buy-zone target already sits
+            # under the live price would otherwise auto-grade on the first bar.
+            if act == "BUY" and tgt and stp and ref and stp < ref < tgt:
                 for b in bars:                       # path: stop-before-target per bar
                     if b.low and float(b.low) <= stp:
                         outcome, exit_px = "loss", stp
@@ -149,7 +159,11 @@ def grade_open(db) -> dict[str, Any]:
                     if b.high and float(b.high) >= tgt:
                         outcome, exit_px = "win", tgt
                         break
-            elif act in ("HOLD", "WATCH") and tgt:   # scalp WAIT/SKIP — punish a missed move
+            elif (act in ("HOLD", "WATCH") and tgt and ref and tgt > ref
+                  and (r.intent or "") == "scalp"):
+                # scalp WAIT/SKIP — punish a missed move (the target the bot itself named
+                # got hit while it said wait). Scalp-only: a decision HOLD's wave target
+                # is a multi-day level and must not grade a 60-min window.
                 hit = any(b.high and float(b.high) >= tgt for b in bars)
                 outcome = "loss" if hit else "win"
             if exit_px is None and bars[-1].close:

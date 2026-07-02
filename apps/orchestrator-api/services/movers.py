@@ -33,7 +33,8 @@ def movers(db, n: int = 5) -> dict[str, Any]:
     rows = db.execute(text(
         "SELECT ticker, avg(volume) av FROM ("
         "  SELECT ticker, volume, row_number() OVER (PARTITION BY ticker ORDER BY date DESC) rn"
-        "  FROM raw_daily_prices WHERE ticker = ANY(:t) AND volume > 0) x "
+        "  FROM raw_daily_prices WHERE ticker = ANY(:t) AND volume > 0 "
+        "  AND date < CURRENT_DATE) x "
         "WHERE rn <= 20 GROUP BY ticker"), {"t": list(NAMES)}).fetchall()
     avg_vol = {r.ticker: float(r.av) for r in rows if r.av}
 
@@ -41,26 +42,34 @@ def movers(db, n: int = 5) -> dict[str, Any]:
     frac = _session_fraction() if in_market else 1.0
 
     quotes: dict[str, dict] = {}
-    with ThreadPoolExecutor(max_workers=8) as ex:
+    ex = ThreadPoolExecutor(max_workers=8)            # no `with`: its exit would block on
+    try:                                               # the slow worker despite the timeout
         futs = {ex.submit(_live_price_for_code, tk, nm): tk for tk, nm in NAMES.items()}
-        try:
-            for f in as_completed(futs, timeout=15):
-                try:
-                    q = f.result()
-                    if q:
-                        quotes[futs[f]] = q
-                except Exception:
-                    pass
-        except Exception:
-            pass                                      # keep whatever finished in time
+        for f in as_completed(futs, timeout=15):
+            try:
+                q = f.result()
+                if q:
+                    quotes[futs[f]] = q
+            except Exception:
+                pass
+    except Exception:
+        pass                                          # keep whatever finished in time
+    finally:
+        ex.shutdown(wait=False, cancel_futures=True)
 
     items = []
     for tk, q in quotes.items():
-        chg = q.get("change_pct")
-        chg = float(chg) if chg is not None else 0.0
+        try:
+            chg = float(q.get("change_pct") or 0.0)
+        except (TypeError, ValueError):
+            chg = 0.0
         vr = None
-        if q.get("volume") and avg_vol.get(tk):
-            vr = round(float(q["volume"]) / (avg_vol[tk] * frac), 1)
+        try:                                       # volume may arrive as "1,234,567" or None
+            vol = float(str(q.get("volume")).replace(",", "")) if q.get("volume") else None
+            if vol and avg_vol.get(tk):
+                vr = round(vol / (avg_vol[tk] * frac), 1)
+        except (TypeError, ValueError):
+            pass
         if abs(chg) >= MIN_MOVE_PCT or (vr is not None and vr >= MIN_VOL_RATIO):
             items.append({"ticker": tk, "name": q.get("name") or NAMES.get(tk, tk),
                           "price": q.get("price"), "change_pct": round(chg, 2),

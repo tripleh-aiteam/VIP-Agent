@@ -24,6 +24,20 @@ Real Estate agent now `active` (rel 0.998) on `realestate.tripleh.co.kr` (401→
 
 - Deploy; next 23:30 UTC cross-agent run will be clean. Optionally regenerate today's cross-agent row so the boss sees a clean one immediately.
 
+### [16:30] Self-audit of Phases A/B/C — 11 findings, all real ones fixed
+
+- **What:** boss asked for a full bug check before his final test. Ran an independent reviewer agent over the whole `557a945..HEAD` diff + own adversarial pass. Fixed:
+  1. **Grading guards** ([call_grader.py](apps/orchestrator-api/services/call_grader.py)) — BUY path-grading now requires coherent levels (`stop < ref < target`); scalp WAIT missed-move rule requires `target > ref` AND `intent='scalp'`. Without these, WAITs auto-graded loss (target already below live price → first bar "hits") and out-of-zone ENTERs auto-graded win — both silently poisoning the Phase-C gate.
+  2. **Budget capture cue** ([position_size.py](apps/orchestrator-api/services/position_size.py) `stated_budget`) — "삼성전자 10만원 가면 팔까?" no longer overwrites the saved budget; an amount counts only with 자금/예산/budget cues or "<amount>으로 + buy-context". 8-case unit test passes.
+  3. **No cross-user budget sharing** — `user_key` no longer falls back to `agent_id` (all null-user chats shared one budget row); without identity, only the message's own stated budget is used.
+  4. **Executor hang** ([movers.py](apps/orchestrator-api/services/movers.py), [buy_picks.py](apps/orchestrator-api/services/buy_picks.py)) — `with ThreadPoolExecutor` defeated the `as_completed` timeout (exit blocks on slow worker); now `shutdown(wait=False, cancel_futures=True)`.
+  5. **Grading transaction safety** — `_bars_in_window`/`_daily_close_after` rollback on failed SELECT (aborted-transaction would have killed the whole grading run); after-15:30 calls grade against the NEXT session's close, not a close from before the call; bar walk includes the call's own minute (stop touched seconds in must count).
+  6. **Readiness intent guard** — "삼성전자 성적 어때?" (stock named) no longer hijacked by the gate report.
+  7. **Movers** — volume strings/None hardened; 20d avg-volume excludes today's partial row.
+  8. **One-time cleanup** — `POST /predictions/chatbot-grade?void_graded_before=<date>` voids rows graded under the old buggy logic so the readiness gate restarts clean (fired once after deploy).
+- **Files:** `services/call_grader.py`, `services/position_size.py`, `services/assistant_agent.py`, `services/movers.py`, `services/buy_picks.py`, `routers/predictions.py`
+- **Left as-is (consistent with neighbors):** intraday cron jobs rely on server-local=UTC (matches existing intraday jobs on Render).
+
 ### [15:10] Complete no-ticker buy answers + Phase C readiness gate
 
 - **What:**
