@@ -140,6 +140,7 @@ interface AvailableModel {
   provider: string;
   real_model: string;
   available: boolean;
+  is_new?: boolean;
 }
 
 interface AgentResponse {
@@ -1283,7 +1284,7 @@ export default function ChatWorkspace({ apiBase, agentId, agentLabel }: Props) {
                             key={m.id}
                             onClick={() => { setModel(m.id); try { localStorage.setItem(`chatbot-${agentId}-model`, m.id); } catch {}; setShowModelPicker(false); }}
                             className={`w-full text-left px-4 py-1.5 text-[13px] hover:bg-gray-50 ${model === m.id ? "bg-blue-50 text-blue-700 font-medium" : "text-gray-700"}`}
-                          >{m.id}</button>
+                          >{m.id}{m.is_new && <span className="ml-1.5 text-[9px] font-bold text-white bg-blue-600 rounded px-1.5 py-0.5 align-middle">NEW</span>}</button>
                         ))}
                       </div>
                     );

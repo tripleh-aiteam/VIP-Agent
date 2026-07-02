@@ -41,10 +41,12 @@ router = APIRouter(prefix="/twins", tags=["digital-twins"])
 # ---------------------------------------------------------------------------
 
 @router.get("/llm/models")
-def list_llm_models():
-    """List available LLM models for the chat picker (Claude, OpenAI, Gemini, Ollama)."""
+def list_llm_models(db: Session = Depends(get_db)):
+    """List available LLM models for the chat picker (newest per family, all providers).
+    Each carries is_new=True for ~10 days after it first appears (for the picker's NEW badge)."""
     from services.llm_client import list_available_models
-    return {"models": list_available_models()}
+    from services.model_seen import annotate_new
+    return {"models": annotate_new(db, list_available_models())}
 
 
 @router.get("/llm/ping")
