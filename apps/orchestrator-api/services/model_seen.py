@@ -9,6 +9,9 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 
 NEW_DAYS = 10   # how long a freshly-appeared model wears the NEW badge
+# On the FIRST run we seed existing models as already-old (so the whole list isn't badged),
+# EXCEPT these genuinely-just-launched flagships — so the NEW badge is visible immediately.
+_JUST_LAUNCHED = {"claude-fable-5", "claude-opus-4-8", "claude-sonnet-5"}
 
 
 def annotate_new(db, models: list[dict], days: int = NEW_DAYS) -> list[dict]:
@@ -19,9 +22,10 @@ def annotate_new(db, models: list[dict], days: int = NEW_DAYS) -> list[dict]:
             "CREATE TABLE IF NOT EXISTS model_seen ("
             " model_id TEXT PRIMARY KEY, first_seen TIMESTAMPTZ DEFAULT now())"))
         first_run = (db.execute(text("SELECT count(*) FROM model_seen")).scalar() or 0) == 0
-        # First run → seed current models as already-old so we don't badge the whole list.
-        seed = f"now() - interval '{int(days) + 1} days'" if first_run else "now()"
+        old = f"now() - interval '{int(days) + 1} days'"
         for m in models:
+            # first run: seed as already-old EXCEPT the just-launched flagships (→ badged NEW now)
+            seed = old if (first_run and m["id"] not in _JUST_LAUNCHED) else "now()"
             db.execute(text(
                 f"INSERT INTO model_seen (model_id, first_seen) VALUES (:i, {seed}) "
                 "ON CONFLICT (model_id) DO NOTHING"), {"i": m["id"]})
