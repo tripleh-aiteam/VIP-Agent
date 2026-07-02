@@ -124,8 +124,30 @@ def get_budget_status() -> dict:
 # Each discover_* returns (friendly, real) pairs, filtered to CHAT models (no embeddings/tts/etc.)
 # and skipping dated snapshots (…-2024-08-06 / …-20251101) to keep the list clean. ----
 _discovery_cache: dict[str, dict] = {}
+_MODEL_YEAR: dict[str, int] = {}     # friendly id → release year (from each provider's /models API)
 # Skip dated/snapshot suffixes (…-2024-08-06, …-20251101, …-1106, …-0125, …-001) — clutter/dupes.
 _DATE_RE = re.compile(r"\d{4}-\d{2}-\d{2}|-\d{3,8}$")
+
+
+def _year_from_ts(ts) -> int | None:
+    try:
+        import datetime as _dt
+        return _dt.datetime.utcfromtimestamp(int(ts)).year
+    except Exception:
+        return None
+
+
+def _base_id(mid: str) -> str:
+    """Strip a trailing date/snapshot (…-2026-03-17, …-20251001) → the undated base id, so an
+    API-dated variant also dates the static friendly name (e.g. claude-haiku-4-5-20251001 →
+    claude-haiku-4-5)."""
+    return re.sub(r"-\d{4}-\d{2}-\d{2}$|-\d{6,8}$", "", mid)
+
+
+def _record_year(mid: str, year: int | None) -> None:
+    if year:
+        _MODEL_YEAR[mid] = year
+        _MODEL_YEAR.setdefault(_base_id(mid), year)
 
 
 def _disc_get(provider: str):
@@ -152,8 +174,16 @@ def _discover_anthropic() -> list:
         r = httpx.get(f"{ANTHROPIC_BASE}/models",
                       headers={"x-api-key": key, "anthropic-version": "2023-06-01"}, timeout=8.0)
         r.raise_for_status()
-        pairs = [(m["id"], m["id"]) for m in (r.json().get("data") or [])
-                 if m.get("id") and not _DATE_RE.search(m["id"])]
+        pairs = []
+        for m in (r.json().get("data") or []):
+            mid = m.get("id")
+            if not mid:
+                continue
+            ca = (m.get("created_at") or "")[:4]
+            _record_year(mid, int(ca) if ca.isdigit() else None)   # dates the base too
+            if _DATE_RE.search(mid):
+                continue                                            # don't show dated snapshots
+            pairs.append((mid, mid))
         return _disc_set("anthropic", pairs)
     except Exception:
         return _disc_stale("anthropic")
@@ -176,6 +206,7 @@ def _discover_openai() -> list:
                 continue
             if re.search(r"(embed|whisper|tts|audio|realtime|image|dall-e|moderation|transcribe|search|instruct)", mid):
                 continue
+            _record_year(mid, _year_from_ts(m.get("created")))     # dates the base too
             if _DATE_RE.search(mid):
                 continue
             pairs.append((mid, mid))
@@ -223,7 +254,10 @@ def _discover_groq() -> list:
             mid = m.get("id") or ""
             if not mid or re.search(r"(whisper|tts|guard|embed|prompt|orpheus|playai)", mid):
                 continue
-            pairs.append((mid if mid.startswith("groq-") else f"groq-{mid}", mid))
+            fr = mid if mid.startswith("groq-") else f"groq-{mid}"
+            pairs.append((fr, mid))
+            yv = _year_from_ts(m.get("created"))
+            _record_year(fr, yv); _record_year(mid, yv)     # date friendly AND real id
         return _disc_set("groq", pairs)
     except Exception:
         return _disc_stale("groq")
@@ -289,6 +323,32 @@ def _collapse_to_latest(catalog: list[dict]) -> list[dict]:
     return [m for m in catalog if id(m) in kept]         # keep original order
 
 
+def _min_year() -> int:
+    try:
+        return int(_env("MIN_MODEL_YEAR", "2026"))       # bump next year via env, no redeploy
+    except Exception:
+        return 2026
+
+
+def _keep_recent(m: dict) -> bool:
+    """Show only current-year+ models (default 2026). Local ollama always kept. Uses the
+    provider-reported release year; Gemini (no API date) → major version >= 3 counts as 2026;
+    unknown year → kept (never hide a model we can't date)."""
+    if m["provider"] == "ollama":
+        return False                                     # local 2024-era open models → hide (not 2026)
+    y = _MODEL_YEAR.get(m["id"])
+    if y is None:
+        y = _MODEL_YEAR.get(m.get("real_model") or "")   # groq: friendly≠real, date by real too
+    if y is not None:
+        return y >= _min_year()
+    if m["provider"] == "gemini":                        # no API date → version rule (3.x = 2026)
+        mm = re.search(r"gemini-(\d+)", m["id"])
+        return (int(mm.group(1)) >= 3) if mm else True
+    if m["provider"] == "groq":                          # groq IS datable via API → undatable = stale/old
+        return False
+    return True
+
+
 def list_available_models() -> list[dict]:
     """Return catalog of models with availability flags. Reads env vars at call time."""
     _discover_and_register_all()                        # auto-add newly-launched models (all providers)
@@ -307,9 +367,10 @@ def list_available_models() -> list[dict]:
         )
         catalog.append({
             "id": friendly, "provider": provider, "real_model": real,
-            "available": available,
+            "available": available, "year": _MODEL_YEAR.get(friendly),
         })
-    return _collapse_to_latest(catalog)                 # keep only the newest per family
+    collapsed = _collapse_to_latest(catalog)            # newest per family
+    return [m for m in collapsed if _keep_recent(m)]    # then keep only 2026+ (MIN_MODEL_YEAR)
 
 
 def ping_model(model: str, timeout: float = 45.0) -> dict:
