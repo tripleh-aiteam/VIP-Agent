@@ -18,6 +18,7 @@ Default model: gpt-5.4-mini (set via LLM_MODEL env var).
 """
 
 import os
+import re
 import time
 import httpx
 
@@ -27,7 +28,9 @@ import httpx
 
 # Maps friendly model names ??(provider, real_model_id)
 MODEL_CATALOG = {
-    # --- Claude ---
+    # --- Claude (newest first) — auto-discovery below also adds any NEWER Claude models ---
+    "claude-fable-5":    ("anthropic", "claude-fable-5"),
+    "claude-opus-4-8":   ("anthropic", "claude-opus-4-8"),
     "claude-opus-4-7":   ("anthropic", "claude-opus-4-5"),
     "claude-sonnet-4-6": ("anthropic", "claude-sonnet-4-5"),
     "claude-haiku-4-5":  ("anthropic", "claude-haiku-4-5"),
@@ -116,8 +119,42 @@ def get_budget_status() -> dict:
     }
 
 
+# Auto-discovery: query Anthropic's /v1/models so a NEWLY-LAUNCHED Claude model (e.g. Fable 5,
+# a future Opus) appears in the picker + is routable WITHOUT any code change. Cached ~1h.
+_anthropic_models_cache = {"ts": 0.0, "ids": []}
+
+
+def _discover_and_register_anthropic() -> None:
+    """Fetch live Anthropic model IDs and register any new claude-* ones into MODEL_CATALOG
+    (so they show in the picker AND route correctly). Silent no-op without a key / on error."""
+    key = _env("ANTHROPIC_API_KEY")
+    if not key:
+        return
+    now = time.time()
+    if _anthropic_models_cache["ids"] and (now - _anthropic_models_cache["ts"] < 3600):
+        ids = _anthropic_models_cache["ids"]
+    else:
+        try:
+            import httpx
+            r = httpx.get(f"{ANTHROPIC_BASE}/models",
+                          headers={"x-api-key": key, "anthropic-version": "2023-06-01"}, timeout=8.0)
+            r.raise_for_status()
+            ids = [m.get("id") for m in (r.json().get("data") or []) if m.get("id")]
+            _anthropic_models_cache.update({"ts": now, "ids": ids})
+        except Exception:
+            ids = _anthropic_models_cache["ids"]        # keep stale cache on failure
+    known_real = {real for (_p, real) in MODEL_CATALOG.values()}
+    for mid in ids:
+        if not mid or mid in MODEL_CATALOG or mid in known_real:
+            continue
+        if re.search(r"-\d{8}$", mid):                  # skip dated snapshots (…-20251101) — clutter
+            continue
+        MODEL_CATALOG[mid] = ("anthropic", mid)         # self-register → picker + routing
+
+
 def list_available_models() -> list[dict]:
     """Return catalog of models with availability flags. Reads env vars at call time."""
+    _discover_and_register_anthropic()                  # auto-add newly-launched Claude models
     has_openai    = bool(_env("OPENAI_API_KEY") or _env("LLM_API_KEY"))
     has_anthropic = bool(_env("ANTHROPIC_API_KEY"))
     has_gemini    = bool(_env("GEMINI_API_KEY") or _env("GOOGLE_API_KEY"))
