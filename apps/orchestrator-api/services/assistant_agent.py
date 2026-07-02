@@ -310,6 +310,20 @@ def _is_watchlist_question(transcript: Optional[str]) -> bool:
     return any(k in t for k in _WATCHLIST_KW)
 
 
+# B3 — "what's moving RIGHT NOW" (live movers), distinct from the pick-based watchlist.
+_MOVERS_KW = (
+    "지금 움직이는", "지금 움직이", "움직이는 종목", "급등주", "급등 종목", "오늘 급등",
+    "급락 종목", "특징주", "거래량 급증", "거래량 터진", "지금 뜨는", "달리는 종목",
+    "movers", "what's moving", "whats moving", "volume spike", "unusual volume",
+    "big movers", "hot stocks right now",
+)
+
+
+def _is_movers_question(transcript: Optional[str]) -> bool:
+    t = (transcript or "").lower()
+    return any(k in t for k in _MOVERS_KW)
+
+
 def _is_scalp_question(transcript: Optional[str]) -> bool:
     t = (transcript or "").lower()
     if not any(k in t for k in _SCALP_KW):
@@ -4141,6 +4155,20 @@ def _run_agent_impl(
                             "tool_used": "position_advice"}
         except Exception as e:
             log.warning(f"position advice failed: {str(e)[:120]}")
+
+    # === B3 — LIVE MOVERS ("지금 움직이는 종목?") — real-time move% + volume vs normal ===
+    if (not confirmed_tool and not attachment_ids and _is_movers_question(transcript)
+            and not _all_stocks_in_query(transcript)):     # a named stock → scalp/advice instead
+        try:
+            from services.movers import movers as _mv
+            _m = _mv(db, n=5)
+            _en = str(lang or "").lower().startswith("en")
+            return {"intent": "movers", "language": lang,
+                    "reply": _m.get("reasoning_en" if _en else "reasoning_ko"),
+                    "action": None, "speak": True, "transcript": transcript,
+                    "tool_used": "movers"}
+        except Exception as e:
+            log.warning(f"movers failed: {str(e)[:120]}")
 
     # === M4 — SCALP WATCHLIST ("오늘 단타 종목 뭐가 좋아?") — no single ticker needed ===
     if (not confirmed_tool and not attachment_ids and _is_watchlist_question(transcript)

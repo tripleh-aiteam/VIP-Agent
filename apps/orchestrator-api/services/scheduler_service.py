@@ -1592,6 +1592,22 @@ def _intraday_forecast_tick():
         db.close()
 
 
+@_single_flight("intraday_snapshot_bank")
+def _intraday_snapshot_bank():
+    """Every 5 min during market: append fresh order-flow snapshots to history —
+    the training series the future next-30-min model needs (B2 prep)."""
+    db = SessionLocal()
+    try:
+        from services.snapshot_bank import bank
+        r = bank(db)
+        if r.get("banked_now"):
+            log.info(f"snapshot bank: {r}", extra={"action": "intraday.bank"})
+    except Exception as e:
+        log.warning(f"snapshot bank failed: {str(e)[:120]}")
+    finally:
+        db.close()
+
+
 @_single_flight("intraday_morning_report")
 def _intraday_morning_report():
     """Before market open: email yesterday's hourly accuracy scorecard (.docx)."""
@@ -2054,7 +2070,16 @@ def init_scheduler():
         id="intraday-morning-report",
         replace_existing=True, max_instances=1, coalesce=True,
     )
-    log.info("scheduler: intraday 2-method hourly forward test registered (hourly 09–15 KST + 08:00 KST email)", extra={"action": "scheduler.intraday_registered"})
+    # B2 prep — bank order-flow snapshots into history every 5 min during market
+    # (00:00–06:55 UTC = 09:00–15:55 KST, Mon–Fri). Idempotent; also exposed at
+    # POST /predictions/intraday/bank for the external cron.
+    _scheduler.add_job(
+        _intraday_snapshot_bank,
+        CronTrigger.from_crontab("*/5 0-6 * * 1-5"),
+        id="intraday-snapshot-bank",
+        replace_existing=True, max_instances=1, coalesce=True,
+    )
+    log.info("scheduler: intraday 2-method hourly forward test registered (hourly 09–15 KST + 08:00 KST email + 5-min snapshot banking)", extra={"action": "scheduler.intraday_registered"})
 
     # Major-news story monitor — twice daily (09:00 + 16:00 KST = 00:00 + 07:00 UTC) so
     # follow-ups (e.g. the 3 Mega Projects 2 PM announcement) are caught + emailed same day.

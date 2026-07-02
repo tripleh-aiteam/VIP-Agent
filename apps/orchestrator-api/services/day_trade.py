@@ -83,6 +83,7 @@ def scalp_signal(db, ticker: str, target_pct: float = 1.0,
 
     # support = nearest large bid wall below price (remembered), else day low
     wall = None
+    mem = {}
     try:
         mem = read_memory(db, tk, depth=30)
         walls = [b for b in mem.get("bids", []) if b.get("is_large") and b["price"] <= last]
@@ -128,6 +129,40 @@ def scalp_signal(db, ticker: str, target_pct: float = 1.0,
     else:
         entry = "WAIT"
 
+    # ---- B1: live order-flow check (PC snapshot, fresh ≤4min) — the 매수/매도 tape
+    # either CONFIRMS the entry or vetoes it. Deterministic, always shown with reasons.
+    rt = None
+    try:
+        from services.trading_brief import realtime_for
+        rt = realtime_for(tk, db=db)
+    except Exception:
+        pass
+    ask_wall = None
+    try:
+        thr_ok = lambda a: a.get("is_large") and last < a["price"] <= target_price
+        overhead = [a for a in mem.get("asks", []) if thr_ok(a)]
+        ask_wall = min(overhead, key=lambda x: x["price"]) if overhead else None
+    except Exception:
+        pass
+    flow_ko, flow_en = [], []
+    if rt and rt.get("live"):
+        imb = rt.get("imbalance")
+        if rt.get("pressure"):
+            _i = f" ({imb:+.2f})" if isinstance(imb, (int, float)) else ""
+            flow_ko.append(f"호가 {rt['pressure']}{_i}")
+            flow_en.append(f"book {rt.get('pressure_en') or rt['pressure']}{_i}")
+        pn = rt.get("program_net")
+        if isinstance(pn, (int, float)) and pn:
+            flow_ko.append("프로그램 순매수 유입" if pn > 0 else "프로그램 순매도")
+            flow_en.append("program flow net-buying" if pn > 0 else "program flow net-selling")
+        if entry == "ENTER" and rt.get("pressure") == "매도우위":
+            entry = "WAIT"                     # tape veto: don't buy into a seller-heavy book
+            flow_ko.append("매도우위 확인 → 진입 보류(대기)로 하향")
+            flow_en.append("ask-heavy tape → entry downgraded to WAIT")
+    if ask_wall:
+        flow_ko.append(f"목표 아래 매도벽 {ask_wall['price']:,} — 목표 도달 저항 주의")
+        flow_en.append(f"large ask wall at {ask_wall['price']:,} below target — resistance on the way")
+
     net_pct = round(target_pct - 0.25, 2)     # ~0.25% round-trip cost (세금+수수료)
     off_ko = " ⚠️ 실시간 수집기 꺼짐 — 일봉 변동성 기준(참고)." if collector_off else ""
     off_en = " ⚠️ Live collector off — using daily volatility (reference)." if collector_off else ""
@@ -160,6 +195,13 @@ def scalp_signal(db, ticker: str, target_pct: float = 1.0,
               + (f", ~{est_min} min to target." if est_min else ".")
               + f" Net ≈ +{net_pct}% after costs.{off_en}")
 
+    if flow_ko:
+        ko += "\n\n🧭 실시간 체크: " + " · ".join(flow_ko)
+        en += "\n\n🧭 Live tape check: " + " · ".join(flow_en)
+    elif not collector_off:
+        ko += "\n\n🧭 실시간 체크: 호가/프로그램 스냅샷 없음 (수집기 확인)."
+        en += "\n\n🧭 Live tape check: no order-book/program snapshot (check collector)."
+
     # 3-method backdrop — ties the day-trade call to the decision phase (M1 & M3 already in
     # hand; M2 = the cached live-analysis signal). Single-stock route only (watchlist skips).
     m2sig = None
@@ -185,6 +227,9 @@ def scalp_signal(db, ticker: str, target_pct: float = 1.0,
             "target_price": target_price, "stop_price": stop_price, "rr": rr,
             "est_minutes": est_min, "net_pct": net_pct, "ml_bias": ml_adv, "wave_bias": wv,
             "m2_bias": m2sig, "collector_off": collector_off, "stale_min": stale_min,
+            "rt_check": ({"imbalance": rt.get("imbalance"), "pressure": rt.get("pressure"),
+                          "program_net": rt.get("program_net")} if rt and rt.get("live") else None),
+            "ask_wall": (ask_wall["price"] if ask_wall else None),
             "reasoning_ko": ko, "reasoning_en": en}
 
 

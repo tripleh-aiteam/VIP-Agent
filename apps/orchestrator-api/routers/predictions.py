@@ -102,6 +102,15 @@ def intraday_tick(db: Session = Depends(get_db)):
     return tick(db)
 
 
+@router.post("/intraday/bank")
+def intraday_bank(db: Session = Depends(get_db)):
+    """B2 prep: append fresh order-flow snapshots to intraday_snapshot_history — the
+    training series for the next-30-min model. Fire every 5 min during market via
+    external cron (idempotent; the in-process scheduler also runs it)."""
+    from services.snapshot_bank import bank
+    return bank(db)
+
+
 @router.post("/intraday/morning-report")
 def intraday_morning_report(email: str | None = Query(None), db: Session = Depends(get_db)):
     """Email yesterday's hourly accuracy scorecard (.docx) to davronbekmalikov96@gmail.com

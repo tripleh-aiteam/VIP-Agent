@@ -24,6 +24,17 @@ Real Estate agent now `active` (rel 0.998) on `realestate.tripleh.co.kr` (401→
 
 - Deploy; next 23:30 UTC cross-agent run will be clean. Optionally regenerate today's cross-agent row so the boss sees a clean one immediately.
 
+### [13:40] Phase B — live tape check, movers intent, snapshot banking (+ tilde display fix)
+
+- **What:**
+  1. **B1 live tape check** — [day_trade.py](apps/orchestrator-api/services/day_trade.py) `scalp_signal` now reads `trading_brief.realtime_for` (PC snapshot ≤4min fresh, or direct Kiwoom from Render's registered IP) and appends a `🧭 실시간 체크` line: 호가 매수/매도우위 (imbalance), program net flow, and the nearest LARGE ask wall between price and target. **Tape veto:** an ENTER is downgraded to WAIT when the book is 매도우위 — never buy into a seller-heavy tape. Returns `rt_check`/`ask_wall` for testability.
+  2. **B3 movers intent** — new [movers.py](apps/orchestrator-api/services/movers.py): "지금 움직이는 종목?"/"movers" ranks the tracked universe by |today's move%| + session-adjusted volume ratio (20d avg × elapsed-session fraction); bar = ±1% or 2× volume; top-5 with 📈/📉, KO+EN. Routed in [assistant_agent.py](apps/orchestrator-api/services/assistant_agent.py) before the watchlist intent (`_MOVERS_KW`).
+  3. **B2 prep: snapshot banking** — new [snapshot_bank.py](apps/orchestrator-api/services/snapshot_bank.py) copies fresh `realtime_snapshot` rows into append-only `intraday_snapshot_history` (PK ticker+ts, ON CONFLICT DO NOTHING). Scheduler job every 5 min 09:00–15:55 KST Mon–Fri ([scheduler_service.py](apps/orchestrator-api/services/scheduler_service.py)) + `POST /predictions/intraday/bank` for external cron. This builds the training series the next-30-min model (B2) needs — ~4 weeks of collector uptime required before training.
+  4. **Display fix** — decide buy/sell zones use `–` instead of `~` ([decision_agent.py](apps/orchestrator-api/services/decision_agent.py)): two digit~digit ranges in one paragraph paired as markdown strikethrough in the chat widget and the tildes vanished (found by the boss during Phase A testing).
+- **Why:** Phase B of the scalp-trust plan — sharpen WHEN-to-enter with the order-flow data we already collect, surface what's moving now, and start banking the history that unlocks the real intraday model.
+- **Files:** `services/day_trade.py`, `services/movers.py` (new), `services/snapshot_bank.py` (new), `services/assistant_agent.py`, `services/scheduler_service.py`, `routers/predictions.py`, `services/decision_agent.py`
+- **Next:** B2 model training blocked on ~4 weeks of banked snapshots (PC collector must run during market!); optional cron `POST /predictions/intraday/bank` every 5 min market hours.
+
 ### [11:10] Scalp-trust batch — honest grading, position sizing, richer advice answers
 
 - **What:**
