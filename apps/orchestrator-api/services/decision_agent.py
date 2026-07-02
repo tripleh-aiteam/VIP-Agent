@@ -331,40 +331,48 @@ def decide(db, ticker: str, focus: Optional[str] = None) -> dict[str, Any]:
     # price for share math: prefer the live price, else fall back to the last close so the
     # '몇 주?' answer always has a number even when live_price is momentarily unavailable.
     _px = price or lv.get("close") or tech.get("close")
-    _pct = {"높음": 15, "보통": 10, "낮음": 5}.get(conf, 8) if decision == "BUY" else 0
-    _shares = None
-    if _px and _pct:
-        try:
-            _shares = int(10_000_000 * _pct / 100 / float(_px))
-        except Exception:
-            _shares = None
+    _bud = 10_000_000                                   # ₩10M reference budget
+    _pct = {"높음": 15, "보통": 10, "낮음": 5}.get(conf, 8) if decision == "BUY" else 10
+
+    def _size_ko(pct: int, buy_ctx: bool):
+        if not _px:
+            return None
+        won = int(_bud * pct / 100)
+        n = int(won // float(_px))
+        if n >= 1:
+            base = f"1,000만원의 {pct}%(≈{won // 10000:,}만원)면 약 {n}주 (현재가 {_pl(_px)}원)"
+            return base + ("를 2~3회 나눠서 담으세요." if buy_ctx else " 정도가 적정 비중이에요.")
+        return (f"1주가 {_pl(_px)}원으로 비싸 예산의 {pct}%({won // 10000:,}만원)로는 1주도 안 돼요 — "
+                f"매수한다면 최소 1주(약 {_pl(_px)}원)부터 소액으로 시작하세요.")
+
+    def _size_en(pct: int, buy_ctx: bool):
+        if not _px:
+            return None
+        won = int(_bud * pct / 100)
+        n = int(won // float(_px))
+        if n >= 1:
+            base = f"{pct}% of ₩10M (≈₩{won:,}) is ~{n} shares (at ₩{_pl(_px)})"
+            return base + (", scaled in over 2–3 buys." if buy_ctx else " — a sensible size.")
+        return (f"at ₩{_pl(_px)}/share it's pricey — {pct}% of ₩10M (₩{won:,}) buys less than 1 share; "
+                f"start with just 1 share (~₩{_pl(_px)}) if you buy.")
+
     if decision == "BUY":
+        _s, _se = _size_ko(_pct, True), _size_en(_pct, True)
         size_ko = (f"확신이 {conf}이라 종목당 투자금의 약 {_pct}%가 적당해요."
-                   + (f" 예를 들어 1,000만원을 굴린다면 약 {_shares}주"
-                      + (f" (현재가 {_pl(_px)}원 기준)" if _px else "")
-                      + "를 2~3회 나눠서 담으세요." if _shares else "")
+                   + (f" {_s}" if _s else "")
                    + f" 손절은 지지선 {_pl(sup)}원이 깨질 때로 잡으세요.")
         size_en = (f"Confidence is {conf_en}, so about {_pct}% of your stock budget per position."
-                   + (f" e.g. on ₩10M that's ~{_shares} shares"
-                      + (f" (at ~₩{_pl(_px)})" if _px else "")
-                      + ", scaled in over 2–3 buys." if _shares else "")
+                   + (f" {_se}" if _se else "")
                    + f" Put a stop if it loses support ₩{_pl(sup)}.")
     else:
         # Even when we say "don't buy now", answer the '몇 주?' question directly with a
         # REFERENCE size (10% of a ₩10M budget) so the user always gets a concrete number.
-        _ref_shares = None
-        if _px:
-            try:
-                _ref_shares = int(10_000_000 * 0.10 / float(_px))
-            except Exception:
-                _ref_shares = None
+        _s, _se = _size_ko(10, False), _size_en(10, False)
         size_ko = ("지금은 신규 매수 보류를 권해요 (0주). "
-                   + (f"참고로 매수한다면 1,000만원 기준 약 {_ref_shares}주"
-                      + (f" (현재가 {_pl(_px)}원)" if _px else "") + " 정도가 적정 비중이에요. " if _ref_shares else "")
+                   + (f"참고로 매수한다면 {_s} " if _s else "")
                    + f"저항 {_pl(res)}원을 확실히 돌파하면 분할 진입하거나, 지지 {_pl(sup)}원에서 반등을 확인한 뒤 소량부터 담으세요.")
         size_en = ("Hold off on new buying for now (0 shares). "
-                   + (f"For reference, if you did buy, ~{_ref_shares} shares on a ₩10M budget"
-                      + (f" (at ₩{_pl(_px)})" if _px else "") + " is a sensible size. " if _ref_shares else "")
+                   + (f"For reference, {_se} " if _se else "")
                    + f"Only scale in once it clears resistance ₩{_pl(res)}, or after it holds support ₩{_pl(sup)}.")
 
     # SELL-TIMING focus ('언제 팔아야 해?'): override the headline + sizing block with an
