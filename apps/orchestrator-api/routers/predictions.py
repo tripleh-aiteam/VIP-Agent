@@ -74,13 +74,6 @@ def scoreboard(db: Session = Depends(get_db)):
     return _sb(db)
 
 
-@router.post("/scorekeeper/run")
-def scorekeeper_run(db: Session = Depends(get_db)):
-    """Manually log today's signals + grade matured ones (normally a daily cron)."""
-    from services.scorekeeper_service import log_today, grade_matured
-    return {"log": log_today(db), "grade": grade_matured(db)}
-
-
 @router.get("/realtime/{ticker}")
 def realtime_signals(ticker: str, db: Session = Depends(get_db)):
     """LIVE signals for one stock (order-book imbalance + intraday 수급 + program net),

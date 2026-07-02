@@ -2516,6 +2516,7 @@ def _run_chain(
     system_prompt: str,
     history: list[dict],
     agent_id: str = "vip",
+    user_id: Optional[str] = None,
 ) -> dict[str, Any]:
     """Execute a multi-step chain. If any step is a WRITE tool, halt and
     return a proposed_chain so the widget can ask for confirmation up front
@@ -2623,6 +2624,27 @@ def _run_chain(
     if _dec:
         _en = str(lang or "").lower().startswith("en")
         reply = _dec.get("reasoning_en" if _en else "reasoning_ko") or reply
+        # 몇 주? — budget-aware sizing on a BUY decision (same 1%-risk rule as scalp)
+        if (_dec.get("decision") or "").upper() == "BUY" and _dec.get("price"):
+            try:
+                from services.position_size import sizing_line
+                _wv0 = _dec.get("method3_wave") or {}
+                _px = float(_dec["price"])
+                _sl = sizing_line(db, transcript=transcript, user_key=user_id or agent_id,
+                                  lang=lang, entry=_px,
+                                  stop=float(_wv0.get("stop") or _px * 0.98))
+                if _sl:
+                    reply = (reply or "") + _sl
+            except Exception:
+                pass
+        # measured trust — show this answer type's real graded record
+        try:
+            from services.call_grader import track_record_line
+            _tr = track_record_line(db, "decision", lang)
+            if _tr:
+                reply = (reply or "") + _tr
+        except Exception:
+            pass
         # M1.2 — measure it: log this advice for grading after its horizon (60 min).
         try:
             from services.call_grader import log_call
@@ -4147,6 +4169,26 @@ def _run_agent_impl(
                 _sig = scalp_signal(db, _c, _tgt, with_backdrop=True)
                 _en = str(lang or "").lower().startswith("en")
                 _reply = _sig.get("reasoning_en" if _en else "reasoning_ko")
+                # 몇 주? — budget-aware position sizing (1%-risk rule), only for tradable calls
+                if _sig.get("entry") in ("ENTER", "WAIT"):
+                    try:
+                        from services.position_size import sizing_line
+                        _bz = _sig.get("buy_zone") or []
+                        _sl = sizing_line(db, transcript=transcript, user_key=user_id or agent_id,
+                                          lang=lang, entry=(_bz[1] if len(_bz) > 1 else _sig.get("current")),
+                                          stop=_sig.get("stop_price"))
+                        if _sl:
+                            _reply = (_reply or "") + _sl
+                    except Exception:
+                        pass
+                # measured trust — real graded record of past scalp answers
+                try:
+                    from services.call_grader import track_record_line
+                    _tr = track_record_line(db, "scalp", lang)
+                    if _tr:
+                        _reply = (_reply or "") + _tr
+                except Exception:
+                    pass
                 try:
                     from services.call_grader import log_call
                     _ga = {"ENTER": "BUY", "WAIT": "HOLD", "SKIP": "HOLD", "AVOID": "AVOID"}.get(_sig.get("entry"), "HOLD")
@@ -4440,13 +4482,13 @@ def _run_agent_impl(
                     # pure OUTLOOK → keep forecasting (two_method). Mirrors the main routing split.
                     if _c and _wants_recommendation(_prev) and "decide" in TOOL_REGISTRY:
                         return _run_chain(db, transcript, lang, [{"tool": "decide", "args": {"ticker": _c}}],
-                                          current_path, selected_id, system, history or [], agent_id=agent_id)
+                                          current_path, selected_id, system, history or [], agent_id=agent_id, user_id=user_id)
                     if _c and "two_method_view" in TOOL_REGISTRY:
                         _st = [{"tool": "two_method_view", "args": {"ticker": _c}}]
                         if "read_chart" in TOOL_REGISTRY:
                             _st.append({"tool": "read_chart", "args": {"ticker": _c}})
                         return _run_chain(db, transcript, lang, _st, current_path,
-                                          selected_id, system, history or [], agent_id=agent_id)
+                                          selected_id, system, history or [], agent_id=agent_id, user_id=user_id)
                 except Exception:
                     pass
 
@@ -4495,7 +4537,7 @@ def _run_agent_impl(
             if _dt_code and _dt_code in _ps2.NAMES:
                 return _run_chain(db, transcript, lang,
                                   [{"tool": "day_trade", "args": {"ticker": _dt_code}}],
-                                  current_path, selected_id, system, history or [], agent_id=agent_id)
+                                  current_path, selected_id, system, history or [], agent_id=agent_id, user_id=user_id)
         except Exception:
             pass
 
@@ -4505,7 +4547,7 @@ def _run_agent_impl(
     if (not confirmed_tool and "market_flows" in TOOL_REGISTRY
             and _is_market_flow_q(transcript)):
         return _run_chain(db, transcript, lang, [{"tool": "market_flows", "args": {}}],
-                          current_path, selected_id, system, history or [], agent_id=agent_id)
+                          current_path, selected_id, system, history or [], agent_id=agent_id, user_id=user_id)
 
     # ===== 공매도 (short-selling) — answer LOCALLY from VIP's Kiwoom (ka10014). The
     # Stock backend's 공매도 tool currently returns '확인 불가' (no data), but VIP's Kiwoom
@@ -4529,7 +4571,7 @@ def _run_agent_impl(
                 if _is_sell_timing_q(transcript):
                     _args["focus"] = "sell"
                 return _run_chain(db, transcript, lang, [{"tool": "decide", "args": _args}],
-                                  current_path, selected_id, system, history or [], agent_id=agent_id)
+                                  current_path, selected_id, system, history or [], agent_id=agent_id, user_id=user_id)
         except Exception:
             pass
 
@@ -4642,11 +4684,11 @@ def _run_agent_impl(
                 hist_steps = [{"tool": "stock_get_daily_history",
                                "args": {"query": transcript, "days": days}}]
                 return _run_chain(db, transcript, lang, hist_steps, current_path,
-                                  selected_id, system, history or [], agent_id=agent_id)
+                                  selected_id, system, history or [], agent_id=agent_id, user_id=user_id)
         if "web_search" in TOOL_REGISTRY:
             ws_steps = [{"tool": "web_search", "args": {"query": transcript}}]
             return _run_chain(db, transcript, lang, ws_steps, current_path,
-                              selected_id, system, history or [], agent_id=agent_id)
+                              selected_id, system, history or [], agent_id=agent_id, user_id=user_id)
 
     # ===== Deterministic STOCK-ADVICE routing =====
     # The LLM (especially for Korean) tends to answer 'should I buy X / X 어때?'
@@ -4679,13 +4721,13 @@ def _run_agent_impl(
             if _is_sell_timing_q(transcript):
                 _args["focus"] = "sell"
             return _run_chain(db, transcript, lang, [{"tool": "decide", "args": _args}],
-                              current_path, selected_id, system, history or [], agent_id=agent_id)
+                              current_path, selected_id, system, history or [], agent_id=agent_id, user_id=user_id)
         if _code and "two_method_view" in TOOL_REGISTRY:
             tm_steps = [{"tool": "two_method_view", "args": {"ticker": _code}}]
             if "read_chart" in TOOL_REGISTRY:
                 tm_steps.append({"tool": "read_chart", "args": {"ticker": _code}})
             return _run_chain(db, transcript, lang, tm_steps, current_path,
-                              selected_id, system, history or [], agent_id=agent_id)
+                              selected_id, system, history or [], agent_id=agent_id, user_id=user_id)
         aid = (agent_id or "vip").lower()
         if aid == "stock":
             advice_steps = [
@@ -4698,7 +4740,7 @@ def _run_agent_impl(
             advice_steps = [s for s in advice_steps if s["tool"] in TOOL_REGISTRY]
             if advice_steps:
                 return _run_chain(db, transcript, lang, advice_steps, current_path,
-                                  selected_id, system, history or [], agent_id=agent_id)
+                                  selected_id, system, history or [], agent_id=agent_id, user_id=user_id)
         elif "ask_agent" in TOOL_REGISTRY:
             # Pass the user's EXACT question (verbatim) so nothing is garbled, and
             # let the Stock agent run its own advice chain.
@@ -4746,7 +4788,7 @@ def _run_agent_impl(
     # ===== Phase 5: Multi-step chain =====
     steps = decision.get("steps")
     if isinstance(steps, list) and len(steps) > 0:
-        return _run_chain(db, transcript, lang, steps, current_path, selected_id, system, history or [], agent_id=agent_id)
+        return _run_chain(db, transcript, lang, steps, current_path, selected_id, system, history or [], agent_id=agent_id, user_id=user_id)
 
     # If the LLM chose to answer directly, return it
     if decision.get("answer") and not decision.get("tool"):

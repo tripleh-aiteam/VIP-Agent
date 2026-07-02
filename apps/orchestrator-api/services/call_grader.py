@@ -10,11 +10,15 @@ calls mature quickly (unlike signal_log which is day-based).
 """
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import text
 
 from services.logger import log
+
+_KST = ZoneInfo("Asia/Seoul")
 
 _DDL = """
 CREATE TABLE IF NOT EXISTS chatbot_calls (
@@ -84,26 +88,96 @@ def _live_price(ticker: str) -> Optional[float]:
     return None
 
 
+def _bars_in_window(db, ticker: str, ts_utc: datetime, horizon_min: int) -> list:
+    """1-min bars (KST-naive table) covering [call time, call time + horizon]."""
+    try:
+        start = ts_utc.astimezone(_KST).replace(tzinfo=None)
+        end = start + timedelta(minutes=int(horizon_min or 60))
+        return db.execute(text(
+            "SELECT ts, high, low, close FROM raw_minute_prices "
+            "WHERE ticker=:t AND ts > :s AND ts <= :e ORDER BY ts"),
+            {"t": ticker, "s": start, "e": end}).fetchall()
+    except Exception:
+        return []
+
+
+def _daily_close_after(db, ticker: str, ts_utc: datetime) -> Optional[float]:
+    """Fallback exit for LATE grading with no minute data: the call day's daily close."""
+    try:
+        d = ts_utc.astimezone(_KST).date()
+        row = db.execute(text(
+            "SELECT close FROM raw_daily_prices WHERE ticker=:t AND date >= :d "
+            "ORDER BY date LIMIT 1"), {"t": ticker, "d": d}).fetchone()
+        return float(row.close) if row and row.close else None
+    except Exception:
+        return None
+
+
 def grade_open(db) -> dict[str, Any]:
-    """Grade calls whose horizon has elapsed. win/loss/flat vs the advised direction."""
+    """Grade calls whose horizon has elapsed.
+
+    Scalp-honest grading: with minute bars, a directional call is graded on the PATH —
+    did the advised target or stop get TOUCHED first inside the window (the user's real
+    trade: sell at +1% / cut at stop)? Stop is checked before target within a bar
+    (conservative). Only without bars do we fall back to endpoint grading — the live
+    price if grading is on time, or the call day's daily close if we woke up late
+    (never "price right now" hours after the window, which graded everything flat)."""
     _ensure(db)
+    now = datetime.now(timezone.utc)
     rows = db.execute(text(
-        "SELECT id, ticker, action, ref_price FROM chatbot_calls WHERE status='open' "
+        "SELECT id, ts, intent, ticker, action, ref_price, target, stop, horizon_min "
+        "FROM chatbot_calls WHERE status='open' "
         "AND now() >= ts + make_interval(mins => horizon_min) ORDER BY ts LIMIT 200")).fetchall()
     graded = 0
     for r in rows:
-        ref = float(r.ref_price) if r.ref_price else _live_price(r.ticker)
-        exit_px = _live_price(r.ticker)
+        ref = float(r.ref_price) if r.ref_price else None
+        tgt = float(r.target) if r.target else None
+        stp = float(r.stop) if r.stop else None
+        act = (r.action or "").upper()
+        horizon = int(r.horizon_min or 60)
+        on_time = now <= r.ts + timedelta(minutes=horizon + 30)
+
+        bars = _bars_in_window(db, r.ticker, r.ts, horizon)
+        outcome = None
+        exit_px = None
+        if bars:
+            if act == "BUY" and tgt and stp:
+                for b in bars:                       # path: stop-before-target per bar
+                    if b.low and float(b.low) <= stp:
+                        outcome, exit_px = "loss", stp
+                        break
+                    if b.high and float(b.high) >= tgt:
+                        outcome, exit_px = "win", tgt
+                        break
+            elif act in ("HOLD", "WATCH") and tgt:   # scalp WAIT/SKIP — punish a missed move
+                hit = any(b.high and float(b.high) >= tgt for b in bars)
+                outcome = "loss" if hit else "win"
+            if exit_px is None and bars[-1].close:
+                exit_px = float(bars[-1].close)      # exit at the window's true end
+        elif on_time:
+            exit_px = _live_price(r.ticker)
+        else:
+            exit_px = _daily_close_after(db, r.ticker, r.ts)
+            if exit_px is None:
+                if (now - r.ts).days >= 7:           # ungradable — retire, excluded from stats
+                    db.execute(text(
+                        "UPDATE chatbot_calls SET status='graded', graded_ts=now(), "
+                        "outcome='void' WHERE id=:id"), {"id": r.id})
+                    graded += 1
+                continue                              # else wait for data, stay open
+
+        ref = ref or exit_px
         if not ref or not exit_px:
             continue
         ret = (exit_px - ref) / ref * 100.0
-        act = (r.action or "").upper()
-        if act == "BUY":
-            outcome = "win" if ret > 0.1 else "loss" if ret < -0.1 else "flat"
-        elif act in ("SELL", "AVOID"):
-            outcome = "win" if ret < -0.1 else "loss" if ret > 0.1 else "flat"
-        else:  # HOLD / WATCH — "correct" if it stayed roughly flat
-            outcome = "win" if abs(ret) <= _FLAT else "flat"
+        if outcome is None:
+            if act == "BUY":
+                # timeout exit: profitable after ~0.25% costs = win
+                outcome = "win" if ret >= 0.3 else "loss" if ret <= -0.3 else "flat"
+            elif act in ("SELL", "AVOID"):
+                outcome = "win" if ret <= -0.3 else "loss" if ret >= 0.3 else "flat"
+            else:  # HOLD/WATCH without a target — right if it stayed flat, wrong if it ran
+                outcome = "win" if abs(ret) <= _FLAT else "loss" if abs(ret) >= 1.0 else "flat"
         db.execute(text(
             "UPDATE chatbot_calls SET status='graded', graded_ts=now(), exit_price=:x, "
             "actual_ret=:r, outcome=:o WHERE id=:id"),
@@ -111,6 +185,29 @@ def grade_open(db) -> dict[str, Any]:
         graded += 1
     db.commit()
     return {"graded": graded}
+
+
+def track_record_line(db, intent: str, lang: Optional[str] = None, days: int = 30) -> Optional[str]:
+    """One appendable line showing this answer type's REAL graded record — the user
+    should see measured trust, not vibes. Hidden until a minimal sample exists."""
+    try:
+        st = (scoreboard(db, days=days).get("by_intent") or {}).get(intent) or {}
+        if (st.get("graded") or 0) < 3:
+            return None
+        en = str(lang or "").lower().startswith("en")
+        w, l, f = st.get("win", 0), st.get("loss", 0), st.get("flat", 0)
+        wr = st.get("win_rate")
+        if en:
+            return (f"\n\n📊 Track record (this answer type, last {days}d): {w}W·{l}L"
+                    + (f"·{f} flat" if f else "")
+                    + (f" · win rate {wr}%" if wr is not None else "")
+                    + " — measured on real graded calls, not estimates.")
+        return (f"\n\n📊 실측 성적 (이 유형 답변, 최근 {days}일): {w}승·{l}패"
+                + (f"·무승부 {f}" if f else "")
+                + (f" · 승률 {wr}%" if wr is not None else "")
+                + " — 추정이 아니라 실제 채점된 결과입니다.")
+    except Exception:
+        return None
 
 
 def scoreboard(db, days: int = 30) -> dict[str, Any]:

@@ -63,6 +63,21 @@ def scalp_signal(db, ticker: str, target_pct: float = 1.0,
                     "reasoning_ko": "실시간 분봉·일봉 데이터가 모두 부족합니다.",
                     "reasoning_en": "No live minute or daily data available."}
 
+    # watchdog — bars exist but the collector DIED mid-session: warn on stale minutes
+    stale_min = None
+    if not collector_off:
+        try:
+            from datetime import datetime
+            from zoneinfo import ZoneInfo
+            as_of = datetime.strptime(str(v.get("as_of"))[:16], "%Y-%m-%d %H:%M")
+            now_kst = datetime.now(ZoneInfo("Asia/Seoul")).replace(tzinfo=None)
+            age = (now_kst - as_of).total_seconds() / 60
+            from services.assistant_agent import _kr_market_open_now
+            if _kr_market_open_now() and age > 10:
+                stale_min = round(age)
+        except Exception:
+            pass
+
     last = v["last"]; exp_move = v.get("expected_day_move_pct") or 0
     realized = v.get("realized_range_pct") or 0; pos = v.get("pos_in_range")
 
@@ -116,6 +131,9 @@ def scalp_signal(db, ticker: str, target_pct: float = 1.0,
     net_pct = round(target_pct - 0.25, 2)     # ~0.25% round-trip cost (세금+수수료)
     off_ko = " ⚠️ 실시간 수집기 꺼짐 — 일봉 변동성 기준(참고)." if collector_off else ""
     off_en = " ⚠️ Live collector off — using daily volatility (reference)." if collector_off else ""
+    if stale_min:
+        off_ko += f" ⚠️ 분봉이 {stale_min}분 전 데이터입니다 — PC 수집기 상태를 확인하세요."
+        off_en += f" ⚠️ Minute data is {stale_min} min old — check the PC collector."
     head = {"ENTER": "🟢 진입 적합", "WAIT": "🟡 대기 (눌림목까지)", "SKIP": "⚪ 오늘은 부적합",
             "AVOID": "🔴 단타 롱 비권장 (상위 추세 약세)"}[entry]
     head_en = {"ENTER": "🟢 Good entry now", "WAIT": "🟡 Wait (for a pullback)",
@@ -166,7 +184,8 @@ def scalp_signal(db, ticker: str, target_pct: float = 1.0,
             "target_pct": target_pct, "current": last, "buy_zone": [buy_lo, buy_hi],
             "target_price": target_price, "stop_price": stop_price, "rr": rr,
             "est_minutes": est_min, "net_pct": net_pct, "ml_bias": ml_adv, "wave_bias": wv,
-            "m2_bias": m2sig, "collector_off": collector_off, "reasoning_ko": ko, "reasoning_en": en}
+            "m2_bias": m2sig, "collector_off": collector_off, "stale_min": stale_min,
+            "reasoning_ko": ko, "reasoning_en": en}
 
 
 def feasibility(db, ticker: str, target_pct: float = 1.0) -> dict[str, Any]:

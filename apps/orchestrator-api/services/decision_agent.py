@@ -172,6 +172,20 @@ def decide(db, ticker: str, focus: Optional[str] = None) -> dict[str, Any]:
     yt = _youtube(db, name)
     ml = ps.get_ticker(db, code) or {}
 
+    # market backdrop — today's live KODEX200 move, so the advice names the tape it's given in
+    mkt = None
+    try:
+        mkt = tb._mkt_ret_today(db)
+    except Exception:
+        pass
+    if mkt is not None:
+        _mtone_ko = "시장 우호적" if mkt >= 0.3 else "시장 급락 경계" if mkt <= -1.5 else "시장 약세 부담" if mkt < 0 else "시장 중립"
+        _mtone_en = "supportive tape" if mkt >= 0.3 else "market plunging — caution" if mkt <= -1.5 else "soft tape" if mkt < 0 else "neutral tape"
+        mkt_line_ko = f"KODEX200 오늘 {mkt:+.2f}% — {_mtone_ko}"
+        mkt_line_en = f"KODEX200 today {mkt:+.2f}% — {_mtone_en}"
+    else:
+        mkt_line_ko = mkt_line_en = None
+
     # Pull the SAME two methods the outlook block shows, so the recommendation is built on
     # BOTH consistently: Method 1 = ML, Method 2 = Analysis (호가/수급/박스권).
     m1, m2, price = {}, {}, None
@@ -477,6 +491,10 @@ def decide(db, ticker: str, focus: Optional[str] = None) -> dict[str, Any]:
         "**기술적 지표**",
         f"{tech.get('summary_ko','중립')} · 지지 {_pl(sup)}원 / 저항 {_pl(res)}원"
         + (f" · 박스권 내 위치 {pos}%" if pos is not None else ""),
+    ]
+    if mkt_line_ko:
+        ko_lines += ["", "**시장 상황**", f"· {mkt_line_ko}"]
+    ko_lines += [
         "",
         f"**뉴스 — {news_ko}**",
     ]
@@ -504,6 +522,10 @@ def decide(db, ticker: str, focus: Optional[str] = None) -> dict[str, Any]:
         "**Technicals**",
         f"{tech.get('summary_en','neutral')} · support ₩{_pl(sup)} / resistance ₩{_pl(res)}"
         + (f" · {pos}% through the range" if pos is not None else ""),
+    ]
+    if mkt_line_en:
+        en_lines += ["", "**Market**", f"- {mkt_line_en}"]
+    en_lines += [
         "",
         f"**News — {news_en}**",
     ]

@@ -24,6 +24,19 @@ Real Estate agent now `active` (rel 0.998) on `realestate.tripleh.co.kr` (401→
 
 - Deploy; next 23:30 UTC cross-agent run will be clean. Optionally regenerate today's cross-agent row so the boss sees a clean one immediately.
 
+### [11:10] Scalp-trust batch — honest grading, position sizing, richer advice answers
+
+- **What:**
+  1. **Path-based call grading** — [call_grader.py](apps/orchestrator-api/services/call_grader.py) `grade_open()` rewritten. Old logic graded at "price right now" (hours late after Render sleep) with endpoint-only ±0.1% thresholds and never used the advised target/stop → all 9 scalp calls graded flat. Now: walk `raw_minute_prices` over [call ts, ts+horizon] and grade BUY as target-touched-first = win / stop-first = loss (stop checked before target within a bar, conservative); scalp WAIT/SKIP with a target is graded as a **missed move** (loss if the target hit while waiting); no minute bars → live price only if grading is on time, else the call day's daily close; ungradable after 7 days → `outcome='void'` (excluded from stats). Timeout exits grade win/loss at ±0.3% (≈ after-cost breakeven).
+  2. **Position sizing ("몇 주 사?")** — new [position_size.py](apps/orchestrator-api/services/position_size.py): `parse_budget` (만원/천만/억/₩/million formats, unit-tested), per-user budget memory (`user_trade_budget` table, keyed `user_id or agent_id`), `size_position` = min(budget cap, **1%-risk cap** vs stop distance), `sizing_line` appended to scalp (ENTER/WAIT) and decide (BUY) replies in [assistant_agent.py](apps/orchestrator-api/services/assistant_agent.py); hint line teaches the user to state a budget once.
+  3. **Measured-trust line** — `track_record_line()` in call_grader appends the intent's real graded W·L record (last 30d) to decide + scalp answers (hidden until ≥3 graded). KO+EN.
+  4. **Market context** — [decision_agent.py](apps/orchestrator-api/services/decision_agent.py) decide() now shows a live KODEX200 today-% line (uses `trading_brief._mkt_ret_today`) in both KO/EN blocks.
+  5. **Collector watchdog** — [day_trade.py](apps/orchestrator-api/services/day_trade.py) `scalp_signal` warns when minute bars are >10 min stale during market hours (collector died mid-session; previously only the fully-off case was labelled).
+  6. **Cleanup** — removed the older duplicate `POST /predictions/scorekeeper/run` route in [predictions.py](apps/orchestrator-api/routers/predictions.py); `_run_chain` now threads `user_id` (11 call sites).
+- **Why:** user's actual use case is intraday scalping (+1% in 30–60 min, repeat). The chatbot's scalp answers could not be trusted because grading never resolved decisively (9/9 flat), and answers lacked "how many shares" + measured track record. This batch makes every scalp/decide answer sized, evidenced, and honestly graded — prerequisite for the 100+ graded-call readiness gate before real money.
+- **Files:** `services/call_grader.py`, `services/position_size.py` (new), `services/assistant_agent.py`, `services/decision_agent.py`, `services/day_trade.py`, `routers/predictions.py`
+- **Next:** user must add cron-job.org pings (hourly `POST /predictions/intraday/tick` 00:05–06:05 UTC Mon–Fri, `POST /predictions/chatbot-grade` every 30 min in market hours, daily `POST /predictions/scorekeeper/run`); deploy to Render; accumulate 100+ decisively-graded scalp calls, gate = 58%+ win after ~0.25% costs. Pre-existing test failures (test_intents report/approval drift, local-Postgres health tests) are unrelated to this batch.
+
 ---
 
 ## 2026-07-01 (Wednesday) — Point Real Estate agent at its real domain (realestate.tripleh.co.kr)
