@@ -40,10 +40,14 @@ def _daily_vol_fallback(db, tk: str) -> Optional[dict]:
             "expected_day_move_pct": atr_pct, "realized_range_pct": 0, "pos_in_range": 50}
 
 
-def scalp_signal(db, ticker: str, target_pct: float = 1.0) -> dict[str, Any]:
+def scalp_signal(db, ticker: str, target_pct: float = 1.0,
+                 with_backdrop: bool = False) -> dict[str, Any]:
     """M3.2 — live scalp read: 진입 NOW vs 대기 + 매수가/목표(+target%)/손절 + 예상 보유시간 +
     가능성, gated by Method 1 & 3 bias (don't scalp-long a bearish stock). Falls back to
-    daily volatility (labelled) when the minute collector is off."""
+    daily volatility (labelled) when the minute collector is off.
+
+    with_backdrop=True appends a compact 3-method line (M1/M2/M3) so the day-trade answer is
+    tied to the decision phase. OFF by default so the watchlist (loops this) stays fast."""
     from services.minute_bars import intraday_vol
     from services.orderbook_memory import read_memory
     from services.stock_resolver import display_name, display_name_en
@@ -138,11 +142,31 @@ def scalp_signal(db, ticker: str, target_pct: float = 1.0) -> dict[str, Any]:
               + (f", ~{est_min} min to target." if est_min else ".")
               + f" Net ≈ +{net_pct}% after costs.{off_en}")
 
+    # 3-method backdrop — ties the day-trade call to the decision phase (M1 & M3 already in
+    # hand; M2 = the cached live-analysis signal). Single-stock route only (watchlist skips).
+    m2sig = None
+    if with_backdrop:
+        try:
+            from services.trading_brief import analysis_batch
+            m2sig = ((analysis_batch(db, [tk]) or {}).get("results", {}).get(tk) or {}).get("signal")
+        except Exception:
+            pass
+        _m1 = {"BUY": "매수", "SELL": "매도", "HOLD": "보유"}.get((ml_adv or "").upper(), "보유")
+        _m2 = {"BUY": "매수", "SELL": "매도", "WATCH": "관망", "HOLD": "관망"}.get((m2sig or "").upper(), "관망")
+        _m3 = {"BUY": "매수", "WATCH": "관망", "AVOID": "회피"}.get((wv or "").upper(), "데이터없음")
+        _m1e = {"BUY": "BUY", "SELL": "SELL", "HOLD": "HOLD"}.get((ml_adv or "").upper(), "HOLD")
+        _m2e = {"BUY": "BUY", "SELL": "SELL", "WATCH": "WATCH", "HOLD": "WATCH"}.get((m2sig or "").upper(), "WATCH")
+        _m3e = {"BUY": "BUY", "WATCH": "WATCH", "AVOID": "AVOID"}.get((wv or "").upper(), "n/a")
+        ko += (f"\n\n📊 배경(3-method): 방법1(ML) {_m1} · 방법2(분석) {_m2} · 방법3(파동) {_m3}. "
+               f"단타는 상위 방향과 같을 때 성공률이 높아요 — 종합 판단은 '살까?'로 물어보세요.")
+        en += (f"\n\n📊 Backdrop (3 methods): M1(ML) {_m1e} · M2(Analysis) {_m2e} · M3(Wave) {_m3e}. "
+               f"Scalps work best in the same direction as the higher-timeframe view.")
+
     return {"ticker": tk, "name": name, "entry": entry, "feasible": feasible,
             "target_pct": target_pct, "current": last, "buy_zone": [buy_lo, buy_hi],
             "target_price": target_price, "stop_price": stop_price, "rr": rr,
             "est_minutes": est_min, "net_pct": net_pct, "ml_bias": ml_adv, "wave_bias": wv,
-            "collector_off": collector_off, "reasoning_ko": ko, "reasoning_en": en}
+            "m2_bias": m2sig, "collector_off": collector_off, "reasoning_ko": ko, "reasoning_en": en}
 
 
 def feasibility(db, ticker: str, target_pct: float = 1.0) -> dict[str, Any]:

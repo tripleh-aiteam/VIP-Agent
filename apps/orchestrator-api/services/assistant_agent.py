@@ -4144,7 +4144,7 @@ def _run_agent_impl(
                 _m = _re.search(r"([\d.]+)\s*%", transcript or "")
                 _tgt = min(max(float(_m.group(1)) if _m else 1.0, 0.3), 5.0)
                 from services.day_trade import scalp_signal
-                _sig = scalp_signal(db, _c, _tgt)
+                _sig = scalp_signal(db, _c, _tgt, with_backdrop=True)
                 _en = str(lang or "").lower().startswith("en")
                 _reply = _sig.get("reasoning_en" if _en else "reasoning_ko")
                 try:
