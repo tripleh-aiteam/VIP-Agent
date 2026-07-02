@@ -55,7 +55,7 @@ def _technicals(code: str) -> dict[str, Any]:
     elif roc5 < -3:
         score -= 1; bits_ko.append(f"단기 모멘텀 {roc5:.1f}%"); bits_en.append(f"momentum {roc5:.1f}%")
     return {"score": score, "support": round(sup), "resistance": round(res),
-            "pos_in_range": round(pos), "ma20": round(ma20) if ma20 else None,
+            "pos_in_range": round(pos), "ma20": round(ma20) if ma20 else None, "close": round(cur),
             "summary_ko": ", ".join(bits_ko) or "중립", "summary_en": ", ".join(bits_en) or "neutral"}
 
 
@@ -330,7 +330,7 @@ def decide(db, ticker: str, focus: Optional[str] = None) -> dict[str, Any]:
                "HOLD": "Not right now — better to wait for confirmation before buying."}[decision]
     # price for share math: prefer the live price, else fall back to the last close so the
     # '몇 주?' answer always has a number even when live_price is momentarily unavailable.
-    _px = price or lv.get("close")
+    _px = price or lv.get("close") or tech.get("close")
     _pct = {"높음": 15, "보통": 10, "낮음": 5}.get(conf, 8) if decision == "BUY" else 0
     _shares = None
     if _px and _pct:
@@ -506,7 +506,7 @@ def decide(db, ticker: str, focus: Optional[str] = None) -> dict[str, Any]:
                  "Note: a reasoned synthesis of all 3 methods + news/flows/technicals — not investment advice or a guarantee."]
     en = "\n".join(en_lines)
     return {"ticker": code, "name": name, "decision": decision, "score": round(total, 1),
-            "price": price, "confidence": conf_en, "news": news, "flows": flows, "technicals": tech,
+            "price": _px, "confidence": conf_en, "news": news, "flows": flows, "technicals": tech,
             "youtube": yt,
             "method1_ml": {"call": ml_adv, "accuracy_pct": acc, "expected_move_pct": em},
             "method2_analysis": {"signal": an_sig, "reasons": m2.get("reasons")},
