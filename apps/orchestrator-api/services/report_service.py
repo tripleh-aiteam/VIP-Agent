@@ -411,7 +411,7 @@ def compose_cross_agent_report(
         try:
             data_result = request_data_from_agent(
                 db=db,
-                requester_agent_id=_get_report_requester(agent_types, agent_type),
+                requester_agent_id=_get_report_requester(db, agent_types, agent_type),
                 target_agent_type=agent_type,
                 trace_id=trace_id,
                 data_request=f"{agent_type}_summary_for_report",
@@ -489,13 +489,37 @@ def compose_cross_agent_report(
     }
 
 
-def _get_report_requester(all_types: list[str], current_type: str) -> str:
-    """Pick a requester agent name (the first agent that isn't the target)."""
-    type_to_name = {"asset": "Asset Agent", "stock": "Stock Agent", "realty": "Real Estate Agent"}
+def _get_report_requester(db, all_types: list[str], current_type: str) -> str:
+    """Pick a requester agent NAME (an active agent whose type isn't the target's).
+
+    The A2A layer resolves the requester by NAME, and registered names differ from
+    the type — e.g. the stock agent is registered as 'AI Advisor', NOT 'Stock Agent'.
+    Hardcoding 'Stock Agent' made the cross-agent report fail with
+    'Requester agent not found: Stock Agent', so we resolve the real name from the DB."""
+    from db.models import CoreAgent
+
+    def real_name(t: str) -> str | None:
+        a = (db.query(CoreAgent)
+             .filter(CoreAgent.type == t, CoreAgent.status == "active", CoreAgent.is_mock.is_(False))
+             .order_by(CoreAgent.reliability_score.desc())
+             .first())
+        return a.name if a else None
+
+    # Prefer a different-type active agent as the requester.
     for t in all_types:
         if t != current_type:
-            return type_to_name.get(t, f"{t.title()} Agent")
-    return type_to_name.get(current_type, f"{current_type.title()} Agent")
+            nm = real_name(t)
+            if nm:
+                return nm
+    # Fall back to an active agent of the current type, then a static default.
+    nm = real_name(current_type)
+    if nm:
+        return nm
+    static = {"asset": "Asset Agent", "stock": "AI Advisor", "realty": "Real Estate Agent"}
+    for t in all_types:
+        if t != current_type:
+            return static.get(t, f"{t.title()} Agent")
+    return static.get(current_type, f"{current_type.title()} Agent")
 
 
 def _build_section_from_a2a_data(agent_type: str, data_result: dict) -> dict:

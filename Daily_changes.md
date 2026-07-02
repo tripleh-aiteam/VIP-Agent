@@ -2,6 +2,30 @@
 
 ---
 
+## 2026-07-02 (Thursday) — Fix Reports-page bugs: cross-agent error + blank YouTube rows
+
+### Goal
+
+Audit the daily reports + the VIP dashboard Reports page for bugs. Found two and fixed both.
+
+### Bug 1 — cross-agent report showed an error (FIXED)
+
+The daily `cross_agent_summary` (23:30 UTC) had an executive summary starting with *"Failed to fetch data from asset agent: Requester agent not found: Stock Agent"*. Root cause: [report_service.py](apps/orchestrator-api/services/report_service.py) `_get_report_requester` hardcoded `{"stock": "Stock Agent"}`, but the A2A layer ([a2a_service.py:494](apps/orchestrator-api/services/a2a_service.py#L494)) resolves the requester **by name**, and the stock agent is registered as **"AI Advisor"**, not "Stock Agent" → `ValueError: Requester agent not found`. Fixed: `_get_report_requester(db, ...)` now resolves the real active agent name **by type** from `core_agents` (verified: target asset → requester "AI Advisor"; stock/realty → "Asset Agent").
+
+### Bug 2 — YouTube reports showed blank rows (FIXED)
+
+`youtube_report` rows (from the external GPU pipeline, `delivery_channel=gpu_youtube`) store `email_subject` + `generated_at_kst`, not `executive_summary`/`kst_time`, so the dashboard YouTube tab listed empty rows. Fixed [reports.py](apps/orchestrator-api/routers/reports.py) `list_reports` to fall back `executive_summary → email_subject → window`.
+
+### Healthy (verified)
+
+Real Estate agent now `active` (rel 0.998) on `realestate.tripleh.co.kr` (401→reachable fix works). Daily reports generating correctly on weekdays (kiwoom/newspaper/master/asset/realty all `daily` for 07-01/07-02); month-end monthly editions fired 06-30.
+
+### Next
+
+- Deploy; next 23:30 UTC cross-agent run will be clean. Optionally regenerate today's cross-agent row so the boss sees a clean one immediately.
+
+---
+
 ## 2026-07-01 (Wednesday) — Point Real Estate agent at its real domain (realestate.tripleh.co.kr)
 
 ### Goal

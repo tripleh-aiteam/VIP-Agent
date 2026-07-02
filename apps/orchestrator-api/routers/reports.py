@@ -788,7 +788,11 @@ def list_reports(
             "period": (r.content_json or {}).get("period", "daily"),
             "delivery_channel": r.delivery_channel,
             "source_run_count": len(r.source_run_ids_json) if r.source_run_ids_json else 0,
-            "executive_summary": (r.content_json or {}).get("executive_summary", ""),
+            # gpu_youtube rows carry no executive_summary — fall back to the email
+            # subject / window so the dashboard row isn't blank.
+            "executive_summary": ((r.content_json or {}).get("executive_summary")
+                                  or (r.content_json or {}).get("email_subject")
+                                  or (r.content_json or {}).get("window") or ""),
             "created_at": r.created_at.isoformat() if r.created_at else None,
         }
         for r in reports
