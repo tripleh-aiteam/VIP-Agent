@@ -320,7 +320,9 @@ def decide(db, ticker: str, focus: Optional[str] = None) -> dict[str, Any]:
     pos = tech.get("pos_in_range")
 
     def _zone(lo, hi):
-        return f"{_pl(lo)}~{_pl(hi)}" if lo and hi else None
+        # "–" not "~": two digit~digit ranges in one paragraph pair up as markdown
+        # strikethrough in the chat widget and the tildes vanish from the display
+        return f"{_pl(lo)}–{_pl(hi)}" if lo and hi else None
     buy_zone, sell_zone = _zone(lv.get("buy_lo"), lv.get("buy_hi")), _zone(lv.get("sell_lo"), lv.get("sell_hi"))
 
     def _clean(t):                                 # strip the 📈/📉/• prefix from a headline
