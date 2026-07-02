@@ -59,10 +59,26 @@ def _technicals(code: str) -> dict[str, Any]:
             "summary_ko": ", ".join(bits_ko) or "중립", "summary_en": ", ".join(bits_en) or "neutral"}
 
 
-# ---- factor 1: news ----
-def _news(db, code: str) -> dict[str, Any]:
+# ---- factor 1: news (newspaper) ----
+def _news(db, code: str, name: Optional[str] = None) -> dict[str, Any]:
     from services import news_impact as ni
-    items = ni.effective_news(db, code, limit=6) or []
+    items = list(ni.effective_news(db, code, limit=6) or [])
+    # NEWSPAPER LIVE fallback: raw_news is often empty per-ticker, so when the DB is thin
+    # pull real recent Korean headlines (Naver News + Google-News) and impact-score them —
+    # so the decision genuinely reflects today's 뉴스/신문 flow, not just the sparse table.
+    if len(items) < 3 and name and name != code:
+        try:
+            from services.stock_news import _fetch_items
+            seen = {(n.get("title") or "")[:40] for n in items}
+            for h in _fetch_items(name, limit=8, days=3):
+                t = (h.get("title") or "").strip()
+                if not t or t[:40] in seen:
+                    continue
+                seen.add(t[:40])
+                items.append({"title": t, "url": h.get("url") or "",
+                              "source": h.get("source"), **ni.score(t, h.get("snippet", ""), None)})
+        except Exception:
+            pass
     score = 0
     titles = []
     for n in items:
@@ -105,15 +121,53 @@ def _flows(db, code: str) -> dict[str, Any]:
             "foreign_5d": f.get("foreign_5d"), "inst_5d": f.get("inst_5d")}
 
 
+# ---- factor 5b: YouTube market sentiment (light nudge, per-stock only when discussed) ----
+_YT_BULL = ("급등", "상승", "호재", "매수", "강세", "상향", "돌파", "사자", "유망", "수혜", "신고가", "긍정")
+_YT_BEAR = ("급락", "하락", "악재", "매도", "약세", "조정", "팔자", "하향", "고점", "경계", "리스크", "부진", "부정")
+
+
+def _youtube(db, name: Optional[str]) -> dict[str, Any]:
+    """Latest market-wide YouTube (grounded) report → a LIGHT sentiment nudge, applied
+    only when the stock is explicitly discussed; otherwise neutral market context. Never
+    fabricates a per-stock view when the name isn't mentioned."""
+    if not name:
+        return {"score": 0, "mentioned": False, "note_ko": "", "note_en": ""}
+    try:
+        import json as _json
+        from services.youtube_grounded import latest_payload
+        blob = _json.dumps((latest_payload(db) or {}).get("report") or {}, ensure_ascii=False)
+    except Exception:
+        blob = ""
+    if not blob or name not in blob:
+        return {"score": 0, "mentioned": False,
+                "note_ko": "시장 심리 참고(개별 언급 없음)", "note_en": "market sentiment only (not singled out)"}
+    score, idx = 0, 0
+    while True:
+        i = blob.find(name, idx)
+        if i < 0:
+            break
+        w = blob[max(0, i - 160): i + 160]
+        b = sum(w.count(k) for k in _YT_BULL)
+        s = sum(w.count(k) for k in _YT_BEAR)
+        score += (1 if b > s else -1 if s > b else 0)
+        idx = i + len(name)
+    score = max(-1, min(1, score))
+    tag_ko = "긍정" if score > 0 else "부정" if score < 0 else "중립"
+    tag_en = "positive" if score > 0 else "negative" if score < 0 else "neutral"
+    return {"score": score, "mentioned": True,
+            "note_ko": f"유튜브에서 언급 — 논조 {tag_ko}", "note_en": f"discussed on YouTube — {tag_en} tone"}
+
+
 def decide(db, ticker: str) -> dict[str, Any]:
     from services import prediction_service as ps
     from services import trading_brief as tb
     code = str(ticker).zfill(6)
     name = ps.NAMES.get(code, code)
 
-    news = _news(db, code)
+    news = _news(db, code, name)
     flows = _flows(db, code)
     tech = _technicals(code)
+    yt = _youtube(db, name)
     ml = ps.get_ticker(db, code) or {}
 
     # Pull the SAME two methods the outlook block shows, so the recommendation is built on
@@ -142,9 +196,9 @@ def decide(db, ticker: str) -> dict[str, Any]:
     wv = (wave.get("verdict") or "").upper()
     wave_score = 1 if wv == "BUY" else -1 if wv == "AVOID" else 0
 
-    # weighted fusion (news 1.0, flows 1.0, technicals 1.2, ML 1.0, Wave 1.0)
+    # weighted fusion (news 1.0, flows 1.0, technicals 1.2, ML 1.0, Wave 1.0, YouTube 0.5)
     total = (news["score"] * 1.0 + flows["score"] * 1.0 + tech["score"] * 1.2
-             + ml_score * 1.0 + wave_score * 1.0)
+             + ml_score * 1.0 + wave_score * 1.0 + yt["score"] * 0.5)
     decision = "BUY" if total >= 2.5 else "SELL" if total <= -2.5 else "HOLD"
     conf = "높음" if abs(total) >= 4 else "보통" if abs(total) >= 2 else "낮음"
     conf_en = {"높음": "high", "보통": "medium", "낮음": "low"}[conf]
@@ -381,6 +435,8 @@ def decide(db, ticker: str) -> dict[str, Any]:
         f"**뉴스 — {news_ko}**",
     ]
     ko_lines += ([f"· {h}" for h in heads] if heads else ["· 특이 뉴스 없음"])
+    if yt.get("note_ko"):
+        ko_lines += ["", "**유튜브 (시장 심리)**", f"· {yt['note_ko']}"]
     ko_lines += ["", "**최종 종합 판단**", final_ko, "",
                  "※ 3가지 방법과 뉴스·수급·기술적 지표를 종합한 참고 의견이며, 투자 권유나 수익 보장이 아닙니다."]
     ko = "\n".join(ko_lines)
@@ -404,11 +460,14 @@ def decide(db, ticker: str) -> dict[str, Any]:
         f"**News — {news_en}**",
     ]
     en_lines += ([f"- {h}" for h in heads] if heads else ["- no notable news"])
+    if yt.get("note_en"):
+        en_lines += ["", "**YouTube (market sentiment)**", f"- {yt['note_en']}"]
     en_lines += ["", "**Final call — all 3 methods**", final_en, "",
                  "Note: a reasoned synthesis of all 3 methods + news/flows/technicals — not investment advice or a guarantee."]
     en = "\n".join(en_lines)
     return {"ticker": code, "name": name, "decision": decision, "score": round(total, 1),
             "price": price, "confidence": conf_en, "news": news, "flows": flows, "technicals": tech,
+            "youtube": yt,
             "method1_ml": {"call": ml_adv, "accuracy_pct": acc, "expected_move_pct": em},
             "method2_analysis": {"signal": an_sig, "reasons": m2.get("reasons")},
             "method3_wave": {"verdict": wv or None, "wave_score": _wsc,
