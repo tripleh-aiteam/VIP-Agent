@@ -99,12 +99,25 @@ def daily_history(code: str, days: int = 20) -> list[dict]:
         n = max(1, min(int(days or 20), 120))
     except Exception:
         n = 20
+    # Naver rejects pageSize > 60 (used to be 90) — page in chunks of 60 instead.
+    # page=1 is the newest 60, page=2 the next 60, so concatenation stays newest-first.
+    r: list = []
     try:
-        r = httpx.get(f"{_BASE}/{code}/price?pageSize={n}&page=1",
-                      headers=_H, timeout=12).json()
+        page = 1
+        while len(r) < n and page <= 3:      # constant pageSize keeps page offsets aligned
+            chunk = httpx.get(f"{_BASE}/{code}/price?pageSize=60&page={page}",
+                              headers=_H, timeout=12).json()
+            if not isinstance(chunk, list) or not chunk:
+                break
+            r.extend(chunk)
+            if len(chunk) < 60:              # no more history available
+                break
+            page += 1
+        r = r[:n]
     except Exception as e:
-        log.warning(f"naver daily {code}: {str(e)[:80]}")
-        return []
+        if not r:
+            log.warning(f"naver daily {code}: {str(e)[:80]}")
+            return []
     out: list[dict] = []
     for d in (r or []):
         close = _num(d.get("closePrice"))

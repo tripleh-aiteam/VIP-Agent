@@ -897,6 +897,9 @@ _DECISION_KW = (
     "buy or sell", "hold or sell", "sell or hold", "should i buy", "should i sell",
     "should i hold", "is it a buy", "buy hold sell", "buy/sell", "your advice",
     "your advise", "what should i do", "recommend",
+    # 'can/may I buy X (today)?' phrasings — same decision intent as 'should I buy'
+    "can i buy", "can we buy", "may i buy", "could i buy", "is it okay to buy",
+    "is it ok to buy", "good idea to buy", "possible to buy",
 )
 
 
