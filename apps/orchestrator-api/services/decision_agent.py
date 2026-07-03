@@ -393,10 +393,11 @@ def decide(db, ticker: str, focus: Optional[str] = None) -> dict[str, Any]:
         act_ko = f"비중 축소·차익 실현을 고려하세요. 저항 {_pl(res)}원을 회복하기 전까지는 보수적으로 보는 게 좋습니다."
         act_en = f"Consider trimming / taking profit; stay cautious until it reclaims resistance at ₩{_pl(res)}."
     else:
-        act_ko = (f"지금은 서둘러 사기보다 보유·관망이 적절합니다. 저항 {_pl(res)}원을 강하게 돌파하면 비중 확대, "
-                  f"지지 {_pl(sup)}원이 깨지면 비중 축소로 대응하세요.")
-        act_en = (f"Hold / wait rather than chase. Add if it breaks resistance ₩{_pl(res)}; "
-                  f"reduce if it loses support ₩{_pl(sup)}.")
+        # trigger-only (the headline already says "don't buy now" — no need to repeat it)
+        act_ko = (f"저항 {_pl(res)}원을 강하게 돌파하면 그때 매수를 검토하고, "
+                  f"지지 {_pl(sup)}원이 깨지면 보유분은 비중 축소로 대응하세요.")
+        act_en = (f"Revisit buying only if it clearly breaks resistance ₩{_pl(res)}; "
+                  f"if support ₩{_pl(sup)} breaks, reduce any existing position.")
 
     en_name = {"SK하이닉스": "SK Hynix", "삼성전자": "Samsung Electronics",
                "삼성전기": "Samsung Electro-Mechanics", "SK스퀘어": "SK Square",
@@ -538,33 +539,24 @@ def decide(db, ticker: str, focus: Optional[str] = None) -> dict[str, Any]:
     wave_para_en = (f"**→ {wv or 'WATCH'}**" + (f" · wave score {_wsc}" if _wsc is not None else "")
                     + f" — {wave_why_en}." + (f" {wave_zone_en}." if wave_zone_en else "")).strip()
 
-    # ---- the special FINAL synthesis paragraph the user asked for ----
-    final_ko = (f"저희 3가지 방법을 종합하면, 최종 추천은 **{dec_full_ko}**입니다. "
-                f"머신러닝은 '{ml_call_ko}', 분석은 '{an_call_ko}'"
-                + (f", 파동은 '{wv_ko}'" if has_wave else "")
-                + ("로 세 방법의 방향이 대체로 일치하고, " if _all_same else "로 방법별 신호가 다소 엇갈리고, ")
-                + f"뉴스 흐름은 '{news_ko}'입니다. 그래서 {act_ko} "
-                + ("방향이 한쪽으로 모이는 만큼 이 판단의 신뢰도는 상대적으로 높습니다."
-                   if _all_same else "신호가 엇갈리는 만큼 한 번에 크게 베팅하기보다 추세를 확인하며 대응하는 것이 안전합니다."))
-    final_en = (f"Putting our 3 methods together, the final recommendation is **{dec_full_en}**. "
-                f"Machine Learning says '{ml_adv or 'HOLD'}', Analysis says '{an_call_en}'"
-                + (f", Wave says '{wv_en}'" if has_wave else "")
-                + (" — they mostly point the same way, " if _all_same else " — the signals are somewhat mixed, ")
-                + f"and news is '{news_en}'. So {act_en} "
-                + ("Because the methods converge here, conviction in this call is relatively higher."
-                   if _all_same else "Because they diverge, it's safer to confirm the trend than to bet big all at once."))
+    # NOTE (boss feedback 2026-07-03): the direct answer at the TOP is the one and only
+    # conclusion — no repeated "최종 종합 판단" synthesis at the bottom. Methods follow as
+    # proof. And a not-buy answer must NOT show a "how many" block (no-buy = 0 shares).
 
-    # ① 친구식 직접 답변 → ② 얼마나/언제 팔까 → ③ 근거: 시장 → 뉴스 → 유튜브 → 방법 1/2/3 →
-    # 기술적 → 체크리스트 → ④ 최종 종합 판단. (보스 피드백: 일반 사용자가 읽기 쉬운 순서 —
-    # 시장 상황부터, 알고리즘 설명은 결론+한 줄 근거만.)
+    # ① 직접 답변(= 유일한 최종 결론) + 대응 가이드 → ②(매수일 때만) 얼마나 / (매도타이밍) 언제
+    # → ③ 근거(증거): 시장 → 뉴스 → 유튜브 → 방법 1/2/3 → 기술적 → 체크리스트. 끝에 요약 반복
+    # 없음. (보스 피드백: 안 사는 답에 '얼마나'는 논리 모순 — 0주; 결론은 맨 위 한 번만.)
     _yt_links_md = " · ".join(f"[영상 보기 {i}]({u})" for i, u in enumerate(yt.get("links") or [], 1))
     _yt_links_md_en = " · ".join(f"[watch {i}]({u})" for i, u in enumerate(yt.get("links") or [], 1))
-    ko_lines = [f"**{head_ko}**  ·  (추천: {dec_full_ko} · 확신 {conf})", ""]
+    ko_lines = [f"**{head_ko}**  ·  (추천: {dec_full_ko} · 확신 {conf})"]
     if _sell_focus:
-        ko_lines += ["**언제 팔까? (매도 타이밍)**", f"· {size_ko}", ""]
-    elif decision != "SELL":
-        ko_lines += ["**얼마나 살까?**", f"· {size_ko}", ""]
-    ko_lines += [f"**왜 그런가 — 근거 (확신 {conf} · {consensus_ko})**"]
+        ko_lines += ["", "**언제 팔까? (매도 타이밍)**", f"· {size_ko}"]
+    elif decision == "BUY":
+        ko_lines += ["", "**얼마나 살까?**", f"· {size_ko}"]
+    else:
+        # not-buy: NO sizing — instead one action line (what to watch for instead)
+        ko_lines += [f"· {act_ko}"]
+    ko_lines += ["", f"**근거 — 방법별 증거 (확신 {conf} · {consensus_ko})**"]
     if mkt_line_ko:
         ko_lines += ["", "**① 시장 상황**", f"· {mkt_line_ko}"]
     ko_lines += ["", f"**② 뉴스 — {news_ko}**"]
@@ -589,16 +581,18 @@ def decide(db, ticker: str, focus: Optional[str] = None) -> dict[str, Any]:
             ko_lines += ["", summary_line(checklist) + "  _(전체는 \"종목명 체크리스트\"로 확인)_"]
         except Exception:
             pass
-    ko_lines += ["", "**최종 종합 판단**", final_ko, "",
+    ko_lines += ["",
                  "※ 3가지 방법과 뉴스·수급·기술적 지표를 종합한 참고 의견이며, 투자 권유나 수익 보장이 아닙니다."]
     ko = "\n".join(ko_lines)
 
-    en_lines = [f"**{head_en}**  ·  (Recommendation: {dec_full_en} · confidence {conf_en})", ""]
+    en_lines = [f"**{head_en}**  ·  (Recommendation: {dec_full_en} · confidence {conf_en})"]
     if _sell_focus:
-        en_lines += ["**When to sell? (exit timing)**", f"- {size_en}", ""]
-    elif decision != "SELL":
-        en_lines += ["**How many?**", f"- {size_en}", ""]
-    en_lines += [f"**Why — the evidence (confidence {conf_en} · {consensus_en})**"]
+        en_lines += ["", "**When to sell? (exit timing)**", f"- {size_en}"]
+    elif decision == "BUY":
+        en_lines += ["", "**How many?**", f"- {size_en}"]
+    else:
+        en_lines += [f"- {act_en}"]
+    en_lines += ["", f"**The evidence — method by method (confidence {conf_en} · {consensus_en})**"]
     if mkt_line_en:
         en_lines += ["", "**① Market**", f"- {mkt_line_en}"]
     en_lines += ["", f"**② News — {news_en}**"]
@@ -623,7 +617,7 @@ def decide(db, ticker: str, focus: Optional[str] = None) -> dict[str, Any]:
             en_lines += ["", summary_line(checklist, en=True) + '  _(full card: ask "SK Hynix checklist")_']
         except Exception:
             pass
-    en_lines += ["", "**Final call — all 3 methods**", final_en, "",
+    en_lines += ["",
                  "Note: a reasoned synthesis of all 3 methods + news/flows/technicals — not investment advice or a guarantee."]
     en = "\n".join(en_lines)
     return {"ticker": code, "name": name, "decision": decision, "score": round(total, 1),
