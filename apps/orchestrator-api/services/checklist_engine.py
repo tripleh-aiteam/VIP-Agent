@@ -113,7 +113,9 @@ def _stock_ctx(db, code: str, news: Optional[dict] = None) -> dict[str, Any]:
     ctx: dict[str, Any] = {"code": code}
     try:
         from services import naver_stock as ns
-        hist = _cached(f"hist:{code}", 300, lambda: ns.daily_history(code, days=120))
+        # NOTE: Naver /price returns EMPTY when pageSize > 90 — cap at 90 days.
+        # Every indicator here fits: Ichimoku 52, MACD 35, MA60 60, RSI 15.
+        hist = _cached(f"hist:{code}", 300, lambda: ns.daily_history(code, days=90))
         chron = list(reversed(hist or []))
         ctx["closes"] = [r["close"] for r in chron if r.get("close") is not None]
         ctx["highs"] = [r["high"] for r in chron if r.get("high") is not None]
