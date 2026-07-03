@@ -2,6 +2,35 @@
 
 ---
 
+## 2026-07-03 (Friday) — Cloud collector finished · 100-item checklist engine · decide() feedback round
+
+### Goal
+
+Three linked deliverables: (1) finish the prior session's cloud-collector WIP so live Kiwoom data flows with NO PC, (2) turn the boss's 100-item paper pre-trade checklist into an agent-run engine, (3) implement his 5 feedback points on the decide() answer. All verified live on both chatbots (VIP + AI Advisor) in KO + EN.
+
+### Files added
+
+- [`services/checklist_engine.py`](apps/orchestrator-api/services/checklist_engine.py) — 33 checklist items live (6 market + 27 stock) as editable data rows; pass/fail/확인 불가 (never faked); human items (sleep/emotion) listed as reminders. New indicator math: RSI/MACD/Bollinger/Ichimoku/pivot R2/만기일. `market_preflight` (cached 5 min) + `stock_scorecard` + renderers.
+
+### Files updated
+
+- [`services/scheduler_service.py`](apps/orchestrator-api/services/scheduler_service.py) — the cloud-collector WIP's missing piece: registered `cloud-collector-pass` (every 2 min, 09:00–15:31 KST). Verified: forced pass wrote (snapshot age 19s→3s), fresh-skip works — PC collector is now an optional accelerator.
+- [`services/decision_agent.py`](apps/orchestrator-api/services/decision_agent.py) — boss feedback round: rationale reordered (① 시장 → ② 뉴스 → ③ 유튜브 → ④⑤⑥ 방법 → 기술적 → 체크리스트 → 최종); methods compacted to verdict + one reason + (±move · accuracy); market line now 코스피+코스닥+환율 (`_market_indicators()`, Naver m-API, 120s cache); YouTube line carries 1–2 clickable video links; checklist deal-breakers (급락일/공매도 과열/악재 압도/손익비<1.2) veto a BUY → "관망 (체크리스트 결격)".
+- [`services/assistant_agent.py`](apps/orchestrator-api/services/assistant_agent.py) — MULTI-STOCK decisions: "삼성전자랑 SK하이닉스 살까?" runs decide per stock (≤3), joined 📌-headed, each graded; "can/may/could I buy" phrasings added (EN fell to the LLM, which hallucinated market numbers); "체크리스트" chat intent (per-stock card / market pre-flight).
+- [`services/naver_stock.py`](apps/orchestrator-api/services/naver_stock.py) — **Naver dropped the /price pageSize limit 90→60** (silently errors above); `daily_history` now paginates constant 60-row chunks. This had blanked all 15 candle checklist items.
+- [`routers/predictions.py`](apps/orchestrator-api/routers/predictions.py) — `GET /predictions/checklist/{ticker}` + `/checklist-market`.
+
+### What this unblocks
+
+Live 호가/수급/공매도 without the PC running (checklist + tape veto always have fresh data); the boss's manual pre-trade discipline now runs automatically inside every 살까? answer; multi-stock questions answered per stock.
+
+### Next
+
+- Checklist Group 2 feeds: economic calendar, VIX, Nasdaq futures, MSCI/만기 calendar, DART key (boss offered to help choose indicators).
+- cron-job.org pings (boss): `/predictions/collector/pass` every 2–3 min + `/predictions/chatbot-grade` every 20–30 min during market.
+
+---
+
 ## 2026-07-03 (Friday) — Collector made self-healing (Task Scheduler) + rollback fix
 
 ### Goal
