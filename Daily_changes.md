@@ -2,6 +2,36 @@
 
 ---
 
+## 2026-07-03 (Friday, evening) — Autopilot: paper trader · self-tuning · kill-switch · 12-day backfill
+
+### Goal
+
+Boss's ask: continuous self-improvement toward real daily trading, running without him. Built the full loop — then the bigger data honestly reversed a finding before it could cost money.
+
+### Files added
+
+- [`services/dip_bounce.py`](apps/orchestrator-api/services/dip_bounce.py) — the boss's buy-the-dip strategy as a scanner (≥dip%/1h + tape confirm + vetoes), chat intent (반등할/buy the dip), auto-graded candidates, GET /predictions/dip-bounce.
+- [`services/dip_alert.py`](apps/orchestrator-api/services/dip_alert.py) — proactive alert emails every 10 min in market (DB dedup 2h/ticker, daily cap, owner-only pilot).
+- [`services/paper_trader.py`](apps/orchestrator-api/services/paper_trader.py) — Autopilot A: virtually executes the bot's signals every 5 min (₩1M/trade, target/stop/60-min exits, caps DB-backed); 08:20 KST scorecard email "봇을 따라했다면 N건 W승 L패 +X%".
+- [`services/self_tune.py`](apps/orchestrator-api/services/self_tune.py) — Autopilot B: nightly path-accurate replay tunes params within rails (±0.25/night, n≥30, win≥55%); params in `strategy_params`, read at runtime (no deploy to tune); **viability kill-switch** (`active` flag).
+- [`ml/backfill_minute_hist.py`](apps/orchestrator-api/ml/backfill_minute_hist.py) — Kiwoom ka10080 5-min candles → `minute_bars_hist` (35,100 bars / 12 trading days); PC task `VIP_MinuteBackfill` tops up daily 16:10.
+
+### The honest reversal
+
+2-day data said dip-buying wins 81.7%; the 12-day replay (1,178 trades) says it **loses in normal tape at every parameter cell** (best 41% win) — the edge was one crash-rebound day. Variants (stock-specific dips, market-flush regime) also negative. The kill-switch paused the strategy automatically; it re-tests nightly and re-enables if its regime returns. tier_agree keeps paper-trading. **Lesson: never trust a backtest from a crash week — demand multi-week windows.**
+
+### Also
+
+- FLAT-overprediction fix in the hourly forecaster (ML FLAT 82%→15% → ~5× more decisive signals; accuracy self-grades from Monday).
+- Audit fixes: 체크리스트 routed to the slow relay (moved before it, +EN card), movers/accuracy/'다음주' position false-positive, typo-tolerant "can I buy" routing (VIP↔AI Advisor identical answers), 422 arg sanitizer, /strategy-params vs /{ticker} route-order gotcha.
+
+### Next
+
+- Monday: first paper trades + scorecard email; verify lean-forecast grading; tuner's next passes.
+- Boss: cron-job.org pings (collector/pass 2-3min, paper/tick 5min, chatbot-grade 20-30min, market hours).
+
+---
+
 ## 2026-07-03 (Friday) — M5.7: track-record-weighted fusion (test-first on real data)
 
 ### Goal
