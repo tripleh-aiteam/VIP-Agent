@@ -1648,6 +1648,22 @@ def _paper_morning_report():
         _db.close()
 
 
+@_single_flight("self_tune_nightly")
+def _self_tune_nightly():
+    """Autopilot B — after close: path-accurate replay on the banked 5-min series, tune
+    the dip-bounce params within rails (±0.25/night), write the note for the morning email."""
+    from db.base import SessionLocal
+    _db = SessionLocal()
+    try:
+        from services.self_tune import run as _st
+        r = _st(_db)
+        log.info(f"self-tune: {r.get('note')}", extra={"action": "self_tune.nightly"})
+    except Exception as e:
+        log.warning(f"self-tune failed: {str(e)[:120]}")
+    finally:
+        _db.close()
+
+
 @_single_flight("dip_alert_pass")
 def _dip_alert_pass():
     """Every 10 min during market: proactive dip-bounce alerts (the boss's own strategy)
@@ -2197,6 +2213,14 @@ def init_scheduler():
         _paper_morning_report,
         CronTrigger.from_crontab("20 23 * * *"),
         id="paper-morning-report",
+        replace_existing=True, max_instances=1, coalesce=True,
+    )
+    # Autopilot B — nightly self-tuning at 16:40 KST (07:40 UTC), after the market close
+    # and the scorekeeper, so tomorrow trades on today's freshest evidence.
+    _scheduler.add_job(
+        _self_tune_nightly,
+        CronTrigger.from_crontab("40 7 * * 1-5"),
+        id="self-tune-nightly",
         replace_existing=True, max_instances=1, coalesce=True,
     )
     log.info("scheduler: intraday 2-method hourly forward test registered (hourly 09–15 KST + 08:00 KST email + 5-min snapshot banking + 2-min cloud collector)", extra={"action": "scheduler.intraday_registered"})

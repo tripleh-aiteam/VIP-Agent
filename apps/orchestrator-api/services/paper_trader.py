@@ -153,13 +153,14 @@ def tick(db, force: bool = False) -> dict[str, Any]:
 
     # ---- 2) open: dip-bounce candidates ----
     try:
-        from services.dip_bounce import STOP_PCT, TARGET_PCT, scan
+        from services.dip_bounce import _params, scan
+        _dip, _tgt, _stp = _params(db)               # Autopilot-tuned, DB-backed
         r = scan(db, log_calls=False)                # the ledger is the grade here
         if not r.get("market_plunge"):
             for c in r.get("candidates") or []:
                 e = float(c["cur"])
                 if _open_trade(db, "dip_bounce", c["ticker"], e,
-                               round(e * (1 + TARGET_PCT / 100)), round(e * (1 - STOP_PCT / 100))):
+                               round(e * (1 + _tgt / 100)), round(e * (1 - _stp / 100))):
                     opened += 1
     except Exception as e:
         log.warning(f"paper dip open: {str(e)[:100]}")
@@ -225,7 +226,17 @@ def morning_report(db) -> dict[str, Any]:
         tag = {"dip_bounce": "낙폭 반등", "tier_agree": "시간별 일치"}.get(s, s)
         L.append(f"· {tag}: {a['n']}건 {a['wins']}승 {a['losses']}패 · 평균 {a['avg_net_pct']:+.2f}%")
     L += ["", f"누적: {cum['n']}건 · {cum['wins']}승 {cum['losses']}패 · 합계 {cum['total_net_pct']:+.2f}%",
-          f"미청산 포지션: {sc['open_now']}건", "",
+          f"미청산 포지션: {sc['open_now']}건"]
+    try:
+        from services.self_tune import latest_note, params_get
+        p = params_get(db, "dip_bounce")
+        L += ["", f"⚙️ 현재 전략 파라미터: 급락 기준 −{p['min_dip']}%/1시간 · 목표 +{p['target_pct']}% · 손절 −{p['stop_pct']}%"]
+        note = latest_note(db)
+        if note:
+            L.append(f"⚙️ 최근 자동 튜닝: {note}")
+    except Exception:
+        pass
+    L += ["",
           "※ 가상 기록입니다(실거래 아님). 체결가는 5분 주기 스냅샷 기준 근사치이며,",
           "   실전 준비 게이트(결정적 100건·승률 58%)에 이 기록이 누적됩니다."]
     body = "\n".join(L)

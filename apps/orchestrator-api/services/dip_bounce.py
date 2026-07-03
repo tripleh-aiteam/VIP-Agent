@@ -21,10 +21,21 @@ from sqlalchemy import text
 
 from services.logger import log
 
-MIN_DIP = 1.5          # % drop over ~1h — the measured edge threshold
-TARGET_PCT = 1.2       # take-profit (historic avg bounce +1.87%; stay under it)
-STOP_PCT = 1.0         # stop below entry
+MIN_DIP = 1.5          # fallback % drop over ~1h — the measured edge threshold
+TARGET_PCT = 1.2       # fallback take-profit
+STOP_PCT = 1.0         # fallback stop below entry
 LOOKBACK_MIN = (50, 75)  # "1 hour ago" tolerance window
+# NOTE: live values come from strategy_params (Autopilot B tunes them nightly within
+# rails); the constants above are only the cold-start fallback.
+
+
+def _params(db) -> tuple[float, float, float]:
+    try:
+        from services.self_tune import params_get
+        p = params_get(db, "dip_bounce")
+        return float(p["min_dip"]), float(p["target_pct"]), float(p["stop_pct"])
+    except Exception:
+        return MIN_DIP, TARGET_PCT, STOP_PCT
 
 
 def _candidates(db, min_dip: float = MIN_DIP, limit: int = 5) -> list[dict[str, Any]]:
@@ -65,11 +76,16 @@ def _candidates(db, min_dip: float = MIN_DIP, limit: int = 5) -> list[dict[str, 
     return out[:limit * 2]                                # keep some vetoed ones to show
 
 
-def scan(db, min_dip: float = MIN_DIP, limit: int = 5,
+def scan(db, min_dip: Optional[float] = None, limit: int = 5,
          agent_id: Optional[str] = None, lang: Optional[str] = None,
          log_calls: bool = True) -> dict[str, Any]:
-    """Full scan → {market_ok, candidates[], reasoning_ko, reasoning_en}."""
+    """Full scan → {market_ok, candidates[], reasoning_ko, reasoning_en}.
+    min_dip=None → use the Autopilot-tuned parameter set."""
     from services.stock_resolver import display_name, display_name_en
+
+    _dip, _tgt, _stp = _params(db)
+    if min_dip is None:
+        min_dip = _dip
 
     mkt = None
     try:
@@ -90,8 +106,8 @@ def scan(db, min_dip: float = MIN_DIP, limit: int = 5,
             for c in passed:
                 entry = c["cur"]
                 log_call(db, ticker=c["ticker"], action="BUY", intent="dip_bounce",
-                         ref_price=entry, target=round(entry * (1 + TARGET_PCT / 100)),
-                         stop=round(entry * (1 - STOP_PCT / 100)), horizon_min=60,
+                         ref_price=entry, target=round(entry * (1 + _tgt / 100)),
+                         stop=round(entry * (1 - _stp / 100)), horizon_min=60,
                          name=display_name(c["ticker"]), agent_id=agent_id, lang=lang)
         except Exception:
             pass
@@ -118,15 +134,15 @@ def scan(db, min_dip: float = MIN_DIP, limit: int = 5,
         for i, c in enumerate(passed, 1):
             nm, nme = display_name(c["ticker"]), display_name_en(c["ticker"])
             entry = c["cur"]
-            tgt = round(entry * (1 + TARGET_PCT / 100))
-            stp = round(entry * (1 - STOP_PCT / 100))
+            tgt = round(entry * (1 + _tgt / 100))
+            stp = round(entry * (1 - _stp / 100))
             imb_ko = ("호가 매수우위" if (c["imbalance"] or 0) > 0 else "호가 중립")
             imb_en = ("bid-heavy book" if (c["imbalance"] or 0) > 0 else "neutral book")
             ko += ["", f"**{i}. {nm} ({c['ticker']})** — 1시간 {c['dip_pct']:+.2f}%",
-                   f"· 진입 {entry:,.0f}원 · 목표 {tgt:,}원 (+{TARGET_PCT}%) · 손절 {stp:,}원 (−{STOP_PCT}%) · 예상 보유 ~60분",
+                   f"· 진입 {entry:,.0f}원 · 목표 {tgt:,}원 (+{_tgt}%) · 손절 {stp:,}원 (−{_stp}%) · 예상 보유 ~60분",
                    f"· 확인: {imb_ko}" + (f" · 공매도 {c['short_ratio']}%" if c["short_ratio"] is not None else "")]
             en += ["", f"**{i}. {nme} ({c['ticker']})** — 1h {c['dip_pct']:+.2f}%",
-                   f"- Entry ₩{entry:,.0f} · Target ₩{tgt:,} (+{TARGET_PCT}%) · Stop ₩{stp:,} (−{STOP_PCT}%) · hold ~60 min",
+                   f"- Entry ₩{entry:,.0f} · Target ₩{tgt:,} (+{_tgt}%) · Stop ₩{stp:,} (−{_stp}%) · hold ~60 min",
                    f"- Confirm: {imb_en}" + (f" · short ratio {c['short_ratio']}%" if c["short_ratio"] is not None else "")]
         ko += ["", "⚠️ 규칙: 목표 도달 시 욕심 없이 매도, 손절가 도달 시 예외 없이 정리. "
                "이 후보들은 자동 채점되어 실제 승률이 계속 기록됩니다."]

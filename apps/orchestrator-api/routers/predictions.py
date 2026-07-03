@@ -110,6 +110,20 @@ def readiness(db: Session = Depends(get_db)):
     return report(db)
 
 
+@router.post("/self-tune")
+def self_tune_ep(db: Session = Depends(get_db)):
+    """Autopilot B: run one bounded tuning pass now (normally nightly 16:40 KST)."""
+    from services.self_tune import run
+    return run(db)
+
+
+@router.get("/strategy-params")
+def strategy_params_ep(db: Session = Depends(get_db)):
+    """Current Autopilot-tuned strategy parameters + last tuning note."""
+    from services.self_tune import latest_note, params_get
+    return {"dip_bounce": params_get(db, "dip_bounce"), "last_tune": latest_note(db)}
+
+
 @router.post("/paper/tick")
 def paper_tick_ep(force: bool = Query(False), db: Session = Depends(get_db)):
     """One paper-trader pass (close hits/timeouts, open from bot signals). External-cron
