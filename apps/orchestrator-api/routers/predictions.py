@@ -110,6 +110,15 @@ def readiness(db: Session = Depends(get_db)):
     return report(db)
 
 
+@router.get("/dip-bounce")
+def dip_bounce_ep(min_dip: float = Query(1.5), db: Session = Depends(get_db)):
+    """Dip-bounce hunter: stocks down ≥min_dip% vs ~1h ago + tape confirmation, with
+    entry/target/stop. Measured basis: 81.7% next-hour-up after ≥1.5%/1h dips (n=71).
+    Candidates are NOT logged for grading here (the chat intent logs) — pass-through view."""
+    from services.dip_bounce import scan
+    return scan(db, min_dip=min_dip, log_calls=False)
+
+
 @router.get("/method-weights")
 def method_weights_ep(db: Session = Depends(get_db)):
     """M5.7 transparency: the live track-record-derived weights + intraday tier stats

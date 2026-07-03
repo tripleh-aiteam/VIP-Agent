@@ -348,6 +348,17 @@ def _is_movers_question(transcript: Optional[str]) -> bool:
     return any(k in t for k in _MOVERS_KW)
 
 
+# Dip-bounce hunter — '많이 떨어진 종목 중 반등할 거?' / 'buy the dip'. The boss's core
+# day-trading pattern: buy a big 1h dip, sell the bounce ~1h later.
+_DIP_BOUNCE_KW = (
+    "반등할", "반등 할", "반등주", "반등 종목", "반등할만", "반등 후보", "낙폭과대", "낙폭 과대",
+    "떨어진 종목", "빠진 종목", "급락 후 반등", "저점 매수 종목", "눌린 종목",
+    "buy the dip", "dip buy", "dip bounce", "rebound candidate", "bounce candidate",
+    "oversold bounce", "likely to rebound", "will rebound", "bounce back soon",
+    "fallen stocks", "dipped stocks",
+)
+
+
 def _is_scalp_question(transcript: Optional[str]) -> bool:
     t = (transcript or "").lower()
     if not any(k in t for k in _SCALP_KW):
@@ -4220,6 +4231,22 @@ def _run_agent_impl(
                     "transcript": transcript, "tool_used": "readiness"}
         except Exception as e:
             log.warning(f"readiness failed: {str(e)[:120]}")
+
+    # === DIP-BOUNCE HUNTER — the boss's own strategy ("떨어진 종목 중 반등할 거?"):
+    # ≥1.5%/1h dips + tape confirmation, every candidate auto-graded (intent='dip_bounce').
+    # Runs BEFORE movers ('많이 빠진' overlaps) — a 반등/rebound word wins.
+    if (not confirmed_tool and not attachment_ids
+            and any(k in (transcript or "").lower() for k in _DIP_BOUNCE_KW)):
+        try:
+            from services.dip_bounce import scan as _dbscan
+            _r = _dbscan(db, agent_id=agent_id, lang=lang)
+            _en = str(lang or "").lower().startswith("en")
+            return {"intent": "dip_bounce", "language": lang,
+                    "reply": _r.get("reasoning_en" if _en else "reasoning_ko"),
+                    "action": None, "speak": True, "transcript": transcript,
+                    "tool_used": "dip_bounce"}
+        except Exception as e:
+            log.warning(f"dip_bounce failed: {str(e)[:120]}")
 
     # === B3 — LIVE MOVERS ("지금 움직이는 종목?") — real-time move% + volume vs normal ===
     if (not confirmed_tool and not attachment_ids and _is_movers_question(transcript)
