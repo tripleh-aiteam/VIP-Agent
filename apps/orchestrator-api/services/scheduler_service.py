@@ -1511,11 +1511,12 @@ def _master_weekly_all():
 @with_retry(max_attempts=1, backoff_seconds=(), job_name="ensure_morning_reports",
             alert_on_final_failure=False)
 def _ensure_morning_reports():
-    """Safety net — runs 8:00 AM KST daily, AFTER all the morning reports.
-    For each expected report, if today's row is NOT already on the dashboard
-    (i.e. the morning run failed / was missed), generate it now. Idempotent:
-    anything already present is skipped, so it never duplicates or double-emails.
-    This is what makes 'a report every day' self-correcting without manual help."""
+    """Self-healing report health check — runs 8:00 AM, 11:15 AM and 5:00 PM KST.
+    (1) If any expected daily report is MISSING from the dashboard, generate it now
+        (idempotent — present reports are skipped, so no duplicates / double-emails).
+    (2) If today's cross-agent report is missing or contains an ERROR marker, it is
+        regenerated (Telegram/dashboard only — no email spam).
+    This is what makes the reports self-correcting without anyone asking."""
     from db.models import OrchReport
     from services.kst import kst_date, kst_now
 
@@ -1553,7 +1554,30 @@ def _ensure_morning_reports():
                             extra={"action": "ensure.backfill", "report": rtype})
                 fn()
 
-        log.info(f"ensure: morning-report check done for {today} ({'weekend' if weekend else 'weekday'})",
+        # Cross-agent report: regenerate if today's is MISSING or contains an ERROR
+        # marker (e.g. a transient agent fetch failure). It's Telegram/dashboard only
+        # (no email), so regenerating is safe — no inbox spam.
+        try:
+            _ERR = ("Requester agent not found", "Failed to fetch", "No module named",
+                    "[LLM unavailable]", "Traceback (", "Adapter error")
+            xrow = (db.query(OrchReport)
+                    .filter(OrchReport.report_type == "cross_agent_summary")
+                    .order_by(OrchReport.created_at.desc()).first())
+            xtoday = bool(xrow and xrow.created_at
+                          and (xrow.created_at + timedelta(hours=9)).strftime("%Y-%m-%d") == today)
+            xerr = any(m in str(xrow.content_json) for m in _ERR) if xrow else False
+            if (not xtoday) or xerr:
+                from services.report_service import compose_cross_agent_report
+                compose_cross_agent_report(db, agent_types=["asset", "stock", "realty"],
+                                           trace_id=f"ensure-cross-{today}")
+                log.warning(f"ensure: cross-agent report regenerated "
+                            f"({'errored' if xerr else 'stale/missing'})",
+                            extra={"action": "ensure.cross_regen"})
+        except Exception as ce:
+            log.warning(f"ensure: cross-agent regen failed: {str(ce)[:120]}",
+                        extra={"action": "ensure.cross_regen_failed"})
+
+        log.info(f"ensure: report health check done for {today} ({'weekend' if weekend else 'weekday'})",
                  extra={"action": "ensure.done"})
     except Exception as e:
         log.warning(f"ensure: morning-report safety net failed: {e}", extra={"action": "ensure.failed"})
@@ -2138,13 +2162,16 @@ def init_scheduler():
     # Safety net — 8:00 AM KST daily: backfill ANY morning report missing from the
     # dashboard (transient failure / missed run), so the boss always has today's
     # set automatically and nobody has to ask. Idempotent (skips what's present).
-    _scheduler.add_job(
-        _ensure_morning_reports,
-        CronTrigger(day_of_week="*", hour=8, minute=0, timezone=_KST_TZ),
-        id="ensure-morning-reports",
-        replace_existing=True,
-    )
-    log.info("scheduler: morning-report safety net registered (8:00 AM KST daily)", extra={"action": "scheduler.ensure_registered"})
+    # Runs 3x daily in KST: 8:00 AM (right after the morning reports), plus a
+    # mid-morning 11:15 AM and an afternoon 5:00 PM check-and-fix pass.
+    for _h, _m in ((8, 0), (11, 15), (17, 0)):
+        _scheduler.add_job(
+            _ensure_morning_reports,
+            CronTrigger(day_of_week="*", hour=_h, minute=_m, timezone=_KST_TZ),
+            id=f"ensure-report-health-{_h:02d}{_m:02d}",
+            replace_existing=True,
+        )
+    log.info("scheduler: report health check registered (8:00 / 11:15 / 17:00 KST daily)", extra={"action": "scheduler.ensure_registered"})
 
     # Knowledge-base sync (RAG / Phase 2) — 7:10 AM KST = 22:10 UTC, after the
     # morning reports are written, so the chatbot grounds answers in fresh content.

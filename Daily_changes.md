@@ -29,6 +29,12 @@ Live 호가/수급/공매도 without the PC running (checklist + tape veto alway
 - Checklist Group 2 feeds: economic calendar, VIX, Nasdaq futures, MSCI/만기 calendar, DART key (boss offered to help choose indicators).
 - cron-job.org pings (boss): `/predictions/collector/pass` every 2–3 min + `/predictions/chatbot-grade` every 20–30 min during market.
 
+### [11:20] Report health check now runs 3× daily (8:00 / 11:15 / 17:00 KST) + auto-fixes cross-agent errors
+
+- **What:** `_ensure_morning_reports` (self-healing report job) is now scheduled at **8:00 AM, 11:15 AM and 5:00 PM KST** (was 8 AM only), per boss request to check + fix reports morning and afternoon. Also **extended it to detect + regenerate the cross-agent report** when today's row is missing OR contains an error marker (`Requester agent not found` / `Failed to fetch` / `No module` / `[LLM unavailable]` / `Adapter error`) — cross-agent is Telegram/dashboard only so regenerating never double-emails. Missing daily reports are still backfilled idempotently. ([scheduler_service.py](apps/orchestrator-api/services/scheduler_service.py))
+- **Immediate check:** today's (07-03) reports are all clean — the 07-02 cross-agent name-resolver fix is live (latest cross-agent row has no error). Ran the enhanced job once → "report health check done", nothing to fix. Verified the 11:15 + 17:00 triggers fire today (KST-tz, named-day).
+- **Note:** in-app self-heal covers transient/data errors + missing reports; a genuine code bug still needs a human/Claude fix (rare now).
+
 ---
 
 ## 2026-07-03 (Friday) — Collector made self-healing (Task Scheduler) + rollback fix
