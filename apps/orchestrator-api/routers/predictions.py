@@ -117,13 +117,6 @@ def self_tune_ep(db: Session = Depends(get_db)):
     return run(db)
 
 
-@router.get("/strategy-params")
-def strategy_params_ep(db: Session = Depends(get_db)):
-    """Current Autopilot-tuned strategy parameters + last tuning note."""
-    from services.self_tune import latest_note, params_get
-    return {"dip_bounce": params_get(db, "dip_bounce"), "last_tune": latest_note(db)}
-
-
 @router.post("/paper/tick")
 def paper_tick_ep(force: bool = Query(False), db: Session = Depends(get_db)):
     """One paper-trader pass (close hits/timeouts, open from bot signals). External-cron
@@ -161,6 +154,14 @@ def dip_bounce_ep(min_dip: float = Query(1.5), db: Session = Depends(get_db)):
     Candidates are NOT logged for grading here (the chat intent logs) — pass-through view."""
     from services.dip_bounce import scan
     return scan(db, min_dip=min_dip, log_calls=False)
+
+
+@router.get("/strategy-params")
+def strategy_params_ep(db: Session = Depends(get_db)):
+    """Current Autopilot-tuned strategy parameters + last tuning note. NOTE: must be
+    registered BEFORE the /{ticker} catch-all or that route swallows the path."""
+    from services.self_tune import latest_note, params_get
+    return {"dip_bounce": params_get(db, "dip_bounce"), "last_tune": latest_note(db)}
 
 
 @router.get("/method-weights")
