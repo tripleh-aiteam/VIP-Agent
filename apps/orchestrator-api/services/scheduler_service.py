@@ -1592,6 +1592,19 @@ def _intraday_forecast_tick():
         db.close()
 
 
+@_single_flight("cloud_collector_pass")
+def _cloud_collector_pass():
+    """Every 2 min during market: server-side Kiwoom collection pass — takes over
+    automatically whenever the PC collector isn't writing (fresh-snapshot skip)."""
+    try:
+        from services.cloud_collector import run_pass
+        r = run_pass()
+        if r.get("started"):
+            log.info(f"cloud collector: {r}", extra={"action": "collector.cloud_tick"})
+    except Exception as e:
+        log.warning(f"cloud collector tick failed: {str(e)[:120]}")
+
+
 @_single_flight("intraday_snapshot_bank")
 def _intraday_snapshot_bank():
     """Every 5 min during market: append fresh order-flow snapshots to history —
@@ -2079,7 +2092,18 @@ def init_scheduler():
         id="intraday-snapshot-bank",
         replace_existing=True, max_instances=1, coalesce=True,
     )
-    log.info("scheduler: intraday 2-method hourly forward test registered (hourly 09–15 KST + 08:00 KST email + 5-min snapshot banking)", extra={"action": "scheduler.intraday_registered"})
+    # Cloud collector — every 2 min during market (00:00–06:31 UTC = 09:00–15:31 KST):
+    # the SERVER polls Kiwoom itself (Render IPs are registered), so live 호가/수급 flows
+    # with no PC. Skips instantly when the PC collector's snapshot is fresh (<90s) —
+    # automatic failover, never double work. Also exposed at POST /predictions/collector/pass
+    # so a FREE external cron keeps it alive through Render free-tier sleep.
+    _scheduler.add_job(
+        _cloud_collector_pass,
+        CronTrigger.from_crontab("*/2 0-6 * * 1-5"),
+        id="cloud-collector-pass",
+        replace_existing=True, max_instances=1, coalesce=True,
+    )
+    log.info("scheduler: intraday 2-method hourly forward test registered (hourly 09–15 KST + 08:00 KST email + 5-min snapshot banking + 2-min cloud collector)", extra={"action": "scheduler.intraday_registered"})
 
     # Major-news story monitor — twice daily (09:00 + 16:00 KST = 00:00 + 07:00 UTC) so
     # follow-ups (e.g. the 3 Mega Projects 2 PM announcement) are caught + emailed same day.

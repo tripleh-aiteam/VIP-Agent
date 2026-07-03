@@ -38,3 +38,5 @@ Thumbs.db
 # Local databases / vector indexes
 *.db
 ruvector.db
+
+.vercel

@@ -110,6 +110,16 @@ def readiness(db: Session = Depends(get_db)):
     return report(db)
 
 
+@router.post("/collector/pass")
+def collector_pass(force: bool = Query(False)):
+    """Cloud collection pass — the server polls Kiwoom itself (Render IPs are
+    registered), so live data flows with NO PC involved. Fire every ~2 min during
+    market via external cron. Skips when a fresh snapshot exists (PC collector
+    active) — automatic failover, never double work."""
+    from services.cloud_collector import run_pass
+    return run_pass(force=force)
+
+
 @router.post("/intraday/bank")
 def intraday_bank(db: Session = Depends(get_db)):
     """B2 prep: append fresh order-flow snapshots to intraday_snapshot_history — the
