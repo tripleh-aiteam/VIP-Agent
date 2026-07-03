@@ -98,8 +98,27 @@ def tool_stock_portfolio(**_kw) -> dict[str, Any]:
 
 
 def tool_stock_intraday_signals(ticker: str | None = None, status: str | None = None, limit: int = 50, **_kw) -> dict[str, Any]:
-    """Real-time intraday trade signals (bullish/bearish/risk) for the watchlist."""
-    return _get("/intraday/signals", {"ticker": ticker, "status": status, "limit": limit})
+    """Real-time intraday trade signals (bullish/bearish/risk) for the watchlist.
+
+    The LLM sometimes invents args (a Korean phrase as `ticker`, a made-up `status`) and
+    the backend 422s — sanitize first, and if a filtered call still 4xxes, retry BARE so
+    the user gets data instead of an apology."""
+    tk = str(ticker).strip() if ticker else None
+    if tk and not (tk.isdigit() and len(tk) == 6):
+        try:
+            from services.stock_resolver import resolve_one
+            tk = (resolve_one(tk) or (None,))[0]
+        except Exception:
+            tk = None
+    st = status if status in ("active", "closed", "all") else None
+    try:
+        lim = max(1, min(int(limit or 50), 100))
+    except Exception:
+        lim = 50
+    r = _get("/intraday/signals", {"ticker": tk, "status": st, "limit": lim})
+    if not r.get("ok") and "HTTP 4" in str(r.get("error", "")):
+        r = _get("/intraday/signals", None)
+    return r
 
 
 def tool_stock_intraday_status(**_kw) -> dict[str, Any]:
