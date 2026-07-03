@@ -2,6 +2,29 @@
 
 ---
 
+## 2026-07-03 (Friday) — M5.7: track-record-weighted fusion (test-first on real data)
+
+### Goal
+
+Accuracy upgrade, boss-mandated process: measure with real data → predict & compare → build. Baseline over ALL graded history (2,052 hourly + 655 daily + 232 chatbot calls) showed the methods flip rank by horizon (intraday ML 56.3% > Analysis 46.7%; daily Analysis 66.3% > ML 30.8%) and both fail at 10시 (<45%). Walk-forward replay on 857 paired forecasts: equal-weight 53.0% → TIER composite **61.4%** → agreement-only **80.0%** (n=25).
+
+### Files added
+
+- [`services/method_weights.py`](apps/orchestrator-api/services/method_weights.py) — rolling per-horizon stats from the graded tables (10-min cache), sample-shrunk weights (k=30), `intraday_tier()` per stock.
+
+### Files updated
+
+- [`services/decision_agent.py`](apps/orchestrator-api/services/decision_agent.py) — ML vote scaled by measured daily record (today 0.89×) + "📐 실측 가중치" transparency line + all-votes-agree confidence boost.
+- [`services/day_trade.py`](apps/orchestrator-api/services/day_trade.py) — scalp 🎯 tier line (hourly ML+Analysis agree ⇒ historic ~80% zone) / ⚠️ conflict caution + measured bad-hour (10시) warning.
+- [`routers/predictions.py`](apps/orchestrator-api/routers/predictions.py) — `GET /predictions/method-weights`.
+
+### Next
+
+- Fix FLAT-overprediction in the hourly forecaster (1,385 flat preds vs 118 actual-flat hours).
+- M5.6 next-30-min model once snapshot_bank accumulates weeks of data.
+
+---
+
 ## 2026-07-03 (Friday) — Cloud collector finished · 100-item checklist engine · decide() feedback round
 
 ### Goal
