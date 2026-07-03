@@ -147,8 +147,9 @@ def _market_indicators() -> dict:
                 except Exception:
                     pass
             try:
+                # NOTE: this endpoint rejects pageSize < 10 ("Too small") — use 10, read row 0.
                 j = cli.get("https://m.stock.naver.com/front-api/marketIndex/prices"
-                            "?category=exchange&reutersCode=FX_USDKRW&page=1&pageSize=1").json()
+                            "?category=exchange&reutersCode=FX_USDKRW&page=1&pageSize=10").json()
                 row = ((j.get("result") or [{}])[0]) if isinstance(j.get("result"), list) else {}
                 if row.get("closePrice"):
                     out["usdkrw"] = {"price": row["closePrice"],
