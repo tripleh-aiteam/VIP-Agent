@@ -26,7 +26,7 @@ MIN_TRADES = 30
 MIN_WIN = 55.0
 COST = 0.25
 
-DEFAULTS = {"min_dip": 1.5, "target_pct": 1.2, "stop_pct": 1.0}
+DEFAULTS = {"min_dip": 1.5, "target_pct": 1.2, "stop_pct": 1.0, "active": 1.0}
 
 _DDL = """
 CREATE TABLE IF NOT EXISTS strategy_params (
@@ -62,15 +62,44 @@ def params_get(db, strategy: str = "dip_bounce") -> dict[str, float]:
     return out
 
 
-def _series(db, days: int = 14) -> dict[str, list]:
-    rows = db.execute(text(
-        "SELECT ticker, ts, price::float FROM intraday_snapshot_history "
-        "WHERE price IS NOT NULL AND ts > now() - (:d || ' days')::interval "
-        "ORDER BY ticker, ts"), {"d": days}).fetchall()
+def _series(db, days: int = 30) -> dict[str, list]:
+    """5-min price series: banked snapshots UNION the Kiwoom minute-bar backfill
+    (minute_bars_hist, topped up daily on the PC) — weeks of replay evidence instead of
+    days. Dedup on (ticker, 5-min bucket)."""
+    rows = db.execute(text("""
+        SELECT ticker, ts, price FROM (
+            SELECT ticker, ts, price::float,
+                   row_number() OVER (PARTITION BY ticker, date_trunc('hour', ts),
+                                      floor(extract(minute FROM ts)::int / 5)
+                                      ORDER BY src) rn
+            FROM (
+                SELECT ticker, ts, price, 1 AS src FROM intraday_snapshot_history
+                WHERE price IS NOT NULL AND ts > now() - (:d || ' days')::interval
+                UNION ALL
+                SELECT ticker, ts, close AS price, 2 AS src FROM minute_bars_hist
+                WHERE close IS NOT NULL AND ts > now() - (:d || ' days')::interval
+            ) u
+        ) q WHERE rn = 1 ORDER BY ticker, ts"""), {"d": days}).fetchall()
     s: dict[str, list] = defaultdict(list)
     for r in rows:
-        s[r.ticker].append((r.ts, r.price))
+        s[r.ticker].append((r.ts, float(r.price)))
     return s
+
+
+def _series_safe(db, days: int = 30) -> dict[str, list]:
+    """_series with graceful fallback when minute_bars_hist doesn't exist yet."""
+    try:
+        return _series(db, days)
+    except Exception:
+        db.rollback()
+        rows = db.execute(text(
+            "SELECT ticker, ts, price::float FROM intraday_snapshot_history "
+            "WHERE price IS NOT NULL AND ts > now() - (:d || ' days')::interval "
+            "ORDER BY ticker, ts"), {"d": days}).fetchall()
+        s: dict[str, list] = defaultdict(list)
+        for r in rows:
+            s[r.ticker].append((r.ts, r.price))
+        return s
 
 
 def _replay(series: dict, min_dip: float, target: float, stop: float,
@@ -115,7 +144,7 @@ def run(db, force: bool = False) -> dict[str, Any]:
     """One tuning pass: grid around current params (±STEP), adopt the best cell that
     clears the sample/win-rate bars; write the note either way."""
     cur = params_get(db, "dip_bounce")
-    series = _series(db)
+    series = _series_safe(db)
     if not series:
         return {"tuned": False, "reason": "no 5-min history"}
 
@@ -133,26 +162,33 @@ def run(db, force: bool = False) -> dict[str, Any]:
                     best = (tot, d, t, s, n, w)
 
     changed = (best[1], best[2], best[3]) != (cur["min_dip"], cur["target_pct"], cur["stop_pct"])
+    # VIABILITY KILL-SWITCH: if even the best cell can't clear the bar (win ≥ MIN_WIN AND
+    # positive net) on the fresh window, the strategy goes INACTIVE — the scan answers
+    # honestly, alerts stop, the paper trader skips it. Re-tested nightly; auto re-enables
+    # the day its regime returns. (12-day replay 2026-07-03: naive dip-buying loses in
+    # normal markets — the 81.7% was one crash-rebound day. Caught before real money.)
+    viable = best[4] >= MIN_TRADES and best[5] >= MIN_WIN and best[0] > 0
     note = (f"replay n={best[4]} win={best[5]:.1f}% total={best[0]:+.1f}% | "
             f"was dip={cur['min_dip']}/tgt={cur['target_pct']}/stop={cur['stop_pct']}"
-            + (f" -> dip={best[1]}/tgt={best[2]}/stop={best[3]}" if changed else " (kept)"))
-    if changed or force:
-        try:
-            db.execute(text(_DDL))
-            for k, v in (("min_dip", best[1]), ("target_pct", best[2]), ("stop_pct", best[3])):
-                db.execute(text(
-                    "INSERT INTO strategy_params (strategy, key, value, note) "
-                    "VALUES ('dip_bounce', :k, :v, :n) "
-                    "ON CONFLICT (strategy, key) DO UPDATE SET value=:v, updated_at=now(), note=:n"),
-                    {"k": k, "v": v, "n": note})
-            db.commit()
-            _cache.pop("dip_bounce", None)
-        except Exception as e:
-            db.rollback()
-            log.warning(f"self_tune write: {str(e)[:120]}")
+            + (f" -> dip={best[1]}/tgt={best[2]}/stop={best[3]}" if changed else " (kept)")
+            + (" | ACTIVE" if viable else " | INACTIVE (no profitable cell — strategy paused)"))
+    try:
+        db.execute(text(_DDL))
+        for k, v in (("min_dip", best[1]), ("target_pct", best[2]), ("stop_pct", best[3]),
+                     ("active", 1.0 if viable else 0.0)):
+            db.execute(text(
+                "INSERT INTO strategy_params (strategy, key, value, note) "
+                "VALUES ('dip_bounce', :k, :v, :n) "
+                "ON CONFLICT (strategy, key) DO UPDATE SET value=:v, updated_at=now(), note=:n"),
+                {"k": k, "v": v, "n": note})
+        db.commit()
+        _cache.pop("dip_bounce", None)
+    except Exception as e:
+        db.rollback()
+        log.warning(f"self_tune write: {str(e)[:120]}")
     log.info(f"self_tune: {note}", extra={"action": "self_tune.run"})
-    return {"tuned": changed, "params": {"min_dip": best[1], "target_pct": best[2],
-                                         "stop_pct": best[3]},
+    return {"tuned": changed, "active": viable,
+            "params": {"min_dip": best[1], "target_pct": best[2], "stop_pct": best[3]},
             "replay": {"n": best[4], "win_pct": round(best[5], 1),
                        "total_net_pct": round(best[0], 2)},
             "note": note}

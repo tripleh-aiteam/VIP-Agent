@@ -2215,11 +2215,12 @@ def init_scheduler():
         id="paper-morning-report",
         replace_existing=True, max_instances=1, coalesce=True,
     )
-    # Autopilot B — nightly self-tuning at 16:40 KST (07:40 UTC), after the market close
-    # and the scorekeeper, so tomorrow trades on today's freshest evidence.
+    # Autopilot B — nightly self-tuning at 16:40 KST (07:40 UTC), DAILY incl. weekends:
+    # the PC tops up minute_bars_hist at 16:10, so weekend passes retune on the full
+    # multi-week series and Monday opens on the freshest evidence.
     _scheduler.add_job(
         _self_tune_nightly,
-        CronTrigger.from_crontab("40 7 * * 1-5"),
+        CronTrigger.from_crontab("40 7 * * *"),
         id="self-tune-nightly",
         replace_existing=True, max_instances=1, coalesce=True,
     )

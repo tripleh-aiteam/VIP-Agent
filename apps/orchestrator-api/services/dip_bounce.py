@@ -38,6 +38,16 @@ def _params(db) -> tuple[float, float, float]:
         return MIN_DIP, TARGET_PCT, STOP_PCT
 
 
+def _active(db) -> bool:
+    """Autopilot kill-switch: the nightly replay disables the strategy when no parameter
+    cell is profitable on the fresh window; re-enables when its regime returns."""
+    try:
+        from services.self_tune import params_get
+        return float(params_get(db, "dip_bounce").get("active", 1.0)) >= 0.5
+    except Exception:
+        return True
+
+
 def _candidates(db, min_dip: float = MIN_DIP, limit: int = 5) -> list[dict[str, Any]]:
     """Stocks down ≥min_dip% vs ~1h ago, tape-confirmed, ranked by dip size."""
     rows = db.execute(text("""
@@ -86,6 +96,22 @@ def scan(db, min_dip: Optional[float] = None, limit: int = 5,
     _dip, _tgt, _stp = _params(db)
     if min_dip is None:
         min_dip = _dip
+
+    # kill-switch: honest inactive answer (stops alerts + paper trades too — everything
+    # flows through this scan)
+    if not _active(db):
+        ko = ("**📉→📈 낙폭 반등 전략 — 현재 비활성 (자동 판단)**\n"
+              "최근 실데이터 리플레이에서 이 전략의 수익 엣지가 확인되지 않아, 시스템이 스스로 "
+              "일시 중지했습니다. 급락 후 반등은 '급반등 장세'에서만 통하는 것으로 측정됐고, "
+              "평상시 급락은 오히려 더 떨어지는 경우가 많았습니다.\n"
+              "매일 밤 새 데이터로 재검증하며, 엣지가 다시 확인되면 자동으로 재가동됩니다.")
+        en = ("**📉→📈 Dip-bounce strategy — currently INACTIVE (automatic decision)**\n"
+              "The nightly replay on recent real data found no profit edge for this strategy, "
+              "so the system paused itself. Dip-buying only measured profitable in sharp "
+              "rebound regimes; in normal tape, big dips tended to keep falling.\n"
+              "It re-tests every night and re-activates automatically when the edge returns.")
+        return {"market_ret": None, "market_plunge": False, "candidates": [], "vetoed": [],
+                "inactive": True, "reasoning_ko": ko, "reasoning_en": en}
 
     mkt = None
     try:
