@@ -2,6 +2,24 @@
 
 ---
 
+## 2026-07-03 (Friday) — Collector made self-healing (Task Scheduler) + rollback fix
+
+### Goal
+
+Boss asked to make the PC collector reliable ("ok do it"). It had silently died once before (June 26 → July 2 data blackout) because it was a hand-started window with no supervision.
+
+### What was done
+
+- **Registered Windows Task Scheduler task `VIP_SnapshotCollector`** on this PC: runs [run_snapshot_collector.bat](apps/orchestrator-api/ml/run_snapshot_collector.bat) daily at 08:50 and **re-fires every 30 min for 8h** (self-healing: if the collector crashed or the PC rebooted, it relaunches within 30 min). Action uses `cmd.exe /c "..."` with a WorkingDirectory (a bare quoted .bat path failed silently with result 1). Discovered that the log-file append lock accidentally acts as a **single-instance mutex** — while a collector holds `snapshot.log`, task fires exit instantly (result 1, harmless); the moment it dies, the next fire takes over. Verified live: killed the old June-25 manual instance → task instance took over within 3 seconds and resumed writing 39 tickers/pass.
+- **Takeover exposed a robustness bug, fixed:** the takeover deadlock (old connection still holding locks) aborted the transaction, and [rt_snapshot_collector.py](apps/orchestrator-api/ml/realtime/rt_snapshot_collector.py)'s inner obm/minbars handlers swallowed the error WITHOUT rollback → the whole pass failed with "current transaction is aborted". Outer handler recovered on the next pass; inner handlers now rollback too so one bad statement no longer wastes a pass.
+- Also this morning ([day_trade.py](apps/orchestrator-api/services/day_trade.py), commit de896ab): scalp answers now name the session date their plan is based on whenever it isn't today.
+
+### Notes
+
+- Only remaining user setup: cron-job.org pings (4 jobs). Long-term recommendation before boss-daily-use: move the collector to an always-on cloud worker (Render IPs are already Kiwoom-registered).
+
+---
+
 ## 2026-07-02 (Thursday) — Fix Reports-page bugs: cross-agent error + blank YouTube rows
 
 ### Goal

@@ -100,6 +100,10 @@ def _one_pass(conn) -> int:
                 obm.record(conn, tk, ob["levels"], datetime.now(timezone.utc))
         except Exception as e:
             print(f"  obm {tk}: {str(e)[:80]}")
+            try:                    # a failed statement aborts the tx — roll back or every
+                conn.rollback()     # later statement in this pass fails ("tx is aborted")
+            except Exception:
+                pass
         # INTRADAY MINUTE CANDLES — only ~every 1 min (bars change once/min); the
         # volatility baseline for day-trade feasibility reads these.
         try:
@@ -109,6 +113,10 @@ def _one_pass(conn) -> int:
                     mb.record(conn, tk, bars)
         except Exception as e:
             print(f"  minbars {tk}: {str(e)[:80]}")
+            try:
+                conn.rollback()
+            except Exception:
+                pass
         rows.append((tk, fl.get("price") or ob.get("best_bid"), ob.get("imbalance"),
                      ob.get("best_bid"), ob.get("best_ask"), fl.get("foreign"),
                      fl.get("institution"), fl.get("fin_invest"), pr.get("net_amt"),
