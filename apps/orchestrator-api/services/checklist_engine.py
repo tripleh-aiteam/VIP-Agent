@@ -641,7 +641,12 @@ def render_ko(card: dict[str, Any]) -> str:
 def render_en(card: dict[str, Any]) -> str:
     """Full scorecard in English (item questions translated; live details may keep
     Korean data-source fragments, numbers dominate)."""
-    L = [f"**📋 {card['name']} checklist — {card['score']}/{card['max']} pts ({card['pct']}%)**"]
+    try:
+        from services.stock_resolver import display_name_en
+        _nm = display_name_en(card["ticker"]) or card["name"]
+    except Exception:
+        _nm = card["name"]
+    L = [f"**📋 {_nm} checklist — {card['score']}/{card['max']} pts ({card['pct']}%)**"]
     if card["deal_breakers"]:
         L += ["", "🚫 **Deal-breakers (no buying):**"]
         for b in card["deal_breakers"]:
