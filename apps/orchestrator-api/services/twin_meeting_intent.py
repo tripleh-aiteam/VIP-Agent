@@ -27,26 +27,46 @@ from services.logger import log
 #  Intent detection
 # ---------------------------------------------------------------------------
 
-# English meeting verbs that should fire auto-create
+# English meeting verbs that should fire auto-create.
+# Covers both "let's MEETing" and bare "let's MEET" + many natural phrasings.
 _EN_MEETING_TRIGGERS = [
+    # "let's [have/do/start/hold] [a] meeting"
     r"\blet'?s\s+(?:have\s+|do\s+|start\s+|hold\s+)?(?:a\s+)?meeting\b",
-    r"\b(?:start|create|open|begin)\s+(?:a\s+)?meeting\b",
+    # "let's meet" / "lets meet" — common short form
+    r"\b(?:let'?s|lets)\s+meet\b",
+    # "we should/need to meet"
+    r"\bwe\s+(?:should|need\s+to|gotta|must)\s+meet\b",
+    # "start/create/open/begin/schedule a meeting"
+    r"\b(?:start|create|open|begin|schedule|book)\s+(?:a\s+)?meeting\b",
+    # "meeting with X"
     r"\bmeeting\s+with\b",
+    # "call a meeting"
     r"\bcall\s+(?:a\s+|an\s+)?meeting\b",
+    # "bring X to a meeting"
     r"\bbring\s+(?:in\s+)?\w+\s+(?:to\s+a\s+|for\s+a\s+)?meeting\b",
-    r"\bmeet\s+with\s+(?!me\b)\w+",   # "meet with X" but not "meet with me"
+    # "meet with X" (but not "meet with me")
+    r"\bmeet\s+with\s+(?!me\b)\w+",
+    # Bare "meet at/in/on TIME" / "meet tomorrow|tonight|today"
+    r"\bmeet\s+(?:at|in|on|by|before|after|tomorrow|tonight|today|next)\b",
+    # "see you in the meeting" / "join the meeting"
+    r"\bjoin\s+(?:the\s+|a\s+)?meeting\b",
 ]
 
-# Korean meeting triggers
+# Korean meeting triggers — covers both 회의/미팅 and casual 만나자
 _KR_MEETING_TRIGGERS = [
-    r"회의하자",        # "let's meet"
-    r"회의\s*시작",     # "start meeting"
-    r"회의를?\s*열어",  # "open meeting"
+    r"회의하자",          # let's meet (회의)
+    r"회의\s*시작",       # start meeting
+    r"회의를?\s*열어",    # open meeting
     r"미팅하자",
     r"미팅\s*시작",
-    r"\w+(?:와|과|랑|이랑|하고)\s+(?:같이\s+)?(?:회의|미팅)",  # "with X (have a) meeting"
+    r"\w+(?:와|과|랑|이랑|하고)\s+(?:같이\s+)?(?:회의|미팅)",
     r"(?:회의|미팅)\s*\w+(?:와|과|랑)",
-    r"트윈들?\s*(?:불러|소집)",   # "summon the twins"
+    r"트윈들?\s*(?:불러|소집)",
+    r"만나자",            # let's meet — casual
+    r"만납시다",          # let's meet — polite
+    r"모이자",            # let's gather
+    r"모입시다",          # let's gather — polite
+    r"(?:회의|미팅)\s*잡",  # "회의 잡자" / "미팅 잡아" — schedule a meeting
 ]
 
 _TRIGGERS = re.compile("|".join(_EN_MEETING_TRIGGERS + _KR_MEETING_TRIGGERS), re.IGNORECASE)
