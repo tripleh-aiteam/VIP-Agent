@@ -44,9 +44,11 @@ def is_position_question(text: str) -> bool:
         return False
     if any(k in t for k in _POSITION_KW):
         return True
-    # holding described implicitly: shares/P&L present AND an advice cue
+    # holding described implicitly: shares/P&L present AND an advice cue.
+    # NOTE: shares require a DIGIT before 주 ('200주') — a bare '주' substring false-fired
+    # on 다음주/이번주 ('삼성전자 다음주 전망 어때?' was answered as a held position).
     has_pnl = bool(_PNL_RE.search(t))
-    has_shares = ("주" in t) or ("share" in t)
+    has_shares = bool(re.search(r"\d[\d,]*\s*주|\d[\d,]*\s*shares?\b", t))
     has_cue = any(c in t for c in _POS_ADVICE_CUE)
     return (has_pnl or has_shares) and has_cue
 

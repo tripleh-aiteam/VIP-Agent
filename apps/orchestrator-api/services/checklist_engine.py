@@ -466,47 +466,51 @@ def _c_method_agreement(c):
 # ---------------------------------------------------------------- item registry
 # (no, category, question_ko, checker, weight, deal_breaker)
 
+# (no, category, question_ko, question_en, checker, weight, deal_breaker)
 MARKET_ITEMS = [
-    (11, "시장", "코스피/코스닥 방향은 상방인가?", _c_market_direction, 2, False),
-    (12, "시장", "전일 미국 증시(나스닥) 마감은 무난했는가?", _c_us_close, 1, False),
-    (17, "시장", "VIX(공포지수)가 적정 수준인가?", _c_vix, 1, False),
-    (16, "시장", "유가가 급변동하고 있지 않은가?", _c_oil, 1, False),
-    (22, "시장", "시장 전체를 압도하는 악재는 없는가?", _c_market_news, 2, True),
-    (20, "시장", "지정학적 리스크는 없는가?", _c_geopolitics, 1, False),
-    (95, "시장", "지수 급락일이 아닌가? (방어)", _c_market_plunge, 3, True),
-    (36, "시장", "선물/옵션 만기일이 아닌가?", _c_expiry, 1, False),
-    (100, "시장", "장 마감 직전 시간대가 아닌가?", _c_near_close, 1, False),
+    (11, "시장", "코스피/코스닥 방향은 상방인가?", "Are KOSPI/KOSDAQ pointing up?", _c_market_direction, 2, False),
+    (12, "시장", "전일 미국 증시(나스닥) 마감은 무난했는가?", "Was the previous US (NASDAQ) close OK?", _c_us_close, 1, False),
+    (17, "시장", "VIX(공포지수)가 적정 수준인가?", "Is the VIX (fear index) at a reasonable level?", _c_vix, 1, False),
+    (16, "시장", "유가가 급변동하고 있지 않은가?", "Is oil NOT swinging sharply?", _c_oil, 1, False),
+    (22, "시장", "시장 전체를 압도하는 악재는 없는가?", "No market-wide overwhelming bad news?", _c_market_news, 2, True),
+    (20, "시장", "지정학적 리스크는 없는가?", "No geopolitical risk?", _c_geopolitics, 1, False),
+    (95, "시장", "지수 급락일이 아닌가? (방어)", "Not an index-plunge day? (defense)", _c_market_plunge, 3, True),
+    (36, "시장", "선물/옵션 만기일이 아닌가?", "Not a futures/options expiry day?", _c_expiry, 1, False),
+    (100, "시장", "장 마감 직전 시간대가 아닌가?", "Not right before market close?", _c_near_close, 1, False),
 ]
 
 STOCK_ITEMS = [
-    (51, "종목선정", "가격이 이동평균선(5/20/60) 위에 정렬돼 있는가?", _c_ma_align, 2, False),
-    (58, "종목선정", "일봉 추세가 상방인가?", _c_daily_uptrend, 2, False),
-    (52, "종목선정", "추세장인가 박스권인가 파악됐는가?", _c_box_or_trend, 1, False),
-    (53, "종목선정", "지지/저항선이 명확한가?", _c_support_clear, 1, False),
-    (47, "종목선정", "거래량이 평소보다 증가했는가?", _c_vol_surge, 2, False),
-    (49, "종목선정", "과도한 갭 시가가 아닌가?", _c_gap_open, 1, False),
-    (50, "종목선정", "신고가/신저가 위치는 유리한가?", _c_new_high_low, 1, False),
-    (67, "종목선정", "전일 종가 대비 위치는 건전한가?", _c_vs_yesterday, 1, False),
-    (68, "종목선정", "시가를 회복했는가?", _c_recovered_open, 1, False),
-    (60, "종목선정", "RSI가 과열/과매도 구간이 아닌가?", _c_rsi, 1, False),
-    (61, "종목선정", "MACD가 골든크로스 상태인가?", _c_macd, 1, False),
-    (62, "종목선정", "볼린저 상단 과이탈(과열)이 아닌가?", _c_bollinger, 1, False),
-    (65, "종목선정", "일목균형표 구름대 위인가?", _c_ichimoku, 1, False),
-    (66, "종목선정", "피봇 R2 아래(과열 아님)인가?", _c_pivot_r2, 1, False),
-    (75, "종목선정", "당일 고점 추격 매수가 아닌가?", _c_near_day_high, 1, False),
-    (55, "수급", "호가창 체결 강도(매수우위)가 있는가?", _c_orderbook_strength, 2, False),
-    (43, "수급", "공매도 과열 종목이 아닌가?", _c_short_overheat, 2, True),
-    (35, "수급", "프로그램 매매가 우호적인가?", _c_program, 1, False),
-    (31, "수급", "외국인이 오늘 순매수인가?", _c_foreign_today, 1, False),
-    (32, "수급", "기관이 오늘 순매수인가?", _c_inst_today, 1, False),
-    (38, "수급", "외인+기관 5일 수급이 순유입인가?", _c_flows_5d, 2, False),
-    (34, "수급", "분산매도(개인 집중) 패턴이 아닌가?", _c_not_distribution, 1, False),
-    (23, "이슈", "종목 뉴스 흐름이 우호적인가?", _c_stock_news_positive, 2, False),
-    (41, "이슈", "재료가 일회성이 아니라 지속성이 있는가?", _c_catalyst_quality, 1, False),
-    (76, "실행", "진입/손절/목표 레벨이 명확한가?", _c_entry_levels, 2, False),
-    (79, "실행", "손익비가 1.2 이상인가?", _c_rr, 2, True),
-    (82, "실행", "방법(ML/파동) 중 매수를 지지하는 신호가 있는가?", _c_method_agreement, 2, False),
+    (51, "종목선정", "가격이 이동평균선(5/20/60) 위에 정렬돼 있는가?", "Price aligned above the 5/20/60 moving averages?", _c_ma_align, 2, False),
+    (58, "종목선정", "일봉 추세가 상방인가?", "Is the daily-chart trend up?", _c_daily_uptrend, 2, False),
+    (52, "종목선정", "추세장인가 박스권인가 파악됐는가?", "Trending or range-bound — identified?", _c_box_or_trend, 1, False),
+    (53, "종목선정", "지지/저항선이 명확한가?", "Are support/resistance clear?", _c_support_clear, 1, False),
+    (47, "종목선정", "거래량이 평소보다 증가했는가?", "Is volume above normal?", _c_vol_surge, 2, False),
+    (49, "종목선정", "과도한 갭 시가가 아닌가?", "No excessive opening gap?", _c_gap_open, 1, False),
+    (50, "종목선정", "신고가/신저가 위치는 유리한가?", "Is the new-high/new-low position favorable?", _c_new_high_low, 1, False),
+    (67, "종목선정", "전일 종가 대비 위치는 건전한가?", "Healthy position vs yesterday's close?", _c_vs_yesterday, 1, False),
+    (68, "종목선정", "시가를 회복했는가?", "Has it recovered the opening price?", _c_recovered_open, 1, False),
+    (60, "종목선정", "RSI가 과열/과매도 구간이 아닌가?", "RSI not overbought/oversold?", _c_rsi, 1, False),
+    (61, "종목선정", "MACD가 골든크로스 상태인가?", "Is MACD in a golden cross?", _c_macd, 1, False),
+    (62, "종목선정", "볼린저 상단 과이탈(과열)이 아닌가?", "Not overextended above the Bollinger upper band?", _c_bollinger, 1, False),
+    (65, "종목선정", "일목균형표 구름대 위인가?", "Above the Ichimoku cloud?", _c_ichimoku, 1, False),
+    (66, "종목선정", "피봇 R2 아래(과열 아님)인가?", "Below pivot R2 (not overheated)?", _c_pivot_r2, 1, False),
+    (75, "종목선정", "당일 고점 추격 매수가 아닌가?", "Not chasing today's high?", _c_near_day_high, 1, False),
+    (55, "수급", "호가창 체결 강도(매수우위)가 있는가?", "Order-book strength on the bid side?", _c_orderbook_strength, 2, False),
+    (43, "수급", "공매도 과열 종목이 아닌가?", "Not a short-selling-overheated stock?", _c_short_overheat, 2, True),
+    (35, "수급", "프로그램 매매가 우호적인가?", "Is program trading favorable?", _c_program, 1, False),
+    (31, "수급", "외국인이 오늘 순매수인가?", "Are foreigners net buying today?", _c_foreign_today, 1, False),
+    (32, "수급", "기관이 오늘 순매수인가?", "Are institutions net buying today?", _c_inst_today, 1, False),
+    (38, "수급", "외인+기관 5일 수급이 순유입인가?", "Foreign+institutional 5-day flows net positive?", _c_flows_5d, 2, False),
+    (34, "수급", "분산매도(개인 집중) 패턴이 아닌가?", "Not a distribution (retail-crowding) pattern?", _c_not_distribution, 1, False),
+    (23, "이슈", "종목 뉴스 흐름이 우호적인가?", "Is the stock's news flow favorable?", _c_stock_news_positive, 2, False),
+    (41, "이슈", "재료가 일회성이 아니라 지속성이 있는가?", "Is the catalyst sustainable (not one-off)?", _c_catalyst_quality, 1, False),
+    (76, "실행", "진입/손절/목표 레벨이 명확한가?", "Entry/stop/target levels clear?", _c_entry_levels, 2, False),
+    (79, "실행", "손익비가 1.2 이상인가?", "Risk:reward at least 1.2?", _c_rr, 2, True),
+    (82, "실행", "방법(ML/파동) 중 매수를 지지하는 신호가 있는가?", "Does at least one method (ML/Wave) back a buy?", _c_method_agreement, 2, False),
 ]
+
+_CAT_EN = {"시장": "Market", "종목선정": "Stock selection", "수급": "Supply & demand",
+           "이슈": "Catalyst", "실행": "Execution"}
 
 # Human-only reminders (not scored — the agent can't honestly check these)
 HUMAN_REMINDERS_KO = [
@@ -514,6 +518,12 @@ HUMAN_REMINDERS_KO = [
     "오늘의 매매 목표와 손실 한도를 정했는가? (5, 92)",
     "예측이 아니라 대응할 준비가 됐는가? (10)",
     "손절은 기계적으로, 뇌동매매 금지 (83, 85, 87)",
+]
+HUMAN_REMINDERS_EN = [
+    "Slept enough? Condition and emotions stable? (1–4)",
+    "Set today's trading goal and loss limit? (5, 92)",
+    "Ready to REACT, not predict? (10)",
+    "Cut losses mechanically — no impulsive/herd trades (83, 85, 87)",
 ]
 
 
@@ -569,6 +579,7 @@ def stock_scorecard(db, ticker: str, news: Optional[dict] = None) -> dict[str, A
         "deal_breakers": market["deal_breakers"] + stock["deal_breakers"],
         "unknown": stock["unknown"] + market["unknown"],
         "human_reminders": HUMAN_REMINDERS_KO,
+        "human_reminders_en": HUMAN_REMINDERS_EN,
     }
     out["verdict_ok"] = not out["deal_breakers"] and stock["pct"] is not None and stock["pct"] >= 55
     return out
@@ -577,13 +588,13 @@ def stock_scorecard(db, ticker: str, news: Optional[dict] = None) -> dict[str, A
 def _score_items(items, ctx, layer: str) -> dict[str, Any]:
     rows, score, mx = [], 0, 0
     breakers, unknown = [], []
-    for no, cat, q, fn, w, db_flag in items:
+    for no, cat, q, q_en, fn, w, db_flag in items:
         try:
             ok, detail = fn(ctx)
         except Exception as e:
             ok, detail = None, f"체크 오류: {str(e)[:40]}"
-        rows.append({"no": no, "category": cat, "q": q, "ok": ok, "detail": detail,
-                     "weight": w, "deal_breaker": db_flag})
+        rows.append({"no": no, "category": cat, "q": q, "q_en": q_en, "ok": ok,
+                     "detail": detail, "weight": w, "deal_breaker": db_flag})
         if ok is None:
             unknown.append(no)
             continue
@@ -624,6 +635,45 @@ def render_ko(card: dict[str, Any]) -> str:
     L += ["", "**🧑 본인 확인 (에이전트가 대신 못 하는 항목):**"]
     L += [f"· {r}" for r in card["human_reminders"]]
     L += ["", "※ 체크리스트는 조건 점검용이며, 방향 판단은 3가지 방법(살까? 질문)과 함께 보세요."]
+    return "\n".join(L)
+
+
+def render_en(card: dict[str, Any]) -> str:
+    """Full scorecard in English (item questions translated; live details may keep
+    Korean data-source fragments, numbers dominate)."""
+    L = [f"**📋 {card['name']} checklist — {card['score']}/{card['max']} pts ({card['pct']}%)**"]
+    if card["deal_breakers"]:
+        L += ["", "🚫 **Deal-breakers (no buying):**"]
+        for b in card["deal_breakers"]:
+            L.append(f"- #{b['no']} {b['detail']}")
+    else:
+        L.append("✅ No deal-breakers")
+    for layer_key, title in (("market", "Market (today)"), ("stock", "Stock")):
+        lay = card[layer_key]
+        L += ["", f"**{title} — {lay['score']}/{lay['max']}**"]
+        for it in lay["items"]:
+            mark = "✅" if it["ok"] else "❌" if it["ok"] is False else "❓"
+            L.append(f"{mark} #{it['no']} {it.get('q_en') or it['q']} — {it['detail']}")
+    if card.get("unknown"):
+        L += ["", f"❓ {len(card['unknown'])} item(s) can't be checked yet — they activate as data sources connect."]
+    L += ["", "**🧑 Self-check (things the agent can't check for you):**"]
+    L += [f"- {r}" for r in card.get("human_reminders_en") or HUMAN_REMINDERS_EN]
+    L += ["", "Note: the checklist verifies CONDITIONS; ask 'should I buy X?' for the 3-method direction call."]
+    return "\n".join(L)
+
+
+def render_market_en(db) -> str:
+    """Market pre-flight only, in English."""
+    m = market_preflight(db)
+    ok_day = not m["deal_breakers"]
+    L = [f"**📋 Today's market check — {m['score']}/{m['max']} pts**",
+         ("✅ Conditions are OK for trading today." if ok_day
+          else "🚫 Better to skip new buying today."), ""]
+    for it in m["items"]:
+        mark = "✅" if it["ok"] else "❌" if it["ok"] is False else "❓"
+        L.append(f"{mark} #{it['no']} {it.get('q_en') or it['q']} — {it['detail']}")
+    L += ["", "**🧑 Self-check:**"] + [f"- {r}" for r in HUMAN_REMINDERS_EN]
+    L += ["", 'Per-stock check: ask "<stock name> checklist".']
     return "\n".join(L)
 
 

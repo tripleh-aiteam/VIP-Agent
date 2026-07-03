@@ -315,8 +315,13 @@ _READINESS_KW = (
     "실전 준비", "실전매매 준비", "실전 매매 준비", "준비됐어", "준비 됐어", "진짜 돈",
     "실거래 시작", "실전 시작해도", "믿어도 돼", "믿을 수 있어", "성적 어때", "성적 얼마",
     "승률 어때", "승률 얼마", "트랙레코드", "채점 결과",
+    # 'how accurate are you' natural phrasings ('요즘 네 예측 잘 맞아?')
+    "잘 맞아", "잘 맞춰", "잘 맞니", "잘 맞나", "예측 잘", "적중률", "적중 률",
+    "얼마나 맞", "맞긴 해", "예측 성적", "예측 정확",
     "ready for real", "real money", "are we ready", "readiness", "track record",
-    "can i trust you", "how accurate are you", "your win rate",
+    "can i trust you", "how accurate are you", "your win rate", "are you accurate",
+    "accuracy rate", "prediction accuracy", "how good are your predictions",
+    "how often are you right",
 )
 
 
@@ -329,8 +334,12 @@ def _is_readiness_question(transcript: Optional[str]) -> bool:
 _MOVERS_KW = (
     "지금 움직이는", "지금 움직이", "움직이는 종목", "급등주", "급등 종목", "오늘 급등",
     "급락 종목", "특징주", "거래량 급증", "거래량 터진", "지금 뜨는", "달리는 종목",
-    "movers", "what's moving", "whats moving", "volume spike", "unusual volume",
-    "big movers", "hot stocks right now",
+    # natural phrasings ('뭐가 제일 많이 움직여?', '오늘 많이 오른 종목')
+    "뭐가 움직", "많이 움직", "제일 움직", "가장 움직", "많이 오른", "제일 오른",
+    "가장 오른", "많이 내린", "제일 내린", "많이 빠진",
+    "movers", "what's moving", "whats moving", "what is moving", "volume spike",
+    "unusual volume", "big movers", "hot stocks right now", "moving the most",
+    "top gainers", "top losers", "biggest gainers", "biggest losers",
 )
 
 
@@ -4307,6 +4316,28 @@ def _run_agent_impl(
         except Exception as e:
             log.warning(f"scalp signal failed: {str(e)[:120]}")
 
+    # ===== CHECKLIST — the boss's 100-item pre-trade checklist, agent-run. "삼성전자
+    # 체크리스트" → full per-stock scorecard; bare "체크리스트" → today's market pre-flight.
+    # MUST run BEFORE the stock-backend relay below, or the relay's LLM composes its own
+    # slow (~30s) checklist-ish answer instead of the deterministic 36-item card. KO/EN.
+    if not confirmed_tool and not attachment_ids and any(
+            k in (transcript or "").lower() for k in ("체크리스트", "체크 리스트", "checklist", "check list")):
+        try:
+            from services.checklist_engine import (render_en, render_ko, render_market_en,
+                                                   render_market_ko, stock_scorecard)
+            from services.stock_resolver import resolve_one
+            _cc, _cn = resolve_one(transcript or "")
+            _en_l = str(lang or "").lower().startswith("en")
+            if _cc:
+                _card = stock_scorecard(db, _cc)
+                _reply = render_en(_card) if _en_l else render_ko(_card)
+            else:
+                _reply = render_market_en(db) if _en_l else render_market_ko(db)
+            return {"intent": "checklist", "language": lang, "reply": _reply, "action": None,
+                    "speak": True, "transcript": transcript, "tool_used": "checklist"}
+        except Exception as e:
+            log.warning(f"checklist intent failed: {str(e)[:120]}")
+
     # === Stock agent = relay the Stock-Advisor app (single source of truth) ===
     # The stock agent's answers (and therefore VIP's delegated answers) come from
     # the SAME backend that powers the Stock app's "주식 AI" box, so every surface
@@ -4662,20 +4693,6 @@ def _run_agent_impl(
         ss = _vip_short_selling_reply(transcript, lang)
         if ss:
             return ss
-
-    # ===== CHECKLIST — the boss's 100-item pre-trade checklist, agent-run. "삼성전자
-    # 체크리스트" → full per-stock scorecard; bare "체크리스트" → today's market pre-flight.
-    if not confirmed_tool and not attachment_ids and any(
-            k in (transcript or "").lower() for k in ("체크리스트", "체크 리스트", "checklist", "check list")):
-        try:
-            from services.checklist_engine import render_ko, render_market_ko, stock_scorecard
-            from services.stock_resolver import resolve_one
-            _cc, _cn = resolve_one(transcript or "")
-            _reply = render_ko(stock_scorecard(db, _cc)) if _cc else render_market_ko(db)
-            return {"intent": "checklist", "language": lang, "reply": _reply, "action": None,
-                    "speak": True, "transcript": transcript, "tool_used": "checklist"}
-        except Exception as e:
-            log.warning(f"checklist intent failed: {str(e)[:120]}")
 
     # ===== BUY/SELL DECISION agent ('사야 할까/팔까', 'buy or sell', '종합 판단') → the
     # comprehensive 3-factor decision (News + Flows + Technicals + ML). Runs BEFORE
