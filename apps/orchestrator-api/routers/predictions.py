@@ -110,6 +110,14 @@ def readiness(db: Session = Depends(get_db)):
     return report(db)
 
 
+@router.post("/dip-alert")
+def dip_alert_ep(force: bool = Query(False), db: Session = Depends(get_db)):
+    """One proactive dip-bounce alert pass (scan → dedup → email new candidates).
+    Fire every ~10 min during market via external cron; force=true tests after hours."""
+    from services.dip_alert import run
+    return run(db, force=force)
+
+
 @router.get("/dip-bounce")
 def dip_bounce_ep(min_dip: float = Query(1.5), db: Session = Depends(get_db)):
     """Dip-bounce hunter: stocks down ≥min_dip% vs ~1h ago + tape confirmation, with

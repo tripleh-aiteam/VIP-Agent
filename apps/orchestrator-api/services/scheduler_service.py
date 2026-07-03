@@ -1616,6 +1616,24 @@ def _intraday_forecast_tick():
         db.close()
 
 
+@_single_flight("dip_alert_pass")
+def _dip_alert_pass():
+    """Every 10 min during market: proactive dip-bounce alerts (the boss's own strategy)
+    — scan for ≥1.5%/1h dips with tape confirmation; email NEW candidates (DB-deduped
+    2h/ticker, daily cap, owner-only pilot). Candidates are auto-graded."""
+    from db.base import SessionLocal
+    _db = SessionLocal()
+    try:
+        from services.dip_alert import run as _dar
+        r = _dar(_db)
+        if r.get("new_alerts"):
+            log.info(f"dip alert: {r}", extra={"action": "dip_alert.tick"})
+    except Exception as e:
+        log.warning(f"dip alert tick failed: {str(e)[:120]}")
+    finally:
+        _db.close()
+
+
 @_single_flight("cloud_collector_pass")
 def _cloud_collector_pass():
     """Every 2 min during market: server-side Kiwoom collection pass — takes over
@@ -2125,6 +2143,14 @@ def init_scheduler():
         _cloud_collector_pass,
         CronTrigger.from_crontab("*/2 0-6 * * 1-5"),
         id="cloud-collector-pass",
+        replace_existing=True, max_instances=1, coalesce=True,
+    )
+    # Dip-bounce alerts — every 10 min during market (also at POST /predictions/dip-alert
+    # for the external cron). The bot proactively flags ≥1.5%/1h dips it would trade.
+    _scheduler.add_job(
+        _dip_alert_pass,
+        CronTrigger.from_crontab("*/10 0-6 * * 1-5"),
+        id="dip-alert-pass",
         replace_existing=True, max_instances=1, coalesce=True,
     )
     log.info("scheduler: intraday 2-method hourly forward test registered (hourly 09–15 KST + 08:00 KST email + 5-min snapshot banking + 2-min cloud collector)", extra={"action": "scheduler.intraday_registered"})
