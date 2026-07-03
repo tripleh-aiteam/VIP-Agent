@@ -321,9 +321,17 @@ def decide(db, ticker: str, focus: Optional[str] = None) -> dict[str, Any]:
     wv = (wave.get("verdict") or "").upper()
     wave_score = 1 if wv == "BUY" else -1 if wv == "AVOID" else 0
 
-    # weighted fusion (news 1.0, flows 1.0, technicals 1.2, ML 1.0, Wave 1.0, YouTube 0.5)
+    # M5.7 — TRACK-RECORD-WEIGHTED fusion: the ML vote is scaled by its MEASURED daily
+    # record (shrunk toward 1.0 on small samples), so a proven-weak method can't outvote
+    # proven-strong evidence. Validated by walk-forward replay on real graded forecasts.
+    try:
+        from services.method_weights import fusion_weights
+        _mw = fusion_weights(db)
+    except Exception:
+        _mw = {"ml": 1.0, "wave": 1.0, "line_ko": None, "line_en": None}
     total = (news["score"] * 1.0 + flows["score"] * 1.0 + tech["score"] * 1.2
-             + ml_score * 1.0 + wave_score * 1.0 + yt["score"] * 0.5)
+             + ml_score * float(_mw.get("ml") or 1.0)
+             + wave_score * float(_mw.get("wave") or 1.0) + yt["score"] * 0.5)
     decision = "BUY" if total >= 2.5 else "SELL" if total <= -2.5 else "HOLD"
     conf = "높음" if abs(total) >= 4 else "보통" if abs(total) >= 2 else "낮음"
     conf_en = {"높음": "high", "보통": "medium", "낮음": "low"}[conf]
@@ -344,6 +352,16 @@ def decide(db, ticker: str, focus: Optional[str] = None) -> dict[str, Any]:
             decision, conf, conf_en, gated = "HOLD", "낮음", "low", True
         elif agree_n == 1 and conf == "높음":
             conf, conf_en = "보통", "medium"       # only 1 method backs it → cap confidence
+
+    # --- Agreement boost (replay-validated): when ALL decisive method votes point the
+    # same way as the decision, historical accuracy jumps (agree-tier ~80% intraday,
+    # n=25) — lift confidence one notch. Mixed/absent votes leave confidence unchanged. ---
+    if _dir != 0:
+        _votes = [v for v in (ml_score,
+                              (1 if an_sig == "BUY" else -1 if an_sig == "SELL" else 0),
+                              wave_score) if v != 0]
+        if len(_votes) >= 2 and all(v == _dir for v in _votes) and conf == "보통":
+            conf, conf_en = "높음", "high"
 
     # --- Checklist gate (the boss's 100-item checklist, agent-run): conditions check on
     # top of the direction call. A deal-breaker (급락일/공매도 과열/악재 압도/손익비 미달)
@@ -648,6 +666,8 @@ def decide(db, ticker: str, focus: Optional[str] = None) -> dict[str, Any]:
     ]
     if has_wave:
         ko_lines += ["", "**⑥ 방법 3 — 파동 (엘리엇·피보나치)**", wave_para_ko]
+    if _mw.get("line_ko"):
+        ko_lines += ["", f"_📐 {_mw['line_ko']} — 실제 채점 성적이 좋은 방법의 표가 더 크게 반영됩니다._"]
     ko_lines += [
         "", "**기술적 지표**",
         f"{tech.get('summary_ko','중립')} · 지지 {_pl(sup)}원 / 저항 {_pl(res)}원"
@@ -686,6 +706,8 @@ def decide(db, ticker: str, focus: Optional[str] = None) -> dict[str, Any]:
     ]
     if has_wave:
         en_lines += ["", "**⑥ Method 3 — Wave (Elliott · Fibonacci)**", wave_para_en]
+    if _mw.get("line_en"):
+        en_lines += ["", f"_📐 {_mw['line_en']} — methods with a better graded record get a bigger vote._"]
     en_lines += [
         "", "**Technicals**",
         f"{tech.get('summary_en','neutral')} · support ₩{_pl(sup)} / resistance ₩{_pl(res)}"

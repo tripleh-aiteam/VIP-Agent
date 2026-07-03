@@ -110,6 +110,15 @@ def readiness(db: Session = Depends(get_db)):
     return report(db)
 
 
+@router.get("/method-weights")
+def method_weights_ep(db: Session = Depends(get_db)):
+    """M5.7 transparency: the live track-record-derived weights + intraday tier stats
+    (rolling windows, straight from the graded tables)."""
+    from services.method_weights import daily_stats, fusion_weights, intraday_stats
+    return {"fusion": fusion_weights(db), "intraday": intraday_stats(db),
+            "daily": daily_stats(db)}
+
+
 @router.get("/checklist/{ticker}")
 def checklist_ep(ticker: str, db: Session = Depends(get_db)):
     """The boss's 100-item pre-trade checklist, agent-run for ONE stock: market pre-flight

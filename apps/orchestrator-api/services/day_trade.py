@@ -184,7 +184,38 @@ def scalp_signal(db, ticker: str, target_pct: float = 1.0,
         except Exception:
             pass
 
+    # M5.7 TIER read (replay-validated): this stock's latest hourly forecasts — when both
+    # methods AGREE the historical hit-rate jumps (~80%, n small); conflicts are coin-flips.
+    # Plus the measured bad-hour caution (e.g. 10시 KST ran sub-45%).
+    tier_ko = tier_en = None
+    _bad_hour_ko = _bad_hour_en = None
+    try:
+        from services.method_weights import intraday_tier
+        _tr = intraday_tier(db, tk)
+        if _tr:
+            if _tr["tier"] == "agree" and _tr.get("agree_acc") is not None:
+                _d_ko = {"UP": "상승", "DOWN": "하락"}.get(_tr.get("ml"), "")
+                tier_ko = (f"🎯 시간별 예측 일치: ML·분석 모두 '{_d_ko}' — 과거 일치 구간 적중률 "
+                           f"{_tr['agree_acc']}% (n={_tr['agree_n']}), 상대적으로 신뢰도 높은 구간.")
+                tier_en = (f"🎯 Hourly forecasts AGREE ({_tr.get('ml')}) — agreement zones have hit "
+                           f"{_tr['agree_acc']}% historically (n={_tr['agree_n']}).")
+            elif _tr["tier"] == "conflict":
+                tier_ko = "⚠️ 시간별 예측 엇갈림(ML vs 분석) — 확신 낮은 구간, 수량 축소 권장."
+                tier_en = "⚠️ Hourly forecasts conflict (ML vs Analysis) — low-conviction zone; smaller size."
+            from datetime import datetime as _dt2
+            from datetime import timedelta as _td2
+            from datetime import timezone as _tz2
+            _kst_h = _dt2.now(_tz2(_td2(hours=9))).hour
+            if _kst_h in (_tr.get("bad_hours") or []):
+                _bad_hour_ko = f"{_kst_h}시대는 과거 예측 적중률이 낮았던 시간대입니다 — 진입은 평소보다 신중히."
+                _bad_hour_en = f"{_kst_h}:00 KST has historically been a low-accuracy hour — extra caution on entries."
+    except Exception:
+        pass
+
     warns_ko, warns_en = [], []
+    if _bad_hour_ko:
+        warns_ko.append(_bad_hour_ko)
+        warns_en.append(_bad_hour_en)
     if collector_off:
         warns_ko.append("실시간 분봉 수집기가 꺼져 있어 일봉 변동성 기준의 참고 수치입니다 — 수집기를 켜면 정확도가 올라갑니다.")
         warns_en.append("The live minute-bar collector is OFF, so these are daily-volatility reference numbers — turn it on for precision.")
@@ -274,6 +305,7 @@ def scalp_signal(db, ticker: str, target_pct: float = 1.0,
             (f"· 방법2 분석: {m2_ko}" if m2_ko else None),
             f"· 방법3 파동: {m3_ko}",
             f"· 실시간 체크: {tape_ko}",
+            tier_ko,
             syn_ko, "",
             "**③ 주의**", *[f"⚠️ {w}" for w in warns_ko]])
         en = _join([
@@ -286,6 +318,7 @@ def scalp_signal(db, ticker: str, target_pct: float = 1.0,
             (f"- Method 2 Analysis: {m2_en}" if m2_en else None),
             f"- Method 3 Wave: {m3_en}",
             f"- Live tape: {tape_en}",
+            tier_en,
             syn_en, "",
             "**③ Caution**", *[f"⚠️ {w}" for w in warns_en]])
     else:
@@ -318,6 +351,7 @@ def scalp_signal(db, ticker: str, target_pct: float = 1.0,
             (f"· 방법2 분석: {m2_ko}" if m2_ko else None),
             f"· 방법3 파동: {m3_ko}",
             f"· 실시간 체크: {tape_ko}",
+            tier_ko,
             syn_ko, "",
             "**⑤ 주의**", *[f"⚠️ {w}" for w in warns_ko]])
         en = _join([
@@ -335,6 +369,7 @@ def scalp_signal(db, ticker: str, target_pct: float = 1.0,
             (f"- Method 2 Analysis: {m2_en}" if m2_en else None),
             f"- Method 3 Wave: {m3_en}",
             f"- Live tape: {tape_en}",
+            tier_en,
             syn_en, "",
             "**⑤ Caution**", *[f"⚠️ {w}" for w in warns_en]])
 
