@@ -601,37 +601,48 @@ def decide(db, ticker: str, focus: Optional[str] = None) -> dict[str, Any]:
     # call, what the resistance('천장')/support('바닥') levels mean, what we're waiting for.
     _m_buy = sum(1 for v in (ml_score == 1, an_sig == "BUY", wave_score == 1) if v)
     _m_sell = sum(1 for v in (ml_score == -1, an_sig == "SELL", wave_score == -1) if v)
+    # name each method's verdict EXPLICITLY (boss: don't just count — say who said what)
+    _pm_ko = {"BUY": "매수", "SELL": "매도", "HOLD": "보유"}.get(ml_adv, "보유")
+    _pa_ko = {"BUY": "매수", "SELL": "매도", "WATCH": "관망", "HOLD": "관망"}.get(an_sig, "관망")
+    _pw_ko = {"BUY": "매수", "WATCH": "관망", "AVOID": "회피"}.get(wv, "데이터 없음")
+    _pm_en = ml_adv or "HOLD"
+    _pa_en = {"BUY": "BUY", "SELL": "SELL", "WATCH": "WATCH", "HOLD": "WATCH"}.get(an_sig, "WATCH")
+    _pw_en = wv or "no data"
+    _who_ko = f"머신러닝은 '{_pm_ko}', 분석은 '{_pa_ko}', 파동은 '{_pw_ko}'"
+    _who_en = f"ML says '{_pm_en}', Analysis says '{_pa_en}', Wave says '{_pw_en}'"
     if decision == "BUY":
-        plain_ko = (f"쉽게 설명하면, 저희 3가지 방법 중 {_m_buy}개가 '사도 좋다'는 쪽을 가리키고 있어요. "
+        plain_ko = (f"쉽게 설명하면, {_who_ko} — {_m_buy}개 방법이 매수 쪽이라 들어갈 만한 자리예요. "
                     f"다만 아무리 좋아 보여도 한 번에 다 사지 말고 2~3번에 나눠 담는 게 안전하고, "
                     f"들어간 뒤에는 지지선 {_pl(sup)}원(최근 주가가 계속 버텨준 '바닥')이 깨지면 "
                     f"미련 없이 계획대로 손절하는 게 핵심이에요.")
-        plain_en = (f"In plain words: {_m_buy} of our 3 methods point to 'buy'. Even so, don't buy "
-                    f"everything at once — split it into 2–3 purchases. And once you're in, the most "
-                    f"important rule is the exit: if support ₩{_pl(sup)} (the 'floor' the price has kept "
-                    f"bouncing off) breaks, cut the loss as planned, no hesitation.")
+        plain_en = (f"In plain words: {_who_en} — {_m_buy} of the 3 point to buy, so it's a reasonable "
+                    f"entry. Even so, don't buy everything at once — split it into 2–3 purchases. And once "
+                    f"you're in, the most important rule is the exit: if support ₩{_pl(sup)} (the 'floor' "
+                    f"the price has kept bouncing off) breaks, cut the loss as planned, no hesitation.")
     elif decision == "SELL":
-        plain_ko = (f"쉽게 설명하면, 3가지 방법 중 {_m_sell}개가 '내림' 쪽을 가리키고 있어서 지금 사는 건 "
-                    f"불리하고, 이미 갖고 있다면 반등이 나올 때 조금씩 줄이는 게 좋아요. "
+        plain_ko = (f"쉽게 설명하면, {_who_ko} — 내림 쪽 신호가 우세해서 지금 사는 건 불리하고, "
+                    f"이미 갖고 있다면 반등이 나올 때 조금씩 줄이는 게 좋아요. "
                     f"저항 {_pl(res)}원(최근 계속 막혔던 '천장')을 다시 회복하기 전까지는 보수적으로 보세요.")
-        plain_en = (f"In plain words: {_m_sell} of our 3 methods point down, so buying here is fighting "
-                    f"the current. If you already hold it, trim gradually into any bounce, and stay "
-                    f"cautious until the price reclaims resistance ₩{_pl(res)} (the 'ceiling' it kept "
-                    f"failing at).")
+        plain_en = (f"In plain words: {_who_en} — the sell-side signals dominate, so buying here is "
+                    f"fighting the current. If you already hold it, trim gradually into any bounce, and "
+                    f"stay cautious until the price reclaims resistance ₩{_pl(res)} (the 'ceiling' it "
+                    f"kept failing at).")
     else:
         _why_bit_ko = ("특히 오늘은 체크리스트에서 결격 사유(시장 악재 등)가 발견돼 신규 매수를 막았어요. "
                        if chk_veto else "")
         _why_bit_en = ("On top of that, today's checklist found a deal-breaker (market-wide bad news etc.), "
                        "so new buying is blocked. " if chk_veto else "")
-        plain_ko = (f"쉽게 설명하면, 저희 3가지 방법 중 확실하게 '사라'는 신호는 {_m_buy}개뿐이고 나머지는 "
-                    f"관망이에요. 신호가 이렇게 엇갈릴 때 들어가면 결과를 운에 맡기는 셈이라, 방향이 "
-                    f"확인될 때까지 기다리는 게 유리해요. {_why_bit_ko}"
+        _none_ko = ("매수 신호가 하나도 없어요" if _m_buy == 0 else f"매수 신호는 {_m_buy}개뿐이에요")
+        _none_en = ("none of them clearly says 'buy'" if _m_buy == 0
+                    else f"only {_m_buy} of the 3 clearly says 'buy'")
+        plain_ko = (f"쉽게 설명하면, {_who_ko}예요 — 즉 지금 {_none_ko}. 신호가 이렇게 모일 때 들어가면 "
+                    f"결과를 운에 맡기는 셈이라, 방향이 확인될 때까지 기다리는 게 유리해요. {_why_bit_ko}"
                     f"저항 {_pl(res)}원은 최근 주가가 계속 막혔던 '천장'이고 지지 {_pl(sup)}원은 계속 "
                     f"버텨준 '바닥'인데 — 천장을 힘있게 뚫으면 상승 힘이 확인된 것이니 그때 매수를 다시 "
                     f"검토하면 되고, 반대로 바닥이 깨지면 더 내려갈 위험이 커졌다는 뜻이에요.")
-        plain_en = (f"In plain words: only {_m_buy} of our 3 methods clearly say 'buy' right now — the rest "
-                    f"say wait. Buying while the signals disagree is basically gambling on luck, so it pays "
-                    f"to wait until the direction confirms. {_why_bit_en}"
+        plain_en = (f"In plain words: {_who_en} — so {_none_en}. Buying while the signals line up like "
+                    f"this is basically gambling on luck, so it pays to wait until the direction confirms. "
+                    f"{_why_bit_en}"
                     f"Resistance ₩{_pl(res)} is the 'ceiling' the price kept failing at, and support "
                     f"₩{_pl(sup)} is the 'floor' it kept bouncing off — a strong break above the ceiling "
                     f"means real buying power (that's when to look again), while a break below the floor "
