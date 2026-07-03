@@ -83,9 +83,14 @@ def _dir_of_move(base: float, now: float) -> str:
 
 def _ml_call(db, ticker: str) -> tuple[str, float] | None:
     """ML method's directional lean for the next hour, from the latest daily prediction.
-    Returns (dir, hourly_move_frac). Daily expected band scaled to ~1 hour."""
+    Returns (dir, hourly_move_frac). Daily expected band scaled to ~1 hour.
+
+    FLAT-overprediction fix (2026-07-03): advice HOLD used to mean FLAT — but real hours
+    are decisive 87% of the time (1,385 FLAT preds vs 118 actual-flat hours), so most
+    forecasts were wasted. When advice is HOLD, fall back to the model's own LEAN:
+    outperform probability >53% → UP, <47% → DOWN. Only a truly 50/50 model stays FLAT."""
     r = db.execute(text(
-        "SELECT advice, expected_high_pct FROM model_predictions "
+        "SELECT advice, expected_high_pct, probability FROM model_predictions "
         "WHERE ticker=:t AND horizon=5 AND as_of=(SELECT max(as_of) FROM model_predictions) "
         "LIMIT 1"), {"t": ticker}).first()
     if not r:
@@ -95,12 +100,29 @@ def _ml_call(db, ticker: str) -> tuple[str, float] | None:
     # one trading day ≈ 6.5h; scale 5-day 1σ to a 1-hour move (~/sqrt(5*6.5))
     hourly = (band5d / 100.0) / (5 * 6.5) ** 0.5
     d = "UP" if advice == "BUY" else "DOWN" if advice == "SELL" else "FLAT"
+    if d == "FLAT" and r[2] is not None:
+        prob = float(r[2])
+        if prob >= 0.53:
+            d = "UP"
+        elif prob <= 0.47:
+            d = "DOWN"
     return d, hourly
 
 
-def _analysis_call(sig: str | None) -> tuple[str, float]:
+def _analysis_call(sig: str | None, score: float | None = None) -> tuple[str, float]:
+    """Analysis method's hourly lean. WATCH used to mean FLAT — now the underlying
+    호가/수급/박스권 score breaks the tie (|score| ≥ 2 → lean that way)."""
     s = (sig or "HOLD").upper()
     d = "UP" if s == "BUY" else "DOWN" if s == "SELL" else "FLAT"
+    if d == "FLAT" and score is not None:
+        try:
+            sc = float(score)
+            if sc >= 2:
+                d = "UP"
+            elif sc <= -2:
+                d = "DOWN"
+        except Exception:
+            pass
     return d, 0.004          # ~0.4% nominal intraday move
 
 
@@ -174,7 +196,7 @@ def tick(db) -> dict[str, Any]:
                 pp = base * (1 + mv) if d == "UP" else base * (1 - mv) if d == "DOWN" else base
                 calls.append(("ml", d, pp))
             sig = (an.get(c) or {}).get("signal")
-            d, mv = _analysis_call(sig)
+            d, mv = _analysis_call(sig, (an.get(c) or {}).get("score"))
             pp = base * (1 + mv) if d == "UP" else base * (1 - mv) if d == "DOWN" else base
             calls.append(("analysis", d, pp))
             for method, pdir, pprice in calls:
