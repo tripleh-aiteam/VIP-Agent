@@ -543,6 +543,47 @@ def decide(db, ticker: str, focus: Optional[str] = None) -> dict[str, Any]:
     # conclusion — no repeated "최종 종합 판단" synthesis at the bottom. Methods follow as
     # proof. And a not-buy answer must NOT show a "how many" block (no-buy = 0 shares).
 
+    # ---- plain-words WHY, right after the direct answer (boss: "add a little more
+    # explanation with easy words"). 2-3 friendly sentences: how many signals back the
+    # call, what the resistance('천장')/support('바닥') levels mean, what we're waiting for.
+    _m_buy = sum(1 for v in (ml_score == 1, an_sig == "BUY", wave_score == 1) if v)
+    _m_sell = sum(1 for v in (ml_score == -1, an_sig == "SELL", wave_score == -1) if v)
+    if decision == "BUY":
+        plain_ko = (f"쉽게 설명하면, 저희 3가지 방법 중 {_m_buy}개가 '사도 좋다'는 쪽을 가리키고 있어요. "
+                    f"다만 아무리 좋아 보여도 한 번에 다 사지 말고 2~3번에 나눠 담는 게 안전하고, "
+                    f"들어간 뒤에는 지지선 {_pl(sup)}원(최근 주가가 계속 버텨준 '바닥')이 깨지면 "
+                    f"미련 없이 계획대로 손절하는 게 핵심이에요.")
+        plain_en = (f"In plain words: {_m_buy} of our 3 methods point to 'buy'. Even so, don't buy "
+                    f"everything at once — split it into 2–3 purchases. And once you're in, the most "
+                    f"important rule is the exit: if support ₩{_pl(sup)} (the 'floor' the price has kept "
+                    f"bouncing off) breaks, cut the loss as planned, no hesitation.")
+    elif decision == "SELL":
+        plain_ko = (f"쉽게 설명하면, 3가지 방법 중 {_m_sell}개가 '내림' 쪽을 가리키고 있어서 지금 사는 건 "
+                    f"불리하고, 이미 갖고 있다면 반등이 나올 때 조금씩 줄이는 게 좋아요. "
+                    f"저항 {_pl(res)}원(최근 계속 막혔던 '천장')을 다시 회복하기 전까지는 보수적으로 보세요.")
+        plain_en = (f"In plain words: {_m_sell} of our 3 methods point down, so buying here is fighting "
+                    f"the current. If you already hold it, trim gradually into any bounce, and stay "
+                    f"cautious until the price reclaims resistance ₩{_pl(res)} (the 'ceiling' it kept "
+                    f"failing at).")
+    else:
+        _why_bit_ko = ("특히 오늘은 체크리스트에서 결격 사유(시장 악재 등)가 발견돼 신규 매수를 막았어요. "
+                       if chk_veto else "")
+        _why_bit_en = ("On top of that, today's checklist found a deal-breaker (market-wide bad news etc.), "
+                       "so new buying is blocked. " if chk_veto else "")
+        plain_ko = (f"쉽게 설명하면, 저희 3가지 방법 중 확실하게 '사라'는 신호는 {_m_buy}개뿐이고 나머지는 "
+                    f"관망이에요. 신호가 이렇게 엇갈릴 때 들어가면 결과를 운에 맡기는 셈이라, 방향이 "
+                    f"확인될 때까지 기다리는 게 유리해요. {_why_bit_ko}"
+                    f"저항 {_pl(res)}원은 최근 주가가 계속 막혔던 '천장'이고 지지 {_pl(sup)}원은 계속 "
+                    f"버텨준 '바닥'인데 — 천장을 힘있게 뚫으면 상승 힘이 확인된 것이니 그때 매수를 다시 "
+                    f"검토하면 되고, 반대로 바닥이 깨지면 더 내려갈 위험이 커졌다는 뜻이에요.")
+        plain_en = (f"In plain words: only {_m_buy} of our 3 methods clearly say 'buy' right now — the rest "
+                    f"say wait. Buying while the signals disagree is basically gambling on luck, so it pays "
+                    f"to wait until the direction confirms. {_why_bit_en}"
+                    f"Resistance ₩{_pl(res)} is the 'ceiling' the price kept failing at, and support "
+                    f"₩{_pl(sup)} is the 'floor' it kept bouncing off — a strong break above the ceiling "
+                    f"means real buying power (that's when to look again), while a break below the floor "
+                    f"means the risk of falling further just grew.")
+
     # ① 직접 답변(= 유일한 최종 결론) + 대응 가이드 → ②(매수일 때만) 얼마나 / (매도타이밍) 언제
     # → ③ 근거(증거): 시장 → 뉴스 → 유튜브 → 방법 1/2/3 → 기술적 → 체크리스트. 끝에 요약 반복
     # 없음. (보스 피드백: 안 사는 답에 '얼마나'는 논리 모순 — 0주; 결론은 맨 위 한 번만.)
@@ -552,10 +593,10 @@ def decide(db, ticker: str, focus: Optional[str] = None) -> dict[str, Any]:
     if _sell_focus:
         ko_lines += ["", "**언제 팔까? (매도 타이밍)**", f"· {size_ko}"]
     elif decision == "BUY":
-        ko_lines += ["", "**얼마나 살까?**", f"· {size_ko}"]
+        ko_lines += ["", "**얼마나 살까?**", f"· {size_ko}", "", plain_ko]
     else:
-        # not-buy: NO sizing — instead one action line (what to watch for instead)
-        ko_lines += [f"· {act_ko}"]
+        # not-buy: NO sizing — the plain-words paragraph (with the trigger levels) instead
+        ko_lines += ["", plain_ko]
     ko_lines += ["", f"**근거 — 방법별 증거 (확신 {conf} · {consensus_ko})**"]
     if mkt_line_ko:
         ko_lines += ["", "**① 시장 상황**", f"· {mkt_line_ko}"]
@@ -589,9 +630,9 @@ def decide(db, ticker: str, focus: Optional[str] = None) -> dict[str, Any]:
     if _sell_focus:
         en_lines += ["", "**When to sell? (exit timing)**", f"- {size_en}"]
     elif decision == "BUY":
-        en_lines += ["", "**How many?**", f"- {size_en}"]
+        en_lines += ["", "**How many?**", f"- {size_en}", "", plain_en]
     else:
-        en_lines += [f"- {act_en}"]
+        en_lines += ["", plain_en]
     en_lines += ["", f"**The evidence — method by method (confidence {conf_en} · {consensus_en})**"]
     if mkt_line_en:
         en_lines += ["", "**① Market**", f"- {mkt_line_en}"]
