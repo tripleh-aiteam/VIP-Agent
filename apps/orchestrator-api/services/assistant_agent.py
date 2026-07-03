@@ -2646,42 +2646,51 @@ def _run_chain(
         reply = _two_method_header(_tm, lang)
 
     # decide tool: use its OWN language-correct reasoning verbatim (the LLM otherwise
-    # mixes EN/KO). The deterministic block already has the verdict + 3-factor breakdown.
-    _dec = next((s.get("result") for s in step_results
-                 if s.get("tool") == "decide"
-                 and isinstance(s.get("result"), dict) and s["result"].get("ok")), None)
-    if _dec:
+    # mixes EN/KO). MULTI-STOCK: '삼성전자랑 SK하이닉스 살까?' runs decide per stock — join
+    # ALL results (name-headed) so every asked stock gets its own verdict.
+    _decs = [s.get("result") for s in step_results
+             if s.get("tool") == "decide"
+             and isinstance(s.get("result"), dict) and s["result"].get("ok")]
+    if _decs:
         _en = str(lang or "").lower().startswith("en")
-        reply = _dec.get("reasoning_en" if _en else "reasoning_ko") or reply
-        # 몇 주? — budget-aware sizing on a BUY decision (same 1%-risk rule as scalp)
-        if (_dec.get("decision") or "").upper() == "BUY" and _dec.get("price"):
+        _parts = []
+        for _dec in _decs:
+            _p = _dec.get("reasoning_en" if _en else "reasoning_ko") or ""
+            if _p and len(_decs) > 1:
+                _p = f"# 📌 {_dec.get('name') or _dec.get('ticker')}\n\n{_p}"
+            # 몇 주? — budget-aware sizing on a BUY decision (same 1%-risk rule as scalp)
+            if (_dec.get("decision") or "").upper() == "BUY" and _dec.get("price"):
+                try:
+                    from services.position_size import sizing_line
+                    _wv0 = _dec.get("method3_wave") or {}
+                    _px = float(_dec["price"])
+                    _sl = sizing_line(db, transcript=transcript, user_key=user_id,
+                                      lang=lang, entry=_px,
+                                      stop=float(_wv0.get("stop") or _px * 0.98))
+                    if _sl:
+                        _p = (_p or "") + _sl
+                except Exception:
+                    pass
+            if _p:
+                _parts.append(_p)
+            # M1.2 — measure it: log EACH stock's advice for grading after its horizon.
             try:
-                from services.position_size import sizing_line
-                _wv0 = _dec.get("method3_wave") or {}
-                _px = float(_dec["price"])
-                _sl = sizing_line(db, transcript=transcript, user_key=user_id,
-                                  lang=lang, entry=_px,
-                                  stop=float(_wv0.get("stop") or _px * 0.98))
-                if _sl:
-                    reply = (reply or "") + _sl
+                from services.call_grader import log_call
+                _wv = _dec.get("method3_wave") or {}
+                log_call(db, ticker=_dec.get("ticker"), action=_dec.get("decision"),
+                         intent="decision", ref_price=_dec.get("price"),
+                         target=_wv.get("target"), stop=_wv.get("stop"), horizon_min=60,
+                         name=_dec.get("name"), agent_id=agent_id, lang=lang)
             except Exception:
                 pass
-        # measured trust — show this answer type's real graded record
+        if _parts:
+            reply = "\n\n---\n\n".join(_parts)
+        # measured trust — show this answer type's real graded record (once, at the end)
         try:
             from services.call_grader import track_record_line
             _tr = track_record_line(db, "decision", lang)
             if _tr:
                 reply = (reply or "") + _tr
-        except Exception:
-            pass
-        # M1.2 — measure it: log this advice for grading after its horizon (60 min).
-        try:
-            from services.call_grader import log_call
-            _wv = _dec.get("method3_wave") or {}
-            log_call(db, ticker=_dec.get("ticker"), action=_dec.get("decision"),
-                     intent="decision", ref_price=_dec.get("price"),
-                     target=_wv.get("target"), stop=_wv.get("stop"), horizon_min=60,
-                     name=_dec.get("name"), agent_id=agent_id, lang=lang)
         except Exception:
             pass
 
@@ -4672,12 +4681,18 @@ def _run_agent_impl(
                                                              or _is_sell_timing_q(transcript)):
         try:
             from services import prediction_service as _psd
-            _dc = next((c for (c, _n) in _all_stocks_in_query(transcript) if c in _psd.NAMES), None)
-            if _dc:
-                _args = {"ticker": _dc}
-                if _is_sell_timing_q(transcript):
-                    _args["focus"] = "sell"
-                return _run_chain(db, transcript, lang, [{"tool": "decide", "args": _args}],
+            # MULTI-STOCK: '삼성전자랑 SK하이닉스 살까?' → decide per stock (up to 3), so
+            # every asked name gets its own verdict (boss feedback: no stock skipped).
+            _dcs = list(dict.fromkeys(c for (c, _n) in _all_stocks_in_query(transcript)
+                                      if c in _psd.NAMES))[:3]
+            if _dcs:
+                _steps = []
+                for _dc in _dcs:
+                    _args = {"ticker": _dc}
+                    if _is_sell_timing_q(transcript):
+                        _args["focus"] = "sell"
+                    _steps.append({"tool": "decide", "args": _args})
+                return _run_chain(db, transcript, lang, _steps,
                                   current_path, selected_id, system, history or [], agent_id=agent_id, user_id=user_id)
         except Exception:
             pass
@@ -4816,18 +4831,22 @@ def _run_agent_impl(
         try:
             from services import prediction_service as _ps
             _found = _all_stocks_in_query(transcript)         # [(code, name), ...]
-            _code = next((c for (c, _n) in _found if c in _ps.NAMES), None)
+            _codes = list(dict.fromkeys(c for (c, _n) in _found if c in _ps.NAMES))[:3]
+            _code = _codes[0] if _codes else None
         except Exception:
-            _code = None
+            _codes, _code = [], None
         # SPLIT (do not merge): a buy/sell/hold ACTION ('사야 할까/살까/should I buy') → the
         # friend-style 'decide' recommendation (verdict + sizing + proof). A pure OUTLOOK
         # ('전망/향후/outlook/어때') → the detailed forecast (two_method_view). Both composers
         # keep EN==KO and VIP==AI Advisor, but the two answers are DIFFERENT by design.
         if _code and _wants_recommendation(transcript) and "decide" in TOOL_REGISTRY:
-            _args = {"ticker": _code}
-            if _is_sell_timing_q(transcript):
-                _args["focus"] = "sell"
-            return _run_chain(db, transcript, lang, [{"tool": "decide", "args": _args}],
+            _steps = []
+            for _dc in _codes:                    # MULTI-STOCK: verdict per asked name
+                _args = {"ticker": _dc}
+                if _is_sell_timing_q(transcript):
+                    _args["focus"] = "sell"
+                _steps.append({"tool": "decide", "args": _args})
+            return _run_chain(db, transcript, lang, _steps,
                               current_path, selected_id, system, history or [], agent_id=agent_id, user_id=user_id)
         if _code and "two_method_view" in TOOL_REGISTRY:
             tm_steps = [{"tool": "two_method_view", "args": {"ticker": _code}}]

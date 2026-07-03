@@ -121,6 +121,46 @@ def _flows(db, code: str) -> dict[str, Any]:
             "foreign_5d": f.get("foreign_5d"), "inst_5d": f.get("inst_5d")}
 
 
+# ---- market indicators (KOSPI/KOSDAQ/USDKRW) — richer '시장 상황' than KODEX alone ----
+_mi_cache: dict = {"t": 0.0, "v": None}
+
+
+def _market_indicators() -> dict:
+    """KOSPI/KOSDAQ %-change + USD/KRW from Naver mobile API. Cached 120s; every part
+    optional (graceful when an endpoint changes)."""
+    import time as _t
+    if (_t.time() - _mi_cache["t"]) < 120 and _mi_cache["v"] is not None:
+        return _mi_cache["v"]
+    out: dict = {}
+    try:
+        import httpx
+        hdr = {"User-Agent": "Mozilla/5.0", "Accept": "application/json"}
+        with httpx.Client(timeout=6.0, headers=hdr) as cli:
+            for idx in ("KOSPI", "KOSDAQ"):
+                try:
+                    j = cli.get(f"https://m.stock.naver.com/api/index/{idx}/basic").json()
+                    r = j.get("fluctuationsRatio")
+                    px = j.get("closePrice")
+                    if r is not None:
+                        out[idx.lower()] = {"pct": float(str(r).replace(",", "")),
+                                            "price": px}
+                except Exception:
+                    pass
+            try:
+                j = cli.get("https://m.stock.naver.com/front-api/marketIndex/prices"
+                            "?category=exchange&reutersCode=FX_USDKRW&page=1&pageSize=1").json()
+                row = ((j.get("result") or [{}])[0]) if isinstance(j.get("result"), list) else {}
+                if row.get("closePrice"):
+                    out["usdkrw"] = {"price": row["closePrice"],
+                                     "pct": float(str(row.get("fluctuationsRatio") or 0).replace(",", ""))}
+            except Exception:
+                pass
+    except Exception:
+        pass
+    _mi_cache.update(t=_t.time(), v=out)
+    return out
+
+
 # ---- factor 5b: YouTube market sentiment (light nudge, per-stock only when discussed) ----
 _YT_BULL = ("급등", "상승", "호재", "매수", "강세", "상향", "돌파", "사자", "유망", "수혜", "신고가", "긍정")
 _YT_BEAR = ("급락", "하락", "악재", "매도", "약세", "조정", "팔자", "하향", "고점", "경계", "리스크", "부진", "부정")
@@ -139,7 +179,9 @@ def _youtube(db, name: Optional[str]) -> dict[str, Any]:
     except Exception:
         blob = ""
     if not blob or name not in blob:
+        from urllib.parse import quote
         return {"score": 0, "mentioned": False,
+                "links": [f"https://www.youtube.com/results?search_query={quote((name or '') + ' 주식')}"],
                 "note_ko": "시장 심리 참고(개별 언급 없음)", "note_en": "market sentiment only (not singled out)"}
     score, idx = 0, 0
     while True:
@@ -154,7 +196,20 @@ def _youtube(db, name: Optional[str]) -> dict[str, Any]:
     score = max(-1, min(1, score))
     tag_ko = "긍정" if score > 0 else "부정" if score < 0 else "중립"
     tag_en = "positive" if score > 0 else "negative" if score < 0 else "neutral"
-    return {"score": score, "mentioned": True,
+    # 1-2 clickable video links: real ones from the grounded report near a mention when
+    # present; else a YouTube search link so the user can always watch for themselves.
+    import re as _re2
+    links = []
+    for m in _re2.finditer(r"https?://(?:www\.)?(?:youtube\.com/watch\?v=[\w-]+|youtu\.be/[\w-]+)", blob):
+        u = m.group(0)
+        if u not in links and abs(m.start() - blob.find(name)) < 4000:
+            links.append(u)
+        if len(links) >= 2:
+            break
+    if not links:
+        from urllib.parse import quote
+        links = [f"https://www.youtube.com/results?search_query={quote(name + ' 주식')}"]
+    return {"score": score, "mentioned": True, "links": links,
             "note_ko": f"유튜브에서 언급 — 논조 {tag_ko}", "note_en": f"discussed on YouTube — {tag_en} tone"}
 
 
@@ -178,11 +233,30 @@ def decide(db, ticker: str, focus: Optional[str] = None) -> dict[str, Any]:
         mkt = tb._mkt_ret_today(db)
     except Exception:
         pass
-    if mkt is not None:
-        _mtone_ko = "시장 우호적" if mkt >= 0.3 else "시장 급락 경계" if mkt <= -1.5 else "시장 약세 부담" if mkt < 0 else "시장 중립"
-        _mtone_en = "supportive tape" if mkt >= 0.3 else "market plunging — caution" if mkt <= -1.5 else "soft tape" if mkt < 0 else "neutral tape"
-        mkt_line_ko = f"KODEX200 오늘 {mkt:+.2f}% — {_mtone_ko}"
-        mkt_line_en = f"KODEX200 today {mkt:+.2f}% — {_mtone_en}"
+    # richer market line: KOSPI + KOSDAQ + USD/KRW alongside the KODEX read
+    mi = _market_indicators()
+    _parts_ko, _parts_en = [], []
+    if mi.get("kospi"):
+        _parts_ko.append(f"코스피 {mi['kospi']['pct']:+.2f}%")
+        _parts_en.append(f"KOSPI {mi['kospi']['pct']:+.2f}%")
+    if mi.get("kosdaq"):
+        _parts_ko.append(f"코스닥 {mi['kosdaq']['pct']:+.2f}%")
+        _parts_en.append(f"KOSDAQ {mi['kosdaq']['pct']:+.2f}%")
+    if mi.get("usdkrw"):
+        _fx = mi["usdkrw"]
+        _parts_ko.append(f"환율 {_fx['price']}원 ({_fx['pct']:+.2f}%)")
+        _parts_en.append(f"USD/KRW {_fx['price']} ({_fx['pct']:+.2f}%)")
+    if not _parts_ko and mkt is not None:
+        _parts_ko.append(f"KODEX200 {mkt:+.2f}%")
+        _parts_en.append(f"KODEX200 {mkt:+.2f}%")
+    _mref = (mi.get("kospi") or {}).get("pct", mkt)
+    if _parts_ko:
+        _mtone_ko = ("시장 우호적" if (_mref or 0) >= 0.3 else "시장 급락 경계" if (_mref or 0) <= -1.5
+                     else "시장 약세 부담" if (_mref or 0) < 0 else "시장 중립")
+        _mtone_en = ("supportive tape" if (_mref or 0) >= 0.3 else "market plunging — caution" if (_mref or 0) <= -1.5
+                     else "soft tape" if (_mref or 0) < 0 else "neutral tape")
+        mkt_line_ko = " · ".join(_parts_ko) + f" — {_mtone_ko}"
+        mkt_line_en = " · ".join(_parts_en) + f" — {_mtone_en}"
     else:
         mkt_line_ko = mkt_line_en = None
 
@@ -427,24 +501,16 @@ def decide(db, ticker: str, focus: Optional[str] = None) -> dict[str, Any]:
                    + ("The trend still holds, so no need to dump it all at once." if decision in ("BUY", "HOLD")
                       else "The trend is weak — trim into any bounce."))
 
-    # ---- fuller, explanatory write-up per method (paragraphs, not terse bullets) ----
-    _vol_ko = ("움직임이 큰 편이라 방향이 맞으면 수익도 크지만 리스크도 함께 커집니다"
-               if em is not None and abs(em) >= 5 else "비교적 완만한 움직임이 예상됩니다")
-    _vol_en = ("a fairly wide swing — bigger reward if right, but bigger risk too"
-               if em is not None and abs(em) >= 5 else "a relatively mild move")
-    _acc_ko = ("정확도가 절반 안팎이라 이 신호 하나만 믿고 크게 베팅하긴 이릅니다"
-               if acc is not None and acc < 55 else "참고할 만한 수준입니다")
-    _acc_en = ("accuracy is near a coin-flip, so don't lean on this signal alone"
-               if acc is not None and acc < 55 else "a usable level of reliability")
+    # ---- COMPACT per-method write-up: verdict first, ONE brief reason, key numbers.
+    # (Boss feedback: nobody wants the how-it-works lecture every answer — just
+    # "did it say buy/sell/hold, and why, briefly.") ----
     ml_tag_ko = {"BUY": "매수", "SELL": "매도", "HOLD": "보유"}.get(ml_adv, "보유")
-    ml_para_ko = (f"**→ {ml_tag_ko} ({ml_adv or 'HOLD'})**. 20년치 국내 시장 데이터로 학습한 모델이 앞으로 5일간 이 "
-                  f"종목이 시장(코스피)을 이길지를 판단하는데, {ml_why_ko}. "
-                  + (f"예상 변동폭은 ±{abs(em)}%로 {_vol_ko}. " if em is not None else "")
-                  + (f"백테스트 정확도는 {acc_txt}로 {_acc_ko}." if acc is not None else "")).strip()
-    ml_para_en = (f"**→ {ml_adv or 'HOLD'}**. A model trained on 20 years of Korean-market data judges whether this "
-                  f"stock beats the market (KOSPI) over the next 5 days; {ml_why_en}. "
-                  + (f"The expected swing is ±{abs(em)}% — {_vol_en}. " if em is not None else "")
-                  + (f"Backtest accuracy is {acc_txt}, {_acc_en}." if acc is not None else "")).strip()
+    ml_para_ko = (f"**→ {ml_tag_ko} ({ml_adv or 'HOLD'})** — {ml_why_ko}."
+                  + (f" (5일 예상 ±{abs(em)}%" if em is not None else " (")
+                  + (f" · 정확도 {acc_txt})" if acc is not None else ")")).replace(" ()", "")
+    ml_para_en = (f"**→ {ml_adv or 'HOLD'}** — {ml_why_en}."
+                  + (f" (5-day ±{abs(em)}%" if em is not None else " (")
+                  + (f" · accuracy {acc_txt})" if acc is not None else ")")).replace(" ()", "")
 
     if pos is None:
         _box_ko = _box_en = ""
@@ -463,18 +529,14 @@ def decide(db, ticker: str, focus: Optional[str] = None) -> dict[str, Any]:
                                        f"a take-profit zone is ₩{sell_zone}." if sell_zone else None]))
     an_tag_ko = {"BUY": "매수", "SELL": "매도", "WATCH": "관망", "HOLD": "관망"}.get(an_sig, "관망")
     an_tag_en = {"BUY": "BUY", "SELL": "SELL", "WATCH": "WATCH", "HOLD": "WATCH"}.get(an_sig, "WATCH")
-    an_para_ko = (f"**→ {an_tag_ko} ({an_tag_en})**. 실시간 호가 잔량, 외국인·기관 수급, 박스권 내 위치를 함께 보면 "
-                  f"{an_why_ko}. {_box_ko} {_zones_ko}").strip()
-    an_para_en = (f"**→ {an_tag_en}**. Reading live order-book depth, foreign/institutional flows and box position: "
-                  f"{an_why_en}. {_box_en} {_zones_en}").strip()
+    an_para_ko = (f"**→ {an_tag_ko} ({an_tag_en})** — {an_why_ko}. {_box_ko} {_zones_ko}").strip()
+    an_para_en = (f"**→ {an_tag_en}** — {an_why_en}. {_box_en} {_zones_en}").strip()
 
     wv_tag_ko = {"BUY": "매수", "WATCH": "관망", "AVOID": "회피"}.get(wv, "관망")
     wave_para_ko = (f"**→ {wv_tag_ko} ({wv or 'WATCH'})**" + (f" · 파동점수 {_wsc}" if _wsc is not None else "")
-                    + f". 강한 상승 파동이 나온 뒤 얼마나 깊게 눌렸는지를 보고 매수 타이밍을 찾는 방법인데(딥 풀백 전략), "
-                    f"{wave_why_ko}." + (f" {wave_zone_ko}." if wave_zone_ko else "")).strip()
+                    + f" — {wave_why_ko}." + (f" {wave_zone_ko}." if wave_zone_ko else "")).strip()
     wave_para_en = (f"**→ {wv or 'WATCH'}**" + (f" · wave score {_wsc}" if _wsc is not None else "")
-                    + f". After a strong up-wave it measures how deep the pullback is to time an entry "
-                    f"(deep-pullback strategy); {wave_why_en}." + (f" {wave_zone_en}." if wave_zone_en else "")).strip()
+                    + f" — {wave_why_en}." + (f" {wave_zone_en}." if wave_zone_en else "")).strip()
 
     # ---- the special FINAL synthesis paragraph the user asked for ----
     final_ko = (f"저희 3가지 방법을 종합하면, 최종 추천은 **{dec_full_ko}**입니다. "
@@ -492,34 +554,35 @@ def decide(db, ticker: str, focus: Optional[str] = None) -> dict[str, Any]:
                 + ("Because the methods converge here, conviction in this call is relatively higher."
                    if _all_same else "Because they diverge, it's safer to confirm the trend than to bet big all at once."))
 
-    # ① 친구식 직접 답변 → ②(매수일 때만) 얼마나 → ③ 근거(방법1/2/3+기술적/뉴스) → ④ 최종 종합 판단
+    # ① 친구식 직접 답변 → ② 얼마나/언제 팔까 → ③ 근거: 시장 → 뉴스 → 유튜브 → 방법 1/2/3 →
+    # 기술적 → 체크리스트 → ④ 최종 종합 판단. (보스 피드백: 일반 사용자가 읽기 쉬운 순서 —
+    # 시장 상황부터, 알고리즘 설명은 결론+한 줄 근거만.)
+    _yt_links_md = " · ".join(f"[영상 보기 {i}]({u})" for i, u in enumerate(yt.get("links") or [], 1))
+    _yt_links_md_en = " · ".join(f"[watch {i}]({u})" for i, u in enumerate(yt.get("links") or [], 1))
     ko_lines = [f"**{head_ko}**  ·  (추천: {dec_full_ko} · 확신 {conf})", ""]
     if _sell_focus:
         ko_lines += ["**언제 팔까? (매도 타이밍)**", f"· {size_ko}", ""]
     elif decision != "SELL":
         ko_lines += ["**얼마나 살까?**", f"· {size_ko}", ""]
+    ko_lines += [f"**왜 그런가 — 근거 (확신 {conf} · {consensus_ko})**"]
+    if mkt_line_ko:
+        ko_lines += ["", "**① 시장 상황**", f"· {mkt_line_ko}"]
+    ko_lines += ["", f"**② 뉴스 — {news_ko}**"]
+    ko_lines += ([f"· {h}" for h in heads] if heads else ["· 특이 뉴스 없음"])
+    if yt.get("note_ko"):
+        ko_lines += ["", "**③ 유튜브 (시장 심리)**",
+                     f"· {yt['note_ko']}" + (f" — {_yt_links_md}" if _yt_links_md else "")]
     ko_lines += [
-        f"**왜 그런가 — 근거 (확신 {conf} · {consensus_ko})**", "",
-        f"**방법 1 — 머신러닝 알고리즘" + (f" ({algo})" if algo else "") + "**", ml_para_ko, "",
-        "**방법 2 — 분석 (호가·수급·박스권)**", an_para_ko,
+        "", f"**④ 방법 1 — 머신러닝" + (f" ({algo})" if algo else "") + "**", ml_para_ko,
+        "", "**⑤ 방법 2 — 분석 (호가·수급·박스권)**", an_para_ko,
     ]
     if has_wave:
-        ko_lines += ["", "**방법 3 — 파동 (엘리엇·피보나치)**", wave_para_ko]
+        ko_lines += ["", "**⑥ 방법 3 — 파동 (엘리엇·피보나치)**", wave_para_ko]
     ko_lines += [
-        "",
-        "**기술적 지표**",
+        "", "**기술적 지표**",
         f"{tech.get('summary_ko','중립')} · 지지 {_pl(sup)}원 / 저항 {_pl(res)}원"
         + (f" · 박스권 내 위치 {pos}%" if pos is not None else ""),
     ]
-    if mkt_line_ko:
-        ko_lines += ["", "**시장 상황**", f"· {mkt_line_ko}"]
-    ko_lines += [
-        "",
-        f"**뉴스 — {news_ko}**",
-    ]
-    ko_lines += ([f"· {h}" for h in heads] if heads else ["· 특이 뉴스 없음"])
-    if yt.get("note_ko"):
-        ko_lines += ["", "**유튜브 (시장 심리)**", f"· {yt['note_ko']}"]
     if checklist:
         try:
             from services.checklist_engine import summary_line
@@ -535,28 +598,25 @@ def decide(db, ticker: str, focus: Optional[str] = None) -> dict[str, Any]:
         en_lines += ["**When to sell? (exit timing)**", f"- {size_en}", ""]
     elif decision != "SELL":
         en_lines += ["**How many?**", f"- {size_en}", ""]
+    en_lines += [f"**Why — the evidence (confidence {conf_en} · {consensus_en})**"]
+    if mkt_line_en:
+        en_lines += ["", "**① Market**", f"- {mkt_line_en}"]
+    en_lines += ["", f"**② News — {news_en}**"]
+    en_lines += ([f"- {h}" for h in heads] if heads else ["- no notable news"])
+    if yt.get("note_en"):
+        en_lines += ["", "**③ YouTube (market sentiment)**",
+                     f"- {yt['note_en']}" + (f" — {_yt_links_md_en}" if _yt_links_md_en else "")]
     en_lines += [
-        f"**Why — the evidence (confidence {conf_en} · {consensus_en})**", "",
-        f"**Method 1 — Machine Learning" + (f" ({algo})" if algo else "") + "**", ml_para_en, "",
-        "**Method 2 — Analysis (orderbook · flows · box)**", an_para_en,
+        "", f"**④ Method 1 — Machine Learning" + (f" ({algo})" if algo else "") + "**", ml_para_en,
+        "", "**⑤ Method 2 — Analysis (orderbook · flows · box)**", an_para_en,
     ]
     if has_wave:
-        en_lines += ["", "**Method 3 — Wave (Elliott · Fibonacci)**", wave_para_en]
+        en_lines += ["", "**⑥ Method 3 — Wave (Elliott · Fibonacci)**", wave_para_en]
     en_lines += [
-        "",
-        "**Technicals**",
+        "", "**Technicals**",
         f"{tech.get('summary_en','neutral')} · support ₩{_pl(sup)} / resistance ₩{_pl(res)}"
         + (f" · {pos}% through the range" if pos is not None else ""),
     ]
-    if mkt_line_en:
-        en_lines += ["", "**Market**", f"- {mkt_line_en}"]
-    en_lines += [
-        "",
-        f"**News — {news_en}**",
-    ]
-    en_lines += ([f"- {h}" for h in heads] if heads else ["- no notable news"])
-    if yt.get("note_en"):
-        en_lines += ["", "**YouTube (market sentiment)**", f"- {yt['note_en']}"]
     if checklist:
         try:
             from services.checklist_engine import summary_line
