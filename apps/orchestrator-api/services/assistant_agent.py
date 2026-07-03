@@ -4651,6 +4651,20 @@ def _run_agent_impl(
         if ss:
             return ss
 
+    # ===== CHECKLIST — the boss's 100-item pre-trade checklist, agent-run. "삼성전자
+    # 체크리스트" → full per-stock scorecard; bare "체크리스트" → today's market pre-flight.
+    if not confirmed_tool and not attachment_ids and any(
+            k in (transcript or "").lower() for k in ("체크리스트", "체크 리스트", "checklist", "check list")):
+        try:
+            from services.checklist_engine import render_ko, render_market_ko, stock_scorecard
+            from services.stock_resolver import resolve_one
+            _cc, _cn = resolve_one(transcript or "")
+            _reply = render_ko(stock_scorecard(db, _cc)) if _cc else render_market_ko(db)
+            return {"intent": "checklist", "language": lang, "reply": _reply, "action": None,
+                    "speak": True, "transcript": transcript, "tool_used": "checklist"}
+        except Exception as e:
+            log.warning(f"checklist intent failed: {str(e)[:120]}")
+
     # ===== BUY/SELL DECISION agent ('사야 할까/팔까', 'buy or sell', '종합 판단') → the
     # comprehensive 3-factor decision (News + Flows + Technicals + ML). Runs BEFORE
     # stock-delegation so it isn't swallowed by the generic Stock-agent path. =====

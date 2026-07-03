@@ -236,6 +236,20 @@ def decide(db, ticker: str, focus: Optional[str] = None) -> dict[str, Any]:
         elif agree_n == 1 and conf == "높음":
             conf, conf_en = "보통", "medium"       # only 1 method backs it → cap confidence
 
+    # --- Checklist gate (the boss's 100-item checklist, agent-run): conditions check on
+    # top of the direction call. A deal-breaker (급락일/공매도 과열/악재 압도/손익비 미달)
+    # vetoes a BUY the way the scalp tape-veto downgrades ENTER — direction may be right,
+    # but conditions aren't. Score is appended to the answer; never breaks decide(). ---
+    checklist = None
+    chk_veto = False
+    try:
+        from services.checklist_engine import stock_scorecard
+        checklist = stock_scorecard(db, code, news=news)
+        if decision == "BUY" and checklist.get("deal_breakers"):
+            decision, conf, conf_en, gated, chk_veto = "HOLD", "낮음", "low", True, True
+    except Exception:
+        checklist = None
+
     acc = m1.get("backtest_accuracy_pct")
     if acc is None and ml.get("backtest_acc") is not None:
         acc = round(ml["backtest_acc"] * 100, 1)
@@ -331,7 +345,10 @@ def decide(db, ticker: str, focus: Optional[str] = None) -> dict[str, Any]:
 
     dec_full_ko = {"BUY": "매수 (BUY)", "SELL": "매도 (SELL)", "HOLD": "보유 (HOLD)"}[decision]
     dec_full_en = {"BUY": "BUY", "SELL": "SELL", "HOLD": "HOLD"}[decision]
-    if gated:                       # abstained: methods didn't back the fusion
+    if chk_veto:                    # checklist deal-breaker vetoed the BUY
+        dec_full_ko = "관망 (체크리스트 결격)"
+        dec_full_en = "WATCH (checklist deal-breaker)"
+    elif gated:                     # abstained: methods didn't back the fusion
         dec_full_ko = "관망 (신호 불충분)"
         dec_full_en = "WATCH (insufficient method backing)"
     em_txt_ko = (f"예상 5일 변동 ±{abs(em)}%" if em is not None else "예상 변동 추정 불가")
@@ -503,6 +520,12 @@ def decide(db, ticker: str, focus: Optional[str] = None) -> dict[str, Any]:
     ko_lines += ([f"· {h}" for h in heads] if heads else ["· 특이 뉴스 없음"])
     if yt.get("note_ko"):
         ko_lines += ["", "**유튜브 (시장 심리)**", f"· {yt['note_ko']}"]
+    if checklist:
+        try:
+            from services.checklist_engine import summary_line
+            ko_lines += ["", summary_line(checklist) + "  _(전체는 \"종목명 체크리스트\"로 확인)_"]
+        except Exception:
+            pass
     ko_lines += ["", "**최종 종합 판단**", final_ko, "",
                  "※ 3가지 방법과 뉴스·수급·기술적 지표를 종합한 참고 의견이며, 투자 권유나 수익 보장이 아닙니다."]
     ko = "\n".join(ko_lines)
@@ -534,12 +557,21 @@ def decide(db, ticker: str, focus: Optional[str] = None) -> dict[str, Any]:
     en_lines += ([f"- {h}" for h in heads] if heads else ["- no notable news"])
     if yt.get("note_en"):
         en_lines += ["", "**YouTube (market sentiment)**", f"- {yt['note_en']}"]
+    if checklist:
+        try:
+            from services.checklist_engine import summary_line
+            en_lines += ["", summary_line(checklist, en=True) + '  _(full card: ask "SK Hynix checklist")_']
+        except Exception:
+            pass
     en_lines += ["", "**Final call — all 3 methods**", final_en, "",
                  "Note: a reasoned synthesis of all 3 methods + news/flows/technicals — not investment advice or a guarantee."]
     en = "\n".join(en_lines)
     return {"ticker": code, "name": name, "decision": decision, "score": round(total, 1),
             "price": _px, "confidence": conf_en, "news": news, "flows": flows, "technicals": tech,
             "youtube": yt,
+            "checklist": ({"score": checklist["score"], "max": checklist["max"],
+                           "pct": checklist["pct"],
+                           "deal_breakers": checklist["deal_breakers"]} if checklist else None),
             "method1_ml": {"call": ml_adv, "accuracy_pct": acc, "expected_move_pct": em},
             "method2_analysis": {"signal": an_sig, "reasons": m2.get("reasons")},
             "method3_wave": {"verdict": wv or None, "wave_score": _wsc,

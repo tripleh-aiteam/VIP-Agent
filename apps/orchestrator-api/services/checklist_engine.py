@@ -1,0 +1,626 @@
+"""checklist_engine.py — the boss's 100-item day-trading checklist, run by the agent.
+
+The user has a paper checklist he ran manually before every trade (100 items across
+Preparation / Market / Supply&Demand / Stock Selection / Execution). A human can't
+complete 100 checks per trade — the agent can, in seconds, on live data.
+
+Design: each item is a DATA row (id, category, question, checker, weight, deal_breaker),
+not hardcoded logic — editable without touching the engine. Three honest outcomes per
+item: pass / fail / unknown("확인 불가" — no data source yet, never faked). Two layers:
+
+  market_preflight(db)          — items about TODAY's market (once, cached ~5 min)
+  stock_scorecard(db, ticker)   — items about ONE stock (on demand)
+
+Deal-breakers veto a BUY regardless of score (same pattern as the scalp tape veto).
+Human-only items (sleep/emotion/journal) are NOT scored — they're listed as reminders.
+decide() consumes this as a gate + an appended scorecard line; the chatbot exposes the
+full card via the '체크리스트' intent.
+"""
+from __future__ import annotations
+
+import time
+from datetime import datetime, timedelta, timezone
+from typing import Any, Callable, Optional
+
+KST = timezone(timedelta(hours=9))
+
+# ---------------------------------------------------------------- indicators
+
+def _ma(vals, n):
+    return sum(vals[-n:]) / n if len(vals) >= n else None
+
+
+def _rsi(closes, n=14) -> Optional[float]:
+    if len(closes) < n + 1:
+        return None
+    gains, losses = [], []
+    for a, b in zip(closes[-n - 1:-1], closes[-n:]):
+        d = b - a
+        gains.append(max(d, 0)); losses.append(max(-d, 0))
+    avg_g, avg_l = sum(gains) / n, sum(losses) / n
+    if avg_l == 0:
+        return 100.0
+    rs = avg_g / avg_l
+    return round(100 - 100 / (1 + rs), 1)
+
+
+def _ema(vals, n):
+    if len(vals) < n:
+        return None
+    k = 2 / (n + 1)
+    e = sum(vals[:n]) / n
+    for v in vals[n:]:
+        e = v * k + e * (1 - k)
+    return e
+
+
+def _macd_golden(closes) -> Optional[bool]:
+    if len(closes) < 35:
+        return None
+    macd = [ _ema(closes[:i], 12) - _ema(closes[:i], 26)
+             for i in range(35, len(closes) + 1) ]
+    if len(macd) < 9:
+        return None
+    sig = _ema(macd, 9)
+    return macd[-1] > sig if sig is not None else None
+
+
+def _boll_upper(closes, n=20, k=2) -> Optional[float]:
+    if len(closes) < n:
+        return None
+    win = closes[-n:]
+    m = sum(win) / n
+    var = sum((v - m) ** 2 for v in win) / n
+    return m + k * (var ** 0.5)
+
+
+def _ichimoku_above_cloud(highs, lows, closes) -> Optional[bool]:
+    if len(closes) < 52:
+        return None
+    def mid(n):  # (highest high + lowest low)/2 over n
+        return (max(highs[-n:]) + min(lows[-n:])) / 2
+    tenkan, kijun = mid(9), mid(26)
+    span_a = (tenkan + kijun) / 2
+    span_b = mid(52)
+    return closes[-1] > max(span_a, span_b)
+
+
+def _expiry_day_kr(now: datetime) -> bool:
+    """KR futures/options expiry = 2nd Thursday of the month."""
+    d = now.date()
+    thursdays = [x for x in range(1, 22)
+                 if datetime(d.year, d.month, x, tzinfo=KST).weekday() == 3]
+    return len(thursdays) >= 2 and d.day == thursdays[1]
+
+
+# ---------------------------------------------------------------- data context
+
+_cache: dict[str, tuple[float, Any]] = {}
+
+
+def _cached(key: str, ttl: float, fn: Callable[[], Any]):
+    hit = _cache.get(key)
+    if hit and time.time() - hit[0] < ttl:
+        return hit[1]
+    v = fn()
+    _cache[key] = (time.time(), v)
+    return v
+
+
+def _stock_ctx(db, code: str, news: Optional[dict] = None) -> dict[str, Any]:
+    """One fetch pass per stock — every checker reads from this dict.
+    `news` lets decide() pass its already-fetched news dict (skips a live re-fetch)."""
+    ctx: dict[str, Any] = {"code": code}
+    try:
+        from services import naver_stock as ns
+        hist = _cached(f"hist:{code}", 300, lambda: ns.daily_history(code, days=120))
+        chron = list(reversed(hist or []))
+        ctx["closes"] = [r["close"] for r in chron if r.get("close") is not None]
+        ctx["highs"] = [r["high"] for r in chron if r.get("high") is not None]
+        ctx["lows"] = [r["low"] for r in chron if r.get("low") is not None]
+        ctx["vols"] = [r.get("volume") for r in chron if r.get("volume") is not None]
+        ctx["opens"] = [r.get("open") for r in chron if r.get("open") is not None]
+    except Exception:
+        pass
+    try:
+        from services.trading_brief import realtime_for
+        ctx["rt"] = realtime_for(code, db=db) or {}
+    except Exception:
+        ctx["rt"] = {}
+    try:
+        from services.trading_brief import _flow
+        ctx["flow"] = _flow(db, code) or {}
+    except Exception:
+        ctx["flow"] = {}
+    if news is not None:
+        ctx["news"] = news
+    else:
+        try:
+            from services.decision_agent import _news
+            from services.stock_resolver import display_name
+            ctx["news"] = _news(db, code, display_name(code))
+        except Exception:
+            ctx["news"] = {}
+    try:
+        from services.wave_method import wave_for
+        ctx["wave"] = wave_for(db, code) or {}
+    except Exception:
+        ctx["wave"] = {}
+    try:
+        from services import prediction_service as ps
+        ctx["ml"] = ps.get_ticker(db, code) or {}
+    except Exception:
+        ctx["ml"] = {}
+    cur = (ctx.get("rt") or {}).get("price")
+    ctx["cur"] = float(cur) if cur else (ctx["closes"][-1] if ctx.get("closes") else None)
+    return ctx
+
+
+# ---------------------------------------------------------------- checkers
+# Each checker: ctx -> (ok: bool|None, detail: str). None = unknown/확인 불가.
+
+def _c_market_direction(m):
+    r = m.get("mkt_ret")
+    if r is None:
+        return None, "지수 데이터 없음"
+    return r > -1.0, f"KODEX200 {r:+.1f}%"
+
+
+def _c_market_plunge(m):
+    r = m.get("mkt_ret")
+    if r is None:
+        return None, ""
+    return r > -2.5, f"지수 {r:+.1f}%" + (" — 급락일" if r <= -2.5 else "")
+
+
+def _c_market_news(m):
+    s = m.get("news_score")
+    if s is None:
+        return None, "시장 뉴스 데이터 없음"
+    return s > -2, f"시장 뉴스 점수 {s:+d}"
+
+
+def _c_geopolitics(m):
+    n = m.get("geo_hits", 0)
+    return n == 0, ("지정학 리스크 뉴스 없음" if n == 0 else f"지정학/매크로 악재 {n}건")
+
+
+def _c_expiry(m):
+    e = m.get("expiry", False)
+    return not e, ("만기일 아님" if not e else "선물/옵션 만기일 — 변동성 주의")
+
+
+def _c_near_close(m):
+    n = datetime.now(KST)
+    mins = n.hour * 60 + n.minute
+    late = 540 <= mins <= 931 and mins >= 870          # after 14:30 KST
+    return not late, ("장 마감 전 주의 시간대" if late else "마감 전 아님")
+
+
+def _mk(ok, detail):
+    return ok, detail
+
+
+def _c_ma_align(c):
+    cl = c.get("closes") or []
+    if len(cl) < 60:
+        return None, "일봉 부족"
+    cur, m5, m20, m60 = cl[-1], _ma(cl, 5), _ma(cl, 20), _ma(cl, 60)
+    ok = cur > m20 and m5 > m20
+    return ok, f"현재가 vs MA20 {'위' if cur > m20 else '아래'} · MA5{'>' if m5 > m20 else '<'}MA20"
+
+
+def _c_daily_uptrend(c):
+    cl = c.get("closes") or []
+    if len(cl) < 25:
+        return None, "일봉 부족"
+    return cl[-1] > _ma(cl, 20), "20일선 " + ("위" if cl[-1] > _ma(cl, 20) else "아래")
+
+
+def _c_box_or_trend(c):
+    cl, hi, lo = c.get("closes") or [], c.get("highs") or [], c.get("lows") or []
+    if len(cl) < 20:
+        return None, "일봉 부족"
+    res, sup = max(hi[-20:]), min(lo[-20:])
+    pos = (cl[-1] - sup) / (res - sup) * 100 if res > sup else 50
+    return True, f"박스권 {round(pos)}% 지점 (지지 {sup:,.0f} / 저항 {res:,.0f})"
+
+
+def _c_support_clear(c):
+    hi, lo = c.get("highs") or [], c.get("lows") or []
+    if len(lo) < 20:
+        return None, "일봉 부족"
+    res, sup = max(hi[-20:]), min(lo[-20:])
+    return (res - sup) / sup > 0.03, f"지지-저항 폭 {round((res - sup) / sup * 100, 1)}%"
+
+
+def _c_vol_surge(c):
+    v = c.get("vols") or []
+    if len(v) < 21:
+        return None, "거래량 데이터 부족"
+    avg = sum(v[-21:-1]) / 20
+    ratio = v[-1] / avg if avg else 0
+    return ratio >= 1.2, f"거래량 20일 평균의 {ratio:.1f}배"
+
+
+def _c_gap_open(c):
+    cl, op = c.get("closes") or [], c.get("opens") or []
+    if len(cl) < 2 or not op:
+        return None, "시가 데이터 부족"
+    gap = (op[-1] - cl[-2]) / cl[-2] * 100
+    return abs(gap) < 4, f"갭 {gap:+.1f}%" + (" — 과대 갭 주의" if abs(gap) >= 4 else "")
+
+
+def _c_new_high_low(c):
+    cl, hi, lo = c.get("closes") or [], c.get("highs") or [], c.get("lows") or []
+    if len(cl) < 60:
+        return None, "일봉 부족"
+    cur = c.get("cur") or cl[-1]
+    if cur >= max(hi[-60:]) * 0.995:
+        return True, "60일 신고가권 (추세 강함)"
+    if cur <= min(lo[-60:]) * 1.005:
+        return False, "60일 신저가권 (약세)"
+    return True, "신고/신저가 아님"
+
+
+def _c_vs_yesterday(c):
+    cl = c.get("closes") or []
+    cur = c.get("cur")
+    if len(cl) < 2 or not cur:
+        return None, "데이터 부족"
+    chg = (cur - cl[-2]) / cl[-2] * 100
+    return chg > -3, f"전일 종가 대비 {chg:+.1f}%"
+
+
+def _c_recovered_open(c):
+    rt = c.get("rt") or {}
+    cur, op = c.get("cur"), (c.get("opens") or [None])[-1]
+    if not cur or not op:
+        return None, "시가 데이터 부족"
+    return cur >= op * 0.995, f"시가 대비 {'회복' if cur >= op * 0.995 else '미회복'} ({(cur - op) / op * 100:+.1f}%)"
+
+
+def _c_rsi(c):
+    r = _rsi(c.get("closes") or [])
+    if r is None:
+        return None, "일봉 부족"
+    return 25 <= r <= 72, f"RSI(14) {r}" + (" — 과열" if r > 72 else " — 과매도" if r < 25 else "")
+
+
+def _c_macd(c):
+    g = _macd_golden(c.get("closes") or [])
+    if g is None:
+        return None, "일봉 부족"
+    return g, "MACD " + ("골든크로스 상태" if g else "데드크로스 상태")
+
+
+def _c_bollinger(c):
+    up = _boll_upper(c.get("closes") or [])
+    cur = c.get("cur")
+    if up is None or not cur:
+        return None, "일봉 부족"
+    return cur <= up * 1.02, ("볼린저 상단 과이탈 — 과열" if cur > up * 1.02 else "볼린저 밴드 정상 범위")
+
+
+def _c_ichimoku(c):
+    a = _ichimoku_above_cloud(c.get("highs") or [], c.get("lows") or [], c.get("closes") or [])
+    if a is None:
+        return None, "일봉 부족(52일)"
+    return a, "일목균형표 구름대 " + ("위" if a else "아래")
+
+
+def _c_pivot_r2(c):
+    hi, lo, cl = c.get("highs") or [], c.get("lows") or [], c.get("closes") or []
+    cur = c.get("cur")
+    if len(cl) < 2 or not cur:
+        return None, "데이터 부족"
+    p = (hi[-2] + lo[-2] + cl[-2]) / 3
+    r2 = p + (hi[-2] - lo[-2])
+    return cur < r2, f"피봇 R2({r2:,.0f}) " + ("아래 — 여유 있음" if cur < r2 else "돌파 — 과열 주의")
+
+
+def _c_near_day_high(c):
+    rt = c.get("rt") or {}
+    cur = c.get("cur")
+    hi, lo = c.get("highs") or [], c.get("lows") or []
+    if not cur or not hi:
+        return None, "데이터 부족"
+    dh, dl = hi[-1], lo[-1]
+    if dh <= dl:
+        return None, "당일 범위 없음"
+    pos = (cur - dl) / (dh - dl) * 100
+    return pos < 85, f"당일 범위 {round(pos)}% 지점" + (" — 고점 추격 주의" if pos >= 85 else "")
+
+
+def _c_orderbook_strength(c):
+    rt = c.get("rt") or {}
+    if not rt.get("live"):
+        return None, "실시간 호가 없음"
+    imb = rt.get("imbalance")
+    return (imb or 0) > 0, f"호가 {'매수우위' if (imb or 0) > 0 else '매도우위'} ({imb:+.0%})" if imb is not None else (None, "호가 없음")
+
+
+def _c_short_overheat(c):
+    rt = c.get("rt") or {}
+    sr = rt.get("short_ratio")
+    if sr is None:
+        return None, "공매도 데이터 없음"
+    return float(sr) < 10, f"공매도 비중 {sr}%" + (" — 과열" if float(sr) >= 10 else "")
+
+
+def _c_program(c):
+    rt = c.get("rt") or {}
+    pn = rt.get("program_net")
+    if pn is None:
+        return None, "프로그램 데이터 없음"
+    return pn >= 0, f"프로그램 순매수 {pn:+,}"
+
+
+def _c_foreign_today(c):
+    f = c.get("flow") or {}
+    fn = f.get("foreign_net")
+    if fn is None:
+        return None, "수급 데이터 없음"
+    return fn > 0, f"외국인 {fn:+,}"
+
+
+def _c_inst_today(c):
+    f = c.get("flow") or {}
+    n = f.get("inst_net")
+    if n is None:
+        return None, "수급 데이터 없음"
+    return n > 0, f"기관 {n:+,}"
+
+
+def _c_flows_5d(c):
+    f = c.get("flow") or {}
+    n5 = (f.get("foreign_5d") or 0) + (f.get("inst_5d") or 0)
+    if not f:
+        return None, "수급 데이터 없음"
+    return n5 > 0, f"외인+기관 5일 합산 {n5:+,}"
+
+
+def _c_not_distribution(c):
+    f = c.get("flow") or {}
+    tag = f.get("tag")
+    if not tag:
+        return None, "수급 태그 없음"
+    return tag != "분산매도", f"수급 패턴: {tag}"
+
+
+def _c_stock_news_positive(c):
+    n = c.get("news") or {}
+    s = n.get("score")
+    if s is None or n.get("count", 0) == 0:
+        return None, "종목 뉴스 없음"
+    return s >= 0, f"뉴스 점수 {s:+d} ({n.get('count')}건)"
+
+
+def _c_catalyst_quality(c):
+    n = c.get("news") or {}
+    titles = " ".join(n.get("titles") or [])
+    if not titles:
+        return None, "뉴스 없음"
+    strong = any(k in titles for k in ("실적", "수주", "계약", "증설", "공급", "인수"))
+    weak_only = any(k in titles for k in ("목표가", "리포트")) and not strong
+    return not weak_only, ("지속성 있는 재료(실적/수주/증설)" if strong
+                           else "리포트성 재료뿐 — 지속성 약함" if weak_only else "일반 뉴스")
+
+
+def _c_rr(c):
+    w = c.get("wave") or {}
+    rr = w.get("rr")
+    if rr is None:
+        cl, hi, lo = c.get("closes") or [], c.get("highs") or [], c.get("lows") or []
+        cur = c.get("cur")
+        if len(cl) >= 20 and cur:
+            res, sup = max(hi[-20:]), min(lo[-20:])
+            stop = max(sup * 0.98, cur * 0.97)
+            tgt = min(res, cur * 1.04)
+            rr = round((tgt - cur) / (cur - stop), 2) if cur > stop else None
+    if rr is None:
+        return None, "손익비 계산 불가"
+    return float(rr) >= 1.2, f"손익비 {rr}"
+
+
+def _c_entry_levels(c):
+    cl, hi, lo = c.get("closes") or [], c.get("highs") or [], c.get("lows") or []
+    if len(cl) < 20:
+        return None, "레벨 계산 불가"
+    return True, f"진입/손절/목표 산출 가능 (지지 {min(lo[-20:]):,.0f} · 저항 {max(hi[-20:]):,.0f})"
+
+
+def _c_method_agreement(c):
+    ml = ((c.get("ml") or {}).get("advice") or "").upper()
+    wv = ((c.get("wave") or {}).get("verdict") or "").upper()
+    if not ml and not wv:
+        return None, "방법 신호 데이터 없음"
+    n = sum(1 for v in (ml == "BUY", wv == "BUY") if v)
+    return n >= 1, f"방법 신호: ML {ml or '-'} · 파동 {wv or '-'}"
+
+
+# ---------------------------------------------------------------- item registry
+# (no, category, question_ko, checker, weight, deal_breaker)
+
+MARKET_ITEMS = [
+    (11, "시장", "코스피/코스닥 방향은 상방인가?", _c_market_direction, 2, False),
+    (22, "시장", "시장 전체를 압도하는 악재는 없는가?", _c_market_news, 2, True),
+    (20, "시장", "지정학적 리스크는 없는가?", _c_geopolitics, 1, False),
+    (95, "시장", "지수 급락일이 아닌가? (방어)", _c_market_plunge, 3, True),
+    (36, "시장", "선물/옵션 만기일이 아닌가?", _c_expiry, 1, False),
+    (100, "시장", "장 마감 직전 시간대가 아닌가?", _c_near_close, 1, False),
+]
+
+STOCK_ITEMS = [
+    (51, "종목선정", "가격이 이동평균선(5/20/60) 위에 정렬돼 있는가?", _c_ma_align, 2, False),
+    (58, "종목선정", "일봉 추세가 상방인가?", _c_daily_uptrend, 2, False),
+    (52, "종목선정", "추세장인가 박스권인가 파악됐는가?", _c_box_or_trend, 1, False),
+    (53, "종목선정", "지지/저항선이 명확한가?", _c_support_clear, 1, False),
+    (47, "종목선정", "거래량이 평소보다 증가했는가?", _c_vol_surge, 2, False),
+    (49, "종목선정", "과도한 갭 시가가 아닌가?", _c_gap_open, 1, False),
+    (50, "종목선정", "신고가/신저가 위치는 유리한가?", _c_new_high_low, 1, False),
+    (67, "종목선정", "전일 종가 대비 위치는 건전한가?", _c_vs_yesterday, 1, False),
+    (68, "종목선정", "시가를 회복했는가?", _c_recovered_open, 1, False),
+    (60, "종목선정", "RSI가 과열/과매도 구간이 아닌가?", _c_rsi, 1, False),
+    (61, "종목선정", "MACD가 골든크로스 상태인가?", _c_macd, 1, False),
+    (62, "종목선정", "볼린저 상단 과이탈(과열)이 아닌가?", _c_bollinger, 1, False),
+    (65, "종목선정", "일목균형표 구름대 위인가?", _c_ichimoku, 1, False),
+    (66, "종목선정", "피봇 R2 아래(과열 아님)인가?", _c_pivot_r2, 1, False),
+    (75, "종목선정", "당일 고점 추격 매수가 아닌가?", _c_near_day_high, 1, False),
+    (55, "수급", "호가창 체결 강도(매수우위)가 있는가?", _c_orderbook_strength, 2, False),
+    (43, "수급", "공매도 과열 종목이 아닌가?", _c_short_overheat, 2, True),
+    (35, "수급", "프로그램 매매가 우호적인가?", _c_program, 1, False),
+    (31, "수급", "외국인이 오늘 순매수인가?", _c_foreign_today, 1, False),
+    (32, "수급", "기관이 오늘 순매수인가?", _c_inst_today, 1, False),
+    (38, "수급", "외인+기관 5일 수급이 순유입인가?", _c_flows_5d, 2, False),
+    (34, "수급", "분산매도(개인 집중) 패턴이 아닌가?", _c_not_distribution, 1, False),
+    (23, "이슈", "종목 뉴스 흐름이 우호적인가?", _c_stock_news_positive, 2, False),
+    (41, "이슈", "재료가 일회성이 아니라 지속성이 있는가?", _c_catalyst_quality, 1, False),
+    (76, "실행", "진입/손절/목표 레벨이 명확한가?", _c_entry_levels, 2, False),
+    (79, "실행", "손익비가 1.2 이상인가?", _c_rr, 2, True),
+    (82, "실행", "방법(ML/파동) 중 매수를 지지하는 신호가 있는가?", _c_method_agreement, 2, False),
+]
+
+# Human-only reminders (not scored — the agent can't honestly check these)
+HUMAN_REMINDERS_KO = [
+    "충분히 잤는가? 컨디션·감정 상태는 안정적인가? (1~4)",
+    "오늘의 매매 목표와 손실 한도를 정했는가? (5, 92)",
+    "예측이 아니라 대응할 준비가 됐는가? (10)",
+    "손절은 기계적으로, 뇌동매매 금지 (83, 85, 87)",
+]
+
+
+# ---------------------------------------------------------------- layers
+
+def market_preflight(db) -> dict[str, Any]:
+    """Layer 1 — TODAY's market readiness. Cached 5 min."""
+    def _build():
+        m: dict[str, Any] = {}
+        try:
+            from services.trading_brief import _mkt_ret_today
+            m["mkt_ret"] = _mkt_ret_today(db)
+        except Exception:
+            m["mkt_ret"] = None
+        try:
+            from services.news_impact import effective_news
+            items = effective_news(db, None, limit=8) or []
+            sc = 0
+            geo = 0
+            for n in items:
+                d = n.get("direction") or 0
+                sc += (1 if d in (1, "▲") else -1 if d in (-1, "▼") else 0)
+                if n.get("type") == "지정학/매크로" and d in (-1, "▼"):
+                    geo += 1
+            m["news_score"] = max(-3, min(3, sc))
+            m["geo_hits"] = geo
+        except Exception:
+            m["news_score"] = None
+            m["geo_hits"] = 0
+        m["expiry"] = _expiry_day_kr(datetime.now(KST))
+        return m
+    mctx = _cached("preflight", 300, _build)
+    return _score_items(MARKET_ITEMS, mctx, layer="market")
+
+
+def stock_scorecard(db, ticker: str, news: Optional[dict] = None) -> dict[str, Any]:
+    """Layer 2 — one stock vs the checklist + the market layer folded in."""
+    code = str(ticker).zfill(6)
+    sctx = _stock_ctx(db, code, news=news)
+    stock = _score_items(STOCK_ITEMS, sctx, layer="stock")
+    market = market_preflight(db)
+    from services.stock_resolver import display_name
+    out = {
+        "ticker": code, "name": display_name(code),
+        "market": market, "stock": stock,
+        "score": stock["score"], "max": stock["max"],
+        "pct": stock["pct"],
+        "deal_breakers": market["deal_breakers"] + stock["deal_breakers"],
+        "unknown": stock["unknown"] + market["unknown"],
+        "human_reminders": HUMAN_REMINDERS_KO,
+    }
+    out["verdict_ok"] = not out["deal_breakers"] and stock["pct"] is not None and stock["pct"] >= 55
+    return out
+
+
+def _score_items(items, ctx, layer: str) -> dict[str, Any]:
+    rows, score, mx = [], 0, 0
+    breakers, unknown = [], []
+    for no, cat, q, fn, w, db_flag in items:
+        try:
+            ok, detail = fn(ctx)
+        except Exception as e:
+            ok, detail = None, f"체크 오류: {str(e)[:40]}"
+        rows.append({"no": no, "category": cat, "q": q, "ok": ok, "detail": detail,
+                     "weight": w, "deal_breaker": db_flag})
+        if ok is None:
+            unknown.append(no)
+            continue
+        mx += w
+        if ok:
+            score += w
+        elif db_flag:
+            breakers.append({"no": no, "q": q, "detail": detail})
+    return {"layer": layer, "items": rows, "score": score, "max": mx,
+            "pct": round(score / mx * 100) if mx else None,
+            "deal_breakers": breakers, "unknown": unknown}
+
+
+# ---------------------------------------------------------------- rendering
+
+def render_ko(card: dict[str, Any]) -> str:
+    """Full scorecard in the user's paper-checklist style."""
+    L = [f"**📋 {card['name']} 체크리스트 — {card['score']}/{card['max']}점 ({card['pct']}%)**"]
+    if card["deal_breakers"]:
+        L.append("")
+        L.append("🚫 **결격 사유 (매수 금지):**")
+        for b in card["deal_breakers"]:
+            L.append(f"· #{b['no']} {b['q']} — {b['detail']}")
+    else:
+        L.append("✅ 결격 사유 없음")
+    for layer_key, title in (("market", "시장 (오늘)"), ("stock", "종목")):
+        lay = card[layer_key]
+        L += ["", f"**{title} — {lay['score']}/{lay['max']}**"]
+        by_cat: dict[str, list] = {}
+        for it in lay["items"]:
+            by_cat.setdefault(it["category"], []).append(it)
+        for cat, its in by_cat.items():
+            for it in its:
+                mark = "✅" if it["ok"] else "❌" if it["ok"] is False else "❓"
+                L.append(f"{mark} #{it['no']} {it['q']} — {it['detail']}")
+    if card.get("unknown"):
+        L += ["", f"❓ 확인 불가 {len(card['unknown'])}개 항목은 데이터 연결 후 자동 활성화됩니다."]
+    L += ["", "**🧑 본인 확인 (에이전트가 대신 못 하는 항목):**"]
+    L += [f"· {r}" for r in card["human_reminders"]]
+    L += ["", "※ 체크리스트는 조건 점검용이며, 방향 판단은 3가지 방법(살까? 질문)과 함께 보세요."]
+    return "\n".join(L)
+
+
+def render_market_ko(db) -> str:
+    """Market pre-flight only (no stock named): '오늘 단타 하기 좋은 날인가?'"""
+    m = market_preflight(db)
+    ok_day = not m["deal_breakers"]
+    L = [f"**📋 오늘의 시장 체크 — {m['score']}/{m['max']}점**",
+         ("✅ 오늘은 매매 가능한 환경입니다." if ok_day else "🚫 오늘은 신규 매수를 쉬는 게 좋은 날입니다."), ""]
+    for it in m["items"]:
+        mark = "✅" if it["ok"] else "❌" if it["ok"] is False else "❓"
+        L.append(f"{mark} #{it['no']} {it['q']} — {it['detail']}")
+    L += ["", "**🧑 본인 확인:**"] + [f"· {r}" for r in HUMAN_REMINDERS_KO]
+    L += ["", "종목별 점검은 \"종목명 체크리스트\"로 물어보세요."]
+    return "\n".join(L)
+
+
+def summary_line(card: dict[str, Any], en: bool = False) -> str:
+    """One-line summary appended to decide()/scalp answers."""
+    if en:
+        s = f"📋 Checklist {card['score']}/{card['max']} ({card['pct']}%)"
+        if card["deal_breakers"]:
+            s += " · 🚫 " + "; ".join(f"#{b['no']} {b['detail']}" for b in card["deal_breakers"][:2])
+        else:
+            s += " · no deal-breakers"
+        return s
+    s = f"📋 체크리스트 {card['score']}/{card['max']}점 ({card['pct']}%)"
+    if card["deal_breakers"]:
+        s += " · 🚫 결격: " + "; ".join(f"#{b['no']} {b['detail']}" for b in card["deal_breakers"][:2])
+    else:
+        s += " · 결격 없음"
+    return s

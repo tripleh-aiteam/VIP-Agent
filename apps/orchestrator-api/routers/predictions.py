@@ -110,6 +110,22 @@ def readiness(db: Session = Depends(get_db)):
     return report(db)
 
 
+@router.get("/checklist/{ticker}")
+def checklist_ep(ticker: str, db: Session = Depends(get_db)):
+    """The boss's 100-item pre-trade checklist, agent-run for ONE stock: market pre-flight
+    + per-stock scorecard + deal-breakers + honest '확인 불가' items. Powers the chatbot
+    '체크리스트' intent and (future) a dashboard card."""
+    from services.checklist_engine import stock_scorecard
+    return stock_scorecard(db, str(ticker).zfill(6))
+
+
+@router.get("/checklist-market")
+def checklist_market_ep(db: Session = Depends(get_db)):
+    """Market-only pre-flight (오늘 매매하기 좋은 날인가?) — cached ~5 min."""
+    from services.checklist_engine import market_preflight
+    return market_preflight(db)
+
+
 @router.post("/collector/pass")
 def collector_pass(force: bool = Query(False)):
     """Cloud collection pass — the server polls Kiwoom itself (Render IPs are
