@@ -110,6 +110,28 @@ def readiness(db: Session = Depends(get_db)):
     return report(db)
 
 
+@router.post("/paper/tick")
+def paper_tick_ep(force: bool = Query(False), db: Session = Depends(get_db)):
+    """One paper-trader pass (close hits/timeouts, open from bot signals). External-cron
+    safe; force=true runs the open/close logic outside market hours (testing)."""
+    from services.paper_trader import tick
+    return tick(db, force=force)
+
+
+@router.get("/paper/scorecard")
+def paper_scorecard_ep(days: int = Query(1), db: Session = Depends(get_db)):
+    """Virtual P&L — 'if you had followed the bot': recent window + cumulative + per strategy."""
+    from services.paper_trader import scorecard
+    return scorecard(db, days=days)
+
+
+@router.post("/paper/report")
+def paper_report_ep(db: Session = Depends(get_db)):
+    """Send the morning scorecard email now (normally 08:20 KST cron)."""
+    from services.paper_trader import morning_report
+    return morning_report(db)
+
+
 @router.post("/dip-alert")
 def dip_alert_ep(force: bool = Query(False), db: Session = Depends(get_db)):
     """One proactive dip-bounce alert pass (scan → dedup → email new candidates).

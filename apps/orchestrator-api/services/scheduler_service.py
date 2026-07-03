@@ -1616,6 +1616,38 @@ def _intraday_forecast_tick():
         db.close()
 
 
+@_single_flight("paper_trader_tick")
+def _paper_trader_tick():
+    """Every 5 min during market: the paper-trader closes hit/matured virtual trades and
+    opens new ones from the bot's own signals — evidence volume for the readiness gate."""
+    from db.base import SessionLocal
+    _db = SessionLocal()
+    try:
+        from services.paper_trader import tick as _pt
+        r = _pt(_db)
+        if r.get("opened") or r.get("closed"):
+            log.info(f"paper trader: {r}", extra={"action": "paper.tick"})
+    except Exception as e:
+        log.warning(f"paper trader tick failed: {str(e)[:120]}")
+    finally:
+        _db.close()
+
+
+@_single_flight("paper_morning_report")
+def _paper_morning_report():
+    """08:20 KST: yesterday's virtual P&L scorecard — 'if you had followed the bot'."""
+    from db.base import SessionLocal
+    _db = SessionLocal()
+    try:
+        from services.paper_trader import morning_report as _pm
+        r = _pm(_db)
+        log.info(f"paper morning report: sent={r.get('sent')}", extra={"action": "paper.report"})
+    except Exception as e:
+        log.warning(f"paper morning report failed: {str(e)[:120]}")
+    finally:
+        _db.close()
+
+
 @_single_flight("dip_alert_pass")
 def _dip_alert_pass():
     """Every 10 min during market: proactive dip-bounce alerts (the boss's own strategy)
@@ -2151,6 +2183,20 @@ def init_scheduler():
         _dip_alert_pass,
         CronTrigger.from_crontab("*/10 0-6 * * 1-5"),
         id="dip-alert-pass",
+        replace_existing=True, max_instances=1, coalesce=True,
+    )
+    # Paper trader — every 5 min during market: virtual execution of the bot's signals
+    # (readiness-gate evidence at 10x speed). Morning scorecard at 08:20 KST (23:20 UTC).
+    _scheduler.add_job(
+        _paper_trader_tick,
+        CronTrigger.from_crontab("*/5 0-6 * * 1-5"),
+        id="paper-trader-tick",
+        replace_existing=True, max_instances=1, coalesce=True,
+    )
+    _scheduler.add_job(
+        _paper_morning_report,
+        CronTrigger.from_crontab("20 23 * * *"),
+        id="paper-morning-report",
         replace_existing=True, max_instances=1, coalesce=True,
     )
     log.info("scheduler: intraday 2-method hourly forward test registered (hourly 09–15 KST + 08:00 KST email + 5-min snapshot banking + 2-min cloud collector)", extra={"action": "scheduler.intraday_registered"})
