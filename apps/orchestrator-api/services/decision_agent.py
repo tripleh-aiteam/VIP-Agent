@@ -156,6 +156,24 @@ def _market_indicators() -> dict:
                                      "pct": float(str(row.get("fluctuationsRatio") or 0).replace(",", ""))}
             except Exception:
                 pass
+            # US backdrop (prev close): 나스닥 + VIX(공포지수) — world-index API
+            for key, idx in (("nasdaq", ".IXIC"), ("vix", ".VIX")):
+                try:
+                    j = cli.get(f"https://api.stock.naver.com/index/{idx}/basic").json()
+                    if j.get("closePrice"):
+                        out[key] = {"price": j["closePrice"],
+                                    "pct": float(str(j.get("fluctuationsRatio") or 0).replace(",", ""))}
+                except Exception:
+                    pass
+            try:  # WTI 유가
+                j = cli.get("https://m.stock.naver.com/front-api/marketIndex/prices"
+                            "?category=energy&reutersCode=CLcv1&page=1&pageSize=10").json()
+                row = ((j.get("result") or [{}])[0]) if isinstance(j.get("result"), list) else {}
+                if row.get("closePrice"):
+                    out["wti"] = {"price": row["closePrice"],
+                                  "pct": float(str(row.get("fluctuationsRatio") or 0).replace(",", ""))}
+            except Exception:
+                pass
     except Exception:
         pass
     _mi_cache.update(t=_t.time(), v=out)
@@ -260,6 +278,22 @@ def decide(db, ticker: str, focus: Optional[str] = None) -> dict[str, Any]:
         mkt_line_en = " · ".join(_parts_en) + f" — {_mtone_en}"
     else:
         mkt_line_ko = mkt_line_en = None
+    # second line: overseas backdrop — 나스닥(전일) + VIX(공포지수, 수준 해석) + WTI 유가
+    _g_ko, _g_en = [], []
+    if mi.get("nasdaq"):
+        _g_ko.append(f"나스닥(전일) {mi['nasdaq']['price']} ({mi['nasdaq']['pct']:+.2f}%)")
+        _g_en.append(f"NASDAQ (prev close) {mi['nasdaq']['price']} ({mi['nasdaq']['pct']:+.2f}%)")
+    if mi.get("vix"):
+        _v = float(str(mi["vix"]["price"]).replace(",", ""))
+        _vt_ko = "안정" if _v < 20 else "경계" if _v < 30 else "공포"
+        _vt_en = "calm" if _v < 20 else "elevated" if _v < 30 else "fear"
+        _g_ko.append(f"VIX {mi['vix']['price']} ({_vt_ko})")
+        _g_en.append(f"VIX {mi['vix']['price']} ({_vt_en})")
+    if mi.get("wti"):
+        _g_ko.append(f"WTI 유가 ${mi['wti']['price']} ({mi['wti']['pct']:+.2f}%)")
+        _g_en.append(f"WTI oil ${mi['wti']['price']} ({mi['wti']['pct']:+.2f}%)")
+    mkt_line2_ko = " · ".join(_g_ko) if _g_ko else None
+    mkt_line2_en = " · ".join(_g_en) if _g_en else None
 
     # Pull the SAME two methods the outlook block shows, so the recommendation is built on
     # BOTH consistently: Method 1 = ML, Method 2 = Analysis (호가/수급/박스권).
@@ -601,6 +635,8 @@ def decide(db, ticker: str, focus: Optional[str] = None) -> dict[str, Any]:
     ko_lines += ["", f"**근거 — 방법별 증거 (확신 {conf} · {consensus_ko})**"]
     if mkt_line_ko:
         ko_lines += ["", "**① 시장 상황**", f"· {mkt_line_ko}"]
+        if mkt_line2_ko:
+            ko_lines += [f"· {mkt_line2_ko}"]
     ko_lines += ["", f"**② 뉴스 — {news_ko}**"]
     ko_lines += ([f"· {h}" for h in heads] if heads else ["· 특이 뉴스 없음"])
     if yt.get("note_ko"):
@@ -637,6 +673,8 @@ def decide(db, ticker: str, focus: Optional[str] = None) -> dict[str, Any]:
     en_lines += ["", f"**The evidence — method by method (confidence {conf_en} · {consensus_en})**"]
     if mkt_line_en:
         en_lines += ["", "**① Market**", f"- {mkt_line_en}"]
+        if mkt_line2_en:
+            en_lines += [f"- {mkt_line2_en}"]
     en_lines += ["", f"**② News — {news_en}**"]
     en_lines += ([f"- {h}" for h in heads] if heads else ["- no notable news"])
     if yt.get("note_en"):

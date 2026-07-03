@@ -199,6 +199,28 @@ def _c_near_close(m):
     return not late, ("장 마감 전 주의 시간대" if late else "마감 전 아님")
 
 
+def _c_us_close(m):
+    nd = (m.get("mi") or {}).get("nasdaq")
+    if not nd:
+        return None, "나스닥 데이터 없음"
+    return nd["pct"] > -1.5, f"나스닥(전일) {nd['pct']:+.2f}%"
+
+
+def _c_vix(m):
+    vx = (m.get("mi") or {}).get("vix")
+    if not vx:
+        return None, "VIX 데이터 없음"
+    v = float(str(vx["price"]).replace(",", ""))
+    return v < 28, f"VIX {vx['price']}" + (" — 공포권" if v >= 30 else " — 경계권" if v >= 20 else " — 안정권")
+
+
+def _c_oil(m):
+    o = (m.get("mi") or {}).get("wti")
+    if not o:
+        return None, "유가 데이터 없음"
+    return abs(o["pct"]) < 3, f"WTI ${o['price']} ({o['pct']:+.2f}%)" + (" — 급변동" if abs(o["pct"]) >= 3 else "")
+
+
 def _mk(ok, detail):
     return ok, detail
 
@@ -446,6 +468,9 @@ def _c_method_agreement(c):
 
 MARKET_ITEMS = [
     (11, "시장", "코스피/코스닥 방향은 상방인가?", _c_market_direction, 2, False),
+    (12, "시장", "전일 미국 증시(나스닥) 마감은 무난했는가?", _c_us_close, 1, False),
+    (17, "시장", "VIX(공포지수)가 적정 수준인가?", _c_vix, 1, False),
+    (16, "시장", "유가가 급변동하고 있지 않은가?", _c_oil, 1, False),
     (22, "시장", "시장 전체를 압도하는 악재는 없는가?", _c_market_news, 2, True),
     (20, "시장", "지정학적 리스크는 없는가?", _c_geopolitics, 1, False),
     (95, "시장", "지수 급락일이 아닌가? (방어)", _c_market_plunge, 3, True),
@@ -519,6 +544,11 @@ def market_preflight(db) -> dict[str, Any]:
             m["news_score"] = None
             m["geo_hits"] = 0
         m["expiry"] = _expiry_day_kr(datetime.now(KST))
+        try:
+            from services.decision_agent import _market_indicators
+            m["mi"] = _market_indicators()      # 나스닥/VIX/유가 (+국내지수/환율)
+        except Exception:
+            m["mi"] = {}
         return m
     mctx = _cached("preflight", 300, _build)
     return _score_items(MARKET_ITEMS, mctx, layer="market")
