@@ -948,12 +948,29 @@ _RECO_ACTION_KW = (
     "will i win", "will i profit", "will i make", "will i lose", "what do you advise",
     "what do you recommend", "add more", "cut my loss", "cut the loss", "take profit",
     "lock in", "get out", "hold it", "keep it", "dump it", "offload",
+    "chance of winning", "chance to win", "chance to winning", "winning chance",
+    "chance of profit", "odds of winning", "승산", "이길 확률", "먹을 확률",
 )
 
 
 def _wants_recommendation(transcript: Optional[str]) -> bool:
-    """True for a buy/sell/hold ACTION ask (→ friend-style decide). Pure outlook is False."""
-    return _is_decision_q(transcript) or any(k in (transcript or "").lower() for k in _RECO_ACTION_KW)
+    """True for a buy/sell/hold ACTION ask (→ friend-style decide). Pure outlook is False.
+
+    TYPO-TOLERANT tier: exact phrases like 'should i buy' break on typos ('shpuld i buy'),
+    which silently dropped the question to the per-bot LLM fallbacks — and two LLM
+    generations are never identical, so VIP and AI Advisor answered DIFFERENTLY (boss
+    complaint 2026-07-03). If the sentence contains a bare trade word (buy/sell) AND a
+    resolvable stock, that alone is a recommendation ask — the deterministic decide()
+    composer answers it identically everywhere."""
+    t = (transcript or "").lower()
+    if _is_decision_q(transcript) or any(k in t for k in _RECO_ACTION_KW):
+        return True
+    if _re.search(r"\b(buy|buying|bought\?|sell|selling)\b", t):
+        try:
+            return _stock_in_query(transcript) is not None
+        except Exception:
+            return False
+    return False
 
 
 def _is_bare_switch_followup(transcript: Optional[str]) -> bool:
