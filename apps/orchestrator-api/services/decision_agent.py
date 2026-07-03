@@ -244,6 +244,16 @@ def decide(db, ticker: str, focus: Optional[str] = None) -> dict[str, Any]:
     flows = _flows(db, code)
     tech = _technicals(code)
     yt = _youtube(db, name)
+    # 5-minute micro-read (boss: daily trading needs 5-min analysis in the final decision)
+    micro = None
+    try:
+        from services.micro_trend import micro_read
+        micro = micro_read(db, code)
+    except Exception:
+        micro = None
+    _micro_score = 0
+    if micro and not micro.get("stale"):        # live sessions only — stale flow is context, not a vote
+        _micro_score = 1 if micro["verdict"] == "UP" else -1 if micro["verdict"] == "DOWN" else 0
     ml = ps.get_ticker(db, code) or {}
 
     # market backdrop — today's live KODEX200 move, so the advice names the tape it's given in
@@ -331,7 +341,8 @@ def decide(db, ticker: str, focus: Optional[str] = None) -> dict[str, Any]:
         _mw = {"ml": 1.0, "wave": 1.0, "line_ko": None, "line_en": None}
     total = (news["score"] * 1.0 + flows["score"] * 1.0 + tech["score"] * 1.2
              + ml_score * float(_mw.get("ml") or 1.0)
-             + wave_score * float(_mw.get("wave") or 1.0) + yt["score"] * 0.5)
+             + wave_score * float(_mw.get("wave") or 1.0) + yt["score"] * 0.5
+             + _micro_score * 0.5)                    # 5-min flow: small, live-only vote
     decision = "BUY" if total >= 2.5 else "SELL" if total <= -2.5 else "HOLD"
     conf = "높음" if abs(total) >= 4 else "보통" if abs(total) >= 2 else "낮음"
     conf_en = {"높음": "high", "보통": "medium", "낮음": "low"}[conf]
@@ -677,6 +688,8 @@ def decide(db, ticker: str, focus: Optional[str] = None) -> dict[str, Any]:
     ]
     if has_wave:
         ko_lines += ["", "**⑥ 방법 3 — 파동 (엘리엇·피보나치)**", wave_para_ko]
+    if micro and micro.get("line_ko"):
+        ko_lines += ["", "**⑦ 5분봉 미세 흐름 (실시간)**", f"· {micro['line_ko']}"]
     if _mw.get("line_ko"):
         ko_lines += ["", f"_📐 {_mw['line_ko']} — 실제 채점 성적이 좋은 방법의 표가 더 크게 반영됩니다._"]
     ko_lines += [
@@ -717,6 +730,8 @@ def decide(db, ticker: str, focus: Optional[str] = None) -> dict[str, Any]:
     ]
     if has_wave:
         en_lines += ["", "**⑥ Method 3 — Wave (Elliott · Fibonacci)**", wave_para_en]
+    if micro and micro.get("line_en"):
+        en_lines += ["", "**⑦ 5-minute micro flow (live)**", f"- {micro['line_en']}"]
     if _mw.get("line_en"):
         en_lines += ["", f"_📐 {_mw['line_en']} — methods with a better graded record get a bigger vote._"]
     en_lines += [
@@ -736,6 +751,7 @@ def decide(db, ticker: str, focus: Optional[str] = None) -> dict[str, Any]:
     return {"ticker": code, "name": name, "decision": decision, "score": round(total, 1),
             "price": _px, "confidence": conf_en, "news": news, "flows": flows, "technicals": tech,
             "youtube": yt,
+            "micro_trend": micro,
             "checklist": ({"score": checklist["score"], "max": checklist["max"],
                            "pct": checklist["pct"],
                            "deal_breakers": checklist["deal_breakers"]} if checklist else None),

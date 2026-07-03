@@ -184,6 +184,19 @@ def scalp_signal(db, ticker: str, target_pct: float = 1.0,
         except Exception:
             pass
 
+    # 5-minute micro flow (boss: daily trading = 5-min analysis): shown in the evidence
+    # section so the entry decision reads the live tape at bar resolution.
+    micro_ko = micro_en = None
+    if with_backdrop:
+        try:
+            from services.micro_trend import micro_read
+            _mi = micro_read(db, tk)
+            if _mi:
+                micro_ko = f"· 5분봉 흐름: {_mi['line_ko']}"
+                micro_en = f"- 5-min flow: {_mi['line_en']}"
+        except Exception:
+            pass
+
     # M5.7 TIER read (replay-validated): this stock's latest hourly forecasts — when both
     # methods AGREE the historical hit-rate jumps (~80%, n small); conflicts are coin-flips.
     # Plus the measured bad-hour caution (e.g. 10시 KST ran sub-45%).
@@ -305,6 +318,7 @@ def scalp_signal(db, ticker: str, target_pct: float = 1.0,
             (f"· 방법2 분석: {m2_ko}" if m2_ko else None),
             f"· 방법3 파동: {m3_ko}",
             f"· 실시간 체크: {tape_ko}",
+            micro_ko,
             tier_ko,
             syn_ko, "",
             "**③ 주의**", *[f"⚠️ {w}" for w in warns_ko]])
@@ -318,6 +332,7 @@ def scalp_signal(db, ticker: str, target_pct: float = 1.0,
             (f"- Method 2 Analysis: {m2_en}" if m2_en else None),
             f"- Method 3 Wave: {m3_en}",
             f"- Live tape: {tape_en}",
+            micro_en,
             tier_en,
             syn_en, "",
             "**③ Caution**", *[f"⚠️ {w}" for w in warns_en]])
@@ -351,6 +366,7 @@ def scalp_signal(db, ticker: str, target_pct: float = 1.0,
             (f"· 방법2 분석: {m2_ko}" if m2_ko else None),
             f"· 방법3 파동: {m3_ko}",
             f"· 실시간 체크: {tape_ko}",
+            micro_ko,
             tier_ko,
             syn_ko, "",
             "**⑤ 주의**", *[f"⚠️ {w}" for w in warns_ko]])
@@ -369,6 +385,7 @@ def scalp_signal(db, ticker: str, target_pct: float = 1.0,
             (f"- Method 2 Analysis: {m2_en}" if m2_en else None),
             f"- Method 3 Wave: {m3_en}",
             f"- Live tape: {tape_en}",
+            micro_en,
             tier_en,
             syn_en, "",
             "**⑤ Caution**", *[f"⚠️ {w}" for w in warns_en]])
