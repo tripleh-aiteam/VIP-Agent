@@ -331,6 +331,16 @@ def decide(db, ticker: str, focus: Optional[str] = None) -> dict[str, Any]:
     wv = (wave.get("verdict") or "").upper()
     wave_score = 1 if wv == "BUY" else -1 if wv == "AVOID" else 0
 
+    # Method 4 (Cycle) — the boss's ±1% cycle-TIMING strategy on 5-min bars (2026-07-06).
+    # DISPLAY-ONLY in this report: its horizon is minutes-hours, not this 5-day decision,
+    # so it does not vote here (mixing horizons would pollute the gate).
+    m4 = {}
+    try:
+        from services.cycle_scalp import signal as _cyc_signal
+        m4 = _cyc_signal(db, code) or {}
+    except Exception:
+        pass
+
     # Hourly AGREEMENT tier — our single strongest measured signal (74% decisive,
     # replay-validated): when the last hour's ML + Analysis forecasts point the SAME
     # way, that direction gets a real vote (0.75). Fresh forecasts only (≤75 min).
@@ -667,6 +677,36 @@ def decide(db, ticker: str, focus: Optional[str] = None) -> dict[str, Any]:
                     + f" — {wave_why_en}." + (f" {wave_zone_en}." if wave_zone_en else "")).strip() \
                    + (f"\n  · How it decides: {_wv_how_en}" if has_wave else "")
 
+    # ---- Method 4 (Cycle ±1%) — real-time TIMING verdict on 5-min bars ----
+    has_m4 = bool(m4.get("ok"))
+    m4_para_ko = m4_para_en = ""
+    if has_m4:
+        try:
+            from services.cycle_scalp import RSI_OVERSOLD as RSI_M4
+        except Exception:
+            RSI_M4 = 40
+        _v4 = m4.get("verdict")
+        _v4_ko = {"BUY_NOW": "지금 진입 타이밍", "WAIT": "타이밍 대기", "NO_SETUP": "셋업 없음"}.get(_v4, "대기")
+        _r4, _r4p = m4.get("rsi"), m4.get("rsi_prev")
+        _why4_ko = {"BUY_NOW": f"5분봉 RSI가 저점에서 돌아섰습니다 ({_r4p}→{_r4}) — 매수 타이밍 도착.",
+                    "WAIT": f"5분봉 RSI {_r4} — 저점권 부근이라 반등 신호를 기다리는 중입니다.",
+                    "NO_SETUP": f"5분봉 RSI {_r4} — 눌림이 없어 지금은 진입 자리가 아닙니다."}.get(_v4, "")
+        _why4_en = {"BUY_NOW": f"5-min RSI just turned up from a low ({_r4p}→{_r4}) — entry timing is here.",
+                    "WAIT": f"5-min RSI {_r4} — near the low zone, waiting for the upturn signal.",
+                    "NO_SETUP": f"5-min RSI {_r4} — no pullback, so no entry setup right now."}.get(_v4, "")
+        m4_para_ko = (f"**→ {_v4_ko}** — {_why4_ko} 진입 시 목표 +1% ({_pl(m4.get('target'))}원) / "
+                      f"손절 −1% ({_pl(m4.get('stop'))}원) / {m4.get('time_stop_min')}분 안에 안 가면 소폭 정리 후 재진입 대기."
+                      f"\n  · 어떻게 찾나: 이 방법은 '작게 여러 번'입니다 — 5분봉 RSI가 저점({RSI_M4}이하)에서 "
+                      f"돌아설 때만 사고, +1% 익절·−1% 손절·시간초과 소폭 정리 후 다음 상승 전에 다시 삽니다. "
+                      f"손실은 작게 끊고 이익은 반복해서 쌓아 5번 중 3번만 이겨도 계좌가 늘어나는 구조입니다.")
+        m4_para_en = (f"**→ {_v4.replace('_',' ') if _v4 else 'WAIT'}** — {_why4_en} On entry: target +1% "
+                      f"(₩{_pl(m4.get('target'))}) / stop −1% (₩{_pl(m4.get('stop'))}) / if it goes nowhere in "
+                      f"{m4.get('time_stop_min')} min, exit small and re-arm."
+                      f"\n  · How it decides: this method trades 'small and often' — it only buys when the 5-min "
+                      f"RSI turns up from a low (≤{RSI_M4}), takes +1%, cuts −1%, exits small on timeout, and "
+                      f"re-enters before the next leg up. Losses stay small and wins repeat, so even 3 wins out "
+                      f"of 5 grows the account.")
+
     # NOTE (boss feedback 2026-07-03): the direct answer at the TOP is the one and only
     # conclusion — no repeated "최종 종합 판단" synthesis at the bottom. Methods follow as
     # proof. And a not-buy answer must NOT show a "how many" block (no-buy = 0 shares).
@@ -752,6 +792,8 @@ def decide(db, ticker: str, focus: Optional[str] = None) -> dict[str, Any]:
     ]
     if has_wave:
         ko_lines += ["", "**⑥ 방법 3 — 파동 (엘리엇·피보나치)**", wave_para_ko]
+    if has_m4:
+        ko_lines += ["", "**🔄 방법 4 — 단타 사이클 (실시간 타이밍 · ±1%)**", m4_para_ko]
     if micro and micro.get("line_ko"):
         ko_lines += ["", "**⑦ 5분봉 미세 흐름 (실시간)**", f"· {micro['line_ko']}"]
     if tier and tier.get("tier") == "agree" and _tier_score != 0:
@@ -799,6 +841,8 @@ def decide(db, ticker: str, focus: Optional[str] = None) -> dict[str, Any]:
     ]
     if has_wave:
         en_lines += ["", "**⑥ Method 3 — Wave (Elliott · Fibonacci)**", wave_para_en]
+    if has_m4:
+        en_lines += ["", "**🔄 Method 4 — Cycle Scalp (real-time timing · ±1%)**", m4_para_en]
     if micro and micro.get("line_en"):
         en_lines += ["", "**⑦ 5-minute micro flow (live)**", f"- {micro['line_en']}"]
     if tier and tier.get("tier") == "agree" and _tier_score != 0:

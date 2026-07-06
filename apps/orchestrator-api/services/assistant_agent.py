@@ -2807,7 +2807,7 @@ def _run_chain(
         "language": lang,
         # 6000 (was 1500→4000): the 3-method recommendation + deep-dive is intentionally
         # detailed; EN answers hit exactly 4000 = truncated mid-sentence.
-        "reply": (reply or "Done.")[:6000],
+        "reply": (reply or "Done.")[:9000],
         "action": action,
         "speak": True,
         "transcript": transcript,
@@ -4346,6 +4346,27 @@ def _run_agent_impl(
         except Exception as e:
             log.warning(f"position advice failed: {str(e)[:120]}")
 
+    # === Method-4 STRATEGY COMPARISON ("전략 비교/compare strategies/1% 전략") — honest
+    # replay of A(fixed ±1%, no time limit) vs B(RSI-timed ±1% cycles) on stored 5-min bars.
+    if (not confirmed_tool and not attachment_ids and any(
+            k in (transcript or "").lower() for k in (
+                "전략 비교", "전략비교", "알고리즘 비교", "두 전략", "1% 전략", "사이클 전략",
+                "compare strateg", "compare algorithm", "compare the two", "cycle strategy",
+                "1% strategy", "which strategy"))):
+        try:
+            from services.stock_resolver import resolve_one
+            from services.cycle_scalp import compare_reply
+            _cc, _cn = resolve_one(transcript or "")
+            _cc = _cc or "000660"
+            _cn = _cn or ("SK Hynix" if str(lang).startswith("en") else "SK하이닉스")
+            _rep = compare_reply(db, _cc, _cn, lang)
+            if _rep:
+                return {"intent": "cycle_compare", "language": lang, "reply": _rep,
+                        "action": None, "speak": True, "transcript": transcript,
+                        "tool_used": "cycle_compare"}
+        except Exception as e:
+            log.warning(f"cycle compare failed: {str(e)[:120]}")
+
     # === Phase C — READINESS GATE ("실전 매매 준비됐어? / are we ready for real money?") ===
     # A named stock means a stock question ("삼성전자 성적 어때?"), not the gate report.
     if (not confirmed_tool and not attachment_ids and _is_readiness_question(transcript)
@@ -4611,7 +4632,7 @@ def _run_agent_impl(
         if ext and ext.get("reply"):
             return {
                 "intent": ext.get("intent") or "stock_advisor",
-                "language": lang, "reply": str(ext["reply"])[:6000],
+                "language": lang, "reply": str(ext["reply"])[:9000],
                 "action": ext.get("action"), "speak": True,
                 "transcript": transcript,
                 "tool_used": ext.get("tool_used") or "stock_advisor",

@@ -4,7 +4,9 @@ from __future__ import annotations
 
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Query
+import hmac
+
+from fastapi import APIRouter, Depends, Header, Query
 from sqlalchemy.orm import Session
 
 from db.base import get_db
@@ -154,6 +156,28 @@ def dip_bounce_ep(min_dip: float = Query(1.5), db: Session = Depends(get_db)):
     Candidates are NOT logged for grading here (the chat intent logs) — pass-through view."""
     from services.dip_bounce import scan
     return scan(db, min_dip=min_dip, log_calls=False)
+
+
+@router.get("/kiwoom-token")
+def kiwoom_token(x_kiwoom_proof: str = Header("")):
+    """THE shared Kiwoom bearer for sibling services (Stock backend). Kiwoom allows one
+    active token per app key — any service that mints its own revokes everyone else's
+    (the 8005 token war that made the order-book monitor flap, 2026-07-06). Auth is
+    proof-of-possession: caller sends X-Kiwoom-Proof = sha256(KIWOOM_APP_SECRET) —
+    only a holder of the same secret (who could mint anyway) can fetch. Fail-closed."""
+    import hashlib
+    import os
+
+    from fastapi import HTTPException
+    secret = (os.getenv("KIWOOM_APP_SECRET") or "").strip()
+    want = hashlib.sha256(secret.encode()).hexdigest() if secret else ""
+    if not want or not hmac.compare_digest(x_kiwoom_proof or "", want):
+        raise HTTPException(status_code=404, detail="Not found")
+    from services import kiwoom_rest as kr
+    info = kr.shared_token_info()
+    if not info:
+        raise HTTPException(status_code=503, detail="token unavailable")
+    return info
 
 
 @router.get("/route-debug")
@@ -442,6 +466,15 @@ def day_trade_feasibility(ticker: str, target: float = Query(1.0), db: Session =
     all from today's measured intraday volatility + the remembered order-book support."""
     from services.day_trade import feasibility
     return feasibility(db, str(ticker).zfill(6), float(target))
+
+
+@router.get("/cycle-compare/{ticker}")
+def cycle_compare(ticker: str, db: Session = Depends(get_db)):
+    """Method-4 strategy comparison over stored 5-min history: A = existing (entry at open,
+    fixed ±1% target/stop, no time limit) vs B = cycle (RSI-timed entries, ±1%, 60-min
+    time-stop, re-entry). Honest measured stats incl. the '>=3 wins of 5' consistency check."""
+    from services.cycle_scalp import compare
+    return compare(db, str(ticker).zfill(6))
 
 
 @router.get("/stock-detail/{ticker}")
