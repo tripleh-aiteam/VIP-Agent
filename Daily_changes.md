@@ -2,6 +2,26 @@
 
 ---
 
+## 2026-07-06 (Monday) — News-freshness watchdog on the daily report
+
+### Goal
+
+Boss asked to verify the daily morning report uses FRESH news (not old data) and to auto-test/update it every day without asking.
+
+### Audit result (news is fresh)
+
+Scanned the last 7 daily `newspaper_report` rows: every day = 18 articles, **0 stale (>2d)**, newest article always = the report's own date (07-06→07-06, … 06-27→06-27). So the report re-fetches live news each morning; it does NOT inject old data. Caveat: international sources (Reuters/Bloomberg/WSJ/Nikkei/SBS Biz/Edaily) return `n:0` (blocked from the datacenter IP), so news skews Korean-domestic (매경/머니투데이/한경) — still fresh.
+
+### Files updated
+
+- [services/scheduler_service.py](apps/orchestrator-api/services/scheduler_service.py) — added a **news-freshness watchdog** to `_ensure_morning_reports` (runs 8:00/11:15/17:00 KST): if today's newspaper report fetched **0 articles** OR its **freshest article is >3 days old**, it regenerates the newspaper report (re-fetches live news + re-sends). Only fires on a genuine break, so no false re-emails on normal days — verified: ran the check today, news fresh → no regen.
+
+### Next
+
+- The international-source `n:0` fetches (Reuters/Bloomberg/WSJ) are a separate issue (datacenter-IP block, same root cause as YouTube transcripts) — needs a residential proxy or different fetch path if the boss wants international coverage back.
+
+---
+
 ## 2026-07-06 (Monday) — Chatbot UX overhaul: Outlook≠Recommendation, position advice, type-ahead, dynamic 2026-only model picker
 
 ### [14:54] Live Order-Book Monitor: Kiwoom direct feed + shared-token fix + 체결/quote strip

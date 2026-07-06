@@ -1516,6 +1516,8 @@ def _ensure_morning_reports():
         (idempotent — present reports are skipped, so no duplicates / double-emails).
     (2) If today's cross-agent report is missing or contains an ERROR marker, it is
         regenerated (Telegram/dashboard only — no email spam).
+    (3) News-freshness watchdog: if today's newspaper report fetched 0 articles or
+        its freshest article is >3 days old, it is regenerated (re-fetches live news).
     This is what makes the reports self-correcting without anyone asking."""
     from db.models import OrchReport
     from services.kst import kst_date, kst_now
@@ -1576,6 +1578,40 @@ def _ensure_morning_reports():
         except Exception as ce:
             log.warning(f"ensure: cross-agent regen failed: {str(ce)[:120]}",
                         extra={"action": "ensure.cross_regen_failed"})
+
+        # News freshness watchdog — the newspaper report must carry TODAY's news.
+        # If today's report is present but the live fetch failed (0 articles) or its
+        # freshest article is >3 days old, regenerate it (re-fetches live news + re-
+        # sends). Only fires on a genuine break, so no false re-emails on normal days.
+        try:
+            import re as _re
+            from datetime import date as _date
+            nrow = (db.query(OrchReport)
+                    .filter(OrchReport.report_type == "newspaper_report",
+                            OrchReport.content_json["period"].astext == market_period)
+                    .order_by(OrchReport.created_at.desc()).first())
+            n_today = bool(nrow and (nrow.content_json or {})
+                           and str((nrow.content_json or {}).get("kst_time") or "").startswith(today))
+            if n_today:  # missing case is already handled by the backfill loop above
+                rep = (nrow.content_json.get("report") or {})
+                fs = rep.get("fetch_stats") or {}
+                total = sum(v.get("n", 0) for v in fs.values() if isinstance(v, dict))
+                dk = (rep.get("detail_ko") or "") + (rep.get("detail_en") or "")
+                dates = _re.findall(r"20\d\d-\d\d-\d\d", dk)
+                newest_age = 999
+                if dates:
+                    try:
+                        newest_age = (kst_now().date() - _date.fromisoformat(max(dates))).days
+                    except Exception:
+                        newest_age = 999
+                if total == 0 or newest_age > 3:
+                    log.warning(f"ensure: newspaper news STALE/empty for {today} "
+                                f"(articles={total}, newest_age={newest_age}d) — regenerating",
+                                extra={"action": "ensure.news_stale"})
+                    (_newspaper_weekly_all if weekend else _newspaper_daily_all)()
+        except Exception as ne:
+            log.warning(f"ensure: news freshness check failed: {str(ne)[:120]}",
+                        extra={"action": "ensure.news_check_failed"})
 
         log.info(f"ensure: report health check done for {today} ({'weekend' if weekend else 'weekday'})",
                  extra={"action": "ensure.done"})
