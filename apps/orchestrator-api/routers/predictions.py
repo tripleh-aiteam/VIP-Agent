@@ -189,6 +189,44 @@ def kiwoom_token(x_kiwoom_proof: str = Header(""), force: bool = Query(False)):
     return info
 
 
+@router.get("/kiwoom-diag")
+def kiwoom_diag(x_kiwoom_proof: str = Header("")):
+    """Server-side Kiwoom connectivity check: outbound IP + raw return_code/msg of one
+    ka10001 call with the SHARED token. Needed because the shared token works from the
+    PC but fails on Render → suspicion is the 지정단말기 IP allowlist (Render's outbound
+    IP drifting out of the registered 74.220.52/60.0/24 ranges). Same proof gate as
+    /kiwoom-token — holders of the app secret only, fail-closed."""
+    import hashlib
+    import os
+
+    import httpx as _hx
+    from fastapi import HTTPException
+    secret = (os.getenv("KIWOOM_APP_SECRET") or "").strip()
+    want = hashlib.sha256(secret.encode()).hexdigest() if secret else ""
+    if not want or not hmac.compare_digest(x_kiwoom_proof or "", want):
+        raise HTTPException(status_code=404, detail="Not found")
+    from services import kiwoom_rest as kr
+    out: dict = {}
+    try:
+        out["outbound_ip"] = _hx.get("https://api.ipify.org", timeout=10).text.strip()
+    except Exception as e:
+        out["outbound_ip_error"] = str(e)[:100]
+    stok, sexp, sbase = kr._shared_token_read()
+    out["shared_token_tail"] = (stok or "")[-6:]
+    try:
+        r = _hx.post(f"{(sbase or 'https://api.kiwoom.com')}/api/dostk/stkinfo",
+                     headers={"authorization": f"Bearer {stok}", "api-id": "ka10001",
+                              "Content-Type": "application/json;charset=UTF-8"},
+                     json={"stk_cd": "005930"}, timeout=15)
+        d = r.json() if r.headers.get("content-type", "").startswith("application/json") else {}
+        out["http"] = r.status_code
+        out["return_code"] = d.get("return_code")
+        out["return_msg"] = str(d.get("return_msg"))[:150]
+    except Exception as e:
+        out["call_error"] = str(e)[:150]
+    return out
+
+
 @router.get("/route-debug")
 def route_debug(q: str = Query(...), agent: str = Query("stock"),
                 key: str = Query("")):
