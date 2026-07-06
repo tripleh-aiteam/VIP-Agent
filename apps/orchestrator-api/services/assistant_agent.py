@@ -979,7 +979,13 @@ def _wants_recommendation(transcript: Optional[str]) -> bool:
         return True
     if _re.search(r"\b(buy|buying|bought\?|sell|selling)\b", t):
         try:
-            return _stock_in_query(transcript) is not None
+            if _stock_in_query(transcript) is not None:
+                return True
+            # FUZZY fallback: 'skynix' etc. — substring matching misses misspellings the
+            # resolver's difflib tier catches ('I wanna buy skynix' got a daily-price
+            # table instead of a decision, boss complaint 2026-07-06)
+            from services.stock_resolver import resolve_one
+            return (resolve_one(transcript or "") or (None,))[0] is not None
         except Exception:
             return False
     return False
@@ -4267,8 +4273,18 @@ def _run_agent_impl(
     # SPLIT: an explicitly 단타-flavored ask → the scalp watchlist; a GENERIC buy ask
     # ("뭐 살까 / what should I buy / which stock is good") → the detailed 3-method
     # buy_picks answer (per-method verdicts, levels, sizing, market line, triggers).
+    def _fuzzy_stock(t):
+        """Substring match first; else the resolver's fuzzy tier ('skynix' → 000660)."""
+        if _all_stocks_in_query(t):
+            return True
+        try:
+            from services.stock_resolver import resolve_one
+            return (resolve_one(t or "") or (None,))[0] is not None
+        except Exception:
+            return False
+
     if (not confirmed_tool and not attachment_ids and _is_watchlist_question(transcript)
-            and not _all_stocks_in_query(transcript)):     # a named stock → let scalp/advice handle it
+            and not _fuzzy_stock(transcript)):     # a named stock (even misspelled) → scalp/advice handles it
         _scalpish = any(k in (transcript or "").lower()
                         for k in ("단타", "초단타", "스캘", "scalp", "intraday"))
         _en = str(lang or "").lower().startswith("en")
@@ -4750,6 +4766,15 @@ def _run_agent_impl(
             # every asked name gets its own verdict (boss feedback: no stock skipped).
             _dcs = list(dict.fromkeys(c for (c, _n) in _all_stocks_in_query(transcript)
                                       if c in _psd.NAMES))[:3]
+            if not _dcs:
+                # FUZZY fallback for misspellings ('skynix') the substring pass misses
+                try:
+                    from services.stock_resolver import resolve_one
+                    _fz = (resolve_one(transcript or "") or (None,))[0]
+                    if _fz and _fz in _psd.NAMES:
+                        _dcs = [_fz]
+                except Exception:
+                    pass
             if _dcs:
                 _steps = []
                 for _dc in _dcs:
@@ -4759,6 +4784,19 @@ def _run_agent_impl(
                     _steps.append({"tool": "decide", "args": _args})
                 return _run_chain(db, transcript, lang, _steps,
                                   current_path, selected_id, system, history or [], agent_id=agent_id, user_id=user_id)
+            if not _is_watchlist_question(transcript):
+                # trade intent but NO resolvable stock: ASK — never fall through to a
+                # price-history/LLM guess (the 'silly answer' class the boss keeps hitting)
+                _en_l = str(lang or "").lower().startswith("en")
+                _cl = ("Which stock do you mean? Please give the name a bit more precisely "
+                       "(e.g. 'SK Hynix', 'Samsung Electronics') — then I'll run the full "
+                       "buy/sell analysis with sizing and levels."
+                       if _en_l else
+                       "어떤 종목을 말씀하시는지 정확히 알려주시겠어요? (예: 'SK하이닉스', "
+                       "'삼성전자') — 종목이 확인되면 매수/매도 판단과 수량·가격까지 바로 분석해 드릴게요.")
+                return {"intent": "clarify_stock", "language": lang, "reply": _cl,
+                        "action": None, "speak": True, "transcript": transcript,
+                        "tool_used": None}
         except Exception:
             pass
 
