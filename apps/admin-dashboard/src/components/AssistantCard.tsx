@@ -31,6 +31,7 @@ import {
 } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { vipConfig } from "../chatbot.config";
+import { MarkdownLite } from "./ChatWorkspace";
 
 interface AvailableModel {
   id: string;
@@ -933,7 +934,11 @@ export function AssistantCard({ floating = true }: Props = {}) {
                 <div className={`rounded-2xl px-3.5 py-2 text-[13px] leading-relaxed ${
                   t.who === "user" ? "bg-blue-600 text-white rounded-br-md" : "bg-gray-100 text-gray-900 rounded-bl-md"
                 }`}>
-                  <span className="whitespace-pre-wrap">{t.text}</span>
+                  {/* Assistant answers are markdown-rich (방법 blocks, tables, links) — render
+                      them like the main chatbot so the pill matches its quality. */}
+                  {t.who === "assistant"
+                    ? <MarkdownLite text={t.text} />
+                    : <span className="whitespace-pre-wrap">{t.text}</span>}
                   {t.who === "assistant" && (t.intent || t.tool_used) && (
                     <div className="text-[9px] opacity-50 mt-0.5">
                       {t.intent}{t.tool_used ? ` · ${t.tool_used}` : ""}

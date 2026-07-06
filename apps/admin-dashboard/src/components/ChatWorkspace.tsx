@@ -60,7 +60,7 @@ function inlineFmt(s: string): ReactNode[] {
   return out;
 }
 
-function MarkdownLite({ text }: { text: string }) {
+export function MarkdownLite({ text }: { text: string }) {
   const lines = (text || "").replace(/\r/g, "").split("\n");
   const isRow = (l: string) => /^\s*\|.*\|\s*$/.test(l);
   const isSep = (l: string) => /^\s*\|?[\s:|-]+\|?\s*$/.test(l) && l.includes("-");
