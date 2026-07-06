@@ -331,6 +331,19 @@ def decide(db, ticker: str, focus: Optional[str] = None) -> dict[str, Any]:
     wv = (wave.get("verdict") or "").upper()
     wave_score = 1 if wv == "BUY" else -1 if wv == "AVOID" else 0
 
+    # Hourly AGREEMENT tier — our single strongest measured signal (74% decisive,
+    # replay-validated): when the last hour's ML + Analysis forecasts point the SAME
+    # way, that direction gets a real vote (0.75). Fresh forecasts only (≤75 min).
+    tier = None
+    _tier_score = 0
+    try:
+        from services.method_weights import intraday_tier
+        tier = intraday_tier(db, code)
+        if tier and tier.get("tier") == "agree":
+            _tier_score = 1 if tier.get("ml") == "UP" else -1 if tier.get("ml") == "DOWN" else 0
+    except Exception:
+        tier = None
+
     # M5.7 — TRACK-RECORD-WEIGHTED fusion: the ML vote is scaled by its MEASURED daily
     # record (shrunk toward 1.0 on small samples), so a proven-weak method can't outvote
     # proven-strong evidence. Validated by walk-forward replay on real graded forecasts.
@@ -342,7 +355,8 @@ def decide(db, ticker: str, focus: Optional[str] = None) -> dict[str, Any]:
     total = (news["score"] * 1.0 + flows["score"] * 1.0 + tech["score"] * 1.2
              + ml_score * float(_mw.get("ml") or 1.0)
              + wave_score * float(_mw.get("wave") or 1.0) + yt["score"] * 0.5
-             + _micro_score * 0.5)                    # 5-min flow: small, live-only vote
+             + _micro_score * 0.5                     # 5-min flow: small, live-only vote
+             + _tier_score * 0.75)                    # hourly agreement: strongest measured signal (74%)
     decision = "BUY" if total >= 2.5 else "SELL" if total <= -2.5 else "HOLD"
     conf = "높음" if abs(total) >= 4 else "보통" if abs(total) >= 2 else "낮음"
     conf_en = {"높음": "high", "보통": "medium", "낮음": "low"}[conf]
@@ -690,6 +704,11 @@ def decide(db, ticker: str, focus: Optional[str] = None) -> dict[str, Any]:
         ko_lines += ["", "**⑥ 방법 3 — 파동 (엘리엇·피보나치)**", wave_para_ko]
     if micro and micro.get("line_ko"):
         ko_lines += ["", "**⑦ 5분봉 미세 흐름 (실시간)**", f"· {micro['line_ko']}"]
+    if tier and tier.get("tier") == "agree" and _tier_score != 0:
+        _td_ko = "상승" if _tier_score > 0 else "하락"
+        ko_lines += ["", "**⑧ 시간별 예측 일치 (1시간)**",
+                     f"· ML·분석 모두 '{_td_ko}' 예측 — 과거 일치 구간 적중률 "
+                     f"{tier.get('agree_acc')}% (n={tier.get('agree_n')}) · 판단에 가중 반영됨"]
     if _mw.get("line_ko"):
         ko_lines += ["", f"_📐 {_mw['line_ko']} — 실제 채점 성적이 좋은 방법의 표가 더 크게 반영됩니다._"]
     ko_lines += [
@@ -732,6 +751,11 @@ def decide(db, ticker: str, focus: Optional[str] = None) -> dict[str, Any]:
         en_lines += ["", "**⑥ Method 3 — Wave (Elliott · Fibonacci)**", wave_para_en]
     if micro and micro.get("line_en"):
         en_lines += ["", "**⑦ 5-minute micro flow (live)**", f"- {micro['line_en']}"]
+    if tier and tier.get("tier") == "agree" and _tier_score != 0:
+        _td_en = "UP" if _tier_score > 0 else "DOWN"
+        en_lines += ["", "**⑧ Hourly forecast agreement (1h)**",
+                     f"- ML and Analysis both forecast '{_td_en}' — agreement zones hit "
+                     f"{tier.get('agree_acc')}% historically (n={tier.get('agree_n')}) · weighted into the verdict"]
     if _mw.get("line_en"):
         en_lines += ["", f"_📐 {_mw['line_en']} — methods with a better graded record get a bigger vote._"]
     en_lines += [
@@ -751,7 +775,7 @@ def decide(db, ticker: str, focus: Optional[str] = None) -> dict[str, Any]:
     return {"ticker": code, "name": name, "decision": decision, "score": round(total, 1),
             "price": _px, "confidence": conf_en, "news": news, "flows": flows, "technicals": tech,
             "youtube": yt,
-            "micro_trend": micro,
+            "micro_trend": micro, "hourly_tier": tier,
             "checklist": ({"score": checklist["score"], "max": checklist["max"],
                            "pct": checklist["pct"],
                            "deal_breakers": checklist["deal_breakers"]} if checklist else None),

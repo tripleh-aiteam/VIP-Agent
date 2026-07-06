@@ -847,6 +847,7 @@ _FUTURE_OUTLOOK_KW = (
     # so they must route to the two-method outlook like the English 'outlook', not to
     # stock-delegation/history (the EN/KO inconsistency the user hit).
     "어떻게 될까", "어떻게 될지", "어떨까", "어찌될까", "어찌 될까", "될까요", "될지",
+    "어떻게 될", "될 것 같", "될것 같", "될거 같", "될 거 같",   # '오늘 오후 어떻게 될 것 같아?'
     "일 후", "일후", "이후 전망", "전망 어때", "전망은", "오를지", "내릴지", "갈까",
     "forecast", "outlook", "next week", "coming days", "going to", "will it",
     "expect", "predict", "future",

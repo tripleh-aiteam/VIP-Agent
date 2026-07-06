@@ -87,6 +87,23 @@ def reply_text(db, lang: Optional[str] = None) -> str:
             mrows.append(f"· {label_ko}: {v['graded']}건 · 시장수익률 상회 {v.get('beat_mkt_rate')}% "
                          f"· 초과수익 {v.get('avg_excess_return')}%")
 
+    # paper-trader ledger — the virtual "if you had followed the bot" record, the
+    # fastest-growing evidence stream (30-60 trades/day vs ~5 chat calls)
+    paper_ko = paper_en = []
+    try:
+        from services.paper_trader import scorecard
+        sc = scorecard(db, days=7)
+        c = sc["cumulative"]
+        if c["n"]:
+            paper_ko = ["", "**가상 매매(페이퍼) 성적 — 봇 신호를 그대로 따라했다면**",
+                        f"· 누적 {c['n']}건 · {c['wins']}승 {c['losses']}패 · 합계 {c['total_net_pct']:+.2f}% (비용 차감)"
+                        + f" · 미청산 {sc['open_now']}건"]
+            paper_en = ["", "**Paper-trading record — following the bot's own signals**",
+                        f"- Cumulative {c['n']} trades · {c['wins']}W {c['losses']}L · total {c['total_net_pct']:+.2f}% net"
+                        + f" · {sc['open_now']} open"]
+    except Exception:
+        pass
+
     if en:
         head = {"GO": "🟢 GATE PASSED — small real-money scalping is justified by the data.",
                 "NO_GO": "🔴 GATE FAILED — enough data, but the win rate is below the bar. Do NOT trade real money on these signals yet.",
@@ -97,6 +114,7 @@ def reply_text(db, lang: Optional[str] = None) -> str:
              "", "**Chatbot record (last 90d, really graded)**", *rows]
         if mrows:
             L += ["", "**Method record (beta-adjusted — the honest metric)**", *mrows]
+        L += paper_en
         L += ["", "Keep using the chatbot daily during market hours — every call is graded automatically. "
               "Ask me this question anytime; the verdict updates with the data."]
         return "\n".join(L)
@@ -110,6 +128,7 @@ def reply_text(db, lang: Optional[str] = None) -> str:
          "", "**챗봇 실측 성적 (최근 90일, 실제 채점)**", *rows]
     if mrows:
         L += ["", "**방법별 성적 (베타 조정 — 정직한 지표)**", *mrows]
+    L += paper_ko
     L += ["", "장중에 챗봇을 매일 쓰시면 모든 콜이 자동 채점됩니다. "
           "이 질문은 언제든 다시 물어보세요 — 데이터가 쌓일수록 판정이 갱신됩니다."]
     return "\n".join(L)
