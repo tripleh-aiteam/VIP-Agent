@@ -156,40 +156,19 @@ def dip_bounce_ep(min_dip: float = Query(1.5), db: Session = Depends(get_db)):
     return scan(db, min_dip=min_dip, log_calls=False)
 
 
-@router.get("/kiwoom-debug")
-def kiwoom_debug(code: str = Query("005930")):
-    """Raw Kiwoom call diagnostics FROM THIS SERVER (token mint + one ka10004 call with
-    the raw return_code/msg) — to see exactly why direct calls fail on Render while
-    working from the PC (suspected single-token-per-key contention)."""
-    from services import kiwoom_rest as kr
-    out: dict = {}
-    try:
-        tok = kr._token()
-        out["token"] = bool(tok)
-    except Exception as e:
-        out["token_error"] = str(e)[:200]
-    try:
-        import httpx
-        t = kr._token()
-        base = getattr(kr, "_last_base", None) or "https://api.kiwoom.com"
-        r = httpx.post(f"{base}/api/dostk/mrkcond",
-                       headers={"authorization": f"Bearer {t}", "api-id": "ka10004",
-                                "Content-Type": "application/json;charset=UTF-8"},
-                       json={"stk_cd": str(code).zfill(6)}, timeout=15)
-        j = r.json() if r.headers.get("content-type", "").startswith("application/json") else {}
-        out["http"] = r.status_code
-        out["return_code"] = j.get("return_code")
-        out["return_msg"] = str(j.get("return_msg"))[:200]
-        out["has_levels"] = bool(j.get("sel_fpr_bid"))
-    except Exception as e:
-        out["call_error"] = str(e)[:200]
-    return out
-
-
 @router.get("/route-debug")
-def route_debug(q: str = Query(...), agent: str = Query("stock")):
+def route_debug(q: str = Query(...), agent: str = Query("stock"),
+                key: str = Query("")):
     """Routing predicate breakdown for a question — shows exactly why a query routes
-    where it does ON THIS DEPLOY (prod-vs-local routing mysteries die here)."""
+    where it does ON THIS DEPLOY (prod-vs-local routing mysteries die here).
+    SECURITY: fail-closed — requires DEBUG_ENDPOINTS_KEY env to be set AND matched
+    (unauthenticated diagnostics flagged by security review 2026-07-06)."""
+    import os
+
+    from fastapi import HTTPException
+    _k = os.getenv("DEBUG_ENDPOINTS_KEY") or ""
+    if not _k or key != _k:
+        raise HTTPException(status_code=404, detail="Not found")
     from services import assistant_agent as aa
     from services.stock_resolver import resolve_one
     t = (q or "").lower()

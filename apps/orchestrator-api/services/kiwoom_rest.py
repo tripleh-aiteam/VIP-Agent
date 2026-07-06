@@ -218,19 +218,65 @@ def _parse_expiry(expires_dt: Any) -> float:
     return time.time() + 12 * 3600
 
 
+_TOKEN_DDL = ("CREATE TABLE IF NOT EXISTS kiwoom_token ("
+              "id INT PRIMARY KEY DEFAULT 1, token TEXT, expiry_epoch DOUBLE PRECISION, "
+              "base TEXT, updated_at TIMESTAMPTZ DEFAULT now())")
+
+
+def _shared_token_read() -> tuple[Optional[str], float, Optional[str]]:
+    """The ONE token every process shares (Supabase row). Kiwoom allows a single active
+    token per app key — when the PC collector and Render each minted their own they
+    revoked each other in turns (8005 'Token이 유효하지 않습니다' seen on Render while
+    the PC worked, 2026-07-06). Adopt-before-mint ends the war. Never raises."""
+    try:
+        from sqlalchemy import text as _sql
+        from db.base import engine
+        with engine.connect() as c:
+            r = c.execute(_sql(
+                "SELECT token, expiry_epoch, base FROM kiwoom_token WHERE id=1")).first()
+        if r and r[0]:
+            return str(r[0]), float(r[1] or 0), (str(r[2]) if r[2] else None)
+    except Exception:
+        pass
+    return None, 0.0, None
+
+
+def _shared_token_write(token: str, expiry: float, base: str) -> None:
+    try:
+        from sqlalchemy import text as _sql
+        from db.base import engine
+        with engine.connect() as c:
+            c.execute(_sql(_TOKEN_DDL))
+            c.execute(_sql(
+                "INSERT INTO kiwoom_token (id, token, expiry_epoch, base, updated_at) "
+                "VALUES (1, :t, :e, :b, now()) "
+                "ON CONFLICT (id) DO UPDATE SET token=:t, expiry_epoch=:e, base=:b, "
+                "updated_at=now()"), {"t": token, "e": expiry, "b": base})
+            c.commit()
+    except Exception as exc:
+        logger.warning("kiwoom_rest: shared token write failed: %s", str(exc)[:100])
+
+
 def _token(force: bool = False) -> Optional[str]:
-    """Return a valid bearer token, minting + caching one if needed.
+    """Return a valid bearer token: process cache → SHARED DB row → mint (+publish).
 
     Reads ``KIWOOM_APP_KEY`` / ``KIWOOM_APP_SECRET`` from env at call time.
     Returns ``None`` (never raises) if creds are missing or the request fails.
     """
-    global _token_cache
+    global _token_cache, _active_base
     now = time.time()
 
     if not force:
         tok, exp = _token_cache
         if tok and now < exp - _TOKEN_SKEW_SEC:
             return tok
+        # adopt the shared token BEFORE minting — minting revokes everyone else's
+        stok, sexp, sbase = _shared_token_read()
+        if stok and now < sexp - _TOKEN_SKEW_SEC and stok != tok:
+            _token_cache = (stok, sexp)
+            if sbase:
+                _active_base = sbase
+            return stok
 
     app_key, app_secret = _creds()
     if not app_key or not app_secret:
@@ -240,7 +286,6 @@ def _token(force: bool = False) -> Optional[str]:
         )
         return None
 
-    global _active_base
     with _token_lock:
         # Re-check under lock (another thread may have just refreshed).
         tok, exp = _token_cache
@@ -293,7 +338,9 @@ def _token(force: bool = False) -> Optional[str]:
                 continue
 
             _active_base = base
-            _token_cache = (token, _parse_expiry(data.get("expires_dt")))
+            _exp = _parse_expiry(data.get("expires_dt"))
+            _token_cache = (token, _exp)
+            _shared_token_write(token, _exp, base)     # publish: everyone reuses THIS one
             logger.info("kiwoom_rest: obtained bearer token via %s (expires_dt=%s)",
                         base, data.get("expires_dt"))
             return token
@@ -313,6 +360,7 @@ def _request(api_id: str, body: dict, cont_yn: str = "N",
     ``path`` defaults to the short-selling endpoint; pass another (e.g.
     ``/api/dostk/stkinfo`` for ka10001 current-price) to reuse this transport.
     """
+    global _token_cache, _active_base
     token = _token()
     if not token:
         return None
@@ -349,6 +397,21 @@ def _request(api_id: str, body: dict, cont_yn: str = "N",
             time.sleep(1.0 * attempt)
             continue
         if rc not in (0, None):
+            msg = str(data.get("return_msg") or "")
+            if "8005" in msg and attempt < _RETRIES:
+                # our token was revoked (another process minted). Adopt the SHARED token
+                # first; only force-mint if the shared one is what just failed.
+                stok, sexp, sbase = _shared_token_read()
+                if stok and stok != token and time.time() < sexp - _TOKEN_SKEW_SEC:
+                    _token_cache = (stok, sexp)
+                    if sbase:
+                        _active_base = sbase
+                    token = stok
+                else:
+                    token = _token(force=True)
+                if not token:
+                    return None
+                continue
             logger.error("kiwoom_rest: %s return_code=%s msg=%s",
                          api_id, rc, data.get("return_msg"))
             return None

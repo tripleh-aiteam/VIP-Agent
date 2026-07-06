@@ -2,6 +2,49 @@
 
 ---
 
+## 2026-07-06 (Monday) — Chatbot UX overhaul: Outlook≠Recommendation, position advice, type-ahead, dynamic 2026-only model picker
+
+### [14:54] Live Order-Book Monitor: Kiwoom direct feed + shared-token fix + 체결/quote strip
+
+- **What:** Monitoring page upgraded to a real Kiwoom terminal view: price-sorted ladder (asks ascending / bids descending, live levels win per price), a 3rd 체결(executions) column from ka10003 with aggressor-side coloring, ⚡−N instant subtraction of freshly-dealt qty from the resting level, and a Kiwoom-style auto-updating quote strip (시가/현재가 ±%/고가/저가/평균 VWAP). Backend `orderbook_view` calls Kiwoom directly (`키움 실시간(직결)`) with stale-serve caches (book 15s / trades 30s / quote 10s).
+- **Root cause of the flapping feed — Kiwoom token war:** Kiwoom allows ONE active token per app key; the PC collector and Render each minted their own, revoking each other (error 8005 "Token이 유효하지 않습니다"). Fix: shared `kiwoom_token` row in Supabase — `_token()` adopts the shared token before minting, every successful mint publishes to the row, and `_request()` recovers from 8005 by adopting the shared token (or force-minting only if the shared one is the one that failed). Verified from the PC: mint → publish → shared read-back match → live 20-level ka10004 call.
+- **Security review fixes (same commit):** deleted the unauthenticated `/predictions/kiwoom-debug` endpoint; `/predictions/route-debug` is now fail-closed — 404 unless `DEBUG_ENDPOINTS_KEY` env is set AND matches `?key=`.
+- **Files:** `services/kiwoom_rest.py` (shared token store + 8005 recovery), `services/orderbook_memory.py` (direct feed, trades, quote, VWAP), `routers/predictions.py` (debug endpoints removed/gated), `apps/admin-dashboard/src/app/monitoring/page.tsx` (ladder sort, 체결 column, ⚡subtraction, quote strip).
+- **Next:** restart the PC snapshot collector so it loads the shared-token code, then verify ≥5 consecutive stable 직결 polls during market hours.
+
+### Goal
+
+Make both chatbots (VIP + AI Advisor) consistent and pleasant to use: distinct answer types, friend-style advice, no input lock while thinking, clickable news, and a self-updating model picker that shows only current models. Every fix verified live on BOTH surfaces and EN==KO; VIP regression stays 24/24.
+
+### Files added
+
+- [`services/model_seen.py`](apps/orchestrator-api/services/model_seen.py) — persists each LLM model's `first_seen` in Postgres (survives Render restarts) so the picker can badge a just-launched model "NEW" for ~10 days; first run seeds current models as already-old (except the just-launched flagships) so the whole list isn't badged.
+
+### Files updated
+
+- [`services/assistant_agent.py`](apps/orchestrator-api/services/assistant_agent.py) — SPLIT outlook vs recommendation routing (`_wants_recommendation`): pure outlook → detailed FORECAST (`_two_method_header` rebuilt: direction + expected 5-day range + per-method forecast + wave target + scenarios + key levels, no buy/sell verdict), buy/sell → `decide`. Situational advice phrasings ("sell now/will I win/what do you advise/팔면 이득?") now route to a recommendation (broadened `_RECO_ACTION_KW` + guards use `_wants_recommendation`). Follow-up inheritance now mirrors the split (reco-follow-up keeps recommending, was forecasting). Raised chain/relay reply caps 1500/1800 → 4000 (answer was cut mid-final-paragraph).
+- [`services/decision_agent.py`](apps/orchestrator-api/services/decision_agent.py) — friend-style recommendation: direct verdict headline, "얼마나 살까?" position sizing (BUY only), each method leads with **→ BUY/HOLD/WATCH** then a full explanatory paragraph, a closing "최종 종합 판단" synthesis paragraph, clickable news links. (Kept the collaborator's confidence-gate + Wave method.)
+- [`services/position_parse.py`](apps/orchestrator-api/services/position_parse.py) — removed pure decision verbs (팔까/팔아야/손절할까/익절) from HOLDING markers so plain "사야 할까 팔까?" is a fresh decision (→ decide, EN==KO) not a position; real holdings still caught by shares/P&L. [`services/position_advice.py`](apps/orchestrator-api/services/position_advice.py) — fixed "None주" display.
+- [`services/llm_client.py`](apps/orchestrator-api/services/llm_client.py) — DYNAMIC model picker: added Fable 5/Opus 4.8; `_discover_and_register_all()` auto-discovers new chat models from every provider's `/models` API (cached ~1h, filters embeddings/tts/audio/dated snapshots); `_collapse_to_latest()` keeps only the newest version per family (Sonnet 5 drops older Sonnets; tiers/sizes stay); captures release year from the APIs and filters to `MIN_MODEL_YEAR` (default 2026) → ~80 models trimmed to 17, all 2026.
+- [`routers/twins.py`](apps/orchestrator-api/routers/twins.py) — `/twins/llm/models` now returns `is_new` via `annotate_new`.
+- [`routers/chat.py`](apps/orchestrator-api/routers/chat.py) — `_vip_stock_data_reply` threads `db` so the AI Advisor relay shows Kiwoom (not Naver) during market; added `/chat/advice/answer` (full-agent outlook/decision for the AI Advisor relay).
+
+### AI Advisor (stock_advisor_agent) + frontends
+
+- Stock backend `stock_agent_adapter.py`: outlook/decision/situational/KO-date/bare-follow-up questions relay to VIP's full agent (the REAL `/chat/agent` path, not the dead agent.py); `backend/app.py`: added `/twins/llm/models` PROXY to VIP — the AI Advisor's picker was empty because it fetches models from the stock backend (which 404'd) while chat worked.
+- Both frontends' chat inputs: type-ahead while thinking + auto-queue the next question (AssistantCard / ChatWorkspace / ActionComposer); news/markdown links open in a new tab; LLM picker shows a NEW badge.
+
+### What this unblocks
+
+Outlook and Recommendation are finally distinct; "should I buy?" gives a friend-style call with sizing + proof; positions get P&L-aware advice; you can type the next question mid-answer; news is clickable; the model picker self-updates and shows only 2026 models identically on both chatbots. Next year: set `MIN_MODEL_YEAR=2027` (no redeploy).
+
+### Next
+
+- AI Advisor's Vercel deploys are flaky (frontend fixes lag) — models fix was done backend-side to avoid it; consider fixing its auto-deploy.
+- Two known minors: EN "trading at right now" on AI Advisor returns prose not a table; bare EN "And the stop-loss?" follow-up answers in Korean.
+
+---
+
 ## 2026-07-03 (Friday, evening) — Autopilot: paper trader · self-tuning · kill-switch · 12-day backfill
 
 ### Goal
