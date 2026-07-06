@@ -23,6 +23,8 @@ type OBView = {
   live: { levels: OBLevel[]; fresh: boolean; age_sec?: number | null };
   memory: { asks: OBLevel[]; bids: OBLevel[]; mid?: number | null; threshold?: number | null };
   trades?: Trade[];
+  quote?: { price?: number; prev_close?: number; change_pct?: number; open?: number;
+            high?: number; low?: number; volume?: number; vwap?: number } | null;
   walls: OBLevel[]; threshold?: number | null; mid?: number | null; naver_price?: number | null;
 };
 
@@ -214,11 +216,29 @@ export default function MonitoringPage() {
 
       <div className="rounded-xl border border-[var(--border-default)] overflow-hidden">
         {/* header: name, code, source, mid */}
-        <div className="flex items-center gap-2 px-3.5 py-2.5 border-b border-[var(--border-default)] bg-[var(--bg-elevated)]">
-          <span className="text-[15px] font-extrabold text-[var(--text-primary)]">📚 {name}</span>
-          <span className="text-[11px] text-[var(--text-muted)]">{code}</span>
-          {ob && <span className="text-[10px] px-1.5 py-0.5 rounded-full font-bold" style={{ color: ob.live?.fresh ? "#fff" : "var(--text-muted)", background: ob.live?.fresh ? RED : "var(--bg-elevated)" }}>{ob.source}</span>}
-          {mid ? <span className="ml-auto text-[12px] font-extrabold text-[var(--text-primary)]">{t("중간가", "mid")} {fmt(Math.round(mid))}</span> : null}
+        <div className="px-3.5 py-2.5 border-b border-[var(--border-default)] bg-[var(--bg-elevated)]">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="text-[15px] font-extrabold text-[var(--text-primary)]">📚 {name}</span>
+            <span className="text-[11px] text-[var(--text-muted)]">{code}</span>
+            {ob && <span className="text-[10px] px-1.5 py-0.5 rounded-full font-bold" style={{ color: ob.live?.fresh ? "#fff" : "var(--text-muted)", background: ob.live?.fresh ? RED : "var(--bg-elevated)" }}>{ob.source}</span>}
+            {ob?.quote?.price != null && (() => {
+              const qp = ob.quote!;
+              const chg = qp.change_pct ?? 0;
+              const cCol = chg > 0 ? RED : chg < 0 ? BLUE : "var(--text-primary)";
+              const tri = chg > 0 ? "▲" : chg < 0 ? "▼" : "";
+              return (
+                <span className="ml-auto flex items-center gap-3 text-[12px] tabular-nums">
+                  <span className="font-extrabold text-[16px]" style={{ color: cCol }}>{fmt(qp.price)}</span>
+                  <span className="font-extrabold" style={{ color: cCol }}>{tri} {chg > 0 ? "+" : ""}{chg?.toFixed(2)}%</span>
+                  <span className="text-[var(--text-muted)]">{t("시가", "O")} <b className="text-[var(--text-secondary)]">{fmt(qp.open)}</b></span>
+                  <span className="text-[var(--text-muted)]">{t("고가", "H")} <b style={{ color: RED }}>{fmt(qp.high)}</b></span>
+                  <span className="text-[var(--text-muted)]">{t("저가", "L")} <b style={{ color: BLUE }}>{fmt(qp.low)}</b></span>
+                  <span className="text-[var(--text-muted)]">{t("평균", "avg")} <b className="text-[var(--text-secondary)]">{fmt(qp.vwap)}</b></span>
+                </span>
+              );
+            })()}
+            {!ob?.quote?.price && mid ? <span className="ml-auto text-[12px] font-extrabold text-[var(--text-primary)]">{t("중간가", "mid")} {fmt(Math.round(mid))}</span> : null}
+          </div>
         </div>
 
         {!ob && !err && <div className="px-3 py-6 text-center text-[12px] text-[var(--text-muted)]">{t("불러오는 중…", "Loading…")}</div>}

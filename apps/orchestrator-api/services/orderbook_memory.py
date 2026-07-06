@@ -14,7 +14,13 @@ Read path (read_memory) takes a SQLAlchemy session (orchestrator endpoint).
 """
 from __future__ import annotations
 
+import time as _time
 from typing import Any
+
+# last-good direct-Kiwoom payloads (throttle-burst resilience, per ticker)
+_last_good: dict[str, tuple] = {}
+_last_trades: dict[str, tuple] = {}
+_last_quote: dict[str, tuple] = {}
 
 # Per-stock large-order thresholds in SHARES (from the user's day-trading rules).
 LARGE_ORDER_SHARES: dict[str, int] = {
@@ -226,13 +232,22 @@ def orderbook_view(db, ticker: str, depth: int = 30) -> dict[str, Any]:
     works with no PC. Falls back to the collector snapshot, then NAVER price after close."""
     mem = read_memory(db, ticker, depth)
 
-    # 1) LIVE book — direct Kiwoom first (true real-time), snapshot fallback
+    # 1) LIVE book — direct Kiwoom first (true real-time), snapshot fallback.
+    # THROTTLE RESILIENCE: the PC collector bursts ~100 calls/30s on the same key, so a
+    # direct call can fail for a few seconds — serve the LAST GOOD direct payload
+    # (≤15s book / ≤30s trades / ≤10s quote) instead of flip-flopping to the slow path.
     live: dict[str, Any] = {}
     trades: list = []
+    quote: dict[str, Any] | None = None
     source = None
+    now = _time.time()
     try:
         from services import kiwoom_rest as kr
         kb = kr.order_book(ticker, ttl=1.0)
+        if kb and kb.get("levels"):
+            _last_good[ticker] = (now, kb)
+        elif ticker in _last_good and now - _last_good[ticker][0] <= 15:
+            kb = _last_good[ticker][1]
         if kb and kb.get("levels"):
             live = {"levels": kb["levels"], "as_of": None, "age_sec": 0, "fresh": True,
                     "imbalance": kb.get("imbalance"),
@@ -240,7 +255,21 @@ def orderbook_view(db, ticker: str, depth: int = 30) -> dict[str, Any]:
             source = "키움 실시간(직결)"
         tr = kr.executions(ticker, ttl=1.0)
         if tr:
-            trades = tr[:30]
+            _last_trades[ticker] = (now, tr[:30])
+        if ticker in _last_trades and now - _last_trades[ticker][0] <= 30:
+            trades = _last_trades[ticker][1]
+        q = kr.current_price(ticker)
+        if q and q.get("price"):
+            _last_quote[ticker] = (now, q)
+        if ticker in _last_quote and now - _last_quote[ticker][0] <= 10:
+            quote = dict(_last_quote[ticker][1])
+            # 평균가 (VWAP) = accumulated amount / accumulated volume from the tick feed
+            try:
+                t0 = trades[0] if trades else None
+                if t0 and t0.get("acc_amount") and t0.get("acc_volume"):
+                    quote["vwap"] = round(t0["acc_amount"] / t0["acc_volume"])
+            except Exception:
+                pass
     except Exception:
         pass
     if not live.get("levels"):
@@ -269,5 +298,5 @@ def orderbook_view(db, ticker: str, depth: int = 30) -> dict[str, Any]:
     walls = sorted([x for x in (mem["asks"] + mem["bids"]) if x["is_large"]],
                    key=lambda x: -x["max_qty"])
     return {"ticker": ticker, "source": source, "live": live, "memory": mem,
-            "trades": trades, "walls": walls, "threshold": mem["threshold"],
-            "mid": mid, "naver_price": price}
+            "trades": trades, "quote": quote, "walls": walls,
+            "threshold": mem["threshold"], "mid": mid, "naver_price": price}

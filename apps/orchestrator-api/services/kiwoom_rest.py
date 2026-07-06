@@ -563,6 +563,7 @@ def executions(code: str, ttl: float = 1.0) -> Optional[list[dict]]:
                 "price": abs(p), "qty": abs(q),
                 "dir": 1 if raw_q.strip().startswith("+") else -1 if raw_q.strip().startswith("-") else 0,
                 "acc_volume": _to_int(r.get("acc_trde_qty")),
+                "acc_amount": _to_int(r.get("acc_trde_prica")),
             })
         return out or None
     return _rt_cached(f"exe:{code}", _f, ttl=ttl)
