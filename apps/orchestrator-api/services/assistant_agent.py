@@ -301,6 +301,10 @@ _WATCHLIST_KW = (
     "watchlist", "what to scalp", "what to trade", "what should i buy", "what stock",
     "which stock", "what to buy", "today's picks", "today picks", "any picks",
     "how many stock", "how many share", "short time trade", "short-term trade",
+    # natural phrasings ('short time trading… advise top 3 stock' fell to delegation)
+    "short time trading", "short term trading", "short-term trading", "day trading",
+    "top 3 stock", "top3 stock", "top three stock", "top stocks", "advise top",
+    "recommend top", "best stocks", "stocks to buy", "추천해줘 종목", "종목 3개", "3종목",
 )
 
 
@@ -4398,8 +4402,37 @@ def _run_agent_impl(
         except Exception:
             return False
 
+    # COMPOUND: 'advise top 3 stocks… AND is SK Hynix ok?' — a picks ask that ALSO names a
+    # stock must answer BOTH (picks + that stock's 3-method check), not step aside into the
+    # vague delegation. Pure named-stock asks ('how many shares of Samsung') still step aside.
+    _tl_w = (transcript or "").lower()
+    _picks_cue = any(k in _tl_w for k in (
+        "top 3", "top3", "top three", "top stocks", "advise top", "recommend top",
+        "best stocks", "stocks to buy", "picks", "what to buy", "which stock", "what stock",
+        "종목 추천", "추천 종목", "뭐 살", "무슨 종목", "어떤 종목", "3종목", "종목 3개"))
+    _compound_picks = _is_watchlist_question(transcript) and _fuzzy_stock(transcript) and _picks_cue
+
+    def _named_stock_check(reply_so_far: str, en: bool) -> str:
+        """Append the named stock's 3-method decision under its own header (compound ask)."""
+        try:
+            from services.stock_resolver import resolve_one
+            from services.decision_agent import decide as _decide
+            _cc, _cn = resolve_one(transcript or "")
+            if not _cc:
+                return reply_so_far
+            _d = _decide(db, _cc)
+            _body = _d.get("reasoning_en" if en else "reasoning_ko") or ""
+            if not _body:
+                return reply_so_far
+            _hdr = (f"\n\n---\n\n## {_d.get('name') or _cn} — is it OK right now?\n\n" if en
+                    else f"\n\n---\n\n## {_d.get('name') or _cn} — 지금 괜찮아?\n\n")
+            return (reply_so_far or "") + _hdr + _body
+        except Exception as _e:
+            log.warning(f"compound named-stock check failed: {str(_e)[:100]}")
+            return reply_so_far
+
     if (not confirmed_tool and not attachment_ids and _is_watchlist_question(transcript)
-            and not _fuzzy_stock(transcript)):     # a named stock (even misspelled) → scalp/advice handles it
+            and (not _fuzzy_stock(transcript) or _compound_picks)):
         _scalpish = any(k in (transcript or "").lower()
                         for k in ("단타", "초단타", "스캘", "scalp", "intraday"))
         _en = str(lang or "").lower().startswith("en")
@@ -4408,7 +4441,10 @@ def _run_agent_impl(
                 from services.buy_picks import build as _bp_build
                 _bp = _bp_build(db, n=3, transcript=transcript, user_key=user_id, lang=lang)
                 if _bp.get("reply"):
-                    return {"intent": "buy_picks", "language": lang, "reply": _bp["reply"],
+                    _rp = _bp["reply"]
+                    if _compound_picks:
+                        _rp = _named_stock_check(_rp, _en)
+                    return {"intent": "buy_picks", "language": lang, "reply": _rp[:6000],
                             "action": None, "speak": True, "transcript": transcript,
                             "tool_used": "buy_picks"}
             except Exception as e:
@@ -4440,7 +4476,9 @@ def _run_agent_impl(
                     _reply = (_reply or "") + _tr
             except Exception:
                 pass
-            return {"intent": "scalp_watchlist", "language": lang, "reply": _reply,
+            if _compound_picks:
+                _reply = _named_stock_check(_reply, _en)
+            return {"intent": "scalp_watchlist", "language": lang, "reply": (_reply or "")[:6000],
                     "action": None, "speak": True, "transcript": transcript,
                     "tool_used": "scalp_watchlist"}
         except Exception as e:
