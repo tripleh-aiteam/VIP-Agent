@@ -4321,6 +4321,12 @@ def _run_agent_impl(
                 if _adv.get("ok"):
                     _en = str(lang or "").lower().startswith("en")
                     _reply = _adv.get("reasoning_en" if _en else "reasoning_ko")
+                    # DETAIL LAYER: advice must be detailed (user ask) — append the grounded
+                    # LLM deep-dive, same as reco/outlook answers.
+                    _extra = _elaborate_answer(transcript, lang,
+                                               [{"tool": "position_advice", "result": _adv}])
+                    if _extra:
+                        _reply = (_reply or "") + "\n\n" + _extra
                     try:
                         from services.call_grader import log_call
                         _ga = {"CUT": "SELL", "TAKE_PROFIT": "SELL", "HOLD_OR_ADD": "BUY"}.get(_adv.get("action"), "HOLD")
@@ -4329,7 +4335,8 @@ def _run_agent_impl(
                                  name=_adv.get("name"), agent_id=agent_id, lang=lang)
                     except Exception:
                         pass
-                    return {"intent": "position_advice", "language": lang, "reply": _reply,
+                    return {"intent": "position_advice", "language": lang,
+                            "reply": (_reply or "")[:6000],
                             "action": None, "speak": True, "transcript": transcript,
                             "tool_used": "position_advice"}
         except Exception as e:
@@ -4480,8 +4487,12 @@ def _run_agent_impl(
                              horizon_min=_sig.get("est_minutes") or 30, name=_n, agent_id=agent_id, lang=lang)
                 except Exception:
                     pass
-                return {"intent": "scalp", "language": lang, "reply": _reply, "action": None,
-                        "speak": True, "transcript": transcript, "tool_used": "scalp_signal"}
+                # DETAIL LAYER: advice must be detailed — grounded LLM deep-dive (as reco/outlook).
+                _extra = _elaborate_answer(transcript, lang, [{"tool": "scalp_signal", "result": _sig}])
+                if _extra:
+                    _reply = (_reply or "") + "\n\n" + _extra
+                return {"intent": "scalp", "language": lang, "reply": (_reply or "")[:6000],
+                        "action": None, "speak": True, "transcript": transcript, "tool_used": "scalp_signal"}
         except Exception as e:
             log.warning(f"scalp signal failed: {str(e)[:120]}")
 

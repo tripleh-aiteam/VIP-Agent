@@ -31,11 +31,20 @@ _POS_ADVICE_CUE = (
 _PNL_RE = __import__("re").compile(r"[+\-]?\d+(?:\.\d+)?\s*%")
 
 
+_HYPOTHETICAL_RE = __import__("re").compile(
+    r"if i (buy|bought|enter|get in)|when should i sell|사면|산다면|지금 사서|살 경우|만약",
+    __import__("re").IGNORECASE)
+
+
 def is_position_question(text: str) -> bool:
     """True when the user describes a stock they HOLD + asks what to do. Detected either
     by an explicit holding word, OR by (stock + a P&L%/shares + an advice cue) — so
-    '지난주 SK하이닉스 200주 -4%에 어떡해?' is caught even without the word '샀다'."""
+    '지난주 SK하이닉스 200주 -4%에 어떡해?' is caught even without the word '샀다'.
+    A HYPOTHETICAL entry ('if I buy now, when do I sell for 1%?' / '지금 사면?') is NOT a
+    position — it's a fresh-decision/scalp question (the '1%' is a target, not a P&L)."""
     t = (text or "").lower()
+    if _HYPOTHETICAL_RE.search(t):
+        return False
     try:
         from services.stock_resolver import find_all
         if not find_all(text):
