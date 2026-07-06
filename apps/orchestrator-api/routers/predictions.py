@@ -515,6 +515,26 @@ def day_trade_feasibility(ticker: str, target: float = Query(1.0), db: Session =
     return feasibility(db, str(ticker).zfill(6), float(target))
 
 
+@router.get("/cycle-signals")
+def cycle_signals(db: Session = Depends(get_db)):
+    """Method-4 (±1% cycle) LIVE timing signal for every tracked stock — feeds the Daily
+    Trading '사이클' method view (verdict/RSI/target/stop per stock, BUY_NOW first)."""
+    from services import prediction_service as ps_mod
+    from services.cycle_scalp import signal
+    out = []
+    for code, name in list(ps_mod.NAMES.items()):
+        try:
+            s = signal(db, code)
+            if s.get("ok"):
+                s["ticker"], s["name"] = code, name
+                out.append(s)
+        except Exception:
+            continue
+    order = {"BUY_NOW": 0, "WAIT": 1, "NO_SETUP": 2}
+    out.sort(key=lambda x: (order.get(x.get("verdict"), 3), -(x.get("rsi") or 0)))
+    return {"results": out}
+
+
 @router.get("/cycle-compare/{ticker}")
 def cycle_compare(ticker: str, db: Session = Depends(get_db)):
     """Method-4 strategy comparison over stored 5-min history: A = existing (entry at open,

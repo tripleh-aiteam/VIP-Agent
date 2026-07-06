@@ -58,7 +58,7 @@ const pct = (n?: number) => (n == null ? "-" : `${n > 0 ? "+" : ""}${n.toFixed(1
 const arrowColor = (a?: string) => (a === "▲" ? "var(--badge-success-text)" : a === "▼" ? "var(--error)" : "var(--text-muted)");
 const signColor = (n?: number) => ((n ?? 0) > 0 ? "var(--badge-success-text)" : (n ?? 0) < 0 ? "var(--error)" : "var(--text-muted)");
 
-type Method = "ml" | "analysis" | "wave" | null;
+type Method = "ml" | "analysis" | "wave" | "cycle" | null;
 
 type IFlow = {
   unit: string; source: string; columns: string[]; columns_en: string[]; note?: string;
@@ -174,6 +174,7 @@ export default function TradingPage() {
       {method === "ml" && brief && <MLView brief={brief} t={t} />}
       {method === "analysis" && brief && <AnalysisView brief={brief} t={t} />}
       {method === "wave" && <WaveView t={t} />}
+      {method === "cycle" && <CycleView t={t} />}
 
       {method && brief && (
         <div className="rounded-xl border border-[var(--border-default)] bg-[var(--bg-elevated)] px-4 py-3 text-[11.5px] text-[var(--text-muted)] leading-relaxed">
@@ -188,8 +189,8 @@ export default function TradingPage() {
 function MethodSelector({ onPick, t, counts }: { onPick: (m: Method) => void; t: (ko: string, en: string) => string; counts: Record<string, number> }) {
   return (
     <div>
-      <p className="text-[13px] text-[var(--text-secondary)] mb-3">{t("분석 방식을 선택하세요 — 세 가지 독립적인 접근을 제공합니다.", "Choose an analysis method — three independent approaches.")}</p>
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+      <p className="text-[13px] text-[var(--text-secondary)] mb-3">{t("분석 방식을 선택하세요 — 네 가지 독립적인 접근을 제공합니다.", "Choose an analysis method — four independent approaches.")}</p>
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
         <button onClick={() => onPick("ml")} className="text-left rounded-2xl border-2 p-5 transition-all hover:scale-[1.01]" style={{ borderColor: "var(--badge-blue-text)", background: "var(--bg-card)", boxShadow: "var(--shadow-sm)" }}>
           <div className="text-[28px] mb-2">🤖</div>
           <div className="text-[17px] font-extrabold text-[var(--text-primary)]">{t("머신러닝 알고리즘", "Machine Learning Algorithms")}</div>
@@ -234,8 +235,96 @@ function MethodSelector({ onPick, t, counts }: { onPick: (m: Method) => void; t:
             <span className="text-[11px] text-[var(--text-muted)]">{t("방법 3 · 독립", "Method 3 · independent")}</span>
           </div>
         </button>
+
+        <button onClick={() => onPick("cycle")} className="text-left rounded-2xl border-2 p-5 transition-all hover:scale-[1.01]" style={{ borderColor: "#f0883e", background: "var(--bg-card)", boxShadow: "var(--shadow-sm)" }}>
+          <div className="text-[28px] mb-2">🔄</div>
+          <div className="text-[17px] font-extrabold text-[var(--text-primary)]">{t("단타 사이클 (±1% 타이밍)", "Cycle Scalp (±1% timing)")}</div>
+          <div className="text-[12px] text-[var(--text-muted)] mt-0.5 mb-3">{t("실시간 매수 타이밍 — 작게 여러 번", "Real-time buy timing — small & often")}</div>
+          <ul className="text-[12.5px] text-[var(--text-secondary)] space-y-1 leading-relaxed">
+            <li>• {t("5분봉 RSI 저점 반등에서만 진입", "Enters only when 5-min RSI turns up from a low")}</li>
+            <li>• {t("+1% 익절 · −1% 손절 · 60분 시간청산 · 재진입", "+1% TP · −1% SL · 60-min time-stop · re-entry")}</li>
+            <li>• {t("실측 A/B 비교 내장 (5번 중 3승 검증 — 정직)", "Built-in honest A/B replay (3-of-5 wins check)")}</li>
+          </ul>
+          <div className="mt-4 flex items-center gap-2">
+            <span className="text-[12px] font-bold px-3 py-1.5 rounded-lg" style={{ color: "#fff", background: "#f0883e" }}>{t("열기 →", "Open →")}</span>
+            <span className="text-[11px] text-[var(--text-muted)]">{t("방법 4 · 신규", "Method 4 · new")}</span>
+          </div>
+        </button>
       </div>
     </div>
+  );
+}
+
+// ============================ Method 4 — Cycle Scalp view ============================
+type CycleSig = { ticker: string; name: string; verdict: string; price?: number; rsi?: number;
+  target?: number; stop?: number; time_stop_min?: number; asof?: string };
+type CycleCmp = { days: number; strategy_a_fixed: Record<string, number | null>; strategy_b_cycle: Record<string, number | null> };
+
+function CycleView({ t }: { t: (ko: string, en: string) => string }) {
+  const [items, setItems] = useState<CycleSig[] | null>(null);
+  const [cmp, setCmp] = useState<Record<string, CycleCmp | "loading">>({});
+  useEffect(() => {
+    let alive = true;
+    api<{ results: CycleSig[] }>("/predictions/cycle-signals")
+      .then((d) => { if (alive) setItems(d.results || []); }).catch(() => { if (alive) setItems([]); });
+    return () => { alive = false; };
+  }, []);
+  const vcol = (v: string) => v === "BUY_NOW" ? "var(--badge-blue-text)" : v === "WAIT" ? "#f0883e" : "var(--text-secondary)";
+  const vlabel = (v: string) => v === "BUY_NOW" ? t("진입 타이밍", "BUY NOW") : v === "WAIT" ? t("타이밍 대기", "WAIT") : t("셋업 없음", "NO SETUP");
+  const fmtn = (x?: number | null) => x == null ? "—" : Number(x).toLocaleString();
+  const loadCmp = (tk: string) => {
+    setCmp((p) => ({ ...p, [tk]: "loading" }));
+    api<CycleCmp>(`/predictions/cycle-compare/${tk}`)
+      .then((d) => setCmp((p) => ({ ...p, [tk]: d })))
+      .catch(() => setCmp((p) => { const q = { ...p }; delete q[tk]; return q; }));
+  };
+  return (
+    <Section title={t("🔄 단타 사이클 (방법 4) — 실시간 타이밍 · +1% 익절 / −1% 손절 · 재진입", "🔄 Cycle Scalp (Method 4) — real-time timing · +1% TP / −1% SL · re-entry")}>
+      <p className="text-[12px] text-[var(--text-muted)] px-1 mb-2">{t("5분봉 RSI가 저점에서 돌아설 때만 진입하고, 안 가면 60분 내 소폭 정리 후 다음 파동을 기다립니다. '비교'를 누르면 기존 고정 전략과의 실측 A/B 결과를 보여줍니다 (정직 — 지금은 기존 전략이 앞서는 종목이 많습니다).", "Enters only when the 5-min RSI turns up from a low; if it goes nowhere it exits small within 60 min and waits for the next leg. 'Compare' shows the honest measured A/B vs the existing fixed strategy.")}</p>
+      {!items && <div className="px-3 py-6 text-center text-[12px] text-[var(--text-muted)]">{t("불러오는 중…", "Loading…")}</div>}
+      {items && items.length === 0 && <div className="px-3 py-6 text-center text-[12px] text-[var(--text-muted)]">{t("표시할 신호가 없습니다 (분봉 데이터 수집 필요).", "No signals (needs minute-bar data).")}</div>}
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+        {items?.map((s) => {
+          const c = cmp[s.ticker];
+          return (
+            <div key={s.ticker} className="rounded-2xl border-2 p-4 transition-all"
+              style={{ borderColor: vcol(s.verdict), background: "var(--bg-card)", boxShadow: "var(--shadow-sm)" }}>
+              <div className="flex items-center gap-2 mb-1.5 cursor-pointer" onClick={() => openStockDetail(s.ticker, s.name)}>
+                <span className="text-[18px] font-extrabold text-[var(--text-primary)]">{s.name}</span>
+                <span className="text-[12px] text-[var(--text-muted)]">{s.ticker}</span>
+                <span className="ml-auto text-[15px] font-extrabold" style={{ color: vcol(s.verdict) }}>{vlabel(s.verdict)}</span>
+              </div>
+              <div className="text-[12.5px] text-[var(--text-secondary)] leading-snug mb-2">
+                {s.verdict === "BUY_NOW"
+                  ? t("📈 5분봉 RSI가 저점에서 방금 돌아섰어요 — 이 방법 기준 +1% 사이클 진입 자리예요.", "5-min RSI just turned up from a low — a +1% cycle entry by this method.")
+                  : s.verdict === "WAIT"
+                    ? t("👀 저점권 근처 — 반등 신호가 켜질 때까지 기다리는 중이에요.", "Near the low zone — waiting for the upturn signal.")
+                    : t("🚫 눌림이 없어 지금은 자리가 아니에요 — 셋업을 기다려요.", "No pullback to work with — waiting for a setup.")}
+              </div>
+              <div className="text-[12px] text-[var(--text-secondary)] flex flex-wrap gap-x-3 gap-y-0.5 mb-2">
+                <span>{t("현재가", "Price")} <b className="text-[var(--text-primary)]">{fmtn(s.price)}</b></span>
+                <span>RSI <b className="text-[var(--text-primary)]">{s.rsi ?? "—"}</b></span>
+                <span>{t("목표", "Target")} <b style={{ color: "var(--badge-blue-text)" }}>{fmtn(s.target)}</b></span>
+                <span>{t("손절", "Stop")} <b style={{ color: "#e5484d" }}>{fmtn(s.stop)}</b></span>
+                <span>{t("시간청산", "Time-stop")} <b>{s.time_stop_min ?? 60}{t("분", "m")}</b></span>
+              </div>
+              {!c && (
+                <button onClick={() => loadCmp(s.ticker)} className="text-[11.5px] font-semibold px-2.5 py-1 rounded-lg border border-[var(--border-default)] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)]">
+                  ⚔️ {t("기존 전략과 비교 (실측)", "Compare vs existing (measured)")}
+                </button>
+              )}
+              {c === "loading" && <div className="text-[11.5px] text-[var(--text-muted)]">{t("12거래일 리플레이 중…", "Replaying 12 trading days…")}</div>}
+              {c && c !== "loading" && (
+                <div className="text-[11.5px] leading-relaxed rounded-lg px-2.5 py-2" style={{ background: "var(--bg-elevated)" }}>
+                  <div>A {t("기존(고정±1%)", "fixed")}: <b>{c.strategy_a_fixed.wins}W/{c.strategy_a_fixed.losses}L · {c.strategy_a_fixed.win_rate_pct}% · {Number(c.strategy_a_fixed.total_pnl_pct) >= 0 ? "+" : ""}{c.strategy_a_fixed.total_pnl_pct}%</b></div>
+                  <div>B {t("사이클(방법4)", "cycle (M4)")}: <b>{c.strategy_b_cycle.wins}W/{c.strategy_b_cycle.losses}L · {c.strategy_b_cycle.win_rate_pct}% · {Number(c.strategy_b_cycle.total_pnl_pct) >= 0 ? "+" : ""}{c.strategy_b_cycle.total_pnl_pct}%</b> · {t("5중3승 구간", "3-of-5")} {c.strategy_b_cycle.three_of_five_pct}%</div>
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </Section>
   );
 }
 
