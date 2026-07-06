@@ -156,6 +156,29 @@ def dip_bounce_ep(min_dip: float = Query(1.5), db: Session = Depends(get_db)):
     return scan(db, min_dip=min_dip, log_calls=False)
 
 
+@router.get("/route-debug")
+def route_debug(q: str = Query(...), agent: str = Query("stock")):
+    """Routing predicate breakdown for a question — shows exactly why a query routes
+    where it does ON THIS DEPLOY (prod-vs-local routing mysteries die here)."""
+    from services import assistant_agent as aa
+    from services.stock_resolver import resolve_one
+    t = (q or "").lower()
+    out = {
+        "wants_recommendation": aa._wants_recommendation(q),
+        "is_decision_q": aa._is_decision_q(q),
+        "is_past_price": aa._is_past_price(q),
+        "has_explicit_date": aa._has_explicit_date(q),
+        "past_kw_hits": [k for k in aa._PAST_DATE_KW if k in t],
+        "pricey_hits": [k for k in aa._PRICEY_KW if k in t],
+        "stock_in_query": aa._stock_in_query(q),
+        "resolve_one": resolve_one(q),
+        "is_watchlist": aa._is_watchlist_question(q),
+        "is_stock_advice": aa._is_stock_advice(q, agent),
+        "is_future_outlook": aa._is_future_outlook(q),
+    }
+    return out
+
+
 @router.get("/strategy-params")
 def strategy_params_ep(db: Session = Depends(get_db)):
     """Current Autopilot-tuned strategy parameters + last tuning note. NOTE: must be

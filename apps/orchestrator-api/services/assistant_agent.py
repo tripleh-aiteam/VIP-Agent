@@ -4407,9 +4407,11 @@ def _run_agent_impl(
     # (No watchlist exclusion here: the watchlist intercept runs EARLIER and already
     # steps aside when a specific stock resolves — 'how many stock' phrasing must not
     # block a named-stock decision.)
+    # (Trade intent TRUMPS the past-price heuristic: '...from which price should I BUY'
+    # was still classified past-price in prod. A genuine past-price ask has no buy/sell
+    # verb, so wants_reco alone is the right gate.)
     if (not confirmed_tool and not attachment_ids
-            and _wants_recommendation(transcript)
-            and not _is_past_price(transcript)):
+            and _wants_recommendation(transcript)):
         try:
             from services import prediction_service as _psd0
             _tf = list(dict.fromkeys(c for (c, _n) in _all_stocks_in_query(transcript)
@@ -4915,7 +4917,7 @@ def _run_agent_impl(
     # unresolved, or the date is out of range), fall back to web-search grounding so
     # we still answer past dates like a general assistant would (with sources) —
     # i.e. the same behavior as Google AI Mode, instead of relaying a "can't" reply.
-    if not confirmed_tool and _is_past_price(transcript):
+    if not confirmed_tool and _is_past_price(transcript) and not _wants_recommendation(transcript):
         # Delegate past-date prices to the Stock backend FIRST (single deterministic
         # source of truth) so VIP and the AI Advisor give the IDENTICAL concise
         # answer. Fall back to the local daily-history chain / web search only if the
