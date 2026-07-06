@@ -580,16 +580,38 @@ def decide(db, ticker: str, focus: Optional[str] = None) -> dict[str, Any]:
                    + ("The trend still holds, so no need to dump it all at once." if decision in ("BUY", "HOLD")
                       else "The trend is weak — trim into any bounce."))
 
-    # ---- COMPACT per-method write-up: verdict first, ONE brief reason, key numbers.
-    # (Boss feedback: nobody wants the how-it-works lecture every answer — just
-    # "did it say buy/sell/hold, and why, briefly.") ----
+    # ---- Per-method write-up: verdict FIRST, then why today's numbers say that, HOW the
+    # method finds its answer (mechanism), and an example of what would flip it.
+    # (Boss 2026-07-06: "in each method explain why it says this + example how it finds the
+    # answer" — supersedes the earlier keep-it-brief note; verdict still leads.) ----
     ml_tag_ko = {"BUY": "매수", "SELL": "매도", "HOLD": "보유"}.get(ml_adv, "보유")
+    _ml_flip_ko = {"BUY": "예: 수급이 순매도로 돌고 상대강도가 꺾이면 같은 모델이 '매도'로 바뀝니다.",
+                   "SELL": "예: 외국인 순매수가 붙고 시장 대비 상대강도가 살아나면 '매수'로 바뀝니다.",
+                   "HOLD": "예: 외국인·기관 순매수가 붙고 코스피 대비 상대강도가 뚜렷해지면 '매수'로, 반대로 무너지면 '매도'로 바뀝니다."}.get(ml_adv or "HOLD")
+    _ml_flip_en = {"BUY": "e.g. if flows turn net-selling and relative strength rolls over, the same model flips to SELL.",
+                   "SELL": "e.g. if foreigners turn net buyers and relative strength vs the market returns, it flips to BUY.",
+                   "HOLD": "e.g. if foreign/institutional buying picks up and it starts clearly beating KOSPI, it flips to BUY — or to SELL if those break down."}.get(ml_adv or "HOLD")
     ml_para_ko = (f"**→ {ml_tag_ko} ({ml_adv or 'HOLD'})** — {ml_why_ko}."
                   + (f" (5일 예상 ±{abs(em)}%" if em is not None else " (")
-                  + (f" · 정확도 {acc_txt})" if acc is not None else ")")).replace(" ()", "")
+                  + (f" · 정확도 {acc_txt})" if acc is not None else ")")).replace(" ()", "") \
+                 + (f"\n  · 어떻게 찾나: 20년치 시장 데이터로 학습한 {algo or 'ML'} 모델이 가격·거래량·수급 등 "
+                    f"19개 지표를 읽어 '앞으로 5일간 코스피를 이길 확률'을 계산합니다. 이번엔 그 확률이 "
+                    f"한쪽으로 충분히 기울지 않아 '{ml_tag_ko}'가 나왔습니다. {_ml_flip_ko}"
+                    if (ml_adv or "HOLD") == "HOLD" else
+                    f"\n  · 어떻게 찾나: 20년치 시장 데이터로 학습한 {algo or 'ML'} 모델이 가격·거래량·수급 등 "
+                    f"19개 지표로 '앞으로 5일간 코스피를 이길 확률'을 계산하는데, 이번엔 그 확률이 "
+                    f"'{ml_tag_ko}' 쪽으로 기울었습니다. {_ml_flip_ko}")
     ml_para_en = (f"**→ {ml_adv or 'HOLD'}** — {ml_why_en}."
                   + (f" (5-day ±{abs(em)}%" if em is not None else " (")
-                  + (f" · accuracy {acc_txt})" if acc is not None else ")")).replace(" ()", "")
+                  + (f" · accuracy {acc_txt})" if acc is not None else ")")).replace(" ()", "") \
+                 + (f"\n  · How it decides: an {algo or 'ML'} model trained on 20 years of Korean-market data reads "
+                    f"~19 features (price, volume, investor flows) and computes the probability this stock BEATS "
+                    f"KOSPI over the next 5 days. This time that probability didn't tilt far enough either way — "
+                    f"hence {ml_adv or 'HOLD'}. {_ml_flip_en}"
+                    if (ml_adv or "HOLD") == "HOLD" else
+                    f"\n  · How it decides: an {algo or 'ML'} model trained on 20 years of Korean-market data reads "
+                    f"~19 features (price, volume, investor flows) and computes the probability this stock beats "
+                    f"KOSPI over 5 days — this time it tilted to {ml_adv}. {_ml_flip_en}")
 
     if pos is None:
         _box_ko = _box_en = ""
@@ -608,14 +630,42 @@ def decide(db, ticker: str, focus: Optional[str] = None) -> dict[str, Any]:
                                        f"a take-profit zone is ₩{sell_zone}." if sell_zone else None]))
     an_tag_ko = {"BUY": "매수", "SELL": "매도", "WATCH": "관망", "HOLD": "관망"}.get(an_sig, "관망")
     an_tag_en = {"BUY": "BUY", "SELL": "SELL", "WATCH": "WATCH", "HOLD": "WATCH"}.get(an_sig, "WATCH")
-    an_para_ko = (f"**→ {an_tag_ko} ({an_tag_en})** — {an_why_ko}. {_box_ko} {_zones_ko}").strip()
-    an_para_en = (f"**→ {an_tag_en}** — {an_why_en}. {_box_en} {_zones_en}").strip()
+    _an_how_ko = ("이 방법은 ①호가창 잔량 균형(사려는 돈 vs 팔려는 돈) ②외국인·기관 실시간 순매수 "
+                  "③박스권 내 위치, 세 가지를 점수로 합쳐 판단합니다. "
+                  + {"BUY": "이번엔 세 신호가 매수 쪽으로 모여 '매수 우위'입니다. 예: 호가가 매도우위로 뒤집히면 '관망'으로 내려갑니다.",
+                     "SELL": "이번엔 파는 힘이 우세해 '매도 우위'입니다. 예: 실시간 수급이 순매수로 돌고 박스 하단까지 눌리면 '매수'로 바뀝니다.",
+                     "WATCH": "이번엔 신호가 서로 엇갈려(받치는 호가 vs 파는 체결) '관망'입니다. 예: 체결이 순매수로 돌아서고 박스 하단(30% 이하)까지 눌리면 '매수'로 바뀝니다."}.get(an_tag_en, ""))
+    _an_how_en = ("It scores three live inputs: ① order-book depth balance (money waiting to buy vs sell), "
+                  "② real-time foreign/institutional net flows, ③ position inside the price box. "
+                  + {"BUY": "This time all three lean buy-side. e.g. if the book flips ask-heavy, it drops back to WATCH.",
+                     "SELL": "This time the selling side dominates. e.g. if live flows turn net-buying and price falls to the box bottom, it flips to BUY.",
+                     "WATCH": "This time the signals conflict (bids supporting vs sellers hitting), so WATCH. e.g. if executions turn net-buying and price dips into the bottom 30% of the box, it flips to BUY."}.get(an_tag_en, ""))
+    an_para_ko = (f"**→ {an_tag_ko} ({an_tag_en})** — {an_why_ko}. {_box_ko} {_zones_ko}").strip() \
+                 + f"\n  · 어떻게 찾나: {_an_how_ko}"
+    an_para_en = (f"**→ {an_tag_en}** — {an_why_en}. {_box_en} {_zones_en}").strip() \
+                 + f"\n  · How it decides: {_an_how_en}"
 
     wv_tag_ko = {"BUY": "매수", "WATCH": "관망", "AVOID": "회피"}.get(wv, "관망")
+    _wv_how_ko = ("이 방법은 '급등 후 깊은 눌림목'만 노립니다: 최근 상승 파동의 세기(파동점수 0.65 이상)를 재고, "
+                  "피보나치 되돌림이 61.8~78.6%까지 깊게 눌린 자리에서만 매수 신호를 켭니다. "
+                  + {"BUY": "이번엔 강한 파동 뒤 매수 구간까지 눌려 '매수'가 켜졌습니다. 예: 손절선을 깨면 즉시 '회피'로 바뀝니다.",
+                     "WATCH": (f"이번엔 파동은 강하지만 되돌림이 {round(_wret*100)}%로 얕아 아직 매수 자리가 아닙니다. "
+                               if _wret is not None else "이번엔 파동은 강하지만 아직 매수 자리까지 눌리지 않았습니다. ")
+                              + "예: 61.8% 되돌림 가격까지 내려오면 '매수' 신호가 켜집니다.",
+                     "AVOID": "이번엔 상승 파동 자체가 약하거나 무너져 '회피'입니다. 예: 새 상승 파동(점수 0.65+)이 나오면 다시 후보가 됩니다."}.get(wv, ""))
+    _wv_how_en = ("It only hunts 'deep pullbacks after a strong rally': it scores the latest up-wave (needs wave "
+                  "score ≥0.65) and fires BUY only when the Fibonacci retrace reaches the 61.8–78.6% zone. "
+                  + {"BUY": "This time price pulled back into that buy zone after a strong wave. e.g. breaking the stop level flips it to AVOID.",
+                     "WATCH": (f"This time the wave is strong but the pullback is only {round(_wret*100)}% — not deep enough yet. "
+                               if _wret is not None else "This time the wave is strong but hasn't pulled back far enough yet. ")
+                              + "e.g. a dip to the 61.8% retrace price would switch it to BUY.",
+                     "AVOID": "This time the up-wave itself is weak or broken. e.g. a fresh strong wave (score 0.65+) would make it a candidate again."}.get(wv, ""))
     wave_para_ko = (f"**→ {wv_tag_ko} ({wv or 'WATCH'})**" + (f" · 파동점수 {_wsc}" if _wsc is not None else "")
-                    + f" — {wave_why_ko}." + (f" {wave_zone_ko}." if wave_zone_ko else "")).strip()
+                    + f" — {wave_why_ko}." + (f" {wave_zone_ko}." if wave_zone_ko else "")).strip() \
+                   + (f"\n  · 어떻게 찾나: {_wv_how_ko}" if has_wave else "")
     wave_para_en = (f"**→ {wv or 'WATCH'}**" + (f" · wave score {_wsc}" if _wsc is not None else "")
-                    + f" — {wave_why_en}." + (f" {wave_zone_en}." if wave_zone_en else "")).strip()
+                    + f" — {wave_why_en}." + (f" {wave_zone_en}." if wave_zone_en else "")).strip() \
+                   + (f"\n  · How it decides: {_wv_how_en}" if has_wave else "")
 
     # NOTE (boss feedback 2026-07-03): the direct answer at the TOP is the one and only
     # conclusion — no repeated "최종 종합 판단" synthesis at the bottom. Methods follow as
