@@ -47,6 +47,11 @@ export default function MonitoringPage() {
   const prevQty = useRef<Record<number, number>>({});
   // persistent last-change direction per price (▲/▼ stays visible until it changes again).
   const lastMove = useRef<Record<number, { dir: "up" | "down"; delta: number }>>({});
+  // executions since the PREVIOUS tick, summed per price — used to (a) badge the ladder
+  // row where deals just happened and (b) optimistically subtract consumed qty until the
+  // next real Kiwoom book snapshot confirms it (boss: 1000 resting − 200 dealt = show 800).
+  const lastAccVol = useRef<number>(0);
+  const execAtPrice = useRef<Record<number, number>>({});
 
   useEffect(() => {
     prevQty.current = {};
@@ -114,6 +119,18 @@ export default function MonitoringPage() {
   // and remember each level's last change direction (persists for the triangle).
   useEffect(() => {
     if (!ob) return;
+    // NEW deals since the previous tick (acc_volume is cumulative → strictly increasing)
+    const fresh: Record<number, number> = {};
+    let maxAcc = lastAccVol.current;
+    (ob.trades || []).forEach((tr) => {
+      const av = tr.acc_volume || 0;
+      if (av > lastAccVol.current) {
+        fresh[tr.price] = (fresh[tr.price] || 0) + (tr.qty || 0);
+        if (av > maxAcc) maxAcc = av;
+      }
+    });
+    execAtPrice.current = fresh;
+    lastAccVol.current = maxAcc;
     const snap: Record<number, number> = {};
     [...asks, ...bids].forEach((l) => {
       if (l.placeholder) return;
@@ -129,7 +146,11 @@ export default function MonitoringPage() {
 
   const ColRow = ({ l, side, rank }: { l: OBLevel; side: "ask" | "bid"; rank: number }) => {
     const ph = !!l.placeholder;
-    const { q, dir } = deltaInfo(l);               // dir = changed THIS tick
+    const { q: qRaw, dir } = deltaInfo(l);         // dir = changed THIS tick
+    // deals just hit this price: show resting − dealt immediately (Kiwoom's next book
+    // snapshot confirms the same number one tick later); ⚡ badge shows what was consumed
+    const dealt = !ph ? (execAtPrice.current[l.price] || 0) : 0;
+    const q = dealt && !dir ? Math.max(0, qRaw - dealt) : qRaw;
     const lm = lastMove.current[l.price];          // persistent last direction
     const useDir = dir || (lm ? lm.dir : "");      // this tick if it changed, else last known
     const tri = useDir === "up" ? "▲" : useDir === "down" ? "▼" : "";
@@ -144,7 +165,10 @@ export default function MonitoringPage() {
         {!ph && <div className={`absolute inset-y-0 ${barSide} rounded`} style={{ width: `${Math.min(100, (q / maxQ) * 100)}%`, background: "var(--text-muted)", opacity: 0.16 }} />}
         <span className="relative tabular-nums text-[10px] text-[var(--text-muted)] text-center" style={{ minWidth: 20 }}>{rank}</span>
         <span className="relative font-bold tabular-nums text-[var(--text-primary)]" style={{ minWidth: 62 }}>{fmt(l.price)}</span>
-        <span className="relative tabular-nums text-[var(--text-secondary)] text-right flex-1">{ph ? "—" : fmt(q)}{!ph && l.is_large ? " 🔥" : ""}</span>
+        <span className="relative tabular-nums text-[var(--text-secondary)] text-right flex-1">
+          {ph ? "—" : fmt(q)}{!ph && l.is_large ? " 🔥" : ""}
+          {dealt > 0 && <span className="ml-1 text-[10px] font-extrabold" style={{ color: "#e65100" }}>⚡−{fmt(dealt)}</span>}
+        </span>
         <span className="relative text-right text-[17px] font-extrabold leading-none" style={{ minWidth: 26, color: triColor, opacity: ph ? 0 : justChanged ? 1 : tri ? 0.5 : 1 }}>{tri || "·"}</span>
       </div>
     );
@@ -263,8 +287,8 @@ export default function MonitoringPage() {
 
       {/* legend */}
       <div className="mt-2 text-[10.5px] text-[var(--text-muted)]">
-        {t("가격순 호가창: 1행 = 최우선 호가 · 화살표 = 잔량 변동(빨강 ▲ 증가, 파랑 ▼ 감소) · 🔥 = 대량 호가 · 체결: 빨강 = 매수 체결, 파랑 = 매도 체결 (키움 직결, 초 단위)",
-          "Price ladder: row 1 = best quote · arrows = qty change (red ▲ up, blue ▼ down) · 🔥 = large order · Executions: red = buyer-hit, blue = seller-hit (direct Kiwoom, per second)")}
+        {t("가격순 호가창: 1행 = 최우선 호가 · 화살표 = 잔량 변동(빨강 ▲ 증가, 파랑 ▼ 감소) · ⚡−N = 방금 체결로 소진된 잔량(잔량−체결 즉시 반영) · 🔥 = 대량 호가 · 체결: 빨강 = 매수, 파랑 = 매도 (키움 직결)",
+          "Price ladder: row 1 = best quote · arrows = qty change (red ▲ up, blue ▼ down) · ⚡−N = qty just consumed by executions (resting − dealt shown instantly) · 🔥 = large order · Executions: red = buyer-hit, blue = seller-hit (direct Kiwoom)")}
       </div>
     </div>
   );
