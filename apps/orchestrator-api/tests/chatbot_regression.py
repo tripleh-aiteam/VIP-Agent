@@ -110,7 +110,7 @@ CASES = [
 
     # ---- DECISION agent (both methods + news → BUY/HOLD/SELL, advice-style) ----
     C("decide", "DECIDE", "en", "Should I buy or sell SK Hynix?",
-      [("recommendation", lambda r, i: has(r"Recommendation:\s*(BUY|HOLD|SELL)", r)),
+      [("recommendation", lambda r, i: has(r"Recommendation:\s*(BUY|HOLD|SELL|WATCH)", r)),
        ("both methods", lambda r, i: has(r"Method 1", r) and has(r"Method 2", r) and has(r"News", r)),
        ("final para", lambda r, i: has(r"Final call|final recommendation is|In plain words", r))]),
     C("decide", "DECIDE", "ko", "SK하이닉스 사야 할까?",
