@@ -1041,6 +1041,15 @@ export default function ChatWorkspace({ apiBase, agentId, agentLabel }: Props) {
             </div>
           </div>
           {activeSession && activeSession.turns.length > 0 && (
+            <div className="flex items-center gap-2">
+            {/* Clear chat — start fresh (history rail hidden; old session stays in localStorage) */}
+            <button
+              onClick={() => createSession()}
+              className="px-3 py-1.5 rounded-lg border border-gray-300 text-[12px] font-medium text-gray-700 hover:bg-gray-50 flex items-center gap-1.5"
+              title="Clear the conversation and start fresh"
+            >
+              🗑 Clear chat
+            </button>
             <div className="relative" data-download-menu>
               <button
                 onClick={() => setShowDownload(showDownload === activeSession.id ? null : activeSession.id)}
@@ -1060,6 +1069,7 @@ export default function ChatWorkspace({ apiBase, agentId, agentLabel }: Props) {
                   >📕 PDF</button>
                 </div>
               )}
+            </div>
             </div>
           )}
         </div>
