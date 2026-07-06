@@ -159,6 +159,9 @@ interface Props {
 }
 
 const DEFAULT_FOLDER_ID = "inbox";
+// Chat-history sidebar hidden per user request (2026-07-06). Sessions still persist in
+// localStorage — flip to true to bring the rail back.
+const SHOW_CHAT_HISTORY = false;
 
 function uid(): string {
   return Math.random().toString(36).slice(2, 11);
@@ -914,7 +917,10 @@ export default function ChatWorkspace({ apiBase, agentId, agentLabel }: Props) {
     >
       {/* ========================================================== */}
       {/* === Sidebar: folder/session tree                       === */}
+      {/* Chat-history rail hidden per user request (2026-07-06) — sessions still persist  */}
+      {/* in localStorage; flip SHOW_CHAT_HISTORY to bring it back.                        */}
       {/* ========================================================== */}
+      {SHOW_CHAT_HISTORY && (
       <aside className="hidden md:flex w-[280px] shrink-0 flex-col border-r border-gray-200 bg-gray-50">
         <div className="px-4 py-3.5 border-b border-gray-200 flex items-center gap-2 bg-white">
           <span className="w-8 h-8 rounded-lg bg-gray-900 text-white flex items-center justify-center text-[14px] shrink-0">💬</span>
@@ -1011,6 +1017,7 @@ export default function ChatWorkspace({ apiBase, agentId, agentLabel }: Props) {
           </div>
         </div>
       </aside>
+      )}
 
       {/* ========================================================== */}
       {/* === Main: conversation flow + composer                === */}
