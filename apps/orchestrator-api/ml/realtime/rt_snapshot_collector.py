@@ -140,6 +140,68 @@ def _one_pass(conn) -> int:
     return len(rows)
 
 
+_HOT_DDL = (
+    "CREATE TABLE IF NOT EXISTS hot_watch (id INT PRIMARY KEY DEFAULT 1, "
+    "ticker TEXT, requested_at TIMESTAMPTZ DEFAULT now())",
+    "CREATE TABLE IF NOT EXISTS kiwoom_hot (ticker TEXT PRIMARY KEY, "
+    "payload JSONB, updated_at TIMESTAMPTZ DEFAULT now())",
+)
+
+
+def _hot_relay_loop() -> None:
+    """PC → Render live-data relay. Render's outbound IP is often outside Kiwoom's
+    지정단말기 allowlist (8050), so the SERVER can't call Kiwoom — this PC can. Render
+    writes the watched ticker into hot_watch; we burst that ticker's book + fills +
+    quote into kiwoom_hot every ~1s while someone is watching (viewer = requested_at
+    fresh ≤60s). Own DB connection + thread; never touches the snapshot pass."""
+    import json as _json
+    conn = get_conn()
+    with conn.cursor() as cur:
+        for ddl in _HOT_DDL:
+            cur.execute(ddl)
+    conn.commit()
+    print("[hot-relay] started", flush=True)
+    while True:
+        try:
+            with conn.cursor() as cur:
+                cur.execute("SELECT ticker, EXTRACT(EPOCH FROM (now()-requested_at)) "
+                            "FROM hot_watch WHERE id=1")
+                row = cur.fetchone()
+            conn.commit()
+            if not row or not row[0] or float(row[1] or 9e9) > 60:
+                time.sleep(3)
+                continue
+            tk = str(row[0])
+            ob = kr.order_book(tk, ttl=0.0) or {}
+            tr = kr.executions(tk, ttl=0.0) or []
+            q = kr.current_price(tk) or {}
+            if not (ob.get("levels") or tr or q.get("price")):
+                time.sleep(2)
+                continue
+            payload = {"levels": ob.get("levels") or [],
+                       "imbalance": ob.get("imbalance"),
+                       "tot_bid": ob.get("tot_bid"), "tot_ask": ob.get("tot_ask"),
+                       "trades": tr[:30], "quote": q}
+            with conn.cursor() as cur:
+                cur.execute(
+                    "INSERT INTO kiwoom_hot (ticker, payload, updated_at) "
+                    "VALUES (%s, %s, now()) "
+                    "ON CONFLICT (ticker) DO UPDATE SET payload=EXCLUDED.payload, "
+                    "updated_at=now()", (tk, _json.dumps(payload)))
+            conn.commit()
+            time.sleep(1.0)
+        except Exception as e:
+            print(f"[hot-relay] error: {str(e)[:90]}", flush=True)
+            try:
+                conn.rollback()
+            except Exception:
+                try:
+                    conn = get_conn()
+                except Exception:
+                    time.sleep(10)
+            time.sleep(3)
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--once", action="store_true")
@@ -156,6 +218,8 @@ def main() -> int:
 
     conn = get_conn()
     _ensure(conn)
+    import threading
+    threading.Thread(target=_hot_relay_loop, daemon=True).start()
     if args.once:
         print(f"[snapshot] wrote {_one_pass(conn)} rows"); return 0
     while True:

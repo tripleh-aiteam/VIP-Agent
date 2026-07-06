@@ -21,6 +21,55 @@ from typing import Any
 _last_good: dict[str, tuple] = {}
 _last_trades: dict[str, tuple] = {}
 _last_quote: dict[str, tuple] = {}
+_watch_written: dict[str, float] = {}   # hot_watch UPSERT throttle (per ticker)
+
+
+# ---------------------------------------------------------------------------
+# PC HOT-RELAY (2026-07-06). Kiwoom's 지정단말기 allowlist rejects Render's
+# outbound IP after some deploys (8050 — the IP is a per-instance lottery inside
+# 74.220.52/60.0/24; only a few are registered). The PC's IP IS registered, so the
+# PC collector relays true real-time Kiwoom data through Supabase: Render writes
+# WHICH ticker is being watched (hot_watch), the PC bursts that ticker's book +
+# fills + quote into kiwoom_hot every ~1s, Render serves it when direct fails.
+# ---------------------------------------------------------------------------
+def _hot_watch_write(db, ticker: str) -> None:
+    """Tell the PC which ticker the monitor is viewing (throttled, never raises)."""
+    nowt = _time.time()
+    if nowt - _watch_written.get(ticker, 0) < 5:
+        return
+    _watch_written[ticker] = nowt
+    try:
+        from sqlalchemy import text as _sql
+        db.execute(_sql(
+            "INSERT INTO hot_watch (id, ticker, requested_at) VALUES (1, :t, now()) "
+            "ON CONFLICT (id) DO UPDATE SET ticker=:t, requested_at=now()"), {"t": ticker})
+        db.commit()
+    except Exception:
+        try:
+            db.rollback()
+        except Exception:
+            pass
+
+
+def _hot_read(db, ticker: str) -> dict | None:
+    """The PC-relayed live payload + its age. None if absent/unreadable."""
+    try:
+        import json as _json
+
+        from sqlalchemy import text as _sql
+        r = db.execute(_sql(
+            "SELECT payload, EXTRACT(EPOCH FROM (now()-updated_at)) "
+            "FROM kiwoom_hot WHERE ticker=:t"), {"t": ticker}).first()
+        if not r or r[0] is None:
+            return None
+        p = r[0] if isinstance(r[0], dict) else _json.loads(r[0])
+        return {"payload": p, "age_sec": float(r[1] or 999)}
+    except Exception:
+        try:
+            db.rollback()
+        except Exception:
+            pass
+        return None
 
 # Per-stock large-order thresholds in SHARES (from the user's day-trading rules).
 LARGE_ORDER_SHARES: dict[str, int] = {
@@ -257,17 +306,40 @@ def orderbook_view(db, ticker: str, depth: int = 30) -> dict[str, Any]:
         tr = kr.executions(ticker, ttl=1.0)
         if tr:
             _last_trades[ticker] = (now, tr[:30])
-        # LAST-KNOWN trades are served indefinitely (frontend labels them by age) —
-        # after 15:30 the day's final ticks must stay visible, not "appear during
-        # market hours" (boss, 2026-07-06).
-        if ticker in _last_trades:
-            trades = _last_trades[ticker][1]
-            trades_age = int(now - _last_trades[ticker][0])
         q = kr.current_price(ticker)
         if q and q.get("price"):
             _last_quote[ticker] = (now, q)
     except Exception:
         pass
+
+    # PC hot-relay: when direct Kiwoom is IP-blocked on this instance (8050), the PC
+    # (registered IP) bursts the watched ticker into kiwoom_hot — same data, ~1-3s old.
+    _hot_watch_write(db, ticker)
+    if not live.get("levels"):
+        hot = _hot_read(db, ticker)
+        if hot:
+            hage = hot["age_sec"]
+            p = hot["payload"]
+            if hage <= 12 and p.get("levels"):
+                live = {"levels": p["levels"], "as_of": None, "age_sec": int(hage),
+                        "fresh": True, "imbalance": p.get("imbalance"),
+                        "tot_bid": p.get("tot_bid"), "tot_ask": p.get("tot_ask")}
+                source = "키움 실시간(PC중계)"
+            hot_ts = now - min(hage, 9e5)
+            if p.get("trades") and (ticker not in _last_trades
+                                    or hot_ts > _last_trades[ticker][0]):
+                _last_trades[ticker] = (hot_ts, p["trades"][:30])
+            hq = p.get("quote") or {}
+            if hq.get("price") and (ticker not in _last_quote
+                                    or hot_ts > _last_quote[ticker][0]):
+                _last_quote[ticker] = (hot_ts, hq)
+
+    # LAST-KNOWN trades are served indefinitely (frontend labels them by age) —
+    # after 15:30 the day's final ticks must stay visible, not "appear during
+    # market hours" (boss, 2026-07-06).
+    if ticker in _last_trades:
+        trades = _last_trades[ticker][1]
+        trades_age = int(now - _last_trades[ticker][0])
     # quote: fresh Kiwoom (≤10s) → last-known Kiwoom (≤120s) → NAVER realtime (always
     # works, incl. after close and while the Kiwoom token is contested) — the header
     # strip (시가/현재가±%/고가/저가) must NEVER be empty.

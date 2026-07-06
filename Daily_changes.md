@@ -2,6 +2,32 @@
 
 ---
 
+## 2026-07-06 (Monday) — Method 4 (1% cycle scalp) + honest A/B strategy comparison
+
+### Goal
+
+Boss's new short-term strategy as **Method 4**: real-time buy TIMING (RSI), +1% take-profit / −1% stop, time-stop + re-entry ("small losses, repeated wins — 3W/2L = net winner"), plus an honest simulation comparing it to the existing fixed-target/stop approach with a "≥3 wins of 5" consistency check.
+
+### Files added
+
+- [`services/cycle_scalp.py`](apps/orchestrator-api/services/cycle_scalp.py) — RSI(14, 5-min) turning up from ≤40 = timed entry; +1%/−1%; 60-min time-stop (going nowhere → exit small); re-entry. `signal()` live BUY_NOW/WAIT/NO_SETUP; `compare()` replay over `minute_bars_hist` (A: entry-at-open fixed ±1%, no time limit vs B: cycle) incl. rolling 3-of-5 metric; `compare_reply()` EN/KO chat answer.
+
+### Files updated
+
+- [`services/decision_agent.py`](apps/orchestrator-api/services/decision_agent.py) — 🔄 방법 4 section in every recommendation (verdict + RSI why + how-it-decides + rules); display-only (minutes-horizon doesn't vote in the 5-day gate).
+- [`services/assistant_agent.py`](apps/orchestrator-api/services/assistant_agent.py) — chat intent '전략 비교/compare strategies' → cycle_compare; reply caps 6000→9000 (EN decide + M4 + deep-dive truncated at exactly 6000).
+- [`routers/predictions.py`](apps/orchestrator-api/routers/predictions.py) — GET /predictions/cycle-compare/{ticker}.
+
+### The honest first measurement (SK Hynix, 12 real trading days of 5-min bars)
+
+A (existing fixed): 12 trades · **75% win · +6.0%** vs B (new cycle): 42 trades · **45% win · −4.4%**, 3-of-5 windows 42% — **the cycle strategy does NOT yet meet the 3-of-5 bar**; the chat answer says so and names the next lever (tune RSI entry/time-stop, re-test). Same lesson as dip-bounce: measure before trusting.
+
+### Also verified
+
+Long-conversation degradation fixed (16 turns of price chatter → advice still full analysis, KO 2.8k/EN 5.6k); the deep-dive layer covers the "natural output" ask. Live-verified 8/8 on BOTH surfaces EN+KO; regression 24/24.
+
+---
+
 ## 2026-07-06 (Monday) — News-freshness watchdog on the daily report
 
 ### Goal
@@ -31,6 +57,13 @@ Scanned the last 7 daily `newspaper_report` rows: every day = 18 articles, **0 s
 - **Security review fixes (same commit):** deleted the unauthenticated `/predictions/kiwoom-debug` endpoint; `/predictions/route-debug` is now fail-closed — 404 unless `DEBUG_ENDPOINTS_KEY` env is set AND matches `?key=`.
 - **Files:** `services/kiwoom_rest.py` (shared token store + 8005 recovery), `services/orderbook_memory.py` (direct feed, trades, quote, VWAP), `routers/predictions.py` (debug endpoints removed/gated), `apps/admin-dashboard/src/app/monitoring/page.tsx` (ladder sort, 체결 column, ⚡subtraction, quote strip).
 - **Next:** restart the PC snapshot collector so it loads the shared-token code, then verify ≥5 consecutive stable 직결 polls during market hours.
+
+### [16:35] Root cause #2 — Kiwoom 8050 IP allowlist → PC hot-relay
+
+- **What:** After token peace, Render STILL failed: `kiwoom-diag` (new proof-gated endpoint) showed outbound IP `74.220.52.1` getting `8050 지정단말기 인증 실패` — Render's per-instance outbound IP is a lottery and this one isn't Kiwoom-registered (explains months of "works after some deploys, dies after others"). Built the PC hot-relay: Render writes the watched ticker to `hot_watch`, the PC collector (registered IP) bursts that ticker's book+fills+quote into `kiwoom_hot` every ~1s, Render serves it as `키움 실시간(PC중계)` whenever direct fails. Third token-war party found and fixed too: the Stock backend force-minted on every auth error — it now fetches VIP's shared token via `/predictions/kiwoom-token` (proof = sha256 of the app secret). Quote strip moved to the control row (right after the 6-digit code input) and backstopped by Naver so it can never be blank; the day's last fills stay visible after close with a 장마감 tag.
+- **Why:** Monitor must be real-time regardless of which IP Render lands on; and no service may ever mint its own Kiwoom token again.
+- **Files:** `services/orderbook_memory.py` (hot read/watch + serve, quote fallback), `ml/realtime/rt_snapshot_collector.py` (`_hot_relay_loop` thread), `routers/predictions.py` (`/kiwoom-token`, `/kiwoom-diag`), `apps/admin-dashboard/src/app/monitoring/page.tsx` (strip in control row, last-fills state), stock repo `backend/services/kiwoom/rest_client.py` (`_fetch_vip_shared_token`).
+- **Next:** ask the friend to also register `74.220.52.1` (ideally all of 74.220.52.0/24 + 74.220.60.0/24) at Kiwoom so 직결 works from Render again; the relay covers the gap meanwhile.
 
 ### Goal
 
