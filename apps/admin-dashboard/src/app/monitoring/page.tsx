@@ -17,10 +17,12 @@ const RED = "#d32f2f";   // 매도 / qty-up (Korean convention: up = red)
 const BLUE = "#1565c0";  // 매수 / qty-down
 
 type OBLevel = { price: number; qty?: number; last_qty?: number; max_qty?: number; is_large?: boolean; age_sec?: number; side?: string; placeholder?: boolean };
+type Trade = { time: string; price: number; qty: number; dir: number; acc_volume?: number };
 type OBView = {
   source: string;
   live: { levels: OBLevel[]; fresh: boolean; age_sec?: number | null };
   memory: { asks: OBLevel[]; bids: OBLevel[]; mid?: number | null; threshold?: number | null };
+  trades?: Trade[];
   walls: OBLevel[]; threshold?: number | null; mid?: number | null; naver_price?: number | null;
 };
 
@@ -64,12 +66,18 @@ export default function MonitoringPage() {
   // Observed levels from THIS session (drop only last session's stale book), best
   // (nearest mid) FIRST. No size filter — every level counts, any quantity.
   const observed = (side: "ask" | "bid"): OBLevel[] => {
-    const src = side === "ask" ? ob?.memory?.asks : ob?.memory?.bids;
-    // show ALL real remembered levels the backend returns (up to 30/side); no age cut
-    // — the backend already keeps only levels near the current price. This is what fills
-    // both sides toward 30 (the 6h cut was hiding earlier-session remembered levels).
-    return [...(src || [])]
-      .sort((a, b) => (b.last_qty || b.qty || 0) - (a.last_qty || a.qty || 0)) // highest qty → lowest
+    // LIVE Kiwoom levels first (updated every poll — the true real-time book), then the
+    // remembered deeper levels beyond the visible 10. KIWOOM-STYLE PRICE SORT: best
+    // quote first on BOTH sides (asks: lowest ask → up · bids: highest bid → down).
+    const liveLv = (ob?.live?.levels || []).filter((l) => l.side === side);
+    const livePrices = new Set(liveLv.map((l) => l.price));
+    const mem = (side === "ask" ? ob?.memory?.asks : ob?.memory?.bids) || [];
+    const merged = [
+      ...liveLv.map((l) => ({ ...l, last_qty: l.qty })),
+      ...mem.filter((m) => !livePrices.has(m.price)),
+    ];
+    return merged
+      .sort((a, b) => (side === "ask" ? a.price - b.price : b.price - a.price))
       .slice(0, 30);
   };
   const obsAsks = observed("ask");
@@ -155,10 +163,10 @@ export default function MonitoringPage() {
   const options = WATCH.some((w) => w.code === code) ? WATCH : [{ code, ko: code, en: code }, ...WATCH];
 
   return (
-    <div className="px-4 md:px-8 py-6 max-w-[820px] mx-auto">
+    <div className="px-4 md:px-8 py-6 max-w-[1080px] mx-auto">
       <div className="flex items-center gap-2 flex-wrap mb-3">
         <h1 className="text-[22px] font-extrabold text-[var(--text-primary)]">{t("실시간 호가 모니터링", "Live Order-Book Monitor")}</h1>
-        <span className="text-[11px] text-[var(--text-muted)]">{t("매도 / 매수 각 30단계 · 잔량 많은 순", "Sellers / Buyers · 30 levels · sorted by quantity (high → low)")}</span>
+        <span className="text-[11px] text-[var(--text-muted)]">{t("매도 / 매수 각 30단계 · 가격순(호가창) · 체결 실시간", "Sellers / Buyers · 30 levels · price ladder · live executions")}</span>
       </div>
 
       {/* controls: dropdown + custom code + speed */}
@@ -203,14 +211,43 @@ export default function MonitoringPage() {
               {asks.map((l, i) => <ColRow key={`a${l.price}_${i}`} l={l} side="ask" rank={i + 1} />)}
               {asks.length === 0 && <div className="px-2 py-3 text-center text-[11px] text-[var(--text-muted)]">—</div>}
             </div>
-            {/* RIGHT — 매수 / buyers (bids) */}
-            <div className="flex-1">
+            {/* MIDDLE — 매수 / buyers (bids) */}
+            <div className="flex-1 border-r border-[var(--border-default)]">
               <div className="px-2 py-1.5 text-center text-[12px] font-extrabold text-[var(--text-primary)]" style={{ background: "var(--bg-elevated)" }}>
                 {t("매수 (매수자) ▶", "Buyers (bids) ▶")} · {obsBids.length}/30
               </div>
               <ColHead />
               {bids.map((l, i) => <ColRow key={`b${l.price}_${i}`} l={l} side="bid" rank={i + 1} />)}
               {bids.length === 0 && <div className="px-2 py-3 text-center text-[11px] text-[var(--text-muted)]">—</div>}
+            </div>
+            {/* RIGHT — 체결 (live executions): the DEALS actually happening, tick by tick */}
+            <div className="flex-1">
+              <div className="px-2 py-1.5 text-center text-[12px] font-extrabold text-[var(--text-primary)]" style={{ background: "var(--bg-elevated)" }}>
+                {t("⚡ 체결 (실시간)", "⚡ Executions (live)")} · {(ob.trades || []).length}
+              </div>
+              <div className="flex items-center gap-1 px-2 py-1 text-[9.5px] font-bold text-[var(--text-muted)] bg-[var(--bg-elevated)]/50">
+                <span style={{ minWidth: 52 }}>{t("시간", "Time")}</span>
+                <span style={{ minWidth: 62 }}>{t("체결가", "Price")}</span>
+                <span className="text-right flex-1">{t("수량", "Qty")}</span>
+                <span style={{ minWidth: 30 }} className="text-right">{t("구분", "Side")}</span>
+              </div>
+              {(ob.trades || []).map((tr, i) => (
+                <div key={`t${tr.time}_${tr.acc_volume ?? i}`}
+                  className="relative flex items-center gap-1 px-2 py-[3px] text-[12px] border-b border-[var(--border-default)]/25"
+                  style={{ background: i === 0 ? (tr.dir > 0 ? "rgba(255,82,82,0.14)" : tr.dir < 0 ? "rgba(41,121,255,0.12)" : undefined) : undefined }}>
+                  <span className="tabular-nums text-[10.5px] text-[var(--text-muted)]" style={{ minWidth: 52 }}>{tr.time}</span>
+                  <span className="font-bold tabular-nums" style={{ minWidth: 62, color: tr.dir > 0 ? RED : tr.dir < 0 ? BLUE : "var(--text-primary)" }}>{fmt(tr.price)}</span>
+                  <span className="tabular-nums text-[var(--text-secondary)] text-right flex-1">{fmt(tr.qty)}</span>
+                  <span className="text-right text-[10.5px] font-extrabold" style={{ minWidth: 30, color: tr.dir > 0 ? RED : tr.dir < 0 ? BLUE : "var(--text-muted)" }}>
+                    {tr.dir > 0 ? t("매수", "B") : tr.dir < 0 ? t("매도", "S") : "·"}
+                  </span>
+                </div>
+              ))}
+              {(ob.trades || []).length === 0 && (
+                <div className="px-2 py-3 text-center text-[11px] text-[var(--text-muted)]">
+                  {t("장중에 체결 내역이 표시됩니다", "Executions appear during market hours")}
+                </div>
+              )}
             </div>
           </div>
         )}
@@ -226,8 +263,8 @@ export default function MonitoringPage() {
 
       {/* legend */}
       <div className="mt-2 text-[10.5px] text-[var(--text-muted)]">
-        {t("화살표 = 잔량 변동 · 빨강 ▲ = 증가, 파랑 ▼ = 감소 · 🔥 = 대량 호가 · 흐린 \"—\" = 미관측 빈 호가 · 왼쪽=매도 오른쪽=매수",
-          "Arrows = quantity change · red ▲ = up, blue ▼ = down · 🔥 = large order · faded \"—\" = price with no order yet · left=sellers, right=buyers")}
+        {t("가격순 호가창: 1행 = 최우선 호가 · 화살표 = 잔량 변동(빨강 ▲ 증가, 파랑 ▼ 감소) · 🔥 = 대량 호가 · 체결: 빨강 = 매수 체결, 파랑 = 매도 체결 (키움 직결, 초 단위)",
+          "Price ladder: row 1 = best quote · arrows = qty change (red ▲ up, blue ▼ down) · 🔥 = large order · Executions: red = buyer-hit, blue = seller-hit (direct Kiwoom, per second)")}
       </div>
     </div>
   );

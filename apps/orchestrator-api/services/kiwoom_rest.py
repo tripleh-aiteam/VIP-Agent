@@ -484,9 +484,9 @@ _rt_cache: dict[str, tuple[float, Any]] = {}
 _RT_TTL = 20.0   # seconds — intraday signals refresh fast but not per-call
 
 
-def _rt_cached(key: str, fn):
+def _rt_cached(key: str, fn, ttl: float | None = None):
     hit = _rt_cache.get(key)
-    if hit and (time.time() - hit[0]) < _RT_TTL:
+    if hit and (time.time() - hit[0]) < (ttl if ttl is not None else _RT_TTL):
         return hit[1]
     val = fn()
     if val is not None:
@@ -501,7 +501,7 @@ def _ob_field(side: str, level: int, kind: str) -> str:
     return f"{side}_{seg}_{kind}"
 
 
-def order_book(code: str) -> Optional[dict]:
+def order_book(code: str, ttl: float | None = None) -> Optional[dict]:
     """LIVE order book (호가, ka10004) -> ALL 10 bid + 10 ask levels + imbalance.
     The microstructure signal the day-trader reads: tot_buy_req >> tot_sel_req =
     buying pressure. The exchange only publishes 10 levels — the deeper 'memory' of
@@ -536,7 +536,36 @@ def order_book(code: str) -> Optional[dict]:
             "tot_bid": tot_bid, "tot_ask": tot_ask, "imbalance": imb,
             "levels": levels,
         }
-    return _rt_cached(f"ob:{code}", _f)
+    return _rt_cached(f"ob:{code}", _f, ttl=ttl)
+
+
+def executions(code: str, ttl: float = 1.0) -> Optional[list[dict]]:
+    """LIVE tick executions (체결정보, ka10003) — the DEALS actually happening, not the
+    resting book. Returns newest-first [{time:'HH:MM:SS', price, qty, dir:+1/-1/0,
+    acc_volume}] (~30 rows). dir = aggressor side read from the signed trade qty
+    (+ = buyer-initiated 매수체결, − = seller-initiated 매도체결)."""
+    code = str(code).strip().zfill(6)
+
+    def _f():
+        d = _request("ka10003", {"stk_cd": code}, path="/api/dostk/stkinfo")
+        if not isinstance(d, dict):
+            return None
+        out = []
+        for r in (d.get("cntr_infr") or []):
+            tm = str(r.get("tm") or "")
+            raw_q = str(r.get("cntr_trde_qty") or "0")
+            q = _to_int(raw_q)
+            p = _to_int(r.get("cur_prc"))
+            if not p or q is None:
+                continue
+            out.append({
+                "time": f"{tm[0:2]}:{tm[2:4]}:{tm[4:6]}" if len(tm) >= 6 else tm,
+                "price": abs(p), "qty": abs(q),
+                "dir": 1 if raw_q.strip().startswith("+") else -1 if raw_q.strip().startswith("-") else 0,
+                "acc_volume": _to_int(r.get("acc_trde_qty")),
+            })
+        return out or None
+    return _rt_cached(f"exe:{code}", _f, ttl=ttl)
 
 
 def investor_flows(code: str) -> Optional[dict]:

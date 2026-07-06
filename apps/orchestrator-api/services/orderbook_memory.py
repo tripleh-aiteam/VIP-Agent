@@ -218,14 +218,47 @@ def live_book(db, ticker: str, fresh_sec: int = 240) -> dict[str, Any]:
 
 def orderbook_view(db, ticker: str, depth: int = 30) -> dict[str, Any]:
     """Full payload for the frontend depth panel: LIVE 10-deep book + the remembered
-    ±depth deep book + large walls. Kiwoom (collector snapshot) while fresh/in-market,
-    else NAVER current price (the book is static after close)."""
-    live = live_book(db, ticker)
+    ±depth deep book + large walls + tick EXECUTIONS (체결).
+
+    REAL-TIME path (2026-07-06): the live book + executions come STRAIGHT from Kiwoom
+    REST (~1s micro-cache) — the old path read the PC collector's DB snapshot (~30s
+    stale), which made the monitor crawl. Render's IPs are Kiwoom-registered, so this
+    works with no PC. Falls back to the collector snapshot, then NAVER price after close."""
     mem = read_memory(db, ticker, depth)
-    fresh = live.get("fresh")
-    source = "키움 실시간" if fresh else "NAVER"
+
+    # 1) LIVE book — direct Kiwoom first (true real-time), snapshot fallback
+    live: dict[str, Any] = {}
+    trades: list = []
+    source = None
+    try:
+        from services import kiwoom_rest as kr
+        kb = kr.order_book(ticker, ttl=1.0)
+        if kb and kb.get("levels"):
+            live = {"levels": kb["levels"], "as_of": None, "age_sec": 0, "fresh": True,
+                    "imbalance": kb.get("imbalance"),
+                    "tot_bid": kb.get("tot_bid"), "tot_ask": kb.get("tot_ask")}
+            source = "키움 실시간(직결)"
+        tr = kr.executions(ticker, ttl=1.0)
+        if tr:
+            trades = tr[:30]
+    except Exception:
+        pass
+    if not live.get("levels"):
+        live = live_book(db, ticker)
+        source = "키움 실시간" if live.get("fresh") else "NAVER"
+
+    # live best bid/ask beats the memory-derived mid (fresher)
+    mid = mem["mid"]
+    try:
+        la = [x["price"] for x in live.get("levels", []) if x["side"] == "ask"]
+        lb = [x["price"] for x in live.get("levels", []) if x["side"] == "bid"]
+        if la and lb:
+            mid = (min(la) + max(lb)) / 2
+    except Exception:
+        pass
+
     price = None
-    if not fresh:                       # after market → Naver current price
+    if not live.get("fresh"):           # after market → Naver current price
         try:
             from services.assistant_agent import _live_price_for_code
             from services.prediction_service import NAMES as _N
@@ -236,5 +269,5 @@ def orderbook_view(db, ticker: str, depth: int = 30) -> dict[str, Any]:
     walls = sorted([x for x in (mem["asks"] + mem["bids"]) if x["is_large"]],
                    key=lambda x: -x["max_qty"])
     return {"ticker": ticker, "source": source, "live": live, "memory": mem,
-            "walls": walls, "threshold": mem["threshold"], "mid": mem["mid"],
-            "naver_price": price}
+            "trades": trades, "walls": walls, "threshold": mem["threshold"],
+            "mid": mid, "naver_price": price}
