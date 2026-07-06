@@ -238,6 +238,7 @@ def orderbook_view(db, ticker: str, depth: int = 30) -> dict[str, Any]:
     # (≤15s book / ≤30s trades / ≤10s quote) instead of flip-flopping to the slow path.
     live: dict[str, Any] = {}
     trades: list = []
+    trades_age = 0
     quote: dict[str, Any] | None = None
     source = None
     now = _time.time()
@@ -256,22 +257,48 @@ def orderbook_view(db, ticker: str, depth: int = 30) -> dict[str, Any]:
         tr = kr.executions(ticker, ttl=1.0)
         if tr:
             _last_trades[ticker] = (now, tr[:30])
-        if ticker in _last_trades and now - _last_trades[ticker][0] <= 30:
+        # LAST-KNOWN trades are served indefinitely (frontend labels them by age) —
+        # after 15:30 the day's final ticks must stay visible, not "appear during
+        # market hours" (boss, 2026-07-06).
+        if ticker in _last_trades:
             trades = _last_trades[ticker][1]
+            trades_age = int(now - _last_trades[ticker][0])
         q = kr.current_price(ticker)
         if q and q.get("price"):
             _last_quote[ticker] = (now, q)
-        if ticker in _last_quote and now - _last_quote[ticker][0] <= 10:
-            quote = dict(_last_quote[ticker][1])
-            # 평균가 (VWAP) = accumulated amount / accumulated volume from the tick feed
-            try:
-                t0 = trades[0] if trades else None
-                if t0 and t0.get("acc_amount") and t0.get("acc_volume"):
-                    quote["vwap"] = round(t0["acc_amount"] / t0["acc_volume"])
-            except Exception:
-                pass
     except Exception:
         pass
+    # quote: fresh Kiwoom (≤10s) → last-known Kiwoom (≤120s) → NAVER realtime (always
+    # works, incl. after close and while the Kiwoom token is contested) — the header
+    # strip (시가/현재가±%/고가/저가) must NEVER be empty.
+    if ticker in _last_quote and now - _last_quote[ticker][0] <= 120:
+        quote = dict(_last_quote[ticker][1])
+        quote["src"] = "kiwoom"
+        quote["age_sec"] = int(now - _last_quote[ticker][0])
+    else:
+        try:
+            from services.naver_stock import daily_history, realtime_quote
+            nq = realtime_quote(ticker)
+            if nq and nq.get("price"):
+                quote = {"price": nq["price"], "change_pct": nq.get("change_pct"),
+                         "open": nq.get("open"), "high": nq.get("high"),
+                         "low": nq.get("low"), "volume": nq.get("volume"),
+                         "prev_close": None, "name": None,
+                         "src": "naver", "age_sec": 0}
+                if quote["open"] is None:   # basic endpoint drops OHLC after close
+                    d = (daily_history(ticker, days=1) or [{}])[0]
+                    for k in ("open", "high", "low", "volume"):
+                        quote[k] = quote[k] if quote[k] is not None else d.get(k)
+        except Exception:
+            pass
+    # 평균가 (VWAP) = accumulated amount / accumulated volume from the tick feed
+    if quote:
+        try:
+            t0 = trades[0] if trades else None
+            if t0 and t0.get("acc_amount") and t0.get("acc_volume"):
+                quote["vwap"] = round(t0["acc_amount"] / t0["acc_volume"])
+        except Exception:
+            pass
     if not live.get("levels"):
         live = live_book(db, ticker)
         source = "키움 실시간" if live.get("fresh") else "NAVER"
@@ -298,5 +325,6 @@ def orderbook_view(db, ticker: str, depth: int = 30) -> dict[str, Any]:
     walls = sorted([x for x in (mem["asks"] + mem["bids"]) if x["is_large"]],
                    key=lambda x: -x["max_qty"])
     return {"ticker": ticker, "source": source, "live": live, "memory": mem,
-            "trades": trades, "quote": quote, "walls": walls,
-            "threshold": mem["threshold"], "mid": mid, "naver_price": price}
+            "trades": trades, "trades_age_sec": trades_age, "quote": quote,
+            "walls": walls, "threshold": mem["threshold"], "mid": mid,
+            "naver_price": price}

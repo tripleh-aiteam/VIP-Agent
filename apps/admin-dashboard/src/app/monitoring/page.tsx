@@ -22,9 +22,10 @@ type OBView = {
   source: string;
   live: { levels: OBLevel[]; fresh: boolean; age_sec?: number | null };
   memory: { asks: OBLevel[]; bids: OBLevel[]; mid?: number | null; threshold?: number | null };
-  trades?: Trade[];
+  trades?: Trade[]; trades_age_sec?: number;
   quote?: { price?: number; prev_close?: number; change_pct?: number; open?: number;
-            high?: number; low?: number; volume?: number; vwap?: number } | null;
+            high?: number; low?: number; volume?: number; vwap?: number;
+            src?: string; age_sec?: number } | null;
   walls: OBLevel[]; threshold?: number | null; mid?: number | null; naver_price?: number | null;
 };
 
@@ -207,6 +208,23 @@ export default function MonitoringPage() {
         <input value={custom} onChange={(e) => setCustom(e.target.value.replace(/\D/g, "").slice(0, 6))}
           onKeyDown={(e) => { if (e.key === "Enter" && custom.length === 6) { setCode(custom); setCustom(""); } }}
           placeholder={t("다른 종목코드 6자리 ↵", "other 6-digit code ↵")} className="text-[12.5px] px-2.5 py-1.5 rounded-lg border bg-transparent" style={{ borderColor: "var(--border-default)", width: 160 }} />
+        {ob?.quote?.price != null && (() => {
+          const qp = ob.quote!;
+          const chg = qp.change_pct ?? 0;
+          const cCol = chg > 0 ? RED : chg < 0 ? BLUE : "var(--text-primary)";
+          const tri = chg > 0 ? "▲" : chg < 0 ? "▼" : "";
+          return (
+            <span className="flex items-center gap-2.5 text-[12px] tabular-nums px-2.5 py-1 rounded-lg border"
+              style={{ borderColor: "var(--border-default)", background: "var(--bg-elevated)" }}>
+              <span className="text-[var(--text-muted)]">{t("시가", "O")} <b className="text-[var(--text-secondary)]">{fmt(qp.open)}</b></span>
+              <span className="font-extrabold text-[15px]" style={{ color: cCol }}>{fmt(qp.price)}</span>
+              <span className="font-extrabold" style={{ color: cCol }}>{tri} {chg > 0 ? "+" : ""}{chg?.toFixed(2)}%</span>
+              <span className="text-[var(--text-muted)]">{t("고가", "H")} <b style={{ color: RED }}>{fmt(qp.high)}</b></span>
+              <span className="text-[var(--text-muted)]">{t("저가", "L")} <b style={{ color: BLUE }}>{fmt(qp.low)}</b></span>
+              {qp.vwap != null && <span className="text-[var(--text-muted)]">{t("평균", "avg")} <b className="text-[var(--text-secondary)]">{fmt(qp.vwap)}</b></span>}
+            </span>
+          );
+        })()}
         <span className="ml-auto text-[11px] text-[var(--text-muted)]">{t("속도", "speed")}</span>
         {[1, 2, 3].map((s) => (
           <button key={s} onClick={() => setSpeed(s)} className="text-[11px] font-bold px-2 py-1 rounded-md border"
@@ -221,23 +239,7 @@ export default function MonitoringPage() {
             <span className="text-[15px] font-extrabold text-[var(--text-primary)]">📚 {name}</span>
             <span className="text-[11px] text-[var(--text-muted)]">{code}</span>
             {ob && <span className="text-[10px] px-1.5 py-0.5 rounded-full font-bold" style={{ color: ob.live?.fresh ? "#fff" : "var(--text-muted)", background: ob.live?.fresh ? RED : "var(--bg-elevated)" }}>{ob.source}</span>}
-            {ob?.quote?.price != null && (() => {
-              const qp = ob.quote!;
-              const chg = qp.change_pct ?? 0;
-              const cCol = chg > 0 ? RED : chg < 0 ? BLUE : "var(--text-primary)";
-              const tri = chg > 0 ? "▲" : chg < 0 ? "▼" : "";
-              return (
-                <span className="ml-auto flex items-center gap-3 text-[12px] tabular-nums">
-                  <span className="font-extrabold text-[16px]" style={{ color: cCol }}>{fmt(qp.price)}</span>
-                  <span className="font-extrabold" style={{ color: cCol }}>{tri} {chg > 0 ? "+" : ""}{chg?.toFixed(2)}%</span>
-                  <span className="text-[var(--text-muted)]">{t("시가", "O")} <b className="text-[var(--text-secondary)]">{fmt(qp.open)}</b></span>
-                  <span className="text-[var(--text-muted)]">{t("고가", "H")} <b style={{ color: RED }}>{fmt(qp.high)}</b></span>
-                  <span className="text-[var(--text-muted)]">{t("저가", "L")} <b style={{ color: BLUE }}>{fmt(qp.low)}</b></span>
-                  <span className="text-[var(--text-muted)]">{t("평균", "avg")} <b className="text-[var(--text-secondary)]">{fmt(qp.vwap)}</b></span>
-                </span>
-              );
-            })()}
-            {!ob?.quote?.price && mid ? <span className="ml-auto text-[12px] font-extrabold text-[var(--text-primary)]">{t("중간가", "mid")} {fmt(Math.round(mid))}</span> : null}
+            {mid ? <span className="ml-auto text-[12px] font-extrabold text-[var(--text-primary)]">{t("중간가", "mid")} {fmt(Math.round(mid))}</span> : null}
           </div>
         </div>
 
@@ -268,6 +270,11 @@ export default function MonitoringPage() {
             <div className="flex-1">
               <div className="px-2 py-1.5 text-center text-[12px] font-extrabold text-[var(--text-primary)]" style={{ background: "var(--bg-elevated)" }}>
                 {t("⚡ 체결 (실시간)", "⚡ Executions (live)")} · {(ob.trades || []).length}
+                {(ob.trades || []).length > 0 && (ob.trades_age_sec ?? 0) > 90 && (
+                  <span className="ml-1.5 text-[9.5px] font-bold px-1.5 py-0.5 rounded-full" style={{ color: "var(--text-muted)", background: "var(--bg-elevated)", border: "1px solid var(--border-default)" }}>
+                    {t("장마감 · 마지막 체결", "closed · last fills")}
+                  </span>
+                )}
               </div>
               <div className="flex items-center gap-1 px-2 py-1 text-[9.5px] font-bold text-[var(--text-muted)] bg-[var(--bg-elevated)]/50">
                 <span style={{ minWidth: 52 }}>{t("시간", "Time")}</span>
@@ -289,7 +296,7 @@ export default function MonitoringPage() {
               ))}
               {(ob.trades || []).length === 0 && (
                 <div className="px-2 py-3 text-center text-[11px] text-[var(--text-muted)]">
-                  {t("장중에 체결 내역이 표시됩니다", "Executions appear during market hours")}
+                  {t("체결 데이터 수신 대기 중… (키움 연결)", "Waiting for fills… (Kiwoom link)")}
                 </div>
               )}
             </div>

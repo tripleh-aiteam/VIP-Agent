@@ -348,6 +348,17 @@ def _token(force: bool = False) -> Optional[str]:
         return None
 
 
+def shared_token_info() -> Optional[dict]:
+    """Valid token + expiry + base for SIBLING services (e.g. the Stock backend on its
+    own Render service, same app key). They must reuse THE one token instead of
+    minting their own — Kiwoom revokes all other tokens on every mint (8005 war)."""
+    tok = _token()
+    if not tok:
+        return None
+    _, exp = _token_cache
+    return {"token": tok, "expiry_epoch": exp, "base": _active_base or _BASE_URL}
+
+
 # --------------------------------------------------------------------------- #
 # Low-level request
 # --------------------------------------------------------------------------- #

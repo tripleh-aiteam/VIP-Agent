@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Optional
 
 import hmac
+import time
 
 from fastapi import APIRouter, Depends, Header, Query
 from sqlalchemy.orm import Session
@@ -13,6 +14,7 @@ from db.base import get_db
 from services import prediction_service as ps
 
 router = APIRouter(prefix="/predictions", tags=["predictions"])
+_last_force_mint = 0.0
 
 
 @router.get("/summary")
@@ -159,7 +161,7 @@ def dip_bounce_ep(min_dip: float = Query(1.5), db: Session = Depends(get_db)):
 
 
 @router.get("/kiwoom-token")
-def kiwoom_token(x_kiwoom_proof: str = Header("")):
+def kiwoom_token(x_kiwoom_proof: str = Header(""), force: bool = Query(False)):
     """THE shared Kiwoom bearer for sibling services (Stock backend). Kiwoom allows one
     active token per app key — any service that mints its own revokes everyone else's
     (the 8005 token war that made the order-book monitor flap, 2026-07-06). Auth is
@@ -174,6 +176,13 @@ def kiwoom_token(x_kiwoom_proof: str = Header("")):
     if not want or not hmac.compare_digest(x_kiwoom_proof or "", want):
         raise HTTPException(status_code=404, detail="Not found")
     from services import kiwoom_rest as kr
+    global _last_force_mint
+    if force and time.time() - _last_force_mint > 30:
+        # caller's copy got revoked and the shared row didn't help — re-mint HERE so
+        # the new token is published for the whole pool (still one mint authority).
+        # 30s throttle: a retry-looping sibling must not trigger a mint storm.
+        _last_force_mint = time.time()
+        kr._token(force=True)
     info = kr.shared_token_info()
     if not info:
         raise HTTPException(status_code=503, detail="token unavailable")
