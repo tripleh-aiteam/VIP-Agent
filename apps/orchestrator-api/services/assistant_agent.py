@@ -2583,6 +2583,41 @@ def _extract_json(text: str) -> Any:
     return None
 
 
+def _elaborate_answer(question: str, lang: str, step_results: list[dict]) -> Optional[str]:
+    """LLM '심층 해설 / Deep dive' section appended AFTER a deterministic reco/forecast block.
+    Answer = our methods' verified numbers (correctness) + LLM elaboration (detail/fluency),
+    grounded STRICTLY on the tool JSON — the LLM may not introduce any number/fact not in it.
+    Groq (fast) so relays don't time out; '' / failure → skip silently."""
+    en = str(lang or "").lower().startswith("en")
+    try:
+        import json as _json
+        data = _json.dumps([{"tool": s.get("tool"), "result": s.get("result")}
+                            for s in step_results], ensure_ascii=False, default=str)[:6500]
+        sys_p = (
+            "You are a senior Korean-equities analyst writing the ELABORATION section that follows a "
+            "structured verdict block the user already saw. STRICT GROUNDING: use ONLY numbers/facts "
+            "present in the DATA JSON — never invent prices, percentages, or events. Write "
+            + ("ENGLISH" if en else "KOREAN (한국어)") + " only.\n"
+            "Write 2-3 substantial paragraphs (no headers, no bullet lists, no verdict repetition):\n"
+            "1) What the numbers actually mean for this investor right now — connect the methods' "
+            "signals into one coherent story (why they agree/disagree, which to trust more here).\n"
+            "2) The concrete risk: what would invalidate this view, which level/number to watch.\n"
+            "3) Practical next step tied to the levels in the data.\n"
+            "Conversational, confident, no fluff, no disclaimers (one exists already)."
+        )
+        out = chat_completion_sync(
+            system_prompt=sys_p,
+            messages=[{"role": "user", "content": f"QUESTION: {question}\n\nDATA:\n{data}"}],
+            max_tokens=700, temperature=0.4, model="groq-llama-3.3-70b",
+        )
+        out = (out or "").strip()
+        if not out or out.startswith("[LLM"):
+            return None
+        return ("**Deep dive**\n" if en else "**심층 해설**\n") + out
+    except Exception:
+        return None
+
+
 def _run_chain(
     db: Session,
     transcript: str,
@@ -2741,6 +2776,15 @@ def _run_chain(
                 reply = (reply or "") + _tr
         except Exception:
             pass
+
+    # DETAIL LAYER (user ask: answers were too short): after the deterministic method
+    # blocks (the CORRECT data), append an LLM-written '심층 해설 / Deep dive' that
+    # elaborates STRICTLY on that data — LLM fluency, method-checked facts. Single-topic
+    # answers only (multi-stock joins are long already); best-effort, never blocks.
+    if (_tm or _decs) and len(_decs) <= 1:
+        _extra = _elaborate_answer(transcript, lang, step_results)
+        if _extra:
+            reply = (reply or "") + "\n\n" + _extra
 
     # If any step returned an action (navigate / open_portal), surface the LAST one
     action = None
@@ -3729,6 +3773,62 @@ def _enforce_reply_language(reply: str, language: Optional[str], transcript: Opt
         return None
 
 
+_SUBQ_LEAD_RE = _re.compile(r"^\s*(그리고|그럼|또한|또|아울러|and also|and then|also|then|and)\b[\s,]*", _re.IGNORECASE)
+
+
+def _split_subquestions(t: str) -> list[str]:
+    """Split a compound question ('A? 그리고 B? 그리고 C?') into its sub-questions so EVERY
+    part gets answered (the router otherwise picks one intent and drops the rest).
+    Conservative: only splits on '?' boundaries; needs 2-4 substantive parts."""
+    t = (t or "").strip()
+    if t.count("?") < 2:
+        return []
+    out = []
+    for p in t.split("?"):
+        p = _SUBQ_LEAD_RE.sub("", p.strip()).strip(" ,.;·-")
+        if len(p) >= 4:
+            out.append(p + "?")
+    return out if 2 <= len(out) <= 4 else []
+
+
+_DETAIL_SECTION_RE = _re.compile(r"\n+\*\*(?:심층 해설|Deep dive)\*\*.*", _re.DOTALL)
+
+
+def _answer_multi_part(db, parts: list[str], language, current_path, selected_id,
+                       history, forced_model, user_id, agent_id, page_context) -> dict[str, Any]:
+    """Answer each sub-question independently and join them numbered — so '가격? 그리고
+    과거? 그리고 살까?' answers ALL three (was: only the last). A part with no stock name
+    inherits the last stock mentioned in an earlier part."""
+    answers, carry, hist = [], None, list(history or [])
+    for i, part in enumerate(parts, 1):
+        q = part
+        try:
+            found = _all_stocks_in_query(part)
+            if found:
+                carry = found[0][1] or found[0][0]
+            elif carry:
+                q = f"{carry} {part}"                    # inherit the stock for bare parts
+        except Exception:
+            pass
+        try:
+            r = _run_agent_impl(
+                db, transcript=q, language=language, current_path=current_path,
+                selected_id=selected_id, history=hist, confirmed_tool=None,
+                confirmed_args=None, attachment_ids=None, forced_model=forced_model,
+                user_id=user_id, agent_id=agent_id, page_context=page_context)
+            sub = str(r.get("reply") or "").strip()
+        except Exception as e:
+            sub = f"(error: {str(e)[:60]})"
+        if len(parts) >= 3:                              # keep combined answer readable:
+            sub = _DETAIL_SECTION_RE.sub("", sub)        # drop deep-dive on 3+ part answers
+        answers.append(f"**{i}. {part}**\n{sub[:1800]}")
+        hist = hist + [{"role": "user", "content": q}, {"role": "assistant", "content": sub[:400]}]
+    return {"intent": "multi_part", "language": language,
+            "reply": "\n\n---\n\n".join(answers)[:6000],
+            "action": None, "speak": True, "transcript": " ".join(parts),
+            "tool_used": "multi_part"}
+
+
 def run_agent(
     db: Session,
     transcript: str,
@@ -3748,14 +3848,21 @@ def run_agent(
     memory persistence (writes each turn to chat_sessions/chat_messages
     under channel='assistant_overlay' so recall_history can find it
     later). Persistence is best-effort and never blocks the response."""
-    result = _run_agent_impl(
-        db, transcript=transcript, language=language,
-        current_path=current_path, selected_id=selected_id, history=history,
-        confirmed_tool=confirmed_tool, confirmed_args=confirmed_args,
-        attachment_ids=attachment_ids, forced_model=forced_model,
-        user_id=user_id, agent_id=agent_id,
-        page_context=page_context,
-    )
+    # MULTI-PART: 'A? 그리고 B? 그리고 C?' → answer EVERY sub-question (was: only the last).
+    _parts = ([] if (confirmed_tool or attachment_ids)
+              else _split_subquestions(transcript))
+    if _parts:
+        result = _answer_multi_part(db, _parts, language, current_path, selected_id,
+                                    history, forced_model, user_id, agent_id, page_context)
+    else:
+        result = _run_agent_impl(
+            db, transcript=transcript, language=language,
+            current_path=current_path, selected_id=selected_id, history=history,
+            confirmed_tool=confirmed_tool, confirmed_args=confirmed_args,
+            attachment_ids=attachment_ids, forced_model=forced_model,
+            user_id=user_id, agent_id=agent_id,
+            page_context=page_context,
+        )
     # LANGUAGE GUARD — English question MUST get an English answer (and vice versa).
     # Catches the case where a delegated (stock-backend) reply comes back in Korean.
     try:

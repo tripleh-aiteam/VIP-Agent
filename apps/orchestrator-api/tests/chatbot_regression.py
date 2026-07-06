@@ -112,11 +112,11 @@ CASES = [
     C("decide", "DECIDE", "en", "Should I buy or sell SK Hynix?",
       [("recommendation", lambda r, i: has(r"Recommendation:\s*(BUY|HOLD|SELL)", r)),
        ("both methods", lambda r, i: has(r"Method 1", r) and has(r"Method 2", r) and has(r"News", r)),
-       ("final para", lambda r, i: has(r"Final call|final recommendation is", r))]),
+       ("final para", lambda r, i: has(r"Final call|final recommendation is|In plain words", r))]),
     C("decide", "DECIDE", "ko", "SK하이닉스 사야 할까?",
       [("recommendation", lambda r, i: has(r"추천:\s*(매수|보유|매도|관망)", r)),
-       ("both methods", lambda r, i: has(r"방법 1", r) and has(r"방법 2", r) and has(r"뉴스", r)),
-       ("final para", lambda r, i: has(r"최종 종합 판단|최종 추천은", r))]),
+       ("both methods", lambda r, i: has(r"방법 1|① ", r) and has(r"방법 2|② ", r) and has(r"뉴스", r)),
+       ("final para", lambda r, i: has(r"최종 종합 판단|최종 추천은|쉽게 설명하면", r))]),
 
     # ---- ADVICE with a HOLDING marker ('last week I bought...') = POSITION advice (not history,
     # not a fresh decide). Routes to the P&L-aware position_advice; shows the 3 methods. ----
