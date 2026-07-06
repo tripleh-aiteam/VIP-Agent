@@ -1017,6 +1017,7 @@ def _is_vip_current_price_q(transcript: Optional[str], agent_id: Optional[str]) 
     if not any(w in t for w in _PRICE_WORDS) and not _compare:
         return False
     if (_is_past_price(transcript) or _is_stock_advice(transcript, agent_id)
+            or _wants_recommendation(transcript)      # 'from which price should I BUY' = a decision, not a quote
             or _is_history_range_query(transcript) or _is_us_stock_query(transcript)):
         return False
     if any(w in t for w in ("뉴스", "news", "유튜브", "youtube", "리포트", "report")):
@@ -4398,6 +4399,37 @@ def _run_agent_impl(
                     "speak": True, "transcript": transcript, "tool_used": "checklist"}
         except Exception as e:
             log.warning(f"checklist intent failed: {str(e)[:120]}")
+
+    # ===== TRADE-INTENT FIRST (order beats guards): any buy/sell ask on a resolvable
+    # stock — even misspelled ('skynix') — goes to the 3-method decide composer BEFORE
+    # the relay/price routes can swallow it ('from which price should I buy' kept
+    # getting price tables because 'price' matched earlier price intercepts). =====
+    # (No watchlist exclusion here: the watchlist intercept runs EARLIER and already
+    # steps aside when a specific stock resolves — 'how many stock' phrasing must not
+    # block a named-stock decision.)
+    if (not confirmed_tool and not attachment_ids
+            and _wants_recommendation(transcript)
+            and not _is_past_price(transcript)):
+        try:
+            from services import prediction_service as _psd0
+            _tf = list(dict.fromkeys(c for (c, _n) in _all_stocks_in_query(transcript)
+                                     if c in _psd0.NAMES))[:3]
+            if not _tf:
+                from services.stock_resolver import resolve_one as _r1
+                _c0 = (_r1(transcript or "") or (None,))[0]
+                if _c0 and _c0 in _psd0.NAMES:
+                    _tf = [_c0]
+            if _tf:
+                _steps = []
+                for _dc in _tf:
+                    _args = {"ticker": _dc}
+                    if _is_sell_timing_q(transcript):
+                        _args["focus"] = "sell"
+                    _steps.append({"tool": "decide", "args": _args})
+                return _run_chain(db, transcript, lang, _steps, current_path,
+                                  selected_id, system, history or [], agent_id=agent_id, user_id=user_id)
+        except Exception as e:
+            log.warning(f"trade-first route failed: {str(e)[:120]}")
 
     # === Stock agent = relay the Stock-Advisor app (single source of truth) ===
     # The stock agent's answers (and therefore VIP's delegated answers) come from
