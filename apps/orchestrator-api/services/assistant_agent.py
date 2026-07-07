@@ -1302,14 +1302,22 @@ def _won_str(v) -> str:
         return str(v)
 
 
-def _vip_history_reply(transcript: Optional[str], lang: str, hist=None) -> Optional[str]:
+def _vip_history_reply(transcript: Optional[str], lang: str, hist=None,
+                       history: Optional[list[dict]] = None) -> Optional[str]:
     """Deterministic multi-day OHLCV table from Naver daily history — past specific
     dates AND ranges ('last 4 days'). Single source, so VIP and the relaying AI Advisor
-    read IDENTICALLY. None → caller falls through."""
+    read IDENTICALLY. None → caller falls through. A bare date follow-up ('7월 2일은?')
+    inherits the stock from the conversation history so it gets the SAME table format."""
     hist = hist or _requested_history_dates(transcript)
     if not hist:
         return None
     stocks = _all_stocks_in_query(transcript)
+    if not stocks and history:
+        for h in reversed(history):
+            s = _all_stocks_in_query(str(h.get("content") or h.get("text") or ""))
+            if s:
+                stocks = s[:1]
+                break
     if not stocks:
         return None
     from services import naver_stock, price_format
@@ -1340,6 +1348,25 @@ def _vip_history_reply(transcript: Optional[str], lang: str, hist=None) -> Optio
                     if not row:
                         earlier = [r for r in rows if r.get("date") and r["date"] <= ds]
                         row = earlier[0] if earlier else None
+                        # OFF-DAY: the asked date had no trading (weekend/holiday) — say WHY
+                        # and clearly label the substituted last-trading-day close (smart, not
+                        # silently showing the wrong date's data).
+                        if row:
+                            try:
+                                import datetime as _dt
+                                _d = _dt.date.fromisoformat(ds)
+                                _wd = _d.weekday()
+                                _wd_ko = "월화수목금토일"[_wd]
+                                _why_ko = "주말(휴장일)" if _wd >= 5 else "휴장일(공휴일)"
+                                _why_en = "a weekend — market closed" if _wd >= 5 else "a market holiday"
+                                notes.append(
+                                    f"📅 {(name or code).upper()}: {_d.month}월 {_d.day}일({_wd_ko})은 {_why_ko}이라 거래가 없었습니다. "
+                                    f"직전 거래일({row.get('date')}) 종가 {_won_str(row.get('close'))} 기준으로 안내드립니다."
+                                    if not _en else
+                                    f"📅 {(name or code).upper()}: {ds} was {_why_en}, so there was no trading. "
+                                    f"Showing the last trading day ({row.get('date')}) instead — close {_won_str(row.get('close'))}.")
+                            except Exception:
+                                pass
                     if row:
                         sel.append(row)
         out.append({"name": (name or code).upper(), "code": code, "rows": sel})
@@ -3255,37 +3282,52 @@ def _two_method_header(tm: dict, lang: str = "ko") -> str:
         if rng:
             L.append(f"- Likely 5-day range: {rng} — plan entries/exits inside this band.")
         L += ["", f"**Method 1 — Machine Learning" + (f" ({algo})" if algo else "") + "**",
-              f"- Forecast: {dir_en}. The model read ~19 features (price/volume/flows) and this is "
-              f"the side its probability tilted to" + (f" — accuracy {acc}%, so treat it as one vote, not gospel." if acc is not None else ".")]
+              f"- Forecast: {dir_en}. The model read ~19 features (price/volume/investor flows) over 20 years of "
+              f"Korean-market data, and this is the side its probability tilted to"
+              + (f" — backtest accuracy {acc}%, so treat it as one vote, not gospel." if acc is not None else "."),
+              ((f"- Its numbers: expected 5-day swing ±{abs(em)}%" if em is not None else "- Expected move: n/a")
+               + (f", which maps to roughly {rng} from here." if rng else ".")
+               + " If price starts breaking out of that band, news/flows are overtaking the model's read.")]
         L += ["", "**Method 2 — Analysis (orderbook · flows · box)**",
               f"- Signal: {sig_en}" + (f" — {reasons}." if reasons else ".")
-              + " This is the 'what real money is doing right now' view — it reacts fastest when the mood flips."]
+              + " This is the 'what real money is doing right now' view — order-book depth, foreign/institutional "
+              "net flows and box position scored together; it reacts fastest when the mood flips."]
         if buy_lo and sell_hi:
-            L.append(f"- Box to trade: support ~{_w(buy_lo)} / resistance ~{_w(sell_hi)} — the range that's been holding.")
+            L.append(f"- Its trade map: support ~{_w(buy_lo)} / resistance ~{_w(sell_hi)} — the range that's been "
+                     f"holding. It favours buying near {_w(buy_lo)} and taking profit near {_w(sell_hi)}, not chasing the middle.")
         if wv in ("BUY", "WATCH", "AVOID"):
+            _ret = wave.get("retrace")
             L += ["", "**Method 3 — Wave (Elliott · Fibonacci)**",
-                  f"- Verdict: {wv}" + (f" (wave score {wsc})" if wsc is not None else "")
-                  + {"BUY": " — a strong rally pulled back deep enough to be a classic dip-buy spot.",
-                     "WATCH": " — the rally is real but the dip isn't deep enough yet; it's watching, not chasing.",
-                     "AVOID": " — the up-wave itself is weak, so this method steps aside."}.get(wv, "")]
+                  f"- Verdict: {wv}" + (f" (wave score {wsc}" + (f", pullback {round(_ret*100)}%" if _ret is not None else "") + ")" if wsc is not None else "")
+                  + {"BUY": " — a strong rally pulled back deep enough (61.8–78.6% Fibonacci zone) to be a classic dip-buy spot.",
+                     "WATCH": " — the rally is real (score ≥0.65 counts as strong) but the dip hasn't reached the 61.8–78.6% buy zone yet; it watches rather than chases.",
+                     "AVOID": " — the up-wave itself is weak or broken, so this method steps aside until a fresh strong wave forms."}.get(wv, "")]
             if wave.get("target"):
                 L.append(f"- Its map: upside target ₩{_f(wave['target'])}"
-                         + (f" · deep-pullback buy near ₩{_f(wave.get('entry'))}" if wave.get("entry") else ""))
+                         + (f" · deep-pullback buy near ₩{_f(wave.get('entry'))}" if wave.get("entry") else "")
+                         + (f" · stop ₩{_f(wave.get('stop'))}" if wave.get("stop") else "")
+                         + " — it only trades when price comes to ITS levels, which is why its backtest edge held up.")
         if m4v:
             L += ["", "**Method 4 — Cycle Scalp (real-time timing · ±1%)**",
                   f"- Right now: {m4v.replace('_',' ')}"
-                  + (f" — 5-min RSI {m4.get('rsi')}" if m4.get("rsi") is not None else "")
-                  + {"BUY_NOW": ". The short-term timing just turned up — this method would take a +1% cycle here.",
-                     "WAIT": ". It's near the low zone but the upturn hasn't fired — it waits rather than guesses.",
-                     "NO_SETUP": ". No pullback to work with — this method sits out until one forms."}.get(m4v, ".")]
+                  + (f" — 5-min RSI {m4.get('rsi_prev')}→{m4.get('rsi')}" if m4.get("rsi") is not None else "")
+                  + {"BUY_NOW": ". The short-term timing just turned up out of the low zone — this method would take a +1% cycle here.",
+                     "WAIT": ". It's near the low zone but the upturn hasn't fired yet — it waits for the RSI to actually turn rather than guessing the bottom.",
+                     "NO_SETUP": ". No pullback to work with right now — it sits out until a dip forms, because chasing strength is exactly what this method avoids."}.get(m4v, ".")]
             if m4.get("target"):
-                L.append(f"- If it fires: target +1% (₩{_f(m4['target'])}) / stop −1% (₩{_f(m4['stop'])}) / re-enter next leg.")
+                L.append(f"- If it fires: target +1% (₩{_f(m4['target'])}) / stop −1% (₩{_f(m4['stop'])}) / "
+                         f"{m4.get('time_stop_min', 60)}-min time-stop, then re-enter on the next leg — small losses, repeated wins.")
         L.append("")
         L.append("**Scenarios — the two levels that matter**")
         if sell_hi:
             L.append(f"- Break above ~{_w(sell_hi)} with volume → the upside scenario opens; shorts get squeezed.")
         if buy_lo:
             L.append(f"- Lose ~{_w(buy_lo)} → expect a deeper pullback; the wave method's deep-buy zone comes into play.")
+        # FINAL REMINDER (user ask): after all the explanation, repeat the conclusion.
+        L += ["", f"**Final take — one line again:** {mood_en}."
+              + (f" Likely range {rng};" if rng else "")
+              + (f" watch resistance ~{_w(sell_hi)}" if sell_hi else "")
+              + (f" and support ~{_w(buy_lo)}." if buy_lo else ".")]
         L += ["", "_Forecast only — not a buy/sell call. Ask \"should I buy?\" for a recommendation._"]
         return "\n".join(L)
 
@@ -3296,38 +3338,52 @@ def _two_method_header(tm: dict, lang: str = "ko") -> str:
     if rng:
         L.append(f"· 예상 5일 범위: {rng} — 매매 계획은 이 밴드 안에서 잡는 게 좋아요.")
     L += ["", f"**방법 1 — 머신러닝 알고리즘" + (f" ({algo})" if algo else "") + "**",
-          f"· 예측: {dir_ko}. 가격·거래량·수급 등 19개 지표를 읽고 확률이 기운 쪽이에요"
-          + (f" — 정확도 {acc}%라 '한 표'로 참고하세요." if acc is not None else ".")]
+          f"· 예측: {dir_ko}. 20년치 국내 시장 데이터로 학습한 모델이 가격·거래량·수급 등 19개 지표를 읽고 "
+          f"확률이 기운 쪽이에요" + (f" — 백테스트 정확도 {acc}%라 '한 표'로 참고하세요." if acc is not None else "."),
+          ((f"· 수치로는: 예상 5일 변동 ±{abs(em)}%" if em is not None else "· 예상 변동: 추정 불가")
+           + (f", 가격으로 환산하면 대략 {rng} 범위예요." if rng else ".")
+           + " 실제 가격이 이 밴드를 벗어나기 시작하면 뉴스·수급이 모델 예측을 앞지르고 있다는 신호예요.")]
     L += ["", "**방법 2 — 분석 (호가·수급·박스권)**",
           f"· 신호: {sig_ko}" + (f" — {reasons}." if reasons else ".")
-          + " 지금 실제 돈이 어느 쪽으로 움직이는지 보는 방법이라, 분위기가 바뀌면 가장 먼저 반응해요."]
+          + " 호가창 잔량·외국인/기관 실시간 순매수·박스권 위치를 함께 점수로 합친, "
+          "'지금 실제 돈이 어디로 움직이는지' 보는 방법이라 분위기가 바뀌면 가장 먼저 반응해요."]
     if buy_lo and sell_hi:
-        L.append(f"· 매매 박스권: 지지 ~{_w(buy_lo)} / 저항 ~{_w(sell_hi)} — 최근 지켜지고 있는 범위예요.")
+        L.append(f"· 이 방법의 매매 지도: 지지 ~{_w(buy_lo)} / 저항 ~{_w(sell_hi)} — 최근 지켜지는 범위예요. "
+                 f"박스 안에서는 {_w(buy_lo)} 부근 매수, {_w(sell_hi)} 부근 익절이 기본이고 중간에서 쫓아가는 건 피해요.")
     if wv in ("BUY", "WATCH", "AVOID"):
+        _ret = wave.get("retrace")
         L += ["", "**방법 3 — 파동 (엘리엇 · 피보나치)**",
               f"· 판단: {({'BUY':'매수','WATCH':'관망','AVOID':'회피'}).get(wv, wv)}"
-              + (f" (파동점수 {wsc})" if wsc is not None else "")
-              + {"BUY": " — 강하게 오른 뒤 충분히 깊게 눌린, 교과서적인 눌림목 자리예요.",
-                 "WATCH": " — 상승 파동은 진짜인데 아직 눌림이 얕아요. 쫓아가지 않고 기다리는 중이에요.",
-                 "AVOID": " — 상승 파동 자체가 약해서 이 방법은 한발 물러나 있어요."}.get(wv, "")]
+              + (f" (파동점수 {wsc}" + (f" · 되돌림 {round(_ret*100)}%" if _ret is not None else "") + ")" if wsc is not None else "")
+              + {"BUY": " — 강하게 오른 뒤 61.8~78.6% 피보나치 구간까지 깊게 눌린, 교과서적인 눌림목 자리예요.",
+                 "WATCH": " — 상승 파동은 진짜인데(점수 0.65 이상이면 강한 파동) 아직 61.8~78.6% 매수 구간까지 눌리지 않았어요. 쫓아가지 않고 기다리는 중이에요.",
+                 "AVOID": " — 상승 파동 자체가 약하거나 무너져서, 새 파동이 나올 때까지 한발 물러나 있어요."}.get(wv, "")]
         if wave.get("target"):
             L.append(f"· 이 방법의 지도: 상단 목표 {_f(wave['target'])}원"
-                     + (f" · 깊은 눌림목 매수 {_f(wave.get('entry'))}원 부근" if wave.get("entry") else ""))
+                     + (f" · 깊은 눌림목 매수 {_f(wave.get('entry'))}원 부근" if wave.get("entry") else "")
+                     + (f" · 손절 {_f(wave.get('stop'))}원" if wave.get("stop") else "")
+                     + " — 가격이 '자기 자리'에 올 때만 매매하는 게 이 방법의 강점이에요.")
     if m4v:
         L += ["", "**방법 4 — 단타 사이클 (실시간 타이밍 · ±1%)**",
               f"· 지금: {({'BUY_NOW':'진입 타이밍','WAIT':'타이밍 대기','NO_SETUP':'셋업 없음'}).get(m4v, m4v)}"
-              + (f" — 5분봉 RSI {m4.get('rsi')}" if m4.get("rsi") is not None else "")
-              + {"BUY_NOW": ". 단기 타이밍이 방금 위로 돌아서서, 이 방법이라면 여기서 +1% 사이클을 노려요.",
-                 "WAIT": ". 저점권 근처지만 아직 반등 신호가 안 켜졌어요 — 찍기보다 기다리는 방법이에요.",
-                 "NO_SETUP": ". 눌림 자체가 없어서 자리가 만들어질 때까지 쉬어요."}.get(m4v, ".")]
+              + (f" — 5분봉 RSI {m4.get('rsi_prev')}→{m4.get('rsi')}" if m4.get("rsi") is not None else "")
+              + {"BUY_NOW": ". 단기 타이밍이 방금 저점에서 위로 돌아서서, 이 방법이라면 여기서 +1% 사이클을 노려요.",
+                 "WAIT": ". 저점권 근처지만 RSI가 실제로 돌아서는 걸 확인해야 해요 — 바닥을 찍기보다 신호를 기다리는 방법이에요.",
+                 "NO_SETUP": ". 눌림 자체가 없어서 쉬는 중이에요 — 강한 가격을 쫓아가는 건 이 방법이 가장 피하는 행동이거든요."}.get(m4v, ".")]
         if m4.get("target"):
-            L.append(f"· 신호가 켜지면: 목표 +1% ({_f(m4['target'])}원) / 손절 −1% ({_f(m4['stop'])}원) / 다음 파동 재진입.")
+            L.append(f"· 신호가 켜지면: 목표 +1% ({_f(m4['target'])}원) / 손절 −1% ({_f(m4['stop'])}원) / "
+                     f"{m4.get('time_stop_min', 60)}분 안에 안 가면 소폭 정리 후 다음 파동 재진입 — 손실은 작게, 이익은 반복해서.")
     L.append("")
     L.append("**시나리오 — 중요한 두 가격**")
     if sell_hi:
         L.append(f"· 저항 ~{_w(sell_hi)}을 거래량 실리며 돌파하면 → 위쪽 시나리오가 열려요.")
     if buy_lo:
         L.append(f"· 지지 ~{_w(buy_lo)}이 깨지면 → 조정이 깊어질 수 있고, 파동 방법의 깊은 매수 구간이 살아나요.")
+    # 최종 리마인드 (user ask): 설명이 끝난 뒤 결론을 한 번 더.
+    L += ["", f"**최종 정리 — 다시 한 줄로:** {mood_ko}."
+          + (f" 예상 범위는 {rng}," if rng else "")
+          + (f" 위로는 저항 ~{_w(sell_hi)}" if sell_hi else "")
+          + (f" · 아래로는 지지 ~{_w(buy_lo)}이 기준선이에요." if buy_lo else ".")]
     L += ["", "_전망(예측)일 뿐 매수/매도 권유가 아닙니다. 매매 판단은 \"살까?\"로 물어보세요._"]
     return "\n".join(L)
 
@@ -4932,7 +4988,7 @@ def _run_agent_impl(
         if _sw:
             _prev = _prev_user_msg(history)
             if _is_vip_current_price_q(_prev, agent_id):           # prev was price → price
-                _vp = _vip_live_price_reply(transcript, lang)
+                _vp = _vip_live_price_reply(transcript, lang, db)
                 if _vp:
                     return _vp
             elif _wants_recommendation(_prev) or _is_future_outlook(_prev) or _is_stock_advice(_prev, agent_id):
@@ -4958,7 +5014,7 @@ def _run_agent_impl(
             and not _is_stock_advice(transcript, agent_id)   # 'last week I bought X, hold or sell?' = ADVICE
             and not _wants_recommendation(transcript)               # not a price-history dump
             and _requested_history_dates(transcript)):
-        _hist = _vip_history_reply(transcript, lang)
+        _hist = _vip_history_reply(transcript, lang, history=history or [])
         if _hist:
             return {"intent": "stock_history", "language": lang, "reply": _hist,
                     "action": None, "speak": True, "transcript": transcript,
@@ -5122,7 +5178,7 @@ def _run_agent_impl(
             _ss_fb = _vip_short_selling_reply(transcript, lang)
             if _ss_fb:
                 return _ss_fb
-        _vp_fb = _vip_live_price_reply(transcript, lang)
+        _vp_fb = _vip_live_price_reply(transcript, lang, db)
         if _vp_fb:
             return _vp_fb
         # If the Stock agent gave nothing usable, fall through to the normal path.
@@ -5135,7 +5191,7 @@ def _run_agent_impl(
         # Use the SAME canonical live-price path as the VIP agent (Kiwoom during
         # market / Naver after, shared formatter) so this stock-agent fallback —
         # reached only when the Stock backend relay is down — still reads identically.
-        vp = _vip_live_price_reply(transcript, lang)
+        vp = _vip_live_price_reply(transcript, lang, db)
         if vp:
             return vp
 
