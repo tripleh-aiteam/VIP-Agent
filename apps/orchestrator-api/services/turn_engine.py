@@ -55,11 +55,43 @@ def _day_bars(db, ticker: str, include_live: bool = True) -> dict[str, list[dict
            + (" UNION SELECT ts, open, high, low, close, volume FROM raw_minute_prices WHERE ticker=:t"
               if include_live else ""))
     rows = db.execute(text(f"SELECT * FROM ({src}) u ORDER BY ts"), {"t": str(ticker).zfill(6)}).fetchall()
-    by: dict[str, list[dict]] = defaultdict(list)
+    # TZ NORMALIZE + DEDUPE: minute_bars_hist stores UTC-labeled hours (00-06 = 09-15 KST)
+    # while raw_minute_prices stores KST-labeled hours (09-15). Mixing them put ~24h of bars
+    # into one 'day' and broke leg-duration math (1,455-min legs). Shift KST-labeled rows
+    # back 9h so everything is on the hist convention; last row per ts wins.
+    import datetime as _dt
+    dedup: dict[str, dict] = {}
     for r in rows:
-        by[str(r[0])[:10]].append({"ts": r[0], "hour": int(str(r[0])[11:13]),
-                                   "open": float(r[1]), "high": float(r[2]), "low": float(r[3]),
-                                   "close": float(r[4]), "volume": float(r[5] or 0)})
+        ts = r[0]
+        hh = int(str(ts)[11:13])
+        if hh >= 8:                                   # KST-labeled row → normalize to UTC label
+            try:
+                ts = ts - _dt.timedelta(hours=9)
+                hh = int(str(ts)[11:13])
+            except Exception:
+                pass
+        dedup[str(ts)] = {"ts": ts, "hour": hh,
+                          "open": float(r[1]), "high": float(r[2]), "low": float(r[3]),
+                          "close": float(r[4]), "volume": float(r[5] or 0)}
+    # RESAMPLE to uniform 5-min buckets: hist is 5-min but the live collector writes 1-MIN
+    # rows (60/hour) — mixing granularities broke the bars×5 duration math (1,455-min legs).
+    buckets: dict[str, dict] = {}
+    for ts in sorted(dedup):
+        b = dedup[ts]
+        mm = (int(ts[14:16]) // 5) * 5
+        key = f"{ts[:14]}{mm:02d}"
+        cur = buckets.get(key)
+        if cur is None:
+            buckets[key] = {"ts": b["ts"], "hour": b["hour"], "open": b["open"], "high": b["high"],
+                            "low": b["low"], "close": b["close"], "volume": b["volume"]}
+        else:
+            cur["high"] = max(cur["high"], b["high"])
+            cur["low"] = min(cur["low"], b["low"])
+            cur["close"] = b["close"]
+            cur["volume"] += b["volume"]
+    by: dict[str, list[dict]] = defaultdict(list)
+    for key in sorted(buckets):
+        by[key[:10]].append(buckets[key])
     return by
 
 
@@ -190,6 +222,66 @@ def backtest(db, ticker: str) -> dict[str, Any]:
             "avg_hold_min": round(st.mean(t["min"] for t in trades)),
             "cost_rt_pct": COST_RT,
             "go": bool(sum(pnls) > 0 and wins / len(pnls) >= 0.55 and len(pnls) >= 12)}
+
+
+def turn_reply(db, ticker: str, name: str, lang: str = "ko") -> Optional[str]:
+    """Chat answer for '언제 반등해? / when will it turn?' — rhythm prior + live turn score.
+    HONEST LABEL: backtest is not yet profitable (v2 NO-GO), so this is informational timing
+    context, not a trade signal. Numbers are real (stored bars + live collector)."""
+    s = live_turn_status(db, ticker)
+    rh = (s.get("rhythm") or {}) if s.get("ok") else rhythm(db, ticker)
+    if not rh.get("ok"):
+        return None
+    en = str(lang or "").lower().startswith("en")
+    L = []
+    if en:
+        L.append(f"**⏱ {name} — turn timing (measured rhythm + live read)**")
+        L.append("")
+        L.append(f"**This stock's rhythm ({rh['days']} trading days measured):** falls typically run "
+                 f"**{rh['dn_min']} min / {rh['dn_pct']}%**, rises **{rh['up_min']} min / +{rh['up_pct']}%**, "
+                 f"about {rh['ups_per_day']} up-waves per day.")
+        if s.get("ok") and s.get("price"):
+            leg = "falling" if s.get("leg") == "down" else "rising/flat"
+            L.append(f"**Right now:** ₩{s['price']:,.0f} · current leg: {leg} "
+                     f"({s.get('leg_run_min')} min, {s.get('leg_run_pct')}%) · 5-min RSI {s.get('rsi')}")
+            sc = s.get("bottom_turn_score") or 0
+            if s.get("fire"):
+                L.append(f"**Bottom-turn signal: FIRING (score {sc})** — RSI turning up out of the low; "
+                         f"if this is a real turn, the typical rise from here is ~{rh['up_min']} min / +{rh['up_pct']}%.")
+            elif s.get("leg") == "down":
+                _left = max(rh["dn_min"] - (s.get("leg_run_min") or 0), 0)
+                L.append(f"**Bottom-turn signal: not yet (score {sc})** — statistically ~{_left} min "
+                         f"of typical fall time remains; watch for the RSI upturn + buyer step-in.")
+            else:
+                L.append(f"**No fall in progress** — turn signals arm on the next down-leg (score {sc}).")
+        L.append("")
+        L.append(f"_Best turn hours (measured): 09:00–10:00 (85% real) · worst: 14:00–15:00 (66%). "
+                 f"⚠️ Honesty: the turn strategy's backtest is NOT yet profitable after costs "
+                 f"(verdict NO-GO, sample still small) — use this as timing context, not a signal._")
+        return "\n".join(L)
+    L.append(f"**⏱ {name} — 턴(반등/고점) 타이밍 (실측 리듬 + 실시간)**")
+    L.append("")
+    L.append(f"**이 종목의 리듬 (실측 {rh['days']}거래일):** 하락 레그 평균 **{rh['dn_min']}분 / {rh['dn_pct']}%**, "
+             f"상승 레그 평균 **{rh['up_min']}분 / +{rh['up_pct']}%**, 하루 상승파동 약 {rh['ups_per_day']}회.")
+    if s.get("ok") and s.get("price"):
+        leg = "하락 중" if s.get("leg") == "down" else "상승/보합"
+        L.append(f"**지금 상태:** {s['price']:,.0f}원 · 현재 레그: {leg} "
+                 f"({s.get('leg_run_min')}분째, {s.get('leg_run_pct')}%) · 5분봉 RSI {s.get('rsi')}")
+        sc = s.get("bottom_turn_score") or 0
+        if s.get("fire"):
+            L.append(f"**바닥 턴 신호: 점등 (점수 {sc})** — RSI가 저점에서 돌아서는 중이에요. 진짜 턴이라면 "
+                     f"여기서 평균 ~{rh['up_min']}분 / +{rh['up_pct']}% 상승 레그가 통계적 기대치예요.")
+        elif s.get("leg") == "down":
+            _left = max(rh["dn_min"] - (s.get("leg_run_min") or 0), 0)
+            L.append(f"**바닥 턴 신호: 아직 (점수 {sc})** — 평균 하락 시간까지 통계적으로 ~{_left}분 남았어요. "
+                     f"RSI 반전 + 매수세 유입이 확인되면 알려드릴 수 있는 신호가 켜져요.")
+        else:
+            L.append(f"**지금은 하락 레그가 아니에요** — 다음 눌림에서 턴 신호가 작동해요 (점수 {sc}).")
+    L.append("")
+    L.append(f"_턴이 잘 맞는 시간대(실측): 09~10시(85% 진짜) · 가짜 턴 많은 시간대: 14~15시(66%). "
+             f"⚠️ 정직 고지: 이 턴 전략의 백테스트는 아직 비용 차감 후 수익이 아닙니다(판정 NO-GO, 표본 부족) — "
+             f"매매 신호가 아니라 타이밍 참고 정보로 쓰세요._")
+    return "\n".join(L)
 
 
 def live_turn_status(db, ticker: str) -> dict[str, Any]:

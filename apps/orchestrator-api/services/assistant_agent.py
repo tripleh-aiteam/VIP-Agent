@@ -4472,6 +4472,43 @@ def _run_agent_impl(
         except Exception as e:
             log.warning(f"position advice failed: {str(e)[:120]}")
 
+    # === TURN TIMING ("언제 반등해?/when will it turn?/언제 팔아야/바닥 언제") — the boss's
+    # turn strategy served as INFORMATIONAL timing: measured rhythm card + live turn score,
+    # with the honest NO-GO backtest label. Fires get logged for forward grading (intent=turn).
+    _turn_q = bool(_re.search(
+        r"언제\s*(반등|오르|올라|팔|사야|들어가)|반등\s*언제|바닥\s*언제|고점\s*언제|턴\s*(왔|신호|타이밍)"
+        r"|when\s+(will|does|is|should)\b.{0,40}\b(turn|bounce|rebound|bottom|sell|peak)"
+        r"|turn signal|bottom yet|hit the bottom|when to (sell|buy in|enter)",
+        (transcript or ""), _re.IGNORECASE))
+    if not confirmed_tool and not attachment_ids and _turn_q:
+        try:
+            from services.stock_resolver import resolve_one
+            from services.turn_engine import turn_reply, live_turn_status
+            _tc, _tn = resolve_one(transcript or "")
+            if not _tc:                                  # bare follow-up: inherit from history
+                for _h in reversed(history or []):
+                    _tc, _tn = resolve_one(str(_h.get("content") or _h.get("text") or ""))
+                    if _tc:
+                        break
+            if _tc:
+                _rep = turn_reply(db, _tc, _tn or _tc, lang)
+                if _rep:
+                    try:                                  # E1: grade every FIRING signal forward
+                        _st = live_turn_status(db, _tc)
+                        if _st.get("fire"):
+                            from services.call_grader import log_call
+                            log_call(db, ticker=_tc, action="BUY", intent="turn",
+                                     ref_price=_st.get("price"),
+                                     horizon_min=int((_st.get("rhythm") or {}).get("up_min") or 30),
+                                     name=_tn, agent_id=agent_id, lang=lang)
+                    except Exception:
+                        pass
+                    return {"intent": "turn_timing", "language": lang, "reply": _rep,
+                            "action": None, "speak": True, "transcript": transcript,
+                            "tool_used": "turn_engine"}
+        except Exception as e:
+            log.warning(f"turn timing failed: {str(e)[:120]}")
+
     # === Method-4 STRATEGY COMPARISON ("전략 비교/compare strategies/1% 전략") — honest
     # replay of A(fixed ±1%, no time limit) vs B(RSI-timed ±1% cycles) on stored 5-min bars.
     if (not confirmed_tool and not attachment_ids and any(

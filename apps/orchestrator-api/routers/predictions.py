@@ -515,6 +515,33 @@ def day_trade_feasibility(ticker: str, target: float = Query(1.0), db: Session =
     return feasibility(db, str(ticker).zfill(6), float(target))
 
 
+@router.get("/turn-status/{ticker}")
+def turn_status(ticker: str, db: Session = Depends(get_db)):
+    """Live TURN read for one stock: rhythm card (measured leg stats) + current leg state +
+    bottom-turn score. Informational — the turn strategy's backtest is NOT yet profitable."""
+    from services.turn_engine import live_turn_status
+    return live_turn_status(db, str(ticker).zfill(6))
+
+
+@router.get("/turn-signals")
+def turn_signals(db: Session = Depends(get_db)):
+    """Live turn status for every tracked stock (firing first) — feeds the Daily Trading view."""
+    from services import prediction_service as ps_mod
+    from services.turn_engine import live_turn_status
+    out = []
+    for code, name in list(ps_mod.NAMES.items()):
+        try:
+            s = live_turn_status(db, code)
+            if s.get("ok"):
+                s["name"] = name
+                s.pop("rhythm", None) or None
+                out.append(s)
+        except Exception:
+            continue
+    out.sort(key=lambda x: (not x.get("fire"), -(x.get("bottom_turn_score") or 0)))
+    return {"results": out}
+
+
 @router.get("/cycle-signals")
 def cycle_signals(db: Session = Depends(get_db)):
     """Method-4 (±1% cycle) LIVE timing signal for every tracked stock — feeds the Daily
