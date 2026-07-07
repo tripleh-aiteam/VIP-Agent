@@ -2,6 +2,29 @@
 
 ---
 
+## 2026-07-07 (Tuesday) — 5 chatbot fixes + first LIVE 30-min forward test of the scalp advisor
+
+### [10:10] Monitor: Kiwoom-style ladder polish + WebSocket tick feed (~1s)
+
+- **What:** ① Verified the monitor serves REAL Kiwoom data (same-moment compare: quote O/H/L/±%, top-3 book, fill stream all identical to raw Kiwoom). ② Fixed the ⚡−N fill subtraction to be side-aware (B fills eat asks, S fills eat bids — at the touch price it showed on BOTH tables). ③ Removed the Side column from executions (fill-price color = side). ④ Sellers now run HIGH price (top) → BEST ask (bottom), Kiwoom order, best quotes adjacent. ⑤ Built **`ml/realtime/ws_hot_feed.py`**: Kiwoom WebSocket 0D(호가)+0B(체결) push feed for the `hot_watch` ticker → keeps `kiwoom_hot` 0.0-0.4s fresh; runs as a daemon thread in the PC collector; REST relay yields while the WS row is <2s fresh and auto-covers if the socket drops; shared pool token only. Measured end-to-end data age: REST relay 1-3s (median 2s) → **WS ~1s median**.
+- **Also answered honestly:** Kiwoom publishes only 10 live levels/side (confirmed live 10+10) — the other 20 rows are our memory feature and re-liven when price approaches them; ML retrains daily (GH Actions dawn run + the PC 16:30 task fixed 07-06).
+- **Files:** `ml/realtime/ws_hot_feed.py` (new), `ml/realtime/rt_snapshot_collector.py` (WS thread + relay yield), `apps/admin-dashboard/src/app/monitoring/page.tsx` (side-aware ⚡, no Side col, sellers order, legend).
+- **Next:** friend registers 74.220.52.1/.2 (ideally 74.220.52.0/24 + 74.220.60.0/24) → 직결 returns; optional: dim remembered rows, 체결강도 panel.
+
+### Goal
+
+Boss's screenshot-driven fix list (format inconsistencies, off-day handling, Kiwoom source, richer outlook), plus a real forward test: ask the bot for short-term advice during market, wait 30 minutes, grade against the actual bars.
+
+### Files updated
+
+- [`services/assistant_agent.py`](apps/orchestrator-api/services/assistant_agent.py) — ① past-date follow-up ('7월 2일은?/and July 2?') now inherits the stock from history → same deterministic table (was LLM bullets); ② OFF-DAY asks (7월 5일=토) now explain "주말(휴장일)이라 거래 없음 — 직전 거래일(07-03) 종가 기준" instead of silently showing the wrong date; ③ threaded `db` into 3 `_vip_live_price_reply` call sites → follow-ups show Kiwoom during market (was Naver); ④ outlook methods carry their real numbers (M1 expected price band + accuracy, M2 buy/sell trade map, M3 wave score/retrace/stop, M4 RSI prev→now + time rule) with meaning sentences; ⑤ outlook ends with "최종 정리 — 다시 한 줄로 / Final take" repeating the conclusion. All EN==KO, both surfaces via relay; regression 24/24; live-verified.
+
+### The first live forward test (advice 09:43 KST, graded 10:25 vs real 5-min bars, KOSPI −4.5% morning)
+
+NAVER ENTER → **LOSS** (stop hit, −0.71% low) · LG에너지솔루션 SKIP → **CORRECT** (fell −1.19%) · 삼성전자 ENTER → OPEN +0.93% (missed +1% target by 70원) · 삼성전기 ENTER → **LOSS** (−1.27%). **0W/2L/1 open/1 correct skip.** Finding: the scalp ENTER gate is too permissive on a crashing market day — the one refusal was the only clearly right call. Proposed next: a **market-regime veto** (KOSPI < −2% intraday → no new long scalps), like the wave method's index-plunge filter.
+
+---
+
 ## 2026-07-06 (Monday) — Method 4 (1% cycle scalp) + honest A/B strategy comparison
 
 ### Goal
@@ -64,6 +87,12 @@ Scanned the last 7 daily `newspaper_report` rows: every day = 18 articles, **0 s
 - **Why:** Monitor must be real-time regardless of which IP Render lands on; and no service may ever mint its own Kiwoom token again.
 - **Files:** `services/orderbook_memory.py` (hot read/watch + serve, quote fallback), `ml/realtime/rt_snapshot_collector.py` (`_hot_relay_loop` thread), `routers/predictions.py` (`/kiwoom-token`, `/kiwoom-diag`), `apps/admin-dashboard/src/app/monitoring/page.tsx` (strip in control row, last-fills state), stock repo `backend/services/kiwoom/rest_client.py` (`_fetch_vip_shared_token`).
 - **Next:** ask the friend to also register `74.220.52.1` (ideally all of 74.220.52.0/24 + 74.220.60.0/24) at Kiwoom so 직결 works from Render again; the relay covers the gap meanwhile.
+
+### [17:30] Daily ML retrain — PC task was silently dead; fixed + ran
+
+- **What:** Boss asked "is ML retraining daily?" Answer: the GitHub Actions cloud retrain (`daily-ml-retrain.yml`, ~05-06:30 KST, FinanceDataReader, full 12-step pipeline) HAS been running daily (51 predictions each morning, verified in `model_predictions`). But the PC's `VIP_DailyRetrain` 16:30 task had NEVER run once — unquoted long path with spaces → 0x80070002 file-not-found, and `retrain.log` didn't exist. Re-registered with the 8.3 short path (`VIPAGE~1`, same fix as VIP_MinuteBackfill) and fired it: all 12 steps exit 0 in 27 min, features now through **2026-07-06**, 51 fresh predictions (1 BUY / 41 HOLD / 9 SELL) — same-evening retrain restored (~13h fresher than the dawn cloud run).
+- **Watch:** the 07-04 cloud run wrote only 12/51 predictions (partial step failure on the runner) — add a failure alert if it repeats.
+- **Files:** none (Task Scheduler re-registration only).
 
 ### Goal
 
