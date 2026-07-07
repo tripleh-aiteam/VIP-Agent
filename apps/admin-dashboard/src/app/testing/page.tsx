@@ -5,7 +5,7 @@
 // stock, positions with unrealized P&L, trade history with realized P&L + win record.
 // Polling /paper-desk/state also triggers pending limit fills server-side.
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { api, apiPost } from "@/components/api";
 import { useLanguage } from "@/components/i18n";
 
@@ -26,6 +26,16 @@ type DeskState = {
 type QuoteRes = { ok: boolean; ticker?: string; name?: string; price?: number; error?: string };
 type StockItem = { code: string; name: string; market: string };
 
+// Defined OUTSIDE the page component: defining this inline recreated the component
+// type on every keystroke/poll, remounting the form and throwing the cursor out of
+// the inputs (boss: "typing is weird") — a stable component type keeps focus.
+const Sect = ({ title, children }: { title: string; children: React.ReactNode }) => (
+  <div className="rounded-xl border border-[var(--border-default)] overflow-hidden mb-4">
+    <div className="px-3 py-2 text-[12.5px] font-extrabold text-[var(--text-primary)]" style={{ background: "var(--bg-elevated)" }}>{title}</div>
+    {children}
+  </div>
+);
+
 export default function TestingPage() {
   const { lang } = useLanguage();
   const t = (ko: string, en: string) => (lang === "ko" ? ko : en);
@@ -41,6 +51,15 @@ export default function TestingPage() {
   const [msg, setMsg] = useState<string | null>(null);
   const [stocks, setStocks] = useState<StockItem[]>([]);
   const qTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // memoized: 2,873 <option>s must not re-render on every keystroke/poll
+  const stockOptions = useMemo(() => (
+    <datalist id="krx-stocks">
+      {stocks.map((s) => (
+        <option key={s.code} value={`${s.name} (${s.code})`}>{s.market}</option>
+      ))}
+    </datalist>
+  ), [stocks]);
 
   const load = () => api<DeskState>("/paper-desk/state").then(setSt).catch(() => {});
   useEffect(() => {
@@ -94,13 +113,6 @@ export default function TestingPage() {
     await apiPost("/paper-desk/reset?cash=100000000"); load();
   };
 
-  const Sect = ({ title, children }: { title: string; children: React.ReactNode }) => (
-    <div className="rounded-xl border border-[var(--border-default)] overflow-hidden mb-4">
-      <div className="px-3 py-2 text-[12.5px] font-extrabold text-[var(--text-primary)]" style={{ background: "var(--bg-elevated)" }}>{title}</div>
-      {children}
-    </div>
-  );
-
   return (
     <div className="px-4 md:px-8 py-6 max-w-[1080px] mx-auto">
       <div className="mb-1 flex items-baseline gap-2 flex-wrap">
@@ -132,12 +144,7 @@ export default function TestingPage() {
           <input value={q} onChange={(e) => setQ(e.target.value)} list="krx-stocks"
             placeholder={t("종목 이름 입력 → 목록에서 선택", "type a name → pick from the list")}
             className="text-[13px] px-2.5 py-1.5 rounded-lg border bg-transparent text-[var(--text-primary)]" style={{ borderColor: "var(--border-default)", width: 220 }} />
-          {/* ALL 2,873 KRX stocks by Korean name — the browser filters as you type */}
-          <datalist id="krx-stocks">
-            {stocks.map((s) => (
-              <option key={s.code} value={`${s.name} (${s.code})`}>{s.market}</option>
-            ))}
-          </datalist>
+          {stockOptions}
           {quote && (quote.ok
             ? <span className="text-[12px] tabular-nums text-[var(--text-secondary)]"><b>{quote.name}</b> {fmt(quote.price)}{t("원", "")}</span>
             : <span className="text-[11px] text-[var(--text-muted)]">{quote.error}</span>)}
