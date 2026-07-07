@@ -54,7 +54,10 @@ export default function MonitoringPage() {
   // row where deals just happened and (b) optimistically subtract consumed qty until the
   // next real Kiwoom book snapshot confirms it (boss: 1000 resting − 200 dealt = show 800).
   const lastAccVol = useRef<number>(0);
-  const execAtPrice = useRef<Record<number, number>>({});
+  // dealt qty per price, SPLIT BY SIDE: a buyer-hit (dir>0) consumes the ASK at that
+  // price, a seller-hit consumes the BID — without the split, the touch price (same
+  // price on both sides for a moment) showed the ⚡−N subtraction on BOTH tables.
+  const execAtPrice = useRef<{ ask: Record<number, number>; bid: Record<number, number> }>({ ask: {}, bid: {} });
 
   useEffect(() => {
     prevQty.current = {};
@@ -123,12 +126,13 @@ export default function MonitoringPage() {
   useEffect(() => {
     if (!ob) return;
     // NEW deals since the previous tick (acc_volume is cumulative → strictly increasing)
-    const fresh: Record<number, number> = {};
+    const fresh = { ask: {} as Record<number, number>, bid: {} as Record<number, number> };
     let maxAcc = lastAccVol.current;
     (ob.trades || []).forEach((tr) => {
       const av = tr.acc_volume || 0;
       if (av > lastAccVol.current) {
-        fresh[tr.price] = (fresh[tr.price] || 0) + (tr.qty || 0);
+        const s = tr.dir > 0 ? "ask" : tr.dir < 0 ? "bid" : null;   // B eats asks, S eats bids
+        if (s) fresh[s][tr.price] = (fresh[s][tr.price] || 0) + (tr.qty || 0);
         if (av > maxAcc) maxAcc = av;
       }
     });
@@ -152,7 +156,7 @@ export default function MonitoringPage() {
     const { q: qRaw, dir } = deltaInfo(l);         // dir = changed THIS tick
     // deals just hit this price: show resting − dealt immediately (Kiwoom's next book
     // snapshot confirms the same number one tick later); ⚡ badge shows what was consumed
-    const dealt = !ph ? (execAtPrice.current[l.price] || 0) : 0;
+    const dealt = !ph ? (execAtPrice.current[side][l.price] || 0) : 0;
     const q = dealt && !dir ? Math.max(0, qRaw - dealt) : qRaw;
     const lm = lastMove.current[l.price];          // persistent last direction
     const useDir = dir || (lm ? lm.dir : "");      // this tick if it changed, else last known
@@ -254,7 +258,9 @@ export default function MonitoringPage() {
                 {t("◀ 매도 (매도자)", "◀ Sellers (asks)")} · {obsAsks.length}/30
               </div>
               <ColHead />
-              {asks.map((l, i) => <ColRow key={`a${l.price}_${i}`} l={l} side="ask" rank={i + 1} />)}
+              {/* KIWOOM ORDER: sellers run HIGH price (top) down to the BEST ask (bottom),
+                  so the best quotes of both tables sit adjacent. rank 1 = best ask (bottom). */}
+              {[...asks].reverse().map((l, i) => <ColRow key={`a${l.price}_${i}`} l={l} side="ask" rank={asks.length - i} />)}
               {asks.length === 0 && <div className="px-2 py-3 text-center text-[11px] text-[var(--text-muted)]">—</div>}
             </div>
             {/* MIDDLE — 매수 / buyers (bids) */}
@@ -280,7 +286,6 @@ export default function MonitoringPage() {
                 <span style={{ minWidth: 52 }}>{t("시간", "Time")}</span>
                 <span style={{ minWidth: 62 }}>{t("체결가", "Price")}</span>
                 <span className="text-right flex-1">{t("수량", "Qty")}</span>
-                <span style={{ minWidth: 30 }} className="text-right">{t("구분", "Side")}</span>
               </div>
               {(ob.trades || []).map((tr, i) => (
                 <div key={`t${tr.time}_${tr.acc_volume ?? i}`}
@@ -289,9 +294,6 @@ export default function MonitoringPage() {
                   <span className="tabular-nums text-[10.5px] text-[var(--text-muted)]" style={{ minWidth: 52 }}>{tr.time}</span>
                   <span className="font-bold tabular-nums" style={{ minWidth: 62, color: tr.dir > 0 ? RED : tr.dir < 0 ? BLUE : "var(--text-primary)" }}>{fmt(tr.price)}</span>
                   <span className="tabular-nums text-[var(--text-secondary)] text-right flex-1">{fmt(tr.qty)}</span>
-                  <span className="text-right text-[10.5px] font-extrabold" style={{ minWidth: 30, color: tr.dir > 0 ? RED : tr.dir < 0 ? BLUE : "var(--text-muted)" }}>
-                    {tr.dir > 0 ? t("매수", "B") : tr.dir < 0 ? t("매도", "S") : "·"}
-                  </span>
                 </div>
               ))}
               {(ob.trades || []).length === 0 && (
@@ -314,8 +316,8 @@ export default function MonitoringPage() {
 
       {/* legend */}
       <div className="mt-2 text-[10.5px] text-[var(--text-muted)]">
-        {t("가격순 호가창: 1행 = 최우선 호가 · 화살표 = 잔량 변동(빨강 ▲ 증가, 파랑 ▼ 감소) · ⚡−N = 방금 체결로 소진된 잔량(잔량−체결 즉시 반영) · 🔥 = 대량 호가 · 체결: 빨강 = 매수, 파랑 = 매도 (키움 직결)",
-          "Price ladder: row 1 = best quote · arrows = qty change (red ▲ up, blue ▼ down) · ⚡−N = qty just consumed by executions (resting − dealt shown instantly) · 🔥 = large order · Executions: red = buyer-hit, blue = seller-hit (direct Kiwoom)")}
+        {t("호가창(키움식): 매도는 위→아래로 내려오며 맨 아래 = 최우선 매도호가, 매수는 맨 위 = 최우선 매수호가 · 화살표 = 잔량 변동(빨강 ▲ 증가, 파랑 ▼ 감소) · ⚡−N = 방금 체결로 소진된 잔량(매수체결→매도잔량, 매도체결→매수잔량) · 🔥 = 대량 호가 · 체결가: 빨강 = 매수, 파랑 = 매도 (키움 직결)",
+          "Kiwoom-style ladder: sellers run down to the BEST ask at the bottom; buyers start with the best bid at the top · arrows = qty change (red ▲ up, blue ▼ down) · ⚡−N = qty just consumed (B fills eat asks, S fills eat bids) · 🔥 = large order · Execution price: red = buyer-hit, blue = seller-hit (direct Kiwoom)")}
       </div>
     </div>
   );
