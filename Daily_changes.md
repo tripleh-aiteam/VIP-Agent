@@ -22,6 +22,13 @@ Report-health audit found the **YouTube grounded report is stale**: the external
 
 ## 2026-07-07 (Tuesday) — 5 chatbot fixes + first LIVE 30-min forward test of the scalp advisor
 
+### [12:55] 모의투자 테스트 — manual fake-money Testing desk (new VIP menu)
+
+- **What:** Boss's idea: verify the chatbot/decision advice with his own hands using fake money at LIVE prices. New `/testing` page (sidebar 모의투자 테스트) + `/paper-desk` API: ₩1억 virtual account (resettable), market orders fill at the live Kiwoom price (Naver fallback; ANY code or name via resolver), 지정가 orders park and auto-fill AT THE LIVE PRICE when it touches the trigger (the page's 4s poll runs the fill check server-side — no cron), realistic costs (buy 0.015% / sell 0.215%), avg-price positions, realized P&L per sell + win record, insufficient cash/shares rejections. Idea credits (realized-vs-unrealized split, win/loss record) from the boss's referenced evanciel-quant-mcp repo — code itself is Binance-MCP, nothing portable.
+- **Tested:** local lifecycle (market fill @ live, 카카오 by name, limit park→trigger→fill at live not the limit — fixed a realism bug where marketable limits filled at the limit price, oversell rejected, round-trip = exactly the fee cost −0.32%) + prod verified (state/quote/order/cancel all green, desk left clean at ₩1억).
+- **Files:** `services/paper_desk.py`, `routers/paper_desk.py` (+`main.py` include), `apps/admin-dashboard/src/app/testing/page.tsx`, `Sidebar.tsx`.
+- **Next:** port the page to the AI Advisor if boss asks; optional TP/SL (OCO) pair orders.
+
 ### [12:00] Boss's live 10/20/30-min engine test → micro-trend regime tiebreak
 
 - **What:** Ran the boss-requested live forward test: engine predictions locked at 11:08 for 5 stocks, graded at +10/+20/+30 min. Result: the engine's two committed DOWN calls hit **6/6** (and its strongest score, SK하이닉스 −3.7, was the biggest faller) with ZERO wrong-side calls — but all three FLAT calls missed identically (mild drift down with the −6% KOSPI tide, 9/9). Fix shipped: [`services/micro_trend.py`](apps/orchestrator-api/services/micro_trend.py) regime tiebreak — a FLAT micro-read whose own evidence doesn't fight the tide leans WITH the market when |KOSPI| ≥ 0.8% intraday, disclosed as "시장 동조 lean(코스피 −x.x%)" + `leaned` flag. Retroactively today: 6/15 → 15/15. Verified: live (all 5 natively DOWN by ship time) + synthetic flat-series unit test (lean fires, DOWN, leaned=True).
