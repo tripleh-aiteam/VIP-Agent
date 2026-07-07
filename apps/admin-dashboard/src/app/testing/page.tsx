@@ -58,9 +58,16 @@ export default function TestingPage() {
   const suggestions = useMemo(() => {
     const needle = q.trim().toLowerCase();
     if (!needle || /^\d{6}$/.test(needle) || /\(\d{6}\)\s*$/.test(q)) return [];
-    return stocks
-      .filter((s) => s.name.toLowerCase().includes(needle) || s.code.startsWith(needle))
-      .slice(0, 8);
+    // STARTS-WITH matches first (boss: "type sk → ALL stocks starting with sk"),
+    // then contains-matches; the whole list shows in a scrollable panel.
+    const starts: StockItem[] = [];
+    const contains: StockItem[] = [];
+    for (const s of stocks) {
+      const n = s.name.toLowerCase();
+      if (n.startsWith(needle) || s.code.startsWith(needle)) starts.push(s);
+      else if (n.includes(needle)) contains.push(s);
+    }
+    return [...starts, ...contains].slice(0, 60);
   }, [q, stocks]);
 
   const load = () => api<DeskState>("/paper-desk/state").then(setSt).catch(() => {});
@@ -171,8 +178,8 @@ export default function TestingPage() {
               placeholder={t("종목 이름/코드 검색", "search name or code")}
               className="w-full text-[13px] px-2.5 py-1.5 rounded-lg border bg-transparent text-[var(--text-primary)]" style={{ borderColor: "var(--border-default)" }} />
             {showSug && suggestions.length > 0 && (
-              <div className="absolute left-0 right-0 top-full mt-1 rounded-lg border overflow-hidden z-20 shadow-lg"
-                style={{ borderColor: "var(--border-default)", background: "var(--bg-elevated)" }}>
+              <div className="absolute left-0 right-0 top-full mt-1 rounded-lg border overflow-y-auto z-20 shadow-lg"
+                style={{ borderColor: "var(--border-default)", background: "var(--bg-elevated)", maxHeight: 320 }}>
                 {suggestions.map((s) => (
                   <button key={s.code} type="button"
                     onMouseDown={(e) => { e.preventDefault(); setQ(`${s.name} (${s.code})`); setShowSug(false); }}
