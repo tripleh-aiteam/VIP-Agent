@@ -53,6 +53,12 @@ Report-health audit found the **YouTube grounded report is stale**: the external
 
 ## 2026-07-07 (Tuesday) — 5 chatbot fixes + first LIVE 30-min forward test of the scalp advisor
 
+### [14:30] Monitor MULTI-viewer fix — watch thrash + WS session war (boss: "reload shows static")
+
+- **What:** With monitors on BOTH dashboards + the paper desk, the single-row `hot_watch` thrashed (log: `watch changed 000660→005930→000660` every second) — the WS feed resubscribed in a loop and fills froze at 13:51. Also found a SECOND single-owner war: Kiwoom allows ONE WebSocket session per app key, and the legacy server-side `ws_orderbook_collector` (auto-on when Render's IP passes the allowlist) kept kicking the PC session ("1000 Bye" loop). Fixes: `hot_watch_multi` row-per-ticker; `ws_hot_feed` v2 subscribes ALL fresh-watched tickers (≤6) in one REG with per-ticker state + ~3s heartbeat (quiet book never reads stale → no memory-fallback flicker); REST relay covers each stale ticker independently; server WS collector now OPT-IN only (`WS_ORDERBOOK_COLLECTOR=true`). Trade-history times now shown in KST (were raw UTC).
+- **Verified on prod (market open):** 2 tickers polled concurrently for 3 min — stale-source 1/60 polls, fills advanced 30x/29x. **PASS — continuous like Kiwoom.**
+- **Files:** `services/orderbook_memory.py` (`_hot_watch_write` → multi), `ml/realtime/ws_hot_feed.py` (multi-ticker rewrite), `ml/realtime/rt_snapshot_collector.py` (relay loops watched set), `services/ws_orderbook_collector.py` (opt-in), `apps/admin-dashboard/src/app/testing/page.tsx` (KST times).
+
 ### [12:55] 모의투자 테스트 — manual fake-money Testing desk (new VIP menu)
 
 - **What:** Boss's idea: verify the chatbot/decision advice with his own hands using fake money at LIVE prices. New `/testing` page (sidebar 모의투자 테스트) + `/paper-desk` API: ₩1억 virtual account (resettable), market orders fill at the live Kiwoom price (Naver fallback; ANY code or name via resolver), 지정가 orders park and auto-fill AT THE LIVE PRICE when it touches the trigger (the page's 4s poll runs the fill check server-side — no cron), realistic costs (buy 0.015% / sell 0.215%), avg-price positions, realized P&L per sell + win record, insufficient cash/shares rejections. Idea credits (realized-vs-unrealized split, win/loss record) from the boss's referenced evanciel-quant-mcp repo — code itself is Binance-MCP, nothing portable.
