@@ -4493,6 +4493,13 @@ def _run_agent_impl(
             if _tc:
                 _rep = turn_reply(db, _tc, _tn or _tc, lang)
                 if _rep:
+                    try:                                  # E2: measured record of past turn fires
+                        from services.call_grader import track_record_line
+                        _trl = track_record_line(db, "turn", lang)
+                        if _trl:
+                            _rep += _trl
+                    except Exception:
+                        pass
                     try:                                  # E1: grade every FIRING signal forward
                         _st = live_turn_status(db, _tc)
                         if _st.get("fire"):
@@ -4707,6 +4714,32 @@ def _run_agent_impl(
                     log_call(db, ticker=_c, action=_ga, intent="scalp", ref_price=_sig.get("current"),
                              target=_sig.get("target_price"), stop=_sig.get("stop_price"),
                              horizon_min=_sig.get("est_minutes") or 30, name=_n, agent_id=agent_id, lang=lang)
+                except Exception:
+                    pass
+                # D5 — TURN TIMING line: the boss's turn strategy as the scalp's timing layer
+                # (rhythm + live leg state + bottom-turn score, honest informational label).
+                try:
+                    from services.turn_engine import live_turn_status
+                    _ts = live_turn_status(db, _c)
+                    if _ts.get("ok"):
+                        _rh = _ts.get("rhythm") or {}
+                        _en2 = str(lang or "").lower().startswith("en")
+                        _leg = _ts.get("leg")
+                        if _en2:
+                            _tl = (f"\n\n**⏱ Turn timing:** currently {'falling' if _leg == 'down' else 'up/flat'} "
+                                   f"{_ts.get('leg_run_min')}m ({_ts.get('leg_run_pct')}%) · bottom-turn score "
+                                   f"{_ts.get('bottom_turn_score')}"
+                                   + (" — 🔔 FIRING" if _ts.get("fire") else "")
+                                   + (f" · this stock's typical fall {_rh.get('dn_min')}m/{_rh.get('dn_pct')}% → "
+                                      f"rise {_rh.get('up_min')}m/+{_rh.get('up_pct')}%" if _rh.get("ok") else ""))
+                        else:
+                            _tl = (f"\n\n**⏱ 턴 타이밍:** 현재 {'하락' if _leg == 'down' else '상승/보합'} "
+                                   f"{_ts.get('leg_run_min')}분째 ({_ts.get('leg_run_pct')}%) · 바닥턴 점수 "
+                                   f"{_ts.get('bottom_turn_score')}"
+                                   + (" — 🔔 신호 점등" if _ts.get("fire") else "")
+                                   + (f" · 이 종목 평균: 하락 {_rh.get('dn_min')}분/{_rh.get('dn_pct')}% → "
+                                      f"상승 {_rh.get('up_min')}분/+{_rh.get('up_pct')}%" if _rh.get("ok") else ""))
+                        _reply = (_reply or "") + _tl
                 except Exception:
                     pass
                 # DETAIL LAYER: advice must be detailed — grounded LLM deep-dive (as reco/outlook).

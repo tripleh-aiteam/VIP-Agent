@@ -260,13 +260,20 @@ type CycleSig = { ticker: string; name: string; verdict: string; price?: number;
   target?: number; stop?: number; time_stop_min?: number; asof?: string };
 type CycleCmp = { days: number; strategy_a_fixed: Record<string, number | null>; strategy_b_cycle: Record<string, number | null> };
 
+type TurnSig = { ticker: string; leg?: string; leg_run_min?: number; leg_run_pct?: number;
+  bottom_turn_score?: number; fire?: boolean };
+
 function CycleView({ t }: { t: (ko: string, en: string) => string }) {
   const [items, setItems] = useState<CycleSig[] | null>(null);
   const [cmp, setCmp] = useState<Record<string, CycleCmp | "loading">>({});
+  const [turns, setTurns] = useState<Record<string, TurnSig>>({});
   useEffect(() => {
     let alive = true;
     api<{ results: CycleSig[] }>("/predictions/cycle-signals")
       .then((d) => { if (alive) setItems(d.results || []); }).catch(() => { if (alive) setItems([]); });
+    api<{ results: TurnSig[] }>("/predictions/turn-signals")
+      .then((d) => { if (alive) setTurns(Object.fromEntries((d.results || []).map(x => [x.ticker, x]))); })
+      .catch(() => {});
     return () => { alive = false; };
   }, []);
   const vcol = (v: string) => v === "BUY_NOW" ? "var(--badge-blue-text)" : v === "WAIT" ? "#f0883e" : "var(--text-secondary)";
@@ -308,6 +315,14 @@ function CycleView({ t }: { t: (ko: string, en: string) => string }) {
                 <span>{t("손절", "Stop")} <b style={{ color: "#e5484d" }}>{fmtn(s.stop)}</b></span>
                 <span>{t("시간청산", "Time-stop")} <b>{s.time_stop_min ?? 60}{t("분", "m")}</b></span>
               </div>
+              {turns[s.ticker] && (
+                <div className="text-[11.5px] mb-2" style={{ color: turns[s.ticker].fire ? "var(--badge-blue-text)" : "var(--text-muted)" }}>
+                  {turns[s.ticker].fire ? "🔔 " : "⏱ "}
+                  {t(
+                    `턴: ${turns[s.ticker].leg === "down" ? "하락" : "상승/보합"} ${turns[s.ticker].leg_run_min ?? "—"}분째 (${turns[s.ticker].leg_run_pct ?? "—"}%) · 바닥턴 점수 ${turns[s.ticker].bottom_turn_score ?? "—"}${turns[s.ticker].fire ? " — 신호 점등!" : ""}`,
+                    `Turn: ${turns[s.ticker].leg === "down" ? "falling" : "up/flat"} ${turns[s.ticker].leg_run_min ?? "—"}m (${turns[s.ticker].leg_run_pct ?? "—"}%) · bottom-turn score ${turns[s.ticker].bottom_turn_score ?? "—"}${turns[s.ticker].fire ? " — FIRING!" : ""}`)}
+                </div>
+              )}
               {!c && (
                 <button onClick={() => loadCmp(s.ticker)} className="text-[11.5px] font-semibold px-2.5 py-1 rounded-lg border border-[var(--border-default)] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)]">
                   ⚔️ {t("기존 전략과 비교 (실측)", "Compare vs existing (measured)")}
