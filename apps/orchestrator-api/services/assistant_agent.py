@@ -317,7 +317,10 @@ _PICKS_PATTERN_RE = _re.compile(
     r"|\b(\d+|three|five)\s*(stocks?|종목|주식).{0,30}(buy|trade|살|매수|사)"
     r"|(stocks?|종목|주식).{0,16}(i can|to)\s*(buy|trade)"
     r"|analy[sz]e (the )?market.{0,30}(stock|buy|recommend|종목)"
-    r"|(살|매수할|투자할)\s*만한\s*(종목|주식)",
+    r"|(살|매수할|투자할)\s*만한\s*(종목|주식)"
+    # 'is there any (korean) stock which i can buy…' / '살 주식 있어?' — scan asks, no single stock
+    r"|is there any.{0,24}(stocks?|종목|주식)"
+    r"|(살|사서|매수할?|딸|이길|벌).{0,20}(주식|종목).{0,8}(있어|있나|있을까|없어|없나)",
     _re.IGNORECASE)
 
 

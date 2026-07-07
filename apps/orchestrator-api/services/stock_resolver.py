@@ -192,9 +192,27 @@ def resolve_one(text: str) -> tuple[Optional[str], Optional[str]]:
     cands = [low] + [w for w in re.split(r"[\s,./]+", low) if len(w) >= 2]
     keys = list(_ALIAS.keys())
     for cand in cands:
-        # 0.72 catches a 1-syllable Korean typo in a 4-syllable name (삼썽전자→삼성전자)
-        m = difflib.get_close_matches(cand, keys, n=1, cutoff=0.72)
+        if cand.isascii() and (cand in _EN_STOPWORDS or len(cand) < 4):
+            continue
+        # 0.72 catches a 1-syllable Korean typo in a 4-syllable name (삼썽전자→삼성전자);
+        # ASCII words need 0.85 — ordinary English words sit close to short EN aliases
+        # ('korean'→'korean air' = 0.75 turned a market-scan question into 대한항공)
+        cutoff = 0.85 if cand.isascii() else 0.72
+        m = difflib.get_close_matches(cand, keys, n=1, cutoff=cutoff)
         if m:
             c = _ALIAS[m[0]]
             return c, display_name(c)
     return None, None
+
+
+# English sentence words that must never fuzzy-resolve to a stock. Alias/substring
+# matching above is untouched — only the typo stage skips these.
+_EN_STOPWORDS = frozenset((
+    "korean", "korea", "stock", "stocks", "share", "shares", "market", "price",
+    "which", "that", "what", "when", "where", "there", "their", "them", "then",
+    "this", "these", "those", "have", "will", "would", "should", "could", "can",
+    "buy", "sell", "hold", "trade", "trading", "winning", "win", "profit", "earn",
+    "money", "hour", "hours", "minute", "minutes", "today", "tomorrow", "after",
+    "before", "about", "from", "with", "and", "for", "any", "some", "good", "best",
+    "tell", "give", "show", "know", "like", "want", "make", "chart", "daily", "now",
+))
