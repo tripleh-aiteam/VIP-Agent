@@ -52,14 +52,16 @@ export default function TestingPage() {
   const [stocks, setStocks] = useState<StockItem[]>([]);
   const qTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // memoized: 2,873 <option>s must not re-render on every keystroke/poll
-  const stockOptions = useMemo(() => (
-    <datalist id="krx-stocks">
-      {stocks.map((s) => (
-        <option key={s.code} value={`${s.name} (${s.code})`}>{s.market}</option>
-      ))}
-    </datalist>
-  ), [stocks]);
+  // custom autocomplete (native <datalist> was unreliable with 2,873 entries):
+  // case-insensitive substring match on name or code, top 8, clickable.
+  const [showSug, setShowSug] = useState(false);
+  const suggestions = useMemo(() => {
+    const needle = q.trim().toLowerCase();
+    if (!needle || /^\d{6}$/.test(needle) || /\(\d{6}\)\s*$/.test(q)) return [];
+    return stocks
+      .filter((s) => s.name.toLowerCase().includes(needle) || s.code.startsWith(needle))
+      .slice(0, 8);
+  }, [q, stocks]);
 
   const load = () => api<DeskState>("/paper-desk/state").then(setSt).catch(() => {});
   useEffect(() => {
@@ -141,10 +143,28 @@ export default function TestingPage() {
       {/* order box */}
       <Sect title={t("주문 (챗봇 조언대로 직접 테스트)", "Place Order (test the chatbot's advice)")}>
         <div className="p-3 flex items-center gap-2 flex-wrap">
-          <input value={q} onChange={(e) => setQ(e.target.value)} list="krx-stocks"
-            placeholder={t("종목 이름 입력 → 목록에서 선택", "type a name → pick from the list")}
-            className="text-[13px] px-2.5 py-1.5 rounded-lg border bg-transparent text-[var(--text-primary)]" style={{ borderColor: "var(--border-default)", width: 220 }} />
-          {stockOptions}
+          <div className="relative" style={{ width: 230 }}>
+            <input value={q}
+              onChange={(e) => { setQ(e.target.value); setShowSug(true); }}
+              onFocus={() => setShowSug(true)}
+              onBlur={() => setTimeout(() => setShowSug(false), 200)}
+              placeholder={t("종목 이름/코드 검색", "search name or code")}
+              className="w-full text-[13px] px-2.5 py-1.5 rounded-lg border bg-transparent text-[var(--text-primary)]" style={{ borderColor: "var(--border-default)" }} />
+            {showSug && suggestions.length > 0 && (
+              <div className="absolute left-0 right-0 top-full mt-1 rounded-lg border overflow-hidden z-20 shadow-lg"
+                style={{ borderColor: "var(--border-default)", background: "var(--bg-elevated)" }}>
+                {suggestions.map((s) => (
+                  <button key={s.code} type="button"
+                    onMouseDown={(e) => { e.preventDefault(); setQ(`${s.name} (${s.code})`); setShowSug(false); }}
+                    className="w-full flex items-center gap-2 px-2.5 py-1.5 text-[12.5px] text-left hover:opacity-70">
+                    <span className="font-bold text-[var(--text-primary)]">{s.name}</span>
+                    <span className="text-[10.5px] text-[var(--text-muted)] tabular-nums">{s.code}</span>
+                    <span className="ml-auto text-[9.5px] text-[var(--text-muted)]">{s.market}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
           {quote && (quote.ok
             ? <span className="text-[12px] tabular-nums text-[var(--text-secondary)]"><b>{quote.name}</b> {fmt(quote.price)}{t("원", "")}</span>
             : <span className="text-[11px] text-[var(--text-muted)]">{quote.error}</span>)}
