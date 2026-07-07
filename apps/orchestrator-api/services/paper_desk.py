@@ -25,6 +25,29 @@ START_CASH = 100_000_000        # ₩1억 default fake bankroll
 BUY_COST_PCT = 0.015            # commission per side (%)
 SELL_COST_PCT = 0.215           # commission + transaction tax (%)
 
+# --- abuse guards (2026-07-07 security review): these endpoints are public like the
+# rest of /predictions, but they WRITE and they fan out to live Kiwoom/Naver quotes —
+# unthrottled spam could burn the Kiwoom rate limit (breaking the real data feed) and
+# grow the orders table unboundedly. In-process caps keep the blast radius tiny.
+MAX_QTY = 1_000_000             # shares per order
+MAX_OPEN_ORDERS = 30
+_PRICE_TTL = 2.0                # per-ticker live-quote micro-cache (seconds)
+_price_cache: dict[str, tuple[float, Optional[float], Optional[str]]] = {}
+_rate: dict[str, list[float]] = {}
+
+
+def _allow(bucket: str, per_min: int) -> bool:
+    """Tiny in-process rate limiter (per instance). True = allowed."""
+    import time as _t
+    now = _t.time()
+    q = [ts for ts in _rate.get(bucket, []) if now - ts < 60]
+    if len(q) >= per_min:
+        _rate[bucket] = q
+        return False
+    q.append(now)
+    _rate[bucket] = q
+    return True
+
 _DDL = (
     "CREATE TABLE IF NOT EXISTS paper_desk_account ("
     " id INT PRIMARY KEY DEFAULT 1, cash DOUBLE PRECISION, start_cash DOUBLE PRECISION,"
@@ -53,23 +76,33 @@ def _ensure(db) -> None:
 
 
 def _live_price(ticker: str) -> tuple[Optional[float], Optional[str]]:
-    """LIVE price + name for ANY 6-digit code: Kiwoom first, Naver fallback."""
+    """LIVE price + name for ANY 6-digit code: Kiwoom first, Naver fallback.
+    2s per-ticker micro-cache — caps upstream amplification from request spam."""
+    import time as _t
+    hit = _price_cache.get(ticker)
+    if hit and _t.time() - hit[0] < _PRICE_TTL:
+        return hit[1], hit[2]
     name = None
+    px: Optional[float] = None
     try:
         from services import kiwoom_rest as kr
         q = kr.current_price(ticker)
         if q and q.get("price"):
-            return float(q["price"]), (q.get("name") or None)
+            px, name = float(q["price"]), (q.get("name") or None)
     except Exception:
         pass
-    try:
-        from services.naver_stock import realtime_quote
-        q = realtime_quote(ticker)
-        if q and q.get("price"):
-            return float(q["price"]), name
-    except Exception:
-        pass
-    return None, name
+    if px is None:
+        try:
+            from services.naver_stock import realtime_quote
+            q = realtime_quote(ticker)
+            if q and q.get("price"):
+                px = float(q["price"])
+        except Exception:
+            pass
+    _price_cache[ticker] = (_t.time(), px, name)
+    if len(_price_cache) > 500:          # bound the cache itself
+        _price_cache.pop(next(iter(_price_cache)))
+    return px, name
 
 
 def _name_for(ticker: str, fallback: Optional[str] = None) -> str:
@@ -160,8 +193,16 @@ def place_order(db, ticker: str, side: str, qty: int,
     order_type = order_type.lower()
     if side not in ("BUY", "SELL") or qty <= 0:
         return {"ok": False, "error": "side must be BUY/SELL and qty > 0"}
+    if qty > MAX_QTY:
+        return {"ok": False, "error": f"qty > {MAX_QTY:,} not allowed"}
     if order_type == "limit" and not limit_price:
         return {"ok": False, "error": "limit order needs limit_price"}
+    if not _allow("order", per_min=20):
+        return {"ok": False, "error": "too many orders — wait a moment"}
+    n_open = db.execute(text(
+        "SELECT count(*) FROM paper_desk_orders WHERE status='OPEN'")).scalar() or 0
+    if order_type == "limit" and int(n_open) >= MAX_OPEN_ORDERS:
+        return {"ok": False, "error": f"open limit orders capped at {MAX_OPEN_ORDERS}"}
     px, kw_name = _live_price(ticker)
     if px is None:
         return {"ok": False, "error": f"no live price for {ticker} — check the code"}
@@ -214,7 +255,15 @@ def cancel_order(db, order_id: int) -> dict:
 
 
 def reset(db, cash: float = START_CASH) -> dict:
+    if not (1_000_000 <= cash <= 10_000_000_000):
+        return {"ok": False, "error": "cash must be between ₩1M and ₩100억"}
+    if not _allow("reset", per_min=2):
+        return {"ok": False, "error": "reset throttled — wait a minute"}
     _ensure(db)
+    # prune terminal orders so the table stays bounded across resets
+    db.execute(text(
+        "DELETE FROM paper_desk_orders WHERE status IN ('CANCELLED','REJECTED') "
+        "AND created_at < now() - interval '30 days'"))
     db.execute(text("DELETE FROM paper_desk_positions"))
     db.execute(text("UPDATE paper_desk_orders SET status='CANCELLED' WHERE status='OPEN'"))
     db.execute(text(
