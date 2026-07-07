@@ -260,10 +260,9 @@ def reset(db, cash: float = START_CASH) -> dict:
     if not _allow("reset", per_min=2):
         return {"ok": False, "error": "reset throttled — wait a minute"}
     _ensure(db)
-    # prune terminal orders so the table stays bounded across resets
-    db.execute(text(
-        "DELETE FROM paper_desk_orders WHERE status IN ('CANCELLED','REJECTED') "
-        "AND created_at < now() - interval '30 days'"))
+    # a reset = a FRESH experiment: clear the whole trade history too (boss saw the
+    # build-time test orders polluting his record, 2026-07-07)
+    db.execute(text("DELETE FROM paper_desk_orders"))
     db.execute(text("DELETE FROM paper_desk_positions"))
     db.execute(text("UPDATE paper_desk_orders SET status='CANCELLED' WHERE status='OPEN'"))
     db.execute(text(
