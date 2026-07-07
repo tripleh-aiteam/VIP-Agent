@@ -2660,6 +2660,12 @@ def _elaborate_answer(question: str, lang: str, step_results: list[dict]) -> Opt
         out = (out or "").strip()
         if not out or out.startswith("[LLM"):
             return None
+        if not en:
+            # llama occasionally leaks Chinese words into Korean prose (综合적으로…)
+            for _cn, _ko in (("综合", "종합"), ("分析", "분석"), ("市场", "시장"),
+                             ("投资", "투자"), ("经济", "경제"), ("技术", "기술"),
+                             ("战略", "전략"), ("确认", "확인")):
+                out = out.replace(_cn, _ko)
         return ("**Deep dive**\n" if en else "**심층 해설**\n") + out
     except Exception:
         return None
@@ -4638,7 +4644,7 @@ def _run_agent_impl(
                     _rp = _bp["reply"]
                     if _compound_picks:
                         _rp = _named_stock_check(_rp, _en)
-                    return {"intent": "buy_picks", "language": lang, "reply": _rp[:6000],
+                    return {"intent": "buy_picks", "language": lang, "reply": _rp[:9000],
                             "action": None, "speak": True, "transcript": transcript,
                             "tool_used": "buy_picks"}
             except Exception as e:
@@ -4672,7 +4678,7 @@ def _run_agent_impl(
                 pass
             if _compound_picks:
                 _reply = _named_stock_check(_reply, _en)
-            return {"intent": "scalp_watchlist", "language": lang, "reply": (_reply or "")[:6000],
+            return {"intent": "scalp_watchlist", "language": lang, "reply": (_reply or "")[:9000],
                     "action": None, "speak": True, "transcript": transcript,
                     "tool_used": "scalp_watchlist"}
         except Exception as e:
