@@ -121,8 +121,20 @@ def desk_quote(q: str = Query(...), db: Session = Depends(get_db)):
                         out[k] = d.get(k)
         except Exception:
             pass
-    out["name"] = _name_for(code, kw_name)
+    out["name"] = _krx_name(db, code) or _name_for(code, kw_name)
     return out
+
+
+def _krx_name(db: Session, code: str) -> Optional[str]:
+    """Authoritative name for ANY listed stock from the krx_stocks table (2,873 rows) —
+    watchlist NAMES only covers ~51 and Kiwoom may be IP-blocked on this instance."""
+    try:
+        from sqlalchemy import text
+        r = db.execute(text("SELECT name FROM krx_stocks WHERE code=:c"), {"c": code}).first()
+        return str(r[0]) if r else None
+    except Exception:
+        db.rollback()
+        return None
 
 
 @router.post("/order")

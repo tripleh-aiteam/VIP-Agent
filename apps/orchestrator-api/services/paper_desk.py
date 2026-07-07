@@ -112,6 +112,18 @@ def _name_for(ticker: str, fallback: Optional[str] = None) -> str:
             return NAMES[ticker]
     except Exception:
         pass
+    # krx_stocks covers ALL 2,873 listed names (positions/history must never show a bare code)
+    try:
+        from sqlalchemy import text as _sql
+
+        from db.base import engine
+        with engine.connect() as c:
+            r = c.execute(_sql("SELECT name FROM krx_stocks WHERE code=:c"),
+                          {"c": ticker}).first()
+        if r and r[0]:
+            return str(r[0])
+    except Exception:
+        pass
     try:
         from services.stock_resolver import name_of  # optional helper
         n = name_of(ticker)
