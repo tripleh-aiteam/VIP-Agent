@@ -28,6 +28,7 @@ Report-health audit found the **YouTube grounded report is stale**: the external
 - **Tested:** local lifecycle (market fill @ live, 카카오 by name, limit park→trigger→fill at live not the limit — fixed a realism bug where marketable limits filled at the limit price, oversell rejected, round-trip = exactly the fee cost −0.32%) + prod verified (state/quote/order/cancel all green, desk left clean at ₩1억).
 - **Files:** `services/paper_desk.py`, `routers/paper_desk.py` (+`main.py` include), `apps/admin-dashboard/src/app/testing/page.tsx`, `Sidebar.tsx`.
 - **Next:** port the page to the AI Advisor if boss asks; optional TP/SL (OCO) pair orders.
+- **[13:10] Security hardening (same feature, follow-up commit):** review flagged the desk's public endpoints as write-capable + upstream-amplifying (order/quote spam could burn the Kiwoom rate limit the real feed depends on). Added in-process guards in `services/paper_desk.py`: 2s per-ticker quote micro-cache (bounded 500), orders ≤20/min, open limit orders ≤30, qty ≤1M, reset bounded ₩1M–₩100억 + ≤2/min + stale-order prune. Verified: 25-order burst throttled, cached quote 0.0s, normal use unaffected. Flagged to boss: dashboard-wide API authentication remains an open platform decision (all write endpoints share the public posture).
 
 ### [12:00] Boss's live 10/20/30-min engine test → micro-trend regime tiebreak
 
