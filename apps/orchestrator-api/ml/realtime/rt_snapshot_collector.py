@@ -172,6 +172,16 @@ def _hot_relay_loop() -> None:
                 time.sleep(3)
                 continue
             tk = str(row[0])
+            # WS tick feed fresh? then IT owns the hot row — don't overwrite pushed
+            # ticks with older REST polls (we only cover when the socket is down).
+            with conn.cursor() as cur:
+                cur.execute("SELECT EXTRACT(EPOCH FROM (now()-updated_at)) "
+                            "FROM kiwoom_hot WHERE ticker=%s", (tk,))
+                r2 = cur.fetchone()
+            conn.commit()
+            if r2 and float(r2[0] if r2[0] is not None else 9e9) < 2.0:
+                time.sleep(1.0)
+                continue
             ob = kr.order_book(tk, ttl=0.0) or {}
             tr = kr.executions(tk, ttl=0.0) or []
             q = kr.current_price(tk) or {}
@@ -220,6 +230,14 @@ def main() -> int:
     _ensure(conn)
     import threading
     threading.Thread(target=_hot_relay_loop, daemon=True).start()
+
+    def _ws_feed():
+        try:
+            from ws_hot_feed import run_forever
+            run_forever()
+        except Exception as e:      # missing lib / crash -> REST relay covers
+            print(f"[ws-feed] disabled: {str(e)[:90]}", flush=True)
+    threading.Thread(target=_ws_feed, daemon=True).start()
     if args.once:
         print(f"[snapshot] wrote {_one_pass(conn)} rows"); return 0
     while True:
