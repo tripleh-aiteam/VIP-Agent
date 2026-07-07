@@ -706,6 +706,9 @@ def decide(db, ticker: str, focus: Optional[str] = None) -> dict[str, Any]:
                       f"RSI turns up from a low (≤{RSI_M4}), takes +1%, cuts −1%, exits small on timeout, and "
                       f"re-enters before the next leg up. Losses stay small and wins repeat, so even 3 wins out "
                       f"of 5 grows the account.")
+        if m4.get("veto_ko"):
+            m4_para_ko += f"\n  · {m4['veto_ko']}"
+            m4_para_en += f"\n  · {m4.get('veto_en') or m4['veto_ko']}"
 
     # NOTE (boss feedback 2026-07-03): the direct answer at the TOP is the one and only
     # conclusion — no repeated "최종 종합 판단" synthesis at the bottom. Methods follow as

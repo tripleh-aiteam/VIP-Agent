@@ -76,8 +76,21 @@ def signal(db, ticker: str) -> dict[str, Any]:
     cur, r_now, r_prev = closes[-1], rsis[-1], rsis[-2]
     entry_now = _entry_ok(rsis, closes, len(bars) - 1)
     verdict = "BUY_NOW" if entry_now else ("WAIT" if (r_now or 50) < RSI_OVERSOLD + 8 else "NO_SETUP")
+    # MARKET-REGIME VETO: an index-crash day downgrades BUY_NOW → WAIT (2026-07-07 live
+    # forward test: crash-day entries hit stops; the refusal was the right call).
+    veto_ko = veto_en = None
+    if verdict == "BUY_NOW":
+        try:
+            from services.market_regime import crash_veto
+            _rg = crash_veto()
+            if _rg.get("veto"):
+                verdict = "WAIT"
+                veto_ko, veto_en = _rg.get("line_ko"), _rg.get("line_en")
+        except Exception:
+            pass
     return {
         "ok": True, "verdict": verdict, "price": cur,
+        "veto_ko": veto_ko, "veto_en": veto_en,
         "rsi": round(r_now, 1) if r_now is not None else None,
         "rsi_prev": round(r_prev, 1) if r_prev is not None else None,
         "target": round(cur * (1 + TP_PCT / 100)),

@@ -129,6 +129,18 @@ def scalp_signal(db, ticker: str, target_pct: float = 1.0,
     else:
         entry = "WAIT"
 
+    # ---- MARKET-REGIME VETO (2026-07-07 live forward test: 3 ENTERs advised on a −4.5%
+    # KOSPI morning → 2 stops hit; the one refusal was the right call). Index crashing →
+    # refuse NEW long scalps outright, like the wave method's index-plunge filter. ----
+    regime = None
+    try:
+        from services.market_regime import crash_veto
+        regime = crash_veto()
+    except Exception:
+        regime = None
+    if regime and regime.get("veto") and entry in ("ENTER", "WAIT", "SKIP"):
+        entry = "AVOID"
+
     # ---- B1: live order-flow check (PC snapshot, fresh ≤4min) — the 매수/매도 tape
     # either CONFIRMS the entry or vetoes it. Deterministic, always shown with reasons.
     rt = None
@@ -304,15 +316,21 @@ def scalp_signal(db, ticker: str, target_pct: float = 1.0,
         return "\n".join(p for p in parts if p is not None)
 
     if entry == "AVOID":
-        why_ko = " / ".join(filter(None, ["머신러닝이 '매도'" if ml_adv == "SELL" else None,
-                                          "파동이 '회피'" if wv == "AVOID" else None])) or "상위 추세 약세"
-        why_en = " / ".join(filter(None, ["ML says SELL" if ml_adv == "SELL" else None,
-                                          "Wave says AVOID" if wv == "AVOID" else None])) or "bearish higher-timeframe trend"
+        _mv = bool(regime and regime.get("veto"))
+        why_ko = " / ".join(filter(None, [
+            "시장 급락일 필터 발동" if _mv else None,
+            "머신러닝이 '매도'" if ml_adv == "SELL" else None,
+            "파동이 '회피'" if wv == "AVOID" else None])) or "상위 추세 약세"
+        why_en = " / ".join(filter(None, [
+            "market-crash filter triggered" if _mv else None,
+            "ML says SELL" if ml_adv == "SELL" else None,
+            "Wave says AVOID" if wv == "AVOID" else None])) or "bearish higher-timeframe trend"
         ko = _join([
             title_ko, "",
             "**① 한 줄 결론**",
             f"지금은 단타 매수를 권하지 않습니다. {why_ko} — 떨어지는 종목의 반등을 잡으려는 단타는 성공 확률이 낮습니다. "
-            f"추세 회복(반등 확인) 후 다시 물어보세요.", "",
+            f"추세 회복(반등 확인) 후 다시 물어보세요.",
+            (regime.get("line_ko") if _mv else None), "",
             "**② 근거 (3가지 방법 + 실시간)**",
             f"· 방법1 머신러닝: {m1_ko}",
             (f"· 방법2 분석: {m2_ko}" if m2_ko else None),
@@ -326,7 +344,8 @@ def scalp_signal(db, ticker: str, target_pct: float = 1.0,
             title_en, "",
             "**① Bottom line**",
             f"A scalp-long isn't advised right now. {why_en} — catching bounces on a falling stock is a low-odds trade. "
-            f"Ask again after the trend recovers.", "",
+            f"Ask again after the trend recovers.",
+            (regime.get("line_en") if _mv else None), "",
             "**② Evidence (3 methods + live tape)**",
             f"- Method 1 ML: {m1_en}",
             (f"- Method 2 Analysis: {m2_en}" if m2_en else None),

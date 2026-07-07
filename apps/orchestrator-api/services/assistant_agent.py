@@ -3317,6 +3317,8 @@ def _two_method_header(tm: dict, lang: str = "ko") -> str:
             if m4.get("target"):
                 L.append(f"- If it fires: target +1% (₩{_f(m4['target'])}) / stop −1% (₩{_f(m4['stop'])}) / "
                          f"{m4.get('time_stop_min', 60)}-min time-stop, then re-enter on the next leg — small losses, repeated wins.")
+            if m4.get("veto_en"):
+                L.append(f"- {m4['veto_en']}")
         L.append("")
         L.append("**Scenarios — the two levels that matter**")
         if sell_hi:
@@ -3373,6 +3375,8 @@ def _two_method_header(tm: dict, lang: str = "ko") -> str:
         if m4.get("target"):
             L.append(f"· 신호가 켜지면: 목표 +1% ({_f(m4['target'])}원) / 손절 −1% ({_f(m4['stop'])}원) / "
                      f"{m4.get('time_stop_min', 60)}분 안에 안 가면 소폭 정리 후 다음 파동 재진입 — 손실은 작게, 이익은 반복해서.")
+        if m4.get("veto_ko"):
+            L.append(f"· {m4['veto_ko']}")
     L.append("")
     L.append("**시나리오 — 중요한 두 가격**")
     if sell_hi:
