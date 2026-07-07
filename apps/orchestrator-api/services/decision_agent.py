@@ -622,6 +622,20 @@ def decide(db, ticker: str, focus: Optional[str] = None) -> dict[str, Any]:
                     f"\n  · How it decides: an {algo or 'ML'} model trained on 20 years of Korean-market data reads "
                     f"~19 features (price, volume, investor flows) and computes the probability this stock beats "
                     f"KOSPI over 5 days — this time it tilted to {ml_adv}. {_ml_flip_en}")
+    # today's evidence line — real numbers, incl. the ±move as an actual price band
+    if em is not None and price:
+        try:
+            _b_lo, _b_hi = float(price) * (1 - abs(em) / 100), float(price) * (1 + abs(em) / 100)
+            _acc_note_ko = (" 정확도가 절반 근처라 이 한 표만 믿고 베팅하면 안 되고, 아래 방법들과 교차 확인해야 합니다."
+                            if acc is not None and acc < 55 else "")
+            _acc_note_en = (" With accuracy near a coin-flip, this vote needs confirmation from the methods below."
+                            if acc is not None and acc < 55 else "")
+            ml_para_ko += (f"\n  · 지금 수치: 예상 5일 변동 ±{abs(em)}% → 가격으로 약 {_pl(_b_lo)}~{_pl(_b_hi)}원 범위."
+                           + (f" 백테스트 정확도 {acc_txt}." if acc is not None else "") + _acc_note_ko)
+            ml_para_en += (f"\n  · Today's numbers: expected 5-day swing ±{abs(em)}% → roughly ₩{_pl(_b_lo)}–{_pl(_b_hi)} in price."
+                           + (f" Backtest accuracy {acc_txt}." if acc is not None else "") + _acc_note_en)
+        except Exception:
+            pass
 
     if pos is None:
         _box_ko = _box_en = ""
@@ -654,6 +668,20 @@ def decide(db, ticker: str, focus: Optional[str] = None) -> dict[str, Any]:
                  + f"\n  · 어떻게 찾나: {_an_how_ko}"
     an_para_en = (f"**→ {an_tag_en}** — {an_why_en}. {_box_en} {_zones_en}").strip() \
                  + f"\n  · How it decides: {_an_how_en}"
+    # today's evidence line — the actual flow numbers behind the signal
+    _f5, _i5 = flows.get("foreign_5d"), flows.get("inst_5d")
+    if _f5 is not None or _i5 is not None:
+        def _sh(v):
+            try:
+                return f"{int(v):+,}"
+            except Exception:
+                return "-"
+        _tag_ko = f" · 판정: {flows['tag']}" if flows.get("tag") else ""
+        _tag_en = f" · read: {flows.get('tag_en') or flows.get('tag')}" if flows.get("tag") else ""
+        an_para_ko += (f"\n  · 지금 수치: 외국인 5일 순매수 {_sh(_f5)}주 · 기관 5일 {_sh(_i5)}주{_tag_ko}"
+                       + (f" · 박스권 위치 {pos}%." if pos is not None else "."))
+        an_para_en += (f"\n  · Today's numbers: foreign 5-day net {_sh(_f5)} sh · institutions {_sh(_i5)} sh{_tag_en}"
+                       + (f" · box position {pos}%." if pos is not None else "."))
 
     wv_tag_ko = {"BUY": "매수", "WATCH": "관망", "AVOID": "회피"}.get(wv, "관망")
     _wv_how_ko = ("이 방법은 '급등 후 깊은 눌림목'만 노립니다: 최근 상승 파동의 세기(파동점수 0.65 이상)를 재고, "
@@ -676,6 +704,18 @@ def decide(db, ticker: str, focus: Optional[str] = None) -> dict[str, Any]:
     wave_para_en = (f"**→ {wv or 'WATCH'}**" + (f" · wave score {_wsc}" if _wsc is not None else "")
                     + f" — {wave_why_en}." + (f" {wave_zone_en}." if wave_zone_en else "")).strip() \
                    + (f"\n  · How it decides: {_wv_how_en}" if has_wave else "")
+    # today's evidence line — the wave's actual measurements
+    if has_wave and _wsc is not None:
+        _wave_ev_ko = (f"\n  · 지금 수치: 파동점수 {_wsc} (기준 0.65 이상=강한 파동)"
+                       + (f" · 되돌림 {round(_wret*100)}% (매수 구간은 61.8~78.6%)" if _wret is not None else "")
+                       + (f" · 목표 {_pl(wave.get('target'))}원" if wave.get("target") else "")
+                       + (f" · R:R {wave.get('rr')}" if wave.get("rr") else "") + ".")
+        _wave_ev_en = (f"\n  · Today's numbers: wave score {_wsc} (≥0.65 = strong)"
+                       + (f" · pullback {round(_wret*100)}% (buy zone is 61.8–78.6%)" if _wret is not None else "")
+                       + (f" · target ₩{_pl(wave.get('target'))}" if wave.get("target") else "")
+                       + (f" · R:R {wave.get('rr')}" if wave.get("rr") else "") + ".")
+        wave_para_ko += _wave_ev_ko
+        wave_para_en += _wave_ev_en
 
     # ---- Method 4 (Cycle ±1%) — real-time TIMING verdict on 5-min bars ----
     has_m4 = bool(m4.get("ok"))
