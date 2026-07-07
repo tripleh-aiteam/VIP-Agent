@@ -12,11 +12,19 @@ and writes a newer row, VIP picks it up automatically.
 
 from __future__ import annotations
 
+import os
 import re
+from datetime import datetime
 from typing import Any, Optional
 
 import httpx
 from sqlalchemy import desc
+
+# The grounded YouTube rows are produced by an EXTERNAL GPU pipeline. If that
+# pipeline stops, the latest row goes stale and we must NOT keep e-mailing days-old
+# analysis as if it were today's. Rows older than this many days are treated as
+# stale (skip the email + flag it). Override with YOUTUBE_MAX_AGE_DAYS.
+_MAX_AGE_DAYS = int(os.getenv("YOUTUBE_MAX_AGE_DAYS", "2"))
 
 # Lines that are (or contain) a YouTube link — Gmail renders these as video
 # preview cards, which we DON'T want in the email body (files only).
@@ -83,6 +91,20 @@ def fetch_files(content: dict) -> list[tuple[str, bytes]]:
     return out
 
 
+def latest_age_days(db) -> Optional[int]:
+    """Age (in days) of the newest grounded YouTube row, or None if none exists.
+    Used to detect that the external GPU pipeline has stopped producing reports."""
+    row = latest_row(db)
+    if not row or not row.created_at:
+        return None
+    return (datetime.utcnow() - row.created_at).days
+
+
+def is_stale(db, max_age_days: int = _MAX_AGE_DAYS) -> bool:
+    age = latest_age_days(db)
+    return age is not None and age > max_age_days
+
+
 def latest_payload(db) -> Optional[dict[str, Any]]:
     """Structured payload for the web UI tab — the latest grounded report's
     content_json plus row id/date. None if no grounded row exists yet."""
@@ -109,6 +131,25 @@ def deliver(db, recipients, *, lang: str = "ko") -> dict[str, Any]:
     row = latest_row(db)
     if not row:
         return {"ok": False, "reason": "no grounded youtube report row yet"}
+
+    # Staleness guard — the external GPU pipeline may have stopped. Never e-mail
+    # days-old analysis as today's report. Skip + alert the team once instead.
+    age = latest_age_days(db)
+    if age is not None and age > _MAX_AGE_DAYS:
+        log.warning(f"youtube_grounded: latest row is {age}d old (> {_MAX_AGE_DAYS}) — "
+                    f"skipping email; the GPU pipeline may be down",
+                    extra={"action": "youtube.grounded.stale"})
+        try:
+            from services.telegram_service import send_alert
+            send_alert(f"⚠️ <b>YouTube 리포트 지연</b>\n최신 유튜브 리포트가 {age}일 전({str(row.created_at)[:10]}) "
+                       f"것입니다 — 외부 GPU 파이프라인이 멈춘 것 같습니다. 오래된 데이터 발송을 막기 위해 "
+                       f"오늘 유튜브 이메일은 보내지 않았습니다.")
+        except Exception:
+            pass
+        return {"ok": False, "reason": f"stale: latest youtube report is {age} days old "
+                f"(pipeline may be down) — email skipped", "stale": True, "age_days": age,
+                "row_id": str(row.id)}
+
     c = row.content_json or {}
     subject = c.get("email_subject") or "유튜브 시장 리포트"
     # SHORT body only (per request) — no long 핵심 포인트/투자의견 text, no video

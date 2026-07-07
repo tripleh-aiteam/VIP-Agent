@@ -1613,6 +1613,17 @@ def _ensure_morning_reports():
             log.warning(f"ensure: news freshness check failed: {str(ne)[:120]}",
                         extra={"action": "ensure.news_check_failed"})
 
+        # YouTube pipeline staleness — external GPU pipeline, we can't regenerate it,
+        # but flag it (delivery + master already skip/exclude stale YouTube data).
+        try:
+            from services import youtube_grounded as _yg
+            yage = _yg.latest_age_days(db)
+            if yage is not None and yage > 2:
+                log.warning(f"ensure: YouTube report is {yage}d old — external GPU pipeline may be down",
+                            extra={"action": "ensure.youtube_stale", "age_days": yage})
+        except Exception:
+            pass
+
         log.info(f"ensure: report health check done for {today} ({'weekend' if weekend else 'weekday'})",
                  extra={"action": "ensure.done"})
     except Exception as e:

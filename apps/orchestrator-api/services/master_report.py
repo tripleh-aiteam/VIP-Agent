@@ -69,6 +69,16 @@ def build_master_report(db, trace_id: str) -> dict:
     kiwoom = _latest_report(db, "kiwoom_report")
     news = _latest_report(db, "newspaper_report")
     youtube = _latest_report(db, "youtube_report")
+    # Don't fold in a stale YouTube report (the external GPU pipeline may have
+    # stopped). If it's days old, drop it so the summary shows N/3 honestly.
+    try:
+        from services import youtube_grounded as _yg
+        if youtube and _yg.is_stale(db):
+            log.warning("master: YouTube source is stale — excluding from synthesis",
+                        extra={"action": "master.youtube_stale"})
+            youtube = {}
+    except Exception:
+        pass
 
     # Use the freshest price rows/table available (prefer kiwoom, else refetch).
     rows = kiwoom.get("rows") or news.get("rows") or youtube.get("rows")

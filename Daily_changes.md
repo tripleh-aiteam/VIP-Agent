@@ -2,6 +2,24 @@
 
 ---
 
+## 2026-07-07 (Tuesday) — YouTube staleness guard (external GPU pipeline stopped 07-03)
+
+### Goal / finding
+
+Report-health audit found the **YouTube grounded report is stale**: the external GPU pipeline (writes `gpu_youtube` rows) produced nothing after **2026-07-03**, so the 6:40 AM YouTube email had been re-sending the same 4-day-old analysis to the 7 recipients, and the Master report was folding stale YouTube data into its "3/3 sources". Everything else (kiwoom/newspaper/master/asset/realty, cross-agent, news freshness) = healthy & fresh for 07-07.
+
+### Files updated
+
+- [services/youtube_grounded.py](apps/orchestrator-api/services/youtube_grounded.py) — added `latest_age_days()` / `is_stale()` + a **staleness guard in `deliver()`**: if the newest row is > `YOUTUBE_MAX_AGE_DAYS` (default 2) old, it **skips the email** (no stale data to the 7) and sends **one Telegram alert** ("파이프라인이 멈춘 것 같습니다"). Verified on live 4-day-old data: `is_stale=True`, email NOT sent, 1 alert fired.
+- [services/master_report.py](apps/orchestrator-api/services/master_report.py) — excludes YouTube from the synthesis when `youtube_grounded.is_stale(db)` → the summary now shows N/3 honestly instead of counting stale YouTube.
+- [services/scheduler_service.py](apps/orchestrator-api/services/scheduler_service.py) — the 3×/day health check now also logs a YouTube-staleness warning (can't regenerate an external pipeline, but it's visible).
+
+### Next
+
+- Ping the colleague: their GPU YouTube pipeline stopped on 07-03. Once it resumes, everything auto-recovers (guard clears when a fresh row arrives).
+
+---
+
 ## 2026-07-07 (Tuesday) — 5 chatbot fixes + first LIVE 30-min forward test of the scalp advisor
 
 ### [12:00] Boss's live 10/20/30-min engine test → micro-trend regime tiebreak
