@@ -24,6 +24,7 @@ type DeskState = {
   costs: { buy_pct: number; sell_pct: number };
 };
 type QuoteRes = { ok: boolean; ticker?: string; name?: string; price?: number; error?: string };
+type StockItem = { code: string; name: string; market: string };
 
 export default function TestingPage() {
   const { lang } = useLanguage();
@@ -38,11 +39,13 @@ export default function TestingPage() {
   const [limitPx, setLimitPx] = useState("");
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
+  const [stocks, setStocks] = useState<StockItem[]>([]);
   const qTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const load = () => api<DeskState>("/paper-desk/state").then(setSt).catch(() => {});
   useEffect(() => {
     load();
+    api<{ stocks: StockItem[] }>("/paper-desk/stocks").then((r) => setStocks(r.stocks || [])).catch(() => {});
     const i = setInterval(load, 4000);
     return () => clearInterval(i);
   }, []);
@@ -72,8 +75,10 @@ export default function TestingPage() {
         setMsg(`❌ ${r.error || r.reason || t("주문 실패", "order failed")}`);
       }
       load();
-    } catch {
-      setMsg(t("❌ 주문 실패 (네트워크)", "❌ order failed (network)"));
+    } catch (e) {
+      const detail = e instanceof Error && e.message ? ` — ${e.message}` : "";
+      setMsg(t(`❌ 주문 실패${detail} (서버 재배포 중이면 1분 후 다시 시도하세요)`,
+        `❌ order failed${detail} (if the server is redeploying, retry in ~1 min)`));
     } finally {
       setBusy(false);
     }
@@ -124,9 +129,15 @@ export default function TestingPage() {
       {/* order box */}
       <Sect title={t("주문 (챗봇 조언대로 직접 테스트)", "Place Order (test the chatbot's advice)")}>
         <div className="p-3 flex items-center gap-2 flex-wrap">
-          <input value={q} onChange={(e) => setQ(e.target.value)}
-            placeholder={t("종목코드 6자리 또는 이름", "6-digit code or name")}
-            className="text-[13px] px-2.5 py-1.5 rounded-lg border bg-transparent text-[var(--text-primary)]" style={{ borderColor: "var(--border-default)", width: 170 }} />
+          <input value={q} onChange={(e) => setQ(e.target.value)} list="krx-stocks"
+            placeholder={t("종목 이름 입력 → 목록에서 선택", "type a name → pick from the list")}
+            className="text-[13px] px-2.5 py-1.5 rounded-lg border bg-transparent text-[var(--text-primary)]" style={{ borderColor: "var(--border-default)", width: 220 }} />
+          {/* ALL 2,873 KRX stocks by Korean name — the browser filters as you type */}
+          <datalist id="krx-stocks">
+            {stocks.map((s) => (
+              <option key={s.code} value={`${s.name} (${s.code})`}>{s.market}</option>
+            ))}
+          </datalist>
           {quote && (quote.ok
             ? <span className="text-[12px] tabular-nums text-[var(--text-secondary)]"><b>{quote.name}</b> {fmt(quote.price)}{t("원", "")}</span>
             : <span className="text-[11px] text-[var(--text-muted)]">{quote.error}</span>)}
