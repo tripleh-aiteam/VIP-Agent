@@ -143,6 +143,26 @@ export default function TestingPage() {
       {/* order box */}
       <Sect title={t("주문 (챗봇 조언대로 직접 테스트)", "Place Order (test the chatbot's advice)")}>
         <div className="p-3 flex items-center gap-2 flex-wrap">
+          {/* full-list dropdown (boss: search AND a browsable menu), grouped by market */}
+          <select value="" onChange={(e) => { if (e.target.value) { setQ(e.target.value); setShowSug(false); } }}
+            className="text-[12.5px] font-bold px-2 py-1.5 rounded-lg border bg-[var(--bg-elevated)] text-[var(--text-primary)]"
+            style={{ borderColor: "var(--border-default)", maxWidth: 150 }}>
+            <option value="">{t("전체 종목 ▾", "All stocks ▾")}</option>
+            {(["KOSPI", "KOSDAQ"] as const).map((mkt) => (
+              <optgroup key={mkt} label={mkt}>
+                {stocks.filter((s) => s.market === mkt).map((s) => (
+                  <option key={s.code} value={`${s.name} (${s.code})`}>{s.name} ({s.code})</option>
+                ))}
+              </optgroup>
+            ))}
+            {stocks.some((s) => s.market !== "KOSPI" && s.market !== "KOSDAQ") && (
+              <optgroup label={t("기타", "Other")}>
+                {stocks.filter((s) => s.market !== "KOSPI" && s.market !== "KOSDAQ").map((s) => (
+                  <option key={s.code} value={`${s.name} (${s.code})`}>{s.name} ({s.code})</option>
+                ))}
+              </optgroup>
+            )}
+          </select>
           <div className="relative" style={{ width: 230 }}>
             <input value={q}
               onChange={(e) => { setQ(e.target.value); setShowSug(true); }}
