@@ -308,10 +308,23 @@ _WATCHLIST_KW = (
 )
 
 
+# Pattern-based picks ask — catches natural phrasings the keyword list misses ('tell me 3
+# stock which i can buy', 'give me five stocks to trade', '살 만한 종목 3개', 'analyze market
+# and recommend stocks'). Keyword misses here fell to the generic ask_agent LLM (stale
+# textbook answers, no methods, no crash veto — 2026-07-07 screenshot).
+_PICKS_PATTERN_RE = _re.compile(
+    r"(tell me|give me|recommend|advise|suggest|pick|찾아|알려|추천).{0,24}\b(\d+|three|five|two|몇)\s*(stocks?|종목|주식)"
+    r"|\b(\d+|three|five)\s*(stocks?|종목|주식).{0,30}(buy|trade|살|매수|사)"
+    r"|(stocks?|종목|주식).{0,16}(i can|to)\s*(buy|trade)"
+    r"|analy[sz]e (the )?market.{0,30}(stock|buy|recommend|종목)"
+    r"|(살|매수할|투자할)\s*만한\s*(종목|주식)",
+    _re.IGNORECASE)
+
+
 def _is_watchlist_question(transcript: Optional[str]) -> bool:
     """A 'what should I day-trade today?' question (no single stock needed)."""
     t = (transcript or "").lower()
-    return any(k in t for k in _WATCHLIST_KW)
+    return any(k in t for k in _WATCHLIST_KW) or bool(_PICKS_PATTERN_RE.search(t))
 
 
 # Phase C — the real-money readiness gate, askable in chat.
