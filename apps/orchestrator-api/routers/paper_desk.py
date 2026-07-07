@@ -86,15 +86,43 @@ def desk_state(db: Session = Depends(get_db)):
 
 @router.get("/quote")
 def desk_quote(q: str = Query(...), db: Session = Depends(get_db)):
-    """Live price + resolved name for the order box (any code or name)."""
+    """Full quote for the order box: 시가/현재가±%/고가/저가 (any code or name).
+    Kiwoom first; Naver realtime + daily candle fill the gaps after hours."""
     from services.paper_desk import _live_price, _name_for
     code = _resolve(q, db)
     if not code.isdigit():
         return {"ok": False, "error": f"'{q}' 종목을 찾지 못했어요"}
-    px, kw_name = _live_price(code)
-    if px is None:
-        return {"ok": False, "error": f"{code} 시세를 가져오지 못했어요"}
-    return {"ok": True, "ticker": code, "name": _name_for(code, kw_name), "price": px}
+    out: dict = {"ok": True, "ticker": code}
+    kw_name = None
+    try:
+        from services import kiwoom_rest as kr
+        kq = kr.current_price(code)
+        if kq and kq.get("price"):
+            kw_name = kq.get("name")
+            out.update({k: kq.get(k) for k in ("price", "open", "high", "low", "change_pct")})
+    except Exception:
+        pass
+    if not out.get("price"):
+        px, _n = _live_price(code)
+        if px is None:
+            return {"ok": False, "error": f"{code} 시세를 가져오지 못했어요"}
+        out["price"] = px
+    if out.get("open") is None or out.get("change_pct") is None:
+        try:
+            from services.naver_stock import daily_history, realtime_quote
+            nq = realtime_quote(code) or {}
+            for k in ("open", "high", "low", "change_pct"):
+                if out.get(k) is None:
+                    out[k] = nq.get(k)
+            if out.get("open") is None:
+                d = (daily_history(code, days=1) or [{}])[0]
+                for k in ("open", "high", "low"):
+                    if out.get(k) is None:
+                        out[k] = d.get(k)
+        except Exception:
+            pass
+    out["name"] = _name_for(code, kw_name)
+    return out
 
 
 @router.post("/order")

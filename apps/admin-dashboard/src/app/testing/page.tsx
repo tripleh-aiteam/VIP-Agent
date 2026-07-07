@@ -23,7 +23,8 @@ type DeskState = {
   positions: Position[]; open_orders: Order[]; history: Order[];
   costs: { buy_pct: number; sell_pct: number };
 };
-type QuoteRes = { ok: boolean; ticker?: string; name?: string; price?: number; error?: string };
+type QuoteRes = { ok: boolean; ticker?: string; name?: string; price?: number; error?: string;
+                  open?: number | null; high?: number | null; low?: number | null; change_pct?: number | null };
 type StockItem = { code: string; name: string; market: string };
 
 // Defined OUTSIDE the page component: defining this inline recreated the component
@@ -86,6 +87,15 @@ export default function TestingPage() {
       api<QuoteRes>(`/paper-desk/quote?q=${encodeURIComponent(q.trim())}`).then(setQuote).catch(() => setQuote(null));
     }, 500);
     return () => { if (qTimer.current) clearTimeout(qTimer.current); };
+  }, [q]);
+
+  // keep the quote strip LIVE while a stock is selected (현재가 must move)
+  useEffect(() => {
+    if (!q.trim()) return;
+    const i = setInterval(() => {
+      api<QuoteRes>(`/paper-desk/quote?q=${encodeURIComponent(q.trim())}`).then(setQuote).catch(() => {});
+    }, 5000);
+    return () => clearInterval(i);
   }, [q]);
 
   const placeOrder = async () => {
@@ -193,7 +203,22 @@ export default function TestingPage() {
             )}
           </div>
           {quote && (quote.ok
-            ? <span className="text-[12px] tabular-nums text-[var(--text-secondary)]"><b>{quote.name}</b> {fmt(quote.price)}{t("원", "")}</span>
+            ? (() => {
+                const chg = quote.change_pct ?? 0;
+                const cCol = chg > 0 ? RED : chg < 0 ? BLUE : "var(--text-primary)";
+                const tri = chg > 0 ? "▲" : chg < 0 ? "▼" : "";
+                return (
+                  <span className="flex items-center gap-2 text-[12px] tabular-nums px-2 py-1 rounded-lg border"
+                    style={{ borderColor: "var(--border-default)", background: "var(--bg-elevated)" }}>
+                    <b className="text-[var(--text-primary)]">{quote.name}</b>
+                    <span className="text-[var(--text-muted)]">{t("시가", "O")} <b className="text-[var(--text-secondary)]">{fmt(quote.open)}</b></span>
+                    <span className="font-extrabold text-[14px]" style={{ color: cCol }}>{fmt(quote.price)}</span>
+                    {quote.change_pct != null && <span className="font-extrabold" style={{ color: cCol }}>{tri} {chg > 0 ? "+" : ""}{chg.toFixed(2)}%</span>}
+                    <span className="text-[var(--text-muted)]">{t("고가", "H")} <b style={{ color: RED }}>{fmt(quote.high)}</b></span>
+                    <span className="text-[var(--text-muted)]">{t("저가", "L")} <b style={{ color: BLUE }}>{fmt(quote.low)}</b></span>
+                  </span>
+                );
+              })()
             : <span className="text-[11px] text-[var(--text-muted)]">{quote.error}</span>)}
           <div className="flex rounded-lg overflow-hidden border" style={{ borderColor: "var(--border-default)" }}>
             {(["BUY", "SELL"] as const).map((s) => (
