@@ -12,6 +12,12 @@ import { useLanguage } from "@/components/i18n";
 const RED = "#d32f2f";
 const BLUE = "#1565c0";
 const fmt = (n?: number | null) => (n == null ? "-" : Number(n).toLocaleString());
+// server timestamps are UTC — display in Korean time (MM-DD HH:mm)
+const kst = (iso?: string | null) => {
+  if (!iso) return "";
+  const s = /Z$|[+-]\d{2}:\d{2}$/.test(iso) ? iso : `${iso}Z`;
+  return new Date(s).toLocaleString("sv-SE", { timeZone: "Asia/Seoul" }).slice(5, 16);
+};
 const pnlCol = (v?: number | null) => (v == null ? "var(--text-muted)" : v > 0 ? RED : v < 0 ? BLUE : "var(--text-muted)");
 
 type Position = { ticker: string; name: string; qty: number; avg_price: number; live_price?: number | null; value: number; unrealized_pnl?: number | null; unrealized_pnl_pct?: number | null };
@@ -363,7 +369,7 @@ export default function TestingPage() {
             <tbody>
               {st.history.map((h) => (
                 <tr key={h.id} className="border-t border-[var(--border-default)]/40">
-                  <td className="px-3 py-1.5 text-[10.5px] text-[var(--text-muted)] tabular-nums">{(h.filled_at || h.created_at || "").slice(5, 16).replace("T", " ")}</td>
+                  <td className="px-3 py-1.5 text-[10.5px] text-[var(--text-muted)] tabular-nums">{kst(h.filled_at || h.created_at)}</td>
                   <td className="px-2 font-bold" style={{ color: h.side === "BUY" ? RED : BLUE }}>{h.side === "BUY" ? t("매수", "BUY") : t("매도", "SELL")}</td>
                   <td className="px-2">{h.name}</td>
                   <td className="text-right px-2 tabular-nums">{fmt(h.qty)}</td>
