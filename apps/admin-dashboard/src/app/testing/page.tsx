@@ -123,9 +123,28 @@ export default function TestingPage() {
   };
 
   const cancel = async (id: number) => { await apiPost(`/paper-desk/cancel/${id}`); load(); };
-  const quickSell = (p: Position) => {
-    setQ(p.ticker); setSide("SELL"); setQty(String(p.qty)); setOtype("market");
-    setMsg(t(`${p.name} 전량 매도 준비 — [주문 실행]을 누르세요`, `Ready to sell all ${p.name} — press Execute`));
+  // ONE-CLICK sell: confirm → market-sell the whole position immediately (boss: the
+  // old "pre-fill the form, then press Execute" flow read as broken)
+  const quickSell = async (p: Position) => {
+    if (!confirm(t(`${p.name} ${p.qty}주 전량을 지금 시장가로 매도할까요?`,
+      `Sell ALL ${p.qty} shares of ${p.name} at market now?`))) return;
+    setBusy(true); setMsg(null);
+    try {
+      const r = await apiPost<{ ok: boolean; fill_price?: number; realized_pnl?: number; realized_pnl_pct?: number; error?: string; reason?: string }>(
+        "/paper-desk/order", { ticker: p.ticker, side: "SELL", qty: p.qty, order_type: "market" });
+      if (r.ok) {
+        const pnl = r.realized_pnl ?? 0;
+        setMsg(t(`✅ ${p.name} ${p.qty}주 매도 완료 @ ${fmt(r.fill_price)} — 실현손익 ${pnl > 0 ? "+" : ""}${fmt(pnl)}원 (${r.realized_pnl_pct}%)`,
+          `✅ Sold ${p.qty} ${p.name} @ ${fmt(r.fill_price)} — realized ${pnl > 0 ? "+" : ""}${fmt(pnl)} (${r.realized_pnl_pct}%)`));
+      } else {
+        setMsg(`❌ ${r.error || r.reason || t("매도 실패", "sell failed")}`);
+      }
+      load();
+    } catch (e) {
+      setMsg(t("❌ 매도 실패 — 잠시 후 다시 시도하세요", "❌ sell failed — retry shortly"));
+    } finally {
+      setBusy(false);
+    }
   };
   const resetDesk = async () => {
     if (!confirm(t("모의계좌를 초기화할까요? (₩1억, 기록 삭제)", "Reset the paper account? (₩100M, clears records)"))) return;
@@ -154,6 +173,15 @@ export default function TestingPage() {
             {st.record.win_rate != null && <> · {t("승률", "win")} <b className="text-[var(--text-primary)]">{st.record.win_rate}%</b></>}
             {" · "}{t("실현손익", "realized")} <b style={{ color: pnlCol(st.realized_pnl) }}>{fmt(st.realized_pnl)}</b>
           </span>
+        </div>
+      )}
+
+      {/* result banner — ALWAYS visible, whatever action produced it */}
+      {msg && (
+        <div className="mb-3 px-3.5 py-2.5 rounded-xl border text-[13px] font-bold text-[var(--text-primary)]"
+          style={{ borderColor: "var(--border-default)", background: msg.startsWith("✅") ? "rgba(76,175,80,0.12)" : msg.startsWith("❌") ? "rgba(244,67,54,0.10)" : "var(--bg-elevated)" }}>
+          {msg}
+          <button onClick={() => setMsg(null)} className="ml-3 text-[11px] text-[var(--text-muted)]">✕</button>
         </div>
       )}
 
@@ -256,7 +284,6 @@ export default function TestingPage() {
               "Limit: BUY fills when price drops to your trigger, SELL when it rises to it (fill = live price at that moment)")}
           </div>
         )}
-        {msg && <div className="px-3 pb-2.5 text-[12px] font-bold text-[var(--text-primary)]">{msg}</div>}
       </Sect>
 
       {/* positions */}
