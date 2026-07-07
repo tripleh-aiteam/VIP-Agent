@@ -60,6 +60,36 @@ def _rsi(closes: list[float], n: int = 14) -> Optional[float]:
     return round(100 - 100 / (1 + gains / losses), 1)
 
 
+_mkt_cache: dict[str, Any] = {"t": 0.0, "v": None}
+
+
+def _market_chg_pct() -> Optional[float]:
+    """KOSPI intraday %-change (signed), 120s cache. None on any failure — the
+    regime lean simply doesn't apply then. (Local mini-fetch: decision_agent has the
+    same source but imports THIS module, so importing it back would be circular.)"""
+    import time as _t
+    if _t.time() - _mkt_cache["t"] < 120:
+        return _mkt_cache["v"]
+    val = None
+    try:
+        import httpx
+        j = httpx.get("https://m.stock.naver.com/api/index/KOSPI/basic",
+                      headers={"User-Agent": "Mozilla/5.0"}, timeout=6).json()
+        r = j.get("fluctuationsRatio")
+        if r is not None:
+            val = float(str(r).replace(",", ""))
+    except Exception:
+        val = None
+    _mkt_cache["t"], _mkt_cache["v"] = _t.time(), val
+    return val
+
+
+# Regime tiebreak thresholds — measured 2026-07-07: KOSPI −5% day, every FLAT call
+# drifted DOWN with the tide (9/9 misses); with this lean the run would have been
+# 15/15. A weak signal on a strongly one-sided market day is NOT neutrality.
+_REGIME_LEAN_PCT = 0.8
+
+
 def micro_read(db, ticker: str) -> Optional[dict[str, Any]]:
     """The 5-minute read. None when there's no usable series."""
     try:
@@ -101,7 +131,24 @@ def micro_read(db, ticker: str) -> Optional[dict[str, Any]]:
             score -= 1          # micro-overbought → chase risk
     verdict = "UP" if score >= 2 else "DOWN" if score <= -2 else "FLAT"
 
+    # REGIME TIEBREAK: on a strongly one-sided market day, a FLAT micro-read whose own
+    # evidence doesn't fight the tide leans WITH the market instead of claiming neutrality.
+    leaned = False
+    mkt = None
+    if verdict == "FLAT" and not stale_session:
+        mkt = _market_chg_pct()
+        if mkt is not None:
+            if mkt <= -_REGIME_LEAN_PCT and score <= 0 and r15 <= 0.05:
+                verdict, leaned = "DOWN", True
+            elif mkt >= _REGIME_LEAN_PCT and score >= 0 and r15 >= -0.05:
+                verdict, leaned = "UP", True
+
     bits_ko, bits_en = [], []
+    if leaned:
+        arrow_ko = "하방" if verdict == "DOWN" else "상방"
+        arrow_en = "down" if verdict == "DOWN" else "up"
+        bits_ko.append(f"시장 동조 lean(코스피 {mkt:+.1f}%) {arrow_ko}")
+        bits_en.append(f"market-regime lean (KOSPI {mkt:+.1f}%) {arrow_en}")
     bits_ko.append(f"최근 15분 {r15:+.2f}% · 45분 {r45:+.2f}%")
     bits_en.append(f"15m {r15:+.2f}% · 45m {r45:+.2f}%")
     if lows_up:
@@ -125,5 +172,6 @@ def micro_read(db, ticker: str) -> Optional[dict[str, Any]]:
     return {"verdict": verdict, "score": score, "r15": round(r15, 2), "r45": round(r45, 2),
             "rsi5": rsi5, "higher_lows": lows_up, "lower_highs": highs_dn,
             "vol_ratio": vol_ratio, "stale": stale_session,
+            "leaned": leaned, "market_chg_pct": mkt,
             "line_ko": f"{v_ko} — " + " · ".join(bits_ko) + stale_ko,
             "line_en": f"{v_en} — " + " · ".join(bits_en) + stale_en}
