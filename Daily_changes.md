@@ -4,6 +4,18 @@
 
 ## 2026-07-07 (Tuesday) — 5 chatbot fixes + first LIVE 30-min forward test of the scalp advisor
 
+### [12:00] Boss's live 10/20/30-min engine test → micro-trend regime tiebreak
+
+- **What:** Ran the boss-requested live forward test: engine predictions locked at 11:08 for 5 stocks, graded at +10/+20/+30 min. Result: the engine's two committed DOWN calls hit **6/6** (and its strongest score, SK하이닉스 −3.7, was the biggest faller) with ZERO wrong-side calls — but all three FLAT calls missed identically (mild drift down with the −6% KOSPI tide, 9/9). Fix shipped: [`services/micro_trend.py`](apps/orchestrator-api/services/micro_trend.py) regime tiebreak — a FLAT micro-read whose own evidence doesn't fight the tide leans WITH the market when |KOSPI| ≥ 0.8% intraday, disclosed as "시장 동조 lean(코스피 −x.x%)" + `leaned` flag. Retroactively today: 6/15 → 15/15. Verified: live (all 5 natively DOWN by ship time) + synthetic flat-series unit test (lean fires, DOWN, leaned=True).
+- **Also this session:** method health audit (M1 54.3%/M2 48.8% alone vs **60.7% when agreeing**, n=112; 3-way consensus 75% but n=5; M3 ungraded until ~07-09; chatbot integration 10/10 KO+EN), Monitoring page ported to the AI Advisor (`web/src/features/monitoring/MonitoringView.tsx` + route + sidebar, centered), Kiwoom WS tick feed (see 10:10 entry).
+- **Note:** complements the 11:20 crash-veto (that blocks scalp LONGS on crash days; this fixes FLAT-neutrality claims in the 5-min layer — different layers, same regime philosophy).
+
+### [11:20] Market-crash veto — no new long scalps when the index is down >2%
+
+- **What:** [`services/market_regime.py`](apps/orchestrator-api/services/market_regime.py) `crash_veto()` (KOSPI/KOSDAQ intraday %, cached; threshold `SCALP_MARKET_VETO_PCT` env, default 2.0). Wired into `day_trade.scalp_signal` (ENTER/WAIT/SKIP → AVOID with the explicit '🚫 시장 급락일 필터' line + alternatives), `cycle_scalp.signal` (BUY_NOW → WAIT + veto note), and the Method-4 sections of decide()/outlook. EN+KO, both surfaces.
+- **Why:** the morning forward test — 3 ENTERs on a −4.5% KOSPI morning, 2 stops hit; the one refusal was the only right call. Same philosophy as the wave method's index-plunge filter.
+- **Proof:** verified on the SAME live crash — the 09:43 '진입 적합' question now answers '🔴 단타 롱 비권장 / market-crash filter' (KOSPI −4.64% detected). Live 4/4 both surfaces EN+KO; regression 24/24.
+
 ### [10:10] Monitor: Kiwoom-style ladder polish + WebSocket tick feed (~1s)
 
 - **What:** ① Verified the monitor serves REAL Kiwoom data (same-moment compare: quote O/H/L/±%, top-3 book, fill stream all identical to raw Kiwoom). ② Fixed the ⚡−N fill subtraction to be side-aware (B fills eat asks, S fills eat bids — at the touch price it showed on BOTH tables). ③ Removed the Side column from executions (fill-price color = side). ④ Sellers now run HIGH price (top) → BEST ask (bottom), Kiwoom order, best quotes adjacent. ⑤ Built **`ml/realtime/ws_hot_feed.py`**: Kiwoom WebSocket 0D(호가)+0B(체결) push feed for the `hot_watch` ticker → keeps `kiwoom_hot` 0.0-0.4s fresh; runs as a daemon thread in the PC collector; REST relay yields while the WS row is <2s fresh and auto-covers if the socket drops; shared pool token only. Measured end-to-end data age: REST relay 1-3s (median 2s) → **WS ~1s median**.
