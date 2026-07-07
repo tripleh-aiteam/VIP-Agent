@@ -33,7 +33,10 @@ _watch_written: dict[str, float] = {}   # hot_watch UPSERT throttle (per ticker)
 # fills + quote into kiwoom_hot every ~1s, Render serves it when direct fails.
 # ---------------------------------------------------------------------------
 def _hot_watch_write(db, ticker: str) -> None:
-    """Tell the PC which ticker the monitor is viewing (throttled, never raises)."""
+    """Tell the PC which tickers are being viewed (throttled, never raises).
+    ROW PER TICKER (2026-07-07): the original single-row hot_watch thrashed when the
+    VIP monitor, the AI Advisor monitor and any probe watched DIFFERENT stocks — the
+    WS feed resubscribed in a loop and fills froze. Multiple viewers are normal now."""
     nowt = _time.time()
     if nowt - _watch_written.get(ticker, 0) < 5:
         return
@@ -41,8 +44,11 @@ def _hot_watch_write(db, ticker: str) -> None:
     try:
         from sqlalchemy import text as _sql
         db.execute(_sql(
-            "INSERT INTO hot_watch (id, ticker, requested_at) VALUES (1, :t, now()) "
-            "ON CONFLICT (id) DO UPDATE SET ticker=:t, requested_at=now()"), {"t": ticker})
+            "CREATE TABLE IF NOT EXISTS hot_watch_multi (ticker TEXT PRIMARY KEY, "
+            "requested_at TIMESTAMPTZ DEFAULT now())"))
+        db.execute(_sql(
+            "INSERT INTO hot_watch_multi (ticker, requested_at) VALUES (:t, now()) "
+            "ON CONFLICT (ticker) DO UPDATE SET requested_at=now()"), {"t": ticker})
         db.commit()
     except Exception:
         try:

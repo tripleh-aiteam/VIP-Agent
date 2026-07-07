@@ -143,6 +143,8 @@ def _one_pass(conn) -> int:
 _HOT_DDL = (
     "CREATE TABLE IF NOT EXISTS hot_watch (id INT PRIMARY KEY DEFAULT 1, "
     "ticker TEXT, requested_at TIMESTAMPTZ DEFAULT now())",
+    "CREATE TABLE IF NOT EXISTS hot_watch_multi (ticker TEXT PRIMARY KEY, "
+    "requested_at TIMESTAMPTZ DEFAULT now())",
     "CREATE TABLE IF NOT EXISTS kiwoom_hot (ticker TEXT PRIMARY KEY, "
     "payload JSONB, updated_at TIMESTAMPTZ DEFAULT now())",
 )
@@ -163,43 +165,52 @@ def _hot_relay_loop() -> None:
     print("[hot-relay] started", flush=True)
     while True:
         try:
+            # ALL fresh-watched tickers (multi-table + legacy single row during rollout)
+            watched: set = set()
             with conn.cursor() as cur:
-                cur.execute("SELECT ticker, EXTRACT(EPOCH FROM (now()-requested_at)) "
-                            "FROM hot_watch WHERE id=1")
-                row = cur.fetchone()
+                cur.execute("SELECT ticker FROM hot_watch_multi "
+                            "WHERE requested_at > now() - interval '60 seconds'")
+                watched |= {str(r[0]) for r in cur.fetchall() if r[0]}
+                try:
+                    cur.execute("SELECT ticker FROM hot_watch WHERE id=1 "
+                                "AND requested_at > now() - interval '60 seconds'")
+                    r = cur.fetchone()
+                    if r and r[0]:
+                        watched.add(str(r[0]))
+                except Exception:
+                    conn.rollback()
             conn.commit()
-            if not row or not row[0] or float(row[1] or 9e9) > 60:
+            if not watched:
                 time.sleep(3)
                 continue
-            tk = str(row[0])
-            # WS tick feed fresh? then IT owns the hot row — don't overwrite pushed
-            # ticks with older REST polls (we only cover when the socket is down).
-            with conn.cursor() as cur:
-                cur.execute("SELECT EXTRACT(EPOCH FROM (now()-updated_at)) "
-                            "FROM kiwoom_hot WHERE ticker=%s", (tk,))
-                r2 = cur.fetchone()
-            conn.commit()
-            if r2 and float(r2[0] if r2[0] is not None else 9e9) < 2.0:
-                time.sleep(1.0)
-                continue
-            ob = kr.order_book(tk, ttl=0.0) or {}
-            tr = kr.executions(tk, ttl=0.0) or []
-            q = kr.current_price(tk) or {}
-            if not (ob.get("levels") or tr or q.get("price")):
-                time.sleep(2)
-                continue
-            payload = {"levels": ob.get("levels") or [],
-                       "imbalance": ob.get("imbalance"),
-                       "tot_bid": ob.get("tot_bid"), "tot_ask": ob.get("tot_ask"),
-                       "trades": tr[:30], "quote": q}
-            with conn.cursor() as cur:
-                cur.execute(
-                    "INSERT INTO kiwoom_hot (ticker, payload, updated_at) "
-                    "VALUES (%s, %s, now()) "
-                    "ON CONFLICT (ticker) DO UPDATE SET payload=EXCLUDED.payload, "
-                    "updated_at=now()", (tk, _json.dumps(payload)))
-            conn.commit()
-            time.sleep(1.0)
+            covered = 0
+            for tk in sorted(watched)[:6]:
+                # WS tick feed fresh? then IT owns this row — only cover stale ones.
+                with conn.cursor() as cur:
+                    cur.execute("SELECT EXTRACT(EPOCH FROM (now()-updated_at)) "
+                                "FROM kiwoom_hot WHERE ticker=%s", (tk,))
+                    r2 = cur.fetchone()
+                conn.commit()
+                if r2 and float(r2[0] if r2[0] is not None else 9e9) < 2.0:
+                    continue
+                ob = kr.order_book(tk, ttl=0.0) or {}
+                tr = kr.executions(tk, ttl=0.0) or []
+                q = kr.current_price(tk) or {}
+                if not (ob.get("levels") or tr or q.get("price")):
+                    continue
+                payload = {"levels": ob.get("levels") or [],
+                           "imbalance": ob.get("imbalance"),
+                           "tot_bid": ob.get("tot_bid"), "tot_ask": ob.get("tot_ask"),
+                           "trades": tr[:30], "quote": q}
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "INSERT INTO kiwoom_hot (ticker, payload, updated_at) "
+                        "VALUES (%s, %s, now()) "
+                        "ON CONFLICT (ticker) DO UPDATE SET payload=EXCLUDED.payload, "
+                        "updated_at=now()", (tk, _json.dumps(payload)))
+                conn.commit()
+                covered += 1
+            time.sleep(1.0 if covered else 1.5)
         except Exception as e:
             print(f"[hot-relay] error: {str(e)[:90]}", flush=True)
             try:

@@ -257,8 +257,12 @@ def status() -> dict:
 
 
 def should_run() -> bool:
-    """Enabled when Kiwoom creds exist and not explicitly disabled."""
-    if os.getenv("WS_ORDERBOOK_COLLECTOR", "").lower() == "false":
+    """OPT-IN only (2026-07-07): Kiwoom allows ONE WebSocket session per app key —
+    this server-side collector was kicking the PC's ws_hot_feed session in a 'Bye'
+    loop (same shape as the token war), freezing the monitor's fills. The PC feed is
+    now the canonical WS consumer; enable this one ONLY with WS_ORDERBOOK_COLLECTOR=true
+    (e.g. if the PC is retired after the Render IPs get whitelisted)."""
+    if os.getenv("WS_ORDERBOOK_COLLECTOR", "").lower() != "true":
         return False
     return bool(os.getenv("KIWOOM_APP_KEY") and os.getenv("KIWOOM_APP_SECRET"))
 
