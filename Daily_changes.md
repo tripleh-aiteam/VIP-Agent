@@ -2,6 +2,37 @@
 
 ---
 
+## 2026-07-07 (Tuesday) — Turn-timing engine (boss's rhythm idea): A-to-Z build, honest NO-GO backtest, shipped as informational layer
+
+### Goal
+
+Boss's chart observation: each stock decreases ~N minutes then increases ~M minutes, repeatedly — if we know each stock's rhythm we can buy at the bottom-turn and sell before the decrease, daily. Built the full pipeline (measure → detect → backtest → chatbot/menu integration) with the standing honesty rule: costs subtracted, label anything unproven.
+
+### Files added
+
+- [services/turn_engine.py](apps/orchestrator-api/services/turn_engine.py) — the whole engine: `_day_bars` (UNION minute_bars_hist + raw_minute_prices with **two data bugs fixed**: live rows are KST-labeled vs hist UTC → normalize hh≥8 by −9h, and live rows are 1-min vs hist 5-min → resample to 5-min buckets; verified 59 bars/day), `rhythm()` zigzag leg stats (e.g. 삼성전기: down 18min/−1.54% → up 15min/+1.36%, ~21.6 legs/day), `_bottom_score`/`_top_score` (RSI turn, volume climax, micro higher-low, leg-duration vs stock's own average, hour weights — 09h KST 85% real turns, 14h 66% trap), cost-aware `backtest()` (0.25% round-trip, crash-day skip, MIN_EXIT_GAIN), `turn_reply()` KO/EN chat answer, `live_turn_status()`.
+
+### Files updated
+
+- [services/assistant_agent.py](apps/orchestrator-api/services/assistant_agent.py) — new `turn_timing` intent ("삼성전자 언제 반등해?" / "When will SK Hynix turn up?" + follow-up stock inheritance); scalp answers now carry a **⏱ 턴 타이밍** line (current leg + bottom-turn score + the stock's average rhythm); every firing signal is auto-logged (`intent="turn"`) for grading + measured track-record line in answers.
+- [routers/predictions.py](apps/orchestrator-api/routers/predictions.py) — `GET /predictions/turn-status/{ticker}`, `GET /predictions/turn-signals` (fire-first).
+- [apps/admin-dashboard/src/app/trading/page.tsx](apps/admin-dashboard/src/app/trading/page.tsx) + AI Advisor `web/src/features/daily-trading/DailyTradingView.tsx` — live turn line per cycle card (하락 X분째 · 바닥턴 점수 · 신호 점등).
+
+### Honest verdict (why it's informational, not a trading signal)
+
+Backtest v1 843 trades / 25.3% win / all-negative → tuned once (stricter fire 0.75, min-exit-gain, crash-day skip) → v2 246 trades / 35.8% win / universe −53.8% / **GO 0 of 39 stocks**. Positive subset exists (SK하이닉스 +2.11%, 현대모비스 +2.10%, 삼성SDI +2.07%, 한화오션 +1.68%) but n=4–7 — too small. So every chat/menu surface carries the ⚠️ NO-GO label; fires are auto-graded forward to build a real sample.
+
+### Verified
+
+24/24 chatbot regression (tag `turn_full`) + full live sweep 9/9 PASS on both surfaces (VIP + AI Advisor) EN/KO: turn questions, scalp+turn line, `/predictions/turn-signals`.
+
+### Next
+
+- Re-run `backtest()` weekly as minute-bar history accumulates; watch auto-graded `intent="turn"` calls.
+- Paper-trade the positive-subset 4 stocks on the 모의투자 desk before any real-money consideration.
+
+---
+
 ## 2026-07-07 (Tuesday) — YouTube staleness guard (external GPU pipeline stopped 07-03)
 
 ### Goal / finding
