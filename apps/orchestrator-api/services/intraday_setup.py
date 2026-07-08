@@ -41,7 +41,12 @@ TARGET_LO, TARGET_HI = 1.5, 2.0      # take-profit band (%), sell on first touch
 STOP_PCT = 1.0                       # cut here (%)
 TIME_MIN = 60                        # time-stop (minutes)
 _VOL_MIN = 0.85                      # min expected 1h move (1σ, %) for +1.5% to be reachable
-_REGIME_CRASH = -1.5                 # KOSPI intraday % that blocks new buys
+_REGIME_CRASH = -1.5                 # KOSPI intraday % that blocks new DIP buys
+_EXTREME_CRASH = -3.0                # KOSPI intraday % that blocks EVERYTHING (panic)
+# MOMENTUM setup thresholds — a stock strongly rising (bucks a down market)
+_MOM_R15, _MOM_R45 = 0.35, 0.5       # min 15m / 45m rise (%)
+_RSI_MOM_MIN, _RSI_MOM_MAX = 52, 72  # rising but not overbought
+_DEEP_SCAN = 14                      # deep-scan the N most active stocks (latency cap)
 
 
 def _vol_1h_pct(closes: list[float]) -> Optional[float]:
@@ -102,10 +107,11 @@ def scan_one(db, code: str, name: str) -> dict[str, Any]:
     sma2h = sum(closes[-24:]) / 24 if len(closes) >= 24 else None
     downtrend = sma2h is not None and price < sma2h
 
-    # --- gates (any TRUE → NOTHING, with the honest reason) ---
+    # --- gates ---
     sector_down = bool(cluster and cluster.get("verdict") == "SECTOR_DOWN")
     mkt = micro.get("market_chg_pct")
-    regime_bad = mkt is not None and mkt <= _REGIME_CRASH
+    regime_bad = mkt is not None and mkt <= _REGIME_CRASH   # blocks DIP buys only
+    extreme_crash = mkt is not None and mkt <= _EXTREME_CRASH  # blocks everything (panic)
     vol_bad = vol is not None and vol < _VOL_MIN
 
     # --- confidence (starts 50, adds for each confirmation) ---
@@ -144,12 +150,12 @@ def scan_one(db, code: str, name: str) -> dict[str, Any]:
                 "reason_en": "peer group falling together — falling knife, risky to buy",
                 "path_ko": "그룹 하락이 멈추고 반등 시작하면 매수 신호 가능",
                 "path_en": "becomes buyable when the group stops falling and turns up"}
-    if regime_bad:
+    if extreme_crash:
         return {**base, "state": "NOTHING", "gate": "regime",
-                "reason_ko": f"시장 급락(코스피 {mkt:+.1f}%) — 신규 매수 보류",
-                "reason_en": f"market plunging (KOSPI {mkt:+.1f}%) — hold off on new buys",
-                "path_ko": "시장 급락이 진정되면 다시 스캔",
-                "path_en": "re-scan once the market plunge calms"}
+                "reason_ko": f"시장 폭락(코스피 {mkt:+.1f}%) — 전량 관망(패닉 회피)",
+                "reason_en": f"market crashing (KOSPI {mkt:+.1f}%) — sit fully out (panic)",
+                "path_ko": "폭락이 진정되면 다시 스캔",
+                "path_en": "re-scan once the crash calms"}
     if vol_bad:
         return {**base, "state": "NOTHING", "gate": "vol",
                 "reason_ko": f"변동성 부족(예상 1시간 ±{vol:.1f}%) — 1시간 +1.5% 어려움",
@@ -163,16 +169,14 @@ def scan_one(db, code: str, name: str) -> dict[str, Any]:
                 "path_ko": f"가격이 2시간 평균 위로 올라오면(≈₩{round(sma2h):,}) 매수 신호 대기",
                 "path_en": f"watch for price to reclaim its 2h average (≈₩{round(sma2h):,})"}
 
-    # --- ACT_NOW candidate: RSI trigger fired → CONFIRM with the ML + news brain ---
-    if sig.get("verdict") == "BUY_NOW":
-        # ML confirmation gate: don't scalp-buy a stock the model rates SELL (5일 하락)
+    # confirm helper: the ML + news brain approves/vetoes an ACT_NOW candidate
+    def _confirm(why_ko: str, why_en: str, stype: str):
         if ml_bearish:
             return {**base, "state": "NOTHING", "gate": "ml",
-                    "reason_ko": "기술적 반등 신호는 있으나 ML이 하락 예상 — 스캘핑 매수 보류",
-                    "reason_en": "technical bounce, but ML forecasts a fall — hold off scalp-buy",
+                    "reason_ko": "기술적 신호는 있으나 ML이 하락 예상 — 스캘핑 매수 보류",
+                    "reason_en": "technical signal, but ML forecasts a fall — hold off scalp-buy",
                     "path_ko": "ML 전망이 매수/중립으로 바뀌면 매수 자리 가능",
                     "path_en": "becomes buyable when the ML outlook turns to buy/neutral"}
-        # news confirmation gate: don't scalp-buy into fresh negative news
         news = {}
         try:
             from services.decision_agent import _news
@@ -182,22 +186,44 @@ def scan_one(db, code: str, name: str) -> dict[str, Any]:
         nscore = news.get("score") or 0
         if nscore <= -2:
             return {**base, "state": "NOTHING", "gate": "news",
-                    "reason_ko": "기술적 반등 신호는 있으나 부정적 뉴스 — 매수 보류",
-                    "reason_en": "technical bounce, but negative news flow — hold off",
+                    "reason_ko": "기술적 신호는 있으나 부정적 뉴스 — 매수 보류",
+                    "reason_en": "technical signal, but negative news flow — hold off",
                     "path_ko": "뉴스 악재가 소화되면 다시 스캔",
                     "path_en": "re-scan once the negative news is digested"}
-        why_ko = "5분봉 반등 시작(RSI 저점 상승전환)"
-        why_en = "5-min bounce starting (RSI turning up from oversold)"
-        if cluster and cluster.get("verdict") in ("CONFIRM_UP", "LAGGARD_UP"):
-            why_ko += " + 그룹 동조"; why_en += " + peer group agrees"
-        if micro.get("higher_lows"):
-            why_ko += " + 저점 higher-low"; why_en += " + higher-lows"
+        wk, we = why_ko, why_en
         if ml_bullish:
-            why_ko += " + ML 매수"; why_en += " + ML says buy"
+            wk += " + ML 매수"; we += " + ML says buy"
         if nscore >= 2:
-            why_ko += " + 긍정 뉴스"; why_en += " + positive news"
-        return {**base, "state": "ACT_NOW", "why_ko": why_ko, "why_en": why_en,
+            wk += " + 긍정 뉴스"; we += " + positive news"
+        return {**base, "state": "ACT_NOW", "setup_type": stype, "why_ko": wk, "why_en": we,
                 "ml": ml_advice, "news_score": nscore}
+
+    # --- SETUP 1: DIP-BOUNCE — RSI oversold turning up (in an uptrend, gates passed).
+    # Skipped on a falling market (don't dip-buy into a −1.5%+ tape). ---
+    if sig.get("verdict") == "BUY_NOW" and not regime_bad:
+        wk = "눌림목 반등 시작(RSI 저점 상승전환)"
+        we = "dip-bounce starting (RSI turning up from oversold)"
+        if cluster and cluster.get("verdict") in ("CONFIRM_UP", "LAGGARD_UP"):
+            wk += " + 그룹 동조"; we += " + peer group agrees"
+        if micro.get("higher_lows"):
+            wk += " + 저점 higher-low"; we += " + higher-lows"
+        return _confirm(wk, we, "dip")
+
+    # --- SETUP 2: MOMENTUM — strong uptrend, rising, not overbought. This catches the
+    # stocks BUCKING a down market (the boss's point: something is always rising). ---
+    r15, r45, rsi5, volr = micro.get("r15"), micro.get("r45"), micro.get("rsi5"), micro.get("vol_ratio")
+    momentum = (r15 is not None and r45 is not None and rsi5 is not None
+                and r15 >= _MOM_R15 and r45 >= _MOM_R45
+                and _RSI_MOM_MIN <= rsi5 <= _RSI_MOM_MAX
+                and micro.get("verdict") == "UP")
+    if momentum:
+        wk = f"강한 상승 흐름 (15분 {r15:+.1f}% · 45분 {r45:+.1f}% · RSI {rsi5})"
+        we = f"strong uptrend (15m {r15:+.1f}% · 45m {r45:+.1f}% · RSI {rsi5})"
+        if volr and volr >= 1.5:
+            wk += " + 거래량 급증"; we += " + volume surge"
+        if cluster and cluster.get("verdict") == "CONFIRM_UP":
+            wk += " + 그룹 동조"; we += " + peer group up"
+        return _confirm(wk, we, "momentum")
 
     # --- FORMING: dip present, waiting for the trigger ---
     if sig.get("verdict") == "WAIT":
@@ -214,12 +240,74 @@ def scan_one(db, code: str, name: str) -> dict[str, Any]:
             "path_en": "buy signal when price pulls back and 5-min RSI turns up from a low"}
 
 
+def _universe(db, limit: int = 45) -> list[tuple[str, str]]:
+    """All stocks we have fresh intraday data for (~40 collected), names from krx_stocks.
+    Falls back to the core WATCHLIST if the snapshot table is empty."""
+    from sqlalchemy import text
+    codes: list[str] = []
+    try:
+        rows = db.execute(text(
+            "SELECT DISTINCT ticker FROM intraday_snapshot_history "
+            "WHERE ts > now() - interval '6 hours'")).fetchall()
+        codes = [str(r[0]) for r in rows if r[0]]
+    except Exception:
+        db.rollback()
+    if not codes:
+        return list(WATCHLIST)
+    names: dict[str, str] = {}
+    try:
+        nr = db.execute(text("SELECT code, name FROM krx_stocks WHERE code = ANY(:c)"),
+                        {"c": codes}).fetchall()
+        names = {str(r[0]): r[1] for r in nr}
+    except Exception:
+        db.rollback()
+    wl = dict(WATCHLIST)
+    return [(c, names.get(c) or wl.get(c) or c) for c in codes][:limit]
+
+
+def _prescan(db, codes: list[str]) -> list[str]:
+    """Cheap bulk rank so we deep-scan only the most ACTIVE stocks: recent snapshot
+    prices → |momentum| + above-2h-average → interest score, high to low. One query."""
+    from collections import defaultdict
+
+    from sqlalchemy import text
+    try:
+        rows = db.execute(text(
+            "SELECT ticker, price FROM intraday_snapshot_history "
+            "WHERE ts > now() - interval '3 hours' AND price IS NOT NULL "
+            "AND ticker = ANY(:c) ORDER BY ticker, ts"), {"c": codes}).fetchall()
+    except Exception:
+        db.rollback()
+        return codes
+    ser: dict[str, list] = defaultdict(list)
+    for tk, px in rows:
+        ser[str(tk)].append(float(px))
+    scored = []
+    for c in codes:
+        s = ser.get(c, [])
+        if len(s) < 10:
+            scored.append((c, -1.0))
+            continue
+        last = s[-1]
+        sma = sum(s[-40:]) / min(len(s), 40)         # ~2h at ~2-3min snapshots
+        mom = abs(last / s[max(0, len(s) - 20)] - 1) * 100   # recent move magnitude
+        interest = mom + (1.5 if last > sma else 0.0)        # movers + uptrend = worth a look
+        scored.append((c, interest))
+    scored.sort(key=lambda x: -x[1])
+    return [c for c, _ in scored]
+
+
 def scan(db) -> dict[str, Any]:
-    """Scan the whole watchlist. Returns act_now / forming / nothing buckets, ranked."""
+    """Scan a WIDE universe (~40 collected stocks): prescan-rank by activity, then deep-scan
+    the most active. Two setup types (dip-bounce + momentum). Ranked act/forming/nothing."""
+    uni = _universe(db)
+    name_of = dict(uni)
+    ranked = _prescan(db, [c for c, _ in uni])
+    top = ranked[:_DEEP_SCAN]
     results = []
-    for code, name in WATCHLIST:
+    for code in top:
         try:
-            results.append(scan_one(db, code, name))
+            results.append(scan_one(db, code, name_of.get(code, code)))
         except Exception:
             db.rollback()
     act = sorted([r for r in results if r["state"] == "ACT_NOW"],
@@ -228,6 +316,7 @@ def scan(db) -> dict[str, Any]:
                      key=lambda r: -r["confidence"])
     nothing = [r for r in results if r["state"] == "NOTHING"]
     return {"act_now": act, "forming": forming, "nothing": nothing,
+            "scanned": len(uni), "deep_scanned": len(results),
             "counts": {"act": len(act), "forming": len(forming), "nothing": len(nothing)}}
 
 
@@ -340,11 +429,15 @@ def scan_reply(db, lang: str = "ko") -> str:
     act, forming = r["act_now"], r["forming"]
     L: list[str] = []
 
+    _tlabel_ko = {"dip": "눌림목 반등", "momentum": "상승추세(모멘텀)"}
+    _tlabel_en = {"dip": "dip-bounce", "momentum": "momentum"}
     if act:
         s = act[0]
         tb = s["target_band"]
+        _tk = _tlabel_ko.get(s.get("setup_type"), "")
+        _te = _tlabel_en.get(s.get("setup_type"), "")
         if ko:
-            L.append(f"🎯 **지금 좋은 자리 {len(act)}개 — {s['name']} ({s['code']})**  확신 {s['confidence']}%")
+            L.append(f"🎯 **지금 좋은 자리 {len(act)}개 — {s['name']} ({s['code']}) · {_tk}**  확신 {s['confidence']}%")
             L += ["",
                   f"· ▲ 방향: 상승 (매수)",
                   f"· 진입: 지금 ~₩{_fmt(s['price'])} (₩{_fmt(s['entry_zone'][0])}–{_fmt(s['entry_zone'][1])})",
@@ -357,7 +450,7 @@ def scan_reply(db, lang: str = "ko") -> str:
             if len(act) > 1:
                 L.append(f"(추가 자리: {', '.join(a['name'] for a in act[1:])})")
         else:
-            L.append(f"🎯 **{len(act)} good setup(s) now — {s['en_name']} ({s['code']})**  confidence {s['confidence']}%")
+            L.append(f"🎯 **{len(act)} good setup(s) now — {s['en_name']} ({s['code']}) · {_te}**  confidence {s['confidence']}%")
             L += ["",
                   f"· ▲ Direction: UP (buy)",
                   f"· Enter: now ~₩{_fmt(s['price'])} (₩{_fmt(s['entry_zone'][0])}–{_fmt(s['entry_zone'][1])})",
@@ -393,6 +486,7 @@ def scan_reply(db, lang: str = "ko") -> str:
     all_stocks = r["nothing"]
     withpx = [s for s in all_stocks if s.get("price")]
     nodata = [s for s in all_stocks if not s.get("price")]
+    scanned = r.get("deep_scanned", len(all_stocks))
     mkt = None
     try:
         from services.micro_trend import _market_chg_pct
@@ -402,10 +496,11 @@ def scan_reply(db, lang: str = "ko") -> str:
     if ko:
         L.append("😌 **지금은 살 만한 자리 없음 — 관망 권장**")
         if mkt is not None:
-            L.append(f"_시장: 코스피 {mkt:+.2f}%_")
+            L.append(f"_시장: 코스피 {mkt:+.2f}% · 오늘 움직임 큰 {scanned}개 정밀 스캔_")
         L += ["",
               "‘살 자리 없음’은 **가격이 안 움직인다는 뜻이 아니라**, 지금 +1.5~2%를 "
-              "낮은 위험으로 노릴 **매수 타이밍이 아니라는 뜻**이에요. 감시 중인 종목별 상태:"]
+              "낮은 위험으로 노릴 **매수 타이밍이 아니라는 뜻**이에요. (눌림목 반등·상승추세 두 방식으로 탐색) "
+              "가장 활발한 종목별 상태:"]
         for s in withpx:
             met = []
             if s.get("rsi") is not None:
@@ -422,17 +517,18 @@ def scan_reply(db, lang: str = "ko") -> str:
         if nodata:
             L.append(f"\n(데이터 준비 중: {', '.join(s['name'] for s in nodata)})")
         L += ["",
-              "💡 **왜 지금 안 좋은가:** 대부분 하락 추세라 눌림목이 반등에 실패할 위험(떨어지는 칼날)이 큽니다. "
-              "지난 백테스트에서도 하락장 눌림 매수는 크게 손실이었어요 — 그래서 지금은 안전하게 쉬는 게 정답.",
-              "⏱️ **다시 확인할 때:** 시장 하락이 멈추고 종목이 2시간 평균 위로 올라오면 매수 자리가 생깁니다. "
-              "보통 **30분~1시간 뒤** 다시 물어보세요 (또는 스캐너가 자동 감지)."]
+              "💡 **왜 지금 안 좋은가:** 활발한 종목들도 (a) 변동성이 부족하거나 (b) 하락 추세라 눌림 반등 실패 위험이 "
+              "크거나 (c) 강한 상승 흐름이 아직 아니에요. 억지 매수는 손실로 이어집니다 — 지금은 쉬는 게 정답.",
+              "⏱️ **다시 확인할 때:** 어떤 종목이 상승 추세로 강하게 오르거나(모멘텀), 눌렸다가 반등을 시작하면 "
+              "매수 자리가 뜹니다. 보통 **30분~1시간 뒤** 다시 물어보세요 (스캐너가 자동 감지도 함)."]
     else:
         L.append("😌 **No good BUY setup right now — sit this one out**")
         if mkt is not None:
-            L.append(f"_Market: KOSPI {mkt:+.2f}%_")
+            L.append(f"_Market: KOSPI {mkt:+.2f}% · deep-scanned the {scanned} most active stocks_")
         L += ["",
               "‘No setup’ does **not** mean prices won't move — it means this isn't a "
-              "**good moment to buy** for a low-risk +1.5~2%. Live status of each watched stock:"]
+              "**good moment to buy** for a low-risk +1.5~2% (checked both dip-bounce & "
+              "momentum). Status of the most active stocks:"]
         for s in withpx:
             met = []
             if s.get("rsi") is not None:
@@ -449,10 +545,9 @@ def scan_reply(db, lang: str = "ko") -> str:
         if nodata:
             L.append(f"\n(data warming up: {', '.join(s['en_name'] for s in nodata)})")
         L += ["",
-              "💡 **Why it's not good now:** most stocks are in a downtrend, so a dip is likely "
-              "to keep falling (a falling knife). The backtest showed dip-buying in a downtrend "
-              "loses badly — so sitting out is the correct, low-risk answer.",
-              "⏱️ **When to check again:** a buy setup appears once the market stops falling and a "
-              "stock reclaims its 2h average. Usually ask again in **30–60 min** (or the scanner "
-              "auto-detects it)."]
+              "💡 **Why it's not good now:** even the active stocks either (a) lack the volatility "
+              "to reach +1.5% in an hour, (b) are in a downtrend (dip likely keeps falling), or "
+              "(c) aren't yet in a strong enough uptrend. Forcing a trade loses — sitting out is right.",
+              "⏱️ **When to check again:** a setup appears when a stock rises strongly (momentum) or "
+              "dips then starts bouncing. Ask again in **30–60 min** (the scanner also auto-detects it)."]
     return "\n".join(L)
