@@ -3969,6 +3969,7 @@ def _answer_multi_part(db, parts: list[str], language, current_path, selected_id
     inherits the last stock mentioned in an earlier part; after a picks part, bare
     'how many?' / 'when to buy·sell?' parts anchor on its #1 pick deterministically."""
     answers, carry, top, hist = [], None, None, list(history or [])
+    scanned_empty = False
     _all_txt = " ".join(parts)
     en = (str(language or "").lower().startswith("en")
           or (str(language or "auto").lower() in ("auto", "")
@@ -3985,8 +3986,31 @@ def _answer_multi_part(db, parts: list[str], language, current_path, selected_id
         except Exception:
             pass
         sub = None
+        # A picks part that (honestly) passed nothing leaves no #1 pick — the follow-ups
+        # must stay deterministic instead of falling to the free LLM (textbook filler).
+        if scanned_empty and not top and not found and _HOWMANY_SUB_RE.match(part.strip()):
+            sub = ("Today no stock passed the entry filters, so there is no entry/stop price "
+                   "to size against. The rule when a pick exists: shares = the smaller of what "
+                   "your budget buys and the 1%-risk rule (one stop-out ≤ 1% of capital). "
+                   "Name a stock — e.g. \"how many shares of Samsung Electronics with 5 million "
+                   "won?\" — and I'll compute it now." if en else
+                   "오늘은 기준을 통과한 종목이 없어 수량을 계산할 진입가·손절가가 없습니다. "
+                   "종목이 있을 때의 규칙: 수량 = 자금으로 살 수 있는 최대치와 1%-리스크 룰(한 번의 "
+                   "손절 손실 ≤ 자금의 1%) 중 작은 쪽입니다. \"삼성전자 500만원으로 몇 주?\"처럼 "
+                   "종목을 지정해 주시면 바로 계산해 드립니다.")
+        elif scanned_empty and not top and not found and _TIMING_SUB_RE.search(part):
+            sub = ("**⏱ Market-wide timing (measured on our minute data)**: turn signals are most "
+                   "reliable **09:00–10:00** (85% of detected turns were real) and least reliable "
+                   "**14:00–15:00** (66% — many fake turns). Since no stock passed today's filters, "
+                   "there is no per-stock rhythm to time — ask \"when will [name] turn up?\" for any "
+                   "stock and I'll give its measured down/up rhythm and live position in the cycle."
+                   if en else
+                   "**⏱ 시장 공통 타이밍 (실측)**: 턴 신호는 **09~10시**가 가장 잘 맞고(감지된 턴의 "
+                   "85%가 진짜), **14~15시**가 가장 안 맞습니다(66% — 가짜 턴 다수). 오늘은 기준 통과 "
+                   "종목이 없어 종목별 리듬 타이밍을 드릴 수 없습니다 — \"[종목명] 언제 반등해?\"라고 "
+                   "물어보시면 그 종목의 실측 하락/상승 리듬과 현재 위치를 바로 드립니다.")
         # 'How many?' after a picks part → real position sizing on the #1 pick.
-        if top and _HOWMANY_SUB_RE.match(part.strip()):
+        elif top and _HOWMANY_SUB_RE.match(part.strip()):
             try:
                 from services.position_size import sizing_line
                 _sl = sizing_line(db, transcript=_all_txt, user_key=user_id, lang="en" if en else "ko",
@@ -4024,6 +4048,8 @@ def _answer_multi_part(db, parts: list[str], language, current_path, selected_id
                 if isinstance(r, dict) and r.get("top_pick"):
                     top = r["top_pick"]
                     carry = carry or top.get("name")
+                elif isinstance(r, dict) and r.get("tool_used") in ("buy_picks", "scalp_watchlist"):
+                    scanned_empty = True                 # honest empty scan — no anchor pick
             except Exception as e:
                 sub = f"(error: {str(e)[:60]})"
         if len(parts) >= 3 and i > 1:                    # keep combined answer readable —
@@ -4792,11 +4818,13 @@ def _run_agent_impl(
                 _reply = _named_stock_check(_reply, _en)
             # DETAIL LAYER — grounded deep dive over the watchlist's own numbers,
             # same as buy_picks/reco answers (boss: scalp answers must be detailed too).
+            # Skipped when no pick passed — elaborating on an empty list produces filler.
             try:
-                _extra = _elaborate_answer(transcript, lang,
-                                           [{"tool": "scalp_watchlist", "result": _wl.get("picks")}])
-                if _extra:
-                    _reply = (_reply or "") + "\n\n" + _extra
+                if _wl.get("picks"):
+                    _extra = _elaborate_answer(transcript, lang,
+                                               [{"tool": "scalp_watchlist", "result": _wl.get("picks")}])
+                    if _extra:
+                        _reply = (_reply or "") + "\n\n" + _extra
             except Exception:
                 pass
             _tpk = None
