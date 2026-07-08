@@ -3961,6 +3961,89 @@ def _split_subquestions(t: str) -> list[str]:
 
 _DETAIL_SECTION_RE = _re.compile(r"\n+\*\*(?:심층 해설|상세 설명|Deep dive|Detailed explanation)\*\*.*", _re.DOTALL)
 
+
+# --- Conversational confirmation ('it means it decreased 5.59%?' / '그럼 떨어졌다는 거야?')
+# A short follow-up that only wants the prior answer confirmed must be answered like a
+# normal LLM chat — Yes/No + plain words from the conversation — not another data table
+# (2026-07-08 boss feedback: 'sometimes the LLM answer is enough').
+_CONFIRM_RE = _re.compile(
+    r"^(so\b|it means|that means|you mean|does (that|it) mean|meaning\b)"
+    r"|(am i right|is that (right|correct)|(,? ?right|,? ?correct|,? ?no)\s*\?+\s*$)"
+    r"|^(그럼|그러면|그러니까|그 ?말은|즉)[ ,]"
+    r"|(맞아|맞지|맞죠|맞나요|맞습니까|(라|다)는 (거야|거지|거네|건가요|뜻이야|뜻인가요|말이야)|란 뜻)\s*\??\s*$",
+    _re.IGNORECASE)
+# decisions/recommendations always go to the engine — never answered from memory
+_CONFIRM_SKIP = ("살까", "사야", "팔까", "팔아야", "추천", "전망", "언제",
+                 "should i", "recommend", "when will", "how many", "몇 주")
+# a NAMED stock + a freshness word wants live data, not a memory answer
+_CONFIRM_FRESH = ("지금", "현재", "실시간", " now", "current", "live")
+
+
+def _confirm_wants_fresh_data(t: str) -> bool:
+    tl = (t or "").lower()
+    if not any(k in tl for k in _CONFIRM_FRESH):
+        return False
+    try:
+        from services.stock_resolver import find_all
+        return bool(find_all(t))
+    except Exception:
+        return False
+
+
+def _confirm_chat_reply(question: str, lang: str, history: list[dict]) -> Optional[str]:
+    """Natural-chat confirmation grounded ONLY on the conversation. None → fall through.
+    Any number in the draft that isn't verbatim in the conversation triggers one strict
+    retry, then a fall-through — the honesty rule beats conversational nicety."""
+    en = str(lang or "").lower().startswith("en")
+    try:
+        from services.llm_client import chat_completion_sync
+        msgs, ground = [], [question]
+        for h in (history or [])[-8:]:
+            role = "assistant" if str(h.get("role")) == "assistant" else "user"
+            txt = str(h.get("content") or h.get("text") or "")[:1500]
+            if txt:
+                msgs.append({"role": role, "content": txt})
+                ground.append(txt)
+        msgs.append({"role": "user", "content": question})
+        known = set(_re.findall(r"\d[\d,]*(?:\.\d+)?", " ".join(ground)))
+        sys_p = (
+            "You are the same friendly Korean-stocks assistant from this conversation. The user "
+            "is asking you to CONFIRM or clarify something already discussed. Answer like a "
+            "natural chat message: if it's a yes/no question, START with "
+            + ("'Yes' or 'No'" if en else "'네' or '아니요'") + ", then explain in 1-3 short plain "
+            "sentences. STRICT RULE: every number you write must appear VERBATIM in this "
+            "conversation — do NOT compute, derive, or estimate any new number. A % change "
+            "shown next to a price means change versus the previous close; trust the stated "
+            "numbers instead of recalculating. If the conversation doesn't contain the needed "
+            "fact, say so and suggest the exact question to ask instead. No tables, no headers, "
+            "no bullet lists. Reply in " + ("ENGLISH" if en else "KOREAN (한국어)") + " only.")
+        out = None
+        for attempt in range(2):
+            draft = chat_completion_sync(system_prompt=sys_p, messages=msgs,
+                                         max_tokens=280, temperature=0.2,
+                                         model="groq-llama-3.3-70b")
+            draft = (draft or "").strip()
+            if not draft or draft.startswith("[LLM"):
+                return None
+            invented = [x for x in _re.findall(r"\d[\d,]*(?:\.\d+)?", draft)
+                        if x not in known and len(x.replace(",", "").replace(".", "")) > 1]
+            if not invented:
+                out = draft
+                break
+            msgs = msgs + [{"role": "assistant", "content": draft},
+                           {"role": "user", "content":
+                            f"Your draft used numbers not in our conversation ({', '.join(invented[:3])}). "
+                            "Rewrite using ONLY numbers that appear verbatim above, or say the fact "
+                            "isn't in the conversation."}]
+        if not out:
+            return None
+        if not en:
+            for _cn, _ko in (("综合", "종합"), ("分析", "분석"), ("市场", "시장"), ("投资", "투자")):
+                out = out.replace(_cn, _ko)
+        return out[:1200]
+    except Exception:
+        return None
+
 # Bare follow-up sub-questions of a picks ask — must anchor on the #1 pick, not fall to a
 # free LLM (2026-07-08 screenshots: 'How many?' → random tool dump, 'buying and selling
 # time?' → generic textbook timetable, different per surface).
@@ -4555,6 +4638,19 @@ def _run_agent_impl(
             lang = "ko"
         else:
             lang = "en"
+
+    # === CONVERSATIONAL CONFIRMATION — a short 'so it means…, right?' follow-up gets a
+    # natural Yes/No chat answer from the conversation itself, not another data dump.
+    # Skipped when the message wants fresh data or an actual decision (지금/살까/추천…).
+    if (history and transcript and len(transcript) <= 90 and not attachment_ids
+            and not confirmed_tool and _CONFIRM_RE.search(transcript)
+            and not any(k in transcript.lower() for k in _CONFIRM_SKIP)
+            and not _confirm_wants_fresh_data(transcript)):
+        _cf = _confirm_chat_reply(transcript, lang, history)
+        if _cf:
+            return {"intent": "confirm_chat", "language": lang, "reply": _cf,
+                    "action": None, "speak": True, "transcript": transcript,
+                    "tool_used": "llm_confirm"}
 
     # === M2 — POSITION-AWARE advice (a holding the user already has) ===
     # "지난주 SK하이닉스 200주 -4% 어떡해?" → 버티기/손절/물타기/익절 with trigger prices,
