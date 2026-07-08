@@ -67,6 +67,12 @@ Boss live-tested both chatbots and reported issues round by round: (1) a market-
 - [services/scalp_watchlist.py](apps/orchestrator-api/services/scalp_watchlist.py) — same method-card depth per scalp pick + ⏱ measured turn rhythm (with live leg) + R:R/net-after-costs + invalidation rule.
 - [services/assistant_agent.py](apps/orchestrator-api/services/assistant_agent.py) — multi-part answers: #1 pick travels via `top_pick` so bare "How many?" runs real position sizing (with 1%-risk-rule explanation) and "buying and selling time?" routes to the measured turn engine (was: generic LLM timetables, different per surface); KO "몇 주?" no longer dropped by the splitter; EN "short time trading" routes like KO 단타; `is there any stock…`/`살 주식 있어?` added to picks patterns; empty-scan days keep follow-ups deterministic (sizing rule + measured market-wide turn hours) and skip the deep dive; hanja-leak cleanup in KO deep dives; caps 6000→9000 (sub-parts 1800→3600, part 1 keeps its deep dive).
 
+### [PM] Conversational confirmation mode + no-pick diagnosis (boss rounds 4-5)
+
+- **What:** (a) No-pick scalp days now explain themselves — 🔍 per-candidate diagnosis (crash-veto with live KOSPI/KOSDAQ %, ML SELL / ML-data-missing flag, wave AVOID, volatility short of target) + 복귀 조건 per stock + deep dive over the diagnostics; this exposed the real cause of boss's "0 passed" screenshot (KOSDAQ −2.95% crash veto — ML was never skipped). (b) New `confirm_chat` intent: short "so it decreased 5.59%? / 그럼 떨어졌다는 거야?" follow-ups answer like a normal LLM chat (네/아니요 + 1-3 plain sentences, grounded on the conversation only, invented-number validator with one retry → fall-through); decisions, named-stock+지금 checks, and stock-switch follow-ups ("그럼 네이버는?") still route to the engines.
+- **Files:** `services/scalp_watchlist.py`, `services/day_trade.py` (`exp_move_pct`/`regime_veto` in scalp_signal), `services/assistant_agent.py` (`_CONFIRM_RE`/`_confirm_chat_reply` + guards), `tests/chatbot_regression.py` (+2 CONFIRM cases).
+- **Verified:** live 4/4 (diagnosis) + 6/6 (confirm + off-topic) on both surfaces EN/KO; regression **26/26**.
+
 ### Verified
 
 Each round live-verified on production, 4 combos each (scan question, 3-part question with picks, 3-part question on an empty-scan day); 24/24 chatbot regression (`multi_part_fix`) still green.
