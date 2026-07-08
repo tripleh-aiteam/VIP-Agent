@@ -2693,7 +2693,7 @@ def _elaborate_answer(question: str, lang: str, step_results: list[dict]) -> Opt
                              ("投资", "투자"), ("经济", "경제"), ("技术", "기술"),
                              ("战略", "전략"), ("确认", "확인")):
                 out = out.replace(_cn, _ko)
-        return ("**Deep dive**\n" if en else "**심층 해설**\n") + out
+        return ("**Detailed explanation**\n" if en else "**상세 설명**\n") + out
     except Exception:
         return None
 
@@ -3959,7 +3959,7 @@ def _split_subquestions(t: str) -> list[str]:
     return out if 2 <= len(out) <= 4 else []
 
 
-_DETAIL_SECTION_RE = _re.compile(r"\n+\*\*(?:심층 해설|Deep dive)\*\*.*", _re.DOTALL)
+_DETAIL_SECTION_RE = _re.compile(r"\n+\*\*(?:심층 해설|상세 설명|Deep dive|Detailed explanation)\*\*.*", _re.DOTALL)
 
 # Bare follow-up sub-questions of a picks ask — must anchor on the #1 pick, not fall to a
 # free LLM (2026-07-08 screenshots: 'How many?' → random tool dump, 'buying and selling
