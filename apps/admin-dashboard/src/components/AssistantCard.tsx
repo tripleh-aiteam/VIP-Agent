@@ -32,6 +32,7 @@ import {
 import { usePathname, useRouter } from "next/navigation";
 import { vipConfig } from "../chatbot.config";
 import { MarkdownLite } from "./ChatWorkspace";
+import { fetchWithRetry } from "../lib/fetchWithRetry";
 
 interface AvailableModel {
   id: string;
@@ -787,7 +788,7 @@ export function AssistantCard({ floating = true }: Props = {}) {
         body.confirmed_tool = confirmedTool;
         body.confirmed_args = confirmedArgs || {};
       }
-      const r = await fetch(`${base}/chat/agent`, {
+      const r = await fetchWithRetry(`${base}/chat/agent`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),

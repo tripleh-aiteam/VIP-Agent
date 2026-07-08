@@ -31,6 +31,7 @@ import {
 } from "react";
 import { useRouter } from "next/navigation";
 import { jsPDF } from "jspdf";
+import { fetchWithRetry } from "../lib/fetchWithRetry";
 
 // ── Lightweight markdown renderer (no deps) ───────────────────────────────
 // Renders GitHub-flavored tables, **bold**, `code`, bullet lists and line
@@ -609,7 +610,7 @@ export default function ChatWorkspace({ apiBase, agentId, agentLabel }: Props) {
         return;
       }
 
-      const r = await fetch(`${base}/chat/agent`, {
+      const r = await fetchWithRetry(`${base}/chat/agent`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

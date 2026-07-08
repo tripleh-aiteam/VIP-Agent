@@ -16,6 +16,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { API } from "./api";
+import { fetchWithRetry } from "../lib/fetchWithRetry";
 
 type Lang = "auto" | "en" | "ko";
 type State = "idle" | "wake_listening" | "listening" | "thinking" | "speaking" | "error";
@@ -606,7 +607,7 @@ export default function ChatbotOverlay() {
   async function confirmProposed(p: ProposedAction) {
     setState("thinking");
     try {
-      const res = await fetch(`${API}/chat/agent`, {
+      const res = await fetchWithRetry(`${API}/chat/agent`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -641,7 +642,7 @@ export default function ChatbotOverlay() {
       setHistory(prev => [...prev, newTurn]);
       const replies: string[] = [];
       for (const s of steps) {
-        const res = await fetch(`${API}/chat/agent`, {
+        const res = await fetchWithRetry(`${API}/chat/agent`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
