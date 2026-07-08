@@ -96,6 +96,17 @@ CASES = [
       [("price table", lambda r, i: i == "stock_price" and is_table(r)), ("naver", lambda r, i: has(r"naver|네이버|035420", r))],
       setup="SK하이닉스 지금 얼마야?"),
 
+    # ---- CONVERSATIONAL CONFIRMATION (2026-07-08: 'so it means…?' = natural Yes/No chat,
+    # grounded on the conversation — no second data dump) ----
+    C("confirm_chat", "CONFIRM", "en", "so that change percent is versus the previous close, right?",
+      [("chat intent", lambda r, i: i == "confirm_chat"), ("leads yes/no", lambda r, i: (r or "").strip().lower().startswith(("yes", "no"))),
+       ("no table", lambda r, i: not is_table(r))],
+      setup="What's SK Hynix trading at right now?"),
+    C("confirm_chat", "CONFIRM", "ko", "그럼 그 등락률은 전일 종가 기준이라는 거야?",
+      [("chat intent", lambda r, i: i == "confirm_chat"), ("leads yes/no", lambda r, i: (r or "").strip().startswith(("네", "아니"))),
+       ("no table", lambda r, i: not is_table(r))],
+      setup="SK하이닉스 지금 얼마야?"),
+
     # ---- MARKET FLOWS (who's buying — real Naver data, identical EN/KO) ----
     C("market_flow", "MFLOW", "en", "Who is buying the market today, foreign or institutions?",
       [("routed", lambda r, i: i in ("chain_completed", "market_flows")), ("number", NUM)]),
