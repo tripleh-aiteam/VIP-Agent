@@ -2,6 +2,27 @@
 
 ---
 
+## 2026-07-08 (Wednesday) — M5.6: the 1-hour model — full 1-year training, honest verdict, ships as RANKING voice
+
+### Goal
+
+Boss's core ask: 'can the engine predict the next hour?' Test-first, full autonomy: backfill max Kiwoom history → train → honest unseen-days gate → integrate only what the numbers earn.
+
+### Files added
+
+- [`ml/backfill_minute_deep.py`](apps/orchestrator-api/ml/backfill_minute_deep.py) — ka10080 cont-yn/next-key **pagination** (single call = ~12 days; probe walked to Kiwoom's true depth = exactly **1 year**). Result: **756,706 5-min bars · 39 stocks · 2025-07-01 → 2026-07-08** (was 41k/13 days).
+- [`ml/hourly_model.py`](apps/orchestrator-api/ml/hourly_model.py) — leakage-safe dataset (207,250 samples; returns/RSI/vol/day-range/vol-surge/time/market/peer/imbalance/short; +0.3%/60min labels, clean-rise, fwd_max) + LogReg/LGBM/XGB bake-off + walk-forward on **62 unseen days** + money-sims (time-exit & touch-exit).
+- [`services/hourly_model.py`](apps/orchestrator-api/services/hourly_model.py) — live predictor (own-trained joblib, security-noted).
+
+### The honest verdict
+
+- Attempt #1 (13 days, one regime): **below random** → not shipped.
+- Attempt #2 (full year): **real skill — 44.5% UP-precision vs 32.8% base (+12pp)** on 62 unseen days… but **not solo-tradeable after 0.23% costs**: time-exit ≈ breakeven (best +0.02%/trade @th0.75), touch-exits negative (intraday stops bleed).
+- **Shipped as a RANKING VOICE only:** scanner candidates sorted by P(up), '🤖 AI 1-hour up-probability' shown transparently (KO+EN); no gate/veto/trades. Live-verified (crash-day close: 26–33% probs, sensibly bearish).
+- **Nightly retrain** added to daily_run — imbalance/short/tick features have <2 weeks of history (the model has barely seen its best inputs). Promotion gate: ≥55% precision + positive money-sim on unseen days.
+
+---
+
 ## 2026-07-08 (Wednesday) — Phase 4: the AUTO-AGENT (auto-trades the scanner's setups on paper)
 
 ### Goal
