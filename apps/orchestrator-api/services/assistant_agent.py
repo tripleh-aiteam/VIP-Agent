@@ -3925,22 +3925,40 @@ def _split_subquestions(t: str) -> list[str]:
     out = []
     for p in t.split("?"):
         p = _SUBQ_LEAD_RE.sub("", p.strip()).strip(" ,.;·-")
-        if len(p) >= 4:
+        # hangul packs a question into fewer chars ('몇 주?') — 2 is already substantive
+        if len(p) >= 4 or (len(p) >= 2 and any("가" <= ch <= "힣" for ch in p)):
             out.append(p + "?")
     return out if 2 <= len(out) <= 4 else []
 
 
 _DETAIL_SECTION_RE = _re.compile(r"\n+\*\*(?:심층 해설|Deep dive)\*\*.*", _re.DOTALL)
 
+# Bare follow-up sub-questions of a picks ask — must anchor on the #1 pick, not fall to a
+# free LLM (2026-07-08 screenshots: 'How many?' → random tool dump, 'buying and selling
+# time?' → generic textbook timetable, different per surface).
+_HOWMANY_SUB_RE = _re.compile(
+    r"^(and\s+|그리고\s*|그럼\s*)?(how (many|much)( stocks?| shares?)?|몇\s*주(나)?(\s*(살까|사야|사))?"
+    r"|얼마나(\s*(살까|사야|사))?)\s*\??$", _re.IGNORECASE)
+_TIMING_SUB_RE = _re.compile(
+    r"(buy|sell|buying|selling|entry|exit).{0,26}(time|timing)|when to (buy|sell)"
+    r"|buying and selling|(매수|매도|사고\s*파는|사는|파는)\s*(시간|타이밍|시점)|언제\s*(사|팔)",
+    _re.IGNORECASE)
+
 
 def _answer_multi_part(db, parts: list[str], language, current_path, selected_id,
                        history, forced_model, user_id, agent_id, page_context) -> dict[str, Any]:
     """Answer each sub-question independently and join them numbered — so '가격? 그리고
     과거? 그리고 살까?' answers ALL three (was: only the last). A part with no stock name
-    inherits the last stock mentioned in an earlier part."""
-    answers, carry, hist = [], None, list(history or [])
+    inherits the last stock mentioned in an earlier part; after a picks part, bare
+    'how many?' / 'when to buy·sell?' parts anchor on its #1 pick deterministically."""
+    answers, carry, top, hist = [], None, None, list(history or [])
+    _all_txt = " ".join(parts)
+    en = (str(language or "").lower().startswith("en")
+          or (str(language or "auto").lower() in ("auto", "")
+              and not any("가" <= ch <= "힣" for ch in _all_txt)))
     for i, part in enumerate(parts, 1):
         q = part
+        found = []
         try:
             found = _all_stocks_in_query(part)
             if found:
@@ -3949,21 +3967,49 @@ def _answer_multi_part(db, parts: list[str], language, current_path, selected_id
                 q = f"{carry} {part}"                    # inherit the stock for bare parts
         except Exception:
             pass
-        try:
-            r = _run_agent_impl(
-                db, transcript=q, language=language, current_path=current_path,
-                selected_id=selected_id, history=hist, confirmed_tool=None,
-                confirmed_args=None, attachment_ids=None, forced_model=forced_model,
-                user_id=user_id, agent_id=agent_id, page_context=page_context)
-            sub = str(r.get("reply") or "").strip()
-        except Exception as e:
-            sub = f"(error: {str(e)[:60]})"
+        sub = None
+        # 'How many?' after a picks part → real position sizing on the #1 pick.
+        if top and _HOWMANY_SUB_RE.match(part.strip()):
+            try:
+                from services.position_size import sizing_line
+                _sl = sizing_line(db, transcript=_all_txt, user_key=user_id, lang="en" if en else "ko",
+                                  entry=float(top["entry"]) if top.get("entry") else None,
+                                  stop=float(top["stop"]) if top.get("stop") else None)
+                if _sl:
+                    _hd = (f"For the #1 candidate **{top.get('name')}** (entry ~₩{int(float(top['entry'])):,}):"
+                           if en and top.get("entry") else
+                           f"1번 후보 **{top.get('name')}** 기준 (진입가 ~{int(float(top['entry'])):,}원):"
+                           if top.get("entry") else "")
+                    sub = (_hd + _sl.strip("\n")).strip() or None
+            except Exception:
+                sub = None
+        # 'buying and selling time?' → the measured turn-timing engine on the #1 pick.
+        elif top and top.get("name") and not found and _TIMING_SUB_RE.search(part):
+            q = (f"when should I buy {top['name']} and when to sell?" if en
+                 else f"{top['name']} 언제 사야 하고 언제 팔아야 해?")
+        if sub is None:
+            try:
+                r = _run_agent_impl(
+                    db, transcript=q, language=language, current_path=current_path,
+                    selected_id=selected_id, history=hist, confirmed_tool=None,
+                    confirmed_args=None, attachment_ids=None, forced_model=forced_model,
+                    user_id=user_id, agent_id=agent_id, page_context=page_context)
+                sub = str(r.get("reply") or "").strip()
+                if isinstance(r, dict) and r.get("top_pick"):
+                    top = r["top_pick"]
+                    carry = carry or top.get("name")
+            except Exception as e:
+                sub = f"(error: {str(e)[:60]})"
         if len(parts) >= 3:                              # keep combined answer readable:
             sub = _DETAIL_SECTION_RE.sub("", sub)        # drop deep-dive on 3+ part answers
-        answers.append(f"**{i}. {part}**\n{sub[:1800]}")
+        if len(sub) > 3000:                              # cut on a line, not mid-word
+            sub = sub[:3000].rsplit("\n", 1)[0] + (
+                "\n… _(ask this part alone for the full detail)_" if en
+                else "\n… _(이 질문만 따로 물어보시면 전체 상세를 드립니다)_")
+        answers.append(f"**{i}. {part}**\n{sub}")
         hist = hist + [{"role": "user", "content": q}, {"role": "assistant", "content": sub[:400]}]
     return {"intent": "multi_part", "language": language,
-            "reply": "\n\n---\n\n".join(answers)[:6000],
+            "reply": "\n\n---\n\n".join(answers)[:9000],
             "action": None, "speak": True, "transcript": " ".join(parts),
             "tool_used": "multi_part"}
 
@@ -4500,6 +4546,12 @@ def _run_agent_impl(
                     if _tc:
                         break
             if _tc:
+                if str(lang or "").lower().startswith("en"):
+                    try:
+                        from services.stock_resolver import display_name_en
+                        _tn = display_name_en(_tc) or _tn
+                    except Exception:
+                        pass
                 _rep = turn_reply(db, _tc, _tn or _tc, lang)
                 if _rep:
                     try:                                  # E2: measured record of past turn fires
@@ -4634,7 +4686,10 @@ def _run_agent_impl(
     if (not confirmed_tool and not attachment_ids and _is_watchlist_question(transcript)
             and (not _fuzzy_stock(transcript) or _compound_picks)):
         _scalpish = any(k in (transcript or "").lower()
-                        for k in ("단타", "초단타", "스캘", "scalp", "intraday"))
+                        for k in ("단타", "초단타", "스캘", "scalp", "intraday",
+                                  # EN must route like KO 단타 (EN==KO rule)
+                                  "short time trad", "short term trad", "short-term trad",
+                                  "day trad"))
         _en = str(lang or "").lower().startswith("en")
         if not _scalpish:
             try:
@@ -4644,9 +4699,25 @@ def _run_agent_impl(
                     _rp = _bp["reply"]
                     if _compound_picks:
                         _rp = _named_stock_check(_rp, _en)
+                    # top pick travels with the result so multi-part follow-ups ('how
+                    # many?', 'when to buy/sell?') can anchor on it deterministically
+                    _tpk = None
+                    try:
+                        _tp = ((_bp.get("buys") or []) + (_bp.get("watches") or []) or [None])[0]
+                        if _tp:
+                            _m3t = _tp.get("method3_wave") or {}
+                            _tht = _tp.get("technicals") or {}
+                            _wb = _m3t.get("verdict") == "BUY" and _m3t.get("entry")
+                            _tpk = {"ticker": _tp.get("ticker"), "name": _tp.get("name"),
+                                    "price": _tp.get("price"),
+                                    "entry": _m3t.get("entry") if _wb else (_tht.get("support") or _tp.get("price")),
+                                    "stop": _m3t.get("stop") if _wb else (
+                                        int(_tht["support"] * 0.98) if _tht.get("support") else None)}
+                    except Exception:
+                        pass
                     return {"intent": "buy_picks", "language": lang, "reply": _rp[:9000],
                             "action": None, "speak": True, "transcript": transcript,
-                            "tool_used": "buy_picks"}
+                            "tool_used": "buy_picks", "top_pick": _tpk}
             except Exception as e:
                 log.warning(f"buy_picks (watchlist route) failed: {str(e)[:120]}")
         try:
@@ -4678,9 +4749,17 @@ def _run_agent_impl(
                 pass
             if _compound_picks:
                 _reply = _named_stock_check(_reply, _en)
+            _tpk = None
+            try:
+                _p1 = (_wl.get("picks") or [None])[0]
+                if _p1:
+                    _tpk = {"ticker": _p1.get("ticker") or _p1.get("code"), "name": _p1.get("name"),
+                            "price": _p1.get("buy"), "entry": _p1.get("buy"), "stop": _p1.get("stop")}
+            except Exception:
+                pass
             return {"intent": "scalp_watchlist", "language": lang, "reply": (_reply or "")[:9000],
                     "action": None, "speak": True, "transcript": transcript,
-                    "tool_used": "scalp_watchlist"}
+                    "tool_used": "scalp_watchlist", "top_pick": _tpk}
         except Exception as e:
             log.warning(f"scalp watchlist failed: {str(e)[:120]}")
 
