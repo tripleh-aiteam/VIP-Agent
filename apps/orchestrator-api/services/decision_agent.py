@@ -819,19 +819,17 @@ def decide(db, ticker: str, focus: Optional[str] = None) -> dict[str, Any]:
                     f"means real buying power (that's when to look again), while a break below the floor "
                     f"means the risk of falling further just grew.")
 
-    # ① 직접 답변(= 유일한 최종 결론) + 대응 가이드 → ②(매수일 때만) 얼마나 / (매도타이밍) 언제
-    # → ③ 근거(증거): 시장 → 뉴스 → 유튜브 → 방법 1/2/3 → 기술적 → 체크리스트. 끝에 요약 반복
-    # 없음. (보스 피드백: 안 사는 답에 '얼마나'는 논리 모순 — 0주; 결론은 맨 위 한 번만.)
+    # BOSS FORMAT (2026-07-08): ① first line = the direct answer → ② body = the evidence
+    # (market → news → youtube → methods → technicals → checklist) → ③ END = 📌 요약
+    # with the plain-words explanation + the final answer restated. ('In plain words' no
+    # longer sits at the top — its content IS the bottom summary.)
     _yt_links_md = " · ".join(f"[영상 보기 {i}]({u})" for i, u in enumerate(yt.get("links") or [], 1))
     _yt_links_md_en = " · ".join(f"[watch {i}]({u})" for i, u in enumerate(yt.get("links") or [], 1))
     ko_lines = [f"**{head_ko}**  ·  (추천: {dec_full_ko} · 확신 {conf})"]
     if _sell_focus:
         ko_lines += ["", "**언제 팔까? (매도 타이밍)**", f"· {size_ko}"]
     elif decision == "BUY":
-        ko_lines += ["", "**얼마나 살까?**", f"· {size_ko}", "", plain_ko]
-    else:
-        # not-buy: NO sizing — the plain-words paragraph (with the trigger levels) instead
-        ko_lines += ["", plain_ko]
+        ko_lines += ["", "**얼마나 살까?**", f"· {size_ko}"]
     ko_lines += ["", f"**근거 — 방법별 증거 (확신 {conf} · {consensus_ko})**"]
     if mkt_line_ko:
         ko_lines += ["", "**① 시장 상황**", f"· {mkt_line_ko}"]
@@ -872,6 +870,9 @@ def decide(db, ticker: str, focus: Optional[str] = None) -> dict[str, Any]:
             ko_lines += ["", summary_line(checklist) + "  _(전체는 \"종목명 체크리스트\"로 확인)_"]
         except Exception:
             pass
+    # ③ 요약 — 쉬운 설명 + 최종 결론 재확인 (보스 포맷: 처음=직접답, 중간=근거, 끝=요약)
+    ko_lines += ["", "**📌 요약 (최종 결론)**", plain_ko,
+                 f"→ **최종: {dec_full_ko} · 확신 {conf}** — {head_ko}"]
     ko_lines += ["",
                  "※ 3가지 방법과 뉴스·수급·기술적 지표를 종합한 참고 의견이며, 투자 권유나 수익 보장이 아닙니다."]
     ko = "\n".join(ko_lines)
@@ -880,9 +881,7 @@ def decide(db, ticker: str, focus: Optional[str] = None) -> dict[str, Any]:
     if _sell_focus:
         en_lines += ["", "**When to sell? (exit timing)**", f"- {size_en}"]
     elif decision == "BUY":
-        en_lines += ["", "**How many?**", f"- {size_en}", "", plain_en]
-    else:
-        en_lines += ["", plain_en]
+        en_lines += ["", "**How many?**", f"- {size_en}"]
     en_lines += ["", f"**The evidence — method by method (confidence {conf_en} · {consensus_en})**"]
     if mkt_line_en:
         en_lines += ["", "**① Market**", f"- {mkt_line_en}"]
@@ -923,6 +922,10 @@ def decide(db, ticker: str, focus: Optional[str] = None) -> dict[str, Any]:
             en_lines += ["", summary_line(checklist, en=True) + '  _(full card: ask "SK Hynix checklist")_']
         except Exception:
             pass
+    # ③ Summary — plain explanation + final answer restated (boss format: top=direct
+    # answer, middle=evidence, end=summary)
+    en_lines += ["", "**📌 Summary (final answer)**", plain_en,
+                 f"→ **Final: {dec_full_en} · confidence {conf_en}** — {head_en}"]
     en_lines += ["",
                  "Note: a reasoned synthesis of all 3 methods + news/flows/technicals — not investment advice or a guarantee."]
     en = "\n".join(en_lines)
