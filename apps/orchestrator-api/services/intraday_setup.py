@@ -77,6 +77,20 @@ def scan_one(db, code: str, name: str) -> dict[str, Any]:
     price = float(sig["price"])
     micro = micro_read(db, code) or {}
     cluster = cluster_pulse(db, code)
+
+    # MIXED ENGINE (2026-07-08): the technical trigger sets the TIMING; the deep brain's
+    # ML direction + news sets the CONVICTION. ML predicts 5-day direction (fast DB read),
+    # so it's a confirmation filter, not the trigger: a SELL-rated / bad-news stock is NOT
+    # scalp-bought even if the RSI bounces. Agreement boosts confidence.
+    ml_advice = None
+    try:
+        from services import prediction_service as ps
+        _ml = ps.get_ticker(db, code) or {}
+        ml_advice = (_ml.get("advice") or "").upper() or None
+    except Exception:
+        pass
+    ml_bearish = ml_advice == "SELL"
+    ml_bullish = ml_advice == "BUY"
     bars = _bars(db, code, limit=120)
     closes = [b["close"] for b in bars]
     vol = _vol_1h_pct(closes[-30:]) if len(closes) >= 8 else None
@@ -108,7 +122,9 @@ def scan_one(db, code: str, name: str) -> dict[str, Any]:
         conf += 5
     if vol is not None and vol >= 1.2:
         conf += 3
-    conf = min(conf, 80)
+    if ml_bullish:
+        conf += 8                        # ML agrees on direction — team confirmation
+    conf = min(conf, 85)
 
     entry_lo, entry_hi = round(price * 0.999), round(price * 1.003)
     tgt_lo, tgt_hi = round(price * (1 + TARGET_LO / 100)), round(price * (1 + TARGET_HI / 100))
@@ -147,15 +163,41 @@ def scan_one(db, code: str, name: str) -> dict[str, Any]:
                 "path_ko": f"가격이 2시간 평균 위로 올라오면(≈₩{round(sma2h):,}) 매수 신호 대기",
                 "path_en": f"watch for price to reclaim its 2h average (≈₩{round(sma2h):,})"}
 
-    # --- ACT_NOW: the RSI bounce trigger is firing ---
+    # --- ACT_NOW candidate: RSI trigger fired → CONFIRM with the ML + news brain ---
     if sig.get("verdict") == "BUY_NOW":
+        # ML confirmation gate: don't scalp-buy a stock the model rates SELL (5일 하락)
+        if ml_bearish:
+            return {**base, "state": "NOTHING", "gate": "ml",
+                    "reason_ko": "기술적 반등 신호는 있으나 ML이 하락 예상 — 스캘핑 매수 보류",
+                    "reason_en": "technical bounce, but ML forecasts a fall — hold off scalp-buy",
+                    "path_ko": "ML 전망이 매수/중립으로 바뀌면 매수 자리 가능",
+                    "path_en": "becomes buyable when the ML outlook turns to buy/neutral"}
+        # news confirmation gate: don't scalp-buy into fresh negative news
+        news = {}
+        try:
+            from services.decision_agent import _news
+            news = _news(db, code, name) or {}
+        except Exception:
+            pass
+        nscore = news.get("score") or 0
+        if nscore <= -2:
+            return {**base, "state": "NOTHING", "gate": "news",
+                    "reason_ko": "기술적 반등 신호는 있으나 부정적 뉴스 — 매수 보류",
+                    "reason_en": "technical bounce, but negative news flow — hold off",
+                    "path_ko": "뉴스 악재가 소화되면 다시 스캔",
+                    "path_en": "re-scan once the negative news is digested"}
         why_ko = "5분봉 반등 시작(RSI 저점 상승전환)"
         why_en = "5-min bounce starting (RSI turning up from oversold)"
         if cluster and cluster.get("verdict") in ("CONFIRM_UP", "LAGGARD_UP"):
             why_ko += " + 그룹 동조"; why_en += " + peer group agrees"
         if micro.get("higher_lows"):
             why_ko += " + 저점 higher-low"; why_en += " + higher-lows"
-        return {**base, "state": "ACT_NOW", "why_ko": why_ko, "why_en": why_en}
+        if ml_bullish:
+            why_ko += " + ML 매수"; why_en += " + ML says buy"
+        if nscore >= 2:
+            why_ko += " + 긍정 뉴스"; why_en += " + positive news"
+        return {**base, "state": "ACT_NOW", "why_ko": why_ko, "why_en": why_en,
+                "ml": ml_advice, "news_score": nscore}
 
     # --- FORMING: dip present, waiting for the trigger ---
     if sig.get("verdict") == "WAIT":
