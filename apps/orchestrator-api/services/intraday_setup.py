@@ -399,9 +399,16 @@ def _scan_mover(db, code: str, name: str) -> Optional[dict[str, Any]]:
             "why_en": f"top market gainer today ({chg:+.1f}%) · near high ({pos*100:.0f}%) · momentum intact"}
 
 
-def scan(db) -> dict[str, Any]:
+_scan_cache: dict[str, Any] = {"t": 0.0, "v": None}
+
+
+def scan(db, use_cache: bool = True) -> dict[str, Any]:
     """Scan our ~40 collected stocks (dip + momentum, deep) PLUS the day's market-wide top
-    gainers (light momentum) — so it hunts where the action is. Ranked act/forming/nothing."""
+    gainers (light momentum). 45s cache so the chatbot is fast (the market-wide Naver
+    fetch is slow); the cron passes use_cache=False to always compute fresh for grading."""
+    import time as _t
+    if use_cache and _scan_cache["v"] is not None and _t.time() - _scan_cache["t"] < 45:
+        return _scan_cache["v"]
     uni = _universe(db)
     name_of = dict(uni)
     ranked = _prescan(db, [c for c, _ in uni])
@@ -440,9 +447,11 @@ def scan(db) -> dict[str, Any]:
 
     act.sort(key=lambda r: -r["confidence"])
     forming.sort(key=lambda r: -r["confidence"])
-    return {"act_now": act, "forming": forming, "nothing": nothing,
-            "scanned": len(uni) + scanned_extra, "deep_scanned": len(results),
-            "counts": {"act": len(act), "forming": len(forming), "nothing": len(nothing)}}
+    out = {"act_now": act, "forming": forming, "nothing": nothing,
+           "scanned": len(uni) + scanned_extra, "deep_scanned": len(results),
+           "counts": {"act": len(act), "forming": len(forming), "nothing": len(nothing)}}
+    _scan_cache["t"], _scan_cache["v"] = _t.time(), out
+    return out
 
 
 _SETUP_DDL = (
@@ -462,7 +471,7 @@ def log_and_grade(db) -> dict:
     db.execute(text(_SETUP_DDL))
     db.commit()
     logged = 0
-    r = scan(db)
+    r = scan(db, use_cache=False)
     for s in r["act_now"]:
         dup = db.execute(text(
             "SELECT 1 FROM setup_log WHERE ticker=:t AND status='OPEN' "
