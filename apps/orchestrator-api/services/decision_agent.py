@@ -125,6 +125,30 @@ def _flows(db, code: str) -> dict[str, Any]:
 _mi_cache: dict = {"t": 0.0, "v": None}
 
 
+_watch_proof_cache: dict = {"t": 0.0, "v": None}
+
+
+def _watch_proof(db) -> Optional[dict]:
+    """What actually happened after our recent no-buy calls (graded log) — the
+    'trust check' receipts shown on WATCH/HOLD answers. Cached 1h."""
+    import time as _t
+    if _watch_proof_cache["v"] is not None and _t.time() - _watch_proof_cache["t"] < 3600:
+        return _watch_proof_cache["v"]
+    out = None
+    try:
+        from sqlalchemy import text as _sql
+        r = db.execute(_sql(
+            "SELECT count(*), round(avg(actual_ret)::numeric, 2) FROM chatbot_calls "
+            "WHERE ts > now() - interval '14 days' AND action IN ('HOLD','WATCH') "
+            "AND actual_ret IS NOT NULL")).first()
+        if r and r[0]:
+            out = {"n": int(r[0]), "avg": float(r[1] or 0)}
+    except Exception:
+        db.rollback()
+    _watch_proof_cache["t"], _watch_proof_cache["v"] = _t.time(), out
+    return out
+
+
 def _market_indicators() -> dict:
     """KOSPI/KOSDAQ %-change + USD/KRW from Naver mobile API. Cached 120s; every part
     optional (graceful when an endpoint changes)."""
@@ -825,7 +849,32 @@ def decide(db, ticker: str, focus: Optional[str] = None) -> dict[str, Any]:
     # longer sits at the top — its content IS the bottom summary.)
     _yt_links_md = " · ".join(f"[영상 보기 {i}]({u})" for i, u in enumerate(yt.get("links") or [], 1))
     _yt_links_md_en = " · ".join(f"[watch {i}]({u})" for i, u in enumerate(yt.get("links") or [], 1))
+    # PROOF LINE for no-buy answers (boss, 2026-07-08: two weeks of 'wait' felt broken —
+    # it was measurably right, but the answer never showed the receipts): what actually
+    # happened after our recent no-buy calls, from the grading log.
+    _proof_ko = _proof_en = None
+    if decision != "BUY":
+        try:
+            _pr = _watch_proof(db)
+            if _pr and _pr["n"] >= 30:
+                _d_ko = "하락했습니다 — '기다리라'는 판단이 실제로 맞았어요 (그때 샀다면 평균 손해)" \
+                    if _pr["avg"] < -0.15 else "크게 오르지 않았습니다 — 기다려도 잃은 것이 없었어요" \
+                    if _pr["avg"] <= 0.15 else "올랐습니다 — 최근엔 신중함이 기회를 놓치게 했어요 (기준 재조정 검토 중)"
+                _d_en = ("FELL — the 'wait' calls were proven right (buying then lost on average)"
+                         if _pr["avg"] < -0.15 else
+                         "went roughly nowhere — waiting cost nothing"
+                         if _pr["avg"] <= 0.15 else
+                         "ROSE — caution has been missing gains lately (recalibration under review)")
+                _proof_ko = (f"_📊 신뢰 근거: 최근 2주 '관망/보류' 답변 {_pr['n']}건 이후 주가는 평균 "
+                             f"{_pr['avg']:+.1f}% {_d_ko}._")
+                _proof_en = (f"_📊 Trust check: after our last {_pr['n']} 'wait' answers (2 weeks), "
+                             f"prices moved {_pr['avg']:+.1f}% on average — they {_d_en}._")
+        except Exception:
+            pass
+
     ko_lines = [f"**{head_ko}**  ·  (추천: {dec_full_ko} · 확신 {conf})"]
+    if _proof_ko:
+        ko_lines += [_proof_ko]
     if _sell_focus:
         ko_lines += ["", "**언제 팔까? (매도 타이밍)**", f"· {size_ko}"]
     elif decision == "BUY":
@@ -878,6 +927,8 @@ def decide(db, ticker: str, focus: Optional[str] = None) -> dict[str, Any]:
     ko = "\n".join(ko_lines)
 
     en_lines = [f"**{head_en}**  ·  (Recommendation: {dec_full_en} · confidence {conf_en})"]
+    if _proof_en:
+        en_lines += [_proof_en]
     if _sell_focus:
         en_lines += ["", "**When to sell? (exit timing)**", f"- {size_en}"]
     elif decision == "BUY":
