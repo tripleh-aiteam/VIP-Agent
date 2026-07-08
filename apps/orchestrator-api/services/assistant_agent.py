@@ -368,6 +368,23 @@ def _is_movers_question(transcript: Optional[str]) -> bool:
     return any(k in t for k in _MOVERS_KW)
 
 
+# Intraday setup scanner — 'what should I trade NOW?' The boss's 1-hour scalp system:
+# scan the watchlist → ACT_NOW / FORMING / NOTHING with entry/target-band/stop zones.
+_SETUP_KW = (
+    "지금 뭐 살까", "지금 뭐 사", "지금 살 종목", "지금 매수할", "지금 살만한", "지금 진입",
+    "오늘 뭐 살까", "뭐 사면 좋을까", "지금 매매할", "단타 자리", "단타 종목", "지금 좋은 자리",
+    "매수 자리 있", "지금 타이밍", "스캔", "셋업", "지금 뭐 사면",
+    "what should i trade", "what to trade now", "what to buy now", "any setup",
+    "today's setups", "todays setups", "scan setups", "trade setups", "good setup now",
+    "what should i buy now", "any good trade", "show me setups", "intraday setup",
+)
+
+
+def _is_setup_question(transcript: Optional[str]) -> bool:
+    t = (transcript or "").lower()
+    return any(k in t for k in _SETUP_KW)
+
+
 # Dip-bounce hunter — '많이 떨어진 종목 중 반등할 거?' / 'buy the dip'. The boss's core
 # day-trading pattern: buy a big 1h dip, sell the bounce ~1h later.
 _DIP_BOUNCE_KW = (
@@ -4618,6 +4635,21 @@ def _run_agent_impl(
                     "transcript": transcript, "tool_used": "readiness"}
         except Exception as e:
             log.warning(f"readiness failed: {str(e)[:120]}")
+
+    # === INTRADAY SETUP SCANNER ("지금 뭐 살까?" / "what should I trade now?") — the
+    # boss's 1-hour scalp system: ACT_NOW / FORMING / NOTHING with entry/target-band/stop
+    # zones. Runs BEFORE dip-bounce/movers (it's the proactive "you tell ME" version).
+    if (not confirmed_tool and not attachment_ids and _is_setup_question(transcript)
+            and not _all_stocks_in_query(transcript)):     # a named stock → advice instead
+        try:
+            from services.intraday_setup import scan_reply
+            _en = str(lang or "").lower().startswith("en")
+            return {"intent": "intraday_setup", "language": lang,
+                    "reply": scan_reply(db, lang="en" if _en else "ko"),
+                    "action": None, "speak": True, "transcript": transcript,
+                    "tool_used": "intraday_setup"}
+        except Exception as e:
+            log.warning(f"intraday_setup failed: {str(e)[:120]}")
 
     # === DIP-BOUNCE HUNTER — the boss's own strategy ("떨어진 종목 중 반등할 거?"):
     # ≥1.5%/1h dips + tape confirmation, every candidate auto-graded (intent='dip_bounce').

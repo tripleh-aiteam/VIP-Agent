@@ -172,3 +172,81 @@ def scan(db) -> dict[str, Any]:
     nothing = [r for r in results if r["state"] == "NOTHING"]
     return {"act_now": act, "forming": forming, "nothing": nothing,
             "counts": {"act": len(act), "forming": len(forming), "nothing": len(nothing)}}
+
+
+def _fmt(n) -> str:
+    return f"{int(round(n)):,}" if n is not None else "-"
+
+
+def scan_reply(db, lang: str = "ko") -> str:
+    """The chatbot answer for '지금 뭐 살까 / what should I trade now' — ACT / FORMING /
+    NOTHING in the zone format. Identical structure KO/EN, both surfaces."""
+    r = scan(db)
+    ko = lang != "en"
+    act, forming = r["act_now"], r["forming"]
+    L: list[str] = []
+
+    if act:
+        s = act[0]
+        tb = s["target_band"]
+        if ko:
+            L.append(f"🎯 **지금 좋은 자리 {len(act)}개 — {s['name']} ({s['code']})**  확신 {s['confidence']}%")
+            L += ["",
+                  f"· ▲ 방향: 상승 (매수)",
+                  f"· 진입: 지금 ~₩{_fmt(s['price'])} (₩{_fmt(s['entry_zone'][0])}–{_fmt(s['entry_zone'][1])})",
+                  f"· 목표: +{s['target_pct'][0]}%~{s['target_pct'][1]}% (₩{_fmt(tb[0])}–{_fmt(tb[1])}) → 이 구간 닿으면 매도",
+                  f"· 손절: −{s['stop_pct']}% (₩{_fmt(s['stop'])})",
+                  f"· 시간: 최대 {s['time_min']}분",
+                  f"· 근거: {s.get('why_ko','')}",
+                  "",
+                  f"👉 지금 진입 구간에서 매수 → +{s['target_pct'][0]}% 닿으면 익절 → 아니면 손절선에서 정리 → 둘 다 아니면 {s['time_min']}분 후 나오기."]
+            if len(act) > 1:
+                L.append(f"(추가 자리: {', '.join(a['name'] for a in act[1:])})")
+        else:
+            L.append(f"🎯 **{len(act)} good setup(s) now — {s['en_name']} ({s['code']})**  confidence {s['confidence']}%")
+            L += ["",
+                  f"· ▲ Direction: UP (buy)",
+                  f"· Enter: now ~₩{_fmt(s['price'])} (₩{_fmt(s['entry_zone'][0])}–{_fmt(s['entry_zone'][1])})",
+                  f"· Target: +{s['target_pct'][0]}%~{s['target_pct'][1]}% (₩{_fmt(tb[0])}–{_fmt(tb[1])}) → sell on first touch",
+                  f"· Stop: −{s['stop_pct']}% (₩{_fmt(s['stop'])})",
+                  f"· Exit by: {s['time_min']} min",
+                  f"· Why: {s.get('why_en','')}",
+                  "",
+                  f"👉 Buy in the entry zone → take profit at +{s['target_pct'][0]}% → else stop out → else close after {s['time_min']} min."]
+            if len(act) > 1:
+                L.append(f"(also: {', '.join(a['en_name'] for a in act[1:])})")
+        return "\n".join(L)
+
+    if forming:
+        s = forming[0]
+        if ko:
+            L.append(f"⏳ **지금 살 자리는 없지만 — {len(forming)}개 준비 중 (감시)**")
+            L += ["", f"**{s['name']} ({s['code']})** 현재 ₩{_fmt(s['price'])}",
+                  f"· 상태: {s['reason_ko']}",
+                  f"· 다음 조건 충족 시 매수 신호: {s.get('trigger_ko','')}",
+                  f"· 충족되면 목표 +{s['target_pct'][0]}~{s['target_pct'][1]}% / 손절 −{s['stop_pct']}%",
+                  "", "👉 지금은 기다리기. 조건 닿으면 완전한 매수 신호가 뜹니다."]
+        else:
+            L.append(f"⏳ **Nothing to buy right now — {len(forming)} setup(s) forming (watching)**")
+            L += ["", f"**{s['en_name']} ({s['code']})** now ₩{_fmt(s['price'])}",
+                  f"· Status: {s['reason_en']}",
+                  f"· Becomes a BUY when: {s.get('trigger_en','')}",
+                  f"· Then target +{s['target_pct'][0]}~{s['target_pct'][1]}% / stop −{s['stop_pct']}%",
+                  "", "👉 Wait for now. When it triggers you'll get a full BUY signal."]
+        return "\n".join(L)
+
+    # nothing
+    reasons = r["nothing"][:3]
+    if ko:
+        L.append("😌 **지금은 좋은 자리 없음 — 쉬어가세요**")
+        L.append("")
+        for s in reasons:
+            L.append(f"· {s['name']}: {s['reason_ko']}")
+        L += ["", "💡 억지로 사지 마세요. 오늘 안 좋으면 0번 거래가 정답입니다. 자리 나오면 다시 물어보세요."]
+    else:
+        L.append("😌 **No good setup right now — sit this one out**")
+        L.append("")
+        for s in reasons:
+            L.append(f"· {s['en_name']}: {s['reason_en']}")
+        L += ["", "💡 Don't force a trade. On a bad day, ZERO trades is the right answer. Ask again later."]
+    return "\n".join(L)
