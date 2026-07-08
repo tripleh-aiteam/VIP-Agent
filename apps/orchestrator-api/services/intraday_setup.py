@@ -627,10 +627,25 @@ def scan_reply(db, lang: str = "ko") -> str:
         mkt = _market_chg_pct()
     except Exception:
         pass
+
+    # BEST AVAILABLE candidate — the boss's ask: always show the ONE closest to buyable
+    # (still NOT a buy — labeled honestly), ranked by how close it is to triggering.
+    _gate_rank = {"nosetup": 4, "ml": 3, "news": 3, "vol": 2, "downtrend": 1, "sector": 0, "regime": 0}
+    best = None
+    if withpx:
+        best = sorted(withpx, key=lambda s: (_gate_rank.get(s.get("gate"), 0), s.get("confidence", 0)),
+                      reverse=True)[0]
+
     if ko:
-        L.append("😌 **지금은 살 만한 자리 없음 — 관망 권장**")
+        L.append("😌 **지금은 확실한 매수 자리 없음 — 관망 권장**")
         if mkt is not None:
-            L.append(f"_시장: 코스피 {mkt:+.2f}% · 오늘 움직임 큰 {scanned}개 정밀 스캔_")
+            _crash = " ⚠️ 급락일" if mkt <= -1.5 else ""
+            L.append(f"_시장: 코스피 {mkt:+.2f}%{_crash} · 시장 전체 상위 포함 {scanned}개 스캔_")
+        if best:
+            L += ["", f"🔎 **그나마 가장 가까운 후보 (아직 매수 신호 아님): {best['name']} ({best['code']}) ₩{_fmt(best['price'])}**",
+                  f"   · 왜 아직 아닌가: {best.get('reason_ko','')}",
+                  f"   · 매수 신호 조건: {best.get('path_ko') or best.get('trigger_ko','')}",
+                  f"   ⚠️ 지금 사면 승산 낮음 — '가장 덜 나쁜' 것일 뿐, 조건 충족 전엔 관망 권장."]
         L += ["",
               "‘살 자리 없음’은 **가격이 안 움직인다는 뜻이 아니라**, 지금 +1.5~2%를 "
               "낮은 위험으로 노릴 **매수 타이밍이 아니라는 뜻**이에요. (눌림목 반등·상승추세 두 방식으로 탐색) "
@@ -656,9 +671,15 @@ def scan_reply(db, lang: str = "ko") -> str:
               "⏱️ **다시 확인할 때:** 어떤 종목이 상승 추세로 강하게 오르거나(모멘텀), 눌렸다가 반등을 시작하면 "
               "매수 자리가 뜹니다. 보통 **30분~1시간 뒤** 다시 물어보세요 (스캐너가 자동 감지도 함)."]
     else:
-        L.append("😌 **No good BUY setup right now — sit this one out**")
+        L.append("😌 **No clear BUY setup right now — sit this one out**")
         if mkt is not None:
-            L.append(f"_Market: KOSPI {mkt:+.2f}% · deep-scanned the {scanned} most active stocks_")
+            _crash = " ⚠️ crash day" if mkt <= -1.5 else ""
+            L.append(f"_Market: KOSPI {mkt:+.2f}%{_crash} · scanned {scanned} incl. market-wide movers_")
+        if best:
+            L += ["", f"🔎 **Closest candidate (NOT a buy yet): {best['en_name']} ({best['code']}) ₩{_fmt(best['price'])}**",
+                  f"   · Why not yet: {best.get('reason_en','')}",
+                  f"   · Turns into a BUY when: {best.get('path_en') or best.get('trigger_en','')}",
+                  f"   ⚠️ Buying now has poor odds — it's just the 'least-bad' one; wait for the condition."]
         L += ["",
               "‘No setup’ does **not** mean prices won't move — it means this isn't a "
               "**good moment to buy** for a low-risk +1.5~2% (checked both dip-bounce & "
