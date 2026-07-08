@@ -32,6 +32,13 @@ type DeskState = {
 type QuoteRes = { ok: boolean; ticker?: string; name?: string; price?: number; error?: string;
                   open?: number | null; high?: number | null; low?: number | null; change_pct?: number | null };
 type StockItem = { code: string; name: string; market: string };
+type AutoStatus = {
+  enabled: boolean;
+  open: { ticker: string; name: string; qty: number; entry: number; target_lo: number; stop: number; time_min: number; confidence: number; opened_at?: string }[];
+  record: { trades: number; wins: number; win_rate: number | null; total_net_pct: number; avg_net_pct: number | null };
+  recent: { name: string; exit_reason: string; net_pct: number; closed_at?: string }[];
+  limits: { pos_pct: number; max_open: number; max_trades_day: number; min_conf: number };
+};
 
 // Defined OUTSIDE the page component: defining this inline recreated the component
 // type on every keystroke/poll, remounting the form and throwing the cursor out of
@@ -77,13 +84,28 @@ export default function TestingPage() {
     return [...starts, ...contains].slice(0, 60);
   }, [q, stocks]);
 
-  const load = () => api<DeskState>("/paper-desk/state").then(setSt).catch(() => {});
+  const [auto, setAuto] = useState<AutoStatus | null>(null);
+
+  const load = () => {
+    api<DeskState>("/paper-desk/state").then(setSt).catch(() => {});
+    api<AutoStatus>("/paper-desk/auto/status").then(setAuto).catch(() => {});
+  };
   useEffect(() => {
     load();
     api<{ stocks: StockItem[] }>("/paper-desk/stocks").then((r) => setStocks(r.stocks || [])).catch(() => {});
     const i = setInterval(load, 4000);
     return () => clearInterval(i);
   }, []);
+
+  const toggleAuto = async () => {
+    if (!auto) return;
+    const turnOn = !auto.enabled;
+    if (turnOn && !confirm(t(
+      "자동매매를 켤까요? 결정 엔진이 좋은 자리를 찾으면 이 모의계좌로 자동 매수/매도합니다 (가짜 돈만 사용).",
+      "Turn ON auto-trading? The decision engine will automatically buy/sell setups on this paper account (fake money only)."))) return;
+    await apiPost(`/paper-desk/auto/toggle?on=${turnOn}`);
+    load();
+  };
 
   // live quote for whatever is typed in the code/name box (debounced)
   useEffect(() => {
@@ -178,6 +200,33 @@ export default function TestingPage() {
             {t("전적", "Record")}: <b className="text-[var(--text-primary)]">{st.record.trades}{t("전", " trades")} {st.record.wins}{t("승", "W")}</b>
             {st.record.win_rate != null && <> · {t("승률", "win")} <b className="text-[var(--text-primary)]">{st.record.win_rate}%</b></>}
             {" · "}{t("실현손익", "realized")} <b style={{ color: pnlCol(st.realized_pnl) }}>{fmt(st.realized_pnl)}</b>
+          </span>
+        </div>
+      )}
+
+      {/* 🤖 AUTO-AGENT (Phase 4): the decision engine trades this desk by itself */}
+      {auto && (
+        <div className="mb-3 px-3.5 py-2.5 rounded-xl border flex items-center gap-3 flex-wrap"
+          style={{ borderColor: auto.enabled ? "#2e7d32" : "var(--border-default)", background: auto.enabled ? "rgba(76,175,80,0.08)" : "var(--bg-elevated)" }}>
+          <span className="text-[13px] font-extrabold text-[var(--text-primary)]">🤖 {t("자동매매 (모의)", "Auto-Trading (paper)")}</span>
+          <button onClick={toggleAuto}
+            className="text-[12px] font-extrabold px-3 py-1 rounded-lg text-white"
+            style={{ background: auto.enabled ? "#2e7d32" : "#9e9e9e" }}>
+            {auto.enabled ? t("켜짐 — 끄기", "ON — turn off") : t("꺼짐 — 켜기", "OFF — turn on")}
+          </button>
+          <span className="text-[11.5px] text-[var(--text-muted)]">
+            {t("전적", "Record")}: <b className="text-[var(--text-primary)]">{auto.record.trades}{t("전", "t")} {auto.record.wins}{t("승", "W")}</b>
+            {auto.record.win_rate != null && <> · {auto.record.win_rate}%</>}
+            {" · "}{t("누적", "net")} <b style={{ color: pnlCol(auto.record.total_net_pct) }}>{auto.record.total_net_pct > 0 ? "+" : ""}{auto.record.total_net_pct}%</b>
+          </span>
+          {auto.open.length > 0 && (
+            <span className="text-[11.5px] text-[var(--text-secondary)]">
+              {t("보유 중", "holding")}: {auto.open.map((o) => `${o.name} ${o.qty}${t("주", "sh")}`).join(", ")}
+            </span>
+          )}
+          <span className="ml-auto text-[10.5px] text-[var(--text-muted)]">
+            {t(`설정: 1회 자산의 ${auto.limits.pos_pct}% · 동시 ${auto.limits.max_open}종목 · 하루 최대 ${auto.limits.max_trades_day}회`,
+               `limits: ${auto.limits.pos_pct}%/trade · ${auto.limits.max_open} open · ${auto.limits.max_trades_day}/day`)}
           </span>
         </div>
       )}

@@ -157,3 +157,26 @@ def desk_cancel(order_id: int, db: Session = Depends(get_db)):
 def desk_reset(cash: float = Query(100_000_000), db: Session = Depends(get_db)):
     from services.paper_desk import reset
     return reset(db, cash=cash)
+
+
+# ---- Phase 4: the AUTO-AGENT (auto-trades the scanner's setups on this desk) ----
+@router.get("/auto/status")
+def auto_status(db: Session = Depends(get_db)):
+    """Auto-agent scorecard + open auto-positions + limits (Testing page panel)."""
+    from services.auto_trader import status
+    return status(db)
+
+
+@router.post("/auto/toggle")
+def auto_toggle(on: bool = Query(...), db: Session = Depends(get_db)):
+    """Turn the auto-agent ON/OFF (paper money only)."""
+    from services.auto_trader import set_enabled
+    return set_enabled(db, on)
+
+
+@router.post("/auto/tick")
+def auto_tick(force: bool = Query(False), db: Session = Depends(get_db)):
+    """One auto-agent pass: manage exits, then maybe open one new setup. Fired by the
+    external 5-min cron during market; also safe to call ad hoc. force=testing only."""
+    from services.auto_trader import tick
+    return tick(db, force=force)
