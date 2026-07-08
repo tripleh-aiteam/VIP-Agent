@@ -2647,6 +2647,16 @@ def _extract_json(text: str) -> Any:
     return None
 
 
+def _insert_before_summary(reply: str, extra: str) -> str:
+    """Insert `extra` BEFORE the '📌 요약/Summary' block so answers always END with the
+    final answer (boss format). Falls back to appending when there's no summary marker."""
+    for marker in ("\n**📌 요약", "\n**📌 Summary"):
+        i = reply.rfind(marker)
+        if i != -1:
+            return reply[:i] + extra + reply[i:]
+    return reply + extra
+
+
 def _elaborate_answer(question: str, lang: str, step_results: list[dict]) -> Optional[str]:
     """LLM '심층 해설 / Deep dive' section appended AFTER a deterministic reco/forecast block.
     Answer = our methods' verified numbers (correctness) + LLM elaboration (detail/fluency),
@@ -2838,23 +2848,24 @@ def _run_chain(
                 pass
         if _parts:
             reply = "\n\n---\n\n".join(_parts)
-        # measured trust — show this answer type's real graded record (once, at the end)
+        # measured trust — show this answer type's real graded record. Inserted BEFORE
+        # the 📌 summary so the answer still ENDS with the final answer (boss format).
         try:
             from services.call_grader import track_record_line
             _tr = track_record_line(db, "decision", lang)
             if _tr:
-                reply = (reply or "") + _tr
+                reply = _insert_before_summary(reply or "", _tr)
         except Exception:
             pass
 
-    # DETAIL LAYER (user ask: answers were too short): after the deterministic method
-    # blocks (the CORRECT data), append an LLM-written '심층 해설 / Deep dive' that
-    # elaborates STRICTLY on that data — LLM fluency, method-checked facts. Single-topic
-    # answers only (multi-stock joins are long already); best-effort, never blocks.
+    # DETAIL LAYER (user ask: answers were too short): an LLM-written '심층 해설 /
+    # Deep dive' elaborating STRICTLY on the deterministic method data. Placed INSIDE
+    # the body — before the 📌 summary — so the answer ends with the final answer
+    # (boss: 'Deep Dive after the final answer is wrong').
     if (_tm or _decs) and len(_decs) <= 1:
         _extra = _elaborate_answer(transcript, lang, step_results)
         if _extra:
-            reply = (reply or "") + "\n\n" + _extra
+            reply = _insert_before_summary(reply or "", "\n\n" + _extra)
 
     # If any step returned an action (navigate / open_portal), surface the LAST one
     action = None
@@ -4558,12 +4569,12 @@ def _run_agent_impl(
                 if _adv.get("ok"):
                     _en = str(lang or "").lower().startswith("en")
                     _reply = _adv.get("reasoning_en" if _en else "reasoning_ko")
-                    # DETAIL LAYER: advice must be detailed (user ask) — append the grounded
-                    # LLM deep-dive, same as reco/outlook answers.
+                    # DETAIL LAYER: grounded LLM deep-dive — inserted BEFORE the 📌 summary
+                    # so the answer still ends with the final answer (boss format).
                     _extra = _elaborate_answer(transcript, lang,
                                                [{"tool": "position_advice", "result": _adv}])
                     if _extra:
-                        _reply = (_reply or "") + "\n\n" + _extra
+                        _reply = _insert_before_summary(_reply or "", "\n\n" + _extra)
                     try:
                         from services.call_grader import log_call
                         _ga = {"CUT": "SELL", "TAKE_PROFIT": "SELL", "HOLD_OR_ADD": "BUY"}.get(_adv.get("action"), "HOLD")
@@ -4811,7 +4822,7 @@ def _run_agent_impl(
                 from services.call_grader import track_record_line
                 _tr = track_record_line(db, "scalp", lang)
                 if _tr:
-                    _reply = (_reply or "") + _tr
+                    _reply = _insert_before_summary(_reply or "", _tr)
             except Exception:
                 pass
             if _compound_picks:
@@ -4827,7 +4838,7 @@ def _run_agent_impl(
                     _extra = _elaborate_answer(transcript, lang,
                                                [{"tool": "scalp_watchlist", "result": _dd_data}])
                     if _extra:
-                        _reply = (_reply or "") + "\n\n" + _extra
+                        _reply = _insert_before_summary(_reply or "", "\n\n" + _extra)
             except Exception:
                 pass
             _tpk = None
@@ -4874,7 +4885,7 @@ def _run_agent_impl(
                     from services.call_grader import track_record_line
                     _tr = track_record_line(db, "scalp", lang)
                     if _tr:
-                        _reply = (_reply or "") + _tr
+                        _reply = _insert_before_summary(_reply or "", _tr)
                 except Exception:
                     pass
                 try:
@@ -4914,7 +4925,7 @@ def _run_agent_impl(
                 # DETAIL LAYER: advice must be detailed — grounded LLM deep-dive (as reco/outlook).
                 _extra = _elaborate_answer(transcript, lang, [{"tool": "scalp_signal", "result": _sig}])
                 if _extra:
-                    _reply = (_reply or "") + "\n\n" + _extra
+                    _reply = _insert_before_summary(_reply or "", "\n\n" + _extra)
                 return {"intent": "scalp", "language": lang, "reply": (_reply or "")[:6000],
                         "action": None, "speak": True, "transcript": transcript, "tool_used": "scalp_signal"}
         except Exception as e:
