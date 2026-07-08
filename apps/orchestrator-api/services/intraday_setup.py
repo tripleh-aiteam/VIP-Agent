@@ -1,0 +1,174 @@
+"""intraday_setup.py — the short-term SETUP SCANNER (boss's 1-hour scalp system).
+
+Goal: for a watchlist, find LOW-RISK buy setups where a +1.5~2% move within ~60 min
+is favorable, and say clearly one of three things per stock:
+
+  ✅ ACT_NOW   — a bounce trigger is firing right now → buy in the entry zone.
+  ⏳ FORMING   — a dip is setting up but the trigger hasn't fired → watch; here's the
+                 exact trigger (RSI turns up / price to support) + rough timing.
+  😌 NOTHING   — no dip, sector falling, market crashing, or too little volatility → sit out.
+
+Every level is a ZONE, not a fixed price (so an auto-agent isn't confused by 1.95% vs
+2.00%): target = a +1.5~2% BAND (sell on first touch), stop = −1%, time-stop = 60 min.
+
+Combines the pieces we already built + measured:
+  • cycle_scalp.signal — RSI-oversold-turning-up trigger (+ its crash veto)
+  • micro_trend        — 5-min dip context + market-regime read
+  • peer_cluster       — sector confirmation (don't buy into a falling sector)
+  • volatility gate    — is +1.5% even reachable in an hour?
+
+UP-only for now (down/inverse trades deferred). Rule-based + transparent so it can be
+backtested honestly before it ever reaches the chatbot or real money.
+"""
+from __future__ import annotations
+
+import statistics
+from typing import Any, Optional
+
+WATCHLIST: list[tuple[str, str]] = [
+    ("005930", "삼성전자"), ("000660", "SK하이닉스"), ("035420", "NAVER"),
+    ("009150", "삼성전기"), ("402340", "SK스퀘어"), ("091160", "KODEX반도체"),
+]
+_EN = {"005930": "Samsung", "000660": "SK Hynix", "035420": "NAVER",
+       "009150": "Samsung E-M", "402340": "SK Square", "091160": "KODEX Semi"}
+
+TARGET_LO, TARGET_HI = 1.5, 2.0      # take-profit band (%), sell on first touch of LO
+STOP_PCT = 1.0                       # cut here (%)
+TIME_MIN = 60                        # time-stop (minutes)
+_VOL_MIN = 0.85                      # min expected 1h move (1σ, %) for +1.5% to be reachable
+_REGIME_CRASH = -1.5                 # KOSPI intraday % that blocks new buys
+
+
+def _vol_1h_pct(closes: list[float]) -> Optional[float]:
+    """Expected 1-hour move (1σ) from 5-min returns — is a +1.5% target realistic?"""
+    rets = [closes[i] / closes[i - 1] - 1 for i in range(1, len(closes)) if closes[i - 1]]
+    if len(rets) < 6:
+        return None
+    return statistics.pstdev(rets) * (12 ** 0.5) * 100    # 12 five-min bars per hour
+
+
+def _nothing(code: str, name: str, ko: str, en: str, **extra) -> dict[str, Any]:
+    """Full-shaped NOTHING result so every payload has the same keys (UI/API safe)."""
+    return {"code": code, "name": name, "en_name": _EN.get(code, name), "state": "NOTHING",
+            "price": None, "rsi": None, "vol_1h_pct": None, "cluster": None,
+            "confidence": 0, "entry_zone": None, "support": None,
+            "target_band": None, "target_pct": [TARGET_LO, TARGET_HI],
+            "stop": None, "stop_pct": STOP_PCT, "time_min": TIME_MIN,
+            "reason_ko": ko, "reason_en": en, **extra}
+
+
+def scan_one(db, code: str, name: str) -> dict[str, Any]:
+    code = str(code).zfill(6)
+    try:
+        from services.cycle_scalp import _bars, signal as m4
+        from services.micro_trend import micro_read
+        from services.peer_cluster import cluster_pulse
+    except Exception as e:
+        return _nothing(code, name, f"모듈 오류 {str(e)[:30]}", "module error")
+
+    sig = m4(db, code)
+    if not sig.get("ok"):
+        return _nothing(code, name, "데이터 부족", "not enough data")
+    price = float(sig["price"])
+    micro = micro_read(db, code) or {}
+    cluster = cluster_pulse(db, code)
+    bars = _bars(db, code, limit=120)
+    closes = [b["close"] for b in bars]
+    vol = _vol_1h_pct(closes[-30:]) if len(closes) >= 8 else None
+    support = round(min(closes[-12:])) if len(closes) >= 12 else round(price * 0.99)
+    # TREND FILTER (backtest 2026-07-08 was decisive): buying RSI-dips in a DOWNtrend
+    # catches knives (-96% over 13d). Requiring price above its ~2h average flips it to
+    # +1.4%/57% — it makes the scanner sit out almost all falling-market dips, which is
+    # exactly the low-risk behaviour we want. sma2h = 24 five-min bars.
+    sma2h = sum(closes[-24:]) / 24 if len(closes) >= 24 else None
+    downtrend = sma2h is not None and price < sma2h
+
+    # --- gates (any TRUE → NOTHING, with the honest reason) ---
+    sector_down = bool(cluster and cluster.get("verdict") == "SECTOR_DOWN")
+    mkt = micro.get("market_chg_pct")
+    regime_bad = mkt is not None and mkt <= _REGIME_CRASH
+    vol_bad = vol is not None and vol < _VOL_MIN
+
+    # --- confidence (starts 50, adds for each confirmation) ---
+    conf = 50
+    rsi, rsi_prev = sig.get("rsi"), sig.get("rsi_prev")
+    turning_up = rsi is not None and rsi_prev is not None and rsi > rsi_prev
+    if cluster and cluster.get("verdict") in ("CONFIRM_UP", "LAGGARD_UP"):
+        conf += 9
+    if micro.get("higher_lows"):
+        conf += 7
+    if micro.get("verdict") == "UP":
+        conf += 6
+    if turning_up:
+        conf += 5
+    if vol is not None and vol >= 1.2:
+        conf += 3
+    conf = min(conf, 80)
+
+    entry_lo, entry_hi = round(price * 0.999), round(price * 1.003)
+    tgt_lo, tgt_hi = round(price * (1 + TARGET_LO / 100)), round(price * (1 + TARGET_HI / 100))
+    stop = round(price * (1 - STOP_PCT / 100))
+    base = {"code": code, "name": name, "en_name": _EN.get(code, name), "price": price,
+            "rsi": rsi, "vol_1h_pct": round(vol, 2) if vol is not None else None,
+            "cluster": cluster.get("verdict") if cluster else None,
+            "confidence": conf,
+            "entry_zone": [entry_lo, entry_hi], "support": support,
+            "target_band": [tgt_lo, tgt_hi], "target_pct": [TARGET_LO, TARGET_HI],
+            "stop": stop, "stop_pct": STOP_PCT, "time_min": TIME_MIN}
+
+    # --- NOTHING gates first (safety before opportunity) ---
+    if sector_down:
+        return {**base, "state": "NOTHING",
+                "reason_ko": "동종 그룹 동반 하락 — 떨어지는 칼날, 매수 위험",
+                "reason_en": "peer group falling together — falling knife, risky to buy"}
+    if regime_bad:
+        return {**base, "state": "NOTHING",
+                "reason_ko": f"시장 급락(코스피 {mkt:+.1f}%) — 신규 매수 보류",
+                "reason_en": f"market plunging (KOSPI {mkt:+.1f}%) — hold off on new buys"}
+    if vol_bad:
+        return {**base, "state": "NOTHING",
+                "reason_ko": f"변동성 부족(예상 1시간 ±{vol:.1f}%) — 1시간 +1.5% 어려움",
+                "reason_en": f"too little volatility (~±{vol:.1f}%/h) — +1.5% unlikely in 1h"}
+    if downtrend:
+        return {**base, "state": "NOTHING",
+                "reason_ko": "하락 추세(2시간 평균 아래) — 눌림목 반등 실패 위험, 관망",
+                "reason_en": "downtrend (below 2h average) — dip-bounce likely to fail, sit out"}
+
+    # --- ACT_NOW: the RSI bounce trigger is firing ---
+    if sig.get("verdict") == "BUY_NOW":
+        why_ko = "5분봉 반등 시작(RSI 저점 상승전환)"
+        why_en = "5-min bounce starting (RSI turning up from oversold)"
+        if cluster and cluster.get("verdict") in ("CONFIRM_UP", "LAGGARD_UP"):
+            why_ko += " + 그룹 동조"; why_en += " + peer group agrees"
+        if micro.get("higher_lows"):
+            why_ko += " + 저점 higher-low"; why_en += " + higher-lows"
+        return {**base, "state": "ACT_NOW", "why_ko": why_ko, "why_en": why_en}
+
+    # --- FORMING: dip present, waiting for the trigger ---
+    if sig.get("verdict") == "WAIT":
+        return {**base, "state": "FORMING",
+                "trigger_ko": f"① 가격이 지지선 ₩{support:,}까지 눌림, 또는 ② 5분봉 RSI 상승전환",
+                "trigger_en": f"① price dips to support ₩{support:,}, or ② 5-min RSI turns up",
+                "reason_ko": "눌림목 형성 중 — 아직 반등 신호 없음 (감시)",
+                "reason_en": "pullback forming — no bounce trigger yet (watching)"}
+
+    return {**base, "state": "NOTHING",
+            "reason_ko": "매수 자리 아님(과매도/눌림 아님)",
+            "reason_en": "not a buy setup (no oversold pullback)"}
+
+
+def scan(db) -> dict[str, Any]:
+    """Scan the whole watchlist. Returns act_now / forming / nothing buckets, ranked."""
+    results = []
+    for code, name in WATCHLIST:
+        try:
+            results.append(scan_one(db, code, name))
+        except Exception:
+            db.rollback()
+    act = sorted([r for r in results if r["state"] == "ACT_NOW"],
+                 key=lambda r: -r["confidence"])
+    forming = sorted([r for r in results if r["state"] == "FORMING"],
+                     key=lambda r: -r["confidence"])
+    nothing = [r for r in results if r["state"] == "NOTHING"]
+    return {"act_now": act, "forming": forming, "nothing": nothing,
+            "counts": {"act": len(act), "forming": len(forming), "nothing": len(nothing)}}
