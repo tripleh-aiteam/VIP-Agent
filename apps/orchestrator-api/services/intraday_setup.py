@@ -227,9 +227,20 @@ def scan_one(db, code: str, name: str) -> dict[str, Any]:
 
     # --- FORMING: dip present, waiting for the trigger ---
     if sig.get("verdict") == "WAIT":
+        # if price is ALREADY at/near its recent low, "dip to support ₩X" is degenerate
+        # (X == now) — the only meaningful trigger left is the RSI turn.
+        at_support = support >= price * 0.997
+        rsi_now = sig.get("rsi")
+        if at_support:
+            trig_ko = (f"5분봉 RSI({rsi_now})가 저점에서 상승 전환 — 지금 지지선(₩{support:,}) "
+                       f"부근이라 반등만 확인되면 매수")
+            trig_en = (f"5-min RSI ({rsi_now}) turns up from its low — already near support "
+                       f"(₩{support:,}), so just needs the bounce to confirm")
+        else:
+            trig_ko = f"① 가격이 지지선 ₩{support:,}까지 더 눌리거나, ② 5분봉 RSI({rsi_now}) 상승 전환"
+            trig_en = f"① price dips further to support ₩{support:,}, or ② 5-min RSI ({rsi_now}) turns up"
         return {**base, "state": "FORMING",
-                "trigger_ko": f"① 가격이 지지선 ₩{support:,}까지 눌림, 또는 ② 5분봉 RSI 상승전환",
-                "trigger_en": f"① price dips to support ₩{support:,}, or ② 5-min RSI turns up",
+                "trigger_ko": trig_ko, "trigger_en": trig_en,
                 "reason_ko": "눌림목 형성 중 — 아직 반등 신호 없음 (감시)",
                 "reason_en": "pullback forming — no bounce trigger yet (watching)"}
 
