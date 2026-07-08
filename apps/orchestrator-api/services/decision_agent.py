@@ -254,6 +254,18 @@ def decide(db, ticker: str, focus: Optional[str] = None) -> dict[str, Any]:
     _micro_score = 0
     if micro and not micro.get("stale"):        # live sessions only — stale flow is context, not a vote
         _micro_score = 1 if micro["verdict"] == "UP" else -1 if micro["verdict"] == "DOWN" else 0
+
+    # 동종 그룹 (peer cluster): 삼성·하이닉스·KODEX move together (corr 0.83) — confirmation +
+    # divergence read of the LIVE tape (not a lead-lag predictor). Live sessions only.
+    cluster = None
+    _cluster_score = 0.0
+    try:
+        from services.peer_cluster import cluster_pulse
+        cluster = cluster_pulse(db, code)
+        if cluster and (not micro or not micro.get("stale")):
+            _cluster_score = cluster["score"]
+    except Exception:
+        cluster = None
     ml = ps.get_ticker(db, code) or {}
 
     # market backdrop — today's live KODEX200 move, so the advice names the tape it's given in
@@ -366,6 +378,7 @@ def decide(db, ticker: str, focus: Optional[str] = None) -> dict[str, Any]:
              + ml_score * float(_mw.get("ml") or 1.0)
              + wave_score * float(_mw.get("wave") or 1.0) + yt["score"] * 0.5
              + _micro_score * 0.5                     # 5-min flow: small, live-only vote
+             + _cluster_score * 0.5                   # 동종 그룹 co-move confirmation/divergence
              + _tier_score * 0.75)                    # hourly agreement: strongest measured signal (74%)
     decision = "BUY" if total >= 2.5 else "SELL" if total <= -2.5 else "HOLD"
     conf = "높음" if abs(total) >= 4 else "보통" if abs(total) >= 2 else "낮음"
@@ -844,6 +857,8 @@ def decide(db, ticker: str, focus: Optional[str] = None) -> dict[str, Any]:
         ko_lines += ["", "**⑧ 시간별 예측 일치 (1시간)**",
                      f"· ML·분석 모두 '{_td_ko}' 예측 — 과거 일치 구간 적중률 "
                      f"{tier.get('agree_acc')}% (n={tier.get('agree_n')}) · 판단에 가중 반영됨"]
+    if cluster and cluster.get("line_ko"):
+        ko_lines += ["", "**⑨ 동종 그룹 동조 (실시간)**", f"· {cluster['line_ko']}"]
     if _mw.get("line_ko"):
         ko_lines += ["", f"_📐 {_mw['line_ko']} — 실제 채점 성적이 좋은 방법의 표가 더 크게 반영됩니다._"]
     ko_lines += [
@@ -893,6 +908,8 @@ def decide(db, ticker: str, focus: Optional[str] = None) -> dict[str, Any]:
         en_lines += ["", "**⑧ Hourly forecast agreement (1h)**",
                      f"- ML and Analysis both forecast '{_td_en}' — agreement zones hit "
                      f"{tier.get('agree_acc')}% historically (n={tier.get('agree_n')}) · weighted into the verdict"]
+    if cluster and cluster.get("line_en"):
+        en_lines += ["", "**⑨ Peer-group co-movement (live)**", f"- {cluster['line_en']}"]
     if _mw.get("line_en"):
         en_lines += ["", f"_📐 {_mw['line_en']} — methods with a better graded record get a bigger vote._"]
     en_lines += [
