@@ -2,6 +2,35 @@
 
 ---
 
+## 2026-07-08 (Wednesday) — ⑨ 동종 그룹: peer co-movement as a live decision fact
+
+### Goal
+
+Boss's idea: 삼성·SK하이닉스·KODEX move together — when advising on one, read the others and add it to the advice as a fact for that moment. Both VIP + AI Advisor, KO+EN.
+
+### Files added
+
+- [`services/peer_cluster.py`](apps/orchestrator-api/services/peer_cluster.py) — cluster defs (반도체·대형주: 005930/000660/069500/091160) + `cluster_pulse(db, ticker)` reading LIVE peer %-change → verdict (SECTOR_DOWN / CONFIRM_UP / LAGGARD_UP / LONE_MOVE / HOLDING_VS_WEAK / NEUTRAL) + fusion score + KO/EN line. 60s quote cache.
+
+### Files updated
+
+- [`services/decision_agent.py`](apps/orchestrator-api/services/decision_agent.py) — `cluster_pulse` wired into `decide()`: `_cluster_score × 0.5` in fusion (live sessions only) + new ⑨ evidence line in `reasoning_ko`/`reasoning_en`.
+
+### The honest measurement (why it's a filter, not a predictor)
+
+Daily return corr 0.79–0.93, 5-min corr 0.83, same-direction 76–78%. BUT lead-lag ≈ 0 (peer's move does NOT predict the next 5 min) → it's a CONFIRMATION + DIVERGENCE read, not a crystal ball. Replay of 280 Samsung dips (13d): peer-also-falling dips −0.70%/1h vs idiosyncratic (peer stable) +0.01% — ~0.7pp edge, mostly value in the SECTOR_DOWN falling-knife warning (91% of dips). Kept modest weight (0.5) + mainly a displayed reason.
+
+### Verified
+
+All 4 verdicts classify correctly on live prices; ⑨ line renders KO+EN; prod PASS on BOTH VIP and AI Advisor (relayed). Live example: Samsung +0.3% while Hynix +4.4%/KODEX반도체 +2.0% → "laggard, catch-up dip-buy."
+
+### Next
+
+- Easy to add clusters (배터리: LG엔솔·삼성SDI·POSCO퓨처엠; 자동차: 현대차·기아) — one list each.
+- The nightly grader can later measure whether the ⑨ vote itself earns its weight.
+
+---
+
 ## 2026-07-07 (Tuesday) — Turn-timing engine (boss's rhythm idea): A-to-Z build, honest NO-GO backtest, shipped as informational layer
 
 ### Goal
