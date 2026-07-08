@@ -3990,6 +3990,18 @@ def _confirm_wants_fresh_data(t: str) -> bool:
         return False
 
 
+def _confirm_is_topic_switch(t: str) -> bool:
+    """'그럼 네이버는?' names a stock without stating any fact/number — that's a
+    switch-stock data question (regression SWITCH-FU), not a confirmation."""
+    if _re.search(r"\d", t or ""):
+        return False
+    try:
+        from services.stock_resolver import find_all
+        return bool(find_all(t))
+    except Exception:
+        return False
+
+
 def _confirm_chat_reply(question: str, lang: str, history: list[dict]) -> Optional[str]:
     """Natural-chat confirmation grounded ONLY on the conversation. None → fall through.
     Any number in the draft that isn't verbatim in the conversation triggers one strict
@@ -4645,7 +4657,8 @@ def _run_agent_impl(
     if (history and transcript and len(transcript) <= 90 and not attachment_ids
             and not confirmed_tool and _CONFIRM_RE.search(transcript)
             and not any(k in transcript.lower() for k in _CONFIRM_SKIP)
-            and not _confirm_wants_fresh_data(transcript)):
+            and not _confirm_wants_fresh_data(transcript)
+            and not _confirm_is_topic_switch(transcript)):
         _cf = _confirm_chat_reply(transcript, lang, history)
         if _cf:
             return {"intent": "confirm_chat", "language": lang, "reply": _cf,
