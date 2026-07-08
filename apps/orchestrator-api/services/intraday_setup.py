@@ -37,10 +37,14 @@ _EN = {"005930": "Samsung", "000660": "SK Hynix", "069500": "KODEX 200",
        "000270": "Kia", "035420": "NAVER", "035720": "Kakao",
        "207940": "Samsung Bio", "009150": "Samsung E-M", "402340": "SK Square"}
 
-TARGET_LO, TARGET_HI = 1.5, 2.0      # take-profit band (%), sell on first touch of LO
-STOP_PCT = 1.0                       # cut here (%)
+TARGET_LO, TARGET_HI = 1.5, 2.0      # default band; ADAPTIVE per-stock overrides it below
+STOP_PCT = 1.0                       # default; adaptive
 TIME_MIN = 60                        # time-stop (minutes)
-_VOL_MIN = 0.85                      # min expected 1h move (1σ, %) for +1.5% to be reachable
+_VOL_MIN = 0.45                      # min 1h move (1σ, %) — below this even a small target
+                                     # can't clear costs reliably; lowered from 0.85 so the
+                                     # target ADAPTS instead of rejecting every calm stock
+_TGT_MIN, _TGT_MAX = 0.8, 2.5        # adaptive take-profit bounds (%)
+_RR = 1.6                            # reward:risk (target / stop)
 _REGIME_CRASH = -1.5                 # KOSPI intraday % that blocks new DIP buys
 _EXTREME_CRASH = -3.0                # KOSPI intraday % that blocks EVERYTHING (panic)
 # MOMENTUM setup thresholds — a stock strongly rising (bucks a down market)
@@ -132,16 +136,23 @@ def scan_one(db, code: str, name: str) -> dict[str, Any]:
         conf += 8                        # ML agrees on direction — team confirmation
     conf = min(conf, 85)
 
+    # ADAPTIVE target/stop — scale to THIS stock's 1h volatility. A calm stock gets a
+    # realistic smaller target (+0.8%, still a win after costs) instead of being rejected
+    # for not reaching a rigid +1.5%; a lively stock gets up to +2.5%. Reward:risk fixed.
+    _sig = vol if vol is not None else 1.2
+    t_lo = max(_TGT_MIN, min(_TGT_MAX, round(_sig * 1.25, 1)))
+    t_hi = round(min(_TGT_MAX + 0.3, t_lo + 0.5), 1)
+    s_pct = max(0.4, round(t_lo / _RR, 1))
     entry_lo, entry_hi = round(price * 0.999), round(price * 1.003)
-    tgt_lo, tgt_hi = round(price * (1 + TARGET_LO / 100)), round(price * (1 + TARGET_HI / 100))
-    stop = round(price * (1 - STOP_PCT / 100))
+    tgt_lo, tgt_hi = round(price * (1 + t_lo / 100)), round(price * (1 + t_hi / 100))
+    stop = round(price * (1 - s_pct / 100))
     base = {"code": code, "name": name, "en_name": _EN.get(code, name), "price": price,
             "rsi": rsi, "vol_1h_pct": round(vol, 2) if vol is not None else None,
             "cluster": cluster.get("verdict") if cluster else None,
             "confidence": conf,
             "entry_zone": [entry_lo, entry_hi], "support": support,
-            "target_band": [tgt_lo, tgt_hi], "target_pct": [TARGET_LO, TARGET_HI],
-            "stop": stop, "stop_pct": STOP_PCT, "time_min": TIME_MIN}
+            "target_band": [tgt_lo, tgt_hi], "target_pct": [t_lo, t_hi],
+            "stop": stop, "stop_pct": s_pct, "time_min": TIME_MIN}
 
     # --- NOTHING gates first (safety before opportunity) ---
     if sector_down:
