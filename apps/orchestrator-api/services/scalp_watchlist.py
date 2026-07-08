@@ -31,13 +31,21 @@ def _candidates(db) -> list[dict]:
 def build(db, n: int = 5, target_pct: float = 1.0) -> dict[str, Any]:
     """Rank candidates by intraday setup + up-bias → top n scalp watchlist."""
     from services.day_trade import scalp_signal
-    rows = []
+    rows, rejects = [], []
     for c in _candidates(db)[: n * 2 + 4]:
         try:
             sig = scalp_signal(db, c["ticker"], target_pct)
         except Exception:
             continue
         if sig.get("entry") in ("AVOID", None) or sig.get("feasible") == "unlikely":
+            # keep the rejection WITH its numbers — an empty list must explain itself
+            from services.stock_resolver import display_name_en as _dne
+            rejects.append({"ticker": c["ticker"], "name": sig.get("name") or c.get("name"),
+                            "name_en": _dne(c["ticker"]), "entry": sig.get("entry"),
+                            "feasible": sig.get("feasible"), "ml": sig.get("ml_bias"),
+                            "wave": sig.get("wave_bias"), "current": sig.get("current"),
+                            "exp_move": sig.get("exp_move_pct"),
+                            "regime_veto": sig.get("regime_veto")})
             continue                                   # bearish bias or no room today → drop
         from services.stock_resolver import display_name_en
         rows.append({"ticker": c["ticker"], "name": sig.get("name") or c.get("name"),
@@ -93,6 +101,18 @@ def build(db, n: int = 5, target_pct: float = 1.0) -> dict[str, Any]:
                    "soft tape — be conservative" if mkt < 0 else "neutral tape")
         mkt_ko = f"\n**시장 상황**: KODEX200 오늘 {mkt:+.2f}% — {tone_ko}\n"
         mkt_en = f"\n**Market**: KODEX200 today {mkt:+.2f}% — {tone_en}\n"
+    # live crash-veto reading (KOSPI/KOSDAQ intraday) — when it fires, the answer must show
+    # the veto's OWN numbers, not just the (possibly stale) KODEX line above
+    try:
+        from services.market_regime import crash_veto
+        _rg = crash_veto()
+        if _rg and _rg.get("veto"):
+            if _rg.get("line_ko"):
+                mkt_ko += _rg["line_ko"] + "\n"
+            if _rg.get("line_en"):
+                mkt_en += _rg["line_en"] + "\n"
+    except Exception:
+        pass
 
     # measured turn rhythm per pick — the boss's timing layer, cheap enough for ≤5 rows
     def _turn_bits(tk: str) -> tuple[Optional[str], Optional[str]]:
@@ -201,14 +221,84 @@ def build(db, n: int = 5, target_pct: float = 1.0) -> dict[str, Any]:
                "**Next step**: for the full per-stock plan (live tape check + share count) ask \"Can I scalp [name]?\", "
                "or \"Should I buy [name]?\" for the position view. Reference only, not investment advice.")
 
+    # Rejection diagnostics — when the list is empty (or thin) the answer must show its
+    # work: per candidate, WHICH check failed with today's numbers and the return trigger.
+    # Also surfaces missing Method-1 data instead of silently judging without it.
+    diag_ko = diag_en = ""
+    if rejects and len(rows) < n:
+        ml_missing = sum(1 for r in rejects if not r.get("ml"))
+        dko, den = [], []
+        for r in rejects[:6]:
+            why_ko, why_en, flip_ko, flip_en = [], [], [], []
+            if r.get("regime_veto"):
+                why_ko.append("시장 급락 베토(지수 −2% 이상) — 신규 롱 금지")
+                why_en.append("market-crash veto (index ≤ −2%) — no new longs")
+                flip_ko.append("지수 낙폭 회복")
+                flip_en.append("index recovers")
+            if r.get("ml") == "SELL":
+                why_ko.append("방법1 머신러닝 '매도' — 5일 기준 하락 우위")
+                why_en.append("Method 1 ML says SELL — 5-day downside edge")
+                flip_ko.append("ML이 중립/매수로 전환")
+                flip_en.append("ML flips to HOLD/BUY")
+            elif not r.get("ml"):
+                why_ko.append("방법1 ML 예측 데이터 없음(파이프라인 갱신 중) — ML 제외 평가")
+                why_en.append("Method 1 ML data missing (pipeline updating) — judged without ML")
+            if r.get("wave") == "AVOID":
+                why_ko.append("방법3 파동 '회피' — 상승 파동 구조가 약하거나 붕괴")
+                why_en.append("Method 3 Wave says AVOID — up-wave weak or broken")
+                flip_ko.append("파동 구조 회복(되돌림 완성)")
+                flip_en.append("wave structure repairs (pullback completes)")
+            if r.get("feasible") == "unlikely":
+                _em = r.get("exp_move")
+                why_ko.append(f"오늘 예상 변동폭 ±{_em}%로는 목표 +{target_pct}% 도달이 어려움" if _em is not None
+                              else f"오늘 변동성으로는 +{target_pct}% 도달이 어려움")
+                why_en.append(f"today's expected range ±{_em}% can't reach +{target_pct}%" if _em is not None
+                              else f"today's volatility can't reach +{target_pct}%")
+                flip_ko.append("변동성 확대(거래 활발해질 때)")
+                flip_en.append("volatility expands")
+            if not why_ko:
+                why_ko.append("종합 기준 미달"); why_en.append("below the combined bar")
+            _px_ko = f" (현재가 {_f(r.get('current'))}원)" if r.get("current") else ""
+            _px_en = f" (now {_f(r.get('current'))})" if r.get("current") else ""
+            dko.append(f"   - **{r['name']}**{_px_ko} — ❌ " + " · ".join(why_ko)
+                       + (f". **복귀 조건**: {', '.join(flip_ko)}." if flip_ko else "."))
+            den.append(f"   - **{r.get('name_en') or r['name']}**{_px_en} — ❌ " + " · ".join(why_en)
+                       + (f". **Comes back when**: {', '.join(flip_en)}." if flip_en else "."))
+        head_ko = ("\n\n**🔍 왜 통과 종목이 없나 — 후보별 진단**\n" if not rows
+                   else "\n\n**🔍 탈락 후보 진단 (참고)**\n")
+        head_en = ("\n\n**🔍 Why nothing passed — per-candidate diagnosis**\n" if not rows
+                   else "\n\n**🔍 Rejected candidates (for reference)**\n")
+        diag_ko = head_ko + "\n".join(dko)
+        diag_en = head_en + "\n".join(den)
+        if ml_missing >= max(2, len(rejects) // 2):
+            diag_ko += (f"\n\n⚠️ **방법 1(머신러닝) 예측 데이터가 후보 {ml_missing}/{len(rejects)}개에서 "
+                        "비어 있습니다** (예측 파이프라인 갱신 중일 수 있음). 그동안은 파동·변동성·호가 "
+                        "기준으로만 평가하며, ML 데이터가 돌아오면 판단 정확도가 올라갑니다.")
+            diag_en += (f"\n\n⚠️ **Method 1 (ML) predictions are missing for {ml_missing}/{len(rejects)} "
+                        "candidates** (the prediction pipeline may be mid-update). Until it returns, "
+                        "picks are judged on Wave + volatility + orderbook only.")
+        _empty_plan_ko = ("\n\n**📌 오늘의 행동 지침**: 통과 종목이 없는 날 억지로 들어가는 것이 단타에서 "
+                          "제일 비싼 실수입니다. 위 복귀 조건들이 실제로 바뀌는지 30분~1시간 간격으로 다시 "
+                          "물어보시고, 그 사이엔 관심 종목의 리듬을 확인해 두세요(\"[종목명] 언제 반등해?\"). "
+                          "현금도 포지션입니다.")
+        _empty_plan_en = ("\n\n**📌 What to actually do today**: forcing an entry on a no-pick day is the "
+                          "most expensive scalping mistake. Re-ask every 30-60 min to see if the return "
+                          "triggers above actually flip, and meanwhile check your watch-stocks' rhythm "
+                          "(\"when will [name] turn up?\"). Cash is also a position.")
+        if not rows:
+            diag_ko += _empty_plan_ko
+            diag_en += _empty_plan_en
+
     reasoning_ko = (f"**📈 오늘의 단타 추천 (상승 편향 + 장중 셋업 · 통과 {len(rows)}종목)**\n"
                     + mkt_ko + "\n"
                     + ("\n\n".join(lines_ko) if lines_ko else
                        "오늘은 조건(상승 편향 + 변동성 여유)을 통과한 단타 셋업이 없습니다 — 무리해서 진입하기보다 쉬는 것도 전략입니다.")
+                    + diag_ko
                     + foot_ko)
     reasoning_en = (f"**📈 Today's scalp picks (up-bias + intraday setup · {len(rows)} passed)**\n"
                     + mkt_en + "\n"
                     + ("\n\n".join(lines_en) if lines_en else
                        "No setup passed the filters today (up-bias + volatility headroom) — sitting out is also a strategy.")
+                    + diag_en
                     + foot_en)
-    return {"picks": rows, "reasoning_ko": reasoning_ko, "reasoning_en": reasoning_en}
+    return {"picks": rows, "rejects": rejects, "reasoning_ko": reasoning_ko, "reasoning_en": reasoning_en}

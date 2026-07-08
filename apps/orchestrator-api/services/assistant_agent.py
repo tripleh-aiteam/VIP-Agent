@@ -4818,11 +4818,14 @@ def _run_agent_impl(
                 _reply = _named_stock_check(_reply, _en)
             # DETAIL LAYER — grounded deep dive over the watchlist's own numbers,
             # same as buy_picks/reco answers (boss: scalp answers must be detailed too).
-            # Skipped when no pick passed — elaborating on an empty list produces filler.
+            # On empty days it elaborates the per-candidate rejection diagnostics instead.
             try:
-                if _wl.get("picks"):
+                _dd_data = (_wl.get("picks") or
+                            ({"passed": 0, "rejected_candidates": _wl.get("rejects")}
+                             if _wl.get("rejects") else None))
+                if _dd_data:
                     _extra = _elaborate_answer(transcript, lang,
-                                               [{"tool": "scalp_watchlist", "result": _wl.get("picks")}])
+                                               [{"tool": "scalp_watchlist", "result": _dd_data}])
                     if _extra:
                         _reply = (_reply or "") + "\n\n" + _extra
             except Exception:
