@@ -25,12 +25,17 @@ from __future__ import annotations
 import statistics
 from typing import Any, Optional
 
+# Liquid day-trade watchlist across sectors — all have live 5-min bars in our collector.
 WATCHLIST: list[tuple[str, str]] = [
-    ("005930", "삼성전자"), ("000660", "SK하이닉스"), ("035420", "NAVER"),
-    ("009150", "삼성전기"), ("402340", "SK스퀘어"), ("091160", "KODEX반도체"),
+    ("005930", "삼성전자"), ("000660", "SK하이닉스"), ("069500", "KODEX200"),
+    ("373220", "LG에너지솔루션"), ("006400", "삼성SDI"), ("005380", "현대차"),
+    ("000270", "기아"), ("035420", "NAVER"), ("035720", "카카오"),
+    ("207940", "삼성바이오로직스"), ("009150", "삼성전기"), ("402340", "SK스퀘어"),
 ]
-_EN = {"005930": "Samsung", "000660": "SK Hynix", "035420": "NAVER",
-       "009150": "Samsung E-M", "402340": "SK Square", "091160": "KODEX Semi"}
+_EN = {"005930": "Samsung", "000660": "SK Hynix", "069500": "KODEX 200",
+       "373220": "LG Energy", "006400": "Samsung SDI", "005380": "Hyundai Motor",
+       "000270": "Kia", "035420": "NAVER", "035720": "Kakao",
+       "207940": "Samsung Bio", "009150": "Samsung E-M", "402340": "SK Square"}
 
 TARGET_LO, TARGET_HI = 1.5, 2.0      # take-profit band (%), sell on first touch of LO
 STOP_PCT = 1.0                       # cut here (%)
@@ -118,21 +123,29 @@ def scan_one(db, code: str, name: str) -> dict[str, Any]:
 
     # --- NOTHING gates first (safety before opportunity) ---
     if sector_down:
-        return {**base, "state": "NOTHING",
+        return {**base, "state": "NOTHING", "gate": "sector",
                 "reason_ko": "동종 그룹 동반 하락 — 떨어지는 칼날, 매수 위험",
-                "reason_en": "peer group falling together — falling knife, risky to buy"}
+                "reason_en": "peer group falling together — falling knife, risky to buy",
+                "path_ko": "그룹 하락이 멈추고 반등 시작하면 매수 신호 가능",
+                "path_en": "becomes buyable when the group stops falling and turns up"}
     if regime_bad:
-        return {**base, "state": "NOTHING",
+        return {**base, "state": "NOTHING", "gate": "regime",
                 "reason_ko": f"시장 급락(코스피 {mkt:+.1f}%) — 신규 매수 보류",
-                "reason_en": f"market plunging (KOSPI {mkt:+.1f}%) — hold off on new buys"}
+                "reason_en": f"market plunging (KOSPI {mkt:+.1f}%) — hold off on new buys",
+                "path_ko": "시장 급락이 진정되면 다시 스캔",
+                "path_en": "re-scan once the market plunge calms"}
     if vol_bad:
-        return {**base, "state": "NOTHING",
+        return {**base, "state": "NOTHING", "gate": "vol",
                 "reason_ko": f"변동성 부족(예상 1시간 ±{vol:.1f}%) — 1시간 +1.5% 어려움",
-                "reason_en": f"too little volatility (~±{vol:.1f}%/h) — +1.5% unlikely in 1h"}
+                "reason_en": f"too little volatility (~±{vol:.1f}%/h) — +1.5% unlikely in 1h",
+                "path_ko": "장중 큰 움직임(변동성)이 살아나면 매수 자리 가능",
+                "path_en": "becomes buyable if intraday volatility picks up"}
     if downtrend:
-        return {**base, "state": "NOTHING",
+        return {**base, "state": "NOTHING", "gate": "downtrend",
                 "reason_ko": "하락 추세(2시간 평균 아래) — 눌림목 반등 실패 위험, 관망",
-                "reason_en": "downtrend (below 2h average) — dip-bounce likely to fail, sit out"}
+                "reason_en": "downtrend (below 2h average) — dip-bounce likely to fail, sit out",
+                "path_ko": f"가격이 2시간 평균 위로 올라오면(≈₩{round(sma2h):,}) 매수 신호 대기",
+                "path_en": f"watch for price to reclaim its 2h average (≈₩{round(sma2h):,})"}
 
     # --- ACT_NOW: the RSI bounce trigger is firing ---
     if sig.get("verdict") == "BUY_NOW":
@@ -152,9 +165,11 @@ def scan_one(db, code: str, name: str) -> dict[str, Any]:
                 "reason_ko": "눌림목 형성 중 — 아직 반등 신호 없음 (감시)",
                 "reason_en": "pullback forming — no bounce trigger yet (watching)"}
 
-    return {**base, "state": "NOTHING",
-            "reason_ko": "매수 자리 아님(과매도/눌림 아님)",
-            "reason_en": "not a buy setup (no oversold pullback)"}
+    return {**base, "state": "NOTHING", "gate": "nosetup",
+            "reason_ko": f"매수 자리 아님 — 과매도 눌림 아님 (RSI {rsi if rsi is not None else '-'})",
+            "reason_en": f"no buy setup — not an oversold pullback (RSI {rsi if rsi is not None else '-'})",
+            "path_ko": "가격이 눌렸다가 5분봉 RSI가 저점에서 상승 전환하면 매수 신호",
+            "path_en": "buy signal when price pulls back and 5-min RSI turns up from a low"}
 
 
 def scan(db) -> dict[str, Any]:
@@ -332,18 +347,70 @@ def scan_reply(db, lang: str = "ko") -> str:
                   "", "👉 Wait for now. When it triggers you'll get a full BUY signal."]
         return "\n".join(L)
 
-    # nothing
-    reasons = r["nothing"][:3]
+    # nothing — DETAILED per-stock breakdown of ALL scanned stocks (+ market context)
+    all_stocks = r["nothing"]
+    withpx = [s for s in all_stocks if s.get("price")]
+    nodata = [s for s in all_stocks if not s.get("price")]
+    mkt = None
+    try:
+        from services.micro_trend import _market_chg_pct
+        mkt = _market_chg_pct()
+    except Exception:
+        pass
     if ko:
-        L.append("😌 **지금은 좋은 자리 없음 — 쉬어가세요**")
-        L.append("")
-        for s in reasons:
-            L.append(f"· {s['name']}: {s['reason_ko']}")
-        L += ["", "💡 억지로 사지 마세요. 오늘 안 좋으면 0번 거래가 정답입니다. 자리 나오면 다시 물어보세요."]
+        L.append("😌 **지금은 살 만한 자리 없음 — 관망 권장**")
+        if mkt is not None:
+            L.append(f"_시장: 코스피 {mkt:+.2f}%_")
+        L += ["",
+              "‘살 자리 없음’은 **가격이 안 움직인다는 뜻이 아니라**, 지금 +1.5~2%를 "
+              "낮은 위험으로 노릴 **매수 타이밍이 아니라는 뜻**이에요. 감시 중인 종목별 상태:"]
+        for s in withpx:
+            met = []
+            if s.get("rsi") is not None:
+                met.append(f"RSI {s['rsi']}")
+            if s.get("vol_1h_pct") is not None:
+                met.append(f"변동성 ±{s['vol_1h_pct']}%/h")
+            if s.get("cluster"):
+                met.append(f"그룹 {s['cluster']}")
+            mets = " · ".join(met)
+            L.append(f"\n**· {s['name']}** ₩{_fmt(s['price'])}{('  ('+mets+')') if mets else ''}")
+            L.append(f"   상태: {s['reason_ko']}")
+            if s.get("path_ko"):
+                L.append(f"   ▶ 매수 조건: {s['path_ko']}")
+        if nodata:
+            L.append(f"\n(데이터 준비 중: {', '.join(s['name'] for s in nodata)})")
+        L += ["",
+              "💡 **왜 지금 안 좋은가:** 대부분 하락 추세라 눌림목이 반등에 실패할 위험(떨어지는 칼날)이 큽니다. "
+              "지난 백테스트에서도 하락장 눌림 매수는 크게 손실이었어요 — 그래서 지금은 안전하게 쉬는 게 정답.",
+              "⏱️ **다시 확인할 때:** 시장 하락이 멈추고 종목이 2시간 평균 위로 올라오면 매수 자리가 생깁니다. "
+              "보통 **30분~1시간 뒤** 다시 물어보세요 (또는 스캐너가 자동 감지)."]
     else:
-        L.append("😌 **No good setup right now — sit this one out**")
-        L.append("")
-        for s in reasons:
-            L.append(f"· {s['en_name']}: {s['reason_en']}")
-        L += ["", "💡 Don't force a trade. On a bad day, ZERO trades is the right answer. Ask again later."]
+        L.append("😌 **No good BUY setup right now — sit this one out**")
+        if mkt is not None:
+            L.append(f"_Market: KOSPI {mkt:+.2f}%_")
+        L += ["",
+              "‘No setup’ does **not** mean prices won't move — it means this isn't a "
+              "**good moment to buy** for a low-risk +1.5~2%. Live status of each watched stock:"]
+        for s in withpx:
+            met = []
+            if s.get("rsi") is not None:
+                met.append(f"RSI {s['rsi']}")
+            if s.get("vol_1h_pct") is not None:
+                met.append(f"vol ±{s['vol_1h_pct']}%/h")
+            if s.get("cluster"):
+                met.append(f"group {s['cluster']}")
+            mets = " · ".join(met)
+            L.append(f"\n**· {s['en_name']}** ₩{_fmt(s['price'])}{('  ('+mets+')') if mets else ''}")
+            L.append(f"   status: {s['reason_en']}")
+            if s.get("path_en"):
+                L.append(f"   ▶ becomes a buy when: {s['path_en']}")
+        if nodata:
+            L.append(f"\n(data warming up: {', '.join(s['en_name'] for s in nodata)})")
+        L += ["",
+              "💡 **Why it's not good now:** most stocks are in a downtrend, so a dip is likely "
+              "to keep falling (a falling knife). The backtest showed dip-buying in a downtrend "
+              "loses badly — so sitting out is the correct, low-risk answer.",
+              "⏱️ **When to check again:** a buy setup appears once the market stops falling and a "
+              "stock reclaims its 2h average. Usually ask again in **30–60 min** (or the scanner "
+              "auto-detects it)."]
     return "\n".join(L)
