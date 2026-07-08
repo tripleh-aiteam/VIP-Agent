@@ -2,6 +2,36 @@
 
 ---
 
+## 2026-07-08 (Wednesday) — Intraday setup scanner (1-hour scalp system), Phases 1-3
+
+### Goal
+
+Boss's 1-hour scalp idea: the bot proactively finds low-risk buy setups (target +1.5-2% in ~60 min), tells time+stock+zones, he trades a few times/day. Zones not fixed prices (for an auto-agent). Test-first: backtest before it reaches the chatbot.
+
+### Files added
+
+- [`services/intraday_setup.py`](apps/orchestrator-api/services/intraday_setup.py) — the scanner. `scan(db)` → per watchlist stock: **ACT_NOW / FORMING / NOTHING** with entry band, +1.5~2% target band (sell on first touch), −1% stop, 60min, confidence. Combines cycle_scalp RSI-turn trigger + micro_trend + peer_cluster + volatility gate + **trend filter**. `scan_reply(ko/en)`, `log_and_grade`, `scorecard`.
+
+### Files updated
+
+- [`services/assistant_agent.py`](apps/orchestrator-api/services/assistant_agent.py) — `_is_setup_question` + intercept: "지금 뭐 살까 / what to trade now" → scan_reply (both bots, KO+EN; named-stock questions still → decide).
+- [`routers/predictions.py`](apps/orchestrator-api/routers/predictions.py) — GET /setups, POST /setups/tick (log+grade), GET /setups/scorecard.
+- `ml/render_pings_5min.bat` — added /setups/tick so the forward record accumulates.
+
+### The decisive backtest (13d 5-min, +1.5%/−1%/60min, cost 0.23%)
+
+- raw RSI-dip: 191 trades, **27% win, −96%** (catches knives in a downtrend)
+- + sector + volatility filters: 83, 30%, −35%
+- **+ trend filter (price > 2h avg): 7 trades, 57%, +1.4%** ← the decisive filter
+The scanner now sits out ~96% of falling-market dips (correct low-risk behaviour). **Honest caveat: 7 trades is too small to trust — the real proof is Phase 4 forward paper-testing.** Prod-verified: both bots answer "sit out" correctly on the down day; /setups API live.
+
+### Next
+
+- Phase 4: wire scanner → paper desk auto-agent (auto buy/manage/sell setups); run 2-3 weeks live.
+- Phase 5: go-real gate — real orders only if paper shows profit + ≥55% win.
+
+---
+
 ## 2026-07-08 (Wednesday) — ⑨ 동종 그룹: peer co-movement as a live decision fact
 
 ### Goal
