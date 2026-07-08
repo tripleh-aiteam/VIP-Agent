@@ -2,6 +2,27 @@
 
 ---
 
+## 2026-07-08 (Wednesday) — Phase 4: the AUTO-AGENT (auto-trades the scanner's setups on paper)
+
+### Goal
+
+The boss's buy→sell→buy→sell loop, hands-free on FAKE money — the honest 2-3 week forward test of whether following the decision engine makes money. Built after his answer-format round (direct answer → evidence → Detailed explanation → 📌 summary at the end; 'Deep dive' renamed 상세 설명/Detailed explanation).
+
+### Files added
+
+- [`services/auto_trader.py`](apps/orchestrator-api/services/auto_trader.py) — `tick()`: manage exits FIRST (target-band first-touch / stop / 60min time-stop) then open ≤1 new ACT_NOW setup per pass (same `intraday_setup.scan` the chatbot uses, conf ≥60, sized 10% of desk equity via `paper_desk.place_order` — live prices, real fees, NO real-money path). Rails: OFF by default (`auto_state`), max 2 open, 6 trades/day, market hours. `status()` scorecard.
+
+### Files updated
+
+- [`routers/paper_desk.py`](apps/orchestrator-api/routers/paper_desk.py) — /paper-desk/auto/{status,toggle,tick}; `ml/render_pings_5min.bat` — auto/tick in the 5-min cron.
+- [`apps/admin-dashboard/src/app/testing/page.tsx`](apps/admin-dashboard/src/app/testing/page.tsx) — 🤖 자동매매 panel: ON/OFF toggle (confirm), live record, open auto-positions, limits.
+
+### Verified
+
+Full cycle local (OFF blocks → ON+setup → auto-BUY 35 삼성전자 @ live → TARGET touch → auto-SELL, net −0.23% fees → scorecard → cleanup) + prod PASS (status live, OFF by default, tick guarded). Boss flips the toggle to start the 2-3 week paper experiment; Phase 5 go-real gate stays: profit + ≥55% win required.
+
+---
+
 ## 2026-07-08 (Wednesday) — Chatbot usability: plain-language 'no setup', sell-question routing, detailed position answer
 
 ### Goal
