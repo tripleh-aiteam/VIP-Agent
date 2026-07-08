@@ -555,6 +555,15 @@ def _fmt(n) -> str:
     return f"{int(round(n)):,}" if n is not None else "-"
 
 
+# plain-word labels for the peer-group jargon (non-technical readers)
+_CLUSTER_KO = {"SECTOR_DOWN": "그룹 동반하락", "CONFIRM_UP": "그룹 동반상승",
+               "LAGGARD_UP": "그룹은 오르는데 뒤처짐", "HOLDING_VS_WEAK": "그룹 약한데 버팀",
+               "LONE_MOVE": "혼자만 움직임", "NEUTRAL": "그룹과 비슷"}
+_CLUSTER_EN = {"SECTOR_DOWN": "sector falling together", "CONFIRM_UP": "sector rising together",
+               "LAGGARD_UP": "lagging a rising group", "HOLDING_VS_WEAK": "holding up vs a weak group",
+               "LONE_MOVE": "moving alone", "NEUTRAL": "in line with its group"}
+
+
 def scan_reply(db, lang: str = "ko") -> str:
     """The chatbot answer for '지금 뭐 살까 / what should I trade now' — ACT / FORMING /
     NOTHING in the zone format. Identical structure KO/EN, both surfaces."""
@@ -637,10 +646,19 @@ def scan_reply(db, lang: str = "ko") -> str:
                       reverse=True)[0]
 
     if ko:
-        L.append("😌 **지금은 확실한 매수 자리 없음 — 관망 권장**")
+        L.append("😌 **지금은 확실한 매수 자리 없음 — 관망(기다림) 권장**")
         if mkt is not None:
             _crash = " ⚠️ 급락일" if mkt <= -1.5 else ""
             L.append(f"_시장: 코스피 {mkt:+.2f}%{_crash} · 시장 전체 상위 포함 {scanned}개 스캔_")
+        # PLAIN-LANGUAGE TL;DR (non-technical) — explain WHY, simply
+        if mkt is not None and mkt <= -1.5:
+            L += ["", f"💬 **쉽게 말하면:** 오늘은 시장 전체가 크게 떨어지는 날이에요(코스피 {mkt:+.1f}%). "
+                  "이런 날에 주식을 사면 더 떨어질 확률이 높아요. 그래서 지금은 **안 사는 것**이 돈을 지키는 길이에요. "
+                  "좋은 매수 자리는 시장이 안정되거나 오를 때 나옵니다."]
+        else:
+            L += ["", "💬 **쉽게 말하면:** 지금은 짧은 시간에 1~2% 오를 만한 **확실한 자리가 없어요.** "
+                  "억지로 사면 잃기 쉬우니, 좋은 자리가 나올 때까지 기다리는 게 좋아요. "
+                  "(하루에 0번 거래도 정답일 수 있어요.)"]
         if best:
             L += ["", f"🔎 **그나마 가장 가까운 후보 (아직 매수 신호 아님): {best['name']} ({best['code']}) ₩{_fmt(best['price'])}**",
                   f"   · 왜 아직 아닌가: {best.get('reason_ko','')}",
@@ -657,7 +675,7 @@ def scan_reply(db, lang: str = "ko") -> str:
             if s.get("vol_1h_pct") is not None:
                 met.append(f"변동성 ±{s['vol_1h_pct']}%/h")
             if s.get("cluster"):
-                met.append(f"그룹 {s['cluster']}")
+                met.append(_CLUSTER_KO.get(s["cluster"], s["cluster"]))
             mets = " · ".join(met)
             L.append(f"\n**· {s['name']}** ₩{_fmt(s['price'])}{('  ('+mets+')') if mets else ''}")
             L.append(f"   상태: {s['reason_ko']}")
@@ -671,10 +689,19 @@ def scan_reply(db, lang: str = "ko") -> str:
               "⏱️ **다시 확인할 때:** 어떤 종목이 상승 추세로 강하게 오르거나(모멘텀), 눌렸다가 반등을 시작하면 "
               "매수 자리가 뜹니다. 보통 **30분~1시간 뒤** 다시 물어보세요 (스캐너가 자동 감지도 함)."]
     else:
-        L.append("😌 **No clear BUY setup right now — sit this one out**")
+        L.append("😌 **No clear BUY setup right now — better to wait (sit out)**")
         if mkt is not None:
             _crash = " ⚠️ crash day" if mkt <= -1.5 else ""
             L.append(f"_Market: KOSPI {mkt:+.2f}%{_crash} · scanned {scanned} incl. market-wide movers_")
+        # PLAIN-LANGUAGE TL;DR (non-technical)
+        if mkt is not None and mkt <= -1.5:
+            L += ["", f"💬 **In simple words:** today the whole market is falling hard (KOSPI {mkt:+.1f}%). "
+                  "On days like this, if you buy, the stock is more likely to keep dropping — so **not buying** "
+                  "is how you protect your money right now. Good buy setups appear when the market steadies or rises."]
+        else:
+            L += ["", "💬 **In simple words:** right now there's **no solid spot** likely to rise 1–2% in a short "
+                  "time. Forcing a trade tends to lose, so it's better to wait for a good setup. "
+                  "(Zero trades in a day can be the right answer.)"]
         if best:
             L += ["", f"🔎 **Closest candidate (NOT a buy yet): {best['en_name']} ({best['code']}) ₩{_fmt(best['price'])}**",
                   f"   · Why not yet: {best.get('reason_en','')}",
@@ -691,7 +718,7 @@ def scan_reply(db, lang: str = "ko") -> str:
             if s.get("vol_1h_pct") is not None:
                 met.append(f"vol ±{s['vol_1h_pct']}%/h")
             if s.get("cluster"):
-                met.append(f"group {s['cluster']}")
+                met.append(_CLUSTER_EN.get(s["cluster"], s["cluster"]))
             mets = " · ".join(met)
             L.append(f"\n**· {s['en_name']}** ₩{_fmt(s['price'])}{('  ('+mets+')') if mets else ''}")
             L.append(f"   status: {s['reason_en']}")

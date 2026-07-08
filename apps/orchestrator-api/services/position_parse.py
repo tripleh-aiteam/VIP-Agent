@@ -20,6 +20,9 @@ _POSITION_KW = (
     "평단", "평균단가", "물타기", "지금 팔", "계속 들고", "계속 보유",
     "bought", "i hold", "holding", "i own", "i'm holding", "im holding", "average price",
     "avg price", "my position", "underwater", "in the red", "in the green",
+    # 'i have <stock>' / 'i've got' — common way to say you hold it. Safe: is_position_question
+    # also REQUIRES a resolved stock, so 'i have a question' (no stock) never matches.
+    "i have", "i've got", "ive got", "i got", "i am holding", "i currently hold",
 )
 # advice cues that, together with a stock + a P&L, mean "I hold this — what do I do?"
 _POS_ADVICE_CUE = (
@@ -45,9 +48,16 @@ def is_position_question(text: str) -> bool:
     t = (text or "").lower()
     if _HYPOTHETICAL_RE.search(t):
         return False
+    # 'i have a question/doubt' is NOT a holding — strip it so the 'i have' marker below
+    # doesn't misfire on a plain question that happens to name a stock.
+    t = t.replace("i have a question", " ").replace("i have a doubt", " ") \
+         .replace("i have question", " ").replace("i have some question", " ")
+    # a stock must be present — exact/substring (find_all) OR fuzzy (resolve_one), so a
+    # typo like 'Skhynix'/'삼썽전자' still counts as a held position, not a fresh decision.
     try:
-        from services.stock_resolver import find_all
-        if not find_all(text):
+        from services.stock_resolver import find_all, resolve_one
+        has_stock = bool(find_all(text)) or bool((resolve_one(text) or (None, None))[0])
+        if not has_stock:
             return False
     except Exception:
         return False
