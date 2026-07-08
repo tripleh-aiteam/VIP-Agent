@@ -319,9 +319,89 @@ def _prescan(db, codes: list[str]) -> list[str]:
     return [c for c, _ in scored]
 
 
+def _top_gainer_codes(skip: int = 12, take: int = 24) -> list[str]:
+    """MARKET-WIDE gainers (Naver rising pages, KOSPI+KOSDAQ). The list is sorted by %
+    desc — we SKIP the extreme top (small-cap +15-30% limit-up pumps, dangerous to chase)
+    and take the moderate-gainer slice below, where the healthy +2-6% liquid names live."""
+    import re
+
+    import httpx
+    out: list[str] = []
+    for sosok in (0, 1):
+        try:
+            r = httpx.get(f"https://finance.naver.com/sise/sise_rise.naver?sosok={sosok}",
+                          headers={"User-Agent": "Mozilla/5.0"}, timeout=8)
+            codes = re.findall(r'/item/main\.naver\?code=(\d{6})', r.content.decode("euc-kr", "ignore"))
+            out += codes[skip:skip + take]
+        except Exception:
+            pass
+    seen, uniq = set(), []
+    for c in out:
+        if c not in seen:
+            seen.add(c)
+            uniq.append(c)
+    return uniq
+
+
+def _scan_mover(db, code: str, name: str) -> Optional[dict[str, Any]]:
+    """LIGHT momentum check for a MODERATE, LIQUID market-wide gainer using the live quote
+    + today's candle: up a healthy +2~6% (NOT a +15-30% small-cap limit-up pump — those
+    are how people blow up), price ≥ ₩5,000, still near the day high, ML + news confirm.
+    A distinct 'market momentum' setup (higher risk = chasing strength). ACT_NOW or None."""
+    from services.naver_stock import daily_history, realtime_quote
+    q = realtime_quote(code) or {}
+    price = q.get("price")
+    chg = q.get("change_pct")
+    if not (price and chg is not None):
+        return None
+    if price < 5000:                          # liquidity floor — avoid penny/pump names
+        return None
+    if not (2.0 <= chg <= 6.0):               # HEALTHY momentum, not a blown-off limit-up
+        return None
+    hi, lo, op = q.get("high"), q.get("low"), q.get("open")
+    if not (hi and lo and op):                # quote missing OHLC → today's candle
+        d = (daily_history(code, days=1) or [{}])[0]
+        hi, lo, op = hi or d.get("high"), lo or d.get("low"), op or d.get("open")
+    if not (hi and lo and op and hi > lo):
+        return None
+    if price <= op:                           # up intraday, not gap-then-fade
+        return None
+    pos = (price - lo) / (hi - lo)
+    if pos < 0.6:                             # fading from the high → momentum broken
+        return None
+    # ML + news confirm
+    try:
+        from services import prediction_service as ps
+        if (ps.get_ticker(db, code) or {}).get("advice", "").upper() == "SELL":
+            return None
+    except Exception:
+        pass
+    try:
+        from services.decision_agent import _news
+        if (_news(db, code, name) or {}).get("score", 0) <= -2:
+            return None
+    except Exception:
+        pass
+    day_range = (hi - lo) / price * 100
+    t_lo = max(_TGT_MIN, min(_TGT_MAX, round(day_range * 0.3, 1)))
+    t_hi = round(t_lo + 0.5, 1)
+    s_pct = max(0.5, round(t_lo / _RR, 1))
+    conf = min(78, 55 + int(pos * 12) + (5 if chg >= 4 else 0))
+    return {"code": code, "name": name, "en_name": name, "price": float(price),
+            "rsi": None, "vol_1h_pct": round(day_range, 2), "cluster": None,
+            "confidence": conf, "setup_type": "market_momentum",
+            "entry_zone": [round(price * 0.999), round(price * 1.004)],
+            "support": round(op), "target_band": [round(price * (1 + t_lo / 100)),
+                                                   round(price * (1 + t_hi / 100))],
+            "target_pct": [t_lo, t_hi], "stop": round(price * (1 - s_pct / 100)),
+            "stop_pct": s_pct, "time_min": TIME_MIN, "state": "ACT_NOW",
+            "why_ko": f"오늘 시장 강세 상위 ({chg:+.1f}%) · 고가 부근({pos*100:.0f}%) · 상승 흐름 지속",
+            "why_en": f"top market gainer today ({chg:+.1f}%) · near high ({pos*100:.0f}%) · momentum intact"}
+
+
 def scan(db) -> dict[str, Any]:
-    """Scan a WIDE universe (~40 collected stocks): prescan-rank by activity, then deep-scan
-    the most active. Two setup types (dip-bounce + momentum). Ranked act/forming/nothing."""
+    """Scan our ~40 collected stocks (dip + momentum, deep) PLUS the day's market-wide top
+    gainers (light momentum) — so it hunts where the action is. Ranked act/forming/nothing."""
     uni = _universe(db)
     name_of = dict(uni)
     ranked = _prescan(db, [c for c, _ in uni])
@@ -332,13 +412,36 @@ def scan(db) -> dict[str, Any]:
             results.append(scan_one(db, code, name_of.get(code, code)))
         except Exception:
             db.rollback()
-    act = sorted([r for r in results if r["state"] == "ACT_NOW"],
-                 key=lambda r: -r["confidence"])
-    forming = sorted([r for r in results if r["state"] == "FORMING"],
-                     key=lambda r: -r["confidence"])
+    act = [r for r in results if r["state"] == "ACT_NOW"]
+    forming = [r for r in results if r["state"] == "FORMING"]
     nothing = [r for r in results if r["state"] == "NOTHING"]
+
+    # MARKET-WIDE top gainers (the boss's point: hunt the whole market, not just our 40)
+    scanned_extra = 0
+    try:
+        in_our_uni = {c for c, _ in uni}
+        cand = [c for c in _top_gainer_codes() if c not in in_our_uni]
+        gnames = {}
+        if cand:
+            from sqlalchemy import text
+            nr = db.execute(text("SELECT code, name FROM krx_stocks WHERE code = ANY(:c)"),
+                            {"c": cand}).fetchall()
+            gnames = {str(r[0]): r[1] for r in nr}
+        # REAL listed equities only — krx_stocks excludes ELW/ETN derivatives + odd codes
+        # that dominate the raw gainer leaderboard (dangerous to chase).
+        gainers = [c for c in cand if c in gnames][:12]
+        for c in gainers:
+            scanned_extra += 1
+            m = _scan_mover(db, c, gnames[c])
+            if m:
+                act.append(m)
+    except Exception:
+        db.rollback()
+
+    act.sort(key=lambda r: -r["confidence"])
+    forming.sort(key=lambda r: -r["confidence"])
     return {"act_now": act, "forming": forming, "nothing": nothing,
-            "scanned": len(uni), "deep_scanned": len(results),
+            "scanned": len(uni) + scanned_extra, "deep_scanned": len(results),
             "counts": {"act": len(act), "forming": len(forming), "nothing": len(nothing)}}
 
 
