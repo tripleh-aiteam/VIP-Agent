@@ -27,6 +27,47 @@ def _fe(v) -> str:
         return "-"
 
 
+def _hour_forecast(db, code: str, cur: Optional[float], d: dict) -> dict:
+    """The next-~1-hour directional forecast for a HELD stock: UP / DOWN / FLAT, an
+    expected price band (±1σ from volatility), and the HONEST measured accuracy of our
+    1-hour calls. Direction = the live 5-min flow (micro_trend), backed by the fused
+    decision when the flow is flat."""
+    direction = "FLAT"
+    try:
+        from services.micro_trend import micro_read
+        m = micro_read(db, code) or {}
+        v = m.get("verdict")
+        if v in ("UP", "DOWN"):
+            direction = v
+        elif d.get("score") is not None:          # flat flow → lean on the fused score
+            sc = d["score"]
+            direction = "UP" if sc >= 2 else "DOWN" if sc <= -2 else "FLAT"
+    except Exception:
+        pass
+    sigma = None
+    try:
+        from services.cycle_scalp import _bars
+        from services.intraday_setup import _vol_1h_pct
+        closes = [b["close"] for b in _bars(db, code, limit=60)]
+        sigma = _vol_1h_pct(closes[-30:])
+    except Exception:
+        pass
+    sigma = sigma or 1.0
+    low = round(cur * (1 - sigma / 100)) if cur else None
+    high = round(cur * (1 + sigma / 100)) if cur else None
+    acc = n = None
+    try:
+        from services.method_weights import intraday_stats
+        s = intraday_stats(db) or {}
+        ml = s.get("ml") or {}
+        if ml.get("n"):
+            acc, n = ml["acc"], ml["n"]
+    except Exception:
+        pass
+    return {"direction": direction, "low": low, "high": high, "sigma": round(sigma, 1),
+            "acc": acc, "n": n}
+
+
 def advise(db, position: dict) -> dict[str, Any]:
     """position = {ticker, name, shares, entry_price, pnl_pct}. Returns render-ready advice."""
     from services.decision_agent import decide
@@ -182,14 +223,56 @@ def advise(db, position: dict) -> dict[str, Any]:
     detail_ko = d.get("reasoning_ko") or ""
     detail_en = d.get("reasoning_en") or ""
 
+    # --- ⏱️ 1-HOUR FORECAST + holder action (boss's format) ---
+    fc = _hour_forecast(db, ticker, cur, d)
+    _dir = fc["direction"]
+    _lo, _hi = fc["low"], fc["high"]
+    _accs_ko = (f"(우리 1시간 방향 예측 정확도: 약 {fc['acc']:.0f}% · 실측 {fc['n']}건 — "
+                f"완벽하지 않으니 참고용)") if fc["acc"] else ""
+    _accs_en = (f"(our 1-hour direction accuracy: ~{fc['acc']:.0f}% over {fc['n']} graded "
+                f"calls — not perfect, use as a guide)") if fc["acc"] else ""
+    if _dir == "DOWN":
+        fc_ko = (f"**⏱️ 앞으로 1시간 예측: 하락 가능성** (예상 범위 {_f(_lo)} ~ {_f(cur)})\n"
+                 f"→ 지금 값이 더 빠지기 전에 **일부/전량 매도해 보유를 줄이는 것**을 고려하세요. "
+                 f"손실을 줄이고, 더 낮은 가격에서 다시 담을 기회를 노립니다. {_accs_ko}")
+        fc_en = (f"**⏱️ Next ~1 hour: likely DOWN** (expected {_fe(_lo)} ~ {_fe(cur)})\n"
+                 f"→ Consider **selling some/all to reduce your holding** before it drops further — "
+                 f"limit the loss now and aim to buy back lower. {_accs_en}")
+    elif _dir == "UP":
+        fc_ko = (f"**⏱️ 앞으로 1시간 예측: 상승 가능성** (예상 범위 {_f(cur)} ~ {_f(_hi)})\n"
+                 f"→ **지금 팔지 말고 보유하세요.** 오르면 더 높은 가격에 매도해 이익을 키울 수 있어요 "
+                 f"— 목표 {_f(near_target)} 도달 시 익절. {_accs_ko}")
+        fc_en = (f"**⏱️ Next ~1 hour: likely UP** (expected {_fe(cur)} ~ {_fe(_hi)})\n"
+                 f"→ **Don't sell yet — hold.** If it rises you can sell higher for a bigger gain "
+                 f"— take profit when it reaches {_fe(near_target)}. {_accs_en}")
+    else:
+        fc_ko = (f"**⏱️ 앞으로 1시간 예측: 큰 변화 없음** (예상 범위 {_f(_lo)} ~ {_f(_hi)})\n"
+                 f"→ 급한 움직임이 없을 가능성이 커요. **그냥 보유(관망)** 하며 위 매매 계획의 "
+                 f"익절/손절 가격을 지켜보세요. {_accs_ko}")
+        fc_en = (f"**⏱️ Next ~1 hour: little change expected** (range {_fe(_lo)} ~ {_fe(_hi)})\n"
+                 f"→ No sharp move likely. **Just hold** and watch the take-profit / cut levels "
+                 f"in the plan above. {_accs_en}")
+
+    _how_ko = ("**🧠 결정 엔진은 이렇게 예측해요:** 머신러닝(과거 패턴 학습)·분석(수급·호가·박스권)·"
+               "파동(엘리엇/피보나치) 3가지 방법에 + 뉴스·시장 흐름·5분봉 실시간 흐름·동종 그룹까지 "
+               "종합해 방향을 냅니다. 여러 신호가 **같은 방향으로 일치할 때** 신뢰도가 높아져요.")
+    _how_en = ("**🧠 How the engine predicts:** it fuses 3 methods — Machine Learning (learned "
+               "patterns), Analysis (order-flow/box levels), Wave (Elliott/Fibonacci) — plus news, "
+               "market trend, the live 5-minute flow and the peer group. Confidence is higher when "
+               "several signals **agree on the same direction.**")
+
     reasoning_ko = (f"**📌 {pos_ko} — {hold_head_ko}**\n\n"
+                    f"{fc_ko}\n\n"
                     f"{plan_ko_s}\n\n"
                     f"**➡️ 종합 결론:** {ko}\n\n"
+                    f"{_how_ko}\n\n"
                     f"───────────── 상세 분석 (각 방법이 어떻게 예측했나) ─────────────\n\n"
                     f"{detail_ko}")
     reasoning_en = (f"**📌 {pos_en} — {hold_head_en}**\n\n"
+                    f"{fc_en}\n\n"
                     f"{plan_en_s}\n\n"
                     f"**➡️ Bottom line:** {en}\n\n"
+                    f"{_how_en}\n\n"
                     f"───────────── Full analysis (how each method predicted) ─────────────\n\n"
                     f"{detail_en}")
     return {"ok": True, "ticker": ticker, "name": name, "action": action,
