@@ -53,6 +53,12 @@ The scanner now sits out ~96% of falling-market dips (correct low-risk behaviour
 - Phase 4: wire scanner → paper desk auto-agent (auto buy/manage/sell setups); run 2-3 weeks live.
 - Phase 5: go-real gate — real orders only if paper shows profit + ≥55% win.
 
+### [11:35] Scanner upgraded — MIXED engine + wider universe + momentum (boss feedback)
+
+- **Mixed engine:** the technical trigger sets TIMING; ML (5-day direction, fast DB read) + news set CONVICTION. A SELL-rated or bad-news (score ≤ −2) stock is vetoed even if the RSI bounces; ML-BUY / positive-news boost confidence (max 85). Unit-tested 4 cases.
+- **Wider + smarter:** boss noted the 12-stock dip-only scanner was too conservative ("surely SOMETHING is buyable"). Now scans the full ~40-stock collected universe (`_universe` from intraday_snapshot_history + krx_stocks names), cheap `_prescan` ranks by activity, deep-scans the 14 most active (~4s). Added a **MOMENTUM setup** (2nd type): a strongly-rising stock (15m/45m up, RSI 52-72, vol surge) is a BUY even on a down market — the regime gate now blocks DIP buys only; a −3% extreme crash blocks all. Reply shows setup type (눌림목/모멘텀) + scan breadth. Prod-verified: scanned 39, deep 14; momentum unit-test fires on a −1.8% day (conf 71).
+- **Also:** detailed NOTHING answer (all scanned stocks + per-stock reason + "becomes a buy when" path + KOSPI context); fixed [:3] cap; watchlist names via `krx_stocks` (was showing bare codes).
+
 ---
 
 ## 2026-07-08 (Wednesday) — ⑨ 동종 그룹: peer co-movement as a live decision fact
