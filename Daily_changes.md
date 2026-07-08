@@ -2,6 +2,28 @@
 
 ---
 
+## 2026-07-08 (Wednesday) — Chatbot usability: plain-language 'no setup', sell-question routing, detailed position answer
+
+### Goal
+
+Boss live-testing (non-technical usability): (1) 'what to trade now' too jargon-heavy when empty, (2) 'I have SK Hynix, buy or SELL if it rises?' answered as a buy, (3) position answer too short + a bare 'Hold' isn't actionable ('if I hold and it drops I lose my chance').
+
+### Files updated
+
+- [`services/intraday_setup.py`](apps/orchestrator-api/services/intraday_setup.py) — NOTHING answer opens with a plain-word TL;DR ('쉽게 말하면 / In simple words') explaining WHY nothing's buyable (crash day vs no solid spot); peer-group jargon shown as friendly labels (SECTOR_DOWN → 그룹 동반하락 / sector falling together). Both bots, KO+EN.
+- [`services/position_parse.py`](apps/orchestrator-api/services/position_parse.py) — added 'i have'/'i've got' holding markers + fuzzy `resolve_one` fallback (typo 'Skhynix' now recognised as a position) + 'i have a question' false-positive guard. Fixes sell/position questions being answered as buys.
+- [`services/position_advice.py`](apps/orchestrator-api/services/position_advice.py) — 🎯 clear ACTION PLAN up top (hold while > support · SELL to take profit at target 'don't miss it on the way up' · SELL to cut below stop) + FULL detailed method-by-method analysis appended via `decide(focus='sell')` (exit-framed). 800 → ~5,200-6,000 chars.
+
+### Verified
+
+Prod PASS both bots KO+EN: plain-language scanner live; 'I have SK Hynix buy or sell' → intent position_advice with exit plan + full detail (6,000 chars). Regressions (fresh buy / scan / price Qs) unaffected.
+
+### Next
+
+- Phase 4 (auto-agent) — awaiting boss go-ahead after he tests the improved answers.
+
+---
+
 ## 2026-07-08 (Wednesday) — Chatbot answer quality round: scan questions, 3-part trading question, answer depth (boss live-testing feedback)
 
 ### Goal
