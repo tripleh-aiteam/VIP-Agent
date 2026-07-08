@@ -14,6 +14,11 @@ Boss live-testing (non-technical usability): (1) 'what to trade now' too jargon-
 - [`services/position_parse.py`](apps/orchestrator-api/services/position_parse.py) — added 'i have'/'i've got' holding markers + fuzzy `resolve_one` fallback (typo 'Skhynix' now recognised as a position) + 'i have a question' false-positive guard. Fixes sell/position questions being answered as buys.
 - [`services/position_advice.py`](apps/orchestrator-api/services/position_advice.py) — 🎯 clear ACTION PLAN up top (hold while > support · SELL to take profit at target 'don't miss it on the way up' · SELL to cut below stop) + FULL detailed method-by-method analysis appended via `decide(focus='sell')` (exit-framed). 800 → ~5,200-6,000 chars.
 
+### [14:40] New answer format for ALL decide() answers (boss's format v2)
+
+- **What:** ① first line = direct answer → ② body = evidence (market→news→youtube→methods→technicals→checklist) → ③ END = **📌 요약/Summary (final answer)**: the plain-words explanation (removed from the top — no duplication) + final verdict restated ('→ Final: WATCH · confidence low'). Supersedes the old 'no bottom summary' law per boss's new instruction. Both bots, KO+EN, prod PASS. `services/decision_agent.py`.
+- **Also [14:30]:** position answer forecast/plan/headline CONSISTENCY (boss caught '1h DOWN → sell' next to 'keep holding'): HOLD verdict + 1h-DOWN now becomes 🟠 TRIM (sell part, buy back cheaper); sell-verdict + 1h-UP → 'sell INTO the bounce'; all 3 directions tested consistent.
+
 ### [14:20] 1-hour forecast in the position answer (boss's format)
 
 - **What:** for a held stock the answer now opens with **⏱️ Next ~1 hour: UP / DOWN / FLAT** + an expected price band (±1σ from live 5-min volatility; direction = micro_trend flow, fused-score fallback) and the matching holder action — DOWN → 'sell some/all before it drops, buy back lower' · UP → 'don't sell yet, sell higher at the target' · FLAT → 'just hold, watch the plan levels'. Includes the HONEST measured accuracy line (~51% over 1,199 graded 1h calls — 'not perfect, use as a guide') and a plain 🧠 'how the engine predicts' paragraph. `services/position_advice.py` (`_hour_forecast`). Prod PASS both bots, KO+EN.
