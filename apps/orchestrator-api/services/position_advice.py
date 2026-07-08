@@ -33,7 +33,9 @@ def advise(db, position: dict) -> dict[str, Any]:
     ticker = str(position.get("ticker") or "").zfill(6)
     if not position.get("ticker"):
         return {"ok": False, "reason": "no ticker"}
-    d = decide(db, ticker)
+    # focus='sell' → the detailed report is framed for someone who HOLDS (exit timing),
+    # not "should I buy" — so it reads correctly for a position question.
+    d = decide(db, ticker, focus="sell")
     name = position.get("name") or d.get("name") or ticker
     cur = d.get("price")
     tech = d.get("technicals") or {}
@@ -148,14 +150,48 @@ def advise(db, position: dict) -> dict[str, Any]:
                   f"🌊 Method 3 (Wave): **{wve}**\n"
                   f"📉 Technicals: {teche}")
 
+    # --- CLEAR EXIT PLAN — so the holder knows EXACTLY when to sell (no missed chance) ---
+    sell_now = action in ("CUT", "TAKE_PROFIT")
+    plan_ko = ["**🎯 매매 계획 (지금 무엇을 해야 하나요?):**"]
+    plan_en = ["**🎯 Your action plan (what to do right now?):**"]
+    if action == "CUT":
+        plan_ko += [f"· 🔴 **지금 매도(손절) 권장** — 추세가 깨져 더 내릴 위험이 큽니다. 지금 팔아 손실을 제한하세요.",
+                    f"· 재진입은 저항 {_f(res)} 회복을 확인한 뒤에만."]
+        plan_en += [f"· 🔴 **SELL now (cut)** — the trend is broken, more downside likely. Sell now to limit the loss.",
+                    f"· Re-enter only after it reclaims resistance {_fe(res)}."]
+    elif action in ("TAKE_PROFIT", "TAKE_PROFIT_PARTIAL"):
+        _part = "일부 " if action == "TAKE_PROFIT_PARTIAL" else ""
+        _partE = "part of it " if action == "TAKE_PROFIT_PARTIAL" else ""
+        plan_ko += [f"· 🟢 **지금 {_part}매도(익절) 권장** — 수익 중이니 이익을 실현하세요.",
+                    f"· 나머지 보유 시: {_f(near_target)} 도달하면 추가 익절 / {_f(stop_lv)} 이탈 시 전량 정리."]
+        plan_en += [f"· 🟢 **SELL {_partE}now (take profit)** — you're in profit, lock it in.",
+                    f"· If holding the rest: take more profit at {_fe(near_target)} / exit all if it loses {_fe(stop_lv)}."]
+    else:  # HOLD / HOLD_OR_ADD
+        plan_ko += [f"· ✅ **보유 유지** — 가격이 지지선 {_f(sup)} 위를 지키는 동안엔 계속 보유.",
+                    f"· 🟢 **익절(매도) 시점:** {_f(near_target)} 도달하면 → 수익 실현하고 파세요. (오를 때 이 가격 놓치지 마세요)",
+                    f"· 🔴 **손절(매도) 시점:** {_f(stop_lv)} 아래로 떨어지면 → 즉시 팔아 손실을 막으세요."]
+        plan_en += [f"· ✅ **Keep holding** — while price stays above support {_fe(sup)}.",
+                    f"· 🟢 **SELL to take profit** when it reaches {_fe(near_target)} → lock in the gain (don't miss this level on the way up).",
+                    f"· 🔴 **SELL to cut loss** if it drops below {_fe(stop_lv)} → sell right away to stop the bleeding."]
+    plan_ko_s = "\n".join(plan_ko)
+    plan_en_s = "\n".join(plan_en)
+
+    # --- FULL detailed analysis: reuse decide()'s complete method-by-method report so the
+    # holder sees HOW each method predicts (ML accuracy/expected move, analysis reasons,
+    # wave levels, market/news/5-min) — same depth as 'should I buy X?'. ---
+    detail_ko = d.get("reasoning_ko") or ""
+    detail_en = d.get("reasoning_en") or ""
+
     reasoning_ko = (f"**📌 {pos_ko} — {hold_head_ko}**\n\n"
-                    f"{methods_ko}\n\n"
+                    f"{plan_ko_s}\n\n"
                     f"**➡️ 종합 결론:** {ko}\n\n"
-                    f"※ 3가지 방법(머신러닝·분석·파동) + 뉴스·기술적 지표를 종합한 참고 의견이며, 투자 권유가 아닙니다.")
+                    f"───────────── 상세 분석 (각 방법이 어떻게 예측했나) ─────────────\n\n"
+                    f"{detail_ko}")
     reasoning_en = (f"**📌 {pos_en} — {hold_head_en}**\n\n"
-                    f"{methods_en}\n\n"
+                    f"{plan_en_s}\n\n"
                     f"**➡️ Bottom line:** {en}\n\n"
-                    f"※ Synthesis of the 3 methods + news/technicals. Reference only, not investment advice.")
+                    f"───────────── Full analysis (how each method predicted) ─────────────\n\n"
+                    f"{detail_en}")
     return {"ok": True, "ticker": ticker, "name": name, "action": action,
             "pnl_pct": round(pnl, 2) if pnl is not None else None, "price": cur,
             "support": sup, "resistance": res, "stop": stop_lv,
