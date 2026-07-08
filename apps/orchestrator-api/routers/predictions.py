@@ -151,6 +151,29 @@ def dip_alert_ep(force: bool = Query(False), db: Session = Depends(get_db)):
     return run(db, force=force)
 
 
+@router.get("/setups")
+def setups(lang: str = Query("ko"), db: Session = Depends(get_db)):
+    """Intraday scalp setups NOW: ACT_NOW / FORMING / NOTHING per watchlist stock, with
+    entry/target-band/stop zones + the formatted chatbot reply. The '지금 뭐 살까' engine."""
+    from services.intraday_setup import scan, scan_reply
+    return {**scan(db), "reply": scan_reply(db, lang=lang)}
+
+
+@router.post("/setups/tick")
+def setups_tick(db: Session = Depends(get_db)):
+    """Log fresh ACT_NOW setups + grade matured ones (forward track record). Fire every
+    ~5-10 min during market via external cron (survives Render free-tier sleep)."""
+    from services.intraday_setup import log_and_grade
+    return log_and_grade(db)
+
+
+@router.get("/setups/scorecard")
+def setups_scorecard(db: Session = Depends(get_db)):
+    """Honest forward record of the scanner's ACT_NOW calls (win rate, net return)."""
+    from services.intraday_setup import scorecard
+    return scorecard(db)
+
+
 @router.get("/dip-bounce")
 def dip_bounce_ep(min_dip: float = Query(1.5), db: Session = Depends(get_db)):
     """Dip-bounce hunter: stocks down ≥min_dip% vs ~1h ago + tape confirmation, with

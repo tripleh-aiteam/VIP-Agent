@@ -174,6 +174,103 @@ def scan(db) -> dict[str, Any]:
             "counts": {"act": len(act), "forming": len(forming), "nothing": len(nothing)}}
 
 
+_SETUP_DDL = (
+    "CREATE TABLE IF NOT EXISTS setup_log ("
+    " id SERIAL PRIMARY KEY, ticker TEXT, name TEXT, logged_at TIMESTAMPTZ DEFAULT now(),"
+    " entry DOUBLE PRECISION, target_lo DOUBLE PRECISION, stop DOUBLE PRECISION,"
+    " time_min INT, confidence INT,"
+    " status TEXT DEFAULT 'OPEN', outcome TEXT, exit_price DOUBLE PRECISION,"
+    " ret_pct DOUBLE PRECISION, graded_at TIMESTAMPTZ)")
+
+
+def log_and_grade(db) -> dict:
+    """Log fresh ACT_NOW setups (2h dedup per ticker) + grade matured OPEN ones vs the
+    live price: hit target band = WIN, hit stop = LOSS, past time_min = TIME (exit@live).
+    Builds the honest forward track record. Idempotent — fire from the market-hours cron."""
+    from sqlalchemy import text
+    db.execute(text(_SETUP_DDL))
+    db.commit()
+    logged = 0
+    r = scan(db)
+    for s in r["act_now"]:
+        dup = db.execute(text(
+            "SELECT 1 FROM setup_log WHERE ticker=:t AND status='OPEN' "
+            "AND logged_at > now() - interval '2 hours'"), {"t": s["code"]}).first()
+        if dup:
+            continue
+        db.execute(text(
+            "INSERT INTO setup_log (ticker, name, entry, target_lo, stop, time_min, confidence) "
+            "VALUES (:t,:n,:e,:tl,:s,:tm,:c)"),
+            {"t": s["code"], "n": s["name"], "e": s["price"],
+             "tl": s["target_band"][0], "s": s["stop"],
+             "tm": s["time_min"], "c": s["confidence"]})
+        logged += 1
+    db.commit()
+    # grade OPEN setups
+    graded = 0
+    from services.peer_cluster import _chg_pct  # noqa: F401  (ensures module import path)
+    open_rows = db.execute(text(
+        "SELECT id, ticker, entry, target_lo, stop, time_min, logged_at, "
+        "EXTRACT(EPOCH FROM (now()-logged_at))/60 AS age_min FROM setup_log "
+        "WHERE status='OPEN'")).fetchall()
+    for oid, tk, entry, tlo, stop, tmin, _lg, age in open_rows:
+        px = _live_px(tk)
+        if px is None:
+            continue
+        outcome = exit_px = None
+        if px >= float(tlo):
+            outcome, exit_px = "WIN", float(tlo)
+        elif px <= float(stop):
+            outcome, exit_px = "LOSS", float(stop)
+        elif age is not None and float(age) >= float(tmin):
+            outcome, exit_px = "TIME", px
+        if outcome:
+            ret = (exit_px / float(entry) - 1) * 100 - 0.23   # net of round-trip cost
+            db.execute(text(
+                "UPDATE setup_log SET status='GRADED', outcome=:o, exit_price=:x, "
+                "ret_pct=:r, graded_at=now() WHERE id=:i"),
+                {"o": outcome, "x": exit_px, "r": round(ret, 3), "i": oid})
+            graded += 1
+    db.commit()
+    return {"logged": logged, "graded": graded}
+
+
+def _live_px(code: str):
+    try:
+        from services import kiwoom_rest as kr
+        q = kr.current_price(code)
+        if q and q.get("price"):
+            return float(q["price"])
+    except Exception:
+        pass
+    try:
+        from services.naver_stock import realtime_quote
+        q = realtime_quote(code)
+        if q and q.get("price"):
+            return float(q["price"])
+    except Exception:
+        pass
+    return None
+
+
+def scorecard(db) -> dict:
+    """Honest forward record of the scanner's ACT_NOW calls."""
+    from sqlalchemy import text
+    try:
+        rows = db.execute(text(
+            "SELECT outcome, count(*), round(avg(ret_pct)::numeric,3) FROM setup_log "
+            "WHERE status='GRADED' GROUP BY outcome")).fetchall()
+    except Exception:
+        db.rollback()
+        return {"graded": 0}
+    by = {r[0]: {"n": r[1], "avg_ret": float(r[2])} for r in rows}
+    n = sum(v["n"] for v in by.values())
+    wins = by.get("WIN", {}).get("n", 0)
+    tot = db.execute(text("SELECT round(sum(ret_pct)::numeric,2) FROM setup_log WHERE status='GRADED'")).scalar()
+    return {"graded": n, "wins": wins, "win_rate": round(wins / n * 100, 1) if n else None,
+            "total_ret_pct": float(tot) if tot is not None else 0.0, "by_outcome": by}
+
+
 def _fmt(n) -> str:
     return f"{int(round(n)):,}" if n is not None else "-"
 
