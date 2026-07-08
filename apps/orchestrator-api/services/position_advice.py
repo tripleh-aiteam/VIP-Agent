@@ -193,6 +193,11 @@ def advise(db, position: dict) -> dict[str, Any]:
 
     # --- CLEAR EXIT PLAN — so the holder knows EXACTLY when to sell (no missed chance) ---
     sell_now = action in ("CUT", "TAKE_PROFIT")
+    # 1-hour forecast FIRST — the plan below must AGREE with it (boss caught a
+    # contradiction: '1h DOWN → sell' next to 'plan → keep holding').
+    fc = _hour_forecast(db, ticker, cur, d)
+    _dir = fc["direction"]
+
     plan_ko = ["**🎯 매매 계획 (지금 무엇을 해야 하나요?):**"]
     plan_en = ["**🎯 Your action plan (what to do right now?):**"]
     if action == "CUT":
@@ -200,6 +205,9 @@ def advise(db, position: dict) -> dict[str, Any]:
                     f"· 재진입은 저항 {_f(res)} 회복을 확인한 뒤에만."]
         plan_en += [f"· 🔴 **SELL now (cut)** — the trend is broken, more downside likely. Sell now to limit the loss.",
                     f"· Re-enter only after it reclaims resistance {_fe(res)}."]
+        if _dir == "UP":
+            plan_ko += ["· 팁: 1시간 내 반등 예상이니 **반등 시 조금 더 나은 가격에 매도**해도 좋아요 (기다리다 놓치진 마세요)."]
+            plan_en += ["· Tip: a bounce is expected within the hour — you may **sell into the bounce at a slightly better price** (just don't wait too long)."]
     elif action in ("TAKE_PROFIT", "TAKE_PROFIT_PARTIAL"):
         _part = "일부 " if action == "TAKE_PROFIT_PARTIAL" else ""
         _partE = "part of it " if action == "TAKE_PROFIT_PARTIAL" else ""
@@ -207,7 +215,19 @@ def advise(db, position: dict) -> dict[str, Any]:
                     f"· 나머지 보유 시: {_f(near_target)} 도달하면 추가 익절 / {_f(stop_lv)} 이탈 시 전량 정리."]
         plan_en += [f"· 🟢 **SELL {_partE}now (take profit)** — you're in profit, lock it in.",
                     f"· If holding the rest: take more profit at {_fe(near_target)} / exit all if it loses {_fe(stop_lv)}."]
-    else:  # HOLD / HOLD_OR_ADD
+    elif _dir == "DOWN":
+        # HOLD-family verdict but the NEXT HOUR looks down → the consistent advice is
+        # 'trim now, rebuy/keep core' — not a bare '그냥 보유'.
+        action = "TRIM"
+        plan_ko += [f"· 🟠 **단기 하락 예상 → 일부(예: 절반) 매도해 보유를 줄이는 것을 고려** — 더 빠지면 싸게 다시 담을 수 있어요.",
+                    f"· 남긴 물량: 지지 {_f(sup)} 위를 지키면 계속 보유.",
+                    f"· 🔴 {_f(stop_lv)} 아래로 떨어지면 → 남은 것도 정리(손절).",
+                    f"· 🟢 예상과 달리 오르면: {_f(near_target)}에서 익절."]
+        plan_en += [f"· 🟠 **Short-term drop expected → consider selling part (e.g. half) to reduce your holding** — if it falls further you can buy back cheaper.",
+                    f"· For what you keep: hold while it stays above support {_fe(sup)}.",
+                    f"· 🔴 If it drops below {_fe(stop_lv)} → sell the rest (cut).",
+                    f"· 🟢 If it rises instead: take profit at {_fe(near_target)}."]
+    else:  # HOLD / HOLD_OR_ADD with flat/up hour → consistent 'hold'
         plan_ko += [f"· ✅ **보유 유지** — 가격이 지지선 {_f(sup)} 위를 지키는 동안엔 계속 보유.",
                     f"· 🟢 **익절(매도) 시점:** {_f(near_target)} 도달하면 → 수익 실현하고 파세요. (오를 때 이 가격 놓치지 마세요)",
                     f"· 🔴 **손절(매도) 시점:** {_f(stop_lv)} 아래로 떨어지면 → 즉시 팔아 손실을 막으세요."]
@@ -216,6 +236,9 @@ def advise(db, position: dict) -> dict[str, Any]:
                     f"· 🔴 **SELL to cut loss** if it drops below {_fe(stop_lv)} → sell right away to stop the bleeding."]
     plan_ko_s = "\n".join(plan_ko)
     plan_en_s = "\n".join(plan_en)
+    if action == "TRIM":       # headline must match the reconciled advice
+        hold_head_ko = "🟠 일부 매도(단기 축소) 고려"
+        hold_head_en = "🟠 Consider trimming (short-term reduce)"
 
     # --- FULL detailed analysis: reuse decide()'s complete method-by-method report so the
     # holder sees HOW each method predicts (ML accuracy/expected move, analysis reasons,
@@ -223,9 +246,7 @@ def advise(db, position: dict) -> dict[str, Any]:
     detail_ko = d.get("reasoning_ko") or ""
     detail_en = d.get("reasoning_en") or ""
 
-    # --- ⏱️ 1-HOUR FORECAST + holder action (boss's format) ---
-    fc = _hour_forecast(db, ticker, cur, d)
-    _dir = fc["direction"]
+    # --- ⏱️ 1-HOUR FORECAST section (fc computed above, plan already reconciled) ---
     _lo, _hi = fc["low"], fc["high"]
     _accs_ko = (f"(우리 1시간 방향 예측 정확도: 약 {fc['acc']:.0f}% · 실측 {fc['n']}건 — "
                 f"완벽하지 않으니 참고용)") if fc["acc"] else ""
@@ -239,19 +260,32 @@ def advise(db, position: dict) -> dict[str, Any]:
                  f"→ Consider **selling some/all to reduce your holding** before it drops further — "
                  f"limit the loss now and aim to buy back lower. {_accs_en}")
     elif _dir == "UP":
-        fc_ko = (f"**⏱️ 앞으로 1시간 예측: 상승 가능성** (예상 범위 {_f(cur)} ~ {_f(_hi)})\n"
-                 f"→ **지금 팔지 말고 보유하세요.** 오르면 더 높은 가격에 매도해 이익을 키울 수 있어요 "
-                 f"— 목표 {_f(near_target)} 도달 시 익절. {_accs_ko}")
-        fc_en = (f"**⏱️ Next ~1 hour: likely UP** (expected {_fe(cur)} ~ {_fe(_hi)})\n"
-                 f"→ **Don't sell yet — hold.** If it rises you can sell higher for a bigger gain "
-                 f"— take profit when it reaches {_fe(near_target)}. {_accs_en}")
+        if action in ("CUT", "TAKE_PROFIT", "TAKE_PROFIT_PARTIAL"):
+            # selling is the verdict — an UP hour means: sell INTO the bounce, don't flip to hold
+            fc_ko = (f"**⏱️ 앞으로 1시간 예측: 반등 가능성** (예상 범위 {_f(cur)} ~ {_f(_hi)})\n"
+                     f"→ 매도 방침은 유지하되, **반등을 이용해 조금 더 나은 가격에 파세요.** {_accs_ko}")
+            fc_en = (f"**⏱️ Next ~1 hour: a bounce is likely** (expected {_fe(cur)} ~ {_fe(_hi)})\n"
+                     f"→ The sell call stands — **use the bounce to sell at a slightly better price.** {_accs_en}")
+        else:
+            fc_ko = (f"**⏱️ 앞으로 1시간 예측: 상승 가능성** (예상 범위 {_f(cur)} ~ {_f(_hi)})\n"
+                     f"→ **지금 팔지 말고 보유하세요.** 오르면 더 높은 가격에 매도해 이익을 키울 수 있어요 "
+                     f"— 목표 {_f(near_target)} 도달 시 익절. {_accs_ko}")
+            fc_en = (f"**⏱️ Next ~1 hour: likely UP** (expected {_fe(cur)} ~ {_fe(_hi)})\n"
+                     f"→ **Don't sell yet — hold.** If it rises you can sell higher for a bigger gain "
+                     f"— take profit when it reaches {_fe(near_target)}. {_accs_en}")
     else:
-        fc_ko = (f"**⏱️ 앞으로 1시간 예측: 큰 변화 없음** (예상 범위 {_f(_lo)} ~ {_f(_hi)})\n"
-                 f"→ 급한 움직임이 없을 가능성이 커요. **그냥 보유(관망)** 하며 위 매매 계획의 "
-                 f"익절/손절 가격을 지켜보세요. {_accs_ko}")
-        fc_en = (f"**⏱️ Next ~1 hour: little change expected** (range {_fe(_lo)} ~ {_fe(_hi)})\n"
-                 f"→ No sharp move likely. **Just hold** and watch the take-profit / cut levels "
-                 f"in the plan above. {_accs_en}")
+        if action in ("CUT", "TAKE_PROFIT", "TAKE_PROFIT_PARTIAL"):
+            fc_ko = (f"**⏱️ 앞으로 1시간 예측: 큰 변화 없음** (예상 범위 {_f(_lo)} ~ {_f(_hi)})\n"
+                     f"→ 기다려도 가격이 크게 좋아질 가능성이 낮아요 — **계획대로 매도를 진행하세요.** {_accs_ko}")
+            fc_en = (f"**⏱️ Next ~1 hour: little change expected** (range {_fe(_lo)} ~ {_fe(_hi)})\n"
+                     f"→ Waiting is unlikely to get you a much better price — **proceed with the sell plan.** {_accs_en}")
+        else:
+            fc_ko = (f"**⏱️ 앞으로 1시간 예측: 큰 변화 없음** (예상 범위 {_f(_lo)} ~ {_f(_hi)})\n"
+                     f"→ 급한 움직임이 없을 가능성이 커요. **그냥 보유(관망)** 하며 위 매매 계획의 "
+                     f"익절/손절 가격을 지켜보세요. {_accs_ko}")
+            fc_en = (f"**⏱️ Next ~1 hour: little change expected** (range {_fe(_lo)} ~ {_fe(_hi)})\n"
+                     f"→ No sharp move likely. **Just hold** and watch the take-profit / cut levels "
+                     f"in the plan above. {_accs_en}")
 
     _how_ko = ("**🧠 결정 엔진은 이렇게 예측해요:** 머신러닝(과거 패턴 학습)·분석(수급·호가·박스권)·"
                "파동(엘리엇/피보나치) 3가지 방법에 + 뉴스·시장 흐름·5분봉 실시간 흐름·동종 그룹까지 "
