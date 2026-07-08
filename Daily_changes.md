@@ -2,6 +2,29 @@
 
 ---
 
+## 2026-07-08 (Wednesday) — Chatbot answer quality round: scan questions, 3-part trading question, answer depth (boss live-testing feedback)
+
+### Goal
+
+Boss live-tested both chatbots and reported issues round by round: (1) a market-scan question answered about one random stock, (2) his 3-part trading question got LLM filler for parts 2-3 and differed between VIP and AI Advisor, (3) answers too short. Each round: fix → self-test → deploy → live-verify 4 combos (VIP/AI Advisor × KO/EN).
+
+### Files updated
+
+- [services/stock_resolver.py](apps/orchestrator-api/services/stock_resolver.py) — fuzzy-typo stage no longer eats English sentence words: `_EN_STOPWORDS` + ASCII cutoff 0.85 ("Is there any **Korean** stock…" was resolving to 대한항공/대한전선 and hijacking the scan route). Korean typos (삼썽전자) and real asks ("Korean Air price") still resolve.
+- [services/buy_picks.py](apps/orchestrator-api/services/buy_picks.py) — scan answers at single-stock depth: per-method verdict-first cards (ML acc + expected move with meaning, flows 5-day shares + box position %, wave score/levels/R:R), news headlines, trade plan with %-distances, why-not-a-BUY + exact flip triggers, 📌 action guide, grounded LLM deep dive.
+- [services/scalp_watchlist.py](apps/orchestrator-api/services/scalp_watchlist.py) — same method-card depth per scalp pick + ⏱ measured turn rhythm (with live leg) + R:R/net-after-costs + invalidation rule.
+- [services/assistant_agent.py](apps/orchestrator-api/services/assistant_agent.py) — multi-part answers: #1 pick travels via `top_pick` so bare "How many?" runs real position sizing (with 1%-risk-rule explanation) and "buying and selling time?" routes to the measured turn engine (was: generic LLM timetables, different per surface); KO "몇 주?" no longer dropped by the splitter; EN "short time trading" routes like KO 단타; `is there any stock…`/`살 주식 있어?` added to picks patterns; empty-scan days keep follow-ups deterministic (sizing rule + measured market-wide turn hours) and skip the deep dive; hanja-leak cleanup in KO deep dives; caps 6000→9000 (sub-parts 1800→3600, part 1 keeps its deep dive).
+
+### Verified
+
+Each round live-verified on production, 4 combos each (scan question, 3-part question with picks, 3-part question on an empty-scan day); 24/24 chatbot regression (`multi_part_fix`) still green.
+
+### Next
+
+- Boss re-tests; watch for the picks-state 3-part answer live during a market window with valid setups (verified locally against prod DB, empty-scan state verified live).
+
+---
+
 ## 2026-07-08 (Wednesday) — Intraday setup scanner (1-hour scalp system), Phases 1-3
 
 ### Goal
