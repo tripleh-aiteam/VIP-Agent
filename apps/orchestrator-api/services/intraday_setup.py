@@ -445,8 +445,21 @@ def scan(db, use_cache: bool = True) -> dict[str, Any]:
     except Exception:
         db.rollback()
 
-    act.sort(key=lambda r: -r["confidence"])
-    forming.sort(key=lambda r: -r["confidence"])
+    # M5.6 RANKING VOICE (2026-07-08): the 1-hour model's P(up) ranks candidates and is
+    # shown transparently. It does NOT gate/veto — its measured skill (+12pp over base
+    # on 62 unseen days) is real but below the solo-trading bar; as a ranker it only
+    # improves WHICH candidate we surface first. Promotion gate in services/hourly_model.
+    for bucket in (act, forming):
+        for s in bucket:
+            try:
+                from services.hourly_model import prob_up_1h
+                p = prob_up_1h(db, s["code"])
+                if p is not None:
+                    s["ai_1h_prob"] = round(p * 100)
+            except Exception:
+                pass
+    act.sort(key=lambda r: (-(r.get("ai_1h_prob") or 50), -r["confidence"]))
+    forming.sort(key=lambda r: (-(r.get("ai_1h_prob") or 50), -r["confidence"]))
     out = {"act_now": act, "forming": forming, "nothing": nothing,
            "scanned": len(uni) + scanned_extra, "deep_scanned": len(results),
            "counts": {"act": len(act), "forming": len(forming), "nothing": len(nothing)}}
@@ -587,6 +600,8 @@ def scan_reply(db, lang: str = "ko") -> str:
                   f"· 목표: +{s['target_pct'][0]}%~{s['target_pct'][1]}% (₩{_fmt(tb[0])}–{_fmt(tb[1])}) → 이 구간 닿으면 매도",
                   f"· 손절: −{s['stop_pct']}% (₩{_fmt(s['stop'])})",
                   f"· 시간: 최대 {s['time_min']}분",
+                  *([f"· 🤖 AI 1시간 상승확률: {s['ai_1h_prob']}% (1년 학습 모델 · 참고용 — 랭킹에만 사용)"]
+                    if s.get("ai_1h_prob") is not None else []),
                   f"· 근거: {s.get('why_ko','')}",
                   "",
                   f"👉 지금 진입 구간에서 매수 → +{s['target_pct'][0]}% 닿으면 익절 → 아니면 손절선에서 정리 → 둘 다 아니면 {s['time_min']}분 후 나오기."]
@@ -600,6 +615,8 @@ def scan_reply(db, lang: str = "ko") -> str:
                   f"· Target: +{s['target_pct'][0]}%~{s['target_pct'][1]}% (₩{_fmt(tb[0])}–{_fmt(tb[1])}) → sell on first touch",
                   f"· Stop: −{s['stop_pct']}% (₩{_fmt(s['stop'])})",
                   f"· Exit by: {s['time_min']} min",
+                  *([f"· 🤖 AI 1-hour up-probability: {s['ai_1h_prob']}% (1-year model · reference — ranking only)"]
+                    if s.get("ai_1h_prob") is not None else []),
                   f"· Why: {s.get('why_en','')}",
                   "",
                   f"👉 Buy in the entry zone → take profit at +{s['target_pct'][0]}% → else stop out → else close after {s['time_min']} min."]

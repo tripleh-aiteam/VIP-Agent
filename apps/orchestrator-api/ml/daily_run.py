@@ -71,6 +71,11 @@ RETRAIN_STEPS = [
      "RETRAIN best model per stock"),
     ([sys.executable, str(HERE / "models" / "backtest.py"), "--save"],
      "refresh economic edge (gates BUY/SELL)"),
+    # M5.6 hourly model: rebuild dataset from the growing minute/imbalance history and
+    # retrain nightly. Currently a RANKING voice only (+12pp skill, below solo-trade
+    # gate); each night's richer data is its shot at promotion (>=55% + positive sim).
+    ([sys.executable, str(HERE / "hourly_model.py"), "all"],
+     "retrain M5.6 hourly ranking model (build+train)"),
 ]
 PREDICT_STEP = [
     ([sys.executable, str(HERE / "models" / "predict.py"), "--horizon", HORIZON],
