@@ -3980,7 +3980,16 @@ def _answer_multi_part(db, parts: list[str], language, current_path, selected_id
                            if en and top.get("entry") else
                            f"1번 후보 **{top.get('name')}** 기준 (진입가 ~{int(float(top['entry'])):,}원):"
                            if top.get("entry") else "")
-                    sub = (_hd + _sl.strip("\n")).strip() or None
+                    _how = ("\n\n**How this is calculated**: share count = the smaller of what your "
+                            "budget can buy and the 1%-risk rule (one stopped-out trade may cost at most "
+                            "1% of your capital) — a tighter stop allows more shares, a wider stop fewer. "
+                            "Fees + tax take ~0.25%p, so a +1% target nets ≈ +0.75%. For a different "
+                            "amount just say e.g. \"with 10 million won\"." if en else
+                            "\n\n**계산 방식**: 수량 = 자금으로 살 수 있는 최대치와 1%-리스크 룰(한 번의 "
+                            "손절 손실이 자금의 1%를 넘지 않게) 중 작은 쪽입니다 — 손절 폭이 좁을수록 수량이 "
+                            "늘고, 넓을수록 줄어듭니다. 수수료·세금 ~0.25%p를 빼면 목표 +1%의 실수익은 "
+                            "≈ +0.75%입니다. 다른 금액 기준은 \"1,000만원으로\"처럼 말씀해 주세요.")
+                    sub = ((_hd + _sl.strip("\n")).strip() + _how) or None
             except Exception:
                 sub = None
         # 'buying and selling time?' → the measured turn-timing engine on the #1 pick.
@@ -4000,10 +4009,10 @@ def _answer_multi_part(db, parts: list[str], language, current_path, selected_id
                     carry = carry or top.get("name")
             except Exception as e:
                 sub = f"(error: {str(e)[:60]})"
-        if len(parts) >= 3:                              # keep combined answer readable:
-            sub = _DETAIL_SECTION_RE.sub("", sub)        # drop deep-dive on 3+ part answers
-        if len(sub) > 3000:                              # cut on a line, not mid-word
-            sub = sub[:3000].rsplit("\n", 1)[0] + (
+        if len(parts) >= 3 and i > 1:                    # keep combined answer readable —
+            sub = _DETAIL_SECTION_RE.sub("", sub)        # part 1 keeps its deep dive
+        if len(sub) > 3600:                              # cut on a line, not mid-word
+            sub = sub[:3600].rsplit("\n", 1)[0] + (
                 "\n… _(ask this part alone for the full detail)_" if en
                 else "\n… _(이 질문만 따로 물어보시면 전체 상세를 드립니다)_")
         answers.append(f"**{i}. {part}**\n{sub}")
@@ -4749,6 +4758,15 @@ def _run_agent_impl(
                 pass
             if _compound_picks:
                 _reply = _named_stock_check(_reply, _en)
+            # DETAIL LAYER — grounded deep dive over the watchlist's own numbers,
+            # same as buy_picks/reco answers (boss: scalp answers must be detailed too).
+            try:
+                _extra = _elaborate_answer(transcript, lang,
+                                           [{"tool": "scalp_watchlist", "result": _wl.get("picks")}])
+                if _extra:
+                    _reply = (_reply or "") + "\n\n" + _extra
+            except Exception:
+                pass
             _tpk = None
             try:
                 _p1 = (_wl.get("picks") or [None])[0]
