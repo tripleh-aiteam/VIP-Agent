@@ -13,21 +13,37 @@ from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, Optional
 
-SCAN_MAX = 6          # candidates to run decide() over (parallel, ~2 batches of 3)
+SCAN_MAX = 8          # candidates to run decide() over (parallel, ~3 batches of 3)
+
+# ALWAYS-SCANNED heavyweights (boss 2026-07-09: asked "what should I buy?" → "no stock
+# passes", then "should I buy Samsung?" → "yes" — nonsense to him, and he was right.
+# Cause: the scan universe was ONLY the morning picks, which that day were all
+# financials — Samsung was never scanned. The core names get a seat every time so the
+# broad question can never miss a BUY the per-stock question would give.)
+CORE = ["005930", "000660", "005380"]
 
 
 def _candidates(db) -> list[str]:
+    picks: list[str] = []
     try:
         from db.models import OrchReport
         r = (db.query(OrchReport)
              .filter(OrchReport.report_type == "recommendation_report")
              .order_by(OrchReport.created_at.desc()).first())
-        picks = ((r.content_json or {}).get("report") or {}).get("picks") if r else None
-        if picks:
-            return [str(p.get("ticker")).zfill(6) for p in picks if p.get("ticker")]
+        p = ((r.content_json or {}).get("report") or {}).get("picks") if r else None
+        if p:
+            picks = [str(x.get("ticker")).zfill(6) for x in p if x.get("ticker")]
     except Exception:
         pass
-    return ["005930", "000660", "005380", "079550", "042700", "012450", "064350", "003490"]
+    base = ["079550", "042700", "012450", "064350", "003490"]
+    merged = picks[:5] + CORE + base
+    seen: set[str] = set()
+    out: list[str] = []
+    for c in merged:
+        if c not in seen:
+            seen.add(c)
+            out.append(c)
+    return out[:SCAN_MAX]
 
 
 def _decide_many(tickers: list[str]) -> list[dict]:
