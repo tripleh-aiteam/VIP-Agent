@@ -126,15 +126,15 @@ export default function TestingPage() {
     return () => clearInterval(i);
   }, []);
 
-  // poll the scanner every 60s for fresh setups (45s server cache keeps this cheap)
+  // poll the AUTO-TRADER's own candidate list every 60s — a popup is, by definition,
+  // a setup the machine itself would buy (boss: "if it pops, it must be a buy").
   useEffect(() => {
     const check = () => {
-      api<{ act_now?: SetupItem[] }>("/predictions/setups").then((r) => {
+      api<{ candidates?: SetupItem[]; auto_note?: string | null }>("/paper-desk/auto/candidates").then((r) => {
         const now = Date.now();
         const fresh: SetupAlert[] = [];
-        for (const s of r.act_now || []) {
-          if (!s || s.state !== "ACT_NOW" || !s.code) continue;
-          if ((s.confidence || 0) < 60) continue;   // alarm only on auto-qualifying setups (conf ≥60)
+        for (const s of r.candidates || []) {
+          if (!s || !s.code) continue;
           const last = seenSetups.current.get(s.code);
           if (last && now - last < 60 * 60 * 1000) continue;   // one alarm per stock per hour
           seenSetups.current.set(s.code, now);

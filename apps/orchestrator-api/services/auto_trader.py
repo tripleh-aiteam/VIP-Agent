@@ -27,17 +27,14 @@ logger = logging.getLogger("vip.auto_trader")
 KST = timezone(timedelta(hours=9))
 
 AUTO_POS_PCT = 10.0          # % of desk equity per trade
-MAX_OPEN = 4                 # concurrent auto-positions (boss 2026-07-09: +2 for the test
-                             # phase — max exposure 4×10% = 40% of the paper account)
-MAX_TRADES_DAY = 10          # hard daily cap (boss 2026-07-09: 6→10 to fill the test
-                             # record faster; paper money only)
-MAX_TRADES_DAY_CHEAP = 20    # boss 2026-07-09: after the base cap, CHEAP stocks
-CHEAP_PX = 100_000           # (<₩100k/share) may keep trading up to 20/day — more
-                             # test data; sizing stays 10% of equity either way
-CIRCUIT_DAY_NET = -5.0       # daily circuit-breaker: when today's CLOSED auto-trades'
-                             # net_pct sum reaches this (≈ −0.5% of the account at 10%
-                             # sizing — a clearly hostile day), STOP opening new trades
-                             # until tomorrow; exits keep being managed
+MAX_OPEN = 6                 # concurrent auto-positions (boss 2026-07-09 PM: test phase —
+                             # "increase the number of trading and remove the limit")
+MAX_TRADES_DAY = 30          # test-phase caps: effectively unlimited for a 6.5h session
+MAX_TRADES_DAY_CHEAP = 40    # (~1 trade every 10 min if the scanner kept firing)
+CHEAP_PX = 100_000           # <₩100k/share = the cheap tier (boss exit tiers + extension)
+CIRCUIT_DAY_NET = -15.0      # disaster backstop only (boss removed the tight -5% for the
+                             # test): ≈ −1.5% of the account in one day — beyond any
+                             # normal bad day; exits always keep being managed
 MIN_CONF = 60                # only take setups the engine is reasonably sure about
 
 _DDL = (
@@ -233,6 +230,58 @@ def tick(db, force: bool = False) -> dict[str, Any]:
     out["opened"] = {"name": s["name"], "qty": qty, "entry": fill,
                      "target": s["target_band"], "stop": s["stop"],
                      "confidence": s["confidence"], "type": s.get("setup_type")}
+    return out
+
+
+def buy_candidates(db, max_n: int = 3) -> dict[str, Any]:
+    """The setups the auto-trader WOULD buy right now — the exact same quality gates
+    as tick() (market open, conf ≥ MIN_CONF, not already held, decision-engine veto),
+    WITHOUT placing an order. Powers the ⚡ popup (boss 2026-07-09: 'if it pops, it
+    must be a buy — filter the rest before it reaches me'). When only auto's budget
+    blocks (caps/circuit-breaker), candidates still show for MANUAL trading, with the
+    block stated in auto_note."""
+    _ensure(db)
+    out: dict[str, Any] = {"candidates": [], "auto_note": None}
+    if not _market_open_now():
+        out["auto_note"] = "market closed"
+        return out
+    try:
+        from services.intraday_setup import scan
+        setups = [s for s in (scan(db).get("act_now") or [])
+                  if s.get("confidence", 0) >= MIN_CONF and s.get("price")]
+        held = {r[0] for r in db.execute(text(
+            "SELECT ticker FROM auto_trades WHERE status='OPEN'")).fetchall()}
+        setups = [s for s in setups if s["code"] not in held]
+        for s in setups[:max_n]:
+            try:
+                from services.decision_agent import decide_cached
+                if (decide_cached(db, s["code"]) or {}).get("decision") == "SELL":
+                    continue                      # engine veto — never show it
+            except Exception:
+                db.rollback()
+            out["candidates"].append(s)
+    except Exception:
+        db.rollback()
+    # why auto might still sit out (candidates stay visible for manual trading)
+    try:
+        n_open = int(db.execute(text(
+            "SELECT count(*) FROM auto_trades WHERE status='OPEN'")).scalar() or 0)
+        n_today = int(db.execute(text(
+            "SELECT count(*) FROM auto_trades WHERE opened_at::date = "
+            "(now() AT TIME ZONE 'Asia/Seoul')::date")).scalar() or 0)
+        day_net = float(db.execute(text(
+            "SELECT coalesce(sum(net_pct),0) FROM auto_trades WHERE status='CLOSED' "
+            "AND closed_at::date=(now() AT TIME ZONE 'Asia/Seoul')::date")).scalar() or 0)
+        if not is_enabled(db):
+            out["auto_note"] = "auto-trading is OFF"
+        elif day_net <= CIRCUIT_DAY_NET:
+            out["auto_note"] = f"circuit-breaker ({day_net:+.1f}%)"
+        elif n_open >= MAX_OPEN:
+            out["auto_note"] = f"max open ({MAX_OPEN})"
+        elif n_today >= MAX_TRADES_DAY_CHEAP:
+            out["auto_note"] = f"daily cap ({MAX_TRADES_DAY_CHEAP})"
+    except Exception:
+        db.rollback()
     return out
 
 

@@ -180,3 +180,11 @@ def auto_tick(force: bool = Query(False), db: Session = Depends(get_db)):
     external 5-min cron during market; also safe to call ad hoc. force=testing only."""
     from services.auto_trader import tick
     return tick(db, force=force)
+
+
+@router.get("/auto/candidates")
+def auto_candidates(db: Session = Depends(get_db)):
+    """The setups the auto-agent WOULD buy right now (same gates, no order) — powers
+    the ⚡ popup alarm so a popup is always a machine-grade buy candidate."""
+    from services.auto_trader import buy_candidates
+    return buy_candidates(db)
