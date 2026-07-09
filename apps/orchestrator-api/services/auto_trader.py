@@ -27,8 +27,10 @@ logger = logging.getLogger("vip.auto_trader")
 KST = timezone(timedelta(hours=9))
 
 AUTO_POS_PCT = 10.0          # % of desk equity per trade
-MAX_OPEN = 2                 # concurrent auto-positions
-MAX_TRADES_DAY = 6           # hard daily cap (boss trades "3-4 times a day")
+MAX_OPEN = 4                 # concurrent auto-positions (boss 2026-07-09: +2 for the test
+                             # phase — max exposure 4×10% = 40% of the paper account)
+MAX_TRADES_DAY = 10          # hard daily cap (boss 2026-07-09: 6→10 to fill the test
+                             # record faster; paper money only)
 MIN_CONF = 60                # only take setups the engine is reasonably sure about
 
 _DDL = (
