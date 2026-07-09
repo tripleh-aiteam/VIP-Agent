@@ -399,6 +399,36 @@ def _scan_mover(db, code: str, name: str) -> Optional[dict[str, Any]]:
             "why_en": f"top market gainer today ({chg:+.1f}%) · near high ({pos*100:.0f}%) · momentum intact"}
 
 
+def setup_for(db, code: str, name: str) -> dict[str, Any]:
+    """The 1-hour setup view for ONE stock — ANY listed stock (boss 2026-07-09: the
+    per-stock chatbot answer must lead with this). Deep scan when we collect minute
+    bars for it; otherwise the light live-quote momentum check (same as the market-wide
+    gainer sweep), so a stock outside our ~40 still gets a real answer instead of
+    'no data'. Attaches the M5.6 AI probability where available (ranking voice)."""
+    code = str(code).zfill(6)
+    s = scan_one(db, code, name)
+    if s.get("state") == "NOTHING" and s.get("reason_en") == "not enough data":
+        m = None
+        try:
+            m = _scan_mover(db, code, name)
+        except Exception:
+            db.rollback()
+        if m:
+            s = m
+        else:
+            s = {**s, "reason_ko": "지금 1시간 단타 신호 없음 (강한 상승 흐름·눌림목 패턴 아님)",
+                 "reason_en": "no 1-hour setup right now (no strong momentum or dip pattern)"}
+    if s.get("state") in ("ACT_NOW", "FORMING"):
+        try:
+            from services.hourly_model import prob_up_1h
+            p = prob_up_1h(db, code)
+            if p is not None:
+                s["ai_1h_prob"] = round(p * 100)
+        except Exception:
+            pass
+    return s
+
+
 _scan_cache: dict[str, Any] = {"t": 0.0, "v": None}
 
 

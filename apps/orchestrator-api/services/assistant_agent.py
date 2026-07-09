@@ -2837,13 +2837,25 @@ def _run_chain(
             if _p:
                 _parts.append(_p)
             # M1.2 — measure it: log EACH stock's advice for grading after its horizon.
+            # When the ⚡ live 1-hour setup drove the answer ("BUY — 1-hour trade"),
+            # grade THAT call (BUY, setup target/stop) — the record must score what
+            # the user was actually told, not the background investment verdict.
             try:
                 from services.call_grader import log_call
                 _wv = _dec.get("method3_wave") or {}
-                log_call(db, ticker=_dec.get("ticker"), action=_dec.get("decision"),
-                         intent="decision", ref_price=_dec.get("price"),
-                         target=_wv.get("target"), stop=_wv.get("stop"), horizon_min=60,
-                         name=_dec.get("name"), agent_id=agent_id, lang=lang)
+                _isu = _dec.get("intraday_setup") or {}
+                if _isu.get("answered_buy_1h"):
+                    _tb = _isu.get("target_band") or [None, None]
+                    log_call(db, ticker=_dec.get("ticker"), action="BUY",
+                             intent="decision_1h", ref_price=_dec.get("price"),
+                             target=_tb[0], stop=_isu.get("stop"),
+                             horizon_min=int(_isu.get("time_min") or 60),
+                             name=_dec.get("name"), agent_id=agent_id, lang=lang)
+                else:
+                    log_call(db, ticker=_dec.get("ticker"), action=_dec.get("decision"),
+                             intent="decision", ref_price=_dec.get("price"),
+                             target=_wv.get("target"), stop=_wv.get("stop"), horizon_min=60,
+                             name=_dec.get("name"), agent_id=agent_id, lang=lang)
             except Exception:
                 pass
         if _parts:

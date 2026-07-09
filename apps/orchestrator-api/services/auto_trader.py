@@ -146,7 +146,32 @@ def tick(db, force: bool = False) -> dict[str, Any]:
     if not setups:
         out["reason"] = out["reason"] or "no qualifying setup"
         return out
-    s = setups[0]                                  # highest confidence first (scan sorts)
+    # DECISION-ENGINE VETO (boss 2026-07-09: "auto-trading must listen to the decision
+    # engine"): before buying, ask the full 9-method fused verdict. SELL → forbidden
+    # (skip to the next candidate). WATCH/HOLD = no objection — it's a 60-minute trade,
+    # not an investment. Engine unavailable → fail-open: the scanner's own ML/news/regime
+    # gates already passed, and a dead engine must not silently halt the whole agent.
+    picked = None
+    out["vetoed"] = []
+    for cand in setups[:3]:
+        try:
+            from services.decision_agent import decide
+            _d = decide(db, cand["code"]) or {}
+            if _d.get("decision") == "SELL":
+                out["vetoed"].append({"name": cand["name"], "code": cand["code"],
+                                      "reason": "decision engine says SELL"})
+                logger.info("auto_trader veto: %s — decision engine SELL", cand["name"])
+                continue
+        except Exception as e:
+            logger.warning("auto_trader: decide() failed for %s (%s) — proceeding on scanner gates",
+                           cand["code"], str(e)[:80])
+            db.rollback()
+        picked = cand
+        break
+    if not picked:
+        out["reason"] = "all candidates vetoed by the decision engine (SELL)"
+        return out
+    s = picked                                     # best non-vetoed (scan sorts by AI prob + conf)
     # position size: AUTO_POS_PCT of desk equity
     from services.paper_desk import state as desk_state
     eq = float((desk_state(db) or {}).get("equity") or 0)

@@ -263,6 +263,14 @@ def decide(db, ticker: str, focus: Optional[str] = None) -> dict[str, Any]:
     from services import trading_brief as tb
     code = str(ticker).zfill(6)
     name = ps.NAMES.get(code, code)
+    if name == code:                # outside our ~40 — resolve from the full KRX list
+        try:
+            from sqlalchemy import text as _t
+            _r = db.execute(_t("SELECT name FROM krx_stocks WHERE code=:c"), {"c": code}).first()
+            if _r:
+                name = _r[0]
+        except Exception:
+            db.rollback()
 
     news = _news(db, code, name)
     flows = _flows(db, code)
@@ -449,6 +457,27 @@ def decide(db, ticker: str, focus: Optional[str] = None) -> dict[str, Any]:
     except Exception:
         checklist = None
 
+    # ⚡ LIVE 1-HOUR SETUP (boss 2026-07-09): "should I buy?" is a TRADER's question, so
+    # the direct answer follows the TRADING view. If the intraday scanner (the exact
+    # pipeline the auto-trader buys from) has an ACT_NOW setup on this stock and the
+    # fused engine doesn't object, the headline becomes "BUY — as a 1-HOUR trade" with
+    # the full exit plan. The daily/investment verdict stays in the body as evidence —
+    # one brain, one mouth: chatbot words == auto-trader actions.
+    setup = None
+    try:
+        from services.intraday_setup import setup_for
+        setup = setup_for(db, code, name)
+    except Exception:
+        setup = None
+        db.rollback()
+    setup_act = bool(setup and setup.get("state") == "ACT_NOW"
+                     and (setup.get("confidence") or 0) >= 60)
+    # headline override only for HOLD/WATCH verdicts: SELL = engine conflict (no trade,
+    # mirrors the auto-trader's decision-engine veto); checklist deal-breaker = bad day;
+    # BUY already says yes (the plan still gets attached below).
+    setup_live = setup_act and decision == "HOLD" and not chk_veto
+    plan_ok = setup_act and (setup_live or decision == "BUY")
+
     acc = m1.get("backtest_accuracy_pct")
     if acc is None and ml.get("backtest_acc") is not None:
         acc = round(ml["backtest_acc"] * 100, 1)
@@ -626,6 +655,17 @@ def decide(db, ticker: str, focus: Optional[str] = None) -> dict[str, Any]:
                    f"cut without hesitation if support ₩{_pl(sup)} breaks. "
                    + ("The trend still holds, so no need to dump it all at once." if decision in ("BUY", "HOLD")
                       else "The trend is weak — trim into any bounce."))
+
+    # ⚡ setup headline override — ONE direct answer, the trader's answer (not for
+    # sell-focus questions: a holder needs exit timing, not a fresh-entry pitch).
+    if setup_live and not _sell_focus:
+        _tb = setup.get("target_band") or [None, None]
+        head_ko = (f"네 — 지금 '1시간 단타'로는 매수해볼 만한 자리예요 (장기 투자용 아님). "
+                   f"목표 {_pl(_tb[0])}원+ · 손절 {_pl(setup.get('stop'))}원 · 최대 60분.")
+        head_en = (f"Yes — as a 1-HOUR TRADE this is buyable right now (not an investment). "
+                   f"Target ₩{_pl(_tb[0])}+ · stop ₩{_pl(setup.get('stop'))} · out by 60 min.")
+        dec_full_ko = "단타 매수 (1시간 트레이드)"
+        dec_full_en = "BUY — 1-hour trade"
 
     # ---- Per-method write-up: verdict FIRST, then why today's numbers say that, HOW the
     # method finds its answer (mechanism), and an example of what would flip it.
@@ -842,6 +882,20 @@ def decide(db, ticker: str, focus: Optional[str] = None) -> dict[str, Any]:
                     f"₩{_pl(sup)} is the 'floor' it kept bouncing off — a strong break above the ceiling "
                     f"means real buying power (that's when to look again), while a break below the floor "
                     f"means the risk of falling further just grew.")
+    if setup_live and not _sell_focus:
+        # the summary must tell the SAME story as the ⚡ headline: yes for 60 minutes,
+        # with the plan; the long-horizon caution becomes "don't hold it longer".
+        _tb = setup.get("target_band") or [None, None]
+        plain_ko = (f"쉽게 설명하면, 긴 호흡(며칠 단위)의 3가지 방법은 아직 확신이 부족하지만, "
+                    f"지금 이 순간의 1시간 단타 셋업은 살아 있어요 — 그래서 답은 '60분 한정 매수'예요. "
+                    f"목표 {_pl(_tb[0])}원에 닿으면 팔고, 손절 {_pl(setup.get('stop'))}원에 닿으면 즉시 팔고, "
+                    f"60분이 지나면 무조건 정리하세요. ({_who_ko} — 이 긴 호흡 의견은 "
+                    f"'오래 들고 가지는 말라'는 뜻으로 이해하면 됩니다.)")
+        plain_en = (f"In plain words: the longer-horizon methods (days) aren't convinced yet, but a live "
+                    f"1-hour setup is active right now — so the answer is 'buy for 60 minutes only'. "
+                    f"Sell at the ₩{_pl(_tb[0])} target, sell immediately at the ₩{_pl(setup.get('stop'))} stop, "
+                    f"and close it out once 60 minutes pass no matter what. ({_who_en} — read that "
+                    f"longer view as 'don't hold this beyond the hour'.)")
 
     # BOSS FORMAT (2026-07-08): ① first line = the direct answer → ② body = the evidence
     # (market → news → youtube → methods → technicals → checklist) → ③ END = 📌 요약
@@ -853,7 +907,7 @@ def decide(db, ticker: str, focus: Optional[str] = None) -> dict[str, Any]:
     # it was measurably right, but the answer never showed the receipts): what actually
     # happened after our recent no-buy calls, from the grading log.
     _proof_ko = _proof_en = None
-    if decision != "BUY":
+    if decision != "BUY" and not setup_live:
         try:
             _pr = _watch_proof(db)
             if _pr and _pr["n"] >= 30:
@@ -872,13 +926,71 @@ def decide(db, ticker: str, focus: Optional[str] = None) -> dict[str, Any]:
         except Exception:
             pass
 
-    ko_lines = [f"**{head_ko}**  ·  (추천: {dec_full_ko} · 확신 {conf})"]
+    # ⚡ 1-hour setup body section — the same live scanner view the auto-trader trades.
+    # Shown for EVERY per-stock answer (plan / forming / none), so the chatbot and the
+    # auto-trader can never look like strangers again.
+    setup_ko_sec: list = []
+    setup_en_sec: list = []
+    if setup and not _sell_focus:
+        if plan_ok:
+            _ez = setup.get("entry_zone") or [None, None]
+            _tb2 = setup.get("target_band") or [None, None]
+            _tp2 = setup.get("target_pct") or [None, None]
+            _prob = setup.get("ai_1h_prob")
+            _n10 = None
+            try:
+                _n10 = int(1_000_000 // float(setup["price"])) if setup.get("price") else None
+            except Exception:
+                _n10 = None
+            setup_ko_sec = ["", "**⚡ 실시간 1시간 셋업 (단타 계획 — 지금 물어본 시각 기준)**",
+                            f"· 왜: {setup.get('why_ko') or '조건 충족'} (셋업 확신 {setup.get('confidence')}%)",
+                            f"· 진입 {_pl(_ez[0])}~{_pl(_ez[1])}원 · 목표 {_pl(_tb2[0])}~{_pl(_tb2[1])}원 "
+                            f"(+{_tp2[0]}~{_tp2[1]}%) · 손절 {_pl(setup.get('stop'))}원 (−{setup.get('stop_pct')}%) "
+                            f"· 최대 {setup.get('time_min', 60)}분",
+                            (f"· 🤖 AI 1시간 상승확률 {_prob}% (참고용 랭킹)" if _prob is not None else None),
+                            (f"· 참고 수량: 1,000만원의 10%(100만원) ≈ {_n10}주" if _n10 else None),
+                            "· 자동매매(모의)도 바로 이 셋업 기준으로 사고팝니다 — 챗봇과 자동매매는 같은 두뇌입니다."]
+            setup_ko_sec = [x for x in setup_ko_sec if x is not None]
+            setup_en_sec = ["", "**⚡ Live 1-hour setup (trade plan — as of your question)**",
+                            f"- Why: {setup.get('why_en') or 'conditions met'} (setup confidence {setup.get('confidence')}%)",
+                            f"- Entry ₩{_pl(_ez[0])}–{_pl(_ez[1])} · target ₩{_pl(_tb2[0])}–{_pl(_tb2[1])} "
+                            f"(+{_tp2[0]}–{_tp2[1]}%) · stop ₩{_pl(setup.get('stop'))} (−{setup.get('stop_pct')}%) "
+                            f"· max {setup.get('time_min', 60)} min",
+                            (f"- 🤖 AI 1-hour up-probability {_prob}% (ranking only)" if _prob is not None else None),
+                            (f"- Reference size: 10% of ₩10M (₩1M) ≈ {_n10} shares" if _n10 else None),
+                            "- The (paper) auto-trader buys and sells on this exact setup — chatbot and auto-trading share one brain."]
+            setup_en_sec = [x for x in setup_en_sec if x is not None]
+        elif setup_act:            # setup exists, but the engine objects (SELL/checklist)
+            setup_ko_sec = ["", "**⚡ 실시간 1시간 셋업**",
+                            "· 기술적 셋업은 있지만 종합 엔진 판단이 부정적이라 단타도 보류합니다 "
+                            "(자동매매도 이 종목은 매수 금지)."]
+            setup_en_sec = ["", "**⚡ Live 1-hour setup**",
+                            "- A technical setup exists, but the combined engine is negative — no trade "
+                            "(the auto-trader is blocked from buying this one too)."]
+        elif setup.get("state") == "FORMING":
+            setup_ko_sec = ["", "**⚡ 실시간 1시간 셋업**",
+                            f"· 형성 중 — 아직 매수 신호 아님. 트리거: "
+                            f"{setup.get('trigger_ko') or setup.get('reason_ko') or '반등 확인 대기'}"]
+            setup_en_sec = ["", "**⚡ Live 1-hour setup**",
+                            f"- Forming — not a buy signal yet. Trigger: "
+                            f"{setup.get('trigger_en') or setup.get('reason_en') or 'waiting for the bounce'}"]
+        else:
+            setup_ko_sec = ["", "**⚡ 실시간 1시간 셋업**",
+                            f"· 지금 없음 — {setup.get('reason_ko') or '조건 미충족'}"]
+            setup_en_sec = ["", "**⚡ Live 1-hour setup**",
+                            f"- None right now — {setup.get('reason_en') or 'conditions not met'}"]
+
+    if setup_live and not _sell_focus:
+        ko_lines = [f"**{head_ko}**  ·  (추천: {dec_full_ko} · 단타 확신 {setup.get('confidence')}%)"]
+    else:
+        ko_lines = [f"**{head_ko}**  ·  (추천: {dec_full_ko} · 확신 {conf})"]
     if _proof_ko:
         ko_lines += [_proof_ko]
     if _sell_focus:
         ko_lines += ["", "**언제 팔까? (매도 타이밍)**", f"· {size_ko}"]
     elif decision == "BUY":
         ko_lines += ["", "**얼마나 살까?**", f"· {size_ko}"]
+    ko_lines += setup_ko_sec
     ko_lines += ["", f"**근거 — 방법별 증거 (확신 {conf} · {consensus_ko})**"]
     if mkt_line_ko:
         ko_lines += ["", "**① 시장 상황**", f"· {mkt_line_ko}"]
@@ -920,19 +1032,25 @@ def decide(db, ticker: str, focus: Optional[str] = None) -> dict[str, Any]:
         except Exception:
             pass
     # ③ 요약 — 쉬운 설명 + 최종 결론 재확인 (보스 포맷: 처음=직접답, 중간=근거, 끝=요약)
+    _fin_ko = (f"단타 확신 {setup.get('confidence')}%" if (setup_live and not _sell_focus)
+               else f"확신 {conf}")
     ko_lines += ["", "**📌 요약 (최종 결론)**", plain_ko,
-                 f"→ **최종: {dec_full_ko} · 확신 {conf}** — {head_ko}"]
+                 f"→ **최종: {dec_full_ko} · {_fin_ko}** — {head_ko}"]
     ko_lines += ["",
                  "※ 3가지 방법과 뉴스·수급·기술적 지표를 종합한 참고 의견이며, 투자 권유나 수익 보장이 아닙니다."]
     ko = "\n".join(ko_lines)
 
-    en_lines = [f"**{head_en}**  ·  (Recommendation: {dec_full_en} · confidence {conf_en})"]
+    if setup_live and not _sell_focus:
+        en_lines = [f"**{head_en}**  ·  (Recommendation: {dec_full_en} · setup confidence {setup.get('confidence')}%)"]
+    else:
+        en_lines = [f"**{head_en}**  ·  (Recommendation: {dec_full_en} · confidence {conf_en})"]
     if _proof_en:
         en_lines += [_proof_en]
     if _sell_focus:
         en_lines += ["", "**When to sell? (exit timing)**", f"- {size_en}"]
     elif decision == "BUY":
         en_lines += ["", "**How many?**", f"- {size_en}"]
+    en_lines += setup_en_sec
     en_lines += ["", f"**The evidence — method by method (confidence {conf_en} · {consensus_en})**"]
     if mkt_line_en:
         en_lines += ["", "**① Market**", f"- {mkt_line_en}"]
@@ -975,8 +1093,10 @@ def decide(db, ticker: str, focus: Optional[str] = None) -> dict[str, Any]:
             pass
     # ③ Summary — plain explanation + final answer restated (boss format: top=direct
     # answer, middle=evidence, end=summary)
+    _fin_en = (f"setup confidence {setup.get('confidence')}%" if (setup_live and not _sell_focus)
+               else f"confidence {conf_en}")
     en_lines += ["", "**📌 Summary (final answer)**", plain_en,
-                 f"→ **Final: {dec_full_en} · confidence {conf_en}** — {head_en}"]
+                 f"→ **Final: {dec_full_en} · {_fin_en}** — {head_en}"]
     en_lines += ["",
                  "Note: a reasoned synthesis of all 3 methods + news/flows/technicals — not investment advice or a guarantee."]
     en = "\n".join(en_lines)
@@ -993,6 +1113,13 @@ def decide(db, ticker: str, focus: Optional[str] = None) -> dict[str, Any]:
                              "entry": wave.get("entry"), "stop": wave.get("stop"),
                              "target": wave.get("target"), "rr": wave.get("rr")},
             "ml": {"advice": ml_adv, "accuracy_pct": acc},
+            "intraday_setup": ({"state": setup.get("state"), "setup_type": setup.get("setup_type"),
+                                "confidence": setup.get("confidence"),
+                                "entry_zone": setup.get("entry_zone"),
+                                "target_band": setup.get("target_band"), "stop": setup.get("stop"),
+                                "time_min": setup.get("time_min"),
+                                "ai_1h_prob": setup.get("ai_1h_prob"),
+                                "answered_buy_1h": bool(setup_live)} if setup else None),
             "reasoning_ko": ko, "reasoning_en": en}
 
 
