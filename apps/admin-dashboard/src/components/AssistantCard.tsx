@@ -329,7 +329,9 @@ export function AssistantCard({ floating = true }: Props = {}) {
   //     attaches a file, or the assistant is mid-reply.
   const [inputFocused, setInputFocused] = useState(false);
   const [pillExpanded, setPillExpanded] = useState(false);
-  const [closed, setClosed] = useState(false);   // user explicitly closed → show pill only
+  // boss 2026-07-09: the assistant must NEVER open by itself — every page load starts
+  // as the corner 🤖 pill (even with an ongoing conversation); it opens only on click.
+  const [closed, setClosed] = useState(true);    // user explicitly opens → card shows
   // Voice state declared here (before hasActivity, which references it).
   type VoiceState = "idle" | "listening" | "thinking" | "speaking";
   const [voiceState, setVoiceState] = useState<VoiceState>("idle");
