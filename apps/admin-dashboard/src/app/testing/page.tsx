@@ -134,6 +134,7 @@ export default function TestingPage() {
         const fresh: SetupAlert[] = [];
         for (const s of r.act_now || []) {
           if (!s || s.state !== "ACT_NOW" || !s.code) continue;
+          if ((s.confidence || 0) < 60) continue;   // alarm only on auto-qualifying setups (conf ≥60)
           const last = seenSetups.current.get(s.code);
           if (last && now - last < 60 * 60 * 1000) continue;   // one alarm per stock per hour
           seenSetups.current.set(s.code, now);
@@ -566,8 +567,8 @@ export default function TestingPage() {
                 {t("최대 60분", "max 60 min")}
               </div>
               <div className="mt-1 text-[10.5px] text-[var(--text-muted)]">
-                {t("자동매매가 켜져 있으면 같은 후보를 자동 매수합니다 · 챗봇에 \"지금 뭐 살까?\"로 상세 확인",
-                   "If auto-trading is ON it buys this same candidate · ask the chatbot \"what should I trade now?\" for detail")}
+                {t("자동매매도 이 후보를 삽니다 (한도·서킷브레이커·엔진 거부에 걸리면 제외) · 챗봇 \"지금 뭐 살까?\"로 상세 확인",
+                   "Auto-trading buys this too (unless caps / circuit-breaker / engine veto block it) · ask \"what should I trade now?\" for detail")}
               </div>
             </div>
           );
