@@ -43,14 +43,30 @@ TIME_MIN = 60                        # time-stop (minutes)
 _VOL_MIN = 0.45                      # min 1h move (1σ, %) — below this even a small target
                                      # can't clear costs reliably; lowered from 0.85 so the
                                      # target ADAPTS instead of rejecting every calm stock
-_TGT_MIN, _TGT_MAX = 0.8, 2.5        # adaptive take-profit bounds (%)
-_RR = 1.6                            # reward:risk (target / stop)
+_TGT_MIN, _TGT_MAX = 0.8, 2.5        # (legacy adaptive bounds — superseded by _plan_pct)
+_RR = 1.6                            # reward:risk (target / stop) inside the cheap band
 _REGIME_CRASH = -1.5                 # KOSPI intraday % that blocks new DIP buys
 _EXTREME_CRASH = -3.0                # KOSPI intraday % that blocks EVERYTHING (panic)
 # MOMENTUM setup thresholds — a stock strongly rising (bucks a down market)
 _MOM_R15, _MOM_R45 = 0.35, 0.5       # min 15m / 45m rise (%)
 _RSI_MOM_MIN, _RSI_MOM_MAX = 52, 72  # rising but not overbought
-_DEEP_SCAN = 14                      # deep-scan the N most active stocks (latency cap)
+_DEEP_SCAN = 45                      # boss 2026-07-09: deep-scan the WHOLE watchlist every
+                                     # pass (was 14 most-active; he wants no stock skipped)
+_CHEAP_PX = 100_000                  # boss's price tiers for the exit plan
+
+
+def _plan_pct(price: float, vol: Optional[float]) -> tuple[float, float, float]:
+    """BOSS-TIERED exit plan (2026-07-09, explicit instruction — replaces the pure
+    volatility-scaled plan): ≥₩100k/share → fixed target +1% / stop −1%; <₩100k →
+    target +2~3% / stop −1~2% (the stock's measured 1h volatility picks the exact
+    point INSIDE the boss's band). Returns (t_lo, t_hi, stop_pct)."""
+    if price and float(price) >= _CHEAP_PX:
+        return 1.0, 1.3, 1.0
+    sig = vol if vol is not None else 1.5
+    t_lo = max(2.0, min(3.0, round(sig * 1.25, 1)))
+    t_hi = round(min(3.4, t_lo + 0.4), 1)
+    s = max(1.0, min(2.0, round(t_lo / _RR, 1)))
+    return t_lo, t_hi, s
 
 
 def _vol_1h_pct(closes: list[float]) -> Optional[float]:
@@ -136,13 +152,9 @@ def scan_one(db, code: str, name: str) -> dict[str, Any]:
         conf += 8                        # ML agrees on direction — team confirmation
     conf = min(conf, 85)
 
-    # ADAPTIVE target/stop — scale to THIS stock's 1h volatility. A calm stock gets a
-    # realistic smaller target (+0.8%, still a win after costs) instead of being rejected
-    # for not reaching a rigid +1.5%; a lively stock gets up to +2.5%. Reward:risk fixed.
-    _sig = vol if vol is not None else 1.2
-    t_lo = max(_TGT_MIN, min(_TGT_MAX, round(_sig * 1.25, 1)))
-    t_hi = round(min(_TGT_MAX + 0.3, t_lo + 0.5), 1)
-    s_pct = max(0.4, round(t_lo / _RR, 1))
+    # BOSS-TIERED target/stop (2026-07-09): ≥₩100k → +1%/−1%; <₩100k → +2~3%/−1~2%
+    # (volatility picks the point inside the band). See _plan_pct.
+    t_lo, t_hi, s_pct = _plan_pct(price, vol)
     entry_lo, entry_hi = round(price * 0.999), round(price * 1.003)
     tgt_lo, tgt_hi = round(price * (1 + t_lo / 100)), round(price * (1 + t_hi / 100))
     stop = round(price * (1 - s_pct / 100))
@@ -383,9 +395,8 @@ def _scan_mover(db, code: str, name: str) -> Optional[dict[str, Any]]:
     except Exception:
         pass
     day_range = (hi - lo) / price * 100
-    t_lo = max(_TGT_MIN, min(_TGT_MAX, round(day_range * 0.3, 1)))
-    t_hi = round(t_lo + 0.5, 1)
-    s_pct = max(0.5, round(t_lo / _RR, 1))
+    # boss-tiered plan: expensive movers +1%/−1%, cheap movers +2~3%/−1~2%
+    t_lo, t_hi, s_pct = _plan_pct(float(price), day_range * 0.5)
     conf = min(78, 55 + int(pos * 12) + (5 if chg >= 4 else 0))
     return {"code": code, "name": name, "en_name": name, "price": float(price),
             "rsi": None, "vol_1h_pct": round(day_range, 2), "cluster": None,
