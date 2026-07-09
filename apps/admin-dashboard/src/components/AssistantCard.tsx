@@ -244,7 +244,11 @@ export function AssistantCard({ floating = true }: Props = {}) {
       const raw = localStorage.getItem(FLOAT_KEY);
       if (raw) return JSON.parse(raw);
     } catch {}
-    return null;
+    // boss 2026-07-09: default open position = docked to the RIGHT edge (the centered
+    // card kept covering the trading page). Still fully draggable/resizable after.
+    const vw = window.innerWidth, vh = window.innerHeight;
+    const w = Math.min(430, vw - 24);
+    return { x: vw - w - 12, y: 72, w, h: Math.max(320, vh - 160) };
   });
   const floatRef = useRef<HTMLDivElement>(null);
   const dragState = useRef<
@@ -1206,6 +1210,12 @@ export function AssistantCard({ floating = true }: Props = {}) {
             onClick={() => {
               setClosed(false);
               setPillExpanded(true);
+              // ALWAYS open docked right (boss: "whenever we open it, right side")
+              const vw = window.innerWidth, vh = window.innerHeight;
+              const w = Math.min(430, vw - 24);
+              const r = clamp(vw - w - 12, 72, w, Math.max(320, vh - 160));
+              setFloatRect(r);
+              persistRect(r);
               setTimeout(() => inputRef.current?.focus(), 50);
             }}
             className="fixed z-[100] bottom-4 right-4 h-12 pl-3 pr-4 rounded-full bg-white border border-gray-200 shadow-xl flex items-center gap-2 hover:shadow-2xl hover:border-gray-300 transition-all"
