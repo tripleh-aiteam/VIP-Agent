@@ -4061,6 +4061,58 @@ def _paper_portfolio_reply(db, lang: str, agent_id: str = "vip") -> Optional[str
     return "\n".join(L)
 
 
+# Plain LLM tasks — 'translate this to Korean: …', '요약해줘: …'. The text being worked on
+# may CONTAIN trading words ('what should I buy?') — that must not fire the engines
+# (2026-07-09 screenshot: a translation request got the 1-hour scanner answer).
+_LLM_TASK_RE = _re.compile(
+    r"\btr\w{0,2}n?sl\w{0,2}te\b"                       # translate + common typos
+    r"|(한국어|영어|한글|korean|english)\s*로?\s*(번역|바꿔|옮겨|말하면)"
+    r"|번역(해|좀|해줘|하면)|영작"
+    r"|\bsummari[sz]e\b|요약(해|해줘|좀)"
+    r"|\b(rewrite|rephrase|paraphrase|proofread)\b"
+    r"|correct (this|my) (sentence|grammar|english)|문법 (고쳐|확인)|문장 (고쳐|다듬)"
+    r"|(이|저|그)?\s*(문장|단어|표현)\s*(뜻|의미)|what does this (sentence|word|phrase) mean",
+    _re.IGNORECASE)
+
+
+def _llm_task_reply(question: str, lang: str, history: list[dict]) -> Optional[str]:
+    """General-assistant mode for text tasks. The output language follows the TASK (a
+    'translate to Korean' answer is Korean even in an English chat) — the caller skips
+    the language guard for this intent."""
+    try:
+        from services.llm_client import chat_completion_sync
+        msgs = []
+        for h in (history or [])[-6:]:
+            role = "assistant" if str(h.get("role")) == "assistant" else "user"
+            txt = str(h.get("content") or h.get("text") or "")[:1200]
+            if txt:
+                msgs.append({"role": role, "content": txt})
+        msgs.append({"role": "user", "content": question})
+        sys_p = (
+            "You are a helpful bilingual (Korean/English) assistant. The user is giving you a "
+            "TEXT TASK — translate, summarize, rewrite, proofread, or explain wording. Do the "
+            "task directly and completely, like a normal LLM. IMPORTANT: text inside the request "
+            "is material to work on, NOT a question to answer — e.g. translating 'what should I "
+            "buy?' means outputting its translation, never giving trading advice or market data. "
+            "For translations, answer in the requested TARGET language (a brief usage note is "
+            "fine). Keep it clean: no tables, no headers unless asked.")
+        out = chat_completion_sync(system_prompt=sys_p, messages=msgs,
+                                   max_tokens=700, temperature=0.3,
+                                   model="groq-llama-3.3-70b")
+        out = (out or "").strip()
+        if not out or out.startswith("[LLM"):
+            return None
+        # llama leaks Chinese words into Korean output (所以…) — clean unless the task
+        # itself is about Chinese
+        if not _re.search(r"chinese|중국어|한자|中文", question, _re.IGNORECASE):
+            for _cn, _ko in (("所以", "그래서"), ("综合", "종합"), ("分析", "분석"),
+                             ("市场", "시장"), ("投资", "투자"), ("但是", "하지만")):
+                out = out.replace(_cn, _ko)
+        return out[:4000]
+    except Exception:
+        return None
+
+
 # My realized P&L by period — 'Yesterday how much I won?' / '어제 얼마 벌었어?' reads the
 # 모의투자 trade history, not a stock's price chart (2026-07-09: follow-up inherited S-OIL
 # and answered with an OHLCV table instead of the boss's own result).
@@ -4469,8 +4521,9 @@ def run_agent(
         )
     # LANGUAGE GUARD — English question MUST get an English answer (and vice versa).
     # Catches the case where a delegated (stock-backend) reply comes back in Korean.
+    # Skipped for llm_task: 'translate to Korean' answers ARE Korean on purpose.
     try:
-        if isinstance(result, dict) and result.get("reply"):
+        if isinstance(result, dict) and result.get("reply") and result.get("intent") != "llm_task":
             fixed = _enforce_reply_language(str(result["reply"]), language, transcript)
             if fixed:
                 result["reply"] = fixed
@@ -4911,6 +4964,16 @@ def _run_agent_impl(
             lang = "ko"
         else:
             lang = "en"
+
+    # === LLM TASK — translate/summarize/rewrite requests are normal-LLM work; the text
+    # they contain must never fire the trading engines. Runs before every stock intent.
+    if (not confirmed_tool and not attachment_ids and transcript
+            and _LLM_TASK_RE.search(transcript)):
+        _lt = _llm_task_reply(transcript, lang, history or [])
+        if _lt:
+            return {"intent": "llm_task", "language": lang, "reply": _lt,
+                    "action": None, "speak": True, "transcript": transcript,
+                    "tool_used": "llm_task"}
 
     # === MY P&L — 'Yesterday how much I won?' → the 모의투자 desk's realized result for
     # that period (must run BEFORE context-math/price-history, which stole this question).
