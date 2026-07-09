@@ -4000,7 +4000,7 @@ _PORTFOLIO_RE = _re.compile(
     _re.IGNORECASE)
 
 
-def _paper_portfolio_reply(db, lang: str) -> Optional[str]:
+def _paper_portfolio_reply(db, lang: str, agent_id: str = "vip") -> Optional[str]:
     """The boss's 모의투자 desk holdings, live-priced — real numbers from paper_desk.state."""
     en = str(lang or "").lower().startswith("en")
     try:
@@ -4010,6 +4010,7 @@ def _paper_portfolio_reply(db, lang: str) -> Optional[str]:
         return None
     poss = st.get("positions") or []
     rec = st.get("record") or {}
+    _desk_url = "/testing" if str(agent_id) == "vip" else "https://oasisvip.vercel.app/testing"
 
     def _w(v):
         try:
@@ -4036,7 +4037,7 @@ def _paper_portfolio_reply(db, lang: str) -> Optional[str]:
         if rec.get("trades"):
             L.append(f"**Record**: {rec['trades']} closed trades · {rec.get('wins', 0)} wins"
                      + (f" · win rate {rec.get('win_rate')}%" if rec.get("win_rate") is not None else ""))
-        L.append("\nFull desk (orders, history, charts): open [모의투자 테스트](/testing).")
+        L.append(f"\nFull desk (orders, history, charts): open [모의투자 테스트]({_desk_url}).")
     else:
         L.append(f"**🧾 모의투자 보유 현황 — 현재 {len(poss)}종목**")
         if not poss:
@@ -4056,7 +4057,7 @@ def _paper_portfolio_reply(db, lang: str) -> Optional[str]:
         if rec.get("trades"):
             L.append(f"**전적**: 청산 {rec['trades']}건 · {rec.get('wins', 0)}승"
                      + (f" · 승률 {rec.get('win_rate')}%" if rec.get("win_rate") is not None else ""))
-        L.append("\n주문·기록·차트 전체는 [모의투자 테스트](/testing)에서 보실 수 있습니다.")
+        L.append(f"\n주문·기록·차트 전체는 [모의투자 테스트]({_desk_url})에서 보실 수 있습니다.")
     return "\n".join(L)
 
 
@@ -4071,7 +4072,7 @@ _PNL_RE = _re.compile(
     _re.IGNORECASE)
 
 
-def _paper_pnl_reply(db, lang: str, transcript: str) -> Optional[str]:
+def _paper_pnl_reply(db, lang: str, transcript: str, agent_id: str = "vip") -> Optional[str]:
     """Realized P&L from the 모의투자 desk for the asked period (KST days). Direct answer
     first, then the closed trades; unrealized P&L noted separately — never mixed in."""
     en = str(lang or "").lower().startswith("en")
@@ -4107,6 +4108,7 @@ def _paper_pnl_reply(db, lang: str, transcript: str) -> Optional[str]:
                         .astimezone(kst).date())
             except Exception:
                 return None
+        _desk_url = "/testing" if str(agent_id) == "vip" else "https://oasisvip.vercel.app/testing"
         sells, buys = [], 0
         for h in (st.get("history") or []):
             d = _kst_date(h.get("filled_at") or h.get("created_at"))
@@ -4137,7 +4139,7 @@ def _paper_pnl_reply(db, lang: str, transcript: str) -> Optional[str]:
                 L.append(f"- Buys {label_en}: {buys} order(s) filled (not counted until sold).")
             L.append(f"\nStill-open positions carry {'+' if upnl >= 0 else ''}{_w(upnl)}원 unrealized "
                      f"(separate from the number above). Cumulative desk P&L: {st.get('total_pnl_pct'):+.2f}% "
-                     f"({_w(st.get('total_pnl'))}원). Details: [모의투자 테스트](/testing).")
+                     f"({_w(st.get('total_pnl'))}원). Details: [모의투자 테스트]({_desk_url}).")
         else:
             if sells:
                 verdict = ("이겼습니다" if total > 0 else "잃었습니다" if total < 0 else "본전이었습니다")
@@ -4154,7 +4156,7 @@ def _paper_pnl_reply(db, lang: str, transcript: str) -> Optional[str]:
                 L.append(f"- {label_ko} 매수 체결: {buys}건 (매도 전까지는 손익에 포함되지 않습니다).")
             L.append(f"\n보유 중 종목의 평가손익은 {'+' if upnl >= 0 else ''}{_w(upnl)}원으로 위 숫자와는 별도입니다. "
                      f"데스크 누적 손익: {st.get('total_pnl_pct'):+.2f}% ({_w(st.get('total_pnl'))}원). "
-                     f"자세한 기록: [모의투자 테스트](/testing).")
+                     f"자세한 기록: [모의투자 테스트]({_desk_url}).")
         return "\n".join(L)
     except Exception:
         return None
@@ -4914,7 +4916,7 @@ def _run_agent_impl(
     # that period (must run BEFORE context-math/price-history, which stole this question).
     if (not confirmed_tool and not attachment_ids and transcript
             and _PNL_RE.search(transcript)):
-        _pl = _paper_pnl_reply(db, lang, transcript)
+        _pl = _paper_pnl_reply(db, lang, transcript, agent_id)
         if _pl:
             return {"intent": "paper_pnl", "language": lang, "reply": _pl,
                     "action": None, "speak": True, "transcript": transcript,
@@ -4941,7 +4943,7 @@ def _run_agent_impl(
     # === MY PORTFOLIO — 'how many stocks am I holding?' → the 모의투자 desk's real state.
     if (not confirmed_tool and not attachment_ids and transcript
             and _PORTFOLIO_RE.search(transcript)):
-        _pf = _paper_portfolio_reply(db, lang)
+        _pf = _paper_portfolio_reply(db, lang, agent_id)
         if _pf:
             return {"intent": "paper_portfolio", "language": lang, "reply": _pf,
                     "action": None, "speak": True, "transcript": transcript,
