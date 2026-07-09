@@ -1123,6 +1123,24 @@ def decide(db, ticker: str, focus: Optional[str] = None) -> dict[str, Any]:
             "reasoning_ko": ko, "reasoning_en": en}
 
 
+_decide_cache: dict[str, tuple] = {}
+
+
+def decide_cached(db, ticker: str, ttl: int = 60) -> dict[str, Any]:
+    """decide() with a short module-level cache (focus=None only). The auto-tick veto
+    and buy_picks ask for the same verdicts seconds apart; a 60s TTL removes the
+    duplicate heavy calls without letting verdicts go stale (the engine's inputs move
+    on 5-minute candles anyway)."""
+    import time as _t
+    code = str(ticker).zfill(6)
+    hit = _decide_cache.get(code)
+    if hit and _t.time() - hit[0] < ttl:
+        return hit[1]
+    d = decide(db, code)
+    _decide_cache[code] = (_t.time(), d)
+    return d
+
+
 def _w(v) -> str:
     if v is None:
         return "-"

@@ -354,6 +354,31 @@ def build(db, n: int = 3, transcript: str = "", user_key: Optional[str] = None,
                          "60-minute auto-trader doesn't trade those; they're for you to buy and hold "
                          "over days._")
 
+    # GRADE the multi-day BUY ideas (audit 2026-07-09: the 🛒 section's BUYs were never
+    # logged — no track record for the multi-day game). Horizon = 3 days; dedup so the
+    # boss re-asking every hour doesn't stack duplicate open calls on the same ticker.
+    for d in buys:
+        try:
+            from sqlalchemy import text as _t
+            _tk = str(d.get("ticker") or "").zfill(6)
+            _dup = db.execute(_t(
+                "SELECT 1 FROM chatbot_calls WHERE ticker=:t AND intent='decision_multi' "
+                "AND status='open' LIMIT 1"), {"t": _tk}).first()
+            if _dup:
+                continue
+            _m3 = d.get("method3_wave") or {}
+            _tech = d.get("technicals") or {}
+            _wave_buy = _m3.get("verdict") == "BUY" and _m3.get("entry")
+            _tgt = _m3.get("target") if _wave_buy else _tech.get("resistance")
+            _stp = (_m3.get("stop") if _wave_buy else
+                    (int(_tech["support"] * 0.98) if _tech.get("support") else None))
+            from services.call_grader import log_call
+            log_call(db, ticker=_tk, action="BUY", intent="decision_multi",
+                     ref_price=d.get("price"), target=_tgt, stop=_stp,
+                     horizon_min=3 * 1440, name=d.get("name"), lang=lang)
+        except Exception:
+            db.rollback()
+
     mkt_line = None
     try:
         from services.trading_brief import _mkt_ret_today

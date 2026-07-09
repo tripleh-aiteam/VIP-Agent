@@ -64,8 +64,21 @@ def _hour_forecast(db, code: str, cur: Optional[float], d: dict) -> dict:
             acc, n = ml["acc"], ml["n"]
     except Exception:
         pass
+    # 🤖 M5.6 — the SAME 1-hour AI the buy answers show (audit 2026-07-09: sell answers
+    # used only micro/fused for the hour view — two different 1h brains). Decisive AI
+    # (≥60/≤40) breaks a FLAT read; it never overrides a live micro UP/DOWN.
+    ai_prob = None
+    try:
+        from services.hourly_model import prob_up_1h
+        p = prob_up_1h(db, code)
+        if p is not None:
+            ai_prob = round(p * 100)
+            if direction == "FLAT":
+                direction = "UP" if ai_prob >= 60 else "DOWN" if ai_prob <= 40 else "FLAT"
+    except Exception:
+        pass
     return {"direction": direction, "low": low, "high": high, "sigma": round(sigma, 1),
-            "acc": acc, "n": n}
+            "acc": acc, "n": n, "ai_prob": ai_prob}
 
 
 def advise(db, position: dict) -> dict[str, Any]:
@@ -286,6 +299,10 @@ def advise(db, position: dict) -> dict[str, Any]:
             fc_en = (f"**⏱️ Next ~1 hour: little change expected** (range {_fe(_lo)} ~ {_fe(_hi)})\n"
                      f"→ No sharp move likely. **Just hold** and watch the take-profit / cut levels "
                      f"in the plan above. {_accs_en}")
+    # 🤖 same AI probability the buy answers show — one 1-hour brain everywhere
+    if fc.get("ai_prob") is not None:
+        fc_ko += f"\n· 🤖 AI 1시간 상승확률 {fc['ai_prob']}% (참고용 랭킹)"
+        fc_en += f"\n· 🤖 AI 1-hour up-probability {fc['ai_prob']}% (ranking only)"
 
     _how_ko = ("**🧠 결정 엔진은 이렇게 예측해요:** 머신러닝(과거 패턴 학습)·분석(수급·호가·박스권)·"
                "파동(엘리엇/피보나치) 3가지 방법에 + 뉴스·시장 흐름·5분봉 실시간 흐름·동종 그룹까지 "

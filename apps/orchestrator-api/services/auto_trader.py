@@ -34,6 +34,10 @@ MAX_TRADES_DAY = 10          # hard daily cap (boss 2026-07-09: 6→10 to fill t
 MAX_TRADES_DAY_CHEAP = 20    # boss 2026-07-09: after the base cap, CHEAP stocks
 CHEAP_PX = 100_000           # (<₩100k/share) may keep trading up to 20/day — more
                              # test data; sizing stays 10% of equity either way
+CIRCUIT_DAY_NET = -5.0       # daily circuit-breaker: when today's CLOSED auto-trades'
+                             # net_pct sum reaches this (≈ −0.5% of the account at 10%
+                             # sizing — a clearly hostile day), STOP opening new trades
+                             # until tomorrow; exits keep being managed
 MIN_CONF = 60                # only take setups the engine is reasonably sure about
 
 _DDL = (
@@ -47,6 +51,10 @@ _DDL = (
     " confidence INT, status TEXT DEFAULT 'OPEN',"
     " exit_price DOUBLE PRECISION, exit_reason TEXT, net_pct DOUBLE PRECISION,"
     " opened_at TIMESTAMPTZ DEFAULT now(), closed_at TIMESTAMPTZ)",
+    # veto receipts (boss: trust needs receipts — show WHEN the engine said no)
+    "CREATE TABLE IF NOT EXISTS auto_vetoes ("
+    " id SERIAL PRIMARY KEY, ticker TEXT, name TEXT, reason TEXT,"
+    " ts TIMESTAMPTZ DEFAULT now())",
 )
 
 
@@ -140,6 +148,15 @@ def tick(db, force: bool = False) -> dict[str, Any]:
     if int(n_today) >= MAX_TRADES_DAY_CHEAP:
         out["reason"] = f"daily trade cap ({MAX_TRADES_DAY_CHEAP})"
         return out
+    # DAILY CIRCUIT-BREAKER — a hostile day must not be traded to the last bullet
+    day_net = float(db.execute(text(
+        "SELECT coalesce(sum(net_pct),0) FROM auto_trades WHERE status='CLOSED' "
+        "AND closed_at::date=(now() AT TIME ZONE 'Asia/Seoul')::date")).scalar() or 0)
+    if day_net <= CIRCUIT_DAY_NET:
+        out["reason"] = (f"daily circuit-breaker: today's closed trades sum "
+                         f"{day_net:+.1f}% ≤ {CIRCUIT_DAY_NET}% — no new entries today "
+                         f"(exits still managed)")
+        return out
     # trades 11..20 are reserved for CHEAP stocks (<₩100k/share) — boss's test extension
     cheap_only = int(n_today) >= MAX_TRADES_DAY
 
@@ -168,12 +185,20 @@ def tick(db, force: bool = False) -> dict[str, Any]:
     out["vetoed"] = []
     for cand in setups[:3]:
         try:
-            from services.decision_agent import decide
-            _d = decide(db, cand["code"]) or {}
+            from services.decision_agent import decide_cached
+            _d = decide_cached(db, cand["code"]) or {}
             if _d.get("decision") == "SELL":
                 out["vetoed"].append({"name": cand["name"], "code": cand["code"],
                                       "reason": "decision engine says SELL"})
                 logger.info("auto_trader veto: %s — decision engine SELL", cand["name"])
+                try:                       # veto receipt for the panel
+                    db.execute(text(
+                        "INSERT INTO auto_vetoes (ticker, name, reason) VALUES (:t,:n,:r)"),
+                        {"t": cand["code"], "n": cand["name"],
+                         "r": "decision engine SELL"})
+                    db.commit()
+                except Exception:
+                    db.rollback()
                 continue
         except Exception as e:
             logger.warning("auto_trader: decide() failed for %s (%s) — proceeding on scanner gates",
@@ -225,7 +250,18 @@ def status(db) -> dict[str, Any]:
     recent = [dict(r._mapping) for r in db.execute(text(
         "SELECT name, exit_reason, net_pct, closed_at FROM auto_trades "
         "WHERE status='CLOSED' ORDER BY closed_at DESC LIMIT 10"))]
+    vetoes_today = 0
+    veto_recent: list = []
+    try:
+        vetoes_today = int(db.execute(text(
+            "SELECT count(*) FROM auto_vetoes "
+            "WHERE ts::date=(now() AT TIME ZONE 'Asia/Seoul')::date")).scalar() or 0)
+        veto_recent = [dict(r._mapping) for r in db.execute(text(
+            "SELECT name, reason, ts FROM auto_vetoes ORDER BY ts DESC LIMIT 5"))]
+    except Exception:
+        db.rollback()
     return {"enabled": is_enabled(db), "open": open_rows,
+            "vetoes": {"today": vetoes_today, "recent": veto_recent},
             "record": {"trades": int(n or 0), "wins": int(wins or 0),
                        "win_rate": round(int(wins or 0) / int(n) * 100, 1) if n else None,
                        "total_net_pct": float(tot) if tot is not None else 0.0,

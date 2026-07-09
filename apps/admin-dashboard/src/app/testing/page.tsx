@@ -18,6 +18,12 @@ const kst = (iso?: string | null) => {
   const s = /Z$|[+-]\d{2}:\d{2}$/.test(iso) ? iso : `${iso}Z`;
   return new Date(s).toLocaleString("sv-SE", { timeZone: "Asia/Seoul" }).slice(5, 16);
 };
+// full KST date (YYYY-MM-DD) — for the history date filter
+const kstDate = (iso?: string | null) => {
+  if (!iso) return "";
+  const s = /Z$|[+-]\d{2}:\d{2}$/.test(iso) ? iso : `${iso}Z`;
+  return new Date(s).toLocaleString("sv-SE", { timeZone: "Asia/Seoul" }).slice(0, 10);
+};
 const pnlCol = (v?: number | null) => (v == null ? "var(--text-muted)" : v > 0 ? RED : v < 0 ? BLUE : "var(--text-muted)");
 
 type Position = { ticker: string; name: string; qty: number; avg_price: number; live_price?: number | null; value: number; unrealized_pnl?: number | null; unrealized_pnl_pct?: number | null };
@@ -37,7 +43,20 @@ type AutoStatus = {
   open: { ticker: string; name: string; qty: number; entry: number; target_lo: number; stop: number; time_min: number; confidence: number; opened_at?: string }[];
   record: { trades: number; wins: number; win_rate: number | null; total_net_pct: number; avg_net_pct: number | null };
   recent: { name: string; exit_reason: string; net_pct: number; closed_at?: string }[];
-  limits: { pos_pct: number; max_open: number; max_trades_day: number; min_conf: number };
+  vetoes?: { today: number; recent: { name: string; reason: string; ts?: string }[] };
+  limits: { pos_pct: number; max_open: number; max_trades_day: number; min_conf: number;
+            max_trades_day_cheap?: number; cheap_px?: number };
+};
+// ⚡ live setup from the scanner — powers the buy-candidate popup alarm
+type SetupItem = {
+  code: string; name: string; en_name?: string; state: string; setup_type?: string;
+  price?: number | null; confidence: number; ai_1h_prob?: number | null;
+  entry_zone?: [number, number] | null; target_band?: [number, number] | null;
+  stop?: number | null; time_min?: number;
+};
+type SetupAlert = {
+  key: string; name: string; conf: number; ai?: number | null;
+  entry?: number | null; target?: number | null; stop?: number | null; ts: number;
 };
 
 // Defined OUTSIDE the page component: defining this inline recreated the component
@@ -86,6 +105,16 @@ export default function TestingPage() {
 
   const [auto, setAuto] = useState<AutoStatus | null>(null);
 
+  // Trade History filters (boss: search by date, side and stock name)
+  const [fltName, setFltName] = useState("");
+  const [fltSide, setFltSide] = useState<"ALL" | "BUY" | "SELL">("ALL");
+  const [fltDate, setFltDate] = useState("");
+
+  // ⚡ buy-candidate popup alarm — a new ACT_NOW setup pops up once, dismissible,
+  // valid for 60 minutes from when it appeared (the engine's horizon is 1 hour).
+  const [alerts, setAlerts] = useState<SetupAlert[]>([]);
+  const seenSetups = useRef<Map<string, number>>(new Map());
+
   const load = () => {
     api<DeskState>("/paper-desk/state").then(setSt).catch(() => {});
     api<AutoStatus>("/paper-desk/auto/status").then(setAuto).catch(() => {});
@@ -94,6 +123,33 @@ export default function TestingPage() {
     load();
     api<{ stocks: StockItem[] }>("/paper-desk/stocks").then((r) => setStocks(r.stocks || [])).catch(() => {});
     const i = setInterval(load, 4000);
+    return () => clearInterval(i);
+  }, []);
+
+  // poll the scanner every 60s for fresh setups (45s server cache keeps this cheap)
+  useEffect(() => {
+    const check = () => {
+      api<{ act_now?: SetupItem[] }>("/predictions/setups").then((r) => {
+        const now = Date.now();
+        const fresh: SetupAlert[] = [];
+        for (const s of r.act_now || []) {
+          if (!s || s.state !== "ACT_NOW" || !s.code) continue;
+          const last = seenSetups.current.get(s.code);
+          if (last && now - last < 60 * 60 * 1000) continue;   // one alarm per stock per hour
+          seenSetups.current.set(s.code, now);
+          fresh.push({
+            key: `${s.code}-${now}`, name: s.name, conf: s.confidence,
+            ai: s.ai_1h_prob ?? null,
+            entry: s.entry_zone ? s.entry_zone[0] : (s.price ?? null),
+            target: s.target_band ? s.target_band[0] : null,
+            stop: s.stop ?? null, ts: now,
+          });
+        }
+        if (fresh.length) setAlerts((a) => [...fresh, ...a].slice(0, 4));
+      }).catch(() => {});
+    };
+    check();
+    const i = setInterval(check, 60000);
     return () => clearInterval(i);
   }, []);
 
@@ -224,9 +280,19 @@ export default function TestingPage() {
               {t("보유 중", "holding")}: {auto.open.map((o) => `${o.name} ${o.qty}${t("주", "sh")}`).join(", ")}
             </span>
           )}
+          {(auto.vetoes?.today ?? 0) > 0 && (
+            <span className="text-[11px] font-bold" style={{ color: "#e65100" }}
+              title={(auto.vetoes?.recent || []).map((v) => `${v.name}: ${v.reason}`).join("\n")}>
+              🛡️ {t("결정엔진 거부", "engine vetoes")}: {auto.vetoes?.today}
+              {auto.vetoes?.recent?.[0] && ` (${auto.vetoes.recent[0].name})`}
+            </span>
+          )}
           <span className="ml-auto text-[10.5px] text-[var(--text-muted)]">
-            {t(`설정: 1회 자산의 ${auto.limits.pos_pct}% · 동시 ${auto.limits.max_open}종목 · 하루 최대 ${auto.limits.max_trades_day}회`,
-               `limits: ${auto.limits.pos_pct}%/trade · ${auto.limits.max_open} open · ${auto.limits.max_trades_day}/day`)}
+            {auto.limits.max_trades_day_cheap
+              ? t(`설정: 1회 자산의 ${auto.limits.pos_pct}% · 동시 ${auto.limits.max_open}종목 · 하루 ${auto.limits.max_trades_day}회 +${auto.limits.max_trades_day_cheap - auto.limits.max_trades_day}회(10만원 미만 종목)`,
+                  `limits: ${auto.limits.pos_pct}%/trade · ${auto.limits.max_open} open · ${auto.limits.max_trades_day}+${auto.limits.max_trades_day_cheap - auto.limits.max_trades_day}(<₩100k)/day`)
+              : t(`설정: 1회 자산의 ${auto.limits.pos_pct}% · 동시 ${auto.limits.max_open}종목 · 하루 최대 ${auto.limits.max_trades_day}회`,
+                  `limits: ${auto.limits.pos_pct}%/trade · ${auto.limits.max_open} open · ${auto.limits.max_trades_day}/day`)}
           </span>
         </div>
       )}
@@ -402,6 +468,32 @@ export default function TestingPage() {
 
       {/* history */}
       <Sect title={t("거래 기록", "Trade History")}>
+        {/* search bar — filter by stock name, side, date (boss request) */}
+        <div className="px-3 py-2 flex items-center gap-2 flex-wrap border-b border-[var(--border-default)]/40"
+          style={{ background: "var(--bg-elevated)" }}>
+          <span className="text-[11px] font-bold text-[var(--text-muted)]">🔍</span>
+          <input value={fltName} onChange={(e) => setFltName(e.target.value)}
+            placeholder={t("종목명 검색…", "Search stock…")}
+            className="text-[12px] px-2 py-1 rounded-lg border bg-[var(--bg-primary)] text-[var(--text-primary)]"
+            style={{ borderColor: "var(--border-default)", width: 150 }} />
+          <select value={fltSide} onChange={(e) => setFltSide(e.target.value as "ALL" | "BUY" | "SELL")}
+            className="text-[12px] font-bold px-2 py-1 rounded-lg border bg-[var(--bg-primary)] text-[var(--text-primary)]"
+            style={{ borderColor: "var(--border-default)" }}>
+            <option value="ALL">{t("전체", "All")}</option>
+            <option value="BUY">{t("매수", "BUY")}</option>
+            <option value="SELL">{t("매도", "SELL")}</option>
+          </select>
+          <input type="date" value={fltDate} onChange={(e) => setFltDate(e.target.value)}
+            className="text-[12px] px-2 py-1 rounded-lg border bg-[var(--bg-primary)] text-[var(--text-primary)]"
+            style={{ borderColor: "var(--border-default)" }} />
+          {(fltName || fltSide !== "ALL" || fltDate) && (
+            <button onClick={() => { setFltName(""); setFltSide("ALL"); setFltDate(""); }}
+              className="text-[11px] font-bold text-[var(--text-muted)] px-2 py-1 rounded-lg border"
+              style={{ borderColor: "var(--border-default)" }}>
+              ✕ {t("초기화", "clear")}
+            </button>
+          )}
+        </div>
         {st && st.history.length > 0 ? (
           <table className="w-full text-[12px]">
             <thead>
@@ -416,7 +508,11 @@ export default function TestingPage() {
               </tr>
             </thead>
             <tbody>
-              {st.history.map((h) => (
+              {st.history.filter((h) =>
+                (fltSide === "ALL" || h.side === fltSide)
+                && (!fltName || (h.name || "").toLowerCase().includes(fltName.trim().toLowerCase()))
+                && (!fltDate || kstDate(h.filled_at || h.created_at) === fltDate)
+              ).map((h) => (
                 <tr key={h.id} className="border-t border-[var(--border-default)]/40">
                   <td className="px-3 py-1.5 text-[10.5px] text-[var(--text-muted)] tabular-nums">{kst(h.filled_at || h.created_at)}</td>
                   <td className="px-2 font-bold" style={{ color: h.side === "BUY" ? RED : BLUE }}>{h.side === "BUY" ? t("매수", "BUY") : t("매도", "SELL")}</td>
@@ -437,6 +533,44 @@ export default function TestingPage() {
       <div className="text-[10.5px] text-[var(--text-muted)]">
         {t(`실제 비용 반영: 매수 수수료 ${st?.costs.buy_pct ?? 0.015}% · 매도 수수료+세금 ${st?.costs.sell_pct ?? 0.215}% · 시세 = 키움 실시간(장중) / 네이버(장외) · 4초마다 자동 갱신되며 대기 주문도 자동 체결됩니다`,
           `Realistic costs: buy ${st?.costs.buy_pct ?? 0.015}% · sell ${st?.costs.sell_pct ?? 0.215}% (fees+tax) · prices = live Kiwoom (Naver after hours) · refreshes every 4s and fills pending limit orders automatically`)}
+      </div>
+
+      {/* ⚡ BUY-CANDIDATE POPUP ALARM (boss): a fresh ACT_NOW setup pops up here.
+          Valid 60 minutes from detection (the engine's horizon), countdown shown,
+          ✕ dismisses it. The 4s state poll keeps the countdown ticking. */}
+      <div className="fixed bottom-4 right-4 z-50 space-y-2" style={{ width: 330 }}>
+        {alerts.filter((a) => Date.now() - a.ts < 60 * 60 * 1000).map((a) => {
+          const leftMin = Math.max(0, Math.round(60 - (Date.now() - a.ts) / 60000));
+          return (
+            <div key={a.key} className="rounded-xl border shadow-lg px-3.5 py-3"
+              style={{ borderColor: "#e65100", background: "var(--bg-primary)", boxShadow: "0 6px 24px rgba(0,0,0,0.25)" }}>
+              <div className="flex items-center gap-2">
+                <span className="text-[13px] font-extrabold text-[var(--text-primary)]">
+                  ⚡ {t("매수 후보 발견!", "Buy candidate found!")}
+                </span>
+                <span className="ml-auto text-[10.5px] font-bold" style={{ color: "#e65100" }}>
+                  ⏱️ {t(`유효 ${leftMin}분`, `${leftMin} min left`)}
+                </span>
+                <button onClick={() => setAlerts((xs) => xs.filter((x) => x.key !== a.key))}
+                  className="text-[13px] font-extrabold text-[var(--text-muted)] px-1.5 py-0.5 rounded hover:opacity-70">✕</button>
+              </div>
+              <div className="mt-1 text-[13px] font-extrabold text-[var(--text-primary)]">
+                {a.name} <span className="text-[11px] font-bold text-[var(--text-muted)]">
+                  · {t("확신", "conf")} {a.conf}%{a.ai != null && <> · 🤖 {a.ai}%</>}</span>
+              </div>
+              <div className="mt-0.5 text-[11.5px] text-[var(--text-secondary)] tabular-nums">
+                {a.entry != null && <>{t("진입", "entry")} ~{fmt(a.entry)} · </>}
+                {a.target != null && <>🎯 {fmt(a.target)} · </>}
+                {a.stop != null && <>🛑 {fmt(a.stop)} · </>}
+                {t("최대 60분", "max 60 min")}
+              </div>
+              <div className="mt-1 text-[10.5px] text-[var(--text-muted)]">
+                {t("자동매매가 켜져 있으면 같은 후보를 자동 매수합니다 · 챗봇에 \"지금 뭐 살까?\"로 상세 확인",
+                   "If auto-trading is ON it buys this same candidate · ask the chatbot \"what should I trade now?\" for detail")}
+              </div>
+            </div>
+          );
+        })}
       </div>
     </div>
   );
