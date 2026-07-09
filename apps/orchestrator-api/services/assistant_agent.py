@@ -5656,7 +5656,9 @@ def _run_agent_impl(
         "(a one-line 'check with a doctor' note is fine where relevant). FORMAT: start "
         "with a short BOLD one-line direct answer, then 3-6 concise bullet points with "
         "the key facts/steps (bold the keyword of each bullet), and end with one short "
-        "practical tip or follow-up question. Same structure in Korean and English.\n\n"
+        "practical tip or follow-up question. The bullets are MANDATORY — never answer "
+        "in prose paragraphs only. Korean answers use the exact same shape: 굵은 한 줄 "
+        "직접 답변 → '- **키워드**: 설명' 불릿 3~6개 → 실용 팁 한 줄.\n\n"
     )
     system = _general_rule + system
     # CURRENT DATE — without this the LLM defaults to its training-cutoff year and
