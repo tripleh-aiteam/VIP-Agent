@@ -3976,6 +3976,78 @@ _CONFIRM_RE = _re.compile(
 _CONFIRM_SKIP = ("살까", "사야", "팔까", "팔아야", "추천", "전망", "언제",
                  "should i", "recommend", "when will", "how many", "몇 주")
 
+# My paper-desk portfolio — 'how many stock currently on the t(y)rade?' / '내가 산 종목
+# 몇 개야?' must read the 모의투자 desk's REAL holdings, not fall into the picks scanner
+# (2026-07-09 screenshot: 'how many stock' keyword hijacked an ownership question).
+_PORTFOLIO_RE = _re.compile(
+    r"(how many|which|what).{0,36}\b(i|we)('ve| have)?\s*(bought|hold|own|holding|has bought)"
+    r"|\bmy (stocks?|positions?|portfolio|holdings?|trades?)\b|what do (i|we) (own|hold)"
+    r"|did (i|we) buy|on the t[yh]?rade\b|paper (account|desk|portfolio)"
+    r"|내(가)?.{0,8}(샀|산 |산\?|보유|가진|들고)|보유(한|중인|하고 있는)?\s*(종목|주식)|포트폴리오"
+    r"|모의투자.{0,12}(보유|종목|몇|현황|얼마)|뭐\s*샀|몇\s*(종목|개).{0,12}(샀|보유|들고)",
+    _re.IGNORECASE)
+
+
+def _paper_portfolio_reply(db, lang: str) -> Optional[str]:
+    """The boss's 모의투자 desk holdings, live-priced — real numbers from paper_desk.state."""
+    en = str(lang or "").lower().startswith("en")
+    try:
+        from services.paper_desk import state as _pd_state
+        st = _pd_state(db)
+    except Exception:
+        return None
+    poss = st.get("positions") or []
+    rec = st.get("record") or {}
+
+    def _w(v):
+        try:
+            return f"{int(float(v)):,}"
+        except Exception:
+            return "-"
+    L = []
+    if en:
+        L.append(f"**🧾 Your paper-trading desk — {len(poss)} position(s) right now**")
+        if not poss:
+            L.append(f"\nNo stocks held at the moment — the account is 100% cash (₩{_w(st.get('cash'))}).")
+        for p in poss:
+            ln = f"- **{p.get('name')}** ({p.get('ticker')}): {p.get('qty'):,} shares @ avg ₩{_w(p.get('avg_price'))}"
+            if p.get("live_price"):
+                ln += (f" · now ₩{_w(p.get('live_price'))} · P&L {p.get('unrealized_pnl_pct'):+.2f}%"
+                       f" (₩{_w(p.get('unrealized_pnl'))})")
+            L.append(ln)
+        oo = st.get("open_orders") or []
+        if oo:
+            L.append(f"- ⏳ Open limit orders waiting: {len(oo)}")
+        L.append(f"\n**Account**: cash ₩{_w(st.get('cash'))} · positions ₩{_w(st.get('positions_value'))}"
+                 f" · equity ₩{_w(st.get('equity'))} · total P&L {st.get('total_pnl_pct'):+.2f}%"
+                 f" (₩{_w(st.get('total_pnl'))})")
+        if rec.get("trades"):
+            L.append(f"**Record**: {rec['trades']} closed trades · {rec.get('wins', 0)} wins"
+                     + (f" · win rate {rec.get('win_rate')}%" if rec.get("win_rate") is not None else ""))
+        L.append("\nFull desk (orders, history, charts): open [모의투자 테스트](/testing).")
+    else:
+        L.append(f"**🧾 모의투자 보유 현황 — 현재 {len(poss)}종목**")
+        if not poss:
+            L.append(f"\n현재 보유 종목이 없습니다 — 전액 현금({_w(st.get('cash'))}원) 상태입니다.")
+        for p in poss:
+            ln = f"- **{p.get('name')}** ({p.get('ticker')}): {p.get('qty'):,}주 @ 평단 {_w(p.get('avg_price'))}원"
+            if p.get("live_price"):
+                ln += (f" · 현재가 {_w(p.get('live_price'))}원 · 평가손익 {p.get('unrealized_pnl_pct'):+.2f}%"
+                       f" ({_w(p.get('unrealized_pnl'))}원)")
+            L.append(ln)
+        oo = st.get("open_orders") or []
+        if oo:
+            L.append(f"- ⏳ 대기 중 지정가 주문: {len(oo)}건")
+        L.append(f"\n**계좌**: 현금 {_w(st.get('cash'))}원 · 주식 평가 {_w(st.get('positions_value'))}원"
+                 f" · 총자산 {_w(st.get('equity'))}원 · 누적 손익 {st.get('total_pnl_pct'):+.2f}%"
+                 f" ({_w(st.get('total_pnl'))}원)")
+        if rec.get("trades"):
+            L.append(f"**전적**: 청산 {rec['trades']}건 · {rec.get('wins', 0)}승"
+                     + (f" · 승률 {rec.get('win_rate')}%" if rec.get("win_rate") is not None else ""))
+        L.append("\n주문·기록·차트 전체는 [모의투자 테스트](/testing)에서 보실 수 있습니다.")
+    return "\n".join(L)
+
+
 # Context math — 'if I win 1% how much will I win?' after a calculation answer is plain
 # arithmetic on the conversation's numbers, not a picks/recommendation ask (2026-07-09
 # screenshot: the word 'win' dragged it into the 3-method scan).
@@ -4743,6 +4815,15 @@ def _run_agent_impl(
             return {"intent": "confirm_chat", "language": lang, "reply": _cf,
                     "action": None, "speak": True, "transcript": transcript,
                     "tool_used": "llm_confirm"}
+
+    # === MY PORTFOLIO — 'how many stocks am I holding?' → the 모의투자 desk's real state.
+    if (not confirmed_tool and not attachment_ids and transcript
+            and _PORTFOLIO_RE.search(transcript)):
+        _pf = _paper_portfolio_reply(db, lang)
+        if _pf:
+            return {"intent": "paper_portfolio", "language": lang, "reply": _pf,
+                    "action": None, "speak": True, "transcript": transcript,
+                    "tool_used": "paper_desk"}
 
     # === M2 — POSITION-AWARE advice (a holding the user already has) ===
     # "지난주 SK하이닉스 200주 -4% 어떡해?" → 버티기/손절/물타기/익절 with trigger prices,
