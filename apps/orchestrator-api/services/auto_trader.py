@@ -262,6 +262,15 @@ def buy_candidates(db, max_n: int = 3) -> dict[str, Any]:
             out["candidates"].append(s)
     except Exception:
         db.rollback()
+    # measured 1-hour accuracy (same number the position forecasts show) — the
+    # semi-automatic decision card displays it next to the predicted interval
+    try:
+        from services.method_weights import intraday_stats
+        _ml = (intraday_stats(db) or {}).get("ml") or {}
+        if _ml.get("n"):
+            out["hour_acc"] = {"acc": _ml["acc"], "n": _ml["n"]}
+    except Exception:
+        db.rollback()
     # why auto might still sit out (candidates stay visible for manual trading)
     try:
         n_open = int(db.execute(text(

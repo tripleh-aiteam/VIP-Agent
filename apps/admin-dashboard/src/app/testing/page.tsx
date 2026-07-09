@@ -52,12 +52,16 @@ type SetupItem = {
   code: string; name: string; en_name?: string; state: string; setup_type?: string;
   price?: number | null; confidence: number; ai_1h_prob?: number | null;
   entry_zone?: [number, number] | null; target_band?: [number, number] | null;
-  stop?: number | null; time_min?: number;
+  target_pct?: [number, number] | null; stop?: number | null; time_min?: number;
+  why_ko?: string | null; why_en?: string | null;
 };
 type SetupAlert = {
-  key: string; name: string; conf: number; ai?: number | null;
+  key: string; code: string; name: string; conf: number; ai?: number | null;
+  price?: number | null; tpLo?: number | null; tpHi?: number | null;
+  why?: string | null; whyEn?: string | null;
   entry?: number | null; target?: number | null; stop?: number | null; ts: number;
 };
+type TradeMode = "manual" | "semi" | "auto";
 
 // Defined OUTSIDE the page component: defining this inline recreated the component
 // type on every keystroke/poll, remounting the form and throwing the cursor out of
@@ -114,6 +118,27 @@ export default function TestingPage() {
   // valid for 60 minutes from when it appeared (the engine's horizon is 1 hour).
   const [alerts, setAlerts] = useState<SetupAlert[]>([]);
   const seenSetups = useRef<Map<string, number>>(new Map());
+  const [alertQty, setAlertQty] = useState<Record<string, string>>({});
+  const [hourAcc, setHourAcc] = useState<{ acc: number; n: number } | null>(null);
+
+  // TRADING MODE (boss 2026-07-09): Manual (quiet — you hunt via the chatbot) /
+  // Semi-Auto (engine predicts → decision card → YOU press Buy or ✕) /
+  // Auto (the machine trades by itself). Mode persists; auto flag syncs to backend.
+  const [mode, setMode] = useState<TradeMode>(() => {
+    if (typeof window === "undefined") return "manual";
+    const saved = localStorage.getItem("paper-trade-mode");
+    return saved === "semi" || saved === "auto" || saved === "manual" ? saved : "manual";
+  });
+  const modeInit = useRef(false);
+  const pickMode = async (m: TradeMode) => {
+    if (m === "auto" && mode !== "auto" && !confirm(t(
+      "완전 자동매매로 전환할까요? 결정 엔진이 이 모의계좌로 스스로 매수/매도합니다 (가짜 돈).",
+      "Switch to FULL AUTO? The engine will buy/sell on this paper account by itself (fake money)."))) return;
+    setMode(m);
+    try { localStorage.setItem("paper-trade-mode", m); } catch {}
+    try { await apiPost(`/paper-desk/auto/toggle?on=${m === "auto"}`); } catch {}
+    load();
+  };
 
   const load = () => {
     api<DeskState>("/paper-desk/state").then(setSt).catch(() => {});
@@ -126,11 +151,25 @@ export default function TestingPage() {
     return () => clearInterval(i);
   }, []);
 
+  // enforce the saved mode on the backend once the first status arrives (a cron-side
+  // toggle or another browser could have flipped it)
+  useEffect(() => {
+    if (!auto || modeInit.current) return;
+    modeInit.current = true;
+    if (auto.enabled !== (mode === "auto")) {
+      apiPost(`/paper-desk/auto/toggle?on=${mode === "auto"}`).then(load).catch(() => {});
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [auto]);
+
   // poll the AUTO-TRADER's own candidate list every 60s — a popup is, by definition,
   // a setup the machine itself would buy (boss: "if it pops, it must be a buy").
+  // Manual mode = quiet (no popups); Semi = decision cards; Auto = info cards.
   useEffect(() => {
+    if (mode === "manual") return;
     const check = () => {
-      api<{ candidates?: SetupItem[]; auto_note?: string | null }>("/paper-desk/auto/candidates").then((r) => {
+      api<{ candidates?: SetupItem[]; auto_note?: string | null; hour_acc?: { acc: number; n: number } }>("/paper-desk/auto/candidates").then((r) => {
+        if (r.hour_acc) setHourAcc(r.hour_acc);
         const now = Date.now();
         const fresh: SetupAlert[] = [];
         for (const s of r.candidates || []) {
@@ -139,8 +178,12 @@ export default function TestingPage() {
           if (last && now - last < 60 * 60 * 1000) continue;   // one alarm per stock per hour
           seenSetups.current.set(s.code, now);
           fresh.push({
-            key: `${s.code}-${now}`, name: s.name, conf: s.confidence,
-            ai: s.ai_1h_prob ?? null,
+            key: `${s.code}-${now}`, code: s.code, name: s.name, conf: s.confidence,
+            ai: s.ai_1h_prob ?? null, price: s.price ?? null,
+            tpLo: s.target_pct ? s.target_pct[0] : null,
+            tpHi: s.target_pct ? s.target_pct[1] : null,
+            why: s.why_ko ?? null,
+            whyEn: s.why_en ?? null,
             entry: s.entry_zone ? s.entry_zone[0] : (s.price ?? null),
             target: s.target_band ? s.target_band[0] : null,
             stop: s.stop ?? null, ts: now,
@@ -152,7 +195,25 @@ export default function TestingPage() {
     check();
     const i = setInterval(check, 60000);
     return () => clearInterval(i);
-  }, []);
+  }, [mode]);
+
+  // semi-auto: YOUR finger on the trigger — buy the card's stock at market
+  const buyFromAlert = async (a: SetupAlert) => {
+    const n = parseInt(alertQty[a.key] || "") ||
+      (a.price ? Math.max(1, Math.floor(10_000_000 / a.price)) : 0);
+    if (!n) return;
+    try {
+      const r = await apiPost<{ ok: boolean; fill_price?: number; error?: string; reason?: string }>(
+        "/paper-desk/order", { ticker: a.code, side: "BUY", qty: n, order_type: "market" });
+      setMsg(r.ok ? t(`✅ 반자동 매수 체결: ${a.name} ${n}주 @ ${fmt(r.fill_price)}원 — 목표 ${fmt(a.target)} · 손절 ${fmt(a.stop)} · 60분`,
+                      `✅ Semi-auto BUY filled: ${a.name} ${n}sh @ ${fmt(r.fill_price)} — target ${fmt(a.target)} · stop ${fmt(a.stop)} · 60 min`)
+                  : `❌ ${r.error || r.reason || "failed"}`);
+      setAlerts((xs) => xs.filter((x) => x.key !== a.key));
+      load();
+    } catch {
+      setMsg(t("❌ 주문 실패 — 다시 시도해 주세요", "❌ Order failed — please retry"));
+    }
+  };
 
   const toggleAuto = async () => {
     if (!auto) return;
@@ -265,12 +326,23 @@ export default function TestingPage() {
       {auto && (
         <div className="mb-3 px-3.5 py-2.5 rounded-xl border flex items-center gap-3 flex-wrap"
           style={{ borderColor: auto.enabled ? "#2e7d32" : "var(--border-default)", background: auto.enabled ? "rgba(76,175,80,0.08)" : "var(--bg-elevated)" }}>
-          <span className="text-[13px] font-extrabold text-[var(--text-primary)]">🤖 {t("자동매매 (모의)", "Auto-Trading (paper)")}</span>
-          <button onClick={toggleAuto}
-            className="text-[12px] font-extrabold px-3 py-1 rounded-lg text-white"
-            style={{ background: auto.enabled ? "#2e7d32" : "#9e9e9e" }}>
-            {auto.enabled ? t("켜짐 — 끄기", "ON — turn off") : t("꺼짐 — 켜기", "OFF — turn on")}
-          </button>
+          <span className="text-[13px] font-extrabold text-[var(--text-primary)]">🤖 {t("매매 방식", "Trading mode")}</span>
+          <div className="flex rounded-lg overflow-hidden border" style={{ borderColor: "var(--border-default)" }}>
+            {([["manual", t("수동", "Manual")], ["semi", t("반자동", "Semi-Auto")], ["auto", t("자동", "Auto")]] as [TradeMode, string][]).map(([m, label]) => (
+              <button key={m} onClick={() => pickMode(m)}
+                className="text-[12px] font-extrabold px-3 py-1"
+                style={mode === m
+                  ? { background: m === "auto" ? "#2e7d32" : m === "semi" ? "#e65100" : "#546e7a", color: "#fff" }
+                  : { background: "var(--bg-primary)", color: "var(--text-muted)" }}>
+                {label}
+              </button>
+            ))}
+          </div>
+          <span className="text-[10.5px] text-[var(--text-muted)]">
+            {mode === "auto" ? t("엔진이 스스로 사고팝니다", "engine trades by itself")
+              : mode === "semi" ? t("엔진이 예측 → 매수는 당신이 결정", "engine predicts → YOU decide")
+              : t("조용히 — 직접 매매만", "quiet — you trade yourself")}
+          </span>
           <span className="text-[11.5px] text-[var(--text-muted)]">
             {t("전적", "Record")}: <b className="text-[var(--text-primary)]">{auto.record.trades}{t("전", "t")} {auto.record.wins}{t("승", "W")}</b>
             {auto.record.win_rate != null && <> · {auto.record.win_rate}%</>}
@@ -543,12 +615,13 @@ export default function TestingPage() {
       <div className="fixed right-4 z-50 space-y-2" style={{ width: 330, bottom: 150 }}>
         {alerts.filter((a) => Date.now() - a.ts < 60 * 60 * 1000).map((a) => {
           const leftMin = Math.max(0, Math.round(60 - (Date.now() - a.ts) / 60000));
+          const defQty = a.price ? Math.max(1, Math.floor(10_000_000 / a.price)) : 1;
           return (
             <div key={a.key} className="rounded-xl border shadow-lg px-3.5 py-3"
               style={{ borderColor: "#e65100", background: "var(--bg-primary)", boxShadow: "0 6px 24px rgba(0,0,0,0.25)" }}>
               <div className="flex items-center gap-2">
                 <span className="text-[13px] font-extrabold text-[var(--text-primary)]">
-                  ⚡ {t("매수 후보 발견!", "Buy candidate found!")}
+                  ⚡ {mode === "semi" ? t("매수 판단 요청", "Your call: buy?") : t("매수 후보 발견!", "Buy candidate found!")}
                 </span>
                 <span className="ml-auto text-[10.5px] font-bold" style={{ color: "#e65100" }}>
                   ⏱️ {t(`유효 ${leftMin}분`, `${leftMin} min left`)}
@@ -558,18 +631,53 @@ export default function TestingPage() {
               </div>
               <div className="mt-1 text-[13px] font-extrabold text-[var(--text-primary)]">
                 {a.name} <span className="text-[11px] font-bold text-[var(--text-muted)]">
-                  · {t("확신", "conf")} {a.conf}%{a.ai != null && <> · 🤖 {a.ai}%</>}</span>
+                  · {fmt(a.price)}{t("원", "")} · {t("확신", "conf")} {a.conf}%{a.ai != null && <> · 🤖 {a.ai}%</>}</span>
               </div>
+              {/* the PREDICTION, in the boss's words: rise interval + accuracy */}
+              {a.tpLo != null && (
+                <div className="mt-0.5 text-[12px] font-bold" style={{ color: RED }}>
+                  {t(`예측: 1시간 내 +${a.tpLo}% ~ +${a.tpHi}% 상승 가능`,
+                     `Forecast: +${a.tpLo}% to +${a.tpHi}% rise within 1 hour`)}
+                  {hourAcc && <span className="font-normal text-[10.5px] text-[var(--text-muted)]">
+                    {" "}{t(`(1시간 예측 적중률 ${Math.round(hourAcc.acc)}% · ${hourAcc.n}건 실측)`,
+                            `(1h forecast accuracy ${Math.round(hourAcc.acc)}% · ${hourAcc.n} graded)`)}</span>}
+                </div>
+              )}
+              {(lang === "ko" ? a.why : (a.whyEn || a.why)) && (
+                <div className="mt-0.5 text-[11px] text-[var(--text-secondary)]">
+                  {t("근거", "Why")}: {lang === "ko" ? a.why : (a.whyEn || a.why)}
+                </div>
+              )}
               <div className="mt-0.5 text-[11.5px] text-[var(--text-secondary)] tabular-nums">
                 {a.entry != null && <>{t("진입", "entry")} ~{fmt(a.entry)} · </>}
                 {a.target != null && <>🎯 {fmt(a.target)} · </>}
                 {a.stop != null && <>🛑 {fmt(a.stop)} · </>}
                 {t("최대 60분", "max 60 min")}
               </div>
-              <div className="mt-1 text-[10.5px] text-[var(--text-muted)]">
-                {t("자동매매도 이 후보를 삽니다 (한도·서킷브레이커·엔진 거부에 걸리면 제외) · 챗봇 \"지금 뭐 살까?\"로 상세 확인",
-                   "Auto-trading buys this too (unless caps / circuit-breaker / engine veto block it) · ask \"what should I trade now?\" for detail")}
-              </div>
+              {mode === "semi" ? (
+                <div className="mt-2 flex items-center gap-2">
+                  <input value={alertQty[a.key] ?? String(defQty)}
+                    onChange={(e) => setAlertQty((m2) => ({ ...m2, [a.key]: e.target.value.replace(/[^0-9]/g, "") }))}
+                    className="w-[76px] text-[12.5px] font-bold px-2 py-1.5 rounded-lg border bg-[var(--bg-elevated)] text-[var(--text-primary)] text-right tabular-nums"
+                    style={{ borderColor: "var(--border-default)" }} />
+                  <span className="text-[11px] text-[var(--text-muted)]">{t("주", "sh")}</span>
+                  <button onClick={() => buyFromAlert(a)}
+                    className="text-[12.5px] font-extrabold px-4 py-1.5 rounded-lg text-white"
+                    style={{ background: RED }}>
+                    {t("매수", "BUY")}
+                  </button>
+                  <button onClick={() => setAlerts((xs) => xs.filter((x) => x.key !== a.key))}
+                    className="text-[12px] font-bold px-3 py-1.5 rounded-lg border text-[var(--text-muted)]"
+                    style={{ borderColor: "var(--border-default)" }}>
+                    {t("무시", "Ignore")}
+                  </button>
+                </div>
+              ) : (
+                <div className="mt-1 text-[10.5px] text-[var(--text-muted)]">
+                  {t("자동매매가 이 후보를 스스로 삽니다 (한도·엔진 거부 시 제외)",
+                     "Auto-trading buys this by itself (unless caps / engine veto block it)")}
+                </div>
+              )}
             </div>
           );
         })}
