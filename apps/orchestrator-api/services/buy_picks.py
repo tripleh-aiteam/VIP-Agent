@@ -318,6 +318,14 @@ def build(db, n: int = 3, transcript: str = "", user_key: Optional[str] = None,
     setup_sec_en = ("\n**⚡ 1-hour trade candidates (exactly what the auto-trader sees)**\n"
                     + ("\n".join(setup_en_l) if setup_en_l
                        else "- none right now — the 1-hour scanner finds no safe setup at this moment"))
+    if buys:
+        # the BUY blocks below are a DIFFERENT horizon — say so, or an empty ⚡ list next
+        # to green BUY badges reads as a contradiction (boss caught exactly this).
+        setup_sec_ko += ("\n- 참고: 아래 🟢 매수 신호는 **며칠 보유용(투자 관점)** 입니다 — 60분 전용인 "
+                         "자동매매는 대상이 아니며, 직접 매수해서 며칠 들고 가는 용도예요.")
+        setup_sec_en += ("\n- Note: the 🟢 BUY signals below are **multi-day position ideas** — the "
+                         "60-minute auto-trader doesn't trade those; they're for you to buy and hold "
+                         "over days.")
 
     mkt_line = None
     try:
