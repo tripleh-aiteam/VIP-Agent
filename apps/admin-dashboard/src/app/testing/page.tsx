@@ -151,11 +151,19 @@ export default function TestingPage() {
     return () => clearInterval(i);
   }, []);
 
-  // enforce the saved mode on the backend once the first status arrives (a cron-side
-  // toggle or another browser could have flipped it)
+  // first status: NO saved mode → ADOPT the machine's current state (never silently
+  // switch a running auto-trader off); saved mode → enforce it on the backend.
   useEffect(() => {
     if (!auto || modeInit.current) return;
     modeInit.current = true;
+    let saved: string | null = null;
+    try { saved = localStorage.getItem("paper-trade-mode"); } catch {}
+    if (!saved) {
+      const m: TradeMode = auto.enabled ? "auto" : "manual";
+      setMode(m);
+      try { localStorage.setItem("paper-trade-mode", m); } catch {}
+      return;
+    }
     if (auto.enabled !== (mode === "auto")) {
       apiPost(`/paper-desk/auto/toggle?on=${mode === "auto"}`).then(load).catch(() => {});
     }
