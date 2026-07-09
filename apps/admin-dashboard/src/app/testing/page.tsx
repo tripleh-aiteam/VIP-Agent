@@ -125,9 +125,10 @@ export default function TestingPage() {
   // Semi-Auto (engine predicts → decision card → YOU press Buy or ✕) /
   // Auto (the machine trades by itself). Mode persists; auto flag syncs to backend.
   const [mode, setMode] = useState<TradeMode>(() => {
-    if (typeof window === "undefined") return "manual";
+    if (typeof window === "undefined") return "semi";
     const saved = localStorage.getItem("paper-trade-mode");
-    return saved === "semi" || saved === "auto" || saved === "manual" ? saved : "manual";
+    // boss 2026-07-09: SEMI-AUTO is the default — engine predicts, HE decides
+    return saved === "semi" || saved === "auto" || saved === "manual" ? saved : "semi";
   });
   const modeInit = useRef(false);
   const pickMode = async (m: TradeMode) => {
@@ -151,19 +152,12 @@ export default function TestingPage() {
     return () => clearInterval(i);
   }, []);
 
-  // first status: NO saved mode → ADOPT the machine's current state (never silently
-  // switch a running auto-trader off); saved mode → enforce it on the backend.
+  // first status: enforce the mode on the backend (default = SEMI-AUTO per the boss —
+  // no saved choice means semi: engine predicts, he decides, machine doesn't self-trade)
   useEffect(() => {
     if (!auto || modeInit.current) return;
     modeInit.current = true;
-    let saved: string | null = null;
-    try { saved = localStorage.getItem("paper-trade-mode"); } catch {}
-    if (!saved) {
-      const m: TradeMode = auto.enabled ? "auto" : "manual";
-      setMode(m);
-      try { localStorage.setItem("paper-trade-mode", m); } catch {}
-      return;
-    }
+    try { localStorage.setItem("paper-trade-mode", mode); } catch {}
     if (auto.enabled !== (mode === "auto")) {
       apiPost(`/paper-desk/auto/toggle?on=${mode === "auto"}`).then(load).catch(() => {});
     }
