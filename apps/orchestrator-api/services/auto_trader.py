@@ -294,6 +294,51 @@ def buy_candidates(db, max_n: int = 3) -> dict[str, Any]:
     return out
 
 
+FOCUS_CODES = ["005930", "000660"]   # boss's semi-auto test focus: 삼성전자 + SK하이닉스
+
+
+def focus_status(db, codes: Optional[list[str]] = None) -> dict[str, Any]:
+    """The SEMI-AUTO focus board (boss 2026-07-09): the live 1-hour state of his two
+    test stocks — ALWAYS answers, signal or not: ACT_NOW plan (veto-checked), FORMING
+    with its trigger, or NOTHING with the honest reason. The auto-trader keeps its own
+    full-market universe in the background (self-improvement data)."""
+    from services import prediction_service as ps
+    out: dict[str, Any] = {"stocks": [], "hour_acc": None}
+    for code in (codes or FOCUS_CODES):
+        code = str(code).zfill(6)
+        name = ps.NAMES.get(code, code)
+        s: dict[str, Any] = {}
+        try:
+            from services.intraday_setup import setup_for
+            s = setup_for(db, code, name) or {}
+        except Exception:
+            db.rollback()
+            s = {"state": "ERROR", "reason_ko": "데이터 오류", "reason_en": "data error"}
+        qualified = bool(s.get("state") == "ACT_NOW" and (s.get("confidence") or 0) >= MIN_CONF)
+        vetoed = False
+        if qualified:
+            try:
+                from services.decision_agent import decide_cached
+                vetoed = (decide_cached(db, code) or {}).get("decision") == "SELL"
+            except Exception:
+                db.rollback()
+        out["stocks"].append({
+            "code": code, "name": name,
+            **{k: s.get(k) for k in (
+                "state", "price", "confidence", "ai_1h_prob", "entry_zone", "target_band",
+                "target_pct", "stop", "stop_pct", "time_min", "why_ko", "why_en",
+                "reason_ko", "reason_en", "trigger_ko", "trigger_en")},
+            "qualified": qualified and not vetoed, "vetoed": vetoed})
+    try:
+        from services.method_weights import intraday_stats
+        _ml = (intraday_stats(db) or {}).get("ml") or {}
+        if _ml.get("n"):
+            out["hour_acc"] = {"acc": _ml["acc"], "n": _ml["n"]}
+    except Exception:
+        db.rollback()
+    return out
+
+
 def status(db) -> dict[str, Any]:
     """The auto-agent's own scorecard + open positions (for the Testing page)."""
     _ensure(db)

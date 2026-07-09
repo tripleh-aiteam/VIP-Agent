@@ -188,3 +188,12 @@ def auto_candidates(db: Session = Depends(get_db)):
     the ⚡ popup alarm so a popup is always a machine-grade buy candidate."""
     from services.auto_trader import buy_candidates
     return buy_candidates(db)
+
+
+@router.get("/auto/focus")
+def auto_focus(db: Session = Depends(get_db)):
+    """Semi-auto FOCUS board — the live 1-hour state of the boss's test stocks
+    (삼성전자 + SK하이닉스): signal with plan, forming with trigger, or none with
+    the reason. Always answers."""
+    from services.auto_trader import focus_status
+    return focus_status(db)
