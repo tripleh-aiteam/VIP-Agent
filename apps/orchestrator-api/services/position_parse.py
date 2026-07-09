@@ -92,8 +92,10 @@ def parse(text: str) -> dict[str, Any]:
     except Exception:
         pass
 
-    # shares — "200주", "100 shares", "200개"
-    m = re.search(r"([\d,]+)\s*(?:주|shares?|share|개)", low)
+    # shares — "200주", "100 shares", "200개", "5 SKhynix stock(s)" (number before the name)
+    m = (re.search(r"([\d,]+)\s*(?:주|shares?|share|stocks?|개)", low)
+         or re.search(r"\b(\d{1,5})\s+(?:\S+\s+){0,2}(?:stocks?|shares?|주)\b", low)
+         or re.search(r"(?:bought|buy|샀|매수)\s+(\d{1,5})\s+[a-z가-힣]", low))
     if m:
         out["shares"] = int(_num(m.group(1)) or 0) or None
 
@@ -109,8 +111,9 @@ def parse(text: str) -> dict[str, Any]:
             pnl = -pnl
     out["pnl_pct"] = pnl
 
-    # entry price — "70,000에", "at 70000", "평단 70000"
-    m = re.search(r"(?:평단가?|평균단가|at|에)\s*([\d,]{4,})", low) or re.search(r"([\d,]{4,})\s*(?:원|krw)?\s*(?:에 샀|에 매수|에)", low)
+    # entry price — "70,000에", "at 70000", "평단 70000", "from 270000", "270000원에서"
+    m = (re.search(r"(?:평단가?|평균단가|at|@|from|에)\s*([\d,]{4,})", low)
+         or re.search(r"([\d,]{4,})\s*(?:원|krw)?\s*(?:에 샀|에 매수|에서|부터|에)", low))
     if m:
         out["entry_price"] = _num(m.group(1))
 

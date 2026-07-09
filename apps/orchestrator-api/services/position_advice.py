@@ -174,6 +174,34 @@ def advise(db, position: dict) -> dict[str, Any]:
     pos_ko = f"{name}" + (f" {shares}주" if shares else "") + " 보유" + (f" · 현재 {pnl:+.1f}%" if pnl is not None else "")
     pos_en = f"Holding {name_en}" + (f" {shares} shares" if shares else "") + (f" · {pnl:+.1f}%" if pnl is not None else "")
 
+    # --- 💼 MY CASE — the user's own money, computed from what they told us (boss:
+    # "it should analyze how much and when I bought", not pre-fixed sentences) ---
+    when = position.get("when")
+    invested = cur_val = pnl_won = None
+    if shares and entry:
+        invested = int(round(shares * entry))
+        if cur:
+            cur_val = int(round(shares * cur))
+            pnl_won = cur_val - invested
+    case_ko = case_en = ""
+    if entry and cur:
+        _sgn = "+" if (pnl or 0) >= 0 else ""
+        case_ko = (f"**💼 내 케이스 진단**: " + (f"{when} " if when else "")
+                   + f"매수가 {_f(entry)}" + (f" × {shares}주 = 투자금 {_f(invested)}" if invested else "")
+                   + f" → 현재가 {_f(cur)}"
+                   + (f", 평가액 {_f(cur_val)}" if cur_val else "")
+                   + (f" · **손익 {_sgn}{pnl_won:,}원 ({pnl:+.1f}%)**" if pnl_won is not None and pnl is not None
+                      else (f" · **손익 {pnl:+.1f}%**" if pnl is not None else "")))
+        case_en = (f"**💼 Your case**: bought " + (f"{when} " if when else "")
+                   + f"at {_fe(entry)}" + (f" × {shares} shares = {_fe(invested)} invested" if invested else "")
+                   + f" → now {_fe(cur)}"
+                   + (f", value {_fe(cur_val)}" if cur_val else "")
+                   + (f" · **P&L {_sgn}₩{pnl_won:,} ({pnl:+.1f}%)**" if pnl_won is not None and pnl is not None
+                      else (f" · **P&L {pnl:+.1f}%**" if pnl is not None else "")))
+        if abs(pnl or 0) > 60:
+            case_ko += "\n_(말씀하신 매수가 기준입니다 — 매수가가 다르면 다시 알려주세요.)_"
+            case_en += "\n_(based on the buy price you stated — tell me again if it differs.)_"
+
     # --- 3-method breakdown (each method's read) so the advice shows its reasoning ---
     m1c = (d.get("method1_ml") or {}).get("call") or "HOLD"
     m1_ko = {"BUY": "매수", "SELL": "매도", "HOLD": "보유"}.get(m1c, "보유")
@@ -304,6 +332,57 @@ def advise(db, position: dict) -> dict[str, Any]:
         fc_ko += f"\n· 🤖 AI 1시간 상승확률 {fc['ai_prob']}% (참고용 랭킹)"
         fc_en += f"\n· 🤖 AI 1-hour up-probability {fc['ai_prob']}% (ranking only)"
 
+    # --- the forecast measured against YOUR position (boss: "if price will increase
+    # above what I bought → say wait; if it will drop >1% → say sell, you'd lose ₩X more")
+    if entry and cur and _lo and _hi:
+        drop_pct = (cur - _lo) / cur * 100.0
+        my_ko, my_en = [], []
+        if _dir == "DOWN" and drop_pct >= 1.0:
+            _more = int(round((cur - _lo) * shares)) if shares else None
+            my_ko.append(f"· **내 포지션 기준**: 예상 저점 {_f(_lo)}까지 밀리면 지금보다 약 -{drop_pct:.1f}% 더 빠집니다"
+                         + (f" — 추가 손실 약 **-{_more:,}원**" if _more else "")
+                         + ". 1% 넘게 더 빠질 가능성이 우세하니 **지금 파는 쪽이 손실을 줄입니다.**")
+            my_en.append(f"· **For YOUR position**: a slide to the expected low {_fe(_lo)} is another -{drop_pct:.1f}% from here"
+                         + (f" — about **-₩{_more:,} more loss**" if _more else "")
+                         + ". With >1% further downside likely, **selling now limits the damage.**")
+        elif _dir == "DOWN":
+            _more = int(round((cur - _lo) * shares)) if shares else None
+            my_ko.append(f"· **내 포지션 기준**: 하락해도 예상 저점 {_f(_lo)}까지 약 -{drop_pct:.1f}% (1% 미만)"
+                         + (f" — 추가 손실 최대 약 -{_more:,}원 수준" if _more else "")
+                         + f". 급락 위험은 제한적이니 **전량 투매보다는 손절선 {_f(stop_lv)} 이탈 여부로 판단**하세요.")
+            my_en.append(f"· **For YOUR position**: even the expected low {_fe(_lo)} is only about -{drop_pct:.1f}% (under 1%)"
+                         + (f" — at most ≈ -₩{_more:,} more" if _more else "")
+                         + f". Crash risk is limited — **decide by the stop {_fe(stop_lv)}, don't panic-sell everything.**")
+        elif _dir == "UP" and _hi > entry:
+            _back = int(round((_hi - cur) * shares)) if shares else None
+            my_ko.append(f"· **내 포지션 기준**: 예상 고점 {_f(_hi)}가 **내 매수가 {_f(entry)}보다 높습니다** — "
+                         f"조금 기다리면 본전 위에서 팔 기회가 올 가능성이 우세합니다"
+                         + (f" (회복 여력 약 +{_back:,}원)" if _back else "") + ". **지금 급하게 팔지 마세요.**")
+            my_en.append(f"· **For YOUR position**: the expected high {_fe(_hi)} is **above your buy price {_fe(entry)}** — "
+                         f"waiting a bit likely gives you a chance to exit above break-even"
+                         + (f" (≈ +₩{_back:,} of recovery room)" if _back else "") + ". **Don't rush the sell.**")
+        elif _dir == "UP" and _hi <= entry:
+            my_ko.append(f"· **내 포지션 기준**: 반등해도 예상 고점은 {_f(_hi)} — **매수가 {_f(entry)}에는 못 미칩니다.** "
+                         f"본전 회복을 기다리기보다, 반등 고점 부근에서 **매도해 손실을 줄이는 것**이 현실적입니다.")
+            my_en.append(f"· **For YOUR position**: even the expected bounce tops out near {_fe(_hi)} — **below your buy price {_fe(entry)}.** "
+                         f"Rather than waiting for break-even, **selling into the bounce to cut the loss** is the realistic play.")
+        elif _dir == "FLAT" and pnl is not None and pnl < 0:
+            my_ko.append(f"· **내 포지션 기준**: 1시간 내 매수가 {_f(entry)} 회복 가능성은 낮습니다(예상 상단 {_f(_hi)}). "
+                         f"위 계획의 손절선 {_f(stop_lv)}을 기준으로 판단하세요.")
+            my_en.append(f"· **For YOUR position**: recovering your buy price {_fe(entry)} within the hour is unlikely (expected top {_fe(_hi)}). "
+                         f"Use the plan's stop {_fe(stop_lv)} as your line.")
+        elif _dir == "FLAT" and pnl is not None and pnl >= 0:
+            _keep = int(round((_lo - entry) * shares)) if shares else None
+            my_ko.append(f"· **내 포지션 기준**: 예상 하단 {_f(_lo)}에서도 매수가 {_f(entry)} 위라 **수익은 유지될 가능성이 큽니다**"
+                         + (f" (최소 약 +{_keep:,}원)" if _keep and _keep > 0 else "")
+                         + f". 서두를 이유 없음 — 목표 {_f(near_target)} 익절 / {_f(stop_lv)} 이탈 시 정리 계획대로 가세요.")
+            my_en.append(f"· **For YOUR position**: even the expected low {_fe(_lo)} stays above your buy price {_fe(entry)} — **your profit likely holds**"
+                         + (f" (at least ≈ +₩{_keep:,})" if _keep and _keep > 0 else "")
+                         + f". No rush — stick to the plan: take profit at {_fe(near_target)}, exit below {_fe(stop_lv)}.")
+        if my_ko:
+            fc_ko += "\n" + "\n".join(my_ko)
+            fc_en += "\n" + "\n".join(my_en)
+
     _how_ko = ("**🧠 결정 엔진은 이렇게 예측해요:** 머신러닝(과거 패턴 학습)·분석(수급·호가·박스권)·"
                "파동(엘리엇/피보나치) 3가지 방법에 + 뉴스·시장 흐름·5분봉 실시간 흐름·동종 그룹까지 "
                "종합해 방향을 냅니다. 여러 신호가 **같은 방향으로 일치할 때** 신뢰도가 높아져요.")
@@ -313,14 +392,16 @@ def advise(db, position: dict) -> dict[str, Any]:
                "several signals **agree on the same direction.**")
 
     reasoning_ko = (f"**📌 {pos_ko} — {hold_head_ko}**\n\n"
-                    f"{fc_ko}\n\n"
+                    + (f"{case_ko}\n\n" if case_ko else "")
+                    + f"{fc_ko}\n\n"
                     f"{plan_ko_s}\n\n"
                     f"**➡️ 종합 결론:** {ko}\n\n"
                     f"{_how_ko}\n\n"
                     f"───────────── 상세 분석 (각 방법이 어떻게 예측했나) ─────────────\n\n"
                     f"{detail_ko}")
     reasoning_en = (f"**📌 {pos_en} — {hold_head_en}**\n\n"
-                    f"{fc_en}\n\n"
+                    + (f"{case_en}\n\n" if case_en else "")
+                    + f"{fc_en}\n\n"
                     f"{plan_en_s}\n\n"
                     f"**➡️ Bottom line:** {en}\n\n"
                     f"{_how_en}\n\n"
