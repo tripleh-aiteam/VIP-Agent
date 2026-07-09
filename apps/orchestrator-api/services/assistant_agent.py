@@ -5134,6 +5134,20 @@ def _run_agent_impl(
     # zones. Runs BEFORE dip-bounce/movers (it's the proactive "you tell ME" version).
     if (not confirmed_tool and not attachment_ids and _is_setup_question(transcript)
             and not _all_stocks_in_query(transcript)):     # a named stock → advice instead
+        # ONE DOOR (boss 2026-07-09): every broad "what should I buy/trade now?" — any
+        # phrasing, any language, both bots — gets the SAME unified answer: the big ⚡
+        # 1-hour verdict (scanner + reasons + forming watch) on top, 🛒 multi-day ideas
+        # below. Previously KO scalp phrasings hit the raw scanner while EN hit
+        # buy_picks — same question, two different answers. Scanner reply = fallback.
+        try:
+            from services.buy_picks import build as _bp_build
+            _bp = _bp_build(db, n=3, transcript=transcript, user_key=user_id, lang=lang)
+            if _bp.get("reply"):
+                return {"intent": "buy_picks", "language": lang, "reply": _bp["reply"],
+                        "action": None, "speak": True, "transcript": transcript,
+                        "tool_used": "buy_picks"}
+        except Exception as e:
+            log.warning(f"buy_picks (setup route) failed: {str(e)[:120]}")
         try:
             from services.intraday_setup import scan_reply
             _en = str(lang or "").lower().startswith("en")

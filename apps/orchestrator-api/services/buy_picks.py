@@ -300,9 +300,17 @@ def build(db, n: int = 3, transcript: str = "", user_key: Optional[str] = None,
     # with a REASON per candidate. The multi-day ideas follow as their own section.
     setup_ko_l: list[str] = []
     setup_en_l: list[str] = []
+    _fm_ko: list[str] = []
+    _fm_en: list[str] = []
     try:
         from services.intraday_setup import scan as _iscan
-        _act = (_iscan(db).get("act_now") or [])[:3]
+        _sc = _iscan(db)
+        _act = (_sc.get("act_now") or [])[:3]
+        for s in (_sc.get("forming") or [])[:2]:
+            _fm_ko.append(f"- (준비 중·감시) **{s.get('name')}** — 트리거: "
+                          f"{s.get('trigger_ko') or s.get('reason_ko') or '반등 확인 대기'}")
+            _fm_en.append(f"- (forming · watching) **{s.get('en_name') or s.get('name')}** — trigger: "
+                          f"{s.get('trigger_en') or s.get('reason_en') or 'waiting for the bounce'}")
         for s in _act:
             _tb = s.get("target_band") or [None, None]
             _pr = s.get("ai_1h_prob")
@@ -322,19 +330,21 @@ def build(db, n: int = 3, transcript: str = "", user_key: Optional[str] = None,
     if setup_ko_l:
         setup_sec_ko = (f"## ⚡ 지금 1시간 단타 후보 {len(setup_ko_l)}개 — 결정 엔진 통과\n"
                         f"_결정 엔진 = {_eng_ko} — 자동매매도 이 후보들을 삽니다._\n"
-                        + "\n".join(setup_ko_l))
+                        + "\n".join(setup_ko_l + _fm_ko))
         setup_sec_en = (f"## ⚡ {len(setup_en_l)} CANDIDATE(S) FOR 1-HOUR TRADING RIGHT NOW\n"
                         f"_Decision engine = {_eng_en} — the auto-trader buys these same names._\n"
-                        + "\n".join(setup_en_l))
+                        + "\n".join(setup_en_l + _fm_en))
     else:
         setup_sec_ko = ("## 🚫 현재 1시간 단타 후보 없음\n"
                         f"**결정 엔진({_eng_ko}) 기준, 지금 이 순간 60분 안에 안전하게 수익 낼 자리가 "
                         "없습니다.** 5분마다 다시 스캔하며, 자리가 생기면 자동매매가 즉시 매수하고 "
-                        "이 답변에도 나타납니다.")
+                        "이 답변에도 나타납니다."
+                        + (("\n\n**준비 중(감시) 후보:**\n" + "\n".join(_fm_ko)) if _fm_ko else ""))
         setup_sec_en = ("## 🚫 CURRENTLY NO CANDIDATE FOR 1-HOUR TRADING\n"
                         f"**According to our decision engine ({_eng_en}), no stock offers a safe "
                         "60-minute profit opportunity at this moment.** It re-scans every 5 minutes — "
-                        "when a candidate appears, the auto-trader buys it and it shows up here.")
+                        "when a candidate appears, the auto-trader buys it and it shows up here."
+                        + (("\n\n**Forming (watching):**\n" + "\n".join(_fm_en)) if _fm_en else ""))
     if buys:
         # the BUY blocks below are a DIFFERENT horizon — say so, or an empty ⚡ list next
         # to green BUY badges reads as a contradiction (boss caught exactly this).
