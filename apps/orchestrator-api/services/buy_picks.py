@@ -291,6 +291,34 @@ def build(db, n: int = 3, transcript: str = "", user_key: Optional[str] = None,
     buys = [d for d in results if (d.get("decision") or "").upper() == "BUY"][:n]
     watches = [d for d in results if d not in buys][: max(n - len(buys), 2 if not buys else 0)]
 
+    # ⚡ 1-HOUR TRADE CANDIDATES (boss 2026-07-09: chatbot, auto-trading and the decision
+    # engine must speak as one) — the broad buy question also shows the live intraday
+    # setups the auto-trader buys from, so "what should I buy?" can never say "nothing"
+    # while the auto desk is happily opening a scalp. Cached scan → cheap.
+    setup_ko_l: list[str] = []
+    setup_en_l: list[str] = []
+    try:
+        from services.intraday_setup import scan as _iscan
+        _act = (_iscan(db).get("act_now") or [])[:3]
+        for s in _act:
+            _tb = s.get("target_band") or [None, None]
+            _pr = s.get("ai_1h_prob")
+            _prk = f" · 🤖 {_pr}%" if _pr is not None else ""
+            setup_ko_l.append(
+                f"- **{s.get('name')}** — 지금 진입, 목표 {_fmt(_tb[0])}원 · 손절 {_fmt(s.get('stop'))}원 · "
+                f"최대 60분 (확신 {s.get('confidence')}%{_prk})")
+            setup_en_l.append(
+                f"- **{s.get('en_name') or s.get('name')}** — enter now, target ₩{_fmt(_tb[0])} · "
+                f"stop ₩{_fmt(s.get('stop'))} · max 60 min (conf {s.get('confidence')}%{_prk})")
+    except Exception:
+        pass
+    setup_sec_ko = ("\n**⚡ 1시간 단타 후보 (자동매매가 보는 것과 동일)**\n"
+                    + ("\n".join(setup_ko_l) if setup_ko_l
+                       else "- 지금은 없음 — 1시간 스캐너 기준 안전한 자리가 없습니다"))
+    setup_sec_en = ("\n**⚡ 1-hour trade candidates (exactly what the auto-trader sees)**\n"
+                    + ("\n".join(setup_en_l) if setup_en_l
+                       else "- none right now — the 1-hour scanner finds no safe setup at this moment"))
+
     mkt_line = None
     try:
         from services.trading_brief import _mkt_ret_today
@@ -349,6 +377,7 @@ def build(db, n: int = 3, transcript: str = "", user_key: Optional[str] = None,
         parts = [head]
         if mkt_line:
             parts.append(f"\n**Market**: {mkt_line}")
+        parts.append(setup_sec_en)
         parts.append("\n" + "\n\n".join(blocks) if blocks else "\n(no data)")
         parts.append("\n" + plan)
         if not budget:
@@ -365,6 +394,7 @@ def build(db, n: int = 3, transcript: str = "", user_key: Optional[str] = None,
         parts = [head]
         if mkt_line:
             parts.append(f"\n**시장 상황**: {mkt_line}")
+        parts.append(setup_sec_ko)
         parts.append("\n" + "\n\n".join(blocks) if blocks else "\n(데이터 없음)")
         parts.append("\n" + plan)
         if not budget:
