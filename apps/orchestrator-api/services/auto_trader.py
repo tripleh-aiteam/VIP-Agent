@@ -31,6 +31,9 @@ MAX_OPEN = 4                 # concurrent auto-positions (boss 2026-07-09: +2 fo
                              # phase — max exposure 4×10% = 40% of the paper account)
 MAX_TRADES_DAY = 10          # hard daily cap (boss 2026-07-09: 6→10 to fill the test
                              # record faster; paper money only)
+MAX_TRADES_DAY_CHEAP = 20    # boss 2026-07-09: after the base cap, CHEAP stocks
+CHEAP_PX = 100_000           # (<₩100k/share) may keep trading up to 20/day — more
+                             # test data; sizing stays 10% of equity either way
 MIN_CONF = 60                # only take setups the engine is reasonably sure about
 
 _DDL = (
@@ -134,9 +137,11 @@ def tick(db, force: bool = False) -> dict[str, Any]:
         return out
     n_today = db.execute(text(
         "SELECT count(*) FROM auto_trades WHERE opened_at::date = (now() AT TIME ZONE 'Asia/Seoul')::date")).scalar() or 0
-    if int(n_today) >= MAX_TRADES_DAY:
-        out["reason"] = f"daily trade cap ({MAX_TRADES_DAY})"
+    if int(n_today) >= MAX_TRADES_DAY_CHEAP:
+        out["reason"] = f"daily trade cap ({MAX_TRADES_DAY_CHEAP})"
         return out
+    # trades 11..20 are reserved for CHEAP stocks (<₩100k/share) — boss's test extension
+    cheap_only = int(n_today) >= MAX_TRADES_DAY
 
     from services.intraday_setup import scan
     setups = [s for s in (scan(db, use_cache=False).get("act_now") or [])
@@ -145,6 +150,12 @@ def tick(db, force: bool = False) -> dict[str, Any]:
     held = {r[0] for r in db.execute(text(
         "SELECT ticker FROM auto_trades WHERE status='OPEN'")).fetchall()}
     setups = [s for s in setups if s["code"] not in held]
+    if cheap_only:
+        setups = [s for s in setups if float(s["price"]) < CHEAP_PX]
+        if not setups:
+            out["reason"] = (f"base cap {MAX_TRADES_DAY} reached — only cheap "
+                             f"(<₩{CHEAP_PX:,}) setups may trade now (none qualify)")
+            return out
     if not setups:
         out["reason"] = out["reason"] or "no qualifying setup"
         return out
@@ -221,4 +232,5 @@ def status(db) -> dict[str, Any]:
                        "avg_net_pct": float(avg) if avg is not None else None},
             "recent": recent,
             "limits": {"pos_pct": AUTO_POS_PCT, "max_open": MAX_OPEN,
-                       "max_trades_day": MAX_TRADES_DAY, "min_conf": MIN_CONF}}
+                       "max_trades_day": MAX_TRADES_DAY, "min_conf": MIN_CONF,
+                       "max_trades_day_cheap": MAX_TRADES_DAY_CHEAP, "cheap_px": CHEAP_PX}}
