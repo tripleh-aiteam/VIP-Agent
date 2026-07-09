@@ -3975,6 +3975,17 @@ _CONFIRM_RE = _re.compile(
 # decisions/recommendations always go to the engine — never answered from memory
 _CONFIRM_SKIP = ("살까", "사야", "팔까", "팔아야", "추천", "전망", "언제",
                  "should i", "recommend", "when will", "how many", "몇 주")
+
+# Context math — 'if I win 1% how much will I win?' after a calculation answer is plain
+# arithmetic on the conversation's numbers, not a picks/recommendation ask (2026-07-09
+# screenshot: the word 'win' dragged it into the 3-method scan).
+_CHAT_MATH_RE = _re.compile(
+    r"how much ((will|would|do|did|can) (i|we) )?(win|make|earn|lose|get|profit)"
+    r"|how much (profit|loss|money)"
+    r"|if (i|we) (win|make|lose|gain|earn)\b"
+    r"|(얼마(를|나)?\s*(벌|이익|남|잃|손해))|(벌|잃)\s*수\s*있|수익.{0,6}얼마|얼마.{0,8}(벌|잃|손해)"
+    r"|(이기면|따면|먹으면).{0,10}얼마",
+    _re.IGNORECASE)
 # a NAMED stock + a freshness word wants live data, not a memory answer
 _CONFIRM_FRESH = ("지금", "현재", "실시간", " now", "current", "live")
 
@@ -4002,10 +4013,60 @@ def _confirm_is_topic_switch(t: str) -> bool:
         return False
 
 
-def _confirm_chat_reply(question: str, lang: str, history: list[dict]) -> Optional[str]:
+def _ctx_percent_math(question: str, lang: str, history: list[dict]) -> Optional[str]:
+    """Deterministic percent-of-context-amount answer — LLM arithmetic is NOT trusted with
+    money (live test: llama computed 2% of 22,460,000 as 448,200). Handles the common
+    'if I win/lose N% how much?' case; anything fancier falls back to the LLM."""
+    en = str(lang or "").lower().startswith("en")
+    try:
+        pcts = _re.findall(r"(\d+(?:\.\d+)?)\s*%", question or "")
+        if len(pcts) != 1:
+            return None
+        pct = float(pcts[0])
+        if not (0 < pct <= 100):
+            return None
+        base = None
+        for h in reversed(history or []):
+            if str(h.get("role")) != "assistant":
+                continue
+            txt = str(h.get("content") or h.get("text") or "")
+            nums = [int(x.replace(",", "")) for x in _re.findall(r"\d[\d,]{4,}", txt)]
+            nums = [n for n in nums if n >= 10_000]
+            if nums:
+                base = max(nums)          # the total is the largest figure in a calc answer
+                break
+        if not base:
+            return None
+        amt = round(base * pct / 100)
+        lose = bool(_re.search(r"lose|loss|잃|손해|손실", question, _re.IGNORECASE))
+        if en:
+            line = f"₩{base:,} × {pct:g}% = **₩{amt:,}**."
+            if lose:
+                line += f" A {pct:g}% loss would leave ₩{base - amt:,}."
+            else:
+                net = round(base * max(pct - 0.25, 0) / 100)
+                line += (f" So a +{pct:g}% win on ₩{base:,} makes ₩{amt:,} (total ₩{base + amt:,}); "
+                         f"after ~0.25%p fees/tax the real take is about ₩{net:,}.")
+            return line
+        line = f"{base:,}원의 {pct:g}% = **{amt:,}원**입니다."
+        if lose:
+            line += f" {pct:g}% 손실이면 {base - amt:,}원이 남습니다."
+        else:
+            net = round(base * max(pct - 0.25, 0) / 100)
+            line += (f" +{pct:g}% 이기면 수익 {amt:,}원 (총 {base + amt:,}원)이고, "
+                     f"수수료·세금 ~0.25%p를 빼면 실수익은 약 {net:,}원입니다.")
+        return line
+    except Exception:
+        return None
+
+
+def _confirm_chat_reply(question: str, lang: str, history: list[dict],
+                        allow_math: bool = False) -> Optional[str]:
     """Natural-chat confirmation grounded ONLY on the conversation. None → fall through.
-    Any number in the draft that isn't verbatim in the conversation triggers one strict
-    retry, then a fall-through — the honesty rule beats conversational nicety."""
+    Confirmations: any number in the draft that isn't verbatim in the conversation triggers
+    one strict retry, then a fall-through — the honesty rule beats conversational nicety.
+    allow_math=True (context calculations like '1% of that = ?'): arithmetic on the
+    conversation's numbers is allowed, shown as a formula."""
     en = str(lang or "").lower().startswith("en")
     try:
         from services.llm_client import chat_completion_sync
@@ -4018,25 +4079,39 @@ def _confirm_chat_reply(question: str, lang: str, history: list[dict]) -> Option
                 ground.append(txt)
         msgs.append({"role": "user", "content": question})
         known = set(_re.findall(r"\d[\d,]*(?:\.\d+)?", " ".join(ground)))
-        sys_p = (
-            "You are the same friendly Korean-stocks assistant from this conversation. The user "
-            "is asking you to CONFIRM or clarify something already discussed. Answer like a "
-            "natural chat message: if it's a yes/no question, START with "
-            + ("'Yes' or 'No'" if en else "'네' or '아니요'") + ", then explain in 1-3 short plain "
-            "sentences. STRICT RULE: every number you write must appear VERBATIM in this "
-            "conversation — do NOT compute, derive, or estimate any new number. A % change "
-            "shown next to a price means change versus the previous close; trust the stated "
-            "numbers instead of recalculating. If the conversation doesn't contain the needed "
-            "fact, say so and suggest the exact question to ask instead. No tables, no headers, "
-            "no bullet lists. Reply in " + ("ENGLISH" if en else "KOREAN (한국어)") + " only.")
+        if allow_math:
+            sys_p = (
+                "You are the same friendly Korean-stocks assistant from this conversation. The "
+                "user asks a small CALCULATION based on numbers already in this conversation. "
+                "Answer like a normal chat: give the result with the formula in one line "
+                "(e.g. ₩22,460,000 × 1% = ₩224,600), double-check the arithmetic digit by digit, "
+                "then at most 2 short follow-up sentences (e.g. the after-fees figure ~0.25%p if "
+                "relevant). The INPUT numbers must come from this conversation — if the base "
+                "amount isn't there, ask which amount to use instead of guessing. No tables, no "
+                "headers. Reply in " + ("ENGLISH" if en else "KOREAN (한국어)") + " only.")
+        else:
+            sys_p = (
+                "You are the same friendly Korean-stocks assistant from this conversation. The user "
+                "is asking you to CONFIRM or clarify something already discussed. Answer like a "
+                "natural chat message: if it's a yes/no question, START with "
+                + ("'Yes' or 'No'" if en else "'네' or '아니요'") + ", then explain in 1-3 short plain "
+                "sentences. STRICT RULE: every number you write must appear VERBATIM in this "
+                "conversation — do NOT compute, derive, or estimate any new number. A % change "
+                "shown next to a price means change versus the previous close; trust the stated "
+                "numbers instead of recalculating. If the conversation doesn't contain the needed "
+                "fact, say so and suggest the exact question to ask instead. No tables, no headers, "
+                "no bullet lists. Reply in " + ("ENGLISH" if en else "KOREAN (한국어)") + " only.")
         out = None
         for attempt in range(2):
             draft = chat_completion_sync(system_prompt=sys_p, messages=msgs,
-                                         max_tokens=280, temperature=0.2,
+                                         max_tokens=280, temperature=0.1 if allow_math else 0.2,
                                          model="groq-llama-3.3-70b")
             draft = (draft or "").strip()
             if not draft or draft.startswith("[LLM"):
                 return None
+            if allow_math:
+                out = draft                      # derived numbers are the point here
+                break
             invented = [x for x in _re.findall(r"\d[\d,]*(?:\.\d+)?", draft)
                         if x not in known and len(x.replace(",", "").replace(".", "")) > 1]
             if not invented:
@@ -4651,15 +4726,19 @@ def _run_agent_impl(
         else:
             lang = "en"
 
-    # === CONVERSATIONAL CONFIRMATION — a short 'so it means…, right?' follow-up gets a
-    # natural Yes/No chat answer from the conversation itself, not another data dump.
+    # === CONVERSATIONAL CONFIRMATION / CONTEXT MATH — a short 'so it means…, right?' or
+    # 'if I win 1% how much will I win?' follow-up gets a natural LLM chat answer from the
+    # conversation itself, not another data dump or a picks scan.
     # Skipped when the message wants fresh data or an actual decision (지금/살까/추천…).
-    if (history and transcript and len(transcript) <= 90 and not attachment_ids
-            and not confirmed_tool and _CONFIRM_RE.search(transcript)
+    _is_ctx_math = bool(history and transcript and _CHAT_MATH_RE.search(transcript))
+    if (history and transcript and len(transcript) <= (120 if _is_ctx_math else 90)
+            and not attachment_ids and not confirmed_tool
+            and (_CONFIRM_RE.search(transcript) or _is_ctx_math)
             and not any(k in transcript.lower() for k in _CONFIRM_SKIP)
             and not _confirm_wants_fresh_data(transcript)
             and not _confirm_is_topic_switch(transcript)):
-        _cf = _confirm_chat_reply(transcript, lang, history)
+        _cf = (_ctx_percent_math(transcript, lang, history) if _is_ctx_math else None) \
+            or _confirm_chat_reply(transcript, lang, history, allow_math=_is_ctx_math)
         if _cf:
             return {"intent": "confirm_chat", "language": lang, "reply": _cf,
                     "action": None, "speak": True, "transcript": transcript,
