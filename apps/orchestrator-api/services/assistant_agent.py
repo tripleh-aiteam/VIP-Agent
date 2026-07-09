@@ -4060,6 +4060,106 @@ def _paper_portfolio_reply(db, lang: str) -> Optional[str]:
     return "\n".join(L)
 
 
+# My realized P&L by period — 'Yesterday how much I won?' / '어제 얼마 벌었어?' reads the
+# 모의투자 trade history, not a stock's price chart (2026-07-09: follow-up inherited S-OIL
+# and answered with an OHLCV table instead of the boss's own result).
+_PNL_RE = _re.compile(
+    r"(yesterday|today|this week|last week).{0,28}(how much|win|won|lose|lost|profit|earn|made|result)"
+    r"|how much (did|have) (i|we) (win|won|make|made|earn(ed)?|lose|lost)"
+    r"|(어제|오늘|이번\s*주|지난\s*주|금주).{0,16}(얼마|수익|손익|벌었|잃었|손해|결과|성적)"
+    r"|얼마(나)?\s*(벌었|잃었|땄|먹었)",
+    _re.IGNORECASE)
+
+
+def _paper_pnl_reply(db, lang: str, transcript: str) -> Optional[str]:
+    """Realized P&L from the 모의투자 desk for the asked period (KST days). Direct answer
+    first, then the closed trades; unrealized P&L noted separately — never mixed in."""
+    en = str(lang or "").lower().startswith("en")
+    try:
+        from datetime import datetime, timedelta, date
+        from zoneinfo import ZoneInfo
+        from services.paper_desk import state as _pd_state
+        kst = ZoneInfo("Asia/Seoul")
+        today = datetime.now(kst).date()
+        tl = (transcript or "").lower()
+        if "yesterday" in tl or "어제" in tl:
+            days, label_ko, label_en = {today - timedelta(days=1)}, "어제", "yesterday"
+        elif "last week" in tl or "지난주" in tl or "지난 주" in tl:
+            mon = today - timedelta(days=today.weekday() + 7)
+            days = {mon + timedelta(days=i) for i in range(7)}
+            label_ko, label_en = "지난주", "last week"
+        elif "this week" in tl or "이번주" in tl or "이번 주" in tl or "금주" in tl:
+            mon = today - timedelta(days=today.weekday())
+            days = {mon + timedelta(days=i) for i in range((today - mon).days + 1)}
+            label_ko, label_en = "이번 주", "this week"
+        else:
+            days, label_ko, label_en = {today}, "오늘", "today"
+
+        st = _pd_state(db)
+
+        def _kst_date(v) -> Optional[date]:
+            try:
+                if isinstance(v, datetime):
+                    return (v.astimezone(kst) if v.tzinfo
+                            else v.replace(tzinfo=ZoneInfo("UTC")).astimezone(kst)).date()
+                s = str(v)[:19].replace("T", " ")
+                return (datetime.strptime(s, "%Y-%m-%d %H:%M:%S").replace(tzinfo=ZoneInfo("UTC"))
+                        .astimezone(kst).date())
+            except Exception:
+                return None
+        sells, buys = [], 0
+        for h in (st.get("history") or []):
+            d = _kst_date(h.get("filled_at") or h.get("created_at"))
+            if d not in days or h.get("status") != "FILLED":
+                continue
+            if h.get("side") == "SELL" and h.get("realized_pnl") is not None:
+                sells.append(h)
+            elif h.get("side") == "BUY":
+                buys += 1
+        total = round(sum(float(h["realized_pnl"]) for h in sells))
+        upnl = sum(float(p.get("unrealized_pnl") or 0) for p in (st.get("positions") or []))
+
+        def _w(v):
+            return f"{int(float(v)):,}"
+        L = []
+        if en:
+            if sells:
+                verdict = ("you WON" if total > 0 else "you LOST" if total < 0 else "you broke even")
+                L.append(f"**💰 {label_en.capitalize()}'s realized result: {'+' if total > 0 else ''}{_w(total)}원 "
+                         f"({len(sells)} closed trade(s))** — {verdict} {label_en}.")
+                for h in sells:
+                    L.append(f"- {h.get('name')} · SELL {h.get('qty'):,} @ ₩{_w(h.get('fill_price'))} → "
+                             f"{'+' if float(h['realized_pnl']) > 0 else ''}{_w(h['realized_pnl'])}원"
+                             + (f" ({h.get('realized_pnl_pct'):+.2f}%)" if h.get("realized_pnl_pct") is not None else ""))
+            else:
+                L.append(f"**💰 {label_en.capitalize()}: no closed (sold) trades — realized P&L ₩0.**")
+            if buys:
+                L.append(f"- Buys {label_en}: {buys} order(s) filled (not counted until sold).")
+            L.append(f"\nStill-open positions carry {'+' if upnl >= 0 else ''}{_w(upnl)}원 unrealized "
+                     f"(separate from the number above). Cumulative desk P&L: {st.get('total_pnl_pct'):+.2f}% "
+                     f"({_w(st.get('total_pnl'))}원). Details: [모의투자 테스트](/testing).")
+        else:
+            if sells:
+                verdict = ("이겼습니다" if total > 0 else "잃었습니다" if total < 0 else "본전이었습니다")
+                josa = "은" if label_ko == "오늘" else "는"
+                L.append(f"**💰 {label_ko} 실현 손익: {'+' if total > 0 else ''}{_w(total)}원 "
+                         f"(청산 {len(sells)}건)** — {label_ko}{josa} {verdict}.")
+                for h in sells:
+                    L.append(f"- {h.get('name')} · 매도 {h.get('qty'):,}주 @ {_w(h.get('fill_price'))}원 → "
+                             f"{'+' if float(h['realized_pnl']) > 0 else ''}{_w(h['realized_pnl'])}원"
+                             + (f" ({h.get('realized_pnl_pct'):+.2f}%)" if h.get("realized_pnl_pct") is not None else ""))
+            else:
+                L.append(f"**💰 {label_ko}는 청산(매도)한 거래가 없어 실현 손익이 0원입니다.**")
+            if buys:
+                L.append(f"- {label_ko} 매수 체결: {buys}건 (매도 전까지는 손익에 포함되지 않습니다).")
+            L.append(f"\n보유 중 종목의 평가손익은 {'+' if upnl >= 0 else ''}{_w(upnl)}원으로 위 숫자와는 별도입니다. "
+                     f"데스크 누적 손익: {st.get('total_pnl_pct'):+.2f}% ({_w(st.get('total_pnl'))}원). "
+                     f"자세한 기록: [모의투자 테스트](/testing).")
+        return "\n".join(L)
+    except Exception:
+        return None
+
+
 # Context math — 'if I win 1% how much will I win?' after a calculation answer is plain
 # arithmetic on the conversation's numbers, not a picks/recommendation ask (2026-07-09
 # screenshot: the word 'win' dragged it into the 3-method scan).
@@ -4809,6 +4909,16 @@ def _run_agent_impl(
             lang = "ko"
         else:
             lang = "en"
+
+    # === MY P&L — 'Yesterday how much I won?' → the 모의투자 desk's realized result for
+    # that period (must run BEFORE context-math/price-history, which stole this question).
+    if (not confirmed_tool and not attachment_ids and transcript
+            and _PNL_RE.search(transcript)):
+        _pl = _paper_pnl_reply(db, lang, transcript)
+        if _pl:
+            return {"intent": "paper_pnl", "language": lang, "reply": _pl,
+                    "action": None, "speak": True, "transcript": transcript,
+                    "tool_used": "paper_desk"}
 
     # === CONVERSATIONAL CONFIRMATION / CONTEXT MATH — a short 'so it means…, right?' or
     # 'if I win 1% how much will I win?' follow-up gets a natural LLM chat answer from the
