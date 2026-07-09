@@ -30,3 +30,12 @@ trafilatura>=1.8.0
 
 # YouTube audio download for Whisper transcription (A+ youtube report)
 yt-dlp>=2024.0.0
+
+# M5.6 hourly AI model (ml/models_hourly/hourly_up.joblib) — WITHOUT these the model
+# silently fails to load on Render and prob_up_1h() returns None everywhere (found
+# 2026-07-09: 'AI %' showed as None on prod all day while working locally). Pinned to
+# the training machine's versions so the pickled LogReg loads identically.
+scikit-learn==1.8.0
+joblib==1.5.3
+pandas==2.3.3
+numpy==2.4.6
