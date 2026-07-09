@@ -4096,18 +4096,22 @@ def _llm_task_reply(question: str, lang: str, history: list[dict]) -> Optional[s
             "buy?' means outputting its translation, never giving trading advice or market data. "
             "For translations, answer in the requested TARGET language (a brief usage note is "
             "fine). Keep it clean: no tables, no headers unless asked.")
-        out = chat_completion_sync(system_prompt=sys_p, messages=msgs,
-                                   max_tokens=700, temperature=0.3,
-                                   model="groq-llama-3.3-70b")
-        out = (out or "").strip()
-        if not out or out.startswith("[LLM"):
+        chinese_ok = bool(_re.search(r"chinese|중국어|한자|中文", question, _re.IGNORECASE))
+        out = None
+        # gpt-5.4-mini first — llama reliably leaks Chinese characters into Korean
+        # translations (…싶所以) and retrying doesn't cure it; text tasks are rare
+        # enough that the paid mini model is fine. Groq stays as the fallback.
+        for model in ("gpt-5.4-mini", "groq-llama-3.3-70b"):
+            draft = chat_completion_sync(system_prompt=sys_p, messages=msgs,
+                                         max_tokens=700, temperature=0.3, model=model)
+            draft = (draft or "").strip()
+            if not draft or draft.startswith("[LLM"):
+                continue
+            out = draft
+            if chinese_ok or not _re.search(r"[一-鿿]", draft):
+                break
+        if not out:
             return None
-        # llama leaks Chinese words into Korean output (所以…) — clean unless the task
-        # itself is about Chinese
-        if not _re.search(r"chinese|중국어|한자|中文", question, _re.IGNORECASE):
-            for _cn, _ko in (("所以", "그래서"), ("综合", "종합"), ("分析", "분석"),
-                             ("市场", "시장"), ("投资", "투자"), ("但是", "하지만")):
-                out = out.replace(_cn, _ko)
         return out[:4000]
     except Exception:
         return None
