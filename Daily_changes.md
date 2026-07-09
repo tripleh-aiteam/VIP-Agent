@@ -2,6 +2,48 @@
 
 ---
 
+## 2026-07-09 (Thursday) — Assistant "knows my desk + works as a normal LLM" round (boss live-testing feedback, 5 fixes)
+
+### Goal
+
+Boss test rounds: (1) floating assistant vanished from the VIP dashboard, (2) "how many stock currently on the trade?" hit the picks scanner instead of his 모의투자 holdings, (3) "Yesterday how much I won?" answered with an OHLCV chart instead of his own P&L, (4) AI Advisor parity, (5) "translate this…" fired the trading engine on the quoted text. Each: fix → self-test → deploy → live-verify.
+
+### Files updated
+
+- [apps/admin-dashboard/src/app/layout.tsx](apps/admin-dashboard/src/app/layout.tsx) — restored `<AssistantCardGlobal />`: it was hidden in code on 06-23 but the live site ran an older deploy; yesterday's push applied the hiding and the assistant "suddenly" vanished. Also `src/lib/fetchWithRetry.ts` + wired into AssistantCard/ChatWorkspace/ChatbotOverlay (chat survives Render redeploys — boss's "Failed to fetch").
+- [services/assistant_agent.py](apps/orchestrator-api/services/assistant_agent.py) — three new deterministic intents ahead of the trading routes: **paper_portfolio** ("how many stocks am I holding?/내가 보유한 종목" → paper_desk.state live: positions w/ avg·live·P&L, account, record, desk link — agent-aware URL, absolute on AI Advisor); **paper_pnl** ("yesterday/today/this-last week how much did I win?/어제 얼마 벌었어?" → realized fills by KST day, won/lost verdict first, per-sell breakdown, unrealized kept separate); **llm_task** ("translate/번역/요약/rewrite…" → normal-LLM answer via gpt-5.4-mini (llama leaked 所以 into Korean) with Groq fallback; quoted text is material, never a trading question; language guard skipped so translations keep their target language). Also earlier today: confirm_chat + deterministic context-math (percent of conversation amounts — llama computed 2% of 22,460,000 wrong, so code does the math).
+- Stock repo `web/src/components/assistant/AssistantCard.tsx` — route-change auto-close to corner pill (parity with VIP) + `web/src/lib/fetchWithRetry.ts`.
+
+### Verified
+
+Every intent live-verified on production on both surfaces EN/KO (portfolio 4/4, P&L 4/4, translation 4/4 + clean-Korean recheck 2/2, context-math 4/4); regression suite (26 cases incl. 2 new CONFIRM) green after each push.
+
+### Next
+
+- Boss wants the assistant to "understand every menu/number/graph" — done for 모의투자; candidates next: Trading scanner, Reports, Monitoring as deterministic read-intents.
+
+---
+
+## 2026-07-09 (Thursday) — One brain, one mouth: 1-hour setup leads the per-stock answer; auto-trader consults the full verdict
+
+### Goal
+
+The boss caught auto-trading buying S-OIL while the chatbot said "don't buy" — two horizons looked like two disconnected brains. Fix both directions: the chatbot's per-stock answer now LEADS with the trader's 1-hour view (his actual question), and the auto-trader must consult the full 9-method verdict before buying. Context: auto-trading's FIRST live day — 코리아써키트 +₩515,936 (+5.14%) in 15 min (09:04→09:19), then S-Oil + 삼성중공업.
+
+### Files updated
+
+- [`services/intraday_setup.py`](apps/orchestrator-api/services/intraday_setup.py) — new `setup_for(db, code, name)`: 1-hour setup view for ANY listed stock (deep `scan_one` when minute bars exist; `_scan_mover` live-quote fallback otherwise) + attaches the M5.6 AI probability.
+- [`services/decision_agent.py`](apps/orchestrator-api/services/decision_agent.py) — ⚡ live-setup integration: HOLD verdict + ACT_NOW setup (conf ≥60) → headline/summary/final become "네 — 1시간 단타 매수" with the target/stop/60min plan (SELL verdict or checklist deal-breaker = no override — engine conflict, no trade, mirroring the auto veto); EVERY per-stock answer gets an ⚡ section (plan / conflict / forming / none); trust-proof line suppressed on 1h-BUY answers; krx_stocks name fallback for non-watchlist codes; `intraday_setup` added to the payload. Verified locally against production data: Samsung ACT_NOW conf 70 + AI 67% → BUY-1h; S-Oil faded → honest "no setup"; Hyundai (outside the 40) works via fallback.
+- [`services/auto_trader.py`](apps/orchestrator-api/services/auto_trader.py) — DECISION-ENGINE VETO before entry: `decide()` on up to 3 top candidates, verdict SELL → skip (logged in `out["vetoed"]`), WATCH/HOLD pass, fail-open if the engine errors (the scanner's own ML/news/regime gates already passed).
+- [`services/assistant_agent.py`](apps/orchestrator-api/services/assistant_agent.py) — grading honesty: when the ⚡ setup drove the answer, `log_call` records BUY/`decision_1h` with the setup's target/stop/60min (not the background HOLD), so the track record scores what the user was actually told.
+
+### Next
+
+- Deploy pending the boss's go (mid-market blip vs after 15:30 close). Commit `ac6cd0c`.
+- Watch the first vetoes appear in `/paper-desk/auto/tick` output; Gate 1 (≥20 trades, ≥55% win) unlocks MAX_OPEN 2→3.
+
+---
+
 ## 2026-07-08 (Wednesday) — M5.6: the 1-hour model — full 1-year training, honest verdict, ships as RANKING voice
 
 ### Goal
