@@ -538,7 +538,8 @@ export default function TestingPage() {
       {/* ⚡ BUY-CANDIDATE POPUP ALARM (boss): a fresh ACT_NOW setup pops up here.
           Valid 60 minutes from detection (the engine's horizon), countdown shown,
           ✕ dismisses it. The 4s state poll keeps the countdown ticking. */}
-      <div className="fixed bottom-4 right-4 z-50 space-y-2" style={{ width: 330 }}>
+      {/* raised above the corner assistant pill + Windows watermark (boss: not visible) */}
+      <div className="fixed right-4 z-50 space-y-2" style={{ width: 330, bottom: 150 }}>
         {alerts.filter((a) => Date.now() - a.ts < 60 * 60 * 1000).map((a) => {
           const leftMin = Math.max(0, Math.round(60 - (Date.now() - a.ts) / 60000));
           return (
