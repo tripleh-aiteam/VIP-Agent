@@ -164,11 +164,11 @@ export default function TestingPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [auto]);
 
-  // poll the AUTO-TRADER's own candidate list every 60s — a popup is, by definition,
-  // a setup the machine itself would buy (boss: "if it pops, it must be a buy").
-  // Manual mode = quiet (no popups); Semi = decision cards; Auto = info cards.
+  // poll the AUTO-TRADER's own candidate list every 60s — a recommendation is, by
+  // definition, a setup the machine itself would buy. Placement by mode (boss):
+  // SEMI → main-body section · MANUAL → right-side popups · AUTO → no cards at all.
   useEffect(() => {
-    if (mode === "manual") return;
+    if (mode === "auto") return;
     const check = () => {
       api<{ candidates?: SetupItem[]; auto_note?: string | null; hour_acc?: { acc: number; n: number } }>("/paper-desk/auto/candidates").then((r) => {
         if (r.hour_acc) setHourAcc(r.hour_acc);
@@ -215,6 +215,69 @@ export default function TestingPage() {
     } catch {
       setMsg(t("❌ 주문 실패 — 다시 시도해 주세요", "❌ Order failed — please retry"));
     }
+  };
+
+  const liveAlerts = alerts.filter((a) => Date.now() - a.ts < 60 * 60 * 1000);
+
+  // one card, two homes: the main-body section (semi) and the floating popup (manual)
+  const alertCard = (a: SetupAlert) => {
+    const leftMin = Math.max(0, Math.round(60 - (Date.now() - a.ts) / 60000));
+    const defQty = a.price ? Math.max(1, Math.floor(10_000_000 / a.price)) : 1;
+    return (
+      <>
+        <div className="flex items-center gap-2">
+          <span className="text-[13px] font-extrabold text-[var(--text-primary)]">
+            ⚡ {t("매수 판단 요청", "Your call: buy?")}
+          </span>
+          <span className="ml-auto text-[10.5px] font-bold" style={{ color: "#e65100" }}>
+            ⏱️ {t(`유효 ${leftMin}분`, `${leftMin} min left`)}
+          </span>
+          <button onClick={() => setAlerts((xs) => xs.filter((x) => x.key !== a.key))}
+            className="text-[13px] font-extrabold text-[var(--text-muted)] px-1.5 py-0.5 rounded hover:opacity-70">✕</button>
+        </div>
+        <div className="mt-1 text-[13px] font-extrabold text-[var(--text-primary)]">
+          {a.name} <span className="text-[11px] font-bold text-[var(--text-muted)]">
+            · {fmt(a.price)}{t("원", "")} · {t("확신", "conf")} {a.conf}%{a.ai != null && <> · 🤖 {a.ai}%</>}</span>
+        </div>
+        {a.tpLo != null && (
+          <div className="mt-0.5 text-[12px] font-bold" style={{ color: RED }}>
+            {t(`예측: 1시간 내 +${a.tpLo}% ~ +${a.tpHi}% 상승 가능`,
+               `Forecast: +${a.tpLo}% to +${a.tpHi}% rise within 1 hour`)}
+            {hourAcc && <span className="font-normal text-[10.5px] text-[var(--text-muted)]">
+              {" "}{t(`(1시간 예측 적중률 ${Math.round(hourAcc.acc)}% · ${hourAcc.n}건 실측)`,
+                      `(1h forecast accuracy ${Math.round(hourAcc.acc)}% · ${hourAcc.n} graded)`)}</span>}
+          </div>
+        )}
+        {(lang === "ko" ? a.why : (a.whyEn || a.why)) && (
+          <div className="mt-0.5 text-[11px] text-[var(--text-secondary)]">
+            {t("근거", "Why")}: {lang === "ko" ? a.why : (a.whyEn || a.why)}
+          </div>
+        )}
+        <div className="mt-0.5 text-[11.5px] text-[var(--text-secondary)] tabular-nums">
+          {a.entry != null && <>{t("진입", "entry")} ~{fmt(a.entry)} · </>}
+          {a.target != null && <>🎯 {fmt(a.target)} · </>}
+          {a.stop != null && <>🛑 {fmt(a.stop)} · </>}
+          {t("최대 60분", "max 60 min")}
+        </div>
+        <div className="mt-2 flex items-center gap-2">
+          <input value={alertQty[a.key] ?? String(defQty)}
+            onChange={(e) => setAlertQty((m2) => ({ ...m2, [a.key]: e.target.value.replace(/[^0-9]/g, "") }))}
+            className="w-[76px] text-[12.5px] font-bold px-2 py-1.5 rounded-lg border bg-[var(--bg-elevated)] text-[var(--text-primary)] text-right tabular-nums"
+            style={{ borderColor: "var(--border-default)" }} />
+          <span className="text-[11px] text-[var(--text-muted)]">{t("주", "sh")}</span>
+          <button onClick={() => buyFromAlert(a)}
+            className="text-[12.5px] font-extrabold px-4 py-1.5 rounded-lg text-white"
+            style={{ background: RED }}>
+            {t("매수", "BUY")}
+          </button>
+          <button onClick={() => setAlerts((xs) => xs.filter((x) => x.key !== a.key))}
+            className="text-[12px] font-bold px-3 py-1.5 rounded-lg border text-[var(--text-muted)]"
+            style={{ borderColor: "var(--border-default)" }}>
+            {t("무시", "Ignore")}
+          </button>
+        </div>
+      </>
+    );
   };
 
   const toggleAuto = async () => {
@@ -370,6 +433,29 @@ export default function TestingPage() {
                   `limits: ${auto.limits.pos_pct}%/trade · ${auto.limits.max_open} open · ${auto.limits.max_trades_day}/day`)}
           </span>
         </div>
+      )}
+
+      {/* ⚡ SEMI-AUTO: engine recommendations live in the MAIN BODY (boss 2026-07-09 —
+          not floating popups). Auto mode shows none; manual gets the side popups. */}
+      {mode === "semi" && (
+        <Sect title={t("⚡ 엔진 추천 — 반자동 (예측은 엔진, 결정은 당신)",
+                       "⚡ Engine recommendations — Semi-Auto (engine predicts, YOU decide)")}>
+          {liveAlerts.length > 0 ? (
+            <div className="p-3 grid gap-3" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(310px, 1fr))" }}>
+              {liveAlerts.map((a) => (
+                <div key={a.key} className="rounded-xl border px-3.5 py-3"
+                  style={{ borderColor: "#e65100", background: "var(--bg-primary)" }}>
+                  {alertCard(a)}
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="px-3 py-4 text-[11.5px] text-[var(--text-muted)]">
+              {t("지금 추천 없음 — 5분마다 전체 시장을 스캔하며, 기준(확신 60+ · 결정엔진 통과)을 넘는 후보가 나오면 여기에 나타납니다. 나타나면 수량 확인 후 [매수] 또는 [무시]를 누르세요.",
+                 "No recommendation right now — the engine scans the whole market every 5 minutes; candidates clearing the bar (conf 60+ · engine-approved) appear here. When one shows, check the quantity and press [BUY] or [Ignore].")}
+            </div>
+          )}
+        </Sect>
       )}
 
       {/* result banner — ALWAYS visible, whatever action produced it */}
@@ -610,80 +696,18 @@ export default function TestingPage() {
           `Realistic costs: buy ${st?.costs.buy_pct ?? 0.015}% · sell ${st?.costs.sell_pct ?? 0.215}% (fees+tax) · prices = live Kiwoom (Naver after hours) · refreshes every 4s and fills pending limit orders automatically`)}
       </div>
 
-      {/* ⚡ BUY-CANDIDATE POPUP ALARM (boss): a fresh ACT_NOW setup pops up here.
-          Valid 60 minutes from detection (the engine's horizon), countdown shown,
-          ✕ dismisses it. The 4s state poll keeps the countdown ticking. */}
-      {/* raised above the corner assistant pill + Windows watermark (boss: not visible) */}
-      <div className="fixed right-4 z-50 space-y-2" style={{ width: 330, bottom: 150 }}>
-        {alerts.filter((a) => Date.now() - a.ts < 60 * 60 * 1000).map((a) => {
-          const leftMin = Math.max(0, Math.round(60 - (Date.now() - a.ts) / 60000));
-          const defQty = a.price ? Math.max(1, Math.floor(10_000_000 / a.price)) : 1;
-          return (
+      {/* ⚡ ENGINE RECOMMENDATIONS — right-side POPUPS in MANUAL mode only (the boss:
+          semi-auto shows them in the main body above; auto shows none at all). */}
+      {mode === "manual" && (
+        <div className="fixed right-4 z-50 space-y-2" style={{ width: 330, bottom: 150 }}>
+          {liveAlerts.map((a) => (
             <div key={a.key} className="rounded-xl border shadow-lg px-3.5 py-3"
               style={{ borderColor: "#e65100", background: "var(--bg-primary)", boxShadow: "0 6px 24px rgba(0,0,0,0.25)" }}>
-              <div className="flex items-center gap-2">
-                <span className="text-[13px] font-extrabold text-[var(--text-primary)]">
-                  ⚡ {mode === "semi" ? t("매수 판단 요청", "Your call: buy?") : t("매수 후보 발견!", "Buy candidate found!")}
-                </span>
-                <span className="ml-auto text-[10.5px] font-bold" style={{ color: "#e65100" }}>
-                  ⏱️ {t(`유효 ${leftMin}분`, `${leftMin} min left`)}
-                </span>
-                <button onClick={() => setAlerts((xs) => xs.filter((x) => x.key !== a.key))}
-                  className="text-[13px] font-extrabold text-[var(--text-muted)] px-1.5 py-0.5 rounded hover:opacity-70">✕</button>
-              </div>
-              <div className="mt-1 text-[13px] font-extrabold text-[var(--text-primary)]">
-                {a.name} <span className="text-[11px] font-bold text-[var(--text-muted)]">
-                  · {fmt(a.price)}{t("원", "")} · {t("확신", "conf")} {a.conf}%{a.ai != null && <> · 🤖 {a.ai}%</>}</span>
-              </div>
-              {/* the PREDICTION, in the boss's words: rise interval + accuracy */}
-              {a.tpLo != null && (
-                <div className="mt-0.5 text-[12px] font-bold" style={{ color: RED }}>
-                  {t(`예측: 1시간 내 +${a.tpLo}% ~ +${a.tpHi}% 상승 가능`,
-                     `Forecast: +${a.tpLo}% to +${a.tpHi}% rise within 1 hour`)}
-                  {hourAcc && <span className="font-normal text-[10.5px] text-[var(--text-muted)]">
-                    {" "}{t(`(1시간 예측 적중률 ${Math.round(hourAcc.acc)}% · ${hourAcc.n}건 실측)`,
-                            `(1h forecast accuracy ${Math.round(hourAcc.acc)}% · ${hourAcc.n} graded)`)}</span>}
-                </div>
-              )}
-              {(lang === "ko" ? a.why : (a.whyEn || a.why)) && (
-                <div className="mt-0.5 text-[11px] text-[var(--text-secondary)]">
-                  {t("근거", "Why")}: {lang === "ko" ? a.why : (a.whyEn || a.why)}
-                </div>
-              )}
-              <div className="mt-0.5 text-[11.5px] text-[var(--text-secondary)] tabular-nums">
-                {a.entry != null && <>{t("진입", "entry")} ~{fmt(a.entry)} · </>}
-                {a.target != null && <>🎯 {fmt(a.target)} · </>}
-                {a.stop != null && <>🛑 {fmt(a.stop)} · </>}
-                {t("최대 60분", "max 60 min")}
-              </div>
-              {mode === "semi" ? (
-                <div className="mt-2 flex items-center gap-2">
-                  <input value={alertQty[a.key] ?? String(defQty)}
-                    onChange={(e) => setAlertQty((m2) => ({ ...m2, [a.key]: e.target.value.replace(/[^0-9]/g, "") }))}
-                    className="w-[76px] text-[12.5px] font-bold px-2 py-1.5 rounded-lg border bg-[var(--bg-elevated)] text-[var(--text-primary)] text-right tabular-nums"
-                    style={{ borderColor: "var(--border-default)" }} />
-                  <span className="text-[11px] text-[var(--text-muted)]">{t("주", "sh")}</span>
-                  <button onClick={() => buyFromAlert(a)}
-                    className="text-[12.5px] font-extrabold px-4 py-1.5 rounded-lg text-white"
-                    style={{ background: RED }}>
-                    {t("매수", "BUY")}
-                  </button>
-                  <button onClick={() => setAlerts((xs) => xs.filter((x) => x.key !== a.key))}
-                    className="text-[12px] font-bold px-3 py-1.5 rounded-lg border text-[var(--text-muted)]"
-                    style={{ borderColor: "var(--border-default)" }}>
-                    {t("무시", "Ignore")}
-                  </button>
-                </div>
-              ) : (
-                <div className="mt-1 text-[10.5px] text-[var(--text-muted)]">
-                  {t("자동매매가 이 후보를 스스로 삽니다 (한도·엔진 거부 시 제외)",
-                     "Auto-trading buys this by itself (unless caps / engine veto block it)")}
-                </div>
-              )}
+              {alertCard(a)}
             </div>
-          );
-        })}
-      </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
