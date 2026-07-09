@@ -295,6 +295,9 @@ def build(db, n: int = 3, transcript: str = "", user_key: Optional[str] = None,
     # engine must speak as one) — the broad buy question also shows the live intraday
     # setups the auto-trader buys from, so "what should I buy?" can never say "nothing"
     # while the auto desk is happily opening a scalp. Cached scan → cheap.
+    # BOSS FORMAT (2026-07-09): the answer STARTS with a big bold verdict about 1-hour
+    # trading — "no candidate" loudly with the engine's components named, or the list
+    # with a REASON per candidate. The multi-day ideas follow as their own section.
     setup_ko_l: list[str] = []
     setup_en_l: list[str] = []
     try:
@@ -303,29 +306,43 @@ def build(db, n: int = 3, transcript: str = "", user_key: Optional[str] = None,
         for s in _act:
             _tb = s.get("target_band") or [None, None]
             _pr = s.get("ai_1h_prob")
-            _prk = f" · 🤖 {_pr}%" if _pr is not None else ""
+            _prk = f" · 🤖 AI {_pr}%" if _pr is not None else ""
             setup_ko_l.append(
-                f"- **{s.get('name')}** — 지금 진입, 목표 {_fmt(_tb[0])}원 · 손절 {_fmt(s.get('stop'))}원 · "
-                f"최대 60분 (확신 {s.get('confidence')}%{_prk})")
+                f"- **{s.get('name')}** — 이유: {s.get('why_ko') or '조건 충족'}\n"
+                f"  · 지금 진입 · 목표 {_fmt(_tb[0])}원 · 손절 {_fmt(s.get('stop'))}원 · 최대 60분 · "
+                f"확신 {s.get('confidence')}%{_prk}")
             setup_en_l.append(
-                f"- **{s.get('en_name') or s.get('name')}** — enter now, target ₩{_fmt(_tb[0])} · "
-                f"stop ₩{_fmt(s.get('stop'))} · max 60 min (conf {s.get('confidence')}%{_prk})")
+                f"- **{s.get('en_name') or s.get('name')}** — why: {s.get('why_en') or 'conditions met'}\n"
+                f"  · enter now · target ₩{_fmt(_tb[0])} · stop ₩{_fmt(s.get('stop'))} · max 60 min · "
+                f"conf {s.get('confidence')}%{_prk}")
     except Exception:
         pass
-    setup_sec_ko = ("\n**⚡ 1시간 단타 후보 (자동매매가 보는 것과 동일)**\n"
-                    + ("\n".join(setup_ko_l) if setup_ko_l
-                       else "- 지금은 없음 — 1시간 스캐너 기준 안전한 자리가 없습니다"))
-    setup_sec_en = ("\n**⚡ 1-hour trade candidates (exactly what the auto-trader sees)**\n"
-                    + ("\n".join(setup_en_l) if setup_en_l
-                       else "- none right now — the 1-hour scanner finds no safe setup at this moment"))
+    _eng_ko = "①머신러닝 ②뉴스 ③수급 ④차트·추세 ⑤시장상황 ⑥🤖 AI 1시간 모델"
+    _eng_en = "① machine learning · ② news · ③ investor flows · ④ chart/trend · ⑤ market regime · ⑥ 🤖 AI 1-hour model"
+    if setup_ko_l:
+        setup_sec_ko = (f"## ⚡ 지금 1시간 단타 후보 {len(setup_ko_l)}개 — 결정 엔진 통과\n"
+                        f"_결정 엔진 = {_eng_ko} — 자동매매도 이 후보들을 삽니다._\n"
+                        + "\n".join(setup_ko_l))
+        setup_sec_en = (f"## ⚡ {len(setup_en_l)} CANDIDATE(S) FOR 1-HOUR TRADING RIGHT NOW\n"
+                        f"_Decision engine = {_eng_en} — the auto-trader buys these same names._\n"
+                        + "\n".join(setup_en_l))
+    else:
+        setup_sec_ko = ("## 🚫 현재 1시간 단타 후보 없음\n"
+                        f"**결정 엔진({_eng_ko}) 기준, 지금 이 순간 60분 안에 안전하게 수익 낼 자리가 "
+                        "없습니다.** 5분마다 다시 스캔하며, 자리가 생기면 자동매매가 즉시 매수하고 "
+                        "이 답변에도 나타납니다.")
+        setup_sec_en = ("## 🚫 CURRENTLY NO CANDIDATE FOR 1-HOUR TRADING\n"
+                        f"**According to our decision engine ({_eng_en}), no stock offers a safe "
+                        "60-minute profit opportunity at this moment.** It re-scans every 5 minutes — "
+                        "when a candidate appears, the auto-trader buys it and it shows up here.")
     if buys:
         # the BUY blocks below are a DIFFERENT horizon — say so, or an empty ⚡ list next
         # to green BUY badges reads as a contradiction (boss caught exactly this).
-        setup_sec_ko += ("\n- 참고: 아래 🟢 매수 신호는 **며칠 보유용(투자 관점)** 입니다 — 60분 전용인 "
-                         "자동매매는 대상이 아니며, 직접 매수해서 며칠 들고 가는 용도예요.")
-        setup_sec_en += ("\n- Note: the 🟢 BUY signals below are **multi-day position ideas** — the "
+        setup_sec_ko += ("\n\n_참고: 아래 🟢 매수 신호는 **며칠 보유용(투자 관점)** 입니다 — 60분 전용인 "
+                         "자동매매는 대상이 아니며, 직접 매수해서 며칠 들고 가는 용도예요._")
+        setup_sec_en += ("\n\n_Note: the 🟢 BUY signals below are **multi-day position ideas** — the "
                          "60-minute auto-trader doesn't trade those; they're for you to buy and hold "
-                         "over days.")
+                         "over days._")
 
     mkt_line = None
     try:
@@ -377,15 +394,15 @@ def build(db, n: int = 3, transcript: str = "", user_key: Optional[str] = None,
 
     if en:
         if buys:
-            head = f"**🛒 What to buy now — {len(buys)} BUY signal(s) from the 3-method engine (scanned {len(results)})**"
+            head = f"**🛒 Multi-day position ideas — {len(buys)} BUY signal(s) from the 3-method engine (scanned {len(results)})**"
         else:
-            head = (f"**🛒 Honest answer: NO stock passes the 3-method BUY gate right now** "
+            head = (f"**🛒 Multi-day position ideas: none pass the 3-method BUY gate right now** "
                     f"(scanned {len(results)}). Below are the best setups to WATCH and the exact "
                     f"trigger that would turn them into buys.")
-        parts = [head]
+        parts = [setup_sec_en]
         if mkt_line:
             parts.append(f"\n**Market**: {mkt_line}")
-        parts.append(setup_sec_en)
+        parts.append("\n" + head)
         parts.append("\n" + "\n\n".join(blocks) if blocks else "\n(no data)")
         parts.append("\n" + plan)
         if not budget:
@@ -395,14 +412,14 @@ def build(db, n: int = 3, transcript: str = "", user_key: Optional[str] = None,
         text = "\n".join(parts) + (tr_line or "")
     else:
         if buys:
-            head = f"**🛒 지금 살 만한 종목 — 3-method 기준 매수 신호 {len(buys)}개 (스캔 {len(results)}종목)**"
+            head = f"**🛒 며칠 보유(투자) 후보 — 3-method 기준 매수 신호 {len(buys)}개 (스캔 {len(results)}종목)**"
         else:
-            head = (f"**🛒 솔직한 답변: 지금은 3-method 기준을 통과하는 매수 신호 종목이 없습니다** "
+            head = (f"**🛒 며칠 보유(투자) 후보: 지금은 3-method 기준을 통과하는 종목이 없습니다** "
                     f"(스캔 {len(results)}종목). 아래는 관찰할 만한 후보와, 매수로 바뀌는 조건입니다.")
-        parts = [head]
+        parts = [setup_sec_ko]
         if mkt_line:
             parts.append(f"\n**시장 상황**: {mkt_line}")
-        parts.append(setup_sec_ko)
+        parts.append("\n" + head)
         parts.append("\n" + "\n\n".join(blocks) if blocks else "\n(데이터 없음)")
         parts.append("\n" + plan)
         if not budget:
