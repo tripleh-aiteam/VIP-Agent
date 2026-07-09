@@ -4,6 +4,12 @@
 
 ## 2026-07-09 (Thursday) — Assistant "knows my desk + works as a normal LLM" round (boss live-testing feedback, 5 fixes)
 
+### [PM2] Sell/position answers analyze MY case + off-topic style parity
+
+- **What:** (a) Position/sell answers now open with **💼 내 케이스 진단** (parsed buy date/price/shares → 투자금 → 평가액 → 손익 ₩+%) and the 1-hour forecast is measured against the USER's entry with won amounts — boss's exact conditional logic: drop >1% expected → "sell now, ≈ −₩X more if it slides"; expected high above entry → "wait, break-even exit likely (+₩Y room)"; bounce short of entry → "sell the bounce"; flat+profit → "no rush, profit holds". Parser upgraded for "5 SKhynix stock from 2,200,000" / "bought 10 Samsung" phrasings. Files: `services/position_parse.py`, `services/position_advice.py`.
+- (b) Off-topic questions answer identically on both surfaces in the AI-Advisor style (bold one-line answer → keyword bullets → tip): general-rule added to VIP's prompt stack (llm_chat cap 1000→2400) and the stock backend's stocks-only deflection replaced with a 일반 질문 section. Files: `services/assistant_agent.py`, stock repo `backend/services/llm/system_prompt.py`.
+- **Verified:** live 4/4 each (position case EN/KO × VIP/AI Advisor; off-topic style incl. KO bullet recheck); regression 26/26.
+
 ### Goal
 
 Boss test rounds: (1) floating assistant vanished from the VIP dashboard, (2) "how many stock currently on the trade?" hit the picks scanner instead of his 모의투자 holdings, (3) "Yesterday how much I won?" answered with an OHLCV chart instead of his own P&L, (4) AI Advisor parity, (5) "translate this…" fired the trading engine on the quoted text. Each: fix → self-test → deploy → live-verify.
@@ -41,6 +47,14 @@ The boss caught auto-trading buying S-OIL while the chatbot said "don't buy" —
 
 - Deploy pending the boss's go (mid-market blip vs after 15:30 close). Commit `ac6cd0c`.
 - Watch the first vetoes appear in `/paper-desk/auto/tick` output; Gate 1 (≥20 trades, ≥55% win) unlocks MAX_OPEN 2→3.
+
+### [Afternoon] Consistency sweep + the boss's own exit rulebook (8 more deploys, all live-verified)
+
+- **What:** boss live-tested all day and drove: (1) `buy_picks` universe hole — CORE heavyweights (삼성전자/하이닉스/현대차) always scanned, SCAN_MAX 6→8 (his "no candidates" vs "Samsung=BUY" catch); (2) ⚡ 1-hour candidates (the auto-trader's exact list + forming watch) inside the broad buy answer; (3) horizon labels (BUY blocks = multi-day, not auto-trader targets); (4) boss headline format — answers open `## 🚫 CURRENTLY NO CANDIDATE FOR 1-HOUR TRADING` (engine components named) or `## ⚡ N candidates` w/ reason each; (5) ONE-DOOR routing — every broad buy/trade phrasing KO/EN → buy_picks (KO scalp phrasings hit the raw scanner before → different answers per language, boss caught it; verified 3 phrasings identical); (6) limits MAX_OPEN 2→4, MAX_TRADES_DAY 6→10 + cheap extension (trades 11–20 restricted to <₩100k stocks); (7) **boss exit tiers** — `intraday_setup._plan_pct()`: ≥₩100k fixed +1%/−1%; <₩100k +2~3%/−1~2% (vol picks in-band); replaces pure adaptive exits in scan_one AND movers; (8) `_DEEP_SCAN` 14→45 — whole watchlist every pass. Prod-verified: deep_scanned=39, all tiers correct.
+- **Why:** boss's law — chatbot, decision engine and auto-trading must speak/act as ONE; exits now run HIS spec (Record from this timestamp = A/B test of boss-tiers vs adaptive).
+- **Auto-trader day 1:** 8 trades · 3W5L · net +1.57% (코리아써키트 +5.15% TARGET 15min, 후성 +2.76% TARGET; all losses stop/time-capped ≤1.96%).
+- **Files:** `services/buy_picks.py`, `services/assistant_agent.py`, `services/auto_trader.py`, `services/intraday_setup.py`
+- **Next:** judge boss-tier vs adaptive exit periods separately in the 2-week record; pending offers — daily −1.5% circuit-breaker, 🐢 position-trader for multi-day BUYs, 1-min exit checks, rotating top-150 deep list (after test).
 
 ---
 
