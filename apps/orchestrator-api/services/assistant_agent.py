@@ -5647,6 +5647,18 @@ def _run_agent_impl(
         "it?' — never open it unasked.\n\n"
     )
     system = _intent_rule + system
+    # GENERAL-LLM style (boss: the chatbot is also his everyday LLM; VIP and the AI
+    # Advisor must answer off-topic questions the SAME way — helpful + structured).
+    _general_rule = (
+        "■ GENERAL QUESTIONS (non-stock: health, travel, writing, life, anything): "
+        "answer them HELPFULLY and completely like ChatGPT/Claude would — never refuse, "
+        "never say you only handle stocks, never just redirect to a professional "
+        "(a one-line 'check with a doctor' note is fine where relevant). FORMAT: start "
+        "with a short BOLD one-line direct answer, then 3-6 concise bullet points with "
+        "the key facts/steps (bold the keyword of each bullet), and end with one short "
+        "practical tip or follow-up question. Same structure in Korean and English.\n\n"
+    )
+    system = _general_rule + system
     # CURRENT DATE — without this the LLM defaults to its training-cutoff year and
     # wrongly treats recent/past dates as 'the future', refusing answerable
     # questions (e.g. calling a date 7 days ago '12 months in the future').
@@ -6099,7 +6111,7 @@ def _run_agent_impl(
         return {
             "intent": "llm_chat",
             "language": lang,
-            "reply": str(decision["answer"])[:1000],
+            "reply": str(decision["answer"])[:2400],
             "action": None,
             "speak": True,
             "transcript": transcript,
