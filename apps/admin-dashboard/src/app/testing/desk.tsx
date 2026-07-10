@@ -451,6 +451,13 @@ export default function Desk({ mode }: { mode: TradeMode }) {
 
   const liveAlerts = alerts.filter((a) => Date.now() - a.ts < 60 * 60 * 1000);
 
+  // KST market clock — after 15:20 the panels switch to their day-report card
+  // (boss: "market closed + all results instead of recommendation; the ML retrains")
+  const kstNow = new Date(Date.now() + (9 * 60 + new Date().getTimezoneOffset()) * 60000);
+  const kstMins = kstNow.getHours() * 60 + kstNow.getMinutes();
+  const marketClosed = kstNow.getDay() === 0 || kstNow.getDay() === 6
+    || kstMins < 9 * 60 || kstMins >= 15 * 60 + 20;
+
   // one card, two homes: the main-body section (semi) and the floating popup (manual)
   const alertCard = (a: SetupAlert) => {
     const leftMin = Math.max(0, Math.round(60 - (Date.now() - a.ts) / 60000));
@@ -786,7 +793,35 @@ export default function Desk({ mode }: { mode: TradeMode }) {
                   {f.ai_1h_prob != null && <span className="text-[11.5px] font-bold text-[var(--text-muted)]">🤖 {f.ai_1h_prob}%</span>}
                   {f.confidence != null && f.confidence > 0 && <span className="text-[11.5px] font-bold text-[var(--text-muted)]">{t("확신", "conf")} {f.confidence}%</span>}
                 </div>
-                {sig ? (
+                {marketClosed ? (() => {
+                  const ds = dayRep?.stocks.find((x) => x.ticker === f.code);
+                  return (
+                    <>
+                      <div className="mt-2 text-[13.5px] font-extrabold text-[var(--text-primary)]">
+                        🌙 {t("장 마감 — 추천 중단 (다음 개장 09:00)", "Market closed — no recommendations (next open 09:00)")}
+                      </div>
+                      <div className="mt-0.5 text-[11px] text-[var(--text-secondary)]">
+                        {t("엔진은 지금 새 판단을 멈추고, 오늘의 데이터를 밤새 재학습합니다 (매일 16:30 자동 재훈련 — 내일 더 똑똑해집니다).",
+                           "The engine has stopped making new calls and retrains overnight on today's data (daily 16:30 auto-retrain — smarter tomorrow).")}
+                      </div>
+                      {ds ? (
+                        <div className="mt-2 px-3 py-2 rounded-lg border text-[12px] tabular-nums"
+                          style={{ borderColor: "var(--border-default)", background: "var(--bg-primary)" }}>
+                          <b className="text-[var(--text-primary)]">📊 {t("오늘 이 종목 결과", "Today on this stock")}</b>
+                          <div className="mt-1">{t("매매", "Trades")}: <b>{ds.buys}{t("매수", "B")} / {ds.sells}{t("매도", "S")}</b>
+                            {" · "}{t("승/패", "W/L")}: <b>{ds.wins}{t("승", "W")} {ds.losses}{t("패", "L")}</b></div>
+                          <div>{t("실현손익", "Realized")}: <b style={{ color: pnlCol(ds.realized) }}>{ds.realized > 0 ? "+" : ""}{fmt(ds.realized)}{t("원", "")}</b>
+                            {ds.avg_pct != null && <> · {t("평균", "avg")} <b style={{ color: pnlCol(ds.avg_pct) }}>{ds.avg_pct > 0 ? "+" : ""}{ds.avg_pct}%</b></>}</div>
+                          <div>{t("매수금액", "Bought")}: {fmt(ds.bought_value)} · {t("매도금액", "Sold")}: {fmt(ds.sold_value)}</div>
+                        </div>
+                      ) : (
+                        <div className="mt-2 text-[11.5px] text-[var(--text-muted)]">
+                          {t("오늘 이 종목은 거래하지 않았습니다.", "No trades on this stock today.")}
+                        </div>
+                      )}
+                    </>
+                  );
+                })() : sig ? (
                   <>
                     <div className="mt-2 text-[15px] font-extrabold" style={{ color: RED }}>
                       🔴 {t(`매수 신호! 1시간 내 +${f.target_pct?.[0]}% ~ +${f.target_pct?.[1]}% 상승 예상`,
@@ -896,7 +931,7 @@ export default function Desk({ mode }: { mode: TradeMode }) {
                 {/* 🧠 the DECISION ENGINE's full opinion — detailed plain-language
                     bullets, BOTH cases (boss 2026-07-10: "accuracy is low, no good
                     news, something like this…") */}
-                {f.opinion && (() => {
+                {!marketClosed && f.opinion && (() => {
                   const op = f.opinion!;
                   const L: string[] = [];
                   const mlAcc = op.ml_acc != null ? Math.round(op.ml_acc) : null;
