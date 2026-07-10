@@ -345,7 +345,7 @@ def state(db) -> dict[str, Any]:
         "SELECT id, ticker, name, side, qty, order_type, limit_price, status, fill_price, "
         "realized_pnl, realized_pnl_pct, note, created_at, filled_at "
         "FROM paper_desk_orders WHERE status IN ('FILLED','REJECTED','CANCELLED') "
-        "ORDER BY COALESCE(filled_at, created_at) DESC LIMIT 60"))]
+        "ORDER BY COALESCE(filled_at, created_at) DESC LIMIT 400"))]
     sells = [h for h in history if h["side"] == "SELL" and h["status"] == "FILLED"
              and h.get("realized_pnl") is not None]
     wins = sum(1 for h in sells if h["realized_pnl"] > 0)

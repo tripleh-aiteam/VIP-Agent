@@ -64,6 +64,9 @@ def _ensure(db) -> None:
         db.rollback()
 
 
+_sell_cooldown: dict[str, float] = {}   # ticker → ts of a FAILED guard sell (anti-spam)
+
+
 def run(db) -> list[dict[str, Any]]:
     """One guard pass over the focus positions. Returns the sells it executed."""
     _ensure(db)
@@ -114,8 +117,14 @@ def run(db) -> list[dict[str, Any]]:
             reason = "GUARD_TRAIL"         # was +1%+, now -1% off the peak
         if not reason:
             continue
+        # anti-spam: a rejected guard sell (e.g. the position was just sold by another
+        # path in the same moment) must NOT retry every pass and flood the history
+        import time as _t
+        if _t.time() - _sell_cooldown.get(tk, 0) < 1800:
+            continue
         r = place_order(db, tk, "SELL", int(qty), "market")
         if r.get("ok"):
+            _sell_cooldown.pop(tk, None)
             try:
                 db.execute(text("DELETE FROM guard_peaks WHERE ticker=:t"), {"t": tk})
                 db.commit()
@@ -126,6 +135,10 @@ def run(db) -> list[dict[str, Any]]:
                             "peak": round(peak)})
             logger.info("position_guard SELL %s x%s (%s) fill=%s", tk, qty, reason,
                         r.get("fill_price"))
+        else:
+            _sell_cooldown[tk] = _t.time()
+            logger.warning("position_guard SELL %s failed (%s) — 30min cooldown",
+                           tk, r.get("reason") or r.get("error"))
     return actions
 
 
