@@ -74,6 +74,11 @@ type FocusStock = {
   why_ko?: string | null; why_en?: string | null; reason_ko?: string | null;
   reason_en?: string | null; trigger_ko?: string | null; trigger_en?: string | null;
   qualified?: boolean; vetoed?: boolean;
+  guard?: {
+    qty: number; avg: number; peak?: number | null; armed?: boolean;
+    auto_managed?: boolean; stop_line?: number | null; trail_line?: number | null;
+    pnl_pct?: number | null; advice_ko?: string | null; advice_en?: string | null;
+  } | null;
   opinion?: {
     decision?: string | null; score?: number | null; confidence?: string | null;
     ml?: string | null; ml_acc?: number | null; analysis?: string | null;
@@ -709,6 +714,45 @@ export default function Desk({ mode }: { mode: TradeMode }) {
                       {(lang === "ko" ? f.reason_ko : (f.reason_en || f.reason_ko)) || t("조건 미충족", "conditions not met")}
                     </div>
                   </>
+                )}
+                {/* 🛡️ HIS holding on this stock: P&L + the guard's automatic protection
+                    lines + the "don't sell yet" advice (boss 2026-07-10) */}
+                {f.guard && (
+                  <div className="mt-2 px-3 py-2 rounded-lg border text-[12px]"
+                    style={{ borderColor: (f.guard.pnl_pct ?? 0) >= 0 ? "#2e7d32" : "#e65100",
+                             background: (f.guard.pnl_pct ?? 0) >= 0 ? "rgba(46,125,50,0.06)" : "rgba(230,81,0,0.06)" }}>
+                    <b className="text-[var(--text-primary)]">
+                      💼 {t(`보유 ${fmt(f.guard.qty)}주 · 평단 ₩${fmt(f.guard.avg)}`,
+                            `Holding ${fmt(f.guard.qty)}sh · avg ₩${fmt(f.guard.avg)}`)}
+                    </b>
+                    {f.guard.pnl_pct != null && (
+                      <b className="ml-1 tabular-nums" style={{ color: pnlCol(f.guard.pnl_pct) }}>
+                        {f.guard.pnl_pct > 0 ? "+" : ""}{f.guard.pnl_pct}%
+                      </b>
+                    )}
+                    {f.guard.auto_managed ? (
+                      <div className="mt-0.5 text-[11px] text-[var(--text-muted)]">
+                        {t("🤖 이 보유분은 자동매매가 자체 목표/손절/60분 규칙으로 관리 중입니다.",
+                           "🤖 This holding is managed by the auto-trade's own target/stop/60-min doors.")}
+                      </div>
+                    ) : (
+                      <>
+                        <div className="mt-0.5 text-[11px] text-[var(--text-secondary)]">
+                          🛡️ {t(`자동 보호: ₩${fmt(f.guard.stop_line)} (평단 -1%) 아래로 내려가면 즉시 자동 매도`,
+                                `Auto-protection: falls to ₩${fmt(f.guard.stop_line)} (avg −1%) → sold instantly`)}
+                          {f.guard.armed && f.guard.trail_line != null && (
+                            <> · {t(`이익 보호: 고점 ₩${fmt(f.guard.peak)} 대비 -1% (₩${fmt(f.guard.trail_line)}) 도달 시 자동 매도`,
+                                    `profit lock: −1% off the ₩${fmt(f.guard.peak)} peak (₩${fmt(f.guard.trail_line)}) → sold`)}</>
+                          )}
+                        </div>
+                        {(lang === "ko" ? f.guard.advice_ko : (f.guard.advice_en || f.guard.advice_ko)) && (
+                          <div className="mt-1 text-[12px] font-bold" style={{ color: "#2e7d32" }}>
+                            {lang === "ko" ? f.guard.advice_ko : (f.guard.advice_en || f.guard.advice_ko)}
+                          </div>
+                        )}
+                      </>
+                    )}
+                  </div>
                 )}
                 {/* 🧠 the DECISION ENGINE's full opinion — detailed plain-language
                     bullets, BOTH cases (boss 2026-07-10: "accuracy is low, no good

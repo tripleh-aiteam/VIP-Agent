@@ -102,6 +102,16 @@ def tick(db, force: bool = False) -> dict[str, Any]:
         out["reason"] = "market closed"
         return out
 
+    # ---- 0) POSITION GUARD backstop (boss's -1%/-peak-1% auto-protection on his own
+    # focus holdings; the desk page's 4s poll is primary, this cron covers page-closed)
+    try:
+        from services.position_guard import run as _guard_run
+        _g = _guard_run(db)
+        if _g:
+            out["guard"] = _g
+    except Exception:
+        db.rollback()
+
     # ---- 1) MANAGE OPEN AUTO-POSITIONS (exits first — protection before opportunity) --
     from services.paper_desk import place_order
     open_rows = db.execute(text(
@@ -342,6 +352,46 @@ def focus_status(db, codes: Optional[list[str]] = None) -> dict[str, Any]:
             }
         except Exception:
             db.rollback()
+        # 🛡️ his own holding on this stock: guard lines + the "don't sell" advice
+        guard: Optional[dict[str, Any]] = None
+        try:
+            from services.position_guard import TRAIL_PCT
+            from services.position_guard import info as _ginfo
+            guard = _ginfo(db, code)
+            if guard and s.get("price") and guard.get("avg"):
+                _pnl = (float(s["price"]) / guard["avg"] - 1) * 100
+                guard["pnl_pct"] = round(_pnl, 2)
+                if _pnl >= 1.0:
+                    # engine still bullish? → say "don't sell" with the reasons
+                    _bull: list[str] = []
+                    _bull_en: list[str] = []
+                    if (s.get("ai_1h_prob") or 0) >= 55:
+                        _bull.append(f"AI 상승확률 {s['ai_1h_prob']}%")
+                        _bull_en.append(f"AI up-prob {s['ai_1h_prob']}%")
+                    _mk = (opinion or {}).get("micro_ko") or ""
+                    if "UP" in ((opinion or {}).get("micro_en") or "") or "상승" in _mk:
+                        _bull.append("5분 흐름 상승 중")
+                        _bull_en.append("5-min flow rising")
+                    if (opinion or {}).get("decision") == "BUY":
+                        _bull.append("종합 엔진 매수 의견")
+                        _bull_en.append("fused engine says BUY")
+                    if s.get("state") == "ACT_NOW":
+                        _bull.append("1시간 셋업 유효")
+                        _bull_en.append("1-hour setup still live")
+                    if _bull:
+                        guard["advice_ko"] = ("💬 지금 팔지 마세요 — 더 오를 가능성이 남아 있습니다 ("
+                                              + " · ".join(_bull) + "). 내려가기 시작하면 제가 고점 대비 "
+                                              f"-{TRAIL_PCT:.0f}%에서 자동으로 팔아 이익을 지킵니다.")
+                        guard["advice_en"] = ("💬 Don't sell yet — more upside looks likely ("
+                                              + " · ".join(_bull_en) + "). If it turns down, I auto-sell "
+                                              f"at {TRAIL_PCT:.0f}% below the peak to protect the profit.")
+                    else:
+                        guard["advice_ko"] = ("💬 상승 근거가 약해졌습니다 — 직접 파셔도 되고, 두면 고점 대비 "
+                                              f"-{TRAIL_PCT:.0f}%에서 자동 매도로 이익을 지킵니다.")
+                        guard["advice_en"] = ("💬 The rise is losing backing — sell if you like, or the "
+                                              f"guard auto-sells {TRAIL_PCT:.0f}% off the peak to keep the profit.")
+        except Exception:
+            db.rollback()
         out["stocks"].append({
             "code": code, "name": name,
             **{k: s.get(k) for k in (
@@ -349,7 +399,7 @@ def focus_status(db, codes: Optional[list[str]] = None) -> dict[str, Any]:
                 "target_pct", "stop", "stop_pct", "time_min", "why_ko", "why_en",
                 "reason_ko", "reason_en", "trigger_ko", "trigger_en")},
             "qualified": qualified and not vetoed, "vetoed": vetoed,
-            "opinion": opinion})
+            "opinion": opinion, "guard": guard})
     try:
         from services.method_weights import intraday_stats
         _ml = (intraday_stats(db) or {}).get("ml") or {}

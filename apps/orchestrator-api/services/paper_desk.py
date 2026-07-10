@@ -306,7 +306,14 @@ def deposit(db, amount: float) -> dict:
 
 def state(db) -> dict[str, Any]:
     """Everything the Testing page renders. Also triggers pending limit fills (so the
-    page's poll IS the fill engine — no separate cron needed)."""
+    page's poll IS the fill engine — no separate cron needed) and the POSITION GUARD
+    (boss 2026-07-10: focus holdings auto-sell at -1% / peak-1% — 'immediately', and
+    this 4s poll is the fastest heartbeat we have)."""
+    try:
+        from services.position_guard import run as _guard_run
+        _guard_run(db)
+    except Exception:
+        db.rollback()
     _ensure(db)
     try:
         check_limit_orders(db)
