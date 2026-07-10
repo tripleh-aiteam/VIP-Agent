@@ -304,7 +304,9 @@ def buy_candidates(db, max_n: int = 3) -> dict[str, Any]:
     return out
 
 
-FOCUS_CODES = ["005930", "000660"]   # boss's semi-auto test focus: 삼성전자 + SK하이닉스
+from services.position_guard import GUARD_CODES as FOCUS_CODES   # the boss's 20 companies
+
+_focus_cache: dict[str, Any] = {"t": 0.0, "v": None}
 
 
 def focus_status(db, codes: Optional[list[str]] = None) -> dict[str, Any]:
@@ -312,6 +314,9 @@ def focus_status(db, codes: Optional[list[str]] = None) -> dict[str, Any]:
     test stocks — ALWAYS answers, signal or not: ACT_NOW plan (veto-checked), FORMING
     with its trigger, or NOTHING with the honest reason. The auto-trader keeps its own
     full-market universe in the background (self-improvement data)."""
+    import time as _time
+    if codes is None and _focus_cache["v"] is not None and _time.time() - _focus_cache["t"] < 50:
+        return _focus_cache["v"]
     from services import prediction_service as ps
     out: dict[str, Any] = {"stocks": [], "hour_acc": None}
     for code in (codes or FOCUS_CODES):
@@ -326,13 +331,21 @@ def focus_status(db, codes: Optional[list[str]] = None) -> dict[str, Any]:
             s = {"state": "ERROR", "reason_ko": "데이터 오류", "reason_en": "data error"}
         qualified = bool(s.get("state") == "ACT_NOW" and (s.get("confidence") or 0) >= MIN_CONF)
         vetoed = False
-        # FULL ENGINE OPINION for BOTH cases (boss 2026-07-10: even when it does NOT
-        # recommend, show WHY — the decision engine's view, in detail). decide_cached
-        # ttl=180s keeps the heavy call to ~once per stock per 3 minutes.
+        # holding? fetched first — a held stock always earns the full opinion
+        guard0: Optional[dict[str, Any]] = None
+        try:
+            from services.position_guard import info as _ginfo0
+            guard0 = _ginfo0(db, code)
+        except Exception:
+            db.rollback()
+        # FULL ENGINE OPINION — only for ACTIVE panels (signal / forming / held): with
+        # 20 fixed companies, a decide() per stock per poll would take minutes. Quiet
+        # panels carry the 📖 detail button, which computes the full story on demand.
+        need_opinion = s.get("state") in ("ACT_NOW", "FORMING") or guard0 is not None
         opinion: Optional[dict[str, Any]] = None
         try:
             from services.decision_agent import decide_cached
-            _d = decide_cached(db, code, ttl=180) or {}
+            _d = (decide_cached(db, code, ttl=180) or {}) if need_opinion else {}
             if qualified and _d.get("decision") == "SELL":
                 vetoed = True
             _m1 = _d.get("method1_ml") or {}
@@ -340,24 +353,24 @@ def focus_status(db, codes: Optional[list[str]] = None) -> dict[str, Any]:
             _m3 = _d.get("method3_wave") or {}
             _news = _d.get("news") or {}
             _micro = _d.get("micro_trend") or {}
-            opinion = {
-                "decision": _d.get("decision"), "score": _d.get("score"),
-                "confidence": _d.get("confidence"),
-                "ml": _m1.get("call") or None, "ml_acc": _m1.get("accuracy_pct"),
-                "analysis": _m2.get("signal") or None,
-                "wave": _m3.get("verdict") or None,
-                "news_score": _news.get("score"),
-                "micro_ko": (_micro or {}).get("line_ko"),
-                "micro_en": (_micro or {}).get("line_en"),
-            }
+            if need_opinion:
+                opinion = {
+                    "decision": _d.get("decision"), "score": _d.get("score"),
+                    "confidence": _d.get("confidence"),
+                    "ml": _m1.get("call") or None, "ml_acc": _m1.get("accuracy_pct"),
+                    "analysis": _m2.get("signal") or None,
+                    "wave": _m3.get("verdict") or None,
+                    "news_score": _news.get("score"),
+                    "micro_ko": (_micro or {}).get("line_ko"),
+                    "micro_en": (_micro or {}).get("line_en"),
+                }
         except Exception:
             db.rollback()
         # 🛡️ his own holding on this stock: guard lines + the "don't sell" advice
         guard: Optional[dict[str, Any]] = None
         try:
             from services.position_guard import TRAIL_PCT
-            from services.position_guard import info as _ginfo
-            guard = _ginfo(db, code)
+            guard = guard0
             if guard and s.get("price") and guard.get("avg"):
                 _pnl = (float(s["price"]) / guard["avg"] - 1) * 100
                 guard["pnl_pct"] = round(_pnl, 2)
@@ -448,6 +461,8 @@ def focus_status(db, codes: Optional[list[str]] = None) -> dict[str, Any]:
             out["hour_acc"] = {"acc": _ml["acc"], "n": _ml["n"]}
     except Exception:
         db.rollback()
+    if codes is None:
+        _focus_cache["t"], _focus_cache["v"] = _time.time(), out
     return out
 
 

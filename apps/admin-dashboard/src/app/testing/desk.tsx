@@ -311,7 +311,6 @@ export default function Desk({ mode }: { mode: TradeMode }) {
         const fresh: SetupAlert[] = [];
         for (const s of r.candidates || []) {
           if (!s || !s.code) continue;
-          if (!FOCUS.includes(s.code)) continue;   // focus stocks only (boss test)
           const last = seenSetups.current.get(s.code);
           if (last && now - last < 60 * 60 * 1000) continue;   // one alarm per stock per hour
           seenSetups.current.set(s.code, now);
@@ -638,8 +637,16 @@ export default function Desk({ mode }: { mode: TradeMode }) {
           EVERY mode page (boss). Semi/Manual: BUY button (YOU decide). Auto: info-only
           (the machine acts). Both cases fully explained. */}
       {(
-        <div className="mb-4 grid gap-3" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(340px, 1fr))" }}>
-          {(focus.length ? focus : FOCUS.map((c) => ({ code: c, name: c === "005930" ? "삼성전자" : "SK하이닉스" } as FocusStock))).map((f) => {
+        <div className="mb-4 grid gap-3" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(340px, 1fr))" }}>
+          {focus.length === 0 && (
+            <div className="px-4 py-6 text-[12px] text-[var(--text-muted)] rounded-2xl border" style={{ borderColor: "var(--border-default)" }}>
+              {t("20개 관심기업 보드를 불러오는 중…", "Loading the 20-company board…")}
+            </div>
+          )}
+          {[...focus].sort((a, b) => {
+            const rank = (x: FocusStock) => (x.qualified ? 0 : x.state === "FORMING" ? 1 : x.guard ? 2 : 3);
+            return rank(a) - rank(b);
+          }).map((f) => {
             const sig = !!f.qualified;
             const forming = f.state === "FORMING";
             const border = sig ? RED : forming ? "#e65100" : "var(--border-default)";

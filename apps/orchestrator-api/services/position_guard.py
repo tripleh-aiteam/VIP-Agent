@@ -21,7 +21,32 @@ from sqlalchemy import text
 
 logger = logging.getLogger("vip.position_guard")
 
-GUARD_CODES = ["005930", "000660"]   # the boss's focus stocks
+# The boss's 20 FOCUS companies (2026-07-10: "put total 20 Korean companies in the
+# list") — the semi-auto board's fixed panels AND the stocks his -1%/peak-1% guard
+# protects. Liquid KR majors, weighted toward our deep-collected watchlist so the
+# 5-min charts and scans have data.
+GUARD_CODES = [
+    "005930",  # 삼성전자
+    "000660",  # SK하이닉스
+    "042660",  # 한화오션
+    "035420",  # NAVER
+    "009150",  # 삼성전기
+    "373220",  # LG에너지솔루션
+    "005380",  # 현대차
+    "000270",  # 기아
+    "005490",  # POSCO홀딩스
+    "035720",  # 카카오
+    "051910",  # LG화학
+    "006400",  # 삼성SDI
+    "105560",  # KB금융
+    "055550",  # 신한지주
+    "012450",  # 한화에어로스페이스
+    "329180",  # HD현대중공업
+    "034020",  # 두산에너빌리티
+    "010140",  # 삼성중공업
+    "042700",  # 한미반도체
+    "066570",  # LG전자
+]
 STOP_PCT = 1.0                       # sell at -1% from his average buy price
 ARM_PCT = 1.0                        # trailing activates once +1% above average…
 TRAIL_PCT = 1.0                      # …then sell on a 1% drop from the peak
