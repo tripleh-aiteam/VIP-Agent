@@ -263,16 +263,17 @@ export default function Desk({ mode }: { mode: TradeMode }) {
         layout: { background: { color: "transparent" }, textColor: dark ? "#aaa" : "#666" },
         grid: { vertLines: { color: "rgba(128,128,128,0.12)" }, horzLines: { color: "rgba(128,128,128,0.12)" } },
         timeScale: { timeVisible: chartTf === "5m" || chartTf === "1h", secondsVisible: false },
+        leftPriceScale: { visible: true, scaleMargins: { top: 0.75, bottom: 0 } },
       });
       const series = chart.addCandlestickSeries({
         upColor: "#d32f2f", downColor: "#1565c0", borderUpColor: "#d32f2f",
         borderDownColor: "#1565c0", wickUpColor: "#d32f2f", wickDownColor: "#1565c0",
       });
-      // 거래량 bars along the bottom (boss: volume matters)
+      // 거래량 bars along the bottom, numbers on the LEFT axis (boss: like Kiwoom —
+      // the volume value must be readable; K/M-compact formatting)
       const volSeries = chart.addHistogramSeries({
-        priceFormat: { type: "volume" }, priceScaleId: "vol",
+        priceFormat: { type: "volume" }, priceScaleId: "left",
       });
-      chart.priceScale("vol").applyOptions({ scaleMargins: { top: 0.8, bottom: 0 } });
       // moving-average lines (orange 5 · blue 20 · green 60) — the colored guide lines
       const maVisible = (() => { try { return localStorage.getItem("chart-ma") !== "off"; } catch { return true; } })();
       const ma5 = chart.addLineSeries({ color: "#ff9800", lineWidth: 1, priceLineVisible: false, lastValueVisible: false, visible: maVisible });
@@ -1221,6 +1222,17 @@ export default function Desk({ mode }: { mode: TradeMode }) {
               <button onClick={() => { setChartCode(null); setChartDetail(null); }}
                 className="ml-1 text-[14px] font-extrabold text-[var(--text-muted)] px-2 py-0.5 rounded hover:opacity-70">✕</button>
             </div>
+          </div>
+          {/* what each colored thing means (boss: small explanation per line) */}
+          <div className="px-3 py-1 text-[10.5px] text-[var(--text-muted)] border-b border-[var(--border-default)]/40 flex gap-3 flex-wrap">
+            {showMa && (
+              <>
+                <span><b style={{ color: "#ff9800" }}>— 🟠 5평균선</b> {t("최근 5개 봉의 평균가 — 단기 흐름 (가격이 위면 단기 상승)", "avg of last 5 candles — short-term pulse (price above = short-term up)")}</span>
+                <span><b style={{ color: "#2196f3" }}>— 🔵 20평균선</b> {t("중기 흐름 — 엔진의 '2시간 평균' 판단과 비슷한 역할", "medium trend — similar role to the engine's 2-hour average")}</span>
+                <span><b style={{ color: "#4caf50" }}>— 🟢 60평균선</b> {t("장기 추세 — 이 위에 있어야 건강한 상승", "long trend — healthy rises live above it")}</span>
+              </>
+            )}
+            <span><b>▮ {t("아래 막대", "bottom bars")}</b> {t("거래량(왼쪽 숫자) — 빨강=상승봉 거래, 파랑=하락봉 거래. 막대가 클수록 진짜 돈이 움직인 것", "volume (numbers on the LEFT axis) — red=up-candle, blue=down-candle; taller bars = real money moving")}</span>
           </div>
           <div ref={chartRef} style={{ height: 380 }} />
           <div className="px-3 py-1.5 text-[10px] text-[var(--text-muted)]">
