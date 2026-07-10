@@ -26,8 +26,8 @@ logger = logging.getLogger("vip.position_guard")
 # protects. Liquid KR majors, weighted toward our deep-collected watchlist so the
 # 5-min charts and scans have data.
 GUARD_CODES = [
-    "005930",  # 삼성전자
-    "000660",  # SK하이닉스
+    "000660",  # SK하이닉스 (boss: first)
+    "005930",  # 삼성전자 (second)
     "042660",  # 한화오션
     "035420",  # NAVER
     "009150",  # 삼성전기

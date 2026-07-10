@@ -644,7 +644,10 @@ export default function Desk({ mode }: { mode: TradeMode }) {
             </div>
           )}
           {[...focus].sort((a, b) => {
-            const rank = (x: FocusStock) => (x.qualified ? 0 : x.state === "FORMING" ? 1 : x.guard ? 2 : 3);
+            // boss: SK하이닉스 first, 삼성전자 second — then actives before quiet
+            const rank = (x: FocusStock) =>
+              x.code === "000660" ? -2 : x.code === "005930" ? -1
+              : x.qualified ? 0 : x.state === "FORMING" ? 1 : x.guard ? 2 : 3;
             return rank(a) - rank(b);
           }).map((f) => {
             const sig = !!f.qualified;

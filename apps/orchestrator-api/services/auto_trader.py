@@ -322,6 +322,14 @@ def focus_status(db, codes: Optional[list[str]] = None) -> dict[str, Any]:
     for code in (codes or FOCUS_CODES):
         code = str(code).zfill(6)
         name = ps.NAMES.get(code, code)
+        if name == code:                # outside the collected ~40 → full KRX list
+            try:
+                _r = db.execute(text(
+                    "SELECT name FROM krx_stocks WHERE code=:c"), {"c": code}).first()
+                if _r:
+                    name = _r[0]
+            except Exception:
+                db.rollback()
         s: dict[str, Any] = {}
         try:
             from services.intraday_setup import setup_for
