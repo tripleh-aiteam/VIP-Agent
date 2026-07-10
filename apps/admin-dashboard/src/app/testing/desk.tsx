@@ -243,6 +243,14 @@ export default function Desk({ mode }: { mode: TradeMode }) {
     }
   };
 
+  // result banners auto-dismiss (boss: the '⏳ 매수 대기' note stayed on screen
+  // forever after he'd already bought) — pending orders still show in 대기 주문
+  useEffect(() => {
+    if (!msg) return;
+    const to = setTimeout(() => setMsg(null), 12000);
+    return () => clearTimeout(to);
+  }, [msg]);
+
   const liveAlerts = alerts.filter((a) => Date.now() - a.ts < 60 * 60 * 1000);
 
   // one card, two homes: the main-body section (semi) and the floating popup (manual)
