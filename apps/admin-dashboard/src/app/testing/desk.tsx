@@ -225,6 +225,16 @@ export default function Desk({ mode }: { mode: TradeMode }) {
     source?: string; candles?: { time: string; open: number; high: number; low: number; close: number }[];
   } | null>(null);
   const chartRef = useRef<HTMLDivElement | null>(null);
+  // MA guide lines: ON by default, one button hides them (boss)
+  const [showMa, setShowMa] = useState<boolean>(() => {
+    if (typeof window === "undefined") return true;
+    return localStorage.getItem("chart-ma") !== "off";
+  });
+  const maRef = useRef<{ applyOptions: (o: { visible: boolean }) => void }[]>([]);
+  useEffect(() => {
+    try { localStorage.setItem("chart-ma", showMa ? "on" : "off"); } catch {}
+    for (const s of maRef.current) { try { s.applyOptions({ visible: showMa }); } catch {} }
+  }, [showMa]);
 
   // price strip + daily candles (poll 20s while a chart is open)
   useEffect(() => {
@@ -264,9 +274,11 @@ export default function Desk({ mode }: { mode: TradeMode }) {
       });
       chart.priceScale("vol").applyOptions({ scaleMargins: { top: 0.8, bottom: 0 } });
       // moving-average lines (orange 5 · blue 20 · green 60) — the colored guide lines
-      const ma5 = chart.addLineSeries({ color: "#ff9800", lineWidth: 1, priceLineVisible: false, lastValueVisible: false });
-      const ma20 = chart.addLineSeries({ color: "#2196f3", lineWidth: 1, priceLineVisible: false, lastValueVisible: false });
-      const ma60 = chart.addLineSeries({ color: "#4caf50", lineWidth: 1, priceLineVisible: false, lastValueVisible: false });
+      const maVisible = (() => { try { return localStorage.getItem("chart-ma") !== "off"; } catch { return true; } })();
+      const ma5 = chart.addLineSeries({ color: "#ff9800", lineWidth: 1, priceLineVisible: false, lastValueVisible: false, visible: maVisible });
+      const ma20 = chart.addLineSeries({ color: "#2196f3", lineWidth: 1, priceLineVisible: false, lastValueVisible: false, visible: maVisible });
+      const ma60 = chart.addLineSeries({ color: "#4caf50", lineWidth: 1, priceLineVisible: false, lastValueVisible: false, visible: maVisible });
+      maRef.current = [ma5, ma20, ma60];
       type Bar = { time: number | string; open: number; high: number; low: number; close: number; volume?: number };
       const applyAll = (bars: Bar[]) => {
         series.setData(bars as never);
@@ -1106,6 +1118,13 @@ export default function Desk({ mode }: { mode: TradeMode }) {
                   {lab}
                 </button>
               ))}
+              <button onClick={() => setShowMa(!showMa)}
+                title={t("이동평균선 (🟠5 · 🔵20 · 🟢60)", "moving averages (🟠5 · 🔵20 · 🟢60)")}
+                className="text-[11.5px] font-extrabold px-2.5 py-1 rounded-md border"
+                style={showMa ? { background: "#ff9800", color: "#fff", borderColor: "#ff9800" }
+                              : { borderColor: "var(--border-default)", color: "var(--text-muted)" }}>
+                {showMa ? t("📉 라인 숨기기", "📉 Hide lines") : t("📈 라인 표시", "📈 Show lines")}
+              </button>
               <button onClick={() => { setChartCode(null); setChartDetail(null); }}
                 className="ml-1 text-[14px] font-extrabold text-[var(--text-muted)] px-2 py-0.5 rounded hover:opacity-70">✕</button>
             </div>
