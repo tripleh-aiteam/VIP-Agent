@@ -284,6 +284,26 @@ def reset(db, cash: float = START_CASH) -> dict:
     return {"ok": True, "cash": cash}
 
 
+def deposit(db, amount: float) -> dict:
+    """Add fake money (boss 2026-07-10: a 'fill money' button). start_cash rises by the
+    same amount so the P&L% stays honest — a deposit is not a profit."""
+    try:
+        amount = float(amount)
+    except Exception:
+        return {"ok": False, "error": "bad amount"}
+    if not (1_000_000 <= amount <= 1_000_000_000):
+        return {"ok": False, "error": "amount must be between ₩100만 and ₩10억"}
+    if not _allow("deposit", per_min=3):
+        return {"ok": False, "error": "deposit throttled — wait a minute"}
+    _ensure(db)
+    db.execute(text(
+        "UPDATE paper_desk_account SET cash=cash+:a, start_cash=start_cash+:a WHERE id=1"),
+        {"a": amount})
+    db.commit()
+    r = db.execute(text("SELECT cash FROM paper_desk_account WHERE id=1")).first()
+    return {"ok": True, "added": amount, "cash": float(r[0]) if r else None}
+
+
 def state(db) -> dict[str, Any]:
     """Everything the Testing page renders. Also triggers pending limit fills (so the
     page's poll IS the fill engine — no separate cron needed)."""

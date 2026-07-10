@@ -159,6 +159,14 @@ def desk_reset(cash: float = Query(100_000_000), db: Session = Depends(get_db)):
     return reset(db, cash=cash)
 
 
+@router.post("/deposit")
+def desk_deposit(amount: float = Query(100_000_000), db: Session = Depends(get_db)):
+    """Add fake money to the desk (boss's 'fill money' button) — start_cash rises too
+    so the P&L% stays honest."""
+    from services.paper_desk import deposit
+    return deposit(db, amount)
+
+
 # ---- Phase 4: the AUTO-AGENT (auto-trades the scanner's setups on this desk) ----
 @router.get("/auto/status")
 def auto_status(db: Session = Depends(get_db)):

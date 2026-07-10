@@ -74,6 +74,12 @@ type FocusStock = {
   why_ko?: string | null; why_en?: string | null; reason_ko?: string | null;
   reason_en?: string | null; trigger_ko?: string | null; trigger_en?: string | null;
   qualified?: boolean; vetoed?: boolean;
+  opinion?: {
+    decision?: string | null; score?: number | null; confidence?: string | null;
+    ml?: string | null; ml_acc?: number | null; analysis?: string | null;
+    wave?: string | null; news_score?: number | null;
+    micro_ko?: string | null; micro_en?: string | null;
+  } | null;
 };
 
 // Defined OUTSIDE the page component: defining this inline recreated the component
@@ -158,9 +164,9 @@ export default function Desk({ mode }: { mode: TradeMode }) {
     return () => clearInterval(i);
   }, []);
 
-  // semi: poll the focus board every 60s (always answers — signal, forming, or none)
+  // semi + auto: poll the focus board every 60s (always answers — signal/forming/none)
   useEffect(() => {
-    if (mode !== "semi") return;
+    if (mode === "manual") return;
     const check = () => {
       api<{ stocks?: FocusStock[]; hour_acc?: { acc: number; n: number } }>("/paper-desk/auto/focus").then((r) => {
         setFocus(r.stocks || []);
@@ -396,12 +402,34 @@ export default function Desk({ mode }: { mode: TradeMode }) {
     await apiPost("/paper-desk/reset?cash=100000000"); load();
   };
 
+  // 💰 fill money (boss): add fake cash without touching the record; P&L% stays honest
+  const depositCash = async () => {
+    const raw = prompt(t("얼마를 추가할까요? (원, 100만~10억)", "How much to add? (₩1M–₩1B)"), "100000000");
+    if (!raw) return;
+    const amt = parseInt(raw.replace(/[^0-9]/g, ""));
+    if (!amt) return;
+    const r = await apiPost<{ ok: boolean; cash?: number; error?: string }>(`/paper-desk/deposit?amount=${amt}`);
+    setMsg(r.ok ? t(`✅ 자금 추가: +₩${fmt(amt)} → 현금 ₩${fmt(r.cash)}`, `✅ Deposited +₩${fmt(amt)} → cash ₩${fmt(r.cash)}`)
+                : `❌ ${r.error || "failed"}`);
+    load();
+  };
+
+  // ⭐ FOCUS-ONLY display (boss: show only 삼성전자+SK하이닉스 in every mode; the
+  // background full-market auto keeps running — one click reveals everything)
+  const [focusOnly, setFocusOnly] = useState(true);
+  const posShown = (st?.positions || []).filter((p) => !focusOnly || FOCUS.includes(p.ticker));
+  const posHidden = (st?.positions.length ?? 0) - posShown.length;
+
   return (
     <div className="px-4 md:px-8 py-6 max-w-[1080px] mx-auto">
       <div className="mb-1 flex items-baseline gap-2 flex-wrap">
         <h1 className="text-[19px] font-extrabold text-[var(--text-primary)]">🧪 {t("모의투자 테스트", "Paper Trading Test")}</h1>
         <span className="text-[11px] text-[var(--text-muted)]">{t("가짜 돈 · 실시간 키움 시세 · 챗봇 조언을 직접 검증", "fake money · live Kiwoom prices · verify the chatbot's advice yourself")}</span>
-        <button onClick={resetDesk} className="ml-auto text-[11px] font-bold px-2.5 py-1 rounded-md border border-[var(--border-default)] text-[var(--text-muted)]">
+        <button onClick={depositCash} className="ml-auto text-[11px] font-extrabold px-2.5 py-1 rounded-md border text-white"
+          style={{ background: "#2e7d32", borderColor: "#2e7d32" }}>
+          💰 {t("자금 추가", "Add funds")}
+        </button>
+        <button onClick={resetDesk} className="text-[11px] font-bold px-2.5 py-1 rounded-md border border-[var(--border-default)] text-[var(--text-muted)]">
           {t("초기화", "Reset")}
         </button>
       </div>
@@ -482,10 +510,10 @@ export default function Desk({ mode }: { mode: TradeMode }) {
         </div>
       )}
 
-      {/* 🎯 SEMI-AUTO FOCUS BOARD — two BIG always-visible panels (boss: the small
-          cards were hard to see). Signal → big red banner + BUY; forming → trigger;
-          nothing → the honest reason. */}
-      {mode === "semi" && (
+      {/* 🎯 FOCUS BOARD — two BIG always-visible panels for 삼성전자 + SK하이닉스.
+          Semi: signal + BUY button (YOU decide). Auto: same detail, info-only (the
+          machine acts). Both cases fully explained (boss 2026-07-10). */}
+      {(mode === "semi" || mode === "auto") && (
         <div className="mb-4 grid gap-3" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(340px, 1fr))" }}>
           {(focus.length ? focus : FOCUS.map((c) => ({ code: c, name: c === "005930" ? "삼성전자" : "SK하이닉스" } as FocusStock))).map((f) => {
             const sig = !!f.qualified;
@@ -519,18 +547,24 @@ export default function Desk({ mode }: { mode: TradeMode }) {
                     <div className="mt-1.5 text-[12.5px] text-[var(--text-primary)] tabular-nums font-bold">
                       {t("진입", "entry")} ~₩{fmt(f.entry_zone?.[0])} · 🎯 ₩{fmt(f.target_band?.[0])} · 🛑 ₩{fmt(f.stop)} · ⏱️ {f.time_min || 60}{t("분", "min")}
                     </div>
-                    <div className="mt-2.5 flex items-center gap-2">
-                      <input value={alertQty[f.code] ?? String(defQty)}
-                        onChange={(e) => setAlertQty((m2) => ({ ...m2, [f.code]: e.target.value.replace(/[^0-9]/g, "") }))}
-                        className="w-[90px] text-[14px] font-extrabold px-2 py-2 rounded-lg border bg-[var(--bg-primary)] text-[var(--text-primary)] text-right tabular-nums"
-                        style={{ borderColor: "var(--border-default)" }} />
-                      <span className="text-[12px] text-[var(--text-muted)]">{t("주", "sh")}</span>
-                      <button onClick={() => buyFocus(f)}
-                        className="text-[15px] font-extrabold px-7 py-2 rounded-xl text-white"
-                        style={{ background: RED }}>
-                        {t("매수", "BUY")}
-                      </button>
-                    </div>
+                    {mode === "semi" ? (
+                      <div className="mt-2.5 flex items-center gap-2">
+                        <input value={alertQty[f.code] ?? String(defQty)}
+                          onChange={(e) => setAlertQty((m2) => ({ ...m2, [f.code]: e.target.value.replace(/[^0-9]/g, "") }))}
+                          className="w-[90px] text-[14px] font-extrabold px-2 py-2 rounded-lg border bg-[var(--bg-primary)] text-[var(--text-primary)] text-right tabular-nums"
+                          style={{ borderColor: "var(--border-default)" }} />
+                        <span className="text-[12px] text-[var(--text-muted)]">{t("주", "sh")}</span>
+                        <button onClick={() => buyFocus(f)}
+                          className="text-[15px] font-extrabold px-7 py-2 rounded-xl text-white"
+                          style={{ background: RED }}>
+                          {t("매수", "BUY")}
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="mt-2 text-[12px] font-bold" style={{ color: "#2e7d32" }}>
+                        🤖 {t("자동매매가 이 신호를 스스로 처리합니다 (다음 체크 내 매수)", "The auto-trader handles this signal itself (buys on its next pass)")}
+                      </div>
+                    )}
                   </>
                 ) : f.vetoed ? (
                   <div className="mt-2 text-[13px] font-bold" style={{ color: "#e65100" }}>
@@ -555,6 +589,32 @@ export default function Desk({ mode }: { mode: TradeMode }) {
                       {(lang === "ko" ? f.reason_ko : (f.reason_en || f.reason_ko)) || t("조건 미충족", "conditions not met")}
                     </div>
                   </>
+                )}
+                {/* 🧠 the DECISION ENGINE's full opinion — shown in BOTH cases (boss:
+                    even when it does not recommend, explain why) */}
+                {f.opinion && (
+                  <div className="mt-2 pt-2 border-t text-[11.5px] leading-relaxed text-[var(--text-secondary)]"
+                    style={{ borderColor: "var(--border-default)" }}>
+                    <b className="text-[var(--text-primary)]">🧠 {t("결정엔진 종합 의견", "Engine's full opinion")}:</b>{" "}
+                    <b style={{ color: f.opinion.decision === "BUY" ? RED : f.opinion.decision === "SELL" ? BLUE : "var(--text-primary)" }}>
+                      {f.opinion.decision === "BUY" ? t("매수", "BUY") : f.opinion.decision === "SELL" ? t("매도", "SELL") : t("보유/관망", "HOLD")}
+                    </b>
+                    {f.opinion.score != null && <> ({t("점수", "score")} {f.opinion.score})</>}
+                    {" · "}① ML: {f.opinion.ml || "-"}{f.opinion.ml_acc != null && ` (${t("정확도", "acc")} ${Math.round(f.opinion.ml_acc)}%)`}
+                    {" · "}② {t("분석", "Analysis")}: {f.opinion.analysis || "-"}
+                    {" · "}③ {t("파동", "Wave")}: {f.opinion.wave || "-"}
+                    {" · "}📰 {t("뉴스", "news")}: {f.opinion.news_score != null
+                      ? (f.opinion.news_score > 0 ? t("호재", "positive") : f.opinion.news_score < 0 ? t("악재", "negative") : t("중립", "neutral")) : "-"}
+                    {(lang === "ko" ? f.opinion.micro_ko : (f.opinion.micro_en || f.opinion.micro_ko)) && (
+                      <div className="mt-0.5">📈 {t("5분 흐름", "5-min flow")}: {lang === "ko" ? f.opinion.micro_ko : (f.opinion.micro_en || f.opinion.micro_ko)}</div>
+                    )}
+                    {!sig && (
+                      <div className="mt-0.5">
+                        {t("→ 지금 매수 신호가 아닌 이유: 위 의견이 한 방향으로 강하게 모이지 않았고, 1시간 타이밍 조건(패턴·추세·확신 60+)이 충족되지 않았습니다. 조건이 갖춰지면 이 판이 즉시 빨간색으로 바뀝니다.",
+                           "→ Why not a buy right now: the votes above don't align strongly one way, and the 1-hour timing conditions (pattern · trend · conf 60+) aren't met. The moment they are, this panel turns red.")}
+                      </div>
+                    )}
+                  </div>
                 )}
                 <div className="mt-2 text-[10px] text-[var(--text-muted)]">
                   {t(`1분마다 자동 갱신${focusAt ? ` · 마지막 확인 ${focusAt}` : ""} · 신호가 켜지면 이 판이 빨간색으로 바뀝니다`,
@@ -676,9 +736,27 @@ export default function Desk({ mode }: { mode: TradeMode }) {
         )}
       </Sect>
 
-      {/* positions */}
-      <Sect title={`${t("보유 종목", "Positions")} · ${st?.positions.length ?? 0}`}>
-        {st && st.positions.length > 0 ? (
+      {/* positions — FOCUS-ONLY by default (boss); one click shows everything the
+          background full-market auto is holding */}
+      <Sect title={`${t("보유 종목", "Positions")} · ${posShown.length}${posHidden > 0 && focusOnly ? ` (+${posHidden})` : ""}`}>
+        <div className="px-3 py-1.5 flex items-center gap-2 border-b border-[var(--border-default)]/40" style={{ background: "var(--bg-elevated)" }}>
+          <button onClick={() => setFocusOnly(true)}
+            className="text-[11px] font-extrabold px-2.5 py-0.5 rounded-md border"
+            style={focusOnly ? { background: "#e65100", color: "#fff", borderColor: "#e65100" }
+                             : { borderColor: "var(--border-default)", color: "var(--text-muted)" }}>
+            ⭐ {t("관심종목만 (삼성전자·SK하이닉스)", "Focus only (Samsung · SK Hynix)")}
+          </button>
+          <button onClick={() => setFocusOnly(false)}
+            className="text-[11px] font-bold px-2.5 py-0.5 rounded-md border"
+            style={!focusOnly ? { background: "#546e7a", color: "#fff", borderColor: "#546e7a" }
+                              : { borderColor: "var(--border-default)", color: "var(--text-muted)" }}>
+            {t("전체 보기", "Show all")}{posHidden > 0 && focusOnly ? ` (+${posHidden})` : ""}
+          </button>
+          <span className="text-[10px] text-[var(--text-muted)]">
+            {t("자동매매는 뒤에서 전체 시장을 계속 학습·기록합니다", "the background auto keeps learning the whole market")}
+          </span>
+        </div>
+        {st && posShown.length > 0 ? (
           <table className="w-full text-[12px]">
             <thead>
               <tr className="text-[10.5px] text-[var(--text-muted)]" style={{ background: "var(--bg-elevated)" }}>
@@ -692,7 +770,7 @@ export default function Desk({ mode }: { mode: TradeMode }) {
               </tr>
             </thead>
             <tbody>
-              {st.positions.map((p) => (
+              {posShown.map((p) => (
                 <tr key={p.ticker} className="border-t border-[var(--border-default)]/40">
                   <td className="px-3 py-1.5 font-bold text-[var(--text-primary)]">{p.name} <span className="text-[10px] text-[var(--text-muted)]">{p.ticker}</span></td>
                   <td className="text-right px-2 tabular-nums">{fmt(p.qty)}</td>
@@ -711,7 +789,11 @@ export default function Desk({ mode }: { mode: TradeMode }) {
               ))}
             </tbody>
           </table>
-        ) : <div className="px-3 py-4 text-center text-[11.5px] text-[var(--text-muted)]">{t("보유 종목 없음 — 챗봇에게 물어보고 첫 주문을 넣어보세요", "No positions — ask the chatbot, then place your first order")}</div>}
+        ) : <div className="px-3 py-4 text-center text-[11.5px] text-[var(--text-muted)]">
+              {focusOnly && posHidden > 0
+                ? t(`관심종목 보유 없음 (다른 종목 ${posHidden}개는 '전체 보기'에서)`, `No focus-stock positions (${posHidden} others under 'Show all')`)
+                : t("보유 종목 없음 — 챗봇에게 물어보고 첫 주문을 넣어보세요", "No positions — ask the chatbot, then place your first order")}
+            </div>}
       </Sect>
 
       {/* open (limit) orders */}
@@ -778,7 +860,8 @@ export default function Desk({ mode }: { mode: TradeMode }) {
             </thead>
             <tbody>
               {st.history.filter((h) =>
-                (fltSide === "ALL" || h.side === fltSide)
+                (!focusOnly || FOCUS.includes(h.ticker))
+                && (fltSide === "ALL" || h.side === fltSide)
                 && (!fltName || (h.name || "").toLowerCase().includes(fltName.trim().toLowerCase()))
                 && (!fltDate || kstDate(h.filled_at || h.created_at) === fltDate)
               ).map((h) => (

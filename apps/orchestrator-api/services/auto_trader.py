@@ -316,19 +316,40 @@ def focus_status(db, codes: Optional[list[str]] = None) -> dict[str, Any]:
             s = {"state": "ERROR", "reason_ko": "데이터 오류", "reason_en": "data error"}
         qualified = bool(s.get("state") == "ACT_NOW" and (s.get("confidence") or 0) >= MIN_CONF)
         vetoed = False
-        if qualified:
-            try:
-                from services.decision_agent import decide_cached
-                vetoed = (decide_cached(db, code) or {}).get("decision") == "SELL"
-            except Exception:
-                db.rollback()
+        # FULL ENGINE OPINION for BOTH cases (boss 2026-07-10: even when it does NOT
+        # recommend, show WHY — the decision engine's view, in detail). decide_cached
+        # ttl=180s keeps the heavy call to ~once per stock per 3 minutes.
+        opinion: Optional[dict[str, Any]] = None
+        try:
+            from services.decision_agent import decide_cached
+            _d = decide_cached(db, code, ttl=180) or {}
+            if qualified and _d.get("decision") == "SELL":
+                vetoed = True
+            _m1 = _d.get("method1_ml") or {}
+            _m2 = _d.get("method2_analysis") or {}
+            _m3 = _d.get("method3_wave") or {}
+            _news = _d.get("news") or {}
+            _micro = _d.get("micro_trend") or {}
+            opinion = {
+                "decision": _d.get("decision"), "score": _d.get("score"),
+                "confidence": _d.get("confidence"),
+                "ml": _m1.get("call") or None, "ml_acc": _m1.get("accuracy_pct"),
+                "analysis": _m2.get("signal") or None,
+                "wave": _m3.get("verdict") or None,
+                "news_score": _news.get("score"),
+                "micro_ko": (_micro or {}).get("line_ko"),
+                "micro_en": (_micro or {}).get("line_en"),
+            }
+        except Exception:
+            db.rollback()
         out["stocks"].append({
             "code": code, "name": name,
             **{k: s.get(k) for k in (
                 "state", "price", "confidence", "ai_1h_prob", "entry_zone", "target_band",
                 "target_pct", "stop", "stop_pct", "time_min", "why_ko", "why_en",
                 "reason_ko", "reason_en", "trigger_ko", "trigger_en")},
-            "qualified": qualified and not vetoed, "vetoed": vetoed})
+            "qualified": qualified and not vetoed, "vetoed": vetoed,
+            "opinion": opinion})
     try:
         from services.method_weights import intraday_stats
         _ml = (intraday_stats(db) or {}).get("ml") or {}
