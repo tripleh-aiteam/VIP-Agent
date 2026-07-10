@@ -73,7 +73,7 @@ type FocusStock = {
   stop?: number | null; stop_pct?: number | null; time_min?: number;
   why_ko?: string | null; why_en?: string | null; reason_ko?: string | null;
   reason_en?: string | null; trigger_ko?: string | null; trigger_en?: string | null;
-  qualified?: boolean; vetoed?: boolean;
+  qualified?: boolean; vetoed?: boolean; dynamic?: boolean;
   guard?: {
     qty: number; avg: number; peak?: number | null; armed?: boolean;
     auto_managed?: boolean; stop_line?: number | null; trail_line?: number | null;
@@ -538,7 +538,10 @@ export default function Desk({ mode }: { mode: TradeMode }) {
   // ⭐ FOCUS-ONLY display (boss: show only 삼성전자+SK하이닉스 in every mode; the
   // background full-market auto keeps running — one click reveals everything)
   const [focusOnly, setFocusOnly] = useState(true);
-  const posShown = (st?.positions || []).filter((p) => !focusOnly || FOCUS.includes(p.ticker));
+  // "focus" view = the two fixed stocks + anything currently on the signal board
+  // (so a stock bought from a 🔥 dynamic panel doesn't vanish from the tables)
+  const boardCodes = useMemo(() => new Set([...FOCUS, ...focus.map((f) => f.code)]), [focus]);
+  const posShown = (st?.positions || []).filter((p) => !focusOnly || boardCodes.has(p.ticker));
   const posHidden = (st?.positions.length ?? 0) - posShown.length;
 
   return (
@@ -641,7 +644,8 @@ export default function Desk({ mode }: { mode: TradeMode }) {
             const forming = f.state === "FORMING";
             const border = sig ? RED : forming ? "#e65100" : "var(--border-default)";
             const bg = sig ? "rgba(211,47,47,0.06)" : forming ? "rgba(230,81,0,0.05)" : "var(--bg-elevated)";
-            const defQty = f.price ? Math.max(1, Math.floor(10_000_000 / f.price)) : 1;
+            // exact suggested share count = 10% of the REAL account equity (boss)
+            const defQty = f.price ? Math.max(1, Math.floor((st?.equity || 100_000_000) * 0.10 / f.price)) : 1;
             return (
               <div key={f.code} className="rounded-2xl border-2 px-4 py-3.5" style={{ borderColor: border, background: bg }}>
                 <div className="flex items-baseline gap-2 flex-wrap">
@@ -651,6 +655,11 @@ export default function Desk({ mode }: { mode: TradeMode }) {
                     {f.name} 📈
                   </button>
                   <span className="text-[11px] text-[var(--text-muted)]">{f.code}</span>
+                  {f.dynamic && (
+                    <span className="text-[10px] font-extrabold px-1.5 py-0.5 rounded-full text-white" style={{ background: "#e65100" }}>
+                      🔥 {t("전체 시장 신호", "market-wide signal")}
+                    </span>
+                  )}
                   {f.price != null && <span className="text-[16px] font-extrabold tabular-nums text-[var(--text-primary)]">₩{fmt(f.price)}</span>}
                   {f.ai_1h_prob != null && <span className="text-[11.5px] font-bold text-[var(--text-muted)]">🤖 {f.ai_1h_prob}%</span>}
                   {f.confidence != null && f.confidence > 0 && <span className="text-[11.5px] font-bold text-[var(--text-muted)]">{t("확신", "conf")} {f.confidence}%</span>}
@@ -671,6 +680,10 @@ export default function Desk({ mode }: { mode: TradeMode }) {
                     )}
                     <div className="mt-1.5 text-[12.5px] text-[var(--text-primary)] tabular-nums font-bold">
                       {t("진입", "entry")} ~₩{fmt(f.entry_zone?.[0])} · 🎯 ₩{fmt(f.target_band?.[0])} · 🛑 ₩{fmt(f.stop)} · ⏱️ {f.time_min || 60}{t("분", "min")}
+                    </div>
+                    <div className="mt-0.5 text-[12px] font-bold" style={{ color: RED }}>
+                      {t(`권장 수량: ${fmt(defQty)}주 (자산의 10% ≈ ₩${fmt(f.price ? defQty * f.price : null)})`,
+                         `Suggested size: ${fmt(defQty)} shares (10% of equity ≈ ₩${fmt(f.price ? defQty * f.price : null)})`)}
                     </div>
                     {mode !== "auto" ? (
                       <div className="mt-2.5 flex items-center gap-2">
@@ -1106,7 +1119,7 @@ export default function Desk({ mode }: { mode: TradeMode }) {
             </thead>
             <tbody>
               {st.history.filter((h) =>
-                (!focusOnly || FOCUS.includes(h.ticker))
+                (!focusOnly || boardCodes.has(h.ticker))
                 && (fltSide === "ALL" || h.side === fltSide)
                 && (!fltName || (h.name || "").toLowerCase().includes(fltName.trim().toLowerCase()))
                 && (!fltDate || kstDate(h.filled_at || h.created_at) === fltDate)

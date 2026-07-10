@@ -400,6 +400,47 @@ def focus_status(db, codes: Optional[list[str]] = None) -> dict[str, Any]:
                 "reason_ko", "reason_en", "trigger_ko", "trigger_en")},
             "qualified": qualified and not vetoed, "vetoed": vetoed,
             "opinion": opinion, "guard": guard})
+
+    # 🔥 DYNAMIC SIGNALS FROM THE WHOLE KOREAN MARKET (boss 2026-07-10): any other
+    # stock (네이버, LG, 한화오션, movers…) with a machine-grade buy signal appears
+    # UNDER the two fixed panels — same full treatment. buy_candidates already ran
+    # every gate incl. the decision-engine veto (decide_cached is warm from it).
+    try:
+        fixed = set(codes or FOCUS_CODES)
+        cand = buy_candidates(db, max_n=4)
+        for s in (cand.get("candidates") or []):
+            if s.get("code") in fixed:
+                continue
+            opinion2: Optional[dict[str, Any]] = None
+            try:
+                from services.decision_agent import decide_cached
+                _d = decide_cached(db, s["code"], ttl=180) or {}
+                _m1 = _d.get("method1_ml") or {}
+                _m2 = _d.get("method2_analysis") or {}
+                _m3 = _d.get("method3_wave") or {}
+                opinion2 = {
+                    "decision": _d.get("decision"), "score": _d.get("score"),
+                    "confidence": _d.get("confidence"),
+                    "ml": _m1.get("call") or None, "ml_acc": _m1.get("accuracy_pct"),
+                    "analysis": _m2.get("signal") or None,
+                    "wave": _m3.get("verdict") or None,
+                    "news_score": (_d.get("news") or {}).get("score"),
+                    "micro_ko": (_d.get("micro_trend") or {}).get("line_ko"),
+                    "micro_en": (_d.get("micro_trend") or {}).get("line_en"),
+                }
+            except Exception:
+                db.rollback()
+            out["stocks"].append({
+                "code": s.get("code"), "name": s.get("name"), "dynamic": True,
+                **{k: s.get(k) for k in (
+                    "state", "price", "confidence", "ai_1h_prob", "entry_zone",
+                    "target_band", "target_pct", "stop", "stop_pct", "time_min",
+                    "why_ko", "why_en")},
+                "qualified": True, "vetoed": False,
+                "opinion": opinion2, "guard": None})
+    except Exception:
+        db.rollback()
+
     try:
         from services.method_weights import intraday_stats
         _ml = (intraday_stats(db) or {}).get("ml") or {}
