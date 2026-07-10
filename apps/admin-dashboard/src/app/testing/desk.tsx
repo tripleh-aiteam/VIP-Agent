@@ -82,6 +82,29 @@ type FocusStock = {
   } | null;
 };
 
+// mini-markdown for the engine's own reports (bold / headings / links / bullets) —
+// our own generated text only, no external content
+const mdLite = (text: string): React.ReactNode => {
+  const inline = (s: string, kPrefix: string): React.ReactNode[] => {
+    const out: React.ReactNode[] = [];
+    let rest = s, k = 0;
+    while (rest.length) {
+      const m = rest.match(/\*\*([^*]+)\*\*|\[([^\]]+)\]\((https?:[^)]+)\)/);
+      if (!m || m.index == null) { out.push(rest); break; }
+      if (m.index > 0) out.push(rest.slice(0, m.index));
+      if (m[1] != null) out.push(<b key={`${kPrefix}-${k++}`} className="text-[var(--text-primary)]">{m[1]}</b>);
+      else out.push(<a key={`${kPrefix}-${k++}`} href={m[3]} target="_blank" rel="noreferrer" className="underline text-[#1565c0]">{m[2]}</a>);
+      rest = rest.slice(m.index + m[0].length);
+    }
+    return out;
+  };
+  return text.split("\n").map((ln, i) => {
+    if (ln.startsWith("## ")) return <div key={i} className="mt-2 text-[13.5px] font-extrabold text-[var(--text-primary)]">{inline(ln.slice(3), String(i))}</div>;
+    if (!ln.trim()) return <div key={i} className="h-1.5" />;
+    return <div key={i} className="leading-relaxed">{inline(ln, String(i))}</div>;
+  });
+};
+
 // Defined OUTSIDE the page component: defining this inline recreated the component
 // type on every keystroke/poll, remounting the form and throwing the cursor out of
 // the inputs (boss: "typing is weird") — a stable component type keeps focus.
@@ -152,6 +175,18 @@ export default function Desk({ mode }: { mode: TradeMode }) {
   // 🎯 SEMI-AUTO focus board: 삼성전자 + SK하이닉스, always-on status
   const [focus, setFocus] = useState<FocusStock[]>([]);
   const [focusAt, setFocusAt] = useState<string>("");
+  // 🧠 per-stock "how the engine thinks" full report (button-expanded, on demand)
+  const [detailOpen, setDetailOpen] = useState<Record<string, boolean>>({});
+  const [detailText, setDetailText] = useState<Record<string, string>>({});
+  const toggleDetail = (code: string) => {
+    const opening = !detailOpen[code];
+    setDetailOpen((m2) => ({ ...m2, [code]: opening }));
+    if (opening && !detailText[code]) {
+      api<{ reply: string }>(`/paper-desk/auto/focus/detail?code=${code}&lang=${lang}`)
+        .then((r) => setDetailText((m2) => ({ ...m2, [code]: r.reply || "…" })))
+        .catch(() => setDetailText((m2) => ({ ...m2, [code]: t("불러오기 실패 — 다시 눌러주세요", "Failed to load — press again") })));
+    }
+  };
 
   const load = () => {
     api<DeskState>("/paper-desk/state").then(setSt).catch(() => {});
@@ -642,6 +677,23 @@ export default function Desk({ mode }: { mode: TradeMode }) {
                     </div>
                   );
                 })()}
+                {/* 🧠 full "how the engine thinks" report — button-expanded, BOTH cases
+                    (boss: hybrid ML + market situation + chart analysis + news, readable) */}
+                <button onClick={() => toggleDetail(f.code)}
+                  className="mt-2 w-full text-left text-[12px] font-extrabold px-3 py-2 rounded-lg border"
+                  style={{ borderColor: "#546e7a", color: detailOpen[f.code] ? "#fff" : "var(--text-primary)",
+                           background: detailOpen[f.code] ? "#546e7a" : "var(--bg-primary)" }}>
+                  🧠 {detailOpen[f.code]
+                    ? t("상세 설명 닫기 ▲", "Close the detailed explanation ▲")
+                    : t("상세 설명 보기 ▼ — 결정엔진이 어떻게 생각했나 (ML · 시장상황 · 차트 분석 · 뉴스)",
+                        "How the engine thinks ▼ — ML · market situation · chart analysis · news")}
+                </button>
+                {detailOpen[f.code] && (
+                  <div className="mt-2 px-3 py-2.5 rounded-lg border text-[11.5px] text-[var(--text-secondary)] max-h-[420px] overflow-y-auto"
+                    style={{ borderColor: "var(--border-default)", background: "var(--bg-primary)" }}>
+                    {detailText[f.code] ? mdLite(detailText[f.code]) : t("엔진의 생각을 불러오는 중…", "Loading the engine's thinking…")}
+                  </div>
+                )}
                 <div className="mt-2 text-[10px] text-[var(--text-muted)]">
                   {t(`1분마다 자동 갱신${focusAt ? ` · 마지막 확인 ${focusAt}` : ""} · 신호가 켜지면 이 판이 빨간색으로 바뀝니다`,
                      `refreshes every minute${focusAt ? ` · last check ${focusAt}` : ""} · this panel turns RED when a signal fires`)}

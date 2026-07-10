@@ -205,3 +205,17 @@ def auto_focus(db: Session = Depends(get_db)):
     the reason. Always answers."""
     from services.auto_trader import focus_status
     return focus_status(db)
+
+
+@router.get("/auto/focus/detail")
+def auto_focus_detail(code: str = Query(...), lang: str = Query("ko"),
+                      db: Session = Depends(get_db)):
+    """HOW THE ENGINE THINKS, in full (boss 2026-07-10): the same detailed report the
+    chatbot gives — hybrid ML + market situation (KOSPI/KOSDAQ/oil/NASDAQ) + chart
+    analysis + news + methods + ⚡ 1-hour view — for a focus panel's 상세 설명 button.
+    decide_cached keeps it instant after the board's own poll warmed the cache."""
+    from services.decision_agent import decide_cached
+    d = decide_cached(db, str(code).zfill(6), ttl=180) or {}
+    return {"code": str(code).zfill(6),
+            "reply": d.get("reasoning_en" if str(lang).lower().startswith("en")
+                           else "reasoning_ko") or ""}
