@@ -649,8 +649,8 @@ export default function Desk({ mode }: { mode: TradeMode }) {
             return (
               <div key={f.code} className="rounded-2xl border-2 px-4 py-3.5" style={{ borderColor: border, background: bg }}>
                 <div className="flex items-baseline gap-2 flex-wrap">
-                  <button onClick={() => { setChartName(f.name); setChartCode(f.code); }}
-                    title={t("클릭하면 아래에 실시간 차트가 열립니다", "click to open the live chart below")}
+                  <button onClick={() => { setChartName(f.name); setChartCode(f.code); setQ(`${f.name} (${f.code})`); setShowSug(false); }}
+                    title={t("클릭하면 아래에 실시간 차트가 열리고 주문창도 이 종목으로 바뀝니다", "click: opens the live chart below AND switches the order box to this stock")}
                     className="text-[18px] font-extrabold text-[var(--text-primary)] underline decoration-dotted underline-offset-4 hover:opacity-70">
                     {f.name} 📈
                   </button>
@@ -684,6 +684,10 @@ export default function Desk({ mode }: { mode: TradeMode }) {
                     <div className="mt-0.5 text-[12px] font-bold" style={{ color: RED }}>
                       {t(`권장 수량: ${fmt(defQty)}주 (자산의 10% ≈ ₩${fmt(f.price ? defQty * f.price : null)})`,
                          `Suggested size: ${fmt(defQty)} shares (10% of equity ≈ ₩${fmt(f.price ? defQty * f.price : null)})`)}
+                    </div>
+                    <div className="mt-0.5 text-[10.5px] text-[var(--text-muted)]">
+                      {t(`왜 ${fmt(defQty)}주? 계좌 자산 ₩${fmt(st?.equity)}의 10%(₩${fmt(Math.round((st?.equity || 0) * 0.1))})를 현재가 ₩${fmt(f.price)}로 나누면 ${fmt(defQty)}주(소수점 버림). 10%만 쓰는 이유: 이 거래가 손절(-1%)로 끝나도 계좌 전체 손실은 약 -0.1%뿐이라, 틀려도 아프지 않게 여러 번 반복할 수 있는 크기입니다.`,
+                         `Why ${fmt(defQty)} shares? 10% of your ₩${fmt(st?.equity)} equity (₩${fmt(Math.round((st?.equity || 0) * 0.1))}) ÷ current price ₩${fmt(f.price)} = ${fmt(defQty)} (rounded down). Why only 10%: even if this trade ends at the −1% stop, the whole account loses just ~0.1% — a size you can afford to repeat and be wrong with.`)}
                     </div>
                     {mode !== "auto" ? (
                       <div className="mt-2.5 flex items-center gap-2">
