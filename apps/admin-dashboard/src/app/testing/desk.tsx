@@ -1136,12 +1136,12 @@ export default function Desk({ mode }: { mode: TradeMode }) {
                 <th className="text-right px-2">{t("수량", "Qty")}</th>
                 <th className="text-right px-2">{t("체결가", "Fill")}</th>
                 <th className="text-right px-2">{t("실현손익", "Realized")}</th>
-                <th className="text-left px-2">{t("상태", "Status")}</th>
               </tr>
             </thead>
             <tbody>
               {st.history.filter((h) =>
-                (!focusOnly || boardCodes.has(h.ticker))
+                h.status === "FILLED"     // boss: status column hidden — show real fills only
+                && (!focusOnly || boardCodes.has(h.ticker))
                 && (fltSide === "ALL" || h.side === fltSide)
                 && (!fltName || (h.name || "").toLowerCase().includes(fltName.trim().toLowerCase()))
                 && (!fltDate || kstDate(h.filled_at || h.created_at) === fltDate)
@@ -1155,7 +1155,6 @@ export default function Desk({ mode }: { mode: TradeMode }) {
                   <td className="text-right px-2 tabular-nums font-extrabold" style={{ color: pnlCol(h.realized_pnl) }}>
                     {h.realized_pnl != null ? `${h.realized_pnl > 0 ? "+" : ""}${fmt(h.realized_pnl)} (${h.realized_pnl_pct}%)` : "-"}
                   </td>
-                  <td className="px-2 text-[10.5px] text-[var(--text-muted)]">{h.status === "FILLED" ? t("체결", "filled") : h.status === "REJECTED" ? `${t("거부", "rejected")}${h.note ? ` · ${h.note}` : ""}` : t("취소", "cancelled")}</td>
                 </tr>
               ))}
             </tbody>
