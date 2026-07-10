@@ -981,22 +981,80 @@ export default function Desk({ mode }: { mode: TradeMode }) {
                     </div>
                   );
                 })()}
-                {/* 🧠 full "how the engine thinks" report — button-expanded, BOTH cases
-                    (boss: hybrid ML + market situation + chart analysis + news, readable) */}
-                <button onClick={() => toggleDetail(f.code)}
-                  className="mt-2 w-full text-center text-[13px] font-extrabold px-3 py-2 rounded-lg text-white"
-                  style={{ background: detailOpen[f.code] ? "#8e0000" : RED }}>
-                  📖 {detailOpen[f.code]
-                    ? t("상세 설명 닫기 ▲", "Close Detailed Explanation ▲")
-                    : t("상세 설명 — 클릭해서 엔진의 생각 전체 읽기 (ML · 시장상황 · 차트 분석 · 뉴스) ▼",
-                        "DETAILED EXPLANATION — click to read the engine's full thinking (ML · market · chart analysis · news) ▼")}
-                </button>
-                {detailOpen[f.code] && (
-                  <div className="mt-2 px-3 py-2.5 rounded-lg border text-[11.5px] text-[var(--text-secondary)] max-h-[420px] overflow-y-auto"
-                    style={{ borderColor: "var(--border-default)", background: "var(--bg-primary)" }}>
-                    {detailText[f.code] ? mdLite(detailText[f.code]) : t("엔진의 생각을 불러오는 중…", "Loading the engine's thinking…")}
-                  </div>
-                )}
+                {/* button layer: during market = the engine's full thinking; after close
+                    = today's per-stock TRADE detail (boss: ML thinking is pointless at
+                    night — show what was traded instead) */}
+                {!marketClosed ? (
+                  <>
+                    <button onClick={() => toggleDetail(f.code)}
+                      className="mt-2 w-full text-center text-[13px] font-extrabold px-3 py-2 rounded-lg text-white"
+                      style={{ background: detailOpen[f.code] ? "#8e0000" : RED }}>
+                      📖 {detailOpen[f.code]
+                        ? t("상세 설명 닫기 ▲", "Close Detailed Explanation ▲")
+                        : t("상세 설명 — 클릭해서 엔진의 생각 전체 읽기 (ML · 시장상황 · 차트 분석 · 뉴스) ▼",
+                            "DETAILED EXPLANATION — click to read the engine's full thinking (ML · market · chart analysis · news) ▼")}
+                    </button>
+                    {detailOpen[f.code] && (
+                      <div className="mt-2 px-3 py-2.5 rounded-lg border text-[11.5px] text-[var(--text-secondary)] max-h-[420px] overflow-y-auto"
+                        style={{ borderColor: "var(--border-default)", background: "var(--bg-primary)" }}>
+                        {detailText[f.code] ? mdLite(detailText[f.code]) : t("엔진의 생각을 불러오는 중…", "Loading the engine's thinking…")}
+                      </div>
+                    )}
+                  </>
+                ) : (() => {
+                  const todayKst = new Date().toLocaleString("sv-SE", { timeZone: "Asia/Seoul" }).slice(0, 10);
+                  const fills = (st?.history || []).filter((h) =>
+                    h.ticker === f.code && h.status === "FILLED"
+                    && kstDate(h.filled_at || h.created_at) === todayKst);
+                  const open = !!detailOpen[`tr-${f.code}`];
+                  return (
+                    <>
+                      <button onClick={() => setDetailOpen((m2) => ({ ...m2, [`tr-${f.code}`]: !open }))}
+                        className="mt-2 w-full text-center text-[13px] font-extrabold px-3 py-2 rounded-lg text-white"
+                        style={{ background: open ? "#8e0000" : RED }}>
+                        📖 {open
+                          ? t("오늘 매매 상세 닫기 ▲", "Close today's trade detail ▲")
+                          : t(`오늘 매매 상세 — 이 종목의 모든 거래 보기 (${fills.length}건) ▼`,
+                              `TODAY'S TRADES — every fill on this stock (${fills.length}) ▼`)}
+                      </button>
+                      {open && (
+                        <div className="mt-2 rounded-lg border max-h-[320px] overflow-y-auto"
+                          style={{ borderColor: "var(--border-default)", background: "var(--bg-primary)" }}>
+                          {fills.length ? (
+                            <table className="w-full text-[11.5px]">
+                              <thead>
+                                <tr className="text-[10px] text-[var(--text-muted)]" style={{ background: "var(--bg-elevated)" }}>
+                                  <th className="text-left px-2 py-1">{t("시간", "Time")}</th>
+                                  <th className="text-left px-1">{t("구분", "Side")}</th>
+                                  <th className="text-right px-1">{t("수량", "Qty")}</th>
+                                  <th className="text-right px-1">{t("체결가", "Fill")}</th>
+                                  <th className="text-right px-2">{t("실현손익", "Realized")}</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {fills.map((h) => (
+                                  <tr key={h.id} className="border-t border-[var(--border-default)]/40 tabular-nums">
+                                    <td className="px-2 py-1 text-[10px] text-[var(--text-muted)]">{kst(h.filled_at || h.created_at)}</td>
+                                    <td className="px-1 font-bold" style={{ color: h.side === "BUY" ? RED : BLUE }}>{h.side === "BUY" ? t("매수", "BUY") : t("매도", "SELL")}</td>
+                                    <td className="text-right px-1">{fmt(h.qty)}</td>
+                                    <td className="text-right px-1">{fmt(h.fill_price)}</td>
+                                    <td className="text-right px-2 font-bold" style={{ color: pnlCol(h.realized_pnl) }}>
+                                      {h.realized_pnl != null ? `${h.realized_pnl > 0 ? "+" : ""}${fmt(h.realized_pnl)} (${h.realized_pnl_pct}%)` : "-"}
+                                    </td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          ) : (
+                            <div className="px-3 py-3 text-[11.5px] text-[var(--text-muted)]">
+                              {t("오늘 이 종목은 거래가 없었습니다.", "No trades on this stock today.")}
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </>
+                  );
+                })()}
                 <div className="mt-2 text-[10px] text-[var(--text-muted)]">
                   {t(`1분마다 자동 갱신${focusAt ? ` · 마지막 확인 ${focusAt}` : ""} · 신호가 켜지면 이 판이 빨간색으로 바뀝니다`,
                      `refreshes every minute${focusAt ? ` · last check ${focusAt}` : ""} · this panel turns RED when a signal fires`)}
