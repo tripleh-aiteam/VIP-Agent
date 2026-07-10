@@ -557,7 +557,15 @@ export default function Desk({ mode }: { mode: TradeMode }) {
         </button>
       </div>
 
-      {/* account header */}
+      {/* account header — when the server is briefly unreachable (deploys/restarts),
+          SAY so instead of silently hiding the money bar (boss: "my money vanished") */}
+      {!st && (
+        <div className="flex items-center gap-2 mb-4 px-3.5 py-2.5 rounded-xl border border-[var(--border-default)] text-[12px] font-bold text-[var(--text-muted)]"
+          style={{ background: "var(--bg-elevated)" }}>
+          ⏳ {t("서버 연결 중… (배포/재시작 중이면 1~2분 내 자동 복구됩니다 — 잔고와 보유 종목은 안전하게 저장되어 있어요)",
+                "Connecting to the server… (auto-recovers in 1–2 min during deploys/restarts — your cash and positions are safely stored)")}
+        </div>
+      )}
       {st && (
         <div className="flex items-center gap-4 flex-wrap mb-4 px-3.5 py-2.5 rounded-xl border border-[var(--border-default)]" style={{ background: "var(--bg-elevated)" }}>
           <span className="text-[12px] text-[var(--text-muted)]">{t("현금", "Cash")} <b className="text-[14px] text-[var(--text-primary)] tabular-nums">₩{fmt(st.cash)}</b></span>
