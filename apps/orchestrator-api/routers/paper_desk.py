@@ -167,6 +167,13 @@ def desk_deposit(amount: float = Query(100_000_000), db: Session = Depends(get_d
     return deposit(db, amount)
 
 
+@router.get("/day-report")
+def desk_day_report(db: Session = Depends(get_db)):
+    """📊 Today's per-stock trading summary (KST) for the results section."""
+    from services.paper_desk import day_report
+    return day_report(db)
+
+
 @router.get("/chart")
 def desk_chart(code: str = Query(...), tf: str = Query("5m"), db: Session = Depends(get_db)):
     """Intraday candles for the inline focus chart (boss 2026-07-10: click the stock →

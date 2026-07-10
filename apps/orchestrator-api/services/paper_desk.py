@@ -284,6 +284,55 @@ def reset(db, cash: float = START_CASH) -> dict:
     return {"ok": True, "cash": cash}
 
 
+def day_report(db) -> dict[str, Any]:
+    """📊 Today's per-stock trading summary (boss 2026-07-10: 'after market it should
+    show per stock result'): for each stock traded today (KST) — buys/sells, money in
+    and out, realized ₩ and avg %, win/lose count; plus account totals."""
+    _ensure(db)
+    rows = db.execute(text(
+        "SELECT ticker, name, side, qty, fill_price, realized_pnl, realized_pnl_pct "
+        "FROM paper_desk_orders WHERE status='FILLED' "
+        "AND COALESCE(filled_at, created_at)::date = (now() AT TIME ZONE 'Asia/Seoul')::date"
+    )).fetchall()
+    agg: dict[str, dict[str, Any]] = {}
+    for tk, name, side, qty, px, rl, rlp in rows:
+        a = agg.setdefault(tk, {"ticker": tk, "name": name, "buys": 0, "sells": 0,
+                                "bought_value": 0.0, "sold_value": 0.0, "realized": 0.0,
+                                "pcts": [], "wins": 0, "losses": 0})
+        val = float(qty or 0) * float(px or 0)
+        if side == "BUY":
+            a["buys"] += 1
+            a["bought_value"] += val
+        else:
+            a["sells"] += 1
+            a["sold_value"] += val
+            if rl is not None:
+                a["realized"] += float(rl)
+                if float(rl) > 0:
+                    a["wins"] += 1
+                elif float(rl) < 0:
+                    a["losses"] += 1
+            if rlp is not None:
+                a["pcts"].append(float(rlp))
+    stocks = []
+    for a in agg.values():
+        pcts = a.get("pcts") or []
+        stocks.append({**{k: v for k, v in a.items() if k != "pcts"},
+                       "avg_pct": round(sum(pcts) / len(pcts), 2) if pcts else None,
+                       "realized": round(a["realized"], 0),
+                       "bought_value": round(a["bought_value"], 0),
+                       "sold_value": round(a["sold_value"], 0)})
+    stocks.sort(key=lambda x: x["realized"])
+    tot_realized = round(sum(s["realized"] for s in stocks), 0)
+    return {"date_kst": None, "stocks": stocks,
+            "totals": {"stocks_traded": len(stocks),
+                       "buys": sum(s["buys"] for s in stocks),
+                       "sells": sum(s["sells"] for s in stocks),
+                       "wins": sum(s["wins"] for s in stocks),
+                       "losses": sum(s["losses"] for s in stocks),
+                       "realized": tot_realized}}
+
+
 def deposit(db, amount: float) -> dict:
     """Add fake money (boss 2026-07-10: a 'fill money' button). start_cash rises by the
     same amount so the P&L% stays honest — a deposit is not a profit."""

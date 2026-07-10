@@ -180,6 +180,40 @@ export default function Desk({ mode }: { mode: TradeMode }) {
   // 🎯 SEMI-AUTO focus board: 삼성전자 + SK하이닉스, always-on status
   const [focus, setFocus] = useState<FocusStock[]>([]);
   const [focusAt, setFocusAt] = useState<string>("");
+  // boss 2026-07-10: only the two mains by default — the other 18 join via a
+  // watch dropdown (persisted); stocks with a live signal always show anyway
+  const [watchExtra, setWatchExtra] = useState<string[]>(() => {
+    if (typeof window === "undefined") return [];
+    try { return JSON.parse(localStorage.getItem("board-watch") || "[]"); } catch { return []; }
+  });
+  const addWatch = (code: string) => {
+    if (!code) return;
+    setWatchExtra((xs) => {
+      const next = xs.includes(code) ? xs : [...xs, code];
+      try { localStorage.setItem("board-watch", JSON.stringify(next)); } catch {}
+      return next;
+    });
+  };
+  const rmWatch = (code: string) => {
+    setWatchExtra((xs) => {
+      const next = xs.filter((c) => c !== code);
+      try { localStorage.setItem("board-watch", JSON.stringify(next)); } catch {}
+      return next;
+    });
+  };
+  // 📊 today's per-stock results
+  type DayReport = {
+    stocks: { ticker: string; name: string; buys: number; sells: number; bought_value: number;
+              sold_value: number; realized: number; avg_pct: number | null; wins: number; losses: number }[];
+    totals: { stocks_traded: number; buys: number; sells: number; wins: number; losses: number; realized: number };
+  };
+  const [dayRep, setDayRep] = useState<DayReport | null>(null);
+  useEffect(() => {
+    const load2 = () => api<DayReport>("/paper-desk/day-report").then(setDayRep).catch(() => {});
+    load2();
+    const i = setInterval(load2, 60000);
+    return () => clearInterval(i);
+  }, []);
   // 📈 inline live chart (boss: click 삼성전자/SK하이닉스 → chart opens between
   // Place Order and Trade History, NOT a new window)
   const [chartCode, setChartCode] = useState<string | null>(null);
@@ -224,33 +258,59 @@ export default function Desk({ mode }: { mode: TradeMode }) {
         upColor: "#d32f2f", downColor: "#1565c0", borderUpColor: "#d32f2f",
         borderDownColor: "#1565c0", wickUpColor: "#d32f2f", wickDownColor: "#1565c0",
       });
-      const aggWM = (rows: { time: string; open: number; high: number; low: number; close: number }[], tf: "W" | "M") => {
+      // 거래량 bars along the bottom (boss: volume matters)
+      const volSeries = chart.addHistogramSeries({
+        priceFormat: { type: "volume" }, priceScaleId: "vol",
+      });
+      chart.priceScale("vol").applyOptions({ scaleMargins: { top: 0.8, bottom: 0 } });
+      // moving-average lines (orange 5 · blue 20 · green 60) — the colored guide lines
+      const ma5 = chart.addLineSeries({ color: "#ff9800", lineWidth: 1, priceLineVisible: false, lastValueVisible: false });
+      const ma20 = chart.addLineSeries({ color: "#2196f3", lineWidth: 1, priceLineVisible: false, lastValueVisible: false });
+      const ma60 = chart.addLineSeries({ color: "#4caf50", lineWidth: 1, priceLineVisible: false, lastValueVisible: false });
+      type Bar = { time: number | string; open: number; high: number; low: number; close: number; volume?: number };
+      const applyAll = (bars: Bar[]) => {
+        series.setData(bars as never);
+        volSeries.setData(bars.map((b) => ({
+          time: b.time, value: b.volume || 0,
+          color: b.close >= b.open ? "rgba(211,47,47,0.45)" : "rgba(21,101,192,0.45)",
+        })) as never);
+        const ma = (n: number) => bars.map((b, i) => {
+          if (i + 1 < n) return null;
+          let sum = 0;
+          for (let j = i - n + 1; j <= i; j++) sum += bars[j].close;
+          return { time: b.time, value: sum / n };
+        }).filter(Boolean);
+        ma5.setData(ma(5) as never);
+        ma20.setData(ma(20) as never);
+        ma60.setData(ma(60) as never);
+      };
+      const aggWM = (rows: { time: string; open: number; high: number; low: number; close: number; volume?: number }[], tf: "W" | "M") => {
         const key = (d: string) => {
           if (tf === "M") return `${d.slice(0, 7)}-01`;
           const dt = new Date(`${d}T00:00:00`);
           dt.setDate(dt.getDate() - ((dt.getDay() + 6) % 7));
           return dt.toISOString().slice(0, 10);
         };
-        const acc: Record<string, { time: string; open: number; high: number; low: number; close: number }> = {};
+        const acc: Record<string, { time: string; open: number; high: number; low: number; close: number; volume: number }> = {};
         for (const c of rows) {
           const k = key(c.time);
           const a = acc[k];
-          if (!a) acc[k] = { time: k, open: c.open, high: c.high, low: c.low, close: c.close };
-          else { a.high = Math.max(a.high, c.high); a.low = Math.min(a.low, c.low); a.close = c.close; }
+          if (!a) acc[k] = { time: k, open: c.open, high: c.high, low: c.low, close: c.close, volume: c.volume || 0 };
+          else { a.high = Math.max(a.high, c.high); a.low = Math.min(a.low, c.low); a.close = c.close; a.volume += c.volume || 0; }
         }
         return Object.values(acc);
       };
       const loadData = async () => {
         try {
           if (chartTf === "5m" || chartTf === "1h") {
-            const r = await api<{ bars: { time: number; open: number; high: number; low: number; close: number }[] }>(
+            const r = await api<{ bars: { time: number; open: number; high: number; low: number; close: number; volume?: number }[] }>(
               `/paper-desk/chart?code=${chartCode}&tf=${chartTf}`);
-            series.setData((r.bars || []) as never);
+            applyAll(r.bars || []);
           } else {
-            const r = await api<{ candles?: { time: string; open: number; high: number; low: number; close: number }[] }>(
+            const r = await api<{ candles?: { time: string; open: number; high: number; low: number; close: number; volume?: number }[] }>(
               `/predictions/stock-detail/${chartCode}`);
             const daily = (r.candles || []).filter((c) => c.open != null && c.close != null);
-            series.setData((chartTf === "D" ? daily : aggWM(daily, chartTf)) as never);
+            applyAll(chartTf === "D" ? daily : aggWM(daily, chartTf));
           }
           chart.timeScale().fitContent();
         } catch { /* keep the last data */ }
@@ -651,7 +711,32 @@ export default function Desk({ mode }: { mode: TradeMode }) {
               {t("20개 관심기업 보드를 불러오는 중…", "Loading the 20-company board…")}
             </div>
           )}
-          {[...focus].sort((a, b) => {
+          {focus.length > 0 && (
+            <div className="col-span-full flex items-center gap-2 flex-wrap">
+              <span className="text-[11px] font-bold text-[var(--text-muted)]">
+                👀 {t("더 지켜볼 종목 추가:", "Watch another company:")}
+              </span>
+              <select value="" onChange={(e) => addWatch(e.target.value)}
+                className="text-[12px] font-bold px-2 py-1 rounded-lg border bg-[var(--bg-primary)] text-[var(--text-primary)]"
+                style={{ borderColor: "var(--border-default)" }}>
+                <option value="">{t("종목 선택 ▾", "Choose ▾")}</option>
+                {focus.filter((f) => !["000660", "005930"].includes(f.code) && !watchExtra.includes(f.code) && !f.dynamic)
+                  .map((f) => <option key={f.code} value={f.code}>{f.name}</option>)}
+              </select>
+              {watchExtra.length > 0 && (
+                <span className="text-[10.5px] text-[var(--text-muted)]">
+                  {t("추가됨:", "watching:")} {watchExtra.map((c) => focus.find((f) => f.code === c)?.name || c).join(" · ")}
+                </span>
+              )}
+            </div>
+          )}
+          {[...focus]
+            .filter((f) =>
+              ["000660", "005930"].includes(f.code)      // the two mains, always
+              || watchExtra.includes(f.code)             // chosen from the dropdown
+              || f.qualified || f.state === "FORMING"    // live signals always surface
+              || !!f.guard || !!f.dynamic)               // holdings + market-wide signals
+            .sort((a, b) => {
             // boss: SK하이닉스 first, 삼성전자 second — then actives before quiet
             const rank = (x: FocusStock) =>
               x.code === "000660" ? -2 : x.code === "005930" ? -1
@@ -677,6 +762,10 @@ export default function Desk({ mode }: { mode: TradeMode }) {
                     <span className="text-[10px] font-extrabold px-1.5 py-0.5 rounded-full text-white" style={{ background: "#e65100" }}>
                       🔥 {t("전체 시장 신호", "market-wide signal")}
                     </span>
+                  )}
+                  {watchExtra.includes(f.code) && (
+                    <button onClick={() => rmWatch(f.code)} title={t("보드에서 빼기", "remove from board")}
+                      className="ml-auto text-[12px] text-[var(--text-muted)] hover:opacity-70">✕</button>
                   )}
                   {f.price != null && <span className="text-[16px] font-extrabold tabular-nums text-[var(--text-primary)]">₩{fmt(f.price)}</span>}
                   {f.ai_1h_prob != null && <span className="text-[11.5px] font-bold text-[var(--text-muted)]">🤖 {f.ai_1h_prob}%</span>}
@@ -1093,6 +1182,52 @@ export default function Desk({ mode }: { mode: TradeMode }) {
                   </td>
                 </tr>
               ))}
+            </tbody>
+          </table>
+        </Sect>
+      )}
+
+      {/* 📊 today's per-stock results (boss: after market, show what happened) */}
+      {dayRep && dayRep.stocks.length > 0 && (
+        <Sect title={`📊 ${t("오늘 결과 — 종목별 요약", "Today's Results — per stock")}`}>
+          <table className="w-full text-[12px]">
+            <thead>
+              <tr className="text-[10.5px] text-[var(--text-muted)]" style={{ background: "var(--bg-elevated)" }}>
+                <th className="text-left px-3 py-1.5">{t("종목", "Stock")}</th>
+                <th className="text-right px-2">{t("매수/매도", "Buys/Sells")}</th>
+                <th className="text-right px-2">{t("매수금액", "Bought")}</th>
+                <th className="text-right px-2">{t("매도금액", "Sold")}</th>
+                <th className="text-right px-2">{t("실현손익", "Realized")}</th>
+                <th className="text-right px-2">{t("평균 %", "Avg %")}</th>
+                <th className="text-right px-2">{t("승/패", "W/L")}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {dayRep.stocks.map((s) => (
+                <tr key={s.ticker} className="border-t border-[var(--border-default)]/40">
+                  <td className="px-3 py-1.5 font-bold text-[var(--text-primary)]">{s.name}</td>
+                  <td className="text-right px-2 tabular-nums">{s.buys}/{s.sells}</td>
+                  <td className="text-right px-2 tabular-nums">{fmt(s.bought_value)}</td>
+                  <td className="text-right px-2 tabular-nums">{fmt(s.sold_value)}</td>
+                  <td className="text-right px-2 tabular-nums font-extrabold" style={{ color: pnlCol(s.realized) }}>
+                    {s.realized > 0 ? "+" : ""}{fmt(s.realized)}
+                  </td>
+                  <td className="text-right px-2 tabular-nums font-bold" style={{ color: pnlCol(s.avg_pct) }}>
+                    {s.avg_pct != null ? `${s.avg_pct > 0 ? "+" : ""}${s.avg_pct}%` : "-"}
+                  </td>
+                  <td className="text-right px-2 tabular-nums">{s.wins}{t("승", "W")} {s.losses}{t("패", "L")}</td>
+                </tr>
+              ))}
+              <tr className="border-t-2 border-[var(--border-default)] font-extrabold" style={{ background: "var(--bg-elevated)" }}>
+                <td className="px-3 py-1.5 text-[var(--text-primary)]">{t("합계", "TOTAL")} · {dayRep.totals.stocks_traded}{t("종목", " stocks")}</td>
+                <td className="text-right px-2 tabular-nums">{dayRep.totals.buys}/{dayRep.totals.sells}</td>
+                <td className="text-right px-2" colSpan={2}></td>
+                <td className="text-right px-2 tabular-nums" style={{ color: pnlCol(dayRep.totals.realized) }}>
+                  {dayRep.totals.realized > 0 ? "+" : ""}{fmt(dayRep.totals.realized)}
+                </td>
+                <td className="text-right px-2"></td>
+                <td className="text-right px-2 tabular-nums">{dayRep.totals.wins}{t("승", "W")} {dayRep.totals.losses}{t("패", "L")}</td>
+              </tr>
             </tbody>
           </table>
         </Sect>

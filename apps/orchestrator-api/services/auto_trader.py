@@ -338,6 +338,13 @@ def focus_status(db, codes: Optional[list[str]] = None) -> dict[str, Any]:
             db.rollback()
             s = {"state": "ERROR", "reason_ko": "데이터 오류", "reason_en": "data error"}
         qualified = bool(s.get("state") == "ACT_NOW" and (s.get("confidence") or 0) >= MIN_CONF)
+        # boss 2026-07-10: NO new recommendations after 15:20 — the market closes 15:30
+        # and a fresh 60-minute idea can't finish its life. (Entries were already
+        # gated in tick()/buy_candidates; this covers the panels too.)
+        if qualified and not _market_open_now():
+            qualified = False
+            s["reason_ko"] = "15:20 이후 신규 추천 중단 — 장 마감(15:30) 임박, 새 1시간 아이디어가 끝까지 살 수 없습니다"
+            s["reason_en"] = "no new recommendations after 15:20 — the market closes at 15:30; a fresh 1-hour idea can't finish its life"
         vetoed = False
         # holding? fetched first — a held stock always earns the full opinion
         guard0: Optional[dict[str, Any]] = None
