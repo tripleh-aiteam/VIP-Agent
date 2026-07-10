@@ -175,6 +175,88 @@ export default function Desk({ mode }: { mode: TradeMode }) {
   // 🎯 SEMI-AUTO focus board: 삼성전자 + SK하이닉스, always-on status
   const [focus, setFocus] = useState<FocusStock[]>([]);
   const [focusAt, setFocusAt] = useState<string>("");
+  // 📈 inline live chart (boss: click 삼성전자/SK하이닉스 → chart opens between
+  // Place Order and Trade History, NOT a new window)
+  const [chartCode, setChartCode] = useState<string | null>(null);
+  const [chartName, setChartName] = useState("");
+  const [chartTf, setChartTf] = useState<"5m" | "1h" | "D" | "W" | "M">("5m");
+  const [chartDetail, setChartDetail] = useState<{
+    price?: number; change_pct?: number; open?: number; high?: number; low?: number;
+    volume?: number; period_high?: number; period_low?: number; market_open?: boolean;
+    source?: string; candles?: { time: string; open: number; high: number; low: number; close: number }[];
+  } | null>(null);
+  const chartRef = useRef<HTMLDivElement | null>(null);
+
+  // price strip + daily candles (poll 20s while a chart is open)
+  useEffect(() => {
+    if (!chartCode) return;
+    let alive = true;
+    const load = () => api<NonNullable<typeof chartDetail>>(`/predictions/stock-detail/${chartCode}`)
+      .then((r) => { if (alive) setChartDetail(r); }).catch(() => {});
+    load();
+    const i = setInterval(load, 20000);
+    return () => { alive = false; clearInterval(i); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [chartCode]);
+
+  // the candle chart itself (lightweight-charts, dynamic import — no SSR)
+  useEffect(() => {
+    if (!chartCode || !chartRef.current) return;
+    let alive = true;
+    let cleanup = () => {};
+    (async () => {
+      const lw = await import("lightweight-charts");
+      if (!alive || !chartRef.current) return;
+      chartRef.current.replaceChildren();
+      const dark = document.documentElement.classList.contains("dark");
+      const chart = lw.createChart(chartRef.current, {
+        height: 380, autoSize: true,
+        layout: { background: { color: "transparent" }, textColor: dark ? "#aaa" : "#666" },
+        grid: { vertLines: { color: "rgba(128,128,128,0.12)" }, horzLines: { color: "rgba(128,128,128,0.12)" } },
+        timeScale: { timeVisible: chartTf === "5m" || chartTf === "1h", secondsVisible: false },
+      });
+      const series = chart.addCandlestickSeries({
+        upColor: "#d32f2f", downColor: "#1565c0", borderUpColor: "#d32f2f",
+        borderDownColor: "#1565c0", wickUpColor: "#d32f2f", wickDownColor: "#1565c0",
+      });
+      const aggWM = (rows: { time: string; open: number; high: number; low: number; close: number }[], tf: "W" | "M") => {
+        const key = (d: string) => {
+          if (tf === "M") return `${d.slice(0, 7)}-01`;
+          const dt = new Date(`${d}T00:00:00`);
+          dt.setDate(dt.getDate() - ((dt.getDay() + 6) % 7));
+          return dt.toISOString().slice(0, 10);
+        };
+        const acc: Record<string, { time: string; open: number; high: number; low: number; close: number }> = {};
+        for (const c of rows) {
+          const k = key(c.time);
+          const a = acc[k];
+          if (!a) acc[k] = { time: k, open: c.open, high: c.high, low: c.low, close: c.close };
+          else { a.high = Math.max(a.high, c.high); a.low = Math.min(a.low, c.low); a.close = c.close; }
+        }
+        return Object.values(acc);
+      };
+      const loadData = async () => {
+        try {
+          if (chartTf === "5m" || chartTf === "1h") {
+            const r = await api<{ bars: { time: number; open: number; high: number; low: number; close: number }[] }>(
+              `/paper-desk/chart?code=${chartCode}&tf=${chartTf}`);
+            series.setData((r.bars || []) as never);
+          } else {
+            const r = await api<{ candles?: { time: string; open: number; high: number; low: number; close: number }[] }>(
+              `/predictions/stock-detail/${chartCode}`);
+            const daily = (r.candles || []).filter((c) => c.open != null && c.close != null);
+            series.setData((chartTf === "D" ? daily : aggWM(daily, chartTf)) as never);
+          }
+          chart.timeScale().fitContent();
+        } catch { /* keep the last data */ }
+      };
+      await loadData();
+      const iv = setInterval(loadData, 20000);
+      cleanup = () => { clearInterval(iv); chart.remove(); };
+    })();
+    return () => { alive = false; cleanup(); };
+  }, [chartCode, chartTf]);
+
   // 🧠 per-stock "how the engine thinks" full report (button-expanded, on demand)
   const [detailOpen, setDetailOpen] = useState<Record<string, boolean>>({});
   const [detailText, setDetailText] = useState<Record<string, string>>({});
@@ -558,7 +640,11 @@ export default function Desk({ mode }: { mode: TradeMode }) {
             return (
               <div key={f.code} className="rounded-2xl border-2 px-4 py-3.5" style={{ borderColor: border, background: bg }}>
                 <div className="flex items-baseline gap-2 flex-wrap">
-                  <span className="text-[18px] font-extrabold text-[var(--text-primary)]">{f.name}</span>
+                  <button onClick={() => { setChartName(f.name); setChartCode(f.code); }}
+                    title={t("클릭하면 아래에 실시간 차트가 열립니다", "click to open the live chart below")}
+                    className="text-[18px] font-extrabold text-[var(--text-primary)] underline decoration-dotted underline-offset-4 hover:opacity-70">
+                    {f.name} 📈
+                  </button>
                   <span className="text-[11px] text-[var(--text-muted)]">{f.code}</span>
                   {f.price != null && <span className="text-[16px] font-extrabold tabular-nums text-[var(--text-primary)]">₩{fmt(f.price)}</span>}
                   {f.ai_1h_prob != null && <span className="text-[11.5px] font-bold text-[var(--text-muted)]">🤖 {f.ai_1h_prob}%</span>}
@@ -680,13 +766,12 @@ export default function Desk({ mode }: { mode: TradeMode }) {
                 {/* 🧠 full "how the engine thinks" report — button-expanded, BOTH cases
                     (boss: hybrid ML + market situation + chart analysis + news, readable) */}
                 <button onClick={() => toggleDetail(f.code)}
-                  className="mt-2 w-full text-left text-[12px] font-extrabold px-3 py-2 rounded-lg border"
-                  style={{ borderColor: "#546e7a", color: detailOpen[f.code] ? "#fff" : "var(--text-primary)",
-                           background: detailOpen[f.code] ? "#546e7a" : "var(--bg-primary)" }}>
-                  🧠 {detailOpen[f.code]
-                    ? t("상세 설명 닫기 ▲", "Close the detailed explanation ▲")
-                    : t("상세 설명 보기 ▼ — 결정엔진이 어떻게 생각했나 (ML · 시장상황 · 차트 분석 · 뉴스)",
-                        "How the engine thinks ▼ — ML · market situation · chart analysis · news")}
+                  className="mt-2 w-full text-center text-[13px] font-extrabold px-3 py-2 rounded-lg text-white"
+                  style={{ background: detailOpen[f.code] ? "#8e0000" : RED }}>
+                  📖 {detailOpen[f.code]
+                    ? t("상세 설명 닫기 ▲", "Close Detailed Explanation ▲")
+                    : t("상세 설명 — 클릭해서 엔진의 생각 전체 읽기 (ML · 시장상황 · 차트 분석 · 뉴스) ▼",
+                        "DETAILED EXPLANATION — click to read the engine's full thinking (ML · market · chart analysis · news) ▼")}
                 </button>
                 {detailOpen[f.code] && (
                   <div className="mt-2 px-3 py-2.5 rounded-lg border text-[11.5px] text-[var(--text-secondary)] max-h-[420px] overflow-y-auto"
@@ -813,6 +898,54 @@ export default function Desk({ mode }: { mode: TradeMode }) {
           </div>
         )}
       </Sect>
+
+      {/* 📈 INLINE LIVE CHART (boss: click 삼성전자/SK하이닉스 above → chart opens HERE,
+          between Place Order and Trade History — never a new window) */}
+      {chartCode && (
+        <Sect title={`📈 ${chartName} ${t("실시간 차트", "Live Chart")} · ${chartCode}`}>
+          <div className="px-3 py-2 flex items-center gap-3 flex-wrap border-b border-[var(--border-default)]/40"
+            style={{ background: "var(--bg-elevated)" }}>
+            {chartDetail?.price != null && (
+              <>
+                <span className="text-[19px] font-extrabold tabular-nums text-[var(--text-primary)]">₩{fmt(chartDetail.price)}</span>
+                {chartDetail.change_pct != null && (
+                  <span className="text-[14px] font-extrabold tabular-nums" style={{ color: pnlCol(chartDetail.change_pct) }}>
+                    {chartDetail.change_pct > 0 ? "▲" : chartDetail.change_pct < 0 ? "▼" : ""}{chartDetail.change_pct}%
+                  </span>
+                )}
+                <span className="text-[11.5px] text-[var(--text-muted)] tabular-nums">
+                  {t("시가", "O")} <b className="text-[var(--text-secondary)]">{fmt(chartDetail.open)}</b>
+                  {" · "}{t("고가", "H")} <b style={{ color: RED }}>{fmt(chartDetail.high)}</b>
+                  {" · "}{t("저가", "L")} <b style={{ color: BLUE }}>{fmt(chartDetail.low)}</b>
+                  {" · "}{t("거래량", "Vol")} <b className="text-[var(--text-secondary)]">{fmt(chartDetail.volume)}</b>
+                  {chartDetail.period_high != null && <> {" · "}{t("3개월 고/저", "3mo H/L")} <b className="text-[var(--text-secondary)]">{fmt(chartDetail.period_high)}/{fmt(chartDetail.period_low)}</b></>}
+                </span>
+                <span className="text-[10px] px-1.5 py-0.5 rounded-full font-bold"
+                  style={chartDetail.market_open ? { color: "#fff", background: RED } : { color: "var(--text-muted)", background: "var(--bg-primary)" }}>
+                  {chartDetail.market_open ? `🔴 ${t("실시간", "LIVE")}` : t("장마감", "Closed")}
+                </span>
+              </>
+            )}
+            <div className="ml-auto flex items-center gap-1">
+              {([["5m", t("5분", "5m")], ["1h", t("1시간", "1h")], ["D", t("일봉", "Day")], ["W", t("주봉", "Week")], ["M", t("월봉", "Month")]] as const).map(([k, lab]) => (
+                <button key={k} onClick={() => setChartTf(k)}
+                  className="text-[11.5px] font-extrabold px-2.5 py-1 rounded-md border"
+                  style={chartTf === k ? { background: "#546e7a", color: "#fff", borderColor: "#546e7a" }
+                                       : { borderColor: "var(--border-default)", color: "var(--text-muted)" }}>
+                  {lab}
+                </button>
+              ))}
+              <button onClick={() => { setChartCode(null); setChartDetail(null); }}
+                className="ml-1 text-[14px] font-extrabold text-[var(--text-muted)] px-2 py-0.5 rounded hover:opacity-70">✕</button>
+            </div>
+          </div>
+          <div ref={chartRef} style={{ height: 380 }} />
+          <div className="px-3 py-1.5 text-[10px] text-[var(--text-muted)]">
+            {t("20초마다 자동 갱신 · 마우스 휠로 확대/축소 · 5분/1시간 = 우리가 수집한 실시간 분봉, 일/주/월 = 네이버 일봉",
+               "refreshes every 20s · scroll to zoom · 5m/1h = our collected live minute bars, D/W/M = Naver daily")}
+          </div>
+        </Sect>
+      )}
 
       {/* positions — FOCUS-ONLY by default (boss); one click shows everything the
           background full-market auto is holding */}

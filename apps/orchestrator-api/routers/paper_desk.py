@@ -167,6 +167,46 @@ def desk_deposit(amount: float = Query(100_000_000), db: Session = Depends(get_d
     return deposit(db, amount)
 
 
+@router.get("/chart")
+def desk_chart(code: str = Query(...), tf: str = Query("5m"), db: Session = Depends(get_db)):
+    """Intraday candles for the inline focus chart (boss 2026-07-10: click the stock →
+    live chart between Place Order and Trade History). tf=5m: our collected 5-min bars
+    (today + 1yr history); tf=1h: the same bars aggregated. Daily/weekly/monthly come
+    from /predictions/stock-detail."""
+    from services.cycle_scalp import _bars
+    code = str(code).zfill(6)
+    bars = _bars(db, code, limit=2500)
+
+    def _ts(b) -> int:
+        try:
+            return int(b["ts"].timestamp())
+        except Exception:
+            return 0
+    out: list[dict] = []
+    if tf == "1h":
+        agg: dict = {}
+        for b in bars:
+            try:
+                k = b["ts"].strftime("%Y-%m-%d %H")
+            except Exception:
+                continue
+            a = agg.get(k)
+            if not a:
+                agg[k] = {"time": _ts(b), "open": b["open"], "high": b["high"],
+                          "low": b["low"], "close": b["close"], "volume": b["volume"]}
+            else:
+                a["high"] = max(a["high"], b["high"])
+                a["low"] = min(a["low"], b["low"])
+                a["close"] = b["close"]
+                a["volume"] += b["volume"]
+        out = list(agg.values())
+    else:
+        out = [{"time": _ts(b), "open": b["open"], "high": b["high"], "low": b["low"],
+                "close": b["close"], "volume": b["volume"]} for b in bars[-500:]]
+    out = [b for b in out if b["time"] > 0]
+    return {"code": code, "tf": tf, "bars": out}
+
+
 # ---- Phase 4: the AUTO-AGENT (auto-trades the scanner's setups on this desk) ----
 @router.get("/auto/status")
 def auto_status(db: Session = Depends(get_db)):
