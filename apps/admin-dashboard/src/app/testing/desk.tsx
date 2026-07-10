@@ -721,7 +721,11 @@ export default function Desk({ mode }: { mode: TradeMode }) {
                 style={{ borderColor: "var(--border-default)" }}>
                 <option value="">{t("종목 선택 ▾", "Choose ▾")}</option>
                 {focus.filter((f) => !["000660", "005930"].includes(f.code) && !watchExtra.includes(f.code) && !f.dynamic)
-                  .map((f) => <option key={f.code} value={f.code}>{f.name}</option>)}
+                  .map((f) => (
+                    <option key={f.code} value={f.code}>
+                      {f.name}{f.qualified ? " 🔴신호!" : f.state === "FORMING" ? " 🟠형성중" : ""}{f.guard ? ` · 💼보유`.trim() : ""}
+                    </option>
+                  ))}
               </select>
               {watchExtra.length > 0 && (
                 <span className="text-[10.5px] text-[var(--text-muted)]">
@@ -732,10 +736,9 @@ export default function Desk({ mode }: { mode: TradeMode }) {
           )}
           {[...focus]
             .filter((f) =>
-              ["000660", "005930"].includes(f.code)      // the two mains, always
-              || watchExtra.includes(f.code)             // chosen from the dropdown
-              || f.qualified || f.state === "FORMING"    // live signals always surface
-              || !!f.guard || !!f.dynamic)               // holdings + market-wide signals
+              ["000660", "005930"].includes(f.code)      // ONLY the two mains by default (boss)
+              || watchExtra.includes(f.code)             // + whatever he picked in the dropdown
+              || !!f.dynamic)                            // + rare 🔥 market-wide signals
             .sort((a, b) => {
             // boss: SK하이닉스 first, 삼성전자 second — then actives before quiet
             const rank = (x: FocusStock) =>
