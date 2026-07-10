@@ -164,9 +164,8 @@ export default function Desk({ mode }: { mode: TradeMode }) {
     return () => clearInterval(i);
   }, []);
 
-  // semi + auto: poll the focus board every 60s (always answers — signal/forming/none)
+  // ALL modes: poll the focus board every 60s (always answers — signal/forming/none)
   useEffect(() => {
-    if (mode === "manual") return;
     const check = () => {
       api<{ stocks?: FocusStock[]; hour_acc?: { acc: number; n: number } }>("/paper-desk/auto/focus").then((r) => {
         setFocus(r.stocks || []);
@@ -510,10 +509,10 @@ export default function Desk({ mode }: { mode: TradeMode }) {
         </div>
       )}
 
-      {/* 🎯 FOCUS BOARD — two BIG always-visible panels for 삼성전자 + SK하이닉스.
-          Semi: signal + BUY button (YOU decide). Auto: same detail, info-only (the
-          machine acts). Both cases fully explained (boss 2026-07-10). */}
-      {(mode === "semi" || mode === "auto") && (
+      {/* 🎯 FOCUS BOARD — two BIG always-visible panels for 삼성전자 + SK하이닉스, on
+          EVERY mode page (boss). Semi/Manual: BUY button (YOU decide). Auto: info-only
+          (the machine acts). Both cases fully explained. */}
+      {(
         <div className="mb-4 grid gap-3" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(340px, 1fr))" }}>
           {(focus.length ? focus : FOCUS.map((c) => ({ code: c, name: c === "005930" ? "삼성전자" : "SK하이닉스" } as FocusStock))).map((f) => {
             const sig = !!f.qualified;
@@ -547,7 +546,7 @@ export default function Desk({ mode }: { mode: TradeMode }) {
                     <div className="mt-1.5 text-[12.5px] text-[var(--text-primary)] tabular-nums font-bold">
                       {t("진입", "entry")} ~₩{fmt(f.entry_zone?.[0])} · 🎯 ₩{fmt(f.target_band?.[0])} · 🛑 ₩{fmt(f.stop)} · ⏱️ {f.time_min || 60}{t("분", "min")}
                     </div>
-                    {mode === "semi" ? (
+                    {mode !== "auto" ? (
                       <div className="mt-2.5 flex items-center gap-2">
                         <input value={alertQty[f.code] ?? String(defQty)}
                           onChange={(e) => setAlertQty((m2) => ({ ...m2, [f.code]: e.target.value.replace(/[^0-9]/g, "") }))}
@@ -590,32 +589,59 @@ export default function Desk({ mode }: { mode: TradeMode }) {
                     </div>
                   </>
                 )}
-                {/* 🧠 the DECISION ENGINE's full opinion — shown in BOTH cases (boss:
-                    even when it does not recommend, explain why) */}
-                {f.opinion && (
-                  <div className="mt-2 pt-2 border-t text-[11.5px] leading-relaxed text-[var(--text-secondary)]"
-                    style={{ borderColor: "var(--border-default)" }}>
-                    <b className="text-[var(--text-primary)]">🧠 {t("결정엔진 종합 의견", "Engine's full opinion")}:</b>{" "}
-                    <b style={{ color: f.opinion.decision === "BUY" ? RED : f.opinion.decision === "SELL" ? BLUE : "var(--text-primary)" }}>
-                      {f.opinion.decision === "BUY" ? t("매수", "BUY") : f.opinion.decision === "SELL" ? t("매도", "SELL") : t("보유/관망", "HOLD")}
-                    </b>
-                    {f.opinion.score != null && <> ({t("점수", "score")} {f.opinion.score})</>}
-                    {" · "}① ML: {f.opinion.ml || "-"}{f.opinion.ml_acc != null && ` (${t("정확도", "acc")} ${Math.round(f.opinion.ml_acc)}%)`}
-                    {" · "}② {t("분석", "Analysis")}: {f.opinion.analysis || "-"}
-                    {" · "}③ {t("파동", "Wave")}: {f.opinion.wave || "-"}
-                    {" · "}📰 {t("뉴스", "news")}: {f.opinion.news_score != null
-                      ? (f.opinion.news_score > 0 ? t("호재", "positive") : f.opinion.news_score < 0 ? t("악재", "negative") : t("중립", "neutral")) : "-"}
-                    {(lang === "ko" ? f.opinion.micro_ko : (f.opinion.micro_en || f.opinion.micro_ko)) && (
-                      <div className="mt-0.5">📈 {t("5분 흐름", "5-min flow")}: {lang === "ko" ? f.opinion.micro_ko : (f.opinion.micro_en || f.opinion.micro_ko)}</div>
-                    )}
-                    {!sig && (
-                      <div className="mt-0.5">
-                        {t("→ 지금 매수 신호가 아닌 이유: 위 의견이 한 방향으로 강하게 모이지 않았고, 1시간 타이밍 조건(패턴·추세·확신 60+)이 충족되지 않았습니다. 조건이 갖춰지면 이 판이 즉시 빨간색으로 바뀝니다.",
-                           "→ Why not a buy right now: the votes above don't align strongly one way, and the 1-hour timing conditions (pattern · trend · conf 60+) aren't met. The moment they are, this panel turns red.")}
-                      </div>
-                    )}
-                  </div>
-                )}
+                {/* 🧠 the DECISION ENGINE's full opinion — detailed plain-language
+                    bullets, BOTH cases (boss 2026-07-10: "accuracy is low, no good
+                    news, something like this…") */}
+                {f.opinion && (() => {
+                  const op = f.opinion!;
+                  const L: string[] = [];
+                  const mlAcc = op.ml_acc != null ? Math.round(op.ml_acc) : null;
+                  const mlCall = op.ml === "BUY" ? t("매수", "buy") : op.ml === "SELL" ? t("매도", "sell") : t("보유(중립)", "hold (neutral)");
+                  L.push(t(
+                    `① 머신러닝: '${mlCall}' 의견${mlAcc != null ? ` — 최근 이 종목 적중률 ${mlAcc}%${mlAcc < 50 ? " (낮음 → 이 표는 약하게만 반영)" : mlAcc >= 55 ? " (양호 → 표에 무게)" : " (동전던지기 수준)"}` : ""}`,
+                    `① Machine Learning: says '${op.ml || "HOLD"}'${mlAcc != null ? ` — recent accuracy on this stock ${mlAcc}%${mlAcc < 50 ? " (LOW → its vote counts little)" : mlAcc >= 55 ? " (decent → vote carries weight)" : " (coin-flip level)"}` : ""}`));
+                  L.push(op.analysis === "BUY"
+                    ? t("② 분석(호가·수급): 사는 돈이 우세 — 매수에 긍정적", "② Analysis (order book · flows): buying money dominates — positive")
+                    : op.analysis === "SELL"
+                    ? t("② 분석(호가·수급): 파는 힘 우세 — 지금 사면 역류를 거스르는 셈", "② Analysis (order book · flows): sellers dominate — buying now fights the current")
+                    : t("② 분석(호가·수급): 사자/팔자 힘이 비슷 — 방향 확신 없음", "② Analysis (order book · flows): buyers and sellers balanced — no directional edge"));
+                  L.push(op.wave === "BUY"
+                    ? t("③ 파동: 강한 상승 뒤 깊은 눌림 — 파동 기준 매수 자리", "③ Wave: deep pullback after a strong rally — a wave-method buy spot")
+                    : op.wave === "AVOID"
+                    ? t("③ 파동: 상승 파동이 약하거나 깨짐 — 회피", "③ Wave: the up-wave is weak or broken — avoid")
+                    : t("③ 파동: 아직 매수 구간까지 눌리지 않음 — 관망", "③ Wave: hasn't pulled back into the buy zone — watch"));
+                  L.push(op.news_score != null && op.news_score > 0
+                    ? t("📰 뉴스: 호재 우세 — 우호적 분위기", "📰 News: positive stories dominate — supportive mood")
+                    : op.news_score != null && op.news_score < 0
+                    ? t("📰 뉴스: 악재 우세 — 주의", "📰 News: negative stories dominate — caution")
+                    : t("📰 뉴스: 주가를 움직일 만한 특별한 호재/악재 없음", "📰 News: nothing strong enough to move the price either way"));
+                  if (f.ai_1h_prob != null) {
+                    L.push(f.ai_1h_prob >= 60
+                      ? t(`🤖 AI 1시간 모델: 상승확률 ${f.ai_1h_prob}% — 강한 편`, `🤖 1-hour AI: ${f.ai_1h_prob}% up-probability — strong`)
+                      : f.ai_1h_prob <= 40
+                      ? t(`🤖 AI 1시간 모델: 상승확률 ${f.ai_1h_prob}% — 하락 쪽에 무게`, `🤖 1-hour AI: ${f.ai_1h_prob}% up-probability — leans DOWN`)
+                      : t(`🤖 AI 1시간 모델: 상승확률 ${f.ai_1h_prob}% — 어느 쪽도 확신 부족`, `🤖 1-hour AI: ${f.ai_1h_prob}% up-probability — no conviction either way`));
+                  }
+                  const micro = lang === "ko" ? op.micro_ko : (op.micro_en || op.micro_ko);
+                  if (micro) L.push(`📈 ${t("5분 흐름", "5-min flow")}: ${micro}`);
+                  return (
+                    <div className="mt-2 pt-2 border-t text-[11.5px] leading-relaxed text-[var(--text-secondary)]"
+                      style={{ borderColor: "var(--border-default)" }}>
+                      <b className="text-[var(--text-primary)]">🧠 {t("결정엔진 종합 의견", "Engine's full opinion")}:</b>{" "}
+                      <b style={{ color: op.decision === "BUY" ? RED : op.decision === "SELL" ? BLUE : "var(--text-primary)" }}>
+                        {op.decision === "BUY" ? t("매수", "BUY") : op.decision === "SELL" ? t("매도", "SELL") : t("보유/관망", "HOLD")}
+                      </b>
+                      {op.score != null && <> ({t("점수", "score")} {op.score} — {t("±2.5 넘어야 강한 신호", "needs ±2.5 for a strong call")})</>}
+                      {L.map((x, i) => <div key={i} className="mt-0.5">· {x}</div>)}
+                      {!sig && (
+                        <div className="mt-1 font-bold text-[var(--text-primary)]">
+                          {t("→ 종합: 위 의견들이 한 방향으로 모이지 않아 60분 안에 확실히 오른다고 볼 근거가 부족합니다. 조건이 갖춰지는 순간 이 판이 빨간색으로 바뀝니다.",
+                             "→ Bottom line: the votes don't align one way, so there isn't enough evidence of a rise within 60 minutes. The moment conditions align, this panel turns red.")}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
                 <div className="mt-2 text-[10px] text-[var(--text-muted)]">
                   {t(`1분마다 자동 갱신${focusAt ? ` · 마지막 확인 ${focusAt}` : ""} · 신호가 켜지면 이 판이 빨간색으로 바뀝니다`,
                      `refreshes every minute${focusAt ? ` · last check ${focusAt}` : ""} · this panel turns RED when a signal fires`)}
@@ -739,22 +765,13 @@ export default function Desk({ mode }: { mode: TradeMode }) {
       {/* positions — FOCUS-ONLY by default (boss); one click shows everything the
           background full-market auto is holding */}
       <Sect title={`${t("보유 종목", "Positions")} · ${posShown.length}${posHidden > 0 && focusOnly ? ` (+${posHidden})` : ""}`}>
-        <div className="px-3 py-1.5 flex items-center gap-2 border-b border-[var(--border-default)]/40" style={{ background: "var(--bg-elevated)" }}>
-          <button onClick={() => setFocusOnly(true)}
-            className="text-[11px] font-extrabold px-2.5 py-0.5 rounded-md border"
-            style={focusOnly ? { background: "#e65100", color: "#fff", borderColor: "#e65100" }
-                             : { borderColor: "var(--border-default)", color: "var(--text-muted)" }}>
-            ⭐ {t("관심종목만 (삼성전자·SK하이닉스)", "Focus only (Samsung · SK Hynix)")}
+        <div className="px-3 py-1 flex items-center justify-end border-b border-[var(--border-default)]/40" style={{ background: "var(--bg-elevated)" }}>
+          <button onClick={() => setFocusOnly(!focusOnly)}
+            className="text-[10.5px] text-[var(--text-muted)] underline underline-offset-2">
+            {focusOnly
+              ? `${t("전체 보기", "show all")}${posHidden > 0 ? ` (+${posHidden})` : ""}`
+              : t("관심종목만 보기", "focus stocks only")}
           </button>
-          <button onClick={() => setFocusOnly(false)}
-            className="text-[11px] font-bold px-2.5 py-0.5 rounded-md border"
-            style={!focusOnly ? { background: "#546e7a", color: "#fff", borderColor: "#546e7a" }
-                              : { borderColor: "var(--border-default)", color: "var(--text-muted)" }}>
-            {t("전체 보기", "Show all")}{posHidden > 0 && focusOnly ? ` (+${posHidden})` : ""}
-          </button>
-          <span className="text-[10px] text-[var(--text-muted)]">
-            {t("자동매매는 뒤에서 전체 시장을 계속 학습·기록합니다", "the background auto keeps learning the whole market")}
-          </span>
         </div>
         {st && posShown.length > 0 ? (
           <table className="w-full text-[12px]">
