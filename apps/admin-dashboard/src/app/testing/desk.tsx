@@ -736,10 +736,19 @@ export default function Desk({ mode }: { mode: TradeMode }) {
               <span className="text-[11px] font-bold text-[var(--text-muted)]">
                 👀 {t("더 지켜볼 종목 추가:", "Watch another company:")}
               </span>
-              <select value="" onChange={(e) => addWatch(e.target.value)}
+              <select value="" onChange={(e) => {
+                  const v = e.target.value;
+                  if (v === "__ALL__") {
+                    // boss: one click → ALL the other companies join the board
+                    const all = focus.filter((f) => !["000660", "005930"].includes(f.code) && !f.dynamic).map((f) => f.code);
+                    setWatchExtra(all);
+                    try { localStorage.setItem("board-watch", JSON.stringify(all)); } catch {}
+                  } else addWatch(v);
+                }}
                 className="text-[12px] font-bold px-2 py-1 rounded-lg border bg-[var(--bg-primary)] text-[var(--text-primary)]"
                 style={{ borderColor: "var(--border-default)" }}>
                 <option value="">{t("종목 선택 ▾", "Choose ▾")}</option>
+                <option value="__ALL__">⭐ {t("전체 추가 (모든 종목)", "Add ALL companies")}</option>
                 {focus.filter((f) => !["000660", "005930"].includes(f.code) && !watchExtra.includes(f.code) && !f.dynamic)
                   .map((f) => (
                     <option key={f.code} value={f.code}>
@@ -748,9 +757,16 @@ export default function Desk({ mode }: { mode: TradeMode }) {
                   ))}
               </select>
               {watchExtra.length > 0 && (
-                <span className="text-[10.5px] text-[var(--text-muted)]">
-                  {t("추가됨:", "watching:")} {watchExtra.map((c) => focus.find((f) => f.code === c)?.name || c).join(" · ")}
-                </span>
+                <>
+                  <span className="text-[10.5px] text-[var(--text-muted)]">
+                    {t(`추가됨 ${watchExtra.length}개:`, `watching ${watchExtra.length}:`)} {watchExtra.map((c) => focus.find((f) => f.code === c)?.name || c).slice(0, 6).join(" · ")}{watchExtra.length > 6 ? " …" : ""}
+                  </span>
+                  <button onClick={() => { setWatchExtra([]); try { localStorage.setItem("board-watch", "[]"); } catch {} }}
+                    className="text-[10.5px] font-bold px-2 py-0.5 rounded-md border text-[var(--text-muted)]"
+                    style={{ borderColor: "var(--border-default)" }}>
+                    ✕ {t("모두 제거 (기본 2개로)", "clear all (back to 2)")}
+                  </button>
+                </>
               )}
             </div>
           )}
