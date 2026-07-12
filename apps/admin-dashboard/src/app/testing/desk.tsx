@@ -201,6 +201,29 @@ export default function Desk({ mode }: { mode: TradeMode }) {
       return next;
     });
   };
+  // 🔍 search ANY KRX stock (Korean or English, typo-tolerant via the server resolver)
+  const [watchQ, setWatchQ] = useState("");
+  const [watchQBusy, setWatchQBusy] = useState(false);
+  const searchWatch = async () => {
+    const q0 = watchQ.trim();
+    if (!q0 || watchQBusy) return;
+    setWatchQBusy(true);
+    try {
+      const r = await api<QuoteRes>(`/paper-desk/quote?q=${encodeURIComponent(q0)}`);
+      if (r.ok && r.ticker) {
+        addWatch(r.ticker);
+        setWatchQ("");
+        setMsg(t(`✅ ${r.name || r.ticker} 보드에 추가됨`, `✅ ${r.name || r.ticker} added to the board`));
+      } else {
+        setMsg(t(`❌ '${q0}' 종목을 찾지 못했습니다 — 한글/영문 이름이나 6자리 코드로 시도해 보세요`,
+                 `❌ Couldn't find '${q0}' — try the Korean/English name or the 6-digit code`));
+      }
+    } catch {
+      setMsg(t("❌ 검색 실패 — 다시 시도해 주세요", "❌ Search failed — please retry"));
+    } finally {
+      setWatchQBusy(false);
+    }
+  };
   // 📊 today's per-stock results
   type DayReport = {
     stocks: { ticker: string; name: string; buys: number; sells: number; bought_value: number;
@@ -359,10 +382,13 @@ export default function Desk({ mode }: { mode: TradeMode }) {
     return () => clearInterval(i);
   }, []);
 
-  // ALL modes: poll the focus board every 60s (always answers — signal/forming/none)
+  // ALL modes: poll the focus board every 60s (always answers — signal/forming/none).
+  // Searched extras (outside the 20) travel as ?extra= so the backend computes them too.
   useEffect(() => {
     const check = () => {
-      api<{ stocks?: FocusStock[]; hour_acc?: { acc: number; n: number } }>("/paper-desk/auto/focus").then((r) => {
+      const extra = watchExtra.join(",");
+      api<{ stocks?: FocusStock[]; hour_acc?: { acc: number; n: number } }>(
+        `/paper-desk/auto/focus${extra ? `?extra=${extra}` : ""}`).then((r) => {
         setFocus(r.stocks || []);
         if (r.hour_acc) setHourAcc(r.hour_acc);
         setFocusAt(new Date().toLocaleTimeString("sv-SE", { timeZone: "Asia/Seoul" }).slice(0, 5));
@@ -371,7 +397,7 @@ export default function Desk({ mode }: { mode: TradeMode }) {
     check();
     const i = setInterval(check, 60000);
     return () => clearInterval(i);
-  }, [mode]);
+  }, [mode, watchExtra]);
 
   // MANUAL page: right-side popups, focus stocks only (boss: hide the rest from
   // semi/manual; the auto page keeps the full market for self-improvement)
@@ -756,6 +782,17 @@ export default function Desk({ mode }: { mode: TradeMode }) {
                     </option>
                   ))}
               </select>
+              <input value={watchQ}
+                onChange={(e) => setWatchQ(e.target.value)}
+                onKeyDown={(e) => { if (e.key === "Enter") searchWatch(); }}
+                placeholder={t("종목 검색 (한글/영문/코드)…", "Search any stock (KR/EN/code)…")}
+                className="text-[12px] px-2 py-1 rounded-lg border bg-[var(--bg-primary)] text-[var(--text-primary)]"
+                style={{ borderColor: "var(--border-default)", width: 190 }} />
+              <button onClick={searchWatch} disabled={watchQBusy}
+                className="text-[12px] font-extrabold px-3 py-1 rounded-lg text-white disabled:opacity-50"
+                style={{ background: "#546e7a" }}>
+                {watchQBusy ? "…" : `🔍 ${t("검색·추가", "Search & add")}`}
+              </button>
               {watchExtra.length > 0 && (
                 <>
                   <span className="text-[10.5px] text-[var(--text-muted)]">

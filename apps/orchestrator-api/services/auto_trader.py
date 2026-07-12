@@ -346,13 +346,16 @@ def focus_status(db, codes: Optional[list[str]] = None) -> dict[str, Any]:
             s["reason_ko"] = "15:20 이후 신규 추천 중단 — 장 마감(15:30) 임박, 새 1시간 아이디어가 끝까지 살 수 없습니다"
             s["reason_en"] = "no new recommendations after 15:20 — the market closes at 15:30; a fresh 1-hour idea can't finish its life"
         vetoed = False
-        # holding? fetched first — a held stock always earns the full opinion
+        # holding? fetched first — a held stock always earns the full opinion.
+        # Guard info only for the 20 protected companies: a searched extra stock must
+        # NOT display protection lines the guard won't actually enforce.
         guard0: Optional[dict[str, Any]] = None
-        try:
-            from services.position_guard import info as _ginfo0
-            guard0 = _ginfo0(db, code)
-        except Exception:
-            db.rollback()
+        if code in FOCUS_CODES:
+            try:
+                from services.position_guard import info as _ginfo0
+                guard0 = _ginfo0(db, code)
+            except Exception:
+                db.rollback()
         # FULL ENGINE OPINION — only for ACTIVE panels (signal / forming / held): with
         # 20 fixed companies, a decide() per stock per poll would take minutes. Quiet
         # panels carry the 📖 detail button, which computes the full story on demand.

@@ -246,12 +246,19 @@ def auto_candidates(db: Session = Depends(get_db)):
 
 
 @router.get("/auto/focus")
-def auto_focus(db: Session = Depends(get_db)):
-    """Semi-auto FOCUS board — the live 1-hour state of the boss's test stocks
-    (삼성전자 + SK하이닉스): signal with plan, forming with trigger, or none with
-    the reason. Always answers."""
+def auto_focus(extra: str = Query(""), db: Session = Depends(get_db)):
+    """Semi-auto FOCUS board — the live 1-hour state of the boss's test stocks.
+    `extra` = comma-separated codes the boss added via the board's search box
+    (any KRX stock, computed on top of the cached 20)."""
     from services.auto_trader import focus_status
-    return focus_status(db)
+    out = focus_status(db)
+    ex = [c.strip().zfill(6) for c in (extra or "").split(",") if c.strip()]
+    have = {s["code"] for s in out.get("stocks", [])}
+    ex = [c for c in ex if c not in have][:8]
+    if ex:
+        more = focus_status(db, codes=ex)
+        out = {**out, "stocks": list(out.get("stocks", [])) + list(more.get("stocks", []))}
+    return out
 
 
 @router.get("/auto/focus/detail")
