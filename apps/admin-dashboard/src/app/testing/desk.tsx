@@ -811,6 +811,7 @@ export default function Desk({ mode }: { mode: TradeMode }) {
             .filter((f) =>
               ["000660", "005930"].includes(f.code)      // ONLY the two mains by default (boss)
               || watchExtra.includes(f.code)             // + whatever he picked in the dropdown
+              || !!f.qualified                           // + a firing BUY signal ALWAYS surfaces
               || !!f.dynamic)                            // + rare 🔥 market-wide signals
             .sort((a, b) => {
             // boss: SK하이닉스 first, 삼성전자 second — then actives before quiet
