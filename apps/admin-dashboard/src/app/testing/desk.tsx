@@ -77,6 +77,9 @@ type FocusStock = {
   why_ko?: string | null; why_en?: string | null; reason_ko?: string | null;
   reason_en?: string | null; trigger_ko?: string | null; trigger_en?: string | null;
   path_ko?: string | null; path_en?: string | null;
+  pattern?: { n: number; up_rate: number; avg_fwd_pct: number; tod_slot?: string | null;
+              tod_up?: number | null; tod_avg_pct?: number | null; tod_n?: number | null;
+              line_ko?: string; line_en?: string } | null;
   qualified?: boolean; vetoed?: boolean; dynamic?: boolean;
   guard?: {
     qty: number; avg: number; peak?: number | null; armed?: boolean;
@@ -992,6 +995,14 @@ export default function Desk({ mode }: { mode: TradeMode }) {
                       </div>
                     )}
                   </>
+                )}
+                {/* 📊 layer ⑩ — the stock's own movement history voting (boss 2026-07-13) */}
+                {!marketClosed && f.pattern && (
+                  <div className="mt-1.5 text-[11.5px]"
+                    style={{ color: f.pattern.up_rate >= 60 ? RED : f.pattern.up_rate <= 40 ? BLUE : "var(--text-secondary)" }}>
+                    📊 <b>{t("과거 패턴", "History pattern")}:</b>{" "}
+                    {lang === "ko" ? f.pattern.line_ko : (f.pattern.line_en || f.pattern.line_ko)}
+                  </div>
                 )}
                 {/* 🛡️ HIS holding on this stock: P&L + the guard's automatic protection
                     lines + the "don't sell yet" advice (boss 2026-07-10) */}

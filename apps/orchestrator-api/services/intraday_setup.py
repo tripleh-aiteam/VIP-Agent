@@ -150,7 +150,26 @@ def scan_one(db, code: str, name: str) -> dict[str, Any]:
         conf += 3
     if ml_bullish:
         conf += 8                        # ML agrees on direction — team confirmation
-    conf = min(conf, 85)
+    # ⑩ 과거 패턴 (analog forecasting, boss 2026-07-13): the stock's own year of
+    # movement history votes — similar-past-windows up-rate + time-of-day personality.
+    # A weighted voice (±conf), never a veto; graded like everything else.
+    pattern = None
+    try:
+        from services.pattern_layer import pattern_vote
+        pattern = pattern_vote(db, code)
+        if pattern:
+            if pattern["up_rate"] >= 60:
+                conf += 4
+            elif pattern["up_rate"] <= 40:
+                conf -= 4
+            if pattern.get("tod_up") is not None:
+                if pattern["tod_up"] >= 57:
+                    conf += 2
+                elif pattern["tod_up"] <= 43:
+                    conf -= 2
+    except Exception:
+        db.rollback()
+    conf = max(0, min(conf, 88))
 
     # BOSS-TIERED target/stop (2026-07-09): ≥₩100k → +1%/−1%; <₩100k → +2~3%/−1~2%
     # (volatility picks the point inside the band). See _plan_pct.
@@ -161,6 +180,7 @@ def scan_one(db, code: str, name: str) -> dict[str, Any]:
     base = {"code": code, "name": name, "en_name": _EN.get(code, name), "price": price,
             "rsi": rsi, "vol_1h_pct": round(vol, 2) if vol is not None else None,
             "cluster": cluster.get("verdict") if cluster else None,
+            "pattern": pattern,
             "confidence": conf,
             "entry_zone": [entry_lo, entry_hi], "support": support,
             "target_band": [tgt_lo, tgt_hi], "target_pct": [t_lo, t_hi],

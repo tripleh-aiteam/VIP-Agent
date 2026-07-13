@@ -441,7 +441,7 @@ def focus_status(db, codes: Optional[list[str]] = None) -> dict[str, Any]:
                 "state", "price", "confidence", "ai_1h_prob", "entry_zone", "target_band",
                 "target_pct", "stop", "stop_pct", "time_min", "why_ko", "why_en",
                 "reason_ko", "reason_en", "trigger_ko", "trigger_en",
-                "path_ko", "path_en")},
+                "path_ko", "path_en", "pattern")},
             "qualified": qualified and not vetoed, "vetoed": vetoed,
             "opinion": opinion, "guard": guard})
 
