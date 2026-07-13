@@ -487,6 +487,82 @@ def setup_for(db, code: str, name: str) -> dict[str, Any]:
     return s
 
 
+INVERSE_ETF = ("252670", "KODEX 200선물인버스2X")   # rises ~2× when KOSPI200 falls
+
+
+def _scan_down(db) -> Optional[dict[str, Any]]:
+    """📉 DOWN setup (boss 2026-07-13): when the MARKET itself is in a confirmed
+    slide, the tradeable instrument is the INVERSE ETF — buying it = earning from
+    the fall, with all the normal doors (target/stop/trail/60min) unchanged.
+    Detection: KODEX200 below its 2h average AND falling on 15m+45m, confirmed by
+    the heavyweight AI leaning down. Never fires in an up/flat tape."""
+    try:
+        from services.cycle_scalp import _bars
+        bars = _bars(db, "069500", limit=120)          # KODEX200 = the market
+        if len(bars) < 30:
+            return None
+        c = [b["close"] for b in bars]
+        r15 = (c[-1] / c[-4] - 1) * 100 if len(c) >= 4 and c[-4] else 0
+        r45 = (c[-1] / c[-10] - 1) * 100 if len(c) >= 10 and c[-10] else 0
+        sma2h = sum(c[-24:]) / min(24, len(c))
+        if not (c[-1] < sma2h and r15 <= -0.15 and r45 <= -0.35):
+            return None
+        ai = None
+        try:
+            from services.hourly_model import prob_up_1h
+            p = prob_up_1h(db, "000660")               # heavyweight confirmation
+            ai = round(p * 100) if p is not None else None
+            if ai is not None and ai >= 50:
+                return None                            # heavyweight not leaning down
+        except Exception:
+            pass
+        code, name = INVERSE_ETF
+        # re-entry cooldown applies to the inverse too
+        try:
+            if db.execute(_sql_text(
+                "SELECT 1 FROM paper_desk_orders WHERE ticker=:t AND side='SELL' "
+                "AND status='FILLED' AND realized_pnl < 0 "
+                "AND COALESCE(filled_at, created_at) > now() - interval '60 minutes' LIMIT 1"),
+                    {"t": code}).first():
+                return None
+        except Exception:
+            db.rollback()
+        from services.paper_desk import _live_price
+        px, _nm = _live_price(code)
+        if not px:
+            return None
+        conf = 62
+        if r45 <= -0.7:
+            conf += 6
+        if ai is not None and ai <= 40:
+            conf += 4
+        # plan from the INDEX's 1h volatility ×2 (the ETF is 2X-leveraged); the boss
+        # price tiers don't apply to an index instrument — adaptive band, RR 1.6
+        rets = [c[i] / c[i - 1] - 1 for i in range(len(c) - 30, len(c)) if c[i - 1]]
+        vol2x = (statistics.pstdev(rets) * (12 ** 0.5) * 100) * 2 if len(rets) > 5 else 1.0
+        t_lo = max(0.8, min(2.5, round(vol2x * 1.25, 1)))
+        t_hi = round(min(2.8, t_lo + 0.4), 1)
+        s_pct = max(0.5, round(t_lo / _RR, 1))
+        return {"code": code, "name": name, "en_name": "KODEX 200 Futures Inverse 2X",
+                "price": float(px), "rsi": None, "vol_1h_pct": round(vol2x, 2),
+                "cluster": None, "pattern": None, "confidence": min(conf, 80),
+                "setup_type": "inverse_down", "direction": "DOWN",
+                "entry_zone": [round(px * 0.999), round(px * 1.004)],
+                "support": None,
+                "target_band": [round(px * (1 + t_lo / 100)), round(px * (1 + t_hi / 100))],
+                "target_pct": [t_lo, t_hi], "stop": round(px * (1 - s_pct / 100)),
+                "stop_pct": s_pct, "time_min": TIME_MIN, "state": "ACT_NOW", "ai_1h_prob": ai,
+                "why_ko": (f"시장 확정 하락 (KODEX200 15분 {r15:+.2f}% · 45분 {r45:+.2f}% · 2시간 평균 아래"
+                           + (f" · 하이닉스 AI {ai}%" if ai is not None else "")
+                           + ") → 인버스 매수 = 하락에서 수익"),
+                "why_en": (f"confirmed market slide (KODEX200 15m {r15:+.2f}% · 45m {r45:+.2f}% · below 2h avg"
+                           + (f" · Hynix AI {ai}%" if ai is not None else "")
+                           + ") → buying the inverse earns from the fall")}
+    except Exception:
+        db.rollback()
+        return None
+
+
 _scan_cache: dict[str, Any] = {"t": 0.0, "v": None}
 
 
@@ -530,6 +606,14 @@ def scan(db, use_cache: bool = True) -> dict[str, Any]:
             m = _scan_mover(db, c, gnames[c])
             if m:
                 act.append(m)
+    except Exception:
+        db.rollback()
+
+    # 📉 DOWN setup — a confirmed market slide makes the INVERSE ETF a buy candidate
+    try:
+        d = _scan_down(db)
+        if d:
+            act.append(d)
     except Exception:
         db.rollback()
 

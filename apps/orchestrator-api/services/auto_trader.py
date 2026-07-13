@@ -226,6 +226,9 @@ def tick(db, force: bool = False) -> dict[str, Any]:
     picked = None
     out["vetoed"] = []
     for cand in setups[:3]:
+        if cand.get("setup_type") == "inverse_down":
+            picked = cand            # the 9-method stock verdict doesn't apply to an
+            break                    # inverse ETF — its gates live in _scan_down
         try:
             from services.decision_agent import decide_cached
             _d = decide_cached(db, cand["code"]) or {}
@@ -314,12 +317,13 @@ def buy_candidates(db, max_n: int = 3) -> dict[str, Any]:
             "SELECT ticker FROM auto_trades WHERE status='OPEN'")).fetchall()}
         setups = [s for s in setups if s["code"] not in held]
         for s in setups[:max_n]:
-            try:
-                from services.decision_agent import decide_cached
-                if (decide_cached(db, s["code"]) or {}).get("decision") == "SELL":
-                    continue                      # engine veto — never show it
-            except Exception:
-                db.rollback()
+            if s.get("setup_type") != "inverse_down":   # stock verdicts don't judge ETFs
+                try:
+                    from services.decision_agent import decide_cached
+                    if (decide_cached(db, s["code"]) or {}).get("decision") == "SELL":
+                        continue                  # engine veto — never show it
+                except Exception:
+                    db.rollback()
             out["candidates"].append(s)
     except Exception:
         db.rollback()
@@ -530,14 +534,22 @@ def focus_status(db, codes: Optional[list[str]] = None) -> dict[str, Any]:
                 }
             except Exception:
                 db.rollback()
+            size2 = None
+            try:
+                from services.smart_size import suggest as _sz2
+                size2 = _sz2(db, s.get("price"), s.get("stop_pct"), conf=s.get("confidence"),
+                             ai_prob=s.get("ai_1h_prob"),
+                             pattern_up=(s.get("pattern") or {}).get("up_rate"))
+            except Exception:
+                db.rollback()
             out["stocks"].append({
                 "code": s.get("code"), "name": s.get("name"), "dynamic": True,
                 **{k: s.get(k) for k in (
                     "state", "price", "confidence", "ai_1h_prob", "entry_zone",
                     "target_band", "target_pct", "stop", "stop_pct", "time_min",
-                    "why_ko", "why_en")},
+                    "why_ko", "why_en", "setup_type", "pattern")},
                 "qualified": True, "vetoed": False,
-                "opinion": opinion2, "guard": None})
+                "opinion": opinion2, "guard": None, "size": size2})
     except Exception:
         db.rollback()
 

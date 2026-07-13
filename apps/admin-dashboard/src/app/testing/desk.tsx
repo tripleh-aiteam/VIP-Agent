@@ -83,7 +83,7 @@ type FocusStock = {
               line_ko?: string; line_en?: string } | null;
   size?: { qty: number; value: number; mult: number; risk_won: number; risk_at_stop: number;
            capped_by?: string | null; line_ko?: string; line_en?: string } | null;
-  qualified?: boolean; vetoed?: boolean; dynamic?: boolean;
+  qualified?: boolean; vetoed?: boolean; dynamic?: boolean; setup_type?: string | null;
   guard?: {
     qty: number; avg: number; peak?: number | null; armed?: boolean;
     auto_managed?: boolean; stop_line?: number | null; trail_line?: number | null;
@@ -873,8 +873,11 @@ export default function Desk({ mode }: { mode: TradeMode }) {
           }).map((f) => {
             const sig = !!f.qualified;
             const forming = f.state === "FORMING";
-            const border = sig ? RED : forming ? "#e65100" : "var(--border-default)";
-            const bg = sig ? "rgba(211,47,47,0.06)" : forming ? "rgba(230,81,0,0.05)" : "var(--bg-elevated)";
+            const isDown = f.setup_type === "inverse_down";
+            const sigColor = isDown ? "#1565c0" : RED;   // 🔵 DOWN bets wear blue
+            const border = sig ? sigColor : forming ? "#e65100" : "var(--border-default)";
+            const bg = sig ? (isDown ? "rgba(21,101,192,0.06)" : "rgba(211,47,47,0.06)")
+                           : forming ? "rgba(230,81,0,0.05)" : "var(--bg-elevated)";
             // engine-PREDICTED size when a signal is live (risk core + ML/pattern
             // conviction, boss 2026-07-13); flat 10% only as the fallback
             const defQty = f.size?.qty
@@ -939,9 +942,12 @@ export default function Desk({ mode }: { mode: TradeMode }) {
                       const tEnd = t1 > close ? close : t1;
                       const hm = (d: Date) => `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
                       return (
-                        <div className="mt-2 text-[15px] font-extrabold" style={{ color: RED }}>
-                          🔴 {t(`매수 신호! +${f.target_pct?.[0]}% ~ +${f.target_pct?.[1]}% 상승 예상 — ⏰ ${hm(t0)} → ${hm(tEnd)} 사이`,
-                                `BUY SIGNAL! +${f.target_pct?.[0]}% to +${f.target_pct?.[1]}% expected — ⏰ between ${hm(t0)} → ${hm(tEnd)}`)}
+                        <div className="mt-2 text-[15px] font-extrabold" style={{ color: sigColor }}>
+                          {isDown
+                            ? t(`🔵 하락 신호! 시장 하락에 베팅 — 인버스 매수, +${f.target_pct?.[0]}% ~ +${f.target_pct?.[1]}% 예상 — ⏰ ${hm(t0)} → ${hm(tEnd)} 사이`,
+                                `🔵 DOWN SIGNAL! Bet on the fall — buy the inverse, +${f.target_pct?.[0]}% to +${f.target_pct?.[1]}% expected — ⏰ between ${hm(t0)} → ${hm(tEnd)}`)
+                            : t(`🔴 매수 신호! +${f.target_pct?.[0]}% ~ +${f.target_pct?.[1]}% 상승 예상 — ⏰ ${hm(t0)} → ${hm(tEnd)} 사이`,
+                                `🔴 BUY SIGNAL! +${f.target_pct?.[0]}% to +${f.target_pct?.[1]}% expected — ⏰ between ${hm(t0)} → ${hm(tEnd)}`)}
                         </div>
                       );
                     })()}
