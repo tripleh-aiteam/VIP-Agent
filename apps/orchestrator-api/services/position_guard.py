@@ -160,18 +160,27 @@ def run(db) -> dict[str, Any]:
                               f"하락 시작하면 ₩{peak * (1 - TRAIL_PCT / 100):,.0f}(고점 -{TRAIL_PCT:.0f}%)에서 매도 알림"),
                 "reason_en": (f"More upside likely — DON'T sell yet! Peak ₩{peak:,.0f} · "
                               f"if it turns down, sell alert at ₩{peak * (1 - TRAIL_PCT / 100):,.0f} (peak −{TRAIL_PCT:.0f}%)")})
+        _pnl_won = (float(px) - avg) * int(qty)
         if armed and float(px) <= peak * (1 - TRAIL_PCT / 100):
             reason = "GUARD_TRAIL"
             why_ko = f"고점 ₩{peak:,.0f} 대비 -{TRAIL_PCT:.0f}% — 이익 보호, 지금 파세요"
             why_en = f"-{TRAIL_PCT:.0f}% off the ₩{peak:,.0f} peak — protect the profit, sell now"
-            plain_ko = "쉽게: 오르던 힘이 꺾였어요. 지금 팔면 번 것을 지키고, 다음 신호가 오면 더 좋은 가격에 다시 살 수 있어요."
-            plain_en = "In plain words: the climb has bent over. Selling now keeps what you earned — the next signal lets you re-enter at a better price."
+            plain_ko = (f"쉽게: ₩{avg:,.0f}에 사서 한때 ₩{peak:,.0f}까지 올랐다가 지금 ₩{px:,.0f}로 내려오는 중이에요. "
+                        f"오르던 힘이 꺾인 신호라, 지금 팔면 약 ₩{_pnl_won:+,.0f}을 지킵니다. "
+                        f"더 기다리면 이익이 녹을 위험이 커요 — 다음 신호가 오면 더 좋은 가격에 다시 살 수 있습니다.")
+            plain_en = (f"In plain words: bought at ₩{avg:,.0f}, it climbed to ₩{peak:,.0f} and is now slipping back to ₩{px:,.0f}. "
+                        f"That's the climb bending over — selling now keeps about ₩{_pnl_won:+,.0f}. "
+                        f"Waiting risks melting the gain; the next signal lets you re-enter better.")
         elif float(px) <= avg * (1 - HARD_STOP_PCT / 100):
             reason = "GUARD_HARD"
             why_ko = f"평단 대비 -{HARD_STOP_PCT:.0f}% 도달 — 무조건 손절선, 지금 파세요"
             why_en = f"-{HARD_STOP_PCT:.0f}% below your buy price — the unconditional floor, sell now"
-            plain_ko = "쉽게: -2%는 '희망 금지'선이에요. 여기서 안 팔면 -5%가 되는 걸 이미 겪었죠 — 작게 끊는 것이 계좌를 지킵니다."
-            plain_en = "In plain words: −2% is the no-hope line. We've seen what happens past it (−5%) — cutting small protects the account."
+            plain_ko = (f"쉽게: ₩{avg:,.0f}에 산 것이 지금 ₩{px:,.0f} — {int(qty):,}주면 약 ₩{_pnl_won:,.0f} 손실이에요. "
+                        f"-{HARD_STOP_PCT:.0f}%는 '희망 금지'선입니다. 이 선을 넘기고 버티다 -5%까지 간 경험이 이미 있죠 — "
+                        f"지금 작게 끊는 것이 계좌를 지키는 길입니다.")
+            plain_en = (f"In plain words: bought at ₩{avg:,.0f}, now ₩{px:,.0f} — about ₩{_pnl_won:,.0f} on {int(qty):,} shares. "
+                        f"−{HARD_STOP_PCT:.0f}% is the no-hope line; we've watched holding past it turn into −5%. "
+                        f"Cutting small now is what protects the account.")
         elif float(px) <= avg * (1 - SOFT_STOP_PCT / 100):
             if _bullish(db, tk):
                 # engine sees a recovery → HOLD (grace zone between −1% and −2%)
@@ -186,8 +195,12 @@ def run(db) -> dict[str, Any]:
             reason = "GUARD_STOP"
             why_ko = f"평단 대비 -{SOFT_STOP_PCT:.0f}% + 반등 근거 없음 — 지금 파세요"
             why_en = f"-{SOFT_STOP_PCT:.0f}% below your buy + no recovery signs — sell now"
-            plain_ko = "쉽게: 산 가격보다 -1% 내려왔는데, 다시 오를 근거를 엔진이 찾지 못했어요. 작은 손실로 끊는 게 큰 손실을 막는 길입니다."
-            plain_en = "In plain words: it's −1% below your buy and the engine finds no reason it recovers. A small cut now prevents a big one later."
+            plain_ko = (f"쉽게: ₩{avg:,.0f}에 산 것이 지금 ₩{px:,.0f}까지 내려왔어요 ({int(qty):,}주 기준 약 ₩{_pnl_won:,.0f}). "
+                        f"엔진이 5분 흐름과 AI 확률로 '다시 오를까?'를 확인했지만 반등 근거를 찾지 못했습니다. "
+                        f"이럴 때는 작은 손실로 끊는 것이 큰 손실을 막는 길이에요 — 팔았다가 진짜 반등 신호가 오면 그때 다시 사면 됩니다.")
+            plain_en = (f"In plain words: bought at ₩{avg:,.0f}, now down to ₩{px:,.0f} (≈₩{_pnl_won:,.0f} on {int(qty):,} shares). "
+                        f"The engine checked the 5-min flow and the AI odds for a recovery and found none. "
+                        f"Cutting small here prevents cutting big later — sell now, and re-buy when a real signal returns.")
         if not reason:
             continue
         if not auto_on:
