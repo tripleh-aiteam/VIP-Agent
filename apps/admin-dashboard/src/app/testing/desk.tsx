@@ -1033,54 +1033,64 @@ export default function Desk({ mode }: { mode: TradeMode }) {
                     )}
                   </div>
                 )}
-                {/* 🧠 the DECISION ENGINE's full opinion — detailed plain-language
-                    bullets, BOTH cases (boss 2026-07-10: "accuracy is low, no good
-                    news, something like this…") */}
+                {/* 🧠 PLAIN-WORDS summary (boss 2026-07-13: the panel must read like a
+                    friend explaining — all technical detail lives behind the 📖 button) */}
                 {!marketClosed && f.opinion && (() => {
                   const op = f.opinion!;
-                  const L: string[] = [];
-                  const mlAcc = op.ml_acc != null ? Math.round(op.ml_acc) : null;
-                  const mlCall = op.ml === "BUY" ? t("매수", "buy") : op.ml === "SELL" ? t("매도", "sell") : t("보유(중립)", "hold (neutral)");
-                  L.push(t(
-                    `① 머신러닝: '${mlCall}' 의견${mlAcc != null ? ` — 최근 이 종목 적중률 ${mlAcc}%${mlAcc < 50 ? " (낮음 → 이 표는 약하게만 반영)" : mlAcc >= 55 ? " (양호 → 표에 무게)" : " (동전던지기 수준)"}` : ""}`,
-                    `① Machine Learning: says '${op.ml || "HOLD"}'${mlAcc != null ? ` — recent accuracy on this stock ${mlAcc}%${mlAcc < 50 ? " (LOW → its vote counts little)" : mlAcc >= 55 ? " (decent → vote carries weight)" : " (coin-flip level)"}` : ""}`));
-                  L.push(op.analysis === "BUY"
-                    ? t("② 분석(호가·수급): 사는 돈이 우세 — 매수에 긍정적", "② Analysis (order book · flows): buying money dominates — positive")
-                    : op.analysis === "SELL"
-                    ? t("② 분석(호가·수급): 파는 힘 우세 — 지금 사면 역류를 거스르는 셈", "② Analysis (order book · flows): sellers dominate — buying now fights the current")
-                    : t("② 분석(호가·수급): 사자/팔자 힘이 비슷 — 방향 확신 없음", "② Analysis (order book · flows): buyers and sellers balanced — no directional edge"));
-                  L.push(op.wave === "BUY"
-                    ? t("③ 파동: 강한 상승 뒤 깊은 눌림 — 파동 기준 매수 자리", "③ Wave: deep pullback after a strong rally — a wave-method buy spot")
-                    : op.wave === "AVOID"
-                    ? t("③ 파동: 상승 파동이 약하거나 깨짐 — 회피", "③ Wave: the up-wave is weak or broken — avoid")
-                    : t("③ 파동: 아직 매수 구간까지 눌리지 않음 — 관망", "③ Wave: hasn't pulled back into the buy zone — watch"));
-                  L.push(op.news_score != null && op.news_score > 0
-                    ? t("📰 뉴스: 호재 우세 — 우호적 분위기", "📰 News: positive stories dominate — supportive mood")
-                    : op.news_score != null && op.news_score < 0
-                    ? t("📰 뉴스: 악재 우세 — 주의", "📰 News: negative stories dominate — caution")
-                    : t("📰 뉴스: 주가를 움직일 만한 특별한 호재/악재 없음", "📰 News: nothing strong enough to move the price either way"));
-                  if (f.ai_1h_prob != null) {
-                    L.push(f.ai_1h_prob >= 60
-                      ? t(`🤖 AI 1시간 모델: 상승확률 ${f.ai_1h_prob}% — 강한 편`, `🤖 1-hour AI: ${f.ai_1h_prob}% up-probability — strong`)
-                      : f.ai_1h_prob <= 40
-                      ? t(`🤖 AI 1시간 모델: 상승확률 ${f.ai_1h_prob}% — 하락 쪽에 무게`, `🤖 1-hour AI: ${f.ai_1h_prob}% up-probability — leans DOWN`)
-                      : t(`🤖 AI 1시간 모델: 상승확률 ${f.ai_1h_prob}% — 어느 쪽도 확신 부족`, `🤖 1-hour AI: ${f.ai_1h_prob}% up-probability — no conviction either way`));
+                  const S: string[] = [];
+                  const reason = (f.reason_ko || "") + (f.reason_en || "");
+                  // 1) the CAUSE, in everyday words
+                  if (/하락 추세|downtrend/i.test(reason)) {
+                    S.push(t("이 주식은 지금 내리막길을 걷는 중이에요. 내리막 중간에 사면 더 떨어질 위험이 크니까, 내리막이 끝났다는 증거를 기다리고 있어요.",
+                             "This stock is walking downhill right now. Buying mid-fall risks more falling, so we're waiting for proof the downhill has ended."));
+                  } else if (/동반 하락|peer group falling/i.test(reason)) {
+                    S.push(t("이 회사만이 아니라 같은 업종 친구들이 다 같이 떨어지고 있어요. 다 함께 떨어질 때 혼자 오르긴 어려워서, 그룹 전체가 멈추길 기다립니다.",
+                             "It's not just this company — its whole industry group is falling together. One stock rarely rises alone against its group, so we wait for the group to stop."));
+                  } else if (/변동성|volatility/i.test(reason)) {
+                    S.push(t("지금 이 주식은 거의 움직이지 않고 있어요. 움직임이 없으면 1시간 안에 수익을 낼 것도 없어서 쉬는 중입니다.",
+                             "The stock is barely moving right now. No movement means nothing to earn within an hour, so we sit out."));
+                  } else if (/과매도 눌림|oversold pullback/i.test(reason)) {
+                    S.push(t("싸게 살 수 있는 '눌린 자리'가 아직 안 왔어요. 좋은 가격에 태워주는 버스가 올 때까지 기다리는 중입니다.",
+                             "The 'dip' that lets us buy cheap hasn't come yet. We're waiting for the bus that offers a good seat."));
+                  } else if (/폭락|crash/i.test(reason)) {
+                    S.push(t("오늘은 시장 전체가 크게 흔들리는 날이라, 안전을 위해 아무것도 사지 않아요.",
+                             "The whole market is shaking today, so for safety we buy nothing."));
+                  } else if (f.reason_ko || f.reason_en) {
+                    S.push(lang === "ko" ? (f.reason_ko as string) : ((f.reason_en || f.reason_ko) as string));
                   }
-                  const micro = lang === "ko" ? op.micro_ko : (op.micro_en || op.micro_ko);
-                  if (micro) L.push(`📈 ${t("5분 흐름", "5-min flow")}: ${micro}`);
+                  // 2) what money did in the last minutes (from micro, simplified)
+                  const microTxt = (op.micro_ko || "") + (op.micro_en || "");
+                  if (/DOWN|하락/i.test(microTxt)) {
+                    S.push(t("조금 전까지도 파는 사람이 사는 사람보다 많았어요.",
+                             "Even in the last minutes, sellers outnumbered buyers."));
+                  } else if (/UP|상승/i.test(microTxt)) {
+                    S.push(t("방금은 사는 쪽이 살짝 우세했지만, 아직 '확실한 방향'이라고 하기엔 이릅니다.",
+                             "Buyers were slightly ahead just now, but it's too early to call it a real turn."));
+                  }
+                  // 3) mood + AI in one friendly line
+                  if (op.news_score != null && op.news_score > 0) {
+                    S.push(t("뉴스 분위기는 좋은 편이라, 흐름만 돌아서면 빨리 살아날 수 있는 종목이에요.",
+                             "The news mood is friendly — once the flow turns, this one can wake up quickly."));
+                  } else if (op.news_score != null && op.news_score < 0) {
+                    S.push(t("뉴스도 좋지 않아서 서두를 이유가 없어요.",
+                             "The news isn't helping either — no reason to hurry."));
+                  }
+                  if (f.ai_1h_prob != null && !sig) {
+                    S.push(f.ai_1h_prob <= 45
+                      ? t(`AI도 앞으로 1시간을 밝게 보지 않아요 (오를 확률 ${f.ai_1h_prob}%).`,
+                          `The AI isn't optimistic about the next hour either (${f.ai_1h_prob}% chance of rising).`)
+                      : t(`AI가 보는 1시간 상승확률은 ${f.ai_1h_prob}% — 동전 던지기 수준이라 이것만 믿고 살 수 없어요.`,
+                          `The AI puts the next hour at ${f.ai_1h_prob}% — coin-flip territory, not enough to act on.`));
+                  }
                   return (
-                    <div className="mt-2 pt-2 border-t text-[11.5px] leading-relaxed text-[var(--text-secondary)]"
+                    <div className="mt-2 pt-2 border-t text-[12px] leading-relaxed text-[var(--text-secondary)]"
                       style={{ borderColor: "var(--border-default)" }}>
-                      <b className="text-[var(--text-primary)]">🧠 {t("결정엔진 종합 의견", "Engine's full opinion")}:</b>{" "}
-                      <b style={{ color: op.decision === "BUY" ? RED : op.decision === "SELL" ? BLUE : "var(--text-primary)" }}>
-                        {op.decision === "BUY" ? t("매수", "BUY") : op.decision === "SELL" ? t("매도", "SELL") : t("보유/관망", "HOLD")}
-                      </b>
-                      {op.score != null && <> ({t("점수", "score")} {op.score} — {t("±2.5 넘어야 강한 신호", "needs ±2.5 for a strong call")})</>}
-                      {L.map((x, i) => <div key={i} className="mt-0.5">· {x}</div>)}
+                      <b className="text-[var(--text-primary)]">🧠 {t("쉬운 설명", "In plain words")}:</b>{" "}
+                      {S.join(" ")}
                       {!sig && (
                         <div className="mt-1 font-bold text-[var(--text-primary)]">
-                          {t("→ 종합: 위 의견들이 한 방향으로 모이지 않아 60분 안에 확실히 오른다고 볼 근거가 부족합니다. 조건이 갖춰지는 순간 이 판이 빨간색으로 바뀝니다.",
-                             "→ Bottom line: the votes don't align one way, so there isn't enough evidence of a rise within 60 minutes. The moment conditions align, this panel turns red.")}
+                          {t("→ 한마디로: 지금 사면 이길 확률보다 질 확률이 높아서 기다리는 거예요. 이기는 조건이 갖춰지는 순간 이 판이 빨간색으로 바뀝니다.",
+                             "→ In one line: buying now would be more likely to lose than win, so we wait. The moment the odds flip, this panel turns red.")}
                         </div>
                       )}
                     </div>
