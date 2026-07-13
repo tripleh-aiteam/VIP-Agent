@@ -382,9 +382,10 @@ export default function Desk({ mode }: { mode: TradeMode }) {
     return () => clearInterval(i);
   }, []);
 
-  // ALL modes: poll the focus board every 60s (always answers — signal/forming/none).
+  // SEMI + AUTO: poll the focus board every 60s (Manual shows no recommendations).
   // Searched extras (outside the 20) travel as ?extra= so the backend computes them too.
   useEffect(() => {
+    if (mode === "manual") return;
     const check = () => {
       const extra = watchExtra.join(",");
       api<{ stocks?: FocusStock[]; hour_acc?: { acc: number; n: number } }>(
@@ -399,10 +400,11 @@ export default function Desk({ mode }: { mode: TradeMode }) {
     return () => clearInterval(i);
   }, [mode, watchExtra]);
 
-  // MANUAL page: right-side popups, focus stocks only (boss: hide the rest from
-  // semi/manual; the auto page keeps the full market for self-improvement)
+  // POPUPS RETIRED (boss 2026-07-11: "in Manual no more recommendations" — Manual is
+  // now the pure trader's desk; Semi-Auto owns all recommendations). Flip to re-enable.
+  const POPUPS = false;
   useEffect(() => {
-    if (mode !== "manual") return;
+    if (!POPUPS || mode !== "manual") return;
     const check = () => {
       api<{ candidates?: SetupItem[]; auto_note?: string | null; hour_acc?: { acc: number; n: number } }>("/paper-desk/auto/candidates").then((r) => {
         if (r.hour_acc) setHourAcc(r.hour_acc);
@@ -700,7 +702,7 @@ export default function Desk({ mode }: { mode: TradeMode }) {
         <span className="text-[11px] text-[var(--text-muted)]">
           {mode === "auto" ? t("엔진이 전체 시장을 스스로 매매 (자가학습)", "engine trades the whole market by itself (self-learning)")
             : mode === "semi" ? t("삼성전자·SK하이닉스 — 엔진이 예측, 결정은 당신", "Samsung · SK Hynix — engine predicts, YOU decide")
-            : t("삼성전자·SK하이닉스 — 직접 매매 + 우측 알림", "Samsung · SK Hynix — you trade, popups on the right")}
+            : t("순수 수동 — 추천 없음, 100% 직접 매매 (추천은 반자동에서)", "pure manual — NO recommendations, 100% your own trading (recommendations live in Semi-Auto)")}
         </span>
         {mode !== "auto" && auto && (
           <span className="ml-auto text-[10.5px] text-[var(--text-muted)]">
@@ -747,10 +749,9 @@ export default function Desk({ mode }: { mode: TradeMode }) {
         </div>
       )}
 
-      {/* 🎯 FOCUS BOARD — two BIG always-visible panels for 삼성전자 + SK하이닉스, on
-          EVERY mode page (boss). Semi/Manual: BUY button (YOU decide). Auto: info-only
-          (the machine acts). Both cases fully explained. */}
-      {(
+      {/* 🎯 FOCUS BOARD — SEMI + AUTO only (boss 2026-07-11: Manual is the pure
+          trader's desk, NO recommendations). Semi: BUY button. Auto: info-only. */}
+      {mode !== "manual" && (
         <div className="mb-4 grid gap-3" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(340px, 1fr))" }}>
           {focus.length === 0 && (
             <div className="px-4 py-6 text-[12px] text-[var(--text-muted)] rounded-2xl border" style={{ borderColor: "var(--border-default)" }}>
@@ -1188,6 +1189,11 @@ export default function Desk({ mode }: { mode: TradeMode }) {
                     {quote.change_pct != null && <span className="font-extrabold" style={{ color: cCol }}>{tri} {chg > 0 ? "+" : ""}{chg.toFixed(2)}%</span>}
                     <span className="text-[var(--text-muted)]">{t("고가", "H")} <b style={{ color: RED }}>{fmt(quote.high)}</b></span>
                     <span className="text-[var(--text-muted)]">{t("저가", "L")} <b style={{ color: BLUE }}>{fmt(quote.low)}</b></span>
+                    {quote.ticker && (
+                      <button onClick={() => { setChartName(quote.name || quote.ticker || ""); setChartCode(quote.ticker || null); }}
+                        title={t("이 종목의 실시간 차트 열기", "open this stock's live chart")}
+                        className="text-[12px] font-extrabold px-1.5 rounded hover:opacity-70">📈</button>
+                    )}
                   </span>
                 );
               })()
@@ -1483,9 +1489,8 @@ export default function Desk({ mode }: { mode: TradeMode }) {
           `Realistic costs: buy ${st?.costs.buy_pct ?? 0.015}% · sell ${st?.costs.sell_pct ?? 0.215}% (fees+tax) · prices = live Kiwoom (Naver after hours) · refreshes every 4s and fills pending limit orders automatically`)}
       </div>
 
-      {/* ⚡ ENGINE RECOMMENDATIONS — right-side POPUPS in MANUAL mode only (the boss:
-          semi-auto shows them in the main body above; auto shows none at all). */}
-      {mode === "manual" && (
+      {/* ⚡ popups — RETIRED (boss: Manual is recommendation-free); POPUPS flag re-enables */}
+      {POPUPS && mode === "manual" && (
         <div className="fixed right-4 z-50 space-y-2" style={{ width: 330, bottom: 150 }}>
           {liveAlerts.map((a) => (
             <div key={a.key} className="rounded-xl border shadow-lg px-3.5 py-3"
