@@ -229,11 +229,23 @@ def tick(db, force: bool = False) -> dict[str, Any]:
         out["reason"] = "all candidates vetoed by the decision engine (SELL)"
         return out
     s = picked                                     # best non-vetoed (scan sorts by AI prob + conf)
-    # position size: AUTO_POS_PCT of desk equity
-    from services.paper_desk import state as desk_state
-    eq = float((desk_state(db) or {}).get("equity") or 0)
-    budget = eq * AUTO_POS_PCT / 100.0
-    qty = int(budget // float(s["price"]))
+    # SMART SIZING (boss 2026-07-13): engine-predicted size — risk core + conviction
+    # (confidence · 🤖 AI · 📊 pattern) + caps. Falls back to the flat 10% rule.
+    qty = 0
+    try:
+        from services.smart_size import suggest as _sz
+        _pat = (s.get("pattern") or {})
+        _sug = _sz(db, s["price"], s.get("stop_pct"), conf=s.get("confidence"),
+                   ai_prob=s.get("ai_1h_prob"), pattern_up=_pat.get("up_rate"))
+        if _sug:
+            qty = int(_sug["qty"])
+            out["sizing"] = {"mult": _sug["mult"], "capped_by": _sug["capped_by"]}
+    except Exception:
+        db.rollback()
+    if qty < 1:
+        from services.paper_desk import state as desk_state
+        eq = float((desk_state(db) or {}).get("equity") or 0)
+        qty = int(eq * AUTO_POS_PCT / 100.0 // float(s["price"]))
     if qty < 1:
         out["reason"] = "equity too small for 1 share of the setup"
         return out
@@ -435,6 +447,16 @@ def focus_status(db, codes: Optional[list[str]] = None) -> dict[str, Any]:
                                               f"guard auto-sells {TRAIL_PCT:.0f}% off the peak to keep the profit.")
         except Exception:
             db.rollback()
+        # engine-predicted size for a live signal (smart_size: risk core + conviction)
+        size_sug = None
+        if qualified and not vetoed and s.get("price"):
+            try:
+                from services.smart_size import suggest as _sz
+                size_sug = _sz(db, s["price"], s.get("stop_pct"), conf=s.get("confidence"),
+                               ai_prob=s.get("ai_1h_prob"),
+                               pattern_up=(s.get("pattern") or {}).get("up_rate"))
+            except Exception:
+                db.rollback()
         out["stocks"].append({
             "code": code, "name": name,
             **{k: s.get(k) for k in (
@@ -443,7 +465,7 @@ def focus_status(db, codes: Optional[list[str]] = None) -> dict[str, Any]:
                 "reason_ko", "reason_en", "trigger_ko", "trigger_en",
                 "path_ko", "path_en", "pattern")},
             "qualified": qualified and not vetoed, "vetoed": vetoed,
-            "opinion": opinion, "guard": guard})
+            "opinion": opinion, "guard": guard, "size": size_sug})
 
     # 🔥 DYNAMIC SIGNALS FROM THE WHOLE KOREAN MARKET (boss 2026-07-10): any other
     # stock (네이버, LG, 한화오션, movers…) with a machine-grade buy signal appears

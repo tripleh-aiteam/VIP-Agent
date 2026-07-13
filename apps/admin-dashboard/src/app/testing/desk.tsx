@@ -80,6 +80,8 @@ type FocusStock = {
   pattern?: { n: number; up_rate: number; avg_fwd_pct: number; tod_slot?: string | null;
               tod_up?: number | null; tod_avg_pct?: number | null; tod_n?: number | null;
               line_ko?: string; line_en?: string } | null;
+  size?: { qty: number; value: number; mult: number; risk_won: number; risk_at_stop: number;
+           capped_by?: string | null; line_ko?: string; line_en?: string } | null;
   qualified?: boolean; vetoed?: boolean; dynamic?: boolean;
   guard?: {
     qty: number; avg: number; peak?: number | null; armed?: boolean;
@@ -867,8 +869,10 @@ export default function Desk({ mode }: { mode: TradeMode }) {
             const forming = f.state === "FORMING";
             const border = sig ? RED : forming ? "#e65100" : "var(--border-default)";
             const bg = sig ? "rgba(211,47,47,0.06)" : forming ? "rgba(230,81,0,0.05)" : "var(--bg-elevated)";
-            // exact suggested share count = 10% of the REAL account equity (boss)
-            const defQty = f.price ? Math.max(1, Math.floor((st?.equity || 100_000_000) * 0.10 / f.price)) : 1;
+            // engine-PREDICTED size when a signal is live (risk core + ML/pattern
+            // conviction, boss 2026-07-13); flat 10% only as the fallback
+            const defQty = f.size?.qty
+              ?? (f.price ? Math.max(1, Math.floor((st?.equity || 100_000_000) * 0.10 / f.price)) : 1);
             return (
               <div key={f.code} className="rounded-2xl border-2 px-4 py-3.5" style={{ borderColor: border, background: bg }}>
                 <div className="flex items-baseline gap-2 flex-wrap">
@@ -947,12 +951,16 @@ export default function Desk({ mode }: { mode: TradeMode }) {
                       {t("진입", "entry")} ~₩{fmt(f.entry_zone?.[0])} · 🎯 ₩{fmt(f.target_band?.[0])} · 🛑 ₩{fmt(f.stop)} · ⏱️ {f.time_min || 60}{t("분", "min")}
                     </div>
                     <div className="mt-0.5 text-[12px] font-bold" style={{ color: RED }}>
-                      {t(`권장 수량: ${fmt(defQty)}주 (자산의 10% ≈ ₩${fmt(f.price ? defQty * f.price : null)})`,
-                         `Suggested size: ${fmt(defQty)} shares (10% of equity ≈ ₩${fmt(f.price ? defQty * f.price : null)})`)}
+                      {t(`권장 수량: ${fmt(defQty)}주 (≈ ₩${fmt(f.price ? defQty * f.price : null)})`,
+                         `Suggested size: ${fmt(defQty)} shares (≈ ₩${fmt(f.price ? defQty * f.price : null)})`)}
+                      {f.size && <span className="ml-1 text-[10px] font-normal text-[var(--text-muted)]">
+                        {t(`· 엔진 산출 (확신가중 ×${f.size.mult})`, `· engine-sized (conviction ×${f.size.mult})`)}</span>}
                     </div>
                     <div className="mt-0.5 text-[10.5px] text-[var(--text-muted)]">
-                      {t(`왜 ${fmt(defQty)}주? 계좌 자산 ₩${fmt(st?.equity)}의 10%(₩${fmt(Math.round((st?.equity || 0) * 0.1))})를 현재가 ₩${fmt(f.price)}로 나누면 ${fmt(defQty)}주(소수점 버림). 10%만 쓰는 이유: 이 거래가 손절(-1%)로 끝나도 계좌 전체 손실은 약 -0.1%뿐이라, 틀려도 아프지 않게 여러 번 반복할 수 있는 크기입니다.`,
-                         `Why ${fmt(defQty)} shares? 10% of your ₩${fmt(st?.equity)} equity (₩${fmt(Math.round((st?.equity || 0) * 0.1))}) ÷ current price ₩${fmt(f.price)} = ${fmt(defQty)} (rounded down). Why only 10%: even if this trade ends at the −1% stop, the whole account loses just ~0.1% — a size you can afford to repeat and be wrong with.`)}
+                      {f.size
+                        ? (lang === "ko" ? f.size.line_ko : (f.size.line_en || f.size.line_ko))
+                        : t(`왜 ${fmt(defQty)}주? 계좌 자산의 10%를 현재가로 나눈 기본 크기입니다 (엔진 산출 대기 중).`,
+                            `Why ${fmt(defQty)} shares? The basic 10%-of-equity size (engine sizing pending).`)}
                     </div>
                     {mode !== "auto" ? (
                       <div className="mt-2.5 flex items-center gap-2">
