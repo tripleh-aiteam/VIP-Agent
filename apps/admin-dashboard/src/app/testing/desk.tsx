@@ -35,7 +35,7 @@ type DeskState = {
   record: { trades: number; wins: number; win_rate: number | null };
   positions: Position[]; open_orders: Order[]; history: Order[];
   guard_alerts?: { ticker: string; name: string; qty: number; price: number;
-                   pnl_pct: number; action: "SELL_NOW" | "HOLD_BOUNCE";
+                   pnl_pct: number; action: "SELL_NOW" | "HOLD_BOUNCE" | "HOLD_RIDE";
                    reason_ko: string; reason_en: string; kind?: string }[];
   costs: { buy_pct: number; sell_pct: number };
 };
@@ -729,8 +729,10 @@ export default function Desk({ mode }: { mode: TradeMode }) {
               <b className="text-[var(--text-primary)]">{a.name}</b>
               <span className="tabular-nums text-[var(--text-muted)]">{fmt(a.qty)}{t("주", "sh")} · ₩{fmt(a.price)}</span>
               <b className="tabular-nums" style={{ color: pnlCol(a.pnl_pct) }}>{a.pnl_pct > 0 ? "+" : ""}{a.pnl_pct}%</b>
-              <span className="text-[11.5px]" style={{ color: a.action === "SELL_NOW" ? RED : "var(--text-secondary)" }}>
-                {a.action === "SELL_NOW" ? "🔴 " : "🟡 "}{lang === "ko" ? a.reason_ko : a.reason_en}
+              <span className={a.action === "HOLD_RIDE" ? "text-[12px] font-extrabold" : "text-[11.5px]"}
+                style={{ color: a.action === "HOLD_BOUNCE" ? "var(--text-secondary)" : RED }}>
+                {a.action === "SELL_NOW" ? "🔴 " : a.action === "HOLD_RIDE" ? "📈 " : "🟡 "}
+                {lang === "ko" ? a.reason_ko : a.reason_en}
               </span>
               {a.action === "SELL_NOW" && (
                 <button onClick={async () => {

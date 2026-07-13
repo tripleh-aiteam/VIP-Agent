@@ -149,6 +149,16 @@ def run(db) -> dict[str, Any]:
         armed = peak >= avg * (1 + ARM_PCT / 100)
         reason: Optional[str] = None
         why_ko = why_en = ""
+        # 🔴 RIDING alert (boss 2026-07-13): while armed and still above the trail,
+        # SHOW the hold decision loudly — "it will rise again → don't sell yet"
+        if armed and float(px) > peak * (1 - TRAIL_PCT / 100) and _bullish(db, tk):
+            out["alerts"].append({
+                "ticker": tk, "name": name, "qty": int(qty), "price": float(px),
+                "pnl_pct": round(pnl, 2), "action": "HOLD_RIDE",
+                "reason_ko": (f"계속 오를 여력 — 팔지 마세요! 고점 ₩{peak:,.0f} · "
+                              f"하락 시작하면 ₩{peak * (1 - TRAIL_PCT / 100):,.0f}(고점 -{TRAIL_PCT:.0f}%)에서 매도 알림"),
+                "reason_en": (f"More upside likely — DON'T sell yet! Peak ₩{peak:,.0f} · "
+                              f"if it turns down, sell alert at ₩{peak * (1 - TRAIL_PCT / 100):,.0f} (peak −{TRAIL_PCT:.0f}%)")})
         if armed and float(px) <= peak * (1 - TRAIL_PCT / 100):
             reason = "GUARD_TRAIL"
             why_ko = f"고점 ₩{peak:,.0f} 대비 -{TRAIL_PCT:.0f}% — 이익 보호, 지금 파세요"
