@@ -358,9 +358,10 @@ def state(db) -> dict[str, Any]:
     page's poll IS the fill engine — no separate cron needed) and the POSITION GUARD
     (boss 2026-07-10: focus holdings auto-sell at -1% / peak-1% — 'immediately', and
     this 4s poll is the fastest heartbeat we have)."""
+    _guard_alerts: list = []
     try:
         from services.position_guard import run as _guard_run
-        _guard_run(db)
+        _guard_alerts = (_guard_run(db) or {}).get("alerts") or []
     except Exception:
         db.rollback()
     _ensure(db)
@@ -417,6 +418,7 @@ def state(db) -> dict[str, Any]:
         "record": {"trades": len(sells), "wins": wins,
                    "win_rate": round(wins / len(sells) * 100, 1) if sells else None},
         "positions": positions, "open_orders": open_orders, "history": history,
+        "guard_alerts": _guard_alerts,
         "reset_at": str(acct[2]),
         "costs": {"buy_pct": BUY_COST_PCT, "sell_pct": SELL_COST_PCT},
     }

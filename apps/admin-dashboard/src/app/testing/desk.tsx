@@ -34,6 +34,9 @@ type DeskState = {
   total_pnl: number; total_pnl_pct: number; realized_pnl: number;
   record: { trades: number; wins: number; win_rate: number | null };
   positions: Position[]; open_orders: Order[]; history: Order[];
+  guard_alerts?: { ticker: string; name: string; qty: number; price: number;
+                   pnl_pct: number; action: "SELL_NOW" | "HOLD_BOUNCE";
+                   reason_ko: string; reason_en: string; kind?: string }[];
   costs: { buy_pct: number; sell_pct: number };
 };
 type QuoteRes = { ok: boolean; ticker?: string; name?: string; price?: number; error?: string;
@@ -712,6 +715,39 @@ export default function Desk({ mode }: { mode: TradeMode }) {
         )}
       </div>
 
+      {/* ⚠️ GUARD SELL RECOMMENDATIONS (boss 2026-07-13): auto OFF → the guard advises
+          instead of acting — every held stock, one-click 매도. (auto ON = it just sells) */}
+      {mode !== "manual" && (st?.guard_alerts?.length ?? 0) > 0 && (
+        <div className="mb-3 px-3.5 py-2.5 rounded-xl border-2 space-y-1.5"
+          style={{ borderColor: RED, background: "rgba(211,47,47,0.05)" }}>
+          <div className="text-[13px] font-extrabold text-[var(--text-primary)]">
+            ⚠️ {t("매도 판단 필요 — 가드 추천", "Action needed — guard recommendations")}
+          </div>
+          {(st?.guard_alerts || []).map((a) => (
+            <div key={a.ticker} className="flex items-center gap-2 flex-wrap text-[12px]">
+              <b className="text-[var(--text-primary)]">{a.name}</b>
+              <span className="tabular-nums text-[var(--text-muted)]">{fmt(a.qty)}{t("주", "sh")} · ₩{fmt(a.price)}</span>
+              <b className="tabular-nums" style={{ color: pnlCol(a.pnl_pct) }}>{a.pnl_pct > 0 ? "+" : ""}{a.pnl_pct}%</b>
+              <span className="text-[11.5px]" style={{ color: a.action === "SELL_NOW" ? RED : "var(--text-secondary)" }}>
+                {a.action === "SELL_NOW" ? "🔴 " : "🟡 "}{lang === "ko" ? a.reason_ko : a.reason_en}
+              </span>
+              {a.action === "SELL_NOW" && (
+                <button onClick={async () => {
+                    const r = await apiPost<{ ok: boolean; fill_price?: number; error?: string }>(
+                      "/paper-desk/order", { ticker: a.ticker, side: "SELL", qty: a.qty, order_type: "market" });
+                    setMsg(r.ok ? t(`✅ ${a.name} 전량 매도 체결 @ ${fmt(r.fill_price)}`, `✅ ${a.name} sold @ ${fmt(r.fill_price)}`)
+                                : `❌ ${r.error || "failed"}`);
+                    load();
+                  }}
+                  className="text-[12px] font-extrabold px-3 py-1 rounded-lg text-white" style={{ background: RED }}>
+                  {t("지금 매도", "SELL now")}
+                </button>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
       {/* 🤖 AUTO CONTROL ROOM — only on the Auto page (full market, self-improvement) */}
       {mode === "auto" && auto && (
         <div className="mb-3 px-3.5 py-2.5 rounded-xl border flex items-center gap-3 flex-wrap"
@@ -968,12 +1004,13 @@ export default function Desk({ mode }: { mode: TradeMode }) {
                     ) : (
                       <>
                         <div className="mt-0.5 text-[11px] text-[var(--text-secondary)]">
-                          🛡️ {t(`자동 보호: ₩${fmt(f.guard.stop_line)} (평단 -1%) 아래로 내려가면 즉시 자동 매도`,
-                                `Auto-protection: falls to ₩${fmt(f.guard.stop_line)} (avg −1%) → sold instantly`)}
+                          🛡️ {t(`보호: ₩${fmt(f.guard.stop_line)} (-1% · 엔진이 반등을 보면 -2%까지 유예) · 무조건선 ₩${fmt((f.guard as { hard_line?: number }).hard_line)}`,
+                                `Protection: ₩${fmt(f.guard.stop_line)} (−1%; grace to −2% if the engine sees a bounce) · hard floor ₩${fmt((f.guard as { hard_line?: number }).hard_line)}`)}
                           {f.guard.armed && f.guard.trail_line != null && (
-                            <> · {t(`이익 보호: 고점 ₩${fmt(f.guard.peak)} 대비 -1% (₩${fmt(f.guard.trail_line)}) 도달 시 자동 매도`,
-                                    `profit lock: −1% off the ₩${fmt(f.guard.peak)} peak (₩${fmt(f.guard.trail_line)}) → sold`)}</>
+                            <> · {t(`이익 보호: 고점 ₩${fmt(f.guard.peak)} 대비 -1% (₩${fmt(f.guard.trail_line)})`,
+                                    `profit lock: −1% off the ₩${fmt(f.guard.peak)} peak (₩${fmt(f.guard.trail_line)})`)}</>
                           )}
+                          {" · "}{t("자동모드 ON=자동 매도 · OFF=매도 추천", "auto ON = sells itself · OFF = recommends")}
                         </div>
                         {(lang === "ko" ? f.guard.advice_ko : (f.guard.advice_en || f.guard.advice_ko)) && (
                           <div className="mt-1 text-[12px] font-bold" style={{ color: "#2e7d32" }}>

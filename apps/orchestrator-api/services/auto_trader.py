@@ -52,6 +52,8 @@ _DDL = (
     "CREATE TABLE IF NOT EXISTS auto_vetoes ("
     " id SERIAL PRIMARY KEY, ticker TEXT, name TEXT, reason TEXT,"
     " ts TIMESTAMPTZ DEFAULT now())",
+    # trail state for the boss's ride-the-rise exits (2026-07-13)
+    "ALTER TABLE auto_trades ADD COLUMN IF NOT EXISTS peak DOUBLE PRECISION",
 )
 
 
@@ -116,15 +118,25 @@ def tick(db, force: bool = False) -> dict[str, Any]:
     from services.paper_desk import place_order
     open_rows = db.execute(text(
         "SELECT id, ticker, name, qty, entry, target_lo, stop, time_min, "
-        "EXTRACT(EPOCH FROM (now()-opened_at))/60 AS age_min "
+        "EXTRACT(EPOCH FROM (now()-opened_at))/60 AS age_min, peak "
         "FROM auto_trades WHERE status='OPEN'")).fetchall()
-    for oid, tk, name, qty, entry, tlo, stop, tmin, age in open_rows:
+    for oid, tk, name, qty, entry, tlo, stop, tmin, age, peak in open_rows:
         px = _live_px(tk)
         if px is None:
             continue
+        # BOSS EXITS (2026-07-13): reaching the target no longer sells — it ARMS the
+        # trail. Ride while rising; sell 1% below the peak. Stop and time doors stay.
+        peak = max(float(peak or entry), float(px))
+        try:
+            db.execute(text("UPDATE auto_trades SET peak=:p WHERE id=:i"),
+                       {"p": peak, "i": oid})
+            db.commit()
+        except Exception:
+            db.rollback()
+        armed = peak >= float(tlo)
         reason = None
-        if px >= float(tlo):
-            reason = "TARGET"
+        if armed and px <= peak * 0.99:
+            reason = "TRAIL"
         elif px <= float(stop):
             reason = "STOP"
         elif age is not None and float(age) >= float(tmin):
@@ -347,15 +359,14 @@ def focus_status(db, codes: Optional[list[str]] = None) -> dict[str, Any]:
             s["reason_en"] = "no new recommendations after 15:20 — the market closes at 15:30; a fresh 1-hour idea can't finish its life"
         vetoed = False
         # holding? fetched first — a held stock always earns the full opinion.
-        # Guard info only for the 20 protected companies: a searched extra stock must
-        # NOT display protection lines the guard won't actually enforce.
+        # The guard now protects EVERY held stock (boss 2026-07-13), so any panel
+        # with a holding shows its real protection lines.
         guard0: Optional[dict[str, Any]] = None
-        if code in FOCUS_CODES:
-            try:
-                from services.position_guard import info as _ginfo0
-                guard0 = _ginfo0(db, code)
-            except Exception:
-                db.rollback()
+        try:
+            from services.position_guard import info as _ginfo0
+            guard0 = _ginfo0(db, code)
+        except Exception:
+            db.rollback()
         # FULL ENGINE OPINION — only for ACTIVE panels (signal / forming / held): with
         # 20 fixed companies, a decide() per stock per poll would take minutes. Quiet
         # panels carry the 📖 detail button, which computes the full story on demand.
