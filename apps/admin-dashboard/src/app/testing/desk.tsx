@@ -921,10 +921,20 @@ export default function Desk({ mode }: { mode: TradeMode }) {
                   );
                 })() : sig ? (
                   <>
-                    <div className="mt-2 text-[15px] font-extrabold" style={{ color: RED }}>
-                      🔴 {t(`매수 신호! 1시간 내 +${f.target_pct?.[0]}% ~ +${f.target_pct?.[1]}% 상승 예상`,
-                            `BUY SIGNAL! +${f.target_pct?.[0]}% to +${f.target_pct?.[1]}% expected within 1 hour`)}
-                    </div>
+                    {(() => {
+                      // exact prediction window (boss): from THIS minute to +60min (capped at close)
+                      const t0 = new Date(kstNow);
+                      const t1 = new Date(kstNow.getTime() + 60 * 60000);
+                      const close = new Date(kstNow); close.setHours(15, 30, 0, 0);
+                      const tEnd = t1 > close ? close : t1;
+                      const hm = (d: Date) => `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+                      return (
+                        <div className="mt-2 text-[15px] font-extrabold" style={{ color: RED }}>
+                          🔴 {t(`매수 신호! +${f.target_pct?.[0]}% ~ +${f.target_pct?.[1]}% 상승 예상 — ⏰ ${hm(t0)} → ${hm(tEnd)} 사이`,
+                                `BUY SIGNAL! +${f.target_pct?.[0]}% to +${f.target_pct?.[1]}% expected — ⏰ between ${hm(t0)} → ${hm(tEnd)}`)}
+                        </div>
+                      );
+                    })()}
                     {hourAcc && <div className="text-[10.5px] text-[var(--text-muted)]">
                       {t(`1시간 예측 적중률 ${Math.round(hourAcc.acc)}% (${hourAcc.n}건 실측) — 참고용`,
                          `1h forecast accuracy ${Math.round(hourAcc.acc)}% (${hourAcc.n} graded) — guide only`)}</div>}
