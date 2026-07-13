@@ -1976,6 +1976,32 @@ def init_scheduler():
     )
     log.info("scheduler: health check registered (every 5 min)", extra={"action": "scheduler.health_registered"})
 
+    # 🛡️ POSITION-GUARD HEARTBEAT — every 60s during KST market hours (boss 2026-07-13:
+    # LG화학 was cut at -2.65% because the guard's pulse depended on an open browser
+    # page / the 5-min cron; this makes the -1%/-2%/trail lines fire on time, always).
+    def _guard_heartbeat():
+        from datetime import datetime, timedelta, timezone
+        kst = datetime.now(timezone(timedelta(hours=9)))
+        if kst.weekday() >= 5 or not (9 * 60 <= kst.hour * 60 + kst.minute <= 15 * 60 + 30):
+            return
+        db = SessionLocal()
+        try:
+            from services.position_guard import run as _grun
+            _grun(db)
+        except Exception as e:
+            log.warning(f"guard heartbeat failed: {str(e)[:120]}")
+        finally:
+            db.close()
+
+    _scheduler.add_job(
+        _guard_heartbeat,
+        "interval", seconds=60,
+        id="position-guard-heartbeat",
+        replace_existing=True,
+        max_instances=1, coalesce=True,
+    )
+    log.info("scheduler: position-guard heartbeat registered (60s, market hours)")
+
     # Hourly snapshot capture — every hour at :05. Saves one 'part' per report
     # type (newspaper/youtube/kiwoom) WITHOUT emailing; the 6 AM build reads all
     # ~24 parts of the day and synthesises the big report. Plus daily cleanup.

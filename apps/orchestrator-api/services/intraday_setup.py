@@ -23,6 +23,8 @@ backtested honestly before it ever reaches the chatbot or real money.
 from __future__ import annotations
 
 import statistics
+
+from sqlalchemy import text as _sql_text
 from typing import Any, Optional
 
 # Liquid day-trade watchlist across sectors — all have live 5-min bars in our collector.
@@ -99,6 +101,23 @@ def scan_one(db, code: str, name: str) -> dict[str, Any]:
     sig = m4(db, code)
     if not sig.get("ok"):
         return _nothing(code, name, "데이터 부족", "not enough data")
+
+    # 🔁 RE-ENTRY COOLDOWN (boss 2026-07-13 loss audit): if this stock was STOP-SOLD at
+    # a loss within the last 60 minutes, NO new buy signal — the LG화학 rebuy loop
+    # (buy → stop → rebuy the same falling stock → stop again) bled fees + cuts.
+    try:
+        _burn = db.execute(_sql_text(
+            "SELECT 1 FROM paper_desk_orders WHERE ticker=:t AND side='SELL' "
+            "AND status='FILLED' AND realized_pnl < 0 "
+            "AND COALESCE(filled_at, created_at) > now() - interval '60 minutes' LIMIT 1"),
+            {"t": code}).first()
+        if _burn:
+            return _nothing(code, name,
+                            "60분 전 이 종목에서 손절 — 재진입 금지 (같은 칼날을 두 번 잡지 않습니다)",
+                            "stopped out of this stock within the last hour — no re-entry "
+                            "(we don't catch the same knife twice)")
+    except Exception:
+        db.rollback()
     price = float(sig["price"])
     micro = micro_read(db, code) or {}
     cluster = cluster_pulse(db, code)
@@ -150,6 +169,14 @@ def scan_one(db, code: str, name: str) -> dict[str, Any]:
         conf += 3
     if ml_bullish:
         conf += 8                        # ML agrees on direction — team confirmation
+    # 📉 RED-TAPE PENALTY (boss 2026-07-13 loss audit): momentum in a falling market
+    # reverses fast — today's cuts mostly came from signals fired against the tape.
+    # A sliding KOSPI demands much stronger proof before a signal qualifies.
+    if mkt is not None:
+        if mkt <= -1.0:
+            conf -= 10
+        elif mkt <= -0.5:
+            conf -= 6
     # ⑩ 과거 패턴 (analog forecasting, boss 2026-07-13): the stock's own year of
     # movement history votes — similar-past-windows up-rate + time-of-day personality.
     # A weighted voice (±conf), never a veto; graded like everything else.

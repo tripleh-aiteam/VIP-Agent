@@ -35,7 +35,30 @@ CHEAP_PX = 100_000           # <₩100k/share = the cheap tier (boss exit tiers 
 CIRCUIT_DAY_NET = -15.0      # disaster backstop only (boss removed the tight -5% for the
                              # test): ≈ −1.5% of the account in one day — beyond any
                              # normal bad day; exits always keep being managed
-MIN_CONF = 60                # only take setups the engine is reasonably sure about
+MIN_CONF = 65                # raised 60→65 (boss 2026-07-13 loss audit): signals need
+                             # stronger proof until the measured win-rate recovers
+DAY_LOSS_BRAKE_PCT = 1.0     # today's REALIZED losses (all trades, his + machine's)
+                             # reach 1% of equity → every buy signal halts until tomorrow
+
+
+def _day_brake(db) -> Optional[str]:
+    """Returns a reason string when today's realized loss has hit the brake."""
+    try:
+        eq_cash = db.execute(text("SELECT cash FROM paper_desk_account WHERE id=1")).scalar()
+        posv = db.execute(text(
+            "SELECT COALESCE(SUM(qty*avg_price),0) FROM paper_desk_positions")).scalar()
+        eq = float(eq_cash or 0) + float(posv or 0)
+        realized = db.execute(text(
+            "SELECT COALESCE(SUM(realized_pnl),0) FROM paper_desk_orders "
+            "WHERE status='FILLED' AND side='SELL' "
+            "AND COALESCE(filled_at, created_at)::date = (now() AT TIME ZONE 'Asia/Seoul')::date"
+        )).scalar()
+        if eq > 0 and float(realized or 0) <= -eq * DAY_LOSS_BRAKE_PCT / 100.0:
+            return (f"오늘 실현 손실 {float(realized):,.0f}원 — 계좌의 -{DAY_LOSS_BRAKE_PCT:g}% 한도 도달, "
+                    f"오늘은 모든 매수 신호를 중단합니다 (내일 초기화)")
+    except Exception:
+        db.rollback()
+    return None
 
 _DDL = (
     "CREATE TABLE IF NOT EXISTS auto_state ("
@@ -279,6 +302,10 @@ def buy_candidates(db, max_n: int = 3) -> dict[str, Any]:
     if not _market_open_now():
         out["auto_note"] = "market closed"
         return out
+    _brake = _day_brake(db)
+    if _brake:
+        out["auto_note"] = _brake
+        return out
     try:
         from services.intraday_setup import scan
         setups = [s for s in (scan(db).get("act_now") or [])
@@ -369,6 +396,13 @@ def focus_status(db, codes: Optional[list[str]] = None) -> dict[str, Any]:
             qualified = False
             s["reason_ko"] = "15:20 이후 신규 추천 중단 — 장 마감(15:30) 임박, 새 1시간 아이디어가 끝까지 살 수 없습니다"
             s["reason_en"] = "no new recommendations after 15:20 — the market closes at 15:30; a fresh 1-hour idea can't finish its life"
+        if qualified:
+            _brk = _day_brake(db)
+            if _brk:
+                qualified = False
+                s["reason_ko"] = "🛑 " + _brk
+                s["reason_en"] = ("🛑 today's realized loss hit the daily brake "
+                                  f"(-{DAY_LOSS_BRAKE_PCT:g}% of equity) — all buy signals halted until tomorrow")
         vetoed = False
         # holding? fetched first — a held stock always earns the full opinion.
         # The guard now protects EVERY held stock (boss 2026-07-13), so any panel
