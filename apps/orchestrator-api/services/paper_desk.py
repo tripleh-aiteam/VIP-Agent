@@ -380,12 +380,20 @@ def state(db) -> dict[str, Any]:
         avg = float(avg)
         val = (px or avg) * qty
         pos_value += val
-        upnl = (px - avg) * qty if px else None
+        # NET-OF-FEES unrealized (boss 2026-07-13: clicked sell at +2.0%, realized
+        # +1.81% — the display was GROSS while realized subtracts the 0.23% costs;
+        # what he sees must equal what a sell would actually bank right now)
+        upnl = upct = None
+        if px:
+            _proceeds = px * qty * (1 - SELL_COST_PCT / 100)
+            _basis = avg * qty * (1 + BUY_COST_PCT / 100)
+            upnl = _proceeds - _basis
+            upct = (upnl / _basis * 100) if _basis else None
         positions.append({
             "ticker": t, "name": name, "qty": qty, "avg_price": round(avg, 0),
             "live_price": px, "value": round(val, 0),
             "unrealized_pnl": round(upnl, 0) if upnl is not None else None,
-            "unrealized_pnl_pct": round((px - avg) / avg * 100, 2) if px else None,
+            "unrealized_pnl_pct": round(upct, 2) if upct is not None else None,
         })
     open_orders = [dict(r._mapping) for r in db.execute(text(
         "SELECT id, ticker, name, side, qty, order_type, limit_price, created_at "
