@@ -741,7 +741,7 @@ export default function Desk({ mode }: { mode: TradeMode }) {
                 {lang === "ko" ? a.reason_ko : a.reason_en}
               </span>
               {(lang === "ko" ? a.plain_ko : (a.plain_en || a.plain_ko)) && (
-                <div className="w-full text-[11px] text-[var(--text-secondary)] pl-1">
+                <div className="w-full text-[11.5px] leading-relaxed text-[var(--text-secondary)] pl-1 whitespace-pre-line">
                   {lang === "ko" ? a.plain_ko : (a.plain_en || a.plain_ko)}
                 </div>
               )}
