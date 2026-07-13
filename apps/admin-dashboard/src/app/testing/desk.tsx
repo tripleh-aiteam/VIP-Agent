@@ -1374,52 +1374,6 @@ export default function Desk({ mode }: { mode: TradeMode }) {
         </Sect>
       )}
 
-      {/* 📊 today's per-stock results (boss: after market, show what happened) */}
-      {dayRep && dayRep.stocks.length > 0 && (
-        <Sect title={`📊 ${t("오늘 결과 — 종목별 요약", "Today's Results — per stock")}`}>
-          <table className="w-full text-[12px]">
-            <thead>
-              <tr className="text-[10.5px] text-[var(--text-muted)]" style={{ background: "var(--bg-elevated)" }}>
-                <th className="text-left px-3 py-1.5">{t("종목", "Stock")}</th>
-                <th className="text-right px-2">{t("매수/매도", "Buys/Sells")}</th>
-                <th className="text-right px-2">{t("매수금액", "Bought")}</th>
-                <th className="text-right px-2">{t("매도금액", "Sold")}</th>
-                <th className="text-right px-2">{t("실현손익", "Realized")}</th>
-                <th className="text-right px-2">{t("평균 %", "Avg %")}</th>
-                <th className="text-right px-2">{t("승/패", "W/L")}</th>
-              </tr>
-            </thead>
-            <tbody>
-              {dayRep.stocks.map((s) => (
-                <tr key={s.ticker} className="border-t border-[var(--border-default)]/40">
-                  <td className="px-3 py-1.5 font-bold text-[var(--text-primary)]">{s.name}</td>
-                  <td className="text-right px-2 tabular-nums">{s.buys}/{s.sells}</td>
-                  <td className="text-right px-2 tabular-nums">{fmt(s.bought_value)}</td>
-                  <td className="text-right px-2 tabular-nums">{fmt(s.sold_value)}</td>
-                  <td className="text-right px-2 tabular-nums font-extrabold" style={{ color: pnlCol(s.realized) }}>
-                    {s.realized > 0 ? "+" : ""}{fmt(s.realized)}
-                  </td>
-                  <td className="text-right px-2 tabular-nums font-bold" style={{ color: pnlCol(s.avg_pct) }}>
-                    {s.avg_pct != null ? `${s.avg_pct > 0 ? "+" : ""}${s.avg_pct}%` : "-"}
-                  </td>
-                  <td className="text-right px-2 tabular-nums">{s.wins}{t("승", "W")} {s.losses}{t("패", "L")}</td>
-                </tr>
-              ))}
-              <tr className="border-t-2 border-[var(--border-default)] font-extrabold" style={{ background: "var(--bg-elevated)" }}>
-                <td className="px-3 py-1.5 text-[var(--text-primary)]">{t("합계", "TOTAL")} · {dayRep.totals.stocks_traded}{t("종목", " stocks")}</td>
-                <td className="text-right px-2 tabular-nums">{dayRep.totals.buys}/{dayRep.totals.sells}</td>
-                <td className="text-right px-2" colSpan={2}></td>
-                <td className="text-right px-2 tabular-nums" style={{ color: pnlCol(dayRep.totals.realized) }}>
-                  {dayRep.totals.realized > 0 ? "+" : ""}{fmt(dayRep.totals.realized)}
-                </td>
-                <td className="text-right px-2"></td>
-                <td className="text-right px-2 tabular-nums">{dayRep.totals.wins}{t("승", "W")} {dayRep.totals.losses}{t("패", "L")}</td>
-              </tr>
-            </tbody>
-          </table>
-        </Sect>
-      )}
-
       {/* history */}
       <Sect title={t("거래 기록", "Trade History")}>
         {/* search bar — filter by stock name, side, date (boss request) */}
@@ -1483,6 +1437,52 @@ export default function Desk({ mode }: { mode: TradeMode }) {
           </table>
         ) : <div className="px-3 py-4 text-center text-[11.5px] text-[var(--text-muted)]">{t("아직 거래 없음", "No trades yet")}</div>}
       </Sect>
+
+      {/* 📊 today's per-stock results (boss: after market, show what happened) */}
+      {dayRep && dayRep.stocks.length > 0 && (
+        <Sect title={`📊 ${t("오늘 결과 — 종목별 요약", "Today's Results — per stock")}`}>
+          <table className="w-full text-[12px]">
+            <thead>
+              <tr className="text-[10.5px] text-[var(--text-muted)]" style={{ background: "var(--bg-elevated)" }}>
+                <th className="text-left px-3 py-1.5">{t("종목", "Stock")}</th>
+                <th className="text-right px-2">{t("매수/매도", "Buys/Sells")}</th>
+                <th className="text-right px-2">{t("매수금액", "Bought")}</th>
+                <th className="text-right px-2">{t("매도금액", "Sold")}</th>
+                <th className="text-right px-2">{t("실현손익", "Realized")}</th>
+                <th className="text-right px-2">{t("평균 %", "Avg %")}</th>
+                <th className="text-right px-2">{t("승/패", "W/L")}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {dayRep.stocks.map((s) => (
+                <tr key={s.ticker} className="border-t border-[var(--border-default)]/40">
+                  <td className="px-3 py-1.5 font-bold text-[var(--text-primary)]">{s.name}</td>
+                  <td className="text-right px-2 tabular-nums">{s.buys}/{s.sells}</td>
+                  <td className="text-right px-2 tabular-nums">{fmt(s.bought_value)}</td>
+                  <td className="text-right px-2 tabular-nums">{fmt(s.sold_value)}</td>
+                  <td className="text-right px-2 tabular-nums font-extrabold" style={{ color: pnlCol(s.realized) }}>
+                    {s.realized > 0 ? "+" : ""}{fmt(s.realized)}
+                  </td>
+                  <td className="text-right px-2 tabular-nums font-bold" style={{ color: pnlCol(s.avg_pct) }}>
+                    {s.avg_pct != null ? `${s.avg_pct > 0 ? "+" : ""}${s.avg_pct}%` : "-"}
+                  </td>
+                  <td className="text-right px-2 tabular-nums">{s.wins}{t("승", "W")} {s.losses}{t("패", "L")}</td>
+                </tr>
+              ))}
+              <tr className="border-t-2 border-[var(--border-default)] font-extrabold" style={{ background: "var(--bg-elevated)" }}>
+                <td className="px-3 py-1.5 text-[var(--text-primary)]">{t("합계", "TOTAL")} · {dayRep.totals.stocks_traded}{t("종목", " stocks")}</td>
+                <td className="text-right px-2 tabular-nums">{dayRep.totals.buys}/{dayRep.totals.sells}</td>
+                <td className="text-right px-2" colSpan={2}></td>
+                <td className="text-right px-2 tabular-nums" style={{ color: pnlCol(dayRep.totals.realized) }}>
+                  {dayRep.totals.realized > 0 ? "+" : ""}{fmt(dayRep.totals.realized)}
+                </td>
+                <td className="text-right px-2"></td>
+                <td className="text-right px-2 tabular-nums">{dayRep.totals.wins}{t("승", "W")} {dayRep.totals.losses}{t("패", "L")}</td>
+              </tr>
+            </tbody>
+          </table>
+        </Sect>
+      )}
 
       <div className="text-[10.5px] text-[var(--text-muted)]">
         {t(`실제 비용 반영: 매수 수수료 ${st?.costs.buy_pct ?? 0.015}% · 매도 수수료+세금 ${st?.costs.sell_pct ?? 0.215}% · 시세 = 키움 실시간(장중) / 네이버(장외) · 4초마다 자동 갱신되며 대기 주문도 자동 체결됩니다`,
