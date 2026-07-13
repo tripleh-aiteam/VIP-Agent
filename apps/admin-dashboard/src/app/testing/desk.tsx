@@ -36,7 +36,8 @@ type DeskState = {
   positions: Position[]; open_orders: Order[]; history: Order[];
   guard_alerts?: { ticker: string; name: string; qty: number; price: number;
                    pnl_pct: number; action: "SELL_NOW" | "HOLD_BOUNCE" | "HOLD_RIDE";
-                   reason_ko: string; reason_en: string; kind?: string }[];
+                   reason_ko: string; reason_en: string;
+                   plain_ko?: string; plain_en?: string; kind?: string }[];
   costs: { buy_pct: number; sell_pct: number };
 };
 type QuoteRes = { ok: boolean; ticker?: string; name?: string; price?: number; error?: string;
@@ -739,6 +740,11 @@ export default function Desk({ mode }: { mode: TradeMode }) {
                 {a.action === "SELL_NOW" ? "🔴 " : a.action === "HOLD_RIDE" ? "📈 " : "🟡 "}
                 {lang === "ko" ? a.reason_ko : a.reason_en}
               </span>
+              {(lang === "ko" ? a.plain_ko : (a.plain_en || a.plain_ko)) && (
+                <div className="w-full text-[11px] text-[var(--text-secondary)] pl-1">
+                  {lang === "ko" ? a.plain_ko : (a.plain_en || a.plain_ko)}
+                </div>
+              )}
               {a.action === "SELL_NOW" && (
                 <button onClick={async () => {
                     const r = await apiPost<{ ok: boolean; fill_price?: number; error?: string }>(

@@ -149,6 +149,7 @@ def run(db) -> dict[str, Any]:
         armed = peak >= avg * (1 + ARM_PCT / 100)
         reason: Optional[str] = None
         why_ko = why_en = ""
+        plain_ko = plain_en = ""
         # 🔴 RIDING alert (boss 2026-07-13): while armed and still above the trail,
         # SHOW the hold decision loudly — "it will rise again → don't sell yet"
         if armed and float(px) > peak * (1 - TRAIL_PCT / 100) and _bullish(db, tk):
@@ -163,10 +164,14 @@ def run(db) -> dict[str, Any]:
             reason = "GUARD_TRAIL"
             why_ko = f"고점 ₩{peak:,.0f} 대비 -{TRAIL_PCT:.0f}% — 이익 보호, 지금 파세요"
             why_en = f"-{TRAIL_PCT:.0f}% off the ₩{peak:,.0f} peak — protect the profit, sell now"
+            plain_ko = "쉽게: 오르던 힘이 꺾였어요. 지금 팔면 번 것을 지키고, 다음 신호가 오면 더 좋은 가격에 다시 살 수 있어요."
+            plain_en = "In plain words: the climb has bent over. Selling now keeps what you earned — the next signal lets you re-enter at a better price."
         elif float(px) <= avg * (1 - HARD_STOP_PCT / 100):
             reason = "GUARD_HARD"
             why_ko = f"평단 대비 -{HARD_STOP_PCT:.0f}% 도달 — 무조건 손절선, 지금 파세요"
             why_en = f"-{HARD_STOP_PCT:.0f}% below your buy price — the unconditional floor, sell now"
+            plain_ko = "쉽게: -2%는 '희망 금지'선이에요. 여기서 안 팔면 -5%가 되는 걸 이미 겪었죠 — 작게 끊는 것이 계좌를 지킵니다."
+            plain_en = "In plain words: −2% is the no-hope line. We've seen what happens past it (−5%) — cutting small protects the account."
         elif float(px) <= avg * (1 - SOFT_STOP_PCT / 100):
             if _bullish(db, tk):
                 # engine sees a recovery → HOLD (grace zone between −1% and −2%)
@@ -181,6 +186,8 @@ def run(db) -> dict[str, Any]:
             reason = "GUARD_STOP"
             why_ko = f"평단 대비 -{SOFT_STOP_PCT:.0f}% + 반등 근거 없음 — 지금 파세요"
             why_en = f"-{SOFT_STOP_PCT:.0f}% below your buy + no recovery signs — sell now"
+            plain_ko = "쉽게: 산 가격보다 -1% 내려왔는데, 다시 오를 근거를 엔진이 찾지 못했어요. 작은 손실로 끊는 게 큰 손실을 막는 길입니다."
+            plain_en = "In plain words: it's −1% below your buy and the engine finds no reason it recovers. A small cut now prevents a big one later."
         if not reason:
             continue
         if not auto_on:
@@ -188,7 +195,8 @@ def run(db) -> dict[str, Any]:
             out["alerts"].append({
                 "ticker": tk, "name": name, "qty": int(qty), "price": float(px),
                 "pnl_pct": round(pnl, 2), "action": "SELL_NOW",
-                "reason_ko": why_ko, "reason_en": why_en, "kind": reason})
+                "reason_ko": why_ko, "reason_en": why_en,
+                "plain_ko": plain_ko, "plain_en": plain_en, "kind": reason})
             continue
         # AUTO: act — with the anti-spam cooldown after a failed sell
         if _time.time() - _sell_cooldown.get(tk, 0) < 1800:
