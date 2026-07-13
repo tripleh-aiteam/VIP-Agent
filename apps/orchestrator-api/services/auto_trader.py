@@ -367,10 +367,11 @@ def focus_status(db, codes: Optional[list[str]] = None) -> dict[str, Any]:
             guard0 = _ginfo0(db, code)
         except Exception:
             db.rollback()
-        # FULL ENGINE OPINION — only for ACTIVE panels (signal / forming / held): with
-        # 20 fixed companies, a decide() per stock per poll would take minutes. Quiet
-        # panels carry the 📖 detail button, which computes the full story on demand.
-        need_opinion = s.get("state") in ("ACT_NOW", "FORMING") or guard0 is not None
+        # FULL ENGINE OPINION — for ACTIVE panels (signal / forming / held) AND the two
+        # mains, ALWAYS (boss 2026-07-13: "why is it not increasing?" needs the real
+        # answer even when quiet). Other quiet panels use the on-demand 📖 button.
+        need_opinion = (s.get("state") in ("ACT_NOW", "FORMING") or guard0 is not None
+                        or code in ("000660", "005930"))
         opinion: Optional[dict[str, Any]] = None
         try:
             from services.decision_agent import decide_cached
@@ -439,7 +440,8 @@ def focus_status(db, codes: Optional[list[str]] = None) -> dict[str, Any]:
             **{k: s.get(k) for k in (
                 "state", "price", "confidence", "ai_1h_prob", "entry_zone", "target_band",
                 "target_pct", "stop", "stop_pct", "time_min", "why_ko", "why_en",
-                "reason_ko", "reason_en", "trigger_ko", "trigger_en")},
+                "reason_ko", "reason_en", "trigger_ko", "trigger_en",
+                "path_ko", "path_en")},
             "qualified": qualified and not vetoed, "vetoed": vetoed,
             "opinion": opinion, "guard": guard})
 

@@ -76,6 +76,7 @@ type FocusStock = {
   stop?: number | null; stop_pct?: number | null; time_min?: number;
   why_ko?: string | null; why_en?: string | null; reason_ko?: string | null;
   reason_en?: string | null; trigger_ko?: string | null; trigger_en?: string | null;
+  path_ko?: string | null; path_en?: string | null;
   qualified?: boolean; vetoed?: boolean; dynamic?: boolean;
   guard?: {
     qty: number; avg: number; peak?: number | null; armed?: boolean;
@@ -977,8 +978,17 @@ export default function Desk({ mode }: { mode: TradeMode }) {
                       ⚪ {t("지금 매수 신호 없음", "No buy signal right now")}
                     </div>
                     <div className="mt-1 text-[12px] text-[var(--text-secondary)]">
+                      <b>{t("왜 안 오르나", "Why it isn't rising")}:</b>{" "}
                       {(lang === "ko" ? f.reason_ko : (f.reason_en || f.reason_ko)) || t("조건 미충족", "conditions not met")}
                     </div>
+                    {(lang === "ko" ? f.path_ko : (f.path_en || f.path_ko)) && (
+                      <div className="mt-0.5 text-[12px] font-bold" style={{ color: "#e65100" }}>
+                        → {t("신호로 바뀌는 조건", "What would flip it to a BUY")}:{" "}
+                        <span className="font-normal text-[var(--text-secondary)]">
+                          {lang === "ko" ? f.path_ko : (f.path_en || f.path_ko)}
+                        </span>
+                      </div>
+                    )}
                   </>
                 )}
                 {/* 🛡️ HIS holding on this stock: P&L + the guard's automatic protection
