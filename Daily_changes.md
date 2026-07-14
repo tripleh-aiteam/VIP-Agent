@@ -34,6 +34,11 @@ Replayed the boss's exact morning case (r15 +1.57%, RSI-5 50, no volume) through
 - **Files:** [routers/paper_desk.py](apps/orchestrator-api/routers/paper_desk.py), [desk.tsx](apps/admin-dashboard/src/app/testing/desk.tsx)
 - **Note:** engine predictions already used fresh prices at decision time (scan calls `_live_price` directly) — this was a *display* staleness, but seeing dead prices was destroying trust.
 
+### [PM3] Boss's signal-card layout — the 4 trading numbers in BIG font
+
+- **What:** Boss spec: on Semi-Auto and Auto, a firing signal must show name/code/chart/live price/conf (already in header) plus, in big font: **매수 (live Buy price) · 매도 목표 (Sell target) · 매도 시간 (Sell-by) · 수량 (Shares)**. Added a 4-tile grid (21px extrabold values, 2×2 on mobile) under the banner: Buy tile ticks with the 3s fast lane and wears the signal color, Sell wears KR-blue, Sell-by = now + time_min capped 15:30, Shares = engine size. The old cramped "진입 · 🎯 · 🛑 · ⏱️" line slimmed to stop + window only (buy/sell/time/qty moved to the tiles).
+- **Files:** [desk.tsx](apps/admin-dashboard/src/app/testing/desk.tsx)
+
 ---
 
 ## 2026-07-09 (Thursday) — Assistant "knows my desk + works as a normal LLM" round (boss live-testing feedback, 5 fixes)

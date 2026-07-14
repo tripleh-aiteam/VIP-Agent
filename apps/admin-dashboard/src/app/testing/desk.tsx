@@ -982,7 +982,33 @@ export default function Desk({ mode }: { mode: TradeMode }) {
                         </div>
                       );
                     })()}
-                    {hourAcc && <div className="text-[10.5px] text-[var(--text-muted)]">
+                    {/* BOSS LAYOUT (2026-07-14): the four numbers he trades with, BIG —
+                        Buy(now, live) · Sell(target) · Sell-by time · Shares */}
+                    {(() => {
+                      const life = f.time_min || 60;
+                      const t1 = new Date(kstNow.getTime() + life * 60000);
+                      const close = new Date(kstNow); close.setHours(15, 30, 0, 0);
+                      const tEnd = t1 > close ? close : t1;
+                      const hm = (d: Date) => `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+                      const buyPx = livePx[f.code] ?? f.price;
+                      const tile = (label: string, val: string, color?: string) => (
+                        <div key={label} className="rounded-xl border px-3 py-2 text-center"
+                          style={{ borderColor: "var(--border-default)", background: "var(--bg-primary)" }}>
+                          <div className="text-[11px] font-bold text-[var(--text-muted)]">{label}</div>
+                          <div className="text-[21px] font-extrabold tabular-nums leading-tight"
+                            style={{ color: color || "var(--text-primary)" }}>{val}</div>
+                        </div>
+                      );
+                      return (
+                        <div className="mt-2 grid grid-cols-2 sm:grid-cols-4 gap-2">
+                          {tile(t("매수 (지금 가격)", "Buy (live price)"), `₩${fmt(buyPx)}`, sigColor)}
+                          {tile(t("매도 목표", "Sell"), `₩${fmt(f.target_band?.[0])}`, "#1565c0")}
+                          {tile(t("매도 시간 (까지)", "Sell by"), hm(tEnd))}
+                          {tile(t("수량", "Shares"), t(`${fmt(defQty)}주`, `${fmt(defQty)} sh`))}
+                        </div>
+                      );
+                    })()}
+                    {hourAcc && <div className="mt-1 text-[10.5px] text-[var(--text-muted)]">
                       {t(`1시간 예측 적중률 ${Math.round(hourAcc.acc)}% (${hourAcc.n}건 실측) — 참고용`,
                          `1h forecast accuracy ${Math.round(hourAcc.acc)}% (${hourAcc.n} graded) — guide only`)}</div>}
                     {(lang === "ko" ? f.why_ko : (f.why_en || f.why_ko)) && (
@@ -991,7 +1017,7 @@ export default function Desk({ mode }: { mode: TradeMode }) {
                       </div>
                     )}
                     <div className="mt-1.5 text-[12.5px] text-[var(--text-primary)] tabular-nums font-bold">
-                      {t("진입", "entry")} ~₩{fmt(f.entry_zone?.[0])} · 🎯 ₩{fmt(f.target_band?.[0])} · 🛑 ₩{fmt(f.stop)} · ⏱️ {f.time_min || 60}{t("분", "min")}
+                      🛑 {t("손절", "stop")} ₩{fmt(f.stop)} ({f.stop_pct != null ? `-${f.stop_pct}%` : "-"}) · ⏱️ {f.time_min || 60}{t("분 안에 승부", "min window")}
                     </div>
                     <div className="mt-0.5 text-[12px] font-bold" style={{ color: RED }}>
                       {t(`권장 수량: ${fmt(defQty)}주 (≈ ₩${fmt(f.price ? defQty * f.price : null)})`,
