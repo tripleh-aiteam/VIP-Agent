@@ -101,7 +101,7 @@ def set_params(db, take_pct: Optional[float] = None, stop_pct: Optional[float] =
                pos_pct: Optional[float] = None, codes: Optional[str] = None) -> dict:
     _ensure(db)
     cur = _cfg(db)
-    take = min(max(float(take_pct if take_pct is not None else cur["take_pct"]), 0.2), 2.0)
+    take = min(max(float(take_pct if take_pct is not None else cur["take_pct"]), 0.05), 2.0)
     stop = min(max(float(stop_pct if stop_pct is not None else cur["stop_pct"]), 0.5), 3.0)
     pos = min(max(float(pos_pct if pos_pct is not None else cur["pos_pct"]), 1.0), 25.0)
     cs = codes if codes is not None else ",".join(cur["codes"])

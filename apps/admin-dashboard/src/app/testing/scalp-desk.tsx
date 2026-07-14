@@ -366,7 +366,12 @@ export default function ScalpDesk({ mode }: { mode: ScalpMode }) {
                   <span className="text-[var(--text-muted)]">{t("작은 승리", "take")}</span>
                   <select value={String(sc.take_pct)} onChange={(e) => setParam("take_pct", Number(e.target.value))}
                     className="px-1.5 py-1 rounded-lg border bg-[var(--bg-primary)] text-[var(--text-primary)]" style={{ borderColor: "var(--border-default)" }}>
-                    {[0.3, 0.4, 0.5, 0.8, 1.0].map((v) => <option key={v} value={v}>+{v}%</option>)}
+                    {[0.05, 0.1, 0.2, 0.3, 0.4, 0.5, 0.8, 1.0].map((v) => {
+                      const net = Math.round((v - 0.23) * 100) / 100;   // fees+tax 0.23% round-trip
+                      return <option key={v} value={v}>
+                        {`+${v}% ${net >= 0 ? t(`(실속 +${net}%)`, `(net +${net}%)`) : t(`(실속 ${net}% 손해!)`, `(net ${net}% LOSS!)`)}`}
+                      </option>;
+                    })}
                   </select>
                   <span className="text-[var(--text-muted)]">{t("손절", "stop")}</span>
                   <select value={String(sc.stop_pct)} onChange={(e) => setParam("stop_pct", Number(e.target.value))}
@@ -414,6 +419,12 @@ export default function ScalpDesk({ mode }: { mode: ScalpMode }) {
                             ? t(`최근 저점에서 ${s.bounce_pct > 0 ? "+" : ""}${s.bounce_pct}% — 상승 시작(+0.10%~) 확인되면 매수`,
                                 `${s.bounce_pct > 0 ? "+" : ""}${s.bounce_pct}% off the recent low — buys when the rise confirms (+0.10%~)`)
                             : t("가격 흐름 관찰 중…", "watching the price stream…")}
+                          {px != null && (
+                            <div className="mt-0.5">
+                              {t(`사면 목표 +${sc.take_pct}% ≈ +₩${fmt(Math.round(px * sc.take_pct / 100))} (₩${fmt(Math.round(px * (1 + sc.take_pct / 100)))}에 매도)`,
+                                 `if bought: take +${sc.take_pct}% ≈ +₩${fmt(Math.round(px * sc.take_pct / 100))} (sells at ₩${fmt(Math.round(px * (1 + sc.take_pct / 100)))})`)}
+                            </div>
+                          )}
                         </div>
                       )}
                     </div>
