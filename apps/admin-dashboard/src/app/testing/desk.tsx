@@ -874,9 +874,10 @@ export default function Desk({ mode }: { mode: TradeMode }) {
             const sig = !!f.qualified;
             const forming = f.state === "FORMING";
             const isDown = f.setup_type === "inverse_down";
-            const sigColor = isDown ? "#1565c0" : RED;   // 🔵 DOWN bets wear blue
+            const isQuick = f.setup_type === "quick_bounce";
+            const sigColor = isDown ? "#1565c0" : isQuick ? "#7b1fa2" : RED;   // 🔵 down · ⚡ purple quick · 🔴 normal
             const border = sig ? sigColor : forming ? "#e65100" : "var(--border-default)";
-            const bg = sig ? (isDown ? "rgba(21,101,192,0.06)" : "rgba(211,47,47,0.06)")
+            const bg = sig ? (isDown ? "rgba(21,101,192,0.06)" : isQuick ? "rgba(123,31,162,0.06)" : "rgba(211,47,47,0.06)")
                            : forming ? "rgba(230,81,0,0.05)" : "var(--bg-elevated)";
             // engine-PREDICTED size when a signal is live (risk core + ML/pattern
             // conviction, boss 2026-07-13); flat 10% only as the fallback
@@ -935,9 +936,11 @@ export default function Desk({ mode }: { mode: TradeMode }) {
                 })() : sig ? (
                   <>
                     {(() => {
-                      // exact prediction window (boss): from THIS minute to +60min (capped at close)
+                      // exact prediction window (boss): from THIS minute for the setup's
+                      // real lifetime (60min normal · 20min ⚡ quick), capped at close
+                      const life = f.time_min || 60;
                       const t0 = new Date(kstNow);
-                      const t1 = new Date(kstNow.getTime() + 60 * 60000);
+                      const t1 = new Date(kstNow.getTime() + life * 60000);
                       const close = new Date(kstNow); close.setHours(15, 30, 0, 0);
                       const tEnd = t1 > close ? close : t1;
                       const hm = (d: Date) => `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
@@ -946,6 +949,9 @@ export default function Desk({ mode }: { mode: TradeMode }) {
                           {isDown
                             ? t(`🔵 하락 신호! 시장 하락에 베팅 — 인버스 매수, +${f.target_pct?.[0]}% ~ +${f.target_pct?.[1]}% 예상 — ⏰ ${hm(t0)} → ${hm(tEnd)} 사이`,
                                 `🔵 DOWN SIGNAL! Bet on the fall — buy the inverse, +${f.target_pct?.[0]}% to +${f.target_pct?.[1]}% expected — ⏰ between ${hm(t0)} → ${hm(tEnd)}`)
+                            : isQuick
+                            ? t(`⚡ 초단타 신호! ${life}분 승부 — +${f.target_pct?.[0]}% ~ +${f.target_pct?.[1]}% 빠르게 먹고 나오기 — ⏰ ${hm(t0)} → ${hm(tEnd)}`,
+                                `⚡ QUICK BOUNCE! a ${life}-minute play — +${f.target_pct?.[0]}% to +${f.target_pct?.[1]}% in and out fast — ⏰ ${hm(t0)} → ${hm(tEnd)}`)
                             : t(`🔴 매수 신호! +${f.target_pct?.[0]}% ~ +${f.target_pct?.[1]}% 상승 예상 — ⏰ ${hm(t0)} → ${hm(tEnd)} 사이`,
                                 `🔴 BUY SIGNAL! +${f.target_pct?.[0]}% to +${f.target_pct?.[1]}% expected — ⏰ between ${hm(t0)} → ${hm(tEnd)}`)}
                         </div>

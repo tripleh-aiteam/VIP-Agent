@@ -317,7 +317,10 @@ def buy_candidates(db, max_n: int = 3) -> dict[str, Any]:
             "SELECT ticker FROM auto_trades WHERE status='OPEN'")).fetchall()}
         setups = [s for s in setups if s["code"] not in held]
         for s in setups[:max_n]:
-            if s.get("setup_type") != "inverse_down":   # stock verdicts don't judge ETFs
+            # inverse_down: stock verdicts don't judge ETFs. quick_bounce: a 20-min
+            # counter-trend scalp isn't judged by the daily SELL verdict (it fires
+            # DURING falls by design; it has its own ML/news/panic/volume vetoes).
+            if s.get("setup_type") not in ("inverse_down", "quick_bounce"):
                 try:
                     from services.decision_agent import decide_cached
                     if (decide_cached(db, s["code"]) or {}).get("decision") == "SELL":
@@ -426,8 +429,9 @@ def focus_status(db, codes: Optional[list[str]] = None) -> dict[str, Any]:
         try:
             from services.decision_agent import decide_cached
             _d = (decide_cached(db, code, ttl=180) or {}) if need_opinion else {}
-            if qualified and _d.get("decision") == "SELL":
-                vetoed = True
+            if (qualified and _d.get("decision") == "SELL"
+                    and s.get("setup_type") not in ("inverse_down", "quick_bounce")):
+                vetoed = True   # ⚡ 20-min scalps aren't judged by the daily verdict
             _m1 = _d.get("method1_ml") or {}
             _m2 = _d.get("method2_analysis") or {}
             _m3 = _d.get("method3_wave") or {}
@@ -501,7 +505,7 @@ def focus_status(db, codes: Optional[list[str]] = None) -> dict[str, Any]:
                 "state", "price", "confidence", "ai_1h_prob", "entry_zone", "target_band",
                 "target_pct", "stop", "stop_pct", "time_min", "why_ko", "why_en",
                 "reason_ko", "reason_en", "trigger_ko", "trigger_en",
-                "path_ko", "path_en", "pattern")},
+                "path_ko", "path_en", "pattern", "setup_type")},
             "qualified": qualified and not vetoed, "vetoed": vetoed,
             "opinion": opinion, "guard": guard, "size": size_sug})
 

@@ -2,6 +2,28 @@
 
 ---
 
+## 2026-07-14 (Tuesday) — ⚡ Quick-bounce signals: strong 15-min thrusts trade fast (no more 45-min wait)
+
+### Goal
+
+Boss asked "삼성전자 is up more than 1%, why not buying?" — the momentum setup demands 15m AND 45m confirmation, so a bounce inside a fall never signals. He'd already ruled: "even if it survived 5 minutes, buy and sell immediately." Build the fast lane.
+
+### Files updated
+
+- [services/intraday_setup.py](apps/orchestrator-api/services/intraday_setup.py) — new `quick_bounce` branch in `scan_one`, placed after `base` and BEFORE the NOTHING gates so it bypasses the downtrend/sector gates by design (bounces live inside falls). Fires on a strong 15-min thrust: ≥1.0% with volume ≥1.5×, or ≥1.2% when Naver bars carry no volume (common); RSI-5 only blocks blow-off tops (>82). Keeps the panic gate, ML-SELL veto, news ≤−2 veto, re-entry cooldown. Tight doors: target +0.8~1.2%, stop −0.7%, **time_min 20**. Conf ladder 62 + strength boosts (thrust ≥1.5% +4, volume ≥2× +4, pattern ≥55 +3, cap 82) — only strong ones clear the auto bar of 65.
+- [services/auto_trader.py](apps/orchestrator-api/services/auto_trader.py) — `quick_bounce` joins `inverse_down` in both decide()-SELL veto exemptions (a 20-min counter-trend scalp isn't judged by the daily verdict); fixed-panel passthrough now includes `setup_type` so 삼성전자/SK하이닉스 cards can style the ⚡ variant.
+- [desk.tsx](apps/admin-dashboard/src/app/testing/desk.tsx) — ⚡ purple signal card + "⚡ 초단타 신호! 20분 승부" banner; the time window now uses the setup's real lifetime (`f.time_min`: 20 min for quick, 60 for normal) instead of hardcoded +60.
+
+### Verified
+
+Replayed the boss's exact morning case (r15 +1.57%, RSI-5 50, no volume) through `scan_one` against prod DB → `ACT_NOW quick_bounce conf=66, targets [0.8,1.2], stop 0.7, time_min 20`. Live scan sane (both mains NOTHING — pop had faded). py_compile + tsc clean.
+
+### Next
+
+- Watch the first graded quick_bounce trades — the 20-min TIME door and −0.7% stop are guesses to refit from the record.
+
+---
+
 ## 2026-07-09 (Thursday) — Assistant "knows my desk + works as a normal LLM" round (boss live-testing feedback, 5 fixes)
 
 ### [PM2] Sell/position answers analyze MY case + off-topic style parity
@@ -55,6 +77,12 @@ The boss caught auto-trading buying S-OIL while the chatbot said "don't buy" —
 - **Auto-trader day 1:** 8 trades · 3W5L · net +1.57% (코리아써키트 +5.15% TARGET 15min, 후성 +2.76% TARGET; all losses stop/time-capped ≤1.96%).
 - **Files:** `services/buy_picks.py`, `services/assistant_agent.py`, `services/auto_trader.py`, `services/intraday_setup.py`
 - **Next:** judge boss-tier vs adaptive exit periods separately in the 2-week record; pending offers — daily −1.5% circuit-breaker, 🐢 position-trader for multi-day BUYs, 1-min exit checks, rotating top-150 deep list (after test).
+
+### [Late afternoon] The 9-item build (audit fixes + boss UI asks) — all deployed + prod-verified
+
+- **What:** engine↔chatbot↔auto audit → build round: (1) 🛒 multi-day BUY picks now GRADED (`decision_multi`, 3-day horizon, dedup — the last ungraded advice surface); (2) 🤖 M5.6 joins the position/sell 1-hour forecast (breaks FLAT at ≥60/≤40 + AI % line — one 1h brain everywhere); (3) veto receipts (`auto_vetoes` table + status().vetoes + 🛡️ panel counter); (4) `decide_cached()` 60s TTL for the tick veto; (5) daily circuit-breaker (closed-trades net sum ≤ −5% → no new entries, exits managed); (6) panel shows `10+10(<₩100k)/day`; (7) Trade-History search bar (name/side/KST-date); (8) ⚡ buy-candidate popup alarm (60s scanner poll, one alarm per stock/hour, entry/target/stop + conf + AI%, 60-min countdown, ✕, raised above the corner pill); (9) **found+fixed: M5.6 was silently dead on Render all day** — scikit-learn/joblib/pandas/numpy were never in requirements.txt → prob_up_1h()=None everywhere; pinned to the training machine's versions; prod now answers "🤖 AI 1시간 상승확률 46%". Assistant UX (boss): opens ONLY on click (closed-by-default every page load) and always docks to the RIGHT edge.
+- **Files:** `services/{buy_picks,position_advice,auto_trader,decision_agent}.py`, `requirements.txt`, `admin-dashboard/src/app/testing/page.tsx`, `admin-dashboard/src/components/AssistantCard.tsx`
+- **Next:** typo-tolerant paper_pnl matcher ("how muich i won" fell into stock_history — offered to boss); surface the decision_multi track record as a 📊 line once n grows.
 
 ---
 

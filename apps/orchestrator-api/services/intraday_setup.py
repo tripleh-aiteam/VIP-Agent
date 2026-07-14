@@ -213,6 +213,46 @@ def scan_one(db, code: str, name: str) -> dict[str, Any]:
             "target_band": [tgt_lo, tgt_hi], "target_pct": [t_lo, t_hi],
             "stop": stop, "stop_pct": s_pct, "time_min": TIME_MIN}
 
+    # ⚡ QUICK BOUNCE (boss 2026-07-14: "even if it survived 5 minutes, buy and sell
+    # immediately") — a STRONG, volume-backed 15-minute thrust trades FAST: tight
+    # doors, 20-minute life, in and out. By design it bypasses the downtrend/sector
+    # gates (bounces live inside falls) but NOT the panic gate, the ML/news vetoes,
+    # or the re-entry cooldown. The strength bar is high on purpose: thrust ≥1.0%
+    # + volume ≥1.5× + healthy RSI, and conf only clears the 65 line with extra
+    # strength (≥1.5% thrust, 2× volume, or history pattern agreeing).
+    _r15q = micro.get("r15")
+    _rsi5q = micro.get("rsi5")
+    _volrq = micro.get("vol_ratio")   # Naver 5-min bars often carry no volume → None
+    _q_thrust = (_r15q is not None
+                 and ((_volrq is not None and _volrq >= 1.5 and _r15q >= 1.0)
+                      or (_volrq is None and _r15q >= 1.2)))   # no volume proof → stronger thrust
+    _q_rsi_ok = _rsi5q is None or _rsi5q <= 82   # only block blow-off tops; the thrust IS the proof
+    if _q_thrust and _q_rsi_ok and not extreme_crash and not ml_bearish:
+        _qnews = 0
+        try:
+            from services.decision_agent import _news as _qn
+            _qnews = (_qn(db, code, name) or {}).get("score") or 0
+        except Exception:
+            db.rollback()
+        if _qnews > -2:
+            _qconf = 62 + (4 if _r15q >= 1.5 else 0) \
+                     + (4 if (_volrq or 0) >= 2.0 else 0) \
+                     + (3 if (pattern or {}).get("up_rate", 0) >= 55 else 0)
+            _qvol_ko = f" + 거래량 {_volrq:.1f}배" if _volrq else ""
+            _qvol_en = f" + volume {_volrq:.1f}×" if _volrq else ""
+            return {**base,
+                    "state": "ACT_NOW", "setup_type": "quick_bounce",
+                    "confidence": min(_qconf, 82),
+                    "target_band": [round(price * 1.008), round(price * 1.012)],
+                    "target_pct": [0.8, 1.2],
+                    "stop": round(price * 0.993), "stop_pct": 0.7,
+                    "time_min": 20,
+                    "why_ko": (f"⚡ 초단타 반등: 15분 {_r15q:+.1f}% 급등{_qvol_ko}"
+                               f" — 20분 승부, 먹고 바로 나옵니다"),
+                    "why_en": (f"⚡ quick bounce: 15m {_r15q:+.1f}% thrust{_qvol_en}"
+                               f" — a 20-minute play, in and out"),
+                    "ml": ml_advice, "news_score": _qnews}
+
     # --- NOTHING gates first (safety before opportunity) ---
     if sector_down:
         return {**base, "state": "NOTHING", "gate": "sector",
