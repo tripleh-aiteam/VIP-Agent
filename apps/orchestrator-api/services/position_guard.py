@@ -114,6 +114,18 @@ def run(db) -> dict[str, Any]:
         return out
     if not rows:
         return out
+    # ⚡ Algorithm-2 ripple positions manage their own exits (take small win /
+    # stop −1% / EOD flat, on a 15s heartbeat) — the guard must not sell them
+    # out from under the scalper
+    try:
+        scalp_held = {r[0] for r in db.execute(text(
+            "SELECT ticker FROM scalp_trades WHERE status='OPEN'")).fetchall()}
+        if scalp_held:
+            rows = [r for r in rows if r[0] not in scalp_held]
+            if not rows:
+                return out
+    except Exception:
+        db.rollback()
     auto_held: set = set()
     auto_on = False
     try:

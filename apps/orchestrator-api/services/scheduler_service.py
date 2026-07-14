@@ -2002,6 +2002,35 @@ def init_scheduler():
     )
     log.info("scheduler: position-guard heartbeat registered (60s, market hours)")
 
+    # ⚡ ALGORITHM-2 SCALP HEARTBEAT — every 15s during KST market hours (boss
+    # 2026-07-14 ripple scalper: buy the upturn, sell the small win, repeat).
+    # Also fills manual-mode auto-sell LIMIT orders server-side. tick() itself
+    # gates on market hours + its own ON/OFF switch; this only gates the days.
+    def _scalp_heartbeat():
+        from datetime import datetime, timedelta, timezone
+        kst = datetime.now(timezone(timedelta(hours=9)))
+        if kst.weekday() >= 5 or not (9 * 60 <= kst.hour * 60 + kst.minute <= 15 * 60 + 25):
+            return
+        db = SessionLocal()
+        try:
+            from services.scalp_trader import tick as _stick
+            r = _stick(db)
+            if r.get("opened") or r.get("closed"):
+                log.info(f"scalp tick: {r}", extra={"action": "scalp.tick"})
+        except Exception as e:
+            log.warning(f"scalp heartbeat failed: {str(e)[:120]}")
+        finally:
+            db.close()
+
+    _scheduler.add_job(
+        _scalp_heartbeat,
+        "interval", seconds=15,
+        id="scalp-heartbeat",
+        replace_existing=True,
+        max_instances=1, coalesce=True,
+    )
+    log.info("scheduler: algorithm-2 scalp heartbeat registered (15s, market hours)")
+
     # Hourly snapshot capture — every hour at :05. Saves one 'part' per report
     # type (newspaper/youtube/kiwoom) WITHOUT emailing; the 6 AM build reads all
     # ~24 parts of the day and synthesises the big report. Plus daily cleanup.

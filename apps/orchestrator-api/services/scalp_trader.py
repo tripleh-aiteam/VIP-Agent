@@ -1,0 +1,319 @@
+"""⚡ ALGORITHM 2 — the boss's low-risk RIPPLE scalper (2026-07-14).
+
+His spec, verbatim logic:
+  - Don't hold 1 hour like Algorithm 1. Take SMALL wins repeatedly:
+    buy when the price STARTS RISING, sell after a small gain (~+0.4% default,
+    his example: buy 1,995,000 → sell 1,998,000). If it keeps rising after the
+    sell → buy again, sell again. 2 buys + 2 sells inside 30 minutes is fine.
+  - After a sell, if the price falls: WAIT. When it starts rising again → buy.
+  - After a buy, if it falls: DO NOT panic-sell the dip. Only at −1% → sell,
+    then wait for the next upturn.
+  - Everything on the same shared paper desk, same stocks as Algorithm 1.
+
+Two modes (UI): AUTO = this state machine runs it; MANUAL = the boss trades
+with the Kiwoom order book + his own buy/sell, plus "auto-sell at my price"
+(a paper-desk LIMIT SELL that our heartbeat fills server-side).
+
+Driven by a 15-second scheduler heartbeat (see scheduler_service). Price
+memory lives in-process (rebuilds ~1 min after a deploy — acceptable).
+"""
+from __future__ import annotations
+
+import logging
+from collections import deque
+from datetime import datetime
+from typing import Any, Optional
+from zoneinfo import ZoneInfo
+
+from sqlalchemy import text
+
+logger = logging.getLogger(__name__)
+KST = ZoneInfo("Asia/Seoul")
+
+# ---- the boss's dials (defaults; changeable from the UI) ----------------- #
+TAKE_PCT_DEFAULT = 0.4    # small win. NOTE: paper fees are 0.23% round-trip —
+                          # a +0.2% gross win is a NET LOSS; 0.4% ≈ +0.17% net.
+STOP_PCT_DEFAULT = 1.0    # his rule: hold dips, cut only at −1%
+POS_PCT_DEFAULT = 10.0    # % of equity per ripple trade
+DEFAULT_CODES = "000660,005930"
+
+# upturn detection on the 15s price stream
+BOUNCE_MIN_PCT = 0.10     # price must lift ≥0.10% off the recent low…
+BOUNCE_MAX_PCT = 0.45     # …but not already ≥0.45% (too late, don't chase)
+RISES_NEEDED = 2          # and the last N reads must be strictly rising
+BUF_LEN = 40              # 40 × 15s = 10-minute rolling window
+EOD_FLAT_HHMM = (15, 18)  # close everything at 15:18 — a scalper sleeps flat
+
+_buf: dict[str, deque] = {}          # code -> deque[(ts, px)]
+
+
+def _ensure(db) -> None:
+    db.execute(text(
+        "CREATE TABLE IF NOT EXISTS scalp_state ("
+        " id INT PRIMARY KEY, enabled BOOLEAN NOT NULL DEFAULT FALSE,"
+        " take_pct DOUBLE PRECISION NOT NULL DEFAULT 0.4,"
+        " stop_pct DOUBLE PRECISION NOT NULL DEFAULT 1.0,"
+        " pos_pct DOUBLE PRECISION NOT NULL DEFAULT 10.0,"
+        " codes TEXT NOT NULL DEFAULT '000660,005930',"
+        " updated_at TIMESTAMPTZ DEFAULT now())"))
+    db.execute(text(
+        "CREATE TABLE IF NOT EXISTS scalp_trades ("
+        " id SERIAL PRIMARY KEY, ticker TEXT, name TEXT, qty INT,"
+        " entry DOUBLE PRECISION, exit_price DOUBLE PRECISION,"
+        " exit_reason TEXT, net_pct DOUBLE PRECISION,"
+        " status TEXT NOT NULL DEFAULT 'OPEN',"
+        " opened_at TIMESTAMPTZ DEFAULT now(), closed_at TIMESTAMPTZ)"))
+    r = db.execute(text("SELECT 1 FROM scalp_state WHERE id=1")).first()
+    if not r:
+        db.execute(text(
+            "INSERT INTO scalp_state (id, enabled, take_pct, stop_pct, pos_pct, codes) "
+            "VALUES (1, FALSE, :t, :s, :p, :c)"),
+            {"t": TAKE_PCT_DEFAULT, "s": STOP_PCT_DEFAULT,
+             "p": POS_PCT_DEFAULT, "c": DEFAULT_CODES})
+    db.commit()
+
+
+def _cfg(db) -> dict[str, Any]:
+    _ensure(db)
+    r = db.execute(text(
+        "SELECT enabled, take_pct, stop_pct, pos_pct, codes FROM scalp_state WHERE id=1")).first()
+    codes = [c.strip().zfill(6) for c in (r[4] or DEFAULT_CODES).split(",") if c.strip()]
+    return {"enabled": bool(r[0]), "take_pct": float(r[1]), "stop_pct": float(r[2]),
+            "pos_pct": float(r[3]), "codes": codes[:6]}
+
+
+def set_enabled(db, on: bool) -> dict:
+    _ensure(db)
+    db.execute(text("UPDATE scalp_state SET enabled=:e, updated_at=now() WHERE id=1"),
+               {"e": bool(on)})
+    db.commit()
+    return {"ok": True, "enabled": bool(on)}
+
+
+def set_params(db, take_pct: Optional[float] = None, stop_pct: Optional[float] = None,
+               pos_pct: Optional[float] = None, codes: Optional[str] = None) -> dict:
+    _ensure(db)
+    cur = _cfg(db)
+    take = min(max(float(take_pct if take_pct is not None else cur["take_pct"]), 0.2), 2.0)
+    stop = min(max(float(stop_pct if stop_pct is not None else cur["stop_pct"]), 0.5), 3.0)
+    pos = min(max(float(pos_pct if pos_pct is not None else cur["pos_pct"]), 1.0), 25.0)
+    cs = codes if codes is not None else ",".join(cur["codes"])
+    cs = ",".join([c.strip().zfill(6) for c in cs.split(",") if c.strip().isdigit()][:6]) \
+        or DEFAULT_CODES
+    db.execute(text(
+        "UPDATE scalp_state SET take_pct=:t, stop_pct=:s, pos_pct=:p, codes=:c, "
+        "updated_at=now() WHERE id=1"), {"t": take, "s": stop, "p": pos, "c": cs})
+    db.commit()
+    return {"ok": True, "take_pct": take, "stop_pct": stop, "pos_pct": pos, "codes": cs}
+
+
+def _market_open_now() -> bool:
+    n = datetime.now(KST)
+    return n.weekday() < 5 and (9 * 60) <= (n.hour * 60 + n.minute) <= (15 * 60 + 20)
+
+
+def _px(code: str) -> Optional[float]:
+    from services.paper_desk import _live_price
+    p, _ = _live_price(code)
+    return p
+
+
+def _name(code: str) -> str:
+    from services.paper_desk import _name_for
+    return _name_for(code)
+
+
+def _close_row(db, out: dict, oid: int, name: str, entry: float, fill: float,
+               reason: str) -> None:
+    net = (fill / float(entry) - 1) * 100 - 0.23
+    db.execute(text(
+        "UPDATE scalp_trades SET status='CLOSED', exit_price=:x, exit_reason=:r, "
+        "net_pct=:n, closed_at=now() WHERE id=:i"),
+        {"x": fill, "r": reason, "n": round(net, 3), "i": oid})
+    db.commit()
+    out["closed"].append({"name": name, "reason": reason, "net_pct": round(net, 2)})
+
+
+def _reconcile_external(db, out: dict) -> None:
+    """Same shared-book lesson as the auto trader: if the shares behind an OPEN
+    scalp row were sold outside (boss click / manual limit), close the row."""
+    rows = db.execute(text(
+        "SELECT id, ticker, name, entry, opened_at FROM scalp_trades "
+        "WHERE status='OPEN'")).fetchall()
+    for oid, tk, name, entry, opened_at in rows:
+        held = int(db.execute(text(
+            "SELECT qty FROM paper_desk_positions WHERE ticker=:t"),
+            {"t": tk}).scalar() or 0)
+        if held > 0:
+            continue
+        last_fill = db.execute(text(
+            "SELECT fill_price FROM paper_desk_orders WHERE ticker=:t AND side='SELL' "
+            "AND status='FILLED' AND fill_price IS NOT NULL AND created_at >= :o "
+            "ORDER BY created_at DESC LIMIT 1"), {"t": tk, "o": opened_at}).scalar()
+        fill = float(last_fill or _px(tk) or entry)
+        _close_row(db, out, oid, name, float(entry), fill, "EXTERNAL")
+
+
+def _upturn(code: str, px: float) -> tuple[bool, float]:
+    """Boss's entry: the price STARTED RISING off a local low.
+    Returns (fire?, bounce_pct_from_recent_low)."""
+    buf = _buf.get(code)
+    if not buf or len(buf) < RISES_NEEDED + 2:
+        return False, 0.0
+    prices = [p for _, p in buf]
+    lo = min(prices)
+    if lo <= 0:
+        return False, 0.0
+    bounce = (px / lo - 1) * 100
+    rising = all(prices[i] < prices[i + 1]
+                 for i in range(len(prices) - RISES_NEEDED - 1, len(prices) - 1))
+    return (rising and BOUNCE_MIN_PCT <= bounce <= BOUNCE_MAX_PCT), round(bounce, 3)
+
+
+def tick(db, force: bool = False) -> dict[str, Any]:
+    """One 15s pass of Algorithm 2. Exits → entries, one shared desk book.
+    Also fills the boss's manual auto-sell LIMIT orders (server-side)."""
+    cfg = _cfg(db)
+    out: dict[str, Any] = {"enabled": cfg["enabled"], "closed": [], "opened": [],
+                           "reason": None}
+    # manual-mode auto-sell orders must fill even when the machine is OFF
+    try:
+        from services.paper_desk import check_limit_orders
+        n = check_limit_orders(db)
+        if n:
+            out["limit_fills"] = n
+    except Exception:
+        db.rollback()
+    try:
+        _reconcile_external(db, out)
+    except Exception:
+        db.rollback()
+    if not force and not _market_open_now():
+        out["reason"] = "market closed"
+        return out
+
+    # feed the 15s price memory for every configured stock (even when OFF —
+    # the moment he flips ON, the upturn detector already has its window)
+    live: dict[str, float] = {}
+    now_ts = datetime.now(KST).timestamp()
+    for code in cfg["codes"]:
+        p = _px(code)
+        if p is None:
+            continue
+        live[code] = float(p)
+        buf = _buf.setdefault(code, deque(maxlen=BUF_LEN))
+        buf.append((now_ts, float(p)))
+
+    if not cfg["enabled"]:
+        out["reason"] = "algorithm 2 is OFF"
+        return out
+
+    from services.paper_desk import place_order
+    n = datetime.now(KST)
+    eod = (n.hour * 60 + n.minute) >= (EOD_FLAT_HHMM[0] * 60 + EOD_FLAT_HHMM[1])
+
+    # ---- 1) EXITS (protect first) ---- #
+    open_rows = db.execute(text(
+        "SELECT id, ticker, name, qty, entry FROM scalp_trades WHERE status='OPEN'")).fetchall()
+    open_codes = set()
+    for oid, tk, name, qty, entry in open_rows:
+        px = live.get(tk) or _px(tk)
+        if px is None:
+            open_codes.add(tk)
+            continue
+        entry = float(entry)
+        reason = None
+        if px >= entry * (1 + cfg["take_pct"] / 100):
+            reason = "TAKE"      # small win — the whole point
+        elif px <= entry * (1 - cfg["stop_pct"] / 100):
+            reason = "STOP"      # his rule: hold dips, cut at −1%
+        elif eod:
+            reason = "EOD"       # a scalper sleeps flat
+        if not reason:
+            open_codes.add(tk)
+            continue
+        held = int(db.execute(text(
+            "SELECT qty FROM paper_desk_positions WHERE ticker=:t"),
+            {"t": tk}).scalar() or 0)
+        sell_qty = min(int(qty), held)
+        if sell_qty <= 0:
+            continue             # reconcile closes it next pass
+        r = place_order(db, tk, "SELL", sell_qty, "market")
+        if r.get("ok"):
+            _close_row(db, out, oid, name, entry, float(r.get("fill_price") or px), reason)
+            _buf.pop(tk, None)   # fresh window: re-buy only on a NEW rise
+        else:
+            logger.warning("scalp: SELL failed %s: %s", tk, r.get("error"))
+            open_codes.add(tk)
+
+    # ---- 2) ENTRIES (one per stock, never while holding it) ---- #
+    if eod:
+        out["reason"] = "EOD flat — no new entries after 15:18"
+        return out
+    for code in cfg["codes"]:
+        if code in open_codes or code not in live:
+            continue
+        fire, bounce = _upturn(code, live[code])
+        if not fire:
+            continue
+        equity = float(db.execute(text(
+            "SELECT cash FROM paper_desk_account WHERE id=1")).scalar() or 0)
+        qty = int(equity * cfg["pos_pct"] / 100 / live[code])
+        if qty < 1:
+            continue
+        r = place_order(db, code, "BUY", qty, "market")
+        if r.get("ok"):
+            fill = float(r.get("fill_price") or live[code])
+            db.execute(text(
+                "INSERT INTO scalp_trades (ticker, name, qty, entry) VALUES (:t,:n,:q,:e)"),
+                {"t": code, "n": _name(code), "q": qty, "e": fill})
+            db.commit()
+            out["opened"].append({"code": code, "qty": qty, "entry": fill,
+                                  "bounce_pct": bounce})
+            logger.info("scalp: BUY %s x%d @ %s (bounce %.2f%%)", code, qty, fill, bounce)
+    return out
+
+
+def status(db) -> dict[str, Any]:
+    """Everything the Algorithm 2 page needs, one call."""
+    cfg = _cfg(db)
+    stocks: list[dict[str, Any]] = []
+    open_map: dict[str, Any] = {}
+    for r in db.execute(text(
+            "SELECT ticker, qty, entry, opened_at FROM scalp_trades WHERE status='OPEN'")):
+        open_map[r[0]] = {"qty": int(r[1]), "entry": float(r[2]), "opened_at": str(r[3])}
+    for code in cfg["codes"]:
+        px = _px(code)
+        o = open_map.get(code)
+        buf = _buf.get(code)
+        lo = min((p for _, p in buf), default=None) if buf else None
+        bounce = round((px / lo - 1) * 100, 2) if (px and lo) else None
+        stocks.append({
+            "code": code, "name": _name(code), "price": px,
+            "state": "LONG" if o else "WAIT",
+            "entry": o["entry"] if o else None, "qty": o["qty"] if o else None,
+            "pnl_pct": round((px / o["entry"] - 1) * 100 - 0.23, 2) if (o and px) else None,
+            "take_at": round(o["entry"] * (1 + cfg["take_pct"] / 100)) if o else None,
+            "stop_at": round(o["entry"] * (1 - cfg["stop_pct"] / 100)) if o else None,
+            "bounce_pct": bounce, "buf_n": len(buf) if buf else 0})
+    today = db.execute(text(
+        "SELECT count(*), coalesce(sum(CASE WHEN net_pct>0 THEN 1 ELSE 0 END),0), "
+        "coalesce(sum(net_pct),0) FROM scalp_trades WHERE status='CLOSED' "
+        "AND closed_at::date=(now() AT TIME ZONE 'Asia/Seoul')::date")).first()
+    recent = [{"name": r[0], "qty": int(r[1]), "entry": float(r[2]),
+               "exit_price": (float(r[3]) if r[3] is not None else None),
+               "exit_reason": r[4],
+               "net_pct": (float(r[5]) if r[5] is not None else None),
+               "closed_at": str(r[6])}
+              for r in db.execute(text(
+                  "SELECT name, qty, entry, exit_price, exit_reason, net_pct, closed_at "
+                  "FROM scalp_trades WHERE status='CLOSED' "
+                  "ORDER BY closed_at DESC LIMIT 25"))]
+    return {**cfg,
+            "stocks": stocks,
+            "today": {"trades": int(today[0] or 0), "wins": int(today[1] or 0),
+                      "net_pct_sum": round(float(today[2] or 0), 2)},
+            "recent": recent,
+            "market_open": _market_open_now(),
+            "fee_note_ko": "왕복 수수료+세금 0.23% — 목표 0.4%면 실수익 약 +0.17%",
+            "fee_note_en": "round-trip fees+tax 0.23% — a 0.4% take nets about +0.17%"}

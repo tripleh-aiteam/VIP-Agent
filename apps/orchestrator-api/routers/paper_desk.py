@@ -261,6 +261,41 @@ def auto_focus(extra: str = Query(""), db: Session = Depends(get_db)):
     return out
 
 
+# --------------------------------------------------------------------------- #
+# ⚡ ALGORITHM 2 — the boss's ripple scalper (buy the upturn, sell the small win,
+# repeat; hold dips, cut at −1%). services/scalp_trader.py; 15s scheduler tick.
+# --------------------------------------------------------------------------- #
+
+@router.get("/scalp/status")
+def scalp_status(db: Session = Depends(get_db)):
+    """Everything the Algorithm 2 page needs: switch, dials, per-stock state
+    (WAIT/LONG + entry/take/stop lines), today's record, recent round trips."""
+    from services.scalp_trader import status
+    return status(db)
+
+
+@router.post("/scalp/toggle")
+def scalp_toggle(on: bool = Query(...), db: Session = Depends(get_db)):
+    from services.scalp_trader import set_enabled
+    return set_enabled(db, on)
+
+
+@router.post("/scalp/params")
+def scalp_params(take_pct: Optional[float] = Query(None), stop_pct: Optional[float] = Query(None),
+                 pos_pct: Optional[float] = Query(None), codes: Optional[str] = Query(None),
+                 db: Session = Depends(get_db)):
+    """The boss's dials: small-win target %, stop %, size % of cash, stock list."""
+    from services.scalp_trader import set_params
+    return set_params(db, take_pct=take_pct, stop_pct=stop_pct, pos_pct=pos_pct, codes=codes)
+
+
+@router.post("/scalp/tick")
+def scalp_tick(force: bool = Query(False), db: Session = Depends(get_db)):
+    """Manual heartbeat (testing) — the scheduler fires this every 15s anyway."""
+    from services.scalp_trader import tick
+    return tick(db, force=force)
+
+
 @router.get("/prices")
 def live_prices(codes: str = Query(..., description="comma-separated 6-digit codes, max 20")):
     """⚡ FAST PRICE LANE (boss 2026-07-14: '현재가 changes very slow vs Kiwoom').
