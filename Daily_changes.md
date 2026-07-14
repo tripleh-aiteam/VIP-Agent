@@ -28,6 +28,12 @@ Replayed the boss's exact morning case (r15 +1.57%, RSI-5 50, no volume) through
 - **Files:** [services/auto_trader.py](apps/orchestrator-api/services/auto_trader.py)
 - **Next:** watch tomorrow that EXTERNAL closes grade sanely in the day report.
 
+### [PM2] ⚡ Fast price lane — 현재가 ticks every 3s like Kiwoom
+
+- **What:** Boss: "price changes very slow vs Kiwoom — predictions will be bad." The panels' 현재가 rode `/auto/focus` (60s page poll + ~50s server cache → up to ~2 min stale). New `GET /paper-desk/prices?codes=` — Kiwoom-first via `_live_price` (2s micro-cache), parallel fan-out, max 20 codes, no DB — and the desk overlays it on the board every 3s (market hours only, semi/auto only). Engine analysis still refreshes every 60s (that part is heavy and fine). Quote strip 5s→3s. Panel footer now says "현재가 3초마다 실시간 (키움) · 엔진 분석 1분마다".
+- **Files:** [routers/paper_desk.py](apps/orchestrator-api/routers/paper_desk.py), [desk.tsx](apps/admin-dashboard/src/app/testing/desk.tsx)
+- **Note:** engine predictions already used fresh prices at decision time (scan calls `_live_price` directly) — this was a *display* staleness, but seeing dead prices was destroying trust.
+
 ---
 
 ## 2026-07-09 (Thursday) — Assistant "knows my desk + works as a normal LLM" round (boss live-testing feedback, 5 fixes)

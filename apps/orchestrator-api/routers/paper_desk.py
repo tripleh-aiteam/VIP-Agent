@@ -261,6 +261,29 @@ def auto_focus(extra: str = Query(""), db: Session = Depends(get_db)):
     return out
 
 
+@router.get("/prices")
+def live_prices(codes: str = Query(..., description="comma-separated 6-digit codes, max 20")):
+    """⚡ FAST PRICE LANE (boss 2026-07-14: '현재가 changes very slow vs Kiwoom').
+    The focus board recomputes every 60s (heavy engine work) — the page overlays
+    prices from THIS every ~3s instead. Kiwoom-first via _live_price (2s
+    micro-cache), parallel fan-out, no DB."""
+    from concurrent.futures import ThreadPoolExecutor
+    from services.paper_desk import _live_price
+    cs: list[str] = []
+    for c in (codes or "").split(","):
+        c = c.strip().zfill(6)
+        if c.isdigit() and len(c) == 6 and c not in cs:
+            cs.append(c)
+    cs = cs[:20]
+    out: dict[str, dict] = {}
+    if cs:
+        with ThreadPoolExecutor(max_workers=8) as ex:
+            for c, (px, _name) in zip(cs, ex.map(_live_price, cs)):
+                if px is not None:
+                    out[c] = {"price": px}
+    return {"prices": out}
+
+
 @router.get("/auto/focus/detail")
 def auto_focus_detail(code: str = Query(...), lang: str = Query("ko"),
                       db: Session = Depends(get_db)):

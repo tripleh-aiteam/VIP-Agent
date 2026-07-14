@@ -497,6 +497,31 @@ export default function Desk({ mode }: { mode: TradeMode }) {
   const marketClosed = kstNow.getDay() === 0 || kstNow.getDay() === 6
     || kstMins < 9 * 60 || kstMins >= 15 * 60 + 20;
 
+  // ⚡ FAST PRICE LANE (boss 2026-07-14: "current price changes very slow vs Kiwoom") —
+  // the focus board recomputes every 60s (heavy engine work), but the 현재가 itself
+  // now overlays from /paper-desk/prices (Kiwoom-first, 2s fresh) every 3 seconds.
+  const [livePx, setLivePx] = useState<Record<string, number>>({});
+  useEffect(() => {
+    if (mode === "manual" || marketClosed) return;   // manual has no board; closed = frozen
+    const tick = () => {
+      const codes = Array.from(new Set(
+        focus.filter((f) =>
+          ["000660", "005930"].includes(f.code) || watchExtra.includes(f.code)
+          || !!f.qualified || !!f.dynamic).map((f) => f.code)));
+      if (!codes.length) return;
+      api<{ prices: Record<string, { price: number }> }>(`/paper-desk/prices?codes=${codes.join(",")}`)
+        .then((r) => {
+          const m: Record<string, number> = {};
+          Object.entries(r.prices || {}).forEach(([c, v]) => { if (v?.price != null) m[c] = v.price; });
+          if (Object.keys(m).length) setLivePx((old) => ({ ...old, ...m }));
+        }).catch(() => {});
+    };
+    tick();
+    const i = setInterval(tick, 3000);
+    return () => clearInterval(i);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mode, marketClosed, focus, watchExtra]);
+
   // one card, two homes: the main-body section (semi) and the floating popup (manual)
   const alertCard = (a: SetupAlert) => {
     const leftMin = Math.max(0, Math.round(60 - (Date.now() - a.ts) / 60000));
@@ -583,7 +608,7 @@ export default function Desk({ mode }: { mode: TradeMode }) {
     if (!q.trim()) return;
     const i = setInterval(() => {
       api<QuoteRes>(`/paper-desk/quote?q=${encodeURIComponent(q.trim())}`).then(setQuote).catch(() => {});
-    }, 5000);
+    }, 3000);
     return () => clearInterval(i);
   }, [q]);
 
@@ -901,7 +926,7 @@ export default function Desk({ mode }: { mode: TradeMode }) {
                     <button onClick={() => rmWatch(f.code)} title={t("보드에서 빼기", "remove from board")}
                       className="ml-auto text-[12px] text-[var(--text-muted)] hover:opacity-70">✕</button>
                   )}
-                  {f.price != null && <span className="text-[16px] font-extrabold tabular-nums text-[var(--text-primary)]">₩{fmt(f.price)}</span>}
+                  {(livePx[f.code] ?? f.price) != null && <span className="text-[16px] font-extrabold tabular-nums text-[var(--text-primary)]">₩{fmt(livePx[f.code] ?? f.price)}</span>}
                   {f.ai_1h_prob != null && <span className="text-[11.5px] font-bold text-[var(--text-muted)]">🤖 {f.ai_1h_prob}%</span>}
                   {f.confidence != null && f.confidence > 0 && <span className="text-[11.5px] font-bold text-[var(--text-muted)]">{t("확신", "conf")} {f.confidence}%</span>}
                 </div>
@@ -1218,8 +1243,8 @@ export default function Desk({ mode }: { mode: TradeMode }) {
                   );
                 })()}
                 <div className="mt-2 text-[10px] text-[var(--text-muted)]">
-                  {t(`1분마다 자동 갱신${focusAt ? ` · 마지막 확인 ${focusAt}` : ""} · 신호가 켜지면 이 판이 빨간색으로 바뀝니다`,
-                     `refreshes every minute${focusAt ? ` · last check ${focusAt}` : ""} · this panel turns RED when a signal fires`)}
+                  {t(`현재가 3초마다 실시간 (키움) · 엔진 분석 1분마다${focusAt ? ` · 마지막 확인 ${focusAt}` : ""} · 신호가 켜지면 이 판이 빨간색으로 바뀝니다`,
+                     `price live every 3s (Kiwoom) · engine analysis every minute${focusAt ? ` · last check ${focusAt}` : ""} · this panel turns RED when a signal fires`)}
                 </div>
               </div>
             );
