@@ -39,6 +39,8 @@ type ScalpStatus = {
 };
 type Position = { ticker: string; name: string; qty: number; avg_price: number;
                   live_price?: number | null; unrealized_pnl_pct?: number | null };
+type StockItem = { code: string; name: string; market?: string };
+type QuoteRes = { ok: boolean; ticker?: string; name?: string; price?: number; error?: string };
 type Order = { id: number; ticker: string; name: string; side: string; qty: number;
                order_type: string; limit_price?: number | null; status?: string;
                fill_price?: number | null; realized_pnl?: number | null;
@@ -154,12 +156,47 @@ export default function ScalpDesk({ mode }: { mode: ScalpMode }) {
   const [sellAt, setSellAt] = useState("");
   const [note, setNote] = useState<string | null>(null);
   const [livePx, setLivePx] = useState<Record<string, number>>({});
+  const [stockList, setStockList] = useState<StockItem[]>([]);
+  const [addQ, setAddQ] = useState("");
+  const [addBusy, setAddBusy] = useState(false);
 
   const load = () => {
     api<ScalpStatus>("/paper-desk/scalp/status").then(setSc).catch(() => {});
     api<DeskState>("/paper-desk/state").then(setSt).catch(() => {});
   };
   useEffect(() => { load(); const i = setInterval(load, 4000); return () => clearInterval(i); }, []);
+  useEffect(() => {
+    api<{ stocks: StockItem[] }>("/paper-desk/stocks").then((r) => setStockList(r.stocks || [])).catch(() => {});
+  }, []);
+
+  // ---- stock list management (boss: dropdown + search like Algorithm 1;
+  //      SK하이닉스·삼성전자 pinned on top — the backend enforces the order) ----
+  const MAINS = ["000660", "005930"];
+  const saveCodes = async (codes: string[]) => {
+    await apiPost(`/paper-desk/scalp/params?codes=${encodeURIComponent(codes.join(","))}`);
+    load();
+  };
+  const addCode = async (c: string) => {
+    const codes = Array.from(new Set([...(sc?.codes || MAINS), c]));
+    if (codes.length > 8) { setNote(t("최대 8종목까지입니다", "max 8 stocks")); return; }
+    await saveCodes(codes);
+  };
+  const rmCode = async (c: string) => {
+    if (MAINS.includes(c)) return;
+    await saveCodes((sc?.codes || MAINS).filter((x) => x !== c));
+    if (sel === c) setSel("000660");
+  };
+  const searchAdd = async () => {
+    const q = addQ.trim();
+    if (!q) return;
+    setAddBusy(true);
+    try {
+      const r = await api<QuoteRes>(`/paper-desk/quote?q=${encodeURIComponent(q)}`);
+      if (r.ok && r.ticker) { await addCode(r.ticker); setAddQ(""); setNote(`✅ ${r.name || r.ticker}`); }
+      else setNote(t(`'${q}' 종목을 찾지 못했어요`, `'${q}' not found`));
+    } catch { setNote(t("검색 실패", "search failed")); }
+    setAddBusy(false);
+  };
 
   // fast price lane — same 3s Kiwoom overlay Algorithm 1 uses
   useEffect(() => {
@@ -273,6 +310,40 @@ export default function ScalpDesk({ mode }: { mode: ScalpMode }) {
         </div>
       )}
 
+      {/* stock picker — dropdown (watchlist) + free search by name/code, mains pinned */}
+      <div className="mt-2.5 flex items-center gap-2 flex-wrap text-[12px]">
+        <span className="font-bold text-[var(--text-muted)]">📋 {t("종목", "Stocks")}:</span>
+        {(sc?.codes || MAINS).map((c) => {
+          const s = sc?.stocks?.find((x) => x.code === c);
+          return (
+            <span key={c} className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full border font-bold text-[var(--text-secondary)]"
+              style={{ borderColor: MAINS.includes(c) ? PURPLE : "var(--border-default)" }}>
+              {s?.name || c}
+              {!MAINS.includes(c) && (
+                <button onClick={() => rmCode(c)} className="text-[var(--text-muted)] hover:opacity-70">✕</button>
+              )}
+            </span>
+          );
+        })}
+        <select value="" onChange={(e) => { if (e.target.value) addCode(e.target.value); }}
+          className="px-2 py-1 rounded-lg border bg-[var(--bg-primary)] text-[var(--text-primary)]"
+          style={{ borderColor: "var(--border-default)" }}>
+          <option value="">{t("＋ 종목 추가…", "＋ add stock…")}</option>
+          {stockList.filter((s) => !(sc?.codes || MAINS).includes(s.code)).map((s) => (
+            <option key={s.code} value={s.code}>{s.name} ({s.code})</option>
+          ))}
+        </select>
+        <input value={addQ} onChange={(e) => setAddQ(e.target.value)}
+          onKeyDown={(e) => { if (e.key === "Enter") searchAdd(); }}
+          placeholder={t("검색 (한글/영문/코드)…", "search (KR/EN/code)…")}
+          className="px-2 py-1 rounded-lg border bg-[var(--bg-primary)] text-[var(--text-primary)]"
+          style={{ borderColor: "var(--border-default)", width: 170 }} />
+        <button onClick={searchAdd} disabled={addBusy}
+          className="font-extrabold px-3 py-1 rounded-lg text-white disabled:opacity-50" style={{ background: "#546e7a" }}>
+          {addBusy ? "…" : `🔍 ${t("검색·추가", "search & add")}`}
+        </button>
+      </div>
+
       {mode === "auto" ? (
         /* ================= AUTO — the machine ripples ================= */
         <>
@@ -355,8 +426,8 @@ export default function ScalpDesk({ mode }: { mode: ScalpMode }) {
           {/* how it thinks — friend language */}
           <div className="mt-4 rounded-xl border px-4 py-3 text-[12.5px] leading-relaxed text-[var(--text-secondary)]"
             style={{ borderColor: "var(--border-default)", background: "var(--bg-elevated)" }}>
-            🧠 {t("규칙: ① 최근 저점에서 +0.10% 이상 들어올리며 연속 상승하면 매수 (이미 +0.45% 넘게 오른 뒤면 안 쫓아감) ② 목표(+0.4%)에 닿으면 바로 매도 — 작은 승리 ③ 판 다음에도 계속 오르면 또 매수 ④ 팔고 나서 떨어지면 그냥 기다림 ⑤ 사고 나서 떨어지면 버티고, −1%에서만 손절 ⑥ 15:18에 전부 정리하고 잠듭니다.",
-                 "Rules: ① buy when price lifts ≥+0.10% off the recent low with consecutive rises (never chases past +0.45%) ② sell the moment the take (+0.4%) is hit — a small win ③ if it keeps rising after the sell, buy again ④ after a sell, falls are just waited out ⑤ after a buy, dips are held — only −1% cuts ⑥ everything closes at 15:18.")}
+            🧠 {t("매수는 세 목소리가 동의해야 합니다: ① 가격 흐름 — 최근 저점에서 +0.10% 이상 들어올리며 연속 상승 (이미 +0.45% 오른 뒤면 안 쫓아감) ② 키움 호가창 — 매도 잔량이 압도하면 안 삼 ③ 짝꿍 종목 — SK하이닉스↔삼성전자는 함께 움직이므로(상관 0.83) 짝꿍이 급락 중이면 안 삼. 그 다음: 목표(+0.4%) 닿으면 바로 매도 → 계속 오르면 또 매수 → 팔고 떨어지면 기다림 → 사고 떨어지면 버티다 −1%에서만 손절 → 15:18 전량 정리.",
+                 "A buy needs three agreeing voices: ① the price stream — lifts ≥+0.10% off the recent low with consecutive rises (never chases past +0.45%) ② the Kiwoom order book — no buy while sellers dominate the queue ③ the partner stock — SKH↔Samsung move together (corr 0.83), so no buy while the partner is dropping. Then: sell the take (+0.4%) instantly → re-buy if it keeps rising → after a sell, falls are waited out → after a buy, dips held to −1% → flat at 15:18.")}
           </div>
         </>
       ) : (

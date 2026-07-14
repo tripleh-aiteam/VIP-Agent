@@ -44,6 +44,13 @@ RISES_NEEDED = 2          # and the last N reads must be strictly rising
 BUF_LEN = 40              # 40 × 15s = 10-minute rolling window
 EOD_FLAT_HHMM = (15, 18)  # close everything at 15:18 — a scalper sleeps flat
 
+# boss 2026-07-14 (2nd round): a buy needs THREE agreeing voices —
+# ① the price stream (upturn), ② the Kiwoom order book (buyers not losing),
+# ③ the partner stock (⑨ peer layer: SKH↔삼성전자 co-move, corr 0.83)
+BOOK_IMB_MIN = -0.10      # (bids−asks)/(bids+asks) — sellers must not dominate
+PEER = {"000660": "005930", "005930": "000660"}
+PEER_DROP_PCT = -0.15     # partner falling faster than this over ~60s → no buy
+
 _buf: dict[str, deque] = {}          # code -> deque[(ts, px)]
 
 
@@ -79,7 +86,7 @@ def _cfg(db) -> dict[str, Any]:
         "SELECT enabled, take_pct, stop_pct, pos_pct, codes FROM scalp_state WHERE id=1")).first()
     codes = [c.strip().zfill(6) for c in (r[4] or DEFAULT_CODES).split(",") if c.strip()]
     return {"enabled": bool(r[0]), "take_pct": float(r[1]), "stop_pct": float(r[2]),
-            "pos_pct": float(r[3]), "codes": codes[:6]}
+            "pos_pct": float(r[3]), "codes": codes[:8]}
 
 
 def set_enabled(db, on: bool) -> dict:
@@ -98,8 +105,15 @@ def set_params(db, take_pct: Optional[float] = None, stop_pct: Optional[float] =
     stop = min(max(float(stop_pct if stop_pct is not None else cur["stop_pct"]), 0.5), 3.0)
     pos = min(max(float(pos_pct if pos_pct is not None else cur["pos_pct"]), 1.0), 25.0)
     cs = codes if codes is not None else ",".join(cur["codes"])
-    cs = ",".join([c.strip().zfill(6) for c in cs.split(",") if c.strip().isdigit()][:6]) \
-        or DEFAULT_CODES
+    lst: list[str] = []
+    for c in cs.split(","):
+        c = c.strip().zfill(6)
+        if c.isdigit() and len(c) == 6 and c not in lst:
+            lst.append(c)
+    # boss: SK하이닉스 · 삼성전자 always on top, then the others (max 8)
+    mains = [c for c in ("000660", "005930") if c in lst]
+    lst = (mains + [c for c in lst if c not in ("000660", "005930")])[:8]
+    cs = ",".join(lst) or DEFAULT_CODES
     db.execute(text(
         "UPDATE scalp_state SET take_pct=:t, stop_pct=:s, pos_pct=:p, codes=:c, "
         "updated_at=now() WHERE id=1"), {"t": take, "s": stop, "p": pos, "c": cs})
@@ -152,6 +166,34 @@ def _reconcile_external(db, out: dict) -> None:
             "ORDER BY created_at DESC LIMIT 1"), {"t": tk, "o": opened_at}).scalar()
         fill = float(last_fill or _px(tk) or entry)
         _close_row(db, out, oid, name, float(entry), fill, "EXTERNAL")
+
+
+def _book_ok(code: str) -> tuple[bool, str]:
+    """② Kiwoom order book must agree: sellers not dominating the queue.
+    Fail-open when the book isn't available (after-hours, IP-blocked local)."""
+    try:
+        from services.kiwoom_rest import order_book
+        ob = order_book(code, ttl=10)
+        imb = (ob or {}).get("imbalance")
+        if imb is None:
+            return True, "book n/a"
+        return (float(imb) >= BOOK_IMB_MIN), f"book {float(imb):+.2f}"
+    except Exception:
+        return True, "book n/a"
+
+
+def _peer_ok(code: str) -> tuple[bool, str]:
+    """③ the partner stock (SKH↔삼성전자 co-move, corr 0.83) must not be
+    falling hard — if the pair leader is dropping, the bounce usually dies."""
+    peer = PEER.get(code)
+    if not peer:
+        return True, "no peer"
+    buf = _buf.get(peer)
+    if not buf or len(buf) < 5:
+        return True, "peer warming"
+    prices = [p for _, p in buf]
+    r = (prices[-1] / prices[-5] - 1) * 100      # ~last 60 seconds
+    return (r > PEER_DROP_PCT), f"peer {r:+.2f}%/60s"
 
 
 def _upturn(code: str, px: float) -> tuple[bool, float]:
@@ -256,6 +298,12 @@ def tick(db, force: bool = False) -> dict[str, Any]:
         fire, bounce = _upturn(code, live[code])
         if not fire:
             continue
+        # three agreeing voices before money moves (boss 2026-07-14 round 2)
+        ok_book, why_book = _book_ok(code)
+        ok_peer, why_peer = _peer_ok(code)
+        if not (ok_book and ok_peer):
+            logger.info("scalp: %s upturn but vetoed — %s · %s", code, why_book, why_peer)
+            continue
         equity = float(db.execute(text(
             "SELECT cash FROM paper_desk_account WHERE id=1")).scalar() or 0)
         qty = int(equity * cfg["pos_pct"] / 100 / live[code])
@@ -269,8 +317,9 @@ def tick(db, force: bool = False) -> dict[str, Any]:
                 {"t": code, "n": _name(code), "q": qty, "e": fill})
             db.commit()
             out["opened"].append({"code": code, "qty": qty, "entry": fill,
-                                  "bounce_pct": bounce})
-            logger.info("scalp: BUY %s x%d @ %s (bounce %.2f%%)", code, qty, fill, bounce)
+                                  "bounce_pct": bounce, "book": why_book, "peer": why_peer})
+            logger.info("scalp: BUY %s x%d @ %s (bounce %.2f%% · %s · %s)",
+                        code, qty, fill, bounce, why_book, why_peer)
     return out
 
 
