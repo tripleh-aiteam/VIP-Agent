@@ -144,6 +144,29 @@ def tick(db, force: bool = False) -> dict[str, Any]:
         "EXTRACT(EPOCH FROM (now()-opened_at))/60 AS age_min, peak "
         "FROM auto_trades WHERE status='OPEN'")).fetchall()
     for oid, tk, name, qty, entry, tlo, stop, tmin, age, peak in open_rows:
+        # RECONCILE (2026-07-14): the desk is ONE shared book — the boss, the guard,
+        # or an overlapping trade may have already sold these shares. If the desk no
+        # longer holds them, close this row as EXTERNAL at the actual last sell fill
+        # instead of retrying a doomed SELL every tick (165 REJECTED orders/day bug).
+        held = int(db.execute(text(
+            "SELECT qty FROM paper_desk_positions WHERE ticker=:t"),
+            {"t": tk}).scalar() or 0)
+        if held <= 0:
+            last_fill = db.execute(text(
+                "SELECT fill_price FROM paper_desk_orders WHERE ticker=:t AND side='SELL' "
+                "AND status='FILLED' AND fill_price IS NOT NULL "
+                "AND created_at >= (SELECT opened_at FROM auto_trades WHERE id=:i) "
+                "ORDER BY created_at DESC LIMIT 1"), {"t": tk, "i": oid}).scalar()
+            fill = float(last_fill or _live_px(tk) or entry)
+            net = (fill / float(entry) - 1) * 100 - 0.23
+            db.execute(text(
+                "UPDATE auto_trades SET status='CLOSED', exit_price=:x, exit_reason='EXTERNAL', "
+                "net_pct=:n, closed_at=now() WHERE id=:i"),
+                {"x": fill, "n": round(net, 3), "i": oid})
+            db.commit()
+            out["closed"].append({"name": name, "reason": "EXTERNAL", "net_pct": round(net, 2)})
+            continue
+        qty = min(int(qty), held)   # partial outside-sell → manage what's actually left
         px = _live_px(tk)
         if px is None:
             continue

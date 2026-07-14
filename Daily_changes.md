@@ -22,6 +22,12 @@ Replayed the boss's exact morning case (r15 +1.57%, RSI-5 50, no volume) through
 
 - Watch the first graded quick_bounce trades — the 20-min TIME door and −0.7% stop are guesses to refit from the record.
 
+### [PM] Auto trader frozen by zombie positions — reconcile the two ledgers
+
+- **What:** Boss: "auto is not working — engine gives ideas but positions are empty." Diagnosis: the desk is ONE shared book (boss clicks + guard + auto), but `auto_trades` was never reconciled with it. All desk positions were sold this morning by other doors, yet 6 auto rows stayed OPEN → tick retried doomed SELLs every 5 min (**165 REJECTED orders in one day**) and sat at `max open (6)`, refusing every new entry. Fix in `tick()`: before managing an exit, check the desk's actual held qty — if 0, close the row as `EXTERNAL` at the real last sell fill (fallback live/entry); if partially sold outside, manage only what's left. Self-healing: first tick after deploy clears all zombies.
+- **Files:** [services/auto_trader.py](apps/orchestrator-api/services/auto_trader.py)
+- **Next:** watch tomorrow that EXTERNAL closes grade sanely in the day report.
+
 ---
 
 ## 2026-07-09 (Thursday) — Assistant "knows my desk + works as a normal LLM" round (boss live-testing feedback, 5 fixes)
