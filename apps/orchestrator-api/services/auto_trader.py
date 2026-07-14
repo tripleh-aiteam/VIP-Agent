@@ -113,6 +113,34 @@ def _live_px(code: str) -> Optional[float]:
     return px
 
 
+def _reconcile_external(db, out: dict[str, Any]) -> None:
+    """Close auto rows whose shares were already sold outside the auto book (boss
+    clicks, position guard, overlapping trades — the desk is ONE shared book).
+    Pure bookkeeping, so it runs on EVERY tick, even with the auto switch OFF:
+    the books must never show phantom positions."""
+    rows = db.execute(text(
+        "SELECT id, ticker, name, entry, opened_at FROM auto_trades "
+        "WHERE status='OPEN'")).fetchall()
+    for oid, tk, name, entry, opened_at in rows:
+        held = int(db.execute(text(
+            "SELECT qty FROM paper_desk_positions WHERE ticker=:t"),
+            {"t": tk}).scalar() or 0)
+        if held > 0:
+            continue
+        last_fill = db.execute(text(
+            "SELECT fill_price FROM paper_desk_orders WHERE ticker=:t AND side='SELL' "
+            "AND status='FILLED' AND fill_price IS NOT NULL AND created_at >= :o "
+            "ORDER BY created_at DESC LIMIT 1"), {"t": tk, "o": opened_at}).scalar()
+        fill = float(last_fill or _live_px(tk) or entry)
+        net = (fill / float(entry) - 1) * 100 - 0.23
+        db.execute(text(
+            "UPDATE auto_trades SET status='CLOSED', exit_price=:x, exit_reason='EXTERNAL', "
+            "net_pct=:n, closed_at=now() WHERE id=:i"),
+            {"x": fill, "n": round(net, 3), "i": oid})
+        db.commit()
+        out["closed"].append({"name": name, "reason": "EXTERNAL", "net_pct": round(net, 2)})
+
+
 def tick(db, force: bool = False) -> dict[str, Any]:
     """One auto-agent pass: manage exits first (protect), then consider a new entry.
     Idempotent; safe to fire every few minutes. force=True ignores market hours
@@ -120,6 +148,10 @@ def tick(db, force: bool = False) -> dict[str, Any]:
     _ensure(db)
     out: dict[str, Any] = {"enabled": is_enabled(db), "closed": [], "opened": None,
                            "reason": None}
+    try:
+        _reconcile_external(db, out)   # books stay honest even while the switch is OFF
+    except Exception:
+        db.rollback()
     if not out["enabled"]:
         out["reason"] = "auto-trading is OFF"
         return out
@@ -144,29 +176,14 @@ def tick(db, force: bool = False) -> dict[str, Any]:
         "EXTRACT(EPOCH FROM (now()-opened_at))/60 AS age_min, peak "
         "FROM auto_trades WHERE status='OPEN'")).fetchall()
     for oid, tk, name, qty, entry, tlo, stop, tmin, age, peak in open_rows:
-        # RECONCILE (2026-07-14): the desk is ONE shared book — the boss, the guard,
-        # or an overlapping trade may have already sold these shares. If the desk no
-        # longer holds them, close this row as EXTERNAL at the actual last sell fill
-        # instead of retrying a doomed SELL every tick (165 REJECTED orders/day bug).
+        # partial outside-sell (boss/guard took some shares) → manage what's left;
+        # fully-gone rows were already closed as EXTERNAL by _reconcile_external
         held = int(db.execute(text(
             "SELECT qty FROM paper_desk_positions WHERE ticker=:t"),
             {"t": tk}).scalar() or 0)
         if held <= 0:
-            last_fill = db.execute(text(
-                "SELECT fill_price FROM paper_desk_orders WHERE ticker=:t AND side='SELL' "
-                "AND status='FILLED' AND fill_price IS NOT NULL "
-                "AND created_at >= (SELECT opened_at FROM auto_trades WHERE id=:i) "
-                "ORDER BY created_at DESC LIMIT 1"), {"t": tk, "i": oid}).scalar()
-            fill = float(last_fill or _live_px(tk) or entry)
-            net = (fill / float(entry) - 1) * 100 - 0.23
-            db.execute(text(
-                "UPDATE auto_trades SET status='CLOSED', exit_price=:x, exit_reason='EXTERNAL', "
-                "net_pct=:n, closed_at=now() WHERE id=:i"),
-                {"x": fill, "n": round(net, 3), "i": oid})
-            db.commit()
-            out["closed"].append({"name": name, "reason": "EXTERNAL", "net_pct": round(net, 2)})
             continue
-        qty = min(int(qty), held)   # partial outside-sell → manage what's actually left
+        qty = min(int(qty), held)
         px = _live_px(tk)
         if px is None:
             continue
