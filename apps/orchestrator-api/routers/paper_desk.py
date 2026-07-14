@@ -296,6 +296,19 @@ def scalp_tick(force: bool = Query(False), db: Session = Depends(get_db)):
     return tick(db, force=force)
 
 
+@router.get("/executions")
+def desk_executions(code: str = Query(...)):
+    """체결 feed for the Algorithm-2 manual desk (boss 2026-07-14): the DEALS actually
+    happening (Kiwoom ka10003, newest first, ~30 rows). dir +1 = buyer-initiated
+    매수체결 (red), −1 = seller-initiated 매도체결 (blue)."""
+    try:
+        from services.kiwoom_rest import executions
+        rows = executions(str(code).zfill(6), ttl=2.0) or []
+    except Exception:
+        rows = []
+    return {"code": str(code).zfill(6), "rows": rows[:30]}
+
+
 @router.get("/prices")
 def live_prices(codes: str = Query(..., description="comma-separated 6-digit codes, max 20")):
     """⚡ FAST PRICE LANE (boss 2026-07-14: '현재가 changes very slow vs Kiwoom').

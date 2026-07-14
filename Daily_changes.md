@@ -47,6 +47,11 @@ Replayed the boss's exact morning case (r15 +1.57%, RSI-5 50, no volume) through
 - **Files:** [services/scalp_trader.py](apps/orchestrator-api/services/scalp_trader.py), [scalp-desk.tsx](apps/admin-dashboard/src/app/testing/scalp-desk.tsx)
 - **Verified:** live book gate returned real data (after-hours SKH book −0.86 → correctly refuses); peer gate blocks on falling partner, allows on rising; mains ordering enforced.
 
+### [PM6] Algorithm 2 manual desk round 3 — 30-level book, 체결 table, size in won/shares
+
+- **What:** (1) Order book got the Algorithm-1-style **30단계** toggle (memory view: remembered scrolled-out levels w/ age, scrollable). (2) New **체결 (live executions) table** under the book — GET `/paper-desk/executions` (Kiwoom ka10003, 2s poll): time · price · qty, red ▲ buyer-hit / blue ▼ seller-hit. (3) Size made concrete: the size dial options show `10% ≈ ₩434M`, and each WAITING card computes the exact trade at the live price — "사면 약 227주 (≈ ₩434M) · 목표 +0.4% = 주당 +₩7,652 → 총 +₩1.7M 예상". Take menu earlier gained 0.05–1.0% options each labeled with net-after-fee (sub-0.23% takes marked LOSS!).
+- **Files:** [routers/paper_desk.py](apps/orchestrator-api/routers/paper_desk.py), [scalp-desk.tsx](apps/admin-dashboard/src/app/testing/scalp-desk.tsx)
+
 ### [PM3] Boss's signal-card layout — the 4 trading numbers in BIG font
 
 - **What:** Boss spec: on Semi-Auto and Auto, a firing signal must show name/code/chart/live price/conf (already in header) plus, in big font: **매수 (live Buy price) · 매도 목표 (Sell target) · 매도 시간 (Sell-by) · 수량 (Shares)**. Added a 4-tile grid (21px extrabold values, 2×2 on mobile) under the banner: Buy tile ticks with the 3s fast lane and wears the signal color, Sell wears KR-blue, Sell-by = now + time_min capped 15:30, Shares = engine size. The old cramped "진입 · 🎯 · 🛑 · ⏱️" line slimmed to stop + window only (buy/sell/time/qty moved to the tiles).

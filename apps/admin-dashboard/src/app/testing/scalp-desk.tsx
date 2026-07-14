@@ -56,9 +56,11 @@ type OBView = {
   walls: OBLevel[]; threshold?: number | null; mid?: number | null;
 };
 
-// ---- Kiwoom-style order-book ladder (10 live levels, price+qty bars) ---- //
+// ---- Kiwoom-style order-book ladder: live 10 levels + 30-level memory view
+//      (same "30단계" idea as Algorithm 1's deep book) ---- //
 function OrderBook({ code, t }: { code: string; t: (ko: string, en: string) => string }) {
   const [ob, setOb] = useState<OBView | null>(null);
+  const [deep, setDeep] = useState(false);
   useEffect(() => {
     if (!code) return;
     let alive = true;
@@ -71,37 +73,93 @@ function OrderBook({ code, t }: { code: string; t: (ko: string, en: string) => s
   if (!ob) return <div className="text-[12px] text-[var(--text-muted)] p-3">{t("호가 불러오는 중…", "loading order book…")}</div>;
   const asks = (ob.live.levels || []).filter((l) => l.side === "ask").sort((a, b) => b.price - a.price);
   const bids = (ob.live.levels || []).filter((l) => l.side === "bid").sort((a, b) => b.price - a.price);
-  const maxQ = Math.max(1, ...asks.concat(bids).map((l) => l.qty || 0));
-  const Row = ({ l, side }: { l: OBLevel; side: "ask" | "bid" }) => (
+  const memAsks = [...(ob.memory?.asks || [])].sort((a, b) => b.price - a.price);
+  const memBids = [...(ob.memory?.bids || [])].sort((a, b) => b.price - a.price);
+  const maxQ = Math.max(1, ...asks.concat(bids).map((l) => l.qty || 0),
+    ...(deep ? memAsks.concat(memBids).map((l) => l.max_qty || l.last_qty || 0) : [0]));
+  const Row = ({ l, side, mem }: { l: OBLevel; side: "ask" | "bid"; mem?: boolean }) => (
     <div className="relative flex items-center justify-between px-2.5 py-[3px] text-[12px] border-b border-[var(--border-default)]/40">
       <div className="absolute inset-y-0 right-0 opacity-20 rounded"
-        style={{ width: `${Math.min(100, ((l.qty || 0) / maxQ) * 100)}%`, background: side === "ask" ? BLUE : RED }} />
+        style={{ width: `${Math.min(100, (((mem ? (l.max_qty || l.last_qty) : l.qty) || 0) / maxQ) * 100)}%`, background: side === "ask" ? BLUE : RED }} />
       <span className="relative font-bold tabular-nums" style={{ color: side === "ask" ? BLUE : RED }}>{fmt(l.price)}</span>
-      <span className="relative tabular-nums text-[var(--text-secondary)]">{(l.qty || 0).toLocaleString()}{l.is_large ? " 🔥" : ""}</span>
+      <span className="relative tabular-nums text-[var(--text-secondary)]">
+        {((mem ? l.last_qty : l.qty) || 0).toLocaleString()}{l.is_large ? " 🔥" : ""}
+        {mem && l.age_sec != null && <span className="ml-1 text-[9px] text-[var(--text-muted)]">{Math.round((l.age_sec || 0) / 60)}m</span>}
+      </span>
     </div>
   );
   return (
     <div className="rounded-xl border border-[var(--border-default)] overflow-hidden">
-      <div className="flex items-center justify-between px-3 py-2 border-b border-[var(--border-default)] bg-[var(--bg-elevated)]">
+      <div className="flex items-center gap-2 px-3 py-2 border-b border-[var(--border-default)] bg-[var(--bg-elevated)]">
         <span className="text-[13.5px] font-extrabold text-[var(--text-primary)]">📚 {t("호가창 (키움 실시간)", "Order book (Kiwoom live)")}</span>
         <span className="text-[10px] px-1.5 py-0.5 rounded-full font-bold"
           style={{ color: ob.live.fresh ? "#fff" : "var(--text-muted)", background: ob.live.fresh ? RED : "var(--bg-elevated)" }}>
           {ob.live.fresh ? "LIVE" : t("장마감", "closed")}
         </span>
+        <button onClick={() => setDeep((v) => !v)} className="ml-auto text-[10.5px] font-bold px-2 py-0.5 rounded-lg border"
+          style={{ color: deep ? "#fff" : "var(--text-secondary)", background: deep ? PURPLE : "transparent", borderColor: "var(--border-default)" }}>
+          {deep ? t("기본 10단계", "Top 10") : t("30단계", "30 levels")}
+        </button>
       </div>
       <div className="flex items-center justify-between px-2.5 py-1 text-[10px] font-bold text-[var(--text-muted)] bg-[var(--bg-elevated)]/50">
-        <span>{t("가격 (파랑=매도/빨강=매수)", "Price (blue=ask / red=bid)")}</span><span>{t("잔량", "Qty")}</span>
+        <span>{t("가격 (파랑=매도/빨강=매수)", "Price (blue=ask / red=bid)")}</span><span>{t("잔량", "Qty")}{deep ? ` · ${t("경과", "age")}` : ""}</span>
       </div>
-      {asks.map((l, i) => <Row key={`a${i}`} l={l} side="ask" />)}
-      <div className="px-2.5 py-1 text-center text-[11.5px] font-extrabold text-[var(--text-primary)] bg-[var(--bg-elevated)]">
-        {ob.mid ? `— ${fmt(Math.round(ob.mid))} —` : "—"}
+      <div style={deep ? { maxHeight: 560, overflowY: "auto" } : undefined}>
+        {(deep ? memAsks : asks).map((l, i) => <Row key={`a${i}`} l={l} side="ask" mem={deep} />)}
+        <div className="px-2.5 py-1 text-center text-[11.5px] font-extrabold text-[var(--text-primary)] bg-[var(--bg-elevated)]">
+          {ob.mid ? `— ${fmt(Math.round(ob.mid))} —` : "—"}
+        </div>
+        {(deep ? memBids : bids).map((l, i) => <Row key={`b${i}`} l={l} side="bid" mem={deep} />)}
       </div>
-      {bids.map((l, i) => <Row key={`b${i}`} l={l} side="bid" />)}
+      {deep && (
+        <div className="px-2.5 py-1 text-[9.5px] text-[var(--text-muted)] bg-[var(--bg-elevated)]/40">
+          {t(`⏳ 화면 밖으로 밀려난 호가까지 기억한 ${memAsks.length + memBids.length}단계 (장중 누적)`,
+             `⏳ ${memAsks.length + memBids.length} remembered levels incl. scrolled-out ones (builds in-market)`)}
+        </div>
+      )}
       {ob.walls && ob.walls.length > 0 && (
         <div className="px-2.5 py-1.5 text-[10.5px] border-t border-[var(--border-default)] bg-[var(--bg-elevated)]/60">
           🔥 {t("대량 호가벽", "Large walls")}: {ob.walls.slice(0, 3).map((w) => `${fmt(w.price)}(${(w.max_qty || 0).toLocaleString()})`).join(", ")}
         </div>
       )}
+    </div>
+  );
+}
+
+// ---- 체결 table — the DEALS actually happening (Kiwoom ka10003, 2s) ---- //
+type ExecRow = { time: string; price: number; qty: number; dir: number; acc_volume?: number | null };
+function ExecTable({ code, t }: { code: string; t: (ko: string, en: string) => string }) {
+  const [rows, setRows] = useState<ExecRow[]>([]);
+  useEffect(() => {
+    if (!code) return;
+    let alive = true;
+    const load = () => api<{ rows: ExecRow[] }>(`/paper-desk/executions?code=${code}`)
+      .then((r) => { if (alive) setRows(r.rows || []); }).catch(() => {});
+    load();
+    const i = setInterval(load, 2000);
+    return () => { alive = false; clearInterval(i); };
+  }, [code]);
+  return (
+    <div className="rounded-xl border border-[var(--border-default)] overflow-hidden">
+      <div className="px-3 py-2 border-b border-[var(--border-default)] bg-[var(--bg-elevated)]">
+        <span className="text-[13.5px] font-extrabold text-[var(--text-primary)]">⚡ {t("체결 (실시간 거래)", "Deals (live executions)")}</span>
+        <span className="ml-2 text-[9.5px] text-[var(--text-muted)]">{t("빨강=사자가 때림 · 파랑=팔자가 때림", "red=buyer hit · blue=seller hit")}</span>
+      </div>
+      <div className="flex items-center justify-between px-2.5 py-1 text-[10px] font-bold text-[var(--text-muted)] bg-[var(--bg-elevated)]/50">
+        <span>{t("시간", "Time")}</span><span>{t("가격", "Price")}</span><span>{t("수량", "Qty")}</span>
+      </div>
+      <div style={{ maxHeight: 300, overflowY: "auto" }}>
+        {rows.length === 0 && <div className="px-3 py-2 text-[11px] text-[var(--text-muted)]">{t("장중에 실시간으로 채워집니다", "fills live in-market")}</div>}
+        {rows.map((r, i) => (
+          <div key={i} className="flex items-center justify-between px-2.5 py-[2.5px] text-[11.5px] tabular-nums border-b border-[var(--border-default)]/30">
+            <span className="text-[var(--text-muted)]">{r.time}</span>
+            <span className="font-bold" style={{ color: r.dir > 0 ? RED : r.dir < 0 ? BLUE : "var(--text-secondary)" }}>
+              {r.dir > 0 ? "▲" : r.dir < 0 ? "▼" : ""}{fmt(r.price)}
+            </span>
+            <span className="text-[var(--text-secondary)]">{fmt(r.qty)}</span>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
@@ -381,7 +439,11 @@ export default function ScalpDesk({ mode }: { mode: ScalpMode }) {
                   <span className="text-[var(--text-muted)]">{t("1회 크기", "size")}</span>
                   <select value={String(sc.pos_pct)} onChange={(e) => setParam("pos_pct", Number(e.target.value))}
                     className="px-1.5 py-1 rounded-lg border bg-[var(--bg-primary)] text-[var(--text-primary)]" style={{ borderColor: "var(--border-default)" }}>
-                    {[5, 10, 15, 20].map((v) => <option key={v} value={v}>{v}%</option>)}
+                    {[5, 10, 15, 20].map((v) => (
+                      <option key={v} value={v}>
+                        {st ? `${v}% ≈ ₩${Math.round(st.cash * v / 100 / 1_000_000).toLocaleString()}M` : `${v}%`}
+                      </option>
+                    ))}
                   </select>
                 </div>
               </div>
@@ -419,12 +481,19 @@ export default function ScalpDesk({ mode }: { mode: ScalpMode }) {
                             ? t(`최근 저점에서 ${s.bounce_pct > 0 ? "+" : ""}${s.bounce_pct}% — 상승 시작(+0.10%~) 확인되면 매수`,
                                 `${s.bounce_pct > 0 ? "+" : ""}${s.bounce_pct}% off the recent low — buys when the rise confirms (+0.10%~)`)
                             : t("가격 흐름 관찰 중…", "watching the price stream…")}
-                          {px != null && (
-                            <div className="mt-0.5">
-                              {t(`사면 목표 +${sc.take_pct}% ≈ +₩${fmt(Math.round(px * sc.take_pct / 100))} (₩${fmt(Math.round(px * (1 + sc.take_pct / 100)))}에 매도)`,
-                                 `if bought: take +${sc.take_pct}% ≈ +₩${fmt(Math.round(px * sc.take_pct / 100))} (sells at ₩${fmt(Math.round(px * (1 + sc.take_pct / 100)))})`)}
-                            </div>
-                          )}
+                          {px != null && (() => {
+                            // exactly what a buy would look like RIGHT NOW, in shares and won
+                            const bq = st ? Math.floor(st.cash * sc.pos_pct / 100 / px) : null;
+                            const takeWon = Math.round(px * sc.take_pct / 100);
+                            return (
+                              <div className="mt-0.5">
+                                {bq
+                                  ? t(`사면 약 ${fmt(bq)}주 (≈ ₩${fmt(bq * px)}) · 목표 +${sc.take_pct}% = 주당 +₩${fmt(takeWon)} → 총 +₩${fmt(bq * takeWon)} 예상`,
+                                      `a buy ≈ ${fmt(bq)} sh (≈ ₩${fmt(bq * px)}) · take +${sc.take_pct}% = +₩${fmt(takeWon)}/sh → ≈ +₩${fmt(bq * takeWon)} total`)
+                                  : t(`목표 +${sc.take_pct}% ≈ 주당 +₩${fmt(takeWon)}`, `take +${sc.take_pct}% ≈ +₩${fmt(takeWon)}/sh`)}
+                              </div>
+                            );
+                          })()}
                         </div>
                       )}
                     </div>
@@ -463,8 +532,11 @@ export default function ScalpDesk({ mode }: { mode: ScalpMode }) {
           </div>
 
           <div className="mt-3 grid lg:grid-cols-[300px_1fr] gap-4">
-            {/* left: the Kiwoom ladder */}
-            <OrderBook code={sel} t={t} />
+            {/* left: the Kiwoom ladder + the deals actually happening */}
+            <div className="flex flex-col gap-3">
+              <OrderBook code={sel} t={t} />
+              <ExecTable code={sel} t={t} />
+            </div>
 
             {/* right: chart + order box */}
             <div>
