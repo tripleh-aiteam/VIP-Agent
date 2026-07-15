@@ -2,6 +2,29 @@
 
 ---
 
+## 2026-07-15 (Wednesday) — Trend-day participation, order source audit, 2-stock board, real-time price+%
+
+### Goal
+
+Boss's four morning asks on a +12% SKH day: (1) prove machines don't trade while OFF, (2) board shows only the 2 mains, (3) prices still "slow", (4) SKH +12%/삼성 +6% got no recommendation.
+
+### Files updated
+
+- [services/paper_desk.py](apps/orchestrator-api/services/paper_desk.py) — `source` column on paper_desk_orders ('manual'/'algo1'/'guard'/'algo2'); `place_order(source=)`; history exposes it; `_live_price` also caches today's change_pct (`_chg_cache`) for the /prices lane.
+- [services/intraday_setup.py](apps/orchestrator-api/services/intraday_setup.py) — 🏇 **trend_ride** setup BEFORE the downtrend gate (45m ≥+2%, 15m not rolling over, RSI 50–80, panic/ML/news vetoes kept): after a gap-up the price sits below its spike-inflated 2h SMA and the gate wrongly said "downtrend" — signals were impossible all day. Momentum RSI cap 72→78. Re-entry cooldown scoped to MACHINE sells only (boss's manual sells muted SKH for an hour).
+- [services/auto_trader.py / position_guard.py / scalp_trader.py] — order tagging (algo1/guard/algo2).
+- [routers/paper_desk.py](apps/orchestrator-api/routers/paper_desk.py) — /prices returns `chg` (today's %).
+- [desk.tsx](apps/admin-dashboard/src/app/testing/desk.tsx) — board shows ONLY 000660+005930+boss-selected (qualified/dynamic no longer auto-surface); other firing stocks appear as one slim 🔥 chip row (click = full panel); header price = real-time + colored ▲/▼% on a 2s lane; history rows show who traded (👤🤖🛡️⚡).
+
+### Verified
+
+- Audit: today's mass sell 09:23-26 + ₩10M buys = all router/manual (machine books empty, both switches respected; duplicate not-enough-shares rejects 5-10s apart = human double-clicks). auto OFF since 07-14 10:03 KST.
+- Price lane measured: prod == Naver's freshest quote tick-for-tick (last-trade time matches); latency 0.5-1s + 2s poll. True tick-stream would need the Kiwoom WebSocket (proposed, not built).
+- trend_ride live-armed: SKH r45 +10.6 passes, correctly waiting for r15 (−0.89, pulling back) to stabilize before firing.
+- The morning 502s: Render backend restarts (one un-deployed at ~09:05, one deploy at 09:23) — board "loss" was the restart window, nothing deleted.
+
+---
+
 ## 2026-07-14 (Tuesday) — ⚡ Quick-bounce signals: strong 15-min thrusts trade fast (no more 45-min wait)
 
 ### Goal

@@ -206,7 +206,7 @@ def tick(db, force: bool = False) -> dict[str, Any]:
             reason = "TIME"
         if not reason:
             continue
-        r = place_order(db, tk, "SELL", int(qty), "market")
+        r = place_order(db, tk, "SELL", int(qty), "market", source="algo1")
         if r.get("ok"):
             fill = float(r.get("fill_price") or px)
             net = (fill / float(entry) - 1) * 100 - 0.23
@@ -315,7 +315,7 @@ def tick(db, force: bool = False) -> dict[str, Any]:
     if qty < 1:
         out["reason"] = "equity too small for 1 share of the setup"
         return out
-    r = place_order(db, s["code"], "BUY", qty, "market")
+    r = place_order(db, s["code"], "BUY", qty, "market", source="algo1")
     if not r.get("ok"):
         out["reason"] = f"BUY failed: {r.get('error') or r.get('reason')}"
         return out

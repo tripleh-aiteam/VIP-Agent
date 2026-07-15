@@ -61,6 +61,9 @@ _DDL = (
     " fill_price DOUBLE PRECISION, realized_pnl DOUBLE PRECISION,"
     " realized_pnl_pct DOUBLE PRECISION, note TEXT,"
     " created_at TIMESTAMPTZ DEFAULT now(), filled_at TIMESTAMPTZ)",
+    # WHO placed it — 'manual' (boss) / 'algo1' / 'guard' / 'algo2' (boss 2026-07-15:
+    # "did the machine trade while OFF?" must be answerable from the record, not memory)
+    "ALTER TABLE paper_desk_orders ADD COLUMN IF NOT EXISTS source TEXT DEFAULT 'manual'",
 )
 
 
@@ -210,7 +213,8 @@ def _fill(db, order_id: int, ticker: str, name: str, side: str, qty: int, px: fl
 
 
 def place_order(db, ticker: str, side: str, qty: int,
-                order_type: str = "market", limit_price: Optional[float] = None) -> dict:
+                order_type: str = "market", limit_price: Optional[float] = None,
+                source: str = "manual") -> dict:
     _ensure(db)
     ticker = str(ticker).strip().zfill(6)
     side = side.upper()
@@ -232,10 +236,10 @@ def place_order(db, ticker: str, side: str, qty: int,
         return {"ok": False, "error": f"no live price for {ticker} — check the code"}
     name = _name_for(ticker, kw_name)
     oid = db.execute(text(
-        "INSERT INTO paper_desk_orders (ticker, name, side, qty, order_type, limit_price) "
-        "VALUES (:t, :n, :s, :q, :ot, :lp) RETURNING id"),
+        "INSERT INTO paper_desk_orders (ticker, name, side, qty, order_type, limit_price, source) "
+        "VALUES (:t, :n, :s, :q, :ot, :lp, :src) RETURNING id"),
         {"t": ticker, "n": name, "s": side, "q": qty, "ot": order_type,
-         "lp": limit_price}).scalar()
+         "lp": limit_price, "src": (source or "manual")[:16]}).scalar()
     db.commit()
     if order_type == "market":
         res = _fill(db, oid, ticker, name, side, qty, px)
@@ -413,7 +417,7 @@ def state(db) -> dict[str, Any]:
         "FROM paper_desk_orders WHERE status='OPEN' ORDER BY id DESC"))]
     history = [dict(r._mapping) for r in db.execute(text(
         "SELECT id, ticker, name, side, qty, order_type, limit_price, status, fill_price, "
-        "realized_pnl, realized_pnl_pct, note, created_at, filled_at "
+        "realized_pnl, realized_pnl_pct, note, created_at, filled_at, source "
         "FROM paper_desk_orders WHERE status IN ('FILLED','REJECTED','CANCELLED') "
         "ORDER BY COALESCE(filled_at, created_at) DESC LIMIT 400"))]
     sells = [h for h in history if h["side"] == "SELL" and h["status"] == "FILLED"

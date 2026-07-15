@@ -280,7 +280,7 @@ def tick(db, force: bool = False) -> dict[str, Any]:
         sell_qty = min(int(qty), held)
         if sell_qty <= 0:
             continue             # reconcile closes it next pass
-        r = place_order(db, tk, "SELL", sell_qty, "market")
+        r = place_order(db, tk, "SELL", sell_qty, "market", source="algo2")
         if r.get("ok"):
             _close_row(db, out, oid, name, entry, float(r.get("fill_price") or px), reason)
             _buf.pop(tk, None)   # fresh window: re-buy only on a NEW rise
@@ -309,7 +309,7 @@ def tick(db, force: bool = False) -> dict[str, Any]:
         qty = int(equity * cfg["pos_pct"] / 100 / live[code])
         if qty < 1:
             continue
-        r = place_order(db, code, "BUY", qty, "market")
+        r = place_order(db, code, "BUY", qty, "market", source="algo2")
         if r.get("ok"):
             fill = float(r.get("fill_price") or live[code])
             db.execute(text(

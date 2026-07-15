@@ -238,7 +238,7 @@ def run(db) -> dict[str, Any]:
         # AUTO: act — with the anti-spam cooldown after a failed sell
         if _time.time() - _sell_cooldown.get(tk, 0) < 1800:
             continue
-        r = place_order(db, tk, "SELL", int(qty), "market")
+        r = place_order(db, tk, "SELL", int(qty), "market", source="guard")
         if r.get("ok"):
             _sell_cooldown.pop(tk, None)
             try:

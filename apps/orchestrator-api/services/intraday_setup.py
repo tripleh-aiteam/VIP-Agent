@@ -51,7 +51,9 @@ _REGIME_CRASH = -1.5                 # KOSPI intraday % that blocks new DIP buys
 _EXTREME_CRASH = -3.0                # KOSPI intraday % that blocks EVERYTHING (panic)
 # MOMENTUM setup thresholds — a stock strongly rising (bucks a down market)
 _MOM_R15, _MOM_R45 = 0.35, 0.5       # min 15m / 45m rise (%)
-_RSI_MOM_MIN, _RSI_MOM_MAX = 52, 72  # rising but not overbought
+_RSI_MOM_MIN, _RSI_MOM_MAX = 52, 78  # rising but not overbought (72→78, boss 07-15:
+                                     # a +12% day was refused at RSI 74 — participate longer)
+_RIDE_R45 = 2.0                      # trend-ride: a 45-min move this big IS the setup
 _DEEP_SCAN = 45                      # boss 2026-07-09: deep-scan the WHOLE watchlist every
                                      # pass (was 14 most-active; he wants no stock skipped)
 _CHEAP_PX = 100_000                  # boss's price tiers for the exit plan
@@ -105,10 +107,13 @@ def scan_one(db, code: str, name: str) -> dict[str, Any]:
     # 🔁 RE-ENTRY COOLDOWN (boss 2026-07-13 loss audit): if this stock was STOP-SOLD at
     # a loss within the last 60 minutes, NO new buy signal — the LG화학 rebuy loop
     # (buy → stop → rebuy the same falling stock → stop again) bled fees + cuts.
+    # MACHINE sells only (2026-07-15): the boss selling by hand is HIS decision —
+    # it must not gag the engine for an hour (SKH was muted on a +12% day by it).
     try:
         _burn = db.execute(_sql_text(
             "SELECT 1 FROM paper_desk_orders WHERE ticker=:t AND side='SELL' "
             "AND status='FILLED' AND realized_pnl < 0 "
+            "AND COALESCE(source, 'manual') <> 'manual' "
             "AND COALESCE(filled_at, created_at) > now() - interval '60 minutes' LIMIT 1"),
             {"t": code}).first()
         if _burn:
@@ -252,6 +257,38 @@ def scan_one(db, code: str, name: str) -> dict[str, Any]:
                     "why_en": (f"⚡ quick bounce: 15m {_r15q:+.1f}% thrust{_qvol_en}"
                                f" — a 20-minute play, in and out"),
                     "ml": ml_advice, "news_score": _qnews}
+
+    # 🏇 TREND RIDE (boss 2026-07-15: SKH +12% / 삼성전자 +6% and no signal) — on a
+    # monster trend day the 45-min move itself IS the setup. Bypasses the downtrend
+    # gate BY DESIGN: after a huge gap-up the price consolidates below its spike-
+    # inflated 2h average and the gate wrongly reads "downtrend". Own safeties:
+    # 45m thrust ≥2%, the last 15 min not rolling over, RSI not blowing off,
+    # panic gate, ML-SELL veto, bad-news veto.
+    _r45t = micro.get("r45")
+    _r15t = micro.get("r15")
+    _rsi5t = micro.get("rsi5")
+    if (_r45t is not None and _r45t >= _RIDE_R45
+            and _r15t is not None and _r15t > -0.1
+            and _rsi5t is not None and 50 <= _rsi5t <= 80
+            and micro.get("verdict") in ("UP", "FLAT")
+            and not extreme_crash and not ml_bearish):
+        _tnews = 0
+        try:
+            from services.decision_agent import _news as _tn
+            _tnews = (_tn(db, code, name) or {}).get("score") or 0
+        except Exception:
+            db.rollback()
+        if _tnews > -2:
+            _tconf = 66 + (4 if _r45t >= 4.0 else 0) \
+                     + (3 if (pattern or {}).get("up_rate", 0) >= 55 else 0)
+            return {**base,
+                    "state": "ACT_NOW", "setup_type": "trend_ride",
+                    "confidence": min(_tconf, 80),
+                    "why_ko": (f"🏇 대세 상승일 올라타기 (45분 {_r45t:+.1f}% · 15분 {_r15t:+.1f}% "
+                               f"· RSI {_rsi5t:.0f}) — 눌림 없이 밀어올리는 날은 추세가 셋업입니다"),
+                    "why_en": (f"🏇 trend-day ride (45m {_r45t:+.1f}% · 15m {_r15t:+.1f}% "
+                               f"· RSI {_rsi5t:.0f}) — on a no-pullback day the trend itself is the setup"),
+                    "ml": ml_advice, "news_score": _tnews}
 
     # --- NOTHING gates first (safety before opportunity) ---
     if sector_down:

@@ -28,7 +28,7 @@ const kstDate = (iso?: string | null) => {
 const pnlCol = (v?: number | null) => (v == null ? "var(--text-muted)" : v > 0 ? RED : v < 0 ? BLUE : "var(--text-muted)");
 
 type Position = { ticker: string; name: string; qty: number; avg_price: number; live_price?: number | null; value: number; unrealized_pnl?: number | null; unrealized_pnl_pct?: number | null };
-type Order = { id: number; ticker: string; name: string; side: string; qty: number; order_type: string; limit_price?: number | null; status?: string; fill_price?: number | null; realized_pnl?: number | null; realized_pnl_pct?: number | null; note?: string | null; created_at?: string; filled_at?: string | null };
+type Order = { id: number; ticker: string; name: string; side: string; qty: number; order_type: string; limit_price?: number | null; status?: string; fill_price?: number | null; realized_pnl?: number | null; realized_pnl_pct?: number | null; note?: string | null; created_at?: string; filled_at?: string | null; source?: string | null };
 type DeskState = {
   cash: number; start_cash: number; positions_value: number; equity: number;
   total_pnl: number; total_pnl_pct: number; realized_pnl: number;
@@ -889,12 +889,37 @@ export default function Desk({ mode }: { mode: TradeMode }) {
               )}
             </div>
           )}
+          {/* 🔥 other stocks with live signals — ONE SLIM LINE, not full panels
+              (boss 2026-07-15: "only 2 stocks visible; I select the rest") */}
+          {(() => {
+            const hidden = focus.filter((f) =>
+              !["000660", "005930"].includes(f.code) && !watchExtra.includes(f.code)
+              && (!!f.qualified || !!f.dynamic));
+            if (!hidden.length) return null;
+            return (
+              <div className="flex items-center gap-1.5 flex-wrap text-[11.5px] rounded-xl border px-3 py-2"
+                style={{ borderColor: "#e65100", background: "rgba(230,81,0,0.05)" }}>
+                <b style={{ color: "#e65100" }}>🔥 {t(`다른 종목 신호 ${hidden.length}개`, `${hidden.length} more signals`)}:</b>
+                {hidden.slice(0, 8).map((f) => (
+                  <button key={f.code}
+                    onClick={() => {
+                      const next = [...watchExtra, f.code];
+                      setWatchExtra(next);
+                      try { localStorage.setItem("board-watch", JSON.stringify(next)); } catch {}
+                    }}
+                    title={t("클릭하면 판에 추가되어 설명까지 보입니다", "click to add the full panel with explanations")}
+                    className="font-bold px-2 py-0.5 rounded-full border hover:opacity-70"
+                    style={{ borderColor: "#e65100", color: "#e65100" }}>
+                    {f.name} {f.confidence ? `${f.confidence}%` : ""} ＋
+                  </button>
+                ))}
+              </div>
+            );
+          })()}
           {[...focus]
             .filter((f) =>
-              ["000660", "005930"].includes(f.code)      // ONLY the two mains by default (boss)
-              || watchExtra.includes(f.code)             // + whatever he picked in the dropdown
-              || !!f.qualified                           // + a firing BUY signal ALWAYS surfaces
-              || !!f.dynamic)                            // + rare 🔥 market-wide signals
+              ["000660", "005930"].includes(f.code)      // ONLY the two mains (boss 07-15)
+              || watchExtra.includes(f.code))            // + whatever HE selected
             .sort((a, b) => {
             // boss: SK하이닉스 first, 삼성전자 second — then actives before quiet
             const rank = (x: FocusStock) =>
@@ -1596,7 +1621,12 @@ export default function Desk({ mode }: { mode: TradeMode }) {
               ).map((h) => (
                 <tr key={h.id} className="border-t border-[var(--border-default)]/40">
                   <td className="px-3 py-1.5 text-[10.5px] text-[var(--text-muted)] tabular-nums">{kst(h.filled_at || h.created_at)}</td>
-                  <td className="px-2 font-bold" style={{ color: h.side === "BUY" ? RED : BLUE }}>{h.side === "BUY" ? t("매수", "BUY") : t("매도", "SELL")}</td>
+                  <td className="px-2 font-bold" style={{ color: h.side === "BUY" ? RED : BLUE }}>
+                    {h.side === "BUY" ? t("매수", "BUY") : t("매도", "SELL")}
+                    <span className="ml-1 text-[10px] font-normal" title={t("주문 주체", "who placed it")}>
+                      {h.source === "algo1" ? "🤖" : h.source === "algo2" ? "⚡" : h.source === "guard" ? "🛡️" : "👤"}
+                    </span>
+                  </td>
                   <td className="px-2">{h.name}</td>
                   <td className="text-right px-2 tabular-nums">{fmt(h.qty)}</td>
                   <td className="text-right px-2 tabular-nums">{fmt(h.fill_price)}</td>
