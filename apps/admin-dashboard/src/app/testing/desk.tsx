@@ -196,7 +196,16 @@ export default function Desk({ mode }: { mode: TradeMode }) {
   // watch dropdown (persisted); stocks with a live signal always show anyway
   const [watchExtra, setWatchExtra] = useState<string[]>(() => {
     if (typeof window === "undefined") return [];
-    try { return JSON.parse(localStorage.getItem("board-watch") || "[]"); } catch { return []; }
+    try {
+      // one-time reset (boss 2026-07-15 PM: board must START as the 2 mains only —
+      // his earlier "add all" click was persisting 18 quiet panels forever)
+      if (!localStorage.getItem("board-watch-v2")) {
+        localStorage.setItem("board-watch-v2", "1");
+        localStorage.setItem("board-watch", "[]");
+        return [];
+      }
+      return JSON.parse(localStorage.getItem("board-watch") || "[]");
+    } catch { return []; }
   });
   const addWatch = (code: string) => {
     if (!code) return;
@@ -891,37 +900,15 @@ export default function Desk({ mode }: { mode: TradeMode }) {
               )}
             </div>
           )}
-          {/* 🔥 other stocks with live signals — ONE SLIM LINE, not full panels
-              (boss 2026-07-15: "only 2 stocks visible; I select the rest") */}
-          {(() => {
-            const hidden = focus.filter((f) =>
-              !["000660", "005930"].includes(f.code) && !watchExtra.includes(f.code)
-              && (!!f.qualified || !!f.dynamic));
-            if (!hidden.length) return null;
-            return (
-              <div className="flex items-center gap-1.5 flex-wrap text-[11.5px] rounded-xl border px-3 py-2"
-                style={{ borderColor: "#e65100", background: "rgba(230,81,0,0.05)" }}>
-                <b style={{ color: "#e65100" }}>🔥 {t(`다른 종목 신호 ${hidden.length}개`, `${hidden.length} more signals`)}:</b>
-                {hidden.slice(0, 8).map((f) => (
-                  <button key={f.code}
-                    onClick={() => {
-                      const next = [...watchExtra, f.code];
-                      setWatchExtra(next);
-                      try { localStorage.setItem("board-watch", JSON.stringify(next)); } catch {}
-                    }}
-                    title={t("클릭하면 판에 추가되어 설명까지 보입니다", "click to add the full panel with explanations")}
-                    className="font-bold px-2 py-0.5 rounded-full border hover:opacity-70"
-                    style={{ borderColor: "#e65100", color: "#e65100" }}>
-                    {f.name} {f.confidence ? `${f.confidence}%` : ""} ＋
-                  </button>
-                ))}
-              </div>
-            );
-          })()}
+          {/* FINAL BOARD RULE (boss 2026-07-15 PM): start with ONLY the two mains;
+              other stocks auto-appear ONLY while they carry a live BUY signal
+              (panel vanishes when the signal ends); holdings open on demand via
+              the dropdown/search. */}
           {[...focus]
             .filter((f) =>
-              ["000660", "005930"].includes(f.code)      // ONLY the two mains (boss 07-15)
-              || watchExtra.includes(f.code))            // + whatever HE selected
+              ["000660", "005930"].includes(f.code)      // the two mains, always
+              || !!f.qualified || !!f.dynamic            // + live signals, auto, while live
+              || watchExtra.includes(f.code))            // + whatever HE opened himself
             .sort((a, b) => {
             // boss: SK하이닉스 first, 삼성전자 second — then actives before quiet
             const rank = (x: FocusStock) =>
