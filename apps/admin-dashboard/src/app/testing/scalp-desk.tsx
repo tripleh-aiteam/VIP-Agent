@@ -512,12 +512,22 @@ export default function ScalpDesk({ mode }: { mode: ScalpMode }) {
                 const hidden = sc.stocks.filter((s) =>
                   !["000660", "005930"].includes(s.code) && !showExtra.includes(s.code)
                   && s.state !== "LONG");
-                if (!hidden.length) return null;
+                if (!hidden.length && !showExtra.length) return null;
                 return (
                   <div className="mt-3 flex items-center gap-1.5 flex-wrap text-[11px] rounded-xl border px-3 py-2"
                     style={{ borderColor: "var(--border-default)", background: "var(--bg-elevated)" }}>
                     <b className="text-[var(--text-muted)]">👁️ {t(`감시 중 ${hidden.length}개 (기계는 계속 매매 — 사면 자동으로 나타남)`,
                         `watching ${hidden.length} (machine still trades them — a buy pops up automatically)`)}:</b>
+                    {showExtra.length > 0 && (
+                      <button onClick={() => {
+                        setShowExtra([]);
+                        try { localStorage.setItem("scalp-show", "[]"); } catch {}
+                      }}
+                        className="font-extrabold px-2 py-0.5 rounded-full border"
+                        style={{ borderColor: PURPLE, color: PURPLE }}>
+                        ✕ {t("SK·삼성만 보기", "show only SK + Samsung")}
+                      </button>
+                    )}
                     {hidden.map((s) => (
                       <button key={s.code}
                         onClick={() => {
