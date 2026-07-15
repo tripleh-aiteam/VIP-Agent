@@ -125,7 +125,9 @@ CASES = [
        ("both methods", lambda r, i: has(r"Method 1", r) and has(r"Method 2", r) and has(r"News", r)),
        ("final para", lambda r, i: has(r"Final call|final recommendation is|In plain words", r))]),
     C("decide", "DECIDE", "ko", "SK하이닉스 사야 할까?",
-      [("recommendation", lambda r, i: has(r"추천:\s*(매수|보유|매도|관망)", r)),
+      # 07-15: the 1-hour setup can LEAD the answer, so the verdict may read '추천: 단타
+      # 매수 (1시간 트레이드)' — accept any clear 매수/보유/매도/관망 recommendation form.
+      [("recommendation", lambda r, i: has(r"추천:\s*[^\n]{0,12}(매수|보유|매도|관망)", r)),
        ("both methods", lambda r, i: has(r"방법 1|① ", r) and has(r"방법 2|② ", r) and has(r"뉴스", r)),
        ("final para", lambda r, i: has(r"최종 종합 판단|최종 추천은|쉽게 설명하면", r))]),
 
