@@ -603,37 +603,37 @@ export default function ScalpDesk({ mode }: { mode: ScalpMode }) {
                 if (!hidden.length && !showExtra.length) return null;
                 const nLong = hidden.filter((s) => s.state === "LONG").length;
                 return (
-                  <div className="mt-3 flex items-center gap-1.5 flex-wrap text-[11px] rounded-xl border px-3 py-2"
-                    style={{ borderColor: "var(--border-default)", background: "var(--bg-elevated)" }}>
-                    <b className="text-[var(--text-muted)]">👁️ {t(
-                      `숨김 ${hidden.length}개${nLong ? ` (보유 ${nLong})` : ""} — 클릭하면 보입니다`,
-                      `hidden ${hidden.length}${nLong ? ` (${nLong} held)` : ""} — click to watch`)}:</b>
+                  <div className="mt-3 flex items-center gap-2 flex-wrap text-[12px]">
+                    <span className="font-bold text-[var(--text-muted)]">👁️ {t("다른 종목 보기", "Watch another stock")}:</span>
+                    <select value="" onChange={(e) => {
+                      if (!e.target.value) return;
+                      const next = [...showExtra, e.target.value];
+                      setShowExtra(next);
+                      try { localStorage.setItem("scalp-show", JSON.stringify(next)); } catch {}
+                    }}
+                      className="px-2 py-1 rounded-lg border bg-[var(--bg-primary)] text-[var(--text-primary)] font-bold"
+                      style={{ borderColor: nLong ? PURPLE : "var(--border-default)", minWidth: 210 }}>
+                      <option value="">{t(
+                        `선택… (숨김 ${hidden.length}개${nLong ? ` · ⚡ 보유 ${nLong}개` : ""})`,
+                        `choose… (${hidden.length} hidden${nLong ? ` · ⚡ ${nLong} held` : ""})`)}</option>
+                      {hidden.map((s) => (
+                        <option key={s.code} value={s.code}>
+                          {s.state === "LONG"
+                            ? `⚡ ${s.name} — ${t("보유", "held")} ${s.pnl_pct != null ? `${s.pnl_pct > 0 ? "+" : ""}${s.pnl_pct}%` : ""}`
+                            : s.name}
+                        </option>
+                      ))}
+                    </select>
                     {showExtra.length > 0 && (
                       <button onClick={() => {
                         setShowExtra([]);
                         try { localStorage.setItem("scalp-show", "[]"); } catch {}
                       }}
-                        className="font-extrabold px-2 py-0.5 rounded-full border"
+                        className="text-[11px] font-extrabold px-2.5 py-1 rounded-lg border"
                         style={{ borderColor: PURPLE, color: PURPLE }}>
                         ✕ {t("SK·삼성만 보기", "show only SK + Samsung")}
                       </button>
                     )}
-                    {hidden.map((s) => (
-                      <button key={s.code}
-                        onClick={() => {
-                          const next = [...showExtra, s.code];
-                          setShowExtra(next);
-                          try { localStorage.setItem("scalp-show", JSON.stringify(next)); } catch {}
-                        }}
-                        title={t("클릭하면 카드가 열립니다", "click to show the full card")}
-                        className="font-bold px-2 py-0.5 rounded-full border hover:opacity-70"
-                        style={s.state === "LONG"
-                          ? { borderColor: PURPLE, color: "#fff", background: PURPLE }
-                          : { borderColor: "var(--border-default)", color: "var(--text-secondary)" }}>
-                        {s.name}{s.state === "LONG" && s.pnl_pct != null
-                          ? ` ${s.pnl_pct > 0 ? "+" : ""}${s.pnl_pct}%` : ""} ＋
-                      </button>
-                    ))}
                   </div>
                 );
               })()}
