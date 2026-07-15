@@ -26,9 +26,13 @@ Local 7/7 (compound EN/KO, Apple $+₩, ADR real/honest/concept, KR price untouc
 
 All live sweeps green: 7-item checks 8/8 (compound EN/KO, Apple $+₩, ADR real/honest, memory VIP+ADV, chatbot-vs-assistant identical answer), boss's exact AARD question PASS on both surfaces, regression 26/26.
 
+### [PM2] Real ADR quotes
+
+- `_us_quote()` (Yahoo chart API, deterministic, no key) is now the primary ADR source with the stock-backend LLM as fallback; **SK하이닉스's US line corrected to SKHYV (NasdaqGS)** — the old OTC HXSCL is dead, which is why quotes "failed". Answers now: `$168.01 (≈ ₩250,200) (−1.17%) — NasdaqGS, Yahoo` + 🇰🇷 Korean-listing line. SSNLF (삼성전자, OTC Pink) quotes too. Live PASS both surfaces on the boss's exact question.
+
 ### Next
 
-- ADR coverage is the mapped names only (SKM/KB/SHG/KT/KEP/PKX/LPL; HXSCL/SSNLF honest-no-source); extend the map or add a cited web-search fallback for OTC lines if boss asks.
+- ADR map covers SKHYV/SSNLF/SKM/KB/SHG/KT/KEP/PKX/LPL — extend on request; Yahoo quote helper is reusable for general US-stock intents if needed later.
 
 ---
 
