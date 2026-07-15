@@ -593,18 +593,21 @@ export default function ScalpDesk({ mode }: { mode: ScalpMode }) {
                 </div>
               </div>
 
-              {/* hidden-but-watched strip (boss: like Algo 1 — only the 2 mains show;
-                  the machine trades ALL of them; a BUY pops the card up automatically) */}
+              {/* hidden stocks strip (boss 2026-07-15 final: ONLY SK+삼성 as cards —
+                  everything else, INCLUDING holdings, lives here; LONG chips glow
+                  purple with live P&L so he clicks exactly what he wants to watch) */}
               {(() => {
-                const hidden = sc.stocks.filter((s) =>
-                  !["000660", "005930"].includes(s.code) && !showExtra.includes(s.code)
-                  && s.state !== "LONG");
+                const hidden = [...sc.stocks]
+                  .filter((s) => !["000660", "005930"].includes(s.code) && !showExtra.includes(s.code))
+                  .sort((a, b) => (a.state === b.state ? 0 : a.state === "LONG" ? -1 : 1));
                 if (!hidden.length && !showExtra.length) return null;
+                const nLong = hidden.filter((s) => s.state === "LONG").length;
                 return (
                   <div className="mt-3 flex items-center gap-1.5 flex-wrap text-[11px] rounded-xl border px-3 py-2"
                     style={{ borderColor: "var(--border-default)", background: "var(--bg-elevated)" }}>
-                    <b className="text-[var(--text-muted)]">👁️ {t(`감시 중 ${hidden.length}개 (기계는 계속 매매 — 사면 자동으로 나타남)`,
-                        `watching ${hidden.length} (machine still trades them — a buy pops up automatically)`)}:</b>
+                    <b className="text-[var(--text-muted)]">👁️ {t(
+                      `숨김 ${hidden.length}개${nLong ? ` (보유 ${nLong})` : ""} — 클릭하면 보입니다`,
+                      `hidden ${hidden.length}${nLong ? ` (${nLong} held)` : ""} — click to watch`)}:</b>
                     {showExtra.length > 0 && (
                       <button onClick={() => {
                         setShowExtra([]);
@@ -623,20 +626,23 @@ export default function ScalpDesk({ mode }: { mode: ScalpMode }) {
                           try { localStorage.setItem("scalp-show", JSON.stringify(next)); } catch {}
                         }}
                         title={t("클릭하면 카드가 열립니다", "click to show the full card")}
-                        className="font-bold px-2 py-0.5 rounded-full border text-[var(--text-secondary)] hover:opacity-70"
-                        style={{ borderColor: "var(--border-default)" }}>
-                        {s.name} ＋
+                        className="font-bold px-2 py-0.5 rounded-full border hover:opacity-70"
+                        style={s.state === "LONG"
+                          ? { borderColor: PURPLE, color: "#fff", background: PURPLE }
+                          : { borderColor: "var(--border-default)", color: "var(--text-secondary)" }}>
+                        {s.name}{s.state === "LONG" && s.pnl_pct != null
+                          ? ` ${s.pnl_pct > 0 ? "+" : ""}${s.pnl_pct}%` : ""} ＋
                       </button>
                     ))}
                   </div>
                 );
               })()}
 
-              {/* per-stock ripple state — mains FIRST (boss), then bought, then near-trigger */}
+              {/* per-stock ripple state — ONLY mains + boss-opened (his final rule) */}
               <div className="mt-3 grid md:grid-cols-2 gap-3">
                 {[...sc.stocks]
                   .filter((s) => ["000660", "005930"].includes(s.code)
-                    || showExtra.includes(s.code) || s.state === "LONG")
+                    || showExtra.includes(s.code))
                   .sort((a, b) => {
                     const rank = (x: ScalpStock) =>
                       x.code === "000660" ? -2 : x.code === "005930" ? -1
