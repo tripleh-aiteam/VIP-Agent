@@ -7,6 +7,6 @@ import ScalpDesk, { type ScalpMode } from "../../scalp-desk";
 
 export default function ScalpModePage({ params }: { params: { mode: string } }) {
   const { mode } = params;
-  if (mode !== "auto" && mode !== "manual") notFound();
+  if (mode !== "auto" && mode !== "semi" && mode !== "manual") notFound();
   return <ScalpDesk mode={mode as ScalpMode} />;
 }

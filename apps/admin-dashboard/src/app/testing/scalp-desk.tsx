@@ -22,16 +22,19 @@ const kst = (iso?: string | null) => {
 };
 const pnlCol = (v?: number | null) => (v == null ? "var(--text-muted)" : v > 0 ? RED : v < 0 ? BLUE : "var(--text-muted)");
 
-export type ScalpMode = "auto" | "manual";
+export type ScalpMode = "auto" | "semi" | "manual";
 
 type ScalpStock = {
   code: string; name: string; price?: number | null; chg?: number | null; state: "WAIT" | "LONG";
   entry?: number | null; qty?: number | null; pnl_pct?: number | null;
   take_at?: number | null; stop_at?: number | null; bounce_pct?: number | null; buf_n?: number;
+  advice?: "TAKE" | "STOP" | null;
   pred?: { pred_pct: number; pred_price: number; up_rate: number | null; n: number; fallback?: boolean } | null;
 };
+type ScalpSignal = { code: string; name: string; price: number; qty: number; why: string; ts: number };
 type ScalpStatus = {
   enabled: boolean; take_pct: number; stop_pct: number; pos_pct: number; codes: string[];
+  mode?: "auto" | "semi"; signals?: ScalpSignal[];
   stocks: ScalpStock[];
   today: { trades: number; wins: number; net_pct_sum: number; realized_won?: number };
   recent: { name: string; qty: number; entry: number; exit_price?: number | null;
@@ -228,6 +231,7 @@ export default function ScalpDesk({ mode }: { mode: ScalpMode }) {
     try { setShowExtra(JSON.parse(localStorage.getItem("scalp-show") || "[]")); } catch {}
   }, []);
   const [cardChart, setCardChart] = useState<string | null>(null);   // 📈 inline chart per card
+  const [pickerOpen, setPickerOpen] = useState(false);               // collapsed stock list
   const [livePx, setLivePx] = useState<Record<string, number>>({});
   const [liveChg, setLiveChg] = useState<Record<string, number>>({});
   const [stockList, setStockList] = useState<StockItem[]>([]);
@@ -239,6 +243,13 @@ export default function ScalpDesk({ mode }: { mode: ScalpMode }) {
     api<DeskState>("/paper-desk/state").then(setSt).catch(() => {});
   };
   useEffect(() => { load(); const i = setInterval(load, 4000); return () => clearInterval(i); }, []);
+  // keep the SERVER mode in sync with the page: /auto = machine trades,
+  // /semi = machine only recommends (manual page doesn't touch the mode)
+  useEffect(() => {
+    if (mode === "manual" || !sc?.mode || sc.mode === mode) return;
+    apiPost(`/paper-desk/scalp/params?mode=${mode}`).then(load).catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mode, sc?.mode]);
   useEffect(() => {
     api<{ stocks: StockItem[] }>("/paper-desk/stocks").then((r) => setStockList(r.stocks || [])).catch(() => {});
   }, []);
@@ -322,7 +333,11 @@ export default function ScalpDesk({ mode }: { mode: ScalpMode }) {
         ? t(`✅ ${side === "BUY" ? "매수" : "매도"} 체결 ₩${fmt(r.fill_price)} × ${n}주`,
             `✅ ${side} filled ₩${fmt(r.fill_price)} × ${n} sh`)
         : `❌ ${r.error || r.reason || "failed"}`);
-    } catch { setNote("❌ failed"); }
+    } catch (e) {
+      // surface the REAL reason (boss: bare '❌ failed' told him nothing — it's
+      // usually the server mid-restart from a deploy)
+      setNote(`❌ ${(e as Error).message || t("서버 응답 없음 — 재배포 중일 수 있음, 잠시 후 재시도", "no server response — may be redeploying, retry in a minute")}`);
+    }
     setBusy(false);
     load();
   };
@@ -343,7 +358,11 @@ export default function ScalpDesk({ mode }: { mode: ScalpMode }) {
         ? t(`⏳ 자동 매도 걸림: ₩${fmt(px)} 도달 시 ${held}주 전량 매도 (서버가 15초마다 확인)`,
             `⏳ auto-sell armed: sells all ${held} sh when ₩${fmt(px)} is reached (server checks every 15s)`)
         : `❌ ${r.error || "failed"}`);
-    } catch { setNote("❌ failed"); }
+    } catch (e) {
+      // surface the REAL reason (boss: bare '❌ failed' told him nothing — it's
+      // usually the server mid-restart from a deploy)
+      setNote(`❌ ${(e as Error).message || t("서버 응답 없음 — 재배포 중일 수 있음, 잠시 후 재시도", "no server response — may be redeploying, retry in a minute")}`);
+    }
     setBusy(false);
     load();
   };
@@ -364,6 +383,10 @@ export default function ScalpDesk({ mode }: { mode: ScalpMode }) {
           <Link href="/testing/scalp/auto" className="text-[12px] font-extrabold px-3 py-1.5 rounded-lg"
             style={mode === "auto" ? { background: PURPLE, color: "#fff" } : { border: "1px solid var(--border-default)", color: "var(--text-secondary)" }}>
             {t("자동", "Auto")}
+          </Link>
+          <Link href="/testing/scalp/semi" className="text-[12px] font-extrabold px-3 py-1.5 rounded-lg"
+            style={mode === "semi" ? { background: "#e65100", color: "#fff" } : { border: "1px solid var(--border-default)", color: "var(--text-secondary)" }}>
+            {t("반자동 (추천+내 손)", "Semi-Auto")}
           </Link>
           <Link href="/testing/scalp/manual" className="text-[12px] font-extrabold px-3 py-1.5 rounded-lg"
             style={mode === "manual" ? { background: PURPLE, color: "#fff" } : { border: "1px solid var(--border-default)", color: "var(--text-secondary)" }}>
@@ -414,10 +437,18 @@ export default function ScalpDesk({ mode }: { mode: ScalpMode }) {
         </div>
       )}
 
-      {/* stock picker — dropdown (watchlist) + free search by name/code, mains pinned */}
+      {/* stock picker — compact like Algorithm 1 (boss: "Alg 1 was more clear"):
+          one line, list collapsed behind a toggle */}
       <div className="mt-2.5 flex items-center gap-2 flex-wrap text-[12px]">
-        <span className="font-bold text-[var(--text-muted)]">📋 {t("종목", "Stocks")}:</span>
-        {(sc?.codes || MAINS).map((c) => {
+        <span className="font-bold text-[var(--text-muted)]">
+          👀 {t(`매매 종목 ${(sc?.codes || MAINS).length}개`, `trading ${(sc?.codes || MAINS).length} stocks`)}
+        </span>
+        <button onClick={() => setPickerOpen((v) => !v)}
+          className="font-bold px-2 py-0.5 rounded-lg border text-[var(--text-secondary)]"
+          style={{ borderColor: "var(--border-default)" }}>
+          {pickerOpen ? t("▴ 접기", "▴ hide list") : t("▾ 목록 보기", "▾ show list")}
+        </button>
+        {pickerOpen && (sc?.codes || MAINS).map((c) => {
           const s = sc?.stocks?.find((x) => x.code === c);
           return (
             <span key={c} className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full border font-bold text-[var(--text-secondary)]"
@@ -460,11 +491,47 @@ export default function ScalpDesk({ mode }: { mode: ScalpMode }) {
         </button>
       </div>
 
-      {mode === "auto" ? (
-        /* ================= AUTO — the machine ripples ================= */
+      {mode !== "manual" ? (
+        /* ============ AUTO (machine trades) / SEMI (machine recommends) ============ */
         <>
+          {/* 🔔 SEMI: live BUY recommendations — HIS finger pulls the trigger */}
+          {mode === "semi" && sc && (sc.signals || []).length > 0 && (
+            <div className="mt-4 grid md:grid-cols-2 gap-3">
+              {(sc.signals || []).map((g) => (
+                <div key={g.code} className="rounded-2xl border-2 px-4 py-3"
+                  style={{ borderColor: "#e65100", background: "rgba(230,81,0,0.07)" }}>
+                  <div className="text-[15px] font-extrabold" style={{ color: "#e65100" }}>
+                    🔔 {t(`매수 추천 — ${g.name}`, `BUY recommendation — ${g.name}`)}
+                    <span className="ml-2 tabular-nums text-[var(--text-primary)]">₩{fmt(livePx[g.code] ?? g.price)}</span>
+                  </div>
+                  <div className="mt-1 text-[11.5px] text-[var(--text-secondary)]">{g.why}</div>
+                  <div className="mt-2 flex items-center gap-2">
+                    <span className="text-[12.5px] font-bold tabular-nums">{t(`수량 ${fmt(g.qty)}주 (엔진 산출)`, `${fmt(g.qty)} sh (engine-sized)`)}</span>
+                    <button disabled={busy} onClick={async () => {
+                      setBusy(true);
+                      try {
+                        const r = await apiPost<{ ok: boolean; error?: string; take_at?: number; stop_at?: number }>(`/paper-desk/scalp/buy?code=${g.code}`);
+                        setNote(r.ok
+                          ? t(`✅ 매수 — 목표 ₩${fmt(r.take_at)} 도달 시 매도 추천이 뜹니다 (손절선 ₩${fmt(r.stop_at)})`,
+                              `✅ bought — a SELL advice appears at ₩${fmt(r.take_at)} (stop line ₩${fmt(r.stop_at)})`)
+                          : `❌ ${r.error}`);
+                      } catch (e) { setNote(`❌ ${(e as Error).message}`); }
+                      setBusy(false);
+                      load();
+                    }}
+                      className="text-[14px] font-extrabold px-6 py-1.5 rounded-xl text-white disabled:opacity-50" style={{ background: RED }}>
+                      {t("매수", "BUY")}
+                    </button>
+                    <span className="text-[10px] text-[var(--text-muted)]">{t("추천은 2분 뒤 자동 소멸", "expires in 2 min")}</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+          {note && mode === "semi" && <div className="mt-2 text-[12.5px] font-bold text-[var(--text-primary)]">{note}</div>}
+
           {sc && (
-            <div className="mt-4 rounded-2xl border-2 p-4" style={{ borderColor: PURPLE, background: "rgba(123,31,162,0.04)" }}>
+            <div className="mt-4 rounded-2xl border-2 p-4" style={{ borderColor: mode === "semi" ? "#e65100" : PURPLE, background: mode === "semi" ? "rgba(230,81,0,0.04)" : "rgba(123,31,162,0.04)" }}>
               <div className="flex items-center gap-3 flex-wrap">
                 <button onClick={toggle}
                   className="text-[14px] font-extrabold px-5 py-2 rounded-xl text-white"
@@ -472,10 +539,13 @@ export default function ScalpDesk({ mode }: { mode: ScalpMode }) {
                   {sc.enabled ? t("● 켜짐 — 끄기", "● ON — turn off") : t("○ 꺼짐 — 켜기", "○ OFF — turn on")}
                 </button>
                 <span className="text-[12px] text-[var(--text-secondary)]">
-                  {sc.enabled
-                    ? t("15초마다: 오르기 시작 → 매수 · 목표 도달 → 매도 · 반복 · 15:18 전량 정리",
-                        "every 15s: upturn → buy · take hit → sell · repeat · flat at 15:18")
-                    : t("꺼져 있음 — 기계는 관찰만 합니다", "off — the machine only watches")}
+                  {!sc.enabled
+                    ? t("꺼져 있음 — 기계는 관찰만 합니다", "off — the machine only watches")
+                    : mode === "semi"
+                      ? t("15초마다 자리 탐색 → 🔔 매수 추천 → 사장님이 매수 · 목표/손절 도달 → 매도 추천 → 사장님이 매도 (기계는 절대 스스로 안 삽니다)",
+                          "every 15s: finds the spot → 🔔 recommends → YOU buy · take/stop reached → SELL advice → YOU sell (the machine never trades by itself)")
+                      : t("15초마다: 오르기 시작 → 매수 · 목표 도달 → 매도 · 반복 · 15:18 전량 정리",
+                          "every 15s: upturn → buy · take hit → sell · repeat · flat at 15:18")}
                 </span>
                 {/* the boss's dials */}
                 <div className="ml-auto flex items-center gap-2 text-[11.5px]">
@@ -612,8 +682,37 @@ export default function ScalpDesk({ mode }: { mode: ScalpMode }) {
                           </span>
                           <div className="mt-0.5 text-[11.5px]">
                             🎯 {t("매도", "sell at")} ₩{fmt(s.take_at)} · 🛑 ₩{fmt(s.stop_at)}
-                            <span className="ml-1 text-[var(--text-muted)]">{t("(내려가도 −1%까지 버팀)", "(dips held to −1%)")}</span>
+                            <span className="ml-1 text-[var(--text-muted)]">
+                              {mode === "semi" ? t("(도달하면 매도 추천이 뜹니다)", "(a SELL advice appears when reached)")
+                                : t("(내려가도 −1%까지 버팀)", "(dips held to −1%)")}
+                            </span>
                           </div>
+                          {mode === "semi" && s.advice && (
+                            <div className="mt-2 rounded-lg px-3 py-2 flex items-center gap-2"
+                              style={{ background: s.advice === "TAKE" ? "rgba(46,125,50,0.1)" : "rgba(211,47,47,0.1)" }}>
+                              <b className="text-[13px]" style={{ color: s.advice === "TAKE" ? "#2e7d32" : RED }}>
+                                {s.advice === "TAKE"
+                                  ? t("🔔 목표 도달 — 지금 파세요 (작은 승리 확정)", "🔔 take reached — SELL now (lock the small win)")
+                                  : t("🚨 손절선 도달 — 지금 파세요 (더 큰 손실 방지)", "🚨 stop reached — SELL now (prevent a bigger loss)")}
+                              </b>
+                              <button disabled={busy} onClick={async () => {
+                                setBusy(true);
+                                try {
+                                  const r = await apiPost<{ ok: boolean; error?: string; realized_pnl?: number; realized_pnl_pct?: number }>(`/paper-desk/scalp/sell?code=${s.code}`);
+                                  setNote(r.ok
+                                    ? t(`✅ 매도 — 실현 ${(r.realized_pnl || 0) > 0 ? "+" : ""}₩${fmt(r.realized_pnl)} (${r.realized_pnl_pct}%)`,
+                                        `✅ sold — realized ${(r.realized_pnl || 0) > 0 ? "+" : ""}₩${fmt(r.realized_pnl)} (${r.realized_pnl_pct}%)`)
+                                    : `❌ ${r.error}`);
+                                } catch (e) { setNote(`❌ ${(e as Error).message}`); }
+                                setBusy(false);
+                                load();
+                              }}
+                                className="ml-auto text-[13px] font-extrabold px-5 py-1.5 rounded-xl text-white disabled:opacity-50"
+                                style={{ background: BLUE }}>
+                                {t("매도", "SELL")}
+                              </button>
+                            </div>
+                          )}
                         </div>
                       ) : (
                         <div className="mt-1.5 text-[11.5px] text-[var(--text-muted)]">

@@ -283,10 +283,26 @@ def scalp_toggle(on: bool = Query(...), db: Session = Depends(get_db)):
 @router.post("/scalp/params")
 def scalp_params(take_pct: Optional[float] = Query(None), stop_pct: Optional[float] = Query(None),
                  pos_pct: Optional[float] = Query(None), codes: Optional[str] = Query(None),
-                 db: Session = Depends(get_db)):
-    """The boss's dials: small-win target %, stop %, size % of cash, stock list."""
+                 mode: Optional[str] = Query(None), db: Session = Depends(get_db)):
+    """The boss's dials: small-win target %, stop %, size % of cash, stock list,
+    mode ('auto' = machine trades · 'semi' = machine only recommends)."""
     from services.scalp_trader import set_params
-    return set_params(db, take_pct=take_pct, stop_pct=stop_pct, pos_pct=pos_pct, codes=codes)
+    return set_params(db, take_pct=take_pct, stop_pct=stop_pct, pos_pct=pos_pct,
+                      codes=codes, mode=mode)
+
+
+@router.post("/scalp/buy")
+def scalp_buy(code: str = Query(...), db: Session = Depends(get_db)):
+    """SEMI mode: execute a machine recommendation — the BOSS's click buys it."""
+    from services.scalp_trader import semi_buy
+    return semi_buy(db, code)
+
+
+@router.post("/scalp/sell")
+def scalp_sell(code: str = Query(...), db: Session = Depends(get_db)):
+    """Sell the whole position of one stock (boss's click) and close its scalp rows."""
+    from services.scalp_trader import sell_all
+    return sell_all(db, code)
 
 
 @router.post("/scalp/adopt")

@@ -52,6 +52,7 @@ PEER = {"000660": "005930", "005930": "000660"}
 PEER_DROP_PCT = -0.15     # partner falling faster than this over ~60s → no buy
 
 _buf: dict[str, deque] = {}          # code -> deque[(ts, px)]
+_semi_signals: dict[str, dict] = {}  # semi mode: code -> live BUY recommendation
 
 
 def _ensure(db) -> None:
@@ -72,6 +73,9 @@ def _ensure(db) -> None:
         " opened_at TIMESTAMPTZ DEFAULT now(), closed_at TIMESTAMPTZ)"))
     db.execute(text(
         "ALTER TABLE scalp_trades ADD COLUMN IF NOT EXISTS why TEXT"))
+    # 'auto' = machine buys AND sells · 'semi' = machine only RECOMMENDS (boss clicks)
+    db.execute(text(
+        "ALTER TABLE scalp_state ADD COLUMN IF NOT EXISTS mode TEXT NOT NULL DEFAULT 'auto'"))
     r = db.execute(text("SELECT 1 FROM scalp_state WHERE id=1")).first()
     if not r:
         db.execute(text(
@@ -85,10 +89,12 @@ def _ensure(db) -> None:
 def _cfg(db) -> dict[str, Any]:
     _ensure(db)
     r = db.execute(text(
-        "SELECT enabled, take_pct, stop_pct, pos_pct, codes FROM scalp_state WHERE id=1")).first()
+        "SELECT enabled, take_pct, stop_pct, pos_pct, codes, mode "
+        "FROM scalp_state WHERE id=1")).first()
     codes = [c.strip().zfill(6) for c in (r[4] or DEFAULT_CODES).split(",") if c.strip()]
     return {"enabled": bool(r[0]), "take_pct": float(r[1]), "stop_pct": float(r[2]),
-            "pos_pct": float(r[3]), "codes": codes[:24]}
+            "pos_pct": float(r[3]), "codes": codes[:24],
+            "mode": (r[5] or "auto") if str(r[5] or "auto") in ("auto", "semi") else "auto"}
 
 
 def set_enabled(db, on: bool) -> dict:
@@ -100,9 +106,14 @@ def set_enabled(db, on: bool) -> dict:
 
 
 def set_params(db, take_pct: Optional[float] = None, stop_pct: Optional[float] = None,
-               pos_pct: Optional[float] = None, codes: Optional[str] = None) -> dict:
+               pos_pct: Optional[float] = None, codes: Optional[str] = None,
+               mode: Optional[str] = None) -> dict:
     _ensure(db)
     cur = _cfg(db)
+    if mode in ("auto", "semi"):
+        db.execute(text("UPDATE scalp_state SET mode=:m, updated_at=now() WHERE id=1"),
+                   {"m": mode})
+        db.commit()
     take = min(max(float(take_pct if take_pct is not None else cur["take_pct"]), 0.05), 2.0)
     stop = min(max(float(stop_pct if stop_pct is not None else cur["stop_pct"]), 0.5), 3.0)
     pos = min(max(float(pos_pct if pos_pct is not None else cur["pos_pct"]), 1.0), 25.0)
@@ -120,7 +131,8 @@ def set_params(db, take_pct: Optional[float] = None, stop_pct: Optional[float] =
         "UPDATE scalp_state SET take_pct=:t, stop_pct=:s, pos_pct=:p, codes=:c, "
         "updated_at=now() WHERE id=1"), {"t": take, "s": stop, "p": pos, "c": cs})
     db.commit()
-    return {"ok": True, "take_pct": take, "stop_pct": stop, "pos_pct": pos, "codes": cs}
+    return {"ok": True, "take_pct": take, "stop_pct": stop, "pos_pct": pos, "codes": cs,
+            "mode": _cfg(db)["mode"]}
 
 
 def _market_open_now() -> bool:
@@ -325,6 +337,11 @@ def tick(db, force: bool = False) -> dict[str, Any]:
         if not reason:
             open_codes.add(tk)
             continue
+        if cfg["mode"] == "semi":
+            # SEMI (boss 2026-07-15): the machine NEVER sells — status() surfaces
+            # the advice and HE clicks the sell button
+            open_codes.add(tk)
+            continue
         held = int(db.execute(text(
             "SELECT qty FROM paper_desk_positions WHERE ticker=:t"),
             {"t": tk}).scalar() or 0)
@@ -362,6 +379,14 @@ def tick(db, force: bool = False) -> dict[str, Any]:
         qty = int(cash * cfg["pos_pct"] / 100 * mult / live[code])
         if qty < 1:
             continue
+        if cfg["mode"] == "semi":
+            # SEMI: recommend, don't buy — the card shows a BUY button for the boss
+            _semi_signals[code] = {
+                "code": code, "name": _name(code), "price": live[code], "qty": qty,
+                "why": f"반등 +{bounce}% · {why_book} · {why_peer} · {why_ko}",
+                "ts": datetime.now(KST).timestamp()}
+            out["opened"].append({"code": code, "semi_signal": True})
+            continue
         r = place_order(db, code, "BUY", qty, "market", source="algo2")
         if r.get("ok"):
             fill = float(r.get("fill_price") or live[code])
@@ -375,6 +400,66 @@ def tick(db, force: bool = False) -> dict[str, Any]:
                                   "bounce_pct": bounce, "why": why})
             logger.info("scalp: BUY %s x%d @ %s (%s)", code, qty, fill, why)
     return out
+
+
+def semi_buy(db, code: str) -> dict[str, Any]:
+    """SEMI mode: the boss clicked BUY on a recommendation — execute it with the
+    machine's sizing and start tracking the row (advice-only exits in semi)."""
+    _ensure(db)
+    code = str(code).strip().zfill(6)
+    cfg = _cfg(db)
+    px = _px(code)
+    if px is None:
+        return {"ok": False, "error": "no live price"}
+    sig = _semi_signals.pop(code, None)
+    qty = int(sig["qty"]) if sig else 0
+    why = sig["why"] if sig else "세미 추천 없이 보스 직접 매수"
+    if qty < 1:
+        ok_b, why_b, imb = _book_ok(code)
+        ok_p, why_p, peer_r = _peer_ok(code)
+        mult, why_ko, _ = _conviction(db, code, imb, peer_r)
+        cash = float(db.execute(text(
+            "SELECT cash FROM paper_desk_account WHERE id=1")).scalar() or 0)
+        qty = int(cash * cfg["pos_pct"] / 100 * mult / px)
+        why = f"{why_b} · {why_p} · {why_ko}"
+    if qty < 1:
+        return {"ok": False, "error": "not enough cash for 1 share"}
+    from services.paper_desk import place_order
+    r = place_order(db, code, "BUY", qty, "market", source="manual")
+    if not r.get("ok"):
+        return {"ok": False, "error": r.get("error") or r.get("reason") or "order failed"}
+    fill = float(r.get("fill_price") or px)
+    db.execute(text(
+        "INSERT INTO scalp_trades (ticker, name, qty, entry, why) VALUES (:t,:n,:q,:e,:w)"),
+        {"t": code, "n": _name(code), "q": qty, "e": fill,
+         "w": f"⚡ 세미 추천 → 👤 보스 매수 · {why}"[:300]})
+    db.commit()
+    return {"ok": True, "qty": qty, "entry": fill,
+            "take_at": round(fill * (1 + cfg["take_pct"] / 100)),
+            "stop_at": round(fill * (1 - cfg["stop_pct"] / 100))}
+
+
+def sell_all(db, code: str) -> dict[str, Any]:
+    """Sell the whole position of one stock (boss's click, any mode) and close
+    its scalp rows at the fill."""
+    _ensure(db)
+    code = str(code).strip().zfill(6)
+    held = int(db.execute(text(
+        "SELECT qty FROM paper_desk_positions WHERE ticker=:t"), {"t": code}).scalar() or 0)
+    if held < 1:
+        return {"ok": False, "error": "no shares held"}
+    from services.paper_desk import place_order
+    r = place_order(db, code, "SELL", held, "market", source="manual")
+    if not r.get("ok"):
+        return {"ok": False, "error": r.get("error") or r.get("reason") or "order failed"}
+    fill = float(r.get("fill_price") or 0)
+    for row in db.execute(text(
+            "SELECT id, name, entry FROM scalp_trades WHERE ticker=:t AND status='OPEN'"),
+            {"t": code}).fetchall():
+        out_tmp = {"closed": []}
+        _close_row(db, out_tmp, row[0], row[1], float(row[2]), fill, "MANUAL")
+    return {"ok": True, "qty": held, "fill": fill,
+            "realized_pnl": r.get("realized_pnl"), "realized_pnl_pct": r.get("realized_pnl_pct")}
 
 
 def adopt(db, code: str) -> dict[str, Any]:
@@ -467,13 +552,21 @@ def status(db) -> dict[str, Any]:
             drift = max(-0.006, min(0.006, drift))       # clamp ±0.6%
             pred = {"pred_pct": round(drift * 100, 3), "up_rate": None, "n": 0,
                     "pred_price": round(px * (1 + drift)), "fallback": True}
+        take_at = round(o["entry"] * (1 + cfg["take_pct"] / 100)) if o else None
+        stop_at = round(o["entry"] * (1 - cfg["stop_pct"] / 100)) if o else None
+        # semi mode: the machine's SELL advice (it never sells by itself there)
+        advice = None
+        if o and px and cfg["mode"] == "semi":
+            if take_at and px >= take_at:
+                advice = "TAKE"
+            elif stop_at and px <= stop_at:
+                advice = "STOP"
         stocks.append({
             "code": code, "name": _name(code), "price": px, "chg": chg,
             "state": "LONG" if o else "WAIT",
             "entry": o["entry"] if o else None, "qty": o["qty"] if o else None,
             "pnl_pct": round((px / o["entry"] - 1) * 100 - 0.23, 2) if (o and px) else None,
-            "take_at": round(o["entry"] * (1 + cfg["take_pct"] / 100)) if o else None,
-            "stop_at": round(o["entry"] * (1 - cfg["stop_pct"] / 100)) if o else None,
+            "take_at": take_at, "stop_at": stop_at, "advice": advice,
             "bounce_pct": bounce, "buf_n": len(buf) if buf else 0,
             "pred": pred})
     today = db.execute(text(
@@ -493,7 +586,14 @@ def status(db) -> dict[str, Any]:
                   "SELECT name, qty, entry, exit_price, exit_reason, net_pct, closed_at, "
                   "opened_at, why FROM scalp_trades WHERE status='CLOSED' "
                   "ORDER BY closed_at DESC LIMIT 25"))]
+    # live SEMI recommendations (fresh <120s, not already held)
+    now_ts = _t.time()
+    open_now = set(open_map.keys())
+    signals = [s for c, s in _semi_signals.items()
+               if now_ts - s.get("ts", 0) < 120 and c not in open_now] \
+        if cfg["mode"] == "semi" else []
     out = {**cfg,
+            "signals": signals,
             "stocks": stocks,
             "today": {"trades": int(today[0] or 0), "wins": int(today[1] or 0),
                       "net_pct_sum": round(float(today[2] or 0), 2),

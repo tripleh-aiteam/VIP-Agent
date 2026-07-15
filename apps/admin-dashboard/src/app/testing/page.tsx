@@ -58,6 +58,9 @@ export default function TestingIndex() {
             <Link href="/testing/scalp/auto" className="text-[13.5px] font-extrabold px-4 py-2 rounded-xl text-white" style={{ background: PURPLE }}>
               {t("자동 (기계가 반복)", "Auto")}
             </Link>
+            <Link href="/testing/scalp/semi" className="text-[13.5px] font-extrabold px-4 py-2 rounded-xl border" style={{ color: "#e65100", borderColor: "#e65100" }}>
+              {t("반자동 (추천+내 손)", "Semi-Auto")}
+            </Link>
             <Link href="/testing/scalp/manual" className="text-[13.5px] font-extrabold px-4 py-2 rounded-xl border" style={{ color: PURPLE, borderColor: PURPLE }}>
               {t("수동 (호가창+차트)", "Manual (order book)")}
             </Link>
