@@ -171,6 +171,8 @@ export default function Desk({ mode }: { mode: TradeMode }) {
   const [fltName, setFltName] = useState("");
   const [fltSide, setFltSide] = useState<"ALL" | "BUY" | "SELL">("ALL");
   const [fltDate, setFltDate] = useState("");
+  // WHO traded (boss 2026-07-15): compare Algo1 vs Algo2 vs manual vs guard earnings
+  const [fltSrc, setFltSrc] = useState<"ALL" | "manual" | "algo1" | "algo2" | "guard">("ALL");
 
   // ⚡ buy-candidate popup alarm — a new ACT_NOW setup pops up once, dismissible,
   // valid for 60 minutes from when it appeared (the engine's horizon is 1 hour).
@@ -1591,13 +1593,39 @@ export default function Desk({ mode }: { mode: TradeMode }) {
           <input type="date" value={fltDate} onChange={(e) => setFltDate(e.target.value)}
             className="text-[12px] px-2 py-1 rounded-lg border bg-[var(--bg-primary)] text-[var(--text-primary)]"
             style={{ borderColor: "var(--border-default)" }} />
-          {(fltName || fltSide !== "ALL" || fltDate) && (
-            <button onClick={() => { setFltName(""); setFltSide("ALL"); setFltDate(""); }}
+          <select value={fltSrc} onChange={(e) => setFltSrc(e.target.value as typeof fltSrc)}
+            className="text-[12px] font-bold px-2 py-1 rounded-lg border bg-[var(--bg-primary)] text-[var(--text-primary)]"
+            style={{ borderColor: "var(--border-default)" }}>
+            <option value="ALL">{t("주체: 전체", "who: all")}</option>
+            <option value="manual">👤 {t("내 손", "manual")}</option>
+            <option value="algo1">🤖 {t("알고리즘 1", "Algo 1")}</option>
+            <option value="algo2">⚡ {t("알고리즘 2", "Algo 2")}</option>
+            <option value="guard">🛡️ {t("가드", "guard")}</option>
+          </select>
+          {(fltName || fltSide !== "ALL" || fltDate || fltSrc !== "ALL") && (
+            <button onClick={() => { setFltName(""); setFltSide("ALL"); setFltDate(""); setFltSrc("ALL"); }}
               className="text-[11px] font-bold text-[var(--text-muted)] px-2 py-1 rounded-lg border"
               style={{ borderColor: "var(--border-default)" }}>
               ✕ {t("초기화", "clear")}
             </button>
           )}
+          {/* per-filter earnings: how much did THIS actor make (net of the 0.23% fees) */}
+          {st && (() => {
+            const rows = st.history.filter((h) =>
+              h.status === "FILLED" && h.side === "SELL" && h.realized_pnl != null
+              && (fltSrc === "ALL" || (h.source || "manual") === fltSrc)
+              && (!fltName || (h.name || "").toLowerCase().includes(fltName.trim().toLowerCase()))
+              && (!fltDate || kstDate(h.filled_at || h.created_at) === fltDate));
+            if (!rows.length) return null;
+            const total = rows.reduce((a, h) => a + (h.realized_pnl || 0), 0);
+            const wins = rows.filter((h) => (h.realized_pnl || 0) > 0).length;
+            return (
+              <span className="ml-auto text-[12px] font-extrabold tabular-nums" style={{ color: pnlCol(total) }}>
+                {t(`이 필터 합계: ${rows.length}건 · 승 ${wins} · ${total > 0 ? "+" : ""}₩${fmt(Math.round(total))} (수수료 차감 후)`,
+                   `filter total: ${rows.length} sells · ${wins} wins · ${total > 0 ? "+" : ""}₩${fmt(Math.round(total))} (net of fees)`)}
+              </span>
+            );
+          })()}
         </div>
         {st && st.history.length > 0 ? (
           <table className="w-full text-[12px]">
@@ -1608,7 +1636,7 @@ export default function Desk({ mode }: { mode: TradeMode }) {
                 <th className="text-left px-2">{t("종목", "Stock")}</th>
                 <th className="text-right px-2">{t("수량", "Qty")}</th>
                 <th className="text-right px-2">{t("체결가", "Fill")}</th>
-                <th className="text-right px-2">{t("실현손익", "Realized")}</th>
+                <th className="text-right px-2">{t("실현손익 (수수료 0.23% 차감 후)", "Realized (net of 0.23% fees)")}</th>
               </tr>
             </thead>
             <tbody>
@@ -1616,6 +1644,7 @@ export default function Desk({ mode }: { mode: TradeMode }) {
                 h.status === "FILLED"     // boss: status column hidden — show real fills only
                 && (!focusOnly || boardCodes.has(h.ticker))
                 && (fltSide === "ALL" || h.side === fltSide)
+                && (fltSrc === "ALL" || (h.source || "manual") === fltSrc)
                 && (!fltName || (h.name || "").toLowerCase().includes(fltName.trim().toLowerCase()))
                 && (!fltDate || kstDate(h.filled_at || h.created_at) === fltDate)
               ).map((h) => (

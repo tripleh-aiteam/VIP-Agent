@@ -220,6 +220,7 @@ export default function ScalpDesk({ mode }: { mode: ScalpMode }) {
   const [qty, setQty] = useState("10");
   const [sellAt, setSellAt] = useState("");
   const [note, setNote] = useState<string | null>(null);
+  const [fltSrc, setFltSrc] = useState<"ALL" | "manual" | "algo1" | "algo2" | "guard">("ALL");
   const [livePx, setLivePx] = useState<Record<string, number>>({});
   const [liveChg, setLiveChg] = useState<Record<string, number>>({});
   const [stockList, setStockList] = useState<StockItem[]>([]);
@@ -738,9 +739,31 @@ export default function ScalpDesk({ mode }: { mode: ScalpMode }) {
            shares, win ₩, win %) */}
       {st && st.history.length > 0 && (
         <div className="mt-4 rounded-xl border overflow-hidden" style={{ borderColor: "var(--border-default)" }}>
-          <div className="px-4 py-2 border-b border-[var(--border-default)] bg-[var(--bg-elevated)]">
+          <div className="px-4 py-2 border-b border-[var(--border-default)] bg-[var(--bg-elevated)] flex items-center gap-2 flex-wrap">
             <b className="text-[13.5px] text-[var(--text-primary)]">🧾 {t("전체 매매 기록", "Trade History")}</b>
-            <span className="ml-2 text-[10px] text-[var(--text-muted)]">👤 {t("내 손", "manual")} · ⚡ Algo2 · 🤖 Algo1 · 🛡️ {t("가드", "guard")}</span>
+            <select value={fltSrc} onChange={(e) => setFltSrc(e.target.value as typeof fltSrc)}
+              className="text-[11.5px] font-bold px-2 py-0.5 rounded-lg border bg-[var(--bg-primary)] text-[var(--text-primary)]"
+              style={{ borderColor: "var(--border-default)" }}>
+              <option value="ALL">{t("주체: 전체", "who: all")}</option>
+              <option value="manual">👤 {t("내 손", "manual")}</option>
+              <option value="algo1">🤖 {t("알고리즘 1", "Algo 1")}</option>
+              <option value="algo2">⚡ {t("알고리즘 2", "Algo 2")}</option>
+              <option value="guard">🛡️ {t("가드", "guard")}</option>
+            </select>
+            {(() => {
+              const rows = st.history.filter((h) =>
+                h.status === "FILLED" && h.side === "SELL" && h.realized_pnl != null
+                && (fltSrc === "ALL" || (h.source || "manual") === fltSrc));
+              if (!rows.length) return null;
+              const total = rows.reduce((a, h) => a + (h.realized_pnl || 0), 0);
+              const wins = rows.filter((h) => (h.realized_pnl || 0) > 0).length;
+              return (
+                <span className="ml-auto text-[11.5px] font-extrabold tabular-nums" style={{ color: pnlCol(total) }}>
+                  {t(`합계: ${rows.length}건 · 승 ${wins} · ${total > 0 ? "+" : ""}₩${fmt(Math.round(total))} (수수료 차감 후)`,
+                     `total: ${rows.length} sells · ${wins} wins · ${total > 0 ? "+" : ""}₩${fmt(Math.round(total))} (net of fees)`)}
+                </span>
+              );
+            })()}
           </div>
           <table className="w-full text-[12px]">
             <thead>
@@ -750,11 +773,12 @@ export default function ScalpDesk({ mode }: { mode: ScalpMode }) {
                 <th className="text-left px-2">{t("종목", "Stock")}</th>
                 <th className="text-right px-2">{t("수량", "Qty")}</th>
                 <th className="text-right px-2">{t("체결가", "Fill")}</th>
-                <th className="text-right px-3">{t("실현손익 (₩ · %)", "Win (₩ · %)")}</th>
+                <th className="text-right px-3">{t("실현손익 (수수료 0.23% 차감 후)", "Win (net of 0.23% fees)")}</th>
               </tr>
             </thead>
             <tbody>
-              {st.history.filter((h) => h.status === "FILLED").slice(0, 40).map((h) => (
+              {st.history.filter((h) => h.status === "FILLED"
+                && (fltSrc === "ALL" || (h.source || "manual") === fltSrc)).slice(0, 40).map((h) => (
                 <tr key={h.id} className="border-t border-[var(--border-default)]/40">
                   <td className="px-3 py-1.5 text-[10.5px] text-[var(--text-muted)] tabular-nums">{kst(h.filled_at || h.created_at)}</td>
                   <td className="px-2 font-bold" style={{ color: h.side === "BUY" ? RED : BLUE }}>
