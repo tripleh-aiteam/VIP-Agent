@@ -789,18 +789,41 @@ export default function ScalpDesk({ mode }: { mode: ScalpMode }) {
               </tr>
             </thead>
             <tbody>
-              {st.positions.map((p) => (
-                <tr key={p.ticker} className="border-t border-[var(--border-default)]/40">
-                  <td className="px-3 py-1.5 font-bold text-[var(--text-primary)]">{p.name} <span className="text-[10px] font-normal text-[var(--text-muted)]">{p.ticker}</span></td>
-                  <td className="text-right px-2 tabular-nums">{fmt(p.qty)}</td>
-                  <td className="text-right px-2 tabular-nums">{fmt(p.avg_price)}</td>
-                  <td className="text-right px-2 tabular-nums">{fmt(livePx[p.ticker] ?? p.live_price)}</td>
-                  <td className="text-right px-2 tabular-nums">{fmt(p.value)}</td>
-                  <td className="text-right px-3 tabular-nums font-extrabold" style={{ color: pnlCol(p.unrealized_pnl) }}>
-                    {p.unrealized_pnl != null ? `${p.unrealized_pnl > 0 ? "+" : ""}${fmt(p.unrealized_pnl)} (${p.unrealized_pnl_pct}%)` : "-"}
-                  </td>
-                </tr>
-              ))}
+              {st.positions.map((p) => {
+                const managed = sc?.stocks?.some((x) => x.code === p.ticker && x.state === "LONG");
+                return (
+                  <tr key={p.ticker} className="border-t border-[var(--border-default)]/40">
+                    <td className="px-3 py-1.5 font-bold text-[var(--text-primary)]">
+                      {p.name} <span className="text-[10px] font-normal text-[var(--text-muted)]">{p.ticker}</span>
+                      {managed ? (
+                        <span className="ml-1.5 text-[9.5px] font-extrabold px-1.5 py-0.5 rounded-full text-white" style={{ background: PURPLE }}>
+                          ⚡ {t("기계 관리 중", "managed")}
+                        </span>
+                      ) : (
+                        <button onClick={async () => {
+                          if (!confirm(t(
+                            `${p.name} ${fmt(p.qty)}주를 알고리즘 2에 맡길까요? 다음 15초 안에 규칙대로 팝니다 (목표 도달 시 즉시 매도 / −1% 손절 / 15:18 정리).`,
+                            `Hand ${p.name} × ${fmt(p.qty)} sh to Algorithm 2? It manages the exit from the next 15s beat (sell at take / −1% stop / EOD flat).`))) return;
+                          const r = await apiPost<{ ok: boolean; error?: string; take_at?: number }>(`/paper-desk/scalp/adopt?code=${p.ticker}`);
+                          setNote(r.ok ? t(`⚡ 맡김 — 목표 ₩${fmt(r.take_at)} 도달 시 자동 매도`, `⚡ adopted — auto-sells at ₩${fmt(r.take_at)}`) : `❌ ${r.error}`);
+                          load();
+                        }}
+                          className="ml-1.5 text-[10px] font-extrabold px-2 py-0.5 rounded-full border"
+                          style={{ borderColor: PURPLE, color: PURPLE }}>
+                          ⚡ {t("맡기기", "hand to Algo 2")}
+                        </button>
+                      )}
+                    </td>
+                    <td className="text-right px-2 tabular-nums">{fmt(p.qty)}</td>
+                    <td className="text-right px-2 tabular-nums">{fmt(p.avg_price)}</td>
+                    <td className="text-right px-2 tabular-nums">{fmt(livePx[p.ticker] ?? p.live_price)}</td>
+                    <td className="text-right px-2 tabular-nums">{fmt(p.value)}</td>
+                    <td className="text-right px-3 tabular-nums font-extrabold" style={{ color: pnlCol(p.unrealized_pnl) }}>
+                      {p.unrealized_pnl != null ? `${p.unrealized_pnl > 0 ? "+" : ""}${fmt(p.unrealized_pnl)} (${p.unrealized_pnl_pct}%)` : "-"}
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>

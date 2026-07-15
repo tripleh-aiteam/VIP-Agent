@@ -289,6 +289,14 @@ def scalp_params(take_pct: Optional[float] = Query(None), stop_pct: Optional[flo
     return set_params(db, take_pct=take_pct, stop_pct=stop_pct, pos_pct=pos_pct, codes=codes)
 
 
+@router.post("/scalp/adopt")
+def scalp_adopt(code: str = Query(...), db: Session = Depends(get_db)):
+    """⚡ 맡기기: hand a manual position to Algorithm 2 — it manages the exit
+    (take / stop / EOD) from the next 15s beat."""
+    from services.scalp_trader import adopt
+    return adopt(db, code)
+
+
 @router.post("/scalp/tick")
 def scalp_tick(force: bool = Query(False), db: Session = Depends(get_db)):
     """Manual heartbeat (testing) — the scheduler fires this every 15s anyway."""

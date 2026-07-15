@@ -368,6 +368,37 @@ def tick(db, force: bool = False) -> dict[str, Any]:
     return out
 
 
+def adopt(db, code: str) -> dict[str, Any]:
+    """⚡ 맡기기 (boss 2026-07-15: manual buy sat unsold at +2.2%): hand a
+    hand-bought position to Algorithm 2. Creates an OPEN scalp row at the
+    position's avg price — the next 15s beat manages the exit by the ripple
+    rules (take / −1% stop / EOD flat)."""
+    _ensure(db)
+    code = str(code).strip().zfill(6)
+    row = db.execute(text(
+        "SELECT qty, avg_price FROM paper_desk_positions WHERE ticker=:t AND qty>0"),
+        {"t": code}).first()
+    if not row:
+        return {"ok": False, "error": "no shares held"}
+    existing = db.execute(text(
+        "SELECT 1 FROM scalp_trades WHERE ticker=:t AND status='OPEN'"),
+        {"t": code}).first()
+    if existing:
+        return {"ok": False, "error": "already managed by Algorithm 2"}
+    qty, avg = int(row[0]), float(row[1])
+    cfg = _cfg(db)
+    db.execute(text(
+        "INSERT INTO scalp_trades (ticker, name, qty, entry, why) VALUES (:t,:n,:q,:e,:w)"),
+        {"t": code, "n": _name(code), "q": qty, "e": avg,
+         "w": "👤 수동 매수 → ⚡ 알고리즘 2 위임 (보스 클릭)"})
+    db.commit()
+    if code not in cfg["codes"] and len(cfg["codes"]) < 24:
+        set_params(db, codes=",".join(cfg["codes"] + [code]))   # card + buffers track it
+    return {"ok": True, "code": code, "qty": qty, "entry": avg,
+            "take_at": round(avg * (1 + cfg["take_pct"] / 100)),
+            "stop_at": round(avg * (1 - cfg["stop_pct"] / 100))}
+
+
 def status(db) -> dict[str, Any]:
     """Everything the Algorithm 2 page needs, one call."""
     cfg = _cfg(db)
