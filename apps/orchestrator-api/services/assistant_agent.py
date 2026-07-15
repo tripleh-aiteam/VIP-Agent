@@ -4092,11 +4092,31 @@ def _append_krw_to_usd(text: str) -> str:
 
 # Korean companies with US-listed ADRs — 'SK Hynix ADR price?' must answer the US line,
 # never the Korean listing dressed up as an ADR (2026-07-15 boss feedback).
-_ADR_US = {"000660": ("HXSCL", "OTC"), "005930": ("SSNLF", "OTC"),
+# SK하이닉스 = SKHYV on NasdaqGS (verified via Yahoo symbol search; old OTC HXSCL is dead).
+_ADR_US = {"000660": ("SKHYV", "NASDAQ"), "005930": ("SSNLF", "OTC"),
            "017670": ("SKM", "NYSE"), "030200": ("KT", "NYSE"),
            "105560": ("KB", "NYSE"), "055550": ("SHG", "NYSE"),
            "015760": ("KEP", "NYSE"), "005490": ("PKX", "NYSE"),
            "034220": ("LPL", "NYSE")}
+
+
+def _us_quote(symbol: str) -> Optional[dict]:
+    """Live US quote via Yahoo's chart API (no key). Returns price/prev/pct or None."""
+    try:
+        import httpx as _hx
+        j = _hx.get(f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}"
+                    "?interval=1d&range=5d",
+                    headers={"User-Agent": "Mozilla/5.0"}, timeout=10).json()
+        m = j["chart"]["result"][0]["meta"]
+        px = m.get("regularMarketPrice")
+        prev = m.get("chartPreviousClose")
+        if px is None:
+            return None
+        pct = ((float(px) / float(prev)) - 1) * 100 if prev else None
+        return {"price": float(px), "prev": prev, "pct": pct,
+                "exchange": m.get("fullExchangeName") or m.get("exchangeName")}
+    except Exception:
+        return None
 
 
 # Plain LLM tasks — 'translate this to Korean: …', '요약해줘: …'. The text being worked on
@@ -5075,16 +5095,26 @@ def _run_agent_impl(
         if _kc and _kc in _ADR_US:
             _us, _exch = _ADR_US[_kc]
             _ans = None
-            try:
-                from services.stock_advisor_chat import ask as _stock_direct
-                _q = (f"What is {_us} trading at right now?" if _en_a else f"{_us} 지금 얼마야?")
-                _d = _stock_direct(_q, lang, [])
-                if isinstance(_d, dict):
-                    _c = (_d.get("reply") or "").strip()
-                    if _c and "$" in _c:
-                        _ans = _c
-            except Exception:
-                pass
+            # PRIMARY: deterministic Yahoo quote — real number, no LLM in the loop
+            _yq = _us_quote(_us)
+            if _yq:
+                _p = _yq["price"]
+                _pcts = f" ({_yq['pct']:+.2f}% vs prev close)" if _yq.get("pct") is not None else ""
+                _src = _yq.get("exchange") or _exch
+                _ans = (f"**${_p:,.2f}**{_pcts} — {_src}, Yahoo Finance (may be slightly delayed)."
+                        if _en_a else
+                        f"**${_p:,.2f}**{_pcts} — {_src} · Yahoo Finance 기준 (지연 가능).")
+            if not _ans:
+                try:
+                    from services.stock_advisor_chat import ask as _stock_direct
+                    _q = (f"What is {_us} trading at right now?" if _en_a else f"{_us} 지금 얼마야?")
+                    _d = _stock_direct(_q, lang, [])
+                    if isinstance(_d, dict):
+                        _c = (_d.get("reply") or "").strip()
+                        if _c and "$" in _c:
+                            _ans = _c
+                except Exception:
+                    pass
             if _ans:
                 _hd = (f"**{_kn} ADR ({_us} · {_exch})** — the US-listed line:\n\n" if _en_a
                        else f"**{_kn} ADR ({_us} · {_exch})** — 미국 상장 기준:\n\n")
