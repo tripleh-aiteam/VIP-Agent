@@ -25,9 +25,10 @@ const pnlCol = (v?: number | null) => (v == null ? "var(--text-muted)" : v > 0 ?
 export type ScalpMode = "auto" | "manual";
 
 type ScalpStock = {
-  code: string; name: string; price?: number | null; state: "WAIT" | "LONG";
+  code: string; name: string; price?: number | null; chg?: number | null; state: "WAIT" | "LONG";
   entry?: number | null; qty?: number | null; pnl_pct?: number | null;
   take_at?: number | null; stop_at?: number | null; bounce_pct?: number | null; buf_n?: number;
+  pred?: { pred_pct: number; pred_price: number; up_rate: number; n: number } | null;
 };
 type ScalpStatus = {
   enabled: boolean; take_pct: number; stop_pct: number; pos_pct: number; codes: string[];
@@ -38,15 +39,20 @@ type ScalpStatus = {
   market_open: boolean; fee_note_ko: string; fee_note_en: string;
 };
 type Position = { ticker: string; name: string; qty: number; avg_price: number;
-                  live_price?: number | null; unrealized_pnl_pct?: number | null };
+                  live_price?: number | null; value?: number;
+                  unrealized_pnl?: number | null; unrealized_pnl_pct?: number | null };
 type StockItem = { code: string; name: string; market?: string };
 type QuoteRes = { ok: boolean; ticker?: string; name?: string; price?: number; error?: string };
 type Order = { id: number; ticker: string; name: string; side: string; qty: number;
                order_type: string; limit_price?: number | null; status?: string;
                fill_price?: number | null; realized_pnl?: number | null;
-               realized_pnl_pct?: number | null; created_at?: string };
-type DeskState = { cash: number; equity: number; positions: Position[];
-                   open_orders: Order[]; history: Order[] };
+               realized_pnl_pct?: number | null; created_at?: string;
+               filled_at?: string | null; source?: string | null };
+type DeskState = { cash: number; equity: number; positions_value?: number;
+                   total_pnl?: number; total_pnl_pct?: number;
+                   record?: { trades: number; wins: number; win_rate: number | null };
+                   positions: Position[]; open_orders: Order[]; history: Order[] };
+const srcBadge = (s?: string | null) => (s === "algo1" ? "🤖" : s === "algo2" ? "⚡" : s === "guard" ? "🛡️" : "👤");
 type OBLevel = { price: number; qty?: number; last_qty?: number; max_qty?: number;
                  is_large?: boolean; age_sec?: number; side?: string };
 type OBView = {
@@ -214,6 +220,7 @@ export default function ScalpDesk({ mode }: { mode: ScalpMode }) {
   const [sellAt, setSellAt] = useState("");
   const [note, setNote] = useState<string | null>(null);
   const [livePx, setLivePx] = useState<Record<string, number>>({});
+  const [liveChg, setLiveChg] = useState<Record<string, number>>({});
   const [stockList, setStockList] = useState<StockItem[]>([]);
   const [addQ, setAddQ] = useState("");
   const [addBusy, setAddBusy] = useState(false);
@@ -260,15 +267,20 @@ export default function ScalpDesk({ mode }: { mode: ScalpMode }) {
   useEffect(() => {
     const tick = () => {
       const codes = sc?.codes?.length ? sc.codes : ["000660", "005930"];
-      api<{ prices: Record<string, { price: number }> }>(`/paper-desk/prices?codes=${codes.join(",")}`)
+      api<{ prices: Record<string, { price: number; chg?: number | null }> }>(`/paper-desk/prices?codes=${codes.join(",")}`)
         .then((r) => {
           const m: Record<string, number> = {};
-          Object.entries(r.prices || {}).forEach(([c, v]) => { if (v?.price != null) m[c] = v.price; });
+          const g: Record<string, number> = {};
+          Object.entries(r.prices || {}).forEach(([c, v]) => {
+            if (v?.price != null) m[c] = v.price;
+            if (v?.chg != null) g[c] = v.chg;
+          });
           if (Object.keys(m).length) setLivePx((old) => ({ ...old, ...m }));
+          if (Object.keys(g).length) setLiveChg((old) => ({ ...old, ...g }));
         }).catch(() => {});
     };
     tick();
-    const i = setInterval(tick, 3000);
+    const i = setInterval(tick, 2000);
     return () => clearInterval(i);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sc?.codes?.join(",")]);
@@ -350,11 +362,36 @@ export default function ScalpDesk({ mode }: { mode: ScalpMode }) {
             {t("수동 (호가창)", "Manual")}
           </Link>
         </div>
-        {st && <span className="ml-auto text-[12px] text-[var(--text-muted)]">
-          {t("현금", "Cash")} <b className="text-[var(--text-primary)] tabular-nums">₩{fmt(st.cash)}</b>
-          <span className="ml-3">{t("총자산", "Equity")} <b className="text-[var(--text-primary)] tabular-nums">₩{fmt(st.equity)}</b></span>
-        </span>}
       </div>
+
+      {/* 💼 account strip — same shape as Algorithm 1 (boss 2026-07-15) */}
+      {st && (
+        <div className="mt-3 flex items-center gap-4 flex-wrap text-[12px] rounded-xl border px-4 py-2.5"
+          style={{ borderColor: "var(--border-default)", background: "var(--bg-elevated)" }}>
+          <span className="text-[var(--text-muted)]">{t("현금", "Cash")} <b className="text-[13.5px] text-[var(--text-primary)] tabular-nums">₩{fmt(st.cash)}</b></span>
+          <span className="text-[var(--text-muted)]">{t("평가액", "Positions")} <b className="text-[13.5px] text-[var(--text-primary)] tabular-nums">₩{fmt(st.positions_value)}</b></span>
+          <span className="text-[var(--text-muted)]">{t("총자산", "Equity")} <b className="text-[14px] text-[var(--text-primary)] tabular-nums">₩{fmt(st.equity)}</b></span>
+          {st.total_pnl != null && (
+            <span className="font-extrabold tabular-nums" style={{ color: pnlCol(st.total_pnl) }}>
+              {t("총손익", "Total P&L")} {st.total_pnl > 0 ? "+" : ""}{fmt(st.total_pnl)} ({st.total_pnl_pct}%)
+            </span>
+          )}
+          {st.record && st.record.trades > 0 && (
+            <span className="text-[11px] text-[var(--text-muted)]">
+              {t(`전체 기록: ${st.record.trades}회 · 승률 ${st.record.win_rate ?? "-"}%`,
+                 `record: ${st.record.trades} trades · win ${st.record.win_rate ?? "-"}%`)}
+            </span>
+          )}
+          <button onClick={async () => {
+            if (!confirm(t("모의계좌에 ₩1억을 추가할까요? (가짜 돈)", "Add ₩100M to the paper account? (fake money)"))) return;
+            await apiPost("/paper-desk/deposit?amount=100000000");
+            load();
+          }}
+            className="ml-auto text-[11.5px] font-extrabold px-3 py-1 rounded-lg text-white" style={{ background: "#2e7d32" }}>
+            💰 {t("자금 추가", "Add funds")}
+          </button>
+        </div>
+      )}
 
       {/* today's scalp record — both modes care */}
       {sc && (
@@ -452,18 +489,38 @@ export default function ScalpDesk({ mode }: { mode: ScalpMode }) {
               <div className="mt-3 grid md:grid-cols-2 gap-3">
                 {sc.stocks.map((s) => {
                   const px = livePx[s.code] ?? s.price;
+                  const chg = liveChg[s.code] ?? s.chg;
                   return (
                     <div key={s.code} className="rounded-xl border px-4 py-3"
                       style={{ borderColor: s.state === "LONG" ? PURPLE : "var(--border-default)", background: "var(--bg-elevated)" }}>
                       <div className="flex items-baseline gap-2 flex-wrap">
                         <b className="text-[15.5px] text-[var(--text-primary)]">{s.name}</b>
                         <span className="text-[10.5px] text-[var(--text-muted)]">{s.code}</span>
-                        <span className="text-[15px] font-extrabold tabular-nums text-[var(--text-primary)]">₩{fmt(px)}</span>
+                        <span className="text-[15px] font-extrabold tabular-nums text-[var(--text-primary)]">
+                          ₩{fmt(px)}
+                          {chg != null && (
+                            <span className="ml-1 text-[12.5px]" style={{ color: chg >= 0 ? RED : BLUE }}>
+                              {chg >= 0 ? "▲" : "▼"}{Math.abs(chg).toFixed(2)}%
+                            </span>
+                          )}
+                        </span>
                         <span className="ml-auto text-[12px] font-extrabold px-2 py-0.5 rounded-full text-white"
                           style={{ background: s.state === "LONG" ? PURPLE : "var(--text-muted)" }}>
                           {s.state === "LONG" ? t("보유 중", "LONG") : t("상승 시작 대기", "WAITING")}
                         </span>
                       </div>
+                      {/* ⏱️ next-5-minutes analog forecast (boss 2026-07-15) */}
+                      {s.pred && px != null && (
+                        <div className="mt-1 text-[11.5px] font-bold tabular-nums"
+                          style={{ color: s.pred.pred_pct >= 0 ? RED : BLUE }}>
+                          ⏱️ {t(`5분 후 예측: ₩${fmt(s.pred.pred_price)} (${s.pred.pred_pct >= 0 ? "+" : ""}${s.pred.pred_pct}%)`,
+                                `5-min forecast: ₩${fmt(s.pred.pred_price)} (${s.pred.pred_pct >= 0 ? "+" : ""}${s.pred.pred_pct}%)`)}
+                          <span className="ml-1 font-normal text-[var(--text-muted)]">
+                            {t(`· 과거 유사장면 ${s.pred.n}번 중 ${s.pred.up_rate}% 상승`,
+                               `· ${s.pred.up_rate}% of ${s.pred.n} similar past moments rose`)}
+                          </span>
+                        </div>
+                      )}
                       {s.state === "LONG" ? (
                         <div className="mt-1.5 text-[12.5px] tabular-nums text-[var(--text-secondary)]">
                           {t("매수가", "entry")} ₩{fmt(s.entry)} × {fmt(s.qty)}{t("주", "sh")}
@@ -527,9 +584,27 @@ export default function ScalpDesk({ mode }: { mode: ScalpMode }) {
               );
             })}
             <span className="ml-auto text-[17px] font-extrabold tabular-nums text-[var(--text-primary)]">
-              ₩{fmt(selPx)} <span className="text-[10.5px] font-normal text-[var(--text-muted)]">{t("3초 실시간 (키움)", "live 3s (Kiwoom)")}</span>
+              ₩{fmt(selPx)}
+              {(liveChg[sel] ?? sc?.stocks?.find((x) => x.code === sel)?.chg) != null && (
+                <span className="ml-1 text-[13.5px]" style={{ color: (liveChg[sel] ?? 0) >= 0 ? RED : BLUE }}>
+                  {(liveChg[sel] ?? 0) >= 0 ? "▲" : "▼"}{Math.abs(liveChg[sel] ?? sc?.stocks?.find((x) => x.code === sel)?.chg ?? 0).toFixed(2)}%
+                </span>
+              )}
+              <span className="ml-1 text-[10.5px] font-normal text-[var(--text-muted)]">{t("2초 실시간 (키움)", "live 2s (Kiwoom)")}</span>
             </span>
           </div>
+          {(() => {
+            const sp = sc?.stocks?.find((x) => x.code === sel);
+            return sp?.pred ? (
+              <div className="mt-1 text-[11.5px] font-bold tabular-nums" style={{ color: sp.pred.pred_pct >= 0 ? RED : BLUE }}>
+                ⏱️ {t(`5분 후 예측: ₩${fmt(sp.pred.pred_price)} (${sp.pred.pred_pct >= 0 ? "+" : ""}${sp.pred.pred_pct}%)`,
+                      `5-min forecast: ₩${fmt(sp.pred.pred_price)} (${sp.pred.pred_pct >= 0 ? "+" : ""}${sp.pred.pred_pct}%)`)}
+                <span className="ml-1 font-normal text-[var(--text-muted)]">
+                  {t(`· 과거 유사장면 ${sp.pred.n}번 중 ${sp.pred.up_rate}% 상승`, `· ${sp.pred.up_rate}% of ${sp.pred.n} similar moments rose`)}
+                </span>
+              </div>
+            ) : null;
+          })()}
 
           <div className="mt-3 grid lg:grid-cols-[300px_1fr] gap-4">
             {/* left: the Kiwoom ladder + the deals actually happening */}
@@ -613,6 +688,82 @@ export default function ScalpDesk({ mode }: { mode: ScalpMode }) {
             </div>
           </div>
         </>
+      )}
+
+      {/* 💼 positions — same style as Algorithm 1 (both modes) */}
+      {st && st.positions.length > 0 && (
+        <div className="mt-4 rounded-xl border overflow-hidden" style={{ borderColor: "var(--border-default)" }}>
+          <div className="px-4 py-2 border-b border-[var(--border-default)] bg-[var(--bg-elevated)]">
+            <b className="text-[13.5px] text-[var(--text-primary)]">💼 {t("보유 종목", "Positions")} · {st.positions.length}</b>
+          </div>
+          <table className="w-full text-[12px]">
+            <thead>
+              <tr className="text-[10.5px] text-[var(--text-muted)]" style={{ background: "var(--bg-elevated)" }}>
+                <th className="text-left px-3 py-1.5">{t("종목", "Stock")}</th>
+                <th className="text-right px-2">{t("수량", "Qty")}</th>
+                <th className="text-right px-2">{t("평균단가", "Avg")}</th>
+                <th className="text-right px-2">{t("현재가", "Live")}</th>
+                <th className="text-right px-2">{t("평가액", "Value")}</th>
+                <th className="text-right px-3">{t("평가손익", "Unrealized")}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {st.positions.map((p) => (
+                <tr key={p.ticker} className="border-t border-[var(--border-default)]/40">
+                  <td className="px-3 py-1.5 font-bold text-[var(--text-primary)]">{p.name} <span className="text-[10px] font-normal text-[var(--text-muted)]">{p.ticker}</span></td>
+                  <td className="text-right px-2 tabular-nums">{fmt(p.qty)}</td>
+                  <td className="text-right px-2 tabular-nums">{fmt(p.avg_price)}</td>
+                  <td className="text-right px-2 tabular-nums">{fmt(livePx[p.ticker] ?? p.live_price)}</td>
+                  <td className="text-right px-2 tabular-nums">{fmt(p.value)}</td>
+                  <td className="text-right px-3 tabular-nums font-extrabold" style={{ color: pnlCol(p.unrealized_pnl) }}>
+                    {p.unrealized_pnl != null ? `${p.unrealized_pnl > 0 ? "+" : ""}${fmt(p.unrealized_pnl)} (${p.unrealized_pnl_pct}%)` : "-"}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {/* 🧾 FULL trade table — same columns as Algorithm 1 + who-traded badge
+          (boss 2026-07-15: "everything saved on the table" — buy time, price,
+           shares, win ₩, win %) */}
+      {st && st.history.length > 0 && (
+        <div className="mt-4 rounded-xl border overflow-hidden" style={{ borderColor: "var(--border-default)" }}>
+          <div className="px-4 py-2 border-b border-[var(--border-default)] bg-[var(--bg-elevated)]">
+            <b className="text-[13.5px] text-[var(--text-primary)]">🧾 {t("전체 매매 기록", "Trade History")}</b>
+            <span className="ml-2 text-[10px] text-[var(--text-muted)]">👤 {t("내 손", "manual")} · ⚡ Algo2 · 🤖 Algo1 · 🛡️ {t("가드", "guard")}</span>
+          </div>
+          <table className="w-full text-[12px]">
+            <thead>
+              <tr className="text-[10.5px] text-[var(--text-muted)]" style={{ background: "var(--bg-elevated)" }}>
+                <th className="text-left px-3 py-1.5">{t("시간", "Time")}</th>
+                <th className="text-left px-2">{t("구분", "Side")}</th>
+                <th className="text-left px-2">{t("종목", "Stock")}</th>
+                <th className="text-right px-2">{t("수량", "Qty")}</th>
+                <th className="text-right px-2">{t("체결가", "Fill")}</th>
+                <th className="text-right px-3">{t("실현손익 (₩ · %)", "Win (₩ · %)")}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {st.history.filter((h) => h.status === "FILLED").slice(0, 40).map((h) => (
+                <tr key={h.id} className="border-t border-[var(--border-default)]/40">
+                  <td className="px-3 py-1.5 text-[10.5px] text-[var(--text-muted)] tabular-nums">{kst(h.filled_at || h.created_at)}</td>
+                  <td className="px-2 font-bold" style={{ color: h.side === "BUY" ? RED : BLUE }}>
+                    {h.side === "BUY" ? t("매수", "BUY") : t("매도", "SELL")}
+                    <span className="ml-1 text-[10px] font-normal">{srcBadge(h.source)}</span>
+                  </td>
+                  <td className="px-2">{h.name}</td>
+                  <td className="text-right px-2 tabular-nums">{fmt(h.qty)}</td>
+                  <td className="text-right px-2 tabular-nums">{fmt(h.fill_price)}</td>
+                  <td className="text-right px-3 tabular-nums font-extrabold" style={{ color: pnlCol(h.realized_pnl) }}>
+                    {h.realized_pnl != null ? `${h.realized_pnl > 0 ? "+" : ""}${fmt(h.realized_pnl)} (${h.realized_pnl_pct}%)` : "-"}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       )}
 
       {/* recent scalp round trips — both modes */}

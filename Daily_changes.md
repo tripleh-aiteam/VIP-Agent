@@ -16,6 +16,12 @@ Boss's four morning asks on a +12% SKH day: (1) prove machines don't trade while
 - [routers/paper_desk.py](apps/orchestrator-api/routers/paper_desk.py) — /prices returns `chg` (today's %).
 - [desk.tsx](apps/admin-dashboard/src/app/testing/desk.tsx) — board shows ONLY 000660+005930+boss-selected (qualified/dynamic no longer auto-surface); other firing stocks appear as one slim 🔥 chip row (click = full panel); header price = real-time + colored ▲/▼% on a 2s lane; history rows show who traded (👤🤖🛡️⚡).
 
+### [PM] Algorithm 2 → Algorithm-1-grade UI + ⏱️ 5-min forecast (boss: "I wanna start to use Algorithm 2")
+
+- **What:** (1) Account strip identical to Algo 1: Cash · 평가액 · Equity · Total P&L(%) · record + 💰 자금 추가 (deposit ₩100M). (2) Stock cards + manual header show **real-time price + today's ▲/▼%** on the 2s lane. (3) **⏱️ 5분 후 예측** per stock: `pattern_layer.next_bar_vote` — same analog machinery scalper-sized (WIN=12 bars, HORIZON=1 bar, K=60, same cached year) → predicted price + ±% + up-rate; shown on auto cards AND the manual header. (4) 💼 Positions table w/ live unrealized P&L + 🧾 full Algo-1-style Trade History (time/side/stock/qty/fill/win₩·win%) with 👤⚡🤖🛡️ source badges — both modes ("everything saved on the table"). Live-tested: SKH pred ₩2,139,180 (+0.10%), status 2s cold / fast cached.
+- **Files:** [services/pattern_layer.py](apps/orchestrator-api/services/pattern_layer.py), [services/scalp_trader.py](apps/orchestrator-api/services/scalp_trader.py), [scalp-desk.tsx](apps/admin-dashboard/src/app/testing/scalp-desk.tsx)
+- **Next:** grade the 5-min forecasts (store + compare) once he trades with them; frontend polls could show pred age.
+
 ### Verified
 
 - Audit: today's mass sell 09:23-26 + ₩10M buys = all router/manual (machine books empty, both switches respected; duplicate not-enough-shares rejects 5-10s apart = human double-clicks). auto OFF since 07-14 10:03 KST.

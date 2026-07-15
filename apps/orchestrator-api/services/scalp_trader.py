@@ -337,14 +337,31 @@ def status(db) -> dict[str, Any]:
         buf = _buf.get(code)
         lo = min((p for _, p in buf), default=None) if buf else None
         bounce = round((px / lo - 1) * 100, 2) if (px and lo) else None
+        # today's change% (cached by _live_price) — the boss's real-time display
+        chg = None
+        try:
+            from services.paper_desk import _chg_cache
+            chg = _chg_cache.get(code)
+        except Exception:
+            pass
+        # ⏱️ next-5-minutes analog forecast (boss 2026-07-15): predicted price + ±%
+        pred = None
+        try:
+            from services.pattern_layer import next_bar_vote
+            nb = next_bar_vote(db, code)
+            if nb and px:
+                pred = {**nb, "pred_price": round(px * (1 + nb["pred_pct"] / 100))}
+        except Exception:
+            db.rollback()
         stocks.append({
-            "code": code, "name": _name(code), "price": px,
+            "code": code, "name": _name(code), "price": px, "chg": chg,
             "state": "LONG" if o else "WAIT",
             "entry": o["entry"] if o else None, "qty": o["qty"] if o else None,
             "pnl_pct": round((px / o["entry"] - 1) * 100 - 0.23, 2) if (o and px) else None,
             "take_at": round(o["entry"] * (1 + cfg["take_pct"] / 100)) if o else None,
             "stop_at": round(o["entry"] * (1 - cfg["stop_pct"] / 100)) if o else None,
-            "bounce_pct": bounce, "buf_n": len(buf) if buf else 0})
+            "bounce_pct": bounce, "buf_n": len(buf) if buf else 0,
+            "pred": pred})
     today = db.execute(text(
         "SELECT count(*), coalesce(sum(CASE WHEN net_pct>0 THEN 1 ELSE 0 END),0), "
         "coalesce(sum(net_pct),0) FROM scalp_trades WHERE status='CLOSED' "

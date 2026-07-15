@@ -149,3 +149,61 @@ def pattern_vote(db, code: str) -> Optional[dict[str, Any]]:
             pass
         logger.warning("pattern_vote failed %s: %s", code, str(e)[:100])
         return None
+
+
+# ---- ⏱️ 5-MINUTE forecast for the Algorithm-2 scalper (boss 2026-07-15) ------- #
+# Same analog machinery, scalper-sized: current shape = last 12 bars (~1 hour),
+# outcome = the very NEXT 5-minute bar. Shares _load_history's cached year.
+NB_WIN = 12
+NB_K = 60
+
+
+def next_bar_vote(db, code: str) -> Optional[dict[str, Any]]:
+    """Predict the next ~5 minutes: {pred_pct, up_rate, n} or None."""
+    try:
+        import numpy as np
+
+        from services.cycle_scalp import _bars
+        code = str(code).zfill(6)
+        cur_bars = _bars(db, code, limit=NB_WIN + 1)
+        if len(cur_bars) < NB_WIN + 1:
+            return None
+        cur_close = np.array([b["close"] for b in cur_bars], dtype=np.float64)
+        cur_ret = np.diff(cur_close) / cur_close[:-1]
+        cstd = float(cur_ret.std())
+        if cstd < 1e-6:
+            return None
+        cur_norm = (cur_ret - cur_ret.mean()) / cstd
+
+        h = _load_history(db, code)
+        if not h:
+            return None
+        closes, days = h["closes"], h["days"]
+        rets = np.diff(closes) / closes[:-1]
+        n = len(rets)
+        if n < NB_WIN + 1 + 50:
+            return None
+        from numpy.lib.stride_tricks import sliding_window_view
+        windows = sliding_window_view(rets, NB_WIN)[: n - NB_WIN - 1]
+        idx = np.arange(len(windows))
+        fwd = (closes[idx + NB_WIN + 1] - closes[idx + NB_WIN]) / closes[idx + NB_WIN]
+        same_day = days[idx] == days[np.minimum(idx + NB_WIN + 1, len(days) - 1)]
+        windows, fwd = windows[same_day], fwd[same_day]
+        if len(windows) < NB_K * 2:
+            return None
+        mean = windows.mean(axis=1, keepdims=True)
+        std = windows.std(axis=1, keepdims=True)
+        std[std < 1e-9] = 1e-9
+        wn = (windows - mean) / std
+        dist = np.linalg.norm(wn - cur_norm, axis=1)
+        near = np.argsort(dist)[:NB_K]
+        return {"pred_pct": round(float(fwd[near].mean() * 100), 3),
+                "up_rate": round(float((fwd[near] > 0).mean() * 100)),
+                "n": NB_K}
+    except Exception as e:
+        try:
+            db.rollback()
+        except Exception:
+            pass
+        logger.warning("next_bar_vote failed %s: %s", code, str(e)[:100])
+        return None
