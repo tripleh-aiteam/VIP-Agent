@@ -5051,6 +5051,11 @@ def _run_agent_impl(
         try:
             from services.stock_resolver import resolve_one
             _kc, _kn = resolve_one(transcript or "")
+            if not _kc:                     # bare 'what is the US ADR price?' → inherit
+                for _h in reversed(history or []):
+                    _kc, _kn = resolve_one(str(_h.get("content") or _h.get("text") or ""))
+                    if _kc:
+                        break
         except Exception:
             _kc = _kn = None
         _en_a = str(lang or "").lower().startswith("en")
@@ -5088,6 +5093,12 @@ def _run_agent_impl(
                    f"\"{_kn} 얼마야?\"로 확인하실 수 있습니다.")
             return {"intent": "adr_price", "language": lang, "reply": _fb, "action": None,
                     "speak": True, "transcript": transcript, "tool_used": None}
+        _fb = ("Which company's ADR do you mean? (e.g. \"SK Telecom ADR price\" — I can quote "
+               "NYSE-listed Korean ADRs like SKM, KB, PKX, KEP directly.)" if _en_a else
+               "어느 회사의 ADR을 말씀하시나요? (예: \"SK텔레콤 ADR 가격\" — SKM, KB, PKX, KEP 같은 "
+               "NYSE 상장 한국 ADR은 바로 시세를 드릴 수 있습니다.)")
+        return {"intent": "adr_price", "language": lang, "reply": _fb, "action": None,
+                "speak": True, "transcript": transcript, "tool_used": None}
 
     # === MY P&L — 'Yesterday how much I won?' → the 모의투자 desk's realized result for
     # that period (must run BEFORE context-math/price-history, which stole this question).
