@@ -20,6 +20,23 @@ const kst = (iso?: string | null) => {
   const s = /Z$|[+-]\d{2}:\d{2}$/.test(iso) ? iso : `${iso}Z`;
   return new Date(s).toLocaleString("sv-SE", { timeZone: "Asia/Seoul" }).slice(5, 16);
 };
+// scalper time: exact HH:MM:SS (a ripple lives minutes — minutes-only hides the story)
+const kstSec = (iso?: string | null) => {
+  if (!iso) return "";
+  const s = /Z$|[+-]\d{2}:\d{2}$/.test(iso) ? iso : `${iso}Z`;
+  return new Date(s).toLocaleString("sv-SE", { timeZone: "Asia/Seoul" }).slice(11, 19);
+};
+// held duration, human style: "4분 32초" / "1시간 5분"
+const heldFor = (a?: string | null, b?: string | null, ko = true) => {
+  if (!a || !b) return "";
+  const pa = /Z$|[+-]\d{2}:\d{2}$/.test(a) ? a : `${a}Z`;
+  const pb = /Z$|[+-]\d{2}:\d{2}$/.test(b) ? b : `${b}Z`;
+  const sec = Math.max(0, Math.round((new Date(pb).getTime() - new Date(pa).getTime()) / 1000));
+  const m = Math.floor(sec / 60), s = sec % 60, h = Math.floor(m / 60);
+  if (h > 0) return ko ? `${h}시간 ${m % 60}분` : `${h}h ${m % 60}m`;
+  if (m > 0) return ko ? `${m}분 ${s}초` : `${m}m ${s}s`;
+  return ko ? `${s}초` : `${s}s`;
+};
 const pnlCol = (v?: number | null) => (v == null ? "var(--text-muted)" : v > 0 ? RED : v < 0 ? BLUE : "var(--text-muted)");
 
 export type ScalpMode = "auto" | "semi" | "manual";
@@ -1002,7 +1019,9 @@ export default function ScalpDesk({ mode }: { mode: ScalpMode }) {
           <table className="w-full text-[12px]">
             <thead>
               <tr className="text-[10.5px] text-[var(--text-muted)]" style={{ background: "var(--bg-elevated)" }}>
-                <th className="text-left px-3 py-1.5">{t("매수 → 매도 시각", "Bought → Sold")}</th>
+                <th className="text-left px-3 py-1.5">{t("매수 시각", "Bought at")}</th>
+                <th className="text-left px-2">{t("매도 시각", "Sold at")}</th>
+                <th className="text-right px-2">⏱ {t("보유", "Held")}</th>
                 <th className="text-left px-2">{t("종목", "Stock")}</th>
                 <th className="text-right px-2">{t("수량", "Qty")}</th>
                 <th className="text-right px-2">{t("매수가 → 매도가", "Buy → Sell")}</th>
@@ -1013,8 +1032,15 @@ export default function ScalpDesk({ mode }: { mode: ScalpMode }) {
             <tbody>
               {sc.recent.map((r, i) => (
                 <tr key={i} className="border-t border-[var(--border-default)]/40">
-                  <td className="px-3 py-1.5 text-[10.5px] text-[var(--text-muted)] tabular-nums">
-                    {kst(r.opened_at)} → {kst(r.closed_at)?.slice(6) || kst(r.closed_at)}
+                  <td className="px-3 py-1.5 text-[11px] font-bold tabular-nums" style={{ color: RED }}>
+                    {kstSec(r.opened_at)}
+                    <div className="text-[9px] font-normal text-[var(--text-muted)]">{kst(r.opened_at)?.slice(0, 5)}</div>
+                  </td>
+                  <td className="px-2 text-[11px] font-bold tabular-nums" style={{ color: BLUE }}>
+                    {kstSec(r.closed_at)}
+                  </td>
+                  <td className="text-right px-2 text-[11px] tabular-nums text-[var(--text-secondary)]">
+                    {heldFor(r.opened_at, r.closed_at, lang === "ko")}
                   </td>
                   <td className="px-2 font-bold text-[var(--text-primary)]">{r.name}
                     {r.why && <div className="text-[9.5px] font-normal text-[var(--text-muted)] max-w-[260px]">{r.why}</div>}
