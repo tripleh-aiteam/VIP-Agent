@@ -70,6 +70,8 @@ def _ensure(db) -> None:
         " exit_reason TEXT, net_pct DOUBLE PRECISION,"
         " status TEXT NOT NULL DEFAULT 'OPEN',"
         " opened_at TIMESTAMPTZ DEFAULT now(), closed_at TIMESTAMPTZ)"))
+    db.execute(text(
+        "ALTER TABLE scalp_trades ADD COLUMN IF NOT EXISTS why TEXT"))
     r = db.execute(text("SELECT 1 FROM scalp_state WHERE id=1")).first()
     if not r:
         db.execute(text(
@@ -86,7 +88,7 @@ def _cfg(db) -> dict[str, Any]:
         "SELECT enabled, take_pct, stop_pct, pos_pct, codes FROM scalp_state WHERE id=1")).first()
     codes = [c.strip().zfill(6) for c in (r[4] or DEFAULT_CODES).split(",") if c.strip()]
     return {"enabled": bool(r[0]), "take_pct": float(r[1]), "stop_pct": float(r[2]),
-            "pos_pct": float(r[3]), "codes": codes[:8]}
+            "pos_pct": float(r[3]), "codes": codes[:24]}
 
 
 def set_enabled(db, on: bool) -> dict:
@@ -110,9 +112,9 @@ def set_params(db, take_pct: Optional[float] = None, stop_pct: Optional[float] =
         c = c.strip().zfill(6)
         if c.isdigit() and len(c) == 6 and c not in lst:
             lst.append(c)
-    # boss: SK하이닉스 · 삼성전자 always on top, then the others (max 8)
+    # boss: SK하이닉스 · 삼성전자 always on top, then the others (max 24 = full watchlist)
     mains = [c for c in ("000660", "005930") if c in lst]
-    lst = (mains + [c for c in lst if c not in ("000660", "005930")])[:8]
+    lst = (mains + [c for c in lst if c not in ("000660", "005930")])[:24]
     cs = ",".join(lst) or DEFAULT_CODES
     db.execute(text(
         "UPDATE scalp_state SET take_pct=:t, stop_pct=:s, pos_pct=:p, codes=:c, "
@@ -168,7 +170,7 @@ def _reconcile_external(db, out: dict) -> None:
         _close_row(db, out, oid, name, float(entry), fill, "EXTERNAL")
 
 
-def _book_ok(code: str) -> tuple[bool, str]:
+def _book_ok(code: str) -> tuple[bool, str, Optional[float]]:
     """② Kiwoom order book must agree: sellers not dominating the queue.
     Fail-open when the book isn't available (after-hours, IP-blocked local)."""
     try:
@@ -176,24 +178,62 @@ def _book_ok(code: str) -> tuple[bool, str]:
         ob = order_book(code, ttl=10)
         imb = (ob or {}).get("imbalance")
         if imb is None:
-            return True, "book n/a"
-        return (float(imb) >= BOOK_IMB_MIN), f"book {float(imb):+.2f}"
+            return True, "book n/a", None
+        return (float(imb) >= BOOK_IMB_MIN), f"book {float(imb):+.2f}", float(imb)
     except Exception:
-        return True, "book n/a"
+        return True, "book n/a", None
 
 
-def _peer_ok(code: str) -> tuple[bool, str]:
+def _peer_ok(code: str) -> tuple[bool, str, Optional[float]]:
     """③ the partner stock (SKH↔삼성전자 co-move, corr 0.83) must not be
     falling hard — if the pair leader is dropping, the bounce usually dies."""
     peer = PEER.get(code)
     if not peer:
-        return True, "no peer"
+        return True, "no peer", None
     buf = _buf.get(peer)
     if not buf or len(buf) < 5:
-        return True, "peer warming"
+        return True, "peer warming", None
     prices = [p for _, p in buf]
     r = (prices[-1] / prices[-5] - 1) * 100      # ~last 60 seconds
-    return (r > PEER_DROP_PCT), f"peer {r:+.2f}%/60s"
+    return (r > PEER_DROP_PCT), f"peer {r:+.2f}%/60s", round(r, 2)
+
+
+def _conviction(db, code: str, imb: Optional[float], peer_r: Optional[float]) -> tuple[float, str, str]:
+    """WHO decides the share count (boss 2026-07-15): base = pos_pct% of cash,
+    then the three voices scale it 0.7×~1.2×. Strong book + rising partner +
+    positive 5-min forecast → bigger; weak evidence → smaller. Returns
+    (multiplier, why_ko, why_en)."""
+    mult = 0.7
+    bits_ko: list[str] = []
+    bits_en: list[str] = []
+    if imb is not None and imb >= 0.10:
+        mult += 0.15
+        bits_ko.append("호가 매수우위")
+        bits_en.append("book buy-heavy")
+    if peer_r is not None and peer_r > 0.05:
+        mult += 0.15
+        bits_ko.append("짝꿍 상승 동행")
+        bits_en.append("partner rising")
+    pred_pct = up_rate = None
+    try:
+        from services.pattern_layer import next_bar_vote
+        nb = next_bar_vote(db, code)
+        if nb:
+            pred_pct, up_rate = nb.get("pred_pct"), nb.get("up_rate")
+    except Exception:
+        db.rollback()
+    if pred_pct is not None and pred_pct > 0:
+        mult += 0.15
+        bits_ko.append(f"5분예측 +{pred_pct}%")
+        bits_en.append(f"5m pred +{pred_pct}%")
+    if up_rate is not None and up_rate >= 55:
+        mult += 0.05
+        bits_ko.append(f"유사장면 {up_rate}% 상승")
+        bits_en.append(f"analogs {up_rate}% up")
+    mult = round(min(mult, 1.2), 2)
+    tail_ko = " · ".join(bits_ko) if bits_ko else "근거 보통 — 작게"
+    tail_en = " · ".join(bits_en) if bits_en else "modest evidence — sized down"
+    return mult, f"확신도 ×{mult} ({tail_ko})", f"conviction ×{mult} ({tail_en})"
 
 
 def _upturn(code: str, px: float) -> tuple[bool, float]:
@@ -235,16 +275,18 @@ def tick(db, force: bool = False) -> dict[str, Any]:
         return out
 
     # feed the 15s price memory for every configured stock (even when OFF —
-    # the moment he flips ON, the upturn detector already has its window)
+    # the moment he flips ON, the upturn detector already has its window).
+    # PARALLEL fetch: at 24 stocks a serial loop would eat the whole 15s beat.
     live: dict[str, float] = {}
     now_ts = datetime.now(KST).timestamp()
-    for code in cfg["codes"]:
-        p = _px(code)
-        if p is None:
-            continue
-        live[code] = float(p)
-        buf = _buf.setdefault(code, deque(maxlen=BUF_LEN))
-        buf.append((now_ts, float(p)))
+    from concurrent.futures import ThreadPoolExecutor
+    with ThreadPoolExecutor(max_workers=8) as _ex:
+        for code, p in zip(cfg["codes"], _ex.map(_px, cfg["codes"])):
+            if p is None:
+                continue
+            live[code] = float(p)
+            buf = _buf.setdefault(code, deque(maxlen=BUF_LEN))
+            buf.append((now_ts, float(p)))
 
     if not cfg["enabled"]:
         out["reason"] = "algorithm 2 is OFF"
@@ -299,27 +341,30 @@ def tick(db, force: bool = False) -> dict[str, Any]:
         if not fire:
             continue
         # three agreeing voices before money moves (boss 2026-07-14 round 2)
-        ok_book, why_book = _book_ok(code)
-        ok_peer, why_peer = _peer_ok(code)
+        ok_book, why_book, imb = _book_ok(code)
+        ok_peer, why_peer, peer_r = _peer_ok(code)
         if not (ok_book and ok_peer):
             logger.info("scalp: %s upturn but vetoed — %s · %s", code, why_book, why_peer)
             continue
-        equity = float(db.execute(text(
+        cash = float(db.execute(text(
             "SELECT cash FROM paper_desk_account WHERE id=1")).scalar() or 0)
-        qty = int(equity * cfg["pos_pct"] / 100 / live[code])
+        # WHO decides the size: pos_pct% of cash × conviction (0.7~1.2 from the voices)
+        mult, why_ko, _why_en = _conviction(db, code, imb, peer_r)
+        qty = int(cash * cfg["pos_pct"] / 100 * mult / live[code])
         if qty < 1:
             continue
         r = place_order(db, code, "BUY", qty, "market", source="algo2")
         if r.get("ok"):
             fill = float(r.get("fill_price") or live[code])
+            why = f"반등 +{bounce}% · {why_book} · {why_peer} · {why_ko}"
             db.execute(text(
-                "INSERT INTO scalp_trades (ticker, name, qty, entry) VALUES (:t,:n,:q,:e)"),
-                {"t": code, "n": _name(code), "q": qty, "e": fill})
+                "INSERT INTO scalp_trades (ticker, name, qty, entry, why) "
+                "VALUES (:t,:n,:q,:e,:w)"),
+                {"t": code, "n": _name(code), "q": qty, "e": fill, "w": why[:300]})
             db.commit()
             out["opened"].append({"code": code, "qty": qty, "entry": fill,
-                                  "bounce_pct": bounce, "book": why_book, "peer": why_peer})
-            logger.info("scalp: BUY %s x%d @ %s (bounce %.2f%% · %s · %s)",
-                        code, qty, fill, bounce, why_book, why_peer)
+                                  "bounce_pct": bounce, "why": why})
+            logger.info("scalp: BUY %s x%d @ %s (%s)", code, qty, fill, why)
     return out
 
 
@@ -353,6 +398,14 @@ def status(db) -> dict[str, Any]:
                 pred = {**nb, "pred_price": round(px * (1 + nb["pred_pct"] / 100))}
         except Exception:
             db.rollback()
+        # newly-added stocks have no deep 5-min history yet → fall back to the
+        # live 15s stream's drift (honest label: 단기 추세 기반)
+        if pred is None and px and buf and len(buf) >= 5:
+            prices = [p for _, p in buf]
+            drift = (prices[-1] / prices[-5] - 1) * 5   # last ~60s extrapolated to 5min
+            drift = max(-0.006, min(0.006, drift))       # clamp ±0.6%
+            pred = {"pred_pct": round(drift * 100, 3), "up_rate": None, "n": 0,
+                    "pred_price": round(px * (1 + drift)), "fallback": True}
         stocks.append({
             "code": code, "name": _name(code), "price": px, "chg": chg,
             "state": "LONG" if o else "WAIT",
@@ -364,21 +417,26 @@ def status(db) -> dict[str, Any]:
             "pred": pred})
     today = db.execute(text(
         "SELECT count(*), coalesce(sum(CASE WHEN net_pct>0 THEN 1 ELSE 0 END),0), "
-        "coalesce(sum(net_pct),0) FROM scalp_trades WHERE status='CLOSED' "
+        "coalesce(sum(net_pct),0), "
+        "coalesce(sum(qty * entry * net_pct / 100.0),0) "
+        "FROM scalp_trades WHERE status='CLOSED' "
         "AND closed_at::date=(now() AT TIME ZONE 'Asia/Seoul')::date")).first()
     recent = [{"name": r[0], "qty": int(r[1]), "entry": float(r[2]),
                "exit_price": (float(r[3]) if r[3] is not None else None),
                "exit_reason": r[4],
                "net_pct": (float(r[5]) if r[5] is not None else None),
-               "closed_at": str(r[6])}
+               "won": (round(int(r[1]) * float(r[2]) * float(r[5]) / 100)
+                       if r[5] is not None else None),
+               "closed_at": str(r[6]), "opened_at": str(r[7]), "why": r[8]}
               for r in db.execute(text(
-                  "SELECT name, qty, entry, exit_price, exit_reason, net_pct, closed_at "
-                  "FROM scalp_trades WHERE status='CLOSED' "
+                  "SELECT name, qty, entry, exit_price, exit_reason, net_pct, closed_at, "
+                  "opened_at, why FROM scalp_trades WHERE status='CLOSED' "
                   "ORDER BY closed_at DESC LIMIT 25"))]
     return {**cfg,
             "stocks": stocks,
             "today": {"trades": int(today[0] or 0), "wins": int(today[1] or 0),
-                      "net_pct_sum": round(float(today[2] or 0), 2)},
+                      "net_pct_sum": round(float(today[2] or 0), 2),
+                      "realized_won": round(float(today[3] or 0))},
             "recent": recent,
             "market_open": _market_open_now(),
             "fee_note_ko": "왕복 수수료+세금 0.23% — 목표 0.4%면 실수익 약 +0.17%",

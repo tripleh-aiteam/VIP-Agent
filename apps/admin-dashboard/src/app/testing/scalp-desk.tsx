@@ -28,14 +28,15 @@ type ScalpStock = {
   code: string; name: string; price?: number | null; chg?: number | null; state: "WAIT" | "LONG";
   entry?: number | null; qty?: number | null; pnl_pct?: number | null;
   take_at?: number | null; stop_at?: number | null; bounce_pct?: number | null; buf_n?: number;
-  pred?: { pred_pct: number; pred_price: number; up_rate: number; n: number } | null;
+  pred?: { pred_pct: number; pred_price: number; up_rate: number | null; n: number; fallback?: boolean } | null;
 };
 type ScalpStatus = {
   enabled: boolean; take_pct: number; stop_pct: number; pos_pct: number; codes: string[];
   stocks: ScalpStock[];
-  today: { trades: number; wins: number; net_pct_sum: number };
+  today: { trades: number; wins: number; net_pct_sum: number; realized_won?: number };
   recent: { name: string; qty: number; entry: number; exit_price?: number | null;
-            exit_reason?: string | null; net_pct?: number | null; closed_at?: string }[];
+            exit_reason?: string | null; net_pct?: number | null; won?: number | null;
+            closed_at?: string; opened_at?: string; why?: string | null }[];
   market_open: boolean; fee_note_ko: string; fee_note_en: string;
 };
 type Position = { ticker: string; name: string; qty: number; avg_price: number;
@@ -342,9 +343,6 @@ export default function ScalpDesk({ mode }: { mode: ScalpMode }) {
 
   const selPx = livePx[sel] ?? sc?.stocks?.find((s) => s.code === sel)?.price ?? null;
   const openLimits = (st?.open_orders || []).filter((o) => o.ticker === sel);
-  const todayFills = (st?.history || [])
-    .filter((o) => o.ticker === sel && o.status === "FILLED")   // no ₩- ghost rows
-    .slice(0, 8);
 
   return (
     <div className="max-w-[1100px] mx-auto px-4 py-5">
@@ -401,7 +399,8 @@ export default function ScalpDesk({ mode }: { mode: ScalpMode }) {
           style={{ borderColor: "var(--border-default)", background: "var(--bg-elevated)" }}>
           <span>📊 {t("오늘", "Today")}: <b>{sc.today.trades}</b>{t("회전", " round-trips")} · W/L <b>{sc.today.wins}/{sc.today.trades - sc.today.wins}</b></span>
           <span style={{ color: pnlCol(sc.today.net_pct_sum) }} className="font-extrabold tabular-nums">
-            {sc.today.net_pct_sum > 0 ? "+" : ""}{sc.today.net_pct_sum}% {t("(수수료 차감 후 합계)", "(net of fees, summed)")}
+            {sc.today.realized_won != null && `${sc.today.realized_won > 0 ? "+" : ""}₩${fmt(sc.today.realized_won)} · `}
+            {sc.today.net_pct_sum > 0 ? "+" : ""}{sc.today.net_pct_sum}% {t("(수수료 차감 후)", "(net of fees)")}
           </span>
           <span className="ml-auto text-[10.5px] text-[var(--text-muted)]">💸 {lang === "ko" ? sc.fee_note_ko : sc.fee_note_en}</span>
         </div>
@@ -430,6 +429,18 @@ export default function ScalpDesk({ mode }: { mode: ScalpMode }) {
             <option key={s.code} value={s.code}>{s.name} ({s.code})</option>
           ))}
         </select>
+        <button onClick={() => {
+          const all = Array.from(new Set([...MAINS, ...stockList.map((s) => s.code)])).slice(0, 24);
+          saveCodes(all);
+        }}
+          className="font-extrabold px-3 py-1 rounded-lg text-white" style={{ background: PURPLE }}>
+          ⭐ {t("전체 추가", "add ALL")}
+        </button>
+        <button onClick={() => saveCodes(MAINS)}
+          className="font-bold px-2 py-1 rounded-lg border text-[var(--text-muted)]"
+          style={{ borderColor: "var(--border-default)" }}>
+          ✕ {t("기본 2개로", "back to 2")}
+        </button>
         <input value={addQ} onChange={(e) => setAddQ(e.target.value)}
           onKeyDown={(e) => { if (e.key === "Enter") searchAdd(); }}
           placeholder={t("검색 (한글/영문/코드)…", "search (KR/EN/code)…")}
@@ -518,8 +529,10 @@ export default function ScalpDesk({ mode }: { mode: ScalpMode }) {
                           ⏱️ {t(`5분 후 예측: ₩${fmt(s.pred.pred_price)} (${s.pred.pred_pct >= 0 ? "+" : ""}${s.pred.pred_pct}%)`,
                                 `5-min forecast: ₩${fmt(s.pred.pred_price)} (${s.pred.pred_pct >= 0 ? "+" : ""}${s.pred.pred_pct}%)`)}
                           <span className="ml-1 font-normal text-[var(--text-muted)]">
-                            {t(`· 과거 유사장면 ${s.pred.n}번 중 ${s.pred.up_rate}% 상승`,
-                               `· ${s.pred.up_rate}% of ${s.pred.n} similar past moments rose`)}
+                            {s.pred.up_rate != null
+                              ? t(`· 과거 유사장면 ${s.pred.n}번 중 ${s.pred.up_rate}% 상승`,
+                                  `· ${s.pred.up_rate}% of ${s.pred.n} similar past moments rose`)
+                              : t("· 단기 추세 기반 (히스토리 수집 중)", "· short-trend based (history still collecting)")}
                           </span>
                         </div>
                       )}
@@ -561,6 +574,13 @@ export default function ScalpDesk({ mode }: { mode: ScalpMode }) {
               </div>
             </div>
           )}
+
+          {/* WHO decides the share count (boss 2026-07-15) */}
+          <div className="mt-3 rounded-xl border px-4 py-2.5 text-[12px] leading-relaxed text-[var(--text-secondary)]"
+            style={{ borderColor: "var(--border-default)", background: "var(--bg-elevated)" }}>
+            💰 {t(`수량은 누가 정하나요? 기본 = 현금의 ${sc?.pos_pct ?? 10}%, 그 위에 세 목소리의 확신도(×0.7~×1.2)를 곱합니다 — 호가 매수우위·짝꿍 상승·5분 예측이 강할수록 크게, 약할수록 작게 삽니다. 매수 이유와 확신도는 아래 기록에 저장됩니다.`,
+                  `Who decides the share count? Base = ${sc?.pos_pct ?? 10}% of cash, scaled by the three voices' conviction (×0.7~×1.2) — strong order book · rising partner · positive 5-min forecast buy bigger; weak evidence buys smaller. The reason is saved on every trade below.`)}
+          </div>
 
           {/* how it thinks — friend language */}
           <div className="mt-4 rounded-xl border px-4 py-3 text-[12.5px] leading-relaxed text-[var(--text-secondary)]"
@@ -672,21 +692,7 @@ export default function ScalpDesk({ mode }: { mode: ScalpMode }) {
                 )}
               </div>
 
-              {/* this stock's fills today */}
-              {todayFills.length > 0 && (
-                <div className="mt-3 rounded-xl border px-4 py-2.5 text-[12px]" style={{ borderColor: "var(--border-default)" }}>
-                  <b className="text-[var(--text-primary)]">🧾 {t("최근 체결", "Recent fills")}</b>
-                  {todayFills.map((o) => (
-                    <div key={o.id} className="flex items-center gap-2 py-0.5 tabular-nums text-[var(--text-secondary)]">
-                      <span className="font-bold" style={{ color: o.side === "BUY" ? RED : BLUE }}>{o.side}</span>
-                      <span>{fmt(o.qty)}{t("주", "sh")} @ ₩{fmt(o.fill_price)}</span>
-                      {o.realized_pnl_pct != null && <span className="font-extrabold" style={{ color: pnlCol(o.realized_pnl_pct) }}>
-                        {o.realized_pnl_pct > 0 ? "+" : ""}{o.realized_pnl_pct}%</span>}
-                      <span className="ml-auto text-[10.5px] text-[var(--text-muted)]">{kst(o.created_at)}</span>
-                    </div>
-                  ))}
-                </div>
-              )}
+              {/* recent fills moved to the bottom Trade History table (boss 2026-07-15) */}
             </div>
           </div>
         </>
@@ -768,27 +774,50 @@ export default function ScalpDesk({ mode }: { mode: ScalpMode }) {
         </div>
       )}
 
-      {/* recent scalp round trips — both modes */}
+      {/* ⚡ ALGORITHM 2 ACTIVITY — every round trip with the full numbers
+          (boss 2026-07-15: what bought, when, how many, win ₩ and %) */}
       {sc && sc.recent.length > 0 && (
-        <div className="mt-4 rounded-xl border px-4 py-3" style={{ borderColor: "var(--border-default)" }}>
-          <b className="text-[13.5px] text-[var(--text-primary)]">🧾 {t("알고리즘 2 매매 기록 (자동)", "Algorithm 2 trade log (auto)")}</b>
-          <div className="mt-1.5 text-[12px]">
-            {sc.recent.map((r, i) => (
-              <div key={i} className="flex items-center gap-2 py-1 border-t border-[var(--border-default)]/40 tabular-nums text-[var(--text-secondary)]">
-                <b className="text-[var(--text-primary)]">{r.name}</b>
-                <span>{fmt(r.qty)}{t("주", "sh")}</span>
-                <span>₩{fmt(r.entry)} → ₩{fmt(r.exit_price)}</span>
-                <span className="text-[10.5px] px-1.5 py-0.5 rounded-full font-bold"
-                  style={{ background: "var(--bg-elevated)", color: r.exit_reason === "TAKE" ? "#2e7d32" : r.exit_reason === "STOP" ? RED : "var(--text-muted)" }}>
-                  {r.exit_reason === "TAKE" ? t("작은 승리", "small win") : r.exit_reason === "STOP" ? t("손절", "stop") : r.exit_reason}
-                </span>
-                <span className="font-extrabold" style={{ color: pnlCol(r.net_pct) }}>
-                  {r.net_pct != null && r.net_pct > 0 ? "+" : ""}{r.net_pct}%
-                </span>
-                <span className="ml-auto text-[10.5px] text-[var(--text-muted)]">{kst(r.closed_at)}</span>
-              </div>
-            ))}
+        <div className="mt-4 rounded-xl border overflow-hidden" style={{ borderColor: PURPLE }}>
+          <div className="px-4 py-2 border-b bg-[var(--bg-elevated)]" style={{ borderColor: "var(--border-default)" }}>
+            <b className="text-[13.5px]" style={{ color: PURPLE }}>⚡ {t("알고리즘 2 활동 — 회전별 전체 기록", "Algorithm 2 activity — every round trip")}</b>
           </div>
+          <table className="w-full text-[12px]">
+            <thead>
+              <tr className="text-[10.5px] text-[var(--text-muted)]" style={{ background: "var(--bg-elevated)" }}>
+                <th className="text-left px-3 py-1.5">{t("매수 → 매도 시각", "Bought → Sold")}</th>
+                <th className="text-left px-2">{t("종목", "Stock")}</th>
+                <th className="text-right px-2">{t("수량", "Qty")}</th>
+                <th className="text-right px-2">{t("매수가 → 매도가", "Buy → Sell")}</th>
+                <th className="text-left px-2">{t("결과", "Exit")}</th>
+                <th className="text-right px-3">{t("손익 (₩ · %)", "Win (₩ · %)")}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {sc.recent.map((r, i) => (
+                <tr key={i} className="border-t border-[var(--border-default)]/40">
+                  <td className="px-3 py-1.5 text-[10.5px] text-[var(--text-muted)] tabular-nums">
+                    {kst(r.opened_at)} → {kst(r.closed_at)?.slice(6) || kst(r.closed_at)}
+                  </td>
+                  <td className="px-2 font-bold text-[var(--text-primary)]">{r.name}
+                    {r.why && <div className="text-[9.5px] font-normal text-[var(--text-muted)] max-w-[260px]">{r.why}</div>}
+                  </td>
+                  <td className="text-right px-2 tabular-nums">{fmt(r.qty)}</td>
+                  <td className="text-right px-2 tabular-nums">₩{fmt(r.entry)} → ₩{fmt(r.exit_price)}</td>
+                  <td className="px-2">
+                    <span className="text-[10.5px] px-1.5 py-0.5 rounded-full font-bold"
+                      style={{ background: "var(--bg-elevated)", color: r.exit_reason === "TAKE" ? "#2e7d32" : r.exit_reason === "STOP" ? RED : "var(--text-muted)" }}>
+                      {r.exit_reason === "TAKE" ? t("작은 승리", "small win") : r.exit_reason === "STOP" ? t("손절", "stop")
+                        : r.exit_reason === "EOD" ? t("장마감 정리", "EOD flat") : r.exit_reason === "EXTERNAL" ? t("외부 매도", "external") : r.exit_reason}
+                    </span>
+                  </td>
+                  <td className="text-right px-3 tabular-nums font-extrabold" style={{ color: pnlCol(r.net_pct) }}>
+                    {r.won != null ? `${r.won > 0 ? "+" : ""}₩${fmt(r.won)}` : "-"}
+                    {r.net_pct != null && ` (${r.net_pct > 0 ? "+" : ""}${r.net_pct}%)`}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       )}
     </div>

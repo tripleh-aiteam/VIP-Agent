@@ -44,6 +44,11 @@ Boss's four morning asks on a +12% SKH day: (1) prove machines don't trade while
 - **Files:** [services/pattern_layer.py](apps/orchestrator-api/services/pattern_layer.py), [services/scalp_trader.py](apps/orchestrator-api/services/scalp_trader.py), [scalp-desk.tsx](apps/admin-dashboard/src/app/testing/scalp-desk.tsx)
 - **Next:** grade the 5-min forecasts (store + compare) once he trades with them; frontend polls could show pred age.
 
+### [PM2] Algorithm 2 full-fleet: 24 stocks, conviction sizing, complete activity table
+
+- **What:** Boss: "add all stocks, start real auto trading, auto UI can't tell what's happening, who decides the share count?" (1) Codes cap 8→24 + ⭐ 전체 추가 button (full watchlist) + parallel price fetch in the 15s tick (serial would eat the beat at 24 stocks). (2) **Conviction sizing** answers "who decides qty": base = pos_pct% of cash × 0.7~1.2 from the three voices (book imb ≥+0.10 +0.15, partner rising +0.15, 5-min pred >0 +0.15, analogs ≥55% +0.05) — the full reason (+bounce, book, peer, conviction) saved in a new `why` column on every scalp trade and shown in the activity table. (3) ⚡ activity table: bought→sold times, stock, qty, buy→sell prices, exit verdict, **win ₩ and %** per round trip + today's realized ₩ in the strip. (4) 5-min pred fallback for newly-added stocks without deep history (live-buffer drift, labeled 단기 추세 기반). (5) Recent fills removed from the manual column (bottom Trade History owns it). Tested: conviction ×1.0 strong / ×0.7 weak on live SKH book.
+- **Files:** [services/scalp_trader.py](apps/orchestrator-api/services/scalp_trader.py), [scalp-desk.tsx](apps/admin-dashboard/src/app/testing/scalp-desk.tsx)
+
 ### Verified
 
 - Audit: today's mass sell 09:23-26 + ₩10M buys = all router/manual (machine books empty, both switches respected; duplicate not-enough-shares rejects 5-10s apart = human double-clicks). auto OFF since 07-14 10:03 KST.
