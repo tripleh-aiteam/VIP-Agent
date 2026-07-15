@@ -499,9 +499,13 @@ export default function ScalpDesk({ mode }: { mode: ScalpMode }) {
                 </div>
               </div>
 
-              {/* per-stock ripple state */}
-              <div className="mt-3 grid md:grid-cols-2 gap-3">
-                {sc.stocks.map((s) => {
+              {/* per-stock ripple state — LONG (bought) first, then closest to firing
+                  (boss 2026-07-15: with 20+ stocks the active ones must pop to the top) */}
+              <div className="mt-3 grid md:grid-cols-2 xl:grid-cols-3 gap-3">
+                {[...sc.stocks].sort((a, b) => {
+                  if (a.state !== b.state) return a.state === "LONG" ? -1 : 1;
+                  return (b.bounce_pct ?? -9) - (a.bounce_pct ?? -9);
+                }).map((s) => {
                   const px = livePx[s.code] ?? s.price;
                   const chg = liveChg[s.code] ?? s.chg;
                   return (
