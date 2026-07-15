@@ -80,6 +80,35 @@ def _ensure(db) -> None:
 
 _chg_cache: dict[str, float] = {}       # ticker -> today's change_pct (same freshness)
 
+# 체결 fallback (boss 2026-07-15: Kiwoom's tick-execution API returns nothing on
+# Render) — we derive deals from the 2s price+cumulative-volume stream that the
+# fast price lane already pulls: volume jumped = trades happened; price direction
+# vs the last sample approximates the aggressor side. Builds while any page polls.
+_deal_hist: dict[str, dict] = {}        # ticker -> {last_vol, last_px, rows: deque}
+
+
+def _note_deal(ticker: str, px: Optional[float], vol) -> None:
+    if px is None or vol is None:
+        return
+    try:
+        from collections import deque as _dq
+        from datetime import datetime as _dt
+        from zoneinfo import ZoneInfo as _zi
+        st = _deal_hist.setdefault(ticker, {"last_vol": None, "last_px": None,
+                                            "rows": _dq(maxlen=40)})
+        vol = int(vol)
+        if st["last_vol"] is not None and vol > st["last_vol"]:
+            lp = st["last_px"]
+            st["rows"].appendleft({
+                "time": _dt.now(_zi("Asia/Seoul")).strftime("%H:%M:%S"),
+                "price": px, "qty": vol - st["last_vol"],
+                "dir": 1 if (lp is not None and px > lp) else (-1 if (lp is not None and px < lp) else 0),
+                "acc_volume": vol})
+        st["last_vol"] = vol
+        st["last_px"] = px
+    except Exception:
+        pass
+
 
 def _live_price(ticker: str) -> tuple[Optional[float], Optional[str]]:
     """LIVE price + name for ANY 6-digit code: Kiwoom first, Naver fallback.
@@ -100,6 +129,7 @@ def _live_price(ticker: str) -> tuple[Optional[float], Optional[str]]:
             px, name = float(q["price"]), (q.get("name") or None)
             chg = q.get("change_pct")
             prev_close = q.get("prev_close")
+            _note_deal(ticker, px, q.get("volume"))   # feeds the 체결 fallback
     except Exception:
         pass
     if px is None:
