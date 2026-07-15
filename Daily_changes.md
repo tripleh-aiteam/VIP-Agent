@@ -17,10 +17,18 @@ Boss's 7-item list: (1) US stocks in $ with (₩) at the live rate, (2) "Why skh
 
 Local 7/7 (compound EN/KO, Apple $+₩, ADR real/honest/concept, KR price untouched); SK Telecom ADR live quote "$31.38 (≈ ₩46,775)"; full live sweep across both surfaces running (compound, FX, ADR, memory follow-up, chatbot-vs-assistant parity).
 
+### [PM] Boss retest round — 3 more fixes
+
+- **ADR honesty**: bare "what is the US ADR price?" (stock only in history / multi-part sub-question) inherited the stock and served the KOREAN listing as the "ADR" — now the ADR route inherits from history, asks which company when none, tolerates typos (AARD/ADRS/ADS), and "in USA and Korea" answers BOTH lines in one reply (US quote or honest no-source + 🇰🇷 한국 원주 live price). Regression DECIDE check updated for the 1-hour-setup-led verdict wording (26/26).
+- **"Failed to fetch" during deploys**: retry ladder extended 3→6 tries (2.5/5/10/20/30s ≈ 67s) in both frontends' `fetchWithRetry` — bridges a full Render restart; friendlier failure message.
+
+### Verified
+
+All live sweeps green: 7-item checks 8/8 (compound EN/KO, Apple $+₩, ADR real/honest, memory VIP+ADV, chatbot-vs-assistant identical answer), boss's exact AARD question PASS on both surfaces, regression 26/26.
+
 ### Next
 
-- Read the live-sweep results (task b2c7ky985) — fix any failure before boss retests.
-- ADR coverage is the mapped names only; extend the map if boss asks for others.
+- ADR coverage is the mapped names only (SKM/KB/SHG/KT/KEP/PKX/LPL; HXSCL/SSNLF honest-no-source); extend the map or add a cited web-search fallback for OTC lines if boss asks.
 
 ---
 
