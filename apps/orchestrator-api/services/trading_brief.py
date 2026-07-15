@@ -337,10 +337,10 @@ def _read_snapshots(db, tickers, max_age_sec: int = 240) -> dict[str, Any]:
 
 def stock_detail(db, ticker: str) -> dict[str, Any]:
     """Rich single-stock detail for the click-through detail view (both methods).
-    OHLC / 등락% / 거래량 / 52주 고저 / NXT 시간외 from Naver (works on Render, ~live during
-    market, EOD after). LIVE 호가·수급·program from Kiwoom 실전 via the PC snapshot (the
-    real edge). Plus 개별주식 선물·옵션 when available. Source label: market hours = 키움
-    실전+네이버, after = 네이버."""
+    Current price / OHLC / volume are read from the project's Kiwoom integration first.
+    Naver is used only as a field-level fallback when the internal Kiwoom connection is
+    unavailable or omits a field. LIVE order book, executions, and flows use the same
+    internal Kiwoom direct/PC-relay path."""
     from services import naver_stock
     from services import prediction_service as ps
     raw = str(ticker or "").strip()
@@ -363,23 +363,34 @@ def stock_detail(db, ticker: str) -> dict[str, Any]:
                 pass
             _t.sleep(0.35)
         return fn(*a)
-    hist = _naver(naver_stock.daily_history, code, 60) or []   # Naver /price rejects >~90
+    # Preserve the local Kiwoom feed as the primary source for the detail drawer.
+    # The Naver quote below is intentionally retained only to fill unavailable fields.
+    kq = {}
+    try:
+        from services import kiwoom_rest
+        kq = kiwoom_rest.current_price(code) or {}
+    except Exception:
+        pass
+    hist = _naver(naver_stock.daily_history, code, 60) or []   # chart/history fallback
     _t.sleep(0.25)
-    q = naver_stock.realtime_quote(code) or {}
+    q = _naver(naver_stock.realtime_quote, code) or {}
     _t.sleep(0.25)
     flows = naver_stock.investor_flows(code, 1) or []
     rt = realtime_for(code, db=db) or {}
     today = hist[0] if hist else {}                      # today's full candle (OHLCV)
     highs = [h["high"] for h in hist if h.get("high") is not None]
     lows = [h["low"] for h in hist if h.get("low") is not None]
-    # live price from realtime_quote (fresher), OHLC/volume from today's candle (the
-    # basic endpoint leaves intraday O/H/L/V null, but the daily candle has them).
-    price = q.get("price") if q.get("price") is not None else today.get("close")
-    chg = q.get("change_pct") if q.get("change_pct") is not None else today.get("change_pct")
-    _open = q.get("open") if q.get("open") is not None else today.get("open")
-    _high = q.get("high") if q.get("high") is not None else today.get("high")
-    _low = q.get("low") if q.get("low") is not None else today.get("low")
-    _vol = q.get("volume") if q.get("volume") is not None else today.get("volume")
+    # Kiwoom wins field-by-field. External data only fills a missing field, including
+    # volume, so the quote remains consistent with the internal order-book feed.
+    def _first(*values):
+        return next((v for v in values if v is not None), None)
+
+    price = _first(kq.get("price"), q.get("price"), today.get("close"))
+    chg = _first(kq.get("change_pct"), q.get("change_pct"), today.get("change_pct"))
+    _open = _first(kq.get("open"), q.get("open"), today.get("open"))
+    _high = _first(kq.get("high"), q.get("high"), today.get("high"))
+    _low = _first(kq.get("low"), q.get("low"), today.get("low"))
+    _vol = _first(kq.get("volume"), q.get("volume"), today.get("volume"))
     prev_close = None
     if price is not None and chg not in (None, 0):
         try:
@@ -390,8 +401,8 @@ def stock_detail(db, ticker: str) -> dict[str, Any]:
     fl0 = flows[0] if flows else {}
     return {
         "ok": True, "ticker": code, "name": name, "market_open": mopen,
-        "source": ("키움 실전 + 네이버" if mopen else "네이버 (장마감)"),
-        "as_of": q.get("as_of"),
+        "source": ("키움 실시간" if kq.get("price") is not None else "외부 시세 폴백 (네이버)"),
+        "as_of": kq.get("as_of") or q.get("as_of"),
         # price block
         "price": price, "change_pct": chg, "prev_close": prev_close,
         "open": _open, "high": _high, "low": _low,

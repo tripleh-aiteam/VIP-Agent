@@ -1087,11 +1087,13 @@ function StockDetailDrawer({ t }: { t: (ko: string, en: string) => string }) {
     let alive = true;
     const load = () => api<Detail>(`/predictions/stock-detail/${code}`).then((x) => { if (alive) setD(x); }).catch(() => {});
     load();
-    const i = setInterval(load, 20000);
+    // The API uses the internal Kiwoom quote/order-book feed first. Refresh at a
+    // live cadence during the session and reduce needless polling after close.
+    const i = setInterval(load, d?.market_open ? 5000 : 20000);
     const esc = (e: KeyboardEvent) => { if (e.key === "Escape") setOpen(false); };
     window.addEventListener("keydown", esc);
     return () => { alive = false; clearInterval(i); window.removeEventListener("keydown", esc); };
-  }, [open, code]);
+  }, [open, code, d?.market_open]);
 
   if (!open) return null;
   const series = aggregate(d?.candles || [], iv);
@@ -1127,7 +1129,7 @@ function StockDetailDrawer({ t }: { t: (ko: string, en: string) => string }) {
             <div className="flex items-center gap-2 text-[11px]">
               {d.live ? <span className="px-2 py-0.5 rounded-full font-bold" style={{ color: "#fff", background: NEG }}>🔴 {t("실시간", "LIVE")} {d.env}</span>
                       : <span className="px-2 py-0.5 rounded-full font-semibold text-[var(--text-muted)] bg-[var(--bg-elevated)]">{t("장마감", "Closed")}</span>}
-              <span className="text-[var(--text-muted)]">{t("출처", "src")}: {d.source}{d.as_of ? ` · ${d.as_of}` : ""}</span>
+              <span className="text-[var(--text-muted)]">{t("출처", "src")}: {d.source || t("키움 우선 · 외부 폴백", "Kiwoom first · external fallback")}{d.as_of ? ` · ${d.as_of}` : ""}</span>
             </div>
 
             {/* our own candlestick chart (renders instantly, zoom/pan with mouse) */}
