@@ -249,6 +249,7 @@ export default function ScalpDesk({ mode }: { mode: ScalpMode }) {
   }, []);
   const [cardChart, setCardChart] = useState<string | null>(null);   // 📈 inline chart per card
   const [pickerOpen, setPickerOpen] = useState(false);               // collapsed stock list
+  const [dayTotal, setDayTotal] = useState(false);                   // 📊 day-total panel
   const [livePx, setLivePx] = useState<Record<string, number>>({});
   const [liveChg, setLiveChg] = useState<Record<string, number>>({});
   const [stockList, setStockList] = useState<StockItem[]>([]);
@@ -1019,9 +1020,45 @@ export default function ScalpDesk({ mode }: { mode: ScalpMode }) {
           (boss 2026-07-15: what bought, when, how many, win ₩ and %) */}
       {sc && sc.recent.length > 0 && (
         <div className="mt-4 rounded-xl border overflow-hidden" style={{ borderColor: PURPLE }}>
-          <div className="px-4 py-2 border-b bg-[var(--bg-elevated)]" style={{ borderColor: "var(--border-default)" }}>
+          <div className="px-4 py-2 border-b bg-[var(--bg-elevated)] flex items-center gap-2 flex-wrap" style={{ borderColor: "var(--border-default)" }}>
             <b className="text-[13.5px]" style={{ color: PURPLE }}>⚡ {t("알고리즘 2 활동 — 회전별 전체 기록", "Algorithm 2 activity — every round trip")}</b>
+            <button onClick={() => setDayTotal((v) => !v)}
+              className="ml-auto text-[11.5px] font-extrabold px-3 py-1 rounded-lg text-white" style={{ background: PURPLE }}>
+              📊 {dayTotal ? t("오늘 합계 닫기", "hide day total") : t("오늘 합계 계산", "calculate today's total")}
+            </button>
           </div>
+          {dayTotal && (() => {
+            const today = new Date().toLocaleString("sv-SE", { timeZone: "Asia/Seoul" }).slice(0, 10);
+            const rows = sc.recent.filter((r) => {
+              const c = r.closed_at || "";
+              const s = /Z$|[+-]\d{2}:\d{2}$/.test(c) ? c : `${c}Z`;
+              return new Date(s).toLocaleString("sv-SE", { timeZone: "Asia/Seoul" }).slice(0, 10) === today;
+            });
+            const wins = rows.filter((r) => (r.won || 0) > 0);
+            const losses = rows.filter((r) => (r.won || 0) < 0);
+            const wSum = wins.reduce((a, r) => a + (r.won || 0), 0);
+            const lSum = losses.reduce((a, r) => a + (r.won || 0), 0);
+            const net = wSum + lSum;
+            return (
+              <div className="px-4 py-3 border-b text-[13px] tabular-nums" style={{ borderColor: "var(--border-default)", background: "rgba(123,31,162,0.04)" }}>
+                <div className="flex items-center gap-5 flex-wrap">
+                  <span>🔄 {t(`오늘 ${rows.length}회전`, `${rows.length} round trips today`)}</span>
+                  <span style={{ color: RED }}>🟢 {t(`승 ${wins.length}번 = +₩${fmt(Math.round(wSum))}`, `${wins.length} wins = +₩${fmt(Math.round(wSum))}`)}</span>
+                  <span style={{ color: BLUE }}>🔴 {t(`패 ${losses.length}번 = −₩${fmt(Math.abs(Math.round(lSum)))}`, `${losses.length} losses = −₩${fmt(Math.abs(Math.round(lSum)))}`)}</span>
+                  <span className="text-[15px] font-extrabold" style={{ color: pnlCol(net) }}>
+                    = {t("오늘 순이익", "net today")} {net > 0 ? "+" : ""}₩{fmt(Math.round(net))}
+                  </span>
+                  <span className="text-[10.5px] text-[var(--text-muted)]">{t("(수수료 0.23% 차감 후 · 표시된 최근 기록 기준)", "(net of 0.23% fees · from the shown recent log)")}</span>
+                </div>
+                {wins.length > 0 && losses.length > 0 && (
+                  <div className="mt-1 text-[11px] text-[var(--text-muted)]">
+                    {t(`평균: 승 +₩${fmt(Math.round(wSum / wins.length))} · 패 −₩${fmt(Math.abs(Math.round(lSum / losses.length)))} — 패 1번이 승 ${Math.abs(lSum / losses.length / (wSum / wins.length)).toFixed(1)}번을 먹습니다`,
+                       `avg: win +₩${fmt(Math.round(wSum / wins.length))} · loss −₩${fmt(Math.abs(Math.round(lSum / losses.length)))} — one loss eats ${Math.abs(lSum / losses.length / (wSum / wins.length)).toFixed(1)} wins`)}
+                  </div>
+                )}
+              </div>
+            );
+          })()}
           <table className="w-full text-[12px]">
             <thead>
               <tr className="text-[10.5px] text-[var(--text-muted)]" style={{ background: "var(--bg-elevated)" }}>
