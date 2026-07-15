@@ -23,6 +23,7 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))  # ml/ on path
 from _db import get_conn  # noqa: E402
+from krx_tick import ceil_to_tick, floor_to_tick, market_for_ticker  # noqa: E402
 
 NAMES = {
     "012450": "한화에어로스페이스", "047810": "한국항공우주", "079550": "LIG넥스원",
@@ -116,14 +117,16 @@ def predict_ticker(conn, ticker: str, horizon: int) -> dict | None:
     # absolute up/down — label the call accordingly.
     dlabel = {1: "▲아웃퍼폼(시장대비)", 0: "→시장수준", -1: "▼언더퍼폼(시장대비)"}[direction]
 
-    # buy/sell levels (추정)
+    # Buy/sell levels (estimate). Prices must be executable KRX quotations, not
+    # the ML model's raw 1-won output. Buy limits round down; sell targets up.
     buy_px = sell_px = None
+    market = market_for_ticker(ticker)
     if advice == "BUY":
-        buy_px = round(close * (1 - 0.003 * band))      # slight dip entry
-        sell_px = round(close * (1 + band / 100))       # +1 sigma target
+        buy_px = floor_to_tick(close * (1 - 0.003 * band), market)  # slight dip entry
+        sell_px = ceil_to_tick(close * (1 + band / 100), market)    # +1 sigma target
     elif advice == "SELL":
-        sell_px = round(close * (1 + 0.003 * band))
-        buy_px = round(close * (1 - band / 100))
+        sell_px = ceil_to_tick(close * (1 + 0.003 * band), market)
+        buy_px = floor_to_tick(close * (1 - band / 100), market)
 
     econ_txt = (f"백테스트 수익엣지 {econ_edge:+.2f}%/거래·승률 {win_rate:.0f}%"
                 if econ_edge is not None else f"정확도엣지 {edge:+.3f}")

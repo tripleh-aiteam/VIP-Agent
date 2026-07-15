@@ -23,6 +23,7 @@ from typing import Any
 from sqlalchemy import text
 
 from services.kst import kst_now
+from ml.krx_tick import round_to_tick, market_for_ticker
 
 log = logging.getLogger("intraday_forecast")
 
@@ -193,11 +194,13 @@ def tick(db) -> dict[str, Any]:
             ml = _ml_call(db, c)
             if ml:
                 d, mv = ml
-                pp = base * (1 + mv) if d == "UP" else base * (1 - mv) if d == "DOWN" else base
+                raw_pp = base * (1 + mv) if d == "UP" else base * (1 - mv) if d == "DOWN" else base
+                pp = round_to_tick(raw_pp, market_for_ticker(c))
                 calls.append(("ml", d, pp))
             sig = (an.get(c) or {}).get("signal")
             d, mv = _analysis_call(sig, (an.get(c) or {}).get("score"))
-            pp = base * (1 + mv) if d == "UP" else base * (1 - mv) if d == "DOWN" else base
+            raw_pp = base * (1 + mv) if d == "UP" else base * (1 - mv) if d == "DOWN" else base
+            pp = round_to_tick(raw_pp, market_for_ticker(c))
             calls.append(("analysis", d, pp))
             for method, pdir, pprice in calls:
                 db.execute(text(

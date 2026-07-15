@@ -26,6 +26,7 @@ from typing import Any, Optional
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import text
+from ml.krx_tick import market_for_ticker, round_to_tick
 
 logger = logging.getLogger(__name__)
 KST = ZoneInfo("Asia/Seoul")
@@ -597,7 +598,7 @@ def status(db) -> dict[str, Any]:
                 nb = next_bar_vote(db, code)
                 _pred_cache[code] = (_t.time(), nb)
             if nb and px:
-                pred = {**nb, "pred_price": round(px * (1 + nb["pred_pct"] / 100))}
+                pred = {**nb, "pred_price": round_to_tick(px * (1 + nb["pred_pct"] / 100), market_for_ticker(code))}
         except Exception:
             db.rollback()
         # newly-added stocks have no deep 5-min history yet → fall back to the
@@ -607,7 +608,7 @@ def status(db) -> dict[str, Any]:
             drift = (prices[-1] / prices[-5] - 1) * 5   # last ~60s extrapolated to 5min
             drift = max(-0.006, min(0.006, drift))       # clamp ±0.6%
             pred = {"pred_pct": round(drift * 100, 3), "up_rate": None, "n": 0,
-                    "pred_price": round(px * (1 + drift)), "fallback": True}
+                    "pred_price": round_to_tick(px * (1 + drift), market_for_ticker(code)), "fallback": True}
         take_at = round(o["entry"] * (1 + cfg["take_pct"] / 100)) if o else None
         stop_at = round(o["entry"] * (1 - cfg["stop_pct"] / 100)) if o else None
         # semi mode: the machine's SELL advice (it never sells by itself there)
