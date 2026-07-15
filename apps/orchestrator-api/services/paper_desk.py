@@ -92,12 +92,14 @@ def _live_price(ticker: str) -> tuple[Optional[float], Optional[str]]:
     name = None
     px: Optional[float] = None
     chg: Optional[float] = None
+    prev_close = None
     try:
         from services import kiwoom_rest as kr
         q = kr.current_price(ticker)
         if q and q.get("price"):
             px, name = float(q["price"]), (q.get("name") or None)
             chg = q.get("change_pct")
+            prev_close = q.get("prev_close")
     except Exception:
         pass
     if px is None:
@@ -109,6 +111,28 @@ def _live_price(ticker: str) -> tuple[Optional[float], Optional[str]]:
                 chg = q.get("change_pct")
         except Exception:
             pass
+    # ⚡ LIVE-BAND CLAMP (boss 2026-07-15: "order book moves but the price doesn't"):
+    # ka10001/Naver quotes can lag; the order book (ka10004) is the freshest feed
+    # that works on Render. The true last-trade price always sits inside the live
+    # bid/ask band — so pull our quote into it. Result: the displayed price moves
+    # exactly when the book moves.
+    try:
+        from services import kiwoom_rest as kr3
+        ob = kr3.order_book(ticker, ttl=2.0) or {}
+        bb, ba = ob.get("best_bid"), ob.get("best_ask")
+        old_px = px
+        if px is not None and bb and px < float(bb):
+            px = float(bb)
+        if px is not None and ba and px > float(ba):
+            px = float(ba)
+        if px is None and bb and ba:
+            px = (float(bb) + float(ba)) / 2
+        if px is not None and old_px and px != old_px and chg is not None:
+            chg = round(float(chg) + (px / old_px - 1) * 100, 2)
+    except Exception:
+        pass
+    if px is not None and prev_close:
+        chg = round((px / float(prev_close) - 1) * 100, 2)
     _price_cache[ticker] = (_t.time(), px, name)
     if chg is not None:
         try:
