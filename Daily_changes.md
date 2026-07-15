@@ -2,6 +2,28 @@
 
 ---
 
+## 2026-07-15 (Wednesday) — Chatbot 7-item improvement round (boss list): $→₩, compound questions, ADR, visible typing
+
+### Goal
+
+Boss's 7-item list: (1) US stocks in $ with (₩) at the live rate, (2) "Why skhynix increased 11% and should I buy or hold?" must answer BOTH parts, (3) technical-term knowledge incl. real ADR prices, (4) chatbot==assistant parity, (5) invisible typing in the assistant input, (6) conversation memory everywhere, (7) trading buy/hold/sell help (existing engine).
+
+### Files updated
+
+- [services/assistant_agent.py](apps/orchestrator-api/services/assistant_agent.py) — `_append_krw_to_usd`: every `$` price in any answer gets `(≈ ₩…)` at the live Naver USD/KRW rate (skipped for translations); compound why+advice splitter for single-`?` questions ("…and should I buy or hold?" / "…그리고 지금 살까?") so both parts answer via multi-part; `adr_price` intent + `_ADR_US` map (SKM/KB/SHG/KT/KEP/PKX/LPL NYSE → real US quote with ₩ conversion; HXSCL/SSNLF OTC → honest "not in our source" instead of the Korean listing dressed as the ADR — the previous behavior).
+- [apps/admin-dashboard/src/components/AssistantCard.tsx](apps/admin-dashboard/src/components/AssistantCard.tsx) + stock repo `web/src/components/assistant/AssistantCard.tsx` — input text forced `text-gray-900` (inherited dark-theme `--text-primary` was white-on-white → boss's invisible typing).
+
+### Verified
+
+Local 7/7 (compound EN/KO, Apple $+₩, ADR real/honest/concept, KR price untouched); SK Telecom ADR live quote "$31.38 (≈ ₩46,775)"; full live sweep across both surfaces running (compound, FX, ADR, memory follow-up, chatbot-vs-assistant parity).
+
+### Next
+
+- Read the live-sweep results (task b2c7ky985) — fix any failure before boss retests.
+- ADR coverage is the mapped names only; extend the map if boss asks for others.
+
+---
+
 ## 2026-07-15 (Wednesday) — Trend-day participation, order source audit, 2-stock board, real-time price+%
 
 ### Goal
