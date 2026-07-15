@@ -331,13 +331,19 @@ def desk_executions(code: str = Query(...)):
         rows = executions(code, ttl=2.0) or []
     except Exception:
         rows = []
+    src = "kiwoom"
     if not rows:
         # Kiwoom's tick API doesn't serve on Render — use the volume-delta feed
         # built by the fast price lane (also make sure it's sampling this code)
         from services.paper_desk import _deal_hist, _live_price
         _live_price(code)
-        rows = list((_deal_hist.get(code) or {}).get("rows") or [])
-    return {"code": code, "rows": rows[:30]}
+        st = _deal_hist.get(code) or {}
+        rows = list(st.get("rows") or [])
+        src = "volume-delta"
+        # diagnostic: does the price source even carry volume on this host?
+        return {"code": code, "rows": rows[:30], "src": src,
+                "last_vol": st.get("last_vol"), "last_px": st.get("last_px")}
+    return {"code": code, "rows": rows[:30], "src": src}
 
 
 @router.get("/prices")

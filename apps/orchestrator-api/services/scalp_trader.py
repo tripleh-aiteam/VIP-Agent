@@ -54,6 +54,13 @@ PEER_DROP_PCT = -0.15     # partner falling faster than this over ~60s → no bu
 _buf: dict[str, deque] = {}          # code -> deque[(ts, px)]
 _semi_signals: dict[str, dict] = {}  # semi mode: code -> live BUY recommendation
 
+# one trade brain at a time: the 15s tick and the 5s exit pulse must never
+# sell the same row twice (boss 2026-07-15: 두산 overshot the -1% line by 0.23%
+# because a fast drop fell through the line between two 15s beats)
+import threading as _threading
+
+_trade_lock = _threading.Lock()
+
 
 def _ensure(db) -> None:
     db.execute(text(
@@ -273,9 +280,58 @@ def _upturn(code: str, px: float) -> tuple[bool, float]:
     return (rising and BOUNCE_MIN_PCT <= bounce <= BOUNCE_MAX_PCT), round(bounce, 3)
 
 
+def exit_pulse(db) -> dict[str, Any]:
+    """⚡ 5-SECOND EXIT WATCH (boss 2026-07-15: 두산 fell through the −1% line
+    between two 15s beats and sold at −1.23%). Checks ONLY the open positions,
+    only TAKE/STOP, only in auto mode — three times faster on the trigger.
+    Skips silently when the full tick holds the trade lock."""
+    if not _trade_lock.acquire(blocking=False):
+        return {"skipped": "busy"}
+    try:
+        cfg = _cfg(db)
+        out: dict[str, Any] = {"closed": []}
+        if not cfg["enabled"] or cfg["mode"] != "auto" or not _market_open_now():
+            return out
+        rows = db.execute(text(
+            "SELECT id, ticker, name, qty, entry FROM scalp_trades WHERE status='OPEN'")).fetchall()
+        if not rows:
+            return out
+        from services.paper_desk import place_order
+        for oid, tk, name, qty, entry in rows:
+            px = _px(tk)
+            if px is None:
+                continue
+            entry = float(entry)
+            reason = None
+            if px >= entry * (1 + cfg["take_pct"] / 100):
+                reason = "TAKE"
+            elif px <= entry * (1 - cfg["stop_pct"] / 100):
+                reason = "STOP"
+            if not reason:
+                continue
+            held = int(db.execute(text(
+                "SELECT qty FROM paper_desk_positions WHERE ticker=:t"),
+                {"t": tk}).scalar() or 0)
+            sell_qty = min(int(qty), held)
+            if sell_qty <= 0:
+                continue
+            r = place_order(db, tk, "SELL", sell_qty, "market", source="algo2")
+            if r.get("ok"):
+                _close_row(db, out, oid, name, entry, float(r.get("fill_price") or px), reason)
+                _buf.pop(tk, None)
+        return out
+    finally:
+        _trade_lock.release()
+
+
 def tick(db, force: bool = False) -> dict[str, Any]:
     """One 15s pass of Algorithm 2. Exits → entries, one shared desk book.
     Also fills the boss's manual auto-sell LIMIT orders (server-side)."""
+    with _trade_lock:
+        return _tick_inner(db, force)
+
+
+def _tick_inner(db, force: bool = False) -> dict[str, Any]:
     cfg = _cfg(db)
     out: dict[str, Any] = {"enabled": cfg["enabled"], "closed": [], "opened": [],
                            "reason": None}

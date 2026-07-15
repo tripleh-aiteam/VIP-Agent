@@ -2031,6 +2031,33 @@ def init_scheduler():
     )
     log.info("scheduler: algorithm-2 scalp heartbeat registered (15s, market hours)")
 
+    # ⚡ 5s EXIT PULSE — take/stop watch on open scalp positions only (boss
+    # 2026-07-15: a fast drop fell through the −1% line between 15s beats).
+    def _scalp_exit_pulse():
+        from datetime import datetime, timedelta, timezone
+        kst = datetime.now(timezone(timedelta(hours=9)))
+        if kst.weekday() >= 5 or not (9 * 60 <= kst.hour * 60 + kst.minute <= 15 * 60 + 25):
+            return
+        db = SessionLocal()
+        try:
+            from services.scalp_trader import exit_pulse
+            r = exit_pulse(db)
+            if r.get("closed"):
+                log.info(f"scalp exit pulse: {r}", extra={"action": "scalp.pulse"})
+        except Exception as e:
+            log.warning(f"scalp exit pulse failed: {str(e)[:120]}")
+        finally:
+            db.close()
+
+    _scheduler.add_job(
+        _scalp_exit_pulse,
+        "interval", seconds=5,
+        id="scalp-exit-pulse",
+        replace_existing=True,
+        max_instances=1, coalesce=True,
+    )
+    log.info("scheduler: algorithm-2 exit pulse registered (5s, market hours)")
+
     # Hourly snapshot capture — every hour at :05. Saves one 'part' per report
     # type (newspaper/youtube/kiwoom) WITHOUT emailing; the 6 AM build reads all
     # ~24 parts of the day and synthesises the big report. Plus daily cleanup.
