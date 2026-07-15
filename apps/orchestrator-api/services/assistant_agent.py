@@ -4061,6 +4061,44 @@ def _paper_portfolio_reply(db, lang: str, agent_id: str = "vip") -> Optional[str
     return "\n".join(L)
 
 
+# US-dollar prices always carry a live ₩ conversion (boss: 'answer in dollar and in the
+# bracket show Korean won'). Uses the Naver USD/KRW rate cached in decision_agent.
+def _append_krw_to_usd(text: str) -> str:
+    if not text or "$" not in text:
+        return text
+    try:
+        from services.decision_agent import _market_indicators
+        fx = ((_market_indicators() or {}).get("usdkrw") or {}).get("price")
+        rate = float(str(fx).replace(",", ""))
+        if not (800 < rate < 3000):
+            return text
+    except Exception:
+        return text
+    out, last, n = [], 0, 0
+    for m in _re.finditer(r"\$([\d,]+(?:\.\d+)?)", text):
+        out.append(text[last:m.end()])
+        last = m.end()
+        tail = text[m.end():m.end() + 14]
+        try:
+            v = float(m.group(1).replace(",", ""))
+        except Exception:
+            v = None
+        if v and v >= 0.5 and "₩" not in tail and "≈" not in tail and n < 6:
+            out.append(f" (≈ ₩{int(round(v * rate)):,})")
+            n += 1
+    out.append(text[last:])
+    return "".join(out)
+
+
+# Korean companies with US-listed ADRs — 'SK Hynix ADR price?' must answer the US line,
+# never the Korean listing dressed up as an ADR (2026-07-15 boss feedback).
+_ADR_US = {"000660": ("HXSCL", "OTC"), "005930": ("SSNLF", "OTC"),
+           "017670": ("SKM", "NYSE"), "030200": ("KT", "NYSE"),
+           "105560": ("KB", "NYSE"), "055550": ("SHG", "NYSE"),
+           "015760": ("KEP", "NYSE"), "005490": ("PKX", "NYSE"),
+           "034220": ("LPL", "NYSE")}
+
+
 # Plain LLM tasks — 'translate this to Korean: …', '요약해줘: …'. The text being worked on
 # may CONTAIN trading words ('what should I buy?') — that must not fire the engines
 # (2026-07-09 screenshot: a translation request got the 1-hour scanner answer).
@@ -4511,6 +4549,24 @@ def run_agent(
     # MULTI-PART: 'A? 그리고 B? 그리고 C?' → answer EVERY sub-question (was: only the last).
     _parts = ([] if (confirmed_tool or attachment_ids)
               else _split_subquestions(transcript))
+    # COMPOUND why+advice with a single '?': 'Why skhynix increased 11% and should I buy
+    # or hold?' — the '?'-based splitter can't see it, so only the advice part answered
+    # (2026-07-10 boss feedback). Split at the advice clause when a why-cue precedes it.
+    if not _parts and not (confirmed_tool or attachment_ids):
+        _t = (transcript or "").strip()
+        if _re.search(r"\b(why|what caused)\b|왜|어째서|무슨 이유", _t, _re.IGNORECASE):
+            _m = _re.search(
+                r"(?:,?\s+(?:and|so)\s+|그리고\s+|그런데\s+|는데\s*|니까\s+|,\s*)"
+                r"((?:should|shall|do|would)\s+i\b.{0,60}|is it (?:a )?good (?:time )?to buy.{0,40}"
+                r"|buy or hold.{0,20}|hold or sell.{0,20}"
+                r"|(?:지금|오늘|이제|저는|나는|난)?\s*(?:살까(?:요)?.{0,20}|사야\s*(?:해|할까|하나).{0,16}"
+                r"|팔까.{0,16}|보유할까.{0,16}|어떡해.{0,10}))\s*\??$",
+                _t, _re.IGNORECASE)
+            if _m and _m.start() > 8:
+                _why = _t[:_m.start()].strip(" ,.;·-")
+                _adv = _m.group(1).strip(" ,.;·-")
+                if len(_why) >= 8 and len(_adv) >= 4:
+                    _parts = [_why.rstrip("?") + "?", _adv.rstrip("?") + "?"]
     if _parts:
         result = _answer_multi_part(db, _parts, language, current_path, selected_id,
                                     history, forced_model, user_id, agent_id, page_context)
@@ -4523,6 +4579,14 @@ def run_agent(
             user_id=user_id, agent_id=agent_id,
             page_context=page_context,
         )
+    # $ → (₩) — any dollar price in the answer carries a live-KRW conversion (skip
+    # translations: converting inside translated text would corrupt the task output).
+    try:
+        if (isinstance(result, dict) and result.get("reply")
+                and result.get("intent") != "llm_task" and "$" in str(result["reply"])):
+            result["reply"] = _append_krw_to_usd(str(result["reply"]))
+    except Exception:
+        pass
     # LANGUAGE GUARD — English question MUST get an English answer (and vice versa).
     # Catches the case where a delegated (stock-backend) reply comes back in Korean.
     # Skipped for llm_task: 'translate to Korean' answers ARE Korean on purpose.
@@ -4978,6 +5042,52 @@ def _run_agent_impl(
             return {"intent": "llm_task", "language": lang, "reply": _lt,
                     "action": None, "speak": True, "transcript": transcript,
                     "tool_used": "llm_task"}
+
+    # === ADR PRICE — 'SK Hynix ADR price?' answers the US listing, never the Korean one.
+    # Concept asks ('what is ADR?') skip through to the concept/LLM path.
+    if (not confirmed_tool and not attachment_ids and transcript
+            and _re.search(r"\bADRs?\b|에이디알", transcript, _re.IGNORECASE)
+            and _re.search(r"price|가격|얼마|시세|trading|quote|how much|현재가", transcript, _re.IGNORECASE)):
+        try:
+            from services.stock_resolver import resolve_one
+            _kc, _kn = resolve_one(transcript or "")
+        except Exception:
+            _kc = _kn = None
+        _en_a = str(lang or "").lower().startswith("en")
+        if _kc and _kc in _ADR_US:
+            _us, _exch = _ADR_US[_kc]
+            _ans = None
+            try:
+                from services.stock_advisor_chat import ask as _stock_direct
+                _q = (f"What is {_us} trading at right now?" if _en_a else f"{_us} 지금 얼마야?")
+                _d = _stock_direct(_q, lang, [])
+                if isinstance(_d, dict):
+                    _c = (_d.get("reply") or "").strip()
+                    if _c and "$" in _c:
+                        _ans = _c
+            except Exception:
+                pass
+            if _ans:
+                _hd = (f"**{_kn} ADR ({_us} · {_exch})** — the US-listed line:\n\n" if _en_a
+                       else f"**{_kn} ADR ({_us} · {_exch})** — 미국 상장 기준:\n\n")
+                return {"intent": "adr_price", "language": lang,
+                        "reply": _append_krw_to_usd(_hd + _ans)[:4000], "action": None,
+                        "speak": True, "transcript": transcript, "tool_used": "stock_advisor"}
+            _fb = (f"I couldn't fetch a live quote for {_kn}'s US ADR ({_us}, {_exch}) right now — "
+                   f"that line isn't in our data source yet. Ask \"{_kn} price\" for the Korean listing."
+                   if _en_a else
+                   f"{_kn}의 미국 ADR({_us}, {_exch}) 실시간 시세를 지금은 조회하지 못했습니다 — 아직 우리 "
+                   f"데이터 소스에 없는 종목입니다. 한국 원주 시세는 \"{_kn} 얼마야?\"로 물어보세요.")
+            return {"intent": "adr_price", "language": lang, "reply": _fb, "action": None,
+                    "speak": True, "transcript": transcript, "tool_used": None}
+        if _kc:
+            _fb = (f"{_kn} has no US-listed ADR in our map — its US line either doesn't exist or "
+                   f"isn't covered yet. The Korean listing is available with \"{_kn} price\"."
+                   if _en_a else
+                   f"{_kn}은(는) 우리가 아는 미국 상장 ADR이 없습니다 — 한국 원주 시세는 "
+                   f"\"{_kn} 얼마야?\"로 확인하실 수 있습니다.")
+            return {"intent": "adr_price", "language": lang, "reply": _fb, "action": None,
+                    "speak": True, "transcript": transcript, "tool_used": None}
 
     # === MY P&L — 'Yesterday how much I won?' → the 모의투자 desk's realized result for
     # that period (must run BEFORE context-math/price-history, which stole this question).

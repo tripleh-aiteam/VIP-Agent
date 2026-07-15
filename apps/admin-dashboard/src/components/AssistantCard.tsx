@@ -1050,7 +1050,7 @@ export function AssistantCard({ floating = true }: Props = {}) {
           onBlur={() => setInputFocused(false)}
           onKeyDown={e => { if (e.key === "Enter") ask(prompt); }}
           placeholder={attachments.length > 0 ? `Ask about your ${attachments.length} file(s)…` : (thinking ? "Answering — type your next question …" : "Ask anything …")}
-          className="flex-1 bg-transparent border-none outline-none px-2 text-[15px] min-w-0"
+          className="flex-1 bg-transparent border-none outline-none px-2 text-[15px] min-w-0 text-gray-900 placeholder-gray-400 caret-blue-600"
         />
 
         {/* LLM picker — button label is just 'LLM'. Popover shows the
