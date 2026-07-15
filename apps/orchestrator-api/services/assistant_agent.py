@@ -5046,7 +5046,8 @@ def _run_agent_impl(
     # === ADR PRICE — 'SK Hynix ADR price?' answers the US listing, never the Korean one.
     # Concept asks ('what is ADR?') skip through to the concept/LLM path.
     if (not confirmed_tool and not attachment_ids and transcript
-            and _re.search(r"\bADRs?\b|에이디알", transcript, _re.IGNORECASE)
+            and _re.search(r"\bADRs?\b|\bAARD\b|\bADRS\b|\bADSs?\b|에이디알|주식예탁증서",
+                           transcript, _re.IGNORECASE)
             and _re.search(r"price|가격|얼마|시세|trading|quote|how much|현재가", transcript, _re.IGNORECASE)):
         try:
             from services.stock_resolver import resolve_one
@@ -5059,6 +5060,18 @@ def _run_agent_impl(
         except Exception:
             _kc = _kn = None
         _en_a = str(lang or "").lower().startswith("en")
+
+        def _kr_line() -> str:
+            """One-line Korean-listing quote — ADR asks like 'in USA and Korea' get both."""
+            try:
+                from services.paper_desk import _live_price
+                _px, _ = _live_price(_kc)
+                if _px:
+                    return (f"\n\n🇰🇷 Korean listing ({_kn}): ₩{int(_px):,} (live)" if _en_a
+                            else f"\n\n🇰🇷 한국 원주 ({_kn}): {int(_px):,}원 (실시간)")
+            except Exception:
+                pass
+            return ""
         if _kc and _kc in _ADR_US:
             _us, _exch = _ADR_US[_kc]
             _ans = None
@@ -5076,14 +5089,14 @@ def _run_agent_impl(
                 _hd = (f"**{_kn} ADR ({_us} · {_exch})** — the US-listed line:\n\n" if _en_a
                        else f"**{_kn} ADR ({_us} · {_exch})** — 미국 상장 기준:\n\n")
                 return {"intent": "adr_price", "language": lang,
-                        "reply": _append_krw_to_usd(_hd + _ans)[:4000], "action": None,
+                        "reply": (_append_krw_to_usd(_hd + _ans) + _kr_line())[:4000], "action": None,
                         "speak": True, "transcript": transcript, "tool_used": "stock_advisor"}
             _fb = (f"I couldn't fetch a live quote for {_kn}'s US ADR ({_us}, {_exch}) right now — "
-                   f"that line isn't in our data source yet. Ask \"{_kn} price\" for the Korean listing."
+                   f"that line isn't in our data source yet."
                    if _en_a else
                    f"{_kn}의 미국 ADR({_us}, {_exch}) 실시간 시세를 지금은 조회하지 못했습니다 — 아직 우리 "
-                   f"데이터 소스에 없는 종목입니다. 한국 원주 시세는 \"{_kn} 얼마야?\"로 물어보세요.")
-            return {"intent": "adr_price", "language": lang, "reply": _fb, "action": None,
+                   f"데이터 소스에 없는 종목입니다.")
+            return {"intent": "adr_price", "language": lang, "reply": _fb + _kr_line(), "action": None,
                     "speak": True, "transcript": transcript, "tool_used": None}
         if _kc:
             _fb = (f"{_kn} has no US-listed ADR in our map — its US line either doesn't exist or "
