@@ -342,7 +342,9 @@ export default function ScalpDesk({ mode }: { mode: ScalpMode }) {
 
   const selPx = livePx[sel] ?? sc?.stocks?.find((s) => s.code === sel)?.price ?? null;
   const openLimits = (st?.open_orders || []).filter((o) => o.ticker === sel);
-  const todayFills = (st?.history || []).filter((o) => o.ticker === sel).slice(0, 8);
+  const todayFills = (st?.history || [])
+    .filter((o) => o.ticker === sel && o.status === "FILLED")   // no ₩- ghost rows
+    .slice(0, 8);
 
   return (
     <div className="max-w-[1100px] mx-auto px-4 py-5">
