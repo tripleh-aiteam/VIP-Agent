@@ -376,8 +376,13 @@ def status(db) -> dict[str, Any]:
     for r in db.execute(text(
             "SELECT ticker, qty, entry, opened_at FROM scalp_trades WHERE status='OPEN'")):
         open_map[r[0]] = {"qty": int(r[1]), "entry": float(r[2]), "opened_at": str(r[3])}
+    # parallel price fan-out — 21 stocks serial would take ~4s per status call
+    # while the page polls every 4s (pile-up); parallel keeps it under ~1s
+    from concurrent.futures import ThreadPoolExecutor
+    with ThreadPoolExecutor(max_workers=8) as _ex:
+        _pxs = dict(zip(cfg["codes"], _ex.map(_px, cfg["codes"])))
     for code in cfg["codes"]:
-        px = _px(code)
+        px = _pxs.get(code)
         o = open_map.get(code)
         buf = _buf.get(code)
         lo = min((p for _, p in buf), default=None) if buf else None

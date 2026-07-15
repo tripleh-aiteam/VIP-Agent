@@ -221,6 +221,13 @@ export default function ScalpDesk({ mode }: { mode: ScalpMode }) {
   const [sellAt, setSellAt] = useState("");
   const [note, setNote] = useState<string | null>(null);
   const [fltSrc, setFltSrc] = useState<"ALL" | "manual" | "algo1" | "algo2" | "guard">("ALL");
+  // DISPLAY-only selection (boss: like Algo 1 — show the 2 mains, hide the rest;
+  // the machine still watches & trades ALL codes in the background)
+  const [showExtra, setShowExtra] = useState<string[]>([]);
+  useEffect(() => {
+    try { setShowExtra(JSON.parse(localStorage.getItem("scalp-show") || "[]")); } catch {}
+  }, []);
+  const [cardChart, setCardChart] = useState<string | null>(null);   // 📈 inline chart per card
   const [livePx, setLivePx] = useState<Record<string, number>>({});
   const [liveChg, setLiveChg] = useState<Record<string, number>>({});
   const [stockList, setStockList] = useState<StockItem[]>([]);
@@ -499,21 +506,67 @@ export default function ScalpDesk({ mode }: { mode: ScalpMode }) {
                 </div>
               </div>
 
-              {/* per-stock ripple state — LONG (bought) first, then closest to firing
-                  (boss 2026-07-15: with 20+ stocks the active ones must pop to the top) */}
-              <div className="mt-3 grid md:grid-cols-2 xl:grid-cols-3 gap-3">
-                {[...sc.stocks].sort((a, b) => {
-                  if (a.state !== b.state) return a.state === "LONG" ? -1 : 1;
-                  return (b.bounce_pct ?? -9) - (a.bounce_pct ?? -9);
-                }).map((s) => {
+              {/* hidden-but-watched strip (boss: like Algo 1 — only the 2 mains show;
+                  the machine trades ALL of them; a BUY pops the card up automatically) */}
+              {(() => {
+                const hidden = sc.stocks.filter((s) =>
+                  !["000660", "005930"].includes(s.code) && !showExtra.includes(s.code)
+                  && s.state !== "LONG");
+                if (!hidden.length) return null;
+                return (
+                  <div className="mt-3 flex items-center gap-1.5 flex-wrap text-[11px] rounded-xl border px-3 py-2"
+                    style={{ borderColor: "var(--border-default)", background: "var(--bg-elevated)" }}>
+                    <b className="text-[var(--text-muted)]">👁️ {t(`감시 중 ${hidden.length}개 (기계는 계속 매매 — 사면 자동으로 나타남)`,
+                        `watching ${hidden.length} (machine still trades them — a buy pops up automatically)`)}:</b>
+                    {hidden.map((s) => (
+                      <button key={s.code}
+                        onClick={() => {
+                          const next = [...showExtra, s.code];
+                          setShowExtra(next);
+                          try { localStorage.setItem("scalp-show", JSON.stringify(next)); } catch {}
+                        }}
+                        title={t("클릭하면 카드가 열립니다", "click to show the full card")}
+                        className="font-bold px-2 py-0.5 rounded-full border text-[var(--text-secondary)] hover:opacity-70"
+                        style={{ borderColor: "var(--border-default)" }}>
+                        {s.name} ＋
+                      </button>
+                    ))}
+                  </div>
+                );
+              })()}
+
+              {/* per-stock ripple state — mains FIRST (boss), then bought, then near-trigger */}
+              <div className="mt-3 grid md:grid-cols-2 gap-3">
+                {[...sc.stocks]
+                  .filter((s) => ["000660", "005930"].includes(s.code)
+                    || showExtra.includes(s.code) || s.state === "LONG")
+                  .sort((a, b) => {
+                    const rank = (x: ScalpStock) =>
+                      x.code === "000660" ? -2 : x.code === "005930" ? -1
+                      : x.state === "LONG" ? 0 : 1;
+                    if (rank(a) !== rank(b)) return rank(a) - rank(b);
+                    return (b.bounce_pct ?? -9) - (a.bounce_pct ?? -9);
+                  }).map((s) => {
                   const px = livePx[s.code] ?? s.price;
                   const chg = liveChg[s.code] ?? s.chg;
                   return (
                     <div key={s.code} className="rounded-xl border px-4 py-3"
                       style={{ borderColor: s.state === "LONG" ? PURPLE : "var(--border-default)", background: "var(--bg-elevated)" }}>
                       <div className="flex items-baseline gap-2 flex-wrap">
-                        <b className="text-[15.5px] text-[var(--text-primary)]">{s.name}</b>
+                        <button onClick={() => setCardChart((c) => (c === s.code ? null : s.code))}
+                          title={t("클릭: 5분봉 차트 열기/닫기", "click: toggle the 5-min chart")}
+                          className="text-[15.5px] font-extrabold text-[var(--text-primary)] underline decoration-dotted underline-offset-4 hover:opacity-70">
+                          {s.name} 📈
+                        </button>
                         <span className="text-[10.5px] text-[var(--text-muted)]">{s.code}</span>
+                        {!["000660", "005930"].includes(s.code) && showExtra.includes(s.code) && (
+                          <button onClick={() => {
+                            const next = showExtra.filter((c) => c !== s.code);
+                            setShowExtra(next);
+                            try { localStorage.setItem("scalp-show", JSON.stringify(next)); } catch {}
+                          }} title={t("카드 숨기기 (매매는 계속)", "hide the card (still trades)")}
+                            className="text-[11px] text-[var(--text-muted)] hover:opacity-70">✕</button>
+                        )}
                         <span className="text-[15px] font-extrabold tabular-nums text-[var(--text-primary)]">
                           ₩{fmt(px)}
                           {chg != null && (
@@ -571,6 +624,11 @@ export default function ScalpDesk({ mode }: { mode: ScalpMode }) {
                               </div>
                             );
                           })()}
+                        </div>
+                      )}
+                      {cardChart === s.code && (
+                        <div className="mt-2 rounded-lg border border-[var(--border-default)] p-1 bg-[var(--bg-primary)]">
+                          <MiniChart code={s.code} />
                         </div>
                       )}
                     </div>
