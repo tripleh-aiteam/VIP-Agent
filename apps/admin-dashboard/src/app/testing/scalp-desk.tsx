@@ -639,6 +639,15 @@ export default function ScalpDesk({ mode }: { mode: ScalpMode }) {
                 );
               })()}
 
+              {/* 🌙 market-closed banner (boss: like Algo 1 — after 15:20 say it plainly) */}
+              {!sc.market_open && (
+                <div className="mt-3 rounded-xl border px-4 py-2.5 text-[13px] font-bold"
+                  style={{ borderColor: "var(--border-default)", background: "var(--bg-elevated)", color: "var(--text-secondary)" }}>
+                  🌙 {t("장 마감 — 매매 중지 (다음 개장 09:00). 각 카드에 오늘 종목별 결과가 표시됩니다.",
+                        "Market closed — trading stopped (next open 09:00). Each card shows today's per-stock result.")}
+                </div>
+              )}
+
               {/* per-stock ripple state — ONLY mains + boss-opened (his final rule) */}
               <div className="mt-3 grid md:grid-cols-2 gap-3">
                 {[...sc.stocks]
@@ -653,6 +662,16 @@ export default function ScalpDesk({ mode }: { mode: ScalpMode }) {
                   }).map((s) => {
                   const px = livePx[s.code] ?? s.price;
                   const chg = liveChg[s.code] ?? s.chg;
+                  // this stock's own day result (from today's closed round trips)
+                  const todayKst = new Date().toLocaleString("sv-SE", { timeZone: "Asia/Seoul" }).slice(0, 10);
+                  const myRows = sc.recent.filter((r) => {
+                    if (r.name !== s.name) return false;
+                    const c = r.closed_at || "";
+                    const iso = /Z$|[+-]\d{2}:\d{2}$/.test(c) ? c : `${c}Z`;
+                    return new Date(iso).toLocaleString("sv-SE", { timeZone: "Asia/Seoul" }).slice(0, 10) === todayKst;
+                  });
+                  const myWins = myRows.filter((r) => (r.won || 0) > 0).length;
+                  const myNet = myRows.reduce((a, r) => a + (r.won || 0), 0);
                   return (
                     <div key={s.code} className="rounded-xl border px-4 py-3"
                       style={{ borderColor: s.state === "LONG" ? PURPLE : "var(--border-default)", background: "var(--bg-elevated)" }}>
@@ -681,8 +700,21 @@ export default function ScalpDesk({ mode }: { mode: ScalpMode }) {
                         </span>
                         <span className="ml-auto text-[12px] font-extrabold px-2 py-0.5 rounded-full text-white"
                           style={{ background: s.state === "LONG" ? PURPLE : "var(--text-muted)" }}>
-                          {s.state === "LONG" ? t("보유 중", "LONG") : t("상승 시작 대기", "WAITING")}
+                          {s.state === "LONG" ? t("보유 중", "LONG")
+                            : !sc.market_open ? t("🌙 마감", "🌙 CLOSED")
+                            : t("상승 시작 대기", "WAITING")}
                         </span>
+                      </div>
+                      {/* 📊 this stock's own day result — win or lose, in won (boss 15:20 rule) */}
+                      <div className="mt-1 text-[11.5px] font-bold tabular-nums">
+                        {myRows.length > 0 ? (
+                          <span style={{ color: pnlCol(myNet) }}>
+                            📊 {t(`오늘 이 종목: ${myRows.length}회전 · ${myWins}승 ${myRows.length - myWins}패 · 순 ${myNet > 0 ? "+" : ""}₩${fmt(Math.round(myNet))}`,
+                                  `today: ${myRows.length} trips · ${myWins}W ${myRows.length - myWins}L · net ${myNet > 0 ? "+" : ""}₩${fmt(Math.round(myNet))}`)}
+                          </span>
+                        ) : !sc.market_open ? (
+                          <span className="text-[var(--text-muted)]">📊 {t("오늘 이 종목 매매 없음", "no trades on this stock today")}</span>
+                        ) : null}
                       </div>
                       {/* ⏱️ next-5-minutes analog forecast (boss 2026-07-15) */}
                       {s.pred && px != null && (
