@@ -316,7 +316,7 @@ def live_prices(codes: str = Query(..., description="comma-separated 6-digit cod
     prices from THIS every ~3s instead. Kiwoom-first via _live_price (2s
     micro-cache), parallel fan-out, no DB."""
     from concurrent.futures import ThreadPoolExecutor
-    from services.paper_desk import _live_price
+    from services.paper_desk import _live_price, _chg_cache
     cs: list[str] = []
     for c in (codes or "").split(","):
         c = c.strip().zfill(6)
@@ -328,7 +328,7 @@ def live_prices(codes: str = Query(..., description="comma-separated 6-digit cod
         with ThreadPoolExecutor(max_workers=8) as ex:
             for c, (px, _name) in zip(cs, ex.map(_live_price, cs)):
                 if px is not None:
-                    out[c] = {"price": px}
+                    out[c] = {"price": px, "chg": _chg_cache.get(c)}
     return {"prices": out}
 
 

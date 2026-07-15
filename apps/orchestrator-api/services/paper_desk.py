@@ -75,20 +75,26 @@ def _ensure(db) -> None:
     db.commit()
 
 
+_chg_cache: dict[str, float] = {}       # ticker -> today's change_pct (same freshness)
+
+
 def _live_price(ticker: str) -> tuple[Optional[float], Optional[str]]:
     """LIVE price + name for ANY 6-digit code: Kiwoom first, Naver fallback.
-    2s per-ticker micro-cache — caps upstream amplification from request spam."""
+    2s per-ticker micro-cache — caps upstream amplification from request spam.
+    Side effect: today's change_pct lands in _chg_cache for the /prices lane."""
     import time as _t
     hit = _price_cache.get(ticker)
     if hit and _t.time() - hit[0] < _PRICE_TTL:
         return hit[1], hit[2]
     name = None
     px: Optional[float] = None
+    chg: Optional[float] = None
     try:
         from services import kiwoom_rest as kr
         q = kr.current_price(ticker)
         if q and q.get("price"):
             px, name = float(q["price"]), (q.get("name") or None)
+            chg = q.get("change_pct")
     except Exception:
         pass
     if px is None:
@@ -97,9 +103,15 @@ def _live_price(ticker: str) -> tuple[Optional[float], Optional[str]]:
             q = realtime_quote(ticker)
             if q and q.get("price"):
                 px = float(q["price"])
+                chg = q.get("change_pct")
         except Exception:
             pass
     _price_cache[ticker] = (_t.time(), px, name)
+    if chg is not None:
+        try:
+            _chg_cache[ticker] = float(chg)
+        except Exception:
+            pass
     if len(_price_cache) > 500:          # bound the cache itself
         _price_cache.pop(next(iter(_price_cache)))
     return px, name

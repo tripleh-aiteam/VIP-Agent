@@ -501,6 +501,7 @@ export default function Desk({ mode }: { mode: TradeMode }) {
   // the focus board recomputes every 60s (heavy engine work), but the 현재가 itself
   // now overlays from /paper-desk/prices (Kiwoom-first, 2s fresh) every 3 seconds.
   const [livePx, setLivePx] = useState<Record<string, number>>({});
+  const [liveChg, setLiveChg] = useState<Record<string, number>>({});
   useEffect(() => {
     if (mode === "manual" || marketClosed) return;   // manual has no board; closed = frozen
     const tick = () => {
@@ -509,15 +510,20 @@ export default function Desk({ mode }: { mode: TradeMode }) {
           ["000660", "005930"].includes(f.code) || watchExtra.includes(f.code)
           || !!f.qualified || !!f.dynamic).map((f) => f.code)));
       if (!codes.length) return;
-      api<{ prices: Record<string, { price: number }> }>(`/paper-desk/prices?codes=${codes.join(",")}`)
+      api<{ prices: Record<string, { price: number; chg?: number | null }> }>(`/paper-desk/prices?codes=${codes.join(",")}`)
         .then((r) => {
           const m: Record<string, number> = {};
-          Object.entries(r.prices || {}).forEach(([c, v]) => { if (v?.price != null) m[c] = v.price; });
+          const g: Record<string, number> = {};
+          Object.entries(r.prices || {}).forEach(([c, v]) => {
+            if (v?.price != null) m[c] = v.price;
+            if (v?.chg != null) g[c] = v.chg;
+          });
           if (Object.keys(m).length) setLivePx((old) => ({ ...old, ...m }));
+          if (Object.keys(g).length) setLiveChg((old) => ({ ...old, ...g }));
         }).catch(() => {});
     };
     tick();
-    const i = setInterval(tick, 3000);
+    const i = setInterval(tick, 2000);   // boss: must feel like Kiwoom — 2s lane
     return () => clearInterval(i);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mode, marketClosed, focus, watchExtra]);
@@ -926,7 +932,16 @@ export default function Desk({ mode }: { mode: TradeMode }) {
                     <button onClick={() => rmWatch(f.code)} title={t("보드에서 빼기", "remove from board")}
                       className="ml-auto text-[12px] text-[var(--text-muted)] hover:opacity-70">✕</button>
                   )}
-                  {(livePx[f.code] ?? f.price) != null && <span className="text-[16px] font-extrabold tabular-nums text-[var(--text-primary)]">₩{fmt(livePx[f.code] ?? f.price)}</span>}
+                  {(livePx[f.code] ?? f.price) != null && (
+                    <span className="text-[16px] font-extrabold tabular-nums text-[var(--text-primary)]">
+                      ₩{fmt(livePx[f.code] ?? f.price)}
+                      {liveChg[f.code] != null && (
+                        <span className="ml-1 text-[13px]" style={{ color: liveChg[f.code] >= 0 ? RED : BLUE }}>
+                          {liveChg[f.code] >= 0 ? "▲" : "▼"}{Math.abs(liveChg[f.code]).toFixed(2)}%
+                        </span>
+                      )}
+                    </span>
+                  )}
                   {f.ai_1h_prob != null && <span className="text-[11.5px] font-bold text-[var(--text-muted)]">🤖 {f.ai_1h_prob}%</span>}
                   {f.confidence != null && f.confidence > 0 && <span className="text-[11.5px] font-bold text-[var(--text-muted)]">{t("확신", "conf")} {f.confidence}%</span>}
                 </div>
