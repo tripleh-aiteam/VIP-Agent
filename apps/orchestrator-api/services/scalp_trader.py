@@ -134,9 +134,18 @@ def _px(code: str) -> Optional[float]:
     return p
 
 
+_name_cache: dict[str, str] = {}        # names don't change intraday — cache forever
+
+
 def _name(code: str) -> str:
+    hit = _name_cache.get(code)
+    if hit:
+        return hit
     from services.paper_desk import _name_for
-    return _name_for(code)
+    n = _name_for(code)
+    if n and n != code:
+        _name_cache[code] = n
+    return n
 
 
 def _close_row(db, out: dict, oid: int, name: str, entry: float, fill: float,
@@ -399,8 +408,19 @@ def adopt(db, code: str) -> dict[str, Any]:
             "stop_at": round(avg * (1 - cfg["stop_pct"] / 100))}
 
 
+_pred_cache: dict[str, tuple[float, Any]] = {}   # 5-min bars only change every 5 min
+_status_cache: Optional[tuple[float, dict]] = None
+
+
 def status(db) -> dict[str, Any]:
-    """Everything the Algorithm 2 page needs, one call."""
+    """Everything the Algorithm 2 page needs, one call. With 21 stocks a cold
+    build costs ~60 cross-region DB round trips — so the whole payload is cached
+    for 3s (the page polls every 4s; concurrent viewers dedupe) and each stock's
+    5-min forecast for 45s."""
+    global _status_cache
+    import time as _t
+    if _status_cache and _t.time() - _status_cache[0] < 3.0:
+        return _status_cache[1]
     cfg = _cfg(db)
     stocks: list[dict[str, Any]] = []
     open_map: dict[str, Any] = {}
@@ -428,8 +448,13 @@ def status(db) -> dict[str, Any]:
         # ⏱️ next-5-minutes analog forecast (boss 2026-07-15): predicted price + ±%
         pred = None
         try:
-            from services.pattern_layer import next_bar_vote
-            nb = next_bar_vote(db, code)
+            _hit = _pred_cache.get(code)
+            if _hit and _t.time() - _hit[0] < 45.0:
+                nb = _hit[1]
+            else:
+                from services.pattern_layer import next_bar_vote
+                nb = next_bar_vote(db, code)
+                _pred_cache[code] = (_t.time(), nb)
             if nb and px:
                 pred = {**nb, "pred_price": round(px * (1 + nb["pred_pct"] / 100))}
         except Exception:
@@ -468,7 +493,7 @@ def status(db) -> dict[str, Any]:
                   "SELECT name, qty, entry, exit_price, exit_reason, net_pct, closed_at, "
                   "opened_at, why FROM scalp_trades WHERE status='CLOSED' "
                   "ORDER BY closed_at DESC LIMIT 25"))]
-    return {**cfg,
+    out = {**cfg,
             "stocks": stocks,
             "today": {"trades": int(today[0] or 0), "wins": int(today[1] or 0),
                       "net_pct_sum": round(float(today[2] or 0), 2),
@@ -477,3 +502,5 @@ def status(db) -> dict[str, Any]:
             "market_open": _market_open_now(),
             "fee_note_ko": "왕복 수수료+세금 0.23% — 목표 0.4%면 실수익 약 +0.17%",
             "fee_note_en": "round-trip fees+tax 0.23% — a 0.4% take nets about +0.17%"}
+    _status_cache = (_t.time(), out)
+    return out
