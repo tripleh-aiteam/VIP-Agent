@@ -5280,6 +5280,58 @@ def _run_agent_impl(
                     "action": None, "speak": True, "transcript": transcript,
                     "tool_used": "paper_desk"}
 
+    # === 🌙 OVERNIGHT hold-or-sell lane (boss 2026-07-16): "팔고 갈까 들고 갈까?"
+    # / "should I hold overnight?" — measured-statistics verdict (backtest found
+    # NO ML edge; every 15:00-visible condition had positive avg gap this year),
+    # per-stock record + fee math, call logged + auto-graded vs the real open.
+    # Runs BEFORE the position/turn/analyst lanes (they were swallowing it).
+    # Named stock → that stock; none named → every held position (up to 3). ===
+    if not confirmed_tool and not attachment_ids:
+        try:
+            from services.overnight_gap import is_overnight_question as _is_on
+            if _is_on(transcript):
+                from services.overnight_gap import advise as _on_advise
+                _on_stocks = list(dict.fromkeys(_all_stocks_in_query(transcript)))[:3]
+                if not _on_stocks:
+                    try:
+                        from services.stock_resolver import resolve_one as _r1o
+                        _co, _no = (_r1o(transcript or "") or (None, None))[:2]
+                        if _co:
+                            _on_stocks = [(_co, _no or _co)]
+                    except Exception:
+                        pass
+                if not _on_stocks:
+                    from sqlalchemy import text as _sql_text
+                    _held = db.execute(_sql_text(
+                        "SELECT ticker, name FROM paper_desk_positions "
+                        "WHERE qty > 0 ORDER BY qty * avg_price DESC LIMIT 3")).fetchall()
+                    _on_stocks = [(r[0], r[1] or r[0]) for r in _held]
+                if _on_stocks:
+                    _parts = []
+                    for _c, _n in _on_stocks:
+                        _a = _on_advise(db, _c, _n, lang)
+                        if _a:
+                            _parts.append(_a)
+                    if _parts:
+                        return {"intent": "overnight_call", "language": lang,
+                                "reply": "\n\n".join(_parts)[:9000], "action": None,
+                                "speak": True, "transcript": transcript,
+                                "tool_used": "overnight_call"}
+                else:
+                    return {"intent": "overnight_call", "language": lang,
+                            "reply": ("Which stock, and are you holding it? Name it "
+                                      "(e.g. \"should I hold Samsung overnight?\") — "
+                                      "or buy first and ask again; I answer from the "
+                                      "measured overnight record."
+                                      if str(lang).lower().startswith("en") else
+                                      "어느 종목인가요? 종목명을 함께 물어봐 주세요 "
+                                      "(예: \"삼성전자 들고 갈까?\") — 보유 중인 종목이 "
+                                      "있으면 자동으로 그 종목들로 답합니다."),
+                            "action": None, "speak": True, "transcript": transcript,
+                            "tool_used": "overnight_call"}
+        except Exception as e:
+            log.warning(f"overnight lane failed: {str(e)[:120]}")
+
     # === M2 — POSITION-AWARE advice (a holding the user already has) ===
     # "지난주 SK하이닉스 200주 -4% 어떡해?" → 버티기/손절/물타기/익절 with trigger prices,
     # from the 3-method decide + the user's P&L. Runs BEFORE delegation so VIP + AI Advisor

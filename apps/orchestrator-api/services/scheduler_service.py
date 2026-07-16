@@ -2070,6 +2070,30 @@ def init_scheduler():
     )
     log.info("scheduler: algorithm-2 exit pulse registered (5s, market hours)")
 
+    # 🌙 overnight hold-or-sell calls: grade yesterday's against today's REAL
+    # open every market morning (boss 2026-07-16 — the advisor's track record)
+    def _grade_overnight():
+        db = SessionLocal()
+        try:
+            from services.overnight_gap import grade_calls
+            r = grade_calls(db)
+            if r.get("graded"):
+                log.info(f"overnight calls graded: {r}", extra={"action": "overnight.grade"})
+        except Exception as e:
+            log.warning(f"overnight grading failed: {str(e)[:120]}")
+        finally:
+            db.close()
+
+    _scheduler.add_job(
+        _grade_overnight,
+        CronTrigger(day_of_week="mon-fri", hour=9, minute=6,
+                    timezone="Asia/Seoul"),
+        id="overnight-grade",
+        replace_existing=True,
+        max_instances=1, coalesce=True,
+    )
+    log.info("scheduler: overnight-call grading registered (09:06 KST Mon-Fri)")
+
     # Hourly snapshot capture — every hour at :05. Saves one 'part' per report
     # type (newspaper/youtube/kiwoom) WITHOUT emailing; the 6 AM build reads all
     # ~24 parts of the day and synthesises the big report. Plus daily cleanup.
