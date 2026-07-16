@@ -23,10 +23,19 @@ Smart-analyst lane + concise mode + language purity + deep graph analysis + matr
 - **What:** [ml/hourly_model.py](apps/orchestrator-api/ml/hourly_model.py) + [services/hourly_model.py](apps/orchestrator-api/services/hourly_model.py): +5 features (gap_pct, day_chg, **mkt_day — instantly #1 importance**, peer_r60, lev_etf_rebal proxy); triple-barrier labels y_tb(+1/−1)/y_tb2(+2/−1) measured on 63 unseen days — real relative skill (tb2 = 2.2× base) but **neither clears fee-math breakeven (61.5%/41%)** → shipped model stays the y_up RANKING voice on the raw scale (calibrated probs would silently break the ≥55 guard/scanner thresholds — kept as diagnostics). Inference **train/serve skew fixed** (real 15/60-min mkt+peer returns from bars, was day-chg). Nightly `ml/scoreboard.log` line (Phase D seed). **First positive unseen-days money-sim: logreg @0.58 avg +0.092%/trade (9,434 signals), @0.65 +0.143%.** New joblib committed; nightly 16:30 pipeline continues automatically.
 - **Strategy finding for the boss:** +1%/−1% touch trading needs a 61.5% win rate after 0.23% fees — the trail-ride past +1% is what keeps Algo 1 near breakeven; entry selectivity (Phase A) and wider winners attack this directly.
 
+### [14:20] Algorithm 2 — boss's Candle 3-2 strategy (selectable, for live A/B vs ripple)
+
+- **What:** new `strategy` dial on Algorithm 2 ('ripple' default / 'candle'). Candle = the boss's exact 1-min rule: 3 consecutive up candles → BUY (flat pos_pct sizing, no voices — pure rule for a clean comparison) · hold while rising, ONE down candle forgiven · 2 consecutive down candles → SELL (`CANDLE2`) · −1% hard stop always · EOD flat · NO take-profit (rides the trend). Works in auto AND semi (🔔 buy card + "🕯️ 2연속 하락 — 지금 파세요" sell advice). Completed-candle detection via Kiwoom ka10080 1-min bars (forming minute dropped, doji ends streaks, 20s cache). Activity table tags trades "캔들 3-2 전략" in the why column and shows a 🕯️ exit chip — that's the A/B record.
+- **Why:** boss's explicit rule; backtest on 1yr of bars was negative (15-28% win) and he said "implement what I said then we will test and compare."
+- **Also fixed:** `_ensure` was re-running ALTER TABLE (AccessExclusiveLock) on every 15s tick/5s pulse/status call — now once per process (it deadlocked against a second DB client during testing).
+- **Files:** [services/scalp_trader.py](apps/orchestrator-api/services/scalp_trader.py), [routers/paper_desk.py](apps/orchestrator-api/routers/paper_desk.py), [testing/scalp-desk.tsx](apps/admin-dashboard/src/app/testing/scalp-desk.tsx)
+- **Tested:** streak logic 8/8 synthetic cases + forgiveness rule; live 1-min candles (SK하이닉스 14:08, dn=2 detected); strategy roundtrip on prod DB (invalid values ignored, restored to ripple).
+
 ### Next
 
 - Phase D: weekly auto-scoreboard report (scoreboard.log accumulating nightly).
 - Watch momentum setup win rate ≥45% gate over the next paper-trading week.
+- Candle 3-2 vs ripple A/B: boss flips the 전략 dial; compare via activity-table why tags.
 
 ---
 

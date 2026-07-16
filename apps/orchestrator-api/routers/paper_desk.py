@@ -283,12 +283,14 @@ def scalp_toggle(on: bool = Query(...), db: Session = Depends(get_db)):
 @router.post("/scalp/params")
 def scalp_params(take_pct: Optional[float] = Query(None), stop_pct: Optional[float] = Query(None),
                  pos_pct: Optional[float] = Query(None), codes: Optional[str] = Query(None),
-                 mode: Optional[str] = Query(None), db: Session = Depends(get_db)):
+                 mode: Optional[str] = Query(None), strategy: Optional[str] = Query(None),
+                 db: Session = Depends(get_db)):
     """The boss's dials: small-win target %, stop %, size % of cash, stock list,
-    mode ('auto' = machine trades · 'semi' = machine only recommends)."""
+    mode ('auto'/'semi'), strategy ('ripple' = bounce+take · 'candle' = 1-min
+    3-up buy / 2-down sell / −1% stop)."""
     from services.scalp_trader import set_params
     return set_params(db, take_pct=take_pct, stop_pct=stop_pct, pos_pct=pos_pct,
-                      codes=codes, mode=mode)
+                      codes=codes, mode=mode, strategy=strategy)
 
 
 @router.post("/scalp/buy")

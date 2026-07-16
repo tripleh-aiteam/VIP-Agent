@@ -45,13 +45,13 @@ type ScalpStock = {
   code: string; name: string; price?: number | null; chg?: number | null; state: "WAIT" | "LONG";
   entry?: number | null; qty?: number | null; pnl_pct?: number | null;
   take_at?: number | null; stop_at?: number | null; bounce_pct?: number | null; buf_n?: number;
-  advice?: "TAKE" | "STOP" | null;
+  advice?: "TAKE" | "STOP" | "CANDLE" | null;
   pred?: { pred_pct: number; pred_price: number; up_rate: number | null; n: number; fallback?: boolean } | null;
 };
 type ScalpSignal = { code: string; name: string; price: number; qty: number; why: string; ts: number };
 type ScalpStatus = {
   enabled: boolean; take_pct: number; stop_pct: number; pos_pct: number; codes: string[];
-  mode?: "auto" | "semi"; signals?: ScalpSignal[];
+  mode?: "auto" | "semi"; strategy?: "ripple" | "candle"; signals?: ScalpSignal[];
   stocks: ScalpStock[];
   today: { trades: number; wins: number; net_pct_sum: number; realized_won?: number };
   recent: { name: string; qty: number; entry: number; exit_price?: number | null;
@@ -395,7 +395,9 @@ export default function ScalpDesk({ mode }: { mode: ScalpMode }) {
       <div className="flex items-center gap-3 flex-wrap">
         <Link href="/testing" className="text-[12px] font-bold text-[var(--text-muted)] hover:opacity-70">← {t("알고리즘 선택", "algorithms")}</Link>
         <h1 className="text-[19px] font-extrabold" style={{ color: PURPLE }}>
-          ⚡ {t("알고리즘 2 — 잔물결 초단타", "Algorithm 2 — ripple scalper")}
+          ⚡ {sc?.strategy === "candle"
+            ? t("알고리즘 2 — 캔들 3-2 (1분봉)", "Algorithm 2 — candle 3-2 (1-min)")
+            : t("알고리즘 2 — 잔물결 초단타", "Algorithm 2 — ripple scalper")}
         </h1>
         <div className="flex gap-1.5">
           <Link href="/testing/scalp/auto" className="text-[12px] font-extrabold px-3 py-1.5 rounded-lg"
@@ -530,8 +532,11 @@ export default function ScalpDesk({ mode }: { mode: ScalpMode }) {
                       try {
                         const r = await apiPost<{ ok: boolean; error?: string; take_at?: number; stop_at?: number }>(`/paper-desk/scalp/buy?code=${g.code}`);
                         setNote(r.ok
-                          ? t(`✅ 매수 — 목표 ₩${fmt(r.take_at)} 도달 시 매도 추천이 뜹니다 (손절선 ₩${fmt(r.stop_at)})`,
-                              `✅ bought — a SELL advice appears at ₩${fmt(r.take_at)} (stop line ₩${fmt(r.stop_at)})`)
+                          ? sc.strategy === "candle"
+                            ? t(`✅ 매수 — 1분봉 2연속 음봉이 나오면 매도 추천이 뜹니다 (손절선 ₩${fmt(r.stop_at)})`,
+                                `✅ bought — a SELL advice appears on 2 down 1-min candles (stop line ₩${fmt(r.stop_at)})`)
+                            : t(`✅ 매수 — 목표 ₩${fmt(r.take_at)} 도달 시 매도 추천이 뜹니다 (손절선 ₩${fmt(r.stop_at)})`,
+                                `✅ bought — a SELL advice appears at ₩${fmt(r.take_at)} (stop line ₩${fmt(r.stop_at)})`)
                           : `❌ ${r.error}`);
                       } catch (e) { setNote(`❌ ${(e as Error).message}`); }
                       setBusy(false);
@@ -559,14 +564,29 @@ export default function ScalpDesk({ mode }: { mode: ScalpMode }) {
                 <span className="text-[12px] text-[var(--text-secondary)]">
                   {!sc.enabled
                     ? t("꺼져 있음 — 기계는 관찰만 합니다", "off — the machine only watches")
-                    : mode === "semi"
-                      ? t("15초마다 자리 탐색 → 🔔 매수 추천 → 사장님이 매수 · 목표/손절 도달 → 매도 추천 → 사장님이 매도 (기계는 절대 스스로 안 삽니다)",
-                          "every 15s: finds the spot → 🔔 recommends → YOU buy · take/stop reached → SELL advice → YOU sell (the machine never trades by itself)")
-                      : t("15초마다: 오르기 시작 → 매수 · 목표 도달 → 매도 · 반복 · 15:18 전량 정리",
-                          "every 15s: upturn → buy · take hit → sell · repeat · flat at 15:18")}
+                    : sc.strategy === "candle"
+                      ? (mode === "semi"
+                          ? t("1분봉 3연속 양봉 → 🔔 매수 추천 → 사장님이 매수 · 2연속 음봉 → 매도 추천 → 사장님이 매도 (−1% 손절은 항상)",
+                              "3 up 1-min candles → 🔔 buy advice → YOU buy · 2 down candles → SELL advice → YOU sell (−1% stop always)")
+                          : t("1분봉 3연속 양봉 → 매수 · 오르는 동안 보유 (음봉 1개는 용서) · 2연속 음봉 → 매도 · −1% 손절 · 15:18 정리",
+                              "3 up 1-min candles → buy · hold while rising (1 down candle forgiven) · 2 down candles → sell · −1% stop · flat 15:18"))
+                      : mode === "semi"
+                        ? t("15초마다 자리 탐색 → 🔔 매수 추천 → 사장님이 매수 · 목표/손절 도달 → 매도 추천 → 사장님이 매도 (기계는 절대 스스로 안 삽니다)",
+                            "every 15s: finds the spot → 🔔 recommends → YOU buy · take/stop reached → SELL advice → YOU sell (the machine never trades by itself)")
+                        : t("15초마다: 오르기 시작 → 매수 · 목표 도달 → 매도 · 반복 · 15:18 전량 정리",
+                            "every 15s: upturn → buy · take hit → sell · repeat · flat at 15:18")}
                 </span>
                 {/* the boss's dials */}
                 <div className="ml-auto flex items-center gap-2 text-[11.5px]">
+                  <span className="text-[var(--text-muted)]">{t("전략", "strategy")}</span>
+                  <select value={sc.strategy || "ripple"}
+                    onChange={async (e) => { await apiPost(`/paper-desk/scalp/params?strategy=${e.target.value}`); load(); }}
+                    className="px-1.5 py-1 rounded-lg border bg-[var(--bg-primary)] text-[var(--text-primary)] font-bold"
+                    style={{ borderColor: sc.strategy === "candle" ? "#e65100" : "var(--border-default)" }}>
+                    <option value="ripple">{t("잔물결 (반등+목표)", "ripple (bounce+take)")}</option>
+                    <option value="candle">{t("캔들 3-2 (1분봉)", "candle 3-2 (1-min)")}</option>
+                  </select>
+                  {sc.strategy !== "candle" && <>
                   <span className="text-[var(--text-muted)]">{t("작은 승리", "take")}</span>
                   <select value={String(sc.take_pct)} onChange={(e) => setParam("take_pct", Number(e.target.value))}
                     className="px-1.5 py-1 rounded-lg border bg-[var(--bg-primary)] text-[var(--text-primary)]" style={{ borderColor: "var(--border-default)" }}>
@@ -577,6 +597,7 @@ export default function ScalpDesk({ mode }: { mode: ScalpMode }) {
                       </option>;
                     })}
                   </select>
+                  </>}
                   <span className="text-[var(--text-muted)]">{t("손절", "stop")}</span>
                   <select value={String(sc.stop_pct)} onChange={(e) => setParam("stop_pct", Number(e.target.value))}
                     className="px-1.5 py-1 rounded-lg border bg-[var(--bg-primary)] text-[var(--text-primary)]" style={{ borderColor: "var(--border-default)" }}>
@@ -737,18 +758,23 @@ export default function ScalpDesk({ mode }: { mode: ScalpMode }) {
                             {s.pnl_pct != null && s.pnl_pct > 0 ? "+" : ""}{s.pnl_pct}%
                           </span>
                           <div className="mt-0.5 text-[11.5px]">
-                            🎯 {t("매도", "sell at")} ₩{fmt(s.take_at)} · 🛑 ₩{fmt(s.stop_at)}
+                            {sc.strategy === "candle"
+                              ? <>🕯️ {t("2연속 음봉 나오면 매도", "sells on 2 down candles")} · 🛑 ₩{fmt(s.stop_at)}</>
+                              : <>🎯 {t("매도", "sell at")} ₩{fmt(s.take_at)} · 🛑 ₩{fmt(s.stop_at)}</>}
                             <span className="ml-1 text-[var(--text-muted)]">
-                              {mode === "semi" ? t("(도달하면 매도 추천이 뜹니다)", "(a SELL advice appears when reached)")
+                              {mode === "semi" ? t("(신호가 오면 매도 추천이 뜹니다)", "(a SELL advice appears on the signal)")
+                                : sc.strategy === "candle" ? t("(오르는 동안 계속 보유 — 음봉 1개는 용서)", "(rides while rising — 1 down candle forgiven)")
                                 : t("(내려가도 −1%까지 버팀)", "(dips held to −1%)")}
                             </span>
                           </div>
                           {mode === "semi" && s.advice && (
                             <div className="mt-2 rounded-lg px-3 py-2 flex items-center gap-2"
-                              style={{ background: s.advice === "TAKE" ? "rgba(46,125,50,0.1)" : "rgba(211,47,47,0.1)" }}>
-                              <b className="text-[13px]" style={{ color: s.advice === "TAKE" ? "#2e7d32" : RED }}>
+                              style={{ background: s.advice === "TAKE" || s.advice === "CANDLE" ? "rgba(46,125,50,0.1)" : "rgba(211,47,47,0.1)" }}>
+                              <b className="text-[13px]" style={{ color: s.advice === "TAKE" || s.advice === "CANDLE" ? "#2e7d32" : RED }}>
                                 {s.advice === "TAKE"
                                   ? t("🔔 목표 도달 — 지금 파세요 (작은 승리 확정)", "🔔 take reached — SELL now (lock the small win)")
+                                  : s.advice === "CANDLE"
+                                  ? t("🕯️ 1분봉 2연속 하락 — 지금 파세요 (캔들 3-2 규칙)", "🕯️ 2 down 1-min candles — SELL now (candle 3-2 rule)")
                                   : t("🚨 손절선 도달 — 지금 파세요 (더 큰 손실 방지)", "🚨 stop reached — SELL now (prevent a bigger loss)")}
                               </b>
                               <button disabled={busy} onClick={async () => {
@@ -772,13 +798,22 @@ export default function ScalpDesk({ mode }: { mode: ScalpMode }) {
                         </div>
                       ) : (
                         <div className="mt-1.5 text-[11.5px] text-[var(--text-muted)]">
-                          {s.bounce_pct != null
+                          {sc.strategy === "candle"
+                            ? t("1분봉 3연속 양봉 나오면 매수 (캔들 3-2 전략)",
+                                "buys after 3 consecutive up 1-min candles (candle 3-2)")
+                            : s.bounce_pct != null
                             ? t(`최근 저점에서 ${s.bounce_pct > 0 ? "+" : ""}${s.bounce_pct}% — 상승 시작(+0.10%~) 확인되면 매수`,
                                 `${s.bounce_pct > 0 ? "+" : ""}${s.bounce_pct}% off the recent low — buys when the rise confirms (+0.10%~)`)
                             : t("가격 흐름 관찰 중…", "watching the price stream…")}
                           {px != null && (() => {
                             // exactly what a buy would look like RIGHT NOW, in shares and won
                             const bq = st ? Math.floor(st.cash * sc.pos_pct / 100 / px) : null;
+                            if (sc.strategy === "candle") return (
+                              <div className="mt-0.5">
+                                {bq ? t(`사면 약 ${fmt(bq)}주 (≈ ₩${fmt(bq * px)}) · 2연속 음봉에 매도 · −${sc.stop_pct}% 손절`,
+                                        `a buy ≈ ${fmt(bq)} sh (≈ ₩${fmt(bq * px)}) · sells on 2 down candles · −${sc.stop_pct}% stop`) : null}
+                              </div>
+                            );
                             const takeWon = Math.round(px * sc.take_pct / 100);
                             return (
                               <div className="mt-0.5">
@@ -1126,6 +1161,7 @@ export default function ScalpDesk({ mode }: { mode: ScalpMode }) {
                     <span className="text-[10.5px] px-1.5 py-0.5 rounded-full font-bold"
                       style={{ background: "var(--bg-elevated)", color: r.exit_reason === "TAKE" ? "#2e7d32" : r.exit_reason === "STOP" ? RED : "var(--text-muted)" }}>
                       {r.exit_reason === "TAKE" ? t("작은 승리", "small win") : r.exit_reason === "STOP" ? t("손절", "stop")
+                        : r.exit_reason === "CANDLE2" ? t("🕯️ 2연속 음봉", "🕯️ 2 down candles")
                         : r.exit_reason === "EOD" ? t("장마감 정리", "EOD flat") : r.exit_reason === "EXTERNAL" ? t("외부 매도", "external") : r.exit_reason}
                     </span>
                   </td>

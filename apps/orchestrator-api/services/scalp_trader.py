@@ -54,6 +54,7 @@ PEER_DROP_PCT = -0.15     # partner falling faster than this over ~60s → no bu
 
 _buf: dict[str, deque] = {}          # code -> deque[(ts, px)]
 _semi_signals: dict[str, dict] = {}  # semi mode: code -> live BUY recommendation
+_sell_hint: dict[str, str] = {}      # semi mode: code -> pending SELL advice reason
 
 # one trade brain at a time: the 15s tick and the 5s exit pulse must never
 # sell the same row twice (boss 2026-07-15: 두산 overshot the -1% line by 0.23%
@@ -63,7 +64,16 @@ import threading as _threading
 _trade_lock = _threading.Lock()
 
 
+_schema_ready = False
+
+
 def _ensure(db) -> None:
+    # DDL once per process — ALTER TABLE takes an AccessExclusiveLock, and the
+    # 15s tick + 5s pulse + status calls were re-running it forever (deadlocked
+    # against a second client on 2026-07-16)
+    global _schema_ready
+    if _schema_ready:
+        return
     db.execute(text(
         "CREATE TABLE IF NOT EXISTS scalp_state ("
         " id INT PRIMARY KEY, enabled BOOLEAN NOT NULL DEFAULT FALSE,"
@@ -84,6 +94,11 @@ def _ensure(db) -> None:
     # 'auto' = machine buys AND sells · 'semi' = machine only RECOMMENDS (boss clicks)
     db.execute(text(
         "ALTER TABLE scalp_state ADD COLUMN IF NOT EXISTS mode TEXT NOT NULL DEFAULT 'auto'"))
+    # 전략 (boss 2026-07-16): 'ripple' = bounce+take · 'candle' = HIS 1-min rule
+    # (3 up candles → buy · ride · 2 down candles → sell · −1% stop). Backtested
+    # negative on a year of bars but implemented for a live A/B comparison.
+    db.execute(text(
+        "ALTER TABLE scalp_state ADD COLUMN IF NOT EXISTS strategy TEXT NOT NULL DEFAULT 'ripple'"))
     r = db.execute(text("SELECT 1 FROM scalp_state WHERE id=1")).first()
     if not r:
         db.execute(text(
@@ -92,17 +107,19 @@ def _ensure(db) -> None:
             {"t": TAKE_PCT_DEFAULT, "s": STOP_PCT_DEFAULT,
              "p": POS_PCT_DEFAULT, "c": DEFAULT_CODES})
     db.commit()
+    _schema_ready = True
 
 
 def _cfg(db) -> dict[str, Any]:
     _ensure(db)
     r = db.execute(text(
-        "SELECT enabled, take_pct, stop_pct, pos_pct, codes, mode "
+        "SELECT enabled, take_pct, stop_pct, pos_pct, codes, mode, strategy "
         "FROM scalp_state WHERE id=1")).first()
     codes = [c.strip().zfill(6) for c in (r[4] or DEFAULT_CODES).split(",") if c.strip()]
     return {"enabled": bool(r[0]), "take_pct": float(r[1]), "stop_pct": float(r[2]),
             "pos_pct": float(r[3]), "codes": codes[:24],
-            "mode": (r[5] or "auto") if str(r[5] or "auto") in ("auto", "semi") else "auto"}
+            "mode": (r[5] or "auto") if str(r[5] or "auto") in ("auto", "semi") else "auto",
+            "strategy": (r[6] or "ripple") if str(r[6] or "ripple") in ("ripple", "candle") else "ripple"}
 
 
 def set_enabled(db, on: bool) -> dict:
@@ -115,12 +132,16 @@ def set_enabled(db, on: bool) -> dict:
 
 def set_params(db, take_pct: Optional[float] = None, stop_pct: Optional[float] = None,
                pos_pct: Optional[float] = None, codes: Optional[str] = None,
-               mode: Optional[str] = None) -> dict:
+               mode: Optional[str] = None, strategy: Optional[str] = None) -> dict:
     _ensure(db)
     cur = _cfg(db)
     if mode in ("auto", "semi"):
         db.execute(text("UPDATE scalp_state SET mode=:m, updated_at=now() WHERE id=1"),
                    {"m": mode})
+        db.commit()
+    if strategy in ("ripple", "candle"):
+        db.execute(text("UPDATE scalp_state SET strategy=:s, updated_at=now() WHERE id=1"),
+                   {"s": strategy})
         db.commit()
     take = min(max(float(take_pct if take_pct is not None else cur["take_pct"]), 0.05), 2.0)
     stop = min(max(float(stop_pct if stop_pct is not None else cur["stop_pct"]), 0.5), 3.0)
@@ -139,8 +160,9 @@ def set_params(db, take_pct: Optional[float] = None, stop_pct: Optional[float] =
         "UPDATE scalp_state SET take_pct=:t, stop_pct=:s, pos_pct=:p, codes=:c, "
         "updated_at=now() WHERE id=1"), {"t": take, "s": stop, "p": pos, "c": cs})
     db.commit()
+    _c2 = _cfg(db)
     return {"ok": True, "take_pct": take, "stop_pct": stop, "pos_pct": pos, "codes": cs,
-            "mode": _cfg(db)["mode"]}
+            "mode": _c2["mode"], "strategy": _c2["strategy"]}
 
 
 def _market_open_now() -> bool:
@@ -265,6 +287,46 @@ def _conviction(db, code: str, imb: Optional[float], peer_r: Optional[float]) ->
     return mult, f"확신도 ×{mult} ({tail_ko})", f"conviction ×{mult} ({tail_en})"
 
 
+# ---- 캔들 3-2 strategy helpers (boss's rule, 2026-07-16) ---------------------- #
+_candle_cache: dict[str, tuple[float, list[dict]]] = {}
+
+
+def _candles_1m(code: str, n: int = 6) -> list[dict]:
+    """Last n COMPLETED 1-minute candles (the forming minute is dropped).
+    20s cache — candles only change once a minute, and the entry loop would
+    otherwise hit Kiwoom once per stock per 15s beat."""
+    now = datetime.now(KST).timestamp()
+    hit = _candle_cache.get(code)
+    if hit and now - hit[0] < 20:
+        return hit[1][-n:]
+    try:
+        from services.kiwoom_rest import minute_bars
+        raw = minute_bars(code, tic="1", count=n + 2) or []
+        cs = raw[:-1][-n:] if len(raw) >= 2 else []
+    except Exception:
+        return hit[1][-n:] if hit else []
+    _candle_cache[code] = (now, cs)
+    return cs
+
+
+def _streaks_1m(code: str) -> tuple[int, int, int]:
+    """(consecutive UP candles at the end, consecutive DOWN candles, candles seen).
+    Up = close>open (양봉), down = close<open (음봉); doji ends both streaks."""
+    cs = _candles_1m(code)
+    up = dn = 0
+    for b in reversed(cs):
+        o, c = b.get("open"), b.get("close")
+        if o is None or c is None:
+            break
+        if c > o and dn == 0:
+            up += 1
+        elif c < o and up == 0:
+            dn += 1
+        else:
+            break
+    return up, dn, len(cs)
+
+
 def _upturn(code: str, px: float) -> tuple[bool, float]:
     """Boss's entry: the price STARTED RISING off a local low.
     Returns (fire?, bounce_pct_from_recent_low)."""
@@ -304,10 +366,10 @@ def exit_pulse(db) -> dict[str, Any]:
                 continue
             entry = float(entry)
             reason = None
-            if px >= entry * (1 + cfg["take_pct"] / 100):
-                reason = "TAKE"
-            elif px <= entry * (1 - cfg["stop_pct"] / 100):
+            if px <= entry * (1 - cfg["stop_pct"] / 100):
                 reason = "STOP"
+            elif cfg["strategy"] != "candle" and px >= entry * (1 + cfg["take_pct"] / 100):
+                reason = "TAKE"      # candle strategy rides — no take; 2-down handled by tick
             if not reason:
                 continue
             held = int(db.execute(text(
@@ -385,18 +447,31 @@ def _tick_inner(db, force: bool = False) -> dict[str, Any]:
             continue
         entry = float(entry)
         reason = None
-        if px >= entry * (1 + cfg["take_pct"] / 100):
-            reason = "TAKE"      # small win — the whole point
-        elif px <= entry * (1 - cfg["stop_pct"] / 100):
-            reason = "STOP"      # his rule: hold dips, cut at −1%
-        elif eod:
-            reason = "EOD"       # a scalper sleeps flat
+        if cfg["strategy"] == "candle":
+            # 캔들 3-2 exits: ride while rising (one down candle forgiven);
+            # 2 consecutive down candles → sell; −1% hard stop; EOD flat. NO take.
+            _up, _dn, _n = _streaks_1m(tk)
+            if px <= entry * (1 - cfg["stop_pct"] / 100):
+                reason = "STOP"
+            elif _n >= 2 and _dn >= 2:
+                reason = "CANDLE2"
+            elif eod:
+                reason = "EOD"
+        else:
+            if px >= entry * (1 + cfg["take_pct"] / 100):
+                reason = "TAKE"      # small win — the whole point
+            elif px <= entry * (1 - cfg["stop_pct"] / 100):
+                reason = "STOP"      # his rule: hold dips, cut at −1%
+            elif eod:
+                reason = "EOD"       # a scalper sleeps flat
         if not reason:
+            _sell_hint.pop(tk, None)
             open_codes.add(tk)
             continue
         if cfg["mode"] == "semi":
             # SEMI (boss 2026-07-15): the machine NEVER sells — status() surfaces
             # the advice and HE clicks the sell button
+            _sell_hint[tk] = reason
             open_codes.add(tk)
             continue
         held = int(db.execute(text(
@@ -419,6 +494,35 @@ def _tick_inner(db, force: bool = False) -> dict[str, Any]:
         return out
     for code in cfg["codes"]:
         if code in open_codes or code not in live:
+            continue
+        if cfg["strategy"] == "candle":
+            # 캔들 3-2 entry: 3 consecutive completed 1-min up candles — the
+            # boss's PURE rule (no voices, flat sizing) for a clean A/B record.
+            _up, _dn, _n = _streaks_1m(code)
+            if _n < 3 or _up < 3:
+                continue
+            cash = float(db.execute(text(
+                "SELECT cash FROM paper_desk_account WHERE id=1")).scalar() or 0)
+            qty = int(cash * cfg["pos_pct"] / 100 / live[code])
+            if qty < 1:
+                continue
+            why = f"캔들 3-2 전략: 1분봉 {_up}연속 양봉 → 매수 (2연속 음봉에 매도, -1% 손절)"
+            if cfg["mode"] == "semi":
+                _semi_signals[code] = {
+                    "code": code, "name": _name(code), "price": live[code], "qty": qty,
+                    "why": why, "ts": datetime.now(KST).timestamp()}
+                out["opened"].append({"code": code, "semi_signal": True})
+                continue
+            r = place_order(db, code, "BUY", qty, "market", source="algo2")
+            if r.get("ok"):
+                fill = float(r.get("fill_price") or live[code])
+                db.execute(text(
+                    "INSERT INTO scalp_trades (ticker, name, qty, entry, why) "
+                    "VALUES (:t,:n,:q,:e,:w)"),
+                    {"t": code, "n": _name(code), "q": qty, "e": fill, "w": why[:300]})
+                db.commit()
+                out["opened"].append({"code": code, "qty": qty, "entry": fill, "why": why})
+                logger.info("scalp candle: BUY %s x%d @ %s", code, qty, fill)
             continue
         fire, bounce = _upturn(code, live[code])
         if not fire:
@@ -614,7 +718,10 @@ def status(db) -> dict[str, Any]:
         # semi mode: the machine's SELL advice (it never sells by itself there)
         advice = None
         if o and px and cfg["mode"] == "semi":
-            if take_at and px >= take_at:
+            if cfg["strategy"] == "candle":
+                advice = {"CANDLE2": "CANDLE", "STOP": "STOP",
+                          "EOD": "STOP"}.get(_sell_hint.get(code) or "")
+            elif take_at and px >= take_at:
                 advice = "TAKE"
             elif stop_at and px <= stop_at:
                 advice = "STOP"
