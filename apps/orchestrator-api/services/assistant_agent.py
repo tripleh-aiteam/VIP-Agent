@@ -4271,7 +4271,9 @@ def _llm_task_reply(question: str, lang: str, history: list[dict]) -> Optional[s
 # 모의투자 trade history, not a stock's price chart (2026-07-09: follow-up inherited S-OIL
 # and answered with an OHLCV table instead of the boss's own result).
 _PNL_RE = _re.compile(
-    r"(yesterday|today|this week|last week).{0,28}(how much|win|won|lose|lost|profit|earn|made|result)"
+    # \b guards (boss 2026-07-16): "what is today's movement shoWINg?" — 'win'
+    # hid inside 'showing' and the P&L table hijacked a CHART question.
+    r"(yesterday|today|this week|last week).{0,28}\b(how much|win|won|lose|lost|profit|earn(ed|ing)?|made|result)s?\b"
     r"|how much (did|have) (i|we) (win|won|make|made|earn(ed)?|lose|lost)"
     r"|(어제|오늘|이번\s*주|지난\s*주|금주).{0,16}(얼마|수익|손익|벌었|잃었|손해|결과|성적)"
     r"|얼마(나)?\s*(벌었|잃었|땄|먹었)",
