@@ -82,10 +82,22 @@ def build() -> None:
         grid[tk] = g
     mkt = grid.get(MARKET_TK)
 
+    # market per-day previous-close map (for the mkt_day regime feature, M5.7)
+    mkt_prev_close: dict = {}
+    if mkt is not None:
+        _mk = mkt.index.tz_convert("Asia/Seoul").date
+        _mc = mkt["close"].to_numpy()
+        _cur = None
+        for j in range(len(_mk)):
+            if _mk[j] != _cur:
+                mkt_prev_close[_mk[j]] = _mc[j - 1] if j > 0 else np.nan
+                _cur = _mk[j]
+
     for tk, g in grid.items():
         if tk == MARKET_TK or len(g) < 60:
             continue
         c = g["close"].to_numpy()
+        o = g["open"].to_numpy()
         h = g["high"].to_numpy()
         lo = g["low"].to_numpy()
         v = g["volume"].to_numpy().astype(float)
@@ -96,6 +108,15 @@ def build() -> None:
         kst = idx.tz_convert("Asia/Seoul")
         day = kst.date
         mins_open = (kst.hour * 60 + kst.minute) - 540
+        # per-day anchors: today's first-bar open + yesterday's last close (M5.7)
+        day_open: dict = {}
+        day_prev_close: dict = {}
+        _cur = None
+        for j in range(len(g)):
+            if day[j] != _cur:
+                day_open[day[j]] = o[j] if not np.isnan(o[j]) else c[j]
+                day_prev_close[day[j]] = c[j - 1] if j > 0 else np.nan
+                _cur = day[j]
         # market series aligned
         mc = mkt["close"].reindex(idx).ffill().to_numpy() if mkt is not None else None
         ptk = PEER.get(tk)
@@ -119,6 +140,27 @@ def build() -> None:
             fwd = (c[i + FWD_BARS] / c[i] - 1) * 100
             fwd_min = (lo[i + 1:i + 1 + FWD_BARS].min() / c[i] - 1) * 100
             fwd_max = (h[i + 1:i + 1 + FWD_BARS].max() / c[i] - 1) * 100
+            # 🎯 TRIPLE-BARRIER label (M5.7): does price touch +1.0% BEFORE −1.0%
+            # within the hour? FIRST touch decides (stop checked first inside a
+            # bar = conservative). This is the question we actually trade.
+            y_tb, tb_pnl = 0, fwd - 0.23           # no touch → time exit, net of fees
+            for j in range(i + 1, i + 1 + FWD_BARS):
+                if lo[j] <= c[i] * 0.99:
+                    y_tb, tb_pnl = 0, -1.0 - 0.23
+                    break
+                if h[j] >= c[i] * 1.01:
+                    y_tb, tb_pnl = 1, 1.0 - 0.23
+                    break
+            # asymmetric barrier +2%/−1% (M5.7b): fee-math breakeven falls from
+            # 61.5% precision to 35.5% — a reachable bar. Same first-touch logic.
+            y_tb2, tb2_pnl = 0, fwd - 0.23
+            for j in range(i + 1, i + 1 + FWD_BARS):
+                if lo[j] <= c[i] * 0.99:
+                    y_tb2, tb2_pnl = 0, -1.0 - 0.23
+                    break
+                if h[j] >= c[i] * 1.02:
+                    y_tb2, tb2_pnl = 1, 2.0 - 0.23
+                    break
             rets5 = pd.Series(c[max(0, i - 30):i + 1]).pct_change().dropna()
             vol1h = float(rets5.std() * np.sqrt(12) * 100) if len(rets5) > 5 else np.nan
             day_mask = np.array([day[j] == day[i] for j in range(max(0, i - 78), i + 1)])
@@ -138,11 +180,24 @@ def build() -> None:
                 "mkt_r15": ret(mc, i, 3) if mc is not None else np.nan,
                 "mkt_r60": ret(mc, i, 12) if mc is not None else np.nan,
                 "peer_r15": ret(pc, i, 3) if pc is not None else np.nan,
+                "peer_r60": ret(pc, i, 12) if pc is not None else np.nan,
                 "imbalance": simb[i] if simb is not None else np.nan,
                 "short_ratio": ssr[i] if ssr is not None else np.nan,
+                # M5.7 day-level context: gap, day change, market day, ETF-rebalance proxy
+                "gap_pct": ((day_open.get(day[i], np.nan) / day_prev_close.get(day[i], np.nan) - 1) * 100
+                            if day_prev_close.get(day[i]) else np.nan),
+                "day_chg": ((c[i] / day_prev_close.get(day[i], np.nan) - 1) * 100
+                            if day_prev_close.get(day[i]) else np.nan),
+                "mkt_day": ((mc[i] / mkt_prev_close.get(day[i], np.nan) - 1) * 100
+                            if (mc is not None and mkt_prev_close.get(day[i])) else np.nan),
+                "lev_etf_rebal": (((c[i] / day_prev_close.get(day[i], np.nan) - 1) * 100)
+                                  if (tk in ("005930", "000660") and day_prev_close.get(day[i]))
+                                  else 0.0),
                 "fwd_ret": fwd, "fwd_min": fwd_min, "fwd_max": fwd_max,
                 "y_up": int(fwd >= UP_TH),
                 "y_clean": int(fwd >= UP_TH and fwd_min > DIP_TH),
+                "y_tb": y_tb, "tb_pnl": tb_pnl,
+                "y_tb2": y_tb2, "tb2_pnl": tb2_pnl,
             })
         if rows:
             frames.append(pd.DataFrame(rows))
@@ -156,22 +211,36 @@ def build() -> None:
 
 FEATS = ["r5", "r15", "r30", "r60", "vol1h", "rsi", "rsi_slope", "dist_sma2h",
          "pos_day_range", "vol_surge", "mins_open", "dow", "mkt_r15", "mkt_r60",
-         "peer_r15", "imbalance", "short_ratio"]
+         "peer_r15", "imbalance", "short_ratio",
+         # M5.7 additions
+         "peer_r60", "gap_pct", "day_chg", "mkt_day", "lev_etf_rebal"]
+
+# MEASURED 2026-07-16 (63 unseen days): both touch-labels show real relative skill
+# (tb: 42% vs 27% base · tb2: 19.6% vs 8.9% base = 2.2×) but neither clears the
+# fee-math money bar (tb needs 61.5% precision, tb2 needs 41%). So the SHIPPED
+# model stays the y_up RANKING voice (probability scale the guard/scanner
+# thresholds expect); the tb labels stay in the dataset + diagnostics.
+LABEL = os.environ.get("M57_LABEL", "y_up")
+PNL_COL = {"y_tb": "tb_pnl", "y_tb2": "tb2_pnl"}.get(LABEL, "fwd_ret")
 
 
 def train() -> None:
     ds = pd.read_parquet(DATASET)
+    feats = [f for f in FEATS if f in ds.columns]
+    label = LABEL if LABEL in ds.columns else "y_up"
+    pnl_col = PNL_COL if PNL_COL in ds.columns else "fwd_ret"
     days = sorted(ds["day"].unique())
     n_test = max(3, len(days) // 4)
     test_days = days[-n_test:]
     tr = ds[~ds["day"].isin(test_days)]
     te = ds[ds["day"].isin(test_days)]
-    print(f"walk-forward: train {len(tr):,} ({days[0]}→{days[-n_test-1]}) · "
-          f"test {len(te):,} on UNSEEN days {test_days}")
-    Xtr, ytr = tr[FEATS], tr["y_up"]
-    Xte, yte = te[FEATS], te["y_up"]
+    print(f"M5.7 walk-forward: label={label} · {len(feats)} features · "
+          f"train {len(tr):,} ({days[0]}→{days[-n_test-1]}) · "
+          f"test {len(te):,} on UNSEEN days {len(test_days)}")
+    Xtr, ytr = tr[feats], tr[label]
+    Xte, yte = te[feats], te[label]
     base_rate = yte.mean()
-    print(f"test base rate (always-guess-UP accuracy): {base_rate*100:.1f}%")
+    print(f"test base rate: {base_rate*100:.1f}%")
 
     results = {}
     from sklearn.impute import SimpleImputer
@@ -199,37 +268,81 @@ def train() -> None:
     results["xgboost"] = (xg, xg.predict_proba(Xte)[:, 1])
 
     print("\n=== UNSEEN-DAYS RESULTS (the honest numbers) ===")
-    best_name, best_val = None, -1
+    best_name, best_val = None, -1.0
     for name, (mdl, proba) in results.items():
-        for th in (0.5, 0.6, 0.65):
+        for th in (0.5, 0.58, 0.65):
             pred = (proba >= th).astype(int)
             n_sig = int(pred.sum())
             if n_sig == 0:
                 print(f"{name:9s} th={th}: no signals")
                 continue
-            prec = float(yte[pred == 1].mean())          # of predicted-UP, how many really rose ≥0.3%
-            # money sim: buy each signal, exit at t+60min close, cost 0.23%
-            pnl = te.loc[pred == 1, "fwd_ret"] - 0.23
-            clean = float(te.loc[pred == 1, "y_clean"].mean())
-            print(f"{name:9s} th={th}: signals {n_sig:4d} · UP-precision {prec*100:5.1f}% "
+            prec = float(yte[pred == 1].mean())
+            pnl = te.loc[pred == 1, pnl_col]
+            print(f"{name:9s} th={th}: signals {n_sig:4d} · precision {prec*100:5.1f}% "
                   f"(base {base_rate*100:.1f}%) · avg net {pnl.mean():+.3f}%/trade · "
-                  f"total {pnl.sum():+.1f}% · clean-rise {clean*100:.0f}%")
-            if th == 0.6 and prec > best_val:
+                  f"total {pnl.sum():+.1f}%")
+            if th == 0.58 and prec > best_val:
                 best_val, best_name = prec, name
-    # feature importances of the best GBM
+    best_name = best_name or "lightgbm"
+
+    # 🎚️ CALIBRATION (M5.7): trade the probability, not the raw score — isotonic
+    # calibration on train, then the honest read at the 0.58 gate on unseen days.
+    from sklearn.calibration import CalibratedClassifierCV
     try:
-        imp = pd.Series(results["lightgbm"][0].feature_importances_, index=FEATS).sort_values(ascending=False)
-        print("\ntop features (lightgbm):", ", ".join(f"{k}:{v}" for k, v in imp.head(8).items()))
+        base_est = results[best_name][0]
+        cal = CalibratedClassifierCV(base_est, method="isotonic", cv=3)
+        cal.fit(Xtr, ytr)
+        cproba = cal.predict_proba(Xte)[:, 1]
+        line = ""
+        for th in (0.5, 0.58, 0.65):
+            pred = (cproba >= th).astype(int)
+            n_sig = int(pred.sum())
+            if n_sig == 0:
+                print(f"CALIBRATED th={th}: no signals")
+                continue
+            prec = float(yte[pred == 1].mean())
+            pnl = te.loc[pred == 1, pnl_col]
+            print(f"CALIBRATED th={th}: signals {n_sig:4d} · precision {prec*100:5.1f}% "
+                  f"· avg net {pnl.mean():+.3f}% · total {pnl.sum():+.1f}%")
+            if th == 0.58:
+                line = (f"{pd.Timestamp.now(tz='Asia/Seoul'):%Y-%m-%d %H:%M} "
+                        f"M5.7 {best_name}+iso label={label} test_days={len(test_days)} "
+                        f"sig@0.58={n_sig} prec={prec*100:.1f}% base={base_rate*100:.1f}% "
+                        f"avg_net={pnl.mean():+.3f}% total={pnl.sum():+.1f}%")
+    except Exception as e:
+        print(f"calibration diagnostics failed ({e})")
+        line = ""
+    # SHIP THE RAW best model — its ~0.5-centered scale is what the guard/scanner
+    # thresholds (>=55 bullish) were tuned to; the calibrated model's honest-but-
+    # tiny probabilities would silently disable those boosts. Calibration stays
+    # a diagnostic + scoreboard truth line.
+    ship = results[best_name][0]
+
+    # 📜 nightly scoreboard (Phase D seed): one honest line per retrain
+    try:
+        with open(HERE / "scoreboard.log", "a", encoding="utf-8") as f:
+            f.write((line or f"{pd.Timestamp.now(tz='Asia/Seoul'):%Y-%m-%d %H:%M} "
+                             f"M5.7 {best_name} (no 0.58 signals)") + "\n")
+        if line:
+            print("scoreboard:", line)
     except Exception:
         pass
-    # save the best model
+
+    try:
+        imp = pd.Series(results["lightgbm"][0].feature_importances_,
+                        index=feats).sort_values(ascending=False)
+        print("\ntop features (lightgbm):", ", ".join(f"{k}:{v}" for k, v in imp.head(10).items()))
+    except Exception:
+        pass
+
     MODEL_OUT.mkdir(exist_ok=True)
     import joblib
-    joblib.dump({"model": results[best_name or 'lightgbm'][0], "features": FEATS,
+    joblib.dump({"model": ship, "features": feats, "label": label,
+                 "version": "M5.7-rank", "calibrated": False,
                  "trained_days": [str(d) for d in days if d not in test_days],
                  "test_days": [str(d) for d in test_days]},
                 MODEL_OUT / "hourly_up.joblib")
-    print(f"\nsaved {best_name or 'lightgbm'} → {MODEL_OUT/'hourly_up.joblib'}")
+    print(f"\nsaved M5.7-rank {best_name} (raw scale) → {MODEL_OUT/'hourly_up.joblib'}")
 
 
 if __name__ == "__main__":

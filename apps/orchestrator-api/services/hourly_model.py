@@ -66,22 +66,53 @@ def prob_up_1h(db, ticker: str) -> Optional[float]:
         from datetime import datetime, timedelta, timezone
         kst = datetime.now(timezone(timedelta(hours=9)))
         mins_open = (kst.hour * 60 + kst.minute) - 540
-        # market + peer context
-        from services.micro_trend import _market_chg_pct
-        mkt = _market_chg_pct()
-        from services.peer_cluster import _chg_pct
         _PEER = {"005930": "000660", "000660": "005930", "009150": "005930",
                  "402340": "000660", "091160": "000660"}   # same map as training
         peer = _PEER.get(code)
+
+        # M5.7: REAL 15/60-min returns for market + peer from their own bars —
+        # the old code fed the DAY change into 15-min features (train/serve skew)
+        def _series_rets(tk2):
+            try:
+                b2 = _bars(db, tk2, limit=20)
+                c2 = [x["close"] for x in b2 if x.get("close")]
+                if len(c2) < 13:
+                    return np.nan, np.nan
+                return ((c2[-1] / c2[-4] - 1) * 100, (c2[-1] / c2[-13] - 1) * 100)
+            except Exception:
+                return np.nan, np.nan
+        mkt_r15, mkt_r60 = _series_rets("069500")
+        peer_r15, peer_r60 = _series_rets(peer) if peer else (np.nan, np.nan)
+
+        # day-level anchors from this stock's own bars (gap / day change)
+        gap_pct = day_chg = np.nan
+        try:
+            dates = [str(x["ts"])[:10] for x in bars]
+            today = dates[-1]
+            k0 = dates.index(today)                       # first bar of today
+            prev_close = c[k0 - 1] if k0 > 0 else None
+            if prev_close:
+                o0 = bars[k0].get("open") or c[k0]
+                gap_pct = (float(o0) / prev_close - 1) * 100
+                day_chg = (c[i] / prev_close - 1) * 100
+        except Exception:
+            pass
+        from services.micro_trend import _market_chg_pct
+        mkt_day = _market_chg_pct()
+
         feats = {
             "r5": ret(1), "r15": ret(3), "r30": ret(6), "r60": ret(12), "vol1h": vol1h,
             "rsi": rsis[i], "rsi_slope": (rsis[i] - rsis[i - 1]) if rsis[i - 1] is not None else np.nan,
             "dist_sma2h": (c[i] / (sum(c[-25:]) / len(c[-25:])) - 1) * 100,
             "pos_day_range": 0.5, "vol_surge": np.nan,
             "mins_open": float(mins_open), "dow": float(kst.weekday()),
-            "mkt_r15": mkt if mkt is not None else np.nan, "mkt_r60": mkt if mkt is not None else np.nan,
-            "peer_r15": _chg_pct(peer) if peer else np.nan,
+            "mkt_r15": mkt_r15, "mkt_r60": mkt_r60,
+            "peer_r15": peer_r15, "peer_r60": peer_r60,
             "imbalance": np.nan, "short_ratio": np.nan,
+            "gap_pct": gap_pct, "day_chg": day_chg,
+            "mkt_day": mkt_day if mkt_day is not None else np.nan,
+            "lev_etf_rebal": (day_chg if (code in ("005930", "000660")
+                                          and not np.isnan(day_chg)) else 0.0),
         }
         try:      # live imbalance/short from the latest snapshot
             from sqlalchemy import text
