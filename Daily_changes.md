@@ -2,6 +2,27 @@
 
 ---
 
+## 2026-07-16 (Thursday) — 🧠 Smart-analyst chatbot lane (both surfaces)
+
+### Goal
+
+Boss: every stock question got squeezed into the buy/hold/sell recommendation format; he wants GPT/Claude-grade analytical answers (read → think → answer, adaptive format) grounded in OUR live Kiwoom data — identical on VIP and AI Advisor, KO/EN.
+
+### Files added
+
+- [services/analyst_answer.py](apps/orchestrator-api/services/analyst_answer.py) — the analyst lane: `is_analysis_question` (market context + analytical cue, action-words excluded), `build_data_pack` (live Kiwoom quote/OHLC/volume + 5-min micro read + order-book imbalance + investor flows + news mood + KOSPI/market flows, timestamped), `answer` (strong LLM via `prefer_paid=True`, claude-sonnet fallback, adaptive persona prompt: conclusion-first, fact-vs-inference, honest limits, no forced recommendation, mirrors language, 6-turn history).
+
+### Files updated
+
+- [services/assistant_agent.py](apps/orchestrator-api/services/assistant_agent.py) — analyst branch inserted BEFORE the trade-intent block: analytical questions (and follow-ups like "위 분석이 유효한가요?", "analyze Samsung the same way") return the analyst answer; 살까/팔까/should-I-buy keep the 3-method format.
+- Stock repo `backend/services/llm/stock_agent_adapter.py` — `_is_analyst_question` mirror added to the VIP-relay gate so the AI Advisor sends these to the same brain (identical answers on both surfaces).
+
+### Verified
+
+Detector 9/9 (boss's ETF-rebalancing EN/KO, revision follow-up, analyze-same-way, why-close-below-open → analyst; buy/price/translate → untouched). Live data pack real (caught the 07-16 crash: SKH −10%, KOSPI −5.5%). Full EN + KO answers generated with data woven in. Production verify after deploy.
+
+---
+
 ## 2026-07-15 (Wednesday) — Chatbot 7-item improvement round (boss list): $→₩, compound questions, ADR, visible typing
 
 ### Goal

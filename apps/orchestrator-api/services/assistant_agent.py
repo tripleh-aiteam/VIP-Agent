@@ -5601,6 +5601,34 @@ def _run_agent_impl(
     # (Trade intent TRUMPS the past-price heuristic: '...from which price should I BUY'
     # was still classified past-price in prod. A genuine past-price ask has no buy/sell
     # verb, so wants_reco alone is the right gate.)
+    # === 🧠 SMART-ANALYST lane (boss 2026-07-16): analytical/explanatory stock
+    # questions (ETF rebalancing mechanics, close quality, 수급 interpretation,
+    # "does that mean tomorrow rises?") get a strong LLM briefed with a LIVE
+    # Kiwoom/Naver/news data pack — free-form, GPT-grade, question-shaped.
+    # Action questions (살까/팔까/should I buy) keep the 3-method decision format
+    # below. Served here for BOTH surfaces (AI Advisor relays to this brain). ===
+    if not confirmed_tool and not attachment_ids:
+        try:
+            from services.analyst_answer import answer as _an_answer
+            from services.analyst_answer import is_analysis_question as _is_an
+            _an_stocks = list(dict.fromkeys(_all_stocks_in_query(transcript)))[:3]
+            if not _an_stocks:
+                try:
+                    from services.stock_resolver import resolve_one as _r1a
+                    _ca, _na = (_r1a(transcript or "") or (None, None))[:2]
+                    if _ca:
+                        _an_stocks = [(_ca, _na or _ca)]
+                except Exception:
+                    pass
+            if (_is_an(transcript, has_stock=bool(_an_stocks))
+                    and not _wants_recommendation(transcript)):
+                _an_out = _an_answer(db, transcript, lang, _an_stocks, history)
+                if _an_out:
+                    return {"intent": "analyst", "language": lang,
+                            "reply": _an_out[:9000]}
+        except Exception as e:
+            log.warning(f"analyst lane failed: {str(e)[:120]}")
+
     if (not confirmed_tool and not attachment_ids
             and _wants_recommendation(transcript)):
         try:
