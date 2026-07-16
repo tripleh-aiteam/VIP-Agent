@@ -18,9 +18,14 @@ Boss: improve Algorithm 1 accuracy; recommendations must analyze current chart +
 
 Smart-analyst lane + concise mode + language purity + deep graph analysis + matrix rig (18/18 prod PASS) + P&L regex word-boundary fix; OpenAI cost audit (~85% = unsent morning reports — boss deciding).
 
+### [PM] Phase C shipped — M5.7-rank trained + deployed same day
+
+- **What:** [ml/hourly_model.py](apps/orchestrator-api/ml/hourly_model.py) + [services/hourly_model.py](apps/orchestrator-api/services/hourly_model.py): +5 features (gap_pct, day_chg, **mkt_day — instantly #1 importance**, peer_r60, lev_etf_rebal proxy); triple-barrier labels y_tb(+1/−1)/y_tb2(+2/−1) measured on 63 unseen days — real relative skill (tb2 = 2.2× base) but **neither clears fee-math breakeven (61.5%/41%)** → shipped model stays the y_up RANKING voice on the raw scale (calibrated probs would silently break the ≥55 guard/scanner thresholds — kept as diagnostics). Inference **train/serve skew fixed** (real 15/60-min mkt+peer returns from bars, was day-chg). Nightly `ml/scoreboard.log` line (Phase D seed). **First positive unseen-days money-sim: logreg @0.58 avg +0.092%/trade (9,434 signals), @0.65 +0.143%.** New joblib committed; nightly 16:30 pipeline continues automatically.
+- **Strategy finding for the boss:** +1%/−1% touch trading needs a 61.5% win rate after 0.23% fees — the trail-ride past +1% is what keeps Algo 1 near breakeven; entry selectivity (Phase A) and wider winners attack this directly.
+
 ### Next
 
-- Phase C (ML v2 "M5.7"): triple-barrier net-of-fees labels, book/flow/hour/regime/ETF features, calibrated ≥58% selectivity, nightly OOS scoreboard. Phase D: weekly auto-report.
+- Phase D: weekly auto-scoreboard report (scoreboard.log accumulating nightly).
 - Watch momentum setup win rate ≥45% gate over the next paper-trading week.
 
 ---
