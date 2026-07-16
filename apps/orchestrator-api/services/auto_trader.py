@@ -141,35 +141,17 @@ def _reconcile_external(db, out: dict[str, Any]) -> None:
         out["closed"].append({"name": name, "reason": "EXTERNAL", "net_pct": round(net, 2)})
 
 
-def tick(db, force: bool = False) -> dict[str, Any]:
-    """One auto-agent pass: manage exits first (protect), then consider a new entry.
-    Idempotent; safe to fire every few minutes. force=True ignores market hours
-    (testing only — exits still honest, entries use live/last prices)."""
-    _ensure(db)
-    out: dict[str, Any] = {"enabled": is_enabled(db), "closed": [], "opened": None,
-                           "reason": None}
-    try:
-        _reconcile_external(db, out)   # books stay honest even while the switch is OFF
-    except Exception:
-        db.rollback()
-    if not out["enabled"]:
-        out["reason"] = "auto-trading is OFF"
-        return out
-    if not force and not _market_open_now():
-        out["reason"] = "market closed"
-        return out
+import threading as _threading
 
-    # ---- 0) POSITION GUARD backstop (boss's -1%/-peak-1% auto-protection on his own
-    # focus holdings; the desk page's 4s poll is primary, this cron covers page-closed)
-    try:
-        from services.position_guard import run as _guard_run
-        _g = _guard_run(db)
-        if _g:
-            out["guard"] = _g
-    except Exception:
-        db.rollback()
+_trade_lock = _threading.Lock()   # tick (5-min cron) and the 5s exit pulse must
+                                  # never sell the same row twice (Phase A)
 
-    # ---- 1) MANAGE OPEN AUTO-POSITIONS (exits first — protection before opportunity) --
+
+def _manage_exits(db, out: dict[str, Any]) -> None:
+    """Exit management for open auto positions: TRAIL (peak−1% once the target
+    armed it) / STOP / TIME. Shared by tick() and the 5-second exit_pulse
+    (Phase A 2026-07-16: stops averaged −1.63% because the 5-min cron was the
+    only pulse — fast drops fell straight through the −1% line)."""
     from services.paper_desk import place_order
     open_rows = db.execute(text(
         "SELECT id, ticker, name, qty, entry, target_lo, stop, time_min, "
@@ -218,6 +200,63 @@ def tick(db, force: bool = False) -> dict[str, Any]:
             out["closed"].append({"name": name, "reason": reason, "net_pct": round(net, 2)})
         else:
             logger.warning("auto_trader: SELL failed for %s: %s", tk, r.get("error"))
+
+
+def exit_pulse(db) -> dict[str, Any]:
+    """⚡ 5-second exit watch for Algorithm 1 auto positions (TRAIL/STOP/TIME
+    only — entries stay on the 5-min tick). Skips when the full tick holds the
+    trade lock. No-op when auto is OFF or nothing is open."""
+    if not _trade_lock.acquire(blocking=False):
+        return {"skipped": "busy"}
+    try:
+        out: dict[str, Any] = {"closed": []}
+        if not is_enabled(db) or not _market_open_now():
+            return out
+        n_open = db.execute(text(
+            "SELECT count(*) FROM auto_trades WHERE status='OPEN'")).scalar() or 0
+        if not int(n_open):
+            return out
+        _manage_exits(db, out)
+        return out
+    finally:
+        _trade_lock.release()
+
+
+def tick(db, force: bool = False) -> dict[str, Any]:
+    """One auto-agent pass: manage exits first (protect), then consider a new entry.
+    Idempotent; safe to fire every few minutes. force=True ignores market hours
+    (testing only — exits still honest, entries use live/last prices)."""
+    with _trade_lock:
+        return _tick_inner(db, force)
+
+
+def _tick_inner(db, force: bool = False) -> dict[str, Any]:
+    _ensure(db)
+    out: dict[str, Any] = {"enabled": is_enabled(db), "closed": [], "opened": None,
+                           "reason": None}
+    try:
+        _reconcile_external(db, out)   # books stay honest even while the switch is OFF
+    except Exception:
+        db.rollback()
+    if not out["enabled"]:
+        out["reason"] = "auto-trading is OFF"
+        return out
+    if not force and not _market_open_now():
+        out["reason"] = "market closed"
+        return out
+
+    # ---- 0) POSITION GUARD backstop (boss's -1%/-peak-1% auto-protection on his own
+    # focus holdings; the desk page's 4s poll is primary, this cron covers page-closed)
+    try:
+        from services.position_guard import run as _guard_run
+        _g = _guard_run(db)
+        if _g:
+            out["guard"] = _g
+    except Exception:
+        db.rollback()
+
+    # ---- 1) MANAGE OPEN AUTO-POSITIONS (exits first — protection before opportunity) --
+    _manage_exits(db, out)
 
     # ---- 2) NEW ENTRY (one per tick, capped) ----
     n_open = db.execute(text(

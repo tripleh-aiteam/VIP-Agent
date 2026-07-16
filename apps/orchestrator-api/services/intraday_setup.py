@@ -201,6 +201,16 @@ def scan_one(db, code: str, name: str) -> dict[str, Any]:
                     conf -= 2
     except Exception:
         db.rollback()
+    # ⏰ BAD-HOURS PENALTY (Phase A, 2026-07-16): 3,617 graded ML calls show the
+    # engine is systematically worst at 10/11/13 KST — signals in those hours
+    # need stronger proof.
+    try:
+        from datetime import datetime as _dth
+        from zoneinfo import ZoneInfo as _zih
+        if _dth.now(_zih("Asia/Seoul")).hour in (10, 11, 13):
+            conf -= 8
+    except Exception:
+        pass
     conf = max(0, min(conf, 88))
 
     # BOSS-TIERED target/stop (2026-07-09): ≥₩100k → +1%/−1%; <₩100k → +2~3%/−1~2%
@@ -363,6 +373,21 @@ def scan_one(db, code: str, name: str) -> dict[str, Any]:
                 and r15 >= _MOM_R15 and r45 >= _MOM_R45
                 and _RSI_MOM_MIN <= rsi5 <= _RSI_MOM_MAX
                 and micro.get("verdict") == "UP")
+    # 🗳️ THREE-VOICE GATE (Phase A, 2026-07-16): the momentum setup lost money
+    # (5 wins / 19 trades, −6.1% total) — it now needs the same agreeing voices
+    # as Algorithm 2 before it may fire. Fail-open on missing data:
+    #   ② order book — sellers must not dominate the queue
+    #   ③ peer group — an explicitly diverging/falling group kills the signal
+    if momentum:
+        try:
+            from services.kiwoom_rest import order_book as _obm
+            _obi = (_obm(code, ttl=10) or {}).get("imbalance")
+            if _obi is not None and float(_obi) < -0.05:
+                momentum = False
+        except Exception:
+            pass
+    if momentum and cluster and cluster.get("verdict") in ("SECTOR_DOWN", "HOLDING_VS_WEAK"):
+        momentum = False        # rising alone while the group falls = fragile momentum
     if momentum:
         wk = f"강한 상승 흐름 (15분 {r15:+.1f}% · 45분 {r45:+.1f}% · RSI {rsi5})"
         we = f"strong uptrend (15m {r15:+.1f}% · 45m {r45:+.1f}% · RSI {rsi5})"

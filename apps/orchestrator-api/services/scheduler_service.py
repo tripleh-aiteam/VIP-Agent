@@ -2048,6 +2048,18 @@ def init_scheduler():
             log.warning(f"scalp exit pulse failed: {str(e)[:120]}")
         finally:
             db.close()
+        # Phase A (2026-07-16): Algorithm 1 auto exits ride the same 5s pulse —
+        # stops fire at −1.0% instead of slipping to −1.63% on the 5-min cron
+        db2 = SessionLocal()
+        try:
+            from services.auto_trader import exit_pulse as _a1_pulse
+            r2 = _a1_pulse(db2)
+            if r2.get("closed"):
+                log.info(f"algo1 exit pulse: {r2}", extra={"action": "auto.pulse"})
+        except Exception as e:
+            log.warning(f"algo1 exit pulse failed: {str(e)[:120]}")
+        finally:
+            db2.close()
 
     _scheduler.add_job(
         _scalp_exit_pulse,
