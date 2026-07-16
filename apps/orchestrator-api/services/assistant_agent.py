@@ -933,6 +933,32 @@ def _is_market_flow_q(transcript: Optional[str]) -> bool:
     return any(k in t for k in _MFLOW_INV_KW) and _stock_in_query(transcript) is None
 
 
+# A live market overview is not a request for a canned morning brief. Its
+# factual claims expire quickly, so it needs evidence before interpretation.
+# Keep this narrow: evergreen questions such as "what is KOSPI?" stay fast.
+_FRESH_MARKET_TIME_KW = (
+    "오늘", "지금", "현재", "실시간", "장 시작", "장초반", "개장", "장중",
+    "today", "now", "current", "live", "market open", "opening", "intraday",
+)
+_MARKET_OVERVIEW_KW = (
+    "코스피", "코스닥", "증시", "주식시장", "시장 흐름", "시장 상황", "장 분위기",
+    "kospi", "kosdaq", "stock market", "market flow", "market overview", "market mood",
+)
+
+
+def _requires_fresh_market_evidence(transcript: Optional[str]) -> bool:
+    """Return whether a market overview needs live evidence before answering.
+
+    This is an evidence policy, not a presentation policy. It deliberately does
+    not prescribe sections, headings, or answer length.
+    """
+    text = (transcript or "").lower()
+    return (
+        any(keyword in text for keyword in _FRESH_MARKET_TIME_KW)
+        and any(keyword in text for keyword in _MARKET_OVERVIEW_KW)
+    )
+
+
 # A BARE stock-switch follow-up ('how about NAVER?', '그럼 네이버는?', 'NAVER는?') — names a
 # new stock but carries NO intent of its own, so it should INHERIT the previous turn's
 # intent (price→price, outlook→outlook), not start a fresh long analysis.
@@ -2709,6 +2735,7 @@ def _run_chain(
     history: list[dict],
     agent_id: str = "vip",
     user_id: Optional[str] = None,
+    fresh_market_evidence: bool = False,
 ) -> dict[str, Any]:
     """Execute a multi-step chain. If any step is a WRITE tool, halt and
     return a proposed_chain so the widget can ask for confirmation up front
@@ -2781,6 +2808,16 @@ def _run_chain(
         "If a stock question is NOT advice (or has no two-method data), instead lead with a "
         "ONE-sentence verdict (매수/보유/매도 + biggest risk) then a '근거:' numbered list."
     )
+    if fresh_market_evidence:
+        follow_system = (
+            "You just fetched live market evidence for the user's question. Answer in a "
+            "natural shape and length that directly fits the question; do not force a fixed "
+            "briefing template, headings, table, verdict, or recommendation. Use only facts "
+            "present in the tool results. Clearly distinguish verified facts from your brief "
+            "interpretation, and include the available source/provider and fetched_at time. "
+            "If a source failed or returned no data, say that plainly; never fill the gap with "
+            "generic market commentary or facts from memory."
+        )
     import json as _json
     summary_input = _json.dumps(step_results, ensure_ascii=False, default=str)[:max(_cap, 3000)]
     try:
@@ -6019,6 +6056,33 @@ def _run_agent_impl(
             and _is_market_flow_q(transcript)):
         return _run_chain(db, transcript, lang, [{"tool": "market_flows", "args": {}}],
                           current_path, selected_id, system, history or [], agent_id=agent_id, user_id=user_id)
+
+    # Fetch evidence before prose for current market-overview questions. This
+    # prevents the downstream Stock Advisor from treating tool use as optional
+    # and producing a generic market narrative instead.
+    if not confirmed_tool and _requires_fresh_market_evidence(transcript):
+        evidence_steps = [
+            {"tool": "stock_get_market_summary", "args": {}},
+            {"tool": "stock_get_investor_flow", "args": {}},
+            {"tool": "stock_get_news", "args": {}},
+        ]
+        evidence_steps = [step for step in evidence_steps if step["tool"] in TOOL_REGISTRY]
+        if evidence_steps:
+            return _run_chain(
+                db, transcript, lang, evidence_steps, current_path, selected_id,
+                system, history or [], agent_id=agent_id, user_id=user_id,
+                fresh_market_evidence=True,
+            )
+        unavailable = (
+            "실시간 시장 데이터 도구를 사용할 수 없어 오늘 시장 흐름을 근거 기반으로 분석할 수 없습니다."
+            if lang == "ko" else
+            "Live market-data tools are unavailable, so I cannot provide an evidence-based analysis of today's market."
+        )
+        return {
+            "intent": "market_evidence_unavailable", "language": lang,
+            "reply": unavailable, "action": None, "speak": True,
+            "transcript": transcript,
+        }
 
     # ===== 공매도 (short-selling) — answer LOCALLY from VIP's Kiwoom (ka10014). The
     # Stock backend's 공매도 tool currently returns '확인 불가' (no data), but VIP's Kiwoom
