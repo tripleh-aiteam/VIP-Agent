@@ -2916,6 +2916,27 @@ def _run_chain(
         if _extra:
             reply = _insert_before_summary(reply or "", "\n\n" + _extra)
 
+    # 📈 GRAPH OPINION on every recommendation (boss 2026-07-16: "in case of the
+    # recommendation also it should give graph analysis opinion") — the deep
+    # multi-timeframe chart read (1-min · 5-min · daily · analog pattern)
+    # appended to decide / two-method answers for the first ticker.
+    if _tm or _decs:
+        try:
+            _ct = None
+            for _s in (steps or []):
+                if _s.get("tool") in ("decide", "two_method_view"):
+                    _ct = (_s.get("args") or {}).get("ticker")
+                    break
+            if _ct:
+                from services.chart_analysis import chart_read as _cr
+                from services.prediction_service import NAMES as _cnames
+                _crd = _cr(db, str(_ct), _cnames.get(str(_ct).zfill(6)))
+                if _crd.get("ok"):
+                    reply = (reply or "") + "\n\n" + (
+                        _crd["block_ko"] if lang == "ko" else _crd["block_en"])
+        except Exception as e:
+            log.warning(f"chart opinion append failed: {str(e)[:100]}")
+
     # If any step returned an action (navigate / open_portal), surface the LAST one
     action = None
     for s in reversed(step_results):

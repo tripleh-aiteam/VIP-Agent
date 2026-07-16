@@ -30,7 +30,9 @@ _MARKET_CTX = re.compile(
     r"(etf|kodex|tiger|레버리지|leverag|인버스|inverse|주식|증시|시장|지수|코스피|코스닥|"
     r"kospi|kosdaq|선물|옵션|futures|option|수급|외국인|외인|기관|프로그램|공매도|"
     r"리밸런싱|rebalanc|종가|시초가|마감|closing|auction|동시호가|호가|orderbook|order book|"
-    r"거래량|volume|stock|market|semiconductor|반도체|캔들|candle|윗꼬리|wick|갭|gap)",
+    r"거래량|volume|stock|market|semiconductor|반도체|캔들|candle|윗꼬리|wick|갭|gap|"
+    r"차트|그래프|chart|graph|이동평균|이평선|moving average|지지선|저항선|support|resistance|"
+    r"추세선|trendline|rsi|macd|볼린저|bollinger|분봉|일봉|주봉)",
     re.IGNORECASE)
 
 # analytical cues — asking to understand/interpret/analyze, not to be told what to do
@@ -38,6 +40,7 @@ _ANALYSIS_CUE = re.compile(
     r"(왜|의미|뜻|뜻인가|해석|분석|영향|이유|어떻게 보|어떻게 해석|시나리오|확률|"
     r"~?라는데|이라는데|다는데|하면 .*(오를|내릴|되)|경우|가능성|평가|점수|근거|"
     r"유효|수정|재평가|맞나|맞는지|다시 (봐|평가)|"
+    r"차트|그래프|chart|graph|"  # naming the graph IS asking for graph analysis
     r"why|mean(s|ing)?|interpret|analy[sz]e|analysis|explain|impact|effect|implication|"
     r"what happens|does (that|this|it)|if .* (rise|fall|drop|mean)|scenario|probab|"
     r"how do (institutions|quants|funds)|revise|still hold|같은 방식|same way)",
@@ -174,6 +177,16 @@ def build_data_pack(db, stocks: list[tuple[str, str]]) -> str:
     for code, name in stocks[:3]:
         try:
             parts.append(_stock_pack(db, code, name))
+        except Exception:
+            pass
+    # 📈 the GRAPH itself (boss 2026-07-16): 1-min + 5-min + daily multi-timeframe
+    # read so every analyst answer can reason from the actual chart movement
+    for code, name in stocks[:2]:
+        try:
+            from services.chart_analysis import chart_read
+            cr = chart_read(db, code, name)
+            if cr.get("ok"):
+                parts.append(cr["block_ko"])
         except Exception:
             pass
     mp = _market_pack(db)
