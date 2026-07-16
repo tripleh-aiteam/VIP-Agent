@@ -2,6 +2,29 @@
 
 ---
 
+## 2026-07-16 (Thursday) — Algorithm 1 improvement: Phase A (record-driven fixes) + Phase B (evidence pack)
+
+### Goal
+
+Boss: improve Algorithm 1 accuracy; recommendations must analyze current chart + historical days + ETF/rebalancing + volume + everything. Plan A→D agreed; A and B built today.
+
+### Files updated
+
+- [services/intraday_setup.py](apps/orchestrator-api/services/intraday_setup.py) — **Phase A**: momentum setup (record: 5W/19, −6.1%) now needs order-book imbalance ≥−0.05 + no SECTOR_DOWN/HOLDING_VS_WEAK peer verdict (fail-open); bad-hours −8 conf during 10/11/13 KST (from 3,617 graded ML calls).
+- [services/auto_trader.py](apps/orchestrator-api/services/auto_trader.py) — exits extracted to `_manage_exits`; new `exit_pulse` on the shared 5s scheduler job with a trade lock (stops were slipping to −1.63% avg on the 5-min cron).
+- [services/chart_analysis.py](apps/orchestrator-api/services/chart_analysis.py) — **Phase B**: chart block now also carries 최근 흐름 (yesterday's candle ±%, last-5-days move, today volume vs 20d avg) and **레버리지 ETF 리밸런싱 추정** (direction from today's move, size class, "mechanical not directional" framing — the boss's reference-document mechanics, live). Flows automatically into every recommendation + the analyst chatbot pack.
+
+### Also today (chatbot day, earlier entries)
+
+Smart-analyst lane + concise mode + language purity + deep graph analysis + matrix rig (18/18 prod PASS) + P&L regex word-boundary fix; OpenAI cost audit (~85% = unsent morning reports — boss deciding).
+
+### Next
+
+- Phase C (ML v2 "M5.7"): triple-barrier net-of-fees labels, book/flow/hour/regime/ETF features, calibrated ≥58% selectivity, nightly OOS scoreboard. Phase D: weekly auto-report.
+- Watch momentum setup win rate ≥45% gate over the next paper-trading week.
+
+---
+
 ## 2026-07-16 (Thursday) — 🧠 Smart-analyst chatbot lane (both surfaces)
 
 ### Goal

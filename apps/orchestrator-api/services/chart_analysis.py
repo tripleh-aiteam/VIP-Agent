@@ -83,9 +83,45 @@ def _daily_read(code: str) -> dict[str, Any]:
         out["atr_pct"] = round(sum(trs) / 14 / last * 100, 2)
         out["last"] = round(last)
         out["prev_close"] = round(closes[-2])
+        # Phase B (boss 2026-07-16): HISTORICAL context — yesterday's candle,
+        # the last-5-days move, and today's volume vs the 20-day average
+        y_o = float(rows[1].get("open") or closes[-2])
+        out["yday_chg"] = round(float(rows[1].get("change_pct") or
+                                      (closes[-2] / closes[-3] - 1) * 100), 2)
+        out["yday_candle"] = "양봉" if closes[-2] >= y_o else "음봉"
+        if len(closes) >= 7:
+            out["d5_chg"] = round((closes[-2] / closes[-7] - 1) * 100, 2)
+        vols = [float(r.get("volume") or 0) for r in rows]      # newest-first
+        v20 = sum(vols[1:21]) / 20 if len(vols) >= 21 else None
+        if v20 and vols[0]:
+            out["vol_vs20"] = round(vols[0] / v20 * 100)
     except Exception as e:
         logger.warning("daily read %s: %s", code, str(e)[:80])
     return out
+
+
+# stocks with single-stock leveraged (2x) ETF products — close-auction rebalancing
+# is a real mechanical flow for these (boss's reference document, 2026-07-16)
+_LEV_ETF_STOCKS = {"005930": "삼성전자", "000660": "SK하이닉스"}
+
+
+def _etf_rebalance_note(code: str, chg_pct: Optional[float]) -> tuple[Optional[str], Optional[str]]:
+    """Estimated close-auction rebalancing for single-stock leveraged ETFs:
+    direction follows today's move (2x long buys after a rise, sells after a
+    fall), size class from |move|. Mechanical effect — NOT a next-day signal."""
+    if code not in _LEV_ETF_STOCKS or chg_pct is None:
+        return None, None
+    mag = abs(float(chg_pct))
+    size_ko = "매우 큼" if mag >= 5 else "큼" if mag >= 2 else "보통"
+    size_en = "very large" if mag >= 5 else "large" if mag >= 2 else "normal"
+    dir_ko = "매수" if chg_pct > 0 else "매도"
+    dir_en = "BUY" if chg_pct > 0 else "SELL"
+    ko = (f"레버리지 ETF 리밸런싱(추정): 오늘 {chg_pct:+.1f}% → 2배 ETF는 종가 부근 대량 "
+          f"'{dir_ko}' 리밸런싱 필요 (규모 {size_ko}) — 오늘 움직임의 기계적 결과이며 내일 방향 예측이 아님")
+    en = (f"Leveraged-ETF rebalancing (est.): today {chg_pct:+.1f}% → the 2x ETF must "
+          f"'{dir_en}' near the close (size: {size_en}) — a mechanical result of today's "
+          f"move, not a next-day signal")
+    return ko, en
 
 
 # ---- intraday 5-min ---------------------------------------------------------- #
@@ -223,6 +259,22 @@ def chart_read(db, code: str, name: Optional[str] = None) -> dict[str, Any]:
         struct_en = "higher lows" if m.get("higher_lows") else "lower highs" if m.get("lower_highs") else "no clear structure"
         ko.append(f"- 최근 1시간(1분봉): 10분 {m.get('r10', 0):+.2f}% · 30분 {m.get('r30', 0):+.2f}% · {struct_ko}")
         en.append(f"- Last hour (1-min): 10m {m.get('r10', 0):+.2f}% · 30m {m.get('r30', 0):+.2f}% · {struct_en}")
+    # Phase B: historical days + volume + ETF-rebalance context
+    if d.get("yday_chg") is not None:
+        v_txt_ko = (f" · 오늘 거래량 20일 평균의 {d['vol_vs20']}%" if d.get("vol_vs20") else "")
+        v_txt_en = (f" · today's volume {d['vol_vs20']}% of the 20d avg" if d.get("vol_vs20") else "")
+        ko.append(f"- 최근 흐름: 어제 {d['yday_chg']:+.2f}% {d.get('yday_candle', '')}"
+                  + (f" · 최근 5일 {d['d5_chg']:+.1f}%" if d.get("d5_chg") is not None else "")
+                  + v_txt_ko)
+        en.append(f"- Recent days: yesterday {d['yday_chg']:+.2f}% "
+                  f"({'up candle' if d.get('yday_candle') == '양봉' else 'down candle'})"
+                  + (f" · last 5 days {d['d5_chg']:+.1f}%" if d.get("d5_chg") is not None else "")
+                  + v_txt_en)
+    _chg_today = i.get("chg_pct")
+    _ek, _ee = _etf_rebalance_note(code, _chg_today)
+    if _ek:
+        ko.append(f"- {_ek}")
+        en.append(f"- {_ee}")
     if pat:
         ko.append(f"- 과거 패턴: {pat.get('line_ko')}")
         en.append(f"- History pattern: {pat.get('line_en')}")
