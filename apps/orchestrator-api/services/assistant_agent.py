@@ -5620,9 +5620,17 @@ def _run_agent_impl(
                         _an_stocks = [(_ca, _na or _ca)]
                 except Exception:
                     pass
-            if (_is_an(transcript, has_stock=bool(_an_stocks))
-                    and not _wants_recommendation(transcript)):
-                _an_out = _an_answer(db, transcript, lang, _an_stocks, history)
+            from services.analyst_answer import is_simple_data_question as _is_sd
+            _full = (_is_an(transcript, has_stock=bool(_an_stocks))
+                     and not _wants_recommendation(transcript))
+            # simple info requests (수급/거래량/선물 순매수…) → CONCISE analyst mode
+            # (boss 2026-07-16: those answers were essays; he wants the number
+            # plus brief context, normal length)
+            _simple = (not _full and _is_sd(transcript)
+                       and not _wants_recommendation(transcript))
+            if _full or _simple:
+                _an_out = _an_answer(db, transcript, lang, _an_stocks, history,
+                                     concise=_simple)
                 if _an_out:
                     return {"intent": "analyst", "language": lang,
                             "reply": _an_out[:9000]}

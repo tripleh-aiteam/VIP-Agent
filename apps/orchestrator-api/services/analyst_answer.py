@@ -60,6 +60,29 @@ def is_analysis_question(text: str, has_stock: bool = False) -> bool:
     return bool((has_stock or _MARKET_CTX.search(t)) and _ANALYSIS_CUE.search(t))
 
 
+# ---- SIMPLE INFO requests (boss 2026-07-16 round 2): "futures investor volume?"
+# style questions were answered with essays. These are DATA-FLOW asks — a number
+# plus brief context is the right answer. Price-only asks are EXCLUDED (the fast
+# deterministic price intercepts own those).
+_DATA_NOUN = re.compile(
+    r"(수급|순매수|순매도|매수량|매도량|거래량|거래대금|선물|옵션|프로그램|공매도|"
+    r"외국인|외인|기관|개인|투자자별|미결제|"
+    r"net (buy|sell)|trading volume|투자자|investor|futures|options|program trading|"
+    r"short (selling|interest)|open interest|foreign(ers)?|institution)",
+    re.IGNORECASE)
+_DATA_ASK = re.compile(
+    r"(얼마|몇 |알려|현황|어떻게 돼|어떻게 되|보여줘|확인해|정리해|"
+    r"how (much|many)|what (is|was|are)|tell me|show me|current|today'?s)",
+    re.IGNORECASE)
+
+
+def is_simple_data_question(text: str) -> bool:
+    t = (text or "").strip()
+    if len(t) < 6 or _ACTION.search(t) or _ANALYSIS_CUE.search(t):
+        return False
+    return bool(_DATA_NOUN.search(t) and _DATA_ASK.search(t))
+
+
 # ---- live data pack -------------------------------------------------------- #
 def _fmt(n) -> str:
     try:
@@ -186,21 +209,36 @@ STYLE:
   follow; technical terms briefly unpacked.
 - You may close with ONE natural follow-up offer (e.g. a deeper check you
   could run), never a sales pitch.
-- ANSWER ENTIRELY IN {LANG}. ({lang_note})
-- Today is {today} (KST). Korean market hours 09:00-15:30."""
+- ANSWER ENTIRELY IN {LANG}. ({lang_note}) NEVER mix languages in one answer:
+  no English sentences inside a Korean answer and vice versa. Stock names,
+  tickers and numbers keep their natural form.
+- Today is {today} (KST). Korean market hours 09:00-15:30.
+{depth_rule}"""
+
+_DEPTH_FULL = """DEPTH: this is an ANALYSIS question — full analyst treatment
+(roughly 250-500 words as described above)."""
+
+_DEPTH_CONCISE = """DEPTH: this is a SIMPLE INFORMATION request — the user wants
+the specific data, not an essay. Lead with the requested number(s)/facts from
+the data pack, add 2-4 sentences of essential context (what the number means,
+timestamp/provisional caveat, one notable comparison), and STOP. Target 60-140
+words. If the data pack does not contain the requested figure, say so plainly
+in one sentence and give the closest available number instead of speculating."""
 
 
 def answer(db, question: str, lang: str, stocks: list[tuple[str, str]],
-           history: Optional[list] = None) -> Optional[str]:
-    """The smart-analyst reply, or None so the caller falls through."""
+           history: Optional[list] = None, concise: bool = False) -> Optional[str]:
+    """The smart-analyst reply, or None so the caller falls through.
+    concise=True → simple-information mode (number-first, 60-140 words)."""
     try:
         pack = build_data_pack(db, stocks)
         from services.llm_client import chat_completion_sync
-        lang_note = ("한국어로만 답하세요" if lang == "ko"
-                     else "Answer only in English; keep Korean stock names as-is")
+        lang_note = ("한국어로만 답하세요 — 영어 문장 금지" if lang == "ko"
+                     else "Answer only in English — no Korean sentences; Korean stock names as-is are fine")
         system = _SYSTEM.replace("{LANG}", "KOREAN" if lang == "ko" else "ENGLISH") \
                         .replace("{lang_note}", lang_note) \
-                        .replace("{today}", datetime.now(KST).strftime("%Y-%m-%d %A %H:%M"))
+                        .replace("{today}", datetime.now(KST).strftime("%Y-%m-%d %A %H:%M")) \
+                        .replace("{depth_rule}", _DEPTH_CONCISE if concise else _DEPTH_FULL)
         msgs: list[dict[str, str]] = []
         for h in (history or [])[-6:]:
             r = h.get("role") if isinstance(h, dict) else None
@@ -209,7 +247,9 @@ def answer(db, question: str, lang: str, stocks: list[tuple[str, str]],
                 msgs.append({"role": r, "content": str(c)[:1500]})
         msgs.append({"role": "user",
                      "content": f"{pack}\n\n---\n질문: {question}"})
-        out = chat_completion_sync(system, msgs, max_tokens=1800, temperature=0.4,
+        out = chat_completion_sync(system, msgs,
+                                   max_tokens=(500 if concise else 1800),
+                                   temperature=0.4,
                                    model="claude-sonnet-4-6", prefer_paid=True)
         if out and "[LLM" not in out[:20]:
             return out.strip()
