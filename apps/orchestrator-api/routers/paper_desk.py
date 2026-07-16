@@ -274,6 +274,23 @@ def scalp_status(db: Session = Depends(get_db)):
     return status(db)
 
 
+@router.get("/scalp/candles")
+def scalp_candles(code: str = Query(...)):
+    """🕯️ Candle 3-2 signal for ONE stock — the manual page's guidance strip.
+    Last completed 1-min candles + current up/down streak + what the boss's
+    rule says to do right now (he clicks the buy/sell buttons himself)."""
+    from services.scalp_trader import _candles_1m, _streaks_1m
+    code = (code or "").strip().zfill(6)
+    cs = _candles_1m(code, n=6)
+    up, dn, n = _streaks_1m(code)
+    signal = "BUY" if up >= 3 else "SELL" if dn >= 2 else "HOLD"
+    return {"ok": True, "code": code, "up": up, "dn": dn, "n": n, "signal": signal,
+            "candles": [{"ts": b.get("ts"), "open": b.get("open"), "close": b.get("close"),
+                         "dir": ("up" if (b.get("close") or 0) > (b.get("open") or 0)
+                                 else "down" if (b.get("close") or 0) < (b.get("open") or 0) else "flat")}
+                        for b in cs]}
+
+
 @router.post("/scalp/toggle")
 def scalp_toggle(on: bool = Query(...), db: Session = Depends(get_db)):
     from services.scalp_trader import set_enabled

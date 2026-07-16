@@ -83,6 +83,50 @@ type OBView = {
   walls: OBLevel[]; threshold?: number | null; mid?: number | null;
 };
 
+// ---- 🕯️ Candle 3-2 signal strip (manual page): last 1-min candles + what the
+//      boss's rule says RIGHT NOW — he clicks the buy/sell buttons himself ---- //
+type CandleSig = { up: number; dn: number; n: number; signal: "BUY" | "SELL" | "HOLD";
+  candles: { ts: string; dir: "up" | "down" | "flat" }[] };
+function CandleStrip({ code, holding, t }: { code: string; holding: boolean; t: (ko: string, en: string) => string }) {
+  const [cs, setCs] = useState<CandleSig | null>(null);
+  useEffect(() => {
+    if (!code) return;
+    let alive = true;
+    const load = () => api<CandleSig>(`/paper-desk/scalp/candles?code=${code}`)
+      .then((r) => { if (alive) setCs(r); }).catch(() => {});
+    load();
+    const i = setInterval(load, 10000);
+    return () => { alive = false; clearInterval(i); };
+  }, [code]);
+  if (!cs || !cs.n) return null;
+  const msg = cs.signal === "BUY"
+    ? t(`🔥 ${cs.up}연속 양봉 — 규칙상 매수 신호!`, `🔥 ${cs.up} up candles in a row — the rule says BUY!`)
+    : cs.signal === "SELL"
+    ? (holding ? t("❄️ 2연속 음봉 — 규칙상 매도 신호!", "❄️ 2 down candles — the rule says SELL!")
+               : t("2연속 음봉 — 하락 중, 매수 금지 구간", "2 down candles — falling, no-buy zone"))
+    : cs.up === 2 ? t("양봉 2연속 — 1개만 더 나오면 매수 신호", "2 up candles — one more = BUY signal")
+    : cs.dn === 1 && holding ? t("음봉 1개 — 용서 구간 (다음 봉이 오르면 계속 보유)", "1 down candle — forgiven (hold if the next rises)")
+    : t("관망 — 3연속 양봉 기다리는 중", "watching — waiting for 3 up candles");
+  const col = cs.signal === "BUY" ? RED : cs.signal === "SELL" ? BLUE : "var(--text-secondary)";
+  return (
+    <div className="mt-2 rounded-xl border-2 px-3.5 py-2 flex items-center gap-2.5 flex-wrap"
+      style={{ borderColor: cs.signal === "HOLD" ? "var(--border-default)" : col,
+               background: cs.signal === "BUY" ? "rgba(211,47,47,0.06)" : cs.signal === "SELL" ? "rgba(25,118,210,0.06)" : "var(--bg-elevated)" }}>
+      <span className="text-[11.5px] font-bold text-[var(--text-muted)]">🕯️ {t("캔들 3-2 (1분봉)", "candle 3-2 (1-min)")}</span>
+      <span className="flex items-end gap-1">
+        {cs.candles.map((b, i) => (
+          <span key={i} title={b.ts} className="inline-block rounded-[2px]"
+            style={{ width: 9, height: b.dir === "flat" ? 4 : 16,
+                     background: b.dir === "up" ? RED : b.dir === "down" ? BLUE : "var(--text-muted)",
+                     opacity: 0.45 + 0.55 * ((i + 1) / cs.candles.length) }} />
+        ))}
+      </span>
+      <b className="text-[12.5px]" style={{ color: col }}>{msg}</b>
+      <span className="ml-auto text-[10px] text-[var(--text-muted)]">{t("완성된 봉 기준 · 10초 갱신", "completed candles · 10s refresh")}</span>
+    </div>
+  );
+}
+
 // ---- Kiwoom-style order-book ladder: live 10 levels + 30-level memory view
 //      (same "30단계" idea as Algorithm 1's deep book) ---- //
 function OrderBook({ code, t }: { code: string; t: (ko: string, en: string) => string }) {
@@ -841,14 +885,20 @@ export default function ScalpDesk({ mode }: { mode: ScalpMode }) {
           {/* WHO decides the share count (boss 2026-07-15) */}
           <div className="mt-3 rounded-xl border px-4 py-2.5 text-[12px] leading-relaxed text-[var(--text-secondary)]"
             style={{ borderColor: "var(--border-default)", background: "var(--bg-elevated)" }}>
-            💰 {t(`수량은 누가 정하나요? 기본 = 현금의 ${sc?.pos_pct ?? 10}%, 그 위에 세 목소리의 확신도(×0.7~×1.2)를 곱합니다 — 호가 매수우위·짝꿍 상승·5분 예측이 강할수록 크게, 약할수록 작게 삽니다. 매수 이유와 확신도는 아래 기록에 저장됩니다.`,
+            💰 {sc?.strategy === "candle"
+              ? t(`수량은 누가 정하나요? 캔들 3-2 전략은 항상 현금의 ${sc?.pos_pct ?? 10}% 고정입니다 — 사장님 규칙을 순수하게 시험하기 위해 확신도 조절 없이 같은 크기로 삽니다. 매수 이유는 아래 기록에 저장됩니다.`,
+                  `Who decides the share count? In candle 3-2 it's always a flat ${sc?.pos_pct ?? 10}% of cash — no conviction scaling, so your rule is tested purely. The reason is saved on every trade below.`)
+              : t(`수량은 누가 정하나요? 기본 = 현금의 ${sc?.pos_pct ?? 10}%, 그 위에 세 목소리의 확신도(×0.7~×1.2)를 곱합니다 — 호가 매수우위·짝꿍 상승·5분 예측이 강할수록 크게, 약할수록 작게 삽니다. 매수 이유와 확신도는 아래 기록에 저장됩니다.`,
                   `Who decides the share count? Base = ${sc?.pos_pct ?? 10}% of cash, scaled by the three voices' conviction (×0.7~×1.2) — strong order book · rising partner · positive 5-min forecast buy bigger; weak evidence buys smaller. The reason is saved on every trade below.`)}
           </div>
 
           {/* how it thinks — friend language */}
           <div className="mt-4 rounded-xl border px-4 py-3 text-[12.5px] leading-relaxed text-[var(--text-secondary)]"
             style={{ borderColor: "var(--border-default)", background: "var(--bg-elevated)" }}>
-            🧠 {t("매수는 세 목소리가 동의해야 합니다: ① 가격 흐름 — 최근 저점에서 +0.10% 이상 들어올리며 연속 상승 (이미 +0.45% 오른 뒤면 안 쫓아감) ② 키움 호가창 — 매도 잔량이 압도하면 안 삼 ③ 짝꿍 종목 — SK하이닉스↔삼성전자는 함께 움직이므로(상관 0.83) 짝꿍이 급락 중이면 안 삼. 그 다음: 목표(+0.4%) 닿으면 바로 매도 → 계속 오르면 또 매수 → 팔고 떨어지면 기다림 → 사고 떨어지면 버티다 −1%에서만 손절 → 15:18 전량 정리.",
+            🧠 {sc?.strategy === "candle"
+              ? t("캔들 3-2 전략 (사장님 규칙): 1분봉을 봅니다. ① 양봉 3개 연속 → 매수 ② 오르는 동안 계속 보유 — 음봉 1개는 용서 (다음 봉이 오르면 계속 보유) ③ 음봉 2개 연속 → 매도 ④ 급락 대비 −1% 손절은 항상 살아있음 ⑤ 판 뒤에는 다시 양봉 3연속을 기다림 → 15:18 전량 정리. 목표가는 없습니다 — 추세가 끝날 때까지 탑니다.",
+                  "Candle 3-2 (your rule): watches 1-min candles. ① 3 up candles in a row → BUY ② holds while rising — 1 down candle forgiven (keeps holding if the next rises) ③ 2 down candles in a row → SELL ④ the −1% hard stop is always alive for sharp drops ⑤ after selling it waits for the next 3-up run → flat at 15:18. No profit target — it rides until the trend ends.")
+              : t("매수는 세 목소리가 동의해야 합니다: ① 가격 흐름 — 최근 저점에서 +0.10% 이상 들어올리며 연속 상승 (이미 +0.45% 오른 뒤면 안 쫓아감) ② 키움 호가창 — 매도 잔량이 압도하면 안 삼 ③ 짝꿍 종목 — SK하이닉스↔삼성전자는 함께 움직이므로(상관 0.83) 짝꿍이 급락 중이면 안 삼. 그 다음: 목표(+0.4%) 닿으면 바로 매도 → 계속 오르면 또 매수 → 팔고 떨어지면 기다림 → 사고 떨어지면 버티다 −1%에서만 손절 → 15:18 전량 정리.",
                  "A buy needs three agreeing voices: ① the price stream — lifts ≥+0.10% off the recent low with consecutive rises (never chases past +0.45%) ② the Kiwoom order book — no buy while sellers dominate the queue ③ the partner stock — SKH↔Samsung move together (corr 0.83), so no buy while the partner is dropping. Then: sell the take (+0.4%) instantly → re-buy if it keeps rising → after a sell, falls are waited out → after a buy, dips held to −1% → flat at 15:18.")}
           </div>
         </>
@@ -890,6 +940,9 @@ export default function ScalpDesk({ mode }: { mode: ScalpMode }) {
               </div>
             ) : null;
           })()}
+
+          {/* 🕯️ the boss's candle rule, readable by hand (works in every mode) */}
+          <CandleStrip code={sel} holding={heldQty(sel) > 0} t={t} />
 
           <div className="mt-3 grid lg:grid-cols-[300px_1fr] gap-4">
             {/* left: the Kiwoom ladder + the deals actually happening */}
