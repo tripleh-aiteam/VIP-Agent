@@ -45,6 +45,15 @@ Smart-analyst lane + concise mode + language purity + deep graph analysis + matr
 - **#4 Chart bug**: `cardChart` was single-select — opening one card's chart closed the other. Now `string[]` (multiple stay open) + explicit ✕ 차트 닫기.
 - **#5 Assistant = chatbot**: verified wiring — the floating Assistant (@triple-h/chatbot overlay) streams to `/chat/agent/stream`, which calls the SAME `run_agent` as the chat page (checked routers/chat.py:287); no client-side intent interception on the text path. Prod SSE matrix (VIP+ADV × KO/EN × analytical/price) run before deploy.
 
+### [16:30] 🌙 Overnight hold-or-sell advisor (boss: "15:00 — hold or sell? need tomorrow's up/down")
+
+- **Backtest first (the honest gate):** 9,870 stock-nights, 39 stocks, 1yr. ML (logreg/GBM) walk-forward: NO edge over base rate — SELL calls only 33-38% correct, following the model LOSES vs always-holding (+0.54% vs +0.63%/night). Conditional sweep: **every condition visible at 15:00 had a positive avg overnight gap** (+0.28%..+0.80%); down days/weak closes open UP 62-65% (mean reversion). → shipped a **measured-statistics advisor**, not a fake-confidence model.
+- **New:** [services/overnight_gap.py](apps/orchestrator-api/services/overnight_gap.py) — per-slice (day up/down × close position) + per-stock overnight record (one day-agg SQL over minute_bars_hist, 6h cache), live today-shape from Kiwoom, HOLD/SELL/NO-EDGE verdict vs the 0.23% rebuy fee, bilingual answer, calls logged to `overnight_calls`.
+- **VIP lane** in assistant_agent BEFORE position/turn/analyst lanes (position_advice was swallowing '팔고 갈까'); named stock → that stock, none → held positions, none held → ask-for-stock. Fixed silent NameError (module has no `text` import).
+- **AI Advisor** (stock repo): `_OVERNIGHT_RE` relay cue added to stock_agent_adapter (팔고 갈까/오버나잇/keep till tomorrow/sell before close).
+- **Grading:** scheduler 09:06 KST Mon-Fri grades every call vs the REAL open (HOLD correct if gap > −0.23%); track record quoted in every answer.
+- Local E2E: detector 12/12, KO/EN/no-stock through real run_agent all `overnight_call`.
+
 ### Next
 
 - Phase D: weekly auto-scoreboard report (scoreboard.log accumulating nightly).
