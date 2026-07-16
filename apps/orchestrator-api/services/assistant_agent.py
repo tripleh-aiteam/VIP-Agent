@@ -1545,6 +1545,40 @@ def _vip_short_selling_reply(transcript: Optional[str], lang: str) -> Optional[d
         _en = True
     date = _fmt_short_date(next((it.get("date") for it in items if it.get("date")), ""))
     reply = price_format.format_short_selling(items, date=date, lang=("en" if _en else "ko"))
+    # boss 2026-07-16: one bare line was too short — add normal-length context
+    # (deterministic, so VIP and the AI Advisor stay identical): what the ratio
+    # means, today's price backdrop, and the data caveat. Target 4-6 lines.
+    try:
+        it0 = items[0]
+        ratio = float(it0.get("short_ratio") or 0)
+        px = chg = None
+        try:
+            from services.paper_desk import _chg_cache, _live_price
+            px, _nm = _live_price(it0["code"])
+            chg = _chg_cache.get(it0["code"])
+        except Exception:
+            pass
+        if _en:
+            lvl = ("on the high side" if ratio >= 3 else
+                   "a normal level" if ratio >= 1 else "on the low side")
+            extra = [f"For context, {ratio:.2f}% of the day's volume being short sales is {lvl} "
+                     f"for a large cap — roughly 1~2% is typical.",
+                     (f"The stock currently trades at ₩{px:,.0f}"
+                      + (f" ({chg:+.2f}% today)" if chg is not None else "")
+                      + ", so short activity should be read against that move." if px else ""),
+                     "The figure is Kiwoom's official daily tally — it updates once per "
+                     "session, so today's trading isn't included yet."]
+        else:
+            lvl = ("높은 편" if ratio >= 3 else "보통 수준" if ratio >= 1 else "낮은 편")
+            extra = [f"참고로 거래량 대비 {ratio:.2f}%의 공매도 비중은 대형주 기준 {lvl}입니다 "
+                     f"(통상 1~2% 수준).",
+                     (f"현재 주가는 ₩{px:,.0f}"
+                      + (f" ({chg:+.2f}%)" if chg is not None else "")
+                      + "로, 공매도 수치는 이 흐름과 함께 읽는 것이 정확합니다." if px else ""),
+                     "이 수치는 키움 공식 일별 집계라 하루 한 번 갱신됩니다 — 오늘 장중 물량은 아직 반영 전입니다."]
+        reply = reply + "\n\n" + "\n".join(x for x in extra if x)
+    except Exception:
+        pass
     return {"intent": "short_selling", "language": lang, "reply": reply,
             "action": None, "speak": True, "transcript": transcript,
             "tool_used": "short_selling", "tool_result": {"items": items}}
@@ -5111,6 +5145,12 @@ def _run_agent_impl(
         else:
             lang = "en"
 
+    # `system` is properly built only at the LLM-fallback stage (further below), but
+    # several EARLY intercepts pass it to _run_chain — which crashed with
+    # UnboundLocalError and silently killed those routes (found 2026-07-16 via the
+    # matrix rig: "trade-first route failed: cannot access local variable 'system'").
+    system = ""
+
     # === LLM TASK — translate/summarize/rewrite requests are normal-LLM work; the text
     # they contain must never fire the trading engines. Runs before every stock intent.
     if (not confirmed_tool and not attachment_ids and transcript
@@ -5379,8 +5419,11 @@ def _run_agent_impl(
                     pass
             _full = (_is_an(transcript, has_stock=bool(_an_stocks))
                      and not _wants_recommendation(transcript))
-            _simple = (not _full and _is_sd(transcript)
-                       and not _wants_recommendation(transcript))
+            # NOTE: no _wants_recommendation gate here — it false-positives on data
+            # nouns ("net BUYING") and sent info questions into the 7,000-char
+            # recommendation (boss's screenshot). _is_sd's own _ACTION regex
+            # already excludes real 살까/should-I-buy asks.
+            _simple = (not _full and _is_sd(transcript))
             if _full or _simple:
                 _an_out = _an_answer(db, transcript, lang, _an_stocks, history,
                                      concise=_simple)

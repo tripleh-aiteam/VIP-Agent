@@ -225,18 +225,26 @@ STYLE:
 - ANSWER ENTIRELY IN {LANG}. ({lang_note}) NEVER mix languages in one answer:
   no English sentences inside a Korean answer and vice versa. Stock names,
   tickers and numbers keep their natural form.
+- If the conversation history already answered a similar question (even in the
+  other language), STILL give the complete standalone answer in {LANG} — never
+  reply "as mentioned above" and never shorten because an earlier turn covered it.
+  KO and EN versions of the same question must be equally complete.
 - Today is {today} (KST). Korean market hours 09:00-15:30.
 {depth_rule}"""
 
-_DEPTH_FULL = """DEPTH: this is an ANALYSIS question — full analyst treatment
-(roughly 250-500 words as described above)."""
+_DEPTH_FULL = """DEPTH: this is an ANALYSIS question — full analyst treatment.
+English: roughly 250-500 words. Korean: 900-1,800 characters (한국어 답변도
+영어와 똑같이 완전하고 깊게 — 한국어라고 짧게 쓰지 마세요). The same question
+asked in Korean or English must receive equally complete answers."""
 
 _DEPTH_CONCISE = """DEPTH: this is a SIMPLE INFORMATION request — the user wants
 the specific data, not an essay. Lead with the requested number(s)/facts from
-the data pack, add 2-4 sentences of essential context (what the number means,
-timestamp/provisional caveat, one notable comparison), and STOP. Target 60-140
-words. If the data pack does not contain the requested figure, say so plainly
-in one sentence and give the closest available number instead of speculating."""
+the data pack, then 3-5 sentences of essential context (what the number means,
+timestamp/provisional caveat, one notable comparison), and STOP.
+English: 60-140 words. Korean: 200-400 characters, 4-6 sentences (한 줄짜리
+답은 금지 — 숫자 뒤에 맥락 문장 3~5개를 반드시 붙이세요). If the data pack does
+not contain the requested figure, say so plainly in one sentence and give the
+closest available number instead of speculating."""
 
 
 def answer(db, question: str, lang: str, stocks: list[tuple[str, str]],
@@ -261,9 +269,26 @@ def answer(db, question: str, lang: str, stocks: list[tuple[str, str]],
         msgs.append({"role": "user",
                      "content": f"{pack}\n\n---\n질문: {question}"})
         out = chat_completion_sync(system, msgs,
-                                   max_tokens=(500 if concise else 1800),
+                                   max_tokens=(600 if concise else 1800),
                                    temperature=0.4,
                                    model="claude-sonnet-4-6", prefer_paid=True)
+        # Korean answers come back too short from most models (boss's screenshot:
+        # KO version of the same question got a fraction of the EN answer) —
+        # one strict retry when under the floor.
+        floor = (150 if concise else 880) if lang == "ko" else (200 if concise else 900)
+        if out and "[LLM" not in out[:20] and len(out.strip()) < floor:
+            msgs.append({"role": "assistant", "content": out})
+            msgs.append({"role": "user", "content": (
+                "답변이 너무 짧습니다. 위 DEPTH 지침의 분량을 지켜, 데이터 숫자를 녹여서 "
+                "완전한 답변으로 다시 작성하세요." if lang == "ko" else
+                "That answer is too short. Rewrite it in full, following the DEPTH "
+                "instruction's length, weaving in the actual numbers.")})
+            out2 = chat_completion_sync(system, msgs,
+                                        max_tokens=(600 if concise else 1800),
+                                        temperature=0.4,
+                                        model="claude-sonnet-4-6", prefer_paid=True)
+            if out2 and "[LLM" not in out2[:20] and len(out2.strip()) > len(out.strip()):
+                out = out2
         if out and "[LLM" not in out[:20]:
             return out.strip()
         return None
