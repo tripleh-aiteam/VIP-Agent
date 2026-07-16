@@ -749,7 +749,7 @@ def status(db) -> dict[str, Any]:
               for r in db.execute(text(
                   "SELECT name, qty, entry, exit_price, exit_reason, net_pct, closed_at, "
                   "opened_at, why FROM scalp_trades WHERE status='CLOSED' "
-                  "ORDER BY closed_at DESC LIMIT 25"))]
+                  "ORDER BY closed_at DESC LIMIT 150"))]
     # live SEMI recommendations (fresh <120s, not already held)
     now_ts = _t.time()
     open_now = set(open_map.keys())

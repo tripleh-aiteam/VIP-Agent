@@ -26,6 +26,22 @@ const kstDate = (iso?: string | null) => {
   return new Date(s).toLocaleString("sv-SE", { timeZone: "Asia/Seoul" }).slice(0, 10);
 };
 const pnlCol = (v?: number | null) => (v == null ? "var(--text-muted)" : v > 0 ? RED : v < 0 ? BLUE : "var(--text-muted)");
+// exact HH:MM:SS + held duration — the round-trip activity table (same as Algo 2)
+const kstSec = (iso?: string | null) => {
+  if (!iso) return "";
+  const s = /Z$|[+-]\d{2}:\d{2}$/.test(iso) ? iso : `${iso}Z`;
+  return new Date(s).toLocaleString("sv-SE", { timeZone: "Asia/Seoul" }).slice(11, 19);
+};
+const heldFor = (a?: string | null, b?: string | null, ko = true) => {
+  if (!a || !b) return "";
+  const pa = /Z$|[+-]\d{2}:\d{2}$/.test(a) ? a : `${a}Z`;
+  const pb = /Z$|[+-]\d{2}:\d{2}$/.test(b) ? b : `${b}Z`;
+  const sec = Math.max(0, Math.round((new Date(pb).getTime() - new Date(pa).getTime()) / 1000));
+  const m = Math.floor(sec / 60), s = sec % 60, h = Math.floor(m / 60);
+  if (h > 0) return ko ? `${h}시간 ${m % 60}분` : `${h}h ${m % 60}m`;
+  if (m > 0) return ko ? `${m}분 ${s}초` : `${m}m ${s}s`;
+  return ko ? `${s}초` : `${s}s`;
+};
 
 type Position = { ticker: string; name: string; qty: number; avg_price: number; live_price?: number | null; value: number; unrealized_pnl?: number | null; unrealized_pnl_pct?: number | null };
 type Order = { id: number; ticker: string; name: string; side: string; qty: number; order_type: string; limit_price?: number | null; status?: string; fill_price?: number | null; realized_pnl?: number | null; realized_pnl_pct?: number | null; note?: string | null; created_at?: string; filled_at?: string | null; source?: string | null };
@@ -66,6 +82,11 @@ type SetupAlert = {
   why?: string | null; whyEn?: string | null;
   entry?: number | null; target?: number | null; stop?: number | null; ts: number;
 };
+// 🤖 Algorithm 1 round trips + today's Algo1-vs-Algo2 scoreboard (boss 2026-07-16)
+type RoundTrip = { name: string; qty: number; entry?: number | null; exit_price?: number | null;
+  won?: number | null; net_pct?: number | null; closed_at?: string | null; opened_at?: string | null;
+  why?: string | null; ticker: string };
+type AlgoCmp = Record<string, { trips: number; wins: number; win_rate: number | null; net_won: number }>;
 export type TradeMode = "manual" | "semi" | "auto";
 // FOCUS stocks for the boss's semi-auto/manual test — the AUTO mode keeps the FULL
 // market universe in the background (self-improvement data must keep flowing)
@@ -391,6 +412,22 @@ export default function Desk({ mode }: { mode: TradeMode }) {
         .catch(() => setDetailText((m2) => ({ ...m2, [code]: t("불러오기 실패 — 다시 눌러주세요", "Failed to load — press again") })));
     }
   };
+
+  // 🤖 Algorithm 1 activity (round trips) + today's Algo1 vs Algo2 scoreboard
+  const [rt, setRt] = useState<RoundTrip[]>([]);
+  const [cmp, setCmp] = useState<AlgoCmp | null>(null);
+  const [rtRes, setRtRes] = useState<"ALL" | "WIN" | "LOSE">("ALL");
+  const [rtStock, setRtStock] = useState("ALL");
+  const [rtTime, setRtTime] = useState<"ALL" | "AM" | "PM" | "1H">("ALL");
+  useEffect(() => {
+    const loadRt = () => {
+      api<{ trips: RoundTrip[] }>("/paper-desk/roundtrips?source=algo1").then((r) => setRt(r.trips || [])).catch(() => {});
+      api<{ today: AlgoCmp }>("/paper-desk/algo-compare").then((r) => setCmp(r.today || {})).catch(() => {});
+    };
+    loadRt();
+    const i = setInterval(loadRt, 15000);
+    return () => clearInterval(i);
+  }, []);
 
   const load = () => {
     api<DeskState>("/paper-desk/state").then(setSt).catch(() => {});
@@ -1559,6 +1596,136 @@ export default function Desk({ mode }: { mode: TradeMode }) {
           </table>
         </Sect>
       )}
+
+      {/* 📊 today's Algorithm 1 vs 2 scoreboard (boss 2026-07-16: compare both sides) */}
+      {cmp && (cmp.algo1 || cmp.algo2) && (
+        <Sect title={`📊 ${t("오늘 비교 — 알고리즘 1 vs 알고리즘 2", "Today — Algorithm 1 vs Algorithm 2")}`}>
+          <div className="grid md:grid-cols-2 gap-3 p-3">
+            {([["algo1", "🤖 " + t("알고리즘 1", "Algorithm 1")], ["algo2", "⚡ " + t("알고리즘 2", "Algorithm 2")]] as const).map(([k, label]) => {
+              const a = cmp[k];
+              return (
+                <div key={k} className="rounded-xl border px-4 py-3 text-[12.5px] tabular-nums"
+                  style={{ borderColor: "var(--border-default)", background: "var(--bg-elevated)" }}>
+                  <b className="text-[13.5px] text-[var(--text-primary)]">{label}</b>
+                  {a ? (
+                    <div className="mt-1 flex items-center gap-4 flex-wrap">
+                      <span>🔄 {t(`${a.trips}회전`, `${a.trips} trips`)}</span>
+                      <span>🏆 {t(`승률 ${a.win_rate ?? "-"}% (${a.wins}승 ${a.trips - a.wins}패)`, `${a.win_rate ?? "-"}% win (${a.wins}W ${a.trips - a.wins}L)`)}</span>
+                      <span className="font-extrabold text-[14px]" style={{ color: pnlCol(a.net_won) }}>
+                        {a.net_won > 0 ? "+" : ""}₩{fmt(a.net_won)}
+                      </span>
+                    </div>
+                  ) : (
+                    <div className="mt-1 text-[var(--text-muted)]">{t("오늘 매매 없음", "no trades today")}</div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+          <div className="px-4 pb-2 text-[10.5px] text-[var(--text-muted)]">
+            {t("같은 가짜-머니 장부의 실현손익(수수료 0.23% 차감 후) 기준 · 오늘 매도 완료된 회전만 집계",
+               "from the same fake-money book's realized P&L (net of 0.23% fees) · counts only round trips closed today")}
+          </div>
+        </Sect>
+      )}
+
+      {/* 🤖 ALGORITHM 1 ACTIVITY — every round trip, same table as Algorithm 2
+          (boss 2026-07-16: 'make like this table in Algorithm 1') */}
+      <Sect title={`🤖 ${t("알고리즘 1 활동 — 회전별 전체 기록", "Algorithm 1 activity — every round trip")}`}>
+        {rt.length === 0 ? (
+          <div className="px-3 py-4 text-center text-[11.5px] text-[var(--text-muted)]">
+            {t("알고리즘 1(자동)이 판 기록이 아직 없습니다 — 자동 모드가 매도하면 여기에 회전별로 쌓입니다",
+               "Algorithm 1 (auto) has no completed round trips yet — they appear here once auto mode sells")}
+          </div>
+        ) : (() => {
+          const rows = rt.filter((r) => {
+            if (rtRes === "WIN" && !((r.won || 0) > 0)) return false;
+            if (rtRes === "LOSE" && !((r.won || 0) < 0)) return false;
+            if (rtStock !== "ALL" && r.name !== rtStock) return false;
+            if (rtTime !== "ALL") {
+              const c = r.closed_at || "";
+              const s = /Z$|[+-]\d{2}:\d{2}$/.test(c) ? c : `${c}Z`;
+              const d = new Date(s);
+              if (rtTime === "1H") {
+                if (Date.now() - d.getTime() > 3600_000) return false;
+              } else {
+                const hh = parseInt(d.toLocaleString("sv-SE", { timeZone: "Asia/Seoul" }).slice(11, 13));
+                if (rtTime === "AM" && hh >= 12) return false;
+                if (rtTime === "PM" && hh < 12) return false;
+              }
+            }
+            return true;
+          });
+          const fNet = rows.reduce((a, r) => a + (r.won || 0), 0);
+          const fWins = rows.filter((r) => (r.won || 0) > 0).length;
+          return (<>
+          <div className="px-3 py-2 flex items-center gap-2 flex-wrap border-b border-[var(--border-default)]/40" style={{ background: "var(--bg-elevated)" }}>
+            <select value={rtRes} onChange={(e) => setRtRes(e.target.value as typeof rtRes)}
+              className="text-[11px] font-bold px-1.5 py-0.5 rounded-lg border bg-[var(--bg-primary)] text-[var(--text-primary)]" style={{ borderColor: "var(--border-default)" }}>
+              <option value="ALL">{t("결과: 전체", "result: all")}</option>
+              <option value="WIN">{t("🟢 승만", "🟢 wins only")}</option>
+              <option value="LOSE">{t("🔴 패만", "🔴 losses only")}</option>
+            </select>
+            <select value={rtStock} onChange={(e) => setRtStock(e.target.value)}
+              className="text-[11px] font-bold px-1.5 py-0.5 rounded-lg border bg-[var(--bg-primary)] text-[var(--text-primary)]" style={{ borderColor: "var(--border-default)" }}>
+              <option value="ALL">{t("종목: 전체", "stock: all")}</option>
+              {Array.from(new Set(rt.map((r) => r.name))).sort().map((n) => <option key={n} value={n}>{n}</option>)}
+            </select>
+            <select value={rtTime} onChange={(e) => setRtTime(e.target.value as typeof rtTime)}
+              className="text-[11px] font-bold px-1.5 py-0.5 rounded-lg border bg-[var(--bg-primary)] text-[var(--text-primary)]" style={{ borderColor: "var(--border-default)" }}>
+              <option value="ALL">{t("시간: 전체", "time: all")}</option>
+              <option value="AM">{t("오전 (9~12시)", "AM (9-12)")}</option>
+              <option value="PM">{t("오후 (12시~)", "PM (12+)")}</option>
+              <option value="1H">{t("최근 1시간", "last hour")}</option>
+            </select>
+            {(rtRes !== "ALL" || rtStock !== "ALL" || rtTime !== "ALL") && (
+              <button onClick={() => { setRtRes("ALL"); setRtStock("ALL"); setRtTime("ALL"); }}
+                className="text-[10.5px] font-bold px-2 py-0.5 rounded-lg border text-[var(--text-muted)]" style={{ borderColor: "var(--border-default)" }}>
+                ✕ {t("필터 지우기", "clear")}
+              </button>
+            )}
+            <span className="ml-auto text-[11.5px] font-extrabold tabular-nums" style={{ color: pnlCol(fNet) }}>
+              {t(`${rows.length}회전 · 승 ${fWins} · 승률 ${rows.length ? Math.round(fWins / rows.length * 100) : 0}% · ${fNet > 0 ? "+" : ""}₩${fmt(Math.round(fNet))}`,
+                 `${rows.length} trips · ${fWins} wins · ${rows.length ? Math.round(fWins / rows.length * 100) : 0}% · ${fNet > 0 ? "+" : ""}₩${fmt(Math.round(fNet))}`)}
+            </span>
+          </div>
+          <table className="w-full text-[12px]">
+            <thead>
+              <tr className="text-[10.5px] text-[var(--text-muted)]" style={{ background: "var(--bg-elevated)" }}>
+                <th className="text-left px-3 py-1.5">{t("매수 시각", "Bought at")}</th>
+                <th className="text-left px-2">{t("매도 시각", "Sold at")}</th>
+                <th className="text-right px-2">⏱ {t("보유", "Held")}</th>
+                <th className="text-left px-2">{t("종목", "Stock")}</th>
+                <th className="text-right px-2">{t("수량", "Qty")}</th>
+                <th className="text-right px-2">{t("매수가 → 매도가", "Buy → Sell")}</th>
+                <th className="text-right px-3">{t("손익 (₩ · %)", "Win (₩ · %)")}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((r, i) => (
+                <tr key={i} className="border-t border-[var(--border-default)]/40">
+                  <td className="px-3 py-1.5 text-[11px] font-bold tabular-nums" style={{ color: RED }}>
+                    {kstSec(r.opened_at)}
+                    <div className="text-[9px] font-normal text-[var(--text-muted)]">{kst(r.opened_at)?.slice(0, 5)}</div>
+                  </td>
+                  <td className="px-2 text-[11px] font-bold tabular-nums" style={{ color: BLUE }}>{kstSec(r.closed_at)}</td>
+                  <td className="text-right px-2 text-[11px] tabular-nums text-[var(--text-secondary)]">{heldFor(r.opened_at, r.closed_at, lang === "ko")}</td>
+                  <td className="px-2 font-bold text-[var(--text-primary)]">{r.name}
+                    {r.why && <div className="text-[9.5px] font-normal text-[var(--text-muted)] max-w-[260px]">{r.why}</div>}
+                  </td>
+                  <td className="text-right px-2 tabular-nums">{fmt(r.qty)}</td>
+                  <td className="text-right px-2 tabular-nums">₩{fmt(r.entry)} → ₩{fmt(r.exit_price)}</td>
+                  <td className="text-right px-3 tabular-nums font-extrabold" style={{ color: pnlCol(r.net_pct) }}>
+                    {r.won != null ? `${r.won > 0 ? "+" : ""}₩${fmt(Math.round(r.won))}` : "-"}
+                    {r.net_pct != null && ` (${r.net_pct > 0 ? "+" : ""}${r.net_pct}%)`}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          </>);
+        })()}
+      </Sect>
 
       {/* history */}
       <Sect title={t("거래 기록", "Trade History")}>

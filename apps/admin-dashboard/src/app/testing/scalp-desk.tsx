@@ -291,9 +291,26 @@ export default function ScalpDesk({ mode }: { mode: ScalpMode }) {
   useEffect(() => {
     try { setShowExtra(JSON.parse(localStorage.getItem("scalp-show") || "[]")); } catch {}
   }, []);
-  const [cardChart, setCardChart] = useState<string | null>(null);   // 📈 inline chart per card
+  // 📈 inline charts — MULTIPLE can stay open (boss 2026-07-16: opening one
+  // closed the other; now each stays until he closes it himself)
+  const [cardChart, setCardChart] = useState<string[]>([]);
+  const toggleChart = (code: string) =>
+    setCardChart((cs) => (cs.includes(code) ? cs.filter((c) => c !== code) : [...cs, code]));
   const [pickerOpen, setPickerOpen] = useState(false);               // collapsed stock list
   const [dayTotal, setDayTotal] = useState(false);                   // 📊 day-total panel
+  // ⚡ activity-table filters (boss 2026-07-16: win/lose · company · time)
+  const [fltRes, setFltRes] = useState<"ALL" | "WIN" | "LOSE">("ALL");
+  const [fltName, setFltName] = useState<string>("ALL");
+  const [fltTime, setFltTime] = useState<"ALL" | "AM" | "PM" | "1H">("ALL");
+  // 📊 today's Algo1 vs Algo2 scoreboard (boss 2026-07-16: compare both sides)
+  const [cmp, setCmp] = useState<Record<string, { trips: number; wins: number; win_rate: number | null; net_won: number }> | null>(null);
+  useEffect(() => {
+    const loadCmp = () => api<{ today: NonNullable<typeof cmp> }>("/paper-desk/algo-compare")
+      .then((r) => setCmp(r.today || {})).catch(() => {});
+    loadCmp();
+    const i = setInterval(loadCmp, 15000);
+    return () => clearInterval(i);
+  }, []);
   const [livePx, setLivePx] = useState<Record<string, number>>({});
   const [liveChg, setLiveChg] = useState<Record<string, number>>({});
   const [stockList, setStockList] = useState<StockItem[]>([]);
@@ -741,7 +758,7 @@ export default function ScalpDesk({ mode }: { mode: ScalpMode }) {
                     <div key={s.code} className="rounded-xl border px-4 py-3"
                       style={{ borderColor: s.state === "LONG" ? PURPLE : "var(--border-default)", background: "var(--bg-elevated)" }}>
                       <div className="flex items-baseline gap-2 flex-wrap">
-                        <button onClick={() => setCardChart((c) => (c === s.code ? null : s.code))}
+                        <button onClick={() => toggleChart(s.code)}
                           title={t("클릭: 5분봉 차트 열기/닫기", "click: toggle the 5-min chart")}
                           className="text-[15.5px] font-extrabold text-[var(--text-primary)] underline decoration-dotted underline-offset-4 hover:opacity-70">
                           {s.name} 📈
@@ -870,8 +887,14 @@ export default function ScalpDesk({ mode }: { mode: ScalpMode }) {
                           })()}
                         </div>
                       )}
-                      {cardChart === s.code && (
+                      {cardChart.includes(s.code) && (
                         <div className="mt-2 rounded-lg border border-[var(--border-default)] p-1 bg-[var(--bg-primary)]">
+                          <div className="flex justify-end">
+                            <button onClick={() => toggleChart(s.code)}
+                              className="text-[10.5px] font-bold px-2 py-0.5 text-[var(--text-muted)] hover:opacity-70">
+                              ✕ {t("차트 닫기", "close chart")}
+                            </button>
+                          </div>
                           <MiniChart code={s.code} />
                         </div>
                       )}
@@ -1136,12 +1159,70 @@ export default function ScalpDesk({ mode }: { mode: ScalpMode }) {
         </div>
       )}
 
+      {/* 📊 today's Algorithm 1 vs 2 scoreboard — same strip as the Algo 1 page */}
+      {cmp && (cmp.algo1 || cmp.algo2) && (
+        <div className="mt-4 rounded-xl border overflow-hidden" style={{ borderColor: "var(--border-default)" }}>
+          <div className="px-4 py-2 text-[12.5px] font-extrabold text-[var(--text-primary)]" style={{ background: "var(--bg-elevated)" }}>
+            📊 {t("오늘 비교 — 알고리즘 1 vs 알고리즘 2", "Today — Algorithm 1 vs Algorithm 2")}
+          </div>
+          <div className="grid md:grid-cols-2 gap-3 p-3">
+            {([["algo1", "🤖 " + t("알고리즘 1", "Algorithm 1")], ["algo2", "⚡ " + t("알고리즘 2", "Algorithm 2")]] as const).map(([k, label]) => {
+              const a = cmp[k];
+              return (
+                <div key={k} className="rounded-xl border px-4 py-3 text-[12.5px] tabular-nums"
+                  style={{ borderColor: k === "algo2" ? PURPLE : "var(--border-default)", background: "var(--bg-elevated)" }}>
+                  <b className="text-[13.5px] text-[var(--text-primary)]">{label}</b>
+                  {a ? (
+                    <div className="mt-1 flex items-center gap-4 flex-wrap">
+                      <span>🔄 {t(`${a.trips}회전`, `${a.trips} trips`)}</span>
+                      <span>🏆 {t(`승률 ${a.win_rate ?? "-"}% (${a.wins}승 ${a.trips - a.wins}패)`, `${a.win_rate ?? "-"}% win (${a.wins}W ${a.trips - a.wins}L)`)}</span>
+                      <span className="font-extrabold text-[14px]" style={{ color: pnlCol(a.net_won) }}>
+                        {a.net_won > 0 ? "+" : ""}₩{fmt(a.net_won)}
+                      </span>
+                    </div>
+                  ) : (
+                    <div className="mt-1 text-[var(--text-muted)]">{t("오늘 매매 없음", "no trades today")}</div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
       {/* ⚡ ALGORITHM 2 ACTIVITY — every round trip with the full numbers
           (boss 2026-07-15: what bought, when, how many, win ₩ and %) */}
       {sc && sc.recent.length > 0 && (
         <div className="mt-4 rounded-xl border overflow-hidden" style={{ borderColor: PURPLE }}>
           <div className="px-4 py-2 border-b bg-[var(--bg-elevated)] flex items-center gap-2 flex-wrap" style={{ borderColor: "var(--border-default)" }}>
             <b className="text-[13.5px]" style={{ color: PURPLE }}>⚡ {t("알고리즘 2 활동 — 회전별 전체 기록", "Algorithm 2 activity — every round trip")}</b>
+            {/* 🔍 filters: result · company · time (boss 2026-07-16) */}
+            <select value={fltRes} onChange={(e) => setFltRes(e.target.value as typeof fltRes)}
+              className="text-[11px] font-bold px-1.5 py-0.5 rounded-lg border bg-[var(--bg-primary)] text-[var(--text-primary)]" style={{ borderColor: "var(--border-default)" }}>
+              <option value="ALL">{t("결과: 전체", "result: all")}</option>
+              <option value="WIN">{t("🟢 승만", "🟢 wins only")}</option>
+              <option value="LOSE">{t("🔴 패만", "🔴 losses only")}</option>
+            </select>
+            <select value={fltName} onChange={(e) => setFltName(e.target.value)}
+              className="text-[11px] font-bold px-1.5 py-0.5 rounded-lg border bg-[var(--bg-primary)] text-[var(--text-primary)]" style={{ borderColor: "var(--border-default)" }}>
+              <option value="ALL">{t("종목: 전체", "stock: all")}</option>
+              {Array.from(new Set(sc.recent.map((r) => r.name))).sort().map((n) => (
+                <option key={n} value={n}>{n}</option>
+              ))}
+            </select>
+            <select value={fltTime} onChange={(e) => setFltTime(e.target.value as typeof fltTime)}
+              className="text-[11px] font-bold px-1.5 py-0.5 rounded-lg border bg-[var(--bg-primary)] text-[var(--text-primary)]" style={{ borderColor: "var(--border-default)" }}>
+              <option value="ALL">{t("시간: 전체", "time: all")}</option>
+              <option value="AM">{t("오전 (9~12시)", "AM (9-12)")}</option>
+              <option value="PM">{t("오후 (12시~)", "PM (12+)")}</option>
+              <option value="1H">{t("최근 1시간", "last hour")}</option>
+            </select>
+            {(fltRes !== "ALL" || fltName !== "ALL" || fltTime !== "ALL") && (
+              <button onClick={() => { setFltRes("ALL"); setFltName("ALL"); setFltTime("ALL"); }}
+                className="text-[10.5px] font-bold px-2 py-0.5 rounded-lg border text-[var(--text-muted)]" style={{ borderColor: "var(--border-default)" }}>
+                ✕ {t("필터 지우기", "clear")}
+              </button>
+            )}
             <button onClick={() => setDayTotal((v) => !v)}
               className="ml-auto text-[11.5px] font-extrabold px-3 py-1 rounded-lg text-white" style={{ background: PURPLE }}>
               📊 {dayTotal ? t("오늘 합계 닫기", "hide day total") : t("오늘 합계 계산", "calculate today's total")}
@@ -1165,6 +1246,11 @@ export default function ScalpDesk({ mode }: { mode: ScalpMode }) {
                   <span>🔄 {t(`오늘 ${rows.length}회전`, `${rows.length} round trips today`)}</span>
                   <span style={{ color: RED }}>🟢 {t(`승 ${wins.length}번 = +₩${fmt(Math.round(wSum))}`, `${wins.length} wins = +₩${fmt(Math.round(wSum))}`)}</span>
                   <span style={{ color: BLUE }}>🔴 {t(`패 ${losses.length}번 = −₩${fmt(Math.abs(Math.round(lSum)))}`, `${losses.length} losses = −₩${fmt(Math.abs(Math.round(lSum)))}`)}</span>
+                  {rows.length > 0 && (
+                    <span className="font-extrabold" style={{ color: wins.length / rows.length >= 0.5 ? "#2e7d32" : RED }}>
+                      🏆 {t(`승률 ${Math.round(wins.length / rows.length * 100)}%`, `win rate ${Math.round(wins.length / rows.length * 100)}%`)}
+                    </span>
+                  )}
                   <span className="text-[15px] font-extrabold" style={{ color: pnlCol(net) }}>
                     = {t("오늘 순이익", "net today")} {net > 0 ? "+" : ""}₩{fmt(Math.round(net))}
                   </span>
@@ -1179,6 +1265,36 @@ export default function ScalpDesk({ mode }: { mode: ScalpMode }) {
               </div>
             );
           })()}
+          {(() => {
+            const actRows = sc.recent.filter((r) => {
+              if (fltRes === "WIN" && !((r.won || 0) > 0)) return false;
+              if (fltRes === "LOSE" && !((r.won || 0) < 0)) return false;
+              if (fltName !== "ALL" && r.name !== fltName) return false;
+              if (fltTime !== "ALL") {
+                const c = r.closed_at || "";
+                const s = /Z$|[+-]\d{2}:\d{2}$/.test(c) ? c : `${c}Z`;
+                const d = new Date(s);
+                if (fltTime === "1H") {
+                  if (Date.now() - d.getTime() > 3600_000) return false;
+                } else {
+                  const hh = parseInt(d.toLocaleString("sv-SE", { timeZone: "Asia/Seoul" }).slice(11, 13));
+                  if (fltTime === "AM" && hh >= 12) return false;
+                  if (fltTime === "PM" && hh < 12) return false;
+                }
+              }
+              return true;
+            });
+            const fActive = fltRes !== "ALL" || fltName !== "ALL" || fltTime !== "ALL";
+            const fNet = actRows.reduce((a, r) => a + (r.won || 0), 0);
+            const fWins = actRows.filter((r) => (r.won || 0) > 0).length;
+            return (<>
+          {fActive && (
+            <div className="px-4 py-1.5 border-b text-[11.5px] font-bold tabular-nums" style={{ borderColor: "var(--border-default)", background: "rgba(123,31,162,0.04)" }}>
+              🔍 {t(`필터 결과: ${actRows.length}회전 · 승 ${fWins} · 승률 ${actRows.length ? Math.round(fWins / actRows.length * 100) : 0}%`,
+                    `filtered: ${actRows.length} trips · ${fWins} wins · ${actRows.length ? Math.round(fWins / actRows.length * 100) : 0}% win rate`)}
+              <span className="ml-2" style={{ color: pnlCol(fNet) }}>{fNet > 0 ? "+" : ""}₩{fmt(Math.round(fNet))}</span>
+            </div>
+          )}
           <table className="w-full text-[12px]">
             <thead>
               <tr className="text-[10.5px] text-[var(--text-muted)]" style={{ background: "var(--bg-elevated)" }}>
@@ -1193,7 +1309,7 @@ export default function ScalpDesk({ mode }: { mode: ScalpMode }) {
               </tr>
             </thead>
             <tbody>
-              {sc.recent.map((r, i) => (
+              {actRows.map((r, i) => (
                 <tr key={i} className="border-t border-[var(--border-default)]/40">
                   <td className="px-3 py-1.5 text-[11px] font-bold tabular-nums" style={{ color: RED }}>
                     {kstSec(r.opened_at)}
@@ -1226,6 +1342,8 @@ export default function ScalpDesk({ mode }: { mode: ScalpMode }) {
               ))}
             </tbody>
           </table>
+            </>);
+          })()}
         </div>
       )}
     </div>

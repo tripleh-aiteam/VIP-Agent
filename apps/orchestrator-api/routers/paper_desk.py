@@ -84,6 +84,61 @@ def desk_state(db: Session = Depends(get_db)):
     return state(db)
 
 
+@router.get("/roundtrips")
+def desk_roundtrips(source: str = Query("algo1"), limit: int = Query(150),
+                    db: Session = Depends(get_db)):
+    """🤖 Round trips (bought→sold pairs) for one actor — the boss's Algorithm 1
+    activity table (2026-07-16: 'make like this table in Algorithm 1'). Each
+    FILLED SELL with realized P&L is paired with the latest preceding FILLED BUY
+    of the same ticker (entry price/time shown = that buy; P&L stays the desk's
+    avg-cost number, net of 0.23% fees)."""
+    from sqlalchemy import text
+    src = source if source in ("manual", "algo1", "algo2", "guard") else "algo1"
+    rows = db.execute(text(
+        "SELECT s.name, s.qty, COALESCE(b.fill_price, s.fill_price) AS entry, "
+        "       s.fill_price AS exit_price, s.realized_pnl, s.realized_pnl_pct, "
+        "       s.filled_at AS closed_at, b.filled_at AS opened_at, s.note, s.ticker "
+        "FROM paper_desk_orders s "
+        "LEFT JOIN LATERAL ("
+        "  SELECT fill_price, filled_at FROM paper_desk_orders b "
+        "  WHERE b.ticker = s.ticker AND b.side = 'BUY' AND b.status = 'FILLED' "
+        "    AND b.filled_at <= s.filled_at "
+        "  ORDER BY b.filled_at DESC LIMIT 1) b ON true "
+        "WHERE s.side = 'SELL' AND s.status = 'FILLED' AND s.realized_pnl IS NOT NULL "
+        "  AND COALESCE(s.source, 'manual') = :src "
+        "ORDER BY s.filled_at DESC LIMIT :lim"),
+        {"src": src, "lim": max(1, min(int(limit), 500))}).fetchall()
+    return {"ok": True, "source": src, "trips": [
+        {"name": r[0], "qty": int(r[1] or 0), "entry": (float(r[2]) if r[2] is not None else None),
+         "exit_price": (float(r[3]) if r[3] is not None else None),
+         "won": (float(r[4]) if r[4] is not None else None),
+         "net_pct": (float(r[5]) if r[5] is not None else None),
+         "closed_at": (str(r[6]) if r[6] else None), "opened_at": (str(r[7]) if r[7] else None),
+         "why": r[8], "ticker": r[9]} for r in rows]}
+
+
+@router.get("/algo-compare")
+def desk_algo_compare(db: Session = Depends(get_db)):
+    """📊 Today's Algorithm 1 vs Algorithm 2 scoreboard (boss 2026-07-16:
+    'in the both side we can compare') — trips, wins, win %, net ₩ per actor,
+    from the same fee-net realized numbers the trade history shows."""
+    from sqlalchemy import text
+    rows = db.execute(text(
+        "SELECT COALESCE(source,'manual') AS src, count(*), "
+        "       sum(CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END), "
+        "       COALESCE(sum(realized_pnl), 0) "
+        "FROM paper_desk_orders "
+        "WHERE side='SELL' AND status='FILLED' AND realized_pnl IS NOT NULL "
+        "  AND filled_at::date = (now() AT TIME ZONE 'Asia/Seoul')::date "
+        "GROUP BY 1")).fetchall()
+    out = {}
+    for src, n, w, net in rows:
+        out[src] = {"trips": int(n or 0), "wins": int(w or 0),
+                    "win_rate": (round(int(w or 0) / int(n) * 100) if n else None),
+                    "net_won": round(float(net or 0))}
+    return {"ok": True, "today": out}
+
+
 @router.get("/quote")
 def desk_quote(q: str = Query(...), db: Session = Depends(get_db)):
     """Full quote for the order box: 시가/현재가±%/고가/저가 (any code or name).

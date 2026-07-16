@@ -31,6 +31,20 @@ Smart-analyst lane + concise mode + language purity + deep graph analysis + matr
 - **Files:** [services/scalp_trader.py](apps/orchestrator-api/services/scalp_trader.py), [routers/paper_desk.py](apps/orchestrator-api/routers/paper_desk.py), [testing/scalp-desk.tsx](apps/admin-dashboard/src/app/testing/scalp-desk.tsx)
 - **Tested:** streak logic 8/8 synthetic cases + forgiveness rule; live 1-min candles (SK하이닉스 14:08, dn=2 detected); strategy roundtrip on prod DB (invalid values ignored, restored to ripple).
 
+### [14:30] Candle 3-2 in ALL THREE modes — manual page gets the 🕯️ signal strip
+
+- **What:** boss switched prod to candle (verified live: strategy=candle, ON, auto, 21 stocks). His follow-up: "is it in auto, semi AND manual?" — auto/semi were; manual got a new `GET /paper-desk/scalp/candles?code=` (last completed 1-min candles + streak + BUY/SELL/HOLD verdict) and a 🕯️ strip under the manual live quote: mini candle blocks + plain-language signal ("🔥 3연속 양봉 — 규칙상 매수 신호!" / "음봉 1개 — 용서 구간" / "❄️ 2연속 음봉 — 매도 신호"), 10s refresh, holding-aware. Auto/semi explainer boxes now strategy-aware.
+- **Key verification:** Kiwoom ka10080 1-min bars WORK on Render (bars=6, fresh timestamps) — unlike ka10003 executions. Candle mode is fully functional in production.
+- **Files:** [routers/paper_desk.py](apps/orchestrator-api/routers/paper_desk.py), [testing/scalp-desk.tsx](apps/admin-dashboard/src/app/testing/scalp-desk.tsx)
+
+### [15:00] Boss's 5-item update round (filters · win% · Algo1 table+compare · chart bug · Assistant parity)
+
+- **#1 Filters on the ⚡ activity table** ([scalp-desk.tsx](apps/admin-dashboard/src/app/testing/scalp-desk.tsx)): 결과(승만/패만) · 종목 · 시간(오전/오후/최근 1시간) selects + filtered summary line (trips/wins/win%/net ₩) + clear button; backend `recent` LIMIT 25→150 so filters have data.
+- **#2 Day-total panel**: 🏆 승률 % added (green ≥50%, red below).
+- **#3 Algorithm 1 round-trip table + comparison**: new `GET /paper-desk/roundtrips?source=` (LATERAL join pairs each FILLED SELL w/ realized P&L to the latest preceding BUY) + `GET /paper-desk/algo-compare` (today's trips/wins/win%/net per source). desk.tsx gets the same activity table as Algo 2 (same filters) + 📊 오늘 비교 strip; scalp-desk.tsx gets the strip too. SQL verified on prod data (algo1 empty — auto hasn't sold yet; manual/algo2 pair correctly).
+- **#4 Chart bug**: `cardChart` was single-select — opening one card's chart closed the other. Now `string[]` (multiple stay open) + explicit ✕ 차트 닫기.
+- **#5 Assistant = chatbot**: verified wiring — the floating Assistant (@triple-h/chatbot overlay) streams to `/chat/agent/stream`, which calls the SAME `run_agent` as the chat page (checked routers/chat.py:287); no client-side intent interception on the text path. Prod SSE matrix (VIP+ADV × KO/EN × analytical/price) run before deploy.
+
 ### Next
 
 - Phase D: weekly auto-scoreboard report (scoreboard.log accumulating nightly).
