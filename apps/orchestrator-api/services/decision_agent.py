@@ -406,12 +406,37 @@ def decide(db, ticker: str, focus: Optional[str] = None) -> dict[str, Any]:
         _mw = fusion_weights(db)
     except Exception:
         _mw = {"ml": 1.0, "wave": 1.0, "line_ko": None, "line_en": None}
+    _w_ml = float(_mw.get("ml") or 1.0)
+    _w_wave = float(_mw.get("wave") or 1.0)
     total = (news["score"] * 1.0 + flows["score"] * 1.0 + tech["score"] * 1.2
-             + ml_score * float(_mw.get("ml") or 1.0)
-             + wave_score * float(_mw.get("wave") or 1.0) + yt["score"] * 0.5
+             + ml_score * _w_ml
+             + wave_score * _w_wave + yt["score"] * 0.5
              + _micro_score * 0.5                     # 5-min flow: small, live-only vote
              + _cluster_score * 0.5                   # 동종 그룹 co-move confirmation/divergence
              + _tier_score * 0.75)                    # hourly agreement: strongest measured signal (74%)
+
+    # 🧠 TRANSPARENT VOTE BREAKDOWN (boss 2026-07-16 "unified decision brain"): every
+    # signal's vote + weight + signed contribution, so the one number is explainable.
+    # (Same fusion math as `total` above — this just makes each term visible.)
+    def _vote_lbl(x: float) -> str:
+        return "BUY" if x > 0 else "SELL" if x < 0 else "HOLD"
+    _sig_defs = [
+        ("ml", "머신러닝 (M1)", "ML (M1)", ml_score, _w_ml),
+        ("wave", "파동 (M3)", "Wave (M3)", wave_score, _w_wave),
+        ("tech", "기술적 지표", "Technicals", tech["score"], 1.2),
+        ("flows", "수급", "Supply/Demand", flows["score"], 1.0),
+        ("news", "뉴스", "News", news["score"], 1.0),
+        ("tier", "1시간 합의", "1-hour agreement", _tier_score, 0.75),
+        ("cluster", "동종 그룹", "Peer cluster", _cluster_score, 0.5),
+        ("micro", "5분 흐름", "5-min flow", _micro_score, 0.5),
+        ("youtube", "유튜브", "YouTube", yt["score"], 0.5),
+    ]
+    signals_breakdown = [
+        {"key": k, "ko": lko, "en": len_,
+         "raw": round(float(sc), 2), "weight": round(float(w), 2),
+         "contribution": round(float(sc) * float(w), 2), "vote": _vote_lbl(sc)}
+        for (k, lko, len_, sc, w) in _sig_defs
+    ]
     decision = "BUY" if total >= 2.5 else "SELL" if total <= -2.5 else "HOLD"
     conf = "높음" if abs(total) >= 4 else "보통" if abs(total) >= 2 else "낮음"
     conf_en = {"높음": "high", "보통": "medium", "낮음": "low"}[conf]
@@ -1120,6 +1145,7 @@ def decide(db, ticker: str, focus: Optional[str] = None) -> dict[str, Any]:
                                 "time_min": setup.get("time_min"),
                                 "ai_1h_prob": setup.get("ai_1h_prob"),
                                 "answered_buy_1h": bool(setup_live)} if setup else None),
+            "signals_breakdown": signals_breakdown,
             "reasoning_ko": ko, "reasoning_en": en}
 
 

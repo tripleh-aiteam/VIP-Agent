@@ -54,6 +54,14 @@ Smart-analyst lane + concise mode + language purity + deep graph analysis + matr
 - **Grading:** scheduler 09:06 KST Mon-Fri grades every call vs the REAL open (HOLD correct if gap > −0.23%); track record quoted in every answer.
 - Local E2E: detector 12/12, KO/EN/no-stock through real run_agent all `overnight_call`.
 
+### [17:30] 🧠 Unified decision brain — the transparent vote scoreboard
+
+- **Finding first:** `decision_agent.decide()` ALREADY fuses ~10 signals (news, 수급, technicals, ML M1+M5.7, Wave M3, YouTube, 5-min micro, peer cluster, hourly-agreement tier) with **track-record weighting** (ML/Wave votes scaled by measured daily record via method_weights.fusion_weights) + confidence gate + agreement boost + checklist veto. The gap was NOT a new brain — it was **transparency** (couldn't see the vote) + folding in the newest signals.
+- **decide()**: added `signals_breakdown` to the return — each signal's vote (BUY/SELL/HOLD), weight, signed contribution (same fusion math, just made visible).
+- **New** [services/decision_brain.py](apps/orchestrator-api/services/decision_brain.py): `scoreboard(db, decide_dict, lang)` renders the 🧠 header — verdict + confidence + score, 🟢 buy-side / 🔴 sell-side signals with weights, an honest HOLD-abstain line ("not enough agreement, the brain waits"), and a ⏱️ TIMING layer (live 1-min candle state) shown SEPARATELY because it's minutes-horizon vs the 5-day call (same discipline decide() keeps for the cycle strategy). `unified_reply()` for standalone use.
+- **Wiring**: prepended in `_run_chain`'s decide path — reuses the decide dict (no re-run), so EVERY buy/sell/hold answer leads with the scoreboard. Covers all 4 surfaces (AI Advisor relays advice → VIP run_agent). Brain verdict logged via call_grader (intent="brain") for grading.
+- Local E2E: 삼성전자 살까 / should I buy SK hynix — both lead with the bilingual scoreboard, full reasoning underneath.
+
 ### Next
 
 - Phase D: weekly auto-scoreboard report (scoreboard.log accumulating nightly).

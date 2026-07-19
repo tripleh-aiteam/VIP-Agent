@@ -2890,6 +2890,16 @@ def _run_chain(
         _parts = []
         for _dec in _decs:
             _p = _dec.get("reasoning_en" if _en else "reasoning_ko") or ""
+            # 🧠 unified decision scoreboard (boss 2026-07-16): lead every buy/sell/hold
+            # answer with the transparent vote — who backed it, who opposed, weights —
+            # so the one verdict is explainable. Reuses the decide dict (no re-run).
+            try:
+                from services.decision_brain import scoreboard as _brain_sb
+                _sb = _brain_sb(db, _dec, lang)
+                if _sb:
+                    _p = _sb + ("\n\n" + _p if _p else "")
+            except Exception:
+                pass
             if _p and len(_decs) > 1:
                 _p = f"# 📌 {_dec.get('name') or _dec.get('ticker')}\n\n{_p}"
             # 몇 주? — budget-aware sizing on a BUY decision (same 1%-risk rule as scalp)
