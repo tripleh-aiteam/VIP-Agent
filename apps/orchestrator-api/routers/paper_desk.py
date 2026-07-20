@@ -389,9 +389,17 @@ def scalp_adopt(code: str = Query(...), db: Session = Depends(get_db)):
 
 @router.post("/scalp/tick")
 def scalp_tick(force: bool = Query(False), db: Session = Depends(get_db)):
-    """Manual heartbeat (testing) — the scheduler fires this every 15s anyway."""
+    """Manual heartbeat (testing) — the scheduler fires this every 15s anyway.
+    Also drives the 🏁 3-strategy tournament on the SAME reliable cron-job.org
+    beat (APScheduler stalls when Render's free tier sleeps)."""
     from services.scalp_trader import tick
-    return tick(db, force=force)
+    r = tick(db, force=force)
+    try:
+        from services.strategy_tournament import tick as _tt
+        _tt(db)
+    except Exception:
+        db.rollback()
+    return r
 
 
 @router.get("/executions")
