@@ -53,7 +53,7 @@ type C3Status = {
             net_pct?: number | null; won?: number | null; closed_at?: string; opened_at?: string; why?: string | null }[];
 };
 type DeskState = { cash: number; positions_value: number; equity: number; total_pnl?: number; total_pnl_pct?: number };
-type AlgoCmp = Record<string, { trips: number; wins: number; win_rate: number | null; net_won: number }>;
+type AlgoCmp = Record<string, { trips: number; wins: number; win_rate: number | null; net_won: number; holding?: number }>;
 type StockItem = { code: string; name: string; market: string };
 type QuoteRes = { ok: boolean; ticker?: string; name?: string; error?: string };
 
@@ -116,12 +116,13 @@ export default function Candle3Desk({ mode }: { mode: C3Mode }) {
     return sc.stocks.filter((s) => MAINS.includes(s.code) || showExtra.includes(s.code));
   }, [sc, showExtra]);
 
+  const need = sc?.streak ?? 3;
   const sigWord = (s: C3Stock) =>
     s.candle_signal === "BUY" ? t(`🔥 ${s.up}연속 양봉 — 매수 신호`, `🔥 ${s.up} up candles — BUY`)
     : s.candle_signal === "SELL" ? t(`❄️ ${s.dn}연속 음봉 — 매도 신호`, `❄️ ${s.dn} down candles — SELL`)
-    : s.up === 2 ? t("양봉 2개 — 1개 더 나오면 매수", "2 up — one more = BUY")
-    : s.dn === 2 ? t("음봉 2개 — 1개 더 나오면 매도", "2 down — one more = SELL")
-    : t("관망 — 3연속 대기 중", "watching — waiting for 3 in a row");
+    : s.up === need - 1 && s.up > 0 ? t(`양봉 ${s.up}개 — 1개 더 나오면 매수`, `${s.up} up — one more = BUY`)
+    : s.dn === need - 1 && s.dn > 0 ? t(`음봉 ${s.dn}개 — 1개 더 나오면 매도`, `${s.dn} down — one more = SELL`)
+    : t(`관망 — ${need}연속 대기 중`, `watching — waiting for ${need} in a row`);
 
   return (
     <div className="max-w-[1180px] mx-auto px-4 py-6">
@@ -160,9 +161,10 @@ export default function Candle3Desk({ mode }: { mode: C3Mode }) {
               return (
                 <div key={k} className="rounded-xl border px-4 py-3 text-[12.5px] tabular-nums" style={{ borderColor: k === "algo3" ? TEAL : "var(--border-default)", background: "var(--bg-elevated)" }}>
                   <b className="text-[13px]" style={{ color: col }}>{label}</b>
-                  {a ? (
+                  {a && (a.trips > 0 || (a.holding ?? 0) > 0) ? (
                     <div className="mt-1 flex items-center gap-3 flex-wrap">
                       <span>🔄 {t(`${a.trips}회전`, `${a.trips} trips`)}</span>
+                      {(a.holding ?? 0) > 0 && <span style={{ color: TEAL }}>📌 {t(`보유 ${a.holding}`, `${a.holding} held`)}</span>}
                       <span>🏆 {t(`승률 ${a.win_rate ?? "-"}%`, `${a.win_rate ?? "-"}% win`)}</span>
                       <span className="font-extrabold" style={{ color: pnlCol(a.net_won) }}>{a.net_won > 0 ? "+" : ""}₩{fmt(a.net_won)}</span>
                     </div>
@@ -287,7 +289,7 @@ export default function Candle3Desk({ mode }: { mode: C3Mode }) {
                     </div>
                   ) : (
                     <div className="mt-1.5 text-[11.5px] text-[var(--text-muted)]">
-                      {t("1분봉 3연속 양봉이 나오면 매수합니다.", "buys when 3 up 1-min candles appear.")}
+                      {t(`1분봉 ${need}연속 양봉이 나오면 매수합니다.`, `buys when ${need} up 1-min candles appear.`)}
                     </div>
                   )}
                 </div>

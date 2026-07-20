@@ -135,7 +135,22 @@ def desk_algo_compare(db: Session = Depends(get_db)):
     for src, n, w, net in rows:
         out[src] = {"trips": int(n or 0), "wins": int(w or 0),
                     "win_rate": (round(int(w or 0) / int(n) * 100) if n else None),
-                    "net_won": round(float(net or 0))}
+                    "net_won": round(float(net or 0)), "holding": 0}
+    # open positions per algo (so a HOLDING engine doesn't look idle) — algo2/algo3
+    # keep their own tables; algo1 opens on the shared desk with source='algo1'.
+    for src, tbl in (("algo2", "scalp_trades"), ("algo3", "candle_trades")):
+        try:
+            h = db.execute(text(f"SELECT count(*) FROM {tbl} WHERE status='OPEN'")).scalar()
+            out.setdefault(src, {"trips": 0, "wins": 0, "win_rate": None, "net_won": 0})["holding"] = int(h or 0)
+        except Exception:
+            db.rollback()
+    try:
+        h1 = db.execute(text(
+            "SELECT count(DISTINCT ticker) FROM paper_desk_orders WHERE source='algo1' "
+            "AND side='BUY' AND status='FILLED' AND ticker IN (SELECT ticker FROM paper_desk_positions WHERE qty>0)")).scalar()
+        out.setdefault("algo1", {"trips": 0, "wins": 0, "win_rate": None, "net_won": 0})["holding"] = int(h1 or 0)
+    except Exception:
+        db.rollback()
     return {"ok": True, "today": out}
 
 

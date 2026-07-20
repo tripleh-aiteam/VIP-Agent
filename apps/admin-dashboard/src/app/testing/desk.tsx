@@ -86,7 +86,7 @@ type SetupAlert = {
 type RoundTrip = { name: string; qty: number; entry?: number | null; exit_price?: number | null;
   won?: number | null; net_pct?: number | null; closed_at?: string | null; opened_at?: string | null;
   why?: string | null; ticker: string };
-type AlgoCmp = Record<string, { trips: number; wins: number; win_rate: number | null; net_won: number }>;
+type AlgoCmp = Record<string, { trips: number; wins: number; win_rate: number | null; net_won: number; holding?: number }>;
 export type TradeMode = "manual" | "semi" | "auto";
 // FOCUS stocks for the boss's semi-auto/manual test — the AUTO mode keeps the FULL
 // market universe in the background (self-improvement data must keep flowing)
@@ -1607,9 +1607,10 @@ export default function Desk({ mode }: { mode: TradeMode }) {
                 <div key={k} className="rounded-xl border px-4 py-3 text-[12.5px] tabular-nums"
                   style={{ borderColor: "var(--border-default)", background: "var(--bg-elevated)" }}>
                   <b className="text-[13.5px] text-[var(--text-primary)]">{label}</b>
-                  {a ? (
+                  {a && (a.trips > 0 || (a.holding ?? 0) > 0) ? (
                     <div className="mt-1 flex items-center gap-4 flex-wrap">
                       <span>🔄 {t(`${a.trips}회전`, `${a.trips} trips`)}</span>
+                      {(a.holding ?? 0) > 0 && <span style={{ color: RED }}>📌 {t(`보유 ${a.holding}`, `${a.holding} held`)}</span>}
                       <span>🏆 {t(`승률 ${a.win_rate ?? "-"}% (${a.wins}승 ${a.trips - a.wins}패)`, `${a.win_rate ?? "-"}% win (${a.wins}W ${a.trips - a.wins}L)`)}</span>
                       <span className="font-extrabold text-[14px]" style={{ color: pnlCol(a.net_won) }}>
                         {a.net_won > 0 ? "+" : ""}₩{fmt(a.net_won)}

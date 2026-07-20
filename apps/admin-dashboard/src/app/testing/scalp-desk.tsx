@@ -304,7 +304,7 @@ export default function ScalpDesk({ mode }: { mode: ScalpMode }) {
   const [fltTime, setFltTime] = useState<"ALL" | "AM" | "PM" | "1H">("ALL");
   const [fltDate, setFltDate] = useState<string>("");   // calendar day filter (KST)
   // 📊 today's Algo1 vs Algo2 scoreboard (boss 2026-07-16: compare both sides)
-  const [cmp, setCmp] = useState<Record<string, { trips: number; wins: number; win_rate: number | null; net_won: number }> | null>(null);
+  const [cmp, setCmp] = useState<Record<string, { trips: number; wins: number; win_rate: number | null; net_won: number; holding?: number }> | null>(null);
   useEffect(() => {
     const loadCmp = () => api<{ today: NonNullable<typeof cmp> }>("/paper-desk/algo-compare")
       .then((r) => setCmp(r.today || {})).catch(() => {});
@@ -1173,9 +1173,10 @@ export default function ScalpDesk({ mode }: { mode: ScalpMode }) {
                 <div key={k} className="rounded-xl border px-4 py-3 text-[12.5px] tabular-nums"
                   style={{ borderColor: k === "algo2" ? PURPLE : "var(--border-default)", background: "var(--bg-elevated)" }}>
                   <b className="text-[13.5px] text-[var(--text-primary)]">{label}</b>
-                  {a ? (
+                  {a && (a.trips > 0 || (a.holding ?? 0) > 0) ? (
                     <div className="mt-1 flex items-center gap-4 flex-wrap">
                       <span>🔄 {t(`${a.trips}회전`, `${a.trips} trips`)}</span>
+                      {(a.holding ?? 0) > 0 && <span style={{ color: PURPLE }}>📌 {t(`보유 ${a.holding}`, `${a.holding} held`)}</span>}
                       <span>🏆 {t(`승률 ${a.win_rate ?? "-"}% (${a.wins}승 ${a.trips - a.wins}패)`, `${a.win_rate ?? "-"}% win (${a.wins}W ${a.trips - a.wins}L)`)}</span>
                       <span className="font-extrabold text-[14px]" style={{ color: pnlCol(a.net_won) }}>
                         {a.net_won > 0 ? "+" : ""}₩{fmt(a.net_won)}
