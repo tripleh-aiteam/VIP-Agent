@@ -1242,8 +1242,10 @@ export default function ScalpDesk({ mode }: { mode: ScalpMode }) {
       })()}
 
       {/* ⚡ ALGORITHM 2 ACTIVITY — every round trip with the full numbers
-          (boss 2026-07-15: what bought, when, how many, win ₩ and %) */}
-      {sc && sc.recent.length > 0 && (
+          (boss 2026-07-15: what bought, when, how many, win ₩ and %).
+          ALWAYS visible (even before status loads) so the calendar day-filter never
+          disappears (boss 2026-07-20: 'add the calendar to Algo 2 and 3 like Algorithm 1'). */}
+      {(
         <div className="mt-4 rounded-xl border overflow-hidden" style={{ borderColor: PURPLE }}>
           <div className="px-4 py-2 border-b bg-[var(--bg-elevated)] flex items-center gap-2 flex-wrap" style={{ borderColor: "var(--border-default)" }}>
             <b className="text-[13.5px]" style={{ color: PURPLE }}>⚡ {t("알고리즘 2 거래 기록", "Algorithm 2 — Trade History")}</b>
@@ -1259,7 +1261,7 @@ export default function ScalpDesk({ mode }: { mode: ScalpMode }) {
             <select value={fltName} onChange={(e) => setFltName(e.target.value)}
               className="text-[11px] font-bold px-1.5 py-0.5 rounded-lg border bg-[var(--bg-primary)] text-[var(--text-primary)]" style={{ borderColor: "var(--border-default)" }}>
               <option value="ALL">{t("종목: 전체", "stock: all")}</option>
-              {Array.from(new Set(sc.recent.map((r) => r.name))).sort().map((n) => (
+              {Array.from(new Set((sc?.recent || []).map((r) => r.name))).sort().map((n) => (
                 <option key={n} value={n}>{n}</option>
               ))}
             </select>
@@ -1283,7 +1285,7 @@ export default function ScalpDesk({ mode }: { mode: ScalpMode }) {
           </div>
           {dayTotal && (() => {
             const today = new Date().toLocaleString("sv-SE", { timeZone: "Asia/Seoul" }).slice(0, 10);
-            const rows = sc.recent.filter((r) => {
+            const rows = (sc?.recent || []).filter((r) => {
               const c = r.closed_at || "";
               const s = /Z$|[+-]\d{2}:\d{2}$/.test(c) ? c : `${c}Z`;
               return new Date(s).toLocaleString("sv-SE", { timeZone: "Asia/Seoul" }).slice(0, 10) === today;
@@ -1319,7 +1321,7 @@ export default function ScalpDesk({ mode }: { mode: ScalpMode }) {
             );
           })()}
           {(() => {
-            const actRows = sc.recent.filter((r) => {
+            const actRows = (sc?.recent || []).filter((r) => {
               if (fltRes === "WIN" && !((r.won || 0) > 0)) return false;
               if (fltRes === "LOSE" && !((r.won || 0) < 0)) return false;
               if (fltName !== "ALL" && r.name !== fltName) return false;
@@ -1342,17 +1344,28 @@ export default function ScalpDesk({ mode }: { mode: ScalpMode }) {
               }
               return true;
             });
-            const fActive = fltRes !== "ALL" || fltName !== "ALL" || fltTime !== "ALL" || !!fltDate;
             const fNet = actRows.reduce((a, r) => a + (r.won || 0), 0);
             const fWins = actRows.filter((r) => (r.won || 0) > 0).length;
+            const fLoss = actRows.filter((r) => (r.won || 0) < 0).length;
+            const fLabel = fltDate ? fltDate : t("전체 기록", "all history");
             return (<>
-          {fActive && (
-            <div className="px-4 py-1.5 border-b text-[11.5px] font-bold tabular-nums" style={{ borderColor: "var(--border-default)", background: "rgba(123,31,162,0.04)" }}>
-              {fltDate ? `📅 ${fltDate}: ` : "🔍 "}{t(`${actRows.length}회전 · 승 ${fWins} · 승률 ${actRows.length ? Math.round(fWins / actRows.length * 100) : 0}%`,
-                    `${actRows.length} trips · ${fWins} wins · ${actRows.length ? Math.round(fWins / actRows.length * 100) : 0}% win rate`)}
-              <span className="ml-2" style={{ color: pnlCol(fNet) }}>{t("순이익", "net")} {fNet > 0 ? "+" : ""}₩{fmt(Math.round(fNet))}</span>
+          {/* 📅 per-day summary — ALWAYS shown (boss 2026-07-20: calendar evaluation like Algo 1) */}
+          <div className="px-4 py-3 border-b text-[13px] tabular-nums flex items-center gap-5 flex-wrap" style={{ borderColor: "var(--border-default)", background: "rgba(123,31,162,0.04)" }}>
+            <span className="font-bold text-[var(--text-secondary)]">📅 {fLabel}:</span>
+            <span>🔄 {t(`${actRows.length}회전`, `${actRows.length} trips`)}</span>
+            <span style={{ color: RED }}>🟢 {fWins}{t("승", "W")}</span>
+            <span style={{ color: BLUE }}>🔴 {fLoss}{t("패", "L")}</span>
+            <span className="font-extrabold" style={{ color: actRows.length && fWins / actRows.length >= 0.5 ? "#2e7d32" : RED }}>
+              🏆 {t(`승률 ${actRows.length ? Math.round(fWins / actRows.length * 100) : 0}%`, `${actRows.length ? Math.round(fWins / actRows.length * 100) : 0}% win`)}</span>
+            <span className="text-[15px] font-extrabold" style={{ color: pnlCol(fNet) }}>= {t("순이익", "net")} {fNet > 0 ? "+" : ""}₩{fmt(Math.round(fNet))}</span>
+            <span className="text-[10px] text-[var(--text-muted)]">{t("(수수료 0.23% 차감 후)", "(net of 0.23% fees)")}</span>
+          </div>
+          {actRows.length === 0 ? (
+            <div className="px-4 py-6 text-center text-[12px] text-[var(--text-muted)]">
+              {fltDate ? t("이 날짜에 완료된 거래가 없습니다", "no completed trades on this date")
+                : t("아직 완료된 회전이 없습니다 — 매수 후 익절/손절되면 여기에 쌓입니다", "no completed round trips yet — they appear here once a buy is sold")}
             </div>
-          )}
+          ) : (
           <table className="w-full text-[12px]">
             <thead>
               <tr className="text-[10.5px] text-[var(--text-muted)]" style={{ background: "var(--bg-elevated)" }}>
@@ -1400,6 +1413,7 @@ export default function ScalpDesk({ mode }: { mode: ScalpMode }) {
               ))}
             </tbody>
           </table>
+          )}
             </>);
           })()}
         </div>

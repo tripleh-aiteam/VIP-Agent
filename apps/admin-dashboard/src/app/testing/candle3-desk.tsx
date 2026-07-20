@@ -403,8 +403,9 @@ export default function Candle3Desk({ mode }: { mode: C3Mode }) {
         );
       })()}
 
-      {/* Trade History — always visible, with a calendar day filter + daily summary */}
-      {sc && (
+      {/* Trade History — ALWAYS visible (even before status loads) so the calendar
+          day-filter never disappears (boss 2026-07-20: 'add calendar to Algo 2 and 3'). */}
+      {(
         <div className="mt-4 rounded-xl border overflow-hidden" style={{ borderColor: TEAL }}>
           <div className="px-4 py-2 border-b bg-[var(--bg-elevated)] flex items-center gap-2 flex-wrap" style={{ borderColor: "var(--border-default)" }}>
             <b className="text-[13.5px]" style={{ color: TEAL }}>🕯️ {t("알고리즘 3 거래 기록", "Algorithm 3 — Trade History")}</b>
@@ -414,12 +415,12 @@ export default function Candle3Desk({ mode }: { mode: C3Mode }) {
             </select>
             <select value={fName} onChange={(e) => setFName(e.target.value)} className="text-[11px] font-bold px-1.5 py-0.5 rounded-lg border bg-[var(--bg-primary)] text-[var(--text-primary)]" style={{ borderColor: "var(--border-default)" }}>
               <option value="ALL">{t("종목: 전체", "stock: all")}</option>
-              {Array.from(new Set(sc.recent.map((r) => r.name))).sort().map((n) => <option key={n} value={n}>{n}</option>)}
+              {Array.from(new Set((sc?.recent || []).map((r) => r.name))).sort().map((n) => <option key={n} value={n}>{n}</option>)}
             </select>
             {(fDate || fRes !== "ALL" || fName !== "ALL") && <button onClick={() => { setFDate(""); setFRes("ALL"); setFName("ALL"); }} className="text-[10.5px] font-bold px-2 py-0.5 rounded-lg border text-[var(--text-muted)]" style={{ borderColor: "var(--border-default)" }}>✕ {t("초기화", "clear")}</button>}
           </div>
           {(() => {
-            const rows = sc.recent.filter((r) =>
+            const rows = (sc?.recent || []).filter((r) =>
               (fRes === "ALL" || (fRes === "WIN" ? (r.won || 0) > 0 : (r.won || 0) < 0))
               && (fName === "ALL" || r.name === fName)
               && (!fDate || kstDate(r.closed_at) === fDate));
