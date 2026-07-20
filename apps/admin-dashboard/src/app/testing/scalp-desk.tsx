@@ -14,6 +14,7 @@ import { useLanguage } from "@/components/i18n";
 const RED = "#d32f2f";
 const BLUE = "#1565c0";
 const PURPLE = "#7b1fa2";
+const ALGO_ROUTE: Record<string, string> = { algo1: "/testing/auto", algo2: "/testing/scalp/auto", algo3: "/testing/candle3/auto" };
 const fmt = (n?: number | null) => (n == null ? "-" : Number(n).toLocaleString());
 const kst = (iso?: string | null) => {
   if (!iso) return "";
@@ -1170,9 +1171,9 @@ export default function ScalpDesk({ mode }: { mode: ScalpMode }) {
             {([["algo1", "🤖 " + t("알고리즘 1", "Algorithm 1")], ["algo2", "⚡ " + t("알고리즘 2 잔물결", "Algo 2 Ripple")], ["algo3", "🕯️ " + t("알고리즘 3 캔들", "Algo 3 Candle")]] as const).map(([k, label]) => {
               const a = cmp[k];
               return (
-                <div key={k} className="rounded-xl border px-4 py-3 text-[12.5px] tabular-nums"
+                <Link key={k} href={ALGO_ROUTE[k]} className="rounded-xl border px-4 py-3 text-[12.5px] tabular-nums hover:shadow-md transition-shadow"
                   style={{ borderColor: k === "algo2" ? PURPLE : "var(--border-default)", background: "var(--bg-elevated)" }}>
-                  <b className="text-[13.5px] text-[var(--text-primary)]">{label}</b>
+                  <b className="text-[13.5px] text-[var(--text-primary)]">{label} ↗</b>
                   {a && (a.trips > 0 || (a.holding ?? 0) > 0) ? (
                     <div className="mt-1 flex items-center gap-4 flex-wrap">
                       <span>🔄 {t(`${a.trips}회전`, `${a.trips} trips`)}</span>
@@ -1185,7 +1186,7 @@ export default function ScalpDesk({ mode }: { mode: ScalpMode }) {
                   ) : (
                     <div className="mt-1 text-[var(--text-muted)]">{t("오늘 매매 없음", "no trades today")}</div>
                   )}
-                </div>
+                </Link>
               );
             })}
           </div>

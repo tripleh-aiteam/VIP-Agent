@@ -3,7 +3,7 @@
 // 🕯️ ALGORITHM 3 — the boss's candle trader (2026-07-20).
 // Brain: 1-min candles — 3 up in a row → BUY, 3 down in a row → SELL, −1% stop,
 // flat 15:18; watches the partner stock + volume. Same 3-mode shape as Algo 2.
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { api, apiPost } from "@/components/api";
 import { useLanguage } from "@/components/i18n";
@@ -59,6 +59,45 @@ type QuoteRes = { ok: boolean; ticker?: string; name?: string; error?: string };
 
 export type C3Mode = "auto" | "semi" | "manual";
 const MAINS = ["000660", "005930"];
+const ALGO_ROUTE: Record<string, string> = { algo1: "/testing/auto", algo2: "/testing/scalp/auto", algo3: "/testing/candle3/auto" };
+
+// 📈 live candle chart (lightweight-charts, dynamic import — same as Algo 2)
+function MiniChart({ code }: { code: string }) {
+  const ref = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (!code || !ref.current) return;
+    let alive = true;
+    let cleanup = () => {};
+    (async () => {
+      const lw = await import("lightweight-charts");
+      if (!alive || !ref.current) return;
+      ref.current.innerHTML = "";
+      const dark = document.documentElement.getAttribute("data-theme") === "dark";
+      const chart = lw.createChart(ref.current, {
+        height: 260, autoSize: true,
+        layout: { background: { color: "transparent" }, textColor: dark ? "#aaa" : "#666" },
+        grid: { vertLines: { color: "rgba(128,128,128,0.10)" }, horzLines: { color: "rgba(128,128,128,0.10)" } },
+        timeScale: { timeVisible: true, secondsVisible: false },
+      });
+      const series = chart.addCandlestickSeries({
+        upColor: RED, downColor: BLUE, borderUpColor: RED, borderDownColor: BLUE, wickUpColor: RED, wickDownColor: BLUE,
+      });
+      const load = async () => {
+        try {
+          const r = await api<{ bars: { time: number; open: number; high: number; low: number; close: number }[] }>(`/paper-desk/chart?code=${code}&tf=1m`);
+          if (!alive) return;
+          series.setData((r.bars || []).slice(-150) as never);
+          chart.timeScale().scrollToRealTime();
+        } catch { /* keep last */ }
+      };
+      await load();
+      const iv = setInterval(load, 15000);
+      cleanup = () => { clearInterval(iv); chart.remove(); };
+    })();
+    return () => { alive = false; cleanup(); };
+  }, [code]);
+  return <div ref={ref} style={{ width: "100%" }} />;
+}
 
 export default function Candle3Desk({ mode }: { mode: C3Mode }) {
   const { lang } = useLanguage();
@@ -75,6 +114,8 @@ export default function Candle3Desk({ mode }: { mode: C3Mode }) {
   const [fRes, setFRes] = useState<"ALL" | "WIN" | "LOSE">("ALL");
   const [fName, setFName] = useState("ALL");
   const [fDate, setFDate] = useState("");   // calendar day filter (YYYY-MM-DD, KST)
+  const [cardChart, setCardChart] = useState<string[]>([]);   // 📈 open charts (multiple)
+  const toggleChart = (c: string) => setCardChart((cs) => (cs.includes(c) ? cs.filter((x) => x !== c) : [...cs, c]));
 
   const load = () => {
     api<C3Status>("/paper-desk/candle3/status").then(setSc).catch(() => {});
@@ -153,14 +194,14 @@ export default function Candle3Desk({ mode }: { mode: C3Mode }) {
       {cmp && (cmp.algo1 || cmp.algo2 || cmp.algo3) && (
         <div className="mt-4 rounded-xl border overflow-hidden" style={{ borderColor: "var(--border-default)" }}>
           <div className="px-4 py-2 text-[12.5px] font-extrabold text-[var(--text-primary)]" style={{ background: "var(--bg-elevated)" }}>
-            📊 {t("오늘 비교 — 알고리즘 1 · 2 · 3", "Today — Algorithm 1 · 2 · 3")}
+            📊 {t("오늘 비교 — 알고리즘 1 · 2 · 3 (클릭해서 이동)", "Today — Algorithm 1 · 2 · 3 (click to open)")}
           </div>
           <div className="grid md:grid-cols-3 gap-3 p-3">
             {([["algo1", "🧠 " + t("알고리즘 1", "Algorithm 1"), RED], ["algo2", "⚡ " + t("알고리즘 2 잔물결", "Algo 2 Ripple"), "#7b1fa2"], ["algo3", "🕯️ " + t("알고리즘 3 캔들", "Algo 3 Candle"), TEAL]] as const).map(([k, label, col]) => {
               const a = cmp[k];
               return (
-                <div key={k} className="rounded-xl border px-4 py-3 text-[12.5px] tabular-nums" style={{ borderColor: k === "algo3" ? TEAL : "var(--border-default)", background: "var(--bg-elevated)" }}>
-                  <b className="text-[13px]" style={{ color: col }}>{label}</b>
+                <Link key={k} href={ALGO_ROUTE[k]} className="rounded-xl border px-4 py-3 text-[12.5px] tabular-nums hover:shadow-md transition-shadow" style={{ borderColor: k === "algo3" ? TEAL : "var(--border-default)", background: "var(--bg-elevated)" }}>
+                  <b className="text-[13px]" style={{ color: col }}>{label} ↗</b>
                   {a && (a.trips > 0 || (a.holding ?? 0) > 0) ? (
                     <div className="mt-1 flex items-center gap-3 flex-wrap">
                       <span>🔄 {t(`${a.trips}회전`, `${a.trips} trips`)}</span>
@@ -169,7 +210,7 @@ export default function Candle3Desk({ mode }: { mode: C3Mode }) {
                       <span className="font-extrabold" style={{ color: pnlCol(a.net_won) }}>{a.net_won > 0 ? "+" : ""}₩{fmt(a.net_won)}</span>
                     </div>
                   ) : <div className="mt-1 text-[var(--text-muted)]">{t("오늘 매매 없음", "no trades today")}</div>}
-                </div>
+                </Link>
               );
             })}
           </div>
@@ -253,7 +294,8 @@ export default function Candle3Desk({ mode }: { mode: C3Mode }) {
               return (
                 <div key={s.code} className="rounded-xl border px-4 py-3" style={{ borderColor: s.state === "LONG" ? TEAL : "var(--border-default)", background: "var(--bg-elevated)" }}>
                   <div className="flex items-baseline gap-2 flex-wrap">
-                    <span className="text-[15.5px] font-extrabold text-[var(--text-primary)]">{s.name}</span>
+                    <button onClick={() => toggleChart(s.code)} title={t("클릭: 1분봉 차트", "click: 1-min chart")}
+                      className="text-[15.5px] font-extrabold text-[var(--text-primary)] underline decoration-dotted underline-offset-4 hover:opacity-70">{s.name} 📈</button>
                     <span className="text-[10.5px] text-[var(--text-muted)]">{s.code}</span>
                     <span className="ml-auto text-[16px] font-extrabold tabular-nums" style={{ color: (s.chg ?? 0) >= 0 ? RED : BLUE }}>₩{fmt(s.price)}</span>
                     <span className="text-[12px] font-extrabold px-2 py-0.5 rounded-full text-white" style={{ background: s.state === "LONG" ? TEAL : "var(--text-muted)" }}>
@@ -290,6 +332,12 @@ export default function Candle3Desk({ mode }: { mode: C3Mode }) {
                   ) : (
                     <div className="mt-1.5 text-[11.5px] text-[var(--text-muted)]">
                       {t(`1분봉 ${need}연속 양봉이 나오면 매수합니다.`, `buys when ${need} up 1-min candles appear.`)}
+                    </div>
+                  )}
+                  {cardChart.includes(s.code) && (
+                    <div className="mt-2 rounded-lg border border-[var(--border-default)] p-1 bg-[var(--bg-primary)]">
+                      <div className="flex justify-end"><button onClick={() => toggleChart(s.code)} className="text-[10.5px] font-bold px-2 py-0.5 text-[var(--text-muted)] hover:opacity-70">✕ {t("차트 닫기", "close")}</button></div>
+                      <MiniChart code={s.code} />
                     </div>
                   )}
                 </div>
