@@ -40,7 +40,8 @@ DEFAULT_CODES = "000660,005930"
 
 # upturn detection on the 15s price stream
 BOUNCE_MIN_PCT = 0.10     # price must lift ≥0.10% off the recent low…
-BOUNCE_MAX_PCT = 0.45     # …but not already ≥0.45% (too late, don't chase)
+BOUNCE_MAX_PCT = 1.20     # …chase cap (boss 2026-07-20: widened 0.45→1.2 so ripple
+                          # actually trades on a trending tape for the live A/B test)
 RISES_NEEDED = 2          # and the last N reads must be strictly rising
 BUF_LEN = 40              # 40 × 15s = 10-minute rolling window
 EOD_FLAT_HHMM = (15, 18)  # close everything at 15:18 — a scalper sleeps flat
@@ -527,12 +528,14 @@ def _tick_inner(db, force: bool = False) -> dict[str, Any]:
         fire, bounce = _upturn(code, live[code])
         if not fire:
             continue
-        # three agreeing voices before money moves (boss 2026-07-14 round 2)
+        # three agreeing voices before money moves (boss 2026-07-14 round 2).
+        # boss 2026-07-20: for the live 3-algo A/B test, the voices INFORM sizing
+        # but no longer VETO the entry — the peer/book gates were the reason the
+        # live ripple sat idle while the tournament ripple traded 17×/day.
         ok_book, why_book, imb = _book_ok(code)
         ok_peer, why_peer, peer_r = _peer_ok(code)
         if not (ok_book and ok_peer):
-            logger.info("scalp: %s upturn but vetoed — %s · %s", code, why_book, why_peer)
-            continue
+            logger.info("scalp: %s upturn (voices soft) — %s · %s", code, why_book, why_peer)
         cash = float(db.execute(text(
             "SELECT cash FROM paper_desk_account WHERE id=1")).scalar() or 0)
         # WHO decides the size: pos_pct% of cash × conviction (0.7~1.2 from the voices)

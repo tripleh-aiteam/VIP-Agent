@@ -49,7 +49,9 @@ def _ensure(db) -> None:
         " pos_pct DOUBLE PRECISION NOT NULL DEFAULT 10.0,"
         " codes TEXT NOT NULL DEFAULT '000660,005930',"
         " mode TEXT NOT NULL DEFAULT 'auto',"
+        " streak INT NOT NULL DEFAULT 3,"
         " updated_at TIMESTAMPTZ DEFAULT now())"))
+    db.execute(text("ALTER TABLE candle_state ADD COLUMN IF NOT EXISTS streak INT NOT NULL DEFAULT 3"))
     db.execute(text(
         "CREATE TABLE IF NOT EXISTS candle_trades ("
         " id SERIAL PRIMARY KEY, ticker TEXT, name TEXT, qty INT,"
@@ -70,11 +72,12 @@ def _ensure(db) -> None:
 def _cfg(db) -> dict[str, Any]:
     _ensure(db)
     r = db.execute(text(
-        "SELECT enabled, stop_pct, pos_pct, codes, mode FROM candle_state WHERE id=1")).first()
+        "SELECT enabled, stop_pct, pos_pct, codes, mode, streak FROM candle_state WHERE id=1")).first()
     codes = [c.strip().zfill(6) for c in (r[3] or DEFAULT_CODES).split(",") if c.strip()]
     return {"enabled": bool(r[0]), "stop_pct": float(r[1]), "pos_pct": float(r[2]),
             "codes": codes[:24],
-            "mode": (r[4] or "auto") if str(r[4] or "auto") in ("auto", "semi") else "auto"}
+            "mode": (r[4] or "auto") if str(r[4] or "auto") in ("auto", "semi") else "auto",
+            "streak": int(r[5] or 3) if int(r[5] or 3) in (2, 3) else 3}
 
 
 def set_enabled(db, on: bool) -> dict:
@@ -86,8 +89,11 @@ def set_enabled(db, on: bool) -> dict:
 
 
 def set_params(db, stop_pct: Optional[float] = None, pos_pct: Optional[float] = None,
-               codes: Optional[str] = None, mode: Optional[str] = None) -> dict:
+               codes: Optional[str] = None, mode: Optional[str] = None,
+               streak: Optional[int] = None) -> dict:
     _ensure(db)
+    if streak in (2, 3):
+        db.execute(text("UPDATE candle_state SET streak=:s, updated_at=now() WHERE id=1"), {"s": int(streak)})
     if stop_pct is not None:
         db.execute(text("UPDATE candle_state SET stop_pct=:v, updated_at=now() WHERE id=1"),
                    {"v": max(0.5, min(3.0, float(stop_pct)))})
@@ -150,6 +156,7 @@ def tick(db, force: bool = False) -> dict[str, Any]:
     if not cfg["enabled"]:
         out["reason"] = "algorithm 3 is OFF"
         return out
+    need = int(cfg.get('streak') or 3)
     n = datetime.now(KST)
     eod = (n.hour * 60 + n.minute) >= (EOD_FLAT_HHMM[0] * 60 + EOD_FLAT_HHMM[1])
 
@@ -167,7 +174,7 @@ def tick(db, force: bool = False) -> dict[str, Any]:
         up, dn, cn = _streaks_1m(tk)
         if px <= entry * (1 - cfg["stop_pct"] / 100):
             reason = "STOP"
-        elif cn >= DOWN_NEEDED and dn >= DOWN_NEEDED:
+        elif cn >= need and dn >= need:
             reason = "CANDLE3"          # 3 consecutive down candles
         elif eod:
             reason = "EOD"
@@ -205,7 +212,7 @@ def tick(db, force: bool = False) -> dict[str, Any]:
         if code in open_codes:
             continue
         up, dn, cn = _streaks_1m(code)
-        if cn < UP_NEEDED or up < UP_NEEDED:
+        if cn < need or up < need:
             continue
         # peer + volume confirmation (fail-open)
         vol_ok, peer_ok = _volume_rising(code), _peer_ok(code)
@@ -219,7 +226,7 @@ def tick(db, force: bool = False) -> dict[str, Any]:
             continue
         vtag = "거래량↑" if vol_ok else "거래량 약함"
         ptag = "짝꿍 안정" if peer_ok else "짝꿍 하락"
-        why = f"알고3 캔들: 1분봉 {up}연속 양봉 → 매수 ({vtag}·{ptag}, 3연속 음봉에 매도·-1% 손절)"
+        why = f"알고3 캔들: 1분봉 {up}연속 양봉 → 매수 ({vtag}·{ptag}, {need}연속 음봉에 매도·-1% 손절)"
         if cfg["mode"] == "semi":
             _semi_signals[code] = {"code": code, "name": _name(code), "price": px,
                                    "qty": qty, "why": why, "ts": n.timestamp()}
@@ -294,6 +301,7 @@ def sell_all(db, code: str) -> dict[str, Any]:
 def status(db) -> dict[str, Any]:
     """Everything the Algorithm 3 page needs — same shape as Algorithm 2's status."""
     cfg = _cfg(db)
+    need = int(cfg.get('streak') or 3)
     open_map = {}
     for r in db.execute(text(
             "SELECT ticker, qty, entry, opened_at FROM candle_trades WHERE status='OPEN'")):
@@ -320,7 +328,7 @@ def status(db) -> dict[str, Any]:
             "pnl_pct": round((px / o["entry"] - 1) * 100 - 0.23, 2) if (o and px) else None,
             "stop_at": stop_at, "advice": advice,
             "up": up, "dn": dn, "n": cn,
-            "candle_signal": "BUY" if up >= UP_NEEDED else "SELL" if dn >= DOWN_NEEDED else "WAIT"})
+            "candle_signal": "BUY" if up >= need else "SELL" if dn >= need else "WAIT"})
     today = db.execute(text(
         "SELECT count(*), coalesce(sum(CASE WHEN net_pct>0 THEN 1 ELSE 0 END),0), "
         "coalesce(sum(net_pct),0), coalesce(sum(qty*entry*net_pct/100.0),0) "
