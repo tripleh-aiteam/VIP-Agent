@@ -77,6 +77,35 @@ export default function ChatbotOverlay() {
   const [error, setError]             = useState<string | null>(null);
   const [hasGreeted, setHasGreeted]   = useState(false);
   const [voicesReady, setVoicesReady] = useState(false);
+  // 👍/👎 self-improvement feedback — keyed by turn ts. Turns the boss's daily
+  // chatting into training signal (POST /chat/feedback → learn_from_feedback).
+  const [fb, setFb] = useState<Record<number, "up" | "down">>({});
+
+  async function sendFeedback(turnIdx: number, verdict: "up" | "down") {
+    const t = history[turnIdx];
+    if (!t || t.who !== "chatbot") return;
+    // the question = nearest preceding user turn
+    let question = "";
+    for (let j = turnIdx - 1; j >= 0; j--) {
+      if (history[j].who === "user") { question = history[j].text; break; }
+    }
+    let correction: string | undefined;
+    if (verdict === "down" && typeof window !== "undefined") {
+      correction = window.prompt(
+        language === "ko"
+          ? "무엇이 틀렸나요? 올바른 답/행동을 알려주면 학습합니다 (건너뛰려면 취소):"
+          : "What was wrong? Tell me the correct answer/behaviour and I'll learn it (Cancel to skip):"
+      ) || undefined;
+    }
+    setFb(prev => ({ ...prev, [t.ts]: verdict }));   // optimistic
+    try {
+      await fetch(`${API}/chat/feedback`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ agentId: "vip", question, answer: t.text, verdict, correction }),
+      });
+    } catch { /* best-effort; feedback never blocks chat */ }
+  }
 
   const recognitionRef = useRef<any>(null);
   const stateRef       = useRef<State>("idle");
@@ -909,6 +938,33 @@ export default function ChatbotOverlay() {
                   <div className="text-[9px] opacity-60 mt-0.5">{t.intent}</div>
                 )}
               </div>
+
+              {/* 👍/👎 feedback — only on real chatbot replies (skip greeting & progress
+                  bubbles); rating a 👎 asks for the correct answer and teaches the bot */}
+              {t.who === "chatbot" && i > 0 && t.text && t.text !== "Running chain..." && (
+                <div className="flex items-center gap-1.5 mt-0.5 pl-1">
+                  {fb[t.ts] ? (
+                    <span className="text-[10px] text-[var(--text-muted)]">
+                      {fb[t.ts] === "up"
+                        ? (language === "ko" ? "고마워요 — 좋은 답으로 기억할게요 ✓" : "thanks — saved as a good answer ✓")
+                        : (language === "ko" ? "배웠어요 — 다음엔 더 잘할게요 ✓" : "learned — I'll do better next time ✓")}
+                    </span>
+                  ) : (
+                    <>
+                      <button
+                        onClick={() => sendFeedback(i, "up")}
+                        title={language === "ko" ? "좋은 답변" : "good answer"}
+                        className="text-[13px] leading-none opacity-50 hover:opacity-100 transition-opacity"
+                      >👍</button>
+                      <button
+                        onClick={() => sendFeedback(i, "down")}
+                        title={language === "ko" ? "틀렸어요 — 고쳐주기" : "wrong — correct it"}
+                        className="text-[13px] leading-none opacity-50 hover:opacity-100 transition-opacity"
+                      >👎</button>
+                    </>
+                  )}
+                </div>
+              )}
 
               {/* Phase 6 — inline result card */}
               {t.card && t.who === "chatbot" && (
