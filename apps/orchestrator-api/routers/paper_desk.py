@@ -155,6 +155,103 @@ def desk_algo_compare(db: Session = Depends(get_db)):
     return {"ok": True, "today": out}
 
 
+# ── Multi-day Algorithm Scoreboard (boss 2026-07-20: "which one is better before
+#    I use real money?"). Aggregates fee-net realized_pnl per algorithm across the
+#    last N trading days and returns the metrics that actually matter for real
+#    money — cumulative net ₩, net per trade, win %, worst single day (drawdown),
+#    days traded, sample size — plus a go/no-go verdict on the CAREFUL gate:
+#    an algo is 'READY' only if net ₩ > 0 AND days ≥ 5 AND completed trips ≥ 30.
+_GATE_DAYS = 5
+_GATE_TRIPS = 30
+_ALGO_LABEL = {"algo1": "Algorithm 1", "algo2": "Algorithm 2 · Ripple",
+               "algo3": "Algorithm 3 · Candle"}
+
+
+def _scoreboard(db, days: int = 15) -> dict:
+    from sqlalchemy import text
+    # one row per (algo, KST trade-day): trips, wins, net ₩ — fee-net realized_pnl
+    rows = db.execute(text(
+        "SELECT COALESCE(source,'manual') AS src, "
+        "       (filled_at AT TIME ZONE 'Asia/Seoul')::date AS d, "
+        "       count(*), sum(CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END), "
+        "       COALESCE(sum(realized_pnl),0), COALESCE(sum(realized_pnl_pct),0) "
+        "FROM paper_desk_orders "
+        "WHERE side='SELL' AND status='FILLED' AND realized_pnl IS NOT NULL "
+        "  AND COALESCE(source,'manual') IN ('algo1','algo2','algo3') "
+        "  AND filled_at >= (now() AT TIME ZONE 'Asia/Seoul')::date - :d "
+        "GROUP BY 1,2 ORDER BY 1,2"),
+        {"d": int(days)}).fetchall()
+    agg: dict = {}
+    for src, d, n, w, net, netpct in rows:
+        a = agg.setdefault(src, {"trips": 0, "wins": 0, "net_won": 0.0,
+                                 "sum_pct": 0.0, "days": {}, "worst_day": None,
+                                 "best_day": None})
+        n, w, net, netpct = int(n or 0), int(w or 0), float(net or 0), float(netpct or 0)
+        a["trips"] += n; a["wins"] += w; a["net_won"] += net; a["sum_pct"] += netpct
+        a["days"][str(d)] = round(net)
+        if a["worst_day"] is None or net < a["worst_day"][1]:
+            a["worst_day"] = [str(d), round(net)]
+        if a["best_day"] is None or net > a["best_day"][1]:
+            a["best_day"] = [str(d), round(net)]
+    out = {}
+    for src in ("algo1", "algo2", "algo3"):
+        a = agg.get(src)
+        if not a:
+            out[src] = {"label": _ALGO_LABEL[src], "trips": 0, "days": 0,
+                        "net_won": 0, "verdict": "NO DATA",
+                        "reason": "no completed trades yet"}
+            continue
+        trips, days_n, net = a["trips"], len(a["days"]), a["net_won"]
+        win_rate = round(a["wins"] / trips * 100) if trips else None
+        per_trade = round(net / trips) if trips else None
+        avg_pct = round(a["sum_pct"] / trips, 3) if trips else None  # net %/trade after fees
+        # CAREFUL gate verdict
+        if net > 0 and days_n >= _GATE_DAYS and trips >= _GATE_TRIPS:
+            verdict, reason = "✅ READY", f"profitable over {days_n} days / {trips} trades"
+        elif net <= 0 and days_n >= _GATE_DAYS and trips >= _GATE_TRIPS:
+            verdict, reason = "❌ REJECT", f"enough data but NOT profitable (net {round(net):,}₩)"
+        else:
+            need = []
+            if days_n < _GATE_DAYS:
+                need.append(f"{_GATE_DAYS - days_n} more day(s)")
+            if trips < _GATE_TRIPS:
+                need.append(f"{_GATE_TRIPS - trips} more trade(s)")
+            lean = "leaning profit" if net > 0 else "currently down"
+            verdict = "⏳ NOT ENOUGH DATA"
+            reason = f"{lean} (net {round(net):,}₩) — need {', '.join(need) or 'more data'}"
+        out[src] = {"label": _ALGO_LABEL[src], "trips": trips, "days": days_n,
+                    "win_rate": win_rate, "net_won": round(net),
+                    "net_per_trade": per_trade, "net_pct_per_trade": avg_pct,
+                    "worst_day": a["worst_day"], "best_day": a["best_day"],
+                    "verdict": verdict, "reason": reason}
+    # overall recommendation: only among READY algos, the highest net ₩ wins
+    ready = {s: v for s, v in out.items() if v["verdict"] == "✅ READY"}
+    if ready:
+        best = max(ready, key=lambda s: ready[s]["net_won"])
+        rec = {"algo": best, "label": out[best]["label"], "status": "GO",
+               "text": f"{out[best]['label']} is the only proven winner"
+                       if len(ready) == 1 else
+                       f"{out[best]['label']} leads the proven set (net {out[best]['net_won']:,}₩)"}
+    else:
+        rec = {"algo": None, "status": "WAIT",
+               "text": "No algorithm has passed the safety gate yet — keep paper-testing, "
+                       "do NOT use real money."}
+    return {"gate": {"days": _GATE_DAYS, "trips": _GATE_TRIPS, "window_days": days},
+            "algos": out, "recommendation": rec}
+
+
+@router.get("/scoreboard")
+def desk_scoreboard(days: int = Query(15, ge=1, le=60),
+                    db: Session = Depends(get_db)):
+    """📊🏁 Multi-day, fee-honest verdict board for the 3 algorithms — the real-
+    money decision. Careful gate: net ₩>0 AND ≥5 days AND ≥30 trips → READY."""
+    try:
+        return {"ok": True, **_scoreboard(db, days)}
+    except Exception as e:
+        db.rollback()
+        return {"ok": False, "error": str(e)[:200]}
+
+
 @router.get("/quote")
 def desk_quote(q: str = Query(...), db: Session = Depends(get_db)):
     """Full quote for the order box: 시가/현재가±%/고가/저가 (any code or name).

@@ -10,6 +10,7 @@ import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { api, apiPost } from "@/components/api";
 import { useLanguage } from "@/components/i18n";
+import AlgoVerdict from "./AlgoVerdict";
 
 const RED = "#d32f2f";
 const BLUE = "#1565c0";
@@ -1160,6 +1161,9 @@ export default function ScalpDesk({ mode }: { mode: ScalpMode }) {
           </table>
         </div>
       )}
+
+      {/* 🏁 multi-day real-money verdict (boss 2026-07-20) */}
+      <div className="mt-4"><AlgoVerdict /></div>
 
       {/* 📊 today's Algorithm 1 vs 2 scoreboard — same strip as the Algo 1 page */}
       {cmp && (cmp.algo1 || cmp.algo2) && (

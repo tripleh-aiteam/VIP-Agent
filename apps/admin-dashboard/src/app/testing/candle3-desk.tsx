@@ -7,6 +7,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { api, apiPost } from "@/components/api";
 import { useLanguage } from "@/components/i18n";
+import AlgoVerdict from "./AlgoVerdict";
 
 const TEAL = "#00838f";
 const RED = "#d32f2f";
@@ -189,6 +190,9 @@ export default function Candle3Desk({ mode }: { mode: C3Mode }) {
           <span className="ml-auto text-[11px] text-[var(--text-muted)]">{sc?.rule_ko && (lang === "ko" ? sc.rule_ko : sc.rule_en)}</span>
         </div>
       )}
+
+      {/* 🏁 multi-day real-money verdict (boss 2026-07-20) */}
+      <div className="mt-4"><AlgoVerdict /></div>
 
       {/* 3-way compare */}
       {cmp && (cmp.algo1 || cmp.algo2 || cmp.algo3) && (

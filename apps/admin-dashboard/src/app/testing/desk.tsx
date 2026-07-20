@@ -10,6 +10,7 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { api, apiPost } from "@/components/api";
 import { useLanguage } from "@/components/i18n";
+import AlgoVerdict from "./AlgoVerdict";
 
 const RED = "#d32f2f";
 const BLUE = "#1565c0";
@@ -1598,6 +1599,9 @@ export default function Desk({ mode }: { mode: TradeMode }) {
           </table>
         </Sect>
       )}
+
+      {/* 🏁 multi-day real-money verdict (boss 2026-07-20: which algo before real money) */}
+      <AlgoVerdict />
 
       {/* 📊 today's Algorithm 1 vs 2 scoreboard (boss 2026-07-16: compare both sides) */}
       {cmp && (cmp.algo1 || cmp.algo2) && (

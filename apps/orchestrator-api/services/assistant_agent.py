@@ -2758,6 +2758,70 @@ def _elaborate_answer(question: str, lang: str, step_results: list[dict]) -> Opt
         return None
 
 
+def _format_algo_scoreboard(sb: dict, lang) -> str:
+    """🏁 Render the multi-day, fee-honest algorithm verdict board in KO/EN.
+    sb = output of routers.paper_desk._scoreboard(db, days)."""
+    en = str(lang or "").lower().startswith("en")
+    algos = sb.get("algos", {})
+    gate = sb.get("gate", {})
+    rec = sb.get("recommendation", {})
+    win = int(gate.get("window_days", 15))
+    L = []
+    if en:
+        L.append(f"🏁 **Which algorithm is best?** (last {win} days · fee-honest net ₩)")
+        L.append("")
+    else:
+        L.append(f"🏁 **어떤 알고리즘이 제일 좋은가?** (최근 {win}일 · 수수료 반영 순손익 ₩)")
+        L.append("")
+    for src in ("algo1", "algo2", "algo3"):
+        a = algos.get(src)
+        if not a:
+            continue
+        label = a.get("label", src)
+        if a.get("verdict") == "NO DATA":
+            L.append(f"**{label}** — {'no trades yet' if en else '아직 거래 없음'}")
+            continue
+        net = a.get("net_won", 0)
+        trips = a.get("trips", 0)
+        days_n = a.get("days", 0)
+        wr = a.get("win_rate")
+        pt = a.get("net_per_trade")
+        pct = a.get("net_pct_per_trade")
+        worst = a.get("worst_day")
+        if en:
+            L.append(f"**{label}** — {a.get('verdict')}")
+            L.append(f"  · net **{net:+,}₩** over {trips} trades / {days_n} days"
+                     + (f" · win {wr}%" if wr is not None else ""))
+            L.append(f"  · per trade {pt:+,}₩ ({pct:+.3f}%)" if pt is not None else "")
+            if worst:
+                L.append(f"  · worst day {worst[1]:+,}₩ ({worst[0]})")
+            L.append(f"  · {a.get('reason','')}")
+        else:
+            L.append(f"**{label}** — {a.get('verdict')}")
+            L.append(f"  · 순손익 **{net:+,}₩** / {trips}거래 · {days_n}일"
+                     + (f" · 승률 {wr}%" if wr is not None else ""))
+            L.append(f"  · 거래당 {pt:+,}₩ ({pct:+.3f}%)" if pt is not None else "")
+            if worst:
+                L.append(f"  · 최악의 날 {worst[1]:+,}₩ ({worst[0]})")
+            L.append(f"  · {a.get('reason','')}")
+        L.append("")
+    if rec.get("status") == "GO":
+        L.append(("👉 **Recommendation: " if en else "👉 **추천: ") + rec.get("text", "") + "**")
+    else:
+        L.append(("👉 **" if en else "👉 **") + rec.get("text", "") + "**")
+    if en:
+        L.append(f"\n_Safety gate: an algorithm is only 'READY' for real money after "
+                 f"net ₩ > 0 AND ≥ {gate.get('days',5)} trading days AND ≥ {gate.get('trips',30)} "
+                 f"completed trades. Win % alone is not enough — a high win rate can still "
+                 f"lose money after fees._")
+    else:
+        L.append(f"\n_안전 기준: 순손익 > 0 이면서 거래일 ≥ {gate.get('days',5)}일, "
+                 f"완료 거래 ≥ {gate.get('trips',30)}건을 모두 만족해야만 실전(real money) "
+                 f"'준비완료'로 봅니다. 승률만으로는 부족합니다 — 승률이 높아도 수수료 때문에 "
+                 f"손해일 수 있습니다._")
+    return "\n".join([x for x in L if x is not None])
+
+
 def _run_chain(
     db: Session,
     transcript: str,
@@ -5349,6 +5413,31 @@ def _run_agent_impl(
                             "tool_used": "overnight_call"}
         except Exception as e:
             log.warning(f"overnight lane failed: {str(e)[:120]}")
+
+    # === 🏁 WHICH-ALGORITHM-IS-BEST lane (boss 2026-07-20: "I'll use real money,
+    #     which of my 3 algorithms is better/more accurate?"). Answers from the
+    #     multi-day, fee-honest scoreboard + the CAREFUL go/no-go gate (net ₩>0
+    #     AND ≥5 days AND ≥30 trips). Honest verdict, KO/EN, both bots. ===
+    if not confirmed_tool and not attachment_ids:
+        try:
+            _ql = (transcript or "").lower()
+            _has_algo = ("알고리즘" in transcript or "알고리듬" in transcript
+                         or "algorithm" in _ql or "algo" in _ql)
+            _pick_cue = any(k in transcript for k in
+                            ("비교", "제일", "가장", "좋", "나은", "정확", "추천",
+                             "실전", "실제 돈", "진짜 돈", "실거래", "뭐가", "어떤", "어느")) \
+                        or any(k in _ql for k in
+                               ("best", "better", "which", "compare", "accurate",
+                                "real money", "recommend", "winning", "most profit"))
+            if _has_algo and _pick_cue:
+                from routers.paper_desk import _scoreboard as _sb_fn
+                _sb = _sb_fn(db, 15)
+                _reply = _format_algo_scoreboard(_sb, lang)
+                return {"intent": "algo_scoreboard", "language": lang,
+                        "reply": _reply[:9000], "action": None, "speak": True,
+                        "transcript": transcript, "tool_used": "algo_scoreboard"}
+        except Exception as e:
+            log.warning(f"algo-scoreboard lane failed: {str(e)[:120]}")
 
     # === M2 — POSITION-AWARE advice (a holding the user already has) ===
     # "지난주 SK하이닉스 200주 -4% 어떡해?" → 버티기/손절/물타기/익절 with trigger prices,
