@@ -43,6 +43,42 @@ def now_kst() -> datetime:
     return datetime.now(_KST)
 
 
+# KRX regular session: 09:00–15:30 KST, Mon–Fri (includes the 15:20–15:30 closing
+# auction). Outside this the live feeds serve an after-hours / last-close price, so
+# a current-price answer must SAY the market is closed (boss 2026-07-20) — otherwise
+# an after-hours Naver quote reads like a live intraday price.
+_KRX_OPEN_MIN = 9 * 60          # 09:00
+_KRX_CLOSE_MIN = 15 * 60 + 30   # 15:30
+
+
+def _kr_market_open(dt: datetime) -> bool:
+    if dt.weekday() >= 5:       # Sat/Sun
+        return False
+    m = dt.hour * 60 + dt.minute
+    return _KRX_OPEN_MIN <= m <= _KRX_CLOSE_MIN
+
+
+def _market_note(dt: datetime, english: bool) -> str:
+    """One-line KR market-status note for current-price answers."""
+    if _kr_market_open(dt):
+        return ("🟢 Market open — this is a live intraday price."
+                if english else "🟢 장중 — 실시간 장중 시세입니다.")
+    if dt.weekday() >= 5:
+        head_en, head_ko = "Market closed (weekend)", "휴장 (주말)"
+    else:
+        m = dt.hour * 60 + dt.minute
+        if m < _KRX_OPEN_MIN:
+            head_en, head_ko = "Market closed (before the open)", "장 시작 전"
+        else:
+            head_en, head_ko = "Market closed (after the close)", "장 마감 후"
+    if english:
+        return (f"🔴 {head_en} — KRX regular hours are 09:00–15:30 KST, Mon–Fri. "
+                f"This is the latest Naver price (after-hours / last close), "
+                f"not a live intraday quote.")
+    return (f"🔴 {head_ko} — 정규장은 평일 09:00–15:30 (한국시간)입니다. "
+            f"실시간 장중가가 아니라 네이버 시간외/종가 시세입니다.")
+
+
 def _is_en(lang) -> bool:
     return str(lang or "").lower().startswith("en")
 
@@ -189,7 +225,10 @@ def format_current(quotes, *, lang, used_watchlist: bool = False,
             return (f"Couldn't fetch a quote for {name}. Please check the ticker or data availability."
                     if english else
                     f"{name} 시세를 조회하지 못했습니다. 종목 코드나 데이터 제공 상태를 확인해 주세요.")
-        return _price_table(q, english, ts, src)
+        table = _price_table(q, english, ts, src)
+        if str(q.get("market") or "KR").upper() == "KR":
+            table += "\n\n" + _market_note(dt, english)
+        return table
 
     # MULTIPLE stocks (watchlist) → compact Stock/Price/Change table
     hdr = ("Stock", "Price", "Change") if english else ("종목", "현재가", "등락")
@@ -207,7 +246,10 @@ def format_current(quotes, *, lang, used_watchlist: bool = False,
     else:
         title = "관심 종목 현재가" if used_watchlist else "요청하신 종목 현재가"
         tail = f"*기준 {ts} (한국시간)" + (f" · 출처 {src}" if src else "") + "*"
-    return f"**{title}**\n\n{md}\n{tail}"
+    out = f"**{title}**\n\n{md}\n{tail}"
+    if any(str(q.get("market") or "KR").upper() == "KR" for q in quotes):
+        out += "\n\n" + _market_note(dt, english)
+    return out
 
 
 def format_past(items, *, date: str, lang, intraday_note: bool = False) -> str:
