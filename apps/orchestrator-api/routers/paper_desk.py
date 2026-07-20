@@ -419,6 +419,11 @@ def scalp_tick(force: bool = Query(False), db: Session = Depends(get_db)):
         _c3(db)
     except Exception:
         db.rollback()
+    try:
+        from services.auto_trader import tick as _a1_tick   # Algo 1 entries (was never ticked)
+        _a1_tick(db)
+    except Exception:
+        db.rollback()
     return r
 
 

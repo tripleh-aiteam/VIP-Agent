@@ -46,10 +46,13 @@ def _loop() -> None:
                     db.rollback(); logger.warning(f"ticker scalp: {str(e)[:100]}")
                 finally:
                     db.close()
-                # 2) Algorithm-1 auto exits (stops/targets on open positions)
+                # 2) Algorithm-1 auto — ENTRIES (buy qualifying setups) + exits.
+                #    boss 2026-07-20: the ticker was only running exit_pulse, so Algo 1
+                #    never bought — tick() is what takes new setups.
                 db = SessionLocal()
                 try:
-                    from services.auto_trader import exit_pulse as _a1
+                    from services.auto_trader import tick as _a1_tick, exit_pulse as _a1
+                    _a1_tick(db)
                     _a1(db)
                 except Exception as e:
                     db.rollback(); logger.warning(f"ticker algo1: {str(e)[:100]}")
