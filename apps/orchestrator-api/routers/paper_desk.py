@@ -22,6 +22,7 @@ class OrderBody(BaseModel):
     qty: int = Field(..., gt=0)
     order_type: str = Field("market", description="market | limit")
     limit_price: Optional[float] = Field(None, description="trigger price for limit orders")
+    source: Optional[str] = Field(None, description="which page placed it: algo1 / manual …")
 
 
 def _resolve(ticker: str, db: Optional[Session] = None) -> str:
@@ -213,8 +214,9 @@ def desk_order(body: OrderBody, db: Session = Depends(get_db)):
     code = _resolve(body.ticker, db)
     if not code.isdigit():
         return {"ok": False, "error": f"'{body.ticker}' 종목을 찾지 못했어요"}
+    src = body.source if body.source in ("algo1", "algo2", "algo3", "guard", "manual") else "manual"
     return place_order(db, code, body.side, body.qty,
-                       order_type=body.order_type, limit_price=body.limit_price)
+                       order_type=body.order_type, limit_price=body.limit_price, source=src)
 
 
 @router.post("/cancel/{order_id}")

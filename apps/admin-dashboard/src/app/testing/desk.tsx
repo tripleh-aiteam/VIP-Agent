@@ -502,7 +502,7 @@ export default function Desk({ mode }: { mode: TradeMode }) {
     if (!n) return;
     try {
       const r = await apiPost<{ ok: boolean; fill_price?: number; error?: string; reason?: string }>(
-        "/paper-desk/order", { ticker: a.code, side: "BUY", qty: n, order_type: "market" });
+        "/paper-desk/order", { ticker: a.code, side: "BUY", qty: n, order_type: "market", source: "algo1" });
       setMsg(r.ok ? t(`✅ 반자동 매수 체결: ${a.name} ${n}주 @ ${fmt(r.fill_price)}원 — 목표 ${fmt(a.target)} · 손절 ${fmt(a.stop)} · 60분`,
                       `✅ Semi-auto BUY filled: ${a.name} ${n}sh @ ${fmt(r.fill_price)} — target ${fmt(a.target)} · stop ${fmt(a.stop)} · 60 min`)
                   : `❌ ${r.error || r.reason || "failed"}`);
@@ -520,7 +520,7 @@ export default function Desk({ mode }: { mode: TradeMode }) {
     if (!n) return;
     try {
       const r = await apiPost<{ ok: boolean; fill_price?: number; error?: string; reason?: string }>(
-        "/paper-desk/order", { ticker: f.code, side: "BUY", qty: n, order_type: "market" });
+        "/paper-desk/order", { ticker: f.code, side: "BUY", qty: n, order_type: "market", source: "algo1" });
       setMsg(r.ok ? t(`✅ 반자동 매수 체결: ${f.name} ${n}주 @ ${fmt(r.fill_price)}원 — 🎯 ${fmt(f.target_band?.[0])} · 🛑 ${fmt(f.stop)} · 60분 내 정리`,
                       `✅ Semi-auto BUY filled: ${f.name} ${n}sh @ ${fmt(r.fill_price)} — 🎯 ${fmt(f.target_band?.[0])} · 🛑 ${fmt(f.stop)} · close within 60 min`)
                   : `❌ ${r.error || r.reason || "failed"}`);
@@ -672,7 +672,7 @@ export default function Desk({ mode }: { mode: TradeMode }) {
     if (busy) return;
     setBusy(true); setMsg(null);
     try {
-      const body: Record<string, unknown> = { ticker: q.trim(), side, qty: parseInt(qty) || 0, order_type: otype };
+      const body: Record<string, unknown> = { ticker: q.trim(), side, qty: parseInt(qty) || 0, order_type: otype, source: "algo1" };
       if (otype === "limit") body.limit_price = parseFloat(limitPx) || 0;
       const r = await apiPost<{ ok: boolean; status?: string; fill_price?: number; note?: string; error?: string; reason?: string }>("/paper-desk/order", body);
       if (r.ok) {
@@ -701,7 +701,7 @@ export default function Desk({ mode }: { mode: TradeMode }) {
     setBusy(true); setMsg(null);
     try {
       const r = await apiPost<{ ok: boolean; fill_price?: number; realized_pnl?: number; realized_pnl_pct?: number; error?: string; reason?: string }>(
-        "/paper-desk/order", { ticker: p.ticker, side: "SELL", qty: p.qty, order_type: "market" });
+        "/paper-desk/order", { ticker: p.ticker, side: "SELL", qty: p.qty, order_type: "market", source: "algo1" });
       if (r.ok) {
         const pnl = r.realized_pnl ?? 0;
         setMsg(t(`✅ ${p.name} ${p.qty}주 매도 완료 @ ${fmt(r.fill_price)} — 실현손익 ${pnl > 0 ? "+" : ""}${fmt(pnl)}원 (${r.realized_pnl_pct}%)`,
@@ -829,7 +829,7 @@ export default function Desk({ mode }: { mode: TradeMode }) {
               {a.action === "SELL_NOW" && (
                 <button onClick={async () => {
                     const r = await apiPost<{ ok: boolean; fill_price?: number; error?: string }>(
-                      "/paper-desk/order", { ticker: a.ticker, side: "SELL", qty: a.qty, order_type: "market" });
+                      "/paper-desk/order", { ticker: a.ticker, side: "SELL", qty: a.qty, order_type: "market", source: "algo1" });
                     setMsg(r.ok ? t(`✅ ${a.name} 전량 매도 체결 @ ${fmt(r.fill_price)}`, `✅ ${a.name} sold @ ${fmt(r.fill_price)}`)
                                 : `❌ ${r.error || "failed"}`);
                     load();
