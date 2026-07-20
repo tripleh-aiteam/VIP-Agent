@@ -355,6 +355,24 @@ def _band_str(band, en: bool) -> str:
     return f"{_won(band[0])} – {_won(band[1])}"
 
 
+def _band_pct(band, price) -> str:
+    """' (−4.2% ~ +1.4%)' — the interval expressed as % vs current price (boss wants %)."""
+    try:
+        price = float(price)
+        lo_p = (float(band[0]) / price - 1) * 100
+        hi_p = (float(band[1]) / price - 1) * 100
+        return f" ({lo_p:+.1f}% ~ {hi_p:+.1f}%)"
+    except Exception:
+        return ""
+
+
+def _band_full(band, price, en: bool) -> str:
+    """Price interval WITH the % range: '₩1,690,000 – ₩1,789,000 (−4.2% ~ +1.4%)'."""
+    if not band:
+        return ""
+    return _band_str(band, en) + _band_pct(band, price)
+
+
 def _algo1_pred(d: dict[str, Any], db, code: str, en: bool):
     """Algorithm 1 directional prediction from the 1-hour up-probability + ML
     expected move + chart read. Returns (direction, ai1h, lines, daily_pct).
@@ -477,40 +495,40 @@ def prediction_view(db, d: dict[str, Any], lang: str = "ko"):
     if en:
         L.append(f"🔮 **Prediction — {name}**" + (f" (now ₩{int(price):,})" if price else ""))
         if combo_band:
-            L.append(f"📊 **Expected price range (near-term): {_band_str(combo_band, True)}**")
+            L.append(f"📊 **Expected price range (near-term): {_band_full(combo_band, price, True)}**")
         L.append(_DIV)
         L.append("🤖 Algorithm 1 — combined brain (ML · News · YouTube · Chart · Kiwoom · Orderbook · Wave)")
         L.append(f"Predicts: {_dir_label(a1_dir, True)}"
-                 + (f" · range {_band_str(combo_band, True)}" if combo_band else ""))
+                 + (f" · range {_band_full(combo_band, price, True)}" if combo_band else ""))
         L.extend(f"   • {ln}" for ln in a1_lines)
         L.append(_DIV)
         L.append("⚡ Algorithm 2 · Ripple (scalp · minutes)")
         L.append(f"Predicts: {_dir_label(rp_dir, True)}"
-                 + (f" · next-minutes range {_band_str(rp_band, True)}" if rp_band else ""))
+                 + (f" · next-minutes range {_band_full(rp_band, price, True)}" if rp_band else ""))
         L.append(f"   • {rp_txt}")
         L.append(_DIV)
         L.append("🕯️ Algorithm 3 · Candle (1-min chart)")
         L.append(f"Predicts: {_dir_label(cd_dir, True)}"
-                 + (f" · next-minutes range {_band_str(cd_band, True)}" if cd_band else ""))
+                 + (f" · next-minutes range {_band_full(cd_band, price, True)}" if cd_band else ""))
         L.append(f"   • {cd_txt}")
     else:
         L.append(f"🔮 **예측 — {name}**" + (f" (현재 ₩{int(price):,})" if price else ""))
         if combo_band:
-            L.append(f"📊 **예상 가격 범위 (단기): {_band_str(combo_band, False)}**")
+            L.append(f"📊 **예상 가격 범위 (단기): {_band_full(combo_band, price, False)}**")
         L.append(_DIV)
         L.append("🤖 알고리즘 1 — 종합 브레인 (ML · 뉴스 · 유튜브 · 차트 · 키움 · 호가 · 파동)")
         L.append(f"예측: {_dir_label(a1_dir, False)}"
-                 + (f" · 범위 {_band_str(combo_band, False)}" if combo_band else ""))
+                 + (f" · 범위 {_band_full(combo_band, price, False)}" if combo_band else ""))
         L.extend(f"   • {ln}" for ln in a1_lines)
         L.append(_DIV)
         L.append("⚡ 알고리즘 2 · 잔물결 (초단타 · 분 단위)")
         L.append(f"예측: {_dir_label(rp_dir, False)}"
-                 + (f" · 수 분 내 범위 {_band_str(rp_band, False)}" if rp_band else ""))
+                 + (f" · 수 분 내 범위 {_band_full(rp_band, price, False)}" if rp_band else ""))
         L.append(f"   • {rp_txt}")
         L.append(_DIV)
         L.append("🕯️ 알고리즘 3 · 캔들 (1분봉)")
         L.append(f"예측: {_dir_label(cd_dir, False)}"
-                 + (f" · 수 분 내 범위 {_band_str(cd_band, False)}" if cd_band else ""))
+                 + (f" · 수 분 내 범위 {_band_full(cd_band, price, False)}" if cd_band else ""))
         L.append(f"   • {cd_txt}")
     return "\n".join(L), {"a1": a1_dir, "rp": rp_dir, "cd": cd_dir, "ai1h": ai1h,
                           "range": combo_band}

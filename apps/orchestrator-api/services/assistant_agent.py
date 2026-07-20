@@ -2860,7 +2860,12 @@ _PRED_NEXTDAY = ("tomorrow", "next day", "next-day", "next open", "next trading 
                  "내일", "모레", "다음날", "다음 날", "담날", "시초가", "개장", "다음 거래일", "다음거래일")
 _PRED_VERB = ("predict", "prediction", "forecast", "expect", "outlook", "estimate",
               "예측", "전망", "예상", "오를", "내릴", "될까", "열릴", "얼마", "시작",
-              "오를까", "내릴까", "상승", "하락")
+              "오를까", "내릴까", "상승", "하락",
+              # boss 2026-07-20: 'what will be price... how many percent increase or decrease?'
+              # must also trigger the prediction interval (nd cue already gates to next-day).
+              "increase", "decrease", "percent", "%", "how much", "how many", "what will",
+              "what price", "what's the price", "rise", "fall", "go up", "go down", "price",
+              "가격", "몇 프로", "몇 퍼센트", "몇 프로", "몇 %", "몇퍼", "얼마나", "오르", "내려")
 
 
 def _is_future_prediction(text: str) -> bool:
@@ -2884,13 +2889,14 @@ def _llm_prediction_summary(d: dict, block: str, name: str, lang, question: str)
             "1-hour up-probability; Algorithm 2 = Ripple, minutes; Algorithm 3 = Candle, "
             "1-min momentum). Write a SHORT final summary (3-5 sentences) that (1) states the "
             "COMBINED predicted DIRECTION — up / down / flat — with rough magnitude/confidence, "
-            "(2) states the PREDICTED PRICE RANGE (from ₩X to ₩Y) exactly as shown in the "
-            "analysis's 'Expected price range' line, (3) briefly explains WHY (which algorithms "
-            "agree or disagree), and (4) is honest that these are short-horizon signals, not a "
+            "(2) states the PREDICTED PRICE RANGE — both the ₩ interval (from ₩X to ₩Y) AND "
+            "its percent change (e.g. −4.2% ~ +1.4%) — exactly as shown in the analysis's "
+            "'Expected price range' line, (3) briefly explains WHY (which algorithms agree or "
+            "disagree), and (4) is honest that these are short-horizon signals, not a "
             "guaranteed price. CRITICAL: do NOT give ANY buy/sell/hold advice or recommendation "
             "— this is a forecast ONLY. Never write the words buy, sell, or hold. Use ONLY "
             "numbers that appear in the analysis — never invent prices. Answer ONLY in English. "
-            "End with a one-line forecast that includes the price range, prefixed '👉'."
+            "End with a one-line forecast that includes BOTH the ₩ range and the % change, prefixed '👉'."
         )
     else:
         sys = (
@@ -2899,11 +2905,11 @@ def _llm_prediction_summary(d: dict, block: str, name: str, lang, question: str)
             "(알고리즘1 = 종합 브레인 + 1시간 상승확률, 알고리즘2 = 잔물결·분 단위, 알고리즘3 = "
             "캔들·1분봉 모멘텀). 다음을 담은 짧은 요약(3~5문장)을 쓰세요: (1) 종합 예측 방향 — "
             "상승/하락/보합 — 과 대략적 강도·확신도, (2) 분석의 '예상 가격 범위' 줄에 나온 예측 "
-            "가격 구간(₩X ~ ₩Y)을 그대로 제시, (3) 이유 간단히(어느 알고리즘이 일치/불일치), "
-            "(4) 단기 신호라 가격을 보장하지 않는다는 점. 매우 중요: 매수/매도/보유 등 어떤 매매 "
-            "조언·추천도 하지 마세요 — 예측만. '매수'·'매도'·'보유'라는 단어를 쓰지 마세요. 분석에 "
-            "나온 숫자만 쓰고 가격을 지어내지 마세요. 반드시 한국어로만. 마지막 줄은 예측 가격 "
-            "범위를 포함해 '👉'로 시작하는 한 줄 예측."
+            "가격 구간을 ₩ 금액(₩X ~ ₩Y)과 % 변동(예: −4.2% ~ +1.4%) 둘 다 제시, (3) 이유 "
+            "간단히(어느 알고리즘이 일치/불일치), (4) 단기 신호라 가격을 보장하지 않는다는 점. "
+            "매우 중요: 매수/매도/보유 등 어떤 매매 조언·추천도 하지 마세요 — 예측만. '매수'·'매도'"
+            "·'보유'라는 단어를 쓰지 마세요. 분석에 나온 숫자만 쓰고 가격을 지어내지 마세요. 반드시 "
+            "한국어로만. 마지막 줄은 ₩ 범위와 % 변동을 모두 포함해 '👉'로 시작하는 한 줄 예측."
         )
     user = (f"User question: {question}\n\nStock: {name}\n"
             f"price {d.get('price')}\n\n=== 3 ALGORITHMS' PREDICTIONS ===\n{block}")
