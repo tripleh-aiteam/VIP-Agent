@@ -316,13 +316,53 @@ def _dir_label(direction: str, en: bool) -> str:
             "FLAT": "➡️ Sideways" if en else "➡️ 보합"}.get(direction, direction)
 
 
+def _won(v) -> str:
+    try:
+        return f"₩{int(round(float(v))):,}"
+    except Exception:
+        return "-"
+
+
+def _round_tick(v) -> int:
+    """Round to a clean KRX-ish tick so the interval reads nicely."""
+    v = float(v)
+    step = 1000 if v >= 100000 else 100 if v >= 10000 else 10 if v >= 1000 else 1
+    return int(round(v / step) * step)
+
+
+def _price_band(price, pct, direction):
+    """Predicted price interval (low, high): a ±pct% band around `price`, SKEWED
+    toward the predicted direction (mostly upside if UP, mostly downside if DOWN).
+    Returns (low, high) rounded to clean ticks, or None."""
+    try:
+        price = float(price); d = abs(float(pct))
+    except (TypeError, ValueError):
+        return None
+    if not price or not d:
+        return None
+    if direction == "UP":
+        lo, hi = price * (1 - d / 3 / 100), price * (1 + d / 100)
+    elif direction == "DOWN":
+        lo, hi = price * (1 - d / 100), price * (1 + d / 3 / 100)
+    else:
+        lo, hi = price * (1 - d / 100), price * (1 + d / 100)
+    return (_round_tick(lo), _round_tick(hi))
+
+
+def _band_str(band, en: bool) -> str:
+    if not band:
+        return ""
+    return f"{_won(band[0])} – {_won(band[1])}"
+
+
 def _algo1_pred(d: dict[str, Any], db, code: str, en: bool):
     """Algorithm 1 directional prediction from the 1-hour up-probability + ML
-    expected move + chart read. Returns (direction, ai1h, explanation lines).
-    NO buy/sell language — pure forecast."""
+    expected move + chart read. Returns (direction, ai1h, lines, daily_pct).
+    NO buy/sell language — pure forecast. Includes a price interval."""
     ml = d.get("method1_ml") or {}
     setup = d.get("intraday_setup") or {}
     tech = d.get("technicals") or {}
+    price = d.get("price")
     ai1h = setup.get("ai_1h_prob")
     if ai1h is None:
         try:
@@ -340,19 +380,25 @@ def _algo1_pred(d: dict[str, Any], db, code: str, en: bool):
     else:
         sc = (tech.get("score") or 0)
         direction = "UP" if sc > 0 else "DOWN" if sc < 0 else "FLAT"
+    # near-term (≈1-day) magnitude: scale the 5-day ML move down by √5, clamp sane.
+    daily_pct = None
+    if exp is not None:
+        daily_pct = min(6.0, max(0.6, abs(exp) / (5 ** 0.5)))
     lines = []
     if ai1h is not None:
         lines.append(f"1-hour prediction: {'UP' if ai1h >= 50 else 'DOWN'} — {ai1h}% chance of rising."
                      if en else f"1시간 예측: {'상승' if ai1h >= 50 else '하락'} — 상승확률 {ai1h}%.")
     if exp is not None:
-        lines.append(f"5-day ML forecast: expected move ±{abs(exp)}% (accuracy {ml.get('accuracy_pct','n/a')}%)."
-                     if en else f"5일 ML 예측: 예상 변동폭 ±{abs(exp)}% (정확도 {ml.get('accuracy_pct','n/a')}%).")
+        ml_band = _price_band(price, abs(exp), "FLAT")   # ML gives a symmetric ± band
+        rng = f" → {_band_str(ml_band, en)}" if ml_band else ""
+        lines.append(f"5-day ML forecast: expected move ±{abs(exp)}%{rng} (accuracy {ml.get('accuracy_pct','n/a')}%)."
+                     if en else f"5일 ML 예측: 예상 변동폭 ±{abs(exp)}%{rng} (정확도 {ml.get('accuracy_pct','n/a')}%).")
     tsum = tech.get("summary_en" if en else "summary_ko")
     if tsum:
         lines.append(f"Chart read: {tsum}." if en else f"차트 판독: {tsum}.")
     if not lines:
         lines.append("no directional data available." if en else "방향성 데이터 없음.")
-    return direction, ai1h, lines
+    return direction, ai1h, lines, daily_pct
 
 
 def _ripple_pred(code: str, en: bool):
@@ -411,39 +457,63 @@ def prediction_view(db, d: dict[str, Any], lang: str = "ko"):
     code = str(d.get("ticker") or "").zfill(6)
     name = d.get("name") or code
     price = d.get("price")
-    a1_dir, ai1h, a1_lines = _algo1_pred(d, db, code, en)
+    a1_dir, ai1h, a1_lines, daily_pct = _algo1_pred(d, db, code, en)
     rp_dir, rp_txt = _ripple_pred(code, en)
     cd_dir, cd_txt = _candle_pred(code, en)
+
+    # combined near-term predicted PRICE INTERVAL (boss 2026-07-20: "show from this to
+    # this price"). Magnitude = Algo-1's ≈1-day move (ML/√5), fallback 1.5%; skewed by
+    # the combined direction (Algo-1 leads, scalps confirm).
+    dmag = daily_pct if daily_pct else 1.5
+    combo_dir = a1_dir
+    if a1_dir == "FLAT":
+        combo_dir = rp_dir if rp_dir != "FLAT" else cd_dir
+    combo_band = _price_band(price, dmag, combo_dir)
+    # per-scalp bands (only when they have a live directional read; tiny minute moves)
+    rp_band = _price_band(price, 0.4, rp_dir) if rp_dir != "FLAT" else None
+    cd_band = _price_band(price, 0.6, cd_dir) if cd_dir != "FLAT" else None
+
     L: list[str] = []
     if en:
         L.append(f"🔮 **Prediction — {name}**" + (f" (now ₩{int(price):,})" if price else ""))
+        if combo_band:
+            L.append(f"📊 **Expected price range (near-term): {_band_str(combo_band, True)}**")
         L.append(_DIV)
         L.append("🤖 Algorithm 1 — combined brain (ML · News · YouTube · Chart · Kiwoom · Orderbook · Wave)")
-        L.append(f"Predicts: {_dir_label(a1_dir, True)}")
+        L.append(f"Predicts: {_dir_label(a1_dir, True)}"
+                 + (f" · range {_band_str(combo_band, True)}" if combo_band else ""))
         L.extend(f"   • {ln}" for ln in a1_lines)
         L.append(_DIV)
         L.append("⚡ Algorithm 2 · Ripple (scalp · minutes)")
-        L.append(f"Predicts: {_dir_label(rp_dir, True)}")
+        L.append(f"Predicts: {_dir_label(rp_dir, True)}"
+                 + (f" · next-minutes range {_band_str(rp_band, True)}" if rp_band else ""))
         L.append(f"   • {rp_txt}")
         L.append(_DIV)
         L.append("🕯️ Algorithm 3 · Candle (1-min chart)")
-        L.append(f"Predicts: {_dir_label(cd_dir, True)}")
+        L.append(f"Predicts: {_dir_label(cd_dir, True)}"
+                 + (f" · next-minutes range {_band_str(cd_band, True)}" if cd_band else ""))
         L.append(f"   • {cd_txt}")
     else:
         L.append(f"🔮 **예측 — {name}**" + (f" (현재 ₩{int(price):,})" if price else ""))
+        if combo_band:
+            L.append(f"📊 **예상 가격 범위 (단기): {_band_str(combo_band, False)}**")
         L.append(_DIV)
         L.append("🤖 알고리즘 1 — 종합 브레인 (ML · 뉴스 · 유튜브 · 차트 · 키움 · 호가 · 파동)")
-        L.append(f"예측: {_dir_label(a1_dir, False)}")
+        L.append(f"예측: {_dir_label(a1_dir, False)}"
+                 + (f" · 범위 {_band_str(combo_band, False)}" if combo_band else ""))
         L.extend(f"   • {ln}" for ln in a1_lines)
         L.append(_DIV)
         L.append("⚡ 알고리즘 2 · 잔물결 (초단타 · 분 단위)")
-        L.append(f"예측: {_dir_label(rp_dir, False)}")
+        L.append(f"예측: {_dir_label(rp_dir, False)}"
+                 + (f" · 수 분 내 범위 {_band_str(rp_band, False)}" if rp_band else ""))
         L.append(f"   • {rp_txt}")
         L.append(_DIV)
         L.append("🕯️ 알고리즘 3 · 캔들 (1분봉)")
-        L.append(f"예측: {_dir_label(cd_dir, False)}")
+        L.append(f"예측: {_dir_label(cd_dir, False)}"
+                 + (f" · 수 분 내 범위 {_band_str(cd_band, False)}" if cd_band else ""))
         L.append(f"   • {cd_txt}")
-    return "\n".join(L), {"a1": a1_dir, "rp": rp_dir, "cd": cd_dir, "ai1h": ai1h}
+    return "\n".join(L), {"a1": a1_dir, "rp": rp_dir, "cd": cd_dir, "ai1h": ai1h,
+                          "range": combo_band}
 
 
 def _synthesis_ko(a1: str, rp: str, cd: str, name: str) -> str:
