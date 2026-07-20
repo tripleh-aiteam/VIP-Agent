@@ -99,7 +99,9 @@ def _ripple_detail(code: str, lang: str) -> list[str]:
         bounce = None
     if en:
         out = ["   • How it works: buys when price lifts +0.10~0.45% off a recent low with "
-               "consecutive rises → sells +0.4% (net +0.17% after fees) / −1% stop / flat 15:18."]
+               "consecutive rises → LETS THE WINNER RUN: once past +0.4% it rides up and sells "
+               "only when it turns down (trailing ~0.3% off the peak, never below break-even) "
+               "/ −1% hard stop / flat 15:18."]
         if bounce is not None:
             out.append(f"   • Right now: {bounce:+.2f}% off the recent low — "
                        + ("in the buy window, watching for the rise to confirm." if 0.10 <= bounce <= 0.45
@@ -109,8 +111,9 @@ def _ripple_detail(code: str, lang: str) -> list[str]:
             out.append("   • Right now: 1-min data unavailable (Kiwoom feed) — waiting.")
         out.append("   • Buys when: a fresh +0.10~0.45% bounce starts. Best on choppy, ranging tape.")
         return out
-    out = ["   • 작동 방식: 최근 저점에서 +0.10~0.45% 반등하며 연속 상승하면 매수 → +0.4% 익절"
-           "(수수료 후 실속 +0.17%) / −1% 손절 / 15:18 정리."]
+    out = ["   • 작동 방식: 최근 저점에서 +0.10~0.45% 반등하며 연속 상승하면 매수 → 승리 라이딩: "
+           "+0.4%를 넘으면 바로 팔지 않고 계속 상승하는 동안 보유, 고점에서 꺾일 때(고점 대비 약 "
+           "0.3% 하락, 손익분기 아래로는 안 팜) 매도 / −1% 손절 / 15:18 정리."]
     if bounce is not None:
         out.append(f"   • 지금: 최근 저점 대비 {bounce:+.2f}% — "
                    + ("매수 구간, 상승 확정 대기 중." if 0.10 <= bounce <= 0.45

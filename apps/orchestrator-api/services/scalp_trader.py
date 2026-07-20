@@ -34,6 +34,30 @@ KST = ZoneInfo("Asia/Seoul")
 # ---- the boss's dials (defaults; changeable from the UI) ----------------- #
 TAKE_PCT_DEFAULT = 0.4    # small win. NOTE: paper fees are 0.23% round-trip —
                           # a +0.2% gross win is a NET LOSS; 0.4% ≈ +0.17% net.
+# boss 2026-07-21: LET WINNERS RUN. Instead of selling the instant it hits +take%,
+# once a scalp becomes a real win (peak ≥ +take%) we RIDE it and sell only when it
+# turns down — trailing TRAIL_PCT off the peak, but never below the +take% floor (so
+# the exit is always ≥ the old fixed-take behaviour). −stop% is still the hard stop.
+TRAIL_PCT = 0.30
+FEE_PCT = 0.23           # round-trip cost — an armed winner is never sold below this
+
+
+def _ripple_exit(entry: float, px: float, peak: float,
+                 take_pct: float, stop_pct: float, eod: bool) -> Optional[str]:
+    """Trailing exit for the ripple strategy — 'let winners run' (boss 2026-07-21).
+    None = keep holding. Once the position has been a real win (peak ≥ +take%), we
+    HOLD while it keeps rising and sell only when it turns DOWN off the peak (a
+    give-back of TRAIL_PCT), never below break-even (+fee) so an armed win can't
+    turn into a loss. Below that, the only exit is the −stop% hard stop."""
+    if px <= entry * (1 - stop_pct / 100):
+        return "STOP"                                 # −1% hard stop (cut risk)
+    if peak >= entry * (1 + take_pct / 100):          # armed: reached a real win
+        trail_stop = max(peak * (1 - TRAIL_PCT / 100), entry * (1 + FEE_PCT / 100))
+        if px <= trail_stop:
+            return "TRAIL"                            # turned down → lock the win
+    if eod:
+        return "EOD"
+    return None
 STOP_PCT_DEFAULT = 1.0    # his rule: hold dips, cut only at −1%
 POS_PCT_DEFAULT = 10.0    # % of equity per ripple trade
 DEFAULT_CODES = "000660,005930"
@@ -92,6 +116,8 @@ def _ensure(db) -> None:
         " opened_at TIMESTAMPTZ DEFAULT now(), closed_at TIMESTAMPTZ)"))
     db.execute(text(
         "ALTER TABLE scalp_trades ADD COLUMN IF NOT EXISTS why TEXT"))
+    db.execute(text(
+        "ALTER TABLE scalp_trades ADD COLUMN IF NOT EXISTS peak DOUBLE PRECISION"))
     # 'auto' = machine buys AND sells · 'semi' = machine only RECOMMENDS (boss clicks)
     db.execute(text(
         "ALTER TABLE scalp_state ADD COLUMN IF NOT EXISTS mode TEXT NOT NULL DEFAULT 'auto'"))
@@ -357,21 +383,26 @@ def exit_pulse(db) -> dict[str, Any]:
         if not cfg["enabled"] or cfg["mode"] != "auto" or not _market_open_now():
             return out
         rows = db.execute(text(
-            "SELECT id, ticker, name, qty, entry FROM scalp_trades WHERE status='OPEN'")).fetchall()
+            "SELECT id, ticker, name, qty, entry, COALESCE(peak, entry) FROM scalp_trades WHERE status='OPEN'")).fetchall()
         if not rows:
             return out
         from services.paper_desk import place_order
-        for oid, tk, name, qty, entry in rows:
+        for oid, tk, name, qty, entry, peak in rows:
             px = _px(tk)
             if px is None:
                 continue
             entry = float(entry)
+            peak = max(float(peak or entry), px)
             reason = None
-            if px <= entry * (1 - cfg["stop_pct"] / 100):
-                reason = "STOP"
-            elif cfg["strategy"] != "candle" and px >= entry * (1 + cfg["take_pct"] / 100):
-                reason = "TAKE"      # candle strategy rides — no take; 2-down handled by tick
+            if cfg["strategy"] == "candle":
+                # candle rides — only the −stop% hard stop is a fast trigger here
+                if px <= entry * (1 - cfg["stop_pct"] / 100):
+                    reason = "STOP"
+            else:
+                # ripple: trailing exit (let winners run) — no fixed take
+                reason = _ripple_exit(entry, px, peak, cfg["take_pct"], cfg["stop_pct"], eod=False)
             if not reason:
+                db.execute(text("UPDATE scalp_trades SET peak=:p WHERE id=:i"), {"p": peak, "i": oid})
                 continue
             held = int(db.execute(text(
                 "SELECT qty FROM paper_desk_positions WHERE ticker=:t"),
@@ -439,14 +470,15 @@ def _tick_inner(db, force: bool = False) -> dict[str, Any]:
 
     # ---- 1) EXITS (protect first) ---- #
     open_rows = db.execute(text(
-        "SELECT id, ticker, name, qty, entry FROM scalp_trades WHERE status='OPEN'")).fetchall()
+        "SELECT id, ticker, name, qty, entry, COALESCE(peak, entry) FROM scalp_trades WHERE status='OPEN'")).fetchall()
     open_codes = set()
-    for oid, tk, name, qty, entry in open_rows:
+    for oid, tk, name, qty, entry, peak in open_rows:
         px = live.get(tk) or _px(tk)
         if px is None:
             open_codes.add(tk)
             continue
         entry = float(entry)
+        peak = max(float(peak or entry), px)
         reason = None
         if cfg["strategy"] == "candle":
             # 캔들 3-2 exits: ride while rising (one down candle forgiven);
@@ -459,14 +491,12 @@ def _tick_inner(db, force: bool = False) -> dict[str, Any]:
             elif eod:
                 reason = "EOD"
         else:
-            if px >= entry * (1 + cfg["take_pct"] / 100):
-                reason = "TAKE"      # small win — the whole point
-            elif px <= entry * (1 - cfg["stop_pct"] / 100):
-                reason = "STOP"      # his rule: hold dips, cut at −1%
-            elif eod:
-                reason = "EOD"       # a scalper sleeps flat
+            # ripple: LET WINNERS RUN — trailing exit (boss 2026-07-21). Rides up while
+            # rising; sells when it turns down off the peak (never below +take%); −1% stop.
+            reason = _ripple_exit(entry, px, peak, cfg["take_pct"], cfg["stop_pct"], eod)
         if not reason:
             _sell_hint.pop(tk, None)
+            db.execute(text("UPDATE scalp_trades SET peak=:p WHERE id=:i"), {"p": peak, "i": oid})
             open_codes.add(tk)
             continue
         if cfg["mode"] == "semi":

@@ -1400,7 +1400,8 @@ export default function ScalpDesk({ mode }: { mode: ScalpMode }) {
                   <td className="px-2">
                     <span className="text-[10.5px] px-1.5 py-0.5 rounded-full font-bold"
                       style={{ background: "var(--bg-elevated)", color: r.exit_reason === "TAKE" ? "#2e7d32" : r.exit_reason === "STOP" ? RED : "var(--text-muted)" }}>
-                      {r.exit_reason === "TAKE" ? t("작은 승리", "small win") : r.exit_reason === "STOP" ? t("손절", "stop")
+                      {r.exit_reason === "TRAIL" ? t("📈 추적 익절 (승리 라이딩)", "📈 trailing win (rode it up)")
+                        : r.exit_reason === "TAKE" ? t("작은 승리", "small win") : r.exit_reason === "STOP" ? t("손절", "stop")
                         : r.exit_reason === "CANDLE2" ? t("🕯️ 2연속 음봉", "🕯️ 2 down candles")
                         : r.exit_reason === "EOD" ? t("장마감 정리", "EOD flat") : r.exit_reason === "EXTERNAL" ? t("외부 매도", "external") : r.exit_reason}
                     </span>
