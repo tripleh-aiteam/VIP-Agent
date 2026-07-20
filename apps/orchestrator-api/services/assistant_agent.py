@@ -4816,7 +4816,10 @@ def run_agent(
     under channel='assistant_overlay' so recall_history can find it
     later). Persistence is best-effort and never blocks the response."""
     # MULTI-PART: 'A? 그리고 B? 그리고 C?' → answer EVERY sub-question (was: only the last).
-    _parts = ([] if (confirmed_tool or attachment_ids)
+    # BUT a single PREDICTION question restated with two '?' ('what will price be tomorrow?
+    # How many percent up or down?') is ONE question — don't split it, or it misses the
+    # prediction-interval lane (boss 2026-07-20). Same for the future-prediction phrasing.
+    _parts = ([] if (confirmed_tool or attachment_ids or _is_future_prediction(transcript))
               else _split_subquestions(transcript))
     # COMPOUND why+advice with a single '?': 'Why skhynix increased 11% and should I buy
     # or hold?' — the '?'-based splitter can't see it, so only the advice part answered
