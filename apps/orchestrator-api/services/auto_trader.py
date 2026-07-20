@@ -35,8 +35,9 @@ CHEAP_PX = 100_000           # <₩100k/share = the cheap tier (boss exit tiers 
 CIRCUIT_DAY_NET = -15.0      # disaster backstop only (boss removed the tight -5% for the
                              # test): ≈ −1.5% of the account in one day — beyond any
                              # normal bad day; exits always keep being managed
-MIN_CONF = 65                # raised 60→65 (boss 2026-07-13 loss audit): signals need
-                             # stronger proof until the measured win-rate recovers
+MIN_CONF = 55                # boss 2026-07-20: lowered 65→55 for the live 3-algo test so
+                             # Algorithm 1 actually takes setups (at 65 only 1 of 8 qualified
+                             # and it sat idle). Raise back after the comparison.
 DAY_LOSS_BRAKE_PCT = 1.0     # today's REALIZED losses (all trades, his + machine's)
                              # reach 1% of equity → every buy signal halts until tomorrow
 
