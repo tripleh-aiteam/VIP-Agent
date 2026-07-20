@@ -5232,6 +5232,35 @@ def _run_agent_impl(
         return {"intent": "adr_price", "language": lang, "reply": _fb, "action": None,
                 "speak": True, "transcript": transcript, "tool_used": None}
 
+    # === 📈 INTRADAY-HIGH FORECAST (boss 2026-07-20): "prediction of today's highest
+    # price and what time" was returning the CURRENT price (hallucination). Runs FIRST —
+    # before the P&L ('얼마') / portfolio / price intercepts that were swallowing the KO
+    # phrasing ("...얼마까지 예측?"). forecast/예측 + high/최고가/what-time → real estimate
+    # (range + time window from 1yr intraday pattern). Named stocks → each; both bots. ===
+    if not confirmed_tool and not attachment_ids:
+        try:
+            from services.intraday_high_forecast import is_high_forecast_question as _is_hf
+            if _is_hf(transcript):
+                from services.intraday_high_forecast import forecast as _hf
+                _hf_stocks = list(dict.fromkeys(_all_stocks_in_query(transcript)))[:3]
+                if not _hf_stocks:
+                    try:
+                        from services.stock_resolver import resolve_one as _r1h
+                        _ch, _nh = (_r1h(transcript or "") or (None, None))[:2]
+                        if _ch:
+                            _hf_stocks = [(_ch, _nh or _ch)]
+                    except Exception:
+                        pass
+                if _hf_stocks:
+                    _parts = [p for (_c, _n) in _hf_stocks if (p := _hf(db, _c, _n, lang))]
+                    if _parts:
+                        return {"intent": "high_forecast", "language": lang,
+                                "reply": "\n\n".join(_parts)[:9000], "action": None,
+                                "speak": True, "transcript": transcript,
+                                "tool_used": "high_forecast"}
+        except Exception as e:
+            log.warning(f"high-forecast lane failed: {str(e)[:120]}")
+
     # === MY P&L — 'Yesterday how much I won?' → the 모의투자 desk's realized result for
     # that period (must run BEFORE context-math/price-history, which stole this question).
     if (not confirmed_tool and not attachment_ids and transcript
@@ -5268,35 +5297,6 @@ def _run_agent_impl(
             return {"intent": "paper_portfolio", "language": lang, "reply": _pf,
                     "action": None, "speak": True, "transcript": transcript,
                     "tool_used": "paper_desk"}
-
-    # === 📈 INTRADAY-HIGH FORECAST (boss 2026-07-20): "prediction of today's highest
-    # price and what time" was returning the CURRENT price (hallucination). Route a
-    # forecast/예측 + high/최고가/what-time question to a real estimate (range + time
-    # window from 1yr intraday pattern) BEFORE the price-quote intercept swallows it.
-    # Named stocks → each; both bots, KO/EN. ===
-    if not confirmed_tool and not attachment_ids:
-        try:
-            from services.intraday_high_forecast import is_high_forecast_question as _is_hf
-            if _is_hf(transcript):
-                from services.intraday_high_forecast import forecast as _hf
-                _hf_stocks = list(dict.fromkeys(_all_stocks_in_query(transcript)))[:3]
-                if not _hf_stocks:
-                    try:
-                        from services.stock_resolver import resolve_one as _r1h
-                        _ch, _nh = (_r1h(transcript or "") or (None, None))[:2]
-                        if _ch:
-                            _hf_stocks = [(_ch, _nh or _ch)]
-                    except Exception:
-                        pass
-                if _hf_stocks:
-                    _parts = [p for (_c, _n) in _hf_stocks if (p := _hf(db, _c, _n, lang))]
-                    if _parts:
-                        return {"intent": "high_forecast", "language": lang,
-                                "reply": "\n\n".join(_parts)[:9000], "action": None,
-                                "speak": True, "transcript": transcript,
-                                "tool_used": "high_forecast"}
-        except Exception as e:
-            log.warning(f"high-forecast lane failed: {str(e)[:120]}")
 
     # === 🌙 OVERNIGHT hold-or-sell lane (boss 2026-07-16): "팔고 갈까 들고 갈까?"
     # / "should I hold overnight?" — measured-statistics verdict (backtest found
