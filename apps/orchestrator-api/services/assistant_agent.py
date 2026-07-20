@@ -5426,6 +5426,25 @@ def _run_agent_impl(
         except Exception as e:
             log.warning(f"turn timing failed: {str(e)[:120]}")
 
+    # === 🏁 3-STRATEGY TOURNAMENT ("오늘 전략 대결 / 알고리즘 어느 게 이기고 있어 / which
+    # algorithm is winning today") — live shadow race: Algo1 vs Ripple vs Candle 3-2 on
+    # the same basket, same day, graded by avg-%-per-trade. Runs BEFORE the Method-4
+    # cycle compare so the boss's "which one is winning" reaches the tournament. ===
+    if (not confirmed_tool and not attachment_ids and any(
+            k in (transcript or "").lower() for k in (
+                "전략 대결", "세 전략", "3개 전략", "세개 전략", "오늘 어느 알고리즘", "어느 알고리즘이 이기",
+                "알고리즘 어느", "어느 전략이 이기", "누가 이기고", "which algorithm is winning",
+                "which strategy is winning", "tournament", "algo1 vs", "three strateg"))):
+        try:
+            from services.strategy_tournament import report as _trep
+            _r = _trep(db, lang)
+            if _r:
+                return {"intent": "tournament", "language": lang, "reply": _r,
+                        "action": None, "speak": True, "transcript": transcript,
+                        "tool_used": "tournament"}
+        except Exception as e:
+            log.warning(f"tournament report failed: {str(e)[:120]}")
+
     # === Method-4 STRATEGY COMPARISON ("전략 비교/compare strategies/1% 전략") — honest
     # replay of A(fixed ±1%, no time limit) vs B(RSI-timed ±1% cycles) on stored 5-min bars.
     if (not confirmed_tool and not attachment_ids and any(

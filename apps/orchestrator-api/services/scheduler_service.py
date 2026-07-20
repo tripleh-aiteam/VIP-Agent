@@ -2094,6 +2094,64 @@ def init_scheduler():
     )
     log.info("scheduler: overnight-call grading registered (09:06 KST Mon-Fri)")
 
+    # 🏁 3-strategy shadow tournament (boss 2026-07-20): Algo1 / Ripple / Candle
+    # trade the same basket in parallel virtual books, 30s tick during market.
+    def _tournament_tick():
+        from datetime import datetime, timedelta, timezone
+        kst = datetime.now(timezone(timedelta(hours=9)))
+        if kst.weekday() >= 5 or not (9 * 60 <= kst.hour * 60 + kst.minute <= 15 * 60 + 22):
+            return
+        db = SessionLocal()
+        try:
+            from services.strategy_tournament import tick
+            r = tick(db)
+            if r.get("opened") or r.get("closed"):
+                log.info(f"tournament: {r}", extra={"action": "tournament.tick"})
+        except Exception as e:
+            log.warning(f"tournament tick failed: {str(e)[:120]}")
+        finally:
+            db.close()
+
+    _scheduler.add_job(
+        _tournament_tick, "interval", seconds=30,
+        id="strategy-tournament", replace_existing=True,
+        max_instances=1, coalesce=True,
+    )
+
+    def _tournament_open_reset():
+        from services.strategy_tournament import _reset_daily
+        _reset_daily()
+
+    _scheduler.add_job(
+        _tournament_open_reset,
+        CronTrigger(day_of_week="mon-fri", hour=9, minute=0, timezone="Asia/Seoul"),
+        id="tournament-reset", replace_existing=True, max_instances=1, coalesce=True,
+    )
+
+    def _tournament_report():
+        db = SessionLocal()
+        try:
+            from services.strategy_tournament import report
+            txt = report(db, "ko")
+            log.info(f"tournament report:\n{txt}", extra={"action": "tournament.report"})
+            try:
+                from services.report_email import send_plain_email, default_recipients
+                for _to in default_recipients():
+                    send_plain_email(_to, "🏁 오늘 전략 대결 결과 (Algo1 vs 잔물결 vs 캔들 3-2)", txt)
+            except Exception as _e:
+                log.warning(f"tournament email failed: {str(_e)[:120]}")
+        except Exception as e:
+            log.warning(f"tournament report failed: {str(e)[:120]}")
+        finally:
+            db.close()
+
+    _scheduler.add_job(
+        _tournament_report,
+        CronTrigger(day_of_week="mon-fri", hour=15, minute=25, timezone="Asia/Seoul"),
+        id="tournament-report", replace_existing=True, max_instances=1, coalesce=True,
+    )
+    log.info("scheduler: strategy tournament registered (30s tick + 15:25 report)")
+
     # Hourly snapshot capture — every hour at :05. Saves one 'part' per report
     # type (newspaper/youtube/kiwoom) WITHOUT emailing; the 6 AM build reads all
     # ~24 parts of the day and synthesises the big report. Plus daily cleanup.

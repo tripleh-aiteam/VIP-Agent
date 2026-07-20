@@ -62,6 +62,14 @@ Smart-analyst lane + concise mode + language purity + deep graph analysis + matr
 - **Wiring**: prepended in `_run_chain`'s decide path — reuses the decide dict (no re-run), so EVERY buy/sell/hold answer leads with the scoreboard. Covers all 4 surfaces (AI Advisor relays advice → VIP run_agent). Brain verdict logged via call_grader (intent="brain") for grading.
 - Local E2E: 삼성전자 살까 / should I buy SK hynix — both lead with the bilingual scoreboard, full reasoning underneath.
 
+### [09:30] 🏁 3-strategy shadow tournament (boss: "run all 3 same-condition today, report after 15:20")
+
+- **Why shadow:** Algo1 + Algo2 share ONE paper account and Algo2 runs one strategy at a time — a live 3-way race is impossible without interference. Solution: three separate VIRTUAL books, same basket (6 liquid stocks), same live prices, ₩10M notional each so the honest score is avg-%-per-trade.
+- **New** [services/strategy_tournament.py](apps/orchestrator-api/services/strategy_tournament.py): DB-persisted positions + trades (survives Render restart). Rules mirror the live engines — Ripple (bounce entry, +0.4% take / −1% stop / 15:18 EOD), Candle 3-2 (3-up buy / 2-down sell / −1% / EOD), Algo1 (decide() BUY once per stock per day, held, marked out 15:20). `tick()` + `report()` (per-strategy trips/win%/avg-per-trade/net, honest winner by avg-per-trade with the "win rate is misleading" note).
+- **Scheduler**: 30s tick (market hours), 09:00 reset, 15:25 auto-email to the boss (report_email.send_plain_email).
+- **Chatbot**: "오늘 전략 대결 / which algorithm is winning today" → live report, both bots KO/EN (routed before the Method-4 cycle compare).
+- Tables cleared after local test → clean prod race from market open.
+
 ### Next
 
 - Phase D: weekly auto-scoreboard report (scoreboard.log accumulating nightly).
