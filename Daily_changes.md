@@ -70,6 +70,13 @@ Smart-analyst lane + concise mode + language purity + deep graph analysis + matr
 - **Chatbot**: "오늘 전략 대결 / which algorithm is winning today" → live report, both bots KO/EN (routed before the Method-4 cycle compare).
 - Tables cleared after local test → clean prod race from market open.
 
+### [09:40] Boss's 4-item round: prediction hallucination · 3-algo advice · graph-analysis framing · dead heartbeat
+
+- **#4 (root cause found) — market open but NO trading.** Live scalp + tournament stayed frozen for 2.5 min while the instance was WARM, yet a manual /scalp/tick worked instantly → the engines are fine but the interval HEARTBEAT wasn't firing (APScheduler interval jobs not executing on prod and/or the external cron-job.org pinger paused). **Fix:** [services/inprocess_ticker.py](apps/orchestrator-api/services/inprocess_ticker.py) — a dead-simple daemon thread (independent of APScheduler) started in [main.py](apps/orchestrator-api/main.py), ticks scalp + Algo-1 exits + tournament every 15s during market hours. Guarded (locks/ON CONFLICT), safe alongside cron. **Boss action item: also confirm the cron-job.org job pinging `/paper-desk/scalp/tick` is enabled** (belt-and-suspenders; also keeps a sleeping instance awake).
+- **#1 prediction hallucination** — "prediction of today's highest price and what time" returned the CURRENT price. [services/intraday_high_forecast.py](apps/orchestrator-api/services/intraday_high_forecast.py): real intraday-HIGH forecast (likely range + time-of-day window from 1yr pattern + today's path), honest caveat, NOT the quote card. Lane placed before the price intercept; both stocks, both bots, KO/EN.
+- **#3 advice showed only Algo 1** → `decision_brain.three_algo_block()`: 🧭 shows all three (🤖 Algo1 daily verdict, ⚡ Ripple live read, 🕯️ Candle live read) with the "different horizons" note. Prepended in the decide answer under the scoreboard.
+- **#2 graph-analysis basis** — scoreboard now states "📈 실시간 차트 분석(1분·5분·일봉)을 여러 알고리즘으로 종합" so it's clearly algorithmic, both languages.
+
 ### Next
 
 - Phase D: weekly auto-scoreboard report (scoreboard.log accumulating nightly).

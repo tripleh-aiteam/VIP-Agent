@@ -95,6 +95,17 @@ async def lifespan(app: FastAPI):
 
     init_scheduler()
 
+    # ⏱️ In-process heartbeat (boss 2026-07-20): drives the live scalp engine +
+    # Algo-1 exits + the 3-strategy tournament every 15s during market hours,
+    # INDEPENDENT of APScheduler (whose interval jobs were not firing on prod —
+    # market was open but nothing traded). Guarded ticks, safe alongside cron.
+    try:
+        from services.inprocess_ticker import start_ticker as _start_ticker
+        _start_ticker()
+        print("[startup] in-process heartbeat ticker launched")
+    except Exception as _e:
+        print(f"[startup] in-process ticker not started: {_e!r}")
+
     # Warm up the LLM provider connection in the background so the FIRST chat request
     # after a deploy/restart isn't cold (a cold first call was a source of the
     # intermittent "I don't know"). Best-effort, non-blocking — never delays startup.
