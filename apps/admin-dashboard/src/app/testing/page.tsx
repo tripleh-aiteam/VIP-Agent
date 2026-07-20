@@ -9,6 +9,7 @@ import { useLanguage } from "@/components/i18n";
 
 const RED = "#d32f2f";
 const PURPLE = "#7b1fa2";
+const TEAL = "#00838f";
 
 export default function TestingIndex() {
   const { t } = useLanguage();
@@ -22,7 +23,7 @@ export default function TestingIndex() {
            "Both algorithms share the same paper account (same cash, same stocks). Records are kept separately.")}
       </p>
 
-      <div className="mt-6 grid md:grid-cols-2 gap-5">
+      <div className="mt-6 grid md:grid-cols-3 gap-5">
         {/* ---- Algorithm 1 — the 1-hour engine ---- */}
         <div className="rounded-2xl border-2 p-5" style={{ borderColor: RED, background: "rgba(211,47,47,0.04)" }}>
           <div className="text-[18px] font-extrabold" style={{ color: RED }}>
@@ -63,6 +64,28 @@ export default function TestingIndex() {
             </Link>
             <Link href="/testing/scalp/manual" className="text-[13.5px] font-extrabold px-4 py-2 rounded-xl border" style={{ color: PURPLE, borderColor: PURPLE }}>
               {t("수동 (호가창+차트)", "Manual (order book)")}
+            </Link>
+          </div>
+        </div>
+
+        {/* ---- Algorithm 3 — the candle trader ---- */}
+        <div className="rounded-2xl border-2 p-5" style={{ borderColor: TEAL, background: "rgba(0,131,143,0.04)" }}>
+          <div className="text-[18px] font-extrabold" style={{ color: TEAL }}>
+            🕯️ {t("알고리즘 3 — 캔들 매매 (NEW)", "Algorithm 3 — candle trader (NEW)")}
+          </div>
+          <p className="mt-2 text-[13px] leading-relaxed text-[var(--text-secondary)]">
+            {t("1분봉 캔들만 봅니다. 3연속 양봉이 뜨면 매수, 3연속 음봉이 뜨면 매도합니다 (−1% 손절, 15:18 정리). 매수·매도 판단에 짝꿍 종목과 거래량도 함께 확인합니다. 알고리즘 2와 똑같은 3가지 모드.",
+               "Watches only the 1-min candles. 3 up candles in a row → buy, 3 down in a row → sell (−1% stop, flat 15:18). It also checks the partner stock and volume when deciding. Same 3 modes as Algorithm 2.")}
+          </p>
+          <div className="mt-4 flex flex-wrap gap-2">
+            <Link href="/testing/candle3/auto" className="text-[13.5px] font-extrabold px-4 py-2 rounded-xl text-white" style={{ background: TEAL }}>
+              {t("자동 (기계가 반복)", "Auto")}
+            </Link>
+            <Link href="/testing/candle3/semi" className="text-[13.5px] font-extrabold px-4 py-2 rounded-xl border" style={{ color: "#e65100", borderColor: "#e65100" }}>
+              {t("반자동 (추천+내 손)", "Semi-Auto")}
+            </Link>
+            <Link href="/testing/candle3/manual" className="text-[13.5px] font-extrabold px-4 py-2 rounded-xl border" style={{ color: TEAL, borderColor: TEAL }}>
+              {t("수동", "Manual")}
             </Link>
           </div>
         </div>

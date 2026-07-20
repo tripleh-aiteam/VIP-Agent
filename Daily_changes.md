@@ -92,6 +92,14 @@ Smart-analyst lane + concise mode + language purity + deep graph analysis + matr
 - ~1,170 chars — detailed but still structured (vs the old ~4,000 dump). Shows honest "1분봉 데이터 없음(키움 피드)" when Kiwoom 8050 blocks the 1-min feed.
 - Also today: deploy unblocked (boss reconnected Render↔GitHub), prediction lane moved before the P&L/portfolio intercepts (KO '얼마까지 예측' fix), AI Advisor forecast relay cue added.
 
+### [12:30] 🕯️ Algorithm 3 — the candle trader (boss: "make a 3rd algorithm for candle")
+
+- **New engine** [services/candle_trader.py](apps/orchestrator-api/services/candle_trader.py): a dedicated copy of Algorithm 2's shape, brain = **3 up 1-min candles → BUY / 3 down → SELL**, −1% stop, EOD flat, watches the partner stock + volume as confirmation. Own `candle_state` + `candle_trades` tables (so the 3 algorithms compare cleanly), shared paper account (source='algo3'), auto/semi/manual modes. Reuses scalp_trader's price/streak helpers.
+- **Endpoints** [routers/paper_desk.py](apps/orchestrator-api/routers/paper_desk.py): /paper-desk/candle3/{status,toggle,params,buy,sell,tick}. Ticks on the same cron `/scalp/tick` beat + the in-process 15s ticker.
+- **Frontend**: [testing/candle3-desk.tsx](apps/admin-dashboard/src/app/testing/candle3-desk.tsx) + /testing/candle3/[mode] route — 3 modes, SK+삼성 default cards + dropdown, live candle-signal bars, ON/OFF + stop/size dials, semi buy/sell, activity table (filters + win% + day total). Landing page now shows **3 algorithm cards**.
+- **3-way comparison** (Algo1 · Algo2 Ripple · Algo3 Candle: trips/win%/net ₩) strip on all three pages, via /paper-desk/algo-compare (groups by source).
+- **Chatbot**: the recommendation's 3-algorithm block now reads 🤖 Algo1 / ⚡ Algo2 Ripple / 🕯️ Algo3 Candle (3-up/3-down), both bots KO/EN.
+
 ### Next
 
 - Phase D: weekly auto-scoreboard report (scoreboard.log accumulating nightly).

@@ -1,0 +1,347 @@
+"use client";
+
+// 🕯️ ALGORITHM 3 — the boss's candle trader (2026-07-20).
+// Brain: 1-min candles — 3 up in a row → BUY, 3 down in a row → SELL, −1% stop,
+// flat 15:18; watches the partner stock + volume. Same 3-mode shape as Algo 2.
+import { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
+import { api, apiPost } from "@/components/api";
+import { useLanguage } from "@/components/i18n";
+
+const TEAL = "#00838f";
+const RED = "#d32f2f";
+const BLUE = "#1565c0";
+const fmt = (n?: number | null) => (n == null ? "-" : Number(n).toLocaleString());
+const pnlCol = (v?: number | null) => (v == null ? "var(--text-muted)" : v > 0 ? RED : v < 0 ? BLUE : "var(--text-muted)");
+const kst = (iso?: string | null) => {
+  if (!iso) return "";
+  const s = /Z$|[+-]\d{2}:\d{2}$/.test(iso) ? iso : `${iso}Z`;
+  return new Date(s).toLocaleString("sv-SE", { timeZone: "Asia/Seoul" }).slice(5, 16);
+};
+const kstSec = (iso?: string | null) => {
+  if (!iso) return "";
+  const s = /Z$|[+-]\d{2}:\d{2}$/.test(iso) ? iso : `${iso}Z`;
+  return new Date(s).toLocaleString("sv-SE", { timeZone: "Asia/Seoul" }).slice(11, 19);
+};
+const heldFor = (a?: string | null, b?: string | null, ko = true) => {
+  if (!a || !b) return "";
+  const pa = /Z$|[+-]\d{2}:\d{2}$/.test(a) ? a : `${a}Z`;
+  const pb = /Z$|[+-]\d{2}:\d{2}$/.test(b) ? b : `${b}Z`;
+  const sec = Math.max(0, Math.round((new Date(pb).getTime() - new Date(pa).getTime()) / 1000));
+  const m = Math.floor(sec / 60), s = sec % 60, h = Math.floor(m / 60);
+  if (h > 0) return ko ? `${h}시간 ${m % 60}분` : `${h}h ${m % 60}m`;
+  if (m > 0) return ko ? `${m}분 ${s}초` : `${m}m ${s}s`;
+  return ko ? `${s}초` : `${s}s`;
+};
+
+type C3Stock = {
+  code: string; name: string; price?: number | null; chg?: number | null; state: "WAIT" | "LONG";
+  entry?: number | null; qty?: number | null; pnl_pct?: number | null; stop_at?: number | null;
+  up: number; dn: number; n: number; candle_signal: "BUY" | "SELL" | "WAIT"; advice?: "CANDLE" | "STOP" | null;
+};
+type C3Signal = { code: string; name: string; price: number; qty: number; why: string; ts: number };
+type C3Status = {
+  enabled: boolean; stop_pct: number; pos_pct: number; codes: string[]; mode?: "auto" | "semi";
+  signals?: C3Signal[]; stocks: C3Stock[]; market_open?: boolean; rule_ko?: string; rule_en?: string;
+  today: { trades: number; wins: number; net_pct_sum: number; realized_won?: number };
+  recent: { name: string; qty: number; entry: number; exit_price?: number | null; exit_reason?: string | null;
+            net_pct?: number | null; won?: number | null; closed_at?: string; opened_at?: string; why?: string | null }[];
+};
+type DeskState = { cash: number; positions_value: number; equity: number; total_pnl?: number; total_pnl_pct?: number };
+type AlgoCmp = Record<string, { trips: number; wins: number; win_rate: number | null; net_won: number }>;
+type StockItem = { code: string; name: string; market: string };
+type QuoteRes = { ok: boolean; ticker?: string; name?: string; error?: string };
+
+export type C3Mode = "auto" | "semi" | "manual";
+const MAINS = ["000660", "005930"];
+
+export default function Candle3Desk({ mode }: { mode: C3Mode }) {
+  const { lang } = useLanguage();
+  const t = (ko: string, en: string) => (lang === "ko" ? ko : en);
+  const [sc, setSc] = useState<C3Status | null>(null);
+  const [st, setSt] = useState<DeskState | null>(null);
+  const [cmp, setCmp] = useState<AlgoCmp | null>(null);
+  const [note, setNote] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [showExtra, setShowExtra] = useState<string[]>([]);
+  const [stockList, setStockList] = useState<StockItem[]>([]);
+  const [addQ, setAddQ] = useState("");
+  // activity filters
+  const [fRes, setFRes] = useState<"ALL" | "WIN" | "LOSE">("ALL");
+  const [fName, setFName] = useState("ALL");
+  const [dayTotal, setDayTotal] = useState(false);
+
+  const load = () => {
+    api<C3Status>("/paper-desk/candle3/status").then(setSc).catch(() => {});
+    api<DeskState>("/paper-desk/state").then(setSt).catch(() => {});
+  };
+  useEffect(() => { load(); const i = setInterval(load, 4000); return () => clearInterval(i); }, []);
+  useEffect(() => {
+    const l = () => api<{ today: AlgoCmp }>("/paper-desk/algo-compare").then((r) => setCmp(r.today || {})).catch(() => {});
+    l(); const i = setInterval(l, 15000); return () => clearInterval(i);
+  }, []);
+  useEffect(() => {
+    if (mode === "manual" || !sc?.mode || sc.mode === mode) return;
+    apiPost(`/paper-desk/candle3/params?mode=${mode}`).then(load).catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mode, sc?.mode]);
+  useEffect(() => {
+    api<{ stocks: StockItem[] }>("/paper-desk/stocks").then((r) => setStockList(r.stocks || [])).catch(() => {});
+  }, []);
+
+  const saveCodes = async (codes: string[]) => { await apiPost(`/paper-desk/candle3/params?codes=${encodeURIComponent(codes.join(","))}`); load(); };
+  const searchAdd = async () => {
+    const q = addQ.trim(); if (!q) return;
+    try {
+      const r = await api<QuoteRes>(`/paper-desk/quote?q=${encodeURIComponent(q)}`);
+      if (r.ok && r.ticker) { await saveCodes(Array.from(new Set([...(sc?.codes || MAINS), r.ticker]))); setAddQ(""); setNote(`✅ ${r.name || r.ticker}`); }
+      else setNote(t(`'${q}' 종목을 찾지 못했어요`, `'${q}' not found`));
+    } catch { setNote(t("검색 실패", "search failed")); }
+  };
+  const toggle = async () => {
+    if (!sc) return; const on = !sc.enabled;
+    if (on && !confirm(t("알고리즘 3(캔들)을 켤까요? 1분봉 3연속 양봉에 사고, 3연속 음봉에 팝니다 (가짜 돈).",
+                         "Turn ON Algorithm 3 (candle)? Buys on 3 up 1-min candles, sells on 3 down (fake money)."))) return;
+    await apiPost(`/paper-desk/candle3/toggle?on=${on}`); load();
+  };
+  const setParam = async (k: "stop_pct" | "pos_pct", v: number) => { await apiPost(`/paper-desk/candle3/params?${k}=${v}`); load(); };
+
+  const cards = useMemo(() => {
+    if (!sc) return [] as C3Stock[];
+    return sc.stocks.filter((s) => MAINS.includes(s.code) || showExtra.includes(s.code));
+  }, [sc, showExtra]);
+
+  const sigWord = (s: C3Stock) =>
+    s.candle_signal === "BUY" ? t(`🔥 ${s.up}연속 양봉 — 매수 신호`, `🔥 ${s.up} up candles — BUY`)
+    : s.candle_signal === "SELL" ? t(`❄️ ${s.dn}연속 음봉 — 매도 신호`, `❄️ ${s.dn} down candles — SELL`)
+    : s.up === 2 ? t("양봉 2개 — 1개 더 나오면 매수", "2 up — one more = BUY")
+    : s.dn === 2 ? t("음봉 2개 — 1개 더 나오면 매도", "2 down — one more = SELL")
+    : t("관망 — 3연속 대기 중", "watching — waiting for 3 in a row");
+
+  return (
+    <div className="max-w-[1180px] mx-auto px-4 py-6">
+      {/* header */}
+      <div className="flex items-center gap-3 flex-wrap">
+        <Link href="/testing" className="text-[12px] font-bold text-[var(--text-muted)] hover:opacity-70">← {t("알고리즘 선택", "algorithms")}</Link>
+        <h1 className="text-[19px] font-extrabold" style={{ color: TEAL }}>🕯️ {t("알고리즘 3 — 캔들 매매", "Algorithm 3 — candle trader")}</h1>
+        <div className="flex gap-1.5">
+          {(["auto", "semi", "manual"] as const).map((m) => (
+            <Link key={m} href={`/testing/candle3/${m}`} className="text-[12px] font-extrabold px-3 py-1.5 rounded-lg"
+              style={mode === m ? { background: m === "semi" ? "#e65100" : TEAL, color: "#fff" } : { border: "1px solid var(--border-default)", color: "var(--text-secondary)" }}>
+              {m === "auto" ? t("자동", "Auto") : m === "semi" ? t("반자동", "Semi-Auto") : t("수동", "Manual")}
+            </Link>
+          ))}
+        </div>
+      </div>
+
+      {/* account */}
+      {st && (
+        <div className="mt-3 flex items-center gap-4 flex-wrap text-[12px] rounded-xl border px-4 py-2.5" style={{ borderColor: "var(--border-default)", background: "var(--bg-elevated)" }}>
+          <span className="text-[var(--text-muted)]">{t("현금", "Cash")} <b className="text-[13.5px] text-[var(--text-primary)] tabular-nums">₩{fmt(st.cash)}</b></span>
+          <span className="text-[var(--text-muted)]">{t("총자산", "Equity")} <b className="text-[14px] text-[var(--text-primary)] tabular-nums">₩{fmt(st.equity)}</b></span>
+          <span className="ml-auto text-[11px] text-[var(--text-muted)]">{sc?.rule_ko && (lang === "ko" ? sc.rule_ko : sc.rule_en)}</span>
+        </div>
+      )}
+
+      {/* 3-way compare */}
+      {cmp && (cmp.algo1 || cmp.algo2 || cmp.algo3) && (
+        <div className="mt-4 rounded-xl border overflow-hidden" style={{ borderColor: "var(--border-default)" }}>
+          <div className="px-4 py-2 text-[12.5px] font-extrabold text-[var(--text-primary)]" style={{ background: "var(--bg-elevated)" }}>
+            📊 {t("오늘 비교 — 알고리즘 1 · 2 · 3", "Today — Algorithm 1 · 2 · 3")}
+          </div>
+          <div className="grid md:grid-cols-3 gap-3 p-3">
+            {([["algo1", "🧠 " + t("알고리즘 1", "Algorithm 1"), RED], ["algo2", "⚡ " + t("알고리즘 2 잔물결", "Algo 2 Ripple"), "#7b1fa2"], ["algo3", "🕯️ " + t("알고리즘 3 캔들", "Algo 3 Candle"), TEAL]] as const).map(([k, label, col]) => {
+              const a = cmp[k];
+              return (
+                <div key={k} className="rounded-xl border px-4 py-3 text-[12.5px] tabular-nums" style={{ borderColor: k === "algo3" ? TEAL : "var(--border-default)", background: "var(--bg-elevated)" }}>
+                  <b className="text-[13px]" style={{ color: col }}>{label}</b>
+                  {a ? (
+                    <div className="mt-1 flex items-center gap-3 flex-wrap">
+                      <span>🔄 {t(`${a.trips}회전`, `${a.trips} trips`)}</span>
+                      <span>🏆 {t(`승률 ${a.win_rate ?? "-"}%`, `${a.win_rate ?? "-"}% win`)}</span>
+                      <span className="font-extrabold" style={{ color: pnlCol(a.net_won) }}>{a.net_won > 0 ? "+" : ""}₩{fmt(a.net_won)}</span>
+                    </div>
+                  ) : <div className="mt-1 text-[var(--text-muted)]">{t("오늘 매매 없음", "no trades today")}</div>}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* semi buy cards */}
+      {mode === "semi" && sc && (sc.signals || []).length > 0 && (
+        <div className="mt-4 grid md:grid-cols-2 gap-3">
+          {(sc.signals || []).map((g) => (
+            <div key={g.code} className="rounded-2xl border-2 px-4 py-3" style={{ borderColor: "#e65100", background: "rgba(230,81,0,0.07)" }}>
+              <div className="text-[15px] font-extrabold" style={{ color: "#e65100" }}>🔔 {t(`매수 추천 — ${g.name}`, `BUY recommendation — ${g.name}`)}
+                <span className="ml-2 tabular-nums text-[var(--text-primary)]">₩{fmt(g.price)}</span></div>
+              <div className="mt-1 text-[11.5px] text-[var(--text-secondary)]">{g.why}</div>
+              <div className="mt-2 flex items-center gap-2">
+                <span className="text-[12.5px] font-bold tabular-nums">{t(`수량 ${fmt(g.qty)}주`, `${fmt(g.qty)} sh`)}</span>
+                <button disabled={busy} onClick={async () => {
+                  setBusy(true);
+                  try { const r = await apiPost<{ ok: boolean; error?: string; stop_at?: number }>(`/paper-desk/candle3/buy?code=${g.code}`);
+                    setNote(r.ok ? t(`✅ 매수 — 3연속 음봉이 나오면 매도 추천 (손절 ₩${fmt(r.stop_at)})`, `✅ bought — SELL advice on 3 down candles (stop ₩${fmt(r.stop_at)})`) : `❌ ${r.error}`);
+                  } catch (e) { setNote(`❌ ${(e as Error).message}`); }
+                  setBusy(false); load();
+                }} className="text-[14px] font-extrabold px-6 py-1.5 rounded-xl text-white disabled:opacity-50" style={{ background: RED }}>{t("매수", "BUY")}</button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+      {note && <div className="mt-2 text-[12.5px] font-bold text-[var(--text-primary)]">{note}</div>}
+
+      {/* control + dials */}
+      {sc && (
+        <div className="mt-4 rounded-2xl border-2 p-4" style={{ borderColor: mode === "semi" ? "#e65100" : TEAL, background: "rgba(0,131,143,0.04)" }}>
+          <div className="flex items-center gap-3 flex-wrap">
+            <button onClick={toggle} className="text-[14px] font-extrabold px-5 py-2 rounded-xl text-white" style={{ background: sc.enabled ? "#2e7d32" : "var(--text-muted)" }}>
+              {sc.enabled ? t("● 켜짐 — 끄기", "● ON — turn off") : t("○ 꺼짐 — 켜기", "○ OFF — turn on")}
+            </button>
+            <span className="text-[12px] text-[var(--text-secondary)]">
+              {!sc.enabled ? t("꺼져 있음 — 기계는 관찰만 합니다", "off — the machine only watches")
+                : mode === "semi" ? t("1분봉 3연속 양봉 → 🔔 매수 추천 · 3연속 음봉 → 매도 추천 (−1% 손절)", "3 up candles → 🔔 buy advice · 3 down → SELL advice (−1% stop)")
+                : t("1분봉 3연속 양봉 → 매수 · 3연속 음봉 → 매도 · −1% 손절 · 15:18 정리", "3 up candles → buy · 3 down → sell · −1% stop · flat 15:18")}
+            </span>
+            <div className="ml-auto flex items-center gap-2 text-[11.5px]">
+              <span className="text-[var(--text-muted)]">{t("손절", "stop")}</span>
+              <select value={String(sc.stop_pct)} onChange={(e) => setParam("stop_pct", Number(e.target.value))} className="px-1.5 py-1 rounded-lg border bg-[var(--bg-primary)] text-[var(--text-primary)]" style={{ borderColor: "var(--border-default)" }}>
+                {[0.5, 1.0, 1.5].map((v) => <option key={v} value={v}>-{v}%</option>)}
+              </select>
+              <span className="text-[var(--text-muted)]">{t("1회 크기", "size")}</span>
+              <select value={String(sc.pos_pct)} onChange={(e) => setParam("pos_pct", Number(e.target.value))} className="px-1.5 py-1 rounded-lg border bg-[var(--bg-primary)] text-[var(--text-primary)]" style={{ borderColor: "var(--border-default)" }}>
+                {[5, 10, 15, 20].map((v) => <option key={v} value={v}>{st ? `${v}% ≈ ₩${Math.round(st.cash * v / 100 / 1_000_000).toLocaleString()}M` : `${v}%`}</option>)}
+              </select>
+            </div>
+          </div>
+
+          {/* dropdown for other stocks */}
+          {(() => {
+            const hidden = sc.stocks.filter((s) => !MAINS.includes(s.code) && !showExtra.includes(s.code));
+            return (
+              <div className="mt-3 flex items-center gap-2 flex-wrap text-[12px]">
+                <span className="font-bold text-[var(--text-muted)]">👁️ {t("다른 종목 보기", "watch another")}:</span>
+                <select value="" onChange={(e) => { if (e.target.value) setShowExtra((x) => [...x, e.target.value]); }} className="px-2 py-1 rounded-lg border bg-[var(--bg-primary)] text-[var(--text-primary)] font-bold" style={{ borderColor: "var(--border-default)", minWidth: 180 }}>
+                  <option value="">{t(`선택… (${hidden.length}개)`, `choose… (${hidden.length})`)}</option>
+                  {hidden.map((s) => <option key={s.code} value={s.code}>{s.name}</option>)}
+                </select>
+                <input value={addQ} onChange={(e) => setAddQ(e.target.value)} onKeyDown={(e) => e.key === "Enter" && searchAdd()} placeholder={t("종목 추가 검색…", "add stock…")} className="text-[12px] px-2 py-1 rounded-lg border bg-[var(--bg-primary)] text-[var(--text-primary)]" style={{ borderColor: "var(--border-default)", width: 130 }} />
+                {showExtra.length > 0 && <button onClick={() => setShowExtra([])} className="text-[11px] text-[var(--text-muted)]">✕ {t("SK·삼성만", "SK·Samsung only")}</button>}
+              </div>
+            );
+          })()}
+
+          {/* stock cards */}
+          <div className="mt-3 grid md:grid-cols-2 gap-3">
+            {cards.map((s) => {
+              const col = s.candle_signal === "BUY" ? RED : s.candle_signal === "SELL" ? BLUE : "var(--text-secondary)";
+              return (
+                <div key={s.code} className="rounded-xl border px-4 py-3" style={{ borderColor: s.state === "LONG" ? TEAL : "var(--border-default)", background: "var(--bg-elevated)" }}>
+                  <div className="flex items-baseline gap-2 flex-wrap">
+                    <span className="text-[15.5px] font-extrabold text-[var(--text-primary)]">{s.name}</span>
+                    <span className="text-[10.5px] text-[var(--text-muted)]">{s.code}</span>
+                    <span className="ml-auto text-[16px] font-extrabold tabular-nums" style={{ color: (s.chg ?? 0) >= 0 ? RED : BLUE }}>₩{fmt(s.price)}</span>
+                    <span className="text-[12px] font-extrabold px-2 py-0.5 rounded-full text-white" style={{ background: s.state === "LONG" ? TEAL : "var(--text-muted)" }}>
+                      {s.state === "LONG" ? t("보유 중", "LONG") : !sc.market_open ? t("🌙 마감", "🌙 CLOSED") : t("대기", "WAITING")}
+                    </span>
+                  </div>
+                  {/* 🕯️ candle signal */}
+                  <div className="mt-1.5 flex items-center gap-2">
+                    <span className="flex items-end gap-0.5">
+                      {Array.from({ length: Math.min(6, Math.max(s.up, s.dn, 1)) }).map((_, i) => (
+                        <span key={i} className="inline-block rounded-[2px]" style={{ width: 8, height: 14, background: s.candle_signal === "BUY" ? RED : s.candle_signal === "SELL" ? BLUE : "var(--text-muted)", opacity: 0.5 + 0.5 * ((i + 1) / 6) }} />
+                      ))}
+                    </span>
+                    <b className="text-[12.5px]" style={{ color: col }}>{sigWord(s)}</b>
+                  </div>
+                  {s.state === "LONG" ? (
+                    <div className="mt-1.5 text-[12.5px] tabular-nums text-[var(--text-secondary)]">
+                      {t("매수가", "entry")} ₩{fmt(s.entry)} × {fmt(s.qty)}{t("주", "sh")}
+                      <span className="ml-2 font-extrabold" style={{ color: pnlCol(s.pnl_pct) }}>{s.pnl_pct != null && s.pnl_pct > 0 ? "+" : ""}{s.pnl_pct}%</span>
+                      <div className="mt-0.5 text-[11.5px]">🛑 ₩{fmt(s.stop_at)} · {mode === "semi" ? t("(3연속 음봉이면 매도 추천)", "(SELL advice on 3 down candles)") : t("(3연속 음봉/−1%에 매도)", "(sells on 3 down / −1%)")}</div>
+                      {mode === "semi" && s.advice && (
+                        <div className="mt-2 rounded-lg px-3 py-2 flex items-center gap-2" style={{ background: "rgba(211,47,47,0.1)" }}>
+                          <b className="text-[13px]" style={{ color: RED }}>{s.advice === "CANDLE" ? t("🕯️ 3연속 음봉 — 지금 파세요", "🕯️ 3 down candles — SELL now") : t("🚨 손절선 — 지금 파세요", "🚨 stop hit — SELL now")}</b>
+                          <button disabled={busy} onClick={async () => {
+                            setBusy(true);
+                            try { const r = await apiPost<{ ok: boolean; error?: string; realized_pnl?: number; realized_pnl_pct?: number }>(`/paper-desk/candle3/sell?code=${s.code}`);
+                              setNote(r.ok ? t(`✅ 매도 — 실현 ${(r.realized_pnl || 0) > 0 ? "+" : ""}₩${fmt(r.realized_pnl)} (${r.realized_pnl_pct}%)`, `✅ sold — ${(r.realized_pnl || 0) > 0 ? "+" : ""}₩${fmt(r.realized_pnl)} (${r.realized_pnl_pct}%)`) : `❌ ${r.error}`);
+                            } catch (e) { setNote(`❌ ${(e as Error).message}`); }
+                            setBusy(false); load();
+                          }} className="ml-auto text-[13px] font-extrabold px-5 py-1.5 rounded-xl text-white disabled:opacity-50" style={{ background: BLUE }}>{t("매도", "SELL")}</button>
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="mt-1.5 text-[11.5px] text-[var(--text-muted)]">
+                      {t("1분봉 3연속 양봉이 나오면 매수합니다.", "buys when 3 up 1-min candles appear.")}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* activity table */}
+      {sc && sc.recent.length > 0 && (
+        <div className="mt-4 rounded-xl border overflow-hidden" style={{ borderColor: TEAL }}>
+          <div className="px-4 py-2 border-b bg-[var(--bg-elevated)] flex items-center gap-2 flex-wrap" style={{ borderColor: "var(--border-default)" }}>
+            <b className="text-[13.5px]" style={{ color: TEAL }}>🕯️ {t("알고리즘 3 활동 — 회전별 기록", "Algorithm 3 activity — every round trip")}</b>
+            <select value={fRes} onChange={(e) => setFRes(e.target.value as typeof fRes)} className="text-[11px] font-bold px-1.5 py-0.5 rounded-lg border bg-[var(--bg-primary)] text-[var(--text-primary)]" style={{ borderColor: "var(--border-default)" }}>
+              <option value="ALL">{t("결과: 전체", "result: all")}</option><option value="WIN">{t("🟢 승만", "🟢 wins")}</option><option value="LOSE">{t("🔴 패만", "🔴 losses")}</option>
+            </select>
+            <select value={fName} onChange={(e) => setFName(e.target.value)} className="text-[11px] font-bold px-1.5 py-0.5 rounded-lg border bg-[var(--bg-primary)] text-[var(--text-primary)]" style={{ borderColor: "var(--border-default)" }}>
+              <option value="ALL">{t("종목: 전체", "stock: all")}</option>
+              {Array.from(new Set(sc.recent.map((r) => r.name))).sort().map((n) => <option key={n} value={n}>{n}</option>)}
+            </select>
+            <button onClick={() => setDayTotal((v) => !v)} className="ml-auto text-[11.5px] font-extrabold px-3 py-1 rounded-lg text-white" style={{ background: TEAL }}>📊 {dayTotal ? t("합계 닫기", "hide total") : t("오늘 합계", "today's total")}</button>
+          </div>
+          {dayTotal && (() => {
+            const rows = sc.recent;
+            const wins = rows.filter((r) => (r.won || 0) > 0), losses = rows.filter((r) => (r.won || 0) < 0);
+            const net = rows.reduce((a, r) => a + (r.won || 0), 0);
+            return (
+              <div className="px-4 py-3 border-b text-[13px] tabular-nums flex items-center gap-5 flex-wrap" style={{ borderColor: "var(--border-default)", background: "rgba(0,131,143,0.04)" }}>
+                <span>🔄 {t(`${rows.length}회전`, `${rows.length} trips`)}</span>
+                <span style={{ color: RED }}>🟢 {wins.length}{t("승", "W")}</span><span style={{ color: BLUE }}>🔴 {losses.length}{t("패", "L")}</span>
+                <span className="font-extrabold" style={{ color: rows.length && wins.length / rows.length >= 0.5 ? "#2e7d32" : RED }}>🏆 {t(`승률 ${rows.length ? Math.round(wins.length / rows.length * 100) : 0}%`, `${rows.length ? Math.round(wins.length / rows.length * 100) : 0}% win`)}</span>
+                <span className="text-[15px] font-extrabold" style={{ color: pnlCol(net) }}>= {net > 0 ? "+" : ""}₩{fmt(Math.round(net))}</span>
+              </div>
+            );
+          })()}
+          {(() => {
+            const rows = sc.recent.filter((r) => (fRes === "ALL" || (fRes === "WIN" ? (r.won || 0) > 0 : (r.won || 0) < 0)) && (fName === "ALL" || r.name === fName));
+            return (
+              <table className="w-full text-[12px]">
+                <thead><tr className="text-[10.5px] text-[var(--text-muted)]" style={{ background: "var(--bg-elevated)" }}>
+                  <th className="text-left px-3 py-1.5">{t("매수", "Bought")}</th><th className="text-left px-2">{t("매도", "Sold")}</th><th className="text-right px-2">⏱</th>
+                  <th className="text-left px-2">{t("종목", "Stock")}</th><th className="text-right px-2">{t("수량", "Qty")}</th><th className="text-right px-2">{t("매수→매도", "Buy→Sell")}</th>
+                  <th className="text-left px-2">{t("결과", "Exit")}</th><th className="text-right px-3">{t("손익", "Win")}</th>
+                </tr></thead>
+                <tbody>
+                  {rows.map((r, i) => (
+                    <tr key={i} className="border-t border-[var(--border-default)]/40">
+                      <td className="px-3 py-1.5 text-[11px] font-bold tabular-nums" style={{ color: RED }}>{kstSec(r.opened_at)}</td>
+                      <td className="px-2 text-[11px] font-bold tabular-nums" style={{ color: BLUE }}>{kstSec(r.closed_at)}</td>
+                      <td className="text-right px-2 text-[11px] tabular-nums text-[var(--text-secondary)]">{heldFor(r.opened_at, r.closed_at, lang === "ko")}</td>
+                      <td className="px-2 font-bold text-[var(--text-primary)]">{r.name}</td>
+                      <td className="text-right px-2 tabular-nums">{fmt(r.qty)}</td>
+                      <td className="text-right px-2 tabular-nums">₩{fmt(r.entry)} → ₩{fmt(r.exit_price)}</td>
+                      <td className="px-2"><span className="text-[10.5px] px-1.5 py-0.5 rounded-full font-bold" style={{ background: "var(--bg-elevated)", color: r.exit_reason === "CANDLE3" ? BLUE : r.exit_reason === "STOP" ? RED : "var(--text-muted)" }}>
+                        {r.exit_reason === "CANDLE3" ? t("🕯️ 3연속 음봉", "🕯️ 3 down") : r.exit_reason === "STOP" ? t("손절", "stop") : r.exit_reason === "EOD" ? t("장마감", "EOD") : r.exit_reason}</span></td>
+                      <td className="text-right px-3 tabular-nums font-extrabold" style={{ color: pnlCol(r.net_pct) }}>{r.won != null ? `${r.won > 0 ? "+" : ""}₩${fmt(Math.round(r.won))}` : "-"}{r.net_pct != null && ` (${r.net_pct > 0 ? "+" : ""}${r.net_pct}%)`}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            );
+          })()}
+        </div>
+      )}
+    </div>
+  );
+}

@@ -1165,8 +1165,8 @@ export default function ScalpDesk({ mode }: { mode: ScalpMode }) {
           <div className="px-4 py-2 text-[12.5px] font-extrabold text-[var(--text-primary)]" style={{ background: "var(--bg-elevated)" }}>
             📊 {t("오늘 비교 — 알고리즘 1 vs 알고리즘 2", "Today — Algorithm 1 vs Algorithm 2")}
           </div>
-          <div className="grid md:grid-cols-2 gap-3 p-3">
-            {([["algo1", "🤖 " + t("알고리즘 1", "Algorithm 1")], ["algo2", "⚡ " + t("알고리즘 2", "Algorithm 2")]] as const).map(([k, label]) => {
+          <div className="grid md:grid-cols-3 gap-3 p-3">
+            {([["algo1", "🤖 " + t("알고리즘 1", "Algorithm 1")], ["algo2", "⚡ " + t("알고리즘 2 잔물결", "Algo 2 Ripple")], ["algo3", "🕯️ " + t("알고리즘 3 캔들", "Algo 3 Candle")]] as const).map(([k, label]) => {
               const a = cmp[k];
               return (
                 <div key={k} className="rounded-xl border px-4 py-3 text-[12.5px] tabular-nums"

@@ -32,7 +32,7 @@ def _timing_layer(db, code: str, name: str) -> dict[str, Any]:
         up, dn, n = _streaks_1m(code)
         if n:
             out["candle"] = {"up": up, "dn": dn,
-                             "signal": "BUY" if up >= 3 else "SELL" if dn >= 2 else "HOLD"}
+                             "signal": "BUY" if up >= 3 else "SELL" if dn >= 3 else "HOLD"}
     except Exception:
         pass
     return out
@@ -41,7 +41,7 @@ def _timing_layer(db, code: str, name: str) -> dict[str, Any]:
 # ---- live point-in-time reads of the two scalp strategies (stateless, from
 #      1-min candles) so the advice can show what ALL THREE algorithms say now ---- #
 def _candle_now(code: str) -> tuple[str, str, str]:
-    """Algo2 · Candle 3-2 verdict RIGHT NOW → (signal, ko, en)."""
+    """Algorithm 3 · Candle verdict RIGHT NOW (3 up → buy, 3 down → sell)."""
     try:
         from services.scalp_trader import _streaks_1m
         up, dn, n = _streaks_1m(code)
@@ -49,9 +49,9 @@ def _candle_now(code: str) -> tuple[str, str, str]:
             return "WAIT", "1분봉 데이터 대기", "waiting for 1-min data"
         if up >= 3:
             return "BUY", f"1분봉 {up}연속 양봉 → 매수 신호", f"{up} up 1-min candles → BUY"
-        if dn >= 2:
+        if dn >= 3:
             return "SELL", f"1분봉 {dn}연속 음봉 → 매도 신호", f"{dn} down 1-min candles → SELL"
-        return "WAIT", f"양봉 {up}·음봉 {dn} — 3연속 양봉 대기", f"up {up}·down {dn} — waiting for 3 up"
+        return "WAIT", f"양봉 {up}·음봉 {dn} — 3연속 대기", f"up {up}·down {dn} — waiting for 3 in a row"
     except Exception:
         return "WAIT", "데이터 없음", "no data"
 
@@ -123,7 +123,7 @@ def _ripple_detail(code: str, lang: str) -> list[str]:
 
 
 def _candle_detail(code: str, lang: str) -> list[str]:
-    """Candle 3-2 strategy + current 1-min streak + what triggers buy/sell."""
+    """Algorithm 3 candle strategy + current 1-min streak + what triggers buy/sell."""
     en = str(lang or "").lower().startswith("en")
     try:
         from services.scalp_trader import _streaks_1m
@@ -131,21 +131,21 @@ def _candle_detail(code: str, lang: str) -> list[str]:
     except Exception:
         up = dn = n = 0
     if en:
-        out = ["   • How it works: 3 up 1-min candles → BUY · rides while rising (1 down "
-               "forgiven) · 2 down candles → SELL · −1% stop · flat 15:18. Rides the trend."]
+        out = ["   • How it works: 3 up 1-min candles → BUY · 3 down candles → SELL · "
+               "−1% stop · flat 15:18. Also checks the partner stock + volume."]
         if n:
             out.append(f"   • Right now: {up} up / {dn} down candles in a row — "
-                       + ("BUY signal is live." if up >= 3 else "SELL signal is live." if dn >= 2
+                       + ("BUY signal is live." if up >= 3 else "SELL signal is live." if dn >= 3
                           else f"needs {3-up} more up candle(s) to buy." if up else "no clear streak yet."))
         else:
             out.append("   • Right now: 1-min candle data unavailable (Kiwoom feed) — waiting.")
         out.append("   • Buys when: 3 green 1-min candles in a row. Best on a clean, trending push.")
         return out
-    out = ["   • 작동 방식: 1분봉 3연속 양봉 → 매수 · 오르는 동안 보유(음봉 1개는 용서) · "
-           "2연속 음봉 → 매도 · −1% 손절 · 15:18 정리. 추세를 탑니다."]
+    out = ["   • 작동 방식: 1분봉 3연속 양봉 → 매수 · 3연속 음봉 → 매도 · −1% 손절 · "
+           "15:18 정리. 짝꿍 종목과 거래량도 함께 확인합니다."]
     if n:
         out.append(f"   • 지금: 양봉 {up}개 / 음봉 {dn}개 연속 — "
-                   + ("매수 신호 발생." if up >= 3 else "매도 신호 발생." if dn >= 2
+                   + ("매수 신호 발생." if up >= 3 else "매도 신호 발생." if dn >= 3
                       else f"매수까지 양봉 {3-up}개 더 필요." if up else "뚜렷한 연속 흐름 없음."))
     else:
         out.append("   • 지금: 1분봉 데이터 없음(키움 피드) — 대기 중.")
@@ -262,7 +262,7 @@ def clean_recommendation(db, d: dict[str, Any], lang: str = "ko") -> str:
         # 4) Candle
         cd_sig, cd_ko, cd_en = _candle_now(code)
         L.append(_DIV)
-        L.append("🕯️ Algorithm 2 · Candle 3-2 (1-min chart)")
+        L.append("🕯️ Algorithm 3 · Candle (1-min chart)")
         L.append(f"Decision: {ic.get(cd_sig,'⚪')} {ve.get(cd_sig,cd_sig)} — {cd_en}")
         L.extend(_candle_detail(code, lang))
         # 5) final from the 3
@@ -294,7 +294,7 @@ def clean_recommendation(db, d: dict[str, Any], lang: str = "ko") -> str:
         L.extend(_ripple_detail(code, lang))
         cd_sig, cd_ko, cd_en = _candle_now(code)
         L.append(_DIV)
-        L.append("🕯️ 알고리즘 2 · 캔들 3-2 (1분봉)")
+        L.append("🕯️ 알고리즘 3 · 캔들 (1분봉)")
         L.append(f"결정: {ic.get(cd_sig,'⚪')} {vk.get(cd_sig,cd_sig)} — {cd_ko}")
         L.extend(_candle_detail(code, lang))
         L.append(_DIV)
@@ -353,7 +353,7 @@ def three_algo_block(db, d: dict[str, Any], lang: str = "ko") -> str:
             "🧭 What each algorithm says right now:\n"
             f"  🤖 Algorithm 1 (daily · 5-day, chart+수급+news+ML): {ic.get(a1,'⚪')} {a1} (confidence {conf_e})\n"
             f"  ⚡ Algorithm 2 · Ripple (scalp · minutes): {ic.get(rp_sig,'⚪')} {rp_sig} — {rp_en}\n"
-            f"  🕯️ Algorithm 2 · Candle 3-2 (1-min): {ic.get(cd_sig,'⚪')} {cd_sig} — {cd_en}\n"
+            f"  🕯️ Algorithm 3 · Candle (1-min): {ic.get(cd_sig,'⚪')} {cd_sig} — {cd_en}\n"
             "  → Different horizons: Algo 1 = hold days; Ripple/Candle = in-and-out in minutes. "
             "They can disagree on purpose — pick the one that matches how long you'll hold.")
     conf_k = {"high": "높음", "medium": "보통", "low": "낮음"}.get(a1_conf, a1_conf)
@@ -362,7 +362,7 @@ def three_algo_block(db, d: dict[str, Any], lang: str = "ko") -> str:
         "🧭 지금 각 알고리즘의 판단:\n"
         f"  🤖 알고리즘 1 (일봉·5일, 차트+수급+뉴스+ML): {ic.get(a1,'⚪')} {_vk.get(a1,a1)} (신뢰도 {conf_k})\n"
         f"  ⚡ 알고리즘 2 · 잔물결 (초단타·분 단위): {ic.get(rp_sig,'⚪')} {_vk.get(rp_sig,rp_sig)} — {rp_ko}\n"
-        f"  🕯️ 알고리즘 2 · 캔들 3-2 (1분봉): {ic.get(cd_sig,'⚪')} {_vk.get(cd_sig,cd_sig)} — {cd_ko}\n"
+        f"  🕯️ 알고리즘 3 · 캔들 (1분봉): {ic.get(cd_sig,'⚪')} {_vk.get(cd_sig,cd_sig)} — {cd_ko}\n"
         "  → 시간 지평이 다릅니다: 알고1 = 며칠 보유 / 잔물결·캔들 = 분 단위 진입·청산. "
         "서로 다를 수 있어요 — 얼마나 들고 갈지에 맞는 걸 고르세요.")
 
@@ -414,7 +414,7 @@ def scoreboard(db, d: dict[str, Any], lang: str = "ko", with_timing: bool = True
         if timing.get("candle"):
             c = timing["candle"]
             ct = ("3+ up 1-min candles (short-term rising)" if c["signal"] == "BUY"
-                  else "2 down 1-min candles (short-term falling)" if c["signal"] == "SELL"
+                  else "3 down 1-min candles (short-term falling)" if c["signal"] == "SELL"
                   else "no clear 1-min streak")
             L.append(f"⏱️ Timing now: {ct} — minutes-horizon, separate from the 5-day call above.")
     else:
@@ -439,7 +439,7 @@ def scoreboard(db, d: dict[str, Any], lang: str = "ko", with_timing: bool = True
         if timing.get("candle"):
             c = timing["candle"]
             ct = ("1분봉 3연속 이상 상승 (단기 상승세)" if c["signal"] == "BUY"
-                  else "1분봉 2연속 하락 (단기 하락세)" if c["signal"] == "SELL"
+                  else "1분봉 3연속 하락 (단기 하락세)" if c["signal"] == "SELL"
                   else "뚜렷한 1분봉 흐름 없음")
             L.append(f"⏱️ 지금 타이밍: {ct} — 분 단위 신호로, 위의 5일 판단과는 별개입니다.")
     return "\n".join(L)

@@ -390,8 +390,8 @@ def scalp_adopt(code: str = Query(...), db: Session = Depends(get_db)):
 @router.post("/scalp/tick")
 def scalp_tick(force: bool = Query(False), db: Session = Depends(get_db)):
     """Manual heartbeat (testing) — the scheduler fires this every 15s anyway.
-    Also drives the 🏁 3-strategy tournament on the SAME reliable cron-job.org
-    beat (APScheduler stalls when Render's free tier sleeps)."""
+    Also drives the 🏁 3-strategy tournament AND Algorithm 3 (candle) on the SAME
+    reliable cron-job.org beat (APScheduler stalls when Render's free tier sleeps)."""
     from services.scalp_trader import tick
     r = tick(db, force=force)
     try:
@@ -399,7 +399,57 @@ def scalp_tick(force: bool = Query(False), db: Session = Depends(get_db)):
         _tt(db)
     except Exception:
         db.rollback()
+    try:
+        from services.candle_trader import tick as _c3
+        _c3(db)
+    except Exception:
+        db.rollback()
     return r
+
+
+# --------------------------------------------------------------------------- #
+# 🕯️ ALGORITHM 3 — the boss's candle trader (3 up 1-min candles → buy, 3 down →
+# sell). A dedicated copy of Algorithm 2's shape; services/candle_trader.py.
+# --------------------------------------------------------------------------- #
+
+@router.get("/candle3/status")
+def candle3_status(db: Session = Depends(get_db)):
+    from services.candle_trader import status
+    return status(db)
+
+
+@router.post("/candle3/toggle")
+def candle3_toggle(on: bool = Query(...), db: Session = Depends(get_db)):
+    from services.candle_trader import set_enabled
+    return set_enabled(db, on)
+
+
+@router.post("/candle3/params")
+def candle3_params(stop_pct: Optional[float] = Query(None), pos_pct: Optional[float] = Query(None),
+                   codes: Optional[str] = Query(None), mode: Optional[str] = Query(None),
+                   db: Session = Depends(get_db)):
+    """Algorithm 3 dials: stop %, size % of cash, stock list, mode (auto/semi)."""
+    from services.candle_trader import set_params
+    return set_params(db, stop_pct=stop_pct, pos_pct=pos_pct, codes=codes, mode=mode)
+
+
+@router.post("/candle3/buy")
+def candle3_buy(code: str = Query(...), db: Session = Depends(get_db)):
+    """Semi mode: the boss accepts a 🔔 candle BUY recommendation."""
+    from services.candle_trader import semi_buy
+    return semi_buy(db, code)
+
+
+@router.post("/candle3/sell")
+def candle3_sell(code: str = Query(...), db: Session = Depends(get_db)):
+    from services.candle_trader import sell_all
+    return sell_all(db, code)
+
+
+@router.post("/candle3/tick")
+def candle3_tick(force: bool = Query(False), db: Session = Depends(get_db)):
+    from services.candle_trader import tick
+    return tick(db, force=force)
 
 
 @router.get("/executions")

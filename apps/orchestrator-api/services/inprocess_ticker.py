@@ -64,6 +64,15 @@ def _loop() -> None:
                     db.rollback(); logger.warning(f"ticker tournament: {str(e)[:100]}")
                 finally:
                     db.close()
+                # 4) Algorithm 3 — the candle trader (3 up → buy, 3 down → sell)
+                db = SessionLocal()
+                try:
+                    from services.candle_trader import tick as _c3
+                    _c3(db)
+                except Exception as e:
+                    db.rollback(); logger.warning(f"ticker algo3: {str(e)[:100]}")
+                finally:
+                    db.close()
         except Exception as e:
             logger.warning(f"inprocess_ticker loop: {str(e)[:120]}")
         time.sleep(15)
