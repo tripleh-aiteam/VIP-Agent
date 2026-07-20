@@ -46,7 +46,7 @@ type C3Stock = {
 };
 type C3Signal = { code: string; name: string; price: number; qty: number; why: string; ts: number };
 type C3Status = {
-  enabled: boolean; stop_pct: number; pos_pct: number; codes: string[]; mode?: "auto" | "semi"; streak?: number;
+  enabled: boolean; stop_pct: number; pos_pct: number; codes: string[]; mode?: "auto" | "semi"; streak?: number; tf?: string;
   signals?: C3Signal[]; stocks: C3Stock[]; market_open?: boolean; rule_ko?: string; rule_en?: string;
   today: { trades: number; wins: number; net_pct_sum: number; realized_won?: number };
   recent: { name: string; qty: number; entry: number; exit_price?: number | null; exit_reason?: string | null;
@@ -254,6 +254,14 @@ export default function Candle3Desk({ mode }: { mode: C3Mode }) {
                 : t("1분봉 3연속 양봉 → 매수 · 3연속 음봉 → 매도 · −1% 손절 · 15:18 정리", "3 up candles → buy · 3 down → sell · −1% stop · flat 15:18")}
             </span>
             <div className="ml-auto flex items-center gap-2 text-[11.5px]">
+              <span className="text-[var(--text-muted)]">{t("봉 간격", "timeframe")}</span>
+              <select value={sc.tf ?? "5"} onChange={async (e) => { await apiPost(`/paper-desk/candle3/params?tf=${e.target.value}`); load(); }}
+                className="px-1.5 py-1 rounded-lg border bg-[var(--bg-primary)] text-[var(--text-primary)] font-bold" style={{ borderColor: (sc.tf ?? "5") !== "1" ? TEAL : "var(--border-default)" }}
+                title={t("1분봉은 노이즈가 많아 3연속이 잘 안 나옵니다. 3·5분봉이 실제 추세입니다.", "1-min is noisy — 3/5-min shows real trends")}>
+                <option value="1">{t("1분봉 (노이즈 많음)", "1-min (noisy)")}</option>
+                <option value="3">{t("3분봉", "3-min")}</option>
+                <option value="5">{t("5분봉 (추세)", "5-min (trend)")}</option>
+              </select>
               <span className="text-[var(--text-muted)]">{t("민감도", "streak")}</span>
               <select value={String(sc.streak ?? 3)} onChange={async (e) => { await apiPost(`/paper-desk/candle3/params?streak=${e.target.value}`); load(); }}
                 className="px-1.5 py-1 rounded-lg border bg-[var(--bg-primary)] text-[var(--text-primary)] font-bold" style={{ borderColor: (sc.streak ?? 3) === 2 ? "#e65100" : "var(--border-default)" }}>

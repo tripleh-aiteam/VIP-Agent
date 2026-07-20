@@ -447,10 +447,11 @@ def candle3_toggle(on: bool = Query(...), db: Session = Depends(get_db)):
 @router.post("/candle3/params")
 def candle3_params(stop_pct: Optional[float] = Query(None), pos_pct: Optional[float] = Query(None),
                    codes: Optional[str] = Query(None), mode: Optional[str] = Query(None),
-                   streak: Optional[int] = Query(None), db: Session = Depends(get_db)):
-    """Algorithm 3 dials: stop %, size %, stock list, mode, streak (2 or 3 candles)."""
+                   streak: Optional[int] = Query(None), tf: Optional[str] = Query(None),
+                   db: Session = Depends(get_db)):
+    """Algorithm 3 dials: stop %, size %, stock list, mode, streak (2/3), tf (1/3/5-min)."""
     from services.candle_trader import set_params
-    return set_params(db, stop_pct=stop_pct, pos_pct=pos_pct, codes=codes, mode=mode, streak=streak)
+    return set_params(db, stop_pct=stop_pct, pos_pct=pos_pct, codes=codes, mode=mode, streak=streak, tf=tf)
 
 
 @router.post("/candle3/buy")

@@ -50,8 +50,12 @@ def _ensure(db) -> None:
         " codes TEXT NOT NULL DEFAULT '000660,005930',"
         " mode TEXT NOT NULL DEFAULT 'auto',"
         " streak INT NOT NULL DEFAULT 3,"
+        " tf TEXT NOT NULL DEFAULT '5',"
         " updated_at TIMESTAMPTZ DEFAULT now())"))
     db.execute(text("ALTER TABLE candle_state ADD COLUMN IF NOT EXISTS streak INT NOT NULL DEFAULT 3"))
+    # boss 2026-07-20: candle timeframe — 1-min was pure noise (flips every minute, so
+    # 3-in-a-row never forms). 3/5-min = the real trend you see on the chart. Default 5.
+    db.execute(text("ALTER TABLE candle_state ADD COLUMN IF NOT EXISTS tf TEXT NOT NULL DEFAULT '5'"))
     db.execute(text(
         "CREATE TABLE IF NOT EXISTS candle_trades ("
         " id SERIAL PRIMARY KEY, ticker TEXT, name TEXT, qty INT,"
@@ -72,12 +76,13 @@ def _ensure(db) -> None:
 def _cfg(db) -> dict[str, Any]:
     _ensure(db)
     r = db.execute(text(
-        "SELECT enabled, stop_pct, pos_pct, codes, mode, streak FROM candle_state WHERE id=1")).first()
+        "SELECT enabled, stop_pct, pos_pct, codes, mode, streak, tf FROM candle_state WHERE id=1")).first()
     codes = [c.strip().zfill(6) for c in (r[3] or DEFAULT_CODES).split(",") if c.strip()]
     return {"enabled": bool(r[0]), "stop_pct": float(r[1]), "pos_pct": float(r[2]),
             "codes": codes[:24],
             "mode": (r[4] or "auto") if str(r[4] or "auto") in ("auto", "semi") else "auto",
-            "streak": int(r[5] or 3) if int(r[5] or 3) in (2, 3) else 3}
+            "streak": int(r[5] or 3) if int(r[5] or 3) in (2, 3) else 3,
+            "tf": str(r[6] or "5") if str(r[6] or "5") in ("1", "3", "5") else "5"}
 
 
 def set_enabled(db, on: bool) -> dict:
@@ -90,10 +95,12 @@ def set_enabled(db, on: bool) -> dict:
 
 def set_params(db, stop_pct: Optional[float] = None, pos_pct: Optional[float] = None,
                codes: Optional[str] = None, mode: Optional[str] = None,
-               streak: Optional[int] = None) -> dict:
+               streak: Optional[int] = None, tf: Optional[str] = None) -> dict:
     _ensure(db)
     if streak in (2, 3):
         db.execute(text("UPDATE candle_state SET streak=:s, updated_at=now() WHERE id=1"), {"s": int(streak)})
+    if tf in ("1", "3", "5"):
+        db.execute(text("UPDATE candle_state SET tf=:v, updated_at=now() WHERE id=1"), {"v": str(tf)})
     if stop_pct is not None:
         db.execute(text("UPDATE candle_state SET stop_pct=:v, updated_at=now() WHERE id=1"),
                    {"v": max(0.5, min(3.0, float(stop_pct)))})
@@ -114,6 +121,43 @@ def set_params(db, stop_pct: Optional[float] = None, pos_pct: Optional[float] = 
                    {"c": ",".join(dict.fromkeys(cl))[:400]})
     db.commit()
     return {"ok": True, **_cfg(db)}
+
+
+_tf_cache: dict[str, tuple[float, list]] = {}
+
+
+def _candles_tf(code: str, tf: str, n: int = 8) -> list[dict]:
+    """Last n COMPLETED candles at the chosen timeframe (1/3/5-min). 20s cache."""
+    import time as _t
+    key = f"{code}:{tf}"
+    hit = _tf_cache.get(key)
+    if hit and _t.time() - hit[0] < 20:
+        return hit[1][-n:]
+    try:
+        from services.kiwoom_rest import minute_bars
+        raw = minute_bars(code, tic=str(tf), count=n + 2) or []
+        cs = raw[:-1][-n:] if len(raw) >= 2 else []
+    except Exception:
+        return hit[1][-n:] if hit else []
+    _tf_cache[key] = (_t.time(), cs)
+    return cs
+
+
+def _streaks_tf(code: str, tf: str) -> tuple[int, int, int]:
+    """(up-in-a-row, down-in-a-row, candles seen) at the chosen timeframe."""
+    cs = _candles_tf(code, tf)
+    up = dn = 0
+    for b in reversed(cs):
+        o, c = b.get("open"), b.get("close")
+        if o is None or c is None:
+            break
+        if c > o and dn == 0:
+            up += 1
+        elif c < o and up == 0:
+            dn += 1
+        else:
+            break
+    return up, dn, len(cs)
 
 
 def _volume_rising(code: str) -> bool:
@@ -157,6 +201,7 @@ def tick(db, force: bool = False) -> dict[str, Any]:
         out["reason"] = "algorithm 3 is OFF"
         return out
     need = int(cfg.get('streak') or 3)
+    tf = str(cfg.get('tf') or '5')
     n = datetime.now(KST)
     eod = (n.hour * 60 + n.minute) >= (EOD_FLAT_HHMM[0] * 60 + EOD_FLAT_HHMM[1])
 
@@ -171,7 +216,7 @@ def tick(db, force: bool = False) -> dict[str, Any]:
             continue
         entry = float(entry)
         reason = None
-        up, dn, cn = _streaks_1m(tk)
+        up, dn, cn = _streaks_tf(tk, tf)
         if px <= entry * (1 - cfg["stop_pct"] / 100):
             reason = "STOP"
         elif cn >= need and dn >= need:
@@ -211,7 +256,7 @@ def tick(db, force: bool = False) -> dict[str, Any]:
     for code in cfg["codes"]:
         if code in open_codes:
             continue
-        up, dn, cn = _streaks_1m(code)
+        up, dn, cn = _streaks_tf(code, tf)
         if cn < need or up < need:
             continue
         # peer + volume confirmation (fail-open)
@@ -302,6 +347,7 @@ def status(db) -> dict[str, Any]:
     """Everything the Algorithm 3 page needs — same shape as Algorithm 2's status."""
     cfg = _cfg(db)
     need = int(cfg.get('streak') or 3)
+    tf = str(cfg.get('tf') or '5')
     open_map = {}
     for r in db.execute(text(
             "SELECT ticker, qty, entry, opened_at FROM candle_trades WHERE status='OPEN'")):
@@ -310,7 +356,7 @@ def status(db) -> dict[str, Any]:
     for code in cfg["codes"]:
         px = _px(code)
         o = open_map.get(code)
-        up, dn, cn = _streaks_1m(code)
+        up, dn, cn = _streaks_tf(code, tf)
         chg = None
         try:
             from services.paper_desk import _chg_cache
@@ -352,5 +398,5 @@ def status(db) -> dict[str, Any]:
                       "net_pct_sum": round(float(today[2] or 0), 2),
                       "realized_won": round(float(today[3] or 0))},
             "recent": recent, "market_open": _market_open_now(),
-            "rule_ko": "1분봉 3연속 양봉 → 매수 · 3연속 음봉 → 매도 · −1% 손절 · 15:18 정리",
-            "rule_en": "3 up 1-min candles → BUY · 3 down → SELL · −1% stop · flat 15:18"}
+            "rule_ko": f"{tf}분봉 {need}연속 양봉 → 매수 · {need}연속 음봉 → 매도 · −1% 손절 · 15:18 정리",
+            "rule_en": f"{need} up {tf}-min candles → BUY · {need} down → SELL · −1% stop · flat 15:18"}
