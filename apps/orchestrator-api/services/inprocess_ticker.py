@@ -34,7 +34,9 @@ def _market_hours() -> bool:
 def _loop() -> None:
     from db.base import SessionLocal
     logger.info("inprocess_ticker: heartbeat thread started (15s, market hours)")
+    _i = 0
     while True:
+        _i += 1
         try:
             if _market_hours():
                 # 1) live Algorithm-2 scalp engine (buys/sells its own book)
@@ -46,14 +48,18 @@ def _loop() -> None:
                     db.rollback(); logger.warning(f"ticker scalp: {str(e)[:100]}")
                 finally:
                     db.close()
-                # 2) Algorithm-1 auto — ENTRIES (buy qualifying setups) + exits.
-                #    boss 2026-07-20: the ticker was only running exit_pulse, so Algo 1
-                #    never bought — tick() is what takes new setups.
+                # 2) Algorithm-1 auto exits every 15s (cheap, protects positions);
+                #    ENTRIES only every ~60s — auto_trader.tick runs a full-universe
+                #    scan that pegged the CPU and failed Render's 5s health check when
+                #    run every 15s (boss 2026-07-20 instance-failed). Algo 1 is a 1-hour
+                #    engine, so a 60s entry cadence is plenty.
                 db = SessionLocal()
                 try:
-                    from services.auto_trader import tick as _a1_tick, exit_pulse as _a1
-                    _a1_tick(db)
+                    from services.auto_trader import exit_pulse as _a1
                     _a1(db)
+                    if _i % 4 == 0:
+                        from services.auto_trader import tick as _a1_tick
+                        _a1_tick(db)
                 except Exception as e:
                     db.rollback(); logger.warning(f"ticker algo1: {str(e)[:100]}")
                 finally:

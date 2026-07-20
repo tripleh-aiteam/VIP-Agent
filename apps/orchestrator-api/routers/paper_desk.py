@@ -419,11 +419,9 @@ def scalp_tick(force: bool = Query(False), db: Session = Depends(get_db)):
         _c3(db)
     except Exception:
         db.rollback()
-    try:
-        from services.auto_trader import tick as _a1_tick   # Algo 1 entries (was never ticked)
-        _a1_tick(db)
-    except Exception:
-        db.rollback()
+    # NOTE: auto_trader.tick (Algo 1 entries) is NOT run here — it does a heavy
+    # full-universe scan and the in-process ticker already runs it every ~60s.
+    # Running it on every cron ping pegged the CPU (Render health-check timeout).
     return r
 
 
