@@ -1193,6 +1193,50 @@ export default function ScalpDesk({ mode }: { mode: ScalpMode }) {
         </div>
       )}
 
+      {/* Positions — held stocks with a Sell button per row (boss 2026-07-20) */}
+      {sc && (() => {
+        const held = sc.stocks.filter((s) => s.state === "LONG");
+        if (!held.length) return null;
+        return (
+          <div className="mt-4 rounded-xl border overflow-hidden" style={{ borderColor: PURPLE }}>
+            <div className="px-4 py-2 border-b bg-[var(--bg-elevated)] text-[13px] font-extrabold text-[var(--text-primary)]" style={{ borderColor: "var(--border-default)" }}>📌 {t(`보유 종목 · ${held.length}`, `Positions · ${held.length}`)}</div>
+            <table className="w-full text-[12px]">
+              <thead><tr className="text-[10.5px] text-[var(--text-muted)]" style={{ background: "var(--bg-elevated)" }}>
+                <th className="text-left px-3 py-1.5">{t("종목", "Stock")}</th><th className="text-right px-2">{t("수량", "Qty")}</th>
+                <th className="text-right px-2">{t("매수가", "Avg")}</th><th className="text-right px-2">{t("현재가", "Live")}</th>
+                <th className="text-right px-2">{t("평가액", "Value")}</th><th className="text-right px-2">{t("평가손익", "Unrealized")}</th><th className="px-2"></th>
+              </tr></thead>
+              <tbody>
+                {held.map((s) => {
+                  const value = (s.price || 0) * (s.qty || 0);
+                  const unreal = ((s.price || 0) - (s.entry || 0)) * (s.qty || 0);
+                  return (
+                    <tr key={s.code} className="border-t border-[var(--border-default)]/40">
+                      <td className="px-3 py-1.5 font-bold text-[var(--text-primary)]">{s.name} <span className="text-[10px] text-[var(--text-muted)]">{s.code}</span></td>
+                      <td className="text-right px-2 tabular-nums">{fmt(s.qty)}</td>
+                      <td className="text-right px-2 tabular-nums">{fmt(s.entry)}</td>
+                      <td className="text-right px-2 tabular-nums font-bold">{fmt(s.price)}</td>
+                      <td className="text-right px-2 tabular-nums">{fmt(Math.round(value))}</td>
+                      <td className="text-right px-2 tabular-nums font-extrabold" style={{ color: pnlCol(unreal) }}>{unreal > 0 ? "+" : ""}{fmt(Math.round(unreal))} ({s.pnl_pct != null && s.pnl_pct > 0 ? "+" : ""}{s.pnl_pct}%)</td>
+                      <td className="px-2 text-right">
+                        <button disabled={busy} onClick={async () => {
+                          if (!confirm(t(`${s.name} 전량 매도할까요?`, `Sell all of ${s.name}?`))) return;
+                          setBusy(true);
+                          try { const r = await apiPost<{ ok: boolean; error?: string; realized_pnl?: number; realized_pnl_pct?: number }>(`/paper-desk/scalp/sell?code=${s.code}`);
+                            setNote(r.ok ? t(`✅ 매도 — 실현 ${(r.realized_pnl || 0) > 0 ? "+" : ""}₩${fmt(r.realized_pnl)} (${r.realized_pnl_pct}%)`, `✅ sold — ${(r.realized_pnl || 0) > 0 ? "+" : ""}₩${fmt(r.realized_pnl)} (${r.realized_pnl_pct}%)`) : `❌ ${r.error}`);
+                          } catch (e) { setNote(`❌ ${(e as Error).message}`); }
+                          setBusy(false); load();
+                        }} className="text-[11px] font-bold px-3 py-1 rounded-lg text-white disabled:opacity-50" style={{ background: BLUE }}>{t("전량 매도", "Sell all")}</button>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        );
+      })()}
+
       {/* ⚡ ALGORITHM 2 ACTIVITY — every round trip with the full numbers
           (boss 2026-07-15: what bought, when, how many, win ₩ and %) */}
       {sc && sc.recent.length > 0 && (
