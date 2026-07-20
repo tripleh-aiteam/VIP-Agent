@@ -2843,35 +2843,39 @@ def _is_future_prediction(text: str) -> bool:
 
 
 def _llm_prediction_summary(d: dict, block: str, name: str, lang, question: str) -> str:
-    """LLM final summary over the 3 algorithms' analysis — the boss wants a forward
-    question to end with a plain-language synthesis, not just the deterministic block."""
+    """LLM final summary over the 3 algorithms' PREDICTIONS. Pure forecast — the boss
+    (2026-07-20): a prediction question must NOT contain any buy/sell/hold advice."""
     from services.llm_client import chat_completion_sync
     en = str(lang or "").lower().startswith("en")
     if en:
         sys = (
-            "You are a Korean-stock trading assistant. The user asked a FORWARD-LOOKING "
-            "question. Below is the analysis from THREE trading algorithms (Algorithm 1 = "
-            "combined decision brain + 1-hour prediction; Algorithm 2 = Ripple scalper; "
-            "Algorithm 3 = Candle 3-up/3-down). Write a SHORT final summary (3-5 sentences) "
-            "that (1) states the COMBINED lean — up / down / flat with rough conviction, "
-            "(2) gives ONE clear actionable recommendation for the user's timeframe, and "
-            "(3) is honest that these are intraday signals — not a guaranteed next-day open. "
-            "Use ONLY numbers that appear in the analysis — never invent prices. Answer ONLY "
-            "in English. End with a one-line takeaway prefixed '👉'."
+            "You are a Korean-stock trading assistant. The user asked a PURE PREDICTION "
+            "question (which direction / what price) — NOT for advice. Below are the "
+            "directional PREDICTIONS from three algorithms (Algorithm 1 = combined brain + "
+            "1-hour up-probability; Algorithm 2 = Ripple, minutes; Algorithm 3 = Candle, "
+            "1-min momentum). Write a SHORT final summary (3-5 sentences) that (1) states the "
+            "COMBINED predicted DIRECTION — up / down / flat — with rough magnitude/confidence, "
+            "(2) briefly explains WHY (which algorithms agree or disagree), and (3) is honest "
+            "that these are short-horizon signals, not a guaranteed price. "
+            "CRITICAL: do NOT give ANY buy/sell/hold advice or recommendation — this is a "
+            "forecast ONLY. Never write the words buy, sell, or hold. Use ONLY numbers that "
+            "appear in the analysis — never invent prices. Answer ONLY in English. End with a "
+            "one-line forecast prefixed '👉'."
         )
     else:
         sys = (
-            "당신은 한국 주식 트레이딩 어시스턴트입니다. 사용자가 '미래(예측)' 질문을 했습니다. "
-            "아래는 3개 알고리즘의 분석입니다 (알고리즘1 = 종합 판단 브레인 + 1시간 예측, "
-            "알고리즘2 = 잔물결 스캘퍼, 알고리즘3 = 캔들 3연속). 다음을 담은 짧은 최종 요약"
-            "(3~5문장)을 쓰세요: (1) 종합 방향 — 상승/하락/보합과 대략적 확신도, (2) 사용자 "
-            "시간대에 맞는 명확한 실행 추천 1가지, (3) 이 신호들은 장중 신호이며 내일 시초가를 "
-            "보장하지 않는다는 점을 솔직히. 분석에 나온 숫자만 사용하고 가격을 지어내지 마세요. "
-            "반드시 한국어로만. 마지막 줄은 '👉'로 시작하는 한 줄 요약."
+            "당신은 한국 주식 트레이딩 어시스턴트입니다. 사용자가 '순수 예측' 질문(어느 방향/얼마)"
+            "을 했습니다 — 매매 조언 요청이 아닙니다. 아래는 3개 알고리즘의 방향 예측입니다 "
+            "(알고리즘1 = 종합 브레인 + 1시간 상승확률, 알고리즘2 = 잔물결·분 단위, 알고리즘3 = "
+            "캔들·1분봉 모멘텀). 다음을 담은 짧은 요약(3~5문장)을 쓰세요: (1) 종합 예측 방향 — "
+            "상승/하락/보합 — 과 대략적 강도·확신도, (2) 이유 간단히(어느 알고리즘이 일치/불일치), "
+            "(3) 단기 신호라 가격을 보장하지 않는다는 점. 매우 중요: 매수/매도/보유 등 어떤 매매 "
+            "조언·추천도 하지 마세요 — 예측만. '매수'·'매도'·'보유'라는 단어를 쓰지 마세요. 분석에 "
+            "나온 숫자만 쓰고 가격을 지어내지 마세요. 반드시 한국어로만. 마지막 줄은 '👉'로 시작하는 "
+            "한 줄 예측."
         )
     user = (f"User question: {question}\n\nStock: {name}\n"
-            f"Decision: {d.get('decision')} · confidence {d.get('confidence')} · "
-            f"price {d.get('price')}\n\n=== 3 ALGORITHMS ANALYSIS ===\n{block}")
+            f"price {d.get('price')}\n\n=== 3 ALGORITHMS' PREDICTIONS ===\n{block}")
     try:
         out = chat_completion_sync(sys, [{"role": "user", "content": user}],
                                    max_tokens=500, temperature=0.3)
@@ -5374,22 +5378,24 @@ def _run_agent_impl(
                 except Exception:
                     pass
             if _pr_stocks:
-                from services.decision_brain import clean_recommendation as _pr_clean
+                from services.decision_brain import prediction_view as _pr_view
                 _pr_parts = []
                 for _c, _n in _pr_stocks:
                     _res = execute_tool("decide", {"ticker": _c}, db=db,
                                         agent_id=agent_id, transcript=transcript)
                     if not (isinstance(_res, dict) and _res.get("ok")):
                         continue
-                    _block = _pr_clean(db, _res, lang)
+                    # PREDICTION framing (direction/up-down/flat + why) — NOT buy/sell/hold.
+                    _block, _dirs = _pr_view(db, _res, lang)
                     _summary = _llm_prediction_summary(_res, _block, _n, lang, transcript)
                     _one = _block + (("\n\n" + _summary) if _summary else "")
                     if len(_pr_stocks) > 1:
                         _one = f"# 📌 {_n}\n\n{_one}"
                     _pr_parts.append(_one)
-                    try:  # grade the forward call vs the real move
+                    try:  # grade the DIRECTION prediction vs the real move
                         from services.call_grader import log_call
-                        log_call(db, ticker=_res.get("ticker"), action=_res.get("decision"),
+                        _pa = {"UP": "BUY", "DOWN": "SELL", "FLAT": "HOLD"}.get(_dirs.get("a1"), "HOLD")
+                        log_call(db, ticker=_res.get("ticker"), action=_pa,
                                  intent="prediction", ref_price=_res.get("price"),
                                  horizon_min=60, name=_res.get("name"),
                                  agent_id=agent_id, lang=lang)

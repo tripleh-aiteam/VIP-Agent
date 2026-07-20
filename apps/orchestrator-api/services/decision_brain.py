@@ -303,6 +303,149 @@ def clean_recommendation(db, d: dict[str, Any], lang: str = "ko") -> str:
     return "\n".join(L)
 
 
+# ===================================================================
+#  🔮 PREDICTION VIEW — the boss (2026-07-20) wants a "predict at time"
+#  question to show each algorithm's DIRECTIONAL FORECAST (up/down/flat +
+#  why), with NO buy/sell/hold wording. Buy/sell/hold belongs ONLY to an
+#  advice question ("should I buy?"). Same raw signals, different framing.
+# ===================================================================
+
+def _dir_label(direction: str, en: bool) -> str:
+    return {"UP": "📈 UP" if en else "📈 상승",
+            "DOWN": "📉 DOWN" if en else "📉 하락",
+            "FLAT": "➡️ Sideways" if en else "➡️ 보합"}.get(direction, direction)
+
+
+def _algo1_pred(d: dict[str, Any], db, code: str, en: bool):
+    """Algorithm 1 directional prediction from the 1-hour up-probability + ML
+    expected move + chart read. Returns (direction, ai1h, explanation lines).
+    NO buy/sell language — pure forecast."""
+    ml = d.get("method1_ml") or {}
+    setup = d.get("intraday_setup") or {}
+    tech = d.get("technicals") or {}
+    ai1h = setup.get("ai_1h_prob")
+    if ai1h is None:
+        try:
+            from services.hourly_model import prob_up_1h
+            _pu = prob_up_1h(db, code)
+            if _pu is not None:
+                ai1h = round(float(_pu) * 100) if _pu <= 1 else round(float(_pu))
+        except Exception:
+            ai1h = None
+    exp = ml.get("expected_move_pct")
+    if ai1h is not None:
+        direction = "UP" if ai1h >= 53 else "DOWN" if ai1h <= 47 else "FLAT"
+    elif exp is not None:
+        direction = "UP" if exp > 0.3 else "DOWN" if exp < -0.3 else "FLAT"
+    else:
+        sc = (tech.get("score") or 0)
+        direction = "UP" if sc > 0 else "DOWN" if sc < 0 else "FLAT"
+    lines = []
+    if ai1h is not None:
+        lines.append(f"1-hour prediction: {'UP' if ai1h >= 50 else 'DOWN'} — {ai1h}% chance of rising."
+                     if en else f"1시간 예측: {'상승' if ai1h >= 50 else '하락'} — 상승확률 {ai1h}%.")
+    if exp is not None:
+        lines.append(f"5-day ML forecast: expected move ±{abs(exp)}% (accuracy {ml.get('accuracy_pct','n/a')}%)."
+                     if en else f"5일 ML 예측: 예상 변동폭 ±{abs(exp)}% (정확도 {ml.get('accuracy_pct','n/a')}%).")
+    tsum = tech.get("summary_en" if en else "summary_ko")
+    if tsum:
+        lines.append(f"Chart read: {tsum}." if en else f"차트 판독: {tsum}.")
+    if not lines:
+        lines.append("no directional data available." if en else "방향성 데이터 없음.")
+    return direction, ai1h, lines
+
+
+def _ripple_pred(code: str, en: bool):
+    """Ripple's short-term directional forecast (no buy/sell)."""
+    try:
+        from services.scalp_trader import _candles_1m
+        cs = _candles_1m(code, n=12)
+        closes = [b.get("close") for b in cs if b.get("close")]
+        if len(closes) < 4:
+            return "FLAT", ("1-min data unavailable — no short-term read." if en
+                            else "1분봉 데이터 없음 — 단기 예측 불가.")
+        lo = min(closes); cur = closes[-1]
+        bounce = (cur / lo - 1) * 100 if lo > 0 else 0
+        rising = closes[-1] > closes[-2] > closes[-3]
+        if rising and bounce <= 0.45:
+            return "UP", (f"rising off the recent low (+{bounce:.2f}%), a small upward drift is likely next few minutes."
+                          if en else f"최근 저점 대비 +{bounce:.2f}% 반등·연속 상승 → 향후 수 분 소폭 상승 예상.")
+        if bounce > 0.45:
+            return "DOWN", (f"already +{bounce:.2f}% up and extended — a short pullback is more likely next."
+                            if en else f"이미 +{bounce:.2f}% 상승·과열 — 단기 눌림(하락) 가능성이 큼.")
+        return "FLAT", (f"only +{bounce:.2f}% off the low, no clear micro-trend — sideways for now."
+                        if en else f"저점 대비 +{bounce:.2f}%뿐 — 뚜렷한 단기 흐름 없음(보합).")
+    except Exception:
+        return "FLAT", ("no data" if en else "데이터 없음")
+
+
+def _candle_pred(code: str, en: bool):
+    """Candle (1-min streak) short-term momentum forecast (no buy/sell)."""
+    try:
+        from services.scalp_trader import _streaks_1m
+        up, dn, n = _streaks_1m(code)
+        if not n:
+            return "FLAT", ("1-min candles unavailable — no read." if en else "1분봉 데이터 없음 — 예측 불가.")
+        if up >= 3:
+            return "UP", (f"{up} up candles in a row — upward momentum, the short-term push likely continues."
+                          if en else f"양봉 {up}연속 — 상승 모멘텀, 단기 상승 흐름 지속 가능.")
+        if dn >= 3:
+            return "DOWN", (f"{dn} down candles in a row — downward momentum short-term."
+                            if en else f"음봉 {dn}연속 — 하락 모멘텀, 단기 하락 가능.")
+        if up > dn:
+            return "UP", (f"{up} up vs {dn} down candles — a mild upward tilt (not yet 3 in a row)."
+                          if en else f"양봉 {up} vs 음봉 {dn} — 약한 상승 우위(아직 3연속은 아님).")
+        if dn > up:
+            return "DOWN", (f"{dn} down vs {up} up candles — a mild downward tilt."
+                            if en else f"음봉 {dn} vs 양봉 {up} — 약한 하락 우위.")
+        return "FLAT", (f"{up} up / {dn} down — balanced, sideways."
+                        if en else f"양봉 {up}·음봉 {dn} — 균형, 보합.")
+    except Exception:
+        return "FLAT", ("no data" if en else "데이터 없음")
+
+
+def prediction_view(db, d: dict[str, Any], lang: str = "ko"):
+    """🔮 PREDICTION layout: each algorithm's DIRECTIONAL forecast + why. No
+    buy/sell/hold — that's for advice questions. Returns (block_text, dirs)."""
+    en = str(lang or "").lower().startswith("en")
+    code = str(d.get("ticker") or "").zfill(6)
+    name = d.get("name") or code
+    price = d.get("price")
+    a1_dir, ai1h, a1_lines = _algo1_pred(d, db, code, en)
+    rp_dir, rp_txt = _ripple_pred(code, en)
+    cd_dir, cd_txt = _candle_pred(code, en)
+    L: list[str] = []
+    if en:
+        L.append(f"🔮 **Prediction — {name}**" + (f" (now ₩{int(price):,})" if price else ""))
+        L.append(_DIV)
+        L.append("🤖 Algorithm 1 — combined brain (ML · News · YouTube · Chart · Kiwoom · Orderbook · Wave)")
+        L.append(f"Predicts: {_dir_label(a1_dir, True)}")
+        L.extend(f"   • {ln}" for ln in a1_lines)
+        L.append(_DIV)
+        L.append("⚡ Algorithm 2 · Ripple (scalp · minutes)")
+        L.append(f"Predicts: {_dir_label(rp_dir, True)}")
+        L.append(f"   • {rp_txt}")
+        L.append(_DIV)
+        L.append("🕯️ Algorithm 3 · Candle (1-min chart)")
+        L.append(f"Predicts: {_dir_label(cd_dir, True)}")
+        L.append(f"   • {cd_txt}")
+    else:
+        L.append(f"🔮 **예측 — {name}**" + (f" (현재 ₩{int(price):,})" if price else ""))
+        L.append(_DIV)
+        L.append("🤖 알고리즘 1 — 종합 브레인 (ML · 뉴스 · 유튜브 · 차트 · 키움 · 호가 · 파동)")
+        L.append(f"예측: {_dir_label(a1_dir, False)}")
+        L.extend(f"   • {ln}" for ln in a1_lines)
+        L.append(_DIV)
+        L.append("⚡ 알고리즘 2 · 잔물결 (초단타 · 분 단위)")
+        L.append(f"예측: {_dir_label(rp_dir, False)}")
+        L.append(f"   • {rp_txt}")
+        L.append(_DIV)
+        L.append("🕯️ 알고리즘 3 · 캔들 (1분봉)")
+        L.append(f"예측: {_dir_label(cd_dir, False)}")
+        L.append(f"   • {cd_txt}")
+    return "\n".join(L), {"a1": a1_dir, "rp": rp_dir, "cd": cd_dir, "ai1h": ai1h}
+
+
 def _synthesis_ko(a1: str, rp: str, cd: str, name: str) -> str:
     scalp_buy = rp == "BUY" or cd == "BUY"
     scalp_sell = rp == "SELL" or cd == "SELL"
