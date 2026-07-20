@@ -1006,6 +1006,35 @@ def _is_sell_timing_q(transcript: Optional[str]) -> bool:
     return any(k in (transcript or "").lower() for k in _SELL_TIMING_KW)
 
 
+def _pending_clarify_decision(history: Optional[list[dict]]) -> bool:
+    """True if the most recent assistant turn was the 'which stock? — then I'll run the
+    buy/sell analysis' clarify prompt (boss 2026-07-20: a bare stock-name reply to it was
+    falling through to a truncating LLM path instead of the deterministic decision)."""
+    for h in reversed(history or []):
+        role = str(h.get("role") or h.get("who") or "").lower()
+        if role in ("assistant", "chatbot", "bot"):
+            c = str(h.get("content") or h.get("text") or "")
+            return ("buy/sell analysis with sizing" in c or "매수/매도 판단과 수량" in c)
+        if role in ("user", "human"):
+            continue
+    return False
+
+
+def _recent_sell_intent(history: Optional[list[dict]]) -> bool:
+    """Recent user turn expressed a SELL/exit intent (so a follow-up decide uses focus=sell)."""
+    _kw = ("sell", "팔", "매도", "익절", "손절", "exit", "정리")
+    n = 0
+    for h in reversed(history or []):
+        if str(h.get("role") or h.get("who") or "").lower() in ("user", "human"):
+            c = str(h.get("content") or h.get("text") or "").lower()
+            if any(k in c for k in _kw):
+                return True
+            n += 1
+            if n >= 4:
+                break
+    return False
+
+
 # A RECOMMENDATION ('should I buy?/살까/팔까') asks for a buy/sell/hold ACTION → the friend-
 # style 'decide' report. A pure OUTLOOK ('전망/향후/outlook/어때') asks WHERE it's headed → the
 # detailed forecast. '전망' + '어때' both live in the advice keywords, so we split explicitly:
@@ -6458,8 +6487,10 @@ def _run_agent_impl(
     # ===== BUY/SELL DECISION agent ('사야 할까/팔까', 'buy or sell', '종합 판단') → the
     # comprehensive 3-factor decision (News + Flows + Technicals + ML). Runs BEFORE
     # stock-delegation so it isn't swallowed by the generic Stock-agent path. =====
+    _pending_dec = _pending_clarify_decision(history)
     if not confirmed_tool and "decide" in TOOL_REGISTRY and (_is_decision_q(transcript)
-                                                             or _is_sell_timing_q(transcript)):
+                                                             or _is_sell_timing_q(transcript)
+                                                             or _pending_dec):
         try:
             from services import prediction_service as _psd
             # MULTI-STOCK: '삼성전자랑 SK하이닉스 살까?' → decide per stock (up to 3), so
@@ -6467,7 +6498,8 @@ def _run_agent_impl(
             _dcs = list(dict.fromkeys(c for (c, _n) in _all_stocks_in_query(transcript)
                                       if c in _psd.NAMES))[:3]
             if not _dcs:
-                # FUZZY fallback for misspellings ('skynix') the substring pass misses
+                # FUZZY fallback for misspellings ('skynix') the substring pass misses.
+                # ALSO the bare stock-name reply to the clarify prompt ('skhynix').
                 try:
                     from services.stock_resolver import resolve_one
                     _fz = (resolve_one(transcript or "") or (None,))[0]
@@ -6476,10 +6508,11 @@ def _run_agent_impl(
                 except Exception:
                     pass
             if _dcs:
+                _sell_focus = _is_sell_timing_q(transcript) or (_pending_dec and _recent_sell_intent(history))
                 _steps = []
                 for _dc in _dcs:
                     _args = {"ticker": _dc}
-                    if _is_sell_timing_q(transcript):
+                    if _sell_focus:
                         _args["focus"] = "sell"
                     _steps.append({"tool": "decide", "args": _args})
                 return _run_chain(db, transcript, lang, _steps,
