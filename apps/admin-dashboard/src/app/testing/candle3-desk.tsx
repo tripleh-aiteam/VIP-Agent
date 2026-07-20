@@ -23,6 +23,11 @@ const kstSec = (iso?: string | null) => {
   const s = /Z$|[+-]\d{2}:\d{2}$/.test(iso) ? iso : `${iso}Z`;
   return new Date(s).toLocaleString("sv-SE", { timeZone: "Asia/Seoul" }).slice(11, 19);
 };
+const kstDate = (iso?: string | null) => {
+  if (!iso) return "";
+  const s = /Z$|[+-]\d{2}:\d{2}$/.test(iso) ? iso : `${iso}Z`;
+  return new Date(s).toLocaleString("sv-SE", { timeZone: "Asia/Seoul" }).slice(0, 10);
+};
 const heldFor = (a?: string | null, b?: string | null, ko = true) => {
   if (!a || !b) return "";
   const pa = /Z$|[+-]\d{2}:\d{2}$/.test(a) ? a : `${a}Z`;
@@ -69,7 +74,7 @@ export default function Candle3Desk({ mode }: { mode: C3Mode }) {
   // activity filters
   const [fRes, setFRes] = useState<"ALL" | "WIN" | "LOSE">("ALL");
   const [fName, setFName] = useState("ALL");
-  const [dayTotal, setDayTotal] = useState(false);
+  const [fDate, setFDate] = useState("");   // calendar day filter (YYYY-MM-DD, KST)
 
   const load = () => {
     api<C3Status>("/paper-desk/candle3/status").then(setSc).catch(() => {});
@@ -292,11 +297,12 @@ export default function Candle3Desk({ mode }: { mode: C3Mode }) {
         </div>
       )}
 
-      {/* activity table */}
-      {sc && sc.recent.length > 0 && (
+      {/* Trade History — always visible, with a calendar day filter + daily summary */}
+      {sc && (
         <div className="mt-4 rounded-xl border overflow-hidden" style={{ borderColor: TEAL }}>
           <div className="px-4 py-2 border-b bg-[var(--bg-elevated)] flex items-center gap-2 flex-wrap" style={{ borderColor: "var(--border-default)" }}>
-            <b className="text-[13.5px]" style={{ color: TEAL }}>🕯️ {t("알고리즘 3 활동 — 회전별 기록", "Algorithm 3 activity — every round trip")}</b>
+            <b className="text-[13.5px]" style={{ color: TEAL }}>🕯️ {t("알고리즘 3 거래 기록", "Algorithm 3 — Trade History")}</b>
+            <input type="date" value={fDate} onChange={(e) => setFDate(e.target.value)} className="text-[11px] px-1.5 py-0.5 rounded-lg border bg-[var(--bg-primary)] text-[var(--text-primary)]" style={{ borderColor: fDate ? TEAL : "var(--border-default)" }} title={t("날짜로 평가", "evaluate by day")} />
             <select value={fRes} onChange={(e) => setFRes(e.target.value as typeof fRes)} className="text-[11px] font-bold px-1.5 py-0.5 rounded-lg border bg-[var(--bg-primary)] text-[var(--text-primary)]" style={{ borderColor: "var(--border-default)" }}>
               <option value="ALL">{t("결과: 전체", "result: all")}</option><option value="WIN">{t("🟢 승만", "🟢 wins")}</option><option value="LOSE">{t("🔴 패만", "🔴 losses")}</option>
             </select>
@@ -304,24 +310,30 @@ export default function Candle3Desk({ mode }: { mode: C3Mode }) {
               <option value="ALL">{t("종목: 전체", "stock: all")}</option>
               {Array.from(new Set(sc.recent.map((r) => r.name))).sort().map((n) => <option key={n} value={n}>{n}</option>)}
             </select>
-            <button onClick={() => setDayTotal((v) => !v)} className="ml-auto text-[11.5px] font-extrabold px-3 py-1 rounded-lg text-white" style={{ background: TEAL }}>📊 {dayTotal ? t("합계 닫기", "hide total") : t("오늘 합계", "today's total")}</button>
+            {(fDate || fRes !== "ALL" || fName !== "ALL") && <button onClick={() => { setFDate(""); setFRes("ALL"); setFName("ALL"); }} className="text-[10.5px] font-bold px-2 py-0.5 rounded-lg border text-[var(--text-muted)]" style={{ borderColor: "var(--border-default)" }}>✕ {t("초기화", "clear")}</button>}
           </div>
-          {dayTotal && (() => {
-            const rows = sc.recent;
+          {(() => {
+            const rows = sc.recent.filter((r) =>
+              (fRes === "ALL" || (fRes === "WIN" ? (r.won || 0) > 0 : (r.won || 0) < 0))
+              && (fName === "ALL" || r.name === fName)
+              && (!fDate || kstDate(r.closed_at) === fDate));
             const wins = rows.filter((r) => (r.won || 0) > 0), losses = rows.filter((r) => (r.won || 0) < 0);
             const net = rows.reduce((a, r) => a + (r.won || 0), 0);
-            return (
+            const label = fDate ? fDate : t("전체 기록", "all history");
+            return (<>
               <div className="px-4 py-3 border-b text-[13px] tabular-nums flex items-center gap-5 flex-wrap" style={{ borderColor: "var(--border-default)", background: "rgba(0,131,143,0.04)" }}>
+                <span className="font-bold text-[var(--text-secondary)]">📅 {label}:</span>
                 <span>🔄 {t(`${rows.length}회전`, `${rows.length} trips`)}</span>
                 <span style={{ color: RED }}>🟢 {wins.length}{t("승", "W")}</span><span style={{ color: BLUE }}>🔴 {losses.length}{t("패", "L")}</span>
                 <span className="font-extrabold" style={{ color: rows.length && wins.length / rows.length >= 0.5 ? "#2e7d32" : RED }}>🏆 {t(`승률 ${rows.length ? Math.round(wins.length / rows.length * 100) : 0}%`, `${rows.length ? Math.round(wins.length / rows.length * 100) : 0}% win`)}</span>
-                <span className="text-[15px] font-extrabold" style={{ color: pnlCol(net) }}>= {net > 0 ? "+" : ""}₩{fmt(Math.round(net))}</span>
+                <span className="text-[15px] font-extrabold" style={{ color: pnlCol(net) }}>= {t("순이익", "net")} {net > 0 ? "+" : ""}₩{fmt(Math.round(net))}</span>
               </div>
-            );
-          })()}
-          {(() => {
-            const rows = sc.recent.filter((r) => (fRes === "ALL" || (fRes === "WIN" ? (r.won || 0) > 0 : (r.won || 0) < 0)) && (fName === "ALL" || r.name === fName));
-            return (
+              {rows.length === 0 ? (
+                <div className="px-4 py-6 text-center text-[12px] text-[var(--text-muted)]">
+                  {fDate ? t("이 날짜에 완료된 거래가 없습니다", "no completed trades on this date")
+                    : t("아직 완료된 회전이 없습니다 — 매수 후 3연속 음봉/−1%에 매도되면 여기에 쌓입니다", "no completed round trips yet — they appear here once a buy sells on 3 down candles / −1%")}
+                </div>
+              ) : (
               <table className="w-full text-[12px]">
                 <thead><tr className="text-[10.5px] text-[var(--text-muted)]" style={{ background: "var(--bg-elevated)" }}>
                   <th className="text-left px-3 py-1.5">{t("매수", "Bought")}</th><th className="text-left px-2">{t("매도", "Sold")}</th><th className="text-right px-2">⏱</th>
@@ -344,7 +356,8 @@ export default function Candle3Desk({ mode }: { mode: C3Mode }) {
                   ))}
                 </tbody>
               </table>
-            );
+              )}
+            </>);
           })()}
         </div>
       )}

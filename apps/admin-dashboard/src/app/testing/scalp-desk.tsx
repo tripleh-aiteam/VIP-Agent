@@ -302,6 +302,7 @@ export default function ScalpDesk({ mode }: { mode: ScalpMode }) {
   const [fltRes, setFltRes] = useState<"ALL" | "WIN" | "LOSE">("ALL");
   const [fltName, setFltName] = useState<string>("ALL");
   const [fltTime, setFltTime] = useState<"ALL" | "AM" | "PM" | "1H">("ALL");
+  const [fltDate, setFltDate] = useState<string>("");   // calendar day filter (KST)
   // 📊 today's Algo1 vs Algo2 scoreboard (boss 2026-07-16: compare both sides)
   const [cmp, setCmp] = useState<Record<string, { trips: number; wins: number; win_rate: number | null; net_won: number }> | null>(null);
   useEffect(() => {
@@ -1195,8 +1196,10 @@ export default function ScalpDesk({ mode }: { mode: ScalpMode }) {
       {sc && sc.recent.length > 0 && (
         <div className="mt-4 rounded-xl border overflow-hidden" style={{ borderColor: PURPLE }}>
           <div className="px-4 py-2 border-b bg-[var(--bg-elevated)] flex items-center gap-2 flex-wrap" style={{ borderColor: "var(--border-default)" }}>
-            <b className="text-[13.5px]" style={{ color: PURPLE }}>⚡ {t("알고리즘 2 활동 — 회전별 전체 기록", "Algorithm 2 activity — every round trip")}</b>
-            {/* 🔍 filters: result · company · time (boss 2026-07-16) */}
+            <b className="text-[13.5px]" style={{ color: PURPLE }}>⚡ {t("알고리즘 2 거래 기록", "Algorithm 2 — Trade History")}</b>
+            {/* 🔍 filters: date · result · company · time (boss 2026-07-16 / 07-20 calendar) */}
+            <input type="date" value={fltDate} onChange={(e) => setFltDate(e.target.value)}
+              className="text-[11px] px-1.5 py-0.5 rounded-lg border bg-[var(--bg-primary)] text-[var(--text-primary)]" style={{ borderColor: fltDate ? PURPLE : "var(--border-default)" }} title={t("날짜로 평가", "evaluate by day")} />
             <select value={fltRes} onChange={(e) => setFltRes(e.target.value as typeof fltRes)}
               className="text-[11px] font-bold px-1.5 py-0.5 rounded-lg border bg-[var(--bg-primary)] text-[var(--text-primary)]" style={{ borderColor: "var(--border-default)" }}>
               <option value="ALL">{t("결과: 전체", "result: all")}</option>
@@ -1217,8 +1220,8 @@ export default function ScalpDesk({ mode }: { mode: ScalpMode }) {
               <option value="PM">{t("오후 (12시~)", "PM (12+)")}</option>
               <option value="1H">{t("최근 1시간", "last hour")}</option>
             </select>
-            {(fltRes !== "ALL" || fltName !== "ALL" || fltTime !== "ALL") && (
-              <button onClick={() => { setFltRes("ALL"); setFltName("ALL"); setFltTime("ALL"); }}
+            {(fltRes !== "ALL" || fltName !== "ALL" || fltTime !== "ALL" || fltDate) && (
+              <button onClick={() => { setFltRes("ALL"); setFltName("ALL"); setFltTime("ALL"); setFltDate(""); }}
                 className="text-[10.5px] font-bold px-2 py-0.5 rounded-lg border text-[var(--text-muted)]" style={{ borderColor: "var(--border-default)" }}>
                 ✕ {t("필터 지우기", "clear")}
               </button>
@@ -1270,6 +1273,11 @@ export default function ScalpDesk({ mode }: { mode: ScalpMode }) {
               if (fltRes === "WIN" && !((r.won || 0) > 0)) return false;
               if (fltRes === "LOSE" && !((r.won || 0) < 0)) return false;
               if (fltName !== "ALL" && r.name !== fltName) return false;
+              if (fltDate) {
+                const c = r.closed_at || "";
+                const s = /Z$|[+-]\d{2}:\d{2}$/.test(c) ? c : `${c}Z`;
+                if (new Date(s).toLocaleString("sv-SE", { timeZone: "Asia/Seoul" }).slice(0, 10) !== fltDate) return false;
+              }
               if (fltTime !== "ALL") {
                 const c = r.closed_at || "";
                 const s = /Z$|[+-]\d{2}:\d{2}$/.test(c) ? c : `${c}Z`;
@@ -1284,15 +1292,15 @@ export default function ScalpDesk({ mode }: { mode: ScalpMode }) {
               }
               return true;
             });
-            const fActive = fltRes !== "ALL" || fltName !== "ALL" || fltTime !== "ALL";
+            const fActive = fltRes !== "ALL" || fltName !== "ALL" || fltTime !== "ALL" || !!fltDate;
             const fNet = actRows.reduce((a, r) => a + (r.won || 0), 0);
             const fWins = actRows.filter((r) => (r.won || 0) > 0).length;
             return (<>
           {fActive && (
             <div className="px-4 py-1.5 border-b text-[11.5px] font-bold tabular-nums" style={{ borderColor: "var(--border-default)", background: "rgba(123,31,162,0.04)" }}>
-              🔍 {t(`필터 결과: ${actRows.length}회전 · 승 ${fWins} · 승률 ${actRows.length ? Math.round(fWins / actRows.length * 100) : 0}%`,
-                    `filtered: ${actRows.length} trips · ${fWins} wins · ${actRows.length ? Math.round(fWins / actRows.length * 100) : 0}% win rate`)}
-              <span className="ml-2" style={{ color: pnlCol(fNet) }}>{fNet > 0 ? "+" : ""}₩{fmt(Math.round(fNet))}</span>
+              {fltDate ? `📅 ${fltDate}: ` : "🔍 "}{t(`${actRows.length}회전 · 승 ${fWins} · 승률 ${actRows.length ? Math.round(fWins / actRows.length * 100) : 0}%`,
+                    `${actRows.length} trips · ${fWins} wins · ${actRows.length ? Math.round(fWins / actRows.length * 100) : 0}% win rate`)}
+              <span className="ml-2" style={{ color: pnlCol(fNet) }}>{t("순이익", "net")} {fNet > 0 ? "+" : ""}₩{fmt(Math.round(fNet))}</span>
             </div>
           )}
           <table className="w-full text-[12px]">

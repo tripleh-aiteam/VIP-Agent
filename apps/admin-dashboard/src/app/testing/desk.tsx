@@ -1773,10 +1773,11 @@ export default function Desk({ mode }: { mode: TradeMode }) {
             if (!rows.length) return null;
             const total = rows.reduce((a, h) => a + (h.realized_pnl || 0), 0);
             const wins = rows.filter((h) => (h.realized_pnl || 0) > 0).length;
+            const wr = rows.length ? Math.round(wins / rows.length * 100) : 0;
             return (
               <span className="ml-auto text-[12px] font-extrabold tabular-nums" style={{ color: pnlCol(total) }}>
-                {t(`이 필터 합계: ${rows.length}건 · 승 ${wins} · ${total > 0 ? "+" : ""}₩${fmt(Math.round(total))} (수수료 차감 후)`,
-                   `filter total: ${rows.length} sells · ${wins} wins · ${total > 0 ? "+" : ""}₩${fmt(Math.round(total))} (net of fees)`)}
+                {(fltDate ? `📅 ${fltDate}: ` : "") + t(`${rows.length}회 매도 · 승 ${wins} · 승률 ${wr}% · ${total > 0 ? "+" : ""}₩${fmt(Math.round(total))} (수수료 차감 후)`,
+                   `${rows.length} sells · ${wins} wins · ${wr}% win · ${total > 0 ? "+" : ""}₩${fmt(Math.round(total))} (net of fees)`)}
               </span>
             );
           })()}
