@@ -2822,6 +2822,67 @@ def _format_algo_scoreboard(sb: dict, lang) -> str:
     return "\n".join([x for x in L if x is not None])
 
 
+# 🔮 FUTURE / NEXT-DAY PREDICTION cues (boss 2026-07-20): "predict tomorrow's price",
+# "tomorrow morning which price will it open?" must run ALL 3 algorithms + an LLM final
+# summary — not dump the current price. Requires a NEXT-DAY cue AND a predict verb so it
+# never grabs plain current-price or today's-high questions.
+_PRED_NEXTDAY = ("tomorrow", "next day", "next-day", "next open", "next trading day",
+                 "opening price", "will open", "open at", "tomorrow morning", "next session",
+                 "내일", "모레", "다음날", "다음 날", "담날", "시초가", "개장", "다음 거래일", "다음거래일")
+_PRED_VERB = ("predict", "prediction", "forecast", "expect", "outlook", "estimate",
+              "예측", "전망", "예상", "오를", "내릴", "될까", "열릴", "얼마", "시작",
+              "오를까", "내릴까", "상승", "하락")
+
+
+def _is_future_prediction(text: str) -> bool:
+    t = text or ""
+    tl = t.lower()
+    nd = any(k in t or k in tl for k in _PRED_NEXTDAY)
+    vb = any(k in t or k in tl for k in _PRED_VERB)
+    return bool(nd and vb)
+
+
+def _llm_prediction_summary(d: dict, block: str, name: str, lang, question: str) -> str:
+    """LLM final summary over the 3 algorithms' analysis — the boss wants a forward
+    question to end with a plain-language synthesis, not just the deterministic block."""
+    from services.llm_client import chat_completion_sync
+    en = str(lang or "").lower().startswith("en")
+    if en:
+        sys = (
+            "You are a Korean-stock trading assistant. The user asked a FORWARD-LOOKING "
+            "question. Below is the analysis from THREE trading algorithms (Algorithm 1 = "
+            "combined decision brain + 1-hour prediction; Algorithm 2 = Ripple scalper; "
+            "Algorithm 3 = Candle 3-up/3-down). Write a SHORT final summary (3-5 sentences) "
+            "that (1) states the COMBINED lean — up / down / flat with rough conviction, "
+            "(2) gives ONE clear actionable recommendation for the user's timeframe, and "
+            "(3) is honest that these are intraday signals — not a guaranteed next-day open. "
+            "Use ONLY numbers that appear in the analysis — never invent prices. Answer ONLY "
+            "in English. End with a one-line takeaway prefixed '👉'."
+        )
+    else:
+        sys = (
+            "당신은 한국 주식 트레이딩 어시스턴트입니다. 사용자가 '미래(예측)' 질문을 했습니다. "
+            "아래는 3개 알고리즘의 분석입니다 (알고리즘1 = 종합 판단 브레인 + 1시간 예측, "
+            "알고리즘2 = 잔물결 스캘퍼, 알고리즘3 = 캔들 3연속). 다음을 담은 짧은 최종 요약"
+            "(3~5문장)을 쓰세요: (1) 종합 방향 — 상승/하락/보합과 대략적 확신도, (2) 사용자 "
+            "시간대에 맞는 명확한 실행 추천 1가지, (3) 이 신호들은 장중 신호이며 내일 시초가를 "
+            "보장하지 않는다는 점을 솔직히. 분석에 나온 숫자만 사용하고 가격을 지어내지 마세요. "
+            "반드시 한국어로만. 마지막 줄은 '👉'로 시작하는 한 줄 요약."
+        )
+    user = (f"User question: {question}\n\nStock: {name}\n"
+            f"Decision: {d.get('decision')} · confidence {d.get('confidence')} · "
+            f"price {d.get('price')}\n\n=== 3 ALGORITHMS ANALYSIS ===\n{block}")
+    try:
+        out = chat_completion_sync(sys, [{"role": "user", "content": user}],
+                                   max_tokens=500, temperature=0.3)
+        if not (out or "").strip():
+            return ""
+        return ("🧠 **AI Final Summary**\n\n" if en else "🧠 **AI 종합 예측 요약**\n\n") + out.strip()
+    except Exception as e:
+        log.warning(f"prediction summary LLM failed: {str(e)[:120]}")
+        return ""
+
+
 def _run_chain(
     db: Session,
     transcript: str,
@@ -5295,6 +5356,55 @@ def _run_agent_impl(
                "NYSE 상장 한국 ADR은 바로 시세를 드릴 수 있습니다.)")
         return {"intent": "adr_price", "language": lang, "reply": _fb, "action": None,
                 "speak": True, "transcript": transcript, "tool_used": None}
+
+    # === 🔮 FUTURE / NEXT-DAY PREDICTION (boss 2026-07-20): "predict Skhynix tomorrow at
+    # 9:00", "tomorrow morning which price will it open?" were dumping the current price.
+    # Now they run ALL 3 algorithms (clean_recommendation) + an LLM final summary. Runs
+    # BEFORE the high-forecast / price / P&L intercepts. Both bots, KO/EN. Needs a NEXT-DAY
+    # cue so it never grabs plain current-price or today's-high questions. ===
+    if not confirmed_tool and not attachment_ids and _is_future_prediction(transcript):
+        try:
+            _pr_stocks = list(dict.fromkeys(_all_stocks_in_query(transcript)))[:2]
+            if not _pr_stocks:
+                try:
+                    from services.stock_resolver import resolve_one as _r1p
+                    _cp, _np = (_r1p(transcript or "") or (None, None))[:2]
+                    if _cp:
+                        _pr_stocks = [(_cp, _np or _cp)]
+                except Exception:
+                    pass
+            if _pr_stocks:
+                from services.decision_brain import clean_recommendation as _pr_clean
+                _pr_parts = []
+                for _c, _n in _pr_stocks:
+                    _res = execute_tool("decide", {"ticker": _c}, db=db,
+                                        agent_id=agent_id, transcript=transcript)
+                    if not (isinstance(_res, dict) and _res.get("ok")):
+                        continue
+                    _block = _pr_clean(db, _res, lang)
+                    _summary = _llm_prediction_summary(_res, _block, _n, lang, transcript)
+                    _one = _block + (("\n\n" + _summary) if _summary else "")
+                    if len(_pr_stocks) > 1:
+                        _one = f"# 📌 {_n}\n\n{_one}"
+                    _pr_parts.append(_one)
+                    try:  # grade the forward call vs the real move
+                        from services.call_grader import log_call
+                        log_call(db, ticker=_res.get("ticker"), action=_res.get("decision"),
+                                 intent="prediction", ref_price=_res.get("price"),
+                                 horizon_min=60, name=_res.get("name"),
+                                 agent_id=agent_id, lang=lang)
+                    except Exception:
+                        pass
+                if _pr_parts:
+                    _hdr = ("🔮 **Tomorrow / forward prediction — based on all 3 algorithms**\n\n"
+                            if str(lang).lower().startswith("en")
+                            else "🔮 **내일·향후 예측 — 3개 알고리즘 종합**\n\n")
+                    return {"intent": "future_prediction", "language": lang,
+                            "reply": (_hdr + "\n\n---\n\n".join(_pr_parts))[:9000],
+                            "action": None, "speak": True, "transcript": transcript,
+                            "tool_used": "future_prediction"}
+        except Exception as e:
+            log.warning(f"future-prediction lane failed: {str(e)[:120]}")
 
     # === 📈 INTRADAY-HIGH FORECAST (boss 2026-07-20): "prediction of today's highest
     # price and what time" was returning the CURRENT price (hallucination). Runs FIRST —
