@@ -83,6 +83,15 @@ Smart-analyst lane + concise mode + language purity + deep graph analysis + matr
 - **Suppressed the trailing clutter for recommendations** ("that's all, nothing more"): the LLM deep-dive, the appended chart-read block, and the track-record footer no longer append to decide answers (kept only for the outlook/two-method path). Graph analysis is now integrated inside Algo-1's detail line instead of a separate dump.
 - Result: ~600-char clean structured answer instead of a ~4,000-char wall. Both bots, KO/EN.
 
+### [11:15] Recommendation detail per algorithm (boss: "structure good but too short")
+
+- Kept the clean structure, added depth to each of the 3 algorithms in `decision_brain.clean_recommendation`:
+  - **Algo 1** → `_algo1_synthesis()`: a 📌 종합 해설 line (how many methods buy/sell + chart + flows + order-book reasons + conclusion).
+  - **Ripple** → `_ripple_detail()`: how it works · live read (bounce % off the low, in/out of the +0.10~0.45% window) · what triggers a buy.
+  - **Candle** → `_candle_detail()`: how it works · live 1-min streak count · what triggers buy/sell.
+- ~1,170 chars — detailed but still structured (vs the old ~4,000 dump). Shows honest "1분봉 데이터 없음(키움 피드)" when Kiwoom 8050 blocks the 1-min feed.
+- Also today: deploy unblocked (boss reconnected Render↔GitHub), prediction lane moved before the P&L/portfolio intercepts (KO '얼마까지 예측' fix), AI Advisor forecast relay cue added.
+
 ### Next
 
 - Phase D: weekly auto-scoreboard report (scoreboard.log accumulating nightly).

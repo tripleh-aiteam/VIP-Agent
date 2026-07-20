@@ -84,6 +84,107 @@ def _ripple_now(code: str) -> tuple[str, str, str]:
 _DIV = "━━━━━━━━━━━━━━━━━━━━"
 
 
+def _ripple_detail(code: str, lang: str) -> list[str]:
+    """Ripple's strategy + current live read + what triggers a buy (boss wants detail)."""
+    en = str(lang or "").lower().startswith("en")
+    sig, ko, en_r = _ripple_now(code)
+    try:
+        from services.scalp_trader import _candles_1m
+        cs = _candles_1m(code, n=12)
+        closes = [b.get("close") for b in cs if b.get("close")]
+        cur = closes[-1] if closes else None
+        lo = min(closes) if closes else None
+        bounce = round((cur / lo - 1) * 100, 2) if (cur and lo) else None
+    except Exception:
+        bounce = None
+    if en:
+        out = ["   • How it works: buys when price lifts +0.10~0.45% off a recent low with "
+               "consecutive rises → sells +0.4% (net +0.17% after fees) / −1% stop / flat 15:18."]
+        if bounce is not None:
+            out.append(f"   • Right now: {bounce:+.2f}% off the recent low — "
+                       + ("in the buy window, watching for the rise to confirm." if 0.10 <= bounce <= 0.45
+                          else "already past the +0.45% chase limit, so it waits for a pullback." if bounce > 0.45
+                          else "not enough of a bounce yet (needs +0.10%)."))
+        else:
+            out.append("   • Right now: 1-min data unavailable (Kiwoom feed) — waiting.")
+        out.append("   • Buys when: a fresh +0.10~0.45% bounce starts. Best on choppy, ranging tape.")
+        return out
+    out = ["   • 작동 방식: 최근 저점에서 +0.10~0.45% 반등하며 연속 상승하면 매수 → +0.4% 익절"
+           "(수수료 후 실속 +0.17%) / −1% 손절 / 15:18 정리."]
+    if bounce is not None:
+        out.append(f"   • 지금: 최근 저점 대비 {bounce:+.2f}% — "
+                   + ("매수 구간, 상승 확정 대기 중." if 0.10 <= bounce <= 0.45
+                      else "이미 +0.45% 추격 한도를 넘어 눌림을 기다립니다." if bounce > 0.45
+                      else "아직 반등이 부족합니다(+0.10% 필요)."))
+    else:
+        out.append("   • 지금: 1분봉 데이터 없음(키움 피드) — 대기 중.")
+    out.append("   • 매수 조건: 새로운 +0.10~0.45% 반등 시작. 박스권·출렁이는 장에서 유리.")
+    return out
+
+
+def _candle_detail(code: str, lang: str) -> list[str]:
+    """Candle 3-2 strategy + current 1-min streak + what triggers buy/sell."""
+    en = str(lang or "").lower().startswith("en")
+    try:
+        from services.scalp_trader import _streaks_1m
+        up, dn, n = _streaks_1m(code)
+    except Exception:
+        up = dn = n = 0
+    if en:
+        out = ["   • How it works: 3 up 1-min candles → BUY · rides while rising (1 down "
+               "forgiven) · 2 down candles → SELL · −1% stop · flat 15:18. Rides the trend."]
+        if n:
+            out.append(f"   • Right now: {up} up / {dn} down candles in a row — "
+                       + ("BUY signal is live." if up >= 3 else "SELL signal is live." if dn >= 2
+                          else f"needs {3-up} more up candle(s) to buy." if up else "no clear streak yet."))
+        else:
+            out.append("   • Right now: 1-min candle data unavailable (Kiwoom feed) — waiting.")
+        out.append("   • Buys when: 3 green 1-min candles in a row. Best on a clean, trending push.")
+        return out
+    out = ["   • 작동 방식: 1분봉 3연속 양봉 → 매수 · 오르는 동안 보유(음봉 1개는 용서) · "
+           "2연속 음봉 → 매도 · −1% 손절 · 15:18 정리. 추세를 탑니다."]
+    if n:
+        out.append(f"   • 지금: 양봉 {up}개 / 음봉 {dn}개 연속 — "
+                   + ("매수 신호 발생." if up >= 3 else "매도 신호 발생." if dn >= 2
+                      else f"매수까지 양봉 {3-up}개 더 필요." if up else "뚜렷한 연속 흐름 없음."))
+    else:
+        out.append("   • 지금: 1분봉 데이터 없음(키움 피드) — 대기 중.")
+    out.append("   • 매수 조건: 1분봉 3연속 양봉. 깔끔한 추세 상승에서 유리.")
+    return out
+
+
+def _algo1_synthesis(d: dict[str, Any], lang: str) -> str:
+    """2-3 sentence plain explanation of WHY Algorithm 1 reached its decision."""
+    en = str(lang or "").lower().startswith("en")
+    sigs = [s for s in (d.get("signals_breakdown") or []) if s.get("vote") != "HOLD"]
+    nb = sum(1 for s in sigs if s["vote"] == "BUY")
+    ns = sum(1 for s in sigs if s["vote"] == "SELL")
+    dec = (d.get("decision") or "HOLD").upper()
+    tech = d.get("technicals") or {}
+    flows = d.get("flows") or {}
+    an = d.get("method2_analysis") or {}
+    reasons = (an.get("reasons") or [])[:3]
+    tsum = tech.get("summary_en" if en else "summary_ko") or ""
+    ftag = (flows.get("tag_en") if en else flows.get("tag")) or ""
+    if en:
+        head = (f"{nb} method(s) lean buy, {ns} lean sell. ")
+        why = (f"Chart: {tsum}. " if tsum else "") + (f"Flows: {ftag}. " if ftag else "")
+        if reasons:
+            why += "Order-book/box: " + "; ".join(reasons) + ". "
+        concl = {"BUY": "The weight of evidence supports buying.",
+                 "SELL": "The weight of evidence says reduce/avoid.",
+                 "HOLD": "Signals conflict, so the brain waits for a clearer setup."}[dec]
+        return "📌 Summary: " + head + why + concl
+    head = f"매수 성향 {nb}개 · 매도 성향 {ns}개. "
+    why = (f"차트: {tsum}. " if tsum else "") + (f"수급: {ftag}. " if ftag else "")
+    if reasons:
+        why += "호가/박스권: " + "; ".join(reasons) + ". "
+    concl = {"BUY": "증거의 무게가 매수를 지지합니다.",
+             "SELL": "증거의 무게가 비중 축소/회피를 가리킵니다.",
+             "HOLD": "신호가 엇갈려 더 뚜렷한 자리를 기다립니다."}[dec]
+    return "📌 종합 해설: " + head + why + concl
+
+
 def clean_recommendation(db, d: dict[str, Any], lang: str = "ko") -> str:
     """The boss's exact recommendation layout (2026-07-20): ONE-line final decision →
     Algorithm 1 (decision + 1h prediction + ML/news/YT/chart/Kiwoom/orderbook/wave
@@ -151,16 +252,19 @@ def clean_recommendation(db, d: dict[str, Any], lang: str = "ko") -> str:
         L.append(f" • Kiwoom supply/demand: {_sc(flows)} " + (flows.get("tag_en") or flows.get("tag") or "neutral"))
         L.append(f" • News: {_sc(news)} " + (f"{news.get('count',0)} items" if news.get('count') else "neutral"))
         L.append(f" • YouTube: {_sc(yt)} " + (f"{yt.get('count',0)} mentions" if yt.get('count') else "neutral"))
+        L.append(_algo1_synthesis(d, lang))
         # 3) Ripple
         rp_sig, rp_ko, rp_en = _ripple_now(code)
         L.append(_DIV)
         L.append("⚡ Algorithm 2 · Ripple (scalp, minutes)")
         L.append(f"Decision: {ic.get(rp_sig,'⚪')} {ve.get(rp_sig,rp_sig)} — {rp_en}")
+        L.extend(_ripple_detail(code, lang))
         # 4) Candle
         cd_sig, cd_ko, cd_en = _candle_now(code)
         L.append(_DIV)
         L.append("🕯️ Algorithm 2 · Candle 3-2 (1-min chart)")
         L.append(f"Decision: {ic.get(cd_sig,'⚪')} {ve.get(cd_sig,cd_sig)} — {cd_en}")
+        L.extend(_candle_detail(code, lang))
         # 5) final from the 3
         L.append(_DIV)
         L.append("🎯 Final answer (from the 3 cases):")
@@ -182,14 +286,17 @@ def clean_recommendation(db, d: dict[str, Any], lang: str = "ko") -> str:
         L.append(f" • 키움 수급: {_sc(flows)} " + (flows.get("tag") or "중립"))
         L.append(f" • 뉴스: {_sc(news)} " + (f"{news.get('count',0)}건" if news.get('count') else "중립"))
         L.append(f" • 유튜브: {_sc(yt)} " + (f"{yt.get('count',0)}건 언급" if yt.get('count') else "중립"))
+        L.append(_algo1_synthesis(d, lang))
         rp_sig, rp_ko, rp_en = _ripple_now(code)
         L.append(_DIV)
         L.append("⚡ 알고리즘 2 · 잔물결 (초단타·분 단위)")
         L.append(f"결정: {ic.get(rp_sig,'⚪')} {vk.get(rp_sig,rp_sig)} — {rp_ko}")
+        L.extend(_ripple_detail(code, lang))
         cd_sig, cd_ko, cd_en = _candle_now(code)
         L.append(_DIV)
         L.append("🕯️ 알고리즘 2 · 캔들 3-2 (1분봉)")
         L.append(f"결정: {ic.get(cd_sig,'⚪')} {vk.get(cd_sig,cd_sig)} — {cd_ko}")
+        L.extend(_candle_detail(code, lang))
         L.append(_DIV)
         L.append("🎯 종합 최종 답변 (3가지 종합):")
         L.append(_synthesis_ko(dec, rp_sig, cd_sig, name))
