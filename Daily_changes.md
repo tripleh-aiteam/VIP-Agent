@@ -77,6 +77,12 @@ Smart-analyst lane + concise mode + language purity + deep graph analysis + matr
 - **#3 advice showed only Algo 1** → `decision_brain.three_algo_block()`: 🧭 shows all three (🤖 Algo1 daily verdict, ⚡ Ripple live read, 🕯️ Candle live read) with the "different horizons" note. Prepended in the decide answer under the scoreboard.
 - **#2 graph-analysis basis** — scoreboard now states "📈 실시간 차트 분석(1분·5분·일봉)을 여러 알고리즘으로 종합" so it's clearly algorithmic, both languages.
 
+### [10:15] Clean recommendation layout (boss: "confusing, hard to understand")
+
+- **Replaced the recommendation dump with the boss's exact structure** — `decision_brain.clean_recommendation()`: (1) one-line ✅ 최종 결정 Buy/Hold/Sell; (2) 🤖 알고리즘 1 — 종합 브레인 (ML·뉴스·유튜브·차트·키움·호가·파동) with its decision + **1시간 예측** (from prob_up_1h) + a short detail line per method; (3) ⚡ 알고리즘 2 잔물결 decision+detail; (4) 🕯️ 캔들 3-2 decision+detail; (5) 🎯 종합 최종 답변 synthesised from the 3 cases.
+- **Suppressed the trailing clutter for recommendations** ("that's all, nothing more"): the LLM deep-dive, the appended chart-read block, and the track-record footer no longer append to decide answers (kept only for the outlook/two-method path). Graph analysis is now integrated inside Algo-1's detail line instead of a separate dump.
+- Result: ~600-char clean structured answer instead of a ~4,000-char wall. Both bots, KO/EN.
+
 ### Next
 
 - Phase D: weekly auto-scoreboard report (scoreboard.log accumulating nightly).

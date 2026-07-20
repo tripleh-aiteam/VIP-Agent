@@ -2889,35 +2889,17 @@ def _run_chain(
         _en = str(lang or "").lower().startswith("en")
         _parts = []
         for _dec in _decs:
-            _p = _dec.get("reasoning_en" if _en else "reasoning_ko") or ""
-            # 🧠 unified decision scoreboard (boss 2026-07-16): lead every buy/sell/hold
-            # answer with the transparent vote — who backed it, who opposed, weights —
-            # so the one verdict is explainable. Reuses the decide dict (no re-run).
+            # 🎯 CLEAN RECOMMENDATION LAYOUT (boss 2026-07-20): one-line final decision →
+            # Algorithm 1 (decision + 1h prediction + ML/news/YT/chart/Kiwoom/orderbook/
+            # wave detail) → Algo 2 Ripple → Algo 2 Candle → final answer from the 3.
+            # Replaces the old confusing dump entirely ("that's all, nothing more").
             try:
-                from services.decision_brain import scoreboard as _brain_sb
-                from services.decision_brain import three_algo_block as _brain_3a
-                _sb = _brain_sb(db, _dec, lang)
-                _3a = _brain_3a(db, _dec, lang)   # 🧭 what all 3 algorithms say (boss 2026-07-20)
-                _head = "\n\n".join(x for x in (_sb, _3a) if x)
-                if _head:
-                    _p = _head + ("\n\n" + _p if _p else "")
+                from services.decision_brain import clean_recommendation as _brain_clean
+                _p = _brain_clean(db, _dec, lang)
             except Exception:
-                pass
+                _p = _dec.get("reasoning_en" if _en else "reasoning_ko") or ""
             if _p and len(_decs) > 1:
                 _p = f"# 📌 {_dec.get('name') or _dec.get('ticker')}\n\n{_p}"
-            # 몇 주? — budget-aware sizing on a BUY decision (same 1%-risk rule as scalp)
-            if (_dec.get("decision") or "").upper() == "BUY" and _dec.get("price"):
-                try:
-                    from services.position_size import sizing_line
-                    _wv0 = _dec.get("method3_wave") or {}
-                    _px = float(_dec["price"])
-                    _sl = sizing_line(db, transcript=transcript, user_key=user_id,
-                                      lang=lang, entry=_px,
-                                      stop=float(_wv0.get("stop") or _px * 0.98))
-                    if _sl:
-                        _p = (_p or "") + _sl
-                except Exception:
-                    pass
             if _p:
                 _parts.append(_p)
             # M1.2 — measure it: log EACH stock's advice for grading after its horizon.
@@ -2944,21 +2926,15 @@ def _run_chain(
                 pass
         if _parts:
             reply = "\n\n---\n\n".join(_parts)
-        # measured trust — show this answer type's real graded record. Inserted BEFORE
-        # the 📌 summary so the answer still ENDS with the final answer (boss format).
-        try:
-            from services.call_grader import track_record_line
-            _tr = track_record_line(db, "decision", lang)
-            if _tr:
-                reply = _insert_before_summary(reply or "", _tr)
-        except Exception:
-            pass
+        # boss 2026-07-20: the clean 3-case recommendation is self-contained —
+        # "that's all, nothing more". The old track-record footer, LLM deep-dive,
+        # and appended chart block are suppressed for decide answers below.
 
     # DETAIL LAYER (user ask: answers were too short): an LLM-written '심층 해설 /
     # Deep dive' elaborating STRICTLY on the deterministic method data. Placed INSIDE
     # the body — before the 📌 summary — so the answer ends with the final answer
     # (boss: 'Deep Dive after the final answer is wrong').
-    if (_tm or _decs) and len(_decs) <= 1:
+    if _tm and not _decs:            # outlook only — recommendations use the clean 3-case layout
         _extra = _elaborate_answer(transcript, lang, step_results)
         if _extra:
             reply = _insert_before_summary(reply or "", "\n\n" + _extra)
@@ -2967,7 +2943,7 @@ def _run_chain(
     # recommendation also it should give graph analysis opinion") — the deep
     # multi-timeframe chart read (1-min · 5-min · daily · analog pattern)
     # appended to decide / two-method answers for the first ticker.
-    if _tm or _decs:
+    if _tm and not _decs:            # recommendation already carries chart in Algo-1 detail
         try:
             _ct = None
             for _s in (steps or []):

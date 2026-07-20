@@ -81,6 +81,154 @@ def _ripple_now(code: str) -> tuple[str, str, str]:
         return "WAIT", "데이터 없음", "no data"
 
 
+_DIV = "━━━━━━━━━━━━━━━━━━━━"
+
+
+def clean_recommendation(db, d: dict[str, Any], lang: str = "ko") -> str:
+    """The boss's exact recommendation layout (2026-07-20): ONE-line final decision →
+    Algorithm 1 (decision + 1h prediction + ML/news/YT/chart/Kiwoom/orderbook/wave
+    detail) → Algorithm 2 Ripple (decision + detail) → Algorithm 2 Candle (decision
+    + detail) → final answer from the 3 cases. Clean and short — nothing more."""
+    en = str(lang or "").lower().startswith("en")
+    code = str(d.get("ticker") or "").zfill(6)
+    name = d.get("name") or code
+    dec = (d.get("decision") or "HOLD").upper()
+    conf = d.get("confidence") or "low"
+    conf_ko = {"high": "높음", "medium": "보통", "low": "낮음"}.get(conf, "낮음")
+    vk = {"BUY": "매수", "SELL": "매도", "HOLD": "보유/관망", "WAIT": "대기"}
+    ve = {"BUY": "BUY", "SELL": "SELL", "HOLD": "HOLD", "WAIT": "WAIT"}
+    ic = {"BUY": "🟢", "SELL": "🔴", "HOLD": "⚪", "WAIT": "⚪"}
+
+    def _v(x):
+        return (ve if en else vk).get(x, x)
+
+    ml = d.get("method1_ml") or {}
+    an = d.get("method2_analysis") or {}
+    wv = d.get("method3_wave") or {}
+    news = d.get("news") or {}
+    flows = d.get("flows") or {}
+    tech = d.get("technicals") or {}
+    yt = d.get("youtube") or {}
+    setup = d.get("intraday_setup") or {}
+    tier = d.get("hourly_tier") or {}
+    ai1h = setup.get("ai_1h_prob")
+    if ai1h is None:                 # boss wants Algo-1's 1-hour prediction shown always
+        try:
+            from services.hourly_model import prob_up_1h
+            _pu = prob_up_1h(db, code)
+            if _pu is not None:
+                ai1h = round(float(_pu) * 100) if _pu <= 1 else round(float(_pu))
+        except Exception:
+            ai1h = None
+
+    def _pl(v):
+        try:
+            return f"{int(v):,}"
+        except Exception:
+            return "-"
+
+    def _sc(x):
+        s = x.get("score") if isinstance(x, dict) else x
+        return "🟢" if (s or 0) > 0 else "🔴" if (s or 0) < 0 else "⚪"
+
+    L: list[str] = []
+    if en:
+        # 1) one-line final
+        L.append(f"✅ Our final decision: **{ve.get(dec, dec)}** — {name} (confidence {conf})")
+        # 2) Algorithm 1
+        L.append(_DIV)
+        ml_call = (ml.get("call") or "HOLD").upper()
+        h1 = f" · 1-hour prediction: {'UP' if (ai1h or 0) >= 50 else 'DOWN'} {ai1h}%" if ai1h is not None else ""
+        L.append(f"🤖 Algorithm 1 — combined brain (ML · News · YouTube · Chart · Kiwoom · Orderbook · Wave)")
+        L.append(f"Decision: {ic.get(dec,'⚪')} {ve.get(dec,dec)}{h1}")
+        L.append("Detail:")
+        L.append(f" • ML (M1): {_v(ml_call)} — accuracy {ml.get('accuracy_pct','n/a')}%"
+                 + (f", 5-day ±{abs(ml['expected_move_pct'])}%" if ml.get('expected_move_pct') is not None else ""))
+        L.append(f" • Wave (Elliott/Fibonacci): {_v((wv.get('verdict') or 'HOLD').upper())}"
+                 + (f" — entry ₩{_pl(wv.get('entry'))}/stop ₩{_pl(wv.get('stop'))}/target ₩{_pl(wv.get('target'))}" if wv.get('entry') else ""))
+        L.append(f" • Chart/Technicals: {_sc(tech)} " + (tech.get("summary_en") or "neutral")
+                 + (f" (support ₩{_pl(tech.get('support'))} · resistance ₩{_pl(tech.get('resistance'))})" if tech.get('support') else ""))
+        L.append(f" • Kiwoom supply/demand: {_sc(flows)} " + (flows.get("tag_en") or flows.get("tag") or "neutral"))
+        L.append(f" • News: {_sc(news)} " + (f"{news.get('count',0)} items" if news.get('count') else "neutral"))
+        L.append(f" • YouTube: {_sc(yt)} " + (f"{yt.get('count',0)} mentions" if yt.get('count') else "neutral"))
+        # 3) Ripple
+        rp_sig, rp_ko, rp_en = _ripple_now(code)
+        L.append(_DIV)
+        L.append("⚡ Algorithm 2 · Ripple (scalp, minutes)")
+        L.append(f"Decision: {ic.get(rp_sig,'⚪')} {ve.get(rp_sig,rp_sig)} — {rp_en}")
+        # 4) Candle
+        cd_sig, cd_ko, cd_en = _candle_now(code)
+        L.append(_DIV)
+        L.append("🕯️ Algorithm 2 · Candle 3-2 (1-min chart)")
+        L.append(f"Decision: {ic.get(cd_sig,'⚪')} {ve.get(cd_sig,cd_sig)} — {cd_en}")
+        # 5) final from the 3
+        L.append(_DIV)
+        L.append("🎯 Final answer (from the 3 cases):")
+        L.append(_synthesis_en(dec, rp_sig, cd_sig, name))
+    else:
+        L.append(f"✅ 최종 결정: **{vk.get(dec, dec)}** — {name} (신뢰도 {conf_ko})")
+        L.append(_DIV)
+        ml_call = (ml.get("call") or "HOLD").upper()
+        h1 = f" · 1시간 예측: {'상승' if (ai1h or 0) >= 50 else '하락'} {ai1h}%" if ai1h is not None else ""
+        L.append("🤖 알고리즘 1 — 종합 브레인 (ML · 뉴스 · 유튜브 · 차트 · 키움 · 호가 · 파동)")
+        L.append(f"결정: {ic.get(dec,'⚪')} {vk.get(dec,dec)}{h1}")
+        L.append("상세 설명:")
+        L.append(f" • 머신러닝(M1): {_v(ml_call)} — 정확도 {ml.get('accuracy_pct','n/a')}%"
+                 + (f", 5일 예상 ±{abs(ml['expected_move_pct'])}%" if ml.get('expected_move_pct') is not None else ""))
+        L.append(f" • 파동(엘리엇/피보나치): {_v((wv.get('verdict') or 'HOLD').upper())}"
+                 + (f" — 진입 ₩{_pl(wv.get('entry'))}/손절 ₩{_pl(wv.get('stop'))}/목표 ₩{_pl(wv.get('target'))}" if wv.get('entry') else ""))
+        L.append(f" • 차트/기술: {_sc(tech)} " + (tech.get("summary_ko") or "중립")
+                 + (f" (지지 ₩{_pl(tech.get('support'))} · 저항 ₩{_pl(tech.get('resistance'))})" if tech.get('support') else ""))
+        L.append(f" • 키움 수급: {_sc(flows)} " + (flows.get("tag") or "중립"))
+        L.append(f" • 뉴스: {_sc(news)} " + (f"{news.get('count',0)}건" if news.get('count') else "중립"))
+        L.append(f" • 유튜브: {_sc(yt)} " + (f"{yt.get('count',0)}건 언급" if yt.get('count') else "중립"))
+        rp_sig, rp_ko, rp_en = _ripple_now(code)
+        L.append(_DIV)
+        L.append("⚡ 알고리즘 2 · 잔물결 (초단타·분 단위)")
+        L.append(f"결정: {ic.get(rp_sig,'⚪')} {vk.get(rp_sig,rp_sig)} — {rp_ko}")
+        cd_sig, cd_ko, cd_en = _candle_now(code)
+        L.append(_DIV)
+        L.append("🕯️ 알고리즘 2 · 캔들 3-2 (1분봉)")
+        L.append(f"결정: {ic.get(cd_sig,'⚪')} {vk.get(cd_sig,cd_sig)} — {cd_ko}")
+        L.append(_DIV)
+        L.append("🎯 종합 최종 답변 (3가지 종합):")
+        L.append(_synthesis_ko(dec, rp_sig, cd_sig, name))
+    return "\n".join(L)
+
+
+def _synthesis_ko(a1: str, rp: str, cd: str, name: str) -> str:
+    scalp_buy = rp == "BUY" or cd == "BUY"
+    scalp_sell = rp == "SELL" or cd == "SELL"
+    if a1 == "BUY" and scalp_buy:
+        return f"중기(알고1)와 단기 신호가 모두 매수 → 지금 진입 자리로 좋습니다."
+    if a1 == "BUY" and not scalp_buy:
+        return f"중기(알고1)는 매수지만 단기 진입 타이밍은 대기 중 → 며칠 보유 관점이면 지금 매수 가능, 초단타면 눌림 후 진입하세요."
+    if a1 == "SELL" and scalp_sell:
+        return f"중기·단기 모두 매도/하락 신호 → 보유 중이면 정리, 신규 매수는 피하세요."
+    if a1 == "SELL":
+        return f"중기(알고1)는 매도 우세 → 신규 매수는 권하지 않습니다. 단기 반등이 있어도 리스크가 큽니다."
+    # HOLD anchor
+    if scalp_buy:
+        return f"중기(알고1)는 관망이나 단기 전략에서 매수 신호 → 초단타 진입은 가능하되 짧게, 손절 -1% 지키세요."
+    return f"세 방법 모두 뚜렷한 신호가 없어 관망이 최종 결론입니다 — 자리가 잡히면 다시 물어보세요."
+
+
+def _synthesis_en(a1: str, rp: str, cd: str, name: str) -> str:
+    scalp_buy = rp == "BUY" or cd == "BUY"
+    scalp_sell = rp == "SELL" or cd == "SELL"
+    if a1 == "BUY" and scalp_buy:
+        return "Mid-term (Algo 1) and short-term signals both say BUY → a good entry right now."
+    if a1 == "BUY" and not scalp_buy:
+        return "Algo 1 (mid-term) says BUY but the short-term timing is still waiting → buy now if you'll hold days; if scalping, wait for a dip to enter."
+    if a1 == "SELL" and scalp_sell:
+        return "Both mid- and short-term point down → trim if you hold, avoid new buys."
+    if a1 == "SELL":
+        return "Algo 1 (mid-term) leans SELL → a new buy isn't advised; short-term bounces carry real risk."
+    if scalp_buy:
+        return "Algo 1 is neutral but a short-term strategy fires BUY → a quick scalp is possible, keep it small with a −1% stop."
+    return "No clear signal from any of the three — HOLD is the conclusion. Ask again once a setup forms."
+
+
 def three_algo_block(db, d: dict[str, Any], lang: str = "ko") -> str:
     """Show what ALL THREE approaches say (boss 2026-07-20: don't answer from Algo 1
     only). 🤖 Algorithm 1 = the daily 5-day decide() verdict; ⚡ Ripple + 🕯️ Candle
