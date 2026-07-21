@@ -11,6 +11,11 @@ const RED = "#d32f2f";
 const PURPLE = "#7b1fa2";
 const TEAL = "#00838f";
 
+// boss 2026-07-21: focus on ALGO 1 ONLY for now (running all 3 over-loaded the server).
+// Algo 2 & 3 are hidden here — their DATA is untouched (still in the DB + the verdict board).
+// Flip back to true to bring them back.
+const SHOW_ALGO_23 = false;
+
 export default function TestingIndex() {
   const { t } = useLanguage();
   return (
@@ -19,11 +24,14 @@ export default function TestingIndex() {
         🧪 {t("모의투자 — 알고리즘을 선택하세요", "Paper Trading — pick an algorithm")}
       </h1>
       <p className="mt-1 text-[13px] text-[var(--text-muted)]">
-        {t("두 알고리즘은 같은 모의계좌(같은 현금·같은 종목)를 씁니다. 성적은 따로 기록됩니다.",
-           "Both algorithms share the same paper account (same cash, same stocks). Records are kept separately.")}
+        {SHOW_ALGO_23
+          ? t("알고리즘들은 같은 모의계좌(같은 현금·같은 종목)를 씁니다. 성적은 따로 기록됩니다.",
+              "The algorithms share the same paper account (same cash, same stocks). Records are kept separately.")
+          : t("지금은 알고리즘 1만 테스트 중입니다. 알고리즘 2·3은 잠시 숨김(데이터는 그대로 보관).",
+              "Testing Algorithm 1 only for now. Algorithms 2 & 3 are hidden for a bit (their data is kept).")}
       </p>
 
-      <div className="mt-6 grid md:grid-cols-3 gap-5">
+      <div className={`mt-6 grid gap-5 ${SHOW_ALGO_23 ? "md:grid-cols-3" : "md:grid-cols-1 max-w-[560px]"}`}>
         {/* ---- Algorithm 1 — the 1-hour engine ---- */}
         <div className="rounded-2xl border-2 p-5" style={{ borderColor: RED, background: "rgba(211,47,47,0.04)" }}>
           <div className="text-[18px] font-extrabold" style={{ color: RED }}>
@@ -46,7 +54,8 @@ export default function TestingIndex() {
           </div>
         </div>
 
-        {/* ---- Algorithm 2 — the ripple scalper ---- */}
+        {/* ---- Algorithm 2 — the ripple scalper (HIDDEN for now, data kept) ---- */}
+        {SHOW_ALGO_23 && (
         <div className="rounded-2xl border-2 p-5" style={{ borderColor: PURPLE, background: "rgba(123,31,162,0.04)" }}>
           <div className="text-[18px] font-extrabold" style={{ color: PURPLE }}>
             ⚡ {t("알고리즘 2 — 잔물결 초단타 (NEW)", "Algorithm 2 — ripple scalper (NEW)")}
@@ -67,8 +76,10 @@ export default function TestingIndex() {
             </Link>
           </div>
         </div>
+        )}
 
-        {/* ---- Algorithm 3 — the candle trader ---- */}
+        {/* ---- Algorithm 3 — the candle trader (HIDDEN for now, data kept) ---- */}
+        {SHOW_ALGO_23 && (
         <div className="rounded-2xl border-2 p-5" style={{ borderColor: TEAL, background: "rgba(0,131,143,0.04)" }}>
           <div className="text-[18px] font-extrabold" style={{ color: TEAL }}>
             🕯️ {t("알고리즘 3 — 캔들 매매 (NEW)", "Algorithm 3 — candle trader (NEW)")}
@@ -89,6 +100,7 @@ export default function TestingIndex() {
             </Link>
           </div>
         </div>
+        )}
       </div>
 
       <p className="mt-6 text-[11.5px] text-[var(--text-muted)]">
