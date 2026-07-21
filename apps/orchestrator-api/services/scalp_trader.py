@@ -78,6 +78,11 @@ PEER = {"000660": "005930", "005930": "000660"}
 PEER_DROP_PCT = -0.15     # partner falling faster than this over ~60s → no buy
 
 _buf: dict[str, deque] = {}          # code -> deque[(ts, px)]
+# winner-peak per open ticker, in MEMORY (not a DB column — a schema ALTER re-runs on
+# every restart and deadlocked under market-open DB load, crash-looping the instance,
+# boss 2026-07-21). Resets on restart → a mid-ride peak falls back to the live price,
+# which only means a slightly earlier (safe) trailing exit. Cleared on close.
+_peak: dict[str, float] = {}
 _semi_signals: dict[str, dict] = {}  # semi mode: code -> live BUY recommendation
 _sell_hint: dict[str, str] = {}      # semi mode: code -> pending SELL advice reason
 
@@ -116,8 +121,6 @@ def _ensure(db) -> None:
         " opened_at TIMESTAMPTZ DEFAULT now(), closed_at TIMESTAMPTZ)"))
     db.execute(text(
         "ALTER TABLE scalp_trades ADD COLUMN IF NOT EXISTS why TEXT"))
-    db.execute(text(
-        "ALTER TABLE scalp_trades ADD COLUMN IF NOT EXISTS peak DOUBLE PRECISION"))
     # 'auto' = machine buys AND sells · 'semi' = machine only RECOMMENDS (boss clicks)
     db.execute(text(
         "ALTER TABLE scalp_state ADD COLUMN IF NOT EXISTS mode TEXT NOT NULL DEFAULT 'auto'"))
@@ -383,16 +386,17 @@ def exit_pulse(db) -> dict[str, Any]:
         if not cfg["enabled"] or cfg["mode"] != "auto" or not _market_open_now():
             return out
         rows = db.execute(text(
-            "SELECT id, ticker, name, qty, entry, COALESCE(peak, entry) FROM scalp_trades WHERE status='OPEN'")).fetchall()
+            "SELECT id, ticker, name, qty, entry FROM scalp_trades WHERE status='OPEN'")).fetchall()
         if not rows:
             return out
         from services.paper_desk import place_order
-        for oid, tk, name, qty, entry, peak in rows:
+        for oid, tk, name, qty, entry in rows:
             px = _px(tk)
             if px is None:
                 continue
             entry = float(entry)
-            peak = max(float(peak or entry), px)
+            peak = max(_peak.get(tk, entry), px)   # in-memory winner-peak
+            _peak[tk] = peak
             reason = None
             if cfg["strategy"] == "candle":
                 # candle rides — only the −stop% hard stop is a fast trigger here
@@ -402,7 +406,6 @@ def exit_pulse(db) -> dict[str, Any]:
                 # ripple: trailing exit (let winners run) — no fixed take
                 reason = _ripple_exit(entry, px, peak, cfg["take_pct"], cfg["stop_pct"], eod=False)
             if not reason:
-                db.execute(text("UPDATE scalp_trades SET peak=:p WHERE id=:i"), {"p": peak, "i": oid})
                 continue
             held = int(db.execute(text(
                 "SELECT qty FROM paper_desk_positions WHERE ticker=:t"),
@@ -413,7 +416,7 @@ def exit_pulse(db) -> dict[str, Any]:
             r = place_order(db, tk, "SELL", sell_qty, "market", source="algo2")
             if r.get("ok"):
                 _close_row(db, out, oid, name, entry, float(r.get("fill_price") or px), reason)
-                _buf.pop(tk, None)
+                _buf.pop(tk, None); _peak.pop(tk, None)
         return out
     finally:
         _trade_lock.release()
@@ -470,15 +473,16 @@ def _tick_inner(db, force: bool = False) -> dict[str, Any]:
 
     # ---- 1) EXITS (protect first) ---- #
     open_rows = db.execute(text(
-        "SELECT id, ticker, name, qty, entry, COALESCE(peak, entry) FROM scalp_trades WHERE status='OPEN'")).fetchall()
+        "SELECT id, ticker, name, qty, entry FROM scalp_trades WHERE status='OPEN'")).fetchall()
     open_codes = set()
-    for oid, tk, name, qty, entry, peak in open_rows:
+    for oid, tk, name, qty, entry in open_rows:
         px = live.get(tk) or _px(tk)
         if px is None:
             open_codes.add(tk)
             continue
         entry = float(entry)
-        peak = max(float(peak or entry), px)
+        peak = max(_peak.get(tk, entry), px)   # in-memory winner-peak
+        _peak[tk] = peak
         reason = None
         if cfg["strategy"] == "candle":
             # 캔들 3-2 exits: ride while rising (one down candle forgiven);
@@ -496,7 +500,6 @@ def _tick_inner(db, force: bool = False) -> dict[str, Any]:
             reason = _ripple_exit(entry, px, peak, cfg["take_pct"], cfg["stop_pct"], eod)
         if not reason:
             _sell_hint.pop(tk, None)
-            db.execute(text("UPDATE scalp_trades SET peak=:p WHERE id=:i"), {"p": peak, "i": oid})
             open_codes.add(tk)
             continue
         if cfg["mode"] == "semi":
@@ -514,7 +517,7 @@ def _tick_inner(db, force: bool = False) -> dict[str, Any]:
         r = place_order(db, tk, "SELL", sell_qty, "market", source="algo2")
         if r.get("ok"):
             _close_row(db, out, oid, name, entry, float(r.get("fill_price") or px), reason)
-            _buf.pop(tk, None)   # fresh window: re-buy only on a NEW rise
+            _buf.pop(tk, None); _peak.pop(tk, None)   # fresh window: re-buy only on a NEW rise
         else:
             logger.warning("scalp: SELL failed %s: %s", tk, r.get("error"))
             open_codes.add(tk)
