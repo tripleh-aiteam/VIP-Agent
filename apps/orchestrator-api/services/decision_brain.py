@@ -156,6 +156,39 @@ def _candle_detail(code: str, lang: str) -> list[str]:
     return out
 
 
+def _crosscheck_now(a1_sig: str, rp_sig: str, cd_sig: str) -> tuple[str, str, str]:
+    """Algorithm 4 · Cross-Check verdict from the other three (strict 3-agree)."""
+    a1, rp, cd = (a1_sig or "").upper(), (rp_sig or "").upper(), (cd_sig or "").upper()
+    n_buy = sum(1 for s in (a1, rp, cd) if s == "BUY")
+    n_sell = sum(1 for s in (a1, rp, cd) if s == "SELL")
+    if n_buy == 3:
+        return "BUY", "3개 모두 매수 동의 → 교차검증 매수", "all 3 agree BUY → Cross-Check BUY"
+    if n_sell == 3:
+        return "SELL", "3개 모두 매도 동의 → 교차검증 매도", "all 3 agree SELL → Cross-Check SELL"
+    return ("WAIT", f"동의 부족 (매수 {n_buy}·매도 {n_sell}) → 대기",
+            f"not unanimous (buy {n_buy}·sell {n_sell}) → WAIT")
+
+
+def _crosscheck_detail(a1_sig: str, rp_sig: str, cd_sig: str, lang: str) -> list[str]:
+    """Algorithm 4 strategy + what the three algorithms say right now (bilingual)."""
+    en = str(lang or "").lower().startswith("en")
+    sig, ko, en_r = _crosscheck_now(a1_sig, rp_sig, cd_sig)
+    a1, rp, cd = (a1_sig or "WAIT").upper(), (rp_sig or "WAIT").upper(), (cd_sig or "WAIT").upper()
+    if en:
+        return [
+            "   • How it works: the 4th competitor has NO view of its own — it BUYS only when "
+            "Algorithm 1, Ripple and Candle ALL agree (strict 3/3; a looser 2/3+brain mode exists). "
+            "Exits: −1% stop / trailing take / lost-consensus / flat 15:18.",
+            f"   • Right now: 🤖 Algo1 {a1} · ⚡ Ripple {rp} · 🕯️ Candle {cd} → {sig} ({en_r}).",
+            "   • Buys when: all three line up — the highest-conviction, lowest-frequency entries."]
+    return [
+        "   • 작동 방식: 4번째 경쟁자는 자기 견해가 없습니다 — 알고리즘 1·잔물결·캔들이 모두 매수에 "
+        "동의할 때만 매수합니다(엄격 3/3; 느슨한 2/3+브레인 모드도 있음). 청산: −1% 손절 / 트레일 익절 / "
+        "합의 이탈 / 15:18 정리.",
+        f"   • 지금: 🤖 알고1 {a1} · ⚡ 잔물결 {rp} · 🕯️ 캔들 {cd} → {sig} ({ko}).",
+        "   • 매수 조건: 셋이 일치할 때 — 가장 확신 높고 빈도 낮은 진입."]
+
+
 def _algo1_synthesis(d: dict[str, Any], lang: str) -> str:
     """2-3 sentence plain explanation of WHY Algorithm 1 reached its decision."""
     en = str(lang or "").lower().startswith("en")
@@ -268,9 +301,15 @@ def clean_recommendation(db, d: dict[str, Any], lang: str = "ko") -> str:
         L.append("🕯️ Algorithm 3 · Candle (1-min chart)")
         L.append(f"Decision: {ic.get(cd_sig,'⚪')} {ve.get(cd_sig,cd_sig)} — {cd_en}")
         L.extend(_candle_detail(code, lang))
-        # 5) final from the 3
+        # 4b) Cross-Check (Algorithm 4) — consensus of the three above
+        x4_sig, _x4_ko, x4_en = _crosscheck_now(dec, rp_sig, cd_sig)
         L.append(_DIV)
-        L.append("🎯 Final answer (from the 3 cases):")
+        L.append("🔀 Algorithm 4 · Cross-Check (trades only when the 3 agree)")
+        L.append(f"Decision: {ic.get(x4_sig,'⚪')} {ve.get(x4_sig,x4_sig)} — {x4_en}")
+        L.extend(_crosscheck_detail(dec, rp_sig, cd_sig, lang))
+        # 5) final from all 4
+        L.append(_DIV)
+        L.append("🎯 Final answer (from all 4 algorithms):")
         L.append(_synthesis_en(dec, rp_sig, cd_sig, name))
     else:
         L.append(f"✅ 최종 결정: **{vk.get(dec, dec)}** — {name} (신뢰도 {conf_ko})")
@@ -300,8 +339,14 @@ def clean_recommendation(db, d: dict[str, Any], lang: str = "ko") -> str:
         L.append("🕯️ 알고리즘 3 · 캔들 (1분봉)")
         L.append(f"결정: {ic.get(cd_sig,'⚪')} {vk.get(cd_sig,cd_sig)} — {cd_ko}")
         L.extend(_candle_detail(code, lang))
+        # 4b) 교차검증 (알고리즘 4) — 위 세 알고리즘의 합의
+        x4_sig, x4_ko, _x4_en = _crosscheck_now(dec, rp_sig, cd_sig)
         L.append(_DIV)
-        L.append("🎯 종합 최종 답변 (3가지 종합):")
+        L.append("🔀 알고리즘 4 · 교차검증 (3개가 동의할 때만 매매)")
+        L.append(f"결정: {ic.get(x4_sig,'⚪')} {vk.get(x4_sig,x4_sig)} — {x4_ko}")
+        L.extend(_crosscheck_detail(dec, rp_sig, cd_sig, lang))
+        L.append(_DIV)
+        L.append("🎯 종합 최종 답변 (4가지 종합):")
         L.append(_synthesis_ko(dec, rp_sig, cd_sig, name))
     return "\n".join(L)
 
