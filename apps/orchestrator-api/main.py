@@ -268,6 +268,8 @@ _lan_origin_regex = (
     r"|192\.168\.\d{1,3}\.\d{1,3}(:\d+)?"
     r"|[a-zA-Z0-9-]+\.vercel\.app"
     r"|[a-zA-Z0-9-]+\.tripleh\.app"
+    r"|[a-zA-Z0-9-]+\.devtunnels\.ms"      # VS Code Port Forwarding (demo links)
+    r"|[a-zA-Z0-9-]+\.loca\.lt"            # localtunnel (demo links)
     r")$"
 )
 

@@ -447,17 +447,42 @@ from services.position_guard import GUARD_CODES as FOCUS_CODES   # the boss's 20
 _focus_cache: dict[str, Any] = {"t": 0.0, "v": None}
 
 
+def _default_focus_codes(db) -> list[str]:
+    """The board's DEFAULT set (boss 2026-07-21: loading all 20 was too heavy). ALWAYS the
+    2 mains (SK Hynix + Samsung), PLUS any stock the engine currently RECOMMENDS (buy/sell,
+    read from the CHEAP cached scan the background ticker refreshes) or that we HOLD.
+    Everything else loads on demand via the board's search box."""
+    codes: list[str] = ["000660", "005930"]          # always: SK Hynix + Samsung (held stocks
+                                                      # show in the Positions panel — kept OFF the
+                                                      # heavy opinion board to load fast).
+    try:                                              # current buy/sell recommendations — READ the
+        from services import intraday_setup as _iset  # scan cache DIRECTLY; NEVER compute on the web
+        _cached = _iset._scan_cache.get("v")          # path (a cold scan took 42s and froze the page).
+        for s in ((_cached or {}).get("act_now") or []):  # the background ticker keeps it warm.
+            if s.get("code") and (s.get("confidence") or 0) >= MIN_CONF:
+                codes.append(str(s["code"]))
+    except Exception:
+        db.rollback()
+    seen: set = set(); out: list[str] = []            # dedup, keep order, cap for safety
+    for c in codes:
+        c = str(c).zfill(6)
+        if c not in seen:
+            seen.add(c); out.append(c)
+    return out[:12]
+
+
 def focus_status(db, codes: Optional[list[str]] = None) -> dict[str, Any]:
-    """The SEMI-AUTO focus board (boss 2026-07-09): the live 1-hour state of his two
-    test stocks — ALWAYS answers, signal or not: ACT_NOW plan (veto-checked), FORMING
-    with its trigger, or NOTHING with the honest reason. The auto-trader keeps its own
-    full-market universe in the background (self-improvement data)."""
+    """The SEMI-AUTO focus board (boss 2026-07-09): the live 1-hour state of the board
+    stocks — ALWAYS answers, signal or not: ACT_NOW plan (veto-checked), FORMING with its
+    trigger, or NOTHING with the honest reason. Default board = 2 mains + recommended +
+    held (boss 2026-07-21); the auto-trader still scans the full market in the background."""
     import time as _time
     if codes is None and _focus_cache["v"] is not None and _time.time() - _focus_cache["t"] < 50:
         return _focus_cache["v"]
     from services import prediction_service as ps
+    board_codes = codes if codes is not None else _default_focus_codes(db)
     out: dict[str, Any] = {"stocks": [], "hour_acc": None}
-    for code in (codes or FOCUS_CODES):
+    for code in board_codes:
         code = str(code).zfill(6)
         name = ps.NAMES.get(code, code)
         if name == code:                # outside the collected ~40 → full KRX list
@@ -507,8 +532,13 @@ def focus_status(db, codes: Optional[list[str]] = None) -> dict[str, Any]:
                         or code in ("000660", "005930"))
         opinion: Optional[dict[str, Any]] = None
         try:
-            from services.decision_agent import decide_cached
-            _d = (decide_cached(db, code, ttl=180) or {}) if need_opinion else {}
+            # CACHE-ONLY (boss 2026-07-21): reading the deep 9-method opinion is slow (many
+            # external calls); computing it for the mains synchronously froze the board for
+            # ~90s. Read the decide cache DIRECTLY — never compute on the web path. The
+            # opinion fills in once the background engine has warmed it; setup/price show now.
+            from services.decision_agent import _decide_cache as _dc
+            _hit = _dc.get(code)
+            _d = (_hit[1] if _hit else {}) if need_opinion else {}
             if (qualified and _d.get("decision") == "SELL"
                     and s.get("setup_type") not in ("inverse_down", "quick_bounce")):
                 vetoed = True   # ⚡ 20-min scalps aren't judged by the daily verdict
@@ -594,8 +624,11 @@ def focus_status(db, codes: Optional[list[str]] = None) -> dict[str, Any]:
     # UNDER the two fixed panels — same full treatment. buy_candidates already ran
     # every gate incl. the decision-engine veto (decide_cached is warm from it).
     try:
-        fixed = set(codes or FOCUS_CODES)
-        cand = buy_candidates(db, max_n=4)
+        from services import intraday_setup as _iset
+        # only surface dynamic candidates when the scan cache is ALREADY warm (the background
+        # ticker fills it); NEVER compute it here — a cold scan took 42s and froze the page.
+        cand = buy_candidates(db, max_n=4) if _iset._scan_cache.get("v") is not None else {"candidates": []}
+        fixed = set(board_codes)
         for s in (cand.get("candidates") or []):
             if s.get("code") in fixed:
                 continue

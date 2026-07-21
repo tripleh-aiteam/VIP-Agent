@@ -14,6 +14,7 @@ guarded, so it is safe even if the external cron ALSO pings.
 from __future__ import annotations
 
 import logging
+import os
 import threading
 import time
 from datetime import datetime, timedelta, timezone
@@ -40,11 +41,11 @@ def _market_hours() -> bool:
 #      at 15s (cheap, protects positions) and Algo-1 entries at 60s. Scalp/candle ticks return
 #      immediately when their engine is disabled, so they cost almost nothing when OFF.
 _GRACE_SEC = 45
-# boss 2026-07-21: the instance crash-looped at market open running all 3 engines × 21 stocks
-# (Render's 5s health check starved → restart loop → nothing traded). Test ALGO 1 ONLY for
-# now; Algo 2 & 3 are HIDDEN and do NOT run (their DB tables/data are untouched — flip this
-# back to False to re-enable them). This keeps the heartbeat as light as possible.
-_ONLY_ALGO1 = True
+# boss 2026-07-21: the small Render box crash-looped at market open running all 3 engines ×
+# 21 stocks. So Render runs ALGO 1 ONLY (default). LOCAL testing (the boss's much stronger PC)
+# runs all 3 — set env ONLY_ALGO1=false to enable Algo 2 & 3. Data is shared via the DB either
+# way; flip on Render only after we pick a winner.
+_ONLY_ALGO1 = os.environ.get("ONLY_ALGO1", "true").strip().lower() not in ("false", "0", "no")
 
 
 def _loop() -> None:

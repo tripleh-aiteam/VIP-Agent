@@ -887,7 +887,7 @@ export default function Desk({ mode }: { mode: TradeMode }) {
         <div className="mb-4 grid gap-3" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(340px, 1fr))" }}>
           {focus.length === 0 && (
             <div className="px-4 py-6 text-[12px] text-[var(--text-muted)] rounded-2xl border" style={{ borderColor: "var(--border-default)" }}>
-              {t("20개 관심기업 보드를 불러오는 중…", "Loading the 20-company board…")}
+              {t("관심 종목(SK하이닉스·삼성전자 + 추천·보유) 불러오는 중…", "Loading focus stocks (SK Hynix · Samsung + recommended · held)…")}
             </div>
           )}
           {focus.length > 0 && (

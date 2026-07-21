@@ -11,10 +11,10 @@ const RED = "#d32f2f";
 const PURPLE = "#7b1fa2";
 const TEAL = "#00838f";
 
-// boss 2026-07-21: focus on ALGO 1 ONLY for now (running all 3 over-loaded the server).
-// Algo 2 & 3 are hidden here — their DATA is untouched (still in the DB + the verdict board).
-// Flip back to true to bring them back.
-const SHOW_ALGO_23 = false;
+// boss 2026-07-21: Render (small box) runs ALGO 1 ONLY, so Algo 2 & 3 cards are hidden
+// there (their DATA is untouched — still in the DB + the verdict board). LOCAL testing on
+// the boss's strong PC shows all 3: set NEXT_PUBLIC_SHOW_ALGO_23=true in .env.local.
+const SHOW_ALGO_23 = process.env.NEXT_PUBLIC_SHOW_ALGO_23 === "true";
 
 export default function TestingIndex() {
   const { t } = useLanguage();
