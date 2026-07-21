@@ -49,6 +49,7 @@ SCALP_21 = ("000660,005930,042660,035420,009150,373220,005380,000270,005490,0357
 _peak: dict[str, float] = {}          # in-memory winner-peak (NO DB column — see scalp_trader)
 _semi_signals: dict[str, dict] = {}   # semi mode: code -> live consensus BUY card
 _sell_hint: dict[str, str] = {}       # semi mode: code -> pending SELL advice reason
+_status_cache: Optional[tuple[float, dict]] = None   # 3s full-payload cache (page polls 4s)
 _schema_ready = False
 
 
@@ -411,7 +412,15 @@ def sell_all(db, code: str) -> dict[str, Any]:
 def status(db) -> dict[str, Any]:
     """Everything the Cross-Check page needs — CHEAP: warm caches + memory only,
     no scan()/decide() compute. Per stock: the 3 signal lights, agreement, open
-    P&L, today's record, recent trades. Same shape family as Algorithm 3's status."""
+    P&L, today's record, recent trades. Same shape family as Algorithm 3's status.
+
+    The whole payload is cached 3s (the page polls every 4s; concurrent viewers
+    dedupe) and the 21-stock signal fan-out is PARALLEL — a serial cold build hit
+    ~15s of Kiwoom round-trips and piled up behind the 4s poll."""
+    global _status_cache
+    import time as _t
+    if _status_cache and _t.time() - _status_cache[0] < 3.0:
+        return _status_cache[1]
     cfg = _cfg(db)
     rule = cfg["rule"]
     need, tf = _candle_need_tf(db)
@@ -420,11 +429,18 @@ def status(db) -> dict[str, Any]:
     for r in db.execute(text(
             "SELECT ticker, qty, entry, opened_at FROM cross_trades WHERE status='OPEN'")):
         open_map[r[0]] = {"qty": int(r[1]), "entry": float(r[2]), "opened_at": str(r[3])}
+    # parallel per-stock fan-out — signals read caches only (allow_compute=False → no
+    # db use inside the thread, so passing None is safe; never share a Session across threads)
+    from concurrent.futures import ThreadPoolExecutor
+
+    def _one(code: str):
+        return code, _px(code), _signals_for(None, code, need, tf, scan_items, allow_compute=False)
+
+    with ThreadPoolExecutor(max_workers=8) as _ex:
+        rows = list(_ex.map(_one, cfg["codes"]))
     stocks = []
-    for code in cfg["codes"]:
-        px = _px(code)
+    for code, px, sig in rows:
         o = open_map.get(code)
-        sig = _signals_for(db, code, need, tf, scan_items, allow_compute=False)
         agree_buy = entry_fires(rule, sig, _prob_ok(sig["algo1_prob"]))
         chg = None
         try:
@@ -466,11 +482,13 @@ def status(db) -> dict[str, Any]:
                else "리플+캔들 매수 & 알고1 비관 아님+확률 OK → 진입 (느슨)")
     rule_en = ("all 3 agree BUY → enter (strict)" if rule == "strict"
                else "ripple+candle BUY & algo1 not-bearish+prob ok → enter (loose)")
-    return {**cfg, "signals": signals, "stocks": stocks,
-            "today": {"trades": int(today[0] or 0), "wins": int(today[1] or 0),
-                      "net_pct_sum": round(float(today[2] or 0), 2),
-                      "realized_won": round(float(today[3] or 0))},
-            "recent": recent, "market_open": _market_open_now(),
-            "streak": need, "tf": tf,
-            "rule_ko": f"{rule_ko} · −{cfg['stop_pct']}% 손절 · 트레일 청산 · 15:18 정리",
-            "rule_en": f"{rule_en} · −{cfg['stop_pct']}% stop · trailing exit · flat 15:18"}
+    out = {**cfg, "signals": signals, "stocks": stocks,
+           "today": {"trades": int(today[0] or 0), "wins": int(today[1] or 0),
+                     "net_pct_sum": round(float(today[2] or 0), 2),
+                     "realized_won": round(float(today[3] or 0))},
+           "recent": recent, "market_open": _market_open_now(),
+           "streak": need, "tf": tf,
+           "rule_ko": f"{rule_ko} · −{cfg['stop_pct']}% 손절 · 트레일 청산 · 15:18 정리",
+           "rule_en": f"{rule_en} · −{cfg['stop_pct']}% stop · trailing exit · flat 15:18"}
+    _status_cache = (_t.time(), out)
+    return out
