@@ -31,15 +31,29 @@ def _market_hours() -> bool:
     return 9 * 60 <= m <= 15 * 60 + 25
 
 
+# boss 2026-07-21: at market open, running all engines every 15s over the 21-stock fleet
+# starved Render's 5s health check → the instance crash-looped → NOTHING traded. Two guards:
+#   1) STARTUP GRACE — do NO tick work for the first 45s after boot, so a freshly (re)started
+#      instance can pass health checks and finish deploying BEFORE the heartbeat hammers it
+#      (this is what breaks the crash-loop).
+#   2) THROTTLE the heavier/less-urgent jobs to 60s (tournament + candle); keep Algo-1 exits
+#      at 15s (cheap, protects positions) and Algo-1 entries at 60s. Scalp/candle ticks return
+#      immediately when their engine is disabled, so they cost almost nothing when OFF.
+_GRACE_SEC = 45
+
+
 def _loop() -> None:
     from db.base import SessionLocal
-    logger.info("inprocess_ticker: heartbeat thread started (15s, market hours)")
+    logger.info("inprocess_ticker: heartbeat thread started (15s, market hours, 45s grace)")
+    _start = time.time()
     _i = 0
     while True:
         _i += 1
         try:
-            if _market_hours():
-                # 1) live Algorithm-2 scalp engine (buys/sells its own book)
+            if time.time() - _start < _GRACE_SEC:
+                pass                          # startup grace — let the instance stabilize
+            elif _market_hours():
+                # 1) Algorithm-2 scalp engine (cheap early-return when disabled)
                 db = SessionLocal()
                 try:
                     from services.scalp_trader import tick as _scalp_tick
@@ -48,11 +62,8 @@ def _loop() -> None:
                     db.rollback(); logger.warning(f"ticker scalp: {str(e)[:100]}")
                 finally:
                     db.close()
-                # 2) Algorithm-1 auto exits every 15s (cheap, protects positions);
-                #    ENTRIES only every ~60s — auto_trader.tick runs a full-universe
-                #    scan that pegged the CPU and failed Render's 5s health check when
-                #    run every 15s (boss 2026-07-20 instance-failed). Algo 1 is a 1-hour
-                #    engine, so a 60s entry cadence is plenty.
+                # 2) Algorithm-1 auto exits every 15s (cheap); ENTRIES every ~60s (the
+                #    full-universe scan is heavy — a 60s cadence keeps health fast).
                 db = SessionLocal()
                 try:
                     from services.auto_trader import exit_pulse as _a1
@@ -64,24 +75,26 @@ def _loop() -> None:
                     db.rollback(); logger.warning(f"ticker algo1: {str(e)[:100]}")
                 finally:
                     db.close()
-                # 3) the 3-strategy shadow tournament
-                db = SessionLocal()
-                try:
-                    from services.strategy_tournament import tick as _tt
-                    _tt(db)
-                except Exception as e:
-                    db.rollback(); logger.warning(f"ticker tournament: {str(e)[:100]}")
-                finally:
-                    db.close()
-                # 4) Algorithm 3 — the candle trader (3 up → buy, 3 down → sell)
-                db = SessionLocal()
-                try:
-                    from services.candle_trader import tick as _c3
-                    _c3(db)
-                except Exception as e:
-                    db.rollback(); logger.warning(f"ticker algo3: {str(e)[:100]}")
-                finally:
-                    db.close()
+                # 3) shadow tournament — throttled to 60s (not trade-critical)
+                if _i % 4 == 0:
+                    db = SessionLocal()
+                    try:
+                        from services.strategy_tournament import tick as _tt
+                        _tt(db)
+                    except Exception as e:
+                        db.rollback(); logger.warning(f"ticker tournament: {str(e)[:100]}")
+                    finally:
+                        db.close()
+                # 4) Algorithm-3 candle — throttled to 60s (5-min candles don't need 15s)
+                if _i % 4 == 0:
+                    db = SessionLocal()
+                    try:
+                        from services.candle_trader import tick as _c3
+                        _c3(db)
+                    except Exception as e:
+                        db.rollback(); logger.warning(f"ticker algo3: {str(e)[:100]}")
+                    finally:
+                        db.close()
         except Exception as e:
             logger.warning(f"inprocess_ticker loop: {str(e)[:120]}")
         time.sleep(15)
