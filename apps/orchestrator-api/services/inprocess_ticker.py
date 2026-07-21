@@ -82,6 +82,15 @@ def _loop() -> None:
                         db.rollback(); logger.warning(f"ticker scalp: {str(e)[:100]}")
                     finally:
                         db.close()
+                    # Algo-4 Cross-Check every 15s — cheap: reads warm caches, no scans
+                    db = SessionLocal()
+                    try:
+                        from services.cross_trader import tick as _cross_tick
+                        _cross_tick(db)
+                    except Exception as e:
+                        db.rollback(); logger.warning(f"ticker crosscheck: {str(e)[:100]}")
+                    finally:
+                        db.close()
                     if _i % 4 == 0:            # tournament + Algo-3 candle throttled to 60s
                         db = SessionLocal()
                         try:

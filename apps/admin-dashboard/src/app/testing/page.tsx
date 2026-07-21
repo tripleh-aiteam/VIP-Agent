@@ -10,6 +10,7 @@ import { useLanguage } from "@/components/i18n";
 const RED = "#d32f2f";
 const PURPLE = "#7b1fa2";
 const TEAL = "#00838f";
+const INDIGO = "#3949ab";
 
 // boss 2026-07-21: Render (small box) runs ALGO 1 ONLY, so Algo 2 & 3 cards are hidden
 // there (their DATA is untouched — still in the DB + the verdict board). LOCAL testing on
@@ -31,7 +32,7 @@ export default function TestingIndex() {
               "Testing Algorithm 1 only for now. Algorithms 2 & 3 are hidden for a bit (their data is kept).")}
       </p>
 
-      <div className={`mt-6 grid gap-5 ${SHOW_ALGO_23 ? "md:grid-cols-3" : "md:grid-cols-1 max-w-[560px]"}`}>
+      <div className={`mt-6 grid gap-5 ${SHOW_ALGO_23 ? "md:grid-cols-2" : "md:grid-cols-1 max-w-[560px]"}`}>
         {/* ---- Algorithm 1 — the 1-hour engine ---- */}
         <div className="rounded-2xl border-2 p-5" style={{ borderColor: RED, background: "rgba(211,47,47,0.04)" }}>
           <div className="text-[18px] font-extrabold" style={{ color: RED }}>
@@ -97,6 +98,30 @@ export default function TestingIndex() {
             </Link>
             <Link href="/testing/candle3/manual" className="text-[13.5px] font-extrabold px-4 py-2 rounded-xl border" style={{ color: TEAL, borderColor: TEAL }}>
               {t("수동", "Manual")}
+            </Link>
+          </div>
+        </div>
+        )}
+
+        {/* ---- Algorithm 4 — the cross-check consensus trader (data kept) ---- */}
+        {SHOW_ALGO_23 && (
+        <div className="rounded-2xl border-2 p-5" style={{ borderColor: INDIGO, background: "rgba(57,73,171,0.04)" }}>
+          <div className="text-[18px] font-extrabold" style={{ color: INDIGO }}>
+            🔀 {t("교차검증 — 3개 알고리즘이 동의할 때만 (NEW)", "Cross-Check — 3 algorithms must agree (NEW)")}
+          </div>
+          <p className="mt-2 text-[13px] leading-relaxed text-[var(--text-secondary)]">
+            {t("스스로 판단하지 않습니다. 알고리즘 1(🤖 엔진) · 2(⚡ 잔물결) · 3(🕯️ 캔들)이 모두 매수에 동의할 때만 삽니다 (엄격 3/3, 또는 느슨 2/3+브레인). 파는 규칙은 항상 안전장치 우선: −손절 · 트레일 청산 · 합의 이탈 · 15:18 정리. 기존 3개는 그대로 두는 대조군 — 이건 4번째 경쟁자입니다.",
+               "It has no opinion of its own. It buys only when Algorithm 1 (🤖 engine) · 2 (⚡ ripple) · 3 (🕯️ candle) all agree to buy (strict 3/3, or loose 2/3+brain). Exits always put safety first: −stop · trailing exit · lost-consensus · flat 15:18. The 3 stay untouched as the control group — this is the 4th competitor.")}
+          </p>
+          <div className="mt-4 flex flex-wrap gap-2">
+            <Link href="/testing/crosscheck/auto" className="text-[13.5px] font-extrabold px-4 py-2 rounded-xl text-white" style={{ background: INDIGO }}>
+              {t("자동 (3개 동의 시 매매)", "Auto")}
+            </Link>
+            <Link href="/testing/crosscheck/semi" className="text-[13.5px] font-extrabold px-4 py-2 rounded-xl border" style={{ color: "#e65100", borderColor: "#e65100" }}>
+              {t("반자동 (추천+내 손)", "Semi-Auto")}
+            </Link>
+            <Link href="/testing/crosscheck/manual" className="text-[13.5px] font-extrabold px-4 py-2 rounded-xl border" style={{ color: INDIGO, borderColor: INDIGO }}>
+              {t("수동 (호가창+차트)", "Manual (order book)")}
             </Link>
           </div>
         </div>

@@ -14,6 +14,7 @@ const ALGO_ROUTE: Record<string, string> = {
   algo1: "/testing/auto",
   algo2: "/testing/scalp/auto",
   algo3: "/testing/candle3/auto",
+  algo4: "/testing/crosscheck/auto",
 };
 const fmt = (n?: number | null) => (n == null ? "-" : Number(n).toLocaleString());
 
@@ -78,8 +79,8 @@ export default function AlgoVerdict() {
         </span>
       </div>
 
-      <div className="grid md:grid-cols-3 gap-3">
-        {(["algo1", "algo2", "algo3"] as const).map((k) => {
+      <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-3">
+        {(["algo1", "algo2", "algo3", "algo4"] as const).map((k) => {
           const a = b.algos[k];
           if (!a) return null;
           return (

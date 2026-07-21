@@ -164,7 +164,7 @@ def desk_algo_compare(db: Session = Depends(get_db)):
 _GATE_DAYS = 5
 _GATE_TRIPS = 30
 _ALGO_LABEL = {"algo1": "Algorithm 1", "algo2": "Algorithm 2 · Ripple",
-               "algo3": "Algorithm 3 · Candle"}
+               "algo3": "Algorithm 3 · Candle", "algo4": "Cross-Check · 3-agree"}
 
 
 def _scoreboard(db, days: int = 15) -> dict:
@@ -177,7 +177,7 @@ def _scoreboard(db, days: int = 15) -> dict:
         "       COALESCE(sum(realized_pnl),0), COALESCE(sum(realized_pnl_pct),0) "
         "FROM paper_desk_orders "
         "WHERE side='SELL' AND status='FILLED' AND realized_pnl IS NOT NULL "
-        "  AND COALESCE(source,'manual') IN ('algo1','algo2','algo3') "
+        "  AND COALESCE(source,'manual') IN ('algo1','algo2','algo3','algo4') "
         "  AND filled_at >= (now() AT TIME ZONE 'Asia/Seoul')::date - :d "
         "GROUP BY 1,2 ORDER BY 1,2"),
         {"d": int(days)}).fetchall()
@@ -194,7 +194,7 @@ def _scoreboard(db, days: int = 15) -> dict:
         if a["best_day"] is None or net > a["best_day"][1]:
             a["best_day"] = [str(d), round(net)]
     out = {}
-    for src in ("algo1", "algo2", "algo3"):
+    for src in ("algo1", "algo2", "algo3", "algo4"):
         a = agg.get(src)
         if not a:
             out[src] = {"label": _ALGO_LABEL[src], "trips": 0, "days": 0,
@@ -311,7 +311,7 @@ def desk_order(body: OrderBody, db: Session = Depends(get_db)):
     code = _resolve(body.ticker, db)
     if not code.isdigit():
         return {"ok": False, "error": f"'{body.ticker}' 종목을 찾지 못했어요"}
-    src = body.source if body.source in ("algo1", "algo2", "algo3", "guard", "manual") else "manual"
+    src = body.source if body.source in ("algo1", "algo2", "algo3", "algo4", "guard", "manual") else "manual"
     return place_order(db, code, body.side, body.qty,
                        order_type=body.order_type, limit_price=body.limit_price, source=src)
 
@@ -567,6 +567,47 @@ def candle3_sell(code: str = Query(...), db: Session = Depends(get_db)):
 @router.post("/candle3/tick")
 def candle3_tick(force: bool = Query(False), db: Session = Depends(get_db)):
     from services.candle_trader import tick
+    return tick(db, force=force)
+
+
+# ---- 🔀 Algorithm 4 · Cross-Check (trades only when the 3 algos agree) -------- #
+@router.get("/crosscheck/status")
+def crosscheck_status(db: Session = Depends(get_db)):
+    from services.cross_trader import status
+    return status(db)
+
+
+@router.post("/crosscheck/toggle")
+def crosscheck_toggle(on: bool = Query(...), db: Session = Depends(get_db)):
+    from services.cross_trader import set_enabled
+    return set_enabled(db, on)
+
+
+@router.post("/crosscheck/params")
+def crosscheck_params(rule: Optional[str] = Query(None), stop_pct: Optional[float] = Query(None),
+                      pos_pct: Optional[float] = Query(None), mode: Optional[str] = Query(None),
+                      codes: Optional[str] = Query(None), db: Session = Depends(get_db)):
+    """Cross-Check dials: rule (strict 3/3 | loose 2/3+brain), stop %, size %, mode, stock list."""
+    from services.cross_trader import set_params
+    return set_params(db, rule=rule, stop_pct=stop_pct, pos_pct=pos_pct, mode=mode, codes=codes)
+
+
+@router.post("/crosscheck/buy")
+def crosscheck_buy(code: str = Query(...), db: Session = Depends(get_db)):
+    """Semi mode: the boss accepts a 🔔 3-agree BUY recommendation."""
+    from services.cross_trader import semi_buy
+    return semi_buy(db, code)
+
+
+@router.post("/crosscheck/sell")
+def crosscheck_sell(code: str = Query(...), db: Session = Depends(get_db)):
+    from services.cross_trader import sell_all
+    return sell_all(db, code)
+
+
+@router.post("/crosscheck/tick")
+def crosscheck_tick(force: bool = Query(False), db: Session = Depends(get_db)):
+    from services.cross_trader import tick
     return tick(db, force=force)
 
 
