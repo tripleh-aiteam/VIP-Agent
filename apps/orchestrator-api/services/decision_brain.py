@@ -559,6 +559,19 @@ def prediction_view(db, d: dict[str, Any], lang: str = "ko"):
         L.append(f"Predicts: {_dir_label(cd_dir, True)}"
                  + (f" · next-minutes range {_band_full(cd_band, price, True)}" if cd_band else ""))
         L.append(f"   • {cd_txt}")
+        # 🔀 Algorithm 4 · Cross-Check — consensus of the three directions above
+        _n_up = sum(1 for x in (a1_dir, rp_dir, cd_dir) if x == "UP")
+        _n_dn = sum(1 for x in (a1_dir, rp_dir, cd_dir) if x == "DOWN")
+        _x4 = "UP" if _n_up == 3 else "DOWN" if _n_dn == 3 else "FLAT"
+        L.append(_DIV)
+        L.append("🔀 Algorithm 4 · Cross-Check (acts only when the 3 above agree)")
+        if _x4 == "UP":
+            L.append(f"Predicts: {_dir_label('UP', True)} — all 3 algorithms point up (3/3) → this is exactly when Cross-Check buys")
+        elif _x4 == "DOWN":
+            L.append(f"Predicts: {_dir_label('DOWN', True)} — all 3 algorithms point down (3/3) → Cross-Check would exit/avoid")
+        else:
+            L.append(f"Predicts: {_dir_label('FLAT', True)} — not unanimous (up {_n_up}·down {_n_dn} of 3) → Cross-Check stays out until all 3 line up")
+        L.append("   • The 4th competitor has no view of its own — it simply requires the three above to agree before acting.")
     else:
         L.append(f"🔮 **예측 — {name}**" + (f" (현재 ₩{int(price):,})" if price else ""))
         if combo_band:
@@ -578,6 +591,19 @@ def prediction_view(db, d: dict[str, Any], lang: str = "ko"):
         L.append(f"예측: {_dir_label(cd_dir, False)}"
                  + (f" · 수 분 내 범위 {_band_full(cd_band, price, False)}" if cd_band else ""))
         L.append(f"   • {cd_txt}")
+        # 🔀 알고리즘 4 · 교차검증 — 위 세 방향의 합의
+        _n_up = sum(1 for x in (a1_dir, rp_dir, cd_dir) if x == "UP")
+        _n_dn = sum(1 for x in (a1_dir, rp_dir, cd_dir) if x == "DOWN")
+        _x4 = "UP" if _n_up == 3 else "DOWN" if _n_dn == 3 else "FLAT"
+        L.append(_DIV)
+        L.append("🔀 알고리즘 4 · 교차검증 (위 3개가 동의할 때만 행동)")
+        if _x4 == "UP":
+            L.append(f"예측: {_dir_label('UP', False)} — 세 알고리즘 모두 상승 (3/3) → 교차검증이 매수하는 바로 그 자리입니다")
+        elif _x4 == "DOWN":
+            L.append(f"예측: {_dir_label('DOWN', False)} — 세 알고리즘 모두 하락 (3/3) → 교차검증은 정리/회피합니다")
+        else:
+            L.append(f"예측: {_dir_label('FLAT', False)} — 만장일치 아님 (상승 {_n_up}·하락 {_n_dn}/3) → 셋이 일치할 때까지 관망합니다")
+        L.append("   • 4번째 경쟁자는 자기 견해가 없습니다 — 위 세 알고리즘의 동의만을 조건으로 행동합니다.")
     return "\n".join(L), {"a1": a1_dir, "rp": rp_dir, "cd": cd_dir, "ai1h": ai1h,
                           "range": combo_band}
 
