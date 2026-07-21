@@ -257,6 +257,18 @@ def _shared_token_write(token: str, expiry: float, base: str) -> None:
         logger.warning("kiwoom_rest: shared token write failed: %s", str(exc)[:100])
 
 
+def _kiwoom_disabled() -> bool:
+    """Only ONE terminal may hold the Kiwoom session (boss 2026-07-22): the local
+    server PC owns it now. On Render (env ``RENDER=true``, set automatically by the
+    platform) Kiwoom is OFF — its requests were kicking the local session in an
+    8050 "logged in elsewhere" war. Every caller already degrades to Naver.
+    Override per-host with ``KIWOOM_DISABLED=1/0`` if needed."""
+    v = os.environ.get("KIWOOM_DISABLED")
+    if v is not None and v.strip() != "":
+        return v.strip().lower() in ("1", "true", "yes")
+    return bool(os.environ.get("RENDER"))
+
+
 def _token(force: bool = False) -> Optional[str]:
     """Return a valid bearer token: process cache → SHARED DB row → mint (+publish).
 
@@ -264,6 +276,8 @@ def _token(force: bool = False) -> Optional[str]:
     Returns ``None`` (never raises) if creds are missing or the request fails.
     """
     global _token_cache, _active_base
+    if _kiwoom_disabled():
+        return None
     now = time.time()
 
     if not force:
