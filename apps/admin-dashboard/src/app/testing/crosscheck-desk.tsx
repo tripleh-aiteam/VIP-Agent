@@ -43,6 +43,12 @@ type CCStock = {
   entry?: number | null; qty?: number | null; pnl_pct?: number | null; stop_at?: number | null;
   algo1: Sig; ripple: Sig; candle: Sig; algo1_prob?: number | null; agree_buy: boolean;
   advice?: string | null;
+  // per-algorithm bilingual reasons + agreement summary (boss 2026-07-22)
+  algo1_why_ko?: string; algo1_why_en?: string;
+  ripple_why_ko?: string; ripple_why_en?: string;
+  candle_why_ko?: string; candle_why_en?: string;
+  n_buy?: number; n_sell?: number; sell_agree?: boolean; sell_need?: number;
+  agree_why_ko?: string; agree_why_en?: string;
 };
 type CCSignal = { code: string; name: string; price: number; qty: number; why: string; ts: number };
 type CCStatus = {
@@ -65,27 +71,47 @@ const MAINS = ["000660", "005930"];
 const light = (s: Sig) => (s === "BUY" ? "🟢" : s === "SELL" ? "🔴" : "⚪");
 const sigCol = (s: Sig) => (s === "BUY" ? "#2e7d32" : s === "SELL" ? RED : "var(--text-muted)");
 
-// ---- the 3-algorithm signal strip: 🤖 Algo1 · ⚡ Ripple · 🕯️ Candle side by side ---- //
-function SignalStrip({ s, t }: { s: CCStock; t: (ko: string, en: string) => string }) {
-  const legs: [string, string, Sig][] = [
-    ["🤖", t("알고1", "Algo1"), s.algo1],
-    ["⚡", t("리플", "Ripple"), s.ripple],
-    ["🕯️", t("캔들", "Candle"), s.candle],
+// ---- the 3-algorithm signal panel: each algo's verdict + WHY, then the
+//      Cross-Check conclusion with the agree count (3/3, 2/3 …) and, when
+//      holding, the SELL-consensus count (boss 2026-07-22: full explanations) ---- //
+function SignalStrip({ s, t, lang }: { s: CCStock; t: (ko: string, en: string) => string; lang: string }) {
+  const ko = lang === "ko";
+  const vword = (sg: Sig) => (sg === "BUY" ? t("매수", "BUY") : sg === "SELL" ? t("매도", "SELL") : t("대기", "WAIT"));
+  const rows: { ic: string; lbl: string; sg: Sig; why?: string }[] = [
+    { ic: "🤖", lbl: t("알고1 (종합 브레인)", "Algo1 (brain)"), sg: s.algo1, why: ko ? s.algo1_why_ko : s.algo1_why_en },
+    { ic: "⚡", lbl: t("알고2 (잔물결)", "Algo2 (ripple)"), sg: s.ripple, why: ko ? s.ripple_why_ko : s.ripple_why_en },
+    { ic: "🕯️", lbl: t("알고3 (캔들)", "Algo3 (candle)"), sg: s.candle, why: ko ? s.candle_why_ko : s.candle_why_en },
   ];
+  const nBuy = s.n_buy ?? rows.filter((r) => r.sg === "BUY").length;
+  const nSell = s.n_sell ?? rows.filter((r) => r.sg === "SELL").length;
+  const agreeWhy = (ko ? s.agree_why_ko : s.agree_why_en)
+    || (s.agree_buy ? t("3/3 모두 매수 동의 → 매수 진입", "3/3 all agree → BUY entry")
+        : t(`${nBuy}/3 매수 — 진입 안 함`, `${nBuy}/3 buy — no entry`));
+  const conclusion: Sig = s.agree_buy ? "BUY" : (s.sell_agree ? "SELL" : "WAIT");
   return (
-    <div className="mt-1.5 flex items-center gap-1.5 flex-wrap rounded-lg px-2 py-1.5"
-      style={{ background: s.agree_buy ? "rgba(46,125,50,0.12)" : "var(--bg-elevated)",
-               border: s.agree_buy ? "1.5px solid #2e7d32" : "1px solid var(--border-default)" }}>
-      {legs.map(([ic, lbl, sg], i) => (
-        <span key={i} className="flex items-center gap-1 text-[12px] font-bold px-1.5 py-0.5 rounded-md"
-          style={{ color: sigCol(sg) }} title={`${lbl}: ${sg}`}>
-          <span>{ic}</span><span className="text-[10.5px] text-[var(--text-muted)]">{lbl}</span>
-          <span>{light(sg)}</span>
-        </span>
+    <div className="mt-1.5 rounded-lg px-2.5 py-2 space-y-1"
+      style={{ background: s.agree_buy ? "rgba(46,125,50,0.10)" : s.sell_agree ? "rgba(211,47,47,0.08)" : "var(--bg-elevated)",
+               border: s.agree_buy ? "1.5px solid #2e7d32" : s.sell_agree ? "1.5px solid #d32f2f" : "1px solid var(--border-default)" }}>
+      {rows.map((r, i) => (
+        <div key={i} className="flex items-start gap-1.5 text-[11.5px] leading-snug">
+          <span className="shrink-0">{r.ic}</span>
+          <span className="shrink-0 font-bold text-[var(--text-secondary)]" style={{ minWidth: ko ? 118 : 96 }}>{r.lbl}</span>
+          <span className="shrink-0 font-extrabold" style={{ color: sigCol(r.sg) }}>{light(r.sg)} {vword(r.sg)}</span>
+          {r.why && <span className="text-[10.5px] text-[var(--text-muted)]">— {r.why}</span>}
+        </div>
       ))}
-      {s.agree_buy
-        ? <b className="ml-auto text-[12px] font-extrabold" style={{ color: "#2e7d32" }}>✅ {t("3개 동의 — 매수", "3 agree — BUY")}</b>
-        : <span className="ml-auto text-[10.5px] text-[var(--text-muted)]">{t("동의 대기", "waiting for agreement")}</span>}
+      <div className="pt-1 mt-0.5 flex items-start gap-1.5 text-[12px] leading-snug border-t border-[var(--border-default)]/50">
+        <span className="shrink-0">🔀</span>
+        <span className="shrink-0 font-bold text-[var(--text-secondary)]" style={{ minWidth: ko ? 118 : 96 }}>{t("교차검증 결론", "Cross-Check")}</span>
+        <b className="shrink-0" style={{ color: sigCol(conclusion) }}>{light(conclusion)} {vword(conclusion)}</b>
+        <span className="text-[10.5px] font-semibold" style={{ color: s.agree_buy ? "#2e7d32" : s.sell_agree ? RED : "var(--text-muted)" }}>— {agreeWhy}</span>
+      </div>
+      {s.state === "LONG" && !s.agree_buy && (
+        <div className="text-[10.5px] text-[var(--text-muted)] pl-5">
+          {t(`매도 동의 ${nSell}/${s.sell_need ?? 3} — ${(s.sell_agree ? "합의 매도 신호!" : `${s.sell_need ?? 3}개 되면 합의 매도`)} (손절·트레일은 항상 작동)`,
+             `sell votes ${nSell}/${s.sell_need ?? 3} — ${(s.sell_agree ? "consensus SELL fired!" : `sells on ${s.sell_need ?? 3}`)} (stop/trail always active)`)}
+        </div>
+      )}
     </div>
   );
 }
@@ -487,7 +513,7 @@ export default function CrossCheckDesk({ mode }: { mode: CCMode }) {
                     {s.state === "LONG" ? t("보유 중", "LONG") : !sc.market_open ? t("🌙 마감", "🌙 CLOSED") : t("대기", "WAITING")}
                   </span>
                 </div>
-                <SignalStrip s={s} t={t} />
+                <SignalStrip s={s} t={t} lang={lang} />
                 {s.state === "LONG" ? (
                   <div className="mt-1.5 text-[12.5px] tabular-nums text-[var(--text-secondary)]">
                     {t("매수가", "entry")} ₩{fmt(s.entry)} × {fmt(s.qty)}{t("주", "sh")}

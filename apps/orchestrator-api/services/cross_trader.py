@@ -182,15 +182,28 @@ def _candle_need_tf(db) -> tuple[int, str]:
 def _signals_for(db, code: str, need: int, tf: str, scan_items: dict,
                  allow_compute: bool) -> dict[str, Any]:
     """The three algorithms' live verdicts for one stock (BUY/WAIT/SELL each) plus
-    the raw booleans the entry/exit rules need. allow_compute=True (tick) lets the
-    Algo-1 brain compute on a cache miss; status() passes False (cache peek only)."""
+    the raw booleans the entry/exit rules need AND a bilingual WHY per algorithm
+    (boss 2026-07-22: every verdict must say its reason). allow_compute=True (tick)
+    lets the Algo-1 brain compute on a cache miss; status() passes False."""
     from services import decision_brain, candle_trader
-    ripple = decision_brain._ripple_now(code)[0]
+    ripple, rip_ko, rip_en = decision_brain._ripple_now(code)
     up, dn, cn = candle_trader._streaks_tf(code, tf)
     candle = "BUY" if up >= need else "SELL" if dn >= need else "WAIT"
+    if not cn:
+        can_ko, can_en = f"{tf}분봉 데이터 대기 중", f"waiting for {tf}-min candles"
+    elif candle == "BUY":
+        can_ko, can_en = (f"{tf}분봉 {up}연속 양봉 (기준 {need}) → 매수 신호",
+                          f"{up} up {tf}-min candles in a row (needs {need}) → BUY")
+    elif candle == "SELL":
+        can_ko, can_en = (f"{tf}분봉 {dn}연속 음봉 (기준 {need}) → 매도 신호",
+                          f"{dn} down {tf}-min candles in a row (needs {need}) → SELL")
+    else:
+        can_ko, can_en = (f"양봉 {up}·음봉 {dn}연속 — {need}연속 대기",
+                          f"up {up}·down {dn} — waiting for {need} in a row")
     # Algorithm 1: scan act_now (conf gate) OR brain BUY; brain SELL = bearish
     item = scan_items.get(str(code).zfill(6))
-    scan_buy = bool(item and (item.get("confidence") or 0) >= CONF_MIN)
+    conf = (item.get("confidence") or 0) if item else 0
+    scan_buy = bool(item and conf >= CONF_MIN)
     decision = None
     if allow_compute:
         try:
@@ -202,6 +215,17 @@ def _signals_for(db, code: str, need: int, tf: str, scan_items: dict,
         decision = _decide_peek(code)
     algo1_buy = scan_buy or (decision == "BUY")
     algo1 = "BUY" if algo1_buy else ("SELL" if decision == "SELL" else "WAIT")
+    if scan_buy:
+        a1_ko = f"엔진 스캔 지금 매수 자리 (확신 {conf}%)"
+        a1_en = f"setup scan says ACT NOW (confidence {conf}%)"
+    elif decision == "BUY":
+        a1_ko, a1_en = "종합 브레인 판정: 매수", "combined brain verdict: BUY"
+    elif decision == "SELL":
+        a1_ko, a1_en = "종합 브레인 판정: 매도 (비관)", "combined brain verdict: SELL (bearish)"
+    elif decision:
+        a1_ko, a1_en = "브레인 중립 — 매수 신호 없음", "brain neutral — no buy signal"
+    else:
+        a1_ko, a1_en = "스캔·브레인 신호 대기 중", "waiting for scan/brain signal"
     prob = item.get("ai_1h_prob") if item else None
     return {
         "algo1": algo1, "ripple": ripple, "candle": candle,
@@ -209,7 +233,10 @@ def _signals_for(db, code: str, need: int, tf: str, scan_items: dict,
         "algo1_sell": decision == "SELL", "algo1_prob": prob,
         "ripple_buy": ripple == "BUY", "ripple_sell": ripple == "SELL",
         "candle_buy": candle == "BUY", "candle_sell": candle == "SELL",
-        "up": up, "dn": dn}
+        "up": up, "dn": dn,
+        "algo1_why_ko": a1_ko, "algo1_why_en": a1_en,
+        "ripple_why_ko": rip_ko, "ripple_why_en": rip_en,
+        "candle_why_ko": can_ko, "candle_why_en": can_en}
 
 
 # ---- pure decision rules (unit-tested in isolation) -------------------------- #
@@ -452,6 +479,29 @@ def status(db) -> dict[str, Any]:
         if o and cfg["mode"] == "semi":
             advice = _sell_hint.get(code)
         stop_at = round(o["entry"] * (1 - cfg["stop_pct"] / 100)) if o else None
+        # agreement summary (boss 2026-07-22: show 3/3 · 2/3 ... plus WHO is missing,
+        # and the SELL-consensus count for held stocks) — bilingual reasons
+        votes = {"algo1": sig["algo1"], "ripple": sig["ripple"], "candle": sig["candle"]}
+        n_buy = sum(1 for v in votes.values() if v == "BUY")
+        n_sell = sum(1 for v in votes.values() if v == "SELL")
+        _nm_ko = {"algo1": "알고1", "ripple": "잔물결", "candle": "캔들"}
+        _nm_en = {"algo1": "Algo1", "ripple": "Ripple", "candle": "Candle"}
+        not_buy = [k for k, v in votes.items() if v != "BUY"]
+        if agree_buy:
+            if rule == "strict":
+                agree_ko, agree_en = "3/3 모두 매수 동의 → 매수 진입", "3/3 all agree → BUY entry"
+            else:
+                agree_ko = "잔물결+캔들 매수 & 알고1 비관 아님 → 매수 진입 (느슨)"
+                agree_en = "ripple+candle BUY & algo1 not bearish → BUY entry (loose)"
+        elif n_buy > 0:
+            miss_ko = "·".join(_nm_ko[k] for k in not_buy)
+            miss_en = ", ".join(_nm_en[k] for k in not_buy)
+            agree_ko = f"{n_buy}/3 매수 — {miss_ko} 미동의 → 진입 안 함"
+            agree_en = f"{n_buy}/3 buy — {miss_en} not agreeing → no entry"
+        else:
+            agree_ko, agree_en = "매수 동의 0/3 — 관망", "0/3 buy votes — watching"
+        sell_need = 3 if rule == "strict" else 2
+        sell_agree = (n_sell >= 3) if rule == "strict" else (sig["ripple_sell"] and sig["candle_sell"])
         stocks.append({
             "code": code, "name": _name(code), "price": px, "chg": chg,
             "state": "LONG" if o else "WAIT",
@@ -459,7 +509,12 @@ def status(db) -> dict[str, Any]:
             "pnl_pct": round((px / o["entry"] - 1) * 100 - 0.23, 2) if (o and px) else None,
             "stop_at": stop_at, "advice": advice,
             "algo1": sig["algo1"], "ripple": sig["ripple"], "candle": sig["candle"],
-            "algo1_prob": sig["algo1_prob"], "agree_buy": agree_buy})
+            "algo1_prob": sig["algo1_prob"], "agree_buy": agree_buy,
+            "algo1_why_ko": sig["algo1_why_ko"], "algo1_why_en": sig["algo1_why_en"],
+            "ripple_why_ko": sig["ripple_why_ko"], "ripple_why_en": sig["ripple_why_en"],
+            "candle_why_ko": sig["candle_why_ko"], "candle_why_en": sig["candle_why_en"],
+            "n_buy": n_buy, "n_sell": n_sell, "sell_agree": sell_agree, "sell_need": sell_need,
+            "agree_why_ko": agree_ko, "agree_why_en": agree_en})
     today = db.execute(text(
         "SELECT count(*), coalesce(sum(CASE WHEN net_pct>0 THEN 1 ELSE 0 END),0), "
         "coalesce(sum(net_pct),0), coalesce(sum(qty*entry*net_pct/100.0),0) "
