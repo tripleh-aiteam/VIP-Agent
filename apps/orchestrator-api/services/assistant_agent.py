@@ -3144,7 +3144,7 @@ def _run_chain(
             # Replaces the old confusing dump entirely ("that's all, nothing more").
             try:
                 from services.decision_brain import clean_recommendation as _brain_clean
-                _p = _brain_clean(db, _dec, lang)
+                _p = _brain_clean(db, _dec, lang, transcript)
             except Exception:
                 _p = _dec.get("reasoning_en" if _en else "reasoning_ko") or ""
             if _p and len(_decs) > 1:

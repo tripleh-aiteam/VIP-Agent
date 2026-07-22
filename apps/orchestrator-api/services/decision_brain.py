@@ -257,23 +257,60 @@ def _algo1_synthesis(d: dict[str, Any], lang: str) -> str:
     return "📌 종합 해설: " + head + why + concl
 
 
-def _plain_advice(dec: str, conf: str, name: str, en: bool) -> str:
+def _plain_advice(dec: str, conf: str, name: str, en: bool, transcript: str = None) -> str:
     """One short, jargon-free line that answers 'so what do I actually do?' in everyday
-    words — shown right under the verdict, ABOVE the technical breakdown, so a
-    non-expert gets a plain read before any ML/wave/chart terms."""
+    words — shown right under the verdict, ABOVE the technical breakdown.
+
+    It is FRAMED TO THE USER'S ACTUAL QUESTION: someone asking 'should I SELL my X?' is a
+    holder, so a BUY signal is answered as 'don't sell / hold' (not 'buy'), and a stated
+    expectation ('tomorrow looks down') is acknowledged instead of ignored — the previous
+    version headlined 'buying' at a holder asking to sell, which read as illogical."""
+    import re as _re
     s_en, s_ko = {"high": ("strong", "확실한"), "medium": ("fair", "어느 정도"),
                   "low": ("weak", "약한")}.get((conf or "low").lower(), ("weak", "약한"))
     # correct Korean object particle (을 after a final consonant, 를 after a vowel)
     _tail = (name or "").strip()[-1:]
     _obj = ("을" if (_tail and 0xAC00 <= ord(_tail) <= 0xD7A3 and (ord(_tail) - 0xAC00) % 28)
             else "를")
+    t = (transcript or "").lower()
+    asked_sell = bool(_re.search(r"\bsell\b|팔|매도|익절|처분", t))
+    asked_buy = bool(_re.search(r"\bbuy\b|살까|사야|사도|매수|진입|담을", t))
+    exp_down = bool(_re.search(r"decreas|going down|go down|\bdown\b|drop|fall|lower|"
+                               r"떨어|하락|내려|빠질|약세|하방", t))
+
+    # ---- HOLDER framing: user already owns it and is asking whether to SELL ----
+    # (a BUY/HOLD signal must be answered as 'don't sell', never 'buy'.)
+    if asked_sell and not asked_buy:
+        if en:
+            nod = ("You expect tomorrow to fall, and the very short term does look a little soft — "
+                   "but " if exp_down else "")
+            if dec == "SELL":
+                return (f"💬 In plain words: {nod}{'yes' if nod else 'Yes'} — trimming or selling here "
+                        f"is reasonable; the signals do lean down ({s_en} conviction). If you'd rather "
+                        "not exit fully, sell part and keep a stop-loss on the rest.")
+            reason = ("the bigger-picture signals still lean UP (a buy signal)" if dec == "BUY"
+                      else "there's no strong reason to sell")
+            return (f"💬 In plain words: {nod}I would **not** sell here: {reason}, so holding makes "
+                    f"more sense than selling ({s_en} conviction). If a near-term dip worries you, "
+                    "sell only a portion or set a stop-loss rather than exiting everything.")
+        nod = ("내일 하락을 예상하시고 아주 단기(다음 몇 시간)도 다소 약해 보이지만, " if exp_down else "")
+        if dec == "SELL":
+            return (f"💬 쉬운 설명: {nod}네 — 지금 일부라도 정리(매도)하는 건 합리적입니다. 신호가 약세 "
+                    f"쪽입니다(확신 {s_ko}). 전량 매도가 부담되면 일부만 팔고 나머지는 손절선을 걸어두세요.")
+        reason = "큰 흐름의 신호는 여전히 **상승 쪽(매수 신호)**이라" if dec == "BUY" else "뚜렷이 팔 이유가 없어서"
+        return (f"💬 쉬운 설명: {nod}지금 파는 건 권하지 않습니다 — {reason} 매도보다 **보유**가 낫습니다"
+                f"(확신 {s_ko}). 단기 하락이 걱정되면 전량 매도 대신 일부만 팔거나 손절선을 걸어두세요.")
+
+    # ---- BUYER framing / neutral ----
     if dec == "BUY":
-        return (f"💬 In plain words: the signs lean toward **buying** {name}, with {s_en} "
+        nod_en = "Even though you're watching for a possible dip, " if exp_down else ""
+        nod_ko = "내일 조정 가능성을 보고 계시지만, " if exp_down else ""
+        return (f"💬 In plain words: {nod_en}the signs lean toward **buying** {name}, with {s_en} "
                 "conviction. If you'll hold for a few days this is a reasonable time to buy; if "
                 "you want a better price, wait for a small dip. Put in only money you can afford "
                 "to lose, and set a stop-loss so a wrong call stays cheap." if en else
-                f"💬 쉬운 설명: 지금은 {name}{_obj} **사는 쪽**으로 신호가 기울어 있고, 확신은 {s_ko} "
-                "수준입니다. 며칠 들고 갈 거면 지금 사도 괜찮고, 더 싸게 사고 싶으면 살짝 눌릴 때를 "
+                f"💬 쉬운 설명: {nod_ko}지금은 {name}{_obj} **사는 쪽**으로 신호가 기울어 있고, 확신은 "
+                f"{s_ko} 수준입니다. 며칠 들고 갈 거면 지금 사도 괜찮고, 더 싸게 사고 싶으면 살짝 눌릴 때를 "
                 "기다리세요. 잃어도 되는 돈만 넣고, 틀렸을 때 손실이 작도록 손절선을 꼭 정해두세요.")
     if dec == "SELL":
         return (f"💬 In plain words: the signs lean toward **selling / taking profit** on {name} "
@@ -289,7 +326,7 @@ def _plain_advice(dec: str, conf: str, name: str, en: bool) -> str:
             "모일 때까지 기다리세요.")
 
 
-def clean_recommendation(db, d: dict[str, Any], lang: str = "ko") -> str:
+def clean_recommendation(db, d: dict[str, Any], lang: str = "ko", transcript: str = None) -> str:
     """The boss's exact recommendation layout (2026-07-20): ONE-line final decision →
     Algorithm 1 (decision + 1h prediction + ML/news/YT/chart/Kiwoom/orderbook/wave
     detail) → Algorithm 2 Ripple (decision + detail) → Algorithm 2 Candle (decision
@@ -340,7 +377,7 @@ def clean_recommendation(db, d: dict[str, Any], lang: str = "ko") -> str:
     if en:
         # 1) one-line final
         L.append(f"✅ Our final decision: **{ve.get(dec, dec)}** — {name} (confidence {conf})")
-        L.append(_plain_advice(dec, conf, name, True))   # plain-words lead, before the jargon
+        L.append(_plain_advice(dec, conf, name, True, transcript))   # plain-words lead, question-aware
         # 2) Algorithm 1
         L.append(_DIV)
         ml_call = (ml.get("call") or "HOLD").upper()
@@ -383,7 +420,7 @@ def clean_recommendation(db, d: dict[str, Any], lang: str = "ko") -> str:
         L.append(_synthesis_en(dec, rp_sig, cd_sig, name))
     else:
         L.append(f"✅ 최종 결정: **{vk.get(dec, dec)}** — {name} (신뢰도 {conf_ko})")
-        L.append(_plain_advice(dec, conf, name, False))   # plain-words lead, before the jargon
+        L.append(_plain_advice(dec, conf, name, False, transcript))   # plain-words lead, question-aware
         L.append(_DIV)
         ml_call = (ml.get("call") or "HOLD").upper()
         h1 = f" · 1시간 예측: {'상승' if (ai1h or 0) >= 50 else '하락'} {ai1h}%" if ai1h is not None else ""
