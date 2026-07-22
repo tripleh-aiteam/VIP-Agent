@@ -6,6 +6,7 @@
 // Polling /paper-desk/state also triggers pending limit fills server-side.
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useFastPrices } from "@/components/useFastPrices";
 import { useRouter } from "next/navigation";
 import { api, apiPost } from "@/components/api";
 import { useLanguage } from "@/components/i18n";
@@ -548,31 +549,18 @@ export default function Desk({ mode }: { mode: TradeMode }) {
   // now overlays from /paper-desk/prices (Kiwoom-first, 2s fresh) every 3 seconds.
   const [livePx, setLivePx] = useState<Record<string, number>>({});
   const [liveChg, setLiveChg] = useState<Record<string, number>>({});
+  // ⚡ fast 1s price tick — visible board codes only, single-flight, visibility-paused
+  // (boss 2026-07-22); mapped into livePx/liveChg the board already reads.
+  const fastCodes = useMemo(() => (mode === "manual" ? [] : Array.from(new Set(
+    focus.filter((f) => ["000660", "005930"].includes(f.code) || watchExtra.includes(f.code)
+      || !!f.qualified || !!f.dynamic).map((f) => f.code)))), [mode, focus, watchExtra]);
+  const fast = useFastPrices(fastCodes);
   useEffect(() => {
-    if (mode === "manual" || marketClosed) return;   // manual has no board; closed = frozen
-    const tick = () => {
-      const codes = Array.from(new Set(
-        focus.filter((f) =>
-          ["000660", "005930"].includes(f.code) || watchExtra.includes(f.code)
-          || !!f.qualified || !!f.dynamic).map((f) => f.code)));
-      if (!codes.length) return;
-      api<{ prices: Record<string, { price: number; chg?: number | null }> }>(`/paper-desk/prices?codes=${codes.join(",")}`)
-        .then((r) => {
-          const m: Record<string, number> = {};
-          const g: Record<string, number> = {};
-          Object.entries(r.prices || {}).forEach(([c, v]) => {
-            if (v?.price != null) m[c] = v.price;
-            if (v?.chg != null) g[c] = v.chg;
-          });
-          if (Object.keys(m).length) setLivePx((old) => ({ ...old, ...m }));
-          if (Object.keys(g).length) setLiveChg((old) => ({ ...old, ...g }));
-        }).catch(() => {});
-    };
-    tick();
-    const i = setInterval(tick, 2000);   // boss: must feel like Kiwoom — 2s lane
-    return () => clearInterval(i);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mode, marketClosed, focus, watchExtra]);
+    const m: Record<string, number> = {}; const g: Record<string, number> = {};
+    Object.entries(fast).forEach(([c, v]) => { if (v.price != null) m[c] = v.price; if (v.chg != null) g[c] = v.chg; });
+    if (Object.keys(m).length) setLivePx((old) => ({ ...old, ...m }));
+    if (Object.keys(g).length) setLiveChg((old) => ({ ...old, ...g }));
+  }, [fast]);
 
   // one card, two homes: the main-body section (semi) and the floating popup (manual)
   const alertCard = (a: SetupAlert) => {

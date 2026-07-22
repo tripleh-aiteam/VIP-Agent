@@ -8,6 +8,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { api, apiPost } from "@/components/api";
 import { useLanguage } from "@/components/i18n";
+import { useFastPrices } from "@/components/useFastPrices";
+import FlashPrice from "@/components/FlashPrice";
 import AlgoVerdict from "./AlgoVerdict";
 
 const INDIGO = "#3949ab";   // Cross-Check brand
@@ -515,6 +517,16 @@ export default function CrossCheckDesk({ mode: initialMode }: { mode: CCMode }) 
   }, [sc, showExtra]);
   const selStock = useMemo(() => sc?.stocks.find((s) => s.code === sel), [sc, sel]);
 
+  // ⚡ fast 1s price tick for only the VISIBLE codes (decoupled from the 4s status poll)
+  const visibleCodes = useMemo(() => (
+    mode === "manual"
+      ? [sel, ...((st?.positions || []).map((p) => p.ticker))]
+      : cards.map((c) => c.code)
+  ), [mode, sel, st?.positions, cards]);
+  const fast = useFastPrices(visibleCodes);
+  const fpx = (code?: string, fb?: number | null) => (code && fast[code]?.price != null ? fast[code].price : fb);
+  const fchg = (code?: string, fb?: number | null) => (code && fast[code]?.chg != null ? fast[code].chg : fb);
+
   // 💰 shared paper-money bar — identical on auto / semi / manual (boss 2026-07-22)
   const moneyBar = st ? (
     <div className="mt-3 rounded-xl border px-4 py-2.5 flex items-center gap-4 flex-wrap text-[12px]" style={{ borderColor: "var(--border-default)", background: "var(--bg-elevated)" }}>
@@ -697,7 +709,7 @@ export default function CrossCheckDesk({ mode: initialMode }: { mode: CCMode }) 
             {(sc?.codes || MAINS).map((c) => { const it = stockList.find((x) => x.code === c); return <option key={c} value={c}>{it?.name || c} ({c})</option>; })}
           </select>
           <input value={addQ} onChange={(e) => setAddQ(e.target.value)} onKeyDown={(e) => e.key === "Enter" && searchAdd()} placeholder={t("종목 검색해 추가…", "search a stock…")} className="text-[12px] px-2 py-1.5 rounded-lg border bg-[var(--bg-primary)] text-[var(--text-primary)]" style={{ borderColor: "var(--border-default)", width: 150 }} />
-          {selStock && <span className="ml-1 text-[16px] font-extrabold tabular-nums" style={{ color: (selStock.chg ?? 0) >= 0 ? RED : BLUE }}>₩{fmt(selStock.price)}</span>}
+          {selStock && <FlashPrice price={fpx(sel, selStock.price)} chg={fchg(sel, selStock.chg)} className="ml-1 text-[16px] font-extrabold tabular-nums" />}
         </div>
 
         <div className="mt-4 grid lg:grid-cols-2 gap-4">
@@ -723,7 +735,7 @@ export default function CrossCheckDesk({ mode: initialMode }: { mode: CCMode }) 
                     <td className="px-3 py-1.5 font-bold text-[var(--text-primary)]">{p.name} <span className="text-[10px] text-[var(--text-muted)]">{p.ticker}</span></td>
                     <td className="text-right px-2 tabular-nums">{fmt(p.qty)}</td>
                     <td className="text-right px-2 tabular-nums">{fmt(p.avg_price)}</td>
-                    <td className="text-right px-2 tabular-nums font-bold">{fmt(p.live_price)}</td>
+                    <td className="text-right px-2 tabular-nums font-bold"><FlashPrice price={fpx(p.ticker, p.live_price)} chg={p.unrealized_pnl_pct} /></td>
                     <td className="text-right px-2 tabular-nums">{fmt(Math.round(p.value))}</td>
                     <td className="text-right px-2 tabular-nums font-extrabold" style={{ color: pnlCol(p.unrealized_pnl) }}>{(p.unrealized_pnl || 0) > 0 ? "+" : ""}{fmt(Math.round(p.unrealized_pnl || 0))}{p.unrealized_pnl_pct != null && ` (${p.unrealized_pnl_pct > 0 ? "+" : ""}${p.unrealized_pnl_pct}%)`}</td>
                     <td className="px-2 text-right">
@@ -905,7 +917,7 @@ export default function CrossCheckDesk({ mode: initialMode }: { mode: CCMode }) 
                 <div className="flex items-baseline gap-2 flex-wrap">
                   <span className="text-[15.5px] font-extrabold text-[var(--text-primary)]">{s.name}</span>
                   <span className="text-[10.5px] text-[var(--text-muted)]">{s.code}</span>
-                  <span className="ml-auto text-[16px] font-extrabold tabular-nums" style={{ color: (s.chg ?? 0) >= 0 ? RED : BLUE }}>₩{fmt(s.price)}</span>
+                  <FlashPrice price={fpx(s.code, s.price)} chg={fchg(s.code, s.chg)} className="ml-auto text-[16px] font-extrabold tabular-nums" />
                   <span className="text-[12px] font-extrabold px-2 py-0.5 rounded-full text-white" style={{ background: s.state === "LONG" ? INDIGO : "var(--text-muted)" }}>
                     {s.state === "LONG" ? t("보유 중", "LONG") : !sc.market_open ? t("🌙 마감", "🌙 CLOSED") : t("대기", "WAITING")}
                   </span>

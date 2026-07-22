@@ -6,10 +6,11 @@
 // MANUAL: his own hands — Kiwoom order book + 5-min chart + BUY/SELL buttons +
 //         "auto-sell at my price" (a limit SELL the server fills every 15s).
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { api, apiPost } from "@/components/api";
 import { useLanguage } from "@/components/i18n";
+import { useFastPrices } from "@/components/useFastPrices";
 import AlgoVerdict from "./AlgoVerdict";
 
 const RED = "#d32f2f";
@@ -364,27 +365,15 @@ export default function ScalpDesk({ mode: initialMode }: { mode: ScalpMode }) {
     setAddBusy(false);
   };
 
-  // fast price lane — same 3s Kiwoom overlay Algorithm 1 uses
+  // ⚡ fast 1s price tick (visible cards only, single-flight, visibility-paused) mapped
+  // into livePx/liveChg the rest of the page already reads (boss 2026-07-22)
+  const fast = useFastPrices(useMemo(() => [...MAINS, ...showExtra], [showExtra]));
   useEffect(() => {
-    const tick = () => {
-      const codes = sc?.codes?.length ? sc.codes : ["000660", "005930"];
-      api<{ prices: Record<string, { price: number; chg?: number | null }> }>(`/paper-desk/prices?codes=${codes.join(",")}`)
-        .then((r) => {
-          const m: Record<string, number> = {};
-          const g: Record<string, number> = {};
-          Object.entries(r.prices || {}).forEach(([c, v]) => {
-            if (v?.price != null) m[c] = v.price;
-            if (v?.chg != null) g[c] = v.chg;
-          });
-          if (Object.keys(m).length) setLivePx((old) => ({ ...old, ...m }));
-          if (Object.keys(g).length) setLiveChg((old) => ({ ...old, ...g }));
-        }).catch(() => {});
-    };
-    tick();
-    const i = setInterval(tick, 2000);
-    return () => clearInterval(i);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sc?.codes?.join(",")]);
+    const m: Record<string, number> = {}; const g: Record<string, number> = {};
+    Object.entries(fast).forEach(([c, v]) => { if (v.price != null) m[c] = v.price; if (v.chg != null) g[c] = v.chg; });
+    if (Object.keys(m).length) setLivePx((old) => ({ ...old, ...m }));
+    if (Object.keys(g).length) setLiveChg((old) => ({ ...old, ...g }));
+  }, [fast]);
 
   const toggle = async () => {
     if (!sc) return;

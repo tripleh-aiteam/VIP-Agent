@@ -7,6 +7,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { api, apiPost } from "@/components/api";
 import { useLanguage } from "@/components/i18n";
+import { useFastPrices } from "@/components/useFastPrices";
+import FlashPrice from "@/components/FlashPrice";
 import AlgoVerdict from "./AlgoVerdict";
 
 const TEAL = "#00838f";
@@ -159,6 +161,11 @@ export default function Candle3Desk({ mode: initialMode }: { mode: C3Mode }) {
     return sc.stocks.filter((s) => MAINS.includes(s.code) || showExtra.includes(s.code));
   }, [sc, showExtra]);
 
+  // ⚡ fast 1s price tick for only the VISIBLE cards (decoupled from the 4s status poll)
+  const fast = useFastPrices(useMemo(() => cards.map((c) => c.code), [cards]));
+  const fpx = (code?: string, fb?: number | null) => (code && fast[code]?.price != null ? fast[code].price : fb);
+  const fchg = (code?: string, fb?: number | null) => (code && fast[code]?.chg != null ? fast[code].chg : fb);
+
   const need = sc?.streak ?? 3;
   const sigWord = (s: C3Stock) =>
     s.candle_signal === "BUY" ? t(`🔥 ${s.up}연속 양봉 — 매수 신호`, `🔥 ${s.up} up candles — BUY`)
@@ -284,7 +291,7 @@ export default function Candle3Desk({ mode: initialMode }: { mode: C3Mode }) {
                     <button onClick={() => toggleChart(s.code)} title={t("클릭: 1분봉 차트", "click: 1-min chart")}
                       className="text-[15.5px] font-extrabold text-[var(--text-primary)] underline decoration-dotted underline-offset-4 hover:opacity-70">{s.name} 📈</button>
                     <span className="text-[10.5px] text-[var(--text-muted)]">{s.code}</span>
-                    <span className="ml-auto text-[16px] font-extrabold tabular-nums" style={{ color: (s.chg ?? 0) >= 0 ? RED : BLUE }}>₩{fmt(s.price)}</span>
+                    <FlashPrice price={fpx(s.code, s.price)} chg={fchg(s.code, s.chg)} className="ml-auto text-[16px] font-extrabold tabular-nums" />
                     <span className="text-[12px] font-extrabold px-2 py-0.5 rounded-full text-white" style={{ background: s.state === "LONG" ? TEAL : "var(--text-muted)" }}>
                       {s.state === "LONG" ? t("보유 중", "LONG") : !sc.market_open ? t("🌙 마감", "🌙 CLOSED") : t("대기", "WAITING")}
                     </span>
@@ -356,7 +363,7 @@ export default function Candle3Desk({ mode: initialMode }: { mode: C3Mode }) {
                       <td className="px-3 py-1.5 font-bold text-[var(--text-primary)]">{s.name} <span className="text-[10px] text-[var(--text-muted)]">{s.code}</span></td>
                       <td className="text-right px-2 tabular-nums">{fmt(s.qty)}</td>
                       <td className="text-right px-2 tabular-nums">{fmt(s.entry)}</td>
-                      <td className="text-right px-2 tabular-nums font-bold">{fmt(s.price)}</td>
+                      <td className="text-right px-2 tabular-nums font-bold"><FlashPrice price={fpx(s.code, s.price)} chg={s.pnl_pct} /></td>
                       <td className="text-right px-2 tabular-nums">{fmt(Math.round(value))}</td>
                       <td className="text-right px-2 tabular-nums font-extrabold" style={{ color: pnlCol(unreal) }}>{unreal > 0 ? "+" : ""}{fmt(Math.round(unreal))} ({s.pnl_pct != null && s.pnl_pct > 0 ? "+" : ""}{s.pnl_pct}%)</td>
                       <td className="px-2 text-right">

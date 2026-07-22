@@ -649,12 +649,12 @@ def desk_executions(code: str = Query(...)):
 
 @router.get("/prices")
 def live_prices(codes: str = Query(..., description="comma-separated 6-digit codes, max 20")):
-    """⚡ FAST PRICE LANE (boss 2026-07-14: '현재가 changes very slow vs Kiwoom').
-    The focus board recomputes every 60s (heavy engine work) — the page overlays
-    prices from THIS every ~3s instead. Kiwoom-first via _live_price (2s
-    micro-cache), parallel fan-out, no DB."""
+    """⚡ FAST PRICE LANE (boss 2026-07-14 / sped up 2026-07-22): the page's 1-second
+    tick. Serves the warm cache INSTANTLY (never blocks on Kiwoom's ~1.5s REST) and
+    kicks background refreshes so prices stay ~1s fresh during market hours. No DB, no
+    signals. Returns {code: {price, chg, change_pct, ts, source}}."""
     from concurrent.futures import ThreadPoolExecutor
-    from services.paper_desk import _live_price, _chg_cache
+    from services.paper_desk import fast_price
     cs: list[str] = []
     for c in (codes or "").split(","):
         c = c.strip().zfill(6)
@@ -664,9 +664,10 @@ def live_prices(codes: str = Query(..., description="comma-separated 6-digit cod
     out: dict[str, dict] = {}
     if cs:
         with ThreadPoolExecutor(max_workers=8) as ex:
-            for c, (px, _name) in zip(cs, ex.map(_live_price, cs)):
+            for c, (px, chg, ts, src) in zip(cs, ex.map(fast_price, cs)):
                 if px is not None:
-                    out[c] = {"price": px, "chg": _chg_cache.get(c)}
+                    out[c] = {"price": px, "chg": chg, "change_pct": chg,
+                              "ts": round(ts, 3), "source": src}
     return {"prices": out}
 
 

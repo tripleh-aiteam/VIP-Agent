@@ -15,7 +15,10 @@ Single account (id=1) — this is the boss's desk, not a multi-user product.
 from __future__ import annotations
 
 import logging
+import threading
+from datetime import datetime
 from typing import Any, Optional
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import text
 
@@ -34,6 +37,57 @@ MAX_OPEN_ORDERS = 30
 _PRICE_TTL = 2.0                # per-ticker live-quote micro-cache (seconds)
 _price_cache: dict[str, tuple[float, Optional[float], Optional[str]]] = {}
 _rate: dict[str, list[float]] = {}
+# ⚡ FAST PRICE LANE (boss 2026-07-22: prices must tick ~1s like the Kiwoom app).
+# Kiwoom REST is ~1.5s/quote, so we NEVER block a request on it: fast_price() serves
+# the cache instantly and kicks a background refresh (single-flight per code). During
+# market hours the cache target is 1s; the continuous 1s polls keep it that fresh.
+_KST = ZoneInfo("Asia/Seoul")
+_src_cache: dict[str, str] = {}          # ticker -> "kiwoom" | "naver"
+_refresh_inflight: set[str] = set()      # single-flight guard (no overlapping fetch/code)
+_refresh_lock = threading.Lock()
+
+
+def _mkt_open() -> bool:
+    n = datetime.now(_KST)
+    return n.weekday() < 5 and (9 * 60) <= (n.hour * 60 + n.minute) <= (15 * 60 + 30)
+
+
+def _kick_price_refresh(ticker: str) -> None:
+    """Refresh one code's quote in the background (single-flight). Never blocks."""
+    with _refresh_lock:
+        if ticker in _refresh_inflight:
+            return
+        _refresh_inflight.add(ticker)
+
+    def _work():
+        try:
+            _live_price(ticker)          # updates _price_cache/_chg_cache/_src_cache
+        except Exception:
+            pass
+        finally:
+            with _refresh_lock:
+                _refresh_inflight.discard(ticker)
+    threading.Thread(target=_work, name=f"px-{ticker}", daemon=True).start()
+
+
+def fast_price(ticker: str) -> tuple[Optional[float], Optional[float], float, Optional[str]]:
+    """Serve the cached quote INSTANTLY (never blocks on Kiwoom); kick a background
+    refresh when the cache is older than the market-hours target (~1s open / 30s closed).
+    Returns (price, change_pct, ts, source). First-ever load does ONE sync fetch so the
+    price isn't blank."""
+    import time as _t
+    ticker = str(ticker).zfill(6)
+    hit = _price_cache.get(ticker)
+    now = _t.time()
+    target = 1.0 if _mkt_open() else 30.0
+    if hit is None:
+        _live_price(ticker)              # cold: one synchronous fetch, then cached
+        hit = _price_cache.get(ticker)
+    elif now - hit[0] >= target:
+        _kick_price_refresh(ticker)      # stale: refresh in background, serve stale now
+    px = hit[1] if hit else None
+    ts = hit[0] if hit else now
+    return px, _chg_cache.get(ticker), ts, _src_cache.get(ticker)
 
 
 def _allow(bucket: str, per_min: int) -> bool:
@@ -116,12 +170,15 @@ def _live_price(ticker: str) -> tuple[Optional[float], Optional[str]]:
     Side effect: today's change_pct lands in _chg_cache for the /prices lane."""
     import time as _t
     hit = _price_cache.get(ticker)
-    if hit and _t.time() - hit[0] < _PRICE_TTL:
+    # ~1s freshness during market hours (fast lane), 2s off-hours (caps upstream spam)
+    ttl = 1.0 if _mkt_open() else _PRICE_TTL
+    if hit and _t.time() - hit[0] < ttl:
         return hit[1], hit[2]
     name = None
     px: Optional[float] = None
     chg: Optional[float] = None
     prev_close = None
+    src: Optional[str] = None
     try:
         from services import kiwoom_rest as kr
         q = kr.current_price(ticker)
@@ -129,6 +186,7 @@ def _live_price(ticker: str) -> tuple[Optional[float], Optional[str]]:
             px, name = float(q["price"]), (q.get("name") or None)
             chg = q.get("change_pct")
             prev_close = q.get("prev_close")
+            src = "kiwoom"
             _note_deal(ticker, px, q.get("volume"))   # feeds the 체결 fallback
     except Exception:
         pass
@@ -139,6 +197,7 @@ def _live_price(ticker: str) -> tuple[Optional[float], Optional[str]]:
             if q and q.get("price"):
                 px = float(q["price"])
                 chg = q.get("change_pct")
+                src = "naver"
         except Exception:
             pass
     # ⚡ LIVE-BAND CLAMP (boss 2026-07-15: "order book moves but the price doesn't"):
@@ -164,6 +223,8 @@ def _live_price(ticker: str) -> tuple[Optional[float], Optional[str]]:
     if px is not None and prev_close:
         chg = round((px / float(prev_close) - 1) * 100, 2)
     _price_cache[ticker] = (_t.time(), px, name)
+    if src:
+        _src_cache[ticker] = src
     if chg is not None:
         try:
             _chg_cache[ticker] = float(chg)
