@@ -2802,7 +2802,7 @@ def _format_algo_scoreboard(sb: dict, lang) -> str:
     else:
         L.append(f"🏁 **어떤 알고리즘이 제일 좋은가?** (최근 {win}일 · 수수료 반영 순손익 ₩)")
         L.append("")
-    for src in ("algo1", "algo2", "algo3"):
+    for src in ("algo1", "algo2", "algo3", "algo4"):
         a = algos.get(src)
         if not a:
             continue
@@ -2887,7 +2887,11 @@ def _llm_prediction_summary(d: dict, block: str, name: str, lang, question: str)
             "question (which direction / what price) — NOT for advice. Below are the "
             "directional PREDICTIONS from three algorithms (Algorithm 1 = combined brain + "
             "1-hour up-probability; Algorithm 2 = Ripple, minutes; Algorithm 3 = Candle, "
-            "1-min momentum). Write a SHORT final summary (3-5 sentences) that (1) states the "
+            "1-min momentum), PLUS a 4th input — the Cross-Check line, which is simply HOW MANY "
+            "of the three point the same way (3 of 3 = strong agreement; 2 = partial; split = "
+            "disagreement). REFLECT that agreement in the confidence you state: all three "
+            "agreeing → higher confidence; only one → low confidence; split → uncertain/sideways. "
+            "Write a SHORT final summary (3-5 sentences) that (1) states the "
             "COMBINED predicted DIRECTION — up / down / flat — with rough magnitude/confidence, "
             "(2) states the PREDICTED PRICE RANGE — both the ₩ interval (from ₩X to ₩Y) AND "
             "its percent change (e.g. −4.2% ~ +1.4%) — exactly as shown in the analysis's "
@@ -2903,7 +2907,10 @@ def _llm_prediction_summary(d: dict, block: str, name: str, lang, question: str)
             "당신은 한국 주식 트레이딩 어시스턴트입니다. 사용자가 '순수 예측' 질문(어느 방향/얼마)"
             "을 했습니다 — 매매 조언 요청이 아닙니다. 아래는 3개 알고리즘의 방향 예측입니다 "
             "(알고리즘1 = 종합 브레인 + 1시간 상승확률, 알고리즘2 = 잔물결·분 단위, 알고리즘3 = "
-            "캔들·1분봉 모멘텀). 다음을 담은 짧은 요약(3~5문장)을 쓰세요: (1) 종합 예측 방향 — "
+            "캔들·1분봉 모멘텀). 여기에 4번째 입력 '교차검증' 줄이 있습니다 — 세 알고리즘 중 몇 개가 "
+            "같은 방향을 보는지입니다(3/3 = 강한 일치, 2 = 부분 일치, 엇갈림 = 불일치). 이 일치도를 "
+            "확신도에 반영하세요: 셋 다 일치 → 높은 확신, 하나만 → 낮은 확신, 엇갈림 → 불확실·보합. "
+            "다음을 담은 짧은 요약(3~5문장)을 쓰세요: (1) 종합 예측 방향 — "
             "상승/하락/보합 — 과 대략적 강도·확신도, (2) 분석의 '예상 가격 범위' 줄에 나온 예측 "
             "가격 구간을 ₩ 금액(₩X ~ ₩Y)과 % 변동(예: −4.2% ~ +1.4%) 둘 다 제시, (3) 이유 "
             "간단히(어느 알고리즘이 일치/불일치), (4) 단기 신호라 가격을 보장하지 않는다는 점. "

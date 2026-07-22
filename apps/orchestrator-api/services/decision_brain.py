@@ -169,24 +169,60 @@ def _crosscheck_now(a1_sig: str, rp_sig: str, cd_sig: str) -> tuple[str, str, st
             f"not unanimous (buy {n_buy}·sell {n_sell}) → WAIT")
 
 
-def _crosscheck_detail(a1_sig: str, rp_sig: str, cd_sig: str, lang: str) -> list[str]:
-    """Algorithm 4 strategy + what the three algorithms say right now (bilingual)."""
+def _x4_holds(db, code: str) -> bool:
+    """Does Cross-Check (Algo 4) currently hold this stock? Cheap indexed read."""
+    try:
+        from sqlalchemy import text as _text
+        return bool(db.execute(_text(
+            "SELECT 1 FROM cross_trades WHERE ticker=:t AND status='OPEN' LIMIT 1"),
+            {"t": str(code).zfill(6)}).first())
+    except Exception:
+        try:
+            db.rollback()
+        except Exception:
+            pass
+        return False
+
+
+def _crosscheck_detail(a1_sig: str, rp_sig: str, cd_sig: str, lang: str,
+                       held: bool = False) -> list[str]:
+    """Algorithm 4 · Cross-Check, in plain words: the three lights on one line, the
+    agreement count + what it means, whether it's holding this stock (bilingual)."""
     en = str(lang or "").lower().startswith("en")
-    sig, ko, en_r = _crosscheck_now(a1_sig, rp_sig, cd_sig)
     a1, rp, cd = (a1_sig or "WAIT").upper(), (rp_sig or "WAIT").upper(), (cd_sig or "WAIT").upper()
+    ve = {"BUY": "BUY", "SELL": "SELL", "WAIT": "WAIT", "HOLD": "WAIT"}
+    vk = {"BUY": "매수", "SELL": "매도", "WAIT": "대기", "HOLD": "대기"}
+    _w = (lambda s: ve.get(s, "WAIT")) if en else (lambda s: vk.get(s, "대기"))
+    n_buy = sum(1 for s in (a1, rp, cd) if s == "BUY")
+    n_sell = sum(1 for s in (a1, rp, cd) if s == "SELL")
+    out: list[str] = []
     if en:
-        return [
-            "   • How it works: the 4th competitor has NO view of its own — it BUYS only when "
-            "Algorithm 1, Ripple and Candle ALL agree (strict 3/3; a looser 2/3+brain mode exists). "
-            "Exits: −1% stop / trailing take / lost-consensus / flat 15:18.",
-            f"   • Right now: 🤖 Algo1 {a1} · ⚡ Ripple {rp} · 🕯️ Candle {cd} → {sig} ({en_r}).",
-            "   • Buys when: all three line up — the highest-conviction, lowest-frequency entries."]
-    return [
-        "   • 작동 방식: 4번째 경쟁자는 자기 견해가 없습니다 — 알고리즘 1·잔물결·캔들이 모두 매수에 "
-        "동의할 때만 매수합니다(엄격 3/3; 느슨한 2/3+브레인 모드도 있음). 청산: −1% 손절 / 트레일 익절 / "
-        "합의 이탈 / 15:18 정리.",
-        f"   • 지금: 🤖 알고1 {a1} · ⚡ 잔물결 {rp} · 🕯️ 캔들 {cd} → {sig} ({ko}).",
-        "   • 매수 조건: 셋이 일치할 때 — 가장 확신 높고 빈도 낮은 진입."]
+        out.append(f"   • The three lights: 🤖 Algo1 {_w(a1)} · ⚡ Ripple {_w(rp)} · 🕯️ Candle {_w(cd)}")
+        if n_buy == 3:
+            out.append("   • ALL 3 AGREE to buy — the strongest signal this system produces.")
+        elif n_sell == 3:
+            out.append("   • ALL 3 AGREE it's weak — the strongest 'avoid / get out' signal.")
+        elif n_buy > 0:
+            out.append(f"   • {n_buy} of 3 agree — not enough; Cross-Check only acts when all three line up.")
+        else:
+            out.append("   • None of the three wants to buy — Cross-Check just watches.")
+        if held:
+            out.append("   • Cross-Check is currently HOLDING this stock — now watching for when to sell.")
+        out.append("   • It has no opinion of its own — it acts only when all three line up (highest-conviction, rarest signal).")
+    else:
+        out.append(f"   • 세 개의 불빛: 🤖 알고1 {_w(a1)} · ⚡ 잔물결 {_w(rp)} · 🕯️ 캔들 {_w(cd)}")
+        if n_buy == 3:
+            out.append("   • 셋 다 매수에 동의 — 이 시스템이 낼 수 있는 가장 강한 신호예요.")
+        elif n_sell == 3:
+            out.append("   • 셋 다 약하다고 동의 — 가장 강한 '피하라 / 빠져나와라' 신호예요.")
+        elif n_buy > 0:
+            out.append(f"   • 셋 중 {n_buy}개만 동의 — 아직 부족해요. 교차검증은 셋이 다 맞을 때만 움직여요.")
+        else:
+            out.append("   • 셋 다 매수 신호가 없어요 — 교차검증은 그냥 지켜봅니다.")
+        if held:
+            out.append("   • 교차검증이 지금 이 종목을 보유 중이에요 — 언제 팔지 지켜보고 있어요.")
+        out.append("   • 스스로 판단하지 않아요 — 셋이 다 맞을 때만 움직여요 (가장 확신 높고 드문 신호).")
+    return out
 
 
 def _algo1_synthesis(d: dict[str, Any], lang: str) -> str:
@@ -303,10 +339,11 @@ def clean_recommendation(db, d: dict[str, Any], lang: str = "ko") -> str:
         L.extend(_candle_detail(code, lang))
         # 4b) Cross-Check (Algorithm 4) — consensus of the three above
         x4_sig, _x4_ko, x4_en = _crosscheck_now(dec, rp_sig, cd_sig)
+        _held4 = _x4_holds(db, code)
         L.append(_DIV)
-        L.append("🔀 Algorithm 4 · Cross-Check (trades only when the 3 agree)")
+        L.append("🔀 Algorithm 4 · Cross-Check (3-agree)")
         L.append(f"Decision: {ic.get(x4_sig,'⚪')} {ve.get(x4_sig,x4_sig)} — {x4_en}")
-        L.extend(_crosscheck_detail(dec, rp_sig, cd_sig, lang))
+        L.extend(_crosscheck_detail(dec, rp_sig, cd_sig, lang, held=_held4))
         # 5) final from all 4
         L.append(_DIV)
         L.append("🎯 Final answer (from all 4 algorithms):")
@@ -341,10 +378,11 @@ def clean_recommendation(db, d: dict[str, Any], lang: str = "ko") -> str:
         L.extend(_candle_detail(code, lang))
         # 4b) 교차검증 (알고리즘 4) — 위 세 알고리즘의 합의
         x4_sig, x4_ko, _x4_en = _crosscheck_now(dec, rp_sig, cd_sig)
+        _held4 = _x4_holds(db, code)
         L.append(_DIV)
-        L.append("🔀 알고리즘 4 · 교차검증 (3개가 동의할 때만 매매)")
+        L.append("🔀 알고리즘 4 · 교차검증 (3개 동의)")
         L.append(f"결정: {ic.get(x4_sig,'⚪')} {vk.get(x4_sig,x4_sig)} — {x4_ko}")
-        L.extend(_crosscheck_detail(dec, rp_sig, cd_sig, lang))
+        L.extend(_crosscheck_detail(dec, rp_sig, cd_sig, lang, held=_held4))
         L.append(_DIV)
         L.append("🎯 종합 최종 답변 (4가지 종합):")
         L.append(_synthesis_ko(dec, rp_sig, cd_sig, name))
@@ -559,19 +597,20 @@ def prediction_view(db, d: dict[str, Any], lang: str = "ko"):
         L.append(f"Predicts: {_dir_label(cd_dir, True)}"
                  + (f" · next-minutes range {_band_full(cd_band, price, True)}" if cd_band else ""))
         L.append(f"   • {cd_txt}")
-        # 🔀 Algorithm 4 · Cross-Check — consensus of the three directions above
+        # 🔀 Cross-Check — how much the three FORECASTS agree (conviction only;
+        # PURE FORECAST language — never buy/sell/hold, boss 2026-07-20 rule).
         _n_up = sum(1 for x in (a1_dir, rp_dir, cd_dir) if x == "UP")
         _n_dn = sum(1 for x in (a1_dir, rp_dir, cd_dir) if x == "DOWN")
-        _x4 = "UP" if _n_up == 3 else "DOWN" if _n_dn == 3 else "FLAT"
         L.append(_DIV)
-        L.append("🔀 Algorithm 4 · Cross-Check (acts only when the 3 above agree)")
-        if _x4 == "UP":
-            L.append(f"Predicts: {_dir_label('UP', True)} — all 3 algorithms point up (3/3) → this is exactly when Cross-Check buys")
-        elif _x4 == "DOWN":
-            L.append(f"Predicts: {_dir_label('DOWN', True)} — all 3 algorithms point down (3/3) → Cross-Check would exit/avoid")
+        L.append("🔀 Cross-Check — how much the three agree")
+        if _n_up == 3 or _n_dn == 3:
+            _w = "up" if _n_up == 3 else "down"
+            L.append(f"   • All 3 point the SAME way ({_w}) — the strongest agreement, so HIGHER confidence in this direction.")
+        elif max(_n_up, _n_dn) == 2:
+            _w = "up" if _n_up == 2 else "down"
+            L.append(f"   • 2 of 3 lean the same way ({_w}) — some agreement, not full; treat the direction as likely, not certain.")
         else:
-            L.append(f"Predicts: {_dir_label('FLAT', True)} — not unanimous (up {_n_up}·down {_n_dn} of 3) → Cross-Check stays out until all 3 line up")
-        L.append("   • The 4th competitor has no view of its own — it simply requires the three above to agree before acting.")
+            L.append(f"   • The three don't agree (up {_n_up} · down {_n_dn} of 3) — mixed signals, so expect a flat, sideways, uncertain move.")
     else:
         L.append(f"🔮 **예측 — {name}**" + (f" (현재 ₩{int(price):,})" if price else ""))
         if combo_band:
@@ -591,24 +630,57 @@ def prediction_view(db, d: dict[str, Any], lang: str = "ko"):
         L.append(f"예측: {_dir_label(cd_dir, False)}"
                  + (f" · 수 분 내 범위 {_band_full(cd_band, price, False)}" if cd_band else ""))
         L.append(f"   • {cd_txt}")
-        # 🔀 알고리즘 4 · 교차검증 — 위 세 방향의 합의
+        # 🔀 교차검증 — 세 예측의 의견 일치도 (확신도만 · 순수 예측 언어, 매매어 금지)
         _n_up = sum(1 for x in (a1_dir, rp_dir, cd_dir) if x == "UP")
         _n_dn = sum(1 for x in (a1_dir, rp_dir, cd_dir) if x == "DOWN")
-        _x4 = "UP" if _n_up == 3 else "DOWN" if _n_dn == 3 else "FLAT"
         L.append(_DIV)
-        L.append("🔀 알고리즘 4 · 교차검증 (위 3개가 동의할 때만 행동)")
-        if _x4 == "UP":
-            L.append(f"예측: {_dir_label('UP', False)} — 세 알고리즘 모두 상승 (3/3) → 교차검증이 매수하는 바로 그 자리입니다")
-        elif _x4 == "DOWN":
-            L.append(f"예측: {_dir_label('DOWN', False)} — 세 알고리즘 모두 하락 (3/3) → 교차검증은 정리/회피합니다")
+        L.append("🔀 교차검증 — 세 의견이 얼마나 일치하나")
+        if _n_up == 3 or _n_dn == 3:
+            _w = "상승" if _n_up == 3 else "하락"
+            L.append(f"   • 셋 다 같은 방향({_w})을 봅니다 — 의견 일치가 가장 강해서 이 방향에 대한 확신이 더 높습니다.")
+        elif max(_n_up, _n_dn) == 2:
+            _w = "상승" if _n_up == 2 else "하락"
+            L.append(f"   • 셋 중 2개가 같은 방향({_w})입니다 — 어느 정도 일치하지만 완전하지는 않아, 그 방향을 유력하게 보되 확정은 아닙니다.")
         else:
-            L.append(f"예측: {_dir_label('FLAT', False)} — 만장일치 아님 (상승 {_n_up}·하락 {_n_dn}/3) → 셋이 일치할 때까지 관망합니다")
-        L.append("   • 4번째 경쟁자는 자기 견해가 없습니다 — 위 세 알고리즘의 동의만을 조건으로 행동합니다.")
+            L.append(f"   • 세 방향이 엇갈립니다 (상승 {_n_up}·하락 {_n_dn}/3) — 신호가 섞여 있어 뚜렷한 방향 없이 옆으로 움직일 가능성이 큽니다.")
     return "\n".join(L), {"a1": a1_dir, "rp": rp_dir, "cd": cd_dir, "ai1h": ai1h,
                           "range": combo_band}
 
 
+def _agree_clause_ko(a1: str, rp: str, cd: str) -> str:
+    """Cross-Check agreement count as a conviction note (boss 2026-07-22)."""
+    n_buy = sum(1 for s in (a1, rp, cd) if s == "BUY")
+    n_sell = sum(1 for s in (a1, rp, cd) if s == "SELL")
+    if n_buy == 3:
+        return " 게다가 교차검증도 3/3 모두 매수에 동의 — 가장 강한 확인이라 이 판단의 확신이 크게 높아집니다."
+    if n_sell == 3:
+        return " 게다가 교차검증도 3/3 모두 약하다고 봐서 — 가장 강한 경고입니다."
+    if n_buy == 2:
+        return " 교차검증은 3개 중 2개가 매수 쪽 — 같은 방향으로 기울지만 완전한 확인은 아직입니다."
+    if n_buy == 1:
+        return " 교차검증은 3개 중 1개만 매수라 확신은 약한 편이에요 (셋이 다 맞아야 가장 강합니다)."
+    return " 교차검증 기준으로는 셋 다 매수 신호가 없어 확신은 낮습니다."
+
+
+def _agree_clause_en(a1: str, rp: str, cd: str) -> str:
+    n_buy = sum(1 for s in (a1, rp, cd) if s == "BUY")
+    n_sell = sum(1 for s in (a1, rp, cd) if s == "SELL")
+    if n_buy == 3:
+        return " On top of that, the cross-check agrees 3/3 — the strongest confirmation, which makes this the highest-conviction case."
+    if n_sell == 3:
+        return " On top of that, the cross-check agrees 3/3 that it's weak — the strongest warning."
+    if n_buy == 2:
+        return " The cross-check has 2 of 3 leaning to buy — same direction, but not full confirmation yet."
+    if n_buy == 1:
+        return " The cross-check has only 1 of 3 to buy, so conviction is on the weaker side (all three lining up is the strongest)."
+    return " By the cross-check, none of the three wants to buy, so conviction is low."
+
+
 def _synthesis_ko(a1: str, rp: str, cd: str, name: str) -> str:
+    return _synthesis_ko_base(a1, rp, cd, name) + _agree_clause_ko(a1, rp, cd)
+
+
+def _synthesis_ko_base(a1: str, rp: str, cd: str, name: str) -> str:
     scalp_buy = rp == "BUY" or cd == "BUY"
     scalp_sell = rp == "SELL" or cd == "SELL"
     if a1 == "BUY" and scalp_buy:
@@ -626,6 +698,10 @@ def _synthesis_ko(a1: str, rp: str, cd: str, name: str) -> str:
 
 
 def _synthesis_en(a1: str, rp: str, cd: str, name: str) -> str:
+    return _synthesis_en_base(a1, rp, cd, name) + _agree_clause_en(a1, rp, cd)
+
+
+def _synthesis_en_base(a1: str, rp: str, cd: str, name: str) -> str:
     scalp_buy = rp == "BUY" or cd == "BUY"
     scalp_sell = rp == "SELL" or cd == "SELL"
     if a1 == "BUY" and scalp_buy:
