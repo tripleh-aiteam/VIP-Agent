@@ -20,15 +20,20 @@ function Test-Up($url) {
 }
 
 # ---- 1) Backend (FastAPI, all 4 algorithms: ONLY_ALGO1=false) --------------
+# REPORTS_ENABLED=false: Render is currently the sole report sender, so this
+# server does NOT register the morning-report/email jobs (no duplicate emails).
+# When the server takes over reports, flip this to 'true' here AND set
+# REPORTS_ENABLED=false on Render's dashboard. See SERVER_SETUP.md.
 if (Test-Up "http://localhost:8000/health") {
     Write-Host "[backend]  already running on :8000 — skipping" -ForegroundColor Yellow
 } else {
-    Write-Host "[backend]  starting on http://localhost:8000  (all 4 algorithms)" -ForegroundColor Green
+    Write-Host "[backend]  starting on http://localhost:8000  (all 4 algorithms, REPORTS_ENABLED=false)" -ForegroundColor Green
     Start-Process powershell -ArgumentList @(
         "-NoExit","-Command",
         "cd '$Root\apps\orchestrator-api'; " +
         "`$env:ONLY_ALGO1='false'; " +
-        "Write-Host 'VIP BACKEND :8000 (all 4 algos) — keep this window open' -ForegroundColor Cyan; " +
+        "`$env:REPORTS_ENABLED='false'; " +
+        "Write-Host 'VIP BACKEND :8000 (all 4 algos, reports OFF) — keep this window open' -ForegroundColor Cyan; " +
         "python -m uvicorn main:app --host 127.0.0.1 --port 8000"
     )
 }

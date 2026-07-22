@@ -94,6 +94,38 @@ all 3 algorithm pages, verdict board, live trading.
 - Algorithm pages → toggle each algorithm **ON** (Auto) if off
 - The 🏁 verdict board shows the SAME history as before (same database)
 
+## Reports — who sends the morning emails (`REPORTS_ENABLED`)
+
+Every machine (this server + Render + a dev PC) runs the **full scheduler**. Without a
+switch, each one sends the SAME morning reports, so the team once got the recommendation
+email **3 times**. The `REPORTS_ENABLED` env var makes report sending controllable per
+machine:
+
+- **`REPORTS_ENABLED=false`** — this instance registers **no** outbound report/email jobs
+  (Kiwoom 6:30, Newspaper 6:32, YouTube 6:40, Master 6:50, Asset 7:00, Real Estate 7:05,
+  Recommendation 7:30, chatbot morning 8:00, the report self-heal, weekly/monthly reports,
+  the intraday + paper scorecard emails, breaking-news / story / dip-alert emails, and the
+  tournament result email). **Trading, the position guard, call graders, and data
+  collectors still run** — only outbound reports are skipped.
+- **`REPORTS_ENABLED=true`** (the **default** when the var is absent) — this instance sends
+  every report as before.
+
+**Current state:** `REPORTS_ENABLED=false` on this server — **Render is currently the
+report sender.** It is set in two places (either alone is enough; both persist across
+restarts): the repo-root `.env` file, and the backend start command in `start-vip.ps1`
+(`$env:REPORTS_ENABLED='false'`). Render has no such var, so it defaults to `true` and
+keeps sending exactly one copy.
+
+> **When the server takes over reports:** set `REPORTS_ENABLED=true` here (edit `.env` +
+> `start-vip.ps1`) **and** set `REPORTS_ENABLED=false` on Render's dashboard
+> (Environment → Add). Exactly **one** instance must be `true` at a time.
+
+**Verify after a restart:** the startup log shows one line —
+`reports disabled on this instance (REPORTS_ENABLED=false)` — and the report jobs
+(`kiwoom-daily-report`, `recommendation-daily-report`, `master-daily-report`, …) are
+absent while the trading jobs (`scalp-heartbeat`, `position-guard-heartbeat`,
+`strategy-tournament`, …) remain.
+
 ## Notes
 
 - **Keep the server awake:** Settings → System → Power → Screen/Sleep → **Never**.
