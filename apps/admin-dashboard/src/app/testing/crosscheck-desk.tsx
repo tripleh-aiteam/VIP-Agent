@@ -68,7 +68,11 @@ type DeskState = {
 };
 type AlgoCmp = Record<string, { trips: number; wins: number; win_rate: number | null; net_won: number; holding?: number }>;
 type StockItem = { code: string; name: string; market?: string };
-type QuoteRes = { ok: boolean; ticker?: string; name?: string; error?: string };
+type QuoteRes = { ok: boolean; ticker?: string; name?: string; error?: string;
+                  price?: number; open?: number | null; high?: number | null; low?: number | null; change_pct?: number | null };
+type RoundTrip = { name: string; qty: number; entry?: number | null; exit_price?: number | null;
+                   won?: number | null; net_pct?: number | null; closed_at?: string | null;
+                   opened_at?: string | null; why?: string | null; ticker?: string };
 type OBLevel = { price: number; qty?: number; last_qty?: number; max_qty?: number; is_large?: boolean; age_sec?: number; side?: string };
 type OBView = { source: string; live: { levels: OBLevel[]; fresh: boolean }; memory: { asks: OBLevel[]; bids: OBLevel[] }; walls: OBLevel[]; threshold?: number | null; mid?: number | null };
 
@@ -313,10 +317,20 @@ export default function CrossCheckDesk({ mode }: { mode: CCMode }) {
   const [stockList, setStockList] = useState<StockItem[]>([]);
   const [addQ, setAddQ] = useState("");
   const [sel, setSel] = useState<string>("000660");   // manual: the one deep-view stock
-  const [mQty, setMQty] = useState("10");             // manual: order quantity
   const [fRes, setFRes] = useState<"ALL" | "WIN" | "LOSE">("ALL");
   const [fName, setFName] = useState("ALL");
   const [fDate, setFDate] = useState("");
+  // manual: Place-Order box (any KRX stock, source='algo4' — trades on this page count
+  // for Cross-Check on the scoreboard) + algo4 round-trip history
+  const [oQ, setOQ] = useState("SK하이닉스 (000660)");
+  const [oShowSug, setOShowSug] = useState(false);
+  const [oSide, setOSide] = useState<"BUY" | "SELL">("BUY");
+  const [oQty, setOQty] = useState("10");
+  const [oType, setOType] = useState<"market" | "limit">("market");
+  const [oLimitPx, setOLimitPx] = useState("");
+  const [oQuote, setOQuote] = useState<QuoteRes | null>(null);
+  const [rt, setRt] = useState<RoundTrip[]>([]);
+  const [rtDate, setRtDate] = useState("");
 
   const load = () => {
     api<CCStatus>("/paper-desk/crosscheck/status").then(setSc).catch(() => {});
@@ -352,22 +366,58 @@ export default function CrossCheckDesk({ mode }: { mode: CCMode }) {
   };
   const setParam = async (k: "stop_pct" | "pos_pct", v: number) => { await apiPost(`/paper-desk/crosscheck/params?${k}=${v}`); load(); };
   const setRule = async (v: "strict" | "loose") => { await apiPost(`/paper-desk/crosscheck/params?rule=${v}`); load(); };
-  // ---- manual-mode trading (shared paper desk, source='manual') ---- //
-  const placeManual = async (side: "BUY" | "SELL") => {
-    const q = Math.max(1, parseInt(mQty || "0", 10) || 0);
-    const nm = stockList.find((x) => x.code === sel)?.name || sel;
-    if (!confirm(t(`${nm} ${q}주 ${side === "BUY" ? "매수" : "매도"}할까요? (시장가·가짜 돈)`,
-                   `${side} ${q} share(s) of ${nm}? (market · fake money)`))) return;
+  // ---- manual-mode trading (shared paper desk, source='algo4' — boss rule:
+  //      whatever is traded on an algorithm's page counts for that algorithm) ---- //
+  const suggestions = useMemo(() => {
+    const q = oQ.trim().toLowerCase();
+    if (!q || /\(\d{6}\)$/.test(oQ.trim())) return [] as StockItem[];
+    return stockList.filter((s) => s.name.toLowerCase().includes(q) || s.code.includes(q)).slice(0, 12);
+  }, [oQ, stockList]);
+  useEffect(() => {                     // live quote preview for the typed stock
+    const q = oQ.trim();
+    if (!q) { setOQuote(null); return; }
+    const id = setTimeout(() => {
+      api<QuoteRes>(`/paper-desk/quote?q=${encodeURIComponent(q)}`).then(setOQuote).catch(() => setOQuote(null));
+    }, 500);
+    return () => clearTimeout(id);
+  }, [oQ]);
+  useEffect(() => {                     // algo4 round-trips (manual page history)
+    if (mode !== "manual") return;
+    const l = () => api<{ trips: RoundTrip[] }>(`/paper-desk/roundtrips?source=algo4`).then((r) => setRt(r.trips || [])).catch(() => {});
+    l(); const i = setInterval(l, 15000); return () => clearInterval(i);
+  }, [mode]);
+  const placeAlgo4Order = async () => {
+    const q = Math.max(1, parseInt(oQty || "0", 10) || 0);
+    const tk = (oQuote?.ok && oQuote.ticker) ? oQuote.ticker : oQ;
+    const nm = oQuote?.name || oQ;
+    const lp = oType === "limit" ? parseFloat(oLimitPx || "0") : undefined;
+    if (oType === "limit" && !lp) { setNote(t("지정가를 입력하세요", "enter a limit price")); return; }
+    if (!confirm(t(`${nm} ${q}주 ${oSide === "BUY" ? "매수" : "매도"} (${oType === "market" ? "시장가" : `지정가 ₩${fmt(lp)}`})? — 교차검증 계정으로 기록됩니다 (가짜 돈)`,
+                   `${oSide} ${q} share(s) of ${nm} (${oType === "market" ? "market" : `limit ₩${fmt(lp)}`})? — counts as Cross-Check (fake money)`))) return;
+    setBusy(true);
+    try {
+      const r = await apiPost<{ ok: boolean; error?: string; reason?: string; status?: string; fill_price?: number; realized_pnl?: number; realized_pnl_pct?: number }>(
+        "/paper-desk/order", { ticker: tk, side: oSide, qty: q, order_type: oType, limit_price: lp, source: "algo4" });
+      if (r.ok) {
+        setNote(r.status === "OPEN"
+          ? t(`⏳ 지정가 주문 접수 — ₩${fmt(lp)} 도달 시 자동 체결`, `⏳ limit order queued — fills at ₩${fmt(lp)}`)
+          : oSide === "BUY"
+            ? t(`✅ 매수 체결 ₩${fmt(r.fill_price)} × ${q}주 (🔀 교차검증 기록)`, `✅ bought ${q} @ ₩${fmt(r.fill_price)} (counts as Cross-Check)`)
+            : t(`✅ 매도 체결 ₩${fmt(r.fill_price)} × ${q}주 — 실현 ${(r.realized_pnl || 0) > 0 ? "+" : ""}₩${fmt(r.realized_pnl)} (${r.realized_pnl_pct ?? "-"}%)`,
+                `✅ sold ${q} @ ₩${fmt(r.fill_price)} — realized ${(r.realized_pnl || 0) > 0 ? "+" : ""}₩${fmt(r.realized_pnl)} (${r.realized_pnl_pct ?? "-"}%)`));
+      } else setNote(`❌ ${r.error || r.reason || "order failed"}`);
+    } catch (e) { setNote(`❌ ${(e as Error).message}`); }
+    setBusy(false); load();
+  };
+  const sellAllPos = async (ticker: string, name: string, qty: number) => {
+    if (!confirm(t(`${name} ${fmt(qty)}주 전량 매도할까요? (시장가·교차검증 기록)`, `Sell all ${fmt(qty)} of ${name}? (market · counts as Cross-Check)`))) return;
     setBusy(true);
     try {
       const r = await apiPost<{ ok: boolean; error?: string; reason?: string; fill_price?: number; realized_pnl?: number; realized_pnl_pct?: number }>(
-        "/paper-desk/order", { ticker: sel, side, qty: q, order_type: "market", source: "manual" });
-      if (r.ok) {
-        setNote(side === "BUY"
-          ? t(`✅ 매수 체결 ₩${fmt(r.fill_price)} × ${q}주`, `✅ bought ${q} @ ₩${fmt(r.fill_price)}`)
-          : t(`✅ 매도 체결 ₩${fmt(r.fill_price)} × ${q}주 — 실현 ${(r.realized_pnl || 0) > 0 ? "+" : ""}₩${fmt(r.realized_pnl)} (${r.realized_pnl_pct ?? "-"}%)`,
-              `✅ sold ${q} @ ₩${fmt(r.fill_price)} — realized ${(r.realized_pnl || 0) > 0 ? "+" : ""}₩${fmt(r.realized_pnl)} (${r.realized_pnl_pct ?? "-"}%)`));
-      } else setNote(`❌ ${r.error || r.reason || "order failed"}`);
+        "/paper-desk/order", { ticker, side: "SELL", qty, order_type: "market", source: "algo4" });
+      setNote(r.ok ? t(`✅ 매도 — 실현 ${(r.realized_pnl || 0) > 0 ? "+" : ""}₩${fmt(r.realized_pnl)} (${r.realized_pnl_pct ?? "-"}%)`,
+                       `✅ sold — realized ${(r.realized_pnl || 0) > 0 ? "+" : ""}₩${fmt(r.realized_pnl)} (${r.realized_pnl_pct ?? "-"}%)`)
+                   : `❌ ${r.error || r.reason || "order failed"}`);
     } catch (e) { setNote(`❌ ${(e as Error).message}`); }
     setBusy(false); load();
   };
@@ -443,22 +493,112 @@ export default function CrossCheckDesk({ mode }: { mode: CCMode }) {
         {/* 💰 paper-money account bar (shared with auto/semi) */}
         {moneyBar}
 
-        {/* stock selector + 🛒 BUY / SELL (market, fake money, source=manual) */}
+        {/* 🛒 PLACE ORDER — any KRX stock, source='algo4' (counts as Cross-Check) */}
+        <div className="mt-4 rounded-xl border overflow-hidden" style={{ borderColor: INDIGO }}>
+          <div className="px-4 py-2 border-b bg-[var(--bg-elevated)] text-[13px] font-extrabold text-[var(--text-primary)]" style={{ borderColor: "var(--border-default)" }}>
+            🛒 {t("주문 (이 페이지의 거래는 교차검증 성적으로 기록)", "Place Order (trades here count as Cross-Check)")}
+          </div>
+          <div className="p-3 flex items-center gap-2 flex-wrap">
+            {/* full-list dropdown + searchable input (ALL KRX stocks) */}
+            <select value="" onChange={(e) => { if (e.target.value) { setOQ(e.target.value); setOShowSug(false); } }}
+              className="text-[12.5px] font-bold px-2 py-1.5 rounded-lg border bg-[var(--bg-elevated)] text-[var(--text-primary)]"
+              style={{ borderColor: "var(--border-default)", maxWidth: 150 }}>
+              <option value="">{t("전체 종목 ▾", "All stocks ▾")}</option>
+              {(["KOSPI", "KOSDAQ"] as const).map((mkt) => (
+                <optgroup key={mkt} label={mkt}>
+                  {stockList.filter((s) => s.market === mkt).map((s) => (
+                    <option key={s.code} value={`${s.name} (${s.code})`}>{s.name} ({s.code})</option>
+                  ))}
+                </optgroup>
+              ))}
+            </select>
+            <div className="relative" style={{ width: 220 }}>
+              <input value={oQ}
+                onChange={(e) => { setOQ(e.target.value); setOShowSug(true); }}
+                onFocus={() => setOShowSug(true)}
+                onBlur={() => setTimeout(() => setOShowSug(false), 200)}
+                placeholder={t("종목 이름/코드 검색", "search name or code")}
+                className="w-full text-[13px] px-2.5 py-1.5 rounded-lg border bg-transparent text-[var(--text-primary)]" style={{ borderColor: "var(--border-default)" }} />
+              {oShowSug && suggestions.length > 0 && (
+                <div className="absolute left-0 right-0 top-full mt-1 rounded-lg border overflow-y-auto z-20 shadow-lg"
+                  style={{ borderColor: "var(--border-default)", background: "var(--bg-elevated)", maxHeight: 300 }}>
+                  {suggestions.map((s) => (
+                    <button key={s.code} type="button"
+                      onMouseDown={(e) => { e.preventDefault(); setOQ(`${s.name} (${s.code})`); setOShowSug(false); }}
+                      className="w-full flex items-center gap-2 px-2.5 py-1.5 text-[12.5px] text-left hover:opacity-70">
+                      <span className="font-bold text-[var(--text-primary)]">{s.name}</span>
+                      <span className="text-[10.5px] text-[var(--text-muted)] tabular-nums">{s.code}</span>
+                      <span className="ml-auto text-[9.5px] text-[var(--text-muted)]">{s.market}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+            {/* live quote preview */}
+            {oQuote && (oQuote.ok
+              ? (() => {
+                  const chg = oQuote.change_pct ?? 0;
+                  const cCol = chg > 0 ? RED : chg < 0 ? BLUE : "var(--text-primary)";
+                  return (
+                    <span className="flex items-center gap-2 text-[12px] tabular-nums px-2 py-1 rounded-lg border"
+                      style={{ borderColor: "var(--border-default)", background: "var(--bg-elevated)" }}>
+                      <b className="text-[var(--text-primary)]">{oQuote.name}</b>
+                      <span className="font-extrabold text-[14px]" style={{ color: cCol }}>{fmt(oQuote.price)}</span>
+                      {oQuote.change_pct != null && <span className="font-extrabold" style={{ color: cCol }}>{chg > 0 ? "▲ +" : chg < 0 ? "▼ " : ""}{chg.toFixed(2)}%</span>}
+                      {oQuote.high != null && <span className="text-[var(--text-muted)]">{t("고", "H")} <b style={{ color: RED }}>{fmt(oQuote.high)}</b> {t("저", "L")} <b style={{ color: BLUE }}>{fmt(oQuote.low)}</b></span>}
+                      {oQuote.ticker && <button onClick={() => setSel(oQuote.ticker!)} title={t("아래 차트/호가로 보기", "focus chart/book below")} className="text-[12px] px-1 hover:opacity-70">📈</button>}
+                    </span>
+                  );
+                })()
+              : <span className="text-[11px] text-[var(--text-muted)]">{oQuote.error}</span>)}
+            {/* side · qty · type · execute */}
+            <div className="flex rounded-lg overflow-hidden border" style={{ borderColor: "var(--border-default)" }}>
+              {(["BUY", "SELL"] as const).map((s) => (
+                <button key={s} onClick={() => setOSide(s)} className="text-[12px] font-extrabold px-3 py-1.5"
+                  style={{ color: oSide === s ? "#fff" : "var(--text-muted)", background: oSide === s ? (s === "BUY" ? RED : BLUE) : "transparent" }}>
+                  {s === "BUY" ? t("매수", "BUY") : t("매도", "SELL")}
+                </button>
+              ))}
+            </div>
+            <input value={oQty} onChange={(e) => setOQty(e.target.value.replace(/\D/g, ""))}
+              className="text-[13px] px-2.5 py-1.5 rounded-lg border bg-transparent text-right tabular-nums" style={{ borderColor: "var(--border-default)", width: 84 }} />
+            <span className="text-[11px] text-[var(--text-muted)]">{t("주", "sh")}</span>
+            <div className="flex rounded-lg overflow-hidden border" style={{ borderColor: "var(--border-default)" }}>
+              {(["market", "limit"] as const).map((o) => (
+                <button key={o} onClick={() => setOType(o)} className="text-[12px] font-bold px-3 py-1.5"
+                  style={{ color: oType === o ? "#fff" : "var(--text-muted)", background: oType === o ? INDIGO : "transparent" }}>
+                  {o === "market" ? t("시장가", "Market") : t("지정가", "Limit")}
+                </button>
+              ))}
+            </div>
+            {oType === "limit" && (
+              <input value={oLimitPx} onChange={(e) => setOLimitPx(e.target.value.replace(/[^\d.]/g, ""))}
+                placeholder={t("체결 희망가", "trigger price")}
+                className="text-[13px] px-2.5 py-1.5 rounded-lg border bg-transparent text-right tabular-nums" style={{ borderColor: "var(--border-default)", width: 110 }} />
+            )}
+            <button onClick={placeAlgo4Order} disabled={busy}
+              className="text-[13px] font-extrabold px-4 py-1.5 rounded-lg text-white disabled:opacity-50"
+              style={{ background: oSide === "BUY" ? RED : BLUE }}>
+              {busy ? "…" : t("주문 실행", "Execute")}
+            </button>
+          </div>
+          {oType === "limit" && (
+            <div className="px-3 pb-2 text-[11px] text-[var(--text-muted)]">
+              {t("지정가: 매수는 현재가가 희망가 이하로 내려오면, 매도는 이상으로 올라가면 자동 체결",
+                 "Limit: BUY fills when price drops to your trigger, SELL when it rises to it")}
+            </div>
+          )}
+          {note && <div className="px-3 pb-2 text-[12.5px] font-bold text-[var(--text-primary)]">{note}</div>}
+        </div>
+
+        {/* 📊 deep-view stock selector (chart · order book · deals below) */}
         <div className="mt-4 flex items-center gap-2 flex-wrap text-[12px]">
-          <span className="font-bold text-[var(--text-muted)]">📈 {t("종목", "Stock")}:</span>
+          <span className="font-bold text-[var(--text-muted)]">📊 {t("차트/호가 종목", "Chart/book stock")}:</span>
           <select value={sel} onChange={(e) => setSel(e.target.value)} className="px-2 py-1.5 rounded-lg border bg-[var(--bg-primary)] text-[var(--text-primary)] font-bold" style={{ borderColor: INDIGO, minWidth: 200 }}>
             {(sc?.codes || MAINS).map((c) => { const it = stockList.find((x) => x.code === c); return <option key={c} value={c}>{it?.name || c} ({c})</option>; })}
           </select>
           <input value={addQ} onChange={(e) => setAddQ(e.target.value)} onKeyDown={(e) => e.key === "Enter" && searchAdd()} placeholder={t("종목 검색해 추가…", "search a stock…")} className="text-[12px] px-2 py-1.5 rounded-lg border bg-[var(--bg-primary)] text-[var(--text-primary)]" style={{ borderColor: "var(--border-default)", width: 150 }} />
           {selStock && <span className="ml-1 text-[16px] font-extrabold tabular-nums" style={{ color: (selStock.chg ?? 0) >= 0 ? RED : BLUE }}>₩{fmt(selStock.price)}</span>}
-          <span className="ml-2 text-[var(--text-muted)]">{t("수량", "Qty")}</span>
-          <input value={mQty} onChange={(e) => setMQty(e.target.value.replace(/[^0-9]/g, ""))} className="text-[13px] font-bold px-2 py-1.5 rounded-lg border bg-[var(--bg-primary)] text-[var(--text-primary)] tabular-nums" style={{ borderColor: "var(--border-default)", width: 76 }} />
-          <button disabled={busy} onClick={() => placeManual("BUY")} className="text-[13.5px] font-extrabold px-5 py-1.5 rounded-xl text-white disabled:opacity-50" style={{ background: RED }}>{t("매수", "BUY")}</button>
-          <button disabled={busy} onClick={() => placeManual("SELL")} className="text-[13.5px] font-extrabold px-5 py-1.5 rounded-xl text-white disabled:opacity-50" style={{ background: BLUE }}>{t("매도", "SELL")}</button>
-          {(() => { const held = (st?.positions || []).find((p) => p.ticker === sel); return held
-            ? <span className="text-[11px] text-[var(--text-muted)]">{t(`보유 ${fmt(held.qty)}주 @₩${fmt(held.avg_price)}`, `holding ${fmt(held.qty)} @₩${fmt(held.avg_price)}`)}</span>
-            : <span className="text-[11px] text-[var(--text-muted)]">{t("미보유", "not held")}</span>; })()}
-          {note && <span className="text-[12px] font-bold text-[var(--text-primary)]">{note}</span>}
         </div>
 
         <div className="mt-4 grid lg:grid-cols-2 gap-4">
@@ -476,7 +616,7 @@ export default function CrossCheckDesk({ mode }: { mode: CCMode }) {
               <thead><tr className="text-[10.5px] text-[var(--text-muted)]" style={{ background: "var(--bg-elevated)" }}>
                 <th className="text-left px-3 py-1.5">{t("종목", "Stock")}</th><th className="text-right px-2">{t("수량", "Qty")}</th>
                 <th className="text-right px-2">{t("매수가", "Avg")}</th><th className="text-right px-2">{t("현재가", "Live")}</th>
-                <th className="text-right px-2">{t("평가액", "Value")}</th><th className="text-right px-3">{t("평가손익", "Unrealized")}</th>
+                <th className="text-right px-2">{t("평가액", "Value")}</th><th className="text-right px-2">{t("평가손익", "Unrealized")}</th><th className="px-2"></th>
               </tr></thead>
               <tbody>
                 {(st?.positions || []).map((p) => (
@@ -486,7 +626,11 @@ export default function CrossCheckDesk({ mode }: { mode: CCMode }) {
                     <td className="text-right px-2 tabular-nums">{fmt(p.avg_price)}</td>
                     <td className="text-right px-2 tabular-nums font-bold">{fmt(p.live_price)}</td>
                     <td className="text-right px-2 tabular-nums">{fmt(Math.round(p.value))}</td>
-                    <td className="text-right px-3 tabular-nums font-extrabold" style={{ color: pnlCol(p.unrealized_pnl) }}>{(p.unrealized_pnl || 0) > 0 ? "+" : ""}{fmt(Math.round(p.unrealized_pnl || 0))}{p.unrealized_pnl_pct != null && ` (${p.unrealized_pnl_pct > 0 ? "+" : ""}${p.unrealized_pnl_pct}%)`}</td>
+                    <td className="text-right px-2 tabular-nums font-extrabold" style={{ color: pnlCol(p.unrealized_pnl) }}>{(p.unrealized_pnl || 0) > 0 ? "+" : ""}{fmt(Math.round(p.unrealized_pnl || 0))}{p.unrealized_pnl_pct != null && ` (${p.unrealized_pnl_pct > 0 ? "+" : ""}${p.unrealized_pnl_pct}%)`}</td>
+                    <td className="px-2 text-right">
+                      <button disabled={busy} onClick={(e) => { e.stopPropagation(); sellAllPos(p.ticker, p.name, p.qty); }}
+                        className="text-[11px] font-bold px-3 py-1 rounded-lg text-white disabled:opacity-50" style={{ background: BLUE }}>{t("전량 매도", "Sell all")}</button>
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -494,34 +638,55 @@ export default function CrossCheckDesk({ mode }: { mode: CCMode }) {
           </div>
         )}
 
-        {/* 🧾 trade history (shared desk orders, newest first) */}
-        <div className="mt-4 rounded-xl border overflow-hidden" style={{ borderColor: "var(--border-default)" }}>
-          <div className="px-4 py-2 border-b bg-[var(--bg-elevated)] text-[13px] font-extrabold text-[var(--text-primary)]" style={{ borderColor: "var(--border-default)" }}>🧾 {t("거래 기록 (모의계좌 전체)", "Trade History (whole paper desk)")}</div>
-          {((st?.history || []).length === 0) ? (
-            <div className="px-4 py-5 text-center text-[12px] text-[var(--text-muted)]">{t("아직 거래 기록이 없습니다", "no trades yet")}</div>
-          ) : (
-            <table className="w-full text-[12px]">
-              <thead><tr className="text-[10.5px] text-[var(--text-muted)]" style={{ background: "var(--bg-elevated)" }}>
-                <th className="text-left px-3 py-1.5">{t("시간", "Time")}</th><th className="text-left px-2">{t("종목", "Stock")}</th>
-                <th className="text-left px-2">{t("구분", "Side")}</th><th className="text-right px-2">{t("수량", "Qty")}</th>
-                <th className="text-right px-2">{t("체결가", "Fill")}</th><th className="text-right px-2">{t("실현손익", "Realized")}</th>
-                <th className="text-left px-3">{t("주체", "By")}</th>
-              </tr></thead>
-              <tbody>
-                {(st?.history || []).slice(0, 40).map((o) => (
-                  <tr key={o.id} className="border-t border-[var(--border-default)]/40">
-                    <td className="px-3 py-1.5 text-[11px] tabular-nums text-[var(--text-secondary)]">{kstSec(o.filled_at || o.created_at)}</td>
-                    <td className="px-2 font-bold text-[var(--text-primary)]">{o.name}</td>
-                    <td className="px-2 font-extrabold" style={{ color: o.side === "BUY" ? RED : BLUE }}>{o.side === "BUY" ? t("매수", "BUY") : t("매도", "SELL")}</td>
-                    <td className="text-right px-2 tabular-nums">{fmt(o.qty)}</td>
-                    <td className="text-right px-2 tabular-nums">{fmt(o.fill_price)}</td>
-                    <td className="text-right px-2 tabular-nums font-extrabold" style={{ color: pnlCol(o.realized_pnl) }}>{o.realized_pnl != null ? `${o.realized_pnl > 0 ? "+" : ""}${fmt(Math.round(o.realized_pnl))}${o.realized_pnl_pct != null ? ` (${o.realized_pnl_pct}%)` : ""}` : "-"}</td>
-                    <td className="px-3 text-[10.5px] text-[var(--text-muted)]">{o.source === "algo4" ? "🔀 algo4" : o.source === "manual" || !o.source ? t("👤 수동", "👤 manual") : o.source}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
+        {/* 🧾 Cross-Check trade history — completed round trips (buy→sell), fee-honest,
+            with the calendar day filter + per-day summary (same pattern as Algo 3) */}
+        <div className="mt-4 rounded-xl border overflow-hidden" style={{ borderColor: INDIGO }}>
+          <div className="px-4 py-2 border-b bg-[var(--bg-elevated)] flex items-center gap-2 flex-wrap" style={{ borderColor: "var(--border-default)" }}>
+            <b className="text-[13.5px]" style={{ color: INDIGO }}>🧾 {t("교차검증 거래 기록 (매수→매도 완결)", "Cross-Check Trade History (completed round trips)")}</b>
+            <input type="date" value={rtDate} onChange={(e) => setRtDate(e.target.value)} className="text-[11px] px-1.5 py-0.5 rounded-lg border bg-[var(--bg-primary)] text-[var(--text-primary)]" style={{ borderColor: rtDate ? INDIGO : "var(--border-default)" }} title={t("날짜로 평가", "evaluate by day")} />
+            {rtDate && <button onClick={() => setRtDate("")} className="text-[10.5px] font-bold px-2 py-0.5 rounded-lg border text-[var(--text-muted)]" style={{ borderColor: "var(--border-default)" }}>✕ {t("초기화", "clear")}</button>}
+          </div>
+          {(() => {
+            const rows = rt.filter((r) => !rtDate || kstDate(r.closed_at) === rtDate);
+            const wins = rows.filter((r) => (r.won || 0) > 0), losses = rows.filter((r) => (r.won || 0) < 0);
+            const net = rows.reduce((a, r) => a + (r.won || 0), 0);
+            return (<>
+              <div className="px-4 py-2.5 border-b text-[12.5px] tabular-nums flex items-center gap-4 flex-wrap" style={{ borderColor: "var(--border-default)", background: "rgba(57,73,171,0.04)" }}>
+                <span className="font-bold text-[var(--text-secondary)]">📅 {rtDate || t("전체 기록", "all history")}:</span>
+                <span>🔄 {t(`${rows.length}회전`, `${rows.length} trips`)}</span>
+                <span style={{ color: RED }}>🟢 {wins.length}{t("승", "W")}</span><span style={{ color: BLUE }}>🔴 {losses.length}{t("패", "L")}</span>
+                <span className="font-extrabold" style={{ color: rows.length && wins.length / rows.length >= 0.5 ? "#2e7d32" : RED }}>🏆 {t(`승률 ${rows.length ? Math.round(wins.length / rows.length * 100) : 0}%`, `${rows.length ? Math.round(wins.length / rows.length * 100) : 0}% win`)}</span>
+                <span className="text-[14px] font-extrabold" style={{ color: pnlCol(net) }}>= {t("순이익", "net")} {net > 0 ? "+" : ""}₩{fmt(Math.round(net))} <span className="text-[10px] font-normal text-[var(--text-muted)]">({t("수수료 반영", "fee-honest")})</span></span>
+              </div>
+              {rows.length === 0 ? (
+                <div className="px-4 py-5 text-center text-[12px] text-[var(--text-muted)]">
+                  {rtDate ? t("이 날짜에 완료된 거래가 없습니다", "no completed trades on this date")
+                    : t("아직 완결(매수→매도)된 교차검증 거래가 없습니다", "no completed Cross-Check round trips yet")}
+                </div>
+              ) : (
+                <table className="w-full text-[12px]">
+                  <thead><tr className="text-[10.5px] text-[var(--text-muted)]" style={{ background: "var(--bg-elevated)" }}>
+                    <th className="text-left px-3 py-1.5">{t("매수", "Bought")}</th><th className="text-left px-2">{t("매도", "Sold")}</th><th className="text-right px-2">⏱</th>
+                    <th className="text-left px-2">{t("종목", "Stock")}</th><th className="text-right px-2">{t("수량", "Qty")}</th>
+                    <th className="text-right px-2">{t("매수→매도", "Buy→Sell")}</th><th className="text-right px-3">{t("손익", "Win")}</th>
+                  </tr></thead>
+                  <tbody>
+                    {rows.map((r, i) => (
+                      <tr key={i} className="border-t border-[var(--border-default)]/40">
+                        <td className="px-3 py-1.5 text-[11px] font-bold tabular-nums" style={{ color: RED }}>{kstSec(r.opened_at)}</td>
+                        <td className="px-2 text-[11px] font-bold tabular-nums" style={{ color: BLUE }}>{kstSec(r.closed_at)}</td>
+                        <td className="text-right px-2 text-[11px] tabular-nums text-[var(--text-secondary)]">{heldFor(r.opened_at, r.closed_at, lang === "ko")}</td>
+                        <td className="px-2 font-bold text-[var(--text-primary)]">{r.name}</td>
+                        <td className="text-right px-2 tabular-nums">{fmt(r.qty)}</td>
+                        <td className="text-right px-2 tabular-nums">₩{fmt(r.entry)} → ₩{fmt(r.exit_price)}</td>
+                        <td className="text-right px-3 tabular-nums font-extrabold" style={{ color: pnlCol(r.net_pct) }}>{r.won != null ? `${r.won > 0 ? "+" : ""}₩${fmt(Math.round(r.won))}` : "-"}{r.net_pct != null && ` (${r.net_pct > 0 ? "+" : ""}${r.net_pct}%)`}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </>);
+          })()}
         </div>
 
         <p className="mt-4 text-[11px] text-[var(--text-muted)]">

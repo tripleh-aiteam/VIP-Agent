@@ -94,7 +94,7 @@ def desk_roundtrips(source: str = Query("algo1"), limit: int = Query(150),
     of the same ticker (entry price/time shown = that buy; P&L stays the desk's
     avg-cost number, net of 0.23% fees)."""
     from sqlalchemy import text
-    src = source if source in ("manual", "algo1", "algo2", "guard") else "algo1"
+    src = source if source in ("manual", "algo1", "algo2", "algo3", "algo4", "guard") else "algo1"
     rows = db.execute(text(
         "SELECT s.name, s.qty, COALESCE(b.fill_price, s.fill_price) AS entry, "
         "       s.fill_price AS exit_price, s.realized_pnl, s.realized_pnl_pct, "
