@@ -100,9 +100,15 @@ function MiniChart({ code }: { code: string }) {
   return <div ref={ref} style={{ width: "100%" }} />;
 }
 
-export default function Candle3Desk({ mode }: { mode: C3Mode }) {
+export default function Candle3Desk({ mode: initialMode }: { mode: C3Mode }) {
   const { lang } = useLanguage();
   const t = (ko: string, en: string) => (lang === "ko" ? ko : en);
+  // INSTANT mode switching (boss 2026-07-22): client-state tabs, URL via replaceState
+  const [mode, setMode] = useState<C3Mode>(initialMode);
+  const switchMode = (m: C3Mode) => {
+    setMode(m);
+    try { window.history.replaceState(null, "", `/testing/candle3/${m}`); } catch { /* ignore */ }
+  };
   const [sc, setSc] = useState<C3Status | null>(null);
   const [st, setSt] = useState<DeskState | null>(null);
   const [cmp, setCmp] = useState<AlgoCmp | null>(null);
@@ -118,18 +124,20 @@ export default function Candle3Desk({ mode }: { mode: C3Mode }) {
   const [cardChart, setCardChart] = useState<string[]>([]);   // 📈 open charts (multiple)
   const toggleChart = (c: string) => setCardChart((cs) => (cs.includes(c) ? cs.filter((x) => x !== c) : [...cs, c]));
 
-  const load = () => {
-    api<C3Status>("/paper-desk/candle3/status").then(setSc).catch(() => {});
-    api<DeskState>("/paper-desk/state").then(setSt).catch(() => {});
-  };
-  useEffect(() => { load(); const i = setInterval(load, 4000); return () => clearInterval(i); }, []);
+  // fast lane: candle3 status 4s · slow lane: heavy /paper-desk/state 30s (piling a
+  // 4s poll onto that endpoint froze pages) · mode sync fire-and-forget
+  const loadStatus = () => { api<C3Status>("/paper-desk/candle3/status").then(setSc).catch(() => {}); };
+  const loadState = () => { api<DeskState>("/paper-desk/state").then(setSt).catch(() => {}); };
+  const load = () => { loadStatus(); loadState(); };
+  useEffect(() => { loadStatus(); const i = setInterval(loadStatus, 4000); return () => clearInterval(i); }, []);
+  useEffect(() => { loadState(); const i = setInterval(loadState, 30000); return () => clearInterval(i); }, []);
   useEffect(() => {
     const l = () => api<{ today: AlgoCmp }>("/paper-desk/algo-compare").then((r) => setCmp(r.today || {})).catch(() => {});
     l(); const i = setInterval(l, 15000); return () => clearInterval(i);
   }, []);
   useEffect(() => {
     if (mode === "manual" || !sc?.mode || sc.mode === mode) return;
-    apiPost(`/paper-desk/candle3/params?mode=${mode}`).then(load).catch(() => {});
+    apiPost(`/paper-desk/candle3/params?mode=${mode}`).catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mode, sc?.mode]);
   useEffect(() => {
@@ -174,10 +182,10 @@ export default function Candle3Desk({ mode }: { mode: C3Mode }) {
         <h1 className="text-[19px] font-extrabold" style={{ color: TEAL }}>🕯️ {t("알고리즘 3 — 캔들 매매", "Algorithm 3 — candle trader")}</h1>
         <div className="flex gap-1.5">
           {(["auto", "semi", "manual"] as const).map((m) => (
-            <Link key={m} href={`/testing/candle3/${m}`} className="text-[12px] font-extrabold px-3 py-1.5 rounded-lg"
+            <button key={m} onClick={() => switchMode(m)} className="text-[12px] font-extrabold px-3 py-1.5 rounded-lg"
               style={mode === m ? { background: m === "semi" ? "#e65100" : TEAL, color: "#fff" } : { border: "1px solid var(--border-default)", color: "var(--text-secondary)" }}>
               {m === "auto" ? t("자동", "Auto") : m === "semi" ? t("반자동", "Semi-Auto") : t("수동", "Manual")}
-            </Link>
+            </button>
           ))}
         </div>
       </div>

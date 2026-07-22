@@ -50,6 +50,11 @@ _peak: dict[str, float] = {}          # in-memory winner-peak (NO DB column — 
 _semi_signals: dict[str, dict] = {}   # semi mode: code -> live consensus BUY card
 _sell_hint: dict[str, str] = {}       # semi mode: code -> pending SELL advice reason
 _status_cache: Optional[tuple[float, dict]] = None   # 3s full-payload cache (page polls 4s)
+# SNAPSHOT pattern (boss 2026-07-22, same lesson as auto_trader focus_status): the WEB
+# path must NEVER compute signals — the 15s background tick() writes per-stock signals
+# here and status() only READS them. Before the first tick: "warming up" placeholders.
+_signal_snapshot: dict[str, dict] = {}   # code -> _signals_for() dict
+_snapshot_ts: float = 0.0
 _schema_ready = False
 
 
@@ -279,19 +284,37 @@ def _cash(db) -> float:
 
 
 def tick(db, force: bool = False) -> dict[str, Any]:
-    """One heartbeat: consensus BUY on agreement, safety-net + consensus exits."""
+    """One heartbeat: consensus BUY on agreement, safety-net + consensus exits.
+    ALSO writes the per-stock signal SNAPSHOT that status() serves (web path
+    never computes — boss 2026-07-22, the auto_trader focus_status lesson)."""
+    global _signal_snapshot, _snapshot_ts
+    import time as _t
     _ensure(db)
     cfg = _cfg(db)
     out: dict[str, Any] = {"enabled": cfg["enabled"], "opened": [], "closed": []}
     if not force and not _market_open_now():
         out["reason"] = "market closed"
         return out
-    if not cfg["enabled"]:
-        out["reason"] = "algorithm 4 is OFF"
-        return out
+    _t0 = _t.time()
     rule = cfg["rule"]
     need, tf = _candle_need_tf(db)
     scan_items = _scan_items(db)
+    # ---- SNAPSHOT for the whole watchlist (runs even when the engine is OFF, so
+    # the page shows live lights before the boss enables it). Cache-peek only
+    # (allow_compute=False → no db use in threads); trade paths below refresh
+    # their own codes with allow_compute=True. ---- #
+    from concurrent.futures import ThreadPoolExecutor
+    snap: dict[str, dict] = {}
+    with ThreadPoolExecutor(max_workers=8) as _ex:
+        for code, sig in _ex.map(
+                lambda c: (c, _signals_for(None, c, need, tf, scan_items, allow_compute=False)),
+                cfg["codes"]):
+            snap[code] = sig
+    if not cfg["enabled"]:
+        _signal_snapshot, _snapshot_ts = snap, _t.time()
+        logger.info("algo4 tick(snapshot-only) %.1fs (%d codes, engine off)", _t.time() - _t0, len(snap))
+        out["reason"] = "algorithm 4 is OFF"
+        return out
     n = datetime.now(KST)
     eod = (n.hour * 60 + n.minute) >= (EOD_FLAT_HHMM[0] * 60 + EOD_FLAT_HHMM[1])
 
@@ -308,6 +331,7 @@ def tick(db, force: bool = False) -> dict[str, Any]:
         peak = max(_peak.get(tk, entry), px)
         _peak[tk] = peak
         sig = _signals_for(db, tk, need, tf, scan_items, allow_compute=True)
+        snap[tk] = sig
         reason = exit_reason(rule, entry, px, peak, cfg["stop_pct"], eod, sig)
         if not reason:
             _sell_hint.pop(tk, None)
@@ -338,12 +362,20 @@ def tick(db, force: bool = False) -> dict[str, Any]:
 
     # ---- ENTRIES (one open per stock; only on agreement) ---- #
     if eod:
+        _signal_snapshot, _snapshot_ts = snap, _t.time()
+        logger.info("algo4 tick %.1fs (%d codes, EOD)", _t.time() - _t0, len(snap))
         out["reason"] = "EOD flat — no new entries after 15:18"
         return out
     for code in cfg["codes"]:
         if code in open_codes:
             continue
+        # cheap pre-check from the snapshot; only PROMISING codes get the full
+        # (possibly computing) read — that's what kept the old tick slow
+        pre = snap.get(code) or {}
+        if not (pre.get("ripple_buy") and pre.get("candle_buy")):
+            continue
         sig = _signals_for(db, code, need, tf, scan_items, allow_compute=True)
+        snap[code] = sig
         prob = sig["algo1_prob"]
         if rule == "loose" and prob is None and sig["ripple_buy"] and sig["candle_buy"]:
             try:                                   # only ONE stock, only when close → cheap
@@ -377,6 +409,8 @@ def tick(db, force: bool = False) -> dict[str, Any]:
             db.commit()
             out["opened"].append({"code": code, "qty": qty, "entry": fill})
             logger.info("algo4 cross BUY %s x%d @ %s (%s)", code, qty, fill, rule)
+    _signal_snapshot, _snapshot_ts = snap, _t.time()
+    logger.info("algo4 tick %.1fs (%d codes)", _t.time() - _t0, len(snap))
     return out
 
 
@@ -451,22 +485,30 @@ def status(db) -> dict[str, Any]:
     cfg = _cfg(db)
     rule = cfg["rule"]
     need, tf = _candle_need_tf(db)
-    scan_items = _scan_items(db)
     open_map = {}
     for r in db.execute(text(
             "SELECT ticker, qty, entry, opened_at FROM cross_trades WHERE status='OPEN'")):
         open_map[r[0]] = {"qty": int(r[1]), "entry": float(r[2]), "opened_at": str(r[3])}
-    # parallel per-stock fan-out — signals read caches only (allow_compute=False → no
-    # db use inside the thread, so passing None is safe; never share a Session across threads)
+    # WEB PATH READS THE SNAPSHOT ONLY (written by the 15s tick) — never computes
+    # signals here. Before the first tick: warming-up placeholders (~15s).
+    warming = not _signal_snapshot or (_t.time() - _snapshot_ts) > 120
+    _ph_ko, _ph_en = "신호 준비 중 (~15초)", "signals warming up (~15s)"
+    _placeholder = {
+        "algo1": "WAIT", "ripple": "WAIT", "candle": "WAIT",
+        "algo1_buy": False, "algo1_not_bearish": True, "algo1_sell": False,
+        "algo1_prob": None, "ripple_buy": False, "ripple_sell": False,
+        "candle_buy": False, "candle_sell": False, "up": 0, "dn": 0,
+        "algo1_why_ko": _ph_ko, "algo1_why_en": _ph_en,
+        "ripple_why_ko": _ph_ko, "ripple_why_en": _ph_en,
+        "candle_why_ko": _ph_ko, "candle_why_en": _ph_en}
+    # prices only (per-ticker 2s micro-cache) — parallel, cheap
     from concurrent.futures import ThreadPoolExecutor
-
-    def _one(code: str):
-        return code, _px(code), _signals_for(None, code, need, tf, scan_items, allow_compute=False)
-
     with ThreadPoolExecutor(max_workers=8) as _ex:
-        rows = list(_ex.map(_one, cfg["codes"]))
+        _pxs = dict(zip(cfg["codes"], _ex.map(_px, cfg["codes"])))
     stocks = []
-    for code, px, sig in rows:
+    for code in cfg["codes"]:
+        px = _pxs.get(code)
+        sig = _signal_snapshot.get(code) or _placeholder
         o = open_map.get(code)
         agree_buy = entry_fires(rule, sig, _prob_ok(sig["algo1_prob"]))
         chg = None
@@ -537,7 +579,7 @@ def status(db) -> dict[str, Any]:
                else "리플+캔들 매수 & 알고1 비관 아님+확률 OK → 진입 (느슨)")
     rule_en = ("all 3 agree BUY → enter (strict)" if rule == "strict"
                else "ripple+candle BUY & algo1 not-bearish+prob ok → enter (loose)")
-    out = {**cfg, "signals": signals, "stocks": stocks,
+    out = {**cfg, "signals": signals, "stocks": stocks, "warming": warming,
            "today": {"trades": int(today[0] or 0), "wins": int(today[1] or 0),
                      "net_pct_sum": round(float(today[2] or 0), 2),
                      "realized_won": round(float(today[3] or 0))},

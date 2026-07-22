@@ -34,15 +34,20 @@ if (Test-Up "http://localhost:8000/health") {
 }
 
 # ---- 2) Dashboard (Next.js, fixed port 3000) -------------------------------
+# PRODUCTION mode when a build exists (boss 2026-07-22: dev mode compiled every page
+# on first visit = slow). NOTE: after future code changes run `npm run build` in
+# apps\admin-dashboard once, then restart — `npm run start` serves the pre-built app.
 if (Test-Up "http://localhost:3000") {
     Write-Host "[dashboard] already running on :3000 — skipping" -ForegroundColor Yellow
 } else {
-    Write-Host "[dashboard] starting on http://localhost:3000" -ForegroundColor Green
+    $HasBuild = Test-Path "$Root\apps\admin-dashboard\.next\BUILD_ID"
+    $Cmd = if ($HasBuild) { "npm run start" } else { "npm run dev" }
+    Write-Host "[dashboard] starting on http://localhost:3000 ($(if ($HasBuild) {'production build'} else {'dev mode - run npm run build for speed'}))" -ForegroundColor Green
     Start-Process powershell -ArgumentList @(
         "-NoExit","-Command",
         "cd '$Root\apps\admin-dashboard'; " +
         "Write-Host 'VIP DASHBOARD :3000 — keep this window open' -ForegroundColor Cyan; " +
-        "npm run dev"
+        $Cmd
     )
 }
 

@@ -277,8 +277,14 @@ function MiniChart({ code }: { code: string }) {
   return <div ref={ref} style={{ width: "100%" }} />;
 }
 
-export default function ScalpDesk({ mode }: { mode: ScalpMode }) {
+export default function ScalpDesk({ mode: initialMode }: { mode: ScalpMode }) {
   const { t, lang } = useLanguage();
+  // INSTANT mode switching (boss 2026-07-22): client-state tabs, URL via replaceState
+  const [mode, setMode] = useState<ScalpMode>(initialMode);
+  const switchMode = (m: ScalpMode) => {
+    setMode(m);
+    try { window.history.replaceState(null, "", `/testing/scalp/${m}`); } catch { /* ignore */ }
+  };
   const [sc, setSc] = useState<ScalpStatus | null>(null);
   const [st, setSt] = useState<DeskState | null>(null);
   const [busy, setBusy] = useState(false);
@@ -320,16 +326,19 @@ export default function ScalpDesk({ mode }: { mode: ScalpMode }) {
   const [addQ, setAddQ] = useState("");
   const [addBusy, setAddBusy] = useState(false);
 
-  const load = () => {
-    api<ScalpStatus>("/paper-desk/scalp/status").then(setSc).catch(() => {});
-    api<DeskState>("/paper-desk/state").then(setSt).catch(() => {});
-  };
-  useEffect(() => { load(); const i = setInterval(load, 4000); return () => clearInterval(i); }, []);
+  // fast lane: scalp status 4s · slow lane: heavy /paper-desk/state 30s (a 4s poll
+  // piles requests onto that endpoint and freezes pages) — boss 2026-07-22 speed pass
+  const loadStatus = () => { api<ScalpStatus>("/paper-desk/scalp/status").then(setSc).catch(() => {}); };
+  const loadState = () => { api<DeskState>("/paper-desk/state").then(setSt).catch(() => {}); };
+  const load = () => { loadStatus(); loadState(); };
+  useEffect(() => { loadStatus(); const i = setInterval(loadStatus, 4000); return () => clearInterval(i); }, []);
+  useEffect(() => { loadState(); const i = setInterval(loadState, 30000); return () => clearInterval(i); }, []);
   // keep the SERVER mode in sync with the page: /auto = machine trades,
-  // /semi = machine only recommends (manual page doesn't touch the mode)
+  // /semi = machine only recommends (manual page doesn't touch the mode).
+  // Fire-and-forget — never blocks the UI.
   useEffect(() => {
     if (mode === "manual" || !sc?.mode || sc.mode === mode) return;
-    apiPost(`/paper-desk/scalp/params?mode=${mode}`).then(load).catch(() => {});
+    apiPost(`/paper-desk/scalp/params?mode=${mode}`).catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mode, sc?.mode]);
   useEffect(() => {
@@ -464,18 +473,18 @@ export default function ScalpDesk({ mode }: { mode: ScalpMode }) {
             : t("알고리즘 2 — 잔물결 초단타", "Algorithm 2 — ripple scalper")}
         </h1>
         <div className="flex gap-1.5">
-          <Link href="/testing/scalp/auto" className="text-[12px] font-extrabold px-3 py-1.5 rounded-lg"
+          <button onClick={() => switchMode("auto")} className="text-[12px] font-extrabold px-3 py-1.5 rounded-lg"
             style={mode === "auto" ? { background: PURPLE, color: "#fff" } : { border: "1px solid var(--border-default)", color: "var(--text-secondary)" }}>
             {t("자동", "Auto")}
-          </Link>
-          <Link href="/testing/scalp/semi" className="text-[12px] font-extrabold px-3 py-1.5 rounded-lg"
+          </button>
+          <button onClick={() => switchMode("semi")} className="text-[12px] font-extrabold px-3 py-1.5 rounded-lg"
             style={mode === "semi" ? { background: "#e65100", color: "#fff" } : { border: "1px solid var(--border-default)", color: "var(--text-secondary)" }}>
             {t("반자동 (추천+내 손)", "Semi-Auto")}
-          </Link>
-          <Link href="/testing/scalp/manual" className="text-[12px] font-extrabold px-3 py-1.5 rounded-lg"
+          </button>
+          <button onClick={() => switchMode("manual")} className="text-[12px] font-extrabold px-3 py-1.5 rounded-lg"
             style={mode === "manual" ? { background: PURPLE, color: "#fff" } : { border: "1px solid var(--border-default)", color: "var(--text-secondary)" }}>
             {t("수동 (호가창)", "Manual")}
-          </Link>
+          </button>
         </div>
       </div>
 

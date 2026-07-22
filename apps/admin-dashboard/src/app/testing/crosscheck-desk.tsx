@@ -306,8 +306,16 @@ function IntervalChart({ code, t, lang }: { code: string; t: (ko: string, en: st
   );
 }
 
-export default function CrossCheckDesk({ mode }: { mode: CCMode }) {
+export default function CrossCheckDesk({ mode: initialMode }: { mode: CCMode }) {
   const { t, lang } = useLanguage();
+  // INSTANT mode switching (boss 2026-07-22): mode is CLIENT state — tabs re-render
+  // immediately from already-loaded data; the URL updates via history.replaceState so
+  // links/bookmarks still work. No route navigation, no refetch, no dev recompile.
+  const [mode, setMode] = useState<CCMode>(initialMode);
+  const switchMode = (m: CCMode) => {
+    setMode(m);
+    try { window.history.replaceState(null, "", `/testing/crosscheck/${m}`); } catch { /* ignore */ }
+  };
   const [sc, setSc] = useState<CCStatus | null>(null);
   const [st, setSt] = useState<DeskState | null>(null);
   const [cmp, setCmp] = useState<AlgoCmp | null>(null);
@@ -332,19 +340,23 @@ export default function CrossCheckDesk({ mode }: { mode: CCMode }) {
   const [rt, setRt] = useState<RoundTrip[]>([]);
   const [rtDate, setRtDate] = useState("");
 
-  const load = () => {
-    api<CCStatus>("/paper-desk/crosscheck/status").then(setSc).catch(() => {});
-    api<DeskState>("/paper-desk/state").then(setSt).catch(() => {});
-  };
-  useEffect(() => { load(); const i = setInterval(load, 4000); return () => clearInterval(i); }, []);
+  // ONE polling loop that survives mode switches (client-state tabs never remount this
+  // component). Fast lane: crosscheck status 4s. Slow lane: /paper-desk/state 30s —
+  // that endpoint is heavy server-side; a 4s poll piles requests up and freezes pages.
+  const loadStatus = () => { api<CCStatus>("/paper-desk/crosscheck/status").then(setSc).catch(() => {}); };
+  const loadState = () => { api<DeskState>("/paper-desk/state").then(setSt).catch(() => {}); };
+  const load = () => { loadStatus(); loadState(); };
+  useEffect(() => { loadStatus(); const i = setInterval(loadStatus, 4000); return () => clearInterval(i); }, []);
+  useEffect(() => { loadState(); const i = setInterval(loadState, 30000); return () => clearInterval(i); }, []);
   useEffect(() => {
     const l = () => api<{ today: AlgoCmp }>("/paper-desk/algo-compare").then((r) => setCmp(r.today || {})).catch(() => {});
     l(); const i = setInterval(l, 15000); return () => clearInterval(i);
   }, []);
-  // keep server mode in sync with the page (manual page doesn't touch the machine mode)
+  // keep server mode in sync with the page — FIRE-AND-FORGET, never blocks the UI
+  // (manual page doesn't touch the machine mode)
   useEffect(() => {
     if (mode === "manual" || !sc?.mode || sc.mode === mode) return;
-    apiPost(`/paper-desk/crosscheck/params?mode=${mode}`).then(load).catch(() => {});
+    apiPost(`/paper-desk/crosscheck/params?mode=${mode}`).catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mode, sc?.mode]);
   useEffect(() => { api<{ stocks: StockItem[] }>("/paper-desk/stocks").then((r) => setStockList(r.stocks || [])).catch(() => {}); }, []);
@@ -483,10 +495,10 @@ export default function CrossCheckDesk({ mode }: { mode: CCMode }) {
           <h1 className="text-[19px] font-extrabold" style={{ color: INDIGO }}>🔀 {t("알고리즘 4 — 교차검증 · 수동 심층", "Algorithm 4 — Cross-Check · manual deep view")}</h1>
           <div className="flex gap-1.5">
             {(["auto", "semi", "manual"] as const).map((m) => (
-              <Link key={m} href={`/testing/crosscheck/${m}`} className="text-[12px] font-extrabold px-3 py-1.5 rounded-lg"
+              <button key={m} onClick={() => switchMode(m)} className="text-[12px] font-extrabold px-3 py-1.5 rounded-lg"
                 style={m === "manual" ? { background: INDIGO, color: "#fff" } : { border: "1px solid var(--border-default)", color: "var(--text-secondary)" }}>
                 {m === "auto" ? t("자동", "Auto") : m === "semi" ? t("반자동", "Semi-Auto") : t("수동", "Manual")}
-              </Link>
+              </button>
             ))}
           </div>
         </div>
@@ -707,10 +719,10 @@ export default function CrossCheckDesk({ mode }: { mode: CCMode }) {
         <h1 className="text-[19px] font-extrabold" style={{ color: INDIGO }}>🔀 {t("알고리즘 4 — 교차검증 (3개 동의)", "Algorithm 4 — Cross-Check (3 agree)")}</h1>
         <div className="flex gap-1.5">
           {(["auto", "semi", "manual"] as const).map((m) => (
-            <Link key={m} href={`/testing/crosscheck/${m}`} className="text-[12px] font-extrabold px-3 py-1.5 rounded-lg"
+            <button key={m} onClick={() => switchMode(m)} className="text-[12px] font-extrabold px-3 py-1.5 rounded-lg"
               style={mode === m ? { background: m === "semi" ? AMBER : INDIGO, color: "#fff" } : { border: "1px solid var(--border-default)", color: "var(--text-secondary)" }}>
               {m === "auto" ? t("자동", "Auto") : m === "semi" ? t("반자동", "Semi-Auto") : t("수동", "Manual")}
-            </Link>
+            </button>
           ))}
         </div>
       </div>

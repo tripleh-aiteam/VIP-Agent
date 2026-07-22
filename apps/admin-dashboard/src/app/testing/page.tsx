@@ -43,13 +43,13 @@ export default function TestingIndex() {
                "The way we trade now. The decision engine (ML + news + chart + history patterns) finds the spot and signals; plans run +1%~ target / −1% stop / 1-hour (⚡quick 20-min). Universal sell-guard included.")}
           </p>
           <div className="mt-4 flex flex-wrap gap-2">
-            <Link href="/testing/semi" className="text-[13.5px] font-extrabold px-4 py-2 rounded-xl text-white" style={{ background: RED }}>
+            <Link prefetch={true} href="/testing/semi" className="text-[13.5px] font-extrabold px-4 py-2 rounded-xl text-white" style={{ background: RED }}>
               {t("반자동 (추천+내 손)", "Semi-Auto")}
             </Link>
-            <Link href="/testing/auto" className="text-[13.5px] font-extrabold px-4 py-2 rounded-xl border" style={{ color: RED, borderColor: RED }}>
+            <Link prefetch={true} href="/testing/auto" className="text-[13.5px] font-extrabold px-4 py-2 rounded-xl border" style={{ color: RED, borderColor: RED }}>
               {t("자동", "Auto")}
             </Link>
-            <Link href="/testing/manual" className="text-[13.5px] font-extrabold px-4 py-2 rounded-xl border text-[var(--text-secondary)]" style={{ borderColor: "var(--border-default)" }}>
+            <Link prefetch={true} href="/testing/manual" className="text-[13.5px] font-extrabold px-4 py-2 rounded-xl border text-[var(--text-secondary)]" style={{ borderColor: "var(--border-default)" }}>
               {t("수동", "Manual")}
             </Link>
           </div>
@@ -66,13 +66,13 @@ export default function TestingIndex() {
                "No 1-hour holds. Buy when it starts rising, sell the small win (+0.4% default), buy again if it keeps rising — many small wins. After a buy, dips are held; only −1% cuts, then wait for the next upturn. Manual mode: Kiwoom order book + chart + auto-sell at your price.")}
           </p>
           <div className="mt-4 flex flex-wrap gap-2">
-            <Link href="/testing/scalp/auto" className="text-[13.5px] font-extrabold px-4 py-2 rounded-xl text-white" style={{ background: PURPLE }}>
+            <Link prefetch={true} href="/testing/scalp/auto" className="text-[13.5px] font-extrabold px-4 py-2 rounded-xl text-white" style={{ background: PURPLE }}>
               {t("자동 (기계가 반복)", "Auto")}
             </Link>
-            <Link href="/testing/scalp/semi" className="text-[13.5px] font-extrabold px-4 py-2 rounded-xl border" style={{ color: "#e65100", borderColor: "#e65100" }}>
+            <Link prefetch={true} href="/testing/scalp/semi" className="text-[13.5px] font-extrabold px-4 py-2 rounded-xl border" style={{ color: "#e65100", borderColor: "#e65100" }}>
               {t("반자동 (추천+내 손)", "Semi-Auto")}
             </Link>
-            <Link href="/testing/scalp/manual" className="text-[13.5px] font-extrabold px-4 py-2 rounded-xl border" style={{ color: PURPLE, borderColor: PURPLE }}>
+            <Link prefetch={true} href="/testing/scalp/manual" className="text-[13.5px] font-extrabold px-4 py-2 rounded-xl border" style={{ color: PURPLE, borderColor: PURPLE }}>
               {t("수동 (호가창+차트)", "Manual (order book)")}
             </Link>
           </div>
@@ -90,13 +90,13 @@ export default function TestingIndex() {
                "Watches only the 1-min candles. 3 up candles in a row → buy, 3 down in a row → sell (−1% stop, flat 15:18). It also checks the partner stock and volume when deciding. Same 3 modes as Algorithm 2.")}
           </p>
           <div className="mt-4 flex flex-wrap gap-2">
-            <Link href="/testing/candle3/auto" className="text-[13.5px] font-extrabold px-4 py-2 rounded-xl text-white" style={{ background: TEAL }}>
+            <Link prefetch={true} href="/testing/candle3/auto" className="text-[13.5px] font-extrabold px-4 py-2 rounded-xl text-white" style={{ background: TEAL }}>
               {t("자동 (기계가 반복)", "Auto")}
             </Link>
-            <Link href="/testing/candle3/semi" className="text-[13.5px] font-extrabold px-4 py-2 rounded-xl border" style={{ color: "#e65100", borderColor: "#e65100" }}>
+            <Link prefetch={true} href="/testing/candle3/semi" className="text-[13.5px] font-extrabold px-4 py-2 rounded-xl border" style={{ color: "#e65100", borderColor: "#e65100" }}>
               {t("반자동 (추천+내 손)", "Semi-Auto")}
             </Link>
-            <Link href="/testing/candle3/manual" className="text-[13.5px] font-extrabold px-4 py-2 rounded-xl border" style={{ color: TEAL, borderColor: TEAL }}>
+            <Link prefetch={true} href="/testing/candle3/manual" className="text-[13.5px] font-extrabold px-4 py-2 rounded-xl border" style={{ color: TEAL, borderColor: TEAL }}>
               {t("수동", "Manual")}
             </Link>
           </div>
@@ -114,13 +114,13 @@ export default function TestingIndex() {
                "It has no opinion of its own. It buys only when Algorithm 1 (🤖 engine) · 2 (⚡ ripple) · 3 (🕯️ candle) all agree to buy (strict 3/3, or loose 2/3+brain). Exits always put safety first: −stop · trailing exit · lost-consensus · flat 15:18. The 3 stay untouched as the control group — this is the 4th competitor.")}
           </p>
           <div className="mt-4 flex flex-wrap gap-2">
-            <Link href="/testing/crosscheck/auto" className="text-[13.5px] font-extrabold px-4 py-2 rounded-xl text-white" style={{ background: INDIGO }}>
+            <Link prefetch={true} href="/testing/crosscheck/auto" className="text-[13.5px] font-extrabold px-4 py-2 rounded-xl text-white" style={{ background: INDIGO }}>
               {t("자동 (3개 동의 시 매매)", "Auto")}
             </Link>
-            <Link href="/testing/crosscheck/semi" className="text-[13.5px] font-extrabold px-4 py-2 rounded-xl border" style={{ color: "#e65100", borderColor: "#e65100" }}>
+            <Link prefetch={true} href="/testing/crosscheck/semi" className="text-[13.5px] font-extrabold px-4 py-2 rounded-xl border" style={{ color: "#e65100", borderColor: "#e65100" }}>
               {t("반자동 (추천+내 손)", "Semi-Auto")}
             </Link>
-            <Link href="/testing/crosscheck/manual" className="text-[13.5px] font-extrabold px-4 py-2 rounded-xl border" style={{ color: INDIGO, borderColor: INDIGO }}>
+            <Link prefetch={true} href="/testing/crosscheck/manual" className="text-[13.5px] font-extrabold px-4 py-2 rounded-xl border" style={{ color: INDIGO, borderColor: INDIGO }}>
               {t("수동 (호가창+차트)", "Manual (order book)")}
             </Link>
           </div>
