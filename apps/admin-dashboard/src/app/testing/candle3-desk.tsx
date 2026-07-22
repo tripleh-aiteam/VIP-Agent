@@ -54,13 +54,11 @@ type C3Status = {
             net_pct?: number | null; won?: number | null; closed_at?: string; opened_at?: string; why?: string | null }[];
 };
 type DeskState = { cash: number; positions_value: number; equity: number; total_pnl?: number; total_pnl_pct?: number };
-type AlgoCmp = Record<string, { trips: number; wins: number; win_rate: number | null; net_won: number; holding?: number }>;
 type StockItem = { code: string; name: string; market: string };
 type QuoteRes = { ok: boolean; ticker?: string; name?: string; error?: string };
 
 export type C3Mode = "auto" | "semi" | "manual";
 const MAINS = ["000660", "005930"];
-const ALGO_ROUTE: Record<string, string> = { algo1: "/testing/auto", algo2: "/testing/scalp/auto", algo3: "/testing/candle3/auto" };
 
 // 📈 live candle chart (lightweight-charts, dynamic import — same as Algo 2)
 function MiniChart({ code }: { code: string }) {
@@ -111,7 +109,6 @@ export default function Candle3Desk({ mode: initialMode }: { mode: C3Mode }) {
   };
   const [sc, setSc] = useState<C3Status | null>(null);
   const [st, setSt] = useState<DeskState | null>(null);
-  const [cmp, setCmp] = useState<AlgoCmp | null>(null);
   const [note, setNote] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [showExtra, setShowExtra] = useState<string[]>([]);
@@ -131,10 +128,6 @@ export default function Candle3Desk({ mode: initialMode }: { mode: C3Mode }) {
   const load = () => { loadStatus(); loadState(); };
   useEffect(() => { loadStatus(); const i = setInterval(loadStatus, 4000); return () => clearInterval(i); }, []);
   useEffect(() => { loadState(); const i = setInterval(loadState, 30000); return () => clearInterval(i); }, []);
-  useEffect(() => {
-    const l = () => api<{ today: AlgoCmp }>("/paper-desk/algo-compare").then((r) => setCmp(r.today || {})).catch(() => {});
-    l(); const i = setInterval(l, 15000); return () => clearInterval(i);
-  }, []);
   useEffect(() => {
     if (mode === "manual" || !sc?.mode || sc.mode === mode) return;
     apiPost(`/paper-desk/candle3/params?mode=${mode}`).catch(() => {});
@@ -202,32 +195,6 @@ export default function Candle3Desk({ mode: initialMode }: { mode: C3Mode }) {
       {/* 🏁 multi-day real-money verdict (boss 2026-07-20) */}
       <div className="mt-4"><AlgoVerdict /></div>
 
-      {/* 3-way compare */}
-      {cmp && (cmp.algo1 || cmp.algo2 || cmp.algo3) && (
-        <div className="mt-4 rounded-xl border overflow-hidden" style={{ borderColor: "var(--border-default)" }}>
-          <div className="px-4 py-2 text-[12.5px] font-extrabold text-[var(--text-primary)]" style={{ background: "var(--bg-elevated)" }}>
-            📊 {t("오늘 비교 — 알고리즘 1 · 2 · 3 (클릭해서 이동)", "Today — Algorithm 1 · 2 · 3 (click to open)")}
-          </div>
-          <div className="grid md:grid-cols-3 gap-3 p-3">
-            {([["algo1", "🧠 " + t("알고리즘 1", "Algorithm 1"), RED], ["algo2", "⚡ " + t("알고리즘 2 잔물결", "Algo 2 Ripple"), "#7b1fa2"], ["algo3", "🕯️ " + t("알고리즘 3 캔들", "Algo 3 Candle"), TEAL]] as const).map(([k, label, col]) => {
-              const a = cmp[k];
-              return (
-                <Link key={k} href={ALGO_ROUTE[k]} className="rounded-xl border px-4 py-3 text-[12.5px] tabular-nums hover:shadow-md transition-shadow" style={{ borderColor: k === "algo3" ? TEAL : "var(--border-default)", background: "var(--bg-elevated)" }}>
-                  <b className="text-[13px]" style={{ color: col }}>{label} ↗</b>
-                  {a && (a.trips > 0 || (a.holding ?? 0) > 0) ? (
-                    <div className="mt-1 flex items-center gap-3 flex-wrap">
-                      <span>🔄 {t(`${a.trips}회전`, `${a.trips} trips`)}</span>
-                      {(a.holding ?? 0) > 0 && <span style={{ color: TEAL }}>📌 {t(`보유 ${a.holding}`, `${a.holding} held`)}</span>}
-                      <span>🏆 {t(`승률 ${a.win_rate ?? "-"}%`, `${a.win_rate ?? "-"}% win`)}</span>
-                      <span className="font-extrabold" style={{ color: pnlCol(a.net_won) }}>{a.net_won > 0 ? "+" : ""}₩{fmt(a.net_won)}</span>
-                    </div>
-                  ) : <div className="mt-1 text-[var(--text-muted)]">{t("오늘 매매 없음", "no trades today")}</div>}
-                </Link>
-              );
-            })}
-          </div>
-        </div>
-      )}
 
       {/* semi buy cards */}
       {mode === "semi" && sc && (sc.signals || []).length > 0 && (

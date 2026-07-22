@@ -15,7 +15,6 @@ import AlgoVerdict from "./AlgoVerdict";
 const RED = "#d32f2f";
 const BLUE = "#1565c0";
 const PURPLE = "#7b1fa2";
-const ALGO_ROUTE: Record<string, string> = { algo1: "/testing/auto", algo2: "/testing/scalp/auto", algo3: "/testing/candle3/auto" };
 const fmt = (n?: number | null) => (n == null ? "-" : Number(n).toLocaleString());
 const kst = (iso?: string | null) => {
   if (!iso) return "";
@@ -311,15 +310,6 @@ export default function ScalpDesk({ mode: initialMode }: { mode: ScalpMode }) {
   const [fltName, setFltName] = useState<string>("ALL");
   const [fltTime, setFltTime] = useState<"ALL" | "AM" | "PM" | "1H">("ALL");
   const [fltDate, setFltDate] = useState<string>("");   // calendar day filter (KST)
-  // 📊 today's Algo1 vs Algo2 scoreboard (boss 2026-07-16: compare both sides)
-  const [cmp, setCmp] = useState<Record<string, { trips: number; wins: number; win_rate: number | null; net_won: number; holding?: number }> | null>(null);
-  useEffect(() => {
-    const loadCmp = () => api<{ today: NonNullable<typeof cmp> }>("/paper-desk/algo-compare")
-      .then((r) => setCmp(r.today || {})).catch(() => {});
-    loadCmp();
-    const i = setInterval(loadCmp, 15000);
-    return () => clearInterval(i);
-  }, []);
   const [livePx, setLivePx] = useState<Record<string, number>>({});
   const [liveChg, setLiveChg] = useState<Record<string, number>>({});
   const [stockList, setStockList] = useState<StockItem[]>([]);
@@ -1174,37 +1164,6 @@ export default function ScalpDesk({ mode: initialMode }: { mode: ScalpMode }) {
       {/* 🏁 multi-day real-money verdict (boss 2026-07-20) */}
       <div className="mt-4"><AlgoVerdict /></div>
 
-      {/* 📊 today's Algorithm 1 vs 2 scoreboard — same strip as the Algo 1 page */}
-      {cmp && (cmp.algo1 || cmp.algo2) && (
-        <div className="mt-4 rounded-xl border overflow-hidden" style={{ borderColor: "var(--border-default)" }}>
-          <div className="px-4 py-2 text-[12.5px] font-extrabold text-[var(--text-primary)]" style={{ background: "var(--bg-elevated)" }}>
-            📊 {t("오늘 비교 — 알고리즘 1 vs 알고리즘 2", "Today — Algorithm 1 vs Algorithm 2")}
-          </div>
-          <div className="grid md:grid-cols-3 gap-3 p-3">
-            {([["algo1", "🤖 " + t("알고리즘 1", "Algorithm 1")], ["algo2", "⚡ " + t("알고리즘 2 잔물결", "Algo 2 Ripple")], ["algo3", "🕯️ " + t("알고리즘 3 캔들", "Algo 3 Candle")]] as const).map(([k, label]) => {
-              const a = cmp[k];
-              return (
-                <Link key={k} href={ALGO_ROUTE[k]} className="rounded-xl border px-4 py-3 text-[12.5px] tabular-nums hover:shadow-md transition-shadow"
-                  style={{ borderColor: k === "algo2" ? PURPLE : "var(--border-default)", background: "var(--bg-elevated)" }}>
-                  <b className="text-[13.5px] text-[var(--text-primary)]">{label} ↗</b>
-                  {a && (a.trips > 0 || (a.holding ?? 0) > 0) ? (
-                    <div className="mt-1 flex items-center gap-4 flex-wrap">
-                      <span>🔄 {t(`${a.trips}회전`, `${a.trips} trips`)}</span>
-                      {(a.holding ?? 0) > 0 && <span style={{ color: PURPLE }}>📌 {t(`보유 ${a.holding}`, `${a.holding} held`)}</span>}
-                      <span>🏆 {t(`승률 ${a.win_rate ?? "-"}% (${a.wins}승 ${a.trips - a.wins}패)`, `${a.win_rate ?? "-"}% win (${a.wins}W ${a.trips - a.wins}L)`)}</span>
-                      <span className="font-extrabold text-[14px]" style={{ color: pnlCol(a.net_won) }}>
-                        {a.net_won > 0 ? "+" : ""}₩{fmt(a.net_won)}
-                      </span>
-                    </div>
-                  ) : (
-                    <div className="mt-1 text-[var(--text-muted)]">{t("오늘 매매 없음", "no trades today")}</div>
-                  )}
-                </Link>
-              );
-            })}
-          </div>
-        </div>
-      )}
 
       {/* Positions — held stocks with a Sell button per row (boss 2026-07-20) */}
       {sc && (() => {

@@ -7,14 +7,12 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import Link from "next/link";
 import { api, apiPost } from "@/components/api";
 import { useLanguage } from "@/components/i18n";
 import AlgoVerdict from "./AlgoVerdict";
 
 const RED = "#d32f2f";
 const BLUE = "#1565c0";
-const ALGO_ROUTE: Record<string, string> = { algo1: "/testing/auto", algo2: "/testing/scalp/auto", algo3: "/testing/candle3/auto" };
 const fmt = (n?: number | null) => (n == null ? "-" : Number(n).toLocaleString());
 // server timestamps are UTC — display in Korean time (MM-DD HH:mm)
 const kst = (iso?: string | null) => {
@@ -89,7 +87,6 @@ type SetupAlert = {
 type RoundTrip = { name: string; qty: number; entry?: number | null; exit_price?: number | null;
   won?: number | null; net_pct?: number | null; closed_at?: string | null; opened_at?: string | null;
   why?: string | null; ticker: string };
-type AlgoCmp = Record<string, { trips: number; wins: number; win_rate: number | null; net_won: number; holding?: number }>;
 export type TradeMode = "manual" | "semi" | "auto";
 // FOCUS stocks for the boss's semi-auto/manual test — the AUTO mode keeps the FULL
 // market universe in the background (self-improvement data must keep flowing)
@@ -416,16 +413,14 @@ export default function Desk({ mode }: { mode: TradeMode }) {
     }
   };
 
-  // 🤖 Algorithm 1 activity (round trips) + today's Algo1 vs Algo2 scoreboard
+  // 🤖 Algorithm 1 activity (round trips) — today-compare strip moved to the Cross-Check page
   const [rt, setRt] = useState<RoundTrip[]>([]);
-  const [cmp, setCmp] = useState<AlgoCmp | null>(null);
   const [rtRes, setRtRes] = useState<"ALL" | "WIN" | "LOSE">("ALL");
   const [rtStock, setRtStock] = useState("ALL");
   const [rtTime, setRtTime] = useState<"ALL" | "AM" | "PM" | "1H">("ALL");
   useEffect(() => {
     const loadRt = () => {
       api<{ trips: RoundTrip[] }>("/paper-desk/roundtrips?source=algo1").then((r) => setRt(r.trips || [])).catch(() => {});
-      api<{ today: AlgoCmp }>("/paper-desk/algo-compare").then((r) => setCmp(r.today || {})).catch(() => {});
     };
     loadRt();
     const i = setInterval(loadRt, 15000);
@@ -1603,38 +1598,6 @@ export default function Desk({ mode }: { mode: TradeMode }) {
       {/* 🏁 multi-day real-money verdict (boss 2026-07-20: which algo before real money) */}
       <AlgoVerdict />
 
-      {/* 📊 today's Algorithm 1 vs 2 scoreboard (boss 2026-07-16: compare both sides) */}
-      {cmp && (cmp.algo1 || cmp.algo2) && (
-        <Sect title={`📊 ${t("오늘 비교 — 알고리즘 1 vs 알고리즘 2", "Today — Algorithm 1 vs Algorithm 2")}`}>
-          <div className="grid md:grid-cols-3 gap-3 p-3">
-            {([["algo1", "🤖 " + t("알고리즘 1", "Algorithm 1")], ["algo2", "⚡ " + t("알고리즘 2 잔물결", "Algo 2 Ripple")], ["algo3", "🕯️ " + t("알고리즘 3 캔들", "Algo 3 Candle")]] as const).map(([k, label]) => {
-              const a = cmp[k];
-              return (
-                <Link key={k} href={ALGO_ROUTE[k]} className="rounded-xl border px-4 py-3 text-[12.5px] tabular-nums hover:shadow-md transition-shadow"
-                  style={{ borderColor: "var(--border-default)", background: "var(--bg-elevated)" }}>
-                  <b className="text-[13.5px] text-[var(--text-primary)]">{label} ↗</b>
-                  {a && (a.trips > 0 || (a.holding ?? 0) > 0) ? (
-                    <div className="mt-1 flex items-center gap-4 flex-wrap">
-                      <span>🔄 {t(`${a.trips}회전`, `${a.trips} trips`)}</span>
-                      {(a.holding ?? 0) > 0 && <span style={{ color: RED }}>📌 {t(`보유 ${a.holding}`, `${a.holding} held`)}</span>}
-                      <span>🏆 {t(`승률 ${a.win_rate ?? "-"}% (${a.wins}승 ${a.trips - a.wins}패)`, `${a.win_rate ?? "-"}% win (${a.wins}W ${a.trips - a.wins}L)`)}</span>
-                      <span className="font-extrabold text-[14px]" style={{ color: pnlCol(a.net_won) }}>
-                        {a.net_won > 0 ? "+" : ""}₩{fmt(a.net_won)}
-                      </span>
-                    </div>
-                  ) : (
-                    <div className="mt-1 text-[var(--text-muted)]">{t("오늘 매매 없음", "no trades today")}</div>
-                  )}
-                </Link>
-              );
-            })}
-          </div>
-          <div className="px-4 pb-2 text-[10.5px] text-[var(--text-muted)]">
-            {t("같은 가짜-머니 장부의 실현손익(수수료 0.23% 차감 후) 기준 · 오늘 매도 완료된 회전만 집계",
-               "from the same fake-money book's realized P&L (net of 0.23% fees) · counts only round trips closed today")}
-          </div>
-        </Sect>
-      )}
 
       {/* 🤖 ALGORITHM 1 ACTIVITY — every round trip, same table as Algorithm 2
           (boss 2026-07-16: 'make like this table in Algorithm 1') */}

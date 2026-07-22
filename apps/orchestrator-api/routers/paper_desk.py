@@ -139,7 +139,8 @@ def desk_algo_compare(db: Session = Depends(get_db)):
                     "net_won": round(float(net or 0)), "holding": 0}
     # open positions per algo (so a HOLDING engine doesn't look idle) — algo2/algo3
     # keep their own tables; algo1 opens on the shared desk with source='algo1'.
-    for src, tbl in (("algo2", "scalp_trades"), ("algo3", "candle_trades")):
+    for src, tbl in (("algo2", "scalp_trades"), ("algo3", "candle_trades"),
+                     ("algo4", "cross_trades")):
         try:
             h = db.execute(text(f"SELECT count(*) FROM {tbl} WHERE status='OPEN'")).scalar()
             out.setdefault(src, {"trips": 0, "wins": 0, "win_rate": None, "net_won": 0})["holding"] = int(h or 0)

@@ -78,6 +78,18 @@ type OBView = { source: string; live: { levels: OBLevel[]; fresh: boolean }; mem
 
 export type CCMode = "auto" | "semi" | "manual";
 const MAINS = ["000660", "005930"];
+// the Cross-Check page is now the central comparison place (boss 2026-07-22) — the
+// today-compare cards moved here from the Algo 1/2/3 pages. Each card links to its page.
+const ALGO_ROUTE: Record<string, string> = {
+  algo1: "/testing/auto", algo2: "/testing/scalp/auto",
+  algo3: "/testing/candle3/auto", algo4: "/testing/crosscheck/auto",
+};
+const ALGO_META: [keyof typeof ALGO_ROUTE, string, string, string][] = [
+  ["algo1", "🤖", "알고리즘 1", "Algorithm 1"],
+  ["algo2", "⚡", "알고2 잔물결", "Algo 2 Ripple"],
+  ["algo3", "🕯️", "알고3 캔들", "Algo 3 Candle"],
+  ["algo4", "🔀", "교차검증", "Cross-Check"],
+];
 const light = (s: Sig) => (s === "BUY" ? "🟢" : s === "SELL" ? "🔴" : "⚪");
 const sigCol = (s: Sig) => (s === "BUY" ? "#2e7d32" : s === "SELL" ? RED : "var(--text-muted)");
 
@@ -526,6 +538,39 @@ export default function CrossCheckDesk({ mode: initialMode }: { mode: CCMode }) 
     </div>
   ) : null;
 
+  // 📊 today — ALL algorithms compare (moved here from the Algo 1/2/3 pages; all modes)
+  const compareStrip = (
+    <div className="mt-4 rounded-xl border overflow-hidden" style={{ borderColor: "var(--border-default)" }}>
+      <div className="px-4 py-2 text-[12.5px] font-extrabold text-[var(--text-primary)]" style={{ background: "var(--bg-elevated)" }}>
+        📊 {t("오늘 — 알고리즘 전체 비교 (클릭해서 이동)", "Today — all algorithms (click to open)")}
+      </div>
+      <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-3 p-3">
+        {ALGO_META.map(([k, icon, ko, en]) => {
+          const a = cmp?.[k];
+          const col = k === "algo4" ? INDIGO : "var(--text-primary)";
+          return (
+            <Link key={k} href={ALGO_ROUTE[k]} className="rounded-xl border px-4 py-3 text-[12px] tabular-nums hover:shadow-md transition-shadow"
+              style={{ borderColor: k === "algo4" ? INDIGO : "var(--border-default)", background: "var(--bg-elevated)" }}>
+              <b className="text-[13px]" style={{ color: col }}>{icon} {t(ko, en)} ↗</b>
+              {a && (a.trips > 0 || (a.holding ?? 0) > 0) ? (
+                <div className="mt-1 flex items-center gap-3 flex-wrap">
+                  <span>🔄 {t(`${a.trips}회전`, `${a.trips} trips`)}</span>
+                  {(a.holding ?? 0) > 0 && <span style={{ color: INDIGO }}>📌 {t(`보유 ${a.holding}`, `${a.holding} held`)}</span>}
+                  <span>🏆 {t(`승률 ${a.win_rate ?? "-"}% (${a.wins}승 ${a.trips - a.wins}패)`, `${a.win_rate ?? "-"}% (${a.wins}W ${a.trips - a.wins}L)`)}</span>
+                  <span className="font-extrabold" style={{ color: pnlCol(a.net_won) }}>{a.net_won > 0 ? "+" : ""}₩{fmt(a.net_won)}</span>
+                </div>
+              ) : <div className="mt-1 text-[var(--text-muted)]">{t("오늘 매매 없음", "no trades today")}</div>}
+            </Link>
+          );
+        })}
+      </div>
+      <div className="px-4 pb-2 text-[10.5px] text-[var(--text-muted)]">
+        {t("같은 가짜-머니 장부의 실현손익(수수료 0.23% 차감) · 오늘 매도 완료된 회전만 집계",
+           "from the same fake-money book's realized P&L (net of 0.23% fees) · only round trips closed today")}
+      </div>
+    </div>
+  );
+
   // ---------- MANUAL: single-stock deep view (chart · 30-level book · deals) ---------- //
   if (mode === "manual") {
     return (
@@ -544,6 +589,8 @@ export default function CrossCheckDesk({ mode: initialMode }: { mode: CCMode }) 
         </div>
         {/* 💰 paper-money account bar (shared with auto/semi) */}
         {moneyBar}
+        {/* 📊 today — all algorithms compare */}
+        {compareStrip}
 
         {/* 🛒 PLACE ORDER — any KRX stock, source='algo4' (counts as Cross-Check) */}
         <div className="mt-4 rounded-xl border overflow-hidden" style={{ borderColor: INDIGO }}>
@@ -769,6 +816,8 @@ export default function CrossCheckDesk({ mode: initialMode }: { mode: CCMode }) 
 
       {/* 💰 paper-money account bar (same as manual — boss 2026-07-22) */}
       {moneyBar}
+      {/* 📊 today — all algorithms compare (central comparison place) */}
+      {compareStrip}
       {sc?.rule_ko && (
         <div className="mt-1.5 px-1 text-[11px] text-[var(--text-muted)]">
           📐 {lang === "ko" ? sc.rule_ko : sc.rule_en}
