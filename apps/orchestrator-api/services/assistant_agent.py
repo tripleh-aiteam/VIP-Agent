@@ -24,6 +24,19 @@ from __future__ import annotations
 import json
 import os
 import re as _re
+
+# ⚡ Stock delegation guard (boss 2026-07-22 perf): this server delegates some stock
+# questions to the Render Stock backend, which RELAYS BACK to its own VIP_ORCHESTRATOR
+# (the now-suspended Render VIP) — so a delegated call could hang up to 45s × 2 = 90s.
+# On this local server VIP answers price/history/prediction/advice itself, so:
+#   • STOCK_DELEGATION=off  → skip the Render delegation entirely (default here), and
+#   • every remaining delegation call is capped at STOCK_DELEGATION_TIMEOUT seconds with
+#     a graceful local fallback, so a slow Render can never hold an answer hostage.
+_STOCK_DELEGATE = os.environ.get("STOCK_DELEGATION", "on").strip().lower() not in ("off", "0", "no", "false")
+try:
+    _STOCK_TIMEOUT = max(2.0, float(os.environ.get("STOCK_DELEGATION_TIMEOUT", "5")))
+except Exception:
+    _STOCK_TIMEOUT = 5.0
 from typing import Any, Optional
 
 from sqlalchemy.orm import Session
@@ -5373,7 +5386,7 @@ def _run_agent_impl(
                 try:
                     from services.stock_advisor_chat import ask as _stock_direct
                     _q = (f"What is {_us} trading at right now?" if _en_a else f"{_us} 지금 얼마야?")
-                    _d = _stock_direct(_q, lang, [])
+                    _d = _stock_direct(_q, lang, [], timeout=_STOCK_TIMEOUT)
                     if isinstance(_d, dict):
                         _c = (_d.get("reply") or "").strip()
                         if _c and "$" in _c:
@@ -6556,7 +6569,7 @@ def _run_agent_impl(
     _stock_turn = (_is_stock_question(transcript)
                    or (_recent_stock_context(history) and any(
                        k in (transcript or "").lower() for k in _STOCK_FOLLOWUP_KW)))
-    if (not confirmed_tool and (agent_id or "vip").lower() != "stock"
+    if (not confirmed_tool and _STOCK_DELEGATE and (agent_id or "vip").lower() != "stock"
             and "ask_agent" in TOOL_REGISTRY and _stock_turn
             and not _is_past_price(transcript)
             and not _is_future_outlook(transcript)        # forecast → local two-method, not delegate
@@ -6565,13 +6578,13 @@ def _run_agent_impl(
             and not _is_report_question(transcript)
             and not _is_concept_question(transcript)):
         # FAST PATH (latency): the Stock backend is the single source of truth, so
-        # call it DIRECTLY instead of the heavier nested run_agent(agent_id='stock')
-        # (which re-runs RAG + an LLM decision before reaching the same backend).
-        # Same answer, ~5-6s faster. Falls back to ask_agent if it returns nothing.
+        # call it DIRECTLY — capped at _STOCK_TIMEOUT so a slow/cold Render peer never
+        # hangs the reply. If it returns nothing in time, fall straight through to VIP's
+        # OWN local handling below (never the 2nd 45s ask_agent round-trip to the same peer).
         ans = None
         try:
             from services.stock_advisor_chat import ask as _stock_direct
-            _d = _stock_direct(transcript, lang, history or [])
+            _d = _stock_direct(transcript, lang, history or [], timeout=_STOCK_TIMEOUT)
             if isinstance(_d, dict):
                 cand = (_d.get("reply") or "").strip()
                 if cand and not cand.startswith(("{", "[")):
@@ -6583,23 +6596,6 @@ def _run_agent_impl(
                     "reply": str(ans)[:1600], "action": None, "speak": True,
                     "transcript": transcript, "tool_used": "ask_agent",
                     "tool_result": {"direct": True}}
-        # Fallback: nested ask_agent (internal stock engine + its own fallbacks).
-        res = execute_tool("ask_agent",
-                           {"agent": "stock", "question": transcript, "history": history or []},
-                           db=db, agent_id=agent_id, transcript=transcript)
-        ans = None
-        if isinstance(res, dict):
-            for a in (res.get("answers") or []):
-                cand = (a.get("answer") or "").strip()
-                # Guard: never relay a raw decision-JSON leak ('{"tool": ...}').
-                if cand and not cand.startswith(("{", "[")):
-                    ans = cand
-                    break
-        if ans:
-            return {"intent": "stock_delegated", "language": lang,
-                    "reply": str(ans)[:1600], "action": None, "speak": True,
-                    "transcript": transcript, "tool_used": "ask_agent",
-                    "tool_result": res}
         # Resilience: the Stock backend returned nothing usable (down, mid-deploy, or a
         # query type it currently fails on). Answer current-price and 공매도 from VIP's
         # OWN Kiwoom so the user never sees a blank reply.
@@ -6639,7 +6635,7 @@ def _run_agent_impl(
         # relay returns nothing usable.
         try:
             from services.stock_advisor_chat import ask as _stock_past
-            _p = _stock_past(transcript, lang, history or [])
+            _p = _stock_past(transcript, lang, history or [], timeout=_STOCK_TIMEOUT) if _STOCK_DELEGATE else None
             if isinstance(_p, dict):
                 cand = (_p.get("reply") or "").strip()
                 if cand and not cand.startswith(("{", "[")):
