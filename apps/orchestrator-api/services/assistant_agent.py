@@ -1454,9 +1454,18 @@ def _vip_history_reply(transcript: Optional[str], lang: str, hist=None,
     single_date = kind == "dates" and len({d.isoformat() for d in payload}) == 1
     notes = []
     out = []
+    # How far back to pull: a RANGE needs its length; a specific DATE needs enough
+    # rows to REACH it (Dec 10 asked in July = ~160 trading days back — 60 wasn't
+    # nearly enough, so old dates silently fell through to a "not available" relay).
+    if kind == "range":
+        _days = payload + 3
+    else:
+        _oldest = min(payload)
+        _span = (_dt_now_kst().date() - _oldest).days
+        _days = max(60, min(_span + 7, 400))
     for code, name in stocks[:6]:
         try:
-            rows = naver_stock.daily_history(code, days=(payload + 3 if kind == "range" else 60))
+            rows = naver_stock.daily_history(code, days=_days)
         except Exception as e:
             log.warning(f"vip history {code} failed: {str(e)[:120]}")
             rows = []
@@ -2115,11 +2124,21 @@ def _format_price_reply(res: dict, lang: str) -> Optional[str]:
 
 
 def _history_days_for(transcript: Optional[str]) -> int:
-    """How many trading days of history to pull for a past-date question."""
+    """How many trading days of history to pull for a past-date question. A specific
+    date drives the count (must be enough rows to REACH that date), not a fixed 30."""
+    try:
+        hist = _requested_history_dates(transcript)
+        if hist and hist[0] == "dates" and hist[1]:
+            span = (_dt_now_kst().date() - min(hist[1])).days
+            return max(5, min(span + 7, 400))
+        if hist and hist[0] == "range":
+            return max(5, min(int(hist[1]) + 6, 400))
+    except Exception:
+        pass
     m = _re.search(r"(\d+)\s*일", transcript or "")
     if m:
         try:
-            return max(5, min(int(m.group(1)) + 6, 120))
+            return max(5, min(int(m.group(1)) + 6, 400))
         except Exception:
             pass
     t = (transcript or "").lower()
@@ -6659,7 +6678,14 @@ def _run_agent_impl(
             _p = _stock_past(transcript, lang, history or [], timeout=_STOCK_TIMEOUT) if _STOCK_DELEGATE else None
             if isinstance(_p, dict):
                 cand = (_p.get("reply") or "").strip()
-                if cand and not cand.startswith(("{", "[")):
+                # The Stock backend's history window is short (~2 months); a date beyond
+                # it comes back as "not available / out of range". DON'T surface that —
+                # fall through to our local Naver chain (now ~18 months) + web search.
+                _unavail = any(k in cand.lower() for k in (
+                    "not available", "out of range", "outside", "falls outside",
+                    "don't have", "do not have", "unable to", "cannot", "can't",
+                    "제공되지 않", "제공하지 않", "범위를 벗어", "범위 밖", "없습니다", "확인되지 않"))
+                if cand and not cand.startswith(("{", "[")) and not _unavail:
                     return {"intent": "stock_past_price", "language": lang,
                             "reply": str(cand)[:1600], "action": None, "speak": True,
                             "transcript": transcript, "tool_used": "stock_advisor",

@@ -257,6 +257,38 @@ def _algo1_synthesis(d: dict[str, Any], lang: str) -> str:
     return "📌 종합 해설: " + head + why + concl
 
 
+def _plain_advice(dec: str, conf: str, name: str, en: bool) -> str:
+    """One short, jargon-free line that answers 'so what do I actually do?' in everyday
+    words — shown right under the verdict, ABOVE the technical breakdown, so a
+    non-expert gets a plain read before any ML/wave/chart terms."""
+    s_en, s_ko = {"high": ("strong", "확실한"), "medium": ("fair", "어느 정도"),
+                  "low": ("weak", "약한")}.get((conf or "low").lower(), ("weak", "약한"))
+    # correct Korean object particle (을 after a final consonant, 를 after a vowel)
+    _tail = (name or "").strip()[-1:]
+    _obj = ("을" if (_tail and 0xAC00 <= ord(_tail) <= 0xD7A3 and (ord(_tail) - 0xAC00) % 28)
+            else "를")
+    if dec == "BUY":
+        return (f"💬 In plain words: the signs lean toward **buying** {name}, with {s_en} "
+                "conviction. If you'll hold for a few days this is a reasonable time to buy; if "
+                "you want a better price, wait for a small dip. Put in only money you can afford "
+                "to lose, and set a stop-loss so a wrong call stays cheap." if en else
+                f"💬 쉬운 설명: 지금은 {name}{_obj} **사는 쪽**으로 신호가 기울어 있고, 확신은 {s_ko} "
+                "수준입니다. 며칠 들고 갈 거면 지금 사도 괜찮고, 더 싸게 사고 싶으면 살짝 눌릴 때를 "
+                "기다리세요. 잃어도 되는 돈만 넣고, 틀렸을 때 손실이 작도록 손절선을 꼭 정해두세요.")
+    if dec == "SELL":
+        return (f"💬 In plain words: the signs lean toward **selling / taking profit** on {name} "
+                f"({s_en} conviction). If you own it, consider trimming or stepping out; if you "
+                "don't own it, just stay on the sidelines for now." if en else
+                f"💬 쉬운 설명: 지금은 {name}{_obj} **파는(차익 실현) 쪽**으로 신호가 기울어 있습니다"
+                f"(확신 {s_ko}). 가지고 있다면 일부라도 정리하는 걸 고려하고, 없다면 지금은 그냥 지켜보세요.")
+    return (f"💬 In plain words: there's **no clear buy-or-sell signal** for {name} yet — the "
+            "smart move is to **wait and watch**. Buying now would be a guess; let the signals "
+            "line up first before you act." if en else
+            f"💬 쉬운 설명: 아직 {name}에 대한 **뚜렷한 매수·매도 신호가 없습니다** — 지금은 "
+            "**기다리며 지켜보는 것**이 현명합니다. 지금 사는 건 사실상 찍기예요. 신호가 한 방향으로 "
+            "모일 때까지 기다리세요.")
+
+
 def clean_recommendation(db, d: dict[str, Any], lang: str = "ko") -> str:
     """The boss's exact recommendation layout (2026-07-20): ONE-line final decision →
     Algorithm 1 (decision + 1h prediction + ML/news/YT/chart/Kiwoom/orderbook/wave
@@ -308,6 +340,7 @@ def clean_recommendation(db, d: dict[str, Any], lang: str = "ko") -> str:
     if en:
         # 1) one-line final
         L.append(f"✅ Our final decision: **{ve.get(dec, dec)}** — {name} (confidence {conf})")
+        L.append(_plain_advice(dec, conf, name, True))   # plain-words lead, before the jargon
         # 2) Algorithm 1
         L.append(_DIV)
         ml_call = (ml.get("call") or "HOLD").upper()
@@ -350,6 +383,7 @@ def clean_recommendation(db, d: dict[str, Any], lang: str = "ko") -> str:
         L.append(_synthesis_en(dec, rp_sig, cd_sig, name))
     else:
         L.append(f"✅ 최종 결정: **{vk.get(dec, dec)}** — {name} (신뢰도 {conf_ko})")
+        L.append(_plain_advice(dec, conf, name, False))   # plain-words lead, before the jargon
         L.append(_DIV)
         ml_call = (ml.get("call") or "HOLD").upper()
         h1 = f" · 1시간 예측: {'상승' if (ai1h or 0) >= 50 else '하락'} {ai1h}%" if ai1h is not None else ""

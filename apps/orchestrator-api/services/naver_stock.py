@@ -93,18 +93,19 @@ def daily_history(code: str, days: int = 20) -> list[dict]:
 
     Returns a NEWEST-FIRST list of
     ``{date, open, high, low, close, change_pct, volume}`` (up to ``days`` rows,
-    capped at 120). ``[]`` on any failure. Works for ANY KR ticker and goes back
-    weeks/months — the basis for past-date price questions + technicals."""
+    capped at 400 ≈ 18 months). ``[]`` on any failure. Works for ANY KR ticker and
+    goes back months/quarters — the basis for past-date price questions + technicals."""
     try:
-        n = max(1, min(int(days or 20), 120))
+        n = max(1, min(int(days or 20), 400))
     except Exception:
         n = 20
     # Naver rejects pageSize > 60 (used to be 90) — page in chunks of 60 instead.
     # page=1 is the newest 60, page=2 the next 60, so concatenation stays newest-first.
+    # up to 8 pages (~480 rows raw) so a specific date up to ~18 months back resolves.
     r: list = []
     try:
         page = 1
-        while len(r) < n and page <= 3:      # constant pageSize keeps page offsets aligned
+        while len(r) < n and page <= 8:      # constant pageSize keeps page offsets aligned
             chunk = httpx.get(f"{_BASE}/{code}/price?pageSize=60&page={page}",
                               headers=_H, timeout=12).json()
             if not isinstance(chunk, list) or not chunk:
