@@ -611,6 +611,15 @@ def crosscheck_tick(force: bool = Query(False), db: Session = Depends(get_db)):
     return tick(db, force=force)
 
 
+@router.get("/crosscheck/explain")
+def crosscheck_explain(code: str = Query(...), lang: str = Query("ko"),
+                       db: Session = Depends(get_db)):
+    """Plain-language, jargon-free explanation of one stock's Cross-Check reasoning
+    (deterministic templates, cache-only reads — fast)."""
+    from services.cross_trader import explain
+    return explain(db, code, lang)
+
+
 @router.get("/executions")
 def desk_executions(code: str = Query(...)):
     """체결 feed for the Algorithm-2 manual desk (boss 2026-07-14): the DEALS actually

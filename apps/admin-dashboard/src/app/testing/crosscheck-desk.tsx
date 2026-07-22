@@ -306,6 +306,46 @@ function IntervalChart({ code, t, lang }: { code: string; t: (ko: string, en: st
   );
 }
 
+// 💬 plain-language explanation accordion (boss 2026-07-22): click → friendly,
+// jargon-free reasons from /crosscheck/explain, client-cached 60s, skeleton while loading.
+type ExplainRes = { name?: string; text: string; lines: { algo1: string; ripple: string; candle: string; cross: string } };
+const _explainCache: Record<string, { at: number; data: ExplainRes }> = {};
+function ExplainAccordion({ code, lang, t }: { code: string; lang: string; t: (ko: string, en: string) => string }) {
+  const [open, setOpen] = useState(false);
+  const [data, setData] = useState<ExplainRes | null>(null);
+  const [loading, setLoading] = useState(false);
+  const fetchIt = () => {
+    const key = `${code}:${lang}`;
+    const c = _explainCache[key];
+    if (c && Date.now() - c.at < 60000) { setData(c.data); return; }
+    setLoading(true);
+    api<ExplainRes>(`/paper-desk/crosscheck/explain?code=${code}&lang=${lang}`)
+      .then((r) => { _explainCache[key] = { at: Date.now(), data: r }; setData(r); })
+      .catch(() => {}).finally(() => setLoading(false));
+  };
+  const toggle = () => { const n = !open; setOpen(n); if (n) fetchIt(); };
+  return (
+    <div className="mt-1.5">
+      <button onClick={toggle} className="text-[11px] font-bold px-2 py-0.5 rounded-md border text-[var(--text-secondary)]" style={{ borderColor: "var(--border-default)" }}>
+        {open ? t("▲ 설명 접기", "▲ hide") : t("💬 쉽게 설명해줘", "💬 explain in plain words")}
+      </button>
+      {open && (
+        <div className="mt-1.5 rounded-lg px-3 py-2 text-[12px] leading-relaxed space-y-1" style={{ background: "var(--bg-primary)", border: "1px solid var(--border-default)" }}>
+          {loading && !data ? (
+            <div className="space-y-1.5 animate-pulse">
+              {[0, 1, 2, 3].map((i) => <div key={i} className="h-3 rounded" style={{ background: "var(--bg-elevated)", width: `${90 - i * 8}%` }} />)}
+            </div>
+          ) : data ? (
+            [data.lines.algo1, data.lines.ripple, data.lines.candle, data.lines.cross].map((ln, i) => (
+              <div key={i} className={i === 3 ? "pt-1 mt-0.5 border-t border-[var(--border-default)]/50 font-semibold text-[var(--text-primary)]" : "text-[var(--text-secondary)]"}>{ln}</div>
+            ))
+          ) : <div className="text-[var(--text-muted)]">{t("불러오는 중…", "loading…")}</div>}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function CrossCheckDesk({ mode: initialMode }: { mode: CCMode }) {
   const { t, lang } = useLanguage();
   // INSTANT mode switching (boss 2026-07-22): mode is CLIENT state — tabs re-render
@@ -746,6 +786,7 @@ export default function CrossCheckDesk({ mode: initialMode }: { mode: CCMode }) 
               <div className="text-[15px] font-extrabold" style={{ color: "#2e7d32" }}>🔔 {t(`3개 동의 — ${g.name} 매수?`, `3 of 3 agree — BUY ${g.name}?`)}
                 <span className="ml-2 tabular-nums text-[var(--text-primary)]">₩{fmt(g.price)}</span></div>
               <div className="mt-1 text-[11.5px] text-[var(--text-secondary)]">{g.why}</div>
+              <ExplainAccordion code={g.code} lang={lang} t={t} />
               <div className="mt-2 flex items-center gap-2">
                 <span className="text-[12.5px] font-bold tabular-nums">{t(`수량 ${fmt(g.qty)}주`, `${fmt(g.qty)} sh`)}</span>
                 <button disabled={busy} onClick={async () => {
@@ -821,6 +862,7 @@ export default function CrossCheckDesk({ mode: initialMode }: { mode: CCMode }) 
                   </span>
                 </div>
                 <SignalStrip s={s} t={t} lang={lang} />
+                <ExplainAccordion code={s.code} lang={lang} t={t} />
                 {s.state === "LONG" ? (
                   <div className="mt-1.5 text-[12.5px] tabular-nums text-[var(--text-secondary)]">
                     {t("매수가", "entry")} ₩{fmt(s.entry)} × {fmt(s.qty)}{t("주", "sh")}

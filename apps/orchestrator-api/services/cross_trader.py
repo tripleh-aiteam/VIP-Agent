@@ -589,3 +589,159 @@ def status(db) -> dict[str, Any]:
            "rule_en": f"{rule_en} · −{cfg['stop_pct']}% stop · trailing exit · flat 15:18"}
     _status_cache = (_t.time(), out)
     return out
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+#  🗣️  PLAIN-LANGUAGE EXPLANATION (boss 2026-07-22): explain each card like
+#  telling a friend over coffee — zero trading jargon. Deterministic templates
+#  (no LLM call), cache-only reads, identical every time.
+# ═══════════════════════════════════════════════════════════════════════════
+def _decide_full_peek(code: str) -> Optional[dict]:
+    """The WHOLE cached decide() dict, read-only (never computes on the web path)."""
+    try:
+        import time as _t
+        from services.decision_agent import _decide_cache
+        hit = _decide_cache.get(str(code).zfill(6))
+        if hit and _t.time() - hit[0] < 300:
+            return hit[1] or None
+    except Exception:
+        pass
+    return None
+
+
+def _ripple_plain(code: str) -> str:
+    """Plain state of the 'ripple watcher' (cache-backed 1-min read, no jargon).
+    -> climbing_now | already_ran | not_yet | no_data."""
+    try:
+        from services.scalp_trader import _candles_1m
+        cs = _candles_1m(code, n=12)
+        closes = [b.get("close") for b in cs if b.get("close")]
+        if len(closes) < 4:
+            return "no_data"
+        lo = min(closes)
+        if lo <= 0:
+            return "no_data"
+        bounce = (closes[-1] / lo - 1) * 100
+        rising = closes[-1] > closes[-2] > closes[-3]
+        if rising and 0.10 <= bounce <= 0.45:
+            return "climbing_now"
+        if bounce > 0.45:
+            return "already_ran"
+        return "not_yet"
+    except Exception:
+        return "no_data"
+
+
+def _build_explain(name: str, sig: dict, d: Optional[dict], rip_state: str,
+                   need: int, tf: str, held: bool, en: bool) -> dict:
+    """Pure text builder — friendly, everyday language. Testable in isolation."""
+    up, dn = int(sig.get("up") or 0), int(sig.get("dn") or 0)
+    L: dict[str, str] = {}
+
+    # 🤖 the smart brain — news mood, big buyers, chart health
+    if not d:
+        L["algo1"] = ("🤖 The smart brain is still studying this stock — check back in a minute."
+                      if en else "🤖 똑똑한 브레인이 아직 이 종목을 분석 중이에요 — 잠시 후 다시 눌러보세요.")
+    else:
+        dec = (d.get("decision") or "HOLD").upper()
+        news = (d.get("news") or {}).get("score") or 0
+        flows = (d.get("flows") or {}).get("score") or 0
+        tech = (d.get("technicals") or {}).get("score") or 0
+        bko, ben = [], []
+        if flows > 0:
+            bko.append("큰손들이 오늘 이 주식을 사들이고 있어요"); ben.append("big investors have been buying this stock today")
+        elif flows < 0:
+            bko.append("큰손들이 팔고 있어요"); ben.append("big investors have been selling it")
+        if news > 0:
+            bko.append("뉴스 분위기도 좋아요"); ben.append("the news mood is friendly")
+        elif news < 0:
+            bko.append("뉴스 분위기가 안 좋아요"); ben.append("the news has been gloomy")
+        if tech > 0:
+            bko.append("차트 모양도 건강해 보여요"); ben.append("the overall picture looks healthy")
+        elif tech < 0:
+            bko.append("차트는 아직 힘이 없어요"); ben.append("the chart still looks weak")
+        if dec == "BUY":
+            vk, ve = "사도 좋겠다고 해요", "says BUY"
+        elif dec == "SELL":
+            vk, ve = "지금은 조심하라고 해요", "says be careful"
+        else:
+            vk, ve = "조금 더 기다리라고 해요", "says WAIT"
+        rk = ", ".join(bko[:2]) if bko else "아직 뚜렷한 이유는 안 보여요"
+        re_ = ", ".join(ben[:2]) if ben else "there's no strong reason either way yet"
+        L["algo1"] = (f"🤖 The smart brain {ve} — {re_}." if en
+                      else f"🤖 똑똑한 브레인은 {vk} — {rk}.")
+
+    # ⚡ the ripple watcher — waits for the price to start climbing
+    L["ripple"] = {
+        "climbing_now": ("⚡ The ripple watcher says BUY — the price has just started climbing, and that's exactly the moment it waits for."
+                         if en else "⚡ 잔물결 감시자는 사자고 해요 — 가격이 막 오르기 시작했어요. 딱 이 순간을 기다렸어요."),
+        "already_ran": ("⚡ The ripple watcher says WAIT — the price already jumped up, so it won't chase; it waits for a small dip first."
+                        if en else "⚡ 잔물결 감시자는 기다려요 — 가격이 이미 훌쩍 올랐어요. 뒤늦게 쫓아가지 않고 살짝 내릴 때를 기다려요."),
+        "not_yet": ("⚡ The ripple watcher says WAIT — the price hasn't started climbing yet. It only buys the moment the price begins to rise."
+                    if en else "⚡ 잔물결 감시자는 기다려요 — 아직 가격이 오르기 시작하지 않았어요. 오르기 시작하는 바로 그 순간에만 사요."),
+        "no_data": ("⚡ The ripple watcher needs a little more price info first (the market just opened or it's quiet right now)."
+                    if en else "⚡ 잔물결 감시자는 가격 정보를 조금 더 기다리고 있어요 (장 초반이거나 조용할 때예요)."),
+    }.get(rip_state, "")
+
+    # 🕯️ the candle watcher — counts green/red candles
+    if not (up or dn):
+        L["candle"] = (f"🕯️ The candle watcher is still counting the {tf}-minute candles."
+                       if en else f"🕯️ 캔들 감시자는 아직 {tf}분 캔들을 세고 있어요.")
+    elif up >= need:
+        L["candle"] = (f"🕯️ The candle watcher says BUY — it wanted {need} green candles in a row, and now there are {up}."
+                       if en else f"🕯️ 캔들 감시자는 사자고 해요 — 초록 캔들 {need}개가 연달아 나오길 기다렸는데 지금 {up}개가 됐어요.")
+    elif dn >= need:
+        L["candle"] = (f"🕯️ The candle watcher says SELL — it counted {dn} red candles in a row, so the price is sliding down."
+                       if en else f"🕯️ 캔들 감시자는 팔라고 해요 — 빨간 캔들이 {dn}개 연달아 나왔어요. 가격이 흘러내리고 있어요.")
+    elif up > 0:
+        L["candle"] = (f"🕯️ The candle watcher says WAIT — it wants {need} green candles in a row and has {up} so far, so it's still counting."
+                       if en else f"🕯️ 캔들 감시자는 기다려요 — 초록 캔들 {need}개가 연달아 필요한데 지금 {up}개예요. 아직 세는 중이에요.")
+    else:
+        L["candle"] = ("🕯️ The candle watcher says WAIT — no run of green candles yet."
+                       if en else "🕯️ 캔들 감시자는 기다려요 — 아직 초록 캔들이 연달아 나오지 않았어요.")
+
+    # 🔀 the plain conclusion
+    votes = [sig.get("algo1"), sig.get("ripple"), sig.get("candle")]
+    n_buy = votes.count("BUY")
+    nm_ko = {"algo1": "브레인", "ripple": "잔물결 감시자", "candle": "캔들 감시자"}
+    nm_en = {"algo1": "the brain", "ripple": "the ripple watcher", "candle": "the candle watcher"}
+    not_buy = [k for k, v in (("algo1", votes[0]), ("ripple", votes[1]), ("candle", votes[2])) if v != "BUY"]
+    if held:
+        L["cross"] = ("🔀 Together: we're already holding this one — now it's just watching for the right time to sell."
+                      if en else "🔀 종합: 이 종목은 이미 사둔 상태예요 — 이제 언제 팔지 지켜보는 중이에요.")
+    elif n_buy >= 3:
+        L["cross"] = ("🔀 Together: all three agree, so Cross-Check is buying this one now."
+                      if en else "🔀 종합: 셋 다 사자고 해서, 교차검증이 지금 이 종목을 삽니다.")
+    elif n_buy > 0:
+        miss_ko = "와 ".join(nm_ko[k] for k in not_buy)
+        miss_en = " and ".join(nm_en[k] for k in not_buy)
+        L["cross"] = (f"🔀 Together: only {n_buy} of 3 agrees, so Cross-Check is NOT buying. When {miss_en} come around too, all three will line up."
+                      if en else f"🔀 종합: 셋 중 {n_buy}명만 사자고 해서, 교차검증은 아직 안 삽니다. {miss_ko}까지 마음이 맞으면 그때 셋이 딱 맞아떨어져요.")
+    else:
+        L["cross"] = ("🔀 Together: none of the three wants to buy right now, so Cross-Check is just watching."
+                      if en else "🔀 종합: 지금은 셋 다 사고 싶어 하지 않아서, 교차검증은 그냥 지켜보고 있어요.")
+
+    return {"lines": L, "text": "\n".join([L["algo1"], L["ripple"], L["candle"], L["cross"]])}
+
+
+def explain(db, code: str, lang: str = "ko") -> dict:
+    """Friendly, jargon-free explanation of a stock's Cross-Check reasoning.
+    Cache-only (fast, deterministic). Same verdicts as the card's lights."""
+    code = str(code).strip().zfill(6)
+    en = str(lang or "").lower().startswith("en")
+    need, tf = _candle_need_tf(db)
+    scan_items = _scan_items(db)
+    sig = _signals_for(None, code, need, tf, scan_items, allow_compute=False)
+    d = _decide_full_peek(code)
+    rip_state = _ripple_plain(code)
+    try:
+        held = bool(db.execute(text(
+            "SELECT 1 FROM cross_trades WHERE ticker=:t AND status='OPEN' LIMIT 1"),
+            {"t": code}).first())
+    except Exception:
+        db.rollback()
+        held = False
+    built = _build_explain(_name(code), sig, d, rip_state, need, tf, held, en)
+    return {"code": code, "name": _name(code),
+            "algo1": sig.get("algo1"), "ripple": sig.get("ripple"), "candle": sig.get("candle"),
+            **built}
