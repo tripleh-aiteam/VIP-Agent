@@ -51,6 +51,8 @@ type CCStock = {
   candle_why_ko?: string; candle_why_en?: string;
   n_buy?: number; n_sell?: number; sell_agree?: boolean; sell_need?: number;
   agree_why_ko?: string; agree_why_en?: string;
+  // recent-window: minutes since each algo last said BUY (null = outside the window)
+  algo1_ago?: number | null; ripple_ago?: number | null; candle_ago?: number | null; window_min?: number;
 };
 type CCSignal = { code: string; name: string; price: number; qty: number; why: string; ts: number };
 type CCStatus = {
@@ -101,10 +103,15 @@ const sigCol = (s: Sig) => (s === "BUY" ? "#2e7d32" : s === "SELL" ? RED : "var(
 function SignalStrip({ s, t, lang }: { s: CCStock; t: (ko: string, en: string) => string; lang: string }) {
   const ko = lang === "ko";
   const vword = (sg: Sig) => (sg === "BUY" ? t("매수", "BUY") : sg === "SELL" ? t("매도", "SELL") : t("대기", "WAIT"));
+  // recent-window badge: when a light is WAIT now but it BOUGHT within the window,
+  // show "매수 Nm 전" so you can see the consensus building toward a trade
+  const agoBadge = (sg: Sig, ago?: number | null) => (sg !== "BUY" && ago != null
+    ? (ago <= 0 ? t(" · 방금 매수", " · bought just now") : t(` · 매수 ${ago}분 전`, ` · bought ${ago}m ago`))
+    : "");
   const rows: { ic: string; lbl: string; sg: Sig; why?: string }[] = [
-    { ic: "🤖", lbl: t("알고1 (종합 브레인)", "Algo1 (brain)"), sg: s.algo1, why: ko ? s.algo1_why_ko : s.algo1_why_en },
-    { ic: "⚡", lbl: t("알고2 (잔물결)", "Algo2 (ripple)"), sg: s.ripple, why: ko ? s.ripple_why_ko : s.ripple_why_en },
-    { ic: "🕯️", lbl: t("알고3 (캔들)", "Algo3 (candle)"), sg: s.candle, why: ko ? s.candle_why_ko : s.candle_why_en },
+    { ic: "🤖", lbl: t("알고1 (종합 브레인)", "Algo1 (brain)"), sg: s.algo1, why: (ko ? s.algo1_why_ko : s.algo1_why_en) + agoBadge(s.algo1, s.algo1_ago) },
+    { ic: "⚡", lbl: t("알고2 (잔물결)", "Algo2 (ripple)"), sg: s.ripple, why: (ko ? s.ripple_why_ko : s.ripple_why_en) + agoBadge(s.ripple, s.ripple_ago) },
+    { ic: "🕯️", lbl: t("알고3 (캔들)", "Algo3 (candle)"), sg: s.candle, why: (ko ? s.candle_why_ko : s.candle_why_en) + agoBadge(s.candle, s.candle_ago) },
   ];
   const nBuy = s.n_buy ?? rows.filter((r) => r.sg === "BUY").length;
   const nSell = s.n_sell ?? rows.filter((r) => r.sg === "SELL").length;

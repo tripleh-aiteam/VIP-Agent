@@ -42,11 +42,17 @@ TAKE_FLOOR = 0.4
 # Algo-1 gates (boss's live-test numbers, same as auto_trader.MIN_CONF / the loose prob gate)
 CONF_MIN = 55
 PROB_MIN = 50.0
+# RECENT-WINDOW agreement (boss 2026-07-22): the three algorithms run on very different
+# clocks — the brain holds BUY for hours while Ripple/Candle only flash for seconds — so
+# strict same-instant 3/3 almost never fires. Instead an algorithm "agrees" if it said BUY
+# within the last AGREE_WINDOW_SEC. Keeps full consensus, but lets brief signals line up.
+AGREE_WINDOW_SEC = 300           # 5 minutes
 # fallback default watchlist (the shared 21 the fleet trades) if scalp_state isn't set yet
 SCALP_21 = ("000660,005930,042660,035420,009150,373220,005380,000270,005490,035720,"
             "051910,006400,105560,055550,012450,329180,034020,010140,042700,066570,006840")
 
 _peak: dict[str, float] = {}          # in-memory winner-peak (NO DB column — see scalp_trader)
+_last_buy: dict[str, dict[str, float]] = {}   # code -> {algo1/ripple/candle: last BUY epoch}
 _semi_signals: dict[str, dict] = {}   # semi mode: code -> live consensus BUY card
 _sell_hint: dict[str, str] = {}       # semi mode: code -> pending SELL advice reason
 _status_cache: Optional[tuple[float, dict]] = None   # 3s full-payload cache (page polls 4s)
@@ -274,6 +280,37 @@ def exit_reason(rule: str, entry: float, px: float, peak: float,
     return None
 
 
+def _stamp_recent(snap: dict, now_ts: float) -> None:
+    """Record the moment each algorithm last said BUY, per code (recent-window agree)."""
+    for code, sig in snap.items():
+        lb = _last_buy.setdefault(code, {})
+        if sig.get("algo1_buy"):
+            lb["algo1"] = now_ts
+        if sig.get("ripple_buy"):
+            lb["ripple"] = now_ts
+        if sig.get("candle_buy"):
+            lb["candle"] = now_ts
+
+
+def _recent(code: str, algo: str, now_ts: float) -> bool:
+    return (now_ts - _last_buy.get(code, {}).get(algo, 0.0)) <= AGREE_WINDOW_SEC
+
+
+def _secs_since_buy(code: str, algo: str, now_ts: float) -> Optional[float]:
+    ts = _last_buy.get(code, {}).get(algo)
+    return (now_ts - ts) if ts else None
+
+
+def _windowed_sig(code: str, sig: dict, now_ts: float) -> dict:
+    """A copy of sig where each *_buy is TRUE if buying NOW or fired within the agreement
+    window — this is what the entry rule and the agree highlight use (recent-window)."""
+    w = dict(sig)
+    w["algo1_buy"] = bool(sig.get("algo1_buy") or _recent(code, "algo1", now_ts))
+    w["ripple_buy"] = bool(sig.get("ripple_buy") or _recent(code, "ripple", now_ts))
+    w["candle_buy"] = bool(sig.get("candle_buy") or _recent(code, "candle", now_ts))
+    return w
+
+
 def _place(db, code: str, side: str, qty: int):
     from services.paper_desk import place_order
     return place_order(db, code, side, qty, "market", source="algo4")
@@ -310,6 +347,7 @@ def tick(db, force: bool = False) -> dict[str, Any]:
                 lambda c: (c, _signals_for(None, c, need, tf, scan_items, allow_compute=False)),
                 cfg["codes"]):
             snap[code] = sig
+    _stamp_recent(snap, _t.time())     # record each algo's last BUY for the recent window
     if not cfg["enabled"]:
         _signal_snapshot, _snapshot_ts = snap, _t.time()
         logger.info("algo4 tick(snapshot-only) %.1fs (%d codes, engine off)", _t.time() - _t0, len(snap))
@@ -366,24 +404,26 @@ def tick(db, force: bool = False) -> dict[str, Any]:
         logger.info("algo4 tick %.1fs (%d codes, EOD)", _t.time() - _t0, len(snap))
         out["reason"] = "EOD flat — no new entries after 15:18"
         return out
+    now_ts = _t.time()
     for code in cfg["codes"]:
         if code in open_codes:
             continue
-        # cheap pre-check from the snapshot; only PROMISING codes get the full
-        # (possibly computing) read — that's what kept the old tick slow
-        pre = snap.get(code) or {}
-        if not (pre.get("ripple_buy") and pre.get("candle_buy")):
+        # cheap pre-check using the RECENT WINDOW (not just this instant) — only codes
+        # where ripple AND candle bought recently get the full (possibly computing) read
+        if not (_recent(code, "ripple", now_ts) and _recent(code, "candle", now_ts)):
             continue
         sig = _signals_for(db, code, need, tf, scan_items, allow_compute=True)
         snap[code] = sig
+        _stamp_recent({code: sig}, now_ts)         # fresh compute may add a BUY just now
+        wsig = _windowed_sig(code, sig, now_ts)    # buys-now OR fired-within-5-min
         prob = sig["algo1_prob"]
-        if rule == "loose" and prob is None and sig["ripple_buy"] and sig["candle_buy"]:
+        if rule == "loose" and prob is None and wsig["ripple_buy"] and wsig["candle_buy"]:
             try:                                   # only ONE stock, only when close → cheap
                 from services.hourly_model import prob_up_1h
                 prob = prob_up_1h(db, code)
             except Exception:
                 db.rollback()
-        if not entry_fires(rule, sig, _prob_ok(prob)):
+        if not entry_fires(rule, wsig, _prob_ok(prob)):
             continue
         px = _px(code)
         if px is None:
@@ -505,12 +545,16 @@ def status(db) -> dict[str, Any]:
     from concurrent.futures import ThreadPoolExecutor
     with ThreadPoolExecutor(max_workers=8) as _ex:
         _pxs = dict(zip(cfg["codes"], _ex.map(_px, cfg["codes"])))
+    now_ts = _t.time()
+    win_min = round(AGREE_WINDOW_SEC / 60)
     stocks = []
     for code in cfg["codes"]:
         px = _pxs.get(code)
         sig = _signal_snapshot.get(code) or _placeholder
         o = open_map.get(code)
-        agree_buy = entry_fires(rule, sig, _prob_ok(sig["algo1_prob"]))
+        # RECENT-WINDOW agreement: a signal counts if buying NOW or fired within the window
+        wsig = _windowed_sig(code, sig, now_ts)
+        agree_buy = entry_fires(rule, wsig, _prob_ok(sig["algo1_prob"]))
         chg = None
         try:
             from services.paper_desk import _chg_cache
@@ -521,25 +565,27 @@ def status(db) -> dict[str, Any]:
         if o and cfg["mode"] == "semi":
             advice = _sell_hint.get(code)
         stop_at = round(o["entry"] * (1 - cfg["stop_pct"] / 100)) if o else None
-        # agreement summary (boss 2026-07-22: show 3/3 · 2/3 ... plus WHO is missing,
-        # and the SELL-consensus count for held stocks) — bilingual reasons
+        # per-algo recency: minutes since its last BUY (None = never / outside window)
+        def _ago_min(algo: str) -> Optional[int]:
+            s = _secs_since_buy(code, algo, now_ts)
+            return round(s / 60) if (s is not None and s <= AGREE_WINDOW_SEC) else None
+        ago = {"algo1": _ago_min("algo1"), "ripple": _ago_min("ripple"), "candle": _ago_min("candle")}
+        # agreement summary — now counts buys within the window (boss 2026-07-22)
+        wbuys = {"algo1": wsig["algo1_buy"], "ripple": wsig["ripple_buy"], "candle": wsig["candle_buy"]}
         votes = {"algo1": sig["algo1"], "ripple": sig["ripple"], "candle": sig["candle"]}
-        n_buy = sum(1 for v in votes.values() if v == "BUY")
+        n_buy = sum(1 for v in wbuys.values() if v)
         n_sell = sum(1 for v in votes.values() if v == "SELL")
         _nm_ko = {"algo1": "알고1", "ripple": "잔물결", "candle": "캔들"}
         _nm_en = {"algo1": "Algo1", "ripple": "Ripple", "candle": "Candle"}
-        not_buy = [k for k, v in votes.items() if v != "BUY"]
+        not_buy = [k for k, v in wbuys.items() if not v]
         if agree_buy:
-            if rule == "strict":
-                agree_ko, agree_en = "3/3 모두 매수 동의 → 매수 진입", "3/3 all agree → BUY entry"
-            else:
-                agree_ko = "잔물결+캔들 매수 & 알고1 비관 아님 → 매수 진입 (느슨)"
-                agree_en = "ripple+candle BUY & algo1 not bearish → BUY entry (loose)"
+            agree_ko = f"3개 모두 매수 동의 (최근 {win_min}분 내) → 매수 진입"
+            agree_en = f"all 3 agree to buy (within {win_min} min) → BUY entry"
         elif n_buy > 0:
             miss_ko = "·".join(_nm_ko[k] for k in not_buy)
             miss_en = ", ".join(_nm_en[k] for k in not_buy)
-            agree_ko = f"{n_buy}/3 매수 — {miss_ko} 미동의 → 진입 안 함"
-            agree_en = f"{n_buy}/3 buy — {miss_en} not agreeing → no entry"
+            agree_ko = f"{n_buy}/3 매수 (최근 {win_min}분) — {miss_ko} 대기 → 진입 안 함"
+            agree_en = f"{n_buy}/3 buy (last {win_min}m) — waiting on {miss_en} → no entry"
         else:
             agree_ko, agree_en = "매수 동의 0/3 — 관망", "0/3 buy votes — watching"
         sell_need = 3 if rule == "strict" else 2
@@ -556,7 +602,9 @@ def status(db) -> dict[str, Any]:
             "ripple_why_ko": sig["ripple_why_ko"], "ripple_why_en": sig["ripple_why_en"],
             "candle_why_ko": sig["candle_why_ko"], "candle_why_en": sig["candle_why_en"],
             "n_buy": n_buy, "n_sell": n_sell, "sell_agree": sell_agree, "sell_need": sell_need,
-            "agree_why_ko": agree_ko, "agree_why_en": agree_en})
+            "agree_why_ko": agree_ko, "agree_why_en": agree_en,
+            "algo1_ago": ago["algo1"], "ripple_ago": ago["ripple"], "candle_ago": ago["candle"],
+            "window_min": win_min})
     today = db.execute(text(
         "SELECT count(*), coalesce(sum(CASE WHEN net_pct>0 THEN 1 ELSE 0 END),0), "
         "coalesce(sum(net_pct),0), coalesce(sum(qty*entry*net_pct/100.0),0) "
