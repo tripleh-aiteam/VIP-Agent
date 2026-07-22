@@ -59,7 +59,13 @@ type CCStatus = {
   recent: { name: string; qty: number; entry: number; exit_price?: number | null; exit_reason?: string | null;
             net_pct?: number | null; won?: number | null; closed_at?: string; opened_at?: string; why?: string | null }[];
 };
-type DeskState = { cash: number; positions_value?: number; equity: number; total_pnl?: number; total_pnl_pct?: number };
+type DeskPosition = { ticker: string; name: string; qty: number; avg_price: number; live_price?: number | null; value: number; unrealized_pnl?: number | null; unrealized_pnl_pct?: number | null };
+type DeskOrder = { id: number; ticker: string; name: string; side: string; qty: number; order_type: string; limit_price?: number | null; status?: string; fill_price?: number | null; realized_pnl?: number | null; realized_pnl_pct?: number | null; created_at?: string; filled_at?: string | null; source?: string | null };
+type DeskState = {
+  cash: number; positions_value?: number; equity: number; total_pnl?: number; total_pnl_pct?: number;
+  realized_pnl?: number; record?: { trades: number; wins: number; win_rate: number | null };
+  positions?: DeskPosition[]; history?: DeskOrder[];
+};
 type AlgoCmp = Record<string, { trips: number; wins: number; win_rate: number | null; net_won: number; holding?: number }>;
 type StockItem = { code: string; name: string; market?: string };
 type QuoteRes = { ok: boolean; ticker?: string; name?: string; error?: string };
@@ -307,6 +313,7 @@ export default function CrossCheckDesk({ mode }: { mode: CCMode }) {
   const [stockList, setStockList] = useState<StockItem[]>([]);
   const [addQ, setAddQ] = useState("");
   const [sel, setSel] = useState<string>("000660");   // manual: the one deep-view stock
+  const [mQty, setMQty] = useState("10");             // manual: order quantity
   const [fRes, setFRes] = useState<"ALL" | "WIN" | "LOSE">("ALL");
   const [fName, setFName] = useState("ALL");
   const [fDate, setFDate] = useState("");
@@ -345,6 +352,39 @@ export default function CrossCheckDesk({ mode }: { mode: CCMode }) {
   };
   const setParam = async (k: "stop_pct" | "pos_pct", v: number) => { await apiPost(`/paper-desk/crosscheck/params?${k}=${v}`); load(); };
   const setRule = async (v: "strict" | "loose") => { await apiPost(`/paper-desk/crosscheck/params?rule=${v}`); load(); };
+  // ---- manual-mode trading (shared paper desk, source='manual') ---- //
+  const placeManual = async (side: "BUY" | "SELL") => {
+    const q = Math.max(1, parseInt(mQty || "0", 10) || 0);
+    const nm = stockList.find((x) => x.code === sel)?.name || sel;
+    if (!confirm(t(`${nm} ${q}주 ${side === "BUY" ? "매수" : "매도"}할까요? (시장가·가짜 돈)`,
+                   `${side} ${q} share(s) of ${nm}? (market · fake money)`))) return;
+    setBusy(true);
+    try {
+      const r = await apiPost<{ ok: boolean; error?: string; reason?: string; fill_price?: number; realized_pnl?: number; realized_pnl_pct?: number }>(
+        "/paper-desk/order", { ticker: sel, side, qty: q, order_type: "market", source: "manual" });
+      if (r.ok) {
+        setNote(side === "BUY"
+          ? t(`✅ 매수 체결 ₩${fmt(r.fill_price)} × ${q}주`, `✅ bought ${q} @ ₩${fmt(r.fill_price)}`)
+          : t(`✅ 매도 체결 ₩${fmt(r.fill_price)} × ${q}주 — 실현 ${(r.realized_pnl || 0) > 0 ? "+" : ""}₩${fmt(r.realized_pnl)} (${r.realized_pnl_pct ?? "-"}%)`,
+              `✅ sold ${q} @ ₩${fmt(r.fill_price)} — realized ${(r.realized_pnl || 0) > 0 ? "+" : ""}₩${fmt(r.realized_pnl)} (${r.realized_pnl_pct ?? "-"}%)`));
+      } else setNote(`❌ ${r.error || r.reason || "order failed"}`);
+    } catch (e) { setNote(`❌ ${(e as Error).message}`); }
+    setBusy(false); load();
+  };
+  const depositCash = async () => {
+    const raw = prompt(t("추가할 금액 (₩)", "Amount to add (₩)"), "100000000");
+    if (!raw) return;
+    const amt = parseInt(raw.replace(/[^0-9]/g, ""), 10);
+    if (!amt) return;
+    const r = await apiPost<{ ok: boolean; cash?: number; error?: string }>(`/paper-desk/deposit?amount=${amt}`);
+    setNote(r.ok ? t(`💰 자금 추가 — 현금 ₩${fmt(r.cash)}`, `💰 funds added — cash ₩${fmt(r.cash)}`) : `❌ ${r.error}`);
+    load();
+  };
+  const resetDesk = async () => {
+    if (!confirm(t("모의계좌를 초기화할까요? (₩1억, 기록 삭제)", "Reset the paper account? (₩100M, clears records)"))) return;
+    await apiPost("/paper-desk/reset");
+    setNote(t("🔄 초기화 완료", "🔄 reset done")); load();
+  };
   const sellOne = async (code: string, name: string) => {
     if (!confirm(t(`${name} 전량 매도할까요?`, `Sell all of ${name}?`))) return;
     setBusy(true);
@@ -377,25 +417,111 @@ export default function CrossCheckDesk({ mode }: { mode: CCMode }) {
             ))}
           </div>
         </div>
-        {/* stock selector */}
+        {/* 💰 paper-money account bar (boss 2026-07-22: manual must show the money) */}
+        <div className="mt-3 rounded-xl border px-4 py-2.5 flex items-center gap-4 flex-wrap text-[12px]" style={{ borderColor: "var(--border-default)", background: "var(--bg-elevated)" }}>
+          <span className="text-[var(--text-muted)]">{t("현금", "Cash")} <b className="text-[13.5px] text-[var(--text-primary)] tabular-nums">₩{fmt(st?.cash)}</b></span>
+          <span className="text-[var(--text-muted)]">{t("보유평가", "Positions")} <b className="text-[13px] text-[var(--text-primary)] tabular-nums">₩{fmt(st?.positions_value)}</b></span>
+          <span className="text-[var(--text-muted)]">{t("총자산", "Equity")} <b className="text-[14px] text-[var(--text-primary)] tabular-nums">₩{fmt(st?.equity)}</b></span>
+          {st?.total_pnl != null && (
+            <span className="text-[var(--text-muted)]">{t("총손익", "Total P&L")} <b className="text-[14px] tabular-nums" style={{ color: pnlCol(st.total_pnl) }}>{st.total_pnl > 0 ? "+" : ""}{fmt(st.total_pnl)}{st.total_pnl_pct != null && ` (${st.total_pnl_pct}%)`}</b></span>
+          )}
+          {st?.record && (
+            <span className="text-[11px] text-[var(--text-muted)]">
+              {t(`기록: ${st.record.trades}회 ${st.record.wins}승 · 승률 ${st.record.win_rate ?? "-"}%`,
+                 `Record: ${st.record.trades} trades ${st.record.wins}W · win ${st.record.win_rate ?? "-"}%`)}
+              {st.realized_pnl != null && <> · {t("실현", "realized")} <b style={{ color: pnlCol(st.realized_pnl) }}>{st.realized_pnl > 0 ? "+" : ""}{fmt(Math.round(st.realized_pnl))}</b></>}
+            </span>
+          )}
+          <span className="ml-auto flex items-center gap-1.5">
+            <button onClick={depositCash} className="text-[11px] font-extrabold px-2.5 py-1 rounded-md text-white" style={{ background: "#2e7d32" }}>💰 {t("자금 추가", "Add funds")}</button>
+            <button onClick={resetDesk} className="text-[11px] font-bold px-2.5 py-1 rounded-md border text-[var(--text-muted)]" style={{ borderColor: "var(--border-default)" }}>{t("초기화", "Reset")}</button>
+          </span>
+        </div>
+
+        {/* stock selector + 🛒 BUY / SELL (market, fake money, source=manual) */}
         <div className="mt-4 flex items-center gap-2 flex-wrap text-[12px]">
           <span className="font-bold text-[var(--text-muted)]">📈 {t("종목", "Stock")}:</span>
           <select value={sel} onChange={(e) => setSel(e.target.value)} className="px-2 py-1.5 rounded-lg border bg-[var(--bg-primary)] text-[var(--text-primary)] font-bold" style={{ borderColor: INDIGO, minWidth: 200 }}>
             {(sc?.codes || MAINS).map((c) => { const it = stockList.find((x) => x.code === c); return <option key={c} value={c}>{it?.name || c} ({c})</option>; })}
           </select>
           <input value={addQ} onChange={(e) => setAddQ(e.target.value)} onKeyDown={(e) => e.key === "Enter" && searchAdd()} placeholder={t("종목 검색해 추가…", "search a stock…")} className="text-[12px] px-2 py-1.5 rounded-lg border bg-[var(--bg-primary)] text-[var(--text-primary)]" style={{ borderColor: "var(--border-default)", width: 150 }} />
-          {selStock && <span className="ml-2 text-[16px] font-extrabold tabular-nums" style={{ color: (selStock.chg ?? 0) >= 0 ? RED : BLUE }}>₩{fmt(selStock.price)}</span>}
+          {selStock && <span className="ml-1 text-[16px] font-extrabold tabular-nums" style={{ color: (selStock.chg ?? 0) >= 0 ? RED : BLUE }}>₩{fmt(selStock.price)}</span>}
+          <span className="ml-2 text-[var(--text-muted)]">{t("수량", "Qty")}</span>
+          <input value={mQty} onChange={(e) => setMQty(e.target.value.replace(/[^0-9]/g, ""))} className="text-[13px] font-bold px-2 py-1.5 rounded-lg border bg-[var(--bg-primary)] text-[var(--text-primary)] tabular-nums" style={{ borderColor: "var(--border-default)", width: 76 }} />
+          <button disabled={busy} onClick={() => placeManual("BUY")} className="text-[13.5px] font-extrabold px-5 py-1.5 rounded-xl text-white disabled:opacity-50" style={{ background: RED }}>{t("매수", "BUY")}</button>
+          <button disabled={busy} onClick={() => placeManual("SELL")} className="text-[13.5px] font-extrabold px-5 py-1.5 rounded-xl text-white disabled:opacity-50" style={{ background: BLUE }}>{t("매도", "SELL")}</button>
+          {(() => { const held = (st?.positions || []).find((p) => p.ticker === sel); return held
+            ? <span className="text-[11px] text-[var(--text-muted)]">{t(`보유 ${fmt(held.qty)}주 @₩${fmt(held.avg_price)}`, `holding ${fmt(held.qty)} @₩${fmt(held.avg_price)}`)}</span>
+            : <span className="text-[11px] text-[var(--text-muted)]">{t("미보유", "not held")}</span>; })()}
           {note && <span className="text-[12px] font-bold text-[var(--text-primary)]">{note}</span>}
         </div>
+
         <div className="mt-4 grid lg:grid-cols-2 gap-4">
           <div className="rounded-xl border p-3" style={{ borderColor: "var(--border-default)", background: "var(--bg-elevated)" }}>
             <IntervalChart code={sel} t={t} lang={lang} />
           </div>
           <div className="space-y-4"><OrderBook code={sel} t={t} /><ExecTable code={sel} t={t} /></div>
         </div>
+
+        {/* 📌 positions (whole shared desk) */}
+        {(st?.positions || []).length > 0 && (
+          <div className="mt-4 rounded-xl border overflow-hidden" style={{ borderColor: INDIGO }}>
+            <div className="px-4 py-2 border-b bg-[var(--bg-elevated)] text-[13px] font-extrabold text-[var(--text-primary)]" style={{ borderColor: "var(--border-default)" }}>📌 {t(`보유 종목 · ${(st?.positions || []).length}`, `Positions · ${(st?.positions || []).length}`)}</div>
+            <table className="w-full text-[12px]">
+              <thead><tr className="text-[10.5px] text-[var(--text-muted)]" style={{ background: "var(--bg-elevated)" }}>
+                <th className="text-left px-3 py-1.5">{t("종목", "Stock")}</th><th className="text-right px-2">{t("수량", "Qty")}</th>
+                <th className="text-right px-2">{t("매수가", "Avg")}</th><th className="text-right px-2">{t("현재가", "Live")}</th>
+                <th className="text-right px-2">{t("평가액", "Value")}</th><th className="text-right px-3">{t("평가손익", "Unrealized")}</th>
+              </tr></thead>
+              <tbody>
+                {(st?.positions || []).map((p) => (
+                  <tr key={p.ticker} className="border-t border-[var(--border-default)]/40 cursor-pointer hover:bg-[var(--bg-elevated)]/50" onClick={() => setSel(p.ticker)}>
+                    <td className="px-3 py-1.5 font-bold text-[var(--text-primary)]">{p.name} <span className="text-[10px] text-[var(--text-muted)]">{p.ticker}</span></td>
+                    <td className="text-right px-2 tabular-nums">{fmt(p.qty)}</td>
+                    <td className="text-right px-2 tabular-nums">{fmt(p.avg_price)}</td>
+                    <td className="text-right px-2 tabular-nums font-bold">{fmt(p.live_price)}</td>
+                    <td className="text-right px-2 tabular-nums">{fmt(Math.round(p.value))}</td>
+                    <td className="text-right px-3 tabular-nums font-extrabold" style={{ color: pnlCol(p.unrealized_pnl) }}>{(p.unrealized_pnl || 0) > 0 ? "+" : ""}{fmt(Math.round(p.unrealized_pnl || 0))}{p.unrealized_pnl_pct != null && ` (${p.unrealized_pnl_pct > 0 ? "+" : ""}${p.unrealized_pnl_pct}%)`}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+
+        {/* 🧾 trade history (shared desk orders, newest first) */}
+        <div className="mt-4 rounded-xl border overflow-hidden" style={{ borderColor: "var(--border-default)" }}>
+          <div className="px-4 py-2 border-b bg-[var(--bg-elevated)] text-[13px] font-extrabold text-[var(--text-primary)]" style={{ borderColor: "var(--border-default)" }}>🧾 {t("거래 기록 (모의계좌 전체)", "Trade History (whole paper desk)")}</div>
+          {((st?.history || []).length === 0) ? (
+            <div className="px-4 py-5 text-center text-[12px] text-[var(--text-muted)]">{t("아직 거래 기록이 없습니다", "no trades yet")}</div>
+          ) : (
+            <table className="w-full text-[12px]">
+              <thead><tr className="text-[10.5px] text-[var(--text-muted)]" style={{ background: "var(--bg-elevated)" }}>
+                <th className="text-left px-3 py-1.5">{t("시간", "Time")}</th><th className="text-left px-2">{t("종목", "Stock")}</th>
+                <th className="text-left px-2">{t("구분", "Side")}</th><th className="text-right px-2">{t("수량", "Qty")}</th>
+                <th className="text-right px-2">{t("체결가", "Fill")}</th><th className="text-right px-2">{t("실현손익", "Realized")}</th>
+                <th className="text-left px-3">{t("주체", "By")}</th>
+              </tr></thead>
+              <tbody>
+                {(st?.history || []).slice(0, 40).map((o) => (
+                  <tr key={o.id} className="border-t border-[var(--border-default)]/40">
+                    <td className="px-3 py-1.5 text-[11px] tabular-nums text-[var(--text-secondary)]">{kstSec(o.filled_at || o.created_at)}</td>
+                    <td className="px-2 font-bold text-[var(--text-primary)]">{o.name}</td>
+                    <td className="px-2 font-extrabold" style={{ color: o.side === "BUY" ? RED : BLUE }}>{o.side === "BUY" ? t("매수", "BUY") : t("매도", "SELL")}</td>
+                    <td className="text-right px-2 tabular-nums">{fmt(o.qty)}</td>
+                    <td className="text-right px-2 tabular-nums">{fmt(o.fill_price)}</td>
+                    <td className="text-right px-2 tabular-nums font-extrabold" style={{ color: pnlCol(o.realized_pnl) }}>{o.realized_pnl != null ? `${o.realized_pnl > 0 ? "+" : ""}${fmt(Math.round(o.realized_pnl))}${o.realized_pnl_pct != null ? ` (${o.realized_pnl_pct}%)` : ""}` : "-"}</td>
+                    <td className="px-3 text-[10.5px] text-[var(--text-muted)]">{o.source === "algo4" ? "🔀 algo4" : o.source === "manual" || !o.source ? t("👤 수동", "👤 manual") : o.source}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+
         <p className="mt-4 text-[11px] text-[var(--text-muted)]">
-          {t("수동 심층 보기 — 추천은 없습니다. 차트·호가·체결만 빠르게 봅니다. 매매는 자동/반자동 탭에서.",
-             "Manual deep view — no recommendations. Just fast chart · order book · deals. Trade from the Auto/Semi tabs.")}
+          {t("가짜 돈 · 실시간 키움 시세 — 수수료+세금 0.23%가 실제처럼 붙습니다. 자동 매매는 자동/반자동 탭에서.",
+             "Fake money · live Kiwoom prices — real-style 0.23% fees+tax apply. Machine trading lives in the Auto/Semi tabs.")}
         </p>
       </div>
     );
