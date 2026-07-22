@@ -756,22 +756,25 @@ def _all_stocks_in_query(transcript: Optional[str]) -> list[tuple[str, str]]:
     'samsung electronics'), matches 6-digit codes, and fuzzy-matches leftover words
     to catch typos like 'Skhynoix' → SK하이닉스."""
     import re as _re
-    # Comprehensive resolver first (all 51 tracked names + slang 하닉/삼전/현차 + codes,
-    # longest-first with span-consumption so 'SKT'≠'KT'). Falls through if it finds none.
-    try:
-        from services.stock_resolver import find_all as _find_all, resolve_one as _resolve_one
-        _hits = _find_all(transcript or "")
-        if _hits:
-            return _hits
-        _c, _n = _resolve_one(transcript or "")     # fuzzy fallback for typos
-        if _c:
-            return [(_c, _n)]
-    except Exception:
-        pass
     t = transcript or ""
     low = t.lower()
     out: list[tuple[str, str]] = []
     seen: set[str] = set()
+    _resolve_one = None
+    # Comprehensive resolver first (all 51 names + slang 하닉/삼전 + codes). SEED with its
+    # hits but DO NOT return early — a correctly-spelled stock must not hide a MISSPELLED
+    # one in the same query (bug 2026-07-22: 'skyhix and samsung' returned only samsung).
+    # The alias/code/fuzzy passes below still run on the leftover so typo'd names resolve.
+    try:
+        from services.stock_resolver import find_all as _find_all, resolve_one as _resolve_one
+        for _hc, _hn in (_find_all(t) or []):
+            _hc = str(_hc)
+            if _hc.isdigit() and _hc not in seen:
+                seen.add(_hc)
+                out.append((_hc, _hn))
+                low = low.replace(_hn.lower(), " ")   # consume so it isn't re-scanned
+    except Exception:
+        pass
     try:
         from services.stock_data_tools import _NAME_TO_TICKER
         names = sorted(_NAME_TO_TICKER, key=len, reverse=True)
@@ -804,17 +807,35 @@ def _all_stocks_in_query(transcript: Optional[str]) -> list[tuple[str, str]]:
         import difflib
         norm = {_re.sub(r"\s+", "", n.lower()): n for n in names}  # spaceless name -> name
         keys = list(norm.keys())
+        # prefer the longest Hangul name per code so a fuzzy hit on an english alias
+        # displays cleanly ('skyhix' -> 'SK하이닉스', not the lowercase 'sk hynix').
+        canon: dict[str, str] = {}
+        for _nm, _cd in _NAME_TO_TICKER.items():
+            _cd = str(_cd)
+            if _re.search(r"[가-힣]", _nm) and len(_nm) > len(canon.get(_cd, "")):
+                canon[_cd] = _nm
         for w in _re.split(r"[\s,/&]+", consumed):
             w = w.strip()
             if len(w) < 4 or w in _STOCK_FUZZY_STOP:
                 continue
-            hit = difflib.get_close_matches(w, keys, n=1, cutoff=0.82)
+            # cutoff 0.72: real stock typos ('skyhix'0.77, 'samsng'0.92, 'naiver'0.91)
+            # all score >=0.77; non-stock words ('current','stock','price','need') top
+            # out at 0.44 — the gap is wide, so 0.72 catches typos without false hits.
+            hit = difflib.get_close_matches(w, keys, n=1, cutoff=0.72)
             if hit:
                 name = norm[hit[0]]
                 code = str(_NAME_TO_TICKER[name])
                 if code.isdigit() and code not in seen:
                     seen.add(code)
-                    out.append((code, name))
+                    out.append((code, canon.get(code, name)))
+    # last resort: if NOTHING resolved at all, one fuzzy single-stock guess (typos)
+    if not out and _resolve_one:
+        try:
+            _rc, _rn = _resolve_one(t)
+            if _rc:
+                out.append((str(_rc), _rn))
+        except Exception:
+            pass
     return out
 
 
