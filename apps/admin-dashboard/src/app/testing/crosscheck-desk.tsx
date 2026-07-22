@@ -401,6 +401,29 @@ export default function CrossCheckDesk({ mode }: { mode: CCMode }) {
   }, [sc, showExtra]);
   const selStock = useMemo(() => sc?.stocks.find((s) => s.code === sel), [sc, sel]);
 
+  // 💰 shared paper-money bar — identical on auto / semi / manual (boss 2026-07-22)
+  const moneyBar = st ? (
+    <div className="mt-3 rounded-xl border px-4 py-2.5 flex items-center gap-4 flex-wrap text-[12px]" style={{ borderColor: "var(--border-default)", background: "var(--bg-elevated)" }}>
+      <span className="text-[var(--text-muted)]">{t("현금", "Cash")} <b className="text-[13.5px] text-[var(--text-primary)] tabular-nums">₩{fmt(st.cash)}</b></span>
+      <span className="text-[var(--text-muted)]">{t("보유평가", "Positions")} <b className="text-[13px] text-[var(--text-primary)] tabular-nums">₩{fmt(st.positions_value)}</b></span>
+      <span className="text-[var(--text-muted)]">{t("총자산", "Equity")} <b className="text-[14px] text-[var(--text-primary)] tabular-nums">₩{fmt(st.equity)}</b></span>
+      {st.total_pnl != null && (
+        <span className="text-[var(--text-muted)]">{t("총손익", "Total P&L")} <b className="text-[14px] tabular-nums" style={{ color: pnlCol(st.total_pnl) }}>{st.total_pnl > 0 ? "+" : ""}{fmt(st.total_pnl)}{st.total_pnl_pct != null && ` (${st.total_pnl_pct}%)`}</b></span>
+      )}
+      {st.record && (
+        <span className="text-[11px] text-[var(--text-muted)]">
+          {t(`기록: ${st.record.trades}회 ${st.record.wins}승 · 승률 ${st.record.win_rate ?? "-"}%`,
+             `Record: ${st.record.trades} trades ${st.record.wins}W · win ${st.record.win_rate ?? "-"}%`)}
+          {st.realized_pnl != null && <> · {t("실현", "realized")} <b style={{ color: pnlCol(st.realized_pnl) }}>{st.realized_pnl > 0 ? "+" : ""}{fmt(Math.round(st.realized_pnl))}</b></>}
+        </span>
+      )}
+      <span className="ml-auto flex items-center gap-1.5">
+        <button onClick={depositCash} className="text-[11px] font-extrabold px-2.5 py-1 rounded-md text-white" style={{ background: "#2e7d32" }}>💰 {t("자금 추가", "Add funds")}</button>
+        <button onClick={resetDesk} className="text-[11px] font-bold px-2.5 py-1 rounded-md border text-[var(--text-muted)]" style={{ borderColor: "var(--border-default)" }}>{t("초기화", "Reset")}</button>
+      </span>
+    </div>
+  ) : null;
+
   // ---------- MANUAL: single-stock deep view (chart · 30-level book · deals) ---------- //
   if (mode === "manual") {
     return (
@@ -417,26 +440,8 @@ export default function CrossCheckDesk({ mode }: { mode: CCMode }) {
             ))}
           </div>
         </div>
-        {/* 💰 paper-money account bar (boss 2026-07-22: manual must show the money) */}
-        <div className="mt-3 rounded-xl border px-4 py-2.5 flex items-center gap-4 flex-wrap text-[12px]" style={{ borderColor: "var(--border-default)", background: "var(--bg-elevated)" }}>
-          <span className="text-[var(--text-muted)]">{t("현금", "Cash")} <b className="text-[13.5px] text-[var(--text-primary)] tabular-nums">₩{fmt(st?.cash)}</b></span>
-          <span className="text-[var(--text-muted)]">{t("보유평가", "Positions")} <b className="text-[13px] text-[var(--text-primary)] tabular-nums">₩{fmt(st?.positions_value)}</b></span>
-          <span className="text-[var(--text-muted)]">{t("총자산", "Equity")} <b className="text-[14px] text-[var(--text-primary)] tabular-nums">₩{fmt(st?.equity)}</b></span>
-          {st?.total_pnl != null && (
-            <span className="text-[var(--text-muted)]">{t("총손익", "Total P&L")} <b className="text-[14px] tabular-nums" style={{ color: pnlCol(st.total_pnl) }}>{st.total_pnl > 0 ? "+" : ""}{fmt(st.total_pnl)}{st.total_pnl_pct != null && ` (${st.total_pnl_pct}%)`}</b></span>
-          )}
-          {st?.record && (
-            <span className="text-[11px] text-[var(--text-muted)]">
-              {t(`기록: ${st.record.trades}회 ${st.record.wins}승 · 승률 ${st.record.win_rate ?? "-"}%`,
-                 `Record: ${st.record.trades} trades ${st.record.wins}W · win ${st.record.win_rate ?? "-"}%`)}
-              {st.realized_pnl != null && <> · {t("실현", "realized")} <b style={{ color: pnlCol(st.realized_pnl) }}>{st.realized_pnl > 0 ? "+" : ""}{fmt(Math.round(st.realized_pnl))}</b></>}
-            </span>
-          )}
-          <span className="ml-auto flex items-center gap-1.5">
-            <button onClick={depositCash} className="text-[11px] font-extrabold px-2.5 py-1 rounded-md text-white" style={{ background: "#2e7d32" }}>💰 {t("자금 추가", "Add funds")}</button>
-            <button onClick={resetDesk} className="text-[11px] font-bold px-2.5 py-1 rounded-md border text-[var(--text-muted)]" style={{ borderColor: "var(--border-default)" }}>{t("초기화", "Reset")}</button>
-          </span>
-        </div>
+        {/* 💰 paper-money account bar (shared with auto/semi) */}
+        {moneyBar}
 
         {/* stock selector + 🛒 BUY / SELL (market, fake money, source=manual) */}
         <div className="mt-4 flex items-center gap-2 flex-wrap text-[12px]">
@@ -545,12 +550,11 @@ export default function CrossCheckDesk({ mode }: { mode: CCMode }) {
         </div>
       </div>
 
-      {/* account */}
-      {st && (
-        <div className="mt-3 flex items-center gap-4 flex-wrap text-[12px] rounded-xl border px-4 py-2.5" style={{ borderColor: "var(--border-default)", background: "var(--bg-elevated)" }}>
-          <span className="text-[var(--text-muted)]">{t("현금", "Cash")} <b className="text-[13.5px] text-[var(--text-primary)] tabular-nums">₩{fmt(st.cash)}</b></span>
-          <span className="text-[var(--text-muted)]">{t("총자산", "Equity")} <b className="text-[14px] text-[var(--text-primary)] tabular-nums">₩{fmt(st.equity)}</b></span>
-          <span className="ml-auto text-[11px] text-[var(--text-muted)]">{sc?.rule_ko && (lang === "ko" ? sc.rule_ko : sc.rule_en)}</span>
+      {/* 💰 paper-money account bar (same as manual — boss 2026-07-22) */}
+      {moneyBar}
+      {sc?.rule_ko && (
+        <div className="mt-1.5 px-1 text-[11px] text-[var(--text-muted)]">
+          📐 {lang === "ko" ? sc.rule_ko : sc.rule_en}
         </div>
       )}
 
