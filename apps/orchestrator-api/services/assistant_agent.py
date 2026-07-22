@@ -1424,12 +1424,25 @@ def _won_str(v) -> str:
         return str(v)
 
 
+def _also_wants_current_price(transcript: Optional[str]) -> bool:
+    """True when a past-date question ALSO explicitly asks for the CURRENT price in the
+    same breath ('현재가랑 12월 10일 종가 둘 다', 'price now and its Dec 10 close'). Needs an
+    explicit live-price cue so a plain '12월 10일 종가' is NOT treated as wanting current."""
+    t = (transcript or "").lower()
+    return (any(k in t for k in ("현재가", "현재 가격", "현재 시세", "실시간", "지금 얼마",
+                                 "지금 가격", "지금 주가", "current price", "price now",
+                                 "right now"))
+            or bool(_re.search(r"\bcurrent\b", t)))
+
+
 def _vip_history_reply(transcript: Optional[str], lang: str, hist=None,
-                       history: Optional[list[dict]] = None) -> Optional[str]:
+                       history: Optional[list[dict]] = None, db=None) -> Optional[str]:
     """Deterministic multi-day OHLCV table from Naver daily history — past specific
     dates AND ranges ('last 4 days'). Single source, so VIP and the relaying AI Advisor
     read IDENTICALLY. None → caller falls through. A bare date follow-up ('7월 2일은?')
-    inherits the stock from the conversation history so it gets the SAME table format."""
+    inherits the stock from the conversation history so it gets the SAME table format.
+    When the SAME sentence also asks for the current price ('현재가랑 12월 10일 종가 둘 다'),
+    the live quote is prepended so BOTH asks are answered (not just the past date)."""
     hist = hist or _requested_history_dates(transcript)
     if not hist:
         return None
@@ -1541,7 +1554,17 @@ def _vip_history_reply(transcript: Optional[str], lang: str, hist=None,
     if not any(s["rows"] for s in out):
         return None
     table = price_format.format_history(out, lang=("en" if _en else "ko"))
-    return ("\n".join(notes) + "\n\n" + table) if notes else table
+    result = ("\n".join(notes) + "\n\n" + table) if notes else table
+    # 'current price AND the 12/10 close, both' — prepend the live quote so the
+    # current-price half isn't dropped by the past-date route (boss test 2026-07-22).
+    if _also_wants_current_price(transcript):
+        try:
+            cur = _vip_live_price_reply(transcript, lang, db)
+            if cur and cur.get("reply"):
+                result = cur["reply"].rstrip() + "\n\n---\n\n" + result
+        except Exception:
+            pass
+    return result
 
 
 def _vip_stock_data_reply(transcript: Optional[str], lang: str, db=None) -> Optional[str]:
@@ -1556,7 +1579,7 @@ def _vip_stock_data_reply(transcript: Optional[str], lang: str, db=None) -> Opti
             return ss["reply"]
     h = _requested_history_dates(transcript)
     if h:
-        r = _vip_history_reply(transcript, lang, h)
+        r = _vip_history_reply(transcript, lang, h, db=db)
         if r:
             return r
     cur = _vip_live_price_reply(transcript, lang, db)
@@ -6465,7 +6488,7 @@ def _run_agent_impl(
             and not _is_stock_advice(transcript, agent_id)   # 'last week I bought X, hold or sell?' = ADVICE
             and not _wants_recommendation(transcript)               # not a price-history dump
             and _requested_history_dates(transcript)):
-        _hist = _vip_history_reply(transcript, lang, history=history or [])
+        _hist = _vip_history_reply(transcript, lang, history=history or [], db=db)
         if _hist:
             return {"intent": "stock_history", "language": lang, "reply": _hist,
                     "action": None, "speak": True, "transcript": transcript,
