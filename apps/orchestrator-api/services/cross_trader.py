@@ -256,9 +256,22 @@ def _signals_for(db, code: str, need: int, tf: str, scan_items: dict,
 
 
 # ---- pure decision rules (unit-tested in isolation) -------------------------- #
+def _pct(prob) -> Optional[float]:
+    """Normalize a 1-hour up-probability to a PERCENT. prob_up_1h returns a fraction
+    (0-1); the setup scan already stores a percent (round(p*100)). This makes both
+    comparable to PROB_MIN=50 (bug 2026-07-23: tick compared the raw 0.49 fraction to
+    50 and ALWAYS blocked on a scan-cache miss)."""
+    if prob is None:
+        return None
+    p = float(prob)
+    return p * 100 if 0 < p <= 1 else p
+
+
 def _prob_ok(prob: Optional[float]) -> bool:
-    """1-hour up-probability gate — fail-open when unknown (boss's loose rule)."""
-    return prob is None or float(prob) >= PROB_MIN
+    """1-hour up-probability gate — fail-open when unknown (boss's loose rule).
+    Compares on a PERCENT scale so a 0.49 fraction reads as 49%, not '0.49 ≥ 50'."""
+    p = _pct(prob)
+    return p is None or p >= PROB_MIN
 
 
 def entry_fires(rule: str, sig: dict, prob_ok: bool) -> bool:
@@ -267,6 +280,39 @@ def entry_fires(rule: str, sig: dict, prob_ok: bool) -> bool:
         return bool(sig["ripple_buy"] and sig["candle_buy"]
                     and sig["algo1_not_bearish"] and prob_ok)
     return bool(sig["algo1_buy"] and sig["ripple_buy"] and sig["candle_buy"])
+
+
+def entry_decision(rule: str, sig: dict, prob, *, holding: bool, mode: str,
+                   cash: float, px: Optional[float], pos_pct: float,
+                   eod: bool) -> dict:
+    """SINGLE SOURCE OF TRUTH for 'will Cross-Check BUY this code on the next tick?'.
+    Used by BOTH tick() (to actually trade) AND status() (to display) so the card can
+    NEVER say '→ BUY entry' unless tick would truly enter. `sig` must already be
+    WINDOWED (recent-agreement applied). Returns:
+      should_buy — tick will place the order this pass.
+      agree      — the algorithms line up (consensus), INDEPENDENT of blockers, so the
+                   card can say '3 agree BUT <reason>' when a blocker stops the buy.
+      blocker    — HOLDING / PROB / SEMI / EOD / NO_PRICE / QTY_ZERO (None when buying
+                   or when there is no agreement)."""
+    if rule == "loose":
+        agree = bool(sig["ripple_buy"] and sig["candle_buy"] and sig["algo1_not_bearish"])
+    else:
+        agree = bool(sig["algo1_buy"] and sig["ripple_buy"] and sig["candle_buy"])
+    if not agree:
+        return {"should_buy": False, "agree": False, "blocker": None}
+    if holding:
+        return {"should_buy": False, "agree": True, "blocker": "HOLDING"}
+    if eod:
+        return {"should_buy": False, "agree": True, "blocker": "EOD"}
+    if rule == "loose" and not _prob_ok(prob):     # strict has no prob gate
+        return {"should_buy": False, "agree": True, "blocker": "PROB"}
+    if px is None:
+        return {"should_buy": False, "agree": True, "blocker": "NO_PRICE"}
+    if int(cash * pos_pct / 100 / px) < 1:
+        return {"should_buy": False, "agree": True, "blocker": "QTY_ZERO"}
+    if mode == "semi":     # valid, sized setup — machine advises; user taps Buy
+        return {"should_buy": False, "agree": True, "blocker": "SEMI"}
+    return {"should_buy": True, "agree": True, "blocker": None}
 
 
 def exit_reason(rule: str, entry: float, px: float, peak: float,
@@ -410,6 +456,7 @@ def tick(db, force: bool = False) -> dict[str, Any]:
         out["reason"] = "EOD flat — no new entries after 15:18"
         return out
     now_ts = _t.time()
+    cash = _cash(db)
     for code in cfg["codes"]:
         if code in open_codes:
             continue
@@ -420,26 +467,28 @@ def tick(db, force: bool = False) -> dict[str, Any]:
         sig = _signals_for(db, code, need, tf, scan_items, allow_compute=True)
         snap[code] = sig
         _stamp_recent({code: sig}, now_ts)         # fresh compute may add a BUY just now
-        wsig = _windowed_sig(code, sig, now_ts)    # buys-now OR fired-within-5-min
+        wsig = _windowed_sig(code, sig, now_ts)    # buys-now OR fired-within-window
         prob = sig["algo1_prob"]
         if rule == "loose" and prob is None and wsig["ripple_buy"] and wsig["candle_buy"]:
             try:                                   # only ONE stock, only when close → cheap
                 from services.hourly_model import prob_up_1h
-                prob = prob_up_1h(db, code)
+                prob = _pct(prob_up_1h(db, code))  # normalize fraction → percent
             except Exception:
                 db.rollback()
-        if not entry_fires(rule, wsig, _prob_ok(prob)):
-            continue
+        sig["algo1_prob"] = prob     # store the REAL (computed) prob so status() shows the
+                                     # SAME gate result — the card can't say BUY if we won't
         px = _px(code)
-        if px is None:
+        # ONE SOURCE OF TRUTH — the identical function status() uses to render the card
+        dec = entry_decision(rule, wsig, prob, holding=False, mode=cfg["mode"],
+                             cash=cash, px=px, pos_pct=cfg["pos_pct"], eod=False)
+        sig["_dec"] = dec            # so status shows tick's real decision for this code
+        if not (dec["should_buy"] or dec["blocker"] == "SEMI"):
             continue
-        qty = int(_cash(db) * cfg["pos_pct"] / 100 / px)
-        if qty < 1:
-            continue
+        qty = int(cash * cfg["pos_pct"] / 100 / px)
         agree_ko = "3/3 동의" if rule == "strict" else "2/3+브레인"
         why = (f"교차검증 {agree_ko}: 🤖알고1 {sig['algo1']} · ⚡리플 {sig['ripple']} · "
                f"🕯️캔들 {sig['candle']} 동시 매수 → 진입 (−{cfg['stop_pct']}% 손절·트레일 청산)")
-        if cfg["mode"] == "semi":
+        if dec["blocker"] == "SEMI":
             _semi_signals[code] = {"code": code, "name": _name(code), "price": px,
                                    "qty": qty, "why": why, "ts": n.timestamp()}
             out["opened"].append({"code": code, "semi_signal": True})
@@ -550,6 +599,9 @@ def status(db) -> dict[str, Any]:
     from concurrent.futures import ThreadPoolExecutor
     with ThreadPoolExecutor(max_workers=8) as _ex:
         _pxs = dict(zip(cfg["codes"], _ex.map(_px, cfg["codes"])))
+    _cash_now = _cash(db)                     # for the qty gate (same input tick uses)
+    _n_kst = datetime.now(KST)
+    _eod_now = (_n_kst.hour * 60 + _n_kst.minute) >= (EOD_FLAT_HHMM[0] * 60 + EOD_FLAT_HHMM[1])
     now_ts = _t.time()
     win_min = round(AGREE_WINDOW_SEC / 60)
     stocks = []
@@ -559,7 +611,13 @@ def status(db) -> dict[str, Any]:
         o = open_map.get(code)
         # RECENT-WINDOW agreement: a signal counts if buying NOW or fired within the window
         wsig = _windowed_sig(code, sig, now_ts)
-        agree_buy = entry_fires(rule, wsig, _prob_ok(sig["algo1_prob"]))
+        # SINGLE SOURCE OF TRUTH: the exact decision tick() uses (entry_decision). The card
+        # can NEVER say '→ BUY entry' unless tick would truly enter next pass. sig['algo1_prob']
+        # carries tick's REAL (computed+normalized) prob for candidates, so the gates match.
+        dec = entry_decision(rule, wsig, sig["algo1_prob"], holding=bool(o),
+                             mode=cfg["mode"], cash=_cash_now, px=px,
+                             pos_pct=cfg["pos_pct"], eod=_eod_now)
+        agree_buy = dec["should_buy"]
         chg = None
         try:
             from services.paper_desk import _chg_cache
@@ -583,9 +641,26 @@ def status(db) -> dict[str, Any]:
         _nm_ko = {"algo1": "알고1", "ripple": "잔물결", "candle": "캔들"}
         _nm_en = {"algo1": "Algo1", "ripple": "Ripple", "candle": "Candle"}
         not_buy = [k for k, v in wbuys.items() if not v]
-        if agree_buy:
+        _pp = _pct(sig["algo1_prob"])
+        _pp = round(_pp) if _pp is not None else None
+        if dec["should_buy"]:
             agree_ko = f"3개 모두 매수 동의 (최근 {win_min}분 내) → 매수 진입"
             agree_en = f"all 3 agree to buy (within {win_min} min) → BUY entry"
+        elif dec["agree"] and dec["blocker"] == "SEMI":
+            agree_ko = f"3개 모두 매수 동의 (최근 {win_min}분) — 세미 모드: 매수 버튼을 누르세요"
+            agree_en = f"all 3 agree (within {win_min} min) — semi mode: tap Buy to enter"
+        elif dec["agree"]:
+            # HONEST blocked-entry reason — the three agree but the engine won't buy.
+            _bk = {
+                "HOLDING":  ("이미 보유 중 — 중복 매수 안 함", "already holding — no double entry"),
+                "EOD":      ("15:18 이후 — 신규 진입 없음", "after 15:18 — no new entries"),
+                "PROB":     (f"1시간 상승확률 {_pp}%<50% — 진입 보류",
+                             f"1-hour up-probability {_pp}% < 50% — no entry"),
+                "NO_PRICE": ("실시간 가격 없음 — 진입 보류", "no live price — no entry"),
+                "QTY_ZERO": ("주문 수량 1주 미만 — 진입 보류", "position size < 1 share — no entry"),
+            }.get(dec["blocker"], ("진입 보류", "entry on hold"))
+            agree_ko = f"⏸ 3개 동의했지만 {_bk[0]}"
+            agree_en = f"⏸ 3 agree BUT {_bk[1]}"
         elif n_buy > 0:
             miss_ko = "·".join(_nm_ko[k] for k in not_buy)
             miss_en = ", ".join(_nm_en[k] for k in not_buy)
