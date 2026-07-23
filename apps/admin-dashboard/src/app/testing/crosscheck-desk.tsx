@@ -471,7 +471,8 @@ export default function CrossCheckDesk({ mode: initialMode }: { mode: CCMode }) 
     setBusy(true);
     try {
       const r = await apiPost<{ ok: boolean; error?: string; reason?: string; status?: string; fill_price?: number; realized_pnl?: number; realized_pnl_pct?: number }>(
-        "/paper-desk/order", { ticker: tk, side: oSide, qty: q, order_type: oType, limit_price: lp, source: "algo4" });
+        "/paper-desk/order", { ticker: tk, side: oSide, qty: q, order_type: oType, limit_price: lp, source: "algo4",
+                               ref_price: oType === "market" ? fpx(tk) : undefined });
       if (r.ok) {
         setNote(r.status === "OPEN"
           ? t(`⏳ 지정가 주문 접수 — ₩${fmt(lp)} 도달 시 자동 체결`, `⏳ limit order queued — fills at ₩${fmt(lp)}`)
@@ -488,7 +489,7 @@ export default function CrossCheckDesk({ mode: initialMode }: { mode: CCMode }) 
     setBusy(true);
     try {
       const r = await apiPost<{ ok: boolean; error?: string; reason?: string; fill_price?: number; realized_pnl?: number; realized_pnl_pct?: number }>(
-        "/paper-desk/order", { ticker, side: "SELL", qty, order_type: "market", source: "algo4" });
+        "/paper-desk/order", { ticker, side: "SELL", qty, order_type: "market", source: "algo4", ref_price: fpx(ticker) });
       setNote(r.ok ? t(`✅ 매도 — 실현 ${(r.realized_pnl || 0) > 0 ? "+" : ""}₩${fmt(r.realized_pnl)} (${r.realized_pnl_pct ?? "-"}%)`,
                        `✅ sold — realized ${(r.realized_pnl || 0) > 0 ? "+" : ""}₩${fmt(r.realized_pnl)} (${r.realized_pnl_pct ?? "-"}%)`)
                    : `❌ ${r.error || r.reason || "order failed"}`);
@@ -513,7 +514,8 @@ export default function CrossCheckDesk({ mode: initialMode }: { mode: CCMode }) 
     if (!confirm(t(`${name} 전량 매도할까요?`, `Sell all of ${name}?`))) return;
     setBusy(true);
     try {
-      const r = await apiPost<{ ok: boolean; error?: string; realized_pnl?: number; realized_pnl_pct?: number }>(`/paper-desk/crosscheck/sell?code=${code}`);
+      const _rp = fpx(code); // WYSIWYG: fill at the on-screen live price
+      const r = await apiPost<{ ok: boolean; error?: string; realized_pnl?: number; realized_pnl_pct?: number }>(`/paper-desk/crosscheck/sell?code=${code}${_rp != null ? `&price=${_rp}` : ""}`);
       setNote(r.ok ? t(`✅ 매도 — 실현 ${(r.realized_pnl || 0) > 0 ? "+" : ""}₩${fmt(r.realized_pnl)} (${r.realized_pnl_pct}%)`, `✅ sold — ${(r.realized_pnl || 0) > 0 ? "+" : ""}₩${fmt(r.realized_pnl)} (${r.realized_pnl_pct}%)`) : `❌ ${r.error}`);
     } catch (e) { setNote(`❌ ${(e as Error).message}`); }
     setBusy(false); load();
@@ -523,7 +525,8 @@ export default function CrossCheckDesk({ mode: initialMode }: { mode: CCMode }) 
     if (!confirm(t(`${name} 매수할까요? (교차검증 기록 · 가짜 돈)`, `Buy ${name}? (counts as Cross-Check · paper money)`))) return;
     setBusy(true);
     try {
-      const r = await apiPost<{ ok: boolean; error?: string; qty?: number; fill_price?: number; stop_at?: number }>(`/paper-desk/crosscheck/buy?code=${code}`);
+      const _rp = fpx(code); // WYSIWYG: fill at the on-screen live price
+      const r = await apiPost<{ ok: boolean; error?: string; qty?: number; fill_price?: number; stop_at?: number }>(`/paper-desk/crosscheck/buy?code=${code}${_rp != null ? `&price=${_rp}` : ""}`);
       setNote(r.ok
         ? t(`✅ 매수 ${fmt(r.qty)}주 @ ₩${fmt(r.fill_price)} — 손절 ₩${fmt(r.stop_at)} (합의 이탈·트레일·−손절에 매도)`,
             `✅ bought ${fmt(r.qty)} @ ₩${fmt(r.fill_price)} — stop ₩${fmt(r.stop_at)} (sells on lost consensus · trail · −stop)`)
@@ -549,6 +552,13 @@ export default function CrossCheckDesk({ mode: initialMode }: { mode: CCMode }) 
   const fast = useFastPrices(visibleCodes);
   const fpx = (code?: string, fb?: number | null) => (code && fast[code]?.price != null ? fast[code].price : fb);
   const fchg = (code?: string, fb?: number | null) => (code && fast[code]?.chg != null ? fast[code].chg : fb);
+  // P&L % from the SAME live price shown on the card (net of the 0.23% round-trip fee), so the
+  // % you see matches the price you see — and thus the WYSIWYG fill (boss 2026-07-23).
+  const livePnlPct = (entry?: number | null, code?: string, fb?: number | null) => {
+    const p = fpx(code);
+    if (p != null && entry) return Math.round(((p / entry - 1) * 100 - 0.23) * 100) / 100;
+    return fb ?? null;
+  };
 
   // 💰 shared paper-money bar — identical on auto / semi / manual (boss 2026-07-22)
   const moneyBar = st ? (
@@ -760,7 +770,7 @@ export default function CrossCheckDesk({ mode: initialMode }: { mode: CCMode }) 
                     <td className="text-right px-2 tabular-nums">{fmt(p.avg_price)}</td>
                     <td className="text-right px-2 tabular-nums font-bold"><FlashPrice price={fpx(p.ticker, p.live_price)} chg={p.unrealized_pnl_pct} /></td>
                     <td className="text-right px-2 tabular-nums">{fmt(Math.round(p.value))}</td>
-                    <td className="text-right px-2 tabular-nums font-extrabold" style={{ color: pnlCol(p.unrealized_pnl) }}>{(p.unrealized_pnl || 0) > 0 ? "+" : ""}{fmt(Math.round(p.unrealized_pnl || 0))}{p.unrealized_pnl_pct != null && ` (${p.unrealized_pnl_pct > 0 ? "+" : ""}${p.unrealized_pnl_pct}%)`}</td>
+                    {(() => { const lp = livePnlPct(p.avg_price, p.ticker, p.unrealized_pnl_pct); const won = (lp != null && p.qty) ? Math.round(p.avg_price * p.qty * lp / 100) : (p.unrealized_pnl || 0); return <td className="text-right px-2 tabular-nums font-extrabold" style={{ color: pnlCol(won) }}>{won > 0 ? "+" : ""}{fmt(Math.round(won))}{lp != null && ` (${lp > 0 ? "+" : ""}${lp}%)`}</td>; })()}
                     <td className="px-2 text-right">
                       <button disabled={busy} onClick={(e) => { e.stopPropagation(); sellAllPos(p.ticker, p.name, p.qty); }}
                         className="text-[11px] font-bold px-3 py-1 rounded-lg text-white disabled:opacity-50" style={{ background: BLUE }}>{t("전량 매도", "Sell all")}</button>
@@ -964,7 +974,7 @@ export default function CrossCheckDesk({ mode: initialMode }: { mode: CCMode }) 
                 {s.state === "LONG" ? (
                   <div className="mt-1.5 text-[12.5px] tabular-nums text-[var(--text-secondary)]">
                     {t("매수가", "entry")} ₩{fmt(s.entry)} × {fmt(s.qty)}{t("주", "sh")}
-                    <span className="ml-2 font-extrabold" style={{ color: pnlCol(s.pnl_pct) }}>{s.pnl_pct != null && s.pnl_pct > 0 ? "+" : ""}{s.pnl_pct}%</span>
+                    {(() => { const lp = livePnlPct(s.entry, s.code, s.pnl_pct); return <span className="ml-2 font-extrabold" style={{ color: pnlCol(lp) }}>{lp != null && lp > 0 ? "+" : ""}{lp}%</span>; })()}
                     <div className="mt-0.5 text-[11.5px]">🛑 ₩{fmt(s.stop_at)} · {mode === "semi" ? t("(합의 이탈 시 매도 추천)", "(SELL advice when consensus breaks)") : t("(합의 이탈/트레일/−손절에 매도)", "(sells on lost consensus / trail / −stop)")}</div>
                     {mode === "semi" && (
                       // semi-auto: you always hold the SELL trigger. The machine only ADVISES
@@ -1007,14 +1017,16 @@ export default function CrossCheckDesk({ mode: initialMode }: { mode: CCMode }) 
               </tr></thead>
               <tbody>
                 {held.map((s) => {
-                  const unreal = ((s.price || 0) - (s.entry || 0)) * (s.qty || 0);
+                  const livePx = fpx(s.code, s.price);
+                  const lp = livePnlPct(s.entry, s.code, s.pnl_pct);
+                  const unreal = ((livePx || 0) - (s.entry || 0)) * (s.qty || 0);
                   return (
                     <tr key={s.code} className="border-t border-[var(--border-default)]/40">
                       <td className="px-3 py-1.5 font-bold text-[var(--text-primary)]">{s.name} <span className="text-[10px] text-[var(--text-muted)]">{s.code}</span></td>
                       <td className="text-right px-2 tabular-nums">{fmt(s.qty)}</td>
                       <td className="text-right px-2 tabular-nums">{fmt(s.entry)}</td>
-                      <td className="text-right px-2 tabular-nums font-bold">{fmt(s.price)}</td>
-                      <td className="text-right px-2 tabular-nums font-extrabold" style={{ color: pnlCol(unreal) }}>{unreal > 0 ? "+" : ""}{fmt(Math.round(unreal))} ({s.pnl_pct != null && s.pnl_pct > 0 ? "+" : ""}{s.pnl_pct}%)</td>
+                      <td className="text-right px-2 tabular-nums font-bold">{fmt(livePx)}</td>
+                      <td className="text-right px-2 tabular-nums font-extrabold" style={{ color: pnlCol(unreal) }}>{unreal > 0 ? "+" : ""}{fmt(Math.round(unreal))} ({lp != null && lp > 0 ? "+" : ""}{lp}%)</td>
                       <td className="px-2 text-right">
                         <button disabled={busy} onClick={() => sellOne(s.code, s.name)} className="text-[11px] font-bold px-3 py-1 rounded-lg text-white disabled:opacity-50" style={{ background: BLUE }}>{t("전량 매도", "Sell all")}</button>
                       </td>

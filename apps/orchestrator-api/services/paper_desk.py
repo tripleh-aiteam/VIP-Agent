@@ -329,7 +329,7 @@ def _fill(db, order_id: int, ticker: str, name: str, side: str, qty: int, px: fl
 
 def place_order(db, ticker: str, side: str, qty: int,
                 order_type: str = "market", limit_price: Optional[float] = None,
-                source: str = "manual") -> dict:
+                source: str = "manual", ref_price: Optional[float] = None) -> dict:
     _ensure(db)
     ticker = str(ticker).strip().zfill(6)
     side = side.upper()
@@ -349,6 +349,17 @@ def place_order(db, ticker: str, side: str, qty: int,
     px, kw_name = _live_price(ticker)
     if px is None:
         return {"ok": False, "error": f"no live price for {ticker} — check the code"}
+    # WYSIWYG paper fill (boss 2026-07-23): a MARKET order fills at the price the user was
+    # LOOKING AT (ref_price = the card's live price) when it's within ±3% of the server's
+    # live price — so the realized % matches the % they clicked, not a fresh price fetched a
+    # moment later. Outside the band (stale/bad value) we ignore it and use the live price.
+    if order_type == "market" and ref_price:
+        try:
+            rp = float(ref_price)
+            if rp > 0 and abs(rp / px - 1) <= 0.03:
+                px = rp
+        except (TypeError, ValueError):
+            pass
     name = _name_for(ticker, kw_name)
     oid = db.execute(text(
         "INSERT INTO paper_desk_orders (ticker, name, side, qty, order_type, limit_price, source) "

@@ -362,9 +362,9 @@ def _windowed_sig(code: str, sig: dict, now_ts: float) -> dict:
     return w
 
 
-def _place(db, code: str, side: str, qty: int):
+def _place(db, code: str, side: str, qty: int, ref_price: Optional[float] = None):
     from services.paper_desk import place_order
-    return place_order(db, code, side, qty, "market", source="algo4")
+    return place_order(db, code, side, qty, "market", source="algo4", ref_price=ref_price)
 
 
 def _cash(db) -> float:
@@ -508,7 +508,7 @@ def tick(db, force: bool = False) -> dict[str, Any]:
     return out
 
 
-def semi_buy(db, code: str) -> dict[str, Any]:
+def semi_buy(db, code: str, ref_price: Optional[float] = None) -> dict[str, Any]:
     _ensure(db)
     code = str(code).strip().zfill(6)
     sig = _semi_signals.get(code)
@@ -519,7 +519,7 @@ def semi_buy(db, code: str) -> dict[str, Any]:
     qty = (sig or {}).get("qty") or int(_cash(db) * cfg["pos_pct"] / 100 / px)
     if qty < 1:
         return {"ok": False, "error": "size too small"}
-    r = _place(db, code, "BUY", qty)
+    r = _place(db, code, "BUY", qty, ref_price=ref_price)
     if not r.get("ok"):
         return r
     fill = float(r.get("fill_price") or px)
@@ -534,7 +534,7 @@ def semi_buy(db, code: str) -> dict[str, Any]:
             "stop_at": round(fill * (1 - cfg["stop_pct"] / 100))}
 
 
-def sell_all(db, code: str) -> dict[str, Any]:
+def sell_all(db, code: str, ref_price: Optional[float] = None) -> dict[str, Any]:
     _ensure(db)
     code = str(code).strip().zfill(6)
     row = db.execute(text(
@@ -548,7 +548,7 @@ def sell_all(db, code: str) -> dict[str, Any]:
     sell_qty = min(int(qty), held)
     if sell_qty <= 0:
         return {"ok": False, "error": "no shares"}
-    r = _place(db, code, "SELL", sell_qty)
+    r = _place(db, code, "SELL", sell_qty, ref_price=ref_price)
     if not r.get("ok"):
         return r
     fill = float(r.get("fill_price") or _px(code) or entry)

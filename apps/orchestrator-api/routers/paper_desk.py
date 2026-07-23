@@ -23,6 +23,9 @@ class OrderBody(BaseModel):
     order_type: str = Field("market", description="market | limit")
     limit_price: Optional[float] = Field(None, description="trigger price for limit orders")
     source: Optional[str] = Field(None, description="which page placed it: algo1 / manual …")
+    ref_price: Optional[float] = Field(None, description="the on-screen live price at click "
+                                       "time — a MARKET order fills at THIS when within ±3% of "
+                                       "the server price (WYSIWYG: realized % matches the card)")
 
 
 def _resolve(ticker: str, db: Optional[Session] = None) -> str:
@@ -314,7 +317,8 @@ def desk_order(body: OrderBody, db: Session = Depends(get_db)):
         return {"ok": False, "error": f"'{body.ticker}' 종목을 찾지 못했어요"}
     src = body.source if body.source in ("algo1", "algo2", "algo3", "algo4", "guard", "manual") else "manual"
     return place_order(db, code, body.side, body.qty,
-                       order_type=body.order_type, limit_price=body.limit_price, source=src)
+                       order_type=body.order_type, limit_price=body.limit_price, source=src,
+                       ref_price=body.ref_price)
 
 
 @router.post("/cancel/{order_id}")
@@ -594,16 +598,19 @@ def crosscheck_params(rule: Optional[str] = Query(None), stop_pct: Optional[floa
 
 
 @router.post("/crosscheck/buy")
-def crosscheck_buy(code: str = Query(...), db: Session = Depends(get_db)):
-    """Semi mode: the boss accepts a 🔔 3-agree BUY recommendation."""
+def crosscheck_buy(code: str = Query(...), price: Optional[float] = Query(None),
+                   db: Session = Depends(get_db)):
+    """Semi mode: the boss accepts a 🔔 3-agree BUY recommendation. `price` = the on-screen
+    live price → the paper fill uses it (WYSIWYG) when within ±3% of the server price."""
     from services.cross_trader import semi_buy
-    return semi_buy(db, code)
+    return semi_buy(db, code, ref_price=price)
 
 
 @router.post("/crosscheck/sell")
-def crosscheck_sell(code: str = Query(...), db: Session = Depends(get_db)):
+def crosscheck_sell(code: str = Query(...), price: Optional[float] = Query(None),
+                    db: Session = Depends(get_db)):
     from services.cross_trader import sell_all
-    return sell_all(db, code)
+    return sell_all(db, code, ref_price=price)
 
 
 @router.post("/crosscheck/tick")
