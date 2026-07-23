@@ -678,6 +678,10 @@ def status(db) -> dict[str, Any]:
             "stop_at": stop_at, "advice": advice,
             "algo1": sig["algo1"], "ripple": sig["ripple"], "candle": sig["candle"],
             "algo1_prob": sig["algo1_prob"], "agree_buy": agree_buy,
+            # `agree` = the three line up (consensus within the window), INDEPENDENT of the
+            # auto-buy blockers — the semi-auto recommendation lists every agreeing stock so
+            # the user can BUY it anytime inside the window (boss 2026-07-23).
+            "agree": dec["agree"], "blocker": dec["blocker"],
             "algo1_why_ko": sig["algo1_why_ko"], "algo1_why_en": sig["algo1_why_en"],
             "ripple_why_ko": sig["ripple_why_ko"], "ripple_why_en": sig["ripple_why_en"],
             "candle_why_ko": sig["candle_why_ko"], "candle_why_en": sig["candle_why_en"],

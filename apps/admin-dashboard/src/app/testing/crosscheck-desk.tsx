@@ -44,6 +44,7 @@ type CCStock = {
   code: string; name: string; price?: number | null; chg?: number | null; state: "WAIT" | "LONG";
   entry?: number | null; qty?: number | null; pnl_pct?: number | null; stop_at?: number | null;
   algo1: Sig; ripple: Sig; candle: Sig; algo1_prob?: number | null; agree_buy: boolean;
+  agree?: boolean; blocker?: string | null;
   advice?: string | null;
   // per-algorithm bilingual reasons + agreement summary (boss 2026-07-22)
   algo1_why_ko?: string; algo1_why_en?: string;
@@ -517,10 +518,25 @@ export default function CrossCheckDesk({ mode: initialMode }: { mode: CCMode }) 
     } catch (e) { setNote(`❌ ${(e as Error).message}`); }
     setBusy(false); load();
   };
+  // semi-auto: buy any agreeing stock on demand (buy anytime within the window)
+  const buyCross = async (code: string, name: string) => {
+    if (!confirm(t(`${name} 매수할까요? (교차검증 기록 · 가짜 돈)`, `Buy ${name}? (counts as Cross-Check · paper money)`))) return;
+    setBusy(true);
+    try {
+      const r = await apiPost<{ ok: boolean; error?: string; qty?: number; fill_price?: number; stop_at?: number }>(`/paper-desk/crosscheck/buy?code=${code}`);
+      setNote(r.ok
+        ? t(`✅ 매수 ${fmt(r.qty)}주 @ ₩${fmt(r.fill_price)} — 손절 ₩${fmt(r.stop_at)} (합의 이탈·트레일·−손절에 매도)`,
+            `✅ bought ${fmt(r.qty)} @ ₩${fmt(r.fill_price)} — stop ₩${fmt(r.stop_at)} (sells on lost consensus · trail · −stop)`)
+        : `❌ ${r.error}`);
+    } catch (e) { setNote(`❌ ${(e as Error).message}`); }
+    setBusy(false); load();
+  };
 
   const cards = useMemo(() => {
     if (!sc) return [] as CCStock[];
-    return sc.stocks.filter((s) => MAINS.includes(s.code) || showExtra.includes(s.code));
+    // always include HELD stocks so every position shows its card (+ SELL button in semi),
+    // even a non-main one bought from the recommendations (boss 2026-07-23).
+    return sc.stocks.filter((s) => MAINS.includes(s.code) || showExtra.includes(s.code) || s.state === "LONG");
   }, [sc, showExtra]);
   const selStock = useMemo(() => sc?.stocks.find((s) => s.code === sel), [sc, sel]);
 
@@ -846,29 +862,43 @@ export default function CrossCheckDesk({ mode: initialMode }: { mode: CCMode }) 
       {/* 🏁 verdict board (now includes Cross-Check) */}
       <div className="mt-4"><AlgoVerdict /></div>
 
-      {/* semi buy cards (agreement fired) */}
-      {mode === "semi" && sc && (sc.signals || []).length > 0 && (
-        <div className="mt-4 grid md:grid-cols-2 gap-3">
-          {(sc.signals || []).map((g) => (
-            <div key={g.code} className="rounded-2xl border-2 px-4 py-3" style={{ borderColor: "#2e7d32", background: "rgba(46,125,50,0.07)" }}>
-              <div className="text-[15px] font-extrabold" style={{ color: "#2e7d32" }}>🔔 {t(`3개 동의 — ${g.name} 매수?`, `3 of 3 agree — BUY ${g.name}?`)}
-                <span className="ml-2 tabular-nums text-[var(--text-primary)]">₩{fmt(g.price)}</span></div>
-              <div className="mt-1 text-[11.5px] text-[var(--text-secondary)]">{g.why}</div>
-              <ExplainAccordion code={g.code} lang={lang} t={t} />
-              <div className="mt-2 flex items-center gap-2">
-                <span className="text-[12.5px] font-bold tabular-nums">{t(`수량 ${fmt(g.qty)}주`, `${fmt(g.qty)} sh`)}</span>
-                <button disabled={busy} onClick={async () => {
-                  setBusy(true);
-                  try { const r = await apiPost<{ ok: boolean; error?: string; stop_at?: number }>(`/paper-desk/crosscheck/buy?code=${g.code}`);
-                    setNote(r.ok ? t(`✅ 매수 — 합의 이탈/트레일/−손절에 매도 (손절 ₩${fmt(r.stop_at)})`, `✅ bought — sells on lost consensus / trail / −stop (stop ₩${fmt(r.stop_at)})`) : `❌ ${r.error}`);
-                  } catch (e) { setNote(`❌ ${(e as Error).message}`); }
-                  setBusy(false); load();
-                }} className="text-[14px] font-extrabold px-6 py-1.5 rounded-xl text-white disabled:opacity-50" style={{ background: RED }}>{t("매수", "BUY")}</button>
-              </div>
+      {/* SEMI-AUTO recommendation — EVERY stock where the 3 agree within the window
+          (not just the 2 mains), each with a BUY button you can tap anytime inside the
+          window. Auto mode buys these itself; semi mode hands YOU the trigger. */}
+      {mode === "semi" && sc && (() => {
+        const winM = sc.stocks?.[0]?.window_min ?? 20;
+        const recs = (sc.stocks || []).filter((s) => (s.agree ?? s.agree_buy) && s.state !== "LONG");
+        return (
+          <div className="mt-4">
+            <div className="text-[13px] font-extrabold mb-2" style={{ color: "#2e7d32" }}>
+              🔔 {recs.length > 0
+                ? t(`매수 추천 ${recs.length}종목 — 최근 ${winM}분 내 3개 동의 · 창 안이면 지금 사도 됩니다`,
+                     `${recs.length} buy recommendation${recs.length > 1 ? "s" : ""} — 3 agree within ${winM} min · buy anytime in the window`)
+                : t(`매수 추천 없음 — 아직 3개가 최근 ${winM}분 내 동의하지 않았습니다`,
+                     `no buy recommendations yet — the 3 haven't agreed within ${winM} min`)}
             </div>
-          ))}
-        </div>
-      )}
+            {recs.length > 0 && (
+              <div className="grid md:grid-cols-2 gap-3">
+                {recs.map((g) => (
+                  <div key={g.code} className="rounded-2xl border-2 px-4 py-3" style={{ borderColor: "#2e7d32", background: "rgba(46,125,50,0.07)" }}>
+                    <div className="flex items-baseline gap-2 flex-wrap">
+                      <span className="text-[15px] font-extrabold" style={{ color: "#2e7d32" }}>🔔 {g.name}</span>
+                      <span className="text-[10.5px] text-[var(--text-muted)]">{g.code}</span>
+                      <FlashPrice price={fpx(g.code, g.price)} chg={fchg(g.code, g.chg)} className="ml-auto text-[15px] font-extrabold tabular-nums" />
+                    </div>
+                    <div className="mt-1 text-[11.5px] text-[var(--text-secondary)]">{(lang === "ko" ? g.agree_why_ko : g.agree_why_en) || t("3개 동의", "3 agree")}</div>
+                    <ExplainAccordion code={g.code} lang={lang} t={t} />
+                    <button disabled={busy} onClick={() => buyCross(g.code, g.name)}
+                      className="mt-2 w-full text-[14px] font-extrabold py-1.5 rounded-xl text-white disabled:opacity-50" style={{ background: RED }}>
+                      {t(`매수 — ${g.name}`, `BUY ${g.name}`)}
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        );
+      })()}
       {note && <div className="mt-2 text-[12.5px] font-bold text-[var(--text-primary)]">{note}</div>}
 
       {/* control + dials */}
@@ -936,10 +966,16 @@ export default function CrossCheckDesk({ mode: initialMode }: { mode: CCMode }) 
                     {t("매수가", "entry")} ₩{fmt(s.entry)} × {fmt(s.qty)}{t("주", "sh")}
                     <span className="ml-2 font-extrabold" style={{ color: pnlCol(s.pnl_pct) }}>{s.pnl_pct != null && s.pnl_pct > 0 ? "+" : ""}{s.pnl_pct}%</span>
                     <div className="mt-0.5 text-[11.5px]">🛑 ₩{fmt(s.stop_at)} · {mode === "semi" ? t("(합의 이탈 시 매도 추천)", "(SELL advice when consensus breaks)") : t("(합의 이탈/트레일/−손절에 매도)", "(sells on lost consensus / trail / −stop)")}</div>
-                    {mode === "semi" && s.advice && (
-                      <div className="mt-2 rounded-lg px-3 py-2 flex items-center gap-2" style={{ background: "rgba(211,47,47,0.1)" }}>
-                        <b className="text-[13px]" style={{ color: RED }}>{t(`🔻 ${s.advice} — 지금 파세요`, `🔻 ${s.advice} — SELL now`)}</b>
-                        <button disabled={busy} onClick={() => sellOne(s.code, s.name)} className="ml-auto text-[13px] font-extrabold px-5 py-1.5 rounded-xl text-white disabled:opacity-50" style={{ background: BLUE }}>{t("매도", "SELL")}</button>
+                    {mode === "semi" && (
+                      // semi-auto: you always hold the SELL trigger. The machine only ADVISES
+                      // (−stop / trail / lost-consensus) — it never sells for you in semi.
+                      <div className="mt-2 rounded-lg px-3 py-2 flex items-center gap-2" style={{ background: s.advice ? "rgba(211,47,47,0.12)" : "rgba(21,101,192,0.06)" }}>
+                        <b className="text-[12.5px]" style={{ color: s.advice ? RED : "var(--text-secondary)" }}>
+                          {s.advice
+                            ? t(`🔻 ${s.advice} — 지금 파세요`, `🔻 ${s.advice} — SELL now`)
+                            : t("언제든 직접 매도 — 손절·트레일·합의이탈은 알림으로 알려드려요", "sell anytime — the machine flags −stop / trail / lost-consensus as advice")}
+                        </b>
+                        <button disabled={busy} onClick={() => sellOne(s.code, s.name)} className="ml-auto text-[13px] font-extrabold px-5 py-1.5 rounded-xl text-white disabled:opacity-50" style={{ background: BLUE }}>{t("전량 매도", "SELL all")}</button>
                       </div>
                     )}
                   </div>
