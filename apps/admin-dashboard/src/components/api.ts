@@ -2,9 +2,15 @@ const _base = process.env.NEXT_PUBLIC_API_BASE_URL;
 
 // Production fallback — if env var is missing or invalid, use Render URL
 const PROD_API = "https://vip-orchestrator.onrender.com";
+// A RELATIVE base ("/api") is same-origin: the Next.js server rewrites /api/* to the
+// private backend (localhost:8000), so remote Tailscale users work and port 8000 is
+// NEVER exposed. This is the preferred setup for team remote access (boss 2026-07-23).
+const isRelative = !!_base && _base.startsWith("/");
 const isValidUrl = _base && (_base.startsWith("http://") || _base.startsWith("https://")) && !_base.includes("eyJ");
 
-export const API = isValidUrl ? _base : (typeof window !== "undefined" && window.location.hostname !== "localhost" ? PROD_API : "http://localhost:8000");
+export const API = isRelative ? _base
+  : isValidUrl ? _base
+  : (typeof window !== "undefined" && window.location.hostname !== "localhost" ? PROD_API : "http://localhost:8000");
 
 /**
  * Auth headers for the orchestrator, derived from the boss's login session
