@@ -46,7 +46,12 @@ PROB_MIN = 50.0
 # clocks — the brain holds BUY for hours while Ripple/Candle only flash for seconds — so
 # strict same-instant 3/3 almost never fires. Instead an algorithm "agrees" if it said BUY
 # within the last AGREE_WINDOW_SEC. Keeps full consensus, but lets brief signals line up.
-AGREE_WINDOW_SEC = 300           # 5 minutes
+AGREE_WINDOW_SEC = 1200          # 20 minutes (boss 2026-07-23: widened 5→20 to get
+                                 # MORE trades to test faster. The safety exits are
+                                 # unchanged — only the ENTRY agreement window widened, so
+                                 # the three algos can line up over 20 min, not just 5.
+                                 # Trade-off: staler consensus may soften win-rate a little;
+                                 # the fresh brain-not-bearish + prob≥50 entry gate still applies.
 # fallback default watchlist (the shared 21 the fleet trades) if scalp_state isn't set yet
 SCALP_21 = ("000660,005930,042660,035420,009150,373220,005380,000270,005490,035720,"
             "051910,006400,105560,055550,012450,329180,034020,010140,042700,066570,006840")
