@@ -456,10 +456,15 @@ def tick(db, force: bool = False) -> dict[str, Any]:
             _sell_hint.pop(tk, None)
             open_codes.add(tk)
             continue
-        if cfg["mode"] == "semi":
-            _sell_hint[tk] = reason      # machine never sells in semi — advises
+        # SAFETY NET IS ALWAYS ON (boss 2026-07-24): the −stop / trailing-take / EOD-flat
+        # exits AUTO-EXECUTE in EVERY mode — a −1% stop must never bleed to −5% just because
+        # the engine is in semi. Only the DISCRETIONARY consensus-sell stays advice-only in
+        # semi (that's the exit where "you decide" genuinely applies).
+        if cfg["mode"] == "semi" and reason == "CONSENSUS":
+            _sell_hint[tk] = reason
             open_codes.add(tk)
             continue
+        _sell_hint.pop(tk, None)
         held = int(db.execute(text(
             "SELECT qty FROM paper_desk_positions WHERE ticker=:t"), {"t": tk}).scalar() or 0)
         sell_qty = min(int(qty), held)
