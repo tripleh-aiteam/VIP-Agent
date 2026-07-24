@@ -52,6 +52,34 @@ AGREE_WINDOW_SEC = 1200          # 20 minutes (boss 2026-07-23: widened 5→20 t
                                  # the three algos can line up over 20 min, not just 5.
                                  # Trade-off: staler consensus may soften win-rate a little;
                                  # the fresh brain-not-bearish + prob≥50 entry gate still applies.
+# AGREEMENT COMBOS (boss 2026-07-24): pick WHICH algorithms must all say BUY for a
+# Cross-Check entry — not just all-3. Each combo lists the required signal keys; the entry
+# fires when every listed one bought within the window. 'loose' keeps its own softer rule.
+#   strict = all three · a1a2 = Brain+Ripple · a1a3 = Brain+Candle · a2a3 = Ripple+Candle
+_COMBO_REQ: dict[str, tuple[str, ...]] = {
+    "strict": ("algo1", "ripple", "candle"),
+    "a1a2":   ("algo1", "ripple"),
+    "a1a3":   ("algo1", "candle"),
+    "a2a3":   ("ripple", "candle"),
+}
+_ALLOWED_RULES = ("strict", "loose", "a1a2", "a1a3", "a2a3")
+_ALGO_NM_KO = {"algo1": "🤖브레인", "ripple": "⚡리플", "candle": "🕯️캔들"}
+_ALGO_NM_EN = {"algo1": "🤖Brain", "ripple": "⚡Ripple", "candle": "🕯️Candle"}
+
+
+def _req_for(rule: str) -> tuple[str, ...]:
+    """The signal keys a combo needs (loose is handled separately; default = all 3)."""
+    return _COMBO_REQ.get(rule, _COMBO_REQ["strict"])
+
+
+def _combo_label(rule: str, en: bool) -> str:
+    if rule == "loose":
+        return "2/3 + brain (loose)" if en else "2/3 + 브레인 (느슨)"
+    nm = _ALGO_NM_EN if en else _ALGO_NM_KO
+    parts = " + ".join(nm[a] for a in _req_for(rule))
+    return (f"all 3 · {parts}" if rule == "strict" else parts) if en else \
+           (f"3개 모두 · {parts}" if rule == "strict" else parts)
+
 # fallback default watchlist (the shared 21 the fleet trades) if scalp_state isn't set yet
 SCALP_21 = ("000660,005930,042660,035420,009150,373220,005380,000270,005490,035720,"
             "051910,006400,105560,055550,012450,329180,034020,010140,042700,066570,006840")
@@ -119,7 +147,7 @@ def _cfg(db) -> dict[str, Any]:
     codes = [c.strip().zfill(6) for c in (r[5] or SCALP_21).split(",") if c.strip()]
     return {"enabled": bool(r[0]),
             "mode": (r[1] or "auto") if str(r[1] or "auto") in ("auto", "semi") else "auto",
-            "rule": (r[2] or "strict") if str(r[2] or "strict") in ("strict", "loose") else "strict",
+            "rule": (r[2] or "strict") if str(r[2] or "strict") in _ALLOWED_RULES else "strict",
             "stop_pct": float(r[3]), "pos_pct": float(r[4]), "codes": codes[:24]}
 
 
@@ -135,7 +163,7 @@ def set_params(db, rule: Optional[str] = None, stop_pct: Optional[float] = None,
                pos_pct: Optional[float] = None, mode: Optional[str] = None,
                codes: Optional[str] = None) -> dict:
     _ensure(db)
-    if rule in ("strict", "loose"):
+    if rule in _ALLOWED_RULES:
         db.execute(text("UPDATE cross_state SET rule=:v, updated_at=now() WHERE id=1"), {"v": rule})
     if mode in ("auto", "semi"):
         db.execute(text("UPDATE cross_state SET mode=:v, updated_at=now() WHERE id=1"), {"v": mode})
@@ -275,11 +303,12 @@ def _prob_ok(prob: Optional[float]) -> bool:
 
 
 def entry_fires(rule: str, sig: dict, prob_ok: bool) -> bool:
-    """Do the algorithms AGREE to BUY? strict = 3/3 · loose = ripple+candle+brain-ok."""
+    """Do the CHOSEN algorithms AGREE to BUY? loose = ripple+candle+brain-ok+prob;
+    any other rule = every algo in that combo bought (strict=all3, a1a2/a1a3/a2a3=a pair)."""
     if rule == "loose":
         return bool(sig["ripple_buy"] and sig["candle_buy"]
                     and sig["algo1_not_bearish"] and prob_ok)
-    return bool(sig["algo1_buy"] and sig["ripple_buy"] and sig["candle_buy"])
+    return all(sig[f"{a}_buy"] for a in _req_for(rule))
 
 
 def entry_decision(rule: str, sig: dict, prob, *, holding: bool, mode: str,
@@ -297,7 +326,7 @@ def entry_decision(rule: str, sig: dict, prob, *, holding: bool, mode: str,
     if rule == "loose":
         agree = bool(sig["ripple_buy"] and sig["candle_buy"] and sig["algo1_not_bearish"])
     else:
-        agree = bool(sig["algo1_buy"] and sig["ripple_buy"] and sig["candle_buy"])
+        agree = all(sig[f"{a}_buy"] for a in _req_for(rule))    # the chosen combo all BUY
     if not agree:
         return {"should_buy": False, "agree": False, "blocker": None}
     if holding:
@@ -322,12 +351,13 @@ def exit_reason(rule: str, entry: float, px: float, peak: float,
     r = _ripple_exit(entry, px, peak, TAKE_FLOOR, stop_pct, eod)
     if r:
         return r
+    # consensus SELL mirrors the entry combo: the chosen algos all say SELL. (Ripple never
+    # emits SELL, so ripple-inclusive combos lean on the always-on stop/trail/EOD net.)
     if rule == "loose":
         if sig["ripple_sell"] and sig["candle_sell"]:
             return "CONSENSUS"
-    else:
-        if sig["algo1_sell"] and sig["ripple_sell"] and sig["candle_sell"]:
-            return "CONSENSUS"
+    elif all(sig[f"{a}_sell"] for a in _req_for(rule)):
+        return "CONSENSUS"
     return None
 
 
@@ -485,7 +515,7 @@ def tick(db, force: bool = False) -> dict[str, Any]:
         if not (dec["should_buy"] or dec["blocker"] == "SEMI"):
             continue
         qty = int(cash * cfg["pos_pct"] / 100 / px)
-        agree_ko = "3/3 동의" if rule == "strict" else "2/3+브레인"
+        agree_ko = "2/3+브레인" if rule == "loose" else f"{_combo_label(rule, False)} 동의"
         why = (f"교차검증 {agree_ko}: 🤖알고1 {sig['algo1']} · ⚡리플 {sig['ripple']} · "
                f"🕯️캔들 {sig['candle']} 동시 매수 → 진입 (−{cfg['stop_pct']}% 손절·트레일 청산)")
         if dec["blocker"] == "SEMI":
@@ -633,24 +663,28 @@ def status(db) -> dict[str, Any]:
             s = _secs_since_buy(code, algo, now_ts)
             return round(s / 60) if (s is not None and s <= AGREE_WINDOW_SEC) else None
         ago = {"algo1": _ago_min("algo1"), "ripple": _ago_min("ripple"), "candle": _ago_min("candle")}
-        # agreement summary — now counts buys within the window (boss 2026-07-22)
+        # agreement summary — COMBO-AWARE: only the CHOSEN algorithms count (boss 2026-07-24)
         wbuys = {"algo1": wsig["algo1_buy"], "ripple": wsig["ripple_buy"], "candle": wsig["candle_buy"]}
         votes = {"algo1": sig["algo1"], "ripple": sig["ripple"], "candle": sig["candle"]}
-        n_buy = sum(1 for v in wbuys.values() if v)
-        n_sell = sum(1 for v in votes.values() if v == "SELL")
+        _req = ("ripple", "candle") if rule == "loose" else _req_for(rule)
+        _req_n = len(_req)
+        n_buy = sum(1 for a in _req if wbuys[a])          # buys among the required algos only
+        n_sell = sum(1 for a in _req if votes[a] == "SELL")
         _nm_ko = {"algo1": "알고1", "ripple": "잔물결", "candle": "캔들"}
         _nm_en = {"algo1": "Algo1", "ripple": "Ripple", "candle": "Candle"}
-        not_buy = [k for k, v in wbuys.items() if not v]
+        not_buy = [a for a in _req if not wbuys[a]]
+        _need_ko = "·".join(_nm_ko[a] for a in _req)
+        _need_en = " + ".join(_nm_en[a] for a in _req)
         _pp = _pct(sig["algo1_prob"])
         _pp = round(_pp) if _pp is not None else None
         if dec["should_buy"]:
-            agree_ko = f"3개 모두 매수 동의 (최근 {win_min}분 내) → 매수 진입"
-            agree_en = f"all 3 agree to buy (within {win_min} min) → BUY entry"
+            agree_ko = f"{_need_ko} 모두 매수 동의 (최근 {win_min}분) → 매수 진입"
+            agree_en = f"{_need_en} all agree to buy (within {win_min} min) → BUY entry"
         elif dec["agree"] and dec["blocker"] == "SEMI":
-            agree_ko = f"3개 모두 매수 동의 (최근 {win_min}분) — 세미 모드: 매수 버튼을 누르세요"
-            agree_en = f"all 3 agree (within {win_min} min) — semi mode: tap Buy to enter"
+            agree_ko = f"{_need_ko} 모두 매수 동의 (최근 {win_min}분) — 세미 모드: 매수 버튼을 누르세요"
+            agree_en = f"{_need_en} all agree (within {win_min} min) — semi mode: tap Buy to enter"
         elif dec["agree"]:
-            # HONEST blocked-entry reason — the three agree but the engine won't buy.
+            # HONEST blocked-entry reason — the chosen algos agree but the engine won't buy.
             _bk = {
                 "HOLDING":  ("이미 보유 중 — 중복 매수 안 함", "already holding — no double entry"),
                 "EOD":      ("15:18 이후 — 신규 진입 없음", "after 15:18 — no new entries"),
@@ -659,17 +693,17 @@ def status(db) -> dict[str, Any]:
                 "NO_PRICE": ("실시간 가격 없음 — 진입 보류", "no live price — no entry"),
                 "QTY_ZERO": ("주문 수량 1주 미만 — 진입 보류", "position size < 1 share — no entry"),
             }.get(dec["blocker"], ("진입 보류", "entry on hold"))
-            agree_ko = f"⏸ 3개 동의했지만 {_bk[0]}"
-            agree_en = f"⏸ 3 agree BUT {_bk[1]}"
+            agree_ko = f"⏸ {_need_ko} 동의했지만 {_bk[0]}"
+            agree_en = f"⏸ {_need_en} agree BUT {_bk[1]}"
         elif n_buy > 0:
             miss_ko = "·".join(_nm_ko[k] for k in not_buy)
             miss_en = ", ".join(_nm_en[k] for k in not_buy)
-            agree_ko = f"{n_buy}/3 매수 (최근 {win_min}분) — {miss_ko} 대기 → 진입 안 함"
-            agree_en = f"{n_buy}/3 buy (last {win_min}m) — waiting on {miss_en} → no entry"
+            agree_ko = f"{n_buy}/{_req_n} 매수 (최근 {win_min}분) — {miss_ko} 대기 → 진입 안 함"
+            agree_en = f"{n_buy}/{_req_n} buy (last {win_min}m) — waiting on {miss_en} → no entry"
         else:
-            agree_ko, agree_en = "매수 동의 0/3 — 관망", "0/3 buy votes — watching"
-        sell_need = 3 if rule == "strict" else 2
-        sell_agree = (n_sell >= 3) if rule == "strict" else (sig["ripple_sell"] and sig["candle_sell"])
+            agree_ko, agree_en = f"매수 동의 0/{_req_n} — 관망", f"0/{_req_n} buy votes — watching"
+        sell_need = _req_n
+        sell_agree = all(votes[a] == "SELL" for a in _req)
         stocks.append({
             "code": code, "name": _name(code), "price": px, "chg": chg,
             "state": "LONG" if o else "WAIT",
@@ -707,10 +741,12 @@ def status(db) -> dict[str, Any]:
     now_ts = datetime.now(KST).timestamp()
     signals = [s for c, s in _semi_signals.items()
                if now_ts - s.get("ts", 0) < 120 and c not in open_map] if cfg["mode"] == "semi" else []
-    rule_ko = ("3개 모두 매수 동의 → 진입 (엄격)" if rule == "strict"
-               else "리플+캔들 매수 & 알고1 비관 아님+확률 OK → 진입 (느슨)")
-    rule_en = ("all 3 agree BUY → enter (strict)" if rule == "strict"
-               else "ripple+candle BUY & algo1 not-bearish+prob ok → enter (loose)")
+    if rule == "loose":
+        rule_ko = "리플+캔들 매수 & 알고1 비관 아님+확률 OK → 진입 (느슨)"
+        rule_en = "ripple+candle BUY & algo1 not-bearish+prob ok → enter (loose)"
+    else:
+        rule_ko = f"{_combo_label(rule, False)} 매수 동의 → 진입"
+        rule_en = f"{_combo_label(rule, True)} agree BUY → enter"
     out = {**cfg, "signals": signals, "stocks": stocks, "warming": warming,
            "today": {"trades": int(today[0] or 0), "wins": int(today[1] or 0),
                      "net_pct_sum": round(float(today[2] or 0), 2),

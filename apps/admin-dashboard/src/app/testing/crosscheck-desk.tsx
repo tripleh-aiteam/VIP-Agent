@@ -56,8 +56,10 @@ type CCStock = {
   algo1_ago?: number | null; ripple_ago?: number | null; candle_ago?: number | null; window_min?: number;
 };
 type CCSignal = { code: string; name: string; price: number; qty: number; why: string; ts: number };
+// which algorithms must agree to buy: strict = all 3 · a1a2/a1a3/a2a3 = a chosen pair · loose = 2/3+brain
+type CCRule = "strict" | "loose" | "a1a2" | "a1a3" | "a2a3";
 type CCStatus = {
-  enabled: boolean; mode?: "auto" | "semi"; rule?: "strict" | "loose"; stop_pct: number; pos_pct: number;
+  enabled: boolean; mode?: "auto" | "semi"; rule?: CCRule; stop_pct: number; pos_pct: number;
   codes: string[]; signals?: CCSignal[]; stocks: CCStock[]; market_open?: boolean;
   rule_ko?: string; rule_en?: string;
   today: { trades: number; wins: number; net_pct_sum: number; realized_won?: number };
@@ -439,7 +441,7 @@ export default function CrossCheckDesk({ mode: initialMode }: { mode: CCMode }) 
     await apiPost(`/paper-desk/crosscheck/toggle?on=${on}`); load();
   };
   const setParam = async (k: "stop_pct" | "pos_pct", v: number) => { await apiPost(`/paper-desk/crosscheck/params?${k}=${v}`); load(); };
-  const setRule = async (v: "strict" | "loose") => { await apiPost(`/paper-desk/crosscheck/params?rule=${v}`); load(); };
+  const setRule = async (v: CCRule) => { await apiPost(`/paper-desk/crosscheck/params?rule=${v}`); load(); };
   // ---- manual-mode trading (shared paper desk, source='algo4' — boss rule:
   //      whatever is traded on an algorithm's page counts for that algorithm) ---- //
   const suggestions = useMemo(() => {
@@ -924,11 +926,14 @@ export default function CrossCheckDesk({ mode: initialMode }: { mode: CCMode }) 
                 : t("세 알고리즘이 동의할 때만 매수 · 트레일 청산 · 손절 · 15:18 정리", "buys only on 3-agree · trailing exit · stop · flat 15:18")}
             </span>
             <div className="ml-auto flex items-center gap-2 text-[11.5px]">
-              <span className="text-[var(--text-muted)]">{t("합의 규칙", "rule")}</span>
-              <select value={rule} onChange={(e) => setRule(e.target.value as "strict" | "loose")}
+              <span className="text-[var(--text-muted)]">{t("어떤 조합이 동의하면 매수", "which combo must agree")}</span>
+              <select value={rule} onChange={(e) => setRule(e.target.value as CCRule)}
                 className="px-1.5 py-1 rounded-lg border bg-[var(--bg-primary)] text-[var(--text-primary)] font-bold" style={{ borderColor: INDIGO }}>
-                <option value="strict">{t("3/3 엄격 (모두 매수)", "3/3 strict (all buy)")}</option>
-                <option value="loose">{t("2/3+브레인 (느슨)", "2/3+brain (loose)")}</option>
+                <option value="strict">{t("🤖⚡🕯️ 3개 모두", "🤖⚡🕯️ All 3")}</option>
+                <option value="a1a2">{t("🤖 브레인 + ⚡ 리플", "🤖 Brain + ⚡ Ripple")}</option>
+                <option value="a1a3">{t("🤖 브레인 + 🕯️ 캔들", "🤖 Brain + 🕯️ Candle")}</option>
+                <option value="a2a3">{t("⚡ 리플 + 🕯️ 캔들", "⚡ Ripple + 🕯️ Candle")}</option>
+                <option value="loose">{t("2/3 + 브레인 (느슨)", "2/3 + brain (loose)")}</option>
               </select>
               <span className="text-[var(--text-muted)]">{t("손절", "stop")}</span>
               <select value={String(sc.stop_pct)} onChange={(e) => setParam("stop_pct", Number(e.target.value))} className="px-1.5 py-1 rounded-lg border bg-[var(--bg-primary)] text-[var(--text-primary)]" style={{ borderColor: "var(--border-default)" }}>
@@ -991,9 +996,13 @@ export default function CrossCheckDesk({ mode: initialMode }: { mode: CCMode }) 
                   </div>
                 ) : (
                   <div className="mt-1.5 text-[11.5px] text-[var(--text-muted)]">
-                    {rule === "strict"
-                      ? t("세 알고리즘이 모두 🟢 매수가 되면 진입합니다.", "enters when all 3 turn 🟢 BUY.")
-                      : t("리플+캔들이 🟢 매수이고 알고1이 비관적이 아니면 진입합니다.", "enters when ripple+candle are 🟢 BUY and algo1 isn't bearish.")}
+                    {({
+                      strict: t("🤖⚡🕯️ 세 알고리즘이 모두 🟢 매수가 되면 진입합니다.", "enters when all 3 turn 🟢 BUY."),
+                      a1a2: t("🤖 브레인과 ⚡ 리플이 모두 🟢 매수가 되면 진입합니다.", "enters when 🤖 Brain + ⚡ Ripple both turn 🟢 BUY."),
+                      a1a3: t("🤖 브레인과 🕯️ 캔들이 모두 🟢 매수가 되면 진입합니다.", "enters when 🤖 Brain + 🕯️ Candle both turn 🟢 BUY."),
+                      a2a3: t("⚡ 리플과 🕯️ 캔들이 모두 🟢 매수가 되면 진입합니다.", "enters when ⚡ Ripple + 🕯️ Candle both turn 🟢 BUY."),
+                      loose: t("리플+캔들이 🟢 매수이고 알고1이 비관적이 아니면 진입합니다.", "enters when ripple+candle are 🟢 BUY and algo1 isn't bearish."),
+                    } as Record<CCRule, string>)[rule]}
                   </div>
                 )}
               </div>
