@@ -59,7 +59,7 @@ type CCSignal = { code: string; name: string; price: number; qty: number; why: s
 // which algorithms must agree to buy: strict = all 3 · a1a2/a1a3/a2a3 = a chosen pair · loose = 2/3+brain
 type CCRule = "strict" | "loose" | "a1a2" | "a1a3" | "a2a3";
 type CCStatus = {
-  enabled: boolean; mode?: "auto" | "semi"; rule?: CCRule; stop_pct: number; pos_pct: number;
+  enabled: boolean; mode?: "auto" | "semi"; rule?: CCRule; stop_pct: number; pos_pct: number; take_pct?: number;
   codes: string[]; signals?: CCSignal[]; stocks: CCStock[]; market_open?: boolean;
   rule_ko?: string; rule_en?: string;
   today: { trades: number; wins: number; net_pct_sum: number; realized_won?: number };
@@ -440,7 +440,7 @@ export default function CrossCheckDesk({ mode: initialMode }: { mode: CCMode }) 
                          "Turn ON Cross-Check (Algorithm 4)? It buys only when all 3 algorithms agree (fake money).") )) return;
     await apiPost(`/paper-desk/crosscheck/toggle?on=${on}`); load();
   };
-  const setParam = async (k: "stop_pct" | "pos_pct", v: number) => { await apiPost(`/paper-desk/crosscheck/params?${k}=${v}`); load(); };
+  const setParam = async (k: "stop_pct" | "pos_pct" | "take_pct", v: number) => { await apiPost(`/paper-desk/crosscheck/params?${k}=${v}`); load(); };
   const setRule = async (v: CCRule) => { await apiPost(`/paper-desk/crosscheck/params?rule=${v}`); load(); };
   // ---- manual-mode trading (shared paper desk, source='algo4' — boss rule:
   //      whatever is traded on an algorithm's page counts for that algorithm) ---- //
@@ -942,6 +942,11 @@ export default function CrossCheckDesk({ mode: initialMode }: { mode: CCMode }) 
               <span className="text-[var(--text-muted)]">{t("1회 크기", "size")}</span>
               <select value={String(sc.pos_pct)} onChange={(e) => setParam("pos_pct", Number(e.target.value))} className="px-1.5 py-1 rounded-lg border bg-[var(--bg-primary)] text-[var(--text-primary)]" style={{ borderColor: "var(--border-default)" }}>
                 {[5, 10, 15, 20].map((v) => <option key={v} value={v}>{st ? `${v}% ≈ ₩${Math.round(st.cash * v / 100 / 1_000_000).toLocaleString()}M` : `${v}%`}</option>)}
+              </select>
+              {/* winner-target dial: arm the trailing exit at +take_pct% (higher = let winners run) */}
+              <span className="text-[var(--text-muted)]" title={t("이익 목표: 이 %만큼 오른 뒤에야 트레일 청산이 작동해 승자를 더 달리게 합니다", "winner target: the trailing exit only arms after +this%, so winners run further")}>{t("이익목표", "let run")}</span>
+              <select value={String(sc.take_pct ?? 0.4)} onChange={(e) => setParam("take_pct", Number(e.target.value))} className="px-1.5 py-1 rounded-lg border bg-[var(--bg-primary)] text-[var(--text-primary)] font-bold" style={{ borderColor: "#2e7d32" }}>
+                {[0.4, 0.8, 1.2, 1.5, 2.0].map((v) => <option key={v} value={v}>+{v}%{v === 0.4 ? t(" (기본)", " (default)") : ""}</option>)}
               </select>
             </div>
           </div>

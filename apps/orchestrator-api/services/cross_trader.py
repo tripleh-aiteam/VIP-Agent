@@ -123,6 +123,11 @@ def _ensure(db) -> None:
         " pos_pct DOUBLE PRECISION NOT NULL DEFAULT 10.0,"
         " codes TEXT NOT NULL DEFAULT '000660,005930',"
         " updated_at TIMESTAMPTZ DEFAULT now())"))
+    # winner-target dial (boss 2026-07-24): arm the trailing exit at +take_pct% instead of
+    # the hard-coded +0.4% — lets winners run. ONE ALTER, guarded by _schema_ready (never
+    # per-tick). Default 0.4 = current behavior, so nothing changes until it's moved.
+    db.execute(text("ALTER TABLE cross_state ADD COLUMN IF NOT EXISTS "
+                    "take_pct DOUBLE PRECISION NOT NULL DEFAULT 0.4"))
     db.execute(text(
         "CREATE TABLE IF NOT EXISTS cross_trades ("
         " id SERIAL PRIMARY KEY, ticker TEXT, name TEXT, qty INT,"
@@ -143,12 +148,13 @@ def _ensure(db) -> None:
 def _cfg(db) -> dict[str, Any]:
     _ensure(db)
     r = db.execute(text(
-        "SELECT enabled, mode, rule, stop_pct, pos_pct, codes FROM cross_state WHERE id=1")).first()
+        "SELECT enabled, mode, rule, stop_pct, pos_pct, codes, take_pct FROM cross_state WHERE id=1")).first()
     codes = [c.strip().zfill(6) for c in (r[5] or SCALP_21).split(",") if c.strip()]
     return {"enabled": bool(r[0]),
             "mode": (r[1] or "auto") if str(r[1] or "auto") in ("auto", "semi") else "auto",
             "rule": (r[2] or "strict") if str(r[2] or "strict") in _ALLOWED_RULES else "strict",
-            "stop_pct": float(r[3]), "pos_pct": float(r[4]), "codes": codes[:24]}
+            "stop_pct": float(r[3]), "pos_pct": float(r[4]), "codes": codes[:24],
+            "take_pct": float(r[6]) if r[6] is not None else TAKE_FLOOR}
 
 
 def set_enabled(db, on: bool) -> dict:
@@ -161,7 +167,7 @@ def set_enabled(db, on: bool) -> dict:
 
 def set_params(db, rule: Optional[str] = None, stop_pct: Optional[float] = None,
                pos_pct: Optional[float] = None, mode: Optional[str] = None,
-               codes: Optional[str] = None) -> dict:
+               codes: Optional[str] = None, take_pct: Optional[float] = None) -> dict:
     _ensure(db)
     if rule in _ALLOWED_RULES:
         db.execute(text("UPDATE cross_state SET rule=:v, updated_at=now() WHERE id=1"), {"v": rule})
@@ -173,6 +179,9 @@ def set_params(db, rule: Optional[str] = None, stop_pct: Optional[float] = None,
     if pos_pct is not None:
         db.execute(text("UPDATE cross_state SET pos_pct=:v, updated_at=now() WHERE id=1"),
                    {"v": max(1.0, min(25.0, float(pos_pct)))})
+    if take_pct is not None:
+        db.execute(text("UPDATE cross_state SET take_pct=:v, updated_at=now() WHERE id=1"),
+                   {"v": max(0.2, min(3.0, float(take_pct)))})
     if codes is not None:
         cl = [c.strip().zfill(6) for c in codes.split(",") if c.strip()]
         for m in ("005930", "000660"):    # pin the 2 mains first (boss's default view)
@@ -345,10 +354,12 @@ def entry_decision(rule: str, sig: dict, prob, *, holding: bool, mode: str,
 
 
 def exit_reason(rule: str, entry: float, px: float, peak: float,
-                stop_pct: float, eod: bool, sig: dict) -> Optional[str]:
+                stop_pct: float, eod: bool, sig: dict,
+                take_pct: float = TAKE_FLOOR) -> Optional[str]:
     """Exit decision. The safety net (STOP / trailing TRAIL / EOD) is ALWAYS on;
-    a consensus sell is an ADDITIONAL exit. None = keep holding."""
-    r = _ripple_exit(entry, px, peak, TAKE_FLOOR, stop_pct, eod)
+    a consensus sell is an ADDITIONAL exit. None = keep holding. `take_pct` = the
+    winner-target dial: the trailing exit only arms once the position is up +take_pct%."""
+    r = _ripple_exit(entry, px, peak, take_pct, stop_pct, eod)
     if r:
         return r
     # consensus SELL mirrors the entry combo: the chosen algos all say SELL. (Ripple never
@@ -451,7 +462,7 @@ def tick(db, force: bool = False) -> dict[str, Any]:
         _peak[tk] = peak
         sig = _signals_for(db, tk, need, tf, scan_items, allow_compute=True)
         snap[tk] = sig
-        reason = exit_reason(rule, entry, px, peak, cfg["stop_pct"], eod, sig)
+        reason = exit_reason(rule, entry, px, peak, cfg["stop_pct"], eod, sig, cfg["take_pct"])
         if not reason:
             _sell_hint.pop(tk, None)
             open_codes.add(tk)
