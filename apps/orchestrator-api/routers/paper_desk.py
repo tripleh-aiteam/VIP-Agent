@@ -591,10 +591,13 @@ def crosscheck_toggle(on: bool = Query(...), db: Session = Depends(get_db)):
 @router.post("/crosscheck/params")
 def crosscheck_params(rule: Optional[str] = Query(None), stop_pct: Optional[float] = Query(None),
                       pos_pct: Optional[float] = Query(None), mode: Optional[str] = Query(None),
-                      codes: Optional[str] = Query(None), db: Session = Depends(get_db)):
-    """Cross-Check dials: rule (strict 3/3 | loose 2/3+brain), stop %, size %, mode, stock list."""
+                      codes: Optional[str] = Query(None), take_pct: Optional[float] = Query(None),
+                      db: Session = Depends(get_db)):
+    """Cross-Check dials: rule (combo), stop %, size %, mode, stock list, and take_pct
+    (winner target — the trailing exit arms at +take_pct%; higher = let winners run)."""
     from services.cross_trader import set_params
-    return set_params(db, rule=rule, stop_pct=stop_pct, pos_pct=pos_pct, mode=mode, codes=codes)
+    return set_params(db, rule=rule, stop_pct=stop_pct, pos_pct=pos_pct, mode=mode,
+                      codes=codes, take_pct=take_pct)
 
 
 @router.post("/crosscheck/buy")
