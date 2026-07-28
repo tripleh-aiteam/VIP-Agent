@@ -10,6 +10,7 @@ import { useLanguage } from "@/components/i18n";
 import { useFastPrices } from "@/components/useFastPrices";
 import FlashPrice from "@/components/FlashPrice";
 import AlgoVerdict from "./AlgoVerdict";
+import AlgorithmTradeTimingChart from "./AlgorithmTradeTimingChart";
 
 const TEAL = "#00838f";
 const RED = "#d32f2f";
@@ -52,7 +53,7 @@ type C3Status = {
   enabled: boolean; stop_pct: number; pos_pct: number; codes: string[]; mode?: "auto" | "semi"; streak?: number; tf?: string;
   signals?: C3Signal[]; stocks: C3Stock[]; market_open?: boolean; rule_ko?: string; rule_en?: string;
   today: { trades: number; wins: number; net_pct_sum: number; realized_won?: number };
-  recent: { name: string; qty: number; entry: number; exit_price?: number | null; exit_reason?: string | null;
+  recent: { ticker: string; name: string; qty: number; entry: number; exit_price?: number | null; exit_reason?: string | null;
             net_pct?: number | null; won?: number | null; closed_at?: string; opened_at?: string; why?: string | null }[];
 };
 type DeskState = { cash: number; positions_value: number; equity: number; total_pnl?: number; total_pnl_pct?: number };
@@ -384,6 +385,12 @@ export default function Candle3Desk({ mode: initialMode }: { mode: C3Mode }) {
           </div>
         );
       })()}
+
+      <AlgorithmTradeTimingChart
+        trades={sc?.recent || []}
+        algorithmLabel={t("알고리즘 3", "Algorithm 3")}
+        accent={TEAL}
+      />
 
       {/* Trade History — ALWAYS visible (even before status loads) so the calendar
           day-filter never disappears (boss 2026-07-20: 'add calendar to Algo 2 and 3'). */}

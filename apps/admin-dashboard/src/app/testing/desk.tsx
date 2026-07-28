@@ -11,6 +11,7 @@ import { useRouter } from "next/navigation";
 import { api, apiPost } from "@/components/api";
 import { useLanguage } from "@/components/i18n";
 import AlgoVerdict from "./AlgoVerdict";
+import AlgorithmTradeTimingChart from "./AlgorithmTradeTimingChart";
 
 const RED = "#d32f2f";
 const BLUE = "#1565c0";
@@ -1586,6 +1587,12 @@ export default function Desk({ mode }: { mode: TradeMode }) {
       {/* 🏁 multi-day real-money verdict (boss 2026-07-20: which algo before real money) */}
       <AlgoVerdict />
 
+
+      <AlgorithmTradeTimingChart
+        trades={rt}
+        algorithmLabel={t("알고리즘 1", "Algorithm 1")}
+        accent={RED}
+      />
 
       {/* 🤖 ALGORITHM 1 ACTIVITY — every round trip, same table as Algorithm 2
           (boss 2026-07-16: 'make like this table in Algorithm 1') */}

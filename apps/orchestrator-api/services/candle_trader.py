@@ -380,14 +380,14 @@ def status(db) -> dict[str, Any]:
         "coalesce(sum(net_pct),0), coalesce(sum(qty*entry*net_pct/100.0),0) "
         "FROM candle_trades WHERE status='CLOSED' "
         "AND closed_at::date=(now() AT TIME ZONE 'Asia/Seoul')::date")).first()
-    recent = [{"name": r[0], "qty": int(r[1]), "entry": float(r[2]),
-               "exit_price": (float(r[3]) if r[3] is not None else None),
-               "exit_reason": r[4],
-               "net_pct": (float(r[5]) if r[5] is not None else None),
-               "won": (round(int(r[1]) * float(r[2]) * float(r[5]) / 100) if r[5] is not None else None),
-               "closed_at": str(r[6]), "opened_at": str(r[7]), "why": r[8]}
+    recent = [{"ticker": r[0], "name": r[1], "qty": int(r[2]), "entry": float(r[3]),
+               "exit_price": (float(r[4]) if r[4] is not None else None),
+               "exit_reason": r[5],
+               "net_pct": (float(r[6]) if r[6] is not None else None),
+               "won": (round(int(r[2]) * float(r[3]) * float(r[6]) / 100) if r[6] is not None else None),
+               "closed_at": str(r[7]), "opened_at": str(r[8]), "why": r[9]}
               for r in db.execute(text(
-                  "SELECT name, qty, entry, exit_price, exit_reason, net_pct, closed_at, "
+                  "SELECT ticker, name, qty, entry, exit_price, exit_reason, net_pct, closed_at, "
                   "opened_at, why FROM candle_trades WHERE status='CLOSED' "
                   "ORDER BY closed_at DESC LIMIT 150"))]
     now_ts = datetime.now(KST).timestamp()
