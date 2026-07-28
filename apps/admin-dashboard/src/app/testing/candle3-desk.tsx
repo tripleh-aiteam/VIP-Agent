@@ -388,6 +388,9 @@ export default function Candle3Desk({ mode: initialMode }: { mode: C3Mode }) {
 
       <AlgorithmTradeTimingChart
         trades={sc?.recent || []}
+        symbols={(sc?.stocks || [])
+          .filter((stock) => stock.state === "LONG")
+          .map((stock) => ({ code: stock.code, name: stock.name }))}
         algorithmLabel={t("알고리즘 3", "Algorithm 3")}
         accent={TEAL}
       />

@@ -36,6 +36,11 @@ type SymbolOption = {
   trades: number;
 };
 
+export type TradeTimingSymbol = {
+  code: string;
+  name: string;
+};
+
 type MarkerInput = {
   time: number;
   position: "belowBar" | "aboveBar";
@@ -46,16 +51,18 @@ type MarkerInput = {
 
 export default function AlgorithmTradeTimingChart({
   trades,
+  symbols = [],
   algorithmLabel,
   accent,
 }: {
   trades: TradeTimingRecord[];
+  symbols?: TradeTimingSymbol[];
   algorithmLabel: string;
   accent: string;
 }) {
   const { lang } = useLanguage();
   const t = (ko: string, en: string) => (lang === "ko" ? ko : en);
-  const options = useMemo(() => buildSymbolOptions(trades), [trades]);
+  const options = useMemo(() => buildSymbolOptions(trades, symbols), [trades, symbols]);
   const [requestedCode, setRequestedCode] = useState<string | null>(null);
   const selected = options.find((item) => item.code === requestedCode) ?? options[0] ?? null;
   const selectedTrades = useMemo(
@@ -318,19 +325,27 @@ function ChartState({
   );
 }
 
-function buildSymbolOptions(trades: TradeTimingRecord[]): SymbolOption[] {
-  const symbols = new Map<string, SymbolOption>();
+function buildSymbolOptions(
+  trades: TradeTimingRecord[],
+  trackedSymbols: TradeTimingSymbol[],
+): SymbolOption[] {
+  const symbolOptions = new Map<string, SymbolOption>();
+  for (const symbol of trackedSymbols) {
+    const code = symbol.code.trim();
+    if (!code) continue;
+    symbolOptions.set(code, { code, name: symbol.name || code, trades: 0 });
+  }
   for (const trade of trades) {
     const code = trade.ticker?.trim();
     if (!code) continue;
-    const current = symbols.get(code);
-    symbols.set(code, {
+    const current = symbolOptions.get(code);
+    symbolOptions.set(code, {
       code,
       name: trade.name || code,
       trades: (current?.trades ?? 0) + 1,
     });
   }
-  return Array.from(symbols.values());
+  return Array.from(symbolOptions.values());
 }
 
 function buildMarkers(bars: ChartBar[], trades: TradeTimingRecord[], lang: string): MarkerInput[] {
