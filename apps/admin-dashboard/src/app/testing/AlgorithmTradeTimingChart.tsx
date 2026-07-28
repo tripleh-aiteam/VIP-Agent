@@ -1,19 +1,63 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import type { LogicalRange } from "lightweight-charts";
 import { api } from "@/components/api";
 import { useLanguage } from "@/components/i18n";
+import { findFirstThreeCandleRuns } from "./candleRunDetection";
 
 const BUY_COLOR = "#d32f2f";
 const SELL_COLOR = "#1565c0";
 const MAX_MARKER_DISTANCE_SECONDS = 10 * 60;
 const CHART_TIMEFRAME = "1m";
+const KOREAN_STOCK_CODE_PATTERN = /^\d{6}$/;
+const KST_TIME_ZONE = "Asia/Seoul";
+const RISING_RUN_COLOR = "#dc2626";
+const FALLING_RUN_COLOR = "#2563eb";
+
+const KST_TICK_FORMATTERS = {
+  ko: new Intl.DateTimeFormat("ko-KR", {
+    timeZone: KST_TIME_ZONE,
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  }),
+  en: new Intl.DateTimeFormat("en-GB", {
+    timeZone: KST_TIME_ZONE,
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  }),
+};
+
+const KST_CROSSHAIR_FORMATTERS = {
+  ko: new Intl.DateTimeFormat("ko-KR", {
+    timeZone: KST_TIME_ZONE,
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  }),
+  en: new Intl.DateTimeFormat("en-GB", {
+    timeZone: KST_TIME_ZONE,
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  }),
+};
 
 export type TradeTimingRecord = {
   ticker?: string | null;
   name: string;
   opened_at?: string | null;
   closed_at?: string | null;
+  entry?: number | null;
+  exit_price?: number | null;
+  net_pct?: number | null;
+  realized_pnl_pct?: number | null;
 };
 
 type ChartBar = {
@@ -46,9 +90,11 @@ type MarkerInput = {
   time: number;
   position: "belowBar" | "aboveBar";
   color: string;
-  shape: "arrowUp" | "arrowDown";
+  shape: "arrowUp" | "arrowDown" | "circle";
   text: string;
 };
+
+type CandleRunMode = "off" | "up" | "down" | "both";
 
 export default function AlgorithmTradeTimingChart({
   trades,
@@ -73,6 +119,7 @@ export default function AlgorithmTradeTimingChart({
   const [chartData, setChartData] = useState<ChartResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [candleRunMode, setCandleRunMode] = useState<CandleRunMode>("off");
   const refreshToken = useRef(0);
 
   useEffect(() => {
@@ -155,15 +202,32 @@ export default function AlgorithmTradeTimingChart({
           </p>
         </div>
         {selected ? (
-          <button
-            type="button"
-            onClick={refresh}
-            disabled={loading}
-            className="rounded-lg border px-2.5 py-1 text-[11px] font-bold text-[var(--text-secondary)] disabled:opacity-50"
-            style={{ borderColor: "var(--border-default)" }}
-          >
-            {loading ? t("불러오는 중입니다", "Loading") : t("새로고침", "Refresh")}
-          </button>
+          <>
+            <label className="flex items-center gap-1.5 text-[10.5px] font-bold text-[var(--text-secondary)]">
+              <span>{t("3연속 캔들", "3-candle runs")}</span>
+              <select
+                value={candleRunMode}
+                onChange={(event) => setCandleRunMode(event.target.value as CandleRunMode)}
+                className="rounded-lg border bg-[var(--bg-primary)] px-2 py-1 text-[11px] font-bold outline-none"
+                style={{ borderColor: "var(--border-default)" }}
+                aria-label={t("3연속 캔들 표시 옵션", "Three-candle run display option")}
+              >
+                <option value="off">{t("끄기", "Off")}</option>
+                <option value="up">{t("상승", "Rising")}</option>
+                <option value="down">{t("하락", "Falling")}</option>
+                <option value="both">{t("모두", "Both")}</option>
+              </select>
+            </label>
+            <button
+              type="button"
+              onClick={refresh}
+              disabled={loading}
+              className="rounded-lg border px-2.5 py-1 text-[11px] font-bold text-[var(--text-secondary)] disabled:opacity-50"
+              style={{ borderColor: "var(--border-default)" }}
+            >
+              {loading ? t("불러오는 중입니다", "Loading") : t("새로고침", "Refresh")}
+            </button>
+          </>
         ) : null}
       </div>
 
@@ -216,7 +280,14 @@ export default function AlgorithmTradeTimingChart({
           )}
         </ChartState>
       ) : (
-        <TimingCanvas bars={chartData.bars} trades={selectedTrades} lang={lang} />
+        <TimingCanvas
+          key={chartData.code}
+          bars={chartData.bars}
+          trades={selectedTrades}
+          lang={lang}
+          isKoreanStock={isKoreanStockCode(chartData.code)}
+          candleRunMode={candleRunMode}
+        />
       )}
 
       {selected ? (
@@ -225,8 +296,15 @@ export default function AlgorithmTradeTimingChart({
           style={{ borderColor: "var(--border-default)" }}
         >
           <span><b style={{ color: BUY_COLOR }}>▲ {t("매수", "Buy")}</b> {t("진입 시점입니다", "entry")}</span>
-          <span><b style={{ color: SELL_COLOR }}>▼ {t("매도", "Sell")}</b> {t("청산 시점입니다", "exit")}</span>
+          <span>
+            <b style={{ color: SELL_COLOR }}>▼ {t("매도", "Sell")}</b>{" "}
+            {t("청산 시점과 실현손익률입니다", "exit with realized return")}
+          </span>
           <span>{t("한국 표준시 기준이며 30초마다 갱신됩니다.", "KST · refreshes every 30 seconds.")}</span>
+          <span>{t(
+            "휠로 확대·축소하고 드래그로 이동하며, 더블클릭하면 초기화됩니다.",
+            "Wheel to zoom, drag to pan, and double-click to reset.",
+          )}</span>
         </div>
       ) : null}
     </section>
@@ -237,12 +315,17 @@ function TimingCanvas({
   bars,
   trades,
   lang,
+  isKoreanStock,
+  candleRunMode,
 }: {
   bars: ChartBar[];
   trades: TradeTimingRecord[];
   lang: string;
+  isKoreanStock: boolean;
+  candleRunMode: CandleRunMode;
 }) {
   const containerRef = useRef<HTMLDivElement | null>(null);
+  const visibleRangeRef = useRef<LogicalRange | null>(null);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -269,8 +352,31 @@ function TimingCanvas({
           timeVisible: true,
           secondsVisible: false,
           borderColor: "rgba(128,128,128,0.24)",
+          rightBarStaysOnScroll: true,
+          ...(isKoreanStock
+            ? { tickMarkFormatter: (time: unknown) => formatKstTime(time, lang, "tick") }
+            : {}),
         },
         rightPriceScale: { borderColor: "rgba(128,128,128,0.24)" },
+        handleScroll: {
+          mouseWheel: false,
+          pressedMouseMove: true,
+          horzTouchDrag: true,
+          vertTouchDrag: false,
+        },
+        handleScale: {
+          mouseWheel: true,
+          pinch: true,
+          axisPressedMouseMove: { time: true, price: true },
+          axisDoubleClickReset: { time: true, price: true },
+        },
+        ...(isKoreanStock
+          ? {
+              localization: {
+                timeFormatter: (time: unknown) => formatKstTime(time, lang, "crosshair"),
+              },
+            }
+          : {}),
       });
       const series = chart.addCandlestickSeries({
         upColor: BUY_COLOR,
@@ -279,21 +385,37 @@ function TimingCanvas({
         borderDownColor: SELL_COLOR,
         wickUpColor: BUY_COLOR,
         wickDownColor: SELL_COLOR,
+        ...(isKoreanStock
+          ? {
+              priceFormat: {
+                type: "price" as const,
+                precision: 0,
+                minMove: 1,
+              },
+            }
+          : {}),
       });
       const validBars = bars
         .filter((bar) => Number.isFinite(bar.time) && Number.isFinite(bar.close))
         .toSorted((left, right) => left.time - right.time);
       series.setData(validBars as never);
-      series.setMarkers(buildMarkers(validBars, trades, lang) as never);
-      chart.timeScale().fitContent();
-      cleanup = () => chart.remove();
+      series.setMarkers(buildMarkers(validBars, trades, lang, candleRunMode) as never);
+      if (visibleRangeRef.current) {
+        chart.timeScale().setVisibleLogicalRange(visibleRangeRef.current);
+      } else {
+        chart.timeScale().fitContent();
+      }
+      cleanup = () => {
+        visibleRangeRef.current = chart.timeScale().getVisibleLogicalRange();
+        chart.remove();
+      };
     });
 
     return () => {
       active = false;
       cleanup();
     };
-  }, [bars, trades, lang]);
+  }, [bars, trades, lang, isKoreanStock, candleRunMode]);
 
   return (
     <div
@@ -349,9 +471,14 @@ function buildSymbolOptions(
   return Array.from(symbolOptions.values());
 }
 
-function buildMarkers(bars: ChartBar[], trades: TradeTimingRecord[], lang: string): MarkerInput[] {
+function buildMarkers(
+  bars: ChartBar[],
+  trades: TradeTimingRecord[],
+  lang: string,
+  candleRunMode: CandleRunMode,
+): MarkerInput[] {
   const barTimes = bars.map((bar) => bar.time);
-  const markers: MarkerInput[] = [];
+  const markers = buildCandleRunMarkers(bars, candleRunMode, lang);
   for (const trade of trades) {
     const openedAt = parseServerTimestamp(trade.opened_at);
     const closedAt = parseServerTimestamp(trade.closed_at);
@@ -367,16 +494,47 @@ function buildMarkers(bars: ChartBar[], trades: TradeTimingRecord[], lang: strin
       });
     }
     if (exitTime !== null) {
+      const returnPct = getRealizedReturnPct(trade);
+      const sellLabel = lang === "ko" ? "매도" : "Sell";
       markers.push({
         time: exitTime,
         position: "aboveBar",
         color: SELL_COLOR,
         shape: "arrowDown",
-        text: lang === "ko" ? "매도" : "Sell",
+        text: returnPct === null ? sellLabel : `${sellLabel} ${formatReturnPct(returnPct)}`,
       });
     }
   }
   return markers.toSorted((left, right) => left.time - right.time);
+}
+
+function buildCandleRunMarkers(
+  bars: ChartBar[],
+  mode: CandleRunMode,
+  lang: string,
+): MarkerInput[] {
+  if (mode === "off") return [];
+
+  const markers: MarkerInput[] = [];
+  for (const run of findFirstThreeCandleRuns(bars)) {
+    if (mode !== "both" && mode !== run.direction) continue;
+
+    const isRising = run.direction === "up";
+    for (let index = 0; index < run.bars.length; index += 1) {
+      markers.push({
+        time: run.bars[index].time,
+        position: isRising ? "belowBar" : "aboveBar",
+        color: isRising ? RISING_RUN_COLOR : FALLING_RUN_COLOR,
+        shape: "circle",
+        text: index === 2
+          ? (lang === "ko"
+              ? `3연속 ${isRising ? "상승" : "하락"}`
+              : `3 ${isRising ? "rising" : "falling"}`)
+          : "",
+      });
+    }
+  }
+  return markers;
 }
 
 function parseServerTimestamp(value?: string | null): number | null {
@@ -384,6 +542,47 @@ function parseServerTimestamp(value?: string | null): number | null {
   const normalized = /Z$|[+-]\d{2}:\d{2}$/.test(value) ? value : `${value}Z`;
   const milliseconds = new Date(normalized).getTime();
   return Number.isFinite(milliseconds) ? Math.floor(milliseconds / 1000) : null;
+}
+
+function isKoreanStockCode(code: string): boolean {
+  return KOREAN_STOCK_CODE_PATTERN.test(code.trim());
+}
+
+function getRealizedReturnPct(trade: TradeTimingRecord): number | null {
+  const reportedReturn = trade.net_pct ?? trade.realized_pnl_pct;
+  if (reportedReturn != null && Number.isFinite(reportedReturn)) return reportedReturn;
+
+  const entryPrice = trade.entry;
+  const exitPrice = trade.exit_price;
+  if (
+    entryPrice == null
+    || exitPrice == null
+    || !Number.isFinite(entryPrice)
+    || !Number.isFinite(exitPrice)
+    || entryPrice <= 0
+  ) {
+    return null;
+  }
+  return ((exitPrice - entryPrice) / entryPrice) * 100;
+}
+
+function formatReturnPct(value: number): string {
+  const rounded = Math.abs(value) < 0.005 ? 0 : value;
+  return `${rounded > 0 ? "+" : ""}${rounded.toFixed(2)}%`;
+}
+
+function formatKstTime(
+  time: unknown,
+  lang: string,
+  display: "tick" | "crosshair",
+): string {
+  if (typeof time !== "number" || !Number.isFinite(time)) return "";
+  const date = new Date(time * 1000);
+  const language = lang === "ko" ? "ko" : "en";
+  const formatter = display === "tick"
+    ? KST_TICK_FORMATTERS[language]
+    : KST_CROSSHAIR_FORMATTERS[language];
+  return formatter.format(date);
 }
 
 function nearestBarTime(times: number[], target: number): number | null {
