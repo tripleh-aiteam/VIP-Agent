@@ -550,10 +550,13 @@ def candle3_toggle(on: bool = Query(...), db: Session = Depends(get_db)):
 def candle3_params(stop_pct: Optional[float] = Query(None), pos_pct: Optional[float] = Query(None),
                    codes: Optional[str] = Query(None), mode: Optional[str] = Query(None),
                    streak: Optional[int] = Query(None), tf: Optional[str] = Query(None),
+                   take_pct: Optional[float] = Query(None),
                    db: Session = Depends(get_db)):
-    """Algorithm 3 dials: stop %, size %, stock list, mode, streak (2/3), tf (1/3/5-min)."""
+    """Algorithm 3 dials: stop %, size %, stock list, mode, streak (2/3), tf (1/3/5-min),
+    take_pct (NET take-profit % — sell on a small gain instead of a 3-down reversal)."""
     from services.candle_trader import set_params
-    return set_params(db, stop_pct=stop_pct, pos_pct=pos_pct, codes=codes, mode=mode, streak=streak, tf=tf)
+    return set_params(db, stop_pct=stop_pct, pos_pct=pos_pct, codes=codes, mode=mode,
+                      streak=streak, tf=tf, take_pct=take_pct)
 
 
 @router.post("/candle3/buy")
@@ -592,12 +595,15 @@ def crosscheck_toggle(on: bool = Query(...), db: Session = Depends(get_db)):
 def crosscheck_params(rule: Optional[str] = Query(None), stop_pct: Optional[float] = Query(None),
                       pos_pct: Optional[float] = Query(None), mode: Optional[str] = Query(None),
                       codes: Optional[str] = Query(None), take_pct: Optional[float] = Query(None),
+                      brain_light: Optional[bool] = Query(None),
+                      exit_mode: Optional[str] = Query(None),
                       db: Session = Depends(get_db)):
-    """Cross-Check dials: rule (combo), stop %, size %, mode, stock list, and take_pct
-    (winner target — the trailing exit arms at +take_pct%; higher = let winners run)."""
+    """Cross-Check dials: rule, stop %, size %, mode, stock list, take_pct, brain_light, and
+    exit_mode ('trail' = winner-target trailing; 'candle' = ride until a 3-down-candle
+    reversal, keeping the -stop% floor + EOD)."""
     from services.cross_trader import set_params
     return set_params(db, rule=rule, stop_pct=stop_pct, pos_pct=pos_pct, mode=mode,
-                      codes=codes, take_pct=take_pct)
+                      codes=codes, take_pct=take_pct, brain_light=brain_light, exit_mode=exit_mode)
 
 
 @router.post("/crosscheck/buy")

@@ -16,6 +16,7 @@ Reuses scalp_trader's price/name/streak helpers so both engines read the same ta
 from __future__ import annotations
 
 import logging
+import threading
 from datetime import datetime
 from typing import Any, Optional
 
@@ -56,6 +57,10 @@ def _ensure(db) -> None:
     # boss 2026-07-20: candle timeframe — 1-min was pure noise (flips every minute, so
     # 3-in-a-row never forms). 3/5-min = the real trend you see on the chart. Default 5.
     db.execute(text("ALTER TABLE candle_state ADD COLUMN IF NOT EXISTS tf TEXT NOT NULL DEFAULT '5'"))
+    # boss 2026-07-28: take-profit — sell on a small NET gain instead of waiting for a
+    # 3-down reversal (which always exited a touch BELOW entry = a small loss every time).
+    db.execute(text("ALTER TABLE candle_state ADD COLUMN IF NOT EXISTS "
+                    "take_pct DOUBLE PRECISION NOT NULL DEFAULT 0.1"))
     db.execute(text(
         "CREATE TABLE IF NOT EXISTS candle_trades ("
         " id SERIAL PRIMARY KEY, ticker TEXT, name TEXT, qty INT,"
@@ -76,13 +81,14 @@ def _ensure(db) -> None:
 def _cfg(db) -> dict[str, Any]:
     _ensure(db)
     r = db.execute(text(
-        "SELECT enabled, stop_pct, pos_pct, codes, mode, streak, tf FROM candle_state WHERE id=1")).first()
+        "SELECT enabled, stop_pct, pos_pct, codes, mode, streak, tf, take_pct FROM candle_state WHERE id=1")).first()
     codes = [c.strip().zfill(6) for c in (r[3] or DEFAULT_CODES).split(",") if c.strip()]
     return {"enabled": bool(r[0]), "stop_pct": float(r[1]), "pos_pct": float(r[2]),
             "codes": codes[:24],
             "mode": (r[4] or "auto") if str(r[4] or "auto") in ("auto", "semi") else "auto",
             "streak": int(r[5] or 3) if int(r[5] or 3) in (2, 3) else 3,
-            "tf": str(r[6] or "5") if str(r[6] or "5") in ("1", "3", "5") else "5"}
+            "tf": str(r[6] or "5") if str(r[6] or "5") in ("1", "3", "5") else "5",
+            "take_pct": float(r[7]) if r[7] is not None else 0.5}
 
 
 def set_enabled(db, on: bool) -> dict:
@@ -95,10 +101,14 @@ def set_enabled(db, on: bool) -> dict:
 
 def set_params(db, stop_pct: Optional[float] = None, pos_pct: Optional[float] = None,
                codes: Optional[str] = None, mode: Optional[str] = None,
-               streak: Optional[int] = None, tf: Optional[str] = None) -> dict:
+               streak: Optional[int] = None, tf: Optional[str] = None,
+               take_pct: Optional[float] = None) -> dict:
     _ensure(db)
     if streak in (2, 3):
         db.execute(text("UPDATE candle_state SET streak=:s, updated_at=now() WHERE id=1"), {"s": int(streak)})
+    if take_pct is not None:
+        db.execute(text("UPDATE candle_state SET take_pct=:v, updated_at=now() WHERE id=1"),
+                   {"v": max(0.1, min(3.0, float(take_pct)))})
     if tf in ("1", "3", "5"):
         db.execute(text("UPDATE candle_state SET tf=:v, updated_at=now() WHERE id=1"), {"v": str(tf)})
     if stop_pct is not None:
@@ -144,20 +154,24 @@ def _candles_tf(code: str, tf: str, n: int = 8) -> list[dict]:
 
 
 def _streaks_tf(code: str, tf: str) -> tuple[int, int, int]:
-    """(up-in-a-row, down-in-a-row, candles seen) at the chosen timeframe."""
+    """(up-in-a-row, down-in-a-row, candles seen) at the chosen timeframe.
+    boss 2026-07-28: 'up' now means the CLOSES actually step HIGHER (x1 < x2 < x3), not just
+    3 candles that each close above their own open. A flat market oscillating in a tiny band
+    (every candle green but all closing at the SAME price) is NO LONGER a 3-up — that was a
+    false buy signal. up=k => the last k candles' closes are strictly rising; dn=k => strictly
+    falling. len(cs) unchanged."""
     cs = _candles_tf(code, tf)
-    up = dn = 0
-    for b in reversed(cs):
-        o, c = b.get("open"), b.get("close")
-        if o is None or c is None:
-            break
-        if c > o and dn == 0:
-            up += 1
-        elif c < o and up == 0:
-            dn += 1
-        else:
-            break
-    return up, dn, len(cs)
+    closes = [b.get("close") for b in cs if b.get("close") is not None]
+    n = len(closes)
+    k = 0                                        # rising links at the tail: close[i] > close[i-1]
+    while n - 1 - k >= 1 and closes[n - 1 - k] > closes[n - 2 - k]:
+        k += 1
+    up = k + 1 if k else 0                        # +1 for the candle the run starts from -> x1<x2<x3 == 3
+    k = 0                                        # falling links at the tail: close[i] < close[i-1]
+    while n - 1 - k >= 1 and closes[n - 1 - k] < closes[n - 2 - k]:
+        k += 1
+    dn = k + 1 if k else 0
+    return up, dn, n
 
 
 def _volume_rising(code: str) -> bool:
@@ -189,8 +203,28 @@ def _place(db, code: str, side: str, qty: int):
     return place_order(db, code, side, qty, "market", source="algo3")
 
 
-def tick(db, force: bool = False) -> dict[str, Any]:
-    """One heartbeat: 3-up → BUY, 3-down → SELL, −1% stop, EOD flat."""
+_tick_lock = threading.Lock()     # serialize tick() so the 5s exit pulse never races the 60s full tick
+
+
+def exit_pulse(db) -> dict[str, Any]:
+    """FAST stop/take-profit protection — runs every 5s. Checks open positions and sells on
+    STOP/TARGET/EOD only (no entry scan), so a fast drop is caught in <=5s instead of <=60s.
+    This tightens the -stop% floor: less slippage past -1% between checks (boss 2026-07-28)."""
+    return tick(db, exits_only=True)
+
+
+def tick(db, force: bool = False, exits_only: bool = False) -> dict[str, Any]:
+    """One heartbeat: 3-up → BUY, +take% take-profit → SELL, −stop% stop, EOD flat.
+    exits_only=True runs just the exit leg (used by the 5s exit_pulse)."""
+    if not _tick_lock.acquire(blocking=False):
+        return {"enabled": True, "opened": [], "closed": [], "reason": "tick busy — skipped"}
+    try:
+        return _tick_impl(db, force, exits_only)
+    finally:
+        _tick_lock.release()
+
+
+def _tick_impl(db, force: bool, exits_only: bool) -> dict[str, Any]:
     _ensure(db)
     cfg = _cfg(db)
     out: dict[str, Any] = {"enabled": cfg["enabled"], "opened": [], "closed": []}
@@ -216,13 +250,12 @@ def tick(db, force: bool = False) -> dict[str, Any]:
             continue
         entry = float(entry)
         reason = None
-        up, dn, cn = _streaks_tf(tk, tf)
-        if px <= entry * (1 - cfg["stop_pct"] / 100):
-            reason = "STOP"
-        elif cn >= need and dn >= need:
-            reason = "CANDLE3"          # 3 consecutive down candles
+        if (px / entry - 1) * 100 - 0.23 <= -cfg["stop_pct"]:
+            reason = "STOP"                              # NET loss (after 0.23% tax) hits -stop% -> what you SEE = -stop%
+        elif (px / entry - 1) * 100 - 0.23 >= cfg["take_pct"]:
+            reason = "TARGET"                            # +take% NET gain (after tax) -> lock the small win
         elif eod:
-            reason = "EOD"
+            reason = "EOD"                               # 15:18 flat
         if not reason:
             _sell_hint.pop(tk, None)
             open_codes.add(tk)
@@ -250,6 +283,8 @@ def tick(db, force: bool = False) -> dict[str, Any]:
             open_codes.add(tk)
 
     # ---- ENTRIES (one open per stock) ---- #
+    if exits_only:                    # 5s fast pulse: protect open positions, skip entry scan
+        return out
     if eod:
         out["reason"] = "EOD flat — no new entries after 15:18"
         return out
@@ -271,7 +306,7 @@ def tick(db, force: bool = False) -> dict[str, Any]:
             continue
         vtag = "거래량↑" if vol_ok else "거래량 약함"
         ptag = "짝꿍 안정" if peer_ok else "짝꿍 하락"
-        why = f"알고3 캔들: 1분봉 {up}연속 양봉 → 매수 ({vtag}·{ptag}, {need}연속 음봉에 매도·-1% 손절)"
+        why = f"알고3 캔들: 1분봉 종가 {up}연속 상승(x1<x2<x3) → 매수 ({vtag}·{ptag}, +익절/-1% 손절)"
         if cfg["mode"] == "semi":
             _semi_signals[code] = {"code": code, "name": _name(code), "price": px,
                                    "qty": qty, "why": why, "ts": n.timestamp()}
@@ -365,7 +400,7 @@ def status(db) -> dict[str, Any]:
             pass
         advice = None
         if o and cfg["mode"] == "semi":
-            advice = {"CANDLE3": "CANDLE", "STOP": "STOP", "EOD": "STOP"}.get(_sell_hint.get(code) or "")
+            advice = {"TARGET": "SELL", "STOP": "STOP", "EOD": "STOP"}.get(_sell_hint.get(code) or "")
         stop_at = round(o["entry"] * (1 - cfg["stop_pct"] / 100)) if o else None
         stocks.append({
             "code": code, "name": _name(code), "price": px, "chg": chg,
@@ -398,5 +433,5 @@ def status(db) -> dict[str, Any]:
                       "net_pct_sum": round(float(today[2] or 0), 2),
                       "realized_won": round(float(today[3] or 0))},
             "recent": recent, "market_open": _market_open_now(),
-            "rule_ko": f"{tf}분봉 {need}연속 양봉 → 매수 · {need}연속 음봉 → 매도 · −1% 손절 · 15:18 정리",
-            "rule_en": f"{need} up {tf}-min candles → BUY · {need} down → SELL · −1% stop · flat 15:18"}
+            "rule_ko": f"{tf}분봉 종가 {need}연속 상승(x1<x2<x3) → 매수 · +{cfg['take_pct']}% 익절 · −{cfg['stop_pct']}% 손절 · 15:18 정리",
+            "rule_en": f"{need} rising closes (x1<x2<x3) on {tf}-min → BUY · +{cfg['take_pct']}% take-profit · −{cfg['stop_pct']}% stop · flat 15:18"}

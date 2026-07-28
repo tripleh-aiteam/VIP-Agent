@@ -210,12 +210,19 @@ def _live_price(ticker: str) -> tuple[Optional[float], Optional[str]]:
         ob = kr3.order_book(ticker, ttl=2.0) or {}
         bb, ba = ob.get("best_bid"), ob.get("best_ask")
         old_px = px
-        if px is not None and bb and px < float(bb):
-            px = float(bb)
-        if px is not None and ba and px > float(ba):
-            px = float(ba)
-        if px is None and bb and ba:
-            px = (float(bb) + float(ba)) / 2
+        # SANITY BAND (2026-07-28): only pull the price INTO the book when the gap is tiny
+        # (<=0.5%). A normal spread is <0.3%; a wide/stale/auction book (bid far above, or
+        # ask far below, the last trade) must NOT drag the fill to an impossible price —
+        # that's what recorded sells ABOVE the day's high (SK하이닉스 @1,834,000 was +0.99%,
+        # 한화에어로 @893,000 was +1.48%). Beyond the band, keep the last-trade price.
+        _bb = float(bb) if bb else None
+        _ba = float(ba) if ba else None
+        if px is not None and _bb and px < _bb and (_bb / px - 1) <= 0.005:
+            px = _bb
+        if px is not None and _ba and px > _ba and (px / _ba - 1) <= 0.005:
+            px = _ba
+        if px is None and _bb and _ba:
+            px = (_bb + _ba) / 2
         if px is not None and old_px and px != old_px and chg is not None:
             chg = round(float(chg) + (px / old_px - 1) * 100, 2)
     except Exception:
@@ -346,6 +353,14 @@ def place_order(db, ticker: str, side: str, qty: int,
         "SELECT count(*) FROM paper_desk_orders WHERE status='OPEN'")).scalar() or 0
     if order_type == "limit" and int(n_open) >= MAX_OPEN_ORDERS:
         return {"ok": False, "error": f"open limit orders capped at {MAX_OPEN_ORDERS}"}
+    # 🛡️ CLOSING-AUCTION GUARD (2026-07-28): KRX continuous trading ends 15:20; 15:20-15:30 is
+    # a single-price call auction with NO live quote — the order book shows estimated prices
+    # that dragged market fills to IMPOSSIBLE values (sells above the day's high). Refuse it.
+    if order_type == "market":
+        from datetime import datetime as _dt, timezone as _tz, timedelta as _td
+        _t = _dt.now(_tz(_td(hours=9)))
+        if 15 * 60 + 20 <= _t.hour * 60 + _t.minute < 15 * 60 + 30:
+            return {"ok": False, "error": "closing auction (15:20-15:30) — no live price; order refused"}
     px, kw_name = _live_price(ticker)
     if px is None:
         return {"ok": False, "error": f"no live price for {ticker} — check the code"}
@@ -356,8 +371,8 @@ def place_order(db, ticker: str, side: str, qty: int,
     if order_type == "market" and ref_price:
         try:
             rp = float(ref_price)
-            if rp > 0 and abs(rp / px - 1) <= 0.03:
-                px = rp
+            if rp > 0 and abs(rp / px - 1) <= 0.01:   # ±1% (was 3%): a stale on-screen price
+                px = rp                                # further from the live price is ignored
         except (TypeError, ValueError):
             pass
     name = _name_for(ticker, kw_name)

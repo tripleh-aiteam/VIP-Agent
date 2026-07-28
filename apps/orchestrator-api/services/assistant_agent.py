@@ -611,6 +611,21 @@ def _relative_date_iso(text: Optional[str]) -> Optional[str]:
     return None
 
 
+def _names_weekday(text: Optional[str]) -> bool:
+    """True if the text names a SPECIFIC weekday (Mon–Sun / 월–일, incl. 3-letter
+    abbreviations) as a standalone word. Used to treat 'last week Friday' as a
+    single day rather than a whole-week range. Uses the same word-boundary match
+    as `_relative_date_iso` so the two stay consistent (e.g. 'fri' inside 'friday'
+    or 'mon' inside 'monitor' does NOT count)."""
+    t = (text or "").lower()
+    if not t:
+        return False
+    for name in _WDAYS:
+        if _re.search(rf"(?<![a-z]){_re.escape(name)}(?![a-z])", t):
+            return True
+    return False
+
+
 def _inject_relative_date(transcript: Optional[str]) -> Optional[str]:
     """For a stock question with a date phrase (relative OR worded, no explicit ISO
     date yet), append the resolved 'YYYY-MM-DD' so past-price routing + history lookup
@@ -1373,6 +1388,18 @@ def _requested_history_dates(q: Optional[str]):
                     pass
             if dates:
                 return ("dates", dates)
+    # A specific weekday ('last week Friday', '지난주 금요일', 'on Monday') is a
+    # SINGLE-DAY question — even though 'last week' ALSO matches the range pattern
+    # below. Resolve it to that one date FIRST, so "last Friday's closing price"
+    # returns just that day instead of the whole week's OHLCV table
+    # (boss 2026-07-27: "I asked exactly one day but it showed all days of the week").
+    if _names_weekday(t):
+        iso = _relative_date_iso(q)
+        if iso:
+            try:
+                return ("dates", [_date.fromisoformat(iso)])
+            except ValueError:
+                pass
     if _is_history_range_query(q):
         return ("range", 7)
     iso = _relative_date_iso(q)
@@ -4952,38 +4979,50 @@ def run_agent(
                 result["reply"] = fixed
     except Exception as _e:
         log.warning(f"language guard skipped: {str(_e)[:120]}")
-    # Persist meaningful turns only — skip empty / multimodal_failed / errors
-    skip_intents = {"empty", "multimodal_failed", "multimodal_missing", "chain_empty"}
-    if user_id and result.get("intent") not in skip_intents and result.get("reply"):
-        _persist_assistant_turn(
-            db,
-            user_id=user_id,
-            user_text=transcript or "",
-            assistant_reply=str(result.get("reply") or ""),
-            intent=result.get("intent"),
-            tool_used=result.get("tool_used"),
-        )
+    # SPEED (boss 2026-07-27: "reply must be very fast"): cross-session memory
+    # persistence + self-improvement logging are best-effort DB writes (a SELECT,
+    # a flush and several INSERTs, all cross-region) that USED to run synchronously
+    # here — BEFORE the already-computed reply was returned, adding ~1s+ of latency
+    # the user felt on every single message. The reply is done; ship it now and
+    # write afterwards on a background thread (its OWN DB session — the request's
+    # `db` may be closed by the time this runs).
+    _final_reply = str(result.get("reply") or "")
+    _final_intent = result.get("intent")
+    _final_tool = result.get("tool_used")
+    _final_needs_llm = bool(result.get("needs_llm"))
 
-    # --- Self-improvement instrumentation (#12 + #13 + #15) ---
-    # Log the answered turn and, if it looks low-confidence, kick off background
-    # web research so the next time this is asked the KB has an answer. All
-    # best-effort — never blocks or breaks the response.
+    def _persist_and_learn_bg() -> None:
+        from db.base import SessionLocal
+        db_bg = SessionLocal()
+        try:
+            # 1. Cross-session memory (so recall_history can find this turn later).
+            skip_intents = {"empty", "multimodal_failed", "multimodal_missing", "chain_empty"}
+            if user_id and _final_intent not in skip_intents and _final_reply:
+                _persist_assistant_turn(
+                    db_bg, user_id=user_id, user_text=transcript or "",
+                    assistant_reply=_final_reply, intent=_final_intent, tool_used=_final_tool,
+                )
+            # 2. Self-improvement instrumentation (#12 + #13 + #15): log the turn and,
+            #    if low-confidence, kick off background web research.
+            skip = {"empty", "multimodal_failed", "multimodal_missing", "chain_empty", "error"}
+            if (transcript or "").strip() and _final_intent not in skip and _final_reply:
+                from services.assistant_learning import is_low_confidence, log_qa
+                low = is_low_confidence(_final_reply) or _final_needs_llm
+                log_qa(db_bg, agent_id=agent_id, question=transcript or "", answer=_final_reply,
+                       intent=_final_intent, tool_used=_final_tool, low_conf=low, user_id=user_id)
+                if low and not confirmed_tool:
+                    _spawn_background_research(agent_id, transcript or "")
+        except Exception as _e:
+            log.warning(f"persist/learn (bg) skipped: {str(_e)[:120]}")
+        finally:
+            db_bg.close()
+
     try:
-        reply_text = str(result.get("reply") or "")
-        skip = {"empty", "multimodal_failed", "multimodal_missing", "chain_empty", "error"}
-        if (transcript or "").strip() and result.get("intent") not in skip and reply_text:
-            from services.assistant_learning import is_low_confidence, log_qa
-            # An offline turn that couldn't be answered is a real knowledge gap —
-            # treat it as low-confidence so the gap report + background research
-            # pick it up (research runs server-side; it doesn't break offline UX).
-            low = is_low_confidence(reply_text) or bool(result.get("needs_llm"))
-            log_qa(db, agent_id=agent_id, question=transcript or "", answer=reply_text,
-                   intent=result.get("intent"), tool_used=result.get("tool_used"),
-                   low_conf=low, user_id=user_id)
-            if low and not (confirmed_tool):
-                _spawn_background_research(agent_id, transcript or "")
+        _persist_executor.submit(_persist_and_learn_bg)
     except Exception as _e:
-        log.warning(f"self-improve instrumentation skipped: {str(_e)[:120]}")
+        # Executor unavailable/saturated → do it inline (correctness over speed).
+        log.warning(f"persist/learn: bg submit failed, running inline: {str(_e)[:120]}")
+        _persist_and_learn_bg()
 
     return result
 
@@ -5001,6 +5040,11 @@ _research_executor = _ThreadPoolExecutor(max_workers=2, thread_name_prefix="rese
 _research_inflight: set[str] = set()
 _research_lock = _threading.Lock()
 _RESEARCH_MAX_INFLIGHT = 8  # hard cap on queued+running jobs
+
+# Off-critical-path writer for turn persistence + QA logging (see run_agent).
+# Bounded worker pool so a burst of chat can't exhaust the DB connection pool;
+# each job opens and closes its own short-lived session.
+_persist_executor = _ThreadPoolExecutor(max_workers=2, thread_name_prefix="persist")
 
 
 def _spawn_background_research(agent_id: str, question: str) -> None:
@@ -6268,29 +6312,52 @@ def _run_agent_impl(
     # and the LLM falls back to its own knowledge — exactly the behaviour
     # the user requested ("first search inside our DB locally, then answer
     # based on his knowledge").
+    # SPEED (boss 2026-07-27: "reply must be very fast"): a plain live-price or
+    # past-date/history question is answered further below by a DETERMINISTIC lane
+    # (the VIP current-price / history tables) — WITHOUT the KB and WITHOUT the LLM.
+    # The vector search + file-index lookup here are two cross-region Supabase
+    # round-trips (plus an embedding call when embeddings are on) whose results those
+    # lanes never read, so skip them for these queries. Guarded to mirror those
+    # lanes exactly (advice/outlook/recommendation still get full KB), and offline
+    # mode is excluded because it answers straight from the KB.
+    _offline_mode = (forced_model or "").strip().lower() in ("none", "offline", "no-llm", "nollm")
+    _kb_not_needed = (
+        not _offline_mode and not attachment_ids and bool(transcript)
+        and (
+            _is_vip_current_price_q(transcript, agent_id)
+            or (
+                bool(_requested_history_dates(transcript))
+                and not _is_future_outlook(transcript)
+                and not _is_stock_advice(transcript, agent_id)
+                and not _wants_recommendation(transcript)
+            )
+        )
+    )
+
     kb_hits: list[dict] = []
     rag_error: Optional[str] = None
-    try:
-        from services.knowledge_ingest import rag_retrieve, EMBED_PROVIDER as _EMB
-        # Embedding cosine scores run lower than keyword scores (and lower still
-        # cross-lingual EN<->KO), so use a lower floor in semantic mode to avoid
-        # filtering valid matches; keyword scores are high so keep 0.35 there.
-        _min_sim = 0.25 if _EMB != "none" else 0.35
-        kb_hits = rag_retrieve(
-            db,
-            agent_id=agent_id,
-            query=transcript,
-            top_k=8,
-            min_sim=_min_sim,
-        )
-        if kb_hits:
-            log.info(
-                "rag: %d hits for agent=%s query=%r (top sim=%.2f)",
-                len(kb_hits), agent_id, transcript[:60], kb_hits[0]["similarity"],
+    if not _kb_not_needed:
+        try:
+            from services.knowledge_ingest import rag_retrieve, EMBED_PROVIDER as _EMB
+            # Embedding cosine scores run lower than keyword scores (and lower still
+            # cross-lingual EN<->KO), so use a lower floor in semantic mode to avoid
+            # filtering valid matches; keyword scores are high so keep 0.35 there.
+            _min_sim = 0.25 if _EMB != "none" else 0.35
+            kb_hits = rag_retrieve(
+                db,
+                agent_id=agent_id,
+                query=transcript,
+                top_k=8,
+                min_sim=_min_sim,
             )
-    except Exception as e:
-        rag_error = str(e)[:200]
-        log.warning("rag retrieval failed (continuing without KB): %s", e)
+            if kb_hits:
+                log.info(
+                    "rag: %d hits for agent=%s query=%r (top sim=%.2f)",
+                    len(kb_hits), agent_id, transcript[:60], kb_hits[0]["similarity"],
+                )
+        except Exception as e:
+            rag_error = str(e)[:200]
+            log.warning("rag retrieval failed (continuing without KB): %s", e)
 
     # Pull the file index regardless of chunk matches so the LLM always
     # knows which files the boss has uploaded. Critical for vague queries
@@ -6298,35 +6365,36 @@ def _run_agent_impl(
     # "내가 올린 파일 알려줘" — questions that don't keyword-match any
     # individual chunk but obviously refer to the uploaded KB.
     kb_files: list[dict] = []
-    try:
-        from sqlalchemy import text as _sa_text
-        rows = db.execute(_sa_text("""
-            SELECT f.filename,
-                   f.size_bytes,
-                   f.chunk_count,
-                   (SELECT c.content FROM assistant_knowledge_chunks c
-                    WHERE c.file_id = f.id
-                    ORDER BY c.id ASC
-                    LIMIT 1) AS preview
-            FROM assistant_knowledge_files f
-            WHERE f.agent_id = :agent_id
-              AND f.status = 'indexed'
-            ORDER BY f.uploaded_at DESC NULLS LAST
-            LIMIT 30
-        """), {"agent_id": agent_id}).fetchall()
-        kb_files = [
-            {
-                "filename": r.filename,
-                "size_bytes": r.size_bytes,
-                "chunk_count": r.chunk_count,
-                "preview": r.preview,
-            }
-            for r in rows
-        ]
-        if kb_files:
-            log.info("file-index: %d files for agent=%s", len(kb_files), agent_id)
-    except Exception as e:
-        log.warning("file-index lookup failed (continuing without it): %s", e)
+    if not _kb_not_needed:
+        try:
+            from sqlalchemy import text as _sa_text
+            rows = db.execute(_sa_text("""
+                SELECT f.filename,
+                       f.size_bytes,
+                       f.chunk_count,
+                       (SELECT c.content FROM assistant_knowledge_chunks c
+                        WHERE c.file_id = f.id
+                        ORDER BY c.id ASC
+                        LIMIT 1) AS preview
+                FROM assistant_knowledge_files f
+                WHERE f.agent_id = :agent_id
+                  AND f.status = 'indexed'
+                ORDER BY f.uploaded_at DESC NULLS LAST
+                LIMIT 30
+            """), {"agent_id": agent_id}).fetchall()
+            kb_files = [
+                {
+                    "filename": r.filename,
+                    "size_bytes": r.size_bytes,
+                    "chunk_count": r.chunk_count,
+                    "preview": r.preview,
+                }
+                for r in rows
+            ]
+            if kb_files:
+                log.info("file-index: %d files for agent=%s", len(kb_files), agent_id)
+        except Exception as e:
+            log.warning("file-index lookup failed (continuing without it): %s", e)
 
     system = _build_system_prompt(
         current_path=current_path,

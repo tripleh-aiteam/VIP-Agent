@@ -113,11 +113,36 @@ def _loop() -> None:
         time.sleep(15)
 
 
+def _fast_algo3_loop() -> None:
+    """Dedicated 5s Algorithm-3 heartbeat (boss 2026-07-28). The main loop only ticked Algo-3
+    every 60s, so BOTH a 3-up BUY signal (live for ~1 candle) AND a fast drop past the −1% stop
+    could be MISSED between checks. This runs Algo-3's FULL tick — entries AND exits — every 5s,
+    over all 21 stocks, so no 3-up entry and no stop is missed. Cheap: 21 streak reads from the
+    warm candle buffer (no LLM, no scan). The candle_trader lock serializes it vs any manual
+    /tick, and 'one open per stock' stops any double-buy."""
+    from db.base import SessionLocal
+    _start = time.time()
+    while True:
+        try:
+            if time.time() - _start >= _GRACE_SEC and _market_hours() and not _ONLY_ALGO1:
+                db = SessionLocal()
+                try:
+                    from services.candle_trader import tick as _c3tick
+                    _c3tick(db)          # full tick: catch every 3-up BUY + every stop within 5s
+                except Exception as e:
+                    db.rollback(); logger.warning(f"fast-algo3: {str(e)[:100]}")
+                finally:
+                    db.close()
+        except Exception as e:
+            logger.warning(f"fast_algo3_loop: {str(e)[:120]}")
+        time.sleep(5)
+
+
 def start_ticker() -> None:
-    """Idempotent — starts the single daemon heartbeat thread."""
+    """Idempotent — starts the daemon heartbeat threads (15s full loop + 5s fast-exit loop)."""
     global _started
     if _started:
         return
     _started = True
-    t = threading.Thread(target=_loop, name="inprocess-ticker", daemon=True)
-    t.start()
+    threading.Thread(target=_loop, name="inprocess-ticker", daemon=True).start()
+    threading.Thread(target=_fast_algo3_loop, name="inprocess-fast-algo3", daemon=True).start()

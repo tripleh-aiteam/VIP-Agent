@@ -112,7 +112,7 @@ function SignalStrip({ s, t, lang }: { s: CCStock; t: (ko: string, en: string) =
     ? (ago <= 0 ? t(" · 방금 매수", " · bought just now") : t(` · 매수 ${ago}분 전`, ` · bought ${ago}m ago`))
     : "");
   const rows: { ic: string; lbl: string; sg: Sig; why?: string }[] = [
-    { ic: "🤖", lbl: t("알고1 (종합 브레인)", "Algo1 (brain)"), sg: s.algo1, why: (ko ? s.algo1_why_ko : s.algo1_why_en) + agoBadge(s.algo1, s.algo1_ago) },
+    { ic: "🤖", lbl: t("알고1 (머신러닝)", "Algo1 (Machine Learning)"), sg: s.algo1, why: (ko ? s.algo1_why_ko : s.algo1_why_en) + agoBadge(s.algo1, s.algo1_ago) },
     { ic: "⚡", lbl: t("알고2 (잔물결)", "Algo2 (ripple)"), sg: s.ripple, why: (ko ? s.ripple_why_ko : s.ripple_why_en) + agoBadge(s.ripple, s.ripple_ago) },
     { ic: "🕯️", lbl: t("알고3 (캔들)", "Algo3 (candle)"), sg: s.candle, why: (ko ? s.candle_why_ko : s.candle_why_en) + agoBadge(s.candle, s.candle_ago) },
   ];
@@ -260,7 +260,7 @@ function aggBars(bars: Bar[], unit: "day" | "week"): Bar[] {
   return out;
 }
 function IntervalChart({ code, t, lang }: { code: string; t: (ko: string, en: string) => string; lang: string }) {
-  const [iv, setIv] = useState("5m");
+  const [iv, setIv] = useState("1m");   // default to 1-min to MATCH the candle signal (reads 1-min)
   const ref = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
     if (!code || !ref.current) return;
@@ -325,7 +325,7 @@ function IntervalChart({ code, t, lang }: { code: string; t: (ko: string, en: st
           </button>
         ))}
       </div>
-      <div ref={ref} style={{ width: "100%" }} />
+      <div ref={ref} style={{ width: "100%", height: 300 }} />
     </div>
   );
 }
@@ -379,6 +379,10 @@ export default function CrossCheckDesk({ mode: initialMode }: { mode: CCMode }) 
   const switchMode = (m: CCMode) => {
     setMode(m);
     try { window.history.replaceState(null, "", `/testing/crosscheck/${m}`); } catch { /* ignore */ }
+    // Push the engine mode to the server ONLY on an explicit auto/semi tab CLICK. (A prior
+    // reactive effect re-posted the tab's mode whenever the ENGINE mode changed elsewhere —
+    // e.g. set via API — silently overwriting it with whatever tab you happened to be on.)
+    if (m !== "manual") apiPost(`/paper-desk/crosscheck/params?mode=${m}`).catch(() => {});
   };
   const [sc, setSc] = useState<CCStatus | null>(null);
   const [st, setSt] = useState<DeskState | null>(null);
@@ -392,6 +396,7 @@ export default function CrossCheckDesk({ mode: initialMode }: { mode: CCMode }) 
   const [fRes, setFRes] = useState<"ALL" | "WIN" | "LOSE">("ALL");
   const [fName, setFName] = useState("ALL");
   const [fDate, setFDate] = useState("");
+  const [fExit, setFExit] = useState<"ALL" | "MANUAL" | "AUTO">("ALL");   // sold manually vs auto-exit
   // manual: Place-Order box (any KRX stock, source='algo4' — trades on this page count
   // for Cross-Check on the scoreboard) + algo4 round-trip history
   const [oQ, setOQ] = useState("SK하이닉스 (000660)");
@@ -416,13 +421,9 @@ export default function CrossCheckDesk({ mode: initialMode }: { mode: CCMode }) 
     const l = () => api<{ today: AlgoCmp }>("/paper-desk/algo-compare").then((r) => setCmp(r.today || {})).catch(() => {});
     l(); const i = setInterval(l, 15000); return () => clearInterval(i);
   }, []);
-  // keep server mode in sync with the page — FIRE-AND-FORGET, never blocks the UI
-  // (manual page doesn't touch the machine mode)
-  useEffect(() => {
-    if (mode === "manual" || !sc?.mode || sc.mode === mode) return;
-    apiPost(`/paper-desk/crosscheck/params?mode=${mode}`).catch(() => {});
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mode, sc?.mode]);
+  // NOTE: engine mode is now pushed ONLY in switchMode() on an explicit tab click. The old
+  // reactive [mode, sc.mode] effect that lived here silently overwrote an API/external mode
+  // change with the current tab (that's what kept flipping auto -> semi). Removed on purpose.
   useEffect(() => { api<{ stocks: StockItem[] }>("/paper-desk/stocks").then((r) => setStockList(r.stocks || [])).catch(() => {}); }, []);
 
   const saveCodes = async (codes: string[]) => { await apiPost(`/paper-desk/crosscheck/params?codes=${encodeURIComponent(codes.join(","))}`); load(); };
@@ -930,8 +931,8 @@ export default function CrossCheckDesk({ mode: initialMode }: { mode: CCMode }) 
               <select value={rule} onChange={(e) => setRule(e.target.value as CCRule)}
                 className="px-1.5 py-1 rounded-lg border bg-[var(--bg-primary)] text-[var(--text-primary)] font-bold" style={{ borderColor: INDIGO }}>
                 <option value="strict">{t("🤖⚡🕯️ 3개 모두", "🤖⚡🕯️ All 3")}</option>
-                <option value="a1a2">{t("🤖 브레인 + ⚡ 리플", "🤖 Brain + ⚡ Ripple")}</option>
-                <option value="a1a3">{t("🤖 브레인 + 🕯️ 캔들", "🤖 Brain + 🕯️ Candle")}</option>
+                <option value="a1a2">{t("🤖 머신러닝 + ⚡ 리플", "🤖 ML + ⚡ Ripple")}</option>
+                <option value="a1a3">{t("🕯️ 캔들 + 🤖 머신러닝", "🕯️ Candle + 🤖 Machine Learning")}</option>
                 <option value="a2a3">{t("⚡ 리플 + 🕯️ 캔들", "⚡ Ripple + 🕯️ Candle")}</option>
                 <option value="loose">{t("2/3 + 브레인 (느슨)", "2/3 + brain (loose)")}</option>
               </select>
@@ -1004,7 +1005,7 @@ export default function CrossCheckDesk({ mode: initialMode }: { mode: CCMode }) 
                     {({
                       strict: t("🤖⚡🕯️ 세 알고리즘이 모두 🟢 매수가 되면 진입합니다.", "enters when all 3 turn 🟢 BUY."),
                       a1a2: t("🤖 브레인과 ⚡ 리플이 모두 🟢 매수가 되면 진입합니다.", "enters when 🤖 Brain + ⚡ Ripple both turn 🟢 BUY."),
-                      a1a3: t("🤖 브레인과 🕯️ 캔들이 모두 🟢 매수가 되면 진입합니다.", "enters when 🤖 Brain + 🕯️ Candle both turn 🟢 BUY."),
+                      a1a3: t("🕯️ 캔들과 🤖 머신러닝이 모두 🟢 매수가 되면 진입합니다.", "enters when 🕯️ Candle + 🤖 Machine Learning both turn 🟢 BUY."),
                       a2a3: t("⚡ 리플과 🕯️ 캔들이 모두 🟢 매수가 되면 진입합니다.", "enters when ⚡ Ripple + 🕯️ Candle both turn 🟢 BUY."),
                       loose: t("리플+캔들이 🟢 매수이고 알고1이 비관적이 아니면 진입합니다.", "enters when ripple+candle are 🟢 BUY and algo1 isn't bearish."),
                     } as Record<CCRule, string>)[rule]}
@@ -1065,12 +1066,16 @@ export default function CrossCheckDesk({ mode: initialMode }: { mode: CCMode }) 
             <option value="ALL">{t("종목: 전체", "stock: all")}</option>
             {Array.from(new Set((sc?.recent || []).map((r) => r.name))).sort().map((n) => <option key={n} value={n}>{n}</option>)}
           </select>
-          {(fDate || fRes !== "ALL" || fName !== "ALL") && <button onClick={() => { setFDate(""); setFRes("ALL"); setFName("ALL"); }} className="text-[10.5px] font-bold px-2 py-0.5 rounded-lg border text-[var(--text-muted)]" style={{ borderColor: "var(--border-default)" }}>✕ {t("초기화", "clear")}</button>}
+          <select value={fExit} onChange={(e) => setFExit(e.target.value as typeof fExit)} className="text-[11px] font-bold px-1.5 py-0.5 rounded-lg border bg-[var(--bg-primary)] text-[var(--text-primary)]" style={{ borderColor: fExit !== "ALL" ? INDIGO : "var(--border-default)" }} title={t("수동 매도 vs 자동 청산", "sold manually vs auto-exit")}>
+            <option value="ALL">{t("체결: 전체", "sold: all")}</option><option value="MANUAL">{t("✋ 수동 매도", "✋ manual")}</option><option value="AUTO">{t("🤖 자동 청산", "🤖 auto")}</option>
+          </select>
+          {(fDate || fRes !== "ALL" || fName !== "ALL" || fExit !== "ALL") && <button onClick={() => { setFDate(""); setFRes("ALL"); setFName("ALL"); setFExit("ALL"); }} className="text-[10.5px] font-bold px-2 py-0.5 rounded-lg border text-[var(--text-muted)]" style={{ borderColor: "var(--border-default)" }}>✕ {t("초기화", "clear")}</button>}
         </div>
         {(() => {
           const rows = (sc?.recent || []).filter((r) =>
             (fRes === "ALL" || (fRes === "WIN" ? (r.won || 0) > 0 : (r.won || 0) < 0))
             && (fName === "ALL" || r.name === fName)
+            && (fExit === "ALL" || (fExit === "MANUAL" ? r.exit_reason === "MANUAL" : r.exit_reason !== "MANUAL"))
             && (!fDate || kstDate(r.closed_at) === fDate));
           const wins = rows.filter((r) => (r.won || 0) > 0), losses = rows.filter((r) => (r.won || 0) < 0);
           const net = rows.reduce((a, r) => a + (r.won || 0), 0);

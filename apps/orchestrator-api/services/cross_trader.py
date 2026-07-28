@@ -24,6 +24,7 @@ and the warm decision cache — status() NEVER computes scan() or decide().
 from __future__ import annotations
 
 import logging
+import threading
 from datetime import datetime
 from typing import Any, Optional
 
@@ -63,8 +64,8 @@ _COMBO_REQ: dict[str, tuple[str, ...]] = {
     "a2a3":   ("ripple", "candle"),
 }
 _ALLOWED_RULES = ("strict", "loose", "a1a2", "a1a3", "a2a3")
-_ALGO_NM_KO = {"algo1": "🤖브레인", "ripple": "⚡리플", "candle": "🕯️캔들"}
-_ALGO_NM_EN = {"algo1": "🤖Brain", "ripple": "⚡Ripple", "candle": "🕯️Candle"}
+_ALGO_NM_KO = {"algo1": "🤖머신러닝", "ripple": "⚡리플", "candle": "🕯️캔들"}
+_ALGO_NM_EN = {"algo1": "🤖ML", "ripple": "⚡Ripple", "candle": "🕯️Candle"}
 
 
 def _req_for(rule: str) -> tuple[str, ...]:
@@ -88,6 +89,9 @@ _peak: dict[str, float] = {}          # in-memory winner-peak (NO DB column — 
 _last_buy: dict[str, dict[str, float]] = {}   # code -> {algo1/ripple/candle: last BUY epoch}
 _semi_signals: dict[str, dict] = {}   # semi mode: code -> live consensus BUY card
 _sell_hint: dict[str, str] = {}       # semi mode: code -> pending SELL advice reason
+_tick_lock = threading.Lock()         # serialize tick(): two overlapping runs once double-bought
+_last_sell: dict[str, float] = {}     # code -> epoch of last SELL (anti-churn cooldown)
+COOLDOWN_SEC = 300                    # after selling a stock, don't re-buy it for 5 min (anti-churn)
 _status_cache: Optional[tuple[float, dict]] = None   # 3s full-payload cache (page polls 4s)
 # SNAPSHOT pattern (boss 2026-07-22, same lesson as auto_trader focus_status): the WEB
 # path must NEVER compute signals — the 15s background tick() writes per-stock signals
@@ -128,6 +132,15 @@ def _ensure(db) -> None:
     # per-tick). Default 0.4 = current behavior, so nothing changes until it's moved.
     db.execute(text("ALTER TABLE cross_state ADD COLUMN IF NOT EXISTS "
                     "take_pct DOUBLE PRECISION NOT NULL DEFAULT 0.4"))
+    # Light-Brain toggle (boss 2026-07-27): when TRUE, a1-inclusive combos accept Algo1
+    # "not bearish" instead of a full Algo1 BUY — many more entries (the Brain only vetoes
+    # clear bearish). Default FALSE = current strict behavior; nothing changes until it's set.
+    db.execute(text("ALTER TABLE cross_state ADD COLUMN IF NOT EXISTS "
+                    "brain_light BOOLEAN NOT NULL DEFAULT FALSE"))
+    # Exit mode (boss 2026-07-28): 'trail' = winner-target trailing (default); 'candle' = ride
+    # until a 3-down-candle reversal (candle_sell) + the -stop% floor + EOD. Default unchanged.
+    db.execute(text("ALTER TABLE cross_state ADD COLUMN IF NOT EXISTS "
+                    "exit_mode TEXT NOT NULL DEFAULT 'trail'"))
     db.execute(text(
         "CREATE TABLE IF NOT EXISTS cross_trades ("
         " id SERIAL PRIMARY KEY, ticker TEXT, name TEXT, qty INT,"
@@ -135,6 +148,10 @@ def _ensure(db) -> None:
         " exit_reason TEXT, net_pct DOUBLE PRECISION, why TEXT,"
         " status TEXT NOT NULL DEFAULT 'OPEN',"
         " opened_at TIMESTAMPTZ DEFAULT now(), closed_at TIMESTAMPTZ)"))
+    # Candle-audit (boss 2026-07-28): store the exact 1-min candles that triggered each
+    # entry/exit so every trade is verifiable against the chart (R=red/up, B=blue/down).
+    db.execute(text("ALTER TABLE cross_trades ADD COLUMN IF NOT EXISTS entry_candles TEXT"))
+    db.execute(text("ALTER TABLE cross_trades ADD COLUMN IF NOT EXISTS exit_candles TEXT"))
     r = db.execute(text("SELECT 1 FROM cross_state WHERE id=1")).first()
     if not r:
         db.execute(text(
@@ -148,13 +165,15 @@ def _ensure(db) -> None:
 def _cfg(db) -> dict[str, Any]:
     _ensure(db)
     r = db.execute(text(
-        "SELECT enabled, mode, rule, stop_pct, pos_pct, codes, take_pct FROM cross_state WHERE id=1")).first()
+        "SELECT enabled, mode, rule, stop_pct, pos_pct, codes, take_pct, brain_light, exit_mode FROM cross_state WHERE id=1")).first()
     codes = [c.strip().zfill(6) for c in (r[5] or SCALP_21).split(",") if c.strip()]
     return {"enabled": bool(r[0]),
             "mode": (r[1] or "auto") if str(r[1] or "auto") in ("auto", "semi") else "auto",
             "rule": (r[2] or "strict") if str(r[2] or "strict") in _ALLOWED_RULES else "strict",
             "stop_pct": float(r[3]), "pos_pct": float(r[4]), "codes": codes[:24],
-            "take_pct": float(r[6]) if r[6] is not None else TAKE_FLOOR}
+            "take_pct": float(r[6]) if r[6] is not None else TAKE_FLOOR,
+            "brain_light": bool(r[7]),
+            "exit_mode": (r[8] or "trail") if str(r[8] or "trail") in ("trail", "candle", "target") else "trail"}
 
 
 def set_enabled(db, on: bool) -> dict:
@@ -167,7 +186,8 @@ def set_enabled(db, on: bool) -> dict:
 
 def set_params(db, rule: Optional[str] = None, stop_pct: Optional[float] = None,
                pos_pct: Optional[float] = None, mode: Optional[str] = None,
-               codes: Optional[str] = None, take_pct: Optional[float] = None) -> dict:
+               codes: Optional[str] = None, take_pct: Optional[float] = None,
+               brain_light: Optional[bool] = None, exit_mode: Optional[str] = None) -> dict:
     _ensure(db)
     if rule in _ALLOWED_RULES:
         db.execute(text("UPDATE cross_state SET rule=:v, updated_at=now() WHERE id=1"), {"v": rule})
@@ -182,6 +202,12 @@ def set_params(db, rule: Optional[str] = None, stop_pct: Optional[float] = None,
     if take_pct is not None:
         db.execute(text("UPDATE cross_state SET take_pct=:v, updated_at=now() WHERE id=1"),
                    {"v": max(0.2, min(3.0, float(take_pct)))})
+    if brain_light is not None:
+        db.execute(text("UPDATE cross_state SET brain_light=:v, updated_at=now() WHERE id=1"),
+                   {"v": bool(brain_light)})
+    if exit_mode in ("trail", "candle", "target"):
+        db.execute(text("UPDATE cross_state SET exit_mode=:v, updated_at=now() WHERE id=1"),
+                   {"v": exit_mode})
     if codes is not None:
         cl = [c.strip().zfill(6) for c in codes.split(",") if c.strip()]
         for m in ("005930", "000660"):    # pin the 2 mains first (boss's default view)
@@ -311,18 +337,27 @@ def _prob_ok(prob: Optional[float]) -> bool:
     return p is None or p >= PROB_MIN
 
 
-def entry_fires(rule: str, sig: dict, prob_ok: bool) -> bool:
+def _leg_ok(sig: dict, a: str, brain_light: bool) -> bool:
+    """One algo's BUY vote for a combo. In Light-Brain mode the Algo1 leg only needs
+    'not bearish' (decision != SELL) instead of a full BUY — so a1-combos fire far more
+    often (the Brain just vetoes clear bearish). Ripple/candle legs are unaffected."""
+    if a == "algo1" and brain_light:
+        return bool(sig["algo1_not_bearish"])
+    return bool(sig[f"{a}_buy"])
+
+
+def entry_fires(rule: str, sig: dict, prob_ok: bool, brain_light: bool = False) -> bool:
     """Do the CHOSEN algorithms AGREE to BUY? loose = ripple+candle+brain-ok+prob;
     any other rule = every algo in that combo bought (strict=all3, a1a2/a1a3/a2a3=a pair)."""
     if rule == "loose":
         return bool(sig["ripple_buy"] and sig["candle_buy"]
                     and sig["algo1_not_bearish"] and prob_ok)
-    return all(sig[f"{a}_buy"] for a in _req_for(rule))
+    return all(_leg_ok(sig, a, brain_light) for a in _req_for(rule))
 
 
 def entry_decision(rule: str, sig: dict, prob, *, holding: bool, mode: str,
                    cash: float, px: Optional[float], pos_pct: float,
-                   eod: bool) -> dict:
+                   eod: bool, brain_light: bool = False) -> dict:
     """SINGLE SOURCE OF TRUTH for 'will Cross-Check BUY this code on the next tick?'.
     Used by BOTH tick() (to actually trade) AND status() (to display) so the card can
     NEVER say '→ BUY entry' unless tick would truly enter. `sig` must already be
@@ -335,7 +370,7 @@ def entry_decision(rule: str, sig: dict, prob, *, holding: bool, mode: str,
     if rule == "loose":
         agree = bool(sig["ripple_buy"] and sig["candle_buy"] and sig["algo1_not_bearish"])
     else:
-        agree = all(sig[f"{a}_buy"] for a in _req_for(rule))    # the chosen combo all BUY
+        agree = all(_leg_ok(sig, a, brain_light) for a in _req_for(rule))  # combo all BUY (Algo1=not-bearish if light)
     if not agree:
         return {"should_buy": False, "agree": False, "blocker": None}
     if holding:
@@ -355,10 +390,30 @@ def entry_decision(rule: str, sig: dict, prob, *, holding: bool, mode: str,
 
 def exit_reason(rule: str, entry: float, px: float, peak: float,
                 stop_pct: float, eod: bool, sig: dict,
-                take_pct: float = TAKE_FLOOR) -> Optional[str]:
-    """Exit decision. The safety net (STOP / trailing TRAIL / EOD) is ALWAYS on;
-    a consensus sell is an ADDITIONAL exit. None = keep holding. `take_pct` = the
-    winner-target dial: the trailing exit only arms once the position is up +take_pct%."""
+                take_pct: float = TAKE_FLOOR, exit_mode: str = "trail") -> Optional[str]:
+    """Exit decision. The -stop% floor and EOD flat are ALWAYS on. `exit_mode`:
+      * "trail"  — winner-target trailing (arms at +take_pct%) + consensus SELL (original).
+      * "candle" — ride winners until a CLEAR reversal: sell on candle_sell (3 down candles);
+                   a 2-down dip does NOT trigger it, so the position keeps holding."""
+    if exit_mode == "target":
+        # take-profit + stop only (no candle exit). BUY on 3 up candles, then:
+        #   * sell the moment a SMALL NET gain (after ~0.23% round-trip tax) reaches take_pct, or
+        #   * sell if it drops to the -stop% floor. Locks in small wins the candle exit always misses.
+        if px <= entry * (1 - stop_pct / 100):     # -stop% safety floor (always on)
+            return "STOP"
+        if (px / entry - 1) * 100 - 0.23 >= take_pct:   # +take_pct% NET (after tax) -> lock the win
+            return "TARGET"
+        if eod:                                     # 15:18 flat (always on)
+            return "EOD"
+        return None
+    if exit_mode == "candle":
+        if px <= entry * (1 - stop_pct / 100):     # -stop% safety floor (always on)
+            return "STOP"
+        if eod:                                     # 15:18 flat (always on)
+            return "EOD"
+        if sig.get("candle_sell"):                  # 3 DOWN candles = clear reversal -> sell
+            return "CANDLE"
+        return None                                 # 2-down / no reversal -> keep riding
     r = _ripple_exit(entry, px, peak, take_pct, stop_pct, eod)
     if r:
         return r
@@ -399,7 +454,10 @@ def _windowed_sig(code: str, sig: dict, now_ts: float) -> dict:
     w = dict(sig)
     w["algo1_buy"] = bool(sig.get("algo1_buy") or _recent(code, "algo1", now_ts))
     w["ripple_buy"] = bool(sig.get("ripple_buy") or _recent(code, "ripple", now_ts))
-    w["candle_buy"] = bool(sig.get("candle_buy") or _recent(code, "candle", now_ts))
+    # candle is a NOW signal — 3 up candles must be TRUE this instant, not "fired sometime in
+    # the last 20 min". The window is fine for the slow legs, but a stale candle-buy let the
+    # engine buy AFTER the up-move had already reversed to 3 DOWN candles (boss 2026-07-28).
+    w["candle_buy"] = bool(sig.get("candle_buy"))
     return w
 
 
@@ -408,11 +466,39 @@ def _place(db, code: str, side: str, qty: int, ref_price: Optional[float] = None
     return place_order(db, code, side, qty, "market", source="algo4", ref_price=ref_price)
 
 
+def _candle_snapshot(code: str) -> str:
+    """Compact record of the last 5 1-min candles for trade audit: R=red/up (close>open),
+    B=blue/down, -=doji, each with its close. e.g. 'B81800 R81900 R82000 R82100 B82000'.
+    Lets any trade be checked against the chart (which candles fired the entry/exit)."""
+    try:
+        from services.scalp_trader import _candles_1m
+        out = []
+        for b in _candles_1m(code, n=5):
+            o, c = b.get("open"), b.get("close")
+            if o and c:
+                out.append(("R" if c > o else "B" if c < o else "-") + str(int(c)))
+        return " ".join(out)
+    except Exception:
+        return ""
+
+
 def _cash(db) -> float:
     return float(db.execute(text("SELECT cash FROM paper_desk_account WHERE id=1")).scalar() or 0)
 
 
 def tick(db, force: bool = False) -> dict[str, Any]:
+    """Serialize ticks: two overlapping runs (scheduler + a manual /tick) once bought the SAME
+    stock ~0.1s apart -> duplicate positions. A non-blocking lock makes a second concurrent
+    tick a no-op instead of a double-buy."""
+    if not _tick_lock.acquire(blocking=False):
+        return {"opened": [], "closed": [], "reason": "tick already running — skipped"}
+    try:
+        return _tick_impl(db, force)
+    finally:
+        _tick_lock.release()
+
+
+def _tick_impl(db, force: bool = False) -> dict[str, Any]:
     """One heartbeat: consensus BUY on agreement, safety-net + consensus exits.
     ALSO writes the per-stock signal SNAPSHOT that status() serves (web path
     never computes — boss 2026-07-22, the auto_trader focus_status lesson)."""
@@ -462,7 +548,7 @@ def tick(db, force: bool = False) -> dict[str, Any]:
         _peak[tk] = peak
         sig = _signals_for(db, tk, need, tf, scan_items, allow_compute=True)
         snap[tk] = sig
-        reason = exit_reason(rule, entry, px, peak, cfg["stop_pct"], eod, sig, cfg["take_pct"])
+        reason = exit_reason(rule, entry, px, peak, cfg["stop_pct"], eod, sig, cfg["take_pct"], cfg["exit_mode"])
         if not reason:
             _sell_hint.pop(tk, None)
             open_codes.add(tk)
@@ -487,10 +573,11 @@ def tick(db, force: bool = False) -> dict[str, Any]:
             net = (fill / entry - 1) * 100 - 0.23
             db.execute(text(
                 "UPDATE cross_trades SET status='CLOSED', exit_price=:x, exit_reason=:r, "
-                "net_pct=:n, closed_at=now() WHERE id=:i"),
-                {"x": fill, "r": reason, "n": round(net, 3), "i": oid})
+                "net_pct=:n, closed_at=now(), exit_candles=:ec WHERE id=:i"),
+                {"x": fill, "r": reason, "n": round(net, 3), "i": oid, "ec": _candle_snapshot(tk)})
             db.commit()
             _peak.pop(tk, None)
+            _last_sell[tk] = _t.time()          # start the anti-churn cooldown for this stock
             out["closed"].append({"name": name, "reason": reason, "net_pct": round(net, 2)})
         else:
             open_codes.add(tk)
@@ -505,6 +592,8 @@ def tick(db, force: bool = False) -> dict[str, Any]:
     cash = _cash(db)
     for code in cfg["codes"]:
         if code in open_codes:
+            continue
+        if now_ts - _last_sell.get(code, 0.0) < COOLDOWN_SEC:   # anti-churn: just sold it, wait 5 min
             continue
         # cheap pre-check using the RECENT WINDOW (not just this instant) — only codes
         # where ripple AND candle bought recently get the full (possibly computing) read
@@ -526,7 +615,8 @@ def tick(db, force: bool = False) -> dict[str, Any]:
         px = _px(code)
         # ONE SOURCE OF TRUTH — the identical function status() uses to render the card
         dec = entry_decision(rule, wsig, prob, holding=False, mode=cfg["mode"],
-                             cash=cash, px=px, pos_pct=cfg["pos_pct"], eod=False)
+                             cash=cash, px=px, pos_pct=cfg["pos_pct"], eod=False,
+                             brain_light=cfg["brain_light"])
         sig["_dec"] = dec            # so status shows tick's real decision for this code
         if not (dec["should_buy"] or dec["blocker"] == "SEMI"):
             continue
@@ -544,8 +634,10 @@ def tick(db, force: bool = False) -> dict[str, Any]:
             fill = float(r.get("fill_price") or px)
             _peak[code] = fill
             db.execute(text(
-                "INSERT INTO cross_trades (ticker, name, qty, entry, why) VALUES (:t,:n,:q,:e,:w)"),
-                {"t": code, "n": _name(code), "q": qty, "e": fill, "w": why[:300]})
+                "INSERT INTO cross_trades (ticker, name, qty, entry, why, entry_candles) "
+                "VALUES (:t,:n,:q,:e,:w,:ec)"),
+                {"t": code, "n": _name(code), "q": qty, "e": fill, "w": why[:300],
+                 "ec": _candle_snapshot(code)})
             db.commit()
             out["opened"].append({"code": code, "qty": qty, "entry": fill})
             logger.info("algo4 cross BUY %s x%d @ %s (%s)", code, qty, fill, rule)
@@ -662,7 +754,8 @@ def status(db) -> dict[str, Any]:
         # carries tick's REAL (computed+normalized) prob for candidates, so the gates match.
         dec = entry_decision(rule, wsig, sig["algo1_prob"], holding=bool(o),
                              mode=cfg["mode"], cash=_cash_now, px=px,
-                             pos_pct=cfg["pos_pct"], eod=_eod_now)
+                             pos_pct=cfg["pos_pct"], eod=_eod_now,
+                             brain_light=cfg["brain_light"])
         agree_buy = dec["should_buy"]
         chg = None
         try:

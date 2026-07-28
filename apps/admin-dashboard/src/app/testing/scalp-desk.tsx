@@ -274,7 +274,7 @@ function MiniChart({ code }: { code: string }) {
     })();
     return () => { alive = false; cleanup(); };
   }, [code]);
-  return <div ref={ref} style={{ width: "100%" }} />;
+  return <div ref={ref} style={{ width: "100%", height: 280 }} />;
 }
 
 export default function ScalpDesk({ mode: initialMode }: { mode: ScalpMode }) {

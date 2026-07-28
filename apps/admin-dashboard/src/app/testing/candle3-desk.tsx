@@ -31,6 +31,11 @@ const kstDate = (iso?: string | null) => {
   const s = /Z$|[+-]\d{2}:\d{2}$/.test(iso) ? iso : `${iso}Z`;
   return new Date(s).toLocaleString("sv-SE", { timeZone: "Asia/Seoul" }).slice(0, 10);
 };
+// KST hour (0-23) of a timestamp, or -1 if none — used to split morning vs afternoon results
+const kstHour = (iso?: string | null) => {
+  const s = kstSec(iso);
+  return s ? parseInt(s.slice(0, 2), 10) : -1;
+};
 const heldFor = (a?: string | null, b?: string | null, ko = true) => {
   if (!a || !b) return "";
   const pa = /Z$|[+-]\d{2}:\d{2}$/.test(a) ? a : `${a}Z`;
@@ -97,7 +102,7 @@ function MiniChart({ code }: { code: string }) {
     })();
     return () => { alive = false; cleanup(); };
   }, [code]);
-  return <div ref={ref} style={{ width: "100%" }} />;
+  return <div ref={ref} style={{ width: "100%", height: 260 }} />;
 }
 
 export default function Candle3Desk({ mode: initialMode }: { mode: C3Mode }) {
@@ -120,6 +125,8 @@ export default function Candle3Desk({ mode: initialMode }: { mode: C3Mode }) {
   const [fRes, setFRes] = useState<"ALL" | "WIN" | "LOSE">("ALL");
   const [fName, setFName] = useState("ALL");
   const [fDate, setFDate] = useState("");   // calendar day filter (YYYY-MM-DD, KST)
+  const [fSession, setFSession] = useState<"ALL" | "AM" | "PM">("ALL");   // morning vs afternoon (by sell time, KST)
+  const [fExit, setFExit] = useState("ALL");   // filter by SELL rule (TARGET / CANDLE3 / STOP / EOD / MANUAL)
   const [cardChart, setCardChart] = useState<string[]>([]);   // 📈 open charts (multiple)
   const toggleChart = (c: string) => setCardChart((cs) => (cs.includes(c) ? cs.filter((x) => x !== c) : [...cs, c]));
 
@@ -399,16 +406,33 @@ export default function Candle3Desk({ mode: initialMode }: { mode: C3Mode }) {
               <option value="ALL">{t("종목: 전체", "stock: all")}</option>
               {Array.from(new Set((sc?.recent || []).map((r) => r.name))).sort().map((n) => <option key={n} value={n}>{n}</option>)}
             </select>
-            {(fDate || fRes !== "ALL" || fName !== "ALL") && <button onClick={() => { setFDate(""); setFRes("ALL"); setFName("ALL"); }} className="text-[10.5px] font-bold px-2 py-0.5 rounded-lg border text-[var(--text-muted)]" style={{ borderColor: "var(--border-default)" }}>✕ {t("초기화", "clear")}</button>}
+            <select value={fSession} onChange={(e) => setFSession(e.target.value as typeof fSession)} className="text-[11px] font-bold px-1.5 py-0.5 rounded-lg border bg-[var(--bg-primary)] text-[var(--text-primary)]" style={{ borderColor: fSession !== "ALL" ? TEAL : "var(--border-default)" }} title={t("오전/오후로 나눠서 평가 (매도 시각 기준)", "split by morning/afternoon (by sell time)")}>
+              <option value="ALL">{t("시간: 종일", "time: all day")}</option>
+              <option value="AM">{t("🌅 오전 (09–12시)", "🌅 Morning (09–12)")}</option>
+              <option value="PM">{t("🌆 오후 (12–15:30)", "🌆 Afternoon (12–15:30)")}</option>
+            </select>
+            <select value={fExit} onChange={(e) => setFExit(e.target.value)} className="text-[11px] font-bold px-1.5 py-0.5 rounded-lg border bg-[var(--bg-primary)] text-[var(--text-primary)]" style={{ borderColor: fExit !== "ALL" ? TEAL : "var(--border-default)" }} title={t("어떤 매도 규칙으로 종료됐는지로 보기", "view by which SELL rule closed each trade")}>
+              <option value="ALL">{t("매도규칙: 전체", "sell rule: all")}</option>
+              <option value="TARGET">{t("🎯 3연속 양봉 매수·익절 (신규)", "🎯 3-up buy · take-profit (new)")}</option>
+              <option value="CANDLE3">{t("🕯️ 3연속 양봉↑·3연속 음봉↓ 매도 (구)", "🕯️ 3-up buy · 3-down sell (old)")}</option>
+              <option value="STOP">{t("손절 −1%", "stop −1%")}</option>
+              <option value="EOD">{t("장마감 정리", "EOD flat")}</option>
+              <option value="MANUAL">{t("수동 매도", "manual")}</option>
+            </select>
+            {(fDate || fRes !== "ALL" || fName !== "ALL" || fSession !== "ALL" || fExit !== "ALL") && <button onClick={() => { setFDate(""); setFRes("ALL"); setFName("ALL"); setFSession("ALL"); setFExit("ALL"); }} className="text-[10.5px] font-bold px-2 py-0.5 rounded-lg border text-[var(--text-muted)]" style={{ borderColor: "var(--border-default)" }}>✕ {t("초기화", "clear")}</button>}
           </div>
           {(() => {
             const rows = (sc?.recent || []).filter((r) =>
               (fRes === "ALL" || (fRes === "WIN" ? (r.won || 0) > 0 : (r.won || 0) < 0))
               && (fName === "ALL" || r.name === fName)
-              && (!fDate || kstDate(r.closed_at) === fDate));
+              && (!fDate || kstDate(r.closed_at) === fDate)
+              && (fSession === "ALL" || (kstHour(r.closed_at) >= 0
+                  && (fSession === "AM" ? kstHour(r.closed_at) < 12 : kstHour(r.closed_at) >= 12)))
+              && (fExit === "ALL" || r.exit_reason === fExit));
             const wins = rows.filter((r) => (r.won || 0) > 0), losses = rows.filter((r) => (r.won || 0) < 0);
             const net = rows.reduce((a, r) => a + (r.won || 0), 0);
-            const label = fDate ? fDate : t("전체 기록", "all history");
+            const sess = fSession === "AM" ? t("🌅 오전", "🌅 morning") : fSession === "PM" ? t("🌆 오후", "🌆 afternoon") : "";
+            const label = (fDate ? fDate : t("전체 기록", "all history")) + (sess ? ` · ${sess}` : "");
             return (<>
               <div className="px-4 py-3 border-b text-[13px] tabular-nums flex items-center gap-5 flex-wrap" style={{ borderColor: "var(--border-default)", background: "rgba(0,131,143,0.04)" }}>
                 <span className="font-bold text-[var(--text-secondary)]">📅 {label}:</span>
@@ -420,7 +444,7 @@ export default function Candle3Desk({ mode: initialMode }: { mode: C3Mode }) {
               {rows.length === 0 ? (
                 <div className="px-4 py-6 text-center text-[12px] text-[var(--text-muted)]">
                   {fDate ? t("이 날짜에 완료된 거래가 없습니다", "no completed trades on this date")
-                    : t("아직 완료된 회전이 없습니다 — 매수 후 3연속 음봉/−1%에 매도되면 여기에 쌓입니다", "no completed round trips yet — they appear here once a buy sells on 3 down candles / −1%")}
+                    : t("아직 완료된 회전이 없습니다 — 매수 후 +익절/−1% 손절에 매도되면 여기에 쌓입니다", "no completed round trips yet — they appear here once a buy sells at +take-profit / −1% stop")}
                 </div>
               ) : (
               <table className="w-full text-[12px]">
@@ -438,8 +462,8 @@ export default function Candle3Desk({ mode: initialMode }: { mode: C3Mode }) {
                       <td className="px-2 font-bold text-[var(--text-primary)]">{r.name}</td>
                       <td className="text-right px-2 tabular-nums">{fmt(r.qty)}</td>
                       <td className="text-right px-2 tabular-nums">₩{fmt(r.entry)} → ₩{fmt(r.exit_price)}</td>
-                      <td className="px-2"><span className="text-[10.5px] px-1.5 py-0.5 rounded-full font-bold" style={{ background: "var(--bg-elevated)", color: r.exit_reason === "CANDLE3" ? BLUE : r.exit_reason === "STOP" ? RED : "var(--text-muted)" }}>
-                        {r.exit_reason === "CANDLE3" ? t("🕯️ 3연속 음봉", "🕯️ 3 down") : r.exit_reason === "STOP" ? t("손절", "stop") : r.exit_reason === "EOD" ? t("장마감", "EOD") : r.exit_reason}</span></td>
+                      <td className="px-2"><span className="text-[10.5px] px-1.5 py-0.5 rounded-full font-bold" style={{ background: "var(--bg-elevated)", color: r.exit_reason === "TARGET" ? "#2e7d32" : r.exit_reason === "STOP" ? RED : r.exit_reason === "CANDLE3" ? BLUE : "var(--text-muted)" }}>
+                        {r.exit_reason === "TARGET" ? t("🎯 익절", "🎯 take-profit") : r.exit_reason === "STOP" ? t("손절", "stop") : r.exit_reason === "EOD" ? t("장마감", "EOD") : r.exit_reason === "CANDLE3" ? t("🕯️ 3연속 음봉", "🕯️ 3 down") : r.exit_reason}</span></td>
                       <td className="text-right px-3 tabular-nums font-extrabold" style={{ color: pnlCol(r.net_pct) }}>{r.won != null ? `${r.won > 0 ? "+" : ""}₩${fmt(Math.round(r.won))}` : "-"}{r.net_pct != null && ` (${r.net_pct > 0 ? "+" : ""}${r.net_pct}%)`}</td>
                     </tr>
                   ))}
