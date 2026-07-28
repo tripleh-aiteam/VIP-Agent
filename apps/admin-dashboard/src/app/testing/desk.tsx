@@ -11,6 +11,7 @@ import { useRouter } from "next/navigation";
 import { api, apiPost } from "@/components/api";
 import { useLanguage } from "@/components/i18n";
 import AlgoVerdict from "./AlgoVerdict";
+import AlgorithmTradeTimingChart from "./AlgorithmTradeTimingChart";
 
 const RED = "#d32f2f";
 const BLUE = "#1565c0";
@@ -1561,6 +1562,13 @@ export default function Desk({ mode }: { mode: TradeMode }) {
                 : t("보유 종목 없음 — 챗봇에게 물어보고 첫 주문을 넣어보세요", "No positions — ask the chatbot, then place your first order")}
             </div>}
       </Sect>
+
+      <AlgorithmTradeTimingChart
+        trades={rt}
+        symbols={posShown.map((position) => ({ code: position.ticker, name: position.name }))}
+        algorithmLabel={t("알고리즘 1", "Algorithm 1")}
+        accent={RED}
+      />
 
       {/* open (limit) orders */}
       {st && st.open_orders.length > 0 && (

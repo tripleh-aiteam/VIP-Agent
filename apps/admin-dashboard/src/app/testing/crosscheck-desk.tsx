@@ -11,6 +11,7 @@ import { useLanguage } from "@/components/i18n";
 import { useFastPrices } from "@/components/useFastPrices";
 import FlashPrice from "@/components/FlashPrice";
 import AlgoVerdict from "./AlgoVerdict";
+import AlgorithmTradeTimingChart from "./AlgorithmTradeTimingChart";
 
 const INDIGO = "#3949ab";   // Cross-Check brand
 const RED = "#d32f2f";      // BUY / up
@@ -63,7 +64,7 @@ type CCStatus = {
   codes: string[]; signals?: CCSignal[]; stocks: CCStock[]; market_open?: boolean;
   rule_ko?: string; rule_en?: string;
   today: { trades: number; wins: number; net_pct_sum: number; realized_won?: number };
-  recent: { name: string; qty: number; entry: number; exit_price?: number | null; exit_reason?: string | null;
+  recent: { ticker: string; name: string; qty: number; entry: number; exit_price?: number | null; exit_reason?: string | null;
             net_pct?: number | null; won?: number | null; closed_at?: string; opened_at?: string; why?: string | null }[];
 };
 type DeskPosition = { ticker: string; name: string; qty: number; avg_price: number; live_price?: number | null; value: number; unrealized_pnl?: number | null; unrealized_pnl_pct?: number | null };
@@ -785,6 +786,16 @@ export default function CrossCheckDesk({ mode: initialMode }: { mode: CCMode }) 
           </div>
         )}
 
+        <AlgorithmTradeTimingChart
+          trades={rt}
+          symbols={(st?.positions || []).map((position) => ({
+            code: position.ticker,
+            name: position.name,
+          }))}
+          algorithmLabel={t("알고리즘 4", "Algorithm 4")}
+          accent={INDIGO}
+        />
+
         {/* 🧾 Cross-Check trade history — completed round trips (buy→sell), fee-honest,
             with the calendar day filter + per-day summary (same pattern as Algo 3) */}
         <div className="mt-4 rounded-xl border overflow-hidden" style={{ borderColor: INDIGO }}>
@@ -1053,6 +1064,15 @@ export default function CrossCheckDesk({ mode: initialMode }: { mode: CCMode }) 
           </div>
         );
       })()}
+
+      <AlgorithmTradeTimingChart
+        trades={sc?.recent || []}
+        symbols={(sc?.stocks || [])
+          .filter((stock) => stock.state === "LONG")
+          .map((stock) => ({ code: stock.code, name: stock.name }))}
+        algorithmLabel={t("알고리즘 4", "Algorithm 4")}
+        accent={INDIGO}
+      />
 
       {/* Trade History — calendar day filter + per-day summary */}
       <div className="mt-4 rounded-xl border overflow-hidden" style={{ borderColor: INDIGO }}>

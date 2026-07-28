@@ -12,6 +12,7 @@ import { api, apiPost } from "@/components/api";
 import { useLanguage } from "@/components/i18n";
 import { useFastPrices } from "@/components/useFastPrices";
 import AlgoVerdict from "./AlgoVerdict";
+import AlgorithmTradeTimingChart from "./AlgorithmTradeTimingChart";
 
 const RED = "#d32f2f";
 const BLUE = "#1565c0";
@@ -56,7 +57,7 @@ type ScalpStatus = {
   mode?: "auto" | "semi"; strategy?: "ripple" | "candle"; signals?: ScalpSignal[];
   stocks: ScalpStock[];
   today: { trades: number; wins: number; net_pct_sum: number; realized_won?: number };
-  recent: { name: string; qty: number; entry: number; exit_price?: number | null;
+  recent: { ticker: string; name: string; qty: number; entry: number; exit_price?: number | null;
             exit_reason?: string | null; net_pct?: number | null; won?: number | null;
             closed_at?: string; opened_at?: string; why?: string | null }[];
   market_open: boolean; fee_note_ko: string; fee_note_en: string;
@@ -1197,6 +1198,15 @@ export default function ScalpDesk({ mode: initialMode }: { mode: ScalpMode }) {
           </div>
         );
       })()}
+
+      <AlgorithmTradeTimingChart
+        trades={sc?.recent || []}
+        symbols={(sc?.stocks || [])
+          .filter((stock) => stock.state === "LONG")
+          .map((stock) => ({ code: stock.code, name: stock.name }))}
+        algorithmLabel={t("알고리즘 2", "Algorithm 2")}
+        accent={PURPLE}
+      />
 
       {/* ⚡ ALGORITHM 2 ACTIVITY — every round trip with the full numbers
           (boss 2026-07-15: what bought, when, how many, win ₩ and %).
