@@ -1563,6 +1563,13 @@ export default function Desk({ mode }: { mode: TradeMode }) {
             </div>}
       </Sect>
 
+      <AlgorithmTradeTimingChart
+        trades={rt}
+        symbols={posShown.map((position) => ({ code: position.ticker, name: position.name }))}
+        algorithmLabel={t("알고리즘 1", "Algorithm 1")}
+        accent={RED}
+      />
+
       {/* open (limit) orders */}
       {st && st.open_orders.length > 0 && (
         <Sect title={`${t("대기 주문 (지정가)", "Open Limit Orders")} · ${st.open_orders.length}`}>
@@ -1587,12 +1594,6 @@ export default function Desk({ mode }: { mode: TradeMode }) {
       {/* 🏁 multi-day real-money verdict (boss 2026-07-20: which algo before real money) */}
       <AlgoVerdict />
 
-
-      <AlgorithmTradeTimingChart
-        trades={rt}
-        algorithmLabel={t("알고리즘 1", "Algorithm 1")}
-        accent={RED}
-      />
 
       {/* 🤖 ALGORITHM 1 ACTIVITY — every round trip, same table as Algorithm 2
           (boss 2026-07-16: 'make like this table in Algorithm 1') */}

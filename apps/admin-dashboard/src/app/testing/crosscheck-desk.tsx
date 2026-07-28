@@ -787,6 +787,10 @@ export default function CrossCheckDesk({ mode: initialMode }: { mode: CCMode }) 
 
         <AlgorithmTradeTimingChart
           trades={rt}
+          symbols={(st?.positions || []).map((position) => ({
+            code: position.ticker,
+            name: position.name,
+          }))}
           algorithmLabel={t("알고리즘 4", "Algorithm 4")}
           accent={INDIGO}
         />
@@ -1062,6 +1066,9 @@ export default function CrossCheckDesk({ mode: initialMode }: { mode: CCMode }) 
 
       <AlgorithmTradeTimingChart
         trades={sc?.recent || []}
+        symbols={(sc?.stocks || [])
+          .filter((stock) => stock.state === "LONG")
+          .map((stock) => ({ code: stock.code, name: stock.name }))}
         algorithmLabel={t("알고리즘 4", "Algorithm 4")}
         accent={INDIGO}
       />

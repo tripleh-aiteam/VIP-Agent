@@ -350,12 +350,45 @@ def desk_day_report(db: Session = Depends(get_db)):
 
 @router.get("/chart")
 def desk_chart(code: str = Query(...), tf: str = Query("5m"), db: Session = Depends(get_db)):
-    """Intraday candles for the inline focus chart (boss 2026-07-10: click the stock →
-    live chart between Place Order and Trade History). tf=5m: our collected 5-min bars
-    (today + 1yr history); tf=1h: the same bars aggregated. Daily/weekly/monthly come
-    from /predictions/stock-detail."""
+    """Intraday candles for inline stock charts.
+
+    The 1m timeframe returns the latest captured trading session from the true
+    one-minute collector. The 5m timeframe returns the combined live and historical
+    intraday series, and 1h aggregates that series by hour.
+    """
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
     from services.cycle_scalp import _bars
     code = str(code).zfill(6)
+
+    if tf == "1m":
+        from services.minute_bars import read_bars
+
+        raw_bars = read_bars(db, code, limit=500)
+        out = []
+        for bar in raw_bars:
+            try:
+                timestamp = datetime.fromisoformat(str(bar["ts"]))
+                if timestamp.tzinfo is None:
+                    timestamp = timestamp.replace(tzinfo=ZoneInfo("Asia/Seoul"))
+                epoch = int(timestamp.timestamp())
+                open_price = float(bar["open"])
+                high_price = float(bar["high"])
+                low_price = float(bar["low"])
+                close_price = float(bar["close"])
+            except (TypeError, ValueError):
+                continue
+            out.append({
+                "time": epoch,
+                "open": open_price,
+                "high": high_price,
+                "low": low_price,
+                "close": close_price,
+                "volume": float(bar.get("volume") or 0),
+            })
+        return {"code": code, "tf": tf, "bars": out}
+
     bars = _bars(db, code, limit=2500)
 
     def _ts(b) -> int:

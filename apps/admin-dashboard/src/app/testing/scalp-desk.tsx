@@ -1201,6 +1201,9 @@ export default function ScalpDesk({ mode: initialMode }: { mode: ScalpMode }) {
 
       <AlgorithmTradeTimingChart
         trades={sc?.recent || []}
+        symbols={(sc?.stocks || [])
+          .filter((stock) => stock.state === "LONG")
+          .map((stock) => ({ code: stock.code, name: stock.name }))}
         algorithmLabel={t("알고리즘 2", "Algorithm 2")}
         accent={PURPLE}
       />

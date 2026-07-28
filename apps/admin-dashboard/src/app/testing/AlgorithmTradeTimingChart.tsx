@@ -7,6 +7,7 @@ import { useLanguage } from "@/components/i18n";
 const BUY_COLOR = "#d32f2f";
 const SELL_COLOR = "#1565c0";
 const MAX_MARKER_DISTANCE_SECONDS = 10 * 60;
+const CHART_TIMEFRAME = "1m";
 
 export type TradeTimingRecord = {
   ticker?: string | null;
@@ -87,7 +88,7 @@ export default function AlgorithmTradeTimingChart({
       setError(null);
       try {
         const result = await api<ChartResponse>(
-          `/paper-desk/chart?code=${encodeURIComponent(selected.code)}&tf=5m`,
+          `/paper-desk/chart?code=${encodeURIComponent(selected.code)}&tf=${CHART_TIMEFRAME}`,
         );
         if (active && token === refreshToken.current) setChartData(result);
       } catch {
@@ -115,7 +116,7 @@ export default function AlgorithmTradeTimingChart({
     const token = ++refreshToken.current;
     setLoading(true);
     setError(null);
-    api<ChartResponse>(`/paper-desk/chart?code=${encodeURIComponent(code)}&tf=5m`)
+    api<ChartResponse>(`/paper-desk/chart?code=${encodeURIComponent(code)}&tf=${CHART_TIMEFRAME}`)
       .then((result) => {
         if (token === refreshToken.current) setChartData(result);
       })
@@ -148,8 +149,8 @@ export default function AlgorithmTradeTimingChart({
           </div>
           <p className="mt-0.5 text-[10.5px] text-[var(--text-muted)]">
             {t(
-              "완료된 매수·매도 시점을 종목별 5분봉 위에서 확인하실 수 있습니다.",
-              "Review completed entries and exits on each stock's five-minute candles.",
+              "보유 종목과 완료 거래의 매수·매도 시점을 종목별 1분봉에서 확인하실 수 있습니다.",
+              "Review held stocks and completed entries and exits on each stock's one-minute candles.",
             )}
           </p>
         </div>
@@ -210,8 +211,8 @@ export default function AlgorithmTradeTimingChart({
       ) : !chartData?.bars.length ? (
         <ChartState>
           {t(
-            "선택한 종목의 5분봉 데이터가 아직 없습니다.",
-            "Five-minute candle data is not available for the selected stock yet.",
+            "선택한 종목의 1분봉 데이터가 아직 없습니다.",
+            "One-minute candle data is not available for the selected stock yet.",
           )}
         </ChartState>
       ) : (
@@ -301,8 +302,8 @@ function TimingCanvas({
       style={{ height: 360 }}
       role="img"
       aria-label={lang === "ko"
-        ? "종목 5분봉과 알고리즘의 매수·매도 시점 차트"
-        : "Five-minute candles with algorithm entry and exit markers"}
+        ? "종목 1분봉과 알고리즘의 매수·매도 시점 차트"
+        : "One-minute candles with algorithm entry and exit markers"}
     />
   );
 }
