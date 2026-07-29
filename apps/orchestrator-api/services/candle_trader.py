@@ -91,6 +91,10 @@ def _ensure(db) -> None:
     # boss 2026-07-29: shadow A/B test on/off (default OFF). Runs both exit modes side by side.
     db.execute(text("ALTER TABLE candle_state ADD COLUMN IF NOT EXISTS "
                     "ab_test BOOLEAN NOT NULL DEFAULT FALSE"))
+    # boss 2026-07-29: hybrid — auto entries, MANUAL exits (machine buys, you take the small
+    # profit yourself). Default OFF. Only affects 'auto' mode; 'semi' exits are already manual.
+    db.execute(text("ALTER TABLE candle_state ADD COLUMN IF NOT EXISTS "
+                    "exit_manual BOOLEAN NOT NULL DEFAULT FALSE"))
     db.execute(text(
         "CREATE TABLE IF NOT EXISTS ab_trades ("
         " id SERIAL PRIMARY KEY, book TEXT, ticker TEXT, name TEXT, qty INT,"
@@ -121,7 +125,7 @@ def _ensure(db) -> None:
 def _cfg(db) -> dict[str, Any]:
     _ensure(db)
     r = db.execute(text(
-        "SELECT enabled, stop_pct, pos_pct, codes, mode, streak, tf, take_pct, exit_mode, entry_timing, flow_confirm, ab_test FROM candle_state WHERE id=1")).first()
+        "SELECT enabled, stop_pct, pos_pct, codes, mode, streak, tf, take_pct, exit_mode, entry_timing, flow_confirm, ab_test, exit_manual FROM candle_state WHERE id=1")).first()
     codes = [c.strip().zfill(6) for c in (r[3] or DEFAULT_CODES).split(",") if c.strip()]
     return {"enabled": bool(r[0]), "stop_pct": float(r[1]), "pos_pct": float(r[2]),
             "codes": codes[:24],
@@ -131,7 +135,7 @@ def _cfg(db) -> dict[str, Any]:
             "take_pct": float(r[7]) if r[7] is not None else 0.5,
             "exit_mode": (r[8] or "target") if str(r[8] or "target") in ("target", "candle") else "target",
             "entry_timing": (r[9] or "confirmed") if str(r[9] or "confirmed") in ("confirmed", "early") else "confirmed",
-            "flow_confirm": bool(r[10]), "ab_test": bool(r[11])}
+            "flow_confirm": bool(r[10]), "ab_test": bool(r[11]), "exit_manual": bool(r[12])}
 
 
 def set_enabled(db, on: bool) -> dict:
@@ -147,7 +151,7 @@ def set_params(db, stop_pct: Optional[float] = None, pos_pct: Optional[float] = 
                streak: Optional[int] = None, tf: Optional[str] = None,
                take_pct: Optional[float] = None, exit_mode: Optional[str] = None,
                entry_timing: Optional[str] = None, flow_confirm: Optional[bool] = None,
-               ab_test: Optional[bool] = None) -> dict:
+               ab_test: Optional[bool] = None, exit_manual: Optional[bool] = None) -> dict:
     _ensure(db)
     if entry_timing in ("confirmed", "early"):
         db.execute(text("UPDATE candle_state SET entry_timing=:v, updated_at=now() WHERE id=1"), {"v": entry_timing})
@@ -155,6 +159,8 @@ def set_params(db, stop_pct: Optional[float] = None, pos_pct: Optional[float] = 
         db.execute(text("UPDATE candle_state SET flow_confirm=:v, updated_at=now() WHERE id=1"), {"v": bool(flow_confirm)})
     if ab_test is not None:
         db.execute(text("UPDATE candle_state SET ab_test=:v, updated_at=now() WHERE id=1"), {"v": bool(ab_test)})
+    if exit_manual is not None:
+        db.execute(text("UPDATE candle_state SET exit_manual=:v, updated_at=now() WHERE id=1"), {"v": bool(exit_manual)})
     if streak in (2, 3):
         db.execute(text("UPDATE candle_state SET streak=:s, updated_at=now() WHERE id=1"), {"s": int(streak)})
     if take_pct is not None:
@@ -289,10 +295,15 @@ def _run_ab_sim(db, cfg: dict, need: int, tf: str, eod: bool) -> None:
         if _flow and (_fi := _flow_imbalance(tk)) is not None and _fi <= FLOW_SELL_FAST:
             reason = "FLOW"                               # order book: heavy selling -> exit both books
         elif book == "target":
-            reason = "TARGET" if net >= take else ("EOD" if eod else None)
-        else:                                             # candle book
+            if cfg["stop_pct"] > 0 and net <= -cfg["stop_pct"]:
+                reason = "STOP"                           # −1% floor — TAKE-PROFIT book only
+            elif net >= take:
+                reason = "TARGET"
+            else:
+                reason = None                             # HOLD overnight otherwise — no EOD flatten
+        else:                                             # candle book — NO stop (pure 3-up/3-down test)
             _u, _dn, _cn = _streaks_tf(tk, tf)
-            reason = "CANDLE3" if (_cn >= need and _dn >= need) else ("EOD" if eod else None)
+            reason = "CANDLE3" if (_cn >= need and _dn >= need) else None   # HOLD overnight — no EOD flatten
         if reason:
             db.execute(text("UPDATE ab_trades SET status='CLOSED', exit_price=:x, exit_reason=:r, "
                             "net_pct=:n, closed_at=now() WHERE id=:i"),
@@ -312,12 +323,17 @@ def _run_ab_sim(db, cfg: dict, need: int, tf: str, eod: bool) -> None:
             qty = int(AB_NOTIONAL / px)
             if qty < 1:
                 continue
+            # IDENTICAL ENTRIES: open in BOTH books only when BOTH are flat for this stock, so
+            # every A/B entry is shared (same stock, same second, same price). If either book is
+            # still holding it, skip — they re-enter together once BOTH have exited. This keeps
+            # the comparison a clean 'same buy, different sell' instead of drifting out of sync.
+            if ("candle", code) in open_set or ("target", code) in open_set:
+                continue
             for book in ("candle", "target"):
-                if (book, code) not in open_set:
-                    db.execute(text("INSERT INTO ab_trades (book, ticker, name, qty, entry) "
-                                    "VALUES (:b,:t,:n,:q,:e)"),
-                               {"b": book, "t": code, "n": _name(code), "q": qty, "e": px})
-                    open_set.add((book, code))
+                db.execute(text("INSERT INTO ab_trades (book, ticker, name, qty, entry) "
+                                "VALUES (:b,:t,:n,:q,:e)"),
+                           {"b": book, "t": code, "n": _name(code), "q": qty, "e": px})
+                open_set.add((book, code))
     db.commit()
 
 
@@ -407,8 +423,8 @@ def _tick_impl(db, force: bool, exits_only: bool) -> dict[str, Any]:
         entry = float(entry)
         reason = None
         _fi = _flow_imbalance(tk) if cfg["flow_confirm"] else None
-        if cfg["stop_pct"] > 0 and (px / entry - 1) * 100 - 0.23 <= -cfg["stop_pct"]:
-            reason = "STOP"                              # -stop% NET floor (stop_pct=0 turns it OFF -> pure candle test)
+        if cfg["stop_pct"] > 0 and cfg["exit_mode"] == "target" and (px / entry - 1) * 100 - 0.23 <= -cfg["stop_pct"]:
+            reason = "STOP"                              # −1% floor ONLY in take-profit mode; 3-down mode = no stop
         elif _fi is not None and _fi <= FLOW_SELL_FAST:  # order book: heavy SELLING -> exit early
             reason = "FLOW"                              # sell before the 3-down candle even forms
         elif cfg["exit_mode"] == "candle":               # OLD mode: sell on 3 FALLING closes
@@ -426,8 +442,8 @@ def _tick_impl(db, force: bool, exits_only: bool) -> dict[str, Any]:
             _sell_hint.pop(tk, None)
             open_codes.add(tk)
             continue
-        if cfg["mode"] == "semi":
-            _sell_hint[tk] = reason      # machine never sells in semi — advises
+        if cfg["mode"] == "semi" or cfg["exit_manual"]:
+            _sell_hint[tk] = reason      # machine never sells in semi / hybrid — advises
             open_codes.add(tk)
             continue
         held = int(db.execute(text(
@@ -553,10 +569,16 @@ def sell_all(db, code: str) -> dict[str, Any]:
         return r
     fill = float(r.get("fill_price") or _px(code) or entry)
     net = (fill / float(entry) - 1) * 100 - 0.23
+    # tag the manual sell so the strategy history can categorize it: honor the machine's
+    # pending advice; else a manual profit-take in take-profit mode counts as TARGET.
+    _cfgm = _cfg(db)
+    _hint = _sell_hint.get(code)
+    reason = _hint if _hint in ("TARGET", "CANDLE3", "FLOW", "STOP", "EOD") else (
+        "TARGET" if (_cfgm["exit_mode"] == "target" and net >= 0) else "MANUAL")
     db.execute(text(
-        "UPDATE candle_trades SET status='CLOSED', exit_price=:x, exit_reason='MANUAL', "
+        "UPDATE candle_trades SET status='CLOSED', exit_price=:x, exit_reason=:r, "
         "net_pct=:n, closed_at=now() WHERE id=:i"),
-        {"x": fill, "n": round(net, 3), "i": oid})
+        {"x": fill, "r": reason, "n": round(net, 3), "i": oid})
     db.commit()
     _sell_hint.pop(code, None)
     return {"ok": True, "realized_pnl": round(sell_qty * float(entry) * net / 100),
@@ -585,7 +607,7 @@ def status(db) -> dict[str, Any]:
         except Exception:
             pass
         advice = None
-        if o and cfg["mode"] == "semi":
+        if o and (cfg["mode"] == "semi" or cfg["exit_manual"]):
             advice = {"TARGET": "SELL", "CANDLE3": "SELL", "FLOW": "SELL", "STOP": "STOP", "EOD": "STOP"}.get(_sell_hint.get(code) or "")
         stop_at = round(o["entry"] * (1 - cfg["stop_pct"] / 100)) if o else None
         _sig = "BUY" if up >= need else "SELL" if dn >= need else "WAIT"

@@ -62,7 +62,7 @@ type C3Status = {
   enabled: boolean; stop_pct: number; pos_pct: number; codes: string[]; mode?: "auto" | "semi"; streak?: number; tf?: string;
   entry_timing?: "confirmed" | "early"; exit_mode?: "target" | "candle";
   flow_confirm?: boolean; flow_vetoes?: { name: string; up: number; imb: number; ts: string }[];
-  ab_test?: boolean;
+  ab_test?: boolean; exit_manual?: boolean;
   ab?: { candle: AbStat; target: AbStat; since?: string; days?: number } | null;
   signals?: C3Signal[]; stocks: C3Stock[]; market_open?: boolean; rule_ko?: string; rule_en?: string;
   today: { trades: number; wins: number; net_pct_sum: number; realized_won?: number };
@@ -134,7 +134,6 @@ export default function Candle3Desk({ mode: initialMode }: { mode: C3Mode }) {
   const [fName, setFName] = useState("ALL");
   const [fDate, setFDate] = useState("");   // calendar day filter (YYYY-MM-DD, KST)
   const [fSession, setFSession] = useState<"ALL" | "AM" | "PM">("ALL");   // morning vs afternoon (by sell time, KST)
-  const [fExit, setFExit] = useState("ALL");   // filter by SELL rule (TARGET / CANDLE3 / STOP / EOD / MANUAL)
   const [fSource, setFSource] = useState<"real" | "candle" | "target">("real");   // real trades vs A/B books
   const [cardChart, setCardChart] = useState<string[]>([]);   // 📈 open charts (multiple)
   const toggleChart = (c: string) => setCardChart((cs) => (cs.includes(c) ? cs.filter((x) => x !== c) : [...cs, c]));
@@ -232,7 +231,9 @@ export default function Candle3Desk({ mode: initialMode }: { mode: C3Mode }) {
                 <button disabled={busy} onClick={async () => {
                   setBusy(true);
                   try { const r = await apiPost<{ ok: boolean; error?: string; stop_at?: number }>(`/paper-desk/candle3/buy?code=${g.code}`);
-                    setNote(r.ok ? t(`✅ 매수 — 3연속 음봉이 나오면 매도 추천 (손절 ₩${fmt(r.stop_at)})`, `✅ bought — SELL advice on 3 down candles (stop ₩${fmt(r.stop_at)})`) : `❌ ${r.error}`);
+                    setNote(r.ok ? ((sc?.exit_mode ?? "target") === "candle"
+                      ? t(`✅ 매수 — 3연속 음봉이 나오면 매도 추천 (손절 ₩${fmt(r.stop_at)})`, `✅ bought — SELL advice on 3 down candles (stop ₩${fmt(r.stop_at)})`)
+                      : t(`✅ 매수 — +0.1% 익절이면 매도 추천 (손절 ₩${fmt(r.stop_at)})`, `✅ bought — SELL advice at +0.1% take-profit (stop ₩${fmt(r.stop_at)})`)) : `❌ ${r.error}`);
                   } catch (e) { setNote(`❌ ${(e as Error).message}`); }
                   setBusy(false); load();
                 }} className="text-[14px] font-extrabold px-6 py-1.5 rounded-xl text-white disabled:opacity-50" style={{ background: RED }}>{t("매수", "BUY")}</button>
@@ -252,10 +253,29 @@ export default function Candle3Desk({ mode: initialMode }: { mode: C3Mode }) {
             </button>
             <span className="text-[12px] text-[var(--text-secondary)]">
               {!sc.enabled ? t("꺼져 있음 — 기계는 관찰만 합니다", "off — the machine only watches")
-                : mode === "semi" ? t("1분봉 3연속 양봉 → 🔔 매수 추천 · 3연속 음봉 → 매도 추천 (−1% 손절)", "3 up candles → 🔔 buy advice · 3 down → SELL advice (−1% stop)")
+                : mode === "semi" ? ((sc.exit_mode ?? "target") === "candle"
+                    ? t("3연속 양봉 → 🔔 매수 추천 · 3연속 음봉 → 매도 추천", "3 up candles → 🔔 buy advice · 3 down → SELL advice")
+                    : t("3연속 양봉 → 🔔 매수 추천 · +0.1% 익절 → 매도 추천", "3 up candles → 🔔 buy advice · +0.1% profit → SELL advice"))
+                : sc.exit_manual ? ((sc.exit_mode ?? "target") === "candle"
+                    ? t("🤖 3연속 양봉 → 자동 매수 · 🙋 3연속 음봉이면 내가 매도", "🤖 3 up → auto-buy · 🙋 you SELL on 3 down")
+                    : t("🤖 3연속 양봉 → 자동 매수 · 🙋 +0.1% 익절이면 내가 매도", "🤖 3 up → auto-buy · 🙋 you SELL at +0.1% profit"))
                 : t("1분봉 3연속 양봉 → 매수 · 3연속 음봉 → 매도 · −1% 손절 · 15:18 정리", "3 up candles → buy · 3 down → sell · −1% stop · flat 15:18")}
             </span>
             <div className="ml-auto flex items-center gap-2 text-[11.5px]">
+              <span className="text-[var(--text-muted)]">{t("매도규칙", "exit rule")}</span>
+              <select value={sc.exit_mode ?? "target"} onChange={async (e) => { setFSource(e.target.value === "candle" ? "candle" : "target"); await apiPost(`/paper-desk/candle3/params?exit_mode=${e.target.value}`); load(); }}
+                className="px-1.5 py-1 rounded-lg border bg-[var(--bg-primary)] text-[var(--text-primary)] font-bold" style={{ borderColor: (sc.exit_mode ?? "target") === "candle" ? "#e65100" : "#7b1fa2" }}
+                title={t("이 데스크(실계좌)의 매도 방식 — 자동·반자동 모두 적용. 🕯️3음봉=3연속 음봉에 매도 / 🎯익절=+0.1% 순익에 매도.", "how THIS desk (real account) sells — applies to both Auto and Semi-Auto. 🕯️ 3-down = sell on 3 falling candles / 🎯 take-profit = sell at +0.1% net.")}>
+                <option value="candle">{t("🕯️ 3음봉 매도", "🕯️ 3-down sell")}</option>
+                <option value="target">{t("🎯 익절 (+0.1%)", "🎯 take-profit (+0.1%)")}</option>
+              </select>
+              <span className="text-[var(--text-muted)]">{t("매도 주체", "who sells")}</span>
+              <select value={sc.exit_manual ? "manual" : "auto"} onChange={async (e) => { await apiPost(`/paper-desk/candle3/params?exit_manual=${e.target.value === "manual"}`); load(); }}
+                className="px-1.5 py-1 rounded-lg border bg-[var(--bg-primary)] text-[var(--text-primary)] font-bold" style={{ borderColor: sc.exit_manual ? "#e65100" : "var(--border-default)" }}
+                title={t("자동매매에서 매도를 누가 할지 — 🤖 기계 자동 매도 / 🙋 내가 직접 매도(기계는 매수만 자동, 나는 작은 이익에 직접 매도). 반자동은 원래 내가 매도.", "in Auto mode, who sells — 🤖 machine auto-sells / 🙋 I sell by hand (machine only auto-buys; I take the small profit myself). Semi-Auto is manual anyway.")}>
+                <option value="auto">{t("🤖 자동 매도", "🤖 machine sells")}</option>
+                <option value="manual">{t("🙋 내가 매도", "🙋 I sell")}</option>
+              </select>
               <span className="text-[var(--text-muted)]">{t("진입 타이밍", "entry")}</span>
               <select value={sc.entry_timing ?? "confirmed"} onChange={async (e) => { await apiPost(`/paper-desk/candle3/params?entry_timing=${e.target.value}`); load(); }}
                 className="px-1.5 py-1 rounded-lg border bg-[var(--bg-primary)] text-[var(--text-primary)] font-bold" style={{ borderColor: (sc.entry_timing ?? "confirmed") === "early" ? "#e65100" : TEAL }}
@@ -291,8 +311,8 @@ export default function Candle3Desk({ mode: initialMode }: { mode: C3Mode }) {
                 <option value="3">{t("3연속 (엄격)", "3 in a row (strict)")}</option>
                 <option value="2">{t("2연속 (자주 매매)", "2 in a row (trades more)")}</option>
               </select>
-              <span className="text-[var(--text-muted)]">{t("손절", "stop")}</span>
-              <select value={String(sc.stop_pct)} onChange={(e) => setParam("stop_pct", Number(e.target.value))} className="px-1.5 py-1 rounded-lg border bg-[var(--bg-primary)] text-[var(--text-primary)]" style={{ borderColor: "var(--border-default)" }}>
+              <span className="text-[var(--text-muted)]">{t("손절 🎯", "stop 🎯")}</span>
+              <select value={String(sc.stop_pct)} onChange={(e) => setParam("stop_pct", Number(e.target.value))} className="px-1.5 py-1 rounded-lg border bg-[var(--bg-primary)] text-[var(--text-primary)]" style={{ borderColor: (sc.exit_mode ?? "target") === "target" ? "#e65100" : "var(--border-default)" }} title={t("손절선 — 🎯익절 모드에서만 적용. 🕯️3음봉 모드는 손절 없음(순수 3음봉 매도).", "stop-loss floor — applies ONLY in 🎯 take-profit mode. 🕯️ 3-down mode has no stop.")}>
                 {[0.5, 1.0, 1.5].map((v) => <option key={v} value={v}>-{v}%</option>)}
               </select>
               <span className="text-[var(--text-muted)]">{t("1회 크기", "size")}</span>
@@ -346,10 +366,12 @@ export default function Candle3Desk({ mode: initialMode }: { mode: C3Mode }) {
                     <div className="mt-1.5 text-[12.5px] tabular-nums text-[var(--text-secondary)]">
                       {t("매수가", "entry")} ₩{fmt(s.entry)} × {fmt(s.qty)}{t("주", "sh")}
                       <span className="ml-2 font-extrabold" style={{ color: pnlCol(s.pnl_pct) }}>{s.pnl_pct != null && s.pnl_pct > 0 ? "+" : ""}{s.pnl_pct}%</span>
-                      <div className="mt-0.5 text-[11.5px]">🛑 ₩{fmt(s.stop_at)} · {mode === "semi" ? t("(3연속 음봉이면 매도 추천)", "(SELL advice on 3 down candles)") : t("(3연속 음봉/−1%에 매도)", "(sells on 3 down / −1%)")}</div>
-                      {mode === "semi" && s.advice && (
+                      <div className="mt-0.5 text-[11.5px]">🛑 ₩{fmt(s.stop_at)} · {(sc.exit_mode ?? "target") === "candle"
+                        ? ((mode === "semi" || sc.exit_manual) ? t("(3연속 음봉이면 매도 추천)", "(SELL advice on 3 down candles)") : t("(3연속 음봉/−1%에 매도)", "(sells on 3 down / −1%)"))
+                        : ((mode === "semi" || sc.exit_manual) ? t("(+0.1% 익절이면 매도 추천)", "(SELL advice at +0.1% take-profit)") : t("(+0.1% 익절/−1%에 매도)", "(sells at +0.1% / −1%)"))}</div>
+                      {(mode === "semi" || sc.exit_manual) && s.advice && (
                         <div className="mt-2 rounded-lg px-3 py-2 flex items-center gap-2" style={{ background: "rgba(211,47,47,0.1)" }}>
-                          <b className="text-[13px]" style={{ color: RED }}>{s.advice === "CANDLE" ? t("🕯️ 3연속 음봉 — 지금 파세요", "🕯️ 3 down candles — SELL now") : t("🚨 손절선 — 지금 파세요", "🚨 stop hit — SELL now")}</b>
+                          <b className="text-[13px]" style={{ color: RED }}>{s.advice === "STOP" ? t("🚨 손절선 — 지금 파세요", "🚨 stop hit — SELL now") : (sc.exit_mode ?? "target") === "candle" ? t("🕯️ 3연속 음봉 — 지금 파세요", "🕯️ 3 down candles — SELL now") : t("🎯 +0.1% 익절 — 지금 파세요", "🎯 +0.1% take-profit — SELL now")}</b>
                           <button disabled={busy} onClick={async () => {
                             setBusy(true);
                             try { const r = await apiPost<{ ok: boolean; error?: string; realized_pnl?: number; realized_pnl_pct?: number }>(`/paper-desk/candle3/sell?code=${s.code}`);
@@ -431,66 +453,16 @@ export default function Candle3Desk({ mode: initialMode }: { mode: C3Mode }) {
         accent={TEAL}
       />
 
-      {/* A/B scorecard — both exit modes on the SAME 3-up entries, for the boss */}
-      {sc?.ab_test && sc.ab && (
-        <div className="mt-4 rounded-xl border overflow-hidden" style={{ borderColor: "#7b1fa2" }}>
-          <div className="px-4 py-2 border-b bg-[var(--bg-elevated)] flex items-center gap-2 flex-wrap" style={{ borderColor: "var(--border-default)" }}>
-            <b className="text-[13.5px]" style={{ color: "#7b1fa2" }}>🆚 {t("A/B 비교 — 같은 3양봉 신호, 가짜 ₩1천만/건", "A/B Test — same 3-up signals, fake ₩10M each")}</b>
-            {(sc.ab.days ?? 0) > 0 && <span className="text-[11px] text-[var(--text-muted)]">{t(`${sc.ab.days}일간 · ${sc.ab.since}부터`, `${sc.ab.days} day(s) · since ${sc.ab.since}`)}</span>}
-            <button onClick={async () => { if (confirm(t("A/B 기록을 모두 지우고 새로 시작할까요?", "Clear the whole A/B history and start over?"))) { await apiPost(`/paper-desk/candle3/ab_reset`); load(); } }} className="text-[10.5px] font-bold px-2 py-0.5 rounded-lg border text-[var(--text-muted)]" style={{ borderColor: "var(--border-default)" }}>↺ {t("초기화", "reset")}</button>
-          </div>
-          <div className="grid grid-cols-2 divide-x" style={{ borderColor: "var(--border-default)" }}>
-            {(["candle", "target"] as const).map((book) => {
-              const s = sc.ab![book];
-              const other = sc.ab![book === "candle" ? "target" : "candle"];
-              const winner = s.won !== other.won && s.won > other.won;
-              const label = book === "candle" ? t("🕯️ 3음봉 매도", "🕯️ 3-down sell") : t("🎯 익절 매도", "🎯 take-profit");
-              return (
-                <div key={book} className="px-4 py-3" style={{ background: winner ? "rgba(123,31,162,0.07)" : "transparent" }}>
-                  <div className="text-[13px] font-bold mb-1">{label} {winner && <span style={{ color: "#7b1fa2" }}>🏆 {t("우세", "winning")}</span>}</div>
-                  <div className="text-[12px] tabular-nums flex flex-col gap-0.5">
-                    <div>🔄 {t(`${s.trades}회전`, `${s.trades} trades`)} · {t(`${s.open} 보유중`, `${s.open} open`)}</div>
-                    <div>🏆 {t(`승률 ${s.win_pct}%`, `${s.win_pct}% win`)} ({s.wins}/{s.trades})</div>
-                    <div className="text-[15px] font-extrabold" style={{ color: pnlCol(s.won) }}>{s.won > 0 ? "+" : ""}₩{fmt(s.won)}</div>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      )}
-
-      {/* Order-book VETO panel — the live proof the layer is working: 3-up signals the
-          order book REFUSED because a sell wall sat above. */}
-      {sc?.flow_confirm && (sc.flow_vetoes?.length ?? 0) > 0 && (
-        <div className="mt-4 rounded-xl border overflow-hidden" style={{ borderColor: "#1565c0" }}>
-          <div className="px-4 py-2 border-b bg-[var(--bg-elevated)] flex items-center gap-2 flex-wrap" style={{ borderColor: "var(--border-default)" }}>
-            <b className="text-[13px]" style={{ color: "#1565c0" }}>🌊 {t("호가확인이 막은 매수 (매도벽)", "Order-book vetoed these 3-up buys (sell wall)")}</b>
-            <span className="text-[11px] text-[var(--text-muted)]">{t("캔들은 사자고 했지만 호가가 거부 → 실제 작동 증거", "candle said buy, the order book said no — live proof it's working")}</span>
-          </div>
-          <div className="px-4 py-2 flex flex-col gap-1 text-[12px]">
-            {(sc.flow_vetoes ?? []).map((v, i) => (
-              <div key={i} className="tabular-nums flex items-center gap-2 flex-wrap">
-                <span className="text-[var(--text-muted)]">{v.ts}</span>
-                <b>{v.name}</b>
-                <span style={{ color: RED }}>{t(`${v.up}연속 양봉 ✅`, `${v.up}-up ✅`)}</span>
-                <span style={{ color: "#1565c0" }}>{t(`→ 매도벽 (호가 ${v.imb}) → 매수 취소`, `→ sell wall (imbalance ${v.imb}) → skipped`)}</span>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
       {/* Trade History — ALWAYS visible (even before status loads) so the calendar
           day-filter never disappears (boss 2026-07-20: 'add calendar to Algo 2 and 3'). */}
       {(
         <div className="mt-4 rounded-xl border overflow-hidden" style={{ borderColor: TEAL }}>
           <div className="px-4 py-2 border-b bg-[var(--bg-elevated)] flex items-center gap-2 flex-wrap" style={{ borderColor: "var(--border-default)" }}>
             <b className="text-[13.5px]" style={{ color: TEAL }}>🕯️ {t("알고리즘 3 거래 기록", "Algorithm 3 — Trade History")}</b>
-            <select value={fSource} onChange={(e) => setFSource(e.target.value as typeof fSource)} className="text-[11px] font-bold px-1.5 py-0.5 rounded-lg border bg-[var(--bg-primary)] text-[var(--text-primary)]" style={{ borderColor: fSource !== "real" ? "#7b1fa2" : "var(--border-default)" }} title={t("실거래 또는 A/B 두 모드(3음봉 vs 익절)를 전환해서 같은 진입의 다른 결과를 비교", "switch between real trades and each A/B mode to compare — same entries, different exits")}>
-              <option value="real">{t("📒 실거래", "📒 Real trades")}</option>
-              <option value="candle">{t("🆚 A/B: 3음봉 매도", "🆚 A/B: 3-down sell")}</option>
-              <option value="target">{t("🆚 A/B: 익절 매도", "🆚 A/B: take-profit")}</option>
+            <select value={fSource} onChange={(e) => { setFSource(e.target.value as typeof fSource); setFDate(""); }} className="text-[11px] font-bold px-1.5 py-0.5 rounded-lg border bg-[var(--bg-primary)] text-[var(--text-primary)]" style={{ borderColor: fSource !== "real" ? "#7b1fa2" : "var(--border-default)" }} title={t("📒전체 = 실거래(오전 포함) / 🕯️·🎯 = 같은 3양봉 진입을 두 방식으로 매도한 A/B 비교(같은 매수·다른 매도). 가짜 ₩1천만/건.", "📒 ALL = your real account (incl. morning) / 🕯️ & 🎯 = A/B sim: the SAME 3-up entries sold two ways (same buy, different sell). Fake ₩10M each.")}>
+              <option value="real">{t("📒 전체 (실거래)", "📒 ALL (real)")}</option>
+              <option value="candle">{t("🕯️ 3양봉·3음봉 (A/B)", "🕯️ 3-up·3-down (A/B)")}</option>
+              <option value="target">{t("🎯 3양봉·익절 (A/B)", "🎯 3-up·take-profit (A/B)")}</option>
             </select>
             <input type="date" value={fDate} onChange={(e) => setFDate(e.target.value)} className="text-[11px] px-1.5 py-0.5 rounded-lg border bg-[var(--bg-primary)] text-[var(--text-primary)]" style={{ borderColor: fDate ? TEAL : "var(--border-default)" }} title={t("날짜로 평가", "evaluate by day")} />
             <select value={fRes} onChange={(e) => setFRes(e.target.value as typeof fRes)} className="text-[11px] font-bold px-1.5 py-0.5 rounded-lg border bg-[var(--bg-primary)] text-[var(--text-primary)]" style={{ borderColor: "var(--border-default)" }}>
@@ -505,25 +477,18 @@ export default function Candle3Desk({ mode: initialMode }: { mode: C3Mode }) {
               <option value="AM">{t("🌅 오전 (09–12시)", "🌅 Morning (09–12)")}</option>
               <option value="PM">{t("🌆 오후 (12–15:30)", "🌆 Afternoon (12–15:30)")}</option>
             </select>
-            <select value={fExit} onChange={(e) => setFExit(e.target.value)} className="text-[11px] font-bold px-1.5 py-0.5 rounded-lg border bg-[var(--bg-primary)] text-[var(--text-primary)]" style={{ borderColor: fExit !== "ALL" ? TEAL : "var(--border-default)" }} title={t("어떤 매도 규칙으로 종료됐는지로 보기", "view by which SELL rule closed each trade")}>
-              <option value="ALL">{t("매도규칙: 전체", "sell rule: all")}</option>
-              <option value="TARGET">{t("🎯 3연속 양봉 매수·익절 (신규)", "🎯 3-up buy · take-profit (new)")}</option>
-              <option value="CANDLE3">{t("🕯️ 3연속 양봉↑·3연속 음봉↓ 매도 (구)", "🕯️ 3-up buy · 3-down sell (old)")}</option>
-              <option value="STOP">{t("손절 −1%", "stop −1%")}</option>
-              <option value="EOD">{t("장마감 정리", "EOD flat")}</option>
-              <option value="MANUAL">{t("수동 매도", "manual")}</option>
-            </select>
-            {(fDate || fRes !== "ALL" || fName !== "ALL" || fSession !== "ALL" || fExit !== "ALL") && <button onClick={() => { setFDate(""); setFRes("ALL"); setFName("ALL"); setFSession("ALL"); setFExit("ALL"); }} className="text-[10.5px] font-bold px-2 py-0.5 rounded-lg border text-[var(--text-muted)]" style={{ borderColor: "var(--border-default)" }}>✕ {t("초기화", "clear")}</button>}
+            {(fDate || fRes !== "ALL" || fName !== "ALL" || fSession !== "ALL") && <button onClick={() => { setFDate(""); setFRes("ALL"); setFName("ALL"); setFSession("ALL"); }} className="text-[10.5px] font-bold px-2 py-0.5 rounded-lg border text-[var(--text-muted)]" style={{ borderColor: "var(--border-default)" }}>✕ {t("초기화", "clear")}</button>}
           </div>
           {(() => {
-            const src = fSource === "real" ? (sc?.recent || []) : (sc?.ab_recent || []).filter((r) => r.book === fSource);
+            // 📒 ALL = real account · 🕯️/🎯 = A/B sim books (the SAME 3-up entries sold two ways — the true side-by-side)
+            const src = fSource === "real" ? (sc?.recent || [])
+              : (sc?.ab_recent || []).filter((r) => r.book === fSource);
             const rows = src.filter((r) =>
               (fRes === "ALL" || (fRes === "WIN" ? (r.won || 0) > 0 : (r.won || 0) < 0))
               && (fName === "ALL" || r.name === fName)
               && (!fDate || kstDate(r.closed_at) === fDate)
               && (fSession === "ALL" || (kstHour(r.closed_at) >= 0
-                  && (fSession === "AM" ? kstHour(r.closed_at) < 12 : kstHour(r.closed_at) >= 12)))
-              && (fExit === "ALL" || r.exit_reason === fExit));
+                  && (fSession === "AM" ? kstHour(r.closed_at) < 12 : kstHour(r.closed_at) >= 12))));
             const wins = rows.filter((r) => (r.won || 0) > 0), losses = rows.filter((r) => (r.won || 0) < 0);
             const net = rows.reduce((a, r) => a + (r.won || 0), 0);
             const sess = fSession === "AM" ? t("🌅 오전", "🌅 morning") : fSession === "PM" ? t("🌆 오후", "🌆 afternoon") : "";
