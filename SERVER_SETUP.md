@@ -110,21 +110,42 @@ machine:
 - **`REPORTS_ENABLED=true`** (the **default** when the var is absent) — this instance sends
   every report as before.
 
-**Current state:** `REPORTS_ENABLED=false` on this server — **Render is currently the
-report sender.** It is set in two places (either alone is enough; both persist across
-restarts): the repo-root `.env` file, and the backend start command in `start-vip.ps1`
-(`$env:REPORTS_ENABLED='false'`). Render has no such var, so it defaults to `true` and
-keeps sending exactly one copy.
+**Current state (since 2026-07-29):** `REPORTS_ENABLED=true` on this server — **THIS
+server is now the sole morning-report sender.** (Render — the previous sender — went
+down/`503` during the migration, so from 2026-07-22 to 07-29 *nobody* was sending and the
+team got no reports for a week.) It is set in two places (either alone is enough; both
+persist across restarts): the repo-root `.env` file, and the backend start command in
+`start-vip.ps1` (`$env:REPORTS_ENABLED='true'`).
 
-> **When the server takes over reports:** set `REPORTS_ENABLED=true` here (edit `.env` +
-> `start-vip.ps1`) **and** set `REPORTS_ENABLED=false` on Render's dashboard
-> (Environment → Add). Exactly **one** instance must be `true` at a time.
+> ⚠️ **Prevent double-sends:** because this server now defaults-and-is-set to `true`, if
+> Render ever comes back it will ALSO send. **Set `REPORTS_ENABLED=false` on Render's
+> dashboard** (Dashboard → the `vip-orchestrator` service → **Environment** → add/edit
+> `REPORTS_ENABLED=false` → **Save changes**, which redeploys). Exactly **one** instance
+> may be `true` at a time.
 
-**Verify after a restart:** the startup log shows one line —
-`reports disabled on this instance (REPORTS_ENABLED=false)` — and the report jobs
-(`kiwoom-daily-report`, `recommendation-daily-report`, `master-daily-report`, …) are
-absent while the trading jobs (`scalp-heartbeat`, `position-guard-heartbeat`,
-`strategy-tournament`, …) remain.
+**Verify after a restart:** the startup log shows the report jobs being registered —
+`scheduler: Kiwoom registered (6:30 KST …)`, `… Master registered (6:50 KST …)`,
+`… Recommendation report registered (7:30 KST …)`, `… report health check registered
+(8:00 / 11:15 / 17:00 KST daily)`, and `… morning-report watchdog registered (8:30 KST
+daily)`. If instead you see `reports disabled on this instance (REPORTS_ENABLED=false)`,
+the env var is still false somewhere — re-check `.env` and `start-vip.ps1`.
+
+## Auto-start + never-silent net (added 2026-07-29)
+
+- **Auto-start at boot:** `start-vip-service.ps1` is a headless launcher (backend :8000
+  with `REPORTS_ENABLED=true` + dashboard :3000, logging to `logs\*.log`, idempotent).
+  Run **`register-autostart.ps1` once in an *elevated* PowerShell** to register the
+  Scheduled Task `VIP-Agent-AutoStart` (runs at boot **whether or not** anyone is logged
+  in) and to persist the never-sleep/hibernate-off power settings. A no-admin fallback
+  task `VIP-Agent-AutoStart-Logon` (starts both servers when the server user logs in) is
+  already registered. Test outside market hours:
+  `Start-ScheduledTask -TaskName VIP-Agent-AutoStart` then `curl http://localhost:8000/health`.
+- **Watchdog:** at **08:30 KST daily** the backend checks that today's Kiwoom / Newspaper /
+  Master / Asset reports actually landed in the DB; if any are missing it emails the boss
+  (`WATCHDOG_ALERT_EMAIL`, default = the SMTP sender) + pings Telegram — so a silent break
+  is caught the same morning, not a week later.
+- **Keep awake / no sleep:** already `standby-timeout-ac 0` + `hibernate-timeout-ac 0`;
+  `register-autostart.ps1` re-applies these + `powercfg /hibernate off` (needs admin).
 
 ## Notes
 

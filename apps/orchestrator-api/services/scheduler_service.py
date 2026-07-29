@@ -1654,6 +1654,86 @@ def _ensure_morning_reports():
         db.close()
 
 
+def _watchdog_morning_reports():
+    """08:30 KST safety-net (registered 2026-07-29 after a week of silent
+    report failure went unnoticed). VERIFIES that today's morning reports
+    actually reached the dashboard/DB — the SAME rows the 8:00 self-heal writes.
+    If any are still MISSING (after the 6:30-8:00 sends + the 8:00 self-heal),
+    it sends ONE alert email to the boss + a Telegram ping, so a silent break is
+    caught the same morning instead of a week later.
+
+    Read-only: it does NOT regenerate reports (the self-heal already tried) — it
+    only raises the flag. Guarded by REPORTS_ENABLED (registered via
+    _add_report_job) so only the designated sender ever alerts."""
+    from db.models import OrchReport
+    from services.kst import kst_date, kst_now
+    from services.report_email import send_plain_email, sender_address, DEFAULT_RECIPIENT
+
+    db = SessionLocal()
+    try:
+        today = kst_date()                      # 'YYYY-MM-DD' (KST)
+        weekend = kst_now().weekday() >= 5
+        period = "weekly" if weekend else "daily"
+
+        def present(rtype: str, per: str | None) -> bool:
+            q = db.query(OrchReport).filter(
+                OrchReport.report_type == rtype,
+                OrchReport.content_json["kst_time"].astext.like(f"{today}%"),
+            )
+            if per:
+                q = q.filter(OrchReport.content_json["period"].astext == per)
+            return db.query(q.exists()).scalar()
+
+        # The morning emails the team expects: market reports (daily on weekdays,
+        # weekly edition on weekends) + the daily Asset report (runs every day).
+        expected = [
+            ("kiwoom_report", period, "Kiwoom"),
+            ("newspaper_report", period, "Newspaper"),
+            ("master_report", period, "Master"),
+            ("asset_report", "daily", "Asset"),
+        ]
+        missing = [label for rtype, per, label in expected if not present(rtype, per)]
+
+        if not missing:
+            log.info(f"watchdog: all morning reports present for {today}",
+                     extra={"action": "watchdog.ok"})
+            return
+
+        # Missing after the self-heal → alert the boss ONCE (email + Telegram).
+        boss = os.getenv("WATCHDOG_ALERT_EMAIL") or sender_address() or DEFAULT_RECIPIENT
+        subject = f"⚠️ VIP morning reports INCOMPLETE — {today} KST"
+        body = (
+            "The 08:30 KST watchdog found today's morning reports are incomplete.\n\n"
+            f"Missing: {', '.join(missing)}\n\n"
+            "The other reports generated normally; these did not reach the "
+            "dashboard/DB even after the 08:00 self-heal.\n\n"
+            "Likely causes: backend was down at 06:30, a source API failed, or "
+            "SMTP rejected. Check logs\\backend.err.log around 06:30-08:00 KST.\n"
+            "Re-send manually from Reports -> Generate, or "
+            "POST /reports/compose/<name>?send_all=true.\n"
+        )
+        try:
+            res = send_plain_email(boss, subject, body)
+            log.warning(
+                f"watchdog: morning reports INCOMPLETE {missing} — alert email "
+                f"{'sent' if res.get('ok') else 'FAILED'} -> {boss} "
+                f"({res.get('reason', 'ok')})",
+                extra={"action": "watchdog.alert"})
+        except Exception as ee:
+            log.warning(f"watchdog: alert email failed: {ee}",
+                        extra={"action": "watchdog.alert_failed"})
+        try:
+            from services.telegram_service import send_alert
+            send_alert(f"⚠️ <b>VIP morning reports incomplete</b> — {today}\n"
+                       f"Missing: {', '.join(missing)}")
+        except Exception:
+            pass
+    except Exception as e:
+        log.warning(f"watchdog: check failed: {e}", extra={"action": "watchdog.failed"})
+    finally:
+        db.close()
+
+
 @_single_flight("scorekeeper")
 def _scorekeeper_daily():
     """Daily: log today's BUY/SELL calls (both methods) + grade matured ones -> the
@@ -2522,6 +2602,19 @@ def init_scheduler():
             replace_existing=True,
         )
     REPORTS_ENABLED and log.info("scheduler: report health check registered (8:00 / 11:15 / 17:00 KST daily)", extra={"action": "scheduler.ensure_registered"})
+
+    # Watchdog — 08:30 AM KST daily: after the 6:30-8:00 sends + the 8:00 self-
+    # heal, VERIFY today's morning reports actually landed; if any are missing,
+    # send ONE alert email (+ Telegram) to the boss. This is the never-silent net
+    # added after morning reports broke unnoticed for a week (2026-07-22..29).
+    # Guarded so only the designated sender alerts.
+    _add_report_job(
+        _watchdog_morning_reports,
+        CronTrigger(day_of_week="*", hour=8, minute=30, timezone=_KST_TZ),
+        id="watchdog-morning-reports",
+        replace_existing=True,
+    )
+    REPORTS_ENABLED and log.info("scheduler: morning-report watchdog registered (8:30 KST daily)", extra={"action": "scheduler.watchdog_registered"})
 
     # Knowledge-base sync (RAG / Phase 2) — 7:10 AM KST = 22:10 UTC, after the
     # morning reports are written, so the chatbot grounds answers in fresh content.
