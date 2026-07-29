@@ -56,6 +56,7 @@ type C3Stock = {
 type C3Signal = { code: string; name: string; price: number; qty: number; why: string; ts: number };
 type C3Status = {
   enabled: boolean; stop_pct: number; pos_pct: number; codes: string[]; mode?: "auto" | "semi"; streak?: number; tf?: string;
+  entry_timing?: "confirmed" | "early"; exit_mode?: "target" | "candle";
   signals?: C3Signal[]; stocks: C3Stock[]; market_open?: boolean; rule_ko?: string; rule_en?: string;
   today: { trades: number; wins: number; net_pct_sum: number; realized_won?: number };
   recent: { ticker: string; name: string; qty: number; entry: number; exit_price?: number | null; exit_reason?: string | null;
@@ -248,6 +249,13 @@ export default function Candle3Desk({ mode: initialMode }: { mode: C3Mode }) {
                 : t("1분봉 3연속 양봉 → 매수 · 3연속 음봉 → 매도 · −1% 손절 · 15:18 정리", "3 up candles → buy · 3 down → sell · −1% stop · flat 15:18")}
             </span>
             <div className="ml-auto flex items-center gap-2 text-[11.5px]">
+              <span className="text-[var(--text-muted)]">{t("진입 타이밍", "entry")}</span>
+              <select value={sc.entry_timing ?? "confirmed"} onChange={async (e) => { await apiPost(`/paper-desk/candle3/params?entry_timing=${e.target.value}`); load(); }}
+                className="px-1.5 py-1 rounded-lg border bg-[var(--bg-primary)] text-[var(--text-primary)] font-bold" style={{ borderColor: (sc.entry_timing ?? "confirmed") === "early" ? "#e65100" : TEAL }}
+                title={t("확정 = 3번째 캔들이 '닫힐 때' 진입(안정, 4번째 시작 근처). 빠름 = 형성 중인 캔들에 진입(3번째에 가깝지만 닫히기 전 색이 바뀔 수 있음).", "confirmed = enter when the 3rd candle CLOSES (safe, ~start of #4). early = enter on the forming candle (closer to the 3rd, but it can flip before it closes).")}>
+                <option value="confirmed">{t("확정 (3번째 종가·안정)", "confirmed (3rd close · safe)")}</option>
+                <option value="early">{t("빠름 (형성 캔들·3번째)", "early (forming · ~3rd)")}</option>
+              </select>
               <span className="text-[var(--text-muted)]">{t("봉 간격", "timeframe")}</span>
               <select value={sc.tf ?? "5"} onChange={async (e) => { await apiPost(`/paper-desk/candle3/params?tf=${e.target.value}`); load(); }}
                 className="px-1.5 py-1 rounded-lg border bg-[var(--bg-primary)] text-[var(--text-primary)] font-bold" style={{ borderColor: (sc.tf ?? "5") !== "1" ? TEAL : "var(--border-default)" }}
