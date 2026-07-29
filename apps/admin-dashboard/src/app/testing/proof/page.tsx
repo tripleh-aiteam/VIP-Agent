@@ -124,7 +124,7 @@ function BookTable({ book, side, fill, t }: { book: Book; side: "BUY" | "SELL"; 
 export default function ProofLab() {
   const { lang } = useLanguage();
   const t = (ko: string, en: string) => (lang === "ko" ? ko : en);
-  const [source, setSource] = useState<"synthetic" | "kiwoom">("synthetic");
+  const [source, setSource] = useState<"synthetic" | "kiwoom">("kiwoom");   // boss 2026-07-30: REAL data first
   const [seed, setSeed] = useState(7);
   const [code, setCode] = useState("005930");
   const [res, setRes] = useState<ProofRes | null>(null);
@@ -141,6 +141,18 @@ export default function ProofLab() {
     setLoading(false);
   };
   useEffect(() => { load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, []);
+
+  // 📡 LIVE mode (boss 2026-07-30): during market hours, today's real candles keep arriving —
+  // silently re-run the proof every 30s so new 3rd-candle arrows appear as they happen.
+  // Silent = no loading flicker, keeps the clicked trade open (trades only APPEND at the end).
+  useEffect(() => {
+    if (source !== "kiwoom") return;
+    const iv = setInterval(() => {
+      api<ProofRes>(`/paper-desk/proof/run?source=kiwoom&code=${code}`).then(setRes).catch(() => {});
+    }, 30_000);
+    return () => clearInterval(iv);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [source, code]);
 
   const sym = res?.symbols?.[symIdx];
   const ver = res?.verification;
@@ -176,10 +188,15 @@ export default function ProofLab() {
             🎲 {t(`새 시뮬레이션 (seed ${seed})`, `new simulation (seed ${seed})`)}
           </button>
         ) : (
-          <select value={code} onChange={(e) => { setCode(e.target.value); load("kiwoom", seed, e.target.value); }}
-            className="text-[12px] font-bold px-2 py-1 rounded-lg border bg-[var(--bg-primary)] text-[var(--text-primary)]" style={{ borderColor: TEAL }}>
-            {KIWOOM_CODES.map(([c, n]) => <option key={c} value={c}>{n}</option>)}
-          </select>
+          <>
+            <select value={code} onChange={(e) => { setCode(e.target.value); load("kiwoom", seed, e.target.value); }}
+              className="text-[12px] font-bold px-2 py-1 rounded-lg border bg-[var(--bg-primary)] text-[var(--text-primary)]" style={{ borderColor: TEAL }}>
+              {KIWOOM_CODES.map(([c, n]) => <option key={c} value={c}>{n}</option>)}
+            </select>
+            <span className="text-[10.5px] font-bold px-2 py-0.5 rounded-full" style={{ background: "rgba(0,131,143,0.12)", color: TEAL }}>
+              ● {t("실시간 — 오늘 장중 30초마다 자동 갱신", "LIVE — auto-refreshes every 30s with today's candles")}
+            </span>
+          </>
         )}
         {loading && <span className="text-[12px] text-[var(--text-muted)]">{t("계산 중…", "running…")}</span>}
       </div>
