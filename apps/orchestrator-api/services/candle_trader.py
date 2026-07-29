@@ -40,6 +40,10 @@ DOWN_NEEDED = 3          # 3 consecutive down 1-min candles → SELL
 FLOW_BUY_VETO = -0.30    # skip a 3-up BUY if imbalance < this (strong resting sell wall)
 FLOW_SELL_FAST = -0.55   # sell a holding EARLY if imbalance <= this (heavy selling pressure)
 _flow_vetoes: list[dict] = []   # recent 3-up buys the order book vetoed (for the UI proof panel)
+# boss 2026-07-29: SHADOW A/B — both exit modes buy the SAME 3-up signals with the same fake
+# notional; 'candle' book sells on 3-down, 'target' book sells on +take%. Same entries = a fair
+# fight (only the exit differs). Pure simulation — does NOT touch the real paper account.
+AB_NOTIONAL = 10_000_000   # ₩10M fake per virtual trade, identical for both books
 NO_NEW_ENTRY_HHMM = (15, 8)   # boss 2026-07-29: stop opening NEW positions 10 min before the
                               # 15:18 flat — otherwise it buys a 3-up then EOD-flattens it a
                               # minute later (the confusing 4th/5th-candle end-of-day churn).
@@ -84,6 +88,15 @@ def _ensure(db) -> None:
     # boss 2026-07-29: order-book confirmation on/off (default OFF so it's opt-in / A/B testable)
     db.execute(text("ALTER TABLE candle_state ADD COLUMN IF NOT EXISTS "
                     "flow_confirm BOOLEAN NOT NULL DEFAULT FALSE"))
+    # boss 2026-07-29: shadow A/B test on/off (default OFF). Runs both exit modes side by side.
+    db.execute(text("ALTER TABLE candle_state ADD COLUMN IF NOT EXISTS "
+                    "ab_test BOOLEAN NOT NULL DEFAULT FALSE"))
+    db.execute(text(
+        "CREATE TABLE IF NOT EXISTS ab_trades ("
+        " id SERIAL PRIMARY KEY, book TEXT, ticker TEXT, name TEXT, qty INT,"
+        " entry DOUBLE PRECISION, exit_price DOUBLE PRECISION, exit_reason TEXT,"
+        " net_pct DOUBLE PRECISION, status TEXT NOT NULL DEFAULT 'OPEN',"
+        " opened_at TIMESTAMPTZ DEFAULT now(), closed_at TIMESTAMPTZ)"))
     db.execute(text(
         "CREATE TABLE IF NOT EXISTS candle_trades ("
         " id SERIAL PRIMARY KEY, ticker TEXT, name TEXT, qty INT,"
@@ -108,7 +121,7 @@ def _ensure(db) -> None:
 def _cfg(db) -> dict[str, Any]:
     _ensure(db)
     r = db.execute(text(
-        "SELECT enabled, stop_pct, pos_pct, codes, mode, streak, tf, take_pct, exit_mode, entry_timing, flow_confirm FROM candle_state WHERE id=1")).first()
+        "SELECT enabled, stop_pct, pos_pct, codes, mode, streak, tf, take_pct, exit_mode, entry_timing, flow_confirm, ab_test FROM candle_state WHERE id=1")).first()
     codes = [c.strip().zfill(6) for c in (r[3] or DEFAULT_CODES).split(",") if c.strip()]
     return {"enabled": bool(r[0]), "stop_pct": float(r[1]), "pos_pct": float(r[2]),
             "codes": codes[:24],
@@ -118,7 +131,7 @@ def _cfg(db) -> dict[str, Any]:
             "take_pct": float(r[7]) if r[7] is not None else 0.5,
             "exit_mode": (r[8] or "target") if str(r[8] or "target") in ("target", "candle") else "target",
             "entry_timing": (r[9] or "confirmed") if str(r[9] or "confirmed") in ("confirmed", "early") else "confirmed",
-            "flow_confirm": bool(r[10])}
+            "flow_confirm": bool(r[10]), "ab_test": bool(r[11])}
 
 
 def set_enabled(db, on: bool) -> dict:
@@ -133,12 +146,15 @@ def set_params(db, stop_pct: Optional[float] = None, pos_pct: Optional[float] = 
                codes: Optional[str] = None, mode: Optional[str] = None,
                streak: Optional[int] = None, tf: Optional[str] = None,
                take_pct: Optional[float] = None, exit_mode: Optional[str] = None,
-               entry_timing: Optional[str] = None, flow_confirm: Optional[bool] = None) -> dict:
+               entry_timing: Optional[str] = None, flow_confirm: Optional[bool] = None,
+               ab_test: Optional[bool] = None) -> dict:
     _ensure(db)
     if entry_timing in ("confirmed", "early"):
         db.execute(text("UPDATE candle_state SET entry_timing=:v, updated_at=now() WHERE id=1"), {"v": entry_timing})
     if flow_confirm is not None:
         db.execute(text("UPDATE candle_state SET flow_confirm=:v, updated_at=now() WHERE id=1"), {"v": bool(flow_confirm)})
+    if ab_test is not None:
+        db.execute(text("UPDATE candle_state SET ab_test=:v, updated_at=now() WHERE id=1"), {"v": bool(ab_test)})
     if streak in (2, 3):
         db.execute(text("UPDATE candle_state SET streak=:s, updated_at=now() WHERE id=1"), {"s": int(streak)})
     if take_pct is not None:
@@ -256,6 +272,76 @@ def _flow_imbalance(code: str) -> Optional[float]:
         return None
 
 
+def _run_ab_sim(db, cfg: dict, need: int, tf: str, eod: bool) -> None:
+    """SHADOW A/B: both books buy the SAME 3-up signals with identical fake notional; the
+    'candle' book sells on 3 DOWN closes, the 'target' book sells on +take% net. Pure
+    simulation — never touches the real paper account. Runs every tick when ab_test is ON."""
+    take = cfg["take_pct"]
+    open_set = set()
+    for oid, book, tk, entry in db.execute(text(
+            "SELECT id, book, ticker, entry FROM ab_trades WHERE status='OPEN'")).fetchall():
+        px = _px(tk)
+        if px is None:
+            open_set.add((book, tk)); continue
+        entry = float(entry); net = (px / entry - 1) * 100 - 0.23
+        reason = None
+        if book == "target":
+            reason = "TARGET" if net >= take else ("EOD" if eod else None)
+        else:                                             # candle book
+            _u, _dn, _cn = _streaks_tf(tk, tf)
+            reason = "CANDLE3" if (_cn >= need and _dn >= need) else ("EOD" if eod else None)
+        if reason:
+            db.execute(text("UPDATE ab_trades SET status='CLOSED', exit_price=:x, exit_reason=:r, "
+                            "net_pct=:n, closed_at=now() WHERE id=:i"),
+                       {"x": px, "r": reason, "n": round(net, 3), "i": oid})
+        else:
+            open_set.add((book, tk))
+    if not eod:                                           # open a virtual buy in BOTH books on a 3-up
+        for code in cfg["codes"]:
+            up, dn, cn = _streaks_tf(code, tf)
+            if cn < need or up < need:
+                continue
+            px = _px(code)
+            if px is None:
+                continue
+            qty = int(AB_NOTIONAL / px)
+            if qty < 1:
+                continue
+            for book in ("candle", "target"):
+                if (book, code) not in open_set:
+                    db.execute(text("INSERT INTO ab_trades (book, ticker, name, qty, entry) "
+                                    "VALUES (:b,:t,:n,:q,:e)"),
+                               {"b": book, "t": code, "n": _name(code), "q": qty, "e": px})
+                    open_set.add((book, code))
+    db.commit()
+
+
+def ab_scorecard(db) -> dict[str, Any]:
+    """Per-book A/B stats for TODAY (closed): trades, wins, win%, cumulative net%, fake ₩ won."""
+    out: dict[str, Any] = {}
+    for book in ("candle", "target"):
+        rows = db.execute(text(
+            "SELECT net_pct, qty, entry FROM ab_trades WHERE book=:b AND status='CLOSED' "
+            "AND closed_at::date=(now() AT TIME ZONE 'Asia/Seoul')::date"), {"b": book}).fetchall()
+        n = len(rows)
+        wins = sum(1 for r in rows if (r[0] or 0) > 0)
+        won = sum(int(r[1]) * float(r[2]) * float(r[0] or 0) / 100 for r in rows)
+        openn = int(db.execute(text(
+            "SELECT count(*) FROM ab_trades WHERE book=:b AND status='OPEN'"), {"b": book}).scalar() or 0)
+        out[book] = {"trades": n, "wins": wins, "win_pct": round(wins / n * 100) if n else 0,
+                     "net_sum": round(sum(float(r[0] or 0) for r in rows), 2),
+                     "won": round(won), "open": openn}
+    return out
+
+
+def ab_reset(db) -> dict:
+    """Clear the A/B sim to start a fresh comparison."""
+    _ensure(db)
+    db.execute(text("DELETE FROM ab_trades"))
+    db.commit()
+    return {"ok": True}
+
+
 def _place(db, code: str, side: str, qty: int):
     from services.paper_desk import place_order
     return place_order(db, code, side, qty, "market", source="algo3")
@@ -354,6 +440,11 @@ def _tick_impl(db, force: bool, exits_only: bool) -> dict[str, Any]:
     # ---- ENTRIES (one open per stock) ---- #
     if exits_only:                    # 5s fast pulse: protect open positions, skip entry scan
         return out
+    if cfg["ab_test"]:                # SHADOW A/B: run both exit modes side by side (sim only)
+        try:
+            _run_ab_sim(db, cfg, need, tf, eod)
+        except Exception:
+            db.rollback()
     if eod:
         out["reason"] = "EOD flat — no new entries after 15:18"
         return out
@@ -532,5 +623,6 @@ def status(db) -> dict[str, Any]:
                       "realized_won": round(float(today[3] or 0))},
             "recent": recent, "market_open": _market_open_now(),
             "flow_vetoes": _flow_vetoes[:10],
+            "ab": ab_scorecard(db) if cfg["ab_test"] else None,
             "rule_ko": f"{tf}분봉 종가 {need}연속 상승(x1<x2<x3) → 매수 · {sell_ko} · {stop_ko} · {time_ko}{flow_ko} · 15:18 정리",
             "rule_en": f"{need} rising closes (x1<x2<x3) on {tf}-min → BUY · {sell_en} · {stop_en} · {time_en}{flow_en} · flat 15:18"}

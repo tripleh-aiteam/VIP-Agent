@@ -55,10 +55,13 @@ type C3Stock = {
   flow?: number | null;   // order-book imbalance: + = buyers, - = sellers (only when flow_confirm ON)
 };
 type C3Signal = { code: string; name: string; price: number; qty: number; why: string; ts: number };
+type AbStat = { trades: number; wins: number; win_pct: number; net_sum: number; won: number; open: number };
 type C3Status = {
   enabled: boolean; stop_pct: number; pos_pct: number; codes: string[]; mode?: "auto" | "semi"; streak?: number; tf?: string;
   entry_timing?: "confirmed" | "early"; exit_mode?: "target" | "candle";
   flow_confirm?: boolean; flow_vetoes?: { name: string; up: number; imb: number; ts: string }[];
+  ab_test?: boolean;
+  ab?: { candle: AbStat; target: AbStat } | null;
   signals?: C3Signal[]; stocks: C3Stock[]; market_open?: boolean; rule_ko?: string; rule_en?: string;
   today: { trades: number; wins: number; net_pct_sum: number; realized_won?: number };
   recent: { ticker: string; name: string; qty: number; entry: number; exit_price?: number | null; exit_reason?: string | null;
@@ -265,6 +268,13 @@ export default function Candle3Desk({ mode: initialMode }: { mode: C3Mode }) {
                 <option value="off">{t("호가확인: OFF", "order-book: OFF")}</option>
                 <option value="on">{t("🔵 호가확인 ON", "🔵 order-book ON")}</option>
               </select>
+              <span className="text-[var(--text-muted)]">{t("A/B비교", "A/B")}</span>
+              <select value={sc.ab_test ? "on" : "off"} onChange={async (e) => { await apiPost(`/paper-desk/candle3/params?ab_test=${e.target.value === "on"}`); load(); }}
+                className="px-1.5 py-1 rounded-lg border bg-[var(--bg-primary)] text-[var(--text-primary)] font-bold" style={{ borderColor: sc.ab_test ? "#7b1fa2" : "var(--border-default)" }}
+                title={t("두 매도방식(3음봉 vs 익절)을 같은 3양봉 신호로 동시에 가상매매(가짜 ₩1천만/건)해 어느 쪽이 나은지 비교합니다. 실제 계좌와 무관.", "runs BOTH exit modes (3-down vs take-profit) on the SAME 3-up signals with fake ₩10M each, to show which wins. Does not touch the real account.")}>
+                <option value="off">{t("A/B: OFF", "A/B: off")}</option>
+                <option value="on">{t("🆚 A/B 비교 ON", "🆚 A/B ON")}</option>
+              </select>
               <span className="text-[var(--text-muted)]">{t("봉 간격", "timeframe")}</span>
               <select value={sc.tf ?? "5"} onChange={async (e) => { await apiPost(`/paper-desk/candle3/params?tf=${e.target.value}`); load(); }}
                 className="px-1.5 py-1 rounded-lg border bg-[var(--bg-primary)] text-[var(--text-primary)] font-bold" style={{ borderColor: (sc.tf ?? "5") !== "1" ? TEAL : "var(--border-default)" }}
@@ -418,6 +428,34 @@ export default function Candle3Desk({ mode: initialMode }: { mode: C3Mode }) {
         algorithmLabel={t("알고리즘 3", "Algorithm 3")}
         accent={TEAL}
       />
+
+      {/* A/B scorecard — both exit modes on the SAME 3-up entries, for the boss */}
+      {sc?.ab_test && sc.ab && (
+        <div className="mt-4 rounded-xl border overflow-hidden" style={{ borderColor: "#7b1fa2" }}>
+          <div className="px-4 py-2 border-b bg-[var(--bg-elevated)] flex items-center gap-2 flex-wrap" style={{ borderColor: "var(--border-default)" }}>
+            <b className="text-[13.5px]" style={{ color: "#7b1fa2" }}>🆚 {t("A/B 비교 — 같은 3양봉 신호, 가짜 ₩1천만/건", "A/B Test — same 3-up signals, fake ₩10M each")}</b>
+            <button onClick={async () => { await apiPost(`/paper-desk/candle3/ab_reset`); load(); }} className="text-[10.5px] font-bold px-2 py-0.5 rounded-lg border text-[var(--text-muted)]" style={{ borderColor: "var(--border-default)" }}>↺ {t("초기화", "reset")}</button>
+          </div>
+          <div className="grid grid-cols-2 divide-x" style={{ borderColor: "var(--border-default)" }}>
+            {(["candle", "target"] as const).map((book) => {
+              const s = sc.ab![book];
+              const other = sc.ab![book === "candle" ? "target" : "candle"];
+              const winner = s.won !== other.won && s.won > other.won;
+              const label = book === "candle" ? t("🕯️ 3음봉 매도", "🕯️ 3-down sell") : t("🎯 익절 매도", "🎯 take-profit");
+              return (
+                <div key={book} className="px-4 py-3" style={{ background: winner ? "rgba(123,31,162,0.07)" : "transparent" }}>
+                  <div className="text-[13px] font-bold mb-1">{label} {winner && <span style={{ color: "#7b1fa2" }}>🏆 {t("우세", "winning")}</span>}</div>
+                  <div className="text-[12px] tabular-nums flex flex-col gap-0.5">
+                    <div>🔄 {t(`${s.trades}회전`, `${s.trades} trades`)} · {t(`${s.open} 보유중`, `${s.open} open`)}</div>
+                    <div>🏆 {t(`승률 ${s.win_pct}%`, `${s.win_pct}% win`)} ({s.wins}/{s.trades})</div>
+                    <div className="text-[15px] font-extrabold" style={{ color: pnlCol(s.won) }}>{s.won > 0 ? "+" : ""}₩{fmt(s.won)}</div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       {/* Order-book VETO panel — the live proof the layer is working: 3-up signals the
           order book REFUSED because a sell wall sat above. */}
