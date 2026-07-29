@@ -235,7 +235,9 @@ def _algo1_synthesis(d: dict[str, Any], lang: str) -> str:
     tech = d.get("technicals") or {}
     flows = d.get("flows") or {}
     an = d.get("method2_analysis") or {}
-    reasons = (an.get("reasons") or [])[:3]
+    # Use the English order-book/box reasons in EN mode — the KO list leaked raw Korean
+    # ('외국인+기관 분산매도 …') into the English decision summary (boss 2026-07-29: KO/EN parity).
+    reasons = (((an.get("reasons_en") if en else an.get("reasons")) or an.get("reasons")) or [])[:3]
     tsum = tech.get("summary_en" if en else "summary_ko") or ""
     ftag = (flows.get("tag_en") if en else flows.get("tag")) or ""
     if en:

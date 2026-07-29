@@ -1012,8 +1012,15 @@ def _requires_fresh_market_evidence(transcript: Optional[str]) -> bool:
 # new stock but carries NO intent of its own, so it should INHERIT the previous turn's
 # intent (price→price, outlook→outlook), not start a fresh long analysis.
 _SWITCH_PREFIX_RE = _re.compile(
-    r"^\s*(how about|what about|and how about|and what about|그럼|그러면|그리고|그 다음|다음으로|then|how about you)\b", _re.I)
+    r"^\s*(how about|what about|and how about|and what about|and also|and then|and|also"
+    r"|그럼|그러면|그리고|그 다음|다음으로|then|how about you|또한|또는|또)\b", _re.I)
 _BARE_STOCK_RE = _re.compile(r"^\s*\S{1,20}\s*(는|은|도)\s*[?？]?\s*$")   # 'X는?' / 'X은?' / 'X도?'
+# English bare follow-up naming just a stock — 'SK Hynix?' / 'and Samsung?' — mirrors the
+# Korean 'X는?' form so an EN switch follow-up hits the deterministic price/forecast lane
+# instead of falling to the LLM (boss 2026-07-29: 'And SK Hynix?' hallucinated a wrong price
+# while the KO '그럼 SK하이닉스는?' returned the correct live quote). The downstream lane still
+# requires the phrase to resolve to a real stock, so non-stock 'really?' safely falls through.
+_BARE_STOCK_EN_RE = _re.compile(r"^\s*(and|also|and also)?\s*[A-Za-z][A-Za-z0-9.\- ]{0,24}\?\s*$", _re.I)
 
 
 def _prev_user_msg(history: Optional[list[dict]]) -> str:
@@ -1142,7 +1149,8 @@ def _is_bare_switch_followup(transcript: Optional[str]) -> bool:
             or _is_stock_advice(t, "vip") or _is_daytrade_followup(t)
             or any(w in tl for w in ("news", "뉴스", "chart", "차트", "report", "리포트", "공매도"))):
         return False
-    return bool(_SWITCH_PREFIX_RE.search(t) or _BARE_STOCK_RE.match(t))
+    return bool(_SWITCH_PREFIX_RE.search(t) or _BARE_STOCK_RE.match(t)
+                or _BARE_STOCK_EN_RE.match(t))
 
 
 def _is_vip_current_price_q(transcript: Optional[str], agent_id: Optional[str]) -> bool:
@@ -4544,6 +4552,36 @@ _PNL_RE = _re.compile(
     r"|얼마(나)?\s*(벌었|잃었|땄|먹었)",
     _re.IGNORECASE)
 
+# A '어제 … 얼마' can be a STOCK-PRICE question ('삼성전자 어제 종가는 얼마였어?'), NOT the
+# desk's realized P&L. When a price-field word (종가/시가/현재가/close/price…) or a named
+# stock is present WITHOUT any gain/loss verb, it's a market-data question and must yield
+# to the price/history lane (boss 2026-07-29: the KO price question hit the 모의투자 P&L
+# result while the identical EN question correctly returned the OHLCV table — KO/EN parity).
+_PRICE_WORD_RE = _re.compile(
+    r"종가|시가|고가|저가|현재가|주가|시세|얼마에"
+    r"|\bclos(e|ed|ing)\b|\bopen(ing|ed)?\b|\bhigh\b|\blow\b|\bprice\b|\bquote\b",
+    _re.IGNORECASE)
+_PNL_VERB_RE = _re.compile(
+    r"벌었|벌어|벌였|잃었|잃어|땄|먹었|손익|수익|손해|이익"
+    r"|\b(profit|won|win|lost|lose|earn(ed|ing)?|made|make|gain(ed|s)?|result)s?\b",
+    _re.IGNORECASE)
+
+
+def _pnl_is_really_price(transcript: Optional[str]) -> bool:
+    """True when a '어제/today … 얼마' actually asks a stock's PRICE (contains a price-field
+    word or names a stock) with NO gain/loss verb — so the P&L lane yields to price/history."""
+    t = transcript or ""
+    if _PNL_VERB_RE.search(t):
+        return False                      # explicit 벌었/잃었/profit → genuine P&L
+    if _PRICE_WORD_RE.search(t):
+        return True                       # 종가/시가/price/close … → a price question
+    try:
+        if _all_stocks_in_query(t):       # a named stock + bare 얼마 → that stock's price
+            return True
+    except Exception:
+        pass
+    return False
+
 
 def _paper_pnl_reply(db, lang: str, transcript: str, agent_id: str = "vip") -> Optional[str]:
     """Realized P&L from the 모의투자 desk for the asked period (KST days). Direct answer
@@ -5611,7 +5649,8 @@ def _run_agent_impl(
     # === MY P&L — 'Yesterday how much I won?' → the 모의투자 desk's realized result for
     # that period (must run BEFORE context-math/price-history, which stole this question).
     if (not confirmed_tool and not attachment_ids and transcript
-            and _PNL_RE.search(transcript)):
+            and _PNL_RE.search(transcript)
+            and not _pnl_is_really_price(transcript)):
         _pl = _paper_pnl_reply(db, lang, transcript, agent_id)
         if _pl:
             return {"intent": "paper_pnl", "language": lang, "reply": _pl,
