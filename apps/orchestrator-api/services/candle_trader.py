@@ -277,6 +277,7 @@ def _run_ab_sim(db, cfg: dict, need: int, tf: str, eod: bool) -> None:
     'candle' book sells on 3 DOWN closes, the 'target' book sells on +take% net. Pure
     simulation — never touches the real paper account. Runs every tick when ab_test is ON."""
     take = cfg["take_pct"]
+    _flow = cfg["flow_confirm"]        # apply the SAME order-book layer to BOTH books when ON
     open_set = set()
     for oid, book, tk, entry in db.execute(text(
             "SELECT id, book, ticker, entry FROM ab_trades WHERE status='OPEN'")).fetchall():
@@ -285,7 +286,9 @@ def _run_ab_sim(db, cfg: dict, need: int, tf: str, eod: bool) -> None:
             open_set.add((book, tk)); continue
         entry = float(entry); net = (px / entry - 1) * 100 - 0.23
         reason = None
-        if book == "target":
+        if _flow and (_fi := _flow_imbalance(tk)) is not None and _fi <= FLOW_SELL_FAST:
+            reason = "FLOW"                               # order book: heavy selling -> exit both books
+        elif book == "target":
             reason = "TARGET" if net >= take else ("EOD" if eod else None)
         else:                                             # candle book
             _u, _dn, _cn = _streaks_tf(tk, tf)
@@ -301,6 +304,8 @@ def _run_ab_sim(db, cfg: dict, need: int, tf: str, eod: bool) -> None:
             up, dn, cn = _streaks_tf(code, tf)
             if cn < need or up < need:
                 continue
+            if _flow and (_ib := _flow_imbalance(code)) is not None and _ib < FLOW_BUY_VETO:
+                continue                                  # order book vetoes the buy for BOTH books
             px = _px(code)
             if px is None:
                 continue
