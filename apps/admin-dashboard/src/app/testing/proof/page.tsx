@@ -53,7 +53,7 @@ const CHECK_LABELS: Record<string, [string, string]> = {
 };
 
 // ---- candle chart with ③▲/③▼ arrows on the exact signal candles ----
-function ProofChart({ candles, trades, focus }: { candles: Candle[]; trades: Trade[]; focus: number | null }) {
+function ProofChart({ candles, trades, focus, buyLabel, sellLabel }: { candles: Candle[]; trades: Trade[]; focus: number | null; buyLabel: string; sellLabel: string }) {
   const ref = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
     if (!ref.current || !candles.length) return;
@@ -76,8 +76,8 @@ function ProofChart({ candles, trades, focus }: { candles: Candle[]; trades: Tra
       series.setData(candles.map((c) => ({ time: c.time, open: c.open, high: c.high, low: c.low, close: c.close })) as never);
       // arrows: buy on the 3rd red (below bar), sell on the 3rd blue (above bar)
       const markers = trades.flatMap((t, i) => [
-        { time: candles[t.buy_idx]?.time, position: "belowBar", color: RED, shape: "arrowUp", text: `③▲매수${focus === i ? "★" : ""}` },
-        { time: candles[t.sell_idx]?.time, position: "aboveBar", color: BLUE, shape: "arrowDown", text: `③▼매도${focus === i ? "★" : ""}` },
+        { time: candles[t.buy_idx]?.time, position: "belowBar", color: RED, shape: "arrowUp", text: `${buyLabel}${focus === i ? "★" : ""}` },
+        { time: candles[t.sell_idx]?.time, position: "aboveBar", color: BLUE, shape: "arrowDown", text: `${sellLabel}${focus === i ? "★" : ""}` },
       ]).filter((m) => m.time != null);
       series.setMarkers(markers as never);
       if (focus != null && trades[focus]) {
@@ -88,7 +88,7 @@ function ProofChart({ candles, trades, focus }: { candles: Candle[]; trades: Tra
       cleanup = () => chart.remove();
     })();
     return () => { alive = false; cleanup(); };
-  }, [candles, trades, focus]);
+  }, [candles, trades, focus, buyLabel, sellLabel]);   // labels in deps → chart redraws on language switch
   return <div ref={ref} style={{ width: "100%", height: 320 }} />;
 }
 
@@ -229,7 +229,7 @@ export default function ProofLab() {
       {/* ---- chart with arrows ---- */}
       {sym && (
         <div className="mt-3 rounded-xl border p-2" style={{ borderColor: "var(--border-default)", background: "var(--bg-elevated)" }}>
-          <ProofChart candles={sym.candles} trades={sym.trades} focus={focus} />
+          <ProofChart candles={sym.candles} trades={sym.trades} focus={focus} buyLabel={t("③▲매수", "③▲BUY")} sellLabel={t("③▼매도", "③▼SELL")} />
           <div className="px-2 pb-1 text-[11px] text-[var(--text-muted)]">
             {t("▲매수 화살표 = 정확히 3번째 양봉 · ▼매도 화살표 = 정확히 3번째 음봉. 거래를 클릭하면 확대 + 증거를 보여줍니다.",
                "▲BUY arrow = exactly the 3rd red candle · ▼SELL arrow = exactly the 3rd blue. Click a trade to zoom + see the evidence.")}
