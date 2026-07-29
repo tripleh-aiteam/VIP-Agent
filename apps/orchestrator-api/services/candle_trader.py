@@ -24,6 +24,7 @@ from sqlalchemy import text
 
 from services.scalp_trader import (KST, EOD_FLAT_HHMM, _px, _name, _candles_1m,
                                    _streaks_1m, _market_open_now)
+from services.kiwoom_rest import order_book
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +33,13 @@ POS_PCT_DEFAULT = 10.0
 DEFAULT_CODES = "000660,005930"
 UP_NEEDED = 3            # 3 consecutive up 1-min candles → BUY
 DOWN_NEEDED = 3          # 3 consecutive down 1-min candles → SELL
+# boss 2026-07-29: order-book (호가) confirmation layer. imbalance = (Σbuy_req − Σsell_req) /
+# total, +1 = all buyers waiting, −1 = all sellers (a sell wall). The candle STAYS the boss —
+# the book only (a) vetoes a 3-up buy when a clear sell wall sits above, and (b) sells a holding
+# early when heavy selling hits — it NEVER trades on its own. Tunable.
+FLOW_BUY_VETO = -0.30    # skip a 3-up BUY if imbalance < this (strong resting sell wall)
+FLOW_SELL_FAST = -0.55   # sell a holding EARLY if imbalance <= this (heavy selling pressure)
+_flow_vetoes: list[dict] = []   # recent 3-up buys the order book vetoed (for the UI proof panel)
 NO_NEW_ENTRY_HHMM = (15, 8)   # boss 2026-07-29: stop opening NEW positions 10 min before the
                               # 15:18 flat — otherwise it buys a 3-up then EOD-flattens it a
                               # minute later (the confusing 4th/5th-candle end-of-day churn).
@@ -73,6 +81,9 @@ def _ensure(db) -> None:
     # (fires ~1 candle sooner, near the 3rd, but the forming candle can flip before it closes).
     db.execute(text("ALTER TABLE candle_state ADD COLUMN IF NOT EXISTS "
                     "entry_timing TEXT NOT NULL DEFAULT 'confirmed'"))
+    # boss 2026-07-29: order-book confirmation on/off (default OFF so it's opt-in / A/B testable)
+    db.execute(text("ALTER TABLE candle_state ADD COLUMN IF NOT EXISTS "
+                    "flow_confirm BOOLEAN NOT NULL DEFAULT FALSE"))
     db.execute(text(
         "CREATE TABLE IF NOT EXISTS candle_trades ("
         " id SERIAL PRIMARY KEY, ticker TEXT, name TEXT, qty INT,"
@@ -82,6 +93,8 @@ def _ensure(db) -> None:
         " opened_at TIMESTAMPTZ DEFAULT now(), closed_at TIMESTAMPTZ)"))
     db.execute(text("ALTER TABLE candle_trades ADD COLUMN IF NOT EXISTS "
                     "entry_timing TEXT"))   # 'confirmed'/'early' saved per trade for comparison
+    db.execute(text("ALTER TABLE candle_trades ADD COLUMN IF NOT EXISTS "
+                    "entry_flow DOUBLE PRECISION"))   # order-book imbalance at buy (audit proof)
     r = db.execute(text("SELECT 1 FROM candle_state WHERE id=1")).first()
     if not r:
         db.execute(text(
@@ -95,7 +108,7 @@ def _ensure(db) -> None:
 def _cfg(db) -> dict[str, Any]:
     _ensure(db)
     r = db.execute(text(
-        "SELECT enabled, stop_pct, pos_pct, codes, mode, streak, tf, take_pct, exit_mode, entry_timing FROM candle_state WHERE id=1")).first()
+        "SELECT enabled, stop_pct, pos_pct, codes, mode, streak, tf, take_pct, exit_mode, entry_timing, flow_confirm FROM candle_state WHERE id=1")).first()
     codes = [c.strip().zfill(6) for c in (r[3] or DEFAULT_CODES).split(",") if c.strip()]
     return {"enabled": bool(r[0]), "stop_pct": float(r[1]), "pos_pct": float(r[2]),
             "codes": codes[:24],
@@ -104,7 +117,8 @@ def _cfg(db) -> dict[str, Any]:
             "tf": str(r[6] or "5") if str(r[6] or "5") in ("1", "3", "5") else "5",
             "take_pct": float(r[7]) if r[7] is not None else 0.5,
             "exit_mode": (r[8] or "target") if str(r[8] or "target") in ("target", "candle") else "target",
-            "entry_timing": (r[9] or "confirmed") if str(r[9] or "confirmed") in ("confirmed", "early") else "confirmed"}
+            "entry_timing": (r[9] or "confirmed") if str(r[9] or "confirmed") in ("confirmed", "early") else "confirmed",
+            "flow_confirm": bool(r[10])}
 
 
 def set_enabled(db, on: bool) -> dict:
@@ -119,10 +133,12 @@ def set_params(db, stop_pct: Optional[float] = None, pos_pct: Optional[float] = 
                codes: Optional[str] = None, mode: Optional[str] = None,
                streak: Optional[int] = None, tf: Optional[str] = None,
                take_pct: Optional[float] = None, exit_mode: Optional[str] = None,
-               entry_timing: Optional[str] = None) -> dict:
+               entry_timing: Optional[str] = None, flow_confirm: Optional[bool] = None) -> dict:
     _ensure(db)
     if entry_timing in ("confirmed", "early"):
         db.execute(text("UPDATE candle_state SET entry_timing=:v, updated_at=now() WHERE id=1"), {"v": entry_timing})
+    if flow_confirm is not None:
+        db.execute(text("UPDATE candle_state SET flow_confirm=:v, updated_at=now() WHERE id=1"), {"v": bool(flow_confirm)})
     if streak in (2, 3):
         db.execute(text("UPDATE candle_state SET streak=:s, updated_at=now() WHERE id=1"), {"s": int(streak)})
     if take_pct is not None:
@@ -229,6 +245,17 @@ def _peer_ok(code: str) -> bool:
         return True
 
 
+def _flow_imbalance(code: str) -> Optional[float]:
+    """Order-book (호가) imbalance: +1 = all buyers waiting, −1 = all sellers (sell wall).
+    ~2.5s cached inside order_book(). Returns None if unavailable → callers FAIL-OPEN
+    (never veto / never force-sell on missing data)."""
+    try:
+        ob = order_book(code, ttl=2.5)
+        return ob.get("imbalance") if ob else None
+    except Exception:
+        return None
+
+
 def _place(db, code: str, side: str, qty: int):
     from services.paper_desk import place_order
     return place_order(db, code, side, qty, "market", source="algo3")
@@ -282,8 +309,11 @@ def _tick_impl(db, force: bool, exits_only: bool) -> dict[str, Any]:
             continue
         entry = float(entry)
         reason = None
+        _fi = _flow_imbalance(tk) if cfg["flow_confirm"] else None
         if cfg["stop_pct"] > 0 and (px / entry - 1) * 100 - 0.23 <= -cfg["stop_pct"]:
             reason = "STOP"                              # -stop% NET floor (stop_pct=0 turns it OFF -> pure candle test)
+        elif _fi is not None and _fi <= FLOW_SELL_FAST:  # order book: heavy SELLING -> exit early
+            reason = "FLOW"                              # sell before the 3-down candle even forms
         elif cfg["exit_mode"] == "candle":               # OLD mode: sell on 3 FALLING closes
             _u, _dn, _cn = _streaks_tf(tk, tf, early=_early)
             if _cn >= need and _dn >= need:
@@ -336,6 +366,15 @@ def _tick_impl(db, force: bool, exits_only: bool) -> dict[str, Any]:
         up, dn, cn = _streaks_tf(code, tf, early=_early)
         if cn < need or up < need:
             continue
+        # ORDER-BOOK CONFIRMATION (only when ON): veto a 3-up buy if a clear SELL WALL sits above.
+        entry_flow = None
+        if cfg["flow_confirm"]:
+            entry_flow = _flow_imbalance(code)
+            if entry_flow is not None and entry_flow < FLOW_BUY_VETO:
+                _flow_vetoes.insert(0, {"name": _name(code), "up": up, "imb": entry_flow,
+                                        "ts": n.strftime("%H:%M:%S")})   # UI proof panel
+                del _flow_vetoes[20:]
+                continue
         # peer + volume confirmation (fail-open)
         vol_ok, peer_ok = _volume_rising(code), _peer_ok(code)
         px = _px(code)
@@ -358,10 +397,10 @@ def _tick_impl(db, force: bool, exits_only: bool) -> dict[str, Any]:
         if r.get("ok"):
             fill = float(r.get("fill_price") or px)
             db.execute(text(
-                "INSERT INTO candle_trades (ticker, name, qty, entry, why, entry_timing) "
-                "VALUES (:t,:n,:q,:e,:w,:et)"),
+                "INSERT INTO candle_trades (ticker, name, qty, entry, why, entry_timing, entry_flow) "
+                "VALUES (:t,:n,:q,:e,:w,:et,:ef)"),
                 {"t": code, "n": _name(code), "q": qty, "e": fill, "w": why[:300],
-                 "et": cfg["entry_timing"]})
+                 "et": cfg["entry_timing"], "ef": entry_flow})
             db.commit()
             out["opened"].append({"code": code, "qty": qty, "entry": fill})
             logger.info("algo3 candle BUY %s x%d @ %s", code, qty, fill)
@@ -445,16 +484,20 @@ def status(db) -> dict[str, Any]:
             pass
         advice = None
         if o and cfg["mode"] == "semi":
-            advice = {"TARGET": "SELL", "CANDLE3": "SELL", "STOP": "STOP", "EOD": "STOP"}.get(_sell_hint.get(code) or "")
+            advice = {"TARGET": "SELL", "CANDLE3": "SELL", "FLOW": "SELL", "STOP": "STOP", "EOD": "STOP"}.get(_sell_hint.get(code) or "")
         stop_at = round(o["entry"] * (1 - cfg["stop_pct"] / 100)) if o else None
+        _sig = "BUY" if up >= need else "SELL" if dn >= need else "WAIT"
+        # live order-book pressure — only when the layer is ON and the stock is relevant
+        # (held or signalling), to keep the호가 calls light
+        flow = _flow_imbalance(code) if (cfg["flow_confirm"] and (o or _sig != "WAIT")) else None
         stocks.append({
             "code": code, "name": _name(code), "price": px, "chg": chg,
             "state": "LONG" if o else "WAIT",
             "entry": o["entry"] if o else None, "qty": o["qty"] if o else None,
             "pnl_pct": round((px / o["entry"] - 1) * 100 - 0.23, 2) if (o and px) else None,
             "stop_at": stop_at, "advice": advice,
-            "up": up, "dn": dn, "n": cn,
-            "candle_signal": "BUY" if up >= need else "SELL" if dn >= need else "WAIT"})
+            "up": up, "dn": dn, "n": cn, "flow": flow,
+            "candle_signal": _sig})
     today = db.execute(text(
         "SELECT count(*), coalesce(sum(CASE WHEN net_pct>0 THEN 1 ELSE 0 END),0), "
         "coalesce(sum(net_pct),0), coalesce(sum(qty*entry*net_pct/100.0),0) "
@@ -481,10 +524,13 @@ def status(db) -> dict[str, Any]:
     _early_mode = cfg["entry_timing"] == "early"
     time_ko = "진입:빠름(형성중 캔들)" if _early_mode else "진입:확정(3번째 종가)"
     time_en = "timing: EARLY (forming candle)" if _early_mode else "timing: confirmed (3rd close)"
+    flow_ko = " · 🔵호가확인 ON" if cfg["flow_confirm"] else ""
+    flow_en = " · 🔵order-book confirm ON" if cfg["flow_confirm"] else ""
     return {**cfg, "signals": signals, "stocks": stocks,
             "today": {"trades": int(today[0] or 0), "wins": int(today[1] or 0),
                       "net_pct_sum": round(float(today[2] or 0), 2),
                       "realized_won": round(float(today[3] or 0))},
             "recent": recent, "market_open": _market_open_now(),
-            "rule_ko": f"{tf}분봉 종가 {need}연속 상승(x1<x2<x3) → 매수 · {sell_ko} · {stop_ko} · {time_ko} · 15:18 정리",
-            "rule_en": f"{need} rising closes (x1<x2<x3) on {tf}-min → BUY · {sell_en} · {stop_en} · {time_en} · flat 15:18"}
+            "flow_vetoes": _flow_vetoes[:10],
+            "rule_ko": f"{tf}분봉 종가 {need}연속 상승(x1<x2<x3) → 매수 · {sell_ko} · {stop_ko} · {time_ko}{flow_ko} · 15:18 정리",
+            "rule_en": f"{need} rising closes (x1<x2<x3) on {tf}-min → BUY · {sell_en} · {stop_en} · {time_en}{flow_en} · flat 15:18"}

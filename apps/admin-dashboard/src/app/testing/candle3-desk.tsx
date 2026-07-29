@@ -52,15 +52,17 @@ type C3Stock = {
   code: string; name: string; price?: number | null; chg?: number | null; state: "WAIT" | "LONG";
   entry?: number | null; qty?: number | null; pnl_pct?: number | null; stop_at?: number | null;
   up: number; dn: number; n: number; candle_signal: "BUY" | "SELL" | "WAIT"; advice?: "CANDLE" | "STOP" | null;
+  flow?: number | null;   // order-book imbalance: + = buyers, - = sellers (only when flow_confirm ON)
 };
 type C3Signal = { code: string; name: string; price: number; qty: number; why: string; ts: number };
 type C3Status = {
   enabled: boolean; stop_pct: number; pos_pct: number; codes: string[]; mode?: "auto" | "semi"; streak?: number; tf?: string;
   entry_timing?: "confirmed" | "early"; exit_mode?: "target" | "candle";
+  flow_confirm?: boolean; flow_vetoes?: { name: string; up: number; imb: number; ts: string }[];
   signals?: C3Signal[]; stocks: C3Stock[]; market_open?: boolean; rule_ko?: string; rule_en?: string;
   today: { trades: number; wins: number; net_pct_sum: number; realized_won?: number };
   recent: { ticker: string; name: string; qty: number; entry: number; exit_price?: number | null; exit_reason?: string | null;
-            net_pct?: number | null; won?: number | null; closed_at?: string; opened_at?: string; why?: string | null }[];
+            net_pct?: number | null; won?: number | null; closed_at?: string; opened_at?: string; why?: string | null; entry_flow?: number | null }[];
 };
 type DeskState = { cash: number; positions_value: number; equity: number; total_pnl?: number; total_pnl_pct?: number };
 type StockItem = { code: string; name: string; market: string };
@@ -256,6 +258,13 @@ export default function Candle3Desk({ mode: initialMode }: { mode: C3Mode }) {
                 <option value="confirmed">{t("확정 (3번째 종가·안정)", "confirmed (3rd close · safe)")}</option>
                 <option value="early">{t("빠름 (형성 캔들·3번째)", "early (forming · ~3rd)")}</option>
               </select>
+              <span className="text-[var(--text-muted)]">{t("호가확인", "order-book")}</span>
+              <select value={sc.flow_confirm ? "on" : "off"} onChange={async (e) => { await apiPost(`/paper-desk/candle3/params?flow_confirm=${e.target.value === "on"}`); load(); }}
+                className="px-1.5 py-1 rounded-lg border bg-[var(--bg-primary)] text-[var(--text-primary)] font-bold" style={{ borderColor: sc.flow_confirm ? "#1565c0" : "var(--border-default)" }}
+                title={t("켜면: 3연속 양봉이어도 호가에 매도벽이 크면 매수 안 함 + 강한 매도압력이면 3음봉 전에 빨리 매도. 캔들이 여전히 주도합니다.", "ON: veto a 3-up buy if a sell wall sits above, and sell early on heavy selling — the candle still leads.")}>
+                <option value="off">{t("호가확인: OFF", "order-book: OFF")}</option>
+                <option value="on">{t("🔵 호가확인 ON", "🔵 order-book ON")}</option>
+              </select>
               <span className="text-[var(--text-muted)]">{t("봉 간격", "timeframe")}</span>
               <select value={sc.tf ?? "5"} onChange={async (e) => { await apiPost(`/paper-desk/candle3/params?tf=${e.target.value}`); load(); }}
                 className="px-1.5 py-1 rounded-lg border bg-[var(--bg-primary)] text-[var(--text-primary)] font-bold" style={{ borderColor: (sc.tf ?? "5") !== "1" ? TEAL : "var(--border-default)" }}
@@ -410,6 +419,27 @@ export default function Candle3Desk({ mode: initialMode }: { mode: C3Mode }) {
         accent={TEAL}
       />
 
+      {/* Order-book VETO panel — the live proof the layer is working: 3-up signals the
+          order book REFUSED because a sell wall sat above. */}
+      {sc?.flow_confirm && (sc.flow_vetoes?.length ?? 0) > 0 && (
+        <div className="mt-4 rounded-xl border overflow-hidden" style={{ borderColor: "#1565c0" }}>
+          <div className="px-4 py-2 border-b bg-[var(--bg-elevated)] flex items-center gap-2 flex-wrap" style={{ borderColor: "var(--border-default)" }}>
+            <b className="text-[13px]" style={{ color: "#1565c0" }}>🌊 {t("호가확인이 막은 매수 (매도벽)", "Order-book vetoed these 3-up buys (sell wall)")}</b>
+            <span className="text-[11px] text-[var(--text-muted)]">{t("캔들은 사자고 했지만 호가가 거부 → 실제 작동 증거", "candle said buy, the order book said no — live proof it's working")}</span>
+          </div>
+          <div className="px-4 py-2 flex flex-col gap-1 text-[12px]">
+            {(sc.flow_vetoes ?? []).map((v, i) => (
+              <div key={i} className="tabular-nums flex items-center gap-2 flex-wrap">
+                <span className="text-[var(--text-muted)]">{v.ts}</span>
+                <b>{v.name}</b>
+                <span style={{ color: RED }}>{t(`${v.up}연속 양봉 ✅`, `${v.up}-up ✅`)}</span>
+                <span style={{ color: "#1565c0" }}>{t(`→ 매도벽 (호가 ${v.imb}) → 매수 취소`, `→ sell wall (imbalance ${v.imb}) → skipped`)}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* Trade History — ALWAYS visible (even before status loads) so the calendar
           day-filter never disappears (boss 2026-07-20: 'add calendar to Algo 2 and 3'). */}
       {(
@@ -480,8 +510,9 @@ export default function Candle3Desk({ mode: initialMode }: { mode: C3Mode }) {
                       <td className="px-2 font-bold text-[var(--text-primary)]">{r.name}</td>
                       <td className="text-right px-2 tabular-nums">{fmt(r.qty)}</td>
                       <td className="text-right px-2 tabular-nums">₩{fmt(r.entry)} → ₩{fmt(r.exit_price)}</td>
-                      <td className="px-2"><span className="text-[10.5px] px-1.5 py-0.5 rounded-full font-bold" style={{ background: "var(--bg-elevated)", color: r.exit_reason === "TARGET" ? "#2e7d32" : r.exit_reason === "STOP" ? RED : r.exit_reason === "CANDLE3" ? BLUE : "var(--text-muted)" }}>
-                        {r.exit_reason === "TARGET" ? t("🎯 익절", "🎯 take-profit") : r.exit_reason === "STOP" ? t("손절", "stop") : r.exit_reason === "EOD" ? t("장마감", "EOD") : r.exit_reason === "CANDLE3" ? t("🕯️ 3연속 음봉", "🕯️ 3 down") : r.exit_reason}</span></td>
+                      <td className="px-2"><span className="text-[10.5px] px-1.5 py-0.5 rounded-full font-bold" style={{ background: "var(--bg-elevated)", color: r.exit_reason === "TARGET" ? "#2e7d32" : r.exit_reason === "STOP" ? RED : r.exit_reason === "FLOW" ? "#1565c0" : r.exit_reason === "CANDLE3" ? BLUE : "var(--text-muted)" }}>
+                        {r.exit_reason === "TARGET" ? t("🎯 익절", "🎯 take-profit") : r.exit_reason === "STOP" ? t("손절", "stop") : r.exit_reason === "FLOW" ? t("🌊 호가매도", "🌊 order-book sell") : r.exit_reason === "EOD" ? t("장마감", "EOD") : r.exit_reason === "CANDLE3" ? t("🕯️ 3연속 음봉", "🕯️ 3 down") : r.exit_reason}</span>
+                        {r.entry_flow != null && <span className="ml-1 text-[9.5px] text-[var(--text-muted)]" title="order-book imbalance at buy">호{r.entry_flow > 0 ? "+" : ""}{r.entry_flow}</span>}</td>
                       <td className="text-right px-3 tabular-nums font-extrabold" style={{ color: pnlCol(r.net_pct) }}>{r.won != null ? `${r.won > 0 ? "+" : ""}₩${fmt(Math.round(r.won))}` : "-"}{r.net_pct != null && ` (${r.net_pct > 0 ? "+" : ""}${r.net_pct}%)`}</td>
                     </tr>
                   ))}
