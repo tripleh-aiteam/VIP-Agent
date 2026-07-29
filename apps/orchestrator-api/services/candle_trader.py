@@ -32,6 +32,9 @@ POS_PCT_DEFAULT = 10.0
 DEFAULT_CODES = "000660,005930"
 UP_NEEDED = 3            # 3 consecutive up 1-min candles → BUY
 DOWN_NEEDED = 3          # 3 consecutive down 1-min candles → SELL
+NO_NEW_ENTRY_HHMM = (15, 8)   # boss 2026-07-29: stop opening NEW positions 10 min before the
+                              # 15:18 flat — otherwise it buys a 3-up then EOD-flattens it a
+                              # minute later (the confusing 4th/5th-candle end-of-day churn).
 PEER = {"000660": "005930", "005930": "000660"}
 
 _semi_signals: dict[str, dict] = {}   # semi mode: code -> live BUY recommendation
@@ -61,6 +64,10 @@ def _ensure(db) -> None:
     # 3-down reversal (which always exited a touch BELOW entry = a small loss every time).
     db.execute(text("ALTER TABLE candle_state ADD COLUMN IF NOT EXISTS "
                     "take_pct DOUBLE PRECISION NOT NULL DEFAULT 0.1"))
+    # boss 2026-07-29: selectable SELL rule — 'target' = +take% take-profit (new),
+    # 'candle' = 3 falling closes x1>x2>x3 (the old 3-down sell). -stop% + EOD always on.
+    db.execute(text("ALTER TABLE candle_state ADD COLUMN IF NOT EXISTS "
+                    "exit_mode TEXT NOT NULL DEFAULT 'target'"))
     db.execute(text(
         "CREATE TABLE IF NOT EXISTS candle_trades ("
         " id SERIAL PRIMARY KEY, ticker TEXT, name TEXT, qty INT,"
@@ -81,14 +88,15 @@ def _ensure(db) -> None:
 def _cfg(db) -> dict[str, Any]:
     _ensure(db)
     r = db.execute(text(
-        "SELECT enabled, stop_pct, pos_pct, codes, mode, streak, tf, take_pct FROM candle_state WHERE id=1")).first()
+        "SELECT enabled, stop_pct, pos_pct, codes, mode, streak, tf, take_pct, exit_mode FROM candle_state WHERE id=1")).first()
     codes = [c.strip().zfill(6) for c in (r[3] or DEFAULT_CODES).split(",") if c.strip()]
     return {"enabled": bool(r[0]), "stop_pct": float(r[1]), "pos_pct": float(r[2]),
             "codes": codes[:24],
             "mode": (r[4] or "auto") if str(r[4] or "auto") in ("auto", "semi") else "auto",
             "streak": int(r[5] or 3) if int(r[5] or 3) in (2, 3) else 3,
             "tf": str(r[6] or "5") if str(r[6] or "5") in ("1", "3", "5") else "5",
-            "take_pct": float(r[7]) if r[7] is not None else 0.5}
+            "take_pct": float(r[7]) if r[7] is not None else 0.5,
+            "exit_mode": (r[8] or "target") if str(r[8] or "target") in ("target", "candle") else "target"}
 
 
 def set_enabled(db, on: bool) -> dict:
@@ -102,18 +110,20 @@ def set_enabled(db, on: bool) -> dict:
 def set_params(db, stop_pct: Optional[float] = None, pos_pct: Optional[float] = None,
                codes: Optional[str] = None, mode: Optional[str] = None,
                streak: Optional[int] = None, tf: Optional[str] = None,
-               take_pct: Optional[float] = None) -> dict:
+               take_pct: Optional[float] = None, exit_mode: Optional[str] = None) -> dict:
     _ensure(db)
     if streak in (2, 3):
         db.execute(text("UPDATE candle_state SET streak=:s, updated_at=now() WHERE id=1"), {"s": int(streak)})
     if take_pct is not None:
         db.execute(text("UPDATE candle_state SET take_pct=:v, updated_at=now() WHERE id=1"),
                    {"v": max(0.1, min(3.0, float(take_pct)))})
+    if exit_mode in ("target", "candle"):
+        db.execute(text("UPDATE candle_state SET exit_mode=:v, updated_at=now() WHERE id=1"), {"v": exit_mode})
     if tf in ("1", "3", "5"):
         db.execute(text("UPDATE candle_state SET tf=:v, updated_at=now() WHERE id=1"), {"v": str(tf)})
     if stop_pct is not None:
-        db.execute(text("UPDATE candle_state SET stop_pct=:v, updated_at=now() WHERE id=1"),
-                   {"v": max(0.5, min(3.0, float(stop_pct)))})
+        v = 0.0 if float(stop_pct) <= 0 else max(0.5, min(3.0, float(stop_pct)))   # 0 = stop OFF
+        db.execute(text("UPDATE candle_state SET stop_pct=:v, updated_at=now() WHERE id=1"), {"v": v})
     if pos_pct is not None:
         db.execute(text("UPDATE candle_state SET pos_pct=:v, updated_at=now() WHERE id=1"),
                    {"v": max(1.0, min(25.0, float(pos_pct)))})
@@ -147,6 +157,11 @@ def _candles_tf(code: str, tf: str, n: int = 8) -> list[dict]:
         from services.kiwoom_rest import minute_bars
         raw = minute_bars(code, tic=str(tf), count=n + 2) or []
         cs = raw[:-1][-n:] if len(raw) >= 2 else []
+        # boss 2026-07-29: keep ONLY today's candles. At the open, minute_bars returns
+        # yesterday's tail too — a 3-up could then span the overnight GAP (buy after 2 real
+        # candles, not 3). Filtering to today forces it to wait for 3 genuine session candles.
+        _today = datetime.now(KST).strftime("%Y-%m-%d")
+        cs = [b for b in cs if str(b.get("ts") or "").startswith(_today)]
     except Exception:
         return hit[1][-n:] if hit else []
     _tf_cache[key] = (_t.time(), cs)
@@ -250,12 +265,19 @@ def _tick_impl(db, force: bool, exits_only: bool) -> dict[str, Any]:
             continue
         entry = float(entry)
         reason = None
-        if (px / entry - 1) * 100 - 0.23 <= -cfg["stop_pct"]:
-            reason = "STOP"                              # NET loss (after 0.23% tax) hits -stop% -> what you SEE = -stop%
-        elif (px / entry - 1) * 100 - 0.23 >= cfg["take_pct"]:
-            reason = "TARGET"                            # +take% NET gain (after tax) -> lock the small win
-        elif eod:
-            reason = "EOD"                               # 15:18 flat
+        if cfg["stop_pct"] > 0 and (px / entry - 1) * 100 - 0.23 <= -cfg["stop_pct"]:
+            reason = "STOP"                              # -stop% NET floor (stop_pct=0 turns it OFF -> pure candle test)
+        elif cfg["exit_mode"] == "candle":               # OLD mode: sell on 3 FALLING closes
+            _u, _dn, _cn = _streaks_tf(tk, tf)
+            if _cn >= need and _dn >= need:
+                reason = "CANDLE3"                       # x1>x2>x3 (3 down) -> sell
+            elif eod:
+                reason = "EOD"
+        else:                                            # NEW mode: take-profit
+            if (px / entry - 1) * 100 - 0.23 >= cfg["take_pct"]:
+                reason = "TARGET"                        # +take% NET gain (after tax) -> lock the small win
+            elif eod:
+                reason = "EOD"                           # 15:18 flat
         if not reason:
             _sell_hint.pop(tk, None)
             open_codes.add(tk)
@@ -287,6 +309,9 @@ def _tick_impl(db, force: bool, exits_only: bool) -> dict[str, Any]:
         return out
     if eod:
         out["reason"] = "EOD flat — no new entries after 15:18"
+        return out
+    if (n.hour * 60 + n.minute) >= (NO_NEW_ENTRY_HHMM[0] * 60 + NO_NEW_ENTRY_HHMM[1]):
+        out["reason"] = "no new entries after 15:08 — avoid buy-then-flatten churn near close"
         return out
     for code in cfg["codes"]:
         if code in open_codes:
@@ -400,7 +425,7 @@ def status(db) -> dict[str, Any]:
             pass
         advice = None
         if o and cfg["mode"] == "semi":
-            advice = {"TARGET": "SELL", "STOP": "STOP", "EOD": "STOP"}.get(_sell_hint.get(code) or "")
+            advice = {"TARGET": "SELL", "CANDLE3": "SELL", "STOP": "STOP", "EOD": "STOP"}.get(_sell_hint.get(code) or "")
         stop_at = round(o["entry"] * (1 - cfg["stop_pct"] / 100)) if o else None
         stocks.append({
             "code": code, "name": _name(code), "price": px, "chg": chg,
@@ -428,10 +453,15 @@ def status(db) -> dict[str, Any]:
     now_ts = datetime.now(KST).timestamp()
     signals = [s for c, s in _semi_signals.items()
                if now_ts - s.get("ts", 0) < 120 and c not in open_map] if cfg["mode"] == "semi" else []
+    _candle_sell = cfg["exit_mode"] == "candle"
+    sell_ko = f"{need}연속 종가 하락(x1>x2>x3) 매도" if _candle_sell else f"+{cfg['take_pct']}% 익절"
+    sell_en = f"{need} falling closes (x1>x2>x3) SELL" if _candle_sell else f"+{cfg['take_pct']}% take-profit"
+    stop_ko = f"−{cfg['stop_pct']}% 손절" if cfg["stop_pct"] > 0 else "손절 없음(순수 테스트)"
+    stop_en = f"−{cfg['stop_pct']}% stop" if cfg["stop_pct"] > 0 else "no stop (pure test)"
     return {**cfg, "signals": signals, "stocks": stocks,
             "today": {"trades": int(today[0] or 0), "wins": int(today[1] or 0),
                       "net_pct_sum": round(float(today[2] or 0), 2),
                       "realized_won": round(float(today[3] or 0))},
             "recent": recent, "market_open": _market_open_now(),
-            "rule_ko": f"{tf}분봉 종가 {need}연속 상승(x1<x2<x3) → 매수 · +{cfg['take_pct']}% 익절 · −{cfg['stop_pct']}% 손절 · 15:18 정리",
-            "rule_en": f"{need} rising closes (x1<x2<x3) on {tf}-min → BUY · +{cfg['take_pct']}% take-profit · −{cfg['stop_pct']}% stop · flat 15:18"}
+            "rule_ko": f"{tf}분봉 종가 {need}연속 상승(x1<x2<x3) → 매수 · {sell_ko} · {stop_ko} · 15:18 정리",
+            "rule_en": f"{need} rising closes (x1<x2<x3) on {tf}-min → BUY · {sell_en} · {stop_en} · flat 15:18"}

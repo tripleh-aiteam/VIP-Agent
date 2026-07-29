@@ -583,13 +583,13 @@ def candle3_toggle(on: bool = Query(...), db: Session = Depends(get_db)):
 def candle3_params(stop_pct: Optional[float] = Query(None), pos_pct: Optional[float] = Query(None),
                    codes: Optional[str] = Query(None), mode: Optional[str] = Query(None),
                    streak: Optional[int] = Query(None), tf: Optional[str] = Query(None),
-                   take_pct: Optional[float] = Query(None),
+                   take_pct: Optional[float] = Query(None), exit_mode: Optional[str] = Query(None),
                    db: Session = Depends(get_db)):
     """Algorithm 3 dials: stop %, size %, stock list, mode, streak (2/3), tf (1/3/5-min),
-    take_pct (NET take-profit % — sell on a small gain instead of a 3-down reversal)."""
+    take_pct (NET take-profit %), exit_mode ('target'=take-profit / 'candle'=3-down sell)."""
     from services.candle_trader import set_params
     return set_params(db, stop_pct=stop_pct, pos_pct=pos_pct, codes=codes, mode=mode,
-                      streak=streak, tf=tf, take_pct=take_pct)
+                      streak=streak, tf=tf, take_pct=take_pct, exit_mode=exit_mode)
 
 
 @router.post("/candle3/buy")
