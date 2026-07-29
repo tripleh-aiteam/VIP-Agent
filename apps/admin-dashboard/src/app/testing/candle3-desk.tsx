@@ -56,6 +56,8 @@ type C3Stock = {
 };
 type C3Signal = { code: string; name: string; price: number; qty: number; why: string; ts: number };
 type AbStat = { trades: number; wins: number; win_pct: number; net_sum: number; won: number; open: number };
+type C3Trade = { ticker: string; name: string; qty: number; entry: number; exit_price?: number | null; exit_reason?: string | null;
+                 net_pct?: number | null; won?: number | null; closed_at?: string; opened_at?: string; why?: string | null; entry_flow?: number | null; book?: string };
 type C3Status = {
   enabled: boolean; stop_pct: number; pos_pct: number; codes: string[]; mode?: "auto" | "semi"; streak?: number; tf?: string;
   entry_timing?: "confirmed" | "early"; exit_mode?: "target" | "candle";
@@ -64,8 +66,7 @@ type C3Status = {
   ab?: { candle: AbStat; target: AbStat; since?: string; days?: number } | null;
   signals?: C3Signal[]; stocks: C3Stock[]; market_open?: boolean; rule_ko?: string; rule_en?: string;
   today: { trades: number; wins: number; net_pct_sum: number; realized_won?: number };
-  recent: { ticker: string; name: string; qty: number; entry: number; exit_price?: number | null; exit_reason?: string | null;
-            net_pct?: number | null; won?: number | null; closed_at?: string; opened_at?: string; why?: string | null; entry_flow?: number | null }[];
+  recent: C3Trade[]; ab_recent?: C3Trade[];
 };
 type DeskState = { cash: number; positions_value: number; equity: number; total_pnl?: number; total_pnl_pct?: number };
 type StockItem = { code: string; name: string; market: string };
@@ -134,6 +135,7 @@ export default function Candle3Desk({ mode: initialMode }: { mode: C3Mode }) {
   const [fDate, setFDate] = useState("");   // calendar day filter (YYYY-MM-DD, KST)
   const [fSession, setFSession] = useState<"ALL" | "AM" | "PM">("ALL");   // morning vs afternoon (by sell time, KST)
   const [fExit, setFExit] = useState("ALL");   // filter by SELL rule (TARGET / CANDLE3 / STOP / EOD / MANUAL)
+  const [fSource, setFSource] = useState<"real" | "candle" | "target">("real");   // real trades vs A/B books
   const [cardChart, setCardChart] = useState<string[]>([]);   // 📈 open charts (multiple)
   const toggleChart = (c: string) => setCardChart((cs) => (cs.includes(c) ? cs.filter((x) => x !== c) : [...cs, c]));
 
@@ -485,6 +487,11 @@ export default function Candle3Desk({ mode: initialMode }: { mode: C3Mode }) {
         <div className="mt-4 rounded-xl border overflow-hidden" style={{ borderColor: TEAL }}>
           <div className="px-4 py-2 border-b bg-[var(--bg-elevated)] flex items-center gap-2 flex-wrap" style={{ borderColor: "var(--border-default)" }}>
             <b className="text-[13.5px]" style={{ color: TEAL }}>🕯️ {t("알고리즘 3 거래 기록", "Algorithm 3 — Trade History")}</b>
+            <select value={fSource} onChange={(e) => setFSource(e.target.value as typeof fSource)} className="text-[11px] font-bold px-1.5 py-0.5 rounded-lg border bg-[var(--bg-primary)] text-[var(--text-primary)]" style={{ borderColor: fSource !== "real" ? "#7b1fa2" : "var(--border-default)" }} title={t("실거래 또는 A/B 두 모드(3음봉 vs 익절)를 전환해서 같은 진입의 다른 결과를 비교", "switch between real trades and each A/B mode to compare — same entries, different exits")}>
+              <option value="real">{t("📒 실거래", "📒 Real trades")}</option>
+              <option value="candle">{t("🆚 A/B: 3음봉 매도", "🆚 A/B: 3-down sell")}</option>
+              <option value="target">{t("🆚 A/B: 익절 매도", "🆚 A/B: take-profit")}</option>
+            </select>
             <input type="date" value={fDate} onChange={(e) => setFDate(e.target.value)} className="text-[11px] px-1.5 py-0.5 rounded-lg border bg-[var(--bg-primary)] text-[var(--text-primary)]" style={{ borderColor: fDate ? TEAL : "var(--border-default)" }} title={t("날짜로 평가", "evaluate by day")} />
             <select value={fRes} onChange={(e) => setFRes(e.target.value as typeof fRes)} className="text-[11px] font-bold px-1.5 py-0.5 rounded-lg border bg-[var(--bg-primary)] text-[var(--text-primary)]" style={{ borderColor: "var(--border-default)" }}>
               <option value="ALL">{t("결과: 전체", "result: all")}</option><option value="WIN">{t("🟢 승만", "🟢 wins")}</option><option value="LOSE">{t("🔴 패만", "🔴 losses")}</option>
@@ -509,7 +516,8 @@ export default function Candle3Desk({ mode: initialMode }: { mode: C3Mode }) {
             {(fDate || fRes !== "ALL" || fName !== "ALL" || fSession !== "ALL" || fExit !== "ALL") && <button onClick={() => { setFDate(""); setFRes("ALL"); setFName("ALL"); setFSession("ALL"); setFExit("ALL"); }} className="text-[10.5px] font-bold px-2 py-0.5 rounded-lg border text-[var(--text-muted)]" style={{ borderColor: "var(--border-default)" }}>✕ {t("초기화", "clear")}</button>}
           </div>
           {(() => {
-            const rows = (sc?.recent || []).filter((r) =>
+            const src = fSource === "real" ? (sc?.recent || []) : (sc?.ab_recent || []).filter((r) => r.book === fSource);
+            const rows = src.filter((r) =>
               (fRes === "ALL" || (fRes === "WIN" ? (r.won || 0) > 0 : (r.won || 0) < 0))
               && (fName === "ALL" || r.name === fName)
               && (!fDate || kstDate(r.closed_at) === fDate)

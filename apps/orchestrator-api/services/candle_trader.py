@@ -628,7 +628,16 @@ def status(db) -> dict[str, Any]:
     time_en = "timing: EARLY (forming candle)" if _early_mode else "timing: confirmed (3rd close)"
     flow_ko = " · 🔵호가확인 ON" if cfg["flow_confirm"] else ""
     flow_en = " · 🔵order-book confirm ON" if cfg["flow_confirm"] else ""
-    return {**cfg, "signals": signals, "stocks": stocks,
+    ab_recent = ([{"ticker": r[0], "name": r[1], "qty": int(r[2]), "entry": float(r[3]),
+                   "exit_price": (float(r[4]) if r[4] is not None else None), "exit_reason": r[5],
+                   "net_pct": (float(r[6]) if r[6] is not None else None),
+                   "won": (round(int(r[2]) * float(r[3]) * float(r[6]) / 100) if r[6] is not None else None),
+                   "closed_at": str(r[7]), "opened_at": str(r[8]), "book": r[9]}
+                  for r in db.execute(text(
+                      "SELECT ticker, name, qty, entry, exit_price, exit_reason, net_pct, closed_at, "
+                      "opened_at, book FROM ab_trades WHERE status='CLOSED' ORDER BY closed_at DESC LIMIT 200"))]
+                 if cfg["ab_test"] else [])
+    return {**cfg, "signals": signals, "stocks": stocks, "ab_recent": ab_recent,
             "today": {"trades": int(today[0] or 0), "wins": int(today[1] or 0),
                       "net_pct_sum": round(float(today[2] or 0), 2),
                       "realized_won": round(float(today[3] or 0))},
