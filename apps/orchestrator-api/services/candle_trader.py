@@ -322,12 +322,13 @@ def _run_ab_sim(db, cfg: dict, need: int, tf: str, eod: bool) -> None:
 
 
 def ab_scorecard(db) -> dict[str, Any]:
-    """Per-book A/B stats for TODAY (closed): trades, wins, win%, cumulative net%, fake ₩ won."""
+    """Per-book A/B stats CUMULATIVE across ALL days since the last reset (multi-day test):
+    trades, wins, win%, cumulative net%, fake ₩ won. Plus the span (days / since date)."""
     out: dict[str, Any] = {}
     for book in ("candle", "target"):
         rows = db.execute(text(
-            "SELECT net_pct, qty, entry FROM ab_trades WHERE book=:b AND status='CLOSED' "
-            "AND closed_at::date=(now() AT TIME ZONE 'Asia/Seoul')::date"), {"b": book}).fetchall()
+            "SELECT net_pct, qty, entry FROM ab_trades WHERE book=:b AND status='CLOSED'"),
+            {"b": book}).fetchall()
         n = len(rows)
         wins = sum(1 for r in rows if (r[0] or 0) > 0)
         won = sum(int(r[1]) * float(r[2]) * float(r[0] or 0) / 100 for r in rows)
@@ -336,6 +337,11 @@ def ab_scorecard(db) -> dict[str, Any]:
         out[book] = {"trades": n, "wins": wins, "win_pct": round(wins / n * 100) if n else 0,
                      "net_sum": round(sum(float(r[0] or 0) for r in rows), 2),
                      "won": round(won), "open": openn}
+    span = db.execute(text(
+        "SELECT to_char(min(opened_at) AT TIME ZONE 'Asia/Seoul','MM-DD HH24:MI'), "
+        "count(DISTINCT (opened_at AT TIME ZONE 'Asia/Seoul')::date) FROM ab_trades")).first()
+    out["since"] = span[0]
+    out["days"] = int(span[1] or 0)
     return out
 
 

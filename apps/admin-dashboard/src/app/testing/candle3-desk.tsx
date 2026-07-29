@@ -61,7 +61,7 @@ type C3Status = {
   entry_timing?: "confirmed" | "early"; exit_mode?: "target" | "candle";
   flow_confirm?: boolean; flow_vetoes?: { name: string; up: number; imb: number; ts: string }[];
   ab_test?: boolean;
-  ab?: { candle: AbStat; target: AbStat } | null;
+  ab?: { candle: AbStat; target: AbStat; since?: string; days?: number } | null;
   signals?: C3Signal[]; stocks: C3Stock[]; market_open?: boolean; rule_ko?: string; rule_en?: string;
   today: { trades: number; wins: number; net_pct_sum: number; realized_won?: number };
   recent: { ticker: string; name: string; qty: number; entry: number; exit_price?: number | null; exit_reason?: string | null;
@@ -434,7 +434,8 @@ export default function Candle3Desk({ mode: initialMode }: { mode: C3Mode }) {
         <div className="mt-4 rounded-xl border overflow-hidden" style={{ borderColor: "#7b1fa2" }}>
           <div className="px-4 py-2 border-b bg-[var(--bg-elevated)] flex items-center gap-2 flex-wrap" style={{ borderColor: "var(--border-default)" }}>
             <b className="text-[13.5px]" style={{ color: "#7b1fa2" }}>🆚 {t("A/B 비교 — 같은 3양봉 신호, 가짜 ₩1천만/건", "A/B Test — same 3-up signals, fake ₩10M each")}</b>
-            <button onClick={async () => { await apiPost(`/paper-desk/candle3/ab_reset`); load(); }} className="text-[10.5px] font-bold px-2 py-0.5 rounded-lg border text-[var(--text-muted)]" style={{ borderColor: "var(--border-default)" }}>↺ {t("초기화", "reset")}</button>
+            {(sc.ab.days ?? 0) > 0 && <span className="text-[11px] text-[var(--text-muted)]">{t(`${sc.ab.days}일간 · ${sc.ab.since}부터`, `${sc.ab.days} day(s) · since ${sc.ab.since}`)}</span>}
+            <button onClick={async () => { if (confirm(t("A/B 기록을 모두 지우고 새로 시작할까요?", "Clear the whole A/B history and start over?"))) { await apiPost(`/paper-desk/candle3/ab_reset`); load(); } }} className="text-[10.5px] font-bold px-2 py-0.5 rounded-lg border text-[var(--text-muted)]" style={{ borderColor: "var(--border-default)" }}>↺ {t("초기화", "reset")}</button>
           </div>
           <div className="grid grid-cols-2 divide-x" style={{ borderColor: "var(--border-default)" }}>
             {(["candle", "target"] as const).map((book) => {
