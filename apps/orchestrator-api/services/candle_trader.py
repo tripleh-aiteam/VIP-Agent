@@ -220,27 +220,33 @@ def _candles_tf(code: str, tf: str, n: int = 8, include_forming: bool = False) -
     return cs
 
 
-def _streaks_tf(code: str, tf: str, early: bool = False) -> tuple[int, int, int]:
-    """(up-in-a-row, down-in-a-row, candles seen) at the chosen timeframe.
-    boss 2026-07-28: 'up' now means the CLOSES actually step HIGHER (x1 < x2 < x3), not just
-    3 candles that each close above their own open. A flat market oscillating in a tiny band
-    (every candle green but all closing at the SAME price) is NO LONGER a 3-up — that was a
-    false buy signal. up=k => the last k candles' closes are strictly rising; dn=k => strictly
-    falling. len(cs) unchanged.
-    early=True includes the still-forming candle (fires ~1 candle sooner, near the 3rd), at the
-    risk that the forming candle flips before it closes."""
-    cs = _candles_tf(code, tf, include_forming=early)
-    closes = [b.get("close") for b in cs if b.get("close") is not None]
+def run_steps(closes: list) -> tuple[int, int]:
+    """THE engine comparison, as a pure function (live trading AND the Proof Lab call this).
+    Returns (rising_steps, falling_steps) at the tail: how many consecutive closes step
+    strictly HIGHER / LOWER than the previous close. 3 rising steps == 3 red candles in a
+    row (x0<x1<x2<x3) == a BUY signal. A flat close (==) breaks the count."""
     n = len(closes)
     k = 0                                        # rising links at the tail: close[i] > close[i-1]
     while n - 1 - k >= 1 and closes[n - 1 - k] > closes[n - 2 - k]:
         k += 1
-    up = k + 1 if k else 0                        # +1 for the candle the run starts from -> x1<x2<x3 == 3
+    up = k
     k = 0                                        # falling links at the tail: close[i] < close[i-1]
     while n - 1 - k >= 1 and closes[n - 1 - k] < closes[n - 2 - k]:
         k += 1
-    dn = k + 1 if k else 0
-    return up, dn, n
+    return up, k
+
+
+def _streaks_tf(code: str, tf: str, early: bool = False) -> tuple[int, int, int]:
+    """(up-tail, down-tail, candles seen) at the chosen timeframe — tail = steps+1 candles.
+    boss 2026-07-28: 'up' means the CLOSES actually step HIGHER, not close>open.
+    ⚠ NOTE (boss 2026-07-29 Proof Lab): tail counts the BASE candle too, so tail>=3 is only
+    2 rising steps (can fire on the 2nd red). Algo-3 decisions therefore compare against
+    need+1 (see tick/status) == true `need` red candles. Return shape kept for cross_trader.
+    early=True includes the still-forming candle (fires ~1 candle sooner)."""
+    cs = _candles_tf(code, tf, include_forming=early)
+    closes = [b.get("close") for b in cs if b.get("close") is not None]
+    u, d = run_steps(closes)
+    return (u + 1 if u else 0), (d + 1 if d else 0), len(closes)
 
 
 def _volume_rising(code: str) -> bool:
@@ -303,7 +309,8 @@ def _run_ab_sim(db, cfg: dict, need: int, tf: str, eod: bool) -> None:
                 reason = None                             # HOLD overnight otherwise — no EOD flatten
         else:                                             # candle book — NO stop (pure 3-up/3-down test)
             _u, _dn, _cn = _streaks_tf(tk, tf)
-            reason = "CANDLE3" if (_cn >= need and _dn >= need) else None   # HOLD overnight — no EOD flatten
+            # tail >= need+1 == `need` true falling candles (x0>x1>x2>x3) — Proof Lab fix 2026-07-29
+            reason = "CANDLE3" if (_cn >= need + 1 and _dn >= need + 1) else None   # HOLD overnight — no EOD flatten
         if reason:
             db.execute(text("UPDATE ab_trades SET status='CLOSED', exit_price=:x, exit_reason=:r, "
                             "net_pct=:n, closed_at=now() WHERE id=:i"),
@@ -313,7 +320,7 @@ def _run_ab_sim(db, cfg: dict, need: int, tf: str, eod: bool) -> None:
     if not eod:                                           # open a virtual buy in BOTH books on a 3-up
         for code in cfg["codes"]:
             up, dn, cn = _streaks_tf(code, tf)
-            if cn < need or up < need:
+            if cn < need + 1 or up < need + 1:            # tail need+1 == `need` true red candles
                 continue
             if _flow and (_ib := _flow_imbalance(code)) is not None and _ib < FLOW_BUY_VETO:
                 continue                                  # order book vetoes the buy for BOTH books
@@ -427,10 +434,10 @@ def _tick_impl(db, force: bool, exits_only: bool) -> dict[str, Any]:
             reason = "STOP"                              # −1% floor ONLY in take-profit mode; 3-down mode = no stop
         elif _fi is not None and _fi <= FLOW_SELL_FAST:  # order book: heavy SELLING -> exit early
             reason = "FLOW"                              # sell before the 3-down candle even forms
-        elif cfg["exit_mode"] == "candle":               # OLD mode: sell on 3 FALLING closes
+        elif cfg["exit_mode"] == "candle":               # OLD mode: sell on 3 FALLING candles
             _u, _dn, _cn = _streaks_tf(tk, tf, early=_early)
-            if _cn >= need and _dn >= need:
-                reason = "CANDLE3"                       # x1>x2>x3 (3 down) -> sell
+            if _cn >= need + 1 and _dn >= need + 1:      # tail need+1 == `need` true blue candles (x0>x1>x2>x3)
+                reason = "CANDLE3"                       # 3rd falling candle -> sell (Proof Lab fix 2026-07-29)
             elif eod:
                 reason = "EOD"
         else:                                            # NEW mode: take-profit
@@ -482,8 +489,8 @@ def _tick_impl(db, force: bool, exits_only: bool) -> dict[str, Any]:
         if code in open_codes:
             continue
         up, dn, cn = _streaks_tf(code, tf, early=_early)
-        if cn < need or up < need:
-            continue
+        if cn < need + 1 or up < need + 1:               # tail need+1 == `need` TRUE red candles — buy on the
+            continue                                     # exact 3rd rise, never the 2nd (Proof Lab fix 2026-07-29)
         # ORDER-BOOK CONFIRMATION (only when ON): veto a 3-up buy if a clear SELL WALL sits above.
         entry_flow = None
         if cfg["flow_confirm"]:
@@ -610,6 +617,8 @@ def status(db) -> dict[str, Any]:
         if o and (cfg["mode"] == "semi" or cfg["exit_manual"]):
             advice = {"TARGET": "SELL", "CANDLE3": "SELL", "FLOW": "SELL", "STOP": "STOP", "EOD": "STOP"}.get(_sell_hint.get(code) or "")
         stop_at = round(o["entry"] * (1 - cfg["stop_pct"] / 100)) if o else None
+        # report STEPS (true red/blue candle counts) — tail-1 — so UI '3연속' == 3 candles
+        up, dn = max(0, up - 1), max(0, dn - 1)
         _sig = "BUY" if up >= need else "SELL" if dn >= need else "WAIT"
         # live order-book pressure — only when the layer is ON and the stock is relevant
         # (held or signalling), to keep the호가 calls light
@@ -641,8 +650,8 @@ def status(db) -> dict[str, Any]:
     signals = [s for c, s in _semi_signals.items()
                if now_ts - s.get("ts", 0) < 120 and c not in open_map] if cfg["mode"] == "semi" else []
     _candle_sell = cfg["exit_mode"] == "candle"
-    sell_ko = f"{need}연속 종가 하락(x1>x2>x3) 매도" if _candle_sell else f"+{cfg['take_pct']}% 익절"
-    sell_en = f"{need} falling closes (x1>x2>x3) SELL" if _candle_sell else f"+{cfg['take_pct']}% take-profit"
+    sell_ko = f"음봉 {need}개 연속(전봉 대비 {need}회 하락) 매도" if _candle_sell else f"+{cfg['take_pct']}% 익절"
+    sell_en = f"{need} falling candles (close < prev close ×{need}) SELL" if _candle_sell else f"+{cfg['take_pct']}% take-profit"
     stop_ko = f"−{cfg['stop_pct']}% 손절" if cfg["stop_pct"] > 0 else "손절 없음(순수 테스트)"
     stop_en = f"−{cfg['stop_pct']}% stop" if cfg["stop_pct"] > 0 else "no stop (pure test)"
     _early_mode = cfg["entry_timing"] == "early"
@@ -666,5 +675,5 @@ def status(db) -> dict[str, Any]:
             "recent": recent, "market_open": _market_open_now(),
             "flow_vetoes": _flow_vetoes[:10],
             "ab": ab_scorecard(db) if cfg["ab_test"] else None,
-            "rule_ko": f"{tf}분봉 종가 {need}연속 상승(x1<x2<x3) → 매수 · {sell_ko} · {stop_ko} · {time_ko}{flow_ko} · 15:18 정리",
-            "rule_en": f"{need} rising closes (x1<x2<x3) on {tf}-min → BUY · {sell_en} · {stop_en} · {time_en}{flow_en} · flat 15:18"}
+            "rule_ko": f"{tf}분봉 양봉 {need}개 연속(전봉 대비 {need}회 상승) → 정확히 {need}번째에 매수 · {sell_ko} · {stop_ko} · {time_ko}{flow_ko}",
+            "rule_en": f"{need} rising candles on {tf}-min (close > prev ×{need}) → BUY exactly on the {need}rd · {sell_en} · {stop_en} · {time_en}{flow_en}"}

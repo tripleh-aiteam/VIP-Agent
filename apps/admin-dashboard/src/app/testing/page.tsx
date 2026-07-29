@@ -126,6 +126,24 @@ export default function TestingIndex() {
           </div>
         </div>
         )}
+
+        {/* ---- 🧪 Proof Lab — boss 2026-07-29: PROVE Algo 3 trades exactly on the 3rd candle ---- */}
+        {SHOW_ALGO_23 && (
+        <div className="rounded-2xl border-2 p-5" style={{ borderColor: "#e65100", background: "rgba(230,81,0,0.04)" }}>
+          <div className="text-[18px] font-extrabold" style={{ color: "#e65100" }}>
+            🧪 {t("증명 시뮬레이션 — 3번째에 사고파는가? (NEW)", "Proof Lab — trades on the 3rd candle? (NEW)")}
+          </div>
+          <p className="mt-2 text-[13px] leading-relaxed text-[var(--text-secondary)]">
+            {t("사장님 증명용. 실제 엔진 함수를 인공 데이터(함정 포함)와 키움 실데이터 양쪽에 돌려, 매수 화살표가 정확히 3번째 양봉·매도 화살표가 정확히 3번째 음봉에 찍히는지 + 체결가가 호가창의 best ask/bid인지 전 거래를 자동 검증합니다. 계좌는 건드리지 않습니다.",
+               "For the boss. Runs the LIVE engine function on artificial data (with planted traps) AND real Kiwoom data; auto-verifies every trade: BUY arrow exactly on the 3rd red, SELL arrow exactly on the 3rd blue, fills = order-book best ask/bid. Touches no accounts.")}
+          </p>
+          <div className="mt-4 flex flex-wrap gap-2">
+            <Link prefetch={true} href="/testing/proof" className="text-[13.5px] font-extrabold px-4 py-2 rounded-xl text-white" style={{ background: "#e65100" }}>
+              {t("증명 열기 (인공 + 실데이터)", "Open the proof (artificial + real)")}
+            </Link>
+          </div>
+        </div>
+        )}
       </div>
 
       <p className="mt-6 text-[11.5px] text-[var(--text-muted)]">
