@@ -894,7 +894,12 @@ export default function ProofLab() {
         const nsData = synData ? `syn:${res.seed ?? seed}${tfNs}` : `kiwoom${tfNs}`;
         const bucketData = (histRef.current[nsData] ??= {});
         for (const s of res.symbols) for (const tr of s.trades) {
-          const k = synData ? `${s.code}|i${tr.buy_idx}-${tr.sell_idx}` : `${s.code}|${tr.buy_hhmm}|${tr.sell_hhmm}`;
+          // ⚠️ the key MUST be the fill times, never buy_idx: buy_idx is a CHART POSITION and
+          // therefore different on every timeframe (bar 3 on 1분봉, 6 on 30초봉, 12 on 15초봉,
+          // 239 on 1초봉 for the very same trade). Keying on it made one trade look like five
+          // and the history count multiplied every time the timeframe was switched. The fill
+          // times are identical in all five charts — that is exactly what this page proves.
+          const k = `${s.code}|${tr.buy_fill_t ?? tr.buy_hhmm}|${tr.sell_fill_t ?? tr.sell_hhmm}`;
           bucketData[k] = { code: s.code, name: s.name, tr };   // overwrite = refresh values, count stays
         }
         // display the CURRENT mode's ledger + hard filter: artificial (PRF*) companies never in
@@ -918,7 +923,8 @@ export default function ProofLab() {
         const findLive = (r: { code: string; tr: Trade }) => {
           const si = res.symbols.findIndex((s2) => s2.code === r.code);
           if (si < 0) return null;
-          const ti = res.symbols[si].trades.findIndex((t2) => t2.buy_hhmm === r.tr.buy_hhmm && t2.sell_hhmm === r.tr.sell_hhmm);
+          // match on the fill SECONDS — the one identifier that is the same in all five charts
+          const ti = res.symbols[si].trades.findIndex((t2) => t2.buy_fill_t === r.tr.buy_fill_t && t2.sell_fill_t === r.tr.sell_fill_t);
           return ti >= 0 ? { code: r.code, ti } : null;
         };
         return (
