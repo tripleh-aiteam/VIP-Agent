@@ -188,6 +188,8 @@ export default function ProofLab() {
   const [focus, setFocus] = useState<number | null>(null);
   const [loading, setLoading] = useState(false);
   const [view, setView] = useState<"candle" | "table">("candle");   // 🕯️ chart vs 📗 price table
+  type FastBook = { asks: [number, number][]; bids: [number, number][]; best_ask: number; best_bid: number; time?: string };
+  const [fastBook, setFastBook] = useState<FastBook | null>(null);   // ⚡ 1s Kiwoom-speed ladder feed
 
   const sourceRef = useRef(source);
   sourceRef.current = source;
@@ -232,6 +234,23 @@ export default function ProofLab() {
   // 🎯 focus mode (boss 2026-07-30): while a trade is selected, HIDE everything else and
   // bring the evidence to the top — a clean stage for demonstrating one trade at a time
   const focused = !!(sel && sym);
+
+  // ⚡ Kiwoom-speed ladder: while the 📗 table view is open, poll a lightweight book
+  // endpoint every second so the 10-level ladder moves like the real 호가창
+  const symCode = sym?.code;
+  useEffect(() => {
+    if (view !== "table" || !symCode) { setFastBook(null); return; }
+    let alive = true;
+    const tick = () => {
+      api<FastBook & { ok?: boolean }>(`/paper-desk/proof/book?source=${source}&code=${symCode}&seed=${seed}`)
+        .then((b) => { if (alive && b?.asks?.length) setFastBook(b); })
+        .catch(() => {});
+    };
+    tick();
+    const iv = setInterval(tick, 1_000);
+    return () => { alive = false; clearInterval(iv); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [view, symCode, source, seed]);
 
   return (
     <div className="max-w-[1100px] mx-auto px-4 py-6">
@@ -330,6 +349,11 @@ export default function ProofLab() {
               style={view === "table" ? { background: TEAL, color: "#fff" } : { border: "1px solid var(--border-default)", color: "var(--text-secondary)" }}>
               📗 {t("호가 테이블 (가격별 잔량)", "price table (qty per price)")}
             </button>
+            {view === "table" && (
+              <span className="text-[10.5px] font-bold px-2 py-0.5 rounded-full" style={{ background: "rgba(0,131,143,0.12)", color: TEAL }}>
+                ⚡ {t(`10호가 · 1초마다 갱신${fastBook?.time ? ` (${fastBook.time})` : ""}`, `10 levels · updates every second${fastBook?.time ? ` (${fastBook.time})` : ""}`)}
+              </span>
+            )}
             {view === "table" && <span className="text-[10.5px] text-[var(--text-muted)]">{t("차트 숨김 — 프로그램이 실제로 읽는 표 데이터만 표시", "chart hidden — showing only the TABLE data the program reads")}</span>}
           </div>
           {view === "candle" ? (
@@ -342,16 +366,18 @@ export default function ProofLab() {
                    "▲BUY arrow = exactly the 3rd red candle · ▼SELL arrow = exactly the 3rd blue. Click a trade to zoom + see the evidence.")}
               </div>
             </>
-          ) : sym.live_book ? (
-            <Ladder book={sym.live_book} t={t}
-              note={source === "synthetic"
-                ? t(`${nm(sym)} — 가격별 대기 수량표 (프로그램은 이 표에서 체결가를 고릅니다: 매수=최저 매도호가, 매도=최고 매수호가)`,
-                    `${nm(sym)} — quantities waiting per price (the program picks its fill from THIS table: buy = lowest seller, sell = highest buyer)`)
-                : t(`${nm(sym)} — 실시간 Kiwoom 호가창 (${sym.live_book.time ?? ""} 기준) · 매수=최저 매도호가, 매도=최고 매수호가`,
-                    `${nm(sym)} — LIVE Kiwoom order book (as of ${sym.live_book.time ?? ""}) · buy = lowest seller, sell = highest buyer`)} />
-          ) : (
-            <div className="px-3 py-6 text-center text-[12px] text-[var(--text-muted)]">{t("호가 데이터 없음", "no book data")}</div>
-          )}
+          ) : (() => {
+            const lb = fastBook ?? sym.live_book;
+            if (!lb) return <div className="px-3 py-6 text-center text-[12px] text-[var(--text-muted)]">{t("호가 데이터 없음", "no book data")}</div>;
+            return (
+              <Ladder book={lb} t={t}
+                note={source === "synthetic"
+                  ? t(`${nm(sym)} — 가격별 대기 수량표 (프로그램은 이 표에서 체결가를 고릅니다: 매수=최저 매도호가, 매도=최고 매수호가)`,
+                      `${nm(sym)} — quantities waiting per price (the program picks its fill from THIS table: buy = lowest seller, sell = highest buyer)`)
+                  : t(`${nm(sym)} — 실시간 Kiwoom 호가창 (${lb.time ?? ""} 기준) · 매수=최저 매도호가, 매도=최고 매수호가`,
+                      `${nm(sym)} — LIVE Kiwoom order book (as of ${lb.time ?? ""}) · buy = lowest seller, sell = highest buyer`)} />
+            );
+          })()}
         </div>
       )}
 

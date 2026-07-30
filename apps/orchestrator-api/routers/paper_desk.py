@@ -624,6 +624,14 @@ def proof_run(source: str = Query("synthetic"), seed: int = Query(7),
     return run_synthetic(seed=seed)
 
 
+@router.get("/proof/book")
+def proof_book(source: str = Query("synthetic"), code: str = Query("PRF1"),
+               seed: int = Query(7)):
+    """⚡ Kiwoom-speed 10-level ladder for the Proof Lab price-table view (polled ~1/sec)."""
+    from services.proof_sim import live_book_fast
+    return live_book_fast(source, code, seed)
+
+
 @router.post("/candle3/buy")
 def candle3_buy(code: str = Query(...), db: Session = Depends(get_db)):
     """Semi mode: the boss accepts a 🔔 candle BUY recommendation."""

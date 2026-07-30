@@ -350,6 +350,40 @@ def _kiwoom_symbol(code: str) -> dict[str, Any] | None:
             "no_trade_proofs": proofs, "verification": ver}
 
 
+def live_book_fast(source: str, code: str, seed: int = 7) -> dict[str, Any]:
+    """⚡ Kiwoom-speed ladder feed — 10 price levels per side, changing every call.
+    Polled ~1/sec by the 📗 price-table view (kept separate from the heavy proof payload).
+    synthetic: anchored to the fake stock's current last close; quantities & a ±1-tick
+    mid drift re-seeded per second so it moves like the real 호가창.
+    kiwoom: the real live order book (10-deep both sides)."""
+    import time as _t
+    if source == "synthetic":
+        k = next((i for i, (c, _n, _b) in enumerate(_SYMBOLS) if c == code), 0)
+        base = _SYMBOLS[k][2]
+        candles = _synthetic_candles(seed + k * 101, base)
+        ref = candles[-1]["close"] if candles else float(base)
+        r = random.Random(f"{code}:{seed}:{int(_t.time())}")
+        t = _tick(ref) or 1
+        mid = ref + t * r.choice([-1, 0, 0, 0, 1])
+        asks = [[mid + t * (i + 1), r.randint(200, 9_900)] for i in range(10)]
+        bids = [[mid - t * i, r.randint(200, 9_900)] for i in range(10)]
+        return {"ok": True, "asks": asks, "bids": bids,
+                "best_ask": asks[0][0], "best_bid": bids[0][0],
+                "time": datetime.now(KST).strftime("%H:%M:%S")}
+    from services.kiwoom_rest import order_book
+    ob = order_book(code, ttl=0.8) or {}
+    lv = ob.get("levels") or []
+    asks = sorted([[l["price"], l["qty"]] for l in lv if l["side"] == "ask"])[:10]
+    bids = sorted([[l["price"], l["qty"]] for l in lv if l["side"] == "bid"], reverse=True)[:10]
+    if not asks and ob.get("best_ask"):
+        asks = [[ob["best_ask"], ob.get("ask_qty") or 0]]
+    if not bids and ob.get("best_bid"):
+        bids = [[ob["best_bid"], ob.get("bid_qty") or 0]]
+    return {"ok": bool(asks or bids), "asks": asks, "bids": bids,
+            "best_ask": (asks[0][0] if asks else None), "best_bid": (bids[0][0] if bids else None),
+            "time": datetime.now(KST).strftime("%H:%M:%S")}
+
+
 def run_kiwoom(code: str = "005930", codes: list[str] | None = None) -> dict[str, Any]:
     """Same proof on TODAY's REAL Kiwoom minute bars (replay). codes=[...] runs ALL
     companies (the desk watchlist) and aggregates the verification. Order-book history
