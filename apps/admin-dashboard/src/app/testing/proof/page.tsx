@@ -24,6 +24,8 @@ type Trade = {
   sell_idx: number; sell_hhmm: string; sell_closes: number[]; exit: number; sell_book: Book;
   buy_time?: number; sell_time?: number;
   buy_timeline?: TlRow[]; sell_timeline?: TlRow[];
+  buy_tape?: { t: string; px: number; qty?: number }[] | null;
+  sell_tape?: { t: string; px: number; qty?: number }[] | null;
   net_pct: number;
 };
 type NoTrade = { hhmm: string; kind: string; note_ko: string; note_en: string };
@@ -33,6 +35,7 @@ type SymBlock = {
   open_positions?: OpenPos[];
   hold_skips?: { idx: number; hhmm: string }[];
   live_book?: { asks: [number, number][]; bids: [number, number][]; best_ask: number; best_bid: number; time?: string } | null;
+  tick_tape?: { t: string; px: number; qty?: number }[] | null;   // REAL live per-second executed deals
   forming?: Candle | null;   // the still-forming current candle — chart display only, never judged
   no_trade_proofs: NoTrade[];
   verification: { trades: number; passed: number; total: number; pct: number; per_trade: { buy_hhmm: string; sell_hhmm: string; checks: Record<string, boolean>; passed: number; total: number }[] };
@@ -417,6 +420,30 @@ export default function ProofLab() {
                   <div className="text-[10.5px] text-[var(--text-muted)] mb-0.5">💹 {t(`${hh}:00–${hh}:59 그 1분 동안의 가격`, `prices during ${hh}:00–${hh}:59`)}</div>
                   {t("시가", "open")} ₩{fmt(cd.open)} · {t("고가", "high")} ₩{fmt(cd.high)} · {t("저가", "low")} ₩{fmt(cd.low)} · <b style={{ color: col }}>{t("종가", "close")} ₩{fmt(cd.close)}</b>
                 </div>
+                {/* 🎬 the FULL second-by-second tape of that minute (artificial mode) */}
+                {(() => {
+                  const tape = isBuy ? sel.buy_tape : sel.sell_tape;
+                  if (!tape?.length) return null;
+                  return (
+                    <div className="mt-2">
+                      <div className="text-[10.5px] font-bold text-[var(--text-muted)] mb-1">🎬 {t("그 1분의 초 단위 전체 가격 (60초 전부) — 스크롤해서 확인", "every second of that minute (all 60) — scroll to inspect")}</div>
+                      <div className="rounded-lg border overflow-y-auto tabular-nums text-[11px]" style={{ maxHeight: 150, borderColor: "var(--border-default)" }}>
+                        {tape.map((r, i) => {
+                          const last = i === tape.length - 1;
+                          return (
+                            <div key={i} className="flex items-center gap-3 px-2 py-[1px]" style={{ background: last ? "rgba(230,81,0,0.14)" : "transparent" }}>
+                              <span className="text-[var(--text-muted)] w-[64px]">{r.t}</span>
+                              <span className="font-bold" style={{ color: last ? col : "var(--text-secondary)" }}>₩{fmt(r.px)}</span>
+                              <span className="text-[10px] text-[var(--text-muted)]">{r.qty ? `${fmt(r.qty)}${lang === "ko" ? "주" : " sh"}` : ""}</span>
+                              {last && <span className="ml-auto text-[10px] font-bold pr-1" style={{ color: col }}>{t("← :59 종가 = 판단!", "← :59 close = the decision!")}</span>}
+                            </div>
+                          );
+                        })}
+                      </div>
+                      <div className="mt-1 text-[10px] text-[var(--text-muted)]">{t("이 60개 가격 중 어떤 것도 '선택'되지 않음 — 마지막(:59)만 판단에 쓰이고, 체결은 다음 초의 호가창에서.", "none of these 60 prices is 'picked' — only the last (:59) judges; the fill comes from the NEXT second's order book.")}</div>
+                    </div>
+                  );
+                })()}
                 {/* why exactly this price — the step-by-step proof (boss 2026-07-30, easy words) */}
                 <div className="mt-2 text-[12px] leading-relaxed flex flex-col gap-1.5">
                   <div className="text-[10.5px] font-bold" style={{ color: col }}>❓ {t("왜 정확히 이 가격인가 — 순서대로", "why EXACTLY this price — step by step")}</div>
@@ -456,6 +483,32 @@ export default function ProofLab() {
               </div>
             );
           })}
+        </div>
+      )}
+
+      {/* ---- 🎬 REAL live tick stream (Kiwoom mode, while focused): the per-second deals we read ---- */}
+      {focused && sel && sym && !sel.buy_book && sym.tick_tape && sym.tick_tape.length > 0 && (
+        <div className="mt-3 rounded-xl border p-4" style={{ borderColor: TEAL, background: "var(--bg-elevated)" }}>
+          <b className="text-[13px]" style={{ color: TEAL }}>🎬 {t("실제 초 단위 체결 데이터 — 지금 이 순간 읽고 있는 원본", "REAL per-second executed deals — the raw feed we are reading right now")}</b>
+          <p className="mt-1 text-[11px] text-[var(--text-secondary)]">
+            {t("거래소는 지나간 분의 초 단위 기록을 보관하지 않아, 그 거래 순간의 초 단위는 다시 볼 수 없습니다. 대신 지금 이 순간의 실제 스트림을 보여드립니다 — 그때도 정확히 이 방식으로 읽고, 다음 초의 호가창 best ask/bid로 체결했습니다.",
+               "Exchanges don't archive past minutes' per-second ticks, so that trade's seconds can't be replayed. Instead here is the ACTUAL stream this very moment — it was read exactly this way then too, and the fill came from the next second's best ask/bid.")}
+          </p>
+          <div className="mt-2 rounded-lg border overflow-y-auto tabular-nums text-[11px]" style={{ maxHeight: 170, borderColor: "var(--border-default)" }}>
+            {sym.tick_tape.map((r, i) => {
+              const up = i > 0 && (sym.tick_tape![i - 1].px ?? 0) < (r.px ?? 0);
+              const dn = i > 0 && (sym.tick_tape![i - 1].px ?? 0) > (r.px ?? 0);
+              return (
+                <div key={i} className="flex items-center gap-3 px-2 py-[1px]">
+                  <span className="text-[var(--text-muted)] w-[70px]">{r.t}</span>
+                  <span className="font-bold" style={{ color: up ? RED : dn ? BLUE : "var(--text-secondary)" }}>₩{fmt(r.px)}</span>
+                  <span className="text-[10px] text-[var(--text-muted)]">{r.qty ? `${fmt(r.qty)}${lang === "ko" ? "주" : " sh"}` : ""}</span>
+                  <span className="text-[10px]">{up ? "▲" : dn ? "▼" : ""}</span>
+                </div>
+              );
+            })}
+          </div>
+          <div className="mt-1 text-[10px] text-[var(--text-muted)]">{t("이 체결들이 쌓여 1분 캔들이 됩니다 — 엔진은 캔들의 종가로 판단하고, 호가창에서 체결합니다.", "these deals pile up into the 1-min candle — the engine judges by its close and fills from the order book.")}</div>
         </div>
       )}
 

@@ -107,6 +107,27 @@ def _book(seed: int, ref: float, side: str) -> dict:
 # --------------------------------------------------------------------------- #
 #  the minute replay — proof the price is NOT picked randomly from 60 seconds  #
 # --------------------------------------------------------------------------- #
+def _second_tape(cd: dict, seed: int) -> list[dict]:
+    """ALL 60 seconds of the signal minute — a plausible per-second price walk that is
+    exactly consistent with the candle (starts at open, touches high & low, ends at close).
+    Demonstrates what 'many prices in one minute' really looks like, tick by tick."""
+    r = random.Random(seed)
+    o, h, l, c = cd["open"], cd["high"], cd["low"], cd["close"]
+    t = _tick((o + c) / 2) or 1
+    hi_s, lo_s = r.sample(range(8, 52), 2)
+    rows = []
+    for s in range(60):
+        px = o + (c - o) * s / 59 + r.choice([-1, 0, 0, 1]) * t
+        px = round(px / t) * t
+        if s == 0: px = o
+        if s == hi_s: px = h
+        if s == lo_s: px = l
+        if s == 59: px = c
+        px = min(max(px, l), h)
+        rows.append({"t": f"{cd['hhmm']}:{s:02d}", "px": px, "qty": r.randint(1, 80) * 10})
+    return rows
+
+
 def _next_sec(hhmm: str) -> str:
     h, m = int(hhmm[:2]), int(hhmm[3:5])
     m += 1
@@ -160,7 +181,8 @@ def _simulate(candles: list[dict], seed: int, with_book: bool) -> tuple[list, li
             entry_px = bk["fill"] if bk else cd["close"]
             pos = {"buy_idx": i, "buy_time": cd["time"], "buy_hhmm": cd["hhmm"],
                    "buy_closes": closes[-4:], "entry": entry_px, "buy_book": bk,
-                   "buy_timeline": _minute_timeline(cd, entry_px, seed * 31 + i, with_book)}
+                   "buy_timeline": _minute_timeline(cd, entry_px, seed * 31 + i, with_book),
+                   "buy_tape": (_second_tape(cd, seed * 11 + i) if with_book else None)}
         elif pos is not None and dn == NEED:             # fires the moment the 3rd blue closes
             bk = _book(seed * 2_000 + i, cd["close"], "SELL") if with_book else None
             exit_px = bk["fill"] if bk else cd["close"]
@@ -168,6 +190,7 @@ def _simulate(candles: list[dict], seed: int, with_book: bool) -> tuple[list, li
             trades.append({**pos, "sell_idx": i, "sell_time": cd["time"], "sell_hhmm": cd["hhmm"],
                            "sell_closes": closes[-4:], "exit": exit_px, "sell_book": bk,
                            "sell_timeline": _minute_timeline(cd, exit_px, seed * 37 + i, with_book),
+                           "sell_tape": (_second_tape(cd, seed * 13 + i) if with_book else None),
                            "net_pct": round(net, 3)})
             pos = None
         elif pos is not None and up == NEED and i > pos["buy_idx"]:
@@ -303,8 +326,21 @@ def _kiwoom_symbol(code: str) -> dict[str, Any] | None:
                          "time": datetime.now(KST).strftime("%H:%M:%S")}
     except Exception:
         live_book = None
+    # 🎬 LIVE tick stream — the REAL second-by-second executed deals Kiwoom reports right
+    # now (exchanges don't archive past minutes' ticks, so this demonstrates the exact
+    # reading mechanism live). Chronological, last ~40 deals.
+    tick_tape = None
+    try:
+        from services.kiwoom_rest import executions
+        ex = executions(code, ttl=5) or []
+        tick_tape = [{"t": e.get("time"), "px": e.get("price"), "qty": e.get("qty")}
+                     for e in reversed(ex[:40]) if e.get("price") is not None]
+        if not tick_tape:
+            tick_tape = None
+    except Exception:
+        tick_tape = None
     return {"code": code, "name": name, "candles": candles, "forming": forming,
-            "trades": trades,
+            "trades": trades, "tick_tape": tick_tape,
             "open_positions": open_pos, "hold_skips": skips, "live_book": live_book,
             "no_trade_proofs": proofs, "verification": ver}
 
