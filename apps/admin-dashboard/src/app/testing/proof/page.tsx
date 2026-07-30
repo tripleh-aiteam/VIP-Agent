@@ -32,6 +32,7 @@ type SymBlock = {
   code: string; name: string; candles: Candle[]; trades: Trade[];
   open_positions?: OpenPos[];
   hold_skips?: { idx: number; hhmm: string }[];
+  live_book?: { asks: [number, number][]; bids: [number, number][]; best_ask: number; best_bid: number; time?: string } | null;
   no_trade_proofs: NoTrade[];
   verification: { trades: number; passed: number; total: number; pct: number; per_trade: { buy_hhmm: string; sell_hhmm: string; checks: Record<string, boolean>; passed: number; total: number }[] };
 };
@@ -48,18 +49,6 @@ const KIWOOM_CODES = [
   ["005930", "삼성전자"], ["000660", "SK하이닉스"], ["005380", "현대차"],
   ["034020", "두산에너빌리티"], ["010140", "삼성중공업"], ["042700", "한미반도체"],
 ];
-
-// check-name → human label
-const CHECK_LABELS: Record<string, [string, string]> = {
-  buy_3_rising: ["매수: 3연속 상승 (x0<x1<x2<x3)", "buy: 3 rising closes (x0<x1<x2<x3)"],
-  buy_exactly_3rd: ["매수: 정확히 3번째 양봉 (2·4번째 아님)", "buy: EXACTLY the 3rd red (not 2nd/4th)"],
-  sell_3_falling: ["매도: 3연속 하락 (x0>x1>x2>x3)", "sell: 3 falling closes (x0>x1>x2>x3)"],
-  sell_exactly_3rd: ["매도: 정확히 3번째 음봉 (2·4번째 아님)", "sell: EXACTLY the 3rd blue (not 2nd/4th)"],
-  engine_says_3up_at_buy: ["실제 엔진 함수도 그 캔들에서 3연속 상승 판정", "live engine fn agrees: 3-up at that candle"],
-  engine_says_3dn_at_sell: ["실제 엔진 함수도 그 캔들에서 3연속 하락 판정", "live engine fn agrees: 3-down at that candle"],
-  buy_fill_is_best_ask: ["매수 체결가 = 호가창 최우선 매도호가(best ask)", "buy fill = best ask in the order book"],
-  sell_fill_is_best_bid: ["매도 체결가 = 호가창 최우선 매수호가(best bid)", "sell fill = best bid in the order book"],
-};
 
 // ---- candle chart with ③▲/③▼ arrows on the exact signal candles ----
 function ProofChart({ candles, trades, focus, buyLabel, sellLabel, openIdxs, holdLabel, skipIdxs, skipLabel }: { candles: Candle[]; trades: Trade[]; focus: number | null; buyLabel: string; sellLabel: string; openIdxs?: number[]; holdLabel?: string; skipIdxs?: number[]; skipLabel?: string }) {
@@ -108,41 +97,6 @@ function ProofChart({ candles, trades, focus, buyLabel, sellLabel, openIdxs, hol
     return () => { alive = false; cleanup(); };
   }, [candles, trades, focus, buyLabel, sellLabel, openIdxs, holdLabel, skipIdxs, skipLabel]);   // labels in deps → chart redraws on language switch
   return <div ref={ref} style={{ width: "100%", height: 320 }} />;
-}
-
-// ---- minute replay: 60 seconds → ONE decision price (:59 close) → fill ----
-function TimelineCol({ rows, side, synthetic, t }: { rows: TlRow[]; side: "BUY" | "SELL"; synthetic: boolean; t: (k: string, e: string) => string }) {
-  const col = side === "BUY" ? RED : BLUE;
-  const label = (r: TlRow): string => {
-    switch (r.kind) {
-      case "open": return t("👀 시가 — 캔들 시작, 엔진은 지켜보기만", "👀 open — candle starts, engine only watches");
-      case "watch": return t("👀 형성 중 — 아직 3번째 확정 아님 → 매매 금지", "👀 forming — 3rd NOT confirmed yet → no trading");
-      case "high": return t("📈 분 내 최고가 (정확한 초는 미저장) — 판단에 사용 안 함", "📈 the minute's HIGH (second not stored) — NOT used");
-      case "low": return t("📉 분 내 최저가 — 판단에 사용 안 함", "📉 the minute's LOW — NOT used");
-      case "close": return side === "BUY"
-        ? t("🔔 종가 — 엔진이 읽는 유일한 가격 → 3연속 상승 확정!", "🔔 CLOSE — the ONLY price the engine reads → 3rd rise confirmed!")
-        : t("🔔 종가 — 엔진이 읽는 유일한 가격 → 3연속 하락 확정!", "🔔 CLOSE — the ONLY price the engine reads → 3rd fall confirmed!");
-      case "fill": return synthetic
-        ? (side === "BUY" ? t("⚡ 시장가 매수 → 이 '초'의 최저 매도호가(best ask)에 체결 — 지난 1분의 최저가가 아님! 과거 가격은 살 수 없음", "⚡ market BUY → the cheapest SELLER at THIS second (best ask) — NOT the minute's lowest price! the past can't be bought")
-                          : t("⚡ 시장가 매도 → 이 '초'의 최고 매수호가(best bid)에 체결 — 지난 1분의 최고가가 아님!", "⚡ market SELL → the highest BUYER at THIS second (best bid) — NOT the minute's highest price!"))
-        : t("⚡ 체결 (재생: 판단 종가로 표시 — 실전은 그 '초'의 실제 호가창)", "⚡ fill (replay shows decision close — live uses that second's real book)");
-    }
-  };
-  return (
-    <div>
-      <div className="text-[11.5px] font-extrabold mb-1" style={{ color: col }}>{side === "BUY" ? t("▲ 매수 분(minute) 재생", "▲ BUY minute replay") : t("▼ 매도 분(minute) 재생", "▼ SELL minute replay")}</div>
-      <div className="flex flex-col gap-0.5">
-        {rows.map((r, i) => (
-          <div key={i} className="flex items-center gap-2 text-[11.5px] rounded-md px-2 py-1"
-            style={{ background: r.kind === "close" ? "rgba(230,81,0,0.13)" : r.kind === "fill" ? (side === "BUY" ? "rgba(211,47,47,0.10)" : "rgba(21,101,192,0.10)") : "transparent" }}>
-            <span className="tabular-nums font-bold text-[var(--text-muted)] w-[64px]">{r.t}</span>
-            <span className="tabular-nums font-extrabold" style={{ color: r.kind === "close" || r.kind === "fill" ? col : "var(--text-secondary)" }}>₩{fmt(r.px)}</span>
-            <span className="text-[10.5px] text-[var(--text-secondary)]">{label(r)}</span>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
 }
 
 // ---- 5-level order-book table with the fill row highlighted ----
@@ -217,10 +171,9 @@ export default function ProofLab() {
   const sym = symList[symIdx];
   const ver = res?.verification;
   const sel = focus != null ? sym?.trades?.[focus] : null;
-  const selChecks = focus != null ? sym?.verification?.per_trade?.[focus] : null;
   // 🎯 focus mode (boss 2026-07-30): while a trade is selected, HIDE everything else and
   // bring the evidence to the top — a clean stage for demonstrating one trade at a time
-  const focused = !!(sel && selChecks && sym);
+  const focused = !!(sel && sym);
 
   return (
     <div className="max-w-[1100px] mx-auto px-4 py-6">
@@ -411,112 +364,53 @@ export default function ProofLab() {
         );
       })()}
 
-      {/* ---- selected trade: the EVIDENCE ---- */}
-      {sel && selChecks && (
+      {/* ---- selected trade: ONE simple proof per side — the minute's prices + why this exact fill ---- */}
+      {sel && sym && (
         <div className="mt-3 grid md:grid-cols-2 gap-3">
-          {/* 💰 why EXACTLY these prices — numbers + one line each */}
-          <div className="md:col-span-2 rounded-xl border p-3" style={{ borderColor: GOLD, background: "rgba(230,81,0,0.05)" }}>
-            <b className="text-[12.5px]" style={{ color: GOLD }}>💰 {t("가격 산출 — 왜 정확히 이 가격인가", "the price math — why EXACTLY these prices")}</b>
-            {(() => {
-              const sigBuy = sel.buy_closes[sel.buy_closes.length - 1];
-              const dBuy = Math.round(sel.entry - sigBuy);
-              const sigSell = sel.sell_closes[sel.sell_closes.length - 1];
-              const dSell = Math.round(sel.exit - sigSell);
-              const dTxt = (d: number) => (d === 0 ? "±₩0" : `${d > 0 ? "+" : "−"}₩${fmt(Math.abs(d))}`);
-              return (
-                <div className="mt-1.5 flex flex-col gap-1 text-[12px] tabular-nums">
-                  <div>
-                    <b style={{ color: RED }}>▲ {t("매수", "BUY")} ₩{fmt(sel.entry)}</b>{" = "}
-                    {sel.buy_book
-                      ? t(`3번째 양봉 종가 ₩${fmt(sigBuy)}(${sel.buy_hhmm}:59 확정) → 다음 초 호가창의 최저 매도호가(best ask) ₩${fmt(sel.entry)}에 체결 · 종가와의 차이 ${dTxt(dBuy)} = 그 순간 가장 싸게 팔겠다는 사람의 가격`,
-                           `3rd red closed ₩${fmt(sigBuy)} (confirmed ${sel.buy_hhmm}:59) → next second, filled at the book's best ask ₩${fmt(sel.entry)} · gap vs close ${dTxt(dBuy)} = the cheapest seller at that instant`)
-                      : t(`3번째 양봉 종가 ₩${fmt(sigBuy)}(${sel.buy_hhmm}:59 확정) = 재생 체결가 (차이 ±₩0 · 실전은 그 초의 best ask로 체결)`,
-                          `3rd red closed ₩${fmt(sigBuy)} (confirmed ${sel.buy_hhmm}:59) = replay fill (gap ±₩0 · live fills at that second's best ask)`)}
+          {(["BUY", "SELL"] as const).map((side) => {
+            const isBuy = side === "BUY";
+            const cd = sym.candles[isBuy ? sel.buy_idx : sel.sell_idx];
+            const fill = isBuy ? sel.entry : sel.exit;
+            const book = isBuy ? sel.buy_book : sel.sell_book;
+            const hh = isBuy ? sel.buy_hhmm : sel.sell_hhmm;
+            const col = isBuy ? RED : BLUE;
+            if (!cd) return null;
+            return (
+              <div key={side} className="rounded-xl border-2 p-4" style={{ borderColor: col, background: "var(--bg-elevated)" }}>
+                <b className="text-[13.5px]" style={{ color: col }}>{isBuy ? "▲" : "▼"} {t(isBuy ? "매수" : "매도", side)} {hh} — ₩{fmt(fill)}</b>
+                {/* the prices that existed inside that minute */}
+                <div className="mt-2 text-[12px] tabular-nums rounded-lg px-3 py-2" style={{ background: "rgba(128,128,128,0.08)" }}>
+                  <div className="text-[10.5px] text-[var(--text-muted)] mb-0.5">💹 {t(`${hh}:00–${hh}:59 그 1분 동안의 가격`, `prices during ${hh}:00–${hh}:59`)}</div>
+                  {t("시가", "open")} ₩{fmt(cd.open)} · {t("고가", "high")} ₩{fmt(cd.high)} · {t("저가", "low")} ₩{fmt(cd.low)} · <b style={{ color: col }}>{t("종가", "close")} ₩{fmt(cd.close)}</b>
+                </div>
+                {/* why exactly this fill — 2 short lines */}
+                <div className="mt-2 text-[12px] leading-relaxed flex flex-col gap-1">
+                  <div>① {isBuy
+                    ? t(`:59 종가 ₩${fmt(cd.close)} = 3연속 상승 확정 (분 중간엔 판단 안 함)`, `:59 close ₩${fmt(cd.close)} = 3rd rise confirmed (no judging mid-minute)`)
+                    : t(`:59 종가 ₩${fmt(cd.close)} = 3연속 하락 확정 (분 중간엔 판단 안 함)`, `:59 close ₩${fmt(cd.close)} = 3rd fall confirmed (no judging mid-minute)`)}</div>
+                  <div>② {book
+                    ? (isBuy
+                      ? t(`다음 초 체결 ₩${fmt(fill)} = 그 순간 호가창의 최저 매도호가(best ask)`, `next second, filled ₩${fmt(fill)} = the order book's cheapest seller (best ask)`)
+                      : t(`다음 초 체결 ₩${fmt(fill)} = 그 순간 호가창의 최고 매수호가(best bid)`, `next second, filled ₩${fmt(fill)} = the order book's highest buyer (best bid)`))
+                    : (isBuy
+                      ? t(`재생 체결 ₩${fmt(fill)} = 판단 종가 · 실전은 아래 Kiwoom 호가창의 best ask에 체결`, `replay fill ₩${fmt(fill)} = the decision close · live buys fill at the Kiwoom book's best ask below`)
+                      : t(`재생 체결 ₩${fmt(fill)} = 판단 종가 · 실전은 아래 Kiwoom 호가창의 best bid에 체결`, `replay fill ₩${fmt(fill)} = the decision close · live sells fill at the Kiwoom book's best bid below`))}</div>
+                </div>
+                {/* the order book: trade's own book (artificial) or the LIVE Kiwoom book (real) */}
+                {book ? (
+                  <div className="mt-2">
+                    <div className="text-[10.5px] font-bold text-[var(--text-muted)] mb-1">📗 {t("체결 순간의 호가창", "the order book at the fill second")}</div>
+                    <BookTable book={book} side={side} fill={fill} t={t} />
                   </div>
-                  <div>
-                    <b style={{ color: BLUE }}>▼ {t("매도", "SELL")} ₩{fmt(sel.exit)}</b>{" = "}
-                    {sel.sell_book
-                      ? t(`3번째 음봉 종가 ₩${fmt(sigSell)}(${sel.sell_hhmm}:59 확정) → 다음 초 최고 매수호가(best bid) ₩${fmt(sel.exit)}에 체결 · 차이 ${dTxt(dSell)} = 그 순간 가장 비싸게 사겠다는 사람의 가격`,
-                           `3rd blue closed ₩${fmt(sigSell)} (confirmed ${sel.sell_hhmm}:59) → next second, filled at the best bid ₩${fmt(sel.exit)} · gap ${dTxt(dSell)} = the highest buyer at that instant`)
-                      : t(`3번째 음봉 종가 ₩${fmt(sigSell)}(${sel.sell_hhmm}:59 확정) = 재생 체결가 (차이 ±₩0 · 실전은 그 초의 best bid로 체결)`,
-                          `3rd blue closed ₩${fmt(sigSell)} (confirmed ${sel.sell_hhmm}:59) = replay fill (gap ±₩0 · live fills at that second's best bid)`)}
+                ) : sym.live_book ? (
+                  <div className="mt-2">
+                    <div className="text-[10.5px] font-bold mb-1" style={{ color: TEAL }}>📡 {t(`Kiwoom 실시간 호가창 (${sym.live_book.time ?? ""} 기준) — 우리가 쓰는 실제 호가 데이터`, `LIVE Kiwoom order book (as of ${sym.live_book.time ?? ""}) — the real book data we use`)}</div>
+                    <BookTable book={sym.live_book} side={side} fill={isBuy ? (sym.live_book.best_ask ?? 0) : (sym.live_book.best_bid ?? 0)} t={t} />
                   </div>
-                </div>
-              );
-            })()}
-          </div>
-          {/* left: the 3-candle chains + checks */}
-          <div className="rounded-xl border p-4" style={{ borderColor: "var(--border-default)", background: "var(--bg-elevated)" }}>
-            <b className="text-[13px]">{t("① 왜 이 캔들에서 사고팔았나 (종가 사슬)", "① why THIS candle — the close chain")}</b>
-            <div className="mt-2 text-[12.5px] tabular-nums">
-              <div className="font-bold" style={{ color: RED }}>{t("매수", "BUY")} {sel.buy_hhmm}:</div>
-              <div className="mt-0.5 flex items-center gap-1 flex-wrap">
-                {sel.buy_closes.map((c, i) => (
-                  <span key={i} className="flex items-center gap-1">
-                    {i > 0 && <span style={{ color: RED }}>&lt;</span>}
-                    <span className={i === 0 ? "text-[var(--text-muted)]" : "font-bold"} style={i > 0 ? { color: RED } : {}}>₩{fmt(c)}</span>
-                  </span>
-                ))}
-                <span className="ml-1 text-[11px]" style={{ color: "#2e7d32" }}>{t("← 3회 연속 상승 ✓ → 3번째 양봉에서 매수", "← 3 rises in a row ✓ → bought on the 3rd red")}</span>
+                ) : null}
               </div>
-              <div className="mt-2 font-bold" style={{ color: BLUE }}>{t("매도", "SELL")} {sel.sell_hhmm}:</div>
-              <div className="mt-0.5 flex items-center gap-1 flex-wrap">
-                {sel.sell_closes.map((c, i) => (
-                  <span key={i} className="flex items-center gap-1">
-                    {i > 0 && <span style={{ color: BLUE }}>&gt;</span>}
-                    <span className={i === 0 ? "text-[var(--text-muted)]" : "font-bold"} style={i > 0 ? { color: BLUE } : {}}>₩{fmt(c)}</span>
-                  </span>
-                ))}
-                <span className="ml-1 text-[11px]" style={{ color: "#2e7d32" }}>{t("← 3회 연속 하락 ✓ → 3번째 음봉에서 매도", "← 3 falls in a row ✓ → sold on the 3rd blue")}</span>
-              </div>
-            </div>
-            <div className="mt-3 border-t pt-2 flex flex-col gap-1" style={{ borderColor: "var(--border-default)" }}>
-              {Object.entries(selChecks.checks).map(([k, ok]) => (
-                <div key={k} className="text-[11.5px] flex items-center gap-1.5">
-                  <span style={{ color: ok ? "#2e7d32" : RED }}>{ok ? "✅" : "❌"}</span>
-                  <span className="text-[var(--text-secondary)]">{CHECK_LABELS[k] ? t(CHECK_LABELS[k][0], CHECK_LABELS[k][1]) : k}</span>
-                </div>
-              ))}
-            </div>
-          </div>
-          {/* right: order-book fill proof (synthetic) or note (kiwoom) */}
-          <div className="rounded-xl border p-4" style={{ borderColor: "var(--border-default)", background: "var(--bg-elevated)" }}>
-            <b className="text-[13px]">{t("② 왜 정확히 이 가격인가 (호가창)", "② why EXACTLY this price — the order book")}</b>
-            {sel.buy_book ? (
-              <div className="mt-2 grid grid-cols-2 gap-3">
-                <div>
-                  <div className="text-[11px] font-bold mb-1" style={{ color: RED }}>{t(`매수 순간 ${sel.buy_hhmm} — 체결 ₩${fmt(sel.entry)}`, `at BUY ${sel.buy_hhmm} — filled ₩${fmt(sel.entry)}`)}</div>
-                  <BookTable book={sel.buy_book} side="BUY" fill={sel.entry} t={t} />
-                  <div className="mt-1 text-[10.5px] text-[var(--text-muted)]">{t("시장가 매수는 가장 싼 매도호가(best ask)에 체결됩니다.", "a market buy fills at the cheapest seller (best ask).")}</div>
-                </div>
-                <div>
-                  <div className="text-[11px] font-bold mb-1" style={{ color: BLUE }}>{t(`매도 순간 ${sel.sell_hhmm} — 체결 ₩${fmt(sel.exit)}`, `at SELL ${sel.sell_hhmm} — filled ₩${fmt(sel.exit)}`)}</div>
-                  <BookTable book={sel.sell_book} side="SELL" fill={sel.exit} t={t} />
-                  <div className="mt-1 text-[10.5px] text-[var(--text-muted)]">{t("시장가 매도는 가장 높은 매수호가(best bid)에 체결됩니다.", "a market sell fills at the highest buyer (best bid).")}</div>
-                </div>
-              </div>
-            ) : (
-              <p className="mt-2 text-[12px] text-[var(--text-secondary)] leading-relaxed">
-                {t("실데이터 재생에는 과거 호가창이 존재하지 않아 판단 종가로 체결을 표시합니다. 호가창 체결 증명은 🧪 인공 데이터 샘플에서 확인하세요. 실전에서는 오늘 실제 매매처럼 그 순간의 best ask/bid로 체결됩니다.",
-                   "Historical order books don't exist for replays, so fills show the decision close. See the 🧪 artificial sample for the order-book fill proof. Live trading fills at that second's real best ask/bid, like today's real trades.")}
-              </p>
-            )}
-          </div>
-        </div>
-      )}
-
-      {/* ---- ③ minute replay: 1 minute = 60 seconds — which price and WHY ---- */}
-      {sel && (sel.buy_timeline || sel.sell_timeline) && (
-        <div className="mt-3 rounded-xl border p-4" style={{ borderColor: GOLD, background: "var(--bg-elevated)" }}>
-          <b className="text-[13px]" style={{ color: GOLD }}>⏱ {t("③ 1분 = 60초 — 그 안에서 가격이 계속 바뀌는데, 어떤 값을 왜 고르나 (과정 재생)", "③ 1 minute = 60 seconds of moving prices — which one is chosen, and why (process replay)")}</b>
-          <p className="mt-1 text-[11.5px] text-[var(--text-secondary)]">
-            {t("무작위 선택이 아니라는 증명: 분이 끝나기 전(형성 중)에는 절대 판단하지 않고, :59 종가 단 하나로 3연속을 확정한 뒤, 다음 초에 호가창에서 체결합니다.",
-               "Proof it is NOT random: the engine never judges while the minute is still forming — it confirms the streak with the :59 CLOSE alone, then fills from the order book on the next second.")}
-          </p>
-          <div className="mt-2 grid md:grid-cols-2 gap-4">
-            {sel.buy_timeline && <TimelineCol rows={sel.buy_timeline} side="BUY" synthetic={source === "synthetic"} t={t} />}
-            {sel.sell_timeline && <TimelineCol rows={sel.sell_timeline} side="SELL" synthetic={source === "synthetic"} t={t} />}
-          </div>
+            );
+          })}
         </div>
       )}
 

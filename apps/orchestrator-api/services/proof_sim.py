@@ -280,8 +280,24 @@ def _kiwoom_symbol(code: str) -> dict[str, Any] | None:
         name = stock_name(code) or code
     except Exception:
         name = code
+    # 📡 LIVE Kiwoom order book snapshot — proof the system reads Kiwoom's real 호가창
+    # (historical books don't exist, so per-trade fills use the decision close; this
+    # live book shows the exact mechanism real fills use: best ask / best bid).
+    live_book = None
+    try:
+        from services.kiwoom_rest import order_book
+        ob = order_book(code, ttl=20) or None
+        if ob and ob.get("best_ask"):
+            asks = sorted([[l["price"], l["qty"]] for l in ob.get("levels", []) if l["side"] == "ask"])[:5]
+            bids = sorted([[l["price"], l["qty"]] for l in ob.get("levels", []) if l["side"] == "bid"], reverse=True)[:5]
+            live_book = {"asks": asks or [[ob["best_ask"], ob.get("ask_qty") or 0]],
+                         "bids": bids or ([[ob["best_bid"], ob.get("bid_qty") or 0]] if ob.get("best_bid") else []),
+                         "best_ask": ob.get("best_ask"), "best_bid": ob.get("best_bid"),
+                         "time": datetime.now(KST).strftime("%H:%M:%S")}
+    except Exception:
+        live_book = None
     return {"code": code, "name": name, "candles": candles, "trades": trades,
-            "open_positions": open_pos, "hold_skips": skips,
+            "open_positions": open_pos, "hold_skips": skips, "live_book": live_book,
             "no_trade_proofs": proofs, "verification": ver}
 
 
