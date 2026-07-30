@@ -209,6 +209,9 @@ export default function ProofLab() {
   const ver = res?.verification;
   const sel = focus != null ? sym?.trades?.[focus] : null;
   const selChecks = focus != null ? sym?.verification?.per_trade?.[focus] : null;
+  // 🎯 focus mode (boss 2026-07-30): while a trade is selected, HIDE everything else and
+  // bring the evidence to the top — a clean stage for demonstrating one trade at a time
+  const focused = !!(sel && selChecks && sym);
 
   return (
     <div className="max-w-[1100px] mx-auto px-4 py-6">
@@ -221,7 +224,23 @@ export default function ProofLab() {
            "Runs the LIVE engine function (candle_trader.run_steps); an independent verifier re-checks every trade from raw candles alone.")}
       </p>
 
+      {/* ---- 🎯 focus header: selected trade — everything else hides below ---- */}
+      {focused && sel && sym && (
+        <div className="mt-3 rounded-xl border-2 px-4 py-3 flex items-center gap-3 flex-wrap" style={{ borderColor: GOLD, background: "rgba(230,81,0,0.06)" }}>
+          <button onClick={() => setFocus(null)} className="text-[12.5px] font-extrabold px-3 py-1.5 rounded-lg text-white" style={{ background: GOLD }}>
+            ← {t("전체 목록으로", "back to all trades")}
+          </button>
+          <b className="text-[14px] text-[var(--text-primary)]">{sym.name}</b>
+          <span className="text-[13px] tabular-nums font-bold" style={{ color: RED }}>▲ {sel.buy_hhmm} ₩{fmt(sel.entry)}</span>
+          <span className="text-[var(--text-muted)]">→</span>
+          <span className="text-[13px] tabular-nums font-bold" style={{ color: BLUE }}>▼ {sel.sell_hhmm} ₩{fmt(sel.exit)}</span>
+          <span className="text-[13.5px] font-extrabold tabular-nums" style={{ color: sel.net_pct > 0 ? RED : BLUE }}>{sel.net_pct > 0 ? "+" : ""}{sel.net_pct}%</span>
+          <span className="ml-auto text-[11px] text-[var(--text-muted)]">{t("아래: 차트 화살표 · 시각 · 가격 산출 근거를 그대로 비교", "below: chart arrows · exact times · the price math to compare")}</span>
+        </div>
+      )}
+
       {/* ---- sample toggle + controls ---- */}
+      {!focused && (
       <div className="mt-3 flex items-center gap-2 flex-wrap">
         <button onClick={() => { setSource("synthetic"); load("synthetic", seed, code); }}
           className="text-[13px] font-extrabold px-4 py-1.5 rounded-xl"
@@ -252,9 +271,10 @@ export default function ProofLab() {
         )}
         {loading && <span className="text-[12px] text-[var(--text-muted)]">{t("계산 중…", "running…")}</span>}
       </div>
+      )}
 
       {/* ---- verdict banner ---- */}
-      {ver && (
+      {!focused && ver && (
         <div className="mt-3 rounded-xl border-2 px-4 py-3 flex items-center gap-4 flex-wrap"
           style={{ borderColor: ver.pct === 100 ? "#2e7d32" : RED, background: ver.pct === 100 ? "rgba(46,125,50,0.07)" : "rgba(211,47,47,0.07)" }}>
           <span className="text-[16px] font-extrabold" style={{ color: ver.pct === 100 ? "#2e7d32" : RED }}>
@@ -266,7 +286,7 @@ export default function ProofLab() {
       )}
 
       {/* ---- symbol tabs (synthetic has 3) ---- */}
-      {res && res.symbols.length > 1 && (
+      {!focused && res && res.symbols.length > 1 && (
         <div className="mt-3 flex gap-1.5 flex-wrap">
           {res.symbols.map((s, i) => (
             <button key={s.code} onClick={() => { setSelCode(s.code); setFocus(null); }}
@@ -291,7 +311,7 @@ export default function ProofLab() {
       )}
 
       {/* ---- 📌 open positions (bought, still waiting for the 3rd blue) ---- */}
-      {res && res.symbols.length > 0 && (() => {
+      {!focused && res && res.symbols.length > 0 && (() => {
         const posRows = res.symbols.flatMap((s, si) => (s.open_positions ?? []).map((p) => ({ s, si, p })));
         if (posRows.length === 0) return null;
         return (
@@ -325,7 +345,7 @@ export default function ProofLab() {
       })()}
 
       {/* ---- 🔍 completed trade history (ALL companies, click → evidence) ---- */}
-      {res && res.symbols.length > 0 && (() => {
+      {!focused && res && res.symbols.length > 0 && (() => {
         const rows = res.symbols
           .flatMap((s, si) => s.trades.map((tr, ti) => ({ s, si, tr, ti })))
           .sort((a, b) => (b.tr.sell_time ?? 0) - (a.tr.sell_time ?? 0));
@@ -491,7 +511,7 @@ export default function ProofLab() {
       )}
 
       {/* ---- no-trade proofs: the traps the engine correctly ignored ---- */}
-      {sym && sym.no_trade_proofs.length > 0 && (
+      {!focused && sym && sym.no_trade_proofs.length > 0 && (
         <div className="mt-3 rounded-xl border overflow-hidden" style={{ borderColor: "#2e7d32" }}>
           <div className="px-4 py-2 border-b bg-[var(--bg-elevated)]" style={{ borderColor: "var(--border-default)" }}>
             <b className="text-[13px]" style={{ color: "#2e7d32" }}>🪤 {t("함정 통과 증명 — 사면 안 될 때 안 샀다", "trap proof — it did NOT trade when it must not")}</b>
@@ -508,7 +528,7 @@ export default function ProofLab() {
       )}
 
       {/* ---- who makes the candles ---- */}
-      {sym && (
+      {!focused && sym && (
         <div className="mt-3 rounded-xl border p-4" style={{ borderColor: "var(--border-default)", background: "var(--bg-elevated)" }}>
           <b className="text-[13px]">🕯️ {t("④ 캔들은 누가 만드나 — 원시 데이터 vs 차트", "④ who makes the candles — raw data vs the chart")}</b>
           <p className="mt-1 text-[12px] text-[var(--text-secondary)] leading-relaxed">
