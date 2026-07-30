@@ -344,7 +344,9 @@ def _verify(candles: list[dict], trades: list[dict], with_book: bool) -> dict:
         per_trade.append({"buy_hhmm": t["buy_hhmm"], "sell_hhmm": t["sell_hhmm"],
                           "checks": cks, "passed": ok, "total": len(cks)})
     return {"trades": len(trades), "passed": passed, "total": total,
-            "pct": round(passed / total * 100, 1) if total else 100.0, "per_trade": per_trade}
+            "pct": round(passed / total * 100, 1) if total else 100.0,
+            # per-trade detail is not rendered — keep it out of the payload (it was ~1/3 of it)
+            "per_trade": [{"passed": pt["passed"], "total": pt["total"]} for pt in per_trade]}
 
 
 # --------------------------------------------------------------------------- #
@@ -379,8 +381,8 @@ def run_synthetic(seed: int = 7, period: int = 60) -> dict[str, Any]:
                 s2 = tr["sell_idx"]
                 tr["sell_cands"] = [c60[j] for j in (s2 - 3, s2 - 2, s2 - 1, s2) if j >= 0]
         candles = c60 if period == 60 else _candles_from(day0, secs, period)
-        DISP_MAX = 900                       # bound the payload; the chart shows ~60 at a time
-        disp_off = max(0, len(candles) - DISP_MAX)
+        disp_off = 0                          # send the FULL day in every view (boss 2026-07-30:
+        #                                       the 15s chart must reach back to 09:00 too)
         if period != 60:
             # DISPLAY only: put each arrow on the candle that CONTAINS the confirming second
             # (the last second of the 3rd decision minute) — same wall-clock moment, finer bar

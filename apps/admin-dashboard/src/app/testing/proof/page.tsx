@@ -40,7 +40,7 @@ type SymBlock = {
   tick_tape?: { t: string; px: number; qty?: number }[] | null;   // REAL live per-second executed deals
   forming?: Candle | null;   // the still-forming current candle — chart display only, never judged
   no_trade_proofs: NoTrade[];
-  verification: { trades: number; passed: number; total: number; pct: number; per_trade: { buy_hhmm: string; sell_hhmm: string; checks: Record<string, boolean>; passed: number; total: number }[] };
+  verification: { trades: number; passed: number; total: number; pct: number; per_trade?: { passed: number; total: number }[] };
 };
 type ProofRes = {
   source: string; seed?: number; period?: number; need: number; rule_ko: string; rule_en: string; engine_fn: string;
