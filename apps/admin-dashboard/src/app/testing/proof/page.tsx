@@ -49,6 +49,14 @@ type ProofRes = {
 // the 3 artificial demo companies — English names for EN mode (Korean stays in KO mode)
 const FAKE_EN: Record<string, string> = { PRF1: "Proof Electronics", PRF2: "Simul Heavy Ind.", PRF3: "Test Chemical" };
 
+// the ACTUAL execution second: the signal candle (HH:MM) closes at :59 → the fill
+// prints at the start of the NEXT minute (HH:MM+1:01) — matches the minute-timeline
+const fillT = (hhmm?: string) => {
+  if (!hhmm || hhmm.length < 5) return "";
+  const h = parseInt(hhmm.slice(0, 2), 10), m = parseInt(hhmm.slice(3, 5), 10) + 1;
+  return `${String(h + Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}:01`;
+};
+
 const KIWOOM_CODES = [
   ["005930", "삼성전자"], ["000660", "SK하이닉스"], ["005380", "현대차"],
   ["034020", "두산에너빌리티"], ["010140", "삼성중공업"], ["042700", "한미반도체"],
@@ -344,9 +352,9 @@ export default function ProofLab() {
             ← {t("전체 목록으로", "back to all trades")}
           </button>
           <b className="text-[14px] text-[var(--text-primary)]">{nm(sym)}</b>
-          <span className="text-[13px] tabular-nums font-bold" style={{ color: RED }}>▲ {sel.buy_hhmm} ₩{fmt(sel.entry)}</span>
+          <span className="text-[13px] tabular-nums font-bold" style={{ color: RED }}>▲ {t("체결", "fill")} {fillT(sel.buy_hhmm)} ₩{fmt(sel.entry)} <span className="text-[10px] opacity-70">({t(`신호 ${sel.buy_hhmm}:59`, `signal ${sel.buy_hhmm}:59`)})</span></span>
           <span className="text-[var(--text-muted)]">→</span>
-          <span className="text-[13px] tabular-nums font-bold" style={{ color: BLUE }}>▼ {sel.sell_hhmm} ₩{fmt(sel.exit)}</span>
+          <span className="text-[13px] tabular-nums font-bold" style={{ color: BLUE }}>▼ {t("체결", "fill")} {fillT(sel.sell_hhmm)} ₩{fmt(sel.exit)} <span className="text-[10px] opacity-70">({t(`신호 ${sel.sell_hhmm}:59`, `signal ${sel.sell_hhmm}:59`)})</span></span>
           <span className="text-[13.5px] font-extrabold tabular-nums" style={{ color: sel.net_pct > 0 ? RED : BLUE }}>{sel.net_pct > 0 ? "+" : ""}{sel.net_pct}%</span>
           <span className="ml-auto text-[11px] text-[var(--text-muted)]">{t("아래: 차트 화살표 · 시각 · 가격 산출 근거를 그대로 비교", "below: chart arrows · exact times · the price math to compare")}</span>
         </div>
@@ -704,7 +712,7 @@ export default function ProofLab() {
                   <tr key={i} onClick={() => { setSelCode(r.s.code); setFocus(null); }}
                     className="border-t border-[var(--border-default)]/40 cursor-pointer hover:bg-[var(--bg-elevated)]">
                     <td className="px-3 py-1.5 font-bold text-[var(--text-primary)]">{nm(r.s)}</td>
-                    <td className="px-2 font-bold" style={{ color: "#e65100" }}>▲ {r.p.buy_hhmm} {t("보유중", "holding")}</td>
+                    <td className="px-2 font-bold" style={{ color: "#e65100" }}>▲ {t("체결", "fill")} {fillT(r.p.buy_hhmm)} {t("보유중", "holding")} <span className="text-[9.5px] opacity-70">({t(`신호 ${r.p.buy_hhmm}`, `sig ${r.p.buy_hhmm}`)})</span></td>
                     <td className="text-right px-2">₩{fmt(r.p.entry)}</td>
                     <td className="text-right px-2">₩{fmt(r.p.last_px)}</td>
                     <td className="text-right px-3 font-bold" style={{ color: r.p.unreal_pct > 0 ? RED : BLUE }}>{r.p.unreal_pct > 0 ? "+" : ""}{r.p.unreal_pct}%</td>
@@ -764,8 +772,8 @@ export default function ProofLab() {
             <table className="w-full text-[12px] tabular-nums">
               <thead><tr className="text-[10.5px] text-[var(--text-muted)]" style={{ background: "var(--bg-elevated)" }}>
                 <th className="text-left px-3 py-1.5">{t("종목", "Stock")}</th>
-                <th className="text-left px-2">{t("매수(3번째 양봉)", "BUY (3rd red)")}</th>
-                <th className="text-left px-2">{t("매도(3번째 음봉)", "SELL (3rd blue)")}</th>
+                <th className="text-left px-2">{t("매수 체결시각 (신호)", "BUY fill time (signal)")}</th>
+                <th className="text-left px-2">{t("매도 체결시각 (신호)", "SELL fill time (signal)")}</th>
                 <th className="text-right px-2">{t("매수가", "entry")}</th><th className="text-right px-2">{t("매도가", "exit")}</th>
                 <th className="text-right px-3">{t("손익", "net")}</th>
               </tr></thead>
@@ -778,8 +786,14 @@ export default function ProofLab() {
                       className={`border-t border-[var(--border-default)]/40 ${live ? "cursor-pointer hover:bg-[var(--bg-elevated)]" : "opacity-70"}`}
                       style={{ background: active ? "rgba(230,81,0,0.08)" : "transparent" }}>
                       <td className="px-3 py-1.5 font-bold text-[var(--text-primary)]">{nm(r)}</td>
-                      <td className="px-2 font-bold" style={{ color: RED }}>▲ {r.tr.buy_hhmm}</td>
-                      <td className="px-2 font-bold" style={{ color: BLUE }}>▼ {r.tr.sell_hhmm}</td>
+                      <td className="px-2 font-bold" style={{ color: RED }}>
+                        <div>▲ {fillT(r.tr.buy_hhmm)}</div>
+                        <div className="text-[9.5px] opacity-70 font-normal">{t(`신호 ${r.tr.buy_hhmm}:59`, `signal ${r.tr.buy_hhmm}:59`)}</div>
+                      </td>
+                      <td className="px-2 font-bold" style={{ color: BLUE }}>
+                        <div>▼ {fillT(r.tr.sell_hhmm)}</div>
+                        <div className="text-[9.5px] opacity-70 font-normal">{t(`신호 ${r.tr.sell_hhmm}:59`, `signal ${r.tr.sell_hhmm}:59`)}</div>
+                      </td>
                       <td className="text-right px-2">₩{fmt(r.tr.entry)}</td>
                       <td className="text-right px-2">₩{fmt(r.tr.exit)}</td>
                       <td className="text-right px-3 font-bold" style={{ color: r.tr.net_pct > 0 ? RED : BLUE }}>{r.tr.net_pct > 0 ? "+" : ""}{r.tr.net_pct}%</td>
@@ -806,7 +820,7 @@ export default function ProofLab() {
             if (!cd) return null;
             return (
               <div key={side} className="rounded-xl border-2 p-4" style={{ borderColor: col, background: "var(--bg-elevated)" }}>
-                <b className="text-[13.5px]" style={{ color: col }}>{isBuy ? "▲" : "▼"} {t(isBuy ? "매수" : "매도", side)} {hh} — ₩{fmt(fill)}</b>
+                <b className="text-[13.5px]" style={{ color: col }}>{isBuy ? "▲" : "▼"} {t(isBuy ? "매수 체결" : "매도 체결", `${side} fill`)} {fillT(hh)} — ₩{fmt(fill)} <span className="text-[10.5px] opacity-70">({t(`신호: ${hh}:59 종가 확정`, `signal: ${hh}:59 close confirmed`)})</span></b>
                 {/* 🕯️ the 3 candles AS NUMBERS — red/blue judged without any chart */}
                 {(() => {
                   const idx = isBuy ? sel.buy_idx : sel.sell_idx;
