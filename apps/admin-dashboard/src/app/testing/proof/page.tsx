@@ -50,13 +50,13 @@ type ProofRes = {
 // the 3 artificial demo companies — English names for EN mode (Korean stays in KO mode)
 const FAKE_EN: Record<string, string> = { PRF1: "Proof Electronics", PRF2: "Simul Heavy Ind.", PRF3: "Test Chemical" };
 
-// the ACTUAL execution second: the signal candle (HH:MM) closes at :59 → the fill prints
-// in the NEXT minute. SELL = best bid = prev close = the minute's FIRST deal (:00);
-// BUY = best ask = open + 1 tick = the minute's SECOND deal (:01). Matches the tapes exactly.
-const fillT = (hhmm?: string, side: "BUY" | "SELL" = "BUY") => {
+// the ACTUAL execution second (boss 2026-07-30): the signal candle closes → BOTH buy and
+// sell fill at the NEXT candle's :00, at its OPEN (= the signal close). One rule, always.
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+const fillT = (hhmm?: string, _side: "BUY" | "SELL" = "BUY") => {
   if (!hhmm || hhmm.length < 5) return "";
   const h = parseInt(hhmm.slice(0, 2), 10), m = parseInt(hhmm.slice(3, 5), 10) + 1;
-  return `${String(h + Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}:${side === "BUY" ? "01" : "00"}`;
+  return `${String(h + Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}:00`;
 };
 
 const KIWOOM_CODES = [
