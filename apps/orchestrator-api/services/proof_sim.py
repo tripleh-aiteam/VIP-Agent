@@ -357,20 +357,32 @@ def live_book_fast(source: str, code: str, seed: int = 7) -> dict[str, Any]:
     mid drift re-seeded per second so it moves like the real 호가창.
     kiwoom: the real live order book (10-deep both sides)."""
     import time as _t
+    now_s = int(_t.time())
     if source == "synthetic":
         k = next((i for i, (c, _n, _b) in enumerate(_SYMBOLS) if c == code), 0)
         base = _SYMBOLS[k][2]
         candles = _synthetic_candles(seed + k * 101, base)
         ref = candles[-1]["close"] if candles else float(base)
-        r = random.Random(f"{code}:{seed}:{int(_t.time())}")
+        r = random.Random(f"{code}:{seed}:{now_s}")
         t = _tick(ref) or 1
         mid = ref + t * r.choice([-1, 0, 0, 0, 1])
         asks = [[mid + t * (i + 1), r.randint(200, 9_900)] for i in range(10)]
         bids = [[mid - t * i, r.randint(200, 9_900)] for i in range(10)]
+        # Kiwoom-style 체결 tape: one row per second (last 15s), deterministic per second so
+        # overlapping rows stay identical between polls — only a NEW row appears each second.
+        prev_close = round((ref * 0.985) / t) * t          # fake yesterday's close (~-1.5%)
+        tape = []
+        for s in range(now_s - 14, now_s + 1):
+            rs = random.Random(f"{code}:{seed}:tape:{s}")
+            tape.append({"t": datetime.fromtimestamp(s, KST).strftime("%H:%M:%S"),
+                         "px": ref + t * rs.choice([-2, -1, -1, 0, 0, 0, 1, 1, 2]),
+                         "qty": rs.randint(1, 120) * 10,
+                         "strength": rs.randint(78, 138)})   # 체결강도 %
         return {"ok": True, "asks": asks, "bids": bids,
                 "best_ask": asks[0][0], "best_bid": bids[0][0],
+                "tape": tape, "prev_close": prev_close,
                 "time": datetime.now(KST).strftime("%H:%M:%S")}
-    from services.kiwoom_rest import order_book
+    from services.kiwoom_rest import order_book, executions
     ob = order_book(code, ttl=0.8) or {}
     lv = ob.get("levels") or []
     asks = sorted([[l["price"], l["qty"]] for l in lv if l["side"] == "ask"])[:10]
@@ -379,8 +391,34 @@ def live_book_fast(source: str, code: str, seed: int = 7) -> dict[str, Any]:
         asks = [[ob["best_ask"], ob.get("ask_qty") or 0]]
     if not bids and ob.get("best_bid"):
         bids = [[ob["best_bid"], ob.get("bid_qty") or 0]]
+    # real 체결 tape + running 체결강도 (buy vol / sell vol × 100, oldest→newest)
+    tape = []
+    prev_close = None
+    try:
+        ex = executions(code, ttl=0.8) or []
+        buyv = sellv = 0
+        rows = []
+        for e in reversed(ex[:30]):                        # chronological
+            q = int(e.get("qty") or 0)
+            d = e.get("dir") or 0
+            if d > 0: buyv += q
+            elif d < 0: sellv += q
+            strength = round(buyv / sellv * 100) if sellv else None
+            rows.append({"t": e.get("time"), "px": e.get("price"), "qty": q, "strength": strength})
+        tape = rows[-20:]
+        try:
+            from services.paper_desk import _chg_cache
+            chg = _chg_cache.get(code)
+            last = tape[-1]["px"] if tape else (ob.get("best_bid") or None)
+            if chg is not None and last:
+                prev_close = round(float(last) / (1 + float(chg) / 100))
+        except Exception:
+            prev_close = None
+    except Exception:
+        tape = []
     return {"ok": bool(asks or bids), "asks": asks, "bids": bids,
             "best_ask": (asks[0][0] if asks else None), "best_bid": (bids[0][0] if bids else None),
+            "tape": tape or None, "prev_close": prev_close,
             "time": datetime.now(KST).strftime("%H:%M:%S")}
 
 

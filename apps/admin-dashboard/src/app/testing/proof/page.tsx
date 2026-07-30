@@ -187,9 +187,10 @@ export default function ProofLab() {
   const [selCode, setSelCode] = useState<string | null>(null);   // selection by CODE — index-shifts can't break it
   const [focus, setFocus] = useState<number | null>(null);
   const [loading, setLoading] = useState(false);
-  const [view, setView] = useState<"candle" | "table">("candle");   // 🕯️ chart vs 📗 price table
-  type FastBook = { asks: [number, number][]; bids: [number, number][]; best_ask: number; best_bid: number; time?: string };
-  const [fastBook, setFastBook] = useState<FastBook | null>(null);   // ⚡ 1s Kiwoom-speed ladder feed
+  const [view, setView] = useState<"candle" | "table">("table");   // 📗 TABLE first (boss 2026-07-30) — chart on demand
+  type FastBook = { asks: [number, number][]; bids: [number, number][]; best_ask: number; best_bid: number; time?: string;
+                    tape?: { t: string; px: number; qty: number; strength?: number | null }[] | null; prev_close?: number | null };
+  const [fastBook, setFastBook] = useState<FastBook | null>(null);   // ⚡ 1s Kiwoom-speed ladder + 체결 feed
 
   const sourceRef = useRef(source);
   sourceRef.current = source;
@@ -235,11 +236,11 @@ export default function ProofLab() {
   // bring the evidence to the top — a clean stage for demonstrating one trade at a time
   const focused = !!(sel && sym);
 
-  // ⚡ Kiwoom-speed ladder: while the 📗 table view is open, poll a lightweight book
-  // endpoint every second so the 10-level ladder moves like the real 호가창
+  // ⚡ Kiwoom-speed feed: poll every second for the selected stock — powers the 10-level
+  // ladder AND the 체결(deal) table so both move like the real Kiwoom screens
   const symCode = sym?.code;
   useEffect(() => {
-    if (view !== "table" || !symCode) { setFastBook(null); return; }
+    if (focused || !symCode) { setFastBook(null); return; }
     let alive = true;
     const tick = () => {
       api<FastBook & { ok?: boolean }>(`/paper-desk/proof/book?source=${source}&code=${symCode}&seed=${seed}`)
@@ -250,7 +251,7 @@ export default function ProofLab() {
     const iv = setInterval(tick, 1_000);
     return () => { alive = false; clearInterval(iv); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [view, symCode, source, seed]);
+  }, [focused, symCode, source, seed]);
 
   return (
     <div className="max-w-[1100px] mx-auto px-4 py-6">
@@ -381,40 +382,54 @@ export default function ProofLab() {
         </div>
       )}
 
-      {/* ---- 📼 per-stock 초당 체결 데이터 — the live per-second execution table ---- */}
-      {!focused && source === "kiwoom" && sym?.tick_tape && sym.tick_tape.length > 0 && (
-        <div className="mt-3 rounded-xl border overflow-hidden" style={{ borderColor: TEAL }}>
-          <div className="px-4 py-2 border-b bg-[var(--bg-elevated)] flex items-center gap-2 flex-wrap" style={{ borderColor: "var(--border-default)" }}>
-            <b className="text-[13px]" style={{ color: TEAL }}>📼 {nm(sym)} — {t("초당 체결 데이터 (실시간)", "per-second execution data (LIVE)")}</b>
-            <span className="text-[10.5px] text-[var(--text-muted)]">{t("위 탭에서 종목 선택 · 자동 갱신 · 이 체결들이 쌓여 1분 캔들이 됩니다", "pick a stock in the tabs above · auto-refreshing · these deals build the 1-min candles")}</span>
-          </div>
-          <div className="overflow-y-auto" style={{ maxHeight: 230 }}>
+      {/* ---- 📼 per-stock 체결 table — Kiwoom columns: 시각·체결가·전일대비·체결량·체결강도 ---- */}
+      {!focused && sym && (() => {
+        const tape = fastBook?.tape ?? sym.tick_tape ?? null;
+        if (!tape || tape.length === 0) return null;
+        const prevClose = fastBook?.prev_close ?? null;
+        const rows = [...tape].slice(-15).reverse();       // newest on top, 15 rows like Kiwoom
+        return (
+          <div className="mt-3 rounded-xl border overflow-hidden" style={{ borderColor: TEAL }}>
+            <div className="px-4 py-2 border-b bg-[var(--bg-elevated)] flex items-center gap-2 flex-wrap" style={{ borderColor: "var(--border-default)" }}>
+              <b className="text-[13px]" style={{ color: TEAL }}>📼 {nm(sym)} — {t("체결 (초당·실시간)", "executions (per second · LIVE)")}</b>
+              <span className="text-[10.5px] font-bold px-2 py-0.5 rounded-full" style={{ background: "rgba(0,131,143,0.12)", color: TEAL }}>
+                ⚡ {t(`1초 갱신${fastBook?.time ? ` (${fastBook.time})` : ""}`, `1s updates${fastBook?.time ? ` (${fastBook.time})` : ""}`)}
+              </span>
+              {prevClose != null && <span className="text-[10.5px] text-[var(--text-muted)] tabular-nums">{t(`전일종가 ₩${fmt(prevClose)}`, `prev close ₩${fmt(prevClose)}`)}</span>}
+              <span className="text-[10.5px] text-[var(--text-muted)]">{t("이 체결들이 쌓여 1분 캔들이 됩니다", "these deals build the 1-min candles")}</span>
+            </div>
             <table className="w-full text-[11.5px] tabular-nums">
-              <thead><tr className="text-[10px] text-[var(--text-muted)] sticky top-0" style={{ background: "var(--bg-elevated)" }}>
-                <th className="text-left px-3 py-1">{t("체결 시각", "time")}</th>
+              <thead><tr className="text-[10px] text-[var(--text-muted)]" style={{ background: "var(--bg-elevated)" }}>
+                <th className="text-left px-3 py-1">{t("체결시각", "time")}</th>
                 <th className="text-right px-2">{t("체결가", "price")}</th>
-                <th className="text-right px-2">{t("수량", "qty")}</th>
-                <th className="text-center px-2">{t("등락", "±")}</th>
+                <th className="text-right px-2">{t("전일대비", "vs prev close")}</th>
+                <th className="text-right px-2">{t("체결량", "volume")}</th>
+                <th className="text-right px-3">{t("체결강도", "strength")}</th>
               </tr></thead>
               <tbody>
-                {[...sym.tick_tape].reverse().map((r, i, arr) => {
-                  const prev = arr[i + 1];   // reversed: next row = earlier deal
-                  const up = prev != null && prev.px < r.px;
-                  const dn = prev != null && prev.px > r.px;
+                {rows.map((r, i) => {
+                  const prev = rows[i + 1];                          // next row = one second earlier
+                  const up = prev != null && (prev.px ?? 0) < (r.px ?? 0);
+                  const dn = prev != null && (prev.px ?? 0) > (r.px ?? 0);
+                  const d = prevClose != null && r.px != null ? Math.round(r.px - prevClose) : null;
+                  const st = (r as { strength?: number | null }).strength ?? null;
                   return (
                     <tr key={i} className="border-t border-[var(--border-default)]/30">
                       <td className="px-3 py-[2px] text-[var(--text-muted)]">{r.t}</td>
-                      <td className="text-right px-2 font-bold" style={{ color: up ? RED : dn ? BLUE : "var(--text-secondary)" }}>₩{fmt(r.px)}</td>
+                      <td className="text-right px-2 font-bold" style={{ color: up ? RED : dn ? BLUE : "var(--text-secondary)" }}>₩{fmt(r.px)} {up ? "▲" : dn ? "▼" : ""}</td>
+                      <td className="text-right px-2 font-bold" style={{ color: d == null ? "var(--text-muted)" : d > 0 ? RED : d < 0 ? BLUE : "var(--text-muted)" }}>
+                        {d == null ? "-" : d === 0 ? "0" : `${d > 0 ? "▲" : "▼"} ${fmt(Math.abs(d))}`}
+                      </td>
                       <td className="text-right px-2 text-[var(--text-secondary)]">{fmt(r.qty)}</td>
-                      <td className="text-center px-2" style={{ color: up ? RED : dn ? BLUE : "var(--text-muted)" }}>{up ? "▲" : dn ? "▼" : "·"}</td>
+                      <td className="text-right px-3 font-bold" style={{ color: st == null ? "var(--text-muted)" : st >= 100 ? RED : BLUE }}>{st == null ? "-" : `${fmt(st)}%`}</td>
                     </tr>
                   );
                 })}
               </tbody>
             </table>
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       {/* ---- 📌 open positions (bought, still waiting for the 3rd blue) ---- */}
       {!focused && res && res.symbols.length > 0 && (() => {
