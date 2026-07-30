@@ -173,7 +173,7 @@ export default function ProofLab() {
   const [seed, setSeed] = useState(7);
   const [code, setCode] = useState("ALL");   // boss 2026-07-30: all companies by default
   const [res, setRes] = useState<ProofRes | null>(null);
-  const [symIdx, setSymIdx] = useState(0);
+  const [selCode, setSelCode] = useState<string | null>(null);   // selection by CODE — index-shifts can't break it
   const [focus, setFocus] = useState<number | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -181,7 +181,7 @@ export default function ProofLab() {
     setLoading(true); setFocus(null);
     try {
       const r = await api<ProofRes>(`/paper-desk/proof/run?source=${src}&seed=${sd}&code=${cd}`);
-      setRes(r); setSymIdx(0);
+      setRes(r); setSelCode(null);
     } catch { /* keep last */ }
     setLoading(false);
   };
@@ -193,13 +193,19 @@ export default function ProofLab() {
   useEffect(() => {
     if (source !== "kiwoom") return;
     const iv = setInterval(() => {
-      api<ProofRes>(`/paper-desk/proof/run?source=kiwoom&code=${code}`).then(setRes).catch(() => {});
-    }, code === "ALL" ? 60_000 : 30_000);   // ALL = up to 18 tickers per sweep → gentler refresh
+      // keep-last-good guard: a Kiwoom hiccup mid-session can return an empty payload —
+      // NEVER let it wipe the tables the boss is looking at (fix 2026-07-30)
+      api<ProofRes>(`/paper-desk/proof/run?source=kiwoom&code=${code}`)
+        .then((r) => { if (r?.symbols?.length) setRes(r); })
+        .catch(() => {});
+    }, code === "ALL" ? 60_000 : 30_000);   // ALL = up to 21 tickers per sweep → gentler refresh
     return () => clearInterval(iv);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [source, code]);
 
-  const sym = res?.symbols?.[symIdx];
+  const symList = res?.symbols ?? [];
+  const symIdx = Math.max(0, selCode ? symList.findIndex((s) => s.code === selCode) : 0);
+  const sym = symList[symIdx];
   const ver = res?.verification;
   const sel = focus != null ? sym?.trades?.[focus] : null;
   const selChecks = focus != null ? sym?.verification?.per_trade?.[focus] : null;
@@ -263,7 +269,7 @@ export default function ProofLab() {
       {res && res.symbols.length > 1 && (
         <div className="mt-3 flex gap-1.5 flex-wrap">
           {res.symbols.map((s, i) => (
-            <button key={s.code} onClick={() => { setSymIdx(i); setFocus(null); }}
+            <button key={s.code} onClick={() => { setSelCode(s.code); setFocus(null); }}
               className="text-[12px] font-extrabold px-3 py-1 rounded-lg"
               style={i === symIdx ? { background: GOLD, color: "#fff" } : { border: "1px solid var(--border-default)", color: "var(--text-secondary)" }}>
               {s.name}
@@ -303,7 +309,7 @@ export default function ProofLab() {
               </tr></thead>
               <tbody>
                 {posRows.map((r, i) => (
-                  <tr key={i} onClick={() => { setSymIdx(r.si); setFocus(null); }}
+                  <tr key={i} onClick={() => { setSelCode(r.s.code); setFocus(null); }}
                     className="border-t border-[var(--border-default)]/40 cursor-pointer hover:bg-[var(--bg-elevated)]">
                     <td className="px-3 py-1.5 font-bold text-[var(--text-primary)]">{r.s.name}</td>
                     <td className="px-2 font-bold" style={{ color: "#e65100" }}>▲ {r.p.buy_hhmm} {t("보유중", "holding")}</td>
@@ -356,7 +362,7 @@ export default function ProofLab() {
                 {rows.map((r, i) => {
                   const active = r.si === symIdx && focus === r.ti;
                   return (
-                    <tr key={i} onClick={() => { if (active) { setFocus(null); } else { setSymIdx(r.si); setFocus(r.ti); } }}
+                    <tr key={i} onClick={() => { if (active) { setFocus(null); } else { setSelCode(r.s.code); setFocus(r.ti); } }}
                       className="border-t border-[var(--border-default)]/40 cursor-pointer hover:bg-[var(--bg-elevated)]"
                       style={{ background: active ? "rgba(230,81,0,0.08)" : "transparent" }}>
                       <td className="px-3 py-1.5 font-bold text-[var(--text-primary)]">{r.s.name}</td>
@@ -378,6 +384,37 @@ export default function ProofLab() {
       {/* ---- selected trade: the EVIDENCE ---- */}
       {sel && selChecks && (
         <div className="mt-3 grid md:grid-cols-2 gap-3">
+          {/* 💰 why EXACTLY these prices — numbers + one line each */}
+          <div className="md:col-span-2 rounded-xl border p-3" style={{ borderColor: GOLD, background: "rgba(230,81,0,0.05)" }}>
+            <b className="text-[12.5px]" style={{ color: GOLD }}>💰 {t("가격 산출 — 왜 정확히 이 가격인가", "the price math — why EXACTLY these prices")}</b>
+            {(() => {
+              const sigBuy = sel.buy_closes[sel.buy_closes.length - 1];
+              const dBuy = Math.round(sel.entry - sigBuy);
+              const sigSell = sel.sell_closes[sel.sell_closes.length - 1];
+              const dSell = Math.round(sel.exit - sigSell);
+              const dTxt = (d: number) => (d === 0 ? "±₩0" : `${d > 0 ? "+" : "−"}₩${fmt(Math.abs(d))}`);
+              return (
+                <div className="mt-1.5 flex flex-col gap-1 text-[12px] tabular-nums">
+                  <div>
+                    <b style={{ color: RED }}>▲ {t("매수", "BUY")} ₩{fmt(sel.entry)}</b>{" = "}
+                    {sel.buy_book
+                      ? t(`3번째 양봉 종가 ₩${fmt(sigBuy)}(${sel.buy_hhmm}:59 확정) → 다음 초 호가창의 최저 매도호가(best ask) ₩${fmt(sel.entry)}에 체결 · 종가와의 차이 ${dTxt(dBuy)} = 그 순간 가장 싸게 팔겠다는 사람의 가격`,
+                           `3rd red closed ₩${fmt(sigBuy)} (confirmed ${sel.buy_hhmm}:59) → next second, filled at the book's best ask ₩${fmt(sel.entry)} · gap vs close ${dTxt(dBuy)} = the cheapest seller at that instant`)
+                      : t(`3번째 양봉 종가 ₩${fmt(sigBuy)}(${sel.buy_hhmm}:59 확정) = 재생 체결가 (차이 ±₩0 · 실전은 그 초의 best ask로 체결)`,
+                          `3rd red closed ₩${fmt(sigBuy)} (confirmed ${sel.buy_hhmm}:59) = replay fill (gap ±₩0 · live fills at that second's best ask)`)}
+                  </div>
+                  <div>
+                    <b style={{ color: BLUE }}>▼ {t("매도", "SELL")} ₩{fmt(sel.exit)}</b>{" = "}
+                    {sel.sell_book
+                      ? t(`3번째 음봉 종가 ₩${fmt(sigSell)}(${sel.sell_hhmm}:59 확정) → 다음 초 최고 매수호가(best bid) ₩${fmt(sel.exit)}에 체결 · 차이 ${dTxt(dSell)} = 그 순간 가장 비싸게 사겠다는 사람의 가격`,
+                           `3rd blue closed ₩${fmt(sigSell)} (confirmed ${sel.sell_hhmm}:59) → next second, filled at the best bid ₩${fmt(sel.exit)} · gap ${dTxt(dSell)} = the highest buyer at that instant`)
+                      : t(`3번째 음봉 종가 ₩${fmt(sigSell)}(${sel.sell_hhmm}:59 확정) = 재생 체결가 (차이 ±₩0 · 실전은 그 초의 best bid로 체결)`,
+                          `3rd blue closed ₩${fmt(sigSell)} (confirmed ${sel.sell_hhmm}:59) = replay fill (gap ±₩0 · live fills at that second's best bid)`)}
+                  </div>
+                </div>
+              );
+            })()}
+          </div>
           {/* left: the 3-candle chains + checks */}
           <div className="rounded-xl border p-4" style={{ borderColor: "var(--border-default)", background: "var(--bg-elevated)" }}>
             <b className="text-[13px]">{t("① 왜 이 캔들에서 사고팔았나 (종가 사슬)", "① why THIS candle — the close chain")}</b>
