@@ -94,7 +94,9 @@ function ProofChart({ candles, trades, focus, buyLabel, sellLabel, openIdxs, hol
       if (focus != null && trades[focus]) {
         chart.timeScale().setVisibleLogicalRange({ from: trades[focus].buy_idx - 7, to: trades[focus].sell_idx + 7 } as never);
       } else {
-        chart.timeScale().fitContent();
+        // full day = hundreds of candles + dozens of arrows → unreadable; default to the
+        // recent ~60 minutes (scroll/drag left for older history)
+        chart.timeScale().setVisibleLogicalRange({ from: Math.max(0, candles.length - 60), to: candles.length + 2 } as never);
       }
       cleanup = () => chart.remove();
     })();
@@ -433,7 +435,7 @@ export default function ProofLab() {
         const tape = fastBook?.tape ?? sym.tick_tape ?? null;
         if (!tape || tape.length === 0) return null;
         const prevClose = fastBook?.prev_close ?? null;
-        const rows = [...tape].slice(-15).reverse();       // newest on top, 15 rows like Kiwoom
+        const rows = [...tape].slice(-45).reverse();       // last ~15 seconds INCLUDING same-second bursts, newest on top
         return (
           <div className={view === "table" ? "rounded-xl border overflow-hidden" : "mt-3 rounded-xl border overflow-hidden"} style={{ borderColor: TEAL }}>
             <div className="px-4 py-2 border-b bg-[var(--bg-elevated)] flex items-center gap-2 flex-wrap" style={{ borderColor: "var(--border-default)" }}>
@@ -442,8 +444,9 @@ export default function ProofLab() {
                 ⚡ {t(`1초 갱신${fastBook?.time ? ` (${fastBook.time})` : ""}`, `1s updates${fastBook?.time ? ` (${fastBook.time})` : ""}`)}
               </span>
               {prevClose != null && <span className="text-[10.5px] text-[var(--text-muted)] tabular-nums">{t(`전일종가 ₩${fmt(prevClose)}`, `prev close ₩${fmt(prevClose)}`)}</span>}
-              <span className="text-[10.5px] text-[var(--text-muted)]">{t("이 체결들이 쌓여 1분 캔들이 됩니다", "these deals build the 1-min candles")}</span>
+              <span className="text-[10.5px] text-[var(--text-muted)]">{t("같은 초에 여러 체결이 찍힙니다 (실제 시장처럼) · 이 체결들이 쌓여 1분 캔들이 됩니다", "several deals print within the SAME second (like the real market) · they build the 1-min candles")}</span>
             </div>
+            <div className="overflow-y-auto" style={{ maxHeight: 300 }}>
             <table className="w-full text-[11.5px] tabular-nums">
               <thead><tr className="text-[10px] text-[var(--text-muted)]" style={{ background: "var(--bg-elevated)" }}>
                 <th className="text-left px-3 py-1">{t("체결시각", "time")}</th>
@@ -473,6 +476,7 @@ export default function ProofLab() {
                 })}
               </tbody>
             </table>
+            </div>
           </div>
         );
       })()}

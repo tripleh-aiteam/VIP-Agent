@@ -393,16 +393,19 @@ def live_book_fast(source: str, code: str, seed: int = 7) -> dict[str, Any]:
         mid = ref + t * r.choice([-1, 0, 0, 0, 1])
         asks = [[mid + t * (i + 1), r.randint(200, 9_900)] for i in range(10)]
         bids = [[mid - t * i, r.randint(200, 9_900)] for i in range(10)]
-        # Kiwoom-style 체결 tape: one row per second (last 15s), deterministic per second so
-        # overlapping rows stay identical between polls — only a NEW row appears each second.
+        # Kiwoom-style 체결 tape: like the real market, EACH second prints a BURST of 1-4
+        # deals (all stamped with that same second), then the next second's burst. Deterministic
+        # per second so overlapping rows never change between polls — only new seconds append.
         prev_close = round((ref * 0.985) / t) * t          # fake yesterday's close (~-1.5%)
         tape = []
         for s in range(now_s - 14, now_s + 1):
             rs = random.Random(f"{code}:{seed}:tape:{s}")
-            tape.append({"t": datetime.fromtimestamp(s, KST).strftime("%H:%M:%S"),
-                         "px": ref + t * rs.choice([-2, -1, -1, 0, 0, 0, 1, 1, 2]),
-                         "qty": rs.randint(1, 120) * 10,
-                         "strength": rs.randint(78, 138)})   # 체결강도 %
+            ts_s = datetime.fromtimestamp(s, KST).strftime("%H:%M:%S")
+            for _d in range(rs.randint(1, 4)):             # several deals within the SAME second
+                tape.append({"t": ts_s,
+                             "px": ref + t * rs.choice([-2, -1, -1, 0, 0, 0, 1, 1, 2]),
+                             "qty": rs.randint(1, 120) * 10,
+                             "strength": rs.randint(78, 138)})   # 체결강도 %
         return {"ok": True, "asks": asks, "bids": bids,
                 "best_ask": asks[0][0], "best_bid": bids[0][0],
                 "tape": tape, "prev_close": prev_close,
