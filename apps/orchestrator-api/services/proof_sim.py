@@ -210,8 +210,8 @@ def _simulate(candles: list[dict], seed: int, with_book: bool) -> tuple[list, li
             trades.append({**pos, "sell_idx": i, "sell_time": cd["time"], "sell_hhmm": cd["hhmm"],
                            "sell_closes": closes[-4:], "exit": exit_px, "sell_book": bk,
                            "sell_timeline": _minute_timeline(cd, exit_px, seed * 37 + i, with_book),
-                           "sell_tapes": ([_second_tape(candles[j], seed * 13 + j) for j in (i - 2, i - 1, i) if j >= 0]
-                                          if with_book else None),
+                           "sell_tapes": ([_second_tape(candles[j], seed * 11 + j) for j in (i - 2, i - 1, i) if j >= 0]
+                                          if with_book else None),   # same seed formula as buys → ONE canonical tape per minute
                            "net_pct": round(net, 3)})
             pos = None
         elif pos is not None and up == NEED and i > pos["buy_idx"]:
@@ -448,6 +448,22 @@ def live_book_fast(source: str, code: str, seed: int = 7) -> dict[str, Any]:
             "best_ask": (asks[0][0] if asks else None), "best_bid": (bids[0][0] if bids else None),
             "tape": tape or None, "prev_close": prev_close,
             "time": datetime.now(KST).strftime("%H:%M:%S")}
+
+
+def minute_tape(source: str, code: str, seed: int, hhmm: str) -> dict[str, Any]:
+    """🕰️ drill-down: the 60-second tape of ONE chosen minute (e.g. 14:07) — regenerated
+    deterministically for artificial stocks (same canonical tape shown everywhere).
+    Real stocks: exchanges don't archive past per-second data, so this is synthetic-only."""
+    if source != "synthetic":
+        return {"ok": False, "reason": "no-history"}
+    k = next((i for i, (c, _n, _b) in enumerate(_SYMBOLS) if c == code), 0)
+    sseed = seed + k * 101
+    candles = _synthetic_candles(sseed, _SYMBOLS[k][2])
+    for idx, cd in enumerate(candles):
+        if cd["hhmm"] == hhmm:
+            return {"ok": True, "hhmm": hhmm, "candle": cd,
+                    "tape": _second_tape(cd, sseed * 11 + idx)}
+    return {"ok": False, "reason": "minute-not-found"}
 
 
 def run_kiwoom(code: str = "005930", codes: list[str] | None = None) -> dict[str, Any]:

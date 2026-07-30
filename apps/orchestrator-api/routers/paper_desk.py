@@ -632,6 +632,14 @@ def proof_book(source: str = Query("synthetic"), code: str = Query("PRF1"),
     return live_book_fast(source, code, seed)
 
 
+@router.get("/proof/minute_tape")
+def proof_minute_tape(source: str = Query("synthetic"), code: str = Query("PRF1"),
+                      seed: int = Query(7), hhmm: str = Query(...)):
+    """🕰️ Proof Lab drill-down: one minute's 60-second tape (synthetic only)."""
+    from services.proof_sim import minute_tape
+    return minute_tape(source, code, seed, hhmm)
+
+
 @router.post("/candle3/buy")
 def candle3_buy(code: str = Query(...), db: Session = Depends(get_db)):
     """Semi mode: the boss accepts a 🔔 candle BUY recommendation."""
