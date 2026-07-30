@@ -93,7 +93,25 @@ def _sec_label(epoch9: int, off: int) -> str:
 
 PERIODS = (1, 15, 30, 40, 60)    # selectable candle sizes — ALL aggregated from the same seconds
 S1_WINDOW = 1800                 # 1초 chart shows a 30-minute window (Kiwoom limits tick charts too)
-DEMO_MINUTES = 840               # the artificial proof day: 09:00 → 23:00, always complete
+DEMO_MINUTES = 840               # longest tape we ever build (14h) — the growth cap
+DEMO_OPEN = (7, 21)              # the artificial market opens 07:21 KST — see _default_start
+MIN_TAPE_MIN = 25                # below this there is too little to judge, so fall back a day
+
+
+def _default_start(now: datetime) -> datetime:
+    """When no session is given, the Proof Lab shows THE artificial market that opened at
+    07:21 and has been trading up to this second (boss 2026-07-31: "only implement data
+    from 7:21 up to now"). It used to show a recorded 09:00~23:00 sample day instead,
+    whose timestamps are in the future during the morning and therefore read as old data
+    from a previous day — that is the confusion this removes.
+
+    Before 07:46 there would be under 25 minutes of tape and barely a trade to look at,
+    so we fall back to the previous day's 07:21 session. That keeps the lab useful at
+    every hour without ever showing a timestamp that has not happened yet."""
+    a = now.replace(hour=DEMO_OPEN[0], minute=DEMO_OPEN[1], second=0, microsecond=0)
+    if (now - a).total_seconds() < MIN_TAPE_MIN * 60:
+        a -= timedelta(days=1)
+    return a
 
 
 def _norm_period(p) -> int:
@@ -110,25 +128,18 @@ def _seconds(seed: int, base_px: float, start: int = 0) -> tuple[int, list[dict]
     prices/times/ups-downs are identical in every view
     (boss 2026-07-30: 'all data must be same').
 
-    Two shapes, chosen by `start`:
-      start == 0  → 전체 하루: a COMPLETE recorded proof day, 09:00→23:00, ALWAYS. It must
-        never wait for the real market. This was once "09:00 until now", which meant that at
-        06:52 there were 3 candles and zero trades — the rule needs 4 candles to see 3 rising
-        steps, so the Proof Lab looked broken every morning until ~09:10.
-      start == epoch seconds → 지금부터: the tape BEGINS at that moment and grows one candle
-        per real minute, so the boss can watch candles form and arrows appear live
-        (boss 2026-07-31: "I wanna start trading from now and lets see how will work").
-        Minute m is seeded by its offset from `start`, so once a minute has closed its prices
-        never change again — closed trades stay immutable exactly as in the full-day tape.
+    The tape ALWAYS runs from a session open up to THIS SECOND — never into the future:
+      start == 0  → the standing market that opened at 07:21 (see _default_start)
+      start == epoch seconds → a fresh market the boss started at that moment, so he can
+        watch candles form and arrows appear live.
+    Either way, minute m is seeded by its offset from the open, so once a minute has closed
+    its prices never change again — closed trades are immutable.
 
     Returns (tape-open epoch+9h, [{off, px, qty}, ...])."""
     n_kst = datetime.now(KST)
-    if start:
-        open_t = datetime.fromtimestamp(start, KST).replace(second=0, microsecond=0)
-        total_sec = min(max(0, int((n_kst - open_t).total_seconds())), DEMO_MINUTES * 60)
-    else:
-        open_t = n_kst.replace(hour=9, minute=0, second=0, microsecond=0)
-        total_sec = DEMO_MINUTES * 60
+    open_t = (datetime.fromtimestamp(start, KST).replace(second=0, microsecond=0)
+              if start else _default_start(n_kst))
+    total_sec = min(max(0, int((n_kst - open_t).total_seconds())), DEMO_MINUTES * 60)
     day0 = int(open_t.timestamp()) + 9 * 3600            # +9h so charts display KST
     t = _tick(base_px) or 1
     secs: list[dict] = []
@@ -602,9 +613,12 @@ def self_check(seed: int = 7) -> dict[str, Any]:
         if not good and len(fails) < 12:
             fails.append(f"[{key}] {msg}")
 
-    def off_of(t: str) -> int:
+    def off_of(t: str, tape0: int) -> int:
+        """Seconds from the TAPE OPEN. This used to subtract a hard-coded 09:00, which was
+        only right while the artificial day always opened at 09:00; the market now opens at
+        07:21, so a fixed anchor walked straight off the end of the seconds array."""
         h, m, s = (int(x) for x in t.split(":"))
-        return h * 3600 + m * 60 + s - 9 * 3600
+        return h * 3600 + m * 60 + s - tape0
 
     per_tf: list[dict] = []
     ref: dict[str, list] = {}
@@ -620,6 +634,8 @@ def self_check(seed: int = 7) -> dict[str, Any]:
                 # and a positional lookup would rebuild the wrong tape and cry false failures.
                 k = next(i for i, (c, _n, _b) in enumerate(_SYMBOLS) if c == s["code"])
                 _d0, secs = _seconds(seed + k * 101, _SYMBOLS[k][2])
+                _ot = datetime.fromtimestamp(_d0 - 9 * 3600, KST)      # when this tape opened
+                tape0 = _ot.hour * 3600 + _ot.minute * 60 + _ot.second
                 # E) candles == their own seconds · F) continuous opens
                 prev_close = None
                 for c in cs:
@@ -644,7 +660,7 @@ def self_check(seed: int = 7) -> dict[str, Any]:
                     #    (the 1초 chart is windowed to 30 min, so older bars aren't sent —
                     #     the second-level check still applies to every trade)
                     for ft, px in ((t["buy_fill_t"], t["entry"]), (t["sell_fill_t"], t["exit"])):
-                        o = off_of(ft)
+                        o = off_of(ft, tape0)
                         _hit("B", o < len(secs) and secs[o]["px"] == px, f"{mode} {p}s {ft} px={px} not at that second")
                         bar = next((c for c in cs if c["off0"] <= o < c["off0"] + c["n"]), None)
                         if bar is not None:
@@ -656,7 +672,7 @@ def self_check(seed: int = 7) -> dict[str, Any]:
                         if i < 0:              # outside the 1초 30-min window → no arrow drawn
                             continue
                         _hit("D", cs[i]["dir"] == want, f"{mode} {p}s {t[ft]} arrow colour")
-                        d = off_of(t[ft]) - cs[i]["off0"]
+                        d = off_of(t[ft], tape0) - cs[i]["off0"]
                         _hit("G", 0 <= d < cs[i]["n"],
                              f"{mode} {p}s fill {t[ft]} is {d}s outside its arrow bar {cs[i]['hhmm']}")
                     # A) identical across charts (1분-고정 mode only — 'chart' mode differs by design)

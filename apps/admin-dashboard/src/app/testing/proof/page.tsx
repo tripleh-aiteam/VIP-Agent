@@ -507,10 +507,9 @@ export default function ProofLab() {
                   title={t("지금 이 순간부터 새 장을 시작합니다 — 기존 매매 기록은 지워지고, 1분에 캔들 1개씩 실시간으로 쌓입니다", "start a fresh market from this second — the existing trades are cleared and candles build one per real minute")}>
                   ▶ {t("지금부터 시작", "start from now")}
                 </button>
-                {/* say what this view IS: a recorded sample labelled 09:00~23:00. Without this
-                    the morning reader sees future times and assumes it is yesterday's data. */}
-                <span className="text-[10px] px-2 py-0.5 rounded-full" style={{ background: "rgba(230,81,0,0.12)", color: GOLD }}>
-                  📅 {t("지금은 '녹화된 샘플 하루'(09:00~23:00)를 보는 중 — 현재 시각과 무관합니다. 실시간으로 보려면 ▶ 지금부터 시작", "currently showing the RECORDED sample day (09:00-23:00) — not tied to the clock. For a live run press ▶ start from now")}
+                {/* the default view is the standing 07:21 market, running to THIS second */}
+                <span className="text-[10px] px-2 py-0.5 rounded-full" style={{ background: "rgba(46,125,50,0.12)", color: "#2e7d32" }}>
+                  ● {t("07:21에 열린 장 — 지금 이 순간까지 (미래 시각 없음). 완전히 새로 시작하려면 ▶ 지금부터 시작", "the market that opened at 07:21, running up to this second (no future timestamps). Press ▶ start from now for a clean run")}
                 </span>
               </>
             ) : (
@@ -520,8 +519,8 @@ export default function ProofLab() {
                 </span>
                 <button onClick={() => goSession(0)}
                   className="text-[11.5px] font-bold px-3 py-1 rounded-lg border" style={{ borderColor: GOLD, color: GOLD }}
-                  title={t("완성된 하루 전체(09:00~23:00, 약 62매매)로 돌아갑니다 — 즉시 전수 검증용", "back to the complete recorded day (09:00-23:00, ~62 trades) — for auditing everything at once")}>
-                  📅 {t("전체 하루 보기", "full day")}
+                  title={t("07:21에 열린 기본 장으로 돌아갑니다 — 지금까지 쌓인 전체 기록", "back to the standing market that opened at 07:21 — everything it has traded so far")}>
+                  📅 {t("07:21 장 보기", "07:21 market")}
                 </button>
                 <button onClick={() => goSession(Math.floor(Date.now() / 1000))}
                   className="text-[11.5px] font-bold px-3 py-1 rounded-lg border" style={{ borderColor: "#2e7d32", color: "#2e7d32" }}
