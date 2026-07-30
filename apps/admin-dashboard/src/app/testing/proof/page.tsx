@@ -18,9 +18,11 @@ const fmt = (n?: number | null) => (n == null ? "-" : Number(n).toLocaleString()
 
 type Candle = { time: number; hhmm: string; open: number; high: number; low: number; close: number };
 type Book = { asks: [number, number][]; bids: [number, number][]; best_ask: number; best_bid: number } | null;
+type TlRow = { t: string; px: number; kind: "open" | "watch" | "high" | "low" | "close" | "fill" };
 type Trade = {
   buy_idx: number; buy_hhmm: string; buy_closes: number[]; entry: number; buy_book: Book;
   sell_idx: number; sell_hhmm: string; sell_closes: number[]; exit: number; sell_book: Book;
+  buy_timeline?: TlRow[]; sell_timeline?: TlRow[];
   net_pct: number;
 };
 type NoTrade = { hhmm: string; kind: string; note_ko: string; note_en: string };
@@ -90,6 +92,41 @@ function ProofChart({ candles, trades, focus, buyLabel, sellLabel }: { candles: 
     return () => { alive = false; cleanup(); };
   }, [candles, trades, focus, buyLabel, sellLabel]);   // labels in deps → chart redraws on language switch
   return <div ref={ref} style={{ width: "100%", height: 320 }} />;
+}
+
+// ---- minute replay: 60 seconds → ONE decision price (:59 close) → fill ----
+function TimelineCol({ rows, side, synthetic, t }: { rows: TlRow[]; side: "BUY" | "SELL"; synthetic: boolean; t: (k: string, e: string) => string }) {
+  const col = side === "BUY" ? RED : BLUE;
+  const label = (r: TlRow): string => {
+    switch (r.kind) {
+      case "open": return t("👀 시가 — 캔들 시작, 엔진은 지켜보기만", "👀 open — candle starts, engine only watches");
+      case "watch": return t("👀 형성 중 — 아직 3번째 확정 아님 → 매매 금지", "👀 forming — 3rd NOT confirmed yet → no trading");
+      case "high": return t("📈 분 내 최고가 (정확한 초는 미저장) — 판단에 사용 안 함", "📈 the minute's HIGH (second not stored) — NOT used");
+      case "low": return t("📉 분 내 최저가 — 판단에 사용 안 함", "📉 the minute's LOW — NOT used");
+      case "close": return side === "BUY"
+        ? t("🔔 종가 — 엔진이 읽는 유일한 가격 → 3연속 상승 확정!", "🔔 CLOSE — the ONLY price the engine reads → 3rd rise confirmed!")
+        : t("🔔 종가 — 엔진이 읽는 유일한 가격 → 3연속 하락 확정!", "🔔 CLOSE — the ONLY price the engine reads → 3rd fall confirmed!");
+      case "fill": return synthetic
+        ? (side === "BUY" ? t("⚡ 시장가 매수 → 호가창 best ask에 체결", "⚡ market BUY → filled at the book's best ask")
+                          : t("⚡ 시장가 매도 → 호가창 best bid에 체결", "⚡ market SELL → filled at the book's best bid"))
+        : t("⚡ 체결 (재생: 판단 종가로 표시 — 실전은 그 초의 실제 호가)", "⚡ fill (replay shows decision close — live uses that second's real book)");
+    }
+  };
+  return (
+    <div>
+      <div className="text-[11.5px] font-extrabold mb-1" style={{ color: col }}>{side === "BUY" ? t("▲ 매수 분(minute) 재생", "▲ BUY minute replay") : t("▼ 매도 분(minute) 재생", "▼ SELL minute replay")}</div>
+      <div className="flex flex-col gap-0.5">
+        {rows.map((r, i) => (
+          <div key={i} className="flex items-center gap-2 text-[11.5px] rounded-md px-2 py-1"
+            style={{ background: r.kind === "close" ? "rgba(230,81,0,0.13)" : r.kind === "fill" ? (side === "BUY" ? "rgba(211,47,47,0.10)" : "rgba(21,101,192,0.10)") : "transparent" }}>
+            <span className="tabular-nums font-bold text-[var(--text-muted)] w-[64px]">{r.t}</span>
+            <span className="tabular-nums font-extrabold" style={{ color: r.kind === "close" || r.kind === "fill" ? col : "var(--text-secondary)" }}>₩{fmt(r.px)}</span>
+            <span className="text-[10.5px] text-[var(--text-secondary)]">{label(r)}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
 }
 
 // ---- 5-level order-book table with the fill row highlighted ----
@@ -336,6 +373,21 @@ export default function ProofLab() {
         </div>
       )}
 
+      {/* ---- ③ minute replay: 1 minute = 60 seconds — which price and WHY ---- */}
+      {sel && (sel.buy_timeline || sel.sell_timeline) && (
+        <div className="mt-3 rounded-xl border p-4" style={{ borderColor: GOLD, background: "var(--bg-elevated)" }}>
+          <b className="text-[13px]" style={{ color: GOLD }}>⏱ {t("③ 1분 = 60초 — 그 안에서 가격이 계속 바뀌는데, 어떤 값을 왜 고르나 (과정 재생)", "③ 1 minute = 60 seconds of moving prices — which one is chosen, and why (process replay)")}</b>
+          <p className="mt-1 text-[11.5px] text-[var(--text-secondary)]">
+            {t("무작위 선택이 아니라는 증명: 분이 끝나기 전(형성 중)에는 절대 판단하지 않고, :59 종가 단 하나로 3연속을 확정한 뒤, 다음 초에 호가창에서 체결합니다.",
+               "Proof it is NOT random: the engine never judges while the minute is still forming — it confirms the streak with the :59 CLOSE alone, then fills from the order book on the next second.")}
+          </p>
+          <div className="mt-2 grid md:grid-cols-2 gap-4">
+            {sel.buy_timeline && <TimelineCol rows={sel.buy_timeline} side="BUY" synthetic={source === "synthetic"} t={t} />}
+            {sel.sell_timeline && <TimelineCol rows={sel.sell_timeline} side="SELL" synthetic={source === "synthetic"} t={t} />}
+          </div>
+        </div>
+      )}
+
       {/* ---- no-trade proofs: the traps the engine correctly ignored ---- */}
       {sym && sym.no_trade_proofs.length > 0 && (
         <div className="mt-3 rounded-xl border overflow-hidden" style={{ borderColor: "#2e7d32" }}>
@@ -356,7 +408,7 @@ export default function ProofLab() {
       {/* ---- who makes the candles ---- */}
       {sym && (
         <div className="mt-3 rounded-xl border p-4" style={{ borderColor: "var(--border-default)", background: "var(--bg-elevated)" }}>
-          <b className="text-[13px]">🕯️ {t("③ 캔들은 누가 만드나 — 원시 데이터 vs 차트", "③ who makes the candles — raw data vs the chart")}</b>
+          <b className="text-[13px]">🕯️ {t("④ 캔들은 누가 만드나 — 원시 데이터 vs 차트", "④ who makes the candles — raw data vs the chart")}</b>
           <p className="mt-1 text-[12px] text-[var(--text-secondary)] leading-relaxed">
             {t("진실은 원시 1분 데이터(키움 시가·고가·저가·종가)입니다. 결정 엔진은 이 원시 '종가'만 전봉과 비교합니다. 화면의 차트(TradingView lightweight-charts)는 같은 원시 숫자를 그림으로 그릴 뿐 — 아래 표가 원시값과 차트에 그려진 값이 동일함을 보여줍니다.",
                "The truth is the raw 1-min data (Kiwoom O/H/L/C). The engine compares only the raw CLOSES vs the previous close. The on-screen chart (TradingView lightweight-charts) merely DRAWS the same raw numbers — the table shows raw value = drawn value.")}

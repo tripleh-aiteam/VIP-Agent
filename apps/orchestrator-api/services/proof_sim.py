@@ -97,6 +97,40 @@ def _book(seed: int, ref: float, side: str) -> dict:
 
 
 # --------------------------------------------------------------------------- #
+#  the minute replay — proof the price is NOT picked randomly from 60 seconds  #
+# --------------------------------------------------------------------------- #
+def _next_sec(hhmm: str) -> str:
+    h, m = int(hhmm[:2]), int(hhmm[3:5])
+    m += 1
+    if m == 60:
+        h, m = h + 1, 0
+    return f"{h:02d}:{m:02d}:01"
+
+
+def _minute_timeline(cd: dict, fill_px: float, seed: int, synthetic: bool) -> list[dict]:
+    """Second-by-second replay of the SIGNAL minute. One minute = 60 seconds of moving
+    prices; the engine reads exactly ONE of them — the CLOSE at :59 — and the fill then
+    comes from the order book at the next second. kinds: open / watch (synthetic wiggles)
+    / high / low (kiwoom real anchors) / close / fill."""
+    rows: list[dict] = []
+    hh = cd["hhmm"]
+    if synthetic:
+        r = random.Random(seed)
+        secs = sorted(r.sample(range(6, 54), 3))
+        vals = [cd["high"], cd["low"], round((cd["high"] + cd["low"]) / 2)]
+        r.shuffle(vals)
+        rows.append({"t": f"{hh}:00", "px": cd["open"], "kind": "open"})
+        rows += [{"t": f"{hh}:{s:02d}", "px": v, "kind": "watch"} for s, v in zip(secs, vals)]
+    else:                                   # real bars: the 4 anchors Kiwoom actually stores
+        rows.append({"t": f"{hh}:00", "px": cd["open"], "kind": "open"})
+        rows.append({"t": f"{hh}:??", "px": cd["high"], "kind": "high"})
+        rows.append({"t": f"{hh}:??", "px": cd["low"], "kind": "low"})
+    rows.append({"t": f"{hh}:59", "px": cd["close"], "kind": "close"})
+    rows.append({"t": _next_sec(hh), "px": fill_px, "kind": "fill"})
+    return rows
+
+
+# --------------------------------------------------------------------------- #
 #  the simulation — calls the REAL engine function candle-by-candle            #
 # --------------------------------------------------------------------------- #
 def _simulate(candles: list[dict], seed: int, with_book: bool) -> tuple[list, list]:
@@ -112,15 +146,17 @@ def _simulate(candles: list[dict], seed: int, with_book: bool) -> tuple[list, li
         up, dn = run_steps(closes)                       # ← REAL engine code
         if pos is None and up == NEED:                   # fires the moment the 3rd red closes
             bk = _book(seed * 1_000 + i, cd["close"], "BUY") if with_book else None
+            entry_px = bk["fill"] if bk else cd["close"]
             pos = {"buy_idx": i, "buy_time": cd["time"], "buy_hhmm": cd["hhmm"],
-                   "buy_closes": closes[-4:], "entry": (bk["fill"] if bk else cd["close"]),
-                   "buy_book": bk}
+                   "buy_closes": closes[-4:], "entry": entry_px, "buy_book": bk,
+                   "buy_timeline": _minute_timeline(cd, entry_px, seed * 31 + i, with_book)}
         elif pos is not None and dn == NEED:             # fires the moment the 3rd blue closes
             bk = _book(seed * 2_000 + i, cd["close"], "SELL") if with_book else None
             exit_px = bk["fill"] if bk else cd["close"]
             net = (exit_px / pos["entry"] - 1) * 100 - FEE_PCT
             trades.append({**pos, "sell_idx": i, "sell_time": cd["time"], "sell_hhmm": cd["hhmm"],
                            "sell_closes": closes[-4:], "exit": exit_px, "sell_book": bk,
+                           "sell_timeline": _minute_timeline(cd, exit_px, seed * 37 + i, with_book),
                            "net_pct": round(net, 3)})
             pos = None
         # ---- no-trade proofs: a 2-up that died / a flat that broke the count ----
