@@ -339,20 +339,35 @@ def run_synthetic(seed: int = 7, period: int = 60) -> dict[str, Any]:
         t_base = _tick(base) or 1                         # ONE tick per symbol, everywhere
         sseed = seed + k * 101
         b30 = _base30(sseed, base)                        # THE market (single source of truth)
-        candles = b30 if period == 30 else _aggregate60(b30)
-        # per-second tapes always come from the 30s truth: a 1-min candle's tape is its two
-        # half-tapes JOINED — so both timeframes show literally the same seconds
-        def _mk_tape(j, _s=sseed, _b=b30, _t=t_base):
-            if period == 30:
-                return _second_tape(_b[j], _s * 11 + j, 30, _t)
+        c60 = _aggregate60(b30)                           # 1-min view = merged halves
+        # ── the ENGINE always decides on 1-MINUTE candles (same as the live desk), so the
+        #    trades/prices/times are IDENTICAL no matter which timeframe is displayed
+        #    (boss 2026-07-30). 30초봉 is purely a finer CHART of the same market.
+        def _mk_tape(j, _s=sseed, _b=b30, _t=t_base):     # a 1-min tape = its two half-tapes joined
             return (_second_tape(_b[2 * j], _s * 11 + 2 * j, 30, _t)
                     + _second_tape(_b[2 * j + 1], _s * 11 + 2 * j + 1, 30, _t))
-        trades, proofs, open_pos, skips = _simulate(candles, sseed, with_book=True, period=period,
+        trades, proofs, open_pos, skips = _simulate(c60, sseed, with_book=True, period=60,
                                                     tick=t_base, tape_fn=_mk_tape)
         for tr in trades[:-6]:                            # keep 60s tapes only on recent trades (payload size)
             tr["buy_tapes"] = None
             tr["sell_tapes"] = None
-        ver = _verify(candles, trades, with_book=True)
+        ver = _verify(c60, trades, with_book=True)
+        # the 3 DECISION candles (+ the baseline before them) travel with each trade so the
+        # evidence panel is identical in both views
+        for tr in trades + open_pos:
+            i = tr["buy_idx"]
+            tr["buy_cands"] = [c60[j] for j in (i - 3, i - 2, i - 1, i) if j >= 0]
+            if "sell_idx" in tr:
+                s2 = tr["sell_idx"]
+                tr["sell_cands"] = [c60[j] for j in (s2 - 3, s2 - 2, s2 - 1, s2) if j >= 0]
+        if period == 30:            # DISPLAY only: remap arrows onto the half that closed the decision
+            for tr in trades + open_pos:
+                tr["buy_idx"] = 2 * tr["buy_idx"] + 1
+                if "sell_idx" in tr:
+                    tr["sell_idx"] = 2 * tr["sell_idx"] + 1
+            for sk in skips:
+                sk["idx"] = 2 * sk["idx"] + 1
+        candles = b30 if period == 30 else c60
         agg_pass += ver["passed"]; agg_total += ver["total"]; agg_trades += ver["trades"]
         # a CURRENT order book per fake stock (anchored to the last close, changes each
         # minute) — powers the '📗 price table' view: the program trades from THIS table
@@ -360,6 +375,9 @@ def run_synthetic(seed: int = 7, period: int = 60) -> dict[str, Any]:
         live_book = {"asks": lb["asks"], "bids": lb["bids"], "best_ask": lb["best_ask"],
                      "best_bid": lb["best_bid"], "time": datetime.now(KST).strftime("%H:%M:%S")}
         symbols.append({"code": code, "name": name, "candles": candles,
+                        # decision-timeframe candles (1-min) so the counter/chips always
+                        # reflect what actually drives the trades, in either view
+                        "dec_candles": (c60 if period == 30 else None),
                         "forming": _synthetic_forming(sseed, b30, period, t_base), "trades": trades,
                         "open_positions": open_pos, "hold_skips": skips, "live_book": live_book,
                         "no_trade_proofs": proofs, "verification": ver})

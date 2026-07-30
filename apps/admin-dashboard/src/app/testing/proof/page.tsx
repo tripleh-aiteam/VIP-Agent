@@ -24,6 +24,7 @@ type Trade = {
   sell_idx: number; sell_hhmm: string; sell_closes: number[]; exit: number; sell_book: Book;
   buy_time?: number; sell_time?: number;
   buy_sig_t?: string; buy_fill_t?: string; sell_sig_t?: string; sell_fill_t?: string;
+  buy_cands?: Candle[]; sell_cands?: Candle[];   // the 3 DECISION candles (+baseline) — same in both views
   buy_timeline?: TlRow[]; sell_timeline?: TlRow[];
   buy_tapes?: { t: string; px: number; qty?: number }[][] | null;   // 60s tape per signal candle (1st/2nd/3rd)
   sell_tapes?: { t: string; px: number; qty?: number }[][] | null;
@@ -32,7 +33,7 @@ type Trade = {
 type NoTrade = { hhmm: string; kind: string; note_ko: string; note_en: string };
 type OpenPos = { buy_idx: number; buy_hhmm: string; buy_closes: number[]; entry: number; last_px: number; unreal_pct: number; buy_sig_t?: string; buy_fill_t?: string };
 type SymBlock = {
-  code: string; name: string; candles: Candle[]; trades: Trade[];
+  code: string; name: string; candles: Candle[]; dec_candles?: Candle[] | null; trades: Trade[];
   open_positions?: OpenPos[];
   hold_skips?: { idx: number; hhmm: string }[];
   live_book?: { asks: [number, number][]; bids: [number, number][]; best_ask: number; best_bid: number; time?: string } | null;
@@ -383,15 +384,15 @@ export default function ProofLab() {
               <button key={p} onClick={() => { setTfSec(p); load("synthetic", seed, code, p); }}
                 className="text-[11.5px] font-extrabold px-3 py-1 rounded-lg"
                 title={p === 60
-                  ? t("실제 데스크와 동일한 1분봉 — 3개(=3분) 상승에 매수", "same as the live desk: 1-min candles — buy on 3 candles (=3 minutes) of rise")
-                  : t("같은 시장을 더 잘게 본 것 — 3개(=1.5분) 상승에 매수하므로 1분봉보다 먼저 신호", "the SAME market at finer grain — 3 candles (=1.5 min) of rise, so it signals earlier than 1-min")}
+                  ? t("실제 데스크와 동일한 1분봉 차트 — 판단도 1분봉 3연속", "the live desk's 1-min chart — decisions use 3 consecutive 1-min candles")
+                  : t("같은 시장·같은 매매를 30초 캔들로 더 잘게 본 것 — 판단은 여전히 1분봉 3연속이므로 체결 시각·가격이 완전히 동일", "the SAME market and the SAME trades drawn with 30-sec candles — decisions still use 3 consecutive 1-min candles, so fill times and prices are identical")}
                 style={tfSec === p ? { background: GOLD, color: "#fff" } : { border: "1px solid var(--border-default)", color: "var(--text-secondary)" }}>
                 {p === 60 ? t("1분봉", "1-min") : t("30초봉", "30-sec")}
               </button>
             ))}
             {tfSec === 30 && (
               <span className="text-[10px] px-2 py-0.5 rounded-full" style={{ background: "rgba(230,81,0,0.12)", color: GOLD }}>
-                {t("같은 데이터 · 캔들이 절반이라 신호가 1.5분 빠름", "same data · half-size candles → signals ~1.5 min earlier")}
+                {t("같은 데이터 · 같은 매매 (시각·가격 동일) · 캔들만 더 잘게", "same data · same trades (identical times & prices) · finer candles only")}
               </span>
             )}
             <button onClick={() => { const s = Math.floor(Math.random() * 9999); setSeed(s); load("synthetic", s, code); }}
@@ -467,11 +468,11 @@ export default function ProofLab() {
                 openIdxs={(sym.open_positions ?? []).map((p) => p.buy_idx)} holdLabel=""
                 skipIdxs={(sym.hold_skips ?? []).map((s) => s.idx)} skipLabel="⏸" resetLabel={t("최근 60분", "recent 60 min")} />
               <div className="px-2 pb-1 text-[11px] text-[var(--text-muted)]">
-                {t(`▲매수 화살표 = 정확히 3번째 양봉 · ▼매도 화살표 = 정확히 3번째 음봉 (${source === "synthetic" ? (tfSec === 30 ? "30초봉" : "1분봉") : "1분봉"} 기준). 거래를 클릭하면 확대 + 증거를 보여줍니다.`,
-                   `▲BUY arrow = exactly the 3rd red candle · ▼SELL arrow = exactly the 3rd blue (counted in ${source === "synthetic" ? (tfSec === 30 ? "30-sec" : "1-min") : "1-min"} candles). Click a trade to zoom + see the evidence.`)}
+                {t("▲매수 화살표 = 1분봉 3연속 양봉의 3번째 · ▼매도 화살표 = 3번째 음봉. 거래를 클릭하면 확대 + 증거를 보여줍니다.",
+                   "▲BUY arrow = the 3rd of 3 consecutive rising 1-min candles · ▼SELL = the 3rd falling. Click a trade to zoom + see the evidence.")}
                 {source === "synthetic" && tfSec === 30 && (
-                  <span style={{ color: GOLD }}>{t(" — 1분봉과 같은 시장이지만 캔들이 절반이므로 3개가 더 빨리 완성돼 화살표가 앞에 찍힙니다.",
-                       " — same market as 1-min, but half-size candles complete 3 sooner, so the arrows sit earlier.")}</span>
+                  <span style={{ color: GOLD }}>{t(" — 30초봉 화면에서는 그 1분봉의 두 번째 절반(판단이 확정된 캔들) 위에 같은 화살표가 찍힙니다. 매매 시각·가격은 1분봉과 100% 동일.",
+                       " — on the 30-sec chart the same arrow sits on that minute's second half (the candle whose close confirmed it). Trade times and prices are 100% identical to the 1-min view.")}</span>
                 )}
               </div>
             </>
@@ -656,7 +657,7 @@ export default function ProofLab() {
 
       {/* ---- 🔢 LIVE counting simulation — how the table's closes become a BUY/SELL ---- */}
       {!focused && sym && (() => {
-        const cs = sym.candles;
+        const cs = sym.dec_candles ?? sym.candles;   // count on the DECISION timeframe (what drives trades)
         if (cs.length < 2) return null;
         const n = Math.min(10, cs.length - 1);
         const chips: { hhmm: string; dir: number }[] = [];
@@ -672,7 +673,7 @@ export default function ProofLab() {
         const col = holding ? BLUE : RED;
         return (
           <div className="mt-3 rounded-xl border-2 p-4" style={{ borderColor: col, background: "var(--bg-elevated)" }}>
-            <b className="text-[13px]" style={{ color: col }}>🔢 {t("실시간 카운팅 — 표의 종가가 매매가 되는 과정", "LIVE counting — how the table's closes become a trade")}</b>
+            <b className="text-[13px]" style={{ color: col }}>🔢 {t("실시간 카운팅 — 1분봉 종가가 매매가 되는 과정 (판단 기준)", "LIVE counting — how the 1-min closes become a trade (the decision timeframe)")}</b>
             <span className="ml-2 text-[10.5px] text-[var(--text-muted)]">
               {t("전봉 종가보다 높으면 🔴 +1 · 낮으면 🔵 (반대편 카운트는 리셋) · 보합 ⚪ = 양쪽 리셋", "close above the previous close = 🔴 +1 · below = 🔵 (resets the other count) · flat ⚪ resets both")}
             </span>
@@ -849,8 +850,10 @@ export default function ProofLab() {
                 {/* 🕯️ the 3 candles AS NUMBERS — red/blue judged without any chart */}
                 {(() => {
                   const idx = isBuy ? sel.buy_idx : sel.sell_idx;
-                  const three = [idx - 2, idx - 1, idx].map((ci) => sym.candles[ci]).filter(Boolean);
-                  const baseClose = sym.candles[idx - 3]?.close ?? three[0]?.open;
+                  const dc = isBuy ? sel.buy_cands : sel.sell_cands;   // DECISION candles (1-min) — identical in both views
+                  const arr = dc && dc.length ? dc : [idx - 3, idx - 2, idx - 1, idx].map((ci) => sym.candles[ci]).filter(Boolean);
+                  const three = arr.slice(-3);
+                  const baseClose = arr.length > 3 ? arr[arr.length - 4].close : three[0]?.open;
                   const ord = [t("1번째", "1st"), t("2번째", "2nd"), t("3번째", "3rd")];
                   return (
                     <div className="mt-2 rounded-lg px-3 py-2" style={{ background: "rgba(128,128,128,0.08)" }}>
