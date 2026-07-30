@@ -297,9 +297,39 @@ export default function ProofLab() {
   const [tfSec, setTfSec] = useState<60 | 40 | 30 | 15 | 1>(60);   // candle period — 1분봉 default
   const [decMode, setDecMode] = useState<"min1" | "chart">("min1");   // who decides: 1분 fixed vs this chart
   // ▶ LIVE-FROM-NOW (boss 2026-07-31: "I wanna start trading from now and lets see how will
-  // work"). 0 = 전체 하루 (the complete recorded proof day, 186 trades, instant audit).
+  // work"). 0 = 전체 하루 (the complete recorded proof day, instant audit).
   // An epoch second = the tape STARTS at that moment and grows one candle per real minute.
-  const [liveStart, setLiveStart] = useState(0);
+  //
+  // ⚠️ PERSISTED, and it has to be. This lived in React state alone, so ANY page reload —
+  // including a dashboard redeploy — silently dropped the running session back to the full
+  // day. The full day is labelled 09:00~23:00, times that have not happened yet in the
+  // morning, so the boss's live trades appeared to vanish and be replaced by "yesterday".
+  // They were never lost; the page had simply forgotten which session it was showing.
+  // A session older than the tape length (14h) can no longer grow, so it is retired.
+  const LIVE_KEY = "proof-live-start";
+  const [liveStart, setLiveStart] = useState<number>(() => {
+    if (typeof window === "undefined") return 0;
+    // ?start=<epoch> wins over the stored value, so a session can be handed over or
+    // recovered by link — the tape is deterministic, so the same start replays the same
+    // candles, the same trades and the same prices, second for second.
+    const q = Number(new URLSearchParams(window.location.search).get("start") || 0);
+    const v = Number.isFinite(q) && q > 0 ? q : Number(window.localStorage.getItem(LIVE_KEY) || 0);
+    if (!Number.isFinite(v) || v <= 0) return 0;
+    if (Date.now() / 1000 - v > 840 * 60) { window.localStorage.removeItem(LIVE_KEY); return 0; }
+    if (q > 0) window.localStorage.setItem(LIVE_KEY, String(q));
+    return v;
+  });
+  // one place that switches session, so persistence can never drift from what is on screen
+  const goSession = (st: number) => {
+    setLiveStart(st);
+    if (typeof window !== "undefined") {
+      if (st) window.localStorage.setItem(LIVE_KEY, String(st));
+      else window.localStorage.removeItem(LIVE_KEY);
+    }
+    setFocus(null);
+    setSelCode(null);
+    load("synthetic", seed, code, tfSec, false, decMode, "", st);
+  };
   const [nowSec, setNowSec] = useState(() => Math.floor(Date.now() / 1000));
   useEffect(() => {
     if (!liveStart) return;                              // only tick while a live session runs
@@ -471,22 +501,29 @@ export default function ProofLab() {
                 real minute. 전체 하루 keeps the complete recorded day for instant auditing. */}
             <span className="w-px h-5 bg-[var(--border-default)]" />
             {liveStart === 0 ? (
-              <button onClick={() => { const st = Math.floor(Date.now() / 1000); setLiveStart(st); setFocus(null); setSelCode(null); load("synthetic", seed, code, tfSec, false, decMode, "", st); }}
-                className="text-[11.5px] font-extrabold px-3 py-1 rounded-lg text-white" style={{ background: "#2e7d32" }}
-                title={t("지금 이 순간부터 새 장을 시작합니다 — 기존 매매 기록은 지워지고, 1분에 캔들 1개씩 실시간으로 쌓입니다", "start a fresh market from this second — the existing trades are cleared and candles build one per real minute")}>
-                ▶ {t("지금부터 시작", "start from now")}
-              </button>
+              <>
+                <button onClick={() => goSession(Math.floor(Date.now() / 1000))}
+                  className="text-[11.5px] font-extrabold px-3 py-1 rounded-lg text-white" style={{ background: "#2e7d32" }}
+                  title={t("지금 이 순간부터 새 장을 시작합니다 — 기존 매매 기록은 지워지고, 1분에 캔들 1개씩 실시간으로 쌓입니다", "start a fresh market from this second — the existing trades are cleared and candles build one per real minute")}>
+                  ▶ {t("지금부터 시작", "start from now")}
+                </button>
+                {/* say what this view IS: a recorded sample labelled 09:00~23:00. Without this
+                    the morning reader sees future times and assumes it is yesterday's data. */}
+                <span className="text-[10px] px-2 py-0.5 rounded-full" style={{ background: "rgba(230,81,0,0.12)", color: GOLD }}>
+                  📅 {t("지금은 '녹화된 샘플 하루'(09:00~23:00)를 보는 중 — 현재 시각과 무관합니다. 실시간으로 보려면 ▶ 지금부터 시작", "currently showing the RECORDED sample day (09:00-23:00) — not tied to the clock. For a live run press ▶ start from now")}
+                </span>
+              </>
             ) : (
               <>
                 <span className="text-[11.5px] font-extrabold px-3 py-1 rounded-lg text-white" style={{ background: "#2e7d32" }}>
                   ● {t(`실시간 ${liveMin}분 경과`, `LIVE — ${liveMin} min elapsed`)}
                 </span>
-                <button onClick={() => { setLiveStart(0); setFocus(null); setSelCode(null); load("synthetic", seed, code, tfSec, false, decMode, "", 0); }}
+                <button onClick={() => goSession(0)}
                   className="text-[11.5px] font-bold px-3 py-1 rounded-lg border" style={{ borderColor: GOLD, color: GOLD }}
                   title={t("완성된 하루 전체(09:00~23:00, 약 62매매)로 돌아갑니다 — 즉시 전수 검증용", "back to the complete recorded day (09:00-23:00, ~62 trades) — for auditing everything at once")}>
                   📅 {t("전체 하루 보기", "full day")}
                 </button>
-                <button onClick={() => { const st = Math.floor(Date.now() / 1000); setLiveStart(st); setFocus(null); setSelCode(null); load("synthetic", seed, code, tfSec, false, decMode, "", st); }}
+                <button onClick={() => goSession(Math.floor(Date.now() / 1000))}
                   className="text-[11.5px] font-bold px-3 py-1 rounded-lg border" style={{ borderColor: "#2e7d32", color: "#2e7d32" }}
                   title={t("기록을 지우고 지금부터 다시 시작", "clear the record and restart from now")}>
                   ↻ {t("다시 시작", "restart")}
