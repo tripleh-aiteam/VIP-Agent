@@ -72,6 +72,15 @@ _PLAN = ([+1] * 8 + [-1] * 8                       # WIN  — bought on the 3rd,
 
 _SYMBOLS = [("PRF1", "프루프전자", 205_000), ("PRF2", "시뮬중공업", 19_500), ("PRF3", "테스트화학", 78_000)]
 
+# Which artificial companies the Proof Lab actually SHOWS. Three at once was too much to
+# read, so the boss now checks one stock at a time (2026-07-31: "hide all info related to
+# these 2 companies, I will check only with one stock").
+# The full list above is kept untouched on purpose: each symbol's prices come from
+# `seed + index * 101`, so removing a row would renumber the others and silently change
+# 프루프전자's tape. Filtering by code here keeps every price and time exactly as it was.
+# To bring one back, just add its code to this set.
+_SHOWN = {"PRF1"}
+
 
 def _label(epoch9: int, period: int) -> str:
     dt = datetime.fromtimestamp(epoch9 - 9 * 3600, KST)
@@ -402,6 +411,8 @@ def run_synthetic(seed: int = 7, period: int = 60, mode: str = "min1",
     symbols = []
     agg_pass = agg_total = agg_trades = 0
     for k, (code, name, base) in enumerate(_SYMBOLS):
+        if code not in _SHOWN:                            # hidden company — skip, keep k stable
+            continue
         t_base = _tick(base) or 1                         # ONE tick per symbol, everywhere
         sseed = seed + k * 101
         day0, secs = _seconds(sseed, base, start)         # THE market (per-second truth)
@@ -602,8 +613,12 @@ def self_check(seed: int = 7) -> dict[str, Any]:
             r = run_synthetic(seed=seed, period=p, mode=mode)
             wins = gross = net = 0.0
             n_tr = 0
-            for k, s in enumerate(r["symbols"]):
+            for s in r["symbols"]:
                 cs, day0 = s["candles"], None
+                # index by CODE, never by position in the response: hidden companies are
+                # filtered out of the payload, so position 0 is not necessarily _SYMBOLS[0]
+                # and a positional lookup would rebuild the wrong tape and cry false failures.
+                k = next(i for i, (c, _n, _b) in enumerate(_SYMBOLS) if c == s["code"])
                 _d0, secs = _seconds(seed + k * 101, _SYMBOLS[k][2])
                 # E) candles == their own seconds · F) continuous opens
                 prev_close = None

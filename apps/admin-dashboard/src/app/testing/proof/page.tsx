@@ -483,7 +483,7 @@ export default function ProofLab() {
                 </span>
                 <button onClick={() => { setLiveStart(0); setFocus(null); setSelCode(null); load("synthetic", seed, code, tfSec, false, decMode, "", 0); }}
                   className="text-[11.5px] font-bold px-3 py-1 rounded-lg border" style={{ borderColor: GOLD, color: GOLD }}
-                  title={t("완성된 하루 전체(약 186매매)로 돌아갑니다 — 즉시 전수 검증용", "back to the complete recorded day (~186 trades) — for auditing everything at once")}>
+                  title={t("완성된 하루 전체(09:00~23:00, 약 62매매)로 돌아갑니다 — 즉시 전수 검증용", "back to the complete recorded day (09:00-23:00, ~62 trades) — for auditing everything at once")}>
                   📅 {t("전체 하루 보기", "full day")}
                 </button>
                 <button onClick={() => { const st = Math.floor(Date.now() / 1000); setLiveStart(st); setFocus(null); setSelCode(null); load("synthetic", seed, code, tfSec, false, decMode, "", st); }}
@@ -530,8 +530,8 @@ export default function ProofLab() {
               {waiting
                 ? t(`아직 매수가 나올 수 없습니다 — 3연속 상승을 세려면 캔들이 최소 4개 필요합니다 (${4 - nC}분 남음). 화면이 비어 있는 것은 정상입니다.`,
                     `a buy is not yet possible — counting 3 rising candles needs at least 4 candles (${4 - nC} min to go). An empty screen here is normal.`)
-                : t("1분에 캔들 1개씩 쌓입니다. 첫 매수는 4분째, 첫 완료 매매(매수→매도)는 약 15분째에 나옵니다. 3종목 합쳐 시간당 12건 정도가 정상 속도입니다 — 그보다 느려 보여도 고장이 아닙니다.",
-                    "one candle per minute. The first BUY lands at minute 4 and the first completed round trip at about minute 15. Across the 3 companies the normal pace is roughly 12 trades per hour — slower than that early on is not a fault.")}
+                : t("1분에 캔들 1개씩 쌓입니다. 첫 매수는 4분째, 첫 완료 매매(매수→매도)는 약 11분째에 나옵니다. 1종목 기준 시간당 4~5건이 정상 속도이고, 중간에 10분 넘게 매매가 없는 구간도 정상입니다 — 2번만 오르고 멈추는 '함정' 구간에서는 규칙대로 사지 않습니다.",
+                    "one candle per minute. The first BUY lands at minute 4 and the first completed round trip at about minute 11. For a single company the normal pace is 4-5 trades per hour, and a quiet stretch of 10+ minutes is also normal — where the price rises only twice and stops, the rule correctly refuses to buy.")}
             </span>
           </div>
         );
