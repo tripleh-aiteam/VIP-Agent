@@ -27,8 +27,10 @@ type Trade = {
   net_pct: number;
 };
 type NoTrade = { hhmm: string; kind: string; note_ko: string; note_en: string };
+type OpenPos = { buy_idx: number; buy_hhmm: string; buy_closes: number[]; entry: number; last_px: number; unreal_pct: number };
 type SymBlock = {
   code: string; name: string; candles: Candle[]; trades: Trade[];
+  open_positions?: OpenPos[];
   no_trade_proofs: NoTrade[];
   verification: { trades: number; passed: number; total: number; pct: number; per_trade: { buy_hhmm: string; sell_hhmm: string; checks: Record<string, boolean>; passed: number; total: number }[] };
 };
@@ -56,7 +58,7 @@ const CHECK_LABELS: Record<string, [string, string]> = {
 };
 
 // ---- candle chart with ③▲/③▼ arrows on the exact signal candles ----
-function ProofChart({ candles, trades, focus, buyLabel, sellLabel }: { candles: Candle[]; trades: Trade[]; focus: number | null; buyLabel: string; sellLabel: string }) {
+function ProofChart({ candles, trades, focus, buyLabel, sellLabel, openIdxs, holdLabel }: { candles: Candle[]; trades: Trade[]; focus: number | null; buyLabel: string; sellLabel: string; openIdxs?: number[]; holdLabel?: string }) {
   const ref = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
     if (!ref.current || !candles.length) return;
@@ -82,6 +84,11 @@ function ProofChart({ candles, trades, focus, buyLabel, sellLabel }: { candles: 
         { time: candles[t.buy_idx]?.time, position: "belowBar", color: RED, shape: "arrowUp", text: `${buyLabel}${focus === i ? "★" : ""}` },
         { time: candles[t.sell_idx]?.time, position: "aboveBar", color: BLUE, shape: "arrowDown", text: `${sellLabel}${focus === i ? "★" : ""}` },
       ]).filter((m) => m.time != null);
+      for (const oi of openIdxs ?? []) {           // still-holding buys: gold arrow, no sell yet
+        const tm = candles[oi]?.time;
+        if (tm != null) markers.push({ time: tm, position: "belowBar", color: "#e65100", shape: "arrowUp", text: holdLabel ?? "HOLD" });
+      }
+      markers.sort((a, b) => (a.time as number) - (b.time as number));
       series.setMarkers(markers as never);
       if (focus != null && trades[focus]) {
         chart.timeScale().setVisibleLogicalRange({ from: trades[focus].buy_idx - 7, to: trades[focus].sell_idx + 7 } as never);
@@ -91,7 +98,7 @@ function ProofChart({ candles, trades, focus, buyLabel, sellLabel }: { candles: 
       cleanup = () => chart.remove();
     })();
     return () => { alive = false; cleanup(); };
-  }, [candles, trades, focus, buyLabel, sellLabel]);   // labels in deps → chart redraws on language switch
+  }, [candles, trades, focus, buyLabel, sellLabel, openIdxs, holdLabel]);   // labels in deps → chart redraws on language switch
   return <div ref={ref} style={{ width: "100%", height: 320 }} />;
 }
 
@@ -268,7 +275,8 @@ export default function ProofLab() {
       {/* ---- chart with arrows ---- */}
       {sym && (
         <div className="mt-3 rounded-xl border p-2" style={{ borderColor: "var(--border-default)", background: "var(--bg-elevated)" }}>
-          <ProofChart candles={sym.candles} trades={sym.trades} focus={focus} buyLabel={t("③▲매수", "③▲BUY")} sellLabel={t("③▼매도", "③▼SELL")} />
+          <ProofChart candles={sym.candles} trades={sym.trades} focus={focus} buyLabel={t("③▲매수", "③▲BUY")} sellLabel={t("③▼매도", "③▼SELL")}
+            openIdxs={(sym.open_positions ?? []).map((p) => p.buy_idx)} holdLabel={t("③▲보유중", "③▲HOLDING")} />
           <div className="px-2 pb-1 text-[11px] text-[var(--text-muted)]">
             {t("▲매수 화살표 = 정확히 3번째 양봉 · ▼매도 화살표 = 정확히 3번째 음봉. 거래를 클릭하면 확대 + 증거를 보여줍니다.",
                "▲BUY arrow = exactly the 3rd red candle · ▼SELL arrow = exactly the 3rd blue. Click a trade to zoom + see the evidence.")}
@@ -276,19 +284,52 @@ export default function ProofLab() {
         </div>
       )}
 
-      {/* ---- ALL-companies trade history (click → evidence) + win/loss summary ---- */}
+      {/* ---- 📌 open positions (bought, still waiting for the 3rd blue) ---- */}
+      {res && res.symbols.length > 0 && (() => {
+        const posRows = res.symbols.flatMap((s, si) => (s.open_positions ?? []).map((p) => ({ s, si, p })));
+        if (posRows.length === 0) return null;
+        return (
+          <div className="mt-3 rounded-xl border overflow-hidden" style={{ borderColor: "#e65100" }}>
+            <div className="px-4 py-2 border-b bg-[var(--bg-elevated)]" style={{ borderColor: "var(--border-default)" }}>
+              <b className="text-[13px]" style={{ color: "#e65100" }}>📌 {t(`보유 중 ${posRows.length}건 — 3번째 양봉에 샀고, 아직 3번째 음봉을 기다리는 중`, `${posRows.length} open position(s) — bought on the 3rd red, still waiting for the 3rd blue`)}</b>
+            </div>
+            <table className="w-full text-[12px] tabular-nums">
+              <thead><tr className="text-[10.5px] text-[var(--text-muted)]" style={{ background: "var(--bg-elevated)" }}>
+                <th className="text-left px-3 py-1.5">{t("종목", "Stock")}</th>
+                <th className="text-left px-2">{t("매수(3번째 양봉)", "BUY (3rd red)")}</th>
+                <th className="text-right px-2">{t("매수가", "entry")}</th>
+                <th className="text-right px-2">{t("현재가", "now")}</th>
+                <th className="text-right px-3">{t("평가손익", "unrealized")}</th>
+              </tr></thead>
+              <tbody>
+                {posRows.map((r, i) => (
+                  <tr key={i} onClick={() => { setSymIdx(r.si); setFocus(null); }}
+                    className="border-t border-[var(--border-default)]/40 cursor-pointer hover:bg-[var(--bg-elevated)]">
+                    <td className="px-3 py-1.5 font-bold text-[var(--text-primary)]">{r.s.name}</td>
+                    <td className="px-2 font-bold" style={{ color: "#e65100" }}>▲ {r.p.buy_hhmm} {t("보유중", "holding")}</td>
+                    <td className="text-right px-2">₩{fmt(r.p.entry)}</td>
+                    <td className="text-right px-2">₩{fmt(r.p.last_px)}</td>
+                    <td className="text-right px-3 font-bold" style={{ color: r.p.unreal_pct > 0 ? RED : BLUE }}>{r.p.unreal_pct > 0 ? "+" : ""}{r.p.unreal_pct}%</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        );
+      })()}
+
+      {/* ---- 🔍 completed trade history (ALL companies, click → evidence) ---- */}
       {res && res.symbols.length > 0 && (() => {
         const rows = res.symbols
-          .flatMap((s, si) => s.trades.map((tr, ti) => ({ s, si, tr, ti, pc: s.verification.per_trade[ti] })))
+          .flatMap((s, si) => s.trades.map((tr, ti) => ({ s, si, tr, ti })))
           .sort((a, b) => (b.tr.sell_time ?? 0) - (a.tr.sell_time ?? 0));
         const wins = rows.filter((r) => r.tr.net_pct > 0).length;
         const losses = rows.filter((r) => r.tr.net_pct < 0).length;
-        const sumNet = rows.reduce((a, r) => a + (r.tr.net_pct || 0), 0);
         const winPct = rows.length ? Math.round((wins / rows.length) * 100) : 0;
         return (
           <div className="mt-3 rounded-xl border overflow-hidden" style={{ borderColor: GOLD }}>
             <div className="px-4 py-2 border-b bg-[var(--bg-elevated)]" style={{ borderColor: "var(--border-default)" }}>
-              <b className="text-[13px]" style={{ color: GOLD }}>🔍 {t("전체 거래 기록 (모든 종목) — 클릭하면 증거가 열립니다", "full trade history (ALL companies) — click a trade, the evidence opens")}</b>
+              <b className="text-[13px]" style={{ color: GOLD }}>🔍 {t("완료된 거래 기록 (모든 종목) — 클릭하면 증거가 열립니다", "completed trade history (ALL companies) — click a trade, the evidence opens")}</b>
             </div>
             {/* summary bar — like the Algo 3 history header */}
             <div className="px-4 py-2.5 border-b text-[13px] tabular-nums flex items-center gap-5 flex-wrap" style={{ borderColor: "var(--border-default)", background: "rgba(230,81,0,0.05)" }}>
@@ -296,7 +337,6 @@ export default function ProofLab() {
               <span style={{ color: RED }}>🟢 {wins}{t("승", "W")}</span>
               <span style={{ color: BLUE }}>🔴 {losses}{t("패", "L")}</span>
               <span className="font-extrabold" style={{ color: winPct >= 50 ? "#2e7d32" : RED }}>🏆 {t(`승률 ${winPct}%`, `${winPct}% win`)}</span>
-              <span className="font-extrabold" style={{ color: sumNet > 0 ? RED : sumNet < 0 ? BLUE : "var(--text-muted)" }}>Σ {t("합계", "total")} {sumNet > 0 ? "+" : ""}{sumNet.toFixed(2)}%</span>
               <span className="ml-auto text-[10.5px] text-[var(--text-muted)]">{t("증명 재생 기준 (실계좌 아님)", "proof replay — not the real account")}</span>
             </div>
             {rows.length === 0 ? (
@@ -310,7 +350,7 @@ export default function ProofLab() {
                 <th className="text-left px-2">{t("매수(3번째 양봉)", "BUY (3rd red)")}</th>
                 <th className="text-left px-2">{t("매도(3번째 음봉)", "SELL (3rd blue)")}</th>
                 <th className="text-right px-2">{t("매수가", "entry")}</th><th className="text-right px-2">{t("매도가", "exit")}</th>
-                <th className="text-right px-2">{t("손익", "net")}</th><th className="text-right px-3">{t("검증", "checks")}</th>
+                <th className="text-right px-3">{t("손익", "net")}</th>
               </tr></thead>
               <tbody>
                 {rows.map((r, i) => {
@@ -324,10 +364,7 @@ export default function ProofLab() {
                       <td className="px-2 font-bold" style={{ color: BLUE }}>▼ {r.tr.sell_hhmm}</td>
                       <td className="text-right px-2">₩{fmt(r.tr.entry)}</td>
                       <td className="text-right px-2">₩{fmt(r.tr.exit)}</td>
-                      <td className="text-right px-2 font-bold" style={{ color: r.tr.net_pct > 0 ? RED : BLUE }}>{r.tr.net_pct > 0 ? "+" : ""}{r.tr.net_pct}%</td>
-                      <td className="text-right px-3 font-extrabold" style={{ color: r.pc && r.pc.passed === r.pc.total ? "#2e7d32" : RED }}>
-                        {r.pc ? `${r.pc.passed}/${r.pc.total} ✓` : "-"}
-                      </td>
+                      <td className="text-right px-3 font-bold" style={{ color: r.tr.net_pct > 0 ? RED : BLUE }}>{r.tr.net_pct > 0 ? "+" : ""}{r.tr.net_pct}%</td>
                     </tr>
                   );
                 })}
