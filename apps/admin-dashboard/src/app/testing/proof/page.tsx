@@ -107,9 +107,9 @@ function TimelineCol({ rows, side, synthetic, t }: { rows: TlRow[]; side: "BUY" 
         ? t("🔔 종가 — 엔진이 읽는 유일한 가격 → 3연속 상승 확정!", "🔔 CLOSE — the ONLY price the engine reads → 3rd rise confirmed!")
         : t("🔔 종가 — 엔진이 읽는 유일한 가격 → 3연속 하락 확정!", "🔔 CLOSE — the ONLY price the engine reads → 3rd fall confirmed!");
       case "fill": return synthetic
-        ? (side === "BUY" ? t("⚡ 시장가 매수 → 호가창 best ask에 체결", "⚡ market BUY → filled at the book's best ask")
-                          : t("⚡ 시장가 매도 → 호가창 best bid에 체결", "⚡ market SELL → filled at the book's best bid"))
-        : t("⚡ 체결 (재생: 판단 종가로 표시 — 실전은 그 초의 실제 호가)", "⚡ fill (replay shows decision close — live uses that second's real book)");
+        ? (side === "BUY" ? t("⚡ 시장가 매수 → 이 '초'의 최저 매도호가(best ask)에 체결 — 지난 1분의 최저가가 아님! 과거 가격은 살 수 없음", "⚡ market BUY → the cheapest SELLER at THIS second (best ask) — NOT the minute's lowest price! the past can't be bought")
+                          : t("⚡ 시장가 매도 → 이 '초'의 최고 매수호가(best bid)에 체결 — 지난 1분의 최고가가 아님!", "⚡ market SELL → the highest BUYER at THIS second (best bid) — NOT the minute's highest price!"))
+        : t("⚡ 체결 (재생: 판단 종가로 표시 — 실전은 그 '초'의 실제 호가창)", "⚡ fill (replay shows decision close — live uses that second's real book)");
     }
   };
   return (
