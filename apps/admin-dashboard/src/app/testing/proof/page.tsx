@@ -23,13 +23,14 @@ type Trade = {
   buy_idx: number; buy_hhmm: string; buy_closes: number[]; entry: number; buy_book: Book;
   sell_idx: number; sell_hhmm: string; sell_closes: number[]; exit: number; sell_book: Book;
   buy_time?: number; sell_time?: number;
+  buy_sig_t?: string; buy_fill_t?: string; sell_sig_t?: string; sell_fill_t?: string;
   buy_timeline?: TlRow[]; sell_timeline?: TlRow[];
   buy_tapes?: { t: string; px: number; qty?: number }[][] | null;   // 60s tape per signal candle (1st/2nd/3rd)
   sell_tapes?: { t: string; px: number; qty?: number }[][] | null;
   net_pct: number;
 };
 type NoTrade = { hhmm: string; kind: string; note_ko: string; note_en: string };
-type OpenPos = { buy_idx: number; buy_hhmm: string; buy_closes: number[]; entry: number; last_px: number; unreal_pct: number };
+type OpenPos = { buy_idx: number; buy_hhmm: string; buy_closes: number[]; entry: number; last_px: number; unreal_pct: number; buy_sig_t?: string; buy_fill_t?: string };
 type SymBlock = {
   code: string; name: string; candles: Candle[]; trades: Trade[];
   open_positions?: OpenPos[];
@@ -41,7 +42,7 @@ type SymBlock = {
   verification: { trades: number; passed: number; total: number; pct: number; per_trade: { buy_hhmm: string; sell_hhmm: string; checks: Record<string, boolean>; passed: number; total: number }[] };
 };
 type ProofRes = {
-  source: string; seed?: number; need: number; rule_ko: string; rule_en: string; engine_fn: string;
+  source: string; seed?: number; period?: number; need: number; rule_ko: string; rule_en: string; engine_fn: string;
   symbols: SymBlock[];
   verification: { trades: number; passed: number; total: number; pct: number };
 };
@@ -273,12 +274,13 @@ export default function ProofLab() {
                     tape?: { t: string; px: number; qty: number; strength?: number | null }[] | null; prev_close?: number | null };
   const [fastBook, setFastBook] = useState<FastBook | null>(null);   // ⚡ 1s Kiwoom-speed ladder + 체결 feed
 
+  const [tfSec, setTfSec] = useState<60 | 30>(60);   // candle period: 1분봉(60s, default) or 30초봉
   const sourceRef = useRef(source);
   sourceRef.current = source;
-  const load = async (src = source, sd = seed, cd = code) => {
+  const load = async (src = source, sd = seed, cd = code, p = tfSec) => {
     setLoading(true); setFocus(null);
     try {
-      const r = await api<ProofRes>(`/paper-desk/proof/run?source=${src}&seed=${sd}&code=${cd}`);
+      const r = await api<ProofRes>(`/paper-desk/proof/run?source=${src}&seed=${sd}&code=${cd}&period=${p}`);
       // a slow response from the OTHER mode must never land after the user switched
       if (src === sourceRef.current && r?.source === src) { setRes(r); setSelCode(null); }
     } catch { /* keep last */ }
@@ -297,16 +299,17 @@ export default function ProofLab() {
     const nTr = (x: ProofRes | null) => (x ? x.symbols.reduce((a, s) => a + s.trades.length, 0) : 0);
     const iv = setInterval(() => {
       if (focusRef.current != null) return;              // don't shift the stage mid-demonstration
-      api<ProofRes>(`/paper-desk/proof/run?source=${source}&seed=${seed}&code=${code}`)
+      api<ProofRes>(`/paper-desk/proof/run?source=${source}&seed=${seed}&code=${code}&period=${tfSec}`)
         .then((r) => {
           if (r?.source !== sourceRef.current) return;   // stale cross-mode response — discard
+          if (r?.source === "synthetic" && (r.period ?? 60) !== tfSec) return;   // stale timeframe — discard
           setRes((old) => (r?.symbols?.length && nSy(r) >= nSy(old) && nTr(r) >= nTr(old) ? r : old));
         })
         .catch(() => {});
     }, source === "synthetic" ? 3_000 : code !== "ALL" ? 10_000 : 60_000);   // fast chips: syn 3s, single 10s, ALL sweep 60s
     return () => clearInterval(iv);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [source, code, seed]);
+  }, [source, code, seed, tfSec]);
 
   const symList = res?.symbols ?? [];
   const symIdx = Math.max(0, selCode ? symList.findIndex((s) => s.code === selCode) : 0);
@@ -325,7 +328,7 @@ export default function ProofLab() {
     if (focused || !symCode) { setFastBook(null); return; }
     let alive = true;
     const tick = () => {
-      api<FastBook & { ok?: boolean }>(`/paper-desk/proof/book?source=${source}&code=${symCode}&seed=${seed}`)
+      api<FastBook & { ok?: boolean }>(`/paper-desk/proof/book?source=${source}&code=${symCode}&seed=${seed}&period=${tfSec}`)
         .then((b) => { if (alive && b?.asks?.length) setFastBook(b); })
         .catch(() => {});
     };
@@ -333,7 +336,7 @@ export default function ProofLab() {
     const iv = setInterval(tick, 1_000);
     return () => { alive = false; clearInterval(iv); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [focused, symCode, source, seed]);
+  }, [focused, symCode, source, seed, tfSec]);
 
   return (
     <div className="max-w-[1100px] mx-auto px-4 py-6">
@@ -353,9 +356,9 @@ export default function ProofLab() {
             ← {t("전체 목록으로", "back to all trades")}
           </button>
           <b className="text-[14px] text-[var(--text-primary)]">{nm(sym)}</b>
-          <span className="text-[13px] tabular-nums font-bold" style={{ color: RED }}>▲ {t("체결", "fill")} {fillT(sel.buy_hhmm)} ₩{fmt(sel.entry)} <span className="text-[10px] opacity-70">({t(`신호 ${sel.buy_hhmm}:59`, `signal ${sel.buy_hhmm}:59`)})</span></span>
+          <span className="text-[13px] tabular-nums font-bold" style={{ color: RED }}>▲ {t("체결", "fill")} {sel.buy_fill_t ?? fillT(sel.buy_hhmm)} ₩{fmt(sel.entry)} <span className="text-[10px] opacity-70">({t(`신호 ${sel.buy_sig_t ?? `${sel.buy_hhmm}:59`}`, `signal ${sel.buy_sig_t ?? `${sel.buy_hhmm}:59`}`)})</span></span>
           <span className="text-[var(--text-muted)]">→</span>
-          <span className="text-[13px] tabular-nums font-bold" style={{ color: BLUE }}>▼ {t("체결", "fill")} {fillT(sel.sell_hhmm, "SELL")} ₩{fmt(sel.exit)} <span className="text-[10px] opacity-70">({t(`신호 ${sel.sell_hhmm}:59`, `signal ${sel.sell_hhmm}:59`)})</span></span>
+          <span className="text-[13px] tabular-nums font-bold" style={{ color: BLUE }}>▼ {t("체결", "fill")} {sel.sell_fill_t ?? fillT(sel.sell_hhmm, "SELL")} ₩{fmt(sel.exit)} <span className="text-[10px] opacity-70">({t(`신호 ${sel.sell_sig_t ?? `${sel.sell_hhmm}:59`}`, `signal ${sel.sell_sig_t ?? `${sel.sell_hhmm}:59`}`)})</span></span>
           <span className="text-[13.5px] font-extrabold tabular-nums" style={{ color: sel.net_pct > 0 ? RED : BLUE }}>{sel.net_pct > 0 ? "+" : ""}{sel.net_pct}%</span>
           <span className="ml-auto text-[11px] text-[var(--text-muted)]">{t("아래: 차트 화살표 · 시각 · 가격 산출 근거를 그대로 비교", "below: chart arrows · exact times · the price math to compare")}</span>
         </div>
@@ -375,10 +378,19 @@ export default function ProofLab() {
           📡 {t("키움 실데이터 (오늘 1분봉)", "Real Kiwoom data (today's 1-min)")}
         </button>
         {source === "synthetic" ? (
-          <button onClick={() => { const s = Math.floor(Math.random() * 9999); setSeed(s); load("synthetic", s, code); }}
-            className="text-[11.5px] font-bold px-3 py-1 rounded-lg border" style={{ borderColor: GOLD, color: GOLD }}>
-            🎲 {t(`새 시뮬레이션 (seed ${seed})`, `new simulation (seed ${seed})`)}
-          </button>
+          <>
+            {([60, 30] as const).map((p) => (
+              <button key={p} onClick={() => { setTfSec(p); load("synthetic", seed, code, p); }}
+                className="text-[11.5px] font-extrabold px-3 py-1 rounded-lg"
+                style={tfSec === p ? { background: GOLD, color: "#fff" } : { border: "1px solid var(--border-default)", color: "var(--text-secondary)" }}>
+                {p === 60 ? t("1분봉", "1-min") : t("30초봉", "30-sec")}
+              </button>
+            ))}
+            <button onClick={() => { const s = Math.floor(Math.random() * 9999); setSeed(s); load("synthetic", s, code); }}
+              className="text-[11.5px] font-bold px-3 py-1 rounded-lg border" style={{ borderColor: GOLD, color: GOLD }}>
+              🎲 {t(`새 시뮬레이션 (seed ${seed})`, `new simulation (seed ${seed})`)}
+            </button>
+          </>
         ) : (
           <>
             <select value={code} onChange={(e) => { setCode(e.target.value); load("kiwoom", seed, e.target.value); }}
@@ -539,7 +551,7 @@ export default function ProofLab() {
           if (source !== "synthetic") { setMinTape({ key, tape: null, err: "nohist" }); return; }
           try {
             const r = await api<{ ok: boolean; tape?: { t: string; px: number; qty?: number }[] }>(
-              `/paper-desk/proof/minute_tape?source=synthetic&code=${sym.code}&seed=${seed}&hhmm=${encodeURIComponent(hhmm)}`);
+              `/paper-desk/proof/minute_tape?source=synthetic&code=${sym.code}&seed=${seed}&hhmm=${encodeURIComponent(hhmm)}&period=${tfSec}`);
             setMinTape({ key, tape: r.ok ? (r.tape ?? null) : null, err: r.ok ? undefined : "nf" });
           } catch { setMinTape({ key, tape: null, err: "nf" }); }
         };
@@ -596,7 +608,7 @@ export default function ProofLab() {
                         <td colSpan={7} className="px-6 py-2" style={{ background: "rgba(128,128,128,0.05)" }}>
                           {minTape?.tape ? (
                             <>
-                              <div className="text-[10px] font-bold text-[var(--text-muted)] mb-1">🎬 {t(`${c.hhmm}의 초 단위 전체 가격 (60초) — 마지막 줄이 이 분의 종가`, `every second of ${c.hhmm} (all 60) — the last row is this minute's close`)}</div>
+                              <div className="text-[10px] font-bold text-[var(--text-muted)] mb-1">🎬 {t(`${c.hhmm}의 초 단위 전체 가격 (${minTape.tape.length}초) — 마지막 줄이 이 캔들의 종가`, `every second of ${c.hhmm} (all ${minTape.tape.length}) — the last row is this candle's close`)}</div>
                               <div className="rounded-lg border overflow-y-auto tabular-nums text-[11px]" style={{ maxHeight: 140, borderColor: "var(--border-default)" }}>
                                 {minTape.tape.map((r2, j) => {
                                   const last = j === minTape.tape!.length - 1;
@@ -713,7 +725,7 @@ export default function ProofLab() {
                   <tr key={i} onClick={() => { setSelCode(r.s.code); setFocus(null); }}
                     className="border-t border-[var(--border-default)]/40 cursor-pointer hover:bg-[var(--bg-elevated)]">
                     <td className="px-3 py-1.5 font-bold text-[var(--text-primary)]">{nm(r.s)}</td>
-                    <td className="px-2 font-bold" style={{ color: "#e65100" }}>▲ {t("체결", "fill")} {fillT(r.p.buy_hhmm)} {t("보유중", "holding")} <span className="text-[9.5px] opacity-70">({t(`신호 ${r.p.buy_hhmm}`, `sig ${r.p.buy_hhmm}`)})</span></td>
+                    <td className="px-2 font-bold" style={{ color: "#e65100" }}>▲ {t("체결", "fill")} {r.p.buy_fill_t ?? fillT(r.p.buy_hhmm)} {t("보유중", "holding")} <span className="text-[9.5px] opacity-70">({t(`신호 ${r.p.buy_sig_t ?? r.p.buy_hhmm}`, `sig ${r.p.buy_sig_t ?? r.p.buy_hhmm}`)})</span></td>
                     <td className="text-right px-2">₩{fmt(r.p.entry)}</td>
                     <td className="text-right px-2">₩{fmt(r.p.last_px)}</td>
                     <td className="text-right px-3 font-bold" style={{ color: r.p.unreal_pct > 0 ? RED : BLUE }}>{r.p.unreal_pct > 0 ? "+" : ""}{r.p.unreal_pct}%</td>
@@ -730,7 +742,7 @@ export default function ProofLab() {
         // merge the payload into the ledger of ITS OWN source (tag from the data, never the UI
         // state — a stale payload from the other mode can't pollute this mode's history)
         const synData = res.source === "synthetic";
-        const nsData = synData ? `syn:${res.seed ?? seed}` : "kiwoom";
+        const nsData = synData ? `syn:${res.seed ?? seed}:${res.period ?? 60}` : "kiwoom";
         const bucketData = (histRef.current[nsData] ??= {});
         for (const s of res.symbols) for (const tr of s.trades) {
           const k = synData ? `${s.code}|i${tr.buy_idx}-${tr.sell_idx}` : `${s.code}|${tr.buy_hhmm}|${tr.sell_hhmm}`;
@@ -738,7 +750,7 @@ export default function ProofLab() {
         }
         // display the CURRENT mode's ledger + hard filter: artificial (PRF*) companies never in
         // Kiwoom history, real companies never in artificial history
-        const nsView = source === "synthetic" ? `syn:${seed}` : "kiwoom";
+        const nsView = source === "synthetic" ? `syn:${seed}:${tfSec}` : "kiwoom";
         const isFake = (c: string) => c.startsWith("PRF");
         const rows = Object.values(histRef.current[nsView] ?? {})
           .filter((r) => (source === "synthetic" ? isFake(r.code) : !isFake(r.code)))
@@ -788,12 +800,12 @@ export default function ProofLab() {
                       style={{ background: active ? "rgba(230,81,0,0.08)" : "transparent" }}>
                       <td className="px-3 py-1.5 font-bold text-[var(--text-primary)]">{nm(r)}</td>
                       <td className="px-2 font-bold" style={{ color: RED }}>
-                        <div>▲ {fillT(r.tr.buy_hhmm)}</div>
-                        <div className="text-[9.5px] opacity-70 font-normal">{t(`신호 ${r.tr.buy_hhmm}:59`, `signal ${r.tr.buy_hhmm}:59`)}</div>
+                        <div>▲ {r.tr.buy_fill_t ?? fillT(r.tr.buy_hhmm)}</div>
+                        <div className="text-[9.5px] opacity-70 font-normal">{t(`신호 ${r.tr.buy_sig_t ?? `${r.tr.buy_hhmm}:59`}`, `signal ${r.tr.buy_sig_t ?? `${r.tr.buy_hhmm}:59`}`)}</div>
                       </td>
                       <td className="px-2 font-bold" style={{ color: BLUE }}>
-                        <div>▼ {fillT(r.tr.sell_hhmm, "SELL")}</div>
-                        <div className="text-[9.5px] opacity-70 font-normal">{t(`신호 ${r.tr.sell_hhmm}:59`, `signal ${r.tr.sell_hhmm}:59`)}</div>
+                        <div>▼ {r.tr.sell_fill_t ?? fillT(r.tr.sell_hhmm, "SELL")}</div>
+                        <div className="text-[9.5px] opacity-70 font-normal">{t(`신호 ${r.tr.sell_sig_t ?? `${r.tr.sell_hhmm}:59`}`, `signal ${r.tr.sell_sig_t ?? `${r.tr.sell_hhmm}:59`}`)}</div>
                       </td>
                       <td className="text-right px-2">₩{fmt(r.tr.entry)}</td>
                       <td className="text-right px-2">₩{fmt(r.tr.exit)}</td>
@@ -821,7 +833,7 @@ export default function ProofLab() {
             if (!cd) return null;
             return (
               <div key={side} className="rounded-xl border-2 p-4" style={{ borderColor: col, background: "var(--bg-elevated)" }}>
-                <b className="text-[13.5px]" style={{ color: col }}>{isBuy ? "▲" : "▼"} {t(isBuy ? "매수 체결" : "매도 체결", `${side} fill`)} {fillT(hh, side)} — ₩{fmt(fill)} <span className="text-[10.5px] opacity-70">({t(`신호: ${hh}:59 종가 확정`, `signal: ${hh}:59 close confirmed`)})</span></b>
+                <b className="text-[13.5px]" style={{ color: col }}>{isBuy ? "▲" : "▼"} {t(isBuy ? "매수 체결" : "매도 체결", `${side} fill`)} {(isBuy ? sel.buy_fill_t : sel.sell_fill_t) ?? fillT(hh, side)} — ₩{fmt(fill)} <span className="text-[10.5px] opacity-70">({t(`신호: ${(isBuy ? sel.buy_sig_t : sel.sell_sig_t) ?? `${hh}:59`} 종가 확정`, `signal: ${(isBuy ? sel.buy_sig_t : sel.sell_sig_t) ?? `${hh}:59`} close confirmed`)})</span></b>
                 {/* 🕯️ the 3 candles AS NUMBERS — red/blue judged without any chart */}
                 {(() => {
                   const idx = isBuy ? sel.buy_idx : sel.sell_idx;
@@ -880,7 +892,7 @@ export default function ProofLab() {
                   return (
                     <div className="mt-2">
                       <div className="text-[10.5px] font-bold text-[var(--text-muted)] mb-1">
-                        🎬 {t(`${ordName} 캔들(${minuteHH})의 초 단위 전체 가격 (60초) — 위 1·2·3번째 줄을 클릭해 분을 전환`,
+                        🎬 {t(`${ordName} 캔들(${minuteHH})의 초 단위 전체 가격 (${tape.length}초) — 위 1·2·3번째 줄을 클릭해 캔들 전환`,
                               `every second of the ${ordName} candle (${minuteHH}) — click the 1st/2nd/3rd rows above to switch minutes`)}
                       </div>
                       <div className="rounded-lg border overflow-y-auto tabular-nums text-[11px]" style={{ maxHeight: 150, borderColor: "var(--border-default)" }}>
@@ -896,20 +908,20 @@ export default function ProofLab() {
                           );
                         })}
                       </div>
-                      <div className="mt-1 text-[10px] text-[var(--text-muted)]">{t("이 60개 가격 중 어떤 것도 '선택'되지 않음 — 각 분의 마지막(:59) 종가만 판단에 쓰이고, 체결은 다음 초의 호가창에서.", "none of these 60 prices is 'picked' — only each minute's :59 close judges; the fill comes from the NEXT second's order book.")}</div>
+                      <div className="mt-1 text-[10px] text-[var(--text-muted)]">{t(`이 ${tape.length}개 가격 중 어떤 것도 '선택'되지 않음 — 각 캔들의 마지막 종가만 판단에 쓰이고, 체결은 다음 초의 호가창에서.`, `none of these ${tape.length} prices is 'picked' — only each candle's last close judges; the fill comes from the NEXT second's order book.`)}</div>
                     </div>
                   );
                 })()}
                 {/* why exactly this price — the step-by-step proof (boss 2026-07-30, easy words) */}
                 <div className="mt-2 text-[12px] leading-relaxed flex flex-col gap-1.5">
                   <div className="text-[10.5px] font-bold" style={{ color: col }}>❓ {t("왜 정확히 이 가격인가 — 순서대로", "why EXACTLY this price — step by step")}</div>
-                  <div>① {t(`${hh}:00~:59의 여러 가격 = 이미 끝난 과거 거래(다른 사람들끼리 체결한 것). 과거는 살 수 없으니 여기서 가격을 고르지 않습니다.`,
-                             `the many prices in ${hh}:00–:59 = the PAST — deals other people already finished. The past can't be bought, so no price is picked from here.`)}</div>
+                  <div>① {t(`${hh} 캔들(${res?.period ?? 60}초)의 여러 가격 = 이미 끝난 과거 거래(다른 사람들끼리 체결한 것). 과거는 살 수 없으니 여기서 가격을 고르지 않습니다.`,
+                             `the many prices in the ${hh} candle (${res?.period ?? 60}s) = the PAST — deals other people already finished. The past can't be bought, so no price is picked from here.`)}</div>
                   <div>② {isBuy
-                    ? t(`이 1분의 쓰임은 딱 하나 — :59 종가 ₩${fmt(cd.close)}로 "3연속 상승 맞다" 확인 → 사자 결정.`,
-                        `that minute is used for ONE thing only — the :59 close ₩${fmt(cd.close)} confirms "yes, 3rd rise" → decision: BUY.`)
-                    : t(`이 1분의 쓰임은 딱 하나 — :59 종가 ₩${fmt(cd.close)}로 "3연속 하락 맞다" 확인 → 팔자 결정.`,
-                        `that minute is used for ONE thing only — the :59 close ₩${fmt(cd.close)} confirms "yes, 3rd fall" → decision: SELL.`)}</div>
+                    ? t(`이 캔들의 쓰임은 딱 하나 — 마지막 종가 ₩${fmt(cd.close)}로 "3연속 상승 맞다" 확인 → 사자 결정.`,
+                        `that candle is used for ONE thing only — its last close ₩${fmt(cd.close)} confirms "yes, 3rd rise" → decision: BUY.`)
+                    : t(`이 캔들의 쓰임은 딱 하나 — 마지막 종가 ₩${fmt(cd.close)}로 "3연속 하락 맞다" 확인 → 팔자 결정.`,
+                        `that candle is used for ONE thing only — its last close ₩${fmt(cd.close)} confirms "yes, 3rd fall" → decision: SELL.`)}</div>
                   <div>③ {t("다음 1분은 아직 오지 않은 미래 → 고를 가격 자체가 없습니다.",
                              "the next minute hasn't happened yet → there is no price range to choose from either.")}</div>
                   <div>④ {book
