@@ -103,40 +103,77 @@ function ProofChart({ candles, trades, focus, buyLabel, sellLabel, openIdxs, hol
   return <div ref={ref} style={{ width: "100%", height: 320 }} />;
 }
 
-// ---- 📗 Kiwoom-style price LADDER (가격별 잔량표) — sellers above, buyers below ----
-function Ladder({ book, t, note }: { book: { asks: [number, number][]; bids: [number, number][]; best_ask: number; best_bid: number; time?: string }; t: (k: string, e: string) => string; note: string }) {
+// ---- 📗 Kiwoom-style price LADDER (호가창) — 잔량·호가·등락률, 현재가 row, 총잔량 totals ----
+function Ladder({ book, t, note, prevClose, lastPx }: {
+  book: { asks: [number, number][]; bids: [number, number][]; best_ask: number; best_bid: number; time?: string };
+  t: (k: string, e: string) => string; note: string; prevClose?: number | null; lastPx?: number | null;
+}) {
   const maxQ = Math.max(...book.asks.map((a) => a[1]), ...book.bids.map((b) => b[1]), 1);
   const asksDesc = [...book.asks].sort((a, b) => b[0] - a[0]);   // highest ask on top, best ask just above center
+  const totAsk = book.asks.reduce((a, [, q]) => a + q, 0);
+  const totBid = book.bids.reduce((a, [, q]) => a + q, 0);
+  const pct = (p: number) => (prevClose ? ((p / prevClose - 1) * 100) : null);
+  const pctCell = (p: number) => {
+    const v = pct(p);
+    if (v == null) return <span className="text-[var(--text-muted)]">-</span>;
+    return <span style={{ color: v > 0 ? RED : v < 0 ? BLUE : "var(--text-muted)" }}>{v > 0 ? "+" : ""}{v.toFixed(2)}%</span>;
+  };
+  const d = prevClose != null && lastPx != null ? Math.round(lastPx - prevClose) : null;
   return (
     <div className="px-2 py-2">
       <div className="px-2 pb-1 text-[10.5px] text-[var(--text-muted)]">{note}</div>
+      {/* Kiwoom-style header: 현재가 · 전일대비 · 시간 */}
+      {lastPx != null && (
+        <div className="mx-2 mb-1 px-3 py-1.5 rounded-lg flex items-center gap-3 tabular-nums" style={{ background: "rgba(128,128,128,0.08)" }}>
+          <span className="text-[10.5px] text-[var(--text-muted)]">{t("현재가", "now")}</span>
+          <b className="text-[15px]" style={{ color: d == null ? "var(--text-primary)" : d > 0 ? RED : d < 0 ? BLUE : "var(--text-primary)" }}>₩{fmt(lastPx)}</b>
+          {d != null && (
+            <b className="text-[12px]" style={{ color: d > 0 ? RED : d < 0 ? BLUE : "var(--text-muted)" }}>
+              {d === 0 ? "0" : `${d > 0 ? "▲" : "▼"} ${fmt(Math.abs(d))}`} ({pct(lastPx)?.toFixed(2)}%)
+            </b>
+          )}
+          {book.time && <span className="ml-auto text-[10.5px] text-[var(--text-muted)]">⚡ {book.time}</span>}
+        </div>
+      )}
       <table className="w-full tabular-nums text-[12px]">
         <thead><tr className="text-[10px] text-[var(--text-muted)]">
-          <th className="text-right px-2 w-[32%]">{t("매도 잔량 (팔려는 수량)", "sellers waiting (qty)")}</th>
-          <th className="text-center px-2">{t("가격", "price")}</th>
-          <th className="text-left px-2 w-[32%]">{t("매수 잔량 (사려는 수량)", "buyers waiting (qty)")}</th>
+          <th className="text-right px-2 w-[28%]">{t("매도잔량", "sellers qty")}</th>
+          <th className="text-center px-2">{t("호가", "price")}</th>
+          <th className="text-center px-2 w-[13%]">{t("등락률", "vs prev %")}</th>
+          <th className="text-left px-2 w-[28%]">{t("매수잔량", "buyers qty")}</th>
         </tr></thead>
         <tbody>
           {asksDesc.map(([p, q], i) => (
-            <tr key={`a${i}`} className="border-t border-[var(--border-default)]/30" style={{ background: p === book.best_ask ? "rgba(211,47,47,0.10)" : "transparent" }}>
+            <tr key={`a${i}`} className="border-t border-[var(--border-default)]/30"
+              style={{ background: p === book.best_ask ? "rgba(211,47,47,0.10)" : "transparent", outline: lastPx === p ? `1.5px solid ${RED}` : undefined }}>
               <td className="text-right px-2 relative">
                 <div style={{ position: "absolute", right: 0, top: 2, bottom: 2, width: `${Math.round((q / maxQ) * 100)}%`, background: "rgba(211,47,47,0.14)", borderRadius: 3 }} />
                 <span className="relative font-bold" style={{ color: RED }}>{fmt(q)}</span>
               </td>
-              <td className="text-center px-2 font-extrabold" style={{ color: RED }}>₩{fmt(p)}{p === book.best_ask ? <span className="text-[10px]"> {t("← 매수는 여기서 체결", "← BUY fills HERE")}</span> : null}</td>
+              <td className="text-center px-2 font-extrabold" style={{ color: RED }}>₩{fmt(p)}{p === book.best_ask ? <span className="text-[10px]"> {t("← 매수 체결", "← BUY here")}</span> : null}</td>
+              <td className="text-center px-2 text-[11px]">{pctCell(p)}</td>
               <td />
             </tr>
           ))}
           {book.bids.map(([p, q], i) => (
-            <tr key={`b${i}`} className="border-t border-[var(--border-default)]/30" style={{ background: p === book.best_bid ? "rgba(21,101,192,0.10)" : "transparent" }}>
+            <tr key={`b${i}`} className="border-t border-[var(--border-default)]/30"
+              style={{ background: p === book.best_bid ? "rgba(21,101,192,0.10)" : "transparent", outline: lastPx === p ? `1.5px solid ${BLUE}` : undefined }}>
               <td />
-              <td className="text-center px-2 font-extrabold" style={{ color: BLUE }}>₩{fmt(p)}{p === book.best_bid ? <span className="text-[10px]"> {t("← 매도는 여기서 체결", "← SELL fills HERE")}</span> : null}</td>
+              <td className="text-center px-2 font-extrabold" style={{ color: BLUE }}>₩{fmt(p)}{p === book.best_bid ? <span className="text-[10px]"> {t("← 매도 체결", "← SELL here")}</span> : null}</td>
+              <td className="text-center px-2 text-[11px]">{pctCell(p)}</td>
               <td className="text-left px-2 relative">
                 <div style={{ position: "absolute", left: 0, top: 2, bottom: 2, width: `${Math.round((q / maxQ) * 100)}%`, background: "rgba(21,101,192,0.14)", borderRadius: 3 }} />
                 <span className="relative font-bold" style={{ color: BLUE }}>{fmt(q)}</span>
               </td>
             </tr>
           ))}
+          {/* Kiwoom bottom totals: 총잔량 */}
+          <tr className="border-t-2" style={{ borderColor: "var(--border-default)" }}>
+            <td className="text-right px-2 py-1 font-extrabold" style={{ color: RED }}>{fmt(totAsk)}</td>
+            <td className="text-center px-2 py-1 text-[10.5px] text-[var(--text-muted)]">{t("총잔량", "totals")}</td>
+            <td className="text-center px-2 py-1 text-[10px]" style={{ color: totBid > totAsk ? RED : BLUE }}>{totBid > totAsk ? t("매수우세", "buyers↑") : t("매도우세", "sellers↑")}</td>
+            <td className="text-left px-2 py-1 font-extrabold" style={{ color: BLUE }}>{fmt(totBid)}</td>
+          </tr>
         </tbody>
       </table>
     </div>
@@ -372,6 +409,8 @@ export default function ProofLab() {
             if (!lb) return <div className="px-3 py-6 text-center text-[12px] text-[var(--text-muted)]">{t("호가 데이터 없음", "no book data")}</div>;
             return (
               <Ladder book={lb} t={t}
+                prevClose={fastBook?.prev_close ?? null}
+                lastPx={fastBook?.tape?.length ? fastBook.tape[fastBook.tape.length - 1].px : null}
                 note={source === "synthetic"
                   ? t(`${nm(sym)} — 가격별 대기 수량표 (프로그램은 이 표에서 체결가를 고릅니다: 매수=최저 매도호가, 매도=최고 매수호가)`,
                       `${nm(sym)} — quantities waiting per price (the program picks its fill from THIS table: buy = lowest seller, sell = highest buyer)`)
