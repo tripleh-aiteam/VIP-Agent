@@ -109,20 +109,20 @@ def _seconds(seed: int, base_px: float) -> tuple[int, list[dict]]:
         step = _PLAN[m % len(_PLAN)]                     # one planted step per MINUTE
         delta = 0 if step == 0 else step * t * rm.choice([1, 1, 2])
         o, c = px, px + delta
-        hi = max(o, c) + t * rm.choice([1, 1, 2])        # top wick >= 1 tick (fills always print inside)
-        lo = min(o, c) - t * rm.choice([0, 1])
-        hs, ls = sorted(rm.sample(range(4, 56), 2))      # the seconds that touch high / low
+        # REAL intra-minute life (boss 2026-07-30): the price wiggles a few ticks around the
+        # path from open to close, so finer candles (15/30/40s) get real bodies instead of
+        # flat lines. High/low are whatever the walk actually touches — nothing is imposed.
+        amp = rm.choice([2, 3, 3, 4])                    # swing amplitude in ticks
         for s in range(60):
             off = m * 60 + s
             if off >= total_sec:
                 break
-            p = o + (c - o) * s / 59 + rm.choice([-1, 0, 0, 1]) * t
-            p = round(p / t) * t
+            path = o + (c - o) * s / 59
+            wig = rm.choice([-amp, -2, -2, -1, -1, 0, 0, 1, 1, 2, 2, amp]) * t
+            p = round((path + wig) / t) * t
             if s == 0: p = o                             # :00 = the minute's open (= prev close)
-            if s == hs: p = hi
-            if s == ls: p = lo
             if s == 59: p = c                            # the minute's CLOSE = what the engine reads
-            secs.append({"off": off, "px": min(max(p, lo), hi), "qty": rm.randint(1, 80) * 10})
+            secs.append({"off": off, "px": p, "qty": rm.randint(1, 80) * 10})
         px = c
     return day0, secs
 
