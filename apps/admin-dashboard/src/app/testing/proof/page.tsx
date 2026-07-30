@@ -137,15 +137,22 @@ function Ladder({ book, t, note, prevClose, lastPx }: {
       )}
       <table className="w-full tabular-nums text-[12px]">
         <thead><tr className="text-[10px] text-[var(--text-muted)]">
-          <th className="text-right px-2 w-[28%]">{t("매도잔량", "sellers qty")}</th>
+          <th className="text-center px-1 w-[72px]">{t("시각", "time")}</th>
+          <th className="text-right px-2 w-[24%]">{t("매도잔량", "sellers qty")}</th>
           <th className="text-center px-2">{t("호가", "price")}</th>
           <th className="text-center px-2 w-[13%]">{t("등락률", "vs prev %")}</th>
-          <th className="text-left px-2 w-[28%]">{t("매수잔량", "buyers qty")}</th>
+          <th className="text-left px-2 w-[24%]">{t("매수잔량", "buyers qty")}</th>
         </tr></thead>
         <tbody>
           {asksDesc.map(([p, q], i) => (
             <tr key={`a${i}`} className="border-t border-[var(--border-default)]/30"
               style={{ background: p === book.best_ask ? "rgba(211,47,47,0.10)" : "transparent", outline: lastPx === p ? `1.5px solid ${RED}` : undefined }}>
+              {i === 0 && (
+                <td rowSpan={asksDesc.length + book.bids.length + 1} className="px-1 text-center align-middle border-r" style={{ borderColor: "var(--border-default)", background: "rgba(0,131,143,0.05)" }}>
+                  <div className="font-extrabold text-[13px] tabular-nums" style={{ color: TEAL }}>{book.time ?? "-"}</div>
+                  <div className="text-[9px] text-[var(--text-muted)] mt-1 leading-tight">{t("이 1초의", "this second's")}<br />{t("대기줄 전체", "whole queue")}<br />{t("(1초 뒤 새 표)", "(new table in 1s)")}</div>
+                </td>
+              )}
               <td className="text-right px-2 relative">
                 <div style={{ position: "absolute", right: 0, top: 2, bottom: 2, width: `${Math.round((q / maxQ) * 100)}%`, background: "rgba(211,47,47,0.14)", borderRadius: 3 }} />
                 <span className="relative font-bold" style={{ color: RED }}>{fmt(q)}</span>
