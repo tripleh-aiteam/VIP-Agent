@@ -625,7 +625,15 @@ def proof_run(source: str = Query("synthetic"), seed: int = Query(7),
             from services.candle_trader import _cfg
             return run_kiwoom(codes=_cfg(db)["codes"])
         return run_kiwoom(code=code)
-    return run_synthetic(seed=seed, period=period, mode=mode, around=around, start=start)
+    res = run_synthetic(seed=seed, period=period, mode=mode, around=around, start=start)
+    # Trim the wire payload to the fields the page actually draws. off0/n/half are internal
+    # bookkeeping (which seconds a bar covers) that the verifier needs but the chart never
+    # reads — and on the 1초 chart there are thousands of bars, so they are pure weight.
+    # self_check() calls run_synthetic directly and still sees the complete candles.
+    keep = ("time", "hhmm", "open", "high", "low", "close", "dir")
+    for sym in res.get("symbols", []):
+        sym["candles"] = [{k: c[k] for k in keep if k in c} for c in sym["candles"]]
+    return res
 
 
 @router.get("/proof/selfcheck")

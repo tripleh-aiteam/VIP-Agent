@@ -162,15 +162,23 @@ function ProofChart({ candles, trades, focus, buyLabel, sellLabel, openIdxs, hol
     // how wide the window is, in SECONDS — the user's zoom, carried across period switches
     const width = want && want.to > want.from ? want.to - want.from : 60 * per;
 
+    const toEdge = () => ts.setVisibleRange({ from: Math.max(first, last - width), to: last + per } as never);
     if (focus != null && trades[focus] && trades[focus].buy_idx >= 0) {
       if (focusChanged) ts.setVisibleLogicalRange({ from: trades[focus].buy_idx - 7, to: trades[focus].sell_idx + 7 } as never);
     } else if (focusChanged || follow || !want) {
       // at the live edge (or just left focus): keep the SAME width and slide it to now, so
       // following new candles never silently rescales the chart to some fixed bar count
-      ts.setVisibleRange({ from: Math.max(first, last - width), to: last + per } as never);
+      toEdge();
     } else {
-      // panned away → put the window back on the very same clock range, whatever the period
-      ts.setVisibleRange({ from: Math.max(first, want.from), to: Math.min(last + per, want.to) } as never);
+      // panned away → put the window back on the very same clock range, whatever the period.
+      // But a chart may not HOLD that range: 1초 keeps only its last 30 minutes, so carrying
+      // an 07:40 window onto it produced from > to — an impossible range that drew an empty
+      // chart with no candles and no arrows. If the window does not overlap this chart's
+      // data, fall back to its live edge rather than asking for a range that cannot exist.
+      const from = Math.max(first, want.from);
+      const to = Math.min(last + per, want.to);
+      if (to - from >= per) ts.setVisibleRange({ from, to } as never);
+      else toEdge();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ready, candles, trades, focus, buyLabel, sellLabel, openIdxs, holdLabel, skipIdxs, skipLabel, periodSec]);
@@ -390,7 +398,7 @@ export default function ProofLab() {
           setRes((old) => (r?.symbols?.length && nSy(r) >= nSy(old) && nTr(r) >= nTr(old) ? r : old));
         })
         .catch(() => {});
-    }, source === "synthetic" ? 3_000 : code !== "ALL" ? 10_000 : 60_000);   // fast chips: syn 3s, single 10s, ALL sweep 60s
+    }, source === "synthetic" ? (tfSec === 1 ? 6_000 : 3_000) : code !== "ALL" ? 10_000 : 60_000);   // syn 3s (1초 6s — thousands of bars per payload), single 10s, ALL sweep 60s
     return () => clearInterval(iv);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [source, code, seed, tfSec, decMode, liveStart]);
@@ -405,7 +413,7 @@ export default function ProofLab() {
   const focused = !!(sel && sym);
   useEffect(() => { setTapeMin({ BUY: 2, SELL: 2 }); }, [focus]);   // fresh trade → default to the 3rd candle's minute
 
-  // 🔎 1초봉은 30분(1,800봉)만 담습니다 — 아침에 난 거래를 클릭하면 그 화살표가 창 밖이라 안 보입니다.
+  // 🔎 1초봉은 60분(3,600봉)만 담습니다 — 그보다 오래된 거래를 클릭하면 그 화살표가 창 밖이라 안 보입니다.
   // 그래서 1초봉에서 거래를 선택하면 창을 그 시각으로 옮겨 다시 받아옵니다 (키움 스크롤백과 같은 동작).
   // 거래 목록 자체는 항상 하루 전체로 계산되므로 선택 index는 그대로 유효합니다.
   const aroundRef = useRef("");
@@ -658,10 +666,10 @@ export default function ProofLab() {
                 )}
                 {source === "synthetic" && tfSec === 1 && (
                   <span style={{ color: GOLD }}>{focused
-                    ? t(" — 1초봉은 30분(1,800봉)만 담기므로, 선택한 거래 시각으로 창을 이동했습니다.",
-                        " — the 1-sec chart holds only 30 minutes (1,800 bars), so the window was moved to the selected trade.")
-                    : t(" — 1초봉은 최근 30분(1,800봉)만 표시합니다. 아침 거래를 보려면 아래 기록에서 그 거래를 클릭하세요.",
-                        " — the 1-sec chart shows only the last 30 minutes (1,800 bars). To see an earlier trade, click it in the history below.")}</span>
+                    ? t(" — 1초봉은 60분(3,600봉)만 담기므로, 선택한 거래 시각으로 창을 이동했습니다.",
+                        " — the 1-sec chart holds 60 minutes (3,600 bars), so the window was moved to the selected trade.")
+                    : t(" — 1초봉은 최근 60분(3,600봉)만 표시합니다. 그보다 오래된 거래의 화살표를 보려면 아래 거래 기록에서 그 거래를 클릭하세요 — 창이 그 시각으로 이동합니다.",
+                        " — the 1-sec chart shows the last 60 minutes (3,600 bars). For the arrows of an older trade, click that trade in the history below — the window jumps to it.")}</span>
                 )}
               </div>
             </>

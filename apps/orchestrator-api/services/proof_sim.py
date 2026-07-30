@@ -92,7 +92,10 @@ def _sec_label(epoch9: int, off: int) -> str:
 
 
 PERIODS = (1, 15, 30, 40, 60)    # selectable candle sizes — ALL aggregated from the same seconds
-S1_WINDOW = 1800                 # 1초 chart shows a 30-minute window (Kiwoom limits tick charts too)
+S1_WINDOW = 3600                 # 1초 chart holds a 60-minute window (Kiwoom limits tick charts too).
+                                 # 30 min left most of the session's arrows off the chart; 60 covers
+                                 # roughly double, and trimming the payload (see routers) plus a slower
+                                 # 1초 refresh means it still costs LESS bandwidth than 30 min did.
 DEMO_MINUTES = 840               # longest tape we ever build (14h) — the growth cap
 DEMO_OPEN = (7, 21)              # the artificial market opens 07:21 KST — see _default_start
 MIN_TAPE_MIN = 25                # below this there is too little to judge, so fall back a day
