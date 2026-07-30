@@ -926,7 +926,7 @@ export default function ProofLab() {
         return (
           <div className="mt-3 rounded-xl border overflow-hidden" style={{ borderColor: GOLD }}>
             <div className="px-4 py-2 border-b bg-[var(--bg-elevated)] flex items-center gap-2 flex-wrap" style={{ borderColor: "var(--border-default)" }}>
-              <b className="text-[13px]" style={{ color: GOLD }}>🕰️ {nm(sym)} — {t("분별 가격 기록 (캔들 검증용)", "minute-by-minute record (verify the candles)")}</b>
+              <b className="text-[13px]" style={{ color: GOLD }}>🕰️ {t("데이터 파일", "Data File")}</b>
               {([5, 10, 15] as const).map((m) => (
                 <button key={m} onClick={() => { setHistMin(m); setHistRange({ from: "", to: "" }); }} className="text-[11px] font-extrabold px-2.5 py-0.5 rounded-lg"
                   style={!useRange && histMin === m ? { background: GOLD, color: "#fff" } : { border: "1px solid var(--border-default)", color: "var(--text-secondary)" }}>
