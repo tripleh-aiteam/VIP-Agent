@@ -57,14 +57,18 @@ def _tick(px: float) -> int:
 #    up2 / up1+flat → fakeouts: must NOT buy
 #    dn3 / dn4      → SELL on 3rd blue (4th falls AFTER the exit)
 #    dn1 chop       → must NOT sell on 1 blue
-_PLAN = ([-1] * 2 + [+1] * 3 + [-1] * 3            # trade 1: clean 3-up → 3-down
-         + [+1] * 2 + [-1] * 2                     # 2-up fakeout — no buy
-         + [+1] * 5 + [0] + [-1] * 4               # trade 2: 5-up (buy on 3rd) → flat → 4-down (sell on 3rd)
-         + [+1] + [0] + [+1] * 2 + [-1] * 3        # flat breaks the count — no buy (and no position → no sell)
-         + [+1] * 3 + [-1] + [+1] + [-1] * 3       # trade 3: 3-up → 1-blue chop (no sell) → 3-down sell
-         + [+1] * 2 + [-1] + [+1] * 3 + [-1] * 3   # trade 4: noise then clean 3-up → 3-down
-         + [+1] * 3)                               # final 3-up: BUY still HELD at the end — shows the
-                                                   # 📌 open-positions table + gold arrow in artificial mode too
+# One planted step per MINUTE. A trade's P&L = (rises AFTER the buy) − (3 falls to the sell),
+# so run lengths decide the outcome — designed for an HONEST mix of wins and losses
+# (boss 2026-07-30: the old pattern was symmetric, which made 0% wins mathematically certain).
+# ups == downs == 40 per cycle → the day oscillates instead of drifting.
+_PLAN = ([+1] * 8 + [-1] * 8                       # WIN  — bought on the 3rd, price rose 5 more
+         + [+1] * 2 + [-1] * 2                     # trap — 2-up fakeout, no buy
+         + [+1] * 3 + [-1] * 3                     # LOSS — bought the top, fell straight back
+         + [+1] * 1 + [0] + [+1] * 2 + [-1] * 3    # trap — a FLAT close breaks the count, no buy
+         + [+1] * 7 + [-1] * 1 + [+1] * 1 + [-1] * 7   # WIN — a single blue candle does NOT sell
+         + [+1] * 4 + [-1] * 4                     # LOSS
+         + [+1] * 9 + [-1] * 9                     # WIN (big)
+         + [+1] * 3 + [-1] * 3)                    # LOSS
 
 _SYMBOLS = [("PRF1", "프루프전자", 205_000), ("PRF2", "시뮬중공업", 19_500), ("PRF3", "테스트화학", 78_000)]
 
@@ -78,7 +82,8 @@ def _sec_label(epoch9: int, off: int) -> str:
     return datetime.fromtimestamp(epoch9 - 9 * 3600 + off, KST).strftime("%H:%M:%S")
 
 
-PERIODS = (15, 30, 40, 60)       # selectable candle sizes — ALL aggregated from the same seconds
+PERIODS = (1, 15, 30, 40, 60)    # selectable candle sizes — ALL aggregated from the same seconds
+S1_WINDOW = 1800                 # 1초 chart shows the last 30 minutes (Kiwoom limits tick charts too)
 
 
 def _norm_period(p) -> int:
@@ -107,29 +112,25 @@ def _seconds(seed: int, base_px: float) -> tuple[int, list[dict]]:
     for m in range((total_sec + 59) // 60):
         rm = random.Random(f"{seed}:min:{m}")            # ← per-minute seed = frozen history
         step = _PLAN[m % len(_PLAN)]                     # one planted step per MINUTE
-        # ONE-WAY minute (boss 2026-07-30): during an up-minute the price only steps UP —
-        # exactly one step inside each 15-second quarter. That makes EVERY sub-bar of an
-        # up-minute red at 15/20/30/40s, so the arrow can sit on the last bar of the 3-minute
-        # run (the 3rd / 6th / 12th candle) and still always be the right colour.
+        # LIVING minute (boss 2026-07-30): the price moves EVERY SECOND, up AND down, while
+        # drifting toward the minute's target close. Real fluctuation means the finer charts
+        # (15/30/40s and even 1s) carry genuine information instead of a smooth staircase —
+        # that is what makes the multi-timeframe cross-check actually prove something.
         o = px
-        if step == 0:                                    # planted flat minute — breaks the streak
-            for s in range(60):
-                off = m * 60 + s
-                if off >= total_sec:
-                    break
-                secs.append({"off": off, "px": o, "qty": rm.randint(1, 80) * 10})
-            continue                                     # px unchanged
-        per_q = rm.choice([1, 1, 2])                     # ticks per quarter → 4 or 8 per minute
-        step_secs = {q * 15 + rm.randint(1, 14) for q in range(4)}
+        ticks = 0 if step == 0 else step * rm.choice([2, 3, 4])   # the minute's NET move, in ticks
+        target = o + ticks * t
         cur = o
         for s in range(60):
             off = m * 60 + s
             if off >= total_sec:
                 break
-            if s in step_secs:
-                cur += step * t * per_q
+            path = o + (target - o) * s / 59                      # drift toward the close
+            wig = rm.choice([-2, -1, -1, 0, 0, 0, 1, 1, 2]) * t   # real second-to-second noise
+            cur = round((path + wig) / t) * t
+            if s == 0: cur = o                                    # :00 = the minute's open (= prev close)
+            if s == 59: cur = target                              # :59 = the CLOSE the engine reads
             secs.append({"off": off, "px": cur, "qty": rm.randint(1, 80) * 10})
-        px = o + step * t * per_q * 4                    # the minute's CLOSE (what the engine reads)
+        px = target
     return day0, secs
 
 
@@ -152,10 +153,16 @@ def _candles_from(day0: int, secs: list[dict], period: int) -> list[dict]:
             pxs = [x["px"] for x in chunk]
             ep9 = day0 + chunk[0]["off"]
             close = pxs[-1]
-            d = 0 if prev_close is None else (1 if close > prev_close else (-1 if close < prev_close else 0))
+            # CONTINUOUS bars (boss 2026-07-30): a bar OPENS at the previous bar's close, the
+            # way an intraday tape has no gaps. Then "close > open" (the eye) and "close >
+            # previous close" (the engine) are the SAME statement — at every timeframe. So a
+            # red bar can never mean anything but 'the engine counted a rise here'.
+            op = prev_close if prev_close is not None else pxs[0]
+            d = 1 if close > op else (-1 if close < op else 0)
             out.append({"time": ep9, "hhmm": _label(ep9, period),
-                        "open": pxs[0], "high": max(pxs), "low": min(pxs), "close": close,
-                        "dir": d, "off0": chunk[0]["off"], "n": ln, "half": ln != period})
+                        "open": op, "high": max(max(pxs), op), "low": min(min(pxs), op),
+                        "close": close, "dir": d,
+                        "off0": chunk[0]["off"], "n": ln, "half": ln != period})
             prev_close = close
             s += ln
     return out
@@ -253,13 +260,15 @@ def _minute_timeline(cd: dict, fill_px: float, seed: int, synthetic: bool, fill_
     hh = cd["hhmm"]
     if synthetic:
         r = random.Random(seed)
-        secs = sorted(r.sample(range(4, period - 4), 3))
-        vals = [cd["high"], cd["low"], round((cd["high"] + cd["low"]) / 2)]
-        r.shuffle(vals)
+        n = cd.get("n", period)
         rows.append({"t": _sec_label(cd["time"], 0), "px": cd["open"], "kind": "open"})
-        rows += [{"t": _sec_label(cd["time"], s), "px": v, "kind": "watch"} for s, v in zip(secs, vals)]
-        rows.append({"t": _sec_label(cd["time"], period - 1), "px": cd["close"], "kind": "close"})
-        rows.append({"t": _sec_label(cd["time"], period + fill_sec), "px": fill_px, "kind": "fill"})
+        if n >= 10:                              # short bars (1s) have no room for 'watch' rows
+            secs = sorted(r.sample(range(2, n - 2), min(3, n - 4)))
+            vals = [cd["high"], cd["low"], round((cd["high"] + cd["low"]) / 2)]
+            r.shuffle(vals)
+            rows += [{"t": _sec_label(cd["time"], s), "px": v, "kind": "watch"} for s, v in zip(secs, vals)]
+        rows.append({"t": _sec_label(cd["time"], n - 1), "px": cd["close"], "kind": "close"})
+        rows.append({"t": _sec_label(cd["time"], n - 1), "px": fill_px, "kind": "fill"})
     else:                                   # real bars: the 4 anchors Kiwoom actually stores
         rows.append({"t": f"{hh}:00", "px": cd["open"], "kind": "open"})
         rows.append({"t": f"{hh}:??", "px": cd["high"], "kind": "high"})
@@ -293,9 +302,12 @@ def _simulate(candles: list[dict], seed: int, with_book: bool, period: int = 60,
         if pos is None and up == NEED:                   # fires the moment the 3rd red closes
             bk = _book(seed * 1_000 + i, cd["close"], "BUY", tick) if with_book else None
             entry_px = bk["fill"] if bk else cd["close"]
+            _bn = cd.get("n", period)                                     # bar length (40s bars end in a 20s half)
             pos = {"buy_idx": i, "buy_time": cd["time"], "buy_hhmm": cd["hhmm"],
-                   "buy_sig_t": _sec_label(cd["time"], period - 1),        # the closing second that confirmed
-                   "buy_fill_t": _sec_label(cd["time"], period),           # execution = :00 of the next slot (its OPEN)
+                   # fill AT the closing second of the 3rd candle: that second's traded price
+                   # IS the close, and (continuous bars) also the next bar's open
+                   "buy_sig_t": _sec_label(cd["time"], _bn - 1),
+                   "buy_fill_t": _sec_label(cd["time"], _bn - 1),
                    "buy_closes": closes[-4:], "entry": entry_px, "buy_book": bk,
                    "buy_timeline": _minute_timeline(cd, entry_px, seed * 31 + i, with_book, fill_sec=0, period=period),
                    # per-second tapes for ALL 3 signal candles (1st/2nd/3rd — click to inspect each)
@@ -304,10 +316,13 @@ def _simulate(candles: list[dict], seed: int, with_book: bool, period: int = 60,
         elif pos is not None and dn == NEED:             # fires the moment the 3rd blue closes
             bk = _book(seed * 2_000 + i, cd["close"], "SELL", tick) if with_book else None
             exit_px = bk["fill"] if bk else cd["close"]
-            net = (exit_px / pos["entry"] - 1) * 100 - FEE_PCT
+            gross = (exit_px / pos["entry"] - 1) * 100
+            net = gross - FEE_PCT
+            _sn = cd.get("n", period)
             trades.append({**pos, "sell_idx": i, "sell_time": cd["time"], "sell_hhmm": cd["hhmm"],
-                           "sell_sig_t": _sec_label(cd["time"], period - 1),
-                           "sell_fill_t": _sec_label(cd["time"], period),   # :00 of the next slot = the open = best bid
+                           "sell_sig_t": _sec_label(cd["time"], _sn - 1),
+                           "sell_fill_t": _sec_label(cd["time"], _sn - 1),
+                           "gross_pct": round(gross, 3), "fee_pct": FEE_PCT,
                            "sell_closes": closes[-4:], "exit": exit_px, "sell_book": bk,
                            "sell_timeline": _minute_timeline(cd, exit_px, seed * 37 + i, with_book, fill_sec=0, period=period),
                            "sell_tapes": ([tape_fn(j) for j in (i - 2, i - 1, i) if j >= 0]
@@ -378,65 +393,96 @@ def _verify(candles: list[dict], trades: list[dict], with_book: bool) -> dict:
 # --------------------------------------------------------------------------- #
 #  public entry points                                                         #
 # --------------------------------------------------------------------------- #
-def run_synthetic(seed: int = 7, period: int = 60) -> dict[str, Any]:
+def run_synthetic(seed: int = 7, period: int = 60, mode: str = "min1",
+                  around: str = "") -> dict[str, Any]:
+    """mode='min1'  → the engine decides on 1-MINUTE candles (like the live desk): every
+                      timeframe shows the SAME trades — this is the consistency proof.
+       mode='chart' → the engine decides on the DISPLAYED candles: proof the rule works at
+                      1초/15초/30초/40초/1분, each chart on its own 3rd candle.
+       around='HH:MM' → 1초 charts hold only 30 minutes of bars, so a trade from earlier in
+                      the day would have no arrow to show. Pass the trade's minute and the
+                      1초 window CENTRES on it instead of on 'now' (Kiwoom scroll-back)."""
     period = _norm_period(period)
+    per_chart = (mode == "chart")
     symbols = []
     agg_pass = agg_total = agg_trades = 0
     for k, (code, name, base) in enumerate(_SYMBOLS):
         t_base = _tick(base) or 1                         # ONE tick per symbol, everywhere
         sseed = seed + k * 101
         day0, secs = _seconds(sseed, base)                # THE market (per-second truth)
-        c60 = _candles_from(day0, secs, 60)               # decision candles (1-min)
-        # ── the ENGINE always decides on 1-MINUTE candles (same as the live desk), so the
-        #    trades/prices/times are IDENTICAL no matter which timeframe is displayed
-        #    (boss 2026-07-30). 15/30/40s are purely finer CHARTS of the same market.
-        def _mk_tape(j, _d=day0, _s=secs):                # a minute's tape = its own 60 seconds
-            return _tape_from(_d, _s, j * 60, 60)
-        trades, proofs, open_pos, skips = _simulate(c60, sseed, with_book=True, period=60,
+        c60 = _candles_from(day0, secs, 60)               # 1-minute candles
+        disp_all = c60 if period == 60 else _candles_from(day0, secs, period)
+        dec = disp_all if per_chart else c60               # what the ENGINE reads
+        def _mk_tape(j, _d=day0, _s=secs, _dec=dec):       # a candle's tape = its own seconds
+            cd = _dec[j]
+            return _tape_from(_d, _s, cd["off0"], cd["n"])
+        trades, proofs, open_pos, skips = _simulate(dec, sseed, with_book=True,
+                                                    period=(period if per_chart else 60),
                                                     tick=t_base, tape_fn=_mk_tape)
         for tr in trades[:-6]:                            # keep 60s tapes only on recent trades (payload size)
             tr["buy_tapes"] = None
             tr["sell_tapes"] = None
-        ver = _verify(c60, trades, with_book=True)
-        # the 3 DECISION candles (+ the baseline before them) travel with each trade so the
-        # evidence panel is identical in both views
+        ver = _verify(dec, trades, with_book=True)
+        # the 3 DECISION candles (+ the baseline before them) travel with each trade, so the
+        # evidence panel shows the same numbers whatever chart you are on
         for tr in trades + open_pos:
             i = tr["buy_idx"]
-            tr["buy_cands"] = [c60[j] for j in (i - 3, i - 2, i - 1, i) if j >= 0]
+            tr["buy_cands"] = [dec[j] for j in (i - 3, i - 2, i - 1, i) if j >= 0]
             if "sell_idx" in tr:
                 s2 = tr["sell_idx"]
-                tr["sell_cands"] = [c60[j] for j in (s2 - 3, s2 - 2, s2 - 1, s2) if j >= 0]
-        candles = c60 if period == 60 else _candles_from(day0, secs, period)
-        disp_off = 0                          # send the FULL day in every view (boss 2026-07-30:
-        #                                       the 15s chart must reach back to 09:00 too)
-        if period != 60:
-            # DISPLAY only: put each arrow on the candle that CONTAINS the confirming second
-            # (the last second of the 3rd decision minute) — same wall-clock moment, finer bar
-            # Inside the signal minute, put the arrow on the LAST bar whose body matches the
-            # trade — a BUY always lands on a RED (rising) candle, a SELL always on a BLUE one
-            # (boss 2026-07-30). A single sub-bar can be blue even while the whole minute rose,
-            # which used to make ~50% of arrows look inverted on the finer charts.
-            # THE arrow rule (boss 2026-07-30): the LAST bar of the 3rd decision minute —
-            # the 3rd candle on 1분봉, the 6th on 30초봉, the 12th on 15초봉, and the closing
-            # half-bar on 40초봉. Bars are minute-clipped, so every minute has the same count.
-            bpm = -(-60 // period)                        # bars per minute (ceil)
-            def _disp(i, _b=bpm, _n=len(candles)):
-                j = i * _b + _b - 1
-                return j if 0 <= j < _n else -1
+                tr["sell_cands"] = [dec[j] for j in (s2 - 3, s2 - 2, s2 - 1, s2) if j >= 0]
+        candles = disp_all
+        if not per_chart and period != 60:
+            # 1분-고정 mode: the arrow goes on the LAST bar of the 3rd decision minute — the
+            # 3rd candle on 1분봉, 6th on 30초봉, 12th on 15초봉, 60th on 1초봉, and the closing
+            # 20s half-bar on 40초봉 (boss's own rule). Bars are minute-clipped, so the count
+            # per minute is constant and this lands exactly on the bar holding second :59.
+            #
+            # ⭐ COLOUR: the engine judges 1-MINUTE candles here, so a sub-minute bar is
+            # painted by the direction of the MINUTE it belongs to — not by its own few
+            # seconds of wiggle. Two things follow, and both are what the boss asked for:
+            #   1. the arrow is ALWAYS on a correctly-coloured bar (buy=red, sell=blue) and
+            #      still sits at the TRUE fill second — no more trading time vs. colour off
+            #      against each other;
+            #   2. a 3-minute rise reads as one solid red run: 3 bars on 1분봉, 6 on 30초봉,
+            #      12 on 15초봉, 4.5 (4 full + the 20s half) on 40초봉, 180 on 1초봉.
+            # Each bar's own direction is kept in "sdir" for anyone who wants it.
+            bpm = -(-60 // period)
+            for _j, _c in enumerate(candles):
+                _c["sdir"] = _c["dir"]
+                _m = _j // bpm
+                if _m < len(dec):
+                    _c["dir"] = dec[_m]["dir"]
+            def _disp(i, up=True, _b=bpm, _cs=candles):
+                last = i * _b + _b - 1
+                return last if 0 <= last < len(_cs) else -1
             for tr in trades + open_pos:
-                tr["buy_idx"] = _disp(tr["buy_idx"])
+                tr["buy_idx"] = _disp(tr["buy_idx"], True)
                 if "sell_idx" in tr:
-                    tr["sell_idx"] = _disp(tr["sell_idx"])
+                    tr["sell_idx"] = _disp(tr["sell_idx"], False)
             for sk in skips:
-                sk["idx"] = _disp(sk["idx"])
-        elif disp_off:                        # 1-min view: same window trim, shift indices
+                sk["idx"] = _disp(sk["idx"], True)
+        # 1초 charts hold a 30-MINUTE window — a whole day is ~33,000 one-second bars, which
+        # is neither drawable nor sendable. By default the window is the most recent 30 min;
+        # pass around='HH:MM' (the trade the boss clicked) and it slides onto that trade so
+        # the arrows are visible instead of silently falling off the left edge.
+        # Indices are remapped ONCE here: anything outside [lo, hi) becomes -1 (no arrow).
+        if period == 1 and len(candles) > S1_WINDOW:
+            lo = len(candles) - S1_WINDOW
+            if around and len(around) >= 5:
+                hit = next((j for j, c in enumerate(candles) if c["hhmm"][:5] == around[:5]), None)
+                if hit is not None:
+                    lo = min(max(0, hit - S1_WINDOW // 3), len(candles) - S1_WINDOW)
+            hi = lo + S1_WINDOW
+            def _win(i, _lo=lo, _hi=hi):
+                return i - _lo if _lo <= i < _hi else -1
             for tr in trades + open_pos:
-                tr["buy_idx"] -= disp_off
+                tr["buy_idx"] = _win(tr["buy_idx"])
                 if "sell_idx" in tr:
-                    tr["sell_idx"] -= disp_off
+                    tr["sell_idx"] = _win(tr["sell_idx"])
             for sk in skips:
-                sk["idx"] -= disp_off
-        candles = candles[disp_off:]
+                sk["idx"] = _win(sk["idx"])
+            candles = candles[lo:hi]
         agg_pass += ver["passed"]; agg_total += ver["total"]; agg_trades += ver["trades"]
         # a CURRENT order book per fake stock (anchored to the last close, changes each
         # minute) — powers the '📗 price table' view: the program trades from THIS table
@@ -447,11 +493,11 @@ def run_synthetic(seed: int = 7, period: int = 60) -> dict[str, Any]:
         symbols.append({"code": code, "name": name, "candles": candles,
                         # decision-timeframe candles (1-min) so the counter/chips always
                         # reflect what actually drives the trades, in every view
-                        "dec_candles": (None if period == 60 else c60[-120:]),
+                        "dec_candles": (None if dec is disp_all else dec[-120:]),
                         "forming": _forming_from(day0, secs, period), "trades": trades,
                         "open_positions": open_pos, "hold_skips": skips, "live_book": live_book,
                         "no_trade_proofs": proofs, "verification": ver})
-    return {"source": "synthetic", "seed": seed, "need": NEED, "period": period,
+    return {"source": "synthetic", "seed": seed, "need": NEED, "period": period, "mode": mode,
             "rule_ko": f"양봉 {NEED}개 연속(전봉 대비 {NEED}회 상승) → 정확히 {NEED}번째 양봉에 매수 · 음봉 {NEED}개 연속 → 정확히 {NEED}번째 음봉에 매도",
             "rule_en": f"{NEED} rising candles → BUY exactly on the {NEED}rd red · {NEED} falling → SELL exactly on the {NEED}rd blue",
             "engine_fn": "services/candle_trader.py::run_steps (the live engine's own comparison)",
@@ -528,6 +574,124 @@ def _kiwoom_symbol(code: str) -> dict[str, Any] | None:
             "trades": trades, "tick_tape": tick_tape,
             "open_positions": open_pos, "hold_skips": skips, "live_book": live_book,
             "no_trade_proofs": proofs, "verification": ver}
+
+
+def self_check(seed: int = 7) -> dict[str, Any]:
+    """🔬 THE CONSISTENCY MATRIX (boss 2026-07-30). Runs every check across ALL timeframes
+    and both decision modes and returns pass/fail counts, so the proof verifies itself:
+      A) every trade is identical in all 5 charts (1분-고정 mode): times, prices, net%
+      B) the trade price EXISTS at that exact second, and inside the bar covering it
+      C) the rule held: 3 strictly rising closes → BUY · 3 strictly falling → SELL
+      D) the arrow sits on the right bar and is the right colour (red buy / blue sell)
+      E) every candle equals the aggregation of its own seconds
+      F) every bar opens at the previous bar's close (continuous tape)
+      G) the arrow's bar actually CONTAINS the exact fill second — so the time written in
+         the history is the time the arrow points at, on every chart"""
+    checks: dict[str, dict] = {k: {"ok": 0, "bad": 0} for k in ("A", "B", "C", "D", "E", "F", "G")}
+    fails: list[str] = []
+
+    def _hit(key, good, msg=""):
+        checks[key]["ok" if good else "bad"] += 1
+        if not good and len(fails) < 12:
+            fails.append(f"[{key}] {msg}")
+
+    def off_of(t: str) -> int:
+        h, m, s = (int(x) for x in t.split(":"))
+        return h * 3600 + m * 60 + s - 9 * 3600
+
+    per_tf: list[dict] = []
+    ref: dict[str, list] = {}
+    for mode in ("min1", "chart"):
+        for p in (60,) + tuple(x for x in PERIODS if x != 60):   # 1분 first: it is the reference
+            r = run_synthetic(seed=seed, period=p, mode=mode)
+            wins = gross = net = 0.0
+            n_tr = 0
+            for k, s in enumerate(r["symbols"]):
+                cs, day0 = s["candles"], None
+                _d0, secs = _seconds(seed + k * 101, _SYMBOLS[k][2])
+                # E) candles == their own seconds · F) continuous opens
+                prev_close = None
+                for c in cs:
+                    chunk = [x["px"] for x in secs[c["off0"]: c["off0"] + c["n"]]]
+                    if chunk:
+                        _hit("E", c["close"] == chunk[-1] and c["high"] >= max(chunk) and c["low"] <= min(chunk),
+                             f"{p}s {c['hhmm']} candle≠seconds")
+                    if prev_close is not None:
+                        _hit("F", c["open"] == prev_close, f"{p}s {c['hhmm']} open≠prev close")
+                    prev_close = c["close"]
+                for t in s["trades"]:
+                    n_tr += 1
+                    net += t["net_pct"]; gross += t.get("gross_pct", t["net_pct"])
+                    wins += 1 if t["net_pct"] > 0 else 0
+                    # C) the rule
+                    for ck, want in (("buy_cands", 1), ("sell_cands", -1)):
+                        cl = [c["close"] for c in t[ck]]
+                        st = [cl[i + 1] - cl[i] for i in range(len(cl) - 1)]
+                        _hit("C", all(x > 0 for x in st) if want == 1 else all(x < 0 for x in st),
+                             f"{mode} {p}s {t['buy_fill_t']} steps={st}")
+                    # B) price exists at that exact second, and inside the bar covering it
+                    #    (the 1초 chart is windowed to 30 min, so older bars aren't sent —
+                    #     the second-level check still applies to every trade)
+                    for ft, px in ((t["buy_fill_t"], t["entry"]), (t["sell_fill_t"], t["exit"])):
+                        o = off_of(ft)
+                        _hit("B", o < len(secs) and secs[o]["px"] == px, f"{mode} {p}s {ft} px={px} not at that second")
+                        bar = next((c for c in cs if c["off0"] <= o < c["off0"] + c["n"]), None)
+                        if bar is not None:
+                            _hit("B", bar["low"] <= px <= bar["high"], f"{mode} {p}s {ft} px outside bar {bar['hhmm']}")
+                    # D) arrow colour · G) the arrow's bar CONTAINS the exact fill second, so
+                    #    the history's time and the arrow's position can never disagree
+                    for ik, ft, want in (("buy_idx", "buy_fill_t", 1), ("sell_idx", "sell_fill_t", -1)):
+                        i = t[ik]
+                        if i < 0:              # outside the 1초 30-min window → no arrow drawn
+                            continue
+                        _hit("D", cs[i]["dir"] == want, f"{mode} {p}s {t[ft]} arrow colour")
+                        d = off_of(t[ft]) - cs[i]["off0"]
+                        _hit("G", 0 <= d < cs[i]["n"],
+                             f"{mode} {p}s fill {t[ft]} is {d}s outside its arrow bar {cs[i]['hhmm']}")
+                    # A) identical across charts (1분-고정 mode only — 'chart' mode differs by design)
+                    if mode == "min1":
+                        key = f"{k}|{t['buy_fill_t']}|{t['sell_fill_t']}"
+                        sig = (t["entry"], t["exit"], t["net_pct"])
+                        if p == 60:                       # the 1분 run is the reference
+                            ref[key] = sig
+                        else:
+                            _hit("A", ref.get(key) == sig, f"{p}s {key} differs from 1분")
+            per_tf.append({"mode": mode, "period": p, "candles": len(r["symbols"][0]["candles"]),
+                           "trades": n_tr, "wins": int(wins),
+                           "win_pct": round(wins / n_tr * 100) if n_tr else 0,
+                           "gross_pct": round(gross, 1), "net_pct": round(net, 1),
+                           "rule_pct": r["verification"]["pct"]})
+    tot_ok = sum(v["ok"] for v in checks.values())
+    tot_bad = sum(v["bad"] for v in checks.values())
+    return {"ok": tot_bad == 0, "passed": tot_ok, "total": tot_ok + tot_bad,
+            "checks": checks, "failures": fails, "per_tf": per_tf,
+            "labels": {
+                "A": "모든 차트에서 같은 매매 (시각·가격·손익) / same trade in every chart",
+                "B": "체결가가 그 '초'에 실제로 존재하고 캔들 범위 안 / fill price exists at that second & inside its bar",
+                "C": "규칙: 3연속 상승 매수 · 3연속 하락 매도 / rule: 3 rising → buy, 3 falling → sell",
+                "D": "화살표 색 = 판단 캔들 방향 (매수=빨강, 매도=파랑) / arrow colour = decision candle's direction",
+                "E": "캔들 = 자기 초들의 집계 / candle = aggregation of its own seconds",
+                "F": "바의 시가 = 앞 바의 종가 (연속 테이프) / bar opens at previous close",
+                "G": "화살표가 가리키는 캔들이 그 체결 '초'를 실제로 포함 / the arrow's bar contains the exact fill second"},
+            # ⚠️ the honest reading of the loss/profit columns above. The pattern is drawn for
+            # TEACHING (clean 3-candle runs + traps), and it pairs every up-leg with an equal
+            # down-leg. With a 3-candle entry lag and a 3-candle exit lag, a paired leg of
+            # length L returns exactly (L-3) - 3 = L-6 ticks — so short legs (3, 4) must lose
+            # and long legs (8, 9) must win, and the total is decided by which lengths I drew.
+            # That is arithmetic of the DRAWING, not a property of the algorithm. Positive
+            # numbers here are no more evidence than negative ones.
+            "note_ko": ("이 표의 손익은 '작동 증명'용이며 수익 예측이 아닙니다. 인공 패턴은 상승 구간마다 "
+                        "같은 길이의 하락 구간을 붙여 만든 교육용 데이터이고, 3봉 진입·3봉 청산이므로 길이 L 구간은 "
+                        "항상 (L-3)-3 = L-6 만큼만 남습니다 — 짧은 구간(3·4봉)은 반드시 손실, 긴 구간(8·9봉)은 반드시 이익. "
+                        "즉 이 손익은 '제가 그린 패턴의 산수'이지 알고리즘의 실력이 아닙니다. 플러스 숫자도 증거가 아닙니다. "
+                        "실제 수익성은 키움 실데이터에서만 판단할 수 있습니다."),
+            "note_en": ("the P&L here proves MECHANICS, not profit. The artificial pattern pairs every "
+                        "up-leg with an equal down-leg for teaching, and with a 3-candle entry lag and a "
+                        "3-candle exit lag a leg of length L returns exactly (L-3)-3 = L-6 ticks — short "
+                        "legs (3, 4) must lose and long legs (8, 9) must win, so the total is decided by "
+                        "which leg lengths were drawn. That is arithmetic of the drawing, not the algorithm's "
+                        "skill; the positive numbers are no more evidence than the negative ones. Real "
+                        "profitability can only be judged on real Kiwoom data.")}
 
 
 def live_book_fast(source: str, code: str, seed: int = 7, period: int = 60) -> dict[str, Any]:

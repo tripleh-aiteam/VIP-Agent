@@ -29,6 +29,8 @@ type Trade = {
   buy_tapes?: { t: string; px: number; qty?: number }[][] | null;   // 60s tape per signal candle (1st/2nd/3rd)
   sell_tapes?: { t: string; px: number; qty?: number }[][] | null;
   net_pct: number;
+  gross_pct?: number;   // before fees (pure price move)
+  fee_pct?: number;     // round-trip cost the desk actually pays
 };
 type NoTrade = { hhmm: string; kind: string; note_ko: string; note_en: string };
 type OpenPos = { buy_idx: number; buy_hhmm: string; buy_closes: number[]; entry: number; last_px: number; unreal_pct: number; buy_sig_t?: string; buy_fill_t?: string };
@@ -294,16 +296,22 @@ export default function ProofLab() {
                     tape?: { t: string; px: number; qty: number; strength?: number | null }[] | null; prev_close?: number | null };
   const [fastBook, setFastBook] = useState<FastBook | null>(null);   // ⚡ 1s Kiwoom-speed ladder + 체결 feed
 
-  const [tfSec, setTfSec] = useState<60 | 40 | 30 | 15>(60);   // candle period — 1분봉 default
+  const [tfSec, setTfSec] = useState<60 | 40 | 30 | 15 | 1>(60);   // candle period — 1분봉 default
+  const [decMode, setDecMode] = useState<"min1" | "chart">("min1");   // who decides: 1분 fixed vs this chart
+  type SelfCheck = { ok: boolean; passed: number; total: number; checks: Record<string, { ok: number; bad: number }>;
+                     failures: string[]; labels: Record<string, string>; note_ko: string; note_en: string;
+                     per_tf: { mode: string; period: number; candles: number; trades: number; win_pct: number; gross_pct: number; net_pct: number }[] };
+  const [sc2, setSc2] = useState<SelfCheck | null>(null);
+  const [scBusy, setScBusy] = useState(false);
   const sourceRef = useRef(source);
   sourceRef.current = source;
   // keep = true → a TIMEFRAME switch only: preserve the selected stock, the focused trade
   // and the chart view (trades are identical across timeframes, so indices stay valid)
-  const load = async (src = source, sd = seed, cd = code, p = tfSec, keep = false) => {
+  const load = async (src = source, sd = seed, cd = code, p = tfSec, keep = false, md = decMode, ar = "") => {
     setLoading(true);
     if (!keep) setFocus(null);
     try {
-      const r = await api<ProofRes>(`/paper-desk/proof/run?source=${src}&seed=${sd}&code=${cd}&period=${p}`);
+      const r = await api<ProofRes>(`/paper-desk/proof/run?source=${src}&seed=${sd}&code=${cd}&period=${p}&mode=${md}&around=${encodeURIComponent(ar)}`);
       // a slow response from the OTHER mode must never land after the user switched
       if (src === sourceRef.current && r?.source === src) { setRes(r); if (!keep) setSelCode(null); }
     } catch { /* keep last */ }
@@ -322,7 +330,7 @@ export default function ProofLab() {
     const nTr = (x: ProofRes | null) => (x ? x.symbols.reduce((a, s) => a + s.trades.length, 0) : 0);
     const iv = setInterval(() => {
       if (focusRef.current != null) return;              // don't shift the stage mid-demonstration
-      api<ProofRes>(`/paper-desk/proof/run?source=${source}&seed=${seed}&code=${code}&period=${tfSec}`)
+      api<ProofRes>(`/paper-desk/proof/run?source=${source}&seed=${seed}&code=${code}&period=${tfSec}&mode=${decMode}`)
         .then((r) => {
           if (r?.source !== sourceRef.current) return;   // stale cross-mode response — discard
           if (r?.source === "synthetic" && (r.period ?? 60) !== tfSec) return;   // stale timeframe — discard
@@ -332,7 +340,7 @@ export default function ProofLab() {
     }, source === "synthetic" ? 3_000 : code !== "ALL" ? 10_000 : 60_000);   // fast chips: syn 3s, single 10s, ALL sweep 60s
     return () => clearInterval(iv);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [source, code, seed, tfSec]);
+  }, [source, code, seed, tfSec, decMode]);
 
   const symList = res?.symbols ?? [];
   const symIdx = Math.max(0, selCode ? symList.findIndex((s) => s.code === selCode) : 0);
@@ -343,6 +351,19 @@ export default function ProofLab() {
   // bring the evidence to the top — a clean stage for demonstrating one trade at a time
   const focused = !!(sel && sym);
   useEffect(() => { setTapeMin({ BUY: 2, SELL: 2 }); }, [focus]);   // fresh trade → default to the 3rd candle's minute
+
+  // 🔎 1초봉은 30분(1,800봉)만 담습니다 — 아침에 난 거래를 클릭하면 그 화살표가 창 밖이라 안 보입니다.
+  // 그래서 1초봉에서 거래를 선택하면 창을 그 시각으로 옮겨 다시 받아옵니다 (키움 스크롤백과 같은 동작).
+  // 거래 목록 자체는 항상 하루 전체로 계산되므로 선택 index는 그대로 유효합니다.
+  const aroundRef = useRef("");
+  useEffect(() => {
+    if (tfSec !== 1 || source !== "synthetic") { aroundRef.current = ""; return; }
+    const want = sel?.buy_hhmm ? sel.buy_hhmm.slice(0, 5) : "";
+    if (want === aroundRef.current) return;
+    aroundRef.current = want;
+    load(source, seed, code, 1, true, decMode, want);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tfSec, focus, source, seed, code, decMode]);
 
   // ⚡ Kiwoom-speed feed: poll every second for the selected stock — powers the 10-level
   // ladder AND the 체결(deal) table so both move like the real Kiwoom screens
@@ -382,7 +403,11 @@ export default function ProofLab() {
           <span className="text-[13px] tabular-nums font-bold" style={{ color: RED }}>▲ {t("체결", "fill")} {sel.buy_fill_t ?? fillT(sel.buy_hhmm)} ₩{fmt(sel.entry)} <span className="text-[10px] opacity-70">({t(`신호 ${sel.buy_sig_t ?? `${sel.buy_hhmm}:59`}`, `signal ${sel.buy_sig_t ?? `${sel.buy_hhmm}:59`}`)})</span></span>
           <span className="text-[var(--text-muted)]">→</span>
           <span className="text-[13px] tabular-nums font-bold" style={{ color: BLUE }}>▼ {t("체결", "fill")} {sel.sell_fill_t ?? fillT(sel.sell_hhmm, "SELL")} ₩{fmt(sel.exit)} <span className="text-[10px] opacity-70">({t(`신호 ${sel.sell_sig_t ?? `${sel.sell_hhmm}:59`}`, `signal ${sel.sell_sig_t ?? `${sel.sell_hhmm}:59`}`)})</span></span>
-          <span className="text-[13.5px] font-extrabold tabular-nums" style={{ color: sel.net_pct > 0 ? RED : BLUE }}>{sel.net_pct > 0 ? "+" : ""}{sel.net_pct}%</span>
+          <span className="text-[13.5px] font-extrabold tabular-nums" title={t("수수료前 → 後", "gross → net")}>
+            <span style={{ color: (sel.gross_pct ?? sel.net_pct) > 0 ? RED : BLUE }}>{(sel.gross_pct ?? sel.net_pct) > 0 ? "+" : ""}{sel.gross_pct ?? sel.net_pct}%</span>
+            <span className="text-[var(--text-muted)] font-normal text-[11px]"> → </span>
+            <span style={{ color: sel.net_pct > 0 ? RED : BLUE }}>{sel.net_pct > 0 ? "+" : ""}{sel.net_pct}%</span>
+          </span>
           <span className="ml-auto text-[11px] text-[var(--text-muted)]">{t("아래: 차트 화살표 · 시각 · 가격 산출 근거를 그대로 비교", "below: chart arrows · exact times · the price math to compare")}</span>
         </div>
       )}
@@ -402,21 +427,41 @@ export default function ProofLab() {
         </button>
         {source === "synthetic" ? (
           <>
-            {([60, 40, 30, 15] as const).map((p) => (
+            {([60, 40, 30, 15, 1] as const).map((p) => (
               <button key={p} onClick={() => { setTfSec(p); load("synthetic", seed, code, p, true); }}
                 className="text-[11.5px] font-extrabold px-2.5 py-1 rounded-lg"
                 title={p === 60
                   ? t("실제 데스크와 동일한 1분봉 차트 — 판단도 1분봉 3연속", "the live desk's 1-min chart — decisions use 3 consecutive 1-min candles")
-                  : t(`같은 시장·같은 매매를 ${p}초 캔들로 더 잘게 본 것 — 판단은 여전히 1분봉 3연속이므로 체결 시각·가격이 완전히 동일`, `the SAME market and the SAME trades drawn with ${p}-sec candles — decisions still use 3 consecutive 1-min candles, so fill times and prices are identical`)}
+                  : decMode === "min1"
+                  ? t(`같은 시장·같은 매매를 ${p}초 캔들로 더 잘게 본 것 — 판단은 여전히 1분봉 3연속이므로 체결 시각·가격이 완전히 동일`, `the SAME market and the SAME trades drawn with ${p}-sec candles — decisions still use 3 consecutive 1-min candles, so fill times and prices are identical`)
+                  : t(`같은 시장을 ${p}초 캔들로 보고, 판단도 이 ${p}초 캔들 3연속으로 — 규칙이 이 시간틀에서도 작동함을 증명 (매매 횟수는 당연히 다름)`, `the same market seen in ${p}-sec candles, and decided on 3 consecutive ${p}-sec candles — proves the rule works at this timeframe too (trade count naturally differs)`)}
                 style={tfSec === p ? { background: GOLD, color: "#fff" } : { border: "1px solid var(--border-default)", color: "var(--text-secondary)" }}>
                 {p === 60 ? t("1분봉", "1-min") : t(`${p}초봉`, `${p}-sec`)}
               </button>
             ))}
-            {tfSec !== 60 && (
-              <span className="text-[10px] px-2 py-0.5 rounded-full" style={{ background: "rgba(230,81,0,0.12)", color: GOLD }}>
-                {t("같은 데이터 · 같은 매매 (시각·가격 동일) · 캔들만 더 잘게", "same data · same trades (identical times & prices) · finer candles only")}
-              </span>
-            )}
+            {/* who decides — 1분 fixed (same trades in every chart) vs this chart's own candles */}
+            <span className="text-[10px] text-[var(--text-muted)] ml-1">{t("판단", "decides")}</span>
+            {/* switching WHO decides changes the trade list itself → drop the focused trade, keep the stock */}
+            {(["min1", "chart"] as const).map((m) => (
+              <button key={m} onClick={() => { setDecMode(m); setFocus(null); load(source, seed, code, tfSec, true, m); }}
+                className="text-[11px] font-extrabold px-2 py-1 rounded-lg"
+                title={m === "min1"
+                  ? t("실제 데스크처럼 1분봉으로 판단 → 5개 차트 모두 '똑같은 매매' (일관성 증명)", "decide on 1-min like the live desk → all 5 charts show the SAME trades (consistency proof)")
+                  : t("보고 있는 차트의 캔들로 판단 → 1초/15초/30초/40초/1분 어디서든 규칙이 작동함을 증명 (매매 횟수는 차트마다 다름)", "decide on the displayed candles → proves the rule works at 1s/15s/30s/40s/1min (trade counts differ per chart, by design)")}
+                style={decMode === m ? { background: TEAL, color: "#fff" } : { border: "1px solid var(--border-default)", color: "var(--text-secondary)" }}>
+                {m === "min1" ? t("1분 고정", "1-min fixed") : t("차트별", "per-chart")}
+              </button>
+            ))}
+            <button onClick={async () => { setScBusy(true); try { setSc2(await api<SelfCheck>(`/paper-desk/proof/selfcheck?seed=${seed}`)); } catch { /* ignore */ } setScBusy(false); }}
+              className="text-[11px] font-extrabold px-2.5 py-1 rounded-lg border" style={{ borderColor: "#2e7d32", color: "#2e7d32" }}
+              title={t("모든 차트·모든 모드에서 데이터·매매·화살표 일관성을 즉시 전수검사", "instantly re-verify data, trades and arrows across every chart and both modes")}>
+              {scBusy ? t("검사 중…", "checking…") : t("🔬 자체검사", "🔬 self-check")}
+            </button>
+            <span className="text-[10px] px-2 py-0.5 rounded-full" style={{ background: decMode === "min1" ? "rgba(230,81,0,0.12)" : "rgba(0,131,143,0.12)", color: decMode === "min1" ? GOLD : TEAL }}>
+              {decMode === "min1"
+                ? t("같은 데이터 · 같은 매매 (시각·가격 동일) · 캔들만 더 잘게", "same data · same trades (identical times & prices) · finer candles only")
+                : t("같은 데이터 · 이 차트가 직접 판단 (매매 횟수는 차트마다 다름 — 정상)", "same data · this chart decides for itself (trade counts differ per chart — by design)")}
+            </span>
             <button onClick={() => { const s = Math.floor(Math.random() * 9999); setSeed(s); load("synthetic", s, code); }}
               className="text-[11.5px] font-bold px-3 py-1 rounded-lg border" style={{ borderColor: GOLD, color: GOLD }}>
               🎲 {t(`새 시뮬레이션 (seed ${seed})`, `new simulation (seed ${seed})`)}
@@ -436,6 +481,57 @@ export default function ProofLab() {
         )}
         {loading && <span className="text-[12px] text-[var(--text-muted)]">{t("계산 중…", "running…")}</span>}
       </div>
+      )}
+
+      {/* ---- 🔬 self-check result: the consistency matrix + per-timeframe comparison ---- */}
+      {!focused && sc2 && (
+        <div className="mt-3 rounded-xl border-2 overflow-hidden" style={{ borderColor: sc2.ok ? "#2e7d32" : RED }}>
+          <div className="px-4 py-2 border-b flex items-center gap-3 flex-wrap" style={{ borderColor: "var(--border-default)", background: sc2.ok ? "rgba(46,125,50,0.08)" : "rgba(211,47,47,0.08)" }}>
+            <b className="text-[14px]" style={{ color: sc2.ok ? "#2e7d32" : RED }}>
+              {sc2.ok ? "✅" : "❌"} {t(`자체검사 ${sc2.passed.toLocaleString()}/${sc2.total.toLocaleString()} 통과`, `self-check ${sc2.passed.toLocaleString()}/${sc2.total.toLocaleString()} passed`)}
+            </b>
+            <span className="text-[10.5px] text-[var(--text-muted)]">{t("모든 차트(1분·40초·30초·15초·1초) × 두 판단모드 전수검사", "every chart (1분·40초·30초·15초·1초) × both decision modes")}</span>
+            <button onClick={() => setSc2(null)} className="ml-auto text-[10.5px] text-[var(--text-muted)]">✕</button>
+          </div>
+          <div className="px-4 py-2 grid md:grid-cols-2 gap-x-6 gap-y-1">
+            {Object.entries(sc2.checks).map(([k, v]) => (
+              <div key={k} className="text-[11.5px] flex items-center gap-2 tabular-nums">
+                <span style={{ color: v.bad === 0 ? "#2e7d32" : RED }}>{v.bad === 0 ? "✅" : "❌"}</span>
+                <span className="font-bold" style={{ color: v.bad === 0 ? "#2e7d32" : RED }}>{v.ok.toLocaleString()}/{(v.ok + v.bad).toLocaleString()}</span>
+                <span className="text-[var(--text-secondary)]">{(sc2.labels[k] || k).split(" / ")[lang === "ko" ? 0 : 1] ?? sc2.labels[k]}</span>
+              </div>
+            ))}
+          </div>
+          {sc2.failures.length > 0 && (
+            <div className="px-4 pb-2 flex flex-col gap-0.5">
+              {sc2.failures.map((f, i) => <span key={i} className="text-[10.5px]" style={{ color: RED }}>⚠ {f}</span>)}
+            </div>
+          )}
+          <div className="px-4 pb-3 overflow-x-auto">
+            <div className="text-[10.5px] font-bold text-[var(--text-muted)] mb-1">📊 {t("차트별 비교 (같은 시장, 같은 데이터)", "per-chart comparison (same market, same data)")}</div>
+            <table className="text-[11.5px] tabular-nums">
+              <thead><tr className="text-[10px] text-[var(--text-muted)]">
+                <th className="text-left px-2">{t("판단", "decides")}</th><th className="text-left px-2">{t("차트", "chart")}</th>
+                <th className="text-right px-2">{t("캔들", "candles")}</th><th className="text-right px-2">{t("매매", "trades")}</th>
+                <th className="text-right px-2">{t("승률", "win%")}</th><th className="text-right px-2">{t("총손익(수수료前)", "gross%")}</th>
+                <th className="text-right px-2">{t("순손익(수수료後)", "net%")}</th>
+              </tr></thead>
+              <tbody>
+                {sc2.per_tf.map((x, i) => (
+                  <tr key={i} className="border-t border-[var(--border-default)]/30">
+                    <td className="px-2">{x.mode === "min1" ? t("1분 고정", "1-min fixed") : t("차트별", "per-chart")}</td>
+                    <td className="px-2 font-bold">{x.period === 60 ? t("1분봉", "1-min") : `${x.period}${t("초봉", "-sec")}`}</td>
+                    <td className="text-right px-2">{fmt(x.candles)}</td><td className="text-right px-2">{x.trades}</td>
+                    <td className="text-right px-2 font-bold" style={{ color: x.win_pct >= 50 ? RED : BLUE }}>{x.win_pct}%</td>
+                    <td className="text-right px-2" style={{ color: x.gross_pct > 0 ? RED : BLUE }}>{x.gross_pct > 0 ? "+" : ""}{x.gross_pct}%</td>
+                    <td className="text-right px-2 font-bold" style={{ color: x.net_pct > 0 ? RED : BLUE }}>{x.net_pct > 0 ? "+" : ""}{x.net_pct}%</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <div className="mt-1.5 text-[10.5px]" style={{ color: GOLD }}>⚠ {lang === "ko" ? sc2.note_ko : sc2.note_en}</div>
+          </div>
+        </div>
       )}
 
       {/* ---- verdict banner ---- */}
@@ -490,11 +586,25 @@ export default function ProofLab() {
                 openIdxs={(sym.open_positions ?? []).map((p) => p.buy_idx)} holdLabel=""
                 skipIdxs={(sym.hold_skips ?? []).map((s) => s.idx)} skipLabel="⏸" resetLabel={t("최근 60분", "recent 60 min")} />
               <div className="px-2 pb-1 text-[11px] text-[var(--text-muted)]">
-                {t("▲매수 화살표 = 1분봉 3연속 양봉의 3번째 · ▼매도 = 3번째 음봉 · 색은 엔진 기준(🔴 전봉 종가보다 상승 / 🔵 하락) → 매수는 항상 빨강, 매도는 항상 파랑. 거래를 클릭하면 확대 + 증거.",
-                   "▲BUY arrow = the 3rd of 3 consecutive rising 1-min candles · ▼SELL = the 3rd falling · bars are coloured by the ENGINE's rule (🔴 closed higher than the previous bar / 🔵 lower) → a BUY is always on red, a SELL always on blue. Click a trade to zoom + see the evidence.")}
-                {source === "synthetic" && tfSec !== 60 && (
+                {decMode === "min1" && tfSec !== 60
+                  ? t(`▲매수 = 3연속 양봉의 3번째가 확정된 그 '초'의 캔들 · ▼매도 = 3번째 음봉 · 색은 판단 기준인 1분봉 방향입니다 — 1분이 상승이면 그 1분 안의 ${60 / tfSec === Math.floor(60 / tfSec) ? 60 / tfSec : Math.ceil(60 / tfSec)}개 캔들이 모두 빨강. 그래서 3분 상승은 빨강 ${3 * Math.ceil(60 / tfSec)}봉 연속으로 보이고, 화살표는 항상 정확한 체결 초 + 올바른 색에 찍힙니다. 거래를 클릭하면 확대 + 증거.`,
+                      `▲BUY = the candle holding the exact second the 3rd rising candle confirmed · ▼SELL = the 3rd falling · bars are coloured by the 1-MIN candle that decides them — if the minute rose, all ${Math.ceil(60 / tfSec)} bars inside it are red. So a 3-minute rise reads as ${3 * Math.ceil(60 / tfSec)} red bars in a row, and the arrow always sits on the exact fill second with the correct colour. Click a trade to zoom + see the evidence.`)
+                  : t("▲매수 화살표 = 3연속 양봉의 3번째 · ▼매도 = 3번째 음봉 · 색은 엔진 기준(🔴 전봉 종가보다 상승 / 🔵 하락) → 매수는 항상 빨강, 매도는 항상 파랑. 거래를 클릭하면 확대 + 증거.",
+                      "▲BUY arrow = the 3rd of 3 consecutive rising candles · ▼SELL = the 3rd falling · bars are coloured by the ENGINE's rule (🔴 closed higher than the previous bar / 🔵 lower) → a BUY is always on red, a SELL always on blue. Click a trade to zoom + see the evidence.")}
+                {source === "synthetic" && tfSec !== 60 && decMode === "min1" && (
                   <span style={{ color: GOLD }}>{t(` — ${tfSec}초봉에서는 판단 3분(=180초)이 더 잘게 나뉘어 보입니다. 화살표는 3번째 분이 확정된 그 '초'를 포함하는 캔들 위에 찍힙니다. 매매 시각·가격은 1분봉과 100% 동일.`,
                        ` — on the ${tfSec}-sec chart the 3 decision minutes (=180 seconds) are simply split into finer bars. The arrow sits on the candle that contains the exact second the 3rd minute confirmed. Trade times and prices are 100% identical to the 1-min view.`)}</span>
+                )}
+                {source === "synthetic" && decMode === "chart" && (
+                  <span style={{ color: TEAL }}>{t(` — 「차트별 판단」: 이 ${tfSec === 60 ? "1분" : tfSec + "초"}봉 3연속으로 직접 판단합니다. 규칙은 동일하지만 시간틀이 다르므로 매매 횟수·시각은 1분봉과 다릅니다 (그게 정상입니다).`,
+                       ` — “per-chart” mode: the engine decides on 3 consecutive ${tfSec === 60 ? "1-min" : tfSec + "-sec"} candles here. Same rule, different timeframe, so trade count and times differ from the 1-min view — that is correct, not a bug.`)}</span>
+                )}
+                {source === "synthetic" && tfSec === 1 && (
+                  <span style={{ color: GOLD }}>{focused
+                    ? t(" — 1초봉은 30분(1,800봉)만 담기므로, 선택한 거래 시각으로 창을 이동했습니다.",
+                        " — the 1-sec chart holds only 30 minutes (1,800 bars), so the window was moved to the selected trade.")
+                    : t(" — 1초봉은 최근 30분(1,800봉)만 표시합니다. 아침 거래를 보려면 아래 기록에서 그 거래를 클릭하세요.",
+                        " — the 1-sec chart shows only the last 30 minutes (1,800 bars). To see an earlier trade, click it in the history below.")}</span>
                 )}
               </div>
             </>
@@ -777,9 +887,11 @@ export default function ProofLab() {
         // merge the payload into the ledger of ITS OWN source (tag from the data, never the UI
         // state — a stale payload from the other mode can't pollute this mode's history)
         const synData = res.source === "synthetic";
-        // trades are IDENTICAL across timeframes → ONE ledger per seed (history stays
-        // continuous when the user switches 1분/40초/30초/15초)
-        const nsData = synData ? `syn:${res.seed ?? seed}` : "kiwoom";
+        // 1분-fixed mode: trades are IDENTICAL across timeframes → ONE ledger per seed, so the
+        // history stays continuous while switching 1분/40초/30초/15초/1초.
+        // per-chart mode: every timeframe is its OWN market decision → its own ledger, never mixed.
+        const tfNs = decMode === "chart" ? `:ch${res.period ?? tfSec}` : "";
+        const nsData = synData ? `syn:${res.seed ?? seed}${tfNs}` : `kiwoom${tfNs}`;
         const bucketData = (histRef.current[nsData] ??= {});
         for (const s of res.symbols) for (const tr of s.trades) {
           const k = synData ? `${s.code}|i${tr.buy_idx}-${tr.sell_idx}` : `${s.code}|${tr.buy_hhmm}|${tr.sell_hhmm}`;
@@ -787,14 +899,22 @@ export default function ProofLab() {
         }
         // display the CURRENT mode's ledger + hard filter: artificial (PRF*) companies never in
         // Kiwoom history, real companies never in artificial history
-        const nsView = source === "synthetic" ? `syn:${seed}` : "kiwoom";
+        const tfNsView = decMode === "chart" ? `:ch${tfSec}` : "";
+        const nsView = source === "synthetic" ? `syn:${seed}${tfNsView}` : `kiwoom${tfNsView}`;
         const isFake = (c: string) => c.startsWith("PRF");
         const rows = Object.values(histRef.current[nsView] ?? {})
           .filter((r) => (source === "synthetic" ? isFake(r.code) : !isFake(r.code)))
           .sort((a, b) => (b.tr.sell_time ?? 0) - (a.tr.sell_time ?? 0));
-        const wins = rows.filter((r) => r.tr.net_pct > 0).length;
-        const losses = rows.filter((r) => r.tr.net_pct < 0).length;
+        // boss 2026-07-30: judge the RULE on gross (pure price move), judge the ACCOUNT on net.
+        // A trade can win on price and still lose money — the 0.23% round trip is why.
+        const gr = (r: { tr: Trade }) => r.tr.gross_pct ?? r.tr.net_pct;
+        const wins = rows.filter((r) => gr(r) > 0).length;
+        const losses = rows.filter((r) => gr(r) < 0).length;
         const winPct = rows.length ? Math.round((wins / rows.length) * 100) : 0;
+        const sumG = rows.reduce((a, r) => a + gr(r), 0);
+        const sumN = rows.reduce((a, r) => a + r.tr.net_pct, 0);
+        const netWins = rows.filter((r) => r.tr.net_pct > 0).length;
+        const r1 = (x: number) => Math.round(x * 100) / 100;
         const findLive = (r: { code: string; tr: Trade }) => {
           const si = res.symbols.findIndex((s2) => s2.code === r.code);
           if (si < 0) return null;
@@ -811,9 +931,23 @@ export default function ProofLab() {
               <span>🔄 {t(`${rows.length}회전`, `${rows.length} trips`)}</span>
               <span style={{ color: RED }}>🟢 {wins}{t("승", "W")}</span>
               <span style={{ color: BLUE }}>🔴 {losses}{t("패", "L")}</span>
-              <span className="font-extrabold" style={{ color: winPct >= 50 ? "#2e7d32" : RED }}>🏆 {t(`승률 ${winPct}%`, `${winPct}% win`)}</span>
+              <span className="font-extrabold" style={{ color: winPct >= 50 ? "#2e7d32" : RED }}>🏆 {t(`승률 ${winPct}% (가격기준)`, `${winPct}% win (on price)`)}</span>
+              <span title={t("수수료·세금 前 순수 가격 변동 합계 — 규칙이 맞았는지 보는 숫자", "pure price move before fees — the number that says whether the rule was right")}>
+                {t("수수료前", "gross")} <b style={{ color: sumG > 0 ? RED : BLUE }}>{sumG > 0 ? "+" : ""}{r1(sumG)}%</b>
+              </span>
+              <span title={t("왕복 수수료·세금 0.23% 차감 후 — 계좌에 실제로 남는 숫자", "after the 0.23% round-trip cost — what actually stays in the account")}>
+                {t("수수료後", "net")} <b style={{ color: sumN > 0 ? RED : BLUE }}>{sumN > 0 ? "+" : ""}{r1(sumN)}%</b>
+                <span className="text-[10px] text-[var(--text-muted)]"> ({t(`실제 이익 ${netWins}건`, `${netWins} actually paid`)})</span>
+              </span>
               <span className="ml-auto text-[10.5px] text-[var(--text-muted)]">{t("증명 재생 기준 (실계좌 아님)", "proof replay — not the real account")}</span>
             </div>
+            {/* ⚠️ boss 2026-07-30: the number above must never be read as "the algorithm earns/loses this much" */}
+            {source === "synthetic" && rows.length > 0 && (
+              <div className="px-4 py-1.5 border-b text-[10.5px] leading-relaxed" style={{ borderColor: "var(--border-default)", color: GOLD }}>
+                ⚠ {t("이 손익은 인공 패턴의 산수입니다 — 알고리즘의 실력이 아닙니다. 상승 L봉 구간에 같은 길이의 하락을 붙여 만든 교육용 데이터이고, 3봉 진입·3봉 청산이므로 항상 (L-3)-3 = L-6 만큼만 남습니다 (짧은 구간=손실 확정, 긴 구간=이익 확정). 실제 수익성은 키움 실데이터에서만 판단합니다.",
+                       "this P&L is arithmetic of the artificial pattern, not the algorithm's skill. Each up-leg of L candles is paired with an equal down-leg for teaching, and with a 3-candle entry and 3-candle exit a leg returns exactly (L-3)-3 = L-6 ticks (short legs must lose, long legs must win). Real profitability is judged only on real Kiwoom data.")}
+              </div>
+            )}
             {rows.length === 0 ? (
               <div className="px-4 py-5 text-center text-[12px] text-[var(--text-muted)]">
                 {t("아직 완성된 회전이 없습니다 — 3양봉 매수 후 3음봉 매도가 완료되면 여기 쌓입니다", "no completed round trips yet — they appear once a 3-up buy meets its 3-down sell")}
@@ -825,7 +959,7 @@ export default function ProofLab() {
                 <th className="text-left px-2">{t("매수 체결시각 (신호)", "BUY fill time (signal)")}</th>
                 <th className="text-left px-2">{t("매도 체결시각 (신호)", "SELL fill time (signal)")}</th>
                 <th className="text-right px-2">{t("매수가", "entry")}</th><th className="text-right px-2">{t("매도가", "exit")}</th>
-                <th className="text-right px-3">{t("손익", "net")}</th>
+                <th className="text-right px-3">{t("손익 (수수료前 → 後)", "P&L (gross → net)")}</th>
               </tr></thead>
               <tbody>
                 {rows.map((r, i) => {
@@ -846,7 +980,12 @@ export default function ProofLab() {
                       </td>
                       <td className="text-right px-2">₩{fmt(r.tr.entry)}</td>
                       <td className="text-right px-2">₩{fmt(r.tr.exit)}</td>
-                      <td className="text-right px-3 font-bold" style={{ color: r.tr.net_pct > 0 ? RED : BLUE }}>{r.tr.net_pct > 0 ? "+" : ""}{r.tr.net_pct}%</td>
+                      <td className="text-right px-3 font-bold">
+                        <span style={{ color: gr(r) > 0 ? RED : BLUE }}>{gr(r) > 0 ? "+" : ""}{gr(r)}%</span>
+                        <span className="text-[var(--text-muted)] font-normal"> → </span>
+                        <span style={{ color: r.tr.net_pct > 0 ? RED : BLUE }}>{r.tr.net_pct > 0 ? "+" : ""}{r.tr.net_pct}%</span>
+                        <div className="text-[9.5px] opacity-60 font-normal">{t(`수수료 ${r.tr.fee_pct ?? 0.23}%`, `fee ${r.tr.fee_pct ?? 0.23}%`)}</div>
+                      </td>
                     </tr>
                   );
                 })}

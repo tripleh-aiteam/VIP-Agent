@@ -610,6 +610,7 @@ def candle3_ab_reset(db: Session = Depends(get_db)):
 @router.get("/proof/run")
 def proof_run(source: str = Query("synthetic"), seed: int = Query(7),
               code: str = Query("005930"), period: int = Query(60),
+              mode: str = Query("min1"), around: str = Query(""),
               db: Session = Depends(get_db)):
     """🧪 Proof Lab (boss 2026-07-29): prove Algo 3 buys EXACTLY on the 3rd rising candle
     and sells EXACTLY on the 3rd falling candle, with an independent verifier.
@@ -622,7 +623,15 @@ def proof_run(source: str = Query("synthetic"), seed: int = Query(7),
             from services.candle_trader import _cfg
             return run_kiwoom(codes=_cfg(db)["codes"])
         return run_kiwoom(code=code)
-    return run_synthetic(seed=seed, period=period)
+    return run_synthetic(seed=seed, period=period, mode=mode, around=around)
+
+
+@router.get("/proof/selfcheck")
+def proof_selfcheck(seed: int = Query(7)):
+    """🔬 Proof Lab self-check: runs the whole consistency matrix (all timeframes × both
+    decision modes) and returns pass/fail counts so the boss can verify it himself."""
+    from services.proof_sim import self_check
+    return self_check(seed=seed)
 
 
 @router.get("/proof/book")
