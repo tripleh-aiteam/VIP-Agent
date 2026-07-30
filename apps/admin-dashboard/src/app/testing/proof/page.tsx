@@ -387,18 +387,29 @@ export default function ProofLab() {
                   <div className="text-[10.5px] text-[var(--text-muted)] mb-0.5">💹 {t(`${hh}:00–${hh}:59 그 1분 동안의 가격`, `prices during ${hh}:00–${hh}:59`)}</div>
                   {t("시가", "open")} ₩{fmt(cd.open)} · {t("고가", "high")} ₩{fmt(cd.high)} · {t("저가", "low")} ₩{fmt(cd.low)} · <b style={{ color: col }}>{t("종가", "close")} ₩{fmt(cd.close)}</b>
                 </div>
-                {/* why exactly this fill — 2 short lines */}
-                <div className="mt-2 text-[12px] leading-relaxed flex flex-col gap-1">
-                  <div>① {isBuy
-                    ? t(`:59 종가 ₩${fmt(cd.close)} = 3연속 상승 확정 (분 중간엔 판단 안 함)`, `:59 close ₩${fmt(cd.close)} = 3rd rise confirmed (no judging mid-minute)`)
-                    : t(`:59 종가 ₩${fmt(cd.close)} = 3연속 하락 확정 (분 중간엔 판단 안 함)`, `:59 close ₩${fmt(cd.close)} = 3rd fall confirmed (no judging mid-minute)`)}</div>
-                  <div>② {book
+                {/* why exactly this price — the step-by-step proof (boss 2026-07-30, easy words) */}
+                <div className="mt-2 text-[12px] leading-relaxed flex flex-col gap-1.5">
+                  <div className="text-[10.5px] font-bold" style={{ color: col }}>❓ {t("왜 정확히 이 가격인가 — 순서대로", "why EXACTLY this price — step by step")}</div>
+                  <div>① {t(`${hh}:00~:59의 여러 가격 = 이미 끝난 과거 거래(다른 사람들끼리 체결한 것). 과거는 살 수 없으니 여기서 가격을 고르지 않습니다.`,
+                             `the many prices in ${hh}:00–:59 = the PAST — deals other people already finished. The past can't be bought, so no price is picked from here.`)}</div>
+                  <div>② {isBuy
+                    ? t(`이 1분의 쓰임은 딱 하나 — :59 종가 ₩${fmt(cd.close)}로 "3연속 상승 맞다" 확인 → 사자 결정.`,
+                        `that minute is used for ONE thing only — the :59 close ₩${fmt(cd.close)} confirms "yes, 3rd rise" → decision: BUY.`)
+                    : t(`이 1분의 쓰임은 딱 하나 — :59 종가 ₩${fmt(cd.close)}로 "3연속 하락 맞다" 확인 → 팔자 결정.`,
+                        `that minute is used for ONE thing only — the :59 close ₩${fmt(cd.close)} confirms "yes, 3rd fall" → decision: SELL.`)}</div>
+                  <div>③ {t("다음 1분은 아직 오지 않은 미래 → 고를 가격 자체가 없습니다.",
+                             "the next minute hasn't happened yet → there is no price range to choose from either.")}</div>
+                  <div>④ {book
                     ? (isBuy
-                      ? t(`다음 초 체결 ₩${fmt(fill)} = 그 순간 호가창의 최저 매도호가(best ask)`, `next second, filled ₩${fmt(fill)} = the order book's cheapest seller (best ask)`)
-                      : t(`다음 초 체결 ₩${fmt(fill)} = 그 순간 호가창의 최고 매수호가(best bid)`, `next second, filled ₩${fmt(fill)} = the order book's highest buyer (best bid)`))
+                      ? t(`행동하는 그 '순간'에 존재하는 건 대기줄(호가창)뿐 → 지금 가장 싸게 팔겠다는 사람의 가격 ₩${fmt(fill)}에 체결. 한 순간 = 살 수 있는 가격 하나 = 고르기 없음.`,
+                          `at the moment of action, only the waiting list (order book) exists → we take the cheapest seller right now: ₩${fmt(fill)}. One moment = one available price = zero choosing.`)
+                      : t(`행동하는 그 '순간'에 존재하는 건 대기줄(호가창)뿐 → 지금 가장 비싸게 사겠다는 사람의 가격 ₩${fmt(fill)}에 체결. 한 순간 = 팔 수 있는 가격 하나 = 고르기 없음.`,
+                          `at the moment of action, only the waiting list (order book) exists → we sell to the highest buyer right now: ₩${fmt(fill)}. One moment = one available price = zero choosing.`))
                     : (isBuy
-                      ? t(`재생 체결 ₩${fmt(fill)} = 판단 종가 · 실전은 아래 Kiwoom 호가창의 best ask에 체결`, `replay fill ₩${fmt(fill)} = the decision close · live buys fill at the Kiwoom book's best ask below`)
-                      : t(`재생 체결 ₩${fmt(fill)} = 판단 종가 · 실전은 아래 Kiwoom 호가창의 best bid에 체결`, `replay fill ₩${fmt(fill)} = the decision close · live sells fill at the Kiwoom book's best bid below`))}</div>
+                      ? t(`행동하는 그 '순간'에 존재하는 건 대기줄(호가창)뿐. 재생에서는 판단 종가 ₩${fmt(fill)}로 표시하며, 실전은 아래 실시간 Kiwoom 호가창의 '가장 싼 판매자(best ask)'에 체결됩니다. 한 순간 = 가격 하나 = 고르기 없음.`,
+                          `at the moment of action, only the waiting list (order book) exists. The replay shows the decision close ₩${fmt(fill)}; live buys fill at the LIVE Kiwoom book's cheapest seller (best ask) below. One moment = one price = zero choosing.`)
+                      : t(`행동하는 그 '순간'에 존재하는 건 대기줄(호가창)뿐. 재생에서는 판단 종가 ₩${fmt(fill)}로 표시하며, 실전은 아래 실시간 Kiwoom 호가창의 '가장 비싼 구매자(best bid)'에 체결됩니다. 한 순간 = 가격 하나 = 고르기 없음.`,
+                          `at the moment of action, only the waiting list (order book) exists. The replay shows the decision close ₩${fmt(fill)}; live sells fill at the LIVE Kiwoom book's highest buyer (best bid) below. One moment = one price = zero choosing.`))}</div>
                 </div>
                 {/* the order book: trade's own book (artificial) or the LIVE Kiwoom book (real) */}
                 {book ? (
