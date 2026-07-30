@@ -31,6 +31,7 @@ type OpenPos = { buy_idx: number; buy_hhmm: string; buy_closes: number[]; entry:
 type SymBlock = {
   code: string; name: string; candles: Candle[]; trades: Trade[];
   open_positions?: OpenPos[];
+  hold_skips?: { idx: number; hhmm: string }[];
   no_trade_proofs: NoTrade[];
   verification: { trades: number; passed: number; total: number; pct: number; per_trade: { buy_hhmm: string; sell_hhmm: string; checks: Record<string, boolean>; passed: number; total: number }[] };
 };
@@ -58,7 +59,7 @@ const CHECK_LABELS: Record<string, [string, string]> = {
 };
 
 // ---- candle chart with ③▲/③▼ arrows on the exact signal candles ----
-function ProofChart({ candles, trades, focus, buyLabel, sellLabel, openIdxs, holdLabel }: { candles: Candle[]; trades: Trade[]; focus: number | null; buyLabel: string; sellLabel: string; openIdxs?: number[]; holdLabel?: string }) {
+function ProofChart({ candles, trades, focus, buyLabel, sellLabel, openIdxs, holdLabel, skipIdxs, skipLabel }: { candles: Candle[]; trades: Trade[]; focus: number | null; buyLabel: string; sellLabel: string; openIdxs?: number[]; holdLabel?: string; skipIdxs?: number[]; skipLabel?: string }) {
   const ref = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
     if (!ref.current || !candles.length) return;
@@ -73,7 +74,7 @@ function ProofChart({ candles, trades, focus, buyLabel, sellLabel, openIdxs, hol
         height: 320, autoSize: true,
         layout: { background: { color: "transparent" }, textColor: dark ? "#aaa" : "#666" },
         grid: { vertLines: { color: "rgba(128,128,128,0.10)" }, horzLines: { color: "rgba(128,128,128,0.10)" } },
-        timeScale: { timeVisible: true, secondsVisible: false },
+        timeScale: { timeVisible: true, secondsVisible: false, rightOffset: 0, fixRightEdge: true },   // no FUTURE space after the last candle
       });
       const series = chart.addCandlestickSeries({
         upColor: RED, downColor: BLUE, borderUpColor: RED, borderDownColor: BLUE, wickUpColor: RED, wickDownColor: BLUE,
@@ -88,6 +89,10 @@ function ProofChart({ candles, trades, focus, buyLabel, sellLabel, openIdxs, hol
         const tm = candles[oi]?.time;
         if (tm != null) markers.push({ time: tm, position: "belowBar", color: "#e65100", shape: "arrowUp", text: holdLabel ?? "HOLD" });
       }
+      for (const si of skipIdxs ?? []) {           // 3-up while ALREADY holding → engine may not double-buy
+        const tm = candles[si]?.time;
+        if (tm != null) markers.push({ time: tm, position: "belowBar", color: "#9e9e9e", shape: "circle" as never, text: skipLabel ?? "held" });
+      }
       markers.sort((a, b) => (a.time as number) - (b.time as number));
       series.setMarkers(markers as never);
       if (focus != null && trades[focus]) {
@@ -98,7 +103,7 @@ function ProofChart({ candles, trades, focus, buyLabel, sellLabel, openIdxs, hol
       cleanup = () => chart.remove();
     })();
     return () => { alive = false; cleanup(); };
-  }, [candles, trades, focus, buyLabel, sellLabel, openIdxs, holdLabel]);   // labels in deps → chart redraws on language switch
+  }, [candles, trades, focus, buyLabel, sellLabel, openIdxs, holdLabel, skipIdxs, skipLabel]);   // labels in deps → chart redraws on language switch
   return <div ref={ref} style={{ width: "100%", height: 320 }} />;
 }
 
@@ -302,7 +307,8 @@ export default function ProofLab() {
       {sym && (
         <div className="mt-3 rounded-xl border p-2" style={{ borderColor: "var(--border-default)", background: "var(--bg-elevated)" }}>
           <ProofChart candles={sym.candles} trades={sym.trades} focus={focus} buyLabel={t("③▲매수", "③▲BUY")} sellLabel={t("③▼매도", "③▼SELL")}
-            openIdxs={(sym.open_positions ?? []).map((p) => p.buy_idx)} holdLabel={t("③▲보유중", "③▲HOLDING")} />
+            openIdxs={(sym.open_positions ?? []).map((p) => p.buy_idx)} holdLabel={t("③▲매수·보유중", "③▲BOUGHT·holding")}
+            skipIdxs={(sym.hold_skips ?? []).map((s) => s.idx)} skipLabel={t("⏸이미보유", "⏸already held")} />
           <div className="px-2 pb-1 text-[11px] text-[var(--text-muted)]">
             {t("▲매수 화살표 = 정확히 3번째 양봉 · ▼매도 화살표 = 정확히 3번째 음봉. 거래를 클릭하면 확대 + 증거를 보여줍니다.",
                "▲BUY arrow = exactly the 3rd red candle · ▼SELL arrow = exactly the 3rd blue. Click a trade to zoom + see the evidence.")}

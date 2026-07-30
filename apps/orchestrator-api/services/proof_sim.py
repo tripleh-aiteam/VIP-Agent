@@ -71,7 +71,13 @@ _SYMBOLS = [("PRF1", "프루프전자", 205_000), ("PRF2", "시뮬중공업", 19
 
 def _synthetic_candles(seed: int, base_px: float) -> list[dict]:
     r = random.Random(seed)
-    day0 = datetime.now(KST).replace(hour=9, minute=0, second=0, microsecond=0)
+    # end the artificial day at the CURRENT minute — never draw candles from the future
+    # (boss 2026-07-30: at 09:47 the chart must not show 09:50)
+    n_kst = datetime.now(KST)
+    open_t = n_kst.replace(hour=9, minute=0, second=0, microsecond=0)
+    day0 = n_kst.replace(second=0, microsecond=0) - timedelta(minutes=len(_PLAN))
+    if day0 < open_t:
+        day0 = open_t
     out, px = [], float(base_px)
     for i, step in enumerate(_PLAN):
         t = _tick(px)
@@ -135,13 +141,15 @@ def _minute_timeline(cd: dict, fill_px: float, seed: int, synthetic: bool) -> li
 # --------------------------------------------------------------------------- #
 #  the simulation — calls the REAL engine function candle-by-candle            #
 # --------------------------------------------------------------------------- #
-def _simulate(candles: list[dict], seed: int, with_book: bool) -> tuple[list, list, list]:
+def _simulate(candles: list[dict], seed: int, with_book: bool) -> tuple[list, list, list, list]:
     """Replay: after each candle CLOSES, feed all closes so far into the live engine
     comparison (run_steps). 3 rising steps & flat → BUY; holding & 3 falling → SELL.
-    Returns (completed trades, no-trade proofs, still-open positions)."""
+    Returns (completed trades, no-trade proofs, still-open positions, hold-skips —
+    3-ups that could NOT buy because the stock was already held: 1 position per stock)."""
     closes: list[float] = []
     trades: list[dict] = []
     proofs: list[dict] = []       # no-trade proofs (fakeouts the engine correctly ignored)
+    skips: list[dict] = []        # 3-up while already holding → no double-buy (visible on chart)
     pos: dict | None = None
     prev_up = prev_dn = 0
     for i, cd in enumerate(candles):
@@ -162,6 +170,12 @@ def _simulate(candles: list[dict], seed: int, with_book: bool) -> tuple[list, li
                            "sell_timeline": _minute_timeline(cd, exit_px, seed * 37 + i, with_book),
                            "net_pct": round(net, 3)})
             pos = None
+        elif pos is not None and up == NEED and i > pos["buy_idx"]:
+            skips.append({"idx": i, "hhmm": cd["hhmm"]})   # a 3rd red we could NOT buy — already holding
+            if len(proofs) < 8:
+                proofs.append({"hhmm": cd["hhmm"], "kind": "already-holding",
+                               "note_ko": "3연속 상승이지만 이미 보유 중 → 추가매수 없음 (1종목 1포지션) ✓",
+                               "note_en": "3-up but ALREADY HOLDING this stock → no double-buy (one position per stock) ✓"})
         # ---- no-trade proofs: a 2-up that died / a flat that broke the count ----
         if prev_up == 2 and up == 0 and len(proofs) < 6:
             proofs.append({"hhmm": cd["hhmm"], "kind": "fakeout-2up",
@@ -181,7 +195,7 @@ def _simulate(candles: list[dict], seed: int, with_book: bool) -> tuple[list, li
         last = closes[-1] if closes else pos["entry"]
         open_pos.append({**pos, "last_px": last,
                          "unreal_pct": round((last / pos["entry"] - 1) * 100 - FEE_PCT, 3)})
-    return trades, proofs, open_pos
+    return trades, proofs, open_pos, skips
 
 
 # --------------------------------------------------------------------------- #
@@ -223,11 +237,12 @@ def run_synthetic(seed: int = 7) -> dict[str, Any]:
     agg_pass = agg_total = agg_trades = 0
     for k, (code, name, base) in enumerate(_SYMBOLS):
         candles = _synthetic_candles(seed + k * 101, base)
-        trades, proofs, open_pos = _simulate(candles, seed + k * 101, with_book=True)
+        trades, proofs, open_pos, skips = _simulate(candles, seed + k * 101, with_book=True)
         ver = _verify(candles, trades, with_book=True)
         agg_pass += ver["passed"]; agg_total += ver["total"]; agg_trades += ver["trades"]
         symbols.append({"code": code, "name": name, "candles": candles, "trades": trades,
-                        "open_positions": open_pos, "no_trade_proofs": proofs, "verification": ver})
+                        "open_positions": open_pos, "hold_skips": skips,
+                        "no_trade_proofs": proofs, "verification": ver})
     return {"source": "synthetic", "seed": seed, "need": NEED,
             "rule_ko": f"양봉 {NEED}개 연속(전봉 대비 {NEED}회 상승) → 정확히 {NEED}번째 양봉에 매수 · 음봉 {NEED}개 연속 → 정확히 {NEED}번째 음봉에 매도",
             "rule_en": f"{NEED} rising candles → BUY exactly on the {NEED}rd red · {NEED} falling → SELL exactly on the {NEED}rd blue",
@@ -259,14 +274,15 @@ def _kiwoom_symbol(code: str) -> dict[str, Any] | None:
                         "low": b.get("low"), "close": b.get("close")})
     if not candles:
         return None
-    trades, proofs, open_pos = _simulate(candles, seed=1, with_book=False)
+    trades, proofs, open_pos, skips = _simulate(candles, seed=1, with_book=False)
     ver = _verify(candles, trades, with_book=False)
     try:
         name = stock_name(code) or code
     except Exception:
         name = code
     return {"code": code, "name": name, "candles": candles, "trades": trades,
-            "open_positions": open_pos, "no_trade_proofs": proofs, "verification": ver}
+            "open_positions": open_pos, "hold_skips": skips,
+            "no_trade_proofs": proofs, "verification": ver}
 
 
 def run_kiwoom(code: str = "005930", codes: list[str] | None = None) -> dict[str, Any]:
