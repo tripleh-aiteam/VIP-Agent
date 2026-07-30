@@ -264,7 +264,7 @@ export default function ProofLab() {
           setRes((old) => (r?.symbols?.length && nSy(r) >= nSy(old) && nTr(r) >= nTr(old) ? r : old));
         })
         .catch(() => {});
-    }, source === "synthetic" ? 10_000 : code !== "ALL" ? 15_000 : 60_000);   // fast chips: syn 10s, single 15s, ALL sweep 60s
+    }, source === "synthetic" ? 3_000 : code !== "ALL" ? 10_000 : 60_000);   // fast chips: syn 3s, single 10s, ALL sweep 60s
     return () => clearInterval(iv);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [source, code, seed]);
