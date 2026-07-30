@@ -95,23 +95,31 @@ def _norm_period(p) -> int:
     return p if p in PERIODS else 60
 
 
-def _seconds(seed: int, base_px: float) -> tuple[int, list[dict]]:
-    """THE market — ONE deterministic per-SECOND price series since 09:00 (frozen per
-    minute-seed). EVERY timeframe (15/30/40/60s) is a pure aggregation of these same
-    seconds, so prices/times/ups-downs are identical in every view
+def _seconds(seed: int, base_px: float, start: int = 0) -> tuple[int, list[dict]]:
+    """THE market — ONE deterministic per-SECOND price series (frozen per minute-seed).
+    EVERY timeframe (1/15/30/40/60s) is a pure aggregation of these same seconds, so
+    prices/times/ups-downs are identical in every view
     (boss 2026-07-30: 'all data must be same').
-    Returns (day-open epoch+9h, [{off, px, qty}, ...])."""
+
+    Two shapes, chosen by `start`:
+      start == 0  → 전체 하루: a COMPLETE recorded proof day, 09:00→23:00, ALWAYS. It must
+        never wait for the real market. This was once "09:00 until now", which meant that at
+        06:52 there were 3 candles and zero trades — the rule needs 4 candles to see 3 rising
+        steps, so the Proof Lab looked broken every morning until ~09:10.
+      start == epoch seconds → 지금부터: the tape BEGINS at that moment and grows one candle
+        per real minute, so the boss can watch candles form and arrows appear live
+        (boss 2026-07-31: "I wanna start trading from now and lets see how will work").
+        Minute m is seeded by its offset from `start`, so once a minute has closed its prices
+        never change again — closed trades stay immutable exactly as in the full-day tape.
+
+    Returns (tape-open epoch+9h, [{off, px, qty}, ...])."""
     n_kst = datetime.now(KST)
-    open_t = n_kst.replace(hour=9, minute=0, second=0, microsecond=0)
-    # ⚠️ The artificial tape is a COMPLETE recorded proof day — 09:00 to 23:00, ALWAYS.
-    # It must never wait for the real market. This used to be "09:00 until now", which meant
-    # that at 06:52 there were 3 candles and zero trades: the rule needs 4 candles to see 3
-    # rising steps, so the Proof Lab was empty every morning and only filled up after ~09:10.
-    # (boss 2026-07-31: "if you think market is not opened — it is artificial data, so you can
-    # do it without waiting market. I wanna test is actually working our algorithm.")
-    # Live, advancing data is what the 키움 실데이터 toggle is for; the artificial sample's job
-    # is to be a full, identical, always-available day that proves the mechanics at any hour.
-    total_sec = DEMO_MINUTES * 60
+    if start:
+        open_t = datetime.fromtimestamp(start, KST).replace(second=0, microsecond=0)
+        total_sec = min(max(0, int((n_kst - open_t).total_seconds())), DEMO_MINUTES * 60)
+    else:
+        open_t = n_kst.replace(hour=9, minute=0, second=0, microsecond=0)
+        total_sec = DEMO_MINUTES * 60
     day0 = int(open_t.timestamp()) + 9 * 3600            # +9h so charts display KST
     t = _tick(base_px) or 1
     secs: list[dict] = []
@@ -381,7 +389,7 @@ def _verify(candles: list[dict], trades: list[dict], with_book: bool) -> dict:
 #  public entry points                                                         #
 # --------------------------------------------------------------------------- #
 def run_synthetic(seed: int = 7, period: int = 60, mode: str = "min1",
-                  around: str = "") -> dict[str, Any]:
+                  around: str = "", start: int = 0) -> dict[str, Any]:
     """mode='min1'  → the engine decides on 1-MINUTE candles (like the live desk): every
                       timeframe shows the SAME trades — this is the consistency proof.
        mode='chart' → the engine decides on the DISPLAYED candles: proof the rule works at
@@ -396,7 +404,7 @@ def run_synthetic(seed: int = 7, period: int = 60, mode: str = "min1",
     for k, (code, name, base) in enumerate(_SYMBOLS):
         t_base = _tick(base) or 1                         # ONE tick per symbol, everywhere
         sseed = seed + k * 101
-        day0, secs = _seconds(sseed, base)                # THE market (per-second truth)
+        day0, secs = _seconds(sseed, base, start)         # THE market (per-second truth)
         c60 = _candles_from(day0, secs, 60)               # 1-minute candles
         disp_all = c60 if period == 60 else _candles_from(day0, secs, period)
         dec = disp_all if per_chart else c60               # what the ENGINE reads
@@ -485,6 +493,7 @@ def run_synthetic(seed: int = 7, period: int = 60, mode: str = "min1",
                         "open_positions": open_pos, "hold_skips": skips, "live_book": live_book,
                         "verification": ver})
     return {"source": "synthetic", "seed": seed, "need": NEED, "period": period, "mode": mode,
+            "start": start,   # echoed so the page can discard a stale response from a previous session
             "rule_ko": f"양봉 {NEED}개 연속(전봉 대비 {NEED}회 상승) → 정확히 {NEED}번째 양봉에 매수 · 음봉 {NEED}개 연속 → 정확히 {NEED}번째 음봉에 매도",
             "rule_en": f"{NEED} rising candles → BUY exactly on the {NEED}rd red · {NEED} falling → SELL exactly on the {NEED}rd blue",
             "engine_fn": "services/candle_trader.py::run_steps (the live engine's own comparison)",
@@ -681,7 +690,8 @@ def self_check(seed: int = 7) -> dict[str, Any]:
                         "profitability can only be judged on real Kiwoom data.")}
 
 
-def live_book_fast(source: str, code: str, seed: int = 7, period: int = 60) -> dict[str, Any]:
+def live_book_fast(source: str, code: str, seed: int = 7, period: int = 60,
+                   start: int = 0) -> dict[str, Any]:
     """⚡ Kiwoom-speed ladder feed — 10 price levels per side, changing every call.
     Polled ~1/sec by the 📗 price-table view (kept separate from the heavy proof payload).
     synthetic: anchored to the fake stock's current last close; quantities & a ±1-tick
@@ -692,7 +702,7 @@ def live_book_fast(source: str, code: str, seed: int = 7, period: int = 60) -> d
     if source == "synthetic":
         k = next((i for i, (c, _n, _b) in enumerate(_SYMBOLS) if c == code), 0)
         base = _SYMBOLS[k][2]
-        _d0, _sc = _seconds(seed + k * 101, base)         # ONE market — ladder identical in every view
+        _d0, _sc = _seconds(seed + k * 101, base, start)  # ONE market — ladder identical in every view
         ref = _sc[-1]["px"] if _sc else float(base)
         r = random.Random(f"{code}:{seed}:{now_s}")
         t = _tick(base) or 1                              # base tick — same as candles/tapes/books
@@ -756,7 +766,8 @@ def live_book_fast(source: str, code: str, seed: int = 7, period: int = 60) -> d
             "time": datetime.now(KST).strftime("%H:%M:%S")}
 
 
-def minute_tape(source: str, code: str, seed: int, hhmm: str, period: int = 60) -> dict[str, Any]:
+def minute_tape(source: str, code: str, seed: int, hhmm: str, period: int = 60,
+                start: int = 0) -> dict[str, Any]:
     """🕰️ drill-down: the 60-second tape of ONE chosen minute (e.g. 14:07) — regenerated
     deterministically for artificial stocks (same canonical tape shown everywhere).
     Real stocks: exchanges don't archive past per-second data, so this is synthetic-only."""
@@ -765,7 +776,7 @@ def minute_tape(source: str, code: str, seed: int, hhmm: str, period: int = 60) 
     k = next((i for i, (c, _n, _b) in enumerate(_SYMBOLS) if c == code), 0)
     sseed = seed + k * 101
     period = _norm_period(period)
-    day0, secs = _seconds(sseed, _SYMBOLS[k][2])
+    day0, secs = _seconds(sseed, _SYMBOLS[k][2], start)
     candles = _candles_from(day0, secs, period)
     for cd in candles:
         if cd["hhmm"] == hhmm:

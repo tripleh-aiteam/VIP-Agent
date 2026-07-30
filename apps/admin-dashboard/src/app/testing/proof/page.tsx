@@ -43,7 +43,7 @@ type SymBlock = {
   verification: { trades: number; passed: number; total: number; pct: number; per_trade?: { passed: number; total: number }[] };
 };
 type ProofRes = {
-  source: string; seed?: number; period?: number; need: number; rule_ko: string; rule_en: string; engine_fn: string;
+  source: string; seed?: number; period?: number; start?: number; need: number; rule_ko: string; rule_en: string; engine_fn: string;
   symbols: SymBlock[];
   verification: { trades: number; passed: number; total: number; pct: number };
 };
@@ -296,17 +296,28 @@ export default function ProofLab() {
 
   const [tfSec, setTfSec] = useState<60 | 40 | 30 | 15 | 1>(60);   // candle period — 1분봉 default
   const [decMode, setDecMode] = useState<"min1" | "chart">("min1");   // who decides: 1분 fixed vs this chart
+  // ▶ LIVE-FROM-NOW (boss 2026-07-31: "I wanna start trading from now and lets see how will
+  // work"). 0 = 전체 하루 (the complete recorded proof day, 186 trades, instant audit).
+  // An epoch second = the tape STARTS at that moment and grows one candle per real minute.
+  const [liveStart, setLiveStart] = useState(0);
+  const [nowSec, setNowSec] = useState(() => Math.floor(Date.now() / 1000));
+  useEffect(() => {
+    if (!liveStart) return;                              // only tick while a live session runs
+    const iv = setInterval(() => setNowSec(Math.floor(Date.now() / 1000)), 1_000);
+    return () => clearInterval(iv);
+  }, [liveStart]);
+  const liveMin = liveStart ? Math.max(0, Math.floor((nowSec - liveStart) / 60)) : 0;
   const sourceRef = useRef(source);
   sourceRef.current = source;
   // keep = true → a TIMEFRAME switch only: preserve the selected stock, the focused trade
   // and the chart view (trades are identical across timeframes, so indices stay valid)
-  const load = async (src = source, sd = seed, cd = code, p = tfSec, keep = false, md = decMode, ar = "") => {
+  const load = async (src = source, sd = seed, cd = code, p = tfSec, keep = false, md = decMode, ar = "", st = liveStart) => {
     setLoading(true);
     if (!keep) setFocus(null);
     try {
-      const r = await api<ProofRes>(`/paper-desk/proof/run?source=${src}&seed=${sd}&code=${cd}&period=${p}&mode=${md}&around=${encodeURIComponent(ar)}`);
+      const r = await api<ProofRes>(`/paper-desk/proof/run?source=${src}&seed=${sd}&code=${cd}&period=${p}&mode=${md}&around=${encodeURIComponent(ar)}&start=${st}`);
       // a slow response from the OTHER mode must never land after the user switched
-      if (src === sourceRef.current && r?.source === src) { setRes(r); if (!keep) setSelCode(null); }
+      if (src === sourceRef.current && r?.source === src && (r.start ?? 0) === st) { setRes(r); if (!keep) setSelCode(null); }
     } catch { /* keep last */ }
     setLoading(false);
   };
@@ -323,17 +334,18 @@ export default function ProofLab() {
     const nTr = (x: ProofRes | null) => (x ? x.symbols.reduce((a, s) => a + s.trades.length, 0) : 0);
     const iv = setInterval(() => {
       if (focusRef.current != null) return;              // don't shift the stage mid-demonstration
-      api<ProofRes>(`/paper-desk/proof/run?source=${source}&seed=${seed}&code=${code}&period=${tfSec}&mode=${decMode}`)
+      api<ProofRes>(`/paper-desk/proof/run?source=${source}&seed=${seed}&code=${code}&period=${tfSec}&mode=${decMode}&start=${liveStart}`)
         .then((r) => {
           if (r?.source !== sourceRef.current) return;   // stale cross-mode response — discard
           if (r?.source === "synthetic" && (r.period ?? 60) !== tfSec) return;   // stale timeframe — discard
+          if (r?.source === "synthetic" && (r.start ?? 0) !== liveStart) return;   // stale session — discard
           setRes((old) => (r?.symbols?.length && nSy(r) >= nSy(old) && nTr(r) >= nTr(old) ? r : old));
         })
         .catch(() => {});
     }, source === "synthetic" ? 3_000 : code !== "ALL" ? 10_000 : 60_000);   // fast chips: syn 3s, single 10s, ALL sweep 60s
     return () => clearInterval(iv);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [source, code, seed, tfSec, decMode]);
+  }, [source, code, seed, tfSec, decMode, liveStart]);
 
   const symList = res?.symbols ?? [];
   const symIdx = Math.max(0, selCode ? symList.findIndex((s) => s.code === selCode) : 0);
@@ -365,7 +377,7 @@ export default function ProofLab() {
     if (focused || !symCode) { setFastBook(null); return; }
     let alive = true;
     const tick = () => {
-      api<FastBook & { ok?: boolean }>(`/paper-desk/proof/book?source=${source}&code=${symCode}&seed=${seed}&period=${tfSec}`)
+      api<FastBook & { ok?: boolean }>(`/paper-desk/proof/book?source=${source}&code=${symCode}&seed=${seed}&period=${tfSec}&start=${liveStart}`)
         .then((b) => { if (alive && b?.asks?.length) setFastBook(b); })
         .catch(() => {});
     };
@@ -373,7 +385,7 @@ export default function ProofLab() {
     const iv = setInterval(tick, 1_000);
     return () => { alive = false; clearInterval(iv); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [focused, symCode, source, seed, tfSec]);
+  }, [focused, symCode, source, seed, tfSec, liveStart]);
 
   return (
     <div className="max-w-[1100px] mx-auto px-4 py-6">
@@ -450,10 +462,37 @@ export default function ProofLab() {
                 ? t("같은 데이터 · 같은 매매 (시각·가격 동일) · 캔들만 더 잘게", "same data · same trades (identical times & prices) · finer candles only")
                 : t("같은 데이터 · 이 차트가 직접 판단 (매매 횟수는 차트마다 다름 — 정상)", "same data · this chart decides for itself (trade counts differ per chart — by design)")}
             </span>
-            <button onClick={() => { const s = Math.floor(Math.random() * 9999); setSeed(s); load("synthetic", s, code); }}
+            <button onClick={() => { const s = Math.floor(Math.random() * 9999); setSeed(s); load("synthetic", s, code, tfSec, false, decMode, "", liveStart); }}
               className="text-[11.5px] font-bold px-3 py-1 rounded-lg border" style={{ borderColor: GOLD, color: GOLD }}>
               🎲 {t(`새 시뮬레이션 (seed ${seed})`, `new simulation (seed ${seed})`)}
             </button>
+
+            {/* ▶ 지금부터 — wipe the tape and trade forward from this second, one candle per
+                real minute. 전체 하루 keeps the complete recorded day for instant auditing. */}
+            <span className="w-px h-5 bg-[var(--border-default)]" />
+            {liveStart === 0 ? (
+              <button onClick={() => { const st = Math.floor(Date.now() / 1000); setLiveStart(st); setFocus(null); setSelCode(null); load("synthetic", seed, code, tfSec, false, decMode, "", st); }}
+                className="text-[11.5px] font-extrabold px-3 py-1 rounded-lg text-white" style={{ background: "#2e7d32" }}
+                title={t("지금 이 순간부터 새 장을 시작합니다 — 기존 매매 기록은 지워지고, 1분에 캔들 1개씩 실시간으로 쌓입니다", "start a fresh market from this second — the existing trades are cleared and candles build one per real minute")}>
+                ▶ {t("지금부터 시작", "start from now")}
+              </button>
+            ) : (
+              <>
+                <span className="text-[11.5px] font-extrabold px-3 py-1 rounded-lg text-white" style={{ background: "#2e7d32" }}>
+                  ● {t(`실시간 ${liveMin}분 경과`, `LIVE — ${liveMin} min elapsed`)}
+                </span>
+                <button onClick={() => { setLiveStart(0); setFocus(null); setSelCode(null); load("synthetic", seed, code, tfSec, false, decMode, "", 0); }}
+                  className="text-[11.5px] font-bold px-3 py-1 rounded-lg border" style={{ borderColor: GOLD, color: GOLD }}
+                  title={t("완성된 하루 전체(약 186매매)로 돌아갑니다 — 즉시 전수 검증용", "back to the complete recorded day (~186 trades) — for auditing everything at once")}>
+                  📅 {t("전체 하루 보기", "full day")}
+                </button>
+                <button onClick={() => { const st = Math.floor(Date.now() / 1000); setLiveStart(st); setFocus(null); setSelCode(null); load("synthetic", seed, code, tfSec, false, decMode, "", st); }}
+                  className="text-[11.5px] font-bold px-3 py-1 rounded-lg border" style={{ borderColor: "#2e7d32", color: "#2e7d32" }}
+                  title={t("기록을 지우고 지금부터 다시 시작", "clear the record and restart from now")}>
+                  ↻ {t("다시 시작", "restart")}
+                </button>
+              </>
+            )}
           </>
         ) : (
           <>
@@ -470,6 +509,33 @@ export default function ProofLab() {
         {loading && <span className="text-[12px] text-[var(--text-muted)]">{t("계산 중…", "running…")}</span>}
       </div>
       )}
+
+      {/* ---- ▶ live session: say plainly what to expect, so an empty early screen is never
+              mistaken for a broken algorithm (that exact confusion cost a morning) ---- */}
+      {!focused && liveStart > 0 && res && (() => {
+        const nC = res.symbols[0]?.candles.length ?? 0;
+        const nT = res.symbols.reduce((a, s) => a + s.trades.length, 0);
+        const nOpen = res.symbols.reduce((a, s) => a + (s.open_positions?.length ?? 0), 0);
+        const waiting = nC < 4;
+        return (
+          <div className="mt-3 rounded-xl border-2 px-4 py-2.5 flex items-center gap-4 flex-wrap"
+            style={{ borderColor: "#2e7d32", background: "rgba(46,125,50,0.06)" }}>
+            <b className="text-[13.5px]" style={{ color: "#2e7d32" }}>
+              ● {t(`실시간 진행 중 — ${liveMin}분 경과`, `LIVE — ${liveMin} min elapsed`)}
+            </b>
+            <span className="text-[12.5px] tabular-nums">{t(`캔들 ${nC}개`, `${nC} candles`)}</span>
+            <span className="text-[12.5px] tabular-nums">{t(`완료 매매 ${nT}건`, `${nT} closed trades`)}</span>
+            <span className="text-[12.5px] tabular-nums">{t(`보유 중 ${nOpen}건`, `${nOpen} holding`)}</span>
+            <span className="text-[11.5px]" style={{ color: waiting ? GOLD : "var(--text-muted)" }}>
+              {waiting
+                ? t(`아직 매수가 나올 수 없습니다 — 3연속 상승을 세려면 캔들이 최소 4개 필요합니다 (${4 - nC}분 남음). 화면이 비어 있는 것은 정상입니다.`,
+                    `a buy is not yet possible — counting 3 rising candles needs at least 4 candles (${4 - nC} min to go). An empty screen here is normal.`)
+                : t("1분에 캔들 1개씩 쌓입니다. 첫 매수는 4분째, 첫 완료 매매(매수→매도)는 약 15분째에 나옵니다. 3종목 합쳐 시간당 12건 정도가 정상 속도입니다 — 그보다 느려 보여도 고장이 아닙니다.",
+                    "one candle per minute. The first BUY lands at minute 4 and the first completed round trip at about minute 15. Across the 3 companies the normal pace is roughly 12 trades per hour — slower than that early on is not a fault.")}
+            </span>
+          </div>
+        );
+      })()}
 
       {/* ---- verdict banner ---- */}
       {!focused && ver && (
@@ -633,7 +699,7 @@ export default function ProofLab() {
           if (source !== "synthetic") { setMinTape({ key, tape: null, err: "nohist" }); return; }
           try {
             const r = await api<{ ok: boolean; tape?: { t: string; px: number; qty?: number }[] }>(
-              `/paper-desk/proof/minute_tape?source=synthetic&code=${sym.code}&seed=${seed}&hhmm=${encodeURIComponent(hhmm)}&period=${tfSec}`);
+              `/paper-desk/proof/minute_tape?source=synthetic&code=${sym.code}&seed=${seed}&hhmm=${encodeURIComponent(hhmm)}&period=${tfSec}&start=${liveStart}`);
             setMinTape({ key, tape: r.ok ? (r.tape ?? null) : null, err: r.ok ? undefined : "nf" });
           } catch { setMinTape({ key, tape: null, err: "nf" }); }
         };
@@ -828,7 +894,8 @@ export default function ProofLab() {
         // history stays continuous while switching 1분/40초/30초/15초/1초.
         // per-chart mode: every timeframe is its OWN market decision → its own ledger, never mixed.
         const tfNs = decMode === "chart" ? `:ch${res.period ?? tfSec}` : "";
-        const nsData = synData ? `syn:${res.seed ?? seed}${tfNs}` : `kiwoom${tfNs}`;
+        const sNs = res.start ? `:live${res.start}` : "";
+        const nsData = synData ? `syn:${res.seed ?? seed}${tfNs}${sNs}` : `kiwoom${tfNs}`;
         const bucketData = (histRef.current[nsData] ??= {});
         for (const s of res.symbols) for (const tr of s.trades) {
           // ⚠️ the key MUST be the fill times, never buy_idx: buy_idx is a CHART POSITION and
@@ -842,7 +909,8 @@ export default function ProofLab() {
         // display the CURRENT mode's ledger + hard filter: artificial (PRF*) companies never in
         // Kiwoom history, real companies never in artificial history
         const tfNsView = decMode === "chart" ? `:ch${tfSec}` : "";
-        const nsView = source === "synthetic" ? `syn:${seed}${tfNsView}` : `kiwoom${tfNsView}`;
+        const sNsView = liveStart ? `:live${liveStart}` : "";
+        const nsView = source === "synthetic" ? `syn:${seed}${tfNsView}${sNsView}` : `kiwoom${tfNsView}`;
         const isFake = (c: string) => c.startsWith("PRF");
         const rows = Object.values(histRef.current[nsView] ?? {})
           .filter((r) => (source === "synthetic" ? isFake(r.code) : !isFake(r.code)))

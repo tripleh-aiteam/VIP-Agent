@@ -611,19 +611,21 @@ def candle3_ab_reset(db: Session = Depends(get_db)):
 def proof_run(source: str = Query("synthetic"), seed: int = Query(7),
               code: str = Query("005930"), period: int = Query(60),
               mode: str = Query("min1"), around: str = Query(""),
-              db: Session = Depends(get_db)):
+              start: int = Query(0), db: Session = Depends(get_db)):
     """🧪 Proof Lab (boss 2026-07-29): prove Algo 3 buys EXACTLY on the 3rd rising candle
     and sells EXACTLY on the 3rd falling candle, with an independent verifier.
     source='synthetic' = planted artificial day (order-book fill proof included);
     source='kiwoom'    = TODAY's real Kiwoom 1-min bars replayed through the same engine
-    function. code='ALL' = every company on the desk watchlist, aggregated."""
+    function. code='ALL' = every company on the desk watchlist, aggregated.
+    start=0 → the complete artificial day; start=<epoch> → a tape that BEGINS at that
+    moment and grows one candle per real minute (the boss's live watch)."""
     from services.proof_sim import run_synthetic, run_kiwoom
     if source == "kiwoom":
         if code == "ALL":
             from services.candle_trader import _cfg
             return run_kiwoom(codes=_cfg(db)["codes"])
         return run_kiwoom(code=code)
-    return run_synthetic(seed=seed, period=period, mode=mode, around=around)
+    return run_synthetic(seed=seed, period=period, mode=mode, around=around, start=start)
 
 
 @router.get("/proof/selfcheck")
@@ -636,18 +638,19 @@ def proof_selfcheck(seed: int = Query(7)):
 
 @router.get("/proof/book")
 def proof_book(source: str = Query("synthetic"), code: str = Query("PRF1"),
-               seed: int = Query(7), period: int = Query(60)):
+               seed: int = Query(7), period: int = Query(60), start: int = Query(0)):
     """⚡ Kiwoom-speed 10-level ladder for the Proof Lab price-table view (polled ~1/sec)."""
     from services.proof_sim import live_book_fast
-    return live_book_fast(source, code, seed, period)
+    return live_book_fast(source, code, seed, period, start)
 
 
 @router.get("/proof/minute_tape")
 def proof_minute_tape(source: str = Query("synthetic"), code: str = Query("PRF1"),
-                      seed: int = Query(7), hhmm: str = Query(...), period: int = Query(60)):
+                      seed: int = Query(7), hhmm: str = Query(...), period: int = Query(60),
+                      start: int = Query(0)):
     """🕰️ Proof Lab drill-down: one candle's per-second tape (synthetic only)."""
     from services.proof_sim import minute_tape
-    return minute_tape(source, code, seed, hhmm, period)
+    return minute_tape(source, code, seed, hhmm, period, start)
 
 
 @router.post("/candle3/buy")
