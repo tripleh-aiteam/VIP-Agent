@@ -54,11 +54,18 @@ const KIWOOM_CODES = [
   ["034020", "두산에너빌리티"], ["010140", "삼성중공업"], ["042700", "한미반도체"],
 ];
 
-// ---- candle chart with ③▲/③▼ arrows on the exact signal candles ----
-function ProofChart({ candles, trades, focus, buyLabel, sellLabel, openIdxs, holdLabel, skipIdxs, skipLabel }: { candles: Candle[]; trades: Trade[]; focus: number | null; buyLabel: string; sellLabel: string; openIdxs?: number[]; holdLabel?: string; skipIdxs?: number[]; skipLabel?: string }) {
+// ---- candle chart with ▲/▼ arrows on the exact signal candles.
+//      Created ONCE; data updates in place. Your zoom/pan is NEVER reset by refreshes —
+//      auto-follow (recent 60 min) only until you touch the chart; ↺ button restores it. ----
+function ProofChart({ candles, trades, focus, buyLabel, sellLabel, openIdxs, holdLabel, skipIdxs, skipLabel, resetLabel }: { candles: Candle[]; trades: Trade[]; focus: number | null; buyLabel: string; sellLabel: string; openIdxs?: number[]; holdLabel?: string; skipIdxs?: number[]; skipLabel?: string; resetLabel?: string }) {
   const ref = useRef<HTMLDivElement | null>(null);
-  useEffect(() => {
-    if (!ref.current || !candles.length) return;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const chartRef = useRef<{ chart: any; series: any } | null>(null);
+  const touchedRef = useRef(false);            // true once the user zooms/pans — we stop auto-ranging
+  const prevFocusRef = useRef<number | null>(null);
+  const [ready, setReady] = useState(0);
+
+  useEffect(() => {                             // create the chart ONCE
     let alive = true;
     let cleanup = () => {};
     (async () => {
@@ -70,39 +77,61 @@ function ProofChart({ candles, trades, focus, buyLabel, sellLabel, openIdxs, hol
         height: 320, autoSize: true,
         layout: { background: { color: "transparent" }, textColor: dark ? "#aaa" : "#666" },
         grid: { vertLines: { color: "rgba(128,128,128,0.10)" }, horzLines: { color: "rgba(128,128,128,0.10)" } },
-        timeScale: { timeVisible: true, secondsVisible: false, rightOffset: 0, fixRightEdge: true },   // no FUTURE space after the last candle
+        timeScale: { timeVisible: true, secondsVisible: false, rightOffset: 0, fixRightEdge: true },
       });
       const series = chart.addCandlestickSeries({
         upColor: RED, downColor: BLUE, borderUpColor: RED, borderDownColor: BLUE, wickUpColor: RED, wickDownColor: BLUE,
       });
-      series.setData(candles.map((c) => ({ time: c.time, open: c.open, high: c.high, low: c.low, close: c.close })) as never);
-      // arrows: buy on the 3rd red (below bar), sell on the 3rd blue (above bar)
-      const markers = trades.flatMap((t, i) => [
-        { time: candles[t.buy_idx]?.time, position: "belowBar", color: RED, shape: "arrowUp", text: `${buyLabel}${focus === i ? "★" : ""}` },
-        { time: candles[t.sell_idx]?.time, position: "aboveBar", color: BLUE, shape: "arrowDown", text: `${sellLabel}${focus === i ? "★" : ""}` },
-      ]).filter((m) => m.time != null);
-      for (const oi of openIdxs ?? []) {           // still-holding buys: gold arrow, no sell yet
-        const tm = candles[oi]?.time;
-        if (tm != null) markers.push({ time: tm, position: "belowBar", color: "#e65100", shape: "arrowUp", text: holdLabel ?? "HOLD" });
-      }
-      for (const si of skipIdxs ?? []) {           // 3-up while ALREADY holding → engine may not double-buy
-        const tm = candles[si]?.time;
-        if (tm != null) markers.push({ time: tm, position: "belowBar", color: "#9e9e9e", shape: "circle" as never, text: skipLabel ?? "held" });
-      }
-      markers.sort((a, b) => (a.time as number) - (b.time as number));
-      series.setMarkers(markers as never);
-      if (focus != null && trades[focus]) {
-        chart.timeScale().setVisibleLogicalRange({ from: trades[focus].buy_idx - 7, to: trades[focus].sell_idx + 7 } as never);
-      } else {
-        // full day = hundreds of candles + dozens of arrows → unreadable; default to the
-        // recent ~60 minutes (scroll/drag left for older history)
-        chart.timeScale().setVisibleLogicalRange({ from: Math.max(0, candles.length - 60), to: candles.length + 2 } as never);
-      }
-      cleanup = () => chart.remove();
+      chartRef.current = { chart, series };
+      setReady((v) => v + 1);
+      cleanup = () => { chartRef.current = null; chart.remove(); };
     })();
     return () => { alive = false; cleanup(); };
-  }, [candles, trades, focus, buyLabel, sellLabel, openIdxs, holdLabel, skipIdxs, skipLabel]);   // labels in deps → chart redraws on language switch
-  return <div ref={ref} style={{ width: "100%", height: 320 }} />;
+  }, []);
+
+  useEffect(() => {                             // update data/markers in place — view untouched
+    const cs = chartRef.current;
+    if (!cs || !candles.length) return;
+    cs.series.setData(candles.map((c) => ({ time: c.time, open: c.open, high: c.high, low: c.low, close: c.close })) as never);
+    const markers = trades.flatMap((t, i) => [
+      { time: candles[t.buy_idx]?.time, position: "belowBar", color: RED, shape: "arrowUp", text: `${buyLabel}${focus === i ? "★" : ""}` },
+      { time: candles[t.sell_idx]?.time, position: "aboveBar", color: BLUE, shape: "arrowDown", text: `${sellLabel}${focus === i ? "★" : ""}` },
+    ]).filter((m) => m.time != null);
+    for (const oi of openIdxs ?? []) {
+      const tm = candles[oi]?.time;
+      if (tm != null) markers.push({ time: tm, position: "belowBar", color: "#e65100", shape: "arrowUp", text: holdLabel ?? "" });
+    }
+    for (const si of skipIdxs ?? []) {
+      const tm = candles[si]?.time;
+      if (tm != null) markers.push({ time: tm, position: "belowBar", color: "#9e9e9e", shape: "circle" as never, text: skipLabel ?? "" });
+    }
+    markers.sort((a, b) => (a.time as number) - (b.time as number));
+    cs.series.setMarkers(markers as never);
+    const focusChanged = prevFocusRef.current !== focus;
+    prevFocusRef.current = focus;
+    if (focus != null && trades[focus]) {
+      if (focusChanged) cs.chart.timeScale().setVisibleLogicalRange({ from: trades[focus].buy_idx - 7, to: trades[focus].sell_idx + 7 } as never);
+    } else if (focusChanged || !touchedRef.current) {
+      // default: follow the recent ~60 minutes — but ONLY while the user hasn't zoomed/panned
+      if (focusChanged) touchedRef.current = false;
+      cs.chart.timeScale().setVisibleLogicalRange({ from: Math.max(0, candles.length - 60), to: candles.length + 2 } as never);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ready, candles, trades, focus, buyLabel, sellLabel, openIdxs, holdLabel, skipIdxs, skipLabel]);
+
+  const markTouched = () => { touchedRef.current = true; };
+  return (
+    <div className="relative" onWheelCapture={markTouched} onMouseDownCapture={markTouched} onTouchStartCapture={markTouched}>
+      <div ref={ref} style={{ width: "100%", height: 320 }} />
+      <button
+        onClick={(e) => { e.stopPropagation(); touchedRef.current = false;
+          chartRef.current?.chart.timeScale().setVisibleLogicalRange({ from: Math.max(0, candles.length - 60), to: candles.length + 2 } as never); }}
+        className="absolute top-1 right-1 z-10 text-[10.5px] font-bold px-2 py-0.5 rounded-lg border bg-[var(--bg-primary)] text-[var(--text-secondary)]"
+        style={{ borderColor: "var(--border-default)" }}>
+        ↺ {resetLabel ?? "reset"}
+      </button>
+    </div>
+  );
 }
 
 // ---- 📗 Kiwoom-style price LADDER (호가창) — 잔량·호가·등락률, 현재가 row, 총잔량 totals ----
@@ -402,9 +431,9 @@ export default function ProofLab() {
           </div>
           {view === "candle" ? (
             <>
-              <ProofChart candles={sym.forming ? [...sym.candles, sym.forming] : sym.candles} trades={sym.trades} focus={focus} buyLabel="" sellLabel=""
+              <ProofChart key={sym.code} candles={sym.forming ? [...sym.candles, sym.forming] : sym.candles} trades={sym.trades} focus={focus} buyLabel="" sellLabel=""
                 openIdxs={(sym.open_positions ?? []).map((p) => p.buy_idx)} holdLabel=""
-                skipIdxs={(sym.hold_skips ?? []).map((s) => s.idx)} skipLabel="⏸" />
+                skipIdxs={(sym.hold_skips ?? []).map((s) => s.idx)} skipLabel="⏸" resetLabel={t("최근 60분", "recent 60 min")} />
               <div className="px-2 pb-1 text-[11px] text-[var(--text-muted)]">
                 {t("▲매수 화살표 = 정확히 3번째 양봉 · ▼매도 화살표 = 정확히 3번째 음봉. 거래를 클릭하면 확대 + 증거를 보여줍니다.",
                    "▲BUY arrow = exactly the 3rd red candle · ▼SELL arrow = exactly the 3rd blue. Click a trade to zoom + see the evidence.")}
