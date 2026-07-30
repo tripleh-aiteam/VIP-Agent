@@ -147,12 +147,7 @@ function Ladder({ book, t, note, prevClose, lastPx }: {
           {asksDesc.map(([p, q], i) => (
             <tr key={`a${i}`} className="border-t border-[var(--border-default)]/30"
               style={{ background: p === book.best_ask ? "rgba(211,47,47,0.10)" : "transparent", outline: lastPx === p ? `1.5px solid ${RED}` : undefined }}>
-              {i === 0 && (
-                <td rowSpan={asksDesc.length + book.bids.length + 1} className="px-1 text-center align-middle border-r" style={{ borderColor: "var(--border-default)", background: "rgba(0,131,143,0.05)" }}>
-                  <div className="font-extrabold text-[13px] tabular-nums" style={{ color: TEAL }}>{book.time ?? "-"}</div>
-                  <div className="text-[9px] text-[var(--text-muted)] mt-1 leading-tight">{t("이 1초의", "this second's")}<br />{t("대기줄 전체", "whole queue")}<br />{t("(1초 뒤 새 표)", "(new table in 1s)")}</div>
-                </td>
-              )}
+              <td className="px-1 text-center text-[10.5px] tabular-nums border-r" style={{ borderColor: "var(--border-default)", color: TEAL, background: "rgba(0,131,143,0.05)" }}>{book.time ?? "-"}</td>
               <td className="text-right px-2 relative">
                 <div style={{ position: "absolute", right: 0, top: 2, bottom: 2, width: `${Math.round((q / maxQ) * 100)}%`, background: "rgba(211,47,47,0.14)", borderRadius: 3 }} />
                 <span className="relative font-bold" style={{ color: RED }}>{fmt(q)}</span>
@@ -165,6 +160,7 @@ function Ladder({ book, t, note, prevClose, lastPx }: {
           {book.bids.map(([p, q], i) => (
             <tr key={`b${i}`} className="border-t border-[var(--border-default)]/30"
               style={{ background: p === book.best_bid ? "rgba(21,101,192,0.10)" : "transparent", outline: lastPx === p ? `1.5px solid ${BLUE}` : undefined }}>
+              <td className="px-1 text-center text-[10.5px] tabular-nums border-r" style={{ borderColor: "var(--border-default)", color: TEAL, background: "rgba(0,131,143,0.05)" }}>{book.time ?? "-"}</td>
               <td />
               <td className="text-center px-2 font-extrabold" style={{ color: BLUE }}>₩{fmt(p)}{p === book.best_bid ? <span className="text-[10px]"> {t("← 매도 체결", "← SELL here")}</span> : null}</td>
               <td className="text-center px-2 text-[11px]">{pctCell(p)}</td>
@@ -176,6 +172,7 @@ function Ladder({ book, t, note, prevClose, lastPx }: {
           ))}
           {/* Kiwoom bottom totals: 총잔량 */}
           <tr className="border-t-2" style={{ borderColor: "var(--border-default)" }}>
+            <td className="px-1 text-center text-[10.5px] tabular-nums border-r" style={{ borderColor: "var(--border-default)", color: TEAL, background: "rgba(0,131,143,0.05)" }}>{book.time ?? "-"}</td>
             <td className="text-right px-2 py-1 font-extrabold" style={{ color: RED }}>{fmt(totAsk)}</td>
             <td className="text-center px-2 py-1 text-[10.5px] text-[var(--text-muted)]">{t("총잔량", "totals")}</td>
             <td className="text-center px-2 py-1 text-[10px]" style={{ color: totBid > totAsk ? RED : BLUE }}>{totBid > totAsk ? t("매수우세", "buyers↑") : t("매도우세", "sellers↑")}</td>
