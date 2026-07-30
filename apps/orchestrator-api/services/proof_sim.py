@@ -129,15 +129,22 @@ def _seconds(seed: int, base_px: float) -> tuple[int, list[dict]]:
 
 def _candles_from(day0: int, secs: list[dict], period: int) -> list[dict]:
     """Aggregate the 1-second truth into candles of `period` seconds (open = first second,
-    close = last, high/low = extremes) — exactly how any real chart builds a timeframe."""
+    close = last, high/low = extremes) — exactly how any real chart builds a timeframe.
+    `dir` = the ENGINE's own comparison for this bar: +1 if its close is HIGHER than the
+    previous bar's close (red), -1 if lower (blue), 0 if equal. The chart is coloured by
+    `dir` so what you see is literally what the engine counts (boss 2026-07-30)."""
     out = []
     full = (len(secs) // period) * period
+    prev_close = None
     for i in range(0, full, period):
         chunk = secs[i:i + period]
         pxs = [x["px"] for x in chunk]
         ep9 = day0 + chunk[0]["off"]
+        close = pxs[-1]
+        d = 0 if prev_close is None else (1 if close > prev_close else (-1 if close < prev_close else 0))
         out.append({"time": ep9, "hhmm": _label(ep9, period),
-                    "open": pxs[0], "high": max(pxs), "low": min(pxs), "close": pxs[-1]})
+                    "open": pxs[0], "high": max(pxs), "low": min(pxs), "close": close, "dir": d})
+        prev_close = close
     return out
 
 
@@ -386,15 +393,33 @@ def run_synthetic(seed: int = 7, period: int = 60) -> dict[str, Any]:
         if period != 60:
             # DISPLAY only: put each arrow on the candle that CONTAINS the confirming second
             # (the last second of the 3rd decision minute) — same wall-clock moment, finer bar
-            def _disp(i, _p=period, _n=len(candles), _o=disp_off):
-                j = ((i + 1) * 60 - 1) // _p - _o
-                return j if 0 <= j < (_n - _o) else -1
+            # Inside the signal minute, put the arrow on the LAST bar whose body matches the
+            # trade — a BUY always lands on a RED (rising) candle, a SELL always on a BLUE one
+            # (boss 2026-07-30). A single sub-bar can be blue even while the whole minute rose,
+            # which used to make ~50% of arrows look inverted on the finer charts.
+            def _disp(i, up=True, _p=period, _cs=candles):
+                conf = min((i * 60 + 59) // _p, len(_cs) - 1)      # bar holding the confirming second
+                if conf < 0:
+                    return -1
+                lo_j = max(0, (i * 60) // _p)
+                want = 1 if up else -1
+                # prefer the LAST matching bar inside the signal minute; for periods that don't
+                # divide 60 (e.g. 40s) allow the adjacent bar (it overlaps the same minute), so
+                # a BUY is always on a red bar and a SELL always on a blue one
+                for hi in (conf, min(conf + 1, len(_cs) - 1)):
+                    pick = None
+                    for j in range(lo_j, hi + 1):
+                        if _cs[j]["dir"] == want:
+                            pick = j
+                    if pick is not None:
+                        return pick
+                return conf
             for tr in trades + open_pos:
-                tr["buy_idx"] = _disp(tr["buy_idx"])
+                tr["buy_idx"] = _disp(tr["buy_idx"], True)
                 if "sell_idx" in tr:
-                    tr["sell_idx"] = _disp(tr["sell_idx"])
+                    tr["sell_idx"] = _disp(tr["sell_idx"], False)
             for sk in skips:
-                sk["idx"] = _disp(sk["idx"])
+                sk["idx"] = _disp(sk["idx"], True)
         elif disp_off:                        # 1-min view: same window trim, shift indices
             for tr in trades + open_pos:
                 tr["buy_idx"] -= disp_off

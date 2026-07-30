@@ -16,7 +16,7 @@ const TEAL = "#00838f";
 const GOLD = "#e65100";
 const fmt = (n?: number | null) => (n == null ? "-" : Number(n).toLocaleString());
 
-type Candle = { time: number; hhmm: string; open: number; high: number; low: number; close: number };
+type Candle = { time: number; hhmm: string; open: number; high: number; low: number; close: number; dir?: number };
 type Book = { asks: [number, number][]; bids: [number, number][]; best_ask: number; best_bid: number } | null;
 type TlRow = { t: string; px: number; kind: "open" | "watch" | "high" | "low" | "close" | "fill" };
 type Trade = {
@@ -110,7 +110,15 @@ function ProofChart({ candles, trades, focus, buyLabel, sellLabel, openIdxs, hol
   useEffect(() => {                             // update data/markers in place — view untouched
     const cs = chartRef.current;
     if (!cs || !candles.length) return;
-    cs.series.setData(candles.map((c) => ({ time: c.time, open: c.open, high: c.high, low: c.low, close: c.close })) as never);
+    // colour each bar by the ENGINE's comparison (close vs the PREVIOUS bar's close), so a
+    // BUY arrow always sits on a red bar and a SELL on a blue one, at every timeframe
+    cs.series.setData(candles.map((c) => {
+      const up = c.dir != null ? c.dir > 0 : c.close > c.open;
+      const flat = c.dir != null && c.dir === 0;
+      const col = flat ? "#9e9e9e" : up ? RED : BLUE;
+      return { time: c.time, open: c.open, high: c.high, low: c.low, close: c.close,
+               color: col, borderColor: col, wickColor: col };
+    }) as never);
     const markers = trades.flatMap((t, i) => [
       { time: candles[t.buy_idx]?.time, position: "belowBar", color: RED, shape: "arrowUp", text: `${buyLabel}${focus === i ? "★" : ""}` },
       { time: candles[t.sell_idx]?.time, position: "aboveBar", color: BLUE, shape: "arrowDown", text: `${sellLabel}${focus === i ? "★" : ""}` },
@@ -482,8 +490,8 @@ export default function ProofLab() {
                 openIdxs={(sym.open_positions ?? []).map((p) => p.buy_idx)} holdLabel=""
                 skipIdxs={(sym.hold_skips ?? []).map((s) => s.idx)} skipLabel="⏸" resetLabel={t("최근 60분", "recent 60 min")} />
               <div className="px-2 pb-1 text-[11px] text-[var(--text-muted)]">
-                {t("▲매수 화살표 = 1분봉 3연속 양봉의 3번째 · ▼매도 화살표 = 3번째 음봉. 거래를 클릭하면 확대 + 증거를 보여줍니다.",
-                   "▲BUY arrow = the 3rd of 3 consecutive rising 1-min candles · ▼SELL = the 3rd falling. Click a trade to zoom + see the evidence.")}
+                {t("▲매수 화살표 = 1분봉 3연속 양봉의 3번째 · ▼매도 = 3번째 음봉 · 색은 엔진 기준(🔴 전봉 종가보다 상승 / 🔵 하락) → 매수는 항상 빨강, 매도는 항상 파랑. 거래를 클릭하면 확대 + 증거.",
+                   "▲BUY arrow = the 3rd of 3 consecutive rising 1-min candles · ▼SELL = the 3rd falling · bars are coloured by the ENGINE's rule (🔴 closed higher than the previous bar / 🔵 lower) → a BUY is always on red, a SELL always on blue. Click a trade to zoom + see the evidence.")}
                 {source === "synthetic" && tfSec !== 60 && (
                   <span style={{ color: GOLD }}>{t(` — ${tfSec}초봉에서는 판단 3분(=180초)이 더 잘게 나뉘어 보입니다. 화살표는 3번째 분이 확정된 그 '초'를 포함하는 캔들 위에 찍힙니다. 매매 시각·가격은 1분봉과 100% 동일.`,
                        ` — on the ${tfSec}-sec chart the 3 decision minutes (=180 seconds) are simply split into finer bars. The arrow sits on the candle that contains the exact second the 3rd minute confirmed. Trade times and prices are 100% identical to the 1-min view.`)}</span>
