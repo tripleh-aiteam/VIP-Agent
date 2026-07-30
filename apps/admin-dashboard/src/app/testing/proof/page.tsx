@@ -33,6 +33,7 @@ type SymBlock = {
   open_positions?: OpenPos[];
   hold_skips?: { idx: number; hhmm: string }[];
   live_book?: { asks: [number, number][]; bids: [number, number][]; best_ask: number; best_bid: number; time?: string } | null;
+  forming?: Candle | null;   // the still-forming current candle — chart display only, never judged
   no_trade_proofs: NoTrade[];
   verification: { trades: number; passed: number; total: number; pct: number; per_trade: { buy_hhmm: string; sell_hhmm: string; checks: Record<string, boolean>; passed: number; total: number }[] };
 };
@@ -150,21 +151,24 @@ export default function ProofLab() {
   };
   useEffect(() => { load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, []);
 
-  // 📡 LIVE mode (boss 2026-07-30): during market hours, today's real candles keep arriving —
-  // silently re-run the proof every 30s so new 3rd-candle arrows appear as they happen.
-  // Silent = no loading flicker, keeps the clicked trade open (trades only APPEND at the end).
+  // 🔴 LIVE in BOTH modes (boss 2026-07-30): silently re-run the proof so new candles/arrows
+  // appear as time passes. Paused while a trade is focused (so the demo view never shifts).
+  // Monotonic guard: history can only GROW — a partial/hiccup payload (fewer stocks or fewer
+  // trades than what's on screen) is discarded, so counts never drop from 10 to 2.
+  const focusRef = useRef<number | null>(null);
+  focusRef.current = focus;
   useEffect(() => {
-    if (source !== "kiwoom") return;
+    const nSy = (x: ProofRes | null) => (x ? x.symbols.length : 0);
+    const nTr = (x: ProofRes | null) => (x ? x.symbols.reduce((a, s) => a + s.trades.length, 0) : 0);
     const iv = setInterval(() => {
-      // keep-last-good guard: a Kiwoom hiccup mid-session can return an empty payload —
-      // NEVER let it wipe the tables the boss is looking at (fix 2026-07-30)
-      api<ProofRes>(`/paper-desk/proof/run?source=kiwoom&code=${code}`)
-        .then((r) => { if (r?.symbols?.length) setRes(r); })
+      if (focusRef.current != null) return;              // don't shift the stage mid-demonstration
+      api<ProofRes>(`/paper-desk/proof/run?source=${source}&seed=${seed}&code=${code}`)
+        .then((r) => setRes((old) => (r?.symbols?.length && nSy(r) >= nSy(old) && nTr(r) >= nTr(old) ? r : old)))
         .catch(() => {});
-    }, code === "ALL" ? 60_000 : 30_000);   // ALL = up to 21 tickers per sweep → gentler refresh
+    }, source === "kiwoom" && code !== "ALL" ? 30_000 : 60_000);   // ALL sweep + synthetic: 60s
     return () => clearInterval(iv);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [source, code]);
+  }, [source, code, seed]);
 
   const symList = res?.symbols ?? [];
   const symIdx = Math.max(0, selCode ? symList.findIndex((s) => s.code === selCode) : 0);
@@ -263,7 +267,7 @@ export default function ProofLab() {
       {/* ---- chart with arrows ---- */}
       {sym && (
         <div className="mt-3 rounded-xl border p-2" style={{ borderColor: "var(--border-default)", background: "var(--bg-elevated)" }}>
-          <ProofChart candles={sym.candles} trades={sym.trades} focus={focus} buyLabel={t("③▲매수", "③▲BUY")} sellLabel={t("③▼매도", "③▼SELL")}
+          <ProofChart candles={sym.forming ? [...sym.candles, sym.forming] : sym.candles} trades={sym.trades} focus={focus} buyLabel={t("③▲매수", "③▲BUY")} sellLabel={t("③▼매도", "③▼SELL")}
             openIdxs={(sym.open_positions ?? []).map((p) => p.buy_idx)} holdLabel={t("③▲매수·보유중", "③▲BOUGHT·holding")}
             skipIdxs={(sym.hold_skips ?? []).map((s) => s.idx)} skipLabel={t("⏸이미보유", "⏸already held")} />
           <div className="px-2 pb-1 text-[11px] text-[var(--text-muted)]">

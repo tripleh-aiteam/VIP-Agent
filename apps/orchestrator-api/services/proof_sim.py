@@ -262,18 +262,25 @@ def _kiwoom_symbol(code: str) -> dict[str, Any] | None:
         return None
     bars = raw[:-1] if len(raw) >= 2 else raw            # drop the forming candle (engine behavior)
     today = datetime.now(KST).strftime("%Y-%m-%d")
-    candles = []
-    for b in bars:
+
+    def _cd(b) -> dict | None:
         ts = str(b.get("ts") or "")
         if not ts.startswith(today) or b.get("close") is None:
-            continue
+            return None
         hh = ts[-5:]
         dt = datetime.strptime(f"{today} {hh}", "%Y-%m-%d %H:%M").replace(tzinfo=KST)
-        candles.append({"time": int(dt.timestamp()) + 9 * 3600, "hhmm": hh,
-                        "open": b.get("open"), "high": b.get("high"),
-                        "low": b.get("low"), "close": b.get("close")})
+        return {"time": int(dt.timestamp()) + 9 * 3600, "hhmm": hh,
+                "open": b.get("open"), "high": b.get("high"),
+                "low": b.get("low"), "close": b.get("close")}
+
+    candles = [c for c in (_cd(b) for b in bars) if c]
     if not candles:
         return None
+    # the still-FORMING current candle — shown on the chart for real-time feel, but the
+    # engine never judges it (it can flip before it closes), so the replay excludes it
+    forming = _cd(raw[-1]) if len(raw) >= 2 else None
+    if forming and candles and forming["hhmm"] == candles[-1]["hhmm"]:
+        forming = None
     trades, proofs, open_pos, skips = _simulate(candles, seed=1, with_book=False)
     ver = _verify(candles, trades, with_book=False)
     try:
@@ -296,7 +303,8 @@ def _kiwoom_symbol(code: str) -> dict[str, Any] | None:
                          "time": datetime.now(KST).strftime("%H:%M:%S")}
     except Exception:
         live_book = None
-    return {"code": code, "name": name, "candles": candles, "trades": trades,
+    return {"code": code, "name": name, "candles": candles, "forming": forming,
+            "trades": trades,
             "open_positions": open_pos, "hold_skips": skips, "live_book": live_book,
             "no_trade_proofs": proofs, "verification": ver}
 
