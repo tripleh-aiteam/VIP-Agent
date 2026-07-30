@@ -507,10 +507,10 @@ def run_synthetic(seed: int = 7, period: int = 60, mode: str = "min1",
         lb = _book(seed * 17 + (secs[-1]["off"] if secs else 0), ref_px, "BUY", t_base)
         live_book = {"asks": lb["asks"], "bids": lb["bids"], "best_ask": lb["best_ask"],
                      "best_bid": lb["best_bid"], "time": datetime.now(KST).strftime("%H:%M:%S")}
+        # dec_candles (the 1-min decision bars) used to ride along for the 🔢 counting chips.
+        # Those are gone (boss 2026-07-31), and nothing else read the field, so it is no
+        # longer sent — up to 120 extra candles off every refresh.
         symbols.append({"code": code, "name": name, "candles": candles,
-                        # decision-timeframe candles (1-min) so the counter/chips always
-                        # reflect what actually drives the trades, in every view
-                        "dec_candles": (None if dec is disp_all else dec[-120:]),
                         "forming": _forming_from(day0, secs, period), "trades": trades,
                         "open_positions": open_pos, "hold_skips": skips, "live_book": live_book,
                         "verification": ver})
