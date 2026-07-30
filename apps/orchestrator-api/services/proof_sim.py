@@ -401,7 +401,7 @@ def live_book_fast(source: str, code: str, seed: int = 7) -> dict[str, Any]:
         for s in range(now_s - 14, now_s + 1):
             rs = random.Random(f"{code}:{seed}:tape:{s}")
             ts_s = datetime.fromtimestamp(s, KST).strftime("%H:%M:%S")
-            for _d in range(rs.randint(1, 4)):             # several deals within the SAME second
+            for _d in range(rs.randint(8, 15)):            # Kiwoom-like burst: ~8-15 deals within the SAME second
                 tape.append({"t": ts_s,
                              "px": ref + t * rs.choice([-2, -1, -1, 0, 0, 0, 1, 1, 2]),
                              "qty": rs.randint(1, 120) * 10,

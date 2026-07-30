@@ -460,7 +460,7 @@ export default function ProofLab() {
         const tape = fastBook?.tape ?? sym.tick_tape ?? null;
         if (!tape || tape.length === 0) return null;
         const prevClose = fastBook?.prev_close ?? null;
-        const rows = [...tape].slice(-45).reverse();       // last ~15 seconds INCLUDING same-second bursts, newest on top
+        const rows = [...tape].slice(-90).reverse();       // last seconds' full bursts (~8-15 deals/sec), newest on top
         return (
           <div className={view === "table" ? "rounded-xl border overflow-hidden" : "mt-3 rounded-xl border overflow-hidden"} style={{ borderColor: TEAL }}>
             <div className="px-4 py-2 border-b bg-[var(--bg-elevated)] flex items-center gap-2 flex-wrap" style={{ borderColor: "var(--border-default)" }}>
