@@ -257,6 +257,7 @@ export default function ProofLab() {
   const [loading, setLoading] = useState(false);
   const [view, setView] = useState<"candle" | "table">("table");   // 📗 TABLE first (boss 2026-07-30) — chart on demand
   const [tapeMin, setTapeMin] = useState<{ BUY: number; SELL: number }>({ BUY: 2, SELL: 2 });   // which of the 3 candles' minute tape shows
+  const [histMin, setHistMin] = useState<5 | 10 | 15>(10);   // 🕰️ minute-verification table window
   type FastBook = { asks: [number, number][]; bids: [number, number][]; best_ask: number; best_bid: number; time?: string;
                     tape?: { t: string; px: number; qty: number; strength?: number | null }[] | null; prev_close?: number | null };
   const [fastBook, setFastBook] = useState<FastBook | null>(null);   // ⚡ 1s Kiwoom-speed ladder + 체결 feed
@@ -507,6 +508,59 @@ export default function ProofLab() {
       })()}
         </div>
       )}
+
+      {/* ---- 🕰️ minute verification table — compare any minute's prices with its candle ---- */}
+      {!focused && sym && sym.candles.length >= 2 && (() => {
+        const cs = sym.candles;
+        const rows = cs.slice(-histMin).map((c, i, arr) => {
+          const gi = cs.length - arr.length + i;                       // index in the full array
+          const prevC = gi >= 1 ? cs[gi - 1].close : null;
+          const d = prevC != null ? Math.round(c.close - prevC) : null;
+          return { c, d };
+        }).reverse();                                                   // newest on top
+        return (
+          <div className="mt-3 rounded-xl border overflow-hidden" style={{ borderColor: GOLD }}>
+            <div className="px-4 py-2 border-b bg-[var(--bg-elevated)] flex items-center gap-2 flex-wrap" style={{ borderColor: "var(--border-default)" }}>
+              <b className="text-[13px]" style={{ color: GOLD }}>🕰️ {nm(sym)} — {t("분별 가격 기록 (캔들 검증용)", "minute-by-minute record (verify the candles)")}</b>
+              {([5, 10, 15] as const).map((m) => (
+                <button key={m} onClick={() => setHistMin(m)} className="text-[11px] font-extrabold px-2.5 py-0.5 rounded-lg"
+                  style={histMin === m ? { background: GOLD, color: "#fff" } : { border: "1px solid var(--border-default)", color: "var(--text-secondary)" }}>
+                  {t(`최근 ${m}분`, `last ${m} min`)}
+                </button>
+              ))}
+              <span className="ml-auto text-[10.5px] text-[var(--text-muted)]">{t("예: 14:07 줄의 시/고/저/종을 차트의 14:07 캔들과 비교하세요 — 같아야 정상", "e.g. compare the 14:07 row's O/H/L/C with the chart's 14:07 candle — they must match")}</span>
+            </div>
+            <table className="w-full text-[11.5px] tabular-nums">
+              <thead><tr className="text-[10px] text-[var(--text-muted)]" style={{ background: "var(--bg-elevated)" }}>
+                <th className="text-left px-3 py-1">{t("시각(분)", "minute")}</th>
+                <th className="text-right px-2">{t("시가", "open")}</th>
+                <th className="text-right px-2">{t("고가", "high")}</th>
+                <th className="text-right px-2">{t("저가", "low")}</th>
+                <th className="text-right px-2">{t("종가", "close")}</th>
+                <th className="text-right px-2">{t("전분 종가 대비", "vs prev close")}</th>
+                <th className="text-center px-3">{t("판정", "verdict")}</th>
+              </tr></thead>
+              <tbody>
+                {rows.map(({ c, d }, i) => {
+                  const rise = d != null && d > 0, fall = d != null && d < 0;
+                  const icol = rise ? RED : fall ? BLUE : "var(--text-muted)";
+                  return (
+                    <tr key={i} className="border-t border-[var(--border-default)]/30">
+                      <td className="px-3 py-[2px] font-bold text-[var(--text-primary)]">{c.hhmm}</td>
+                      <td className="text-right px-2">₩{fmt(c.open)}</td>
+                      <td className="text-right px-2" style={{ color: RED }}>₩{fmt(c.high)}</td>
+                      <td className="text-right px-2" style={{ color: BLUE }}>₩{fmt(c.low)}</td>
+                      <td className="text-right px-2 font-extrabold" style={{ color: icol }}>₩{fmt(c.close)}</td>
+                      <td className="text-right px-2 font-bold" style={{ color: icol }}>{d == null ? "-" : d === 0 ? "0" : `${d > 0 ? "+" : "−"}₩${fmt(Math.abs(d))}`}</td>
+                      <td className="text-center px-3 font-bold" style={{ color: icol }}>{d == null ? "-" : rise ? t("🔴▲ 상승", "🔴▲ rise") : fall ? t("🔵▼ 하락", "🔵▼ fall") : t("⚪ 보합", "⚪ flat")}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        );
+      })()}
 
       {/* ---- 🔢 LIVE counting simulation — how the table's closes become a BUY/SELL ---- */}
       {!focused && sym && (() => {
