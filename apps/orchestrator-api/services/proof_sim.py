@@ -92,7 +92,10 @@ def _base30(seed: int, base_px: float) -> list[dict]:
     out, px = [], float(base_px)
     for m in range(total):
         r = random.Random(f"{seed}:30:{m}")               # ← per-slot seed = frozen history
-        step = _PLAN[m % len(_PLAN)]
+        # each planted pattern step spans ONE MINUTE = two 30s halves moving the SAME
+        # direction (boss 2026-07-30): the 1-min view then shows the exact 3-up/3-down
+        # pattern, and the 30s view is the SAME market at finer grain — one data, two lenses
+        step = _PLAN[(m // 2) % len(_PLAN)]
         delta = 0 if step == 0 else step * t * r.choice([1, 1, 2])
         o, c = px, px + delta
         # top wick ALWAYS >= 1 tick so fills always print inside the slot's range
