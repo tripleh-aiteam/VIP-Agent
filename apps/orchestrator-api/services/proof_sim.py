@@ -83,7 +83,8 @@ def _sec_label(epoch9: int, off: int) -> str:
 
 
 PERIODS = (1, 15, 30, 40, 60)    # selectable candle sizes — ALL aggregated from the same seconds
-S1_WINDOW = 1800                 # 1초 chart shows the last 30 minutes (Kiwoom limits tick charts too)
+S1_WINDOW = 1800                 # 1초 chart shows a 30-minute window (Kiwoom limits tick charts too)
+DEMO_MINUTES = 840               # the artificial proof day: 09:00 → 23:00, always complete
 
 
 def _norm_period(p) -> int:
@@ -102,13 +103,15 @@ def _seconds(seed: int, base_px: float) -> tuple[int, list[dict]]:
     Returns (day-open epoch+9h, [{off, px, qty}, ...])."""
     n_kst = datetime.now(KST)
     open_t = n_kst.replace(hour=9, minute=0, second=0, microsecond=0)
-    total_sec = int((n_kst - open_t).total_seconds())
-    # The FAKE market is a demo tape, not the KRX session — it keeps trading long after the
-    # real 15:30 close so the Proof Lab can be watched live in the evening (boss 2026-07-30:
-    # "server is on, immediately start trading with artificial data, so watch trading").
-    # Cap at 23:00 (14h of tape ≈ 840 minutes) — the 1분 chart then holds ~840 bars, the 1초
-    # chart still shows its rolling 30-minute window, so nothing gets unmanageable.
-    total_sec = max(180, min(total_sec, 840 * 60))
+    # ⚠️ The artificial tape is a COMPLETE recorded proof day — 09:00 to 23:00, ALWAYS.
+    # It must never wait for the real market. This used to be "09:00 until now", which meant
+    # that at 06:52 there were 3 candles and zero trades: the rule needs 4 candles to see 3
+    # rising steps, so the Proof Lab was empty every morning and only filled up after ~09:10.
+    # (boss 2026-07-31: "if you think market is not opened — it is artificial data, so you can
+    # do it without waiting market. I wanna test is actually working our algorithm.")
+    # Live, advancing data is what the 키움 실데이터 toggle is for; the artificial sample's job
+    # is to be a full, identical, always-available day that proves the mechanics at any hour.
+    total_sec = DEMO_MINUTES * 60
     day0 = int(open_t.timestamp()) + 9 * 3600            # +9h so charts display KST
     t = _tick(base_px) or 1
     secs: list[dict] = []
