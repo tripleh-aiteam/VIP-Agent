@@ -263,8 +263,13 @@ def run_synthetic(seed: int = 7) -> dict[str, Any]:
         trades, proofs, open_pos, skips = _simulate(candles, seed + k * 101, with_book=True)
         ver = _verify(candles, trades, with_book=True)
         agg_pass += ver["passed"]; agg_total += ver["total"]; agg_trades += ver["trades"]
+        # a CURRENT order book per fake stock (anchored to the last close, changes each
+        # minute) — powers the '📗 price table' view: the program trades from THIS table
+        lb = _book(seed * 17 + (candles[-1]["time"] if candles else 0), candles[-1]["close"], "BUY")
+        live_book = {"asks": lb["asks"], "bids": lb["bids"], "best_ask": lb["best_ask"],
+                     "best_bid": lb["best_bid"], "time": datetime.now(KST).strftime("%H:%M:%S")}
         symbols.append({"code": code, "name": name, "candles": candles, "trades": trades,
-                        "open_positions": open_pos, "hold_skips": skips,
+                        "open_positions": open_pos, "hold_skips": skips, "live_book": live_book,
                         "no_trade_proofs": proofs, "verification": ver})
     return {"source": "synthetic", "seed": seed, "need": NEED,
             "rule_ko": f"양봉 {NEED}개 연속(전봉 대비 {NEED}회 상승) → 정확히 {NEED}번째 양봉에 매수 · 음봉 {NEED}개 연속 → 정확히 {NEED}번째 음봉에 매도",

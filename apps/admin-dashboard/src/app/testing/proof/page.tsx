@@ -103,6 +103,46 @@ function ProofChart({ candles, trades, focus, buyLabel, sellLabel, openIdxs, hol
   return <div ref={ref} style={{ width: "100%", height: 320 }} />;
 }
 
+// ---- 📗 Kiwoom-style price LADDER (가격별 잔량표) — sellers above, buyers below ----
+function Ladder({ book, t, note }: { book: { asks: [number, number][]; bids: [number, number][]; best_ask: number; best_bid: number; time?: string }; t: (k: string, e: string) => string; note: string }) {
+  const maxQ = Math.max(...book.asks.map((a) => a[1]), ...book.bids.map((b) => b[1]), 1);
+  const asksDesc = [...book.asks].sort((a, b) => b[0] - a[0]);   // highest ask on top, best ask just above center
+  return (
+    <div className="px-2 py-2">
+      <div className="px-2 pb-1 text-[10.5px] text-[var(--text-muted)]">{note}</div>
+      <table className="w-full tabular-nums text-[12px]">
+        <thead><tr className="text-[10px] text-[var(--text-muted)]">
+          <th className="text-right px-2 w-[32%]">{t("매도 잔량 (팔려는 수량)", "sellers waiting (qty)")}</th>
+          <th className="text-center px-2">{t("가격", "price")}</th>
+          <th className="text-left px-2 w-[32%]">{t("매수 잔량 (사려는 수량)", "buyers waiting (qty)")}</th>
+        </tr></thead>
+        <tbody>
+          {asksDesc.map(([p, q], i) => (
+            <tr key={`a${i}`} className="border-t border-[var(--border-default)]/30" style={{ background: p === book.best_ask ? "rgba(211,47,47,0.10)" : "transparent" }}>
+              <td className="text-right px-2 relative">
+                <div style={{ position: "absolute", right: 0, top: 2, bottom: 2, width: `${Math.round((q / maxQ) * 100)}%`, background: "rgba(211,47,47,0.14)", borderRadius: 3 }} />
+                <span className="relative font-bold" style={{ color: RED }}>{fmt(q)}</span>
+              </td>
+              <td className="text-center px-2 font-extrabold" style={{ color: RED }}>₩{fmt(p)}{p === book.best_ask ? <span className="text-[10px]"> {t("← 매수는 여기서 체결", "← BUY fills HERE")}</span> : null}</td>
+              <td />
+            </tr>
+          ))}
+          {book.bids.map(([p, q], i) => (
+            <tr key={`b${i}`} className="border-t border-[var(--border-default)]/30" style={{ background: p === book.best_bid ? "rgba(21,101,192,0.10)" : "transparent" }}>
+              <td />
+              <td className="text-center px-2 font-extrabold" style={{ color: BLUE }}>₩{fmt(p)}{p === book.best_bid ? <span className="text-[10px]"> {t("← 매도는 여기서 체결", "← SELL fills HERE")}</span> : null}</td>
+              <td className="text-left px-2 relative">
+                <div style={{ position: "absolute", left: 0, top: 2, bottom: 2, width: `${Math.round((q / maxQ) * 100)}%`, background: "rgba(21,101,192,0.14)", borderRadius: 3 }} />
+                <span className="relative font-bold" style={{ color: BLUE }}>{fmt(q)}</span>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 // ---- 5-level order-book table with the fill row highlighted ----
 function BookTable({ book, side, fill, t }: { book: Book; side: "BUY" | "SELL"; fill: number; t: (k: string, e: string) => string }) {
   if (!book) return null;
@@ -147,6 +187,7 @@ export default function ProofLab() {
   const [selCode, setSelCode] = useState<string | null>(null);   // selection by CODE — index-shifts can't break it
   const [focus, setFocus] = useState<number | null>(null);
   const [loading, setLoading] = useState(false);
+  const [view, setView] = useState<"candle" | "table">("candle");   // 🕯️ chart vs 📗 price table
 
   const sourceRef = useRef(source);
   sourceRef.current = source;
@@ -277,16 +318,40 @@ export default function ProofLab() {
         </div>
       )}
 
-      {/* ---- chart with arrows ---- */}
+      {/* ---- chart OR price table (boss 2026-07-30: prove the program trades from TABLE data) ---- */}
       {sym && (
         <div className="mt-3 rounded-xl border p-2" style={{ borderColor: "var(--border-default)", background: "var(--bg-elevated)" }}>
-          <ProofChart candles={sym.forming ? [...sym.candles, sym.forming] : sym.candles} trades={sym.trades} focus={focus} buyLabel={t("③▲매수", "③▲BUY")} sellLabel={t("③▼매도", "③▼SELL")}
-            openIdxs={(sym.open_positions ?? []).map((p) => p.buy_idx)} holdLabel={t("③▲매수·보유중", "③▲BOUGHT·holding")}
-            skipIdxs={(sym.hold_skips ?? []).map((s) => s.idx)} skipLabel={t("⏸이미보유", "⏸already held")} />
-          <div className="px-2 pb-1 text-[11px] text-[var(--text-muted)]">
-            {t("▲매수 화살표 = 정확히 3번째 양봉 · ▼매도 화살표 = 정확히 3번째 음봉. 거래를 클릭하면 확대 + 증거를 보여줍니다.",
-               "▲BUY arrow = exactly the 3rd red candle · ▼SELL arrow = exactly the 3rd blue. Click a trade to zoom + see the evidence.")}
+          <div className="flex items-center gap-1.5 px-2 pt-1 pb-2">
+            <button onClick={() => setView("candle")} className="text-[12px] font-extrabold px-3 py-1 rounded-lg"
+              style={view === "candle" ? { background: GOLD, color: "#fff" } : { border: "1px solid var(--border-default)", color: "var(--text-secondary)" }}>
+              🕯️ {t("캔들 차트", "candle chart")}
+            </button>
+            <button onClick={() => setView("table")} className="text-[12px] font-extrabold px-3 py-1 rounded-lg"
+              style={view === "table" ? { background: TEAL, color: "#fff" } : { border: "1px solid var(--border-default)", color: "var(--text-secondary)" }}>
+              📗 {t("호가 테이블 (가격별 잔량)", "price table (qty per price)")}
+            </button>
+            {view === "table" && <span className="text-[10.5px] text-[var(--text-muted)]">{t("차트 숨김 — 프로그램이 실제로 읽는 표 데이터만 표시", "chart hidden — showing only the TABLE data the program reads")}</span>}
           </div>
+          {view === "candle" ? (
+            <>
+              <ProofChart candles={sym.forming ? [...sym.candles, sym.forming] : sym.candles} trades={sym.trades} focus={focus} buyLabel={t("③▲매수", "③▲BUY")} sellLabel={t("③▼매도", "③▼SELL")}
+                openIdxs={(sym.open_positions ?? []).map((p) => p.buy_idx)} holdLabel={t("③▲매수·보유중", "③▲BOUGHT·holding")}
+                skipIdxs={(sym.hold_skips ?? []).map((s) => s.idx)} skipLabel={t("⏸이미보유", "⏸already held")} />
+              <div className="px-2 pb-1 text-[11px] text-[var(--text-muted)]">
+                {t("▲매수 화살표 = 정확히 3번째 양봉 · ▼매도 화살표 = 정확히 3번째 음봉. 거래를 클릭하면 확대 + 증거를 보여줍니다.",
+                   "▲BUY arrow = exactly the 3rd red candle · ▼SELL arrow = exactly the 3rd blue. Click a trade to zoom + see the evidence.")}
+              </div>
+            </>
+          ) : sym.live_book ? (
+            <Ladder book={sym.live_book} t={t}
+              note={source === "synthetic"
+                ? t(`${nm(sym)} — 가격별 대기 수량표 (프로그램은 이 표에서 체결가를 고릅니다: 매수=최저 매도호가, 매도=최고 매수호가)`,
+                    `${nm(sym)} — quantities waiting per price (the program picks its fill from THIS table: buy = lowest seller, sell = highest buyer)`)
+                : t(`${nm(sym)} — 실시간 Kiwoom 호가창 (${sym.live_book.time ?? ""} 기준) · 매수=최저 매도호가, 매도=최고 매수호가`,
+                    `${nm(sym)} — LIVE Kiwoom order book (as of ${sym.live_book.time ?? ""}) · buy = lowest seller, sell = highest buyer`)} />
+          ) : (
+            <div className="px-3 py-6 text-center text-[12px] text-[var(--text-muted)]">{t("호가 데이터 없음", "no book data")}</div>
+          )}
         </div>
       )}
 
