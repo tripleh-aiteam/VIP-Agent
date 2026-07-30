@@ -77,7 +77,9 @@ def _synthetic_candles(seed: int, base_px: float) -> list[dict]:
     n_kst = datetime.now(KST)
     open_t = n_kst.replace(hour=9, minute=0, second=0, microsecond=0)
     total = int((n_kst - open_t).total_seconds() // 60)   # completed minutes since 09:00
-    total = max(2, min(total, 380))
+    # the FAKE market keeps trading after the real 15:30 close (demos run in the evening too);
+    # cap at 570 min (= 18:30) to bound the payload
+    total = max(2, min(total, 570))
     t = _tick(base_px) or 1
     out, px = [], float(base_px)
     for m in range(total):
