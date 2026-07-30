@@ -217,7 +217,7 @@ export default function ProofLab() {
   const { lang } = useLanguage();
   const t = (ko: string, en: string) => (lang === "ko" ? ko : en);
   const nm = (s: { code: string; name: string }) => (lang !== "ko" && FAKE_EN[s.code]) || s.name;
-  const [source, setSource] = useState<"synthetic" | "kiwoom">("kiwoom");   // boss 2026-07-30: REAL data first
+  const [source, setSource] = useState<"synthetic" | "kiwoom">("synthetic");   // boss 2026-07-30: ARTIFICIAL first (demo), real on the toggle
   const [seed, setSeed] = useState(7);
   const [code, setCode] = useState("ALL");   // boss 2026-07-30: all companies by default
   const [res, setRes] = useState<ProofRes | null>(null);
