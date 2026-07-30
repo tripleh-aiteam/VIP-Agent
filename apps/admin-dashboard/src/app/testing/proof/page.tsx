@@ -41,6 +41,9 @@ type ProofRes = {
   verification: { trades: number; passed: number; total: number; pct: number };
 };
 
+// the 3 artificial demo companies — English names for EN mode (Korean stays in KO mode)
+const FAKE_EN: Record<string, string> = { PRF1: "Proof Electronics", PRF2: "Simul Heavy Ind.", PRF3: "Test Chemical" };
+
 const KIWOOM_CODES = [
   ["005930", "삼성전자"], ["000660", "SK하이닉스"], ["005380", "현대차"],
   ["034020", "두산에너빌리티"], ["010140", "삼성중공업"], ["042700", "한미반도체"],
@@ -174,6 +177,7 @@ function BookTable({ book, side, fill, t }: { book: Book; side: "BUY" | "SELL"; 
 export default function ProofLab() {
   const { lang } = useLanguage();
   const t = (ko: string, en: string) => (lang === "ko" ? ko : en);
+  const nm = (s: { code: string; name: string }) => (lang !== "ko" && FAKE_EN[s.code]) || s.name;
   const [source, setSource] = useState<"synthetic" | "kiwoom">("kiwoom");   // boss 2026-07-30: REAL data first
   const [seed, setSeed] = useState(7);
   const [code, setCode] = useState("ALL");   // boss 2026-07-30: all companies by default
@@ -235,7 +239,7 @@ export default function ProofLab() {
           <button onClick={() => setFocus(null)} className="text-[12.5px] font-extrabold px-3 py-1.5 rounded-lg text-white" style={{ background: GOLD }}>
             ← {t("전체 목록으로", "back to all trades")}
           </button>
-          <b className="text-[14px] text-[var(--text-primary)]">{sym.name}</b>
+          <b className="text-[14px] text-[var(--text-primary)]">{nm(sym)}</b>
           <span className="text-[13px] tabular-nums font-bold" style={{ color: RED }}>▲ {sel.buy_hhmm} ₩{fmt(sel.entry)}</span>
           <span className="text-[var(--text-muted)]">→</span>
           <span className="text-[13px] tabular-nums font-bold" style={{ color: BLUE }}>▼ {sel.sell_hhmm} ₩{fmt(sel.exit)}</span>
@@ -297,7 +301,7 @@ export default function ProofLab() {
             <button key={s.code} onClick={() => { setSelCode(s.code); setFocus(null); }}
               className="text-[12px] font-extrabold px-3 py-1 rounded-lg"
               style={i === symIdx ? { background: GOLD, color: "#fff" } : { border: "1px solid var(--border-default)", color: "var(--text-secondary)" }}>
-              {s.name}
+              {nm(s)}
             </button>
           ))}
         </div>
@@ -337,7 +341,7 @@ export default function ProofLab() {
                 {posRows.map((r, i) => (
                   <tr key={i} onClick={() => { setSelCode(r.s.code); setFocus(null); }}
                     className="border-t border-[var(--border-default)]/40 cursor-pointer hover:bg-[var(--bg-elevated)]">
-                    <td className="px-3 py-1.5 font-bold text-[var(--text-primary)]">{r.s.name}</td>
+                    <td className="px-3 py-1.5 font-bold text-[var(--text-primary)]">{nm(r.s)}</td>
                     <td className="px-2 font-bold" style={{ color: "#e65100" }}>▲ {r.p.buy_hhmm} {t("보유중", "holding")}</td>
                     <td className="text-right px-2">₩{fmt(r.p.entry)}</td>
                     <td className="text-right px-2">₩{fmt(r.p.last_px)}</td>
@@ -391,7 +395,7 @@ export default function ProofLab() {
                     <tr key={i} onClick={() => { if (active) { setFocus(null); } else { setSelCode(r.s.code); setFocus(r.ti); } }}
                       className="border-t border-[var(--border-default)]/40 cursor-pointer hover:bg-[var(--bg-elevated)]"
                       style={{ background: active ? "rgba(230,81,0,0.08)" : "transparent" }}>
-                      <td className="px-3 py-1.5 font-bold text-[var(--text-primary)]">{r.s.name}</td>
+                      <td className="px-3 py-1.5 font-bold text-[var(--text-primary)]">{nm(r.s)}</td>
                       <td className="px-2 font-bold" style={{ color: RED }}>▲ {r.tr.buy_hhmm}</td>
                       <td className="px-2 font-bold" style={{ color: BLUE }}>▼ {r.tr.sell_hhmm}</td>
                       <td className="text-right px-2">₩{fmt(r.tr.entry)}</td>
