@@ -382,10 +382,18 @@ export default function ProofLab() {
             {([60, 30] as const).map((p) => (
               <button key={p} onClick={() => { setTfSec(p); load("synthetic", seed, code, p); }}
                 className="text-[11.5px] font-extrabold px-3 py-1 rounded-lg"
+                title={p === 60
+                  ? t("실제 데스크와 동일한 1분봉 — 3개(=3분) 상승에 매수", "same as the live desk: 1-min candles — buy on 3 candles (=3 minutes) of rise")
+                  : t("같은 시장을 더 잘게 본 것 — 3개(=1.5분) 상승에 매수하므로 1분봉보다 먼저 신호", "the SAME market at finer grain — 3 candles (=1.5 min) of rise, so it signals earlier than 1-min")}
                 style={tfSec === p ? { background: GOLD, color: "#fff" } : { border: "1px solid var(--border-default)", color: "var(--text-secondary)" }}>
                 {p === 60 ? t("1분봉", "1-min") : t("30초봉", "30-sec")}
               </button>
             ))}
+            {tfSec === 30 && (
+              <span className="text-[10px] px-2 py-0.5 rounded-full" style={{ background: "rgba(230,81,0,0.12)", color: GOLD }}>
+                {t("같은 데이터 · 캔들이 절반이라 신호가 1.5분 빠름", "same data · half-size candles → signals ~1.5 min earlier")}
+              </span>
+            )}
             <button onClick={() => { const s = Math.floor(Math.random() * 9999); setSeed(s); load("synthetic", s, code); }}
               className="text-[11.5px] font-bold px-3 py-1 rounded-lg border" style={{ borderColor: GOLD, color: GOLD }}>
               🎲 {t(`새 시뮬레이션 (seed ${seed})`, `new simulation (seed ${seed})`)}
@@ -459,8 +467,12 @@ export default function ProofLab() {
                 openIdxs={(sym.open_positions ?? []).map((p) => p.buy_idx)} holdLabel=""
                 skipIdxs={(sym.hold_skips ?? []).map((s) => s.idx)} skipLabel="⏸" resetLabel={t("최근 60분", "recent 60 min")} />
               <div className="px-2 pb-1 text-[11px] text-[var(--text-muted)]">
-                {t("▲매수 화살표 = 정확히 3번째 양봉 · ▼매도 화살표 = 정확히 3번째 음봉. 거래를 클릭하면 확대 + 증거를 보여줍니다.",
-                   "▲BUY arrow = exactly the 3rd red candle · ▼SELL arrow = exactly the 3rd blue. Click a trade to zoom + see the evidence.")}
+                {t(`▲매수 화살표 = 정확히 3번째 양봉 · ▼매도 화살표 = 정확히 3번째 음봉 (${source === "synthetic" ? (tfSec === 30 ? "30초봉" : "1분봉") : "1분봉"} 기준). 거래를 클릭하면 확대 + 증거를 보여줍니다.`,
+                   `▲BUY arrow = exactly the 3rd red candle · ▼SELL arrow = exactly the 3rd blue (counted in ${source === "synthetic" ? (tfSec === 30 ? "30-sec" : "1-min") : "1-min"} candles). Click a trade to zoom + see the evidence.`)}
+                {source === "synthetic" && tfSec === 30 && (
+                  <span style={{ color: GOLD }}>{t(" — 1분봉과 같은 시장이지만 캔들이 절반이므로 3개가 더 빨리 완성돼 화살표가 앞에 찍힙니다.",
+                       " — same market as 1-min, but half-size candles complete 3 sooner, so the arrows sit earlier.")}</span>
+                )}
               </div>
             </>
           ) : (() => {
