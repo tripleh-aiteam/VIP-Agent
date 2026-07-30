@@ -85,7 +85,10 @@ def _synthetic_candles(seed: int, base_px: float) -> list[dict]:
         step = _PLAN[m % len(_PLAN)]
         delta = 0 if step == 0 else step * t * r.choice([1, 1, 2])
         o, c = px, px + delta
-        hi = max(o, c) + t * r.choice([0, 1])
+        # top wick ALWAYS >= 1 tick: a buy fills at prev close + 1 tick (best ask) = open + 1
+        # tick, and in a real market that execution prints — so the fill-minute candle must
+        # contain the fill price (boss 2026-07-30 consistency fix)
+        hi = max(o, c) + t * r.choice([1, 1, 2])
         lo = min(o, c) - t * r.choice([0, 1])
         ts = open_t + timedelta(minutes=m)
         out.append({"time": int(ts.timestamp()) + 9 * 3600,   # +9h so the chart displays KST
