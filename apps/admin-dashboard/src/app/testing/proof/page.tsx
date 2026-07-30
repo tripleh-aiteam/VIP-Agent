@@ -74,6 +74,7 @@ function ProofChart({ candles, trades, focus, buyLabel, sellLabel, openIdxs, hol
   const chartRef = useRef<{ chart: any; series: any } | null>(null);
   const touchedRef = useRef(false);            // true once the user zooms/pans — we stop auto-ranging
   const prevFocusRef = useRef<number | null>(null);
+  const viewRef = useRef<{ from: number; to: number } | null>(null);   // the visible TIME window (survives timeframe switches)
   const [ready, setReady] = useState(0);
 
   useEffect(() => {                             // create the chart ONCE
@@ -92,6 +93,12 @@ function ProofChart({ candles, trades, focus, buyLabel, sellLabel, openIdxs, hol
       });
       const series = chart.addCandlestickSeries({
         upColor: RED, downColor: BLUE, borderUpColor: RED, borderDownColor: BLUE, wickUpColor: RED, wickDownColor: BLUE,
+      });
+      // remember the visible TIME window so a timeframe switch (candle indices change
+      // meaning) or a data refresh can restore exactly the same clock range
+      chart.timeScale().subscribeVisibleTimeRangeChange((r: unknown) => {
+        const rr = r as { from?: number; to?: number } | null;
+        if (rr && rr.from != null && rr.to != null) viewRef.current = { from: rr.from, to: rr.to };
       });
       chartRef.current = { chart, series };
       setReady((v) => v + 1);
@@ -120,12 +127,16 @@ function ProofChart({ candles, trades, focus, buyLabel, sellLabel, openIdxs, hol
     cs.series.setMarkers(markers as never);
     const focusChanged = prevFocusRef.current !== focus;
     prevFocusRef.current = focus;
-    if (focus != null && trades[focus]) {
+    if (focus != null && trades[focus] && trades[focus].buy_idx >= 0) {
       if (focusChanged) cs.chart.timeScale().setVisibleLogicalRange({ from: trades[focus].buy_idx - 7, to: trades[focus].sell_idx + 7 } as never);
     } else if (focusChanged || !touchedRef.current) {
-      // default: follow the recent ~60 minutes — but ONLY while the user hasn't zoomed/panned
+      // default: follow the recent ~60 bars — but ONLY while the user hasn't zoomed/panned
       if (focusChanged) touchedRef.current = false;
       cs.chart.timeScale().setVisibleLogicalRange({ from: Math.max(0, candles.length - 60), to: candles.length + 2 } as never);
+    } else if (viewRef.current) {
+      // user has their own view → restore the SAME CLOCK RANGE (not candle indices), so
+      // switching 1분↔40초↔30초↔15초 or a live refresh never moves the boss's screen
+      cs.chart.timeScale().setVisibleRange(viewRef.current as never);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ready, candles, trades, focus, buyLabel, sellLabel, openIdxs, holdLabel, skipIdxs, skipLabel]);
@@ -278,12 +289,15 @@ export default function ProofLab() {
   const [tfSec, setTfSec] = useState<60 | 40 | 30 | 15>(60);   // candle period — 1분봉 default
   const sourceRef = useRef(source);
   sourceRef.current = source;
-  const load = async (src = source, sd = seed, cd = code, p = tfSec) => {
-    setLoading(true); setFocus(null);
+  // keep = true → a TIMEFRAME switch only: preserve the selected stock, the focused trade
+  // and the chart view (trades are identical across timeframes, so indices stay valid)
+  const load = async (src = source, sd = seed, cd = code, p = tfSec, keep = false) => {
+    setLoading(true);
+    if (!keep) setFocus(null);
     try {
       const r = await api<ProofRes>(`/paper-desk/proof/run?source=${src}&seed=${sd}&code=${cd}&period=${p}`);
       // a slow response from the OTHER mode must never land after the user switched
-      if (src === sourceRef.current && r?.source === src) { setRes(r); setSelCode(null); }
+      if (src === sourceRef.current && r?.source === src) { setRes(r); if (!keep) setSelCode(null); }
     } catch { /* keep last */ }
     setLoading(false);
   };
@@ -381,7 +395,7 @@ export default function ProofLab() {
         {source === "synthetic" ? (
           <>
             {([60, 40, 30, 15] as const).map((p) => (
-              <button key={p} onClick={() => { setTfSec(p); load("synthetic", seed, code, p); }}
+              <button key={p} onClick={() => { setTfSec(p); load("synthetic", seed, code, p, true); }}
                 className="text-[11.5px] font-extrabold px-2.5 py-1 rounded-lg"
                 title={p === 60
                   ? t("실제 데스크와 동일한 1분봉 차트 — 판단도 1분봉 3연속", "the live desk's 1-min chart — decisions use 3 consecutive 1-min candles")
