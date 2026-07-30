@@ -62,7 +62,9 @@ _PLAN = ([-1] * 2 + [+1] * 3 + [-1] * 3            # trade 1: clean 3-up → 3-d
          + [+1] * 5 + [0] + [-1] * 4               # trade 2: 5-up (buy on 3rd) → flat → 4-down (sell on 3rd)
          + [+1] + [0] + [+1] * 2 + [-1] * 3        # flat breaks the count — no buy (and no position → no sell)
          + [+1] * 3 + [-1] + [+1] + [-1] * 3       # trade 3: 3-up → 1-blue chop (no sell) → 3-down sell
-         + [+1] * 2 + [-1] + [+1] * 3 + [-1] * 3)  # trade 4: noise then clean 3-up → 3-down
+         + [+1] * 2 + [-1] + [+1] * 3 + [-1] * 3   # trade 4: noise then clean 3-up → 3-down
+         + [+1] * 3)                               # final 3-up: BUY still HELD at the end — shows the
+                                                   # 📌 open-positions table + gold arrow in artificial mode too
 
 _SYMBOLS = [("PRF1", "프루프전자", 205_000), ("PRF2", "시뮬중공업", 19_500), ("PRF3", "테스트화학", 78_000)]
 
