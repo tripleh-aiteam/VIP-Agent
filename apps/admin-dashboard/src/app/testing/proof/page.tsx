@@ -137,6 +137,10 @@ export default function ProofLab() {
   const [seed, setSeed] = useState(7);
   const [code, setCode] = useState("ALL");   // boss 2026-07-30: all companies by default
   const [res, setRes] = useState<ProofRes | null>(null);
+  // 📒 cumulative trade LEDGER (boss 2026-07-30): a normal history — new trades append (+1),
+  // rows are NEVER removed by refreshes/hiccups/scope switches. Namespaced per mode
+  // (and per seed for artificial); cleared only by page reload.
+  const histRef = useRef<Record<string, Record<string, { code: string; name: string; tr: Trade }>>>({});
   const [selCode, setSelCode] = useState<string | null>(null);   // selection by CODE — index-shifts can't break it
   const [focus, setFocus] = useState<number | null>(null);
   const [loading, setLoading] = useState(false);
@@ -311,18 +315,29 @@ export default function ProofLab() {
         );
       })()}
 
-      {/* ---- 🔍 completed trade history (ALL companies, click → evidence) ---- */}
-      {!focused && res && res.symbols.length > 0 && (() => {
-        const rows = res.symbols
-          .flatMap((s, si) => s.trades.map((tr, ti) => ({ s, si, tr, ti })))
-          .sort((a, b) => (b.tr.sell_time ?? 0) - (a.tr.sell_time ?? 0));
+      {/* ---- 📒 cumulative trade history (append-only ledger — can only grow, +1 per trade) ---- */}
+      {!focused && res && (() => {
+        // merge the current payload into the ledger (idempotent: keyed per trade)
+        const ns = source === "synthetic" ? `syn:${seed}` : "kiwoom";
+        const bucket = (histRef.current[ns] ??= {});
+        for (const s of res.symbols) for (const tr of s.trades) {
+          const k = source === "synthetic" ? `${s.code}|i${tr.buy_idx}-${tr.sell_idx}` : `${s.code}|${tr.buy_hhmm}|${tr.sell_hhmm}`;
+          bucket[k] = { code: s.code, name: s.name, tr };   // overwrite = refresh values, count stays
+        }
+        const rows = Object.values(bucket).sort((a, b) => (b.tr.sell_time ?? 0) - (a.tr.sell_time ?? 0));
         const wins = rows.filter((r) => r.tr.net_pct > 0).length;
         const losses = rows.filter((r) => r.tr.net_pct < 0).length;
         const winPct = rows.length ? Math.round((wins / rows.length) * 100) : 0;
+        const findLive = (r: { code: string; tr: Trade }) => {
+          const si = res.symbols.findIndex((s2) => s2.code === r.code);
+          if (si < 0) return null;
+          const ti = res.symbols[si].trades.findIndex((t2) => t2.buy_hhmm === r.tr.buy_hhmm && t2.sell_hhmm === r.tr.sell_hhmm);
+          return ti >= 0 ? { code: r.code, ti } : null;
+        };
         return (
           <div className="mt-3 rounded-xl border overflow-hidden" style={{ borderColor: GOLD }}>
             <div className="px-4 py-2 border-b bg-[var(--bg-elevated)]" style={{ borderColor: "var(--border-default)" }}>
-              <b className="text-[13px]" style={{ color: GOLD }}>🔍 {t("완료된 거래 기록 (모든 종목) — 클릭하면 증거가 열립니다", "completed trade history (ALL companies) — click a trade, the evidence opens")}</b>
+              <b className="text-[13px]" style={{ color: GOLD }}>📒 {t("거래 기록 (누적 — 새 거래마다 +1, 절대 줄지 않음) — 클릭하면 증거", "trade history (cumulative — +1 per new trade, never shrinks) — click for evidence")}</b>
             </div>
             {/* summary bar — like the Algo 3 history header */}
             <div className="px-4 py-2.5 border-b text-[13px] tabular-nums flex items-center gap-5 flex-wrap" style={{ borderColor: "var(--border-default)", background: "rgba(230,81,0,0.05)" }}>
@@ -347,12 +362,13 @@ export default function ProofLab() {
               </tr></thead>
               <tbody>
                 {rows.map((r, i) => {
-                  const active = r.si === symIdx && focus === r.ti;
+                  const live = findLive(r);
+                  const active = live != null && live.code === sym?.code && focus === live.ti;
                   return (
-                    <tr key={i} onClick={() => { if (active) { setFocus(null); } else { setSelCode(r.s.code); setFocus(r.ti); } }}
-                      className="border-t border-[var(--border-default)]/40 cursor-pointer hover:bg-[var(--bg-elevated)]"
+                    <tr key={i} onClick={() => { if (active) { setFocus(null); } else if (live) { setSelCode(live.code); setFocus(live.ti); } }}
+                      className={`border-t border-[var(--border-default)]/40 ${live ? "cursor-pointer hover:bg-[var(--bg-elevated)]" : "opacity-70"}`}
                       style={{ background: active ? "rgba(230,81,0,0.08)" : "transparent" }}>
-                      <td className="px-3 py-1.5 font-bold text-[var(--text-primary)]">{nm(r.s)}</td>
+                      <td className="px-3 py-1.5 font-bold text-[var(--text-primary)]">{nm(r)}</td>
                       <td className="px-2 font-bold" style={{ color: RED }}>▲ {r.tr.buy_hhmm}</td>
                       <td className="px-2 font-bold" style={{ color: BLUE }}>▼ {r.tr.sell_hhmm}</td>
                       <td className="text-right px-2">₩{fmt(r.tr.entry)}</td>
