@@ -107,23 +107,29 @@ def _seconds(seed: int, base_px: float) -> tuple[int, list[dict]]:
     for m in range((total_sec + 59) // 60):
         rm = random.Random(f"{seed}:min:{m}")            # ← per-minute seed = frozen history
         step = _PLAN[m % len(_PLAN)]                     # one planted step per MINUTE
-        delta = 0 if step == 0 else step * t * rm.choice([1, 1, 2])
-        o, c = px, px + delta
-        # REAL intra-minute life (boss 2026-07-30): the price wiggles a few ticks around the
-        # path from open to close, so finer candles (15/30/40s) get real bodies instead of
-        # flat lines. High/low are whatever the walk actually touches — nothing is imposed.
-        amp = rm.choice([2, 3, 3, 4])                    # swing amplitude in ticks
+        # ONE-WAY minute (boss 2026-07-30): during an up-minute the price only steps UP —
+        # exactly one step inside each 15-second quarter. That makes EVERY sub-bar of an
+        # up-minute red at 15/20/30/40s, so the arrow can sit on the last bar of the 3-minute
+        # run (the 3rd / 6th / 12th candle) and still always be the right colour.
+        o = px
+        if step == 0:                                    # planted flat minute — breaks the streak
+            for s in range(60):
+                off = m * 60 + s
+                if off >= total_sec:
+                    break
+                secs.append({"off": off, "px": o, "qty": rm.randint(1, 80) * 10})
+            continue                                     # px unchanged
+        per_q = rm.choice([1, 1, 2])                     # ticks per quarter → 4 or 8 per minute
+        step_secs = {q * 15 + rm.randint(1, 14) for q in range(4)}
+        cur = o
         for s in range(60):
             off = m * 60 + s
             if off >= total_sec:
                 break
-            path = o + (c - o) * s / 59
-            wig = rm.choice([-amp, -2, -2, -1, -1, 0, 0, 1, 1, 2, 2, amp]) * t
-            p = round((path + wig) / t) * t
-            if s == 0: p = o                             # :00 = the minute's open (= prev close)
-            if s == 59: p = c                            # the minute's CLOSE = what the engine reads
-            secs.append({"off": off, "px": p, "qty": rm.randint(1, 80) * 10})
-        px = c
+            if s in step_secs:
+                cur += step * t * per_q
+            secs.append({"off": off, "px": cur, "qty": rm.randint(1, 80) * 10})
+        px = o + step * t * per_q * 4                    # the minute's CLOSE (what the engine reads)
     return day0, secs
 
 
@@ -134,17 +140,24 @@ def _candles_from(day0: int, secs: list[dict], period: int) -> list[dict]:
     previous bar's close (red), -1 if lower (blue), 0 if equal. The chart is coloured by
     `dir` so what you see is literally what the engine counts (boss 2026-07-30)."""
     out = []
-    full = (len(secs) // period) * period
     prev_close = None
-    for i in range(0, full, period):
-        chunk = secs[i:i + period]
-        pxs = [x["px"] for x in chunk]
-        ep9 = day0 + chunk[0]["off"]
-        close = pxs[-1]
-        d = 0 if prev_close is None else (1 if close > prev_close else (-1 if close < prev_close else 0))
-        out.append({"time": ep9, "hhmm": _label(ep9, period),
-                    "open": pxs[0], "high": max(pxs), "low": min(pxs), "close": close, "dir": d})
-        prev_close = close
+    # bars are CLIPPED AT EACH MINUTE, so a period that doesn't divide 60 (40s) ends the
+    # minute with a short "half" bar (40 + 20). Every 3-minute decision run then finishes
+    # exactly on a bar boundary in every timeframe (boss 2026-07-30: the 4.5-candle idea).
+    for m in range(len(secs) // 60):
+        s = 0
+        while s < 60:
+            ln = min(period, 60 - s)
+            chunk = secs[m * 60 + s: m * 60 + s + ln]
+            pxs = [x["px"] for x in chunk]
+            ep9 = day0 + chunk[0]["off"]
+            close = pxs[-1]
+            d = 0 if prev_close is None else (1 if close > prev_close else (-1 if close < prev_close else 0))
+            out.append({"time": ep9, "hhmm": _label(ep9, period),
+                        "open": pxs[0], "high": max(pxs), "low": min(pxs), "close": close,
+                        "dir": d, "off0": chunk[0]["off"], "n": ln, "half": ln != period})
+            prev_close = close
+            s += ln
     return out
 
 
@@ -161,16 +174,22 @@ def _synthetic_candles(seed: int, base_px: float, period: int = 60) -> list[dict
 
 
 def _forming_from(day0: int, secs: list[dict], period: int) -> dict | None:
-    """The still-forming candle = the REAL leftover seconds after the last complete candle
-    (no synthesis — same truth array), so it matches every other view."""
-    rem = len(secs) % period
+    """The still-forming candle = the REAL leftover seconds of the current (incomplete)
+    minute, clipped the same way as closed bars — no synthesis, same truth array."""
+    rem = len(secs) % 60
     if rem == 0:
         return None
-    chunk = secs[-rem:]
-    pxs = [x["px"] for x in chunk]
-    ep9 = day0 + chunk[0]["off"]
-    return {"time": ep9, "hhmm": _label(ep9, period),
-            "open": pxs[0], "high": max(pxs), "low": min(pxs), "close": pxs[-1]}
+    base = (len(secs) // 60) * 60
+    last, s = None, 0
+    while s < rem:
+        ln = min(period, 60 - s, rem - s)
+        chunk = secs[base + s: base + s + ln]
+        pxs = [x["px"] for x in chunk]
+        ep9 = day0 + chunk[0]["off"]
+        last = {"time": ep9, "hhmm": _label(ep9, period), "open": pxs[0],
+                "high": max(pxs), "low": min(pxs), "close": pxs[-1]}
+        s += ln
+    return last
 
 
 def _book(seed: int, ref: float, side: str, tick: int | None = None) -> dict:
@@ -397,32 +416,19 @@ def run_synthetic(seed: int = 7, period: int = 60) -> dict[str, Any]:
             # trade — a BUY always lands on a RED (rising) candle, a SELL always on a BLUE one
             # (boss 2026-07-30). A single sub-bar can be blue even while the whole minute rose,
             # which used to make ~50% of arrows look inverted on the finer charts.
-            def _disp(i, up=True, _p=period, _cs=candles):
-                conf = min((i * 60 + 59) // _p, len(_cs) - 1)      # bar holding the confirming second
-                if conf < 0:
-                    return -1
-                want = 1 if up else -1
-                # Pick the LAST bar whose ENGINE direction matches, searching progressively:
-                #   1) inside the signal minute      2) + the adjacent (fill) bar
-                #   3) back across the 2nd decision minute   4) back across all 3
-                # Step 4 always succeeds: the 3 decision closes rose (or fell) overall, so a
-                # matching bar must exist in that span — a BUY can never land on a blue bar.
-                for back, hi in ((0, conf), (0, min(conf + 1, len(_cs) - 1)),
-                                 (1, min(conf + 1, len(_cs) - 1)), (2, min(conf + 1, len(_cs) - 1))):
-                    lo_j = max(0, ((i - back) * 60) // _p)
-                    pick = None
-                    for j in range(lo_j, hi + 1):
-                        if _cs[j]["dir"] == want:
-                            pick = j
-                    if pick is not None:
-                        return pick
-                return conf
+            # THE arrow rule (boss 2026-07-30): the LAST bar of the 3rd decision minute —
+            # the 3rd candle on 1분봉, the 6th on 30초봉, the 12th on 15초봉, and the closing
+            # half-bar on 40초봉. Bars are minute-clipped, so every minute has the same count.
+            bpm = -(-60 // period)                        # bars per minute (ceil)
+            def _disp(i, _b=bpm, _n=len(candles)):
+                j = i * _b + _b - 1
+                return j if 0 <= j < _n else -1
             for tr in trades + open_pos:
-                tr["buy_idx"] = _disp(tr["buy_idx"], True)
+                tr["buy_idx"] = _disp(tr["buy_idx"])
                 if "sell_idx" in tr:
-                    tr["sell_idx"] = _disp(tr["sell_idx"], False)
+                    tr["sell_idx"] = _disp(tr["sell_idx"])
             for sk in skips:
-                sk["idx"] = _disp(sk["idx"], True)
+                sk["idx"] = _disp(sk["idx"])
         elif disp_off:                        # 1-min view: same window trim, shift indices
             for tr in trades + open_pos:
                 tr["buy_idx"] -= disp_off
@@ -610,10 +616,10 @@ def minute_tape(source: str, code: str, seed: int, hhmm: str, period: int = 60) 
     period = _norm_period(period)
     day0, secs = _seconds(sseed, _SYMBOLS[k][2])
     candles = _candles_from(day0, secs, period)
-    for idx, cd in enumerate(candles):
+    for cd in candles:
         if cd["hhmm"] == hhmm:
             return {"ok": True, "hhmm": hhmm, "candle": cd,
-                    "tape": _tape_from(day0, secs, idx * period, period)}
+                    "tape": _tape_from(day0, secs, cd["off0"], cd["n"])}
     return {"ok": False, "reason": "minute-not-found"}
 
 
