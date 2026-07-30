@@ -401,12 +401,15 @@ def run_synthetic(seed: int = 7, period: int = 60) -> dict[str, Any]:
                 conf = min((i * 60 + 59) // _p, len(_cs) - 1)      # bar holding the confirming second
                 if conf < 0:
                     return -1
-                lo_j = max(0, (i * 60) // _p)
                 want = 1 if up else -1
-                # prefer the LAST matching bar inside the signal minute; for periods that don't
-                # divide 60 (e.g. 40s) allow the adjacent bar (it overlaps the same minute), so
-                # a BUY is always on a red bar and a SELL always on a blue one
-                for hi in (conf, min(conf + 1, len(_cs) - 1)):
+                # Pick the LAST bar whose ENGINE direction matches, searching progressively:
+                #   1) inside the signal minute      2) + the adjacent (fill) bar
+                #   3) back across the 2nd decision minute   4) back across all 3
+                # Step 4 always succeeds: the 3 decision closes rose (or fell) overall, so a
+                # matching bar must exist in that span — a BUY can never land on a blue bar.
+                for back, hi in ((0, conf), (0, min(conf + 1, len(_cs) - 1)),
+                                 (1, min(conf + 1, len(_cs) - 1)), (2, min(conf + 1, len(_cs) - 1))):
+                    lo_j = max(0, ((i - back) * 60) // _p)
                     pick = None
                     for j in range(lo_j, hi + 1):
                         if _cs[j]["dir"] == want:
