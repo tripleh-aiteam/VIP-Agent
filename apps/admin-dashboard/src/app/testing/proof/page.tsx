@@ -663,8 +663,10 @@ export default function ProofLab() {
           })()}
         </div>
 
-      {/* ---- 📼 per-stock 체결 table — Kiwoom columns: 시각·체결가·전일대비·체결량·체결강도 ---- */}
-      {!focused && (() => {
+      {/* ---- 📼 per-stock 체결 table — Kiwoom columns: 시각·체결가·전일대비·체결량·체결강도.
+              TABLE VIEW ONLY (boss 2026-07-31: the menu had grown too complex). Under the
+              candle chart the page is now just chart → 보유 → 거래 기록 → 분별 기록. ---- */}
+      {!focused && view === "table" && (() => {
         const tape = fastBook?.tape ?? sym.tick_tape ?? null;
         if (!tape || tape.length === 0) return null;
         const prevClose = fastBook?.prev_close ?? null;
@@ -716,118 +718,9 @@ export default function ProofLab() {
         </div>
       )}
 
-      {/* ---- 🕰️ minute verification table — compare any minute's prices with its candle ---- */}
-      {!focused && sym && sym.candles.length >= 2 && (() => {
-        const cs = sym.candles;
-        const useRange = histRange.from !== "" && histRange.to !== "";
-        const picked = useRange
-          ? cs.filter((c) => c.hhmm >= histRange.from && c.hhmm <= histRange.to).slice(0, 120)
-          : cs.slice(-histMin);
-        const rows = picked.map((c) => {
-          const gi = cs.indexOf(c);
-          const prevC = gi >= 1 ? cs[gi - 1].close : null;
-          const d = prevC != null ? Math.round(c.close - prevC) : null;
-          return { c, d };
-        }).reverse();                                                   // newest on top
-        const openMinute = async (hhmm: string) => {
-          const key = `${sym.code}|${hhmm}`;
-          if (minTape?.key === key) { setMinTape(null); return; }       // click again → close
-          if (source !== "synthetic") { setMinTape({ key, tape: null, err: "nohist" }); return; }
-          try {
-            const r = await api<{ ok: boolean; tape?: { t: string; px: number; qty?: number }[] }>(
-              `/paper-desk/proof/minute_tape?source=synthetic&code=${sym.code}&seed=${seed}&hhmm=${encodeURIComponent(hhmm)}&period=${tfSec}&start=${liveStart}`);
-            setMinTape({ key, tape: r.ok ? (r.tape ?? null) : null, err: r.ok ? undefined : "nf" });
-          } catch { setMinTape({ key, tape: null, err: "nf" }); }
-        };
-        return (
-          <div className="mt-3 rounded-xl border overflow-hidden" style={{ borderColor: GOLD }}>
-            <div className="px-4 py-2 border-b bg-[var(--bg-elevated)] flex items-center gap-2 flex-wrap" style={{ borderColor: "var(--border-default)" }}>
-              <b className="text-[13px]" style={{ color: GOLD }}>🕰️ {nm(sym)} — {t("분별 가격 기록 (캔들 검증용)", "minute-by-minute record (verify the candles)")}</b>
-              {([5, 10, 15] as const).map((m) => (
-                <button key={m} onClick={() => { setHistMin(m); setHistRange({ from: "", to: "" }); }} className="text-[11px] font-extrabold px-2.5 py-0.5 rounded-lg"
-                  style={!useRange && histMin === m ? { background: GOLD, color: "#fff" } : { border: "1px solid var(--border-default)", color: "var(--text-secondary)" }}>
-                  {t(`최근 ${m}분`, `last ${m} min`)}
-                </button>
-              ))}
-              <span className="text-[10.5px] text-[var(--text-muted)]">{t("구간:", "range:")}</span>
-              <input type="time" value={histRange.from} onChange={(e) => setHistRange((r) => ({ ...r, from: e.target.value }))}
-                className="text-[11px] px-1.5 py-0.5 rounded-lg border bg-[var(--bg-primary)] text-[var(--text-primary)]" style={{ borderColor: useRange ? GOLD : "var(--border-default)" }} />
-              <span className="text-[10.5px] text-[var(--text-muted)]">→</span>
-              <input type="time" value={histRange.to} onChange={(e) => setHistRange((r) => ({ ...r, to: e.target.value }))}
-                className="text-[11px] px-1.5 py-0.5 rounded-lg border bg-[var(--bg-primary)] text-[var(--text-primary)]" style={{ borderColor: useRange ? GOLD : "var(--border-default)" }} />
-              {useRange && <button onClick={() => setHistRange({ from: "", to: "" })} className="text-[10.5px] font-bold px-2 py-0.5 rounded-lg border text-[var(--text-muted)]" style={{ borderColor: "var(--border-default)" }}>✕</button>}
-              <span className="ml-auto text-[10.5px] text-[var(--text-muted)]">{t("줄을 클릭하면 그 분의 초 단위 데이터가 열립니다", "click a row → that minute's per-second data opens")}</span>
-            </div>
-            <table className="w-full text-[11.5px] tabular-nums">
-              <thead><tr className="text-[10px] text-[var(--text-muted)]" style={{ background: "var(--bg-elevated)" }}>
-                <th className="text-left px-3 py-1">{t("시각(분)", "minute")}</th>
-                <th className="text-right px-2">{t("시가", "open")}</th>
-                <th className="text-right px-2">{t("고가", "high")}</th>
-                <th className="text-right px-2">{t("저가", "low")}</th>
-                <th className="text-right px-2">{t("종가", "close")}</th>
-                <th className="text-right px-2">{t("전분 종가 대비", "vs prev close")}</th>
-                <th className="text-center px-3">{t("판정", "verdict")}</th>
-              </tr></thead>
-              <tbody>
-                {rows.map(({ c, d }, i) => {
-                  const rise = d != null && d > 0, fall = d != null && d < 0;
-                  const icol = rise ? RED : fall ? BLUE : "var(--text-muted)";
-                  const key = `${sym.code}|${c.hhmm}`;
-                  const openHere = minTape?.key === key;
-                  return (
-                    <React.Fragment key={i}>
-                    <tr onClick={() => openMinute(c.hhmm)}
-                      className="border-t border-[var(--border-default)]/30 cursor-pointer hover:bg-[var(--bg-elevated)]"
-                      style={{ background: openHere ? "rgba(230,81,0,0.08)" : "transparent" }}>
-                      <td className="px-3 py-[2px] font-bold text-[var(--text-primary)]">{openHere ? "▾ " : "▸ "}{c.hhmm}</td>
-                      <td className="text-right px-2">₩{fmt(c.open)}</td>
-                      <td className="text-right px-2" style={{ color: RED }}>₩{fmt(c.high)}</td>
-                      <td className="text-right px-2" style={{ color: BLUE }}>₩{fmt(c.low)}</td>
-                      <td className="text-right px-2 font-extrabold" style={{ color: icol }}>₩{fmt(c.close)}</td>
-                      <td className="text-right px-2 font-bold" style={{ color: icol }}>{d == null ? "-" : d === 0 ? "0" : `${d > 0 ? "+" : "−"}₩${fmt(Math.abs(d))}`}</td>
-                      <td className="text-center px-3 font-bold" style={{ color: icol }}>{d == null ? "-" : rise ? t("🔴▲ 상승", "🔴▲ rise") : fall ? t("🔵▼ 하락", "🔵▼ fall") : t("⚪ 보합", "⚪ flat")}</td>
-                    </tr>
-                    {openHere && (
-                      <tr>
-                        <td colSpan={7} className="px-6 py-2" style={{ background: "rgba(128,128,128,0.05)" }}>
-                          {minTape?.tape ? (
-                            <>
-                              <div className="text-[10px] font-bold text-[var(--text-muted)] mb-1">🎬 {t(`${c.hhmm}의 초 단위 전체 가격 (${minTape.tape.length}초) — 마지막 줄이 이 캔들의 종가`, `every second of ${c.hhmm} (all ${minTape.tape.length}) — the last row is this candle's close`)}</div>
-                              <div className="rounded-lg border overflow-y-auto tabular-nums text-[11px]" style={{ maxHeight: 140, borderColor: "var(--border-default)" }}>
-                                {minTape.tape.map((r2, j) => {
-                                  const last = j === minTape.tape!.length - 1;
-                                  return (
-                                    <div key={j} className="flex items-center gap-3 px-2 py-[1px]" style={{ background: last ? "rgba(230,81,0,0.14)" : "transparent" }}>
-                                      <span className="text-[var(--text-muted)] w-[64px]">{r2.t}</span>
-                                      <span className="font-bold" style={{ color: last ? icol : "var(--text-secondary)" }}>₩{fmt(r2.px)}</span>
-                                      <span className="text-[10px] text-[var(--text-muted)]">{r2.qty ? `${fmt(r2.qty)}${lang === "ko" ? "주" : " sh"}` : ""}</span>
-                                      {last && <span className="ml-auto text-[10px] font-bold pr-1" style={{ color: icol }}>{t("← 이 분의 종가", "← this minute's close")}</span>}
-                                    </div>
-                                  );
-                                })}
-                              </div>
-                            </>
-                          ) : (
-                            <span className="text-[11px] text-[var(--text-muted)]">
-                              {minTape?.err === "nohist"
-                                ? t("실데이터는 거래소가 과거 초 단위를 보관하지 않아 열 수 없습니다 — 초 단위 검증은 🧪 인공 데이터에서 하세요", "real per-second history isn't archived by the exchange — use 🧪 artificial data for second-level verification")
-                                : t("데이터 없음", "no data")}
-                            </span>
-                          )}
-                        </td>
-                      </tr>
-                    )}
-                    </React.Fragment>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        );
-      })()}
-
-      {/* ---- 🔢 LIVE counting simulation — how the table's closes become a BUY/SELL ---- */}
-      {!focused && sym && (() => {
+      {/* ---- 🔢 LIVE counting simulation — how the table's closes become a BUY/SELL.
+              TABLE VIEW ONLY: it explains the raw table data, so it lives with the table. ---- */}
+      {!focused && view === "table" && sym && (() => {
         const cs = sym.dec_candles ?? sym.candles;   // count on the DECISION timeframe (what drives trades)
         if (cs.length < 2) return null;
         const n = Math.min(10, cs.length - 1);
@@ -1039,6 +932,116 @@ export default function ProofLab() {
               </tbody>
             </table>
             )}
+          </div>
+        );
+      })()}
+
+      {/* ---- 🕰️ minute verification table — compare any minute's prices with its candle ---- */}
+      {!focused && sym && sym.candles.length >= 2 && (() => {
+        const cs = sym.candles;
+        const useRange = histRange.from !== "" && histRange.to !== "";
+        const picked = useRange
+          ? cs.filter((c) => c.hhmm >= histRange.from && c.hhmm <= histRange.to).slice(0, 120)
+          : cs.slice(-histMin);
+        const rows = picked.map((c) => {
+          const gi = cs.indexOf(c);
+          const prevC = gi >= 1 ? cs[gi - 1].close : null;
+          const d = prevC != null ? Math.round(c.close - prevC) : null;
+          return { c, d };
+        }).reverse();                                                   // newest on top
+        const openMinute = async (hhmm: string) => {
+          const key = `${sym.code}|${hhmm}`;
+          if (minTape?.key === key) { setMinTape(null); return; }       // click again → close
+          if (source !== "synthetic") { setMinTape({ key, tape: null, err: "nohist" }); return; }
+          try {
+            const r = await api<{ ok: boolean; tape?: { t: string; px: number; qty?: number }[] }>(
+              `/paper-desk/proof/minute_tape?source=synthetic&code=${sym.code}&seed=${seed}&hhmm=${encodeURIComponent(hhmm)}&period=${tfSec}&start=${liveStart}`);
+            setMinTape({ key, tape: r.ok ? (r.tape ?? null) : null, err: r.ok ? undefined : "nf" });
+          } catch { setMinTape({ key, tape: null, err: "nf" }); }
+        };
+        return (
+          <div className="mt-3 rounded-xl border overflow-hidden" style={{ borderColor: GOLD }}>
+            <div className="px-4 py-2 border-b bg-[var(--bg-elevated)] flex items-center gap-2 flex-wrap" style={{ borderColor: "var(--border-default)" }}>
+              <b className="text-[13px]" style={{ color: GOLD }}>🕰️ {nm(sym)} — {t("분별 가격 기록 (캔들 검증용)", "minute-by-minute record (verify the candles)")}</b>
+              {([5, 10, 15] as const).map((m) => (
+                <button key={m} onClick={() => { setHistMin(m); setHistRange({ from: "", to: "" }); }} className="text-[11px] font-extrabold px-2.5 py-0.5 rounded-lg"
+                  style={!useRange && histMin === m ? { background: GOLD, color: "#fff" } : { border: "1px solid var(--border-default)", color: "var(--text-secondary)" }}>
+                  {t(`최근 ${m}분`, `last ${m} min`)}
+                </button>
+              ))}
+              <span className="text-[10.5px] text-[var(--text-muted)]">{t("구간:", "range:")}</span>
+              <input type="time" value={histRange.from} onChange={(e) => setHistRange((r) => ({ ...r, from: e.target.value }))}
+                className="text-[11px] px-1.5 py-0.5 rounded-lg border bg-[var(--bg-primary)] text-[var(--text-primary)]" style={{ borderColor: useRange ? GOLD : "var(--border-default)" }} />
+              <span className="text-[10.5px] text-[var(--text-muted)]">→</span>
+              <input type="time" value={histRange.to} onChange={(e) => setHistRange((r) => ({ ...r, to: e.target.value }))}
+                className="text-[11px] px-1.5 py-0.5 rounded-lg border bg-[var(--bg-primary)] text-[var(--text-primary)]" style={{ borderColor: useRange ? GOLD : "var(--border-default)" }} />
+              {useRange && <button onClick={() => setHistRange({ from: "", to: "" })} className="text-[10.5px] font-bold px-2 py-0.5 rounded-lg border text-[var(--text-muted)]" style={{ borderColor: "var(--border-default)" }}>✕</button>}
+              <span className="ml-auto text-[10.5px] text-[var(--text-muted)]">{t("줄을 클릭하면 그 분의 초 단위 데이터가 열립니다", "click a row → that minute's per-second data opens")}</span>
+            </div>
+            <table className="w-full text-[11.5px] tabular-nums">
+              <thead><tr className="text-[10px] text-[var(--text-muted)]" style={{ background: "var(--bg-elevated)" }}>
+                <th className="text-left px-3 py-1">{t("시각(분)", "minute")}</th>
+                <th className="text-right px-2">{t("시가", "open")}</th>
+                <th className="text-right px-2">{t("고가", "high")}</th>
+                <th className="text-right px-2">{t("저가", "low")}</th>
+                <th className="text-right px-2">{t("종가", "close")}</th>
+                <th className="text-right px-2">{t("전분 종가 대비", "vs prev close")}</th>
+                <th className="text-center px-3">{t("판정", "verdict")}</th>
+              </tr></thead>
+              <tbody>
+                {rows.map(({ c, d }, i) => {
+                  const rise = d != null && d > 0, fall = d != null && d < 0;
+                  const icol = rise ? RED : fall ? BLUE : "var(--text-muted)";
+                  const key = `${sym.code}|${c.hhmm}`;
+                  const openHere = minTape?.key === key;
+                  return (
+                    <React.Fragment key={i}>
+                    <tr onClick={() => openMinute(c.hhmm)}
+                      className="border-t border-[var(--border-default)]/30 cursor-pointer hover:bg-[var(--bg-elevated)]"
+                      style={{ background: openHere ? "rgba(230,81,0,0.08)" : "transparent" }}>
+                      <td className="px-3 py-[2px] font-bold text-[var(--text-primary)]">{openHere ? "▾ " : "▸ "}{c.hhmm}</td>
+                      <td className="text-right px-2">₩{fmt(c.open)}</td>
+                      <td className="text-right px-2" style={{ color: RED }}>₩{fmt(c.high)}</td>
+                      <td className="text-right px-2" style={{ color: BLUE }}>₩{fmt(c.low)}</td>
+                      <td className="text-right px-2 font-extrabold" style={{ color: icol }}>₩{fmt(c.close)}</td>
+                      <td className="text-right px-2 font-bold" style={{ color: icol }}>{d == null ? "-" : d === 0 ? "0" : `${d > 0 ? "+" : "−"}₩${fmt(Math.abs(d))}`}</td>
+                      <td className="text-center px-3 font-bold" style={{ color: icol }}>{d == null ? "-" : rise ? t("🔴▲ 상승", "🔴▲ rise") : fall ? t("🔵▼ 하락", "🔵▼ fall") : t("⚪ 보합", "⚪ flat")}</td>
+                    </tr>
+                    {openHere && (
+                      <tr>
+                        <td colSpan={7} className="px-6 py-2" style={{ background: "rgba(128,128,128,0.05)" }}>
+                          {minTape?.tape ? (
+                            <>
+                              <div className="text-[10px] font-bold text-[var(--text-muted)] mb-1">🎬 {t(`${c.hhmm}의 초 단위 전체 가격 (${minTape.tape.length}초) — 마지막 줄이 이 캔들의 종가`, `every second of ${c.hhmm} (all ${minTape.tape.length}) — the last row is this candle's close`)}</div>
+                              <div className="rounded-lg border overflow-y-auto tabular-nums text-[11px]" style={{ maxHeight: 140, borderColor: "var(--border-default)" }}>
+                                {minTape.tape.map((r2, j) => {
+                                  const last = j === minTape.tape!.length - 1;
+                                  return (
+                                    <div key={j} className="flex items-center gap-3 px-2 py-[1px]" style={{ background: last ? "rgba(230,81,0,0.14)" : "transparent" }}>
+                                      <span className="text-[var(--text-muted)] w-[64px]">{r2.t}</span>
+                                      <span className="font-bold" style={{ color: last ? icol : "var(--text-secondary)" }}>₩{fmt(r2.px)}</span>
+                                      <span className="text-[10px] text-[var(--text-muted)]">{r2.qty ? `${fmt(r2.qty)}${lang === "ko" ? "주" : " sh"}` : ""}</span>
+                                      {last && <span className="ml-auto text-[10px] font-bold pr-1" style={{ color: icol }}>{t("← 이 분의 종가", "← this minute's close")}</span>}
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            </>
+                          ) : (
+                            <span className="text-[11px] text-[var(--text-muted)]">
+                              {minTape?.err === "nohist"
+                                ? t("실데이터는 거래소가 과거 초 단위를 보관하지 않아 열 수 없습니다 — 초 단위 검증은 🧪 인공 데이터에서 하세요", "real per-second history isn't archived by the exchange — use 🧪 artificial data for second-level verification")
+                                : t("데이터 없음", "no data")}
+                            </span>
+                          )}
+                        </td>
+                      </tr>
+                    )}
+                    </React.Fragment>
+                  );
+                })}
+              </tbody>
+            </table>
           </div>
         );
       })()}
