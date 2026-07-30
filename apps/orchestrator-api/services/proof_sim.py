@@ -103,8 +103,12 @@ def _seconds(seed: int, base_px: float) -> tuple[int, list[dict]]:
     n_kst = datetime.now(KST)
     open_t = n_kst.replace(hour=9, minute=0, second=0, microsecond=0)
     total_sec = int((n_kst - open_t).total_seconds())
-    # the FAKE market keeps trading after the real 15:30 close; cap at 18:30
-    total_sec = max(180, min(total_sec, 570 * 60))
+    # The FAKE market is a demo tape, not the KRX session — it keeps trading long after the
+    # real 15:30 close so the Proof Lab can be watched live in the evening (boss 2026-07-30:
+    # "server is on, immediately start trading with artificial data, so watch trading").
+    # Cap at 23:00 (14h of tape ≈ 840 minutes) — the 1분 chart then holds ~840 bars, the 1초
+    # chart still shows its rolling 30-minute window, so nothing gets unmanageable.
+    total_sec = max(180, min(total_sec, 840 * 60))
     day0 = int(open_t.timestamp()) + 9 * 3600            # +9h so charts display KST
     t = _tick(base_px) or 1
     secs: list[dict] = []
