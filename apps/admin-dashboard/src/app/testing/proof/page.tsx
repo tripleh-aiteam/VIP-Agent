@@ -275,7 +275,7 @@ export default function ProofLab() {
                     tape?: { t: string; px: number; qty: number; strength?: number | null }[] | null; prev_close?: number | null };
   const [fastBook, setFastBook] = useState<FastBook | null>(null);   // ⚡ 1s Kiwoom-speed ladder + 체결 feed
 
-  const [tfSec, setTfSec] = useState<60 | 30>(60);   // candle period: 1분봉(60s, default) or 30초봉
+  const [tfSec, setTfSec] = useState<60 | 40 | 30 | 15>(60);   // candle period — 1분봉 default
   const sourceRef = useRef(source);
   sourceRef.current = source;
   const load = async (src = source, sd = seed, cd = code, p = tfSec) => {
@@ -380,17 +380,17 @@ export default function ProofLab() {
         </button>
         {source === "synthetic" ? (
           <>
-            {([60, 30] as const).map((p) => (
+            {([60, 40, 30, 15] as const).map((p) => (
               <button key={p} onClick={() => { setTfSec(p); load("synthetic", seed, code, p); }}
-                className="text-[11.5px] font-extrabold px-3 py-1 rounded-lg"
+                className="text-[11.5px] font-extrabold px-2.5 py-1 rounded-lg"
                 title={p === 60
                   ? t("실제 데스크와 동일한 1분봉 차트 — 판단도 1분봉 3연속", "the live desk's 1-min chart — decisions use 3 consecutive 1-min candles")
-                  : t("같은 시장·같은 매매를 30초 캔들로 더 잘게 본 것 — 판단은 여전히 1분봉 3연속이므로 체결 시각·가격이 완전히 동일", "the SAME market and the SAME trades drawn with 30-sec candles — decisions still use 3 consecutive 1-min candles, so fill times and prices are identical")}
+                  : t(`같은 시장·같은 매매를 ${p}초 캔들로 더 잘게 본 것 — 판단은 여전히 1분봉 3연속이므로 체결 시각·가격이 완전히 동일`, `the SAME market and the SAME trades drawn with ${p}-sec candles — decisions still use 3 consecutive 1-min candles, so fill times and prices are identical`)}
                 style={tfSec === p ? { background: GOLD, color: "#fff" } : { border: "1px solid var(--border-default)", color: "var(--text-secondary)" }}>
-                {p === 60 ? t("1분봉", "1-min") : t("30초봉", "30-sec")}
+                {p === 60 ? t("1분봉", "1-min") : t(`${p}초봉`, `${p}-sec`)}
               </button>
             ))}
-            {tfSec === 30 && (
+            {tfSec !== 60 && (
               <span className="text-[10px] px-2 py-0.5 rounded-full" style={{ background: "rgba(230,81,0,0.12)", color: GOLD }}>
                 {t("같은 데이터 · 같은 매매 (시각·가격 동일) · 캔들만 더 잘게", "same data · same trades (identical times & prices) · finer candles only")}
               </span>
@@ -470,9 +470,9 @@ export default function ProofLab() {
               <div className="px-2 pb-1 text-[11px] text-[var(--text-muted)]">
                 {t("▲매수 화살표 = 1분봉 3연속 양봉의 3번째 · ▼매도 화살표 = 3번째 음봉. 거래를 클릭하면 확대 + 증거를 보여줍니다.",
                    "▲BUY arrow = the 3rd of 3 consecutive rising 1-min candles · ▼SELL = the 3rd falling. Click a trade to zoom + see the evidence.")}
-                {source === "synthetic" && tfSec === 30 && (
-                  <span style={{ color: GOLD }}>{t(" — 30초봉에서는 판단 3분이 절반 캔들 6개로 보입니다(1분=2개). 화살표는 그 3번째 분의 두 번째 절반(판단 확정 캔들) 위. 시각·가격은 1분봉과 100% 동일.",
-                       " — on the 30-sec chart the 3 decision minutes appear as 6 half-candles (1 min = 2). The arrow sits on the 3rd minute's second half (the candle that confirmed it). Times and prices are 100% identical to the 1-min view.")}</span>
+                {source === "synthetic" && tfSec !== 60 && (
+                  <span style={{ color: GOLD }}>{t(` — ${tfSec}초봉에서는 판단 3분(=180초)이 더 잘게 나뉘어 보입니다. 화살표는 3번째 분이 확정된 그 '초'를 포함하는 캔들 위에 찍힙니다. 매매 시각·가격은 1분봉과 100% 동일.`,
+                       ` — on the ${tfSec}-sec chart the 3 decision minutes (=180 seconds) are simply split into finer bars. The arrow sits on the candle that contains the exact second the 3rd minute confirmed. Trade times and prices are 100% identical to the 1-min view.`)}</span>
                 )}
               </div>
             </>
@@ -755,7 +755,9 @@ export default function ProofLab() {
         // merge the payload into the ledger of ITS OWN source (tag from the data, never the UI
         // state — a stale payload from the other mode can't pollute this mode's history)
         const synData = res.source === "synthetic";
-        const nsData = synData ? `syn:${res.seed ?? seed}:${res.period ?? 60}` : "kiwoom";
+        // trades are IDENTICAL across timeframes → ONE ledger per seed (history stays
+        // continuous when the user switches 1분/40초/30초/15초)
+        const nsData = synData ? `syn:${res.seed ?? seed}` : "kiwoom";
         const bucketData = (histRef.current[nsData] ??= {});
         for (const s of res.symbols) for (const tr of s.trades) {
           const k = synData ? `${s.code}|i${tr.buy_idx}-${tr.sell_idx}` : `${s.code}|${tr.buy_hhmm}|${tr.sell_hhmm}`;
@@ -763,7 +765,7 @@ export default function ProofLab() {
         }
         // display the CURRENT mode's ledger + hard filter: artificial (PRF*) companies never in
         // Kiwoom history, real companies never in artificial history
-        const nsView = source === "synthetic" ? `syn:${seed}:${tfSec}` : "kiwoom";
+        const nsView = source === "synthetic" ? `syn:${seed}` : "kiwoom";
         const isFake = (c: string) => c.startsWith("PRF");
         const rows = Object.values(histRef.current[nsView] ?? {})
           .filter((r) => (source === "synthetic" ? isFake(r.code) : !isFake(r.code)))

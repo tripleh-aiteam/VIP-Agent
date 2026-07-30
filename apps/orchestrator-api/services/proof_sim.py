@@ -78,73 +78,92 @@ def _sec_label(epoch9: int, off: int) -> str:
     return datetime.fromtimestamp(epoch9 - 9 * 3600 + off, KST).strftime("%H:%M:%S")
 
 
-def _base30(seed: int, base_px: float) -> list[dict]:
-    """THE market — one deterministic series of 30-second slots since 09:00 (frozen per
-    slot). Every timeframe VIEW (30s, 1-min) is derived from this single source of truth,
-    so prices are identical across timeframes (boss 2026-07-30: 'it must be same data')."""
+PERIODS = (15, 30, 40, 60)       # selectable candle sizes — ALL aggregated from the same seconds
+
+
+def _norm_period(p) -> int:
+    try:
+        p = int(p)
+    except Exception:
+        return 60
+    return p if p in PERIODS else 60
+
+
+def _seconds(seed: int, base_px: float) -> tuple[int, list[dict]]:
+    """THE market — ONE deterministic per-SECOND price series since 09:00 (frozen per
+    minute-seed). EVERY timeframe (15/30/40/60s) is a pure aggregation of these same
+    seconds, so prices/times/ups-downs are identical in every view
+    (boss 2026-07-30: 'all data must be same').
+    Returns (day-open epoch+9h, [{off, px, qty}, ...])."""
     n_kst = datetime.now(KST)
     open_t = n_kst.replace(hour=9, minute=0, second=0, microsecond=0)
-    total = int((n_kst - open_t).total_seconds() // 30)   # completed 30s slots since 09:00
-    # the FAKE market keeps trading after the real 15:30 close (demos run in the evening too);
-    # cap at 570 min worth of slots (= 18:30) to bound the payload
-    total = max(2, min(total, 570 * 2))
+    total_sec = int((n_kst - open_t).total_seconds())
+    # the FAKE market keeps trading after the real 15:30 close; cap at 18:30
+    total_sec = max(180, min(total_sec, 570 * 60))
+    day0 = int(open_t.timestamp()) + 9 * 3600            # +9h so charts display KST
     t = _tick(base_px) or 1
-    out, px = [], float(base_px)
-    for m in range(total):
-        r = random.Random(f"{seed}:30:{m}")               # ← per-slot seed = frozen history
-        # each planted pattern step spans ONE MINUTE = two 30s halves moving the SAME
-        # direction (boss 2026-07-30): the 1-min view then shows the exact 3-up/3-down
-        # pattern, and the 30s view is the SAME market at finer grain — one data, two lenses
-        step = _PLAN[(m // 2) % len(_PLAN)]
-        delta = 0 if step == 0 else step * t * r.choice([1, 1, 2])
+    secs: list[dict] = []
+    px = float(base_px)
+    for m in range((total_sec + 59) // 60):
+        rm = random.Random(f"{seed}:min:{m}")            # ← per-minute seed = frozen history
+        step = _PLAN[m % len(_PLAN)]                     # one planted step per MINUTE
+        delta = 0 if step == 0 else step * t * rm.choice([1, 1, 2])
         o, c = px, px + delta
-        # top wick ALWAYS >= 1 tick so fills always print inside the slot's range
-        hi = max(o, c) + t * r.choice([1, 1, 2])
-        lo = min(o, c) - t * r.choice([0, 1])
-        ts = open_t + timedelta(seconds=m * 30)
-        ep9 = int(ts.timestamp()) + 9 * 3600              # +9h so the chart displays KST
-        out.append({"time": ep9, "hhmm": _label(ep9, 30),
-                    "open": o, "high": hi, "low": lo, "close": c})
+        hi = max(o, c) + t * rm.choice([1, 1, 2])        # top wick >= 1 tick (fills always print inside)
+        lo = min(o, c) - t * rm.choice([0, 1])
+        hs, ls = sorted(rm.sample(range(4, 56), 2))      # the seconds that touch high / low
+        for s in range(60):
+            off = m * 60 + s
+            if off >= total_sec:
+                break
+            p = o + (c - o) * s / 59 + rm.choice([-1, 0, 0, 1]) * t
+            p = round(p / t) * t
+            if s == 0: p = o                             # :00 = the minute's open (= prev close)
+            if s == hs: p = hi
+            if s == ls: p = lo
+            if s == 59: p = c                            # the minute's CLOSE = what the engine reads
+            secs.append({"off": off, "px": min(max(p, lo), hi), "qty": rm.randint(1, 80) * 10})
         px = c
-    return out
+    return day0, secs
 
 
-def _aggregate60(base30: list[dict]) -> list[dict]:
-    """1-min view = each pair of 30s halves MERGED (open of 1st, close of 2nd, max/min of
-    both) — exactly how real charts build higher timeframes from lower ones."""
+def _candles_from(day0: int, secs: list[dict], period: int) -> list[dict]:
+    """Aggregate the 1-second truth into candles of `period` seconds (open = first second,
+    close = last, high/low = extremes) — exactly how any real chart builds a timeframe."""
     out = []
-    for i in range(0, len(base30) - len(base30) % 2, 2):
-        a, b = base30[i], base30[i + 1]
-        out.append({"time": a["time"], "hhmm": _label(a["time"], 60),
-                    "open": a["open"], "close": b["close"],
-                    "high": max(a["high"], b["high"]), "low": min(a["low"], b["low"])})
+    full = (len(secs) // period) * period
+    for i in range(0, full, period):
+        chunk = secs[i:i + period]
+        pxs = [x["px"] for x in chunk]
+        ep9 = day0 + chunk[0]["off"]
+        out.append({"time": ep9, "hhmm": _label(ep9, period),
+                    "open": pxs[0], "high": max(pxs), "low": min(pxs), "close": pxs[-1]})
     return out
+
+
+def _tape_from(day0: int, secs: list[dict], start_off: int, count: int) -> list[dict]:
+    """The per-second tape of one candle — straight from the truth array (no re-generation),
+    so the tape ALWAYS matches the candle and every other timeframe."""
+    return [{"t": _sec_label(day0, x["off"]), "px": x["px"], "qty": x["qty"]}
+            for x in secs[start_off:start_off + count]]
 
 
 def _synthetic_candles(seed: int, base_px: float, period: int = 60) -> list[dict]:
-    b = _base30(seed, base_px)
-    return b if period == 30 else _aggregate60(b)
+    day0, secs = _seconds(seed, base_px)
+    return _candles_from(day0, secs, _norm_period(period))
 
 
-def _synthetic_forming(seed: int, base30: list[dict], period: int = 60, tick: int | None = None) -> dict | None:
-    """The current (still-forming) slot for display — like the kiwoom forming candle.
-    For the 1-min view: if a 30s half has already closed, the forming minute IS that real
-    half (same data across timeframes); otherwise synthesize the fresh slot's start."""
-    if not base30:
+def _forming_from(day0: int, secs: list[dict], period: int) -> dict | None:
+    """The still-forming candle = the REAL leftover seconds after the last complete candle
+    (no synthesis — same truth array), so it matches every other view."""
+    rem = len(secs) % period
+    if rem == 0:
         return None
-    if period == 60 and len(base30) % 2 == 1:
-        h = base30[-1]                                     # the dangling first half of this minute
-        return {"time": h["time"], "hhmm": _label(h["time"], 60),
-                "open": h["open"], "high": h["high"], "low": h["low"], "close": h["close"]}
-    last = base30[-1]
-    ep9 = last["time"] + 30                                # the slot right after the last closed one
-    o = last["close"]
-    t = tick or _tick(o) or 1
-    r = random.Random(f"{seed}:forming:{ep9}")
-    c = o + t * r.choice([-1, 0, 0, 1])
+    chunk = secs[-rem:]
+    pxs = [x["px"] for x in chunk]
+    ep9 = day0 + chunk[0]["off"]
     return {"time": ep9, "hhmm": _label(ep9, period),
-            "open": o, "high": max(o, c) + t * r.choice([0, 1]),
-            "low": min(o, c) - t * r.choice([0, 1]), "close": c}
+            "open": pxs[0], "high": max(pxs), "low": min(pxs), "close": pxs[-1]}
 
 
 def _book(seed: int, ref: float, side: str, tick: int | None = None) -> dict:
@@ -332,20 +351,19 @@ def _verify(candles: list[dict], trades: list[dict], with_book: bool) -> dict:
 #  public entry points                                                         #
 # --------------------------------------------------------------------------- #
 def run_synthetic(seed: int = 7, period: int = 60) -> dict[str, Any]:
-    period = 30 if period == 30 else 60
+    period = _norm_period(period)
     symbols = []
     agg_pass = agg_total = agg_trades = 0
     for k, (code, name, base) in enumerate(_SYMBOLS):
         t_base = _tick(base) or 1                         # ONE tick per symbol, everywhere
         sseed = seed + k * 101
-        b30 = _base30(sseed, base)                        # THE market (single source of truth)
-        c60 = _aggregate60(b30)                           # 1-min view = merged halves
+        day0, secs = _seconds(sseed, base)                # THE market (per-second truth)
+        c60 = _candles_from(day0, secs, 60)               # decision candles (1-min)
         # ── the ENGINE always decides on 1-MINUTE candles (same as the live desk), so the
         #    trades/prices/times are IDENTICAL no matter which timeframe is displayed
-        #    (boss 2026-07-30). 30초봉 is purely a finer CHART of the same market.
-        def _mk_tape(j, _s=sseed, _b=b30, _t=t_base):     # a 1-min tape = its two half-tapes joined
-            return (_second_tape(_b[2 * j], _s * 11 + 2 * j, 30, _t)
-                    + _second_tape(_b[2 * j + 1], _s * 11 + 2 * j + 1, 30, _t))
+        #    (boss 2026-07-30). 15/30/40s are purely finer CHARTS of the same market.
+        def _mk_tape(j, _d=day0, _s=secs):                # a minute's tape = its own 60 seconds
+            return _tape_from(_d, _s, j * 60, 60)
         trades, proofs, open_pos, skips = _simulate(c60, sseed, with_book=True, period=60,
                                                     tick=t_base, tape_fn=_mk_tape)
         for tr in trades[:-6]:                            # keep 60s tapes only on recent trades (payload size)
@@ -360,25 +378,41 @@ def run_synthetic(seed: int = 7, period: int = 60) -> dict[str, Any]:
             if "sell_idx" in tr:
                 s2 = tr["sell_idx"]
                 tr["sell_cands"] = [c60[j] for j in (s2 - 3, s2 - 2, s2 - 1, s2) if j >= 0]
-        if period == 30:            # DISPLAY only: remap arrows onto the half that closed the decision
+        candles = c60 if period == 60 else _candles_from(day0, secs, period)
+        DISP_MAX = 900                       # bound the payload; the chart shows ~60 at a time
+        disp_off = max(0, len(candles) - DISP_MAX)
+        if period != 60:
+            # DISPLAY only: put each arrow on the candle that CONTAINS the confirming second
+            # (the last second of the 3rd decision minute) — same wall-clock moment, finer bar
+            def _disp(i, _p=period, _n=len(candles), _o=disp_off):
+                j = ((i + 1) * 60 - 1) // _p - _o
+                return j if 0 <= j < (_n - _o) else -1
             for tr in trades + open_pos:
-                tr["buy_idx"] = 2 * tr["buy_idx"] + 1
+                tr["buy_idx"] = _disp(tr["buy_idx"])
                 if "sell_idx" in tr:
-                    tr["sell_idx"] = 2 * tr["sell_idx"] + 1
+                    tr["sell_idx"] = _disp(tr["sell_idx"])
             for sk in skips:
-                sk["idx"] = 2 * sk["idx"] + 1
-        candles = b30 if period == 30 else c60
+                sk["idx"] = _disp(sk["idx"])
+        elif disp_off:                        # 1-min view: same window trim, shift indices
+            for tr in trades + open_pos:
+                tr["buy_idx"] -= disp_off
+                if "sell_idx" in tr:
+                    tr["sell_idx"] -= disp_off
+            for sk in skips:
+                sk["idx"] -= disp_off
+        candles = candles[disp_off:]
         agg_pass += ver["passed"]; agg_total += ver["total"]; agg_trades += ver["trades"]
         # a CURRENT order book per fake stock (anchored to the last close, changes each
         # minute) — powers the '📗 price table' view: the program trades from THIS table
-        lb = _book(seed * 17 + (candles[-1]["time"] if candles else 0), candles[-1]["close"], "BUY", t_base)
+        ref_px = secs[-1]["px"] if secs else float(base)   # same anchor in every view
+        lb = _book(seed * 17 + (secs[-1]["off"] if secs else 0), ref_px, "BUY", t_base)
         live_book = {"asks": lb["asks"], "bids": lb["bids"], "best_ask": lb["best_ask"],
                      "best_bid": lb["best_bid"], "time": datetime.now(KST).strftime("%H:%M:%S")}
         symbols.append({"code": code, "name": name, "candles": candles,
                         # decision-timeframe candles (1-min) so the counter/chips always
-                        # reflect what actually drives the trades, in either view
-                        "dec_candles": (c60 if period == 30 else None),
-                        "forming": _synthetic_forming(sseed, b30, period, t_base), "trades": trades,
+                        # reflect what actually drives the trades, in every view
+                        "dec_candles": (None if period == 60 else c60[-120:]),
+                        "forming": _forming_from(day0, secs, period), "trades": trades,
                         "open_positions": open_pos, "hold_skips": skips, "live_book": live_book,
                         "no_trade_proofs": proofs, "verification": ver})
     return {"source": "synthetic", "seed": seed, "need": NEED, "period": period,
@@ -471,8 +505,8 @@ def live_book_fast(source: str, code: str, seed: int = 7, period: int = 60) -> d
     if source == "synthetic":
         k = next((i for i, (c, _n, _b) in enumerate(_SYMBOLS) if c == code), 0)
         base = _SYMBOLS[k][2]
-        b30 = _base30(seed + k * 101, base)               # ONE market — ladder identical across timeframes
-        ref = b30[-1]["close"] if b30 else float(base)
+        _d0, _sc = _seconds(seed + k * 101, base)         # ONE market — ladder identical in every view
+        ref = _sc[-1]["px"] if _sc else float(base)
         r = random.Random(f"{code}:{seed}:{now_s}")
         t = _tick(base) or 1                              # base tick — same as candles/tapes/books
         mid = ref + t * r.choice([-1, 0, 0, 0, 1])
@@ -543,17 +577,13 @@ def minute_tape(source: str, code: str, seed: int, hhmm: str, period: int = 60) 
         return {"ok": False, "reason": "no-history"}
     k = next((i for i, (c, _n, _b) in enumerate(_SYMBOLS) if c == code), 0)
     sseed = seed + k * 101
-    period = 30 if period == 30 else 60
-    b30 = _base30(sseed, _SYMBOLS[k][2])
-    candles = b30 if period == 30 else _aggregate60(b30)
-    t_base = _tick(_SYMBOLS[k][2]) or 1
+    period = _norm_period(period)
+    day0, secs = _seconds(sseed, _SYMBOLS[k][2])
+    candles = _candles_from(day0, secs, period)
     for idx, cd in enumerate(candles):
         if cd["hhmm"] == hhmm:
-            tape = (_second_tape(cd, sseed * 11 + idx, 30, t_base) if period == 30
-                    else _second_tape(b30[2 * idx], sseed * 11 + 2 * idx, 30, t_base)
-                    + _second_tape(b30[2 * idx + 1], sseed * 11 + 2 * idx + 1, 30, t_base))
             return {"ok": True, "hhmm": hhmm, "candle": cd,
-                    "tape": tape}
+                    "tape": _tape_from(day0, secs, idx * period, period)}
     return {"ok": False, "reason": "minute-not-found"}
 
 
