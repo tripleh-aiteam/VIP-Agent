@@ -66,17 +66,23 @@ const KIWOOM_CODES = [
 ];
 
 // ---- candle chart with ▲/▼ arrows on the exact signal candles.
-//      Created ONCE; data updates in place. Your zoom/pan is NEVER reset by refreshes —
-//      auto-follow (recent 60 min) pauses when you pan/zoom and resumes on its own
-//      once the newest candle is back in view. ----
-function ProofChart({ candles, trades, focus, buyLabel, sellLabel, openIdxs, holdLabel, skipIdxs, skipLabel }: { candles: Candle[]; trades: Trade[]; focus: number | null; buyLabel: string; sellLabel: string; openIdxs?: number[]; holdLabel?: string; skipIdxs?: number[]; skipLabel?: string }) {
+//      Created ONCE; data updates in place.
+//
+//      THE VIEW IS A CLOCK WINDOW, never a bar count (boss 2026-07-31: "if I watch 1분 then
+//      30초 and come back, it resets and I lose where I am"). Whatever period you switch to,
+//      you keep looking at the SAME stretch of the day at the SAME zoom width — 08:00~08:30
+//      stays 08:00~08:30 whether that is 30 bars or 60. Only the candles get finer.
+//
+//      Live-follow keeps YOUR width and slides it forward while the newest bar is in view;
+//      pan away and the window is left exactly where you put it. ----
+function ProofChart({ candles, trades, focus, buyLabel, sellLabel, openIdxs, holdLabel, skipIdxs, skipLabel, periodSec }: { candles: Candle[]; trades: Trade[]; focus: number | null; buyLabel: string; sellLabel: string; openIdxs?: number[]; holdLabel?: string; skipIdxs?: number[]; skipLabel?: string; periodSec?: number }) {
   const ref = useRef<HTMLDivElement | null>(null);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const chartRef = useRef<{ chart: any; series: any } | null>(null);
-  const touchedRef = useRef(false);            // true once the user zooms/pans — we stop auto-ranging
+  const followRef = useRef(true);              // is the newest bar in view? then slide with it
   const prevFocusRef = useRef<number | null>(null);
-  const viewRef = useRef<{ from: number; to: number } | null>(null);   // the visible TIME window (survives timeframe switches)
-  const lastIdxRef = useRef(0);                // index of the newest bar — auto-follow resumes when it scrolls back into view
+  const viewRef = useRef<{ from: number; to: number } | null>(null);   // the visible CLOCK window
+  const lastIdxRef = useRef(0);                // index of the newest bar (live-edge test)
   const [ready, setReady] = useState(0);
 
   useEffect(() => {                             // create the chart ONCE
@@ -102,13 +108,12 @@ function ProofChart({ candles, trades, focus, buyLabel, sellLabel, openIdxs, hol
         const rr = r as { from?: number; to?: number } | null;
         if (rr && rr.from != null && rr.to != null) viewRef.current = { from: rr.from, to: rr.to };
       });
-      // The ↺ button was the only way back to auto-follow after a pan/zoom, and it is gone
-      // (boss 2026-07-31). So auto-follow now returns BY ITSELF the moment the newest bar is
-      // back in view — the way a real trading chart behaves. Scroll away and your view is
-      // kept; scroll back to the right edge and it starts tracking new candles again.
+      // "Am I at the live edge?" — the standard trading-chart test, and the only thing that
+      // decides whether the window slides with new candles. The ↺ button that used to do this
+      // is gone (boss 2026-07-31), so this has to work without any UI.
       chart.timeScale().subscribeVisibleLogicalRangeChange((r: unknown) => {
         const rr = r as { to?: number } | null;
-        if (rr && rr.to != null && rr.to >= lastIdxRef.current - 0.5) touchedRef.current = false;
+        if (rr && rr.to != null) followRef.current = rr.to >= lastIdxRef.current - 0.5;
       });
       chartRef.current = { chart, series };
       setReady((v) => v + 1);
@@ -120,6 +125,10 @@ function ProofChart({ candles, trades, focus, buyLabel, sellLabel, openIdxs, hol
   useEffect(() => {                             // update data/markers in place — view untouched
     const cs = chartRef.current;
     if (!cs || !candles.length) return;
+    // Snapshot the window BEFORE setData: writing a different period changes the visible
+    // range and fires the subscription, which would overwrite the very window we want back.
+    const want = viewRef.current ? { ...viewRef.current } : null;
+    const follow = followRef.current;
     lastIdxRef.current = candles.length - 1;
     // colour each bar by the ENGINE's comparison (close vs the PREVIOUS bar's close), so a
     // BUY arrow always sits on a red bar and a SELL on a blue one, at every timeframe
@@ -146,23 +155,28 @@ function ProofChart({ candles, trades, focus, buyLabel, sellLabel, openIdxs, hol
     cs.series.setMarkers(markers as never);
     const focusChanged = prevFocusRef.current !== focus;
     prevFocusRef.current = focus;
+    const ts = cs.chart.timeScale();
+    const first = candles[0].time as number;
+    const last = candles[candles.length - 1].time as number;
+    const per = periodSec || 60;
+    // how wide the window is, in SECONDS — the user's zoom, carried across period switches
+    const width = want && want.to > want.from ? want.to - want.from : 60 * per;
+
     if (focus != null && trades[focus] && trades[focus].buy_idx >= 0) {
-      if (focusChanged) cs.chart.timeScale().setVisibleLogicalRange({ from: trades[focus].buy_idx - 7, to: trades[focus].sell_idx + 7 } as never);
-    } else if (focusChanged || !touchedRef.current) {
-      // default: follow the recent ~60 bars — but ONLY while the user hasn't zoomed/panned
-      if (focusChanged) touchedRef.current = false;
-      cs.chart.timeScale().setVisibleLogicalRange({ from: Math.max(0, candles.length - 60), to: candles.length + 2 } as never);
-    } else if (viewRef.current) {
-      // user has their own view → restore the SAME CLOCK RANGE (not candle indices), so
-      // switching 1분↔40초↔30초↔15초 or a live refresh never moves the boss's screen
-      cs.chart.timeScale().setVisibleRange(viewRef.current as never);
+      if (focusChanged) ts.setVisibleLogicalRange({ from: trades[focus].buy_idx - 7, to: trades[focus].sell_idx + 7 } as never);
+    } else if (focusChanged || follow || !want) {
+      // at the live edge (or just left focus): keep the SAME width and slide it to now, so
+      // following new candles never silently rescales the chart to some fixed bar count
+      ts.setVisibleRange({ from: Math.max(first, last - width), to: last + per } as never);
+    } else {
+      // panned away → put the window back on the very same clock range, whatever the period
+      ts.setVisibleRange({ from: Math.max(first, want.from), to: Math.min(last + per, want.to) } as never);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ready, candles, trades, focus, buyLabel, sellLabel, openIdxs, holdLabel, skipIdxs, skipLabel]);
+  }, [ready, candles, trades, focus, buyLabel, sellLabel, openIdxs, holdLabel, skipIdxs, skipLabel, periodSec]);
 
-  const markTouched = () => { touchedRef.current = true; };
   return (
-    <div className="relative" onWheelCapture={markTouched} onMouseDownCapture={markTouched} onTouchStartCapture={markTouched}>
+    <div className="relative">
       <div ref={ref} style={{ width: "100%", height: 320 }} />
     </div>
   );
@@ -627,7 +641,7 @@ export default function ProofLab() {
             <>
               <ProofChart key={sym.code} candles={sym.forming ? [...sym.candles, sym.forming] : sym.candles} trades={sym.trades} focus={focus} buyLabel="" sellLabel=""
                 openIdxs={(sym.open_positions ?? []).map((p) => p.buy_idx)} holdLabel=""
-                skipIdxs={(sym.hold_skips ?? []).map((s) => s.idx)} skipLabel="⏸" />
+                skipIdxs={(sym.hold_skips ?? []).map((s) => s.idx)} skipLabel="⏸" periodSec={tfSec} />
               <div className="px-2 pb-1 text-[11px] text-[var(--text-muted)]">
                 {decMode === "min1" && tfSec !== 60
                   ? t(`▲매수 = 3연속 양봉의 3번째가 확정된 그 '초'의 캔들 · ▼매도 = 3번째 음봉 · 색은 판단 기준인 1분봉 방향입니다 — 1분이 상승이면 그 1분 안의 ${60 / tfSec === Math.floor(60 / tfSec) ? 60 / tfSec : Math.ceil(60 / tfSec)}개 캔들이 모두 빨강. 그래서 3분 상승은 빨강 ${3 * Math.ceil(60 / tfSec)}봉 연속으로 보이고, 화살표는 항상 정확한 체결 초 + 올바른 색에 찍힙니다. 거래를 클릭하면 확대 + 증거.`,
