@@ -450,11 +450,46 @@ export default function ProofLab() {
             return (
               <div key={side} className="rounded-xl border-2 p-4" style={{ borderColor: col, background: "var(--bg-elevated)" }}>
                 <b className="text-[13.5px]" style={{ color: col }}>{isBuy ? "▲" : "▼"} {t(isBuy ? "매수" : "매도", side)} {hh} — ₩{fmt(fill)}</b>
-                {/* the prices that existed inside that minute */}
-                <div className="mt-2 text-[12px] tabular-nums rounded-lg px-3 py-2" style={{ background: "rgba(128,128,128,0.08)" }}>
-                  <div className="text-[10.5px] text-[var(--text-muted)] mb-0.5">💹 {t(`${hh}:00–${hh}:59 그 1분 동안의 가격`, `prices during ${hh}:00–${hh}:59`)}</div>
-                  {t("시가", "open")} ₩{fmt(cd.open)} · {t("고가", "high")} ₩{fmt(cd.high)} · {t("저가", "low")} ₩{fmt(cd.low)} · <b style={{ color: col }}>{t("종가", "close")} ₩{fmt(cd.close)}</b>
-                </div>
+                {/* 🕯️ the 3 candles AS NUMBERS — red/blue judged without any chart */}
+                {(() => {
+                  const idx = isBuy ? sel.buy_idx : sel.sell_idx;
+                  const three = [idx - 2, idx - 1, idx].map((ci) => sym.candles[ci]).filter(Boolean);
+                  const baseClose = sym.candles[idx - 3]?.close ?? three[0]?.open;
+                  const ord = [t("1번째", "1st"), t("2번째", "2nd"), t("3번째", "3rd")];
+                  return (
+                    <div className="mt-2 rounded-lg px-3 py-2" style={{ background: "rgba(128,128,128,0.08)" }}>
+                      <div className="text-[10.5px] text-[var(--text-muted)] mb-1">
+                        🕯️ {isBuy
+                          ? t("차트 없이 숫자만으로 — 3연속 양봉(🔴) 판정: 종가가 '직전 분 종가'보다 높으면 🔴▲", "the 3 candles as pure NUMBERS — 🔴 red = this close HIGHER than the previous minute's close")
+                          : t("차트 없이 숫자만으로 — 3연속 음봉(🔵) 판정: 종가가 '직전 분 종가'보다 낮으면 🔵▼", "the 3 candles as pure NUMBERS — 🔵 blue = this close LOWER than the previous minute's close")}
+                      </div>
+                      {baseClose != null && (
+                        <div className="text-[10.5px] text-[var(--text-muted)] tabular-nums">{t(`기준 — 직전 분 종가: ₩${fmt(baseClose)}`, `baseline — previous minute's close: ₩${fmt(baseClose)}`)}</div>
+                      )}
+                      <div className="mt-1 flex flex-col gap-0.5 text-[11.5px] tabular-nums">
+                        {three.map((c3, k) => {
+                          const prevC = k === 0 ? baseClose : three[k - 1].close;
+                          const d = prevC != null ? Math.round(c3.close - prevC) : 0;
+                          const rise = d > 0, fall = d < 0;
+                          const icon = rise ? "🔴▲" : fall ? "🔵▼" : "⚪＝";
+                          const icol = rise ? RED : fall ? BLUE : "var(--text-muted)";
+                          return (
+                            <div key={k} className="flex items-center gap-2 flex-wrap rounded px-1.5 py-[2px]" style={{ background: k === three.length - 1 ? "rgba(230,81,0,0.10)" : "transparent" }}>
+                              <span className="font-bold w-[42px]" style={{ color: icol }}>{ord[k] ?? ""}</span>
+                              <span className="text-[var(--text-muted)]">{c3.hhmm}</span>
+                              <span>{t("시", "O")} ₩{fmt(c3.open)}</span>
+                              <span>{t("고", "H")} ₩{fmt(c3.high)}</span>
+                              <span>{t("저", "L")} ₩{fmt(c3.low)}</span>
+                              <b style={{ color: icol }}>{t("종", "C")} ₩{fmt(c3.close)}</b>
+                              <b style={{ color: icol }}>{icon} {d !== 0 ? `${d > 0 ? "+" : ""}₩${fmt(Math.abs(d))}` : ""}</b>
+                              {k === three.length - 1 && <b className="ml-auto text-[10.5px]" style={{ color: col }}>{isBuy ? t("→ 3번째 🔴 = 매수!", "→ 3rd 🔴 = BUY!") : t("→ 3번째 🔵 = 매도!", "→ 3rd 🔵 = SELL!")}</b>}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  );
+                })()}
                 {/* 🎬 the FULL second-by-second tape of that minute (artificial mode) */}
                 {(() => {
                   const tape = isBuy ? sel.buy_tape : sel.sell_tape;
