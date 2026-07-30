@@ -38,7 +38,7 @@ type SymBlock = {
   verification: { trades: number; passed: number; total: number; pct: number; per_trade: { buy_hhmm: string; sell_hhmm: string; checks: Record<string, boolean>; passed: number; total: number }[] };
 };
 type ProofRes = {
-  source: string; need: number; rule_ko: string; rule_en: string; engine_fn: string;
+  source: string; seed?: number; need: number; rule_ko: string; rule_en: string; engine_fn: string;
   symbols: SymBlock[];
   verification: { trades: number; passed: number; total: number; pct: number };
 };
@@ -145,11 +145,14 @@ export default function ProofLab() {
   const [focus, setFocus] = useState<number | null>(null);
   const [loading, setLoading] = useState(false);
 
+  const sourceRef = useRef(source);
+  sourceRef.current = source;
   const load = async (src = source, sd = seed, cd = code) => {
     setLoading(true); setFocus(null);
     try {
       const r = await api<ProofRes>(`/paper-desk/proof/run?source=${src}&seed=${sd}&code=${cd}`);
-      setRes(r); setSelCode(null);
+      // a slow response from the OTHER mode must never land after the user switched
+      if (src === sourceRef.current && r?.source === src) { setRes(r); setSelCode(null); }
     } catch { /* keep last */ }
     setLoading(false);
   };
@@ -167,7 +170,10 @@ export default function ProofLab() {
     const iv = setInterval(() => {
       if (focusRef.current != null) return;              // don't shift the stage mid-demonstration
       api<ProofRes>(`/paper-desk/proof/run?source=${source}&seed=${seed}&code=${code}`)
-        .then((r) => setRes((old) => (r?.symbols?.length && nSy(r) >= nSy(old) && nTr(r) >= nTr(old) ? r : old)))
+        .then((r) => {
+          if (r?.source !== sourceRef.current) return;   // stale cross-mode response — discard
+          setRes((old) => (r?.symbols?.length && nSy(r) >= nSy(old) && nTr(r) >= nTr(old) ? r : old));
+        })
         .catch(() => {});
     }, source === "kiwoom" && code !== "ALL" ? 30_000 : 60_000);   // ALL sweep + synthetic: 60s
     return () => clearInterval(iv);
@@ -317,14 +323,22 @@ export default function ProofLab() {
 
       {/* ---- 📒 cumulative trade history (append-only ledger — can only grow, +1 per trade) ---- */}
       {!focused && res && (() => {
-        // merge the current payload into the ledger (idempotent: keyed per trade)
-        const ns = source === "synthetic" ? `syn:${seed}` : "kiwoom";
-        const bucket = (histRef.current[ns] ??= {});
+        // merge the payload into the ledger of ITS OWN source (tag from the data, never the UI
+        // state — a stale payload from the other mode can't pollute this mode's history)
+        const synData = res.source === "synthetic";
+        const nsData = synData ? `syn:${res.seed ?? seed}` : "kiwoom";
+        const bucketData = (histRef.current[nsData] ??= {});
         for (const s of res.symbols) for (const tr of s.trades) {
-          const k = source === "synthetic" ? `${s.code}|i${tr.buy_idx}-${tr.sell_idx}` : `${s.code}|${tr.buy_hhmm}|${tr.sell_hhmm}`;
-          bucket[k] = { code: s.code, name: s.name, tr };   // overwrite = refresh values, count stays
+          const k = synData ? `${s.code}|i${tr.buy_idx}-${tr.sell_idx}` : `${s.code}|${tr.buy_hhmm}|${tr.sell_hhmm}`;
+          bucketData[k] = { code: s.code, name: s.name, tr };   // overwrite = refresh values, count stays
         }
-        const rows = Object.values(bucket).sort((a, b) => (b.tr.sell_time ?? 0) - (a.tr.sell_time ?? 0));
+        // display the CURRENT mode's ledger + hard filter: artificial (PRF*) companies never in
+        // Kiwoom history, real companies never in artificial history
+        const nsView = source === "synthetic" ? `syn:${seed}` : "kiwoom";
+        const isFake = (c: string) => c.startsWith("PRF");
+        const rows = Object.values(histRef.current[nsView] ?? {})
+          .filter((r) => (source === "synthetic" ? isFake(r.code) : !isFake(r.code)))
+          .sort((a, b) => (b.tr.sell_time ?? 0) - (a.tr.sell_time ?? 0));
         const wins = rows.filter((r) => r.tr.net_pct > 0).length;
         const losses = rows.filter((r) => r.tr.net_pct < 0).length;
         const winPct = rows.length ? Math.round((wins / rows.length) * 100) : 0;
