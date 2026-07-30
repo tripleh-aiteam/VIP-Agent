@@ -70,27 +70,45 @@ _SYMBOLS = [("PRF1", "프루프전자", 205_000), ("PRF2", "시뮬중공업", 19
 
 
 def _synthetic_candles(seed: int, base_px: float) -> list[dict]:
-    r = random.Random(seed)
-    # end the artificial day at the CURRENT minute — never draw candles from the future
-    # (boss 2026-07-30: at 09:47 the chart must not show 09:50)
+    """Deterministic per WALL-CLOCK minute (boss 2026-07-30 consistency fix): minute M's
+    candle is computed from (seed, M) alone, so once a minute closes its chip/candle can
+    NEVER change on later refreshes. The day starts at 09:00, the planted pattern cycles,
+    and a new candle appears exactly when a minute completes — never from the future."""
     n_kst = datetime.now(KST)
     open_t = n_kst.replace(hour=9, minute=0, second=0, microsecond=0)
-    day0 = n_kst.replace(second=0, microsecond=0) - timedelta(minutes=len(_PLAN))
-    if day0 < open_t:
-        day0 = open_t
+    total = int((n_kst - open_t).total_seconds() // 60)   # completed minutes since 09:00
+    total = max(2, min(total, 380))
+    t = _tick(base_px) or 1
     out, px = [], float(base_px)
-    for i, step in enumerate(_PLAN):
-        t = _tick(px)
+    for m in range(total):
+        r = random.Random(f"{seed}:{m}")                  # ← per-minute seed = frozen history
+        step = _PLAN[m % len(_PLAN)]
         delta = 0 if step == 0 else step * t * r.choice([1, 1, 2])
         o, c = px, px + delta
         hi = max(o, c) + t * r.choice([0, 1])
         lo = min(o, c) - t * r.choice([0, 1])
-        ts = day0 + timedelta(minutes=i)
+        ts = open_t + timedelta(minutes=m)
         out.append({"time": int(ts.timestamp()) + 9 * 3600,   # +9h so the chart displays KST
                     "hhmm": ts.strftime("%H:%M"),
                     "open": o, "high": hi, "low": lo, "close": c})
         px = c
     return out
+
+
+def _synthetic_forming(seed: int, candles: list[dict]) -> dict | None:
+    """The current (still-forming) minute for display — like the kiwoom forming candle."""
+    if not candles:
+        return None
+    n_kst = datetime.now(KST)
+    last = candles[-1]
+    o = last["close"]
+    t = _tick(o) or 1
+    r = random.Random(f"{seed}:forming:{n_kst.strftime('%H%M')}")
+    c = o + t * r.choice([-1, 0, 0, 1])
+    ts = n_kst.replace(second=0, microsecond=0)
+    return {"time": int(ts.timestamp()) + 9 * 3600, "hhmm": ts.strftime("%H:%M"),
+            "open": o, "high": max(o, c) + t * r.choice([0, 1]),
+            "low": min(o, c) - t * r.choice([0, 1]), "close": c}
 
 
 def _book(seed: int, ref: float, side: str) -> dict:
@@ -264,6 +282,9 @@ def run_synthetic(seed: int = 7) -> dict[str, Any]:
     for k, (code, name, base) in enumerate(_SYMBOLS):
         candles = _synthetic_candles(seed + k * 101, base)
         trades, proofs, open_pos, skips = _simulate(candles, seed + k * 101, with_book=True)
+        for tr in trades[:-6]:                            # keep 60s tapes only on recent trades (payload size)
+            tr["buy_tapes"] = None
+            tr["sell_tapes"] = None
         ver = _verify(candles, trades, with_book=True)
         agg_pass += ver["passed"]; agg_total += ver["total"]; agg_trades += ver["trades"]
         # a CURRENT order book per fake stock (anchored to the last close, changes each
@@ -271,7 +292,8 @@ def run_synthetic(seed: int = 7) -> dict[str, Any]:
         lb = _book(seed * 17 + (candles[-1]["time"] if candles else 0), candles[-1]["close"], "BUY")
         live_book = {"asks": lb["asks"], "bids": lb["bids"], "best_ask": lb["best_ask"],
                      "best_bid": lb["best_bid"], "time": datetime.now(KST).strftime("%H:%M:%S")}
-        symbols.append({"code": code, "name": name, "candles": candles, "trades": trades,
+        symbols.append({"code": code, "name": name, "candles": candles,
+                        "forming": _synthetic_forming(seed + k * 101, candles), "trades": trades,
                         "open_positions": open_pos, "hold_skips": skips, "live_book": live_book,
                         "no_trade_proofs": proofs, "verification": ver})
     return {"source": "synthetic", "seed": seed, "need": NEED,
