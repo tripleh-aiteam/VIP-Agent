@@ -290,6 +290,41 @@ export default function ProofLab() {
         </div>
       )}
 
+      {/* ---- 📼 per-stock 초당 체결 데이터 — the live per-second execution table ---- */}
+      {!focused && source === "kiwoom" && sym?.tick_tape && sym.tick_tape.length > 0 && (
+        <div className="mt-3 rounded-xl border overflow-hidden" style={{ borderColor: TEAL }}>
+          <div className="px-4 py-2 border-b bg-[var(--bg-elevated)] flex items-center gap-2 flex-wrap" style={{ borderColor: "var(--border-default)" }}>
+            <b className="text-[13px]" style={{ color: TEAL }}>📼 {nm(sym)} — {t("초당 체결 데이터 (실시간)", "per-second execution data (LIVE)")}</b>
+            <span className="text-[10.5px] text-[var(--text-muted)]">{t("위 탭에서 종목 선택 · 자동 갱신 · 이 체결들이 쌓여 1분 캔들이 됩니다", "pick a stock in the tabs above · auto-refreshing · these deals build the 1-min candles")}</span>
+          </div>
+          <div className="overflow-y-auto" style={{ maxHeight: 230 }}>
+            <table className="w-full text-[11.5px] tabular-nums">
+              <thead><tr className="text-[10px] text-[var(--text-muted)] sticky top-0" style={{ background: "var(--bg-elevated)" }}>
+                <th className="text-left px-3 py-1">{t("체결 시각", "time")}</th>
+                <th className="text-right px-2">{t("체결가", "price")}</th>
+                <th className="text-right px-2">{t("수량", "qty")}</th>
+                <th className="text-center px-2">{t("등락", "±")}</th>
+              </tr></thead>
+              <tbody>
+                {[...sym.tick_tape].reverse().map((r, i, arr) => {
+                  const prev = arr[i + 1];   // reversed: next row = earlier deal
+                  const up = prev != null && prev.px < r.px;
+                  const dn = prev != null && prev.px > r.px;
+                  return (
+                    <tr key={i} className="border-t border-[var(--border-default)]/30">
+                      <td className="px-3 py-[2px] text-[var(--text-muted)]">{r.t}</td>
+                      <td className="text-right px-2 font-bold" style={{ color: up ? RED : dn ? BLUE : "var(--text-secondary)" }}>₩{fmt(r.px)}</td>
+                      <td className="text-right px-2 text-[var(--text-secondary)]">{fmt(r.qty)}</td>
+                      <td className="text-center px-2" style={{ color: up ? RED : dn ? BLUE : "var(--text-muted)" }}>{up ? "▲" : dn ? "▼" : "·"}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
       {/* ---- 📌 open positions (bought, still waiting for the 3rd blue) ---- */}
       {!focused && res && res.symbols.length > 0 && (() => {
         const posRows = res.symbols.flatMap((s, si) => (s.open_positions ?? []).map((p) => ({ s, si, p })));
