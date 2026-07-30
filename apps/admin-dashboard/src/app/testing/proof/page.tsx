@@ -49,12 +49,13 @@ type ProofRes = {
 // the 3 artificial demo companies — English names for EN mode (Korean stays in KO mode)
 const FAKE_EN: Record<string, string> = { PRF1: "Proof Electronics", PRF2: "Simul Heavy Ind.", PRF3: "Test Chemical" };
 
-// the ACTUAL execution second: the signal candle (HH:MM) closes at :59 → the fill
-// prints at the start of the NEXT minute (HH:MM+1:01) — matches the minute-timeline
-const fillT = (hhmm?: string) => {
+// the ACTUAL execution second: the signal candle (HH:MM) closes at :59 → the fill prints
+// in the NEXT minute. SELL = best bid = prev close = the minute's FIRST deal (:00);
+// BUY = best ask = open + 1 tick = the minute's SECOND deal (:01). Matches the tapes exactly.
+const fillT = (hhmm?: string, side: "BUY" | "SELL" = "BUY") => {
   if (!hhmm || hhmm.length < 5) return "";
   const h = parseInt(hhmm.slice(0, 2), 10), m = parseInt(hhmm.slice(3, 5), 10) + 1;
-  return `${String(h + Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}:01`;
+  return `${String(h + Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}:${side === "BUY" ? "01" : "00"}`;
 };
 
 const KIWOOM_CODES = [
@@ -354,7 +355,7 @@ export default function ProofLab() {
           <b className="text-[14px] text-[var(--text-primary)]">{nm(sym)}</b>
           <span className="text-[13px] tabular-nums font-bold" style={{ color: RED }}>▲ {t("체결", "fill")} {fillT(sel.buy_hhmm)} ₩{fmt(sel.entry)} <span className="text-[10px] opacity-70">({t(`신호 ${sel.buy_hhmm}:59`, `signal ${sel.buy_hhmm}:59`)})</span></span>
           <span className="text-[var(--text-muted)]">→</span>
-          <span className="text-[13px] tabular-nums font-bold" style={{ color: BLUE }}>▼ {t("체결", "fill")} {fillT(sel.sell_hhmm)} ₩{fmt(sel.exit)} <span className="text-[10px] opacity-70">({t(`신호 ${sel.sell_hhmm}:59`, `signal ${sel.sell_hhmm}:59`)})</span></span>
+          <span className="text-[13px] tabular-nums font-bold" style={{ color: BLUE }}>▼ {t("체결", "fill")} {fillT(sel.sell_hhmm, "SELL")} ₩{fmt(sel.exit)} <span className="text-[10px] opacity-70">({t(`신호 ${sel.sell_hhmm}:59`, `signal ${sel.sell_hhmm}:59`)})</span></span>
           <span className="text-[13.5px] font-extrabold tabular-nums" style={{ color: sel.net_pct > 0 ? RED : BLUE }}>{sel.net_pct > 0 ? "+" : ""}{sel.net_pct}%</span>
           <span className="ml-auto text-[11px] text-[var(--text-muted)]">{t("아래: 차트 화살표 · 시각 · 가격 산출 근거를 그대로 비교", "below: chart arrows · exact times · the price math to compare")}</span>
         </div>
@@ -791,7 +792,7 @@ export default function ProofLab() {
                         <div className="text-[9.5px] opacity-70 font-normal">{t(`신호 ${r.tr.buy_hhmm}:59`, `signal ${r.tr.buy_hhmm}:59`)}</div>
                       </td>
                       <td className="px-2 font-bold" style={{ color: BLUE }}>
-                        <div>▼ {fillT(r.tr.sell_hhmm)}</div>
+                        <div>▼ {fillT(r.tr.sell_hhmm, "SELL")}</div>
                         <div className="text-[9.5px] opacity-70 font-normal">{t(`신호 ${r.tr.sell_hhmm}:59`, `signal ${r.tr.sell_hhmm}:59`)}</div>
                       </td>
                       <td className="text-right px-2">₩{fmt(r.tr.entry)}</td>
@@ -820,7 +821,7 @@ export default function ProofLab() {
             if (!cd) return null;
             return (
               <div key={side} className="rounded-xl border-2 p-4" style={{ borderColor: col, background: "var(--bg-elevated)" }}>
-                <b className="text-[13.5px]" style={{ color: col }}>{isBuy ? "▲" : "▼"} {t(isBuy ? "매수 체결" : "매도 체결", `${side} fill`)} {fillT(hh)} — ₩{fmt(fill)} <span className="text-[10.5px] opacity-70">({t(`신호: ${hh}:59 종가 확정`, `signal: ${hh}:59 close confirmed`)})</span></b>
+                <b className="text-[13.5px]" style={{ color: col }}>{isBuy ? "▲" : "▼"} {t(isBuy ? "매수 체결" : "매도 체결", `${side} fill`)} {fillT(hh, side)} — ₩{fmt(fill)} <span className="text-[10.5px] opacity-70">({t(`신호: ${hh}:59 종가 확정`, `signal: ${hh}:59 close confirmed`)})</span></b>
                 {/* 🕯️ the 3 candles AS NUMBERS — red/blue judged without any chart */}
                 {(() => {
                   const idx = isBuy ? sel.buy_idx : sel.sell_idx;

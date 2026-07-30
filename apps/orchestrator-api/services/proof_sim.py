@@ -142,7 +142,8 @@ def _second_tape(cd: dict, seed: int) -> list[dict]:
     for s in range(60):
         px = o + (c - o) * s / 59 + r.choice([-1, 0, 0, 1]) * t
         px = round(px / t) * t
-        if s == 0: px = o
+        if s == 0: px = o          # :00 = the minute's OPEN = prev close → where a SELL fill prints
+        if s == 1: px = o + t      # :01 = open + 1 tick (best ask)     → where a BUY fill prints
         if s == hi_s: px = h
         if s == lo_s: px = l
         if s == 59: px = c
@@ -151,15 +152,15 @@ def _second_tape(cd: dict, seed: int) -> list[dict]:
     return rows
 
 
-def _next_sec(hhmm: str) -> str:
+def _next_sec(hhmm: str, sec: int = 1) -> str:
     h, m = int(hhmm[:2]), int(hhmm[3:5])
     m += 1
     if m == 60:
         h, m = h + 1, 0
-    return f"{h:02d}:{m:02d}:01"
+    return f"{h:02d}:{m:02d}:{sec:02d}"
 
 
-def _minute_timeline(cd: dict, fill_px: float, seed: int, synthetic: bool) -> list[dict]:
+def _minute_timeline(cd: dict, fill_px: float, seed: int, synthetic: bool, fill_sec: int = 1) -> list[dict]:
     """Second-by-second replay of the SIGNAL minute. One minute = 60 seconds of moving
     prices; the engine reads exactly ONE of them — the CLOSE at :59 — and the fill then
     comes from the order book at the next second. kinds: open / watch (synthetic wiggles)
@@ -178,7 +179,7 @@ def _minute_timeline(cd: dict, fill_px: float, seed: int, synthetic: bool) -> li
         rows.append({"t": f"{hh}:??", "px": cd["high"], "kind": "high"})
         rows.append({"t": f"{hh}:??", "px": cd["low"], "kind": "low"})
     rows.append({"t": f"{hh}:59", "px": cd["close"], "kind": "close"})
-    rows.append({"t": _next_sec(hh), "px": fill_px, "kind": "fill"})
+    rows.append({"t": _next_sec(hh, fill_sec), "px": fill_px, "kind": "fill"})
     return rows
 
 
@@ -204,7 +205,7 @@ def _simulate(candles: list[dict], seed: int, with_book: bool) -> tuple[list, li
             entry_px = bk["fill"] if bk else cd["close"]
             pos = {"buy_idx": i, "buy_time": cd["time"], "buy_hhmm": cd["hhmm"],
                    "buy_closes": closes[-4:], "entry": entry_px, "buy_book": bk,
-                   "buy_timeline": _minute_timeline(cd, entry_px, seed * 31 + i, with_book),
+                   "buy_timeline": _minute_timeline(cd, entry_px, seed * 31 + i, with_book, fill_sec=1),
                    # 60-second tapes for ALL 3 signal candles (1st/2nd/3rd — click to inspect each)
                    "buy_tapes": ([_second_tape(candles[j], seed * 11 + j) for j in (i - 2, i - 1, i) if j >= 0]
                                  if with_book else None)}
@@ -214,7 +215,7 @@ def _simulate(candles: list[dict], seed: int, with_book: bool) -> tuple[list, li
             net = (exit_px / pos["entry"] - 1) * 100 - FEE_PCT
             trades.append({**pos, "sell_idx": i, "sell_time": cd["time"], "sell_hhmm": cd["hhmm"],
                            "sell_closes": closes[-4:], "exit": exit_px, "sell_book": bk,
-                           "sell_timeline": _minute_timeline(cd, exit_px, seed * 37 + i, with_book),
+                           "sell_timeline": _minute_timeline(cd, exit_px, seed * 37 + i, with_book, fill_sec=0),
                            "sell_tapes": ([_second_tape(candles[j], seed * 11 + j) for j in (i - 2, i - 1, i) if j >= 0]
                                           if with_book else None),   # same seed formula as buys → ONE canonical tape per minute
                            "net_pct": round(net, 3)})
