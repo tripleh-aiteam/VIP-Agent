@@ -471,8 +471,8 @@ export default function ProofLab() {
                 {t("▲매수 화살표 = 1분봉 3연속 양봉의 3번째 · ▼매도 화살표 = 3번째 음봉. 거래를 클릭하면 확대 + 증거를 보여줍니다.",
                    "▲BUY arrow = the 3rd of 3 consecutive rising 1-min candles · ▼SELL = the 3rd falling. Click a trade to zoom + see the evidence.")}
                 {source === "synthetic" && tfSec === 30 && (
-                  <span style={{ color: GOLD }}>{t(" — 30초봉 화면에서는 그 1분봉의 두 번째 절반(판단이 확정된 캔들) 위에 같은 화살표가 찍힙니다. 매매 시각·가격은 1분봉과 100% 동일.",
-                       " — on the 30-sec chart the same arrow sits on that minute's second half (the candle whose close confirmed it). Trade times and prices are 100% identical to the 1-min view.")}</span>
+                  <span style={{ color: GOLD }}>{t(" — 30초봉에서는 판단 3분이 절반 캔들 6개로 보입니다(1분=2개). 화살표는 그 3번째 분의 두 번째 절반(판단 확정 캔들) 위. 시각·가격은 1분봉과 100% 동일.",
+                       " — on the 30-sec chart the 3 decision minutes appear as 6 half-candles (1 min = 2). The arrow sits on the 3rd minute's second half (the candle that confirmed it). Times and prices are 100% identical to the 1-min view.")}</span>
                 )}
               </div>
             </>
