@@ -24,8 +24,8 @@ type Trade = {
   sell_idx: number; sell_hhmm: string; sell_closes: number[]; exit: number; sell_book: Book;
   buy_time?: number; sell_time?: number;
   buy_timeline?: TlRow[]; sell_timeline?: TlRow[];
-  buy_tape?: { t: string; px: number; qty?: number }[] | null;
-  sell_tape?: { t: string; px: number; qty?: number }[] | null;
+  buy_tapes?: { t: string; px: number; qty?: number }[][] | null;   // 60s tape per signal candle (1st/2nd/3rd)
+  sell_tapes?: { t: string; px: number; qty?: number }[][] | null;
   net_pct: number;
 };
 type NoTrade = { hhmm: string; kind: string; note_ko: string; note_en: string };
@@ -229,6 +229,7 @@ export default function ProofLab() {
   const [focus, setFocus] = useState<number | null>(null);
   const [loading, setLoading] = useState(false);
   const [view, setView] = useState<"candle" | "table">("table");   // 📗 TABLE first (boss 2026-07-30) — chart on demand
+  const [tapeMin, setTapeMin] = useState<{ BUY: number; SELL: number }>({ BUY: 2, SELL: 2 });   // which of the 3 candles' minute tape shows
   type FastBook = { asks: [number, number][]; bids: [number, number][]; best_ask: number; best_bid: number; time?: string;
                     tape?: { t: string; px: number; qty: number; strength?: number | null }[] | null; prev_close?: number | null };
   const [fastBook, setFastBook] = useState<FastBook | null>(null);   // ⚡ 1s Kiwoom-speed ladder + 체결 feed
@@ -276,6 +277,7 @@ export default function ProofLab() {
   // 🎯 focus mode (boss 2026-07-30): while a trade is selected, HIDE everything else and
   // bring the evidence to the top — a clean stage for demonstrating one trade at a time
   const focused = !!(sel && sym);
+  useEffect(() => { setTapeMin({ BUY: 2, SELL: 2 }); }, [focus]);   // fresh trade → default to the 3rd candle's minute
 
   // ⚡ Kiwoom-speed feed: poll every second for the selected stock — powers the 10-level
   // ladder AND the 체결(deal) table so both move like the real Kiwoom screens
@@ -379,9 +381,11 @@ export default function ProofLab() {
         </div>
       )}
 
-      {/* ---- chart OR price table (boss 2026-07-30: prove the program trades from TABLE data) ---- */}
+      {/* ---- chart OR price table (boss 2026-07-30: prove the program trades from TABLE data)
+           Kiwoom layout in table view: 호가(waiting list) LEFT · 체결(deals) RIGHT ---- */}
       {sym && (
-        <div className="mt-3 rounded-xl border p-2" style={{ borderColor: "var(--border-default)", background: "var(--bg-elevated)" }}>
+        <div className={!focused && view === "table" ? "mt-3 grid lg:grid-cols-2 gap-3 items-start" : "mt-3"}>
+        <div className="rounded-xl border p-2" style={{ borderColor: "var(--border-default)", background: "var(--bg-elevated)" }}>
           <div className="flex items-center gap-1.5 px-2 pt-1 pb-2">
             <button onClick={() => setView("candle")} className="text-[12px] font-extrabold px-3 py-1 rounded-lg"
               style={view === "candle" ? { background: GOLD, color: "#fff" } : { border: "1px solid var(--border-default)", color: "var(--text-secondary)" }}>
@@ -423,16 +427,15 @@ export default function ProofLab() {
             );
           })()}
         </div>
-      )}
 
       {/* ---- 📼 per-stock 체결 table — Kiwoom columns: 시각·체결가·전일대비·체결량·체결강도 ---- */}
-      {!focused && sym && (() => {
+      {!focused && (() => {
         const tape = fastBook?.tape ?? sym.tick_tape ?? null;
         if (!tape || tape.length === 0) return null;
         const prevClose = fastBook?.prev_close ?? null;
         const rows = [...tape].slice(-15).reverse();       // newest on top, 15 rows like Kiwoom
         return (
-          <div className="mt-3 rounded-xl border overflow-hidden" style={{ borderColor: TEAL }}>
+          <div className={view === "table" ? "rounded-xl border overflow-hidden" : "mt-3 rounded-xl border overflow-hidden"} style={{ borderColor: TEAL }}>
             <div className="px-4 py-2 border-b bg-[var(--bg-elevated)] flex items-center gap-2 flex-wrap" style={{ borderColor: "var(--border-default)" }}>
               <b className="text-[13px]" style={{ color: TEAL }}>📼 {nm(sym)} — {t("체결 (초당·실시간)", "executions (per second · LIVE)")}</b>
               <span className="text-[10.5px] font-bold px-2 py-0.5 rounded-full" style={{ background: "rgba(0,131,143,0.12)", color: TEAL }}>
@@ -473,6 +476,8 @@ export default function ProofLab() {
           </div>
         );
       })()}
+        </div>
+      )}
 
       {/* ---- 📌 open positions (bought, still waiting for the 3rd blue) ---- */}
       {!focused && res && res.symbols.length > 0 && (() => {
@@ -622,8 +627,14 @@ export default function ProofLab() {
                           const rise = d > 0, fall = d < 0;
                           const icon = rise ? "🔴▲" : fall ? "🔵▼" : "⚪＝";
                           const icol = rise ? RED : fall ? BLUE : "var(--text-muted)";
+                          const tapesAvail = (isBuy ? sel.buy_tapes : sel.sell_tapes)?.length ?? 0;
+                          const tapeSelected = tapeMin[side] === k;
                           return (
-                            <div key={k} className="flex items-center gap-2 flex-wrap rounded px-1.5 py-[2px]" style={{ background: k === three.length - 1 ? "rgba(230,81,0,0.10)" : "transparent" }}>
+                            <div key={k}
+                              onClick={() => { if (tapesAvail > k) setTapeMin((m) => ({ ...m, [side]: k })); }}
+                              className={`flex items-center gap-2 flex-wrap rounded px-1.5 py-[2px] ${tapesAvail > k ? "cursor-pointer hover:bg-[var(--bg-primary)]" : ""}`}
+                              style={{ background: k === three.length - 1 ? "rgba(230,81,0,0.10)" : "transparent", outline: tapeSelected && tapesAvail > k ? `1.5px solid ${col}` : undefined }}
+                              title={tapesAvail > k ? t("클릭: 이 분의 초 단위 60개 가격 보기", "click: see this minute's 60 per-second prices") : undefined}>
                               <span className="font-bold w-[42px]" style={{ color: icol }}>{ord[k] ?? ""}</span>
                               <span className="text-[var(--text-muted)]">{c3.hhmm}</span>
                               <span>{t("시", "O")} ₩{fmt(c3.open)}</span>
@@ -639,13 +650,21 @@ export default function ProofLab() {
                     </div>
                   );
                 })()}
-                {/* 🎬 the FULL second-by-second tape of that minute (artificial mode) */}
+                {/* 🎬 the FULL second-by-second tape — one per signal candle, picked by clicking 1st/2nd/3rd */}
                 {(() => {
-                  const tape = isBuy ? sel.buy_tape : sel.sell_tape;
-                  if (!tape?.length) return null;
+                  const tapes = isBuy ? sel.buy_tapes : sel.sell_tapes;
+                  if (!tapes?.length) return null;
+                  const selIdx = Math.min(tapeMin[side], tapes.length - 1);
+                  const tape = tapes[selIdx];
+                  const ordName = [t("1번째", "1st"), t("2번째", "2nd"), t("3번째", "3rd")][selIdx] ?? "";
+                  const minuteHH = tape?.[0]?.t?.slice(0, 5) ?? "";
+                  const isSignalMin = selIdx === tapes.length - 1;
                   return (
                     <div className="mt-2">
-                      <div className="text-[10.5px] font-bold text-[var(--text-muted)] mb-1">🎬 {t("그 1분의 초 단위 전체 가격 (60초 전부) — 스크롤해서 확인", "every second of that minute (all 60) — scroll to inspect")}</div>
+                      <div className="text-[10.5px] font-bold text-[var(--text-muted)] mb-1">
+                        🎬 {t(`${ordName} 캔들(${minuteHH})의 초 단위 전체 가격 (60초) — 위 1·2·3번째 줄을 클릭해 분을 전환`,
+                              `every second of the ${ordName} candle (${minuteHH}) — click the 1st/2nd/3rd rows above to switch minutes`)}
+                      </div>
                       <div className="rounded-lg border overflow-y-auto tabular-nums text-[11px]" style={{ maxHeight: 150, borderColor: "var(--border-default)" }}>
                         {tape.map((r, i) => {
                           const last = i === tape.length - 1;
@@ -654,12 +673,12 @@ export default function ProofLab() {
                               <span className="text-[var(--text-muted)] w-[64px]">{r.t}</span>
                               <span className="font-bold" style={{ color: last ? col : "var(--text-secondary)" }}>₩{fmt(r.px)}</span>
                               <span className="text-[10px] text-[var(--text-muted)]">{r.qty ? `${fmt(r.qty)}${lang === "ko" ? "주" : " sh"}` : ""}</span>
-                              {last && <span className="ml-auto text-[10px] font-bold pr-1" style={{ color: col }}>{t("← :59 종가 = 판단!", "← :59 close = the decision!")}</span>}
+                              {last && <span className="ml-auto text-[10px] font-bold pr-1" style={{ color: col }}>{isSignalMin ? t("← :59 종가 = 판단!", "← :59 close = the decision!") : t("← 이 분의 종가", "← this minute's close")}</span>}
                             </div>
                           );
                         })}
                       </div>
-                      <div className="mt-1 text-[10px] text-[var(--text-muted)]">{t("이 60개 가격 중 어떤 것도 '선택'되지 않음 — 마지막(:59)만 판단에 쓰이고, 체결은 다음 초의 호가창에서.", "none of these 60 prices is 'picked' — only the last (:59) judges; the fill comes from the NEXT second's order book.")}</div>
+                      <div className="mt-1 text-[10px] text-[var(--text-muted)]">{t("이 60개 가격 중 어떤 것도 '선택'되지 않음 — 각 분의 마지막(:59) 종가만 판단에 쓰이고, 체결은 다음 초의 호가창에서.", "none of these 60 prices is 'picked' — only each minute's :59 close judges; the fill comes from the NEXT second's order book.")}</div>
                     </div>
                   );
                 })()}

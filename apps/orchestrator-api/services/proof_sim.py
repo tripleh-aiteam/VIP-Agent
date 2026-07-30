@@ -182,7 +182,9 @@ def _simulate(candles: list[dict], seed: int, with_book: bool) -> tuple[list, li
             pos = {"buy_idx": i, "buy_time": cd["time"], "buy_hhmm": cd["hhmm"],
                    "buy_closes": closes[-4:], "entry": entry_px, "buy_book": bk,
                    "buy_timeline": _minute_timeline(cd, entry_px, seed * 31 + i, with_book),
-                   "buy_tape": (_second_tape(cd, seed * 11 + i) if with_book else None)}
+                   # 60-second tapes for ALL 3 signal candles (1st/2nd/3rd — click to inspect each)
+                   "buy_tapes": ([_second_tape(candles[j], seed * 11 + j) for j in (i - 2, i - 1, i) if j >= 0]
+                                 if with_book else None)}
         elif pos is not None and dn == NEED:             # fires the moment the 3rd blue closes
             bk = _book(seed * 2_000 + i, cd["close"], "SELL") if with_book else None
             exit_px = bk["fill"] if bk else cd["close"]
@@ -190,7 +192,8 @@ def _simulate(candles: list[dict], seed: int, with_book: bool) -> tuple[list, li
             trades.append({**pos, "sell_idx": i, "sell_time": cd["time"], "sell_hhmm": cd["hhmm"],
                            "sell_closes": closes[-4:], "exit": exit_px, "sell_book": bk,
                            "sell_timeline": _minute_timeline(cd, exit_px, seed * 37 + i, with_book),
-                           "sell_tape": (_second_tape(cd, seed * 13 + i) if with_book else None),
+                           "sell_tapes": ([_second_tape(candles[j], seed * 13 + j) for j in (i - 2, i - 1, i) if j >= 0]
+                                          if with_book else None),
                            "net_pct": round(net, 3)})
             pos = None
         elif pos is not None and up == NEED and i > pos["buy_idx"]:
