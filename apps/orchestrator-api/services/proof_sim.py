@@ -292,17 +292,15 @@ def _simulate(candles: list[dict], seed: int, with_book: bool, period: int = 60,
               tick: int | None = None, tape_fn=None) -> tuple[list, list, list, list]:
     """Replay: after each candle CLOSES, feed all closes so far into the live engine
     comparison (run_steps). 3 rising steps & flat → BUY; holding & 3 falling → SELL.
-    Returns (completed trades, no-trade proofs, still-open positions, hold-skips —
+    Returns (completed trades, still-open positions, hold-skips —
     3-ups that could NOT buy because the stock was already held: 1 position per stock)."""
     if tape_fn is None:
         def tape_fn(j):  # noqa: E731 — default: one canonical tape per candle
             return _second_tape(candles[j], seed * 11 + j, period, tick)
     closes: list[float] = []
     trades: list[dict] = []
-    proofs: list[dict] = []       # no-trade proofs (fakeouts the engine correctly ignored)
     skips: list[dict] = []        # 3-up while already holding → no double-buy (visible on chart)
     pos: dict | None = None
-    prev_up = prev_dn = 0
     for i, cd in enumerate(candles):
         closes.append(cd["close"])
         up, dn = run_steps(closes)                       # ← REAL engine code
@@ -338,30 +336,12 @@ def _simulate(candles: list[dict], seed: int, with_book: bool, period: int = 60,
             pos = None
         elif pos is not None and up == NEED and i > pos["buy_idx"]:
             skips.append({"idx": i, "hhmm": cd["hhmm"]})   # a 3rd red we could NOT buy — already holding
-            if len(proofs) < 8:
-                proofs.append({"hhmm": cd["hhmm"], "kind": "already-holding",
-                               "note_ko": "3연속 상승이지만 이미 보유 중 → 추가매수 없음 (1종목 1포지션) ✓",
-                               "note_en": "3-up but ALREADY HOLDING this stock → no double-buy (one position per stock) ✓"})
-        # ---- no-trade proofs: a 2-up that died / a flat that broke the count ----
-        if prev_up == 2 and up == 0 and len(proofs) < 6:
-            proofs.append({"hhmm": cd["hhmm"], "kind": "fakeout-2up",
-                           "note_ko": "양봉 2개뿐 → 3번째가 없어서 매수 안 함 ✓",
-                           "note_en": "only 2 red candles → no 3rd, engine did NOT buy ✓"})
-        if len(closes) >= 2 and cd["close"] == closes[-2] and prev_up >= 1 and len(proofs) < 6:
-            proofs.append({"hhmm": cd["hhmm"], "kind": "flat-break",
-                           "note_ko": "보합(같은 종가) → 연속 카운트 리셋, 매수 안 함 ✓",
-                           "note_en": "flat close → streak reset, engine did NOT buy ✓"})
-        if pos is not None and prev_dn in (1, 2) and dn == 0 and len(proofs) < 8:
-            proofs.append({"hhmm": cd["hhmm"], "kind": f"chop-{prev_dn}dn",
-                           "note_ko": f"음봉 {prev_dn}개에서 반등 → 3번째가 없어서 매도 안 함 ✓",
-                           "note_en": f"only {prev_dn} blue then bounce → no 3rd, engine did NOT sell ✓"})
-        prev_up, prev_dn = up, dn
     open_pos: list[dict] = []
     if pos is not None:                                  # bought, still waiting for the 3rd blue
         last = closes[-1] if closes else pos["entry"]
         open_pos.append({**pos, "last_px": last,
                          "unreal_pct": round((last / pos["entry"] - 1) * 100 - FEE_PCT, 3)})
-    return trades, proofs, open_pos, skips
+    return trades, open_pos, skips
 
 
 # --------------------------------------------------------------------------- #
@@ -423,7 +403,7 @@ def run_synthetic(seed: int = 7, period: int = 60, mode: str = "min1",
         def _mk_tape(j, _d=day0, _s=secs, _dec=dec):       # a candle's tape = its own seconds
             cd = _dec[j]
             return _tape_from(_d, _s, cd["off0"], cd["n"])
-        trades, proofs, open_pos, skips = _simulate(dec, sseed, with_book=True,
+        trades, open_pos, skips = _simulate(dec, sseed, with_book=True,
                                                     period=(period if per_chart else 60),
                                                     tick=t_base, tape_fn=_mk_tape)
         for tr in trades[:-6]:                            # keep 60s tapes only on recent trades (payload size)
@@ -503,7 +483,7 @@ def run_synthetic(seed: int = 7, period: int = 60, mode: str = "min1",
                         "dec_candles": (None if dec is disp_all else dec[-120:]),
                         "forming": _forming_from(day0, secs, period), "trades": trades,
                         "open_positions": open_pos, "hold_skips": skips, "live_book": live_book,
-                        "no_trade_proofs": proofs, "verification": ver})
+                        "verification": ver})
     return {"source": "synthetic", "seed": seed, "need": NEED, "period": period, "mode": mode,
             "rule_ko": f"양봉 {NEED}개 연속(전봉 대비 {NEED}회 상승) → 정확히 {NEED}번째 양봉에 매수 · 음봉 {NEED}개 연속 → 정확히 {NEED}번째 음봉에 매도",
             "rule_en": f"{NEED} rising candles → BUY exactly on the {NEED}rd red · {NEED} falling → SELL exactly on the {NEED}rd blue",
@@ -542,7 +522,7 @@ def _kiwoom_symbol(code: str) -> dict[str, Any] | None:
     forming = _cd(raw[-1]) if len(raw) >= 2 else None
     if forming and candles and forming["hhmm"] == candles[-1]["hhmm"]:
         forming = None
-    trades, proofs, open_pos, skips = _simulate(candles, seed=1, with_book=False)
+    trades, open_pos, skips = _simulate(candles, seed=1, with_book=False)
     ver = _verify(candles, trades, with_book=False)
     try:
         name = stock_name(code) or code
@@ -580,7 +560,7 @@ def _kiwoom_symbol(code: str) -> dict[str, Any] | None:
     return {"code": code, "name": name, "candles": candles, "forming": forming,
             "trades": trades, "tick_tape": tick_tape,
             "open_positions": open_pos, "hold_skips": skips, "live_book": live_book,
-            "no_trade_proofs": proofs, "verification": ver}
+            "verification": ver}
 
 
 def self_check(seed: int = 7) -> dict[str, Any]:

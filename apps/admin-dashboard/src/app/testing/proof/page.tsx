@@ -32,7 +32,6 @@ type Trade = {
   gross_pct?: number;   // before fees (pure price move)
   fee_pct?: number;     // round-trip cost the desk actually pays
 };
-type NoTrade = { hhmm: string; kind: string; note_ko: string; note_en: string };
 type OpenPos = { buy_idx: number; buy_hhmm: string; buy_closes: number[]; entry: number; last_px: number; unreal_pct: number; buy_sig_t?: string; buy_fill_t?: string };
 type SymBlock = {
   code: string; name: string; candles: Candle[]; dec_candles?: Candle[] | null; trades: Trade[];
@@ -41,7 +40,6 @@ type SymBlock = {
   live_book?: { asks: [number, number][]; bids: [number, number][]; best_ask: number; best_bid: number; time?: string } | null;
   tick_tape?: { t: string; px: number; qty?: number }[] | null;   // REAL live per-second executed deals
   forming?: Candle | null;   // the still-forming current candle — chart display only, never judged
-  no_trade_proofs: NoTrade[];
   verification: { trades: number; passed: number; total: number; pct: number; per_trade?: { passed: number; total: number }[] };
 };
 type ProofRes = {
@@ -298,11 +296,6 @@ export default function ProofLab() {
 
   const [tfSec, setTfSec] = useState<60 | 40 | 30 | 15 | 1>(60);   // candle period — 1분봉 default
   const [decMode, setDecMode] = useState<"min1" | "chart">("min1");   // who decides: 1분 fixed vs this chart
-  type SelfCheck = { ok: boolean; passed: number; total: number; checks: Record<string, { ok: number; bad: number }>;
-                     failures: string[]; labels: Record<string, string>; note_ko: string; note_en: string;
-                     per_tf: { mode: string; period: number; candles: number; trades: number; win_pct: number; gross_pct: number; net_pct: number }[] };
-  const [sc2, setSc2] = useState<SelfCheck | null>(null);
-  const [scBusy, setScBusy] = useState(false);
   const sourceRef = useRef(source);
   sourceRef.current = source;
   // keep = true → a TIMEFRAME switch only: preserve the selected stock, the focused trade
@@ -452,11 +445,6 @@ export default function ProofLab() {
                 {m === "min1" ? t("1분 고정", "1-min fixed") : t("차트별", "per-chart")}
               </button>
             ))}
-            <button onClick={async () => { setScBusy(true); try { setSc2(await api<SelfCheck>(`/paper-desk/proof/selfcheck?seed=${seed}`)); } catch { /* ignore */ } setScBusy(false); }}
-              className="text-[11px] font-extrabold px-2.5 py-1 rounded-lg border" style={{ borderColor: "#2e7d32", color: "#2e7d32" }}
-              title={t("모든 차트·모든 모드에서 데이터·매매·화살표 일관성을 즉시 전수검사", "instantly re-verify data, trades and arrows across every chart and both modes")}>
-              {scBusy ? t("검사 중…", "checking…") : t("🔬 자체검사", "🔬 self-check")}
-            </button>
             <span className="text-[10px] px-2 py-0.5 rounded-full" style={{ background: decMode === "min1" ? "rgba(230,81,0,0.12)" : "rgba(0,131,143,0.12)", color: decMode === "min1" ? GOLD : TEAL }}>
               {decMode === "min1"
                 ? t("같은 데이터 · 같은 매매 (시각·가격 동일) · 캔들만 더 잘게", "same data · same trades (identical times & prices) · finer candles only")
@@ -481,57 +469,6 @@ export default function ProofLab() {
         )}
         {loading && <span className="text-[12px] text-[var(--text-muted)]">{t("계산 중…", "running…")}</span>}
       </div>
-      )}
-
-      {/* ---- 🔬 self-check result: the consistency matrix + per-timeframe comparison ---- */}
-      {!focused && sc2 && (
-        <div className="mt-3 rounded-xl border-2 overflow-hidden" style={{ borderColor: sc2.ok ? "#2e7d32" : RED }}>
-          <div className="px-4 py-2 border-b flex items-center gap-3 flex-wrap" style={{ borderColor: "var(--border-default)", background: sc2.ok ? "rgba(46,125,50,0.08)" : "rgba(211,47,47,0.08)" }}>
-            <b className="text-[14px]" style={{ color: sc2.ok ? "#2e7d32" : RED }}>
-              {sc2.ok ? "✅" : "❌"} {t(`자체검사 ${sc2.passed.toLocaleString()}/${sc2.total.toLocaleString()} 통과`, `self-check ${sc2.passed.toLocaleString()}/${sc2.total.toLocaleString()} passed`)}
-            </b>
-            <span className="text-[10.5px] text-[var(--text-muted)]">{t("모든 차트(1분·40초·30초·15초·1초) × 두 판단모드 전수검사", "every chart (1분·40초·30초·15초·1초) × both decision modes")}</span>
-            <button onClick={() => setSc2(null)} className="ml-auto text-[10.5px] text-[var(--text-muted)]">✕</button>
-          </div>
-          <div className="px-4 py-2 grid md:grid-cols-2 gap-x-6 gap-y-1">
-            {Object.entries(sc2.checks).map(([k, v]) => (
-              <div key={k} className="text-[11.5px] flex items-center gap-2 tabular-nums">
-                <span style={{ color: v.bad === 0 ? "#2e7d32" : RED }}>{v.bad === 0 ? "✅" : "❌"}</span>
-                <span className="font-bold" style={{ color: v.bad === 0 ? "#2e7d32" : RED }}>{v.ok.toLocaleString()}/{(v.ok + v.bad).toLocaleString()}</span>
-                <span className="text-[var(--text-secondary)]">{(sc2.labels[k] || k).split(" / ")[lang === "ko" ? 0 : 1] ?? sc2.labels[k]}</span>
-              </div>
-            ))}
-          </div>
-          {sc2.failures.length > 0 && (
-            <div className="px-4 pb-2 flex flex-col gap-0.5">
-              {sc2.failures.map((f, i) => <span key={i} className="text-[10.5px]" style={{ color: RED }}>⚠ {f}</span>)}
-            </div>
-          )}
-          <div className="px-4 pb-3 overflow-x-auto">
-            <div className="text-[10.5px] font-bold text-[var(--text-muted)] mb-1">📊 {t("차트별 비교 (같은 시장, 같은 데이터)", "per-chart comparison (same market, same data)")}</div>
-            <table className="text-[11.5px] tabular-nums">
-              <thead><tr className="text-[10px] text-[var(--text-muted)]">
-                <th className="text-left px-2">{t("판단", "decides")}</th><th className="text-left px-2">{t("차트", "chart")}</th>
-                <th className="text-right px-2">{t("캔들", "candles")}</th><th className="text-right px-2">{t("매매", "trades")}</th>
-                <th className="text-right px-2">{t("승률", "win%")}</th><th className="text-right px-2">{t("총손익(수수료前)", "gross%")}</th>
-                <th className="text-right px-2">{t("순손익(수수료後)", "net%")}</th>
-              </tr></thead>
-              <tbody>
-                {sc2.per_tf.map((x, i) => (
-                  <tr key={i} className="border-t border-[var(--border-default)]/30">
-                    <td className="px-2">{x.mode === "min1" ? t("1분 고정", "1-min fixed") : t("차트별", "per-chart")}</td>
-                    <td className="px-2 font-bold">{x.period === 60 ? t("1분봉", "1-min") : `${x.period}${t("초봉", "-sec")}`}</td>
-                    <td className="text-right px-2">{fmt(x.candles)}</td><td className="text-right px-2">{x.trades}</td>
-                    <td className="text-right px-2 font-bold" style={{ color: x.win_pct >= 50 ? RED : BLUE }}>{x.win_pct}%</td>
-                    <td className="text-right px-2" style={{ color: x.gross_pct > 0 ? RED : BLUE }}>{x.gross_pct > 0 ? "+" : ""}{x.gross_pct}%</td>
-                    <td className="text-right px-2 font-bold" style={{ color: x.net_pct > 0 ? RED : BLUE }}>{x.net_pct > 0 ? "+" : ""}{x.net_pct}%</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-            <div className="mt-1.5 text-[10.5px]" style={{ color: GOLD }}>⚠ {lang === "ko" ? sc2.note_ko : sc2.note_en}</div>
-          </div>
-        </div>
       )}
 
       {/* ---- verdict banner ---- */}
@@ -1164,56 +1101,6 @@ export default function ProofLab() {
         </div>
       )}
 
-      {/* ---- no-trade proofs: the traps the engine correctly ignored ---- */}
-      {!focused && sym && sym.no_trade_proofs.length > 0 && (
-        <div className="mt-3 rounded-xl border overflow-hidden" style={{ borderColor: "#2e7d32" }}>
-          <div className="px-4 py-2 border-b bg-[var(--bg-elevated)]" style={{ borderColor: "var(--border-default)" }}>
-            <b className="text-[13px]" style={{ color: "#2e7d32" }}>🪤 {t("함정 통과 증명 — 사면 안 될 때 안 샀다", "trap proof — it did NOT trade when it must not")}</b>
-          </div>
-          <div className="px-4 py-2 flex flex-col gap-1">
-            {sym.no_trade_proofs.map((p, i) => (
-              <div key={i} className="text-[12px] flex items-center gap-2">
-                <span className="tabular-nums text-[var(--text-muted)]">{p.hhmm}</span>
-                <span className="text-[var(--text-secondary)]">{lang === "ko" ? p.note_ko : p.note_en}</span>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* ---- who makes the candles ---- */}
-      {!focused && sym && (
-        <div className="mt-3 rounded-xl border p-4" style={{ borderColor: "var(--border-default)", background: "var(--bg-elevated)" }}>
-          <b className="text-[13px]">🕯️ {t("④ 캔들은 누가 만드나 — 원시 데이터 vs 차트", "④ who makes the candles — raw data vs the chart")}</b>
-          <p className="mt-1 text-[12px] text-[var(--text-secondary)] leading-relaxed">
-            {t("진실은 원시 1분 데이터(키움 시가·고가·저가·종가)입니다. 결정 엔진은 이 원시 '종가'만 전봉과 비교합니다. 화면의 차트(TradingView lightweight-charts)는 같은 원시 숫자를 그림으로 그릴 뿐 — 아래 표가 원시값과 차트에 그려진 값이 동일함을 보여줍니다.",
-               "The truth is the raw 1-min data (Kiwoom O/H/L/C). The engine compares only the raw CLOSES vs the previous close. The on-screen chart (TradingView lightweight-charts) merely DRAWS the same raw numbers — the table shows raw value = drawn value.")}
-          </p>
-          <div className="mt-2 overflow-x-auto">
-            <table className="text-[11.5px] tabular-nums">
-              <thead><tr className="text-[10px] text-[var(--text-muted)]">
-                <th className="px-2 text-left">{t("시각", "time")}</th>
-                <th className="px-2 text-right">{t("원시 종가(엔진이 봄)", "raw close (engine reads)")}</th>
-                <th className="px-2 text-right">{t("차트에 그려진 종가", "close drawn on chart")}</th>
-                <th className="px-2">{t("일치", "match")}</th>
-              </tr></thead>
-              <tbody>
-                {sym.candles.slice(0, 8).map((c, i) => (
-                  <tr key={i} className="border-t border-[var(--border-default)]/40">
-                    <td className="px-2 py-0.5">{c.hhmm}</td>
-                    <td className="px-2 text-right font-bold">₩{fmt(c.close)}</td>
-                    <td className="px-2 text-right font-bold">₩{fmt(c.close)}</td>
-                    <td className="px-2 text-center" style={{ color: "#2e7d32" }}>✓</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-          <p className="mt-2 text-[11px] text-[var(--text-muted)]">
-            {t(`엔진 함수: ${res?.engine_fn ?? ""}`, `engine fn: ${res?.engine_fn ?? ""}`)}
-          </p>
-        </div>
-      )}
     </div>
   );
 }
