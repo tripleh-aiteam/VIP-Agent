@@ -402,9 +402,9 @@ export default function ProofLab() {
           </div>
           {view === "candle" ? (
             <>
-              <ProofChart candles={sym.forming ? [...sym.candles, sym.forming] : sym.candles} trades={sym.trades} focus={focus} buyLabel={t("③▲매수", "③▲BUY")} sellLabel={t("③▼매도", "③▼SELL")}
-                openIdxs={(sym.open_positions ?? []).map((p) => p.buy_idx)} holdLabel={t("③▲매수·보유중", "③▲BOUGHT·holding")}
-                skipIdxs={(sym.hold_skips ?? []).map((s) => s.idx)} skipLabel={t("⏸이미보유", "⏸already held")} />
+              <ProofChart candles={sym.forming ? [...sym.candles, sym.forming] : sym.candles} trades={sym.trades} focus={focus} buyLabel="" sellLabel=""
+                openIdxs={(sym.open_positions ?? []).map((p) => p.buy_idx)} holdLabel=""
+                skipIdxs={(sym.hold_skips ?? []).map((s) => s.idx)} skipLabel="⏸" />
               <div className="px-2 pb-1 text-[11px] text-[var(--text-muted)]">
                 {t("▲매수 화살표 = 정확히 3번째 양봉 · ▼매도 화살표 = 정확히 3번째 음봉. 거래를 클릭하면 확대 + 증거를 보여줍니다.",
                    "▲BUY arrow = exactly the 3rd red candle · ▼SELL arrow = exactly the 3rd blue. Click a trade to zoom + see the evidence.")}
