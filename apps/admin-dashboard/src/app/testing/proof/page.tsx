@@ -479,6 +479,67 @@ export default function ProofLab() {
         </div>
       )}
 
+      {/* ---- 🔢 LIVE counting simulation — how the table's closes become a BUY/SELL ---- */}
+      {!focused && sym && (() => {
+        const cs = sym.candles;
+        if (cs.length < 2) return null;
+        const n = Math.min(10, cs.length - 1);
+        const chips: { hhmm: string; dir: number }[] = [];
+        for (let i = cs.length - n; i < cs.length; i++) {
+          const d = cs[i].close - cs[i - 1].close;
+          chips.push({ hhmm: cs[i].hhmm, dir: d > 0 ? 1 : d < 0 ? -1 : 0 });
+        }
+        let up = 0; for (let i = cs.length - 1; i >= 1 && cs[i].close > cs[i - 1].close; i--) up++;
+        let dn = 0; for (let i = cs.length - 1; i >= 1 && cs[i].close < cs[i - 1].close; i--) dn++;
+        const holding = (sym.open_positions?.length ?? 0) > 0;
+        const k = Math.min(3, holding ? dn : up);
+        const remain = Math.max(0, 3 - k);
+        const col = holding ? BLUE : RED;
+        return (
+          <div className="mt-3 rounded-xl border-2 p-4" style={{ borderColor: col, background: "var(--bg-elevated)" }}>
+            <b className="text-[13px]" style={{ color: col }}>🔢 {t("실시간 카운팅 — 표의 종가가 매매가 되는 과정", "LIVE counting — how the table's closes become a trade")}</b>
+            <span className="ml-2 text-[10.5px] text-[var(--text-muted)]">
+              {t("전봉 종가보다 높으면 🔴 +1 · 낮으면 🔵 (반대편 카운트는 리셋) · 보합 ⚪ = 양쪽 리셋", "close above the previous close = 🔴 +1 · below = 🔵 (resets the other count) · flat ⚪ resets both")}
+            </span>
+            {/* the last minutes as chips */}
+            <div className="mt-2 flex items-end gap-1 flex-wrap">
+              {chips.map((c, i) => (
+                <div key={i} className="flex flex-col items-center">
+                  <span className="text-[15px]">{c.dir > 0 ? "🔴" : c.dir < 0 ? "🔵" : "⚪"}</span>
+                  <span className="text-[8.5px] tabular-nums text-[var(--text-muted)]">{c.hhmm}</span>
+                </div>
+              ))}
+              {sym.forming && (
+                <div className="flex flex-col items-center opacity-50">
+                  <span className="text-[15px]">⏳</span>
+                  <span className="text-[8.5px] tabular-nums text-[var(--text-muted)]">{sym.forming.hhmm}</span>
+                </div>
+              )}
+            </div>
+            {/* the counter state */}
+            <div className="mt-2 flex items-center gap-3 flex-wrap">
+              <span className="text-[20px] tracking-wide">
+                {holding
+                  ? <>{Array.from({ length: k }).map((_, i) => <span key={i}>🔵</span>)}{Array.from({ length: remain }).map((_, i) => <span key={`e${i}`} className="opacity-25">🔵</span>)}</>
+                  : <>{Array.from({ length: k }).map((_, i) => <span key={i}>🔴</span>)}{Array.from({ length: remain }).map((_, i) => <span key={`e${i}`} className="opacity-25">🔴</span>)}</>}
+              </span>
+              <b className="text-[14px]" style={{ color: col }}>
+                {holding
+                  ? (k >= 3 ? t("🔵 3연속 하락 완성 → 매도 실행! → 거래 기록으로", "🔵 3 falls complete → SELL fired! → into the history")
+                     : k === 0 ? t("보유 중 · 하락 카운트 0 — 상승/보합이 나와서 리셋됨", "holding · fall count 0 — a rise/flat reset it")
+                     : t(`보유 중 · 🔵 ${k}연속 하락 — ${remain}개 더 나오면 매도`, `holding · ${k} fall(s) in a row — ${remain} more → SELL`))
+                  : (k >= 3 ? t("🔴 3연속 상승 완성 → 매수 실행! → 아래 '보유 중' 표를 보세요", "🔴 3 rises complete → BUY fired! → see the positions table below")
+                     : k === 0 ? t("관망 중 · 상승 카운트 0 — 하락/보합이 나와서 리셋됨", "watching · rise count 0 — a fall/flat reset it")
+                     : t(`관망 중 · 🔴 ${k}연속 상승 — ${remain}개 더 나오면 자동 매수`, `watching · ${k} rise(s) in a row — ${remain} more → automatic BUY`))}
+              </b>
+              <span className="ml-auto text-[10.5px] text-[var(--text-muted)]">
+                {holding ? t("상태: 보유 중 → 🔵 하락을 셉니다", "state: HOLDING → counting 🔵 falls") : t("상태: 관망 → 🔴 상승을 셉니다", "state: WATCHING → counting 🔴 rises")}
+              </span>
+            </div>
+          </div>
+        );
+      })()}
+
       {/* ---- 📌 open positions (bought, still waiting for the 3rd blue) ---- */}
       {!focused && res && res.symbols.length > 0 && (() => {
         const posRows = res.symbols.flatMap((s, si) => (s.open_positions ?? []).map((p) => ({ s, si, p })));
