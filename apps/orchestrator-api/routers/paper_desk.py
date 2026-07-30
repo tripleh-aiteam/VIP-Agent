@@ -609,14 +609,19 @@ def candle3_ab_reset(db: Session = Depends(get_db)):
 
 @router.get("/proof/run")
 def proof_run(source: str = Query("synthetic"), seed: int = Query(7),
-              code: str = Query("005930")):
+              code: str = Query("005930"), db: Session = Depends(get_db)):
     """🧪 Proof Lab (boss 2026-07-29): prove Algo 3 buys EXACTLY on the 3rd rising candle
     and sells EXACTLY on the 3rd falling candle, with an independent verifier.
     source='synthetic' = planted artificial day (order-book fill proof included);
     source='kiwoom'    = TODAY's real Kiwoom 1-min bars replayed through the same engine
-    function. No DB access."""
+    function. code='ALL' = every company on the desk watchlist, aggregated."""
     from services.proof_sim import run_synthetic, run_kiwoom
-    return run_kiwoom(code=code) if source == "kiwoom" else run_synthetic(seed=seed)
+    if source == "kiwoom":
+        if code == "ALL":
+            from services.candle_trader import _cfg
+            return run_kiwoom(codes=_cfg(db)["codes"])
+        return run_kiwoom(code=code)
+    return run_synthetic(seed=seed)
 
 
 @router.post("/candle3/buy")

@@ -229,13 +229,14 @@ def run_synthetic(seed: int = 7) -> dict[str, Any]:
                              "pct": round(agg_pass / agg_total * 100, 1) if agg_total else 100.0}}
 
 
-def run_kiwoom(code: str = "005930") -> dict[str, Any]:
-    """Same proof on TODAY's REAL Kiwoom minute bars (replay). Order-book history does
-    not exist, so fills = decision close and book checks are skipped here — the
-    synthetic sample carries the fill-price proof."""
+def _kiwoom_symbol(code: str) -> dict[str, Any] | None:
+    """One real ticker: TODAY's Kiwoom 1-min bars replayed through the engine fn."""
     from services.kiwoom_rest import minute_bars
     from services.scalp_trader import _name as stock_name
-    raw = minute_bars(code, tic="1", count=400) or []
+    try:
+        raw = minute_bars(code, tic="1", count=400) or []
+    except Exception:
+        return None
     bars = raw[:-1] if len(raw) >= 2 else raw            # drop the forming candle (engine behavior)
     today = datetime.now(KST).strftime("%Y-%m-%d")
     candles = []
@@ -248,16 +249,32 @@ def run_kiwoom(code: str = "005930") -> dict[str, Any]:
         candles.append({"time": int(dt.timestamp()) + 9 * 3600, "hhmm": hh,
                         "open": b.get("open"), "high": b.get("high"),
                         "low": b.get("low"), "close": b.get("close")})
+    if not candles:
+        return None
     trades, proofs = _simulate(candles, seed=1, with_book=False)
     ver = _verify(candles, trades, with_book=False)
     try:
         name = stock_name(code) or code
     except Exception:
         name = code
-    return {"source": "kiwoom", "code": code, "name": name, "need": NEED,
+    return {"code": code, "name": name, "candles": candles, "trades": trades,
+            "no_trade_proofs": proofs, "verification": ver}
+
+
+def run_kiwoom(code: str = "005930", codes: list[str] | None = None) -> dict[str, Any]:
+    """Same proof on TODAY's REAL Kiwoom minute bars (replay). codes=[...] runs ALL
+    companies (the desk watchlist) and aggregates the verification. Order-book history
+    does not exist, so fills = decision close and book checks are skipped here — the
+    synthetic sample carries the fill-price proof."""
+    targets = codes if codes else [code]
+    symbols = [s for s in (_kiwoom_symbol(c) for c in targets) if s]
+    agg_pass = sum(s["verification"]["passed"] for s in symbols)
+    agg_total = sum(s["verification"]["total"] for s in symbols)
+    agg_trades = sum(s["verification"]["trades"] for s in symbols)
+    return {"source": "kiwoom", "code": code, "need": NEED,
             "rule_ko": "실제 키움 오늘 1분봉으로 같은 엔진 함수를 재생 — 화살표가 정확히 3번째 양봉/음봉에 있는지 확인",
             "rule_en": "TODAY's real Kiwoom 1-min bars replayed through the same engine function — check the arrows sit exactly on the 3rd candles",
             "engine_fn": "services/candle_trader.py::run_steps (the live engine's own comparison)",
-            "symbols": [{"code": code, "name": name, "candles": candles, "trades": trades,
-                         "no_trade_proofs": proofs, "verification": ver}],
-            "verification": ver}
+            "symbols": symbols,
+            "verification": {"trades": agg_trades, "passed": agg_pass, "total": agg_total,
+                             "pct": round(agg_pass / agg_total * 100, 1) if agg_total else 100.0}}

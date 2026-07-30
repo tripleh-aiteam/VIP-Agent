@@ -22,6 +22,7 @@ type TlRow = { t: string; px: number; kind: "open" | "watch" | "high" | "low" | 
 type Trade = {
   buy_idx: number; buy_hhmm: string; buy_closes: number[]; entry: number; buy_book: Book;
   sell_idx: number; sell_hhmm: string; sell_closes: number[]; exit: number; sell_book: Book;
+  buy_time?: number; sell_time?: number;
   buy_timeline?: TlRow[]; sell_timeline?: TlRow[];
   net_pct: number;
 };
@@ -163,7 +164,7 @@ export default function ProofLab() {
   const t = (ko: string, en: string) => (lang === "ko" ? ko : en);
   const [source, setSource] = useState<"synthetic" | "kiwoom">("kiwoom");   // boss 2026-07-30: REAL data first
   const [seed, setSeed] = useState(7);
-  const [code, setCode] = useState("005930");
+  const [code, setCode] = useState("ALL");   // boss 2026-07-30: all companies by default
   const [res, setRes] = useState<ProofRes | null>(null);
   const [symIdx, setSymIdx] = useState(0);
   const [focus, setFocus] = useState<number | null>(null);
@@ -186,7 +187,7 @@ export default function ProofLab() {
     if (source !== "kiwoom") return;
     const iv = setInterval(() => {
       api<ProofRes>(`/paper-desk/proof/run?source=kiwoom&code=${code}`).then(setRes).catch(() => {});
-    }, 30_000);
+    }, code === "ALL" ? 60_000 : 30_000);   // ALL = up to 18 tickers per sweep → gentler refresh
     return () => clearInterval(iv);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [source, code]);
@@ -228,6 +229,7 @@ export default function ProofLab() {
           <>
             <select value={code} onChange={(e) => { setCode(e.target.value); load("kiwoom", seed, e.target.value); }}
               className="text-[12px] font-bold px-2 py-1 rounded-lg border bg-[var(--bg-primary)] text-[var(--text-primary)]" style={{ borderColor: TEAL }}>
+              <option value="ALL">{t("📊 전체 (모든 종목)", "📊 ALL companies")}</option>
               {KIWOOM_CODES.map(([c, n]) => <option key={c} value={c}>{n}</option>)}
             </select>
             <span className="text-[10.5px] font-bold px-2 py-0.5 rounded-full" style={{ background: "rgba(0,131,143,0.12)", color: TEAL }}>
@@ -252,7 +254,7 @@ export default function ProofLab() {
 
       {/* ---- symbol tabs (synthetic has 3) ---- */}
       {res && res.symbols.length > 1 && (
-        <div className="mt-3 flex gap-1.5">
+        <div className="mt-3 flex gap-1.5 flex-wrap">
           {res.symbols.map((s, i) => (
             <button key={s.code} onClick={() => { setSymIdx(i); setFocus(null); }}
               className="text-[12px] font-extrabold px-3 py-1 rounded-lg"
@@ -274,41 +276,67 @@ export default function ProofLab() {
         </div>
       )}
 
-      {/* ---- trades table (click → evidence) ---- */}
-      {sym && (
-        <div className="mt-3 rounded-xl border overflow-hidden" style={{ borderColor: GOLD }}>
-          <div className="px-4 py-2 border-b bg-[var(--bg-elevated)]" style={{ borderColor: "var(--border-default)" }}>
-            <b className="text-[13px]" style={{ color: GOLD }}>🔍 {t("거래를 클릭하세요 — 증거가 열립니다", "click a trade — the evidence opens")}</b>
+      {/* ---- ALL-companies trade history (click → evidence) + win/loss summary ---- */}
+      {res && res.symbols.length > 0 && (() => {
+        const rows = res.symbols
+          .flatMap((s, si) => s.trades.map((tr, ti) => ({ s, si, tr, ti, pc: s.verification.per_trade[ti] })))
+          .sort((a, b) => (b.tr.sell_time ?? 0) - (a.tr.sell_time ?? 0));
+        const wins = rows.filter((r) => r.tr.net_pct > 0).length;
+        const losses = rows.filter((r) => r.tr.net_pct < 0).length;
+        const sumNet = rows.reduce((a, r) => a + (r.tr.net_pct || 0), 0);
+        const winPct = rows.length ? Math.round((wins / rows.length) * 100) : 0;
+        return (
+          <div className="mt-3 rounded-xl border overflow-hidden" style={{ borderColor: GOLD }}>
+            <div className="px-4 py-2 border-b bg-[var(--bg-elevated)]" style={{ borderColor: "var(--border-default)" }}>
+              <b className="text-[13px]" style={{ color: GOLD }}>🔍 {t("전체 거래 기록 (모든 종목) — 클릭하면 증거가 열립니다", "full trade history (ALL companies) — click a trade, the evidence opens")}</b>
+            </div>
+            {/* summary bar — like the Algo 3 history header */}
+            <div className="px-4 py-2.5 border-b text-[13px] tabular-nums flex items-center gap-5 flex-wrap" style={{ borderColor: "var(--border-default)", background: "rgba(230,81,0,0.05)" }}>
+              <span>🔄 {t(`${rows.length}회전`, `${rows.length} trips`)}</span>
+              <span style={{ color: RED }}>🟢 {wins}{t("승", "W")}</span>
+              <span style={{ color: BLUE }}>🔴 {losses}{t("패", "L")}</span>
+              <span className="font-extrabold" style={{ color: winPct >= 50 ? "#2e7d32" : RED }}>🏆 {t(`승률 ${winPct}%`, `${winPct}% win`)}</span>
+              <span className="font-extrabold" style={{ color: sumNet > 0 ? RED : sumNet < 0 ? BLUE : "var(--text-muted)" }}>Σ {t("합계", "total")} {sumNet > 0 ? "+" : ""}{sumNet.toFixed(2)}%</span>
+              <span className="ml-auto text-[10.5px] text-[var(--text-muted)]">{t("증명 재생 기준 (실계좌 아님)", "proof replay — not the real account")}</span>
+            </div>
+            {rows.length === 0 ? (
+              <div className="px-4 py-5 text-center text-[12px] text-[var(--text-muted)]">
+                {t("아직 완성된 회전이 없습니다 — 3양봉 매수 후 3음봉 매도가 완료되면 여기 쌓입니다", "no completed round trips yet — they appear once a 3-up buy meets its 3-down sell")}
+              </div>
+            ) : (
+            <table className="w-full text-[12px] tabular-nums">
+              <thead><tr className="text-[10.5px] text-[var(--text-muted)]" style={{ background: "var(--bg-elevated)" }}>
+                <th className="text-left px-3 py-1.5">{t("종목", "Stock")}</th>
+                <th className="text-left px-2">{t("매수(3번째 양봉)", "BUY (3rd red)")}</th>
+                <th className="text-left px-2">{t("매도(3번째 음봉)", "SELL (3rd blue)")}</th>
+                <th className="text-right px-2">{t("매수가", "entry")}</th><th className="text-right px-2">{t("매도가", "exit")}</th>
+                <th className="text-right px-2">{t("손익", "net")}</th><th className="text-right px-3">{t("검증", "checks")}</th>
+              </tr></thead>
+              <tbody>
+                {rows.map((r, i) => {
+                  const active = r.si === symIdx && focus === r.ti;
+                  return (
+                    <tr key={i} onClick={() => { if (active) { setFocus(null); } else { setSymIdx(r.si); setFocus(r.ti); } }}
+                      className="border-t border-[var(--border-default)]/40 cursor-pointer hover:bg-[var(--bg-elevated)]"
+                      style={{ background: active ? "rgba(230,81,0,0.08)" : "transparent" }}>
+                      <td className="px-3 py-1.5 font-bold text-[var(--text-primary)]">{r.s.name}</td>
+                      <td className="px-2 font-bold" style={{ color: RED }}>▲ {r.tr.buy_hhmm}</td>
+                      <td className="px-2 font-bold" style={{ color: BLUE }}>▼ {r.tr.sell_hhmm}</td>
+                      <td className="text-right px-2">₩{fmt(r.tr.entry)}</td>
+                      <td className="text-right px-2">₩{fmt(r.tr.exit)}</td>
+                      <td className="text-right px-2 font-bold" style={{ color: r.tr.net_pct > 0 ? RED : BLUE }}>{r.tr.net_pct > 0 ? "+" : ""}{r.tr.net_pct}%</td>
+                      <td className="text-right px-3 font-extrabold" style={{ color: r.pc && r.pc.passed === r.pc.total ? "#2e7d32" : RED }}>
+                        {r.pc ? `${r.pc.passed}/${r.pc.total} ✓` : "-"}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+            )}
           </div>
-          <table className="w-full text-[12px] tabular-nums">
-            <thead><tr className="text-[10.5px] text-[var(--text-muted)]" style={{ background: "var(--bg-elevated)" }}>
-              <th className="text-left px-3 py-1.5">{t("매수(3번째 양봉)", "BUY (3rd red)")}</th>
-              <th className="text-left px-2">{t("매도(3번째 음봉)", "SELL (3rd blue)")}</th>
-              <th className="text-right px-2">{t("매수가", "entry")}</th><th className="text-right px-2">{t("매도가", "exit")}</th>
-              <th className="text-right px-2">{t("손익", "net")}</th><th className="text-right px-3">{t("검증", "checks")}</th>
-            </tr></thead>
-            <tbody>
-              {sym.trades.map((tr, i) => {
-                const pc = sym.verification.per_trade[i];
-                return (
-                  <tr key={i} onClick={() => setFocus(focus === i ? null : i)}
-                    className="border-t border-[var(--border-default)]/40 cursor-pointer hover:bg-[var(--bg-elevated)]"
-                    style={{ background: focus === i ? "rgba(230,81,0,0.08)" : "transparent" }}>
-                    <td className="px-3 py-1.5 font-bold" style={{ color: RED }}>▲ {tr.buy_hhmm}</td>
-                    <td className="px-2 font-bold" style={{ color: BLUE }}>▼ {tr.sell_hhmm}</td>
-                    <td className="text-right px-2">₩{fmt(tr.entry)}</td>
-                    <td className="text-right px-2">₩{fmt(tr.exit)}</td>
-                    <td className="text-right px-2 font-bold" style={{ color: tr.net_pct > 0 ? RED : BLUE }}>{tr.net_pct > 0 ? "+" : ""}{tr.net_pct}%</td>
-                    <td className="text-right px-3 font-extrabold" style={{ color: pc && pc.passed === pc.total ? "#2e7d32" : RED }}>
-                      {pc ? `${pc.passed}/${pc.total} ✓` : "-"}
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-      )}
+        );
+      })()}
 
       {/* ---- selected trade: the EVIDENCE ---- */}
       {sel && selChecks && (
