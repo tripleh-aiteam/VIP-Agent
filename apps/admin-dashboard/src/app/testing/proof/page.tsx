@@ -16,7 +16,7 @@ const TEAL = "#00838f";
 const GOLD = "#e65100";
 const fmt = (n?: number | null) => (n == null ? "-" : Number(n).toLocaleString());
 
-type Candle = { time: number; hhmm: string; open: number; high: number; low: number; close: number; dir?: number };
+type Candle = { time: number; hhmm: string; open: number; high: number; low: number; close: number; dir?: number; t0?: string; vol?: number };
 type Book = { asks: [number, number][]; bids: [number, number][]; best_ask: number; best_bid: number;
               last?: number; spread?: number; slip?: number } | null;   // slip = ticks paid to cross the spread
 type TlRow = { t: string; px: number; kind: "open" | "watch" | "high" | "low" | "close" | "fill" };
@@ -44,7 +44,7 @@ type SymBlock = {
   verification: { trades: number; passed: number; total: number; pct: number; per_trade?: { passed: number; total: number }[] };
 };
 type ProofRes = {
-  source: string; seed?: number; period?: number; start?: number; need: number; rule_ko: string; rule_en: string; engine_fn: string;
+  source: string; seed?: number; period?: number; start?: number; tick?: number; need: number; rule_ko: string; rule_en: string; engine_fn: string;
   symbols: SymBlock[];
   verification: { trades: number; passed: number; total: number; pct: number };
 };
@@ -327,6 +327,9 @@ export default function ProofLab() {
 
   const [tfSec, setTfSec] = useState<60 | 40 | 30 | 15 | 6 | 3>(60);   // candle period — 1분봉 default
   const [decMode, setDecMode] = useState<"min1" | "chart">("min1");   // who decides: 1분 fixed vs this chart
+  // 틱 차트 (boss 2026-07-31): 0 = time-based, N = one bar per N EXECUTIONS. A different
+  // axis — a bar has no duration, it closes when N trades have printed.
+  const [tick, setTick] = useState<0 | 5 | 10 | 30>(0);
   // ▶ LIVE-FROM-NOW (boss 2026-07-31: "I wanna start trading from now and lets see how will
   // work"). 0 = 전체 하루 (the complete recorded proof day, instant audit).
   // An epoch second = the tape STARTS at that moment and grows one candle per real minute.
@@ -372,11 +375,11 @@ export default function ProofLab() {
   sourceRef.current = source;
   // keep = true → a TIMEFRAME switch only: preserve the selected stock, the focused trade
   // and the chart view (trades are identical across timeframes, so indices stay valid)
-  const load = async (src = source, sd = seed, cd = code, p = tfSec, keep = false, md = decMode, ar = "", st = liveStart) => {
+  const load = async (src = source, sd = seed, cd = code, p = tfSec, keep = false, md = decMode, ar = "", st = liveStart, tk = tick) => {
     setLoading(true);
     if (!keep) setFocus(null);
     try {
-      const r = await api<ProofRes>(`/paper-desk/proof/run?source=${src}&seed=${sd}&code=${cd}&period=${p}&mode=${md}&around=${encodeURIComponent(ar)}&start=${st}`);
+      const r = await api<ProofRes>(`/paper-desk/proof/run?source=${src}&seed=${sd}&code=${cd}&period=${p}&mode=${md}&around=${encodeURIComponent(ar)}&start=${st}&tick=${tk}`);
       // a slow response from the OTHER mode must never land after the user switched
       if (src === sourceRef.current && r?.source === src && (r.start ?? 0) === st) { setRes(r); if (!keep) setSelCode(null); }
     } catch { /* keep last */ }
@@ -395,7 +398,7 @@ export default function ProofLab() {
     const nTr = (x: ProofRes | null) => (x ? x.symbols.reduce((a, s) => a + s.trades.length, 0) : 0);
     const iv = setInterval(() => {
       if (focusRef.current != null) return;              // don't shift the stage mid-demonstration
-      api<ProofRes>(`/paper-desk/proof/run?source=${source}&seed=${seed}&code=${code}&period=${tfSec}&mode=${decMode}&start=${liveStart}`)
+      api<ProofRes>(`/paper-desk/proof/run?source=${source}&seed=${seed}&code=${code}&period=${tfSec}&mode=${decMode}&start=${liveStart}&tick=${tick}`)
         .then((r) => {
           if (r?.source !== sourceRef.current) return;   // stale cross-mode response — discard
           if (r?.source === "synthetic" && (r.period ?? 60) !== tfSec) return;   // stale timeframe — discard
@@ -406,7 +409,7 @@ export default function ProofLab() {
     }, source === "synthetic" ? (tfSec <= 6 ? 6_000 : 3_000) : code !== "ALL" ? 10_000 : 60_000);   // syn 3s (3초/6초 6s — thousands of bars per payload), single 10s, ALL sweep 60s
     return () => clearInterval(iv);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [source, code, seed, tfSec, decMode, liveStart]);
+  }, [source, code, seed, tfSec, decMode, liveStart, tick]);
 
   const symList = res?.symbols ?? [];
   const symIdx = Math.max(0, selCode ? symList.findIndex((s) => s.code === selCode) : 0);
@@ -494,7 +497,7 @@ export default function ProofLab() {
         {source === "synthetic" ? (
           <>
             {([60, 40, 30, 15, 6, 3] as const).map((p) => (
-              <button key={p} onClick={() => { setTfSec(p); load("synthetic", seed, code, p, true); }}
+              <button key={p} onClick={() => { setTfSec(p); setTick(0); load(source, seed, code, p, true, decMode, "", liveStart, 0); }}
                 className="text-[11.5px] font-extrabold px-2.5 py-1 rounded-lg"
                 title={p === 60
                   ? t("실제 데스크와 동일한 1분봉 차트 — 판단도 1분봉 3연속", "the live desk's 1-min chart — decisions use 3 consecutive 1-min candles")
@@ -503,6 +506,17 @@ export default function ProofLab() {
                   : t(`같은 시장을 ${p}초 캔들로 보고, 판단도 이 ${p}초 캔들 3연속으로 — 규칙이 이 시간틀에서도 작동함을 증명 (매매 횟수는 당연히 다름)`, `the same market seen in ${p}-sec candles, and decided on 3 consecutive ${p}-sec candles — proves the rule works at this timeframe too (trade count naturally differs)`)}
                 style={tfSec === p ? { background: GOLD, color: "#fff" } : { border: "1px solid var(--border-default)", color: "var(--text-secondary)" }}>
                 {p === 60 ? t("1분봉", "1-min") : t(`${p}초봉`, `${p}-sec`)}
+              </button>
+            ))}
+            {/* 틱 차트 — a bar closes after N TRADES, not after N seconds (boss 2026-07-31) */}
+            <span className="text-[10px] text-[var(--text-muted)] ml-1">{t("틱", "tick")}</span>
+            {([5, 10, 30] as const).map((n) => (
+              <button key={`tk${n}`} onClick={() => { setTick(tick === n ? 0 : n); load(source, seed, code, tfSec, true, decMode, "", liveStart, tick === n ? 0 : n); }}
+                className="text-[11.5px] font-extrabold px-2.5 py-1 rounded-lg"
+                title={t(`체결 ${n}건마다 캔들 1개 — 시간과 무관하게 '거래 ${n}번'이 한 봉입니다. 거래가 몰리면 봉이 빨리 생기고, 한산하면 천천히 생깁니다.`,
+                         `one candle per ${n} executions — a bar closes after ${n} TRADES, regardless of how long that takes. Busy periods make bars fast, quiet ones slow.`)}
+                style={tick === n ? { background: "#6a1b9a", color: "#fff" } : { border: "1px solid var(--border-default)", color: "var(--text-secondary)" }}>
+                {n}{t("틱", "-tick")}
               </button>
             ))}
             {/* who decides — 1분 fixed (same trades in every chart) vs this chart's own candles */}
@@ -519,7 +533,9 @@ export default function ProofLab() {
               </button>
             ))}
             <span className="text-[10px] px-2 py-0.5 rounded-full" style={{ background: decMode === "min1" ? "rgba(230,81,0,0.12)" : "rgba(0,131,143,0.12)", color: decMode === "min1" ? GOLD : TEAL }}>
-              {decMode === "min1"
+              {tick > 0
+                ? t(`같은 데이터 · 같은 매매 · 봉은 체결 ${tick}건 단위 (시간 아님)`, `same data · same trades · bars of ${tick} executions, not of time`)
+                : decMode === "min1"
                 ? t("같은 데이터 · 같은 매매 (시각·가격 동일) · 캔들만 더 잘게", "same data · same trades (identical times & prices) · finer candles only")
                 : t("같은 데이터 · 이 차트가 직접 판단 (매매 횟수는 차트마다 다름 — 정상)", "same data · this chart decides for itself (trade counts differ per chart — by design)")}
             </span>
@@ -655,7 +671,7 @@ export default function ProofLab() {
               <ProofChart key={sym.code} candles={sym.forming ? [...sym.candles, sym.forming] : sym.candles} trades={sym.trades} focus={focus}
                 buyLabel={t("매수 신호", "buying signal")} sellLabel={t("매도 신호", "selling signal")}
                 openIdxs={(sym.open_positions ?? []).map((p) => p.buy_idx)} holdLabel={t("보유 중", "holding")}
-                skipIdxs={(sym.hold_skips ?? []).map((s) => s.idx)} skipLabel="⏸" periodSec={tfSec} />
+                skipIdxs={(sym.hold_skips ?? []).map((s) => s.idx)} skipLabel="⏸" periodSec={tick ? 1 : tfSec} />
               <div className="px-2 pb-1 text-[11px] text-[var(--text-muted)]">
                 {decMode === "min1" && tfSec !== 60
                   ? t(`▲매수 신호 = 빨강(상승) 캔들 위 · ▼매도 신호 = 파랑(하락) 캔들 위 — 모든 차트에서 항상. 캔들 색은 그 캔들 자신의 움직임(종가>시가 빨강)이고, 화살표는 '판단한 그 1분' 안에서 색이 맞는 마지막 ${tfSec}초 캔들에 찍힙니다. 정확한 체결 '초'는 아래 거래 기록과 증거판에 있습니다 (한 분 안에서 화살표가 :59보다 조금 앞설 수 있습니다).`,
@@ -665,6 +681,10 @@ export default function ProofLab() {
                 {source === "synthetic" && tfSec !== 60 && decMode === "min1" && (
                   <span style={{ color: GOLD }}>{t(` — ${tfSec}초봉에서는 판단 3분(=180초)이 더 잘게 나뉘어 보입니다. 화살표는 3번째 분이 확정된 그 '초'를 포함하는 캔들 위에 찍힙니다. 매매 시각·가격은 1분봉과 100% 동일.`,
                        ` — on the ${tfSec}-sec chart the 3 decision minutes (=180 seconds) are simply split into finer bars. The arrow sits on the candle that contains the exact second the 3rd minute confirmed. Trade times and prices are 100% identical to the 1-min view.`)}</span>
+                )}
+                {tick > 0 && (
+                  <span style={{ color: "#6a1b9a" }}>{t(` — 틱 차트: 체결 ${tick}건마다 봉 하나. 가로축은 '시간'이 아니라 '거래 순서'입니다 — 거래가 몰린 구간은 봉이 촘촘하고, 한산하면 드뭅니다. 매매 자체는 1분봉 3연속으로 판단하므로 다른 차트와 완전히 동일합니다.`,
+                       ` — TICK chart: one candle per ${tick} executions. The x-axis is trade ORDER, not the clock — busy stretches produce bars quickly, quiet ones slowly. The trades themselves are still decided on three 1-min closes, so they are identical to every other chart.`)}</span>
                 )}
                 {source === "synthetic" && decMode === "chart" && (
                   <span style={{ color: TEAL }}>{t(` — 「차트별 판단」: 이 ${tfSec === 60 ? "1분" : tfSec + "초"}봉 3연속으로 직접 판단합니다. 규칙은 동일하지만 시간틀이 다르므로 매매 횟수·시각은 1분봉과 다릅니다 (그게 정상입니다).`,

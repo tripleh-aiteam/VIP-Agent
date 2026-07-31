@@ -131,6 +131,10 @@ def _sec_label(epoch9: int, off: int) -> str:
 # unlike 40초, which closes each minute with a 20-second remainder.
 PERIODS = (3, 6, 15, 30, 40, 60)
 
+# Tick-chart sizes: one bar per N EXECUTIONS. A different axis from PERIODS — these bars
+# have no fixed duration, which is the whole point (boss 2026-07-31: "time does not care").
+TICKS = (5, 10, 30)
+
 # A chart never ships more than this many bars. Applied to ANY timeframe whose full tape
 # would exceed it, rather than to one hard-coded period: at the 840-minute cap that is
 # 16,800 bars at 3초 and 8,400 at 6초, which is neither drawable nor sendable. 3,600 bars
@@ -250,6 +254,66 @@ def _candles_from(day0: int, secs: list[dict], period: int) -> list[dict]:
                         "off0": chunk[0]["off"], "n": ln, "half": ln != period})
             prev_close = close
             s += ln
+    return out
+
+
+def _execs(day0: int, secs: list[dict], seed: int, tick: int) -> list[dict]:
+    """The EXECUTION stream — individual 체결, the deals themselves.
+
+    A real market prints SEVERAL deals inside one second at slightly different prices, and
+    the "price at that second" is simply the LAST of them. That is exactly how this is
+    built: the intermediate deals walk from the previous second's price toward this one,
+    and the final deal of every second IS secs[i]["px"].
+
+    Two things follow. The 체결 table stops being decorative and becomes the same data the
+    candles are made of. And nothing that already existed moves — every second still closes
+    where it closed, so every candle, every trade and every price in the audit is unchanged.
+
+    A TICK chart then groups these deals N at a time, which is a different axis entirely:
+    time stops mattering and only the count of trades does (boss 2026-07-31)."""
+    out: list[dict] = []
+    prev = secs[0]["px"] if secs else 0.0
+    for x in secs:
+        r = random.Random(f"{seed}:ex:{x['off']}")
+        k = r.choices([1, 2, 3, 4, 5], weights=[26, 27, 23, 15, 9])[0]   # deals in this second
+        vols = [max(1, int(x["qty"] / k)) for _ in range(k)]
+        for j in range(k - 1):
+            f = (j + 1) / k
+            mid = prev + (x["px"] - prev) * f + r.choice([-1, 0, 0, 0, 1]) * tick
+            out.append({"t": _sec_label(day0, x["off"]), "px": round(mid / tick) * tick,
+                        "qty": vols[j] * 10, "strength": r.randint(78, 138), "off": x["off"]})
+        # the closing print of the second — the number every candle and every trade uses
+        out.append({"t": _sec_label(day0, x["off"]), "px": x["px"],
+                    "qty": vols[-1] * 10, "strength": r.randint(78, 138), "off": x["off"]})
+        prev = x["px"]
+    return out
+
+
+def _candles_from_ticks(day0: int, execs: list[dict], n: int) -> list[dict]:
+    """Tick candles: ONE bar per `n` executions, regardless of how long they took.
+
+    Only COMPLETE groups become bars, so a bar never changes once drawn. Opens are
+    continuous (a bar opens at the previous bar's close) and `dir` is the bar's own
+    close-vs-open, exactly as in the time-based charts — so red still means "this bar
+    rose" and nothing about reading the chart changes.
+
+    `time` is sequential (one step per bar) rather than the clock: several bars can end
+    inside the same second, and a chart cannot draw two bars at one timestamp. The real
+    clock time of each bar is in `hhmm`, and the axis is labelled as a trade count."""
+    out: list[dict] = []
+    prev_close = None
+    for b in range(len(execs) // n):
+        grp = execs[b * n:(b + 1) * n]
+        pxs = [x["px"] for x in grp]
+        close = pxs[-1]
+        op = prev_close if prev_close is not None else pxs[0]
+        d = 1 if close > op else (-1 if close < op else 0)
+        out.append({"time": day0 + b, "hhmm": grp[-1]["t"], "open": op,
+                    "high": max(max(pxs), op), "low": min(min(pxs), op),
+                    "close": close, "dir": d,
+                    "off0": grp[0]["off"], "n": n, "half": False,
+                    "t0": grp[0]["t"], "vol": sum(x["qty"] for x in grp)})
+        prev_close = close
     return out
 
 
@@ -471,15 +535,20 @@ def _verify(candles: list[dict], trades: list[dict], with_book: bool) -> dict:
 #  public entry points                                                         #
 # --------------------------------------------------------------------------- #
 def run_synthetic(seed: int = 7, period: int = 60, mode: str = "min1",
-                  around: str = "", start: int = 0) -> dict[str, Any]:
+                  around: str = "", start: int = 0, tick: int = 0) -> dict[str, Any]:
     """mode='min1'  → the engine decides on 1-MINUTE candles (like the live desk): every
                       timeframe shows the SAME trades — this is the consistency proof.
        mode='chart' → the engine decides on the DISPLAYED candles: proof the rule works at
                       3초/6초/15초/30초/40초/1분, each chart on its own 3rd candle.
        around='HH:MM' → fine charts hold only their most recent BAR_CAP bars, so a trade
                       from earlier in the session would have no arrow to show. Pass the trade's
-                      minute and the window CENTRES on it instead of on 'now' (Kiwoom scroll-back)."""
+                      minute and the window CENTRES on it instead of on 'now' (Kiwoom scroll-back).
+       tick=N        → a TICK chart: one bar per N executions instead of per N seconds. Time
+                      stops mattering; only the count of trades does (boss 2026-07-31). The
+                      trades themselves are unchanged — the engine still decides on 1-minute
+                      closes — so this is another window onto the same market."""
     period = _norm_period(period)
+    tick = tick if tick in TICKS else 0
     per_chart = (mode == "chart")
     symbols = []
     agg_pass = agg_total = agg_trades = 0
@@ -490,7 +559,9 @@ def run_synthetic(seed: int = 7, period: int = 60, mode: str = "min1",
         sseed = seed + k * 101
         day0, secs = _seconds(sseed, base, start)         # THE market (per-second truth)
         c60 = _candles_from(day0, secs, 60)               # 1-minute candles
-        disp_all = c60 if period == 60 else _candles_from(day0, secs, period)
+        execs = _execs(day0, secs, sseed, t_base) if tick else None
+        disp_all = (_candles_from_ticks(day0, execs, tick) if tick
+                    else (c60 if period == 60 else _candles_from(day0, secs, period)))
         dec = disp_all if per_chart else c60               # what the ENGINE reads
         def _mk_tape(j, _d=day0, _s=secs, _dec=dec):       # a candle's tape = its own seconds
             cd = _dec[j]
@@ -511,7 +582,34 @@ def run_synthetic(seed: int = 7, period: int = 60, mode: str = "min1",
                 s2 = tr["sell_idx"]
                 tr["sell_cands"] = [dec[j] for j in (s2 - 3, s2 - 2, s2 - 1, s2) if j >= 0]
         candles = disp_all
-        if not per_chart and period != 60:
+        if not per_chart and tick:
+            # TICK chart: bars have no fixed duration, so "the Nth bar of the minute" means
+            # nothing here. Group the bars by the minute they CLOSED in, then use the same
+            # rule as everywhere else — the last correctly-coloured bar inside the deciding
+            # minute — so a buy arrow is on a rising bar on this chart too.
+            by_min: dict[str, list[int]] = {}
+            for _j, _c in enumerate(candles):
+                by_min.setdefault(_c["hhmm"][:5], []).append(_j)
+
+            def _disp(i, up=True, _bm=by_min, _cs=candles, _dec=dec):
+                want = 1 if up else -1
+                for back in (0, 1, 2):
+                    if not (0 <= i - back < len(_dec)):
+                        continue
+                    pick = None
+                    for j in _bm.get(_dec[i - back]["hhmm"][:5], []):
+                        if _cs[j]["dir"] == want:
+                            pick = j
+                    if pick is not None:
+                        return pick
+                return -1
+            for tr in trades + open_pos:
+                tr["buy_idx"] = _disp(tr["buy_idx"], True)
+                if "sell_idx" in tr:
+                    tr["sell_idx"] = _disp(tr["sell_idx"], False)
+            for sk in skips:
+                sk["idx"] = _disp(sk["idx"], True)
+        elif not per_chart and period != 60:
             # 1분-고정 mode: the arrow goes on the LAST bar of the 3rd decision minute — the
             # 3rd candle on 1분봉, 6th on 30초봉, 12th on 15초봉, 60th on 1초봉, and the closing
             # 20s half-bar on 40초봉 (boss's own rule). Bars are minute-clipped, so the count
@@ -605,10 +703,11 @@ def run_synthetic(seed: int = 7, period: int = 60, mode: str = "min1",
         # Those are gone (boss 2026-07-31), and nothing else read the field, so it is no
         # longer sent — up to 120 extra candles off every refresh.
         symbols.append({"code": code, "name": name, "candles": candles,
-                        "forming": _forming_from(day0, secs, period), "trades": trades,
+                        "forming": (None if tick else _forming_from(day0, secs, period)), "trades": trades,
                         "open_positions": open_pos, "hold_skips": skips, "live_book": live_book,
                         "verification": ver})
-    return {"source": "synthetic", "seed": seed, "need": NEED, "period": period, "mode": mode,
+    return {"source": "synthetic", "seed": seed, "need": NEED, "period": period,
+            "tick": tick, "mode": mode,
             "start": start,   # echoed so the page can discard a stale response from a previous session
             "rule_ko": f"양봉 {NEED}개 연속(전봉 대비 {NEED}회 상승) → 정확히 {NEED}번째 양봉에 매수 · 음봉 {NEED}개 연속 → 정확히 {NEED}번째 음봉에 매도",
             "rule_en": f"{NEED} rising candles → BUY exactly on the {NEED}rd red · {NEED} falling → SELL exactly on the {NEED}rd blue",
