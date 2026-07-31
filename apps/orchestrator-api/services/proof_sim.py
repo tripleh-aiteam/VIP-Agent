@@ -470,6 +470,7 @@ def _simulate(candles: list[dict], seed: int, with_book: bool, period: int = 60,
                    "buy_sig_t": _sec_label(cd["time"], _bn - 1),
                    "buy_fill_t": _sec_label(cd["time"], _bn - 1),
                    "buy_closes": closes[-4:], "entry": entry_px, "buy_book": bk,
+                   "buy_close": cd["close"],   # the CANDLE close — the price the chart shows
                    "buy_timeline": _minute_timeline(cd, entry_px, seed * 31 + i, with_book, fill_sec=0, period=period),
                    # per-second tapes for ALL 3 signal candles (1st/2nd/3rd — click to inspect each)
                    "buy_tapes": ([tape_fn(j) for j in (i - 2, i - 1, i) if j >= 0]
@@ -484,6 +485,12 @@ def _simulate(candles: list[dict], seed: int, with_book: bool, period: int = 60,
                            "sell_sig_t": _sec_label(cd["time"], _sn - 1),
                            "sell_fill_t": _sec_label(cd["time"], _sn - 1),
                            "gross_pct": round(gross, 3), "fee_pct": FEE_PCT,
+                           # what the CANDLES moved, close to close. Different from gross,
+                           # which is measured between the fills — a rise smaller than the
+                           # spread shows as a rising chart and a flat trade, and the boss
+                           # was right to ask why (2026-07-31).
+                           "move_pct": round((cd["close"] / pos["buy_close"] - 1) * 100, 3),
+                           "sell_close": cd["close"],
                            "sell_closes": closes[-4:], "exit": exit_px, "sell_book": bk,
                            "sell_timeline": _minute_timeline(cd, exit_px, seed * 37 + i, with_book, fill_sec=0, period=period),
                            "sell_tapes": ([tape_fn(j) for j in (i - 2, i - 1, i) if j >= 0]

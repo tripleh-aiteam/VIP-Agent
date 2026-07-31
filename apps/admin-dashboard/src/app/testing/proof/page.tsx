@@ -30,7 +30,9 @@ type Trade = {
   buy_tapes?: { t: string; px: number; qty?: number }[][] | null;   // 60s tape per signal candle (1st/2nd/3rd)
   sell_tapes?: { t: string; px: number; qty?: number }[][] | null;
   net_pct: number;
-  gross_pct?: number;   // before fees (pure price move)
+  gross_pct?: number;   // between the FILLS, before fees (spread already paid)
+  move_pct?: number;    // what the CANDLES moved, close to close
+  buy_close?: number; sell_close?: number;
   fee_pct?: number;     // round-trip cost the desk actually pays
 };
 type OpenPos = { buy_idx: number; buy_hhmm: string; buy_closes: number[]; entry: number; last_px: number; unreal_pct: number; buy_sig_t?: string; buy_fill_t?: string };
@@ -909,7 +911,13 @@ export default function ProofLab() {
         const gr = (r: { tr: Trade }) => r.tr.gross_pct ?? r.tr.net_pct;
         const wins = rows.filter((r) => gr(r) > 0).length;
         const losses = rows.filter((r) => gr(r) < 0).length;
+        // a trade can land EXACTLY on 0 — the candle rose but the spread ate all of it.
+        // Counting only >0 and <0 made 8 trips show as 0W+6L, which does not add up.
+        const flats = rows.length - wins - losses;
         const winPct = rows.length ? Math.round((wins / rows.length) * 100) : 0;
+        // what the CANDLES did, which is what the eye reads off the chart
+        const upMoves = rows.filter((r) => (r.tr.move_pct ?? 0) > 0).length;
+        const eaten = rows.filter((r) => (r.tr.move_pct ?? 0) > 0 && gr(r) <= 0).length;
         const findLive = (r: { code: string; tr: Trade }) => {
           const si = res.symbols.findIndex((s2) => s2.code === r.code);
           if (si < 0) return null;
@@ -927,7 +935,19 @@ export default function ProofLab() {
               <span>🔄 {t(`${rows.length}회전`, `${rows.length} trips`)}</span>
               <span style={{ color: RED }}>🟢 {wins}{t("승", "W")}</span>
               <span style={{ color: BLUE }}>🔴 {losses}{t("패", "L")}</span>
-              <span className="font-extrabold" style={{ color: winPct >= 50 ? "#2e7d32" : RED }}>🏆 {t(`승률 ${winPct}% (가격기준)`, `${winPct}% win (on price)`)}</span>
+              {flats > 0 && (
+                <span className="text-[var(--text-muted)]" title={t("체결가 기준 정확히 0% — 캔들은 올랐지만 스프레드가 그만큼 먹은 경우", "exactly 0% between the fills — the candle rose but the spread took all of it")}>
+                  ⚪ {flats}{t("무", "flat")}
+                </span>
+              )}
+              <span className="font-extrabold" style={{ color: winPct >= 50 ? "#2e7d32" : RED }}>🏆 {t(`승률 ${winPct}% (체결가 기준)`, `${winPct}% win (on FILLS)`)}</span>
+              {upMoves > 0 && (
+                <span className="text-[11.5px]" style={{ color: GOLD }}
+                  title={t("차트 캔들은 매수한 분보다 매도한 분이 더 높게 끝난 거래 수. 체결은 매도호가에 사고 매수호가에 팔기 때문에 이보다 불리합니다.", "trades whose SELL minute closed higher than the BUY minute on the chart. Fills are worse than that, because you buy at the ask and sell at the bid.")}>
+                  📈 {t(`캔들 상승 ${upMoves}건`, `${upMoves} rose on the chart`)}
+                  {eaten > 0 && t(` — 그 중 ${eaten}건은 스프레드가 다 먹음`, ` — spread ate ${eaten} of them`)}
+                </span>
+              )}
               {filtered && (
                 <span className="text-[10.5px] px-2 py-0.5 rounded-full" style={{ background: "rgba(0,131,143,0.12)", color: TEAL }}>
                   {t(`전체 ${allRows.length}건 중 필터 적용`, `filtered from ${allRows.length} total`)}
@@ -987,7 +1007,7 @@ export default function ProofLab() {
                 <th className="text-left px-2">{t("매수 체결시각 (신호)", "BUY fill time (signal)")}</th>
                 <th className="text-left px-2">{t("매도 체결시각 (신호)", "SELL fill time (signal)")}</th>
                 <th className="text-right px-2">{t("매수가", "entry")}</th><th className="text-right px-2">{t("매도가", "exit")}</th>
-                <th className="text-right px-3">{t("손익 (수수료前 → 後)", "P&L (gross → net)")}</th>
+                <th className="text-right px-3">{t("손익 (체결가 기준 → 수수료後)", "P&L (on fills → after fee)")}</th>
               </tr></thead>
               <tbody>
                 {rows.map((r, i) => {
@@ -1009,10 +1029,19 @@ export default function ProofLab() {
                       <td className="text-right px-2">₩{fmt(r.tr.entry)}</td>
                       <td className="text-right px-2">₩{fmt(r.tr.exit)}</td>
                       <td className="text-right px-3 font-bold">
-                        <span style={{ color: gr(r) > 0 ? RED : BLUE }}>{gr(r) > 0 ? "+" : ""}{gr(r)}%</span>
+                        <span style={{ color: gr(r) > 0 ? RED : (gr(r) < 0 ? BLUE : "var(--text-muted)") }}>{gr(r) > 0 ? "+" : ""}{gr(r)}%</span>
                         <span className="text-[var(--text-muted)] font-normal"> → </span>
                         <span style={{ color: r.tr.net_pct > 0 ? RED : BLUE }}>{r.tr.net_pct > 0 ? "+" : ""}{r.tr.net_pct}%</span>
-                        <div className="text-[9.5px] opacity-60 font-normal">{t(`수수료 ${r.tr.fee_pct ?? 0.23}%`, `fee ${r.tr.fee_pct ?? 0.23}%`)}</div>
+                        {/* the candle move, so a row reads the same way the chart does */}
+                        <div className="text-[9.5px] opacity-70 font-normal">
+                          {r.tr.move_pct != null && (
+                            <span style={{ color: r.tr.move_pct > 0 ? RED : (r.tr.move_pct < 0 ? BLUE : "inherit") }}>
+                              {t("캔들 ", "chart ")}{r.tr.move_pct > 0 ? "+" : ""}{r.tr.move_pct}%
+                              <span className="text-[var(--text-muted)]"> · </span>
+                            </span>
+                          )}
+                          {t(`수수료 ${r.tr.fee_pct ?? 0.23}%`, `fee ${r.tr.fee_pct ?? 0.23}%`)}
+                        </div>
                       </td>
                     </tr>
                   );
