@@ -78,7 +78,7 @@ _WANDER = 0.20                          # bridge amplitude — calibrated to |bo
 _plan_cache: dict[int, list[int]] = {}
 
 
-def _plan_for(seed: int) -> list[int]:
+def _plan_for(seed: int, need: int = 0) -> list[int]:
     """The direction of every minute of the session: +1 rise, -1 fall, 0 flat.
 
     Built once per symbol seed and cached, so minute m always has the same direction no
@@ -88,14 +88,18 @@ def _plan_for(seed: int) -> list[int]:
     Run lengths are drawn from the measured real distribution above, alternating rises and
     falls, with a flat minute occasionally breaking the count (which is exactly the case
     that must NOT be counted as a rise — a trap the real market provides for free)."""
-    if seed in _plan_cache:
-        return _plan_cache[seed]
+    want = max(need + 60, DEMO_MINUTES + 60)
+    have = _plan_cache.get(seed)
+    if have is not None and len(have) >= want:
+        return have
+    # regenerate from the same seed when a LONGER session needs more minutes — the stream
+    # runs from minute 0, so the prefix is identical and no closed minute ever changes.
     r = random.Random(f"{seed}:plan:real")
     lens = [L for L, _w in _RUN_W]
     wts = [w for _L, w in _RUN_W]
     plan: list[int] = []
     up = r.random() < 0.5
-    while len(plan) < DEMO_MINUTES + 60:
+    while len(plan) < want:
         plan += [1 if up else -1] * r.choices(lens, weights=wts)[0]
         if r.random() < _FLAT_RATE:
             plan.append(0)
@@ -178,7 +182,8 @@ def _norm_period(p) -> int:
     return p if p in PERIODS else 60
 
 
-def _seconds(seed: int, base_px: float, start: int = 0) -> tuple[int, list[dict]]:
+def _seconds(seed: int, base_px: float, start: int = 0,
+              span: int | None = None) -> tuple[int, list[dict]]:
     """THE market — ONE deterministic per-SECOND price series (frozen per minute-seed).
     EVERY timeframe (3/6/15/30/40/60s) is a pure aggregation of these same seconds, so
     prices/times/ups-downs are identical in every view
@@ -195,12 +200,16 @@ def _seconds(seed: int, base_px: float, start: int = 0) -> tuple[int, list[dict]
     n_kst = datetime.now(KST)
     open_t = (datetime.fromtimestamp(start, KST).replace(second=0, microsecond=0)
               if start else _default_start(n_kst))
-    total_sec = min(max(0, int((n_kst - open_t).total_seconds())), DEMO_MINUTES * 60)
+    # The 14h cap keeps the CHARTS drawable. The Strategy Lab runs a single session across
+    # a whole weekend (boss 2026-07-31: "non stop during weekends"), so it passes span=0 to
+    # lift the cap — it only ever asks for closes, never for bars to draw.
+    cap = DEMO_MINUTES * 60 if span is None else (span * 60 if span else 10 ** 9)
+    total_sec = min(max(0, int((n_kst - open_t).total_seconds())), cap)
     day0 = int(open_t.timestamp()) + 9 * 3600            # +9h so charts display KST
     t = _tick(base_px) or 1
     secs: list[dict] = []
     px = float(base_px)
-    plan = _plan_for(seed)
+    plan = _plan_for(seed, (total_sec + 59) // 60)
     for m in range((total_sec + 59) // 60):
         rm = random.Random(f"{seed}:min:{m}")            # ← per-minute seed = frozen history
         step = plan[m]                                   # this minute's direction (see _plan_for)
