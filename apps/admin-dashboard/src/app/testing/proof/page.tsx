@@ -558,9 +558,30 @@ export default function ProofLab() {
               style={{ borderColor: tick > 0 ? "#6a1b9a" : "var(--border-default)" }} />
             {tick > 0 && (
               <>
-                <span className="text-[11.5px] font-extrabold px-2 py-1 rounded-lg text-white" style={{ background: "#6a1b9a" }}>
-                  {t(`체결 ${tick}건 = 캔들 1개`, `${tick} deals = 1 candle`)}
-                </span>
+                {/* 5틱 and 10틱 look alike on screen — the difference is density, which the eye
+                    cannot judge. So the chip states it: how long one bar covers, and how far
+                    back the chart reaches (boss 2026-07-31: "how can I distinguish?"). */}
+                {(() => {
+                  const cs = sym?.candles ?? [];
+                  const secOf = (x?: string) => { if (!x) return null; const p2 = x.split(":").map(Number); return p2[0] * 3600 + p2[1] * 60 + (p2[2] || 0); };
+                  const durs = cs.slice(-300).map((c) => { const a2 = secOf(c.t0), b2 = secOf(c.hhmm); return a2 != null && b2 != null && b2 >= a2 ? b2 - a2 : null; }).filter((x): x is number => x != null);
+                  const per = durs.length ? durs.reduce((x, y) => x + y, 0) / durs.length : 0;
+                  const f = secOf(cs[0]?.hhmm), l = secOf(cs[cs.length - 1]?.hhmm);
+                  const span = f != null && l != null ? Math.round((l - f) / 60) : 0;
+                  return (
+                    <span className="text-[11.5px] font-extrabold px-2 py-1 rounded-lg text-white" style={{ background: "#6a1b9a" }}
+                      title={t("숫자를 키우면 봉 하나가 더 긴 시간을 담고 차트가 더 멀리까지 보입니다. 작게 하면 더 잘게 보이지만 보이는 구간이 짧아집니다.",
+                               "a bigger number means each bar covers more time and the chart reaches further back; a smaller one shows finer detail over a shorter stretch.")}>
+                      {t(`체결 ${tick}건 = 캔들 1개`, `${tick} deals = 1 candle`)}
+                      {cs.length > 0 && (
+                        <span className="font-normal opacity-90">
+                          {t(` · 봉당 ~${per < 10 ? per.toFixed(1) : Math.round(per)}초 · 최근 ${span}분`,
+                             ` · ~${per < 10 ? per.toFixed(1) : Math.round(per)}s/bar · last ${span} min`)}
+                        </span>
+                      )}
+                    </span>
+                  );
+                })()}
                 <button onClick={() => { setTickIn(""); setArrows(true); }} className="text-[11px] font-bold px-2 py-1 rounded-lg border"
                   style={{ borderColor: GOLD, color: GOLD }}>
                   ✕ {t("시간 차트로", "back to time")}
