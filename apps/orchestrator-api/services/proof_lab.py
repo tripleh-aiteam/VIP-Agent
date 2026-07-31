@@ -169,7 +169,8 @@ def consistency_gate(seed: int = 7, start: int = 0, tick: int = 5) -> dict[str, 
 _cmp_cache: dict[tuple, tuple[int, dict]] = {}
 
 
-def compare(seed: int = 7, start: int = 0, tick: int = 5) -> dict[str, Any]:
+def compare(seed: int = 7, start: int = 0, tick: int = 5,
+            code: str = "", bars: int = 500, hist: int = 40) -> dict[str, Any]:
     """Every variant against the SAME market, returned as the Monday comparison table.
 
     The tape is built ONCE per stock and every rule runs against it, so the only thing
@@ -179,7 +180,7 @@ def compare(seed: int = 7, start: int = 0, tick: int = 5) -> dict[str, Any]:
     # candles only arrive a few times a second. Cached for the current MINUTE: the page can
     # poll freely and the numbers still move, without rebuilding the world each time.
     import time as _t
-    key = (seed, start, tick, tuple(sorted(_SHOWN)))
+    key = (seed, start, tick, code, bars, hist, tuple(sorted(_SHOWN)))
     now_min = int(_t.time()) // 60
     hit = _cmp_cache.get(key)
     if hit and hit[0] == now_min:
@@ -193,19 +194,26 @@ def compare(seed: int = 7, start: int = 0, tick: int = 5) -> dict[str, Any]:
         t = _tick(base) or 1
         d0, secs = _seconds(sseed, base, start, span=0)   # span=0 → no 14h cap
         cs = _candles_from_ticks(d0, _execs(d0, secs, sseed, t), tick)
-        tapes.append({"code": code, "name": name, "seed": sseed, "tick": t,
+        tapes.append({"code": code, "name": name, "seed": sseed, "tick": t, "cs": cs,
                       "closes": [c["close"] for c in cs],
                       "first": cs[0]["hhmm"] if cs else None,
                       "last": cs[-1]["hhmm"] if cs else None})
 
+    chart_tape = next((t for t in tapes if t["code"] == code), tapes[0] if tapes else None)
     rows = []
     for v in VARIANTS:
         trades = []
         per_stock = {}
+        recent: list[dict] = []
         for tp in tapes:
             got = run_variant(tp["closes"], tp["tick"], v, tp["seed"])
             trades += got
             per_stock[tp["name"]] = len(got)
+            for g in got[-hist:]:
+                recent.append({**g, "code": tp["code"], "name": tp["name"],
+                               "buy_t": tp["cs"][g["buy_i"]]["hhmm"],
+                               "sell_t": tp["cs"][g["sell_i"]]["hhmm"]})
+        recent.sort(key=lambda x: x["sell_t"], reverse=True)
         w = [t for t in trades if t["gross_pct"] > 0]
         l = [t for t in trades if t["gross_pct"] < 0]
         flat = len(trades) - len(w) - len(l)
@@ -222,9 +230,24 @@ def compare(seed: int = 7, start: int = 0, tick: int = 5) -> dict[str, Any]:
             "rr": round(aw / al, 2) if al else 0.0,
             "per_trade": round(sum(t["net_pct"] for t in trades) / len(trades), 3) if trades else 0.0,
             "per_stock": per_stock,
+            "recent": recent[:hist],
+            # arrows for the charted stock only — index into the candles sent below
+            "marks": [{"b": g["buy_i"], "s": g["sell_i"], "net": g["net_pct"]}
+                      for g in (run_variant(chart_tape["closes"], chart_tape["tick"], v, chart_tape["seed"])[-60:]
+                                if chart_tape else [])],
         })
     rows.sort(key=lambda r: (-r["win_pct"], -r["per_trade"]))
+    off = max(0, len(chart_tape["cs"]) - bars) if chart_tape else 0
+    if chart_tape and off:
+        for r in rows:
+            r["marks"] = [{"b": m["b"] - off, "s": m["s"] - off, "net": m["net"]}
+                          for m in r["marks"] if m["b"] >= off]
     out = {"ok": True, "seed": seed, "start": start, "tick": tick,
+           "chart": ({"code": chart_tape["code"], "name": chart_tape["name"],
+                      "candles": [{"time": c["time"], "hhmm": c["hhmm"], "open": c["open"],
+                                   "high": c["high"], "low": c["low"], "close": c["close"],
+                                   "dir": c["dir"]} for c in chart_tape["cs"][off:]]}
+                     if chart_tape else None),
             "stocks": [{"code": t["code"], "name": t["name"], "candles": len(t["closes"]),
                         "from": t["first"], "to": t["last"]} for t in tapes],
             "variants": rows, "fee_pct": FEE_PCT}

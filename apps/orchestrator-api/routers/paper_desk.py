@@ -640,13 +640,14 @@ def proof_run(source: str = Query("synthetic"), seed: int = Query(7),
 
 
 @router.get("/proof/lab")
-def proof_lab(seed: int = Query(7), start: int = Query(0), tick: int = Query(5)):
+def proof_lab(seed: int = Query(7), start: int = Query(0), tick: int = Query(5),
+              code: str = Query(""), bars: int = Query(500), hist: int = Query(40)):
     """🔬 Strategy Lab: every rule variant trading the SAME artificial market, side by
     side, so Monday's comparison differs only by the rule (boss 2026-07-31). Nothing is
     stored — the market is deterministic, so this recomputes the full history from the
     session start on every call and a restart cannot lose a trade."""
     from services.proof_lab import compare
-    return compare(seed=seed, start=start, tick=tick)
+    return compare(seed=seed, start=start, tick=tick, code=code, bars=bars, hist=hist)
 
 
 @router.get("/proof/lab/gate")
