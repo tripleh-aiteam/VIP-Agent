@@ -549,6 +549,15 @@ export default function ProofLab() {
             {/* 틱 차트 — type ANY count; a bar closes after that many TRADES, not seconds.
                 Applied on a short debounce so typing "30" does not fire a request per digit. */}
             <span className="text-[10px] text-[var(--text-muted)] ml-1">{t("틱", "tick")}</span>
+            {/* one click for the simplest story of all — "one candle is one deal" (boss
+                2026-07-31: he has to explain this page to people). Typing 1 does the same. */}
+            <button onClick={() => setTickIn(tick === 1 ? "" : "1")}
+              className="text-[11.5px] font-extrabold px-2.5 py-1 rounded-lg"
+              title={t("체결 1건 = 캔들 1개. 가장 설명하기 쉬운 화면 — 거래 하나가 캔들 하나입니다. 다만 체결 하나에는 가격이 하나뿐이라 꼬리가 없어 절반쯤은 선처럼 보입니다.",
+                       "1 deal = 1 candle. The easiest screen to explain — one trade is one candle. A single deal has one price though, so there is no wick and about half look like flat lines.")}
+              style={tick === 1 ? { background: "#6a1b9a", color: "#fff" } : { border: "1px solid #6a1b9a", color: "#6a1b9a" }}>
+              {t("1체결 = 1캔들", "1 deal = 1 candle")}
+            </button>
             <input type="number" min={1} max={500} value={tickIn}
               onChange={(e) => setTickIn(e.target.value)}
               placeholder={t("몇 건?", "how many?")}
