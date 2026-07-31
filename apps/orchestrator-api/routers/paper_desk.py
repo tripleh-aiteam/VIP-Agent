@@ -613,7 +613,8 @@ def proof_run(source: str = Query("synthetic"), seed: int = Query(7),
               mode: str = Query("min1"), around: str = Query(""),
               start: int = Query(0), tick: int = Query(0),
               exit_mode: str = Query("candle"), take_pct: float = Query(0.5),
-              stop_pct: float = Query(1.0), db: Session = Depends(get_db)):
+              stop_pct: float = Query(1.0), need: int = Query(3), need_dn: int = Query(0),
+              db: Session = Depends(get_db)):
     """🧪 Proof Lab (boss 2026-07-29): prove Algo 3 buys EXACTLY on the 3rd rising candle
     and sells EXACTLY on the 3rd falling candle, with an independent verifier.
     source='synthetic' = planted artificial day (order-book fill proof included);
@@ -628,7 +629,8 @@ def proof_run(source: str = Query("synthetic"), seed: int = Query(7),
             return run_kiwoom(codes=_cfg(db)["codes"])
         return run_kiwoom(code=code)
     res = run_synthetic(seed=seed, period=period, mode=mode, around=around, start=start, tick=tick,
-                        exit_mode=exit_mode, take_pct=take_pct, stop_pct=stop_pct)
+                        exit_mode=exit_mode, take_pct=take_pct, stop_pct=stop_pct,
+                        need=max(2, min(int(need), 6)), need_dn=max(0, min(int(need_dn), 6)))
     # Trim the wire payload to the fields the page actually draws. off0/n/half are internal
     # bookkeeping (which seconds a bar covers) that the verifier needs but the chart never
     # reads — and on the 1초 chart there are thousands of bars, so they are pure weight.

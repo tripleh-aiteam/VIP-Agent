@@ -330,6 +330,25 @@ export default function ProofLab() {
   // 수수료 표시 (boss 2026-07-31): OFF by default — the plain result of the trade; ON adds
   // the 0.23% round-trip fee+tax, which is what the account actually keeps.
   const [withFee, setWithFee] = useState(false);
+  // 조합 (boss 2026-07-31): the SAME page and the SAME trade history, switched between
+  // rules. Every combination reads the identical market from the identical second, so the
+  // only thing that differs between two readings is the rule.
+  const COMBOS = [
+    { id: "3u3d", need: 3, dn: 3, ko: "3연속↑ / 3연속↓", en: "3up / 3down" },
+    { id: "2u2d", need: 2, dn: 2, ko: "2연속↑ / 2연속↓", en: "2up / 2down" },
+    { id: "3u2d", need: 3, dn: 2, ko: "3연속↑ / 2연속↓", en: "3up / 2down" },
+    { id: "2u3d", need: 2, dn: 3, ko: "2연속↑ / 3연속↓", en: "2up / 3down" },
+    { id: "3u4d", need: 3, dn: 4, ko: "3연속↑ / 4연속↓", en: "3up / 4down" },
+    { id: "4u3d", need: 4, dn: 3, ko: "4연속↑ / 3연속↓", en: "4up / 3down" },
+    { id: "3u03", need: 3, dn: 0, take: 0.3, stop: 1.0, ko: "3연속↑ / +0.3% 익절", en: "3up / +0.3% gain" },
+    { id: "3u05", need: 3, dn: 0, take: 0.5, stop: 1.0, ko: "3연속↑ / +0.5% 익절", en: "3up / +0.5% gain" },
+    { id: "3u10", need: 3, dn: 0, take: 1.0, stop: 1.0, ko: "3연속↑ / +1.0% 익절", en: "3up / +1.0% gain" },
+  ] as const;
+  const [combo, setCombo] = useState<string>("3u3d");
+  const cb = COMBOS.find((c) => c.id === combo) ?? COMBOS[0];
+  const comboQS = (c: typeof cb) =>
+    `&need=${c.need}&need_dn=${c.dn}` +
+    (c.dn === 0 ? `&exit_mode=target&take_pct=${(c as { take?: number }).take ?? 0.5}&stop_pct=${(c as { stop?: number }).stop ?? 1}` : "&exit_mode=candle");
   const [view, setView] = useState<"candle" | "table">("table");   // 📗 TABLE first (boss 2026-07-30) — chart on demand
   const [tapeMin, setTapeMin] = useState<{ BUY: number; SELL: number }>({ BUY: 2, SELL: 2 });   // which of the 3 candles' minute tape shows
   const [histMin, setHistMin] = useState<5 | 10 | 15>(10);   // 🕰️ Data File window
@@ -417,7 +436,7 @@ export default function ProofLab() {
     setLoading(true);
     if (!keep) setFocus(null);
     try {
-      const r = await api<ProofRes>(`/paper-desk/proof/run?source=${src}&seed=${sd}&code=${cd}&period=${p}&mode=${md}&around=${encodeURIComponent(ar)}&start=${st}&tick=${tk}`);
+      const r = await api<ProofRes>(`/paper-desk/proof/run?source=${src}&seed=${sd}&code=${cd}&period=${p}&mode=${md}&around=${encodeURIComponent(ar)}&start=${st}&tick=${tk}${comboQS(cb)}`);
       // a slow response from the OTHER mode must never land after the user switched
       if (src === sourceRef.current && r?.source === src && (r.start ?? 0) === st) { setRes(r); if (!keep) setSelCode(null); }
     } catch { /* keep last */ }
@@ -436,7 +455,7 @@ export default function ProofLab() {
     const nTr = (x: ProofRes | null) => (x ? x.symbols.reduce((a, s) => a + s.trades.length, 0) : 0);
     const iv = setInterval(() => {
       if (focusRef.current != null) return;              // don't shift the stage mid-demonstration
-      api<ProofRes>(`/paper-desk/proof/run?source=${source}&seed=${seed}&code=${code}&period=${tfSec}&mode=${decMode}&start=${liveStart}&tick=${tick}`)
+      api<ProofRes>(`/paper-desk/proof/run?source=${source}&seed=${seed}&code=${code}&period=${tfSec}&mode=${decMode}&start=${liveStart}&tick=${tick}${comboQS(cb)}`)
         .then((r) => {
           if (r?.source !== sourceRef.current) return;   // stale cross-mode response — discard
           if (r?.source === "synthetic" && (r.period ?? 60) !== tfSec) return;   // stale timeframe — discard
@@ -447,7 +466,7 @@ export default function ProofLab() {
     }, source === "synthetic" ? (tfSec <= 6 ? 6_000 : 3_000) : code !== "ALL" ? 10_000 : 60_000);   // syn 3s (3초/6초 6s — thousands of bars per payload), single 10s, ALL sweep 60s
     return () => clearInterval(iv);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [source, code, seed, tfSec, decMode, liveStart, tick]);
+  }, [source, code, seed, tfSec, decMode, liveStart, tick, combo]);
 
   const symList = res?.symbols ?? [];
   const symIdx = Math.max(0, selCode ? symList.findIndex((s) => s.code === selCode) : 0);
@@ -917,8 +936,9 @@ export default function ProofLab() {
         // history stays continuous while switching 1분/40초/30초/15초/6초/3초.
         // per-chart mode: every timeframe is its OWN market decision → its own ledger, never mixed.
         const tfNs = decMode === "chart" ? `:ch${res.period ?? tfSec}` : "";
+        const cbNs = `:${combo}`;      // each rule keeps its own history
         const sNs = res.start ? `:live${res.start}` : "";
-        const nsData = synData ? `syn:${res.seed ?? seed}${tfNs}${sNs}` : `kiwoom${tfNs}`;
+        const nsData = synData ? `syn:${res.seed ?? seed}${tfNs}${sNs}${cbNs}` : `kiwoom${tfNs}${cbNs}`;
         const bucketData = (histRef.current[nsData] ??= {});
         for (const s of res.symbols) for (const tr of s.trades) {
           // ⚠️ the key MUST be the fill times, never buy_idx: buy_idx is a CHART POSITION and
@@ -933,7 +953,7 @@ export default function ProofLab() {
         // Kiwoom history, real companies never in artificial history
         const tfNsView = decMode === "chart" ? `:ch${tfSec}` : "";
         const sNsView = liveStart ? `:live${liveStart}` : "";
-        const nsView = source === "synthetic" ? `syn:${seed}${tfNsView}${sNsView}` : `kiwoom${tfNsView}`;
+        const nsView = source === "synthetic" ? `syn:${seed}${tfNsView}${sNsView}:${combo}` : `kiwoom${tfNsView}:${combo}`;
         const isFake = (c: string) => c.startsWith("PRF");
         let rows = Object.values(histRef.current[nsView] ?? {})
           .filter((r) => (source === "synthetic" ? isFake(r.code) : !isFake(r.code)))
@@ -995,6 +1015,24 @@ export default function ProofLab() {
                      `— this table lists all ${res.symbols.length} companies. The chart shows only ${nm(sym)} — click another row to jump to that company's chart.`)}
                 </span>
               )}
+            </div>
+            {/* 조합 선택 — the same market and the same table, one rule at a time. All of
+                them start from the identical second, so the numbers are comparable. */}
+            <div className="px-4 py-2 border-b flex items-center gap-1.5 flex-wrap" style={{ borderColor: "var(--border-default)", background: "rgba(106,27,154,0.04)" }}>
+              <span className="text-[11px] font-bold" style={{ color: "#6a1b9a" }}>
+                🔀 {t("규칙 조합", "rule")}
+              </span>
+              {COMBOS.map((c) => (
+                <button key={c.id} onClick={() => { setCombo(c.id); setFocus(null); load(source, seed, code, tfSec, true); }}
+                  className="text-[11px] font-extrabold px-2.5 py-1 rounded-lg"
+                  style={combo === c.id ? { background: "#6a1b9a", color: "#fff" }
+                         : { border: "1px solid var(--border-default)", color: "var(--text-secondary)" }}>
+                  {lang === "ko" ? c.ko : c.en}
+                </button>
+              ))}
+              <span className="text-[10px] text-[var(--text-muted)] ml-auto">
+                {t("모두 같은 시장·같은 시각에서 시작합니다 — 차이는 규칙 하나뿐", "all start from the same market at the same second — the only difference is the rule")}
+              </span>
             </div>
             {/* summary bar — like the Algo 3 history header */}
             <div className="px-4 py-2.5 border-b text-[13px] tabular-nums flex items-center gap-5 flex-wrap" style={{ borderColor: "var(--border-default)", background: "rgba(230,81,0,0.05)" }}>

@@ -511,7 +511,8 @@ def _minute_timeline(cd: dict, fill_px: float, seed: int, synthetic: bool, fill_
 # --------------------------------------------------------------------------- #
 def _simulate(candles: list[dict], seed: int, with_book: bool, period: int = 60,
               tick: int | None = None, tape_fn=None, exit_mode: str = "candle",
-              take_pct: float = 0.5, stop_pct: float = 1.0) -> tuple[list, list, list, list]:
+              take_pct: float = 0.5, stop_pct: float = 1.0,
+              need: int = NEED, need_dn: int = 0) -> tuple[list, list, list, list]:
     """Replay: after each candle CLOSES, feed all closes so far into the live engine
     comparison (run_steps). 3 rising steps & flat → BUY; holding & 3 falling → SELL.
     Returns (completed trades, still-open positions, hold-skips —
@@ -526,7 +527,7 @@ def _simulate(candles: list[dict], seed: int, with_book: bool, period: int = 60,
     for i, cd in enumerate(candles):
         closes.append(cd["close"])
         up, dn = run_steps(closes)                       # ← REAL engine code
-        if pos is None and up == NEED:                   # fires the moment the 3rd red closes
+        if pos is None and up == need:                   # fires the moment the Nth red closes
             bk = _book(seed * 1_000 + i, cd["close"], "BUY", tick) if with_book else None
             entry_px = bk["fill"] if bk else cd["close"]
             _bn = cd.get("n", period)                                     # bar length (40s bars end in a 20s half)
@@ -546,7 +547,7 @@ def _simulate(candles: list[dict], seed: int, with_book: bool, period: int = 60,
         # the profit the moment it is there. Both exist on the live desk (candle_trader's
         # exit_mode), and the real account's own numbers said the same thing this shows.
         elif pos is not None and (
-                (dn == NEED) if exit_mode == "candle"
+                (dn == (need_dn or need)) if exit_mode == "candle"
                 # ⚠️ take-profit MUST carry a stop. Without one a losing position is simply
                 # never closed, so it never reaches the history and the closed trades come
                 # out 100% winners — a number that says nothing except that the losers are
@@ -579,7 +580,7 @@ def _simulate(candles: list[dict], seed: int, with_book: bool, period: int = 60,
                                           if with_book else None),   # same tape source as buys → ONE canonical tape per candle
                            "net_pct": round(net, 3)})
             pos = None
-        elif pos is not None and up == NEED and i > pos["buy_idx"]:
+        elif pos is not None and up == need and i > pos["buy_idx"]:
             skips.append({"idx": i, "hhmm": cd["hhmm"]})   # a 3rd red we could NOT buy — already holding
     open_pos: list[dict] = []
     if pos is not None:                                  # bought, still waiting for the 3rd blue
@@ -592,22 +593,29 @@ def _simulate(candles: list[dict], seed: int, with_book: bool, period: int = 60,
 # --------------------------------------------------------------------------- #
 #  the INDEPENDENT verifier — re-derives every claim from raw candles alone    #
 # --------------------------------------------------------------------------- #
-def _verify(candles: list[dict], trades: list[dict], with_book: bool) -> dict:
+def _verify(candles: list[dict], trades: list[dict], with_book: bool,
+            need: int = NEED, need_dn: int = 0) -> dict:
     closes = [c["close"] for c in candles]
     per_trade, passed, total = [], 0, 0
     for t in trades:
         b, s = t["buy_idx"], t["sell_idx"]
         cks: dict[str, bool] = {}
-        # BUY: the 3 candles at b-2, b-1, b each closed above the previous close
-        cks["buy_3_rising"] = b >= 3 and closes[b - 3] < closes[b - 2] < closes[b - 1] < closes[b]
-        # exactly the 3rd — the candle before the run was NOT rising (else it'd be the 4th)
-        cks["buy_exactly_3rd"] = b < 4 or not (closes[b - 4] < closes[b - 3])
-        # SELL mirror
-        cks["sell_3_falling"] = s >= 3 and closes[s - 3] > closes[s - 2] > closes[s - 1] > closes[s]
-        cks["sell_exactly_3rd"] = s < 4 or not (closes[s - 4] > closes[s - 3])
-        # the live engine function agrees candle-by-candle
-        cks["engine_says_3up_at_buy"] = run_steps(closes[: b + 1])[0] == NEED
-        cks["engine_says_3dn_at_sell"] = run_steps(closes[: s + 1])[1] == NEED
+        # BUY: the `need` candles ending at b each closed above the previous close.
+        # Written against `need` rather than a hard-coded 3 so the verifier checks whatever
+        # combination is running — 2up/2down and 4up/3down are audited as strictly as the
+        # original rule (boss 2026-07-31: compare combinations in the same table).
+        cks[f"buy_{need}_rising"] = b >= need and all(
+            closes[b - k - 1] < closes[b - k] for k in range(need))
+        # exactly the Nth — the candle before the run was NOT rising (else it'd be the N+1th)
+        cks[f"buy_exactly_{need}th"] = b < need + 1 or not (closes[b - need - 1] < closes[b - need])
+        cks["engine_says_up_at_buy"] = run_steps(closes[: b + 1])[0] == need
+        if need_dn:                                   # a candle-count exit — mirror the buy
+            cks[f"sell_{need_dn}_falling"] = s >= need_dn and all(
+                closes[s - k - 1] > closes[s - k] for k in range(need_dn))
+            cks[f"sell_exactly_{need_dn}th"] = s < need_dn + 1 or not (closes[s - need_dn - 1] > closes[s - need_dn])
+            cks["engine_says_dn_at_sell"] = run_steps(closes[: s + 1])[1] == need_dn
+        else:                                         # a take-profit / stop exit
+            cks["sell_after_buy"] = s > b
         if with_book:
             cks["buy_fill_is_best_ask"] = t["buy_book"] is not None and t["entry"] == t["buy_book"]["best_ask"]
             cks["sell_fill_is_best_bid"] = t["sell_book"] is not None and t["exit"] == t["sell_book"]["best_bid"]
@@ -628,7 +636,8 @@ def _verify(candles: list[dict], trades: list[dict], with_book: bool) -> dict:
 def run_synthetic(seed: int = 7, period: int = 60, mode: str = "min1",
                   around: str = "", start: int = 0, tick: int = 0,
                   exit_mode: str = "candle", take_pct: float = 0.5,
-                  stop_pct: float = 1.0) -> dict[str, Any]:
+                  stop_pct: float = 1.0, need: int = NEED,
+                  need_dn: int = 0) -> dict[str, Any]:
     """mode='min1'  → the engine decides on 1-MINUTE candles (like the live desk): every
                       timeframe shows the SAME trades — this is the consistency proof.
        mode='chart' → the engine decides on the DISPLAYED candles: proof the rule works at
@@ -669,19 +678,20 @@ def run_synthetic(seed: int = 7, period: int = 60, mode: str = "min1",
                                                     period=(period if per_chart else 60),
                                                     tick=t_base, tape_fn=_mk_tape,
                                                     exit_mode=exit_mode, take_pct=take_pct,
-                                                    stop_pct=stop_pct)
+                                                    stop_pct=stop_pct, need=need, need_dn=need_dn)
         for tr in trades[:-6]:                            # keep 60s tapes only on recent trades (payload size)
             tr["buy_tapes"] = None
             tr["sell_tapes"] = None
-        ver = _verify(dec, trades, with_book=True)
+        ver = _verify(dec, trades, with_book=True, need=need,
+                      need_dn=(need_dn or need) if exit_mode == "candle" else 0)
         # the 3 DECISION candles (+ the baseline before them) travel with each trade, so the
         # evidence panel shows the same numbers whatever chart you are on
         for tr in trades + open_pos:
             i = tr["buy_idx"]
-            tr["buy_cands"] = [dec[j] for j in (i - 3, i - 2, i - 1, i) if j >= 0]
+            tr["buy_cands"] = [dec[j] for j in range(i - need, i + 1) if j >= 0]
             if "sell_idx" in tr:
                 s2 = tr["sell_idx"]
-                tr["sell_cands"] = [dec[j] for j in (s2 - 3, s2 - 2, s2 - 1, s2) if j >= 0]
+                tr["sell_cands"] = [dec[j] for j in range(s2 - (need_dn or need), s2 + 1) if j >= 0]
         candles = disp_all
         if not per_chart and tick:
             # TICK chart: bars have no fixed duration, so "the Nth bar of the minute" means
@@ -807,12 +817,17 @@ def run_synthetic(seed: int = 7, period: int = 60, mode: str = "min1",
                         "forming": (None if tick else _forming_from(day0, secs, period)), "trades": trades,
                         "open_positions": open_pos, "hold_skips": skips, "live_book": live_book,
                         "verification": ver})
-    return {"source": "synthetic", "seed": seed, "need": NEED, "period": period,
+    return {"source": "synthetic", "seed": seed, "need": need, "need_dn": need_dn or need,
+            "period": period,
             "tick": tick, "mode": mode, "exit_mode": exit_mode, "take_pct": take_pct,
             "stop_pct": stop_pct,
             "start": start,   # echoed so the page can discard a stale response from a previous session
-            "rule_ko": f"양봉 {NEED}개 연속(전봉 대비 {NEED}회 상승) → 정확히 {NEED}번째 양봉에 매수 · 음봉 {NEED}개 연속 → 정확히 {NEED}번째 음봉에 매도",
-            "rule_en": f"{NEED} rising candles → BUY exactly on the {NEED}rd red · {NEED} falling → SELL exactly on the {NEED}rd blue",
+            "rule_ko": (f"양봉 {need}개 연속 → 정확히 {need}번째 양봉에 매수 · "
+                        + (f"음봉 {need_dn or need}개 연속 → 정확히 {need_dn or need}번째 음봉에 매도"
+                           if exit_mode == "candle" else f"+{take_pct}% 익절 / -{stop_pct}% 손절")),
+            "rule_en": (f"{need} rising candles → BUY on the {need}th red · "
+                        + (f"{need_dn or need} falling → SELL on the {need_dn or need}th blue"
+                           if exit_mode == "candle" else f"take +{take_pct}%, stop -{stop_pct}%")),
             "engine_fn": "services/candle_trader.py::run_steps (the live engine's own comparison)",
             "symbols": symbols,
             "verification": {"trades": agg_trades, "passed": agg_pass, "total": agg_total,
