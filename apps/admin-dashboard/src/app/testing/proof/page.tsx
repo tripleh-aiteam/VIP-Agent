@@ -76,7 +76,7 @@ const KIWOOM_CODES = [
 //
 //      Live-follow keeps YOUR width and slides it forward while the newest bar is in view;
 //      pan away and the window is left exactly where you put it. ----
-function ProofChart({ candles, trades, focus, buyLabel, sellLabel, openIdxs, holdLabel, skipIdxs, skipLabel, periodSec }: { candles: Candle[]; trades: Trade[]; focus: number | null; buyLabel: string; sellLabel: string; openIdxs?: number[]; holdLabel?: string; skipIdxs?: number[]; skipLabel?: string; periodSec?: number }) {
+function ProofChart({ candles, trades, focus, buyLabel, sellLabel, openIdxs, holdLabel, skipIdxs, skipLabel, periodSec, showArrows = true }: { candles: Candle[]; trades: Trade[]; focus: number | null; buyLabel: string; sellLabel: string; openIdxs?: number[]; holdLabel?: string; skipIdxs?: number[]; skipLabel?: string; periodSec?: number; showArrows?: boolean }) {
   const ref = useRef<HTMLDivElement | null>(null);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const chartRef = useRef<{ chart: any; series: any } | null>(null);
@@ -162,7 +162,9 @@ function ProofChart({ candles, trades, focus, buyLabel, sellLabel, openIdxs, hol
       if (tm != null) markers.push({ time: tm, position: "belowBar", color: "#9e9e9e", shape: "circle" as never, text: skipLabel ?? "" });
     }
     markers.sort((a, b) => (a.time as number) - (b.time as number));
-    cs.series.setMarkers(markers as never);
+    // 화살표 없이 보기: the plain price action, so the shape of the market can be read
+    // without the trade markers on top of it (boss 2026-07-31)
+    cs.series.setMarkers((showArrows ? markers : []) as never);
     const focusChanged = prevFocusRef.current !== focus;
     prevFocusRef.current = focus;
     const ts = cs.chart.timeScale();
@@ -191,7 +193,7 @@ function ProofChart({ candles, trades, focus, buyLabel, sellLabel, openIdxs, hol
       else toEdge();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ready, candles, trades, focus, buyLabel, sellLabel, openIdxs, holdLabel, skipIdxs, skipLabel, periodSec]);
+  }, [ready, candles, trades, focus, buyLabel, sellLabel, openIdxs, holdLabel, skipIdxs, skipLabel, periodSec, showArrows]);
 
   return (
     <div className="relative">
@@ -321,6 +323,7 @@ export default function ProofLab() {
   const [selCode, setSelCode] = useState<string | null>(null);   // selection by CODE — index-shifts can't break it
   const [focus, setFocus] = useState<number | null>(null);
   const [loading, setLoading] = useState(false);
+  const [arrows, setArrows] = useState(true);   // 🎯 show the buy/sell markers on the chart
   const [view, setView] = useState<"candle" | "table">("table");   // 📗 TABLE first (boss 2026-07-30) — chart on demand
   const [tapeMin, setTapeMin] = useState<{ BUY: number; SELL: number }>({ BUY: 2, SELL: 2 });   // which of the 3 candles' minute tape shows
   const [histMin, setHistMin] = useState<5 | 10 | 15>(10);   // 🕰️ Data File window
@@ -692,6 +695,23 @@ export default function ProofLab() {
               style={view === "table" ? { background: TEAL, color: "#fff" } : { border: "1px solid var(--border-default)", color: "var(--text-secondary)" }}>
               📗 {t("호가 테이블 (가격별 잔량)", "price table (qty per price)")}
             </button>
+            {/* 화살표 on/off — the same chart with and without the trade markers, so the
+                price action can be read on its own and then again with the trades on it */}
+            {view === "candle" && (
+              <>
+                <span className="w-px h-5 bg-[var(--border-default)] mx-0.5" />
+                {([true, false] as const).map((on) => (
+                  <button key={String(on)} onClick={() => setArrows(on)}
+                    className="text-[11.5px] font-extrabold px-2.5 py-1 rounded-lg"
+                    title={on
+                      ? t("매수/매도 화살표를 캔들 위에 표시", "show the buy/sell arrows on the candles")
+                      : t("화살표 없이 순수한 가격 움직임만 — 매매 표시를 지우고 시장 자체를 봅니다", "price action only — clear the trade markers and read the market by itself")}
+                    style={arrows === on ? { background: "#2e7d32", color: "#fff" } : { border: "1px solid var(--border-default)", color: "var(--text-secondary)" }}>
+                    {on ? t("▲▼ 화살표", "▲▼ arrows") : t("화살표 없이", "no arrows")}
+                  </button>
+                ))}
+              </>
+            )}
             {view === "table" && (
               <span className="text-[10.5px] font-bold px-2 py-0.5 rounded-full" style={{ background: "rgba(0,131,143,0.12)", color: TEAL }}>
                 ⚡ {t(`10호가 · 1초마다 갱신${fastBook?.time ? ` (${fastBook.time})` : ""}`, `10 levels · updates every second${fastBook?.time ? ` (${fastBook.time})` : ""}`)}
@@ -704,7 +724,7 @@ export default function ProofLab() {
               <ProofChart key={sym.code} candles={sym.forming ? [...sym.candles, sym.forming] : sym.candles} trades={sym.trades} focus={focus}
                 buyLabel={t("매수 신호", "buying signal")} sellLabel={t("매도 신호", "selling signal")}
                 openIdxs={(sym.open_positions ?? []).map((p) => p.buy_idx)} holdLabel={t("보유 중", "holding")}
-                skipIdxs={(sym.hold_skips ?? []).map((s) => s.idx)} skipLabel="⏸" periodSec={tick ? 1 : tfSec} />
+                skipIdxs={(sym.hold_skips ?? []).map((s) => s.idx)} skipLabel="⏸" periodSec={tick ? 1 : tfSec} showArrows={arrows} />
               <div className="px-2 pb-1 text-[11px] text-[var(--text-muted)]">
                 {decMode === "min1" && tfSec !== 60
                   ? t(`▲매수 신호 = 빨강(상승) 캔들 위 · ▼매도 신호 = 파랑(하락) 캔들 위 — 모든 차트에서 항상. 캔들 색은 그 캔들 자신의 움직임(종가>시가 빨강)이고, 화살표는 '판단한 그 1분' 안에서 색이 맞는 마지막 ${tfSec}초 캔들에 찍힙니다. 정확한 체결 '초'는 아래 거래 기록과 증거판에 있습니다 (한 분 안에서 화살표가 :59보다 조금 앞설 수 있습니다).`,
