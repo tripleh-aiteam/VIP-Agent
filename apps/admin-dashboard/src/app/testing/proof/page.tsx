@@ -740,9 +740,12 @@ export default function ProofLab() {
         </div>
 
       {/* ---- 📼 per-stock 체결 table — Kiwoom columns: 시각·체결가·전일대비·체결량·체결강도.
-              TABLE VIEW ONLY (boss 2026-07-31: the menu had grown too complex). Under the
-              candle chart the page is now just chart → 보유 → 거래 기록 → 분별 기록. ---- */}
-      {!focused && view === "table" && (() => {
+              Shown with the 호가 table, AND with a TICK chart — because a tick bar is made
+              of these very rows, so hiding them there would hide the chart's own source
+              data (boss 2026-07-31: "when we choose tick number it should show us the chart
+              and the executions table"). Under a TIME chart it stays hidden: the page there
+              is chart → 보유 → 거래 기록 → 데이터 파일. ---- */}
+      {!focused && (view === "table" || tick > 0) && (() => {
         const tape = fastBook?.tape ?? sym.tick_tape ?? null;
         if (!tape || tape.length === 0) return null;
         const prevClose = fastBook?.prev_close ?? null;
@@ -750,7 +753,7 @@ export default function ProofLab() {
         return (
           <div className={view === "table" ? "rounded-xl border overflow-hidden" : "mt-3 rounded-xl border overflow-hidden"} style={{ borderColor: TEAL }}>
             <div className="px-4 py-2 border-b bg-[var(--bg-elevated)] flex items-center gap-2 flex-wrap" style={{ borderColor: "var(--border-default)" }}>
-              <b className="text-[13px]" style={{ color: TEAL }}>📼 {nm(sym)} — {t("체결 (초당·실시간)", "executions (per second · LIVE)")}</b>
+              <b className="text-[13px]" style={{ color: tick > 0 ? "#6a1b9a" : TEAL }}>📼 {nm(sym)} — {tick > 0 ? t(`체결 — 이 ${tick}건이 모여 ${tick}틱봉 하나가 됩니다`, `executions — every ${tick} of these rows make ONE ${tick}-tick candle`) : t("체결 (초당·실시간)", "executions (per second · LIVE)")}</b>
               <span className="text-[10.5px] font-bold px-2 py-0.5 rounded-full" style={{ background: "rgba(0,131,143,0.12)", color: TEAL }}>
                 ⚡ {t(`1초 갱신${fastBook?.time ? ` (${fastBook.time})` : ""}`, `1s updates${fastBook?.time ? ` (${fastBook.time})` : ""}`)}
               </span>

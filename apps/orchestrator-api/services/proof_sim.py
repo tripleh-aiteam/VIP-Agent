@@ -951,19 +951,16 @@ def live_book_fast(source: str, code: str, seed: int = 7, period: int = 60,
         mid = ref + t * r.choice([-1, 0, 0, 0, 1])
         asks = [[mid + t * (i + 1), r.randint(200, 9_900)] for i in range(10)]
         bids = [[mid - t * i, r.randint(200, 9_900)] for i in range(10)]
-        # Kiwoom-style 체결 tape: like the real market, EACH second prints a BURST of 1-4
-        # deals (all stamped with that same second), then the next second's burst. Deterministic
-        # per second so overlapping rows never change between polls — only new seconds append.
+        # 체결 tape — the REAL execution stream, the same deals the candles and the tick
+        # charts are built from. It used to be invented here with its own random generator,
+        # so the table could print prices in a second that no candle had ever seen. Now it
+        # is _execs() over the tail of the tape, which means a 5틱 bar drawn on the chart is
+        # literally the last five rows of this table (boss 2026-07-31).
         prev_close = round((ref * 0.985) / t) * t          # fake yesterday's close (~-1.5%)
-        tape = []
-        for s in range(now_s - 14, now_s + 1):
-            rs = random.Random(f"{code}:{seed}:tape:{s}")
-            ts_s = datetime.fromtimestamp(s, KST).strftime("%H:%M:%S")
-            for _d in range(rs.randint(8, 15)):            # Kiwoom-like burst: ~8-15 deals within the SAME second
-                tape.append({"t": ts_s,
-                             "px": ref + t * rs.choice([-2, -1, -1, 0, 0, 0, 1, 1, 2]),
-                             "qty": rs.randint(1, 120) * 10,
-                             "strength": rs.randint(78, 138)})   # 체결강도 %
+        TAIL = 25                                          # seconds of deals to show
+        tail = _sc[-(TAIL + 1):]                           # +1 leading second: _execs walks FROM it
+        tape = [e for e in _execs(_d0, tail, seed + k * 101, t)
+                if e["off"] != tail[0]["off"]] if len(tail) > 1 else []
         return {"ok": True, "asks": asks, "bids": bids,
                 "best_ask": asks[0][0], "best_bid": bids[0][0],
                 "tape": tape, "prev_close": prev_close,
