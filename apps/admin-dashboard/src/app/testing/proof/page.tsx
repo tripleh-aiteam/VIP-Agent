@@ -340,9 +340,9 @@ export default function ProofLab() {
     { id: "2u3d", need: 2, dn: 3, ko: "2연속↑ / 3연속↓", en: "2up / 3down" },
     { id: "3u4d", need: 3, dn: 4, ko: "3연속↑ / 4연속↓", en: "3up / 4down" },
     { id: "4u3d", need: 4, dn: 3, ko: "4연속↑ / 3연속↓", en: "4up / 3down" },
-    { id: "3u03", need: 3, dn: 0, take: 0.3, stop: 1.0, ko: "3연속↑ / +0.3% 익절", en: "3up / +0.3% gain" },
-    { id: "3u05", need: 3, dn: 0, take: 0.5, stop: 1.0, ko: "3연속↑ / +0.5% 익절", en: "3up / +0.5% gain" },
-    { id: "3u10", need: 3, dn: 0, take: 1.0, stop: 1.0, ko: "3연속↑ / +1.0% 익절", en: "3up / +1.0% gain" },
+    { id: "3u03", need: 3, dn: 0, take: 0.3, stop: 1.0, ko: "3연속↑ / +0.3% 익절(수수료 후)", en: "3up / +0.3% after fees" },
+    { id: "3u05", need: 3, dn: 0, take: 0.5, stop: 1.0, ko: "3연속↑ / +0.5% 익절(수수료 후)", en: "3up / +0.5% after fees" },
+    { id: "3u10", need: 3, dn: 0, take: 1.0, stop: 1.0, ko: "3연속↑ / +1.0% 익절(수수료 후)", en: "3up / +1.0% after fees" },
   ] as const;
   const [combo, setCombo] = useState<string>("3u3d");
   const cb = COMBOS.find((c) => c.id === combo) ?? COMBOS[0];
@@ -402,6 +402,58 @@ export default function ProofLab() {
     setSelCode(null);
     load("synthetic", seed, code, tfSec, false, decMode, "", st);
   };
+  // 🔀 run one combination on the 5틱 clock (boss 2026-07-31: "for each combination need
+  // use 5 tik as a clock"). Two settings have to move together or the comparison is a lie:
+  //   tick=5      → the bars are 5 executions each, not 60 seconds each
+  //   decMode=chart → the ENGINE reads those bars. Without this the bars are merely DRAWN
+  //                   at 5틱 while the rule still counts 1분 candles, and every combination
+  //                   would report its minute-chart result under a 5틱 label.
+  // Pass `st` to open a fresh market at that second, which puts every combination back to
+  // 0 trips / 0% — the ledgers are namespaced by session AND rule, so nothing carries over.
+  const runCombo = (id: string, st?: number) => {
+    const fresh = st !== undefined;
+    setCombo(id);
+    setDecMode("chart");
+    setTick(5);
+    setTickIn("5");
+    setFocus(null);
+    if (fresh) {
+      setLiveStart(st!);
+      setSelCode(null);
+      if (typeof window !== "undefined") {
+        if (st) window.localStorage.setItem(LIVE_KEY, String(st));
+        else window.localStorage.removeItem(LIVE_KEY);
+      }
+    }
+    load(source, seed, code, tfSec, !fresh, "chart", "", fresh ? st! : liveStart, 5, id);
+  };
+  // is the rule actually counting 5틱 bars? (drawing at 5틱 while deciding on 1분 is not)
+  const on5 = decMode === "chart" && tick === 5;
+  // 📊 every rule's 승률 in one pass, measured off THIS session so the nine numbers are
+  // comparable — same market, same second, same 5틱 clock, one rule apart.
+  const [scan, setScan] = useState<Record<string, { w: number; l: number; f: number; pct: number }> | null>(null);
+  const [scanning, setScanning] = useState(false);
+  const compareAll = async () => {
+    setScanning(true);
+    const out: Record<string, { w: number; l: number; f: number; pct: number }> = {};
+    for (const c of COMBOS) {
+      try {
+        const r = await api<ProofRes>(`/paper-desk/proof/run?source=synthetic&seed=${seed}&code=${code}&period=${tfSec}&mode=chart&start=${liveStart}&tick=5${comboQS(c)}`);
+        // the SAME arithmetic the summary bar runs, so a rule's number cannot depend on
+        // which of the two places you read it from (boss 2026-07-31: "make them consistent")
+        const ts = (r?.symbols ?? []).flatMap((s2) => s2.trades).filter((tr) => tr.sell_fill_t);
+        const g = (tr: Trade) => (withFee ? tr.net_pct : (tr.gross_pct ?? tr.net_pct));
+        const w = ts.filter((tr) => g(tr) > 0).length;
+        const l = ts.filter((tr) => g(tr) < 0).length;
+        out[c.id] = { w, l, f: ts.length - w - l, pct: w + l ? Math.round((w / (w + l)) * 100) : 0 };
+        setScan({ ...out });                       // fill the buttons in as each one lands
+      } catch { /* leave that rule blank rather than showing a made-up number */ }
+    }
+    setScanning(false);
+  };
+  // a scan is only true for the session and the fee setting it was measured under — keeping
+  // stale percentages on the buttons after either changes would be the quietest kind of lie
+  useEffect(() => { setScan(null); }, [liveStart, withFee, seed, code]);
   const [nowSec, setNowSec] = useState(() => Math.floor(Date.now() / 1000));
   useEffect(() => {
     if (!liveStart) return;                              // only tick while a live session runs
@@ -432,11 +484,15 @@ export default function ProofLab() {
   sourceRef.current = source;
   // keep = true → a TIMEFRAME switch only: preserve the selected stock, the focused trade
   // and the chart view (trades are identical across timeframes, so indices stay valid)
-  const load = async (src = source, sd = seed, cd = code, p = tfSec, keep = false, md = decMode, ar = "", st = liveStart, tk = tick) => {
+  const load = async (src = source, sd = seed, cd = code, p = tfSec, keep = false, md = decMode, ar = "", st = liveStart, tk = tick, cbId = combo) => {
     setLoading(true);
     if (!keep) setFocus(null);
     try {
-      const r = await api<ProofRes>(`/paper-desk/proof/run?source=${src}&seed=${sd}&code=${cd}&period=${p}&mode=${md}&around=${encodeURIComponent(ar)}&start=${st}&tick=${tk}${comboQS(cb)}`);
+      // the rule travels as an ARGUMENT, not off state: a click sets state and fires the
+      // fetch in the same tick, and React has not re-rendered yet — reading `cb` here would
+      // send the PREVIOUS rule and the table would lag one click behind.
+      const cbUse = COMBOS.find((c) => c.id === cbId) ?? cb;
+      const r = await api<ProofRes>(`/paper-desk/proof/run?source=${src}&seed=${sd}&code=${cd}&period=${p}&mode=${md}&around=${encodeURIComponent(ar)}&start=${st}&tick=${tk}${comboQS(cbUse)}`);
       // a slow response from the OTHER mode must never land after the user switched
       if (src === sourceRef.current && r?.source === src && (r.start ?? 0) === st) { setRes(r); if (!keep) setSelCode(null); }
     } catch { /* keep last */ }
@@ -935,7 +991,10 @@ export default function ProofLab() {
         // 1분-fixed mode: trades are IDENTICAL across timeframes → ONE ledger per seed, so the
         // history stays continuous while switching 1분/40초/30초/15초/6초/3초.
         // per-chart mode: every timeframe is its OWN market decision → its own ledger, never mixed.
-        const tfNs = decMode === "chart" ? `:ch${res.period ?? tfSec}` : "";
+        // the TICK belongs in the namespace too: in chart mode a 5틱 bar and a 10틱 bar are
+        // two different clocks producing two different sets of trades, and sharing one
+        // ledger between them would silently blend both into a single win rate.
+        const tfNs = decMode === "chart" ? `:ch${res.tick ? `t${res.tick}` : (res.period ?? tfSec)}` : "";
         const cbNs = `:${combo}`;      // each rule keeps its own history
         const sNs = res.start ? `:live${res.start}` : "";
         const nsData = synData ? `syn:${res.seed ?? seed}${tfNs}${sNs}${cbNs}` : `kiwoom${tfNs}${cbNs}`;
@@ -951,7 +1010,7 @@ export default function ProofLab() {
         }
         // display the CURRENT mode's ledger + hard filter: artificial (PRF*) companies never in
         // Kiwoom history, real companies never in artificial history
-        const tfNsView = decMode === "chart" ? `:ch${tfSec}` : "";
+        const tfNsView = decMode === "chart" ? `:ch${tick ? `t${tick}` : tfSec}` : "";
         const sNsView = liveStart ? `:live${liveStart}` : "";
         const nsView = source === "synthetic" ? `syn:${seed}${tfNsView}${sNsView}:${combo}` : `kiwoom${tfNsView}:${combo}`;
         const isFake = (c: string) => c.startsWith("PRF");
@@ -1022,16 +1081,51 @@ export default function ProofLab() {
               <span className="text-[11px] font-bold" style={{ color: "#6a1b9a" }}>
                 🔀 {t("규칙 조합", "rule")}
               </span>
-              {COMBOS.map((c) => (
-                <button key={c.id} onClick={() => { setCombo(c.id); setFocus(null); load(source, seed, code, tfSec, true); }}
-                  className="text-[11px] font-extrabold px-2.5 py-1 rounded-lg"
-                  style={combo === c.id ? { background: "#6a1b9a", color: "#fff" }
-                         : { border: "1px solid var(--border-default)", color: "var(--text-secondary)" }}>
-                  {lang === "ko" ? c.ko : c.en}
-                </button>
-              ))}
-              <span className="text-[10px] text-[var(--text-muted)] ml-auto">
-                {t("모두 같은 시장·같은 시각에서 시작합니다 — 차이는 규칙 하나뿐", "all start from the same market at the same second — the only difference is the rule")}
+              {/* 승률 per rule, right on its own button, so the nine numbers can be read
+                  against each other without clicking through nine times. Only the rule on
+                  screen has a measured number — the rest say "눌러서 확인". */}
+              {COMBOS.map((c) => {
+                const sc = c.id === combo && on5 ? { pct: winPct, w: wins, l: losses } : scan?.[c.id];
+                const best = scan && Math.max(...Object.values(scan).map((v) => v.pct));
+                const top = !!sc && !!best && sc.pct === best && sc.pct > 0;
+                return (
+                  <button key={c.id} onClick={() => runCombo(c.id)}
+                    className="text-[11px] font-extrabold px-2.5 py-1 rounded-lg"
+                    title={sc ? t(`${sc.w}승 ${sc.l}패 → 승률 ${sc.pct}%`, `${sc.w}W ${sc.l}L → ${sc.pct}% win`) : ""}
+                    style={combo === c.id ? { background: "#6a1b9a", color: "#fff" }
+                           : { border: `1px solid ${top ? "#6a1b9a" : "var(--border-default)"}`, color: "var(--text-secondary)" }}>
+                    {lang === "ko" ? c.ko : c.en}
+                    {sc && (
+                      <span className="ml-1.5 tabular-nums" style={{ color: combo === c.id ? "#fff" : RED }}>
+                        {sc.pct}%
+                      </span>
+                    )}
+                  </button>
+                );
+              })}
+              <button onClick={compareAll} disabled={scanning}
+                className="text-[11px] font-extrabold px-2.5 py-1 rounded-lg text-white ml-1"
+                style={{ background: "#6a1b9a", opacity: scanning ? 0.55 : 1 }}
+                title={t("9개 규칙을 모두 같은 시장·같은 5틱 시계로 돌려 승률을 버튼마다 표시합니다.",
+                         "runs all 9 rules over the same market on the same 5-tick clock and prints each one's win rate on its button.")}>
+                📊 {scanning ? t("계산 중…", "measuring…") : t("9개 승률 비교", "win rate — all 9")}
+              </button>
+              <button onClick={() => { setScan(null); runCombo(combo, Math.floor(Date.now() / 1000)); }}
+                className="text-[11px] font-extrabold px-2.5 py-1 rounded-lg text-white ml-1"
+                style={{ background: "#2e7d32" }}
+                title={t("지금 이 순간부터 새 장을 열고, 9개 조합을 모두 0회전 0%에서 동시에 다시 시작합니다. 지금 화면의 기록은 오늘 07:21부터 쌓인 것이라 조합마다 출발점이 다릅니다.",
+                         "open a fresh market from this second and restart all 9 combinations together at 0 trips, 0%. What is on screen now accumulated from 07:21 today, so the combinations did not start level.")}>
+                ⏱ {t("전부 0부터 다시", "restart all at zero")}
+              </button>
+              {/* say which clock the rule is actually counting on. "5틱" printed while the
+                  engine still reads 1분 candles would be the most misleading label on the
+                  page, so the badge follows decMode, not the drawing. */}
+              <span className="text-[10px] ml-auto" style={{ color: on5 ? "#6a1b9a" : "var(--text-muted)" }}>
+                {on5
+                  ? t(`⏱ 5틱 시계 — 규칙이 5체결 봉을 셉니다${liveStart ? " · 9개 조합 모두 같은 초에 0부터 출발" : " · 오늘 07:21부터 누적"}`,
+                      `⏱ 5-tick clock — the rule counts 5-execution bars${liveStart ? " · all 9 combinations started from zero at the same second" : " · accumulated from 07:21 today"}`)
+                  : t(`지금은 ${decMode === "min1" ? "1분" : tick ? tick + "틱" : tfSec + "초"} 시계입니다 — 조합 버튼을 누르면 5틱으로 바뀝니다`,
+                      `currently on the ${decMode === "min1" ? "1-minute" : tick ? tick + "-tick" : tfSec + "s"} clock — press a rule button to switch to 5-tick`)}
               </span>
             </div>
             {/* summary bar — like the Algo 3 history header */}

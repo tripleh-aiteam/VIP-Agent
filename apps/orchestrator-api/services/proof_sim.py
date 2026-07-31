@@ -553,7 +553,12 @@ def _simulate(candles: list[dict], seed: int, with_book: bool, period: int = 60,
                 # out 100% winners — a number that says nothing except that the losers are
                 # still open. The live desk sets -1% on target mode for exactly this reason
                 # (boss 2026-07-30: "put -1% border in the 3 up, take a profit").
-                else ((cd["close"] / pos["entry"] - 1) * 100 >= take_pct
+                # The TAKE is measured AFTER the 0.23% round trip — the boss asked for
+                # "small gain (after fee) then sell", and a +0.3% gross target actually
+                # banks +0.07%, so the button would have promised four times what it paid.
+                # The STOP stays on the price move: it is a risk limit on the position,
+                # not on the P&L, which is how every desk sets one.
+                else ((cd["close"] / pos["entry"] - 1) * 100 - FEE_PCT >= take_pct
                       or (cd["close"] / pos["entry"] - 1) * 100 <= -stop_pct)):
             bk = _book(seed * 2_000 + i, cd["close"], "SELL", tick) if with_book else None
             exit_px = bk["fill"] if bk else cd["close"]
@@ -570,9 +575,9 @@ def _simulate(candles: list[dict], seed: int, with_book: bool, period: int = 60,
                            # was right to ask why (2026-07-31).
                            "move_pct": round((cd["close"] / pos["buy_close"] - 1) * 100, 3),
                            "exit_why": ("3연속 하락" if exit_mode == "candle"
-                                        else ("+%s%% 익절" % take_pct
-                                              if (cd["close"] / pos["entry"] - 1) * 100 >= take_pct
-                                              else "-%s%% 손절" % stop_pct)),
+                                        else ("+%s%% 익절(수수료 후)" % take_pct
+                                              if (cd["close"] / pos["entry"] - 1) * 100 - FEE_PCT >= take_pct
+                                              else "-%s%% 손절(주가)" % stop_pct)),
                            "sell_close": cd["close"],
                            "sell_closes": closes[-4:], "exit": exit_px, "sell_book": bk,
                            "sell_timeline": _minute_timeline(cd, exit_px, seed * 37 + i, with_book, fill_sec=0, period=period),
@@ -824,10 +829,10 @@ def run_synthetic(seed: int = 7, period: int = 60, mode: str = "min1",
             "start": start,   # echoed so the page can discard a stale response from a previous session
             "rule_ko": (f"양봉 {need}개 연속 → 정확히 {need}번째 양봉에 매수 · "
                         + (f"음봉 {need_dn or need}개 연속 → 정확히 {need_dn or need}번째 음봉에 매도"
-                           if exit_mode == "candle" else f"+{take_pct}% 익절 / -{stop_pct}% 손절")),
+                           if exit_mode == "candle" else f"수수료 뗀 뒤 +{take_pct}% 익절 / 주가 -{stop_pct}% 손절")),
             "rule_en": (f"{need} rising candles → BUY on the {need}th red · "
                         + (f"{need_dn or need} falling → SELL on the {need_dn or need}th blue"
-                           if exit_mode == "candle" else f"take +{take_pct}%, stop -{stop_pct}%")),
+                           if exit_mode == "candle" else f"take +{take_pct}% AFTER fees, stop -{stop_pct}% on price")),
             "engine_fn": "services/candle_trader.py::run_steps (the live engine's own comparison)",
             "symbols": symbols,
             "verification": {"trades": agg_trades, "passed": agg_pass, "total": agg_total,
