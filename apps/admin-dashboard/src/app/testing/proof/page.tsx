@@ -17,7 +17,8 @@ const GOLD = "#e65100";
 const fmt = (n?: number | null) => (n == null ? "-" : Number(n).toLocaleString());
 
 type Candle = { time: number; hhmm: string; open: number; high: number; low: number; close: number; dir?: number };
-type Book = { asks: [number, number][]; bids: [number, number][]; best_ask: number; best_bid: number } | null;
+type Book = { asks: [number, number][]; bids: [number, number][]; best_ask: number; best_bid: number;
+              last?: number; spread?: number; slip?: number } | null;   // slip = ticks paid to cross the spread
 type TlRow = { t: string; px: number; kind: "open" | "watch" | "high" | "low" | "close" | "fill" };
 type Trade = {
   buy_idx: number; buy_hhmm: string; buy_closes: number[]; entry: number; buy_book: Book;
@@ -1127,6 +1128,16 @@ export default function ProofLab() {
                           `at the moment of action, only the waiting list (order book) exists. The replay shows the decision close ₩${fmt(fill)}; live buys fill at the LIVE Kiwoom book's cheapest seller (best ask) below. One moment = one price = zero choosing.`)
                       : t(`행동하는 그 '순간'에 존재하는 건 대기줄(호가창)뿐. 재생에서는 판단 종가 ₩${fmt(fill)}로 표시하며, 실전은 아래 실시간 Kiwoom 호가창의 '가장 비싼 구매자(best bid)'에 체결됩니다. 한 순간 = 가격 하나 = 고르기 없음.`,
                           `at the moment of action, only the waiting list (order book) exists. The replay shows the decision close ₩${fmt(fill)}; live sells fill at the LIVE Kiwoom book's highest buyer (best bid) below. One moment = one price = zero choosing.`))}</div>
+                  {book && book.last != null && (
+                    <div style={{ color: GOLD }}>⑤ {(book.slip ?? 0) > 0
+                      ? (isBuy
+                        ? t(`체결가 ₩${fmt(fill)}는 종가 ₩${fmt(book.last)}보다 ₩${fmt(book.slip)} 위입니다 — 오류가 아니라 스프레드(호가 차이) 비용입니다. 시장가 매수는 '마지막 체결가'가 아니라 '지금 팔겠다는 가장 싼 사람의 호가'를 지불합니다.`,
+                            `the fill ₩${fmt(fill)} is ₩${fmt(book.slip)} ABOVE the close ₩${fmt(book.last)} — not an error, that is the spread. A market BUY pays the cheapest seller's ASK, never the last traded price.`)
+                        : t(`체결가 ₩${fmt(fill)}는 종가 ₩${fmt(book.last)}보다 ₩${fmt(book.slip)} 아래입니다 — 오류가 아니라 스프레드 비용입니다. 시장가 매도는 '가장 비싸게 사겠다는 사람의 호가'를 받습니다.`,
+                            `the fill ₩${fmt(fill)} is ₩${fmt(book.slip)} BELOW the close ₩${fmt(book.last)} — not an error, that is the spread. A market SELL receives the highest buyer's BID.`))
+                      : t(`이번엔 종가 ₩${fmt(book.last)}가 마침 최우선 호가와 같아 스프레드 비용이 ₩0이었습니다. 매번 내는 건 아닙니다.`,
+                          `this time the close ₩${fmt(book.last)} happened to sit on the best quote, so crossing the spread cost ₩0. It is not paid on every fill.`)}</div>
+                  )}
                 </div>
                 {/* the order book: trade's own book (artificial) or the LIVE Kiwoom book (real) */}
                 {book ? (

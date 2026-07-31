@@ -238,23 +238,35 @@ def _forming_from(day0: int, secs: list[dict], period: int) -> dict | None:
 
 
 def _book(seed: int, ref: float, side: str, tick: int | None = None) -> dict:
-    """Synthetic 5-level order book around the decision price. Buys pay the BEST ASK
-    (cheapest seller = ref + 1 tick); sells hit the BEST BID (highest buyer = ref).
-    tick: pass the symbol's BASE tick so book/tape/candles always share one tick size
-    even if the price drifts across a KRX tick band (boss 2026-07-30 consistency)."""
+    """Synthetic 5-level order book around the last traded price, with a REAL 1-tick spread.
+    A market order takes liquidity: a BUY pays the best ask (the cheapest seller waiting),
+    a SELL hits the best bid (the highest buyer waiting). It never trades at the mid.
+
+    Until 2026-07-31 the book was anchored so the taking side sat exactly ON `ref`, which
+    made "buy from the waiting list" cost nothing and quietly flattered every result. The
+    boss spotted that the ladder on screen showed a spread the trades never paid.
+
+    Where the last trade sits is itself information: if a buyer just lifted the ask, the
+    last price IS the ask and the next buyer pays the same; if a seller hit the bid, the
+    last price is the bid and a buyer must pay one tick more. Deciding that per candle
+    (deterministically, from the seed) makes the ROUND-TRIP cost one full spread on
+    average — which is what crossing bid→ask→bid actually costs — instead of two, which
+    would double-charge the spread and understate the algorithm.
+
+    tick: the symbol's BASE tick, so book/tape/candles share one tick size even if the
+    price drifts across a KRX tick band (boss 2026-07-30 consistency)."""
     r = random.Random(seed)
     t = tick or _tick(ref)
-    # boss 2026-07-30: BOTH sides fill at the NEXT candle's :00 at its OPEN (= the signal
-    # close). The book is anchored so the fill side touches ref: a buy meets a seller
-    # waiting AT the last price; a sell meets a buyer AT the last price.
-    if side == "BUY":
-        asks = [[ref + t * i, r.randint(300, 9_500)] for i in range(5)]        # best ask == ref
-        bids = [[ref - t * (i + 1), r.randint(300, 9_500)] for i in range(5)]
-    else:
-        asks = [[ref + t * (i + 1), r.randint(300, 9_500)] for i in range(5)]
-        bids = [[ref - t * i, r.randint(300, 9_500)] for i in range(5)]        # best bid == ref
-    return {"asks": asks, "bids": bids, "best_ask": asks[0][0], "best_bid": bids[0][0],
-            "fill": asks[0][0] if side == "BUY" else bids[0][0]}
+    last_at_ask = r.random() < 0.5              # was the last print a buyer lifting the ask?
+    best_ask = ref if last_at_ask else ref + t
+    best_bid = best_ask - t                     # always exactly one tick of spread
+    asks = [[best_ask + t * i, r.randint(300, 9_500)] for i in range(5)]
+    bids = [[best_bid - t * i, r.randint(300, 9_500)] for i in range(5)]
+    return {"asks": asks, "bids": bids, "best_ask": best_ask, "best_bid": best_bid,
+            "fill": best_ask if side == "BUY" else best_bid,
+            "last": ref, "spread": t,
+            # how far the fill is from the last traded price — 0 or 1 tick, never hidden
+            "slip": (best_ask - ref) if side == "BUY" else (ref - best_bid)}
 
 
 # --------------------------------------------------------------------------- #
@@ -659,15 +671,26 @@ def self_check(seed: int = 7) -> dict[str, Any]:
                         st = [cl[i + 1] - cl[i] for i in range(len(cl) - 1)]
                         _hit("C", all(x > 0 for x in st) if want == 1 else all(x < 0 for x in st),
                              f"{mode} {p}s {t['buy_fill_t']} steps={st}")
-                    # B) price exists at that exact second, and inside the bar covering it
-                    #    (the 1초 chart is windowed to 30 min, so older bars aren't sent —
-                    #     the second-level check still applies to every trade)
-                    for ft, px in ((t["buy_fill_t"], t["entry"]), (t["sell_fill_t"], t["exit"])):
+                    # B) the fill came off the WAITING LIST at that exact second.
+                    #    Since 2026-07-31 the book carries a real 1-tick spread, so the fill
+                    #    is the best ask / best bid — a resting order, NOT necessarily a
+                    #    price that traded. Checking "the fill is inside the candle" would
+                    #    now be checking the old zero-spread model, so instead:
+                    #      · the last TRADED price at that second is the candle's close
+                    #      · the fill is exactly that book's best ask (buy) / best bid (sell)
+                    #      · and it is within one tick of the traded price — never further
+                    for ft, px, bk, is_buy in ((t["buy_fill_t"], t["entry"], t.get("buy_book"), True),
+                                               (t["sell_fill_t"], t["exit"], t.get("sell_book"), False)):
                         o = off_of(ft, tape0)
-                        _hit("B", o < len(secs) and secs[o]["px"] == px, f"{mode} {p}s {ft} px={px} not at that second")
-                        bar = next((c for c in cs if c["off0"] <= o < c["off0"] + c["n"]), None)
-                        if bar is not None:
-                            _hit("B", bar["low"] <= px <= bar["high"], f"{mode} {p}s {ft} px outside bar {bar['hhmm']}")
+                        traded = secs[o]["px"] if o < len(secs) else None
+                        _hit("B", traded is not None, f"{mode} {p}s {ft} second not in the tape")
+                        if bk:
+                            want_px = bk["best_ask"] if is_buy else bk["best_bid"]
+                            _hit("B", px == want_px,
+                                 f"{mode} {p}s {ft} filled {px}, waiting list says {want_px}")
+                            if traded is not None:
+                                _hit("B", abs(px - traded) <= bk.get("spread", 0),
+                                     f"{mode} {p}s {ft} fill {px} is more than one tick from traded {traded}")
                     # D) arrow colour · G) the arrow's bar CONTAINS the exact fill second, so
                     #    the history's time and the arrow's position can never disagree
                     for ik, ft, want in (("buy_idx", "buy_fill_t", 1), ("sell_idx", "sell_fill_t", -1)):
