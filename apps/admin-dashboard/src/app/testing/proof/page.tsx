@@ -417,6 +417,11 @@ export default function ProofLab() {
     setTick(5);
     setTickIn("5");
     setFocus(null);
+    // clicking a rule means "show me this rule trading" — so bring up the 5틱 CHART with
+    // its arrows on, rather than leaving the boss on the Data File table to find it
+    // (boss 2026-07-31: "when i click 3up 3 down it should show chart").
+    setView("candle");
+    setArrows(true);
     if (fresh) {
       setLiveStart(st!);
       setSelCode(null);
@@ -431,29 +436,32 @@ export default function ProofLab() {
   const on5 = decMode === "chart" && tick === 5;
   // 📊 every rule's 승률 in one pass, measured off THIS session so the nine numbers are
   // comparable — same market, same second, same 5틱 clock, one rule apart.
-  const [scan, setScan] = useState<Record<string, { w: number; l: number; f: number; pct: number }> | null>(null);
+  type ComboScore = { id: string; trips: number; w: number; l: number; flat: number; pct: number;
+                      w_net: number; l_net: number; pct_net: number; audit: { ok: boolean } };
+  const [scan, setScan] = useState<Record<string, ComboScore> | null>(null);
   const [scanning, setScanning] = useState(false);
   const compareAll = async () => {
     setScanning(true);
-    const out: Record<string, { w: number; l: number; f: number; pct: number }> = {};
-    for (const c of COMBOS) {
-      try {
-        const r = await api<ProofRes>(`/paper-desk/proof/run?source=synthetic&seed=${seed}&code=${code}&period=${tfSec}&mode=chart&start=${liveStart}&tick=5${comboQS(c)}`);
-        // the SAME arithmetic the summary bar runs, so a rule's number cannot depend on
-        // which of the two places you read it from (boss 2026-07-31: "make them consistent")
-        const ts = (r?.symbols ?? []).flatMap((s2) => s2.trades).filter((tr) => tr.sell_fill_t);
-        const g = (tr: Trade) => (withFee ? tr.net_pct : (tr.gross_pct ?? tr.net_pct));
-        const w = ts.filter((tr) => g(tr) > 0).length;
-        const l = ts.filter((tr) => g(tr) < 0).length;
-        out[c.id] = { w, l, f: ts.length - w - l, pct: w + l ? Math.round((w / (w + l)) * 100) : 0 };
-        setScan({ ...out });                       // fill the buttons in as each one lands
-      } catch { /* leave that rule blank rather than showing a made-up number */ }
-    }
+    try {
+      // ONE call scores all nine over one market on one clock. Nine separate /proof/run
+      // calls would be ~50k bars of payload the buttons never draw, and — worse — nine
+      // separately-generated views of "the same" market. Here the tape is built once.
+      const r = await api<{ combos: ComboScore[] }>(`/paper-desk/proof/combos?seed=${seed}&start=${liveStart}&tick=5`);
+      const out: Record<string, ComboScore> = {};
+      for (const c of r?.combos ?? []) out[c.id] = c;
+      setScan(out);
+    } catch { /* leave the buttons blank rather than showing a made-up number */ }
     setScanning(false);
   };
-  // a scan is only true for the session and the fee setting it was measured under — keeping
-  // stale percentages on the buttons after either changes would be the quietest kind of lie
-  useEffect(() => { setScan(null); }, [liveStart, withFee, seed, code]);
+  // the percentages are on the buttons BEFORE anything is clicked, and refresh as the
+  // market runs on (boss 2026-07-31: "before clicking also it should show winning %")
+  useEffect(() => {
+    if (source !== "synthetic") return;
+    compareAll();
+    const iv = setInterval(compareAll, 60_000);
+    return () => clearInterval(iv);
+    /* eslint-disable-next-line react-hooks/exhaustive-deps */
+  }, [source, seed, liveStart]);
   const [nowSec, setNowSec] = useState(() => Math.floor(Date.now() / 1000));
   useEffect(() => {
     if (!liveStart) return;                              // only tick while a live session runs
@@ -1084,31 +1092,41 @@ export default function ProofLab() {
               {/* 승률 per rule, right on its own button, so the nine numbers can be read
                   against each other without clicking through nine times. Only the rule on
                   screen has a measured number — the rest say "눌러서 확인". */}
-              {COMBOS.map((c) => {
-                const sc = c.id === combo && on5 ? { pct: winPct, w: wins, l: losses } : scan?.[c.id];
-                const best = scan && Math.max(...Object.values(scan).map((v) => v.pct));
-                const top = !!sc && !!best && sc.pct === best && sc.pct > 0;
-                return (
-                  <button key={c.id} onClick={() => runCombo(c.id)}
-                    className="text-[11px] font-extrabold px-2.5 py-1 rounded-lg"
-                    title={sc ? t(`${sc.w}승 ${sc.l}패 → 승률 ${sc.pct}%`, `${sc.w}W ${sc.l}L → ${sc.pct}% win`) : ""}
-                    style={combo === c.id ? { background: "#6a1b9a", color: "#fff" }
-                           : { border: `1px solid ${top ? "#6a1b9a" : "var(--border-default)"}`, color: "var(--text-secondary)" }}>
-                    {lang === "ko" ? c.ko : c.en}
-                    {sc && (
-                      <span className="ml-1.5 tabular-nums" style={{ color: combo === c.id ? "#fff" : RED }}>
-                        {sc.pct}%
-                      </span>
-                    )}
-                  </button>
-                );
-              })}
+              {(() => {
+                // every button reads the SAME scoreboard — one market, one clock, one pass.
+                // Reading the active button off the on-screen ledger instead would let it
+                // print a different number from the other eight for no visible reason.
+                const pctOf = (v: ComboScore) => (withFee ? v.pct_net : v.pct);
+                const best = scan ? Math.max(...Object.values(scan).map(pctOf)) : 0;
+                return COMBOS.map((c) => {
+                  const sc = scan?.[c.id];
+                  const p = sc ? pctOf(sc) : null;
+                  const top = p !== null && p === best && p > 0;
+                  return (
+                    <button key={c.id} onClick={() => runCombo(c.id)}
+                      className="text-[11px] font-extrabold px-2.5 py-1 rounded-lg"
+                      title={sc
+                        ? t(`${sc.trips}회전 · ${withFee ? sc.w_net : sc.w}승 ${withFee ? sc.l_net : sc.l}패 → 승률 ${p}% (${withFee ? "수수료 포함" : "수수료 전"})${sc.audit.ok ? " · 규칙 100% 준수" : " · ⚠ 규칙 검증 실패"}`,
+                            `${sc.trips} trips · ${withFee ? sc.w_net : sc.w}W ${withFee ? sc.l_net : sc.l}L → ${p}% win (${withFee ? "fees included" : "before fees"})${sc.audit.ok ? " · 100% rule compliance" : " · ⚠ rule audit failed"}`)
+                        : t("계산 중…", "measuring…")}
+                      style={combo === c.id ? { background: "#6a1b9a", color: "#fff" }
+                             : { border: `1px solid ${top ? "#6a1b9a" : "var(--border-default)"}`, color: "var(--text-secondary)" }}>
+                      {lang === "ko" ? c.ko : c.en}
+                      {p !== null && (
+                        <span className="ml-1.5 tabular-nums" style={{ color: combo === c.id ? "#fff" : (top ? "#6a1b9a" : RED) }}>
+                          {top ? "🏆" : ""}{p}%
+                        </span>
+                      )}
+                    </button>
+                  );
+                });
+              })()}
               <button onClick={compareAll} disabled={scanning}
                 className="text-[11px] font-extrabold px-2.5 py-1 rounded-lg text-white ml-1"
                 style={{ background: "#6a1b9a", opacity: scanning ? 0.55 : 1 }}
                 title={t("9개 규칙을 모두 같은 시장·같은 5틱 시계로 돌려 승률을 버튼마다 표시합니다.",
                          "runs all 9 rules over the same market on the same 5-tick clock and prints each one's win rate on its button.")}>
-                📊 {scanning ? t("계산 중…", "measuring…") : t("9개 승률 비교", "win rate — all 9")}
+                📊 {scanning ? t("계산 중…", "measuring…") : t("승률 새로고침", "refresh win rates")}
               </button>
               <button onClick={() => { setScan(null); runCombo(combo, Math.floor(Date.now() / 1000)); }}
                 className="text-[11px] font-extrabold px-2.5 py-1 rounded-lg text-white ml-1"

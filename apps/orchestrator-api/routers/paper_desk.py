@@ -641,6 +641,18 @@ def proof_run(source: str = Query("synthetic"), seed: int = Query(7),
     return res
 
 
+@router.get("/proof/combos")
+def proof_combos(seed: int = Query(7), start: int = Query(0), tick: int = Query(5)):
+    """🔀 Every rule combination's 승률 in one call — the numbers that sit on the buttons
+    BEFORE the boss clicks one (2026-07-31: "before clicking also it should show winning %").
+
+    Deliberately returns counts only, no candles: the page needs nine numbers, and nine
+    full chart payloads is ~32k bars × 3 stocks, which is not something to run on page load.
+    Same market, same clock, one rule apart — so the nine are directly comparable."""
+    from services.proof_sim import combo_scores
+    return combo_scores(seed=seed, start=start, tick=tick)
+
+
 @router.get("/proof/lab")
 def proof_lab(seed: int = Query(7), start: int = Query(0), tick: int = Query(5),
               code: str = Query(""), bars: int = Query(500), hist: int = Query(40)):

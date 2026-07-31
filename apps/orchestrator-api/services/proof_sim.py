@@ -512,7 +512,8 @@ def _minute_timeline(cd: dict, fill_px: float, seed: int, synthetic: bool, fill_
 def _simulate(candles: list[dict], seed: int, with_book: bool, period: int = 60,
               tick: int | None = None, tape_fn=None, exit_mode: str = "candle",
               take_pct: float = 0.5, stop_pct: float = 1.0,
-              need: int = NEED, need_dn: int = 0) -> tuple[list, list, list, list]:
+              need: int = NEED, need_dn: int = 0,
+              light: bool = False) -> tuple[list, list, list, list]:
     """Replay: after each candle CLOSES, feed all closes so far into the live engine
     comparison (run_steps). 3 rising steps & flat → BUY; holding & 3 falling → SELL.
     Returns (completed trades, still-open positions, hold-skips —
@@ -538,10 +539,11 @@ def _simulate(candles: list[dict], seed: int, with_book: bool, period: int = 60,
                    "buy_fill_t": _sec_label(cd["time"], _bn - 1),
                    "buy_closes": closes[-4:], "entry": entry_px, "buy_book": bk,
                    "buy_close": cd["close"],   # the CANDLE close — the price the chart shows
-                   "buy_timeline": _minute_timeline(cd, entry_px, seed * 31 + i, with_book, fill_sec=0, period=period),
+                   "buy_timeline": (None if light else
+                                    _minute_timeline(cd, entry_px, seed * 31 + i, with_book, fill_sec=0, period=period)),
                    # per-second tapes for ALL 3 signal candles (1st/2nd/3rd — click to inspect each)
                    "buy_tapes": ([tape_fn(j) for j in (i - 2, i - 1, i) if j >= 0]
-                                 if with_book else None)}
+                                 if with_book and not light else None)}
         # THE EXIT. 'candle' waits for 3 consecutive falls — by which time an average
         # 14-minute hold has usually round-tripped and given the gain back. 'target' takes
         # the profit the moment it is there. Both exist on the live desk (candle_trader's
@@ -580,9 +582,10 @@ def _simulate(candles: list[dict], seed: int, with_book: bool, period: int = 60,
                                               else "-%s%% 손절(주가)" % stop_pct)),
                            "sell_close": cd["close"],
                            "sell_closes": closes[-4:], "exit": exit_px, "sell_book": bk,
-                           "sell_timeline": _minute_timeline(cd, exit_px, seed * 37 + i, with_book, fill_sec=0, period=period),
+                           "sell_timeline": (None if light else
+                                             _minute_timeline(cd, exit_px, seed * 37 + i, with_book, fill_sec=0, period=period)),
                            "sell_tapes": ([tape_fn(j) for j in (i - 2, i - 1, i) if j >= 0]
-                                          if with_book else None),   # same tape source as buys → ONE canonical tape per candle
+                                          if with_book and not light else None),   # same tape source as buys → ONE canonical tape per candle
                            "net_pct": round(net, 3)})
             pos = None
         elif pos is not None and up == need and i > pos["buy_idx"]:
@@ -633,6 +636,100 @@ def _verify(candles: list[dict], trades: list[dict], with_book: bool,
             "pct": round(passed / total * 100, 1) if total else 100.0,
             # per-trade detail is not rendered — keep it out of the payload (it was ~1/3 of it)
             "per_trade": [{"passed": pt["passed"], "total": pt["total"]} for pt in per_trade]}
+
+
+# --------------------------------------------------------------------------- #
+#  🔀 the nine rule combinations, scored side by side                          #
+# --------------------------------------------------------------------------- #
+# The SAME nine the Proof Lab buttons offer. Kept here rather than only in the page so
+# the scoreboard and the chart can never drift onto different definitions of "3up/2down".
+COMBOS: list[dict[str, Any]] = [
+    {"id": "3u3d", "need": 3, "dn": 3},
+    {"id": "2u2d", "need": 2, "dn": 2},
+    {"id": "3u2d", "need": 3, "dn": 2},
+    {"id": "2u3d", "need": 2, "dn": 3},
+    {"id": "3u4d", "need": 3, "dn": 4},
+    {"id": "4u3d", "need": 4, "dn": 3},
+    {"id": "3u03", "need": 3, "dn": 0, "take": 0.3, "stop": 1.0},
+    {"id": "3u05", "need": 3, "dn": 0, "take": 0.5, "stop": 1.0},
+    {"id": "3u10", "need": 3, "dn": 0, "take": 1.0, "stop": 1.0},
+]
+
+
+def combo_scores(seed: int = 7, start: int = 0, tick: int = 5) -> dict[str, Any]:
+    """Every combination's 승률 over ONE market on ONE clock — the numbers that sit on the
+    buttons before the boss clicks (2026-07-31: "before clicking also it should show
+    winning %").
+
+    The market is built ONCE and all nine rules replay over it. That is not only ~9x
+    cheaper than nine calls to run_synthetic — it is the thing that makes the nine
+    comparable at all: identical tape, identical bars, identical books, one rule apart.
+
+    Fills come from the same order book run_synthetic uses, so a rule's win rate here is
+    the same number the trade history shows after clicking it. Only the per-second tape
+    decoration is skipped (light=True), which no counter reads."""
+    tick = max(1, min(int(tick or 5), TICK_MAX))
+    per_symbol: list[tuple[int, int, list[dict]]] = []          # (k, sseed, tick candles)
+    for k, (code, _name, base) in enumerate(_SYMBOLS):
+        if code not in _SHOWN:
+            continue
+        t_base = _tick(base) or 1
+        sseed = seed + k * 101
+        day0, secs = _seconds(sseed, base, start)
+        execs = _execs(day0, secs, sseed, t_base)
+        per_symbol.append((t_base, sseed, _candles_from_ticks(day0, execs, tick)))
+
+    out = []
+    for v in COMBOS:
+        w = l = f = 0
+        nw = nl = nf = 0                # the same counts after the 0.23% round trip
+        gross_sum = net_sum = 0.0
+        trips = 0
+        passed = total = 0
+        first: str | None = None
+        for t_base, sseed, bars in per_symbol:
+            trades, _open, _skips = _simulate(
+                bars, sseed, with_book=True, period=60, tick=t_base,
+                exit_mode=("candle" if v["dn"] else "target"),
+                take_pct=float(v.get("take", 0.5)), stop_pct=float(v.get("stop", 1.0)),
+                need=v["need"], need_dn=v["dn"], light=True)
+            ver = _verify(bars, trades, with_book=True, need=v["need"], need_dn=v["dn"])
+            passed += ver["passed"]
+            total += ver["total"]
+            for tr in trades:
+                trips += 1
+                g = tr["gross_pct"]
+                gross_sum += g
+                net_sum += tr["net_pct"]
+                if g > 0:
+                    w += 1
+                elif g < 0:
+                    l += 1
+                else:
+                    f += 1
+                n = tr["net_pct"]
+                if n > 0:
+                    nw += 1
+                elif n < 0:
+                    nl += 1
+                else:
+                    nf += 1
+                if first is None or tr["buy_sig_t"] < first:
+                    first = tr["buy_sig_t"]
+        # 승률 = wins / DECIDED. Flats (the candle rose but the spread ate exactly all of
+        # it) are neither, and dividing by them made two different W/L pairs print the
+        # same percentage — the bug the boss caught on 2026-07-31.
+        out.append({"id": v["id"], "trips": trips, "w": w, "l": l, "flat": f,
+                    "pct": round(w / (w + l) * 100) if (w + l) else 0,
+                    "w_net": nw, "l_net": nl, "flat_net": nf,
+                    "pct_net": round(nw / (nw + nl) * 100) if (nw + nl) else 0,
+                    "gross_total": round(gross_sum, 2), "net_total": round(net_sum, 2),
+                    "audit": {"passed": passed, "total": total,
+                              "ok": total == 0 or passed == total},
+                    "first_buy": first})
+    bars_n = [len(b) for _t, _s, b in per_symbol]
+    return {"seed": seed, "start": start, "tick": tick, "bars": bars_n,
+            "clock": f"{tick}틱", "fee_pct": FEE_PCT, "combos": out}
 
 
 # --------------------------------------------------------------------------- #
