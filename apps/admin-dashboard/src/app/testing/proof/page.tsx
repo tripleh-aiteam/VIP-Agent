@@ -84,6 +84,12 @@ function ProofChart({ candles, trades, focus, buyLabel, sellLabel, openIdxs, hol
   const prevFocusRef = useRef<number | null>(null);
   const viewRef = useRef<{ from: number; to: number } | null>(null);   // the visible CLOCK window
   const lastIdxRef = useRef(0);                // index of the newest bar (live-edge test)
+  // The axis must show each bar's OWN clock time, never the raw timestamp. On a TICK chart
+  // the timestamps are sequential (one step per bar) so that two bars can never collide,
+  // which made the axis count seconds from the session open instead of showing the clock —
+  // it read 08:26 on a bar that really happened at 09:29. Every candle already carries its
+  // true time in `hhmm`, so the axis and the crosshair are formatted from that.
+  const labelRef = useRef<Map<number, string>>(new Map());
   const [ready, setReady] = useState(0);
 
   useEffect(() => {                             // create the chart ONCE
@@ -98,7 +104,9 @@ function ProofChart({ candles, trades, focus, buyLabel, sellLabel, openIdxs, hol
         height: 320, autoSize: true,
         layout: { background: { color: "transparent" }, textColor: dark ? "#aaa" : "#666" },
         grid: { vertLines: { color: "rgba(128,128,128,0.10)" }, horzLines: { color: "rgba(128,128,128,0.10)" } },
-        timeScale: { timeVisible: true, secondsVisible: false, rightOffset: 0, fixRightEdge: true },
+        timeScale: { timeVisible: true, secondsVisible: false, rightOffset: 0, fixRightEdge: true,
+                     tickMarkFormatter: (tm: number) => (labelRef.current.get(tm) ?? "").slice(0, 5) },
+        localization: { timeFormatter: (tm: number) => labelRef.current.get(tm) ?? "" },
       });
       const series = chart.addCandlestickSeries({
         upColor: RED, downColor: BLUE, borderUpColor: RED, borderDownColor: BLUE, wickUpColor: RED, wickDownColor: BLUE,
@@ -131,6 +139,7 @@ function ProofChart({ candles, trades, focus, buyLabel, sellLabel, openIdxs, hol
     const want = viewRef.current ? { ...viewRef.current } : null;
     const follow = followRef.current;
     lastIdxRef.current = candles.length - 1;
+    labelRef.current = new Map(candles.map((c) => [c.time, c.hhmm]));
     // colour each bar by the ENGINE's comparison (close vs the PREVIOUS bar's close), so a
     // BUY arrow always sits on a red bar and a SELL on a blue one, at every timeframe
     cs.series.setData(candles.map((c) => {
