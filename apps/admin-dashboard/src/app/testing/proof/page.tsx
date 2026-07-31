@@ -950,6 +950,15 @@ export default function ProofLab() {
           <div className="mt-3 rounded-xl border overflow-hidden" style={{ borderColor: GOLD }}>
             <div className="px-4 py-2 border-b bg-[var(--bg-elevated)]" style={{ borderColor: "var(--border-default)" }}>
               <b className="text-[13px]" style={{ color: GOLD }}>📒 {t("거래 기록 (누적 — 새 거래마다 +1, 절대 줄지 않음) — 클릭하면 증거", "trade history (cumulative — +1 per new trade, never shrinks) — click for evidence")}</b>
+              {/* the list holds ALL companies while the chart shows ONE — without saying so,
+                  a trade that is simply another company's reads as a missing arrow
+                  (boss 2026-07-31: "I check 14:27 bought but did not show") */}
+              {sym && res.symbols.length > 1 && (
+                <span className="ml-2 text-[10.5px]" style={{ color: TEAL }}>
+                  {t(`— 이 표는 ${res.symbols.length}개 종목 전부입니다. 차트에는 ${nm(sym)} 하나만 나옵니다 — 다른 줄을 클릭하면 그 종목 차트로 넘어갑니다.`,
+                     `— this table lists all ${res.symbols.length} companies. The chart shows only ${nm(sym)} — click another row to jump to that company's chart.`)}
+                </span>
+              )}
             </div>
             {/* summary bar — like the Algo 3 history header */}
             <div className="px-4 py-2.5 border-b text-[13px] tabular-nums flex items-center gap-5 flex-wrap" style={{ borderColor: "var(--border-default)", background: "rgba(230,81,0,0.05)" }}>
@@ -1075,7 +1084,9 @@ export default function ProofLab() {
                     <tr key={i} onClick={() => { if (active) { setFocus(null); } else if (live) { setSelCode(live.code); setFocus(live.ti); } }}
                       className={`border-t border-[var(--border-default)]/40 ${live ? "cursor-pointer hover:bg-[var(--bg-elevated)]" : "opacity-70"}`}
                       style={{ background: active ? "rgba(230,81,0,0.08)" : "transparent" }}>
-                      <td className="px-3 py-1.5 font-bold text-[var(--text-primary)]">{nm(r)}</td>
+                      <td className="px-3 py-1.5 font-bold" style={{ color: r.code === sym?.code ? "var(--text-primary)" : "var(--text-muted)" }}>
+                        {r.code === sym?.code && <span style={{ color: TEAL }}>▶ </span>}{nm(r)}
+                      </td>
                       <td className="px-2 font-bold" style={{ color: RED }}>
                         <div>▲ {r.tr.buy_fill_t ?? fillT(r.tr.buy_hhmm)}</div>
                         <div className="text-[9.5px] opacity-70 font-normal">{t(`신호 ${r.tr.buy_sig_t ?? `${r.tr.buy_hhmm}:59`}`, `signal ${r.tr.buy_sig_t ?? `${r.tr.buy_hhmm}:59`}`)}</div>
