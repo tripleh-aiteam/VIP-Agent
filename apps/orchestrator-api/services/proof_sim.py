@@ -576,10 +576,10 @@ def run_synthetic(seed: int = 7, period: int = 60, mode: str = "min1",
        around='HH:MM' → fine charts hold only their most recent BAR_CAP bars, so a trade
                       from earlier in the session would have no arrow to show. Pass the trade's
                       minute and the window CENTRES on it instead of on 'now' (Kiwoom scroll-back).
-       tick=N        → the last N EXECUTIONS, one candle per deal. Time stops mattering;
-                      you are looking at individual deals. The trades themselves are unchanged
-                      — the engine still decides on 1-minute closes — so this is another window
-                      onto the same market, just the closest one available."""
+       tick=N        → a TICK chart: one candle per N EXECUTIONS instead of per N seconds.
+                      Time stops mattering, only the count of deals does. The trades themselves
+                      are unchanged — the engine still decides on 1-minute closes — so this is
+                      another window onto the same market."""
     period = _norm_period(period)
     tick = max(0, min(int(tick or 0), TICK_MAX))
     per_chart = (mode == "chart")
@@ -592,12 +592,13 @@ def run_synthetic(seed: int = 7, period: int = 60, mode: str = "min1",
         sseed = seed + k * 101
         day0, secs = _seconds(sseed, base, start)         # THE market (per-second truth)
         c60 = _candles_from(day0, secs, 60)               # 1-minute candles
-        # 틱 = "show me the last N DEALS, one candle each" (boss 2026-07-31: "I wanted to
-        # show 5 traded or 10 traded in the chart"). It is a microscope on the tape, not a
-        # Kiwoom-style N-deals-per-candle aggregation — grouping deals would hide the very
-        # thing he wants to look at. Type 10 and exactly the last 10 deals are drawn.
+        # 틱 = N DEALS per candle, the Kiwoom 틱차트 rule. I briefly made it "draw the last
+        # N deals, one candle each" and the boss saw the flaw immediately: one deal carries
+        # ONE price, so that candle has no high and no low — 22 of 40 came out as flat lines
+        # with nothing to read. A candle needs a GROUP of deals to have a body and wicks,
+        # which is exactly why every real platform aggregates.
         execs = _execs(day0, secs, sseed, t_base) if tick else None
-        disp_all = (_candles_from_ticks(day0, execs[-tick:], 1) if tick
+        disp_all = (_candles_from_ticks(day0, execs, tick) if tick
                     else (c60 if period == 60 else _candles_from(day0, secs, period)))
         dec = disp_all if per_chart else c60               # what the ENGINE reads
         def _mk_tape(j, _d=day0, _s=secs, _dec=dec):       # a candle's tape = its own seconds

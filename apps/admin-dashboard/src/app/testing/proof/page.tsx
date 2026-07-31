@@ -542,18 +542,18 @@ export default function ProofLab() {
             ))}
             {/* 틱 차트 — type ANY count; a bar closes after that many TRADES, not seconds.
                 Applied on a short debounce so typing "30" does not fire a request per digit. */}
-            <span className="text-[10px] text-[var(--text-muted)] ml-1">{t("체결 확대경", "deals")}</span>
-            <input type="number" min={1} max={500} value={tickIn}
+            <span className="text-[10px] text-[var(--text-muted)] ml-1">{t("틱", "tick")}</span>
+            <input type="number" min={2} max={500} value={tickIn}
               onChange={(e) => setTickIn(e.target.value)}
               placeholder={t("몇 건?", "how many?")}
-              title={t("최근 체결 N건을 한 건씩 캔들로 그립니다 — 개별 거래를 하나하나 보는 확대경입니다. 10을 넣으면 마지막 10건만 나옵니다. 비우면 시간 차트로 돌아갑니다.",
-                       "draws the last N executions, ONE candle per deal — a microscope on individual trades. Type 10 and only the last 10 deals appear. Clear it to go back to the time charts.")}
+              title={t("체결 N건이 모여 캔들 1개가 됩니다 — 시간이 아니라 거래 건수로 봉이 닫힙니다. 한 건짜리 캔들은 가격이 하나뿐이라 고가·저가가 없으므로, 2건 이상을 넣으세요. 비우면 시간 차트로 돌아갑니다.",
+                       "N executions make ONE candle — the bar closes on a deal count, not a clock. A single deal carries one price, so a 1-deal candle has no high or low; use 2 or more. Clear it to go back to the time charts.")}
               className="w-20 text-[11.5px] font-bold px-2 py-1 rounded-lg border bg-[var(--bg-primary)] text-[var(--text-primary)] tabular-nums"
               style={{ borderColor: tick > 0 ? "#6a1b9a" : "var(--border-default)" }} />
             {tick > 0 && (
               <>
                 <span className="text-[11.5px] font-extrabold px-2 py-1 rounded-lg text-white" style={{ background: "#6a1b9a" }}>
-                  {t(`최근 ${tick}건`, `last ${tick} deals`)}
+                  {t(`체결 ${tick}건 = 캔들 1개`, `${tick} deals = 1 candle`)}
                 </span>
                 <button onClick={() => setTickIn("")} className="text-[11px] font-bold px-2 py-1 rounded-lg border"
                   style={{ borderColor: GOLD, color: GOLD }}>
@@ -576,7 +576,7 @@ export default function ProofLab() {
             ))}
             <span className="text-[10px] px-2 py-0.5 rounded-full" style={{ background: decMode === "min1" ? "rgba(230,81,0,0.12)" : "rgba(0,131,143,0.12)", color: decMode === "min1" ? GOLD : TEAL }}>
               {tick > 0
-                ? t(`같은 데이터 · 최근 체결 ${tick}건만 · 한 건 = 캔들 하나`, `same data · only the last ${tick} deals · one deal = one candle`)
+                ? t(`같은 데이터 · 같은 매매 · 체결 ${tick}건마다 캔들 하나 (시간 아님)`, `same data · same trades · one candle per ${tick} deals, not per unit of time`)
                 : decMode === "min1"
                 ? t("같은 데이터 · 같은 매매 (시각·가격 동일) · 캔들만 더 잘게", "same data · same trades (identical times & prices) · finer candles only")
                 : t("같은 데이터 · 이 차트가 직접 판단 (매매 횟수는 차트마다 다름 — 정상)", "same data · this chart decides for itself (trade counts differ per chart — by design)")}
@@ -742,8 +742,8 @@ export default function ProofLab() {
                        ` — on the ${tfSec}-sec chart the 3 decision minutes (=180 seconds) are simply split into finer bars. The arrow sits on the candle that contains the exact second the 3rd minute confirmed. Trade times and prices are 100% identical to the 1-min view.`)}</span>
                 )}
                 {tick > 0 && (
-                  <span style={{ color: "#6a1b9a" }}>{t(` — 체결 확대경: 가장 최근 체결 ${tick}건을 한 건에 캔들 하나씩 그렸습니다 (${tick}개 캔들). 가로축은 시간이 아니라 거래 순서이고, 그보다 오래된 체결은 그리지 않습니다. 숫자를 크게 넣으면 더 멀리까지 보입니다.`,
-                       ` — deal microscope: the last ${tick} executions, ONE candle per deal (${tick} candles). The x-axis is trade order, not the clock, and nothing older than those ${tick} deals is drawn. Type a bigger number to see further back.`)}</span>
+                  <span style={{ color: "#6a1b9a" }}>{t(` — 틱 차트: 체결 ${tick}건이 모여 캔들 하나입니다. 그 ${tick}건 중 첫 가격이 시가, 가장 높은 값이 고가, 가장 낮은 값이 저가, 마지막이 종가 — 그래서 몸통과 꼬리가 생깁니다. 가로축은 시간이 아니라 거래 순서라, 거래가 몰리면 봉이 빨리 생기고 한산하면 천천히 생깁니다.`,
+                       ` — TICK chart: ${tick} executions make one candle. Of those ${tick} deals the first is the open, the highest the high, the lowest the low and the last the close — which is what gives the bar a body and wicks. The x-axis is trade order, not the clock, so busy stretches make bars fast and quiet ones slowly.`)}</span>
                 )}
                 {source === "synthetic" && decMode === "chart" && (
                   <span style={{ color: TEAL }}>{t(` — 「차트별 판단」: 이 ${tfSec === 60 ? "1분" : tfSec + "초"}봉 3연속으로 직접 판단합니다. 규칙은 동일하지만 시간틀이 다르므로 매매 횟수·시각은 1분봉과 다릅니다 (그게 정상입니다).`,
@@ -788,7 +788,7 @@ export default function ProofLab() {
         return (
           <div className={view === "table" ? "rounded-xl border overflow-hidden" : "mt-3 rounded-xl border overflow-hidden"} style={{ borderColor: TEAL }}>
             <div className="px-4 py-2 border-b bg-[var(--bg-elevated)] flex items-center gap-2 flex-wrap" style={{ borderColor: "var(--border-default)" }}>
-              <b className="text-[13px]" style={{ color: tick > 0 ? "#6a1b9a" : TEAL }}>📼 {nm(sym)} — {tick > 0 ? t(`체결 — 아래 마지막 ${tick}건이 차트의 캔들 ${tick}개입니다 (한 줄 = 한 캔들)`, `executions — the last ${tick} rows below ARE the ${tick} candles on the chart (one row = one candle)`) : t("체결 (초당·실시간)", "executions (per second · LIVE)")}</b>
+              <b className="text-[13px]" style={{ color: tick > 0 ? "#6a1b9a" : TEAL }}>📼 {nm(sym)} — {tick > 0 ? t(`체결 — 아래 ${tick}줄마다 차트의 캔들 하나가 만들어집니다`, `executions — every ${tick} rows below make ONE candle on the chart`) : t("체결 (초당·실시간)", "executions (per second · LIVE)")}</b>
               <span className="text-[10.5px] font-bold px-2 py-0.5 rounded-full" style={{ background: "rgba(0,131,143,0.12)", color: TEAL }}>
                 ⚡ {t(`1초 갱신${fastBook?.time ? ` (${fastBook.time})` : ""}`, `1s updates${fastBook?.time ? ` (${fastBook.time})` : ""}`)}
               </span>
