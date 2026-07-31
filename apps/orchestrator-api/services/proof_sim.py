@@ -8,11 +8,11 @@ Purpose: PROVE, with evidence the boss can click through, that Algorithm 3's eng
      the same raw numbers.
 
 Two samples, same verifier:
-  • source="synthetic" — an artificial trading day where we PLANT known patterns:
-      clean 3-ups, a 5-up (must still buy on the 3rd), 2-up fakeouts (must NOT buy),
-      flat candles (must break the count), 1-blue chops (must NOT sell), a 4-down
-      (must sell on the 3rd). Order book is generated per fill, so the price
-      explanation is exact.
+  • source="synthetic" — an artificial trading day generated to MATCH the statistics of
+      real Kiwoom 1-minute bars (run lengths, flat-close rate, body/range — see _RUN_W).
+      It used to be a hand-drawn staircase of planted patterns; realistic movement throws
+      up the same traps far more often, and without anyone choosing when. The order book
+      is generated per fill, so the price explanation is exact.
   • source="kiwoom"  — TODAY's real minute bars from Kiwoom for a real ticker; the
       same engine comparison replayed candle-by-candle, arrows on the real chart.
       (Historical order books don't exist, so fills use the decision close and the
@@ -48,27 +48,61 @@ def _tick(px: float) -> int:
 
 
 # --------------------------------------------------------------------------- #
-#  synthetic day — planted patterns                                            #
+#  the synthetic market's shape                                                #
 # --------------------------------------------------------------------------- #
-#  step plan per symbol: +1 = one rising candle, -1 = one falling, 0 = flat.
-#  Every trap the boss asked about is planted:
-#    up3            → BUY exactly on 3rd red
-#    up5            → BUY on 3rd red, 4th & 5th keep rising AFTER the entry
-#    up2 / up1+flat → fakeouts: must NOT buy
-#    dn3 / dn4      → SELL on 3rd blue (4th falls AFTER the exit)
-#    dn1 chop       → must NOT sell on 1 blue
-# One planted step per MINUTE. A trade's P&L = (rises AFTER the buy) − (3 falls to the sell),
-# so run lengths decide the outcome — designed for an HONEST mix of wins and losses
-# (boss 2026-07-30: the old pattern was symmetric, which made 0% wins mathematically certain).
-# ups == downs == 40 per cycle → the day oscillates instead of drifting.
-_PLAN = ([+1] * 8 + [-1] * 8                       # WIN  — bought on the 3rd, price rose 5 more
-         + [+1] * 2 + [-1] * 2                     # trap — 2-up fakeout, no buy
-         + [+1] * 3 + [-1] * 3                     # LOSS — bought the top, fell straight back
-         + [+1] * 1 + [0] + [+1] * 2 + [-1] * 3    # trap — a FLAT close breaks the count, no buy
-         + [+1] * 7 + [-1] * 1 + [+1] * 1 + [-1] * 7   # WIN — a single blue candle does NOT sell
-         + [+1] * 4 + [-1] * 4                     # LOSS
-         + [+1] * 9 + [-1] * 9                     # WIN (big)
-         + [+1] * 3 + [-1] * 3)                    # LOSS
+# ── The minute-by-minute shape of the market ────────────────────────────────────────
+# This used to be a hand-drawn staircase (8 up, 8 down, 2 up, 2 down …). It made clean
+# teaching examples but it did not look like a market: 56% of its runs lasted 3 minutes
+# or more, and the chart read as one long ramp up followed by one long ramp down
+# (boss 2026-07-31: "in the chart it looks like always up and always down, I want more
+# fluctuation").
+#
+# So the shape is now drawn from REAL data instead of invented. Measured 2026-07-31 on
+# Kiwoom 1-minute bars — 삼성전자, SK하이닉스, 현대차, NAVER, 400 bars each, 394 runs:
+#
+#     minutes a rise lasts   1: 59.1%   2: 21.8%   3: 13.5%   4: 2.0%
+#                            5:  1.3%   6:  1.0%   7:  0.3%   8: 0.3%
+#     runs reaching 3+ (the ones that trigger a BUY): 19%
+#     minutes that close exactly flat: ~15%
+#     median |body| / high-low range: 0.50
+#
+# The weights below ARE those counts. Nothing here is chosen to make the algorithm look
+# good or bad — it is chosen to look like Korea. Whatever P&L falls out of it is the
+# honest consequence of trading a realistic tape, and it should be read that way.
+_RUN_W = [(1, 233), (2, 86), (3, 53), (4, 8), (5, 5), (6, 4), (7, 1), (8, 1)]
+_FLAT_RATE = 0.28                       # inserted BETWEEN runs → ~13% of MINUTES flat (real: 6-25%)
+_TICK_SZ = [1, 2, 3, 4]                 # a minute's net move, in ticks
+_TICK_W = [45, 30, 15, 10]              # small moves dominate, as in the real tape
+_WANDER = 0.20                          # bridge amplitude — calibrated to |body|/range ≈ 0.50
+
+_plan_cache: dict[int, list[int]] = {}
+
+
+def _plan_for(seed: int) -> list[int]:
+    """The direction of every minute of the session: +1 rise, -1 fall, 0 flat.
+
+    Built once per symbol seed and cached, so minute m always has the same direction no
+    matter how long the tape has grown — a closed minute can never change, which is what
+    keeps closed trades immutable.
+
+    Run lengths are drawn from the measured real distribution above, alternating rises and
+    falls, with a flat minute occasionally breaking the count (which is exactly the case
+    that must NOT be counted as a rise — a trap the real market provides for free)."""
+    if seed in _plan_cache:
+        return _plan_cache[seed]
+    r = random.Random(f"{seed}:plan:real")
+    lens = [L for L, _w in _RUN_W]
+    wts = [w for _L, w in _RUN_W]
+    plan: list[int] = []
+    up = r.random() < 0.5
+    while len(plan) < DEMO_MINUTES + 60:
+        plan += [1 if up else -1] * r.choices(lens, weights=wts)[0]
+        if r.random() < _FLAT_RATE:
+            plan.append(0)
+        up = not up
+    _plan_cache[seed] = plan
+    return plan
+
 
 _SYMBOLS = [("PRF1", "프루프전자", 205_000), ("PRF2", "시뮬중공업", 19_500), ("PRF3", "테스트화학", 78_000)]
 
@@ -155,24 +189,29 @@ def _seconds(seed: int, base_px: float, start: int = 0) -> tuple[int, list[dict]
     t = _tick(base_px) or 1
     secs: list[dict] = []
     px = float(base_px)
+    plan = _plan_for(seed)
     for m in range((total_sec + 59) // 60):
         rm = random.Random(f"{seed}:min:{m}")            # ← per-minute seed = frozen history
-        step = _PLAN[m % len(_PLAN)]                     # one planted step per MINUTE
-        # LIVING minute (boss 2026-07-30): the price moves EVERY SECOND, up AND down, while
-        # drifting toward the minute's target close. Real fluctuation means the finer charts
-        # (15/30/40s and even 1s) carry genuine information instead of a smooth staircase —
-        # that is what makes the multi-timeframe cross-check actually prove something.
+        step = plan[m]                                   # this minute's direction (see _plan_for)
         o = px
-        ticks = 0 if step == 0 else step * rm.choice([2, 3, 4])   # the minute's NET move, in ticks
+        ticks = 0 if step == 0 else step * rm.choices(_TICK_SZ, weights=_TICK_W)[0]
         target = o + ticks * t
-        cur = o
+        # A real minute does NOT walk straight from its open to its close: it wanders both
+        # ways and ends wherever it ends. That is a Brownian bridge — a random walk pinned
+        # to both ends — and its amplitude is scaled so the high-low range comes out about
+        # twice the body, which is what real Kiwoom bars measure (median |body|/range 0.50).
+        # This is what makes the 3초/6초/15초 charts show genuine texture instead of a ramp.
+        w = [0.0]
+        for _ in range(59):
+            w.append(w[-1] + rm.gauss(0.0, 1.0))
+        span = max(abs(ticks), 1) * t * _WANDER
         for s in range(60):
             off = m * 60 + s
             if off >= total_sec:
                 break
-            path = o + (target - o) * s / 59                      # drift toward the close
-            wig = rm.choice([-2, -1, -1, 0, 0, 0, 1, 1, 2]) * t   # real second-to-second noise
-            cur = round((path + wig) / t) * t
+            lin = o + (target - o) * s / 59                       # where the drift alone would be
+            brg = (w[s] - w[59] * s / 59) * span                  # the wander, pinned to 0 at both ends
+            cur = round((lin + brg) / t) * t
             if s == 0: cur = o                                    # :00 = the minute's open (= prev close)
             if s == 59: cur = target                              # :59 = the CLOSE the engine reads
             secs.append({"off": off, "px": cur, "qty": rm.randint(1, 80) * 10})

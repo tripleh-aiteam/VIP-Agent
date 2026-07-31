@@ -895,8 +895,8 @@ export default function ProofLab() {
             {/* ⚠️ boss 2026-07-30: the number above must never be read as "the algorithm earns/loses this much" */}
             {source === "synthetic" && rows.length > 0 && (
               <div className="px-4 py-1.5 border-b text-[10.5px] leading-relaxed" style={{ borderColor: "var(--border-default)", color: GOLD }}>
-                ⚠ {t("이 손익은 인공 패턴의 산수입니다 — 알고리즘의 실력이 아닙니다. 상승 L봉 구간에 같은 길이의 하락을 붙여 만든 교육용 데이터이고, 3봉 진입·3봉 청산이므로 항상 (L-3)-3 = L-6 만큼만 남습니다 (짧은 구간=손실 확정, 긴 구간=이익 확정). 실제 수익성은 키움 실데이터에서만 판단합니다.",
-                       "this P&L is arithmetic of the artificial pattern, not the algorithm's skill. Each up-leg of L candles is paired with an equal down-leg for teaching, and with a 3-candle entry and 3-candle exit a leg returns exactly (L-3)-3 = L-6 ticks (short legs must lose, long legs must win). Real profitability is judged only on real Kiwoom data.")}
+                ⚠ {t("이 데이터는 실제 키움 1분봉 통계에 맞춰 생성됩니다 (2026-07-31 삼성전자·SK하이닉스·현대차·NAVER 1,600봉 측정: 상승 연속 1분 59% · 2분 22% · 3분 이상 19%, 보합 약 15%, 몸통/고저 0.50). 더 이상 계단식 인공 패턴이 아니므로 이 손익은 '현실과 비슷한 등락에서 이 규칙이 어떻게 되는가'를 보여줍니다. 다만 여전히 인공 데이터입니다 — 실제 수익성은 키움 실데이터 백테스트로만 확정됩니다.",
+                       "this data is generated to match REAL Kiwoom 1-min statistics (measured 2026-07-31 across 1,600 bars of 삼성전자/SK하이닉스/현대차/NAVER: rises lasting 1 min 59%, 2 min 22%, 3+ min 19%; ~15% flat closes; body/range 0.50). It is no longer a staircase, so this P&L shows how the rule behaves on realistic movement. It is still artificial data — real profitability is settled only by a backtest on real Kiwoom bars.")}
               </div>
             )}
             {rows.length === 0 ? (
