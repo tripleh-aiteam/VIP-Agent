@@ -144,6 +144,24 @@ export default function TestingIndex() {
           </div>
         </div>
         )}
+
+        {/* ---- 🔬 Strategy Lab — boss 2026-07-31: which RULE wins, all of them side by side ---- */}
+        {SHOW_ALGO_23 && (
+        <div className="rounded-2xl border-2 p-5" style={{ borderColor: "#6a1b9a", background: "rgba(106,27,154,0.04)" }}>
+          <div className="text-[18px] font-extrabold" style={{ color: "#6a1b9a" }}>
+            🔬 {t("전략 실험실 — 어떤 규칙이 제일 나은가? (NEW)", "Strategy Lab — which rule wins? (NEW)")}
+          </div>
+          <p className="mt-2 text-[13px] leading-relaxed text-[var(--text-secondary)]">
+            {t("12개 규칙(3연속↑/3연속↓, 2/2, 3/2, 3/4, 익절 +0.3·+0.5·+1.0% 등)이 같은 인공 시장·같은 3종목·같은 5틱 캔들에서 동시에 매매합니다. 차이는 규칙 하나뿐이라 승률을 바로 비교할 수 있습니다. 주말 내내 돌려두고 월요일에 순위를 보세요 — 저장하지 않고 매번 다시 계산하므로 서버를 껐다 켜도 기록이 사라지지 않습니다.",
+               "12 rules (3up/3down, 2/2, 3/2, 3/4, take-profit at +0.3/+0.5/+1.0% and more) trade the SAME artificial market, the same 3 stocks, the same 5-tick candles — so the only difference between two rows is the rule. Leave it running over the weekend and read the ranking on Monday. Nothing is stored, so restarting the server loses nothing.")}
+          </p>
+          <div className="mt-4 flex flex-wrap gap-2">
+            <Link prefetch={true} href="/testing/lab" className="text-[13.5px] font-extrabold px-4 py-2 rounded-xl text-white" style={{ background: "#6a1b9a" }}>
+              {t("실험실 열기 (12개 규칙 비교)", "Open the lab (12 rules compared)")}
+            </Link>
+          </div>
+        </div>
+        )}
       </div>
 
       <p className="mt-6 text-[11.5px] text-[var(--text-muted)]">
