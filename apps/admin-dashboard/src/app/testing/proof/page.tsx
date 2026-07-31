@@ -941,6 +941,7 @@ export default function ProofLab() {
         // shifts every trade by 0.23% but rarely moves a trade across the win/loss line, so
         // the counts stay put and nothing on screen appears to change (boss 2026-07-31:
         // "now fee included and excluded same?"). The total is where the fee actually lands.
+        const winPct = rows.length ? Math.round((wins / rows.length) * 100) : 0;
         const sum = Math.round(rows.reduce((a2, r) => a2 + gr(r), 0) * 100) / 100;
         const feeCost = Math.round(rows.length * 0.23 * 100) / 100;
         const upMoves = rows.filter((r) => (r.tr.move_pct ?? 0) > 0).length;
@@ -967,18 +968,25 @@ export default function ProofLab() {
                   ⚪ {flats}{t("무", "flat")}
                 </span>
               )}
-              {/* ONE figure, not two. 승률 and Σ side by side competed for attention and
-                  invited the question of which was "the" answer (boss 2026-07-31). The total
-                  is the answer, so it stands alone — and it is the number the 💸 button
-                  actually moves. W/L/flat counts remain to its left for anyone who wants them. */}
-              <span className="text-[15px] font-extrabold tabular-nums"
+              {/* 승률 is the headline — it answers "how often does it win" and is the number
+                  the boss asked to see (2026-07-31). The P&L total stays as small print
+                  beside it: it is negative on this data, which is the finding rather than a
+                  fault, and it is also the only figure the 💸 button moves — so hiding it
+                  would make that button look broken again. */}
+              <span className="text-[16px] font-extrabold tabular-nums"
+                title={t("이긴 매매의 개수 비율입니다 (몇 번 이겼는가). 얼마를 벌었는지는 옆의 합계입니다.",
+                         "the share of trades that ended in profit — HOW OFTEN it wins. How MUCH it made is the total beside it.")}
+                style={{ color: winPct >= 50 ? "#2e7d32" : GOLD }}>
+                🏆 {t(`승률 ${winPct}%`, `${winPct}% win`)}
+              </span>
+              <span className="text-[11px] tabular-nums"
                 title={withFee
-                  ? t(`왕복 수수료·세금 ${feeCost}% (${rows.length}건 × 0.23%)를 뺀 합계입니다.`, `total after ${feeCost}% of round-trip fees (${rows.length} trades x 0.23%).`)
-                  : t(`매매 자체의 합계 — 수수료 ${feeCost}%는 아직 빼지 않았습니다. 💸 버튼을 누르면 차감됩니다.`, `the trades' own total — ${feeCost}% of fees not taken out yet. Press 💸 to subtract them.`)}
+                  ? t(`왕복 수수료·세금 ${feeCost}% (${rows.length}건 × 0.23%)를 뺀 합계`, `total after ${feeCost}% of round-trip fees (${rows.length} trades x 0.23%)`)
+                  : t(`매매 자체의 합계 — 수수료 ${feeCost}%는 아직 빼지 않았습니다`, `the trades' own total — ${feeCost}% of fees not taken out yet`)}
                 style={{ color: sum > 0 ? RED : BLUE }}>
-                {sum > 0 ? "+" : ""}{sum}%
-                <span className="text-[10px] font-normal text-[var(--text-muted)]">
-                  {withFee ? t(` 수수료 포함`, ` incl. fees`) : t(` 수수료 제외`, ` excl. fees`)}
+                {t("합계", "total")} {sum > 0 ? "+" : ""}{sum}%
+                <span className="text-[9.5px] text-[var(--text-muted)]">
+                  {withFee ? t(" 수수료 포함", " incl. fees") : t(" 수수료 제외", " excl. fees")}
                 </span>
               </span>
               {upMoves > 0 && (
