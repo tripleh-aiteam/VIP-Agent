@@ -794,12 +794,14 @@ export default function ProofLab() {
         return (
           <div className={view === "table" ? "rounded-xl border overflow-hidden" : "mt-3 rounded-xl border overflow-hidden"} style={{ borderColor: TEAL }}>
             <div className="px-4 py-2 border-b bg-[var(--bg-elevated)] flex items-center gap-2 flex-wrap" style={{ borderColor: "var(--border-default)" }}>
-              <b className="text-[13px]" style={{ color: tick > 0 ? "#6a1b9a" : TEAL }}>📼 {nm(sym)} — {tick > 0 ? t(`체결 — 아래 ${tick}줄마다 차트의 캔들 하나가 만들어집니다`, `executions — every ${tick} rows below make ONE candle on the chart`) : t("체결 (초당·실시간)", "executions (per second · LIVE)")}</b>
+              <b className="text-[13px]" style={{ color: tick > 0 ? "#6a1b9a" : TEAL }}>📼 {nm(sym)} — {tick > 0 ? t(`체결 — 차트는 이런 체결 ${tick}건을 묶어 캔들 하나로 그립니다 (이 표는 최신순이라 줄 묶음이 캔들 경계와 딱 맞지는 않습니다)`, `executions — the chart groups ${tick} deals like these into one candle (this table is newest-first, so the rows do not line up with candle boundaries)`) : t("체결 (초당·실시간)", "executions (per second · LIVE)")}</b>
               <span className="text-[10.5px] font-bold px-2 py-0.5 rounded-full" style={{ background: "rgba(0,131,143,0.12)", color: TEAL }}>
                 ⚡ {t(`1초 갱신${fastBook?.time ? ` (${fastBook.time})` : ""}`, `1s updates${fastBook?.time ? ` (${fastBook.time})` : ""}`)}
               </span>
               {prevClose != null && <span className="text-[10.5px] text-[var(--text-muted)] tabular-nums">{t(`전일종가 ₩${fmt(prevClose)}`, `prev close ₩${fmt(prevClose)}`)}</span>}
-              <span className="text-[10.5px] text-[var(--text-muted)]">{t("같은 초에 여러 체결이 찍힙니다 (실제 시장처럼) · 이 체결들이 쌓여 1분 캔들이 됩니다", "several deals print within the SAME second (like the real market) · they build the 1-min candles")}</span>
+              <span className="text-[10.5px] text-[var(--text-muted)]">{tick > 0
+                  ? t(`같은 초에 여러 체결이 찍힙니다 (실제 시장처럼) · 지금 차트는 이 체결 ${tick}건마다 캔들 하나입니다`, `several deals print within the SAME second (like the real market) · the chart is currently one candle per ${tick} of them`)
+                  : t("같은 초에 여러 체결이 찍힙니다 (실제 시장처럼) · 이 체결들이 쌓여 캔들이 됩니다", "several deals print within the SAME second (like the real market) · these deals are what the candles are built from")}</span>
             </div>
             <div className="overflow-y-auto" style={{ maxHeight: 300 }}>
             <table className="w-full text-[11.5px] tabular-nums">
