@@ -230,7 +230,7 @@ def _seconds(seed: int, base_px: float, start: int = 0) -> tuple[int, list[dict]
     return day0, secs
 
 
-def _candles_from(day0: int, secs: list[dict], period: int) -> list[dict]:
+def _candles_from(day0: int, secs: list[dict], period: int, hl: list | None = None) -> list[dict]:
     """Aggregate the 1-second truth into candles of `period` seconds (open = first second,
     close = last, high/low = extremes) — exactly how any real chart builds a timeframe.
     `dir` = the ENGINE's own comparison for this bar: +1 if its close is HIGHER than the
@@ -245,8 +245,15 @@ def _candles_from(day0: int, secs: list[dict], period: int) -> list[dict]:
         s = 0
         while s < 60:
             ln = min(period, 60 - s)
-            chunk = secs[m * 60 + s: m * 60 + s + ln]
+            i0 = m * 60 + s
+            chunk = secs[i0: i0 + ln]
             pxs = [x["px"] for x in chunk]
+            # HIGH/LOW come from every DEAL in the bar, not from the one-per-second sample.
+            # 40% of seconds contain deals outside that sample, which is why a 5틱 chart
+            # could show a low the 3초 chart never did (boss 2026-07-31: "different highest
+            # and lowest peak ... not good"). Closes are untouched, so no trade moves.
+            hi_d = max(hl[j][0] for j in range(i0, i0 + ln)) if hl else max(pxs)
+            lo_d = min(hl[j][1] for j in range(i0, i0 + ln)) if hl else min(pxs)
             ep9 = day0 + chunk[0]["off"]
             close = pxs[-1]
             # CONTINUOUS bars (boss 2026-07-30): a bar OPENS at the previous bar's close, the
@@ -256,7 +263,7 @@ def _candles_from(day0: int, secs: list[dict], period: int) -> list[dict]:
             op = prev_close if prev_close is not None else pxs[0]
             d = 1 if close > op else (-1 if close < op else 0)
             out.append({"time": ep9, "hhmm": _label(ep9, period),
-                        "open": op, "high": max(max(pxs), op), "low": min(min(pxs), op),
+                        "open": op, "high": max(hi_d, op), "low": min(lo_d, op),
                         "close": close, "dir": d,
                         "off0": chunk[0]["off"], "n": ln, "half": ln != period})
             prev_close = close
@@ -281,18 +288,62 @@ def _execs(day0: int, secs: list[dict], seed: int, tick: int) -> list[dict]:
     out: list[dict] = []
     prev = secs[0]["px"] if secs else 0.0
     for x in secs:
-        r = random.Random(f"{seed}:ex:{x['off']}")
-        k = r.choices([1, 2, 3, 4, 5], weights=[26, 27, 23, 15, 9])[0]   # deals in this second
-        vols = [max(1, int(x["qty"] / k)) for _ in range(k)]
-        for j in range(k - 1):
-            f = (j + 1) / k
-            mid = prev + (x["px"] - prev) * f + r.choice([-1, 0, 0, 0, 1]) * tick
-            out.append({"t": _sec_label(day0, x["off"]), "px": round(mid / tick) * tick,
-                        "qty": vols[j] * 10, "strength": r.randint(78, 138), "off": x["off"]})
-        # the closing print of the second — the number every candle and every trade uses
-        out.append({"t": _sec_label(day0, x["off"]), "px": x["px"],
-                    "qty": vols[-1] * 10, "strength": r.randint(78, 138), "off": x["off"]})
+        pxs, vols, strs = _second_deals(seed, x, prev, tick)
+        lbl = _sec_label(day0, x["off"])
+        for px, q, st in zip(pxs, vols, strs):
+            out.append({"t": lbl, "px": px, "qty": q, "strength": st, "off": x["off"]})
         prev = x["px"]
+    return out
+
+
+def _second_deals(seed: int, x: dict, prev: float, tick: int) -> tuple[list, list, list]:
+    """THE deals of one second — the single source both the tick charts and the time
+    charts read, so they can never disagree.
+
+    Before this existed the time charts sampled ONE price per second (the closing print)
+    while the tick charts used every deal, and 40% of seconds contained deals outside that
+    one-price band. The result was a 5틱 chart showing a low of 220,500 where the 3초 chart
+    showed 221,000 — the boss spotted it as different peaks on charts of the same market.
+
+    The last price returned is always x["px"], which is what every candle closes on and
+    what the engine reads, so nothing about any trade changes."""
+    r = random.Random(f"{seed}:ex:{x['off']}")
+    k = r.choices([1, 2, 3, 4, 5], weights=[26, 27, 23, 15, 9])[0]        # deals this second
+    base = max(1, int(x["qty"] / k))
+    pxs, vols, strs = [], [], []
+    for j in range(k - 1):
+        f = (j + 1) / k
+        mid = prev + (x["px"] - prev) * f + r.choice([-1, 0, 0, 0, 1]) * tick
+        pxs.append(round(mid / tick) * tick)
+        vols.append(base * 10)
+        strs.append(r.randint(78, 138))
+    pxs.append(x["px"])                       # the closing print of the second
+    vols.append(base * 10)
+    strs.append(r.randint(78, 138))
+    return pxs, vols, strs
+
+
+_hl_cache: dict[int, list[tuple]] = {}
+
+
+def _sec_hl(seed: int, secs: list[dict], tick: int) -> list[tuple]:
+    """(high, low) of every second, from ALL its deals — what a real candle's wick is made
+    of. Same numbers as _execs by construction, but without building 85,000 dicts.
+
+    Cached and extended INCREMENTALLY: the tape only ever grows at the end, and a closed
+    second never changes, so a refresh recomputes just the handful of new seconds instead
+    of all 33,000. Without this, adding per-deal wicks doubled the cost of every request."""
+    have = _hl_cache.get(seed)
+    if have is not None and len(have) >= len(secs):
+        return have[:len(secs)]
+    out = have[:] if have else []
+    start = len(out)
+    prev = secs[start - 1]["px"] if start else (secs[0]["px"] if secs else 0.0)
+    for x in secs[start:]:
+        pxs, _v, _s = _second_deals(seed, x, prev, tick)
+        out.append((max(pxs), min(pxs)))
+        prev = x["px"]
+    _hl_cache[seed] = out
     return out
 
 
@@ -333,7 +384,7 @@ def _tape_from(day0: int, secs: list[dict], start_off: int, count: int) -> list[
 
 def _synthetic_candles(seed: int, base_px: float, period: int = 60) -> list[dict]:
     day0, secs = _seconds(seed, base_px)
-    return _candles_from(day0, secs, _norm_period(period))
+    return _candles_from(day0, secs, _norm_period(period), _sec_hl(seed, secs, _tick(base_px) or 1))
 
 
 def _forming_from(day0: int, secs: list[dict], period: int) -> dict | None:
@@ -591,7 +642,8 @@ def run_synthetic(seed: int = 7, period: int = 60, mode: str = "min1",
         t_base = _tick(base) or 1                         # ONE tick per symbol, everywhere
         sseed = seed + k * 101
         day0, secs = _seconds(sseed, base, start)         # THE market (per-second truth)
-        c60 = _candles_from(day0, secs, 60)               # 1-minute candles
+        hl = _sec_hl(sseed, secs, t_base)                 # per-second high/low from ALL deals
+        c60 = _candles_from(day0, secs, 60, hl)           # 1-minute candles
         # 틱 = N DEALS per candle, the Kiwoom 틱차트 rule. I briefly made it "draw the last
         # N deals, one candle each" and the boss saw the flaw immediately: one deal carries
         # ONE price, so that candle has no high and no low — 22 of 40 came out as flat lines
@@ -599,7 +651,7 @@ def run_synthetic(seed: int = 7, period: int = 60, mode: str = "min1",
         # which is exactly why every real platform aggregates.
         execs = _execs(day0, secs, sseed, t_base) if tick else None
         disp_all = (_candles_from_ticks(day0, execs, tick) if tick
-                    else (c60 if period == 60 else _candles_from(day0, secs, period)))
+                    else (c60 if period == 60 else _candles_from(day0, secs, period, hl)))
         dec = disp_all if per_chart else c60               # what the ENGINE reads
         def _mk_tape(j, _d=day0, _s=secs, _dec=dec):       # a candle's tape = its own seconds
             cd = _dec[j]
@@ -1055,7 +1107,8 @@ def minute_tape(source: str, code: str, seed: int, hhmm: str, period: int = 60,
     sseed = seed + k * 101
     period = _norm_period(period)
     day0, secs = _seconds(sseed, _SYMBOLS[k][2], start)
-    candles = _candles_from(day0, secs, period)
+    hl = _sec_hl(sseed, secs, _tick(_SYMBOLS[k][2]) or 1)
+    candles = _candles_from(day0, secs, period, hl)
     for cd in candles:
         if cd["hhmm"] == hhmm:
             return {"ok": True, "hhmm": hhmm, "candle": cd,
