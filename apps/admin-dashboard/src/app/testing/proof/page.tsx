@@ -172,7 +172,7 @@ function ProofChart({ candles, trades, focus, buyLabel, sellLabel, openIdxs, hol
       toEdge();
     } else {
       // panned away → put the window back on the very same clock range, whatever the period.
-      // But a chart may not HOLD that range: 1초 keeps only its last 30 minutes, so carrying
+      // But a chart may not HOLD that range: fine charts keep only their last 3,600 bars, so carrying
       // an 07:40 window onto it produced from > to — an impossible range that drew an empty
       // chart with no candles and no arrows. If the window does not overlap this chart's
       // data, fall back to its live edge rather than asking for a range that cannot exist.
@@ -325,7 +325,7 @@ export default function ProofLab() {
                     tape?: { t: string; px: number; qty: number; strength?: number | null }[] | null; prev_close?: number | null };
   const [fastBook, setFastBook] = useState<FastBook | null>(null);   // ⚡ 1s Kiwoom-speed ladder + 체결 feed
 
-  const [tfSec, setTfSec] = useState<60 | 40 | 30 | 15 | 1>(60);   // candle period — 1분봉 default
+  const [tfSec, setTfSec] = useState<60 | 40 | 30 | 15 | 6 | 3>(60);   // candle period — 1분봉 default
   const [decMode, setDecMode] = useState<"min1" | "chart">("min1");   // who decides: 1분 fixed vs this chart
   // ▶ LIVE-FROM-NOW (boss 2026-07-31: "I wanna start trading from now and lets see how will
   // work"). 0 = 전체 하루 (the complete recorded proof day, instant audit).
@@ -403,7 +403,7 @@ export default function ProofLab() {
           setRes((old) => (r?.symbols?.length && nSy(r) >= nSy(old) && nTr(r) >= nTr(old) ? r : old));
         })
         .catch(() => {});
-    }, source === "synthetic" ? (tfSec === 1 ? 6_000 : 3_000) : code !== "ALL" ? 10_000 : 60_000);   // syn 3s (1초 6s — thousands of bars per payload), single 10s, ALL sweep 60s
+    }, source === "synthetic" ? (tfSec <= 6 ? 6_000 : 3_000) : code !== "ALL" ? 10_000 : 60_000);   // syn 3s (3초/6초 6s — thousands of bars per payload), single 10s, ALL sweep 60s
     return () => clearInterval(iv);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [source, code, seed, tfSec, decMode, liveStart]);
@@ -418,16 +418,16 @@ export default function ProofLab() {
   const focused = !!(sel && sym);
   useEffect(() => { setTapeMin({ BUY: 2, SELL: 2 }); }, [focus]);   // fresh trade → default to the 3rd candle's minute
 
-  // 🔎 1초봉은 60분(3,600봉)만 담습니다 — 그보다 오래된 거래를 클릭하면 그 화살표가 창 밖이라 안 보입니다.
-  // 그래서 1초봉에서 거래를 선택하면 창을 그 시각으로 옮겨 다시 받아옵니다 (키움 스크롤백과 같은 동작).
+  // 🔎 잘게 나눈 차트(3초·6초)는 최근 3,600봉만 담습니다 — 그보다 오래된 거래를 클릭하면 화살표가 창 밖입니다.
+  // 그래서 거래를 선택하면 창을 그 시각으로 옮겨 다시 받아옵니다 (키움 스크롤백과 같은 동작).
   // 거래 목록 자체는 항상 하루 전체로 계산되므로 선택 index는 그대로 유효합니다.
   const aroundRef = useRef("");
   useEffect(() => {
-    if (tfSec !== 1 || source !== "synthetic") { aroundRef.current = ""; return; }
+    if (tfSec > 6 || source !== "synthetic") { aroundRef.current = ""; return; }
     const want = sel?.buy_hhmm ? sel.buy_hhmm.slice(0, 5) : "";
     if (want === aroundRef.current) return;
     aroundRef.current = want;
-    load(source, seed, code, 1, true, decMode, want);
+    load(source, seed, code, tfSec, true, decMode, want);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tfSec, focus, source, seed, code, decMode]);
 
@@ -493,7 +493,7 @@ export default function ProofLab() {
         </button>
         {source === "synthetic" ? (
           <>
-            {([60, 40, 30, 15, 1] as const).map((p) => (
+            {([60, 40, 30, 15, 6, 3] as const).map((p) => (
               <button key={p} onClick={() => { setTfSec(p); load("synthetic", seed, code, p, true); }}
                 className="text-[11.5px] font-extrabold px-2.5 py-1 rounded-lg"
                 title={p === 60
@@ -513,7 +513,7 @@ export default function ProofLab() {
                 className="text-[11px] font-extrabold px-2 py-1 rounded-lg"
                 title={m === "min1"
                   ? t("실제 데스크처럼 1분봉으로 판단 → 5개 차트 모두 '똑같은 매매' (일관성 증명)", "decide on 1-min like the live desk → all 5 charts show the SAME trades (consistency proof)")
-                  : t("보고 있는 차트의 캔들로 판단 → 1초/15초/30초/40초/1분 어디서든 규칙이 작동함을 증명 (매매 횟수는 차트마다 다름)", "decide on the displayed candles → proves the rule works at 1s/15s/30s/40s/1min (trade counts differ per chart, by design)")}
+                  : t("보고 있는 차트의 캔들로 판단 → 3초/6초/15초/30초/40초/1분 어디서든 규칙이 작동함을 증명 (매매 횟수는 차트마다 다름)", "decide on the displayed candles → proves the rule works at 3s/6s/15s/30s/40s/1min (trade counts differ per chart, by design)")}
                 style={decMode === m ? { background: TEAL, color: "#fff" } : { border: "1px solid var(--border-default)", color: "var(--text-secondary)" }}>
                 {m === "min1" ? t("1분 고정", "1-min fixed") : t("차트별", "per-chart")}
               </button>
@@ -669,12 +669,12 @@ export default function ProofLab() {
                   <span style={{ color: TEAL }}>{t(` — 「차트별 판단」: 이 ${tfSec === 60 ? "1분" : tfSec + "초"}봉 3연속으로 직접 판단합니다. 규칙은 동일하지만 시간틀이 다르므로 매매 횟수·시각은 1분봉과 다릅니다 (그게 정상입니다).`,
                        ` — “per-chart” mode: the engine decides on 3 consecutive ${tfSec === 60 ? "1-min" : tfSec + "-sec"} candles here. Same rule, different timeframe, so trade count and times differ from the 1-min view — that is correct, not a bug.`)}</span>
                 )}
-                {source === "synthetic" && tfSec === 1 && (
+                {source === "synthetic" && tfSec <= 6 && (
                   <span style={{ color: GOLD }}>{focused
-                    ? t(" — 1초봉은 60분(3,600봉)만 담기므로, 선택한 거래 시각으로 창을 이동했습니다.",
-                        " — the 1-sec chart holds 60 minutes (3,600 bars), so the window was moved to the selected trade.")
-                    : t(" — 1초봉은 최근 60분(3,600봉)만 표시합니다. 그보다 오래된 거래의 화살표를 보려면 아래 거래 기록에서 그 거래를 클릭하세요 — 창이 그 시각으로 이동합니다.",
-                        " — the 1-sec chart shows the last 60 minutes (3,600 bars). For the arrows of an older trade, click that trade in the history below — the window jumps to it.")}</span>
+                    ? t(` — ${tfSec}초봉은 최근 3,600봉(${Math.round(3600 * tfSec / 60)}분)만 담기므로, 선택한 거래 시각으로 창을 이동했습니다.`,
+                        ` — the ${tfSec}-sec chart holds 3,600 bars (${Math.round(3600 * tfSec / 60)} min), so the window was moved to the selected trade.`)
+                    : t(` — ${tfSec}초봉은 최근 3,600봉(${Math.round(3600 * tfSec / 60)}분)까지 표시합니다. 그보다 오래된 거래의 화살표를 보려면 아래 거래 기록에서 그 거래를 클릭하세요 — 창이 그 시각으로 이동합니다.`,
+                        ` — the ${tfSec}-sec chart shows up to 3,600 bars (${Math.round(3600 * tfSec / 60)} min). For the arrows of an older trade, click that trade in the history below — the window jumps to it.`)}</span>
                 )}
               </div>
             </>
@@ -789,7 +789,7 @@ export default function ProofLab() {
         // state — a stale payload from the other mode can't pollute this mode's history)
         const synData = res.source === "synthetic";
         // 1분-fixed mode: trades are IDENTICAL across timeframes → ONE ledger per seed, so the
-        // history stays continuous while switching 1분/40초/30초/15초/1초.
+        // history stays continuous while switching 1분/40초/30초/15초/6초/3초.
         // per-chart mode: every timeframe is its OWN market decision → its own ledger, never mixed.
         const tfNs = decMode === "chart" ? `:ch${res.period ?? tfSec}` : "";
         const sNs = res.start ? `:live${res.start}` : "";
@@ -798,7 +798,7 @@ export default function ProofLab() {
         for (const s of res.symbols) for (const tr of s.trades) {
           // ⚠️ the key MUST be the fill times, never buy_idx: buy_idx is a CHART POSITION and
           // therefore different on every timeframe (bar 3 on 1분봉, 6 on 30초봉, 12 on 15초봉,
-          // 239 on 1초봉 for the very same trade). Keying on it made one trade look like five
+          // 1,439 on 3초봉 for the very same trade). Keying on it made one trade look like five
           // and the history count multiplied every time the timeframe was switched. The fill
           // times are identical in all five charts — that is exactly what this page proves.
           const k = `${s.code}|${tr.buy_fill_t ?? tr.buy_hhmm}|${tr.sell_fill_t ?? tr.sell_hhmm}`;

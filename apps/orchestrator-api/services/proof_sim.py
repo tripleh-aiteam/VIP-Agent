@@ -91,11 +91,19 @@ def _sec_label(epoch9: int, off: int) -> str:
     return datetime.fromtimestamp(epoch9 - 9 * 3600 + off, KST).strftime("%H:%M:%S")
 
 
-PERIODS = (1, 15, 30, 40, 60)    # selectable candle sizes — ALL aggregated from the same seconds
-S1_WINDOW = 3600                 # 1초 chart holds a 60-minute window (Kiwoom limits tick charts too).
-                                 # 30 min left most of the session's arrows off the chart; 60 covers
-                                 # roughly double, and trimming the payload (see routers) plus a slower
-                                 # 1초 refresh means it still costs LESS bandwidth than 30 min did.
+# Selectable candle sizes — ALL aggregated from the same per-second truth series.
+# 1초 was dropped for 3초/6초 (boss 2026-07-31). Both divide 60 exactly, so every minute
+# holds a whole number of bars (20 at 3초, 10 at 6초) and no half candle is ever needed —
+# unlike 40초, which closes each minute with a 20-second remainder.
+PERIODS = (3, 6, 15, 30, 40, 60)
+
+# A chart never ships more than this many bars. Applied to ANY timeframe whose full tape
+# would exceed it, rather than to one hard-coded period: at the 840-minute cap that is
+# 16,800 bars at 3초 and 8,400 at 6초, which is neither drawable nor sendable. 3,600 bars
+# means 3 hours of coverage at 3초 and 6 hours at 6초 — far more than the 60 minutes the
+# old 1초 chart could hold. Clicking a trade slides the window onto it (see `around`).
+BAR_CAP = 3600
+
 DEMO_MINUTES = 840               # longest tape we ever build (14h) — the growth cap
 DEMO_OPEN = (7, 21)              # the artificial market opens 07:21 KST — see _default_start
 MIN_TAPE_MIN = 25                # below this there is too little to judge, so fall back a day
@@ -127,7 +135,7 @@ def _norm_period(p) -> int:
 
 def _seconds(seed: int, base_px: float, start: int = 0) -> tuple[int, list[dict]]:
     """THE market — ONE deterministic per-SECOND price series (frozen per minute-seed).
-    EVERY timeframe (1/15/30/40/60s) is a pure aggregation of these same seconds, so
+    EVERY timeframe (3/6/15/30/40/60s) is a pure aggregation of these same seconds, so
     prices/times/ups-downs are identical in every view
     (boss 2026-07-30: 'all data must be same').
 
@@ -428,10 +436,10 @@ def run_synthetic(seed: int = 7, period: int = 60, mode: str = "min1",
     """mode='min1'  → the engine decides on 1-MINUTE candles (like the live desk): every
                       timeframe shows the SAME trades — this is the consistency proof.
        mode='chart' → the engine decides on the DISPLAYED candles: proof the rule works at
-                      1초/15초/30초/40초/1분, each chart on its own 3rd candle.
-       around='HH:MM' → 1초 charts hold only 30 minutes of bars, so a trade from earlier in
-                      the day would have no arrow to show. Pass the trade's minute and the
-                      1초 window CENTRES on it instead of on 'now' (Kiwoom scroll-back)."""
+                      3초/6초/15초/30초/40초/1분, each chart on its own 3rd candle.
+       around='HH:MM' → fine charts hold only their most recent BAR_CAP bars, so a trade
+                      from earlier in the session would have no arrow to show. Pass the trade's
+                      minute and the window CENTRES on it instead of on 'now' (Kiwoom scroll-back)."""
     period = _norm_period(period)
     per_chart = (mode == "chart")
     symbols = []
@@ -494,18 +502,18 @@ def run_synthetic(seed: int = 7, period: int = 60, mode: str = "min1",
                     tr["sell_idx"] = _disp(tr["sell_idx"], False)
             for sk in skips:
                 sk["idx"] = _disp(sk["idx"], True)
-        # 1초 charts hold a 30-MINUTE window — a whole day is ~33,000 one-second bars, which
-        # is neither drawable nor sendable. By default the window is the most recent 30 min;
+        # Fine charts hold the most recent BAR_CAP bars — a whole session at 3초 is ~16,800,
+        # which is neither drawable nor sendable. By default the window ends at 'now';
         # pass around='HH:MM' (the trade the boss clicked) and it slides onto that trade so
         # the arrows are visible instead of silently falling off the left edge.
         # Indices are remapped ONCE here: anything outside [lo, hi) becomes -1 (no arrow).
-        if period == 1 and len(candles) > S1_WINDOW:
-            lo = len(candles) - S1_WINDOW
+        if len(candles) > BAR_CAP:
+            lo = len(candles) - BAR_CAP
             if around and len(around) >= 5:
                 hit = next((j for j, c in enumerate(candles) if c["hhmm"][:5] == around[:5]), None)
                 if hit is not None:
-                    lo = min(max(0, hit - S1_WINDOW // 3), len(candles) - S1_WINDOW)
-            hi = lo + S1_WINDOW
+                    lo = min(max(0, hit - BAR_CAP // 3), len(candles) - BAR_CAP)
+            hi = lo + BAR_CAP
             def _win(i, _lo=lo, _hi=hi):
                 return i - _lo if _lo <= i < _hi else -1
             for tr in trades + open_pos:
@@ -695,7 +703,7 @@ def self_check(seed: int = 7) -> dict[str, Any]:
                     #    the history's time and the arrow's position can never disagree
                     for ik, ft, want in (("buy_idx", "buy_fill_t", 1), ("sell_idx", "sell_fill_t", -1)):
                         i = t[ik]
-                        if i < 0:              # outside the 1초 30-min window → no arrow drawn
+                        if i < 0:              # outside this chart's bar window → no arrow drawn
                             continue
                         _hit("D", cs[i]["dir"] == want, f"{mode} {p}s {t[ft]} arrow colour")
                         d = off_of(t[ft], tape0) - cs[i]["off0"]
