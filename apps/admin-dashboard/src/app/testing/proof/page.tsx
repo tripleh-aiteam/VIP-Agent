@@ -936,7 +936,6 @@ export default function ProofLab() {
         // a trade can land EXACTLY on 0 — the candle rose but the spread ate all of it.
         // Counting only >0 and <0 made 8 trips show as 0W+6L, which does not add up.
         const flats = rows.length - wins - losses;
-        const winPct = rows.length ? Math.round((wins / rows.length) * 100) : 0;
         // what the CANDLES did, which is what the eye reads off the chart
         // ONE total, following the toggle. Without it the 💸 button looks broken: the fee
         // shifts every trade by 0.23% but rarely moves a trade across the win/loss line, so
@@ -968,23 +967,18 @@ export default function ProofLab() {
                   ⚪ {flats}{t("무", "flat")}
                 </span>
               )}
-              {/* No fee label here. 승률 counts HOW OFTEN a trade won; the fee only changes that
-                  count if a win was smaller than 0.23%, so labelling it "수수료 제외 / 포함" put
-                  two different-sounding tags on one unchanging number and read as a
-                  contradiction (boss 2026-07-31: "it makes confusion to people"). The fee
-                  belongs on Σ, which is HOW MUCH — and that does move. */}
-              <span className="font-extrabold" style={{ color: winPct >= 50 ? "#2e7d32" : RED }}
-                title={t("이긴 매매의 '개수' 비율입니다. 수수료는 금액을 0.23%씩 낮추지만, 이익이 0.23%보다 작았던 매매만 승패가 뒤집힙니다 — 그래서 승률은 대개 그대로이고, 수수료는 옆의 Σ 합계에서 드러납니다.",
-                         "the share of trades that ended in profit — a COUNT. The fee lowers every result by 0.23%, but only flips a trade if its gain was smaller than that, so the count usually holds. The fee shows up in Σ beside it, which is the amount.")}>
-                🏆 {t(`승률 ${winPct}%`, `${winPct}% win`)}
-              </span>
-              <span className="font-extrabold" title={withFee
-                  ? t(`왕복 수수료·세금 ${feeCost}% (${rows.length}건 × 0.23%)를 뺀 합계`, `total after ${feeCost}% of round-trip fees (${rows.length} trades x 0.23%)`)
-                  : t(`매매 자체의 합계 — 수수료 ${feeCost}%는 아직 빼지 않았습니다`, `the trades' own total — ${feeCost}% of fees not yet taken out`)}
+              {/* ONE figure, not two. 승률 and Σ side by side competed for attention and
+                  invited the question of which was "the" answer (boss 2026-07-31). The total
+                  is the answer, so it stands alone — and it is the number the 💸 button
+                  actually moves. W/L/flat counts remain to its left for anyone who wants them. */}
+              <span className="text-[15px] font-extrabold tabular-nums"
+                title={withFee
+                  ? t(`왕복 수수료·세금 ${feeCost}% (${rows.length}건 × 0.23%)를 뺀 합계입니다.`, `total after ${feeCost}% of round-trip fees (${rows.length} trades x 0.23%).`)
+                  : t(`매매 자체의 합계 — 수수료 ${feeCost}%는 아직 빼지 않았습니다. 💸 버튼을 누르면 차감됩니다.`, `the trades' own total — ${feeCost}% of fees not taken out yet. Press 💸 to subtract them.`)}
                 style={{ color: sum > 0 ? RED : BLUE }}>
-                Σ {sum > 0 ? "+" : ""}{sum}%
+                {sum > 0 ? "+" : ""}{sum}%
                 <span className="text-[10px] font-normal text-[var(--text-muted)]">
-                  {withFee ? t(` (수수료 ${feeCost}% 포함)`, ` (incl. ${feeCost}% fees)`) : t(` (수수료 ${feeCost}% 제외)`, ` (excl. ${feeCost}% fees)`)}
+                  {withFee ? t(` 수수료 포함`, ` incl. fees`) : t(` 수수료 제외`, ` excl. fees`)}
                 </span>
               </span>
               {upMoves > 0 && (
