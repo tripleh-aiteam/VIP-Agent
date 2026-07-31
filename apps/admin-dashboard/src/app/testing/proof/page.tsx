@@ -1119,9 +1119,9 @@ export default function ProofLab() {
                              "the next minute hasn't happened yet → there is no price range to choose from either.")}</div>
                   <div>④ {book
                     ? (isBuy
-                      ? t(`행동하는 그 '순간'에 존재하는 건 대기줄(호가창)뿐 → 지금 가장 싸게 팔겠다는 사람의 가격 ₩${fmt(fill)}에 체결. 한 순간 = 살 수 있는 가격 하나 = 고르기 없음.`,
-                          `at the moment of action, only the waiting list (order book) exists → we take the cheapest seller right now: ₩${fmt(fill)}. One moment = one available price = zero choosing.`)
-                      : t(`행동하는 그 '순간'에 존재하는 건 대기줄(호가창)뿐 → 지금 가장 비싸게 사겠다는 사람의 가격 ₩${fmt(fill)}에 체결. 한 순간 = 팔 수 있는 가격 하나 = 고르기 없음.`,
+                      ? t(`행동하는 그 '순간'에 존재하는 건 대기줄(호가창)뿐 → 지금 가장 싸게 팔겠다는 사람의 가격 ₩${fmt(fill)}에 체결. 한 순간 = 고를 여지 없음. (주문 수량이 최우선 호가 잔량보다 크면 다음 호가로 넘어가 여러 가격에 나눠 체결되고, 매수가는 그 가중평균이 됩니다.)`,
+                          `at the moment of action, only the waiting list (order book) exists → we take the cheapest seller right now: ₩${fmt(fill)}. One moment = nothing to choose. (If the order is bigger than the quantity resting at that quote it walks to the next level, filling at several prices — the entry becomes their weighted average.)`)
+                      : t(`행동하는 그 '순간'에 존재하는 건 대기줄(호가창)뿐 → 지금 가장 비싸게 사겠다는 사람의 가격 ₩${fmt(fill)}에 체결. 한 순간 = 고를 여지 없음. (주문 수량이 최우선 호가 잔량보다 크면 다음 호가로 넘어가 여러 가격에 나눠 체결되고, 매도가는 그 가중평균이 됩니다.)`,
                           `at the moment of action, only the waiting list (order book) exists → we sell to the highest buyer right now: ₩${fmt(fill)}. One moment = one available price = zero choosing.`))
                     : (isBuy
                       ? t(`행동하는 그 '순간'에 존재하는 건 대기줄(호가창)뿐. 재생에서는 판단 종가 ₩${fmt(fill)}로 표시하며, 실전은 아래 실시간 Kiwoom 호가창의 '가장 싼 판매자(best ask)'에 체결됩니다. 한 순간 = 가격 하나 = 고르기 없음.`,
@@ -1131,10 +1131,10 @@ export default function ProofLab() {
                   {book && book.last != null && (
                     <div style={{ color: GOLD }}>⑤ {(book.slip ?? 0) > 0
                       ? (isBuy
-                        ? t(`체결가 ₩${fmt(fill)}는 종가 ₩${fmt(book.last)}보다 ₩${fmt(book.slip)} 위입니다 — 오류가 아니라 스프레드(호가 차이) 비용입니다. 시장가 매수는 '마지막 체결가'가 아니라 '지금 팔겠다는 가장 싼 사람의 호가'를 지불합니다.`,
-                            `the fill ₩${fmt(fill)} is ₩${fmt(book.slip)} ABOVE the close ₩${fmt(book.last)} — not an error, that is the spread. A market BUY pays the cheapest seller's ASK, never the last traded price.`)
-                        : t(`체결가 ₩${fmt(fill)}는 종가 ₩${fmt(book.last)}보다 ₩${fmt(book.slip)} 아래입니다 — 오류가 아니라 스프레드 비용입니다. 시장가 매도는 '가장 비싸게 사겠다는 사람의 호가'를 받습니다.`,
-                            `the fill ₩${fmt(fill)} is ₩${fmt(book.slip)} BELOW the close ₩${fmt(book.last)} — not an error, that is the spread. A market SELL receives the highest buyer's BID.`))
+                        ? t(`체결가 ₩${fmt(fill)}는 종가 ₩${fmt(book.last)}보다 ₩${fmt(book.slip)} 위입니다 — 오류가 아니라 스프레드(호가 차이) 비용입니다. 시장가 매수는 '가장 싸게 팔겠다는 사람의 호가(최우선 매도호가)'를 지불합니다 — 이 호가는 마지막 체결가와 같거나 그 위이며, 결코 아래가 아닙니다.`,
+                            `the fill ₩${fmt(fill)} is ₩${fmt(book.slip)} ABOVE the close ₩${fmt(book.last)} — not an error, that is the spread. A market BUY pays the cheapest seller's ASK, which sits AT or ABOVE the last traded price — never below.`)
+                        : t(`체결가 ₩${fmt(fill)}는 종가 ₩${fmt(book.last)}보다 ₩${fmt(book.slip)} 아래입니다 — 오류가 아니라 스프레드 비용입니다. 시장가 매도는 '가장 비싸게 사겠다는 사람의 호가(최우선 매수호가)'를 받습니다 — 이 호가는 마지막 체결가와 같거나 그 아래이며, 결코 위가 아닙니다.`,
+                            `the fill ₩${fmt(fill)} is ₩${fmt(book.slip)} BELOW the close ₩${fmt(book.last)} — not an error, that is the spread. A market SELL receives the highest buyer's BID, which sits AT or BELOW the last traded price — never above.`))
                       : t(`이번엔 종가 ₩${fmt(book.last)}가 마침 최우선 호가와 같아 스프레드 비용이 ₩0이었습니다. 매번 내는 건 아닙니다.`,
                           `this time the close ₩${fmt(book.last)} happened to sit on the best quote, so crossing the spread cost ₩0. It is not paid on every fill.`)}</div>
                   )}
