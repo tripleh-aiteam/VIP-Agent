@@ -517,21 +517,21 @@ def run_synthetic(seed: int = 7, period: int = 60, mode: str = "min1",
             # 20s half-bar on 40초봉 (boss's own rule). Bars are minute-clipped, so the count
             # per minute is constant and this lands exactly on the bar holding second :59.
             #
-            # ⭐ COLOUR: the engine judges 1-MINUTE candles here, so a sub-minute bar is
-            # painted by the direction of the MINUTE it belongs to — not by its own few
-            # seconds of wiggle. Two things follow, and both are what the boss asked for:
-            #   1. the arrow is ALWAYS on a correctly-coloured bar (buy=red, sell=blue) and
-            #      still sits at the TRUE fill second — no more trading time vs. colour off
-            #      against each other;
-            #   2. a 3-minute rise reads as one solid red run: 3 bars on 1분봉, 6 on 30초봉,
-            #      12 on 15초봉, 4.5 (4 full + the 20s half) on 40초봉, 180 on 1초봉.
-            # Each bar's own direction is kept in "sdir" for anyone who wants it.
+            # ⭐ COLOUR: every bar is painted by ITS OWN movement — close against its open.
+            #
+            # Sub-minute bars used to be painted by the direction of the MINUTE they belong
+            # to, so a buy arrow always landed on a red bar. That was harmless while the
+            # price walked smoothly from open to close, but the tape now wanders the way a
+            # real one does, and 41% of 3초 bars close against their minute. Minute-colouring
+            # would therefore paint falling bars red — the chart would contradict the Data
+            # File and the per-second record, which is a worse fault than an arrow sitting on
+            # an off-colour bar.
+            #
+            # So the colour is honest and the arrow still marks the exact fill second. The
+            # BUY-on-red rule was always about the DECISION candles (1분), and those are
+            # shown red/blue in the evidence panel and the Data File; three seconds of noise
+            # under the arrow is not the decision and must not be dressed up as one.
             bpm = -(-60 // period)
-            for _j, _c in enumerate(candles):
-                _c["sdir"] = _c["dir"]
-                _m = _j // bpm
-                if _m < len(dec):
-                    _c["dir"] = dec[_m]["dir"]
             def _disp(i, up=True, _b=bpm, _cs=candles):
                 last = i * _b + _b - 1
                 return last if 0 <= last < len(_cs) else -1
@@ -687,6 +687,7 @@ def self_check(seed: int = 7) -> dict[str, Any]:
     for mode in ("min1", "chart"):
         for p in (60,) + tuple(x for x in PERIODS if x != 60):   # 1분 first: it is the reference
             r = run_synthetic(seed=seed, period=p, mode=mode)
+            dec_p = p if mode == "chart" else 60      # which timeframe the engine actually judged
             wins = gross = net = 0.0
             n_tr = 0
             for s in r["symbols"]:
@@ -744,7 +745,17 @@ def self_check(seed: int = 7) -> dict[str, Any]:
                         i = t[ik]
                         if i < 0:              # outside this chart's bar window → no arrow drawn
                             continue
-                        _hit("D", cs[i]["dir"] == want, f"{mode} {p}s {t[ft]} arrow colour")
+                        # D) The claim worth checking is that the arrow sits on a bar the
+                        #    DECISION covers — and, where the chart IS the decision timeframe,
+                        #    that the bar's colour matches the side. Asserting the colour on a
+                        #    3-second bar would be asserting something the rule never said:
+                        #    the engine judged the minute, and 41% of 3초 bars close against
+                        #    their minute now that the tape wanders realistically.
+                        if p == dec_p:
+                            _hit("D", cs[i]["dir"] == want, f"{mode} {p}s {t[ft]} arrow colour")
+                        else:
+                            _hit("D", cs[i]["hhmm"][:5] == t[ft][:5],
+                                 f"{mode} {p}s arrow at {cs[i]['hhmm']} outside decision minute {t[ft][:5]}")
                         d = off_of(t[ft], tape0) - cs[i]["off0"]
                         _hit("G", 0 <= d < cs[i]["n"],
                              f"{mode} {p}s fill {t[ft]} is {d}s outside its arrow bar {cs[i]['hhmm']}")
@@ -769,7 +780,7 @@ def self_check(seed: int = 7) -> dict[str, Any]:
                 "A": "모든 차트에서 같은 매매 (시각·가격·손익) / same trade in every chart",
                 "B": "체결가가 그 '초'에 실제로 존재하고 캔들 범위 안 / fill price exists at that second & inside its bar",
                 "C": "규칙: 3연속 상승 매수 · 3연속 하락 매도 / rule: 3 rising → buy, 3 falling → sell",
-                "D": "화살표 색 = 판단 캔들 방향 (매수=빨강, 매도=파랑) / arrow colour = decision candle's direction",
+                "D": "화살표가 판단 캔들 위에 (판단 시간틀에서는 색도 일치) / arrow sits on the decision candle (and matches its colour on the decision timeframe)",
                 "E": "캔들 = 자기 초들의 집계 / candle = aggregation of its own seconds",
                 "F": "바의 시가 = 앞 바의 종가 (연속 테이프) / bar opens at previous close",
                 "G": "화살표가 가리키는 캔들이 그 체결 '초'를 실제로 포함 / the arrow's bar contains the exact fill second"},
