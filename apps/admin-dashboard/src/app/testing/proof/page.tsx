@@ -652,8 +652,9 @@ export default function ProofLab() {
           </div>
           {view === "candle" ? (
             <>
-              <ProofChart key={sym.code} candles={sym.forming ? [...sym.candles, sym.forming] : sym.candles} trades={sym.trades} focus={focus} buyLabel="" sellLabel=""
-                openIdxs={(sym.open_positions ?? []).map((p) => p.buy_idx)} holdLabel=""
+              <ProofChart key={sym.code} candles={sym.forming ? [...sym.candles, sym.forming] : sym.candles} trades={sym.trades} focus={focus}
+                buyLabel={t("매수 신호", "buying signal")} sellLabel={t("매도 신호", "selling signal")}
+                openIdxs={(sym.open_positions ?? []).map((p) => p.buy_idx)} holdLabel={t("보유 중", "holding")}
                 skipIdxs={(sym.hold_skips ?? []).map((s) => s.idx)} skipLabel="⏸" periodSec={tfSec} />
               <div className="px-2 pb-1 text-[11px] text-[var(--text-muted)]">
                 {decMode === "min1" && tfSec !== 60
