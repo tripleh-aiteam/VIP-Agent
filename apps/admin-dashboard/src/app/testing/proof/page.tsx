@@ -21,6 +21,7 @@ type Book = { asks: [number, number][]; bids: [number, number][]; best_ask: numb
               last?: number; spread?: number; slip?: number } | null;   // slip = ticks paid to cross the spread
 type TlRow = { t: string; px: number; kind: "open" | "watch" | "high" | "low" | "close" | "fill" };
 type Trade = {
+  exit_why?: string;
   buy_idx: number; buy_hhmm: string; buy_closes: number[]; entry: number; buy_book: Book;
   sell_idx: number; sell_hhmm: string; sell_closes: number[]; exit: number; sell_book: Book;
   buy_time?: number; sell_time?: number;
@@ -329,6 +330,9 @@ export default function ProofLab() {
   // 수수료 표시 (boss 2026-07-31): OFF by default — the plain result of the trade; ON adds
   // the 0.23% round-trip fee+tax, which is what the account actually keeps.
   const [withFee, setWithFee] = useState(false);
+  // 매도 규칙 — the live desk has both (candle_trader exit_mode). "candle" waits for 3
+  // falls; "target" takes +N% and cuts at -1%, the same stop the real desk uses.
+  const [exitMode, setExitMode] = useState<"candle" | "target">("candle");
   const [view, setView] = useState<"candle" | "table">("table");   // 📗 TABLE first (boss 2026-07-30) — chart on demand
   const [tapeMin, setTapeMin] = useState<{ BUY: number; SELL: number }>({ BUY: 2, SELL: 2 });   // which of the 3 candles' minute tape shows
   const [histMin, setHistMin] = useState<5 | 10 | 15>(10);   // 🕰️ Data File window
@@ -410,7 +414,7 @@ export default function ProofLab() {
     setLoading(true);
     if (!keep) setFocus(null);
     try {
-      const r = await api<ProofRes>(`/paper-desk/proof/run?source=${src}&seed=${sd}&code=${cd}&period=${p}&mode=${md}&around=${encodeURIComponent(ar)}&start=${st}&tick=${tk}`);
+      const r = await api<ProofRes>(`/paper-desk/proof/run?source=${src}&seed=${sd}&code=${cd}&period=${p}&mode=${md}&around=${encodeURIComponent(ar)}&start=${st}&tick=${tk}&exit_mode=${exitMode}&take_pct=0.5&stop_pct=1`);
       // a slow response from the OTHER mode must never land after the user switched
       if (src === sourceRef.current && r?.source === src && (r.start ?? 0) === st) { setRes(r); if (!keep) setSelCode(null); }
     } catch { /* keep last */ }
@@ -429,7 +433,7 @@ export default function ProofLab() {
     const nTr = (x: ProofRes | null) => (x ? x.symbols.reduce((a, s) => a + s.trades.length, 0) : 0);
     const iv = setInterval(() => {
       if (focusRef.current != null) return;              // don't shift the stage mid-demonstration
-      api<ProofRes>(`/paper-desk/proof/run?source=${source}&seed=${seed}&code=${code}&period=${tfSec}&mode=${decMode}&start=${liveStart}&tick=${tick}`)
+      api<ProofRes>(`/paper-desk/proof/run?source=${source}&seed=${seed}&code=${code}&period=${tfSec}&mode=${decMode}&start=${liveStart}&tick=${tick}&exit_mode=${exitMode}&take_pct=0.5&stop_pct=1`)
         .then((r) => {
           if (r?.source !== sourceRef.current) return;   // stale cross-mode response — discard
           if (r?.source === "synthetic" && (r.period ?? 60) !== tfSec) return;   // stale timeframe — discard
@@ -440,7 +444,7 @@ export default function ProofLab() {
     }, source === "synthetic" ? (tfSec <= 6 ? 6_000 : 3_000) : code !== "ALL" ? 10_000 : 60_000);   // syn 3s (3초/6초 6s — thousands of bars per payload), single 10s, ALL sweep 60s
     return () => clearInterval(iv);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [source, code, seed, tfSec, decMode, liveStart, tick]);
+  }, [source, code, seed, tfSec, decMode, liveStart, tick, exitMode]);
 
   const symList = res?.symbols ?? [];
   const symIdx = Math.max(0, selCode ? symList.findIndex((s) => s.code === selCode) : 0);
@@ -539,6 +543,20 @@ export default function ProofLab() {
                 {p === 60 ? t("1분봉", "1-min") : t(`${p}초봉`, `${p}-sec`)}
               </button>
             ))}
+            {/* 매도 규칙 — the single biggest lever on the result, so it belongs on screen */}
+            <span className="w-px h-5 bg-[var(--border-default)] mx-0.5" />
+            <span className="text-[10px] text-[var(--text-muted)]">{t("매도", "exit")}</span>
+            {(["candle", "target"] as const).map((m) => (
+              <button key={m} onClick={() => { setExitMode(m); setFocus(null); load(source, seed, code, tfSec, true); }}
+                className="text-[11px] font-extrabold px-2 py-1 rounded-lg"
+                title={m === "candle"
+                  ? t("3연속 음봉에 매도 — 지금 방식. 확인까지 기다리므로 평균 14분을 보유하고, 그 사이 가격이 왕복해 이익을 되돌려줍니다.", "sell on 3 consecutive falls — the current rule. It waits for confirmation, so it holds ~14 min and the price usually round-trips, giving the gain back.")
+                  : t("+0.5%에 익절, -1%에 손절 — 실제 데스크가 쓰는 방식(exit_mode=target). 손절이 있어야 지는 포지션도 닫히고 승률이 정직해집니다.", "take +0.5%, cut at -1% — what the live desk uses (exit_mode=target). The stop matters: without it losing positions never close and the win rate is meaningless.")}
+                style={exitMode === m ? { background: m === "target" ? "#2e7d32" : GOLD, color: "#fff" } : { border: "1px solid var(--border-default)", color: "var(--text-secondary)" }}>
+                {m === "candle" ? t("3연속 하락", "3-down") : t("+0.5% 익절 / -1% 손절", "+0.5% / -1%")}
+              </button>
+            ))}
+
             {/* 틱 차트 — type ANY count; a bar closes after that many TRADES, not seconds.
                 Applied on a short debounce so typing "30" does not fire a request per digit. */}
             <span className="text-[10px] text-[var(--text-muted)] ml-1">{t("틱", "tick")}</span>

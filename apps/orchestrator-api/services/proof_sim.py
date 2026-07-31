@@ -113,7 +113,12 @@ _SYMBOLS = [("PRF1", "프루프전자", 205_000), ("PRF2", "시뮬중공업", 19
 # `seed + index * 101`, so removing a row would renumber the others and silently change
 # 프루프전자's tape. Filtering by code here keeps every price and time exactly as it was.
 # To bring one back, just add its code to this set.
-_SHOWN = {"PRF1"}
+# Back to all three (2026-07-31): one company gave only 8 completed trades in 4.5 hours,
+# because the engine holds one position at a time and spends ~39% of the session inside
+# one — so 6 of its 15 signals were skipped while already holding. Eight trades is far too
+# small a sample to read a win rate from. Three companies is the same rule watching three
+# tapes: ~22 trades over the same hours.
+_SHOWN = {"PRF1", "PRF2", "PRF3"}
 
 
 def _label(epoch9: int, period: int) -> str:
@@ -445,7 +450,8 @@ def _minute_timeline(cd: dict, fill_px: float, seed: int, synthetic: bool, fill_
 #  the simulation — calls the REAL engine function candle-by-candle            #
 # --------------------------------------------------------------------------- #
 def _simulate(candles: list[dict], seed: int, with_book: bool, period: int = 60,
-              tick: int | None = None, tape_fn=None) -> tuple[list, list, list, list]:
+              tick: int | None = None, tape_fn=None, exit_mode: str = "candle",
+              take_pct: float = 0.5, stop_pct: float = 1.0) -> tuple[list, list, list, list]:
     """Replay: after each candle CLOSES, feed all closes so far into the live engine
     comparison (run_steps). 3 rising steps & flat → BUY; holding & 3 falling → SELL.
     Returns (completed trades, still-open positions, hold-skips —
@@ -475,7 +481,19 @@ def _simulate(candles: list[dict], seed: int, with_book: bool, period: int = 60,
                    # per-second tapes for ALL 3 signal candles (1st/2nd/3rd — click to inspect each)
                    "buy_tapes": ([tape_fn(j) for j in (i - 2, i - 1, i) if j >= 0]
                                  if with_book else None)}
-        elif pos is not None and dn == NEED:             # fires the moment the 3rd blue closes
+        # THE EXIT. 'candle' waits for 3 consecutive falls — by which time an average
+        # 14-minute hold has usually round-tripped and given the gain back. 'target' takes
+        # the profit the moment it is there. Both exist on the live desk (candle_trader's
+        # exit_mode), and the real account's own numbers said the same thing this shows.
+        elif pos is not None and (
+                (dn == NEED) if exit_mode == "candle"
+                # ⚠️ take-profit MUST carry a stop. Without one a losing position is simply
+                # never closed, so it never reaches the history and the closed trades come
+                # out 100% winners — a number that says nothing except that the losers are
+                # still open. The live desk sets -1% on target mode for exactly this reason
+                # (boss 2026-07-30: "put -1% border in the 3 up, take a profit").
+                else ((cd["close"] / pos["entry"] - 1) * 100 >= take_pct
+                      or (cd["close"] / pos["entry"] - 1) * 100 <= -stop_pct)):
             bk = _book(seed * 2_000 + i, cd["close"], "SELL", tick) if with_book else None
             exit_px = bk["fill"] if bk else cd["close"]
             gross = (exit_px / pos["entry"] - 1) * 100
@@ -490,6 +508,10 @@ def _simulate(candles: list[dict], seed: int, with_book: bool, period: int = 60,
                            # spread shows as a rising chart and a flat trade, and the boss
                            # was right to ask why (2026-07-31).
                            "move_pct": round((cd["close"] / pos["buy_close"] - 1) * 100, 3),
+                           "exit_why": ("3연속 하락" if exit_mode == "candle"
+                                        else ("+%s%% 익절" % take_pct
+                                              if (cd["close"] / pos["entry"] - 1) * 100 >= take_pct
+                                              else "-%s%% 손절" % stop_pct)),
                            "sell_close": cd["close"],
                            "sell_closes": closes[-4:], "exit": exit_px, "sell_book": bk,
                            "sell_timeline": _minute_timeline(cd, exit_px, seed * 37 + i, with_book, fill_sec=0, period=period),
@@ -544,7 +566,9 @@ def _verify(candles: list[dict], trades: list[dict], with_book: bool) -> dict:
 #  public entry points                                                         #
 # --------------------------------------------------------------------------- #
 def run_synthetic(seed: int = 7, period: int = 60, mode: str = "min1",
-                  around: str = "", start: int = 0, tick: int = 0) -> dict[str, Any]:
+                  around: str = "", start: int = 0, tick: int = 0,
+                  exit_mode: str = "candle", take_pct: float = 0.5,
+                  stop_pct: float = 1.0) -> dict[str, Any]:
     """mode='min1'  → the engine decides on 1-MINUTE candles (like the live desk): every
                       timeframe shows the SAME trades — this is the consistency proof.
        mode='chart' → the engine decides on the DISPLAYED candles: proof the rule works at
@@ -577,7 +601,9 @@ def run_synthetic(seed: int = 7, period: int = 60, mode: str = "min1",
             return _tape_from(_d, _s, cd["off0"], cd["n"])
         trades, open_pos, skips = _simulate(dec, sseed, with_book=True,
                                                     period=(period if per_chart else 60),
-                                                    tick=t_base, tape_fn=_mk_tape)
+                                                    tick=t_base, tape_fn=_mk_tape,
+                                                    exit_mode=exit_mode, take_pct=take_pct,
+                                                    stop_pct=stop_pct)
         for tr in trades[:-6]:                            # keep 60s tapes only on recent trades (payload size)
             tr["buy_tapes"] = None
             tr["sell_tapes"] = None
@@ -716,7 +742,8 @@ def run_synthetic(seed: int = 7, period: int = 60, mode: str = "min1",
                         "open_positions": open_pos, "hold_skips": skips, "live_book": live_book,
                         "verification": ver})
     return {"source": "synthetic", "seed": seed, "need": NEED, "period": period,
-            "tick": tick, "mode": mode,
+            "tick": tick, "mode": mode, "exit_mode": exit_mode, "take_pct": take_pct,
+            "stop_pct": stop_pct,
             "start": start,   # echoed so the page can discard a stale response from a previous session
             "rule_ko": f"양봉 {NEED}개 연속(전봉 대비 {NEED}회 상승) → 정확히 {NEED}번째 양봉에 매수 · 음봉 {NEED}개 연속 → 정확히 {NEED}번째 음봉에 매도",
             "rule_en": f"{NEED} rising candles → BUY exactly on the {NEED}rd red · {NEED} falling → SELL exactly on the {NEED}rd blue",
