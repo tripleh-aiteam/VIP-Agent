@@ -314,7 +314,11 @@ export default function ProofLab() {
   const [loading, setLoading] = useState(false);
   const [view, setView] = useState<"candle" | "table">("table");   // 📗 TABLE first (boss 2026-07-30) — chart on demand
   const [tapeMin, setTapeMin] = useState<{ BUY: number; SELL: number }>({ BUY: 2, SELL: 2 });   // which of the 3 candles' minute tape shows
-  const [histMin, setHistMin] = useState<5 | 10 | 15>(10);   // 🕰️ minute-verification table window
+  const [histMin, setHistMin] = useState<5 | 10 | 15>(10);   // 🕰️ Data File window
+  // 📒 trade-history filters (boss 2026-07-31: "I wanna see last 10", "between this time and this time")
+  const [trN, setTrN] = useState<number | "">("");            // show only the most recent N trades
+  const [trFrom, setTrFrom] = useState("");                   // HH:MM window, inclusive
+  const [trTo, setTrTo] = useState("");
   const [histRange, setHistRange] = useState<{ from: string; to: string }>({ from: "", to: "" });   // custom from→to interval
   const [minTape, setMinTape] = useState<{ key: string; tape: { t: string; px: number; qty?: number }[] | null; err?: string } | null>(null);   // clicked minute's seconds
   type FastBook = { asks: [number, number][]; bids: [number, number][]; best_ask: number; best_bid: number; time?: string;
@@ -806,19 +810,29 @@ export default function ProofLab() {
         const sNsView = liveStart ? `:live${liveStart}` : "";
         const nsView = source === "synthetic" ? `syn:${seed}${tfNsView}${sNsView}` : `kiwoom${tfNsView}`;
         const isFake = (c: string) => c.startsWith("PRF");
-        const rows = Object.values(histRef.current[nsView] ?? {})
+        let rows = Object.values(histRef.current[nsView] ?? {})
           .filter((r) => (source === "synthetic" ? isFake(r.code) : !isFake(r.code)))
           .sort((a, b) => (b.tr.sell_time ?? 0) - (a.tr.sell_time ?? 0));
+        const allRows = rows;
+        // time window first, then "last N" — so "last 10 between 08:00 and 09:00" reads
+        // the way it sounds. A trade counts as inside the window if EITHER leg falls in it,
+        // otherwise a trade that opened before 08:00 and closed at 08:30 would vanish.
+        const hm = (x?: string) => (x && x.length >= 5 ? x.slice(0, 5) : "");
+        if (trFrom || trTo) {
+          const lo = trFrom || "00:00", hi = trTo || "23:59";
+          rows = rows.filter((r) => {
+            const b1 = hm(r.tr.buy_fill_t ?? r.tr.buy_hhmm), s1 = hm(r.tr.sell_fill_t ?? r.tr.sell_hhmm);
+            return (b1 >= lo && b1 <= hi) || (s1 >= lo && s1 <= hi);
+          });
+        }
+        if (typeof trN === "number" && trN > 0) rows = rows.slice(0, trN);   // already newest-first
+        const filtered = rows.length !== allRows.length;
         // boss 2026-07-30: judge the RULE on gross (pure price move), judge the ACCOUNT on net.
         // A trade can win on price and still lose money — the 0.23% round trip is why.
         const gr = (r: { tr: Trade }) => r.tr.gross_pct ?? r.tr.net_pct;
         const wins = rows.filter((r) => gr(r) > 0).length;
         const losses = rows.filter((r) => gr(r) < 0).length;
         const winPct = rows.length ? Math.round((wins / rows.length) * 100) : 0;
-        const sumG = rows.reduce((a, r) => a + gr(r), 0);
-        const sumN = rows.reduce((a, r) => a + r.tr.net_pct, 0);
-        const netWins = rows.filter((r) => r.tr.net_pct > 0).length;
-        const r1 = (x: number) => Math.round(x * 100) / 100;
         const findLive = (r: { code: string; tr: Trade }) => {
           const si = res.symbols.findIndex((s2) => s2.code === r.code);
           if (si < 0) return null;
@@ -837,14 +851,46 @@ export default function ProofLab() {
               <span style={{ color: RED }}>🟢 {wins}{t("승", "W")}</span>
               <span style={{ color: BLUE }}>🔴 {losses}{t("패", "L")}</span>
               <span className="font-extrabold" style={{ color: winPct >= 50 ? "#2e7d32" : RED }}>🏆 {t(`승률 ${winPct}% (가격기준)`, `${winPct}% win (on price)`)}</span>
-              <span title={t("수수료·세금 前 순수 가격 변동 합계 — 규칙이 맞았는지 보는 숫자", "pure price move before fees — the number that says whether the rule was right")}>
-                {t("수수료前", "gross")} <b style={{ color: sumG > 0 ? RED : BLUE }}>{sumG > 0 ? "+" : ""}{r1(sumG)}%</b>
-              </span>
-              <span title={t("왕복 수수료·세금 0.23% 차감 후 — 계좌에 실제로 남는 숫자", "after the 0.23% round-trip cost — what actually stays in the account")}>
-                {t("수수료後", "net")} <b style={{ color: sumN > 0 ? RED : BLUE }}>{sumN > 0 ? "+" : ""}{r1(sumN)}%</b>
-                <span className="text-[10px] text-[var(--text-muted)]"> ({t(`실제 이익 ${netWins}건`, `${netWins} actually paid`)})</span>
-              </span>
+              {filtered && (
+                <span className="text-[10.5px] px-2 py-0.5 rounded-full" style={{ background: "rgba(0,131,143,0.12)", color: TEAL }}>
+                  {t(`전체 ${allRows.length}건 중 필터 적용`, `filtered from ${allRows.length} total`)}
+                </span>
+              )}
               <span className="ml-auto text-[10.5px] text-[var(--text-muted)]">{t("증명 재생 기준 (실계좌 아님)", "proof replay — not the real account")}</span>
+            </div>
+
+            {/* 🔎 filters — how many, and between which times. Counts above follow the filter. */}
+            <div className="px-4 py-2 border-b flex items-center gap-2 flex-wrap text-[11.5px]" style={{ borderColor: "var(--border-default)" }}>
+              <span className="text-[var(--text-muted)]">🔎 {t("최근", "last")}</span>
+              {([10, 20, 50] as const).map((n) => (
+                <button key={n} onClick={() => setTrN(trN === n ? "" : n)}
+                  className="font-bold px-2 py-0.5 rounded-lg"
+                  style={trN === n ? { background: TEAL, color: "#fff" } : { border: "1px solid var(--border-default)", color: "var(--text-secondary)" }}>
+                  {n}{t("건", "")}
+                </button>
+              ))}
+              <input type="number" min={1} placeholder={t("직접", "N")} value={trN === "" ? "" : trN}
+                onChange={(e) => setTrN(e.target.value === "" ? "" : Math.max(1, parseInt(e.target.value, 10) || 1))}
+                className="w-16 px-1.5 py-0.5 rounded-lg border bg-[var(--bg-primary)] text-[var(--text-primary)] tabular-nums"
+                style={{ borderColor: "var(--border-default)" }} />
+              <span className="w-px h-4 bg-[var(--border-default)] mx-1" />
+              <span className="text-[var(--text-muted)]">{t("구간", "between")}</span>
+              <input type="time" value={trFrom} onChange={(e) => setTrFrom(e.target.value)}
+                className="px-1.5 py-0.5 rounded-lg border bg-[var(--bg-primary)] text-[var(--text-primary)] tabular-nums"
+                style={{ borderColor: "var(--border-default)" }} />
+              <span className="text-[var(--text-muted)]">→</span>
+              <input type="time" value={trTo} onChange={(e) => setTrTo(e.target.value)}
+                className="px-1.5 py-0.5 rounded-lg border bg-[var(--bg-primary)] text-[var(--text-primary)] tabular-nums"
+                style={{ borderColor: "var(--border-default)" }} />
+              {(trN !== "" || trFrom || trTo) && (
+                <button onClick={() => { setTrN(""); setTrFrom(""); setTrTo(""); }}
+                  className="font-bold px-2 py-0.5 rounded-lg border" style={{ borderColor: GOLD, color: GOLD }}>
+                  ✕ {t("전체 보기", "show all")}
+                </button>
+              )}
+              <span className="ml-auto text-[10px] text-[var(--text-muted)]">
+                {t("매수 또는 매도 시각이 구간에 들어가면 표시됩니다", "a trade shows if either its BUY or SELL time falls in the window")}
+              </span>
             </div>
             {/* ⚠️ boss 2026-07-30: the number above must never be read as "the algorithm earns/loses this much" */}
             {source === "synthetic" && rows.length > 0 && (
