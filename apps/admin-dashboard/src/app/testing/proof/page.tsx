@@ -326,6 +326,9 @@ export default function ProofLab() {
   const [focus, setFocus] = useState<number | null>(null);
   const [loading, setLoading] = useState(false);
   const [arrows, setArrows] = useState(true);   // 🎯 show the buy/sell markers on the chart
+  // 수수료 표시 (boss 2026-07-31): OFF by default — the plain result of the trade; ON adds
+  // the 0.23% round-trip fee+tax, which is what the account actually keeps.
+  const [withFee, setWithFee] = useState(false);
   const [view, setView] = useState<"candle" | "table">("table");   // 📗 TABLE first (boss 2026-07-30) — chart on demand
   const [tapeMin, setTapeMin] = useState<{ BUY: number; SELL: number }>({ BUY: 2, SELL: 2 });   // which of the 3 candles' minute tape shows
   const [histMin, setHistMin] = useState<5 | 10 | 15>(10);   // 🕰️ Data File window
@@ -908,7 +911,8 @@ export default function ProofLab() {
         const filtered = rows.length !== allRows.length;
         // boss 2026-07-30: judge the RULE on gross (pure price move), judge the ACCOUNT on net.
         // A trade can win on price and still lose money — the 0.23% round trip is why.
-        const gr = (r: { tr: Trade }) => r.tr.gross_pct ?? r.tr.net_pct;
+        // the number every count and every row uses — fee excluded by default
+        const gr = (r: { tr: Trade }) => (withFee ? r.tr.net_pct : (r.tr.gross_pct ?? r.tr.net_pct));
         const wins = rows.filter((r) => gr(r) > 0).length;
         const losses = rows.filter((r) => gr(r) < 0).length;
         // a trade can land EXACTLY on 0 — the candle rose but the spread ate all of it.
@@ -940,7 +944,7 @@ export default function ProofLab() {
                   ⚪ {flats}{t("무", "flat")}
                 </span>
               )}
-              <span className="font-extrabold" style={{ color: winPct >= 50 ? "#2e7d32" : RED }}>🏆 {t(`승률 ${winPct}% (체결가 기준)`, `${winPct}% win (on FILLS)`)}</span>
+              <span className="font-extrabold" style={{ color: winPct >= 50 ? "#2e7d32" : RED }}>🏆 {t(`승률 ${winPct}% (${withFee ? "수수료 포함" : "수수료 제외"})`, `${winPct}% win (${withFee ? "after fee" : "fee excluded"})`)}</span>
               {upMoves > 0 && (
                 <span className="text-[11.5px]" style={{ color: GOLD }}
                   title={t("차트 캔들은 매수한 분보다 매도한 분이 더 높게 끝난 거래 수. 체결은 매도호가에 사고 매수호가에 팔기 때문에 이보다 불리합니다.", "trades whose SELL minute closed higher than the BUY minute on the chart. Fills are worse than that, because you buy at the ask and sell at the bid.")}>
@@ -985,6 +989,16 @@ export default function ProofLab() {
                   ✕ {t("전체 보기", "show all")}
                 </button>
               )}
+              {/* 수수료 on/off — default OFF (the plain result), click for what the account keeps */}
+              <span className="w-px h-4 bg-[var(--border-default)] mx-1" />
+              <button onClick={() => setWithFee(!withFee)}
+                className="font-extrabold px-2.5 py-0.5 rounded-lg"
+                title={withFee
+                  ? t("왕복 수수료·세금 0.23%를 뺀 값 — 계좌에 실제로 남는 숫자입니다. 누르면 수수료 제외 값으로 돌아갑니다.", "with the 0.23% round-trip fee+tax removed — what the account actually keeps. Click to go back to the plain result.")
+                  : t("지금은 수수료 제외 값입니다 (매매 자체의 결과). 누르면 왕복 수수료·세금 0.23%를 뺀 실제 손익을 봅니다.", "currently the plain result of the trade, fee excluded. Click to subtract the 0.23% round-trip fee+tax and see the real P&L.")}
+                style={withFee ? { background: BLUE, color: "#fff" } : { border: "1px solid var(--border-default)", color: "var(--text-secondary)" }}>
+                {withFee ? t("💸 수수료 포함", "💸 fee included") : t("수수료 제외", "fee excluded")}
+              </button>
               <span className="ml-auto text-[10px] text-[var(--text-muted)]">
                 {t("매수 또는 매도 시각이 구간에 들어가면 표시됩니다", "a trade shows if either its BUY or SELL time falls in the window")}
               </span>
@@ -1007,7 +1021,7 @@ export default function ProofLab() {
                 <th className="text-left px-2">{t("매수 체결시각 (신호)", "BUY fill time (signal)")}</th>
                 <th className="text-left px-2">{t("매도 체결시각 (신호)", "SELL fill time (signal)")}</th>
                 <th className="text-right px-2">{t("매수가", "entry")}</th><th className="text-right px-2">{t("매도가", "exit")}</th>
-                <th className="text-right px-3">{t("손익 (체결가 기준 → 수수료後)", "P&L (on fills → after fee)")}</th>
+                <th className="text-right px-3">{withFee ? t("손익 (수수료 포함)", "P&L (after fee)") : t("손익 (수수료 제외)", "P&L (fee excluded)")}</th>
               </tr></thead>
               <tbody>
                 {rows.map((r, i) => {
@@ -1029,19 +1043,18 @@ export default function ProofLab() {
                       <td className="text-right px-2">₩{fmt(r.tr.entry)}</td>
                       <td className="text-right px-2">₩{fmt(r.tr.exit)}</td>
                       <td className="text-right px-3 font-bold">
-                        <span style={{ color: gr(r) > 0 ? RED : (gr(r) < 0 ? BLUE : "var(--text-muted)") }}>{gr(r) > 0 ? "+" : ""}{gr(r)}%</span>
-                        <span className="text-[var(--text-muted)] font-normal"> → </span>
-                        <span style={{ color: r.tr.net_pct > 0 ? RED : BLUE }}>{r.tr.net_pct > 0 ? "+" : ""}{r.tr.net_pct}%</span>
+                        <span className="text-[13px]" style={{ color: gr(r) > 0 ? RED : (gr(r) < 0 ? BLUE : "var(--text-muted)") }}>
+                          {gr(r) > 0 ? "+" : ""}{gr(r)}%
+                        </span>
                         {/* the candle move, so a row reads the same way the chart does */}
-                        <div className="text-[9.5px] opacity-70 font-normal">
-                          {r.tr.move_pct != null && (
+                        {r.tr.move_pct != null && (
+                          <div className="text-[9.5px] opacity-70 font-normal">
                             <span style={{ color: r.tr.move_pct > 0 ? RED : (r.tr.move_pct < 0 ? BLUE : "inherit") }}>
                               {t("캔들 ", "chart ")}{r.tr.move_pct > 0 ? "+" : ""}{r.tr.move_pct}%
-                              <span className="text-[var(--text-muted)]"> · </span>
                             </span>
-                          )}
-                          {t(`수수료 ${r.tr.fee_pct ?? 0.23}%`, `fee ${r.tr.fee_pct ?? 0.23}%`)}
-                        </div>
+                            {withFee && t(` · 수수료 ${r.tr.fee_pct ?? 0.23}% 차감`, ` · fee ${r.tr.fee_pct ?? 0.23}% taken`)}
+                          </div>
+                        )}
                       </td>
                     </tr>
                   );
