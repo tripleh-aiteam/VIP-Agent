@@ -395,6 +395,12 @@ export default function ProofLab() {
     const want = Math.max(0, Math.min(500, parseInt(tickIn, 10) || 0));
     if (want === tick) return;
     const h = setTimeout(() => {
+      // A tick chart is for reading the tape itself, and at 3,600 bars the markers cover
+      // it (boss 2026-07-31: "tick by default should be no arrows"). So arrows go off on
+      // the way in and back on when returning to a time chart — the ▲▼ button overrides
+      // either way and whatever is set by hand then stays.
+      if (want > 0 && tick === 0) setArrows(false);
+      if (want === 0 && tick > 0) setArrows(true);
       setTick(want);
       setFocus(null);
       load(source, seed, code, tfSec, true, decMode, "", liveStart, want);
@@ -529,7 +535,7 @@ export default function ProofLab() {
         {source === "synthetic" ? (
           <>
             {([60, 40, 30, 15, 6, 3] as const).map((p) => (
-              <button key={p} onClick={() => { setTfSec(p); setTick(0); setTickIn(""); load(source, seed, code, p, true, decMode, "", liveStart, 0); }}
+              <button key={p} onClick={() => { setTfSec(p); if (tick) setArrows(true); setTick(0); setTickIn(""); load(source, seed, code, p, true, decMode, "", liveStart, 0); }}
                 className="text-[11.5px] font-extrabold px-2.5 py-1 rounded-lg"
                 title={p === 60
                   ? t("실제 데스크와 동일한 1분봉 차트 — 판단도 1분봉 3연속", "the live desk's 1-min chart — decisions use 3 consecutive 1-min candles")
@@ -555,7 +561,7 @@ export default function ProofLab() {
                 <span className="text-[11.5px] font-extrabold px-2 py-1 rounded-lg text-white" style={{ background: "#6a1b9a" }}>
                   {t(`체결 ${tick}건 = 캔들 1개`, `${tick} deals = 1 candle`)}
                 </span>
-                <button onClick={() => setTickIn("")} className="text-[11px] font-bold px-2 py-1 rounded-lg border"
+                <button onClick={() => { setTickIn(""); setArrows(true); }} className="text-[11px] font-bold px-2 py-1 rounded-lg border"
                   style={{ borderColor: GOLD, color: GOLD }}>
                   ✕ {t("시간 차트로", "back to time")}
                 </button>
