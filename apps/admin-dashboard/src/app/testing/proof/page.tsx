@@ -924,7 +924,11 @@ export default function ProofLab() {
         // shifts every trade by 0.23% but rarely moves a trade across the win/loss line, so
         // the counts stay put and nothing on screen appears to change (boss 2026-07-31:
         // "now fee included and excluded same?"). The total is where the fee actually lands.
-        const winPct = rows.length ? Math.round((wins / rows.length) * 100) : 0;
+        // W / (W + L) — a flat trade decided nothing, so it does not belong in the
+        // denominator. Dividing by ALL trips let the flats dilute both columns by the same
+        // amount, so 6W/23L and 6W/27L both printed 18% (boss 2026-07-31: "this is wrong").
+        const decided = wins + losses;
+        const winPct = decided ? Math.round((wins / decided) * 100) : 0;
         const sum = Math.round(rows.reduce((a2, r) => a2 + gr(r), 0) * 100) / 100;
         const feeCost = Math.round(rows.length * 0.23 * 100) / 100;
         const upMoves = rows.filter((r) => (r.tr.move_pct ?? 0) > 0).length;
@@ -957,8 +961,8 @@ export default function ProofLab() {
                   fault, and it is also the only figure the 💸 button moves — so hiding it
                   would make that button look broken again. */}
               <span className="text-[16px] font-extrabold tabular-nums"
-                title={t("이긴 매매의 개수 비율입니다 (몇 번 이겼는가). 얼마를 벌었는지는 옆의 합계입니다.",
-                         "the share of trades that ended in profit — HOW OFTEN it wins. How MUCH it made is the total beside it.")}
+                title={t(`이긴 매매 ${wins}건 ÷ 승패가 난 매매 ${decided}건 (무승부 ${flats}건은 제외). 얼마를 벌었는지는 옆의 합계입니다.`,
+                         `${wins} wins out of ${decided} decided trades (${flats} flat trades excluded). How MUCH it made is the total beside it.`)}
                 style={{ color: winPct >= 50 ? "#2e7d32" : GOLD }}>
                 🏆 {t(`승률 ${winPct}%`, `${winPct}% win`)}
               </span>
