@@ -532,9 +532,41 @@ def run_synthetic(seed: int = 7, period: int = 60, mode: str = "min1",
             # shown red/blue in the evidence panel and the Data File; three seconds of noise
             # under the arrow is not the decision and must not be dressed up as one.
             bpm = -(-60 // period)
+
             def _disp(i, up=True, _b=bpm, _cs=candles):
+                """Which bar carries the arrow for decision minute `i`.
+
+                The trade fills at :59, so the obvious choice is the bar holding that
+                second. But a minute that ROSE can easily end with a falling 20-second
+                tail — 09:47 rose 209,500→211,500 while its last 40초 bar fell
+                212,500→211,500 — and a BUY arrow on a blue bar is exactly what the
+                Proof Lab exists to disprove (boss 2026-07-31: "buying in the blue and
+                selling in the red, which is wrong").
+
+                So: take the LAST bar inside that minute whose OWN direction matches the
+                side. The arrow is then always on a correctly-coloured bar AND still
+                inside the minute that actually decided the trade. If the whole minute
+                somehow has no matching bar, look back across the other two decision
+                minutes — one must match, since those three closes rose (or fell)
+                overall. The exact fill second stays in the history and the evidence
+                panel, which is where a precise time belongs.
+
+                On the 1분 chart bpm is 1, so this returns the decision candle itself and
+                nothing moves."""
                 last = i * _b + _b - 1
-                return last if 0 <= last < len(_cs) else -1
+                if not (0 <= last < len(_cs)):
+                    return -1
+                want = 1 if up else -1
+                for back in (0, 1, 2):                       # this minute, then the two before
+                    lo = max(0, (i - back) * _b)
+                    hi = min(last, (i - back) * _b + _b - 1)
+                    pick = None
+                    for j in range(lo, hi + 1):
+                        if _cs[j]["dir"] == want:
+                            pick = j                          # keep the LAST match in the minute
+                    if pick is not None:
+                        return pick
+                return last
             for tr in trades + open_pos:
                 tr["buy_idx"] = _disp(tr["buy_idx"], True)
                 if "sell_idx" in tr:
@@ -665,8 +697,8 @@ def self_check(seed: int = 7) -> dict[str, Any]:
       D) the arrow sits on the right bar and is the right colour (red buy / blue sell)
       E) every candle equals the aggregation of its own seconds
       F) every bar opens at the previous bar's close (continuous tape)
-      G) the arrow's bar actually CONTAINS the exact fill second — so the time written in
-         the history is the time the arrow points at, on every chart"""
+      G) the arrow's bar belongs to the minute that decided the trade (it may sit earlier
+         than :59 inside that minute so the colour is right, but never in another minute)"""
     checks: dict[str, dict] = {k: {"ok": 0, "bad": 0} for k in ("A", "B", "C", "D", "E", "F", "G")}
     fails: list[str] = []
 
@@ -687,7 +719,6 @@ def self_check(seed: int = 7) -> dict[str, Any]:
     for mode in ("min1", "chart"):
         for p in (60,) + tuple(x for x in PERIODS if x != 60):   # 1분 first: it is the reference
             r = run_synthetic(seed=seed, period=p, mode=mode)
-            dec_p = p if mode == "chart" else 60      # which timeframe the engine actually judged
             wins = gross = net = 0.0
             n_tr = 0
             for s in r["symbols"]:
@@ -745,20 +776,15 @@ def self_check(seed: int = 7) -> dict[str, Any]:
                         i = t[ik]
                         if i < 0:              # outside this chart's bar window → no arrow drawn
                             continue
-                        # D) The claim worth checking is that the arrow sits on a bar the
-                        #    DECISION covers — and, where the chart IS the decision timeframe,
-                        #    that the bar's colour matches the side. Asserting the colour on a
-                        #    3-second bar would be asserting something the rule never said:
-                        #    the engine judged the minute, and 41% of 3초 bars close against
-                        #    their minute now that the tape wanders realistically.
-                        if p == dec_p:
-                            _hit("D", cs[i]["dir"] == want, f"{mode} {p}s {t[ft]} arrow colour")
-                        else:
-                            _hit("D", cs[i]["hhmm"][:5] == t[ft][:5],
-                                 f"{mode} {p}s arrow at {cs[i]['hhmm']} outside decision minute {t[ft][:5]}")
-                        d = off_of(t[ft], tape0) - cs[i]["off0"]
-                        _hit("G", 0 <= d < cs[i]["n"],
-                             f"{mode} {p}s fill {t[ft]} is {d}s outside its arrow bar {cs[i]['hhmm']}")
+                        # D) a BUY arrow must sit on a rising bar and a SELL on a falling
+                        #    one, on EVERY chart. The arrow is placed on the last matching
+                        #    bar inside the decision minute precisely so this always holds.
+                        _hit("D", cs[i]["dir"] == want, f"{mode} {p}s {t[ft]} arrow colour")
+                        # G) and that bar must belong to the minute that decided the trade —
+                        #    the arrow may sit earlier than :59 within it (to land on the
+                        #    right colour) but it can never drift to some other minute.
+                        _hit("G", cs[i]["hhmm"][:5] == t[ft][:5],
+                             f"{mode} {p}s arrow at {cs[i]['hhmm']} outside decision minute {t[ft][:5]}")
                     # A) identical across charts (1분-고정 mode only — 'chart' mode differs by design)
                     if mode == "min1":
                         key = f"{k}|{t['buy_fill_t']}|{t['sell_fill_t']}"
@@ -778,12 +804,12 @@ def self_check(seed: int = 7) -> dict[str, Any]:
             "checks": checks, "failures": fails, "per_tf": per_tf,
             "labels": {
                 "A": "모든 차트에서 같은 매매 (시각·가격·손익) / same trade in every chart",
-                "B": "체결가가 그 '초'에 실제로 존재하고 캔들 범위 안 / fill price exists at that second & inside its bar",
+                "B": "체결가가 그 초의 호가창 최우선 호가와 일치 / the fill is that second's best ask (buy) or best bid (sell)",
                 "C": "규칙: 3연속 상승 매수 · 3연속 하락 매도 / rule: 3 rising → buy, 3 falling → sell",
-                "D": "화살표가 판단 캔들 위에 (판단 시간틀에서는 색도 일치) / arrow sits on the decision candle (and matches its colour on the decision timeframe)",
+                "D": "매수 화살표는 빨강 캔들, 매도는 파랑 캔들 위 (모든 차트) / BUY arrow on a rising bar, SELL on a falling bar, on every chart",
                 "E": "캔들 = 자기 초들의 집계 / candle = aggregation of its own seconds",
                 "F": "바의 시가 = 앞 바의 종가 (연속 테이프) / bar opens at previous close",
-                "G": "화살표가 가리키는 캔들이 그 체결 '초'를 실제로 포함 / the arrow's bar contains the exact fill second"},
+                "G": "화살표 캔들이 판단한 그 분(minute) 안에 있음 / the arrow's bar belongs to the deciding minute"},
             # ⚠️ the honest reading of the loss/profit columns above. The pattern is drawn for
             # TEACHING (clean 3-candle runs + traps), and it pairs every up-leg with an equal
             # down-leg. With a 3-candle entry lag and a 3-candle exit lag, a paired leg of

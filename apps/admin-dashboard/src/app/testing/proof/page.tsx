@@ -658,10 +658,10 @@ export default function ProofLab() {
                 skipIdxs={(sym.hold_skips ?? []).map((s) => s.idx)} skipLabel="⏸" periodSec={tfSec} />
               <div className="px-2 pb-1 text-[11px] text-[var(--text-muted)]">
                 {decMode === "min1" && tfSec !== 60
-                  ? t(`▲매수 = 3연속 양봉의 3번째가 확정된 그 '초'의 캔들 · ▼매도 = 3번째 음봉. 캔들 색은 '그 캔들 자신의 움직임'입니다 (종가>시가 빨강). ${tfSec}초 캔들 하나는 판단 근거가 아니라 그 ${tfSec}초의 값이므로, 화살표가 반대색 캔들 위에 있을 수 있습니다 — 판단은 1분봉 3개로 하며 그 3개는 아래 데이터 파일과 증거판에서 확인하세요.`,
-                      `▲BUY = the candle holding the exact second the 3rd rising 1-min candle confirmed · ▼SELL = the 3rd falling. Candle colour is that candle's OWN move (close > open = red). One ${tfSec}-sec candle is not the reason for the trade — it is just those ${tfSec} seconds — so an arrow can sit on an opposite-coloured candle. The decision is made on three 1-MIN candles; check those in the Data File and the evidence panel.`)
-                  : t("▲매수 화살표 = 3연속 양봉의 3번째 · ▼매도 = 3번째 음봉 · 색은 그 캔들 자신의 움직임(종가>시가 빨강) → 판단 시간틀에서는 매수는 항상 빨강, 매도는 항상 파랑. 거래를 클릭하면 확대 + 증거.",
-                      "▲BUY arrow = the 3rd of 3 consecutive rising candles · ▼SELL = the 3rd falling · colour is each candle's own move (close > open = red) → on the deciding timeframe a BUY is always on red and a SELL on blue. Click a trade to zoom + see the evidence.")}
+                  ? t(`▲매수 신호 = 빨강(상승) 캔들 위 · ▼매도 신호 = 파랑(하락) 캔들 위 — 모든 차트에서 항상. 캔들 색은 그 캔들 자신의 움직임(종가>시가 빨강)이고, 화살표는 '판단한 그 1분' 안에서 색이 맞는 마지막 ${tfSec}초 캔들에 찍힙니다. 정확한 체결 '초'는 아래 거래 기록과 증거판에 있습니다 (한 분 안에서 화살표가 :59보다 조금 앞설 수 있습니다).`,
+                      `▲buying signal sits on a RISING candle · ▼selling signal on a FALLING one — always, on every chart. Candle colour is each candle's own move (close > open = red), and the arrow marks the last correctly-coloured ${tfSec}-sec candle INSIDE the minute that decided the trade. The exact fill second is in the trade history and the evidence panel (within that minute the arrow can sit slightly before :59).`)
+                  : t("▲매수 신호 = 3연속 양봉의 3번째 · ▼매도 신호 = 3번째 음봉 · 색은 그 캔들 자신의 움직임(종가>시가 빨강) → 매수는 항상 빨강, 매도는 항상 파랑. 거래를 클릭하면 확대 + 증거.",
+                      "▲buying signal = the 3rd of 3 consecutive rising candles · ▼selling signal = the 3rd falling · colour is each candle's own move (close > open = red) → a BUY is always on red, a SELL always on blue. Click a trade to zoom + see the evidence.")}
                 {source === "synthetic" && tfSec !== 60 && decMode === "min1" && (
                   <span style={{ color: GOLD }}>{t(` — ${tfSec}초봉에서는 판단 3분(=180초)이 더 잘게 나뉘어 보입니다. 화살표는 3번째 분이 확정된 그 '초'를 포함하는 캔들 위에 찍힙니다. 매매 시각·가격은 1분봉과 100% 동일.`,
                        ` — on the ${tfSec}-sec chart the 3 decision minutes (=180 seconds) are simply split into finer bars. The arrow sits on the candle that contains the exact second the 3rd minute confirmed. Trade times and prices are 100% identical to the 1-min view.`)}</span>
