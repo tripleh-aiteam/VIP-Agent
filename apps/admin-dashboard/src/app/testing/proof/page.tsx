@@ -549,11 +549,11 @@ export default function ProofLab() {
             {/* 틱 차트 — type ANY count; a bar closes after that many TRADES, not seconds.
                 Applied on a short debounce so typing "30" does not fire a request per digit. */}
             <span className="text-[10px] text-[var(--text-muted)] ml-1">{t("틱", "tick")}</span>
-            <input type="number" min={2} max={500} value={tickIn}
+            <input type="number" min={1} max={500} value={tickIn}
               onChange={(e) => setTickIn(e.target.value)}
               placeholder={t("몇 건?", "how many?")}
-              title={t("체결 N건이 모여 캔들 1개가 됩니다 — 시간이 아니라 거래 건수로 봉이 닫힙니다. 한 건짜리 캔들은 가격이 하나뿐이라 고가·저가가 없으므로, 2건 이상을 넣으세요. 비우면 시간 차트로 돌아갑니다.",
-                       "N executions make ONE candle — the bar closes on a deal count, not a clock. A single deal carries one price, so a 1-deal candle has no high or low; use 2 or more. Clear it to go back to the time charts.")}
+              title={t("체결 N건이 모여 캔들 1개가 됩니다 — 시간이 아니라 거래 건수로 봉이 닫힙니다. 1을 넣으면 '캔들 하나 = 체결 하나'가 되어 설명이 가장 쉽지만, 체결 하나는 가격이 하나뿐이라 절반 정도가 선으로 보입니다. 비우면 시간 차트로 돌아갑니다.",
+                       "N executions make ONE candle — the bar closes on a deal count, not a clock. Type 1 and one candle IS one deal, the simplest thing to explain, but a single deal has one price so about half the candles come out as flat lines. Clear it to go back to the time charts.")}
               className="w-20 text-[11.5px] font-bold px-2 py-1 rounded-lg border bg-[var(--bg-primary)] text-[var(--text-primary)] tabular-nums"
               style={{ borderColor: tick > 0 ? "#6a1b9a" : "var(--border-default)" }} />
             {tick > 0 && (
@@ -768,7 +768,11 @@ export default function ProofLab() {
                   <span style={{ color: GOLD }}>{t(` — ${tfSec}초봉에서는 판단 3분(=180초)이 더 잘게 나뉘어 보입니다. 화살표는 3번째 분이 확정된 그 '초'를 포함하는 캔들 위에 찍힙니다. 매매 시각·가격은 1분봉과 100% 동일.`,
                        ` — on the ${tfSec}-sec chart the 3 decision minutes (=180 seconds) are simply split into finer bars. The arrow sits on the candle that contains the exact second the 3rd minute confirmed. Trade times and prices are 100% identical to the 1-min view.`)}</span>
                 )}
-                {tick > 0 && (
+                {tick === 1 && (
+                  <span style={{ color: "#6a1b9a" }}>{t(" — 캔들 하나 = 체결 하나입니다. 설명하기는 가장 쉽지만, 체결 하나에는 가격이 하나뿐이라 위아래 꼬리가 없어 절반 정도가 선처럼 보입니다. 모양까지 보이게 하려면 2 이상을 넣으세요.",
+                       " — one candle IS one deal. The simplest thing to explain, but a single deal has only one price, so there is no wick and about half the candles look like flat lines. Type 2 or more if you want shape as well.")}</span>
+                )}
+                {tick > 1 && (
                   <span style={{ color: "#6a1b9a" }}>{t(` — 틱 차트: 체결 ${tick}건이 모여 캔들 하나입니다. 그 ${tick}건 중 첫 가격이 시가, 가장 높은 값이 고가, 가장 낮은 값이 저가, 마지막이 종가 — 그래서 몸통과 꼬리가 생깁니다. 가로축은 시간이 아니라 거래 순서라, 거래가 몰리면 봉이 빨리 생기고 한산하면 천천히 생깁니다.`,
                        ` — TICK chart: ${tick} executions make one candle. Of those ${tick} deals the first is the open, the highest the high, the lowest the low and the last the close — which is what gives the bar a body and wicks. The x-axis is trade order, not the clock, so busy stretches make bars fast and quiet ones slowly.`)}</span>
                 )}
