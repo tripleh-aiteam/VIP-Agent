@@ -1142,7 +1142,7 @@ export default function ProofLab() {
                               <span className="text-[var(--text-muted)] w-[64px]">{r.t}</span>
                               <span className="font-bold" style={{ color: last ? col : "var(--text-secondary)" }}>₩{fmt(r.px)}</span>
                               <span className="text-[10px] text-[var(--text-muted)]">{r.qty ? `${fmt(r.qty)}${lang === "ko" ? "주" : " sh"}` : ""}</span>
-                              {last && <span className="ml-auto text-[10px] font-bold pr-1" style={{ color: col }}>{isSignalMin ? t("← :59 종가 = 판단 기준 (지불액 아님)", "← :59 close = DECIDES only (not what we pay)") : t("← 이 분의 종가", "← this minute's close")}</span>}
+                              {last && <span className="ml-auto text-[10px] font-bold pr-1" style={{ color: col }}>{isSignalMin ? t("← :59 종가 = 이 숫자로 판단 (체결가는 아래 호가창에서)", "← :59 close = the number that DECIDES (fill price comes from the book below)") : t("← 이 분의 종가", "← this minute's close")}</span>}
                             </div>
                           );
                         })}
