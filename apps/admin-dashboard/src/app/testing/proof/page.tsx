@@ -1025,16 +1025,23 @@ export default function ProofLab() {
                   ✕ {t("전체 보기", "show all")}
                 </button>
               )}
-              {/* 수수료 on/off — default OFF (the plain result), click for what the account keeps */}
+              {/* 수수료 — a SEGMENTED pair, not one button. As a single toggle the label
+                  "수수료 제외" reads as "click to exclude", so the boss could not tell which
+                  state he was in (2026-07-31). Two options with the active one filled in
+                  removes the question. 수수료 제외 is the default, as asked. */}
               <span className="w-px h-4 bg-[var(--border-default)] mx-1" />
-              <button onClick={() => setWithFee(!withFee)}
-                className="font-extrabold px-2.5 py-0.5 rounded-lg"
-                title={withFee
-                  ? t("왕복 수수료·세금 0.23%를 뺀 값 — 계좌에 실제로 남는 숫자입니다. 누르면 수수료 제외 값으로 돌아갑니다.", "with the 0.23% round-trip fee+tax removed — what the account actually keeps. Click to go back to the plain result.")
-                  : t("지금은 수수료 제외 값입니다 (매매 자체의 결과). 누르면 왕복 수수료·세금 0.23%를 뺀 실제 손익을 봅니다.", "currently the plain result of the trade, fee excluded. Click to subtract the 0.23% round-trip fee+tax and see the real P&L.")}
-                style={withFee ? { background: BLUE, color: "#fff" } : { border: "1px solid var(--border-default)", color: "var(--text-secondary)" }}>
-                {withFee ? t("💸 수수료 포함", "💸 fee included") : t("수수료 제외", "fee excluded")}
-              </button>
+              {([false, true] as const).map((f) => (
+                <button key={String(f)} onClick={() => setWithFee(f)}
+                  className="font-extrabold px-2.5 py-0.5 rounded-lg"
+                  title={f
+                    ? t("왕복 수수료·세금 0.23%를 뺀 값 — 계좌에 실제로 남는 금액", "with the 0.23% round-trip fee+tax removed — what the account actually keeps")
+                    : t("매매 자체의 결과 — 수수료를 빼기 전 (기본값)", "the trade's own result, before fees are taken out (default)")}
+                  style={withFee === f
+                    ? { background: f ? BLUE : "#2e7d32", color: "#fff" }
+                    : { border: "1px solid var(--border-default)", color: "var(--text-secondary)" }}>
+                  {f ? t("💸 수수료 포함", "💸 fee included") : t("수수료 제외", "before fees")}
+                </button>
+              ))}
               <span className="ml-auto text-[10px] text-[var(--text-muted)]">
                 {t("매수 또는 매도 시각이 구간에 들어가면 표시됩니다", "a trade shows if either its BUY or SELL time falls in the window")}
               </span>
