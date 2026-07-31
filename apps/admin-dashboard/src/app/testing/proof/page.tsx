@@ -1120,8 +1120,12 @@ export default function ProofLab() {
                     <tr key={i} onClick={() => { if (active) { setFocus(null); } else if (live) { setSelCode(live.code); setFocus(live.ti); } }}
                       className={`border-t border-[var(--border-default)]/40 ${live ? "cursor-pointer hover:bg-[var(--bg-elevated)]" : "opacity-70"}`}
                       style={{ background: active ? "rgba(230,81,0,0.08)" : "transparent" }}>
-                      <td className="px-3 py-1.5 font-bold" style={{ color: r.code === sym?.code ? "var(--text-primary)" : "var(--text-muted)" }}>
-                        {r.code === sym?.code && <span style={{ color: TEAL }}>▶ </span>}{nm(r)}
+                      {/* ▶ marks the company currently ON THE CHART — needed, because the table lists
+                          all three and only one is drawn. Dimming the other rows made two thirds of
+                          the history look like an error (boss 2026-07-31), so every row keeps full
+                          contrast and only the marker distinguishes them. */}
+                      <td className="px-3 py-1.5 font-bold text-[var(--text-primary)]">
+                        <span style={{ color: TEAL, opacity: r.code === sym?.code ? 1 : 0 }}>▶ </span>{nm(r)}
                       </td>
                       <td className="px-2 font-bold" style={{ color: RED }}>
                         <div>▲ {r.tr.buy_fill_t ?? fillT(r.tr.buy_hhmm)}</div>
