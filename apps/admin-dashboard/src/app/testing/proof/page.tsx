@@ -1096,7 +1096,7 @@ export default function ProofLab() {
                               <span className="text-[var(--text-muted)] w-[64px]">{r.t}</span>
                               <span className="font-bold" style={{ color: last ? col : "var(--text-secondary)" }}>₩{fmt(r.px)}</span>
                               <span className="text-[10px] text-[var(--text-muted)]">{r.qty ? `${fmt(r.qty)}${lang === "ko" ? "주" : " sh"}` : ""}</span>
-                              {last && <span className="ml-auto text-[10px] font-bold pr-1" style={{ color: col }}>{isSignalMin ? t("← :59 종가 = 판단!", "← :59 close = the decision!") : t("← 이 분의 종가", "← this minute's close")}</span>}
+                              {last && <span className="ml-auto text-[10px] font-bold pr-1" style={{ color: col }}>{isSignalMin ? t("← :59 종가 = 판단 기준 (지불액 아님)", "← :59 close = DECIDES only (not what we pay)") : t("← 이 분의 종가", "← this minute's close")}</span>}
                             </div>
                           );
                         })}
@@ -1142,7 +1142,7 @@ export default function ProofLab() {
                 {/* the order book: trade's own book (artificial) or the LIVE Kiwoom book (real) */}
                 {book ? (
                   <div className="mt-2">
-                    <div className="text-[10.5px] font-bold text-[var(--text-muted)] mb-1">📗 {t("체결 순간의 호가창", "the order book at the fill second")}</div>
+                    <div className="text-[10.5px] font-bold text-[var(--text-muted)] mb-1">📗 {t("체결 순간의 호가창 — 지불 가격은 여기서 나옵니다 (위 종가가 아니라)", "the order book at the fill second — the price PAID comes from here, not from the close above")}</div>
                     <BookTable book={book} side={side} fill={fill} t={t} />
                   </div>
                 ) : sym.live_book ? (
