@@ -938,6 +938,12 @@ export default function ProofLab() {
         const flats = rows.length - wins - losses;
         const winPct = rows.length ? Math.round((wins / rows.length) * 100) : 0;
         // what the CANDLES did, which is what the eye reads off the chart
+        // ONE total, following the toggle. Without it the 💸 button looks broken: the fee
+        // shifts every trade by 0.23% but rarely moves a trade across the win/loss line, so
+        // the counts stay put and nothing on screen appears to change (boss 2026-07-31:
+        // "now fee included and excluded same?"). The total is where the fee actually lands.
+        const sum = Math.round(rows.reduce((a2, r) => a2 + gr(r), 0) * 100) / 100;
+        const feeCost = Math.round(rows.length * 0.23 * 100) / 100;
         const upMoves = rows.filter((r) => (r.tr.move_pct ?? 0) > 0).length;
         const eaten = rows.filter((r) => (r.tr.move_pct ?? 0) > 0 && gr(r) <= 0).length;
         const findLive = (r: { code: string; tr: Trade }) => {
@@ -963,6 +969,15 @@ export default function ProofLab() {
                 </span>
               )}
               <span className="font-extrabold" style={{ color: winPct >= 50 ? "#2e7d32" : RED }}>🏆 {t(`승률 ${winPct}% (${withFee ? "수수료 포함" : "수수료 제외"})`, `${winPct}% win (${withFee ? "after fee" : "fee excluded"})`)}</span>
+              <span className="font-extrabold" title={withFee
+                  ? t(`왕복 수수료·세금 ${feeCost}% (${rows.length}건 × 0.23%)를 뺀 합계`, `total after ${feeCost}% of round-trip fees (${rows.length} trades x 0.23%)`)
+                  : t(`매매 자체의 합계 — 수수료 ${feeCost}%는 아직 빼지 않았습니다`, `the trades' own total — ${feeCost}% of fees not yet taken out`)}
+                style={{ color: sum > 0 ? RED : BLUE }}>
+                Σ {sum > 0 ? "+" : ""}{sum}%
+                <span className="text-[10px] font-normal text-[var(--text-muted)]">
+                  {withFee ? t(` (수수료 ${feeCost}% 포함)`, ` (incl. ${feeCost}% fees)`) : t(` (수수료 ${feeCost}% 제외)`, ` (excl. ${feeCost}% fees)`)}
+                </span>
+              </span>
               {upMoves > 0 && (
                 <span className="text-[11.5px]" style={{ color: GOLD }}
                   title={t("차트 캔들은 매수한 분보다 매도한 분이 더 높게 끝난 거래 수. 체결은 매도호가에 사고 매수호가에 팔기 때문에 이보다 불리합니다.", "trades whose SELL minute closed higher than the BUY minute on the chart. Fills are worse than that, because you buy at the ask and sell at the bid.")}>
