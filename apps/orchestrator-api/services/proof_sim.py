@@ -131,9 +131,11 @@ def _sec_label(epoch9: int, off: int) -> str:
 # unlike 40초, which closes each minute with a 20-second remainder.
 PERIODS = (3, 6, 15, 30, 40, 60)
 
-# Tick-chart sizes: one bar per N EXECUTIONS. A different axis from PERIODS — these bars
-# have no fixed duration, which is the whole point (boss 2026-07-31: "time does not care").
-TICKS = (5, 10, 30)
+# Tick charts: one bar per N EXECUTIONS. A different axis from PERIODS — these bars have
+# no fixed duration, which is the whole point (boss 2026-07-31: "time does not care").
+# ANY count is allowed, not a fixed menu — the boss types the number he wants. Capped only
+# so a single request cannot ask for something undrawable.
+TICK_MAX = 500
 
 # A chart never ships more than this many bars. Applied to ANY timeframe whose full tape
 # would exceed it, rather than to one hard-coded period: at the 840-minute cap that is
@@ -548,7 +550,7 @@ def run_synthetic(seed: int = 7, period: int = 60, mode: str = "min1",
                       trades themselves are unchanged — the engine still decides on 1-minute
                       closes — so this is another window onto the same market."""
     period = _norm_period(period)
-    tick = tick if tick in TICKS else 0
+    tick = max(0, min(int(tick or 0), TICK_MAX))
     per_chart = (mode == "chart")
     symbols = []
     agg_pass = agg_total = agg_trades = 0

@@ -329,7 +329,8 @@ export default function ProofLab() {
   const [decMode, setDecMode] = useState<"min1" | "chart">("min1");   // who decides: 1분 fixed vs this chart
   // 틱 차트 (boss 2026-07-31): 0 = time-based, N = one bar per N EXECUTIONS. A different
   // axis — a bar has no duration, it closes when N trades have printed.
-  const [tick, setTick] = useState<0 | 5 | 10 | 30>(0);
+  const [tick, setTick] = useState(0);          // applied tick size (0 = time chart)
+  const [tickIn, setTickIn] = useState("");    // what is typed in the box
   // ▶ LIVE-FROM-NOW (boss 2026-07-31: "I wanna start trading from now and lets see how will
   // work"). 0 = 전체 하루 (the complete recorded proof day, instant audit).
   // An epoch second = the tape STARTS at that moment and grows one candle per real minute.
@@ -371,6 +372,19 @@ export default function ProofLab() {
     return () => clearInterval(iv);
   }, [liveStart]);
   const liveMin = liveStart ? Math.max(0, Math.floor((nowSec - liveStart) / 60)) : 0;
+  // apply the typed tick count after a pause, so each keystroke is not a request
+  useEffect(() => {
+    const want = Math.max(0, Math.min(500, parseInt(tickIn, 10) || 0));
+    if (want === tick) return;
+    const h = setTimeout(() => {
+      setTick(want);
+      setFocus(null);
+      load(source, seed, code, tfSec, true, decMode, "", liveStart, want);
+    }, 600);
+    return () => clearTimeout(h);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tickIn]);
+
   const sourceRef = useRef(source);
   sourceRef.current = source;
   // keep = true → a TIMEFRAME switch only: preserve the selected stock, the focused trade
@@ -497,7 +511,7 @@ export default function ProofLab() {
         {source === "synthetic" ? (
           <>
             {([60, 40, 30, 15, 6, 3] as const).map((p) => (
-              <button key={p} onClick={() => { setTfSec(p); setTick(0); load(source, seed, code, p, true, decMode, "", liveStart, 0); }}
+              <button key={p} onClick={() => { setTfSec(p); setTick(0); setTickIn(""); load(source, seed, code, p, true, decMode, "", liveStart, 0); }}
                 className="text-[11.5px] font-extrabold px-2.5 py-1 rounded-lg"
                 title={p === 60
                   ? t("실제 데스크와 동일한 1분봉 차트 — 판단도 1분봉 3연속", "the live desk's 1-min chart — decisions use 3 consecutive 1-min candles")
@@ -508,17 +522,27 @@ export default function ProofLab() {
                 {p === 60 ? t("1분봉", "1-min") : t(`${p}초봉`, `${p}-sec`)}
               </button>
             ))}
-            {/* 틱 차트 — a bar closes after N TRADES, not after N seconds (boss 2026-07-31) */}
+            {/* 틱 차트 — type ANY count; a bar closes after that many TRADES, not seconds.
+                Applied on a short debounce so typing "30" does not fire a request per digit. */}
             <span className="text-[10px] text-[var(--text-muted)] ml-1">{t("틱", "tick")}</span>
-            {([5, 10, 30] as const).map((n) => (
-              <button key={`tk${n}`} onClick={() => { setTick(tick === n ? 0 : n); load(source, seed, code, tfSec, true, decMode, "", liveStart, tick === n ? 0 : n); }}
-                className="text-[11.5px] font-extrabold px-2.5 py-1 rounded-lg"
-                title={t(`체결 ${n}건마다 캔들 1개 — 시간과 무관하게 '거래 ${n}번'이 한 봉입니다. 거래가 몰리면 봉이 빨리 생기고, 한산하면 천천히 생깁니다.`,
-                         `one candle per ${n} executions — a bar closes after ${n} TRADES, regardless of how long that takes. Busy periods make bars fast, quiet ones slow.`)}
-                style={tick === n ? { background: "#6a1b9a", color: "#fff" } : { border: "1px solid var(--border-default)", color: "var(--text-secondary)" }}>
-                {n}{t("틱", "-tick")}
-              </button>
-            ))}
+            <input type="number" min={1} max={500} value={tickIn}
+              onChange={(e) => setTickIn(e.target.value)}
+              placeholder={t("몇 건?", "how many?")}
+              title={t("체결 N건마다 캔들 1개 — 시간과 무관합니다. 원하는 숫자를 직접 입력하세요 (1~500). 비우면 시간 차트로 돌아갑니다.",
+                       "one candle per N executions — nothing to do with time. Type any number you want (1-500). Clear it to go back to the time charts.")}
+              className="w-20 text-[11.5px] font-bold px-2 py-1 rounded-lg border bg-[var(--bg-primary)] text-[var(--text-primary)] tabular-nums"
+              style={{ borderColor: tick > 0 ? "#6a1b9a" : "var(--border-default)" }} />
+            {tick > 0 && (
+              <>
+                <span className="text-[11.5px] font-extrabold px-2 py-1 rounded-lg text-white" style={{ background: "#6a1b9a" }}>
+                  {t(`${tick}틱봉`, `${tick}-tick`)}
+                </span>
+                <button onClick={() => setTickIn("")} className="text-[11px] font-bold px-2 py-1 rounded-lg border"
+                  style={{ borderColor: GOLD, color: GOLD }}>
+                  ✕ {t("시간 차트로", "back to time")}
+                </button>
+              </>
+            )}
             {/* who decides — 1분 fixed (same trades in every chart) vs this chart's own candles */}
             <span className="text-[10px] text-[var(--text-muted)] ml-1">{t("판단", "decides")}</span>
             {/* switching WHO decides changes the trade list itself → drop the focused trade, keep the stock */}
