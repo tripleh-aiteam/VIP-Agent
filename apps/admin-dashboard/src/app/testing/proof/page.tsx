@@ -26,6 +26,9 @@ type Trade = {
   sell_idx: number; sell_hhmm: string; sell_closes: number[]; exit: number; sell_book: Book;
   buy_time?: number; sell_time?: number;
   buy_sig_t?: string; buy_fill_t?: string; sell_sig_t?: string; sell_fill_t?: string;
+  // the calendar day of each fill. Only shown once a session has run past midnight —
+  // before that it is noise, after that "09:12:19" alone cannot say which day it was.
+  buy_date?: string; sell_date?: string;
   buy_cands?: Candle[]; sell_cands?: Candle[];   // the 3 DECISION candles (+baseline) — same in both views
   buy_timeline?: TlRow[]; sell_timeline?: TlRow[];
   buy_tapes?: { t: string; px: number; qty?: number }[][] | null;   // 60s tape per signal candle (1st/2nd/3rd)
@@ -466,10 +469,17 @@ export default function ProofLab() {
   useEffect(() => {
     if (source !== "synthetic") return;
     compareAll();
-    const iv = setInterval(compareAll, 60_000);
+    const iv = setInterval(compareAll, sessHours >= 24 ? 300_000 : 60_000);
     return () => clearInterval(iv);
     /* eslint-disable-next-line react-hooks/exhaustive-deps */
   }, [source, seed, liveStart]);
+  // A session the boss leaves running for a week carries ~300k bars, and each refresh
+  // re-derives it. Polling that every 3 seconds queues requests faster than they can
+  // be answered, so the interval follows the size of what is being asked for.
+  const sessHours = liveStart ? (Date.now() / 1000 - liveStart) / 3600 : 0;
+  const pollMs = sessHours >= 24 ? 30_000 : sessHours >= 6 ? 10_000 : 0;   // 0 = use the normal rule
+  const multiDay = sessHours >= 24;
+  const sessDays = Math.floor(sessHours / 24) + 1;
   const [nowSec, setNowSec] = useState(() => Math.floor(Date.now() / 1000));
   useEffect(() => {
     if (!liveStart) return;                              // only tick while a live session runs
@@ -535,10 +545,10 @@ export default function ProofLab() {
           setRes((old) => (r?.symbols?.length && nSy(r) >= nSy(old) && nTr(r) >= nTr(old) ? r : old));
         })
         .catch(() => {});
-    }, source === "synthetic" ? (tfSec <= 6 ? 6_000 : 3_000) : code !== "ALL" ? 10_000 : 60_000);   // syn 3s (3초/6초 6s — thousands of bars per payload), single 10s, ALL sweep 60s
+    }, source === "synthetic" ? (pollMs || (tfSec <= 6 ? 6_000 : 3_000)) : code !== "ALL" ? 10_000 : 60_000);   // syn 3s (3초/6초 6s — thousands of bars per payload), single 10s, ALL sweep 60s
     return () => clearInterval(iv);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [source, code, seed, tfSec, decMode, liveStart, tick, combo, pin5]);
+  }, [source, code, seed, tfSec, decMode, liveStart, tick, combo, pin5, pollMs]);
 
   const symList = res?.symbols ?? [];
   const symIdx = Math.max(0, selCode ? symList.findIndex((s) => s.code === selCode) : 0);
@@ -1039,7 +1049,9 @@ export default function ProofLab() {
           // 1,439 on 3초봉 for the very same trade). Keying on it made one trade look like five
           // and the history count multiplied every time the timeframe was switched. The fill
           // times are identical in all five charts — that is exactly what this page proves.
-          const k = `${s.code}|${tr.buy_fill_t ?? tr.buy_hhmm}|${tr.sell_fill_t ?? tr.sell_hhmm}`;
+          // the date belongs in the key: across a week two different trades can share
+          // the same HH:MM:SS, and without it the second one would overwrite the first
+          const k = `${s.code}|${tr.buy_date ?? ""}${tr.buy_fill_t ?? tr.buy_hhmm}|${tr.sell_date ?? ""}${tr.sell_fill_t ?? tr.sell_hhmm}`;
           bucketData[k] = { code: s.code, name: s.name, tr };   // overwrite = refresh values, count stays
         }
         // display the CURRENT mode's ledger + hard filter: artificial (PRF*) companies never in
@@ -1100,6 +1112,13 @@ export default function ProofLab() {
           <div className="mt-3 rounded-xl border overflow-hidden" style={{ borderColor: GOLD }}>
             <div className="px-4 py-2 border-b bg-[var(--bg-elevated)]" style={{ borderColor: "var(--border-default)" }}>
               <b className="text-[13px]" style={{ color: GOLD }}>📒 {t("거래 기록 (누적 — 새 거래마다 +1, 절대 줄지 않음) — 클릭하면 증거", "trade history (cumulative — +1 per new trade, never shrinks) — click for evidence")}</b>
+              {multiDay && (
+                <span className="ml-2 text-[10.5px] font-bold px-2 py-0.5 rounded-full" style={{ background: "rgba(106,27,154,0.12)", color: "#6a1b9a" }}
+                  title={t("이 세션은 자정을 넘겨 계속 돌고 있습니다. 시:분:초만으로는 어느 날인지 알 수 없어 날짜를 함께 표시합니다.",
+                           "this session has been running past midnight. HH:MM:SS alone cannot say which day, so the date is shown with it.")}>
+                  📆 {t(`연속 세션 ${sessDays}일째 — 날짜 표시 중`, `continuous session, day ${sessDays} — dates shown`)}
+                </span>
+              )}
               {/* the list holds ALL companies while the chart shows ONE — without saying so,
                   a trade that is simply another company's reads as a missing arrow
                   (boss 2026-07-31: "I check 14:27 bought but did not show") */}
@@ -1308,11 +1327,11 @@ export default function ProofLab() {
                         <span style={{ color: TEAL, opacity: r.code === sym?.code ? 1 : 0 }}>▶ </span>{nm(r)}
                       </td>
                       <td className="px-2 font-bold" style={{ color: RED }}>
-                        <div>▲ {r.tr.buy_fill_t ?? fillT(r.tr.buy_hhmm)}</div>
+                        <div>▲ {multiDay && r.tr.buy_date && <span className="text-[9.5px] opacity-70 mr-1">{r.tr.buy_date}</span>}{r.tr.buy_fill_t ?? fillT(r.tr.buy_hhmm)}</div>
                         <div className="text-[9.5px] opacity-70 font-normal">{t(`신호 ${r.tr.buy_sig_t ?? `${r.tr.buy_hhmm}:59`}`, `signal ${r.tr.buy_sig_t ?? `${r.tr.buy_hhmm}:59`}`)}</div>
                       </td>
                       <td className="px-2 font-bold" style={{ color: BLUE }}>
-                        <div>▼ {r.tr.sell_fill_t ?? fillT(r.tr.sell_hhmm, "SELL")}</div>
+                        <div>▼ {multiDay && r.tr.sell_date && <span className="text-[9.5px] opacity-70 mr-1">{r.tr.sell_date}</span>}{r.tr.sell_fill_t ?? fillT(r.tr.sell_hhmm, "SELL")}</div>
                         <div className="text-[9.5px] opacity-70 font-normal">{t(`신호 ${r.tr.sell_sig_t ?? `${r.tr.sell_hhmm}:59`}`, `signal ${r.tr.sell_sig_t ?? `${r.tr.sell_hhmm}:59`}`)}</div>
                       </td>
                       <td className="text-right px-2">₩{fmt(r.tr.entry)}</td>

@@ -135,6 +135,14 @@ def _sec_label(epoch9: int, off: int) -> str:
     return datetime.fromtimestamp(epoch9 - 9 * 3600 + off, KST).strftime("%H:%M:%S")
 
 
+def _date_label(epoch9: int, off: int) -> str:
+    """The calendar day a second falls on. A session left running for a week crosses
+    midnight, and from then on "09:12:19" is ambiguous and — worse — sorts AFTER
+    "00:00:17" from the following morning. Anything ordering or displaying trades across
+    days needs this too (boss 2026-08-03: "i wanna test whole weeks")."""
+    return datetime.fromtimestamp(epoch9 - 9 * 3600 + off, KST).strftime("%m-%d")
+
+
 def _end_off(c: dict) -> int:
     """The second (offset from the day open) in which this bar CLOSED — the moment a fill
     on this bar happened. Time bars carry it implicitly as off0+n-1; tick bars do not,
@@ -220,14 +228,51 @@ def _seconds(seed: int, base_px: float, start: int = 0,
     # The 14h cap keeps the CHARTS drawable. The Strategy Lab runs a single session across
     # a whole weekend (boss 2026-07-31: "non stop during weekends"), so it passes span=0 to
     # lift the cap — it only ever asks for closes, never for bars to draw.
-    cap = DEMO_MINUTES * 60 if span is None else (span * 60 if span else 10 ** 9)
+    # A session the boss STARTED is his, and runs for as long as he leaves it — days or a
+    # whole week (2026-08-03: "you should not restart, i wanna test whole weeks"). Only the
+    # standing day carries the growth cap, and there the day open bounds it anyway.
+    if span is not None:
+        cap = span * 60 if span else 10 ** 9
+    else:
+        cap = 10 ** 9 if start else DEMO_MINUTES * 60
     total_sec = min(max(0, int((n_kst - open_t).total_seconds())), cap)
     day0 = int(open_t.timestamp()) + 9 * 3600            # +9h so charts display KST
+
+    # ── incremental cache ────────────────────────────────────────────────────────────
+    # A week-long session is ~600,000 seconds and costs seconds of CPU to build from
+    # scratch, which a page polling every 3s cannot pay (boss 2026-08-03: "i wanna test
+    # whole weeks"). The market is append-only and every minute is frozen by its own
+    # seed, so the tape already built is still valid — only the newest minutes are new.
+    # The trailing minute is REGENERATED rather than appended to: while a minute is still
+    # running it is partial, and `px` for the next minute comes from its close.
+    ck = (seed, round(float(base_px), 4), day0)
+    hit = _TAPE_CACHE.get(ck)
+    if hit and hit["total"] >= total_sec:
+        return day0, hit["secs"][:total_sec]             # already have it — plain prefix
+    m_from, secs, px = 0, [], float(base_px)
+    if hit:
+        m_from = hit["full_min"]                         # complete minutes are immutable
+        secs = hit["secs"][:m_from * 60]
+        px = hit["px_at"]
+    return day0, _grow(seed, base_px, total_sec, ck, m_from, secs, px)
+
+
+# how many whole tapes to keep — 3 symbols x a couple of sessions, not a leak
+_TAPE_CACHE: dict[tuple, dict] = {}
+_TAPE_CACHE_MAX = 12
+
+
+def _grow(seed: int, base_px: float, total_sec: int, ck: tuple,
+          m_from: int, secs: list[dict], px: float) -> list[dict]:
+    """Generate minutes [m_from, ceil(total_sec/60)) onto `secs` and cache the result.
+
+    Split out of _seconds so the same code builds a tape from nothing and extends one
+    that already exists — an extension path that generated seconds a different way would
+    be a silent history rewrite, which is the one thing this engine must never do."""
     t = _tick(base_px) or 1
-    secs: list[dict] = []
-    px = float(base_px)
-    plan = _plan_for(seed, (total_sec + 59) // 60)
-    for m in range((total_sec + 59) // 60):
+    m_to = (total_sec + 59) // 60
+    plan = _plan_for(seed, m_to)
+    for m in range(m_from, m_to):
         rm = random.Random(f"{seed}:min:{m}")            # ← per-minute seed = frozen history
         step = plan[m]                                   # this minute's direction (see _plan_for)
         o = px
@@ -241,19 +286,26 @@ def _seconds(seed: int, base_px: float, start: int = 0,
         w = [0.0]
         for _ in range(59):
             w.append(w[-1] + rm.gauss(0.0, 1.0))
-        span = max(abs(ticks), 1) * t * _WANDER
+        amp = max(abs(ticks), 1) * t * _WANDER
         for s in range(60):
             off = m * 60 + s
             if off >= total_sec:
                 break
             lin = o + (target - o) * s / 59                       # where the drift alone would be
-            brg = (w[s] - w[59] * s / 59) * span                  # the wander, pinned to 0 at both ends
+            brg = (w[s] - w[59] * s / 59) * amp                   # the wander, pinned to 0 at both ends
             cur = round((lin + brg) / t) * t
             if s == 0: cur = o                                    # :00 = the minute's open (= prev close)
             if s == 59: cur = target                              # :59 = the CLOSE the engine reads
             secs.append({"off": off, "px": cur, "qty": rm.randint(1, 80) * 10})
         px = target
-    return day0, secs
+    full = total_sec // 60                               # minutes that are COMPLETE
+    if len(_TAPE_CACHE) >= _TAPE_CACHE_MAX and ck not in _TAPE_CACHE:
+        _TAPE_CACHE.pop(next(iter(_TAPE_CACHE)))
+    _TAPE_CACHE[ck] = {"secs": secs, "total": total_sec, "full_min": full,
+                       # the price the NEXT minute opens at = the close of minute full-1,
+                       # which is that minute's target — recomputed on the next grow()
+                       "px_at": (secs[full * 60 - 1]["px"] if full else float(base_px))}
+    return secs
 
 
 def _candles_from(day0: int, secs: list[dict], period: int, hl: list | None = None) -> list[dict]:
@@ -296,6 +348,7 @@ def _candles_from(day0: int, secs: list[dict], period: int, hl: list | None = No
                         # they do not (see _candles_from_ticks), and a fill label computed
                         # the old way drifted by half an hour.
                         "endo": chunk[-1]["off"], "end_t": _sec_label(day0, chunk[-1]["off"]),
+                        "end_d": _date_label(day0, chunk[-1]["off"]),
                         "off0": chunk[0]["off"], "n": ln, "half": ln != period})
             prev_close = close
             s += ln
@@ -316,15 +369,35 @@ def _execs(day0: int, secs: list[dict], seed: int, tick: int) -> list[dict]:
 
     A TICK chart then groups these deals N at a time, which is a different axis entirely:
     time stops mattering and only the count of trades does (boss 2026-07-31)."""
-    out: list[dict] = []
-    prev = secs[0]["px"] if secs else 0.0
-    for x in secs:
+    # Deriving every deal of a week-long tape takes seconds of CPU, and a page polling
+    # every 3s asks for it constantly. Each second's deals depend only on that second and
+    # the one before it, so the work already done is still valid — resume from where the
+    # last call stopped (boss 2026-08-03: "i wanna test whole weeks").
+    ck = (seed, day0, tick)
+    hit = _EXEC_CACHE.get(ck)
+    if hit and hit["n_sec"] >= len(secs):
+        return hit["out"][:hit["ends"][len(secs) - 1]] if secs else []
+    if hit and hit["n_sec"]:
+        out, i0 = hit["out"], hit["n_sec"]
+        prev = secs[i0 - 1]["px"]
+    else:
+        out, i0 = [], 0
+        prev = secs[0]["px"] if secs else 0.0
+    ends = hit["ends"] if hit and hit["n_sec"] else []
+    for x in secs[i0:]:
         pxs, vols, strs = _second_deals(seed, x, prev, tick)
         lbl = _sec_label(day0, x["off"])
         for px, q, st in zip(pxs, vols, strs):
             out.append({"t": lbl, "px": px, "qty": q, "strength": st, "off": x["off"]})
+        ends.append(len(out))                            # deals up to and including this second
         prev = x["px"]
+    if len(_EXEC_CACHE) >= _TAPE_CACHE_MAX and ck not in _EXEC_CACHE:
+        _EXEC_CACHE.pop(next(iter(_EXEC_CACHE)))
+    _EXEC_CACHE[ck] = {"out": out, "ends": ends, "n_sec": len(secs)}
     return out
+
+
+_EXEC_CACHE: dict[tuple, dict] = {}
 
 
 def _second_deals(seed: int, x: dict, prev: float, tick: int) -> tuple[list, list, list]:
@@ -406,6 +479,7 @@ def _candles_from_ticks(day0: int, execs: list[dict], n: int) -> list[dict]:
                     # it the other way put every 5틱 fill time minutes off, growing through
                     # the session (37 min adrift by mid-session).
                     "endo": grp[-1]["off"], "end_t": grp[-1]["t"],
+                    "end_d": _date_label(day0, grp[-1]["off"]),
                     "off0": grp[0]["off"], "n": n, "half": False,
                     "t0": grp[0]["t"], "vol": sum(x["qty"] for x in grp)})
         prev_close = close
@@ -567,6 +641,7 @@ def _simulate(candles: list[dict], seed: int, with_book: bool, period: int = 60,
                    # IS the close, and (continuous bars) also the next bar's open
                    "buy_sig_t": _bt,
                    "buy_fill_t": _bt,
+                   "buy_date": cd.get("end_d"),
                    "buy_closes": closes[-4:], "entry": entry_px, "buy_book": bk,
                    "buy_close": cd["close"],   # the CANDLE close — the price the chart shows
                    "buy_timeline": (None if light else
@@ -600,6 +675,7 @@ def _simulate(candles: list[dict], seed: int, with_book: bool, period: int = 60,
             trades.append({**pos, "sell_idx": i, "sell_time": cd["time"], "sell_hhmm": cd["hhmm"],
                            "sell_sig_t": _st,
                            "sell_fill_t": _st,
+                           "sell_date": cd.get("end_d"),
                            "gross_pct": round(gross, 3), "fee_pct": FEE_PCT,
                            # what the CANDLES moved, close to close. Different from gross,
                            # which is measured between the fills — a rise smaller than the
@@ -686,6 +762,9 @@ COMBOS: list[dict[str, Any]] = [
 ]
 
 
+_SCORE_CACHE: dict[tuple, tuple[float, dict]] = {}
+
+
 def combo_scores(seed: int = 7, start: int = 0, tick: int = 5) -> dict[str, Any]:
     """Every combination's 승률 over ONE market on ONE clock — the numbers that sit on the
     buttons before the boss clicks (2026-07-31: "before clicking also it should show
@@ -699,6 +778,18 @@ def combo_scores(seed: int = 7, start: int = 0, tick: int = 5) -> dict[str, Any]
     the same number the trade history shows after clicking it. Only the per-second tape
     decoration is skipped (light=True), which no counter reads."""
     tick = max(1, min(int(tick or 5), TICK_MAX))
+    # Nine rules over a week is 300k bars each and takes ~30s — the tape caches make the
+    # DATA cheap but the simulation itself is inherently O(bars x rules). Several pollers
+    # (the page, the buttons, the watchdog) ask for the same answer, so they share one.
+    # The TTL scales with the session: a day-old session refreshes every few seconds, a
+    # week-old one every couple of minutes, which is far finer than it visibly changes.
+    import time as _t
+    age_h = ((_t.time() - start) / 3600.0) if start else 0.0
+    ttl = 3.0 if age_h < 24 else min(180.0, 3.0 + age_h)
+    ck = (seed, start, tick)
+    got = _SCORE_CACHE.get(ck)
+    if got and _t.time() - got[0] < ttl:
+        return {**got[1], "cached_sec": round(_t.time() - got[0], 1)}
     per_symbol: list[tuple[int, int, list[dict]]] = []          # (k, sseed, tick candles)
     for k, (code, _name, base) in enumerate(_SYMBOLS):
         if code not in _SHOWN:
@@ -744,8 +835,9 @@ def combo_scores(seed: int = 7, start: int = 0, tick: int = 5) -> dict[str, Any]
                     nl += 1
                 else:
                     nf += 1
-                if first is None or tr["buy_sig_t"] < first:
-                    first = tr["buy_sig_t"]
+                key = (tr.get("buy_date") or "", tr["buy_sig_t"])
+                if first is None or key < first:
+                    first = key
         # 승률 = wins / DECIDED. Flats (the candle rose but the spread ate exactly all of
         # it) are neither, and dividing by them made two different W/L pairs print the
         # same percentage — the bug the boss caught on 2026-07-31.
@@ -756,10 +848,17 @@ def combo_scores(seed: int = 7, start: int = 0, tick: int = 5) -> dict[str, Any]
                     "gross_total": round(gross_sum, 2), "net_total": round(net_sum, 2),
                     "audit": {"passed": passed, "total": total,
                               "ok": total == 0 or passed == total},
-                    "first_buy": first})
-    bars_n = [len(b) for _t, _s, b in per_symbol]
-    return {"seed": seed, "start": start, "tick": tick, "bars": bars_n,
-            "clock": f"{tick}틱", "fee_pct": FEE_PCT, "combos": out}
+                    "first_buy": (f"{first[0]} {first[1]}" if first and first[0] else
+                                  (first[1] if first else None))})
+    bars_n = [len(b) for _tb, _s, b in per_symbol]
+    res = {"seed": seed, "start": start, "tick": tick, "bars": bars_n,
+           "multi_day": age_h >= 24,
+           "clock": f"{tick}틱", "fee_pct": FEE_PCT, "combos": out,
+           "session_hours": round(age_h, 1), "cached_sec": 0.0}
+    if len(_SCORE_CACHE) > 24:
+        _SCORE_CACHE.clear()
+    _SCORE_CACHE[ck] = (_t.time(), res)
+    return res
 
 
 # --------------------------------------------------------------------------- #
