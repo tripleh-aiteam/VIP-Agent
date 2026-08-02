@@ -47,7 +47,9 @@ type SymBlock = {
   verification: { trades: number; passed: number; total: number; pct: number; per_trade?: { passed: number; total: number }[] };
 };
 type ProofRes = {
-  source: string; seed?: number; period?: number; start?: number; tick?: number; need: number; rule_ko: string; rule_en: string; engine_fn: string;
+  source: string; seed?: number; period?: number; start?: number; tick?: number;
+  dec_tick?: number;   // the clock the RULE counted on — 0 means "whatever this chart draws"
+  need: number; rule_ko: string; rule_en: string; engine_fn: string;
   symbols: SymBlock[];
   verification: { trades: number; passed: number; total: number; pct: number };
 };
@@ -345,6 +347,10 @@ export default function ProofLab() {
     { id: "3u10", need: 3, dn: 0, take: 1.0, stop: 1.0, ko: "3연속↑ / +1.0% 익절(수수료 후)", en: "3up / +1.0% after fees" },
   ] as const;
   const [combo, setCombo] = useState<string>("3u3d");
+  // 🔒 the rule's CLOCK, held at 5틱 while the chart draws whatever you like. Without
+  // this the engine re-decides on each chart, so one rule showed a different trade list
+  // on 5틱 than on 1분 — the boss asked for them to match (2026-08-03).
+  const [pin5, setPin5] = useState(false);
   const cb = COMBOS.find((c) => c.id === combo) ?? COMBOS[0];
   const comboQS = (c: typeof cb) =>
     `&need=${c.need}&need_dn=${c.dn}` +
@@ -414,6 +420,7 @@ export default function ProofLab() {
     const fresh = st !== undefined;
     setCombo(id);
     setDecMode("chart");
+    setPin5(true);            // the rule counts 5틱 bars from here on, whatever is drawn
     setTick(5);
     setTickIn("5");
     setFocus(null);
@@ -430,7 +437,7 @@ export default function ProofLab() {
         else window.localStorage.removeItem(LIVE_KEY);
       }
     }
-    load(source, seed, code, tfSec, !fresh, "chart", "", fresh ? st! : liveStart, 5, id);
+    load(source, seed, code, tfSec, !fresh, "chart", "", fresh ? st! : liveStart, 5, id, true);
   };
   // is the rule actually counting 5틱 bars? (drawing at 5틱 while deciding on 1분 is not)
   const on5 = decMode === "chart" && tick === 5;
@@ -492,7 +499,7 @@ export default function ProofLab() {
   sourceRef.current = source;
   // keep = true → a TIMEFRAME switch only: preserve the selected stock, the focused trade
   // and the chart view (trades are identical across timeframes, so indices stay valid)
-  const load = async (src = source, sd = seed, cd = code, p = tfSec, keep = false, md = decMode, ar = "", st = liveStart, tk = tick, cbId = combo) => {
+  const load = async (src = source, sd = seed, cd = code, p = tfSec, keep = false, md = decMode, ar = "", st = liveStart, tk = tick, cbId = combo, pin = pin5) => {
     setLoading(true);
     if (!keep) setFocus(null);
     try {
@@ -500,7 +507,7 @@ export default function ProofLab() {
       // fetch in the same tick, and React has not re-rendered yet — reading `cb` here would
       // send the PREVIOUS rule and the table would lag one click behind.
       const cbUse = COMBOS.find((c) => c.id === cbId) ?? cb;
-      const r = await api<ProofRes>(`/paper-desk/proof/run?source=${src}&seed=${sd}&code=${cd}&period=${p}&mode=${md}&around=${encodeURIComponent(ar)}&start=${st}&tick=${tk}${comboQS(cbUse)}`);
+      const r = await api<ProofRes>(`/paper-desk/proof/run?source=${src}&seed=${sd}&code=${cd}&period=${p}&mode=${md}&around=${encodeURIComponent(ar)}&start=${st}&tick=${tk}${pin ? "&dec_tick=5" : ""}${comboQS(cbUse)}`);
       // a slow response from the OTHER mode must never land after the user switched
       if (src === sourceRef.current && r?.source === src && (r.start ?? 0) === st) { setRes(r); if (!keep) setSelCode(null); }
     } catch { /* keep last */ }
@@ -519,7 +526,7 @@ export default function ProofLab() {
     const nTr = (x: ProofRes | null) => (x ? x.symbols.reduce((a, s) => a + s.trades.length, 0) : 0);
     const iv = setInterval(() => {
       if (focusRef.current != null) return;              // don't shift the stage mid-demonstration
-      api<ProofRes>(`/paper-desk/proof/run?source=${source}&seed=${seed}&code=${code}&period=${tfSec}&mode=${decMode}&start=${liveStart}&tick=${tick}${comboQS(cb)}`)
+      api<ProofRes>(`/paper-desk/proof/run?source=${source}&seed=${seed}&code=${code}&period=${tfSec}&mode=${decMode}&start=${liveStart}&tick=${tick}${pin5 ? "&dec_tick=5" : ""}${comboQS(cb)}`)
         .then((r) => {
           if (r?.source !== sourceRef.current) return;   // stale cross-mode response — discard
           if (r?.source === "synthetic" && (r.period ?? 60) !== tfSec) return;   // stale timeframe — discard
@@ -530,7 +537,7 @@ export default function ProofLab() {
     }, source === "synthetic" ? (tfSec <= 6 ? 6_000 : 3_000) : code !== "ALL" ? 10_000 : 60_000);   // syn 3s (3초/6초 6s — thousands of bars per payload), single 10s, ALL sweep 60s
     return () => clearInterval(iv);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [source, code, seed, tfSec, decMode, liveStart, tick, combo]);
+  }, [source, code, seed, tfSec, decMode, liveStart, tick, combo, pin5]);
 
   const symList = res?.symbols ?? [];
   const symIdx = Math.max(0, selCode ? symList.findIndex((s) => s.code === selCode) : 0);
@@ -618,7 +625,7 @@ export default function ProofLab() {
         {source === "synthetic" ? (
           <>
             {([60, 40, 30, 15, 6, 3] as const).map((p) => (
-              <button key={p} onClick={() => { setTfSec(p); if (tick) setArrows(true); setTick(0); setTickIn(""); load(source, seed, code, p, true, decMode, "", liveStart, 0); }}
+              <button key={p} onClick={() => { setTfSec(p); if (tick) setArrows(true); setTick(0); setTickIn(""); load(source, seed, code, p, true, decMode, "", liveStart, 0, combo, pin5); }}
                 className="text-[11.5px] font-extrabold px-2.5 py-1 rounded-lg"
                 title={p === 60
                   ? t("실제 데스크와 동일한 1분봉 차트 — 판단도 1분봉 3연속", "the live desk's 1-min chart — decisions use 3 consecutive 1-min candles")
@@ -684,7 +691,7 @@ export default function ProofLab() {
             <span className="text-[10px] text-[var(--text-muted)] ml-1">{t("판단", "decides")}</span>
             {/* switching WHO decides changes the trade list itself → drop the focused trade, keep the stock */}
             {(["min1", "chart"] as const).map((m) => (
-              <button key={m} onClick={() => { setDecMode(m); setFocus(null); load(source, seed, code, tfSec, true, m); }}
+              <button key={m} onClick={() => { setDecMode(m); setPin5(false); setFocus(null); load(source, seed, code, tfSec, true, m, "", liveStart, tick, combo, false); }}
                 className="text-[11px] font-extrabold px-2 py-1 rounded-lg"
                 title={m === "min1"
                   ? t("실제 데스크처럼 1분봉으로 판단 → 5개 차트 모두 '똑같은 매매' (일관성 증명)", "decide on 1-min like the live desk → all 5 charts show the SAME trades (consistency proof)")
@@ -1002,7 +1009,8 @@ export default function ProofLab() {
         // the TICK belongs in the namespace too: in chart mode a 5틱 bar and a 10틱 bar are
         // two different clocks producing two different sets of trades, and sharing one
         // ledger between them would silently blend both into a single win rate.
-        const tfNs = decMode === "chart" ? `:ch${res.tick ? `t${res.tick}` : (res.period ?? tfSec)}` : "";
+        const tfNs = res.dec_tick ? `:dec${res.dec_tick}`
+          : decMode === "chart" ? `:ch${res.tick ? `t${res.tick}` : (res.period ?? tfSec)}` : "";
         const cbNs = `:${combo}`;      // each rule keeps its own history
         const sNs = res.start ? `:live${res.start}` : "";
         const nsData = synData ? `syn:${res.seed ?? seed}${tfNs}${sNs}${cbNs}` : `kiwoom${tfNs}${cbNs}`;
@@ -1018,7 +1026,8 @@ export default function ProofLab() {
         }
         // display the CURRENT mode's ledger + hard filter: artificial (PRF*) companies never in
         // Kiwoom history, real companies never in artificial history
-        const tfNsView = decMode === "chart" ? `:ch${tick ? `t${tick}` : tfSec}` : "";
+        const tfNsView = pin5 ? ":dec5"
+          : decMode === "chart" ? `:ch${tick ? `t${tick}` : tfSec}` : "";
         const sNsView = liveStart ? `:live${liveStart}` : "";
         const nsView = source === "synthetic" ? `syn:${seed}${tfNsView}${sNsView}:${combo}` : `kiwoom${tfNsView}:${combo}`;
         const isFake = (c: string) => c.startsWith("PRF");
@@ -1138,12 +1147,15 @@ export default function ProofLab() {
               {/* say which clock the rule is actually counting on. "5틱" printed while the
                   engine still reads 1분 candles would be the most misleading label on the
                   page, so the badge follows decMode, not the drawing. */}
-              <span className="text-[10px] ml-auto" style={{ color: on5 ? "#6a1b9a" : "var(--text-muted)" }}>
-                {on5
-                  ? t(`⏱ 5틱 시계 — 규칙이 5체결 봉을 셉니다${liveStart ? " · 9개 조합 모두 같은 초에 0부터 출발" : " · 오늘 07:21부터 누적"}`,
-                      `⏱ 5-tick clock — the rule counts 5-execution bars${liveStart ? " · all 9 combinations started from zero at the same second" : " · accumulated from 07:21 today"}`)
-                  : t(`지금은 ${decMode === "min1" ? "1분" : tick ? tick + "틱" : tfSec + "초"} 시계입니다 — 조합 버튼을 누르면 5틱으로 바뀝니다`,
-                      `currently on the ${decMode === "min1" ? "1-minute" : tick ? tick + "-tick" : tfSec + "s"} clock — press a rule button to switch to 5-tick`)}
+              {/* Which clock is the RULE counting on, and what is merely being drawn? Those
+                  are two different things now, and conflating them is what made one rule
+                  show different trades on 5틱 and 1분. */}
+              <span className="text-[10px] ml-auto" style={{ color: pin5 ? "#6a1b9a" : "var(--text-muted)" }}>
+                {pin5
+                  ? t(`🔒 규칙 시계 = 5틱 고정 · 지금 화면은 ${tick ? tick + "틱" : tfSec === 60 ? "1분봉" : tfSec + "초봉"} — 차트를 바꿔도 매매는 그대로입니다`,
+                      `🔒 rule clock pinned to 5-tick · chart is drawing ${tick ? tick + "-tick" : tfSec === 60 ? "1-min" : tfSec + "s"} — changing the chart does not change a single trade`)
+                  : t(`지금은 ${decMode === "min1" ? "1분" : tick ? tick + "틱" : tfSec + "초"} 시계입니다 — 조합 버튼을 누르면 5틱으로 고정됩니다`,
+                      `currently on the ${decMode === "min1" ? "1-minute" : tick ? tick + "-tick" : tfSec + "s"} clock — press a rule button to pin it to 5-tick`)}
               </span>
             </div>
             {/* summary bar — like the Algo 3 history header */}

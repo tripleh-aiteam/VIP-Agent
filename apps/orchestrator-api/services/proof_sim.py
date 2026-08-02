@@ -23,6 +23,7 @@ function live trading uses. An INDEPENDENT verifier then re-derives every claim
 from the raw candles alone and reports pass/fail per check. No DB writes."""
 from __future__ import annotations
 
+import bisect
 import random
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -132,6 +133,14 @@ def _label(epoch9: int, period: int) -> str:
 
 def _sec_label(epoch9: int, off: int) -> str:
     return datetime.fromtimestamp(epoch9 - 9 * 3600 + off, KST).strftime("%H:%M:%S")
+
+
+def _end_off(c: dict) -> int:
+    """The second (offset from the day open) in which this bar CLOSED — the moment a fill
+    on this bar happened. Time bars carry it implicitly as off0+n-1; tick bars do not,
+    because their `n` counts deals, so they state it as `endo`. Everything that needs to
+    line a bar up against the clock goes through here."""
+    return c.get("endo", c["off0"] + c["n"] - 1)
 
 
 # Selectable candle sizes — ALL aggregated from the same per-second truth series.
@@ -274,6 +283,11 @@ def _candles_from(day0: int, secs: list[dict], period: int, hl: list | None = No
             out.append({"time": ep9, "hhmm": _label(ep9, period),
                         "open": op, "high": max(hi_d, op), "low": min(lo_d, op),
                         "close": close, "dir": d,
+                        # endo/end_t = the bar's LAST second, stated outright rather than
+                        # re-derived from time+n. On a time bar the two agree; on a TICK bar
+                        # they do not (see _candles_from_ticks), and a fill label computed
+                        # the old way drifted by half an hour.
+                        "endo": chunk[-1]["off"], "end_t": _sec_label(day0, chunk[-1]["off"]),
                         "off0": chunk[0]["off"], "n": ln, "half": ln != period})
             prev_close = close
             s += ln
@@ -378,6 +392,12 @@ def _candles_from_ticks(day0: int, execs: list[dict], n: int) -> list[dict]:
         out.append({"time": day0 + b, "hhmm": grp[-1]["t"], "open": op,
                     "high": max(max(pxs), op), "low": min(min(pxs), op),
                     "close": close, "dir": d,
+                    # ⚠️ on a tick bar `time` is a DRAWING slot (day0 + bar number) and `n`
+                    # counts DEALS, not seconds — so time+n-1 is not a clock reading. Anyone
+                    # who needs the real moment this bar closed must use endo/end_t. Deriving
+                    # it the other way put every 5틱 fill time minutes off, growing through
+                    # the session (37 min adrift by mid-session).
+                    "endo": grp[-1]["off"], "end_t": grp[-1]["t"],
                     "off0": grp[0]["off"], "n": n, "half": False,
                     "t0": grp[0]["t"], "vol": sum(x["qty"] for x in grp)})
         prev_close = close
@@ -531,12 +551,14 @@ def _simulate(candles: list[dict], seed: int, with_book: bool, period: int = 60,
         if pos is None and up == need:                   # fires the moment the Nth red closes
             bk = _book(seed * 1_000 + i, cd["close"], "BUY", tick) if with_book else None
             entry_px = bk["fill"] if bk else cd["close"]
-            _bn = cd.get("n", period)                                     # bar length (40s bars end in a 20s half)
+            # the bar's real closing second. `end_t` is carried by the bar itself; the
+            # time+n-1 form is only correct for TIME bars, and silently wrong on tick bars.
+            _bt = cd.get("end_t") or _sec_label(cd["time"], cd.get("n", period) - 1)
             pos = {"buy_idx": i, "buy_time": cd["time"], "buy_hhmm": cd["hhmm"],
                    # fill AT the closing second of the 3rd candle: that second's traded price
                    # IS the close, and (continuous bars) also the next bar's open
-                   "buy_sig_t": _sec_label(cd["time"], _bn - 1),
-                   "buy_fill_t": _sec_label(cd["time"], _bn - 1),
+                   "buy_sig_t": _bt,
+                   "buy_fill_t": _bt,
                    "buy_closes": closes[-4:], "entry": entry_px, "buy_book": bk,
                    "buy_close": cd["close"],   # the CANDLE close — the price the chart shows
                    "buy_timeline": (None if light else
@@ -566,10 +588,10 @@ def _simulate(candles: list[dict], seed: int, with_book: bool, period: int = 60,
             exit_px = bk["fill"] if bk else cd["close"]
             gross = (exit_px / pos["entry"] - 1) * 100
             net = gross - FEE_PCT
-            _sn = cd.get("n", period)
+            _st = cd.get("end_t") or _sec_label(cd["time"], cd.get("n", period) - 1)
             trades.append({**pos, "sell_idx": i, "sell_time": cd["time"], "sell_hhmm": cd["hhmm"],
-                           "sell_sig_t": _sec_label(cd["time"], _sn - 1),
-                           "sell_fill_t": _sec_label(cd["time"], _sn - 1),
+                           "sell_sig_t": _st,
+                           "sell_fill_t": _st,
                            "gross_pct": round(gross, 3), "fee_pct": FEE_PCT,
                            # what the CANDLES moved, close to close. Different from gross,
                            # which is measured between the fills — a rise smaller than the
@@ -739,7 +761,7 @@ def run_synthetic(seed: int = 7, period: int = 60, mode: str = "min1",
                   around: str = "", start: int = 0, tick: int = 0,
                   exit_mode: str = "candle", take_pct: float = 0.5,
                   stop_pct: float = 1.0, need: int = NEED,
-                  need_dn: int = 0) -> dict[str, Any]:
+                  need_dn: int = 0, dec_tick: int = 0) -> dict[str, Any]:
     """mode='min1'  → the engine decides on 1-MINUTE candles (like the live desk): every
                       timeframe shows the SAME trades — this is the consistency proof.
        mode='chart' → the engine decides on the DISPLAYED candles: proof the rule works at
@@ -748,11 +770,17 @@ def run_synthetic(seed: int = 7, period: int = 60, mode: str = "min1",
                       from earlier in the session would have no arrow to show. Pass the trade's
                       minute and the window CENTRES on it instead of on 'now' (Kiwoom scroll-back).
        tick=N        → a TICK chart: one candle per N EXECUTIONS instead of per N seconds.
-                      Time stops mattering, only the count of deals does. The trades themselves
-                      are unchanged — the engine still decides on 1-minute closes — so this is
-                      another window onto the same market."""
+                      Time stops mattering, only the count of deals does.
+       dec_tick=N    → PIN the decision clock to N-tick bars while the chart draws whatever
+                      period/tick is asked for. This is what makes a rule's trade list
+                      identical on 5틱, 10틱, 30초 and 1분 — the rule keeps its own clock and
+                      every chart is just a different window onto the same trades
+                      (boss 2026-08-03: "buying and selling price/table must be same with
+                      5 tik, 10 tik, and 1 minut, 30 sec"). Without it, mode=chart re-decides
+                      on each chart and two views of one rule disagree."""
     period = _norm_period(period)
     tick = max(0, min(int(tick or 0), TICK_MAX))
+    dec_tick = max(0, min(int(dec_tick or 0), TICK_MAX))
     per_chart = (mode == "chart")
     symbols = []
     agg_pass = agg_total = agg_trades = 0
@@ -769,15 +797,23 @@ def run_synthetic(seed: int = 7, period: int = 60, mode: str = "min1",
         # ONE price, so that candle has no high and no low — 22 of 40 came out as flat lines
         # with nothing to read. A candle needs a GROUP of deals to have a body and wicks,
         # which is exactly why every real platform aggregates.
-        execs = _execs(day0, secs, sseed, t_base) if tick else None
+        execs = _execs(day0, secs, sseed, t_base) if (tick or dec_tick) else None
         disp_all = (_candles_from_ticks(day0, execs, tick) if tick
                     else (c60 if period == 60 else _candles_from(day0, secs, period, hl)))
-        dec = disp_all if per_chart else c60               # what the ENGINE reads
+        # what the ENGINE reads. With dec_tick the rule keeps its OWN clock no matter
+        # what the chart is drawing, so switching timeframe cannot change a single trade.
+        if dec_tick:
+            dec = (disp_all if dec_tick == tick
+                   else _candles_from_ticks(day0, execs, dec_tick))
+        else:
+            dec = disp_all if per_chart else c60
         def _mk_tape(j, _d=day0, _s=secs, _dec=dec):       # a candle's tape = its own seconds
             cd = _dec[j]
-            return _tape_from(_d, _s, cd["off0"], cd["n"])
+            # a TICK bar's "n" counts deals, not seconds — its span is endo-off0+1
+            span = cd.get("endo", cd["off0"] + cd["n"] - 1) - cd["off0"] + 1
+            return _tape_from(_d, _s, cd["off0"], span)
         trades, open_pos, skips = _simulate(dec, sseed, with_book=True,
-                                                    period=(period if per_chart else 60),
+                                                    period=(60 if (dec_tick or not per_chart) else period),
                                                     tick=t_base, tape_fn=_mk_tape,
                                                     exit_mode=exit_mode, take_pct=take_pct,
                                                     stop_pct=stop_pct, need=need, need_dn=need_dn)
@@ -795,7 +831,31 @@ def run_synthetic(seed: int = 7, period: int = 60, mode: str = "min1",
                 s2 = tr["sell_idx"]
                 tr["sell_cands"] = [dec[j] for j in range(s2 - (need_dn or need), s2 + 1) if j >= 0]
         candles = disp_all
-        if not per_chart and tick:
+        if dec_tick and dec is not disp_all:
+            # PINNED CLOCK: the rule decided on dec_tick bars; this chart draws something
+            # else. Put each arrow on the bar that CONTAINS the fill second — the one exact
+            # answer, and the only one that keeps the arrow at the same moment on every
+            # chart. On a chart coarser than the decision clock (1분 vs 5틱) that bar can be
+            # blue under a buy: a fast rule can and does buy inside a falling minute. That
+            # is the truth of the trade, and moving the arrow to a red bar to make it look
+            # tidy would put it at a time the trade did not happen.
+            _starts = [c["off0"] for c in candles]
+
+            def _disp(i, up=True, _dec=dec, _st=_starts, _cs=candles):
+                if not (0 <= i < len(_dec)):
+                    return -1
+                e = _end_off(_dec[i])
+                j = bisect.bisect_right(_st, e) - 1
+                if j < 0 or (j == len(_cs) - 1 and e > _end_off(_cs[j])):
+                    return -1              # falls past the last COMPLETE bar — nothing to mark
+                return j
+            for tr in trades + open_pos:
+                tr["buy_idx"] = _disp(tr["buy_idx"], True)
+                if "sell_idx" in tr:
+                    tr["sell_idx"] = _disp(tr["sell_idx"], False)
+            for sk in skips:
+                sk["idx"] = _disp(sk["idx"], True)
+        elif not per_chart and tick:
             # TICK chart: bars have no fixed duration, so "the Nth bar of the minute" means
             # nothing here. Group the bars by the minute they CLOSED in, then use the same
             # rule as everywhere else — the last correctly-coloured bar inside the deciding
@@ -921,7 +981,7 @@ def run_synthetic(seed: int = 7, period: int = 60, mode: str = "min1",
                         "verification": ver})
     return {"source": "synthetic", "seed": seed, "need": need, "need_dn": need_dn or need,
             "period": period,
-            "tick": tick, "mode": mode, "exit_mode": exit_mode, "take_pct": take_pct,
+            "tick": tick, "dec_tick": dec_tick, "mode": mode, "exit_mode": exit_mode, "take_pct": take_pct,
             "stop_pct": stop_pct,
             "start": start,   # echoed so the page can discard a stale response from a previous session
             "rule_ko": (f"양봉 {need}개 연속 → 정확히 {need}번째 양봉에 매수 · "
