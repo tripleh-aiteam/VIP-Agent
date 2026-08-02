@@ -365,6 +365,7 @@ export default function ProofLab() {
   const [histRange, setHistRange] = useState<{ from: string; to: string }>({ from: "", to: "" });   // custom from→to interval
   const [minTape, setMinTape] = useState<{ key: string; tape: { t: string; px: number; qty?: number }[] | null; err?: string } | null>(null);   // clicked minute's seconds
   type FastBook = { asks: [number, number][]; bids: [number, number][]; best_ask: number; best_bid: number; time?: string;
+                    live?: boolean; behind_sec?: number | null; wall?: string;
                     tape?: { t: string; px: number; qty: number; strength?: number | null }[] | null; prev_close?: number | null };
   const [fastBook, setFastBook] = useState<FastBook | null>(null);   // ⚡ 1s Kiwoom-speed ladder + 체결 feed
 
@@ -918,10 +919,27 @@ export default function ProofLab() {
         return (
           <div className={view === "table" ? "rounded-xl border overflow-hidden" : "mt-3 rounded-xl border overflow-hidden"} style={{ borderColor: TEAL }}>
             <div className="px-4 py-2 border-b bg-[var(--bg-elevated)] flex items-center gap-2 flex-wrap" style={{ borderColor: "var(--border-default)" }}>
-              <b className="text-[13px]" style={{ color: tick > 0 ? "#6a1b9a" : TEAL }}>📼 {nm(sym)} — {tick > 0 ? t(`체결 — 차트는 이런 체결 ${tick}건을 묶어 캔들 하나로 그립니다 (이 표는 최신순이라 줄 묶음이 캔들 경계와 딱 맞지는 않습니다)`, `executions — the chart groups ${tick} deals like these into one candle (this table is newest-first, so the rows do not line up with candle boundaries)`) : t("체결 (초당·실시간)", "executions (per second · LIVE)")}</b>
-              <span className="text-[10.5px] font-bold px-2 py-0.5 rounded-full" style={{ background: "rgba(0,131,143,0.12)", color: TEAL }}>
-                ⚡ {t(`1초 갱신${fastBook?.time ? ` (${fastBook.time})` : ""}`, `1s updates${fastBook?.time ? ` (${fastBook.time})` : ""}`)}
-              </span>
+              <b className="text-[13px]" style={{ color: tick > 0 ? "#6a1b9a" : TEAL }}>📼 {nm(sym)} — {tick > 0 ? t(`체결 — 차트는 이런 체결 ${tick}건을 묶어 캔들 하나로 그립니다 (이 표는 최신순이라 줄 묶음이 캔들 경계와 딱 맞지는 않습니다)`, `executions — the chart groups ${tick} deals like these into one candle (this table is newest-first, so the rows do not line up with candle boundaries)`) : (fastBook?.live === false ? t("체결 (지난 장)", "executions (past session)") : t("체결 (초당·실시간)", "executions (per second · LIVE)"))}</b>
+              {(() => {
+                // the badge reports the MARKET clock and whether this feed is actually live.
+                // It used to print the browser clock unconditionally, so a closed session
+                // read as live and the header disagreed with every row beneath it.
+                const live = fastBook?.live !== false;
+                const behind = fastBook?.behind_sec ?? 0;
+                const mins = Math.round(behind / 60);
+                return (
+                  <span className="text-[10.5px] font-bold px-2 py-0.5 rounded-full"
+                    style={live ? { background: "rgba(0,131,143,0.12)", color: TEAL }
+                                : { background: "rgba(120,120,120,0.16)", color: "var(--text-secondary)" }}
+                    title={live ? "" : t(`이 장은 이미 끝났습니다 — 마지막 체결이 ${mins}분 전입니다. 지금 시각이 아니라 그 장의 시계를 표시합니다.`,
+                                         `this session has already closed — its last deal was ${mins} min ago. The clock shown is that session's, not the current time.`)}>
+                    {live
+                      ? t(`⚡ 1초 갱신${fastBook?.time ? ` (${fastBook.time})` : ""}`, `⚡ 1s updates${fastBook?.time ? ` (${fastBook.time})` : ""}`)
+                      : t(`⏸ 마감된 장${fastBook?.time ? ` — 마지막 체결 ${fastBook.time}` : ""} (${mins}분 전)`,
+                          `⏸ closed session${fastBook?.time ? ` — last deal ${fastBook.time}` : ""} (${mins} min ago)`)}
+                  </span>
+                );
+              })()}
               {prevClose != null && <span className="text-[10.5px] text-[var(--text-muted)] tabular-nums">{t(`전일종가 ₩${fmt(prevClose)}`, `prev close ₩${fmt(prevClose)}`)}</span>}
               <span className="text-[10.5px] text-[var(--text-muted)]">{tick > 0
                   ? t(`같은 초에 여러 체결이 찍힙니다 (실제 시장처럼) · 지금 차트는 이 체결 ${tick}건마다 캔들 하나입니다`, `several deals print within the SAME second (like the real market) · the chart is currently one candle per ${tick} of them`)

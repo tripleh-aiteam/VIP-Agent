@@ -162,9 +162,17 @@ TICK_MAX = 500
 # old 1초 chart could hold. Clicking a trade slides the window onto it (see `around`).
 BAR_CAP = 3600
 
-DEMO_MINUTES = 840               # longest tape we ever build (14h) — the growth cap
+# 07:21 + 1000 min = 00:01, so the day reaches NOW at every hour the boss might be at his
+# desk. It was 840 (14h), which stopped the tape dead at 21:21: after that the newest
+# "live" deal was hours old and the executions panel printed 21:20 under a 07:45 clock
+# (boss 2026-08-03: "dealing time was 21:20 now 07:45"). BAR_CAP already keeps the
+# payload small, so a longer tape costs generation time only.
+DEMO_MINUTES = 1000              # longest tape we ever build — the growth cap
 DEMO_OPEN = (7, 21)              # the artificial market opens 07:21 KST — see _default_start
-MIN_TAPE_MIN = 25                # below this there is too little to judge, so fall back a day
+# Falling back a whole day to avoid a thin chart cost far more than it saved: for the
+# first 25 minutes of every morning the page showed YESTERDAY while labelled LIVE.
+# 3 minutes is enough for a chart to draw, and the fallback is now labelled either way.
+MIN_TAPE_MIN = 3                 # below this there is nothing to draw, so fall back a day
 
 
 def _default_start(now: datetime) -> datetime:
@@ -1238,10 +1246,20 @@ def live_book_fast(source: str, code: str, seed: int = 7, period: int = 60,
         tail = _sc[-(TAIL + 1):]                           # +1 leading second: _execs walks FROM it
         tape = [e for e in _execs(_d0, tail, seed + k * 101, t)
                 if e["off"] != tail[0]["off"]] if len(tail) > 1 else []
+        # The header clock is the TAPE's clock, not the wall clock. Stamping a market
+        # feed with the wall clock made the panel print "LIVE 07:45:20" above deals
+        # from 21:20 — two different moments presented as one (boss 2026-08-03).
+        # `live` says whether this tape actually reaches now, so the page can stop
+        # claiming ⚡LIVE over a session that has closed.
+        tape_t = tape[-1]["t"] if tape else (_sec_label(_d0, _sc[-1]["off"]) if _sc else None)
+        end_epoch = (_d0 - 9 * 3600 + _sc[-1]["off"]) if _sc else 0
         return {"ok": True, "asks": asks, "bids": bids,
                 "best_ask": asks[0][0], "best_bid": bids[0][0],
                 "tape": tape, "prev_close": prev_close,
-                "time": datetime.now(KST).strftime("%H:%M:%S")}
+                "live": bool(_sc) and (now_s - end_epoch) <= 90,
+                "behind_sec": max(0, now_s - end_epoch) if _sc else None,
+                "wall": datetime.now(KST).strftime("%H:%M:%S"),
+                "time": tape_t}
     from services.kiwoom_rest import order_book, executions
     ob = order_book(code, ttl=0.8) or {}
     lv = ob.get("levels") or []
