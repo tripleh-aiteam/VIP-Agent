@@ -16,6 +16,7 @@ from __future__ import annotations
 from typing import Any
 
 from services.proof_sim import (FEE_PCT, _book, _candles_from, _candles_from_ticks,
+                                _sec_label,
                                 _execs, _seconds, _SHOWN, _SYMBOLS, _tick, _sec_hl,
                                 _sec_label)
 
@@ -46,10 +47,23 @@ VARIANTS: list[dict] = [
     {"id": "3d+0.5", "entry": 3, "dir": -1, "kind": "target", "a": 0.5, "b": 1.0},
     {"id": "2d3u", "entry": 2, "dir": -1, "kind": "candle", "a": 3},
     {"id": "3d3u", "entry": 3, "dir": -1, "kind": "candle", "a": 3},
+    # ── the boss's top six, each with a per-company model filtering its entries
+    # (2026-08-03). Same rule, same exits; the model only decides whether to TAKE a
+    # signal the rule already produced, so a "+ML" row can be read against its twin.
+    {"id": "3u+0.3ML", "entry": 3, "kind": "target", "a": 0.3, "b": 1.0, "ml": True},
+    {"id": "3u+0.5ML", "entry": 3, "kind": "target", "a": 0.5, "b": 1.0, "ml": True},
+    {"id": "2u+0.5ML", "entry": 2, "kind": "target", "a": 0.5, "b": 1.0, "ml": True},
+    {"id": "4u3dML", "entry": 4, "kind": "candle", "a": 3, "ml": True},
+    {"id": "3u+1.0ML", "entry": 3, "kind": "target", "a": 1.0, "b": 1.0, "ml": True},
+    {"id": "4u+1.0ML", "entry": 4, "kind": "target", "a": 1.0, "b": 1.0, "ml": True},
 ]
 
 
 def label(v: dict, ko: bool = True) -> str:
+    if v.get("ml"):
+        base = dict(v)
+        base.pop("ml")
+        return label(base, ko) + (" + ML" if not ko else " + ML")
     dn = v.get("dir", 1) < 0
     ent = (f"{v['entry']}연속 하락" if dn else f"{v['entry']}연속 상승") if ko else           (f"{v['entry']} down" if dn else f"{v['entry']} up")
     if v["kind"] == "candle":
@@ -59,8 +73,39 @@ def label(v: dict, ko: bool = True) -> str:
             else f"{ent} / +{v['a']}% take, -{v['b']}% stop")
 
 
+def _outcome(cl, i, entry, tick, v):
+    """Did the signal at bar i eventually win, and on WHICH BAR was that decided?
+
+    The resolving bar matters as much as the answer. A label that is only settled inside
+    the trading window has read the future, so those samples must be embargoed from the
+    fit — otherwise the model is scored on bars it was partly trained on and reports
+    skill it does not have. Used only to label PAST signals; never to decide a live trade."""
+    for j in range(i + 1, min(i + 600, len(cl))):
+        if v["kind"] == "candle":
+            # the mirror of the live exit, counted the same way
+            run = 0
+            for q in range(j, max(0, j - v["a"]) - 1, -1):
+                if q < 1:
+                    break
+                rise = cl[q] > cl[q - 1]
+                if (rise if v.get("dir", 1) < 0 else not rise):
+                    run += 1
+                else:
+                    break
+            if run >= v["a"]:
+                return (1 if cl[j] > entry else 0), j
+        else:
+            if (cl[j] / entry - 1) * 100 - FEE_PCT >= v["a"]:
+                return 1, j
+            if ((cl[j] - tick) / entry - 1) * 100 <= -v["b"]:
+                return 0, j
+    return None, None
+
+
 def run_variant(closes: list[float], tick: int, v: dict, seed: int,
-                evidence: bool = False, with_open: bool = False):
+                evidence: bool = False, with_open: bool = False,
+                vols: list[float] | None = None, ml_key: tuple | None = None,
+                ml_bundle: dict | None = None):
     """One rule over one stock's closes. Fills cross the spread exactly as the Proof Lab
     does — a BUY pays the best ask, a SELL takes the best bid — so these numbers are
     directly comparable with the trade history on the proof page.
@@ -76,6 +121,14 @@ def run_variant(closes: list[float], tick: int, v: dict, seed: int,
     out: list[dict] = []
     pos = None
     up = dn = 0
+
+    # The model is trained on history that ENDS where this session begins (see
+    # _ml_for). Nothing is fitted in here, so there is no split to honour and no way for
+    # a label to be settled by a bar the model is later scored on. `ml_bundle` is either
+    # a finished model or None, and None means this variant simply does not trade.
+    bundle = ml_bundle
+
+    last_sig_live = -1
     for i in range(1, len(closes)):
         c, prev = closes[i], closes[i - 1]
         up = up + 1 if c > prev else 0
@@ -84,8 +137,28 @@ def run_variant(closes: list[float], tick: int, v: dict, seed: int,
             # dir=-1 buys after a run of FALLS instead of rises. The tape is mean-reverting
             # at 5틱, so this is the same rule pointed the other way — nothing else changes.
             if (dn if v.get("dir", 1) < 0 else up) == v["entry"]:
+                if v.get("ml"):
+                    from services.proof_ml import features_at, score, MARGIN
+                    vv = vols or [0.0] * len(closes)
+                    fa = features_at(closes, vv, i, last_sig_live)
+                    last_sig_live = i
+                    # no model, no trading — a variant that cannot be scored honestly
+                    # takes nothing rather than falling back to the plain rule
+                    if bundle is None:
+                        continue
+                    sc = score(bundle, fa)
+                    # "better than this rule's average signal", not an absolute 0.5
+                    if sc["p"] < bundle["base_rate"] + MARGIN:
+                        continue                      # the model declined this signal
+                    ml_meta = {"p": round(sc["p"], 4), "why": sc["why"],
+                               "bar": round(bundle["base_rate"] + MARGIN, 4),
+                               "base_rate": round(bundle["base_rate"], 4),
+                               "auc": bundle["auc"], "n_train": bundle["n_train"]}
+                else:
+                    ml_meta = None
                 bk = _book(seed * 1_000 + i, c, "BUY", tick)
                 pos = {"i": i, "entry": bk["fill"], "bk": bk, "close": c,
+                       "ml": ml_meta,
                        "seq": closes[max(0, i - v["entry"]): i + 1]}
         else:
             if v["kind"] == "candle":
@@ -120,7 +193,7 @@ def run_variant(closes: list[float], tick: int, v: dict, seed: int,
                       "entry": pos["entry"], "exit": bk["fill"],
                       "gross_pct": round(gross, 3),
                       "net_pct": round(gross - FEE_PCT, 3),
-                      "exit_why": why}
+                      "exit_why": why, "ml": pos.get("ml")}
                 if evidence:
                     tr["buy_ev"] = {"close": pos["close"], "book": pos["bk"], "seq": pos["seq"]}
                     tr["sell_ev"] = {"close": c, "book": bk,
@@ -135,6 +208,12 @@ def run_variant(closes: list[float], tick: int, v: dict, seed: int,
                 # (boss 2026-08-03: "rules and buying and selling must match each other").
                 # `up == entry` is an equality test, so a continuing run cannot re-fire.
                 pos = None
+    if v.get("ml"):
+        for tr in out:
+            tr["ml_model"] = ({"auc": bundle["auc"], "n_train": bundle["n_train"],
+                               "n_test": bundle["n_test"], "base_rate": bundle["base_rate"],
+                               "trained_to": bundle.get("trained_to"),
+                               "n_signals": bundle.get("n_signals", 0)} if bundle else None)
     if not with_open:
         return out
     # a position still OPEN at the end is not a trade, but it IS what the rule is doing
@@ -345,6 +424,63 @@ def clock_label(tick: int, period: int) -> str:
     return f"{period}초" if period else f"{tick}틱"
 
 
+_ML_CACHE: dict[tuple, Any] = {}
+TRAIN_HOURS = 72          # how much history before the session the model may learn from
+
+
+def _ml_for(c_code: str, base: float, sseed: int, t: int, tick: int, period: int,
+            v: dict, start: int) -> dict | None:
+    """Train this company's model on the tape BEFORE the traded session, and stop there.
+
+    Training on the same bars the rule then trades is the mistake that makes a model look
+    clever: even with a split, a label that resolves after the split has read the future.
+    Ending the training tape at the session open removes the question entirely — every bar
+    the model learned from is finished before the first trade is scored. It is also what
+    you would do with real data: fit on last week, trade today.
+    """
+    from services.proof_ml import features_at, train, MIN_TRAIN
+    open_ep = _session_open_epoch(start)
+    key = (c_code, v["id"], tick, period, open_ep // 3600)
+    if key in _ML_CACHE:
+        return _ML_CACHE[key]
+    d0, secs = _seconds(sseed, base, open_ep - TRAIN_HOURS * 3600, span=0)
+    keep = max(0, open_ep - (d0 - 9 * 3600))        # only seconds before the session open
+    secs = secs[:keep]
+    bundle = None
+    if len(secs) > 3600:
+        cs = _bars(d0, secs, sseed, t, tick, period)
+        cl = [c["close"] for c in cs]
+        vv = [float(c.get("vol") or 0) for c in cs]
+        samples, u, dn_, last = [], 0, 0, -1
+        for i in range(1, len(cl)):
+            u = u + 1 if cl[i] > cl[i - 1] else 0
+            dn_ = dn_ + 1 if cl[i] < cl[i - 1] else 0
+            if (dn_ if v.get("dir", 1) < 0 else u) != v["entry"]:
+                continue
+            y, _res = _outcome(cl, i, cl[i] + t, t, v)
+            if y is None:
+                continue
+            samples.append((features_at(cl, vv, i, last), y))
+            last = i
+        bundle = train(samples, key)
+        if bundle is not None:
+            bundle["n_signals"] = len(samples)
+            bundle["trained_to"] = _sec_label(d0, len(secs) - 1)
+    _ML_CACHE[key] = bundle
+    if len(_ML_CACHE) > 128:
+        _ML_CACHE.pop(next(iter(_ML_CACHE)))
+    return bundle
+
+
+def _session_open_epoch(start: int) -> int:
+    """The epoch second this session opened — an explicit start, or today's 07:21 open."""
+    if start:
+        return int(start)
+    from datetime import datetime
+    from services.proof_sim import _default_start, KST
+    return int(_default_start(datetime.now(KST)).timestamp())
+
+
 def variant_trades(vid: str, seed: int = 7, start: int = 0, tick: int = 5,
                    code: str = "", bars: int = 400, limit: int = 400,
                    around: int = -1, period: int = 0, at: str = "") -> dict[str, Any]:
@@ -367,6 +503,9 @@ def variant_trades(vid: str, seed: int = 7, start: int = 0, tick: int = 5,
     rows: list[dict] = []
     holding: list[dict] = []
     tapes: dict[str, dict] = {}
+    pair_all: list[dict] = []          # the same rule WITHOUT the model, same window
+    pair_model: dict | None = None
+    no_model: list[str] = []           # companies with too little history to fit
     for k, (c_code, name, base) in enumerate(_SYMBOLS):
         if c_code not in _SHOWN:
             continue
@@ -374,9 +513,33 @@ def variant_trades(vid: str, seed: int = 7, start: int = 0, tick: int = 5,
         t = _tick(base) or 1
         d0, secs = _seconds(sseed, base, start, span=0)
         cs = _bars(d0, secs, sseed, t, tick, period)
+        vv = [float(c.get("vol") or 0) for c in cs]
+        mlb = _ml_for(c_code, base, sseed, t, tick, period, v, start) if v.get("ml") else None
         got, op = run_variant([c["close"] for c in cs], t, v, sseed,
-                              evidence=True, with_open=True)
+                              evidence=True, with_open=True,
+                              vols=vv, ml_bundle=mlb)
+        # THE PAIRED BASELINE: the same rule without the model, over the SAME window.
+        # "+ML 60%" against the rule's all-day figure would compare two different sets of
+        # bars; the only honest comparison is the one the model actually faced.
+        # computed whenever this is an ML variant — NOT only when the model traded.
+        # A model that declined everything still needs its baseline on screen, or the row
+        # reads "0 trips" with nothing to compare it against and looks broken.
+        base_pair = None
+        if v.get("ml"):
+            plain = dict(v); plain.pop("ml")
+            # the model trades the WHOLE session (it was trained before it), so the plain
+            # rule over the whole session is the like-for-like comparison
+            base_pair = run_variant([c["close"] for c in cs], t, plain, sseed)
         tapes[c_code] = {"cs": cs, "name": name, "trades": got}
+        if base_pair is not None:
+            pair_all.extend(base_pair)
+            if pair_model is None:
+                pair_model = (got[0].get("ml_model") if got else None) or (
+                    {"auc": mlb.get("auc"), "n_train": mlb.get("n_train"),
+                     "n_test": mlb.get("n_test"), "n_signals": mlb.get("n_signals"),
+                     "trained_to": mlb.get("trained_to")} if mlb else None)
+            if mlb is None:
+                no_model.append(name)
         for g in got:
             b_c, s_c = cs[g["buy_i"]], cs[g["sell_i"]]
             rows.append({
@@ -392,6 +555,7 @@ def variant_trades(vid: str, seed: int = 7, start: int = 0, tick: int = 5,
                            "loss" if g["gross_pct"] < 0 else "flat"),
                 "bars_held": g["sell_i"] - g["buy_i"],
                 "buy_ev": g.get("buy_ev"), "sell_ev": g.get("sell_ev"),
+                "ml": g.get("ml"),
             })
         if op:
             b_c = cs[op["buy_i"]]
@@ -467,6 +631,20 @@ def variant_trades(vid: str, seed: int = 7, start: int = 0, tick: int = 5,
             "trips": len(rows), "wins": w, "losses": l, "flats": len(rows) - w - l,
             "win_pct": round(w / (w + l) * 100) if (w + l) else 0,
             "trades": rows[:limit], "shown": min(len(rows), limit),
+            # what the model is, and what the SAME rule did on the SAME bars without it
+            "ml": ({"no_model": no_model,
+                    "auc": (pair_model or {}).get("auc"),
+                    "n_train": (pair_model or {}).get("n_train"),
+                    "n_test": (pair_model or {}).get("n_test"),
+                    "base": {
+                        "trips": len(pair_all),
+                        "wins": sum(1 for g in pair_all if g["gross_pct"] > 0),
+                        "losses": sum(1 for g in pair_all if g["gross_pct"] < 0),
+                        "win_pct": round(sum(1 for g in pair_all if g["gross_pct"] > 0)
+                                         / max(1, sum(1 for g in pair_all if g["gross_pct"] != 0)) * 100),
+                        "per_trade": (round(sum(g["net_pct"] for g in pair_all) / len(pair_all), 3)
+                                      if pair_all else 0.0)}}
+                   if v.get("ml") else None),
             "holding": holding, "chart": chart, "fee_pct": FEE_PCT}
 
 
@@ -501,6 +679,7 @@ def compare(seed: int = 7, start: int = 0, tick: int = 5,
         d0, secs = _seconds(sseed, base, start, span=0)   # span=0 → no 14h cap
         cs = _bars(d0, secs, sseed, t, tick, period)
         tapes.append({"code": c_code, "name": name, "seed": sseed, "tick": t, "cs": cs,
+                      "base": base,
                       "closes": [c["close"] for c in cs],
                       "first": cs[0]["hhmm"] if cs else None,
                       "last": cs[-1]["hhmm"] if cs else None})
@@ -512,7 +691,10 @@ def compare(seed: int = 7, start: int = 0, tick: int = 5,
         per_stock = {}
         recent: list[dict] = []
         for tp in tapes:
-            got = run_variant(tp["closes"], tp["tick"], v, tp["seed"])
+            got = run_variant(tp["closes"], tp["tick"], v, tp["seed"],
+                              vols=[float(c.get("vol") or 0) for c in tp["cs"]],
+                              ml_bundle=(_ml_for(tp["code"], tp["base"], tp["seed"], tp["tick"],
+                                                 tick, period, v, start) if v.get("ml") else None))
             trades += got
             per_stock[tp["name"]] = len(got)
             for g in got[-hist:]:
@@ -539,7 +721,10 @@ def compare(seed: int = 7, start: int = 0, tick: int = 5,
             "recent": recent[:hist],
             # arrows for the charted stock only — index into the candles sent below
             "marks": [{"b": g["buy_i"], "s": g["sell_i"], "g": g["gross_pct"], "net": g["net_pct"]}
-                      for g in (run_variant(chart_tape["closes"], chart_tape["tick"], v, chart_tape["seed"])[-60:]
+                      for g in (run_variant(chart_tape["closes"], chart_tape["tick"], v, chart_tape["seed"],
+                                            vols=[float(c.get("vol") or 0) for c in chart_tape["cs"]],
+                                            ml_key=(chart_tape["code"], v["id"], tick, period,
+                                                    len(chart_tape["cs"])))[-60:]
                                 if chart_tape else [])],
         })
     rows.sort(key=lambda r: (-r["win_pct"], -r["per_trade"]))

@@ -156,15 +156,22 @@ export default function StrategyLab() {
   type Book = { asks: [number, number][]; bids: [number, number][]; best_ask: number;
                 best_bid: number; fill: number; last: number; spread: number; slip: number };
   type Ev = { close: number; book: Book; seq: number[] };
+  type MlWhy = { key: string; ko: string; en: string; value: number; push: number; for: boolean };
+  type Ml = { p: number; bar: number; base_rate: number; auc: number | null;
+              n_train: number; why: MlWhy[] };
+  type MlHead = { auc: number | null; n_train: number; n_test: number; no_model?: string[];
+                  base: { trips: number; wins: number; losses: number; win_pct: number;
+                          per_trade: number } };
   type LabTrade = { code: string; name: string; buy_t: string; buy_d?: string; entry: number;
                     sell_t: string; sell_d?: string; exit: number; gross_pct: number; net_pct: number;
                     result: "win" | "loss" | "flat"; bars_held: number; exit_why?: string;
-                    buy_ev?: Ev | null; sell_ev?: Ev | null };
+                    buy_ev?: Ev | null; sell_ev?: Ev | null; ml?: Ml | null };
   type Detail = {
     ok: boolean; id: string; ko: string; en: string; clock: string; tick: number;
     entry_n: number; kind: string; a: number; b?: number | null;
     trips: number; wins: number; losses: number; flats: number; win_pct: number; shown: number;
     at?: string; at_found?: boolean;   // a Data File minute the chart was asked to jump to
+    ml?: MlHead | null;                // present only on a "+ ML" rule
     trades: LabTrade[];
     holding: { code: string; name: string; buy_t: string; buy_d?: string; entry: number;
                last: number; unreal_pct: number; buy_ev?: Ev | null }[];
@@ -440,6 +447,12 @@ export default function StrategyLab() {
                              : i === 0 ? "rgba(230,81,0,0.06)" : "transparent" }}>
                     <td className="px-3 py-1.5 font-bold text-[var(--text-primary)]">
                       {sel === v.id ? "▶ " : i === 0 ? "🏆 " : ""}{lang === "ko" ? v.ko : v.en}
+                      {/* the model only ever DECLINES signals the rule produced, so a
+                          "+ ML" row is the same rule with fewer trades — never a new one */}
+                      {v.id.endsWith("ML") && (
+                        <span className="ml-1.5 text-[9.5px] font-extrabold px-1.5 py-0.5 rounded"
+                          style={{ background: "rgba(21,101,192,0.14)", color: "#1565c0" }}>🤖 ML</span>
+                      )}
                     </td>
                     {/* When this rule is expanded, the row shows the DETAIL's own numbers —
                         literally the same object the trade list below is counted from. The
@@ -494,6 +507,58 @@ export default function StrategyLab() {
                 )}
                 {detailBusy && <span className="text-[11px] text-[var(--text-muted)]">{t("불러오는 중…", "loading…")}</span>}
               </div>
+
+              {/* the model's own report card. Its AUC is on screen beside its win rate
+                  because a filter's win rate without its skill measure is half a fact:
+                  0.5 means the model is a coin, however good the row looks. */}
+              {detail?.ml && (
+                <div className="px-4 py-2 border-b text-[11.5px]" style={{ borderColor: "var(--border-default)", background: "rgba(21,101,192,0.06)" }}>
+                  <b style={{ color: "#1565c0" }}>🤖 {t("이 규칙 + 기계학습", "this rule + machine learning")}</b>
+                  <span className="ml-2 text-[var(--text-secondary)]">
+                    {t(`회사마다 따로 학습한 모델이 신호를 걸러냅니다 — 규칙이 낸 신호만 대상으로, 새 매매를 만들지는 않습니다.`,
+                       `a model trained per company filters the signals — it only ever declines what the rule produced, it never creates a trade.`)}
+                  </span>
+                  <div className="mt-1.5 grid gap-2" style={{ gridTemplateColumns: "1fr 1fr 1fr" }}>
+                    <div className="rounded-lg border px-2 py-1.5" style={{ borderColor: "var(--border-default)" }}>
+                      <div className="text-[10px] text-[var(--text-muted)]">{t("기계학습 없이 (같은 장, 같은 규칙)", "without ML (same session, same rule)")}</div>
+                      <div className="tabular-nums font-bold">
+                        {detail.ml.base.trips}{t("회전", " trips")} · <span style={{ color: GOLD }}>{detail.ml.base.win_pct}%</span>
+                        <span className="text-[10px] text-[var(--text-muted)] ml-1">{t("건당", "per trade")} {detail.ml.base.per_trade}%</span>
+                      </div>
+                    </div>
+                    <div className="rounded-lg border px-2 py-1.5" style={{ borderColor: "#1565c0" }}>
+                      <div className="text-[10px]" style={{ color: "#1565c0" }}>{t("기계학습 적용", "with ML")}</div>
+                      <div className="tabular-nums font-bold">
+                        {detail.trips}{t("회전", " trips")} · <span style={{ color: detail.win_pct >= detail.ml.base.win_pct ? GREEN : BLUE }}>{detail.win_pct}%</span>
+                        <span className="text-[10px] text-[var(--text-muted)] ml-1">
+                          {detail.win_pct - detail.ml.base.win_pct >= 0 ? "+" : ""}{detail.win_pct - detail.ml.base.win_pct}{t("%p", "pp")}
+                        </span>
+                      </div>
+                    </div>
+                    <div className="rounded-lg border px-2 py-1.5" style={{ borderColor: "var(--border-default)" }}>
+                      <div className="text-[10px] text-[var(--text-muted)]">{t("모델 실력 (학습에 쓰지 않은 데이터)", "model skill (data it never trained on)")}</div>
+                      <div className="tabular-nums font-bold" style={{ color: (detail.ml.auc ?? 0.5) >= 0.55 ? GREEN : "var(--text-secondary)" }}>
+                        AUC {detail.ml.auc == null ? "—" : detail.ml.auc.toFixed(3)}
+                        <span className="text-[10px] text-[var(--text-muted)] ml-1">
+                          {t(`학습 ${detail.ml.n_train} / 검증 ${detail.ml.n_test}`, `fit ${detail.ml.n_train} / held out ${detail.ml.n_test}`)}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                  {(detail.ml.auc == null || detail.ml.auc < 0.55) && (
+                    <div className="mt-1 text-[10.5px]" style={{ color: GOLD }}>
+                      ⚠ {t("AUC 0.5는 동전 던지기입니다. 이 모델은 아직 실력이 증명되지 않았으므로, 위의 승률 차이는 우연일 수 있습니다.",
+                            "AUC 0.5 is a coin flip. This model has not shown skill, so the win-rate difference above may be luck.")}
+                    </div>
+                  )}
+                  {detail.ml.no_model && detail.ml.no_model.length > 0 && (
+                    <div className="mt-1 text-[10.5px] text-[var(--text-muted)]">
+                      {t(`학습 데이터가 모자라 모델을 만들지 못한 종목: ${detail.ml.no_model.join(", ")} — 이 종목은 매매하지 않았습니다.`,
+                         `not enough history to fit a model for: ${detail.ml.no_model.join(", ")} — those stocks were not traded.`)}
+                    </div>
+                  )}
+                </div>
+              )}
 
               {/* (1) the 5틱 chart. The window follows the TRADES, not the clock: it used
                      to end at "now" while the rule's trades sat thousands of bars behind,
@@ -681,6 +746,37 @@ export default function StrategyLab() {
                         {(tr.sell_ev?.seq ?? []).map((x) => `₩${x.toLocaleString()}`).join(" → ")}
                       </span>
                     </div>
+                    {tr.ml && (
+                      <div className="mt-2 rounded-lg border px-2.5 py-2" style={{ borderColor: "#1565c0", background: "rgba(21,101,192,0.05)" }}>
+                        <b className="text-[11.5px]" style={{ color: "#1565c0" }}>
+                          🤖 {t("기계학습이 이 신호를 통과시킨 이유", "why the model let this signal through")}
+                        </b>
+                        <div className="text-[11.5px] mt-1 tabular-nums">
+                          {t(`이 규칙의 평균 신호는 ${(tr.ml.base_rate * 100).toFixed(0)}% 승률입니다. 모델은 이 신호를 `,
+                             `an average signal of this rule wins ${(tr.ml.base_rate * 100).toFixed(0)}% of the time. The model scored this one `)}
+                          <b style={{ color: GREEN }}>{(tr.ml.p * 100).toFixed(1)}%</b>
+                          {t(` 로 봤고, 기준선 ${(tr.ml.bar * 100).toFixed(1)}% 를 넘겨서 매수했습니다.`,
+                             `, above its bar of ${(tr.ml.bar * 100).toFixed(1)}%, so it bought.`)}
+                        </div>
+                        <div className="mt-1 space-y-0.5">
+                          {tr.ml.why.map((w, q) => (
+                            <div key={q} className="text-[11px] tabular-nums flex items-center gap-2">
+                              <span style={{ color: w.for ? RED : BLUE, width: 18 }}>{w.for ? "▲" : "▼"}</span>
+                              <span className="text-[var(--text-primary)]" style={{ minWidth: 150 }}>{lang === "ko" ? w.ko : w.en}</span>
+                              <span className="text-[var(--text-muted)]">{w.value}</span>
+                              <span style={{ color: w.for ? RED : BLUE }}>
+                                {t(w.for ? "→ 승률을 높이는 쪽" : "→ 승률을 낮추는 쪽",
+                                   w.for ? "→ pushed FOR the trade" : "→ pushed AGAINST it")}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                        <div className="mt-1 text-[10px] text-[var(--text-muted)]">
+                          {t("모델은 이 봉과 그 이전 봉만 봅니다 — 앞으로 무슨 일이 일어나는지는 모릅니다. 학습도 이 장이 시작되기 전 데이터로만 했습니다.",
+                             "the model sees only this bar and the ones before it — it knows nothing of what happens next, and it was trained only on data from before this session began.")}
+                        </div>
+                      </div>
+                    )}
                     <div className="mt-2 grid gap-2" style={{ gridTemplateColumns: "1fr 1fr" }}>
                       <Side ev={tr.buy_ev} side="BUY" />
                       <Side ev={tr.sell_ev} side="SELL" />
