@@ -154,6 +154,12 @@ export default function StrategyLab() {
   const [dfOpen, setDfOpen] = useState<string | null>(null);      // which minute is expanded
   const [dfMin, setDfMin] = useState<DfMin | null>(null);
   const [dfCode, setDfCode] = useState("");
+  // 📼 the execution feed — the SAME endpoint the Proof Lab reads, so the deals under this
+  // chart are literally the deals the 5틱 candles above it are built from.
+  type Feed = { asks: [number, number][]; bids: [number, number][]; time?: string;
+                live?: boolean; behind_sec?: number | null; prev_close?: number | null;
+                tape?: { t: string; px: number; qty: number; strength?: number | null }[] | null };
+  const [feed, setFeed] = useState<Feed | null>(null);
   const loadDf = useCallback((c: string, mins: number, f = "", tt = "") => {
     setDfOpen(null); setDfMin(null);
     api<Df>(`/paper-desk/proof/lab/datafile?seed=7&start=${startRef.current}`
@@ -230,6 +236,19 @@ export default function StrategyLab() {
     try { setGate(await api<Gate>(`/paper-desk/proof/lab/gate?seed=7&start=${start}&tick=${tick}`)); }
     catch { /* ignore */ }
   };
+
+  useEffect(() => {
+    let alive = true;
+    const hit = () => {
+      api<Feed>(`/paper-desk/proof/book?source=synthetic&code=${encodeURIComponent(code)}`
+        + `&seed=7&period=60&start=${startRef.current}`)
+        .then((r) => { if (alive) setFeed(r ?? null); })
+        .catch(() => {});
+    };
+    hit();
+    const iv = setInterval(hit, 1_000);
+    return () => { alive = false; clearInterval(iv); };
+  }, [code]);
 
   const hrs = start ? Math.floor((Date.now() / 1000 - start) / 3600) : 0;
   const mins = start ? Math.floor((Date.now() / 1000 - start) / 60) % 60 : 0;
@@ -819,6 +838,81 @@ export default function StrategyLab() {
               </table>
             </div>
           ) : null}
+
+
+          {/* ---- 📼 the executions the candles above are built from. Placed AFTER the
+                 chart because that is the order the boss reads the page in: rank the
+                 rules, look at the market, then look at the deals themselves
+                 (2026-08-03). Same endpoint as the Proof Lab — one feed, two pages. ---- */}
+          {feed?.tape && feed.tape.length > 0 && (() => {
+            const rows = [...feed.tape].slice(-90).reverse();     // newest on top
+            const prevClose = feed.prev_close ?? null;
+            const live = feed.live !== false;
+            const mins = Math.round((feed.behind_sec ?? 0) / 60);
+            return (
+              <div className="mt-3 rounded-xl border overflow-hidden" style={{ borderColor: "#00838f" }}>
+                <div className="px-4 py-2 border-b bg-[var(--bg-elevated)] flex items-center gap-2 flex-wrap" style={{ borderColor: "var(--border-default)" }}>
+                  <b className="text-[13px]" style={{ color: "#00838f" }}>
+                    📼 {lab?.chart?.name ?? ""} — {t(`체결 — 위 차트는 이런 체결 ${tick}건을 묶어 캔들 하나로 그립니다`,
+                                                     `executions — the chart above groups ${tick} deals like these into one candle`)}
+                  </b>
+                  {/* the MARKET's clock, and only called live when it really is */}
+                  <span className="text-[10.5px] font-bold px-2 py-0.5 rounded-full"
+                    style={live ? { background: "rgba(0,131,143,0.12)", color: "#00838f" }
+                                : { background: "rgba(120,120,120,0.16)", color: "var(--text-secondary)" }}
+                    title={live ? "" : t(`이 장은 이미 끝났습니다 — 마지막 체결이 ${mins}분 전입니다.`,
+                                         `this session has closed — its last deal was ${mins} min ago.`)}>
+                    {live ? t(`⚡ 1초 갱신${feed.time ? ` (${feed.time})` : ""}`, `⚡ 1s updates${feed.time ? ` (${feed.time})` : ""}`)
+                          : t(`⏸ 마감된 장${feed.time ? ` — 마지막 체결 ${feed.time}` : ""}`, `⏸ closed session${feed.time ? ` — last deal ${feed.time}` : ""}`)}
+                  </span>
+                  {prevClose != null && (
+                    <span className="text-[10.5px] text-[var(--text-muted)] tabular-nums">
+                      {t(`전일종가 ₩${prevClose.toLocaleString()}`, `prev close ₩${prevClose.toLocaleString()}`)}
+                    </span>
+                  )}
+                  <span className="text-[10.5px] text-[var(--text-muted)]">
+                    {t(`같은 초에 여러 체결이 찍힙니다 (실제 시장처럼) · 지금 차트는 이 체결 ${tick}건마다 캔들 하나입니다`,
+                       `several deals print within the SAME second (like the real market) · the chart is one candle per ${tick} of them`)}
+                  </span>
+                </div>
+                <div className="overflow-y-auto" style={{ maxHeight: 300 }}>
+                  <table className="w-full text-[11.5px] tabular-nums">
+                    <thead><tr className="text-[10px] text-[var(--text-muted)] sticky top-0" style={{ background: "var(--bg-elevated)" }}>
+                      <th className="text-left px-3 py-1">{t("체결시각", "time")}</th>
+                      <th className="text-right px-2">{t("체결가", "price")}</th>
+                      <th className="text-right px-2">{t("전일대비", "vs prev close")}</th>
+                      <th className="text-right px-2">{t("체결량", "volume")}</th>
+                      <th className="text-right px-3">{t("체결강도", "strength")}</th>
+                    </tr></thead>
+                    <tbody>
+                      {rows.map((r, i) => {
+                        const pv = rows[i + 1];                    // the next row is one deal earlier
+                        const up = pv != null && pv.px < r.px;
+                        const dn = pv != null && pv.px > r.px;
+                        const d = prevClose != null ? Math.round(r.px - prevClose) : null;
+                        const st2 = r.strength ?? null;
+                        return (
+                          <tr key={i} className="border-t border-[var(--border-default)]/30">
+                            <td className="px-3 py-[2px] text-[var(--text-muted)]">{r.t}</td>
+                            <td className="text-right px-2 font-bold" style={{ color: up ? RED : dn ? BLUE : "var(--text-secondary)" }}>
+                              ₩{r.px.toLocaleString()} {up ? "▲" : dn ? "▼" : ""}
+                            </td>
+                            <td className="text-right px-2 font-bold" style={{ color: d == null ? "var(--text-muted)" : d > 0 ? RED : d < 0 ? BLUE : "var(--text-muted)" }}>
+                              {d == null ? "-" : d === 0 ? "0" : `${d > 0 ? "▲" : "▼"} ${Math.abs(d).toLocaleString()}`}
+                            </td>
+                            <td className="text-right px-2 text-[var(--text-secondary)]">{r.qty.toLocaleString()}</td>
+                            <td className="text-right px-3 font-bold" style={{ color: st2 == null ? "var(--text-muted)" : st2 >= 100 ? RED : BLUE }}>
+                              {st2 == null ? "-" : `${st2}%`}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            );
+          })()}
 
           <p className="mt-2 text-[10.5px] leading-relaxed" style={{ color: GOLD }}>
             ⚠ {t(`모든 매매는 실제와 같은 비용을 냅니다 — 살 때 최우선 매도호가, 팔 때 최우선 매수호가, 왕복 수수료 ${lab.fee_pct}%. '합계'는 수수료 前, '건당'은 수수료 後입니다. 승률은 승/(승+패)이며 무승부는 제외합니다.`,
