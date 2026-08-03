@@ -1439,10 +1439,8 @@ export default function ProofLab() {
               <thead><tr className="text-[10px] text-[var(--text-muted)]" style={{ background: "var(--bg-elevated)" }}>
                 <th className="text-left px-3 py-1">{t("시각(분)", "minute")}</th>
                 <th className="text-right px-2">{t("시가", "open")}</th>
-                <th className="text-right px-2">{t("고가", "high")}</th>
-                <th className="text-right px-2">{t("저가", "low")}</th>
                 <th className="text-right px-2">{t("종가", "close")}</th>
-                <th className="text-right px-2">{t("전분 종가 대비", "vs prev close")}</th>
+                <th className="text-right px-2">{t("차이", "difference")}</th>
                 <th className="text-center px-3">{t("판정", "verdict")}</th>
               </tr></thead>
               <tbody>
@@ -1458,15 +1456,16 @@ export default function ProofLab() {
                       style={{ background: openHere ? "rgba(230,81,0,0.08)" : "transparent" }}>
                       <td className="px-3 py-[2px] font-bold text-[var(--text-primary)]">{openHere ? "▾ " : "▸ "}{c.hhmm}</td>
                       <td className="text-right px-2">₩{fmt(c.open)}</td>
-                      <td className="text-right px-2" style={{ color: RED }}>₩{fmt(c.high)}</td>
-                      <td className="text-right px-2" style={{ color: BLUE }}>₩{fmt(c.low)}</td>
                       <td className="text-right px-2 font-extrabold" style={{ color: icol }}>₩{fmt(c.close)}</td>
+                      {/* the difference the ENGINE reads: this close against the PREVIOUS
+                          close. Bars are continuous — a bar opens where the last one closed —
+                          so it is also close-minus-open, and 🔴/🔵 follows this one number. */}
                       <td className="text-right px-2 font-bold" style={{ color: icol }}>{d == null ? "-" : d === 0 ? "0" : `${d > 0 ? "+" : "−"}₩${fmt(Math.abs(d))}`}</td>
                       <td className="text-center px-3 font-bold" style={{ color: icol }}>{d == null ? "-" : rise ? t("🔴▲ 상승", "🔴▲ rise") : fall ? t("🔵▼ 하락", "🔵▼ fall") : t("⚪ 보합", "⚪ flat")}</td>
                     </tr>
                     {openHere && (
                       <tr>
-                        <td colSpan={7} className="px-6 py-2" style={{ background: "rgba(128,128,128,0.05)" }}>
+                        <td colSpan={5} className="px-6 py-2" style={{ background: "rgba(128,128,128,0.05)" }}>
                           {minTape?.tape ? (
                             <>
                               <div className="text-[10px] font-bold text-[var(--text-muted)] mb-1">🎬 {t(`${c.hhmm}의 초 단위 전체 가격 (${minTape.tape.length}초) — 마지막 줄이 이 캔들의 종가`, `every second of ${c.hhmm} (all ${minTape.tape.length}) — the last row is this candle's close`)}</div>

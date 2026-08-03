@@ -668,6 +668,17 @@ def proof_lab(seed: int = Query(7), start: int = Query(0), tick: int = Query(5),
     return compare(seed=seed, start=start, tick=tick, code=code, bars=bars, hist=hist)
 
 
+@router.get("/proof/lab/trades")
+def proof_lab_trades(variant: str = Query(...), seed: int = Query(7), start: int = Query(0),
+                     tick: int = Query(5), code: str = Query(""), bars: int = Query(400),
+                     limit: int = Query(400)):
+    """🔎 Drill-down behind a ranking row: every trade ONE rule made, on every stock, with
+    the 5틱 candles so the rule can be checked against the bars it counted."""
+    from services.proof_lab import variant_trades
+    return variant_trades(variant, seed=seed, start=start, tick=tick, code=code,
+                          bars=bars, limit=limit)
+
+
 @router.get("/proof/lab/gate")
 def proof_lab_gate(seed: int = Query(7), start: int = Query(0), tick: int = Query(5)):
     """The consistency gate: proves the lab is reading the same market the charts draw —

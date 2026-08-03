@@ -169,6 +169,65 @@ def consistency_gate(seed: int = 7, start: int = 0, tick: int = 5) -> dict[str, 
 _cmp_cache: dict[tuple, tuple[int, dict]] = {}
 
 
+def variant_trades(vid: str, seed: int = 7, start: int = 0, tick: int = 5,
+                   code: str = "", bars: int = 400, limit: int = 400) -> dict[str, Any]:
+    """EVERY trade one rule made, across every stock — the drill-down behind a ranking row.
+
+    The ranking answers "which rule wins more often". This answers "show me the trades it
+    actually made": which company, bought when and at what, sold when and at what, and what
+    that came to (boss 2026-08-03). The 5틱 candles come back with it so the rule can be
+    checked against the bars it claims to have counted, rather than taken on trust.
+
+    Totals are recomputed here from the same trades the table lists, so the drill-down and
+    the ranking row can never disagree — if they ever did, one of them would be a story."""
+    v = next((x for x in VARIANTS if x["id"] == vid), None)
+    if v is None:
+        return {"ok": False, "error": f"unknown rule {vid}"}
+    rows: list[dict] = []
+    chart = None
+    for k, (c_code, name, base) in enumerate(_SYMBOLS):
+        if c_code not in _SHOWN:
+            continue
+        sseed = seed + k * 101
+        t = _tick(base) or 1
+        d0, secs = _seconds(sseed, base, start, span=0)
+        cs = _candles_from_ticks(d0, _execs(d0, secs, sseed, t), tick)
+        got = run_variant([c["close"] for c in cs], t, v, sseed)
+        for g in got:
+            b_c, s_c = cs[g["buy_i"]], cs[g["sell_i"]]
+            rows.append({
+                "code": c_code, "name": name,
+                "buy_t": b_c["hhmm"], "buy_d": b_c.get("end_d"), "entry": g["entry"],
+                "sell_t": s_c["hhmm"], "sell_d": s_c.get("end_d"), "exit": g["exit"],
+                # the money, both ways: the price move, and what is left after the round trip
+                "gross_pct": g["gross_pct"], "net_pct": g["net_pct"],
+                # three states, not two. A trade can land EXACTLY on 0 — the price rose
+                # but the spread took all of it — and a boolean would file that under
+                # "loss", which is neither what happened nor what the win% counts.
+                "result": ("win" if g["gross_pct"] > 0 else
+                           "loss" if g["gross_pct"] < 0 else "flat"),
+                "bars_held": g["sell_i"] - g["buy_i"],
+            })
+        if (code and c_code == code) or (not code and chart is None):
+            off = max(0, len(cs) - bars)
+            chart = {"code": c_code, "name": name,
+                     "candles": [{"time": c["time"], "hhmm": c["hhmm"], "open": c["open"],
+                                  "high": c["high"], "low": c["low"], "close": c["close"],
+                                  "dir": c["dir"]} for c in cs[off:]],
+                     "marks": [{"b": g["buy_i"] - off, "s": g["sell_i"] - off,
+                                "net": g["net_pct"]} for g in got if g["buy_i"] >= off]}
+    rows.sort(key=lambda r: ((r["sell_d"] or ""), r["sell_t"]), reverse=True)
+    w = sum(1 for r in rows if r["gross_pct"] > 0)
+    l = sum(1 for r in rows if r["gross_pct"] < 0)
+    return {"ok": True, "id": vid, "ko": label(v, True), "en": label(v, False),
+            "tick": tick, "clock": f"{tick}틱",
+            # the SAME arithmetic the ranking row uses — one source, so they cannot drift
+            "trips": len(rows), "wins": w, "losses": l, "flats": len(rows) - w - l,
+            "win_pct": round(w / (w + l) * 100) if (w + l) else 0,
+            "trades": rows[:limit], "shown": min(len(rows), limit),
+            "chart": chart, "fee_pct": FEE_PCT}
+
+
 def compare(seed: int = 7, start: int = 0, tick: int = 5,
             code: str = "", bars: int = 500, hist: int = 40) -> dict[str, Any]:
     """Every variant against the SAME market, returned as the Monday comparison table.

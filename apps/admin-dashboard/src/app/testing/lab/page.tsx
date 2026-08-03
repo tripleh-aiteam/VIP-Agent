@@ -105,6 +105,18 @@ export default function StrategyLab() {
   const [tick, setTick] = useState(5);
   const [code, setCode] = useState("");            // which stock the chart draws
   const [sel, setSel] = useState<string | null>(null);   // variant whose arrows are on the chart
+  // 🔎 the drill-down behind a ranking row: every trade THIS rule made, on every stock,
+  // with its own 5틱 chart so the rule can be checked against the bars it counted
+  type Detail = {
+    ok: boolean; id: string; ko: string; en: string; clock: string;
+    trips: number; wins: number; losses: number; flats: number; win_pct: number; shown: number;
+    trades: { code: string; name: string; buy_t: string; buy_d?: string; entry: number;
+              sell_t: string; sell_d?: string; exit: number; gross_pct: number; net_pct: number;
+              result: "win" | "loss" | "flat"; bars_held: number }[];
+    chart: { code: string; name: string; candles: Candle[]; marks: { b: number; s: number; net: number }[] } | null;
+  };
+  const [detail, setDetail] = useState<Detail | null>(null);
+  const [detailBusy, setDetailBusy] = useState(false);
   const [grid, setGrid] = useState(false);         // one-page grid of every variant's trades
   // the session is persisted, so a reload or a redeploy resumes the SAME weekend run —
   // the mistake that lost a morning on the proof page
@@ -237,38 +249,142 @@ export default function StrategyLab() {
                 <th className="text-right px-2">{t("회전", "trips")}</th>
                 <th className="text-right px-2">{t("승", "W")}</th>
                 <th className="text-right px-2">{t("패", "L")}</th>
-                <th className="text-right px-2">{t("무", "flat")}</th>
                 <th className="text-right px-3">{t("승률", "win%")}</th>
-                <th className="text-right px-2">{t("평균 이익", "avg win")}</th>
-                <th className="text-right px-2">{t("평균 손실", "avg loss")}</th>
-                <th className="text-right px-2">{t("손익비", "R:R")}</th>
-                <th className="text-right px-2">{t("합계", "total")}</th>
-                <th className="text-right px-3">{t("건당", "per trade")}</th>
+                <th className="text-right px-3 text-[10px]">{t("자세히", "detail")}</th>
               </tr></thead>
               <tbody>
                 {lab.variants.map((v, i) => (
-                  <tr key={v.id} onClick={() => setSel(sel === v.id ? null : v.id)}
+                  <tr key={v.id} onClick={() => {
+                      const open = sel === v.id;
+                      setSel(open ? null : v.id);
+                      setDetail(null);
+                      if (open) return;
+                      setDetailBusy(true);
+                      // the rule ids contain "+" (3u+0.3) and in a query string "+" decodes to a SPACE,
+                      // so an unencoded id reaches the server as "3u 0.3" and matches nothing
+                      api<Detail>(`/paper-desk/proof/lab/trades?variant=${encodeURIComponent(v.id)}&seed=7&start=${start}&tick=${tick}&code=${encodeURIComponent(code)}`)
+                        .then((d) => setDetail(d?.ok ? d : null))
+                        .catch(() => setDetail(null))
+                        .finally(() => setDetailBusy(false));
+                    }}
                     className="border-t border-[var(--border-default)]/40 cursor-pointer hover:bg-[var(--bg-elevated)]"
                     style={{ background: sel === v.id ? "rgba(106,27,154,0.10)"
                              : i === 0 ? "rgba(230,81,0,0.06)" : "transparent" }}>
                     <td className="px-3 py-1.5 font-bold text-[var(--text-primary)]">
                       {sel === v.id ? "▶ " : i === 0 ? "🏆 " : ""}{lang === "ko" ? v.ko : v.en}
                     </td>
-                    <td className="text-right px-2">{v.trips.toLocaleString()}</td>
-                    <td className="text-right px-2" style={{ color: RED }}>{v.wins}</td>
-                    <td className="text-right px-2" style={{ color: BLUE }}>{v.losses}</td>
-                    <td className="text-right px-2 text-[var(--text-muted)]">{v.flats || ""}</td>
-                    <td className="text-right px-3 font-extrabold" style={{ color: v.win_pct >= 50 ? GREEN : GOLD }}>{v.win_pct}%</td>
-                    <td className="text-right px-2" style={{ color: RED }}>+{v.avg_win}%</td>
-                    <td className="text-right px-2" style={{ color: BLUE }}>−{v.avg_loss}%</td>
-                    <td className="text-right px-2" style={{ color: v.rr >= 1 ? GREEN : "var(--text-secondary)" }}>{v.rr}</td>
-                    <td className="text-right px-2 font-bold" style={{ color: v.gross > 0 ? RED : BLUE }}>{v.gross > 0 ? "+" : ""}{v.gross}%</td>
-                    <td className="text-right px-3" style={{ color: v.per_trade > 0 ? RED : BLUE }}>{v.per_trade > 0 ? "+" : ""}{v.per_trade}%</td>
+                    {/* When this rule is expanded, the row shows the DETAIL's own numbers —
+                        literally the same object the trade list below is counted from. The
+                        ranking is cached for the current minute while the drill-down is
+                        computed live, so on a moving market the row could otherwise read 227
+                        with 228 trades listed underneath it. Same figures, one source. */}
+                    {(() => {
+                      const d = sel === v.id && detail?.id === v.id ? detail : null;
+                      const trips = d ? d.trips : v.trips;
+                      const wins = d ? d.wins : v.wins;
+                      const losses = d ? d.losses : v.losses;
+                      const wp = d ? d.win_pct : v.win_pct;
+                      return (
+                        <>
+                          <td className="text-right px-2">{trips.toLocaleString()}</td>
+                          <td className="text-right px-2" style={{ color: RED }}>{wins}</td>
+                          <td className="text-right px-2" style={{ color: BLUE }}>{losses}</td>
+                          <td className="text-right px-3 font-extrabold" style={{ color: wp >= 50 ? GREEN : GOLD }}>{wp}%</td>
+                        </>
+                      );
+                    })()}
+                    <td className="text-right px-3 text-[10.5px]" style={{ color: "#6a1b9a" }}>
+                      {sel === v.id ? t("닫기 ▲", "close ▲") : t("보기 ▼", "open ▼")}
+                    </td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
+
+          {/* ---- 🔎 one rule's own trades, and the 5틱 bars it counted ---- */}
+          {sel && (
+            <div className="mt-3 rounded-xl border overflow-hidden" style={{ borderColor: "#6a1b9a" }}>
+              <div className="px-4 py-2 border-b flex items-center gap-3 flex-wrap"
+                style={{ borderColor: "var(--border-default)", background: "rgba(106,27,154,0.07)" }}>
+                <b className="text-[13px]" style={{ color: "#6a1b9a" }}>
+                  🔎 {detail ? (lang === "ko" ? detail.ko : detail.en) : "…"} — {t("이 규칙이 한 매매 전부", "every trade this rule made")}
+                </b>
+                {detail && (
+                  <>
+                    <span className="text-[12px] tabular-nums">{t(`${detail.trips}회전`, `${detail.trips} trips`)}</span>
+                    <span className="text-[12px] tabular-nums" style={{ color: RED }}>{detail.wins}{t("승", "W")}</span>
+                    <span className="text-[12px] tabular-nums" style={{ color: BLUE }}>{detail.losses}{t("패", "L")}</span>
+                    <span className="text-[12px] tabular-nums font-extrabold" style={{ color: detail.win_pct >= 50 ? GREEN : GOLD }}>
+                      {detail.win_pct}% {t("승률", "win")}
+                    </span>
+                    <span className="text-[10.5px] text-[var(--text-muted)]">
+                      {t(`${detail.clock} 기준 · 위 순위표의 숫자와 같은 매매에서 계산했습니다`,
+                         `on the ${detail.clock} clock · computed from the same trades as the ranking row above`)}
+                    </span>
+                  </>
+                )}
+                {detailBusy && <span className="text-[11px] text-[var(--text-muted)]">{t("불러오는 중…", "loading…")}</span>}
+              </div>
+
+              {/* the 5틱 chart for THIS rule — its own arrows, so "did it really follow 5틱?"
+                  is answerable by looking rather than by trusting the table */}
+              {detail?.chart && (
+                <div className="p-2 border-b" style={{ borderColor: "var(--border-default)" }}>
+                  <div className="px-2 pb-1 text-[11px]" style={{ color: "#6a1b9a" }}>
+                    📈 {tick}{t("틱 차트", "-tick chart")} — {detail.chart.name}
+                    <span className="text-[10px] text-[var(--text-muted)] ml-2">
+                      {t("화살표 하나가 아래 표의 한 줄입니다 — 봉 하나 = 체결 " + tick + "건", `each arrow is one row below — one bar = ${tick} executions`)}
+                    </span>
+                  </div>
+                  <LabChart candles={detail.chart.candles} marks={detail.chart.marks} />
+                </div>
+              )}
+
+              {detail && (
+                <div className="overflow-y-auto" style={{ maxHeight: 420 }}>
+                  <table className="w-full text-[11.5px] tabular-nums">
+                    <thead><tr className="text-[10px] text-[var(--text-muted)] sticky top-0" style={{ background: "var(--bg-elevated)" }}>
+                      <th className="text-left px-3 py-1.5">{t("종목", "stock")}</th>
+                      <th className="text-left px-2">{t("매수 시각", "bought")}</th>
+                      <th className="text-right px-2">{t("매수가", "buy price")}</th>
+                      <th className="text-left px-2">{t("매도 시각", "sold")}</th>
+                      <th className="text-right px-2">{t("매도가", "sell price")}</th>
+                      <th className="text-right px-2">{t("차이", "diff")}</th>
+                      <th className="text-right px-2">{t("손익", "P&L")}</th>
+                      <th className="text-right px-3">{t("결과", "result")}</th>
+                    </tr></thead>
+                    <tbody>
+                      {detail.trades.map((tr, i) => (
+                        <tr key={i} className="border-t border-[var(--border-default)]/40">
+                          <td className="px-3 py-1 font-bold text-[var(--text-primary)]">{tr.name}</td>
+                          <td className="px-2" style={{ color: RED }}>▲ {tr.buy_d ? `${tr.buy_d} ` : ""}{tr.buy_t}</td>
+                          <td className="text-right px-2">₩{tr.entry.toLocaleString()}</td>
+                          <td className="px-2" style={{ color: BLUE }}>▼ {tr.sell_d ? `${tr.sell_d} ` : ""}{tr.sell_t}</td>
+                          <td className="text-right px-2">₩{tr.exit.toLocaleString()}</td>
+                          <td className="text-right px-2" style={{ color: tr.exit - tr.entry > 0 ? RED : tr.exit - tr.entry < 0 ? BLUE : "var(--text-muted)" }}>
+                            {tr.exit - tr.entry > 0 ? "+" : ""}{(tr.exit - tr.entry).toLocaleString()}
+                          </td>
+                          <td className="text-right px-2 font-bold" style={{ color: tr.gross_pct > 0 ? RED : tr.gross_pct < 0 ? BLUE : "var(--text-muted)" }}>
+                            {tr.gross_pct > 0 ? "+" : ""}{tr.gross_pct}%
+                          </td>
+                          <td className="text-right px-3 font-bold" style={{ color: tr.gross_pct > 0 ? RED : tr.gross_pct < 0 ? BLUE : "var(--text-muted)" }}>
+                            {tr.gross_pct > 0 ? t("승", "WIN") : tr.gross_pct < 0 ? t("패", "LOSS") : t("무", "flat")}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                  {detail.trips > detail.shown && (
+                    <div className="px-3 py-1.5 text-[10.5px] text-[var(--text-muted)] border-t" style={{ borderColor: "var(--border-default)" }}>
+                      {t(`최근 ${detail.shown}건만 표시했습니다 (전체 ${detail.trips}건) — 위의 승·패·승률은 전체 기준입니다`,
+                         `showing the most recent ${detail.shown} of ${detail.trips} — the W/L/win% above are over ALL of them`)}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
 
           {/* ---- the 5틱 market every variant is trading ---- */}
           {lab.chart && (
