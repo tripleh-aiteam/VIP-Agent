@@ -44,10 +44,20 @@ def label(v: dict, ko: bool = True) -> str:
             else f"{v['entry']} up / +{v['a']}% take, -{v['b']}% stop")
 
 
-def run_variant(closes: list[float], tick: int, v: dict, seed: int) -> list[dict]:
+def run_variant(closes: list[float], tick: int, v: dict, seed: int,
+                evidence: bool = False, with_open: bool = False):
     """One rule over one stock's closes. Fills cross the spread exactly as the Proof Lab
     does — a BUY pays the best ask, a SELL takes the best bid — so these numbers are
-    directly comparable with the trade history on the proof page."""
+    directly comparable with the trade history on the proof page.
+
+    evidence=True also keeps WHY each fill was that price: the order book at the moment,
+    and the closes the rule counted to decide. Off by default because the ranking runs
+    this twelve times over every stock and never looks at it.
+
+    with_open=True returns (trades, open_position_or_None) instead of just the trades.
+    The open position is deliberately NOT appended to the trade list — a dozen callers
+    iterate that list expecting every entry to have a sell, and an entry without one
+    would break them silently rather than loudly."""
     out: list[dict] = []
     pos = None
     up = dn = 0
@@ -58,22 +68,41 @@ def run_variant(closes: list[float], tick: int, v: dict, seed: int) -> list[dict
         if pos is None:
             if up == v["entry"]:
                 bk = _book(seed * 1_000 + i, c, "BUY", tick)
-                pos = {"i": i, "entry": bk["fill"]}
+                pos = {"i": i, "entry": bk["fill"], "bk": bk, "close": c,
+                       "seq": closes[max(0, i - v["entry"]): i + 1]}
         else:
             if v["kind"] == "candle":
                 hit = dn == v["a"]
+                why = f"{v['a']}연속 하락"
             else:
                 ch = (c / pos["entry"] - 1) * 100
                 hit = ch >= v["a"] or ch <= -v["b"]
+                why = (f"+{v['a']}% 익절" if ch >= v["a"] else f"-{v['b']}% 손절") if hit else ""
             if hit:
                 bk = _book(seed * 2_000 + i, c, "SELL", tick)
                 gross = (bk["fill"] / pos["entry"] - 1) * 100
-                out.append({"buy_i": pos["i"], "sell_i": i,
-                            "entry": pos["entry"], "exit": bk["fill"],
-                            "gross_pct": round(gross, 3),
-                            "net_pct": round(gross - FEE_PCT, 3)})
+                tr = {"buy_i": pos["i"], "sell_i": i,
+                      "entry": pos["entry"], "exit": bk["fill"],
+                      "gross_pct": round(gross, 3),
+                      "net_pct": round(gross - FEE_PCT, 3),
+                      "exit_why": why}
+                if evidence:
+                    tr["buy_ev"] = {"close": pos["close"], "book": pos["bk"], "seq": pos["seq"]}
+                    tr["sell_ev"] = {"close": c, "book": bk,
+                                     "seq": closes[max(0, i - (v["a"] if v["kind"] == "candle" else 1)): i + 1]}
+                out.append(tr)
                 pos, up, dn = None, 0, 0
-    return out
+    if not with_open:
+        return out
+    # a position still OPEN at the end is not a trade, but it IS what the rule is doing
+    # right now — the boss asked to see holdings, and "none" is also an answer
+    op = None
+    if pos is not None:
+        op = {"buy_i": pos["i"], "entry": pos["entry"], "last": closes[-1],
+              "unreal_pct": round((closes[-1] / pos["entry"] - 1) * 100, 3)}
+        if evidence:
+            op["buy_ev"] = {"close": pos["close"], "book": pos["bk"], "seq": pos["seq"]}
+    return out, op
 
 
 def consistency_gate(seed: int = 7, start: int = 0, tick: int = 5) -> dict[str, Any]:
@@ -170,21 +199,27 @@ _cmp_cache: dict[tuple, tuple[int, dict]] = {}
 
 
 def variant_trades(vid: str, seed: int = 7, start: int = 0, tick: int = 5,
-                   code: str = "", bars: int = 400, limit: int = 400) -> dict[str, Any]:
-    """EVERY trade one rule made, across every stock — the drill-down behind a ranking row.
+                   code: str = "", bars: int = 400, limit: int = 400,
+                   around: int = -1) -> dict[str, Any]:
+    """EVERY trade one rule made, what it is holding right now, and the evidence behind
+    any single fill — the drill-down behind a ranking row (boss 2026-08-03).
 
-    The ranking answers "which rule wins more often". This answers "show me the trades it
-    actually made": which company, bought when and at what, sold when and at what, and what
-    that came to (boss 2026-08-03). The 5틱 candles come back with it so the rule can be
-    checked against the bars it claims to have counted, rather than taken on trust.
+    The ranking answers "which rule wins more often". This answers "show me what it did":
+    which company, bought when and at what, sold when and at what, what that came to, what
+    it is still holding, and — for one chosen trade — why that exact price.
+
+    `around` is the index of a trade in the returned list: the chart window centres on it
+    so its arrows are on screen. Without that the window always ended at "now" and a rule
+    whose last trade was hours ago drew a chart with nothing on it at all.
 
     Totals are recomputed here from the same trades the table lists, so the drill-down and
-    the ranking row can never disagree — if they ever did, one of them would be a story."""
+    the ranking row can never disagree."""
     v = next((x for x in VARIANTS if x["id"] == vid), None)
     if v is None:
         return {"ok": False, "error": f"unknown rule {vid}"}
     rows: list[dict] = []
-    chart = None
+    holding: list[dict] = []
+    tapes: dict[str, dict] = {}
     for k, (c_code, name, base) in enumerate(_SYMBOLS):
         if c_code not in _SHOWN:
             continue
@@ -192,40 +227,68 @@ def variant_trades(vid: str, seed: int = 7, start: int = 0, tick: int = 5,
         t = _tick(base) or 1
         d0, secs = _seconds(sseed, base, start, span=0)
         cs = _candles_from_ticks(d0, _execs(d0, secs, sseed, t), tick)
-        got = run_variant([c["close"] for c in cs], t, v, sseed)
+        got, op = run_variant([c["close"] for c in cs], t, v, sseed,
+                              evidence=True, with_open=True)
+        tapes[c_code] = {"cs": cs, "name": name, "trades": got}
         for g in got:
             b_c, s_c = cs[g["buy_i"]], cs[g["sell_i"]]
             rows.append({
-                "code": c_code, "name": name,
+                "code": c_code, "name": name, "buy_i": g["buy_i"], "sell_i": g["sell_i"],
                 "buy_t": b_c["hhmm"], "buy_d": b_c.get("end_d"), "entry": g["entry"],
                 "sell_t": s_c["hhmm"], "sell_d": s_c.get("end_d"), "exit": g["exit"],
-                # the money, both ways: the price move, and what is left after the round trip
                 "gross_pct": g["gross_pct"], "net_pct": g["net_pct"],
+                "exit_why": g.get("exit_why", ""),
                 # three states, not two. A trade can land EXACTLY on 0 — the price rose
                 # but the spread took all of it — and a boolean would file that under
                 # "loss", which is neither what happened nor what the win% counts.
                 "result": ("win" if g["gross_pct"] > 0 else
                            "loss" if g["gross_pct"] < 0 else "flat"),
                 "bars_held": g["sell_i"] - g["buy_i"],
+                "buy_ev": g.get("buy_ev"), "sell_ev": g.get("sell_ev"),
             })
-        if (code and c_code == code) or (not code and chart is None):
-            off = max(0, len(cs) - bars)
-            chart = {"code": c_code, "name": name,
-                     "candles": [{"time": c["time"], "hhmm": c["hhmm"], "open": c["open"],
-                                  "high": c["high"], "low": c["low"], "close": c["close"],
-                                  "dir": c["dir"]} for c in cs[off:]],
-                     "marks": [{"b": g["buy_i"] - off, "s": g["sell_i"] - off,
-                                "net": g["net_pct"]} for g in got if g["buy_i"] >= off]}
+        if op:
+            b_c = cs[op["buy_i"]]
+            holding.append({"code": c_code, "name": name, "buy_i": op["buy_i"],
+                            "buy_t": b_c["hhmm"], "buy_d": b_c.get("end_d"),
+                            "entry": op["entry"], "last": op["last"],
+                            "unreal_pct": op["unreal_pct"], "buy_ev": op.get("buy_ev")})
     rows.sort(key=lambda r: ((r["sell_d"] or ""), r["sell_t"]), reverse=True)
-    w = sum(1 for r in rows if r["gross_pct"] > 0)
-    l = sum(1 for r in rows if r["gross_pct"] < 0)
+
+    # ---- the chart window ----------------------------------------------------------
+    # It used to be simply "the last `bars` bars", which put the window at NOW while the
+    # rule's trades sat thousands of bars behind it — so the chart came up with one arrow
+    # on it, or none. The window now follows the trades: onto the one the boss clicked,
+    # else onto the most recent one.
+    focus = rows[around] if 0 <= around < len(rows) else (rows[0] if rows else None)
+    chart = None
+    pick = (focus or {}).get("code") or code
+    tp = tapes.get(pick) or (tapes.get(code) or (next(iter(tapes.values())) if tapes else None))
+    if tp:
+        cs = tp["cs"]
+        anchor = focus["sell_i"] if focus and focus.get("code") == pick else len(cs) - 1
+        hi = min(len(cs), anchor + max(20, bars // 8))
+        off = max(0, hi - bars)
+        marks = [{"b": g["buy_i"] - off, "s": g["sell_i"] - off, "net": g["net_pct"]}
+                 for g in tp["trades"] if off <= g["buy_i"] < hi and off <= g["sell_i"] < hi]
+        chart = {"code": pick, "name": tp["name"], "off": off,
+                 "candles": [{"time": c["time"], "hhmm": c["hhmm"], "open": c["open"],
+                              "high": c["high"], "low": c["low"], "close": c["close"],
+                              "dir": c["dir"]} for c in cs[off:hi]],
+                 "marks": marks,
+                 "focus": ({"b": focus["buy_i"] - off, "s": focus["sell_i"] - off}
+                           if focus and focus.get("code") == pick
+                           and off <= focus["buy_i"] < hi else None)}
+
+    w = sum(1 for r in rows if r["result"] == "win")
+    l = sum(1 for r in rows if r["result"] == "loss")
     return {"ok": True, "id": vid, "ko": label(v, True), "en": label(v, False),
             "tick": tick, "clock": f"{tick}틱",
+            "entry_n": v["entry"], "kind": v["kind"], "a": v["a"], "b": v.get("b"),
             # the SAME arithmetic the ranking row uses — one source, so they cannot drift
             "trips": len(rows), "wins": w, "losses": l, "flats": len(rows) - w - l,
             "win_pct": round(w / (w + l) * 100) if (w + l) else 0,
             "trades": rows[:limit], "shown": min(len(rows), limit),
-            "chart": chart, "fee_pct": FEE_PCT}
+            "holding": holding, "chart": chart, "fee_pct": FEE_PCT}
 
 
 def compare(seed: int = 7, start: int = 0, tick: int = 5,

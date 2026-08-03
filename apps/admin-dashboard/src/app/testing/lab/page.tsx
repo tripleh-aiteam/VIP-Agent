@@ -107,16 +107,40 @@ export default function StrategyLab() {
   const [sel, setSel] = useState<string | null>(null);   // variant whose arrows are on the chart
   // 🔎 the drill-down behind a ranking row: every trade THIS rule made, on every stock,
   // with its own 5틱 chart so the rule can be checked against the bars it counted
+  type Book = { asks: [number, number][]; bids: [number, number][]; best_ask: number;
+                best_bid: number; fill: number; last: number; spread: number; slip: number };
+  type Ev = { close: number; book: Book; seq: number[] };
+  type LabTrade = { code: string; name: string; buy_t: string; buy_d?: string; entry: number;
+                    sell_t: string; sell_d?: string; exit: number; gross_pct: number; net_pct: number;
+                    result: "win" | "loss" | "flat"; bars_held: number; exit_why?: string;
+                    buy_ev?: Ev | null; sell_ev?: Ev | null };
   type Detail = {
-    ok: boolean; id: string; ko: string; en: string; clock: string;
+    ok: boolean; id: string; ko: string; en: string; clock: string; tick: number;
+    entry_n: number; kind: string; a: number; b?: number | null;
     trips: number; wins: number; losses: number; flats: number; win_pct: number; shown: number;
-    trades: { code: string; name: string; buy_t: string; buy_d?: string; entry: number;
-              sell_t: string; sell_d?: string; exit: number; gross_pct: number; net_pct: number;
-              result: "win" | "loss" | "flat"; bars_held: number }[];
-    chart: { code: string; name: string; candles: Candle[]; marks: { b: number; s: number; net: number }[] } | null;
+    trades: LabTrade[];
+    holding: { code: string; name: string; buy_t: string; buy_d?: string; entry: number;
+               last: number; unreal_pct: number; buy_ev?: Ev | null }[];
+    chart: { code: string; name: string; candles: Candle[];
+             marks: { b: number; s: number; net: number }[];
+             focus: { b: number; s: number } | null } | null;
   };
   const [detail, setDetail] = useState<Detail | null>(null);
   const [detailBusy, setDetailBusy] = useState(false);
+  const [pick, setPick] = useState<number | null>(null);   // which trade the chart is on
+  // one place that loads a rule's drill-down, so "open the rule" and "jump to a trade"
+  // cannot drift apart. `around` re-centres the chart on that trade.
+  const openRule = useCallback((id: string, around = -1) => {
+    setDetailBusy(true);
+    setPick(around >= 0 ? around : null);
+    // the ids contain "+" (3u+0.3) and in a query string "+" decodes to a SPACE,
+    // so an unencoded id reaches the server as "3u 0.3" and matches nothing
+    api<Detail>(`/paper-desk/proof/lab/trades?variant=${encodeURIComponent(id)}&seed=7`
+      + `&start=${startRef.current}&tick=${tick}&bars=1500&around=${around}`)
+      .then((d) => setDetail(d?.ok ? d : null))
+      .catch(() => setDetail(null))
+      .finally(() => setDetailBusy(false));
+  }, [tick]);
   const [grid, setGrid] = useState(false);         // one-page grid of every variant's trades
   // the session is persisted, so a reload or a redeploy resumes the SAME weekend run —
   // the mistake that lost a morning on the proof page
@@ -258,14 +282,8 @@ export default function StrategyLab() {
                       const open = sel === v.id;
                       setSel(open ? null : v.id);
                       setDetail(null);
-                      if (open) return;
-                      setDetailBusy(true);
-                      // the rule ids contain "+" (3u+0.3) and in a query string "+" decodes to a SPACE,
-                      // so an unencoded id reaches the server as "3u 0.3" and matches nothing
-                      api<Detail>(`/paper-desk/proof/lab/trades?variant=${encodeURIComponent(v.id)}&seed=7&start=${start}&tick=${tick}&code=${encodeURIComponent(code)}`)
-                        .then((d) => setDetail(d?.ok ? d : null))
-                        .catch(() => setDetail(null))
-                        .finally(() => setDetailBusy(false));
+                      setPick(null);
+                      if (!open) openRule(v.id);
                     }}
                     className="border-t border-[var(--border-default)]/40 cursor-pointer hover:bg-[var(--bg-elevated)]"
                     style={{ background: sel === v.id ? "rgba(106,27,154,0.10)"
@@ -327,22 +345,55 @@ export default function StrategyLab() {
                 {detailBusy && <span className="text-[11px] text-[var(--text-muted)]">{t("불러오는 중…", "loading…")}</span>}
               </div>
 
-              {/* the 5틱 chart for THIS rule — its own arrows, so "did it really follow 5틱?"
-                  is answerable by looking rather than by trusting the table */}
+              {/* (1) the 5틱 chart. The window follows the TRADES, not the clock: it used
+                     to end at "now" while the rule's trades sat thousands of bars behind,
+                     so the chart came up with no arrows on it (boss 2026-08-03). */}
               {detail?.chart && (
                 <div className="p-2 border-b" style={{ borderColor: "var(--border-default)" }}>
-                  <div className="px-2 pb-1 text-[11px]" style={{ color: "#6a1b9a" }}>
-                    📈 {tick}{t("틱 차트", "-tick chart")} — {detail.chart.name}
-                    <span className="text-[10px] text-[var(--text-muted)] ml-2">
-                      {t("화살표 하나가 아래 표의 한 줄입니다 — 봉 하나 = 체결 " + tick + "건", `each arrow is one row below — one bar = ${tick} executions`)}
+                  <div className="px-2 pb-1 text-[11px] flex items-center gap-2 flex-wrap" style={{ color: "#6a1b9a" }}>
+                    <b>📈 {tick}{t("틱 차트", "-tick chart")} — {detail.chart.name}</b>
+                    <span className="text-[10px] text-[var(--text-muted)]">
+                      {t(`▲ 매수 · ▼ 매도 — 화살표 ${detail.chart.marks.length}개 · 봉 하나 = 체결 ${tick}건`,
+                         `▲ buy · ▼ sell — ${detail.chart.marks.length} arrows · one bar = ${tick} executions`)}
                     </span>
+                    {pick !== null && (
+                      <span className="text-[10px] font-bold px-2 py-0.5 rounded-full" style={{ background: "rgba(230,81,0,0.14)", color: GOLD }}>
+                        {t("아래에서 고른 매매로 이동했습니다", "moved to the trade picked below")}
+                      </span>
+                    )}
                   </div>
                   <LabChart candles={detail.chart.candles} marks={detail.chart.marks} />
                 </div>
               )}
 
+              {/* (2) what the rule is holding RIGHT NOW — "none" is also an answer */}
               {detail && (
-                <div className="overflow-y-auto" style={{ maxHeight: 420 }}>
+                <div className="px-4 py-2 border-b text-[11.5px]" style={{ borderColor: "var(--border-default)", background: "rgba(230,81,0,0.05)" }}>
+                  <b style={{ color: GOLD }}>📌 {t("보유 중", "holding now")}</b>
+                  {detail.holding.length === 0 ? (
+                    <span className="ml-2 text-[var(--text-muted)]">
+                      {t("0건 — 지금은 아무것도 들고 있지 않습니다 (모두 매도 완료)", "0 — nothing open right now, every position has been sold")}
+                    </span>
+                  ) : (
+                    <span className="ml-2 tabular-nums">
+                      {detail.holding.map((h, i) => (
+                        <span key={i} className="mr-4">
+                          <b className="text-[var(--text-primary)]">{h.name}</b>
+                          {" "}▲ {h.buy_d ? `${h.buy_d} ` : ""}{h.buy_t} ₩{h.entry.toLocaleString()}
+                          {" → "}{t("현재", "now")} ₩{h.last.toLocaleString()}
+                          <b className="ml-1" style={{ color: h.unreal_pct > 0 ? RED : h.unreal_pct < 0 ? BLUE : "var(--text-muted)" }}>
+                            {h.unreal_pct > 0 ? "+" : ""}{h.unreal_pct}%
+                          </b>
+                        </span>
+                      ))}
+                    </span>
+                  )}
+                </div>
+              )}
+
+              {/* (3) the trade history — click a row for the evidence behind it */}
+              {detail && (
+                <div className="overflow-y-auto" style={{ maxHeight: 380 }}>
                   <table className="w-full text-[11.5px] tabular-nums">
                     <thead><tr className="text-[10px] text-[var(--text-muted)] sticky top-0" style={{ background: "var(--bg-elevated)" }}>
                       <th className="text-left px-3 py-1.5">{t("종목", "stock")}</th>
@@ -355,24 +406,29 @@ export default function StrategyLab() {
                       <th className="text-right px-3">{t("결과", "result")}</th>
                     </tr></thead>
                     <tbody>
-                      {detail.trades.map((tr, i) => (
-                        <tr key={i} className="border-t border-[var(--border-default)]/40">
-                          <td className="px-3 py-1 font-bold text-[var(--text-primary)]">{tr.name}</td>
-                          <td className="px-2" style={{ color: RED }}>▲ {tr.buy_d ? `${tr.buy_d} ` : ""}{tr.buy_t}</td>
-                          <td className="text-right px-2">₩{tr.entry.toLocaleString()}</td>
-                          <td className="px-2" style={{ color: BLUE }}>▼ {tr.sell_d ? `${tr.sell_d} ` : ""}{tr.sell_t}</td>
-                          <td className="text-right px-2">₩{tr.exit.toLocaleString()}</td>
-                          <td className="text-right px-2" style={{ color: tr.exit - tr.entry > 0 ? RED : tr.exit - tr.entry < 0 ? BLUE : "var(--text-muted)" }}>
-                            {tr.exit - tr.entry > 0 ? "+" : ""}{(tr.exit - tr.entry).toLocaleString()}
-                          </td>
-                          <td className="text-right px-2 font-bold" style={{ color: tr.gross_pct > 0 ? RED : tr.gross_pct < 0 ? BLUE : "var(--text-muted)" }}>
-                            {tr.gross_pct > 0 ? "+" : ""}{tr.gross_pct}%
-                          </td>
-                          <td className="text-right px-3 font-bold" style={{ color: tr.gross_pct > 0 ? RED : tr.gross_pct < 0 ? BLUE : "var(--text-muted)" }}>
-                            {tr.gross_pct > 0 ? t("승", "WIN") : tr.gross_pct < 0 ? t("패", "LOSS") : t("무", "flat")}
-                          </td>
-                        </tr>
-                      ))}
+                      {detail.trades.map((tr, i) => {
+                        const col = tr.result === "win" ? RED : tr.result === "loss" ? BLUE : "var(--text-muted)";
+                        return (
+                          <tr key={i} onClick={() => openRule(detail.id, i)}
+                            className="border-t border-[var(--border-default)]/40 cursor-pointer hover:bg-[var(--bg-elevated)]"
+                            style={{ background: pick === i ? "rgba(230,81,0,0.10)" : "transparent" }}>
+                            <td className="px-3 py-1 font-bold text-[var(--text-primary)]">{pick === i ? "▶ " : ""}{tr.name}</td>
+                            <td className="px-2" style={{ color: RED }}>▲ {tr.buy_d ? `${tr.buy_d} ` : ""}{tr.buy_t}</td>
+                            <td className="text-right px-2">₩{tr.entry.toLocaleString()}</td>
+                            <td className="px-2" style={{ color: BLUE }}>▼ {tr.sell_d ? `${tr.sell_d} ` : ""}{tr.sell_t}</td>
+                            <td className="text-right px-2">₩{tr.exit.toLocaleString()}</td>
+                            <td className="text-right px-2" style={{ color: col }}>
+                              {tr.exit - tr.entry > 0 ? "+" : ""}{(tr.exit - tr.entry).toLocaleString()}
+                            </td>
+                            <td className="text-right px-2 font-bold" style={{ color: col }}>
+                              {tr.gross_pct > 0 ? "+" : ""}{tr.gross_pct}%
+                            </td>
+                            <td className="text-right px-3 font-bold" style={{ color: col }}>
+                              {tr.result === "win" ? t("승", "WIN") : tr.result === "loss" ? t("패", "LOSS") : t("무", "flat")}
+                            </td>
+                          </tr>
+                        );
+                      })}
                     </tbody>
                   </table>
                   {detail.trips > detail.shown && (
@@ -383,6 +439,87 @@ export default function StrategyLab() {
                   )}
                 </div>
               )}
+
+              {/* (4) the evidence for the one trade that was clicked */}
+              {detail && pick !== null && detail.trades[pick] && (() => {
+                const tr = detail.trades[pick];
+                const n = detail.entry_n;
+                const exitTxt = detail.kind === "candle"
+                  ? t(`음봉 ${detail.a}개 연속`, `${detail.a} falling bars in a row`)
+                  : t(`+${detail.a}% 익절 또는 -${detail.b}% 손절`, `+${detail.a}% take or -${detail.b}% stop`);
+                const Side = ({ ev, side }: { ev?: Ev | null; side: "BUY" | "SELL" }) => {
+                  if (!ev?.book) return null;
+                  const bk = ev.book;
+                  return (
+                    <div className="rounded-lg border p-2" style={{ borderColor: "var(--border-default)" }}>
+                      <div className="text-[10px] font-bold mb-1" style={{ color: side === "BUY" ? RED : BLUE }}>
+                        {side === "BUY" ? t("① 매수 순간의 호가창", "① the book when it bought")
+                                        : t("② 매도 순간의 호가창", "② the book when it sold")}
+                      </div>
+                      <div className="text-[10.5px] tabular-nums space-y-[1px]">
+                        <div>{t("이 봉의 종가", "this bar's close")}: <b>₩{ev.close.toLocaleString()}</b></div>
+                        <div style={{ color: BLUE }}>{t("최우선 매도호가(파는 사람)", "best ask (sellers)")}: ₩{bk.best_ask.toLocaleString()}</div>
+                        <div style={{ color: RED }}>{t("최우선 매수호가(사는 사람)", "best bid (buyers)")}: ₩{bk.best_bid.toLocaleString()}</div>
+                        <div className="pt-1 font-bold" style={{ color: side === "BUY" ? RED : BLUE }}>
+                          {side === "BUY"
+                            ? t(`→ 살 때는 파는 사람의 가장 싼 값을 내야 합니다 = ₩${bk.fill.toLocaleString()}`,
+                                `→ buying pays the cheapest seller = ₩${bk.fill.toLocaleString()}`)
+                            : t(`→ 팔 때는 사는 사람의 가장 비싼 값을 받습니다 = ₩${bk.fill.toLocaleString()}`,
+                                `→ selling takes the highest buyer = ₩${bk.fill.toLocaleString()}`)}
+                        </div>
+                        <div className="text-[9.5px] text-[var(--text-muted)]">
+                          {t(`호가 간격 ₩${bk.spread.toLocaleString()} — 종가와 체결가가 다른 이유가 이것입니다`,
+                             `spread ₩${bk.spread.toLocaleString()} — this is why the fill differs from the close`)}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                };
+                return (
+                  <div className="px-4 py-3 border-t" style={{ borderColor: GOLD, background: "rgba(230,81,0,0.04)" }}>
+                    <b className="text-[12.5px]" style={{ color: GOLD }}>
+                      🔍 {tr.name} — {tr.buy_d ? `${tr.buy_d} ` : ""}{tr.buy_t} → {tr.sell_t}
+                    </b>
+                    <div className="mt-2 text-[11.5px] leading-relaxed text-[var(--text-secondary)]">
+                      <b className="text-[var(--text-primary)]">{t("이 규칙이 하는 일", "what this rule does")}: </b>
+                      {t(`${detail.clock} 봉을 하나씩 보다가, 종가가 앞의 봉보다 ${n}번 연속 올랐으면 그 ${n}번째 봉에서 삽니다. 그 뒤 ${exitTxt}이면 팝니다.`,
+                         `it reads ${detail.clock} bars one by one; when the close rises above the previous bar ${n} times in a row it buys on that ${n}th bar, then sells on ${exitTxt}.`)}
+                    </div>
+                    <div className="mt-1 text-[11.5px] tabular-nums">
+                      <b className="text-[var(--text-primary)]">{t("매수 근거", "why it bought")}: </b>
+                      <span style={{ color: RED }}>
+                        {(tr.buy_ev?.seq ?? []).map((x) => `₩${x.toLocaleString()}`).join(" → ")}
+                      </span>
+                      <span className="text-[10.5px] text-[var(--text-muted)] ml-1">
+                        {t(`(${n}번 연속 상승 — 마지막이 ${n}번째)`, `(${n} rises in a row — the last one is the ${n}th)`)}
+                      </span>
+                    </div>
+                    <div className="text-[11.5px] tabular-nums">
+                      <b className="text-[var(--text-primary)]">{t("매도 근거", "why it sold")}: </b>
+                      <span style={{ color: BLUE }}>{tr.exit_why || "-"}</span>
+                      <span className="ml-1">
+                        {(tr.sell_ev?.seq ?? []).map((x) => `₩${x.toLocaleString()}`).join(" → ")}
+                      </span>
+                    </div>
+                    <div className="mt-2 grid gap-2" style={{ gridTemplateColumns: "1fr 1fr" }}>
+                      <Side ev={tr.buy_ev} side="BUY" />
+                      <Side ev={tr.sell_ev} side="SELL" />
+                    </div>
+                    <div className="mt-2 text-[11.5px] tabular-nums">
+                      <b className="text-[var(--text-primary)]">{t("결과", "result")}: </b>
+                      ₩{tr.entry.toLocaleString()} → ₩{tr.exit.toLocaleString()}
+                      <b className="ml-1" style={{ color: tr.result === "win" ? RED : tr.result === "loss" ? BLUE : "var(--text-muted)" }}>
+                        {tr.gross_pct > 0 ? "+" : ""}{tr.gross_pct}%
+                      </b>
+                      <span className="text-[10.5px] text-[var(--text-muted)] ml-2">
+                        {t(`수수료 0.23%를 빼면 ${tr.net_pct > 0 ? "+" : ""}${tr.net_pct}% · ${tr.bars_held}봉 보유`,
+                           `after the 0.23% round trip: ${tr.net_pct > 0 ? "+" : ""}${tr.net_pct}% · held ${tr.bars_held} bars`)}
+                      </span>
+                    </div>
+                  </div>
+                );
+              })()}
+
             </div>
           )}
 
