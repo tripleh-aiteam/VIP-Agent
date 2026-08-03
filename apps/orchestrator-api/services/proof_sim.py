@@ -373,6 +373,22 @@ def _execs(day0: int, secs: list[dict], seed: int, tick: int) -> list[dict]:
     # every 3s asks for it constantly. Each second's deals depend only on that second and
     # the one before it, so the work already done is still valid — resume from where the
     # last call stopped (boss 2026-08-03: "i wanna test whole weeks").
+    # ⚠️ The cache is only valid when `secs` is a PREFIX of the tape it was built from.
+    # live_book_fast passes the TAIL (the last ~25 seconds) to render the 체결 panel, and
+    # without this guard the cache happily answered with the first 25 seconds of the
+    # session instead — the panel showed 07:21:25 under a 09:00 clock. A prefix always
+    # starts at offset 0; a tail does not, which is the whole test.
+    prefix = bool(secs) and secs[0]["off"] == 0
+    if not prefix:
+        out: list[dict] = []
+        prev = secs[0]["px"] if secs else 0.0
+        for x in secs:
+            pxs, vols, strs = _second_deals(seed, x, prev, tick)
+            lbl = _sec_label(day0, x["off"])
+            for px, q, st in zip(pxs, vols, strs):
+                out.append({"t": lbl, "px": px, "qty": q, "strength": st, "off": x["off"]})
+            prev = x["px"]
+        return out
     ck = (seed, day0, tick)
     hit = _EXEC_CACHE.get(ck)
     if hit and hit["n_sec"] >= len(secs):
