@@ -860,6 +860,24 @@ export default function ProofLab() {
               style={view === "table" ? { background: TEAL, color: "#fff" } : { border: "1px solid var(--border-default)", color: "var(--text-secondary)" }}>
               📗 {t("호가 테이블 (가격별 잔량)", "price table (qty per price)")}
             </button>
+            {/* ⚠️ THE CANDLES ON SCREEN ARE NOT THE CANDLES THE RULE COUNTED.
+                When the clock is pinned to 5틱 and the chart is drawing something else, the
+                run you can COUNT here is a different run: measured over the whole session,
+                a "3연속↑" buy arrow sits after anywhere from 0 to 5 red MINUTE bars, because
+                a minute is not a 5틱 bar. The boss counted 5 and reported it as a broken rule
+                (2026-08-03) — he was reading the page exactly as it invited him to. */}
+            {view === "candle" && pin5 && (tick !== 5 || decMode !== "chart") && (
+              <div className="w-full mt-1 px-3 py-1.5 rounded-lg text-[11px] font-bold flex items-center gap-2 flex-wrap"
+                style={{ background: "rgba(230,81,0,0.10)", color: GOLD }}>
+                ⚠ {t(`이 차트는 ${tick ? tick + "틱봉" : tfSec === 60 ? "1분봉" : tfSec + "초봉"}입니다. 규칙은 5틱 봉을 셌습니다 — 화면에서 세는 연속 개수는 규칙이 센 개수가 아닙니다. 매매 자체는 어느 차트에서도 동일합니다.`,
+                      `this chart draws ${tick ? tick + "-tick" : tfSec === 60 ? "1-minute" : tfSec + "-second"} candles, but the rule counted 5-TICK candles — the run you can count here is not the run the rule counted. The trades themselves are the same on every chart.`)}
+                <button onClick={() => { setTick(5); setTickIn("5"); setDecMode("chart");
+                    load(source, seed, code, tfSec, true, "chart", "", liveStart, 5, combo, true); }}
+                  className="px-2 py-0.5 rounded-md text-white font-extrabold" style={{ background: GOLD }}>
+                  {t("5틱 봉으로 보기", "show me the 5-tick candles")}
+                </button>
+              </div>
+            )}
             {/* 화살표 on/off — the same chart with and without the trade markers, so the
                 price action can be read on its own and then again with the trades on it */}
             {view === "candle" && (
