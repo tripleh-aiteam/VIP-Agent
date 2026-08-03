@@ -52,7 +52,10 @@ type SymBlock = {
 type ProofRes = {
   source: string; seed?: number; period?: number; start?: number; tick?: number;
   dec_tick?: number;   // the clock the RULE counted on — 0 means "whatever this chart draws"
-  need: number; rule_ko: string; rule_en: string; engine_fn: string;
+  // which RULE produced these trades. Needed because a response can arrive after the boss
+  // has already clicked another rule, and a trade must be filed under the rule that made it.
+  need: number; need_dn?: number; exit_mode?: string; take_pct?: number;
+  rule_ko: string; rule_en: string; engine_fn: string;
   symbols: SymBlock[];
   verification: { trades: number; passed: number; total: number; pct: number };
 };
@@ -349,6 +352,14 @@ export default function ProofLab() {
     { id: "3u05", need: 3, dn: 0, take: 0.5, stop: 1.0, ko: "3연속↑ / +0.5% 익절(수수료 후)", en: "3up / +0.5% after fees" },
     { id: "3u10", need: 3, dn: 0, take: 1.0, stop: 1.0, ko: "3연속↑ / +1.0% 익절(수수료 후)", en: "3up / +1.0% after fees" },
   ] as const;
+  // which of the nine a payload came from, read from the payload itself
+  const ruleIdOf = (r: ProofRes | null): string | undefined => {
+    if (!r) return undefined;
+    const dn = r.need_dn ?? 0;
+    return r.exit_mode === "target"
+      ? COMBOS.find((c) => c.dn === 0 && (c.take ?? 0.5) === r.take_pct)?.id
+      : COMBOS.find((c) => c.dn !== 0 && c.need === r.need && c.dn === dn)?.id;
+  };
   const [combo, setCombo] = useState<string>("3u3d");
   // 🔒 the rule's CLOCK, held at 5틱 while the chart draws whatever you like. Without
   // this the engine re-decides on each chart, so one rule showed a different trade list
@@ -520,7 +531,12 @@ export default function ProofLab() {
       const cbUse = COMBOS.find((c) => c.id === cbId) ?? cb;
       const r = await api<ProofRes>(`/paper-desk/proof/run?source=${src}&seed=${sd}&code=${cd}&period=${p}&mode=${md}&around=${encodeURIComponent(ar)}&start=${st}&tick=${tk}${pin ? "&dec_tick=5" : ""}${comboQS(cbUse)}`);
       // a slow response from the OTHER mode must never land after the user switched
-      if (src === sourceRef.current && r?.source === src && (r.start ?? 0) === st) { setRes(r); if (!keep) setSelCode(null); }
+      // ...and the RULE must still be the one on screen. Without this a slow response for
+      // the previous rule overwrites the new one's table, which looks exactly like the
+      // rules not being separated at all.
+      const rid = ruleIdOf(r);
+      if (src === sourceRef.current && r?.source === src && (r.start ?? 0) === st
+          && (src !== "synthetic" || !rid || rid === cbId)) { setRes(r); if (!keep) setSelCode(null); }
     } catch { /* keep last */ }
     setLoading(false);
   };
@@ -532,6 +548,8 @@ export default function ProofLab() {
   // trades than what's on screen) is discarded, so counts never drop from 10 to 2.
   const focusRef = useRef<number | null>(null);
   focusRef.current = focus;
+  const comboRef = useRef<string>(combo);
+  comboRef.current = combo;
   useEffect(() => {
     const nSy = (x: ProofRes | null) => (x ? x.symbols.length : 0);
     const nTr = (x: ProofRes | null) => (x ? x.symbols.reduce((a, s) => a + s.trades.length, 0) : 0);
@@ -542,6 +560,10 @@ export default function ProofLab() {
           if (r?.source !== sourceRef.current) return;   // stale cross-mode response — discard
           if (r?.source === "synthetic" && (r.period ?? 60) !== tfSec) return;   // stale timeframe — discard
           if (r?.source === "synthetic" && (r.start ?? 0) !== liveStart) return;   // stale session — discard
+          {
+            const rid = ruleIdOf(r);
+            if (r?.source === "synthetic" && rid && rid !== comboRef.current) return;   // stale RULE — discard
+          }
           setRes((old) => (r?.symbols?.length && nSy(r) >= nSy(old) && nTr(r) >= nTr(old) ? r : old));
         })
         .catch(() => {});
@@ -1039,9 +1061,15 @@ export default function ProofLab() {
         // ledger between them would silently blend both into a single win rate.
         const tfNs = res.dec_tick ? `:dec${res.dec_tick}`
           : decMode === "chart" ? `:ch${res.tick ? `t${res.tick}` : (res.period ?? tfSec)}` : "";
-        const cbNs = `:${combo}`;      // each rule keeps its own history
+        // ⚠️ from the RESPONSE, never from the `combo` state. Clicking rule B while rule A's
+        // request is still in flight used to file A's trades under B — and since the ledger
+        // only ever grows, every rule slowly accumulated every other rule's trades until
+        // they all looked the same (boss 2026-08-03: "if i click any of them all tradings
+        // is coming so I can not distinguish"). Every other part of this key already came
+        // from `res`; the rule was the one piece still read off the screen.
+        const cbNs = `:${ruleIdOf(res) ?? combo}`;      // each rule keeps its own history
         const sNs = res.start ? `:live${res.start}` : "";
-        const nsData = synData ? `syn:${res.seed ?? seed}${tfNs}${sNs}${cbNs}` : `kiwoom${tfNs}${cbNs}`;
+        const nsData = synData ? `syn2:${res.seed ?? seed}${tfNs}${sNs}${cbNs}` : `kiwoom2${tfNs}${cbNs}`;
         const bucketData = (histRef.current[nsData] ??= {});
         for (const s of res.symbols) for (const tr of s.trades) {
           // ⚠️ the key MUST be the fill times, never buy_idx: buy_idx is a CHART POSITION and
@@ -1059,7 +1087,7 @@ export default function ProofLab() {
         const tfNsView = pin5 ? ":dec5"
           : decMode === "chart" ? `:ch${tick ? `t${tick}` : tfSec}` : "";
         const sNsView = liveStart ? `:live${liveStart}` : "";
-        const nsView = source === "synthetic" ? `syn:${seed}${tfNsView}${sNsView}:${combo}` : `kiwoom${tfNsView}:${combo}`;
+        const nsView = source === "synthetic" ? `syn2:${seed}${tfNsView}${sNsView}:${combo}` : `kiwoom2${tfNsView}:${combo}`;
         const isFake = (c: string) => c.startsWith("PRF");
         let rows = Object.values(histRef.current[nsView] ?? {})
           .filter((r) => (source === "synthetic" ? isFake(r.code) : !isFake(r.code)))
@@ -1112,6 +1140,11 @@ export default function ProofLab() {
           <div className="mt-3 rounded-xl border overflow-hidden" style={{ borderColor: GOLD }}>
             <div className="px-4 py-2 border-b bg-[var(--bg-elevated)]" style={{ borderColor: "var(--border-default)" }}>
               <b className="text-[13px]" style={{ color: GOLD }}>📒 {t("거래 기록 (누적 — 새 거래마다 +1, 절대 줄지 않음) — 클릭하면 증거", "trade history (cumulative — +1 per new trade, never shrinks) — click for evidence")}</b>
+              <span className="ml-2 text-[10.5px] font-bold px-2 py-0.5 rounded-full" style={{ background: "rgba(106,27,154,0.12)", color: "#6a1b9a" }}
+                title={t("이 표에는 지금 선택한 규칙이 만든 매매만 들어갑니다. 다른 규칙의 매매는 그 규칙을 눌렀을 때 나옵니다.",
+                         "this table holds only the trades the selected rule made. Another rule's trades appear when you press that rule.")}>
+                🔀 {lang === "ko" ? cb.ko : cb.en} {t("의 매매만", "only")}
+              </span>
               {multiDay && (
                 <span className="ml-2 text-[10.5px] font-bold px-2 py-0.5 rounded-full" style={{ background: "rgba(106,27,154,0.12)", color: "#6a1b9a" }}
                   title={t("이 세션은 자정을 넘겨 계속 돌고 있습니다. 시:분:초만으로는 어느 날인지 알 수 없어 날짜를 함께 표시합니다.",
