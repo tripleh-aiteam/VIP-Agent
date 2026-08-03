@@ -351,7 +351,12 @@ def variant_trades(vid: str, seed: int = 7, start: int = 0, tick: int = 5,
     # else onto the most recent one.
     focus = rows[around] if 0 <= around < len(rows) else (rows[0] if rows else None)
     chart = None
-    pick = (focus or {}).get("code") or code
+    # An explicitly requested stock WINS. It used to be the other way round, so the focused
+    # trade's stock overrode the caller and this chart ignored `code` entirely — which is
+    # how the page ended up showing two charts of two different companies at once
+    # (boss 2026-08-03: "we have 2 charts open, are they the same or different?").
+    # With no explicit code, follow the trade being looked at.
+    pick = code or (focus or {}).get("code")
     tp = tapes.get(pick) or (tapes.get(code) or (next(iter(tapes.values())) if tapes else None))
     if tp:
         cs = tp["cs"]
@@ -404,14 +409,18 @@ def compare(seed: int = 7, start: int = 0, tick: int = 5,
         return hit[1]
 
     tapes = []
-    for k, (code, name, base) in enumerate(_SYMBOLS):
-        if code not in _SHOWN:
+    # ⚠️ NOT `code` — that is the caller's chosen stock. Reusing the name here left it
+    # holding the LAST symbol of the loop, so chart_tape below always resolved to that one
+    # and the stock buttons under the market chart did nothing (found 2026-08-03 when the
+    # two charts on screen showed two different companies).
+    for k, (c_code, name, base) in enumerate(_SYMBOLS):
+        if c_code not in _SHOWN:
             continue
         sseed = seed + k * 101
         t = _tick(base) or 1
         d0, secs = _seconds(sseed, base, start, span=0)   # span=0 → no 14h cap
         cs = _candles_from_ticks(d0, _execs(d0, secs, sseed, t), tick)
-        tapes.append({"code": code, "name": name, "seed": sseed, "tick": t, "cs": cs,
+        tapes.append({"code": c_code, "name": name, "seed": sseed, "tick": t, "cs": cs,
                       "closes": [c["close"] for c in cs],
                       "first": cs[0]["hhmm"] if cs else None,
                       "last": cs[-1]["hhmm"] if cs else None})

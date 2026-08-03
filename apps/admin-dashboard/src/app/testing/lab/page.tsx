@@ -176,7 +176,11 @@ export default function StrategyLab() {
     // the ids contain "+" (3u+0.3) and in a query string "+" decodes to a SPACE,
     // so an unencoded id reaches the server as "3u 0.3" and matches nothing
     api<Detail>(`/paper-desk/proof/lab/trades?variant=${encodeURIComponent(id)}&seed=7`
-      + `&start=${startRef.current}&tick=${tick}&bars=1500&around=${around}`)
+      + `&start=${startRef.current}&tick=${tick}&bars=1500&around=${around}`
+      // the SAME company the market chart below is on. Leaving this off let the panel
+      // follow the newest trade's stock, so the page showed two charts of two different
+      // companies at once (boss 2026-08-03).
+      + `&code=${encodeURIComponent(codeRef.current)}`)
       .then((d) => {
         setDetail(d?.ok ? d : null);
         const c = d?.chart?.code;
@@ -196,6 +200,8 @@ export default function StrategyLab() {
   });
   const startRef = useRef(start);
   startRef.current = start;
+  const codeRef = useRef(code);
+  codeRef.current = code;
 
   const load = useCallback(async (st = startRef.current, tk = tick) => {
     setBusy(true);
@@ -402,6 +408,9 @@ export default function StrategyLab() {
                 <div className="p-2 border-b" style={{ borderColor: "var(--border-default)" }}>
                   <div className="px-2 pb-1 text-[11px] flex items-center gap-2 flex-wrap" style={{ color: "#6a1b9a" }}>
                     <b>📈 {tick}{t("틱 차트", "-tick chart")} — {detail.chart.name}</b>
+                    <span className="text-[10px] px-1.5 py-0.5 rounded-full" style={{ background: "rgba(106,27,154,0.12)" }}>
+                      {t("아래 시장 차트와 같은 종목·같은 시장 (구간만 다름)", "same company and same market as the chart below — only the window differs")}
+                    </span>
                     <span className="text-[10px] text-[var(--text-muted)]">
                       {t(`▲ 매수 · ▼ 매도 — 화살표 ${detail.chart.marks.length}개 · 봉 하나 = 체결 ${tick}건`,
                          `▲ buy · ▼ sell — ${detail.chart.marks.length} arrows · one bar = ${tick} executions`)}
@@ -713,7 +722,9 @@ export default function StrategyLab() {
                   📈 {tick}{t("틱 차트", "-tick chart")} — {lab.chart.name}
                 </b>
                 {lab.stocks.map((st) => (
-                  <button key={st.code} onClick={() => setCode(st.code)}
+                  <button key={st.code} onClick={() => { setCode(st.code); codeRef.current = st.code;
+                      if (sel) openRule(sel, pick ?? -1);          // keep the panel on the same company
+                      setDfCode(st.code); loadDf(st.code, dfMins, dfFrom, dfTo); }}
                     className="text-[11px] font-bold px-2 py-0.5 rounded-lg"
                     style={lab.chart?.code === st.code ? { background: "#6a1b9a", color: "#fff" }
                            : { border: "1px solid var(--border-default)", color: "var(--text-secondary)" }}>
