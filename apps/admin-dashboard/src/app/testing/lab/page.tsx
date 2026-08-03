@@ -42,6 +42,7 @@ type Lab = {
   stocks: { code: string; name: string; candles: number; from: string; to: string }[];
   chart: { code: string; name: string; candles: Candle[] } | null;
   variants: Variant[];
+  clock?: string; period?: number;   // the clock these results were produced on
 };
 type Gate = { ok: boolean; passed: number; total: number;
               checks: Record<string, number[]>; failures: string[]; labels: Record<string, string> };
@@ -116,6 +117,11 @@ export default function StrategyLab() {
   const [gate, setGate] = useState<Gate | null>(null);
   const [busy, setBusy] = useState(false);
   const [tick, setTick] = useState(5);
+  // The clock the rules run on, and the chart the page draws — deliberately the same thing.
+  // period=0 → 틱 bars of size `tick`; period>0 → that many SECONDS per bar.
+  const [period, setPeriod] = useState(0);
+  const [clockIn, setClockIn] = useState("");        // what is typed in the box
+  const [atMin, setAtMin] = useState("");            // a Data File minute to jump to
   const [code, setCode] = useState("");            // which stock the chart draws
   const [sel, setSel] = useState<string | null>(null);   // variant whose arrows are on the chart
   // 🔎 the drill-down behind a ranking row: every trade THIS rule made, on every stock,
@@ -131,6 +137,7 @@ export default function StrategyLab() {
     ok: boolean; id: string; ko: string; en: string; clock: string; tick: number;
     entry_n: number; kind: string; a: number; b?: number | null;
     trips: number; wins: number; losses: number; flats: number; win_pct: number; shown: number;
+    at?: string; at_found?: boolean;   // a Data File minute the chart was asked to jump to
     trades: LabTrade[];
     holding: { code: string; name: string; buy_t: string; buy_d?: string; entry: number;
                last: number; unreal_pct: number; buy_ev?: Ev | null }[];
@@ -176,13 +183,14 @@ export default function StrategyLab() {
   };
   // one place that loads a rule's drill-down, so "open the rule" and "jump to a trade"
   // cannot drift apart. `around` re-centres the chart on that trade.
-  const openRule = useCallback((id: string, around = -1) => {
+  const openRule = useCallback((id: string, around = -1, at = "") => {
     setDetailBusy(true);
     setPick(around >= 0 ? around : null);
     // the ids contain "+" (3u+0.3) and in a query string "+" decodes to a SPACE,
     // so an unencoded id reaches the server as "3u 0.3" and matches nothing
     api<Detail>(`/paper-desk/proof/lab/trades?variant=${encodeURIComponent(id)}&seed=7`
-      + `&start=${startRef.current}&tick=${tick}&bars=1500&around=${around}`
+      + `&start=${startRef.current}&tick=${tick}&period=${periodRef.current}&bars=1500`
+      + `&around=${around}&at=${encodeURIComponent(at)}`
       // the SAME company the market chart below is on. Leaving this off let the panel
       // follow the newest trade's stock, so the page showed two charts of two different
       // companies at once (boss 2026-08-03).
@@ -208,10 +216,12 @@ export default function StrategyLab() {
   startRef.current = start;
   const codeRef = useRef(code);
   codeRef.current = code;
+  const periodRef = useRef(period);
+  periodRef.current = period;
 
   const load = useCallback(async (st = startRef.current, tk = tick) => {
     setBusy(true);
-    try { setLab(await api<Lab>(`/paper-desk/proof/lab?seed=7&start=${st}&tick=${tk}&code=${code}&bars=400&hist=40`)); }
+    try { setLab(await api<Lab>(`/paper-desk/proof/lab?seed=7&start=${st}&tick=${tk}&period=${periodRef.current}&code=${code}&bars=400&hist=40`)); }
     catch { /* keep the last table rather than blanking the screen */ }
     setBusy(false);
   }, [tick, code]);
@@ -287,12 +297,38 @@ export default function StrategyLab() {
             </button>
           </>
         )}
-        <span className="text-[10.5px] text-[var(--text-muted)] ml-1">{t("캔들", "candle")}</span>
+        {/* ONE clock control. The buttons are the tick clocks; the box takes a number of
+            SECONDS — type 30 and you get the 30초 chart, and the rules run on it, because
+            on this page the chart IS the clock (boss 2026-08-03). */}
+        <span className="text-[10.5px] text-[var(--text-muted)] ml-1">{t("캔들(=규칙의 시계)", "candle (= the rule's clock)")}</span>
         {[3, 5, 10, 30].map((n) => (
-          <button key={n} onClick={() => { setTick(n); load(start, n); }}
+          <button key={n} onClick={() => { setTick(n); setPeriod(0); periodRef.current = 0; setClockIn("");
+              setAtMin(""); load(start, n); if (sel) setTimeout(() => openRule(sel), 0); }}
             className="text-[11.5px] font-bold px-2.5 py-1 rounded-lg"
-            style={tick === n ? { background: "#6a1b9a", color: "#fff" } : { border: "1px solid var(--border-default)", color: "var(--text-secondary)" }}>
+            style={tick === n && !period ? { background: "#6a1b9a", color: "#fff" } : { border: "1px solid var(--border-default)", color: "var(--text-secondary)" }}>
             {n}{t("틱", "-tick")}
+          </button>
+        ))}
+        <input value={clockIn} onChange={(e) => setClockIn(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key !== "Enter") return;
+            const n = Math.max(0, Math.min(60, parseInt(clockIn, 10) || 0));
+            if (!n) return;
+            setPeriod(n); periodRef.current = n; setAtMin("");
+            load(start, tick);
+            if (sel) setTimeout(() => openRule(sel), 0);
+          }}
+          placeholder={t("초", "sec")}
+          title={t("초 단위 캔들 — 3, 6, 15, 30, 40, 60 중 하나를 쓰고 Enter. 예: 30 → 30초봉. 규칙도 이 봉으로 판단합니다.",
+                   "candle size in SECONDS — type 3, 6, 15, 30, 40 or 60 and press Enter. e.g. 30 → 30-second candles, and the rules decide on them too.")}
+          className="w-[54px] text-[11.5px] px-2 py-1 rounded-lg border bg-transparent"
+          style={{ borderColor: period ? "#6a1b9a" : "var(--border-default)" }} />
+        {([3, 6, 15, 30, 40, 60] as const).map((n) => (
+          <button key={"s" + n} onClick={() => { setPeriod(n); periodRef.current = n; setClockIn(String(n));
+              setAtMin(""); load(start, tick); if (sel) setTimeout(() => openRule(sel), 0); }}
+            className="text-[11.5px] font-bold px-2 py-1 rounded-lg"
+            style={period === n ? { background: "#6a1b9a", color: "#fff" } : { border: "1px solid var(--border-default)", color: "var(--text-secondary)" }}>
+            {n === 60 ? t("1분", "1-min") : `${n}${t("초", "s")}`}
           </button>
         ))}
         <button onClick={runGate} className="text-[11.5px] font-bold px-3 py-1 rounded-lg border"
@@ -426,7 +462,7 @@ export default function StrategyLab() {
               {detail?.chart && (
                 <div className="p-2 border-b" style={{ borderColor: "var(--border-default)" }}>
                   <div className="px-2 pb-1 text-[11px] flex items-center gap-2 flex-wrap" style={{ color: "#6a1b9a" }}>
-                    <b>📈 {tick}{t("틱 차트", "-tick chart")} — {detail.chart.name}</b>
+                    <b>📈 {detail.clock} {t("차트", "chart")} — {detail.chart.name}</b>
                     <span className="text-[10px] px-1.5 py-0.5 rounded-full" style={{ background: "rgba(106,27,154,0.12)" }}>
                       {t("아래 시장 차트와 같은 종목·같은 시장 (구간만 다름)", "same company and same market as the chart below — only the window differs")}
                     </span>
@@ -434,6 +470,20 @@ export default function StrategyLab() {
                       {t(`▲ 매수 · ▼ 매도 — 화살표 ${detail.chart.marks.length}개 · 봉 하나 = 체결 ${tick}건`,
                          `▲ buy · ▼ sell — ${detail.chart.marks.length} arrows · one bar = ${tick} executions`)}
                     </span>
+                    {atMin && (
+                      // a minute still running has no finished 30초/1분 bar yet, so the jump
+                      // cannot land on it — say that rather than leave the chart somewhere
+                      // else without explanation
+                      <span className="text-[10px] font-bold px-2 py-0.5 rounded-full"
+                        style={detail.at_found === false
+                          ? { background: "rgba(120,120,120,0.18)", color: "var(--text-secondary)" }
+                          : { background: "rgba(230,81,0,0.14)", color: GOLD }}>
+                        {detail.at_found === false
+                          ? t(`${atMin} 은 아직 진행 중이라 ${detail.clock} 봉이 완성되지 않았습니다 — 가장 최근 봉을 보고 있습니다`,
+                              `${atMin} is still running, so it has no finished ${detail.clock} candle yet — showing the latest bar instead`)
+                          : t(`데이터 파일의 ${atMin} 로 이동했습니다`, `moved to ${atMin} from the Data File`)}
+                      </span>
+                    )}
                     {pick !== null && (
                       <span className="text-[10px] font-bold px-2 py-0.5 rounded-full" style={{ background: "rgba(230,81,0,0.14)", color: GOLD }}>
                         {t("아래에서 고른 매매로 이동했습니다", "moved to the trade picked below")}
@@ -668,7 +718,11 @@ export default function StrategyLab() {
                             const on = dfOpen === r.hhmm;
                             return (
                               <React.Fragment key={r.hhmm}>
-                                <tr onClick={() => openMinute(df.code, r.hhmm)}
+                                <tr onClick={() => { openMinute(df.code, r.hhmm);
+                                      // ...and take the chart to that minute, which is the
+                                      // whole point of having them on one page
+                                      setAtMin(r.hhmm.slice(0, 5));
+                                      if (sel) openRule(sel, -1, r.hhmm.slice(0, 5)); }}
                                   className="border-t border-[var(--border-default)]/30 cursor-pointer hover:bg-[var(--bg-elevated)]"
                                   style={{ background: on ? "rgba(230,81,0,0.08)" : "transparent" }}>
                                   {/* the minute still running is shown, but never as a
@@ -743,7 +797,7 @@ export default function StrategyLab() {
             <div className="mt-4 rounded-xl border p-2" style={{ borderColor: "var(--border-default)", background: "var(--bg-elevated)" }}>
               <div className="flex items-center gap-2 px-2 pt-1 pb-2 flex-wrap">
                 <b className="text-[13px]" style={{ color: "#6a1b9a" }}>
-                  📈 {tick}{t("틱 차트", "-tick chart")} — {lab.chart.name}
+                  📈 {lab.clock ?? `${tick}틱`} {t("차트", "chart")} — {lab.chart.name}
                 </b>
                 {lab.stocks.map((st) => (
                   <button key={st.code} onClick={() => { setCode(st.code); codeRef.current = st.code;

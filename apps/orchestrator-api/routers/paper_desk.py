@@ -659,24 +659,28 @@ def proof_combos(seed: int = Query(7), start: int = Query(0), tick: int = Query(
 
 @router.get("/proof/lab")
 def proof_lab(seed: int = Query(7), start: int = Query(0), tick: int = Query(5),
-              code: str = Query(""), bars: int = Query(500), hist: int = Query(40)):
+              code: str = Query(""), bars: int = Query(500), hist: int = Query(40),
+              period: int = Query(0)):
     """🔬 Strategy Lab: every rule variant trading the SAME artificial market, side by
     side, so Monday's comparison differs only by the rule (boss 2026-07-31). Nothing is
     stored — the market is deterministic, so this recomputes the full history from the
     session start on every call and a restart cannot lose a trade."""
     from services.proof_lab import compare
-    return compare(seed=seed, start=start, tick=tick, code=code, bars=bars, hist=hist)
+    return compare(seed=seed, start=start, tick=tick, code=code, bars=bars, hist=hist,
+                   period=max(0, min(int(period or 0), 60)))
 
 
 @router.get("/proof/lab/trades")
 def proof_lab_trades(variant: str = Query(...), seed: int = Query(7), start: int = Query(0),
                      tick: int = Query(5), code: str = Query(""), bars: int = Query(400),
-                     limit: int = Query(400), around: int = Query(-1)):
+                     limit: int = Query(400), around: int = Query(-1),
+                     period: int = Query(0), at: str = Query("")):
     """🔎 Drill-down behind a ranking row: every trade ONE rule made, on every stock, with
     the 5틱 candles so the rule can be checked against the bars it counted."""
     from services.proof_lab import variant_trades
     return variant_trades(variant, seed=seed, start=start, tick=tick, code=code,
-                          bars=bars, limit=limit, around=around)
+                          bars=bars, limit=limit, around=around,
+                          period=max(0, min(int(period or 0), 60)), at=at)
 
 
 @router.get("/proof/lab/datafile")

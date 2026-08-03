@@ -127,7 +127,8 @@ def run_variant(closes: list[float], tick: int, v: dict, seed: int,
     return out, op
 
 
-def consistency_gate(seed: int = 7, start: int = 0, tick: int = 5) -> dict[str, Any]:
+def consistency_gate(seed: int = 7, start: int = 0, tick: int = 5,
+                     period: int = 0) -> dict[str, Any]:
     """Prove the lab and the Proof Lab charts read ONE market (boss 2026-07-31: "when we
     compare all other minute based charts, data, prices, time must be same and also ups
     and downs also must be same").
@@ -305,9 +306,27 @@ def data_file(seed: int = 7, start: int = 0, code: str = "", mins: int = 10,
             "rows": rows, "total_minutes": len(mrows)}
 
 
+def _bars(d0, secs, sseed, t, tick: int, period: int):
+    """The bars the rules run on AND the chart draws — deliberately the same object.
+
+    period=0 → N-execution (틱) bars.  period>0 → N-second bars.
+    In this lab the clock IS the chart: the rule decides on exactly the candles you are
+    looking at, so counting them on screen always gives the number the rule counted. That
+    is the opposite of the Proof Lab, where the clock is pinned and the chart is free —
+    and it is why this page needs no "these are not the candles the rule counted" warning.
+    """
+    if period:
+        return _candles_from(d0, secs, period, _sec_hl(sseed, secs, t))
+    return _candles_from_ticks(d0, _execs(d0, secs, sseed, t), tick)
+
+
+def clock_label(tick: int, period: int) -> str:
+    return f"{period}초" if period else f"{tick}틱"
+
+
 def variant_trades(vid: str, seed: int = 7, start: int = 0, tick: int = 5,
                    code: str = "", bars: int = 400, limit: int = 400,
-                   around: int = -1) -> dict[str, Any]:
+                   around: int = -1, period: int = 0, at: str = "") -> dict[str, Any]:
     """EVERY trade one rule made, what it is holding right now, and the evidence behind
     any single fill — the drill-down behind a ranking row (boss 2026-08-03).
 
@@ -333,7 +352,7 @@ def variant_trades(vid: str, seed: int = 7, start: int = 0, tick: int = 5,
         sseed = seed + k * 101
         t = _tick(base) or 1
         d0, secs = _seconds(sseed, base, start, span=0)
-        cs = _candles_from_ticks(d0, _execs(d0, secs, sseed, t), tick)
+        cs = _bars(d0, secs, sseed, t, tick, period)
         got, op = run_variant([c["close"] for c in cs], t, v, sseed,
                               evidence=True, with_open=True)
         tapes[c_code] = {"cs": cs, "name": name, "trades": got}
@@ -368,6 +387,7 @@ def variant_trades(vid: str, seed: int = 7, start: int = 0, tick: int = 5,
     # else onto the most recent one.
     focus = rows[around] if 0 <= around < len(rows) else (rows[0] if rows else None)
     chart = None
+    at_found = False
     # An explicitly requested stock WINS. It used to be the other way round, so the focused
     # trade's stock overrode the caller and this chart ignored `code` entirely — which is
     # how the page ended up showing two charts of two different companies at once
@@ -377,7 +397,21 @@ def variant_trades(vid: str, seed: int = 7, start: int = 0, tick: int = 5,
     tp = tapes.get(pick) or (tapes.get(code) or (next(iter(tapes.values())) if tapes else None))
     if tp:
         cs = tp["cs"]
-        anchor = focus["sell_i"] if focus and focus.get("code") == pick else len(cs) - 1
+        # `at` is a minute clicked in the Data File — the chart jumps there so the boss can
+        # see the place the row is describing (2026-08-03). It beats the focused trade,
+        # because he asked for that minute explicitly.
+        anchor = None
+        at_found = False
+        if at:
+            hit = next((j for j, c in enumerate(cs) if c["hhmm"][:5] == at[:5]), None)
+            if hit is not None:
+                anchor, at_found = hit, True
+            # A minute still RUNNING has no completed 30초/1분 bar yet — _candles_from only
+            # emits whole minutes — so the jump would silently land nowhere. Anchor on the
+            # live edge instead and SAY the bar does not exist yet, because the forming row
+            # is the top one in the Data File and therefore the first thing anyone clicks.
+        if anchor is None:
+            anchor = focus["sell_i"] if focus and focus.get("code") == pick else len(cs) - 1
         hi = min(len(cs), anchor + max(20, bars // 8))
         off = max(0, hi - bars)
         # BOTH numbers travel with the arrow. The chart used to label itself with net_pct
@@ -399,7 +433,8 @@ def variant_trades(vid: str, seed: int = 7, start: int = 0, tick: int = 5,
     w = sum(1 for r in rows if r["result"] == "win")
     l = sum(1 for r in rows if r["result"] == "loss")
     return {"ok": True, "id": vid, "ko": label(v, True), "en": label(v, False),
-            "tick": tick, "clock": f"{tick}틱",
+            "tick": tick, "period": period, "clock": clock_label(tick, period),
+            "at": at, "at_found": bool(at) and at_found,
             "entry_n": v["entry"], "kind": v["kind"], "a": v["a"], "b": v.get("b"),
             # the SAME arithmetic the ranking row uses — one source, so they cannot drift
             "trips": len(rows), "wins": w, "losses": l, "flats": len(rows) - w - l,
@@ -409,7 +444,8 @@ def variant_trades(vid: str, seed: int = 7, start: int = 0, tick: int = 5,
 
 
 def compare(seed: int = 7, start: int = 0, tick: int = 5,
-            code: str = "", bars: int = 500, hist: int = 40) -> dict[str, Any]:
+            code: str = "", bars: int = 500, hist: int = 40,
+            period: int = 0) -> dict[str, Any]:
     """Every variant against the SAME market, returned as the Monday comparison table.
 
     The tape is built ONCE per stock and every rule runs against it, so the only thing
@@ -419,7 +455,7 @@ def compare(seed: int = 7, start: int = 0, tick: int = 5,
     # candles only arrive a few times a second. Cached for the current MINUTE: the page can
     # poll freely and the numbers still move, without rebuilding the world each time.
     import time as _t
-    key = (seed, start, tick, code, bars, hist, tuple(sorted(_SHOWN)))
+    key = (seed, start, tick, period, code, bars, hist, tuple(sorted(_SHOWN)))
     now_min = int(_t.time()) // 60
     hit = _cmp_cache.get(key)
     if hit and hit[0] == now_min:
@@ -436,7 +472,7 @@ def compare(seed: int = 7, start: int = 0, tick: int = 5,
         sseed = seed + k * 101
         t = _tick(base) or 1
         d0, secs = _seconds(sseed, base, start, span=0)   # span=0 → no 14h cap
-        cs = _candles_from_ticks(d0, _execs(d0, secs, sseed, t), tick)
+        cs = _bars(d0, secs, sseed, t, tick, period)
         tapes.append({"code": c_code, "name": name, "seed": sseed, "tick": t, "cs": cs,
                       "closes": [c["close"] for c in cs],
                       "first": cs[0]["hhmm"] if cs else None,
@@ -485,7 +521,8 @@ def compare(seed: int = 7, start: int = 0, tick: int = 5,
         for r in rows:
             r["marks"] = [{"b": m["b"] - off, "s": m["s"] - off, "g": m["g"], "net": m["net"]}
                           for m in r["marks"] if m["b"] >= off]
-    out = {"ok": True, "seed": seed, "start": start, "tick": tick,
+    out = {"ok": True, "seed": seed, "start": start, "tick": tick, "period": period,
+           "clock": clock_label(tick, period),
            "chart": ({"code": chart_tape["code"], "name": chart_tape["name"],
                       "candles": [{"time": c["time"], "hhmm": c["hhmm"], "open": c["open"],
                                    "high": c["high"], "low": c["low"], "close": c["close"],
