@@ -35,14 +35,28 @@ VARIANTS: list[dict] = [
     {"id": "2u+0.5", "entry": 2, "kind": "target", "a": 0.5, "b": 1.0},
     {"id": "3u+0.5s", "entry": 3, "kind": "target", "a": 0.5, "b": 0.5},
     {"id": "4u+1.0", "entry": 4, "kind": "target", "a": 1.0, "b": 1.0},
+    # ── REVERSAL entries (2026-08-03). Measured on 60h of this tape: after 3 RISES the
+    # next 5틱 bar rises 18% of the time against a 27% base, but after 2 FALLS it rises
+    # 55%. Every rule above therefore buys at the worst moment available and the mirror
+    # is twice as good. These are the same exits, entered the other way round, so the
+    # comparison isolates exactly one thing: which direction the entry faces.
+    {"id": "2d+0.3", "entry": 2, "dir": -1, "kind": "target", "a": 0.3, "b": 1.0},
+    {"id": "3d+0.3", "entry": 3, "dir": -1, "kind": "target", "a": 0.3, "b": 1.0},
+    {"id": "2d+0.5", "entry": 2, "dir": -1, "kind": "target", "a": 0.5, "b": 1.0},
+    {"id": "3d+0.5", "entry": 3, "dir": -1, "kind": "target", "a": 0.5, "b": 1.0},
+    {"id": "2d3u", "entry": 2, "dir": -1, "kind": "candle", "a": 3},
+    {"id": "3d3u", "entry": 3, "dir": -1, "kind": "candle", "a": 3},
 ]
 
 
 def label(v: dict, ko: bool = True) -> str:
+    dn = v.get("dir", 1) < 0
+    ent = (f"{v['entry']}연속 하락" if dn else f"{v['entry']}연속 상승") if ko else           (f"{v['entry']} down" if dn else f"{v['entry']} up")
     if v["kind"] == "candle":
-        return f"{v['entry']}연속 상승 → {v['a']}연속 하락 매도" if ko else f"{v['entry']} up / {v['a']} down"
-    return (f"{v['entry']}연속 상승 → +{v['a']}% 익절 / -{v['b']}% 손절" if ko
-            else f"{v['entry']} up / +{v['a']}% take, -{v['b']}% stop")
+        exi = f"{v['a']}연속 {'상승' if dn else '하락'} 매도" if ko else               f"{v['a']} {'up' if dn else 'down'}"
+        return f"{ent} → {exi}" if ko else f"{ent} / {exi}"
+    return (f"{ent} → +{v['a']}% 익절 / -{v['b']}% 손절" if ko
+            else f"{ent} / +{v['a']}% take, -{v['b']}% stop")
 
 
 def run_variant(closes: list[float], tick: int, v: dict, seed: int,
@@ -67,14 +81,21 @@ def run_variant(closes: list[float], tick: int, v: dict, seed: int,
         up = up + 1 if c > prev else 0
         dn = dn + 1 if c < prev else 0
         if pos is None:
-            if up == v["entry"]:
+            # dir=-1 buys after a run of FALLS instead of rises. The tape is mean-reverting
+            # at 5틱, so this is the same rule pointed the other way — nothing else changes.
+            if (dn if v.get("dir", 1) < 0 else up) == v["entry"]:
                 bk = _book(seed * 1_000 + i, c, "BUY", tick)
                 pos = {"i": i, "entry": bk["fill"], "bk": bk, "close": c,
                        "seq": closes[max(0, i - v["entry"]): i + 1]}
         else:
             if v["kind"] == "candle":
-                hit = dn == v["a"]
-                why = f"{v['a']}연속 하락"
+                # a reversal entry exits on a run of RISES — the mirror of the exit above
+                if v.get("dir", 1) < 0:
+                    hit = up == v["a"]
+                    why = f"{v['a']}연속 상승"
+                else:
+                    hit = dn == v["a"]
+                    why = f"{v['a']}연속 하락"
             else:
                 # Measure the stop on what a SALE WOULD ACTUALLY FETCH, not on the close.
                 # A sell takes the bid, which is the close or one tick under it, so testing
