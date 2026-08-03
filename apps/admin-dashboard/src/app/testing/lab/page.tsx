@@ -195,8 +195,12 @@ export default function StrategyLab() {
                 live?: boolean; behind_sec?: number | null; prev_close?: number | null;
                 tape?: { t: string; px: number; qty: number; strength?: number | null }[] | null };
   const [feed, setFeed] = useState<Feed | null>(null);
-  const loadDf = useCallback((c: string, mins: number, f = "", tt = "") => {
-    setDfOpen(null); setDfMin(null);
+  const loadDf = useCallback((c: string, mins: number, f = "", tt = "", keepOpen = false) => {
+    // Collapsing the expanded minute belongs to "the boss changed stock or window", NOT to
+    // every refresh. openRule() calls this after fetching the chart, so clicking a minute
+    // opened the seconds table and then closed it a moment later when the chart came back
+    // (boss 2026-08-03: "it is opening and suddenly closing").
+    if (!keepOpen) { setDfOpen(null); setDfMin(null); }
     api<Df>(`/paper-desk/proof/lab/datafile?seed=7&start=${startRef.current}`
       + `&code=${encodeURIComponent(c)}&mins=${f || tt ? 0 : mins}`
       + `&frm=${encodeURIComponent(f)}&to=${encodeURIComponent(tt)}`)
@@ -226,7 +230,12 @@ export default function StrategyLab() {
       .then((d) => {
         setDetail(d?.ok ? d : null);
         const c = d?.chart?.code;
-        if (c) { setDfCode(c); loadDf(c, dfMins, dfFrom, dfTo); }
+        // only when the chart moved to a DIFFERENT company — otherwise the Data File on
+        // screen is already the right one and reloading it just destroys the open row
+        if (c && c !== dfCodeRef.current) {
+          setDfCode(c); dfCodeRef.current = c;
+          loadDf(c, dfMins, dfFrom, dfTo);
+        }
       })
       .catch(() => setDetail(null))
       .finally(() => setDetailBusy(false));
@@ -246,6 +255,8 @@ export default function StrategyLab() {
   codeRef.current = code;
   const periodRef = useRef(period);
   periodRef.current = period;
+  const dfCodeRef = useRef(dfCode);
+  dfCodeRef.current = dfCode;
 
   const load = useCallback(async (st = startRef.current, tk = tick) => {
     setBusy(true);
@@ -698,7 +709,8 @@ export default function StrategyLab() {
                   <div className="px-4 py-2 flex items-center gap-2 flex-wrap" style={{ background: "var(--bg-elevated)" }}>
                     <b className="text-[12.5px]" style={{ color: GOLD }}>🕰️ {t("데이터 파일", "Data File")}</b>
                     {detail.chart && lab && lab.stocks.map((st) => (
-                      <button key={st.code} onClick={() => { setDfCode(st.code); loadDf(st.code, dfMins, dfFrom, dfTo); }}
+                      <button key={st.code} onClick={() => { setDfCode(st.code); dfCodeRef.current = st.code;
+                          loadDf(st.code, dfMins, dfFrom, dfTo); }}
                         className="text-[10.5px] font-bold px-2 py-0.5 rounded-md border"
                         style={(dfCode || detail.chart?.code) === st.code
                           ? { background: GOLD, color: "#fff", borderColor: GOLD }
@@ -831,7 +843,8 @@ export default function StrategyLab() {
                 {lab.stocks.map((st) => (
                   <button key={st.code} onClick={() => { setCode(st.code); codeRef.current = st.code;
                       if (sel) openRule(sel, pick ?? -1);          // keep the panel on the same company
-                      setDfCode(st.code); loadDf(st.code, dfMins, dfFrom, dfTo); }}
+                      setDfCode(st.code); dfCodeRef.current = st.code;
+                      loadDf(st.code, dfMins, dfFrom, dfTo); }}
                     className="text-[11px] font-bold px-2 py-0.5 rounded-lg"
                     style={lab.chart?.code === st.code ? { background: "#6a1b9a", color: "#fff" }
                            : { border: "1px solid var(--border-default)", color: "var(--text-secondary)" }}>
