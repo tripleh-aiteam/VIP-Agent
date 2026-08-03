@@ -14,6 +14,11 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "@/components/api";
 import { useLanguage } from "@/components/i18n";
 
+// 09:30:43 -> 09:30. On a real account the order reaches the exchange a moment after
+// the signal, so printing the second promises a precision the broker cannot honour.
+// The exact second stays in the cell's tooltip.
+const hm = (x?: string) => (x && x.length >= 5 ? x.slice(0, 5) : (x ?? ""));
+
 const RED = "#d32f2f";
 const BLUE = "#1565c0";
 const GOLD = "#e65100";
@@ -28,7 +33,7 @@ type Variant = {
   per_stock: Record<string, number>;
   recent: { code: string; name: string; buy_t: string; sell_t: string;
             entry: number; exit: number; gross_pct: number; net_pct: number }[];
-  marks: { b: number; s: number; net: number }[];
+  marks: { b: number; s: number; g?: number; net: number }[];
 };
 type Candle = { time: number; hhmm: string; open: number; high: number; low: number; close: number; dir: number };
 type Lab = {
@@ -46,7 +51,7 @@ const KEY = "lab-session-start";
 /** 5틱 chart for the lab. Created once, data replaced in place, so the live refresh never
  *  resets the zoom. Arrows show the SELECTED variant only — twelve rules' worth at once
  *  would bury the candles. */
-function LabChart({ candles, marks }: { candles: Candle[]; marks: { b: number; s: number; net: number }[] }) {
+function LabChart({ candles, marks }: { candles: Candle[]; marks: { b: number; s: number; g?: number; net: number }[] }) {
   const ref = useRef<HTMLDivElement | null>(null);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const cs = useRef<{ chart: any; series: any } | null>(null);
@@ -86,11 +91,17 @@ function LabChart({ candles, marks }: { candles: Candle[]; marks: { b: number; s
       return { time: x.time, open: x.open, high: x.high, low: x.low, close: x.close,
                color: col, borderColor: col, wickColor: col };
     }) as never);
-    const m = marks.flatMap((k) => [
-      { time: candles[k.b]?.time, position: "belowBar", color: RED, shape: "arrowUp", text: "매수" },
-      { time: candles[k.s]?.time, position: "aboveBar", color: k.net > 0 ? "#2e7d32" : BLUE,
-        shape: "arrowDown", text: `${k.net > 0 ? "+" : ""}${k.net}%` },
-    ]).filter((x) => x.time != null).sort((a, b) => (a.time as number) - (b.time as number));
+    // Label with GROSS — the price move between the two fills — because that is what the
+    // trade table's 손익 column shows. Labelling the arrow with net while the table showed
+    // gross made one trade read as two different results depending on where you looked.
+    const m = marks.flatMap((k) => {
+      const v = k.g ?? k.net;
+      return [
+        { time: candles[k.b]?.time, position: "belowBar", color: RED, shape: "arrowUp", text: "매수" },
+        { time: candles[k.s]?.time, position: "aboveBar", color: v > 0 ? "#2e7d32" : BLUE,
+          shape: "arrowDown", text: `${v > 0 ? "+" : ""}${v}%` },
+      ];
+    }).filter((x) => x.time != null).sort((a, b) => (a.time as number) - (b.time as number));
     c.series.setMarkers(m as never);
   }, [ready, candles, marks]);
 
@@ -123,7 +134,7 @@ export default function StrategyLab() {
     holding: { code: string; name: string; buy_t: string; buy_d?: string; entry: number;
                last: number; unreal_pct: number; buy_ev?: Ev | null }[];
     chart: { code: string; name: string; candles: Candle[];
-             marks: { b: number; s: number; net: number }[];
+             marks: { b: number; s: number; g: number; net: number }[];
              focus: { b: number; s: number } | null } | null;
   };
   const [detail, setDetail] = useState<Detail | null>(null);
@@ -385,7 +396,7 @@ export default function StrategyLab() {
                       {detail.holding.map((h, i) => (
                         <span key={i} className="mr-4">
                           <b className="text-[var(--text-primary)]">{h.name}</b>
-                          {" "}▲ {h.buy_d ? `${h.buy_d} ` : ""}{h.buy_t} ₩{h.entry.toLocaleString()}
+                          {" "}▲ {h.buy_d ? `${h.buy_d} ` : ""}{hm(h.buy_t)} ₩{h.entry.toLocaleString()}
                           {" → "}{t("현재", "now")} ₩{h.last.toLocaleString()}
                           <b className="ml-1" style={{ color: h.unreal_pct > 0 ? RED : h.unreal_pct < 0 ? BLUE : "var(--text-muted)" }}>
                             {h.unreal_pct > 0 ? "+" : ""}{h.unreal_pct}%
@@ -419,9 +430,13 @@ export default function StrategyLab() {
                             className="border-t border-[var(--border-default)]/40 cursor-pointer hover:bg-[var(--bg-elevated)]"
                             style={{ background: pick === i ? "rgba(230,81,0,0.10)" : "transparent" }}>
                             <td className="px-3 py-1 font-bold text-[var(--text-primary)]">{pick === i ? "▶ " : ""}{tr.name}</td>
-                            <td className="px-2" style={{ color: RED }}>▲ {tr.buy_d ? `${tr.buy_d} ` : ""}{tr.buy_t}</td>
+                            <td className="px-2" style={{ color: RED }} title={t(`정확한 체결 초: ${tr.buy_t}`, `exact fill second: ${tr.buy_t}`)}>
+                              ▲ {tr.buy_d ? `${tr.buy_d} ` : ""}{hm(tr.buy_t)}
+                            </td>
                             <td className="text-right px-2">₩{tr.entry.toLocaleString()}</td>
-                            <td className="px-2" style={{ color: BLUE }}>▼ {tr.sell_d ? `${tr.sell_d} ` : ""}{tr.sell_t}</td>
+                            <td className="px-2" style={{ color: BLUE }} title={t(`정확한 체결 초: ${tr.sell_t}`, `exact fill second: ${tr.sell_t}`)}>
+                              ▼ {tr.sell_d ? `${tr.sell_d} ` : ""}{hm(tr.sell_t)}
+                            </td>
                             <td className="text-right px-2">₩{tr.exit.toLocaleString()}</td>
                             <td className="text-right px-2" style={{ color: col }}>
                               {tr.exit - tr.entry > 0 ? "+" : ""}{(tr.exit - tr.entry).toLocaleString()}
@@ -484,7 +499,7 @@ export default function StrategyLab() {
                 return (
                   <div className="px-4 py-3 border-t" style={{ borderColor: GOLD, background: "rgba(230,81,0,0.04)" }}>
                     <b className="text-[12.5px]" style={{ color: GOLD }}>
-                      🔍 {tr.name} — {tr.buy_d ? `${tr.buy_d} ` : ""}{tr.buy_t} → {tr.sell_t}
+                      🔍 {tr.name} — {tr.buy_d ? `${tr.buy_d} ` : ""}{hm(tr.buy_t)} → {hm(tr.sell_t)}
                     </b>
                     <div className="mt-2 text-[11.5px] leading-relaxed text-[var(--text-secondary)]">
                       <b className="text-[var(--text-primary)]">{t("이 규칙이 하는 일", "what this rule does")}: </b>

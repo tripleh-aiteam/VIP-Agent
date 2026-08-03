@@ -91,7 +91,15 @@ def run_variant(closes: list[float], tick: int, v: dict, seed: int,
                     tr["sell_ev"] = {"close": c, "book": bk,
                                      "seq": closes[max(0, i - (v["a"] if v["kind"] == "candle" else 1)): i + 1]}
                 out.append(tr)
-                pos, up, dn = None, 0, 0
+                # Do NOT reset the run counters here. run_steps — the live engine, and
+                # what the Proof Lab uses — counts the consecutive run at the tail of the
+                # closes and knows nothing about positions. Zeroing them after an exit made
+                # this lab a SECOND, different implementation of the same rule: a take-profit
+                # sells on a RISING bar, so the reset threw away a run that the real engine
+                # would have kept counting, and the two labs then bought at different bars
+                # (boss 2026-08-03: "rules and buying and selling must match each other").
+                # `up == entry` is an equality test, so a continuing run cannot re-fire.
+                pos = None
     if not with_open:
         return out
     # a position still OPEN at the end is not a trade, but it IS what the rule is doing
@@ -268,7 +276,12 @@ def variant_trades(vid: str, seed: int = 7, start: int = 0, tick: int = 5,
         anchor = focus["sell_i"] if focus and focus.get("code") == pick else len(cs) - 1
         hi = min(len(cs), anchor + max(20, bars // 8))
         off = max(0, hi - bars)
-        marks = [{"b": g["buy_i"] - off, "s": g["sell_i"] - off, "net": g["net_pct"]}
+        # BOTH numbers travel with the arrow. The chart used to label itself with net_pct
+        # while the table's 손익 column showed gross_pct — the same trade reading +0.86%
+        # on the chart and +1.09% in the table, with nothing on screen saying which was
+        # which (boss 2026-08-03). The chart now prints gross, the same as the table.
+        marks = [{"b": g["buy_i"] - off, "s": g["sell_i"] - off,
+                  "g": g["gross_pct"], "net": g["net_pct"]}
                  for g in tp["trades"] if off <= g["buy_i"] < hi and off <= g["sell_i"] < hi]
         chart = {"code": pick, "name": tp["name"], "off": off,
                  "candles": [{"time": c["time"], "hhmm": c["hhmm"], "open": c["open"],
@@ -354,7 +367,7 @@ def compare(seed: int = 7, start: int = 0, tick: int = 5,
             "per_stock": per_stock,
             "recent": recent[:hist],
             # arrows for the charted stock only — index into the candles sent below
-            "marks": [{"b": g["buy_i"], "s": g["sell_i"], "net": g["net_pct"]}
+            "marks": [{"b": g["buy_i"], "s": g["sell_i"], "g": g["gross_pct"], "net": g["net_pct"]}
                       for g in (run_variant(chart_tape["closes"], chart_tape["tick"], v, chart_tape["seed"])[-60:]
                                 if chart_tape else [])],
         })
@@ -362,7 +375,7 @@ def compare(seed: int = 7, start: int = 0, tick: int = 5,
     off = max(0, len(chart_tape["cs"]) - bars) if chart_tape else 0
     if chart_tape and off:
         for r in rows:
-            r["marks"] = [{"b": m["b"] - off, "s": m["s"] - off, "net": m["net"]}
+            r["marks"] = [{"b": m["b"] - off, "s": m["s"] - off, "g": m["g"], "net": m["net"]}
                           for m in r["marks"] if m["b"] >= off]
     out = {"ok": True, "seed": seed, "start": start, "tick": tick,
            "chart": ({"code": chart_tape["code"], "name": chart_tape["name"],
