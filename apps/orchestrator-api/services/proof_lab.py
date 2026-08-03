@@ -16,7 +16,7 @@ from __future__ import annotations
 from typing import Any
 
 from services.proof_sim import (FEE_PCT, _book, _candles_from, _candles_from_ticks,
-                                _sec_label,
+                                _sec_label, _date_label,
                                 _execs, _seconds, _SHOWN, _SYMBOLS, _tick, _sec_hl,
                                 _sec_label)
 
@@ -393,6 +393,11 @@ def data_file(seed: int = 7, start: int = 0, code: str = "", mins: int = 10,
         if diff == 0:
             diff = 0            # round() yields -0.0, which prints as "−0" and reads as a bug
         rows.append({"hhmm": cd["hhmm"], "open": cd["open"], "close": cd["close"],
+                     # the DAY, because the standing session runs 07:21 -> 00:01 and after
+                     # midnight two rows can both read "08:30" with nothing to separate
+                     # them. The trades have carried a date since 2026-08-03; the Data File
+                     # they are reconciled against did not, which is half a fix.
+                     "date": _date_label(d0, cd["off0"]),
                      "diff": diff, "forming": bool(cd.get("forming")),
                      "dir": 0 if diff is None or diff == 0 else (1 if diff > 0 else -1)})
         prev = cd["close"]

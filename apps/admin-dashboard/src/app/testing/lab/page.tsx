@@ -185,7 +185,7 @@ export default function StrategyLab() {
   const [pick, setPick] = useState<number | null>(null);   // which trade the chart is on
   // 🕰️ Data File — the minute-by-minute record the rules trade on top of. Same tape, same
   // seconds; this is what a trade is reconciled against (boss 2026-08-03).
-  type DfRow = { hhmm: string; open: number; close: number; diff: number | null; dir: number; forming?: boolean };
+  type DfRow = { hhmm: string; date?: string; open: number; close: number; diff: number | null; dir: number; forming?: boolean };
   type Df = { ok: boolean; code: string; name: string; rows: DfRow[]; total_minutes: number };
   type DfMin = { ok: boolean; hhmm: string; open: number; close: number; deal_count: number;
                  seconds: { t: string; deals: { px: number; qty: number }[] }[]; traded: number[] };
@@ -196,6 +196,9 @@ export default function StrategyLab() {
   const [dfOpen, setDfOpen] = useState<string | null>(null);      // which minute is expanded
   const [dfMin, setDfMin] = useState<DfMin | null>(null);
   const [dfCode, setDfCode] = useState("");
+  // does the loaded Data File cover more than one calendar day? Only then is the date
+  // worth the width — on a single-day session it is noise.
+  const [dfSpansDays, setDfSpansDays] = useState(false);
   // 📼 the execution feed — the SAME endpoint the Proof Lab reads, so the deals under this
   // chart are literally the deals the 5틱 candles above it are built from.
   type Feed = { asks: [number, number][]; bids: [number, number][]; time?: string;
@@ -211,7 +214,10 @@ export default function StrategyLab() {
     api<Df>(`/paper-desk/proof/lab/datafile?seed=7&start=${startRef.current}`
       + `&code=${encodeURIComponent(c)}&mins=${f || tt ? 0 : mins}`
       + `&frm=${encodeURIComponent(f)}&to=${encodeURIComponent(tt)}`)
-      .then((r) => setDf(r?.ok ? r : null)).catch(() => setDf(null));
+      .then((r) => {
+        setDf(r?.ok ? r : null);
+        setDfSpansDays(!!r?.rows && new Set(r.rows.map((x) => x.date).filter(Boolean)).size > 1);
+      }).catch(() => setDf(null));
   }, []);
   const openMinute = (c: string, hhmm: string) => {
     if (dfOpen === hhmm) { setDfOpen(null); setDfMin(null); return; }
@@ -839,6 +845,7 @@ export default function StrategyLab() {
                       {t("한 줄을 누르면 그 분의 체결이 초 단위로 열립니다", "click a row → that minute's executions open, second by second")}
                     </span>
                   </div>
+                  {df && (() => { return null; })()}
                   {df && (
                     <div className="overflow-y-auto" style={{ maxHeight: 340 }}>
                       <table className="w-full text-[11.5px] tabular-nums">
@@ -865,7 +872,13 @@ export default function StrategyLab() {
                                   {/* the minute still running is shown, but never as a
                                       settled one — its close is only the latest print */}
                                   <td className="px-3 py-[2px] font-bold text-[var(--text-primary)]">
-                                    {r.forming ? "⏳ " : on ? "▾ " : "▸ "}{r.hhmm}
+                                    {r.forming ? "⏳ " : on ? "▾ " : "▸ "}
+                                    {/* the day, once the session has crossed midnight —
+                                        otherwise two rows both read "08:30" */}
+                                    {dfSpansDays && r.date && (
+                                      <span className="text-[9.5px] font-normal text-[var(--text-muted)] mr-1">{r.date}</span>
+                                    )}
+                                    {r.hhmm}
                                     {r.forming && <span className="ml-1 text-[9.5px] font-normal" style={{ color: GOLD }}>{t("진행 중", "running")}</span>}
                                   </td>
                                   <td className="text-right px-2">₩{r.open.toLocaleString()}</td>
