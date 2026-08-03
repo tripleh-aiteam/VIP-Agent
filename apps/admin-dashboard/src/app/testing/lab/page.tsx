@@ -9,6 +9,7 @@
  * Nothing is stored: the market is deterministic, so the whole weekend is recomputed from
  * the session start on every load. A restart or a redeploy cannot lose a single trade.
  */
+import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "@/components/api";
 import { useLanguage } from "@/components/i18n";
@@ -186,9 +187,14 @@ export default function StrategyLab() {
 
   return (
     <div className="p-5 max-w-[1400px]">
-      <h1 className="text-[20px] font-extrabold text-[var(--text-primary)]">
-        🔬 {t("전략 실험실 — 어떤 규칙이 제일 나은가", "Strategy Lab — which rule does best")}
-      </h1>
+      <div className="flex items-center gap-3 flex-wrap">
+        <Link href="/testing" className="text-[12px] font-bold text-[var(--text-muted)] hover:opacity-70">
+          ← {t("알고리즘 선택", "algorithms")}
+        </Link>
+        <h1 className="text-[20px] font-extrabold text-[var(--text-primary)]">
+          🔬 {t("전략 실험실 — 어떤 규칙이 제일 나은가", "Strategy Lab — which rule does best")}
+        </h1>
+      </div>
       <p className="mt-1 text-[12px] text-[var(--text-secondary)]">
         {t("모든 규칙이 같은 인공 시장·같은 3종목·같은 5틱 캔들에서 동시에 매매합니다. 차이는 규칙 하나뿐입니다. 저장하지 않고 매번 세션 시작부터 다시 계산하므로, 서버를 재시작해도 기록이 사라지지 않습니다.",
            "every rule trades the SAME artificial market, the same 3 stocks, the same 5-tick candles — the only difference between two rows is the rule. Nothing is stored: the whole run is recomputed from the session start, so a restart cannot lose a trade.")}

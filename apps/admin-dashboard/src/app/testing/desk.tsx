@@ -5,6 +5,7 @@
 // stock, positions with unrealized P&L, trade history with realized P&L + win record.
 // Polling /paper-desk/state also triggers pending limit fills server-side.
 
+import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useFastPrices } from "@/components/useFastPrices";
 import { useRouter } from "next/navigation";
@@ -730,6 +731,11 @@ export default function Desk({ mode }: { mode: TradeMode }) {
   return (
     <div className="px-4 md:px-8 py-6 max-w-[1080px] mx-auto">
       <div className="mb-1 flex items-baseline gap-2 flex-wrap">
+        {/* Algorithm 1 was the only desk with no way back to the algorithm list — every
+            other one has carried this link for a while (boss 2026-08-03). */}
+        <Link href="/testing" className="text-[12px] font-bold text-[var(--text-muted)] hover:opacity-70">
+          ← {t("알고리즘 선택", "algorithms")}
+        </Link>
         <h1 className="text-[19px] font-extrabold text-[var(--text-primary)]">🧪 {t("모의투자 테스트", "Paper Trading Test")}</h1>
         <span className="text-[11px] text-[var(--text-muted)]">{t("가짜 돈 · 실시간 키움 시세 · 챗봇 조언을 직접 검증", "fake money · live Kiwoom prices · verify the chatbot's advice yourself")}</span>
         <button onClick={depositCash} className="ml-auto text-[11px] font-extrabold px-2.5 py-1 rounded-md border text-white"
