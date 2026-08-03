@@ -426,6 +426,12 @@ def variant_trades(vid: str, seed: int = 7, start: int = 0, tick: int = 5,
                               "high": c["high"], "low": c["low"], "close": c["close"],
                               "dir": c["dir"]} for c in cs[off:hi]],
                  "marks": marks,
+                 # where in the RETURNED window the requested minute sits, so the page can
+                 # actually scroll to it. Sliding the window is not enough: the chart keeps
+                 # its own view, so a 1,500-bar payload looks unchanged (boss 2026-08-03:
+                 # "if I click any time it is not opening exact time").
+                 "at_idx": (next((j for j, c in enumerate(cs[off:hi])
+                                  if c["hhmm"][:5] == at[:5]), None) if at else None),
                  "focus": ({"b": focus["buy_i"] - off, "s": focus["sell_i"] - off}
                            if focus and focus.get("code") == pick
                            and off <= focus["buy_i"] < hi else None)}

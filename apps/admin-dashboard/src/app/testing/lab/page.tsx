@@ -53,11 +53,14 @@ const KEY = "lab-session-start";
 /** 5틱 chart for the lab. Created once, data replaced in place, so the live refresh never
  *  resets the zoom. Arrows show the SELECTED variant only — twelve rules' worth at once
  *  would bury the candles. */
-function LabChart({ candles, marks }: { candles: Candle[]; marks: { b: number; s: number; g?: number; net: number }[] }) {
+function LabChart({ candles, marks, focus }:
+    { candles: Candle[]; marks: { b: number; s: number; g?: number; net: number }[];
+      focus?: number | null }) {
   const ref = useRef<HTMLDivElement | null>(null);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const cs = useRef<{ chart: any; series: any } | null>(null);
   const label = useRef<Map<number, string>>(new Map());
+  const applied = useRef<number | null | undefined>(undefined);   // last target scrolled to
   const [ready, setReady] = useState(0);
 
   useEffect(() => {
@@ -104,8 +107,32 @@ function LabChart({ candles, marks }: { candles: Candle[]; marks: { b: number; s
           shape: "arrowDown", text: `${v > 0 ? "+" : ""}${v}%` },
       ];
     }).filter((x) => x.time != null).sort((a, b) => (a.time as number) - (b.time as number));
+    // a flag on the bar that was asked for, so it can be picked out at a glance
+    if (focus != null && candles[focus]) {
+      m.push({ time: candles[focus].time, position: "aboveBar", color: GOLD,
+               shape: "arrowDown", text: `◆ ${candles[focus].hhmm.slice(0, 5)}` } as never);
+      m.sort((a2, b2) => (a2.time as number) - (b2.time as number));
+    }
     c.series.setMarkers(m as never);
-  }, [ready, candles, marks]);
+
+    // SCROLL THERE. setData alone leaves the chart wherever it was, so on a 1,500-bar
+    // payload the view looked identical no matter which minute was clicked — the window
+    // had moved underneath but nothing on screen did. Zoom in around the target instead
+    // of showing the whole window, or it is a needle in 1,500 bars.
+    // ...but only when the TARGET CHANGES. Doing it on every payload would haul the view
+    // back every 60s refresh and throw away whatever the boss had scrolled to.
+    try {
+      if (applied.current !== focus) {
+        applied.current = focus;
+        if (focus != null && candles[focus]) {
+          c.chart.timeScale().setVisibleLogicalRange({
+            from: Math.max(0, focus - 70), to: Math.min(candles.length - 1, focus + 25) });
+        } else {
+          c.chart.timeScale().fitContent();
+        }
+      }
+    } catch { /* the chart may be mid-teardown */ }
+  }, [ready, candles, marks, focus]);
 
   return <div ref={ref} style={{ width: "100%", height: 300 }} />;
 }
@@ -143,6 +170,7 @@ export default function StrategyLab() {
                last: number; unreal_pct: number; buy_ev?: Ev | null }[];
     chart: { code: string; name: string; candles: Candle[];
              marks: { b: number; s: number; g: number; net: number }[];
+             at_idx?: number | null;
              focus: { b: number; s: number } | null } | null;
   };
   const [detail, setDetail] = useState<Detail | null>(null);
@@ -490,7 +518,8 @@ export default function StrategyLab() {
                       </span>
                     )}
                   </div>
-                  <LabChart candles={detail.chart.candles} marks={detail.chart.marks} />
+                  <LabChart candles={detail.chart.candles} marks={detail.chart.marks}
+                    focus={detail.chart.at_idx ?? detail.chart.focus?.s ?? null} />
                 </div>
               )}
 
