@@ -16,7 +16,8 @@ from __future__ import annotations
 from typing import Any
 
 from services.proof_sim import (FEE_PCT, _book, _candles_from, _candles_from_ticks,
-                                _execs, _seconds, _SHOWN, _SYMBOLS, _tick, _sec_hl)
+                                _execs, _seconds, _SHOWN, _SYMBOLS, _tick, _sec_hl,
+                                _sec_label)
 
 # The rules under test. entry = consecutive rising candles. exit is either a count of
 # consecutive falling candles, or a take-profit with a stop — both net of the fee, which
@@ -244,6 +245,22 @@ def data_file(seed: int = 7, start: int = 0, code: str = "", mins: int = 10,
     hl = _sec_hl(sseed, secs, t)
     mrows = _candles_from(d0, secs, 60, hl)
 
+    # The minute STILL RUNNING belongs here too. _candles_from only emits whole minutes, so
+    # a trade that just executed could not be reconciled against the Data File until its
+    # minute ended — and "the minute is not in the Data File" is exactly what a wrong price
+    # would look like (found by the audit 2026-08-03, 3 trades in the live minute).
+    # It is appended and flagged `forming`, never silently mixed in with the closed ones.
+    rem = len(secs) % 60
+    if rem:
+        base = (len(secs) // 60) * 60
+        chunk = secs[base: base + rem]
+        ep9 = d0 + chunk[0]["off"]
+        pxs = [x["px"] for x in chunk]
+        mrows = mrows + [{"time": ep9, "hhmm": _sec_label(d0, chunk[0]["off"])[:5],
+                          "open": mrows[-1]["close"] if mrows else pxs[0],
+                          "high": max(pxs), "low": min(pxs), "close": pxs[-1],
+                          "off0": chunk[0]["off"], "n": rem, "forming": True}]
+
     if hhmm:
         cd = next((c for c in mrows if c["hhmm"][:5] == hhmm[:5]), None)
         if cd is None:
@@ -258,7 +275,7 @@ def data_file(seed: int = 7, start: int = 0, code: str = "", mins: int = 10,
             by_sec[-1]["deals"].append({"px": e["px"], "qty": e["qty"]})
         return {"ok": True, "code": c_code, "name": name, "hhmm": cd["hhmm"],
                 "open": cd["open"], "close": cd["close"], "high": cd["high"],
-                "low": cd["low"], "tick": t,
+                "low": cd["low"], "tick": t, "forming": bool(cd.get("forming")),
                 "seconds": by_sec, "deal_count": len(deals),
                 # every distinct price that actually traded in this minute — what a fill
                 # is checked against
@@ -275,7 +292,7 @@ def data_file(seed: int = 7, start: int = 0, code: str = "", mins: int = 10,
         if diff == 0:
             diff = 0            # round() yields -0.0, which prints as "−0" and reads as a bug
         rows.append({"hhmm": cd["hhmm"], "open": cd["open"], "close": cd["close"],
-                     "diff": diff,
+                     "diff": diff, "forming": bool(cd.get("forming")),
                      "dir": 0 if diff is None or diff == 0 else (1 if diff > 0 else -1)})
         prev = cd["close"]
     if frm or to:

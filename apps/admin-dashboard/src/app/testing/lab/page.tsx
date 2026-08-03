@@ -143,7 +143,7 @@ export default function StrategyLab() {
   const [pick, setPick] = useState<number | null>(null);   // which trade the chart is on
   // 🕰️ Data File — the minute-by-minute record the rules trade on top of. Same tape, same
   // seconds; this is what a trade is reconciled against (boss 2026-08-03).
-  type DfRow = { hhmm: string; open: number; close: number; diff: number | null; dir: number };
+  type DfRow = { hhmm: string; open: number; close: number; diff: number | null; dir: number; forming?: boolean };
   type Df = { ok: boolean; code: string; name: string; rows: DfRow[]; total_minutes: number };
   type DfMin = { ok: boolean; hhmm: string; open: number; close: number; deal_count: number;
                  seconds: { t: string; deals: { px: number; qty: number }[] }[]; traded: number[] };
@@ -671,7 +671,12 @@ export default function StrategyLab() {
                                 <tr onClick={() => openMinute(df.code, r.hhmm)}
                                   className="border-t border-[var(--border-default)]/30 cursor-pointer hover:bg-[var(--bg-elevated)]"
                                   style={{ background: on ? "rgba(230,81,0,0.08)" : "transparent" }}>
-                                  <td className="px-3 py-[2px] font-bold text-[var(--text-primary)]">{on ? "▾ " : "▸ "}{r.hhmm}</td>
+                                  {/* the minute still running is shown, but never as a
+                                      settled one — its close is only the latest print */}
+                                  <td className="px-3 py-[2px] font-bold text-[var(--text-primary)]">
+                                    {r.forming ? "⏳ " : on ? "▾ " : "▸ "}{r.hhmm}
+                                    {r.forming && <span className="ml-1 text-[9.5px] font-normal" style={{ color: GOLD }}>{t("진행 중", "running")}</span>}
+                                  </td>
                                   <td className="text-right px-2">₩{r.open.toLocaleString()}</td>
                                   <td className="text-right px-2 font-extrabold" style={{ color: col }}>₩{r.close.toLocaleString()}</td>
                                   <td className="text-right px-2 font-bold" style={{ color: col }}>
