@@ -681,8 +681,13 @@ def _simulate(candles: list[dict], seed: int, with_book: bool, period: int = 60,
                 # banks +0.07%, so the button would have promised four times what it paid.
                 # The STOP stays on the price move: it is a risk limit on the position,
                 # not on the P&L, which is how every desk sets one.
+                # The STOP is measured on what a sale would actually fetch — the bid,
+                # which is the close or one tick under it — not on the close. Testing the
+                # close let the position slide a further tick before the order went in, so
+                # a "-1% stop" realised -1.485% (boss 2026-08-03). Same change in
+                # proof_lab.run_variant; the two must not drift apart again.
                 else ((cd["close"] / pos["entry"] - 1) * 100 - FEE_PCT >= take_pct
-                      or (cd["close"] / pos["entry"] - 1) * 100 <= -stop_pct)):
+                      or ((cd["close"] - (tick or 0)) / pos["entry"] - 1) * 100 <= -stop_pct)):
             bk = _book(seed * 2_000 + i, cd["close"], "SELL", tick) if with_book else None
             exit_px = bk["fill"] if bk else cd["close"]
             gross = (exit_px / pos["entry"] - 1) * 100
@@ -701,7 +706,9 @@ def _simulate(candles: list[dict], seed: int, with_book: bool, period: int = 60,
                            "exit_why": ("3연속 하락" if exit_mode == "candle"
                                         else ("+%s%% 익절(수수료 후)" % take_pct
                                               if (cd["close"] / pos["entry"] - 1) * 100 - FEE_PCT >= take_pct
-                                              else "-%s%% 손절(주가)" % stop_pct)),
+                                              # a LEVEL, not a landing price: the first tick
+                                              # below it is what you actually get
+                                              else "-%s%% 손절선" % stop_pct)),
                            "sell_close": cd["close"],
                            "sell_closes": closes[-4:], "exit": exit_px, "sell_book": bk,
                            "sell_timeline": (None if light else

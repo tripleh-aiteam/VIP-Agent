@@ -551,6 +551,14 @@ export default function StrategyLab() {
                     <div className="text-[11.5px] tabular-nums">
                       <b className="text-[var(--text-primary)]">{t("매도 근거", "why it sold")}: </b>
                       <span style={{ color: BLUE }}>{tr.exit_why || "-"}</span>
+                      {/* a stop is a LEVEL, and the level is usually not a tradable price.
+                          Without saying so, "-1% 손절" landing on -1.24% reads as a bug. */}
+                      {(tr.exit_why || "").includes("손절") && detail.b != null && (
+                        <span className="text-[10.5px] text-[var(--text-muted)] ml-1">
+                          {t(`— −${detail.b}%는 기준선입니다. 그 아래 첫 호가에서 팔리므로 실제 손실은 ${tr.gross_pct}%가 됩니다 (호가 한 칸이 이 가격대에서 약 ${(100 / (tr.entry / 500)).toFixed(2)}%)`,
+                             `— −${detail.b}% is the trigger LEVEL. You sell at the first tick below it, so the realised loss is ${tr.gross_pct}% (one tick is about ${(100 / (tr.entry / 500)).toFixed(2)}% at this price)`)}
+                        </span>
+                      )}
                       <span className="ml-1">
                         {(tr.sell_ev?.seq ?? []).map((x) => `₩${x.toLocaleString()}`).join(" → ")}
                       </span>

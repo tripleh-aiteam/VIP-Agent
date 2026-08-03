@@ -75,9 +75,22 @@ def run_variant(closes: list[float], tick: int, v: dict, seed: int,
                 hit = dn == v["a"]
                 why = f"{v['a']}연속 하락"
             else:
+                # Measure the stop on what a SALE WOULD ACTUALLY FETCH, not on the close.
+                # A sell takes the bid, which is the close or one tick under it, so testing
+                # the close let the position fall a further tick before the order went in —
+                # a "-1% stop" then realised -1.485% (boss 2026-08-03). Testing the
+                # conservative bid (close - one tick) fires as soon as the money is really
+                # down 1%. The take side stays on the close: the take is only reached by
+                # rising, and the bid cannot be better than the close.
+                #
+                # What CANNOT be removed is tick granularity. At ₩202,000 a tick is ₩500 =
+                # 0.25%, so a 1% stop has four ticks of room and ₩199,980 is not a price
+                # that exists. The realised loss is therefore the first tick BELOW the
+                # level, never the level itself.
                 ch = (c / pos["entry"] - 1) * 100
-                hit = ch >= v["a"] or ch <= -v["b"]
-                why = (f"+{v['a']}% 익절" if ch >= v["a"] else f"-{v['b']}% 손절") if hit else ""
+                ch_bid = ((c - tick) / pos["entry"] - 1) * 100
+                hit = ch >= v["a"] or ch_bid <= -v["b"]
+                why = (f"+{v['a']}% 익절" if ch >= v["a"] else f"-{v['b']}% 손절선") if hit else ""
             if hit:
                 bk = _book(seed * 2_000 + i, c, "SELL", tick)
                 gross = (bk["fill"] / pos["entry"] - 1) * 100
