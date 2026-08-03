@@ -9,6 +9,7 @@
  * Nothing is stored: the market is deterministic, so the whole weekend is recomputed from
  * the session start on every load. A restart or a redeploy cannot lose a single trade.
  */
+import React from "react";
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "@/components/api";
@@ -140,6 +141,33 @@ export default function StrategyLab() {
   const [detail, setDetail] = useState<Detail | null>(null);
   const [detailBusy, setDetailBusy] = useState(false);
   const [pick, setPick] = useState<number | null>(null);   // which trade the chart is on
+  // 🕰️ Data File — the minute-by-minute record the rules trade on top of. Same tape, same
+  // seconds; this is what a trade is reconciled against (boss 2026-08-03).
+  type DfRow = { hhmm: string; open: number; close: number; diff: number | null; dir: number };
+  type Df = { ok: boolean; code: string; name: string; rows: DfRow[]; total_minutes: number };
+  type DfMin = { ok: boolean; hhmm: string; open: number; close: number; deal_count: number;
+                 seconds: { t: string; deals: { px: number; qty: number }[] }[]; traded: number[] };
+  const [df, setDf] = useState<Df | null>(null);
+  const [dfMins, setDfMins] = useState<5 | 10 | 15>(10);
+  const [dfFrom, setDfFrom] = useState("");
+  const [dfTo, setDfTo] = useState("");
+  const [dfOpen, setDfOpen] = useState<string | null>(null);      // which minute is expanded
+  const [dfMin, setDfMin] = useState<DfMin | null>(null);
+  const [dfCode, setDfCode] = useState("");
+  const loadDf = useCallback((c: string, mins: number, f = "", tt = "") => {
+    setDfOpen(null); setDfMin(null);
+    api<Df>(`/paper-desk/proof/lab/datafile?seed=7&start=${startRef.current}`
+      + `&code=${encodeURIComponent(c)}&mins=${f || tt ? 0 : mins}`
+      + `&frm=${encodeURIComponent(f)}&to=${encodeURIComponent(tt)}`)
+      .then((r) => setDf(r?.ok ? r : null)).catch(() => setDf(null));
+  }, []);
+  const openMinute = (c: string, hhmm: string) => {
+    if (dfOpen === hhmm) { setDfOpen(null); setDfMin(null); return; }
+    setDfOpen(hhmm); setDfMin(null);
+    api<DfMin>(`/paper-desk/proof/lab/datafile?seed=7&start=${startRef.current}`
+      + `&code=${encodeURIComponent(c)}&hhmm=${encodeURIComponent(hhmm)}`)
+      .then((r) => setDfMin(r?.ok ? r : null)).catch(() => setDfMin(null));
+  };
   // one place that loads a rule's drill-down, so "open the rule" and "jump to a trade"
   // cannot drift apart. `around` re-centres the chart on that trade.
   const openRule = useCallback((id: string, around = -1) => {
@@ -149,10 +177,15 @@ export default function StrategyLab() {
     // so an unencoded id reaches the server as "3u 0.3" and matches nothing
     api<Detail>(`/paper-desk/proof/lab/trades?variant=${encodeURIComponent(id)}&seed=7`
       + `&start=${startRef.current}&tick=${tick}&bars=1500&around=${around}`)
-      .then((d) => setDetail(d?.ok ? d : null))
+      .then((d) => {
+        setDetail(d?.ok ? d : null);
+        const c = d?.chart?.code;
+        if (c) { setDfCode(c); loadDf(c, dfMins, dfFrom, dfTo); }
+      })
       .catch(() => setDetail(null))
       .finally(() => setDetailBusy(false));
-  }, [tick]);
+    /* eslint-disable-next-line react-hooks/exhaustive-deps */
+  }, [tick, dfMins, dfFrom, dfTo, loadDf]);
   const [grid, setGrid] = useState(false);         // one-page grid of every variant's trades
   // the session is persisted, so a reload or a redeploy resumes the SAME weekend run —
   // the mistake that lost a morning on the proof page
@@ -540,6 +573,126 @@ export default function StrategyLab() {
                   </div>
                 );
               })()}
+
+
+              {/* (5) 🕰️ Data File — the minute record every rule reads. A trade is
+                     reconciled against it: click the minute a fill happened in and the
+                     price has to be there (boss 2026-08-03). */}
+              {detail && (
+                <div className="border-t" style={{ borderColor: "var(--border-default)" }}>
+                  <div className="px-4 py-2 flex items-center gap-2 flex-wrap" style={{ background: "var(--bg-elevated)" }}>
+                    <b className="text-[12.5px]" style={{ color: GOLD }}>🕰️ {t("데이터 파일", "Data File")}</b>
+                    {detail.chart && lab && lab.stocks.map((st) => (
+                      <button key={st.code} onClick={() => { setDfCode(st.code); loadDf(st.code, dfMins, dfFrom, dfTo); }}
+                        className="text-[10.5px] font-bold px-2 py-0.5 rounded-md border"
+                        style={(dfCode || detail.chart?.code) === st.code
+                          ? { background: GOLD, color: "#fff", borderColor: GOLD }
+                          : { borderColor: "var(--border-default)", color: "var(--text-secondary)" }}>
+                        {st.name}
+                      </button>
+                    ))}
+                    {([5, 10, 15] as const).map((m) => (
+                      <button key={m} onClick={() => { setDfMins(m); setDfFrom(""); setDfTo(""); loadDf(dfCode || detail.chart?.code || "", m); }}
+                        className="text-[10.5px] font-bold px-2 py-0.5 rounded-md border"
+                        style={dfMins === m && !dfFrom && !dfTo
+                          ? { background: "#455a64", color: "#fff", borderColor: "#455a64" }
+                          : { borderColor: "var(--border-default)", color: "var(--text-secondary)" }}>
+                        {t(`최근 ${m}분`, `last ${m} min`)}
+                      </button>
+                    ))}
+                    <span className="text-[10px] text-[var(--text-muted)] ml-1">{t("구간", "range")}:</span>
+                    <input value={dfFrom} onChange={(e) => setDfFrom(e.target.value)} placeholder="--:--"
+                      className="w-[62px] text-[10.5px] px-1 py-0.5 rounded border bg-transparent"
+                      style={{ borderColor: "var(--border-default)" }} />
+                    <span className="text-[10px] text-[var(--text-muted)]">→</span>
+                    <input value={dfTo} onChange={(e) => setDfTo(e.target.value)} placeholder="--:--"
+                      className="w-[62px] text-[10.5px] px-1 py-0.5 rounded border bg-transparent"
+                      style={{ borderColor: "var(--border-default)" }} />
+                    <button onClick={() => loadDf(dfCode || detail.chart?.code || "", dfMins, dfFrom, dfTo)}
+                      className="text-[10.5px] font-bold px-2 py-0.5 rounded-md text-white" style={{ background: "#455a64" }}>
+                      {t("적용", "apply")}
+                    </button>
+                    <span className="text-[10px] text-[var(--text-muted)] ml-auto">
+                      {t("한 줄을 누르면 그 분의 체결이 초 단위로 열립니다", "click a row → that minute's executions open, second by second")}
+                    </span>
+                  </div>
+                  {df && (
+                    <div className="overflow-y-auto" style={{ maxHeight: 340 }}>
+                      <table className="w-full text-[11.5px] tabular-nums">
+                        <thead><tr className="text-[10px] text-[var(--text-muted)] sticky top-0" style={{ background: "var(--bg-elevated)" }}>
+                          <th className="text-left px-3 py-1">{t("분", "minute")}</th>
+                          <th className="text-right px-2">{t("시가", "open")}</th>
+                          <th className="text-right px-2">{t("종가", "close")}</th>
+                          <th className="text-right px-2">{t("차이", "difference")}</th>
+                          <th className="text-center px-3">{t("판정", "verdict")}</th>
+                        </tr></thead>
+                        <tbody>
+                          {df.rows.map((r) => {
+                            const col = r.dir > 0 ? RED : r.dir < 0 ? BLUE : "var(--text-muted)";
+                            const on = dfOpen === r.hhmm;
+                            return (
+                              <React.Fragment key={r.hhmm}>
+                                <tr onClick={() => openMinute(df.code, r.hhmm)}
+                                  className="border-t border-[var(--border-default)]/30 cursor-pointer hover:bg-[var(--bg-elevated)]"
+                                  style={{ background: on ? "rgba(230,81,0,0.08)" : "transparent" }}>
+                                  <td className="px-3 py-[2px] font-bold text-[var(--text-primary)]">{on ? "▾ " : "▸ "}{r.hhmm}</td>
+                                  <td className="text-right px-2">₩{r.open.toLocaleString()}</td>
+                                  <td className="text-right px-2 font-extrabold" style={{ color: col }}>₩{r.close.toLocaleString()}</td>
+                                  <td className="text-right px-2 font-bold" style={{ color: col }}>
+                                    {r.diff == null ? "-" : r.diff === 0 ? "0" : `${r.diff > 0 ? "+" : "−"}₩${Math.abs(r.diff).toLocaleString()}`}
+                                  </td>
+                                  <td className="text-center px-3 font-bold" style={{ color: col }}>
+                                    {r.diff == null ? "-" : r.dir > 0 ? t("🔴▲ 상승", "🔴▲ rise") : r.dir < 0 ? t("🔵▼ 하락", "🔵▼ fall") : t("⚪ 보합", "⚪ flat")}
+                                  </td>
+                                </tr>
+                                {on && (
+                                  <tr>
+                                    <td colSpan={5} className="px-5 py-2" style={{ background: "rgba(128,128,128,0.05)" }}>
+                                      {dfMin ? (
+                                        <>
+                                          <div className="text-[10px] font-bold text-[var(--text-muted)] mb-1">
+                                            🎬 {t(`${dfMin.hhmm} 의 체결 전부 — ${dfMin.deal_count}건 · 한 초에 여러 건이 찍힙니다`,
+                                                   `every execution in ${dfMin.hhmm} — ${dfMin.deal_count} of them · several print within one second`)}
+                                          </div>
+                                          <div className="rounded-lg border overflow-y-auto text-[11px] tabular-nums"
+                                            style={{ maxHeight: 190, borderColor: "var(--border-default)" }}>
+                                            {dfMin.seconds.map((sec, j) => (
+                                              <div key={j} className="flex items-start gap-2 px-2 py-[1px] border-b border-[var(--border-default)]/20">
+                                                <span className="text-[var(--text-muted)] w-[62px] shrink-0">{sec.t}</span>
+                                                <span className="flex flex-wrap gap-x-3">
+                                                  {sec.deals.map((dl, q) => (
+                                                    <span key={q}>₩{dl.px.toLocaleString()}
+                                                      <span className="text-[9px] text-[var(--text-muted)]"> {dl.qty.toLocaleString()}{t("주", "")}</span>
+                                                    </span>
+                                                  ))}
+                                                </span>
+                                              </div>
+                                            ))}
+                                          </div>
+                                          <div className="text-[10px] text-[var(--text-muted)] mt-1">
+                                            {t(`이 분에 실제로 체결된 가격: ${dfMin.traded.map((x) => "₩" + x.toLocaleString()).join(", ")} · 종가 ₩${dfMin.close.toLocaleString()} (이 분의 마지막 체결)`,
+                                               `prices that actually traded this minute: ${dfMin.traded.map((x) => "₩" + x.toLocaleString()).join(", ")} · close ₩${dfMin.close.toLocaleString()} (the last execution of the minute)`)}
+                                          </div>
+                                        </>
+                                      ) : (
+                                        <span className="text-[11px] text-[var(--text-muted)]">{t("불러오는 중…", "loading…")}</span>
+                                      )}
+                                    </td>
+                                  </tr>
+                                )}
+                              </React.Fragment>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                  <div className="px-4 py-1.5 text-[10px] text-[var(--text-muted)] border-t" style={{ borderColor: "var(--border-default)" }}>
+                    {t("시가 = 앞 분의 종가입니다 (봉이 이어지므로). 차이 = 종가 − 앞 분 종가 — 규칙이 세는 숫자가 이것입니다. 체결가는 종가와 같거나 한 호가 차이입니다: 살 때는 매도호가를, 팔 때는 매수호가를 잡기 때문입니다.",
+                       "open = the PREVIOUS minute's close (bars are continuous). difference = close − previous close, which is the number the rule counts. A fill is that price or one tick away: buying takes the ask, selling takes the bid.")}
+                  </div>
+                </div>
+              )}
 
             </div>
           )}

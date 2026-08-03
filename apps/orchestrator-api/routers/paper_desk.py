@@ -679,6 +679,17 @@ def proof_lab_trades(variant: str = Query(...), seed: int = Query(7), start: int
                           bars=bars, limit=limit, around=around)
 
 
+@router.get("/proof/lab/datafile")
+def proof_lab_datafile(seed: int = Query(7), start: int = Query(0), code: str = Query(""),
+                       mins: int = Query(10), frm: str = Query(""), to: str = Query(""),
+                       hhmm: str = Query("")):
+    """🕰️ Data File for the Strategy Lab — the minute-by-minute record the rules trade on.
+    hhmm=10:32 opens that minute and returns EVERY deal in it, grouped by second, so a
+    fill can be reconciled against the tape it came from (boss 2026-08-03)."""
+    from services.proof_lab import data_file
+    return data_file(seed=seed, start=start, code=code, mins=mins, frm=frm, to=to, hhmm=hhmm)
+
+
 @router.get("/proof/lab/gate")
 def proof_lab_gate(seed: int = Query(7), start: int = Query(0), tick: int = Query(5)):
     """The consistency gate: proves the lab is reading the same market the charts draw —

@@ -15,8 +15,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from services.proof_sim import (FEE_PCT, _book, _candles_from_ticks, _execs, _seconds,
-                                _SHOWN, _SYMBOLS, _tick)
+from services.proof_sim import (FEE_PCT, _book, _candles_from, _candles_from_ticks,
+                                _execs, _seconds, _SHOWN, _SYMBOLS, _tick, _sec_hl)
 
 # The rules under test. entry = consecutive rising candles. exit is either a count of
 # consecutive falling candles, or a take-profit with a stop — both net of the fee, which
@@ -204,6 +204,75 @@ def consistency_gate(seed: int = 7, start: int = 0, tick: int = 5) -> dict[str, 
 
 
 _cmp_cache: dict[tuple, tuple[int, dict]] = {}
+
+
+def data_file(seed: int = 7, start: int = 0, code: str = "", mins: int = 10,
+              frm: str = "", to: str = "", hhmm: str = "") -> dict:
+    """🕰️ The Data File for one stock: the minute-by-minute record the rules trade on top of.
+
+    Same tape, same seconds, same everything the 5틱 bars are aggregated from — that is the
+    whole point. The boss reconciles a trade against this: a fill at 10:32 has to be
+    findable in 10:32 (2026-08-03).
+
+    hhmm="10:32" drills into that minute and returns EVERY DEAL in it, grouped by second —
+    not one price per second. That distinction decides whether the reconciliation works at
+    all: a 5틱 bar closes on a DEAL, and a second holds several. Measured over 600 bars,
+    the bar's close appears in a one-price-per-second view only 97% of the time but in the
+    full deal list 100% of the time. The missing 3% are not errors — they are intra-second
+    deals that a per-second summary throws away."""
+    k = next((i for i, (c, _n, _b) in enumerate(_SYMBOLS)
+              if c == code and c in _SHOWN), None)
+    if k is None:
+        k = next(i for i, (c, _n, _b) in enumerate(_SYMBOLS) if c in _SHOWN)
+    c_code, name, base = _SYMBOLS[k]
+    sseed = seed + k * 101
+    t = _tick(base) or 1
+    d0, secs = _seconds(sseed, base, start, span=0)
+    hl = _sec_hl(sseed, secs, t)
+    mrows = _candles_from(d0, secs, 60, hl)
+
+    if hhmm:
+        cd = next((c for c in mrows if c["hhmm"][:5] == hhmm[:5]), None)
+        if cd is None:
+            return {"ok": False, "error": f"minute {hhmm} not in this session"}
+        # every deal of the minute, in order, grouped by the second it printed in
+        lo, hi = cd["off0"], cd["off0"] + cd["n"]
+        deals = [e for e in _execs(d0, secs, sseed, t) if lo <= e["off"] < hi]
+        by_sec: list[dict] = []
+        for e in deals:
+            if not by_sec or by_sec[-1]["t"] != e["t"]:
+                by_sec.append({"t": e["t"], "deals": []})
+            by_sec[-1]["deals"].append({"px": e["px"], "qty": e["qty"]})
+        return {"ok": True, "code": c_code, "name": name, "hhmm": cd["hhmm"],
+                "open": cd["open"], "close": cd["close"], "high": cd["high"],
+                "low": cd["low"], "tick": t,
+                "seconds": by_sec, "deal_count": len(deals),
+                # every distinct price that actually traded in this minute — what a fill
+                # is checked against
+                "traded": sorted({e["px"] for e in deals})}
+
+    # The minute list. `open` is the PREVIOUS minute's close, not that minute's first deal —
+    # bars are continuous here (boss 2026-07-30), which is what makes "close > open" and
+    # "close > previous close" the same statement at every timeframe. So `difference` is
+    # close-minus-previous-close, which is the number the rule actually counts.
+    rows = []
+    prev = None
+    for cd in mrows:
+        diff = None if prev is None else round(cd["close"] - prev, 4)
+        if diff == 0:
+            diff = 0            # round() yields -0.0, which prints as "−0" and reads as a bug
+        rows.append({"hhmm": cd["hhmm"], "open": cd["open"], "close": cd["close"],
+                     "diff": diff,
+                     "dir": 0 if diff is None or diff == 0 else (1 if diff > 0 else -1)})
+        prev = cd["close"]
+    if frm or to:
+        f2, t2 = (frm or "00:00")[:5], (to or "23:59")[:5]
+        rows = [r for r in rows if f2 <= r["hhmm"][:5] <= t2]
+    elif mins > 0:
+        rows = rows[-mins:]
+    rows.reverse()                                  # newest first, like the Proof Lab's
+    return {"ok": True, "code": c_code, "name": name, "tick": t,
+            "rows": rows, "total_minutes": len(mrows)}
 
 
 def variant_trades(vid: str, seed: int = 7, start: int = 0, tick: int = 5,
