@@ -916,7 +916,11 @@ export default function StrategyLab() {
                       {/* What the trade actually GAINED. The P&L beside it is gross - on a
                           +0.3%% target the 0.23%% round trip eats three quarters of it, so
                           the gross figure is not the money (boss 2026-08-04). */}
-                      {money && <th className="text-right px-2">{t("수량", "shares")}</th>}
+                      {/* ALWAYS visible. The share count is not money, it is what was
+                          actually bought - and hiding it behind the money button meant the
+                          boss saw "+1,000 원" on a trade with no idea it was one share
+                          (2026-08-04). */}
+                      <th className="text-right px-2">{t("수량", "shares")}</th>
                       {money && <th className="text-right px-2">{t("수수료 뺀 실수익", "actually gained")}</th>}
                       <th className="text-right px-3">{t("결과", "result")}</th>
                     </tr></thead>
@@ -942,18 +946,18 @@ export default function StrategyLab() {
                             <td className="text-right px-2 font-bold" style={{ color: col }}>
                               {tr.gross_pct > 0 ? "+" : ""}{tr.gross_pct}%
                             </td>
-                            {money && (
-                              <td className="text-right px-2 tabular-nums"
-                                style={{ color: (tr.qty ?? 1) > 1 ? "#1565c0" : "var(--text-muted)" }}>
-                                {(tr.qty ?? 1).toLocaleString()}{t("주", "")}
-                              </td>
-                            )}
+                            <td className="text-right px-2 tabular-nums font-bold"
+                              style={{ color: (tr.qty ?? 1) > 1 ? "#1565c0" : "var(--text-muted)" }}
+                              title={t(`${(tr.qty ?? 1).toLocaleString()}주 x ₩${tr.entry.toLocaleString()} = ₩${((tr.qty ?? 1) * tr.entry).toLocaleString()} 투입`,
+                                       `${(tr.qty ?? 1).toLocaleString()} shares x ₩${tr.entry.toLocaleString()} = ₩${((tr.qty ?? 1) * tr.entry).toLocaleString()} committed`)}>
+                              {(tr.qty ?? 1).toLocaleString()}
+                            </td>
                             {money && (
                               <td className="text-right px-2 font-bold tabular-nums"
                                 style={{ color: tr.net_pct > 0 ? GREEN : tr.net_pct < 0 ? BLUE : "var(--text-muted)" }}
                                 title={t(`1주 기준입니다: 매수가 \u20a9${tr.entry.toLocaleString()} x 수수료 뺀 ${tr.net_pct}%`,
                                          `one share: \u20a9${tr.entry.toLocaleString()} x ${tr.net_pct}% after the round trip`)}>
-                                {won(wonOf(tr.entry, tr.net_pct))}
+                                {won(wonOf(tr.entry, tr.net_pct) * (tr.qty ?? 1))}
                               </td>
                             )}
                             <td className="text-right px-3 font-bold" style={{ color: col }}>

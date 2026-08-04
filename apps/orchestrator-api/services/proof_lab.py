@@ -175,7 +175,15 @@ def run_variant(closes: list[float], tick: int, v: dict, seed: int,
                 else:
                     ml_meta = None
                 bk = book(seed * 1_000 + i, c, "BUY", tick)
-                pos = {"i": i, "entry": bk["fill"], "bk": bk, "close": c,
+                # EVERY rule gets a real position, not just the ML ones. A plain rule has
+                # no model to ask, so it takes the whole cap for its price band — which is
+                # still an explainable number ("the most this band allows"), and it is what
+                # the boss meant by "increase number of stock" (2026-08-04). An ML rule
+                # takes 5-100% of that same cap, so the model can only ever ask for LESS
+                # than the plain rule, never more.
+                from services.proof_ml import cap_for as _cap
+                _q = (ml_meta or {}).get("qty") or _cap(c)
+                pos = {"i": i, "entry": bk["fill"], "bk": bk, "close": c, "qty": _q,
                        "ml": ml_meta,
                        "seq": closes[max(0, i - v["entry"]): i + 1]}
         else:
@@ -209,7 +217,7 @@ def run_variant(closes: list[float], tick: int, v: dict, seed: int,
                 gross = (bk["fill"] / pos["entry"] - 1) * 100
                 tr = {"buy_i": pos["i"], "sell_i": i,
                       # 1 for every plain rule; the model's answer for an ML one
-                      "qty": (pos.get("ml") or {}).get("qty", 1),
+                      "qty": pos.get("qty", 1),
                       "entry": pos["entry"], "exit": bk["fill"],
                       "gross_pct": round(gross, 3),
                       "net_pct": round(gross - FEE_PCT, 3),
