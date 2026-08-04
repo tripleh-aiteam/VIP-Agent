@@ -183,13 +183,15 @@ export default function StrategyLab() {
   type LabTrade = { code: string; name: string; buy_t: string; buy_d?: string; entry: number;
                     sell_t: string; sell_d?: string; exit: number; gross_pct: number; net_pct: number;
                     result: "win" | "loss" | "flat"; bars_held: number; exit_why?: string;
-                    buy_ev?: Ev | null; sell_ev?: Ev | null; ml?: Ml | null };
+                    buy_ev?: Ev | null; sell_ev?: Ev | null; ml?: Ml | null;
+                    qty?: number };   // shares the model asked for; 1 for every plain rule
   type Detail = {
     ok: boolean; id: string; ko: string; en: string; clock: string; tick: number;
     entry_n: number; kind: string; a: number; b?: number | null;
     trips: number; wins: number; losses: number; flats: number; win_pct: number; shown: number;
     decided: number; thin: boolean; net_total?: number; gross_total?: number; per_trade?: number;
     net_won_total?: number; per_trade_won?: number;
+    net_won_sized?: number; net_won_balanced?: number; shares_total?: number;
     at?: string; at_found?: boolean;   // a Data File minute the chart was asked to jump to
     ml?: MlHead | null;                // present only on a "+ ML" rule
     trades: LabTrade[];
@@ -773,6 +775,45 @@ export default function StrategyLab() {
                       </div>
                     </div>
                   </div>
+                  {/* HOW MANY SHARES the model wants, and what that costs. The boss asked
+                      twice for an ML-predicted quantity, so here it is with the result it
+                      actually produces - which splits into two opposite answers:
+                        buying MORE when confident triples the stock held, and a rule that
+                        loses on average loses about twice as much holding three times as
+                        much; spreading the SAME money toward the trades the model likes is
+                        the version that helps. Both on screen; neither hidden. */}
+                  {detail.net_won_sized != null && (
+                    <div className="mt-2 rounded-lg border px-2 py-1.5 text-[11px]"
+                      style={{ borderColor: "#1565c0", background: "rgba(21,101,192,0.05)" }}>
+                      <b style={{ color: "#1565c0" }}>
+                        🔢 {t("모델이 정한 수량", "the quantity the model asked for")}
+                      </b>
+                      <span className="ml-2 text-[var(--text-muted)]">
+                        {t(`${detail.trips}번 매매에 주식 ${detail.shares_total}주 (신뢰도가 높을수록 1~5주)`,
+                           `${detail.shares_total} shares over ${detail.trips} trades (1-5, more when the model is surer)`)}
+                      </span>
+                      <div className="mt-1 grid gap-2" style={{ gridTemplateColumns: "1fr 1fr 1fr" }}>
+                        {([
+                          [t("1주씩", "one share each"), detail.net_won_total ?? 0, false],
+                          [t("확신할 때 더 사기", "buy more when sure"), detail.net_won_sized ?? 0, true],
+                          [t("같은 돈, 배분만 바꾸기", "same money, reallocated"), detail.net_won_balanced ?? 0, false],
+                        ] as [string, number, boolean][]).map(([lab, val, warn]) => (
+                          <div key={lab} className="rounded border px-2 py-1"
+                            style={{ borderColor: warn ? GOLD : "var(--border-default)" }}>
+                            <div className="text-[9.5px] text-[var(--text-muted)]">{lab}</div>
+                            <div className="tabular-nums font-bold"
+                              style={{ color: val > 0 ? GREEN : val < 0 ? BLUE : "inherit" }}>
+                              {val < 0 ? "-" : "+"}₩{Math.abs(val).toLocaleString()}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                      <div className="mt-1 text-[10px]" style={{ color: GOLD }}>
+                        {t("수량은 실력을 키우는 게 아니라 있는 실력을 곱합니다 — 지는 규칙을 3배로 사면 손실도 커집니다.",
+                           "quantity multiplies the edge that exists, it does not create one - buying 3x more of a losing rule loses more.")}
+                      </div>
+                    </div>
+                  )}
                   {(detail.ml.auc == null || detail.ml.auc < 0.55) && (
                     <div className="mt-1 text-[10.5px]" style={{ color: GOLD }}>
                       ⚠ {t("AUC 0.5는 동전 던지기입니다. 이 모델은 아직 실력이 증명되지 않았으므로, 위의 승률 차이는 우연일 수 있습니다.",
@@ -867,6 +908,7 @@ export default function StrategyLab() {
                       {/* What the trade actually GAINED. The P&L beside it is gross - on a
                           +0.3%% target the 0.23%% round trip eats three quarters of it, so
                           the gross figure is not the money (boss 2026-08-04). */}
+                      {money && <th className="text-right px-2">{t("수량", "shares")}</th>}
                       {money && <th className="text-right px-2">{t("수수료 뺀 실수익", "actually gained")}</th>}
                       <th className="text-right px-3">{t("결과", "result")}</th>
                     </tr></thead>
@@ -892,6 +934,12 @@ export default function StrategyLab() {
                             <td className="text-right px-2 font-bold" style={{ color: col }}>
                               {tr.gross_pct > 0 ? "+" : ""}{tr.gross_pct}%
                             </td>
+                            {money && (
+                              <td className="text-right px-2 tabular-nums"
+                                style={{ color: (tr.qty ?? 1) > 1 ? "#1565c0" : "var(--text-muted)" }}>
+                                {tr.qty ?? 1}{t("주", "")}
+                              </td>
+                            )}
                             {money && (
                               <td className="text-right px-2 font-bold tabular-nums"
                                 style={{ color: tr.net_pct > 0 ? GREEN : tr.net_pct < 0 ? BLUE : "var(--text-muted)" }}

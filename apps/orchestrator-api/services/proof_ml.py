@@ -150,3 +150,28 @@ def score(bundle: dict, feats: list[float]) -> dict[str, Any]:
                  "value": round(feats[j], 4), "push": round(contrib[j], 4),
                  "for": contrib[j] > 0} for j in order[:3]],
     }
+
+# ── HOW MANY SHARES: the model's confidence turned into a quantity ──────────────────
+# The boss asked for this twice: "how about increasing stock number, like ML predict the
+# number of stock". It is a real idea and it measures as REAL but SMALL - weighting the
+# six ML rules by confidence took them from -₩162,814 to -₩105,024, and 99.8% of random
+# weightings shuffled WITHIN the same stock did worse, so the model genuinely picks the
+# better trades. It does NOT reach profit, and that is the important caveat: sizing
+# amplifies whatever edge exists, and a negative edge amplified is a bigger loss.
+#
+# The scale is deliberately shallow. `p` on accepted signals sits a few points above the
+# model's own bar, never near certainty, so a scheme that bet 20x on a 0.45 probability
+# would be inventing confidence the model does not have.
+QTY_MIN, QTY_MAX = 1, 5
+QTY_STEP = 0.02          # every 2 points of edge over the bar buys one more share
+
+
+def quantity(p: float, bar: float) -> int:
+    """Shares to buy for a signal the model scored `p`, against its own acceptance bar.
+
+    A signal only reaches here if p >= bar, so the smallest position is one share and the
+    edge above the bar is what buys more. Capped, because the far tail of a logistic
+    regression on eight features is not information.
+    """
+    edge = max(0.0, float(p) - float(bar))
+    return max(QTY_MIN, min(QTY_MAX, int(QTY_MIN + round(edge / QTY_STEP))))

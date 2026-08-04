@@ -160,9 +160,15 @@ def run_variant(closes: list[float], tick: int, v: dict, seed: int,
                     # "better than this rule's average signal", not an absolute 0.5
                     if sc["p"] < bundle["base_rate"] + MARGIN:
                         continue                      # the model declined this signal
+                    from services.proof_ml import quantity as _qty
+                    _bar = bundle["base_rate"] + MARGIN
                     ml_meta = {"p": round(sc["p"], 4), "why": sc["why"],
-                               "bar": round(bundle["base_rate"] + MARGIN, 4),
+                               "bar": round(_bar, 4),
                                "base_rate": round(bundle["base_rate"], 4),
+                               # HOW MANY SHARES the model wants on this signal. One share
+                               # is the floor; the edge over its own bar buys more. Sizing
+                               # amplifies whatever edge exists — including a negative one.
+                               "qty": _qty(sc["p"], _bar),
                                "auc": bundle["auc"], "n_train": bundle["n_train"]}
                 else:
                     ml_meta = None
@@ -200,6 +206,8 @@ def run_variant(closes: list[float], tick: int, v: dict, seed: int,
                 bk = book(seed * 2_000 + i, c, "SELL", tick)
                 gross = (bk["fill"] / pos["entry"] - 1) * 100
                 tr = {"buy_i": pos["i"], "sell_i": i,
+                      # 1 for every plain rule; the model's answer for an ML one
+                      "qty": (pos.get("ml") or {}).get("qty", 1),
                       "entry": pos["entry"], "exit": bk["fill"],
                       "gross_pct": round(gross, 3),
                       "net_pct": round(gross - FEE_PCT, 3),
@@ -592,6 +600,8 @@ def variant_trades(vid: str, seed: int = 7, start: int = 0, tick: int = 5,
                 "result": ("win" if g["gross_pct"] > 0 else
                            "loss" if g["gross_pct"] < 0 else "flat"),
                 "bars_held": g["sell_i"] - g["buy_i"],
+                # how many shares the model asked for (1 for every plain rule)
+                "qty": g.get("qty", 1),
                 "buy_ev": g.get("buy_ev"), "sell_ev": g.get("sell_ev"),
                 "ml": g.get("ml"),
             })
@@ -682,6 +692,21 @@ def variant_trades(vid: str, seed: int = 7, start: int = 0, tick: int = 5,
             # rule with more trades than fit. Net is after the round-trip fee.
             # THE MONEY IN WON - see the note in kiwoom_rules. One share per signal.
             "net_won_total": round(sum(r["entry"] * r["net_pct"] / 100 for r in rows)),
+            # the SAME trades with the model's share count. Shown beside the one-share
+            # figure rather than replacing it: sizing multiplies whatever edge is there,
+            # so the two numbers together are the only honest way to see what it did.
+            "net_won_sized": round(sum(r.get("qty", 1) * r["entry"] * r["net_pct"] / 100
+                                       for r in rows)),
+            "shares_total": sum(r.get("qty", 1) for r in rows),
+            # SCALE and ALLOCATION are two different ideas and they give opposite answers.
+            # "buy more when confident" (net_won_sized) buys ~3x more stock, and a rule
+            # that loses on average loses ~2x more when it holds 3x the stock. Spreading
+            # the SAME money toward the trades the model likes is the version that helps:
+            # it is the only one where the model's judgement is being used rather than
+            # simply amplified. Both are reported; neither is hidden (boss 2026-08-04).
+            "net_won_balanced": (round(sum(r.get("qty", 1) * (len(rows) / max(1, sum(
+                x.get("qty", 1) for x in rows))) * r["entry"] * r["net_pct"] / 100
+                for r in rows)) if rows else 0),
             "per_trade_won": (round(sum(r["entry"] * r["net_pct"] / 100 for r in rows) / len(rows))
                               if rows else 0),
             "net_total": round(sum(r["net_pct"] for r in rows), 2),
