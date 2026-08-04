@@ -121,6 +121,12 @@ def trades(vid: str, tick: int = 5, period: int = 0, code: str = "",
     # needs to look up `around` in the SAME order the table displays, and that order is
     # not known until every stock has been walked.
     rows, holding, chart = [], [], None
+    # WHICH STOCK THE CHART DRAWS. `code` is the button the boss pressed above the chart,
+    # but a clicked TRADE wins over it: the trade table lists every company together, and
+    # clicking an SK하이닉스 row while the chart was pinned to 삼성전자 left the chart
+    # exactly where it was — so clicking almost any row appeared to do nothing at all
+    # (boss 2026-08-04: "if click any completed trade it is not showing chart"). Resolved
+    # after the rows are sorted, because `around` indexes the displayed order.
     for c_code, name in WATCH:
         cs = _bars_for(c_code, tick, period)
         if len(cs) < 10:
@@ -149,6 +155,11 @@ def trades(vid: str, tick: int = 5, period: int = 0, code: str = "",
                             "unreal_pct": op["unreal_pct"]})
     rows.sort(key=lambda r: r["sell_t"], reverse=True)
 
+    # a clicked trade decides the company; only when nothing is clicked does the stock
+    # button decide it
+    focus = rows[around] if 0 <= around < len(rows) else None
+    want_code = focus["code"] if focus else code
+
     # ---- second pass: the chart, now that `rows` is in the order the table shows ----
     for c_code, name in WATCH:
         cs = _bars_for(c_code, tick, period)
@@ -157,7 +168,7 @@ def trades(vid: str, tick: int = 5, period: int = 0, code: str = "",
         got = [{"buy_i": r["buy_i"], "sell_i": r["sell_i"], "gross_pct": r["gross_pct"],
                 "net_pct": r["net_pct"]} for r in rows if r["code"] == c_code]
         got.sort(key=lambda g: g["buy_i"])
-        if (code and c_code == code) or (not code and chart is None):
+        if (want_code and c_code == want_code) or (not want_code and chart is None):
             # The window follows the TRADES, not the clock. At 5틱 on a liquid name a bar
             # is a fraction of a second, so "the last 600 bars" is about two minutes —
             # and every trade older than that falls off the left edge, which is how this
@@ -166,16 +177,17 @@ def trades(vid: str, tick: int = 5, period: int = 0, code: str = "",
             # he asked for that trade. Otherwise anchor on the most recent one.
             # The window is wide (2,500 bars) because a real 5틱 bar on 삼성전자 lasts a
             # fraction of a second — 600 bars was two minutes and showed no arrows at all.
-            anchor = None
-            if 0 <= around < len(rows):
-                r_ = rows[around]
-                if r_["code"] == c_code:
-                    anchor = r_["sell_i"]
+            anchor = focus["sell_i"] if (focus and focus["code"] == c_code) else None
             if anchor is None:
                 anchor = got[-1]["sell_i"] if got else len(cs) - 1
             hi = min(len(cs), anchor + max(20, bars // 8))
             off = max(0, hi - bars)
             chart = {"code": c_code, "name": name, "off": off,
+                     # where the clicked trade sits in THIS window, so the page can put it
+                     # on screen instead of trusting the chart's own remembered view
+                     "focus": ({"b": focus["buy_i"] - off, "s": focus["sell_i"] - off}
+                               if focus and focus["code"] == c_code
+                               and off <= focus["buy_i"] < hi else None),
                      "candles": cs[off:hi],
                      "marks": [{"b": g["buy_i"] - off, "s": g["sell_i"] - off,
                                 "g": g["gross_pct"], "net": g["net_pct"]}
@@ -193,5 +205,11 @@ def trades(vid: str, tick: int = 5, period: int = 0, code: str = "",
             # loss and is NOT in the percentage, so the denominator has to be on screen or
             # "2 trips ... 100%" reads as two wins (boss 2026-08-04)
             "decided": w + l, "thin": (w + l) < 10,
+            # THE MONEY. Summed over EVERY trade, not the page's slice - `trades` is
+            # cut to `limit`, so a total added up on screen would quietly under-report a
+            # rule with more trades than fit. Net is after the round-trip fee.
+            "net_total": round(sum(r["net_pct"] for r in rows), 2),
+            "gross_total": round(sum(r["gross_pct"] for r in rows), 2),
+            "per_trade": round(sum(r["net_pct"] for r in rows) / len(rows), 3) if rows else 0.0,
             "trades": rows[:limit], "shown": min(len(rows), limit),
             "holding": holding, "chart": chart, "fee_pct": FEE_PCT}

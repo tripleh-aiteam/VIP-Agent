@@ -152,6 +152,7 @@ export default function StrategyLab() {
   const WINNERS6_ML = WINNERS6.map((x) => x + "ML");
   type RuleView = "w6" | "w6ml" | "all6" | "all";
   const [ruleView, setRuleView] = useState<RuleView>("all");
+  const [money, setMoney] = useState(false);      // off until he asks - see the button
   const inView = (id: string) => (
     ruleView === "w6" ? WINNERS6.includes(id)
       : ruleView === "w6ml" ? WINNERS6_ML.includes(id)
@@ -186,7 +187,7 @@ export default function StrategyLab() {
     ok: boolean; id: string; ko: string; en: string; clock: string; tick: number;
     entry_n: number; kind: string; a: number; b?: number | null;
     trips: number; wins: number; losses: number; flats: number; win_pct: number; shown: number;
-    decided: number; thin: boolean;
+    decided: number; thin: boolean; net_total?: number; gross_total?: number; per_trade?: number;
     at?: string; at_found?: boolean;   // a Data File minute the chart was asked to jump to
     ml?: MlHead | null;                // present only on a "+ ML" rule
     trades: LabTrade[];
@@ -198,6 +199,16 @@ export default function StrategyLab() {
              focus: { b: number; s: number } | null } | null;
   };
   const [detail, setDetail] = useState<Detail | null>(null);
+  // The money for the OPEN rule. Prefer the server's figure - it is summed over every
+  // trade, while the list on screen is cut to `limit`. Fall back to adding up the rows
+  // only when they are all here, and to null (nothing shown) when they are not.
+  const moneyRows = detail?.trades ?? [];
+  const moneyAll = !!detail && detail.shown === detail.trips;
+  const moneyNet = detail?.net_total ?? (moneyAll
+    ? Math.round(moneyRows.reduce((x, r) => x + r.net_pct, 0) * 100) / 100 : null);
+  const moneyPer = detail?.per_trade ?? (moneyAll && moneyRows.length
+    ? Math.round((moneyRows.reduce((x, r) => x + r.net_pct, 0) / moneyRows.length) * 1000) / 1000
+    : null);
   const [detailBusy, setDetailBusy] = useState(false);
   const [pick, setPick] = useState<number | null>(null);   // which trade the chart is on
   // 🕰️ Data File — the minute-by-minute record the rules trade on top of. Same tape, same
@@ -478,7 +489,31 @@ export default function StrategyLab() {
               {t(" 승률 높은 순입니다.", " highest win rate first.")}
             </div>
           )}
-          <div className="mt-3 rounded-xl border overflow-x-auto" style={{ borderColor: "var(--border-default)" }}>
+          <div className="mt-2 flex items-center gap-2 flex-wrap">
+            {/* THE MONEY, off by default (boss 2026-08-04). A win rate and a P&L answer
+                different questions and mixing them by default is how "60%" came to look
+                like a good rule while it lost money on every trade. One button, and both
+                the per-trade figure and the running total appear together - a total with
+                no per-trade hides how it was earned, and a per-trade with no total hides
+                how much it came to. */}
+            <button onClick={() => setMoney((v) => !v)}
+              className="text-[10.5px] font-bold px-2 py-1 rounded-md border"
+              style={{ borderColor: money ? "#e65100" : "var(--border-default)",
+                       background: money ? "rgba(230,81,0,0.10)" : "transparent",
+                       color: money ? "#e65100" : "var(--text-secondary)" }}
+              title={t("승률만으로는 돈을 벌었는지 알 수 없습니다 - 건당 손익과 합계를 함께 봅니다",
+                       "a win rate alone cannot say whether it made money - this shows the per-trade result and the running total together")}>
+              {money ? t("\ud83d\udcb0 \uc190\uc775 \uc228\uae30\uae30", "\ud83d\udcb0 hide the money")
+                     : t("\ud83d\udcb0 \uc2e4\uc81c \uc190\uc775 \ubcf4\uae30", "\ud83d\udcb0 show the money")}
+            </button>
+            {money && (
+              <span className="text-[10.5px]" style={{ color: "var(--text-muted)" }}>
+                {t("수수료 0.23% 뺀 뒤입니다. 합계는 그 규칙이 낸 모든 매매를 더한 값입니다.",
+                   "after the 0.23% round trip. the total is every trade that rule made, added up.")}
+              </span>
+            )}
+          </div>
+          <div className="mt-2 rounded-xl border overflow-x-auto" style={{ borderColor: "var(--border-default)" }}>
             <table className="w-full text-[12px] tabular-nums">
               <thead><tr className="text-[10.5px] text-[var(--text-muted)]" style={{ background: "var(--bg-elevated)" }}>
                 <th className="text-left px-3 py-2">
@@ -497,6 +532,8 @@ export default function StrategyLab() {
                 <th className="text-right px-2">{t("승", "W")}</th>
                 <th className="text-right px-2">{t("패", "L")}</th>
                 <th className="text-right px-3">{t("승률", "win%")}</th>
+                {money && <th className="text-right px-3">{t("건당", "per trade")}</th>}
+                {money && <th className="text-right px-3">{t("합계", "total")}</th>}
                 <th className="text-right px-3 text-[10px]">{t("자세히", "detail")}</th>
               </tr></thead>
               <tbody>
@@ -593,6 +630,18 @@ export default function StrategyLab() {
                         </>
                       );
                     })()}
+                    {money && (
+                      <td className="text-right px-3 tabular-nums"
+                        style={{ color: v.per_trade > 0 ? GREEN : v.per_trade < 0 ? BLUE : "inherit" }}>
+                        {v.per_trade > 0 ? "+" : ""}{v.per_trade}%
+                      </td>
+                    )}
+                    {money && (
+                      <td className="text-right px-3 tabular-nums font-bold"
+                        style={{ color: v.net > 0 ? GREEN : v.net < 0 ? BLUE : "inherit" }}>
+                        {v.net > 0 ? "+" : ""}{v.net}%
+                      </td>
+                    )}
                     <td className="text-right px-3 text-[10.5px]" style={{ color: "#6a1b9a" }}>
                       {sel === v.id ? t("닫기 ▲", "close ▲") : t("보기 ▼", "open ▼")}
                     </td>
@@ -630,6 +679,23 @@ export default function StrategyLab() {
                         style={{ background: "rgba(230,81,0,0.14)", color: GOLD }}>
                         {t(`⚠ 승+패 ${detail.decided}건뿐입니다 — ${detail.wins}승 ÷ ${detail.decided}건 = ${detail.win_pct}%. 이 숫자는 아직 실력이 아니라 우연입니다`,
                            `⚠ only ${detail.decided} decided - ${detail.wins} win ÷ ${detail.decided} = ${detail.win_pct}%. that is luck, not a measurement`)}
+                      </span>
+                    )}
+                                  {/* Added up from the rows on screen when the server does not send a total.
+                  The backend runs with NO --reload, so until it restarts `net_total` is
+                  absent and this header would read "total 0%%" - a confidently wrong
+                  number, which is the one thing this panel must never print. Exact
+                  whenever the list is complete, and hidden entirely when it is not. */}
+{money && moneyNet !== null && (
+                      <span className="text-[12px] tabular-nums font-extrabold px-2 py-0.5 rounded"
+                        style={{ background: moneyNet >= 0 ? "rgba(46,125,50,0.12)" : "rgba(21,101,192,0.12)",
+                                 color: moneyNet >= 0 ? GREEN : BLUE }}
+                        title={t("이 규칙이 낸 모든 매매의 합계 (수수료 뺀 뒤)",
+                                 "every trade this rule made, added up, after fees")}>
+                        {t("합계", "total")} {moneyNet > 0 ? "+" : ""}{moneyNet}%
+                        <span className="font-normal ml-1 text-[10.5px]">
+                          ({t("건당", "per trade")} {(moneyPer ?? 0) > 0 ? "+" : ""}{moneyPer ?? 0}%)
+                        </span>
                       </span>
                     )}
                     <span className="text-[10.5px] text-[var(--text-muted)]">

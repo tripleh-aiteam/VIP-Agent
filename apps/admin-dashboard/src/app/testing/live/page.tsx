@@ -32,7 +32,7 @@ type Book = { ok: boolean; code: string; name?: string; asks: [number, number][]
 type Execs = { ok: boolean; prev_close?: number; total: number;
                rows: { t: string; px: number; qty: number }[] };
 type RuleRow = { id: string; ko: string; en: string; dir: number; trips: number; wins: number;
-                 losses: number; flats: number; win_pct: number; per_trade: number;
+                 losses: number; flats: number; win_pct: number; per_trade: number; net: number;
                  decided: number; thin: boolean };
 type Rank = { ok: boolean; clock: string; fee_pct: number; original_12?: string[];
               stocks: { code: string; name: string; bars: number; from: string; to: string;
@@ -48,10 +48,12 @@ type RDetail = { ok: boolean; id: string; ko: string; en: string; clock: string;
                  entry_n: number; kind: string; a: number; b?: number | null; dir: number;
                  trips: number; wins: number; losses: number; flats: number; win_pct: number;
                  decided: number; thin: boolean; shown: number;
+                 net_total?: number; gross_total?: number; per_trade?: number;
                  trades: RTrade[];
                  holding: { code: string; name: string; buy_t: string; entry: number;
                             last: number; unreal_pct: number }[];
                  chart: { code: string; name: string; off: number; candles: Bar[];
+                          focus: { b: number; s: number } | null;
                           marks: { b: number; s: number; g: number; net: number }[] } | null };
 type Status = { running: boolean; market_open: boolean; polls: number;
                 errors: Record<string, string>;
@@ -62,11 +64,14 @@ type Status = { running: boolean; market_open: boolean; polls: number;
 
 /** The chart. Same library and the same continuous-bar convention as the labs, so a red
  *  bar means the same thing here as it does there. */
-function LiveChart({ bars, marks }: { bars: Bar[]; marks?: { b: number; s: number; g: number }[] }) {
+function LiveChart({ bars, marks, focus }:
+                   { bars: Bar[]; marks?: { b: number; s: number; g: number }[];
+                     focus?: number | null }) {
   const ref = useRef<HTMLDivElement | null>(null);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const cs = useRef<{ chart: any; series: any } | null>(null);
   const label = useRef<Map<number, string>>(new Map());
+  const applied = useRef<number | null | undefined>(undefined);
   const [ready, setReady] = useState(0);
 
   useEffect(() => {
@@ -111,10 +116,30 @@ function LiveChart({ bars, marks }: { bars: Bar[]; marks?: { b: number; s: numbe
       { time: k.b, position: "belowBar", color: RED, shape: "arrowUp", text: "매수" },
       { time: k.s, position: "aboveBar", color: k.g > 0 ? "#2e7d32" : BLUE,
         shape: "arrowDown", text: `${k.g > 0 ? "+" : ""}${k.g}%` },
-    ]).filter((x) => x.time >= 0 && x.time < bars.length)
-      .sort((a2, b2) => (a2.time as number) - (b2.time as number));
+    ]).filter((x) => x.time >= 0 && x.time < bars.length);
+    // the clicked trade gets its own gold marker, so it is obvious WHICH of the arrows
+    // on screen is the row he clicked
+    if (focus != null && bars[focus]) {
+      m.push({ time: focus, position: "aboveBar", color: GOLD, shape: "arrowDown",
+               text: `\u25c6 ${bars[focus].hhmm.slice(0, 5)}` } as never);
+    }
+    m.sort((a2, b2) => (a2.time as number) - (b2.time as number));
     c.series.setMarkers(m as never);
-  }, [ready, bars, marks]);
+
+    // Sliding the data is NOT enough: the chart keeps its own view, so a 2,500-bar
+    // payload looks unchanged and the trade he clicked sits somewhere off screen. The
+    // same thing was true on the Strategy Lab (2026-08-03: "if I click any time it is
+    // not opening exact time"). Zoom to the trade, once per change of focus.
+    if (applied.current !== focus) {
+      applied.current = focus;
+      if (focus != null && bars[focus]) {
+        c.chart.timeScale().setVisibleLogicalRange({
+          from: Math.max(0, focus - 70), to: Math.min(bars.length - 1, focus + 25) });
+      } else {
+        c.chart.timeScale().fitContent();
+      }
+    }
+  }, [ready, bars, marks, focus]);
 
   return <div ref={ref} style={{ width: "100%", height: 320 }} />;
 }
@@ -145,20 +170,43 @@ export default function LiveDeskPage() {
   const twelve = rank?.original_12?.length ? rank.original_12 : ORIGINAL_12;
   const shownRules = (rank?.variants ?? []).filter((v) => twelve.includes(v.id));
   const [det, setDet] = useState<RDetail | null>(null);
+  // The money for the OPEN rule. Prefer the server's figure - it is summed over every
+  // trade, while the list on screen is cut to `limit`. Fall back to adding up the rows
+  // only when they are all here, and to null (nothing shown) when they are not.
+  const moneyRows = det?.trades ?? [];
+  const moneyAll = !!det && det.shown === det.trips;
+  const moneyNet = det?.net_total ?? (moneyAll
+    ? Math.round(moneyRows.reduce((x, r) => x + r.net_pct, 0) * 100) / 100 : null);
+  const moneyPer = det?.per_trade ?? (moneyAll && moneyRows.length
+    ? Math.round((moneyRows.reduce((x, r) => x + r.net_pct, 0) / moneyRows.length) * 1000) / 1000
+    : null);
   const [pick, setPick] = useState<number | null>(null);
+  const [money, setMoney] = useState(false);      // off until he asks - see the button
+  const chartRef = useRef<HTMLDivElement | null>(null);
+  const detRef = useRef<RDetail | null>(null);
 
   const codeRef = useRef(code); codeRef.current = code;
   const perRef = useRef(period); perRef.current = period;
   const tickRef = useRef(tick); tickRef.current = tick;
 
-  const openRule = useCallback((id: string, tradeIdx: number | null = null) => {
+  const openRule = useCallback((id: string, tradeIdx: number | null = null,
+                                tradeCode?: string) => {
     setPick(tradeIdx);
     const q = perRef.current ? `period=${perRef.current}` : `tick=${tickRef.current}`;
+    // WHICH COMPANY THE CHART DRAWS. Normally the stock button above the chart, but a
+    // clicked TRADE overrides it - the trade table lists all three companies together,
+    // and asking for 삼성전자's chart while he clicked an SK하이닉스 row is why clicking
+    // a completed trade looked like it did nothing (boss 2026-08-04).
+    //
+    // Sent from here as well as being fixed on the server, because the backend runs with
+    // NO --reload and a restart during market hours costs ~72s of real tape that cannot
+    // be recovered. This makes the fix work against the server that is running right now.
+    const want = tradeCode || codeRef.current;
     api<RDetail>(`/paper-desk/live/rules/trades?variant=${encodeURIComponent(id)}&${q}`
-      + `&code=${encodeURIComponent(codeRef.current)}&bars=2500`
-      // clicking a trade row moves the chart to it, the same as the Strategy Lab
+      + `&code=${encodeURIComponent(want)}&bars=2500`
       + `&around=${tradeIdx ?? -1}`)
-      .then((d) => setDet(d?.ok ? d : null)).catch(() => setDet(null));
+      .then((d) => { const v = d?.ok ? d : null; detRef.current = v; setDet(v); })
+      .catch(() => { detRef.current = null; setDet(null); });
   }, []);
 
   const pull = useCallback(() => {
@@ -173,7 +221,12 @@ export default function LiveDeskPage() {
   useEffect(() => {
     pull();
     api<Status>("/paper-desk/live/status").then(setSt).catch(() => {});
-    const a = setInterval(() => { pull(); if (sel) openRule(sel, pick); }, 3000);
+    // keep the clicked trade's company across the 3s refresh, or the chart snaps back to
+    // the stock button a moment after he clicks
+    const a = setInterval(() => {
+      pull();
+      if (sel) openRule(sel, pick, pick !== null ? detRef.current?.trades[pick]?.code : undefined);
+    }, 3000);
     const b = setInterval(() => api<Status>("/paper-desk/live/status").then(setSt).catch(() => {}), 15000);
     return () => { clearInterval(a); clearInterval(b); };
   }, [pull, sel, pick, openRule]);
@@ -264,6 +317,30 @@ export default function LiveDeskPage() {
             ⚠ {t(`체결가 가정: 살 때 종가+1호가(매도호가를 침), 팔 때 종가(매수호가). 왕복 수수료 ${rank.fee_pct}% 별도. 과거의 실제 호가차는 아무도 기록하지 않으므로 되살릴 수 없어, 가장 좁은 1호가로 가정했습니다 — 호가가 넓은 종목에서는 결과가 실제보다 좋게 나옵니다.`,
                   `fill assumption: a BUY pays close + one tick (it lifts the ask), a SELL receives close (it hits the bid), plus ${rank.fee_pct}% round trip. The real historical spread was never recorded and cannot be recovered, so the tightest possible one tick is assumed - on a wide-spread stock that FLATTERS the result.`)}
           </div>
+          <div className="px-4 py-2 flex items-center gap-2 flex-wrap">
+            {/* THE MONEY, off by default (boss 2026-08-04). A win rate and a P&L answer
+                different questions, and mixing them by default is how a rule winning 56%
+                of its trades read as a good one while losing on every single trade. One
+                button shows the per-trade figure and the running total together: a total
+                without a per-trade hides how it was earned, and a per-trade without a
+                total hides how much it came to. */}
+            <button onClick={() => setMoney((v) => !v)}
+              className="text-[10.5px] font-bold px-2 py-1 rounded-md border"
+              style={{ borderColor: money ? "#e65100" : "var(--border-default)",
+                       background: money ? "rgba(230,81,0,0.10)" : "transparent",
+                       color: money ? "#e65100" : "var(--text-secondary)" }}
+              title={t("승률만으로는 돈을 벌었는지 알 수 없습니다 - 건당 손익과 합계를 함께 봅니다",
+                       "a win rate alone cannot say whether it made money - this shows the per-trade result and the running total together")}>
+              {money ? t("\ud83d\udcb0 \uc190\uc775 \uc228\uae30\uae30", "\ud83d\udcb0 hide the money")
+                     : t("\ud83d\udcb0 \uc2e4\uc81c \uc190\uc775 \ubcf4\uae30", "\ud83d\udcb0 show the money")}
+            </button>
+            {money && (
+              <span className="text-[10.5px]" style={{ color: "var(--text-muted)" }}>
+                {t(`수수료 ${rank.fee_pct}% 뺀 뒤입니다. 합계는 그 규칙이 낸 모든 매매를 더한 값입니다.`,
+                   `after the ${rank.fee_pct}% round trip. the total is every trade that rule made, added up.`)}
+              </span>
+            )}
+          </div>
           <div className="overflow-x-auto">
             <table className="w-full text-[12px] tabular-nums">
               <thead><tr className="text-[10.5px] text-[var(--text-muted)]" style={{ background: "var(--bg-elevated)" }}>
@@ -272,7 +349,8 @@ export default function LiveDeskPage() {
                 <th className="text-right px-2">{t("승", "W")}</th>
                 <th className="text-right px-2">{t("패", "L")}</th>
                 <th className="text-right px-3">{t("승률", "win%")}</th>
-                <th className="text-right px-3">{t("건당", "per trade")}</th>
+                {money && <th className="text-right px-3">{t("건당", "per trade")}</th>}
+                {money && <th className="text-right px-3">{t("합계", "total")}</th>}
                 <th className="text-right px-3 text-[10px]">{t("자세히", "detail")}</th>
               </tr></thead>
               <tbody>
@@ -317,9 +395,18 @@ export default function LiveDeskPage() {
                         </span>
                       )}
                     </td>
-                    <td className="text-right px-3" style={{ color: v.per_trade > 0 ? RED : BLUE }}>
-                      {v.per_trade > 0 ? "+" : ""}{v.per_trade}%
-                    </td>
+                    {money && (
+                      <td className="text-right px-3 tabular-nums"
+                        style={{ color: v.per_trade > 0 ? "#2e7d32" : v.per_trade < 0 ? BLUE : "inherit" }}>
+                        {v.per_trade > 0 ? "+" : ""}{v.per_trade}%
+                      </td>
+                    )}
+                    {money && (
+                      <td className="text-right px-3 tabular-nums font-bold"
+                        style={{ color: v.net > 0 ? "#2e7d32" : v.net < 0 ? BLUE : "inherit" }}>
+                        {v.net > 0 ? "+" : ""}{v.net}%
+                      </td>
+                    )}
                     <td className="text-right px-3 text-[10.5px]" style={{ color: "#6a1b9a" }}>
                       {sel === v.id ? t("닫기 ▲", "close ▲") : t("보기 ▼", "open ▼")}
                     </td>
@@ -350,6 +437,23 @@ export default function LiveDeskPage() {
             <span className="text-[12px] tabular-nums font-extrabold" style={{ color: det.win_pct >= 50 ? "#2e7d32" : GOLD }}>
               {det.win_pct}% {t("승률", "win")}
             </span>
+                          {/* Added up from the rows on screen when the server does not send a total.
+                  The backend runs with NO --reload, so until it restarts `net_total` is
+                  absent and this header would read "total 0%%" - a confidently wrong
+                  number, which is the one thing this panel must never print. Exact
+                  whenever the list is complete, and hidden entirely when it is not. */}
+{money && moneyNet !== null && (
+              <span className="text-[12px] tabular-nums font-extrabold px-2 py-0.5 rounded"
+                style={{ background: moneyNet >= 0 ? "rgba(46,125,50,0.12)" : "rgba(21,101,192,0.12)",
+                         color: moneyNet >= 0 ? "#2e7d32" : BLUE }}
+                title={t("이 규칙이 낸 모든 매매의 합계 (수수료 뺀 뒤)",
+                         "every trade this rule made, added up, after fees")}>
+                {t("합계", "total")} {moneyNet > 0 ? "+" : ""}{moneyNet}%
+                <span className="font-normal ml-1 text-[10.5px]">
+                  ({t("건당", "per trade")} {(moneyPer ?? 0) > 0 ? "+" : ""}{moneyPer ?? 0}%)
+                </span>
+              </span>
+            )}
             {det.thin && (
               <span className="text-[10.5px] font-bold px-2 py-0.5 rounded"
                 style={{ background: "rgba(230,81,0,0.14)", color: GOLD }}>
@@ -397,7 +501,11 @@ export default function LiveDeskPage() {
                   const col = tr.result === "win" ? RED : tr.result === "loss" ? BLUE : "var(--text-muted)";
                   return (
                     <tr key={i} onClick={() => { const off2 = pick === i ? null : i;
-                          setPick(off2); if (sel) openRule(sel, off2); }}
+                          setPick(off2); if (sel) openRule(sel, off2, off2 === null ? undefined : tr.code);
+                          // the chart sits ABOVE this table, so a click that only reloads
+                          // it looks like nothing happened - put it on screen
+                          if (off2 !== null) chartRef.current?.scrollIntoView(
+                            { behavior: "smooth", block: "center" }); }}
                       className="border-t border-[var(--border-default)]/40 cursor-pointer hover:bg-[var(--bg-elevated)]"
                       style={{ background: pick === i ? "rgba(230,81,0,0.10)" : "transparent" }}>
                       <td className="px-3 py-1 font-bold text-[var(--text-primary)]">{pick === i ? "▶ " : ""}{tr.name}</td>
@@ -552,9 +660,21 @@ export default function LiveDeskPage() {
       )}
 
       {/* chart */}
-      <div className="mt-2 rounded-xl border p-2" style={{ borderColor: "var(--border-default)", background: "var(--bg-elevated)" }}>
+      <div ref={chartRef} className="mt-2 rounded-xl border p-2" style={{ borderColor: "var(--border-default)", background: "var(--bg-elevated)" }}>
         <div className="px-2 pt-1 pb-2 text-[11.5px]" style={{ color: "#6a1b9a" }}>
-          <b>📈 {tape?.name ?? ""} — {tape?.clock ?? ""} {t("차트", "chart")}</b>
+          <b>📈 {(sel && det?.chart ? det.chart.name : tape?.name) ?? ""} — {tape?.clock ?? ""} {t("차트", "chart")}</b>
+          {sel && det?.chart && det.chart.code !== code && (
+            <span className="ml-2 text-[10px] font-bold px-1.5 py-0.5 rounded"
+              style={{ background: "rgba(230,81,0,0.14)", color: GOLD }}>
+              {t(`선택한 매매의 종목입니다 (${det.chart.name})`,
+                 `following the trade you clicked (${det.chart.name})`)}
+            </span>
+          )}
+          {sel && det?.chart?.focus && (
+            <span className="ml-2 text-[10px]" style={{ color: GOLD }}>
+              {t("◆ 금색 표시가 클릭한 매매입니다", "◆ the gold mark is the trade you clicked")}
+            </span>
+          )}
           <span className="text-[10px] text-[var(--text-muted)] ml-2">
             {bars.length
               ? t(`${bars.length}봉 · ${tape?.first}~${tape?.last} 사이 체결 ${fmt(tape?.ticks)}건으로 만들었습니다`,
@@ -562,8 +682,15 @@ export default function LiveDeskPage() {
               : t("아직 봉을 만들 만큼 체결이 모이지 않았습니다", "not enough executions collected to form a bar yet")}
           </span>
         </div>
-        {bars.length ? <LiveChart bars={sel && det?.chart?.code === code ? det.chart.candles : bars}
-                                  marks={sel && det?.chart?.code === code ? det.chart.marks : undefined} /> : (
+        {/* When a rule is open its OWN chart wins, whatever stock it is for. This used to
+            require det.chart.code === code, so clicking an SK하이닉스 trade while the
+            stock button said 삼성전자 threw the rule's chart away and drew the bare tape
+            with no arrows at all - which is why clicking a completed trade looked like it
+            did nothing (boss 2026-08-04). The header below names the company actually
+            drawn, so the two can never disagree on screen. */}
+        {bars.length ? <LiveChart bars={sel && det?.chart ? det.chart.candles : bars}
+                                  marks={sel && det?.chart ? det.chart.marks : undefined}
+                                  focus={sel && det?.chart ? (det.chart.focus?.s ?? null) : null} /> : (
           <div className="px-4 py-10 text-center text-[12px] text-[var(--text-muted)]">
             {st?.market_open
               ? t("수집 중입니다 — 잠시 뒤 첫 봉이 그려집니다.", "collecting - the first bars appear shortly.")

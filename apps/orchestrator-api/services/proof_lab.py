@@ -677,6 +677,12 @@ def variant_trades(vid: str, seed: int = 7, start: int = 0, tick: int = 5,
             # `decided` is the real denominator; `thin` says when the whole percentage is
             # a coin that has landed once or twice.
             "decided": w + l, "thin": (w + l) < MIN_DECIDED,
+            # THE MONEY. Summed over EVERY trade, not the page's slice - `trades` is
+            # cut to `limit`, so a total added up on screen would quietly under-report a
+            # rule with more trades than fit. Net is after the round-trip fee.
+            "net_total": round(sum(r["net_pct"] for r in rows), 2),
+            "gross_total": round(sum(r["gross_pct"] for r in rows), 2),
+            "per_trade": round(sum(r["net_pct"] for r in rows) / len(rows), 3) if rows else 0.0,
             "trades": rows[:limit], "shown": min(len(rows), limit),
             # what the model is, and what the SAME rule did on the SAME bars without it
             # HOW THE TWO ACTUALLY RELATE. The model never invents a signal — audited
