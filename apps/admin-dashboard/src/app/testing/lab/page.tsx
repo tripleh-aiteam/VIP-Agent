@@ -921,7 +921,7 @@ export default function StrategyLab() {
                           boss saw "+1,000 원" on a trade with no idea it was one share
                           (2026-08-04). */}
                       <th className="text-right px-2">{t("수량", "shares")}</th>
-                      {money && <th className="text-right px-2">{t("수수료 뺀 실수익", "actually gained")}</th>}
+                      <th className="text-right px-2">{t("수수료 뺀 실수익", "actually gained")}</th>
                       <th className="text-right px-3">{t("결과", "result")}</th>
                     </tr></thead>
                     <tbody>
@@ -952,14 +952,12 @@ export default function StrategyLab() {
                                        `${(tr.qty ?? 1).toLocaleString()} shares x ₩${tr.entry.toLocaleString()} = ₩${((tr.qty ?? 1) * tr.entry).toLocaleString()} committed`)}>
                               {(tr.qty ?? 1).toLocaleString()}
                             </td>
-                            {money && (
-                              <td className="text-right px-2 font-bold tabular-nums"
+                            <td className="text-right px-2 font-bold tabular-nums"
                                 style={{ color: tr.net_pct > 0 ? GREEN : tr.net_pct < 0 ? BLUE : "var(--text-muted)" }}
                                 title={t(`1주 기준입니다: 매수가 \u20a9${tr.entry.toLocaleString()} x 수수료 뺀 ${tr.net_pct}%`,
                                          `one share: \u20a9${tr.entry.toLocaleString()} x ${tr.net_pct}% after the round trip`)}>
                                 {won(wonOf(tr.entry, tr.net_pct) * (tr.qty ?? 1))}
                               </td>
-                            )}
                             <td className="text-right px-3 font-bold" style={{ color: col }}>
                               {tr.result === "win" ? t("승", "WIN") : tr.result === "loss" ? t("패", "LOSS") : t("무", "flat")}
                             </td>

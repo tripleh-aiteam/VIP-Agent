@@ -614,8 +614,11 @@ export default function LiveDeskPage() {
                 <th className="text-right px-2">{t("매도가", "sell price")}</th>
                 <th className="text-right px-2">{t("차이", "diff")}</th>
                 <th className="text-right px-2">{t("손익", "P&L")}</th>
-                {money && <th className="text-right px-2">{t("수량", "shares")}</th>}
-                {money && <th className="text-right px-2">{t("수수료 뺀 실수익", "actually gained")}</th>}
+                {/* the size and the money it made are facts about the TRADE, not the
+                    summary money the button governs — both always on, and both must be
+                    unconditional together or the header and the body disagree */}
+                <th className="text-right px-2">{t("수량", "shares")}</th>
+                <th className="text-right px-2">{t("수수료 뺀 실수익", "actually gained")}</th>
                 <th className="text-right px-3">{t("결과", "result")}</th>
               </tr></thead>
               <tbody>
@@ -644,20 +647,16 @@ export default function LiveDeskPage() {
                       {/* What the trade actually GAINED. The P&L beside it is gross, and on
                           a +0.3% target the 0.23% round trip eats three quarters of it - so
                           the gross figure is not the money (boss 2026-08-04). */}
-                      {money && (
-                        <td className="text-right px-2 tabular-nums"
+                      <td className="text-right px-2 tabular-nums"
                           style={{ color: (tr.qty ?? 1) > 1 ? "#1565c0" : "var(--text-muted)" }}>
                           {(tr.qty ?? 1).toLocaleString()}
                         </td>
-                      )}
-                      {money && (
-                        <td className="text-right px-2 font-bold tabular-nums"
-                          style={{ color: tr.net_pct > 0 ? "#2e7d32" : tr.net_pct < 0 ? BLUE : "var(--text-muted)" }}
-                          title={t(`1주 기준입니다: 매수가 \u20a9${tr.entry.toLocaleString()} x 수수료 뺀 ${tr.net_pct}%`,
-                                   `one share: \u20a9${tr.entry.toLocaleString()} x ${tr.net_pct}% after the round trip`)}>
-                          {won(wonOf(tr.entry, tr.net_pct) * (tr.qty ?? 1))}
-                        </td>
-                      )}
+                      <td className="text-right px-2 font-bold tabular-nums"
+                        style={{ color: tr.net_pct > 0 ? "#2e7d32" : tr.net_pct < 0 ? BLUE : "var(--text-muted)" }}
+                        title={t(`${(tr.qty ?? 1).toLocaleString()}주 x ₩${tr.entry.toLocaleString()} · 수수료 뺀 ${tr.net_pct}%`,
+                                 `${(tr.qty ?? 1).toLocaleString()} shares x ₩${tr.entry.toLocaleString()} · ${tr.net_pct}% after the round trip`)}>
+                        {won(wonOf(tr.entry, tr.net_pct) * (tr.qty ?? 1))}
+                      </td>
                       <td className="text-right px-3 font-bold" style={{ color: col }}>
                         {tr.result === "win" ? t("승", "WIN") : tr.result === "loss" ? t("패", "LOSS") : t("무", "flat")}
                       </td>
