@@ -532,8 +532,11 @@ export default function StrategyLab() {
                 <th className="text-right px-2">{t("승", "W")}</th>
                 <th className="text-right px-2">{t("패", "L")}</th>
                 <th className="text-right px-3">{t("승률", "win%")}</th>
+                {/* the total is always on: a win rate with no money beside it is what made
+                    a 76%%-winning rule look good while it lost -16%% (boss 2026-08-04).
+                    Only the per-trade breakdown waits for the button. */}
+                <th className="text-right px-3">{t("총 손익", "total")}</th>
                 {money && <th className="text-right px-3">{t("건당", "per trade")}</th>}
-                {money && <th className="text-right px-3">{t("합계", "total")}</th>}
                 <th className="text-right px-3 text-[10px]">{t("자세히", "detail")}</th>
               </tr></thead>
               <tbody>
@@ -630,16 +633,14 @@ export default function StrategyLab() {
                         </>
                       );
                     })()}
+                    <td className="text-right px-3 tabular-nums font-bold"
+                      style={{ color: v.net > 0 ? GREEN : v.net < 0 ? BLUE : "inherit" }}>
+                      {v.net > 0 ? "+" : ""}{v.net}%
+                    </td>
                     {money && (
                       <td className="text-right px-3 tabular-nums"
                         style={{ color: v.per_trade > 0 ? GREEN : v.per_trade < 0 ? BLUE : "inherit" }}>
                         {v.per_trade > 0 ? "+" : ""}{v.per_trade}%
-                      </td>
-                    )}
-                    {money && (
-                      <td className="text-right px-3 tabular-nums font-bold"
-                        style={{ color: v.net > 0 ? GREEN : v.net < 0 ? BLUE : "inherit" }}>
-                        {v.net > 0 ? "+" : ""}{v.net}%
                       </td>
                     )}
                     <td className="text-right px-3 text-[10.5px]" style={{ color: "#6a1b9a" }}>
@@ -686,16 +687,18 @@ export default function StrategyLab() {
                   absent and this header would read "total 0%%" - a confidently wrong
                   number, which is the one thing this panel must never print. Exact
                   whenever the list is complete, and hidden entirely when it is not. */}
-{money && moneyNet !== null && (
+{moneyNet !== null && (
                       <span className="text-[12px] tabular-nums font-extrabold px-2 py-0.5 rounded"
                         style={{ background: moneyNet >= 0 ? "rgba(46,125,50,0.12)" : "rgba(21,101,192,0.12)",
                                  color: moneyNet >= 0 ? GREEN : BLUE }}
                         title={t("이 규칙이 낸 모든 매매의 합계 (수수료 뺀 뒤)",
                                  "every trade this rule made, added up, after fees")}>
                         {t("합계", "total")} {moneyNet > 0 ? "+" : ""}{moneyNet}%
-                        <span className="font-normal ml-1 text-[10.5px]">
-                          ({t("건당", "per trade")} {(moneyPer ?? 0) > 0 ? "+" : ""}{moneyPer ?? 0}%)
-                        </span>
+                        {money && (
+                          <span className="font-normal ml-1 text-[10.5px]">
+                            ({t("건당", "per trade")} {(moneyPer ?? 0) > 0 ? "+" : ""}{moneyPer ?? 0}%)
+                          </span>
+                        )}
                       </span>
                     )}
                     <span className="text-[10.5px] text-[var(--text-muted)]">
@@ -852,6 +855,10 @@ export default function StrategyLab() {
                       <th className="text-right px-2">{t("매도가", "sell price")}</th>
                       <th className="text-right px-2">{t("차이", "diff")}</th>
                       <th className="text-right px-2">{t("손익", "P&L")}</th>
+                      {/* What the trade actually GAINED. The P&L beside it is gross - on a
+                          +0.3%% target the 0.23%% round trip eats three quarters of it, so
+                          the gross figure is not the money (boss 2026-08-04). */}
+                      {money && <th className="text-right px-2">{t("수수료 뺀 실수익", "actually gained")}</th>}
                       <th className="text-right px-3">{t("결과", "result")}</th>
                     </tr></thead>
                     <tbody>
@@ -876,6 +883,14 @@ export default function StrategyLab() {
                             <td className="text-right px-2 font-bold" style={{ color: col }}>
                               {tr.gross_pct > 0 ? "+" : ""}{tr.gross_pct}%
                             </td>
+                            {money && (
+                              <td className="text-right px-2 font-bold tabular-nums"
+                                style={{ color: tr.net_pct > 0 ? GREEN : tr.net_pct < 0 ? BLUE : "var(--text-muted)" }}
+                                title={t(`${tr.gross_pct}% 에서 수수료 0.23%를 뺀 값입니다`,
+                                         `${tr.gross_pct}% less the 0.23% round trip`)}>
+                                {tr.net_pct > 0 ? "+" : ""}{tr.net_pct}%
+                              </td>
+                            )}
                             <td className="text-right px-3 font-bold" style={{ color: col }}>
                               {tr.result === "win" ? t("승", "WIN") : tr.result === "loss" ? t("패", "LOSS") : t("무", "flat")}
                             </td>
