@@ -94,8 +94,12 @@ def rank(tick: int = 5, period: int = 0) -> dict[str, Any]:
             "flats": len(trades) - w - l,
             "win_pct": round(w / (w + l) * 100) if (w + l) else 0,
             "net": round(sum(t["net_pct"] for t in trades), 2),
-            "net_won": round(sum(t["entry"] * t["net_pct"] / 100 for t in trades)),
-            "per_trade_won": (round(sum(t["entry"] * t["net_pct"] / 100 for t in trades) / len(trades))
+            "net_won": round(sum(shares_for(t["entry"], 0) * t["entry"] * t["net_pct"] / 100
+                                 for t in trades)),
+            "shares_total": sum(shares_for(t["entry"], 0) for t in trades),
+            "capital_used": round(sum(shares_for(t["entry"], 0) * t["entry"] for t in trades)),
+            "per_trade_won": (round(sum(shares_for(t["entry"], 0) * t["entry"] * t["net_pct"]
+                                        / 100 for t in trades) / len(trades))
                               if trades else 0),
             "per_trade": (round(sum(t["net_pct"] for t in trades) / len(trades), 3)
                           if trades else 0.0),
@@ -114,6 +118,7 @@ def rank(tick: int = 5, period: int = 0) -> dict[str, Any]:
 
 
 def shares_for(entry: float, budget: int) -> int:
+    """(see below) — kept for the explicit won-budget buttons on the desk."""
     """How many shares ₩`budget` buys of a stock priced `entry`.
 
     The desks have always traded ONE share, which is not equal risk: one share of
@@ -125,7 +130,16 @@ def shares_for(entry: float, budget: int) -> int:
     smaller than one share of SK하이닉스 would silently drop that stock from the results.
     """
     if budget <= 0:
-        return 1
+        # NO BUDGET CHOSEN -> the same price-band cap the artificial desk uses, so the
+        # real desk opens tomorrow trading real sizes instead of one share (boss
+        # 2026-08-04: "not 1 shares it should more then we can earn more money").
+        #
+        # There are no models on this desk yet, so nothing can pick a fraction of the cap
+        # the way the artificial ML rules do — a plain rule takes the whole band. When the
+        # models are trained on the real tape they will size WITHIN this cap, never above
+        # it, so today's numbers are the ceiling rather than something to be revised past.
+        from services.proof_ml import cap_for
+        return cap_for(entry)
     return max(1, int(budget // max(1.0, entry)))
 
 
