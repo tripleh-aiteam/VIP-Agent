@@ -56,14 +56,16 @@ def _bars_for(code: str, tick: int, period: int) -> list[dict]:
     return bars_time(ticks, period) if period else bars_ticks(ticks, max(1, tick))
 
 
-# The eighteen plain rules: the TWELVE the boss has been testing since the start, plus
-# six REVERSAL rules (buy after falls) that I added on the artificial side. The live desk
-# ranks all eighteen but SHOWS the twelve by default — eighteen rows against yesterday's
-# twelve is a different experiment, not a longer one, and reading them side by side is
-# what caused the confusion (boss 2026-08-04). `dir` travels with each row so the page can
-# filter; nothing is recomputed or thrown away when it does.
-PLAIN = [v for v in VARIANTS if not v.get("ml")]
-ORIGINAL_12 = [v["id"] for v in PLAIN if v.get("dir", 1) > 0]
+# THE TWELVE. Exactly the rules the boss has been testing since the start — entries on a
+# run of RISES. The six reversal rules (buy after FALLS) live on the artificial side only:
+# they were mine, they turned this desk into a different experiment from yesterday's, and
+# he asked twice for them gone rather than filtered (2026-08-04). They are not hidden here,
+# they are not ranked here, and nothing on this desk computes them.
+#
+# They still exist in the Strategy Lab, where they were introduced and where the
+# comparison they belong to is being run.
+PLAIN = [v for v in VARIANTS if not v.get("ml") and v.get("dir", 1) > 0]
+ORIGINAL_12 = [v["id"] for v in PLAIN]
 
 
 def rank(tick: int = 5, period: int = 0) -> dict[str, Any]:
