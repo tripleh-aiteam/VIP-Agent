@@ -680,6 +680,10 @@ def variant_trades(vid: str, seed: int = 7, start: int = 0, tick: int = 5,
             # THE MONEY. Summed over EVERY trade, not the page's slice - `trades` is
             # cut to `limit`, so a total added up on screen would quietly under-report a
             # rule with more trades than fit. Net is after the round-trip fee.
+            # THE MONEY IN WON - see the note in kiwoom_rules. One share per signal.
+            "net_won_total": round(sum(r["entry"] * r["net_pct"] / 100 for r in rows)),
+            "per_trade_won": (round(sum(r["entry"] * r["net_pct"] / 100 for r in rows) / len(rows))
+                              if rows else 0),
             "net_total": round(sum(r["net_pct"] for r in rows), 2),
             "gross_total": round(sum(r["gross_pct"] for r in rows), 2),
             "per_trade": round(sum(r["net_pct"] for r in rows) / len(rows), 3) if rows else 0.0,
@@ -776,6 +780,9 @@ def compare(seed: int = 7, start: int = 0, tick: int = 5,
             "win_pct": round(len(w) / decided * 100) if decided else 0,
             "gross": round(sum(t["gross_pct"] for t in trades), 2),
             "net": round(sum(t["net_pct"] for t in trades), 2),
+            "net_won": round(sum(t["entry"] * t["net_pct"] / 100 for t in trades)),
+            "per_trade_won": (round(sum(t["entry"] * t["net_pct"] / 100 for t in trades) / len(trades))
+                              if trades else 0),
             "avg_win": round(aw, 3), "avg_loss": round(al, 3),
             "rr": round(aw / al, 2) if al else 0.0,
             "per_trade": round(sum(t["net_pct"] for t in trades) / len(trades), 3) if trades else 0.0,

@@ -32,6 +32,7 @@ type Book = { ok: boolean; code: string; name?: string; asks: [number, number][]
 type Execs = { ok: boolean; prev_close?: number; total: number;
                rows: { t: string; px: number; qty: number }[] };
 type RuleRow = { id: string; ko: string; en: string; dir: number; trips: number; wins: number;
+                 net_won?: number | null; per_trade_won?: number | null;
                  losses: number; flats: number; win_pct: number; per_trade: number; net: number;
                  decided: number; thin: boolean };
 type Rank = { ok: boolean; clock: string; fee_pct: number; original_12?: string[];
@@ -49,6 +50,7 @@ type RDetail = { ok: boolean; id: string; ko: string; en: string; clock: string;
                  trips: number; wins: number; losses: number; flats: number; win_pct: number;
                  decided: number; thin: boolean; shown: number;
                  net_total?: number; gross_total?: number; per_trade?: number;
+                 net_won_total?: number; per_trade_won?: number;
                  trades: RTrade[];
                  holding: { code: string; name: string; buy_t: string; entry: number;
                             last: number; unreal_pct: number }[];
@@ -179,6 +181,17 @@ export default function LiveDeskPage() {
     ? Math.round(moneyRows.reduce((x, r) => x + r.net_pct, 0) * 100) / 100 : null);
   const moneyPer = det?.per_trade ?? (moneyAll && moneyRows.length
     ? Math.round((moneyRows.reduce((x, r) => x + r.net_pct, 0) / moneyRows.length) * 1000) / 1000
+    : null);
+  // Money in WON. `entry` is one share and net_pct is a percentage OF that entry, so
+  // entry x net_pct / 100 is exactly what one share of that trade gained or lost. Done
+  // here as well as on the server because the backend runs with NO --reload: until it is
+  // restarted the won fields are absent, and this is the number the boss asked to see.
+  const wonOf = (entry: number, netPct: number) => Math.round(entry * netPct / 100);
+  const won = (n: number) => `${n < 0 ? "-" : "+"}\u20a9${Math.abs(n).toLocaleString()}`;
+  const moneyWon = det?.net_won_total ?? (moneyAll
+    ? moneyRows.reduce((x, r) => x + wonOf(r.entry, r.net_pct), 0) : null);
+  const moneyWonPer = det?.per_trade_won ?? (moneyAll && moneyRows.length
+    ? Math.round(moneyRows.reduce((x, r) => x + wonOf(r.entry, r.net_pct), 0) / moneyRows.length)
     : null);
   const [pick, setPick] = useState<number | null>(null);
   const [money, setMoney] = useState(false);      // off until he asks - see the button
@@ -396,13 +409,17 @@ export default function LiveDeskPage() {
                       )}
                     </td>
                     <td className="text-right px-3 tabular-nums font-bold"
-                      style={{ color: v.net > 0 ? "#2e7d32" : v.net < 0 ? BLUE : "inherit" }}>
-                      {v.net > 0 ? "+" : ""}{v.net}%
+                      style={{ color: v.net > 0 ? "#2e7d32" : v.net < 0 ? BLUE : "inherit" }}
+                      title={t("1주씩 매매했다면 이만큼입니다", "if you traded one share each time")}>
+                      {v.net_won == null ? `${v.net > 0 ? "+" : ""}${v.net}%`
+                        : `${v.net_won < 0 ? "-" : "+"}₩${Math.abs(v.net_won).toLocaleString()}`}
                     </td>
                     {money && (
                       <td className="text-right px-3 tabular-nums"
-                        style={{ color: v.per_trade > 0 ? "#2e7d32" : v.per_trade < 0 ? BLUE : "inherit" }}>
-                        {v.per_trade > 0 ? "+" : ""}{v.per_trade}%
+                        style={{ color: v.per_trade > 0 ? "#2e7d32" : v.per_trade < 0 ? BLUE : "inherit" }}
+                        title={t("매매 한 번당 평균, 1주 기준", "the average of one trade, one share")}>
+                        {v.per_trade_won == null ? `${v.per_trade > 0 ? "+" : ""}${v.per_trade}%`
+                          : `${v.per_trade_won < 0 ? "-" : "+"}₩${Math.abs(v.per_trade_won).toLocaleString()}`}
                       </td>
                     )}
                     <td className="text-right px-3 text-[10.5px]" style={{ color: "#6a1b9a" }}>
@@ -440,16 +457,16 @@ export default function LiveDeskPage() {
                   absent and this header would read "total 0%%" - a confidently wrong
                   number, which is the one thing this panel must never print. Exact
                   whenever the list is complete, and hidden entirely when it is not. */}
-{moneyNet !== null && (
+{moneyWon !== null && (
               <span className="text-[12px] tabular-nums font-extrabold px-2 py-0.5 rounded"
-                style={{ background: moneyNet >= 0 ? "rgba(46,125,50,0.12)" : "rgba(21,101,192,0.12)",
-                         color: moneyNet >= 0 ? "#2e7d32" : BLUE }}
+                style={{ background: moneyWon >= 0 ? "rgba(46,125,50,0.12)" : "rgba(21,101,192,0.12)",
+                         color: moneyWon >= 0 ? "#2e7d32" : BLUE }}
                 title={t("이 규칙이 낸 모든 매매의 합계 (수수료 뺀 뒤)",
                          "every trade this rule made, added up, after fees")}>
-                {t("합계", "total")} {moneyNet > 0 ? "+" : ""}{moneyNet}%
+                {t("합계", "total")} {moneyWon === null ? "-" : won(moneyWon)}
                 {money && (
                   <span className="font-normal ml-1 text-[10.5px]">
-                    ({t("건당", "per trade")} {(moneyPer ?? 0) > 0 ? "+" : ""}{moneyPer ?? 0}%)
+                    ({t("건당", "per trade")} {moneyWonPer === null ? "-" : won(moneyWonPer)})
                   </span>
                 )}
               </span>
@@ -526,9 +543,9 @@ export default function LiveDeskPage() {
                       {money && (
                         <td className="text-right px-2 font-bold tabular-nums"
                           style={{ color: tr.net_pct > 0 ? "#2e7d32" : tr.net_pct < 0 ? BLUE : "var(--text-muted)" }}
-                          title={t(`${tr.gross_pct}% 에서 수수료 ${rank?.fee_pct ?? 0.23}%를 뺀 값입니다`,
-                                   `${tr.gross_pct}% less the ${rank?.fee_pct ?? 0.23}% round trip`)}>
-                          {tr.net_pct > 0 ? "+" : ""}{tr.net_pct}%
+                          title={t(`1주 기준입니다: 매수가 \u20a9${tr.entry.toLocaleString()} x 수수료 뺀 ${tr.net_pct}%`,
+                                   `one share: \u20a9${tr.entry.toLocaleString()} x ${tr.net_pct}% after the round trip`)}>
+                          {won(wonOf(tr.entry, tr.net_pct))}
                         </td>
                       )}
                       <td className="text-right px-3 font-bold" style={{ color: col }}>

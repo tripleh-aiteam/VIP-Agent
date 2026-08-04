@@ -94,6 +94,9 @@ def rank(tick: int = 5, period: int = 0) -> dict[str, Any]:
             "flats": len(trades) - w - l,
             "win_pct": round(w / (w + l) * 100) if (w + l) else 0,
             "net": round(sum(t["net_pct"] for t in trades), 2),
+            "net_won": round(sum(t["entry"] * t["net_pct"] / 100 for t in trades)),
+            "per_trade_won": (round(sum(t["entry"] * t["net_pct"] / 100 for t in trades) / len(trades))
+                              if trades else 0),
             "per_trade": (round(sum(t["net_pct"] for t in trades) / len(trades), 3)
                           if trades else 0.0),
             # fewer than this many DECIDED trades and a win rate is a coin that landed a
@@ -208,6 +211,13 @@ def trades(vid: str, tick: int = 5, period: int = 0, code: str = "",
             # THE MONEY. Summed over EVERY trade, not the page's slice - `trades` is
             # cut to `limit`, so a total added up on screen would quietly under-report a
             # rule with more trades than fit. Net is after the round-trip fee.
+            # THE MONEY IN WON. Percent answers "how well", won answers "how much", and
+            # the boss asked for how much. One share per signal: there is no position size
+            # anywhere in this system, so a share is the only honest unit - and it is the
+            # same unit the `diff` column beside it already uses.
+            "net_won_total": round(sum(r["entry"] * r["net_pct"] / 100 for r in rows)),
+            "per_trade_won": (round(sum(r["entry"] * r["net_pct"] / 100 for r in rows) / len(rows))
+                              if rows else 0),
             "net_total": round(sum(r["net_pct"] for r in rows), 2),
             "gross_total": round(sum(r["gross_pct"] for r in rows), 2),
             "per_trade": round(sum(r["net_pct"] for r in rows) / len(rows), 3) if rows else 0.0,
