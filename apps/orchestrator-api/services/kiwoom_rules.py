@@ -56,7 +56,14 @@ def _bars_for(code: str, tick: int, period: int) -> list[dict]:
     return bars_time(ticks, period) if period else bars_ticks(ticks, max(1, tick))
 
 
+# The eighteen plain rules: the TWELVE the boss has been testing since the start, plus
+# six REVERSAL rules (buy after falls) that I added on the artificial side. The live desk
+# ranks all eighteen but SHOWS the twelve by default — eighteen rows against yesterday's
+# twelve is a different experiment, not a longer one, and reading them side by side is
+# what caused the confusion (boss 2026-08-04). `dir` travels with each row so the page can
+# filter; nothing is recomputed or thrown away when it does.
 PLAIN = [v for v in VARIANTS if not v.get("ml")]
+ORIGINAL_12 = [v["id"] for v in PLAIN if v.get("dir", 1) > 0]
 
 
 def rank(tick: int = 5, period: int = 0) -> dict[str, Any]:
@@ -79,6 +86,8 @@ def rank(tick: int = 5, period: int = 0) -> dict[str, Any]:
         l = sum(1 for t in trades if t["gross_pct"] < 0)
         rows.append({
             "id": v["id"], "ko": label(v, True), "en": label(v, False),
+            # +1 = the original twelve (buy after RISES), -1 = the six reversal rules
+            "dir": v.get("dir", 1),
             "trips": len(trades), "wins": w, "losses": l,
             "flats": len(trades) - w - l,
             "win_pct": round(w / (w + l) * 100) if (w + l) else 0,
@@ -91,7 +100,7 @@ def rank(tick: int = 5, period: int = 0) -> dict[str, Any]:
             "decided": w + l, "thin": (w + l) < 10,
         })
     rows.sort(key=lambda r: (r["thin"], -r["win_pct"], -r["trips"]))
-    return {"ok": True, "clock": f"{period}초" if period else f"{tick}틱",
+    return {"ok": True, "original_12": ORIGINAL_12, "clock": f"{period}초" if period else f"{tick}틱",
             "tick": tick, "period": period, "fee_pct": FEE_PCT,
             "stocks": [{"code": c, "name": t["name"], "bars": len(t["cs"]),
                         "from": t["cs"][0]["hhmm"], "to": t["cs"][-1]["hhmm"],

@@ -31,10 +31,10 @@ type Book = { ok: boolean; code: string; name?: string; asks: [number, number][]
               last?: number; prev_close?: number; change_pct?: number };
 type Execs = { ok: boolean; prev_close?: number; total: number;
                rows: { t: string; px: number; qty: number }[] };
-type RuleRow = { id: string; ko: string; en: string; trips: number; wins: number;
+type RuleRow = { id: string; ko: string; en: string; dir: number; trips: number; wins: number;
                  losses: number; flats: number; win_pct: number; per_trade: number;
                  decided: number; thin: boolean };
-type Rank = { ok: boolean; clock: string; fee_pct: number;
+type Rank = { ok: boolean; clock: string; fee_pct: number; original_12?: string[];
               stocks: { code: string; name: string; bars: number; from: string; to: string;
                         tick_size: number }[];
               variants: RuleRow[] };
@@ -131,6 +131,24 @@ export default function LiveDeskPage() {
   const [st, setSt] = useState<Status | null>(null);
   const [rank, setRank] = useState<Rank | null>(null);
   const [sel, setSel] = useState<string | null>(null);
+  // THE TWELVE by default. The six reversal rules (buy after FALLS) are mine, added on
+  // the artificial side; showing all eighteen next to yesterday's twelve reads as one
+  // experiment when it is two (boss 2026-08-04: "it makes us confussion"). Same remedy
+  // he asked for on the Strategy Lab when the same thing happened there: a filter.
+  const [ruleView, setRuleView] = useState<"12" | "all">("12");
+  // Filtered here, not fetched: the server ranks all eighteen against ONE tape, so
+  // switching the box cannot change any rule's numbers - only which rows are drawn.
+  //
+  // The twelve are named here as well as on the server ON PURPOSE. The server field
+  // arrived in the same change as this box, and the backend runs with no --reload: until
+  // it is restarted `dir` is undefined, `dir > 0` is false, and the table would render
+  // EMPTY. A restart during market hours costs ~72s of real tape that cannot be
+  // recovered, so the page must work correctly against both versions of the server.
+  const ORIGINAL_12 = ["3u3d", "2u2d", "3u2d", "2u3d", "3u4d", "4u3d",
+                       "3u+0.3", "3u+0.5", "3u+1.0", "2u+0.5", "3u+0.5s", "4u+1.0"];
+  const twelve = rank?.original_12?.length ? rank.original_12 : ORIGINAL_12;
+  const shownRules = (rank?.variants ?? []).filter(
+    (v) => ruleView === "all" || twelve.includes(v.id));
   const [det, setDet] = useState<RDetail | null>(null);
   const [pick, setPick] = useState<number | null>(null);
 
@@ -231,12 +249,18 @@ export default function LiveDeskPage() {
           <div className="px-4 py-2 border-b flex items-center gap-2 flex-wrap"
             style={{ borderColor: "var(--border-default)", background: "rgba(106,27,154,0.06)" }}>
             <b className="text-[13px]" style={{ color: "#6a1b9a" }}>
-              🔬 {t(`규칙 ${rank.variants.length}개 — 진짜 키움 체결로`, `${rank.variants.length} rules, on real Kiwoom executions`)}
+              🔬 {t(`규칙 ${shownRules.length}개 — 진짜 키움 체결로`, `${shownRules.length} rules, on real Kiwoom executions`)}
             </b>
             <span className="text-[10.5px] text-[var(--text-muted)]">
               {t(`${rank.clock} 기준 · 인공 데이터 실험실과 똑같은 규칙·똑같은 엔진입니다. 다른 것은 시장 하나뿐입니다.`,
                  `on the ${rank.clock} clock - the same rules and the same engine as the artificial lab. The only thing different is the market.`)}
             </span>
+            {ruleView === "12" && (
+              <span className="text-[10px] font-bold px-1.5 py-0.5 rounded"
+                style={{ background: "rgba(106,27,154,0.12)", color: "#6a1b9a" }}>
+                {t("어제와 같은 12개", "the same 12 as yesterday")}
+              </span>
+            )}
             {rank.stocks.map((x) => (
               <span key={x.code} className="text-[10px] text-[var(--text-muted)]">
                 {x.name} {x.bars.toLocaleString()}{t("봉", " bars")}
@@ -250,7 +274,16 @@ export default function LiveDeskPage() {
           <div className="overflow-x-auto">
             <table className="w-full text-[12px] tabular-nums">
               <thead><tr className="text-[10.5px] text-[var(--text-muted)]" style={{ background: "var(--bg-elevated)" }}>
-                <th className="text-left px-3 py-2">{t("규칙", "rule")}</th>
+                <th className="text-left px-3 py-2">
+                  <select value={ruleView} onChange={(e) => { setRuleView(e.target.value as "12" | "all"); setSel(null); setDet(null); }}
+                    className="text-[11px] font-bold px-1.5 py-1 rounded-md border bg-[var(--bg-primary)] text-[var(--text-primary)]"
+                    style={{ borderColor: ruleView === "all" ? "var(--border-default)" : "#6a1b9a" }}
+                    title={t("어제까지 테스트한 12개 규칙이 기본입니다. 나머지 6개는 하락 뒤에 사는 반대 방향 규칙으로, 제가 인공 데이터 쪽에서 추가한 것입니다.",
+                             "the twelve rules you have been testing are the default. the other six buy after FALLS - they are mine, added on the artificial side.")}>
+                    <option value="12">{t("규칙 12개 (어제와 동일)", "the 12 rules (same as yesterday)")}</option>
+                    <option value="all">{t("전체 18개 (+ 하락 후 매수 6개)", "all 18 (+ 6 buy-after-falls)")}</option>
+                  </select>
+                </th>
                 <th className="text-right px-2">{t("회전", "trips")}</th>
                 <th className="text-right px-2">{t("승", "W")}</th>
                 <th className="text-right px-2">{t("패", "L")}</th>
@@ -259,7 +292,7 @@ export default function LiveDeskPage() {
                 <th className="text-right px-3 text-[10px]">{t("자세히", "detail")}</th>
               </tr></thead>
               <tbody>
-                {rank.variants.map((v, i) => (
+                {shownRules.map((v, i) => (
                   <tr key={v.id} onClick={() => { const open = sel === v.id;
                         setSel(open ? null : v.id); setDet(null); setPick(null);
                         if (!open) openRule(v.id); }}
