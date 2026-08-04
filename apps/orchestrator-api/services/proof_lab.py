@@ -477,6 +477,27 @@ def _ml_for(c_code: str, base: float, sseed: int, t: int, tick: int, period: int
     return bundle
 
 
+def sessions() -> dict[str, Any]:
+    """The 07:21 open of today and of the preceding days, as epochs.
+
+    Computed here rather than in the browser: the market opens at 07:21 KST and a browser
+    in another timezone would compute a different second, which would quietly load a
+    different market. The artificial tape is deterministic, so asking for an earlier open
+    REGENERATES those days exactly — yesterday's trading was never lost, the lab simply
+    never asked for it (boss 2026-08-04)."""
+    from datetime import datetime, timedelta
+    from services.proof_sim import KST, DEMO_OPEN
+    n = datetime.now(KST).replace(hour=DEMO_OPEN[0], minute=DEMO_OPEN[1],
+                                  second=0, microsecond=0)
+    out = [{"days": 1, "label_ko": "오늘", "label_en": "today", "start": 0}]
+    for d in (1, 2, 6):
+        ep = int((n - timedelta(days=d)).timestamp())
+        out.append({"days": d + 1, "start": ep,
+                    "label_ko": f"{d + 1}일", "label_en": f"{d + 1} days",
+                    "opened": (n - timedelta(days=d)).strftime("%m-%d %H:%M")})
+    return {"ok": True, "sessions": out}
+
+
 def _session_open_epoch(start: int) -> int:
     """The epoch second this session opened — an explicit start, or today's 07:21 open."""
     if start:
@@ -732,7 +753,14 @@ def compare(seed: int = 7, start: int = 0, tick: int = 5,
                                                     len(chart_tape["cs"])))[-60:]
                                 if chart_tape else [])],
         })
-    rows.sort(key=lambda r: (-r["win_pct"], -r["per_trade"]))
+    # A rule with one trade at 100% is not the leader, it is a coin that landed once.
+    # Rules below MIN_RANKED trips are still SHOWN — hiding them would be worse — but
+    # they sort beneath everything with a real sample, and carry `thin` so the page can
+    # say why (boss 2026-08-04 saw "4 up / +1.0% + ML  100%  1 trip" at the top).
+    MIN_RANKED = 10
+    for r in rows:
+        r["thin"] = r["trips"] < MIN_RANKED
+    rows.sort(key=lambda r: (r["thin"], -r["win_pct"], -r["trips"]))
     off = max(0, len(chart_tape["cs"]) - bars) if chart_tape else 0
     if chart_tape and off:
         for r in rows:

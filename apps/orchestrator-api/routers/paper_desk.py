@@ -747,6 +747,15 @@ def proof_lab_trades(variant: str = Query(...), seed: int = Query(7), start: int
                           period=max(0, min(int(period or 0), 60)), at=at)
 
 
+@router.get("/proof/lab/sessions")
+def proof_lab_sessions():
+    """The 07:21 opens of today and the days before it, so the lab can load more than one
+    day. The artificial market is deterministic — an earlier open regenerates those days
+    exactly, which is why nothing had to be stored to get yesterday back."""
+    from services.proof_lab import sessions
+    return sessions()
+
+
 @router.get("/proof/lab/datafile")
 def proof_lab_datafile(seed: int = Query(7), start: int = Query(0), code: str = Query(""),
                        mins: int = Query(10), frm: str = Query(""), to: str = Query(""),

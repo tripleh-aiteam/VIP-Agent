@@ -27,6 +27,7 @@ const TEAL = "#00838f";
 const GREEN = "#2e7d32";
 
 type Variant = {
+  thin?: boolean;        // fewer trades than the ranking trusts
   id: string; ko: string; en: string;
   trips: number; wins: number; losses: number; flats: number;
   win_pct: number; gross: number; net: number;
@@ -211,6 +212,12 @@ export default function StrategyLab() {
   // does the loaded Data File cover more than one calendar day? Only then is the date
   // worth the width — on a single-day session it is noise.
   const [dfSpansDays, setDfSpansDays] = useState(false);
+  // How many days of market to load. The artificial tape is deterministic, so opening an
+  // EARLIER session regenerates those days exactly — yesterday's trading was never lost,
+  // the lab just always asked for today (boss 2026-08-04). The opens come from the server
+  // because 07:21 is KST and a browser elsewhere would compute a different second.
+  type Sess = { days: number; start: number; label_ko: string; label_en: string; opened?: string };
+  const [sessions, setSessions] = useState<Sess[]>([]);
   // 📼 the execution feed — the SAME endpoint the Proof Lab reads, so the deals under this
   // chart are literally the deals the 5틱 candles above it are built from.
   type Feed = { asks: [number, number][]; bids: [number, number][]; time?: string;
@@ -292,6 +299,11 @@ export default function StrategyLab() {
 
   useEffect(() => { load(); }, [load]);
   useEffect(() => {
+    api<{ sessions: Sess[] }>("/paper-desk/proof/lab/sessions")
+      .then((r) => setSessions(r?.sessions ?? [])).catch(() => {});
+    /* eslint-disable-next-line react-hooks/exhaustive-deps */
+  }, []);
+  useEffect(() => {
     const iv = setInterval(() => load(), 60_000);   // the server caches per minute anyway
     return () => clearInterval(iv);
   }, [load]);
@@ -361,6 +373,20 @@ export default function StrategyLab() {
             </button>
           </>
         )}
+        {/* how many days of market to trade. A longer session takes a few seconds to
+            build the first time and is then cached — the numbers below change with it. */}
+        <span className="text-[10.5px] text-[var(--text-muted)] ml-1">{t("기간", "range")}</span>
+        {sessions.map((sx) => (
+          <button key={sx.days} onClick={() => begin(sx.start)}
+            title={sx.opened ? t(`${sx.opened} 07:21 장부터 지금까지`, `from the ${sx.opened} open until now`)
+                             : t("오늘 07:21 장부터", "from today's 07:21 open")}
+            className="text-[11.5px] font-bold px-2.5 py-1 rounded-lg"
+            style={start === sx.start ? { background: "#2e7d32", color: "#fff" }
+                   : { border: "1px solid var(--border-default)", color: "var(--text-secondary)" }}>
+            {lang === "ko" ? sx.label_ko : sx.label_en}
+          </button>
+        ))}
+        <span className="w-px h-5 bg-[var(--border-default)] mx-0.5" />
         {/* ONE clock control. The buttons are the tick clocks; the box takes a number of
             SECONDS — type 30 and you get the 30초 chart, and the rules run on it, because
             on this page the chart IS the clock (boss 2026-08-03). */}
@@ -497,7 +523,15 @@ export default function StrategyLab() {
                     style={{ background: sel === v.id ? "rgba(106,27,154,0.10)"
                              : i === 0 ? "rgba(230,81,0,0.06)" : "transparent" }}>
                     <td className="px-3 py-1.5 font-bold text-[var(--text-primary)]">
-                      {sel === v.id ? "▶ " : (i === 0 && ruleView !== "all6") ? "🏆 " : ""}{lang === "ko" ? v.ko : v.en}
+                      {sel === v.id ? "▶ " : (i === 0 && ruleView !== "all6" && !v.thin) ? "🏆 " : ""}{lang === "ko" ? v.ko : v.en}
+                      {v.thin && (
+                        <span className="ml-1.5 text-[9.5px] font-bold px-1.5 py-0.5 rounded"
+                          style={{ background: "rgba(230,81,0,0.14)", color: GOLD }}
+                          title={t("매매 수가 너무 적어 승률을 신뢰할 수 없습니다 — 순위에서도 아래로 내립니다",
+                                   "too few trades for the win rate to mean anything - ranked below the rest")}>
+                          {t("표본 부족", "thin")}
+                        </span>
+                      )}
                       {/* the model only ever DECLINES signals the rule produced, so a
                           "+ ML" row is the same rule with fewer trades — never a new one */}
                       {v.id.endsWith("ML") && (
