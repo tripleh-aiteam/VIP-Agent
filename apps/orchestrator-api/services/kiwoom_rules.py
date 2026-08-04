@@ -113,8 +113,25 @@ def rank(tick: int = 5, period: int = 0) -> dict[str, Any]:
             "variants": rows}
 
 
+def shares_for(entry: float, budget: int) -> int:
+    """How many shares ₩`budget` buys of a stock priced `entry`.
+
+    The desks have always traded ONE share, which is not equal risk: one share of
+    SK하이닉스 is ₩1,562,000 of exposure and one share of 한화오션 is ₩85,250 — an 18x
+    difference filed under the same word, "a trade". A fixed won budget makes the three
+    companies comparable, and it is what a real account does.
+
+    Korea has no fractional shares, so this floors — and never below one, because a budget
+    smaller than one share of SK하이닉스 would silently drop that stock from the results.
+    """
+    if budget <= 0:
+        return 1
+    return max(1, int(budget // max(1.0, entry)))
+
+
 def trades(vid: str, tick: int = 5, period: int = 0, code: str = "",
-           bars: int = 2500, limit: int = 300, around: int = -1) -> dict[str, Any]:
+           bars: int = 2500, limit: int = 300, around: int = -1,
+           budget: int = 0) -> dict[str, Any]:
     """One rule's trades on the real tape, with the chart and the evidence per trade."""
     v = next((x for x in PLAIN if x["id"] == vid), None)
     if v is None:
@@ -149,6 +166,8 @@ def trades(vid: str, tick: int = 5, period: int = 0, code: str = "",
                            "loss" if g["gross_pct"] < 0 else "flat"),
                 "bars_held": g["sell_i"] - g["buy_i"],
                 "tick_size": tk,
+                # shares this trade would buy for the chosen budget (1 when none is set)
+                "qty": shares_for(g["entry"], budget),
                 "buy_ev": g.get("buy_ev"), "sell_ev": g.get("sell_ev"),
             })
         if op:
@@ -215,7 +234,15 @@ def trades(vid: str, tick: int = 5, period: int = 0, code: str = "",
             # the boss asked for how much. One share per signal: there is no position size
             # anywhere in this system, so a share is the only honest unit - and it is the
             # same unit the `diff` column beside it already uses.
+            "budget": budget,
             "net_won_total": round(sum(r["entry"] * r["net_pct"] / 100 for r in rows)),
+            # THE SAME TRADES AT THE CHOSEN SIZE. P&L is linear in quantity, so this is
+            # exactly the one-share figure scaled per stock - which is the point: it shows
+            # that size changes the MAGNITUDE and never the sign.
+            "net_won_sized": round(sum(r["qty"] * r["entry"] * r["net_pct"] / 100
+                                       for r in rows)),
+            "shares_total": sum(r["qty"] for r in rows),
+            "capital_used": round(sum(r["qty"] * r["entry"] for r in rows)),
             "per_trade_won": (round(sum(r["entry"] * r["net_pct"] / 100 for r in rows) / len(rows))
                               if rows else 0),
             "net_total": round(sum(r["net_pct"] for r in rows), 2),

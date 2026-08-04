@@ -44,12 +44,13 @@ type Ev = { close: number; book: { best_ask: number; best_bid: number; fill: num
 type RTrade = { code: string; name: string; buy_i: number; sell_i: number; buy_t: string;
                 entry: number; sell_t: string; exit: number; gross_pct: number;
                 net_pct: number; exit_why?: string; result: "win" | "loss" | "flat";
-                bars_held: number; tick_size: number; buy_ev?: Ev | null; sell_ev?: Ev | null };
+                bars_held: number; tick_size: number; qty?: number; buy_ev?: Ev | null; sell_ev?: Ev | null };
 type RDetail = { ok: boolean; id: string; ko: string; en: string; clock: string;
                  entry_n: number; kind: string; a: number; b?: number | null; dir: number;
                  trips: number; wins: number; losses: number; flats: number; win_pct: number;
                  decided: number; thin: boolean; shown: number;
                  net_total?: number; gross_total?: number; per_trade?: number;
+                 net_won_sized?: number; shares_total?: number; capital_used?: number; budget?: number;
                  net_won_total?: number; per_trade_won?: number;
                  trades: RTrade[];
                  holding: { code: string; name: string; buy_t: string; entry: number;
@@ -196,13 +197,17 @@ export default function LiveDeskPage() {
   // restarted the won fields are absent, and this is the number the boss asked to see.
   const wonOf = (entry: number, netPct: number) => Math.round(entry * netPct / 100);
   const won = (n: number) => `${n < 0 ? "-" : "+"}\u20a9${Math.abs(n).toLocaleString()}`;
-  const moneyWon = det?.net_won_total ?? (moneyAll
+  const moneyWon = det?.net_won_sized ?? det?.net_won_total ?? (moneyAll
     ? moneyRows.reduce((x, r) => x + wonOf(r.entry, r.net_pct), 0) : null);
   const moneyWonPer = det?.per_trade_won ?? (moneyAll && moneyRows.length
     ? Math.round(moneyRows.reduce((x, r) => x + wonOf(r.entry, r.net_pct), 0) / moneyRows.length)
     : null);
   const [pick, setPick] = useState<number | null>(null);
   const [money, setMoney] = useState(false);      // off until he asks - see the button
+  // WON PER TRADE. 0 = the historical one share. One share is not equal risk - one share
+  // of SK하이닉스 is ₩1.5M and one of 한화오션 is ₩85k - so a fixed budget is both fairer
+  // and closer to a real account. It scales the money and never the win rate.
+  const [budget, setBudget] = useState(0);
   const chartRef = useRef<HTMLDivElement | null>(null);
   // 🕰️ Data File - the minute record the rules read, built from the REAL executions.
   // The artificial lab has had this since 2026-08-03; the boss asked for the same thing
@@ -218,6 +223,7 @@ export default function LiveDeskPage() {
   const [dfOpen, setDfOpen] = useState<string | null>(null);
   const [dfMin, setDfMin] = useState<DfMin | null>(null);
   const detRef = useRef<RDetail | null>(null);
+  const budgetRef = useRef(0);
   const loadDfRef = useRef<((c: string, m: number, f?: string, t?: string) => void) | null>(null);
   const dfMinsRef = useRef<number>(10);
   const dfFromRef = useRef("");
@@ -242,7 +248,7 @@ export default function LiveDeskPage() {
     const want = tradeCode || codeRef.current;
     api<RDetail>(`/paper-desk/live/rules/trades?variant=${encodeURIComponent(id)}&${q}`
       + `&code=${encodeURIComponent(want)}&bars=2500`
-      + `&around=${tradeIdx ?? -1}`)
+      + `&around=${tradeIdx ?? -1}&budget=${budgetRef.current}`)
       .then((d) => { const v = d?.ok ? d : null; detRef.current = v; setDet(v); })
       .catch(() => { detRef.current = null; setDet(null); });
   }, []);
@@ -266,6 +272,7 @@ export default function LiveDeskPage() {
 
   useEffect(() => { loadDfRef.current = loadDf; }, [loadDf]);
   useEffect(() => { dfMinsRef.current = dfMins; }, [dfMins]);
+  useEffect(() => { budgetRef.current = budget; if (sel) openRule(sel, pick); }, [budget]);   // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { dfFromRef.current = dfFrom; }, [dfFrom]);
   useEffect(() => { dfToRef.current = dfTo; }, [dfTo]);
 
@@ -399,9 +406,24 @@ export default function LiveDeskPage() {
             </button>
             {money && (
               <span className="text-[10.5px]" style={{ color: "var(--text-muted)" }}>
-                {t(`수수료 ${rank.fee_pct}% 뺀 뒤입니다. 합계는 그 규칙이 낸 모든 매매를 더한 값입니다.`,
-                   `after the ${rank.fee_pct}% round trip. the total is every trade that rule made, added up.`)}
+                {t(`수수료 ${rank.fee_pct}% 뺀 뒤입니다.`, `after the ${rank.fee_pct}% round trip.`)}
               </span>
+            )}
+            {money && (
+              <>
+                <span className="text-[10.5px] ml-2" style={{ color: "var(--text-muted)" }}>
+                  {t("한 번에 얼마씩:", "money per trade:")}
+                </span>
+                {([[0, t("1주", "1 share")], [10_000_000, "₩1,000만"], [50_000_000, "₩5,000만"],
+                   [100_000_000, "₩1억"]] as [number, string][]).map(([v, lab]) => (
+                  <button key={v} onClick={() => setBudget(v)}
+                    className="text-[10px] font-bold px-1.5 py-0.5 rounded border"
+                    style={budget === v ? { borderColor: "#e65100", color: "#e65100", background: "rgba(230,81,0,0.10)" }
+                                        : { borderColor: "var(--border-default)", color: "var(--text-secondary)" }}>
+                    {lab}
+                  </button>
+                ))}
+              </>
             )}
           </div>
           <div className="overflow-x-auto">
@@ -592,6 +614,7 @@ export default function LiveDeskPage() {
                 <th className="text-right px-2">{t("매도가", "sell price")}</th>
                 <th className="text-right px-2">{t("차이", "diff")}</th>
                 <th className="text-right px-2">{t("손익", "P&L")}</th>
+                {money && <th className="text-right px-2">{t("수량", "shares")}</th>}
                 {money && <th className="text-right px-2">{t("수수료 뺀 실수익", "actually gained")}</th>}
                 <th className="text-right px-3">{t("결과", "result")}</th>
               </tr></thead>
@@ -622,11 +645,17 @@ export default function LiveDeskPage() {
                           a +0.3% target the 0.23% round trip eats three quarters of it - so
                           the gross figure is not the money (boss 2026-08-04). */}
                       {money && (
+                        <td className="text-right px-2 tabular-nums"
+                          style={{ color: (tr.qty ?? 1) > 1 ? "#1565c0" : "var(--text-muted)" }}>
+                          {(tr.qty ?? 1).toLocaleString()}
+                        </td>
+                      )}
+                      {money && (
                         <td className="text-right px-2 font-bold tabular-nums"
                           style={{ color: tr.net_pct > 0 ? "#2e7d32" : tr.net_pct < 0 ? BLUE : "var(--text-muted)" }}
                           title={t(`1주 기준입니다: 매수가 \u20a9${tr.entry.toLocaleString()} x 수수료 뺀 ${tr.net_pct}%`,
                                    `one share: \u20a9${tr.entry.toLocaleString()} x ${tr.net_pct}% after the round trip`)}>
-                          {won(wonOf(tr.entry, tr.net_pct))}
+                          {won(wonOf(tr.entry, tr.net_pct) * (tr.qty ?? 1))}
                         </td>
                       )}
                       <td className="text-right px-3 font-bold" style={{ color: col }}>
