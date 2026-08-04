@@ -378,8 +378,8 @@ export default function LiveDeskPage() {
               style={{ borderColor: money ? "#e65100" : "var(--border-default)",
                        background: money ? "rgba(230,81,0,0.10)" : "transparent",
                        color: money ? "#e65100" : "var(--text-secondary)" }}
-              title={t("승률만으로는 돈을 벌었는지 알 수 없습니다 - 건당 손익과 합계를 함께 봅니다",
-                       "a win rate alone cannot say whether it made money - this shows the per-trade result and the running total together")}>
+              title={t("승률만으로는 돈을 벌었는지 알 수 없습니다 - 실제로 번 돈을 원으로 보여줍니다",
+                       "a win rate alone cannot say whether it made money - this shows what was actually made, in won")}>
               {money ? t("\ud83d\udcb0 \uc190\uc775 \uc228\uae30\uae30", "\ud83d\udcb0 hide the money")
                      : t("\ud83d\udcb0 \uc2e4\uc81c \uc190\uc775 \ubcf4\uae30", "\ud83d\udcb0 show the money")}
             </button>
@@ -399,7 +399,6 @@ export default function LiveDeskPage() {
                 <th className="text-right px-2">{t("패", "L")}</th>
                 <th className="text-right px-3">{t("승률", "win%")}</th>
                 {money && <th className="text-right px-3">{t("총 손익", "total")}</th>}
-                {money && <th className="text-right px-3">{t("건당", "per trade")}</th>}
                 <th className="text-right px-3 text-[10px]">{t("자세히", "detail")}</th>
               </tr></thead>
               <tbody>
@@ -452,14 +451,6 @@ export default function LiveDeskPage() {
                         : `${v.net_won < 0 ? "-" : "+"}₩${Math.abs(v.net_won).toLocaleString()}`}
                       </td>
                     )}
-                    {money && (
-                      <td className="text-right px-3 tabular-nums"
-                        style={{ color: v.per_trade > 0 ? "#2e7d32" : v.per_trade < 0 ? BLUE : "inherit" }}
-                        title={t("매매 한 번당 평균, 1주 기준", "the average of one trade, one share")}>
-                        {v.per_trade_won == null ? `${v.per_trade > 0 ? "+" : ""}${v.per_trade}%`
-                          : `${v.per_trade_won < 0 ? "-" : "+"}₩${Math.abs(v.per_trade_won).toLocaleString()}`}
-                      </td>
-                    )}
                     <td className="text-right px-3 text-[10.5px]" style={{ color: "#6a1b9a" }}>
                       {sel === v.id ? t("닫기 ▲", "close ▲") : t("보기 ▼", "open ▼")}
                     </td>
@@ -502,11 +493,6 @@ export default function LiveDeskPage() {
                 title={t("이 규칙이 낸 모든 매매의 합계 (수수료 뺀 뒤)",
                          "every trade this rule made, added up, after fees")}>
                 {t("합계", "total")} {moneyWon === null ? "-" : won(moneyWon)}
-                {money && (
-                  <span className="font-normal ml-1 text-[10.5px]">
-                    ({t("건당", "per trade")} {moneyWonPer === null ? "-" : won(moneyWonPer)})
-                  </span>
-                )}
               </span>
             )}
             {det.thin && (

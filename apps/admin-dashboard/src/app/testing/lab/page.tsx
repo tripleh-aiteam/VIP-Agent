@@ -486,11 +486,15 @@ export default function StrategyLab() {
               <span className="ml-3 font-extrabold" style={{ color: best.win_pct >= 50 ? GREEN : GOLD }}>
                 {t(`승률 ${best.win_pct}%`, `${best.win_pct}% win`)}
               </span>
-              <span className="ml-3 tabular-nums" style={{ color: best.gross > 0 ? RED : BLUE }}>
-                {t("합계", "total")} {best.gross > 0 ? "+" : ""}{best.gross}%
-              </span>
+              {/* money only when he asks for it - this banner was printing a total and a
+                  per-trade with no button pressed (boss 2026-08-04) */}
+              {money && (
+                <span className="ml-3 tabular-nums" style={{ color: best.gross > 0 ? RED : BLUE }}>
+                  {t("합계", "total")} {best.gross > 0 ? "+" : ""}{best.gross}%
+                </span>
+              )}
               <span className="ml-3 text-[10.5px] text-[var(--text-muted)]">
-                {t(`${best.trips}회전 · 건당 ${best.per_trade}%`, `${best.trips} trips · ${best.per_trade}% per trade`)}
+                {t(`${best.trips}회전`, `${best.trips} trips`)}
               </span>
             </div>
           )}
@@ -514,8 +518,8 @@ export default function StrategyLab() {
               style={{ borderColor: money ? "#e65100" : "var(--border-default)",
                        background: money ? "rgba(230,81,0,0.10)" : "transparent",
                        color: money ? "#e65100" : "var(--text-secondary)" }}
-              title={t("승률만으로는 돈을 벌었는지 알 수 없습니다 - 건당 손익과 합계를 함께 봅니다",
-                       "a win rate alone cannot say whether it made money - this shows the per-trade result and the running total together")}>
+              title={t("승률만으로는 돈을 벌었는지 알 수 없습니다 - 실제로 번 돈을 원으로 보여줍니다",
+                       "a win rate alone cannot say whether it made money - this shows what was actually made, in won")}>
               {money ? t("\ud83d\udcb0 \uc190\uc775 \uc228\uae30\uae30", "\ud83d\udcb0 hide the money")
                      : t("\ud83d\udcb0 \uc2e4\uc81c \uc190\uc775 \ubcf4\uae30", "\ud83d\udcb0 show the money")}
             </button>
@@ -549,7 +553,6 @@ export default function StrategyLab() {
                     a 76%%-winning rule look good while it lost -16%% (boss 2026-08-04).
                     Only the per-trade breakdown waits for the button. */}
                 {money && <th className="text-right px-3">{t("총 손익", "total")}</th>}
-                {money && <th className="text-right px-3">{t("건당", "per trade")}</th>}
                 <th className="text-right px-3 text-[10px]">{t("자세히", "detail")}</th>
               </tr></thead>
               <tbody>
@@ -654,14 +657,6 @@ export default function StrategyLab() {
                         : `${v.net_won < 0 ? "-" : "+"}₩${Math.abs(v.net_won).toLocaleString()}`}
                       </td>
                     )}
-                    {money && (
-                      <td className="text-right px-3 tabular-nums"
-                        style={{ color: v.per_trade > 0 ? GREEN : v.per_trade < 0 ? BLUE : "inherit" }}
-                        title={t("매매 한 번당 평균, 1주 기준", "the average of one trade, one share")}>
-                        {v.per_trade_won == null ? `${v.per_trade > 0 ? "+" : ""}${v.per_trade}%`
-                          : `${v.per_trade_won < 0 ? "-" : "+"}₩${Math.abs(v.per_trade_won).toLocaleString()}`}
-                      </td>
-                    )}
                     <td className="text-right px-3 text-[10.5px]" style={{ color: "#6a1b9a" }}>
                       {sel === v.id ? t("닫기 ▲", "close ▲") : t("보기 ▼", "open ▼")}
                     </td>
@@ -713,11 +708,6 @@ export default function StrategyLab() {
                         title={t("이 규칙이 낸 모든 매매의 합계 (수수료 뺀 뒤)",
                                  "every trade this rule made, added up, after fees")}>
                         {t("합계", "total")} {moneyWon === null ? "-" : won(moneyWon)}
-                        {money && (
-                          <span className="font-normal ml-1 text-[10.5px]">
-                            ({t("건당", "per trade")} {moneyWonPer === null ? "-" : won(moneyWonPer)})
-                          </span>
-                        )}
                       </span>
                     )}
                     <span className="text-[10.5px] text-[var(--text-muted)]">
@@ -761,7 +751,7 @@ export default function StrategyLab() {
                       <div className="text-[10px] text-[var(--text-muted)]">{t("기계학습 없이 (같은 장, 같은 규칙)", "without ML (same session, same rule)")}</div>
                       <div className="tabular-nums font-bold">
                         {detail.ml.base.trips}{t("회전", " trips")} · <span style={{ color: GOLD }}>{detail.ml.base.win_pct}%</span>
-                        <span className="text-[10px] text-[var(--text-muted)] ml-1">{t("건당", "per trade")} {detail.ml.base.per_trade}%</span>
+
                       </div>
                     </div>
                     <div className="rounded-lg border px-2 py-1.5" style={{ borderColor: "#1565c0" }}>
@@ -1369,7 +1359,7 @@ export default function StrategyLab() {
           })()}
 
           <p className="mt-2 text-[10.5px] leading-relaxed" style={{ color: GOLD }}>
-            ⚠ {t(`모든 매매는 실제와 같은 비용을 냅니다 — 살 때 최우선 매도호가, 팔 때 최우선 매수호가, 왕복 수수료 ${lab.fee_pct}%. '합계'는 수수료 前, '건당'은 수수료 後입니다. 승률은 승/(승+패)이며 무승부는 제외합니다.`,
+            ⚠ {t(`모든 매매는 실제와 같은 비용을 냅니다 — 살 때 최우선 매도호가, 팔 때 최우선 매수호가, 왕복 수수료 ${lab.fee_pct}%. '총 손익'은 1주씩 매매했을 때 수수료를 뺀 실제 금액입니다. 승률은 승/(승+패)이며 무승부는 제외합니다.`,
                  `every trade pays real costs — the buy takes the best ask, the sell the best bid, plus ${lab.fee_pct}% round-trip fee. "total" is before fees, "per trade" is after. Win% is W/(W+L); flat trades are excluded.`)}
           </p>
           <p className="mt-1 text-[10.5px] text-[var(--text-muted)] leading-relaxed">
