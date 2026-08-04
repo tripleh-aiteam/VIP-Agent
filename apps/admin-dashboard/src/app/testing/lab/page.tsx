@@ -32,6 +32,7 @@ type Variant = {
   vs?: number | null;
   net_won?: number | null; per_trade_won?: number | null;    // an ML row's own plain twin, so sorting cannot hide the comparison
   vs_trips?: number | null;
+  shares_total?: number; capital_used?: number;   // the size behind the total
   trips: number; wins: number; losses: number; flats: number;
   win_pct: number; gross: number; net: number;
   avg_win: number; avg_loss: number; rr: number; per_trade: number;
@@ -220,7 +221,8 @@ export default function StrategyLab() {
   // restarted the won fields are absent, and this is the number the boss asked to see.
   const wonOf = (entry: number, netPct: number) => Math.round(entry * netPct / 100);
   const won = (n: number) => `${n < 0 ? "-" : "+"}\u20a9${Math.abs(n).toLocaleString()}`;
-  const moneyWon = detail?.net_won_total ?? (moneyAll
+  // the SIZED total, so the header agrees with its own rows and the ranking above it
+  const moneyWon = detail?.net_won_sized ?? detail?.net_won_total ?? (moneyAll
     ? moneyRows.reduce((x, r) => x + wonOf(r.entry, r.net_pct), 0) : null);
   const moneyWonPer = detail?.per_trade_won ?? (moneyAll && moneyRows.length
     ? Math.round(moneyRows.reduce((x, r) => x + wonOf(r.entry, r.net_pct), 0) / moneyRows.length)
@@ -655,7 +657,8 @@ export default function StrategyLab() {
                     {money && (
                     <td className="text-right px-3 tabular-nums font-bold"
                         style={{ color: v.net > 0 ? GREEN : v.net < 0 ? BLUE : "inherit" }}
-                        title={t("1주씩 매매했다면 이만큼입니다", "if you traded one share each time")}>
+                        title={t(`${(v.shares_total ?? 0).toLocaleString()}주 · 투입 ₩${(v.capital_used ?? 0).toLocaleString()}`,
+                               `${(v.shares_total ?? 0).toLocaleString()} shares · ₩${(v.capital_used ?? 0).toLocaleString()} committed`)}>
                       {v.net_won == null ? `${v.net > 0 ? "+" : ""}${v.net}%`
                         : `${v.net_won < 0 ? "-" : "+"}₩${Math.abs(v.net_won).toLocaleString()}`}
                       </td>
