@@ -48,7 +48,8 @@ OVERLAP = 250           # how many recent ticks to match on when finding the new
 
 _lock = threading.Lock()
 _mem: dict[str, list[dict]] = {}        # code -> today's ticks, chronological
-_state: dict[str, Any] = {"running": False, "last": {}, "errors": {}, "polls": 0}
+_state: dict[str, Any] = {"running": False, "last": {}, "errors": {}, "polls": 0,
+                          "gaps": {}}          # code -> [(from, to, seconds), ...]
 
 
 def _day() -> str:
@@ -118,6 +119,27 @@ def _append_new(have: list[dict], page: list[dict]) -> list[dict]:
                        have[-1]["ts"], page[0]["ts"])
         return page
     return [x for x in page if x["ts"] > have[-1]["ts"]]
+
+
+def gaps(code: str, min_sec: int = 60) -> list[dict]:
+    """Holes in the stored tape.
+
+    Every backend restart during market hours punches one: the collector stops, Kiwoom
+    remembers only ~40 seconds, and whatever traded in between is gone for good — it
+    cannot be backfilled from anywhere. A spliced tape drawn as one continuous line would
+    quietly imply prices that were never observed, so the holes are recorded and shown
+    (found 2026-08-04: a 419s hole at 09:42-09:49, caused by my own deploy).
+    """
+    tk = load(code)
+    out = []
+    for a_, b_ in zip(tk, tk[1:]):
+        def sec(x):
+            t = x["ts"]
+            return int(t[8:10]) * 3600 + int(t[10:12]) * 60 + int(t[12:14])
+        d = sec(b_) - sec(a_)
+        if d >= min_sec:
+            out.append({"from": a_["t"], "to": b_["t"], "seconds": d})
+    return out
 
 
 def load(code: str, day: str | None = None) -> list[dict]:
@@ -200,9 +222,11 @@ def status() -> dict[str, Any]:
            "poll_sec": POLL_SEC, "stocks": []}
     for code, name in WATCH:
         t = load(code)
+        gp = gaps(code)
         out["stocks"].append({
             "code": code, "name": name, "ticks": len(t),
             "first": t[0]["t"] if t else None, "last": t[-1]["t"] if t else None,
+            "gaps": gp, "gap_sec": sum(g["seconds"] for g in gp),
             "file": str(_path(code)),
         })
     return out

@@ -643,6 +643,25 @@ def live_tape(code: str = Query("005930"), period: int = Query(0),
             "bars": cs[-max(1, bars):]}
 
 
+@router.get("/live/rules")
+def live_rules(tick: int = Query(5), period: int = Query(0)):
+    """The same rules the Strategy Lab runs, over the REAL Kiwoom tape. No ML here — the
+    boss asked for the plain rules on real data first, which is the right order."""
+    from services.kiwoom_rules import rank
+    return rank(tick=tick, period=max(0, min(int(period or 0), 600)))
+
+
+@router.get("/live/rules/trades")
+def live_rule_trades(variant: str = Query(...), tick: int = Query(5),
+                     period: int = Query(0), code: str = Query(""),
+                     bars: int = Query(2500), limit: int = Query(300),
+                     around: int = Query(-1)):
+    """One rule's real trades: what it bought, at what, when, and why."""
+    from services.kiwoom_rules import trades
+    return trades(variant, tick=tick, period=max(0, min(int(period or 0), 600)),
+                  code=code, bars=bars, limit=limit, around=around)
+
+
 @router.get("/live/book")
 def live_book(code: str = Query("005930")):
     """The real 10-level order book — who is waiting to buy and to sell, right now."""

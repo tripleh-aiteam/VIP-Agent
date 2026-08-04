@@ -105,7 +105,7 @@ def _outcome(cl, i, entry, tick, v):
 def run_variant(closes: list[float], tick: int, v: dict, seed: int,
                 evidence: bool = False, with_open: bool = False,
                 vols: list[float] | None = None, ml_key: tuple | None = None,
-                ml_bundle: dict | None = None):
+                ml_bundle: dict | None = None, fill_fn=None):
     """One rule over one stock's closes. Fills cross the spread exactly as the Proof Lab
     does — a BUY pays the best ask, a SELL takes the best bid — so these numbers are
     directly comparable with the trade history on the proof page.
@@ -121,6 +121,12 @@ def run_variant(closes: list[float], tick: int, v: dict, seed: int,
     out: list[dict] = []
     pos = None
     up = dn = 0
+    # HOW A FILL IS PRICED, injected. The artificial market has a synthetic order book;
+    # the real one has a real spread that was never recorded historically. Keeping the
+    # RULE in one place and swapping only the fill model means the two markets can never
+    # drift into two different definitions of "3 consecutive rises" — which is exactly the
+    # bug that cost a day when this lab briefly had its own copy of the engine.
+    book = fill_fn or (lambda seed_i, px, side, tk: _book(seed_i, px, side, tk))
 
     # The model is trained on history that ENDS where this session begins (see
     # _ml_for). Nothing is fitted in here, so there is no split to honour and no way for
@@ -156,7 +162,7 @@ def run_variant(closes: list[float], tick: int, v: dict, seed: int,
                                "auc": bundle["auc"], "n_train": bundle["n_train"]}
                 else:
                     ml_meta = None
-                bk = _book(seed * 1_000 + i, c, "BUY", tick)
+                bk = book(seed * 1_000 + i, c, "BUY", tick)
                 pos = {"i": i, "entry": bk["fill"], "bk": bk, "close": c,
                        "ml": ml_meta,
                        "seq": closes[max(0, i - v["entry"]): i + 1]}
@@ -187,7 +193,7 @@ def run_variant(closes: list[float], tick: int, v: dict, seed: int,
                 hit = ch >= v["a"] or ch_bid <= -v["b"]
                 why = (f"+{v['a']}% 익절" if ch >= v["a"] else f"-{v['b']}% 손절선") if hit else ""
             if hit:
-                bk = _book(seed * 2_000 + i, c, "SELL", tick)
+                bk = book(seed * 2_000 + i, c, "SELL", tick)
                 gross = (bk["fill"] / pos["entry"] - 1) * 100
                 tr = {"buy_i": pos["i"], "sell_i": i,
                       "entry": pos["entry"], "exit": bk["fill"],
