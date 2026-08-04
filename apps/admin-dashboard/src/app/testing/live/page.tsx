@@ -518,6 +518,49 @@ export default function LiveDeskPage() {
             )}
           </div>
 
+          {/* THE CHART, ABOVE THE TRADE TABLE. It used to sit below everything, so
+              clicking a row scrolled the page down and away from the very thing the click
+              was supposed to show. The Strategy Lab puts the chart directly above its
+              trade history and the boss asked for the same here (2026-08-04). */}
+          <div ref={chartRef} className="mx-4 my-2 rounded-xl border p-2" style={{ borderColor: "var(--border-default)", background: "var(--bg-elevated)" }}>
+            <div className="px-2 pt-1 pb-2 text-[11.5px]" style={{ color: "#6a1b9a" }}>
+              <b>📈 {(sel && det?.chart ? det.chart.name : tape?.name) ?? ""} — {tape?.clock ?? ""} {t("차트", "chart")}</b>
+              {sel && det?.chart && det.chart.code !== code && (
+                <span className="ml-2 text-[10px] font-bold px-1.5 py-0.5 rounded"
+                  style={{ background: "rgba(230,81,0,0.14)", color: GOLD }}>
+                  {t(`선택한 매매의 종목입니다 (${det.chart.name})`,
+                     `following the trade you clicked (${det.chart.name})`)}
+                </span>
+              )}
+              {sel && det?.chart?.focus && (
+                <span className="ml-2 text-[10px]" style={{ color: GOLD }}>
+                  {t("◆ 금색 표시가 클릭한 매매입니다", "◆ the gold mark is the trade you clicked")}
+                </span>
+              )}
+              <span className="text-[10px] text-[var(--text-muted)] ml-2">
+                {bars.length
+                  ? t(`${bars.length}봉 · ${tape?.first}~${tape?.last} 사이 체결 ${fmt(tape?.ticks)}건으로 만들었습니다`,
+                      `${bars.length} bars, built from ${fmt(tape?.ticks)} executions between ${tape?.first} and ${tape?.last}`)
+                  : t("아직 봉을 만들 만큼 체결이 모이지 않았습니다", "not enough executions collected to form a bar yet")}
+              </span>
+            </div>
+            {/* When a rule is open its OWN chart wins, whatever stock it is for. This used to
+                require det.chart.code === code, so clicking an SK하이닉스 trade while the
+                stock button said 삼성전자 threw the rule's chart away and drew the bare tape
+                with no arrows at all - which is why clicking a completed trade looked like it
+                did nothing (boss 2026-08-04). The header below names the company actually
+                drawn, so the two can never disagree on screen. */}
+            {bars.length ? <LiveChart bars={sel && det?.chart ? det.chart.candles : bars}
+                                      marks={sel && det?.chart ? det.chart.marks : undefined}
+                                      focus={sel && det?.chart ? (det.chart.focus?.s ?? null) : null} /> : (
+              <div className="px-4 py-10 text-center text-[12px] text-[var(--text-muted)]">
+                {st?.market_open
+                  ? t("수집 중입니다 — 잠시 뒤 첫 봉이 그려집니다.", "collecting - the first bars appear shortly.")
+                  : t("장이 열려야 새 체결이 들어옵니다 (09:00~15:30).", "new executions only arrive while the market is open (09:00-15:30).")}
+              </div>
+            )}
+          </div>
+
           {/* holdings */}
           <div className="px-4 py-2 border-b text-[11.5px]" style={{ borderColor: "var(--border-default)", background: "rgba(230,81,0,0.05)" }}>
             <b style={{ color: GOLD }}>📌 {t("보유 중", "holding now")}</b>
@@ -843,46 +886,6 @@ export default function LiveDeskPage() {
           </span>
         </div>
       )}
-
-      {/* chart */}
-      <div ref={chartRef} className="mt-2 rounded-xl border p-2" style={{ borderColor: "var(--border-default)", background: "var(--bg-elevated)" }}>
-        <div className="px-2 pt-1 pb-2 text-[11.5px]" style={{ color: "#6a1b9a" }}>
-          <b>📈 {(sel && det?.chart ? det.chart.name : tape?.name) ?? ""} — {tape?.clock ?? ""} {t("차트", "chart")}</b>
-          {sel && det?.chart && det.chart.code !== code && (
-            <span className="ml-2 text-[10px] font-bold px-1.5 py-0.5 rounded"
-              style={{ background: "rgba(230,81,0,0.14)", color: GOLD }}>
-              {t(`선택한 매매의 종목입니다 (${det.chart.name})`,
-                 `following the trade you clicked (${det.chart.name})`)}
-            </span>
-          )}
-          {sel && det?.chart?.focus && (
-            <span className="ml-2 text-[10px]" style={{ color: GOLD }}>
-              {t("◆ 금색 표시가 클릭한 매매입니다", "◆ the gold mark is the trade you clicked")}
-            </span>
-          )}
-          <span className="text-[10px] text-[var(--text-muted)] ml-2">
-            {bars.length
-              ? t(`${bars.length}봉 · ${tape?.first}~${tape?.last} 사이 체결 ${fmt(tape?.ticks)}건으로 만들었습니다`,
-                  `${bars.length} bars, built from ${fmt(tape?.ticks)} executions between ${tape?.first} and ${tape?.last}`)
-              : t("아직 봉을 만들 만큼 체결이 모이지 않았습니다", "not enough executions collected to form a bar yet")}
-          </span>
-        </div>
-        {/* When a rule is open its OWN chart wins, whatever stock it is for. This used to
-            require det.chart.code === code, so clicking an SK하이닉스 trade while the
-            stock button said 삼성전자 threw the rule's chart away and drew the bare tape
-            with no arrows at all - which is why clicking a completed trade looked like it
-            did nothing (boss 2026-08-04). The header below names the company actually
-            drawn, so the two can never disagree on screen. */}
-        {bars.length ? <LiveChart bars={sel && det?.chart ? det.chart.candles : bars}
-                                  marks={sel && det?.chart ? det.chart.marks : undefined}
-                                  focus={sel && det?.chart ? (det.chart.focus?.s ?? null) : null} /> : (
-          <div className="px-4 py-10 text-center text-[12px] text-[var(--text-muted)]">
-            {st?.market_open
-              ? t("수집 중입니다 — 잠시 뒤 첫 봉이 그려집니다.", "collecting - the first bars appear shortly.")
-              : t("장이 열려야 새 체결이 들어옵니다 (09:00~15:30).", "new executions only arrive while the market is open (09:00-15:30).")}
-          </div>
-        )}
-      </div>
 
       <div className="mt-3 grid gap-3" style={{ gridTemplateColumns: "1fr 1fr" }}>
         {/* 호가 — who is waiting to buy and to sell */}
