@@ -607,6 +607,70 @@ def candle3_ab_reset(db: Session = Depends(get_db)):
     return ab_reset(db)
 
 
+# ── 📡 LIVE KIWOOM DESK ────────────────────────────────────────────────────────────
+# The same charts and tables as the artificial labs, on REAL executions. Separate from
+# /proof/* on purpose: the artificial market must keep trading untouched (boss
+# 2026-08-04), and these two must never share a code path that could couple them.
+def _tape_ready():
+    """Start the collector on first use. Kiwoom keeps only ~40 SECONDS of tick history,
+    so the tape has to be accumulated continuously or it does not exist."""
+    from services import kiwoom_tape
+    kiwoom_tape.start()
+    return kiwoom_tape
+
+
+@router.get("/live/status")
+def live_status():
+    """Is the collector running, and how much tape has it gathered per stock."""
+    return _tape_ready().status()
+
+
+@router.get("/live/tape")
+def live_tape(code: str = Query("005930"), period: int = Query(0),
+              tick: int = Query(5), bars: int = Query(400)):
+    """Real executions aggregated into bars — N seconds (period) or N executions (tick),
+    the same two clocks the artificial labs use, so the charts are comparable."""
+    kt = _tape_ready()
+    ticks = kt.load(code)
+    if not ticks:
+        return {"ok": True, "code": code, "bars": [], "ticks": 0,
+                "note": "no tape yet - the collector needs the market open"}
+    cs = kt.bars_time(ticks, period) if period else kt.bars_ticks(ticks, max(1, tick))
+    name = next((n for c, n in kt.WATCH if c == code), code)
+    return {"ok": True, "code": code, "name": name,
+            "clock": f"{period}초" if period else f"{tick}틱",
+            "ticks": len(ticks), "first": ticks[0]["t"], "last": ticks[-1]["t"],
+            "bars": cs[-max(1, bars):]}
+
+
+@router.get("/live/book")
+def live_book(code: str = Query("005930")):
+    """The real 10-level order book — who is waiting to buy and to sell, right now."""
+    from services.kiwoom_rest import order_book, current_price
+    ob = order_book(code, ttl=0.8) or {}
+    lv = ob.get("levels") or []
+    asks = sorted([[l["price"], l["qty"]] for l in lv if l["side"] == "ask"])[:10]
+    bids = sorted([[l["price"], l["qty"]] for l in lv if l["side"] == "bid"], reverse=True)[:10]
+    cp = current_price(code) or {}
+    return {"ok": bool(asks or bids), "code": code, "asks": asks, "bids": bids,
+            "best_ask": ob.get("best_ask"), "best_bid": ob.get("best_bid"),
+            "last": cp.get("price"), "prev_close": cp.get("prev_close"),
+            "change_pct": cp.get("change_pct"), "name": cp.get("name")}
+
+
+@router.get("/live/execs")
+def live_execs(code: str = Query("005930"), n: int = Query(120)):
+    """The real execution tape, newest first, from what the collector has stored — so the
+    rows here are exactly the ticks the bars above are built from."""
+    kt = _tape_ready()
+    ticks = kt.load(code)
+    from services.kiwoom_rest import current_price
+    cp = current_price(code) or {}
+    rows = ticks[-max(1, n):][::-1]
+    return {"ok": True, "code": code, "prev_close": cp.get("prev_close"),
+            "rows": rows, "total": len(ticks)}
+
+
 @router.get("/proof/run")
 def proof_run(source: str = Query("synthetic"), seed: int = Query(7),
               code: str = Query("005930"), period: int = Query(60),

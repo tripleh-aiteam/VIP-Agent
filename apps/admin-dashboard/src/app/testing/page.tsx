@@ -157,7 +157,27 @@ export default function TestingIndex() {
           </p>
           <div className="mt-4 flex flex-wrap gap-2">
             <Link prefetch={true} href="/testing/lab" className="text-[13.5px] font-extrabold px-4 py-2 rounded-xl text-white" style={{ background: "#6a1b9a" }}>
-              {t("실험실 열기 (12개 규칙 비교)", "Open the lab (12 rules compared)")}
+              {t("실험실 열기 (규칙 비교)", "Open the lab (rules compared)")}
+            </Link>
+          </div>
+        </div>
+        )}
+
+        {/* ---- 📡 Live Kiwoom Desk — boss 2026-08-04: the same charts and tables, on the
+             REAL market. Separate page from the two artificial labs on purpose: those must
+             keep trading undisturbed, and pages that share no code cannot break each other. ---- */}
+        {SHOW_ALGO_23 && (
+        <div className="rounded-2xl border-2 p-5" style={{ borderColor: "#00838f", background: "rgba(0,131,143,0.04)" }}>
+          <div className="text-[18px] font-extrabold" style={{ color: "#00838f" }}>
+            📡 {t("실시간 키움 데스크 — 진짜 시장 (NEW)", "Live Kiwoom Desk — the real market (NEW)")}
+          </div>
+          <p className="mt-2 text-[13px] leading-relaxed text-[var(--text-secondary)]">
+            {t("인공 데이터로 만든 것과 똑같은 차트(1분·40·30·15·6·3초·N틱)와 표(실시간 호가, 실시간 체결)를 진짜 키움 체결 위에 올렸습니다. 키움은 최근 체결 900건(삼성전자 기준 40초치)만 돌려주고 그보다 과거는 요청조차 되지 않으므로, 서버가 3초마다 모아서 쌓습니다 — 차트는 장 시작엔 짧고 하루가 갈수록 깊어집니다. 아직 매매는 하지 않습니다: 먼저 진짜 데이터가 인공 데이터와 같은 모양인지 눈으로 확인하는 단계입니다.",
+               "the same charts (1-min, 40/30/15/6/3-sec, N-tick) and tables (live order book, live executions) as the artificial labs, on real Kiwoom executions. Kiwoom returns only the last 900 executions — forty seconds for 삼성전자 — and older ticks cannot be requested at all, so the server collects every 3s and accumulates. The chart starts short and deepens through the day. It does not trade yet: this step is for checking by eye that the real data takes the same shape as the artificial.")}
+          </p>
+          <div className="mt-4 flex flex-wrap gap-2">
+            <Link prefetch={true} href="/testing/live" className="text-[13.5px] font-extrabold px-4 py-2 rounded-xl text-white" style={{ background: "#00838f" }}>
+              {t("실시간 데스크 열기", "Open the live desk")}
             </Link>
           </div>
         </div>
