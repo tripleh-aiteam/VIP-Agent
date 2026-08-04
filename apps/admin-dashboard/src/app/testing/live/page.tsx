@@ -57,6 +57,14 @@ type RDetail = { ok: boolean; id: string; ko: string; en: string; clock: string;
                  chart: { code: string; name: string; off: number; candles: Bar[];
                           focus: { b: number; s: number } | null;
                           marks: { b: number; s: number; g: number; net: number }[] } | null };
+type DfRow = { hhmm: string; key: string; date: string; open: number; high: number;
+               low: number; close: number; diff: number; dir: number; deal_count: number;
+               vol: number; forming: boolean };
+type Df = { ok: boolean; code: string; name: string; rows: DfRow[]; total_minutes: number;
+            first?: string; last?: string; empty?: string };
+type DfMin = DfRow & { ok: boolean; name: string;
+                       seconds: { t: string; deals: { px: number; qty: number }[] }[];
+                       traded: number[] };
 type Status = { running: boolean; market_open: boolean; polls: number;
                 errors: Record<string, string>;
                 stocks: { code: string; name: string; ticks: number;
@@ -196,7 +204,16 @@ export default function LiveDeskPage() {
   const [pick, setPick] = useState<number | null>(null);
   const [money, setMoney] = useState(false);      // off until he asks - see the button
   const chartRef = useRef<HTMLDivElement | null>(null);
+  // 🕰️ Data File - the minute record the rules read, built from the REAL executions.
+  // The artificial lab has had this since 2026-08-03; the boss asked for the same thing
+  // here, because a fill you cannot look up is a fill you cannot check.
+  const [df, setDf] = useState<Df | null>(null);
+  const [dfMins, setDfMins] = useState<5 | 10 | 15>(10);
+  const [dfOpen, setDfOpen] = useState<string | null>(null);
+  const [dfMin, setDfMin] = useState<DfMin | null>(null);
   const detRef = useRef<RDetail | null>(null);
+  const loadDfRef = useRef<((c: string, m: number) => void) | null>(null);
+  const dfMinsRef = useRef<number>(10);
 
   const codeRef = useRef(code); codeRef.current = code;
   const perRef = useRef(period); perRef.current = period;
@@ -222,6 +239,23 @@ export default function LiveDeskPage() {
       .catch(() => { detRef.current = null; setDet(null); });
   }, []);
 
+  const loadDf = useCallback((c: string, mins: number) => {
+    if (!c) return;
+    api<Df>(`/paper-desk/live/datafile?code=${encodeURIComponent(c)}&mins=${mins}`)
+      .then((d) => setDf(d?.ok ? d : null)).catch(() => setDf(null));
+  }, []);
+
+  const openMinute = useCallback((c: string, hhmm: string) => {
+    const key = hhmm.slice(0, 5);
+    setDfOpen((cur) => (cur === key ? null : key));
+    setDfMin(null);
+    api<DfMin>(`/paper-desk/live/datafile?code=${encodeURIComponent(c)}&hhmm=${encodeURIComponent(key)}`)
+      .then((d) => setDfMin(d?.ok ? d : null)).catch(() => setDfMin(null));
+  }, []);
+
+  useEffect(() => { loadDfRef.current = loadDf; }, [loadDf]);
+  useEffect(() => { dfMinsRef.current = dfMins; }, [dfMins]);
+
   const pull = useCallback(() => {
     const c = codeRef.current;
     const q = perRef.current ? `period=${perRef.current}` : `tick=${tickRef.current}`;
@@ -229,6 +263,8 @@ export default function LiveDeskPage() {
     api<Book>(`/paper-desk/live/book?code=${c}`).then(setBook).catch(() => {});
     api<Execs>(`/paper-desk/live/execs?code=${c}&n=120`).then(setExecs).catch(() => {});
     api<Rank>(`/paper-desk/live/rules?${q}`).then(setRank).catch(() => {});
+    // follows the CHARTED company, so the minute rows always describe the bars above them
+    loadDfRef.current?.(detRef.current?.chart?.code || c, dfMinsRef.current);
   }, []);
 
   useEffect(() => {
@@ -362,7 +398,7 @@ export default function LiveDeskPage() {
                 <th className="text-right px-2">{t("승", "W")}</th>
                 <th className="text-right px-2">{t("패", "L")}</th>
                 <th className="text-right px-3">{t("승률", "win%")}</th>
-                <th className="text-right px-3">{t("총 손익", "total")}</th>
+                {money && <th className="text-right px-3">{t("총 손익", "total")}</th>}
                 {money && <th className="text-right px-3">{t("건당", "per trade")}</th>}
                 <th className="text-right px-3 text-[10px]">{t("자세히", "detail")}</th>
               </tr></thead>
@@ -408,12 +444,14 @@ export default function LiveDeskPage() {
                         </span>
                       )}
                     </td>
+                    {money && (
                     <td className="text-right px-3 tabular-nums font-bold"
-                      style={{ color: v.net > 0 ? "#2e7d32" : v.net < 0 ? BLUE : "inherit" }}
-                      title={t("1주씩 매매했다면 이만큼입니다", "if you traded one share each time")}>
+                        style={{ color: v.net > 0 ? "#2e7d32" : v.net < 0 ? BLUE : "inherit" }}
+                        title={t("1주씩 매매했다면 이만큼입니다", "if you traded one share each time")}>
                       {v.net_won == null ? `${v.net > 0 ? "+" : ""}${v.net}%`
                         : `${v.net_won < 0 ? "-" : "+"}₩${Math.abs(v.net_won).toLocaleString()}`}
-                    </td>
+                      </td>
+                    )}
                     {money && (
                       <td className="text-right px-3 tabular-nums"
                         style={{ color: v.per_trade > 0 ? "#2e7d32" : v.per_trade < 0 ? BLUE : "inherit" }}
@@ -457,7 +495,7 @@ export default function LiveDeskPage() {
                   absent and this header would read "total 0%%" - a confidently wrong
                   number, which is the one thing this panel must never print. Exact
                   whenever the list is complete, and hidden entirely when it is not. */}
-{moneyWon !== null && (
+{money && moneyWon !== null && (
               <span className="text-[12px] tabular-nums font-extrabold px-2 py-0.5 rounded"
                 style={{ background: moneyWon >= 0 ? "rgba(46,125,50,0.12)" : "rgba(21,101,192,0.12)",
                          color: moneyWon >= 0 ? "#2e7d32" : BLUE }}
@@ -557,6 +595,102 @@ export default function LiveDeskPage() {
               </tbody>
             </table>
           </div>
+
+          {/* (5) 🕰️ THE DATA FILE - the minute record every rule reads. A trade is only
+              believable if the price it claims can be found in the minute it claims, at a
+              price that really printed. The artificial lab has had this; the real desk had
+              nothing to check a fill against (boss 2026-08-04). */}
+          {df && (
+            <div className="px-4 py-3 border-t" style={{ borderColor: GOLD, background: "rgba(230,81,0,0.03)" }}>
+              <div className="flex items-center gap-2 flex-wrap">
+                <b className="text-[12.5px]" style={{ color: GOLD }}>🕰️ {t("데이터 파일", "Data File")} — {df.name}</b>
+                <span className="text-[10.5px] text-[var(--text-muted)]">
+                  {t(`진짜 체결로 만든 1분 기록 ${df.total_minutes}분 · 한 줄을 누르면 그 1분의 체결이 전부 나옵니다`,
+                     `${df.total_minutes} minutes of real executions · click a row for every deal in that minute`)}
+                </span>
+                {([5, 10, 15] as const).map((m) => (
+                  <button key={m} onClick={() => { setDfMins(m); loadDf(df.code, m); }}
+                    className="text-[10px] font-bold px-1.5 py-0.5 rounded border"
+                    style={dfMins === m ? { borderColor: GOLD, color: GOLD, background: "rgba(230,81,0,0.10)" }
+                                        : { borderColor: "var(--border-default)", color: "var(--text-secondary)" }}>
+                    {t(`${m}분`, `${m} min`)}
+                  </button>
+                ))}
+              </div>
+              <div className="mt-2 rounded-lg border overflow-y-auto" style={{ borderColor: "var(--border-default)", maxHeight: 320 }}>
+                <table className="w-full text-[11.5px] tabular-nums">
+                  <thead><tr className="text-[10px] text-[var(--text-muted)] sticky top-0" style={{ background: "var(--bg-elevated)" }}>
+                    <th className="text-left px-3 py-1">{t("분", "minute")}</th>
+                    <th className="text-right px-2">{t("시가", "open")}</th>
+                    <th className="text-right px-2">{t("종가", "close")}</th>
+                    <th className="text-right px-2">{t("차이", "difference")}</th>
+                    <th className="text-right px-2">{t("체결 수", "deals")}</th>
+                    <th className="text-center px-3">{t("판정", "verdict")}</th>
+                  </tr></thead>
+                  <tbody>
+                    {df.rows.map((r) => {
+                      const col = r.dir > 0 ? RED : r.dir < 0 ? BLUE : "var(--text-muted)";
+                      const on = dfOpen === r.hhmm.slice(0, 5);
+                      return (
+                        <React.Fragment key={r.key}>
+                          <tr onClick={() => openMinute(df.code, r.hhmm)}
+                            className="border-t border-[var(--border-default)]/30 cursor-pointer hover:bg-[var(--bg-elevated)]"
+                            style={{ background: on ? "rgba(230,81,0,0.08)" : "transparent" }}>
+                            {/* the minute still running is shown - a trade that just
+                                executed must be checkable at once - but never as settled */}
+                            <td className="px-3 py-[2px] font-bold text-[var(--text-primary)]">
+                              {r.forming ? "⏳ " : on ? "▾ " : "▸ "}{r.hhmm}
+                              {r.forming && <span className="ml-1 text-[9.5px] font-normal" style={{ color: GOLD }}>{t("진행 중", "running")}</span>}
+                            </td>
+                            <td className="text-right px-2">₩{r.open.toLocaleString()}</td>
+                            <td className="text-right px-2 font-extrabold" style={{ color: col }}>₩{r.close.toLocaleString()}</td>
+                            <td className="text-right px-2 font-bold" style={{ color: col }}>
+                              {r.diff === 0 ? "0" : `${r.diff > 0 ? "+" : "\u2212"}\u20a9${Math.abs(r.diff).toLocaleString()}`}
+                            </td>
+                            <td className="text-right px-2 text-[var(--text-muted)]">{r.deal_count.toLocaleString()}</td>
+                            <td className="text-center px-3 font-bold" style={{ color: col }}>
+                              {r.dir > 0 ? t("🔴▲ 상승", "🔴▲ rise") : r.dir < 0 ? t("🔵▼ 하락", "🔵▼ fall") : t("⚪ 보합", "⚪ flat")}
+                            </td>
+                          </tr>
+                          {on && (
+                            <tr>
+                              <td colSpan={6} className="px-5 py-2" style={{ background: "rgba(128,128,128,0.05)" }}>
+                                {dfMin && dfMin.key === r.key ? (
+                                  <>
+                                    <div className="text-[10px] font-bold text-[var(--text-muted)] mb-1">
+                                      🎬 {t(`${dfMin.hhmm} 의 체결 전부 — ${dfMin.deal_count}건 · 한 초에 여러 건이 찍힙니다`,
+                                             `every execution in ${dfMin.hhmm} — ${dfMin.deal_count} of them · several print within one second`)}
+                                    </div>
+                                    <div className="overflow-y-auto" style={{ maxHeight: 190 }}>
+                                      {dfMin.seconds.map((sec) => (
+                                        <div key={sec.t} className="flex gap-2 items-start text-[10.5px] py-[1px]">
+                                          <span className="text-[var(--text-muted)] w-16 shrink-0">{sec.t.slice(3)}</span>
+                                          <span className="flex flex-wrap gap-1">
+                                            {sec.deals.map((x, j) => (
+                                              <span key={j} className="px-1 rounded" style={{ background: "rgba(128,128,128,0.10)" }}>
+                                                ₩{x.px.toLocaleString()}
+                                                <span className="text-[9px] text-[var(--text-muted)] ml-[2px]">×{x.qty.toLocaleString()}</span>
+                                              </span>
+                                            ))}
+                                          </span>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  </>
+                                ) : (
+                                  <span className="text-[10.5px] text-[var(--text-muted)]">{t("불러오는 중…", "loading…")}</span>
+                                )}
+                              </td>
+                            </tr>
+                          )}
+                        </React.Fragment>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
 
           {/* the evidence for one trade */}
           {pick !== null && det.trades[pick] && (() => {

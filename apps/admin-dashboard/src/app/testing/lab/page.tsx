@@ -548,7 +548,7 @@ export default function StrategyLab() {
                 {/* the total is always on: a win rate with no money beside it is what made
                     a 76%%-winning rule look good while it lost -16%% (boss 2026-08-04).
                     Only the per-trade breakdown waits for the button. */}
-                <th className="text-right px-3">{t("총 손익", "total")}</th>
+                {money && <th className="text-right px-3">{t("총 손익", "total")}</th>}
                 {money && <th className="text-right px-3">{t("건당", "per trade")}</th>}
                 <th className="text-right px-3 text-[10px]">{t("자세히", "detail")}</th>
               </tr></thead>
@@ -646,12 +646,14 @@ export default function StrategyLab() {
                         </>
                       );
                     })()}
+                    {money && (
                     <td className="text-right px-3 tabular-nums font-bold"
-                      style={{ color: v.net > 0 ? GREEN : v.net < 0 ? BLUE : "inherit" }}
-                      title={t("1주씩 매매했다면 이만큼입니다", "if you traded one share each time")}>
+                        style={{ color: v.net > 0 ? GREEN : v.net < 0 ? BLUE : "inherit" }}
+                        title={t("1주씩 매매했다면 이만큼입니다", "if you traded one share each time")}>
                       {v.net_won == null ? `${v.net > 0 ? "+" : ""}${v.net}%`
                         : `${v.net_won < 0 ? "-" : "+"}₩${Math.abs(v.net_won).toLocaleString()}`}
-                    </td>
+                      </td>
+                    )}
                     {money && (
                       <td className="text-right px-3 tabular-nums"
                         style={{ color: v.per_trade > 0 ? GREEN : v.per_trade < 0 ? BLUE : "inherit" }}
@@ -704,7 +706,7 @@ export default function StrategyLab() {
                   absent and this header would read "total 0%%" - a confidently wrong
                   number, which is the one thing this panel must never print. Exact
                   whenever the list is complete, and hidden entirely when it is not. */}
-{moneyWon !== null && (
+{money && moneyWon !== null && (
                       <span className="text-[12px] tabular-nums font-extrabold px-2 py-0.5 rounded"
                         style={{ background: moneyWon >= 0 ? "rgba(46,125,50,0.12)" : "rgba(21,101,192,0.12)",
                                  color: moneyWon >= 0 ? GREEN : BLUE }}

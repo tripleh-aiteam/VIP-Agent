@@ -280,3 +280,90 @@ def bars_time(ticks: list[dict], seconds: int) -> list[dict]:
             cur, cur_key = [], k
         cur.append(x)
     return out                      # the bar still forming is deliberately not emitted
+
+
+# ── the Data File: the minute-by-minute record of what REALLY traded ────────────────
+def data_file(code: str, mins: int = 12, frm: str = "", to: str = "",
+              hhmm: str = "") -> dict[str, Any]:
+    """🕰️ The Data File for one real stock — the same reconciliation surface the
+    artificial Strategy Lab has, built from actual Kiwoom executions.
+
+    The boss reconciles a trade against this: a fill at 10:32 has to be findable in
+    10:32, at a price that really printed (2026-08-04, asking for the Kiwoom side to
+    have what the artificial side has).
+
+    Minutes are built with the SAME rule as `bars_time(ticks, 60)` — each opens at the
+    previous close — so the Data File and the 1분 chart cannot disagree about a minute.
+    The minute STILL RUNNING is included and flagged `forming`, because a trade that just
+    executed must be reconcilable immediately; on the artificial side its absence looked
+    exactly like a wrong price.
+
+    hhmm="10:32" returns EVERY execution in that minute grouped by second, not one price
+    per second. That distinction is what makes the reconciliation work at all: a tick bar
+    closes on a DEAL, and one second holds several.
+    """
+    ticks = load(code)
+    name = next((n for c, n in WATCH if c == code), code)
+    if not ticks:
+        return {"ok": True, "code": code, "name": name, "rows": [], "total_minutes": 0,
+                "empty": "no executions collected yet"}
+
+    def minute_of(x):
+        return x["ts"][8:12]                       # HHMM
+
+    # group, preserving order
+    order: list[str] = []
+    by: dict[str, list[dict]] = {}
+    for x in ticks:
+        k = minute_of(x)
+        if k not in by:
+            by[k] = []
+            order.append(k)
+        by[k].append(x)
+
+    last_key = order[-1]
+    rows, prev_close = [], None
+    for k in order:
+        grp = by[k]
+        pxs = [y["px"] for y in grp]
+        close = pxs[-1]
+        op = prev_close if prev_close is not None else pxs[0]
+        rows.append({
+            "hhmm": f"{k[:2]}:{k[2:]}", "key": k,
+            "date": f"{grp[0]['ts'][4:6]}-{grp[0]['ts'][6:8]}",
+            "open": op, "high": max(max(pxs), op), "low": min(min(pxs), op), "close": close,
+            "diff": round(close - op, 2),
+            "dir": 1 if close > op else (-1 if close < op else 0),
+            "deal_count": len(grp), "vol": sum(y["qty"] for y in grp),
+            # the running minute is not finished; say so rather than let it read as closed
+            "forming": k == last_key,
+        })
+        prev_close = close
+
+    # ---- drilling into ONE minute: every deal in it, grouped by second --------------
+    if hhmm:
+        want = hhmm.replace(":", "")[:4]
+        row = next((r for r in rows if r["key"] == want), None)
+        if row is None:
+            return {"ok": False, "code": code, "name": name,
+                    "error": f"{hhmm} is not in the collected tape"}
+        secs: list[dict] = []
+        for x in by[want]:
+            t = x["t"]
+            if not secs or secs[-1]["t"] != t:
+                secs.append({"t": t, "deals": []})
+            secs[-1]["deals"].append({"px": x["px"], "qty": x["qty"]})
+        return {"ok": True, "code": code, "name": name, **row,
+                "seconds": secs, "traded": sorted({x["px"] for x in by[want]})}
+
+    # ---- the list, newest last, windowed the same way the lab's is -----------------
+    sel = rows
+    if frm or to:
+        f = (frm or "00:00").replace(":", "")[:4]
+        t2 = (to or "23:59").replace(":", "")[:4]
+        sel = [r for r in rows if f <= r["key"] <= t2]
+    elif mins:
+        sel = rows[-mins:]
+    return {"ok": True, "code": code, "name": name, "rows": sel,
+            "total_minutes": len(rows),
+            "first": rows[0]["hhmm"], "last": rows[-1]["hhmm"]}

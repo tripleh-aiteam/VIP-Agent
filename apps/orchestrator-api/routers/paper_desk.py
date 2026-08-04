@@ -662,6 +662,18 @@ def live_rule_trades(variant: str = Query(...), tick: int = Query(5),
                   code=code, bars=bars, limit=limit, around=around)
 
 
+@router.get("/live/datafile")
+def live_datafile(code: str = Query("005930"), mins: int = Query(12),
+                  frm: str = Query(""), to: str = Query(""), hhmm: str = Query("")):
+    """The minute-by-minute record of what REALLY traded, so a fill can be reconciled
+    against it — the same surface the artificial Strategy Lab has (boss 2026-08-04:
+    "Data file also all row data like we did in the Strategy lab which is missing in the
+    Kiwoom side"). hhmm="10:32" returns every execution in that minute."""
+    from services.kiwoom_tape import data_file
+    return data_file(code, mins=max(1, min(int(mins or 12), 400)),
+                     frm=frm, to=to, hhmm=hhmm)
+
+
 @router.get("/live/book")
 def live_book(code: str = Query("005930")):
     """The real 10-level order book — who is waiting to buy and to sell, right now."""
