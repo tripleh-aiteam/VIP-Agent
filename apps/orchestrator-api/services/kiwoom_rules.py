@@ -85,8 +85,10 @@ def rank(tick: int = 5, period: int = 0) -> dict[str, Any]:
             "net": round(sum(t["net_pct"] for t in trades), 2),
             "per_trade": (round(sum(t["net_pct"] for t in trades) / len(trades), 3)
                           if trades else 0.0),
-            # fewer than this and a win rate is a coin that landed a few times
-            "thin": len(trades) < 10,
+            # fewer than this many DECIDED trades and a win rate is a coin that landed a
+            # few times. Counted on wins+losses, not trips: eight flats and two wins is a
+            # "100%" carried by two trades.
+            "decided": w + l, "thin": (w + l) < 10,
         })
     rows.sort(key=lambda r: (r["thin"], -r["win_pct"], -r["trips"]))
     return {"ok": True, "clock": f"{period}초" if period else f"{tick}틱",
@@ -176,5 +178,9 @@ def trades(vid: str, tick: int = 5, period: int = 0, code: str = "",
             "dir": v.get("dir", 1),
             "trips": len(rows), "wins": w, "losses": l, "flats": len(rows) - w - l,
             "win_pct": round(w / (w + l) * 100) if (w + l) else 0,
+            # the same honesty the Strategy Lab now carries: a flat is neither a win nor a
+            # loss and is NOT in the percentage, so the denominator has to be on screen or
+            # "2 trips ... 100%" reads as two wins (boss 2026-08-04)
+            "decided": w + l, "thin": (w + l) < 10,
             "trades": rows[:limit], "shown": min(len(rows), limit),
             "holding": holding, "chart": chart, "fee_pct": FEE_PCT}

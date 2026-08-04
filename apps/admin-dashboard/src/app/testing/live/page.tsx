@@ -32,7 +32,8 @@ type Book = { ok: boolean; code: string; name?: string; asks: [number, number][]
 type Execs = { ok: boolean; prev_close?: number; total: number;
                rows: { t: string; px: number; qty: number }[] };
 type RuleRow = { id: string; ko: string; en: string; trips: number; wins: number;
-                 losses: number; flats: number; win_pct: number; per_trade: number; thin: boolean };
+                 losses: number; flats: number; win_pct: number; per_trade: number;
+                 decided: number; thin: boolean };
 type Rank = { ok: boolean; clock: string; fee_pct: number;
               stocks: { code: string; name: string; bars: number; from: string; to: string;
                         tick_size: number }[];
@@ -45,7 +46,8 @@ type RTrade = { code: string; name: string; buy_i: number; sell_i: number; buy_t
                 bars_held: number; tick_size: number; buy_ev?: Ev | null; sell_ev?: Ev | null };
 type RDetail = { ok: boolean; id: string; ko: string; en: string; clock: string;
                  entry_n: number; kind: string; a: number; b?: number | null; dir: number;
-                 trips: number; wins: number; losses: number; win_pct: number; shown: number;
+                 trips: number; wins: number; losses: number; flats: number; win_pct: number;
+                 decided: number; thin: boolean; shown: number;
                  trades: RTrade[];
                  holding: { code: string; name: string; buy_t: string; entry: number;
                             last: number; unreal_pct: number }[];
@@ -274,10 +276,30 @@ export default function LiveDeskPage() {
                         </span>
                       )}
                     </td>
-                    <td className="text-right px-2">{v.trips.toLocaleString()}</td>
+                    <td className="text-right px-2">
+                      {v.trips.toLocaleString()}
+                      {/* a flat is in this count but NOT in the win rate, and hiding it is
+                          how "2 trips ... 100%" came to mean one win and one draw on the
+                          artificial side (boss 2026-08-04). Same rule, same fix, here. */}
+                      {v.flats > 0 && (
+                        <span className="ml-1 text-[9.5px] text-[var(--text-muted)]"
+                          title={t(`${v.flats}회는 본전 — 승도 패도 아니라 승률에서 빠집니다`,
+                                   `${v.flats} ended flat - neither a win nor a loss, so not in the win rate`)}>
+                          +{v.flats}{t("무", "flat")}
+                        </span>
+                      )}
+                    </td>
                     <td className="text-right px-2" style={{ color: RED }}>{v.wins}</td>
                     <td className="text-right px-2" style={{ color: BLUE }}>{v.losses}</td>
-                    <td className="text-right px-3 font-extrabold" style={{ color: v.win_pct >= 50 ? "#2e7d32" : GOLD }}>{v.win_pct}%</td>
+                    <td className="text-right px-3 font-extrabold" style={{ color: v.win_pct >= 50 ? "#2e7d32" : GOLD }}>
+                      <span title={t(`${v.wins}승 ÷ ${v.wins + v.losses}건(승+패) = ${v.win_pct}%`,
+                                     `${v.wins} wins ÷ ${v.wins + v.losses} decided (W+L) = ${v.win_pct}%`)}>{v.win_pct}%</span>
+                      {v.wins + v.losses < 10 && (
+                        <span className="block text-[9px] font-normal" style={{ color: GOLD }}>
+                          {t(`${v.wins + v.losses}건 중`, `of ${v.wins + v.losses}`)}
+                        </span>
+                      )}
+                    </td>
                     <td className="text-right px-3" style={{ color: v.per_trade > 0 ? RED : BLUE }}>
                       {v.per_trade > 0 ? "+" : ""}{v.per_trade}%
                     </td>
@@ -303,9 +325,21 @@ export default function LiveDeskPage() {
             <span className="text-[12px] tabular-nums">{det.trips}{t("회전", " trips")}</span>
             <span className="text-[12px] tabular-nums" style={{ color: RED }}>{det.wins}{t("승", "W")}</span>
             <span className="text-[12px] tabular-nums" style={{ color: BLUE }}>{det.losses}{t("패", "L")}</span>
+            {det.flats > 0 && (
+              <span className="text-[12px] tabular-nums" style={{ color: "var(--text-muted)" }}>
+                {det.flats}{t("무", " flat")}
+              </span>
+            )}
             <span className="text-[12px] tabular-nums font-extrabold" style={{ color: det.win_pct >= 50 ? "#2e7d32" : GOLD }}>
               {det.win_pct}% {t("승률", "win")}
             </span>
+            {det.thin && (
+              <span className="text-[10.5px] font-bold px-2 py-0.5 rounded"
+                style={{ background: "rgba(230,81,0,0.14)", color: GOLD }}>
+                {t(`⚠ 승+패 ${det.decided}건뿐입니다 — 아직 실력이 아니라 우연입니다`,
+                   `⚠ only ${det.decided} decided - that is luck, not a measurement`)}
+              </span>
+            )}
           </div>
 
           {/* holdings */}

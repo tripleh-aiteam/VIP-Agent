@@ -29,6 +29,8 @@ const GREEN = "#2e7d32";
 type Variant = {
   thin?: boolean;        // fewer trades than the ranking trusts
   id: string; ko: string; en: string;
+  vs?: number | null;    // an ML row's own plain twin, so sorting cannot hide the comparison
+  vs_trips?: number | null;
   trips: number; wins: number; losses: number; flats: number;
   win_pct: number; gross: number; net: number;
   avg_win: number; avg_loss: number; rr: number; per_trade: number;
@@ -172,7 +174,8 @@ export default function StrategyLab() {
   type MlWhy = { key: string; ko: string; en: string; value: number; push: number; for: boolean };
   type Ml = { p: number; bar: number; base_rate: number; auc: number | null;
               n_train: number; why: MlWhy[] };
-  type MlHead = { auc: number | null; n_train: number; n_test: number; no_model?: string[];
+  type MlHead = { same_bar?: number; only_ml?: number; only_plain?: number;
+                  auc: number | null; n_train: number; n_test: number; no_model?: string[];
                   base: { trips: number; wins: number; losses: number; win_pct: number;
                           per_trade: number } };
   type LabTrade = { code: string; name: string; buy_t: string; buy_d?: string; entry: number;
@@ -183,6 +186,7 @@ export default function StrategyLab() {
     ok: boolean; id: string; ko: string; en: string; clock: string; tick: number;
     entry_n: number; kind: string; a: number; b?: number | null;
     trips: number; wins: number; losses: number; flats: number; win_pct: number; shown: number;
+    decided: number; thin: boolean;
     at?: string; at_found?: boolean;   // a Data File minute the chart was asked to jump to
     ml?: MlHead | null;                // present only on a "+ ML" rule
     trades: LabTrade[];
@@ -471,8 +475,7 @@ export default function StrategyLab() {
             <div className="mt-2 text-[11px]" style={{ color: "#6a1b9a" }}>
               {t(`${lab.variants.filter((v) => inView(v.id)).length}개 규칙만 보고 있습니다 (전체 ${lab.variants.length}개). 규칙 열의 선택 상자로 바꿉니다.`,
                  `showing ${lab.variants.filter((v) => inView(v.id)).length} of ${lab.variants.length} rules — change it with the box in the rule column.`)}
-              {ruleView === "all6" && t(" 각 규칙 바로 아래에 그 규칙의 ML 버전이 옵니다.",
-                                        " each rule is followed by its own ML version.")}
+              {t(" 승률 높은 순입니다.", " highest win rate first.")}
             </div>
           )}
           <div className="mt-3 rounded-xl border overflow-x-auto" style={{ borderColor: "var(--border-default)" }}>
@@ -498,19 +501,12 @@ export default function StrategyLab() {
               </tr></thead>
               <tbody>
                 {(() => {
-                  const shown = lab.variants.filter((v) => inView(v.id));
-                  // In the "all 6" view, put each rule immediately above its own ML twin.
-                  // Ranking them by win rate scatters a pair to opposite ends of the table,
-                  // which is exactly the comparison that view exists to make.
-                  if (ruleView !== "all6") return shown;
-                  const by = new Map(shown.map((v) => [v.id, v]));
-                  const paired: typeof shown = [];
-                  for (const base of WINNERS6) {
-                    const b1 = by.get(base); const m1 = by.get(base + "ML");
-                    if (b1) paired.push(b1);
-                    if (m1) paired.push(m1);
-                  }
-                  return paired.length ? paired : shown;
+                  // EVERY view, highest win rate first (boss 2026-08-04). The server has
+                  // already sorted that way - thin rules last - so the order is the same
+                  // arithmetic in all four views and there is nothing to re-sort here.
+                  // "all 6" used to pair each rule above its ML twin; sorting scatters that
+                  // pair, so the comparison now travels INSIDE the ML row as `vs`.
+                  return lab.variants.filter((v) => inView(v.id));
                 })().map((v, i) => (
                   <tr key={v.id} onClick={() => {
                       const open = sel === v.id;
@@ -532,11 +528,25 @@ export default function StrategyLab() {
                           {t("표본 부족", "thin")}
                         </span>
                       )}
-                      {/* the model only ever DECLINES signals the rule produced, so a
-                          "+ ML" row is the same rule with fewer trades — never a new one */}
+                      {/* the model judges signals the rule produced and never invents one,
+                          but it is NOT "the same rule with fewer trades" — see the note in
+                          the ML card below (chain audit, 2026-08-04) */}
                       {v.id.endsWith("ML") && (
                         <span className="ml-1.5 text-[9.5px] font-extrabold px-1.5 py-0.5 rounded"
                           style={{ background: "rgba(21,101,192,0.14)", color: "#1565c0" }}>🤖 ML</span>
+                      )}
+                      {/* sorted by win rate, a rule and its ML version land far apart - so
+                          the row states what the SAME rule did on the SAME bars without the
+                          model. Rising is the model helping; falling is it getting in the way. */}
+                      {v.id.endsWith("ML") && v.vs != null && (
+                        <span className="ml-1.5 text-[9.5px]" style={{ color: "var(--text-muted)" }}
+                          title={t("모델 없이 같은 규칙이 같은 봉에서 낸 승률", "what the same rule did on the same bars with no model")}>
+                          {t("모델 없이", "without ML")} {v.vs}%
+                          <b style={{ color: v.win_pct > v.vs ? GREEN : v.win_pct < v.vs ? BLUE : "inherit" }}>
+                            {" "}{v.win_pct > v.vs ? "▲" : v.win_pct < v.vs ? "▼" : "="}
+                            {Math.abs(v.win_pct - v.vs)}p
+                          </b>
+                        </span>
                       )}
                     </td>
                     {/* When this rule is expanded, the row shows the DETAIL's own numbers —
@@ -550,12 +560,36 @@ export default function StrategyLab() {
                       const wins = d ? d.wins : v.wins;
                       const losses = d ? d.losses : v.losses;
                       const wp = d ? d.win_pct : v.win_pct;
+                      const flats = d ? d.flats : v.flats;
+                      const decided = wins + losses;
                       return (
                         <>
-                          <td className="text-right px-2">{trips.toLocaleString()}</td>
+                          <td className="text-right px-2">
+                            {trips.toLocaleString()}
+                            {/* A flat is neither a win nor a loss, so it is not in the win
+                                rate - but it IS in this count, and saying "2 trips ... 100%"
+                                without naming it reads as two wins. That is how the boss
+                                found 4up/3down + ML: 2 trips, 1 win, 1 flat, printed 100%. */}
+                            {flats > 0 && (
+                              <span className="ml-1 text-[9.5px] text-[var(--text-muted)]"
+                                title={t(`${flats}회는 본전(±0%) — 승도 패도 아니라 승률 계산에서 빠집니다`,
+                                         `${flats} ended flat (±0%) - neither a win nor a loss, so they are not in the win rate`)}>
+                                +{flats}{t("무", "flat")}
+                              </span>
+                            )}
+                          </td>
                           <td className="text-right px-2" style={{ color: RED }}>{wins}</td>
                           <td className="text-right px-2" style={{ color: BLUE }}>{losses}</td>
-                          <td className="text-right px-3 font-extrabold" style={{ color: wp >= 50 ? GREEN : GOLD }}>{wp}%</td>
+                          <td className="text-right px-3 font-extrabold" style={{ color: wp >= 50 ? GREEN : GOLD }}>
+                            <span title={t(`${wins}승 ÷ ${decided}건(승+패) = ${wp}%`,
+                                           `${wins} wins ÷ ${decided} decided (W+L) = ${wp}%`)}>{wp}%</span>
+                            {/* the denominator, whenever it is too small to mean anything */}
+                            {decided < 10 && (
+                              <span className="block text-[9px] font-normal" style={{ color: GOLD }}>
+                                {t(`${decided}건 중`, `of ${decided}`)}
+                              </span>
+                            )}
+                          </td>
                         </>
                       );
                     })()}
@@ -581,9 +615,23 @@ export default function StrategyLab() {
                     <span className="text-[12px] tabular-nums">{t(`${detail.trips}회전`, `${detail.trips} trips`)}</span>
                     <span className="text-[12px] tabular-nums" style={{ color: RED }}>{detail.wins}{t("승", "W")}</span>
                     <span className="text-[12px] tabular-nums" style={{ color: BLUE }}>{detail.losses}{t("패", "L")}</span>
+                    {detail.flats > 0 && (
+                      <span className="text-[12px] tabular-nums" style={{ color: "var(--text-muted)" }}>
+                        {detail.flats}{t("무", " flat")}
+                      </span>
+                    )}
                     <span className="text-[12px] tabular-nums font-extrabold" style={{ color: detail.win_pct >= 50 ? GREEN : GOLD }}>
                       {detail.win_pct}% {t("승률", "win")}
                     </span>
+                    {/* The percentage and its denominator, together. This header said
+                        "2 trips ... 100%" for a rule that won once and drew once. */}
+                    {detail.thin && (
+                      <span className="text-[10.5px] font-bold px-2 py-0.5 rounded"
+                        style={{ background: "rgba(230,81,0,0.14)", color: GOLD }}>
+                        {t(`⚠ 승+패 ${detail.decided}건뿐입니다 — ${detail.wins}승 ÷ ${detail.decided}건 = ${detail.win_pct}%. 이 숫자는 아직 실력이 아니라 우연입니다`,
+                           `⚠ only ${detail.decided} decided - ${detail.wins} win ÷ ${detail.decided} = ${detail.win_pct}%. that is luck, not a measurement`)}
+                      </span>
+                    )}
                     <span className="text-[10.5px] text-[var(--text-muted)]">
                       {t(`${detail.clock} 기준 · 위 순위표의 숫자와 같은 매매에서 계산했습니다`,
                          `on the ${detail.clock} clock · computed from the same trades as the ranking row above`)}
@@ -600,9 +648,26 @@ export default function StrategyLab() {
                 <div className="px-4 py-2 border-b text-[11.5px]" style={{ borderColor: "var(--border-default)", background: "rgba(21,101,192,0.06)" }}>
                   <b style={{ color: "#1565c0" }}>🤖 {t("이 규칙 + 기계학습", "this rule + machine learning")}</b>
                   <span className="ml-2 text-[var(--text-secondary)]">
-                    {t(`회사마다 따로 학습한 모델이 신호를 걸러냅니다 — 규칙이 낸 신호만 대상으로, 새 매매를 만들지는 않습니다.`,
-                       `a model trained per company filters the signals — it only ever declines what the rule produced, it never creates a trade.`)}
+                    {t(`회사마다 따로 학습한 모델이 규칙의 신호를 걸러냅니다. 없는 신호를 만들어내지는 않습니다 — 감사에서 0건 확인했습니다.`,
+                       `a model trained per company judges the signals the rule produced. It never invents one — audited, 0 across every rule and company.`)}
                   </span>
+                  {/* What the page used to claim here was wrong: that "+ML" is simply the
+                      plain rule with fewer trades. Declining a signal leaves the rule FLAT,
+                      and a flat rule can take the NEXT signal — which the plain rule had to
+                      ignore because it was still holding. Found 2026-08-04 by the chain
+                      audit: for 2 up/+0.5% only 32 of the ML version's 57 trades were at
+                      the same bar as the plain rule's. Two paths, one market. */}
+                  {detail.ml.same_bar != null && (
+                    <div className="mt-1 text-[11px]" style={{ color: "#1565c0" }}>
+                      {t(`두 버전이 같은 자리에서 산 매매는 ${detail.ml.same_bar}건입니다. `
+                         + `ML만 산 것 ${detail.ml.only_ml}건, 규칙만 산 것 ${detail.ml.only_plain}건 — `
+                         + `신호를 거르면 그 다음 신호에서 자리가 비기 때문에, "규칙에서 몇 개를 뺀 것"이 아니라 같은 장을 다르게 걸어간 결과입니다.`,
+                         `the two versions bought at the same bar ${detail.ml.same_bar} times — `
+                         + `${detail.ml.only_ml} were the ML version's alone and ${detail.ml.only_plain} the plain rule's alone. `
+                         + `Declining a signal leaves the model FLAT, so it can take the next one while the plain rule is still holding: `
+                         + `this is not "the rule minus some trades", it is the same rule walking the same market by a different path.`)}
+                    </div>
+                  )}
                   <div className="mt-1.5 grid gap-2" style={{ gridTemplateColumns: "1fr 1fr 1fr" }}>
                     <div className="rounded-lg border px-2 py-1.5" style={{ borderColor: "var(--border-default)" }}>
                       <div className="text-[10px] text-[var(--text-muted)]">{t("기계학습 없이 (같은 장, 같은 규칙)", "without ML (same session, same rule)")}</div>

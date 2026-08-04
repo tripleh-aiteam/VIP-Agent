@@ -20,6 +20,10 @@ from services.proof_sim import (FEE_PCT, _book, _candles_from, _candles_from_tic
                                 _execs, _seconds, _SHOWN, _SYMBOLS, _tick, _sec_hl,
                                 _sec_label)
 
+# Below this many DECIDED trades (wins + losses) a win rate is not a measurement — it is
+# a coin that happened to land. Rules under it are still shown, but ranked last and marked.
+MIN_DECIDED = 10
+
 # The rules under test. entry = consecutive rising candles. exit is either a count of
 # consecutive falling candles, or a take-profit with a stop — both net of the fee, which
 # is what "small gain after fee" has to mean to be worth anything.
@@ -562,6 +566,8 @@ def variant_trades(vid: str, seed: int = 7, start: int = 0, tick: int = 5,
             # the model trades the WHOLE session (it was trained before it), so the plain
             # rule over the whole session is the like-for-like comparison
             base_pair = run_variant([c["close"] for c in cs], t, plain, sseed)
+            for _g in base_pair:
+                _g["code"] = c_code          # so the overlap below can be counted per stock
         tapes[c_code] = {"cs": cs, "name": name, "trades": got}
         if base_pair is not None:
             pair_all.extend(base_pair)
@@ -655,6 +661,9 @@ def variant_trades(vid: str, seed: int = 7, start: int = 0, tick: int = 5,
 
     w = sum(1 for r in rows if r["result"] == "win")
     l = sum(1 for r in rows if r["result"] == "loss")
+    # trades the two versions took at the very same bar of the very same stock
+    _pair_keys = {(g.get("code"), g["buy_i"]) for g in pair_all}
+    _same_bar = sum(1 for r in rows if (r["code"], r["buy_i"]) in _pair_keys)
     return {"ok": True, "id": vid, "ko": label(v, True), "en": label(v, False),
             "tick": tick, "period": period, "clock": clock_label(tick, period),
             "at": at, "at_found": bool(at) and at_found,
@@ -662,9 +671,24 @@ def variant_trades(vid: str, seed: int = 7, start: int = 0, tick: int = 5,
             # the SAME arithmetic the ranking row uses — one source, so they cannot drift
             "trips": len(rows), "wins": w, "losses": l, "flats": len(rows) - w - l,
             "win_pct": round(w / (w + l) * 100) if (w + l) else 0,
+            # 승률 is W/(W+L) — a flat is neither, as agreed on 2026-07-31. But a header
+            # reading "2 trips ... 100%" while one of those two was FLAT looks like two
+            # wins, which is exactly how the boss found this (2026-08-04, 4up/3down + ML).
+            # `decided` is the real denominator; `thin` says when the whole percentage is
+            # a coin that has landed once or twice.
+            "decided": w + l, "thin": (w + l) < MIN_DECIDED,
             "trades": rows[:limit], "shown": min(len(rows), limit),
             # what the model is, and what the SAME rule did on the SAME bars without it
-            "ml": ({"no_model": no_model,
+            # HOW THE TWO ACTUALLY RELATE. The model never invents a signal — audited
+            # 2026-08-04, 0 invented across every rule and stock. But it is NOT true that
+            # "+ML" is the plain rule minus some trades, which is what the page used to
+            # say. Declining a signal leaves the rule FLAT, and a flat rule can take the
+            # next signal that the plain rule had to ignore because it was still holding.
+            # So the two follow different paths through the same market, and the honest
+            # figure is how many trades they actually share.
+            "ml": ({"same_bar": _same_bar, "only_ml": len(rows) - _same_bar,
+                    "only_plain": len(pair_all) - _same_bar,
+                    "no_model": no_model,
                     "auc": (pair_model or {}).get("auc"),
                     "n_train": (pair_model or {}).get("n_train"),
                     "n_test": (pair_model or {}).get("n_test"),
@@ -766,6 +790,15 @@ def compare(seed: int = 7, start: int = 0, tick: int = 5,
     MIN_RANKED = 10
     for r in rows:
         r["thin"] = r["trips"] < MIN_RANKED
+    # Every "+ ML" row carries the win rate of its OWN plain twin. The boss asked for every
+    # view sorted by win rate, which scatters a rule and its ML version to opposite ends of
+    # the table — so the comparison that pairing used to make travels inside the row instead.
+    by_id = {r["id"]: r for r in rows}
+    for r in rows:
+        if r["id"].endswith("ML"):
+            twin = by_id.get(r["id"][:-2])
+            r["vs"] = twin["win_pct"] if twin else None
+            r["vs_trips"] = twin["trips"] if twin else None
     rows.sort(key=lambda r: (r["thin"], -r["win_pct"], -r["trips"]))
     off = max(0, len(chart_tape["cs"]) - bars) if chart_tape else 0
     if chart_tape and off:
