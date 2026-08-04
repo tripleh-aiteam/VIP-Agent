@@ -209,11 +209,19 @@ export default function LiveDeskPage() {
   // here, because a fill you cannot look up is a fill you cannot check.
   const [df, setDf] = useState<Df | null>(null);
   const [dfMins, setDfMins] = useState<5 | 10 | 15>(10);
+  // A fixed 5/10/15 cannot answer "show me the last 35 minutes", and it cannot go back to
+  // a minute from this morning at all - the boss hit exactly that (2026-08-04). The
+  // Strategy Lab has had a from/to range since the day it got a Data File; this is the
+  // same control, and the server already accepted frm/to.
+  const [dfFrom, setDfFrom] = useState("");
+  const [dfTo, setDfTo] = useState("");
   const [dfOpen, setDfOpen] = useState<string | null>(null);
   const [dfMin, setDfMin] = useState<DfMin | null>(null);
   const detRef = useRef<RDetail | null>(null);
-  const loadDfRef = useRef<((c: string, m: number) => void) | null>(null);
+  const loadDfRef = useRef<((c: string, m: number, f?: string, t?: string) => void) | null>(null);
   const dfMinsRef = useRef<number>(10);
+  const dfFromRef = useRef("");
+  const dfToRef = useRef("");
 
   const codeRef = useRef(code); codeRef.current = code;
   const perRef = useRef(period); perRef.current = period;
@@ -239,9 +247,12 @@ export default function LiveDeskPage() {
       .catch(() => { detRef.current = null; setDet(null); });
   }, []);
 
-  const loadDf = useCallback((c: string, mins: number) => {
+  const loadDf = useCallback((c: string, mins: number, f = "", tt = "") => {
     if (!c) return;
-    api<Df>(`/paper-desk/live/datafile?code=${encodeURIComponent(c)}&mins=${mins}`)
+    // a range wins over the minute buttons; with neither, "the last N minutes"
+    const q = (f || tt) ? `frm=${encodeURIComponent(f)}&to=${encodeURIComponent(tt)}`
+                        : `mins=${mins}`;
+    api<Df>(`/paper-desk/live/datafile?code=${encodeURIComponent(c)}&${q}`)
       .then((d) => setDf(d?.ok ? d : null)).catch(() => setDf(null));
   }, []);
 
@@ -255,6 +266,8 @@ export default function LiveDeskPage() {
 
   useEffect(() => { loadDfRef.current = loadDf; }, [loadDf]);
   useEffect(() => { dfMinsRef.current = dfMins; }, [dfMins]);
+  useEffect(() => { dfFromRef.current = dfFrom; }, [dfFrom]);
+  useEffect(() => { dfToRef.current = dfTo; }, [dfTo]);
 
   const pull = useCallback(() => {
     const c = codeRef.current;
@@ -264,7 +277,8 @@ export default function LiveDeskPage() {
     api<Execs>(`/paper-desk/live/execs?code=${c}&n=120`).then(setExecs).catch(() => {});
     api<Rank>(`/paper-desk/live/rules?${q}`).then(setRank).catch(() => {});
     // follows the CHARTED company, so the minute rows always describe the bars above them
-    loadDfRef.current?.(detRef.current?.chart?.code || c, dfMinsRef.current);
+    loadDfRef.current?.(detRef.current?.chart?.code || c, dfMinsRef.current,
+                        dfFromRef.current, dfToRef.current);
   }, []);
 
   useEffect(() => {
@@ -591,17 +605,39 @@ export default function LiveDeskPage() {
               <div className="flex items-center gap-2 flex-wrap">
                 <b className="text-[12.5px]" style={{ color: GOLD }}>🕰️ {t("데이터 파일", "Data File")} — {df.name}</b>
                 <span className="text-[10.5px] text-[var(--text-muted)]">
-                  {t(`진짜 체결로 만든 1분 기록 ${df.total_minutes}분 · 한 줄을 누르면 그 1분의 체결이 전부 나옵니다`,
-                     `${df.total_minutes} minutes of real executions · click a row for every deal in that minute`)}
+                  {t(`${df.rows.length}분 보는 중 (수집된 ${df.total_minutes}분 중) · 한 줄을 누르면 그 1분의 체결이 전부 나옵니다`,
+                     `showing ${df.rows.length} of ${df.total_minutes} minutes collected · click a row for every deal in that minute`)}
                 </span>
                 {([5, 10, 15] as const).map((m) => (
-                  <button key={m} onClick={() => { setDfMins(m); loadDf(df.code, m); }}
+                  <button key={m} onClick={() => { setDfMins(m); setDfFrom(""); setDfTo("");
+                                                   loadDf(df.code, m); }}
                     className="text-[10px] font-bold px-1.5 py-0.5 rounded border"
-                    style={dfMins === m ? { borderColor: GOLD, color: GOLD, background: "rgba(230,81,0,0.10)" }
-                                        : { borderColor: "var(--border-default)", color: "var(--text-secondary)" }}>
-                    {t(`${m}분`, `${m} min`)}
+                    style={dfMins === m && !dfFrom && !dfTo
+                             ? { borderColor: GOLD, color: GOLD, background: "rgba(230,81,0,0.10)" }
+                             : { borderColor: "var(--border-default)", color: "var(--text-secondary)" }}>
+                    {t(`최근 ${m}분`, `last ${m} min`)}
                   </button>
                 ))}
+                <span className="text-[10px] text-[var(--text-muted)] ml-1">{t("구간", "range")}:</span>
+                <input value={dfFrom} onChange={(e) => setDfFrom(e.target.value)} placeholder="--:--"
+                  className="w-[62px] text-[10.5px] px-1 py-0.5 rounded border bg-transparent"
+                  style={{ borderColor: "var(--border-default)" }} />
+                <span className="text-[10px] text-[var(--text-muted)]">→</span>
+                <input value={dfTo} onChange={(e) => setDfTo(e.target.value)} placeholder="--:--"
+                  className="w-[62px] text-[10.5px] px-1 py-0.5 rounded border bg-transparent"
+                  style={{ borderColor: "var(--border-default)" }} />
+                <button onClick={() => loadDf(df.code, dfMins, dfFrom, dfTo)}
+                  className="text-[10.5px] font-bold px-2 py-0.5 rounded-md text-white"
+                  style={{ background: "#455a64" }}>
+                  {t("적용", "apply")}
+                </button>
+                {(dfFrom || dfTo) && (
+                  <button onClick={() => { setDfFrom(""); setDfTo(""); loadDf(df.code, dfMins); }}
+                    className="text-[10px] px-1.5 py-0.5 rounded border"
+                    style={{ borderColor: "var(--border-default)", color: "var(--text-secondary)" }}>
+                    {t("구간 해제", "clear")}
+                  </button>
+                )}
               </div>
               <div className="mt-2 rounded-lg border overflow-y-auto" style={{ borderColor: "var(--border-default)", maxHeight: 320 }}>
                 <table className="w-full text-[11.5px] tabular-nums">
