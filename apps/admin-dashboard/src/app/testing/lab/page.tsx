@@ -192,6 +192,7 @@ export default function StrategyLab() {
     decided: number; thin: boolean; net_total?: number; gross_total?: number; per_trade?: number;
     net_won_total?: number; per_trade_won?: number;
     net_won_sized?: number; net_won_balanced?: number; shares_total?: number;
+    capital_used?: number;
     at?: string; at_found?: boolean;   // a Data File minute the chart was asked to jump to
     ml?: MlHead | null;                // present only on a "+ ML" rule
     trades: LabTrade[];
@@ -789,9 +790,16 @@ export default function StrategyLab() {
                         🔢 {t("모델이 정한 수량", "the quantity the model asked for")}
                       </b>
                       <span className="ml-2 text-[var(--text-muted)]">
-                        {t(`${detail.trips}번 매매에 주식 ${detail.shares_total}주 (신뢰도가 높을수록 1~5주)`,
-                           `${detail.shares_total} shares over ${detail.trips} trades (1-5, more when the model is surer)`)}
+                        {t(`${detail.trips}번 매매에 ${(detail.shares_total ?? 0).toLocaleString()}주 · 투입 자금 ₩${(detail.capital_used ?? 0).toLocaleString()}`,
+                           `${(detail.shares_total ?? 0).toLocaleString()} shares over ${detail.trips} trades · ₩${(detail.capital_used ?? 0).toLocaleString()} committed`)}
                       </span>
+                      {/* THE RISK BANDS the size obeys. A share count means nothing without
+                          the price beside it, so the ceiling is per price band and the
+                          money committed is always on screen next to it. */}
+                      <div className="mt-1 text-[10px]" style={{ color: "var(--text-muted)" }}>
+                        {t("한도: 100만원 초과 100주 · 10만원 초과 1,000주 · 그 아래 100,000주. 모델은 신뢰도에 따라 그 한도의 5~100%를 씁니다.",
+                           "caps: over ₩1m → 100 shares · over ₩100k → 1,000 · below that → 100,000. the model takes 5-100% of its cap by confidence.")}
+                      </div>
                       <div className="mt-1 grid gap-2" style={{ gridTemplateColumns: "1fr 1fr 1fr" }}>
                         {([
                           [t("1주씩", "one share each"), detail.net_won_total ?? 0, false],
@@ -937,7 +945,7 @@ export default function StrategyLab() {
                             {money && (
                               <td className="text-right px-2 tabular-nums"
                                 style={{ color: (tr.qty ?? 1) > 1 ? "#1565c0" : "var(--text-muted)" }}>
-                                {tr.qty ?? 1}{t("주", "")}
+                                {(tr.qty ?? 1).toLocaleString()}{t("주", "")}
                               </td>
                             )}
                             {money && (

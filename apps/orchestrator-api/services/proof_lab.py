@@ -168,7 +168,9 @@ def run_variant(closes: list[float], tick: int, v: dict, seed: int,
                                # HOW MANY SHARES the model wants on this signal. One share
                                # is the floor; the edge over its own bar buys more. Sizing
                                # amplifies whatever edge exists — including a negative one.
-                               "qty": _qty(sc["p"], _bar),
+                               # priced off the BAR'S CLOSE, so the cap band is decided
+                               # by what the share actually costs at that moment
+                               "qty": _qty(sc["p"], _bar, c),
                                "auc": bundle["auc"], "n_train": bundle["n_train"]}
                 else:
                     ml_meta = None
@@ -698,6 +700,9 @@ def variant_trades(vid: str, seed: int = 7, start: int = 0, tick: int = 5,
             "net_won_sized": round(sum(r.get("qty", 1) * r["entry"] * r["net_pct"] / 100
                                        for r in rows)),
             "shares_total": sum(r.get("qty", 1) for r in rows),
+            # what the model actually committed - the number that says whether a share
+            # count is sane, and the one a cap exists to bound
+            "capital_used": round(sum(r.get("qty", 1) * r["entry"] for r in rows)),
             # SCALE and ALLOCATION are two different ideas and they give opposite answers.
             # "buy more when confident" (net_won_sized) buys ~3x more stock, and a rule
             # that loses on average loses ~2x more when it holds 3x the stock. Spreading

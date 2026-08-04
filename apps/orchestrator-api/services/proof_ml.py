@@ -151,27 +151,48 @@ def score(bundle: dict, feats: list[float]) -> dict[str, Any]:
                  "for": contrib[j] > 0} for j in order[:3]],
     }
 
-# ── HOW MANY SHARES: the model's confidence turned into a quantity ──────────────────
-# The boss asked for this twice: "how about increasing stock number, like ML predict the
-# number of stock". It is a real idea and it measures as REAL but SMALL - weighting the
-# six ML rules by confidence took them from -₩162,814 to -₩105,024, and 99.8% of random
-# weightings shuffled WITHIN the same stock did worse, so the model genuinely picks the
-# better trades. It does NOT reach profit, and that is the important caveat: sizing
-# amplifies whatever edge exists, and a negative edge amplified is a bigger loss.
+# ── HOW MANY SHARES: the model's confidence turned into a real position ────────────
+# The boss asked for a share count he can DEFEND: "we should have a reason if someone
+# asks why you bought 2k shares — then I will tell this is the ML prediction." So the
+# number is a model output, not a setting, and it is reproducible from the model's own
+# probability.
 #
-# The scale is deliberately shallow. `p` on accepted signals sits a few points above the
-# model's own bar, never near certainty, so a scheme that bet 20x on a 0.45 probability
-# would be inventing confidence the model does not have.
-QTY_MIN, QTY_MAX = 1, 5
-QTY_STEP = 0.02          # every 2 points of edge over the bar buys one more share
+# RISK IS CAPPED BY PRICE, to his specification (2026-08-04). A thousand shares means
+# something completely different on a ₩1,500,000 stock than on a ₩19,000 one, so the
+# ceiling is set per price band and the model only ever chooses a fraction of it:
+#
+#     over ₩1,000,000   ->    100 shares max   (SK하이닉스: ₩157m at the cap)
+#     over ₩100,000     ->  1,000 shares max   (프루프전자: ₩223m at the cap)
+#     below that        -> 100,000 shares max  (시뮬중공업: ₩1.9bn at the cap)
+#
+# ONE THING TO KEEP IN VIEW, said once and then left alone: quantity multiplies the
+# result and cannot change its sign. Every rule here currently loses per trade, so a
+# bigger position produces a bigger loss in exactly the same proportion. The value of
+# this is that the size is now explainable and consistent - it is not a way to turn a
+# losing rule into a winning one.
+FLOOR_FRAC = 0.05        # the least confident accepted signal still takes 5% of the cap
+FULL_EDGE = 0.10         # this much edge over the model's own bar earns the whole cap
 
 
-def quantity(p: float, bar: float) -> int:
-    """Shares to buy for a signal the model scored `p`, against its own acceptance bar.
+def cap_for(price: float) -> int:
+    """The most shares allowed at this price — the boss's risk bands."""
+    if price > 1_000_000:
+        return 100
+    if price > 100_000:
+        return 1_000
+    return 100_000
 
-    A signal only reaches here if p >= bar, so the smallest position is one share and the
-    edge above the bar is what buys more. Capped, because the far tail of a logistic
-    regression on eight features is not information.
+
+def quantity(p: float, bar: float, price: float = 0.0) -> int:
+    """Shares for a signal the model scored `p`, against its own acceptance bar.
+
+    A signal only reaches here if p >= bar, so `edge` is never negative. The edge is
+    scaled against FULL_EDGE rather than against 1.0, because `p` on accepted signals sits
+    a few points above the bar and never near certainty — dividing by 1.0 would mean the
+    model effectively always asked for the floor and the cap would be dead code.
     """
+    if price <= 0:
+        return 1
     edge = max(0.0, float(p) - float(bar))
-    return max(QTY_MIN, min(QTY_MAX, int(QTY_MIN + round(edge / QTY_STEP))))
+    frac = min(1.0, max(FLOOR_FRAC, edge / FULL_EDGE))
+    return max(1, int(round(cap_for(price) * frac)))
