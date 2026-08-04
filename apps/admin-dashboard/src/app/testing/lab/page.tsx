@@ -143,6 +143,18 @@ export default function StrategyLab() {
   const [lab, setLab] = useState<Lab | null>(null);
   const [gate, setGate] = useState<Gate | null>(null);
   const [busy, setBusy] = useState(false);
+  // The six the boss chose on 2026-08-03 as his winners, and their ML twins. Twenty-four
+  // rows is a wall of numbers; he asked to be able to look at one group at a time.
+  const WINNERS6 = ["3u+0.3", "3u+0.5", "2u+0.5", "4u3d", "3u+1.0", "4u+1.0"];
+  const WINNERS6_ML = WINNERS6.map((x) => x + "ML");
+  type RuleView = "w6" | "w6ml" | "all6" | "all";
+  const [ruleView, setRuleView] = useState<RuleView>("all");
+  const inView = (id: string) => (
+    ruleView === "w6" ? WINNERS6.includes(id)
+      : ruleView === "w6ml" ? WINNERS6_ML.includes(id)
+        : ruleView === "all6" ? (WINNERS6.includes(id) || WINNERS6_ML.includes(id))
+          : true);
+
   const [tick, setTick] = useState(5);
   // The clock the rules run on, and the chart the page draws — deliberately the same thing.
   // period=0 → 틱 bars of size `tick`; period>0 → that many SECONDS per bar.
@@ -429,10 +441,29 @@ export default function StrategyLab() {
             </div>
           )}
 
+          {ruleView !== "all" && (
+            <div className="mt-2 text-[11px]" style={{ color: "#6a1b9a" }}>
+              {t(`${lab.variants.filter((v) => inView(v.id)).length}개 규칙만 보고 있습니다 (전체 ${lab.variants.length}개). 규칙 열의 선택 상자로 바꿉니다.`,
+                 `showing ${lab.variants.filter((v) => inView(v.id)).length} of ${lab.variants.length} rules — change it with the box in the rule column.`)}
+              {ruleView === "all6" && t(" 각 규칙 바로 아래에 그 규칙의 ML 버전이 옵니다.",
+                                        " each rule is followed by its own ML version.")}
+            </div>
+          )}
           <div className="mt-3 rounded-xl border overflow-x-auto" style={{ borderColor: "var(--border-default)" }}>
             <table className="w-full text-[12px] tabular-nums">
               <thead><tr className="text-[10.5px] text-[var(--text-muted)]" style={{ background: "var(--bg-elevated)" }}>
-                <th className="text-left px-3 py-2">{t("규칙", "rule")}</th>
+                <th className="text-left px-3 py-2">
+                  <select value={ruleView} onChange={(e) => { setRuleView(e.target.value as RuleView); setSel(null); setDetail(null); }}
+                    className="text-[11px] font-bold px-1.5 py-1 rounded-md border bg-[var(--bg-primary)] text-[var(--text-primary)]"
+                    style={{ borderColor: ruleView === "all" ? "var(--border-default)" : "#6a1b9a" }}
+                    title={t("표에 어떤 규칙을 보여줄지 고릅니다 — 24줄을 한 번에 보면 비교가 어렵습니다",
+                             "choose which rules the table shows — 24 rows at once is hard to compare")}>
+                    <option value="w6">{t("6개 우승 규칙", "the 6 winners")}</option>
+                    <option value="w6ml">{t("6개 우승 규칙 + ML", "the 6 winners + ML")}</option>
+                    <option value="all6">{t("6개 전부 (규칙 + ML)", "all 6 (rule and ML)")}</option>
+                    <option value="all">{t("전체", "everything")}</option>
+                  </select>
+                </th>
                 <th className="text-right px-2">{t("회전", "trips")}</th>
                 <th className="text-right px-2">{t("승", "W")}</th>
                 <th className="text-right px-2">{t("패", "L")}</th>
@@ -440,7 +471,21 @@ export default function StrategyLab() {
                 <th className="text-right px-3 text-[10px]">{t("자세히", "detail")}</th>
               </tr></thead>
               <tbody>
-                {lab.variants.map((v, i) => (
+                {(() => {
+                  const shown = lab.variants.filter((v) => inView(v.id));
+                  // In the "all 6" view, put each rule immediately above its own ML twin.
+                  // Ranking them by win rate scatters a pair to opposite ends of the table,
+                  // which is exactly the comparison that view exists to make.
+                  if (ruleView !== "all6") return shown;
+                  const by = new Map(shown.map((v) => [v.id, v]));
+                  const paired: typeof shown = [];
+                  for (const base of WINNERS6) {
+                    const b1 = by.get(base); const m1 = by.get(base + "ML");
+                    if (b1) paired.push(b1);
+                    if (m1) paired.push(m1);
+                  }
+                  return paired.length ? paired : shown;
+                })().map((v, i) => (
                   <tr key={v.id} onClick={() => {
                       const open = sel === v.id;
                       setSel(open ? null : v.id);
@@ -452,7 +497,7 @@ export default function StrategyLab() {
                     style={{ background: sel === v.id ? "rgba(106,27,154,0.10)"
                              : i === 0 ? "rgba(230,81,0,0.06)" : "transparent" }}>
                     <td className="px-3 py-1.5 font-bold text-[var(--text-primary)]">
-                      {sel === v.id ? "▶ " : i === 0 ? "🏆 " : ""}{lang === "ko" ? v.ko : v.en}
+                      {sel === v.id ? "▶ " : (i === 0 && ruleView !== "all6") ? "🏆 " : ""}{lang === "ko" ? v.ko : v.en}
                       {/* the model only ever DECLINES signals the rule produced, so a
                           "+ ML" row is the same rule with fewer trades — never a new one */}
                       {v.id.endsWith("ML") && (
