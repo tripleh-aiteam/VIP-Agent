@@ -177,7 +177,12 @@ export default function LiveDeskPage() {
   // nothing once the server is restarted, and it is what lets the removal take effect
   // immediately instead of waiting for a restart that would cost ~72s of real tape.
   const ORIGINAL_12 = ["3u3d", "2u2d", "3u2d", "2u3d", "3u4d", "4u3d",
-                       "3u+0.3", "3u+0.5", "3u+1.0", "2u+0.5", "3u+0.5s", "4u+1.0"];
+                       "3u+0.3", "3u+0.5", "3u+1.0", "2u+0.5", "3u+0.5s", "4u+1.0",
+                       // The take-profit experiment, added 2026-08-05 at his request after
+                       // it went onto the Strategy Lab. These four buy after FALLS - the
+                       // only reversal rules on this desk - so without naming them here
+                       // the page would silently drop every one of them.
+                       "3d+1.0", "3d+1.5", "3d+2.0", "3d+2.0w"];
   const twelve = rank?.original_12?.length ? rank.original_12 : ORIGINAL_12;
   const shownRules = (rank?.variants ?? []).filter((v) => twelve.includes(v.id));
   const [det, setDet] = useState<RDetail | null>(null);
@@ -384,7 +389,7 @@ export default function LiveDeskPage() {
             </span>
             <span className="text-[10px] font-bold px-1.5 py-0.5 rounded"
               style={{ background: "rgba(106,27,154,0.12)", color: "#6a1b9a" }}>
-              {t("어제와 같은 12개", "the same 12 as yesterday")}
+              {t("어제 12개 + 익절 실험 4개", "yesterday's 12 + the 4-rule exit test")}
             </span>
             {rank.stocks.map((x) => (
               <span key={x.code} className="text-[10px] text-[var(--text-muted)]">

@@ -64,7 +64,16 @@ def _bars_for(code: str, tick: int, period: int) -> list[dict]:
 #
 # They still exist in the Strategy Lab, where they were introduced and where the
 # comparison they belong to is being run.
-PLAIN = [v for v in VARIANTS if not v.get("ml") and v.get("dir", 1) > 0]
+# THE TAKE-PROFIT EXPERIMENT, carried over from the Strategy Lab (boss 2026-08-05).
+# These four buy after FALLS, so the dir > 0 filter below would drop them - they are named
+# explicitly instead. He had me remove the six reversal rules from this desk because two
+# experiments in one table was confusing; these four are a DIFFERENT experiment he asked
+# for by name, testing whether a bigger profit target beats the fee.
+EXPERIMENT = ("3d+1.0", "3d+1.5", "3d+2.0", "3d+2.0w")
+
+PLAIN = [v for v in VARIANTS
+         if not v.get("ml") and (v.get("dir", 1) > 0 or v["id"] in EXPERIMENT)]
+# every id this desk shows - the page uses it so the two can never drift apart
 ORIGINAL_12 = [v["id"] for v in PLAIN]
 
 
