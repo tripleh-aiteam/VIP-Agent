@@ -386,9 +386,31 @@ export default function LiveDeskPage() {
             <b className="text-[13px]" style={{ color: "#6a1b9a" }}>
               🔬 {t(`규칙 ${shownRules.length}개 — 진짜 키움 체결로`, `${shownRules.length} rules, on real Kiwoom executions`)}
             </b>
+            {/* THE CLOCK, on the table itself. It lived only in small caption text and in
+                buttons far below, so the boss pasted a full ranking and could not tell
+                whether he was reading 5틱 or 1분 (2026-08-05). The whole point of the
+                1분 group is comparing the same rule across clocks - the switch has to be
+                where the numbers are. */}
+            {([["5틱", 5, 0], ["10틱", 10, 0], ["30초", 5, 30], ["1분", 5, 60]] as
+              [string, number, number][]).map(([lab, tk, per]) => (
+              <button key={lab}
+                onClick={() => { setTick(tk); setPeriod(per);
+                                 tickRef.current = tk; perRef.current = per;
+                                 setDet(null); setSel(null); setPick(null); pull(); }}
+                className="text-[11px] font-bold px-2 py-0.5 rounded-md border"
+                style={(period === per && (per !== 0 ? true : tick === tk))
+                  ? { borderColor: "#6a1b9a", color: "#fff", background: "#6a1b9a" }
+                  : { borderColor: "var(--border-default)", color: "var(--text-secondary)" }}>
+                {lab}
+              </button>
+            ))}
+            <span className="text-[11px] font-bold px-1.5 py-0.5 rounded"
+              style={{ background: "rgba(106,27,154,0.12)", color: "#6a1b9a" }}>
+              {t(`지금 보는 것: ${rank.clock} 봉`, `showing: ${rank.clock} bars`)}
+            </span>
             <span className="text-[10.5px] text-[var(--text-muted)]">
-              {t(`${rank.clock} 기준 · 인공 데이터 실험실과 똑같은 규칙·똑같은 엔진입니다. 다른 것은 시장 하나뿐입니다.`,
-                 `on the ${rank.clock} clock - the same rules and the same engine as the artificial lab. The only thing different is the market.`)}
+              {t("같은 규칙, 다른 봉 크기 — 규칙은 그대로고 봉만 바뀝니다.",
+                 "same rules, different bar size - the rules never change, only the bars.")}
             </span>
             <span className="text-[10px] font-bold px-1.5 py-0.5 rounded"
               style={{ background: "rgba(106,27,154,0.12)", color: "#6a1b9a" }}>
