@@ -155,8 +155,9 @@ export default function StrategyLab() {
   // THE TAKE-PROFIT EXPERIMENT (boss 2026-08-05). Ten rules that all buy the same way -
   // after falls - so the ONLY thing separating the rows is how much profit they wait for.
   // Six he already had, four new ones holding out for +1.0% to +2.0%.
-  const EXIT10 = ["3d+0.3", "3d+0.5", "2d+0.3", "2d+0.5", "3d3u", "2d3u",
-                  "3d+1.0", "3d+1.5", "3d+2.0", "3d+2.0w"];
+  // 2-down entries removed at the boss's instruction (2026-08-05)
+  const EXIT10 = ["3d+0.3", "3d+0.5", "3d3u",
+                  "3d+1.0", "3d+1.5", "3d+2.0", "3d+2.0w", "3d+1.0w"];
   type RuleView = "exit10" | "w6" | "w6ml" | "all6" | "all";
   const [ruleView, setRuleView] = useState<RuleView>("all");
   const [money, setMoney] = useState(false);      // off until he asks - see the button
@@ -588,8 +589,9 @@ export default function StrategyLab() {
                   // out - the warning belongs on the row, not in the ordering.
                   // "all 6" used to pair each rule above its ML twin; sorting scatters that
                   // pair, so the comparison now travels INSIDE the ML row as `vs`.
-                  return lab.variants.filter((v) => inView(v.id))
-                    .slice().sort((a2, b2) => b2.win_pct - a2.win_pct || b2.trips - a2.trips);
+                  // server order: up/down group first, then %-target group, each by
+                  // win rate (boss 2026-08-05) - no client re-sort, or the grouping dies
+                  return lab.variants.filter((v) => inView(v.id));
                 })().map((v, i) => (
                   <tr key={v.id} onClick={() => {
                       const open = sel === v.id;

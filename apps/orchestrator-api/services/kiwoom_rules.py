@@ -109,10 +109,8 @@ def _bars_for(code: str, tick: int, period: int) -> list[dict]:
 # on the 1분 clock), 3d3u (the only rule ever positive on the artificial side — no
 # profit cap, exits on the market's own signal), and 2d+0.5 as the tight-target control
 # so the comparison "same entry, wider exit" is visible on one screen.
-EXPERIMENT = ("3d+1.0", "3d+1.5", "3d+2.0", "3d+2.0w",
-              "2d+1.0", "3d3u", "2d+0.5",
-              # the neighbourhood of 2d+1.0 — see proof_lab for why (2026-08-05)
-              "2d+0.8", "2d+1.2", "2d+1.0s", "3d+1.0w")
+# 2-down entries removed at the boss's instruction (2026-08-05); 3-down rules stay.
+EXPERIMENT = ("3d+1.0", "3d+1.5", "3d+2.0", "3d+2.0w", "3d3u", "3d+1.0w")
 
 PLAIN = [v for v in VARIANTS
          if not v.get("ml") and (v.get("dir", 1) > 0 or v["id"] in EXPERIMENT)]
@@ -141,7 +139,7 @@ def rank(tick: int = 5, period: int = 0) -> dict[str, Any]:
         rows.append({
             "id": v["id"], "ko": label(v, True), "en": label(v, False),
             # +1 = the original twelve (buy after RISES), -1 = the six reversal rules
-            "dir": v.get("dir", 1),
+            "dir": v.get("dir", 1), "kind": v["kind"],
             "trips": len(trades), "wins": w, "losses": l,
             "flats": len(trades) - w - l,
             "win_pct": round(w / (w + l) * 100) if (w + l) else 0,
@@ -164,7 +162,11 @@ def rank(tick: int = 5, period: int = 0) -> dict[str, Any]:
     # Sorting thin rules to the bottom put a 100% rule below a 7% one and made the
     # sequence look arbitrary next to the column he is reading. The 표본 부족 badge stays
     # on the row, which is where a warning about the sample belongs.
-    rows.sort(key=lambda r: (-r["win_pct"], -r["trips"]))
+    # GROUPED as the boss reads them (2026-08-05): first every up/down rule (exit by
+    # candle count), then every %-target rule - and inside each group, highest win rate
+    # first. `kind` travels with the row so the page cannot need to guess the group.
+    rows.sort(key=lambda r: (0 if r.get("kind") == "candle" else 1,
+                             -r["win_pct"], -r["trips"]))
     return {"ok": True, "original_12": ORIGINAL_12, "clock": f"{period}초" if period else f"{tick}틱",
             "tick": tick, "period": period, "fee_pct": FEE_PCT,
             "stocks": [{"code": c, "name": t["name"], "bars": len(t["cs"]),

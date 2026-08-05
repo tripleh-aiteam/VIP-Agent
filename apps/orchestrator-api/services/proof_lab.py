@@ -45,11 +45,12 @@ VARIANTS: list[dict] = [
     # 55%. Every rule above therefore buys at the worst moment available and the mirror
     # is twice as good. These are the same exits, entered the other way round, so the
     # comparison isolates exactly one thing: which direction the entry faces.
-    {"id": "2d+0.3", "entry": 2, "dir": -1, "kind": "target", "a": 0.3, "b": 1.0},
+    # The 2-DOWN family (2d+0.3/0.5/1.0/0.8/1.2/1.0s, 2d3u) was REMOVED at the boss's
+    # instruction on 2026-08-05, from both desks. Recorded for honesty: 2d+1.0 was that
+    # day's only rule positive on BOTH clocks, and the neighbourhood test was built
+    # around it - re-adding is a one-line change if the decision is revisited.
     {"id": "3d+0.3", "entry": 3, "dir": -1, "kind": "target", "a": 0.3, "b": 1.0},
-    {"id": "2d+0.5", "entry": 2, "dir": -1, "kind": "target", "a": 0.5, "b": 1.0},
     {"id": "3d+0.5", "entry": 3, "dir": -1, "kind": "target", "a": 0.5, "b": 1.0},
-    {"id": "2d3u", "entry": 2, "dir": -1, "kind": "candle", "a": 3},
     {"id": "3d3u", "entry": 3, "dir": -1, "kind": "candle", "a": 3},
 
     # ── THE TAKE-PROFIT EXPERIMENT (boss 2026-08-05) ────────────────────────────────
@@ -72,16 +73,12 @@ VARIANTS: list[dict] = [
     # (+0.157%/trade, 73% win, 11 trades) when read on the 1분 clock. A 1분 bar moves
     # further than a 5틱 bar while the fee stays 0.23%, so the move-to-cost ratio
     # improves purely by waiting. Small sample; that is what running it is for.
-    {"id": "2d+1.0", "entry": 2, "dir": -1, "kind": "pct", "a": 1.0, "b": 1.5},
 
     # ── THE NEIGHBOURHOOD TEST (boss approved 2026-08-05). 2d+1.0 is the only rule with
     # a real sample that is positive on BOTH clocks today. Before trusting it, nudge each
     # of its numbers and see whether the ZONE is good or only the point: a rule that
     # captured something true about the market must have decent neighbours, and a rule
     # that merely fit one day's wiggles will stand alone. Four directions:
-    {"id": "2d+0.8", "entry": 2, "dir": -1, "kind": "pct", "a": 0.8, "b": 1.2},   # smaller take
-    {"id": "2d+1.2", "entry": 2, "dir": -1, "kind": "pct", "a": 1.2, "b": 1.5},   # bigger take
-    {"id": "2d+1.0s", "entry": 2, "dir": -1, "kind": "pct", "a": 1.0, "b": 1.0},  # tighter stop
     {"id": "3d+1.0w", "entry": 3, "dir": -1, "kind": "pct", "a": 1.0, "b": 1.5},  # stricter entry
     # ── the boss's top six, each with a per-company model filtering its entries
     # (2026-08-03). Same rule, same exits; the model only decides whether to TAKE a
@@ -846,6 +843,7 @@ def compare(seed: int = 7, start: int = 0, tick: int = 5,
         al = abs(sum(t["gross_pct"] for t in l) / len(l)) if l else 0.0
         rows.append({
             "id": v["id"], "ko": label(v, True), "en": label(v, False),
+            "kind": v["kind"],
             "trips": len(trades), "wins": len(w), "losses": len(l), "flats": flat,
             "win_pct": round(len(w) / decided * 100) if decided else 0,
             "gross": round(sum(t["gross_pct"] for t in trades), 2),
@@ -889,7 +887,11 @@ def compare(seed: int = 7, start: int = 0, tick: int = 5,
             twin = by_id.get(r["id"][:-2])
             r["vs"] = twin["win_pct"] if twin else None
             r["vs_trips"] = twin["trips"] if twin else None
-    rows.sort(key=lambda r: (r["thin"], -r["win_pct"], -r["trips"]))
+    # GROUPED as the boss reads them (2026-08-05): first every up/down rule (exit by
+    # candle count), then every %-target rule - and inside each group, highest win rate
+    # first. `kind` travels with the row so the page cannot need to guess the group.
+    rows.sort(key=lambda r: (0 if r.get("kind") == "candle" else 1,
+                             -r["win_pct"], -r["trips"]))
     off = max(0, len(chart_tape["cs"]) - bars) if chart_tape else 0
     if chart_tape and off:
         for r in rows:
