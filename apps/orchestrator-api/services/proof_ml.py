@@ -163,7 +163,7 @@ def score(bundle: dict, feats: list[float]) -> dict[str, Any]:
 #
 #     over ₩1,000,000   ->    100 shares max   (SK하이닉스: ₩156m at the cap)
 #     over ₩100,000     ->  1,000 shares max   (프루프전자: ₩208m at the cap)
-#     below that        -> 10,000 shares max   (한화오션:   ₩870m at the cap)
+#     below that        ->  1,000 shares max   (한화오션:    ₩87m at the cap)
 #
 # THE CHEAP BAND WAS 100,000 AND IT DROWNED EVERYTHING (boss 2026-08-05: "한화오션 is
 # 100K so it decreases a lot our gain"). At 100,000 shares a ₩87,000 stock is ₩8.7bn of
@@ -186,7 +186,9 @@ def cap_for(price: float) -> int:
         return 100
     if price > 100_000:
         return 1_000
-    return 10_000
+    # 1,000 EVERYWHERE below that too (boss 2026-08-05: "max 1K for all sides"). Nothing
+    # on any desk now buys more than a thousand shares of anything.
+    return 1_000
 
 
 def quantity(p: float, bar: float, price: float = 0.0) -> int:
