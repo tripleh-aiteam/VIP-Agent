@@ -908,7 +908,8 @@ export default function StrategyLab() {
                       </span>
                     )}
                   </div>
-                  <LabChart candles={detail.chart.candles} marks={detail.chart.marks}
+                  <LabChart key={`det-${sel}-${detail.chart.code}-${tick}-${period}`}
+                    candles={detail.chart.candles} marks={detail.chart.marks}
                     focus={detail.chart.at_idx ?? detail.chart.focus?.s ?? null} />
                 </div>
               )}

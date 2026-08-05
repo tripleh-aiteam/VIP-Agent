@@ -625,7 +625,17 @@ export default function LiveDeskPage() {
                 with no arrows at all - which is why clicking a completed trade looked like it
                 did nothing (boss 2026-08-04). The header below names the company actually
                 drawn, so the two can never disagree on screen. */}
-            {bars.length ? <LiveChart bars={sel && det?.chart ? det.chart.candles : bars}
+            {/* keyed by DATASET IDENTITY. The x-axis uses bar NUMBERS as positions, so
+                when this same chart swaps between the live tape and a rule's window (or
+                the clock changes), the library can briefly keep tick labels cached from
+                the previous dataset - which is how a "15:11" from the full-day tape
+                appeared between 09:11 and 09:12 inside a morning window (boss
+                2026-08-05). A changed key remounts the chart: fresh axis, no stale
+                labels, provably ordered data underneath (checked: 0 out-of-order rows
+                in every payload). */}
+            {bars.length ? <LiveChart
+                key={`det-${sel ?? "tape"}-${det?.chart?.code ?? code}-${tick}-${period}`}
+                bars={sel && det?.chart ? det.chart.candles : bars}
                                       marks={sel && det?.chart ? det.chart.marks : undefined}
                                       focus={sel && det?.chart ? (det.chart.focus?.s ?? null) : null} /> : (
               <div className="px-4 py-10 text-center text-[12px] text-[var(--text-muted)]">
@@ -991,7 +1001,7 @@ export default function LiveDeskPage() {
             </span>
           )}
         </div>
-        {bars.length ? <LiveChart bars={bars} /> : (
+        {bars.length ? <LiveChart key={`mkt-${code}-${tick}-${period}`} bars={bars} /> : (
           <div className="px-4 py-8 text-center text-[12px] text-[var(--text-muted)]">
             {st?.market_open
               ? t("수집 중입니다 — 잠시 뒤 봉이 그려집니다.", "collecting - bars appear shortly.")
