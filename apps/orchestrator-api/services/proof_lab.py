@@ -45,13 +45,15 @@ VARIANTS: list[dict] = [
     # 55%. Every rule above therefore buys at the worst moment available and the mirror
     # is twice as good. These are the same exits, entered the other way round, so the
     # comparison isolates exactly one thing: which direction the entry faces.
+    # ALL down-entry rules (2-down AND 3-down families) were REMOVED at the boss's
+    # instruction, 2026-08-05: "too risky, I wanna trade only buy when up not down".
+    # Buying after falls is catching a falling knife, and that is his risk call to make.
+    # For the record, the removed set included the day's only positive rules; re-adding
+    # any of them is one line here plus the id lists in kiwoom_rules and the live page.
     # The 2-DOWN family (2d+0.3/0.5/1.0/0.8/1.2/1.0s, 2d3u) was REMOVED at the boss's
     # instruction on 2026-08-05, from both desks. Recorded for honesty: 2d+1.0 was that
     # day's only rule positive on BOTH clocks, and the neighbourhood test was built
     # around it - re-adding is a one-line change if the decision is revisited.
-    {"id": "3d+0.3", "entry": 3, "dir": -1, "kind": "target", "a": 0.3, "b": 1.0},
-    {"id": "3d+0.5", "entry": 3, "dir": -1, "kind": "target", "a": 0.5, "b": 1.0},
-    {"id": "3d3u", "entry": 3, "dir": -1, "kind": "candle", "a": 3},
 
     # ── THE TAKE-PROFIT EXPERIMENT (boss 2026-08-05) ────────────────────────────────
     # Every rule above aims for +0.3% or +0.5%, and the round trip costs 0.23% — so the
@@ -63,10 +65,6 @@ VARIANTS: list[dict] = [
     # The trade-off is real and points the other way: a bigger target is reached less
     # often, so the win rate falls as the target rises. Which effect wins is a question
     # about this tape, not about arithmetic, and running them side by side is the answer.
-    {"id": "3d+1.0", "entry": 3, "dir": -1, "kind": "pct", "a": 1.0, "b": 1.0},
-    {"id": "3d+1.5", "entry": 3, "dir": -1, "kind": "pct", "a": 1.5, "b": 2.0},
-    {"id": "3d+2.0", "entry": 3, "dir": -1, "kind": "pct", "a": 2.0, "b": 2.0},
-    {"id": "3d+2.0w", "entry": 3, "dir": -1, "kind": "pct", "a": 2.0, "b": 3.0},
     # ── THE 1분 CANDIDATE (boss 2026-08-05). Measured on today's real tape: the same
     # fall-entry rules lose less at every step from 5틱 to 30초 to 1분, and this shape —
     # two falls, +1.0% take, -1.5% stop — was the first thing POSITIVE on real data
@@ -78,8 +76,7 @@ VARIANTS: list[dict] = [
     # a real sample that is positive on BOTH clocks today. Before trusting it, nudge each
     # of its numbers and see whether the ZONE is good or only the point: a rule that
     # captured something true about the market must have decent neighbours, and a rule
-    # that merely fit one day's wiggles will stand alone. Four directions:
-    {"id": "3d+1.0w", "entry": 3, "dir": -1, "kind": "pct", "a": 1.0, "b": 1.5},  # stricter entry
+    # that merely fit one day's wiggles will stand alone. Four directions:  # stricter entry
     # ── the boss's top six, each with a per-company model filtering its entries
     # (2026-08-03). Same rule, same exits; the model only decides whether to TAKE a
     # signal the rule already produced, so a "+ML" row can be read against its twin.

@@ -188,8 +188,8 @@ export default function LiveDeskPage() {
                        // it went onto the Strategy Lab. These four buy after FALLS - the
                        // only reversal rules on this desk - so without naming them here
                        // the page would silently drop every one of them.
-                       // 2-down entries removed at the boss's instruction (2026-08-05)
-                       "3d+1.0", "3d+1.5", "3d+2.0", "3d+2.0w", "3d3u", "3d+1.0w"];
+                       // ALL down-entry rules removed (boss 2026-08-05): up-only desk
+                       ];
   const twelve = rank?.original_12?.length ? rank.original_12 : ORIGINAL_12;
   const shownRules = (rank?.variants ?? []).filter((v) => twelve.includes(v.id));
   const [det, setDet] = useState<RDetail | null>(null);
@@ -424,7 +424,7 @@ export default function LiveDeskPage() {
             </span>
             <span className="text-[10px] font-bold px-1.5 py-0.5 rounded"
               style={{ background: "rgba(106,27,154,0.12)", color: "#6a1b9a" }}>
-              {t("어제 12개 + 익절 실험 4개", "yesterday's 12 + the 4-rule exit test")}
+              {t("상승 매수 12개 규칙", "the 12 buy-on-rise rules")}
             </span>
             {rank.stocks.map((x) => (
               <span key={x.code} className="text-[10px] text-[var(--text-muted)]">

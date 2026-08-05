@@ -109,8 +109,9 @@ def _bars_for(code: str, tick: int, period: int) -> list[dict]:
 # on the 1분 clock), 3d3u (the only rule ever positive on the artificial side — no
 # profit cap, exits on the market's own signal), and 2d+0.5 as the tight-target control
 # so the comparison "same entry, wider exit" is visible on one screen.
-# 2-down entries removed at the boss's instruction (2026-08-05); 3-down rules stay.
-EXPERIMENT = ("3d+1.0", "3d+1.5", "3d+2.0", "3d+2.0w", "3d3u", "3d+1.0w")
+# ALL down-entry rules removed at the boss's instruction (2026-08-05) - the desk buys
+# only after RISES now. The tuple stays as the one place to re-admit an experiment.
+EXPERIMENT: tuple[str, ...] = ()
 
 PLAIN = [v for v in VARIANTS
          if not v.get("ml") and (v.get("dir", 1) > 0 or v["id"] in EXPERIMENT)]
