@@ -153,7 +153,11 @@ def rank(tick: int = 5, period: int = 0) -> dict[str, Any]:
             # "100%" carried by two trades.
             "decided": w + l, "thin": (w + l) < 10,
         })
-    rows.sort(key=lambda r: (r["thin"], -r["win_pct"], -r["trips"]))
+    # PURELY by win rate, highest first (boss 2026-08-05, same as the Strategy Lab).
+    # Sorting thin rules to the bottom put a 100% rule below a 7% one and made the
+    # sequence look arbitrary next to the column he is reading. The 표본 부족 badge stays
+    # on the row, which is where a warning about the sample belongs.
+    rows.sort(key=lambda r: (-r["win_pct"], -r["trips"]))
     return {"ok": True, "original_12": ORIGINAL_12, "clock": f"{period}초" if period else f"{tick}틱",
             "tick": tick, "period": period, "fee_pct": FEE_PCT,
             "stocks": [{"code": c, "name": t["name"], "bars": len(t["cs"]),
