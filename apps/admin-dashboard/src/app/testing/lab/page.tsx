@@ -597,15 +597,9 @@ export default function StrategyLab() {
                     style={{ background: sel === v.id ? "rgba(106,27,154,0.10)"
                              : i === 0 ? "rgba(230,81,0,0.06)" : "transparent" }}>
                     <td className="px-3 py-1.5 font-bold text-[var(--text-primary)]">
+                      <span className="text-[10px] font-bold px-1 mr-1 rounded"
+                        style={{ background: "rgba(106,27,154,0.12)", color: "#6a1b9a" }}>{i + 1}</span>
                       {sel === v.id ? "▶ " : (i === 0 && !v.thin) ? "🏆 " : ""}{lang === "ko" ? v.ko : v.en}
-                      {v.thin && (
-                        <span className="ml-1.5 text-[9.5px] font-bold px-1.5 py-0.5 rounded"
-                          style={{ background: "rgba(230,81,0,0.14)", color: GOLD }}
-                          title={t("매매 수가 너무 적어 승률을 신뢰할 수 없습니다 — 순위에서도 아래로 내립니다",
-                                   "too few trades for the win rate to mean anything - ranked below the rest")}>
-                          {t("표본 부족", "thin")}
-                        </span>
-                      )}
                       {/* the model judges signals the rule produced and never invents one,
                           but it is NOT "the same rule with fewer trades" — see the note in
                           the ML card below (chain audit, 2026-08-04) */}

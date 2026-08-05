@@ -646,7 +646,7 @@ def _simulate(candles: list[dict], seed: int, with_book: bool, period: int = 60,
     for i, cd in enumerate(candles):
         closes.append(cd["close"])
         up, dn = run_steps(closes)                       # ← REAL engine code
-        if pos is None and up == need:                   # fires the moment the Nth red closes
+        if pos is None and up >= need:                   # N OR MORE while flat (boss 2026-08-05)
             bk = _book(seed * 1_000 + i, cd["close"], "BUY", tick) if with_book else None
             entry_px = bk["fill"] if bk else cd["close"]
             # the bar's real closing second. `end_t` is carried by the bar itself; the

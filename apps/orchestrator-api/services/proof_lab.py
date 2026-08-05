@@ -172,7 +172,15 @@ def run_variant(closes: list[float], tick: int, v: dict, seed: int,
         if pos is None:
             # dir=-1 buys after a run of FALLS instead of rises. The tape is mean-reverting
             # at 5틱, so this is the same rule pointed the other way — nothing else changes.
-            if (dn if v.get("dir", 1) < 0 else up) == v["entry"]:
+            # ">= entry", not "== entry" (boss 2026-08-05, reaffirmed after seeing the
+            # numbers): an EMPTY-HANDED rule buys whenever the visible run is at least its
+            # entry count. Under the old equality, a rule that sold mid-run watched the
+            # run continue at 5, 6, 7 and never re-fired until it broke and rebuilt -
+            # "4 up happened and it did not buy". Measured cost of the change: ~0.2% more
+            # entries, and in the test they lost slightly; he chose completeness over
+            # that, which is his risk call to make. A holding rule is unaffected - one
+            # position per stock, never doubled (verified: 3,392 pairs, 0 overlaps).
+            if (dn if v.get("dir", 1) < 0 else up) >= v["entry"]:
                 if v.get("ml"):
                     from services.proof_ml import features_at, score, MARGIN
                     vv = vols or [0.0] * len(closes)

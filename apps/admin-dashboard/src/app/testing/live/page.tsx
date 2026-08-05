@@ -225,6 +225,10 @@ export default function LiveDeskPage() {
     : null);
   const [pick, setPick] = useState<number | null>(null);
   const [money, setMoney] = useState(false);      // off until he asks - see the button
+  // which side of the picked trade the chart centres on: clicking the BUY time shows the
+  // buy with its arrow, the SELL time the sell (boss 2026-08-05: "if i click time it
+  // should go to buying ... selling"). The row itself still defaults to the sell.
+  const [focusSide, setFocusSide] = useState<"b" | "s">("s");
   // WON PER TRADE. 0 = the historical one share. One share is not equal risk - one share
   // of SK하이닉스 is ₩1.5M and one of 한화오션 is ₩85k - so a fixed budget is both fairer
   // and closer to a real account. It scales the money and never the win rate.
@@ -274,7 +278,7 @@ export default function LiveDeskPage() {
     // be recovered. This makes the fix work against the server that is running right now.
     const want = tradeCode || codeRef.current;
     api<RDetail>(`/paper-desk/live/rules/trades?variant=${encodeURIComponent(id)}&${q}`
-      + `&code=${encodeURIComponent(want)}&bars=2500`
+      + `&code=${encodeURIComponent(want)}&bars=60000`
       + `&around=${tradeIdx ?? -1}&budget=${budgetRef.current}`)
       .then((d) => { const v = d?.ok ? d : null; detRef.current = v; setDet(v); })
       .catch(() => { detRef.current = null; setDet(null); });
@@ -491,14 +495,9 @@ export default function LiveDeskPage() {
                     style={{ background: sel === v.id ? "rgba(106,27,154,0.10)"
                              : (i === 0 && !v.thin) ? "rgba(230,81,0,0.06)" : "transparent" }}>
                     <td className="px-3 py-1.5 font-bold text-[var(--text-primary)]">
+                      <span className="text-[10px] font-bold px-1 mr-1 rounded"
+                        style={{ background: "rgba(106,27,154,0.12)", color: "#6a1b9a" }}>{i + 1}</span>
                       {sel === v.id ? "▶ " : (i === 0 && !v.thin) ? "🏆 " : ""}{lang === "ko" ? v.ko : v.en}
-                      {v.thin && (
-                        <span className="ml-1.5 text-[9.5px] font-bold px-1.5 py-0.5 rounded"
-                          style={{ background: "rgba(230,81,0,0.14)", color: GOLD }}
-                          title={t("매매 수가 너무 적어 승률을 신뢰할 수 없습니다", "too few trades for the win rate to mean anything")}>
-                          {t("표본 부족", "thin")}
-                        </span>
-                      )}
                     </td>
                     <td className="text-right px-2">
                       {v.trips.toLocaleString()}
@@ -645,7 +644,9 @@ export default function LiveDeskPage() {
                 off={sel && det?.chart ? det.chart.off : (tape?.off ?? 0)}
                 bars={sel && det?.chart ? det.chart.candles : bars}
                                       marks={sel && det?.chart ? det.chart.marks : undefined}
-                                      focus={sel && det?.chart ? (det.chart.focus?.s ?? null) : null} /> : (
+                                      focus={sel && det?.chart
+                  ? ((focusSide === "b" ? det.chart.focus?.b : det.chart.focus?.s) ?? null)
+                  : null} /> : (
               <div className="px-4 py-10 text-center text-[12px] text-[var(--text-muted)]">
                 {st?.market_open
                   ? t("수집 중입니다 — 잠시 뒤 첫 봉이 그려집니다.", "collecting - the first bars appear shortly.")
@@ -705,9 +706,19 @@ export default function LiveDeskPage() {
                       className="border-t border-[var(--border-default)]/40 cursor-pointer hover:bg-[var(--bg-elevated)]"
                       style={{ background: pick === i ? "rgba(230,81,0,0.10)" : "transparent" }}>
                       <td className="px-3 py-1 font-bold text-[var(--text-primary)]">{pick === i ? "▶ " : ""}{tr.name}</td>
-                      <td className="px-2" style={{ color: RED }} title={t(`정확한 체결 초: ${tr.buy_t}`, `exact second: ${tr.buy_t}`)}>▲ {tr.buy_t.slice(0, 5)}</td>
+                      <td className="px-2 cursor-pointer underline decoration-dotted" style={{ color: RED }}
+                        title={t(`클릭하면 차트가 이 매수로 이동합니다 (${tr.buy_t})`, `click: chart jumps to this BUY (${tr.buy_t})`)}
+                        onClick={(e) => { e.stopPropagation(); setFocusSide("b"); setPick(i);
+                                          if (sel) openRule(sel, i, tr.code);
+                                          chartRef.current?.scrollIntoView({ behavior: "smooth", block: "center" }); }}>
+                        ▲ {tr.buy_t.slice(0, 5)}</td>
                       <td className="text-right px-2">₩{tr.entry.toLocaleString()}</td>
-                      <td className="px-2" style={{ color: BLUE }} title={t(`정확한 체결 초: ${tr.sell_t}`, `exact second: ${tr.sell_t}`)}>▼ {tr.sell_t.slice(0, 5)}</td>
+                      <td className="px-2 cursor-pointer underline decoration-dotted" style={{ color: BLUE }}
+                        title={t(`클릭하면 차트가 이 매도로 이동합니다 (${tr.sell_t})`, `click: chart jumps to this SELL (${tr.sell_t})`)}
+                        onClick={(e) => { e.stopPropagation(); setFocusSide("s"); setPick(i);
+                                          if (sel) openRule(sel, i, tr.code);
+                                          chartRef.current?.scrollIntoView({ behavior: "smooth", block: "center" }); }}>
+                        ▼ {tr.sell_t.slice(0, 5)}</td>
                       <td className="text-right px-2">₩{tr.exit.toLocaleString()}</td>
                       <td className="text-right px-2" style={{ color: col }}>
                         {tr.exit - tr.entry > 0 ? "+" : ""}{(tr.exit - tr.entry).toLocaleString()}
