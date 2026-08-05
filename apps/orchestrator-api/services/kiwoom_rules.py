@@ -49,6 +49,42 @@ def _fill(_seed_i: int, px: float, side: str, tk: int) -> dict[str, Any]:
             "slip": tk if side == "BUY" else 0}
 
 
+def _hole_bars(code: str, tick: int, period: int) -> set[int]:
+    """Bar indices where the tape has a HOLE immediately before them.
+
+    A hole is time the collector was down. The bars either side are stitched together as
+    if consecutive, so a position open across one has an unobserved price path: a stop
+    that should have fired during the gap did not, and the trade survived to exit later.
+    Those trades are real but not judgeable, and this is how the desk can say so instead
+    of quietly counting them (boss 2026-08-05: "what is the solution?").
+    """
+    ticks = load(code)
+    if not ticks:
+        return set()
+
+    def sec(x):
+        t = x["ts"]
+        return int(t[8:10]) * 3600 + int(t[10:12]) * 60 + int(t[12:14])
+
+    out: set[int] = set()
+    for i in range(1, len(ticks)):
+        if sec(ticks[i]) - sec(ticks[i - 1]) >= 60:
+            # which bar does tick i land in? tick bars are fixed-size groups; time bars
+            # are found by the second, so ask the aggregator rather than assume
+            out.add(i // max(1, tick) if not period else -1)
+    if period:
+        cs = _bars_for(code, tick, period)
+        out = set()
+        for j in range(1, len(cs)):
+            # a time bar whose clock jumps more than its own width has a hole before it
+            def s2(h):
+                p = h.split(":")
+                return int(p[0]) * 3600 + int(p[1]) * 60 + int(p[2] if len(p) > 2 else 0)
+            if s2(cs[j]["hhmm"]) - s2(cs[j - 1]["hhmm"]) >= max(60, period * 2):
+                out.add(j)
+    return out
+
+
 def _bars_for(code: str, tick: int, period: int) -> list[dict]:
     ticks = load(code)
     if not ticks:
@@ -175,6 +211,7 @@ def trades(vid: str, tick: int = 5, period: int = 0, code: str = "",
         if len(cs) < 10:
             continue
         tk = krx_tick(cs[-1]["close"]) or 1
+        holes = _hole_bars(c_code, tick, period)
         got, op = run_variant([c["close"] for c in cs], tk, v, 1,
                               evidence=True, with_open=True, fill_fn=_fill)
         for g in got:
@@ -191,6 +228,9 @@ def trades(vid: str, tick: int = 5, period: int = 0, code: str = "",
                 "tick_size": tk,
                 # shares this trade would buy for the chosen budget (1 when none is set)
                 "qty": shares_for(g["entry"], budget),
+                # held through a stretch of tape the collector missed - the entry and exit
+                # are real, the path between them is unknown
+                "spans_hole": any(g["buy_i"] < h <= g["sell_i"] for h in holes),
                 "buy_ev": g.get("buy_ev"), "sell_ev": g.get("sell_ev"),
             })
         if op:
@@ -250,6 +290,9 @@ def trades(vid: str, tick: int = 5, period: int = 0, code: str = "",
             # loss and is NOT in the percentage, so the denominator has to be on screen or
             # "2 trips ... 100%" reads as two wins (boss 2026-08-04)
             "decided": w + l, "thin": (w + l) < 10,
+            # how many of these cannot be judged: the collector was down while they
+            # were open, so a stop that should have fired during the gap may not have
+            "spanning_hole": sum(1 for r in rows if r.get("spans_hole")),
             # THE MONEY. Summed over EVERY trade, not the page's slice - `trades` is
             # cut to `limit`, so a total added up on screen would quietly under-report a
             # rule with more trades than fit. Net is after the round-trip fee.
