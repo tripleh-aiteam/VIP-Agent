@@ -289,6 +289,7 @@ export default function LiveDeskPage() {
   const perRef = useRef(period); perRef.current = period;
   const tickRef = useRef(tick); tickRef.current = tick;
 
+  const detSeqRef = useRef(0);
   const openRule = useCallback((id: string, tradeIdx: number | null = null,
                                 tradeCode?: string) => {
     setPick(tradeIdx);
@@ -302,12 +303,20 @@ export default function LiveDeskPage() {
     // NO --reload and a restart during market hours costs ~72s of real tape that cannot
     // be recovered. This makes the fix work against the server that is running right now.
     const want = tradeCode || codeRef.current;
+    // LAST CLICK WINS. The detail payload is the whole day (60,000 bars, several MB), so
+    // a response can land seconds after it was asked for - and an OLD response arriving
+    // after a NEW click used to overwrite the click, which read as "clicking the buy time
+    // shows late / jumps back" (boss 2026-08-06). Every request takes a number; only the
+    // newest number is allowed to touch the screen.
+    const my = ++detSeqRef.current;
     api<RDetail>(`/paper-desk/live/rules/trades?variant=${encodeURIComponent(id)}&${q}`
       + `&code=${encodeURIComponent(want)}&bars=60000`
       + `&around=${tradeIdx ?? -1}&budget=${budgetRef.current}`
       + `&day=${ruleDayRef.current}&frm=${encodeURIComponent(hourFromRef.current)}&to=${encodeURIComponent(hourToRef.current)}`)
-      .then((d) => { const v = d?.ok ? d : null; detRef.current = v; setDet(v); })
-      .catch(() => { detRef.current = null; setDet(null); });
+      .then((d) => { if (my !== detSeqRef.current) return;
+                     const v = d?.ok ? d : null; detRef.current = v; setDet(v); })
+      .catch(() => { if (my !== detSeqRef.current) return;
+                     detRef.current = null; setDet(null); });
   }, []);
 
   const loadDf = useCallback((c: string, mins: number, f = "", tt = "") => {
@@ -354,7 +363,10 @@ export default function LiveDeskPage() {
     // the stock button a moment after he clicks
     const a = setInterval(() => {
       pull();
-      if (sel) openRule(sel, pick, pick !== null ? detRef.current?.trades[pick]?.code : undefined);
+      // a stored day's trades cannot change - re-downloading the multi-MB detail every
+      // 3s only churned the chart under his cursor. Refresh it live-only.
+      if (sel && !ruleDayRef.current)
+        openRule(sel, pick, pick !== null ? detRef.current?.trades[pick]?.code : undefined);
     }, 3000);
     const b = setInterval(() => api<Status>("/paper-desk/live/status").then(setSt).catch(() => {}), 15000);
     return () => { clearInterval(a); clearInterval(b); };
@@ -812,15 +824,19 @@ export default function LiveDeskPage() {
                       <td className="px-3 py-1 font-bold text-[var(--text-primary)]">{pick === i ? "▶ " : ""}{tr.name}</td>
                       <td className="px-2 cursor-pointer underline decoration-dotted" style={{ color: RED }}
                         title={t(`클릭하면 차트가 이 매수로 이동합니다 (${tr.buy_t})`, `click: chart jumps to this BUY (${tr.buy_t})`)}
-                        onClick={(e) => { e.stopPropagation(); setFocusSide("b"); setPick(i);
-                                          if (sel) openRule(sel, i, tr.code);
+                        onClick={(e) => { e.stopPropagation(); setFocusSide("b");
+                                          if (pick !== i || detRef.current?.chart?.code !== tr.code) {
+                                            setPick(i); if (sel) openRule(sel, i, tr.code);
+                                          }
                                           chartRef.current?.scrollIntoView({ behavior: "smooth", block: "center" }); }}>
                         ▲ {tr.buy_t.slice(0, 5)}</td>
                       <td className="text-right px-2">₩{tr.entry.toLocaleString()}</td>
                       <td className="px-2 cursor-pointer underline decoration-dotted" style={{ color: BLUE }}
                         title={t(`클릭하면 차트가 이 매도로 이동합니다 (${tr.sell_t})`, `click: chart jumps to this SELL (${tr.sell_t})`)}
-                        onClick={(e) => { e.stopPropagation(); setFocusSide("s"); setPick(i);
-                                          if (sel) openRule(sel, i, tr.code);
+                        onClick={(e) => { e.stopPropagation(); setFocusSide("s");
+                                          if (pick !== i || detRef.current?.chart?.code !== tr.code) {
+                                            setPick(i); if (sel) openRule(sel, i, tr.code);
+                                          }
                                           chartRef.current?.scrollIntoView({ behavior: "smooth", block: "center" }); }}>
                         ▼ {tr.sell_t.slice(0, 5)}</td>
                       <td className="text-right px-2">₩{tr.exit.toLocaleString()}</td>
