@@ -86,6 +86,15 @@ function LiveChart({ bars, marks, focus, off = 0 }:
   const cs = useRef<{ chart: any; series: any } | null>(null);
   const label = useRef<Map<number, string>>(new Map());
   const applied = useRef<number | null | undefined>(undefined);
+  // HIS view vs OUR view. Every 3s poll re-feeds the data, and the library then
+  // re-decides what is visible - which yanked the chart out from under him while he was
+  // scrolled back studying a moment (boss 2026-08-06: "when i click and looking and
+  // monitoring chart it should not reload"). We remember the range HE scrolled to
+  // (prog guards our own programmatic moves from being mistaken for his), and after
+  // every data update we put his view back - unless he is at the right edge, where
+  // following the live market is what monitoring means.
+  const userRange = useRef<{ from: number; to: number } | null>(null);
+  const prog = useRef(false);
   const [ready, setReady] = useState(0);
 
   useEffect(() => {
@@ -108,6 +117,11 @@ function LiveChart({ bars, marks, focus, off = 0 }:
         upColor: RED, downColor: BLUE, borderUpColor: RED, borderDownColor: BLUE,
         wickUpColor: RED, wickDownColor: BLUE });
       cs.current = { chart, series };
+      chart.timeScale().subscribeVisibleTimeRangeChange(() => {
+        if (prog.current) return;
+        const r = chart.timeScale().getVisibleRange();
+        if (r) userRange.current = r as never;
+      });
       setReady((v) => v + 1);
       cleanup = () => { cs.current = null; chart.remove(); };
     })();
@@ -151,12 +165,21 @@ function LiveChart({ bars, marks, focus, off = 0 }:
     // not opening exact time"). Zoom to the trade, once per change of focus.
     if (applied.current !== focus) {
       applied.current = focus;
+      prog.current = true;
+      userRange.current = null;            // a click starts a fresh view
       if (focus != null && bars[focus]) {
         c.chart.timeScale().setVisibleLogicalRange({
           from: Math.max(0, focus - 70), to: Math.min(bars.length - 1, focus + 25) });
       } else {
         c.chart.timeScale().fitContent();
       }
+      setTimeout(() => { prog.current = false; }, 0);
+    } else if (userRange.current
+               && (userRange.current.to as number) < off + bars.length - 2) {
+      // he scrolled away from the live edge - pin his view through the refresh
+      prog.current = true;
+      try { c.chart.timeScale().setVisibleRange(userRange.current as never); } catch {}
+      setTimeout(() => { prog.current = false; }, 0);
     }
   }, [ready, bars, marks, focus, off]);
 
