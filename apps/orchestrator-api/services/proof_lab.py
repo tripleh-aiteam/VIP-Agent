@@ -51,6 +51,21 @@ VARIANTS: list[dict] = [
     {"id": "3d+0.5", "entry": 3, "dir": -1, "kind": "target", "a": 0.5, "b": 1.0},
     {"id": "2d3u", "entry": 2, "dir": -1, "kind": "candle", "a": 3},
     {"id": "3d3u", "entry": 3, "dir": -1, "kind": "candle", "a": 3},
+
+    # ── THE TAKE-PROFIT EXPERIMENT (boss 2026-08-05) ────────────────────────────────
+    # Every rule above aims for +0.3% or +0.5%, and the round trip costs 0.23% — so the
+    # fee eats most of every win and it takes eighteen of them to pay for one -1% loss.
+    # These four hold out for a bigger move instead. The BUY is identical to 3d+0.3
+    # (three falls in a row); only the EXIT differs, so this group isolates exactly one
+    # variable: how much profit is worth waiting for.
+    #
+    # The trade-off is real and points the other way: a bigger target is reached less
+    # often, so the win rate falls as the target rises. Which effect wins is a question
+    # about this tape, not about arithmetic, and running them side by side is the answer.
+    {"id": "3d+1.0", "entry": 3, "dir": -1, "kind": "pct", "a": 1.0, "b": 1.0},
+    {"id": "3d+1.5", "entry": 3, "dir": -1, "kind": "pct", "a": 1.5, "b": 2.0},
+    {"id": "3d+2.0", "entry": 3, "dir": -1, "kind": "pct", "a": 2.0, "b": 2.0},
+    {"id": "3d+2.0w", "entry": 3, "dir": -1, "kind": "pct", "a": 2.0, "b": 3.0},
     # ── the boss's top six, each with a per-company model filtering its entries
     # (2026-08-03). Same rule, same exits; the model only decides whether to TAKE a
     # signal the rule already produced, so a "+ML" row can be read against its twin.

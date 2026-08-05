@@ -152,11 +152,17 @@ export default function StrategyLab() {
   // rows is a wall of numbers; he asked to be able to look at one group at a time.
   const WINNERS6 = ["3u+0.3", "3u+0.5", "2u+0.5", "4u3d", "3u+1.0", "4u+1.0"];
   const WINNERS6_ML = WINNERS6.map((x) => x + "ML");
-  type RuleView = "w6" | "w6ml" | "all6" | "all";
+  // THE TAKE-PROFIT EXPERIMENT (boss 2026-08-05). Ten rules that all buy the same way -
+  // after falls - so the ONLY thing separating the rows is how much profit they wait for.
+  // Six he already had, four new ones holding out for +1.0% to +2.0%.
+  const EXIT10 = ["3d+0.3", "3d+0.5", "2d+0.3", "2d+0.5", "3d3u", "2d3u",
+                  "3d+1.0", "3d+1.5", "3d+2.0", "3d+2.0w"];
+  type RuleView = "exit10" | "w6" | "w6ml" | "all6" | "all";
   const [ruleView, setRuleView] = useState<RuleView>("all");
   const [money, setMoney] = useState(false);      // off until he asks - see the button
   const inView = (id: string) => (
-    ruleView === "w6" ? WINNERS6.includes(id)
+    ruleView === "exit10" ? EXIT10.includes(id)
+      : ruleView === "w6" ? WINNERS6.includes(id)
       : ruleView === "w6ml" ? WINNERS6_ML.includes(id)
         : ruleView === "all6" ? (WINNERS6.includes(id) || WINNERS6_ML.includes(id))
           : true);
@@ -509,6 +515,9 @@ export default function StrategyLab() {
               {t(`${lab.variants.filter((v) => inView(v.id)).length}개 규칙만 보고 있습니다 (전체 ${lab.variants.length}개). 규칙 열의 선택 상자로 바꿉니다.`,
                  `showing ${lab.variants.filter((v) => inView(v.id)).length} of ${lab.variants.length} rules — change it with the box in the rule column.`)}
               {t(" 승률 높은 순입니다.", " highest win rate first.")}
+              {ruleView === "exit10" && t(
+                " 10개 모두 '3연속(또는 2연속) 하락 후 매수'로 사는 방식은 같습니다 — 다른 것은 익절 목표뿐입니다. 목표가 클수록 수수료 0.23%가 덜 갉아먹지만, 도달 횟수는 줄어듭니다.",
+                " all ten buy the same way - after falls. The only difference is the profit target. A bigger target loses less of itself to the 0.23% fee, but is reached less often.")}
             </div>
           )}
           <div className="mt-2 flex items-center gap-2 flex-wrap">
@@ -544,6 +553,7 @@ export default function StrategyLab() {
                     style={{ borderColor: ruleView === "all" ? "var(--border-default)" : "#6a1b9a" }}
                     title={t("표에 어떤 규칙을 보여줄지 고릅니다 — 24줄을 한 번에 보면 비교가 어렵습니다",
                              "choose which rules the table shows — 24 rows at once is hard to compare")}>
+                    <option value="exit10">{t("익절 실험 10개 (하락 후 매수)", "the 10-rule exit test (buy after falls)")}</option>
                     <option value="w6">{t("6개 우승 규칙", "the 6 winners")}</option>
                     <option value="w6ml">{t("6개 우승 규칙 + ML", "the 6 winners + ML")}</option>
                     <option value="all6">{t("6개 전부 (규칙 + ML)", "all 6 (rule and ML)")}</option>
