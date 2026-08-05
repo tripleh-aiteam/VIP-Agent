@@ -448,21 +448,17 @@ export default function LiveDeskPage() {
                 {t(`수수료 ${rank.fee_pct}% 뺀 뒤입니다.`, `after the ${rank.fee_pct}% round trip.`)}
               </span>
             )}
+            {/* The won-budget buttons (1주 / ₩1,000만 / ₩5,000만 / ₩1억) were removed
+                2026-08-05 at the boss's request. They predated the 10/100/1,000 share
+                bands and ended up as a second sizing system fighting the one he chose -
+                worse, the "1주" label had gone stale: with the band caps live, budget=0
+                actually traded 10/100/1,000 shares, so the button said one thing and did
+                another. The `budget` query param survives on the API for analysis. */}
             {money && (
-              <>
-                <span className="text-[10.5px] ml-2" style={{ color: "var(--text-muted)" }}>
-                  {t("한 번에 얼마씩:", "money per trade:")}
-                </span>
-                {([[0, t("1주", "1 share")], [10_000_000, "₩1,000만"], [50_000_000, "₩5,000만"],
-                   [100_000_000, "₩1억"]] as [number, string][]).map(([v, lab]) => (
-                  <button key={v} onClick={() => setBudget(v)}
-                    className="text-[10px] font-bold px-1.5 py-0.5 rounded border"
-                    style={budget === v ? { borderColor: "#e65100", color: "#e65100", background: "rgba(230,81,0,0.10)" }
-                                        : { borderColor: "var(--border-default)", color: "var(--text-secondary)" }}>
-                    {lab}
-                  </button>
-                ))}
-              </>
+              <span className="text-[10.5px] ml-2" style={{ color: "var(--text-muted)" }}>
+                {t("수량: 가격대별 한도 (100만원 초과 10주 · 10만원 초과 100주 · 그 아래 1,000주)",
+                   "size: price-band caps (over ₩1m → 10 · over ₩100k → 100 · below → 1,000 shares)")}
+              </span>
             )}
           </div>
           <div className="overflow-x-auto">
