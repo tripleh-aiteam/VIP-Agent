@@ -687,6 +687,12 @@ export default function LiveDeskPage() {
             )}
           </div>
 
+          {det.id.endsWith("ML") && (
+            <div className="px-4 py-1.5 border-b text-[11px]" style={{ borderColor: "var(--border-default)", background: "rgba(21,101,192,0.06)", color: "#1565c0" }}>
+              🤖 {t("이 표의 매매는 모두 모델이 승인한 매수입니다 — 신호마다 모델이 사기/건너뛰기를 정했고, 수량도 모델이 정했습니다(확신이 클수록 많이). 매도는 모델이 아니라 항상 규칙이 합니다. 모델이 건너뛴 신호는 여기에 없습니다 — 규칙 이름이 같은 ML 없는 행에서 전부 볼 수 있습니다.",
+                    "Every trade here is a buy the model APPROVED - at each signal the model chose buy/skip, and chose the share count (more when more confident). Selling is always the rule, never the model. Signals the model skipped are not in this table - the plain row with the same rule name shows all of them.")}
+            </div>
+          )}
           {/* THE CHART, ABOVE THE TRADE TABLE. It used to sit below everything, so
               clicking a row scrolled the page down and away from the very thing the click
               was supposed to show. The Strategy Lab puts the chart directly above its
