@@ -108,7 +108,7 @@ function LabChart({ candles, marks, focus }:
       const v = k.g ?? k.net;
       return [
         { time: candles[k.b]?.time, position: "belowBar", color: RED, shape: "arrowUp", text: "매수" },
-        { time: candles[k.s]?.time, position: "aboveBar", color: v > 0 ? "#2e7d32" : BLUE,
+        { time: candles[k.s]?.time, position: "aboveBar", color: v > 0 ? RED : BLUE,
           shape: "arrowDown", text: `${v > 0 ? "+" : ""}${v}%` },
       ];
     }).filter((x) => x.time != null).sort((a, b) => (a.time as number) - (b.time as number));
@@ -678,7 +678,7 @@ export default function StrategyLab() {
                     })()}
                     {money && (
                     <td className="text-right px-3 tabular-nums font-bold"
-                        style={{ color: v.net > 0 ? GREEN : v.net < 0 ? BLUE : "inherit" }}
+                        style={{ color: v.net > 0 ? RED : v.net < 0 ? BLUE : "inherit" }}
                         title={t(`${(v.shares_total ?? 0).toLocaleString()}주 · 투입 ₩${(v.capital_used ?? 0).toLocaleString()}`,
                                `${(v.shares_total ?? 0).toLocaleString()} shares · ₩${(v.capital_used ?? 0).toLocaleString()} committed`)}>
                       {/* A minus in front of ₩1,164,396,515 is one character against
@@ -689,7 +689,7 @@ export default function StrategyLab() {
                         const val = v.net_won ?? 0;
                         const up = val > 0;
                         return (
-                          <span style={{ color: up ? GREEN : val < 0 ? BLUE : "var(--text-muted)" }}>
+                          <span style={{ color: up ? RED : val < 0 ? BLUE : "var(--text-muted)" }}>
                             <b style={{ fontSize: "13px" }}>{up ? "▲ +" : val < 0 ? "▼ −" : ""}</b>
                             ₩{Math.abs(val).toLocaleString()}
                           </span>
@@ -743,8 +743,8 @@ export default function StrategyLab() {
                   whenever the list is complete, and hidden entirely when it is not. */}
 {money && moneyWon !== null && (
                       <span className="text-[12px] tabular-nums font-extrabold px-2 py-0.5 rounded"
-                        style={{ background: moneyWon >= 0 ? "rgba(46,125,50,0.12)" : "rgba(21,101,192,0.12)",
-                                 color: moneyWon >= 0 ? GREEN : BLUE }}
+                        style={{ background: moneyWon >= 0 ? "rgba(198,40,40,0.10)" : "rgba(21,101,192,0.12)",
+                                 color: moneyWon >= 0 ? RED : BLUE }}
                         title={t("이 규칙이 낸 모든 매매의 합계 (수수료 뺀 뒤)",
                                  "every trade this rule made, added up, after fees")}>
                         {t("합계", "total")} {moneyWon === null ? "-" : won(moneyWon)}
@@ -847,7 +847,7 @@ export default function StrategyLab() {
                             style={{ borderColor: warn ? GOLD : "var(--border-default)" }}>
                             <div className="text-[9.5px] text-[var(--text-muted)]">{lab}</div>
                             <div className="tabular-nums font-bold"
-                              style={{ color: val > 0 ? GREEN : val < 0 ? BLUE : "inherit" }}>
+                              style={{ color: val > 0 ? RED : val < 0 ? BLUE : "inherit" }}>
                               {val < 0 ? "-" : "+"}₩{Math.abs(val).toLocaleString()}
                             </div>
                           </div>
@@ -990,7 +990,7 @@ export default function StrategyLab() {
                               {(tr.qty ?? 1).toLocaleString()}
                             </td>
                             <td className="text-right px-2 font-bold tabular-nums"
-                                style={{ color: tr.net_pct > 0 ? GREEN : tr.net_pct < 0 ? BLUE : "var(--text-muted)" }}
+                                style={{ color: tr.net_pct > 0 ? RED : tr.net_pct < 0 ? BLUE : "var(--text-muted)" }}
                                 title={t(`1주 기준입니다: 매수가 \u20a9${tr.entry.toLocaleString()} x 수수료 뺀 ${tr.net_pct}%`,
                                          `one share: \u20a9${tr.entry.toLocaleString()} x ${tr.net_pct}% after the round trip`)}>
                                 {won(Math.round(wonOf(tr.entry, tr.net_pct) * (tr.qty ?? 1)))}

@@ -125,7 +125,7 @@ function LiveChart({ bars, marks, focus }:
     // side, and there is no reason to repeat it here.
     const m = (marks ?? []).flatMap((k) => [
       { time: k.b, position: "belowBar", color: RED, shape: "arrowUp", text: "매수" },
-      { time: k.s, position: "aboveBar", color: k.g > 0 ? "#2e7d32" : BLUE,
+      { time: k.s, position: "aboveBar", color: k.g > 0 ? RED : BLUE,
         shape: "arrowDown", text: `${k.g > 0 ? "+" : ""}${k.g}%` },
     ]).filter((x) => x.time >= 0 && x.time < bars.length);
     // the clicked trade gets its own gold marker, so it is obvious WHICH of the arrows
@@ -520,7 +520,7 @@ export default function LiveDeskPage() {
                     </td>
                     {money && (
                     <td className="text-right px-3 tabular-nums font-bold"
-                        style={{ color: v.net > 0 ? "#2e7d32" : v.net < 0 ? BLUE : "inherit" }}
+                        style={{ color: v.net > 0 ? RED : v.net < 0 ? BLUE : "inherit" }}
                         title={t("1주씩 매매했다면 이만큼입니다", "if you traded one share each time")}>
                       {v.net_won == null ? `${v.net > 0 ? "+" : ""}${v.net}%`
                         : `${v.net_won < 0 ? "-" : "+"}₩${Math.abs(v.net_won).toLocaleString()}`}
@@ -563,8 +563,8 @@ export default function LiveDeskPage() {
                   whenever the list is complete, and hidden entirely when it is not. */}
 {money && moneyWon !== null && (
               <span className="text-[12px] tabular-nums font-extrabold px-2 py-0.5 rounded"
-                style={{ background: moneyWon >= 0 ? "rgba(46,125,50,0.12)" : "rgba(21,101,192,0.12)",
-                         color: moneyWon >= 0 ? "#2e7d32" : BLUE }}
+                style={{ background: moneyWon >= 0 ? "rgba(198,40,40,0.10)" : "rgba(21,101,192,0.12)",
+                         color: moneyWon >= 0 ? RED : BLUE }}
                 title={t("이 규칙이 낸 모든 매매의 합계 (수수료 뺀 뒤)",
                          "every trade this rule made, added up, after fees")}>
                 {t("합계", "total")} {moneyWon === null ? "-" : won(moneyWon)}
@@ -691,7 +691,7 @@ export default function LiveDeskPage() {
                           {(tr.qty ?? 1).toLocaleString()}
                         </td>
                       <td className="text-right px-2 font-bold tabular-nums"
-                        style={{ color: tr.net_pct > 0 ? "#2e7d32" : tr.net_pct < 0 ? BLUE : "var(--text-muted)" }}
+                        style={{ color: tr.net_pct > 0 ? RED : tr.net_pct < 0 ? BLUE : "var(--text-muted)" }}
                         title={t(`${(tr.qty ?? 1).toLocaleString()}주 x ₩${tr.entry.toLocaleString()} · 수수료 뺀 ${tr.net_pct}%`,
                                  `${(tr.qty ?? 1).toLocaleString()} shares x ₩${tr.entry.toLocaleString()} · ${tr.net_pct}% after the round trip`)}>
                         {won(Math.round(wonOf(tr.entry, tr.net_pct) * (tr.qty ?? 1)))}
