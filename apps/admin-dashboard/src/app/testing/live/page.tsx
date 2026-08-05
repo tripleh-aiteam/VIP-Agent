@@ -518,14 +518,29 @@ export default function LiveDeskPage() {
                         </span>
                       )}
                     </td>
-                    {money && (
-                    <td className="text-right px-3 tabular-nums font-bold"
-                        style={{ color: v.net > 0 ? RED : v.net < 0 ? BLUE : "inherit" }}
-                        title={t("1주씩 매매했다면 이만큼입니다", "if you traded one share each time")}>
-                      {v.net_won == null ? `${v.net > 0 ? "+" : ""}${v.net}%`
-                        : `${v.net_won < 0 ? "-" : "+"}₩${Math.abs(v.net_won).toLocaleString()}`}
-                      </td>
-                    )}
+                    {money && (() => {
+                      {/* COLOURED BY THE NUMBER IT SHOWS. This cell displayed the WON
+                          total but took its colour from the PERCENT total, and the two
+                          can disagree in sign - 2 down / +0.5% was -4.80% in percent yet
+                          +₩830,348 in won (wins sat on the expensive stock, losses on
+                          the cheap ones), so a positive figure rendered blue while its
+                          neighbours rendered red (boss 2026-08-05: "again mixed"). One
+                          value decides both the digits and the colour, and the same bold
+                          glyph as the Strategy Lab makes the sign unmissable. */}
+                      const useWon = v.net_won != null;
+                      const val = useWon ? (v.net_won as number) : v.net;
+                      const up = val > 0;
+                      return (
+                        <td className="text-right px-3 tabular-nums font-bold"
+                          title={t(`이 규칙의 모든 매매를 실제 수량으로 더한 값입니다`,
+                                   `every trade this rule made, at the traded sizes, added up`)}>
+                          <span style={{ color: up ? RED : val < 0 ? BLUE : "var(--text-muted)" }}>
+                            <b style={{ fontSize: "13px" }}>{up ? "▲ +" : val < 0 ? "▼ −" : ""}</b>
+                            {useWon ? `₩${Math.abs(val).toLocaleString()}` : `${Math.abs(val)}%`}
+                          </span>
+                        </td>
+                      );
+                    })()}
                     <td className="text-right px-3 text-[10.5px]" style={{ color: "#6a1b9a" }}>
                       {sel === v.id ? t("닫기 ▲", "close ▲") : t("보기 ▼", "open ▼")}
                     </td>
