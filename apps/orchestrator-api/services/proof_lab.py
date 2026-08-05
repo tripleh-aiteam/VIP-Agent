@@ -80,6 +80,14 @@ VARIANTS: list[dict] = [
     # ── the boss's top six, each with a per-company model filtering its entries
     # (2026-08-03). Same rule, same exits; the model only decides whether to TAKE a
     # signal the rule already produced, so a "+ML" row can be read against its twin.
+    # ── the REMAINING six, paired 2026-08-06 so every rule on the Kiwoom desk trades
+    # with and without its model side by side ("all 12 rules with ML and without ML") ──
+    {"id": "3u3dML", "entry": 3, "kind": "candle", "a": 3, "ml": True},
+    {"id": "2u2dML", "entry": 2, "kind": "candle", "a": 2, "ml": True},
+    {"id": "3u2dML", "entry": 3, "kind": "candle", "a": 2, "ml": True},
+    {"id": "2u3dML", "entry": 2, "kind": "candle", "a": 3, "ml": True},
+    {"id": "3u4dML", "entry": 3, "kind": "candle", "a": 4, "ml": True},
+    {"id": "3u+0.5sML", "entry": 3, "kind": "target", "a": 0.5, "b": 0.5, "ml": True},
     {"id": "3u+0.3ML", "entry": 3, "kind": "target", "a": 0.3, "b": 1.0, "ml": True},
     {"id": "3u+0.5ML", "entry": 3, "kind": "target", "a": 0.5, "b": 1.0, "ml": True},
     {"id": "2u+0.5ML", "entry": 2, "kind": "target", "a": 0.5, "b": 1.0, "ml": True},

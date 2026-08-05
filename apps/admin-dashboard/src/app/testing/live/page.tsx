@@ -193,7 +193,9 @@ export default function LiveDeskPage() {
                        // ALL down-entry rules removed (boss 2026-08-05): up-only desk
                        // + ML twins of the six winners (boss 2026-08-06): each trades in
                        // parallel with its plain twin, trained on PRIOR days' real tape
-                       "3u+0.3ML", "3u+0.5ML", "2u+0.5ML", "4u3dML", "3u+1.0ML", "4u+1.0ML"];
+                       "3u+0.3ML", "3u+0.5ML", "2u+0.5ML", "4u3dML", "3u+1.0ML", "4u+1.0ML",
+                       // ...and the remaining six, so ALL 12 are paired (boss 2026-08-06)
+                       "3u3dML", "2u2dML", "3u2dML", "2u3dML", "3u4dML", "3u+0.5sML"];
   const twelve = rank?.original_12?.length ? rank.original_12 : ORIGINAL_12;
   const shownRules = (rank?.variants ?? []).filter((v) => twelve.includes(v.id))
     .filter((v) => mlView === "all" ? true
@@ -493,7 +495,7 @@ export default function LiveDeskPage() {
             </span>
             <span className="text-[10px] font-bold px-1.5 py-0.5 rounded"
               style={{ background: "rgba(106,27,154,0.12)", color: "#6a1b9a" }}>
-              {t("상승 매수 12개 + ML 6개 (실제 과거 체결로 학습)", "12 buy-on-rise + 6 ML twins (trained on prior days' real tape)")}
+              {t("상승 매수 12개 + ML 12개 — 전 규칙 쌍둥이 비교", "12 buy-on-rise rules + 12 ML twins — every rule paired")}
             </span>
             {rank.stocks.map((x) => (
               <span key={x.code} className="text-[10px] text-[var(--text-muted)]">
