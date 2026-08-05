@@ -161,9 +161,18 @@ def score(bundle: dict, feats: list[float]) -> dict[str, Any]:
 # something completely different on a ₩1,500,000 stock than on a ₩19,000 one, so the
 # ceiling is set per price band and the model only ever chooses a fraction of it:
 #
-#     over ₩1,000,000   ->    100 shares max   (SK하이닉스: ₩156m at the cap)
-#     over ₩100,000     ->  1,000 shares max   (프루프전자: ₩208m at the cap)
-#     below that        ->  1,000 shares max   (한화오션:    ₩87m at the cap)
+#     over ₩1,000,000   ->     10 shares max   (SK하이닉스: ₩15.6m at the cap)
+#     over ₩100,000     ->    100 shares max   (삼성전자:   ₩23.9m at the cap)
+#     below that        ->  1,000 shares max   (한화오션:   ₩87.0m at the cap)
+#
+# TEN TIMES FEWER SHARES FOR TEN TIMES THE PRICE (boss 2026-08-05). This brings the
+# biggest position to 5.6x the smallest, down from 12.5x when every band was 1,000.
+#
+# The residual spread is INSIDE a band, not between them: 한화오션 at ₩87,000 and
+# 시뮬중공업 at ₩19,150 both take 1,000 shares, which is ₩87m against ₩19m. No share-count
+# rule can fix that - a band spanning ₩1 to ₩100,000 treats stocks 5x apart in price as
+# equals. Setting the MONEY per trade and deriving the shares removes it exactly; he
+# preferred to keep share counts, and this is much the better version of that.
 #
 # THE CHEAP BAND WAS 100,000 AND IT DROWNED EVERYTHING (boss 2026-08-05: "한화오션 is
 # 100K so it decreases a lot our gain"). At 100,000 shares a ₩87,000 stock is ₩8.7bn of
@@ -183,11 +192,9 @@ FULL_EDGE = 0.10         # this much edge over the model's own bar earns the who
 def cap_for(price: float) -> int:
     """The most shares allowed at this price — the boss's risk bands."""
     if price > 1_000_000:
-        return 100
+        return 10
     if price > 100_000:
-        return 1_000
-    # 1,000 EVERYWHERE below that too (boss 2026-08-05: "max 1K for all sides"). Nothing
-    # on any desk now buys more than a thousand shares of anything.
+        return 100
     return 1_000
 
 
