@@ -38,6 +38,7 @@ type RuleRow = { id: string; ko: string; en: string; dir: number; trips: number;
                  losses: number; flats: number; win_pct: number; per_trade: number; net: number;
                  decided: number; thin: boolean };
 type Rank = { ok: boolean; clock: string; fee_pct: number; original_12?: string[];
+              days?: string[]; day?: string; frm?: string; to?: string;
               stocks: { code: string; name: string; bars: number; from: string; to: string;
                         tick_size: number }[];
               variants: RuleRow[] };
@@ -194,7 +195,9 @@ export default function LiveDeskPage() {
                        // parallel with its plain twin, trained on PRIOR days' real tape
                        "3u+0.3ML", "3u+0.5ML", "2u+0.5ML", "4u3dML", "3u+1.0ML", "4u+1.0ML"];
   const twelve = rank?.original_12?.length ? rank.original_12 : ORIGINAL_12;
-  const shownRules = (rank?.variants ?? []).filter((v) => twelve.includes(v.id));
+  const shownRules = (rank?.variants ?? []).filter((v) => twelve.includes(v.id))
+    .filter((v) => mlView === "all" ? true
+                 : mlView === "ml" ? v.id.endsWith("ML") : !v.id.endsWith("ML"));
   const [det, setDet] = useState<RDetail | null>(null);
   // The money for the OPEN rule. Prefer the server's figure - it is summed over every
   // trade, while the list on screen is cut to `limit`. Fall back to adding up the rows
@@ -232,6 +235,19 @@ export default function LiveDeskPage() {
   // buy with its arrow, the SELL time the sell (boss 2026-08-05: "if i click time it
   // should go to buying ... selling"). The row itself still defaults to the sell.
   const [focusSide, setFocusSide] = useState<"b" | "s">("s");
+  // WHICH DAY the rules panel reads ("" = today, live). The boss lost sight of yesterday
+  // twice at dawn because the desk only ever read today's empty file (2026-08-06).
+  const [ruleDay, setRuleDay] = useState("");
+  const ruleDayRef = useRef("");
+  // optional hour window inside that day
+  const [hourFrom, setHourFrom] = useState("");
+  const [hourTo, setHourTo] = useState("");
+  const hourFromRef = useRef(""); const hourToRef = useRef("");
+  useEffect(() => { ruleDayRef.current = ruleDay; }, [ruleDay]);
+  useEffect(() => { hourFromRef.current = hourFrom; }, [hourFrom]);
+  useEffect(() => { hourToRef.current = hourTo; }, [hourTo]);
+  // with ML / without ML / everything
+  const [mlView, setMlView] = useState<"all" | "ml" | "plain">("all");
   // WON PER TRADE. 0 = the historical one share. One share is not equal risk - one share
   // of SK하이닉스 is ₩1.5M and one of 한화오션 is ₩85k - so a fixed budget is both fairer
   // and closer to a real account. It scales the money and never the win rate.
@@ -282,7 +298,8 @@ export default function LiveDeskPage() {
     const want = tradeCode || codeRef.current;
     api<RDetail>(`/paper-desk/live/rules/trades?variant=${encodeURIComponent(id)}&${q}`
       + `&code=${encodeURIComponent(want)}&bars=60000`
-      + `&around=${tradeIdx ?? -1}&budget=${budgetRef.current}`)
+      + `&around=${tradeIdx ?? -1}&budget=${budgetRef.current}`
+      + `&day=${ruleDayRef.current}&frm=${encodeURIComponent(hourFromRef.current)}&to=${encodeURIComponent(hourToRef.current)}`)
       .then((d) => { const v = d?.ok ? d : null; detRef.current = v; setDet(v); })
       .catch(() => { detRef.current = null; setDet(null); });
   }, []);
@@ -316,7 +333,9 @@ export default function LiveDeskPage() {
     api<Tape>(`/paper-desk/live/tape?code=${c}&${q}&bars=${chartBarsRef.current}`).then(setTape).catch(() => {});
     api<Book>(`/paper-desk/live/book?code=${c}`).then(setBook).catch(() => {});
     api<Execs>(`/paper-desk/live/execs?code=${c}&n=120`).then(setExecs).catch(() => {});
-    api<Rank>(`/paper-desk/live/rules?${q}`).then(setRank).catch(() => {});
+    api<Rank>(`/paper-desk/live/rules?${q}&day=${ruleDayRef.current}`
+      + `&frm=${encodeURIComponent(hourFromRef.current)}&to=${encodeURIComponent(hourToRef.current)}`)
+      .then(setRank).catch(() => {});
     // follows the CHARTED company, so the minute rows always describe the bars above them
     loadDfRef.current?.(detRef.current?.chart?.code || c, dfMinsRef.current,
                         dfFromRef.current, dfToRef.current);
@@ -425,6 +444,49 @@ export default function LiveDeskPage() {
               style={{ background: "rgba(106,27,154,0.12)", color: "#6a1b9a" }}>
               {t(`지금 보는 것: ${rank.clock} 봉`, `showing: ${rank.clock} bars`)}
             </span>
+            {/* WHICH DAY. "" = today's live tape; any stored day is one click. The ML
+                models honestly re-train per day: viewing 08-05 uses only 08-04. */}
+            <span className="text-[10px] text-[var(--text-muted)] ml-2">{t("날짜:", "day:")}</span>
+            {[["", t("오늘(실시간)", "today (live)")],
+              ...((rank.days ?? []).map((d2) => [d2, `${d2.slice(4, 6)}-${d2.slice(6)}`]) as [string, string][])
+             ].map(([val, lab]) => (
+              <button key={val || "today"}
+                onClick={() => { setRuleDay(val); ruleDayRef.current = val;
+                                 setDet(null); setSel(null); setPick(null); pull(); }}
+                className="text-[10px] font-bold px-1.5 py-0.5 rounded border"
+                style={ruleDay === val ? { borderColor: "#e65100", color: "#fff", background: "#e65100" }
+                                       : { borderColor: "var(--border-default)", color: "var(--text-secondary)" }}>
+                {lab}
+              </button>
+            ))}
+            <span className="text-[10px] text-[var(--text-muted)] ml-1">{t("시간:", "hours:")}</span>
+            <input value={hourFrom} onChange={(e) => setHourFrom(e.target.value)} placeholder="09:00"
+              className="w-[52px] text-[10px] px-1 py-0.5 rounded border bg-transparent"
+              style={{ borderColor: "var(--border-default)" }} />
+            <span className="text-[10px] text-[var(--text-muted)]">~</span>
+            <input value={hourTo} onChange={(e) => setHourTo(e.target.value)} placeholder="10:00"
+              className="w-[52px] text-[10px] px-1 py-0.5 rounded border bg-transparent"
+              style={{ borderColor: "var(--border-default)" }} />
+            <button onClick={() => { hourFromRef.current = hourFrom; hourToRef.current = hourTo;
+                                     setDet(null); setSel(null); pull(); }}
+              className="text-[10px] font-bold px-1.5 py-0.5 rounded-md text-white" style={{ background: "#455a64" }}>
+              {t("적용", "apply")}
+            </button>
+            {(hourFrom || hourTo) && (
+              <button onClick={() => { setHourFrom(""); setHourTo(""); hourFromRef.current = ""; hourToRef.current = "";
+                                       setDet(null); pull(); }}
+                className="text-[10px] px-1.5 py-0.5 rounded border"
+                style={{ borderColor: "var(--border-default)", color: "var(--text-secondary)" }}>
+                {t("해제", "clear")}
+              </button>
+            )}
+            <select value={mlView} onChange={(e) => setMlView(e.target.value as "all" | "ml" | "plain")}
+              className="text-[10px] font-bold px-1 py-0.5 rounded border bg-[var(--bg-primary)] text-[var(--text-primary)] ml-1"
+              style={{ borderColor: mlView === "all" ? "var(--border-default)" : "#1565c0" }}>
+              <option value="all">{t("전체 (ML 포함)", "all (with ML)")}</option>
+              <option value="ml">{t("ML만", "ML only")}</option>
+              <option value="plain">{t("ML 제외", "without ML")}</option>
+            </select>
             <span className="text-[10.5px] text-[var(--text-muted)]">
               {t("같은 규칙, 다른 봉 크기 — 규칙은 그대로고 봉만 바뀝니다.",
                  "same rules, different bar size - the rules never change, only the bars.")}

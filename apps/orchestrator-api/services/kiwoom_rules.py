@@ -85,11 +85,34 @@ def _hole_bars(code: str, tick: int, period: int) -> set[int]:
     return out
 
 
-def _bars_for(code: str, tick: int, period: int) -> list[dict]:
-    ticks = load(code)
+def _bars_for(code: str, tick: int, period: int, day: str = "",
+              frm: str = "", to: str = "") -> list[dict]:
+    """Bars for one stock — today's live tape by default, or any STORED day, optionally
+    cut to an hour window. The boss lost sight of yesterday twice at dawn because the
+    desk only ever read today's (empty) file (2026-08-06): now any collected day is one
+    click away, and an hour of it can be isolated.
+
+    The window cuts TICKS, not bars, so a 5틱 bar never straddles the boundary — the
+    first bar of the window is built purely from executions inside it.
+    """
+    ticks = load(code, day or None)
     if not ticks:
         return []
+    if frm or to:
+        f = (frm or "00:00").replace(":", "")[:4].ljust(6, "0")
+        t2 = (to or "23:59").replace(":", "")[:4].ljust(6, "9")
+        ticks = [x for x in ticks if f <= x["ts"][8:14] <= t2]
+        if not ticks:
+            return []
     return bars_time(ticks, period) if period else bars_ticks(ticks, max(1, tick))
+
+
+def stored_days(code: str = "005930") -> list[str]:
+    """Every day the collector has a file for, oldest first."""
+    import re as _re
+    from services.kiwoom_tape import ROOT
+    return sorted({m.group(1) for p in ROOT.glob(f"{code}_*.jsonl")
+                   if (m := _re.match(rf"{code}_(\d{{8}})\.jsonl$", p.name))})
 
 
 # THE TWELVE. Exactly the rules the boss has been testing since the start — entries on a
@@ -129,7 +152,7 @@ DESK = PLAIN + ML_RULES
 _KML_CACHE: dict = {}
 
 
-def _prior_day_closes(code: str, tick: int, period: int):
+def _prior_day_closes(code: str, tick: int, period: int, before: str = ""):
     """Bars from every stored day BEFORE today, concatenated in date order. Day files are
     independent tapes, so bars are built per day and joined - an overnight gap therefore
     lands INSIDE the training data exactly once per boundary, which mirrors reality."""
@@ -137,7 +160,7 @@ def _prior_day_closes(code: str, tick: int, period: int):
     from services.kiwoom_tape import ROOT, _day, load
     days = sorted({m.group(1) for p in ROOT.glob(f"{code}_*.jsonl")
                    if (m := _re.match(rf"{code}_(\d{{8}})\.jsonl$", p.name))
-                   and m.group(1) < _day()})
+                   and m.group(1) < (before or _day())})
     cl, vv = [], []
     for d in days:
         tk = load(code, d)
@@ -149,15 +172,16 @@ def _prior_day_closes(code: str, tick: int, period: int):
     return cl, vv, days
 
 
-def kiwoom_ml_for(code: str, tick: int, period: int, v: dict):
+def kiwoom_ml_for(code: str, tick: int, period: int, v: dict, day: str = ""):
     """This company's model for this rule and clock, fitted on yesterday-and-earlier."""
     from services.kiwoom_tape import _day
     from services.proof_lab import _outcome
     from services.proof_ml import features_at, train
-    key = (code, v["id"], tick, period, _day())
+    ref = day or _day()
+    key = (code, v["id"], tick, period, ref)
     if key in _KML_CACHE:
         return _KML_CACHE[key]
-    cl, vv, days = _prior_day_closes(code, tick, period)
+    cl, vv, days = _prior_day_closes(code, tick, period, ref)
     bundle = None
     if len(cl) > 500:
         t = krx_tick(cl[-1]) or 1
@@ -182,11 +206,12 @@ def kiwoom_ml_for(code: str, tick: int, period: int, v: dict):
 ORIGINAL_12 = [v["id"] for v in PLAIN]
 
 
-def rank(tick: int = 5, period: int = 0) -> dict[str, Any]:
+def rank(tick: int = 5, period: int = 0, day: str = "",
+         frm: str = "", to: str = "") -> dict[str, Any]:
     """Every plain rule over the real tape of every watched stock, ranked."""
     tapes = {}
     for code, name in WATCH:
-        cs = _bars_for(code, tick, period)
+        cs = _bars_for(code, tick, period, day, frm, to)
         if len(cs) < 10:
             continue
         tapes[code] = {"name": name, "cs": cs, "tk": krx_tick(cs[-1]["close"]) or 1}
@@ -195,7 +220,7 @@ def rank(tick: int = 5, period: int = 0) -> dict[str, Any]:
     for v in DESK:
         trades = []
         for code, tp in tapes.items():
-            mlb = kiwoom_ml_for(code, tick, period, v) if v.get("ml") else None
+            mlb = kiwoom_ml_for(code, tick, period, v, day) if v.get("ml") else None
             got = run_variant([c["close"] for c in tp["cs"]], tp["tk"], v, 1,
                               fill_fn=_fill, ml_bundle=mlb)
             trades += got
@@ -240,7 +265,9 @@ def rank(tick: int = 5, period: int = 0) -> dict[str, Any]:
             r["vs_trips"] = tw["trips"] if tw else None
     rows.sort(key=lambda r: (0 if r.get("kind") == "candle" else 1,
                              -r["win_pct"], -r["trips"]))
-    return {"ok": True, "original_12": ORIGINAL_12, "clock": f"{period}초" if period else f"{tick}틱",
+    return {"ok": True, "original_12": ORIGINAL_12, "days": stored_days(),
+            "day": day, "frm": frm, "to": to,
+            "clock": f"{period}초" if period else f"{tick}틱",
             "tick": tick, "period": period, "fee_pct": FEE_PCT,
             "stocks": [{"code": c, "name": t["name"], "bars": len(t["cs"]),
                         "from": t["cs"][0]["hhmm"], "to": t["cs"][-1]["hhmm"],
@@ -276,7 +303,7 @@ def shares_for(entry: float, budget: int) -> int:
 
 def trades(vid: str, tick: int = 5, period: int = 0, code: str = "",
            bars: int = 2500, limit: int = 300, around: int = -1,
-           budget: int = 0) -> dict[str, Any]:
+           budget: int = 0, day: str = "", frm: str = "", to: str = "") -> dict[str, Any]:
     """One rule's trades on the real tape, with the chart and the evidence per trade."""
     v = next((x for x in DESK if x["id"] == vid), None)
     if v is None:
@@ -293,12 +320,12 @@ def trades(vid: str, tick: int = 5, period: int = 0, code: str = "",
     # (boss 2026-08-04: "if click any completed trade it is not showing chart"). Resolved
     # after the rows are sorted, because `around` indexes the displayed order.
     for c_code, name in WATCH:
-        cs = _bars_for(c_code, tick, period)
+        cs = _bars_for(c_code, tick, period, day, frm, to)
         if len(cs) < 10:
             continue
         tk = krx_tick(cs[-1]["close"]) or 1
-        holes = _hole_bars(c_code, tick, period)
-        mlb = kiwoom_ml_for(c_code, tick, period, v) if v.get("ml") else None
+        holes = _hole_bars(c_code, tick, period) if not (day or frm or to) else set()
+        mlb = kiwoom_ml_for(c_code, tick, period, v, day) if v.get("ml") else None
         got, op = run_variant([c["close"] for c in cs], tk, v, 1,
                               evidence=True, with_open=True, fill_fn=_fill,
                               ml_bundle=mlb)
@@ -335,7 +362,7 @@ def trades(vid: str, tick: int = 5, period: int = 0, code: str = "",
 
     # ---- second pass: the chart, now that `rows` is in the order the table shows ----
     for c_code, name in WATCH:
-        cs = _bars_for(c_code, tick, period)
+        cs = _bars_for(c_code, tick, period, day, frm, to)
         if len(cs) < 10:
             continue
         got = [{"buy_i": r["buy_i"], "sell_i": r["sell_i"], "gross_pct": r["gross_pct"],
