@@ -572,12 +572,15 @@ export default function StrategyLab() {
               </tr></thead>
               <tbody>
                 {(() => {
-                  // EVERY view, highest win rate first (boss 2026-08-04). The server has
-                  // already sorted that way - thin rules last - so the order is the same
-                  // arithmetic in all four views and there is nothing to re-sort here.
+                  // PURELY by win rate, highest first (boss 2026-08-05). The server sorts
+                  // thin rules to the bottom regardless of their percentage, which pushed a
+                  // 71% rule below a 48% one; he wants the sequence to follow the number he
+                  // is reading. The 표본 부족 badge stays, so a small sample is still called
+                  // out - the warning belongs on the row, not in the ordering.
                   // "all 6" used to pair each rule above its ML twin; sorting scatters that
                   // pair, so the comparison now travels INSIDE the ML row as `vs`.
-                  return lab.variants.filter((v) => inView(v.id));
+                  return lab.variants.filter((v) => inView(v.id))
+                    .slice().sort((a2, b2) => b2.win_pct - a2.win_pct || b2.trips - a2.trips);
                 })().map((v, i) => (
                   <tr key={v.id} onClick={() => {
                       const open = sel === v.id;
@@ -590,7 +593,7 @@ export default function StrategyLab() {
                     style={{ background: sel === v.id ? "rgba(106,27,154,0.10)"
                              : i === 0 ? "rgba(230,81,0,0.06)" : "transparent" }}>
                     <td className="px-3 py-1.5 font-bold text-[var(--text-primary)]">
-                      {sel === v.id ? "▶ " : (i === 0 && ruleView !== "all6" && !v.thin) ? "🏆 " : ""}{lang === "ko" ? v.ko : v.en}
+                      {sel === v.id ? "▶ " : (i === 0 && !v.thin) ? "🏆 " : ""}{lang === "ko" ? v.ko : v.en}
                       {v.thin && (
                         <span className="ml-1.5 text-[9.5px] font-bold px-1.5 py-0.5 rounded"
                           style={{ background: "rgba(230,81,0,0.14)", color: GOLD }}
@@ -669,8 +672,20 @@ export default function StrategyLab() {
                         style={{ color: v.net > 0 ? GREEN : v.net < 0 ? BLUE : "inherit" }}
                         title={t(`${(v.shares_total ?? 0).toLocaleString()}주 · 투입 ₩${(v.capital_used ?? 0).toLocaleString()}`,
                                `${(v.shares_total ?? 0).toLocaleString()} shares · ₩${(v.capital_used ?? 0).toLocaleString()} committed`)}>
-                      {v.net_won == null ? `${v.net > 0 ? "+" : ""}${v.net}%`
-                        : `${v.net_won < 0 ? "-" : "+"}₩${Math.abs(v.net_won).toLocaleString()}`}
+                      {/* A minus in front of ₩1,164,396,515 is one character against
+                          thirteen and is genuinely easy to miss (boss 2026-08-05: "hard to
+                          recognize"). The sign gets its own bold glyph and its own colour,
+                          so gain and loss are told apart before the digits are read. */}
+                      {(() => {
+                        const val = v.net_won ?? 0;
+                        const up = val > 0;
+                        return (
+                          <span style={{ color: up ? GREEN : val < 0 ? BLUE : "var(--text-muted)" }}>
+                            <b style={{ fontSize: "13px" }}>{up ? "▲ +" : val < 0 ? "▼ −" : ""}</b>
+                            ₩{Math.abs(val).toLocaleString()}
+                          </span>
+                        );
+                      })()}
                       </td>
                     )}
                     <td className="text-right px-3 text-[10.5px]" style={{ color: "#6a1b9a" }}>
