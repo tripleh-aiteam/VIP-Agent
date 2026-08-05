@@ -33,6 +33,7 @@ type Book = { ok: boolean; code: string; name?: string; asks: [number, number][]
 type Execs = { ok: boolean; prev_close?: number; total: number;
                rows: { t: string; px: number; qty: number }[] };
 type RuleRow = { id: string; ko: string; en: string; dir: number; trips: number; wins: number;
+                 vs?: number | null; vs_trips?: number | null;
                  net_won?: number | null; per_trade_won?: number | null;
                  losses: number; flats: number; win_pct: number; per_trade: number; net: number;
                  decided: number; thin: boolean };
@@ -189,7 +190,9 @@ export default function LiveDeskPage() {
                        // only reversal rules on this desk - so without naming them here
                        // the page would silently drop every one of them.
                        // ALL down-entry rules removed (boss 2026-08-05): up-only desk
-                       ];
+                       // + ML twins of the six winners (boss 2026-08-06): each trades in
+                       // parallel with its plain twin, trained on PRIOR days' real tape
+                       "3u+0.3ML", "3u+0.5ML", "2u+0.5ML", "4u3dML", "3u+1.0ML", "4u+1.0ML"];
   const twelve = rank?.original_12?.length ? rank.original_12 : ORIGINAL_12;
   const shownRules = (rank?.variants ?? []).filter((v) => twelve.includes(v.id));
   const [det, setDet] = useState<RDetail | null>(null);
@@ -428,7 +431,7 @@ export default function LiveDeskPage() {
             </span>
             <span className="text-[10px] font-bold px-1.5 py-0.5 rounded"
               style={{ background: "rgba(106,27,154,0.12)", color: "#6a1b9a" }}>
-              {t("상승 매수 12개 규칙", "the 12 buy-on-rise rules")}
+              {t("상승 매수 12개 + ML 6개 (실제 과거 체결로 학습)", "12 buy-on-rise + 6 ML twins (trained on prior days' real tape)")}
             </span>
             {rank.stocks.map((x) => (
               <span key={x.code} className="text-[10px] text-[var(--text-muted)]">
@@ -496,6 +499,21 @@ export default function LiveDeskPage() {
                              : (i === 0 && !v.thin) ? "rgba(230,81,0,0.06)" : "transparent" }}>
                     <td className="px-3 py-1.5 font-bold text-[var(--text-primary)]">
                       {sel === v.id ? "▶ " : (i === 0 && !v.thin) ? "🏆 " : ""}{lang === "ko" ? v.ko : v.en}
+                      {v.id.endsWith("ML") && (
+                        <span className="ml-1.5 text-[9.5px] font-extrabold px-1.5 py-0.5 rounded"
+                          style={{ background: "rgba(21,101,192,0.14)", color: "#1565c0" }}>🤖 ML</span>
+                      )}
+                      {/* the plain twin's rate rides on the ML row, so the with/without
+                          comparison survives sorting - same as the Strategy Lab */}
+                      {v.id.endsWith("ML") && v.vs != null && (
+                        <span className="ml-1.5 text-[9.5px]" style={{ color: "var(--text-muted)" }}
+                          title={t("모델 없이 같은 규칙이 같은 봉에서 낸 승률", "the same rule on the same bars with no model")}>
+                          {t("모델 없이", "without ML")} {v.vs}%
+                          <b style={{ color: v.win_pct > v.vs ? RED : v.win_pct < v.vs ? BLUE : "inherit" }}>
+                            {" "}{v.win_pct > v.vs ? "▲" : v.win_pct < v.vs ? "▼" : "="}{Math.abs(v.win_pct - (v.vs ?? 0))}p
+                          </b>
+                        </span>
+                      )}
                     </td>
                     <td className="text-right px-2">
                       {v.trips.toLocaleString()}

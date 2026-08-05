@@ -115,6 +115,69 @@ EXPERIMENT: tuple[str, ...] = ()
 
 PLAIN = [v for v in VARIANTS
          if not v.get("ml") and (v.get("dir", 1) > 0 or v["id"] in EXPERIMENT)]
+
+# ── ML ON THE REAL DESK (boss 2026-08-06, before the open) ─────────────────────────
+# The same six "+ ML" rules the Strategy Lab runs, now trading the real tape in parallel
+# with their plain twins - so "with ML" and "without ML" sit side by side on one board.
+#
+# THE ONE HONEST DIFFERENCE FROM THE LAB: these models train ONLY on prior days' stored
+# real tape (2026-08-04, 08-05 and whatever accumulates), never on the day being traded.
+# Same features, same trainer, same labels as the lab (proof_ml) - only the tape is real.
+ML_RULES = [v for v in VARIANTS if v.get("ml") and v.get("dir", 1) > 0]
+DESK = PLAIN + ML_RULES
+
+_KML_CACHE: dict = {}
+
+
+def _prior_day_closes(code: str, tick: int, period: int):
+    """Bars from every stored day BEFORE today, concatenated in date order. Day files are
+    independent tapes, so bars are built per day and joined - an overnight gap therefore
+    lands INSIDE the training data exactly once per boundary, which mirrors reality."""
+    import re as _re
+    from services.kiwoom_tape import ROOT, _day, load
+    days = sorted({m.group(1) for p in ROOT.glob(f"{code}_*.jsonl")
+                   if (m := _re.match(rf"{code}_(\d{{8}})\.jsonl$", p.name))
+                   and m.group(1) < _day()})
+    cl, vv = [], []
+    for d in days:
+        tk = load(code, d)
+        if not tk:
+            continue
+        cs = bars_time(tk, period) if period else bars_ticks(tk, max(1, tick))
+        cl += [c["close"] for c in cs]
+        vv += [float(c.get("vol") or 0) for c in cs]
+    return cl, vv, days
+
+
+def kiwoom_ml_for(code: str, tick: int, period: int, v: dict):
+    """This company's model for this rule and clock, fitted on yesterday-and-earlier."""
+    from services.kiwoom_tape import _day
+    from services.proof_lab import _outcome
+    from services.proof_ml import features_at, train
+    key = (code, v["id"], tick, period, _day())
+    if key in _KML_CACHE:
+        return _KML_CACHE[key]
+    cl, vv, days = _prior_day_closes(code, tick, period)
+    bundle = None
+    if len(cl) > 500:
+        t = krx_tick(cl[-1]) or 1
+        samples, u, dn, last = [], 0, 0, -1
+        for i in range(1, len(cl)):
+            u = u + 1 if cl[i] > cl[i - 1] else 0
+            dn = dn + 1 if cl[i] < cl[i - 1] else 0
+            if (dn if v.get("dir", 1) < 0 else u) < v["entry"]:
+                continue
+            y, _res = _outcome(cl, i, cl[i] + t, t, v)
+            if y is None:
+                continue
+            samples.append((features_at(cl, vv, i, last), y))
+            last = i
+        bundle = train(samples, key)
+        if bundle is not None:
+            bundle["n_signals"] = len(samples)
+            bundle["trained_to"] = f"{days[-1][:4]}-{days[-1][4:6]}-{days[-1][6:]} close" if days else "?"
+    _KML_CACHE[key] = bundle
+    return bundle
 # every id this desk shows - the page uses it so the two can never drift apart
 ORIGINAL_12 = [v["id"] for v in PLAIN]
 
@@ -129,11 +192,12 @@ def rank(tick: int = 5, period: int = 0) -> dict[str, Any]:
         tapes[code] = {"name": name, "cs": cs, "tk": krx_tick(cs[-1]["close"]) or 1}
 
     rows = []
-    for v in PLAIN:
+    for v in DESK:
         trades = []
         for code, tp in tapes.items():
+            mlb = kiwoom_ml_for(code, tick, period, v) if v.get("ml") else None
             got = run_variant([c["close"] for c in tp["cs"]], tp["tk"], v, 1,
-                              fill_fn=_fill)
+                              fill_fn=_fill, ml_bundle=mlb)
             trades += got
         w = sum(1 for t in trades if t["gross_pct"] > 0)
         l = sum(1 for t in trades if t["gross_pct"] < 0)
@@ -166,6 +230,14 @@ def rank(tick: int = 5, period: int = 0) -> dict[str, Any]:
     # GROUPED as the boss reads them (2026-08-05): first every up/down rule (exit by
     # candle count), then every %-target rule - and inside each group, highest win rate
     # first. `kind` travels with the row so the page cannot need to guess the group.
+    # every "+ ML" row carries its own plain twin's rate, so the comparison the board
+    # exists for survives any sorting (same as the Strategy Lab)
+    _by = {r["id"]: r for r in rows}
+    for r in rows:
+        if r["id"].endswith("ML"):
+            tw = _by.get(r["id"][:-2])
+            r["vs"] = tw["win_pct"] if tw else None
+            r["vs_trips"] = tw["trips"] if tw else None
     rows.sort(key=lambda r: (0 if r.get("kind") == "candle" else 1,
                              -r["win_pct"], -r["trips"]))
     return {"ok": True, "original_12": ORIGINAL_12, "clock": f"{period}초" if period else f"{tick}틱",
@@ -206,7 +278,7 @@ def trades(vid: str, tick: int = 5, period: int = 0, code: str = "",
            bars: int = 2500, limit: int = 300, around: int = -1,
            budget: int = 0) -> dict[str, Any]:
     """One rule's trades on the real tape, with the chart and the evidence per trade."""
-    v = next((x for x in PLAIN if x["id"] == vid), None)
+    v = next((x for x in DESK if x["id"] == vid), None)
     if v is None:
         return {"ok": False, "error": f"unknown rule {vid}"}
 
@@ -226,8 +298,10 @@ def trades(vid: str, tick: int = 5, period: int = 0, code: str = "",
             continue
         tk = krx_tick(cs[-1]["close"]) or 1
         holes = _hole_bars(c_code, tick, period)
+        mlb = kiwoom_ml_for(c_code, tick, period, v) if v.get("ml") else None
         got, op = run_variant([c["close"] for c in cs], tk, v, 1,
-                              evidence=True, with_open=True, fill_fn=_fill)
+                              evidence=True, with_open=True, fill_fn=_fill,
+                              ml_bundle=mlb)
         for g in got:
             b_c, s_c = cs[g["buy_i"]], cs[g["sell_i"]]
             rows.append({
