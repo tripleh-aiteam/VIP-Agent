@@ -954,6 +954,38 @@ export default function LiveDeskPage() {
         </div>
       )}
 
+      {/* THE STANDING MARKET CHART, between the rules and the order book. The only chart
+          on the page lived inside a rule's drill-down, so with nothing open the page
+          jumped from the ranking straight to the 호가 - and the boss wants to WATCH the
+          book move against the chart (2026-08-05: "I wanna monitor changings in the
+          order book how effecting to the chart"). This one is always here, always the
+          live tape, and refreshes on the same 2-3s pull as the book below it. */}
+      <div className="mt-3 rounded-xl border p-2" style={{ borderColor: "var(--border-default)", background: "var(--bg-elevated)" }}>
+        <div className="px-2 pt-1 pb-2 text-[11.5px] flex items-center gap-2 flex-wrap" style={{ color: "#6a1b9a" }}>
+          <b>📈 {tape?.name ?? ""} — {tape?.clock ?? ""} {t("실시간 차트", "live chart")}</b>
+          <span className="text-[10px] text-[var(--text-muted)]">
+            {bars.length
+              ? t(`${bars.length}봉 · 마지막 ${tape?.last ?? ""} · 아래 호가와 같은 2~3초 주기로 갱신됩니다`,
+                  `${bars.length} bars · last ${tape?.last ?? ""} · refreshes on the same 2-3s cycle as the book below`)
+              : t("아직 봉이 없습니다", "no bars yet")}
+          </span>
+          {book && (
+            <span className="ml-auto text-[10.5px] tabular-nums">
+              <span style={{ color: RED }}>{t("매도호가", "ask")} ₩{fmt(book.best_ask)}</span>
+              <span className="mx-1 text-[var(--text-muted)]">|</span>
+              <span style={{ color: BLUE }}>{t("매수호가", "bid")} ₩{fmt(book.best_bid)}</span>
+            </span>
+          )}
+        </div>
+        {bars.length ? <LiveChart bars={bars} /> : (
+          <div className="px-4 py-8 text-center text-[12px] text-[var(--text-muted)]">
+            {st?.market_open
+              ? t("수집 중입니다 — 잠시 뒤 봉이 그려집니다.", "collecting - bars appear shortly.")
+              : t("장이 닫혀 있습니다 (09:00~15:30).", "market closed (09:00-15:30).")}
+          </div>
+        )}
+      </div>
+
       <div className="mt-3 grid gap-3" style={{ gridTemplateColumns: "1fr 1fr" }}>
         {/* 호가 — who is waiting to buy and to sell */}
         <div className="rounded-xl border overflow-hidden" style={{ borderColor: TEAL }}>
