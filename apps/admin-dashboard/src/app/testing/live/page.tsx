@@ -452,19 +452,19 @@ export default function LiveDeskPage() {
             </span>
             {/* WHICH DAY. "" = today's live tape; any stored day is one click. The ML
                 models honestly re-train per day: viewing 08-05 uses only 08-04. */}
+            {/* ONE dropdown instead of a button per day (boss 2026-08-06) - the day list
+                grows for ever, so a row of buttons would too. Newest first, today on top. */}
             <span className="text-[10px] text-[var(--text-muted)] ml-2">{t("날짜:", "day:")}</span>
-            {[["", t("오늘(실시간)", "today (live)")],
-              ...((rank.days ?? []).map((d2) => [d2, `${d2.slice(4, 6)}-${d2.slice(6)}`]) as [string, string][])
-             ].map(([val, lab]) => (
-              <button key={val || "today"}
-                onClick={() => { setRuleDay(val); ruleDayRef.current = val;
+            <select value={ruleDay}
+              onChange={(e) => { const val = e.target.value; setRuleDay(val); ruleDayRef.current = val;
                                  setDet(null); setSel(null); setPick(null); pull(); }}
-                className="text-[10px] font-bold px-1.5 py-0.5 rounded border"
-                style={ruleDay === val ? { borderColor: "#e65100", color: "#fff", background: "#e65100" }
-                                       : { borderColor: "var(--border-default)", color: "var(--text-secondary)" }}>
-                {lab}
-              </button>
-            ))}
+              className="text-[10px] font-bold px-1 py-0.5 rounded border bg-[var(--bg-primary)] text-[var(--text-primary)]"
+              style={{ borderColor: ruleDay ? "#e65100" : "var(--border-default)" }}>
+              <option value="">{t("오늘 (실시간)", "today (live)")}</option>
+              {(rank.days ?? []).slice().reverse().map((d2) => (
+                <option key={d2} value={d2}>{`${d2.slice(4, 6)}-${d2.slice(6)}`}</option>
+              ))}
+            </select>
             <span className="text-[10px] text-[var(--text-muted)] ml-1">{t("시간:", "hours:")}</span>
             <input value={hourFrom} onChange={(e) => setHourFrom(e.target.value)} placeholder="09:00"
               className="w-[52px] text-[10px] px-1 py-0.5 rounded border bg-transparent"
