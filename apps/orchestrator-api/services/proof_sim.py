@@ -175,7 +175,12 @@ BAR_CAP = 3600
 # "live" deal was hours old and the executions panel printed 21:20 under a 07:45 clock
 # (boss 2026-08-03: "dealing time was 21:20 now 07:45"). BAR_CAP already keeps the
 # payload small, so a longer tape costs generation time only.
-DEMO_MINUTES = 1000              # longest tape we ever build — the growth cap
+# 1450 minutes = 24h10m, just past a full day: the standing session must reach the NEXT
+# morning's 07:21 rollover without stalling. At 1000 (16h40m) yesterday's session froze at
+# ~00:01, so every night from midnight to 07:21 the lab showed "last trade 23:50" and
+# looked dead (boss 2026-08-06: "it should continuously trade"). The tape is deterministic
+# either way - this only lets it keep growing until the new day takes over.
+DEMO_MINUTES = 1450              # longest tape we ever build — the growth cap
 DEMO_OPEN = (7, 21)              # the artificial market opens 07:21 KST — see _default_start
 # Falling back a whole day to avoid a thin chart cost far more than it saved: for the
 # first 25 minutes of every morning the page showed YESTERDAY while labelled LIVE.
