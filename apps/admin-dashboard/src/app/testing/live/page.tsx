@@ -195,12 +195,21 @@ export default function LiveDeskPage() {
   // entry x net_pct / 100 is exactly what one share of that trade gained or lost. Done
   // here as well as on the server because the backend runs with NO --reload: until it is
   // restarted the won fields are absent, and this is the number the boss asked to see.
-  const wonOf = (entry: number, netPct: number) => Math.round(entry * netPct / 100);
-  const won = (n: number) => `${n < 0 ? "-" : "+"}\u20a9${Math.abs(n).toLocaleString()}`;
+  // NOT rounded here. Rounding to the nearest won per SHARE and then multiplying by the
+  // quantity multiplies the rounding error too: at 100,000 shares a ₩0.07 rounding became
+  // ₩7,000, and the row disagreed with the server's total, which rounds only at the end
+  // (boss 2026-08-05 checked a trade by hand and found it). Callers round once, after
+  // multiplying by the size.
+  const wonOf = (entry: number, netPct: number) => entry * netPct / 100;
+  const won = (n: number) => `${n < 0 ? "-" : "+"}\u20a9${Math.abs(Math.round(n)).toLocaleString()}`;
+  // the fallbacks multiply by the SIZE \u2014 they summed one share per trade while the rows
+  // beneath them showed the real quantity
   const moneyWon = det?.net_won_sized ?? det?.net_won_total ?? (moneyAll
-    ? moneyRows.reduce((x, r) => x + wonOf(r.entry, r.net_pct), 0) : null);
+    ? Math.round(moneyRows.reduce((x, r) => x + wonOf(r.entry, r.net_pct) * (r.qty ?? 1), 0))
+    : null);
   const moneyWonPer = det?.per_trade_won ?? (moneyAll && moneyRows.length
-    ? Math.round(moneyRows.reduce((x, r) => x + wonOf(r.entry, r.net_pct), 0) / moneyRows.length)
+    ? Math.round(moneyRows.reduce((x, r) => x + wonOf(r.entry, r.net_pct) * (r.qty ?? 1), 0)
+                 / moneyRows.length)
     : null);
   const [pick, setPick] = useState<number | null>(null);
   const [money, setMoney] = useState(false);      // off until he asks - see the button
@@ -655,7 +664,7 @@ export default function LiveDeskPage() {
                         style={{ color: tr.net_pct > 0 ? "#2e7d32" : tr.net_pct < 0 ? BLUE : "var(--text-muted)" }}
                         title={t(`${(tr.qty ?? 1).toLocaleString()}주 x ₩${tr.entry.toLocaleString()} · 수수료 뺀 ${tr.net_pct}%`,
                                  `${(tr.qty ?? 1).toLocaleString()} shares x ₩${tr.entry.toLocaleString()} · ${tr.net_pct}% after the round trip`)}>
-                        {won(wonOf(tr.entry, tr.net_pct) * (tr.qty ?? 1))}
+                        {won(Math.round(wonOf(tr.entry, tr.net_pct) * (tr.qty ?? 1)))}
                       </td>
                       <td className="text-right px-3 font-bold" style={{ color: col }}>
                         {tr.result === "win" ? t("승", "WIN") : tr.result === "loss" ? t("패", "LOSS") : t("무", "flat")}

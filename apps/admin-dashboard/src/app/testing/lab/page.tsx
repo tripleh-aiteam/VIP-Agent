@@ -225,13 +225,22 @@ export default function StrategyLab() {
   // entry x net_pct / 100 is exactly what one share of that trade gained or lost. Done
   // here as well as on the server because the backend runs with NO --reload: until it is
   // restarted the won fields are absent, and this is the number the boss asked to see.
-  const wonOf = (entry: number, netPct: number) => Math.round(entry * netPct / 100);
-  const won = (n: number) => `${n < 0 ? "-" : "+"}\u20a9${Math.abs(n).toLocaleString()}`;
-  // the SIZED total, so the header agrees with its own rows and the ranking above it
+  // NOT rounded here. Rounding to the nearest won per SHARE and then multiplying by the
+  // quantity multiplies the rounding error too: at 100,000 shares a ₩0.07 rounding became
+  // ₩7,000, and the row disagreed with the server's total, which rounds only at the end
+  // (boss 2026-08-05 checked a trade by hand and found it). Callers round once, after
+  // multiplying by the size.
+  const wonOf = (entry: number, netPct: number) => entry * netPct / 100;
+  const won = (n: number) => `${n < 0 ? "-" : "+"}\u20a9${Math.abs(Math.round(n)).toLocaleString()}`;
+  // the SIZED total, so the header agrees with its own rows and the ranking above it.
+  // The fallbacks multiply by the SIZE \u2014 they summed one share per trade while the rows
+  // beneath them showed 100,000, so the header could disagree with its own table.
   const moneyWon = detail?.net_won_sized ?? detail?.net_won_total ?? (moneyAll
-    ? moneyRows.reduce((x, r) => x + wonOf(r.entry, r.net_pct), 0) : null);
+    ? Math.round(moneyRows.reduce((x, r) => x + wonOf(r.entry, r.net_pct) * (r.qty ?? 1), 0))
+    : null);
   const moneyWonPer = detail?.per_trade_won ?? (moneyAll && moneyRows.length
-    ? Math.round(moneyRows.reduce((x, r) => x + wonOf(r.entry, r.net_pct), 0) / moneyRows.length)
+    ? Math.round(moneyRows.reduce((x, r) => x + wonOf(r.entry, r.net_pct) * (r.qty ?? 1), 0)
+                 / moneyRows.length)
     : null);
   const [detailBusy, setDetailBusy] = useState(false);
   const [pick, setPick] = useState<number | null>(null);   // which trade the chart is on
@@ -984,7 +993,7 @@ export default function StrategyLab() {
                                 style={{ color: tr.net_pct > 0 ? GREEN : tr.net_pct < 0 ? BLUE : "var(--text-muted)" }}
                                 title={t(`1주 기준입니다: 매수가 \u20a9${tr.entry.toLocaleString()} x 수수료 뺀 ${tr.net_pct}%`,
                                          `one share: \u20a9${tr.entry.toLocaleString()} x ${tr.net_pct}% after the round trip`)}>
-                                {won(wonOf(tr.entry, tr.net_pct) * (tr.qty ?? 1))}
+                                {won(Math.round(wonOf(tr.entry, tr.net_pct) * (tr.qty ?? 1)))}
                               </td>
                             <td className="text-right px-3 font-bold" style={{ color: col }}>
                               {tr.result === "win" ? t("승", "WIN") : tr.result === "loss" ? t("패", "LOSS") : t("무", "flat")}
