@@ -1028,32 +1028,34 @@ export default function LiveDeskPage() {
 
       {/* stock + clock */}
       <div className="mt-3 flex items-center gap-2 flex-wrap">
-        {(st?.stocks ?? [{ code: "005930", name: "삼성전자", ticks: 0 }]).map((x) => (
-          <button key={x.code} onClick={() => { setCode(x.code); codeRef.current = x.code; pull(); }}
-            className="text-[12px] font-extrabold px-3 py-1.5 rounded-lg"
-            style={code === x.code ? { background: TEAL, color: "#fff" }
-                   : { border: "1px solid var(--border-default)", color: "var(--text-secondary)" }}>
-            {x.name}
-          </button>
-        ))}
-        <span className="w-px h-5 bg-[var(--border-default)] mx-1" />
-        <span className="text-[10.5px] text-[var(--text-muted)]">{t("캔들", "candle")}</span>
-        {[1, 5, 10, 30].map((n) => (
-          <button key={"t" + n} onClick={() => { setTick(n); setPeriod(0); perRef.current = 0; tickRef.current = n; setClockIn(""); pull(); }}
-            className="text-[11.5px] font-bold px-2.5 py-1 rounded-lg"
-            style={!period && tick === n ? { background: "#6a1b9a", color: "#fff" }
-                   : { border: "1px solid var(--border-default)", color: "var(--text-secondary)" }}>
-            {n}{t("틱", "-tick")}
-          </button>
-        ))}
-        {[3, 6, 15, 30, 40, 60].map((n) => (
-          <button key={"s" + n} onClick={() => { setPeriod(n); perRef.current = n; setClockIn(String(n)); pull(); }}
-            className="text-[11.5px] font-bold px-2 py-1 rounded-lg"
-            style={period === n ? { background: "#6a1b9a", color: "#fff" }
-                   : { border: "1px solid var(--border-default)", color: "var(--text-secondary)" }}>
-            {n === 60 ? t("1분", "1-min") : `${n}${t("초", "s")}`}
-          </button>
-        ))}
+        {/* Two dropdowns instead of 3 stock buttons + 10 clock buttons (boss 2026-08-06:
+            "it is making confussion"). Same shared tick/period state as before. */}
+        <span className="text-[10.5px] text-[var(--text-muted)]">{t("종목", "stock")}</span>
+        <select value={code}
+          onChange={(e) => { const c2 = e.target.value; setCode(c2); codeRef.current = c2; pull(); }}
+          className="text-[12px] font-extrabold px-1.5 py-1 rounded-lg border bg-[var(--bg-primary)]"
+          style={{ borderColor: TEAL, color: TEAL }}>
+          {(st?.stocks ?? [{ code: "005930", name: "삼성전자", ticks: 0 }]).map((x) => (
+            <option key={x.code} value={x.code}>{x.name}</option>
+          ))}
+        </select>
+        <span className="text-[10.5px] text-[var(--text-muted)] ml-1">{t("캔들", "candle")}</span>
+        <select value={period ? `p${period}` : `t${tick}`}
+          onChange={(e) => { const val = e.target.value;
+                             if (val[0] === "t") { const n = Number(val.slice(1));
+                               setTick(n); setPeriod(0); perRef.current = 0; tickRef.current = n; setClockIn("");
+                             } else { const n = Number(val.slice(1));
+                               setPeriod(n); perRef.current = n; setClockIn(String(n)); }
+                             pull(); }}
+          className="text-[11.5px] font-bold px-1.5 py-1 rounded-lg border bg-[var(--bg-primary)]"
+          style={{ borderColor: "#6a1b9a", color: "#6a1b9a" }}>
+          {[1, 5, 10, 30].map((n) => (
+            <option key={"t" + n} value={`t${n}`}>{n}{t("틱", "-tick")}</option>
+          ))}
+          {[3, 6, 15, 30, 40, 60].map((n) => (
+            <option key={"s" + n} value={`p${n}`}>{n === 60 ? t("1분", "1-min") : `${n}${t("초", "s")}`}</option>
+          ))}
+        </select>
         <input value={clockIn} onChange={(e) => setClockIn(e.target.value)}
           onKeyDown={(e) => {
             if (e.key !== "Enter") return;
