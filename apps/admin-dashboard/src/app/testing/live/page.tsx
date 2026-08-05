@@ -495,8 +495,6 @@ export default function LiveDeskPage() {
                     style={{ background: sel === v.id ? "rgba(106,27,154,0.10)"
                              : (i === 0 && !v.thin) ? "rgba(230,81,0,0.06)" : "transparent" }}>
                     <td className="px-3 py-1.5 font-bold text-[var(--text-primary)]">
-                      <span className="text-[10px] font-bold px-1 mr-1 rounded"
-                        style={{ background: "rgba(106,27,154,0.12)", color: "#6a1b9a" }}>{i + 1}</span>
                       {sel === v.id ? "▶ " : (i === 0 && !v.thin) ? "🏆 " : ""}{lang === "ko" ? v.ko : v.en}
                     </td>
                     <td className="text-right px-2">
