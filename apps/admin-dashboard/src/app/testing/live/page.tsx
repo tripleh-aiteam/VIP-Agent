@@ -707,7 +707,10 @@ export default function LiveDeskPage() {
                 </span>
               )}
               <span className="text-[10px] text-[var(--text-muted)] ml-2">
-                {bars.length
+                {sel && det?.chart
+                  ? t(`${det.chart.candles.length.toLocaleString()}봉${ruleDay ? ` · ${ruleDay.slice(4, 6)}-${ruleDay.slice(6)} 저장된 하루` : " · 오늘"}`,
+                      `${det.chart.candles.length.toLocaleString()} bars${ruleDay ? ` · stored day ${ruleDay.slice(4, 6)}-${ruleDay.slice(6)}` : " · today"}`)
+                  : bars.length
                   ? t(`${bars.length}봉 · ${tape?.first}~${tape?.last} 사이 체결 ${fmt(tape?.ticks)}건으로 만들었습니다`,
                       `${bars.length} bars, built from ${fmt(tape?.ticks)} executions between ${tape?.first} and ${tape?.last}`)
                   : t("아직 봉을 만들 만큼 체결이 모이지 않았습니다", "not enough executions collected to form a bar yet")}
@@ -727,7 +730,11 @@ export default function LiveDeskPage() {
                 2026-08-05). A changed key remounts the chart: fresh axis, no stale
                 labels, provably ordered data underneath (checked: 0 out-of-order rows
                 in every payload). */}
-            {bars.length ? <LiveChart
+            {/* Gate on the dataset actually DRAWN. This tested the LIVE tape's length,
+                so before 09:00 (or after a restart) a stored day's fully loaded chart was
+                replaced by "market is closed" - the boss could not review 08-04/08-05 at
+                dawn (2026-08-06). A rule's own chart must show whenever IT has bars. */}
+            {(sel && det?.chart ? det.chart.candles.length : bars.length) ? <LiveChart
                 key={`det-${sel ?? "tape"}-${det?.chart?.code ?? code}-${tick}-${period}`}
                 off={sel && det?.chart ? det.chart.off : (tape?.off ?? 0)}
                 bars={sel && det?.chart ? det.chart.candles : bars}
@@ -736,7 +743,10 @@ export default function LiveDeskPage() {
                   ? ((focusSide === "b" ? det.chart.focus?.b : det.chart.focus?.s) ?? null)
                   : null} /> : (
               <div className="px-4 py-10 text-center text-[12px] text-[var(--text-muted)]">
-                {st?.market_open
+                {ruleDay
+                  ? t(`${ruleDay.slice(4, 6)}-${ruleDay.slice(6)} 저장된 하루를 보는 중 — 위에서 규칙을 클릭하면 그 날의 차트와 매매가 열립니다.`,
+                      `viewing stored day ${ruleDay.slice(4, 6)}-${ruleDay.slice(6)} - click a rule above to open that day's chart and trades.`)
+                  : st?.market_open
                   ? t("수집 중입니다 — 잠시 뒤 첫 봉이 그려집니다.", "collecting - the first bars appear shortly.")
                   : t("장이 열려야 새 체결이 들어옵니다 (09:00~15:30).", "new executions only arrive while the market is open (09:00-15:30).")}
               </div>
