@@ -197,9 +197,10 @@ export default function LiveDeskPage() {
                        // ...and the remaining six, so ALL 12 are paired (boss 2026-08-06)
                        "3u3dML", "2u2dML", "3u2dML", "2u3dML", "3u4dML", "3u+0.5sML"];
   const twelve = rank?.original_12?.length ? rank.original_12 : ORIGINAL_12;
-  const shownRules = (rank?.variants ?? []).filter((v) => twelve.includes(v.id))
-    .filter((v) => mlView === "all" ? true
-                 : mlView === "ml" ? v.id.endsWith("ML") : !v.id.endsWith("ML"));
+  // NOTE: shownRules is computed BELOW the mlView state it filters by — referencing a
+  // `const` before its line runs is a temporal-dead-zone crash, and this exact mistake
+  // white-screened the whole page on 2026-08-06 ("Application error: a client-side
+  // exception"). Declaration order in a component body is load-bearing.
   const [det, setDet] = useState<RDetail | null>(null);
   // The money for the OPEN rule. Prefer the server's figure - it is summed over every
   // trade, while the list on screen is cut to `limit`. Fall back to adding up the rows
@@ -250,6 +251,9 @@ export default function LiveDeskPage() {
   useEffect(() => { hourToRef.current = hourTo; }, [hourTo]);
   // with ML / without ML / everything
   const [mlView, setMlView] = useState<"all" | "ml" | "plain">("all");
+  const shownRules = (rank?.variants ?? []).filter((v) => twelve.includes(v.id))
+    .filter((v) => mlView === "all" ? true
+                 : mlView === "ml" ? v.id.endsWith("ML") : !v.id.endsWith("ML"));
   // WON PER TRADE. 0 = the historical one share. One share is not equal risk - one share
   // of SK하이닉스 is ₩1.5M and one of 한화오션 is ₩85k - so a fixed budget is both fairer
   // and closer to a real account. It scales the money and never the win rate.
