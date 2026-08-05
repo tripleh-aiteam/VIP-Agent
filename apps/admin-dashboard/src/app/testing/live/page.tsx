@@ -781,7 +781,20 @@ export default function LiveDeskPage() {
                 bars={sel && det?.chart ? det.chart.candles : bars}
                                       marks={sel && det?.chart ? det.chart.marks : undefined}
                                       focus={sel && det?.chart
-                  ? ((focusSide === "b" ? det.chart.focus?.b : det.chart.focus?.s) ?? null)
+                  ? (() => {
+                      // INSTANT JUMP. The chart already holds the whole day and every
+                      // trade row carries its bar positions (buy_i/sell_i are indices
+                      // into that same day), so a click on a same-company trade is pure
+                      // arithmetic - no waiting for the server round-trip the boss felt
+                      // as delay (2026-08-06). The fetch still runs behind it, for the
+                      // order-book evidence; when it lands the focus is already right.
+                      const ptr = pick !== null ? det.trades[pick] : null;
+                      if (ptr && ptr.code === det.chart.code) {
+                        const f = (focusSide === "b" ? ptr.buy_i : ptr.sell_i) - det.chart.off;
+                        if (f >= 0 && f < det.chart.candles.length) return f;
+                      }
+                      return (focusSide === "b" ? det.chart.focus?.b : det.chart.focus?.s) ?? null;
+                    })()
                   : null} /> : (
               <div className="px-4 py-10 text-center text-[12px] text-[var(--text-muted)]">
                 {ruleDay
