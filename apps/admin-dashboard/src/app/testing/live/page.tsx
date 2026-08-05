@@ -433,23 +433,23 @@ export default function LiveDeskPage() {
                 whether he was reading 5틱 or 1분 (2026-08-05). The whole point of the
                 1분 group is comparing the same rule across clocks - the switch has to be
                 where the numbers are. */}
-            {([["5틱", 5, 0], ["10틱", 10, 0], ["30초", 5, 30], ["1분", 5, 60]] as
-              [string, number, number][]).map(([lab, tk, per]) => (
-              <button key={lab}
-                onClick={() => { setTick(tk); setPeriod(per);
+            {/* One dropdown, 5틱 selected by default (boss 2026-08-06: four buttons PLUS a
+                "showing" badge read as two different things). The select IS the badge now. */}
+            <span className="text-[10px] text-[var(--text-muted)]">{t("봉:", "bars:")}</span>
+            <select value={period ? `p${period}` : `t${tick}`}
+              onChange={(e) => { const val = e.target.value;
+                                 const per = val[0] === "p" ? Number(val.slice(1)) : 0;
+                                 const tk = val[0] === "t" ? Number(val.slice(1)) : 5;
+                                 setTick(tk); setPeriod(per);
                                  tickRef.current = tk; perRef.current = per;
                                  setDet(null); setSel(null); setPick(null); pull(); }}
-                className="text-[11px] font-bold px-2 py-0.5 rounded-md border"
-                style={(period === per && (per !== 0 ? true : tick === tk))
-                  ? { borderColor: "#6a1b9a", color: "#fff", background: "#6a1b9a" }
-                  : { borderColor: "var(--border-default)", color: "var(--text-secondary)" }}>
-                {lab}
-              </button>
-            ))}
-            <span className="text-[11px] font-bold px-1.5 py-0.5 rounded"
-              style={{ background: "rgba(106,27,154,0.12)", color: "#6a1b9a" }}>
-              {t(`지금 보는 것: ${rank.clock} 봉`, `showing: ${rank.clock} bars`)}
-            </span>
+              className="text-[11px] font-bold px-1 py-0.5 rounded border bg-[var(--bg-primary)]"
+              style={{ borderColor: "#6a1b9a", color: "#6a1b9a" }}>
+              <option value="t5">5틱</option>
+              <option value="t10">10틱</option>
+              <option value="p30">30초</option>
+              <option value="p60">1분</option>
+            </select>
             {/* WHICH DAY. "" = today's live tape; any stored day is one click. The ML
                 models honestly re-train per day: viewing 08-05 uses only 08-04. */}
             {/* ONE dropdown instead of a button per day (boss 2026-08-06) - the day list
@@ -568,17 +568,21 @@ export default function LiveDeskPage() {
                     <td className="px-3 py-1.5 font-bold text-[var(--text-primary)]">
                       {sel === v.id ? "▶ " : (i === 0 && !v.thin) ? "🏆 " : ""}{lang === "ko" ? v.ko : v.en}
                       {v.id.endsWith("ML") && (
-                        <span className="ml-1.5 text-[9.5px] font-extrabold px-1.5 py-0.5 rounded"
+                        <span className="ml-1.5 text-[9.5px] font-extrabold px-1.5 py-0.5 rounded cursor-help"
+                          title={t("이 규칙은 매수 신호마다 회사별 ML 모델에게 먼저 물어봅니다. 과거 이긴 매수와 비슷하면 사고(확신이 클수록 더 많이), 과거 진 매수와 비슷하면 그 매수를 건너뜁니다.",
+                                   "Before every buy signal this rule asks its per-company ML model first: if the moment looks like past winners it buys (more shares when more confident); if it looks like past losers it skips that trade.")}
                           style={{ background: "rgba(21,101,192,0.14)", color: "#1565c0" }}>🤖 ML</span>
                       )}
                       {/* the plain twin's rate rides on the ML row, so the with/without
-                          comparison survives sorting - same as the Strategy Lab */}
+                          comparison survives sorting. Written as a sentence with BOTH
+                          numbers - "without ML 7% ▲13p" alone read as noise (boss 08-06). */}
                       {v.id.endsWith("ML") && v.vs != null && (
                         <span className="ml-1.5 text-[9.5px]" style={{ color: "var(--text-muted)" }}
-                          title={t("모델 없이 같은 규칙이 같은 봉에서 낸 승률", "the same rule on the same bars with no model")}>
-                          {t("모델 없이", "without ML")} {v.vs}%
+                          title={t(`같은 규칙, 같은 봉: 모델 없이 ${v.vs}% (${v.vs_trips ?? "?"}건) → 모델이 고른 매수만 ${v.win_pct}%`,
+                                   `same rule, same bars: no model ${v.vs}% (${v.vs_trips ?? "?"} trades) → only model-approved buys ${v.win_pct}%`)}>
+                          {t("모델 없이", "without ML")} {v.vs}% → {t("모델과", "with ML")} {v.win_pct}%
                           <b style={{ color: v.win_pct > v.vs ? RED : v.win_pct < v.vs ? BLUE : "inherit" }}>
-                            {" "}{v.win_pct > v.vs ? "▲" : v.win_pct < v.vs ? "▼" : "="}{Math.abs(v.win_pct - (v.vs ?? 0))}p
+                            {" "}({v.win_pct > v.vs ? "▲" : v.win_pct < v.vs ? "▼" : "="}{Math.abs(Math.round((v.win_pct - (v.vs ?? 0)) * 10) / 10)}p{v.win_pct === v.vs ? "" : v.win_pct > v.vs ? t(" 개선", " better") : t(" 하락", " worse")})
                           </b>
                         </span>
                       )}
