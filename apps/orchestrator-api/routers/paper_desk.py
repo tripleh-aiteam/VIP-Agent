@@ -637,10 +637,18 @@ def live_tape(code: str = Query("005930"), period: int = Query(0),
                 "note": "no tape yet - the collector needs the market open"}
     cs = kt.bars_time(ticks, period) if period else kt.bars_ticks(ticks, max(1, tick))
     name = next((n for c, n in kt.WATCH if c == code), code)
+    win = cs[-max(1, bars):]
     return {"ok": True, "code": code, "name": name,
             "clock": f"{period}초" if period else f"{tick}틱",
             "ticks": len(ticks), "first": ticks[0]["t"], "last": ticks[-1]["t"],
-            "bars": cs[-max(1, bars):]}
+            # `off` = the absolute position of the first returned bar in the day's tape.
+            # The chart addresses bars by NUMBER; without this, each poll's sliding window
+            # renumbered every bar (bar #0 became a different bar every 3 seconds) and the
+            # axis label cache could briefly show the previous window's times - which is
+            # exactly the "15:11 between 09:11 and 09:12" the boss kept seeing. With an
+            # absolute number, a bar keeps its number for ever and nothing can mix.
+            "off": len(cs) - len(win), "total_bars": len(cs),
+            "bars": win}
 
 
 @router.get("/live/rules")

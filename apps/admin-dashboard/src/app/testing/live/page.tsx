@@ -25,7 +25,8 @@ const GOLD = "#e65100";
 type Bar = { time: number; hhmm: string; open: number; high: number; low: number;
              close: number; dir: number; vol: number; n: number };
 type Tape = { ok: boolean; code: string; name?: string; clock: string; ticks: number;
-              first?: string; last?: string; bars: Bar[]; note?: string };
+              first?: string; last?: string; bars: Bar[]; note?: string;
+              off?: number; total_bars?: number };
 type Book = { ok: boolean; code: string; name?: string; asks: [number, number][];
               bids: [number, number][]; best_ask?: number; best_bid?: number;
               last?: number; prev_close?: number; change_pct?: number };
@@ -75,9 +76,9 @@ type Status = { running: boolean; market_open: boolean; polls: number;
 
 /** The chart. Same library and the same continuous-bar convention as the labs, so a red
  *  bar means the same thing here as it does there. */
-function LiveChart({ bars, marks, focus }:
+function LiveChart({ bars, marks, focus, off = 0 }:
                    { bars: Bar[]; marks?: { b: number; s: number; g: number }[];
-                     focus?: number | null }) {
+                     focus?: number | null; off?: number }) {
   const ref = useRef<HTMLDivElement | null>(null);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const cs = useRef<{ chart: any; series: any } | null>(null);
@@ -114,24 +115,29 @@ function LiveChart({ bars, marks, focus }:
   useEffect(() => {
     const c = cs.current;
     if (!c || !bars.length) return;
-    label.current = new Map(bars.map((b, i) => [i, b.hhmm]));
+    // ABSOLUTE bar numbers, not window positions. The tape window SLIDES: on every
+    // 2-3s poll, "bar #0" used to become a different bar, and the axis label cache could
+    // briefly show the previous window's times - the "15:11 between 09:11 and 09:12"
+    // the boss kept catching. With `off` (the bar's permanent position in the day) a bar
+    // keeps one number for ever, so labels cannot mix and updates cannot shift.
+    label.current = new Map(bars.map((b, i) => [off + i, b.hhmm]));
     c.series.setData(bars.map((b, i) => {
       const col = b.dir > 0 ? RED : b.dir < 0 ? BLUE : "#9e9e9e";
-      return { time: i, open: b.open, high: b.high, low: b.low, close: b.close,
+      return { time: off + i, open: b.open, high: b.high, low: b.low, close: b.close,
                color: col, borderColor: col, wickColor: col };
     }) as never);
     // arrows carry GROSS - the same number the trade table shows. Labelling one with net
     // while the table showed gross made one trade read as two results on the artificial
     // side, and there is no reason to repeat it here.
     const m = (marks ?? []).flatMap((k) => [
-      { time: k.b, position: "belowBar", color: RED, shape: "arrowUp", text: "매수" },
-      { time: k.s, position: "aboveBar", color: k.g > 0 ? RED : BLUE,
+      { time: off + k.b, position: "belowBar", color: RED, shape: "arrowUp", text: "매수" },
+      { time: off + k.s, position: "aboveBar", color: k.g > 0 ? RED : BLUE,
         shape: "arrowDown", text: `${k.g > 0 ? "+" : ""}${k.g}%` },
-    ]).filter((x) => x.time >= 0 && x.time < bars.length);
+    ]).filter((x) => (x.time as number) >= off && (x.time as number) < off + bars.length);
     // the clicked trade gets its own gold marker, so it is obvious WHICH of the arrows
     // on screen is the row he clicked
     if (focus != null && bars[focus]) {
-      m.push({ time: focus, position: "aboveBar", color: GOLD, shape: "arrowDown",
+      m.push({ time: off + focus, position: "aboveBar", color: GOLD, shape: "arrowDown",
                text: `\u25c6 ${bars[focus].hhmm.slice(0, 5)}` } as never);
     }
     m.sort((a2, b2) => (a2.time as number) - (b2.time as number));
@@ -150,7 +156,7 @@ function LiveChart({ bars, marks, focus }:
         c.chart.timeScale().fitContent();
       }
     }
-  }, [ready, bars, marks, focus]);
+  }, [ready, bars, marks, focus, off]);
 
   return <div ref={ref} style={{ width: "100%", height: 320 }} />;
 }
@@ -233,6 +239,12 @@ export default function LiveDeskPage() {
   // The artificial lab has had this since 2026-08-03; the boss asked for the same thing
   // here, because a fill you cannot look up is a fill you cannot check.
   const [df, setDf] = useState<Df | null>(null);
+  // how many bars the STANDING chart loads. 600 x 5틱 on 삼성전자 is ~5 minutes, which
+  // read as "data before 15:00 is missing" (boss 2026-08-05) - it never was; the window
+  // was just small. 전체 loads the whole day.
+  const [chartBars, setChartBars] = useState(600);
+  const chartBarsRef = useRef(600);
+  useEffect(() => { chartBarsRef.current = chartBars; }, [chartBars]);
   const [dfMins, setDfMins] = useState<5 | 10 | 15>(10);
   // A fixed 5/10/15 cannot answer "show me the last 35 minutes", and it cannot go back to
   // a minute from this morning at all - the boss hit exactly that (2026-08-04). The
@@ -299,7 +311,7 @@ export default function LiveDeskPage() {
   const pull = useCallback(() => {
     const c = codeRef.current;
     const q = perRef.current ? `period=${perRef.current}` : `tick=${tickRef.current}`;
-    api<Tape>(`/paper-desk/live/tape?code=${c}&${q}&bars=400`).then(setTape).catch(() => {});
+    api<Tape>(`/paper-desk/live/tape?code=${c}&${q}&bars=${chartBarsRef.current}`).then(setTape).catch(() => {});
     api<Book>(`/paper-desk/live/book?code=${c}`).then(setBook).catch(() => {});
     api<Execs>(`/paper-desk/live/execs?code=${c}&n=120`).then(setExecs).catch(() => {});
     api<Rank>(`/paper-desk/live/rules?${q}`).then(setRank).catch(() => {});
@@ -635,6 +647,7 @@ export default function LiveDeskPage() {
                 in every payload). */}
             {bars.length ? <LiveChart
                 key={`det-${sel ?? "tape"}-${det?.chart?.code ?? code}-${tick}-${period}`}
+                off={sel && det?.chart ? det.chart.off : (tape?.off ?? 0)}
                 bars={sel && det?.chart ? det.chart.candles : bars}
                                       marks={sel && det?.chart ? det.chart.marks : undefined}
                                       focus={sel && det?.chart ? (det.chart.focus?.s ?? null) : null} /> : (
@@ -989,10 +1002,19 @@ export default function LiveDeskPage() {
           <b>📈 {tape?.name ?? ""} — {tape?.clock ?? ""} {t("실시간 차트", "live chart")}</b>
           <span className="text-[10px] text-[var(--text-muted)]">
             {bars.length
-              ? t(`${bars.length}봉 · 마지막 ${tape?.last ?? ""} · 아래 호가와 같은 2~3초 주기로 갱신됩니다`,
-                  `${bars.length} bars · last ${tape?.last ?? ""} · refreshes on the same 2-3s cycle as the book below`)
+              ? t(`${bars[0]?.hhmm?.slice(0, 5)}~${bars[bars.length - 1]?.hhmm?.slice(0, 5)} 구간 · ${bars.length}봉 보는 중 (하루 전체 ${(tape?.total_bars ?? bars.length).toLocaleString()}봉)`,
+                  `showing ${bars[0]?.hhmm?.slice(0, 5)}~${bars[bars.length - 1]?.hhmm?.slice(0, 5)} · ${bars.length} of ${(tape?.total_bars ?? bars.length).toLocaleString()} bars today`)
               : t("아직 봉이 없습니다", "no bars yet")}
           </span>
+          {([[600, t("최근 600봉", "last 600")], [3000, t("3,000봉", "3,000")],
+             [100000, t("하루 전체", "whole day")]] as [number, string][]).map(([n, lab]) => (
+            <button key={n} onClick={() => { setChartBars(n); chartBarsRef.current = n; pull(); }}
+              className="text-[10px] font-bold px-1.5 py-0.5 rounded border"
+              style={chartBars === n ? { borderColor: "#6a1b9a", color: "#fff", background: "#6a1b9a" }
+                                     : { borderColor: "var(--border-default)", color: "var(--text-secondary)" }}>
+              {lab}
+            </button>
+          ))}
           {book && (
             <span className="ml-auto text-[10.5px] tabular-nums">
               <span style={{ color: RED }}>{t("매도호가", "ask")} ₩{fmt(book.best_ask)}</span>
@@ -1001,7 +1023,8 @@ export default function LiveDeskPage() {
             </span>
           )}
         </div>
-        {bars.length ? <LiveChart key={`mkt-${code}-${tick}-${period}`} bars={bars} /> : (
+        {bars.length ? <LiveChart key={`mkt-${code}-${tick}-${period}`}
+                                  off={tape?.off ?? 0} bars={bars} /> : (
           <div className="px-4 py-8 text-center text-[12px] text-[var(--text-muted)]">
             {st?.market_open
               ? t("수집 중입니다 — 잠시 뒤 봉이 그려집니다.", "collecting - bars appear shortly.")
