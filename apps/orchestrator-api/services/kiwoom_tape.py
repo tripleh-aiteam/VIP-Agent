@@ -90,7 +90,19 @@ def _fetch(code: str) -> list[dict]:
         except Exception:
             continue
     out.reverse()                        # chronological
-    return [x for x in out if x["px"] > 0]
+    # ONLY TODAY'S TICKS. ka10079 always returns the most recent ~900 executions, so the
+    # first poll of a new day - before the market opens, or in the first seconds after -
+    # returns YESTERDAY's closing tape. The day file was empty, so all 900 were accepted
+    # as new and written into today's file (found 2026-08-05: 삼성전자's file began at
+    # 15:19 the previous afternoon).
+    #
+    # That is not a cosmetic problem. The bar series then runs ...15:30:16 ₩240,000 ->
+    # 09:00:05 ₩254,000, and a +5.8% overnight gap becomes an ordinary bar-to-bar move
+    # that rules trade: 2 up / +0.5% "bought" at 15:19 and "sold" at 09:00 for +7.292%.
+    # Every one of those wins is fictional - you cannot hold through the close and the
+    # rule never intended to.
+    today = _day()
+    return [x for x in out if x["px"] > 0 and x["ts"][:8] == today]
 
 
 def _append_new(have: list[dict], page: list[dict]) -> list[dict]:
