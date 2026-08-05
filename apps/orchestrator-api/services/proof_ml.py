@@ -161,9 +161,15 @@ def score(bundle: dict, feats: list[float]) -> dict[str, Any]:
 # something completely different on a ₩1,500,000 stock than on a ₩19,000 one, so the
 # ceiling is set per price band and the model only ever chooses a fraction of it:
 #
-#     over ₩1,000,000   ->    100 shares max   (SK하이닉스: ₩157m at the cap)
-#     over ₩100,000     ->  1,000 shares max   (프루프전자: ₩223m at the cap)
-#     below that        -> 100,000 shares max  (시뮬중공업: ₩1.9bn at the cap)
+#     over ₩1,000,000   ->    100 shares max   (SK하이닉스: ₩156m at the cap)
+#     over ₩100,000     ->  1,000 shares max   (프루프전자: ₩208m at the cap)
+#     below that        -> 10,000 shares max   (한화오션:   ₩870m at the cap)
+#
+# THE CHEAP BAND WAS 100,000 AND IT DROWNED EVERYTHING (boss 2026-08-05: "한화오션 is
+# 100K so it decreases a lot our gain"). At 100,000 shares a ₩87,000 stock is ₩8.7bn of
+# exposure - fifty-six times the SK하이닉스 cap - so one cheap stock decided every total
+# on the board while the expensive one, where the edge actually lives, contributed almost
+# nothing. 10,000 brings the three bands within about 5x of each other instead of 56x.
 #
 # ONE THING TO KEEP IN VIEW, said once and then left alone: quantity multiplies the
 # result and cannot change its sign. Every rule here currently loses per trade, so a
@@ -180,7 +186,7 @@ def cap_for(price: float) -> int:
         return 100
     if price > 100_000:
         return 1_000
-    return 100_000
+    return 10_000
 
 
 def quantity(p: float, bar: float, price: float = 0.0) -> int:
