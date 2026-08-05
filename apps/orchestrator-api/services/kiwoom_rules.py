@@ -105,7 +105,12 @@ def _bars_for(code: str, tick: int, period: int) -> list[dict]:
 # explicitly instead. He had me remove the six reversal rules from this desk because two
 # experiments in one table was confusing; these four are a DIFFERENT experiment he asked
 # for by name, testing whether a bigger profit target beats the fee.
-EXPERIMENT = ("3d+1.0", "3d+1.5", "3d+2.0", "3d+2.0w")
+# The 1분 group joined 2026-08-05: 2d+1.0 (the first setting positive on real data,
+# on the 1분 clock), 3d3u (the only rule ever positive on the artificial side — no
+# profit cap, exits on the market's own signal), and 2d+0.5 as the tight-target control
+# so the comparison "same entry, wider exit" is visible on one screen.
+EXPERIMENT = ("3d+1.0", "3d+1.5", "3d+2.0", "3d+2.0w",
+              "2d+1.0", "3d3u", "2d+0.5")
 
 PLAIN = [v for v in VARIANTS
          if not v.get("ml") and (v.get("dir", 1) > 0 or v["id"] in EXPERIMENT)]

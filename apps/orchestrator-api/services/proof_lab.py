@@ -66,6 +66,13 @@ VARIANTS: list[dict] = [
     {"id": "3d+1.5", "entry": 3, "dir": -1, "kind": "pct", "a": 1.5, "b": 2.0},
     {"id": "3d+2.0", "entry": 3, "dir": -1, "kind": "pct", "a": 2.0, "b": 2.0},
     {"id": "3d+2.0w", "entry": 3, "dir": -1, "kind": "pct", "a": 2.0, "b": 3.0},
+    # ── THE 1분 CANDIDATE (boss 2026-08-05). Measured on today's real tape: the same
+    # fall-entry rules lose less at every step from 5틱 to 30초 to 1분, and this shape —
+    # two falls, +1.0% take, -1.5% stop — was the first thing POSITIVE on real data
+    # (+0.157%/trade, 73% win, 11 trades) when read on the 1분 clock. A 1분 bar moves
+    # further than a 5틱 bar while the fee stays 0.23%, so the move-to-cost ratio
+    # improves purely by waiting. Small sample; that is what running it is for.
+    {"id": "2d+1.0", "entry": 2, "dir": -1, "kind": "pct", "a": 1.0, "b": 1.5},
     # ── the boss's top six, each with a per-company model filtering its entries
     # (2026-08-03). Same rule, same exits; the model only decides whether to TAKE a
     # signal the rule already produced, so a "+ML" row can be read against its twin.
