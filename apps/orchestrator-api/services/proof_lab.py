@@ -73,6 +73,16 @@ VARIANTS: list[dict] = [
     # further than a 5틱 bar while the fee stays 0.23%, so the move-to-cost ratio
     # improves purely by waiting. Small sample; that is what running it is for.
     {"id": "2d+1.0", "entry": 2, "dir": -1, "kind": "pct", "a": 1.0, "b": 1.5},
+
+    # ── THE NEIGHBOURHOOD TEST (boss approved 2026-08-05). 2d+1.0 is the only rule with
+    # a real sample that is positive on BOTH clocks today. Before trusting it, nudge each
+    # of its numbers and see whether the ZONE is good or only the point: a rule that
+    # captured something true about the market must have decent neighbours, and a rule
+    # that merely fit one day's wiggles will stand alone. Four directions:
+    {"id": "2d+0.8", "entry": 2, "dir": -1, "kind": "pct", "a": 0.8, "b": 1.2},   # smaller take
+    {"id": "2d+1.2", "entry": 2, "dir": -1, "kind": "pct", "a": 1.2, "b": 1.5},   # bigger take
+    {"id": "2d+1.0s", "entry": 2, "dir": -1, "kind": "pct", "a": 1.0, "b": 1.0},  # tighter stop
+    {"id": "3d+1.0w", "entry": 3, "dir": -1, "kind": "pct", "a": 1.0, "b": 1.5},  # stricter entry
     # ── the boss's top six, each with a per-company model filtering its entries
     # (2026-08-03). Same rule, same exits; the model only decides whether to TAKE a
     # signal the rule already produced, so a "+ML" row can be read against its twin.

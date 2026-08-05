@@ -110,7 +110,9 @@ def _bars_for(code: str, tick: int, period: int) -> list[dict]:
 # profit cap, exits on the market's own signal), and 2d+0.5 as the tight-target control
 # so the comparison "same entry, wider exit" is visible on one screen.
 EXPERIMENT = ("3d+1.0", "3d+1.5", "3d+2.0", "3d+2.0w",
-              "2d+1.0", "3d3u", "2d+0.5")
+              "2d+1.0", "3d3u", "2d+0.5",
+              # the neighbourhood of 2d+1.0 — see proof_lab for why (2026-08-05)
+              "2d+0.8", "2d+1.2", "2d+1.0s", "3d+1.0w")
 
 PLAIN = [v for v in VARIANTS
          if not v.get("ml") and (v.get("dir", 1) > 0 or v["id"] in EXPERIMENT)]

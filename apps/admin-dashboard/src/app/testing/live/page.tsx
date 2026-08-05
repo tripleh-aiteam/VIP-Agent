@@ -185,7 +185,10 @@ export default function LiveDeskPage() {
                        "3d+1.0", "3d+1.5", "3d+2.0", "3d+2.0w",
                        // the 1분 group (2026-08-05): the first setting positive on real
                        // data, the uncapped signal-exit rule, and a tight-target control
-                       "2d+1.0", "3d3u", "2d+0.5"];
+                       "2d+1.0", "3d3u", "2d+0.5",
+                       // the neighbourhood of 2d+1.0 (2026-08-05): nudge each number and
+                       // see whether the zone is good or only the point
+                       "2d+0.8", "2d+1.2", "2d+1.0s", "3d+1.0w"];
   const twelve = rank?.original_12?.length ? rank.original_12 : ORIGINAL_12;
   const shownRules = (rank?.variants ?? []).filter((v) => twelve.includes(v.id));
   const [det, setDet] = useState<RDetail | null>(null);
