@@ -118,18 +118,18 @@ def _outcome(cl, i, entry, tick, v):
     the trading window has read the future, so those samples must be embargoed from the
     fit — otherwise the model is scored on bars it was partly trained on and reports
     skill it does not have. Used only to label PAST signals; never to decide a live trade."""
+    # the candle exit's mirror, counted EXACTLY as the live engines count: a step the
+    # rule's way extends the run, a step the other way resets it, a FLAT close is a
+    # pause and the run stands (boss 2026-08-06)
+    run = 0
     for j in range(i + 1, min(i + 600, len(cl))):
         if v["kind"] == "candle":
-            # the mirror of the live exit, counted the same way
-            run = 0
-            for q in range(j, max(0, j - v["a"]) - 1, -1):
-                if q < 1:
-                    break
-                rise = cl[q] > cl[q - 1]
-                if (rise if v.get("dir", 1) < 0 else not rise):
-                    run += 1
-                else:
-                    break
+            step_hit = (cl[j] > cl[j - 1]) if v.get("dir", 1) < 0 else (cl[j] < cl[j - 1])
+            step_other = (cl[j] < cl[j - 1]) if v.get("dir", 1) < 0 else (cl[j] > cl[j - 1])
+            if step_hit:
+                run += 1
+            elif step_other:
+                run = 0
             if run >= v["a"]:
                 return (1 if cl[j] > entry else 0), j
         else:
@@ -175,8 +175,11 @@ def run_variant(closes: list[float], tick: int, v: dict, seed: int,
     last_sig_live = -1
     for i in range(1, len(closes)):
         c, prev = closes[i], closes[i - 1]
-        up = up + 1 if c > prev else 0
-        dn = dn + 1 if c < prev else 0
+        # a FLAT close is a PAUSE, not a break (boss 2026-08-06) - the run stands
+        if c > prev:
+            up, dn = up + 1, 0
+        elif c < prev:
+            up, dn = 0, dn + 1
         if pos is None:
             # dir=-1 buys after a run of FALLS instead of rises. The tape is mean-reverting
             # at 5틱, so this is the same rule pointed the other way — nothing else changes.
@@ -331,8 +334,11 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
         s = stks[si]
         closes = s["closes"]
         c, prev = closes[i], closes[i - 1]
-        up[si] = up[si] + 1 if c > prev else 0
-        dn[si] = dn[si] + 1 if c < prev else 0
+        # a FLAT close is a PAUSE, not a break (boss 2026-08-06) - the run stands
+        if c > prev:
+            up[si], dn[si] = up[si] + 1, 0
+        elif c < prev:
+            up[si], dn[si] = 0, dn[si] + 1
         if pos is None:
             if (dn[si] if v.get("dir", 1) < 0 else up[si]) >= v["entry"]:
                 if v.get("ml"):
@@ -639,8 +645,11 @@ def _ml_for(c_code: str, base: float, sseed: int, t: int, tick: int, period: int
         vv = [float(c.get("vol") or 0) for c in cs]
         samples, u, dn_, last = [], 0, 0, -1
         for i in range(1, len(cl)):
-            u = u + 1 if cl[i] > cl[i - 1] else 0
-            dn_ = dn_ + 1 if cl[i] < cl[i - 1] else 0
+            # flat = pause, same as the live engines (boss 2026-08-06)
+            if cl[i] > cl[i - 1]:
+                u, dn_ = u + 1, 0
+            elif cl[i] < cl[i - 1]:
+                u, dn_ = 0, dn_ + 1
             if (dn_ if v.get("dir", 1) < 0 else u) != v["entry"]:
                 continue
             y, _res = _outcome(cl, i, cl[i] + t, t, v)

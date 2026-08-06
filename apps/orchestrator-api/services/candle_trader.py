@@ -223,17 +223,31 @@ def _candles_tf(code: str, tf: str, n: int = 8, include_forming: bool = False) -
 def run_steps(closes: list) -> tuple[int, int]:
     """THE engine comparison, as a pure function (live trading AND the Proof Lab call this).
     Returns (rising_steps, falling_steps) at the tail: how many consecutive closes step
-    strictly HIGHER / LOWER than the previous close. 3 rising steps == 3 red candles in a
-    row (x0<x1<x2<x3) == a BUY signal. A flat close (==) breaks the count."""
+    strictly HIGHER / LOWER than the previous close.
+
+    A FLAT close (==) is a PAUSE, not a break (boss 2026-08-06: "even though there is a
+    pause in the increase or decrease you count it as an increase or decrease"). Under the
+    old rule a flat bar zeroed the count, so 하락-하락-보합-하락 read as 1 fall instead of
+    3 - which is how 3u3d held SK하이닉스 through 09:12's three falls and sold seven bars
+    late. Flats are skipped; only a step the OTHER way ends the run."""
     n = len(closes)
-    k = 0                                        # rising links at the tail: close[i] > close[i-1]
-    while n - 1 - k >= 1 and closes[n - 1 - k] > closes[n - 2 - k]:
-        k += 1
-    up = k
-    k = 0                                        # falling links at the tail: close[i] < close[i-1]
-    while n - 1 - k >= 1 and closes[n - 1 - k] < closes[n - 2 - k]:
-        k += 1
-    return up, k
+    up = 0
+    j = n - 1
+    while j >= 1:                                # rising links at the tail, flats skipped
+        if closes[j] > closes[j - 1]:
+            up += 1
+        elif closes[j] < closes[j - 1]:
+            break
+        j -= 1
+    dn = 0
+    j = n - 1
+    while j >= 1:                                # falling links at the tail, flats skipped
+        if closes[j] < closes[j - 1]:
+            dn += 1
+        elif closes[j] > closes[j - 1]:
+            break
+        j -= 1
+    return up, dn
 
 
 def _streaks_tf(code: str, tf: str, early: bool = False) -> tuple[int, int, int]:

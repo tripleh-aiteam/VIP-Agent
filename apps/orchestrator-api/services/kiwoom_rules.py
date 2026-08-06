@@ -187,8 +187,11 @@ def kiwoom_ml_for(code: str, tick: int, period: int, v: dict, day: str = ""):
         t = krx_tick(cl[-1]) or 1
         samples, u, dn, last = [], 0, 0, -1
         for i in range(1, len(cl)):
-            u = u + 1 if cl[i] > cl[i - 1] else 0
-            dn = dn + 1 if cl[i] < cl[i - 1] else 0
+            # flat = pause, same as the live engines (boss 2026-08-06)
+            if cl[i] > cl[i - 1]:
+                u, dn = u + 1, 0
+            elif cl[i] < cl[i - 1]:
+                u, dn = 0, dn + 1
             if (dn if v.get("dir", 1) < 0 else u) < v["entry"]:
                 continue
             y, _res = _outcome(cl, i, cl[i] + t, t, v)
