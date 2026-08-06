@@ -150,6 +150,7 @@ ML_RULES = [v for v in VARIANTS if v.get("ml") and v.get("dir", 1) > 0]
 DESK = PLAIN + ML_RULES
 
 _KML_CACHE: dict = {}
+_RANK_DAY_CACHE: dict = {}
 
 
 def _prior_day_closes(code: str, tick: int, period: int, before: str = ""):
@@ -241,12 +242,24 @@ def rank(tick: int = 5, period: int = 0, day: str = "",
                          "times": [c["hhmm"] for c in tp["cs"]]}
                         for code, tp in tapes.items()])
                    for d, tapes in tapes_by_day]
+    from services.kiwoom_tape import _day as _kday
+    _today = _kday()
     for v in DESK:
         trades = []
         for d, base_stks in base_by_day:
+            # a FINISHED day's tape never changes, so its trades are computed once.
+            # Without this the cumulative view re-ran three days of every rule on every
+            # 3-second poll. Today is never cached - it is still being written.
+            ck = (d, tick, period, frm, to, v["id"])
+            if d and d < _today and ck in _RANK_DAY_CACHE:
+                trades += _RANK_DAY_CACHE[ck]
+                continue
             stks = [dict(sk, ml_bundle=(kiwoom_ml_for(sk["code"], tick, period, v, d)
                                         if v.get("ml") else None)) for sk in base_stks]
-            trades += run_desk(stks, v, fill_fn=_fill)
+            got = run_desk(stks, v, fill_fn=_fill)
+            if d and d < _today:
+                _RANK_DAY_CACHE[ck] = got
+            trades += got
         w = sum(1 for t in trades if t["gross_pct"] > 0)
         l = sum(1 for t in trades if t["gross_pct"] < 0)
         rows.append({
