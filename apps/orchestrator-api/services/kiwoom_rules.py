@@ -151,8 +151,16 @@ def stored_days(code: str = "005930") -> list[str]:
 # only after RISES now. The tuple stays as the one place to re-admit an experiment.
 EXPERIMENT: tuple[str, ...] = ()
 
+# THE SIMPLE UP/DOWNS ARE OFF THIS DESK (boss 2026-08-06 evening: "waiting until
+# 4 down is not good... remove simple up/downs and remain others like up/some %").
+# A pure candle rule waits for N falls with no % anywhere; every rule that stays has a
+# % in its exit - his six 2% hybrids (falls = the stop, 2% = the take) and the six
+# %-target rules. Their ML twins go with them: the exit is what he rejected. Removed,
+# not filtered, as always - and re-admitting is deleting one condition.
+_PURE_CANDLE = {"3u3d", "2u2d", "3u2d", "2u3d", "3u4d", "4u3d"}
 PLAIN = [v for v in VARIANTS
-         if not v.get("ml") and (v.get("dir", 1) > 0 or v["id"] in EXPERIMENT)]
+         if not v.get("ml") and (v.get("dir", 1) > 0 or v["id"] in EXPERIMENT)
+         and v["id"] not in _PURE_CANDLE]
 
 # ── ML ON THE REAL DESK (boss 2026-08-06, before the open) ─────────────────────────
 # The same six "+ ML" rules the Strategy Lab runs, now trading the real tape in parallel
@@ -161,7 +169,8 @@ PLAIN = [v for v in VARIANTS
 # THE ONE HONEST DIFFERENCE FROM THE LAB: these models train ONLY on prior days' stored
 # real tape (2026-08-04, 08-05 and whatever accumulates), never on the day being traded.
 # Same features, same trainer, same labels as the lab (proof_ml) - only the tape is real.
-ML_RULES = [v for v in VARIANTS if v.get("ml") and v.get("dir", 1) > 0]
+ML_RULES = [v for v in VARIANTS if v.get("ml") and v.get("dir", 1) > 0
+            and v["id"][:-2] not in _PURE_CANDLE]
 DESK = PLAIN + ML_RULES
 
 _KML_CACHE: dict = {}
