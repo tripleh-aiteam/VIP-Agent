@@ -287,9 +287,12 @@ export default function LiveDeskPage() {
   useEffect(() => { hourToRef.current = hourTo; }, [hourTo]);
   // with ML / without ML / everything
   const [mlView, setMlView] = useState<"all" | "ml" | "plain">("all");
+  // type 20 in the win% header - only rules winning 20%+ stay (boss 2026-08-06)
+  const [minWin, setMinWin] = useState("");
   const shownRules = (rank?.variants ?? []).filter((v) => twelve.includes(v.id))
     .filter((v) => mlView === "all" ? true
-                 : mlView === "ml" ? v.id.endsWith("ML") : !v.id.endsWith("ML"));
+                 : mlView === "ml" ? v.id.endsWith("ML") : !v.id.endsWith("ML"))
+    .filter((v) => !minWin.trim() || v.win_pct >= (parseInt(minWin, 10) || 0));
   // WON PER TRADE. 0 = the historical one share. One share is not equal risk - one share
   // of SK하이닉스 is ₩1.5M and one of 한화오션 is ₩85k - so a fixed budget is both fairer
   // and closer to a real account. It scales the money and never the win rate.
@@ -614,7 +617,14 @@ export default function LiveDeskPage() {
                 <th className="text-right px-2">{t("회전", "trips")}</th>
                 <th className="text-right px-2">{t("승", "W")}</th>
                 <th className="text-right px-2">{t("패", "L")}</th>
-                <th className="text-right px-3">{t("승률", "win%")}</th>
+                <th className="text-right px-3">
+                  {t("승률", "win%")}
+                  <input value={minWin} onChange={(e) => setMinWin(e.target.value.replace(/[^0-9]/g, ""))}
+                    placeholder="≥%" title={t("숫자를 쓰면 그 승률 이상만 보입니다 (예: 20)", "type a number - only rules winning that % or more stay (e.g. 20)")}
+                    className="ml-1 w-[34px] text-[10px] px-1 py-[1px] rounded border bg-[var(--bg-primary)] text-right"
+                    style={{ borderColor: minWin ? "#e65100" : "var(--border-default)",
+                             color: minWin ? "#e65100" : "inherit" }} />
+                </th>
                 {money && <th className="text-right px-3">{t("총 손익", "total")}</th>}
                 <th className="text-right px-3 text-[10px]">{t("자세히", "detail")}</th>
               </tr></thead>
