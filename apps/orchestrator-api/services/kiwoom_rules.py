@@ -174,6 +174,48 @@ ML_RULES = [v for v in VARIANTS if v.get("ml") and v.get("dir", 1) > 0
 DESK = PLAIN + ML_RULES
 
 _KML_CACHE: dict = {}
+_CTX_CACHE: dict = {}
+
+
+def _kd0() -> str:
+    from services.kiwoom_tape import _day
+    return _day()
+
+
+def daily_ctx(code: str, day: str) -> list[float]:
+    """The 5-year tables' view of this stock on the morning of `day` - everything from
+    strictly EARLIER days: yesterday's returns, gap, SMA ratio, and the foreign/
+    institutional flow signs. Zeros when the DB is unreachable - the models degrade
+    gracefully instead of the desk failing."""
+    key = (code, day)
+    if key in _CTX_CACHE:
+        return _CTX_CACHE[key]
+    out = [0.0] * 7
+    try:
+        from datetime import date as _date
+        from ml._db import get_conn
+        dd = _date(int(day[:4]), int(day[4:6]), int(day[6:]))
+        conn = get_conn()
+        cur = conn.cursor()
+        cur.execute("""SELECT ret_1d, ret_5d, ret_20d, gap_open, sma_5, sma_20
+                       FROM stock_features_daily WHERE ticker=%s AND date < %s
+                       ORDER BY date DESC LIMIT 1""", (code, dd))
+        r = cur.fetchone()
+        cur.execute("""SELECT foreign_net_value, inst_net_value
+                       FROM korean_investor_flows WHERE ticker=%s AND date < %s
+                       ORDER BY date DESC LIMIT 1""", (code, dd))
+        f = cur.fetchone() or (0, 0)
+        conn.close()
+        if r:
+            ret1, ret5, ret20, gap, s5, s20 = [float(x or 0) for x in r]
+            out = [ret1, ret5, ret20, gap,
+                   (s5 / s20 - 1) * 100 if s20 else 0.0,
+                   (1.0 if (f[0] or 0) > 0 else -1.0 if (f[0] or 0) < 0 else 0.0),
+                   (1.0 if (f[1] or 0) > 0 else -1.0 if (f[1] or 0) < 0 else 0.0)]
+    except Exception:
+        pass
+    _CTX_CACHE[key] = out
+    return out
 _RANK_DAY_CACHE: dict = {}
 
 
@@ -206,11 +248,28 @@ def kiwoom_ml_for(code: str, tick: int, period: int, v: dict, day: str = ""):
     key = (code, v["id"], tick, period, ref)
     if key in _KML_CACHE:
         return _KML_CACHE[key]
-    cl, vv, days = _prior_day_closes(code, tick, period, ref)
-    bundle = None
-    if len(cl) > 500:
+    import re as _re
+    from services.kiwoom_tape import ROOT, load as _load
+    from services.proof_ml import features_at_v2, train_v2
+    prior_days = sorted({m.group(1) for p in ROOT.glob(f"{code}_*.jsonl")
+                         if (m := _re.match(rf"{code}_(\d{{8}})\.jsonl$", p.name))
+                         and m.group(1) < ref})
+    # V2 SAMPLES (boss 2026-08-06 night): per prior day, tick features + that day's
+    # 5-year context. v1 samples collected in the same pass as the honest fallback.
+    s_v1, s_v2 = [], []
+    for d2 in prior_days:
+        tk_rows = _load(code, d2)
+        if not tk_rows:
+            continue
+        cs2 = bars_time(tk_rows, period) if period else bars_ticks(tk_rows, max(1, tick))
+        if len(cs2) < 30:
+            continue
+        cl = [c["close"] for c in cs2]
+        vv = [float(c.get("vol") or 0) for c in cs2]
+        tt = [c["hhmm"] for c in cs2]
+        ctx = daily_ctx(code, d2)
         t = krx_tick(cl[-1]) or 1
-        samples, u, dn, last = [], 0, 0, -1
+        u, dn, last = 0, 0, -1
         for i in range(1, len(cl)):
             # flat = pause, same as the live engines (boss 2026-08-06)
             if cl[i] > cl[i - 1]:
@@ -222,12 +281,16 @@ def kiwoom_ml_for(code: str, tick: int, period: int, v: dict, day: str = ""):
             y, _res = _outcome(cl, i, cl[i] + t, t, v)
             if y is None:
                 continue
-            samples.append((features_at(cl, vv, i, last), y))
+            s_v1.append((features_at(cl, vv, i, last), y))
+            s_v2.append((features_at_v2(cl, vv, i, last, tt, u, ctx), y))
             last = i
-        bundle = train(samples, key)
-        if bundle is not None:
-            bundle["n_signals"] = len(samples)
-            bundle["trained_to"] = f"{days[-1][:4]}-{days[-1][4:6]}-{days[-1][6:]} close" if days else "?"
+    bundle = train_v2(s_v2, key)
+    if bundle is None:
+        bundle = train(s_v1, key)      # the old recipe - never guessing
+    if bundle is not None:
+        bundle["n_signals"] = len(s_v1)
+        bundle["trained_to"] = (f"{prior_days[-1][:4]}-{prior_days[-1][4:6]}-"
+                                f"{prior_days[-1][6:]} close" if prior_days else "?")
     _KML_CACHE[key] = bundle
     return bundle
 # every id this desk shows - the page uses it so the two can never drift apart.
@@ -265,6 +328,8 @@ def rank(tick: int = 5, period: int = 0, day: str = "",
     # let a rule hold all three companies at once.
     base_by_day = [(d, [{"code": code, "closes": [c["close"] for c in tp["cs"]],
                          "tick": tp["tk"], "seed": 1,
+                         "vols": [float(c.get("vol") or 0) for c in tp["cs"]],
+                         "ctx": daily_ctx(code, d or _kd0()),
                          "times": [c["hhmm"] for c in tp["cs"]]}
                         for code, tp in tapes.items()])
                    for d, tapes in tapes_by_day]
@@ -398,6 +463,8 @@ def trades(vid: str, tick: int = 5, period: int = 0, code: str = "",
                          "closes": [c["close"] for c in cs],
                          "tick": krx_tick(cs[-1]["close"]) or 1, "seed": 1,
                          "times": [c["hhmm"] for c in cs],
+                         "vols": [float(c.get("vol") or 0) for c in cs],
+                         "ctx": daily_ctx(c_code, d or _kd0()),
                          "holes": (_hole_bars(c_code, tick, period)
                                    if not (d or frm or to) else set()),
                          "ml_bundle": (kiwoom_ml_for(c_code, tick, period, v, d)

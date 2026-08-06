@@ -368,11 +368,19 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
         if pos is None:
             if (dn[si] if v.get("dir", 1) < 0 else up[si]) >= v["entry"]:
                 if v.get("ml"):
-                    from services.proof_ml import MARGIN, features_at, score
+                    from services.proof_ml import (MARGIN, features_at,
+                                                   features_at_v2, score)
                     vv = s.get("vols") or [0.0] * len(closes)
-                    fa = features_at(closes, vv, i, last_sig[si])
-                    last_sig[si] = i
                     bundle = s.get("ml_bundle")
+                    if bundle is not None and bundle.get("v2"):
+                        # the upgraded model (boss 2026-08-06 night): tick features
+                        # plus the 5-year daily context riding on the stk dict
+                        fa = features_at_v2(closes, vv, i, last_sig[si],
+                                            s.get("times"), up[si],
+                                            s.get("ctx"))
+                    else:
+                        fa = features_at(closes, vv, i, last_sig[si])
+                    last_sig[si] = i
                     if bundle is None:
                         continue
                     sc = score(bundle, fa)

@@ -132,6 +132,66 @@ def train(samples: list[tuple[list[float], int]], key: tuple) -> dict[str, Any] 
     return bundle
 
 
+def features_at_v2(cl, vols, i, last_sig, times, up_run, ctx):
+    """V2 (2026-08-06 night, boss's order: use the 5-year data): the 8 tick features
+    plus 4 more from the tape (run length, bar speed, day-so-far move, range position)
+    plus 6+1 DAILY-CONTEXT numbers from the long tables - yesterday's momentum, gap,
+    SMA ratio and the foreign/institutional flow signs. Context is strictly from days
+    BEFORE the traded day; nothing here reaches past bar i."""
+    base = features_at(cl, vols, i, last_sig)
+
+    def _sec(t):
+        p = t.split(":")
+        return int(p[0]) * 3600 + int(p[1]) * 60 + int(p[2] if len(p) > 2 else 0)
+    j = max(0, i - 5)
+    bar_secs = (_sec(times[i]) - _sec(times[j])) / max(1, i - j) if times else 0.0
+    extra = [float(up_run), float(min(bar_secs, 60.0)),
+             (cl[i] / cl[0] - 1) * 100 if cl[0] else 0.0,
+             (cl[i] / max(cl[max(0, i - 60):i + 1]) - 1) * 100]
+    return base + extra + list(ctx or [0.0] * 7)
+
+
+def train_v2(samples: list[tuple[list[float], int]], key: tuple):
+    """Bake-off on v2 features: logistic vs gradient boosting, winner by AUC on the
+    last 25% of samples (time-ordered, so the split is a real walk-forward). Returns a
+    v2 bundle, or None when there is too little to fit honestly - and None means the
+    caller falls back to the v1 recipe, never to guessing."""
+    if len(samples) < 80:
+        return None
+    import numpy as np
+    X = np.array([f for f, _y in samples], dtype=float)
+    Y = np.array([y for _f, y in samples], dtype=int)
+    if Y.sum() < 8 or (1 - Y).sum() < 8:
+        return None
+    cut = int(len(X) * 0.75)
+    from sklearn.ensemble import GradientBoostingClassifier
+    from sklearn.linear_model import LogisticRegression
+    from sklearn.metrics import roc_auc_score
+    from sklearn.pipeline import make_pipeline
+    from sklearn.preprocessing import StandardScaler
+    best = None
+    for algo, mk in (("logreg", lambda: make_pipeline(StandardScaler(),
+                                                      LogisticRegression(max_iter=500))),
+                     ("gbdt", lambda: GradientBoostingClassifier(
+                         n_estimators=120, max_depth=3, learning_rate=0.05,
+                         subsample=0.8, random_state=7))):
+        try:
+            m = mk()
+            m.fit(X[:cut], Y[:cut])
+            auc = (roc_auc_score(Y[cut:], m.predict_proba(X[cut:])[:, 1])
+                   if len(set(Y[cut:])) > 1 else 0.5)
+            if best is None or auc > best["auc"]:
+                m2 = mk()
+                m2.fit(X, Y)
+                best = {"v2": True, "model": m2, "algo": algo,
+                        "auc": round(float(auc), 3),
+                        "base_rate": float(Y.mean()), "n_train": len(X),
+                        "n_test": len(X) - cut}
+        except Exception:
+            continue
+    return best
+
+
 def score(bundle: dict, feats: list[float]) -> dict[str, Any]:
     """P(this signal wins), and WHY — the per-feature push behind that number.
 
@@ -139,6 +199,15 @@ def score(bundle: dict, feats: list[float]) -> dict[str, Any]:
     is exactly what moved the odds. Ranked by size, so the explanation on screen is the
     real reason and not a plausible-sounding one."""
     import numpy as np
+    if bundle.get("v2"):
+        # v2 bundles are sklearn pipelines fitted on raw v2 features - no hand-rolled
+        # standardisation, and the per-feature "why" of the logistic path does not
+        # apply; the evidence panel still gets p, bar and the share count
+        p = float(bundle["model"].predict_proba(np.array([feats], dtype=float))[0][1])
+        return {"p": p,
+                "why": [{"key": "v2", "ko": "5년 데이터 모델(" + bundle.get("algo", "?") + ")",
+                         "en": "5-yr data model (" + bundle.get("algo", "?") + ")",
+                         "value": round(p, 4), "push": 0.0, "for": p >= 0.5}]}
     z = [(feats[j] - bundle["mean"][j]) / (bundle["scale"][j] or 1.0)
          for j in range(len(feats))]
     contrib = [z[j] * bundle["coef"][j] for j in range(len(feats))]
