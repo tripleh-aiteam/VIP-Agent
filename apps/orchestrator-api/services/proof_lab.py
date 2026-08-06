@@ -956,6 +956,16 @@ def variant_trades(vid: str, seed: int = 7, start: int = 0, tick: int = 5,
             "holding": holding, "chart": chart, "fee_pct": FEE_PCT}
 
 
+# WHAT THE LAB TRADES - mirrored from the Kiwoom desk at the boss's order (2026-08-06
+# night: "implement all things ... to artificial data side also, like instead of
+# 2up/2down use 2 up 2%"). The simple up/downs and their ML twins are off both boards;
+# every traded rule has a % in its exit. The full VARIANTS list stays for lookups.
+_LAB_OFF = {"3u3d", "2u2d", "3u2d", "2u3d", "3u4d", "4u3d"}
+LAB_ACTIVE = [v for v in VARIANTS
+              if v["id"] not in _LAB_OFF
+              and not (v["id"].endswith("ML") and v["id"][:-2] in _LAB_OFF)]
+
+
 def compare(seed: int = 7, start: int = 0, tick: int = 5,
             code: str = "", bars: int = 500, hist: int = 40,
             period: int = 0) -> dict[str, Any]:
@@ -996,7 +1006,7 @@ def compare(seed: int = 7, start: int = 0, tick: int = 5,
     rows = []
     chart_i = next((k2 for k2, tp in enumerate(tapes)
                     if chart_tape and tp["code"] == chart_tape["code"]), None)
-    for v in VARIANTS:
+    for v in LAB_ACTIVE:
         # ONE run over the whole desk (boss 2026-08-06: holding anything blocks buying
         # anything). The per-stock loop this replaces gave each stock its own position.
         stks = [{"code": tp["code"], "name": tp["name"], "closes": tp["closes"],
