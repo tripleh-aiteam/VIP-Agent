@@ -531,9 +531,11 @@ export default function LiveDeskPage() {
             <select value={mlView} onChange={(e) => setMlView(e.target.value as "all" | "ml" | "plain")}
               className="text-[10px] font-bold px-1 py-0.5 rounded border bg-[var(--bg-primary)] text-[var(--text-primary)] ml-1"
               style={{ borderColor: mlView === "all" ? "var(--border-default)" : "#1565c0" }}>
-              <option value="all">{t("전체 (ML 포함)", "all (with ML)")}</option>
-              <option value="ml">{t("ML만", "ML only")}</option>
-              <option value="plain">{t("ML 제외", "without ML")}</option>
+              {/* the rows are always RULE + ML twins - "ML만" read as if the desk had a
+                  model trading alone, which does not exist (boss 2026-08-06) */}
+              <option value="all">{t("전체 (규칙 + 규칙+ML)", "all (rules & rules+ML)")}</option>
+              <option value="ml">{t("규칙+ML 만", "rules + ML")}</option>
+              <option value="plain">{t("규칙만 (ML 없이)", "rules only")}</option>
             </select>
             <span className="text-[10.5px] text-[var(--text-muted)]">
               {t("같은 규칙, 다른 봉 크기 — 규칙은 그대로고 봉만 바뀝니다.",
