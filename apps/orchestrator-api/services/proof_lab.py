@@ -30,18 +30,18 @@ MIN_DECIDED = 10
 VARIANTS: list[dict] = [
     {"id": "3u3d", "entry": 3, "kind": "candle", "a": 3},
     # ── THE BOSS'S HYBRID (2026-08-06, deployed at his decision): the same six candle
-    # rules with a +0.3% TAKE added - sell on the falls OR on the gain, whichever comes
+    # rules with a TAKE added (his chosen threshold: 2%) - falls OR gain, whichever comes
     # first. Measured on the year BEFORE deploying: on the five live stocks this LOSES
     # MORE than the pure candle exit (every threshold 0.3-5% tested; the take caps the
     # rare big winner and frees the hand for more losing trades). He chose to run it
     # live in parallel anyway - the board, not the backtest, gets the last word. The
     # hybrids sit beside the originals, never replacing them, exactly like the ML twins.
-    {"id": "3u3d+t", "entry": 3, "kind": "candle", "a": 3, "take": 0.3},
-    {"id": "2u2d+t", "entry": 2, "kind": "candle", "a": 2, "take": 0.3},
-    {"id": "3u2d+t", "entry": 3, "kind": "candle", "a": 2, "take": 0.3},
-    {"id": "2u3d+t", "entry": 2, "kind": "candle", "a": 3, "take": 0.3},
-    {"id": "3u4d+t", "entry": 3, "kind": "candle", "a": 4, "take": 0.3},
-    {"id": "4u3d+t", "entry": 4, "kind": "candle", "a": 3, "take": 0.3},
+    {"id": "3u3d+t", "entry": 3, "kind": "candle", "a": 3, "take": 2.0},
+    {"id": "2u2d+t", "entry": 2, "kind": "candle", "a": 2, "take": 2.0},
+    {"id": "3u2d+t", "entry": 3, "kind": "candle", "a": 2, "take": 2.0},
+    {"id": "2u3d+t", "entry": 2, "kind": "candle", "a": 3, "take": 2.0},
+    {"id": "3u4d+t", "entry": 3, "kind": "candle", "a": 4, "take": 2.0},
+    {"id": "4u3d+t", "entry": 4, "kind": "candle", "a": 3, "take": 2.0},
     {"id": "2u2d", "entry": 2, "kind": "candle", "a": 2},
     {"id": "3u2d", "entry": 3, "kind": "candle", "a": 2},
     {"id": "2u3d", "entry": 2, "kind": "candle", "a": 3},
@@ -120,9 +120,10 @@ def label(v: dict, ko: bool = True) -> str:
     if v["kind"] == "candle":
         exi = f"{v['a']}연속 {'상승' if dn else '하락'} 매도" if ko else               f"{v['a']} {'up' if dn else 'down'}"
         if v.get("take") is not None:
-            # the boss's hybrid: the falls OR the gain, whichever first
-            return (f"{ent} → +{v['take']}% 익절 또는 {exi}" if ko
-                    else f"{ent} / +{v['take']}% take or {exi}")
+            # the boss's hybrid, in the exact wording he asked for: "2up/2% or 2 down"
+            tk_ = int(v["take"]) if float(v["take"]).is_integer() else v["take"]
+            return (f"{ent} → {tk_}% 또는 {exi}" if ko
+                    else f"{ent} / {tk_}% or {exi}")
         return f"{ent} → {exi}" if ko else f"{ent} / {exi}"
     return (f"{ent} → +{v['a']}% 익절 / -{v['b']}% 손절" if ko
             else f"{ent} / +{v['a']}% take, -{v['b']}% stop")
