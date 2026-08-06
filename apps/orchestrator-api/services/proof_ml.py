@@ -166,25 +166,43 @@ def train_v2(samples: list[tuple[list[float], int]], key: tuple):
     cut = int(len(X) * 0.75)
     from sklearn.ensemble import GradientBoostingClassifier
     from sklearn.linear_model import LogisticRegression
-    from sklearn.metrics import roc_auc_score
+    from sklearn.metrics import accuracy_score, roc_auc_score
     from sklearn.pipeline import make_pipeline
     from sklearn.preprocessing import StandardScaler
+    # HYPERPARAMETER TUNING (boss 2026-08-06 night). Every candidate is scored on the
+    # SAME time-ordered tail split - later samples judge earlier fits, mirroring live
+    # trading - and only the winner is refit on everything. The grid is small on
+    # purpose: with hundreds of samples a big grid finds noise, not skill.
+    cands = [("logreg C=1.0", lambda: make_pipeline(StandardScaler(),
+                 LogisticRegression(max_iter=500, C=1.0))),
+             ("logreg C=0.1", lambda: make_pipeline(StandardScaler(),
+                 LogisticRegression(max_iter=500, C=0.1))),
+             ("gbdt 120x3 lr.05", lambda: GradientBoostingClassifier(
+                 n_estimators=120, max_depth=3, learning_rate=0.05,
+                 subsample=0.8, random_state=7)),
+             ("gbdt 240x3 lr.03", lambda: GradientBoostingClassifier(
+                 n_estimators=240, max_depth=3, learning_rate=0.03,
+                 subsample=0.8, random_state=7)),
+             ("gbdt 120x2 lr.10", lambda: GradientBoostingClassifier(
+                 n_estimators=120, max_depth=2, learning_rate=0.10,
+                 subsample=0.8, random_state=7)),
+             ("gbdt 300x4 lr.02", lambda: GradientBoostingClassifier(
+                 n_estimators=300, max_depth=4, learning_rate=0.02,
+                 subsample=0.7, random_state=7))]
     best = None
-    for algo, mk in (("logreg", lambda: make_pipeline(StandardScaler(),
-                                                      LogisticRegression(max_iter=500))),
-                     ("gbdt", lambda: GradientBoostingClassifier(
-                         n_estimators=120, max_depth=3, learning_rate=0.05,
-                         subsample=0.8, random_state=7))):
+    for algo, mk in cands:
         try:
             m = mk()
             m.fit(X[:cut], Y[:cut])
-            auc = (roc_auc_score(Y[cut:], m.predict_proba(X[cut:])[:, 1])
-                   if len(set(Y[cut:])) > 1 else 0.5)
+            pv = m.predict_proba(X[cut:])[:, 1]
+            auc = (roc_auc_score(Y[cut:], pv) if len(set(Y[cut:])) > 1 else 0.5)
+            acc = float(accuracy_score(Y[cut:], pv >= 0.5))
             if best is None or auc > best["auc"]:
                 m2 = mk()
                 m2.fit(X, Y)
                 best = {"v2": True, "model": m2, "algo": algo,
                         "auc": round(float(auc), 3),
+                        "val_acc": round(acc, 3),
                         "base_rate": float(Y.mean()), "n_train": len(X),
                         "n_test": len(X) - cut}
         except Exception:
