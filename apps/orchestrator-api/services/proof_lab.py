@@ -29,6 +29,19 @@ MIN_DECIDED = 10
 # is what "small gain after fee" has to mean to be worth anything.
 VARIANTS: list[dict] = [
     {"id": "3u3d", "entry": 3, "kind": "candle", "a": 3},
+    # ── THE BOSS'S HYBRID (2026-08-06, deployed at his decision): the same six candle
+    # rules with a +0.3% TAKE added - sell on the falls OR on the gain, whichever comes
+    # first. Measured on the year BEFORE deploying: on the five live stocks this LOSES
+    # MORE than the pure candle exit (every threshold 0.3-5% tested; the take caps the
+    # rare big winner and frees the hand for more losing trades). He chose to run it
+    # live in parallel anyway - the board, not the backtest, gets the last word. The
+    # hybrids sit beside the originals, never replacing them, exactly like the ML twins.
+    {"id": "3u3d+t", "entry": 3, "kind": "candle", "a": 3, "take": 0.3},
+    {"id": "2u2d+t", "entry": 2, "kind": "candle", "a": 2, "take": 0.3},
+    {"id": "3u2d+t", "entry": 3, "kind": "candle", "a": 2, "take": 0.3},
+    {"id": "2u3d+t", "entry": 2, "kind": "candle", "a": 3, "take": 0.3},
+    {"id": "3u4d+t", "entry": 3, "kind": "candle", "a": 4, "take": 0.3},
+    {"id": "4u3d+t", "entry": 4, "kind": "candle", "a": 3, "take": 0.3},
     {"id": "2u2d", "entry": 2, "kind": "candle", "a": 2},
     {"id": "3u2d", "entry": 3, "kind": "candle", "a": 2},
     {"id": "2u3d", "entry": 2, "kind": "candle", "a": 3},
@@ -106,6 +119,10 @@ def label(v: dict, ko: bool = True) -> str:
     ent = (f"{v['entry']}연속 하락" if dn else f"{v['entry']}연속 상승") if ko else           (f"{v['entry']} down" if dn else f"{v['entry']} up")
     if v["kind"] == "candle":
         exi = f"{v['a']}연속 {'상승' if dn else '하락'} 매도" if ko else               f"{v['a']} {'up' if dn else 'down'}"
+        if v.get("take") is not None:
+            # the boss's hybrid: the falls OR the gain, whichever first
+            return (f"{ent} → +{v['take']}% 익절 또는 {exi}" if ko
+                    else f"{ent} / +{v['take']}% take or {exi}")
         return f"{ent} → {exi}" if ko else f"{ent} / {exi}"
     return (f"{ent} → +{v['a']}% 익절 / -{v['b']}% 손절" if ko
             else f"{ent} / +{v['a']}% take, -{v['b']}% stop")
@@ -130,6 +147,9 @@ def _outcome(cl, i, entry, tick, v):
                 run += 1
             elif step_other:
                 run = 0
+            # the boss's hybrid: the take ends the trade first when it comes first
+            if v.get("take") is not None and (cl[j] / entry - 1) * 100 >= v["take"]:
+                return 1, j
             if run >= v["a"]:
                 return (1 if cl[j] > entry else 0), j
         else:
@@ -240,6 +260,11 @@ def run_variant(closes: list[float], tick: int, v: dict, seed: int,
                 else:
                     hit = dn == v["a"]
                     why = f"{v['a']}연속 하락"
+                # the boss's hybrid (2026-08-06): the take can end the trade first
+                if not hit and v.get("take") is not None:
+                    if (c / pos["entry"] - 1) * 100 >= v["take"]:
+                        hit = True
+                        why = f"+{v['take']}% 익절"
             else:
                 # Measure the stop on what a SALE WOULD ACTUALLY FETCH, not on the close.
                 # A sell takes the bid, which is the close or one tick under it, so testing
@@ -375,6 +400,11 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                 else:
                     hit = dn[si] == v["a"]
                     why = f"{v['a']}연속 하락"
+                # the boss's hybrid (2026-08-06): the take can end the trade first
+                if not hit and v.get("take") is not None:
+                    if (c / pos["entry"] - 1) * 100 >= v["take"]:
+                        hit = True
+                        why = f"+{v['take']}% 익절"
             else:
                 ch = (c / pos["entry"] - 1) * 100
                 ch_bid = ((c - s["tick"]) / pos["entry"] - 1) * 100

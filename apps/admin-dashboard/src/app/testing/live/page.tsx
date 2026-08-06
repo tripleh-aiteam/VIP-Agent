@@ -560,7 +560,7 @@ export default function LiveDeskPage() {
             </span>
             <span className="text-[10px] font-bold px-1.5 py-0.5 rounded"
               style={{ background: "rgba(106,27,154,0.12)", color: "#6a1b9a" }}>
-              {t("상승 매수 12개 + ML 12개 — 전 규칙 쌍둥이 비교", "12 buy-on-rise rules + 12 ML twins — every rule paired")}
+              {t("상승 매수 12개 + 하이브리드 6개(+0.3% 익절 또는 N하락) + ML 12개", "12 rules + 6 hybrids (+0.3% take or N-down) + 12 ML twins")}
             </span>
             {rank.stocks.map((x) => (
               <span key={x.code} className="text-[10px] text-[var(--text-muted)]">
