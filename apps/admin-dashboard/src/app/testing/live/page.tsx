@@ -44,7 +44,8 @@ type Rank = { ok: boolean; clock: string; fee_pct: number; original_12?: string[
               variants: RuleRow[] };
 type Ev = { close: number; book: { best_ask: number; best_bid: number; fill: number;
             spread: number }; seq: number[] };
-type RTrade = { code: string; name: string; buy_i: number; sell_i: number; buy_t: string;
+type RTrade = { code: string; name: string; day?: string;
+                buy_i: number; sell_i: number; buy_t: string;
                 entry: number; sell_t: string; exit: number; gross_pct: number;
                 net_pct: number; exit_why?: string; result: "win" | "loss" | "flat";
                 bars_held: number; tick_size: number; qty?: number; buy_ev?: Ev | null; sell_ev?: Ev | null };
@@ -496,6 +497,7 @@ export default function LiveDeskPage() {
               className="text-[10px] font-bold px-1 py-0.5 rounded border bg-[var(--bg-primary)] text-[var(--text-primary)]"
               style={{ borderColor: ruleDay ? "#e65100" : "var(--border-default)" }}>
               <option value="">{t("오늘 (실시간)", "today (live)")}</option>
+              <option value="all">{t("전체 누적 (모든 날)", "all days (total)")}</option>
               {/* today's own file appears in stored days the moment the market opens -
                   listing it again under "오늘 (실시간)" showed TWO todays (boss 08-06) */}
               {(rank.days ?? []).slice().reverse()
@@ -754,8 +756,8 @@ export default function LiveDeskPage() {
               )}
               <span className="text-[10px] text-[var(--text-muted)] ml-2">
                 {sel && det?.chart
-                  ? t(`${det.chart.candles.length.toLocaleString()}봉${ruleDay ? ` · ${ruleDay.slice(4, 6)}-${ruleDay.slice(6)} 저장된 하루` : " · 오늘"}`,
-                      `${det.chart.candles.length.toLocaleString()} bars${ruleDay ? ` · stored day ${ruleDay.slice(4, 6)}-${ruleDay.slice(6)}` : " · today"}`)
+                  ? t(`${det.chart.candles.length.toLocaleString()}봉${ruleDay === "all" ? " · 전체 누적 — 차트는 클릭한 매매의 날" : ruleDay ? ` · ${ruleDay.slice(4, 6)}-${ruleDay.slice(6)} 저장된 하루` : " · 오늘"}`,
+                      `${det.chart.candles.length.toLocaleString()} bars${ruleDay === "all" ? " · all days - chart shows the clicked trade's day" : ruleDay ? ` · stored day ${ruleDay.slice(4, 6)}-${ruleDay.slice(6)}` : " · today"}`)
                   : bars.length
                   ? t(`${bars.length}봉 · ${tape?.first}~${tape?.last} 사이 체결 ${fmt(tape?.ticks)}건으로 만들었습니다`,
                       `${bars.length} bars, built from ${fmt(tape?.ticks)} executions between ${tape?.first} and ${tape?.last}`)
@@ -803,8 +805,11 @@ export default function LiveDeskPage() {
                   : null} /> : (
               <div className="px-4 py-10 text-center text-[12px] text-[var(--text-muted)]">
                 {ruleDay
-                  ? t(`${ruleDay.slice(4, 6)}-${ruleDay.slice(6)} 저장된 하루를 보는 중 — 위에서 규칙을 클릭하면 그 날의 차트와 매매가 열립니다.`,
-                      `viewing stored day ${ruleDay.slice(4, 6)}-${ruleDay.slice(6)} - click a rule above to open that day's chart and trades.`)
+                  ? (ruleDay === "all"
+                     ? t("전체 누적을 보는 중 — 위에서 규칙을 클릭하면 모든 날의 매매가 열립니다.",
+                         "viewing all days - click a rule above to open every day's trades.")
+                     : t(`${ruleDay.slice(4, 6)}-${ruleDay.slice(6)} 저장된 하루를 보는 중 — 위에서 규칙을 클릭하면 그 날의 차트와 매매가 열립니다.`,
+                         `viewing stored day ${ruleDay.slice(4, 6)}-${ruleDay.slice(6)} - click a rule above to open that day's chart and trades.`))
                   : st?.market_open
                   ? t("수집 중입니다 — 잠시 뒤 첫 봉이 그려집니다.", "collecting - the first bars appear shortly.")
                   : t("장이 열려야 새 체결이 들어옵니다 (09:00~15:30).", "new executions only arrive while the market is open (09:00-15:30).")}
@@ -862,7 +867,11 @@ export default function LiveDeskPage() {
                             { behavior: "smooth", block: "center" }); }}
                       className="border-t border-[var(--border-default)]/40 cursor-pointer hover:bg-[var(--bg-elevated)]"
                       style={{ background: pick === i ? "rgba(230,81,0,0.10)" : "transparent" }}>
-                      <td className="px-3 py-1 font-bold text-[var(--text-primary)]">{pick === i ? "▶ " : ""}{tr.name}</td>
+                      <td className="px-3 py-1 font-bold text-[var(--text-primary)]">{pick === i ? "▶ " : ""}{tr.name}
+                        {tr.day && (
+                          <span className="ml-1 text-[9px] font-bold px-1 py-0.5 rounded"
+                            style={{ background: "rgba(230,81,0,0.12)", color: "#e65100" }}>{tr.day}</span>
+                        )}</td>
                       <td className="px-2 cursor-pointer underline decoration-dotted" style={{ color: RED }}
                         title={t(`클릭하면 차트가 이 매수로 이동합니다 (${tr.buy_t})`, `click: chart jumps to this BUY (${tr.buy_t})`)}
                         onClick={(e) => { e.stopPropagation(); setFocusSide("b");

@@ -211,27 +211,42 @@ ORIGINAL_12 = [v["id"] for v in PLAIN]
 
 def rank(tick: int = 5, period: int = 0, day: str = "",
          frm: str = "", to: str = "") -> dict[str, Any]:
-    """Every plain rule over the real tape of every watched stock, ranked."""
-    tapes = {}
-    for code, name in WATCH:
-        cs = _bars_for(code, tick, period, day, frm, to)
-        if len(cs) < 10:
-            continue
-        tapes[code] = {"name": name, "cs": cs, "tk": krx_tick(cs[-1]["close"]) or 1}
+    """Every plain rule over the real tape of every watched stock, ranked.
+
+    day="all" is the CUMULATIVE board (boss 2026-08-06: "total result up to today"):
+    every stored day is run separately - each day is its own session, positions never
+    span the overnight gap, and each day's ML models are the ones that day actually had
+    (trained only on the days before it) - then the trades are added up."""
+    day_list = stored_days() if day == "all" else [day]
+    tapes_by_day = []
+    for d in day_list:
+        tapes = {}
+        for code, name in WATCH:
+            cs = _bars_for(code, tick, period, d, frm, to)
+            if len(cs) < 10:
+                continue
+            tapes[code] = {"name": name, "cs": cs, "tk": krx_tick(cs[-1]["close"]) or 1}
+        if tapes:
+            tapes_by_day.append((d, tapes))
+    if not tapes_by_day:
+        tapes_by_day = [(day, {})]
 
     rows = []
     # THE DESK LAW (boss 2026-08-06: "if I am holding then I can not buy another
     # stock"): every stock's bars merge onto one clock and the rule holds ONE position
     # across all of them - see proof_lab.run_desk. The per-stock loop this replaces
     # let a rule hold all three companies at once.
-    base_stks = [{"code": code, "closes": [c["close"] for c in tp["cs"]],
-                  "tick": tp["tk"], "seed": 1,
-                  "times": [c["hhmm"] for c in tp["cs"]]}
-                 for code, tp in tapes.items()]
+    base_by_day = [(d, [{"code": code, "closes": [c["close"] for c in tp["cs"]],
+                         "tick": tp["tk"], "seed": 1,
+                         "times": [c["hhmm"] for c in tp["cs"]]}
+                        for code, tp in tapes.items()])
+                   for d, tapes in tapes_by_day]
     for v in DESK:
-        stks = [dict(sk, ml_bundle=(kiwoom_ml_for(sk["code"], tick, period, v, day)
-                                    if v.get("ml") else None)) for sk in base_stks]
-        trades = run_desk(stks, v, fill_fn=_fill)
+        trades = []
+        for d, base_stks in base_by_day:
+            stks = [dict(sk, ml_bundle=(kiwoom_ml_for(sk["code"], tick, period, v, d)
+                                        if v.get("ml") else None)) for sk in base_stks]
+            trades += run_desk(stks, v, fill_fn=_fill)
         w = sum(1 for t in trades if t["gross_pct"] > 0)
         l = sum(1 for t in trades if t["gross_pct"] < 0)
         rows.append({
@@ -277,9 +292,12 @@ def rank(tick: int = 5, period: int = 0, day: str = "",
             "day": day, "frm": frm, "to": to,
             "clock": f"{period}초" if period else f"{tick}틱",
             "tick": tick, "period": period, "fee_pct": FEE_PCT,
-            "stocks": [{"code": c, "name": t["name"], "bars": len(t["cs"]),
+            # for day="all" this is the LATEST day's tape summary with the bar counts
+            # summed over every day - enough for the header, honest about the total
+            "stocks": [{"code": c, "name": t["name"],
+                        "bars": sum(len(tp2[c]["cs"]) for _d2, tp2 in tapes_by_day if c in tp2),
                         "from": t["cs"][0]["hhmm"], "to": t["cs"][-1]["hhmm"],
-                        "tick_size": t["tk"]} for c, t in tapes.items()],
+                        "tick_size": t["tk"]} for c, t in tapes_by_day[-1][1].items()],
             "variants": rows}
 
 
@@ -328,49 +346,57 @@ def trades(vid: str, tick: int = 5, period: int = 0, code: str = "",
     # (boss 2026-08-04: "if click any completed trade it is not showing chart"). Resolved
     # after the rows are sorted, because `around` indexes the displayed order.
     # THE DESK LAW (boss 2026-08-06): all stocks on one clock, ONE position for the
-    # rule across the whole desk - see proof_lab.run_desk.
-    stks = []
-    for c_code, name in WATCH:
-        cs = _bars_for(c_code, tick, period, day, frm, to)
-        if len(cs) < 10:
+    # rule across the whole desk - see proof_lab.run_desk. day="all" runs every stored
+    # day as its own session and concatenates the trades (cumulative view).
+    day_list = stored_days() if day == "all" else [day]
+    for d in day_list:
+        stks = []
+        for c_code, name in WATCH:
+            cs = _bars_for(c_code, tick, period, d, frm, to)
+            if len(cs) < 10:
+                continue
+            stks.append({"code": c_code, "name": name, "cs": cs,
+                         "closes": [c["close"] for c in cs],
+                         "tick": krx_tick(cs[-1]["close"]) or 1, "seed": 1,
+                         "times": [c["hhmm"] for c in cs],
+                         "holes": (_hole_bars(c_code, tick, period)
+                                   if not (d or frm or to) else set()),
+                         "ml_bundle": (kiwoom_ml_for(c_code, tick, period, v, d)
+                                       if v.get("ml") else None)})
+        if not stks:
             continue
-        stks.append({"code": c_code, "name": name, "cs": cs,
-                     "closes": [c["close"] for c in cs],
-                     "tick": krx_tick(cs[-1]["close"]) or 1, "seed": 1,
-                     "times": [c["hhmm"] for c in cs],
-                     "holes": (_hole_bars(c_code, tick, period)
-                               if not (day or frm or to) else set()),
-                     "ml_bundle": (kiwoom_ml_for(c_code, tick, period, v, day)
-                                   if v.get("ml") else None)})
-    got, op = run_desk(stks, v, evidence=True, with_open=True, fill_fn=_fill)
-    for g in got:
-        sk = stks[g["si"]]
-        cs = sk["cs"]
-        b_c, s_c = cs[g["buy_i"]], cs[g["sell_i"]]
-        rows.append({
-            "code": sk["code"], "name": sk["name"], "buy_i": g["buy_i"], "sell_i": g["sell_i"],
-            "buy_t": b_c["hhmm"], "entry": g["entry"],
-            "sell_t": s_c["hhmm"], "exit": g["exit"],
-            "gross_pct": g["gross_pct"], "net_pct": g["net_pct"],
-            "exit_why": g.get("exit_why", ""),
-            "result": ("win" if g["gross_pct"] > 0 else
-                       "loss" if g["gross_pct"] < 0 else "flat"),
-            "bars_held": g["sell_i"] - g["buy_i"],
-            "tick_size": sk["tick"],
-            # shares this trade would buy for the chosen budget (1 when none is set)
-            "qty": shares_for(g["entry"], budget),
-            # held through a stretch of tape the collector missed - the entry and exit
-            # are real, the path between them is unknown
-            "spans_hole": any(g["buy_i"] < h <= g["sell_i"] for h in sk["holes"]),
-            "buy_ev": g.get("buy_ev"), "sell_ev": g.get("sell_ev"),
-        })
-    if op:
-        sk = stks[op["si"]]
-        b_c = sk["cs"][op["buy_i"]]
-        holding.append({"code": sk["code"], "name": sk["name"], "buy_t": b_c["hhmm"],
-                        "entry": op["entry"], "last": op["last"],
-                        "unreal_pct": op["unreal_pct"]})
-    rows.sort(key=lambda r: r["sell_t"], reverse=True)
+        got, op = run_desk(stks, v, evidence=True, with_open=True, fill_fn=_fill)
+        for g in got:
+            sk = stks[g["si"]]
+            cs = sk["cs"]
+            b_c, s_c = cs[g["buy_i"]], cs[g["sell_i"]]
+            rows.append({
+                "code": sk["code"], "name": sk["name"], "buy_i": g["buy_i"], "sell_i": g["sell_i"],
+                "buy_t": b_c["hhmm"], "entry": g["entry"],
+                "sell_t": s_c["hhmm"], "exit": g["exit"],
+                # which stored day this trade belongs to - shown on the cumulative view
+                "d8": d, "day": (f"{d[4:6]}-{d[6:]}" if day == "all" and d else ""),
+                "gross_pct": g["gross_pct"], "net_pct": g["net_pct"],
+                "exit_why": g.get("exit_why", ""),
+                "result": ("win" if g["gross_pct"] > 0 else
+                           "loss" if g["gross_pct"] < 0 else "flat"),
+                "bars_held": g["sell_i"] - g["buy_i"],
+                "tick_size": sk["tick"],
+                # shares this trade would buy for the chosen budget (1 when none is set)
+                "qty": shares_for(g["entry"], budget),
+                # held through a stretch of tape the collector missed - the entry and exit
+                # are real, the path between them is unknown
+                "spans_hole": any(g["buy_i"] < h <= g["sell_i"] for h in sk["holes"]),
+                "buy_ev": g.get("buy_ev"), "sell_ev": g.get("sell_ev"),
+            })
+        # only the LAST session can still be holding - earlier days are finished
+        if op and d == day_list[-1]:
+            sk = stks[op["si"]]
+            b_c = sk["cs"][op["buy_i"]]
+            holding.append({"code": sk["code"], "name": sk["name"], "buy_t": b_c["hhmm"],
+                            "entry": op["entry"], "last": op["last"],
+                            "unreal_pct": op["unreal_pct"]})
+    rows.sort(key=lambda r: (r.get("d8") or "", r["sell_t"]), reverse=True)
 
     # a clicked trade decides the company; only when nothing is clicked does the stock
     # button decide it
@@ -378,12 +404,16 @@ def trades(vid: str, tick: int = 5, period: int = 0, code: str = "",
     want_code = focus["code"] if focus else code
 
     # ---- second pass: the chart, now that `rows` is in the order the table shows ----
+    # on the cumulative view the chart shows ONE day at a time: the day of the clicked
+    # trade, else the latest day - a chart of three glued days would lie about time
+    chart_day = (focus.get("d8") if focus else "") or (day_list[-1] if day == "all" else day)
     for c_code, name in WATCH:
-        cs = _bars_for(c_code, tick, period, day, frm, to)
+        cs = _bars_for(c_code, tick, period, chart_day, frm, to)
         if len(cs) < 10:
             continue
         got = [{"buy_i": r["buy_i"], "sell_i": r["sell_i"], "gross_pct": r["gross_pct"],
-                "net_pct": r["net_pct"]} for r in rows if r["code"] == c_code]
+                "net_pct": r["net_pct"]} for r in rows if r["code"] == c_code
+               and (day != "all" or r.get("d8") == chart_day)]
         got.sort(key=lambda g: g["buy_i"])
         if (want_code and c_code == want_code) or (not want_code and chart is None):
             # The window follows the TRADES, not the clock. At 5틱 on a liquid name a bar
@@ -394,7 +424,8 @@ def trades(vid: str, tick: int = 5, period: int = 0, code: str = "",
             # he asked for that trade. Otherwise anchor on the most recent one.
             # The window is wide (2,500 bars) because a real 5틱 bar on 삼성전자 lasts a
             # fraction of a second — 600 bars was two minutes and showed no arrows at all.
-            anchor = focus["sell_i"] if (focus and focus["code"] == c_code) else None
+            anchor = (focus["sell_i"] if (focus and focus["code"] == c_code
+                      and (day != "all" or focus.get("d8") == chart_day)) else None)
             if anchor is None:
                 anchor = got[-1]["sell_i"] if got else len(cs) - 1
             hi = min(len(cs), anchor + max(20, bars // 8))
@@ -404,6 +435,7 @@ def trades(vid: str, tick: int = 5, period: int = 0, code: str = "",
                      # on screen instead of trusting the chart's own remembered view
                      "focus": ({"b": focus["buy_i"] - off, "s": focus["sell_i"] - off}
                                if focus and focus["code"] == c_code
+                               and (day != "all" or focus.get("d8") == chart_day)
                                and off <= focus["buy_i"] < hi else None),
                      "candles": cs[off:hi],
                      "marks": [{"b": g["buy_i"] - off, "s": g["sell_i"] - off,
