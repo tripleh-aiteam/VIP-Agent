@@ -622,23 +622,18 @@ export default function LiveDeskPage() {
                 <th className="text-right px-2">{t("패", "L")}</th>
                 <th className="text-right px-3">
                   {t("승률", "win%")}
-                  {minWin !== null && (
-                    <span className="ml-1 text-[9.5px] font-bold px-1 py-[1px] rounded cursor-pointer"
-                      style={{ background: "rgba(230,81,0,0.14)", color: "#e65100" }}
-                      title={t("클릭하면 필터가 사라집니다", "click to remove the filter")}
-                      onClick={() => setMinWin(null)}>
-                      ≥{minWin}% ✕
-                    </span>
-                  )}
+                  {/* NO chip, NO colour change, NO trace - the boss filters without
+                      anyone watching the screen knowing (2026-08-06). Enter with an
+                      empty box brings every row back. */}
                   <input value={winInput}
                     onChange={(e) => setWinInput(e.target.value.replace(/[^0-9]/g, ""))}
                     onKeyDown={(e) => {
                       if (e.key !== "Enter") return;
                       const n = parseInt(winInput, 10);
-                      setMinWin(Number.isFinite(n) ? n : null);
+                      setMinWin(Number.isFinite(n) ? n : null);   // empty + Enter clears
                       setWinInput("");
                     }}
-                    placeholder="≥%" title={t("숫자를 쓰고 Enter — 그 승률 이상만 남습니다 (예: 20)", "type a number and press Enter - only rules winning that % or more stay (e.g. 20)")}
+                    placeholder="≥%"
                     className="ml-1 w-[34px] text-[10px] px-1 py-[1px] rounded border bg-[var(--bg-primary)] text-right"
                     style={{ borderColor: "var(--border-default)" }} />
                 </th>
