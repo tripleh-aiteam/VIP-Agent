@@ -496,7 +496,12 @@ export default function LiveDeskPage() {
               className="text-[10px] font-bold px-1 py-0.5 rounded border bg-[var(--bg-primary)] text-[var(--text-primary)]"
               style={{ borderColor: ruleDay ? "#e65100" : "var(--border-default)" }}>
               <option value="">{t("오늘 (실시간)", "today (live)")}</option>
-              {(rank.days ?? []).slice().reverse().map((d2) => (
+              {/* today's own file appears in stored days the moment the market opens -
+                  listing it again under "오늘 (실시간)" showed TWO todays (boss 08-06) */}
+              {(rank.days ?? []).slice().reverse()
+                .filter((d2) => d2 !== new Intl.DateTimeFormat("sv-SE", { timeZone: "Asia/Seoul" })
+                  .format(new Date()).replace(/-/g, ""))
+                .map((d2) => (
                 <option key={d2} value={d2}>{`${d2.slice(4, 6)}-${d2.slice(6)}`}</option>
               ))}
             </select>
