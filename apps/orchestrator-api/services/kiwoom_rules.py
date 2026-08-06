@@ -417,6 +417,10 @@ def trades(vid: str, tick: int = 5, period: int = 0, code: str = "",
                 # held through a stretch of tape the collector missed - the entry and exit
                 # are real, the path between them is unknown
                 "spans_hole": any(g["buy_i"] < h <= g["sell_i"] for h in sk["holes"]),
+                # the model's decision at the buy - p, the bar it had to clear, and the
+                # share count it chose - so the evidence panel can tell the ML story
+                # (boss 2026-08-06: "this kind of process need in the rule+ML part")
+                "ml": g.get("ml"),
                 "buy_ev": g.get("buy_ev"), "sell_ev": g.get("sell_ev"),
             })
         # only the LAST session can still be holding - earlier days are finished

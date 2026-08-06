@@ -44,7 +44,9 @@ type Rank = { ok: boolean; clock: string; fee_pct: number; original_12?: string[
               variants: RuleRow[] };
 type Ev = { close: number; book: { best_ask: number; best_bid: number; fill: number;
             spread: number }; seq: number[] };
-type RTrade = { code: string; name: string; day?: string; d8?: string;
+type MLMeta = { p: number; bar: number; base_rate?: number; qty?: number;
+                auc?: number | null; n_train?: number };
+type RTrade = { code: string; name: string; day?: string; d8?: string; ml?: MLMeta | null;
                 buy_i: number; sell_i: number; buy_t: string;
                 entry: number; sell_t: string; exit: number; gross_pct: number;
                 net_pct: number; exit_why?: string; result: "win" | "loss" | "flat";
@@ -1107,6 +1109,47 @@ export default function LiveDeskPage() {
                   <span style={{ color: BLUE }}>{tr.exit_why || "-"}</span>
                   <span className="ml-1">{(tr.sell_ev?.seq ?? []).map((x) => `₩${x.toLocaleString()}`).join(" → ")}</span>
                 </div>
+                {tr.ml && (
+                  <div className="mt-2 rounded-lg border p-2" style={{ borderColor: "#1565c0", background: "rgba(21,101,192,0.05)" }}>
+                    <div className="text-[10px] font-bold mb-1" style={{ color: "#1565c0" }}>
+                      🤖 {t("모델의 결정 — 매수 신호가 뜬 순간", "the model's decision - at the moment the signal fired")}
+                    </div>
+                    <div className="text-[11px] leading-relaxed space-y-[2px]">
+                      <div>
+                        <b>{t("질문", "question")}: </b>
+                        {det.kind === "candle"
+                          ? t(`지금 사서 ${det.a}연속 ${det.dir < 0 ? "상승" : "하락"}에 팔면, 수수료를 빼고도 이익일까?`,
+                              `if we buy now and sell at ${det.a} ${det.dir < 0 ? "rising" : "falling"} bars in a row, do we gain after fees?`)
+                          : t(`+${det.a}% 익절이 -${det.b}% 손절보다 먼저 올까?`,
+                              `will the +${det.a}% take arrive before the -${det.b}% stop?`)}
+                      </div>
+                      <div className="tabular-nums">
+                        <b>{t("모델의 답", "the model's answer")}: </b>
+                        {t(`이익으로 끝날 확률 ${(tr.ml.p * 100).toFixed(1)}% — 이 규칙의 통과 기준 ${(tr.ml.bar * 100).toFixed(1)}% 이상`,
+                           `${(tr.ml.p * 100).toFixed(1)}% chance this trade ends in profit — above this rule's own bar of ${(tr.ml.bar * 100).toFixed(1)}%`)}
+                        <b style={{ color: RED }}> → {t("매수", "BUY")}</b>
+                      </div>
+                      <div className="tabular-nums">
+                        <b>{t("수량", "shares")}: </b>
+                        {t(`확신에 비례해 ${(tr.ml.qty ?? tr.qty ?? 1).toLocaleString()}주 (확률이 높을수록 많이)`,
+                           `${(tr.ml.qty ?? tr.qty ?? 1).toLocaleString()} shares, scaled by that confidence`)}
+                      </div>
+                      <div>
+                        <b>{t("사후 판정", "verdict")}: </b>
+                        {tr.result === "win"
+                          ? <span style={{ color: RED }}>{t("모델이 맞았습니다 — 이 매매는 이익으로 끝났습니다.", "the model was right - this trade ended in profit.")}</span>
+                          : tr.result === "loss"
+                          ? <span style={{ color: BLUE }}>{t(`모델이 틀렸습니다 — ${(tr.ml.p * 100).toFixed(0)}%는 확신이지 보장이 아닙니다. 이런 틀림도 기록에 그대로 남습니다.`,
+                                                            `the model was wrong - ${(tr.ml.p * 100).toFixed(0)}% is confidence, not a guarantee. Wrong calls stay on the record.`)}</span>
+                          : <span className="text-[var(--text-muted)]">{t("본전 — 맞음도 틀림도 아닙니다.", "flat - neither right nor wrong.")}</span>}
+                      </div>
+                      <div className="text-[9.5px] text-[var(--text-muted)]">
+                        {t("모델은 매수만 결정합니다 — 매도는 항상 규칙이 합니다. 모델이 거른 신호는 이 표에 없고, 같은 이름의 ML 없는 행에 있습니다.",
+                           "the model only decides the buy - selling is always the rule. Signals it skipped are not here; see the same rule without ML.")}
+                      </div>
+                    </div>
+                  </div>
+                )}
                 <div className="mt-2 grid gap-2" style={{ gridTemplateColumns: "1fr 1fr" }}>
                   <Side ev={tr.buy_ev} side="BUY" />
                   <Side ev={tr.sell_ev} side="SELL" />
