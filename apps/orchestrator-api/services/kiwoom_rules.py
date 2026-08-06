@@ -29,7 +29,7 @@ from __future__ import annotations
 from typing import Any
 
 from services.kiwoom_tape import WATCH, bars_ticks, bars_time, load
-from services.proof_lab import FEE_PCT, VARIANTS, label, run_variant
+from services.proof_lab import FEE_PCT, VARIANTS, label, run_desk, run_variant
 from services.proof_sim import _tick as krx_tick
 
 
@@ -217,13 +217,18 @@ def rank(tick: int = 5, period: int = 0, day: str = "",
         tapes[code] = {"name": name, "cs": cs, "tk": krx_tick(cs[-1]["close"]) or 1}
 
     rows = []
+    # THE DESK LAW (boss 2026-08-06: "if I am holding then I can not buy another
+    # stock"): every stock's bars merge onto one clock and the rule holds ONE position
+    # across all of them - see proof_lab.run_desk. The per-stock loop this replaces
+    # let a rule hold all three companies at once.
+    base_stks = [{"code": code, "closes": [c["close"] for c in tp["cs"]],
+                  "tick": tp["tk"], "seed": 1,
+                  "times": [c["hhmm"] for c in tp["cs"]]}
+                 for code, tp in tapes.items()]
     for v in DESK:
-        trades = []
-        for code, tp in tapes.items():
-            mlb = kiwoom_ml_for(code, tick, period, v, day) if v.get("ml") else None
-            got = run_variant([c["close"] for c in tp["cs"]], tp["tk"], v, 1,
-                              fill_fn=_fill, ml_bundle=mlb)
-            trades += got
+        stks = [dict(sk, ml_bundle=(kiwoom_ml_for(sk["code"], tick, period, v, day)
+                                    if v.get("ml") else None)) for sk in base_stks]
+        trades = run_desk(stks, v, fill_fn=_fill)
         w = sum(1 for t in trades if t["gross_pct"] > 0)
         l = sum(1 for t in trades if t["gross_pct"] < 0)
         rows.append({
@@ -319,40 +324,49 @@ def trades(vid: str, tick: int = 5, period: int = 0, code: str = "",
     # exactly where it was — so clicking almost any row appeared to do nothing at all
     # (boss 2026-08-04: "if click any completed trade it is not showing chart"). Resolved
     # after the rows are sorted, because `around` indexes the displayed order.
+    # THE DESK LAW (boss 2026-08-06): all stocks on one clock, ONE position for the
+    # rule across the whole desk - see proof_lab.run_desk.
+    stks = []
     for c_code, name in WATCH:
         cs = _bars_for(c_code, tick, period, day, frm, to)
         if len(cs) < 10:
             continue
-        tk = krx_tick(cs[-1]["close"]) or 1
-        holes = _hole_bars(c_code, tick, period) if not (day or frm or to) else set()
-        mlb = kiwoom_ml_for(c_code, tick, period, v, day) if v.get("ml") else None
-        got, op = run_variant([c["close"] for c in cs], tk, v, 1,
-                              evidence=True, with_open=True, fill_fn=_fill,
-                              ml_bundle=mlb)
-        for g in got:
-            b_c, s_c = cs[g["buy_i"]], cs[g["sell_i"]]
-            rows.append({
-                "code": c_code, "name": name, "buy_i": g["buy_i"], "sell_i": g["sell_i"],
-                "buy_t": b_c["hhmm"], "entry": g["entry"],
-                "sell_t": s_c["hhmm"], "exit": g["exit"],
-                "gross_pct": g["gross_pct"], "net_pct": g["net_pct"],
-                "exit_why": g.get("exit_why", ""),
-                "result": ("win" if g["gross_pct"] > 0 else
-                           "loss" if g["gross_pct"] < 0 else "flat"),
-                "bars_held": g["sell_i"] - g["buy_i"],
-                "tick_size": tk,
-                # shares this trade would buy for the chosen budget (1 when none is set)
-                "qty": shares_for(g["entry"], budget),
-                # held through a stretch of tape the collector missed - the entry and exit
-                # are real, the path between them is unknown
-                "spans_hole": any(g["buy_i"] < h <= g["sell_i"] for h in holes),
-                "buy_ev": g.get("buy_ev"), "sell_ev": g.get("sell_ev"),
-            })
-        if op:
-            b_c = cs[op["buy_i"]]
-            holding.append({"code": c_code, "name": name, "buy_t": b_c["hhmm"],
-                            "entry": op["entry"], "last": op["last"],
-                            "unreal_pct": op["unreal_pct"]})
+        stks.append({"code": c_code, "name": name, "cs": cs,
+                     "closes": [c["close"] for c in cs],
+                     "tick": krx_tick(cs[-1]["close"]) or 1, "seed": 1,
+                     "times": [c["hhmm"] for c in cs],
+                     "holes": (_hole_bars(c_code, tick, period)
+                               if not (day or frm or to) else set()),
+                     "ml_bundle": (kiwoom_ml_for(c_code, tick, period, v, day)
+                                   if v.get("ml") else None)})
+    got, op = run_desk(stks, v, evidence=True, with_open=True, fill_fn=_fill)
+    for g in got:
+        sk = stks[g["si"]]
+        cs = sk["cs"]
+        b_c, s_c = cs[g["buy_i"]], cs[g["sell_i"]]
+        rows.append({
+            "code": sk["code"], "name": sk["name"], "buy_i": g["buy_i"], "sell_i": g["sell_i"],
+            "buy_t": b_c["hhmm"], "entry": g["entry"],
+            "sell_t": s_c["hhmm"], "exit": g["exit"],
+            "gross_pct": g["gross_pct"], "net_pct": g["net_pct"],
+            "exit_why": g.get("exit_why", ""),
+            "result": ("win" if g["gross_pct"] > 0 else
+                       "loss" if g["gross_pct"] < 0 else "flat"),
+            "bars_held": g["sell_i"] - g["buy_i"],
+            "tick_size": sk["tick"],
+            # shares this trade would buy for the chosen budget (1 when none is set)
+            "qty": shares_for(g["entry"], budget),
+            # held through a stretch of tape the collector missed - the entry and exit
+            # are real, the path between them is unknown
+            "spans_hole": any(g["buy_i"] < h <= g["sell_i"] for h in sk["holes"]),
+            "buy_ev": g.get("buy_ev"), "sell_ev": g.get("sell_ev"),
+        })
+    if op:
+        sk = stks[op["si"]]
+        b_c = sk["cs"][op["buy_i"]]
+        holding.append({"code": sk["code"], "name": sk["name"], "buy_t": b_c["hhmm"],
+                        "entry": op["entry"], "last": op["last"],
+                        "unreal_pct": op["unreal_pct"]})
     rows.sort(key=lambda r: r["sell_t"], reverse=True)
 
     # a clicked trade decides the company; only when nothing is clicked does the stock

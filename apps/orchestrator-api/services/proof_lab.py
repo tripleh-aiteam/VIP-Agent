@@ -297,6 +297,117 @@ def run_variant(closes: list[float], tick: int, v: dict, seed: int,
     return out, op
 
 
+def run_desk(stks: list[dict], v: dict, evidence: bool = False,
+             with_open: bool = False, fill_fn=None):
+    """The rule over the WHOLE DESK with ONE position across every stock (boss
+    2026-08-06: "if I am holding then I can not buy another stock ... implement this to
+    all, and start using from now"). Until today each stock ran run_variant
+    independently, so one rule could hold 삼성전자 and still buy SK하이닉스 - three
+    positions at once filed under one rule, which he saw and rejected.
+
+    Every stock's bars merge onto ONE clock (each bar's own time key, supplied by the
+    caller), and a single position gates all of them: while the rule holds ANYTHING it
+    buys NOTHING, on any stock, until the sell. Runs keep counting while blocked, so
+    with the >=-entry law a still-standing run fires the moment the hands are free.
+
+    Entry counting, ML gating, fills and exits are copied line-for-line from
+    run_variant, which remains the single-stock engine (training, audits). The ONLY new
+    behaviour here is the cross-stock lock - keep the two in step.
+
+    stks: [{"closes", "tick", "seed", "times", optional "vols", "ml_bundle"}]
+    Every trade carries "si" - its index into stks. with_open adds the open position
+    (also with "si"), of which there can now be at most ONE for the whole desk.
+    """
+    out: list[dict] = []
+    pos = None
+    n = len(stks)
+    up = [0] * n
+    dn = [0] * n
+    last_sig = [-1] * n
+    book = fill_fn or (lambda seed_i, px, side, tk: _book(seed_i, px, side, tk))
+    events = sorted((s["times"][i], si, i)
+                    for si, s in enumerate(stks) for i in range(1, len(s["closes"])))
+    for _tkey, si, i in events:
+        s = stks[si]
+        closes = s["closes"]
+        c, prev = closes[i], closes[i - 1]
+        up[si] = up[si] + 1 if c > prev else 0
+        dn[si] = dn[si] + 1 if c < prev else 0
+        if pos is None:
+            if (dn[si] if v.get("dir", 1) < 0 else up[si]) >= v["entry"]:
+                if v.get("ml"):
+                    from services.proof_ml import MARGIN, features_at, score
+                    vv = s.get("vols") or [0.0] * len(closes)
+                    fa = features_at(closes, vv, i, last_sig[si])
+                    last_sig[si] = i
+                    bundle = s.get("ml_bundle")
+                    if bundle is None:
+                        continue
+                    sc = score(bundle, fa)
+                    if sc["p"] < bundle["base_rate"] + MARGIN:
+                        continue
+                    from services.proof_ml import quantity as _qty
+                    _bar = bundle["base_rate"] + MARGIN
+                    ml_meta = {"p": round(sc["p"], 4), "why": sc["why"],
+                               "bar": round(_bar, 4),
+                               "base_rate": round(bundle["base_rate"], 4),
+                               "qty": _qty(sc["p"], _bar, c),
+                               "auc": bundle["auc"], "n_train": bundle["n_train"]}
+                else:
+                    ml_meta = None
+                bk = book(s["seed"] * 1_000 + i, c, "BUY", s["tick"])
+                from services.proof_ml import cap_for as _cap
+                _q = (ml_meta or {}).get("qty") or _cap(c)
+                pos = {"si": si, "i": i, "entry": bk["fill"], "bk": bk, "close": c,
+                       "qty": _q, "ml": ml_meta,
+                       "seq": closes[max(0, i - v["entry"]): i + 1]}
+        elif pos["si"] == si:
+            if v["kind"] == "candle":
+                if v.get("dir", 1) < 0:
+                    hit = up[si] == v["a"]
+                    why = f"{v['a']}연속 상승"
+                else:
+                    hit = dn[si] == v["a"]
+                    why = f"{v['a']}연속 하락"
+            else:
+                ch = (c / pos["entry"] - 1) * 100
+                ch_bid = ((c - s["tick"]) / pos["entry"] - 1) * 100
+                hit = ch >= v["a"] or ch_bid <= -v["b"]
+                why = (f"+{v['a']}% 익절" if ch >= v["a"] else f"-{v['b']}% 손절선") if hit else ""
+            if hit:
+                bk = book(s["seed"] * 2_000 + i, c, "SELL", s["tick"])
+                gross = (bk["fill"] / pos["entry"] - 1) * 100
+                tr = {"si": si, "buy_i": pos["i"], "sell_i": i,
+                      "qty": pos.get("qty", 1),
+                      "entry": pos["entry"], "exit": bk["fill"],
+                      "gross_pct": round(gross, 3),
+                      "net_pct": round(gross - FEE_PCT, 3),
+                      "exit_why": why, "ml": pos.get("ml")}
+                if v.get("ml"):
+                    b2 = s.get("ml_bundle")
+                    tr["ml_model"] = ({"auc": b2["auc"], "n_train": b2["n_train"],
+                                       "n_test": b2["n_test"], "base_rate": b2["base_rate"],
+                                       "trained_to": b2.get("trained_to"),
+                                       "n_signals": b2.get("n_signals", 0)} if b2 else None)
+                if evidence:
+                    tr["buy_ev"] = {"close": pos["close"], "book": pos["bk"], "seq": pos["seq"]}
+                    tr["sell_ev"] = {"close": c, "book": bk,
+                                     "seq": closes[max(0, i - (v["a"] if v["kind"] == "candle" else 1)): i + 1]}
+                out.append(tr)
+                pos = None
+    if not with_open:
+        return out
+    op = None
+    if pos is not None:
+        s = stks[pos["si"]]
+        op = {"si": pos["si"], "buy_i": pos["i"], "entry": pos["entry"],
+              "last": s["closes"][-1],
+              "unreal_pct": round((s["closes"][-1] / pos["entry"] - 1) * 100, 3)}
+        if evidence:
+            op["buy_ev"] = {"close": pos["close"], "book": pos["bk"], "seq": pos["seq"]}
+    return out, op
+
+
 def consistency_gate(seed: int = 7, start: int = 0, tick: int = 5,
                      period: int = 0) -> dict[str, Any]:
     """Prove the lab and the Proof Lab charts read ONE market (boss 2026-07-31: "when we
@@ -602,6 +713,9 @@ def variant_trades(vid: str, seed: int = 7, start: int = 0, tick: int = 5,
     pair_all: list[dict] = []          # the same rule WITHOUT the model, same window
     pair_model: dict | None = None
     no_model: list[str] = []           # companies with too little history to fit
+    # THE DESK LAW (boss 2026-08-06): build every stock first, then run the rule ONCE
+    # across all of them - one clock, one position. See run_desk.
+    stks = []
     for k, (c_code, name, base) in enumerate(_SYMBOLS):
         if c_code not in _SHOWN:
             continue
@@ -611,58 +725,58 @@ def variant_trades(vid: str, seed: int = 7, start: int = 0, tick: int = 5,
         cs = _bars(d0, secs, sseed, t, tick, period)
         vv = [float(c.get("vol") or 0) for c in cs]
         mlb = _ml_for(c_code, base, sseed, t, tick, period, v, start) if v.get("ml") else None
-        got, op = run_variant([c["close"] for c in cs], t, v, sseed,
-                              evidence=True, with_open=True,
-                              vols=vv, ml_bundle=mlb)
-        # THE PAIRED BASELINE: the same rule without the model, over the SAME window.
-        # "+ML 60%" against the rule's all-day figure would compare two different sets of
-        # bars; the only honest comparison is the one the model actually faced.
-        # computed whenever this is an ML variant — NOT only when the model traded.
-        # A model that declined everything still needs its baseline on screen, or the row
-        # reads "0 trips" with nothing to compare it against and looks broken.
-        base_pair = None
-        if v.get("ml"):
-            plain = dict(v); plain.pop("ml")
-            # the model trades the WHOLE session (it was trained before it), so the plain
-            # rule over the whole session is the like-for-like comparison
-            base_pair = run_variant([c["close"] for c in cs], t, plain, sseed)
-            for _g in base_pair:
-                _g["code"] = c_code          # so the overlap below can be counted per stock
-        tapes[c_code] = {"cs": cs, "name": name, "trades": got}
-        if base_pair is not None:
-            pair_all.extend(base_pair)
-            if pair_model is None:
-                pair_model = (got[0].get("ml_model") if got else None) or (
-                    {"auc": mlb.get("auc"), "n_train": mlb.get("n_train"),
-                     "n_test": mlb.get("n_test"), "n_signals": mlb.get("n_signals"),
-                     "trained_to": mlb.get("trained_to")} if mlb else None)
-            if mlb is None:
-                no_model.append(name)
-        for g in got:
-            b_c, s_c = cs[g["buy_i"]], cs[g["sell_i"]]
-            rows.append({
-                "code": c_code, "name": name, "buy_i": g["buy_i"], "sell_i": g["sell_i"],
-                "buy_t": b_c["hhmm"], "buy_d": b_c.get("end_d"), "entry": g["entry"],
-                "sell_t": s_c["hhmm"], "sell_d": s_c.get("end_d"), "exit": g["exit"],
-                "gross_pct": g["gross_pct"], "net_pct": g["net_pct"],
-                "exit_why": g.get("exit_why", ""),
-                # three states, not two. A trade can land EXACTLY on 0 — the price rose
-                # but the spread took all of it — and a boolean would file that under
-                # "loss", which is neither what happened nor what the win% counts.
-                "result": ("win" if g["gross_pct"] > 0 else
-                           "loss" if g["gross_pct"] < 0 else "flat"),
-                "bars_held": g["sell_i"] - g["buy_i"],
-                # how many shares the model asked for (1 for every plain rule)
-                "qty": g.get("qty", 1),
-                "buy_ev": g.get("buy_ev"), "sell_ev": g.get("sell_ev"),
-                "ml": g.get("ml"),
-            })
-        if op:
-            b_c = cs[op["buy_i"]]
-            holding.append({"code": c_code, "name": name, "buy_i": op["buy_i"],
-                            "buy_t": b_c["hhmm"], "buy_d": b_c.get("end_d"),
-                            "entry": op["entry"], "last": op["last"],
-                            "unreal_pct": op["unreal_pct"], "buy_ev": op.get("buy_ev")})
+        if v.get("ml") and mlb is None:
+            no_model.append(name)
+        stks.append({"code": c_code, "name": name, "cs": cs, "tick": t, "seed": sseed,
+                     "closes": [c["close"] for c in cs], "vols": vv, "ml_bundle": mlb,
+                     # day travels with the time key, or a two-day tape would interleave
+                     "times": [((c.get("end_d") or ""), c["hhmm"]) for c in cs]})
+    got, op = run_desk(stks, v, evidence=True, with_open=True)
+    # THE PAIRED BASELINE: the same rule without the model, over the SAME desk under the
+    # SAME one-position law. A model that declined everything still needs its baseline
+    # on screen, or the row reads "0 trips" and looks broken.
+    if v.get("ml"):
+        plain = dict(v); plain.pop("ml")
+        pair_all = run_desk(stks, plain)
+        for _g in pair_all:
+            _g["code"] = stks[_g["si"]]["code"]   # so the overlap below counts per stock
+        pair_model = next((tr.get("ml_model") for tr in got if tr.get("ml_model")), None)
+        if pair_model is None:
+            mlb0 = next((x["ml_bundle"] for x in stks if x["ml_bundle"]), None)
+            pair_model = ({"auc": mlb0.get("auc"), "n_train": mlb0.get("n_train"),
+                           "n_test": mlb0.get("n_test"), "n_signals": mlb0.get("n_signals"),
+                           "trained_to": mlb0.get("trained_to")} if mlb0 else None)
+    for s_i, sk in enumerate(stks):
+        tapes[sk["code"]] = {"cs": sk["cs"], "name": sk["name"],
+                             "trades": [g for g in got if g["si"] == s_i]}
+    for g in got:
+        sk = stks[g["si"]]
+        cs, c_code, name = sk["cs"], sk["code"], sk["name"]
+        b_c, s_c = cs[g["buy_i"]], cs[g["sell_i"]]
+        rows.append({
+            "code": c_code, "name": name, "buy_i": g["buy_i"], "sell_i": g["sell_i"],
+            "buy_t": b_c["hhmm"], "buy_d": b_c.get("end_d"), "entry": g["entry"],
+            "sell_t": s_c["hhmm"], "sell_d": s_c.get("end_d"), "exit": g["exit"],
+            "gross_pct": g["gross_pct"], "net_pct": g["net_pct"],
+            "exit_why": g.get("exit_why", ""),
+            # three states, not two. A trade can land EXACTLY on 0 — the price rose
+            # but the spread took all of it — and a boolean would file that under
+            # "loss", which is neither what happened nor what the win% counts.
+            "result": ("win" if g["gross_pct"] > 0 else
+                       "loss" if g["gross_pct"] < 0 else "flat"),
+            "bars_held": g["sell_i"] - g["buy_i"],
+            # how many shares the model asked for (1 for every plain rule)
+            "qty": g.get("qty", 1),
+            "buy_ev": g.get("buy_ev"), "sell_ev": g.get("sell_ev"),
+            "ml": g.get("ml"),
+        })
+    if op:
+        sk = stks[op["si"]]
+        b_c = sk["cs"][op["buy_i"]]
+        holding.append({"code": sk["code"], "name": sk["name"], "buy_i": op["buy_i"],
+                        "buy_t": b_c["hhmm"], "buy_d": b_c.get("end_d"),
+                        "entry": op["entry"], "last": op["last"],
+                        "unreal_pct": op["unreal_pct"], "buy_ev": op.get("buy_ev")})
     rows.sort(key=lambda r: ((r["sell_d"] or ""), r["sell_t"]), reverse=True)
 
     # ---- the chart window ----------------------------------------------------------
@@ -832,18 +946,24 @@ def compare(seed: int = 7, start: int = 0, tick: int = 5,
 
     chart_tape = next((t for t in tapes if t["code"] == code), tapes[0] if tapes else None)
     rows = []
+    chart_i = next((k2 for k2, tp in enumerate(tapes)
+                    if chart_tape and tp["code"] == chart_tape["code"]), None)
     for v in VARIANTS:
-        trades = []
-        per_stock = {}
+        # ONE run over the whole desk (boss 2026-08-06: holding anything blocks buying
+        # anything). The per-stock loop this replaces gave each stock its own position.
+        stks = [{"code": tp["code"], "name": tp["name"], "closes": tp["closes"],
+                 "tick": tp["tick"], "seed": tp["seed"],
+                 "vols": [float(c.get("vol") or 0) for c in tp["cs"]],
+                 "times": [((c.get("end_d") or ""), c["hhmm"]) for c in tp["cs"]],
+                 "ml_bundle": (_ml_for(tp["code"], tp["base"], tp["seed"], tp["tick"],
+                                       tick, period, v, start) if v.get("ml") else None)}
+                for tp in tapes]
+        trades = run_desk(stks, v)
+        per_stock = {tp["name"]: sum(1 for g in trades if g["si"] == k2)
+                     for k2, tp in enumerate(tapes)}
         recent: list[dict] = []
-        for tp in tapes:
-            got = run_variant(tp["closes"], tp["tick"], v, tp["seed"],
-                              vols=[float(c.get("vol") or 0) for c in tp["cs"]],
-                              ml_bundle=(_ml_for(tp["code"], tp["base"], tp["seed"], tp["tick"],
-                                                 tick, period, v, start) if v.get("ml") else None))
-            trades += got
-            per_stock[tp["name"]] = len(got)
-            for g in got[-hist:]:
+        for k2, tp in enumerate(tapes):
+            for g in [g for g in trades if g["si"] == k2][-hist:]:
                 recent.append({**g, "code": tp["code"], "name": tp["name"],
                                "buy_t": tp["cs"][g["buy_i"]]["hhmm"],
                                "sell_t": tp["cs"][g["sell_i"]]["hhmm"]})
@@ -876,13 +996,12 @@ def compare(seed: int = 7, start: int = 0, tick: int = 5,
             "per_trade": round(sum(t["net_pct"] for t in trades) / len(trades), 3) if trades else 0.0,
             "per_stock": per_stock,
             "recent": recent[:hist],
-            # arrows for the charted stock only — index into the candles sent below
+            # arrows for the charted stock only — index into the candles sent below.
+            # From the SAME desk run as the row above, so the chart can never show a
+            # trade the one-position law forbids.
             "marks": [{"b": g["buy_i"], "s": g["sell_i"], "g": g["gross_pct"], "net": g["net_pct"]}
-                      for g in (run_variant(chart_tape["closes"], chart_tape["tick"], v, chart_tape["seed"],
-                                            vols=[float(c.get("vol") or 0) for c in chart_tape["cs"]],
-                                            ml_key=(chart_tape["code"], v["id"], tick, period,
-                                                    len(chart_tape["cs"])))[-60:]
-                                if chart_tape else [])],
+                      for g in ([g for g in trades if g["si"] == chart_i][-60:]
+                                if chart_i is not None else [])],
         })
     # A rule with one trade at 100% is not the leader, it is a coin that landed once.
     # Rules below MIN_RANKED trips are still SHOWN — hiding them would be worse — but
