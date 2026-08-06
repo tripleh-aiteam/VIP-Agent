@@ -54,6 +54,11 @@ OVERLAP = 250           # how many recent ticks to match on when finding the new
 
 _lock = threading.Lock()
 _mem: dict[str, list[dict]] = {}        # code -> today's ticks, chronological
+# WHICH DAY the memory belongs to. Without this stamp, ticks cached yesterday evening
+# were served as "today" the next morning (boss 2026-08-07: "if I click today it is
+# showing old data"), and the first poll of the new day would have APPENDED today's
+# ticks onto yesterday's - the day-boundary contamination bug, again, via the cache.
+_mem_day: dict[str, str] = {}
 _state: dict[str, Any] = {"running": False, "last": {}, "errors": {}, "polls": 0,
                           "gaps": {}}          # code -> [(from, to, seconds), ...]
 
@@ -163,7 +168,7 @@ def gaps(code: str, min_sec: int = 60) -> list[dict]:
 def load(code: str, day: str | None = None) -> list[dict]:
     """Today's stored ticks for one stock, chronological."""
     with _lock:
-        if day in (None, _day()) and code in _mem:
+        if day in (None, _day()) and code in _mem and _mem_day.get(code) == _day():
             return list(_mem[code])
     p = _path(code, day)
     if not p.exists():
@@ -175,9 +180,11 @@ def load(code: str, day: str | None = None) -> list[dict]:
                 out.append(json.loads(line))
             except Exception:
                 continue
+    # cache ONLY the actual today - a stored past day must never impersonate it
     if day in (None, _day()):
         with _lock:
             _mem[code] = list(out)
+            _mem_day[code] = _day()
     return out
 
 
@@ -187,7 +194,7 @@ def poll_once(code: str) -> int:
     if not page:
         return 0
     with _lock:
-        have = _mem.get(code)
+        have = _mem.get(code) if _mem_day.get(code) == _day() else None
     if have is None:
         have = load(code)
     new = _append_new(have, page)
@@ -199,6 +206,7 @@ def poll_once(code: str) -> int:
             f.write(json.dumps(x, ensure_ascii=False) + "\n")
     with _lock:
         _mem[code] = have + new
+        _mem_day[code] = _day()
         _state["last"][code] = new[-1]["t"]
     return len(new)
 
