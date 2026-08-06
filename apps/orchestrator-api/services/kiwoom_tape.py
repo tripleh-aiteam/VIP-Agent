@@ -41,6 +41,12 @@ WATCH: list[tuple[str, str]] = [
     ("005930", "삼성전자"),
     ("000660", "SK하이닉스"),
     ("042660", "한화오션"),
+    # added 2026-08-06 mid-session at the boss's request ("Add 2 stock company, naver
+    # and Samsung"). Their tape starts from the moment of the restart - the morning
+    # cannot be backfilled (Kiwoom only returns ~900 recent executions), and their ML
+    # twins stay silent until a full stored day exists to train on.
+    ("035420", "NAVER"),
+    ("006400", "삼성SDI"),
 ]
 
 POLL_SEC = 3.0          # comfortably inside the ~40s the API remembers
