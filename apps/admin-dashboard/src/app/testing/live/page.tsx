@@ -44,7 +44,7 @@ type Rank = { ok: boolean; clock: string; fee_pct: number; original_12?: string[
               variants: RuleRow[] };
 type Ev = { close: number; book: { best_ask: number; best_bid: number; fill: number;
             spread: number }; seq: number[] };
-type RTrade = { code: string; name: string; day?: string;
+type RTrade = { code: string; name: string; day?: string; d8?: string;
                 buy_i: number; sell_i: number; buy_t: string;
                 entry: number; sell_t: string; exit: number; gross_pct: number;
                 net_pct: number; exit_why?: string; result: "win" | "loss" | "flat";
@@ -96,6 +96,10 @@ function LiveChart({ bars, marks, focus, off = 0 }:
   // following the live market is what monitoring means.
   const userRange = useRef<{ from: number; to: number } | null>(null);
   const prog = useRef(false);
+  // dataset identity: on the cumulative view a click can swap the WHOLE DAY under the
+  // chart while the focus number stays the same - without this the zoom never fired
+  // and "clicking 09:53 did not bring me there" (boss 2026-08-06)
+  const sigRef = useRef("");
   const [ready, setReady] = useState(0);
 
   useEffect(() => {
@@ -164,8 +168,10 @@ function LiveChart({ bars, marks, focus, off = 0 }:
     // payload looks unchanged and the trade he clicked sits somewhere off screen. The
     // same thing was true on the Strategy Lab (2026-08-03: "if I click any time it is
     // not opening exact time"). Zoom to the trade, once per change of focus.
-    if (applied.current !== focus) {
+    const sig = `${off}|${bars[0]?.hhmm ?? ""}`;
+    if (applied.current !== focus || sigRef.current !== sig) {
       applied.current = focus;
+      sigRef.current = sig;
       prog.current = true;
       userRange.current = null;            // a click starts a fresh view
       if (focus != null && bars[focus]) {
@@ -318,6 +324,8 @@ export default function LiveDeskPage() {
   const tickRef = useRef(tick); tickRef.current = tick;
 
   const detSeqRef = useRef(0);
+  // the day (d8) of the chart inside `det` - the server draws the clicked trade's day
+  const detDayRef = useRef("");
   const openRule = useCallback((id: string, tradeIdx: number | null = null,
                                 tradeCode?: string) => {
     setPick(tradeIdx);
@@ -342,7 +350,10 @@ export default function LiveDeskPage() {
       + `&around=${tradeIdx ?? -1}&budget=${budgetRef.current}`
       + `&day=${ruleDayRef.current}&frm=${encodeURIComponent(hourFromRef.current)}&to=${encodeURIComponent(hourToRef.current)}`)
       .then((d) => { if (my !== detSeqRef.current) return;
-                     const v = d?.ok ? d : null; detRef.current = v; setDet(v); })
+                     const v = d?.ok ? d : null; detRef.current = v;
+                     detDayRef.current = (tradeIdx != null
+                       ? v?.trades?.[tradeIdx]?.d8 : v?.trades?.[0]?.d8) ?? "";
+                     setDet(v); })
       .catch(() => { if (my !== detSeqRef.current) return;
                      detRef.current = null; setDet(null); });
   }, []);
@@ -802,7 +813,8 @@ export default function LiveDeskPage() {
                       // as delay (2026-08-06). The fetch still runs behind it, for the
                       // order-book evidence; when it lands the focus is already right.
                       const ptr = pick !== null ? det.trades[pick] : null;
-                      if (ptr && ptr.code === det.chart.code) {
+                      if (ptr && ptr.code === det.chart.code
+                          && (ptr.d8 ?? "") === detDayRef.current) {
                         const f = (focusSide === "b" ? ptr.buy_i : ptr.sell_i) - det.chart.off;
                         if (f >= 0 && f < det.chart.candles.length) return f;
                       }
@@ -881,7 +893,8 @@ export default function LiveDeskPage() {
                       <td className="px-2 cursor-pointer underline decoration-dotted" style={{ color: RED }}
                         title={t(`클릭하면 차트가 이 매수로 이동합니다 (${tr.buy_t})`, `click: chart jumps to this BUY (${tr.buy_t})`)}
                         onClick={(e) => { e.stopPropagation(); setFocusSide("b");
-                                          if (pick !== i || detRef.current?.chart?.code !== tr.code) {
+                                          if (pick !== i || detRef.current?.chart?.code !== tr.code
+                                              || (tr.d8 ?? "") !== detDayRef.current) {
                                             setPick(i); if (sel) openRule(sel, i, tr.code);
                                           }
                                           chartRef.current?.scrollIntoView({ behavior: "smooth", block: "center" }); }}>
@@ -890,7 +903,8 @@ export default function LiveDeskPage() {
                       <td className="px-2 cursor-pointer underline decoration-dotted" style={{ color: BLUE }}
                         title={t(`클릭하면 차트가 이 매도로 이동합니다 (${tr.sell_t})`, `click: chart jumps to this SELL (${tr.sell_t})`)}
                         onClick={(e) => { e.stopPropagation(); setFocusSide("s");
-                                          if (pick !== i || detRef.current?.chart?.code !== tr.code) {
+                                          if (pick !== i || detRef.current?.chart?.code !== tr.code
+                                              || (tr.d8 ?? "") !== detDayRef.current) {
                                             setPick(i); if (sel) openRule(sel, i, tr.code);
                                           }
                                           chartRef.current?.scrollIntoView({ behavior: "smooth", block: "center" }); }}>
