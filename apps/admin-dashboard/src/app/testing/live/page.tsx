@@ -220,7 +220,11 @@ export default function LiveDeskPage() {
                        "3u+0.3ML", "3u+0.5ML", "2u+0.5ML", "4u3dML", "3u+1.0ML", "4u+1.0ML",
                        // ...and the remaining six, so ALL 12 are paired (boss 2026-08-06)
                        "3u3dML", "2u2dML", "3u2dML", "2u3dML", "3u4dML", "3u+0.5sML"];
-  const twelve = rank?.original_12?.length ? rank.original_12 : ORIGINAL_12;
+  // UNION, not preference. The server's list names only the 12 plain rules, and
+  // preferring it filtered every ML twin OFF THE SCREEN while they traded - the boss
+  // watched "rules + ML" sit empty for an hour (2026-08-06). Neither list alone can
+  // hide rows the other knows about.
+  const twelve = Array.from(new Set([...(rank?.original_12 ?? []), ...ORIGINAL_12]));
   // NOTE: shownRules is computed BELOW the mlView state it filters by — referencing a
   // `const` before its line runs is a temporal-dead-zone crash, and this exact mistake
   // white-screened the whole page on 2026-08-06 ("Application error: a client-side

@@ -206,8 +206,10 @@ def kiwoom_ml_for(code: str, tick: int, period: int, v: dict, day: str = ""):
             bundle["trained_to"] = f"{days[-1][:4]}-{days[-1][4:6]}-{days[-1][6:]} close" if days else "?"
     _KML_CACHE[key] = bundle
     return bundle
-# every id this desk shows - the page uses it so the two can never drift apart
-ORIGINAL_12 = [v["id"] for v in PLAIN]
+# every id this desk shows - the page uses it so the two can never drift apart.
+# DESK, not PLAIN: listing only the plain 12 made the page hide the 12 ML twins
+# (boss 2026-08-06 - "rules + ML is empty").
+ORIGINAL_12 = [v["id"] for v in DESK]
 
 
 def rank(tick: int = 5, period: int = 0, day: str = "",
