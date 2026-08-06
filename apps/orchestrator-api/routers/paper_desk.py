@@ -678,6 +678,25 @@ def live_rule_trades(variant: str = Query(...), tick: int = Query(5),
                   day=day, frm=frm, to=to)
 
 
+@router.get("/live/warm")
+def live_warm():
+    """Pre-open warm-up: train/cache TODAY's ML bundles before the bell, so the first
+    poll after 09:00 answers instantly instead of training 30 models mid-open. Safe to
+    call any time - training is walk-forward (prior stored days only) and cached."""
+    from services.kiwoom_rules import ML_RULES, kiwoom_ml_for
+    from services.kiwoom_tape import WATCH, _day
+    ref = _day()
+    out = []
+    for v in ML_RULES:
+        for code, name in WATCH:
+            b = kiwoom_ml_for(code, 5, 0, v, ref)
+            out.append({"rule": v["id"], "stock": name,
+                        "model": (b.get("algo") if b else None),
+                        "auc": (b.get("auc") if b else None)})
+    return {"ok": True, "day": ref, "models": out,
+            "trained": sum(1 for x in out if x["model"])}
+
+
 @router.get("/live/datafile")
 def live_datafile(code: str = Query("005930"), mins: int = Query(12),
                   frm: str = Query(""), to: str = Query(""), hhmm: str = Query("")):
