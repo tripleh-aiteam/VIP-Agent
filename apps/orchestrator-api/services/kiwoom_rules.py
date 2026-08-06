@@ -85,16 +85,28 @@ def _hole_bars(code: str, tick: int, period: int) -> set[int]:
     return out
 
 
+_FINISHED_BARS: dict = {}
+
+
 def _bars_for(code: str, tick: int, period: int, day: str = "",
               frm: str = "", to: str = "") -> list[dict]:
     """Bars for one stock — today's live tape by default, or any STORED day, optionally
     cut to an hour window. The boss lost sight of yesterday twice at dawn because the
-    desk only ever read today's (empty) file (2026-08-06): now any collected day is one
-    click away, and an hour of it can be isolated.
+    desk only ever read yesterday's (empty) file (2026-08-06): now any collected day is
+    one click away, and an hour of it can be isolated.
 
     The window cuts TICKS, not bars, so a 5틱 bar never straddles the boundary — the
     first bar of the window is built purely from executions inside it.
+
+    A FINISHED day's bars are cached: its file never changes, and without the cache the
+    cumulative view re-read and re-parsed three 16MB tape files on every 3-second poll
+    (boss 2026-08-06: "switching to all days is very slow").
     """
+    from services.kiwoom_tape import _day as _kd
+    finished = bool(day) and day < _kd()
+    key = (code, tick, period, day, frm, to)
+    if finished and key in _FINISHED_BARS:
+        return _FINISHED_BARS[key]
     ticks = load(code, day or None)
     if not ticks:
         return []
@@ -104,7 +116,10 @@ def _bars_for(code: str, tick: int, period: int, day: str = "",
         ticks = [x for x in ticks if f <= x["ts"][8:14] <= t2]
         if not ticks:
             return []
-    return bars_time(ticks, period) if period else bars_ticks(ticks, max(1, tick))
+    out = bars_time(ticks, period) if period else bars_ticks(ticks, max(1, tick))
+    if finished:
+        _FINISHED_BARS[key] = out
+    return out
 
 
 def stored_days(code: str = "005930") -> list[str]:
