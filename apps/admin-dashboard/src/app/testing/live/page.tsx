@@ -732,6 +732,16 @@ export default function LiveDeskPage() {
         </div>
       )}
 
+      {/* a click must never look dead: while the whole-day detail loads (a few
+          seconds on first open), say so (boss 2026-08-07: "it is not opening and
+          showing me nothing") */}
+      {sel && !det && (
+        <div className="mt-3 rounded-xl border px-4 py-6 text-center text-[12px]"
+          style={{ borderColor: "#6a1b9a", color: "var(--text-muted)" }}>
+          ⏳ {t("이 규칙의 하루 전체 기록을 불러오는 중입니다 — 몇 초 걸립니다…",
+               "loading this rule's full-day record — takes a few seconds…")}
+        </div>
+      )}
       {/* ---- one rule's real trades ---- */}
       {sel && det?.ok && (
         <div className="mt-3 rounded-xl border overflow-hidden" style={{ borderColor: "#6a1b9a" }}>
