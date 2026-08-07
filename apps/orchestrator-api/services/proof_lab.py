@@ -53,6 +53,17 @@ VARIANTS: list[dict] = [
     # measured that entries after big runs revert hardest (the 0.2-0.5% bucket carried
     # 88% of one day's losses). 3 days: win 45%->51%, losses -83%.
     {"id": "3u+0.3r", "entry": 3, "kind": "pct", "a": 0.3, "b": 1.0, "max_run": 0.2},
+    # ── THE TOP-5 COMBINATIONS (boss 2026-08-07: "analyze and find me top 5 and start
+    # using"). A 224-combo sweep over 4 stored days, ranked win-rate-first per his
+    # explicit priority, minimum ~1 trade/hour. All stack the measured filters: gentle
+    # runs, real volume, small take, wide stop. Honesty note kept ON the record: the
+    # wide stop BUYS win% by making losses rarer-but-bigger; expectancy is the number
+    # that must also be watched, and the board shows both.
+    {"id": "top1", "entry": 2, "kind": "pct", "a": 0.3, "b": 1.5, "max_run": 0.1, "vol": 1.5},
+    {"id": "top2", "entry": 3, "kind": "pct", "a": 0.3, "b": 1.5, "max_run": 0.2, "vol": 1.5},
+    {"id": "top3", "entry": 3, "kind": "pct", "a": 0.3, "b": 1.5, "max_run": 0.2},
+    {"id": "top4", "entry": 2, "kind": "pct", "a": 0.3, "b": 1.0, "max_run": 0.1, "vol": 1.5},
+    {"id": "top5", "entry": 3, "kind": "pct", "a": 0.3, "b": 1.5, "max_run": 0.3, "vol": 1.5},
     {"id": "3u+0.5r", "entry": 3, "kind": "pct", "a": 0.5, "b": 1.0, "max_run": 0.2},
     {"id": "2u+0.5r", "entry": 2, "kind": "pct", "a": 0.5, "b": 1.0, "max_run": 0.2},
     {"id": "3u+0.5v", "entry": 3, "kind": "pct", "a": 0.5, "b": 1.0, "vol": 1.5},
