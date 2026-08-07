@@ -53,6 +53,8 @@ type RTrade = { code: string; name: string; day?: string; d8?: string; ml?: MLMe
                 bars_held: number; tick_size: number; qty?: number; buy_ev?: Ev | null; sell_ev?: Ev | null };
 type RDetail = { ok: boolean; id: string; ko: string; en: string; clock: string;
                  entry_n: number; kind: string; a: number; b?: number | null; dir: number;
+                 vol_x?: number | null; max_run?: number | null; take?: number | null;
+                 is_ml?: boolean;
                  trips: number; wins: number; losses: number; flats: number; win_pct: number;
                  decided: number; thin: boolean; shown: number;
                  net_total?: number; gross_total?: number; per_trade?: number;
@@ -772,6 +774,63 @@ export default function LiveDeskPage() {
             )}
           </div>
 
+          {/* WHY THIS RULE - buy steps, sell conditions, and the measurements behind
+              each condition (boss 2026-08-07: "if I click any rule it should open
+              explanation ... in English mode then in english otherwise in Korean") */}
+          <div className="px-4 py-2 border-b text-[11.5px]" style={{ borderColor: "var(--border-default)", background: "rgba(15,81,50,0.04)" }}>
+            <b style={{ color: "#0f5132" }}>📖 {t("이 규칙의 설명", "how this rule works")}</b>
+            <div className="mt-1 grid gap-3" style={{ gridTemplateColumns: "1fr 1fr 1fr" }}>
+              <div>
+                <b className="text-[10.5px]" style={{ color: RED }}>{t("사는 조건 (모두 만족해야 삽니다)", "BUY conditions (all must be true)")}</b>
+                <ol className="mt-1 ml-4 list-decimal space-y-[2px] text-[var(--text-secondary)]">
+                  <li>{t(`종가가 직전 봉보다 높은 봉이 ${det.entry_n}개 연속 (보합은 세던 것을 멈출 뿐, 끊지 않음)`,
+                         `${det.entry_n} bars in a row closing higher (a flat bar pauses the count, never breaks it)`)}</li>
+                  {det.vol_x && <li>{t(`신호 봉의 거래량이 최근 20개 봉 평균의 ${det.vol_x}배 이상 — 붐빌 때만`,
+                                       `signal bar's volume ≥ ${det.vol_x}× this stock's last-20-bar average — only when busy`)}</li>}
+                  {det.max_run && <li>{t(`연속 상승의 총 상승폭이 ${det.max_run}% 미만 — 막 출발한 상승만`,
+                                         `the run's total climb under ${det.max_run}% — only rises that just started`)}</li>}
+                  {det.is_ml && <li>{t("이 종목 전용 AI 모델의 승인 — 과거의 이긴 매수와 비슷할 때만",
+                                       "this stock's own AI model must approve — only moments resembling past winners")}</li>}
+                  <li>{t("이 규칙이 아무것도 들고 있지 않을 것 (한 손 법칙)",
+                         "the rule must be empty-handed (one-position law)")}</li>
+                </ol>
+              </div>
+              <div>
+                <b className="text-[10.5px]" style={{ color: BLUE }}>{t("파는 조건 (먼저 오는 쪽)", "SELL conditions (whichever comes first)")}</b>
+                <ul className="mt-1 ml-4 list-disc space-y-[2px] text-[var(--text-secondary)]">
+                  {det.kind !== "candle" ? (<>
+                    <li>{t(`+${det.a}% 이익 도달 → 익절`, `reaches +${det.a}% profit → take`)}</li>
+                    <li>{t(`-${det.b}% 손실 도달 → 손절`, `falls to −${det.b}% → stop`)}</li>
+                  </>) : (<>
+                    {det.take && <li>{t(`+${det.take}% 이익 도달 → 익절`, `reaches +${det.take}% profit → take`)}</li>}
+                    <li>{t(`${det.a}번 연속 하락 → 매도 (패턴이 손절 역할)`,
+                           `${det.a} consecutive falls → sell (the pattern acts as the stop)`)}</li>
+                  </>)}
+                  <li>{t("장 마감까지 안 팔리면 '보유 중'으로 표시 — 다음 날로 넘기지 않음",
+                         "unsold at close → shown as holding; never carried overnight")}</li>
+                </ul>
+              </div>
+              <div>
+                <b className="text-[10.5px]" style={{ color: "#0f5132" }}>{t("왜 이 규칙인가 (측정으로 선택)", "WHY selected (measured, not assumed)")}</b>
+                <ul className="mt-1 ml-4 list-disc space-y-[2px] text-[var(--text-secondary)]">
+                  {det.max_run && <li>{t("매매 1,271건 분석: 크게 오른 뒤 산 매매가 최다 패배 — 작은 상승만 사자 승률 45→51%",
+                                         "1,271-trade analysis: buys after big runs lost most — small-run-only lifted win 45→51%")}</li>}
+                  {det.vol_x && <li>{t("얇은 거래량의 상승은 쉽게 무너짐 — 거래량 조건으로 승률 46→50%",
+                                       "thin-volume rises collapse — the volume gate lifted win 46→50%")}</li>}
+                  {det.kind !== "candle" && (det.b ?? 0) >= 1.5 && <li>{t("손절 폭 전수 실험: 좁을수록 나빠짐 (0.4%: 22% → 1.5%: 62%) — 출렁임을 버티는 폭",
+                                       "stop-width sweep: tighter was always worse (0.4%: 22% → 1.5%: 62%) — wide enough to survive wobble")}</li>}
+                  {det.kind !== "candle" && det.a <= 0.3 && <li>{t("+0.3%는 이 시장에서 가장 자주 도달하는 목표 (실험으로 확인)",
+                                       "+0.3% is the most-often-reached target on these stocks (measured)")}</li>}
+                  {det.is_ml && <li>{t("모델은 매수만 거름 — 같은 규칙 대비 승률 +3~21p (매일 비교 중)",
+                                       "the model filters buys only — +3–21p win vs the same rule bare (compared daily)")}</li>}
+                  {det.take && det.kind === "candle" && <li>{t("회장님 설계: 패턴 손절 + % 익절의 결합 — 원본과 나란히 검증 중",
+                                       "the boss's design: pattern stop + % take, validated beside the originals")}</li>}
+                  <li>{t("236개 조합 전수 실험에서 승률 상위만 채택 — 무작위 아님",
+                         "chosen from a 236-combination sweep by win rate — nothing random")}</li>
+                </ul>
+              </div>
+            </div>
+          </div>
           {det.id.endsWith("ML") && (
             <div className="px-4 py-1.5 border-b text-[11px]" style={{ borderColor: "var(--border-default)", background: "rgba(21,101,192,0.06)", color: "#1565c0" }}>
               🤖 {t("이 표의 매매는 모두 모델이 승인한 매수입니다 — 신호마다 모델이 사기/건너뛰기를 정했고, 수량도 모델이 정했습니다(확신이 클수록 많이). 매도는 모델이 아니라 항상 규칙이 합니다. 모델이 건너뛴 신호는 여기에 없습니다 — 규칙 이름이 같은 ML 없는 행에서 전부 볼 수 있습니다.",

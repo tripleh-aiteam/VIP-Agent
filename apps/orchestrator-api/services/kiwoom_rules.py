@@ -561,6 +561,10 @@ def trades(vid: str, tick: int = 5, period: int = 0, code: str = "",
     return {"ok": True, "id": vid, "ko": label(v, True), "en": label(v, False),
             "clock": f"{period}초" if period else f"{tick}틱",
             "entry_n": v["entry"], "kind": v["kind"], "a": v["a"], "b": v.get("b"),
+            # the rule's full recipe, so the page can EXPLAIN it in either language
+            # (boss 2026-08-07: click a rule -> buy/sell conditions + why selected)
+            "vol_x": v.get("vol"), "max_run": v.get("max_run"), "take": v.get("take"),
+            "is_ml": bool(v.get("ml")),
             "dir": v.get("dir", 1),
             "trips": len(rows), "wins": w, "losses": l, "flats": len(rows) - w - l,
             "win_pct": round(w / (w + l) * 100) if (w + l) else 0,
