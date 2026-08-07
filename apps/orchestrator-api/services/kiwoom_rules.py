@@ -217,6 +217,8 @@ def daily_ctx(code: str, day: str) -> list[float]:
     _CTX_CACHE[key] = out
     return out
 _RANK_DAY_CACHE: dict = {}
+_RANK_TTL: dict = {}
+_TRADES_TTL: dict = {}
 
 
 def _prior_day_closes(code: str, tick: int, period: int, before: str = ""):
@@ -307,6 +309,11 @@ def rank(tick: int = 5, period: int = 0, day: str = "",
     every stored day is run separately - each day is its own session, positions never
     span the overnight gap, and each day's ML models are the ones that day actually had
     (trained only on the days before it) - then the trades are added up."""
+    import time as _t
+    _rk = (tick, period, day, frm, to)
+    _hit = _RANK_TTL.get(_rk)
+    if _hit and _t.time() - _hit[0] < 2.5:
+        return _hit[1]         # the page polls every 3s; identical answers are reused
     day_list = stored_days() if day == "all" else [day]
     tapes_by_day = []
     for d in day_list:
@@ -333,6 +340,12 @@ def rank(tick: int = 5, period: int = 0, day: str = "",
                          "times": [c["hhmm"] for c in tp["cs"]]}
                         for code, tp in tapes.items()])
                    for d, tapes in tapes_by_day]
+    # ONE sort of the merged clock per day-tape, shared by every rule (the sort was
+    # ~90% of the request at end-of-day: 29 rules x 300k events)
+    events_by_day = [(d, sorted((sk["times"][i], si, i)
+                                for si, sk in enumerate(base)
+                                for i in range(1, len(sk["closes"]))))
+                     for d, base in base_by_day]
     from services.kiwoom_tape import _day as _kday
     _today = _kday()
     for v in DESK:
@@ -341,7 +354,7 @@ def rank(tick: int = 5, period: int = 0, day: str = "",
         if v.get("clock") and tuple(v["clock"]) != (tick, period):
             continue
         trades = []
-        for d, base_stks in base_by_day:
+        for (d, base_stks), (_d2, _events) in zip(base_by_day, events_by_day):
             # a FINISHED day's tape never changes, so its trades are computed once.
             # Without this the cumulative view re-ran three days of every rule on every
             # 3-second poll. Today is never cached - it is still being written.
@@ -351,7 +364,7 @@ def rank(tick: int = 5, period: int = 0, day: str = "",
                 continue
             stks = [dict(sk, ml_bundle=(kiwoom_ml_for(sk["code"], tick, period, v, d)
                                         if v.get("ml") else None)) for sk in base_stks]
-            got = run_desk(stks, v, fill_fn=_fill)
+            got = run_desk(stks, v, fill_fn=_fill, events=_events)
             if d and d < _today:
                 _RANK_DAY_CACHE[ck] = got
             trades += got
@@ -396,7 +409,7 @@ def rank(tick: int = 5, period: int = 0, day: str = "",
             r["vs_trips"] = tw["trips"] if tw else None
     rows.sort(key=lambda r: (0 if r.get("kind") == "candle" else 1,
                              -r["win_pct"], -r["trips"]))
-    return {"ok": True, "original_12": ORIGINAL_12, "days": stored_days(),
+    _res = {"ok": True, "original_12": ORIGINAL_12, "days": stored_days(),
             "day": day, "frm": frm, "to": to,
             "clock": f"{period}초" if period else f"{tick}틱",
             "tick": tick, "period": period, "fee_pct": FEE_PCT,
@@ -407,6 +420,8 @@ def rank(tick: int = 5, period: int = 0, day: str = "",
                         "from": t["cs"][0]["hhmm"], "to": t["cs"][-1]["hhmm"],
                         "tick_size": t["tk"]} for c, t in tapes_by_day[-1][1].items()],
             "variants": rows}
+    _RANK_TTL[_rk] = (_t.time(), _res)
+    return _res
 
 
 def shares_for(entry: float, budget: int) -> int:
@@ -442,6 +457,11 @@ def trades(vid: str, tick: int = 5, period: int = 0, code: str = "",
     v = next((x for x in DESK if x["id"] == vid), None)
     if v is None:
         return {"ok": False, "error": f"unknown rule {vid}"}
+    import time as _t
+    _tk2 = (vid, tick, period, code, bars, limit, around, budget, day, frm, to)
+    _hit2 = _TRADES_TTL.get(_tk2)
+    if _hit2 and _t.time() - _hit2[0] < 2.5:
+        return _hit2[1]
 
     # Two passes: collect every trade first, sort them, THEN build the chart — the chart
     # needs to look up `around` in the SAME order the table displays, and that order is
@@ -558,7 +578,7 @@ def trades(vid: str, tick: int = 5, period: int = 0, code: str = "",
 
     w = sum(1 for r in rows if r["result"] == "win")
     l = sum(1 for r in rows if r["result"] == "loss")
-    return {"ok": True, "id": vid, "ko": label(v, True), "en": label(v, False),
+    _res2 = {"ok": True, "id": vid, "ko": label(v, True), "en": label(v, False),
             "clock": f"{period}초" if period else f"{tick}틱",
             "entry_n": v["entry"], "kind": v["kind"], "a": v["a"], "b": v.get("b"),
             # the rule's full recipe, so the page can EXPLAIN it in either language
@@ -598,3 +618,5 @@ def trades(vid: str, tick: int = 5, period: int = 0, code: str = "",
             "per_trade": round(sum(r["net_pct"] for r in rows) / len(rows), 3) if rows else 0.0,
             "trades": rows[:limit], "shown": min(len(rows), limit),
             "holding": holding, "chart": chart, "fee_pct": FEE_PCT}
+    _TRADES_TTL[_tk2] = (_t.time(), _res2)
+    return _res2

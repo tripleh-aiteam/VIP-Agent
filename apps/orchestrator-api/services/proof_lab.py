@@ -394,7 +394,7 @@ def run_variant(closes: list[float], tick: int, v: dict, seed: int,
 
 
 def run_desk(stks: list[dict], v: dict, evidence: bool = False,
-             with_open: bool = False, fill_fn=None):
+             with_open: bool = False, fill_fn=None, events=None):
     """The rule over the WHOLE DESK with ONE position across every stock (boss
     2026-08-06: "if I am holding then I can not buy another stock ... implement this to
     all, and start using from now"). Until today each stock ran run_variant
@@ -421,8 +421,12 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
     dn = [0] * n
     last_sig = [-1] * n
     book = fill_fn or (lambda seed_i, px, side, tk: _book(seed_i, px, side, tk))
-    events = sorted((s["times"][i], si, i)
-                    for si, s in enumerate(stks) for i in range(1, len(s["closes"])))
+    # the merged clock is IDENTICAL for every rule over the same tapes - callers that
+    # run many rules pass it in once instead of re-sorting ~300k events per rule
+    # (end-of-day the desk took 8.7s per poll; boss 2026-08-07: "server is very slow")
+    if events is None:
+        events = sorted((s["times"][i], si, i)
+                        for si, s in enumerate(stks) for i in range(1, len(s["closes"])))
     for _tkey, si, i in events:
         s = stks[si]
         closes = s["closes"]
