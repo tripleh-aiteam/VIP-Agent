@@ -781,33 +781,36 @@ export default function LiveDeskPage() {
             <b style={{ color: "#0f5132" }}>📖 {t("이 규칙의 설명", "how this rule works")}</b>
             <div className="mt-1 grid gap-3" style={{ gridTemplateColumns: "1fr 1fr 1fr" }}>
               <div>
-                <b className="text-[10.5px]" style={{ color: RED }}>{t("사는 조건 (모두 만족해야 삽니다)", "BUY conditions (all must be true)")}</b>
-                <ol className="mt-1 ml-4 list-decimal space-y-[2px] text-[var(--text-secondary)]">
-                  <li>{t(`종가가 직전 봉보다 높은 봉이 ${det.entry_n}개 연속 (보합은 세던 것을 멈출 뿐, 끊지 않음)`,
-                         `${det.entry_n} bars in a row closing higher (a flat bar pauses the count, never breaks it)`)}</li>
-                  {det.vol_x && <li>{t(`신호 봉의 거래량이 최근 20개 봉 평균의 ${det.vol_x}배 이상 — 붐빌 때만`,
-                                       `signal bar's volume ≥ ${det.vol_x}× this stock's last-20-bar average — only when busy`)}</li>}
-                  {det.max_run && <li>{t(`연속 상승의 총 상승폭이 ${det.max_run}% 미만 — 막 출발한 상승만`,
-                                         `the run's total climb under ${det.max_run}% — only rises that just started`)}</li>}
-                  {det.is_ml && <li>{t("이 종목 전용 AI 모델의 승인 — 과거의 이긴 매수와 비슷할 때만",
-                                       "this stock's own AI model must approve — only moments resembling past winners")}</li>}
-                  <li>{t("이 규칙이 아무것도 들고 있지 않을 것 (한 손 법칙)",
-                         "the rule must be empty-handed (one-position law)")}</li>
+                <b className="text-[10.5px]" style={{ color: RED }}>{t("사는 조건 — 질문에 전부 \"예\"여야 삽니다", "BUY — every question must answer YES")}</b>
+                <ol className="mt-1 ml-4 list-decimal space-y-[3px] text-[var(--text-secondary)]">
+                  <li>{t(`"가격이 ${det.entry_n}번 연속 올랐는가?" — 봉의 마감 가격이 직전 봉보다 높으면 상승 1번. 그런 봉이 ${det.entry_n}개 연속. (가격이 그대로인 봉은 세던 숫자를 잠시 멈출 뿐, 0으로 되돌리지 않습니다)`,
+                         `"Did the price rise ${det.entry_n} times in a row?" — a bar closing higher than the one before = one rise; ${det.entry_n} such bars back-to-back. (An unchanged bar pauses the count — it never resets it)`)}</li>
+                  {det.vol_x && <li>{t(`"시장이 붐비는가?" — 신호 봉에서 거래된 주식 수가 이 종목의 최근 20개 봉 평균보다 ${det.vol_x}배 이상 많아야 합니다. 조용한 시장에서 가격만 오르는 것은 믿지 않습니다.`,
+                                       `"Is the market busy?" — the shares traded on the signal bar must be at least ${det.vol_x}× this stock's own recent average (last 20 bars). A price rising in a quiet market is not trusted.`)}</li>}
+                  {det.max_run && <li>{t(`"상승이 아직 작은가?" — 오르기 시작한 지점부터 지금까지 전부 합쳐 ${det.max_run}% 미만이어야 합니다 (만원짜리 주식이면 ${Math.round(10000*det.max_run/100)}원도 안 오른 상태). 이미 크게 오른 상승은 끝물이라 사지 않습니다.`,
+                                         `"Is the climb still small?" — from where the rise began until now, the total climb must be under ${det.max_run}% (for a ₩10,000 stock, that's less than ₩${Math.round(10000*det.max_run/100)}). A rise that already moved a lot is finishing, not starting — skip it.`)}</li>}
+                  {det.is_ml && <li>{t(`"AI가 허락하는가?" — 이 종목 전용 인공지능이 과거 데이터와 비교해 "평소보다 이길 확률이 높다"고 할 때만 삽니다. 거절하면 그 신호는 그냥 지나갑니다.`,
+                                       `"Does the AI approve?" — this stock's own AI compares the moment with the past and must say "better odds than usual." A refusal means the signal is simply skipped.`)}</li>}
+                  <li>{t(`"빈손인가?" — 이 규칙이 아직 아무 주식도 들고 있지 않아야 합니다. 들고 있으면 다 팔 때까지 새로 사지 않습니다.`,
+                         `"Are the hands empty?" — the rule must not be holding anything. While holding, it never buys again until it sells.`)}</li>
                 </ol>
               </div>
               <div>
-                <b className="text-[10.5px]" style={{ color: BLUE }}>{t("파는 조건 (먼저 오는 쪽)", "SELL conditions (whichever comes first)")}</b>
-                <ul className="mt-1 ml-4 list-disc space-y-[2px] text-[var(--text-secondary)]">
+                <b className="text-[10.5px]" style={{ color: BLUE }}>{t("파는 조건 — 자동, 먼저 오는 쪽", "SELL — automatic, whichever comes first")}</b>
+                <ul className="mt-1 ml-4 list-disc space-y-[3px] text-[var(--text-secondary)]">
                   {det.kind !== "candle" ? (<>
-                    <li>{t(`+${det.a}% 이익 도달 → 익절`, `reaches +${det.a}% profit → take`)}</li>
-                    <li>{t(`-${det.b}% 손실 도달 → 손절`, `falls to −${det.b}% → stop`)}</li>
+                    <li>{t(`이익이 +${det.a}%에 닿으면 → 자동으로 팝니다 (익절). 만원에 샀다면 ${(10000*(1+det.a/100)).toLocaleString()}원이 된 순간입니다.`,
+                           `profit touches +${det.a}% → sells automatically (the take). If bought at ₩10,000, that's the moment it reaches ₩${(10000*(1+det.a/100)).toLocaleString()}.`)}</li>
+                    <li>{t(`손실이 -${det.b}%까지 밀리면 → 자동으로 팝니다 (손절). 만원에 샀다면 ${(10000*(1-(det.b??0)/100)).toLocaleString()}원까지 내려온 순간 — 더 큰 손해를 막는 보호선입니다.`,
+                           `loss slips to −${det.b}% → sells automatically (the stop). If bought at ₩10,000, that's it falling to ₩${(10000*(1-(det.b??0)/100)).toLocaleString()} — the protection line against bigger damage.`)}</li>
                   </>) : (<>
-                    {det.take && <li>{t(`+${det.take}% 이익 도달 → 익절`, `reaches +${det.take}% profit → take`)}</li>}
-                    <li>{t(`${det.a}번 연속 하락 → 매도 (패턴이 손절 역할)`,
-                           `${det.a} consecutive falls → sell (the pattern acts as the stop)`)}</li>
+                    {det.take && <li>{t(`이익이 +${det.take}%에 닿으면 → 자동으로 팝니다 (익절). 만원 기준 ${(10000*(1+det.take/100)).toLocaleString()}원.`,
+                                        `profit touches +${det.take}% → sells automatically (the take). ₩${(10000*(1+det.take/100)).toLocaleString()} on a ₩10,000 stock.`)}</li>}
+                    <li>{t(`가격이 ${det.a}번 연속 내리면 → 팝니다. 이 규칙에서는 "연속 하락"이 손절선 역할을 합니다 — 정해진 % 대신 시장의 모양을 보고 나갑니다.`,
+                           `the price falls ${det.a} times in a row → sell. In this rule the falling pattern IS the stop — it exits on the market's shape instead of a fixed %.`)}</li>
                   </>)}
-                  <li>{t("장 마감까지 안 팔리면 '보유 중'으로 표시 — 다음 날로 넘기지 않음",
-                         "unsold at close → shown as holding; never carried overnight")}</li>
+                  <li>{t(`장이 끝날 때까지 어느 쪽도 안 오면 → "보유 중"으로만 표시되고, 밤을 넘겨 들고 가지 않습니다.`,
+                         `if neither line is touched by the close → shown as "holding" only; positions are never carried overnight.`)}</li>
                 </ul>
               </div>
               <div>
