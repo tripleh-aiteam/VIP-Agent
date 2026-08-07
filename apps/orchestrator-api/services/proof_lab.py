@@ -48,6 +48,13 @@ VARIANTS: list[dict] = [
     # Measured before deploying (3 real days): win 46%->50%, losses -35%. The threshold
     # lives in the data AND the label so nobody has to ask "how much volume?".
     {"id": "3u+0.3v", "entry": 3, "kind": "pct", "a": 0.3, "b": 1.0, "vol": 1.5},
+    # ── SMALL-RUN entries (boss 2026-08-07): buy the BEGINNING of a rise, not the end
+    # of one. The entry run's total move must be under v["max_run"] percent - we
+    # measured that entries after big runs revert hardest (the 0.2-0.5% bucket carried
+    # 88% of one day's losses). 3 days: win 45%->51%, losses -83%.
+    {"id": "3u+0.3r", "entry": 3, "kind": "pct", "a": 0.3, "b": 1.0, "max_run": 0.2},
+    {"id": "3u+0.5r", "entry": 3, "kind": "pct", "a": 0.5, "b": 1.0, "max_run": 0.2},
+    {"id": "2u+0.5r", "entry": 2, "kind": "pct", "a": 0.5, "b": 1.0, "max_run": 0.2},
     {"id": "3u+0.5v", "entry": 3, "kind": "pct", "a": 0.5, "b": 1.0, "vol": 1.5},
     {"id": "2u+0.5v", "entry": 2, "kind": "pct", "a": 0.5, "b": 1.0, "vol": 1.5},
     {"id": "2u2d", "entry": 2, "kind": "candle", "a": 2},
@@ -127,6 +134,8 @@ def label(v: dict, ko: bool = True) -> str:
     ent = (f"{v['entry']}연속 하락" if dn else f"{v['entry']}연속 상승") if ko else           (f"{v['entry']} down" if dn else f"{v['entry']} up")
     if v.get("vol"):
         ent += f" (거래량 ≥{v['vol']}배)" if ko else f" (vol ≥{v['vol']}x)"
+    if v.get("max_run"):
+        ent += f" (상승폭 <{v['max_run']}%)" if ko else f" (run <{v['max_run']}%)"
     if v["kind"] == "candle":
         exi = f"{v['a']}연속 {'상승' if dn else '하락'} 매도" if ko else               f"{v['a']} {'up' if dn else 'down'}"
         if v.get("take") is not None:
@@ -223,6 +232,21 @@ def run_variant(closes: list[float], tick: int, v: dict, seed: int,
             # that, which is his risk call to make. A holding rule is unaffected - one
             # position per stock, never doubled (verified: 3,392 pairs, 0 overlaps).
             if (dn if v.get("dir", 1) < 0 else up) >= v["entry"]:
+                if v.get("max_run"):
+                    # small-run confirmation: walk back to the run's start (pause law -
+                    # flats skipped); the total move must be under the cap, or the rise
+                    # has already spent itself and reversion is the likelier next step
+                    _j = i
+                    while _j >= 1:
+                        if closes[_j] > closes[_j - 1]:
+                            pass
+                        elif closes[_j] < closes[_j - 1]:
+                            break
+                        _j -= 1
+                    else:
+                        _j = 0
+                    if _j < i and closes[_j] and (closes[i] / closes[_j] - 1) * 100 >= v["max_run"]:
+                        continue
                 if v.get("vol"):
                     # volume confirmation: the signal bar must carry >= v["vol"] x this
                     # stock's own last-20-bar average - no volume data, no trade
@@ -384,6 +408,19 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
             up[si], dn[si] = 0, dn[si] + 1
         if pos is None:
             if (dn[si] if v.get("dir", 1) < 0 else up[si]) >= v["entry"]:
+                if v.get("max_run"):
+                    # small-run confirmation, same walk as run_variant - keep in step
+                    _j = i
+                    while _j >= 1:
+                        if closes[_j] > closes[_j - 1]:
+                            pass
+                        elif closes[_j] < closes[_j - 1]:
+                            break
+                        _j -= 1
+                    else:
+                        _j = 0
+                    if _j < i and closes[_j] and (closes[i] / closes[_j] - 1) * 100 >= v["max_run"]:
+                        continue
                 if v.get("vol"):
                     # volume confirmation, same as run_variant - keep the two in step
                     _vv = s.get("vols") or []
