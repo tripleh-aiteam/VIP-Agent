@@ -336,6 +336,10 @@ def rank(tick: int = 5, period: int = 0, day: str = "",
     from services.kiwoom_tape import _day as _kday
     _today = _kday()
     for v in DESK:
+        # a clock-pinned rule only computes on its own view - a 1분 strategy must not
+        # be judged on 5틱 bars it was never designed for (boss 2026-08-07 gain group)
+        if v.get("clock") and tuple(v["clock"]) != (tick, period):
+            continue
         trades = []
         for d, base_stks in base_by_day:
             # a FINISHED day's tape never changes, so its trades are computed once.

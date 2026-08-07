@@ -64,6 +64,17 @@ VARIANTS: list[dict] = [
     {"id": "top3", "entry": 3, "kind": "pct", "a": 0.3, "b": 1.5, "max_run": 0.2},
     {"id": "top4", "entry": 2, "kind": "pct", "a": 0.3, "b": 1.0, "max_run": 0.1, "vol": 1.5},
     {"id": "top5", "entry": 3, "kind": "pct", "a": 0.3, "b": 1.5, "max_run": 0.3, "vol": 1.5},
+    # ── THE GAIN GROUP (boss 2026-08-07: "find best combinations for gaining to the
+    # positive"). The only POSITIVE cells of a four-clock sweep - all on the 1-MINUTE
+    # clock with strong volume gates and bigger takes, exactly where the clock ladder
+    # pointed. "clock" PINS a rule to its designed timeframe: the desk only computes it
+    # on that view, so a 1분 strategy can never be diluted by 5틱ing it.
+    # Honesty: 12-25 trades per cell over 4 days; 7 positives out of thousands tested
+    # carries real selection risk - these must EARN their keep live and in the weekend
+    # year study before anyone believes them.
+    {"id": "g1", "entry": 3, "kind": "pct", "a": 0.5, "b": 2.0, "vol": 2.0, "clock": [5, 60]},
+    {"id": "g2", "entry": 2, "kind": "pct", "a": 1.0, "b": 2.0, "vol": 1.5, "clock": [5, 60]},
+    {"id": "g3", "entry": 3, "kind": "pct", "a": 1.0, "b": 2.0, "vol": 1.5, "clock": [5, 60]},
     {"id": "3u+0.5r", "entry": 3, "kind": "pct", "a": 0.5, "b": 1.0, "max_run": 0.2},
     {"id": "2u+0.5r", "entry": 2, "kind": "pct", "a": 0.5, "b": 1.0, "max_run": 0.2},
     {"id": "3u+0.5v", "entry": 3, "kind": "pct", "a": 0.5, "b": 1.0, "vol": 1.5},
@@ -147,6 +158,10 @@ def label(v: dict, ko: bool = True) -> str:
         ent += f" (거래량 ≥{v['vol']}배)" if ko else f" (vol ≥{v['vol']}x)"
     if v.get("max_run"):
         ent += f" (상승폭 <{v['max_run']}%)" if ko else f" (run <{v['max_run']}%)"
+    if v.get("clock"):
+        _t, _p = v["clock"]
+        _cl = f"{_p}초" if _p and _p < 60 else ("1분" if _p == 60 else f"{_t}틱")
+        ent = (f"[{_cl} 전용] " if ko else f"[{_cl} only] ") + ent
     if v["kind"] == "candle":
         exi = f"{v['a']}연속 {'상승' if dn else '하락'} 매도" if ko else               f"{v['a']} {'up' if dn else 'down'}"
         if v.get("take") is not None:
