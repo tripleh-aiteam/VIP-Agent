@@ -830,6 +830,29 @@ export default function LiveDeskPage() {
                 </ul>
               </div>
             </div>
+            {/* the moment-by-moment STORY (boss 2026-08-07: "after 3 up wait and look
+                market something like this") - one sentence-flow, built per recipe */}
+            <div className="mt-2 pt-2 border-t text-[11px] leading-relaxed" style={{ borderColor: "var(--border-default)" }}>
+              <b style={{ color: "#0f5132" }}>⏱ {t("실제 흐름", "how it plays out, moment by moment")}: </b>
+              <span className="text-[var(--text-secondary)]">
+                {t(`봉이 하나 완성될 때마다 규칙이 지켜봅니다 → 종가가 직전보다 높으면 "상승 1"로 셉니다 (보합이면 세던 숫자 유지) → ${det.entry_n}번째 상승이 뜨는 순간`,
+                   `the rule watches each bar as it completes → a higher close counts "+1 rise" (a flat keeps the count) → the moment the ${det.entry_n}th rise prints`)}
+                {det.vol_x ? t(`, 그 봉의 거래량을 최근 평균과 비교하고(${det.vol_x}배 미만이면 포기)`,
+                               `, it checks that bar's volume vs recent average (below ${det.vol_x}× → walk away)`) : ""}
+                {det.max_run ? t(`, 상승 전체 폭을 재고(${det.max_run}% 이상이면 포기)`,
+                                 `, measures the whole climb (already ${det.max_run}%+ → walk away)`) : ""}
+                {det.is_ml ? t(", AI 모델에게 확인받고(거절하면 포기)", ", asks the AI model (a refusal → walk away)") : ""}
+                {t(` → 전부 통과하면 그 봉 종가+1호가에 즉시 매수 → 이후 봉마다 가격만 지켜봅니다: `,
+                   ` → all pass: buy instantly at that close+1 tick → then it only watches price, bar by bar: `)}
+                {det.kind !== "candle"
+                  ? t(`+${det.a}%에 닿으면 그 봉에서 익절, -${det.b}%로 밀리면 그 봉에서 손절`,
+                      `touch +${det.a}% → sell that bar (take); slip to −${det.b}% → sell that bar (stop)`)
+                  : t(`${det.take ? `+${det.take}% 먼저 닿으면 익절, 아니면 ` : ""}${det.a}연속 하락이 나오면 매도`,
+                      `${det.take ? `+${det.take}% first → take; otherwise ` : ""}${det.a} straight falls → sell`)}
+                {t(" → 팔고 나면 빈손으로 돌아가 다음 신호를 기다립니다. 그 사이의 다른 신호들은 전부 무시합니다 (한 손 법칙).",
+                   " → after selling it returns empty-handed and waits for the next signal. Every signal in between is ignored (one-position law).")}
+              </span>
+            </div>
           </div>
           {det.id.endsWith("ML") && (
             <div className="px-4 py-1.5 border-b text-[11px]" style={{ borderColor: "var(--border-default)", background: "rgba(21,101,192,0.06)", color: "#1565c0" }}>
