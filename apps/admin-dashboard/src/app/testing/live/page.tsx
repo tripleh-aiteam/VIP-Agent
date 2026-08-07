@@ -291,7 +291,9 @@ export default function LiveDeskPage() {
   // and only rules winning 20%+ stay. Click the chip's x to clear (boss 2026-08-06:
   // "after adding 20 then I should type enter then 20 should gone").
   const [winInput, setWinInput] = useState("");
-  const [minWin, setMinWin] = useState<number | null>(null);
+  // DEFAULT 50: the board opens showing only rules winning 50%+ (boss 2026-08-07).
+  // Enter on the empty box reveals everything; typing a number sets a new floor.
+  const [minWin, setMinWin] = useState<number | null>(50);
   const shownRules = (rank?.variants ?? []).filter((v) => twelve.includes(v.id))
     .filter((v) => mlView === "all" ? true
                  : mlView === "ml" ? v.id.endsWith("ML") : !v.id.endsWith("ML"))
