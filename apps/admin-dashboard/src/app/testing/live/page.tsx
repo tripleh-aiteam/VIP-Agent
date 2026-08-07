@@ -975,13 +975,12 @@ export default function LiveDeskPage() {
                 <th className="text-right px-2">{t("매수가", "buy price")}</th>
                 <th className="text-left px-2">{t("매도 시각", "sold")}</th>
                 <th className="text-right px-2">{t("매도가", "sell price")}</th>
-                <th className="text-right px-2">{t("차이", "diff")}</th>
+                {money && <th className="text-right px-2">{t("차이", "diff")}</th>}
                 <th className="text-right px-2">{t("손익", "P&L")}</th>
-                {/* the size and the money it made are facts about the TRADE, not the
-                    summary money the button governs — both always on, and both must be
-                    unconditional together or the header and the body disagree */}
+                {/* the won-gain column obeys the 💰 button, same as the board total -
+                    with money hidden it must not leak here (boss 2026-08-07) */}
                 <th className="text-right px-2">{t("수량", "shares")}</th>
-                <th className="text-right px-2">{t("수수료 뺀 실수익", "actually gained")}</th>
+                {money && <th className="text-right px-2">{t("수수료 뺀 실수익", "actually gained")}</th>}
                 <th className="text-right px-3">{t("결과", "result")}</th>
               </tr></thead>
               <tbody>
@@ -1021,9 +1020,11 @@ export default function LiveDeskPage() {
                                           chartRef.current?.scrollIntoView({ behavior: "smooth", block: "center" }); }}>
                         ▼ {tr.sell_t.slice(0, 5)}</td>
                       <td className="text-right px-2">₩{tr.exit.toLocaleString()}</td>
-                      <td className="text-right px-2" style={{ color: col }}>
-                        {tr.exit - tr.entry > 0 ? "+" : ""}{(tr.exit - tr.entry).toLocaleString()}
-                      </td>
+                      {money && (
+                        <td className="text-right px-2" style={{ color: col }}>
+                          {tr.exit - tr.entry > 0 ? "+" : ""}{(tr.exit - tr.entry).toLocaleString()}
+                        </td>
+                      )}
                       <td className="text-right px-2 font-bold" style={{ color: col }}>
                         {tr.gross_pct > 0 ? "+" : ""}{tr.gross_pct}%
                       </td>
@@ -1034,12 +1035,14 @@ export default function LiveDeskPage() {
                           style={{ color: (tr.qty ?? 1) > 1 ? "#1565c0" : "var(--text-muted)" }}>
                           {(tr.qty ?? 1).toLocaleString()}
                         </td>
-                      <td className="text-right px-2 font-bold tabular-nums"
-                        style={{ color: tr.net_pct > 0 ? RED : tr.net_pct < 0 ? BLUE : "var(--text-muted)" }}
-                        title={t(`${(tr.qty ?? 1).toLocaleString()}주 x ₩${tr.entry.toLocaleString()} · 수수료 뺀 ${tr.net_pct}%`,
-                                 `${(tr.qty ?? 1).toLocaleString()} shares x ₩${tr.entry.toLocaleString()} · ${tr.net_pct}% after the round trip`)}>
-                        {won(Math.round(wonOf(tr.entry, tr.net_pct) * (tr.qty ?? 1)))}
-                      </td>
+                      {money && (
+                        <td className="text-right px-2 font-bold tabular-nums"
+                          style={{ color: tr.net_pct > 0 ? RED : tr.net_pct < 0 ? BLUE : "var(--text-muted)" }}
+                          title={t(`${(tr.qty ?? 1).toLocaleString()}주 x ₩${tr.entry.toLocaleString()} · 수수료 뺀 ${tr.net_pct}%`,
+                                   `${(tr.qty ?? 1).toLocaleString()} shares x ₩${tr.entry.toLocaleString()} · ${tr.net_pct}% after the round trip`)}>
+                          {won(Math.round(wonOf(tr.entry, tr.net_pct) * (tr.qty ?? 1)))}
+                        </td>
+                      )}
                       <td className="text-right px-3 font-bold" style={{ color: col }}>
                         {tr.result === "win" ? t("승", "WIN") : tr.result === "loss" ? t("패", "LOSS") : t("무", "flat")}
                       </td>
