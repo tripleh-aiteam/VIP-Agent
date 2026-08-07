@@ -198,15 +198,27 @@ def train_v2(samples: list[tuple[list[float], int]], key: tuple):
             auc = (roc_auc_score(Y[cut:], pv) if len(set(Y[cut:])) > 1 else 0.5)
             acc = float(accuracy_score(Y[cut:], pv >= 0.5))
             if best is None or auc > best["auc"]:
-                m2 = mk()
-                m2.fit(X, Y)
-                best = {"v2": True, "model": m2, "algo": algo,
+                best = {"v2": True, "model": m, "algo": algo,
                         "auc": round(float(auc), 3),
                         "val_acc": round(acc, 3),
                         "base_rate": float(Y.mean()), "n_train": len(X),
-                        "n_test": len(X) - cut}
+                        "n_test": len(X) - cut, "_val_p": pv, "_val_y": Y[cut:]}
         except Exception:
             continue
+    if best is None:
+        return None
+    # ── CALIBRATION (boss 2026-08-07: "75% is confidence, not a guarantee" - some
+    # models claimed 66-80% and delivered 0-53%). The winner stays fitted on the
+    # TRAIN portion, and a Platt layer learns on the VALIDATION portion how much its
+    # confidence historically exaggerates: raw p -> honest p. The desk's gate and the
+    # share sizing then act on claims the model can actually back. No calibrator when
+    # the validation slice is one-sided - a layer fitted on nothing would be a new lie.
+    pv, yv = best.pop("_val_p"), best.pop("_val_y")
+    if len(set(yv)) > 1 and len(yv) >= 20:
+        from sklearn.linear_model import LogisticRegression as _LR
+        cal = _LR(max_iter=200)
+        cal.fit(np.array(pv, dtype=float).reshape(-1, 1), np.array(yv, dtype=int))
+        best["cal"] = cal
     return best
 
 
@@ -222,6 +234,9 @@ def score(bundle: dict, feats: list[float]) -> dict[str, Any]:
         # standardisation, and the per-feature "why" of the logistic path does not
         # apply; the evidence panel still gets p, bar and the share count
         p = float(bundle["model"].predict_proba(np.array([feats], dtype=float))[0][1])
+        if bundle.get("cal") is not None:
+            # the honesty layer: raw confidence corrected by its own track record
+            p = float(bundle["cal"].predict_proba(np.array([[p]], dtype=float))[0][1])
         return {"p": p,
                 "why": [{"key": "v2", "ko": "5년 데이터 모델(" + bundle.get("algo", "?") + ")",
                          "en": "5-yr data model (" + bundle.get("algo", "?") + ")",

@@ -687,6 +687,12 @@ def live_warm():
     from services.kiwoom_tape import WATCH, _day
     ref = _day()
     out = []
+    # all four clocks the dropdown offers - a cold clock trained minutes mid-session
+    # when first clicked (boss 2026-08-07: "if i switch to 1 minute it is not showing")
+    for tick, period in ((5, 0), (10, 0), (5, 30), (5, 60)):
+        for v in ML_RULES:
+            for code, _n in WATCH:
+                kiwoom_ml_for(code, tick, period, v, ref)
     for v in ML_RULES:
         for code, name in WATCH:
             b = kiwoom_ml_for(code, 5, 0, v, ref)
