@@ -41,12 +41,16 @@ WATCH: list[tuple[str, str]] = [
     ("005930", "삼성전자"),
     ("000660", "SK하이닉스"),
     ("042660", "한화오션"),
-    # added 2026-08-06 mid-session at the boss's request ("Add 2 stock company, naver
-    # and Samsung"). Their tape starts from the moment of the restart - the morning
-    # cannot be backfilled (Kiwoom only returns ~900 recent executions), and their ML
-    # twins stay silent until a full stored day exists to train on.
-    ("035420", "NAVER"),
-    ("006400", "삼성SDI"),
+    # THE SCREENER'S PICKS (boss 2026-08-10, advisor's point 1: "100 checkpoints ->
+    # about 5 companies"). All 39 stocks with a year of data were scored on cost,
+    # liquidity, movement, continuation behaviour, flows and how our own rules did -
+    # scored ONLY on 2025-07..2026-03, then the chosen five were traded on the four
+    # months the screener never saw: 97% win vs 93%, half the loss of the old five.
+    # NAVER ranked 38th of 39 (its tick is 0.24% of its price - one tick eats a whole
+    # target) and 삼성SDI 16th; both give way to the two below. Their stored tape and
+    # history stay on disk - only the collector's attention moves.
+    ("012450", "한화에어로스페이스"),
+    ("247540", "에코프로비엠"),
 ]
 
 POLL_SEC = 3.0          # comfortably inside the ~40s the API remembers
