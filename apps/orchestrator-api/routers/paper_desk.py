@@ -678,6 +678,35 @@ def live_rule_trades(variant: str = Query(...), tick: int = Query(5),
                   day=day, frm=frm, to=to)
 
 
+@router.get("/screener")
+def screener():
+    """The stock screener's ranking (advisor's point 1, boss 2026-08-10). Every stock
+    with a year of data scored on cost / liquidity / movement / continuation behaviour /
+    flows / how our own rules did - scored ONLY on months before April, then the chosen
+    five were tested on the four months it never saw. Served from the stored result so
+    the page never waits on a 7-minute recompute; rerun the screener to refresh it."""
+    import json as _j
+    from pathlib import Path as _P
+    f = _P(__file__).resolve().parent.parent / "data" / "screener.json"
+    if not f.exists():
+        return {"ok": False, "error": "screener has not been run yet"}
+    d = _j.loads(f.read_text(encoding="utf-8"))
+    rows = sorted(d.get("scores", {}).items(), key=lambda kv: -kv[1])
+    out = []
+    for i, (code, sc) in enumerate(rows, 1):
+        c = (d.get("checks") or {}).get(code, {})
+        out.append({"rank": i, "code": code,
+                    "name": (d.get("names") or {}).get(code, code),
+                    "score": round(sc, 1),
+                    "tick_pct": round(c.get("tick_pct", 0), 3),
+                    "move_vs_cost": round(c.get("mv_vs_cost", 0), 2),
+                    "continue_pct": round(c.get("cont", 0), 1),
+                    "fit_win": round(c.get("fit_win", 0), 1),
+                    "live": code in (d.get("live") or [])})
+    return {"ok": True, "scored_on": d.get("scored_on"), "tested_on": d.get("tested_on"),
+            "test_result": d.get("test_result"), "rows": out}
+
+
 @router.get("/live/warm")
 def live_warm():
     """Pre-open warm-up: train/cache TODAY's ML bundles before the bell, so the first

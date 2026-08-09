@@ -37,6 +37,12 @@ type RuleRow = { id: string; ko: string; en: string; dir: number; trips: number;
                  net_won?: number | null; per_trade_won?: number | null;
                  losses: number; flats: number; win_pct: number; per_trade: number; net: number;
                  decided: number; thin: boolean };
+type Screen = { ok: boolean; scored_on?: string; tested_on?: string;
+                test_result?: { picked: { trades: number; win: number; won: number };
+                                previous: { trades: number; win: number; won: number } };
+                rows: { rank: number; code: string; name: string; score: number;
+                        tick_pct: number; move_vs_cost: number; continue_pct: number;
+                        fit_win: number; live: boolean }[] };
 type Rank = { ok: boolean; clock: string; fee_pct: number; original_12?: string[];
               days?: string[]; day?: string; frm?: string; to?: string;
               stocks: { code: string; name: string; bars: number; from: string; to: string;
@@ -289,6 +295,10 @@ export default function LiveDeskPage() {
   useEffect(() => { hourToRef.current = hourTo; }, [hourTo]);
   // with ML / without ML / everything
   const [mlView, setMlView] = useState<"all" | "ml" | "plain">("all");
+  // the screener's ranking - loaded once, shown on demand (boss 2026-08-10)
+  const [screen, setScreen] = useState<Screen | null>(null);
+  const [screenOpen, setScreenOpen] = useState(false);
+  useEffect(() => { api<Screen>("/paper-desk/screener").then(setScreen).catch(() => {}); }, []);
   // win% threshold: type 20, press ENTER - the box empties, a "≥20%" chip appears,
   // and only rules winning 20%+ stay. Click the chip's x to clear (boss 2026-08-06:
   // "after adding 20 then I should type enter then 20 should gone").
@@ -483,6 +493,73 @@ export default function LiveDeskPage() {
         </div>
       </div>
 
+      {screen?.ok && (
+        <div className="mt-3 rounded-xl border overflow-hidden" style={{ borderColor: "#0f5132" }}>
+          <div className="px-4 py-2 flex items-center gap-2 flex-wrap cursor-pointer"
+            style={{ background: "rgba(15,81,50,0.06)" }}
+            onClick={() => setScreenOpen(!screenOpen)}>
+            <b className="text-[13px]" style={{ color: "#0f5132" }}>
+              🔎 {t("종목 선별 (체크포인트 점수)", "stock screener (checkpoint scores)")}
+            </b>
+            <span className="text-[10.5px] text-[var(--text-muted)]">
+              {t(`${screen.rows.length}개 종목 채점 → 상위 5개가 지금 데스크에서 거래 중`,
+                 `${screen.rows.length} stocks scored → the top 5 are the live desk`)}
+            </span>
+            {screen.test_result && (
+              <span className="text-[10px] font-bold px-1.5 py-0.5 rounded"
+                style={{ background: "rgba(15,81,50,0.14)", color: "#0f5132" }}>
+                {t(`선별한 5개 ${screen.test_result.picked.win}% vs 이전 5개 ${screen.test_result.previous.win}% (선별이 못 본 4개월)`,
+                   `picked five ${screen.test_result.picked.win}% vs previous five ${screen.test_result.previous.win}% (4 months it never saw)`)}
+              </span>
+            )}
+            <span className="ml-auto text-[10.5px]" style={{ color: "#0f5132" }}>
+              {screenOpen ? t("닫기 ▲", "close ▲") : t("점수 보기 ▼", "see the scores ▼")}
+            </span>
+          </div>
+          {screenOpen && (
+            <div className="overflow-y-auto" style={{ maxHeight: 320 }}>
+              <table className="w-full text-[11.5px] tabular-nums">
+                <thead><tr className="text-[10px] text-[var(--text-muted)] sticky top-0"
+                  style={{ background: "var(--bg-elevated)" }}>
+                  <th className="text-left px-3 py-1">#</th>
+                  <th className="text-left px-2">{t("종목", "stock")}</th>
+                  <th className="text-right px-3">{t("종합 점수", "score")}</th>
+                  <th className="text-right px-3" title={t("1호가가 가격의 몇 % 인가 - 작을수록 좋음", "one tick as % of price - smaller is better")}>
+                    {t("호가 비용", "tick cost")}</th>
+                  <th className="text-right px-3" title={t("3봉 상승폭 ÷ (수수료+호가) - 1보다 커야 이익 가능", "3-bar move ÷ cost - must exceed 1 to profit")}>
+                    {t("움직임 ÷ 비용", "move ÷ cost")}</th>
+                  <th className="text-right px-3" title={t("오른 뒤 계속 오를 확률 - 우리 규칙은 상승을 삽니다", "chance a rise continues - our rules buy rises")}>
+                    {t("상승 지속", "continues")}</th>
+                  <th className="text-right px-3">{t("우리 규칙 승률", "our rules")}</th>
+                </tr></thead>
+                <tbody>
+                  {screen.rows.map((r) => (
+                    <tr key={r.code} className="border-t border-[var(--border-default)]/40"
+                      style={{ background: r.live ? "rgba(15,81,50,0.08)" : "transparent" }}>
+                      <td className="px-3 py-1 text-[var(--text-muted)]">{r.rank}</td>
+                      <td className="px-2 font-bold text-[var(--text-primary)]">
+                        {r.name}
+                        {r.live && <span className="ml-1.5 text-[9px] font-extrabold px-1 py-0.5 rounded"
+                          style={{ background: "#0f5132", color: "#fff" }}>{t("거래 중", "LIVE")}</span>}
+                      </td>
+                      <td className="text-right px-3 font-bold" style={{ color: "#0f5132" }}>{r.score}</td>
+                      <td className="text-right px-3">{r.tick_pct}%</td>
+                      <td className="text-right px-3">{r.move_vs_cost}x</td>
+                      <td className="text-right px-3">{r.continue_pct}%</td>
+                      <td className="text-right px-3">{r.fit_win}%</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              <div className="px-4 py-2 text-[10.5px] text-[var(--text-muted)] border-t"
+                style={{ borderColor: "var(--border-default)" }}>
+                {t(`점수는 ${screen.scored_on} 자료로만 매겼고, 선별된 5개를 선별이 보지 못한 ${screen.tested_on} 구간에서 검증했습니다 — 과거에 맞춘 것이 아닙니다.`,
+                   `scored only on ${screen.scored_on}, then the chosen five were tested on ${screen.tested_on} which the screener never saw - not fitted to the past.`)}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
       {/* ---- the rules, on real money prices. This is what he opens the page for. ---- */}
       {rank?.ok && (
         <div className="mt-3 rounded-xl border overflow-hidden" style={{ borderColor: "#6a1b9a" }}>
