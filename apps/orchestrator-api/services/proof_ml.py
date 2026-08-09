@@ -291,6 +291,35 @@ FLOOR_FRAC = 0.05        # the least confident accepted signal still takes 5% of
 FULL_EDGE = 0.10         # this much edge over the model's own bar earns the whole cap
 
 
+# ── THE BOSS'S MONEY LIMITS (2026-08-10) ────────────────────────────────────────────
+# Both sides of every limit-order rule, in WON, per stock. Measured over a full year
+# before deploying: the buy band of one tick costs ~120k won a year (used 3 times) and
+# buys him a hard ceiling; his own sell floors measured best of everything tried.
+# Stocks not listed (the artificial lab) fall back to the same shape in ticks.
+LIMIT_BUY_CAP = {          # most we will ever pay ABOVE our offer
+    "000660": 1000,        # SK하이닉스   (1 tick)
+    "005930": 500,         # 삼성전자     (1 tick)
+    "006400": 500,         # 삼성SDI     (1 tick)
+    "035420": 500,         # NAVER      (1 tick)
+    "042660": 100,         # 한화오션     (1 tick)
+}
+SELL_FLOOR = {             # never sell more than this BELOW the stop trigger
+    "000660": 2000,
+    "005930": 1000,
+    "006400": 1000,
+    "035420": 1000,
+    "042660": 400,
+}
+
+
+def buy_cap_won(code: str, tick: int) -> int:
+    return LIMIT_BUY_CAP.get(code, tick)          # default: one tick
+
+
+def sell_floor_won(code: str, tick: int) -> int:
+    return SELL_FLOOR.get(code, 2 * tick)         # default: two ticks
+
+
 def cap_for(price: float) -> int:
     """The most shares allowed at this price — the boss's risk bands."""
     if price > 1_000_000:

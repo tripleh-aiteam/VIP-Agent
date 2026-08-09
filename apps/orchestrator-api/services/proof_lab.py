@@ -72,6 +72,19 @@ VARIANTS: list[dict] = [
     # Honesty: 12-25 trades per cell over 4 days; 7 positives out of thousands tested
     # carries real selection risk - these must EARN their keep live and in the weekend
     # year study before anyone believes them.
+    # ── THE LIMIT-ORDER DESK (boss 2026-08-10): offer the close, never pay more than
+    # one tick above it, take +2 ticks, stop -2% with his per-stock floor. Same rule,
+    # five variations of the entry filter, so the board keeps comparing.
+    {"id": "LMT", "entry": 3, "kind": "pct", "a": 0.3, "b": 2.0, "exec": "limit",
+     "take_ticks": 2, "stop_pct": 2.0, "wait_bars": 2},
+    {"id": "LMTv", "entry": 3, "kind": "pct", "a": 0.3, "b": 2.0, "exec": "limit",
+     "take_ticks": 2, "stop_pct": 2.0, "wait_bars": 2, "vol": 1.5},
+    {"id": "LMT2", "entry": 2, "kind": "pct", "a": 0.3, "b": 2.0, "exec": "limit",
+     "take_ticks": 2, "stop_pct": 2.0, "wait_bars": 2, "vol": 1.5},
+    {"id": "LMT4", "entry": 3, "kind": "pct", "a": 0.3, "b": 2.0, "exec": "limit",
+     "take_ticks": 4, "stop_pct": 2.0, "wait_bars": 2, "vol": 1.5},
+    {"id": "LMT6", "entry": 3, "kind": "pct", "a": 0.3, "b": 2.0, "exec": "limit",
+     "take_ticks": 6, "stop_pct": 2.0, "wait_bars": 2, "vol": 1.5},
     {"id": "g1", "entry": 3, "kind": "pct", "a": 0.5, "b": 2.0, "vol": 2.0, "clock": [5, 60]},
     {"id": "g2", "entry": 2, "kind": "pct", "a": 1.0, "b": 2.0, "vol": 1.5, "clock": [5, 60]},
     {"id": "g3", "entry": 3, "kind": "pct", "a": 1.0, "b": 2.0, "vol": 1.5, "clock": [5, 60]},
@@ -156,6 +169,11 @@ def label(v: dict, ko: bool = True) -> str:
     ent = (f"{v['entry']}연속 하락" if dn else f"{v['entry']}연속 상승") if ko else           (f"{v['entry']} down" if dn else f"{v['entry']} up")
     if v.get("vol"):
         ent += f" (거래량 ≥{v['vol']}배)" if ko else f" (vol ≥{v['vol']}x)"
+    if v.get("exec") == "limit":
+        tt_ = v.get("take_ticks", 2)
+        return ((f"[지정가] {ent} → +{tt_}호가 익절 / -{v.get('stop_pct',2.0)}% 손절(하한선)")
+                if ko else
+                (f"[LIMIT] {ent} / +{tt_} ticks take, -{v.get('stop_pct',2.0)}% stop (with floor)"))
     if v.get("max_run"):
         ent += f" (상승폭 <{v['max_run']}%)" if ko else f" (run <{v['max_run']}%)"
     if v.get("clock"):
@@ -416,6 +434,15 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
     """
     out: list[dict] = []
     pos = None
+    # THE BOSS'S LIMIT-ORDER MODEL (2026-08-10). A rule carrying exec="limit" does not
+    # pay the ask: it OFFERS the signal bar's close and waits `wait_bars` bars of its own
+    # stock. If the market comes to the offer it fills there; if the wait expires it pays
+    # at most buy_cap_won above the offer, and beyond that the signal is abandoned. The
+    # pending order holds the desk's one hand, exactly as a position does - two stocks can
+    # never both be working an order. Exits become real orders too: a resting SELL LIMIT
+    # take_ticks above the entry (filled intrabar off the high) and a protective stop that
+    # sells only between its trigger and sell_floor_won beneath it - never a won lower.
+    pend = None
     n = len(stks)
     up = [0] * n
     dn = [0] * n
@@ -436,7 +463,28 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
             up[si], dn[si] = up[si] + 1, 0
         elif c < prev:
             up[si], dn[si] = 0, dn[si] + 1
-        if pos is None:
+        # ---- a working limit order, on its own stock's bars ----
+        if pend is not None and pend["si"] == si:
+            from services.proof_ml import buy_cap_won
+            lows = s.get("lows") or closes
+            if lows[i] <= pend["px"]:
+                bk = book(s["seed"] * 1_000 + i, pend["px"], "BUY", s["tick"])
+                bk = dict(bk, fill=pend["px"])           # our price, not the ask
+                pos = {"si": si, "i": pend["i"], "entry": pend["px"], "bk": bk,
+                       "close": pend["close"], "qty": pend["qty"], "ml": pend["ml"],
+                       "seq": pend["seq"], "limit": True}
+                pend = None
+            else:
+                pend["left"] -= 1
+                if pend["left"] <= 0:
+                    ask = c + s["tick"]
+                    if ask <= pend["px"] + buy_cap_won(s.get("code", ""), s["tick"]):
+                        bk = book(s["seed"] * 1_000 + i, c, "BUY", s["tick"])
+                        pos = {"si": si, "i": i, "entry": ask, "bk": bk, "close": c,
+                               "qty": pend["qty"], "ml": pend["ml"], "seq": pend["seq"],
+                               "limit": True}
+                    pend = None                          # else: abandoned, no trade
+        if pos is None and pend is None:
             if (dn[si] if v.get("dir", 1) < 0 else up[si]) >= v["entry"]:
                 if v.get("max_run"):
                     # small-run confirmation, same walk as run_variant - keep in step
@@ -488,10 +536,55 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                 bk = book(s["seed"] * 1_000 + i, c, "BUY", s["tick"])
                 from services.proof_ml import cap_for as _cap
                 _q = (ml_meta or {}).get("qty") or _cap(c)
-                pos = {"si": si, "i": i, "entry": bk["fill"], "bk": bk, "close": c,
-                       "qty": _q, "ml": ml_meta,
-                       "seq": closes[max(0, i - v["entry"]): i + 1]}
-        elif pos["si"] == si:
+                if v.get("exec") == "limit":
+                    pend = {"si": si, "i": i, "px": c, "close": c, "qty": _q,
+                            "ml": ml_meta, "left": v.get("wait_bars", 2),
+                            "seq": closes[max(0, i - v["entry"]): i + 1]}
+                else:
+                    pos = {"si": si, "i": i, "entry": bk["fill"], "bk": bk, "close": c,
+                           "qty": _q, "ml": ml_meta,
+                           "seq": closes[max(0, i - v["entry"]): i + 1]}
+        elif pos is not None and pos["si"] == si:
+            # (pos can be None while a limit order is still working - the branch above
+            #  is now guarded by `pend is None`, so this one must test pos explicitly)
+            if v.get("exec") == "limit":
+                from services.proof_ml import sell_floor_won
+                tk = s["tick"]
+                highs = s.get("highs") or closes
+                lows = s.get("lows") or closes
+                take = pos["entry"] + v.get("take_ticks", 2) * tk
+                trig = pos["entry"] * (1 - v.get("stop_pct", 2.0) / 100)
+                floor = trig - sell_floor_won(s.get("code", ""), tk)
+                hit, why, fill_px = False, "", None
+                if highs[i] >= take:
+                    hit, fill_px = True, take
+                    why = f"+{v.get('take_ticks', 2)}호가 익절"
+                elif lows[i] <= trig:
+                    # the stop sells inside its band only - below the floor we HOLD,
+                    # which is the boss's instruction and its risk, stated plainly
+                    if lows[i] >= floor:
+                        hit, fill_px = True, max(floor, min(c, trig))
+                        why = f"-{v.get('stop_pct', 2.0)}% 손절"
+                if hit:
+                    bk = dict(book(s["seed"] * 2_000 + i, c, "SELL", tk), fill=fill_px)
+                    gross = (fill_px / pos["entry"] - 1) * 100
+                    tr = {"si": si, "buy_i": pos["i"], "sell_i": i,
+                          "qty": pos.get("qty", 1), "entry": pos["entry"],
+                          "exit": fill_px, "gross_pct": round(gross, 3),
+                          "net_pct": round(gross - FEE_PCT, 3),
+                          "exit_why": why, "ml": pos.get("ml")}
+                    if v.get("ml"):
+                        b2 = s.get("ml_bundle")
+                        tr["ml_model"] = ({"auc": b2["auc"], "n_train": b2["n_train"],
+                                           "n_test": b2["n_test"], "base_rate": b2["base_rate"],
+                                           "trained_to": b2.get("trained_to"),
+                                           "n_signals": b2.get("n_signals", 0)} if b2 else None)
+                    if evidence:
+                        tr["buy_ev"] = {"close": pos["close"], "book": pos["bk"], "seq": pos["seq"]}
+                        tr["sell_ev"] = {"close": c, "book": bk, "seq": closes[max(0, i - 1): i + 1]}
+                    out.append(tr)
+                    pos = None
+                continue
             if v["kind"] == "candle":
                 if v.get("dir", 1) < 0:
                     hit = up[si] == v["a"]

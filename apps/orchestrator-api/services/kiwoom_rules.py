@@ -334,6 +334,8 @@ def rank(tick: int = 5, period: int = 0, day: str = "",
     # across all of them - see proof_lab.run_desk. The per-stock loop this replaces
     # let a rule hold all three companies at once.
     base_by_day = [(d, [{"code": code, "closes": [c["close"] for c in tp["cs"]],
+                         "highs": [c["high"] for c in tp["cs"]],
+                         "lows": [c["low"] for c in tp["cs"]],
                          "tick": tp["tk"], "seed": 1,
                          "vols": [float(c.get("vol") or 0) for c in tp["cs"]],
                          "ctx": daily_ctx(code, d or _kd0()),
@@ -485,6 +487,8 @@ def trades(vid: str, tick: int = 5, period: int = 0, code: str = "",
                 continue
             stks.append({"code": c_code, "name": name, "cs": cs,
                          "closes": [c["close"] for c in cs],
+                         "highs": [c["high"] for c in cs],
+                         "lows": [c["low"] for c in cs],
                          "tick": krx_tick(cs[-1]["close"]) or 1, "seed": 1,
                          "times": [c["hhmm"] for c in cs],
                          "vols": [float(c.get("vol") or 0) for c in cs],
