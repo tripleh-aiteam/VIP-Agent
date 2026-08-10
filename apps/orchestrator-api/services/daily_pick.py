@@ -54,6 +54,27 @@ DESK = [
 ]
 PINNED = DESK           # kept for callers that still ask which names are fixed
 
+# WHICH DESK IS LIVE (boss 2026-08-11). "fixed" = his six, traded every day. "score" =
+# the day's top five from the 100-item checklist, chosen fresh each morning. He wanted to
+# be able to switch and have the other desk turn OFF, so this is one setting, remembered
+# on disk, read by pick() and by the collector - never two desks trading at once.
+_MODE_FILE = _DATA / "desk_mode.json"
+
+
+def desk_mode() -> str:
+    try:
+        m = json.loads(_MODE_FILE.read_text(encoding="utf-8")).get("mode")
+        return m if m in ("fixed", "score") else "fixed"
+    except Exception:
+        return "fixed"
+
+
+def set_desk_mode(mode: str) -> str:
+    mode = mode if mode in ("fixed", "score") else "fixed"
+    _DATA.mkdir(exist_ok=True)
+    _MODE_FILE.write_text(json.dumps({"mode": mode}), encoding="utf-8")
+    return mode
+
 
 def _conn():
     from ml._db import get_conn
@@ -248,19 +269,26 @@ def pick(day: str, n: int = N_PICKS, refresh_character: bool = False) -> dict[st
     for i, r in enumerate(rows, 1):
         r["rank"] = i
         r["pinned"] = r["code"] in DESK
-    # THE DESK is the boss's fixed six. The score no longer picks who trades - it grades
-    # them, and `by_score` still marks the day's genuine top n so the board can show what
-    # the checklist WOULD have chosen next to what he actually trades.
-    chosen = [r for r in rows if r["code"] in DESK]
-    chosen.sort(key=lambda r: DESK.index(r["code"]))     # his order, not the score's
+    # WHICH DESK TRADES. "fixed" = his six in his order; "score" = the day's top n from
+    # the checklist. Only one is ever live, and `by_score` always marks the checklist's
+    # own answer so the board can show what the other desk would have done.
     earned = rows[:n]
+    mode = desk_mode()
+    if mode == "score":
+        chosen = list(earned)
+    else:
+        chosen = [r for r in rows if r["code"] in DESK]
+        chosen.sort(key=lambda r: DESK.index(r["code"]))   # his order, not the score's
+    live = {r["code"] for r in chosen}
     for r in rows:
-        r["on_desk"] = r["code"] in DESK
-        r["by_score"] = r in earned                     # would have been picked on merit
-        r["added"] = r["on_desk"] and r not in earned   # on the desk by his choice alone
+        r["on_desk"] = r["code"] in live
+        r["by_score"] = r in earned                     # the checklist's own five
+        r["pinned"] = r["code"] in DESK                 # one of his six, live or not
+        r["added"] = r["on_desk"] and r not in earned   # trading by his choice alone
     missing = [c for c in DESK if c not in {r["code"] for r in rows}]
     return {"ok": True, "day": day, "picks": [r["code"] for r in chosen],
-            "pinned": DESK, "desk": DESK, "fixed_desk": True,
+            "mode": mode, "pinned": DESK, "desk": DESK,
+            "fixed_desk": mode == "fixed",
             "n_earned": len([r for r in chosen if r["by_score"]]),
             "n_added": len([r for r in chosen if r["added"]]),
             "missing": missing, "weights": WEIGHTS, "rows": rows}

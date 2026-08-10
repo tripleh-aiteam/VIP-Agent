@@ -681,6 +681,34 @@ def live_rule_trades(variant: str = Query(...), tick: int = Query(5),
                   day=day, frm=frm, to=to, use_gate=bool(gate))
 
 
+@router.post("/desk-mode")
+def desk_mode_set(mode: str = Query(...), force: int = Query(0)):
+    """Switch the whole desk between the boss's six and the checklist's top five.
+    One is always OFF: the collector follows whichever is set. During market hours the
+    swap needs force=1, because re-pointing mid-session abandons the tape already
+    collected for the stocks that leave."""
+    from services.daily_pick import desk_mode, save_picks, set_desk_mode
+    from services.kiwoom_tape import WATCH, _day, market_open, refresh_watch
+    m = set_desk_mode(mode)
+    d = _day()
+    if market_open() and not force:
+        return {"ok": True, "mode": m, "applied": False,
+                "note": "market is open - pass force=1 to switch the collector now",
+                "trading_now": [{"code": c, "name": n} for c, n in WATCH]}
+    save_picks(d)
+    refresh_watch(force=True)
+    return {"ok": True, "mode": m, "applied": True, "day": d,
+            "trading_now": [{"code": c, "name": n} for c, n in WATCH]}
+
+
+@router.get("/desk-mode")
+def desk_mode_get():
+    from services.daily_pick import DESK, desk_mode
+    from services.kiwoom_tape import WATCH
+    return {"ok": True, "mode": desk_mode(), "fixed_six": DESK,
+            "trading_now": [{"code": c, "name": n} for c, n in WATCH]}
+
+
 @router.get("/raw-daily")
 def raw_daily(code: str = Query(...), days: int = Query(20), to: str = Query("")):
     """The raw rows the picker reads - open/high/low/close/volume straight out of

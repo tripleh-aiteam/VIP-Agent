@@ -86,6 +86,7 @@ type Pick = { ok: boolean; day: string; market_open?: boolean; applied?: boolean
               picks: string[]; weights?: Record<string, number>;
               trading_now?: { code: string; name: string }[];
               pinned?: string[]; n_earned?: number; n_added?: number;
+              mode?: string; desk?: string[]; missing?: string[];
               rows: { rank: number; code: string; name: string; score: number;
                       tick_pct: number; rsi: number; aligned: number; new_high: number;
                       why: string[]; groups: Record<string, number>;
@@ -367,6 +368,23 @@ export default function LiveDeskPage() {
   const [pickAll, setPickAll] = useState(false);       // the other 32 stay behind a button
   const [pickCol, setPickCol] = useState("");          // a column header explains itself when clicked
   useEffect(() => { api<Pick>("/paper-desk/daily-pick").then(setDpick).catch(() => {}); }, []);
+  // WHICH DESK TRADES (boss 2026-08-11): his six by default, or the checklist's top five
+  // - and switching one ON turns the other OFF, collector included. During market hours
+  // the swap needs confirming, because the stocks that leave abandon their tape.
+  const [deskBusy, setDeskBusy] = useState(false);
+  const switchDesk = useCallback((mode: "fixed" | "score") => {
+    if (mode === (dpick?.mode ?? "fixed")) return;
+    const open = !!dpick?.market_open;
+    if (open && !confirm(t(
+      "지금은 장중입니다. 지금 바꾸면 빠지는 종목의 오늘 체결 기록 수집이 중단됩니다. 바꿀까요?",
+      "The market is open. Switching now stops collecting today's tape for the stocks that leave. Switch anyway?"))) return;
+    setDeskBusy(true);
+    api<{ ok: boolean }>(`/paper-desk/desk-mode?mode=${mode}&force=${open ? 1 : 0}`, { method: "POST" })
+      .then(() => api<Pick>("/paper-desk/daily-pick"))
+      .then(setDpick)
+      .catch(() => {})
+      .finally(() => setDeskBusy(false));
+  }, [dpick, t]);
   // THE SOURCE DATA. The boss asked to check the rows the picker reads without opening
   // Supabase (2026-08-10). One indexed query, ~20 rows - light enough to open on a click.
   const [rawCode, setRawCode] = useState("");
@@ -613,7 +631,10 @@ export default function LiveDeskPage() {
           <div className="px-4 py-2 flex items-center gap-2 flex-wrap cursor-pointer"
             style={{ background: "rgba(21,101,192,0.06)" }} onClick={() => setPickOpen(!pickOpen)}>
             <b className="text-[13px]" style={{ color: "#1565c0" }}>
-              🎯 {t(`내 종목 ${(dpick.picks || []).length} — 매일 이 종목만 매매합니다`,
+              🎯 {(dpick.mode ?? "fixed") === "score"
+                ? t(`100점 상위 ${(dpick.picks || []).length}종목 — 오늘 아침 점수로 뽑았습니다`,
+                    `top ${(dpick.picks || []).length} by score — chosen by this morning's checklist`)
+                : t(`내 종목 ${(dpick.picks || []).length} — 매일 이 종목만 매매합니다`,
                     `my desk: ${(dpick.picks || []).length} stocks — these are what we trade, every day`)}
             </b>
             <span className="text-[11px] font-bold">
@@ -631,8 +652,26 @@ export default function LiveDeskPage() {
                    `still collecting the previous five today (${(dpick.trading_now || []).map((x) => x.name).join(", ")}) - applies from tomorrow morning`)}
               </span>
             )}
-            <span className="ml-auto text-[10.5px]" style={{ color: "#1565c0" }}>
-              {pickOpen ? t("닫기 ▲", "close ▲") : t("순위 보기 ▼", "see the ranking ▼")}
+            <span className="ml-auto flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
+              {([["fixed", t("내 6종목", "my 6 stocks")],
+                 ["score", t("100점 상위 5종목", "top 5 by the 100-point score")]] as const)
+                .map(([m, lab]) => (
+                <button key={m} disabled={deskBusy} onClick={() => switchDesk(m)}
+                  title={m === "fixed"
+                    ? t("SK하이닉스 · 삼성전자 · NAVER · SK텔레콤 · 한화오션 · 두산에너빌리티",
+                        "SK하이닉스, 삼성전자, NAVER, SK텔레콤, 한화오션, 두산에너빌리티")
+                    : t("매일 아침 100항목 점수로 다시 뽑는 상위 5종목",
+                        "the top five re-scored by the 100-item checklist every morning")}
+                  className="text-[10px] font-bold px-2 py-0.5 rounded border"
+                  style={(dpick.mode ?? "fixed") === m
+                    ? { background: "#1565c0", color: "#fff", borderColor: "#1565c0" }
+                    : { borderColor: "var(--border-default)", color: "var(--text-secondary)" }}>
+                  {(dpick.mode ?? "fixed") === m ? "● " : ""}{lab}
+                </button>
+              ))}
+              <span className="text-[10.5px] ml-1" style={{ color: "#1565c0" }}>
+                {pickOpen ? t("닫기 ▲", "close ▲") : t("순위 보기 ▼", "see the ranking ▼")}
+              </span>
             </span>
           </div>
           {pickOpen && (
