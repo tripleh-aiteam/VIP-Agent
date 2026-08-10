@@ -386,6 +386,10 @@ def rank(tick: int = 5, period: int = 0, day: str = "",
             "id": v["id"], "ko": label(v, True), "en": label(v, False),
             # +1 = the original twelve (buy after RISES), -1 = the six reversal rules
             "dir": v.get("dir", 1), "kind": v["kind"],
+            # WHICH WAY (boss 2026-08-10): "new" = find a sharp drop and ride the
+            # bounce, "old" = buy three rises and take a fixed number of ticks. The
+            # board opens on the new family and the old one is one click away.
+            "family": v.get("family", "old"),
             "trips": len(trades), "wins": w, "losses": l,
             "flats": len(trades) - w - l,
             "win_pct": round(w / (w + l) * 100) if (w + l) else 0,
@@ -601,6 +605,10 @@ def trades(vid: str, tick: int = 5, period: int = 0, code: str = "",
             # (boss 2026-08-07: click a rule -> buy/sell conditions + why selected)
             "vol_x": v.get("vol"), "max_run": v.get("max_run"), "take": v.get("take"),
             "is_ml": bool(v.get("ml")),
+            # the new way carries its own recipe so the explanation panel can spell out
+            # the sharp-drop entry and the riding exit instead of the +N호가 wording
+            "family": v.get("family", "old"), "dip": v.get("dip"), "ride": v.get("ride"),
+            "take_ticks": v.get("take_ticks"), "stop_pct": v.get("stop_pct"),
             "dir": v.get("dir", 1),
             "trips": len(rows), "wins": w, "losses": l, "flats": len(rows) - w - l,
             "win_pct": round(w / (w + l) * 100) if (w + l) else 0,

@@ -78,7 +78,7 @@ type RuleRow = { id: string; ko: string; en: string; dir: number; trips: number;
                  vs?: number | null; vs_trips?: number | null;
                  net_won?: number | null; per_trade_won?: number | null;
                  losses: number; flats: number; win_pct: number; per_trade: number; net: number;
-                 decided: number; thin: boolean };
+                 decided: number; thin: boolean; family?: string };
 type Gate = { ok: boolean; day: string; go: number; total: number;
               rows: { code: string; name: string; go: boolean;
                       reason_ko: string; reason_en: string }[] };
@@ -352,6 +352,11 @@ export default function LiveDeskPage() {
   useEffect(() => { hourToRef.current = hourTo; }, [hourTo]);
   // with ML / without ML / everything
   const [mlView, setMlView] = useState<"all" | "ml" | "plain">("all");
+  // WHICH WAY (boss 2026-08-10): "we have to trade using both ways partially, old way
+  // and new way also - by default it should show new way, and if I click old way it
+  // should show our old way". Both families trade on every tape at once; this only
+  // chooses which set of rows is on screen.
+  const [way, setWay] = useState<"new" | "old" | "both">("new");
   // the screener's ranking - loaded once, shown on demand (boss 2026-08-10)
   // the static year-based screener panel was superseded by the daily picker above;
   // /paper-desk/screener still serves its data for reference.
@@ -388,6 +393,7 @@ export default function LiveDeskPage() {
   // Enter on the empty box reveals everything; typing a number sets a new floor.
   const [minWin, setMinWin] = useState<number | null>(50);
   const shownRules = (rank?.variants ?? []).filter((v) => twelve.includes(v.id))
+    .filter((v) => way === "both" ? true : (v.family ?? "old") === way)
     .filter((v) => mlView === "all" ? true
                  : mlView === "ml" ? v.id.endsWith("ML") : !v.id.endsWith("ML"))
     .filter((v) => minWin === null || v.win_pct >= minWin);
@@ -909,6 +915,19 @@ export default function LiveDeskPage() {
                 {t("해제", "clear")}
               </button>
             )}
+            <div className="flex items-center gap-0.5 mr-1">
+              {([["new", t("새 방식", "new way"), t("급락 후 반등을 잡고, 오르는 동안 들고 갑니다", "catch the bounce off a sharp drop, then ride it")],
+                 ["old", t("예전 방식", "old way"), t("3연속 상승에 사고 +6·+10호가에 팝니다", "buy 3 rises, sell at +6 / +10 ticks")],
+                 ["both", t("둘 다", "both"), t("두 방식을 한 화면에서 비교", "both families on one screen")]] as const)
+                .map(([k, lab, tip]) => (
+                <button key={k} onClick={() => { setWay(k); setDet(null); }} title={tip}
+                  className="text-[10px] font-bold px-2 py-0.5 rounded border"
+                  style={way === k ? { background: "#6a1b9a", color: "#fff", borderColor: "#6a1b9a" }
+                                   : { borderColor: "var(--border-default)", color: "var(--text-secondary)" }}>
+                  {lab}
+                </button>
+              ))}
+            </div>
             <select value={mlView} onChange={(e) => setMlView(e.target.value as "all" | "ml" | "plain")}
               className="text-[10px] font-bold px-1 py-0.5 rounded border bg-[var(--bg-primary)] text-[var(--text-primary)] ml-1"
               style={{ borderColor: mlView === "all" ? "var(--border-default)" : "#1565c0" }}>
@@ -919,8 +938,14 @@ export default function LiveDeskPage() {
               <option value="plain">{t("규칙만 (ML 없이)", "rules only")}</option>
             </select>
             <span className="text-[10.5px] text-[var(--text-muted)]">
-              {t("같은 규칙, 다른 봉 크기 — 규칙은 그대로고 봉만 바뀝니다.",
-                 "same rules, different bar size - the rules never change, only the bars.")}
+              {way === "new"
+                ? t("새 방식: 급락 → 멈춤 → 2번째 양봉에 매수. 급등이면 0.5%·1%에 팔지 않고 고점 -0.5% 또는 2연속 음봉까지 보유, 완만하면 3연속 상승 또는 +1%에 매도. 횡보는 아예 매매 안 함. — 1년치 검증에서는 손실이었습니다(진입 신호가 무작위 시점과 통계적으로 같음). 실제 테이프로 확인하려고 올려둔 것이며 가짜 돈입니다.",
+                    "New way: sharp drop -> it stops -> buy the 2nd up candle. A sharp bounce is NOT sold at 0.5% or 1% - it is held to -0.5% off the peak or 2 down candles; a slow one is sold at 3 rises or +1%. Nothing is traded in a flat market. - It lost money in the year-long test (the entry is statistically the same as a random moment). It is here on paper money to be settled on live tape.")
+                : way === "old"
+                ? t("예전 방식: 3연속 상승에 매수, +6 또는 +10호가에 매도, -2% 손절. 지금까지 실제로 거래해 온 규칙입니다.",
+                    "Old way: buy after 3 rises, sell at +6 or +10 ticks, -2% stop. This is what the desk has actually been trading.")
+                : t("두 방식이 같은 테이프 위에서 동시에 돌아갑니다 — 승률과 금액을 나란히 비교하세요.",
+                    "Both families run on the same tape at the same time - compare the win rate and the money side by side.")}
             </span>
             <span className="text-[10px] font-bold px-1.5 py-0.5 rounded"
               style={{ background: "rgba(106,27,154,0.12)", color: "#6a1b9a" }}>

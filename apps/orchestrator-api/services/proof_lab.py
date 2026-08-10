@@ -124,6 +124,53 @@ VARIANTS: list[dict] = [
      "take_ticks": 6, "stop_pct": 2.0, "wait_bars": 2, "vol": 1.5, "ml": True},
     {"id": "T10ML", "entry": 3, "kind": "pct", "a": 0.3, "b": 2.0, "exec": "limit",
      "take_ticks": 10, "stop_pct": 2.0, "wait_bars": 2, "vol": 1.5, "ml": True},
+    # ══ THE NEW WAY (boss 2026-08-10) ═══════════════════════════════════════════════
+    # "Do not look for 3 red candles anywhere. Find a SHARP DECREASE, and whenever it
+    # stops decreasing and starts increasing, buy on the second red. Do not sell at 0.5%
+    # or 1% if it is rising sharply - it can rise again, so wait, and sell at the
+    # beginning of the second blue. If it rises slowly instead, sell after 3 up or +1%.
+    # If it is only oscillating, no trading - no loss and no gain."
+    #
+    # MEASURED BEFORE BUILDING, and he was told: over a year of 5분봉 on the desk stocks
+    # and over every recorded day of tape at 1분/5틱/10틱/30틱, 144 parameter variants,
+    # every single one lost money. The reason is the entry: after this signal the price
+    # behaves like a randomly chosen bar (avg best +0.707% vs +0.668%, avg worst -0.758%
+    # vs -0.698%), so it has no edge to trade on. He asked for it on the board anyway,
+    # next to the old way, to settle it on live tape rather than on my backtests. Paper
+    # money only until it earns better numbers.
+    {"id": "N1", "entry": 2, "kind": "pct", "a": 0.3, "b": 2.0, "exec": "limit",
+     "stop_pct": 2.0, "wait_bars": 2, "family": "new", "ignore_gate": True,
+     "dip": {"drop": 0.8, "sharp": 3.0, "ups": 2, "chop": 0.40, "look": 20},
+     "ride": {"arm": 1.0, "give": 0.5, "downs": 2, "slow_ups": 3, "slow_take": 1.0,
+              "sharp_rise": 2.0}},
+    {"id": "N2", "entry": 2, "kind": "pct", "a": 0.3, "b": 2.0, "exec": "limit",
+     "stop_pct": 2.0, "wait_bars": 2, "family": "new", "ignore_gate": True,
+     "dip": {"drop": 0.4, "sharp": 3.0, "ups": 2, "chop": 0.40, "look": 20},
+     "ride": {"arm": 0.5, "give": 0.3, "downs": 2, "slow_ups": 3, "slow_take": 1.0,
+              "sharp_rise": 2.0}},
+    {"id": "N3", "entry": 3, "kind": "pct", "a": 0.3, "b": 2.0, "exec": "limit",
+     "stop_pct": 2.0, "wait_bars": 2, "family": "new", "ignore_gate": True,
+     "dip": {"drop": 0.8, "sharp": 3.0, "ups": 3, "chop": 0.40, "look": 20},
+     "ride": {"arm": 1.0, "give": 0.5, "downs": 2, "slow_ups": 3, "slow_take": 1.0,
+              "sharp_rise": 2.0}},
+    {"id": "N1ML", "entry": 2, "kind": "pct", "a": 0.3, "b": 2.0, "exec": "limit",
+     "stop_pct": 2.0, "wait_bars": 2, "family": "new", "ignore_gate": True, "ml": True,
+     "dip": {"drop": 0.8, "sharp": 3.0, "ups": 2, "chop": 0.40, "look": 20},
+     "ride": {"arm": 1.0, "give": 0.5, "downs": 2, "slow_ups": 3, "slow_take": 1.0,
+              "sharp_rise": 2.0}},
+    # HIS EXIT ON THE OLD ENTRY. The one measured improvement in the whole study: keep
+    # the 3-rise entry the desk already trades and swap ONLY the exit for his ride.
+    # Holdout months: +6 ticks -6.55M / 52% win, this -1.97M / 45% win. Still negative,
+    # three times less so - so it belongs on the board next to both parents.
+    {"id": "R6", "entry": 3, "kind": "pct", "a": 0.3, "b": 2.0, "exec": "limit",
+     "stop_pct": 2.0, "wait_bars": 2, "vol": 1.5, "family": "new", "ignore_gate": True,
+     "ride": {"arm": 1.0, "give": 0.5, "downs": 2, "slow_ups": 3, "slow_take": 1.0,
+              "sharp_rise": 2.0}},
+    {"id": "R6ML", "entry": 3, "kind": "pct", "a": 0.3, "b": 2.0, "exec": "limit",
+     "stop_pct": 2.0, "wait_bars": 2, "vol": 1.5, "family": "new", "ignore_gate": True, "ml": True,
+     "ride": {"arm": 1.0, "give": 0.5, "downs": 2, "slow_ups": 3, "slow_take": 1.0,
+              "sharp_rise": 2.0}},
+
     {"id": "g1", "entry": 3, "kind": "pct", "a": 0.5, "b": 2.0, "vol": 2.0, "clock": [5, 60]},
     {"id": "g2", "entry": 2, "kind": "pct", "a": 1.0, "b": 2.0, "vol": 1.5, "clock": [5, 60]},
     {"id": "g3", "entry": 3, "kind": "pct", "a": 1.0, "b": 2.0, "vol": 1.5, "clock": [5, 60]},
@@ -214,6 +261,27 @@ def label(v: dict, ko: bool = True) -> str:
         _t, _p = v["clock"]
         _cl = f"{_p}초" if _p and _p < 60 else ("1분" if _p == 60 else f"{_t}틱")
         ent = (f"[{_cl} 전용] " if ko else f"[{_cl} only] ") + ent
+    if v.get("ride"):
+        r = v["ride"]
+        d = v.get("dip")
+        if ko:
+            ent = (f"급락 후 {d['ups']}연속 상승" if d else f"{v['entry']}연속 상승")
+            ex = (f"급등이면 고점 -{r['give']}% 또는 2연속 하락까지 보유 · "
+                  f"완만하면 {r['slow_ups']}연속 상승 또는 +{r['slow_take']}%")
+            txt = f"{ent} → {ex}"
+        else:
+            ent = (f"{d['ups']} rises after a sharp drop" if d
+                   else f"{v['entry']} rises")
+            ex = (f"ride a sharp move to -{r['give']}% off the peak or 2 falls; "
+                  f"a slow one to {r['slow_ups']} rises or +{r['slow_take']}%")
+            txt = f"{ent} → {ex}"
+        if v.get("vol"):
+            txt += (" · 거래량" if ko else " · volume")
+        if v.get("ignore_gate"):
+            txt += (" (게이트 무시)" if ko else " (no gate)")
+        if v.get("ml"):
+            txt += " + ML🤖"
+        return txt
     if v.get("exec") == "limit":
         # no "[LIMIT]" tag: the whole desk is limit-order now, so the word said nothing
         tt_ = v.get("take_ticks", 2)
@@ -453,6 +521,60 @@ def run_variant(closes: list[float], tick: int, v: dict, seed: int,
     return out, op
 
 
+def _dip_entry(s: dict, v: dict, i: int, ups: int, closes: list) -> bool:
+    """Does bar i finish the boss's pattern? sharp drop -> it stopped -> N bars back up.
+    A flat market ("oscillation") is refused outright: he asked for no trade at all
+    there, no loss and no gain."""
+    d = v["dip"]
+    st = _dip_state(s, d.get("look", 20))
+    if st["rng"][i] < d.get("chop", 0.40):          # nothing is happening - stand aside
+        return False
+    if st["drop"][i] < d.get("drop", 0.8):          # the fall was not big enough
+        return False
+    typ = st["typ"][i]
+    if typ and st["hi"][i] * st["drop"][i] / 100 < d.get("sharp", 3.0) * typ:
+        return False                                 # ... or not SHARP, just a slow drift
+    return ups >= d.get("ups", 2)                    # and it has turned back up
+
+
+def _dip_state(s: dict, look: int = 20) -> dict:
+    """THE BOSS'S NEW ENTRY (2026-08-10): stop buying three rises anywhere. Find a SHARP
+    DROP first, wait for the fall to stop, and buy on the way back up.
+
+    Everything here is independent of the rule's parameters, so it is computed once per
+    stock and shared by every rule that asks - the detector walks the whole tape and a
+    5틱 day is 30,000 bars.
+
+    For each bar it stores: the high of the last `look` bars, the trough since that high,
+    how far the fall went, and a typical bar move (median of the last 40) so "sharp" can
+    mean "much bigger than this stock's normal wiggle" rather than a fixed number.
+    """
+    import statistics
+    got = s.get("_dip")
+    if got is not None and got.get("look") == look:
+        return got
+    cl = s["closes"]
+    n = len(cl)
+    diffs = [0.0] + [abs(cl[i] - cl[i - 1]) for i in range(1, n)]
+    typ = [0.0] * n
+    hiw = [0.0] * n
+    rng = [0.0] * n
+    drop = [0.0] * n
+    for i in range(n):
+        w = diffs[max(1, i - 39):i + 1]
+        typ[i] = statistics.median(w) if w else 0.0
+        j = max(0, i - look)
+        win = cl[j:i + 1]
+        hi = max(win)
+        hiw[i] = hi
+        rng[i] = (hi - min(win)) / hi * 100 if hi else 0.0
+        k = j + win.index(hi)
+        drop[i] = (hi - min(cl[k:i + 1])) / hi * 100 if hi and k < i else 0.0
+    got = {"look": look, "typ": typ, "hi": hiw, "rng": rng, "drop": drop}
+    s["_dip"] = got
+    return got
+
+
 def run_desk(stks: list[dict], v: dict, evidence: bool = False,
              with_open: bool = False, fill_fn=None, events=None):
     """The rule over the WHOLE DESK with ONE position across every stock (boss
@@ -514,7 +636,8 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                 bk = dict(bk, fill=pend["px"])           # our price, not the ask
                 pos = {"si": si, "i": pend["i"], "entry": pend["px"], "bk": bk,
                        "close": pend["close"], "qty": pend["qty"], "ml": pend["ml"],
-                       "seq": pend["seq"], "limit": True}
+                       "seq": pend["seq"], "limit": True, "sharp": pend.get("sharp"),
+                       "peak": pend["px"], "ups": 0, "downs": 0}
                 pend = None
             else:
                 pend["left"] -= 1
@@ -524,13 +647,16 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                         bk = book(s["seed"] * 1_000 + i, c, "BUY", s["tick"])
                         pos = {"si": si, "i": i, "entry": ask, "bk": bk, "close": c,
                                "qty": pend["qty"], "ml": pend["ml"], "seq": pend["seq"],
-                               "limit": True}
+                               "limit": True, "sharp": pend.get("sharp"),
+                               "peak": ask, "ups": 0, "downs": 0}
                     pend = None                          # else: abandoned, no trade
         if pos is None and pend is None:
             # the daily gate (boss 2026-08-10): a stock whose day was judged NO-GO before
             # the open produces no entries at all today. Exits are untouched - a position
             # opened before a gate closes is still managed to its normal end.
             if s.get("gate_ok") is False and not v.get("ignore_gate"):
+                pass
+            elif v.get("dip") and not _dip_entry(s, v, i, up[si], closes):
                 pass
             elif (dn[si] if v.get("dir", 1) < 0 else up[si]) >= v["entry"]:
                 if v.get("max_run"):
@@ -583,17 +709,81 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                 bk = book(s["seed"] * 1_000 + i, c, "BUY", s["tick"])
                 from services.proof_ml import cap_for as _cap
                 _q = (ml_meta or {}).get("qty") or _cap(c)
+                # was the bounce SHARP or slow? his two cases part here, and the answer
+                # is fixed at the signal - not re-judged later when we already know more
+                _sharp = False
+                if v.get("ride"):
+                    _st = _dip_state(s, (v.get("dip") or {}).get("look", 20))
+                    _u = (v.get("dip") or {}).get("ups", v["entry"])
+                    _base = closes[max(0, i - _u)]
+                    _g = (c - _base) / _base * 100 if _base else 0.0
+                    _tp = _st["typ"][i] / c * 100 if c else 0.0
+                    _sharp = bool(_tp and _g >= v["ride"].get("sharp_rise", 2.0) * _tp)
                 if v.get("exec") == "limit":
                     pend = {"si": si, "i": i, "px": c, "close": c, "qty": _q,
-                            "ml": ml_meta, "left": v.get("wait_bars", 2),
+                            "ml": ml_meta, "left": v.get("wait_bars", 2), "sharp": _sharp,
                             "seq": closes[max(0, i - v["entry"]): i + 1]}
                 else:
                     pos = {"si": si, "i": i, "entry": bk["fill"], "bk": bk, "close": c,
-                           "qty": _q, "ml": ml_meta,
+                           "qty": _q, "ml": ml_meta, "sharp": _sharp,
                            "seq": closes[max(0, i - v["entry"]): i + 1]}
         elif pos is not None and pos["si"] == si:
             # (pos can be None while a limit order is still working - the branch above
             #  is now guarded by `pend is None`, so this one must test pos explicitly)
+            if v.get("ride"):
+                # HIS EXIT (2026-08-10): "do not sell at 0.5% or 1% if it is rising
+                # sharply, it can rise again - wait, and sell at the beginning of the
+                # second blue candle." A slow rise is sold the old way instead: three
+                # rises or +1%, whichever comes first.
+                from services.proof_ml import sell_floor_won
+                r = v["ride"]
+                tk = s["tick"]
+                lows = s.get("lows") or closes
+                pos["peak"] = max(pos.get("peak", pos["entry"]), c)
+                if c > prev:
+                    pos["ups"] = pos.get("ups", 0) + 1; pos["downs"] = 0
+                elif c < prev:
+                    pos["downs"] = pos.get("downs", 0) + 1; pos["ups"] = 0
+                gain = (c / pos["entry"] - 1) * 100
+                peak_gain = (pos["peak"] / pos["entry"] - 1) * 100
+                trig = pos["entry"] * (1 - v.get("stop_pct", 2.0) / 100)
+                floor = trig - sell_floor_won(s.get("code", ""), tk)
+                hit, why, fill_px = False, "", None
+                if lows[i] <= trig and lows[i] >= floor:
+                    hit, fill_px = True, max(floor, min(c, trig))
+                    why = f"-{v.get('stop_pct', 2.0)}% 손절"
+                elif pos.get("sharp"):
+                    # the ride is only "armed" once it has actually made something -
+                    # otherwise two red bars off the entry close every trade at a loss
+                    if peak_gain >= r.get("arm", 1.0):
+                        if pos.get("downs", 0) >= r.get("downs", 2):
+                            hit, fill_px, why = True, c, "2연속 하락 (상승 후)"
+                        elif gain <= peak_gain - r.get("give", 0.5):
+                            hit, fill_px, why = True, c, f"고점 대비 -{r.get('give', 0.5)}%"
+                else:
+                    if gain >= r.get("slow_take", 1.0):
+                        hit, fill_px, why = True, c, f"+{r.get('slow_take', 1.0)}% 익절"
+                    elif pos.get("ups", 0) >= r.get("slow_ups", 3):
+                        hit, fill_px, why = True, c, f"{r.get('slow_ups', 3)}연속 상승"
+                    elif pos.get("downs", 0) >= r.get("downs", 2) and gain > FEE_PCT:
+                        hit, fill_px, why = True, c, "2연속 하락 (이익 확보)"
+                if hit:
+                    bk = dict(book(s["seed"] * 2_000 + i, c, "SELL", tk), fill=fill_px)
+                    gross = (fill_px / pos["entry"] - 1) * 100
+                    tr = {"si": si, "buy_i": pos["i"], "sell_i": i,
+                          "qty": pos.get("qty", 1), "entry": pos["entry"],
+                          "exit": fill_px, "gross_pct": round(gross, 3),
+                          "net_pct": round(gross - FEE_PCT, 3),
+                          "exit_why": why, "ml": pos.get("ml"),
+                          "sharp": bool(pos.get("sharp"))}
+                    if evidence:
+                        tr["buy_ev"] = {"close": pos["close"], "book": pos["bk"],
+                                        "seq": pos["seq"]}
+                        tr["sell_ev"] = {"close": c, "book": bk,
+                                         "seq": closes[max(0, i - 1): i + 1]}
+                    out.append(tr)
+                    pos = None
+                continue
             if v.get("exec") == "limit":
                 from services.proof_ml import sell_floor_won
                 tk = s["tick"]
