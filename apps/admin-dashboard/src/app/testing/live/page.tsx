@@ -385,6 +385,33 @@ export default function LiveDeskPage() {
   const [showBlocked, setShowBlocked] = useState(false);
   const showBlockedRef = useRef(false);
   useEffect(() => { showBlockedRef.current = showBlocked; }, [showBlocked]);
+  // WHICH CLOCK IS BETTER (boss 2026-08-10: "parallel with 1 minute and 5 tick we will
+  // test which one is better"). Switching the dropdown back and forth compares nothing -
+  // this runs both clocks and puts the four numbers on one line. Fetched on demand and
+  // when the day changes, NOT on the 3-second poll: it is two full rule runs.
+  const [clocks, setClocks] = useState<Record<string, { fam: string; trips: number;
+    win: number; won: number }[]> | null>(null);
+  const [clocksBusy, setClocksBusy] = useState(false);
+  const loadClocks = useCallback(() => {
+    setClocksBusy(true);
+    const q = (extra: string) => `/paper-desk/live/rules?${extra}`
+      + (ruleDay ? `&day=${ruleDay}` : "") + (showBlocked ? "&gate=0" : "");
+    Promise.all([api<Rank>(q("tick=5")), api<Rank>(q("period=60"))])
+      .then(([a5, m1]) => {
+        const sum = (r: Rank) => (["new", "old"] as const).map((fam) => {
+          const rs = (r.variants || []).filter((v) => (v.family ?? "old") === fam);
+          const trips = rs.reduce((x, v) => x + v.trips, 0);
+          const wins = rs.reduce((x, v) => x + v.wins, 0);
+          const losses = rs.reduce((x, v) => x + v.losses, 0);
+          return { fam, trips, win: wins + losses ? Math.round(wins / (wins + losses) * 100) : 0,
+                   won: rs.reduce((x, v) => x + (v.net_won ?? 0), 0) };
+        });
+        setClocks({ "5틱": sum(a5), "1분": sum(m1) });
+      })
+      .catch(() => setClocks(null))
+      .finally(() => setClocksBusy(false));
+  }, [ruleDay, showBlocked]);
+  useEffect(() => { loadClocks(); }, [loadClocks]);
   // win% threshold: type 20, press ENTER - the box empties, a "≥20%" chip appears,
   // and only rules winning 20%+ stay. Click the chip's x to clear (boss 2026-08-06:
   // "after adding 20 then I should type enter then 20 should gone").
@@ -915,27 +942,64 @@ export default function LiveDeskPage() {
                 {t("해제", "clear")}
               </button>
             )}
-            <div className="flex items-center gap-0.5 mr-1">
-              {([["new", t("새 방식", "new way"), t("급락 후 반등을 잡고, 오르는 동안 들고 갑니다", "catch the bounce off a sharp drop, then ride it")],
-                 ["old", t("예전 방식", "old way"), t("3연속 상승에 사고 +6·+10호가에 팝니다", "buy 3 rises, sell at +6 / +10 ticks")],
-                 ["both", t("둘 다", "both"), t("두 방식을 한 화면에서 비교", "both families on one screen")]] as const)
-                .map(([k, lab, tip]) => (
-                <button key={k} onClick={() => { setWay(k); setDet(null); }} title={tip}
-                  className="text-[10px] font-bold px-2 py-0.5 rounded border"
-                  style={way === k ? { background: "#6a1b9a", color: "#fff", borderColor: "#6a1b9a" }
-                                   : { borderColor: "var(--border-default)", color: "var(--text-secondary)" }}>
-                  {lab}
-                </button>
-              ))}
+            <div className="w-full flex items-center gap-2 flex-wrap mb-1 pb-1 border-b"
+              style={{ borderColor: "var(--border-default)" }}>
+              <b className="text-[11px]" style={{ color: "#6a1b9a" }}>
+                ⏱ {t("어느 봉이 더 나은가", "which clock is better")}
+              </b>
+              {clocks ? (["5틱", "1분"] as const).map((ck) => (
+                <span key={ck} className="text-[10.5px] flex items-center gap-1">
+                  <b style={{ color: "var(--text-primary)" }}>{ck}</b>
+                  {clocks[ck].map((r) => (
+                    <span key={r.fam} className="px-1.5 py-0.5 rounded"
+                      style={{ background: r.fam === "new" ? "rgba(106,27,154,0.10)"
+                                                           : "rgba(21,101,192,0.10)" }}>
+                      {r.fam === "new" ? t("새", "new") : t("예전", "old")}{" "}
+                      {r.trips}{t("건", "t")} {r.win}%{" "}
+                      <b style={{ color: r.won > 0 ? "#b02a2a" : r.won < 0 ? "#1565c0"
+                                                                          : "var(--text-muted)" }}>
+                        {money ? `${r.won > 0 ? "+" : ""}₩${Math.round(r.won).toLocaleString()}`
+                               : "💰"}
+                      </b>
+                    </span>
+                  ))}
+                </span>
+              )) : (
+                <span className="text-[10px] text-[var(--text-muted)]">
+                  {clocksBusy ? t("계산 중…", "running both clocks…") : "—"}
+                </span>
+              )}
+              <button onClick={loadClocks} disabled={clocksBusy}
+                className="text-[10px] px-1.5 py-0.5 rounded border"
+                style={{ borderColor: "#6a1b9a", color: "#6a1b9a" }}>
+                {t("다시 계산", "recalculate")}
+              </button>
+              <span className="text-[10px] text-[var(--text-muted)]">
+                {t("같은 테이프, 같은 규칙, 봉 크기만 다름 — 각 방식의 모든 규칙 합계",
+                   "same tape, same rules, only the bar size differs - every rule in each family, added up")}
+              </span>
             </div>
-            <select value={mlView} onChange={(e) => setMlView(e.target.value as "all" | "ml" | "plain")}
-              className="text-[10px] font-bold px-1 py-0.5 rounded border bg-[var(--bg-primary)] text-[var(--text-primary)] ml-1"
-              style={{ borderColor: mlView === "all" ? "var(--border-default)" : "#1565c0" }}>
-              {/* the rows are always RULE + ML twins - "ML만" read as if the desk had a
-                  model trading alone, which does not exist (boss 2026-08-06) */}
-              <option value="all">{t("전체 (규칙 + 규칙+ML)", "all (rules & rules+ML)")}</option>
-              <option value="ml">{t("규칙+ML 만", "rules + ML")}</option>
-              <option value="plain">{t("규칙만 (ML 없이)", "rules only")}</option>
+            {/* ONE dropdown for "which rules am I looking at" (boss 2026-08-10: put the
+                new rule inside the dropdown that already holds 전체 / 규칙+ML / 규칙만).
+                It carries both choices at once - which WAY the rule trades and whether a
+                model filters it - because separate controls made him hunt for the
+                combination he wanted. The value is "family|ml". */}
+            <select value={`${way}|${mlView}`}
+              onChange={(e) => { const [w, m] = e.target.value.split("|");
+                                 setWay(w as "new" | "old" | "both");
+                                 setMlView(m as "all" | "ml" | "plain");
+                                 setDet(null); setSel(null); }}
+              className="text-[10.5px] font-bold px-1 py-0.5 rounded border bg-[var(--bg-primary)] text-[var(--text-primary)] ml-1"
+              style={{ borderColor: "#6a1b9a", color: "#6a1b9a" }}>
+              <option value="new|all">{t("📉📈 급락 후 반등 — 새 규칙", "📉📈 sharp drop then bounce - the new rule")}</option>
+              <option value="new|ml">{t("📉📈 급락 후 반등 + ML 만", "📉📈 sharp drop then bounce + ML only")}</option>
+              <option value="new|plain">{t("📉📈 급락 후 반등 (ML 없이)", "📉📈 sharp drop then bounce (no ML)")}</option>
+              <option value="old|all">{t("📈 3연속 상승 — 예전 규칙", "📈 three rises - the old rule")}</option>
+              <option value="old|ml">{t("📈 3연속 상승 + ML 만", "📈 three rises + ML only")}</option>
+              <option value="old|plain">{t("📈 3연속 상승 (ML 없이)", "📈 three rises (no ML)")}</option>
+              <option value="both|all">{t("🔀 두 방식 모두 (비교)", "🔀 both ways (compare)")}</option>
+              <option value="both|plain">{t("🔀 두 방식 모두 · 규칙만 (ML 없이)", "🔀 both ways, rules only (no ML)")}</option>
+              <option value="both|ml">{t("🔀 두 방식 모두 · 규칙+ML 만", "🔀 both ways, rules + ML only")}</option>
             </select>
             <span className="text-[10.5px] text-[var(--text-muted)]">
               {way === "new"
