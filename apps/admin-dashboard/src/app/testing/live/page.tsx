@@ -102,7 +102,8 @@ type Screen = { ok: boolean; scored_on?: string; tested_on?: string;
                         g_cost?: number; g_liquidity?: number; g_movement?: number;
                         g_behavior?: number; g_flow?: number; g_fit?: number }[] };
 type Rank = { ok: boolean; clock: string; fee_pct: number; original_12?: string[];
-              days?: string[]; day?: string; auto_day?: boolean; frm?: string; to?: string;
+              days?: string[]; day?: string; auto_day?: boolean; today?: string;
+              frm?: string; to?: string;
               stocks: { code: string; name: string; bars: number; from: string; to: string;
                         tick_size: number }[];
               variants: RuleRow[] };
@@ -356,6 +357,26 @@ export default function LiveDeskPage() {
   const [hourTo, setHourTo] = useState("");
   const hourFromRef = useRef(""); const hourToRef = useRef("");
   useEffect(() => { ruleDayRef.current = ruleDay; }, [ruleDay]);
+  // WHICH DAY IS SELECTED before the first tick of the session. Showing 08-10's finished
+  // trades under a picker that read "today" was read as "today has already traded"
+  // (boss 2026-08-11, twice). So the picker is moved to the day actually being shown -
+  // one date on screen, nowhere claiming to be today - and moved back to live by itself
+  // the moment today's tape appears.
+  const autoPinRef = useRef("");
+  useEffect(() => {
+    if (!rank) return;
+    const today = rank.today || "";
+    const hasToday = !!today && (rank.days || []).includes(today);
+    if (rank.auto_day && rank.day && ruleDay === "" && !hasToday) {
+      autoPinRef.current = rank.day;
+      setRuleDay(rank.day); ruleDayRef.current = rank.day;
+      setDet(null); setSel(null);
+    } else if (hasToday && autoPinRef.current && ruleDay === autoPinRef.current) {
+      autoPinRef.current = "";
+      setRuleDay(""); ruleDayRef.current = "";
+      setDet(null); setSel(null);
+    }
+  }, [rank, ruleDay]);
   useEffect(() => { hourFromRef.current = hourFrom; }, [hourFrom]);
   useEffect(() => { hourToRef.current = hourTo; }, [hourTo]);
   // with ML / without ML / everything
@@ -992,11 +1013,11 @@ export default function LiveDeskPage() {
             {/* Today has no tape before the opening bell, so the board reads the newest
                 day that does rather than showing an empty desk (boss 2026-08-11). Says
                 which day, so a past session is never mistaken for this one. */}
-            {rank?.auto_day && rank.day && (
-              <span className="text-[10px] font-bold px-2 py-0.5 rounded"
-                style={{ background: "rgba(230,81,0,0.14)", color: "#e65100" }}>
-                {t(`오늘은 아직 체결이 없어 ${rank.day.slice(4, 6)}월 ${rank.day.slice(6, 8)}일 결과를 보여드립니다`,
-                   `no executions today yet - showing ${rank.day.slice(4, 6)}/${rank.day.slice(6, 8)}`)}
+            {ruleDay && ruleDay === autoPinRef.current && (
+              <span className="text-[10px] px-2 py-0.5 rounded"
+                style={{ background: "rgba(230,81,0,0.10)", color: "#e65100" }}>
+                {t("오늘 장 시작 전 — 마지막 거래일 기록입니다",
+                   "before today's open - this is the last trading day's record")}
               </span>
             )}
             {/* THE CLOCK, on the table itself. It lived only in small caption text and in
@@ -1031,16 +1052,7 @@ export default function LiveDeskPage() {
                                  setDet(null); setSel(null); setPick(null); pull(); }}
               className="text-[10px] font-bold px-1 py-0.5 rounded border bg-[var(--bg-primary)] text-[var(--text-primary)]"
               style={{ borderColor: ruleDay ? "#e65100" : "var(--border-default)" }}>
-              {/* Before the first tick of the day the board reads the newest stored day.
-                  Leaving this reading "오늘 (실시간)" while 08-10's trades were on screen
-                  looked like today's session had already happened (boss 2026-08-11), so
-                  the option says what it is actually showing. */}
-              <option value="">
-                {rank?.auto_day && rank.day
-                  ? t(`오늘 (체결 없음 → ${rank.day.slice(4, 6)}-${rank.day.slice(6, 8)} 표시)`,
-                      `today (no executions yet → showing ${rank.day.slice(4, 6)}-${rank.day.slice(6, 8)})`)
-                  : t("오늘 (실시간)", "today (live)")}
-              </option>
+              <option value="">{t("오늘 (실시간)", "today (live)")}</option>
               <option value="all">{t("전체 누적 (모든 날)", "all days (total)")}</option>
               {/* today's own file appears in stored days the moment the market opens -
                   listing it again under "오늘 (실시간)" showed TWO todays (boss 08-06) */}

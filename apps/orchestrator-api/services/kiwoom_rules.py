@@ -445,7 +445,8 @@ def rank(tick: int = 5, period: int = 0, day: str = "",
     rows.sort(key=lambda r: (0 if r.get("kind") == "candle" else 1,
                              -r["win_pct"], -r["trips"]))
     _res = {"ok": True, "original_12": ORIGINAL_12, "days": stored_days(),
-            "day": day, "auto_day": auto_day, "frm": frm, "to": to, "gate_applied": use_gate,
+            "day": day, "auto_day": auto_day, "today": _kd0(),
+            "frm": frm, "to": to, "gate_applied": use_gate,
             "clock": f"{period}초" if period else f"{tick}틱",
             "tick": tick, "period": period, "fee_pct": FEE_PCT,
             # for day="all" this is the LATEST day's tape summary with the bar counts
