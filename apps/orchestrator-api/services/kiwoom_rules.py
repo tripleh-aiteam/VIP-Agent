@@ -310,6 +310,24 @@ def kiwoom_ml_for(code: str, tick: int, period: int, v: dict, day: str = ""):
 ORIGINAL_12 = [v["id"] for v in DESK]
 
 
+def _auto_day(day: str) -> tuple[str, bool]:
+    """WHICH DAY THE BOARD READS when nothing is chosen (boss 2026-08-11: "even when the
+    market is closed I was able to see old trading history, now it is not showing").
+
+    "" means TODAY's live tape, which is right during and after a session - but before
+    the opening bell today has no tape at all, so the whole board went blank every
+    morning and the previous day's work looked deleted. When today has no file yet, fall
+    back to the newest day that does, and say so, rather than showing an empty desk.
+    """
+    if day:
+        return day, False
+    days = stored_days()
+    today = _kd0()
+    if not days or days[-1] == today:
+        return day, False
+    return days[-1], True
+
+
 def rank(tick: int = 5, period: int = 0, day: str = "",
          frm: str = "", to: str = "", use_gate: bool = True) -> dict[str, Any]:
     """Every plain rule over the real tape of every watched stock, ranked.
@@ -323,6 +341,7 @@ def rank(tick: int = 5, period: int = 0, day: str = "",
     _hit = _RANK_TTL.get(_rk)
     if _hit and _t.time() - _hit[0] < 2.5:
         return _hit[1]         # the page polls every 3s; identical answers are reused
+    day, auto_day = _auto_day(day)
     day_list = stored_days() if day == "all" else [day]
     tapes_by_day = []
     for d in day_list:
@@ -426,7 +445,7 @@ def rank(tick: int = 5, period: int = 0, day: str = "",
     rows.sort(key=lambda r: (0 if r.get("kind") == "candle" else 1,
                              -r["win_pct"], -r["trips"]))
     _res = {"ok": True, "original_12": ORIGINAL_12, "days": stored_days(),
-            "day": day, "frm": frm, "to": to, "gate_applied": use_gate,
+            "day": day, "auto_day": auto_day, "frm": frm, "to": to, "gate_applied": use_gate,
             "clock": f"{period}초" if period else f"{tick}틱",
             "tick": tick, "period": period, "fee_pct": FEE_PCT,
             # for day="all" this is the LATEST day's tape summary with the bar counts
@@ -475,6 +494,7 @@ def trades(vid: str, tick: int = 5, period: int = 0, code: str = "",
     if v is None:
         return {"ok": False, "error": f"unknown rule {vid}"}
     import time as _t
+    day, _auto = _auto_day(day)
     _tk2 = (vid, tick, period, code, bars, limit, around, budget, day, frm, to, use_gate)
     _hit2 = _TRADES_TTL.get(_tk2)
     if _hit2 and _t.time() - _hit2[0] < 2.5:

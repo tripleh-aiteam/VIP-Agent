@@ -102,7 +102,7 @@ type Screen = { ok: boolean; scored_on?: string; tested_on?: string;
                         g_cost?: number; g_liquidity?: number; g_movement?: number;
                         g_behavior?: number; g_flow?: number; g_fit?: number }[] };
 type Rank = { ok: boolean; clock: string; fee_pct: number; original_12?: string[];
-              days?: string[]; day?: string; frm?: string; to?: string;
+              days?: string[]; day?: string; auto_day?: boolean; frm?: string; to?: string;
               stocks: { code: string; name: string; bars: number; from: string; to: string;
                         tick_size: number }[];
               variants: RuleRow[] };
@@ -979,6 +979,16 @@ export default function LiveDeskPage() {
                 style={{ background: "#e65100", color: "#fff" }}>
                 {t("가상 결과 — 매수 금지된 종목 포함 (실제 매매 아님)",
                    "WOULD-HAVE numbers - includes blocked stocks (not real trading)")}
+              </span>
+            )}
+            {/* Today has no tape before the opening bell, so the board reads the newest
+                day that does rather than showing an empty desk (boss 2026-08-11). Says
+                which day, so a past session is never mistaken for this one. */}
+            {rank?.auto_day && rank.day && (
+              <span className="text-[10px] font-bold px-2 py-0.5 rounded"
+                style={{ background: "rgba(230,81,0,0.14)", color: "#e65100" }}>
+                {t(`오늘은 아직 체결이 없어 ${rank.day.slice(4, 6)}월 ${rank.day.slice(6, 8)}일 결과를 보여드립니다`,
+                   `no executions today yet - showing ${rank.day.slice(4, 6)}/${rank.day.slice(6, 8)}`)}
               </span>
             )}
             {/* THE CLOCK, on the table itself. It lived only in small caption text and in
