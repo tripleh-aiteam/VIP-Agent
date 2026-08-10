@@ -17,6 +17,40 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "@/components/api";
 import { useLanguage } from "@/components/i18n";
 
+/** What each column of the stock-picking table means, in plain words — the boss reads
+ *  this table every morning and should never have to ask what "flex" is. Order in each
+ *  entry: [Korean title, English title, Korean body, English body]. The weights are the
+ *  real ones from services/daily_pick.py WEIGHTS. */
+const COL_HELP: Record<string, [string, string, string, string]> = {
+  rank: ["순위", "rank",
+    "오늘 총점이 높은 순서입니다. 후보 종목 전체를 매일 아침 다시 채점해서 다시 줄을 세웁니다. 어제 1등이 오늘 20등이 될 수 있습니다.",
+    "The order of today's total score. Every candidate is re-scored and re-ranked each morning, so yesterday's #1 can be today's #20."],
+  stock: ["종목", "stock",
+    "종목 이름입니다. 📌 표시는 점수와 상관없이 항상 데스크에 넣는 고정 종목(SK하이닉스·삼성전자)이라는 뜻입니다. 나머지는 그날 점수로 뽑힌 상위 5개입니다.",
+    "The stock's name. 📌 means it is a fixed name (SK하이닉스, 삼성전자) that goes on the desk regardless of its score. The rest are the day's top five by score."],
+  score: ["오늘 점수 (0~100)", "today's score (0-100)",
+    "오른쪽 여섯 항목을 가중평균한 총점입니다. 비중은 추세 25 · 유동성 20 · 유연성 20 · 지지저항 15 · 모멘텀 10 · 수급 10. 100에 가까울수록 오늘 단타에 적합하다는 뜻이며, 그날 이전 자료만 사용합니다(미래 정보 없음).",
+    "The weighted total of the six columns to the right: trend 25, liquidity 20, flexibility 20, levels 15, momentum 10, flows 10. Closer to 100 means better suited to today's short-term trading. Only data from before the day is used - no peeking ahead."],
+  trend: ["추세 — 비중 25 (가장 중요)", "trend - weight 25 (the biggest)",
+    "값이 위로 질서 있게 움직이고 있는가. ① 5일선 > 20일선 > 60일선 정배열(35%) ② 1년 동안 얼마나 곧게 움직였는지, 위아래로 흔들리지 않고 한 방향으로 가는 성질(25%) ③ 20일 신고가 여부(20%) ④ 최근 20일선 위에서 보낸 날의 비율(20%). 우리 규칙은 3번 오르면 사기 때문에 위로 가는 종목에서만 통합니다.",
+    "Is it moving up in an orderly way? (1) the 5-day line above the 20 above the 60 (35%), (2) how straight it travels over a year rather than sawing up and down (25%), (3) a 20-day new high (20%), (4) how much of the recent stretch it spent above its 20-day line (20%). Our rules buy after three rises, so they only work on stocks that actually go up."],
+  liquidity: ["유동성 — 비중 20", "liquidity - weight 20",
+    "우리가 사고팔 때 값이 밀리지 않을 만큼 거래가 많은가. ① 1년 평균 거래대금(60%) ② 거래량이 평소보다 확 늘어나는 날의 빈도(40%). 거래가 적으면 주문이 체결되지 않거나 불리한 값에 체결됩니다.",
+    "Is there enough trading that our order does not move the price? (1) average trading value over a year (60%), (2) how often volume spikes well above normal (40%). Thin stocks either do not fill or fill at a worse price."],
+  flexibility: ["유연성 — 비중 20 (호가 비용)", "flexibility - weight 20 (the tick cost)",
+    "한 호가(한 칸)가 주가의 몇 %인가. 작을수록 좋습니다. 우리는 매매 한 번에 수수료 0.23% + 호가 1칸을 냅니다. 한 칸이 0.05%인 종목은 이 비용을 넘기 쉽고, 0.5%인 종목은 이겨도 손해가 납니다. 이 항목이 낮은 종목은 이기고도 돈을 잃는 종목입니다.",
+    "How large one tick is as a percentage of the price - smaller is better. Every trade costs us 0.23% in fees plus one tick. Where a tick is 0.05% that cost is easy to clear; where it is 0.5% you can win the trade and still lose money. A low score here is the stock that wins and loses at the same time."],
+  levels: ["지지저항 — 비중 15", "levels - weight 15",
+    "지금 값이 자기 자리 어디쯤에 있는가. ① 볼린저밴드 안에서의 위치(50%) ② 어제 종가 대비 위치(50%). 너무 아래면 떨어지는 중이고, 꼭대기에 붙어 있으면 이미 늦어서 살 자리가 아닙니다. 가운데에서 위로 향할 때가 가장 좋습니다.",
+    "Where the price sits against its own levels: (1) its position inside the Bollinger band (50%), (2) where it stands versus yesterday's close (50%). Too low means it is still falling; pinned at the top means we are late. Mid-band and rising is the good place to buy."],
+  momentum: ["모멘텀 — 비중 10", "momentum - weight 10",
+    "올라갈 힘이 남아 있는가. ① RSI가 55 근처일 때 만점(50%) — 70을 넘으면 과열이라 오히려 점수가 깎입니다 ② MACD 골든크로스 발생 여부(50%). '이미 다 올라간 종목'이 아니라 '지금 막 오르기 시작한 종목'을 고르기 위한 항목입니다.",
+    "Is there room left to rise? (1) RSI nearest 55 scores best (50%) - above 70 is overheated and loses points, (2) a MACD golden cross (50%). This column is what separates a stock that is just starting to move from one that has already made its move."],
+  flows: ["수급 — 비중 10", "flows - weight 10",
+    "큰 손이 같은 편인가. ① 외국인 3일 순매수(45%) ② 기관 3일 순매수(30%) ③ 개인만 몰려 있는 종목이면 감점(15%) ④ 공매도 비중이 낮을수록 가점(10%). 외국인·기관이 파는 종목은 오전에 올라도 되돌림이 자주 나옵니다.",
+    "Is the big money on our side? (1) foreigners' 3-day net buying (45%), (2) institutions' 3-day net (30%), (3) a penalty when only retail is crowded in (15%), (4) a bonus for low short interest (10%). Names that foreigners and institutions are selling tend to give back their morning gains."],
+};
+
 const RED = "#d32f2f";
 const BLUE = "#1565c0";
 const TEAL = "#00838f";
@@ -318,6 +352,7 @@ export default function LiveDeskPage() {
   const [dpick, setDpick] = useState<Pick | null>(null);
   const [pickOpen, setPickOpen] = useState(true);      // the desk is worth seeing at once
   const [pickAll, setPickAll] = useState(false);       // the other 32 stay behind a button
+  const [pickCol, setPickCol] = useState("");          // a column header explains itself when clicked
   useEffect(() => { api<Pick>("/paper-desk/daily-pick").then(setDpick).catch(() => {}); }, []);
   const [gate, setGate] = useState<Gate | null>(null);
   useEffect(() => { api<Gate>("/paper-desk/gate").then(setGate).catch(() => {}); }, []);
@@ -553,33 +588,50 @@ export default function LiveDeskPage() {
               <table className="w-full text-[11.5px] tabular-nums">
                 <thead><tr className="text-[10px] text-[var(--text-muted)] sticky top-0"
                   style={{ background: "var(--bg-elevated)" }}>
-                  <th className="text-left px-3 py-1">#</th>
-                  <th className="text-left px-2">{t("종목", "stock")}</th>
-                  <th className="text-right px-3">{t("오늘 점수", "today")}</th>
-                  <th className="text-right px-2">{t("추세", "trend")}</th>
-                  <th className="text-right px-2">{t("유동성", "liq")}</th>
-                  <th className="text-right px-2">{t("유연성", "flex")}</th>
-                  <th className="text-right px-2">{t("지지저항", "levels")}</th>
-                  <th className="text-right px-2">{t("모멘텀", "mom")}</th>
-                  <th className="text-right px-2">{t("수급", "flows")}</th>
-                  <th className="text-center px-2">{t("선정", "how")}</th>
-                  <th className="text-left px-3">{t("선택 이유", "why")}</th>
+                  {[["rank", t("순위", "#"), "left"], ["stock", t("종목", "stock"), "left"],
+                    ["score", t("오늘 점수", "today"), "right"], ["trend", t("추세", "trend"), "right"],
+                    ["liquidity", t("유동성", "liq"), "right"], ["flexibility", t("유연성", "flex"), "right"],
+                    ["levels", t("지지저항", "levels"), "right"], ["momentum", t("모멘텀", "mom"), "right"],
+                    ["flows", t("수급", "flows"), "right"]].map(([k, lab, al]) => (
+                    <th key={k} onClick={() => setPickCol(pickCol === k ? "" : k)}
+                      title={t("눌러서 설명 보기", "click for an explanation")}
+                      className={`px-2 py-1 cursor-pointer select-none whitespace-nowrap ${al === "left" ? "text-left" : "text-right"}`}
+                      style={pickCol === k ? { color: "#1565c0", fontWeight: 800 } : undefined}>
+                      <span style={{ borderBottom: "1px dotted currentColor" }}>{lab}</span>
+                      <span className="ml-0.5 opacity-60">ⓘ</span>
+                    </th>
+                  ))}
                 </tr></thead>
                 <tbody>
+                  {pickCol && (
+                    <tr><td colSpan={9} className="px-4 py-2.5 text-[11px] leading-relaxed border-b"
+                      style={{ background: "rgba(21,101,192,0.07)", borderColor: "#1565c0",
+                               color: "var(--text-secondary)" }}>
+                      <div className="flex items-start gap-2">
+                        <b className="text-[12px] shrink-0" style={{ color: "#1565c0" }}>
+                          {COL_HELP[pickCol][lang === "ko" ? 0 : 1]}
+                        </b>
+                        <span>{COL_HELP[pickCol][lang === "ko" ? 2 : 3]}</span>
+                        <button onClick={() => setPickCol("")}
+                          className="ml-auto shrink-0 text-[10px] px-1.5 rounded"
+                          style={{ color: "#1565c0" }}>{t("닫기 ✕", "close ✕")}</button>
+                      </div>
+                    </td></tr>
+                  )}
                   {(pickAll ? dpick.rows
                             : [...dpick.rows.filter((r) => r.by_score),
                                ...dpick.rows.filter((r) => r.added)]).map((r) => (
                     <React.Fragment key={r.code}>
                     {r.added && dpick.rows.filter((x) => x.by_score).length > 0
                       && r === dpick.rows.filter((x) => x.added)[0] && (
-                      <tr><td colSpan={11} className="px-3 py-1 text-[10px] font-bold text-center"
+                      <tr><td colSpan={9} className="px-3 py-1 text-[10px] font-bold text-center"
                         style={{ background: "rgba(230,81,0,0.10)", color: "#e65100" }}>
                         {t("▲ 점수 상위 5 · 아래는 항상 포함하는 고정 종목 ▼",
                            "▲ top 5 by score · always-included fixed stocks below ▼")}
                       </td></tr>
                     )}
                     {pickAll && !r.on_desk && r === dpick.rows.filter((x) => !x.on_desk)[0] && (
-                      <tr><td colSpan={11} className="px-3 py-1 text-[10px] font-bold text-center"
+                      <tr><td colSpan={9} className="px-3 py-1 text-[10px] font-bold text-center"
                         style={{ background: "rgba(128,128,128,0.10)", color: "var(--text-muted)" }}>
                         {t("▼ 오늘 선택되지 않은 종목 (참고용)", "▼ not selected today (for reference)")}
                       </td></tr>
@@ -598,12 +650,6 @@ export default function LiveDeskPage() {
                           {r.groups?.[g] ?? "-"}
                         </td>
                       ))}
-                      <td className="text-center px-2 text-[9.5px] font-bold">
-                        {r.by_score ? <span style={{ color: "#1565c0" }}>{t("상위 5", "TOP 5")}</span>
-                          : r.added ? <span style={{ color: "#e65100" }}>{t("고정 추가", "added")}</span>
-                          : <span className="text-[var(--text-muted)]">—</span>}
-                      </td>
-                      <td className="px-3 text-[10px] text-[var(--text-secondary)]">{(r.why || []).join(" · ") || "-"}</td>
                     </tr>
                     </React.Fragment>
                   ))}
