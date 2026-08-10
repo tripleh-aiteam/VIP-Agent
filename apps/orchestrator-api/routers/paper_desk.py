@@ -653,14 +653,18 @@ def live_tape(code: str = Query("005930"), period: int = Query(0),
 
 @router.get("/live/rules")
 def live_rules(tick: int = Query(5), period: int = Query(0), day: str = Query(""),
-               frm: str = Query(""), to: str = Query(""), gate: int = Query(1)):
+               frm: str = Query(""), to: str = Query(""), gate: int = Query(1),
+               auto: int = Query(1)):
     """The same rules the Strategy Lab runs, over the REAL Kiwoom tape. No ML here — the
     boss asked for the plain rules on real data first, which is the right order."""
     from services.kiwoom_rules import rank
     # gate=0 shows what the rules WOULD have done on a day the gate closed - a viewing
     # switch only; the desk itself always trades gated (boss 2026-08-10)
+    # auto=0: the user explicitly chose TODAY, so an empty board is the honest answer -
+    # never yesterday's trades under today's label (boss 2026-08-11, three times)
     return rank(tick=tick, period=max(0, min(int(period or 0), 600)),
-                day=day, frm=frm, to=to, use_gate=bool(gate))
+                day=day, frm=frm, to=to, use_gate=bool(gate),
+                allow_fallback=bool(auto))
 
 
 @router.get("/live/rules/trades")
@@ -669,7 +673,7 @@ def live_rule_trades(variant: str = Query(...), tick: int = Query(5),
                      bars: int = Query(2500), limit: int = Query(300),
                      around: int = Query(-1), budget: int = Query(0),
                      day: str = Query(""), frm: str = Query(""), to: str = Query(""),
-                     gate: int = Query(1)):
+                     gate: int = Query(1), auto: int = Query(1)):
     """One rule's real trades: what it bought, at what, when, and why.
 
     `budget` is won per trade — 0 means the historical one share. It scales the money and
@@ -678,7 +682,8 @@ def live_rule_trades(variant: str = Query(...), tick: int = Query(5),
     return trades(variant, tick=tick, period=max(0, min(int(period or 0), 600)),
                   code=code, bars=bars, limit=limit, around=around,
                   budget=max(0, min(int(budget or 0), 1_000_000_000)),
-                  day=day, frm=frm, to=to, use_gate=bool(gate))
+                  day=day, frm=frm, to=to, use_gate=bool(gate),
+                  allow_fallback=bool(auto))
 
 
 @router.post("/desk-mode")

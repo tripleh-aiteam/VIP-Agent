@@ -363,11 +363,17 @@ export default function LiveDeskPage() {
   // one date on screen, nowhere claiming to be today - and moved back to live by itself
   // the moment today's tape appears.
   const autoPinRef = useRef("");
+  // ...and NEVER against the user's hand (boss 2026-08-11: he chose 오늘 and the picker
+  // snapped straight back to 08-10, so today was unreachable). Touching the day picker
+  // sets this and the auto-pin stands down for good; only the un-pin at the first tick
+  // of today remains armed.
+  const dayTouchedRef = useRef(false);
   useEffect(() => {
     if (!rank) return;
     const today = rank.today || "";
     const hasToday = !!today && (rank.days || []).includes(today);
-    if (rank.auto_day && rank.day && ruleDay === "" && !hasToday) {
+    if (rank.auto_day && rank.day && ruleDay === "" && !hasToday
+        && !dayTouchedRef.current && !autoPinRef.current) {
       autoPinRef.current = rank.day;
       setRuleDay(rank.day); ruleDayRef.current = rank.day;
       setDet(null); setSel(null);
@@ -531,7 +537,8 @@ export default function LiveDeskPage() {
       + `&code=${encodeURIComponent(want)}&bars=60000`
       + `&around=${tradeIdx ?? -1}&budget=${budgetRef.current}`
       + `&day=${ruleDayRef.current}&frm=${encodeURIComponent(hourFromRef.current)}&to=${encodeURIComponent(hourToRef.current)}`
-      + `&gate=${showBlockedRef.current ? 0 : 1}`)
+      + `&gate=${showBlockedRef.current ? 0 : 1}`
+      + `&auto=${dayTouchedRef.current && !ruleDayRef.current ? 0 : 1}`)
       .then((d) => { if (my !== detSeqRef.current) return;
                      const v = d?.ok ? d : null; detRef.current = v;
                      detDayRef.current = (tradeIdx != null
@@ -583,6 +590,7 @@ export default function LiveDeskPage() {
     api<Book>(`/paper-desk/live/book?code=${c}`).then(setBook).catch(() => {});
     api<Execs>(`/paper-desk/live/execs?code=${c}&n=120`).then(setExecs).catch(() => {});
     api<Rank>(`/paper-desk/live/rules?${q}&gate=${showBlockedRef.current ? 0 : 1}&day=${ruleDayRef.current}`
+      + `&auto=${dayTouchedRef.current && !ruleDayRef.current ? 0 : 1}`
       + `&frm=${encodeURIComponent(hourFromRef.current)}&to=${encodeURIComponent(hourToRef.current)}`)
       .then(setRank).catch(() => {});
     // follows the CHARTED company, so the minute rows always describe the bars above them
@@ -1013,6 +1021,13 @@ export default function LiveDeskPage() {
             {/* Today has no tape before the opening bell, so the board reads the newest
                 day that does rather than showing an empty desk (boss 2026-08-11). Says
                 which day, so a past session is never mistaken for this one. */}
+            {!ruleDay && rank?.auto_day && (
+              <span className="text-[10px] font-bold px-2 py-0.5 rounded"
+                style={{ background: "rgba(21,101,192,0.10)", color: "#1565c0" }}>
+                {t("오늘 — 아직 체결 없음 (09:00 개장부터 채워집니다)",
+                   "today - no executions yet (fills from the 09:00 open)")}
+              </span>
+            )}
             {ruleDay && ruleDay === autoPinRef.current && (
               <span className="text-[10px] px-2 py-0.5 rounded"
                 style={{ background: "rgba(230,81,0,0.10)", color: "#e65100" }}>
@@ -1048,7 +1063,8 @@ export default function LiveDeskPage() {
                 grows for ever, so a row of buttons would too. Newest first, today on top. */}
             <span className="text-[10px] text-[var(--text-muted)] ml-2">{t("날짜:", "day:")}</span>
             <select value={ruleDay}
-              onChange={(e) => { const val = e.target.value; setRuleDay(val); ruleDayRef.current = val;
+              onChange={(e) => { const val = e.target.value; dayTouchedRef.current = true;
+                                 setRuleDay(val); ruleDayRef.current = val;
                                  setDet(null); setSel(null); setPick(null); pull(); }}
               className="text-[10px] font-bold px-1 py-0.5 rounded border bg-[var(--bg-primary)] text-[var(--text-primary)]"
               style={{ borderColor: ruleDay ? "#e65100" : "var(--border-default)" }}>

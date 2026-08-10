@@ -329,7 +329,8 @@ def _auto_day(day: str) -> tuple[str, bool]:
 
 
 def rank(tick: int = 5, period: int = 0, day: str = "",
-         frm: str = "", to: str = "", use_gate: bool = True) -> dict[str, Any]:
+         frm: str = "", to: str = "", use_gate: bool = True,
+         allow_fallback: bool = True) -> dict[str, Any]:
     """Every plain rule over the real tape of every watched stock, ranked.
 
     day="all" is the CUMULATIVE board (boss 2026-08-06: "total result up to today"):
@@ -337,11 +338,11 @@ def rank(tick: int = 5, period: int = 0, day: str = "",
     span the overnight gap, and each day's ML models are the ones that day actually had
     (trained only on the days before it) - then the trades are added up."""
     import time as _t
-    _rk = (tick, period, day, frm, to, use_gate)
+    _rk = (tick, period, day, frm, to, use_gate, allow_fallback)
     _hit = _RANK_TTL.get(_rk)
     if _hit and _t.time() - _hit[0] < 2.5:
         return _hit[1]         # the page polls every 3s; identical answers are reused
-    day, auto_day = _auto_day(day)
+    day, auto_day = _auto_day(day) if allow_fallback else (day, False)
     day_list = stored_days() if day == "all" else [day]
     tapes_by_day = []
     for d in day_list:
@@ -489,13 +490,13 @@ def shares_for(entry: float, budget: int) -> int:
 def trades(vid: str, tick: int = 5, period: int = 0, code: str = "",
            bars: int = 2500, limit: int = 300, around: int = -1,
            budget: int = 0, day: str = "", frm: str = "", to: str = "",
-           use_gate: bool = True) -> dict[str, Any]:
+           use_gate: bool = True, allow_fallback: bool = True) -> dict[str, Any]:
     """One rule's trades on the real tape, with the chart and the evidence per trade."""
     v = next((x for x in DESK if x["id"] == vid), None)
     if v is None:
         return {"ok": False, "error": f"unknown rule {vid}"}
     import time as _t
-    day, _auto = _auto_day(day)
+    day, _auto = _auto_day(day) if allow_fallback else (day, False)
     _tk2 = (vid, tick, period, code, bars, limit, around, budget, day, frm, to, use_gate)
     _hit2 = _TRADES_TTL.get(_tk2)
     if _hit2 and _t.time() - _hit2[0] < 2.5:
