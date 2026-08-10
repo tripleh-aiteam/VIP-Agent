@@ -657,12 +657,20 @@ export default function LiveDeskPage() {
                     `my desk: ${(dpick.picks || []).length} stocks — these are what we trade, every day`)}
             </b>
             <span className="text-[11px] font-bold">
+              {/* no scores on his own six: the desk is already decided, so a number
+                  beside each name decides nothing (boss 2026-08-11) */}
               {(dpick.picks || []).map((c) => (dpick.rows || []).find((r) => r.code === c))
-                .filter(Boolean).map((r) => `${r!.name} ${r!.score}`).join(" · ")}
+                .filter(Boolean)
+                .map((r) => ((dpick.mode ?? "fixed") === "fixed" ? r!.name
+                                                                 : `${r!.name} ${r!.score}`))
+                .join(" · ")}
             </span>
             <span className="text-[10px] text-[var(--text-muted)]">
-              {t(`직접 고른 고정 종목입니다. 100점 체크리스트는 매일 그대로 돌아가며 이 종목들의 점수·순위를 매기지만, 누가 매매될지는 정하지 않습니다 — 오늘 이 중 ${dpick.n_earned ?? 0}개가 점수 상위 5에도 들었습니다.`,
-                 `your own fixed list. The 100-item checklist still runs every morning and scores them, but it no longer decides who trades - ${dpick.n_earned ?? 0} of them also made today's top 5 on merit.`)}
+              {(dpick.mode ?? "fixed") === "fixed"
+                ? t("직접 고른 고정 종목입니다. 종목을 누르면 그 종목의 매수·매도 시각과 차트가 아래에 열립니다.",
+                    "your own fixed list. Click a stock to open its buy and sell times and its chart below.")
+                : t(`오늘 아침 100점 체크리스트가 뽑은 상위 5종목입니다 — 매일 다시 채점합니다.`,
+                    `the top five chosen by this morning's 100-item checklist - re-scored every day.`)}
             </span>
             {!dpick.applied && (
               <span className="text-[10px] font-bold px-1.5 py-0.5 rounded"
