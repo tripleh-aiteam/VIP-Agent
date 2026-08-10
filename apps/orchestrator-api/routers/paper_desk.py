@@ -682,7 +682,8 @@ def live_rule_trades(variant: str = Query(...), tick: int = Query(5),
 
 
 @router.get("/daily-pick")
-def daily_pick_today(day: str = Query(""), refresh: int = Query(0)):
+def daily_pick_today(day: str = Query(""), refresh: int = Query(0),
+                     force: int = Query(0)):
     """TODAY's five, chosen by the checklist: long-run character x current condition,
     everything from data before today. refresh=1 recomputes and re-points the collector
     (only honoured outside market hours - swapping stocks mid-session would abandon
@@ -690,9 +691,16 @@ def daily_pick_today(day: str = Query(""), refresh: int = Query(0)):
     from services.daily_pick import pick, save_picks
     from services.kiwoom_tape import WATCH, _day, market_open, refresh_watch
     d = day or _day()
-    if refresh and not market_open():
-        save_picks(d)
-        refresh_watch(force=True)
+    # refresh=1 re-points the collector at today's list. Normally only outside market
+    # hours (swapping mid-session abandons half a day of a stock's tape) - force=1 does
+    # it anyway, which the boss asked for when a pinned stock was missing from the desk.
+    if refresh:
+        if market_open() and not force:
+            res = pick(d)
+            res["note"] = "market is open - pass force=1 to switch now"
+        else:
+            save_picks(d)
+            refresh_watch(force=True)
     res = pick(d)
     res["trading_now"] = [{"code": c, "name": n} for c, n in WATCH]
     res["applied"] = [c for c, _n in WATCH] == res.get("picks", [])

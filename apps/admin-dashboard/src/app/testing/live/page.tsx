@@ -311,9 +311,8 @@ export default function LiveDeskPage() {
   // with ML / without ML / everything
   const [mlView, setMlView] = useState<"all" | "ml" | "plain">("all");
   // the screener's ranking - loaded once, shown on demand (boss 2026-08-10)
-  const [screen, setScreen] = useState<Screen | null>(null);
-  const [screenOpen, setScreenOpen] = useState(false);
-  useEffect(() => { api<Screen>("/paper-desk/screener").then(setScreen).catch(() => {}); }, []);
+  // the static year-based screener panel was superseded by the daily picker above;
+  // /paper-desk/screener still serves its data for reference.
   // the morning GO / NO-GO verdict per stock (advisor's point 2)
   // TODAY's five, chosen by the checklist every morning
   const [dpick, setDpick] = useState<Pick | null>(null);
@@ -645,94 +644,6 @@ export default function LiveDeskPage() {
             <div className="mt-1.5 text-[10.5px] font-bold" style={{ color: "#b02a2a" }}>
               {t("⚠ 오늘은 모든 종목이 매수 금지입니다 — 새 매수는 없고, 보유 중인 건은 규칙대로 정리됩니다.",
                  "⚠ every stock is closed for buying today - no new entries; open positions still exit by their rules.")}
-            </div>
-          )}
-        </div>
-      )}
-      {screen?.ok && (
-        <div className="mt-3 rounded-xl border overflow-hidden" style={{ borderColor: "#0f5132" }}>
-          <div className="px-4 py-2 flex items-center gap-2 flex-wrap cursor-pointer"
-            style={{ background: "rgba(15,81,50,0.06)" }}
-            onClick={() => setScreenOpen(!screenOpen)}>
-            <b className="text-[13px]" style={{ color: "#0f5132" }}>
-              🔎 {t("체크리스트 100항목 결과 — 종목 선별", "100-item checklist results — stock selection")}
-            </b>
-            <span className="text-[10.5px] text-[var(--text-muted)]">
-              {t(`${screen.rows.length}개 종목 · 6개 체크포인트 · 100점 만점 · 상위 5개 선택 · 13개월 실제 데이터`,
-                 `${screen.rows.length} stocks · 6 checkpoints · out of 100 · top 5 selected · 13 months of real data`)}
-            </span>
-            <span className="ml-auto text-[10.5px]" style={{ color: "#0f5132" }}>
-              {screenOpen ? t("닫기 ▲", "close ▲") : t("점수 보기 ▼", "see the scores ▼")}
-            </span>
-          </div>
-          {screenOpen && (
-            <div className="overflow-y-auto" style={{ maxHeight: 320 }}>
-              <table className="w-full text-[11.5px] tabular-nums">
-                <thead><tr className="text-[10px] text-[var(--text-muted)] sticky top-0"
-                  style={{ background: "var(--bg-elevated)" }}>
-                  <th className="text-left px-3 py-1">#</th>
-                  <th className="text-left px-2">{t("종목", "stock")}</th>
-                  <th className="text-right px-3">{t("종합", "TOTAL")}</th>
-                  <th className="text-right px-2" title={t("체크리스트 48,49 — 가격 유연성 (호가 비용, 갭 발생) · 20%", "checklist 48,49 - price flexibility (tick cost, gaps) · 20%")}>
-                    {t("①유연성", "①flex")}</th>
-                  <th className="text-right px-2" title={t("체크리스트 50,51,52,58,59 — 추세 (신고가, 이평 정배열, 추세성) · 25%", "checklist 50,51,52,58,59 - trend (new highs, MA alignment) · 25%")}>
-                    {t("②추세", "②trend")}</th>
-                  <th className="text-right px-2" title={t("체크리스트 53,62,64,67,74 — 지지·저항과 눌림목 · 15%", "checklist 53,62,64,67,74 - support/resistance & pullbacks · 15%")}>
-                    {t("③지지저항", "③levels")}</th>
-                  <th className="text-right px-2" title={t("체크리스트 46,47,69,21 — 거래대금·거래량 급증 · 20%", "checklist 46,47,69,21 - trading value & volume surges · 20%")}>
-                    {t("④유동성", "④liq")}</th>
-                  <th className="text-right px-2" title={t("체크리스트 60,61 — 모멘텀 (RSI 구간, MACD 골든크로스) · 10%", "checklist 60,61 - momentum (RSI zone, MACD crosses) · 10%")}>
-                    {t("⑤모멘텀", "⑤mom")}</th>
-                  <th className="text-right px-2" title={t("체크리스트 31,32,34,43 — 수급 (외국인·기관·개인 쏠림·공매도) · 10%", "checklist 31,32,34,43 - flows (foreign, institutional, retail, shorts) · 10%")}>
-                    {t("⑥수급", "⑥flow")}</th>
-                  <th className="text-right px-3 text-[9px]" title={t("근거 수치: 1호가 비중 · 움직임÷비용 · 상승지속률 · 우리 규칙 승률", "evidence: tick% · move÷cost · continues · our-rule win%")}>
-                    {t("근거 수치", "evidence")}</th>
-                </tr></thead>
-                <tbody>
-                  {screen.rows.map((r) => (
-                    <React.Fragment key={r.code}>
-                    {r.rank === 6 && (
-                      <tr><td colSpan={10} className="px-3 py-1 text-[10px] font-bold text-center"
-                        style={{ background: "rgba(15,81,50,0.10)", color: "#0f5132" }}>
-                        {t("▲ 상위 5개 = 선택된 종목 · 아래는 선택되지 않음 ▼",
-                           "▲ TOP 5 = selected · not selected below ▼")}
-                      </td></tr>
-                    )}
-                    <tr className="border-t border-[var(--border-default)]/40"
-                      style={{ background: r.rank <= 5 ? "rgba(15,81,50,0.10)"
-                               : r.live ? "rgba(230,81,0,0.07)" : "transparent" }}>
-                      <td className="px-3 py-1 text-[var(--text-muted)]">{r.rank}</td>
-                      <td className="px-2 font-bold text-[var(--text-primary)]">
-                        {r.name}
-                        {r.live && <span className="ml-1.5 text-[9px] font-extrabold px-1 py-0.5 rounded"
-                          style={{ background: r.rank <= 5 ? "#0f5132" : "#e65100", color: "#fff" }}>
-                          {r.rank <= 5 ? t("거래 중", "LIVE")
-                                       : t("거래 중 (회장님 유지)", "LIVE (your keep)")}</span>}
-                      </td>
-                      <td className="text-right px-3 font-extrabold" style={{ color: "#0f5132" }}>{r.score}</td>
-                      {[r.g_cost, r.g_behavior, r.g_movement, r.g_liquidity, r.g_fit, r.g_flow].map((g, gi) => (
-                        <td key={gi} className="text-right px-2 tabular-nums"
-                          style={{ color: (g ?? 0) >= 70 ? "#0f5132" : (g ?? 0) >= 40 ? "var(--text-secondary)" : "#b02a2a" }}>
-                          {g ?? "-"}
-                        </td>
-                      ))}
-                      <td className="text-right px-3 text-[9.5px] text-[var(--text-muted)] whitespace-nowrap">
-                        {r.tick_pct}% · {r.move_vs_cost}x · {r.continue_pct}% · {r.fit_win}%
-                      </td>
-                    </tr>
-                    </React.Fragment>
-                  ))}
-                </tbody>
-              </table>
-              <div className="px-4 py-2 text-[10.5px] text-[var(--text-muted)] border-t"
-                style={{ borderColor: "var(--border-default)" }}>
-                <div>{t("자문 체크리스트 100항목 중 측정 가능한 항목으로 채점했습니다: 유연성(48,49) 20% · 추세(50,51,52,58,59) 25% · 지지저항(53,62,64,67,74) 15% · 유동성(46,47,69) 20% · 모멘텀(60,61) 10% · 수급(31,32,34,43) 10%.",
-                        "scored from the measurable items of the advisor's 100-item checklist: flexibility(48,49) 20% · trend(50,51,52,58,59) 25% · levels(53,62,64,67,74) 15% · liquidity(46,47,69) 20% · momentum(60,61) 10% · flows(31,32,34,43) 10%.")}</div>
-                <div className="mt-1">{t("측정 불가 항목은 숨기지 않고 알립니다: 뉴스·테마·공시(26-30,40-45), 호가창 강도·허수(55-57,70), 선물옵션 만기(36-37), 해외지표(12-20), 트레이더 컨디션(1-10).",
-                        "items we cannot measure are reported, not hidden: news/themes/disclosures (26-30,40-45), order-book strength & spoofing (55-57,70), futures expiry (36-37), external markets (12-20), the trader's own condition (1-10).")}</div>
-                <div className="mt-1">{t(`점수는 ${screen.scored_on} 자료로만 매겼고, 선별된 5개를 선별이 보지 못한 ${screen.tested_on} 구간에서 검증했습니다 — 과거에 맞춘 것이 아닙니다.`,
-                   `scored only on ${screen.scored_on}, then the chosen five were tested on ${screen.tested_on} which the screener never saw - not fitted to the past.`)}</div>
-              </div>
             </div>
           )}
         </div>
