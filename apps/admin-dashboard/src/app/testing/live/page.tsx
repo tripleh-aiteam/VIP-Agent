@@ -513,6 +513,18 @@ export default function LiveDeskPage() {
                      detRef.current = null; setDet(null); });
   }, []);
 
+  // CLICK A STOCK, SEE ITS TRADES (boss 2026-08-11: on his own six the scores say
+  // nothing he does not already know - what he wants from that panel is when it bought,
+  // at what price, when it sold, and the chart). Points the existing detail panel at
+  // that company and opens the best-ranked rule if none is open yet.
+  const openStock = useCallback((c2: string) => {
+    setCode(c2); codeRef.current = c2;
+    const id = sel || shownRules[0]?.id;
+    if (id) { setSel(id); openRule(id, null, c2); }
+    setTimeout(() => document.getElementById("rule-detail")?.scrollIntoView(
+      { behavior: "smooth", block: "start" }), 60);
+  }, [sel, shownRules, openRule]);
+
   const loadDf = useCallback((c: string, mins: number, f = "", tt = "") => {
     if (!c) return;
     // a range wins over the minute buttons; with neither, "the last N minutes"
@@ -674,7 +686,52 @@ export default function LiveDeskPage() {
               </span>
             </span>
           </div>
-          {pickOpen && (
+          {pickOpen && (dpick.mode ?? "fixed") === "fixed" && (
+            <div>
+              <table className="w-full text-[12px] tabular-nums">
+                <thead><tr className="text-[10px] text-[var(--text-muted)]"
+                  style={{ background: "var(--bg-elevated)" }}>
+                  <th className="text-left px-3 py-1">{t("종목", "stock")}</th>
+                  <th className="text-right px-2">{t("오늘 수집 체결", "ticks today")}</th>
+                  <th className="text-left px-3">{t("수집 시간", "collected")}</th>
+                  <th className="text-left px-3">{t("오늘 매매", "today's trading")}</th>
+                </tr></thead>
+                <tbody>
+                  {(dpick.picks || []).map((c2) => {
+                    const r = (dpick.rows || []).find((x) => x.code === c2);
+                    const live = (st?.stocks || []).find((x) => x.code === c2);
+                    return (
+                      <tr key={c2} onClick={() => openStock(c2)}
+                        className="border-t border-[var(--border-default)]/40 cursor-pointer"
+                        style={{ background: code === c2 ? "rgba(21,101,192,0.14)" : "transparent" }}>
+                        <td className="px-3 py-1.5 font-bold text-[var(--text-primary)]">
+                          {r?.name || c2}
+                        </td>
+                        <td className="text-right px-2 text-[var(--text-secondary)]">
+                          {live ? live.ticks.toLocaleString() : "—"}
+                        </td>
+                        <td className="px-3 text-[10px] text-[var(--text-muted)]">
+                          {live?.first ? `${live.first} ~ ${live.last}` : t("아직 없음", "nothing yet")}
+                        </td>
+                        <td className="px-3">
+                          <span className="text-[10.5px] font-bold px-2 py-0.5 rounded border"
+                            style={{ borderColor: "#1565c0", color: "#1565c0" }}>
+                            {t("매수·매도 시간과 차트 보기 →", "see the buy / sell times and the chart →")}
+                          </span>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+              <div className="px-4 py-2 text-[10.5px] text-[var(--text-muted)] border-t"
+                style={{ borderColor: "var(--border-default)" }}>
+                {t("직접 고정한 6종목입니다. 종목을 누르면 그 종목의 오늘 매매 — 몇 시에 얼마에 사고, 몇 시에 얼마에 팔았는지 — 와 차트가 아래에 열립니다. 점수는 이 화면에서 뺐습니다: 어떤 종목을 매매할지 이미 정해져 있으므로 점수가 결정하는 것이 없습니다. 100점 순위를 보시려면 위의 「100점 상위 5종목」으로 바꾸세요.",
+                   "Your own six. Click a stock and its trading opens below - what time it bought and at what price, what time it sold, with the chart. The scores are off this screen: the desk is already decided, so they decide nothing. Switch to \u300c100점 상위 5종목\u300d above to see the ranking.")}
+              </div>
+            </div>
+          )}
+          {pickOpen && (dpick.mode ?? "fixed") !== "fixed" && (
             <div className="overflow-y-auto" style={{ maxHeight: 340 }}>
               <table className="w-full text-[11.5px] tabular-nums">
                 <thead><tr className="text-[10px] text-[var(--text-muted)] sticky top-0"
@@ -1227,7 +1284,7 @@ export default function LiveDeskPage() {
       )}
       {/* ---- one rule's real trades ---- */}
       {sel && det?.ok && (
-        <div className="mt-3 rounded-xl border overflow-hidden" style={{ borderColor: "#6a1b9a" }}>
+        <div id="rule-detail" className="mt-3 rounded-xl border overflow-hidden" style={{ borderColor: "#6a1b9a" }}>
           <div className="px-4 py-2 border-b flex items-center gap-3 flex-wrap"
             style={{ borderColor: "var(--border-default)", background: "rgba(106,27,154,0.07)" }}>
             <b className="text-[13px]" style={{ color: "#6a1b9a" }}>
