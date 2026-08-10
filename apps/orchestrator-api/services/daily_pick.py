@@ -61,10 +61,24 @@ PINNED = DESK           # kept for callers that still ask which names are fixed
 _MODE_FILE = _DATA / "desk_mode.json"
 
 
+def _today() -> str:
+    from services.kiwoom_tape import _day
+    return _day()
+
+
 def desk_mode() -> str:
+    """EVERY DAY STARTS ON HIS SIX (boss 2026-08-11: "by default every day, if I do not
+    say anything, it must trade using the 6 companies"). A switch to the score desk holds
+    for the rest of that day and no longer: the stored mode is stamped with the day it
+    was chosen, and a stamp from any earlier day reads back as "fixed"."""
     try:
-        m = json.loads(_MODE_FILE.read_text(encoding="utf-8")).get("mode")
-        return m if m in ("fixed", "score") else "fixed"
+        d = json.loads(_MODE_FILE.read_text(encoding="utf-8"))
+        m = d.get("mode")
+        if m not in ("fixed", "score"):
+            return "fixed"
+        if m == "score" and d.get("day") != _today():
+            return "fixed"          # yesterday's choice does not carry into today
+        return m
     except Exception:
         return "fixed"
 
@@ -72,7 +86,8 @@ def desk_mode() -> str:
 def set_desk_mode(mode: str) -> str:
     mode = mode if mode in ("fixed", "score") else "fixed"
     _DATA.mkdir(exist_ok=True)
-    _MODE_FILE.write_text(json.dumps({"mode": mode}), encoding="utf-8")
+    _MODE_FILE.write_text(json.dumps({"mode": mode, "day": _today()}),
+                          encoding="utf-8")
     return mode
 
 
