@@ -40,9 +40,12 @@ type RuleRow = { id: string; ko: string; en: string; dir: number; trips: number;
 type Screen = { ok: boolean; scored_on?: string; tested_on?: string;
                 test_result?: { picked: { trades: number; win: number; won: number };
                                 previous: { trades: number; win: number; won: number } };
+                weights?: Record<string, number>;
                 rows: { rank: number; code: string; name: string; score: number;
                         tick_pct: number; move_vs_cost: number; continue_pct: number;
-                        fit_win: number; live: boolean }[] };
+                        fit_win: number; live: boolean;
+                        g_cost?: number; g_liquidity?: number; g_movement?: number;
+                        g_behavior?: number; g_flow?: number; g_fit?: number }[] };
 type Rank = { ok: boolean; clock: string; fee_pct: number; original_12?: string[];
               days?: string[]; day?: string; frm?: string; to?: string;
               stocks: { code: string; name: string; bars: number; from: string; to: string;
@@ -499,19 +502,12 @@ export default function LiveDeskPage() {
             style={{ background: "rgba(15,81,50,0.06)" }}
             onClick={() => setScreenOpen(!screenOpen)}>
             <b className="text-[13px]" style={{ color: "#0f5132" }}>
-              🔎 {t("종목 선별 (체크포인트 점수)", "stock screener (checkpoint scores)")}
+              🔎 {t("체크포인트 결과 — 종목 선별", "checkpoint results — stock selection")}
             </b>
             <span className="text-[10.5px] text-[var(--text-muted)]">
-              {t(`${screen.rows.length}개 종목 채점 → 상위 5개가 지금 데스크에서 거래 중`,
-                 `${screen.rows.length} stocks scored → the top 5 are the live desk`)}
+              {t(`${screen.rows.length}개 종목 · 6개 체크포인트 · 100점 만점 · 상위 5개 선택 · 13개월 실제 데이터`,
+                 `${screen.rows.length} stocks · 6 checkpoints · out of 100 · top 5 selected · 13 months of real data`)}
             </span>
-            {screen.test_result && (
-              <span className="text-[10px] font-bold px-1.5 py-0.5 rounded"
-                style={{ background: "rgba(15,81,50,0.14)", color: "#0f5132" }}>
-                {t(`선별한 5개 ${screen.test_result.picked.win}% vs 이전 5개 ${screen.test_result.previous.win}% (선별이 못 본 4개월)`,
-                   `picked five ${screen.test_result.picked.win}% vs previous five ${screen.test_result.previous.win}% (4 months it never saw)`)}
-              </span>
-            )}
             <span className="ml-auto text-[10.5px]" style={{ color: "#0f5132" }}>
               {screenOpen ? t("닫기 ▲", "close ▲") : t("점수 보기 ▼", "see the scores ▼")}
             </span>
@@ -523,20 +519,27 @@ export default function LiveDeskPage() {
                   style={{ background: "var(--bg-elevated)" }}>
                   <th className="text-left px-3 py-1">#</th>
                   <th className="text-left px-2">{t("종목", "stock")}</th>
-                  <th className="text-right px-3">{t("종합 점수", "score")}</th>
-                  <th className="text-right px-3" title={t("1호가가 가격의 몇 % 인가 - 작을수록 좋음", "one tick as % of price - smaller is better")}>
-                    {t("호가 비용", "tick cost")}</th>
-                  <th className="text-right px-3" title={t("3봉 상승폭 ÷ (수수료+호가) - 1보다 커야 이익 가능", "3-bar move ÷ cost - must exceed 1 to profit")}>
-                    {t("움직임 ÷ 비용", "move ÷ cost")}</th>
-                  <th className="text-right px-3" title={t("오른 뒤 계속 오를 확률 - 우리 규칙은 상승을 삽니다", "chance a rise continues - our rules buy rises")}>
-                    {t("상승 지속", "continues")}</th>
-                  <th className="text-right px-3">{t("우리 규칙 승률", "our rules")}</th>
+                  <th className="text-right px-3">{t("종합", "TOTAL")}</th>
+                  <th className="text-right px-2" title={t("체크포인트 ①: 호가 비용이 싼가 (가중치 25%)", "checkpoint ①: is the tick cheap? (weight 25%)")}>
+                    {t("①비용", "①cost")}</th>
+                  <th className="text-right px-2" title={t("체크포인트 ②: 오른 뒤 계속 오르는가 (25%)", "checkpoint ②: do rises continue? (25%)")}>
+                    {t("②지속", "②behav")}</th>
+                  <th className="text-right px-2" title={t("체크포인트 ③: 충분히 움직이는가 (20%)", "checkpoint ③: does it move enough? (20%)")}>
+                    {t("③움직임", "③move")}</th>
+                  <th className="text-right px-2" title={t("체크포인트 ④: 거래가 활발한가 (15%)", "checkpoint ④: is it liquid? (15%)")}>
+                    {t("④유동성", "④liq")}</th>
+                  <th className="text-right px-2" title={t("체크포인트 ⑤: 우리 규칙과 맞는가 (10%)", "checkpoint ⑤: does it fit our rules? (10%)")}>
+                    {t("⑤적합", "⑤fit")}</th>
+                  <th className="text-right px-2" title={t("체크포인트 ⑥: 외국인·기관이 사는가 (5%)", "checkpoint ⑥: are big investors buying? (5%)")}>
+                    {t("⑥수급", "⑥flow")}</th>
+                  <th className="text-right px-3 text-[9px]" title={t("근거 수치: 1호가 비중 · 움직임÷비용 · 상승지속률 · 우리 규칙 승률", "evidence: tick% · move÷cost · continues · our-rule win%")}>
+                    {t("근거 수치", "evidence")}</th>
                 </tr></thead>
                 <tbody>
                   {screen.rows.map((r) => (
                     <React.Fragment key={r.code}>
                     {r.rank === 6 && (
-                      <tr><td colSpan={7} className="px-3 py-1 text-[10px] font-bold text-center"
+                      <tr><td colSpan={10} className="px-3 py-1 text-[10px] font-bold text-center"
                         style={{ background: "rgba(15,81,50,0.10)", color: "#0f5132" }}>
                         {t("▲ 상위 5개 = 선택된 종목 · 아래는 선택되지 않음 ▼",
                            "▲ TOP 5 = selected · not selected below ▼")}
@@ -553,11 +556,16 @@ export default function LiveDeskPage() {
                           {r.rank <= 5 ? t("거래 중", "LIVE")
                                        : t("거래 중 (회장님 유지)", "LIVE (your keep)")}</span>}
                       </td>
-                      <td className="text-right px-3 font-bold" style={{ color: "#0f5132" }}>{r.score}</td>
-                      <td className="text-right px-3">{r.tick_pct}%</td>
-                      <td className="text-right px-3">{r.move_vs_cost}x</td>
-                      <td className="text-right px-3">{r.continue_pct}%</td>
-                      <td className="text-right px-3">{r.fit_win}%</td>
+                      <td className="text-right px-3 font-extrabold" style={{ color: "#0f5132" }}>{r.score}</td>
+                      {[r.g_cost, r.g_behavior, r.g_movement, r.g_liquidity, r.g_fit, r.g_flow].map((g, gi) => (
+                        <td key={gi} className="text-right px-2 tabular-nums"
+                          style={{ color: (g ?? 0) >= 70 ? "#0f5132" : (g ?? 0) >= 40 ? "var(--text-secondary)" : "#b02a2a" }}>
+                          {g ?? "-"}
+                        </td>
+                      ))}
+                      <td className="text-right px-3 text-[9.5px] text-[var(--text-muted)] whitespace-nowrap">
+                        {r.tick_pct}% · {r.move_vs_cost}x · {r.continue_pct}% · {r.fit_win}%
+                      </td>
                     </tr>
                     </React.Fragment>
                   ))}
@@ -565,8 +573,10 @@ export default function LiveDeskPage() {
               </table>
               <div className="px-4 py-2 text-[10.5px] text-[var(--text-muted)] border-t"
                 style={{ borderColor: "var(--border-default)" }}>
-                {t(`점수는 ${screen.scored_on} 자료로만 매겼고, 선별된 5개를 선별이 보지 못한 ${screen.tested_on} 구간에서 검증했습니다 — 과거에 맞춘 것이 아닙니다.`,
-                   `scored only on ${screen.scored_on}, then the chosen five were tested on ${screen.tested_on} which the screener never saw - not fitted to the past.`)}
+                <div>{t("체크포인트 6개: ①호가 비용 25% · ②상승 지속성 25% · ③움직임 크기 20% · ④유동성 15% · ⑤우리 규칙 적합도 10% · ⑥외국인·기관 수급 5% — 각 항목 100점 만점, 가중 합계가 종합 점수입니다.",
+                        "the 6 checkpoints: ①cost 25% · ②behavior 25% · ③movement 20% · ④liquidity 15% · ⑤fit with our rules 10% · ⑥investor flows 5% — each out of 100; the weighted sum is the total.")}</div>
+                <div className="mt-1">{t(`점수는 ${screen.scored_on} 자료로만 매겼고, 선별된 5개를 선별이 보지 못한 ${screen.tested_on} 구간에서 검증했습니다 — 과거에 맞춘 것이 아닙니다.`,
+                   `scored only on ${screen.scored_on}, then the chosen five were tested on ${screen.tested_on} which the screener never saw - not fitted to the past.`)}</div>
               </div>
             </div>
           )}

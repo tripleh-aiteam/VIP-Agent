@@ -695,16 +695,22 @@ def screener():
     out = []
     for i, (code, sc) in enumerate(rows, 1):
         c = (d.get("checks") or {}).get(code, {})
+        g = (d.get("groups") or {}).get(code, {})
         out.append({"rank": i, "code": code,
                     "name": (d.get("names") or {}).get(code, code),
                     "score": round(sc, 1),
+                    # the six checkpoint groups behind the score (0-100 each)
+                    "g_cost": g.get("cost"), "g_liquidity": g.get("liquidity"),
+                    "g_movement": g.get("movement"), "g_behavior": g.get("behavior"),
+                    "g_flow": g.get("flow"), "g_fit": g.get("fit"),
                     "tick_pct": round(c.get("tick_pct", 0), 3),
                     "move_vs_cost": round(c.get("mv_vs_cost", 0), 2),
                     "continue_pct": round(c.get("cont", 0), 1),
                     "fit_win": round(c.get("fit_win", 0), 1),
                     "live": code in (d.get("live") or [])})
     return {"ok": True, "scored_on": d.get("scored_on"), "tested_on": d.get("tested_on"),
-            "test_result": d.get("test_result"), "rows": out}
+            "test_result": d.get("test_result"), "weights": d.get("weights"),
+            "rows": out}
 
 
 @router.get("/live/warm")
