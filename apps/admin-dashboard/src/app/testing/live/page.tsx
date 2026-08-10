@@ -308,6 +308,11 @@ export default function LiveDeskPage() {
   // the morning GO / NO-GO verdict per stock (advisor's point 2)
   const [gate, setGate] = useState<Gate | null>(null);
   useEffect(() => { api<Gate>("/paper-desk/gate").then(setGate).catch(() => {}); }, []);
+  // VIEWING switch only: with the gate closed the board shows nothing, so this asks
+  // "what WOULD the rules have done today?" The desk itself always trades gated.
+  const [showBlocked, setShowBlocked] = useState(false);
+  const showBlockedRef = useRef(false);
+  useEffect(() => { showBlockedRef.current = showBlocked; }, [showBlocked]);
   // win% threshold: type 20, press ENTER - the box empties, a "≥20%" chip appears,
   // and only rules winning 20%+ stay. Click the chip's x to clear (boss 2026-08-06:
   // "after adding 20 then I should type enter then 20 should gone").
@@ -379,7 +384,8 @@ export default function LiveDeskPage() {
     api<RDetail>(`/paper-desk/live/rules/trades?variant=${encodeURIComponent(id)}&${q}`
       + `&code=${encodeURIComponent(want)}&bars=60000`
       + `&around=${tradeIdx ?? -1}&budget=${budgetRef.current}`
-      + `&day=${ruleDayRef.current}&frm=${encodeURIComponent(hourFromRef.current)}&to=${encodeURIComponent(hourToRef.current)}`)
+      + `&day=${ruleDayRef.current}&frm=${encodeURIComponent(hourFromRef.current)}&to=${encodeURIComponent(hourToRef.current)}`
+      + `&gate=${showBlockedRef.current ? 0 : 1}`)
       .then((d) => { if (my !== detSeqRef.current) return;
                      const v = d?.ok ? d : null; detRef.current = v;
                      detDayRef.current = (tradeIdx != null
@@ -418,7 +424,7 @@ export default function LiveDeskPage() {
     api<Tape>(`/paper-desk/live/tape?code=${c}&${q}&bars=${chartBarsRef.current}`).then(setTape).catch(() => {});
     api<Book>(`/paper-desk/live/book?code=${c}`).then(setBook).catch(() => {});
     api<Execs>(`/paper-desk/live/execs?code=${c}&n=120`).then(setExecs).catch(() => {});
-    api<Rank>(`/paper-desk/live/rules?${q}&day=${ruleDayRef.current}`
+    api<Rank>(`/paper-desk/live/rules?${q}&gate=${showBlockedRef.current ? 0 : 1}&day=${ruleDayRef.current}`
       + `&frm=${encodeURIComponent(hourFromRef.current)}&to=${encodeURIComponent(hourToRef.current)}`)
       .then(setRank).catch(() => {});
     // follows the CHARTED company, so the minute rows always describe the bars above them
@@ -518,6 +524,16 @@ export default function LiveDeskPage() {
               {t("어제까지의 일봉만 보고 판정합니다 — 오늘 자료는 쓰지 않습니다",
                  "judged only on daily bars up to yesterday - today's data is never used")}
             </span>
+            <button onClick={() => { setShowBlocked(!showBlocked); showBlockedRef.current = !showBlocked;
+                                     setDet(null); setSel(null); setPick(null); pull(); }}
+              className="ml-auto text-[10.5px] font-bold px-2 py-0.5 rounded-md border"
+              title={t("금지된 종목도 포함해 '만약 거래했다면' 결과를 봅니다 — 실제 매매에는 영향이 없습니다",
+                       "see what the rules WOULD have done including blocked stocks - real trading is unaffected")}
+              style={showBlocked ? { background: "#e65100", color: "#fff", borderColor: "#e65100" }
+                                 : { borderColor: "#e65100", color: "#e65100" }}>
+              {showBlocked ? t("가상 결과 보는 중 (클릭해 끄기)", "showing would-have results (click to stop)")
+                           : t("금지된 날도 결과 보기", "show results anyway")}
+            </button>
           </div>
           <div className="mt-1.5 grid gap-1" style={{ gridTemplateColumns: "repeat(auto-fit,minmax(330px,1fr))" }}>
             {gate.rows.map((r) => (
@@ -635,6 +651,13 @@ export default function LiveDeskPage() {
             <b className="text-[13px]" style={{ color: "#6a1b9a" }}>
               🔬 {t(`규칙 ${shownRules.length}개 — 진짜 키움 체결로`, `${shownRules.length} rules, on real Kiwoom executions`)}
             </b>
+            {showBlocked && (
+              <span className="text-[10px] font-extrabold px-1.5 py-0.5 rounded"
+                style={{ background: "#e65100", color: "#fff" }}>
+                {t("가상 결과 — 매수 금지된 종목 포함 (실제 매매 아님)",
+                   "WOULD-HAVE numbers - includes blocked stocks (not real trading)")}
+              </span>
+            )}
             {/* THE CLOCK, on the table itself. It lived only in small caption text and in
                 buttons far below, so the boss pasted a full ranking and could not tell
                 whether he was reading 5틱 or 1분 (2026-08-05). The whole point of the

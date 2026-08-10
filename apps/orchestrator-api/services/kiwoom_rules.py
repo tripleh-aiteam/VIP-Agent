@@ -311,7 +311,7 @@ ORIGINAL_12 = [v["id"] for v in DESK]
 
 
 def rank(tick: int = 5, period: int = 0, day: str = "",
-         frm: str = "", to: str = "") -> dict[str, Any]:
+         frm: str = "", to: str = "", use_gate: bool = True) -> dict[str, Any]:
     """Every plain rule over the real tape of every watched stock, ranked.
 
     day="all" is the CUMULATIVE board (boss 2026-08-06: "total result up to today"):
@@ -319,7 +319,7 @@ def rank(tick: int = 5, period: int = 0, day: str = "",
     span the overnight gap, and each day's ML models are the ones that day actually had
     (trained only on the days before it) - then the trades are added up."""
     import time as _t
-    _rk = (tick, period, day, frm, to)
+    _rk = (tick, period, day, frm, to, use_gate)
     _hit = _RANK_TTL.get(_rk)
     if _hit and _t.time() - _hit[0] < 2.5:
         return _hit[1]         # the page polls every 3s; identical answers are reused
@@ -348,7 +348,7 @@ def rank(tick: int = 5, period: int = 0, day: str = "",
                          "tick": tp["tk"], "seed": 1,
                          "vols": [float(c.get("vol") or 0) for c in tp["cs"]],
                          "ctx": daily_ctx(code, d or _kd0()),
-                         "gate_ok": _gate_ok(code, d or _kd0()),
+                         "gate_ok": (_gate_ok(code, d or _kd0()) if use_gate else True),
                          "times": [c["hhmm"] for c in tp["cs"]]}
                         for code, tp in tapes.items()])
                    for d, tapes in tapes_by_day]
@@ -370,7 +370,7 @@ def rank(tick: int = 5, period: int = 0, day: str = "",
             # a FINISHED day's tape never changes, so its trades are computed once.
             # Without this the cumulative view re-ran three days of every rule on every
             # 3-second poll. Today is never cached - it is still being written.
-            ck = (d, tick, period, frm, to, v["id"])
+            ck = (d, tick, period, frm, to, v["id"], use_gate)
             if d and d < _today and ck in _RANK_DAY_CACHE:
                 trades += _RANK_DAY_CACHE[ck]
                 continue
@@ -422,7 +422,7 @@ def rank(tick: int = 5, period: int = 0, day: str = "",
     rows.sort(key=lambda r: (0 if r.get("kind") == "candle" else 1,
                              -r["win_pct"], -r["trips"]))
     _res = {"ok": True, "original_12": ORIGINAL_12, "days": stored_days(),
-            "day": day, "frm": frm, "to": to,
+            "day": day, "frm": frm, "to": to, "gate_applied": use_gate,
             "clock": f"{period}초" if period else f"{tick}틱",
             "tick": tick, "period": period, "fee_pct": FEE_PCT,
             # for day="all" this is the LATEST day's tape summary with the bar counts
@@ -464,13 +464,14 @@ def shares_for(entry: float, budget: int) -> int:
 
 def trades(vid: str, tick: int = 5, period: int = 0, code: str = "",
            bars: int = 2500, limit: int = 300, around: int = -1,
-           budget: int = 0, day: str = "", frm: str = "", to: str = "") -> dict[str, Any]:
+           budget: int = 0, day: str = "", frm: str = "", to: str = "",
+           use_gate: bool = True) -> dict[str, Any]:
     """One rule's trades on the real tape, with the chart and the evidence per trade."""
     v = next((x for x in DESK if x["id"] == vid), None)
     if v is None:
         return {"ok": False, "error": f"unknown rule {vid}"}
     import time as _t
-    _tk2 = (vid, tick, period, code, bars, limit, around, budget, day, frm, to)
+    _tk2 = (vid, tick, period, code, bars, limit, around, budget, day, frm, to, use_gate)
     _hit2 = _TRADES_TTL.get(_tk2)
     if _hit2 and _t.time() - _hit2[0] < 2.5:
         return _hit2[1]
@@ -503,7 +504,7 @@ def trades(vid: str, tick: int = 5, period: int = 0, code: str = "",
                          "times": [c["hhmm"] for c in cs],
                          "vols": [float(c.get("vol") or 0) for c in cs],
                          "ctx": daily_ctx(c_code, d or _kd0()),
-                         "gate_ok": _gate_ok(c_code, d or _kd0()),
+                         "gate_ok": (_gate_ok(c_code, d or _kd0()) if use_gate else True),
                          "holes": (_hole_bars(c_code, tick, period)
                                    if not (d or frm or to) else set()),
                          "ml_bundle": (kiwoom_ml_for(c_code, tick, period, v, d)
