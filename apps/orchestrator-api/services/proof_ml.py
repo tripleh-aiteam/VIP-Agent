@@ -307,6 +307,8 @@ LIMIT_BUY_CAP = {          # most we will ever pay ABOVE our offer
     "064350": 100,         # 현대로템      (1 tick, ₩147k → ₩100 tick)
     "402340": 1000,        # SK스퀘어      (1 tick, ₩939k → ₩1,000 tick)
     "042700": 100,         # 한미반도체     (1 tick, ₩192k → ₩100 tick)
+    "017670": 100,         # SK텔레콤      (1 tick, ₩88k → ₩100 tick)
+    "034020": 100,         # 두산에너빌리티  (1 tick, ₩77k → ₩100 tick)
 }
 SELL_FLOOR = {             # never sell more than this BELOW the stop trigger
     "000660": 2000,
@@ -319,6 +321,8 @@ SELL_FLOOR = {             # never sell more than this BELOW the stop trigger
     "064350": 200,         # 현대로템      (2 ticks = ₩200)
     "402340": 2000,        # SK스퀘어      (2 ticks = ₩2,000)
     "042700": 200,         # 한미반도체     (2 ticks = ₩200)
+    "017670": 200,         # SK텔레콤      (2 ticks = ₩200)
+    "034020": 200,         # 두산에너빌리티  (2 ticks = ₩200)
 }
 
 

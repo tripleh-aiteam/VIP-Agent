@@ -580,16 +580,16 @@ export default function LiveDeskPage() {
           <div className="px-4 py-2 flex items-center gap-2 flex-wrap cursor-pointer"
             style={{ background: "rgba(21,101,192,0.06)" }} onClick={() => setPickOpen(!pickOpen)}>
             <b className="text-[13px]" style={{ color: "#1565c0" }}>
-              🎯 {t(`오늘의 ${(dpick.rows || []).filter((r) => r.on_desk).length}종목 — 점수 상위 5 + SK하이닉스·삼성전자`,
-                    `today's ${(dpick.rows || []).filter((r) => r.on_desk).length} stocks — top 5 by score + SK하이닉스 & 삼성전자`)}
+              🎯 {t(`내 종목 ${(dpick.picks || []).length} — 매일 이 종목만 매매합니다`,
+                    `my desk: ${(dpick.picks || []).length} stocks — these are what we trade, every day`)}
             </b>
             <span className="text-[11px] font-bold">
-              {(dpick.rows || []).filter((r) => r.on_desk)
-                .map((r) => `${r.name}${r.pinned ? "📌" : ""} ${r.score}`).join(" · ")}
+              {(dpick.picks || []).map((c) => (dpick.rows || []).find((r) => r.code === c))
+                .filter(Boolean).map((r) => `${r!.name} ${r!.score}`).join(" · ")}
             </span>
             <span className="text-[10px] text-[var(--text-muted)]">
-              {t(`점수 상위 5개 + 고정 2개(📌) · 고정 종목이 5위 안에 들면 중복 없이 그대로 — 오늘 ${dpick.n_added ?? 0}개 추가`,
-                 `the day's top 5 plus the 2 fixed (📌); if a fixed one is already in the top 5 it is not added twice - ${dpick.n_added ?? 0} added today`)}
+              {t(`직접 고른 고정 종목입니다. 100점 체크리스트는 매일 그대로 돌아가며 이 종목들의 점수·순위를 매기지만, 누가 매매될지는 정하지 않습니다 — 오늘 이 중 ${dpick.n_earned ?? 0}개가 점수 상위 5에도 들었습니다.`,
+                 `your own fixed list. The 100-item checklist still runs every morning and scores them, but it no longer decides who trades - ${dpick.n_earned ?? 0} of them also made today's top 5 on merit.`)}
             </span>
             {!dpick.applied && (
               <span className="text-[10px] font-bold px-1.5 py-0.5 rounded"
@@ -638,21 +638,14 @@ export default function LiveDeskPage() {
                     </td></tr>
                   )}
                   {(pickAll ? dpick.rows
-                            : [...dpick.rows.filter((r) => r.by_score),
-                               ...dpick.rows.filter((r) => r.added)]).map((r) => (
+                            : (dpick.picks || []).map((c) => dpick.rows.find((r) => r.code === c))
+                                                 .filter(Boolean) as typeof dpick.rows).map((r) => (
                     <React.Fragment key={r.code}>
-                    {r.added && dpick.rows.filter((x) => x.by_score).length > 0
-                      && r === dpick.rows.filter((x) => x.added)[0] && (
-                      <tr><td colSpan={9} className="px-3 py-1 text-[10px] font-bold text-center"
-                        style={{ background: "rgba(230,81,0,0.10)", color: "#e65100" }}>
-                        {t("▲ 점수 상위 5 · 아래는 항상 포함하는 고정 종목 ▼",
-                           "▲ top 5 by score · always-included fixed stocks below ▼")}
-                      </td></tr>
-                    )}
-                    {pickAll && !r.on_desk && r === dpick.rows.filter((x) => !x.on_desk)[0] && (
+                    {pickAll && r === dpick.rows[0] && (
                       <tr><td colSpan={9} className="px-3 py-1 text-[10px] font-bold text-center"
                         style={{ background: "rgba(128,128,128,0.10)", color: "var(--text-muted)" }}>
-                        {t("▼ 오늘 선택되지 않은 종목 (참고용)", "▼ not selected today (for reference)")}
+                        {t("▼ 100점 체크리스트 전체 순위 (참고용) · ★ = 오늘 점수 상위 5 · 색칠된 줄 = 내 종목",
+                           "▼ the full 100-item checklist ranking (for reference) · ★ = today's top 5 by score · shaded = your desk")}
                       </td></tr>
                     )}
                     <tr className="border-t border-[var(--border-default)]/40"
@@ -660,7 +653,8 @@ export default function LiveDeskPage() {
                                                      : "transparent" }}>
                       <td className="px-3 py-1 text-[var(--text-muted)]">{r.rank}</td>
                       <td className="px-2 font-bold text-[var(--text-primary)]">
-                        {r.pinned ? "📌 " : ""}{r.name}</td>
+                        {r.by_score ? <span title={t("오늘 점수 상위 5", "top 5 by score today")}
+                          style={{ color: "#e65100" }}>★ </span> : ""}{r.name}</td>
                       <td className="text-right px-3 font-extrabold" style={{ color: "#1565c0" }}>{r.score}</td>
                       {["trend","liquidity","flexibility","levels","momentum","flows"].map((g) => (
                         <td key={g} className="text-right px-2"
@@ -679,8 +673,9 @@ export default function LiveDeskPage() {
                   className="text-[10.5px] font-bold px-2.5 py-1 rounded-md border"
                   style={pickAll ? { background: "#1565c0", color: "#fff", borderColor: "#1565c0" }
                                  : { borderColor: "#1565c0", color: "#1565c0" }}>
-                  {pickAll ? t("데스크 종목만 보기 ▲", "show only the desk ▲")
-                           : t(`전체 ${dpick.rows.length}종목 순위 보기 ▼`, `see all ${dpick.rows.length} ranked ▼`)}
+                  {pickAll ? t("내 종목만 보기 ▲", "show only my desk ▲")
+                           : t(`100점 체크리스트 순위 보기 (${dpick.rows.length}종목) ▼`,
+                               `see the 100-item checklist ranking (${dpick.rows.length} stocks) ▼`)}
                 </button>
                 <button onClick={() => setRawCode(rawCode ? "" : (dpick.rows[0]?.code || ""))}
                   className="ml-2 text-[10.5px] font-bold px-2.5 py-1 rounded-md border"
@@ -779,8 +774,8 @@ export default function LiveDeskPage() {
               )}
               <div className="px-4 py-2 text-[10.5px] text-[var(--text-muted)] border-t"
                 style={{ borderColor: "var(--border-default)" }}>
-                {t("매일 점수 상위 5종목을 뽑고, 여기에 SK하이닉스와 삼성전자(📌)를 항상 더합니다. 둘 중 하나가 이미 5위 안에 들면 중복해서 넣지 않으므로 그날 종목 수는 5~7개가 됩니다. 고정 종목의 점수와 순위도 그대로 공개합니다. — 장기 성격(1년: 거래대금·호가비용·추세성·거래량 급증)과 당일 상태(이평 정배열·신고가·RSI·MACD·볼린저·3일 수급·공매도)를 곱해 매일 아침 다시 채점합니다. 전부 그 날 이전 자료만 씁니다.",
-                   "Each morning the top five by score are taken, then SK하이닉스 and 삼성전자 (📌) are always added; if either is already in the top five it is not added twice, so the desk is 5-7 names. The fixed stocks' scores and ranks are published exactly as they are. — Scored fresh every morning: long-run character (a year of trading value, tick cost, trendiness, volume surges) times today's condition (MA alignment, new highs, RSI, MACD, Bollinger, 3-day flows, short interest). Only data from before the day is used.")}
+                {t("매매 종목은 직접 고정한 목록입니다 — SK하이닉스 · 삼성전자 · NAVER · SK텔레콤 · 한화오션 · 두산에너빌리티. 100점 체크리스트는 매일 아침 그대로 돌아가서 이 종목들의 점수와 순위를 매기지만, 누가 매매될지는 더 이상 정하지 않습니다. 위 버튼을 누르면 오늘 점수로 뽑혔을 상위 5종목(★)까지 전체 순위를 볼 수 있습니다. — 점수는 장기 성격(1년: 거래대금·호가비용·추세성·거래량 급증)과 당일 상태(이평 정배열·신고가·RSI·MACD·볼린저·3일 수급·공매도)로 계산하며, 전부 그 날 이전 자료만 씁니다.",
+                   "The traded list is fixed by you - SK하이닉스, 삼성전자, NAVER, SK텔레콤, 한화오션, 두산에너빌리티. The 100-item checklist still runs every morning and scores them, but it no longer decides who trades. The button above opens the full ranking, where ★ marks the five the score would have picked today. - Scores combine long-run character (a year of trading value, tick cost, trendiness, volume surges) with today's condition (MA alignment, new highs, RSI, MACD, Bollinger, 3-day flows, short interest), always from data before the day.")}
               </div>
             </div>
           )}

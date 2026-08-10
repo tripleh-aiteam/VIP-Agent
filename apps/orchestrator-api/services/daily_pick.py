@@ -38,21 +38,21 @@ WEIGHTS = {"trend": 25, "liquidity": 20, "flexibility": 20,
            "levels": 15, "momentum": 10, "flows": 10}
 N_PICKS = 5
 
-# THE BOSS'S THREE, always on the desk (2026-08-10). He wants them traded every day and
-# their score shown every day, so the checklist judges them in public rather than
-# quietly leaving them out. Measured over the last 60 sessions before this was set:
-# SK하이닉스 would have earned a place on 34 of 60 days by score alone (best rank 1),
-# 삼성전자 on 0 (avg rank 22.5) and NAVER on 1 (avg 24.9) - both held back by an
-# expensive tick (0.216% and 0.248% of price). Pinning them is his call, made with
-# those numbers in front of him; the remaining slots are still won on score.
-# THE DESK RULE (boss 2026-08-10, revised): the day's TOP FIVE on score, plus
-# SK하이닉스 and 삼성전자 always - and if either already earned a top-five seat it is
-# not added twice, so the desk is 5, 6 or 7 names. Their scores are always published:
-# over the 60 sessions before this was set SK하이닉스 would have earned a place on 34
-# days by score alone (best rank 1) while 삼성전자 earned none (avg rank 22.5), held
-# back by a tick costing 0.216% of its price. Pinning them is his call, made with
-# those numbers in front of him.
-PINNED = ["000660", "005930"]                    # SK하이닉스 · 삼성전자
+# THE BOSS'S DESK (2026-08-10, his call). He named the six companies he wants traded
+# every day, so the desk is fixed and the checklist no longer chooses who trades - it
+# scores them. The 100-item score still runs every morning over every candidate and is
+# shown in full on the board, so he can see where his six rank and who would have been
+# picked on merit; it just does not decide the desk any more. Change this list and the
+# collector follows it the next morning (or immediately with daily-pick?refresh=1&force=1).
+DESK = [
+    "000660",   # SK하이닉스
+    "005930",   # 삼성전자
+    "035420",   # NAVER
+    "017670",   # SK텔레콤
+    "042660",   # 한화오션
+    "034020",   # 두산에너빌리티
+]
+PINNED = DESK           # kept for callers that still ask which names are fixed
 
 
 def _conn():
@@ -68,6 +68,9 @@ def build_character(before: str = "") -> dict[str, dict]:
     conn = _conn(); cur = conn.cursor()
     cur.execute("SELECT DISTINCT ticker FROM minute_bars_hist ORDER BY ticker")
     tickers = [r[0] for r in cur.fetchall()]
+    # a desk stock is scored whether or not we happen to hold minute history for it -
+    # SK텔레콤 has none and would otherwise be missing from its own board
+    tickers = sorted(set(tickers) | set(DESK))
     cur.execute("SELECT code, name FROM krx_stocks")
     names = dict(cur.fetchall())
     for tk in tickers:
@@ -244,21 +247,23 @@ def pick(day: str, n: int = N_PICKS, refresh_character: bool = False) -> dict[st
     rows.sort(key=lambda r: -r["score"])
     for i, r in enumerate(rows, 1):
         r["rank"] = i
-        r["pinned"] = r["code"] in PINNED
-    # THE DESK = the pinned three + the highest scorers that are not pinned, filling to
-    # n. Pinned stocks keep their honest rank and score in the table; being on the desk
-    # is not the same as having earned it, and the board says which is which.
-    earned = rows[:n]                                   # the day's genuine top five
-    extra = [r for r in rows if r["pinned"] and r not in earned]
-    chosen = earned + extra                             # 5, 6 or 7 stocks, never a duplicate
-    chosen.sort(key=lambda r: -r["score"])
+        r["pinned"] = r["code"] in DESK
+    # THE DESK is the boss's fixed six. The score no longer picks who trades - it grades
+    # them, and `by_score` still marks the day's genuine top n so the board can show what
+    # the checklist WOULD have chosen next to what he actually trades.
+    chosen = [r for r in rows if r["code"] in DESK]
+    chosen.sort(key=lambda r: DESK.index(r["code"]))     # his order, not the score's
+    earned = rows[:n]
     for r in rows:
-        r["on_desk"] = r["code"] in {x["code"] for x in chosen}
-        r["by_score"] = r in earned                     # earned its seat on merit
-        r["added"] = r in extra                         # on the desk only because pinned
+        r["on_desk"] = r["code"] in DESK
+        r["by_score"] = r in earned                     # would have been picked on merit
+        r["added"] = r["on_desk"] and r not in earned   # on the desk by his choice alone
+    missing = [c for c in DESK if c not in {r["code"] for r in rows}]
     return {"ok": True, "day": day, "picks": [r["code"] for r in chosen],
-            "pinned": PINNED, "n_earned": len(earned), "n_added": len(extra),
-            "weights": WEIGHTS, "rows": rows}
+            "pinned": DESK, "desk": DESK, "fixed_desk": True,
+            "n_earned": len([r for r in chosen if r["by_score"]]),
+            "n_added": len([r for r in chosen if r["added"]]),
+            "missing": missing, "weights": WEIGHTS, "rows": rows}
 
 
 def save_picks(day: str, n: int = N_PICKS) -> dict[str, Any]:
