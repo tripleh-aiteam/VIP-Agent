@@ -1031,7 +1031,16 @@ export default function LiveDeskPage() {
                                  setDet(null); setSel(null); setPick(null); pull(); }}
               className="text-[10px] font-bold px-1 py-0.5 rounded border bg-[var(--bg-primary)] text-[var(--text-primary)]"
               style={{ borderColor: ruleDay ? "#e65100" : "var(--border-default)" }}>
-              <option value="">{t("오늘 (실시간)", "today (live)")}</option>
+              {/* Before the first tick of the day the board reads the newest stored day.
+                  Leaving this reading "오늘 (실시간)" while 08-10's trades were on screen
+                  looked like today's session had already happened (boss 2026-08-11), so
+                  the option says what it is actually showing. */}
+              <option value="">
+                {rank?.auto_day && rank.day
+                  ? t(`오늘 (체결 없음 → ${rank.day.slice(4, 6)}-${rank.day.slice(6, 8)} 표시)`,
+                      `today (no executions yet → showing ${rank.day.slice(4, 6)}-${rank.day.slice(6, 8)})`)
+                  : t("오늘 (실시간)", "today (live)")}
+              </option>
               <option value="all">{t("전체 누적 (모든 날)", "all days (total)")}</option>
               {/* today's own file appears in stored days the moment the market opens -
                   listing it again under "오늘 (실시간)" showed TWO todays (boss 08-06) */}
