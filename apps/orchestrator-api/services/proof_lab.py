@@ -93,8 +93,22 @@ VARIANTS: list[dict] = [
      "take_ticks": 10, "stop_pct": 2.0, "wait_bars": 2, "vol": 1.5},
     {"id": "T10ng", "entry": 3, "kind": "pct", "a": 0.3, "b": 2.0, "exec": "limit",
      "take_ticks": 10, "stop_pct": 2.0, "wait_bars": 2, "vol": 1.5, "ignore_gate": True},
+    # EVERY main rule gets an ungated twin (boss 2026-08-10). With one twin each, a
+    # gate-closed day left the gated side of the board empty and the comparison could
+    # never mature; now both sides collect evidence on every single day.
     {"id": "T6r", "entry": 3, "kind": "pct", "a": 0.3, "b": 2.0, "exec": "limit",
      "take_ticks": 6, "stop_pct": 2.0, "wait_bars": 2, "vol": 1.5, "max_run": 0.2},
+    {"id": "T6rng", "entry": 3, "kind": "pct", "a": 0.3, "b": 2.0, "exec": "limit",
+     "take_ticks": 6, "stop_pct": 2.0, "wait_bars": 2, "vol": 1.5, "max_run": 0.2,
+     "ignore_gate": True},
+    {"id": "T6twong", "entry": 2, "kind": "pct", "a": 0.3, "b": 2.0, "exec": "limit",
+     "take_ticks": 6, "stop_pct": 2.0, "wait_bars": 2, "vol": 1.5, "ignore_gate": True},
+    {"id": "T10twong", "entry": 2, "kind": "pct", "a": 0.3, "b": 2.0, "exec": "limit",
+     "take_ticks": 10, "stop_pct": 2.0, "wait_bars": 2, "vol": 1.5, "ignore_gate": True},
+    {"id": "T6barng", "entry": 3, "kind": "pct", "a": 0.3, "b": 2.0, "exec": "limit",
+     "take_ticks": 6, "stop_pct": 2.0, "wait_bars": 2, "ignore_gate": True},
+    {"id": "T4ng", "entry": 3, "kind": "pct", "a": 0.3, "b": 2.0, "exec": "limit",
+     "take_ticks": 4, "stop_pct": 2.0, "wait_bars": 2, "vol": 1.5, "ignore_gate": True},
     {"id": "T10r", "entry": 3, "kind": "pct", "a": 0.3, "b": 2.0, "exec": "limit",
      "take_ticks": 10, "stop_pct": 2.0, "wait_bars": 2, "vol": 1.5, "max_run": 0.2},
     {"id": "T6two", "entry": 2, "kind": "pct", "a": 0.3, "b": 2.0, "exec": "limit",
