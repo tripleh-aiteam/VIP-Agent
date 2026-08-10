@@ -669,7 +669,8 @@ export default function LiveDeskPage() {
             </span>
             <span className="text-[10px] font-bold px-1.5 py-0.5 rounded"
               style={{ background: "rgba(106,27,154,0.12)", color: "#6a1b9a" }}>
-              {t("하이브리드 6개(2% 익절, N하락=손절) + %규칙 6개 + ML 6개 — 모든 규칙에 %가 있습니다", "6 hybrids (2% take, N-down stop) + 6 %-rules + 6 ML twins — every rule has a % exit")}
+              {t("전 규칙 지정가 주문 — 종가에 걸고, 한 호가까지만 쫓고, 하한선 아래로는 팔지 않습니다",
+      "every rule uses limit orders — offer the close, chase at most one tick, never sell below the floor")}
             </span>
             {rank.stocks.map((x) => (
               <span key={x.code} className="text-[10px] text-[var(--text-muted)]">

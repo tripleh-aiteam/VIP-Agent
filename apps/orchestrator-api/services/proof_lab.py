@@ -85,6 +85,24 @@ VARIANTS: list[dict] = [
      "take_ticks": 4, "stop_pct": 2.0, "wait_bars": 2, "vol": 1.5},
     {"id": "LMT6", "entry": 3, "kind": "pct", "a": 0.3, "b": 2.0, "exec": "limit",
      "take_ticks": 6, "stop_pct": 2.0, "wait_bars": 2, "vol": 1.5},
+    # the filters that earned their place on the old market-order desk, carried over so
+    # the comparison survives the switch (boss 2026-08-10: "keep limit based, remove the
+    # old version")
+    {"id": "LMTr", "entry": 3, "kind": "pct", "a": 0.3, "b": 2.0, "exec": "limit",
+     "take_ticks": 2, "stop_pct": 2.0, "wait_bars": 2, "max_run": 0.2},
+    {"id": "LMTvr", "entry": 3, "kind": "pct", "a": 0.3, "b": 2.0, "exec": "limit",
+     "take_ticks": 2, "stop_pct": 2.0, "wait_bars": 2, "vol": 1.5, "max_run": 0.2},
+    {"id": "LMT2r", "entry": 2, "kind": "pct", "a": 0.3, "b": 2.0, "exec": "limit",
+     "take_ticks": 2, "stop_pct": 2.0, "wait_bars": 2, "vol": 1.5, "max_run": 0.1},
+    {"id": "LMT4r", "entry": 3, "kind": "pct", "a": 0.3, "b": 2.0, "exec": "limit",
+     "take_ticks": 4, "stop_pct": 2.0, "wait_bars": 2, "vol": 1.5, "max_run": 0.2},
+    # ML twins, so "with model / without model" keeps being measured every day
+    {"id": "LMTvML", "entry": 3, "kind": "pct", "a": 0.3, "b": 2.0, "exec": "limit",
+     "take_ticks": 2, "stop_pct": 2.0, "wait_bars": 2, "vol": 1.5, "ml": True},
+    {"id": "LMT2ML", "entry": 2, "kind": "pct", "a": 0.3, "b": 2.0, "exec": "limit",
+     "take_ticks": 2, "stop_pct": 2.0, "wait_bars": 2, "vol": 1.5, "ml": True},
+    {"id": "LMT4ML", "entry": 3, "kind": "pct", "a": 0.3, "b": 2.0, "exec": "limit",
+     "take_ticks": 4, "stop_pct": 2.0, "wait_bars": 2, "vol": 1.5, "ml": True},
     {"id": "g1", "entry": 3, "kind": "pct", "a": 0.5, "b": 2.0, "vol": 2.0, "clock": [5, 60]},
     {"id": "g2", "entry": 2, "kind": "pct", "a": 1.0, "b": 2.0, "vol": 1.5, "clock": [5, 60]},
     {"id": "g3", "entry": 3, "kind": "pct", "a": 1.0, "b": 2.0, "vol": 1.5, "clock": [5, 60]},
@@ -169,17 +187,18 @@ def label(v: dict, ko: bool = True) -> str:
     ent = (f"{v['entry']}연속 하락" if dn else f"{v['entry']}연속 상승") if ko else           (f"{v['entry']} down" if dn else f"{v['entry']} up")
     if v.get("vol"):
         ent += f" (거래량 ≥{v['vol']}배)" if ko else f" (vol ≥{v['vol']}x)"
-    if v.get("exec") == "limit":
-        tt_ = v.get("take_ticks", 2)
-        return ((f"[지정가] {ent} → +{tt_}호가 익절 / -{v.get('stop_pct',2.0)}% 손절(하한선)")
-                if ko else
-                (f"[LIMIT] {ent} / +{tt_} ticks take, -{v.get('stop_pct',2.0)}% stop (with floor)"))
     if v.get("max_run"):
         ent += f" (상승폭 <{v['max_run']}%)" if ko else f" (run <{v['max_run']}%)"
     if v.get("clock"):
         _t, _p = v["clock"]
         _cl = f"{_p}초" if _p and _p < 60 else ("1분" if _p == 60 else f"{_t}틱")
         ent = (f"[{_cl} 전용] " if ko else f"[{_cl} only] ") + ent
+    if v.get("exec") == "limit":
+        # no "[LIMIT]" tag: the whole desk is limit-order now, so the word said nothing
+        tt_ = v.get("take_ticks", 2)
+        return ((f"{ent} → +{tt_}호가 익절 / -{v.get('stop_pct',2.0)}% 손절")
+                if ko else
+                (f"{ent} / +{tt_} ticks take, -{v.get('stop_pct',2.0)}% stop"))
     if v["kind"] == "candle":
         exi = f"{v['a']}연속 {'상승' if dn else '하락'} 매도" if ko else               f"{v['a']} {'up' if dn else 'down'}"
         if v.get("take") is not None:
@@ -1144,9 +1163,10 @@ def variant_trades(vid: str, seed: int = 7, start: int = 0, tick: int = 5,
 # 2up/2down use 2 up 2%"). The simple up/downs and their ML twins are off both boards;
 # every traded rule has a % in its exit. The full VARIANTS list stays for lookups.
 _LAB_OFF = {"3u3d", "2u2d", "3u2d", "2u3d", "3u4d", "4u3d"}
-LAB_ACTIVE = [v for v in VARIANTS
-              if v["id"] not in _LAB_OFF
-              and not (v["id"].endswith("ML") and v["id"][:-2] in _LAB_OFF)]
+# LIMIT ONLY (boss 2026-08-10). Market-order rules are off both boards; everything
+# traded now offers its price, caps the chase and floors the stop. The old variants stay
+# in VARIANTS for history lookups and for re-admitting a comparison in one line.
+LAB_ACTIVE = [v for v in VARIANTS if v.get("exec") == "limit"]
 
 
 def compare(seed: int = 7, start: int = 0, tick: int = 5,

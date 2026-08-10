@@ -158,9 +158,10 @@ EXPERIMENT: tuple[str, ...] = ()
 # %-target rules. Their ML twins go with them: the exit is what he rejected. Removed,
 # not filtered, as always - and re-admitting is deleting one condition.
 _PURE_CANDLE = {"3u3d", "2u2d", "3u2d", "2u3d", "3u4d", "4u3d"}
-PLAIN = [v for v in VARIANTS
-         if not v.get("ml") and (v.get("dir", 1) > 0 or v["id"] in EXPERIMENT)
-         and v["id"] not in _PURE_CANDLE]
+# LIMIT ONLY (boss 2026-08-10: "just keep limit based and remove old version"). Every
+# rule on the desk now offers its price, never pays above its cap, and sells no lower
+# than its floor. The market-order variants remain in VARIANTS for stored-day lookups.
+PLAIN = [v for v in VARIANTS if v.get("exec") == "limit" and not v.get("ml")]
 
 # ── ML ON THE REAL DESK (boss 2026-08-06, before the open) ─────────────────────────
 # The same six "+ ML" rules the Strategy Lab runs, now trading the real tape in parallel
@@ -169,8 +170,7 @@ PLAIN = [v for v in VARIANTS
 # THE ONE HONEST DIFFERENCE FROM THE LAB: these models train ONLY on prior days' stored
 # real tape (2026-08-04, 08-05 and whatever accumulates), never on the day being traded.
 # Same features, same trainer, same labels as the lab (proof_ml) - only the tape is real.
-ML_RULES = [v for v in VARIANTS if v.get("ml") and v.get("dir", 1) > 0
-            and v["id"][:-2] not in _PURE_CANDLE]
+ML_RULES = [v for v in VARIANTS if v.get("ml") and v.get("exec") == "limit"]
 DESK = PLAIN + ML_RULES
 
 _KML_CACHE: dict = {}
