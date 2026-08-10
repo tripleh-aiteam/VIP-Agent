@@ -681,6 +681,49 @@ def live_rule_trades(variant: str = Query(...), tick: int = Query(5),
                   day=day, frm=frm, to=to, use_gate=bool(gate))
 
 
+@router.get("/raw-daily")
+def raw_daily(code: str = Query(...), days: int = Query(20), to: str = Query("")):
+    """The raw rows the picker reads - open/high/low/close/volume straight out of
+    raw_daily_prices, plus the flow rows, so the boss can check the source data without
+    opening Supabase. Nothing is computed here beyond the day's % change."""
+    from ml._db import get_conn
+    n = max(1, min(int(days or 20), 250))
+    conn = get_conn(); cur = conn.cursor()
+    try:
+        if to:
+            cur.execute("""SELECT date,open,high,low,close,volume FROM raw_daily_prices
+                           WHERE ticker=%s AND date<=%s ORDER BY date DESC LIMIT %s""",
+                        (code, f"{to[:4]}-{to[4:6]}-{to[6:]}", n))
+        else:
+            cur.execute("""SELECT date,open,high,low,close,volume FROM raw_daily_prices
+                           WHERE ticker=%s ORDER BY date DESC LIMIT %s""", (code, n))
+        rows = [{"date": d.strftime("%Y-%m-%d"), "open": float(o or 0), "high": float(h or 0),
+                 "low": float(lo or 0), "close": float(c or 0), "volume": float(v or 0)}
+                for d, o, h, lo, c, v in cur.fetchall()][::-1]
+        for i in range(1, len(rows)):
+            p = rows[i - 1]["close"]
+            rows[i]["chg"] = round((rows[i]["close"] / p - 1) * 100, 2) if p else 0.0
+        if rows:
+            rows[0]["chg"] = None
+        flows = []
+        try:
+            cur.execute("""SELECT date,foreign_net_value,inst_net_value,individual_net_value
+                           FROM korean_investor_flows WHERE ticker=%s ORDER BY date DESC LIMIT %s""",
+                        (code, n))
+            flows = [{"date": d.strftime("%Y-%m-%d"), "foreign": float(f or 0),
+                      "inst": float(i or 0), "retail": float(r or 0)}
+                     for d, f, i, r in cur.fetchall()][::-1]
+        except Exception:
+            conn.rollback()
+        cur.execute("SELECT name FROM krx_stocks WHERE code=%s", (code,))
+        nm = cur.fetchone()
+        return {"ok": True, "code": code, "name": (nm[0] if nm else code),
+                "table": "raw_daily_prices", "rows": rows, "flows": flows,
+                "flow_latest": (flows[-1]["date"] if flows else None)}
+    finally:
+        conn.close()
+
+
 @router.get("/daily-pick")
 def daily_pick_today(day: str = Query(""), refresh: int = Query(0),
                      force: int = Query(0)):

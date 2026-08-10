@@ -21,6 +21,14 @@ import { useLanguage } from "@/components/i18n";
  *  this table every morning and should never have to ask what "flex" is. Order in each
  *  entry: [Korean title, English title, Korean body, English body]. The weights are the
  *  real ones from services/daily_pick.py WEIGHTS. */
+type RawDaily = {
+  ok: boolean; code: string; name: string; table: string;
+  rows: { date: string; open: number; high: number; low: number; close: number;
+          volume: number; chg?: number | null }[];
+  flows: { date: string; foreign: number; inst: number; retail: number }[];
+  flow_latest: string | null;
+};
+
 const COL_HELP: Record<string, [string, string, string, string]> = {
   rank: ["순위", "rank",
     "오늘 총점이 높은 순서입니다. 후보 종목 전체를 매일 아침 다시 채점해서 다시 줄을 세웁니다. 어제 1등이 오늘 20등이 될 수 있습니다.",
@@ -354,6 +362,17 @@ export default function LiveDeskPage() {
   const [pickAll, setPickAll] = useState(false);       // the other 32 stay behind a button
   const [pickCol, setPickCol] = useState("");          // a column header explains itself when clicked
   useEffect(() => { api<Pick>("/paper-desk/daily-pick").then(setDpick).catch(() => {}); }, []);
+  // THE SOURCE DATA. The boss asked to check the rows the picker reads without opening
+  // Supabase (2026-08-10). One indexed query, ~20 rows - light enough to open on a click.
+  const [rawCode, setRawCode] = useState("");
+  const [rawDays, setRawDays] = useState(20);
+  const [raw, setRaw] = useState<RawDaily | null>(null);
+  useEffect(() => {
+    if (!rawCode) { setRaw(null); return; }
+    setRaw(null);
+    api<RawDaily>(`/paper-desk/raw-daily?code=${rawCode}&days=${rawDays}`)
+      .then(setRaw).catch(() => {});
+  }, [rawCode, rawDays]);
   const [gate, setGate] = useState<Gate | null>(null);
   useEffect(() => { api<Gate>("/paper-desk/gate").then(setGate).catch(() => {}); }, []);
   // VIEWING switch only: with the gate closed the board shows nothing, so this asks
@@ -663,7 +682,101 @@ export default function LiveDeskPage() {
                   {pickAll ? t("데스크 종목만 보기 ▲", "show only the desk ▲")
                            : t(`전체 ${dpick.rows.length}종목 순위 보기 ▼`, `see all ${dpick.rows.length} ranked ▼`)}
                 </button>
+                <button onClick={() => setRawCode(rawCode ? "" : (dpick.rows[0]?.code || ""))}
+                  className="ml-2 text-[10.5px] font-bold px-2.5 py-1 rounded-md border"
+                  style={rawCode ? { background: "#6a1b9a", color: "#fff", borderColor: "#6a1b9a" }
+                                 : { borderColor: "#6a1b9a", color: "#6a1b9a" }}>
+                  {rawCode ? t("원자료 닫기 ▲", "close the source data ▲")
+                           : t("📄 원자료 보기 (이 점수의 근거)", "📄 see the source data behind these scores")}
+                </button>
               </div>
+              {rawCode && (
+                <div className="border-t px-4 py-3" style={{ borderColor: "#6a1b9a",
+                     background: "rgba(106,27,154,0.05)" }}>
+                  <div className="flex items-center gap-2 flex-wrap mb-2">
+                    <b className="text-[12px]" style={{ color: "#6a1b9a" }}>
+                      {t("원자료 — 위 점수는 전부 이 표에서 계산됩니다",
+                         "the source rows - every score above is computed from this table")}
+                    </b>
+                    <select value={rawCode} onChange={(e) => setRawCode(e.target.value)}
+                      className="text-[11px] px-2 py-0.5 rounded border bg-transparent"
+                      style={{ borderColor: "#6a1b9a", color: "var(--text-primary)" }}>
+                      {dpick.rows.map((r) => (
+                        <option key={r.code} value={r.code} style={{ color: "#000" }}>
+                          {r.pinned ? "📌 " : ""}{r.name}
+                        </option>
+                      ))}
+                    </select>
+                    <select value={rawDays} onChange={(e) => setRawDays(Number(e.target.value))}
+                      className="text-[11px] px-2 py-0.5 rounded border bg-transparent"
+                      style={{ borderColor: "#6a1b9a", color: "var(--text-primary)" }}>
+                      {[5, 10, 20, 60, 120].map((d) => (
+                        <option key={d} value={d} style={{ color: "#000" }}>
+                          {t(`최근 ${d}일`, `last ${d} days`)}
+                        </option>
+                      ))}
+                    </select>
+                    <span className="text-[10px] text-[var(--text-muted)]">
+                      {t("테이블: raw_daily_prices (일봉) · korean_investor_flows (수급)",
+                         "tables: raw_daily_prices (daily candles) - korean_investor_flows (flows)")}
+                    </span>
+                  </div>
+                  {!raw ? (
+                    <div className="text-[11px] text-[var(--text-muted)] py-2">
+                      {t("불러오는 중…", "loading…")}
+                    </div>
+                  ) : (
+                    <div className="overflow-x-auto">
+                      <table className="text-[11px] tabular-nums w-full">
+                        <thead><tr className="text-[10px] text-[var(--text-muted)]">
+                          <th className="text-left px-2 py-1">{t("날짜", "date")}</th>
+                          <th className="text-right px-2">{t("시가", "open")}</th>
+                          <th className="text-right px-2">{t("고가", "high")}</th>
+                          <th className="text-right px-2">{t("저가", "low")}</th>
+                          <th className="text-right px-2">{t("종가", "close")}</th>
+                          <th className="text-right px-2">{t("등락", "chg")}</th>
+                          <th className="text-right px-2">{t("거래량", "volume")}</th>
+                          <th className="text-right px-3">{t("외국인", "foreign")}</th>
+                          <th className="text-right px-2">{t("기관", "inst")}</th>
+                        </tr></thead>
+                        <tbody>
+                          {raw.rows.map((r) => {
+                            const f = raw.flows.find((x) => x.date === r.date);
+                            return (
+                              <tr key={r.date} className="border-t border-[var(--border-default)]/30">
+                                <td className="px-2 py-0.5 text-[var(--text-secondary)]">{r.date}</td>
+                                <td className="text-right px-2">{Math.round(r.open).toLocaleString()}</td>
+                                <td className="text-right px-2">{Math.round(r.high).toLocaleString()}</td>
+                                <td className="text-right px-2">{Math.round(r.low).toLocaleString()}</td>
+                                <td className="text-right px-2 font-bold">{Math.round(r.close).toLocaleString()}</td>
+                                <td className="text-right px-2 font-bold"
+                                  style={{ color: (r.chg ?? 0) > 0 ? "#b02a2a" : (r.chg ?? 0) < 0 ? "#1565c0" : "var(--text-muted)" }}>
+                                  {r.chg == null ? "-" : `${r.chg > 0 ? "+" : ""}${r.chg}%`}
+                                </td>
+                                <td className="text-right px-2 text-[var(--text-secondary)]">
+                                  {Math.round(r.volume).toLocaleString()}</td>
+                                <td className="text-right px-3"
+                                  style={{ color: f ? ((f.foreign > 0) ? "#b02a2a" : "#1565c0") : "var(--text-muted)" }}>
+                                  {f ? `${f.foreign > 0 ? "+" : ""}${Math.round(f.foreign / 1e8).toLocaleString()}억` : "—"}</td>
+                                <td className="text-right px-2"
+                                  style={{ color: f ? ((f.inst > 0) ? "#b02a2a" : "#1565c0") : "var(--text-muted)" }}>
+                                  {f ? `${f.inst > 0 ? "+" : ""}${Math.round(f.inst / 1e8).toLocaleString()}억` : "—"}</td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                      <div className="text-[10px] text-[var(--text-muted)] mt-2">
+                        {raw.flow_latest
+                          ? t(`수급 자료 최신일: ${raw.flow_latest}. 이 날짜가 최근이 아니면 수급 점수는 오래된 자료로 계산된 것입니다.`,
+                              `flow data goes up to ${raw.flow_latest}. If that is not recent, the flows score was computed from stale data.`)
+                          : t("이 종목은 수급 자료가 전혀 없어 수급 점수는 중립 처리됩니다.",
+                              "this stock has no flow data at all, so its flows score is filled in as neutral.")}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
               <div className="px-4 py-2 text-[10.5px] text-[var(--text-muted)] border-t"
                 style={{ borderColor: "var(--border-default)" }}>
                 {t("매일 점수 상위 5종목을 뽑고, 여기에 SK하이닉스와 삼성전자(📌)를 항상 더합니다. 둘 중 하나가 이미 5위 안에 들면 중복해서 넣지 않으므로 그날 종목 수는 5~7개가 됩니다. 고정 종목의 점수와 순위도 그대로 공개합니다. — 장기 성격(1년: 거래대금·호가비용·추세성·거래량 급증)과 당일 상태(이평 정배열·신고가·RSI·MACD·볼린저·3일 수급·공매도)를 곱해 매일 아침 다시 채점합니다. 전부 그 날 이전 자료만 씁니다.",
