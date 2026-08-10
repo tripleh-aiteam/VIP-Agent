@@ -316,7 +316,8 @@ export default function LiveDeskPage() {
   // the morning GO / NO-GO verdict per stock (advisor's point 2)
   // TODAY's five, chosen by the checklist every morning
   const [dpick, setDpick] = useState<Pick | null>(null);
-  const [pickOpen, setPickOpen] = useState(false);
+  const [pickOpen, setPickOpen] = useState(true);      // the desk is worth seeing at once
+  const [pickAll, setPickAll] = useState(false);       // the other 32 stay behind a button
   useEffect(() => { api<Pick>("/paper-desk/daily-pick").then(setDpick).catch(() => {}); }, []);
   const [gate, setGate] = useState<Gate | null>(null);
   useEffect(() => { api<Gate>("/paper-desk/gate").then(setGate).catch(() => {}); }, []);
@@ -565,8 +566,25 @@ export default function LiveDeskPage() {
                   <th className="text-left px-3">{t("선택 이유", "why")}</th>
                 </tr></thead>
                 <tbody>
-                  {dpick.rows.map((r) => (
-                    <tr key={r.code} className="border-t border-[var(--border-default)]/40"
+                  {(pickAll ? dpick.rows
+                            : [...dpick.rows.filter((r) => r.by_score),
+                               ...dpick.rows.filter((r) => r.added)]).map((r) => (
+                    <React.Fragment key={r.code}>
+                    {r.added && dpick.rows.filter((x) => x.by_score).length > 0
+                      && r === dpick.rows.filter((x) => x.added)[0] && (
+                      <tr><td colSpan={11} className="px-3 py-1 text-[10px] font-bold text-center"
+                        style={{ background: "rgba(230,81,0,0.10)", color: "#e65100" }}>
+                        {t("▲ 점수 상위 5 · 아래는 항상 포함하는 고정 종목 ▼",
+                           "▲ top 5 by score · always-included fixed stocks below ▼")}
+                      </td></tr>
+                    )}
+                    {pickAll && !r.on_desk && r === dpick.rows.filter((x) => !x.on_desk)[0] && (
+                      <tr><td colSpan={11} className="px-3 py-1 text-[10px] font-bold text-center"
+                        style={{ background: "rgba(128,128,128,0.10)", color: "var(--text-muted)" }}>
+                        {t("▼ 오늘 선택되지 않은 종목 (참고용)", "▼ not selected today (for reference)")}
+                      </td></tr>
+                    )}
+                    <tr className="border-t border-[var(--border-default)]/40"
                       style={{ background: r.on_desk ? (r.pinned ? "rgba(230,81,0,0.09)" : "rgba(21,101,192,0.10)")
                                                      : "transparent" }}>
                       <td className="px-3 py-1 text-[var(--text-muted)]">{r.rank}</td>
@@ -587,9 +605,19 @@ export default function LiveDeskPage() {
                       </td>
                       <td className="px-3 text-[10px] text-[var(--text-secondary)]">{(r.why || []).join(" · ") || "-"}</td>
                     </tr>
+                    </React.Fragment>
                   ))}
                 </tbody>
               </table>
+              <div className="px-4 py-1.5 border-t text-center" style={{ borderColor: "var(--border-default)" }}>
+                <button onClick={() => setPickAll(!pickAll)}
+                  className="text-[10.5px] font-bold px-2.5 py-1 rounded-md border"
+                  style={pickAll ? { background: "#1565c0", color: "#fff", borderColor: "#1565c0" }
+                                 : { borderColor: "#1565c0", color: "#1565c0" }}>
+                  {pickAll ? t("데스크 종목만 보기 ▲", "show only the desk ▲")
+                           : t(`전체 ${dpick.rows.length}종목 순위 보기 ▼`, `see all ${dpick.rows.length} ranked ▼`)}
+                </button>
+              </div>
               <div className="px-4 py-2 text-[10.5px] text-[var(--text-muted)] border-t"
                 style={{ borderColor: "var(--border-default)" }}>
                 {t("매일 점수 상위 5종목을 뽑고, 여기에 SK하이닉스와 삼성전자(📌)를 항상 더합니다. 둘 중 하나가 이미 5위 안에 들면 중복해서 넣지 않으므로 그날 종목 수는 5~7개가 됩니다. 고정 종목의 점수와 순위도 그대로 공개합니다. — 장기 성격(1년: 거래대금·호가비용·추세성·거래량 급증)과 당일 상태(이평 정배열·신고가·RSI·MACD·볼린저·3일 수급·공매도)를 곱해 매일 아침 다시 채점합니다. 전부 그 날 이전 자료만 씁니다.",
