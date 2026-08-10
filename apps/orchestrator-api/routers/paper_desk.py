@@ -774,7 +774,10 @@ def daily_pick_today(day: str = Query(""), refresh: int = Query(0),
             refresh_watch(force=True)
     res = pick(d)
     res["trading_now"] = [{"code": c, "name": n} for c, n in WATCH]
-    res["applied"] = [c for c, _n in WATCH] == res.get("picks", [])
+    # SETS, not lists: the collector holds the picks in score order while a fixed desk
+    # lists them in the boss's order, and comparing lists made the board warn "still
+    # collecting the previous five" when it was collecting exactly the right ones.
+    res["applied"] = {c for c, _n in WATCH} == set(res.get("picks", []))
     res["market_open"] = market_open()
     return res
 
