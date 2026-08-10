@@ -45,7 +45,14 @@ N_PICKS = 5
 # 삼성전자 on 0 (avg rank 22.5) and NAVER on 1 (avg 24.9) - both held back by an
 # expensive tick (0.216% and 0.248% of price). Pinning them is his call, made with
 # those numbers in front of him; the remaining slots are still won on score.
-PINNED = ["000660", "005930", "035420"]          # SK하이닉스 · 삼성전자 · NAVER
+# THE DESK RULE (boss 2026-08-10, revised): the day's TOP FIVE on score, plus
+# SK하이닉스 and 삼성전자 always - and if either already earned a top-five seat it is
+# not added twice, so the desk is 5, 6 or 7 names. Their scores are always published:
+# over the 60 sessions before this was set SK하이닉스 would have earned a place on 34
+# days by score alone (best rank 1) while 삼성전자 earned none (avg rank 22.5), held
+# back by a tick costing 0.216% of its price. Pinning them is his call, made with
+# those numbers in front of him.
+PINNED = ["000660", "005930"]                    # SK하이닉스 · 삼성전자
 
 
 def _conn():
@@ -241,15 +248,16 @@ def pick(day: str, n: int = N_PICKS, refresh_character: bool = False) -> dict[st
     # THE DESK = the pinned three + the highest scorers that are not pinned, filling to
     # n. Pinned stocks keep their honest rank and score in the table; being on the desk
     # is not the same as having earned it, and the board says which is which.
-    pinned_rows = [r for r in rows if r["pinned"]]
-    earned = [r for r in rows if not r["pinned"]][:max(0, n - len(pinned_rows))]
-    chosen = pinned_rows + earned
+    earned = rows[:n]                                   # the day's genuine top five
+    extra = [r for r in rows if r["pinned"] and r not in earned]
+    chosen = earned + extra                             # 5, 6 or 7 stocks, never a duplicate
     chosen.sort(key=lambda r: -r["score"])
     for r in rows:
         r["on_desk"] = r["code"] in {x["code"] for x in chosen}
-        r["by_score"] = r in earned
+        r["by_score"] = r in earned                     # earned its seat on merit
+        r["added"] = r in extra                         # on the desk only because pinned
     return {"ok": True, "day": day, "picks": [r["code"] for r in chosen],
-            "pinned": PINNED, "n_earned": len(earned),
+            "pinned": PINNED, "n_earned": len(earned), "n_added": len(extra),
             "weights": WEIGHTS, "rows": rows}
 
 

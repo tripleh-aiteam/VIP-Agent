@@ -43,11 +43,12 @@ type Gate = { ok: boolean; day: string; go: number; total: number;
 type Pick = { ok: boolean; day: string; market_open?: boolean; applied?: boolean;
               picks: string[]; weights?: Record<string, number>;
               trading_now?: { code: string; name: string }[];
-              pinned?: string[]; n_earned?: number;
+              pinned?: string[]; n_earned?: number; n_added?: number;
               rows: { rank: number; code: string; name: string; score: number;
                       tick_pct: number; rsi: number; aligned: number; new_high: number;
                       why: string[]; groups: Record<string, number>;
-                      pinned?: boolean; by_score?: boolean; on_desk?: boolean }[] };
+                      pinned?: boolean; by_score?: boolean; on_desk?: boolean;
+                      added?: boolean }[] };
 type Screen = { ok: boolean; scored_on?: string; tested_on?: string;
                 test_result?: { picked: { trades: number; win: number; won: number };
                                 previous: { trades: number; win: number; won: number } };
@@ -525,14 +526,16 @@ export default function LiveDeskPage() {
           <div className="px-4 py-2 flex items-center gap-2 flex-wrap cursor-pointer"
             style={{ background: "rgba(21,101,192,0.06)" }} onClick={() => setPickOpen(!pickOpen)}>
             <b className="text-[13px]" style={{ color: "#1565c0" }}>
-              🎯 {t("오늘의 5종목 (체크리스트가 아침마다 선택)", "today's five (chosen each morning by the checklist)")}
+              🎯 {t(`오늘의 ${(dpick.rows || []).filter((r) => r.on_desk).length}종목 — 점수 상위 5 + SK하이닉스·삼성전자`,
+                    `today's ${(dpick.rows || []).filter((r) => r.on_desk).length} stocks — top 5 by score + SK하이닉스 & 삼성전자`)}
             </b>
             <span className="text-[11px] font-bold">
               {(dpick.rows || []).filter((r) => r.on_desk)
                 .map((r) => `${r.name}${r.pinned ? "📌" : ""} ${r.score}`).join(" · ")}
             </span>
             <span className="text-[10px] text-[var(--text-muted)]">
-              {t("📌 3개는 고정, 2개는 그날 점수 1·2위", "📌 3 fixed, 2 won on today's score")}
+              {t(`점수 상위 5개 + 고정 2개(📌) · 고정 종목이 5위 안에 들면 중복 없이 그대로 — 오늘 ${dpick.n_added ?? 0}개 추가`,
+                 `the day's top 5 plus the 2 fixed (📌); if a fixed one is already in the top 5 it is not added twice - ${dpick.n_added ?? 0} added today`)}
             </span>
             {!dpick.applied && (
               <span className="text-[10px] font-bold px-1.5 py-0.5 rounded"
@@ -579,8 +582,8 @@ export default function LiveDeskPage() {
                         </td>
                       ))}
                       <td className="text-center px-2 text-[9.5px] font-bold">
-                        {r.pinned ? <span style={{ color: "#e65100" }}>{t("고정", "fixed")}</span>
-                          : r.by_score ? <span style={{ color: "#1565c0" }}>{t("점수 선정", "by score")}</span>
+                        {r.by_score ? <span style={{ color: "#1565c0" }}>{t("상위 5", "TOP 5")}</span>
+                          : r.added ? <span style={{ color: "#e65100" }}>{t("고정 추가", "added")}</span>
                           : <span className="text-[var(--text-muted)]">—</span>}
                       </td>
                       <td className="px-3 text-[10px] text-[var(--text-secondary)]">{(r.why || []).join(" · ") || "-"}</td>
@@ -590,8 +593,8 @@ export default function LiveDeskPage() {
               </table>
               <div className="px-4 py-2 text-[10.5px] text-[var(--text-muted)] border-t"
                 style={{ borderColor: "var(--border-default)" }}>
-                {t("📌 SK하이닉스·삼성전자·NAVER는 회장님 지시로 매일 고정 편성이며, 점수는 그대로 공개됩니다. 나머지 2자리는 그날 점수 1·2위가 가져갑니다. — 장기 성격(1년: 거래대금·호가비용·추세성·거래량 급증)과 당일 상태(이평 정배열·신고가·RSI·MACD·볼린저·3일 수급·공매도)를 곱해 매일 아침 다시 채점합니다. 전부 그 날 이전 자료만 씁니다.",
-                   "📌 SK하이닉스, 삼성전자 and NAVER are fixed on the desk by the boss's instruction, with their scores shown openly; the other two seats go to the day's top scorers. — Scored fresh every morning: long-run character (a year of trading value, tick cost, trendiness, volume surges) times today's condition (MA alignment, new highs, RSI, MACD, Bollinger, 3-day flows, short interest). Only data from before the day is used.")}
+                {t("매일 점수 상위 5종목을 뽑고, 여기에 SK하이닉스와 삼성전자(📌)를 항상 더합니다. 둘 중 하나가 이미 5위 안에 들면 중복해서 넣지 않으므로 그날 종목 수는 5~7개가 됩니다. 고정 종목의 점수와 순위도 그대로 공개합니다. — 장기 성격(1년: 거래대금·호가비용·추세성·거래량 급증)과 당일 상태(이평 정배열·신고가·RSI·MACD·볼린저·3일 수급·공매도)를 곱해 매일 아침 다시 채점합니다. 전부 그 날 이전 자료만 씁니다.",
+                   "Each morning the top five by score are taken, then SK하이닉스 and 삼성전자 (📌) are always added; if either is already in the top five it is not added twice, so the desk is 5-7 names. The fixed stocks' scores and ranks are published exactly as they are. — Scored fresh every morning: long-run character (a year of trading value, tick cost, trendiness, volume surges) times today's condition (MA alignment, new highs, RSI, MACD, Bollinger, 3-day flows, short interest). Only data from before the day is used.")}
               </div>
             </div>
           )}
