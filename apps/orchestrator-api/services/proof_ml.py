@@ -303,7 +303,8 @@ LIMIT_BUY_CAP = {          # most we will ever pay ABOVE our offer
     "035420": 500,         # NAVER      (1 tick)
     "042660": 100,         # 한화오션     (1 tick)
     "012450": 1000,        # 한화에어로스페이스 (1 tick, price ~₩900k)
-    "247540": 100,         # 에코프로비엠   (1 tick, price ~₩190k)
+    "247540": 100,         # 에코프로비엠   (1 tick, ₩107k → ₩100 tick)
+    "064350": 100,         # 현대로템      (1 tick, ₩147k → ₩100 tick)
 }
 SELL_FLOOR = {             # never sell more than this BELOW the stop trigger
     "000660": 2000,
@@ -312,7 +313,8 @@ SELL_FLOOR = {             # never sell more than this BELOW the stop trigger
     "035420": 1000,
     "042660": 400,
     "012450": 2000,        # 한화에어로스페이스 (2 ticks)
-    "247540": 400,         # 에코프로비엠   (4 ticks)
+    "247540": 200,         # 에코프로비엠   (2 ticks = ₩200)
+    "064350": 200,         # 현대로템      (2 ticks = ₩200)
 }
 
 

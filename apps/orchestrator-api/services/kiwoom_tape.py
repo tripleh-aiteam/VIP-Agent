@@ -40,7 +40,6 @@ ROOT = Path(__file__).resolve().parent.parent / "data" / "kiwoom_tape"
 WATCH: list[tuple[str, str]] = [
     ("005930", "삼성전자"),
     ("000660", "SK하이닉스"),
-    ("042660", "한화오션"),
     # THE SCREENER'S PICKS (boss 2026-08-10, advisor's point 1: "100 checkpoints ->
     # about 5 companies"). All 39 stocks with a year of data were scored on cost,
     # liquidity, movement, continuation behaviour, flows and how our own rules did -
@@ -51,6 +50,7 @@ WATCH: list[tuple[str, str]] = [
     # history stay on disk - only the collector's attention moves.
     ("012450", "한화에어로스페이스"),
     ("247540", "에코프로비엠"),
+    ("064350", "현대로템"),
 ]
 
 POLL_SEC = 3.0          # comfortably inside the ~40s the API remembers
