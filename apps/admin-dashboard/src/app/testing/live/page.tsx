@@ -114,6 +114,7 @@ type RTrade = { code: string; name: string; day?: string; d8?: string; ml?: MLMe
                 buy_i: number; sell_i: number; buy_t: string;
                 entry: number; sell_t: string; exit: number; gross_pct: number;
                 net_pct: number; exit_why?: string; result: "win" | "loss" | "flat";
+                sharp?: boolean;
                 bars_held: number; tick_size: number; qty?: number; buy_ev?: Ev | null; sell_ev?: Ev | null };
 type RDetail = { ok: boolean; id: string; ko: string; en: string; clock: string;
                  entry_n: number; kind: string; a: number; b?: number | null; dir: number;
@@ -129,7 +130,13 @@ type RDetail = { ok: boolean; id: string; ko: string; en: string; clock: string;
                             last: number; unreal_pct: number }[];
                  chart: { code: string; name: string; off: number; candles: Bar[];
                           focus: { b: number; s: number } | null;
-                          marks: { b: number; s: number; g: number; net: number }[] } | null };
+                          marks: { b: number; s: number; g: number; net: number }[] } | null;
+                 family?: string;
+  dip?: { drop: number; sharp: number; ups: number; chop: number; look: number } | null;
+  ride?: { arm: number; give: number; downs: number; slow_ups: number;
+           slow_take: number; sharp_rise: number } | null;
+  take_ticks?: number | null; stop_pct?: number | null;
+};
 type DfRow = { hhmm: string; key: string; date: string; open: number; high: number;
                low: number; close: number; diff: number; dir: number; deal_count: number;
                vol: number; forming: boolean };
@@ -1288,7 +1295,12 @@ export default function LiveDeskPage() {
           <div className="px-4 py-2 border-b flex items-center gap-3 flex-wrap"
             style={{ borderColor: "var(--border-default)", background: "rgba(106,27,154,0.07)" }}>
             <b className="text-[13px]" style={{ color: "#6a1b9a" }}>
-              🔎 {lang === "ko" ? det.ko : det.en} — {t("이 규칙이 진짜 시장에서 한 매매", "what this rule did on the real market")}
+              🔎 {lang === "ko" ? det.ko : det.en}
+              {" — "}
+              <span style={{ color: "#1565c0" }}>
+                {(st?.stocks || []).find((x) => x.code === code)?.name || code}
+              </span>
+              {" "}{t("에서 이 규칙이 한 매매", "- what this rule did on this stock")}
             </b>
             <span className="text-[12px] tabular-nums">{det.trips}{t("회전", " trips")}</span>
             <span className="text-[12px] tabular-nums" style={{ color: RED }}>{det.wins}{t("승", "W")}</span>
@@ -1333,8 +1345,16 @@ export default function LiveDeskPage() {
               <div>
                 <b className="text-[10.5px]" style={{ color: RED }}>{t("사는 조건 — 질문에 전부 \"예\"여야 삽니다", "BUY — every question must answer YES")}</b>
                 <ol className="mt-1 ml-4 list-decimal space-y-[3px] text-[var(--text-secondary)]">
-                  <li>{t(`"가격이 ${det.entry_n}번 연속 올랐는가?" — 봉의 마감 가격이 직전 봉보다 높으면 상승 1번. 그런 봉이 ${det.entry_n}개 연속. (가격이 그대로인 봉은 세던 숫자를 잠시 멈출 뿐, 0으로 되돌리지 않습니다)`,
-                         `"Did the price rise ${det.entry_n} times in a row?" — a bar closing higher than the one before = one rise; ${det.entry_n} such bars back-to-back. (An unchanged bar pauses the count — it never resets it)`)}</li>
+                  {det.dip && (<>
+                    <li>{t(`"먼저 급락이 있었는가?" — 최근 ${det.dip.look}개 봉의 최고가에서 ${det.dip.drop}% 이상 떨어졌고, 그 낙폭이 이 종목의 평소 한 봉 움직임의 ${det.dip.sharp}배를 넘어야 합니다. 천천히 흘러내린 것은 급락으로 치지 않습니다.`,
+                           `"Was there a sharp drop first?" — the price must have fallen at least ${det.dip.drop}% from the highest close of the last ${det.dip.look} bars, AND that fall must be bigger than ${det.dip.sharp}× this stock's normal bar move. A slow drift down does not count as sharp.`)}</li>
+                    <li>{t(`"멈췄다가 다시 오르기 시작했는가?" — 바닥을 찍은 뒤 ${det.dip.ups}개 봉 연속 상승. 이 ${det.dip.ups}번째 양봉의 마감가로 주문을 냅니다. (가격이 그대로인 봉은 숫자를 멈출 뿐 0으로 되돌리지 않습니다)`,
+                           `"Has it stopped falling and turned up?" — ${det.dip.ups} rising bars off the low; the order is placed at the close of that ${det.dip.ups}${det.dip.ups === 2 ? "nd" : "rd"} up bar. (A flat bar pauses the count, it never resets it)`)}</li>
+                    <li>{t(`"횡보장이 아닌가?" — 최근 ${det.dip.look}개 봉의 고저 폭이 ${det.dip.chop}% 미만이면 아무것도 하지 않습니다. 움직임이 없는 시장에서는 매매 자체를 안 합니다 — 손실도 이익도 없습니다.`,
+                           `"Is the market actually moving?" — if the last ${det.dip.look} bars ranged less than ${det.dip.chop}%, nothing is traded at all. In a flat market there is no trade, so no loss and no gain.`)}</li>
+                  </>)}
+                  {!det.dip && <li>{t(`"가격이 ${det.entry_n}번 연속 올랐는가?" — 봉의 마감 가격이 직전 봉보다 높으면 상승 1번. 그런 봉이 ${det.entry_n}개 연속. (가격이 그대로인 봉은 세던 숫자를 잠시 멈출 뿐, 0으로 되돌리지 않습니다)`,
+                         `"Did the price rise ${det.entry_n} times in a row?" — a bar closing higher than the one before = one rise; ${det.entry_n} such bars back-to-back. (An unchanged bar pauses the count — it never resets it)`)}</li>}
                   {det.vol_x && <li>{t(`"시장이 붐비는가?" — 신호 봉에서 거래된 주식 수가 이 종목의 최근 20개 봉 평균보다 ${det.vol_x}배 이상 많아야 합니다. 조용한 시장에서 가격만 오르는 것은 믿지 않습니다.`,
                                        `"Is the market busy?" — the shares traded on the signal bar must be at least ${det.vol_x}× this stock's own recent average (last 20 bars). A price rising in a quiet market is not trusted.`)}</li>}
                   {det.max_run && <li>{t(`"상승이 아직 작은가?" — 오르기 시작한 지점부터 지금까지 전부 합쳐 ${det.max_run}% 미만이어야 합니다 (만원짜리 주식이면 ${Math.round(10000*det.max_run/100)}원도 안 오른 상태). 이미 크게 오른 상승은 끝물이라 사지 않습니다.`,
@@ -1348,7 +1368,23 @@ export default function LiveDeskPage() {
               <div>
                 <b className="text-[10.5px]" style={{ color: BLUE }}>{t("파는 조건 — 자동, 먼저 오는 쪽", "SELL — automatic, whichever comes first")}</b>
                 <ul className="mt-1 ml-4 list-disc space-y-[3px] text-[var(--text-secondary)]">
-                  {det.kind !== "candle" ? (<>
+                  {det.ride ? (<>
+                    <li>{t(`반등이 가파르면 (진입 직전 상승이 평소 한 봉의 ${det.ride.sharp_rise}배 이상) → 0.5%나 1%에 팔지 않고 계속 들고 갑니다. 이익이 +${det.ride.arm}%를 넘긴 다음부터, 고점 대비 ${det.ride.give}% 밀리거나 ${det.ride.downs}개 봉 연속 음봉이 나오면 그때 팝니다.`,
+                           `If the bounce is steep (the rise into the entry is ${det.ride.sharp_rise}× a normal bar or more) → it is NOT sold at 0.5% or 1%. Once the profit passes +${det.ride.arm}%, it sells when the price gives back ${det.ride.give}% from its peak or prints ${det.ride.downs} down bars in a row.`)}</li>
+                    <li>{t(`반등이 완만하면 → 예전 방식으로 팝니다: ${det.ride.slow_ups}번 연속 상승, 또는 +${det.ride.slow_take}% 중 먼저 오는 쪽. 느린 상승은 오래 기다릴 값어치가 없습니다.`,
+                           `If the bounce is slow → it is sold the old way: ${det.ride.slow_ups} rises in a row, or +${det.ride.slow_take}%, whichever comes first. A slow climb is not worth waiting on.`)}</li>
+                    <li>{t(`손실이 -${det.stop_pct ?? 2}%까지 밀리면 → 손절. 단, 종목별 최저선(원 단위) 아래로는 팔지 않고 들고 있습니다.`,
+                           `If the loss slips to −${det.stop_pct ?? 2}% → the stop sells; but never below this stock's own won floor, where it holds instead.`)}</li>
+                    <li>{t("15:20 이후에는 새로 사지 않고, 들고 있던 것은 마지막 가격으로 정리합니다. 밤을 넘기지 않습니다.",
+                           "After 15:20 nothing new is bought and anything still open is closed at the last traded price. Nothing is carried overnight.")}</li>
+                  </>) : det.take_ticks ? (<>
+                    <li>{t(`+${det.take_ticks}호가에 걸어둔 매도 주문이 체결되면 → 익절. 호가 한 칸은 이 종목의 가격대에서 정해집니다.`,
+                           `A resting sell order ${det.take_ticks} ticks above the entry fills → that is the take. One tick is set by the stock's own price band.`)}</li>
+                    <li>{t(`손실이 -${det.stop_pct ?? 2}%까지 밀리면 → 손절. 종목별 최저선 아래로는 팔지 않습니다.`,
+                           `The loss slipping to −${det.stop_pct ?? 2}% triggers the stop, which never sells below the stock's won floor.`)}</li>
+                    <li>{t("15:20 이후 정리 — 밤을 넘겨 들고 가지 않습니다.",
+                           "Closed after 15:20 - nothing is carried overnight.")}</li>
+                  </>) : det.kind !== "candle" ? (<>
                     <li>{t(`이익이 +${det.a}%에 닿으면 → 자동으로 팝니다 (익절). 만원에 샀다면 ${(10000*(1+det.a/100)).toLocaleString()}원이 된 순간입니다.`,
                            `profit touches +${det.a}% → sells automatically (the take). If bought at ₩10,000, that's the moment it reaches ₩${(10000*(1+det.a/100)).toLocaleString()}.`)}</li>
                     <li>{t(`손실이 -${det.b}%까지 밀리면 → 자동으로 팝니다 (손절). 만원에 샀다면 ${(10000*(1-(det.b??0)/100)).toLocaleString()}원까지 내려온 순간 — 더 큰 손해를 막는 보호선입니다.`,
