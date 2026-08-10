@@ -534,13 +534,24 @@ export default function LiveDeskPage() {
                 </tr></thead>
                 <tbody>
                   {screen.rows.map((r) => (
-                    <tr key={r.code} className="border-t border-[var(--border-default)]/40"
-                      style={{ background: r.live ? "rgba(15,81,50,0.08)" : "transparent" }}>
+                    <React.Fragment key={r.code}>
+                    {r.rank === 6 && (
+                      <tr><td colSpan={7} className="px-3 py-1 text-[10px] font-bold text-center"
+                        style={{ background: "rgba(15,81,50,0.10)", color: "#0f5132" }}>
+                        {t("▲ 상위 5개 = 선택된 종목 · 아래는 선택되지 않음 ▼",
+                           "▲ TOP 5 = selected · not selected below ▼")}
+                      </td></tr>
+                    )}
+                    <tr className="border-t border-[var(--border-default)]/40"
+                      style={{ background: r.rank <= 5 ? "rgba(15,81,50,0.10)"
+                               : r.live ? "rgba(230,81,0,0.07)" : "transparent" }}>
                       <td className="px-3 py-1 text-[var(--text-muted)]">{r.rank}</td>
                       <td className="px-2 font-bold text-[var(--text-primary)]">
                         {r.name}
                         {r.live && <span className="ml-1.5 text-[9px] font-extrabold px-1 py-0.5 rounded"
-                          style={{ background: "#0f5132", color: "#fff" }}>{t("거래 중", "LIVE")}</span>}
+                          style={{ background: r.rank <= 5 ? "#0f5132" : "#e65100", color: "#fff" }}>
+                          {r.rank <= 5 ? t("거래 중", "LIVE")
+                                       : t("거래 중 (회장님 유지)", "LIVE (your keep)")}</span>}
                       </td>
                       <td className="text-right px-3 font-bold" style={{ color: "#0f5132" }}>{r.score}</td>
                       <td className="text-right px-3">{r.tick_pct}%</td>
@@ -548,6 +559,7 @@ export default function LiveDeskPage() {
                       <td className="text-right px-3">{r.continue_pct}%</td>
                       <td className="text-right px-3">{r.fit_win}%</td>
                     </tr>
+                    </React.Fragment>
                   ))}
                 </tbody>
               </table>
