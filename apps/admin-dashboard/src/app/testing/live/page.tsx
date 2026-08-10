@@ -589,7 +589,7 @@ export default function LiveDeskPage() {
                 <thead><tr className="text-[10px] text-[var(--text-muted)] sticky top-0"
                   style={{ background: "var(--bg-elevated)" }}>
                   {[["rank", t("순위", "#"), "left"], ["stock", t("종목", "stock"), "left"],
-                    ["score", t("오늘 점수", "today"), "right"], ["trend", t("추세", "trend"), "right"],
+                    ["score", t("점수", "score"), "right"], ["trend", t("추세", "trend"), "right"],
                     ["liquidity", t("유동성", "liq"), "right"], ["flexibility", t("유연성", "flex"), "right"],
                     ["levels", t("지지저항", "levels"), "right"], ["momentum", t("모멘텀", "mom"), "right"],
                     ["flows", t("수급", "flows"), "right"]].map(([k, lab, al]) => (
