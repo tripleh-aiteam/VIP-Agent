@@ -75,34 +75,41 @@ VARIANTS: list[dict] = [
     # ── THE LIMIT-ORDER DESK (boss 2026-08-10): offer the close, never pay more than
     # one tick above it, take +2 ticks, stop -2% with his per-stock floor. Same rule,
     # five variations of the entry filter, so the board keeps comparing.
-    {"id": "LMT", "entry": 3, "kind": "pct", "a": 0.3, "b": 2.0, "exec": "limit",
-     "take_ticks": 2, "stop_pct": 2.0, "wait_bars": 2},
-    {"id": "LMTv", "entry": 3, "kind": "pct", "a": 0.3, "b": 2.0, "exec": "limit",
-     "take_ticks": 2, "stop_pct": 2.0, "wait_bars": 2, "vol": 1.5},
-    {"id": "LMT2", "entry": 2, "kind": "pct", "a": 0.3, "b": 2.0, "exec": "limit",
-     "take_ticks": 2, "stop_pct": 2.0, "wait_bars": 2, "vol": 1.5},
-    {"id": "LMT4", "entry": 3, "kind": "pct", "a": 0.3, "b": 2.0, "exec": "limit",
-     "take_ticks": 4, "stop_pct": 2.0, "wait_bars": 2, "vol": 1.5},
-    {"id": "LMT6", "entry": 3, "kind": "pct", "a": 0.3, "b": 2.0, "exec": "limit",
+    # ── THE BIG-TAKE DESK (boss 2026-08-10, from his own observation on the board:
+    # every rule wins 96-100%, and the ONLY thing separating profit from loss is the
+    # size of the target). The fee is ~0.23% of the position; two ticks does not cover
+    # it, six does. Measured over the year, holdout months the design never saw:
+    #     +2 ticks  206 days  97% win  -7.84M won
+    #     +6 ticks  165 days  89% win  +0.95M won
+    #     +10 ticks 128 days  82% win  +2.72M won
+    # Every rule here is a limit order (offer the close, cap the chase, floor the stop).
+    # "ng" = the same rule with the daily gate IGNORED, so the board settles the gate
+    # question by itself instead of us arguing about it.
+    {"id": "T6", "entry": 3, "kind": "pct", "a": 0.3, "b": 2.0, "exec": "limit",
      "take_ticks": 6, "stop_pct": 2.0, "wait_bars": 2, "vol": 1.5},
-    # the filters that earned their place on the old market-order desk, carried over so
-    # the comparison survives the switch (boss 2026-08-10: "keep limit based, remove the
-    # old version")
-    {"id": "LMTr", "entry": 3, "kind": "pct", "a": 0.3, "b": 2.0, "exec": "limit",
-     "take_ticks": 2, "stop_pct": 2.0, "wait_bars": 2, "max_run": 0.2},
-    {"id": "LMTvr", "entry": 3, "kind": "pct", "a": 0.3, "b": 2.0, "exec": "limit",
-     "take_ticks": 2, "stop_pct": 2.0, "wait_bars": 2, "vol": 1.5, "max_run": 0.2},
-    {"id": "LMT2r", "entry": 2, "kind": "pct", "a": 0.3, "b": 2.0, "exec": "limit",
-     "take_ticks": 2, "stop_pct": 2.0, "wait_bars": 2, "vol": 1.5, "max_run": 0.1},
-    {"id": "LMT4r", "entry": 3, "kind": "pct", "a": 0.3, "b": 2.0, "exec": "limit",
-     "take_ticks": 4, "stop_pct": 2.0, "wait_bars": 2, "vol": 1.5, "max_run": 0.2},
-    # ML twins, so "with model / without model" keeps being measured every day
-    {"id": "LMTvML", "entry": 3, "kind": "pct", "a": 0.3, "b": 2.0, "exec": "limit",
-     "take_ticks": 2, "stop_pct": 2.0, "wait_bars": 2, "vol": 1.5, "ml": True},
-    {"id": "LMT2ML", "entry": 2, "kind": "pct", "a": 0.3, "b": 2.0, "exec": "limit",
-     "take_ticks": 2, "stop_pct": 2.0, "wait_bars": 2, "vol": 1.5, "ml": True},
-    {"id": "LMT4ML", "entry": 3, "kind": "pct", "a": 0.3, "b": 2.0, "exec": "limit",
-     "take_ticks": 4, "stop_pct": 2.0, "wait_bars": 2, "vol": 1.5, "ml": True},
+    {"id": "T6ng", "entry": 3, "kind": "pct", "a": 0.3, "b": 2.0, "exec": "limit",
+     "take_ticks": 6, "stop_pct": 2.0, "wait_bars": 2, "vol": 1.5, "ignore_gate": True},
+    {"id": "T10", "entry": 3, "kind": "pct", "a": 0.3, "b": 2.0, "exec": "limit",
+     "take_ticks": 10, "stop_pct": 2.0, "wait_bars": 2, "vol": 1.5},
+    {"id": "T10ng", "entry": 3, "kind": "pct", "a": 0.3, "b": 2.0, "exec": "limit",
+     "take_ticks": 10, "stop_pct": 2.0, "wait_bars": 2, "vol": 1.5, "ignore_gate": True},
+    {"id": "T6r", "entry": 3, "kind": "pct", "a": 0.3, "b": 2.0, "exec": "limit",
+     "take_ticks": 6, "stop_pct": 2.0, "wait_bars": 2, "vol": 1.5, "max_run": 0.2},
+    {"id": "T10r", "entry": 3, "kind": "pct", "a": 0.3, "b": 2.0, "exec": "limit",
+     "take_ticks": 10, "stop_pct": 2.0, "wait_bars": 2, "vol": 1.5, "max_run": 0.2},
+    {"id": "T6two", "entry": 2, "kind": "pct", "a": 0.3, "b": 2.0, "exec": "limit",
+     "take_ticks": 6, "stop_pct": 2.0, "wait_bars": 2, "vol": 1.5},
+    {"id": "T10two", "entry": 2, "kind": "pct", "a": 0.3, "b": 2.0, "exec": "limit",
+     "take_ticks": 10, "stop_pct": 2.0, "wait_bars": 2, "vol": 1.5},
+    {"id": "T6bare", "entry": 3, "kind": "pct", "a": 0.3, "b": 2.0, "exec": "limit",
+     "take_ticks": 6, "stop_pct": 2.0, "wait_bars": 2},
+    # one +4 kept as the bridge to the old numbers, and the ML twins of the two mains
+    {"id": "T4", "entry": 3, "kind": "pct", "a": 0.3, "b": 2.0, "exec": "limit",
+     "take_ticks": 4, "stop_pct": 2.0, "wait_bars": 2, "vol": 1.5},
+    {"id": "T6ML", "entry": 3, "kind": "pct", "a": 0.3, "b": 2.0, "exec": "limit",
+     "take_ticks": 6, "stop_pct": 2.0, "wait_bars": 2, "vol": 1.5, "ml": True},
+    {"id": "T10ML", "entry": 3, "kind": "pct", "a": 0.3, "b": 2.0, "exec": "limit",
+     "take_ticks": 10, "stop_pct": 2.0, "wait_bars": 2, "vol": 1.5, "ml": True},
     {"id": "g1", "entry": 3, "kind": "pct", "a": 0.5, "b": 2.0, "vol": 2.0, "clock": [5, 60]},
     {"id": "g2", "entry": 2, "kind": "pct", "a": 1.0, "b": 2.0, "vol": 1.5, "clock": [5, 60]},
     {"id": "g3", "entry": 3, "kind": "pct", "a": 1.0, "b": 2.0, "vol": 1.5, "clock": [5, 60]},
@@ -196,6 +203,8 @@ def label(v: dict, ko: bool = True) -> str:
     if v.get("exec") == "limit":
         # no "[LIMIT]" tag: the whole desk is limit-order now, so the word said nothing
         tt_ = v.get("take_ticks", 2)
+        if v.get("ignore_gate"):
+            ent += " (게이트 무시)" if ko else " (no gate)"
         return ((f"{ent} → +{tt_}호가 익절 / -{v.get('stop_pct',2.0)}% 손절")
                 if ko else
                 (f"{ent} / +{tt_} ticks take, -{v.get('stop_pct',2.0)}% stop"))
@@ -507,7 +516,7 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
             # the daily gate (boss 2026-08-10): a stock whose day was judged NO-GO before
             # the open produces no entries at all today. Exits are untouched - a position
             # opened before a gate closes is still managed to its normal end.
-            if s.get("gate_ok") is False:
+            if s.get("gate_ok") is False and not v.get("ignore_gate"):
                 pass
             elif (dn[si] if v.get("dir", 1) < 0 else up[si]) >= v["entry"]:
                 if v.get("max_run"):
