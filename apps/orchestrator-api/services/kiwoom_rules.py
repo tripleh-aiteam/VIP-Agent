@@ -177,6 +177,15 @@ _KML_CACHE: dict = {}
 _CTX_CACHE: dict = {}
 
 
+def _gate_ok(code: str, day: str) -> bool:
+    """Was this stock cleared to trade on this day? (services/daily_gate)"""
+    try:
+        from services.daily_gate import gate
+        return bool(gate(code, day).get("go", True))
+    except Exception:
+        return True                      # fail open - never stop the desk on an error
+
+
 def _kd0() -> str:
     from services.kiwoom_tape import _day
     return _day()
@@ -339,6 +348,7 @@ def rank(tick: int = 5, period: int = 0, day: str = "",
                          "tick": tp["tk"], "seed": 1,
                          "vols": [float(c.get("vol") or 0) for c in tp["cs"]],
                          "ctx": daily_ctx(code, d or _kd0()),
+                         "gate_ok": _gate_ok(code, d or _kd0()),
                          "times": [c["hhmm"] for c in tp["cs"]]}
                         for code, tp in tapes.items()])
                    for d, tapes in tapes_by_day]
@@ -493,6 +503,7 @@ def trades(vid: str, tick: int = 5, period: int = 0, code: str = "",
                          "times": [c["hhmm"] for c in cs],
                          "vols": [float(c.get("vol") or 0) for c in cs],
                          "ctx": daily_ctx(c_code, d or _kd0()),
+                         "gate_ok": _gate_ok(c_code, d or _kd0()),
                          "holes": (_hole_bars(c_code, tick, period)
                                    if not (d or frm or to) else set()),
                          "ml_bundle": (kiwoom_ml_for(c_code, tick, period, v, d)

@@ -678,6 +678,18 @@ def live_rule_trades(variant: str = Query(...), tick: int = Query(5),
                   day=day, frm=frm, to=to)
 
 
+@router.get("/gate")
+def daily_gate_today(day: str = Query("")):
+    """GO / NO-GO per stock for today, with the reason (advisor's point 2). Computed
+    from daily bars STRICTLY BEFORE the day being judged, so the morning verdict uses
+    nothing from the session it gates."""
+    from services.daily_gate import ACTIVE, gate_all
+    from services.kiwoom_tape import _day
+    rows = gate_all(day)
+    return {"ok": True, "day": day or _day(), "checks_active": ACTIVE,
+            "go": sum(1 for r in rows if r["go"]), "total": len(rows), "rows": rows}
+
+
 @router.get("/screener")
 def screener():
     """The stock screener's ranking (advisor's point 1, boss 2026-08-10). Every stock

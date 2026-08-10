@@ -504,7 +504,12 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                                "limit": True}
                     pend = None                          # else: abandoned, no trade
         if pos is None and pend is None:
-            if (dn[si] if v.get("dir", 1) < 0 else up[si]) >= v["entry"]:
+            # the daily gate (boss 2026-08-10): a stock whose day was judged NO-GO before
+            # the open produces no entries at all today. Exits are untouched - a position
+            # opened before a gate closes is still managed to its normal end.
+            if s.get("gate_ok") is False:
+                pass
+            elif (dn[si] if v.get("dir", 1) < 0 else up[si]) >= v["entry"]:
                 if v.get("max_run"):
                     # small-run confirmation, same walk as run_variant - keep in step
                     _j = i

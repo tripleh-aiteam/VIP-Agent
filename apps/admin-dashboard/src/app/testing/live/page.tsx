@@ -37,6 +37,9 @@ type RuleRow = { id: string; ko: string; en: string; dir: number; trips: number;
                  net_won?: number | null; per_trade_won?: number | null;
                  losses: number; flats: number; win_pct: number; per_trade: number; net: number;
                  decided: number; thin: boolean };
+type Gate = { ok: boolean; day: string; go: number; total: number;
+              rows: { code: string; name: string; go: boolean;
+                      reason_ko: string; reason_en: string }[] };
 type Screen = { ok: boolean; scored_on?: string; tested_on?: string;
                 test_result?: { picked: { trades: number; win: number; won: number };
                                 previous: { trades: number; win: number; won: number } };
@@ -302,6 +305,9 @@ export default function LiveDeskPage() {
   const [screen, setScreen] = useState<Screen | null>(null);
   const [screenOpen, setScreenOpen] = useState(false);
   useEffect(() => { api<Screen>("/paper-desk/screener").then(setScreen).catch(() => {}); }, []);
+  // the morning GO / NO-GO verdict per stock (advisor's point 2)
+  const [gate, setGate] = useState<Gate | null>(null);
+  useEffect(() => { api<Gate>("/paper-desk/gate").then(setGate).catch(() => {}); }, []);
   // win% threshold: type 20, press ENTER - the box empties, a "≥20%" chip appears,
   // and only rules winning 20%+ stay. Click the chip's x to clear (boss 2026-08-06:
   // "after adding 20 then I should type enter then 20 should gone").
@@ -496,6 +502,45 @@ export default function LiveDeskPage() {
         </div>
       </div>
 
+      {gate?.ok && (
+        <div className="mt-3 rounded-xl border px-4 py-2" style={{ borderColor: "#e65100",
+             background: gate.go === 0 ? "rgba(176,42,42,0.06)" : "rgba(230,81,0,0.05)" }}>
+          <div className="flex items-center gap-2 flex-wrap">
+            <b className="text-[13px]" style={{ color: "#e65100" }}>
+              📅 {t("오늘 매수 가능 여부 (장 시작 전 판정)", "today's buy permission (decided before the open)")}
+            </b>
+            <span className="text-[11px] font-bold px-1.5 py-0.5 rounded"
+              style={{ background: gate.go > 0 ? "rgba(15,81,50,0.14)" : "rgba(176,42,42,0.14)",
+                       color: gate.go > 0 ? "#0f5132" : "#b02a2a" }}>
+              {t(`${gate.total}개 중 ${gate.go}개 매수 가능`, `${gate.go} of ${gate.total} cleared to buy`)}
+            </span>
+            <span className="text-[10px] text-[var(--text-muted)]">
+              {t("어제까지의 일봉만 보고 판정합니다 — 오늘 자료는 쓰지 않습니다",
+                 "judged only on daily bars up to yesterday - today's data is never used")}
+            </span>
+          </div>
+          <div className="mt-1.5 grid gap-1" style={{ gridTemplateColumns: "repeat(auto-fit,minmax(330px,1fr))" }}>
+            {gate.rows.map((r) => (
+              <div key={r.code} className="text-[11px] flex items-start gap-2">
+                <span className="font-extrabold px-1.5 py-0.5 rounded shrink-0"
+                  style={{ background: r.go ? "#0f5132" : "#b02a2a", color: "#fff" }}>
+                  {r.go ? "GO" : "NO-GO"}
+                </span>
+                <b className="text-[var(--text-primary)] shrink-0" style={{ minWidth: 110 }}>{r.name}</b>
+                <span style={{ color: r.go ? "#0f5132" : "var(--text-secondary)" }}>
+                  {lang === "ko" ? r.reason_ko : r.reason_en}
+                </span>
+              </div>
+            ))}
+          </div>
+          {gate.go === 0 && (
+            <div className="mt-1.5 text-[10.5px] font-bold" style={{ color: "#b02a2a" }}>
+              {t("⚠ 오늘은 모든 종목이 매수 금지입니다 — 새 매수는 없고, 보유 중인 건은 규칙대로 정리됩니다.",
+                 "⚠ every stock is closed for buying today - no new entries; open positions still exit by their rules.")}
+            </div>
+          )}
+        </div>
+      )}
       {screen?.ok && (
         <div className="mt-3 rounded-xl border overflow-hidden" style={{ borderColor: "#0f5132" }}>
           <div className="px-4 py-2 flex items-center gap-2 flex-wrap cursor-pointer"
