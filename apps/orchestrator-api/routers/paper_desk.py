@@ -681,6 +681,25 @@ def live_rule_trades(variant: str = Query(...), tick: int = Query(5),
                   day=day, frm=frm, to=to, use_gate=bool(gate))
 
 
+@router.get("/daily-pick")
+def daily_pick_today(day: str = Query(""), refresh: int = Query(0)):
+    """TODAY's five, chosen by the checklist: long-run character x current condition,
+    everything from data before today. refresh=1 recomputes and re-points the collector
+    (only honoured outside market hours - swapping stocks mid-session would abandon
+    half a day of tape)."""
+    from services.daily_pick import pick, save_picks
+    from services.kiwoom_tape import WATCH, _day, market_open, refresh_watch
+    d = day or _day()
+    if refresh and not market_open():
+        save_picks(d)
+        refresh_watch(force=True)
+    res = pick(d)
+    res["trading_now"] = [{"code": c, "name": n} for c, n in WATCH]
+    res["applied"] = [c for c, _n in WATCH] == res.get("picks", [])
+    res["market_open"] = market_open()
+    return res
+
+
 @router.get("/gate")
 def daily_gate_today(day: str = Query("")):
     """GO / NO-GO per stock for today, with the reason (advisor's point 2). Computed

@@ -40,6 +40,12 @@ type RuleRow = { id: string; ko: string; en: string; dir: number; trips: number;
 type Gate = { ok: boolean; day: string; go: number; total: number;
               rows: { code: string; name: string; go: boolean;
                       reason_ko: string; reason_en: string }[] };
+type Pick = { ok: boolean; day: string; market_open?: boolean; applied?: boolean;
+              picks: string[]; weights?: Record<string, number>;
+              trading_now?: { code: string; name: string }[];
+              rows: { rank: number; code: string; name: string; score: number;
+                      tick_pct: number; rsi: number; aligned: number; new_high: number;
+                      why: string[]; groups: Record<string, number> }[] };
 type Screen = { ok: boolean; scored_on?: string; tested_on?: string;
                 test_result?: { picked: { trades: number; win: number; won: number };
                                 previous: { trades: number; win: number; won: number } };
@@ -306,6 +312,10 @@ export default function LiveDeskPage() {
   const [screenOpen, setScreenOpen] = useState(false);
   useEffect(() => { api<Screen>("/paper-desk/screener").then(setScreen).catch(() => {}); }, []);
   // the morning GO / NO-GO verdict per stock (advisor's point 2)
+  // TODAY's five, chosen by the checklist every morning
+  const [dpick, setDpick] = useState<Pick | null>(null);
+  const [pickOpen, setPickOpen] = useState(false);
+  useEffect(() => { api<Pick>("/paper-desk/daily-pick").then(setDpick).catch(() => {}); }, []);
   const [gate, setGate] = useState<Gate | null>(null);
   useEffect(() => { api<Gate>("/paper-desk/gate").then(setGate).catch(() => {}); }, []);
   // VIEWING switch only: with the gate closed the board shows nothing, so this asks
@@ -508,6 +518,71 @@ export default function LiveDeskPage() {
         </div>
       </div>
 
+      {dpick?.ok && (
+        <div className="mt-3 rounded-xl border overflow-hidden" style={{ borderColor: "#1565c0" }}>
+          <div className="px-4 py-2 flex items-center gap-2 flex-wrap cursor-pointer"
+            style={{ background: "rgba(21,101,192,0.06)" }} onClick={() => setPickOpen(!pickOpen)}>
+            <b className="text-[13px]" style={{ color: "#1565c0" }}>
+              🎯 {t("오늘의 5종목 (체크리스트가 아침마다 선택)", "today's five (chosen each morning by the checklist)")}
+            </b>
+            <span className="text-[11px] font-bold">
+              {(dpick.rows || []).slice(0, 5).map((r) => r.name).join(" · ")}
+            </span>
+            {!dpick.applied && (
+              <span className="text-[10px] font-bold px-1.5 py-0.5 rounded"
+                style={{ background: "rgba(230,81,0,0.14)", color: "#e65100" }}>
+                {t(`오늘은 아직 이전 5종목으로 수집 중 (${(dpick.trading_now || []).map((x) => x.name).join(", ")}) — 내일 아침부터 적용`,
+                   `still collecting the previous five today (${(dpick.trading_now || []).map((x) => x.name).join(", ")}) - applies from tomorrow morning`)}
+              </span>
+            )}
+            <span className="ml-auto text-[10.5px]" style={{ color: "#1565c0" }}>
+              {pickOpen ? t("닫기 ▲", "close ▲") : t("순위 보기 ▼", "see the ranking ▼")}
+            </span>
+          </div>
+          {pickOpen && (
+            <div className="overflow-y-auto" style={{ maxHeight: 340 }}>
+              <table className="w-full text-[11.5px] tabular-nums">
+                <thead><tr className="text-[10px] text-[var(--text-muted)] sticky top-0"
+                  style={{ background: "var(--bg-elevated)" }}>
+                  <th className="text-left px-3 py-1">#</th>
+                  <th className="text-left px-2">{t("종목", "stock")}</th>
+                  <th className="text-right px-3">{t("오늘 점수", "today")}</th>
+                  <th className="text-right px-2">{t("추세", "trend")}</th>
+                  <th className="text-right px-2">{t("유동성", "liq")}</th>
+                  <th className="text-right px-2">{t("유연성", "flex")}</th>
+                  <th className="text-right px-2">{t("지지저항", "levels")}</th>
+                  <th className="text-right px-2">{t("모멘텀", "mom")}</th>
+                  <th className="text-right px-2">{t("수급", "flows")}</th>
+                  <th className="text-left px-3">{t("선택 이유", "why")}</th>
+                </tr></thead>
+                <tbody>
+                  {dpick.rows.map((r) => (
+                    <tr key={r.code} className="border-t border-[var(--border-default)]/40"
+                      style={{ background: r.rank <= 5 ? "rgba(21,101,192,0.10)" : "transparent" }}>
+                      <td className="px-3 py-1 text-[var(--text-muted)]">{r.rank}</td>
+                      <td className="px-2 font-bold text-[var(--text-primary)]">{r.name}</td>
+                      <td className="text-right px-3 font-extrabold" style={{ color: "#1565c0" }}>{r.score}</td>
+                      {["trend","liquidity","flexibility","levels","momentum","flows"].map((g) => (
+                        <td key={g} className="text-right px-2"
+                          style={{ color: (r.groups?.[g] ?? 0) >= 70 ? "#0f5132"
+                                   : (r.groups?.[g] ?? 0) >= 40 ? "var(--text-secondary)" : "#b02a2a" }}>
+                          {r.groups?.[g] ?? "-"}
+                        </td>
+                      ))}
+                      <td className="px-3 text-[10px] text-[var(--text-secondary)]">{(r.why || []).join(" · ") || "-"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              <div className="px-4 py-2 text-[10.5px] text-[var(--text-muted)] border-t"
+                style={{ borderColor: "var(--border-default)" }}>
+                {t("장기 성격(1년: 거래대금·호가비용·추세성·거래량 급증)과 당일 상태(이평 정배열·신고가·RSI·MACD·볼린저·3일 수급·공매도)를 곱해 매일 아침 다시 채점합니다. 전부 그 날 이전 자료만 씁니다.",
+                   "scored fresh every morning: long-run character (a year of trading value, tick cost, trendiness, volume surges) times today's condition (MA alignment, new highs, RSI, MACD, Bollinger, 3-day flows, short interest). Only data from before the day is used.")}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
       {gate?.ok && (
         <div className="mt-3 rounded-xl border px-4 py-2" style={{ borderColor: "#e65100",
              background: gate.go === 0 ? "rgba(176,42,42,0.06)" : "rgba(230,81,0,0.05)" }}>

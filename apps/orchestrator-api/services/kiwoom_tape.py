@@ -59,6 +59,34 @@ WATCH: list[tuple[str, str]] = [
     ("042700", "한미반도체"),
 ]
 
+_watch_day = ""         # the day WATCH was last chosen for
+
+
+def refresh_watch(force: bool = False) -> list[tuple[str, str]]:
+    """Point the collector at TODAY's five (boss 2026-08-10: the checklist chooses the
+    stocks every morning, not once). Runs before the open; never mid-session, because
+    swapping a stock at 11:00 would abandon half a day of its tape. Falls back to the
+    current list if the picker cannot run - the desk must never be left with no stocks."""
+    global _watch_day
+    today = _day()
+    if not force and _watch_day == today:
+        return WATCH
+    try:
+        from services.daily_pick import load_picks, save_picks
+        picks = load_picks()
+        if not picks:
+            res = save_picks(today)
+            picks = [(r["code"], r["name"]) for r in res.get("rows", [])[:5]] if res.get("ok") else []
+        if picks:
+            WATCH[:] = picks
+            _watch_day = today
+            logger.info("kiwoom_tape: today's five = %s", [n for _c, n in picks])
+    except Exception as e:
+        logger.warning("kiwoom_tape: daily pick failed (%s) - keeping %s",
+                       str(e)[:80], [n for _c, n in WATCH])
+    return WATCH
+
+
 POLL_SEC = 3.0          # comfortably inside the ~40s the API remembers
 OVERLAP = 250           # how many recent ticks to match on when finding the new part
 
@@ -225,6 +253,9 @@ def _loop():
     _state["running"] = True
     while True:
         try:
+            if not market_open():
+                # the quiet window before the bell is when the checklist chooses
+                refresh_watch()
             if market_open():
                 for code, _name in WATCH:
                     try:
