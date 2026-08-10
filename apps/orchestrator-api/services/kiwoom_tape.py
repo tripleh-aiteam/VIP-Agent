@@ -76,7 +76,11 @@ def refresh_watch(force: bool = False) -> list[tuple[str, str]]:
         picks = load_picks()
         if not picks:
             res = save_picks(today)
-            picks = [(r["code"], r["name"]) for r in res.get("rows", [])[:5]] if res.get("ok") else []
+            if res.get("ok"):
+                sel = {c for c in res["picks"]}
+                picks = [(r["code"], r["name"]) for r in res["rows"] if r["code"] in sel]
+            else:
+                picks = []
         if picks:
             WATCH[:] = picks
             _watch_day = today

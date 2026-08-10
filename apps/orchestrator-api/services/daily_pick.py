@@ -38,6 +38,15 @@ WEIGHTS = {"trend": 25, "liquidity": 20, "flexibility": 20,
            "levels": 15, "momentum": 10, "flows": 10}
 N_PICKS = 5
 
+# THE BOSS'S THREE, always on the desk (2026-08-10). He wants them traded every day and
+# their score shown every day, so the checklist judges them in public rather than
+# quietly leaving them out. Measured over the last 60 sessions before this was set:
+# SK하이닉스 would have earned a place on 34 of 60 days by score alone (best rank 1),
+# 삼성전자 on 0 (avg rank 22.5) and NAVER on 1 (avg 24.9) - both held back by an
+# expensive tick (0.216% and 0.248% of price). Pinning them is his call, made with
+# those numbers in front of him; the remaining slots are still won on score.
+PINNED = ["000660", "005930", "035420"]          # SK하이닉스 · 삼성전자 · NAVER
+
 
 def _conn():
     from ml._db import get_conn
@@ -228,16 +237,31 @@ def pick(day: str, n: int = N_PICKS, refresh_character: bool = False) -> dict[st
     rows.sort(key=lambda r: -r["score"])
     for i, r in enumerate(rows, 1):
         r["rank"] = i
-    return {"ok": True, "day": day, "picks": [r["code"] for r in rows[:n]],
+        r["pinned"] = r["code"] in PINNED
+    # THE DESK = the pinned three + the highest scorers that are not pinned, filling to
+    # n. Pinned stocks keep their honest rank and score in the table; being on the desk
+    # is not the same as having earned it, and the board says which is which.
+    pinned_rows = [r for r in rows if r["pinned"]]
+    earned = [r for r in rows if not r["pinned"]][:max(0, n - len(pinned_rows))]
+    chosen = pinned_rows + earned
+    chosen.sort(key=lambda r: -r["score"])
+    for r in rows:
+        r["on_desk"] = r["code"] in {x["code"] for x in chosen}
+        r["by_score"] = r in earned
+    return {"ok": True, "day": day, "picks": [r["code"] for r in chosen],
+            "pinned": PINNED, "n_earned": len(earned),
             "weights": WEIGHTS, "rows": rows}
 
 
 def save_picks(day: str, n: int = N_PICKS) -> dict[str, Any]:
     res = pick(day, n)
     if res.get("ok"):
+        chosen = {c for c in res["picks"]}
+        res["rows_desk"] = [r for r in res["rows"] if r["code"] in chosen]
         _DATA.mkdir(exist_ok=True)
         _PICK_FILE.write_text(json.dumps(
-            {"day": day, "picks": [[r["code"], r["name"]] for r in res["rows"][:n]],
+            {"day": day,
+             "picks": [[r["code"], r["name"]] for r in res.get("rows_desk", [])],
              "rows": res["rows"]}, ensure_ascii=False), encoding="utf-8")
     return res
 

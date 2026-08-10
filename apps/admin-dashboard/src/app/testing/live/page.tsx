@@ -43,9 +43,11 @@ type Gate = { ok: boolean; day: string; go: number; total: number;
 type Pick = { ok: boolean; day: string; market_open?: boolean; applied?: boolean;
               picks: string[]; weights?: Record<string, number>;
               trading_now?: { code: string; name: string }[];
+              pinned?: string[]; n_earned?: number;
               rows: { rank: number; code: string; name: string; score: number;
                       tick_pct: number; rsi: number; aligned: number; new_high: number;
-                      why: string[]; groups: Record<string, number> }[] };
+                      why: string[]; groups: Record<string, number>;
+                      pinned?: boolean; by_score?: boolean; on_desk?: boolean }[] };
 type Screen = { ok: boolean; scored_on?: string; tested_on?: string;
                 test_result?: { picked: { trades: number; win: number; won: number };
                                 previous: { trades: number; win: number; won: number } };
@@ -526,7 +528,11 @@ export default function LiveDeskPage() {
               🎯 {t("오늘의 5종목 (체크리스트가 아침마다 선택)", "today's five (chosen each morning by the checklist)")}
             </b>
             <span className="text-[11px] font-bold">
-              {(dpick.rows || []).slice(0, 5).map((r) => r.name).join(" · ")}
+              {(dpick.rows || []).filter((r) => r.on_desk)
+                .map((r) => `${r.name}${r.pinned ? "📌" : ""} ${r.score}`).join(" · ")}
+            </span>
+            <span className="text-[10px] text-[var(--text-muted)]">
+              {t("📌 3개는 고정, 2개는 그날 점수 1·2위", "📌 3 fixed, 2 won on today's score")}
             </span>
             {!dpick.applied && (
               <span className="text-[10px] font-bold px-1.5 py-0.5 rounded"
@@ -553,14 +559,17 @@ export default function LiveDeskPage() {
                   <th className="text-right px-2">{t("지지저항", "levels")}</th>
                   <th className="text-right px-2">{t("모멘텀", "mom")}</th>
                   <th className="text-right px-2">{t("수급", "flows")}</th>
+                  <th className="text-center px-2">{t("선정", "how")}</th>
                   <th className="text-left px-3">{t("선택 이유", "why")}</th>
                 </tr></thead>
                 <tbody>
                   {dpick.rows.map((r) => (
                     <tr key={r.code} className="border-t border-[var(--border-default)]/40"
-                      style={{ background: r.rank <= 5 ? "rgba(21,101,192,0.10)" : "transparent" }}>
+                      style={{ background: r.on_desk ? (r.pinned ? "rgba(230,81,0,0.09)" : "rgba(21,101,192,0.10)")
+                                                     : "transparent" }}>
                       <td className="px-3 py-1 text-[var(--text-muted)]">{r.rank}</td>
-                      <td className="px-2 font-bold text-[var(--text-primary)]">{r.name}</td>
+                      <td className="px-2 font-bold text-[var(--text-primary)]">
+                        {r.pinned ? "📌 " : ""}{r.name}</td>
                       <td className="text-right px-3 font-extrabold" style={{ color: "#1565c0" }}>{r.score}</td>
                       {["trend","liquidity","flexibility","levels","momentum","flows"].map((g) => (
                         <td key={g} className="text-right px-2"
@@ -569,6 +578,11 @@ export default function LiveDeskPage() {
                           {r.groups?.[g] ?? "-"}
                         </td>
                       ))}
+                      <td className="text-center px-2 text-[9.5px] font-bold">
+                        {r.pinned ? <span style={{ color: "#e65100" }}>{t("고정", "fixed")}</span>
+                          : r.by_score ? <span style={{ color: "#1565c0" }}>{t("점수 선정", "by score")}</span>
+                          : <span className="text-[var(--text-muted)]">—</span>}
+                      </td>
                       <td className="px-3 text-[10px] text-[var(--text-secondary)]">{(r.why || []).join(" · ") || "-"}</td>
                     </tr>
                   ))}
@@ -576,8 +590,8 @@ export default function LiveDeskPage() {
               </table>
               <div className="px-4 py-2 text-[10.5px] text-[var(--text-muted)] border-t"
                 style={{ borderColor: "var(--border-default)" }}>
-                {t("장기 성격(1년: 거래대금·호가비용·추세성·거래량 급증)과 당일 상태(이평 정배열·신고가·RSI·MACD·볼린저·3일 수급·공매도)를 곱해 매일 아침 다시 채점합니다. 전부 그 날 이전 자료만 씁니다.",
-                   "scored fresh every morning: long-run character (a year of trading value, tick cost, trendiness, volume surges) times today's condition (MA alignment, new highs, RSI, MACD, Bollinger, 3-day flows, short interest). Only data from before the day is used.")}
+                {t("📌 SK하이닉스·삼성전자·NAVER는 회장님 지시로 매일 고정 편성이며, 점수는 그대로 공개됩니다. 나머지 2자리는 그날 점수 1·2위가 가져갑니다. — 장기 성격(1년: 거래대금·호가비용·추세성·거래량 급증)과 당일 상태(이평 정배열·신고가·RSI·MACD·볼린저·3일 수급·공매도)를 곱해 매일 아침 다시 채점합니다. 전부 그 날 이전 자료만 씁니다.",
+                   "📌 SK하이닉스, 삼성전자 and NAVER are fixed on the desk by the boss's instruction, with their scores shown openly; the other two seats go to the day's top scorers. — Scored fresh every morning: long-run character (a year of trading value, tick cost, trendiness, volume surges) times today's condition (MA alignment, new highs, RSI, MACD, Bollinger, 3-day flows, short interest). Only data from before the day is used.")}
               </div>
             </div>
           )}
