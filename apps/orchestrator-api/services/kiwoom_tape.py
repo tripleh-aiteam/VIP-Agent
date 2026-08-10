@@ -39,7 +39,6 @@ ROOT = Path(__file__).resolve().parent.parent / "data" / "kiwoom_tape"
 # rate-limited API, and the point is depth of tape, not breadth of coverage.
 WATCH: list[tuple[str, str]] = [
     ("005930", "삼성전자"),
-    ("000660", "SK하이닉스"),
     # THE SCREENER'S PICKS (boss 2026-08-10, advisor's point 1: "100 checkpoints ->
     # about 5 companies"). All 39 stocks with a year of data were scored on cost,
     # liquidity, movement, continuation behaviour, flows and how our own rules did -
@@ -50,7 +49,14 @@ WATCH: list[tuple[str, str]] = [
     # history stay on disk - only the collector's attention moves.
     ("012450", "한화에어로스페이스"),
     ("247540", "에코프로비엠"),
-    ("064350", "현대로템"),
+    # THE ADVISOR'S CHECKLIST PICKS (boss 2026-08-10, option B). His real 100-item list
+    # replaced my first screener: 20 of its stock-selection items plus the supply-demand
+    # items, scored on data before 2026-04. It named SK스퀘어 #1 and 한미반도체 #3, so
+    # 현대로템 and SK하이닉스 give way. Recorded honestly: on the holdout months these
+    # five earned +4.15M against the previous five's +4.64M - the boss chose the
+    # advisor's method over the higher number, and the board will keep score.
+    ("402340", "SK스퀘어"),
+    ("042700", "한미반도체"),
 ]
 
 POLL_SEC = 3.0          # comfortably inside the ~40s the API remembers

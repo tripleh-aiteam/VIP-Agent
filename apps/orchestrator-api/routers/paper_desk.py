@@ -707,6 +707,7 @@ def screener():
         return {"ok": False, "error": "screener has not been run yet"}
     d = _j.loads(f.read_text(encoding="utf-8"))
     rows = sorted(d.get("scores", {}).items(), key=lambda kv: -kv[1])
+    src = d.get("source", "")
     out = []
     for i, (code, sc) in enumerate(rows, 1):
         c = (d.get("checks") or {}).get(code, {})
@@ -715,9 +716,9 @@ def screener():
                     "name": (d.get("names") or {}).get(code, code),
                     "score": round(sc, 1),
                     # the six checkpoint groups behind the score (0-100 each)
-                    "g_cost": g.get("cost"), "g_liquidity": g.get("liquidity"),
-                    "g_movement": g.get("movement"), "g_behavior": g.get("behavior"),
-                    "g_flow": g.get("flow"), "g_fit": g.get("fit"),
+                    "g_cost": g.get("g_flex"), "g_liquidity": g.get("g_liquidity"),
+                    "g_movement": g.get("g_levels"), "g_behavior": g.get("g_trend"),
+                    "g_flow": g.get("g_flow"), "g_fit": g.get("g_momentum"),
                     "tick_pct": round(c.get("tick_pct", 0), 3),
                     "move_vs_cost": round(c.get("mv_vs_cost", 0), 2),
                     "continue_pct": round(c.get("cont", 0), 1),
@@ -725,7 +726,7 @@ def screener():
                     "live": code in (d.get("live") or [])})
     return {"ok": True, "scored_on": d.get("scored_on"), "tested_on": d.get("tested_on"),
             "test_result": d.get("test_result"), "weights": d.get("weights"),
-            "rows": out}
+            "source": src, "missing": d.get("missing"), "rows": out}
 
 
 @router.get("/live/warm")

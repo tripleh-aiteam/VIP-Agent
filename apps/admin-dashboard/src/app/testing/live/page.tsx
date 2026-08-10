@@ -563,7 +563,7 @@ export default function LiveDeskPage() {
             style={{ background: "rgba(15,81,50,0.06)" }}
             onClick={() => setScreenOpen(!screenOpen)}>
             <b className="text-[13px]" style={{ color: "#0f5132" }}>
-              🔎 {t("체크포인트 결과 — 종목 선별", "checkpoint results — stock selection")}
+              🔎 {t("체크리스트 100항목 결과 — 종목 선별", "100-item checklist results — stock selection")}
             </b>
             <span className="text-[10.5px] text-[var(--text-muted)]">
               {t(`${screen.rows.length}개 종목 · 6개 체크포인트 · 100점 만점 · 상위 5개 선택 · 13개월 실제 데이터`,
@@ -581,17 +581,17 @@ export default function LiveDeskPage() {
                   <th className="text-left px-3 py-1">#</th>
                   <th className="text-left px-2">{t("종목", "stock")}</th>
                   <th className="text-right px-3">{t("종합", "TOTAL")}</th>
-                  <th className="text-right px-2" title={t("체크포인트 ①: 호가 비용이 싼가 (가중치 25%)", "checkpoint ①: is the tick cheap? (weight 25%)")}>
-                    {t("①비용", "①cost")}</th>
-                  <th className="text-right px-2" title={t("체크포인트 ②: 오른 뒤 계속 오르는가 (25%)", "checkpoint ②: do rises continue? (25%)")}>
-                    {t("②지속", "②behav")}</th>
-                  <th className="text-right px-2" title={t("체크포인트 ③: 충분히 움직이는가 (20%)", "checkpoint ③: does it move enough? (20%)")}>
-                    {t("③움직임", "③move")}</th>
-                  <th className="text-right px-2" title={t("체크포인트 ④: 거래가 활발한가 (15%)", "checkpoint ④: is it liquid? (15%)")}>
+                  <th className="text-right px-2" title={t("체크리스트 48,49 — 가격 유연성 (호가 비용, 갭 발생) · 20%", "checklist 48,49 - price flexibility (tick cost, gaps) · 20%")}>
+                    {t("①유연성", "①flex")}</th>
+                  <th className="text-right px-2" title={t("체크리스트 50,51,52,58,59 — 추세 (신고가, 이평 정배열, 추세성) · 25%", "checklist 50,51,52,58,59 - trend (new highs, MA alignment) · 25%")}>
+                    {t("②추세", "②trend")}</th>
+                  <th className="text-right px-2" title={t("체크리스트 53,62,64,67,74 — 지지·저항과 눌림목 · 15%", "checklist 53,62,64,67,74 - support/resistance & pullbacks · 15%")}>
+                    {t("③지지저항", "③levels")}</th>
+                  <th className="text-right px-2" title={t("체크리스트 46,47,69,21 — 거래대금·거래량 급증 · 20%", "checklist 46,47,69,21 - trading value & volume surges · 20%")}>
                     {t("④유동성", "④liq")}</th>
-                  <th className="text-right px-2" title={t("체크포인트 ⑤: 우리 규칙과 맞는가 (10%)", "checkpoint ⑤: does it fit our rules? (10%)")}>
-                    {t("⑤적합", "⑤fit")}</th>
-                  <th className="text-right px-2" title={t("체크포인트 ⑥: 외국인·기관이 사는가 (5%)", "checkpoint ⑥: are big investors buying? (5%)")}>
+                  <th className="text-right px-2" title={t("체크리스트 60,61 — 모멘텀 (RSI 구간, MACD 골든크로스) · 10%", "checklist 60,61 - momentum (RSI zone, MACD crosses) · 10%")}>
+                    {t("⑤모멘텀", "⑤mom")}</th>
+                  <th className="text-right px-2" title={t("체크리스트 31,32,34,43 — 수급 (외국인·기관·개인 쏠림·공매도) · 10%", "checklist 31,32,34,43 - flows (foreign, institutional, retail, shorts) · 10%")}>
                     {t("⑥수급", "⑥flow")}</th>
                   <th className="text-right px-3 text-[9px]" title={t("근거 수치: 1호가 비중 · 움직임÷비용 · 상승지속률 · 우리 규칙 승률", "evidence: tick% · move÷cost · continues · our-rule win%")}>
                     {t("근거 수치", "evidence")}</th>
@@ -634,8 +634,10 @@ export default function LiveDeskPage() {
               </table>
               <div className="px-4 py-2 text-[10.5px] text-[var(--text-muted)] border-t"
                 style={{ borderColor: "var(--border-default)" }}>
-                <div>{t("체크포인트 6개: ①호가 비용 25% · ②상승 지속성 25% · ③움직임 크기 20% · ④유동성 15% · ⑤우리 규칙 적합도 10% · ⑥외국인·기관 수급 5% — 각 항목 100점 만점, 가중 합계가 종합 점수입니다.",
-                        "the 6 checkpoints: ①cost 25% · ②behavior 25% · ③movement 20% · ④liquidity 15% · ⑤fit with our rules 10% · ⑥investor flows 5% — each out of 100; the weighted sum is the total.")}</div>
+                <div>{t("자문 체크리스트 100항목 중 측정 가능한 항목으로 채점했습니다: 유연성(48,49) 20% · 추세(50,51,52,58,59) 25% · 지지저항(53,62,64,67,74) 15% · 유동성(46,47,69) 20% · 모멘텀(60,61) 10% · 수급(31,32,34,43) 10%.",
+                        "scored from the measurable items of the advisor's 100-item checklist: flexibility(48,49) 20% · trend(50,51,52,58,59) 25% · levels(53,62,64,67,74) 15% · liquidity(46,47,69) 20% · momentum(60,61) 10% · flows(31,32,34,43) 10%.")}</div>
+                <div className="mt-1">{t("측정 불가 항목은 숨기지 않고 알립니다: 뉴스·테마·공시(26-30,40-45), 호가창 강도·허수(55-57,70), 선물옵션 만기(36-37), 해외지표(12-20), 트레이더 컨디션(1-10).",
+                        "items we cannot measure are reported, not hidden: news/themes/disclosures (26-30,40-45), order-book strength & spoofing (55-57,70), futures expiry (36-37), external markets (12-20), the trader's own condition (1-10).")}</div>
                 <div className="mt-1">{t(`점수는 ${screen.scored_on} 자료로만 매겼고, 선별된 5개를 선별이 보지 못한 ${screen.tested_on} 구간에서 검증했습니다 — 과거에 맞춘 것이 아닙니다.`,
                    `scored only on ${screen.scored_on}, then the chosen five were tested on ${screen.tested_on} which the screener never saw - not fitted to the past.`)}</div>
               </div>
