@@ -610,6 +610,18 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
     n = len(stks)
     up = [0] * n
     dn = [0] * n
+    lastc = [0.0] * n          # each stock's most recent close, for the closing bell
+
+    def _secs(t: str) -> int:
+        try:
+            return int(t[0:2]) * 3600 + int(t[3:5]) * 60 + int(t[6:8])
+        except Exception:
+            return -1
+
+    # when does each stock's tape run out? a position on a stock that has gone dark can
+    # never be managed again, and under the desk law it shuts the whole desk down
+    endt = [(_secs(sk["times"][-1]) if sk.get("times") and isinstance(sk["times"][-1], str)
+             else -1) for sk in stks]
     last_sig = [-1] * n
     book = fill_fn or (lambda seed_i, px, side, tk: _book(seed_i, px, side, tk))
     # the merged clock is IDENTICAL for every rule over the same tapes - callers that
@@ -622,6 +634,47 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
         s = stks[si]
         closes = s["closes"]
         c, prev = closes[i], closes[i - 1]
+        # THE CLOSING BELL. Found 2026-08-10 while asking why the 1분 board was empty:
+        # one position that never reached its take and never triggered its floored stop
+        # holds the desk's single hand for the REST OF THE DAY, so 23 rules showed 0
+        # trades on a full session. At 5틱 the price walks through the stop band and the
+        # trade ends; at 1분 a single bar can jump the whole band, the stop is skipped by
+        # the never-sell-below-the-floor law, and the day is over at 09:07.
+        # A day desk does not carry a position overnight anyway: after 15:20 nothing new
+        # is bought (checklist #100) and anything still open is closed at the last price.
+        _t = s.get("times")
+        _now = _t[i] if _t and isinstance(_t[i], str) else ""
+        _late = _now >= "15:20"
+        lastc[si] = c
+        # THE STOCK THAT WENT QUIET (found 2026-08-10). 한화오션 stopped ticking at 09:32
+        # while the desk was holding it, and because a position is only ever managed on
+        # ITS OWN stock's bars, the desk's single hand stayed shut for the rest of the
+        # session: 23 rules, a full day of tape, 0 trades. So the closing bell is read
+        # off the MERGED clock - whichever stock is still printing - and it closes
+        # whatever is open at the last price that stock actually traded.
+        # A STOCK THAT GOES DARK (2026-08-10). 한화오션 stopped printing at 09:32 while the
+        # desk held it; every other stock kept trading all day and the desk bought nothing
+        # more, because a position is only ever managed on its OWN stock's bars. Ten
+        # minutes of silence from the stock we are holding, while the rest of the desk is
+        # still printing, ends the trade at the last price it actually traded.
+        _dark = (pos is not None and endt[pos["si"]] >= 0 and _secs(_now) >= 0
+                 and _secs(_now) - endt[pos["si"]] > 600)
+        if (_late or _dark) and pos is not None:
+            _s2 = stks[pos["si"]]
+            _px = lastc[pos["si"]]
+            _bk = dict(book(_s2["seed"] * 2_000 + i, _px, "SELL", _s2["tick"]), fill=_px)
+            _gross = (_px / pos["entry"] - 1) * 100
+            _tr = {"si": pos["si"], "buy_i": pos["i"], "sell_i": pos["i"],
+                   "qty": pos.get("qty", 1), "entry": pos["entry"], "exit": _px,
+                   "gross_pct": round(_gross, 3),
+                   "net_pct": round(_gross - FEE_PCT, 3),
+                   "exit_why": ("장 마감 정리" if _late else "종목 체결 중단 정리"),
+                   "ml": pos.get("ml")}
+            if evidence:
+                _tr["buy_ev"] = {"close": pos["close"], "book": pos["bk"], "seq": pos["seq"]}
+                _tr["sell_ev"] = {"close": _px, "book": _bk, "seq": [_px]}
+            out.append(_tr)
+            pos = None
         # a FLAT close is a PAUSE, not a break (boss 2026-08-06) - the run stands
         if c > prev:
             up[si], dn[si] = up[si] + 1, 0
@@ -650,7 +703,9 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                                "limit": True, "sharp": pend.get("sharp"),
                                "peak": ask, "ups": 0, "downs": 0}
                     pend = None                          # else: abandoned, no trade
-        if pos is None and pend is None:
+        if _late and pend is not None and pend["si"] == si:
+            pend = None                      # a working order is cancelled, not chased
+        if pos is None and pend is None and not _late:
             # the daily gate (boss 2026-08-10): a stock whose day was judged NO-GO before
             # the open produces no entries at all today. Exits are untouched - a position
             # opened before a gate closes is still managed to its normal end.
