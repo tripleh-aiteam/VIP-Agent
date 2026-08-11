@@ -563,11 +563,6 @@ export default function LiveDeskPage() {
   // at what price, when it sold, and the chart). Points the existing detail panel at
   // that company and opens the best-ranked rule if none is open yet.
   const autoOpenRef = useRef("");
-  // THE HISTORY IS OPEN BY DEFAULT (boss 2026-08-11: "whenever I do not click, also
-  // below it shows all trading history"). With nothing selected, the best visible rule
-  // opens itself, so the day's trades are always on screen without a click. Closing or
-  // switching rules is still the user's - this only fills an empty screen, once per
-  // filter change, and never re-fights a click.
   // ONE TABLE FOR THE WHOLE FAMILY (boss 2026-08-11): rule, stock, buy, sell, result,
   // money - every trade the visible family made, merged and time-ordered, with each
   // buy/sell time clickable to open that exact trade on the chart as proof.
@@ -652,15 +647,8 @@ export default function LiveDeskPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [openRule]);
   
-  useEffect(() => {
-    const first = shownRules[0]?.id;
-    if (!first || sel !== null) { autoOpenRef.current = sel ?? ""; return; }
-    if (autoOpenRef.current === `closed:${first}`) return;   // the user closed it - respect that
-    setSel(first);
-    autoOpenRef.current = first;
-    openRule(first, null);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [shownRules.map((v) => v.id).join(","), sel]);
+  // (auto-open removed 2026-08-11 with the totals table: the detail panel opens ONLY
+  // from a click on a trade in the 매매 내역)
   const openStock = useCallback((c2: string) => {
     setCode(c2); codeRef.current = c2;
     const id = sel || shownRules[0]?.id;
@@ -1423,124 +1411,8 @@ export default function LiveDeskPage() {
               </span>
             )}
           </div>
-          <div className="px-4 pt-1 text-[10.5px] text-[var(--text-muted)]">
-            {t("⬇ 알고리즘별 합계 — 위 매매 내역과 같은 매매를 알고리즘별로 더한 표입니다. 줄을 누르면 차트와 함께 열립니다. (보유 중인 것은 팔리기 전까지 어느 쪽 합계에도 들어가지 않습니다)",
-               "⬇ totals per algorithm - the SAME trades as the history above, added up per algorithm. Click a row to open it with the chart. (A holding counts nowhere until it sells)")}
-          </div>
-          <div className="overflow-x-auto">
-            <table className="w-full text-[12px] tabular-nums">
-              <thead><tr className="text-[10.5px] text-[var(--text-muted)]" style={{ background: "var(--bg-elevated)" }}>
-                <th className="text-left px-3 py-2">{t("알고리즘", "algorithm")}</th>
-                <th className="text-right px-2">{t("회전", "trips")}</th>
-                <th className="text-right px-2">{t("승", "W")}</th>
-                <th className="text-right px-2">{t("패", "L")}</th>
-                <th className="text-right px-3">
-                  {t("승률", "win%")}
-                  {/* NO chip, NO colour change, NO trace - the boss filters without
-                      anyone watching the screen knowing (2026-08-06). Enter with an
-                      empty box brings every row back. */}
-                  <input value={winInput}
-                    onChange={(e) => setWinInput(e.target.value.replace(/[^0-9]/g, ""))}
-                    onKeyDown={(e) => {
-                      if (e.key !== "Enter") return;
-                      const n = parseInt(winInput, 10);
-                      setMinWin(Number.isFinite(n) ? n : null);   // empty + Enter clears
-                      setWinInput("");
-                    }}
-                    placeholder="≥%"
-                    className="ml-1 w-[34px] text-[10px] px-1 py-[1px] rounded border bg-[var(--bg-primary)] text-right"
-                    style={{ borderColor: "var(--border-default)" }} />
-                </th>
-                {money && <th className="text-right px-3">{t("총 손익", "total")}</th>}
-                <th className="text-right px-3 text-[10px]">{t("자세히", "detail")}</th>
-              </tr></thead>
-              <tbody>
-                {shownRules.map((v, i) => (
-                  <tr key={v.id} onClick={() => { const open = sel === v.id;
-                        // remember an explicit close, so the auto-open does not undo it
-                        autoOpenRef.current = open ? `closed:${v.id}` : v.id;
-                        setSel(open ? null : v.id); setDet(null); setPick(null);
-                        if (!open) openRule(v.id); }}
-                    className="border-t border-[var(--border-default)]/40 cursor-pointer hover:bg-[var(--bg-elevated)]"
-                    style={{ background: sel === v.id ? "rgba(106,27,154,0.10)"
-                             : (i === 0 && !v.thin) ? "rgba(230,81,0,0.06)" : "transparent" }}>
-                    <td className="px-3 py-1.5 font-bold text-[var(--text-primary)]">
-                      {sel === v.id ? "▶ " : (i === 0 && !v.thin) ? "🏆 " : ""}{lang === "ko" ? v.ko : v.en}
-                      {v.id.endsWith("ML") && (
-                        <span className="ml-1.5 text-[9.5px] font-extrabold px-1.5 py-0.5 rounded cursor-help"
-                          title={t("이 규칙은 매수 신호마다 회사별 ML 모델에게 먼저 물어봅니다. 과거 이긴 매수와 비슷하면 사고(확신이 클수록 더 많이), 과거 진 매수와 비슷하면 그 매수를 건너뜁니다.",
-                                   "Before every buy signal this rule asks its per-company ML model first: if the moment looks like past winners it buys (more shares when more confident); if it looks like past losers it skips that trade.")}
-                          style={{ background: "rgba(21,101,192,0.14)", color: "#1565c0" }}>🤖 ML</span>
-                      )}
-                      {/* the plain twin's rate rides on the ML row, so the with/without
-                          comparison survives sorting. Written as a sentence with BOTH
-                          numbers - "without ML 7% ▲13p" alone read as noise (boss 08-06). */}
-                      {v.id.endsWith("ML") && v.vs != null && (
-                        <span className="ml-1.5 text-[9.5px]" style={{ color: "var(--text-muted)" }}
-                          title={t(`같은 규칙, 같은 봉: 모델 없이 ${v.vs}% (${v.vs_trips ?? "?"}건) → 모델이 고른 매수만 ${v.win_pct}%`,
-                                   `same rule, same bars: no model ${v.vs}% (${v.vs_trips ?? "?"} trades) → only model-approved buys ${v.win_pct}%`)}>
-                          {t("모델 없이", "without ML")} {v.vs}% → {t("모델과", "with ML")} {v.win_pct}%
-                          <b style={{ color: v.win_pct > v.vs ? RED : v.win_pct < v.vs ? BLUE : "inherit" }}>
-                            {" "}({v.win_pct > v.vs ? "▲" : v.win_pct < v.vs ? "▼" : "="}{Math.abs(Math.round((v.win_pct - (v.vs ?? 0)) * 10) / 10)}p{v.win_pct === v.vs ? "" : v.win_pct > v.vs ? t(" 개선", " better") : t(" 하락", " worse")})
-                          </b>
-                        </span>
-                      )}
-                    </td>
-                    <td className="text-right px-2">
-                      {v.trips.toLocaleString()}
-                      {/* a flat is in this count but NOT in the win rate, and hiding it is
-                          how "2 trips ... 100%" came to mean one win and one draw on the
-                          artificial side (boss 2026-08-04). Same rule, same fix, here. */}
-                      {v.flats > 0 && (
-                        <span className="ml-1 text-[9.5px] text-[var(--text-muted)]"
-                          title={t(`${v.flats}회는 본전 — 승도 패도 아니라 승률에서 빠집니다`,
-                                   `${v.flats} ended flat - neither a win nor a loss, so not in the win rate`)}>
-                          +{v.flats}{t("무", "flat")}
-                        </span>
-                      )}
-                    </td>
-                    <td className="text-right px-2" style={{ color: RED }}>{v.wins}</td>
-                    <td className="text-right px-2" style={{ color: BLUE }}>{v.losses}</td>
-                    <td className="text-right px-3 font-extrabold" style={{ color: v.win_pct >= 50 ? "#2e7d32" : GOLD }}>
-                      <span title={t(`${v.wins}승 ÷ ${v.wins + v.losses}건(승+패) = ${v.win_pct}%`,
-                                     `${v.wins} wins ÷ ${v.wins + v.losses} decided (W+L) = ${v.win_pct}%`)}>{v.win_pct}%</span>
-                      {v.wins + v.losses < 10 && (
-                        <span className="block text-[9px] font-normal" style={{ color: GOLD }}>
-                          {t(`${v.wins + v.losses}건 중`, `of ${v.wins + v.losses}`)}
-                        </span>
-                      )}
-                    </td>
-                    {money && (() => {
-                      {/* COLOURED BY THE NUMBER IT SHOWS. This cell displayed the WON
-                          total but took its colour from the PERCENT total, and the two
-                          can disagree in sign - 2 down / +0.5% was -4.80% in percent yet
-                          +₩830,348 in won (wins sat on the expensive stock, losses on
-                          the cheap ones), so a positive figure rendered blue while its
-                          neighbours rendered red (boss 2026-08-05: "again mixed"). One
-                          value decides both the digits and the colour, and the same bold
-                          glyph as the Strategy Lab makes the sign unmissable. */}
-                      const useWon = v.net_won != null;
-                      const val = useWon ? (v.net_won as number) : v.net;
-                      const up = val > 0;
-                      return (
-                        <td className="text-right px-3 tabular-nums font-bold"
-                          title={t(`이 규칙의 모든 매매를 실제 수량으로 더한 값입니다`,
-                                   `every trade this rule made, at the traded sizes, added up`)}>
-                          <span style={{ color: up ? RED : val < 0 ? BLUE : "var(--text-muted)" }}>
-                            <b style={{ fontSize: "13px" }}>{up ? "▲ +" : val < 0 ? "▼ −" : ""}</b>
-                            {useWon ? `₩${Math.abs(val).toLocaleString()}` : `${Math.abs(val)}%`}
-                          </span>
-                        </td>
-                      );
-                    })()}
-                    <td className="text-right px-3 text-[10.5px]" style={{ color: "#6a1b9a" }}>
-                      {sel === v.id ? t("닫기 ▲", "close ▲") : t("보기 ▼", "open ▼")}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          {/* the per-algorithm totals table was REMOVED (boss 2026-08-11): the 매매
+              내역 is the one view, and detail opens by clicking a trade in it */}
         </div>
       )}
 
@@ -1566,6 +1438,11 @@ export default function LiveDeskPage() {
           <div className="px-4 py-2 border-b flex items-center gap-3 flex-wrap"
             style={{ borderColor: "var(--border-default)", background: "rgba(106,27,154,0.07)" }}>
             <b className="text-[13px]" style={{ color: "#6a1b9a" }}>
+              <button onClick={() => { setSel(null); setDet(null); setPick(null); }}
+                className="mr-1 text-[10px] px-1.5 py-0.5 rounded border align-middle"
+                style={{ borderColor: "#6a1b9a", color: "#6a1b9a" }}>
+                ✕ {t("닫기", "close")}
+              </button>
               🔎 {lang === "ko" ? det.ko : det.en}
               {" — "}
               <span style={{ color: "#1565c0" }}>
