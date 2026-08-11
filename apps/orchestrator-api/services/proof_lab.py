@@ -145,12 +145,12 @@ VARIANTS: list[dict] = [
     # money only until it earns better numbers.
     {"id": "N1", "entry": 1, "kind": "pct", "a": 0.3, "b": 2.0, "exec": "limit",
      "stop_pct": 2.0, "wait_bars": 2, "family": "new", "ignore_gate": True,
-     "dip": {"drop": 0.8, "sharp": 3.0, "ups": 1, "chop": 0.40, "win_sec": 600},
+     "dip": {"drop": 0.8, "sharp": 3.0, "ups": 1, "chop": 1.2, "win_sec": 600},
      "ride": {"arm": -99.0, "give": 99.0, "downs": 1, "slow_ups": 99, "slow_downs": 99,
               "slow_take": 1.0, "sharp_rise": 2.0}},
     {"id": "N2", "entry": 1, "kind": "pct", "a": 0.3, "b": 2.0, "exec": "limit",
      "stop_pct": 2.0, "wait_bars": 2, "family": "new", "ignore_gate": True,
-     "dip": {"drop": 0.4, "sharp": 3.0, "ups": 1, "chop": 0.40, "win_sec": 600},
+     "dip": {"drop": 0.4, "sharp": 3.0, "ups": 1, "chop": 0.6, "win_sec": 600},
      "ride": {"arm": -99.0, "give": 99.0, "downs": 1, "slow_ups": 99, "slow_downs": 99,
               "slow_take": 1.0, "sharp_rise": 2.0}},
     # N3 (an extra confirming candle, so the 3rd red) REMOVED 2026-08-11: the boss's
