@@ -1310,9 +1310,9 @@ export default function LiveDeskPage() {
                                  setDet(null); setSel(null); }}
               className="text-[10.5px] font-bold px-1 py-0.5 rounded border bg-[var(--bg-primary)] text-[var(--text-primary)] ml-1"
               style={{ borderColor: "#6a1b9a", color: "#6a1b9a" }}>
-              <option value="new|all">{t("📉📈 급락 후 반등 — 새 규칙", "📉📈 sharp drop then bounce - the new rule")}</option>
-              <option value="new|ml">{t("📉📈 급락 후 반등 + ML 만", "📉📈 sharp drop then bounce + ML only")}</option>
-              <option value="new|plain">{t("📉📈 급락 후 반등 (ML 없이)", "📉📈 sharp drop then bounce (no ML)")}</option>
+              {/* the new rule trades WITHOUT ML - its old ML twins were trained on the
+                  wrong target and removed (boss 2026-08-11), so no ML options here */}
+              <option value="new|all">{t("📉📈 급락 후 반등 — 새 규칙 (ML 없음)", "📉📈 sharp drop then bounce - the new rule (no ML)")}</option>
               <option value="old|all">{t("📈 3연속 상승 — 예전 규칙", "📈 three rises - the old rule")}</option>
               <option value="old|ml">{t("📈 3연속 상승 + ML 만", "📈 three rises + ML only")}</option>
               <option value="old|plain">{t("📈 3연속 상승 (ML 없이)", "📈 three rises (no ML)")}</option>
