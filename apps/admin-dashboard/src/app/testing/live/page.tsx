@@ -1523,10 +1523,8 @@ export default function LiveDeskPage() {
                 <b className="text-[10.5px]" style={{ color: BLUE }}>{t("파는 조건 — 자동, 먼저 오는 쪽", "SELL — automatic, whichever comes first")}</b>
                 <ul className="mt-1 ml-4 list-disc space-y-[3px] text-[var(--text-secondary)]">
                   {det.ride ? (<>
-                    <li>{t(`오름이 가파르면 (진입 직전 상승이 평소 한 봉의 ${det.ride.sharp_rise}배 이상) → 0.5%나 1%에 팔지 않고 계속 들고 갑니다. 내림이 시작되어 음봉 ${det.ride.downs}개가 완성되면, 즉 ${det.ride.downs + 1}번째 음봉이 시작되는 가격에 팝니다.`,
-                           `If the rise is steep (the climb into the entry is ${det.ride.sharp_rise}× a normal bar or more) → it is NOT sold at 0.5% or 1% - it is held. When the fall begins and ${det.ride.downs} down candle${det.ride.downs > 1 ? "s are" : " is"} complete, it sells at the price where the ${det.ride.downs + 1 === 2 ? "2nd" : `${det.ride.downs + 1}th`} down candle begins.`)}</li>
-                    <li>{t(`오름이 완만하면 → +${det.ride.slow_take}%에 닿는 순간 봅니다: 아직 오르는 중이면 팔지 않고 계속 들고 가서 두 번째 음봉 시작에 팝니다. 닿은 봉이 이미 내리는 중이면 그 자리에서 팝니다.`,
-                           `If the rise is slow → at +${det.ride.slow_take}% it checks: still climbing - it does NOT sell, it keeps riding and sells at the start of the 2nd down candle. Already falling at that moment - it sells on the spot.`)}</li>
+                    <li>{t(`내리기 시작하면 팝니다 — 음봉 ${det.ride.downs ?? 1}개가 완성되는 순간, 즉 ${(det.ride.downs ?? 1) + 1}번째 음봉이 시작되는 가격에 매도. 오름이 급하든 완만하든 똑같이 적용됩니다. 매도 호가는 가장 두꺼운 매도벽 바로 앞에 겁니다(호가창 자료가 있을 때).`,
+                           `It sells when the fall starts - the moment ${det.ride.downs ?? 1} down candle${(det.ride.downs ?? 1) > 1 ? "s are" : " is"} complete, at the price where the ${(det.ride.downs ?? 1) + 1 === 2 ? "2nd" : `${(det.ride.downs ?? 1) + 1}th`} down candle begins. Sharp or slow rise - the same exit. The sell is offered one tick in front of the biggest ask wall when the book shows one.`)}</li>
                     <li>{t(`손실이 -${det.stop_pct ?? 2}%까지 밀리면 → 손절. 단, 종목별 최저선(원 단위) 아래로는 팔지 않고 들고 있습니다.`,
                            `If the loss slips to −${det.stop_pct ?? 2}% → the stop sells; but never below this stock's own won floor, where it holds instead.`)}</li>
                     <li>{t("15:20 이후에는 새로 사지 않고, 들고 있던 것은 마지막 가격으로 정리합니다. 밤을 넘기지 않습니다.",
