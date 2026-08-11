@@ -398,7 +398,7 @@ def rank(tick: int = 5, period: int = 0, day: str = "",
     import time as _t
     _rk = (tick, period, day, frm, to, use_gate, allow_fallback)
     _hit = _RANK_TTL.get(_rk)
-    if _hit and _t.time() - _hit[0] < 2.5:
+    if _hit and _t.time() - _hit[0] < 3.4:
         return _hit[1]         # the page polls every 3s; identical answers are reused
     day, auto_day = _auto_day(day) if allow_fallback else (day, False)
     day_list = stored_days() if day == "all" else [day]
@@ -564,7 +564,7 @@ def trades(vid: str, tick: int = 5, period: int = 0, code: str = "",
     day, _auto = _auto_day(day) if allow_fallback else (day, False)
     _tk2 = (vid, tick, period, code, bars, limit, around, budget, day, frm, to, use_gate)
     _hit2 = _TRADES_TTL.get(_tk2)
-    if _hit2 and _t.time() - _hit2[0] < 2.5:
+    if _hit2 and _t.time() - _hit2[0] < 3.4:
         return _hit2[1]
 
     # Two passes: collect every trade first, sort them, THEN build the chart — the chart

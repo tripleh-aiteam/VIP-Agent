@@ -760,6 +760,7 @@ def desk_mode_set(mode: str = Query(...), force: int = Query(0)):
     from services.daily_pick import desk_mode, save_picks, set_desk_mode
     from services.kiwoom_tape import WATCH, _day, market_open, refresh_watch
     m = set_desk_mode(mode)
+    _DP_TTL.clear()
     d = _day()
     if market_open() and not force:
         return {"ok": True, "mode": m, "applied": False,
@@ -822,6 +823,9 @@ def raw_daily(code: str = Query(...), days: int = Query(20), to: str = Query("")
         conn.close()
 
 
+_DP_TTL: dict = {}
+
+
 @router.get("/daily-pick")
 def daily_pick_today(day: str = Query(""), refresh: int = Query(0),
                      force: int = Query(0)):
@@ -832,6 +836,15 @@ def daily_pick_today(day: str = Query(""), refresh: int = Query(0),
     from services.daily_pick import pick, save_picks
     from services.kiwoom_tape import WATCH, _day, market_open, refresh_watch
     d = day or _day()
+    # the picker reads Supabase and costs ~1.7s per call for an answer that changes once
+    # a day - a 60s cache makes every page load after the first ~3ms. refresh and the
+    # desk-mode switch clear it.
+    import time as _t
+    from services.daily_pick import desk_mode as _dm
+    if not refresh:
+        _hit = _DP_TTL.get((d, _dm()))
+        if _hit and _t.time() - _hit[0] < 60:
+            return _hit[1]
     # refresh=1 re-points the collector at today's list. Normally only outside market
     # hours (swapping mid-session abandons half a day of a stock's tape) - force=1 does
     # it anyway, which the boss asked for when a pinned stock was missing from the desk.
@@ -849,6 +862,11 @@ def daily_pick_today(day: str = Query(""), refresh: int = Query(0),
     # collecting the previous five" when it was collecting exactly the right ones.
     res["applied"] = {c for c, _n in WATCH} == set(res.get("picks", []))
     res["market_open"] = market_open()
+    if not refresh:
+        from services.daily_pick import desk_mode as _dm2
+        _DP_TTL[(d, _dm2())] = (_t.time(), res)
+    else:
+        _DP_TTL.clear()
     return res
 
 

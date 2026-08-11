@@ -515,6 +515,7 @@ export default function LiveDeskPage() {
   const tickRef = useRef(tick); tickRef.current = tick;
 
   const detSeqRef = useRef(0);
+  const [detBusy, setDetBusy] = useState(false);
   // the day (d8) of the chart inside `det` - the server draws the clicked trade's day
   const detDayRef = useRef("");
   const openRule = useCallback((id: string, tradeIdx: number | null = null,
@@ -536,6 +537,7 @@ export default function LiveDeskPage() {
     // shows late / jumps back" (boss 2026-08-06). Every request takes a number; only the
     // newest number is allowed to touch the screen.
     const my = ++detSeqRef.current;
+    setDetBusy(true);
     api<RDetail>(`/paper-desk/live/rules/trades?variant=${encodeURIComponent(id)}&${q}`
       + `&code=${encodeURIComponent(want)}&bars=${chartOpenRef.current ? 60000 : 1200}`
       + `&around=${tradeIdx ?? -1}&budget=${budgetRef.current}`
@@ -543,11 +545,13 @@ export default function LiveDeskPage() {
       + `&gate=${showBlockedRef.current ? 0 : 1}`
       + `&auto=${dayTouchedRef.current && !ruleDayRef.current ? 0 : 1}`)
       .then((d) => { if (my !== detSeqRef.current) return;
+                     setDetBusy(false);
                      const v = d?.ok ? d : null; detRef.current = v;
                      detDayRef.current = (tradeIdx != null
                        ? v?.trades?.[tradeIdx]?.d8 : v?.trades?.[0]?.d8) ?? "";
                      setDet(v); })
       .catch(() => { if (my !== detSeqRef.current) return;
+                     setDetBusy(false);
                      detRef.current = null; setDet(null); });
   }, []);
 
@@ -1152,6 +1156,11 @@ export default function LiveDeskPage() {
                 <b className="text-[11px]" style={{ color: "#0f5132" }}>
                   📋 {t("매매 내역", "trading history")}
                 </b>
+                {famBusy && !fam && (
+                  <span className="text-[10.5px] font-bold" style={{ color: "#e65100" }}>
+                    ⏳ {t("불러오는 중…", "Loading…")}
+                  </span>
+                )}
                 {fam && (
                   <span className="text-[10.5px] text-[var(--text-secondary)]">
                     {fam.trips}{t("건", " trades")}
@@ -1284,6 +1293,11 @@ export default function LiveDeskPage() {
                   ))}
                 </div>
               )}
+              {famOpen && !fam && famBusy && (
+                <div className="text-[11px] font-bold py-2 text-center" style={{ color: "#e65100" }}>
+                  ⏳ {t("매매 내역을 불러오는 중입니다…", "Loading the trading history…")}
+                </div>
+              )}
               {famOpen && fam && fam.rows.length === 0 && (
                 <div className="text-[10.5px] text-[var(--text-muted)] py-1">
                   {t("이 기간에 완료된 매매가 없습니다.", "no completed trades in this window.")}
@@ -1300,6 +1314,7 @@ export default function LiveDeskPage() {
                                  setWay(w as "new" | "old" | "both");
                                  setMlView(m as "all" | "ml" | "plain");
                                  setFamOpen(true);        // choosing an algorithm SHOWS its history
+                                 setFam(null);            // old family's rows must not wear the new label
                                  setDet(null); setSel(null); }}
               className="text-[10.5px] font-bold px-1 py-0.5 rounded border bg-[var(--bg-primary)] text-[var(--text-primary)] ml-1"
               style={{ borderColor: "#6a1b9a", color: "#6a1b9a" }}>
@@ -1476,6 +1491,12 @@ export default function LiveDeskPage() {
         </div>
       )}
       {/* ---- one rule's real trades ---- */}
+      {sel && !det && detBusy && (
+        <div className="mt-3 rounded-xl border px-4 py-3 text-[12px] font-bold text-center"
+          style={{ borderColor: "#6a1b9a", color: "#e65100" }}>
+          ⏳ {t("이 알고리즘의 매매를 불러오는 중입니다…", "Loading this algorithm's trades…")}
+        </div>
+      )}
       {sel && det?.ok && (
         <div id="rule-detail" className="mt-3 rounded-xl border overflow-hidden" style={{ borderColor: "#6a1b9a" }}>
           <div className="px-4 py-2 border-b flex items-center gap-3 flex-wrap"
