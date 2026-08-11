@@ -781,6 +781,66 @@ def desk_mode_get():
             "trading_now": [{"code": c, "name": n} for c, n in WATCH]}
 
 
+@router.get("/drill")
+def history_drill(code: str = Query(...), day: str = Query(...),
+                  level: str = Query("hours"), hour: str = Query(""),
+                  minute: str = Query("")):
+    """The boss's drill-down (2026-08-11): a day opens into hours, an hour into
+    minutes, a minute into seconds - price, volume, and direction at every level.
+    Second-level truth exists only for days our collector recorded; Kiwoom keeps ~40s
+    of the past, so what we did not record cannot be conjured."""
+    from services.kiwoom_tape import load
+    ticks = load(code, day)
+    if not ticks:
+        return {"ok": False, "error": "no tape recorded for this day"}
+
+    def bucket(key_len):
+        out = []
+        cur = None
+        for x in ticks:
+            t = x["ts"][8:14]              # HHMMSS
+            if level == "minutes" and t[:2] != hour:
+                continue
+            if level == "seconds" and (t[:2] != hour or t[2:4] != minute):
+                continue
+            k = t[:key_len]
+            if cur is None or cur["k"] != k:
+                if cur is not None:
+                    out.append(cur)
+                cur = {"k": k, "open": x["px"], "high": x["px"], "low": x["px"],
+                       "close": x["px"], "vol": 0, "n": 0}
+            cur["close"] = x["px"]
+            cur["high"] = max(cur["high"], x["px"])
+            cur["low"] = min(cur["low"], x["px"])
+            cur["vol"] += x.get("qty") or 0
+            cur["n"] += 1
+        if cur is not None:
+            out.append(cur)
+        prev = None
+        for r in out:
+            r["chg"] = (round((r["close"] / prev - 1) * 100, 3) if prev else None)
+            r["dir"] = 0 if prev is None or r["close"] == prev else (1 if r["close"] > prev else -1)
+            prev = r["close"]
+        return out
+
+    key_len = {"hours": 2, "minutes": 4, "seconds": 6}.get(level, 2)
+    rows = bucket(key_len)
+    fmt = {2: lambda k: f"{k}:00", 4: lambda k: f"{k[:2]}:{k[2:]}",
+           6: lambda k: f"{k[:2]}:{k[2:4]}:{k[4:]}"}[key_len]
+    return {"ok": True, "code": code, "day": day, "level": level,
+            "rows": [{"t": fmt(r["k"]), "key": r["k"], "open": r["open"],
+                      "high": r["high"], "low": r["low"], "close": r["close"],
+                      "vol": r["vol"], "n": r["n"], "chg": r["chg"], "dir": r["dir"]}
+                     for r in rows]}
+
+
+@router.get("/drill-days")
+def history_drill_days(code: str = Query(...)):
+    """Which days have recorded tape (drillable to the second) for this stock."""
+    from services.kiwoom_rules import stored_days
+    return {"ok": True, "days": stored_days(code)}
+
+
 @router.get("/raw-daily")
 def raw_daily(code: str = Query(...), days: int = Query(20), to: str = Query("")):
     """The raw rows the picker reads - open/high/low/close/volume straight out of

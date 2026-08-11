@@ -455,6 +455,29 @@ export default function LiveDeskPage() {
     api<RawDaily>(`/paper-desk/raw-daily?code=${rawCode}&days=${rawDays}`)
       .then(setRaw).catch(() => {});
   }, [rawCode, rawDays]);
+  // THE DRILL (boss 2026-08-11): a recorded day opens into hours, an hour into
+  // minutes, a minute into seconds - price, volume, direction at every level.
+  type DrillRow = { t: string; key: string; open: number; high: number; low: number;
+                    close: number; vol: number; n: number; chg: number | null; dir: number };
+  const [drillDays, setDrillDays] = useState<string[]>([]);
+  const [drill, setDrill] = useState<{ level: string; day: string; hour: string;
+    minute: string; rows: DrillRow[] } | null>(null);
+  const [drillBusy, setDrillBusy] = useState(false);
+  const pullDrill = useCallback((day: string, level: string, hour = "", minute = "") => {
+    setDrillBusy(true);
+    api<{ ok: boolean; rows: DrillRow[] }>(
+      `/paper-desk/drill?code=${rawCode}&day=${day}&level=${level}&hour=${hour}&minute=${minute}`)
+      .then((d) => { if (d?.ok) setDrill({ level, day, hour, minute, rows: d.rows }); })
+      .catch(() => {})
+      .finally(() => setDrillBusy(false));
+  }, [rawCode]);
+  useEffect(() => {
+    if (!histOpen || !rawCode) { setDrill(null); setDrillDays([]); return; }
+    api<{ ok: boolean; days: string[] }>(`/paper-desk/drill-days?code=${rawCode}`)
+      .then((d) => setDrillDays(d?.ok ? d.days : []))
+      .catch(() => {});
+    setDrill(null);
+  }, [histOpen, rawCode]);
   const [gate, setGate] = useState<Gate | null>(null);
   useEffect(() => { api<Gate>("/paper-desk/gate").then(setGate).catch(() => {}); }, []);
   // VIEWING switch only: with the gate closed the board shows nothing, so this asks
@@ -2340,6 +2363,83 @@ export default function LiveDeskPage() {
                     })}
                   </tbody>
                 </table>
+                {drillDays.length > 0 && (
+                  <div className="mt-2 text-[10.5px]">
+                    <b style={{ color: "#6a1b9a" }}>
+                      🔎 {t("초 단위까지 파고들기 — 기록된 날만 가능:", "drill to the second - recorded days only:")}
+                    </b>
+                    {drillDays.map((d2) => (
+                      <button key={d2} onClick={() => pullDrill(d2, "hours")}
+                        className="ml-1 px-1.5 py-0.5 rounded border text-[10px] font-bold"
+                        style={drill?.day === d2 ? { background: "#6a1b9a", color: "#fff", borderColor: "#6a1b9a" }
+                                                 : { borderColor: "#6a1b9a", color: "#6a1b9a" }}>
+                        {d2.slice(4, 6)}-{d2.slice(6)}
+                      </button>
+                    ))}
+                  </div>
+                )}
+                {drill && (
+                  <div className="mt-2 rounded-lg border p-2" style={{ borderColor: "#6a1b9a" }}>
+                    <div className="flex items-center gap-2 text-[10.5px] font-bold mb-1"
+                      style={{ color: "#6a1b9a" }}>
+                      <button onClick={() => pullDrill(drill.day, "hours")}
+                        className="underline decoration-dotted">{drill.day.slice(4, 6)}-{drill.day.slice(6)}</button>
+                      {drill.level !== "hours" && (
+                        <>
+                          <span>›</span>
+                          <button onClick={() => pullDrill(drill.day, "minutes", drill.hour)}
+                            className="underline decoration-dotted">{drill.hour}{t("시", "h")}</button>
+                        </>
+                      )}
+                      {drill.level === "seconds" && (<><span>›</span><span>{drill.hour}:{drill.minute}</span></>)}
+                      <span className="text-[var(--text-muted)] font-normal">
+                        {drill.level === "hours" ? t("· 시간을 누르면 분 단위로", "· click an hour for its minutes")
+                          : drill.level === "minutes" ? t("· 분을 누르면 초 단위로", "· click a minute for its seconds")
+                          : t("· 초 단위 — 실제 체결 그대로", "· seconds - the executions as they happened")}
+                      </span>
+                      {drillBusy && <span style={{ color: "#e65100" }}>⏳</span>}
+                    </div>
+                    <div className="overflow-y-auto" style={{ maxHeight: 260 }}>
+                      <table className="w-full text-[10.5px] tabular-nums">
+                        <thead><tr className="text-[9.5px] text-[var(--text-muted)] sticky top-0"
+                          style={{ background: "var(--bg-elevated)" }}>
+                          <th className="text-left px-2 py-0.5">{t("시각", "time")}</th>
+                          <th className="text-right px-2">{t("시가", "open")}</th>
+                          <th className="text-right px-2">{t("고가", "high")}</th>
+                          <th className="text-right px-2">{t("저가", "low")}</th>
+                          <th className="text-right px-2">{t("종가", "close")}</th>
+                          <th className="text-right px-2">{t("등락", "±")}</th>
+                          <th className="text-right px-2">{t("거래량", "volume")}</th>
+                          <th className="text-right px-2">{t("체결수", "deals")}</th>
+                        </tr></thead>
+                        <tbody>
+                          {drill.rows.map((r) => (
+                            <tr key={r.key}
+                              onClick={() => {
+                                if (drill.level === "hours") pullDrill(drill.day, "minutes", r.key);
+                                else if (drill.level === "minutes") pullDrill(drill.day, "seconds", r.key.slice(0, 2), r.key.slice(2));
+                              }}
+                              className={"border-t border-[var(--border-default)]/30 " +
+                                (drill.level !== "seconds" ? "cursor-pointer hover:bg-[var(--bg-elevated)]" : "")}>
+                              <td className="px-2 py-0.5 font-bold"
+                                style={{ color: drill.level !== "seconds" ? "#6a1b9a" : "var(--text-secondary)" }}>
+                                {drill.level !== "seconds" ? "▸ " : ""}{r.t}</td>
+                              <td className="text-right px-2">{Math.round(r.open).toLocaleString()}</td>
+                              <td className="text-right px-2" style={{ color: RED }}>{Math.round(r.high).toLocaleString()}</td>
+                              <td className="text-right px-2" style={{ color: BLUE }}>{Math.round(r.low).toLocaleString()}</td>
+                              <td className="text-right px-2 font-bold">{Math.round(r.close).toLocaleString()}</td>
+                              <td className="text-right px-2 font-bold"
+                                style={{ color: r.dir > 0 ? RED : r.dir < 0 ? BLUE : "var(--text-muted)" }}>
+                                {r.chg == null ? "-" : `${r.chg > 0 ? "▲+" : r.chg < 0 ? "▼" : ""}${r.chg}%`}</td>
+                              <td className="text-right px-2 text-[var(--text-secondary)]">{r.vol.toLocaleString()}</td>
+                              <td className="text-right px-2 text-[var(--text-muted)]">{r.n.toLocaleString()}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
                 <div className="text-[10px] text-[var(--text-muted)] mt-2">
                   {raw.flow_latest
                     ? t(`수급 자료 최신일: ${raw.flow_latest} — 이 날짜 이후의 외국인/기관 칸은 비어 있습니다.`,
