@@ -151,8 +151,12 @@ VARIANTS: list[dict] = [
     # exist (five candles span ~0.2%) - there the top->now law of N2 is the equivalent.
     # Tested on today's tape before deployment: 3 events, 67% win, +0.093%/trade net -
     # the only entry with a positive per-trade average on today's grind.
+    # N3 retired 2026-08-12 pre-open at the boss's instruction: "N3 is confusing
+    # people - just Sharp as the name is enough, delete it from today's trading."
+    # One algorithm, one name. Its 08-11 history replays as always.
     {"id": "N3", "entry": 1, "kind": "pct", "a": 0.3, "b": 2.0, "exec": "limit",
      "stop_pct": 2.0, "wait_bars": 2, "family": "new", "ignore_gate": True,
+     "retired_from": "20260812",
      "clock": [5, 60],
      "run": {"blues": 5, "drop": 1.0, "vol": 1.2},
      "scout": {"frac": 0.03, "confirm": 0.5},
