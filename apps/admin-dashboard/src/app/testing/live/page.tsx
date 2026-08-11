@@ -614,7 +614,8 @@ export default function LiveDeskPage() {
       .finally(() => setFamBusy(false));
   }, [way]);
   useEffect(() => {
-    if (!famOpen) return;
+    // fetch even while the panel is collapsed - the server answers from a 4s cache,
+    // and a collapsed header with no data read as "the history is gone" (2026-08-11)
     pullFam();
     const h = setInterval(pullFam, 20000);
     return () => clearInterval(h);
@@ -1181,6 +1182,14 @@ export default function LiveDeskPage() {
                 <b className="text-[11px]" style={{ color: "#0f5132" }}>
                   📋 {t("매매 내역", "trading history")}
                 </b>
+                {fam && (
+                  <span className="text-[10.5px] text-[var(--text-secondary)]">
+                    {fam.trips}{t("건", " trades")}
+                    {((fam as { holding?: unknown[] }).holding?.length ?? 0) > 0 &&
+                      t(` · 보유 ${(fam as { holding?: unknown[] }).holding!.length}`,
+                        ` · holding ${(fam as { holding?: unknown[] }).holding!.length}`)}
+                  </span>
+                )}
                 <button onClick={(e) => { e.stopPropagation(); setMoney((v) => !v); }}
                   className="text-[10px] px-1.5 py-0.5 rounded border"
                   style={{ borderColor: money ? "#e65100" : "var(--border-default)",
@@ -1364,6 +1373,7 @@ export default function LiveDeskPage() {
               onChange={(e) => { const [w, m] = e.target.value.split("|");
                                  setWay(w as "new" | "old" | "both");
                                  setMlView(m as "all" | "ml" | "plain");
+                                 setFamOpen(true);        // choosing an algorithm SHOWS its history
                                  setDet(null); setSel(null); }}
               className="text-[10.5px] font-bold px-1 py-0.5 rounded border bg-[var(--bg-primary)] text-[var(--text-primary)] ml-1"
               style={{ borderColor: "#6a1b9a", color: "#6a1b9a" }}>
