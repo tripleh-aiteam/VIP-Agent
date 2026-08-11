@@ -143,6 +143,20 @@ VARIANTS: list[dict] = [
     # vs -0.698%), so it has no edge to trade on. He asked for it on the board anyway,
     # next to the old way, to settle it on live tape rather than on my backtests. Paper
     # money only until it earns better numbers.
+    # N3 - THE BOSS'S RUN LAW (2026-08-11, his design): five consecutive blue candles
+    # (flats pause, per his counting law) falling 1.0% together, on above-average
+    # volume - his volume-as-reality test - then buy at the exact 2nd red. No window
+    # parameter at all: the run is its own clock. Pinned to 1분, where a candle is a
+    # minute and five blues mean five minutes of real selling; at 5틱 this shape cannot
+    # exist (five candles span ~0.2%) - there the top->now law of N2 is the equivalent.
+    # Tested on today's tape before deployment: 3 events, 67% win, +0.093%/trade net -
+    # the only entry with a positive per-trade average on today's grind.
+    {"id": "N3", "entry": 1, "kind": "pct", "a": 0.3, "b": 2.0, "exec": "limit",
+     "stop_pct": 2.0, "wait_bars": 2, "family": "new", "ignore_gate": True,
+     "clock": [5, 60],
+     "run": {"blues": 5, "drop": 1.0, "vol": 1.2},
+     "ride": {"arm": 1.0, "give": 99.0, "downs": 1, "slow_ups": 99, "slow_downs": 99,
+              "slow_take": 1.0, "sharp_rise": 2.0}},
     {"id": "N2", "entry": 1, "kind": "pct", "a": 0.3, "b": 2.0, "exec": "limit",
      "stop_pct": 2.0, "wait_bars": 2, "family": "new", "ignore_gate": True,
      "dip": {"drop": 1.0, "sharp": 3.0, "ups": 1, "chop": 1.5, "win_sec": 1800},
@@ -260,6 +274,15 @@ def label(v: dict, ko: bool = True) -> str:
     if v.get("ride"):
         r = v["ride"]
         d = v.get("dip")
+        rn = v.get("run")
+        if rn:
+            if ko:
+                return (f"음봉 {rn['blues']}연속·합계 -{rn['drop']}%·거래량 {rn['vol']}배 → "
+                        f"2번째 양봉 시작에 매수 → +{r['arm']}% 도달 후 2번째 음봉 시작에 매도"
+                        + (" (게이트 무시)" if v.get("ignore_gate") else ""))
+            return (f"{rn['blues']} straight blues totalling -{rn['drop']}% on {rn['vol']}x volume → "
+                    f"buy at the 2nd red → after +{r['arm']}%, sell at the 2nd blue"
+                    + (" (no gate)" if v.get("ignore_gate") else ""))
         _u = d["ups"] if d else v["entry"]
 
         def _ord(n: int) -> str:
@@ -605,6 +628,48 @@ def _ask_wall_offer(s: dict, i: int, close: float, tick: float):
     return offer, {"price": p, "qty": q, "ts": snap["ts"]}
 
 
+def _run_entry(s: dict, v: dict, i: int, ups: int, closes: list) -> bool:
+    """The boss's run law: at the exact 2nd red (ups == 1), the candles immediately
+    before the turn must be >= K consecutive blues (flats pause) falling >= drop%
+    together, on volume above vol x the recent average."""
+    r = v["run"]
+    if ups != 1:                     # only the exact 2nd red, same as the dip law
+        return False
+    # walk back over the run that ended at the turn: closes[j] descending with pauses
+    j = i - 1                        # the first red bar
+    while j >= 1 and closes[j] == closes[j - 1]:
+        j -= 1                       # flats between the red and the run
+    end = j                          # last bar of the blue run
+    blues = 0
+    top = closes[end]
+    while j >= 1:
+        if closes[j] < closes[j - 1]:
+            blues += 1
+            top = closes[j - 1]
+            j -= 1
+        elif closes[j] == closes[j - 1]:
+            j -= 1                   # a pause inside the run
+        else:
+            break
+    if blues < r.get("blues", 5):
+        return False
+    bottom = closes[end]
+    fall = (top - bottom) / top * 100 if top else 0.0
+    if fall < r.get("drop", 1.0):
+        return False
+    vm = r.get("vol", 0)
+    if vm:
+        vv = s.get("vols") or []
+        if not vv:
+            return False
+        w = vv[max(0, i - 40):i]
+        vavg = sum(w) / len(w) if w else 0.0
+        vrun = sum(vv[max(0, end - blues + 1):end + 1]) / max(blues, 1)
+        if not vavg or vrun < vm * vavg:
+            return False
+    return True
+
+
 def _dip_entry(s: dict, v: dict, i: int, ups: int, closes: list) -> bool:
     """Does bar i finish the boss's pattern? sharp drop -> it stopped -> N bars back up.
     A flat market ("oscillation") is refused outright: he asked for no trade at all
@@ -877,6 +942,8 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
             # than 0.40%, the market is going nowhere and no rule may buy into it.
             # No loss and no gain, by instruction. Exits are untouched.
             elif _dip_state(s, (v.get("dip") or {}).get("win_sec", 600))["rng"][i]                     < (v.get("dip") or {}).get("chop", 0.40):
+                pass
+            elif v.get("run") and not _run_entry(s, v, i, up[si], closes):
                 pass
             elif v.get("dip") and not _dip_entry(s, v, i, up[si], closes):
                 pass
