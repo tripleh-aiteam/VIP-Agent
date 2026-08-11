@@ -155,11 +155,13 @@ VARIANTS: list[dict] = [
      "stop_pct": 2.0, "wait_bars": 2, "family": "new", "ignore_gate": True,
      "clock": [5, 60],
      "run": {"blues": 5, "drop": 1.0, "vol": 1.2},
+     "scout": {"frac": 0.03, "confirm": 0.5},
      "ride": {"arm": 1.0, "give": 99.0, "downs": 1, "slow_ups": 99, "slow_downs": 99,
               "slow_take": 1.0, "sharp_rise": 2.0}},
     {"id": "N2", "entry": 1, "kind": "pct", "a": 0.3, "b": 2.0, "exec": "limit",
      "stop_pct": 2.0, "wait_bars": 2, "family": "new", "ignore_gate": True,
      "dip": {"drop": 1.0, "sharp": 3.0, "ups": 1, "chop": 1.5, "win_sec": 1800},
+     "scout": {"frac": 0.03, "confirm": 0.5},
      "ride": {"arm": 1.0, "give": 99.0, "downs": 1, "slow_ups": 99, "slow_downs": 99,
               "slow_take": 1.0, "sharp_rise": 2.0}},
     # N3 (an extra confirming candle, so the 3rd red) REMOVED 2026-08-11: the boss's
@@ -908,8 +910,13 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
             if lows[i] <= pend["px"]:
                 bk = book(s["seed"] * 1_000 + i, pend["px"], "BUY", s["tick"])
                 bk = dict(bk, fill=pend["px"])           # our price, not the ask
+                _scv = v.get("scout")
+                _q_all = pend["qty"]
+                _q_sc = max(1, int(_q_all * _scv["frac"])) if _scv else _q_all
                 pos = {"si": si, "i": pend["i"], "entry": pend["px"], "bk": bk,
-                       "close": pend["close"], "qty": pend["qty"], "ml": pend["ml"],
+                       "close": pend["close"], "qty": _q_sc, "ml": pend["ml"],
+                       "qty_add": (_q_all - _q_sc) if _scv else 0,
+                       "added": False, "add_px": None,
                        "seq": pend["seq"], "limit": True, "sharp": pend.get("sharp"),
                        "wall": pend.get("wall"), "sig": pend.get("sig"),
                        "peak": pend["px"], "ups": 0, "downs": 0}
@@ -920,8 +927,13 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                     ask = c + s["tick"]
                     if ask <= pend["px"] + buy_cap_won(s.get("code", ""), s["tick"]):
                         bk = book(s["seed"] * 1_000 + i, c, "BUY", s["tick"])
+                        _scv2 = v.get("scout")
+                        _qa2 = pend["qty"]
+                        _qs2 = max(1, int(_qa2 * _scv2["frac"])) if _scv2 else _qa2
                         pos = {"si": si, "i": i, "entry": ask, "bk": bk, "close": c,
-                               "qty": pend["qty"], "ml": pend["ml"], "seq": pend["seq"],
+                               "qty": _qs2, "ml": pend["ml"], "seq": pend["seq"],
+                               "qty_add": (_qa2 - _qs2) if _scv2 else 0,
+                               "added": False, "add_px": None,
                                "limit": True, "sharp": pend.get("sharp"),
                                "wall": pend.get("wall"), "sig": pend.get("sig"),
                                "peak": ask, "ups": 0, "downs": 0}
@@ -1059,6 +1071,13 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                 # count restarts fresh when real movement returns.
                 _chop_now = (_dip_state(s, (v.get("dip") or {}).get("win_sec", 600))
                              ["rng"][i] < (v.get("dip") or {}).get("chop", 0.40))
+                # THE SCOUT'S CONFIRMATION: the remaining shares join at +confirm%
+                # above the scout entry. Recorded on the position so the exit can
+                # compute the blended result honestly.
+                _sc = v.get("scout")
+                if _sc and not pos.get("added") and pos.get("qty_add", 0) > 0                         and (c / pos["entry"] - 1) * 100 >= _sc.get("confirm", 0.5):
+                    pos["added"] = True
+                    pos["add_px"] = c
                 pos["chop"] = _chop_now
                 if _chop_now:
                     pos["ups"] = 0; pos["downs"] = 0
@@ -1109,6 +1128,14 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                         hit, fill_px, why = True, c, _why
                 if hit:
                     bk = dict(book(s["seed"] * 2_000 + i, c, "SELL", tk), fill=fill_px)
+                    # blended result when the scout was reinforced: entry becomes the
+                    # size-weighted average so % and money stay consistent downstream
+                    _qs = pos.get("qty", 1)
+                    if pos.get("added") and pos.get("add_px"):
+                        _qa = pos.get("qty_add", 0)
+                        _went = (pos["entry"] * _qs + pos["add_px"] * _qa) / (_qs + _qa)
+                        pos["entry"] = _went
+                        pos["qty"] = _qs + _qa
                     gross = (fill_px / pos["entry"] - 1) * 100
                     tr = {"si": si, "buy_i": pos["i"], "sell_i": i,
                           "qty": pos.get("qty", 1), "entry": pos["entry"],
@@ -1116,6 +1143,9 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                           "net_pct": round(gross - FEE_PCT, 3),
                           "exit_why": why, "ml": pos.get("ml"),
                           "sharp": bool(pos.get("sharp")), "wall": pos.get("wall"),
+                          "scout": ({"added": bool(pos.get("added")),
+                                     "add_px": pos.get("add_px")}
+                                    if v.get("scout") else None),
                           "sig": pos.get("sig"), "ask_wall": pos.get("ask_wall")}
                     last_exit[si] = i
                     if evidence:

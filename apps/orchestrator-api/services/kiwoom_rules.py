@@ -618,7 +618,7 @@ def trades(vid: str, tick: int = 5, period: int = 0, code: str = "",
                 "d8": d, "day": (f"{d[4:6]}-{d[6:]}" if day == "all" and d else ""),
                 "gross_pct": g["gross_pct"], "net_pct": g["net_pct"],
                 "exit_why": g.get("exit_why", ""),
-                "sig": g.get("sig"), "wall": g.get("wall"),
+                "sig": g.get("sig"), "wall": g.get("wall"), "scout": g.get("scout"),
                 "result": ("win" if g["gross_pct"] > 0 else
                            "loss" if g["gross_pct"] < 0 else "flat"),
                 "bars_held": g["sell_i"] - g["buy_i"],
