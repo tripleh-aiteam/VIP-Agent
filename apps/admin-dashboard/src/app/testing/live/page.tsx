@@ -1195,6 +1195,16 @@ export default function LiveDeskPage() {
                     ⏳ {t("불러오는 중…", "Loading…")}
                   </span>
                 )}
+                {fam && fam.rows.length > 0 && (
+                  <span className="text-[10.5px] text-[var(--text-secondary)]">
+                    {Array.from(new Set(fam.rows.map((r) => r.rule))).map((ru) => {
+                      const rs = fam.rows.filter((r) => r.rule === ru);
+                      const w2 = rs.filter((r) => r.result === "win").length;
+                      const l2 = rs.filter((r) => r.result === "loss").length;
+                      return `${ru} ${rs.length}${lang === "ko" ? "건" : "t"} ${w2}${lang === "ko" ? "승" : "W"}${l2}${lang === "ko" ? "패" : "L"}`;
+                    }).join(" · ")}
+                  </span>
+                )}
                 {fam && (
                   <span className="text-[10.5px] text-[var(--text-secondary)]">
                     {fam.trips}{t("건", " trades")}
@@ -1398,10 +1408,14 @@ export default function LiveDeskPage() {
               </span>
             )}
           </div>
+          <div className="px-4 pt-1 text-[10.5px] text-[var(--text-muted)]">
+            {t("⬇ 알고리즘별 합계 — 위 매매 내역과 같은 매매를 알고리즘별로 더한 표입니다. 줄을 누르면 차트와 함께 열립니다. (보유 중인 것은 팔리기 전까지 어느 쪽 합계에도 들어가지 않습니다)",
+               "⬇ totals per algorithm - the SAME trades as the history above, added up per algorithm. Click a row to open it with the chart. (A holding counts nowhere until it sells)")}
+          </div>
           <div className="overflow-x-auto">
             <table className="w-full text-[12px] tabular-nums">
               <thead><tr className="text-[10.5px] text-[var(--text-muted)]" style={{ background: "var(--bg-elevated)" }}>
-                <th className="text-left px-3 py-2">{t("규칙", "rule")}</th>
+                <th className="text-left px-3 py-2">{t("알고리즘", "algorithm")}</th>
                 <th className="text-right px-2">{t("회전", "trips")}</th>
                 <th className="text-right px-2">{t("승", "W")}</th>
                 <th className="text-right px-2">{t("패", "L")}</th>
