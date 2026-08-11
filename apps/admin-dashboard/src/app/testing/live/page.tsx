@@ -471,7 +471,9 @@ export default function LiveDeskPage() {
     .filter((v) => way === "both" ? true : (v.family ?? "old") === way)
     .filter((v) => mlView === "all" ? true
                  : mlView === "ml" ? v.id.endsWith("ML") : !v.id.endsWith("ML"))
-    .filter((v) => minWin === null || v.win_pct >= minWin);
+    // the quiet floor hides weak OLD rules among many; the Sharp family is two
+    // algorithms and hiding them made the whole view read as broken (2026-08-11)
+    .filter((v) => (v.family ?? "old") !== "old" || minWin === null || v.win_pct >= minWin);
   // WON PER TRADE. 0 = the historical one share. One share is not equal risk - one share
   // of SK하이닉스 is ₩1.5M and one of 한화오션 is ₩85k - so a fixed budget is both fairer
   // and closer to a real account. It scales the money and never the win rate.
