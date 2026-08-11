@@ -954,7 +954,10 @@ export default function LiveDeskPage() {
           )}
         </div>
       )}
-      {gate?.ok && (
+      {/* the GO/NO-GO strip only rides with the SCORE desk (boss 2026-08-11): on his
+          fixed six the rules on the board ignore the gate anyway, so a wall of NO-GO
+          over stocks that are trading regardless read as a contradiction */}
+      {gate?.ok && (dpick?.mode ?? "fixed") === "score" && (
         <div className="mt-3 rounded-xl border px-4 py-2" style={{ borderColor: "#e65100",
              background: gate.go === 0 ? "rgba(176,42,42,0.06)" : "rgba(230,81,0,0.05)" }}>
           <div className="flex items-center gap-2 flex-wrap">
