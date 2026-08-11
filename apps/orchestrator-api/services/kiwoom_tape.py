@@ -85,6 +85,15 @@ def refresh_watch(force: bool = False) -> list[tuple[str, str]]:
             WATCH[:] = picks
             _watch_day = today
             logger.info("kiwoom_tape: today's five = %s", [n for _c, n in picks])
+            # the investor flows ride the same once-a-day moment: the pykrx job that
+            # used to fill them died 2026-07-02 and nobody noticed for five weeks
+            # (boss caught it 2026-08-11). ~40 Kiwoom calls in the quiet window.
+            try:
+                from services.flow_sync import sync_flows
+                r = sync_flows()
+                logger.info("flow_sync: +%s rows", r.get("added"))
+            except Exception as e:
+                logger.warning("flow_sync failed: %s", str(e)[:120])
     except Exception as e:
         logger.warning("kiwoom_tape: daily pick failed (%s) - keeping %s",
                        str(e)[:80], [n for _c, n in WATCH])
