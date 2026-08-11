@@ -444,6 +444,7 @@ export default function LiveDeskPage() {
   }, [dpick, t]);
   // THE SOURCE DATA. The boss asked to check the rows the picker reads without opening
   // Supabase (2026-08-10). One indexed query, ~20 rows - light enough to open on a click.
+  const [histOpen, setHistOpen] = useState(false);
   const [rawCode, setRawCode] = useState("");
   const [rawDays, setRawDays] = useState(20);
   const [raw, setRaw] = useState<RawDaily | null>(null);
@@ -2290,6 +2291,100 @@ export default function LiveDeskPage() {
             </table>
           </div>
         </div>
+      </div>
+
+      {/* THE HISTORICAL RECORD (boss 2026-08-11): the daily table the agent actually
+          reads - open/high/low/close, volume, and who was buying (foreigners,
+          institutions) - straight from raw_daily_prices and korean_investor_flows.
+          Closed by default; fetches only when opened. */}
+      <div className="mt-3 rounded-xl border overflow-hidden" style={{ borderColor: "#6a1b9a" }}>
+        <div className="px-4 py-2 flex items-center gap-2 flex-wrap cursor-pointer"
+          style={{ background: "rgba(106,27,154,0.06)" }}
+          onClick={() => { const nx = !histOpen; setHistOpen(nx);
+                           if (nx && !rawCode) setRawCode((dpick?.picks || [])[0] || "005930"); }}>
+          <b className="text-[13px]" style={{ color: "#6a1b9a" }}>
+            📚 {t("과거 기록 — 일봉·거래량·수급", "historical record - daily candles, volume, flows")}
+          </b>
+          <span className="text-[10px] text-[var(--text-muted)]">
+            {t("에이전트가 기억하는 원자료: 시가·고가·저가·종가 · 거래량 · 외국인/기관 순매수",
+               "the raw rows the agent remembers: open/high/low/close, volume, foreign & institutional net buying")}
+          </span>
+          <span className="ml-auto text-[10.5px]" style={{ color: "#6a1b9a" }}>
+            {histOpen ? t("닫기 ▲", "close ▲") : t("열기 ▼", "open ▼")}
+          </span>
+        </div>
+        {histOpen && (
+          <div className="px-4 py-2">
+            <div className="flex items-center gap-2 flex-wrap mb-2">
+              <select value={rawCode} onChange={(e) => setRawCode(e.target.value)}
+                className="text-[11px] px-2 py-0.5 rounded border bg-transparent"
+                style={{ borderColor: "#6a1b9a", color: "var(--text-primary)" }}>
+                {(dpick?.rows || []).filter((r) => r.on_desk).map((r) => (
+                  <option key={r.code} value={r.code} style={{ color: "#000" }}>{r.name}</option>
+                ))}
+              </select>
+              <select value={rawDays} onChange={(e) => setRawDays(Number(e.target.value))}
+                className="text-[11px] px-2 py-0.5 rounded border bg-transparent"
+                style={{ borderColor: "#6a1b9a", color: "var(--text-primary)" }}>
+                {[5, 10, 20, 60, 120, 250].map((d) => (
+                  <option key={d} value={d} style={{ color: "#000" }}>{t(`최근 ${d}일`, `last ${d} days`)}</option>
+                ))}
+              </select>
+              {!raw && rawCode && (
+                <span className="text-[10.5px] font-bold" style={{ color: "#e65100" }}>
+                  ⏳ {t("불러오는 중…", "Loading…")}
+                </span>
+              )}
+            </div>
+            {raw && (
+              <div className="overflow-x-auto">
+                <table className="text-[11px] tabular-nums w-full">
+                  <thead><tr className="text-[10px] text-[var(--text-muted)]">
+                    <th className="text-left px-2 py-1">{t("날짜", "date")}</th>
+                    <th className="text-right px-2">{t("시가", "open")}</th>
+                    <th className="text-right px-2">{t("고가(최대)", "high (max)")}</th>
+                    <th className="text-right px-2">{t("저가(최소)", "low (min)")}</th>
+                    <th className="text-right px-2">{t("종가", "close")}</th>
+                    <th className="text-right px-2">{t("등락", "chg")}</th>
+                    <th className="text-right px-2">{t("거래량", "volume")}</th>
+                    <th className="text-right px-3">{t("외국인", "foreign")}</th>
+                    <th className="text-right px-2">{t("기관", "inst")}</th>
+                  </tr></thead>
+                  <tbody>
+                    {[...raw.rows].reverse().map((r) => {
+                      const f = raw.flows.find((x) => x.date === r.date);
+                      return (
+                        <tr key={r.date} className="border-t border-[var(--border-default)]/30">
+                          <td className="px-2 py-0.5 text-[var(--text-secondary)]">{r.date}</td>
+                          <td className="text-right px-2">{Math.round(r.open).toLocaleString()}</td>
+                          <td className="text-right px-2" style={{ color: RED }}>{Math.round(r.high).toLocaleString()}</td>
+                          <td className="text-right px-2" style={{ color: BLUE }}>{Math.round(r.low).toLocaleString()}</td>
+                          <td className="text-right px-2 font-bold">{Math.round(r.close).toLocaleString()}</td>
+                          <td className="text-right px-2 font-bold"
+                            style={{ color: (r.chg ?? 0) > 0 ? RED : (r.chg ?? 0) < 0 ? BLUE : "var(--text-muted)" }}>
+                            {r.chg == null ? "-" : `${r.chg > 0 ? "+" : ""}${r.chg}%`}</td>
+                          <td className="text-right px-2 text-[var(--text-secondary)]">{Math.round(r.volume).toLocaleString()}</td>
+                          <td className="text-right px-3"
+                            style={{ color: f ? (f.foreign > 0 ? RED : BLUE) : "var(--text-muted)" }}>
+                            {f ? `${f.foreign > 0 ? "+" : ""}${Math.round(f.foreign / 1e8).toLocaleString()}억` : "—"}</td>
+                          <td className="text-right px-2"
+                            style={{ color: f ? (f.inst > 0 ? RED : BLUE) : "var(--text-muted)" }}>
+                            {f ? `${f.inst > 0 ? "+" : ""}${Math.round(f.inst / 1e8).toLocaleString()}억` : "—"}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+                <div className="text-[10px] text-[var(--text-muted)] mt-2">
+                  {raw.flow_latest
+                    ? t(`수급 자료 최신일: ${raw.flow_latest} — 이 날짜 이후의 외국인/기관 칸은 비어 있습니다.`,
+                        `flow data goes up to ${raw.flow_latest} - foreign/inst cells after that date are empty.`)
+                    : t("이 종목은 수급 자료가 없습니다.", "no flow data for this stock.")}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       <p className="mt-3 text-[10.5px] text-[var(--text-muted)] leading-relaxed">
