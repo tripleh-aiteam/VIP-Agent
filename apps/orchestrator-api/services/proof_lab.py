@@ -145,12 +145,12 @@ VARIANTS: list[dict] = [
     # money only until it earns better numbers.
     {"id": "N1", "entry": 1, "kind": "pct", "a": 0.3, "b": 2.0, "exec": "limit",
      "stop_pct": 2.0, "wait_bars": 2, "family": "new", "ignore_gate": True,
-     "dip": {"drop": 0.8, "sharp": 3.0, "ups": 1, "chop": 0.40, "look": 20},
+     "dip": {"drop": 0.8, "sharp": 3.0, "ups": 1, "chop": 0.40, "win_sec": 600},
      "ride": {"arm": -99.0, "give": 99.0, "downs": 1, "slow_ups": 99, "slow_downs": 99,
               "slow_take": 1.0, "sharp_rise": 2.0}},
     {"id": "N2", "entry": 1, "kind": "pct", "a": 0.3, "b": 2.0, "exec": "limit",
      "stop_pct": 2.0, "wait_bars": 2, "family": "new", "ignore_gate": True,
-     "dip": {"drop": 0.4, "sharp": 3.0, "ups": 1, "chop": 0.40, "look": 20},
+     "dip": {"drop": 0.4, "sharp": 3.0, "ups": 1, "chop": 0.40, "win_sec": 600},
      "ride": {"arm": -99.0, "give": 99.0, "downs": 1, "slow_ups": 99, "slow_downs": 99,
               "slow_take": 1.0, "sharp_rise": 2.0}},
     # N3 (an extra confirming candle, so the 3rd red) REMOVED 2026-08-11: the boss's
@@ -613,7 +613,13 @@ def _dip_entry(s: dict, v: dict, i: int, ups: int, closes: list) -> bool:
     A flat market ("oscillation") is refused outright: he asked for no trade at all
     there, no loss and no gain."""
     d = v["dip"]
-    st = _dip_state(s, d.get("look", 20))
+    st = _dip_state(s, d.get("win_sec", 600))
+    # the detector must have SEEN something before it may judge: in the first seconds
+    # of the session the window holds 2-3 bars and graded the opening gap as a "sharp
+    # drop", buying and selling within the same second (found 2026-08-11). Two minutes
+    # of observed tape is the price of admission.
+    if st.get("by_time") and st["span"][i] < 120:
+        return False
     if st["rng"][i] < d.get("chop", 0.40):          # nothing is happening - stand aside
         return False
     if st["drop"][i] < d.get("drop", 0.8):          # the fall was not big enough
@@ -624,45 +630,90 @@ def _dip_entry(s: dict, v: dict, i: int, ups: int, closes: list) -> bool:
     return ups >= d.get("ups", 2)                    # and it has turned back up
 
 
-def _dip_state(s: dict, look: int = 20) -> dict:
-    """THE BOSS'S NEW ENTRY (2026-08-10): stop buying three rises anywhere. Find a SHARP
-    DROP first, wait for the fall to stop, and buy on the way back up.
+def _dip_state(s: dict, win_sec: int = 600) -> dict:
+    """The drop detector, measured over TIME (boss's audit, 2026-08-11).
 
-    Everything here is independent of the rule's parameters, so it is computed once per
-    stock and shared by every rule that asks - the detector walks the whole tape and a
-    5틱 day is 30,000 bars.
+    The first version looked back 20 BARS - but a bar is not an amount of time: 20 5틱
+    bars of 삼성전자 span ~21 seconds while 20 bars of 한화오션 span ~7 minutes, so
+    "sharp drop" meant a different thing on every stock, and on the most liquid names
+    the detector graded 21-second micro-wiggles. This one looks back `win_sec` seconds
+    of clock (10 minutes by default) everywhere, at every bar size.
 
-    For each bar it stores: the high of the last `look` bars, the trough since that high,
-    how far the fall went, and a typical bar move (median of the last 40) so "sharp" can
-    mean "much bigger than this stock's normal wiggle" rather than a fixed number.
+    Second defect fixed here: on ultra-liquid stocks most consecutive 5틱 bars close at
+    the SAME price, the median bar move computed to zero, and the 3x-typical sharpness
+    test silently passed for anything. The typical move is now floored at ONE TICK, so
+    "3x a typical bar" is never less than three ticks of real movement.
+
+    O(n) with monotonic deques; cached in the shared "_dipc" box so all rules pay once.
+    Synthetic tapes have no clock - there the window falls back to `win_sec` bars.
     """
     import statistics
-    # the cache lives in a nested dict, because callers hand each rule a SHALLOW copy
-    # of the stock dict: a value stored flat on the copy dies with it, while this inner
-    # dict is shared by every copy and the walk below runs once per stock, not per rule
+    from collections import deque
     box = s.setdefault("_dipc", {})
-    got = box.get(look)
+    got = box.get(("t", win_sec))
     if got is not None:
         return got
     cl = s["closes"]
     n = len(cl)
+    tick = float(s.get("tick") or 1)
+    times = s.get("times")
+
+    def _secs(x):
+        if isinstance(x, str) and len(x) >= 7:
+            t = x.replace(":", "")
+            try:
+                return int(t[0:2]) * 3600 + int(t[2:4]) * 60 + int(t[4:6])
+            except Exception:
+                return None
+        return None
+    secs = [_secs(times[i]) if times else None for i in range(n)]
+    by_time = bool(n) and all(x is not None for x in secs[: min(n, 50)])
+
     diffs = [0.0] + [abs(cl[i] - cl[i - 1]) for i in range(1, n)]
     typ = [0.0] * n
+    for i in range(n):
+        w = diffs[max(1, i - 39):i + 1]
+        typ[i] = max(statistics.median(w) if w else 0.0, tick)   # floored at one tick
+
     hiw = [0.0] * n
     rng = [0.0] * n
     drop = [0.0] * n
+    span = [0] * n
+    j = 0
+    maxdq = deque()      # decreasing closes: head = window max
+    mindq = deque()      # increasing closes: head = window min
     for i in range(n):
-        w = diffs[max(1, i - 39):i + 1]
-        typ[i] = statistics.median(w) if w else 0.0
-        j = max(0, i - look)
-        win = cl[j:i + 1]
-        hi = max(win)
+        while maxdq and cl[maxdq[-1]] <= cl[i]:
+            maxdq.pop()
+        maxdq.append(i)
+        while mindq and cl[mindq[-1]] >= cl[i]:
+            mindq.pop()
+        mindq.append(i)
+        if by_time:
+            lim = (secs[i] or 0) - win_sec
+            while j < i and (secs[j] is None or secs[j] < lim):
+                j += 1
+        else:
+            j = max(0, i - win_sec)
+        while maxdq and maxdq[0] < j:
+            maxdq.popleft()
+        while mindq and mindq[0] < j:
+            mindq.popleft()
+        hi_i = maxdq[0]
+        hi = cl[hi_i]
+        lo = cl[mindq[0]]
         hiw[i] = hi
-        rng[i] = (hi - min(win)) / hi * 100 if hi else 0.0
-        k = j + win.index(hi)
-        drop[i] = (hi - min(cl[k:i + 1])) / hi * 100 if hi and k < i else 0.0
-    got = {"look": look, "typ": typ, "hi": hiw, "rng": rng, "drop": drop}
-    box[look] = got
+        span[i] = ((secs[i] or 0) - (secs[j] or 0)) if by_time else (i - j)
+        rng[i] = (hi - lo) / hi * 100 if hi else 0.0
+        tr = cl[i]
+        for k in mindq:                     # trough SINCE the window's high
+            if k >= hi_i:
+                tr = cl[k]
+                break
+        drop[i] = (hi - tr) / hi * 100 if hi and hi_i < i else 0.0
+    got = {"win_sec": win_sec, "typ": typ, "hi": hiw, "rng": rng, "drop": drop,
+           "span": span, "by_time": by_time}
+    box[("t", win_sec)] = got
     return got
 
 
@@ -811,7 +862,7 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
             # same floor the dip rules already used: if the last 20 bars ranged less
             # than 0.40%, the market is going nowhere and no rule may buy into it.
             # No loss and no gain, by instruction. Exits are untouched.
-            elif _dip_state(s, (v.get("dip") or {}).get("look", 20))["rng"][i]                     < (v.get("dip") or {}).get("chop", 0.40):
+            elif _dip_state(s, (v.get("dip") or {}).get("win_sec", 600))["rng"][i]                     < (v.get("dip") or {}).get("chop", 0.40):
                 pass
             elif v.get("dip") and not _dip_entry(s, v, i, up[si], closes):
                 pass
@@ -870,7 +921,7 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                 # is fixed at the signal - not re-judged later when we already know more
                 _sharp = False
                 if v.get("ride"):
-                    _st = _dip_state(s, (v.get("dip") or {}).get("look", 20))
+                    _st = _dip_state(s, (v.get("dip") or {}).get("win_sec", 600))
                     _u = (v.get("dip") or {}).get("ups", v["entry"])
                     _base = closes[max(0, i - _u)]
                     _g = (c - _base) / _base * 100 if _base else 0.0

@@ -134,7 +134,8 @@ type RDetail = { ok: boolean; id: string; ko: string; en: string; clock: string;
                           focus: { b: number; s: number } | null;
                           marks: { b: number; s: number; g: number; net: number }[] } | null;
                  family?: string;
-  dip?: { drop: number; sharp: number; ups: number; chop: number; look: number } | null;
+  dip?: { drop: number; sharp: number; ups: number; chop: number;
+          look?: number; win_sec?: number } | null;
   ride?: { arm: number; give: number; downs: number; slow_ups: number;
            slow_take: number; sharp_rise: number } | null;
   take_ticks?: number | null; stop_pct?: number | null;
@@ -1494,12 +1495,12 @@ export default function LiveDeskPage() {
                 <b className="text-[10.5px]" style={{ color: RED }}>{t("사는 조건 — 질문에 전부 \"예\"여야 삽니다", "BUY — every question must answer YES")}</b>
                 <ol className="mt-1 ml-4 list-decimal space-y-[3px] text-[var(--text-secondary)]">
                   {det.dip && (<>
-                    <li>{t(`"먼저 급락이 있었는가?" — 최근 ${det.dip.look}개 봉의 최고가에서 ${det.dip.drop}% 이상 떨어졌고, 그 낙폭이 이 종목의 평소 한 봉 움직임의 ${det.dip.sharp}배를 넘어야 합니다. 천천히 흘러내린 것은 급락으로 치지 않습니다.`,
-                           `"Was there a sharp drop first?" — the price must have fallen at least ${det.dip.drop}% from the highest close of the last ${det.dip.look} bars, AND that fall must be bigger than ${det.dip.sharp}× this stock's normal bar move. A slow drift down does not count as sharp.`)}</li>
+                    <li>{t(`"먼저 급락이 있었는가?" — 최근 ${Math.round((det.dip.win_sec ?? 600) / 60)}분의 최고가에서 ${det.dip.drop}% 이상 떨어졌고, 그 낙폭이 이 종목의 평소 한 봉 움직임(최소 1호가)의 ${det.dip.sharp}배를 넘어야 합니다. 천천히 흘러내린 것은 급락으로 치지 않으며, 장 시작 후 2분간은 판단하지 않습니다.`,
+                           `"Was there a sharp drop first?" — the price must have fallen at least ${det.dip.drop}% from the highest close of the last ${Math.round((det.dip.win_sec ?? 600) / 60)} minutes, AND that fall must exceed ${det.dip.sharp}× this stock's normal bar move (floored at one tick). A slow drift does not count, and the first 2 minutes of the session are never judged.`)}</li>
                     <li>{t(`"멈췄다가 다시 오르기 시작했는가?" — 바닥 뒤 양봉 ${det.dip.ups}개가 완성되면, 즉 ${det.dip.ups + 1}번째 양봉이 시작되는 그 가격에 삽니다. (가격이 그대로인 봉은 숫자를 멈출 뿐 0으로 되돌리지 않습니다)`,
                            `"Has it stopped falling and turned up?" — after ${det.dip.ups} completed up candle${det.dip.ups > 1 ? "s" : ""} off the low, it buys at the price where the ${det.dip.ups + 1 === 2 ? "2nd" : `${det.dip.ups + 1}th`} up candle begins. (A flat bar pauses the count, it never resets it)`)}</li>
-                    <li>{t(`"횡보장이 아닌가?" — 최근 ${det.dip.look}개 봉의 고저 폭이 ${det.dip.chop}% 미만이면 아무것도 하지 않습니다. 움직임이 없는 시장에서는 매매 자체를 안 합니다 — 손실도 이익도 없습니다.`,
-                           `"Is the market actually moving?" — if the last ${det.dip.look} bars ranged less than ${det.dip.chop}%, nothing is traded at all. In a flat market there is no trade, so no loss and no gain.`)}</li>
+                    <li>{t(`"횡보장이 아닌가?" — 최근 ${Math.round((det.dip.win_sec ?? 600) / 60)}분의 고저 폭이 ${det.dip.chop}% 미만이면 아무것도 하지 않습니다. 움직임이 없는 시장에서는 매매 자체를 안 합니다 — 손실도 이익도 없습니다.`,
+                           `"Is the market actually moving?" — if the last ${Math.round((det.dip.win_sec ?? 600) / 60)} minutes ranged less than ${det.dip.chop}%, nothing is traded at all. In a flat market there is no trade, so no loss and no gain.`)}</li>
                   </>)}
                   {!det.dip && <li>{t(`"가격이 ${det.entry_n}번 연속 올랐는가?" — 봉의 마감 가격이 직전 봉보다 높으면 상승 1번. 그런 봉이 ${det.entry_n}개 연속. (가격이 그대로인 봉은 세던 숫자를 잠시 멈출 뿐, 0으로 되돌리지 않습니다)`,
                          `"Did the price rise ${det.entry_n} times in a row?" — a bar closing higher than the one before = one rise; ${det.entry_n} such bars back-to-back. (An unchanged bar pauses the count — it never resets it)`)}</li>}
@@ -1509,8 +1510,8 @@ export default function LiveDeskPage() {
                                          `"Is the climb still small?" — from where the rise began until now, the total climb must be under ${det.max_run}% (for a ₩10,000 stock, that's less than ₩${Math.round(10000*det.max_run/100)}). A rise that already moved a lot is finishing, not starting — skip it.`)}</li>}
                   {det.is_ml && <li>{t(`"AI가 허락하는가?" — 이 종목 전용 인공지능이 과거 데이터와 비교해 "평소보다 이길 확률이 높다"고 할 때만 삽니다. 거절하면 그 신호는 그냥 지나갑니다.`,
                                        `"Does the AI approve?" — this stock's own AI compares the moment with the past and must say "better odds than usual." A refusal means the signal is simply skipped.`)}</li>}
-                  {!det.dip && <li>{t(`"횡보장이 아닌가?" — 최근 20개 봉의 고저 폭이 0.4% 미만이면 모든 규칙이 매매하지 않습니다. 움직임 없는 시장에서는 손실도 이익도 없습니다.`,
-                         `"Is the market actually moving?" — if the last 20 bars ranged under 0.4%, NO rule trades at all. In a flat market there is no loss and no gain.`)}</li>}
+                  {!det.dip && <li>{t(`"횡보장이 아닌가?" — 최근 10분의 고저 폭이 0.4% 미만이면 모든 규칙이 매매하지 않습니다.`,
+                         `"Is the market actually moving?" — if the last 10 minutes ranged under 0.4%, NO rule trades at all.`)}</li>}
                   <li>{t(`"빈손인가?" — 이 규칙이 아직 아무 주식도 들고 있지 않아야 합니다. 들고 있으면 다 팔 때까지 새로 사지 않습니다.`,
                          `"Are the hands empty?" — the rule must not be holding anything. While holding, it never buys again until it sells.`)}</li>
                 </ol>
