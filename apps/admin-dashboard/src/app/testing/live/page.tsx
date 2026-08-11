@@ -1234,8 +1234,15 @@ export default function LiveDeskPage() {
                         <React.Fragment key={`${r.rule}-${r.idx}-${i}`}>
                         <tr className="border-t border-[var(--border-default)]/30">
                           <td className="px-2 py-0.5 font-bold cursor-pointer underline decoration-dotted"
-                            title={t("누르면 왜 샀고 왜 팔았는지 설명이 열립니다", "click: why it bought and why it sold")}
-                            onClick={() => setFamExp(famExp === `${r.rule}-${r.idx}` ? null : `${r.rule}-${r.idx}`)}
+                            title={t("누르면 설명과 함께 차트에 매수·매도 지점이 증거로 표시됩니다",
+                                     "click: the story opens AND the chart marks the buy and sell as proof")}
+                            onClick={() => { const k = `${r.rule}-${r.idx}`;
+                                             const open = famExp === k;
+                                             setFamExp(open ? null : k);
+                                             if (!open) {
+                                               setChartOpen(true); chartOpenRef.current = true;
+                                               openFamTrade(r, "b");
+                                             } }}
                             style={{ color: "#6a1b9a" }}>{r.rule} ⓘ</td>
                           <td className="px-2 font-bold text-[var(--text-primary)]">{r.name || r.code}</td>
                           <td className="px-2 cursor-pointer underline decoration-dotted"
@@ -1265,6 +1272,13 @@ export default function LiveDeskPage() {
                               <div><b style={{ color: "#6a1b9a" }}>{lang === "ko" ? r.rule_ko : r.rule_en}</b></div>
                               <div className="mt-1"><b style={{ color: RED }}>{t("왜 샀나 — ", "why it bought — ")}</b>{lang === "ko" ? ex.buyKo : ex.buyEn}</div>
                               <div className="mt-0.5"><b style={{ color: BLUE }}>{t("왜 팔았나 — ", "why it sold — ")}</b>{lang === "ko" ? ex.sellKo : ex.sellEn}</div>
+                              <div className="mt-1 text-[10px]" style={{ color: "#6a1b9a" }}>
+                                📈 {r.rule.startsWith("N")
+                                  ? t("증거는 아래 차트에 있습니다: ▲ 매수 직전의 급락과 두 번째 양봉, ▼ 매도 지점을 캔들로 직접 확인하세요. ▲/▼ 시간을 누르면 차트가 그 지점으로 이동합니다.",
+                                      "the proof is on the chart below: see the sharp fall before ▲, the second up candle it bought on, and the ▼ sell. Click the ▲/▼ times to jump the chart to each point.")
+                                  : t("증거는 아래 차트에 있습니다: ▲ 매수와 ▼ 매도 지점이 캔들 위에 표시됩니다.",
+                                      "the proof is on the chart below: ▲ buy and ▼ sell are marked on the candles.")}
+                              </div>
                             </td></tr>
                           );
                         })()}
@@ -1278,7 +1292,14 @@ export default function LiveDeskPage() {
                           style={{ background: "rgba(230,81,0,0.05)" }}>
                           <td className="px-2 py-0.5 font-bold cursor-pointer underline decoration-dotted"
                             title={t("누르면 왜 샀고 왜 아직 들고 있는지 설명이 열립니다", "click: why it bought and why it is still holding")}
-                            onClick={() => setFamExp(famExp === `h-${h.rule}-${k}` ? null : `h-${h.rule}-${k}`)}
+                            onClick={() => { const kk = `h-${h.rule}-${k}`;
+                                             const open = famExp === kk;
+                                             setFamExp(open ? null : kk);
+                                             if (!open) {
+                                               setChartOpen(true); chartOpenRef.current = true;
+                                               setSel(h.rule); autoOpenRef.current = h.rule;
+                                               openRule(h.rule, null, h.code);
+                                             } }}
                             style={{ color: "#e65100" }}>{h.rule} ⓘ</td>
                           <td className="px-2 font-bold text-[var(--text-primary)]">{h.name || h.code}</td>
                           <td className="px-2" style={{ color: RED }}>
