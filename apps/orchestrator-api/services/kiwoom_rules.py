@@ -618,6 +618,7 @@ def trades(vid: str, tick: int = 5, period: int = 0, code: str = "",
                 "d8": d, "day": (f"{d[4:6]}-{d[6:]}" if day == "all" and d else ""),
                 "gross_pct": g["gross_pct"], "net_pct": g["net_pct"],
                 "exit_why": g.get("exit_why", ""),
+                "sig": g.get("sig"), "wall": g.get("wall"),
                 "result": ("win" if g["gross_pct"] > 0 else
                            "loss" if g["gross_pct"] < 0 else "flat"),
                 "bars_held": g["sell_i"] - g["buy_i"],
@@ -639,6 +640,8 @@ def trades(vid: str, tick: int = 5, period: int = 0, code: str = "",
             b_c = sk["cs"][op["buy_i"]]
             holding.append({"code": sk["code"], "name": sk["name"], "buy_t": b_c["hhmm"],
                             "entry": op["entry"], "last": op["last"],
+                            "sig": op.get("sig"), "wall": op.get("wall"),
+                            "buy_i": op["buy_i"],
                             "unreal_pct": op["unreal_pct"]})
     rows.sort(key=lambda r: (r.get("d8") or "", r["sell_t"]), reverse=True)
 
@@ -682,9 +685,14 @@ def trades(vid: str, tick: int = 5, period: int = 0, code: str = "",
                                and (day != "all" or focus.get("d8") == chart_day)
                                and off <= focus["buy_i"] < hi else None),
                      "candles": cs[off:hi],
-                     "marks": [{"b": g["buy_i"] - off, "s": g["sell_i"] - off,
-                                "g": g["gross_pct"], "net": g["net_pct"]}
-                               for g in got if off <= g["buy_i"] < hi and off <= g["sell_i"] < hi]}
+                     "marks": ([{"b": g["buy_i"] - off, "s": g["sell_i"] - off,
+                                 "g": g["gross_pct"], "net": g["net_pct"]}
+                                for g in got if off <= g["buy_i"] < hi and off <= g["sell_i"] < hi]
+                               + ([{"b": op["buy_i"] - off, "s": len(cs) - 1 - off,
+                                    "g": op["unreal_pct"], "net": op["unreal_pct"],
+                                    "open": True}]
+                                  if op is not None and stks[op["si"]]["code"] == c_code
+                                  and off <= op["buy_i"] < hi else []))}
 
     w = sum(1 for r in rows if r["result"] == "win")
     l = sum(1 for r in rows if r["result"] == "loss")

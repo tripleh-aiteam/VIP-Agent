@@ -730,7 +730,7 @@ def live_family_trades(family: str = Query("new"), tick: int = Query(5),
                          "exit": tr.get("exit"), "net_pct": tr.get("net_pct"),
                          "exit_why": tr.get("exit_why"), "qty": tr.get("qty"),
                          "won": won, "result": tr.get("result"),
-                         "wall": tr.get("wall")})
+                         "sig": tr.get("sig"), "wall": tr.get("wall")})
     rows.sort(key=lambda r: (r.get("d8") or "", r.get("buy_t") or ""))
     w = sum(1 for r in rows if r["result"] == "win")
     l = sum(1 for r in rows if r["result"] == "loss")

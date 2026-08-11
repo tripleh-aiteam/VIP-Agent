@@ -571,6 +571,7 @@ export default function LiveDeskPage() {
                   code: string; name?: string; d8?: string; buy_t: string; entry: number;
                   sell_t: string; exit: number; net_pct: number; exit_why?: string;
                   qty?: number; won: number; result: string;
+                  sig?: { drop: number; sx: number | null; rng: number; t?: string } | null;
                   wall?: { price: number; qty: number } | null };
   type FamTrades = { ok: boolean; rows: FamRow[]; trips: number; wins: number;
                      losses: number; win_pct: number; net_won: number };
@@ -609,13 +610,21 @@ export default function LiveDeskPage() {
   // the algorithm itself, and this trade's exit, built from the row's own numbers.
   const [famExp, setFamExp] = useState<string | null>(null);
   const explainTrade = (r: { rule: string; exit_why?: string; buy_t?: string;
-                             entry: number; name?: string; sell_t?: string }) => {
+                             entry: number; name?: string; sell_t?: string;
+                             sig?: { drop: number; sx: number | null; rng: number; t?: string } | null }) => {
     const isDip = r.rule.startsWith("N");
+    // when the trade carries its own measured signal, the story uses THOSE numbers -
+    // the proof the boss asked for, not a description (2026-08-11)
+    const sg = r.sig;
     const buyKo = isDip
-      ? `이 종목이 짧은 시간에 급하게 떨어졌고(평소 움직임의 3배 이상), 떨어짐이 멈춘 뒤 첫 양봉이 완성되어 두 번째 양봉이 시작되는 값 ₩${Math.round(r.entry).toLocaleString()}에 샀습니다. 급락 후 첫 반등을 잡는 알고리즘입니다.`
+      ? (sg
+        ? `측정된 사실: 직전 10분 안에 ${sg.drop}% 급락${sg.sx != null ? ` (평소 봉의 ${sg.sx}배)` : ""}, 구간 변동 ${sg.rng}%${sg.t ? `, 신호 시각 ${sg.t}` : ""}. 하락이 멈추고 첫 양봉이 완성된 뒤, 두 번째 양봉이 시작되는 값 ₩${Math.round(r.entry).toLocaleString()}에 샀습니다.`
+        : `이 종목이 짧은 시간에 급하게 떨어졌고(평소 움직임의 3배 이상), 떨어짐이 멈춘 뒤 첫 양봉이 완성되어 두 번째 양봉이 시작되는 값 ₩${Math.round(r.entry).toLocaleString()}에 샀습니다.`)
       : `가격이 3번 연속 오르고 거래량이 평소보다 많아, 상승이 시작됐다고 보고 ₩${Math.round(r.entry).toLocaleString()}에 샀습니다 (예전 알고리즘).`;
     const buyEn = isDip
-      ? `The stock fell sharply in a short time (3× its normal move). When the fall stopped and one up candle completed, it bought at ₩${Math.round(r.entry).toLocaleString()} — the price where the second up candle began. This algorithm catches the first bounce after a sharp drop.`
+      ? (sg
+        ? `Measured facts: within the prior 10 minutes it fell ${sg.drop}%${sg.sx != null ? ` (${sg.sx}× its normal bar)` : ""}, range ${sg.rng}%${sg.t ? `, signal at ${sg.t}` : ""}. The fall stopped, one up candle completed, and it bought at ₩${Math.round(r.entry).toLocaleString()} — the start of the second up candle.`
+        : `The stock fell sharply (3× its normal move); when the fall stopped and one up candle completed it bought at ₩${Math.round(r.entry).toLocaleString()} — the start of the second up candle.`)
       : `The price rose 3 times in a row on above-average volume, so it judged a climb had started and bought at ₩${Math.round(r.entry).toLocaleString()} (the old algorithm).`;
     const w = r.exit_why || "";
     let sellKo = `매도 사유: ${w}`;
@@ -1271,15 +1280,21 @@ export default function LiveDeskPage() {
                           <td className="text-right px-3 text-[var(--text-muted)]">—</td>
                         </tr>
                         {famExp === `h-${h.rule}-${k}` && (() => {
-                          const ex = explainTrade({ rule: h.rule, entry: h.entry });
+                          const ex = explainTrade({ rule: h.rule, entry: h.entry,
+                            sig: (h as unknown as { sig?: { drop: number; sx: number | null;
+                                  rng: number; t?: string } | null }).sig });
                           return (
                             <tr><td colSpan={7} className="px-4 py-2 text-[10.5px] leading-relaxed"
                               style={{ background: "rgba(230,81,0,0.06)", color: "var(--text-secondary)" }}>
                               <div><b style={{ color: RED }}>{t("왜 샀나 — ", "why it bought — ")}</b>{lang === "ko" ? ex.buyKo : ex.buyEn}</div>
                               <div className="mt-0.5"><b style={{ color: "#e65100" }}>{t("왜 들고 있나 — ", "why it is holding — ")}</b>
                                 {lang === "ko"
-                                  ? "아직 파는 조건이 오지 않았습니다: 급등이면 두 번째 음봉 시작, 완만하면 +1% 이익, 손실 -2%면 손절, 15:20이면 장 마감 정리 — 이 중 먼저 오는 것이 팝니다."
-                                  : "No sell condition has arrived yet: a sharp rise sells at the start of the 2nd down candle, a slow one at +1%, the stop at −2%, and the 15:20 close-out — whichever comes first."}</div>
+                                  ? "아직 파는 조건이 오지 않았습니다: 내리기 시작해 두 번째 음봉이 시작되면 매도, 손실 -2%면 손절, 15:20이면 장 마감 정리 — 이 중 먼저 오는 것이 팝니다."
+                                  : "No sell condition has arrived yet: it sells at the start of the 2nd down candle when the fall begins, at the −2% stop, or at the 15:20 close — whichever comes first."}</div>
+                              <div className="mt-1 text-[10px]" style={{ color: "#6a1b9a" }}>
+                                📈 {t("아래 차트에서 ▲ 매수 지점과 그 직전의 급락을 직접 확인하세요 — 열린 포지션은 매수부터 현재까지 표시됩니다.",
+                                      "check the ▲ buy and the fall before it on the chart below - an open position is marked from its buy to now.")}
+                              </div>
                             </td></tr>
                           );
                         })()}

@@ -830,7 +830,7 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                 pos = {"si": si, "i": pend["i"], "entry": pend["px"], "bk": bk,
                        "close": pend["close"], "qty": pend["qty"], "ml": pend["ml"],
                        "seq": pend["seq"], "limit": True, "sharp": pend.get("sharp"),
-                       "wall": pend.get("wall"),
+                       "wall": pend.get("wall"), "sig": pend.get("sig"),
                        "peak": pend["px"], "ups": 0, "downs": 0}
                 pend = None
             else:
@@ -842,7 +842,7 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                         pos = {"si": si, "i": i, "entry": ask, "bk": bk, "close": c,
                                "qty": pend["qty"], "ml": pend["ml"], "seq": pend["seq"],
                                "limit": True, "sharp": pend.get("sharp"),
-                               "wall": pend.get("wall"),
+                               "wall": pend.get("wall"), "sig": pend.get("sig"),
                                "peak": ask, "ups": 0, "downs": 0}
                     pend = None                          # else: abandoned, no trade
         if _late and pend is not None and pend["si"] == si:
@@ -918,6 +918,15 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                 # was the bounce SHARP or slow? his two cases part here, and the answer
                 # is fixed at the signal - not re-judged later when we already know more
                 _sharp = False
+                _sig = None
+                if v.get("dip"):
+                    _std = _dip_state(s, v["dip"].get("win_sec", 600))
+                    _typd = _std["typ"][i]
+                    _sig = {"drop": round(_std["drop"][i], 2),
+                            "sx": (round((_std["hi"][i] * _std["drop"][i] / 100) / _typd, 1)
+                                   if _typd else None),
+                            "rng": round(_std["rng"][i], 2),
+                            "t": (s.get("times") or [None] * (i + 1))[i]}
                 if v.get("ride"):
                     _st = _dip_state(s, (v.get("dip") or {}).get("win_sec", 600))
                     _u = (v.get("dip") or {}).get("ups", v["entry"])
@@ -930,7 +939,7 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                                   else _wall_offer(s, i, c, s["tick"]))
                     pend = {"si": si, "i": i, "px": _px, "close": c, "qty": _q,
                             "ml": ml_meta, "left": v.get("wait_bars", 2), "sharp": _sharp,
-                            "wall": _wall,
+                            "wall": _wall, "sig": _sig,
                             "seq": closes[max(0, i - v["entry"]): i + 1]}
                 else:
                     pos = {"si": si, "i": i, "entry": bk["fill"], "bk": bk, "close": c,
@@ -999,7 +1008,7 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                           "net_pct": round(gross - FEE_PCT, 3),
                           "exit_why": why, "ml": pos.get("ml"),
                           "sharp": bool(pos.get("sharp")), "wall": pos.get("wall"),
-                          "ask_wall": pos.get("ask_wall")}
+                          "sig": pos.get("sig"), "ask_wall": pos.get("ask_wall")}
                     if evidence:
                         tr["buy_ev"] = {"close": pos["close"], "book": pos["bk"],
                                         "seq": pos["seq"]}
@@ -1090,7 +1099,7 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
     if pos is not None:
         s = stks[pos["si"]]
         op = {"si": pos["si"], "buy_i": pos["i"], "entry": pos["entry"],
-              "last": s["closes"][-1],
+              "last": s["closes"][-1], "sig": pos.get("sig"), "wall": pos.get("wall"),
               "unreal_pct": round((s["closes"][-1] / pos["entry"] - 1) * 100, 3)}
         if evidence:
             op["buy_ev"] = {"close": pos["close"], "book": pos["bk"], "seq": pos["seq"]}
