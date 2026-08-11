@@ -272,14 +272,12 @@ def label(v: dict, ko: bool = True) -> str:
         if ko:
             ent = (f"급락 {d['drop']}% 후 {_u + 1}번째 양봉 시작에 매수" if d
                    else f"{v['entry']}연속 상승에 매수")
-            ex = (f"급등이면 {r.get('downs', 2) + 1}번째 음봉 시작에 매도 · "
-                  f"완만하면 +{r['slow_take']}%")
+            ex = f"내리기 시작하면 {r.get('downs', 1) + 1}번째 음봉 시작에 매도"
             txt = f"{ent} → {ex}"
         else:
             ent = (f"{d['drop']}% sharp drop → buy at the start of the {_ord(_u + 1)} up candle"
                    if d else f"buy after {v['entry']} rises")
-            ex = (f"a sharp rise sells at the start of the {_ord(r.get('downs', 2) + 1)} down candle; "
-                  f"a slow one at +{r['slow_take']}%")
+            ex = f"sells at the start of the {_ord(r.get('downs', 1) + 1)} down candle, whenever the fall starts"
             txt = f"{ent} → {ex}"
         if v.get("vol"):
             txt += (" · 거래량" if ko else " · volume")
@@ -977,40 +975,21 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                 elif lows[i] <= trig and lows[i] >= floor:
                     hit, fill_px = True, max(floor, min(c, trig))
                     why = f"-{v.get('stop_pct', 2.0)}% 손절"
-                elif pos.get("sharp"):
-                    # the ride is only "armed" once it has actually made something -
-                    # otherwise two red bars off the entry close every trade at a loss
-                    if peak_gain >= r.get("arm", 1.0):
-                        if pos.get("downs", 0) >= r.get("downs", 2):
-                            _why = ("두 번째 음봉 시작 매도" if r.get("downs", 2) == 1
-                                    else "2연속 하락 (상승 후)")
-                            _spx, _aw = _ask_wall_offer(s, i, c, tk)
-                            if _aw is not None:
-                                pos["psell"] = {"px": _spx, "left": v.get("wait_bars", 2),
-                                                "why": _why}
-                                pos["ask_wall"] = _aw
-                            else:
-                                hit, fill_px, why = True, c, _why
-                        elif gain <= peak_gain - r.get("give", 0.5):
-                            hit, fill_px, why = True, c, f"고점 대비 -{r.get('give', 0.5)}%"
-                else:
-                    if gain >= r.get("slow_take", 1.0):
-                        # THE BOSS'S AMENDMENT (2026-08-11, after watching SK하이닉스 sell
-                        # at +1% and keep climbing): +1% is no longer the sell - it is the
-                        # ARMING line. Reached while the candle is still rising, the trade
-                        # keeps riding and sells like the sharp case, at the start of the
-                        # second down candle. Only a candle already falling at +1% sells
-                        # on the spot. "If it continues to increase do not sell and wait
-                        # until the second blue."
-                        if c < prev:
-                            hit, fill_px, why = True, c, f"+{r.get('slow_take', 1.0)}% 익절 (하락 전환)"
-                        else:
-                            pos["sharp"] = True     # ride from here; 2nd-blue exit takes over
-                            pos["downs"] = 0
-                    elif pos.get("ups", 0) >= r.get("slow_ups", 3):
-                        hit, fill_px, why = True, c, f"{r.get('slow_ups', 3)}연속 상승"
-                    elif pos.get("downs", 0) >= r.get("slow_downs", r.get("downs", 2))                             and gain > FEE_PCT:
-                        hit, fill_px, why = True, c, "하락 전환 (이익 확보)"
+                elif pos.get("downs", 0) >= r.get("downs", 1):
+                    # ONE EXIT FOR BOTH CASES (boss 2026-08-11, final wording: "in both
+                    # cases, if it starts to decrease we have to sell"). The first
+                    # completed down candle ends every ride - no +1% gate, no sharp/slow
+                    # difference on the way out. The sell still offers one tick in front
+                    # of the ask wall when a fresh book snapshot shows one.
+                    _why = ("두 번째 음봉 시작 매도" if r.get("downs", 1) == 1
+                            else f"{r.get('downs', 1) + 1}번째 음봉 시작 매도")
+                    _spx, _aw = _ask_wall_offer(s, i, c, tk)
+                    if _aw is not None:
+                        pos["psell"] = {"px": _spx, "left": v.get("wait_bars", 2),
+                                        "why": _why}
+                        pos["ask_wall"] = _aw
+                    else:
+                        hit, fill_px, why = True, c, _why
                 if hit:
                     bk = dict(book(s["seed"] * 2_000 + i, c, "SELL", tk), fill=fill_px)
                     gross = (fill_px / pos["entry"] - 1) * 100
