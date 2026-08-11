@@ -619,10 +619,19 @@ def _dip_entry(s: dict, v: dict, i: int, ups: int, closes: list) -> bool:
         return False
     if st["rng"][i] < d.get("chop", 0.40):          # nothing is happening - stand aside
         return False
-    if st["drop"][i] < d.get("drop", 0.8):          # the fall was not big enough
+    # THE FALL IS MEASURED TO NOW, not to the trough (boss 2026-08-11: "we have to
+    # compare with the current time"). A dip only counts while it is still OPEN: if
+    # the bounce has already recovered most of the fall, there is no dip any more -
+    # his 130k->110k->129k example, where nobody looking at the chart says "sharp
+    # decrease" at 129k. This also makes the exact window length less sensitive: a
+    # stale high whose fall has healed can never trigger, however long the window.
+    hi = st["hi"][i]
+    _cl = s["closes"]
+    drop_now = (hi - _cl[i]) / hi * 100 if hi else 0.0
+    if drop_now < d.get("drop", 0.8):               # the fall (as it stands NOW)
         return False
     typ = st["typ"][i]
-    if typ and st["hi"][i] * st["drop"][i] / 100 < d.get("sharp", 3.0) * typ:
+    if typ and (hi - _cl[i]) < d.get("sharp", 3.0) * typ:
         return False                                 # ... or not SHARP, just a slow drift
     # EXACTLY the 2nd red, never later (boss's 14:43 thought-experiment, 2026-08-11):
     # with >=, a hand that was busy at the turn could buy the 5th or 15th red - the top
@@ -938,7 +947,8 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                 if v.get("dip"):
                     _std = _dip_state(s, v["dip"].get("win_sec", 600))
                     _typd = _std["typ"][i]
-                    _sig = {"drop": round(_std["drop"][i], 2),
+                    _hi_ = _std["hi"][i]
+                    _sig = {"drop": (round((_hi_ - c) / _hi_ * 100, 2) if _hi_ else 0.0),
                             "sx": (round((_std["hi"][i] * _std["drop"][i] / 100) / _typd, 1)
                                    if _typd else None),
                             "rng": round(_std["rng"][i], 2),
