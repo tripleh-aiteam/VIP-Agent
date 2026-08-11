@@ -148,12 +148,9 @@ VARIANTS: list[dict] = [
      "dip": {"drop": 0.4, "sharp": 3.0, "ups": 1, "chop": 0.40, "look": 20},
      "ride": {"arm": -99.0, "give": 99.0, "downs": 1, "slow_ups": 99, "slow_downs": 99,
               "slow_take": 1.0, "sharp_rise": 2.0}},
-    # the cautious twin: same rule, one extra up candle of confirmation before entering
-    {"id": "N3", "entry": 2, "kind": "pct", "a": 0.3, "b": 2.0, "exec": "limit",
-     "stop_pct": 2.0, "wait_bars": 2, "family": "new", "ignore_gate": True,
-     "dip": {"drop": 0.8, "sharp": 3.0, "ups": 2, "chop": 0.40, "look": 20},
-     "ride": {"arm": -99.0, "give": 99.0, "downs": 1, "slow_ups": 99, "slow_downs": 99,
-              "slow_take": 1.0, "sharp_rise": 2.0}},
+    # N3 (an extra confirming candle, so the 3rd red) REMOVED 2026-08-11: the boss's
+    # rule is explicit - the buy is at the START OF THE SECOND RED, all six stocks, no
+    # variants that enter later.
     # N1ML existed here for one day (2026-08-10..11) and was REMOVED: its model was
     # trained by _outcome on the OLD rule's target (+0.3% before -2%) from plain 2-rise
     # signals with no dip condition - a model for a different rule wearing this rule's
@@ -163,10 +160,11 @@ VARIANTS: list[dict] = [
     # the 3-rise entry the desk already trades and swap ONLY the exit for his ride.
     # Holdout months: +6 ticks -6.55M / 52% win, this -1.97M / 45% win. Still negative,
     # three times less so - so it belongs on the board next to both parents.
-    {"id": "R6", "entry": 3, "kind": "pct", "a": 0.3, "b": 2.0, "exec": "limit",
-     "stop_pct": 2.0, "wait_bars": 2, "vol": 1.5, "family": "new", "ignore_gate": True,
-     "ride": {"arm": -99.0, "give": 99.0, "downs": 1, "slow_ups": 99, "slow_downs": 99,
-              "slow_take": 1.0, "sharp_rise": 2.0}},
+    # R6 (his exit on the OLD 3-rise entry) REMOVED 2026-08-11 at his instruction: he
+    # watched it buy the 4th and 5th red candle - which is what a 3-rise entry does -
+    # and rejected it. "In all 6 it must work like this": sharp drop, buy the 2nd red.
+    # For the record it was 2-for-2 (+1.49M) when removed; the comparison it existed
+    # for is settled by his decision, not by the sample.
     # R6ML removed with N1ML, same defect, same condition for return.
 
     {"id": "g1", "entry": 3, "kind": "pct", "a": 0.5, "b": 2.0, "vol": 2.0, "clock": [5, 60]},
@@ -566,6 +564,45 @@ def _wall_offer(s: dict, i: int, close: float, tick: float):
     return offer, {"price": p, "qty": q, "ts": snap["ts"]}
 
 
+def _ask_wall_offer(s: dict, i: int, close: float, tick: float):
+    """The SELL side of the boss's book idea (2026-08-11): when the exit fires, offer
+    one tick BELOW the biggest ask wall above the price - the sell stands in front of
+    the barrier and deals before it. Only walls within 5 ticks above count; no usable
+    book, or the wall's front already at/below the close, means (close, None) - sell at
+    the close as before."""
+    book = s.get("book")
+    times = s.get("times")
+    if not book or not times or not isinstance(times[i], str):
+        return close, None
+
+    def _secs(t: str) -> int:
+        try:
+            t = t.replace(":", "")
+            return int(t[0:2]) * 3600 + int(t[2:4]) * 60 + int(t[4:6])
+        except Exception:
+            return -1
+    now = _secs(times[i])
+    if now < 0:
+        return close, None
+    snap = None
+    for b in book:
+        bs = _secs(b.get("ts", ""))
+        if bs < 0 or bs > now:
+            break
+        snap = b
+    if snap is None or now - _secs(snap["ts"]) > 120:
+        return close, None
+    cap = close + 5 * tick
+    cands = [(q, p) for p, q in snap.get("asks", []) if close < p <= cap]
+    if not cands:
+        return close, None
+    q, p = max(cands)
+    offer = p - tick
+    if offer <= close:
+        return close, None
+    return offer, {"price": p, "qty": q, "ts": snap["ts"]}
+
+
 def _dip_entry(s: dict, v: dict, i: int, ups: int, closes: list) -> bool:
     """Does bar i finish the boss's pattern? sharp drop -> it stopped -> N bars back up.
     A flat market ("oscillation") is refused outright: he asked for no trade at all
@@ -865,7 +902,21 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                 trig = pos["entry"] * (1 - v.get("stop_pct", 2.0) / 100)
                 floor = trig - sell_floor_won(s.get("code", ""), tk)
                 hit, why, fill_px = False, "", None
-                if lows[i] <= trig and lows[i] >= floor:
+                # a WORKING SELL from a previous bar: standing one tick in front of the
+                # ask wall. Filled off the high; two bars of patience, then the close.
+                ps = pos.get("psell")
+                if ps is not None:
+                    highs = s.get("highs") or closes
+                    if highs[i] >= ps["px"]:
+                        hit, fill_px, why = True, ps["px"], ps["why"] + " · 호가벽 앞"
+                    else:
+                        ps["left"] -= 1
+                        if ps["left"] <= 0:
+                            hit, fill_px, why = True, c, ps["why"]
+                    if lows[i] <= trig and lows[i] >= floor and not hit:
+                        hit, fill_px = True, max(floor, min(c, trig))
+                        why = f"-{v.get('stop_pct', 2.0)}% 손절"
+                elif lows[i] <= trig and lows[i] >= floor:
                     hit, fill_px = True, max(floor, min(c, trig))
                     why = f"-{v.get('stop_pct', 2.0)}% 손절"
                 elif pos.get("sharp"):
@@ -873,9 +924,15 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                     # otherwise two red bars off the entry close every trade at a loss
                     if peak_gain >= r.get("arm", 1.0):
                         if pos.get("downs", 0) >= r.get("downs", 2):
-                            hit, fill_px, why = True, c, ("두 번째 음봉 시작 매도"
-                                                          if r.get("downs", 2) == 1
-                                                          else "2연속 하락 (상승 후)")
+                            _why = ("두 번째 음봉 시작 매도" if r.get("downs", 2) == 1
+                                    else "2연속 하락 (상승 후)")
+                            _spx, _aw = _ask_wall_offer(s, i, c, tk)
+                            if _aw is not None:
+                                pos["psell"] = {"px": _spx, "left": v.get("wait_bars", 2),
+                                                "why": _why}
+                                pos["ask_wall"] = _aw
+                            else:
+                                hit, fill_px, why = True, c, _why
                         elif gain <= peak_gain - r.get("give", 0.5):
                             hit, fill_px, why = True, c, f"고점 대비 -{r.get('give', 0.5)}%"
                 else:
@@ -893,7 +950,8 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                           "exit": fill_px, "gross_pct": round(gross, 3),
                           "net_pct": round(gross - FEE_PCT, 3),
                           "exit_why": why, "ml": pos.get("ml"),
-                          "sharp": bool(pos.get("sharp")), "wall": pos.get("wall")}
+                          "sharp": bool(pos.get("sharp")), "wall": pos.get("wall"),
+                          "ask_wall": pos.get("ask_wall")}
                     if evidence:
                         tr["buy_ev"] = {"close": pos["close"], "book": pos["bk"],
                                         "seq": pos["seq"]}
