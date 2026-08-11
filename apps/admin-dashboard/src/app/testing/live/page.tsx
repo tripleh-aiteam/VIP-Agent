@@ -1053,6 +1053,27 @@ export default function LiveDeskPage() {
           )}
         </div>
       )}
+      {/* THE ALGORITHM CHOICE, its own bar above the panel (boss 2026-08-11: it was
+          buried under the history table inside the toolbar and unreachable) */}
+      <div className="mt-3 flex items-center gap-2">
+        <b className="text-[12px]" style={{ color: "#6a1b9a" }}>{t("알고리즘:", "algorithm:")}</b>
+        <select value={`${way}|${mlView}`}
+              onChange={(e) => { const [w, m] = e.target.value.split("|");
+                                 setWay(w as "new" | "old" | "both");
+                                 setMlView(m as "all" | "ml" | "plain");
+                                 setFamOpen(true);        // choosing an algorithm SHOWS its history
+                                 setFam(null);            // old family's rows must not wear the new label
+                                 setDet(null); setSel(null); }}
+              className="text-[10.5px] font-bold px-1 py-0.5 rounded border bg-[var(--bg-primary)] text-[var(--text-primary)] ml-1"
+              style={{ borderColor: "#6a1b9a", color: "#6a1b9a" }}>
+              {/* the new rule trades WITHOUT ML - its old ML twins were trained on the
+                  wrong target and removed (boss 2026-08-11), so no ML options here */}
+              <option value="new|all">{t("⚡ Sharp 규칙 — 급락 후 반등 (급등·완만 두 경우)", "⚡ Sharp rule — drop then bounce (sharp & normal cases)")}</option>
+              <option value="old|all">{t("📜 예전 규칙 — 기록 보관용 (내일부터 매매 중단)", "📜 Old rule — kept as proof (stops trading tomorrow)")}</option>
+
+            </select>
+
+      </div>
       {/* ---- the rules, on real money prices. This is what he opens the page for. ---- */}
       {rank?.ok && (
         <div className="mt-3 rounded-xl border overflow-hidden" style={{ borderColor: "#6a1b9a" }}>
@@ -1304,26 +1325,6 @@ export default function LiveDeskPage() {
                 </div>
               )}
             </div>
-            {/* ONE dropdown for "which rules am I looking at" (boss 2026-08-10: put the
-                new rule inside the dropdown that already holds 전체 / 규칙+ML / 규칙만).
-                It carries both choices at once - which WAY the rule trades and whether a
-                model filters it - because separate controls made him hunt for the
-                combination he wanted. The value is "family|ml". */}
-            <select value={`${way}|${mlView}`}
-              onChange={(e) => { const [w, m] = e.target.value.split("|");
-                                 setWay(w as "new" | "old" | "both");
-                                 setMlView(m as "all" | "ml" | "plain");
-                                 setFamOpen(true);        // choosing an algorithm SHOWS its history
-                                 setFam(null);            // old family's rows must not wear the new label
-                                 setDet(null); setSel(null); }}
-              className="text-[10.5px] font-bold px-1 py-0.5 rounded border bg-[var(--bg-primary)] text-[var(--text-primary)] ml-1"
-              style={{ borderColor: "#6a1b9a", color: "#6a1b9a" }}>
-              {/* the new rule trades WITHOUT ML - its old ML twins were trained on the
-                  wrong target and removed (boss 2026-08-11), so no ML options here */}
-              <option value="new|all">{t("⚡ Sharp 규칙 — 급락 후 반등 (급등·완만 두 경우)", "⚡ Sharp rule — drop then bounce (sharp & normal cases)")}</option>
-              <option value="old|all">{t("📜 예전 규칙 — 기록 보관용 (내일부터 매매 중단)", "📜 Old rule — kept as proof (stops trading tomorrow)")}</option>
-
-            </select>
             <span className="text-[10px] text-[var(--text-muted)]">
               {rank.stocks.length}{t("종목", " stocks")} · {rank.stocks.reduce((a2, x) => a2 + x.bars, 0).toLocaleString()}{t("봉", " bars")}
             </span>
