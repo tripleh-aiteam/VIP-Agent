@@ -1067,21 +1067,24 @@ export default function LiveDeskPage() {
           buried under the history table inside the toolbar and unreachable) */}
       <div className="mt-3 flex items-center gap-2">
         <b className="text-[12px]" style={{ color: "#6a1b9a" }}>{t("알고리즘:", "algorithm:")}</b>
-        <select value={`${way}|${mlView}`}
-              onChange={(e) => { const [w, m] = e.target.value.split("|");
-                                 setWay(w as "new" | "old" | "both");
-                                 setMlView(m as "all" | "ml" | "plain");
-                                 setFamOpen(true);        // choosing an algorithm SHOWS its history
-                                 setFam(null);            // old family's rows must not wear the new label
-                                 setDet(null); setSel(null); }}
-              className="text-[10.5px] font-bold px-1 py-0.5 rounded border bg-[var(--bg-primary)] text-[var(--text-primary)] ml-1"
-              style={{ borderColor: "#6a1b9a", color: "#6a1b9a" }}>
-              {/* the new rule trades WITHOUT ML - its old ML twins were trained on the
-                  wrong target and removed (boss 2026-08-11), so no ML options here */}
-              <option value="new|all">{t("⚡ Sharp 규칙 — 급락 후 반등 (급등·완만 두 경우)", "⚡ Sharp rule — drop then bounce (sharp & normal cases)")}</option>
-              <option value="old|all">{t("📜 예전 규칙 — 기록 보관용 (내일부터 매매 중단)", "📜 Old rule — kept as proof (stops trading tomorrow)")}</option>
-
-            </select>
+        {/* TWO BUTTONS, no dropdown (boss 2026-08-11: the select misbehaved twice in one
+            morning; a button cannot half-work). The pressed one is filled in. */}
+        {([["new", t("⚡ Sharp 규칙", "⚡ Sharp rule"),
+            t("급락 후 반등 — 급등·완만 두 경우", "drop then bounce - sharp & normal cases")],
+           ["old", t("📜 예전 규칙", "📜 Old rule"),
+            t("기록 보관용 — 내일부터 매매 중단", "kept as proof - stops trading tomorrow")]] as const)
+          .map(([k, lab, tip]) => (
+          <button key={k} title={tip}
+            onClick={() => { if (way === k) return;
+                             setWay(k); setMlView("all");
+                             setFamOpen(true); setFam(null);
+                             setDet(null); setSel(null); }}
+            className="text-[11.5px] font-bold px-3 py-1 rounded-md border"
+            style={way === k ? { background: "#6a1b9a", color: "#fff", borderColor: "#6a1b9a" }
+                             : { borderColor: "#6a1b9a", color: "#6a1b9a", background: "transparent" }}>
+            {way === k ? "● " : ""}{lab}
+          </button>
+        ))}
 
       </div>
       {/* ---- the rules, on real money prices. This is what he opens the page for. ---- */}
