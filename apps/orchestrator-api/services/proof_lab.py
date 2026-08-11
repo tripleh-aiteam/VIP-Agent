@@ -624,7 +624,11 @@ def _dip_entry(s: dict, v: dict, i: int, ups: int, closes: list) -> bool:
     typ = st["typ"][i]
     if typ and st["hi"][i] * st["drop"][i] / 100 < d.get("sharp", 3.0) * typ:
         return False                                 # ... or not SHARP, just a slow drift
-    return ups >= d.get("ups", 2)                    # and it has turned back up
+    # EXACTLY the 2nd red, never later (boss's 14:43 thought-experiment, 2026-08-11):
+    # with >=, a hand that was busy at the turn could buy the 5th or 15th red - the top
+    # of a finished bounce. Equality means the buy exists only at the moment his rule
+    # names; if the hand is busy then, that dip is honestly missed, not chased.
+    return ups == d.get("ups", 1)
 
 
 def _dip_state(s: dict, win_sec: int = 600) -> dict:
