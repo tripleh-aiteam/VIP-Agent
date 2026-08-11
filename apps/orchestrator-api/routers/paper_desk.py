@@ -706,7 +706,7 @@ def live_family_trades(family: str = Query("new"), tick: int = Query(5),
     import time as _t
     _fk = (family, tick, period, day, frm, to, gate, auto)
     _hit = _FAM_TTL.get(_fk)
-    if _hit and _t.time() - _hit[0] < 4.0:
+    if _hit and _t.time() - _hit[0] < 20.0:
         return _hit[1]
     rows = []
     holding = []
