@@ -255,6 +255,11 @@ def poll_once(code: str) -> int:
 
 def _loop():
     _state["running"] = True
+    # A RESTART DURING MARKET HOURS came back on the hardcoded default list, because the
+    # daily re-point only ran in the quiet window - the desk collected the wrong five
+    # for 21 seconds on 2026-08-11 before it was caught. On startup the saved picks are
+    # from before the bell, so honouring them mid-session abandons nothing.
+    refresh_watch(force=True)
     while True:
         try:
             if not market_open():

@@ -406,6 +406,25 @@ export default function LiveDeskPage() {
   // - and switching one ON turns the other OFF, collector included. During market hours
   // the swap needs confirming, because the stocks that leave abandon their tape.
   const [deskBusy, setDeskBusy] = useState(false);
+  // WHERE THE NEW RULE STANDS per stock, live. It fires a few times a day by design,
+  // so the quiet hours must say "condition not met yet" per stock instead of looking
+  // broken (boss 2026-08-11). 15s cadence: it reads today's live bars server-side.
+  type DipStat = { ok: boolean; rows: { code: string; name: string; stage: string;
+                   ko: string; en: string; ups?: number }[] };
+  const [dipStat, setDipStat] = useState<DipStat | null>(null);
+  useEffect(() => {
+    if ((dpick?.mode ?? "fixed") !== "fixed") { setDipStat(null); return; }
+    let live = true;
+    const pullDip = () => {
+      const q = perRef.current ? `period=${perRef.current}` : `tick=${tickRef.current}`;
+      api<DipStat>(`/paper-desk/live/dip-status?${q}`)
+        .then((d) => { if (live) setDipStat(d?.ok ? d : null); })
+        .catch(() => {});
+    };
+    pullDip();
+    const h = setInterval(pullDip, 15000);
+    return () => { live = false; clearInterval(h); };
+  }, [dpick?.mode]);
   const switchDesk = useCallback((mode: "fixed" | "score") => {
     if (mode === (dpick?.mode ?? "fixed")) return;
     const open = !!dpick?.market_open;
@@ -738,6 +757,7 @@ export default function LiveDeskPage() {
                   <th className="text-left px-3 py-1">{t("종목", "stock")}</th>
                   <th className="text-right px-2">{t("오늘 수집 체결", "ticks today")}</th>
                   <th className="text-left px-3">{t("수집 시간", "collected")}</th>
+                  <th className="text-left px-3">{t("새 규칙 상태 (지금)", "new rule - where it stands now")}</th>
                   <th className="text-left px-3">{t("오늘 매매", "today's trading")}</th>
                 </tr></thead>
                 <tbody>
@@ -756,6 +776,19 @@ export default function LiveDeskPage() {
                         </td>
                         <td className="px-3 text-[10px] text-[var(--text-muted)]">
                           {live?.first ? `${live.first} ~ ${live.last}` : t("아직 없음", "nothing yet")}
+                        </td>
+                        <td className="px-3 text-[10.5px]">
+                          {(() => {
+                            const d2 = dipStat?.rows.find((x) => x.code === c2);
+                            if (!d2) return <span className="text-[var(--text-muted)]">—</span>;
+                            const col = d2.stage === "ready" ? "#b02a2a"
+                                      : d2.stage === "turning" ? "#e65100"
+                                      : d2.stage === "chop" ? "var(--text-muted)" : "#1565c0";
+                            return <span style={{ color: col, fontWeight: d2.stage === "ready" ? 700 : 400 }}>
+                              {d2.stage === "ready" ? "🔴 " : d2.stage === "turning" ? "🟠 " : ""}
+                              {lang === "ko" ? d2.ko : d2.en}
+                            </span>;
+                          })()}
                         </td>
                         <td className="px-3">
                           <span className="text-[10.5px] font-bold px-2 py-0.5 rounded border"

@@ -153,11 +153,11 @@ VARIANTS: list[dict] = [
      "dip": {"drop": 0.8, "sharp": 3.0, "ups": 3, "chop": 0.40, "look": 20},
      "ride": {"arm": 1.0, "give": 0.5, "downs": 2, "slow_ups": 3, "slow_take": 1.0,
               "sharp_rise": 2.0}},
-    {"id": "N1ML", "entry": 2, "kind": "pct", "a": 0.3, "b": 2.0, "exec": "limit",
-     "stop_pct": 2.0, "wait_bars": 2, "family": "new", "ignore_gate": True, "ml": True,
-     "dip": {"drop": 0.8, "sharp": 3.0, "ups": 2, "chop": 0.40, "look": 20},
-     "ride": {"arm": 1.0, "give": 0.5, "downs": 2, "slow_ups": 3, "slow_take": 1.0,
-              "sharp_rise": 2.0}},
+    # N1ML existed here for one day (2026-08-10..11) and was REMOVED: its model was
+    # trained by _outcome on the OLD rule's target (+0.3% before -2%) from plain 2-rise
+    # signals with no dip condition - a model for a different rule wearing this rule's
+    # label. The boss caught it. ML returns to the new family only when the training
+    # labels are the ride exit's own outcomes on dip-entry signals.
     # HIS EXIT ON THE OLD ENTRY. The one measured improvement in the whole study: keep
     # the 3-rise entry the desk already trades and swap ONLY the exit for his ride.
     # Holdout months: +6 ticks -6.55M / 52% win, this -1.97M / 45% win. Still negative,
@@ -166,10 +166,7 @@ VARIANTS: list[dict] = [
      "stop_pct": 2.0, "wait_bars": 2, "vol": 1.5, "family": "new", "ignore_gate": True,
      "ride": {"arm": 1.0, "give": 0.5, "downs": 2, "slow_ups": 3, "slow_take": 1.0,
               "sharp_rise": 2.0}},
-    {"id": "R6ML", "entry": 3, "kind": "pct", "a": 0.3, "b": 2.0, "exec": "limit",
-     "stop_pct": 2.0, "wait_bars": 2, "vol": 1.5, "family": "new", "ignore_gate": True, "ml": True,
-     "ride": {"arm": 1.0, "give": 0.5, "downs": 2, "slow_ups": 3, "slow_take": 1.0,
-              "sharp_rise": 2.0}},
+    # R6ML removed with N1ML, same defect, same condition for return.
 
     {"id": "g1", "entry": 3, "kind": "pct", "a": 0.5, "b": 2.0, "vol": 2.0, "clock": [5, 60]},
     {"id": "g2", "entry": 2, "kind": "pct", "a": 1.0, "b": 2.0, "vol": 1.5, "clock": [5, 60]},

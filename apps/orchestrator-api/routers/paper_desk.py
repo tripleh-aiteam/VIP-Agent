@@ -686,6 +686,14 @@ def live_rule_trades(variant: str = Query(...), tick: int = Query(5),
                   allow_fallback=bool(auto))
 
 
+@router.get("/live/dip-status")
+def live_dip_status(tick: int = Query(5), period: int = Query(0)):
+    """Per stock, where the new rule's hunt stands right now - so a quiet board reads
+    as "condition not met yet at 삼성전자: waiting for a sharp drop" instead of broken."""
+    from services.kiwoom_rules import dip_status
+    return dip_status(tick=tick, period=max(0, min(int(period or 0), 600)))
+
+
 @router.post("/desk-mode")
 def desk_mode_set(mode: str = Query(...), force: int = Query(0)):
     """Switch the whole desk between the boss's six and the checklist's top five.

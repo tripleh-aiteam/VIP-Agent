@@ -328,6 +328,64 @@ def _auto_day(day: str) -> tuple[str, bool]:
     return days[-1], True
 
 
+def dip_status(tick: int = 5, period: int = 0) -> dict[str, Any]:
+    """WHERE EACH STOCK STANDS in the new rule's hunt, live (boss 2026-08-11: the rule
+    fires a few times a day by design, and a quiet board must say "the condition is not
+    met yet" per stock rather than look broken). Judged against N2, the loosest active
+    dip rule (0.4% drop, 3x a typical bar, 2 ups, 0.4% chop floor); N1/N3 want 0.8%.
+    """
+    import statistics
+    out = []
+    for code, name in WATCH:
+        cs = _bars_for(code, tick, period, "")
+        if len(cs) < 25:
+            out.append({"code": code, "name": name, "stage": "warming",
+                        "ko": "봉이 아직 부족합니다 (수집 중)",
+                        "en": "not enough bars yet (collecting)"})
+            continue
+        cl = [c["close"] for c in cs]
+        i = len(cl) - 1
+        diffs = [abs(cl[j] - cl[j - 1]) for j in range(max(1, i - 39), i + 1)]
+        typ = statistics.median(diffs) if diffs else 0.0
+        j0 = max(0, i - 20)
+        win = cl[j0:i + 1]
+        hi = max(win); lo = min(win)
+        rng = (hi - lo) / hi * 100 if hi else 0.0
+        k = j0 + win.index(hi)
+        trough = min(cl[k:i + 1]) if k < i else cl[i]
+        drop = (hi - trough) / hi * 100 if hi and k < i else 0.0
+        sharp_x = ((hi - trough) / typ) if typ else 0.0
+        ups = 0
+        for j in range(i, 0, -1):
+            if cl[j] > cl[j - 1]:
+                ups += 1
+            elif cl[j] < cl[j - 1]:
+                break
+        row = {"code": code, "name": name, "drop": round(drop, 2),
+               "sharp_x": round(sharp_x, 1), "range": round(rng, 2), "ups": ups}
+        if rng < 0.40:
+            row["stage"] = "chop"
+            row["ko"] = f"횡보 (최근 20봉 폭 {rng:.2f}%) — 규칙대로 매매 안 함"
+            row["en"] = f"flat market ({rng:.2f}% range over 20 bars) - no trading, by the rule"
+        elif drop < 0.40 or sharp_x < 3.0:
+            row["stage"] = "waiting_drop"
+            row["ko"] = (f"급락 대기 — 지금까지 최대 하락 {drop:.2f}% "
+                         f"(기준 0.4% 이상 · 평소 봉의 3배, 현재 {sharp_x:.1f}배)")
+            row["en"] = (f"waiting for a sharp drop - deepest so far {drop:.2f}% "
+                         f"(needs 0.4%+ and 3x a normal bar, now {sharp_x:.1f}x)")
+        elif ups < 2:
+            row["stage"] = "turning"
+            row["ko"] = f"급락 {drop:.2f}% 발견 — 반등 확인 중 ({ups}/2 양봉)"
+            row["en"] = f"sharp drop {drop:.2f}% found - waiting for the turn ({ups}/2 up bars)"
+        else:
+            row["stage"] = "ready"
+            row["ko"] = f"조건 충족 — 급락 {drop:.2f}% 후 {ups}연속 상승 (신호 구간)"
+            row["en"] = f"condition met - {drop:.2f}% drop then {ups} rises (signal zone)"
+        out.append(row)
+    return {"ok": True, "clock": f"{period}초" if period else f"{tick}틱",
+            "rule": "N2 (급락 0.4% · 3배 · 2양봉 · 횡보 0.4% 제외)", "rows": out}
+
+
 def rank(tick: int = 5, period: int = 0, day: str = "",
          frm: str = "", to: str = "", use_gate: bool = True,
          allow_fallback: bool = True) -> dict[str, Any]:
