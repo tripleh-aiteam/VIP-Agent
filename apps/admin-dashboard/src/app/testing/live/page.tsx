@@ -460,33 +460,6 @@ export default function LiveDeskPage() {
   const [showBlocked, setShowBlocked] = useState(false);
   const showBlockedRef = useRef(false);
   useEffect(() => { showBlockedRef.current = showBlocked; }, [showBlocked]);
-  // WHICH CLOCK IS BETTER (boss 2026-08-10: "parallel with 1 minute and 5 tick we will
-  // test which one is better"). Switching the dropdown back and forth compares nothing -
-  // this runs both clocks and puts the four numbers on one line. Fetched on demand and
-  // when the day changes, NOT on the 3-second poll: it is two full rule runs.
-  const [clocks, setClocks] = useState<Record<string, { fam: string; trips: number;
-    win: number; won: number }[]> | null>(null);
-  const [clocksBusy, setClocksBusy] = useState(false);
-  const loadClocks = useCallback(() => {
-    setClocksBusy(true);
-    const q = (extra: string) => `/paper-desk/live/rules?${extra}`
-      + (ruleDay ? `&day=${ruleDay}` : "") + (showBlocked ? "&gate=0" : "");
-    Promise.all([api<Rank>(q("tick=5")), api<Rank>(q("period=60"))])
-      .then(([a5, m1]) => {
-        const sum = (r: Rank) => (["new", "old"] as const).map((fam) => {
-          const rs = (r.variants || []).filter((v) => (v.family ?? "old") === fam);
-          const trips = rs.reduce((x, v) => x + v.trips, 0);
-          const wins = rs.reduce((x, v) => x + v.wins, 0);
-          const losses = rs.reduce((x, v) => x + v.losses, 0);
-          return { fam, trips, win: wins + losses ? Math.round(wins / (wins + losses) * 100) : 0,
-                   won: rs.reduce((x, v) => x + (v.net_won ?? 0), 0) };
-        });
-        setClocks({ "5틱": sum(a5), "1분": sum(m1) });
-      })
-      .catch(() => setClocks(null))
-      .finally(() => setClocksBusy(false));
-  }, [ruleDay, showBlocked]);
-  useEffect(() => { loadClocks(); }, [loadClocks]);
   // win% threshold: type 20, press ENTER - the box empties, a "≥20%" chip appears,
   // and only rules winning 20%+ stay. Click the chip's x to clear (boss 2026-08-06:
   // "after adding 20 then I should type enter then 20 should gone").
@@ -625,9 +598,6 @@ export default function LiveDeskPage() {
   // understand why this time bought, why sold"). Plain-words explanation of the buy,
   // the algorithm itself, and this trade's exit, built from the row's own numbers.
   const [famExp, setFamExp] = useState<string | null>(null);
-  // the clock comparison, the algorithm picker and the money switch live in one menu,
-  // CLOSED by default (boss 2026-08-11: "need separate menu, otherwise closed")
-  const [cfgOpen, setCfgOpen] = useState(false);
   const explainTrade = (r: { rule: string; exit_why?: string; buy_t?: string;
                              entry: number; name?: string; sell_t?: string }) => {
     const isDip = r.rule.startsWith("N");
@@ -1320,50 +1290,6 @@ export default function LiveDeskPage() {
                 </div>
               )}
             </div>
-            <div className="w-full mb-1">
-              <button onClick={() => setCfgOpen(!cfgOpen)}
-                className="text-[10.5px] font-bold px-2.5 py-1 rounded-md border"
-                style={cfgOpen ? { background: "#6a1b9a", color: "#fff", borderColor: "#6a1b9a" }
-                               : { borderColor: "var(--border-default)", color: "var(--text-secondary)" }}>
-                ⚙️ {cfgOpen ? t("설정·비교 닫기 ▲", "close settings & compare ▲")
-                            : t("설정·비교 (알고리즘 선택 · 봉 비교 · 손익) ▼",
-                                "settings & compare (algorithm, clocks, money) ▼")}
-              </button>
-            </div>
-            {cfgOpen && (<>
-            <div className="w-full flex items-center gap-2 flex-wrap mb-1 pb-1 border-b"
-              style={{ borderColor: "var(--border-default)" }}>
-              <b className="text-[11px]" style={{ color: "#6a1b9a" }}>
-                ⏱ {t("어느 봉이 더 나은가", "which clock is better")}
-              </b>
-              {clocks ? (["5틱", "1분"] as const).map((ck) => (
-                <span key={ck} className="text-[10.5px] flex items-center gap-1">
-                  <b style={{ color: "var(--text-primary)" }}>{ck}</b>
-                  {clocks[ck].map((r) => (
-                    <span key={r.fam} className="px-1.5 py-0.5 rounded"
-                      style={{ background: r.fam === "new" ? "rgba(106,27,154,0.10)"
-                                                           : "rgba(21,101,192,0.10)" }}>
-                      {r.fam === "new" ? t("새", "new") : t("예전", "old")}{" "}
-                      {r.trips}{t("건", "t")} {r.win}%{" "}
-                      <b style={{ color: r.won > 0 ? "#b02a2a" : r.won < 0 ? "#1565c0"
-                                                                          : "var(--text-muted)" }}>
-                        {money ? `${r.won > 0 ? "+" : ""}₩${Math.round(r.won).toLocaleString()}`
-                               : "💰"}
-                      </b>
-                    </span>
-                  ))}
-                </span>
-              )) : (
-                <span className="text-[10px] text-[var(--text-muted)]">
-                  {clocksBusy ? t("계산 중…", "running both clocks…") : "—"}
-                </span>
-              )}
-              <button onClick={loadClocks} disabled={clocksBusy}
-                className="text-[10px] px-1.5 py-0.5 rounded border"
-                style={{ borderColor: "#6a1b9a", color: "#6a1b9a" }}>
-                {t("다시 계산", "recalculate")}
-              </button>
-            </div>
             {/* ONE dropdown for "which rules am I looking at" (boss 2026-08-10: put the
                 new rule inside the dropdown that already holds 전체 / 규칙+ML / 규칙만).
                 It carries both choices at once - which WAY the rule trades and whether a
@@ -1386,9 +1312,7 @@ export default function LiveDeskPage() {
             <span className="text-[10px] text-[var(--text-muted)]">
               {rank.stocks.length}{t("종목", " stocks")} · {rank.stocks.reduce((a2, x) => a2 + x.bars, 0).toLocaleString()}{t("봉", " bars")}
             </span>
-            </>)}
           </div>
-          {cfgOpen && (
           <div className="px-4 py-2 flex items-center gap-2 flex-wrap">
             {/* THE MONEY, off by default (boss 2026-08-04). A win rate and a P&L answer
                 different questions, and mixing them by default is how a rule winning 56%
@@ -1424,7 +1348,6 @@ export default function LiveDeskPage() {
               </span>
             )}
           </div>
-          )}
           <div className="overflow-x-auto">
             <table className="w-full text-[12px] tabular-nums">
               <thead><tr className="text-[10.5px] text-[var(--text-muted)]" style={{ background: "var(--bg-elevated)" }}>
