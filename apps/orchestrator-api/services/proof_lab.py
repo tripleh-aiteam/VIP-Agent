@@ -958,7 +958,18 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                 tk = s["tick"]
                 lows = s.get("lows") or closes
                 pos["peak"] = max(pos.get("peak", pos["entry"]), c)
-                if c > prev:
+                # OSCILLATION = HOLD (boss 2026-08-11): a position bought before the
+                # market went flat is not sold into the wiggle. While the 10-minute
+                # range is under the chop floor the down-candle count is frozen at
+                # zero, so the 2nd-blue exit cannot fire on flat-market noise - only
+                # the -2% stop and the 15:20 close can end the trade in there. The
+                # count restarts fresh when real movement returns.
+                _chop_now = (_dip_state(s, (v.get("dip") or {}).get("win_sec", 600))
+                             ["rng"][i] < (v.get("dip") or {}).get("chop", 0.40))
+                pos["chop"] = _chop_now
+                if _chop_now:
+                    pos["ups"] = 0; pos["downs"] = 0
+                elif c > prev:
                     pos["ups"] = pos.get("ups", 0) + 1; pos["downs"] = 0
                 elif c < prev:
                     pos["downs"] = pos.get("downs", 0) + 1; pos["ups"] = 0
@@ -1100,6 +1111,7 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
         s = stks[pos["si"]]
         op = {"si": pos["si"], "buy_i": pos["i"], "entry": pos["entry"],
               "last": s["closes"][-1], "sig": pos.get("sig"), "wall": pos.get("wall"),
+              "chop": bool(pos.get("chop")),
               "unreal_pct": round((s["closes"][-1] / pos["entry"] - 1) * 100, 3)}
         if evidence:
             op["buy_ev"] = {"close": pos["close"], "book": pos["bk"], "seq": pos["seq"]}

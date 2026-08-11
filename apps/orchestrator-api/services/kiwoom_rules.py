@@ -641,6 +641,7 @@ def trades(vid: str, tick: int = 5, period: int = 0, code: str = "",
             holding.append({"code": sk["code"], "name": sk["name"], "buy_t": b_c["hhmm"],
                             "entry": op["entry"], "last": op["last"],
                             "sig": op.get("sig"), "wall": op.get("wall"),
+                            "chop": op.get("chop"),
                             "buy_i": op["buy_i"],
                             "unreal_pct": op["unreal_pct"]})
     rows.sort(key=lambda r: (r.get("d8") or "", r["sell_t"]), reverse=True)

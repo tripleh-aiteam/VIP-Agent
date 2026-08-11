@@ -1271,7 +1271,9 @@ export default function LiveDeskPage() {
                           <td className="px-2" style={{ color: RED }}>
                             ▲ {h.buy_t?.slice(0, 8)} @₩{Math.round(h.entry).toLocaleString()}</td>
                           <td className="px-2 font-bold" style={{ color: "#e65100" }}>
-                            {t("보유 중 — 아직 매도 전", "holding — not sold yet")}</td>
+                            {(h as unknown as { chop?: boolean }).chop
+                              ? t("보유 중 — 지금 횡보 구간, 매도 판단 정지", "holding — market flat now, exit judging paused")
+                              : t("보유 중 — 아직 매도 전", "holding — not sold yet")}</td>
                           <td className="text-right px-2 font-bold"
                             style={{ color: h.unreal_pct > 0 ? "#b02a2a" : "#1565c0" }}>
                             {h.unreal_pct > 0 ? "+" : ""}{h.unreal_pct}%</td>
@@ -1287,6 +1289,12 @@ export default function LiveDeskPage() {
                             <tr><td colSpan={7} className="px-4 py-2 text-[10.5px] leading-relaxed"
                               style={{ background: "rgba(230,81,0,0.06)", color: "var(--text-secondary)" }}>
                               <div><b style={{ color: RED }}>{t("왜 샀나 — ", "why it bought — ")}</b>{lang === "ko" ? ex.buyKo : ex.buyEn}</div>
+                              {(h as unknown as { chop?: boolean }).chop && (
+                                <div className="mt-0.5 font-bold" style={{ color: "#e65100" }}>
+                                  ⏸ {t("지금 이 종목은 횡보(오실레이션) 구간입니다 — 규칙대로 매도 판단을 멈추고 보유합니다. 움직임이 돌아오면 다시 판단합니다. (-2% 손절과 15:20 정리는 계속 살아 있습니다)",
+                                        "this stock is in an oscillation (flat) stretch right now - by the rule, exit judging is paused and we hold. Judging resumes when movement returns. (The -2% stop and the 15:20 close stay armed.)")}
+                                </div>
+                              )}
                               <div className="mt-0.5"><b style={{ color: "#e65100" }}>{t("왜 들고 있나 — ", "why it is holding — ")}</b>
                                 {lang === "ko"
                                   ? "아직 파는 조건이 오지 않았습니다: 내리기 시작해 두 번째 음봉이 시작되면 매도, 손실 -2%면 손절, 15:20이면 장 마감 정리 — 이 중 먼저 오는 것이 팝니다."
