@@ -524,6 +524,48 @@ def run_variant(closes: list[float], tick: int, v: dict, seed: int,
     return out, op
 
 
+def _wall_offer(s: dict, i: int, close: float, tick: float):
+    """THE BOSS'S BOOK IDEA (2026-08-11): joining the biggest bid wall means being last
+    in a 15,000-share queue - filled only when the wall is failing. So the buy offers
+    ONE TICK IN FRONT of the biggest bid wall instead: filled first on any dip, with the
+    wall's buying interest directly beneath the position.
+
+    Uses the book snapshot nearest (at or before) the signal bar, if the collector
+    recorded one within the last 2 minutes. Only walls within 5 ticks below the close
+    count - a wall far away says nothing about this entry. Returns (offer, wall|None);
+    with no usable book it returns (close, None), which is exactly the old behaviour.
+    """
+    book = s.get("book")
+    times = s.get("times")
+    if not book or not times or not isinstance(times[i], str):
+        return close, None
+
+    def _secs(t: str) -> int:
+        try:
+            t = t.replace(":", "")
+            return int(t[0:2]) * 3600 + int(t[2:4]) * 60 + int(t[4:6])
+        except Exception:
+            return -1
+    now = _secs(times[i])
+    if now < 0:
+        return close, None
+    snap = None
+    for b in book:                      # oldest-first; keep the newest one not after now
+        bs = _secs(b.get("ts", ""))
+        if bs < 0 or bs > now:
+            break
+        snap = b
+    if snap is None or now - _secs(snap["ts"]) > 120:
+        return close, None
+    floor = close - 5 * tick
+    cands = [(q, p) for p, q in snap.get("bids", []) if floor <= p < close]
+    if not cands:
+        return close, None
+    q, p = max(cands)
+    offer = min(close, p + tick)
+    return offer, {"price": p, "qty": q, "ts": snap["ts"]}
+
+
 def _dip_entry(s: dict, v: dict, i: int, ups: int, closes: list) -> bool:
     """Does bar i finish the boss's pattern? sharp drop -> it stopped -> N bars back up.
     A flat market ("oscillation") is refused outright: he asked for no trade at all
@@ -697,6 +739,7 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                 pos = {"si": si, "i": pend["i"], "entry": pend["px"], "bk": bk,
                        "close": pend["close"], "qty": pend["qty"], "ml": pend["ml"],
                        "seq": pend["seq"], "limit": True, "sharp": pend.get("sharp"),
+                       "wall": pend.get("wall"),
                        "peak": pend["px"], "ups": 0, "downs": 0}
                 pend = None
             else:
@@ -708,6 +751,7 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                         pos = {"si": si, "i": i, "entry": ask, "bk": bk, "close": c,
                                "qty": pend["qty"], "ml": pend["ml"], "seq": pend["seq"],
                                "limit": True, "sharp": pend.get("sharp"),
+                               "wall": pend.get("wall"),
                                "peak": ask, "ups": 0, "downs": 0}
                     pend = None                          # else: abandoned, no trade
         if _late and pend is not None and pend["si"] == si:
@@ -789,8 +833,11 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                     _tp = _st["typ"][i] / c * 100 if c else 0.0
                     _sharp = bool(_tp and _g >= v["ride"].get("sharp_rise", 2.0) * _tp)
                 if v.get("exec") == "limit":
-                    pend = {"si": si, "i": i, "px": c, "close": c, "qty": _q,
+                    _px, _wall = ((c, None) if v.get("family") != "new"
+                                  else _wall_offer(s, i, c, s["tick"]))
+                    pend = {"si": si, "i": i, "px": _px, "close": c, "qty": _q,
                             "ml": ml_meta, "left": v.get("wait_bars", 2), "sharp": _sharp,
+                            "wall": _wall,
                             "seq": closes[max(0, i - v["entry"]): i + 1]}
                 else:
                     pos = {"si": si, "i": i, "entry": bk["fill"], "bk": bk, "close": c,
@@ -846,7 +893,7 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                           "exit": fill_px, "gross_pct": round(gross, 3),
                           "net_pct": round(gross - FEE_PCT, 3),
                           "exit_why": why, "ml": pos.get("ml"),
-                          "sharp": bool(pos.get("sharp"))}
+                          "sharp": bool(pos.get("sharp")), "wall": pos.get("wall")}
                     if evidence:
                         tr["buy_ev"] = {"close": pos["close"], "book": pos["bk"],
                                         "seq": pos["seq"]}

@@ -116,6 +116,7 @@ type RTrade = { code: string; name: string; day?: string; d8?: string; ml?: MLMe
                 entry: number; sell_t: string; exit: number; gross_pct: number;
                 net_pct: number; exit_why?: string; result: "win" | "loss" | "flat";
                 sharp?: boolean;
+                wall?: { price: number; qty: number; ts: string } | null;
                 bars_held: number; tick_size: number; qty?: number; buy_ev?: Ev | null; sell_ev?: Ev | null };
 type RDetail = { ok: boolean; id: string; ko: string; en: string; clock: string;
                  entry_n: number; kind: string; a: number; b?: number | null; dir: number;
@@ -1704,7 +1705,10 @@ export default function LiveDeskPage() {
                                             setPick(i); if (sel) openRule(sel, i, tr.code);
                                           }
                                           chartRef.current?.scrollIntoView({ behavior: "smooth", block: "center" }); }}>
-                        ▲ {tr.buy_t.slice(0, 5)}</td>
+                        ▲ {tr.buy_t.slice(0, 5)}
+                        {tr.wall && <span title={t(
+                          `호가벽 앞 매수: ${tr.wall.qty.toLocaleString()}주 벽(₩${tr.wall.price.toLocaleString()}) 바로 위 1틱에 주문`,
+                          `bought one tick in front of a ${tr.wall.qty.toLocaleString()}-share wall at ₩${tr.wall.price.toLocaleString()}`)}> 🧱</span>}</td>
                       <td className="text-right px-2">₩{tr.entry.toLocaleString()}</td>
                       <td className="px-2 cursor-pointer underline decoration-dotted" style={{ color: BLUE }}
                         title={t(`클릭하면 차트가 이 매도로 이동합니다 (${tr.sell_t})`, `click: chart jumps to this SELL (${tr.sell_t})`)}

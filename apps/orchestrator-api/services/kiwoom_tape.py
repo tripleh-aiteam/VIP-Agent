@@ -253,6 +253,54 @@ def poll_once(code: str) -> int:
     return len(new)
 
 
+# ── THE ORDER-BOOK TAPE (boss 2026-08-11, feedback 4). His idea: stand one tick in
+# front of the biggest bid wall to buy, sell one tick before the biggest ask wall. The
+# execution ticks say nothing about the resting book, and Kiwoom keeps no history - so
+# from today the collector snapshots the 10-level book alongside the ticks. One stock
+# per cycle, round-robin: each of six stocks every ~18s, gentle on the rate limit, and
+# walls live for minutes. book_{code}_{day}.jsonl, one snapshot per line.
+_book_rr = {"i": 0}
+
+
+def _snap_book_next() -> None:
+    if not WATCH:
+        return
+    code, _name = WATCH[_book_rr["i"] % len(WATCH)]
+    _book_rr["i"] += 1
+    try:
+        from services.kiwoom_rest import order_book
+        ob = order_book(code)
+        if not ob or not ob.get("levels"):
+            return
+        import json as _json
+        from datetime import datetime as _dt
+        from zoneinfo import ZoneInfo as _Z
+        now = _dt.now(_Z("Asia/Seoul"))
+        row = {"ts": now.strftime("%H%M%S"),
+               "bids": [[lv["price"], lv["qty"]] for lv in ob["levels"] if lv["side"] == "bid"],
+               "asks": [[lv["price"], lv["qty"]] for lv in ob["levels"] if lv["side"] == "ask"]}
+        p = ROOT / f"book_{code}_{_day()}.jsonl"
+        with p.open("a", encoding="utf-8") as f:
+            f.write(_json.dumps(row, ensure_ascii=False) + chr(10))
+    except Exception as e:
+        logger.debug("book snap %s: %s", code, str(e)[:80])
+
+
+def load_book(code: str, day: str = "") -> list[dict]:
+    """The day's book snapshots, oldest first. [] when none were recorded."""
+    import json as _json
+    p = ROOT / f"book_{code}_{day or _day()}.jsonl"
+    if not p.exists():
+        return []
+    out = []
+    for line in p.read_text(encoding="utf-8").splitlines():
+        try:
+            out.append(_json.loads(line))
+        except Exception:
+            continue
+    return out
+
+
 def _loop():
     _state["running"] = True
     # A RESTART DURING MARKET HOURS came back on the hardcoded default list, because the
@@ -274,6 +322,7 @@ def _loop():
                             _state["errors"].pop(code, None)
                     except Exception as e:                       # one bad stock must not
                         _state["errors"][code] = str(e)[:200]    # stop the others
+                _snap_book_next()
                 time.sleep(POLL_SEC)
             else:
                 time.sleep(30)

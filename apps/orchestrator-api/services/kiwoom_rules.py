@@ -422,7 +422,10 @@ def rank(tick: int = 5, period: int = 0, day: str = "",
     # let a rule hold all three companies at once.
     # "_dipc" is the shared chop/dip cache: every rule gets a shallow copy of these
     # dicts, and seeding the inner dict here means the 20-bar walk runs once per stock
-    base_by_day = [(d, [{"code": code, "_dipc": {},
+    # the day's book snapshots ride on the stk dict so the new family can offer in
+    # front of the biggest bid wall; [] on days before recording began (2026-08-11)
+    from services.kiwoom_tape import load_book as _lb
+    base_by_day = [(d, [{"code": code, "_dipc": {}, "book": _lb(code, d or _kd0()),
                          "closes": [c["close"] for c in tp["cs"]],
                          "highs": [c["high"] for c in tp["cs"]],
                          "lows": [c["low"] for c in tp["cs"]],
@@ -583,7 +586,9 @@ def trades(vid: str, tick: int = 5, period: int = 0, code: str = "",
             cs = _bars_for(c_code, tick, period, d, frm, to)
             if len(cs) < 10:
                 continue
-            stks.append({"code": c_code, "name": name, "cs": cs,
+            from services.kiwoom_tape import load_book as _lb2
+            stks.append({"code": c_code, "name": name, "cs": cs, "_dipc": {},
+                         "book": _lb2(c_code, d or _kd0()),
                          "closes": [c["close"] for c in cs],
                          "highs": [c["high"] for c in cs],
                          "lows": [c["low"] for c in cs],
