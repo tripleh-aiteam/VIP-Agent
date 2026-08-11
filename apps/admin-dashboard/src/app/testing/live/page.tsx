@@ -571,6 +571,21 @@ export default function LiveDeskPage() {
   // nothing he does not already know - what he wants from that panel is when it bought,
   // at what price, when it sold, and the chart). Points the existing detail panel at
   // that company and opens the best-ranked rule if none is open yet.
+  // THE HISTORY IS OPEN BY DEFAULT (boss 2026-08-11: "whenever I do not click, also
+  // below it shows all trading history"). With nothing selected, the best visible rule
+  // opens itself, so the day's trades are always on screen without a click. Closing or
+  // switching rules is still the user's - this only fills an empty screen, once per
+  // filter change, and never re-fights a click.
+  const autoOpenRef = useRef("");
+  useEffect(() => {
+    const first = shownRules[0]?.id;
+    if (!first || sel !== null) { autoOpenRef.current = sel ?? ""; return; }
+    if (autoOpenRef.current === `closed:${first}`) return;   // the user closed it - respect that
+    setSel(first);
+    autoOpenRef.current = first;
+    openRule(first, null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [shownRules.map((v) => v.id).join(","), sel]);
   const openStock = useCallback((c2: string) => {
     setCode(c2); codeRef.current = c2;
     const id = sel || shownRules[0]?.id;
@@ -1285,6 +1300,8 @@ export default function LiveDeskPage() {
               <tbody>
                 {shownRules.map((v, i) => (
                   <tr key={v.id} onClick={() => { const open = sel === v.id;
+                        // remember an explicit close, so the auto-open does not undo it
+                        autoOpenRef.current = open ? `closed:${v.id}` : v.id;
                         setSel(open ? null : v.id); setDet(null); setPick(null);
                         if (!open) openRule(v.id); }}
                     className="border-t border-[var(--border-default)]/40 cursor-pointer hover:bg-[var(--bg-elevated)]"
