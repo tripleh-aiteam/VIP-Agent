@@ -420,7 +420,10 @@ def rank(tick: int = 5, period: int = 0, day: str = "",
     # stock"): every stock's bars merge onto one clock and the rule holds ONE position
     # across all of them - see proof_lab.run_desk. The per-stock loop this replaces
     # let a rule hold all three companies at once.
-    base_by_day = [(d, [{"code": code, "closes": [c["close"] for c in tp["cs"]],
+    # "_dipc" is the shared chop/dip cache: every rule gets a shallow copy of these
+    # dicts, and seeding the inner dict here means the 20-bar walk runs once per stock
+    base_by_day = [(d, [{"code": code, "_dipc": {},
+                         "closes": [c["close"] for c in tp["cs"]],
                          "highs": [c["high"] for c in tp["cs"]],
                          "lows": [c["low"] for c in tp["cs"]],
                          "tick": tp["tk"], "seed": 1,

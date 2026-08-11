@@ -553,8 +553,12 @@ def _dip_state(s: dict, look: int = 20) -> dict:
     mean "much bigger than this stock's normal wiggle" rather than a fixed number.
     """
     import statistics
-    got = s.get("_dip")
-    if got is not None and got.get("look") == look:
+    # the cache lives in a nested dict, because callers hand each rule a SHALLOW copy
+    # of the stock dict: a value stored flat on the copy dies with it, while this inner
+    # dict is shared by every copy and the walk below runs once per stock, not per rule
+    box = s.setdefault("_dipc", {})
+    got = box.get(look)
+    if got is not None:
         return got
     cl = s["closes"]
     n = len(cl)
@@ -574,7 +578,7 @@ def _dip_state(s: dict, look: int = 20) -> dict:
         k = j + win.index(hi)
         drop[i] = (hi - min(cl[k:i + 1])) / hi * 100 if hi and k < i else 0.0
     got = {"look": look, "typ": typ, "hi": hiw, "rng": rng, "drop": drop}
-    s["_dip"] = got
+    box[look] = got
     return got
 
 
@@ -713,6 +717,13 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
             # the open produces no entries at all today. Exits are untouched - a position
             # opened before a gate closes is still managed to its normal end.
             if s.get("gate_ok") is False and not v.get("ignore_gate"):
+                pass
+            # OSCILLATION = NO TRADING, for every rule on the desk (boss 2026-08-11:
+            # "if the chart is oscillation then not trading - make sure for all"). The
+            # same floor the dip rules already used: if the last 20 bars ranged less
+            # than 0.40%, the market is going nowhere and no rule may buy into it.
+            # No loss and no gain, by instruction. Exits are untouched.
+            elif _dip_state(s, (v.get("dip") or {}).get("look", 20))["rng"][i]                     < (v.get("dip") or {}).get("chop", 0.40):
                 pass
             elif v.get("dip") and not _dip_entry(s, v, i, up[si], closes):
                 pass

@@ -1452,6 +1452,8 @@ export default function LiveDeskPage() {
                                          `"Is the climb still small?" — from where the rise began until now, the total climb must be under ${det.max_run}% (for a ₩10,000 stock, that's less than ₩${Math.round(10000*det.max_run/100)}). A rise that already moved a lot is finishing, not starting — skip it.`)}</li>}
                   {det.is_ml && <li>{t(`"AI가 허락하는가?" — 이 종목 전용 인공지능이 과거 데이터와 비교해 "평소보다 이길 확률이 높다"고 할 때만 삽니다. 거절하면 그 신호는 그냥 지나갑니다.`,
                                        `"Does the AI approve?" — this stock's own AI compares the moment with the past and must say "better odds than usual." A refusal means the signal is simply skipped.`)}</li>}
+                  {!det.dip && <li>{t(`"횡보장이 아닌가?" — 최근 20개 봉의 고저 폭이 0.4% 미만이면 모든 규칙이 매매하지 않습니다. 움직임 없는 시장에서는 손실도 이익도 없습니다.`,
+                         `"Is the market actually moving?" — if the last 20 bars ranged under 0.4%, NO rule trades at all. In a flat market there is no loss and no gain.`)}</li>}
                   <li>{t(`"빈손인가?" — 이 규칙이 아직 아무 주식도 들고 있지 않아야 합니다. 들고 있으면 다 팔 때까지 새로 사지 않습니다.`,
                          `"Are the hands empty?" — the rule must not be holding anything. While holding, it never buys again until it sells.`)}</li>
                 </ol>
