@@ -847,26 +847,6 @@ export default function LiveDeskPage() {
               </span>
             </span>
           </div>
-          {/* FIXED MODE IS LIGHT (boss 2026-08-11: per-stock rows made the app heavy).
-              Six names in the header, one button to the merged history+holdings; the
-              score mode below keeps its full ranking - there the information is the
-              point. */}
-          {pickOpen && (dpick.mode ?? "fixed") === "fixed" && (
-            <div className="px-4 py-2 flex items-center gap-2 flex-wrap border-t"
-              style={{ borderColor: "var(--border-default)" }}>
-              <button onClick={() => { setFamOpen(true);
-                  setTimeout(() => document.getElementById("fam-table")?.scrollIntoView(
-                    { behavior: "smooth", block: "start" }), 60); }}
-                className="text-[11px] font-bold px-3 py-1 rounded-md border"
-                style={{ borderColor: "#0f5132", color: "#0f5132" }}>
-                📋 {t("전체 매매 내역 · 보유 현황 보기", "trading history & holdings — all six together")}
-              </button>
-              <span className="text-[10px] text-[var(--text-muted)]">
-                {t("종목별 상세는 내역 표에서 시간을 누르면 열립니다.",
-                   "per-trade detail opens from the history table.")}
-              </span>
-            </div>
-          )}
           {pickOpen && (dpick.mode ?? "fixed") !== "fixed" && (
             <div className="overflow-y-auto" style={{ maxHeight: 340 }}>
               <table className="w-full text-[11.5px] tabular-nums">
