@@ -581,7 +581,14 @@ export default function LiveDeskPage() {
   const [famOpen, setFamOpen] = useState(true);
   const [fam, setFam] = useState<FamTrades | null>(null);
   const [famBusy, setFamBusy] = useState(false);
+  // LAST CLICK WINS, same law as the chart detail: the old family's fetch can take
+  // 20s+ (its ML rules), and a switch to Sharp mid-flight used to get overwritten when
+  // that slow response finally landed - Sharp showed nothing, or the wrong rows, or
+  // Loading for ever (boss 2026-08-11, "make it consistent"). Only the newest request
+  // may touch the screen.
+  const famSeqRef = useRef(0);
   const pullFam = useCallback(() => {
+    const my = ++famSeqRef.current;
     setFamBusy(true);
     const q = perRef.current ? `period=${perRef.current}` : `tick=${tickRef.current}`;
     api<FamTrades>(`/paper-desk/live/rules/family-trades?family=${way}&${q}`
@@ -589,9 +596,9 @@ export default function LiveDeskPage() {
       + `&to=${encodeURIComponent(hourToRef.current)}`
       + `&gate=${showBlockedRef.current ? 0 : 1}`
       + `&auto=${dayTouchedRef.current && !ruleDayRef.current ? 0 : 1}`)
-      .then((d) => setFam(d?.ok ? d : null))
-      .catch(() => {})
-      .finally(() => setFamBusy(false));
+      .then((d) => { if (my !== famSeqRef.current) return;
+                     setFam(d?.ok ? d : null); setFamBusy(false); })
+      .catch(() => { if (my !== famSeqRef.current) return; setFamBusy(false); });
   }, [way]);
   useEffect(() => {
     // fetch even while the panel is collapsed - the server answers from a 4s cache,
