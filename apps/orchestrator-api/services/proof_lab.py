@@ -138,21 +138,22 @@ VARIANTS: list[dict] = [
     # vs -0.698%), so it has no edge to trade on. He asked for it on the board anyway,
     # next to the old way, to settle it on live tape rather than on my backtests. Paper
     # money only until it earns better numbers.
-    {"id": "N1", "entry": 2, "kind": "pct", "a": 0.3, "b": 2.0, "exec": "limit",
+    {"id": "N1", "entry": 1, "kind": "pct", "a": 0.3, "b": 2.0, "exec": "limit",
+     "stop_pct": 2.0, "wait_bars": 2, "family": "new", "ignore_gate": True,
+     "dip": {"drop": 0.8, "sharp": 3.0, "ups": 1, "chop": 0.40, "look": 20},
+     "ride": {"arm": -99.0, "give": 99.0, "downs": 1, "slow_ups": 99, "slow_downs": 99,
+              "slow_take": 1.0, "sharp_rise": 2.0}},
+    {"id": "N2", "entry": 1, "kind": "pct", "a": 0.3, "b": 2.0, "exec": "limit",
+     "stop_pct": 2.0, "wait_bars": 2, "family": "new", "ignore_gate": True,
+     "dip": {"drop": 0.4, "sharp": 3.0, "ups": 1, "chop": 0.40, "look": 20},
+     "ride": {"arm": -99.0, "give": 99.0, "downs": 1, "slow_ups": 99, "slow_downs": 99,
+              "slow_take": 1.0, "sharp_rise": 2.0}},
+    # the cautious twin: same rule, one extra up candle of confirmation before entering
+    {"id": "N3", "entry": 2, "kind": "pct", "a": 0.3, "b": 2.0, "exec": "limit",
      "stop_pct": 2.0, "wait_bars": 2, "family": "new", "ignore_gate": True,
      "dip": {"drop": 0.8, "sharp": 3.0, "ups": 2, "chop": 0.40, "look": 20},
-     "ride": {"arm": 1.0, "give": 0.5, "downs": 2, "slow_ups": 3, "slow_take": 1.0,
-              "sharp_rise": 2.0}},
-    {"id": "N2", "entry": 2, "kind": "pct", "a": 0.3, "b": 2.0, "exec": "limit",
-     "stop_pct": 2.0, "wait_bars": 2, "family": "new", "ignore_gate": True,
-     "dip": {"drop": 0.4, "sharp": 3.0, "ups": 2, "chop": 0.40, "look": 20},
-     "ride": {"arm": 0.5, "give": 0.3, "downs": 2, "slow_ups": 3, "slow_take": 1.0,
-              "sharp_rise": 2.0}},
-    {"id": "N3", "entry": 3, "kind": "pct", "a": 0.3, "b": 2.0, "exec": "limit",
-     "stop_pct": 2.0, "wait_bars": 2, "family": "new", "ignore_gate": True,
-     "dip": {"drop": 0.8, "sharp": 3.0, "ups": 3, "chop": 0.40, "look": 20},
-     "ride": {"arm": 1.0, "give": 0.5, "downs": 2, "slow_ups": 3, "slow_take": 1.0,
-              "sharp_rise": 2.0}},
+     "ride": {"arm": -99.0, "give": 99.0, "downs": 1, "slow_ups": 99, "slow_downs": 99,
+              "slow_take": 1.0, "sharp_rise": 2.0}},
     # N1ML existed here for one day (2026-08-10..11) and was REMOVED: its model was
     # trained by _outcome on the OLD rule's target (+0.3% before -2%) from plain 2-rise
     # signals with no dip condition - a model for a different rule wearing this rule's
@@ -164,8 +165,8 @@ VARIANTS: list[dict] = [
     # three times less so - so it belongs on the board next to both parents.
     {"id": "R6", "entry": 3, "kind": "pct", "a": 0.3, "b": 2.0, "exec": "limit",
      "stop_pct": 2.0, "wait_bars": 2, "vol": 1.5, "family": "new", "ignore_gate": True,
-     "ride": {"arm": 1.0, "give": 0.5, "downs": 2, "slow_ups": 3, "slow_take": 1.0,
-              "sharp_rise": 2.0}},
+     "ride": {"arm": -99.0, "give": 99.0, "downs": 1, "slow_ups": 99, "slow_downs": 99,
+              "slow_take": 1.0, "sharp_rise": 2.0}},
     # R6ML removed with N1ML, same defect, same condition for return.
 
     {"id": "g1", "entry": 3, "kind": "pct", "a": 0.5, "b": 2.0, "vol": 2.0, "clock": [5, 60]},
@@ -261,16 +262,21 @@ def label(v: dict, ko: bool = True) -> str:
     if v.get("ride"):
         r = v["ride"]
         d = v.get("dip")
+        _u = d["ups"] if d else v["entry"]
+
+        def _ord(n: int) -> str:
+            return {1: "1st", 2: "2nd", 3: "3rd"}.get(n, f"{n}th")
         if ko:
-            ent = (f"급락 후 {d['ups']}연속 상승" if d else f"{v['entry']}연속 상승")
-            ex = (f"급등이면 고점 -{r['give']}% 또는 2연속 하락까지 보유 · "
-                  f"완만하면 {r['slow_ups']}연속 상승 또는 +{r['slow_take']}%")
+            ent = (f"급락 {d['drop']}% 후 {_u + 1}번째 양봉 시작에 매수" if d
+                   else f"{v['entry']}연속 상승에 매수")
+            ex = (f"급등이면 {r.get('downs', 2) + 1}번째 음봉 시작에 매도 · "
+                  f"완만하면 +{r['slow_take']}%")
             txt = f"{ent} → {ex}"
         else:
-            ent = (f"{d['ups']} rises after a sharp drop" if d
-                   else f"{v['entry']} rises")
-            ex = (f"ride a sharp move to -{r['give']}% off the peak or 2 falls; "
-                  f"a slow one to {r['slow_ups']} rises or +{r['slow_take']}%")
+            ent = (f"{d['drop']}% sharp drop → buy at the start of the {_ord(_u + 1)} up candle"
+                   if d else f"buy after {v['entry']} rises")
+            ex = (f"a sharp rise sells at the start of the {_ord(r.get('downs', 2) + 1)} down candle; "
+                  f"a slow one at +{r['slow_take']}%")
             txt = f"{ent} → {ex}"
         if v.get("vol"):
             txt += (" · 거래량" if ko else " · volume")
@@ -809,7 +815,9 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                     # otherwise two red bars off the entry close every trade at a loss
                     if peak_gain >= r.get("arm", 1.0):
                         if pos.get("downs", 0) >= r.get("downs", 2):
-                            hit, fill_px, why = True, c, "2연속 하락 (상승 후)"
+                            hit, fill_px, why = True, c, ("두 번째 음봉 시작 매도"
+                                                          if r.get("downs", 2) == 1
+                                                          else "2연속 하락 (상승 후)")
                         elif gain <= peak_gain - r.get("give", 0.5):
                             hit, fill_px, why = True, c, f"고점 대비 -{r.get('give', 0.5)}%"
                 else:
@@ -817,8 +825,8 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                         hit, fill_px, why = True, c, f"+{r.get('slow_take', 1.0)}% 익절"
                     elif pos.get("ups", 0) >= r.get("slow_ups", 3):
                         hit, fill_px, why = True, c, f"{r.get('slow_ups', 3)}연속 상승"
-                    elif pos.get("downs", 0) >= r.get("downs", 2) and gain > FEE_PCT:
-                        hit, fill_px, why = True, c, "2연속 하락 (이익 확보)"
+                    elif pos.get("downs", 0) >= r.get("slow_downs", r.get("downs", 2))                             and gain > FEE_PCT:
+                        hit, fill_px, why = True, c, "하락 전환 (이익 확보)"
                 if hit:
                     bk = dict(book(s["seed"] * 2_000 + i, c, "SELL", tk), fill=fill_px)
                     gross = (fill_px / pos["entry"] - 1) * 100
