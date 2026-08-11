@@ -1088,12 +1088,16 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                 elif lows[i] <= trig and lows[i] >= floor:
                     hit, fill_px = True, max(floor, min(c, trig))
                     why = f"-{v.get('stop_pct', 2.0)}% 손절"
-                elif pos.get("downs", 0) >= r.get("downs", 1):
-                    # ONE EXIT FOR BOTH CASES (boss 2026-08-11, final wording: "in both
-                    # cases, if it starts to decrease we have to sell"). The first
-                    # completed down candle ends every ride - no +1% gate, no sharp/slow
-                    # difference on the way out. The sell still offers one tick in front
-                    # of the ask wall when a fresh book snapshot shows one.
+                elif pos.get("downs", 0) >= r.get("downs", 1)                         and (r.get("arm", 0) <= 0 or peak_gain >= r["arm"]):
+                    # THE ARMED 2ND-BLUE EXIT. History of this line, kept for honesty:
+                    # the boss first unified both cases to "sell at the 2nd blue" with
+                    # no gate; when he later chose the 1% Sharp definition the arming
+                    # was DECLARED restored via the variant's arm value - but this block
+                    # never read it, so the engine kept selling unarmed all afternoon
+                    # while the reports said otherwise (caught 2026-08-11 evening when
+                    # his N3 stats query showed exits below +1%). Now the parameter is
+                    # law: arm>0 means the profit must touch +arm% before a down candle
+                    # may sell; before that only the stop and the closes act.
                     _why = ("두 번째 음봉 시작 매도" if r.get("downs", 1) == 1
                             else f"{r.get('downs', 1) + 1}번째 음봉 시작 매도")
                     _spx, _aw = _ask_wall_offer(s, i, c, tk)
