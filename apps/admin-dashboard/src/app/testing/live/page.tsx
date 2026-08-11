@@ -572,12 +572,53 @@ export default function LiveDeskPage() {
   // nothing he does not already know - what he wants from that panel is when it bought,
   // at what price, when it sold, and the chart). Points the existing detail panel at
   // that company and opens the best-ranked rule if none is open yet.
+  const autoOpenRef = useRef("");
   // THE HISTORY IS OPEN BY DEFAULT (boss 2026-08-11: "whenever I do not click, also
   // below it shows all trading history"). With nothing selected, the best visible rule
   // opens itself, so the day's trades are always on screen without a click. Closing or
   // switching rules is still the user's - this only fills an empty screen, once per
   // filter change, and never re-fights a click.
-  const autoOpenRef = useRef("");
+  // ONE TABLE FOR THE WHOLE FAMILY (boss 2026-08-11): rule, stock, buy, sell, result,
+  // money - every trade the visible family made, merged and time-ordered, with each
+  // buy/sell time clickable to open that exact trade on the chart as proof.
+  type FamRow = { rule: string; rule_ko?: string; rule_en?: string; idx: number;
+                  code: string; name?: string; d8?: string; buy_t: string; entry: number;
+                  sell_t: string; exit: number; net_pct: number; exit_why?: string;
+                  qty?: number; won: number; result: string;
+                  wall?: { price: number; qty: number } | null };
+  type FamTrades = { ok: boolean; rows: FamRow[]; trips: number; wins: number;
+                     losses: number; win_pct: number; net_won: number };
+  const [famOpen, setFamOpen] = useState(true);
+  const [fam, setFam] = useState<FamTrades | null>(null);
+  const [famBusy, setFamBusy] = useState(false);
+  const pullFam = useCallback(() => {
+    setFamBusy(true);
+    const q = perRef.current ? `period=${perRef.current}` : `tick=${tickRef.current}`;
+    api<FamTrades>(`/paper-desk/live/rules/family-trades?family=${way}&${q}`
+      + `&day=${ruleDayRef.current}&frm=${encodeURIComponent(hourFromRef.current)}`
+      + `&to=${encodeURIComponent(hourToRef.current)}`
+      + `&gate=${showBlockedRef.current ? 0 : 1}`
+      + `&auto=${dayTouchedRef.current && !ruleDayRef.current ? 0 : 1}`)
+      .then((d) => setFam(d?.ok ? d : null))
+      .catch(() => {})
+      .finally(() => setFamBusy(false));
+  }, [way]);
+  useEffect(() => {
+    if (!famOpen) return;
+    pullFam();
+    const h = setInterval(pullFam, 20000);
+    return () => clearInterval(h);
+  }, [famOpen, pullFam, ruleDay, hourFrom, hourTo, tick, period, showBlocked]);
+  // opening one trade from the merged table = the same proof path a rule row uses
+  const openFamTrade = useCallback((r: FamRow, side: "b" | "s") => {
+    setFocusSide(side);
+    setSel(r.rule);
+    autoOpenRef.current = r.rule;
+    openRule(r.rule, r.idx, r.code);
+    setTimeout(() => chartRef.current?.scrollIntoView({ behavior: "smooth", block: "center" }), 120);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [openRule]);
+  
   useEffect(() => {
     const first = shownRules[0]?.id;
     if (!first || sel !== null) { autoOpenRef.current = sel ?? ""; return; }
@@ -1152,6 +1193,74 @@ export default function LiveDeskPage() {
                 {t("해제", "clear")}
               </button>
             )}
+            <div className="w-full mb-1 pb-1 border-b" style={{ borderColor: "var(--border-default)" }}>
+              <div className="flex items-center gap-2 flex-wrap cursor-pointer"
+                onClick={() => setFamOpen(!famOpen)}>
+                <b className="text-[11px]" style={{ color: "#0f5132" }}>
+                  📋 {t(`전체 매매 내역 — ${way === "new" ? "새 방식" : way === "old" ? "예전 방식" : "두 방식"} 규칙 전부 합쳐서`,
+                        `all trades — every ${way === "new" ? "new-way" : way === "old" ? "old-way" : ""} rule merged`)}
+                </b>
+                {fam && (
+                  <span className="text-[10.5px] font-bold">
+                    {fam.trips}{t("건", "t")} · {fam.win_pct}%
+                    {money && <b className="ml-1" style={{ color: fam.net_won > 0 ? "#b02a2a" : fam.net_won < 0 ? "#1565c0" : "var(--text-muted)" }}>
+                      {fam.net_won > 0 ? "+" : ""}₩{Math.round(fam.net_won).toLocaleString()}</b>}
+                  </span>
+                )}
+                <span className="ml-auto text-[10px]" style={{ color: "#0f5132" }}>
+                  {famBusy ? t("갱신 중…", "updating…") : famOpen ? t("닫기 ▲", "close ▲") : t("펼치기 ▼", "open ▼")}
+                </span>
+              </div>
+              {famOpen && fam && fam.rows.length > 0 && (
+                <div className="overflow-x-auto mt-1">
+                  <table className="w-full text-[11px] tabular-nums">
+                    <thead><tr className="text-[10px] text-[var(--text-muted)]">
+                      <th className="text-left px-2 py-0.5">{t("규칙", "rule")}</th>
+                      <th className="text-left px-2">{t("종목", "stock")}</th>
+                      <th className="text-left px-2">{t("매수", "buy")}</th>
+                      <th className="text-left px-2">{t("매도", "sell")}</th>
+                      <th className="text-right px-2">{t("결과", "result")}</th>
+                      <th className="text-left px-2">{t("사유", "why")}</th>
+                      <th className="text-right px-3">{t("금액", "money")}</th>
+                    </tr></thead>
+                    <tbody>
+                      {fam.rows.map((r, i) => (
+                        <tr key={`${r.rule}-${r.idx}-${i}`}
+                          className="border-t border-[var(--border-default)]/30">
+                          <td className="px-2 py-0.5 font-bold"
+                            title={lang === "ko" ? r.rule_ko : r.rule_en}
+                            style={{ color: "#6a1b9a" }}>{r.rule}</td>
+                          <td className="px-2 font-bold text-[var(--text-primary)]">{r.name || r.code}</td>
+                          <td className="px-2 cursor-pointer underline decoration-dotted"
+                            style={{ color: RED }}
+                            title={t("클릭: 차트에서 이 매수 확인", "click: see this buy on the chart")}
+                            onClick={() => openFamTrade(r, "b")}>
+                            ▲ {r.buy_t?.slice(0, 8)} @₩{Math.round(r.entry).toLocaleString()}
+                            {r.wall ? " 🧱" : ""}</td>
+                          <td className="px-2 cursor-pointer underline decoration-dotted"
+                            style={{ color: BLUE }}
+                            title={t("클릭: 차트에서 이 매도 확인", "click: see this sell on the chart")}
+                            onClick={() => openFamTrade(r, "s")}>
+                            ▼ {r.sell_t?.slice(0, 8)} @₩{Math.round(r.exit).toLocaleString()}</td>
+                          <td className="text-right px-2 font-bold"
+                            style={{ color: r.net_pct > 0 ? "#b02a2a" : r.net_pct < 0 ? "#1565c0" : "var(--text-muted)" }}>
+                            {r.net_pct > 0 ? "+" : ""}{r.net_pct}%</td>
+                          <td className="px-2 text-[10px] text-[var(--text-secondary)]">{r.exit_why || "-"}</td>
+                          <td className="text-right px-3 font-bold"
+                            style={{ color: r.won > 0 ? "#b02a2a" : r.won < 0 ? "#1565c0" : "var(--text-muted)" }}>
+                            {money ? `${r.won > 0 ? "+" : ""}₩${Math.round(r.won).toLocaleString()}` : "💰"}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+              {famOpen && fam && fam.rows.length === 0 && (
+                <div className="text-[10.5px] text-[var(--text-muted)] py-1">
+                  {t("이 기간에 완료된 매매가 없습니다.", "no completed trades in this window.")}
+                </div>
+              )}
+            </div>
             <div className="w-full flex items-center gap-2 flex-wrap mb-1 pb-1 border-b"
               style={{ borderColor: "var(--border-default)" }}>
               <b className="text-[11px]" style={{ color: "#6a1b9a" }}>

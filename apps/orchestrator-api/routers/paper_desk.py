@@ -686,6 +686,45 @@ def live_rule_trades(variant: str = Query(...), tick: int = Query(5),
                   allow_fallback=bool(auto))
 
 
+@router.get("/live/rules/family-trades")
+def live_family_trades(family: str = Query("new"), tick: int = Query(5),
+                       period: int = Query(0), day: str = Query(""),
+                       frm: str = Query(""), to: str = Query(""),
+                       gate: int = Query(1), auto: int = Query(1)):
+    """EVERY trade of one family in one table (boss 2026-08-11: rule, stock, buy, sell,
+    result, money - across the whole family, not one rule at a time). Rows carry the
+    rule id and the trade's index inside that rule's own list, so the page can open the
+    exact trade on the chart as proof with the machinery it already has."""
+    from services.kiwoom_rules import DESK, trades
+    rows = []
+    for v in DESK:
+        if family != "all" and v.get("family", "old") != family:
+            continue
+        d = trades(v["id"], tick=tick, period=max(0, min(int(period or 0), 600)),
+                   bars=10, limit=500, day=day, frm=frm, to=to,
+                   use_gate=bool(gate), allow_fallback=bool(auto))
+        if not d.get("ok"):
+            continue
+        for i, tr in enumerate(d.get("trades") or []):
+            won = round((tr.get("entry") or 0) * (tr.get("qty") or 1)
+                        * (tr.get("net_pct") or 0) / 100)
+            rows.append({"rule": v["id"], "rule_ko": d.get("ko"), "rule_en": d.get("en"),
+                         "idx": i, "code": tr.get("code"), "name": tr.get("name"),
+                         "d8": tr.get("d8"), "buy_t": tr.get("buy_t"),
+                         "entry": tr.get("entry"), "sell_t": tr.get("sell_t"),
+                         "exit": tr.get("exit"), "net_pct": tr.get("net_pct"),
+                         "exit_why": tr.get("exit_why"), "qty": tr.get("qty"),
+                         "won": won, "result": tr.get("result"),
+                         "wall": tr.get("wall")})
+    rows.sort(key=lambda r: (r.get("d8") or "", r.get("buy_t") or ""))
+    w = sum(1 for r in rows if r["result"] == "win")
+    l = sum(1 for r in rows if r["result"] == "loss")
+    return {"ok": True, "family": family, "rows": rows,
+            "trips": len(rows), "wins": w, "losses": l,
+            "win_pct": round(w / (w + l) * 100) if (w + l) else 0,
+            "net_won": sum(r["won"] for r in rows)}
+
+
 @router.get("/live/dip-status")
 def live_dip_status(tick: int = Query(5), period: int = Query(0)):
     """Per stock, where the new rule's hunt stands right now - so a quiet board reads
