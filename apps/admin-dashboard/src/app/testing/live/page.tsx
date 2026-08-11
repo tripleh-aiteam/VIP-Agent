@@ -620,6 +620,43 @@ export default function LiveDeskPage() {
     return () => clearInterval(h);
   }, [famOpen, pullFam, ruleDay, hourFrom, hourTo, tick, period, showBlocked]);
   // opening one trade from the merged table = the same proof path a rule row uses
+  // CLICK THE ALGORITHM NAME, GET THE STORY (boss 2026-08-11: "other person also can
+  // understand why this time bought, why sold"). Plain-words explanation of the buy,
+  // the algorithm itself, and this trade's exit, built from the row's own numbers.
+  const [famExp, setFamExp] = useState<string | null>(null);
+  // the clock comparison, the algorithm picker and the money switch live in one menu,
+  // CLOSED by default (boss 2026-08-11: "need separate menu, otherwise closed")
+  const [cfgOpen, setCfgOpen] = useState(false);
+  const explainTrade = (r: { rule: string; exit_why?: string; buy_t?: string;
+                             entry: number; name?: string; sell_t?: string }) => {
+    const isDip = r.rule.startsWith("N");
+    const buyKo = isDip
+      ? `이 종목이 짧은 시간에 급하게 떨어졌고(평소 움직임의 3배 이상), 떨어짐이 멈춘 뒤 첫 양봉이 완성되어 두 번째 양봉이 시작되는 값 ₩${Math.round(r.entry).toLocaleString()}에 샀습니다. 급락 후 첫 반등을 잡는 알고리즘입니다.`
+      : `가격이 3번 연속 오르고 거래량이 평소보다 많아, 상승이 시작됐다고 보고 ₩${Math.round(r.entry).toLocaleString()}에 샀습니다 (예전 알고리즘).`;
+    const buyEn = isDip
+      ? `The stock fell sharply in a short time (3× its normal move). When the fall stopped and one up candle completed, it bought at ₩${Math.round(r.entry).toLocaleString()} — the price where the second up candle began. This algorithm catches the first bounce after a sharp drop.`
+      : `The price rose 3 times in a row on above-average volume, so it judged a climb had started and bought at ₩${Math.round(r.entry).toLocaleString()} (the old algorithm).`;
+    const w = r.exit_why || "";
+    let sellKo = `매도 사유: ${w}`;
+    let sellEn = `Exit: ${w}`;
+    if (w.includes("손절")) {
+      sellKo = "산 값에서 2% 떨어져 보호선(손절)이 자동으로 팔았습니다. 더 큰 손해를 막는 안전장치입니다.";
+      sellEn = "The price fell 2% below the entry, so the protective stop sold automatically — the safety line against bigger damage.";
+    } else if (w.includes("+1.0%") || w.includes("익절")) {
+      sellKo = "오름이 완만해서 +1% 이익에 도달한 순간 팔았습니다. 느린 상승은 기다리지 않는 규칙입니다.";
+      sellEn = "The rise was gentle, so it sold the moment profit reached +1%. A slow climb is not worth waiting on.";
+    } else if (w.includes("음봉")) {
+      sellKo = "급하게 오르던 흐름이 꺾여 첫 음봉이 완성되었고, 두 번째 음봉이 시작되는 값에 팔았습니다." + (w.includes("호가벽") ? " 매도 호가는 가장 두꺼운 매도벽 바로 앞에 걸었습니다." : "");
+      sellEn = "The sharp climb turned: one down candle completed and it sold at the price where the second down candle began." + (w.includes("호가벽") ? " The sell was offered one tick in front of the biggest ask wall." : "");
+    } else if (w.includes("마감")) {
+      sellKo = "장 마감(15:20) 정리 — 밤 사이 위험을 안고 가지 않도록 마지막 가격에 팔았습니다.";
+      sellEn = "The 15:20 close-out — sold at the last price so nothing is carried overnight.";
+    } else if (w.includes("중단")) {
+      sellKo = "이 종목의 체결이 10분 이상 끊겨, 마지막 거래 가격으로 정리했습니다.";
+      sellEn = "This stock stopped printing for 10+ minutes, so the trade was closed at its last traded price.";
+    }
+    return { buyKo, buyEn, sellKo, sellEn };
+  };
   const openFamTrade = useCallback((r: FamRow, side: "b" | "s") => {
     setFocusSide(side);
     setSel(r.rule);
@@ -1067,7 +1104,7 @@ export default function LiveDeskPage() {
           <div className="px-4 py-2 border-b flex items-center gap-2 flex-wrap"
             style={{ borderColor: "var(--border-default)", background: "rgba(106,27,154,0.06)" }}>
             <b className="text-[13px]" style={{ color: "#6a1b9a" }}>
-              🔬 {t(`규칙 ${shownRules.length}개 — 진짜 키움 체결로`, `${shownRules.length} rules, on real Kiwoom executions`)}
+              🔬 {t("매매", "trading")}
             </b>
             {showBlocked && (
               <span className="text-[10px] font-extrabold px-1.5 py-0.5 rounded"
@@ -1162,15 +1199,17 @@ export default function LiveDeskPage() {
               <div className="flex items-center gap-2 flex-wrap cursor-pointer"
                 onClick={() => setFamOpen(!famOpen)}>
                 <b className="text-[11px]" style={{ color: "#0f5132" }}>
-                  📋 {t(`전체 매매 내역 — ${way === "new" ? "새 방식" : way === "old" ? "예전 방식" : "두 방식"} 규칙 전부 합쳐서`,
-                        `all trades — every ${way === "new" ? "new-way" : way === "old" ? "old-way" : ""} rule merged`)}
+                  📋 {t("매매 내역", "trading history")}
                 </b>
-                {fam && (
-                  <span className="text-[10.5px] font-bold">
-                    {fam.trips}{t("건", "t")} · {fam.win_pct}%
-                    {money && <b className="ml-1" style={{ color: fam.net_won > 0 ? "#b02a2a" : fam.net_won < 0 ? "#1565c0" : "var(--text-muted)" }}>
-                      {fam.net_won > 0 ? "+" : ""}₩{Math.round(fam.net_won).toLocaleString()}</b>}
-                  </span>
+                <button onClick={(e) => { e.stopPropagation(); setMoney((v) => !v); }}
+                  className="text-[10px] px-1.5 py-0.5 rounded border"
+                  style={{ borderColor: money ? "#e65100" : "var(--border-default)",
+                           color: money ? "#e65100" : "var(--text-muted)" }}>
+                  {money ? t("💰 손익 숨기기", "💰 hide money") : t("💰 손익 보기", "💰 show money")}
+                </button>
+                {money && fam && (
+                  <b className="text-[10.5px]" style={{ color: fam.net_won > 0 ? "#b02a2a" : fam.net_won < 0 ? "#1565c0" : "var(--text-muted)" }}>
+                    {fam.net_won > 0 ? "+" : ""}₩{Math.round(fam.net_won).toLocaleString()}</b>
                 )}
                 <span className="ml-auto text-[10px]" style={{ color: "#0f5132" }}>
                   {famBusy ? t("갱신 중…", "updating…") : famOpen ? t("닫기 ▲", "close ▲") : t("펼치기 ▼", "open ▼")}
@@ -1180,7 +1219,7 @@ export default function LiveDeskPage() {
                 <div className="overflow-x-auto mt-1">
                   <table className="w-full text-[11px] tabular-nums">
                     <thead><tr className="text-[10px] text-[var(--text-muted)]">
-                      <th className="text-left px-2 py-0.5">{t("규칙", "rule")}</th>
+                      <th className="text-left px-2 py-0.5">{t("알고리즘", "algorithm")}</th>
                       <th className="text-left px-2">{t("종목", "stock")}</th>
                       <th className="text-left px-2">{t("매수", "buy")}</th>
                       <th className="text-left px-2">{t("매도", "sell")}</th>
@@ -1190,11 +1229,12 @@ export default function LiveDeskPage() {
                     </tr></thead>
                     <tbody>
                       {fam.rows.map((r, i) => (
-                        <tr key={`${r.rule}-${r.idx}-${i}`}
-                          className="border-t border-[var(--border-default)]/30">
-                          <td className="px-2 py-0.5 font-bold"
-                            title={lang === "ko" ? r.rule_ko : r.rule_en}
-                            style={{ color: "#6a1b9a" }}>{r.rule}</td>
+                        <React.Fragment key={`${r.rule}-${r.idx}-${i}`}>
+                        <tr className="border-t border-[var(--border-default)]/30">
+                          <td className="px-2 py-0.5 font-bold cursor-pointer underline decoration-dotted"
+                            title={t("누르면 왜 샀고 왜 팔았는지 설명이 열립니다", "click: why it bought and why it sold")}
+                            onClick={() => setFamExp(famExp === `${r.rule}-${r.idx}` ? null : `${r.rule}-${r.idx}`)}
+                            style={{ color: "#6a1b9a" }}>{r.rule} ⓘ</td>
                           <td className="px-2 font-bold text-[var(--text-primary)]">{r.name || r.code}</td>
                           <td className="px-2 cursor-pointer underline decoration-dotted"
                             style={{ color: RED }}
@@ -1215,12 +1255,61 @@ export default function LiveDeskPage() {
                             style={{ color: r.won > 0 ? "#b02a2a" : r.won < 0 ? "#1565c0" : "var(--text-muted)" }}>
                             {money ? `${r.won > 0 ? "+" : ""}₩${Math.round(r.won).toLocaleString()}` : "💰"}</td>
                         </tr>
+                        {famExp === `${r.rule}-${r.idx}` && (() => {
+                          const ex = explainTrade(r);
+                          return (
+                            <tr><td colSpan={7} className="px-4 py-2 text-[10.5px] leading-relaxed border-t"
+                              style={{ background: "rgba(106,27,154,0.05)", color: "var(--text-secondary)" }}>
+                              <div><b style={{ color: "#6a1b9a" }}>{lang === "ko" ? r.rule_ko : r.rule_en}</b></div>
+                              <div className="mt-1"><b style={{ color: RED }}>{t("왜 샀나 — ", "why it bought — ")}</b>{lang === "ko" ? ex.buyKo : ex.buyEn}</div>
+                              <div className="mt-0.5"><b style={{ color: BLUE }}>{t("왜 팔았나 — ", "why it sold — ")}</b>{lang === "ko" ? ex.sellKo : ex.sellEn}</div>
+                            </td></tr>
+                          );
+                        })()}
+                        </React.Fragment>
+                      ))}
+                      {((fam as unknown as { holding?: { rule: string; code: string; name?: string;
+                          buy_t?: string; entry: number; last: number; unreal_pct: number }[] }).holding || [])
+                        .map((h, k) => (
+                        <React.Fragment key={`h-${h.rule}-${k}`}>
+                        <tr className="border-t border-[var(--border-default)]/30"
+                          style={{ background: "rgba(230,81,0,0.05)" }}>
+                          <td className="px-2 py-0.5 font-bold cursor-pointer underline decoration-dotted"
+                            title={t("누르면 왜 샀고 왜 아직 들고 있는지 설명이 열립니다", "click: why it bought and why it is still holding")}
+                            onClick={() => setFamExp(famExp === `h-${h.rule}-${k}` ? null : `h-${h.rule}-${k}`)}
+                            style={{ color: "#e65100" }}>{h.rule} ⓘ</td>
+                          <td className="px-2 font-bold text-[var(--text-primary)]">{h.name || h.code}</td>
+                          <td className="px-2" style={{ color: RED }}>
+                            ▲ {h.buy_t?.slice(0, 8)} @₩{Math.round(h.entry).toLocaleString()}</td>
+                          <td className="px-2 font-bold" style={{ color: "#e65100" }}>
+                            {t("보유 중 — 아직 매도 전", "holding — not sold yet")}</td>
+                          <td className="text-right px-2 font-bold"
+                            style={{ color: h.unreal_pct > 0 ? "#b02a2a" : "#1565c0" }}>
+                            {h.unreal_pct > 0 ? "+" : ""}{h.unreal_pct}%</td>
+                          <td className="px-2 text-[10px] text-[var(--text-muted)]">
+                            {t("평가손익 (수수료 전)", "unrealized, before fees")}</td>
+                          <td className="text-right px-3 text-[var(--text-muted)]">—</td>
+                        </tr>
+                        {famExp === `h-${h.rule}-${k}` && (() => {
+                          const ex = explainTrade({ rule: h.rule, entry: h.entry });
+                          return (
+                            <tr><td colSpan={7} className="px-4 py-2 text-[10.5px] leading-relaxed"
+                              style={{ background: "rgba(230,81,0,0.06)", color: "var(--text-secondary)" }}>
+                              <div><b style={{ color: RED }}>{t("왜 샀나 — ", "why it bought — ")}</b>{lang === "ko" ? ex.buyKo : ex.buyEn}</div>
+                              <div className="mt-0.5"><b style={{ color: "#e65100" }}>{t("왜 들고 있나 — ", "why it is holding — ")}</b>
+                                {lang === "ko"
+                                  ? "아직 파는 조건이 오지 않았습니다: 급등이면 두 번째 음봉 시작, 완만하면 +1% 이익, 손실 -2%면 손절, 15:20이면 장 마감 정리 — 이 중 먼저 오는 것이 팝니다."
+                                  : "No sell condition has arrived yet: a sharp rise sells at the start of the 2nd down candle, a slow one at +1%, the stop at −2%, and the 15:20 close-out — whichever comes first."}</div>
+                            </td></tr>
+                          );
+                        })()}
+                        </React.Fragment>
                       ))}
                     </tbody>
                   </table>
                 </div>
               )}
-              {famOpen && fam && ((fam as { holding?: unknown[] }).holding?.length ?? 0) > 0 && (
+              {famOpen && fam && ((fam as { holding?: unknown[] }).holding?.length ?? 0) > 0 && false && (
                 <div className="text-[10.5px] px-2 py-1 flex gap-3 flex-wrap"
                   style={{ background: "rgba(230,81,0,0.06)" }}>
                   <b style={{ color: "#e65100" }}>{t("보유 중", "holding now")}</b>
@@ -1242,6 +1331,17 @@ export default function LiveDeskPage() {
                 </div>
               )}
             </div>
+            <div className="w-full mb-1">
+              <button onClick={() => setCfgOpen(!cfgOpen)}
+                className="text-[10.5px] font-bold px-2.5 py-1 rounded-md border"
+                style={cfgOpen ? { background: "#6a1b9a", color: "#fff", borderColor: "#6a1b9a" }
+                               : { borderColor: "var(--border-default)", color: "var(--text-secondary)" }}>
+                ⚙️ {cfgOpen ? t("설정·비교 닫기 ▲", "close settings & compare ▲")
+                            : t("설정·비교 (알고리즘 선택 · 봉 비교 · 손익) ▼",
+                                "settings & compare (algorithm, clocks, money) ▼")}
+              </button>
+            </div>
+            {cfgOpen && (<>
             <div className="w-full flex items-center gap-2 flex-wrap mb-1 pb-1 border-b"
               style={{ borderColor: "var(--border-default)" }}>
               <b className="text-[11px]" style={{ color: "#6a1b9a" }}>
@@ -1296,7 +1396,9 @@ export default function LiveDeskPage() {
             <span className="text-[10px] text-[var(--text-muted)]">
               {rank.stocks.length}{t("종목", " stocks")} · {rank.stocks.reduce((a2, x) => a2 + x.bars, 0).toLocaleString()}{t("봉", " bars")}
             </span>
+            </>)}
           </div>
+          {cfgOpen && (
           <div className="px-4 py-2 flex items-center gap-2 flex-wrap">
             {/* THE MONEY, off by default (boss 2026-08-04). A win rate and a P&L answer
                 different questions, and mixing them by default is how a rule winning 56%
@@ -1332,6 +1434,7 @@ export default function LiveDeskPage() {
               </span>
             )}
           </div>
+          )}
           <div className="overflow-x-auto">
             <table className="w-full text-[12px] tabular-nums">
               <thead><tr className="text-[10.5px] text-[var(--text-muted)]" style={{ background: "var(--bg-elevated)" }}>
