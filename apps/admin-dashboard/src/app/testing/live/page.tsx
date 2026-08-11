@@ -1291,11 +1291,7 @@ export default function LiveDeskPage() {
                   wrong target and removed (boss 2026-08-11), so no ML options here */}
               <option value="new|all">{t("⚡ Sharp 규칙 — 급락 후 반등 (급등·완만 두 경우)", "⚡ Sharp rule — drop then bounce (sharp & normal cases)")}</option>
               <option value="old|all">{t("📜 예전 규칙 — 기록 보관용 (내일부터 매매 중단)", "📜 Old rule — kept as proof (stops trading tomorrow)")}</option>
-              <option value="old|ml">{t("📈 3연속 상승 + ML 만", "📈 three rises + ML only")}</option>
-              <option value="old|plain">{t("📈 3연속 상승 (ML 없이)", "📈 three rises (no ML)")}</option>
-              <option value="both|all">{t("🔀 두 방식 모두 (비교)", "🔀 both ways (compare)")}</option>
-              <option value="both|plain">{t("🔀 두 방식 모두 · 규칙만 (ML 없이)", "🔀 both ways, rules only (no ML)")}</option>
-              <option value="both|ml">{t("🔀 두 방식 모두 · 규칙+ML 만", "🔀 both ways, rules + ML only")}</option>
+
             </select>
             <span className="text-[10px] text-[var(--text-muted)]">
               {rank.stocks.length}{t("종목", " stocks")} · {rank.stocks.reduce((a2, x) => a2 + x.bars, 0).toLocaleString()}{t("봉", " bars")}

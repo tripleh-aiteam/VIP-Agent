@@ -686,6 +686,9 @@ def live_rule_trades(variant: str = Query(...), tick: int = Query(5),
                   allow_fallback=bool(auto))
 
 
+_FAM_TTL: dict = {}
+
+
 @router.get("/live/rules/family-trades")
 def live_family_trades(family: str = Query("new"), tick: int = Query(5),
                        period: int = Query(0), day: str = Query(""),
@@ -696,7 +699,17 @@ def live_family_trades(family: str = Query("new"), tick: int = Query(5),
     rule id and the trade's index inside that rule's own list, so the page can open the
     exact trade on the chart as proof with the machinery it already has."""
     from services.kiwoom_rules import DESK, trades
+    # 4-second answer cache: the page polls this every 20s while the same computation
+    # also feeds the 3s rules poll, and the boss felt the wait (2026-08-11) - the
+    # holdings used to be a SECOND full pass per rule, which doubled the work for
+    # nothing since trades() already returns them
+    import time as _t
+    _fk = (family, tick, period, day, frm, to, gate, auto)
+    _hit = _FAM_TTL.get(_fk)
+    if _hit and _t.time() - _hit[0] < 4.0:
+        return _hit[1]
     rows = []
+    holding = []
     for v in DESK:
         if family != "all" and v.get("family", "old") != family:
             continue
@@ -705,6 +718,8 @@ def live_family_trades(family: str = Query("new"), tick: int = Query(5),
                    use_gate=bool(gate), allow_fallback=bool(auto))
         if not d.get("ok"):
             continue
+        for h in (d.get("holding") or []):
+            holding.append(dict(h, rule=v["id"]))
         for i, tr in enumerate(d.get("trades") or []):
             won = round((tr.get("entry") or 0) * (tr.get("qty") or 1)
                         * (tr.get("net_pct") or 0) / 100)
@@ -716,25 +731,16 @@ def live_family_trades(family: str = Query("new"), tick: int = Query(5),
                          "exit_why": tr.get("exit_why"), "qty": tr.get("qty"),
                          "won": won, "result": tr.get("result"),
                          "wall": tr.get("wall")})
-    # the family's OPEN positions ride along, so "what is the desk holding right now"
-    # is one call - the boss asked for history, ongoing and holdings in one place
-    holding = []
-    for v in DESK:
-        if family != "all" and v.get("family", "old") != family:
-            continue
-        d = trades(v["id"], tick=tick, period=max(0, min(int(period or 0), 600)),
-                   bars=10, limit=1, day=day, frm=frm, to=to,
-                   use_gate=bool(gate), allow_fallback=bool(auto))
-        for h in (d.get("holding") or []):
-            holding.append(dict(h, rule=v["id"]))
     rows.sort(key=lambda r: (r.get("d8") or "", r.get("buy_t") or ""))
     w = sum(1 for r in rows if r["result"] == "win")
     l = sum(1 for r in rows if r["result"] == "loss")
-    return {"ok": True, "family": family, "rows": rows,
+    _res = {"ok": True, "family": family, "rows": rows,
             "trips": len(rows), "wins": w, "losses": l,
             "win_pct": round(w / (w + l) * 100) if (w + l) else 0,
             "holding": holding,
             "net_won": sum(r["won"] for r in rows)}
+    _FAM_TTL[_fk] = (_t.time(), _res)
+    return _res
 
 
 @router.get("/live/dip-status")
