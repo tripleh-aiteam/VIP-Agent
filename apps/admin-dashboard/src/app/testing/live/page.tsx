@@ -1126,8 +1126,6 @@ export default function LiveDeskPage() {
               className="text-[11px] font-bold px-1 py-0.5 rounded border bg-[var(--bg-primary)]"
               style={{ borderColor: "#6a1b9a", color: "#6a1b9a" }}>
               <option value="t5">5틱</option>
-              <option value="t10">10틱</option>
-              <option value="p30">30초</option>
               <option value="p60">1분</option>
             </select>
             {/* WHICH DAY. "" = today's live tape; any stored day is one click. The ML
@@ -1195,8 +1193,13 @@ export default function LiveDeskPage() {
                   </span>
                 )}
                 {fam && (
-                  <span className="text-[10.5px] text-[var(--text-secondary)]">
+                  <span className="text-[10.5px] font-bold text-[var(--text-primary)]">
                     {fam.trips}{t("건", " trades")}
+                    {" · "}
+                    <span style={{ color: fam.win_pct >= 50 ? "#b02a2a" : "#1565c0" }}>
+                      {t(`승률 ${fam.win_pct}%`, `win ${fam.win_pct}%`)}
+                    </span>
+                    {" "}({fam.wins}{t("승", "W")} {fam.losses}{t("패", "L")})
                     {((fam as { holding?: unknown[] }).holding?.length ?? 0) > 0 &&
                       t(` · 보유 ${(fam as { holding?: unknown[] }).holding!.length}`,
                         ` · holding ${(fam as { holding?: unknown[] }).holding!.length}`)}
