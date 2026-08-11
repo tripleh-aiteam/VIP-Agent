@@ -995,7 +995,18 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                             hit, fill_px, why = True, c, f"고점 대비 -{r.get('give', 0.5)}%"
                 else:
                     if gain >= r.get("slow_take", 1.0):
-                        hit, fill_px, why = True, c, f"+{r.get('slow_take', 1.0)}% 익절"
+                        # THE BOSS'S AMENDMENT (2026-08-11, after watching SK하이닉스 sell
+                        # at +1% and keep climbing): +1% is no longer the sell - it is the
+                        # ARMING line. Reached while the candle is still rising, the trade
+                        # keeps riding and sells like the sharp case, at the start of the
+                        # second down candle. Only a candle already falling at +1% sells
+                        # on the spot. "If it continues to increase do not sell and wait
+                        # until the second blue."
+                        if c < prev:
+                            hit, fill_px, why = True, c, f"+{r.get('slow_take', 1.0)}% 익절 (하락 전환)"
+                        else:
+                            pos["sharp"] = True     # ride from here; 2nd-blue exit takes over
+                            pos["downs"] = 0
                     elif pos.get("ups", 0) >= r.get("slow_ups", 3):
                         hit, fill_px, why = True, c, f"{r.get('slow_ups', 3)}연속 상승"
                     elif pos.get("downs", 0) >= r.get("slow_downs", r.get("downs", 2))                             and gain > FEE_PCT:
