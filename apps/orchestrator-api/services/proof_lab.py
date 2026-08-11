@@ -752,7 +752,7 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
     n = len(stks)
     up = [0] * n
     dn = [0] * n
-    dip_done = [-1] * n        # per stock: the hii of the last dip this rule traded
+    last_exit = [-1] * n       # per stock: bar index of this rule's last completed sell
     lastc = [0.0] * n          # each stock's most recent close, for the closing bell
 
     def _secs(t: str) -> int:
@@ -817,6 +817,7 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                 _tr["buy_ev"] = {"close": pos["close"], "book": pos["bk"], "seq": pos["seq"]}
                 _tr["sell_ev"] = {"close": _px, "book": _bk, "seq": [_px]}
             out.append(_tr)
+            last_exit[_tr["si"]] = i
             pos = None
         # a FLAT close is a PAUSE, not a break (boss 2026-08-06) - the run stands
         if c > prev:
@@ -867,13 +868,14 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                 pass
             elif v.get("dip") and not _dip_entry(s, v, i, up[si], closes):
                 pass
-            elif v.get("dip") and _dip_state(s, v["dip"].get("win_sec", 600))["hii"][i]                     == dip_done[si]:
-                # ONE ENTRY PER SHARP DECREASE (boss 2026-08-11, after 500 trades in a
-                # morning): the drop stays inside the 10-minute window for minutes, so
-                # after every exit the same standing dip re-fired within seconds - one
-                # dip became fifty trades. A dip is named by the bar its high stands on;
-                # this rule buys each named dip ONCE. Only a new high followed by a new
-                # sharp fall re-arms the entry.
+            elif v.get("dip") and _dip_state(s, v["dip"].get("win_sec", 600))["hii"][i]                     <= last_exit[si]:
+                # ONE ENTRY PER SHARP DECREASE, second iteration (boss 2026-08-11: the
+                # first guard named a dip by the exact bar of its high, and at 5틱 a new
+                # micro-high seconds later renamed the same visual dip - he caught
+                # identical trades printed twice in one minute). The law is now: after
+                # this rule sells, it may only buy again off a high that formed AFTER
+                # that sell. A genuinely new rise, then a new sharp fall - one trade per
+                # dip as the eye sees it.
                 pass
             elif (dn[si] if v.get("dir", 1) < 0 else up[si]) >= v["entry"]:
                 if v.get("max_run"):
@@ -945,8 +947,6 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                     _g = (c - _base) / _base * 100 if _base else 0.0
                     _tp = _st["typ"][i] / c * 100 if c else 0.0
                     _sharp = bool(_tp and _g >= v["ride"].get("sharp_rise", 2.0) * _tp)
-                if v.get("dip"):
-                    dip_done[si] = _dip_state(s, v["dip"].get("win_sec", 600))["hii"][i]
                 if v.get("exec") == "limit":
                     _px, _wall = ((c, None) if v.get("family") != "new"
                                   else _wall_offer(s, i, c, s["tick"]))
@@ -1033,6 +1033,7 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                           "exit_why": why, "ml": pos.get("ml"),
                           "sharp": bool(pos.get("sharp")), "wall": pos.get("wall"),
                           "sig": pos.get("sig"), "ask_wall": pos.get("ask_wall")}
+                    last_exit[si] = i
                     if evidence:
                         tr["buy_ev"] = {"close": pos["close"], "book": pos["bk"],
                                         "seq": pos["seq"]}
@@ -1067,6 +1068,7 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                           "exit": fill_px, "gross_pct": round(gross, 3),
                           "net_pct": round(gross - FEE_PCT, 3),
                           "exit_why": why, "ml": pos.get("ml")}
+                    last_exit[si] = i
                     if v.get("ml"):
                         b2 = s.get("ml_bundle")
                         tr["ml_model"] = ({"auc": b2["auc"], "n_train": b2["n_train"],
