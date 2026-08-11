@@ -716,26 +716,23 @@ export default function LiveDeskPage() {
         </h1>
       </div>
 
-      {/* the collector, stated plainly: this page can only draw what has been gathered */}
-      <div className="mt-3 px-3 py-2 rounded-xl border text-[11.5px]" style={{ borderColor: TEAL, background: "rgba(0,131,143,0.05)" }}>
-        <b style={{ color: TEAL }}>📼 {t("체결 수집기", "tape collector")}</b>
-        <span className="ml-2 text-[var(--text-secondary)]">
-          {t(`키움은 최근 체결 약 900건(삼성전자 기준 40초치)만 돌려줍니다. 그보다 과거의 틱은 요청할 수 없어서, 서버가 3초마다 모아 쌓습니다 — 그래서 차트는 장 시작엔 짧고 하루가 갈수록 깊어집니다.`,
-             `Kiwoom returns only the last ~900 executions — forty seconds for 삼성전자 — and older ticks cannot be requested at all. The server collects every 3s and accumulates, so the chart starts short and deepens through the day.`)}
-        </span>
-        <div className="mt-1 flex items-center gap-3 flex-wrap tabular-nums">
+      {/* one status line - the how-it-works text and the per-stock tick counts were
+          removed as weight (boss 2026-08-11); the hole and error warnings stay because
+          they name real, unrecoverable problems */}
+      <div className="mt-3 px-3 py-1.5 rounded-xl border text-[11.5px]" style={{ borderColor: TEAL, background: "rgba(0,131,143,0.05)" }}>
+        <div className="flex items-center gap-3 flex-wrap tabular-nums">
+          <b style={{ color: TEAL }}>📼 {t("체결 수집기", "tape collector")}</b>
           <span className="font-bold" style={{ color: st?.running ? "#2e7d32" : GOLD }}>
             {st?.running ? t("수집 중", "collecting") : t("정지", "stopped")}
           </span>
           <span style={{ color: st?.market_open ? "#2e7d32" : "var(--text-muted)" }}>
-            {st?.market_open ? t("장중 (09:00~15:30)", "market open (09:00-15:30)") : t("장 마감 — 새 체결 없음", "market closed - no new executions")}
+            {st?.market_open ? t("장중 (09:00~15:30)", "market open (09:00-15:30)") : t("장 마감", "market closed")}
           </span>
-          {st?.stocks.map((x) => (
-            <span key={x.code} className="text-[var(--text-muted)]">
-              {x.name} <b className="text-[var(--text-primary)]">{fmt(x.ticks)}</b>{t("틱", " ticks")}
-              {x.first ? ` (${x.first}~${x.last})` : ""}
+          {st && (
+            <span className="text-[var(--text-muted)]">
+              {st.stocks.length}{t("종목", " stocks")} · {fmt(st.stocks.reduce((a2, x) => a2 + x.ticks, 0))}{t("틱", " ticks")}
             </span>
-          ))}
+          )}
           {/* A hole in the tape is not cosmetic. Kiwoom remembers ~40 seconds, so whatever
               traded while the collector was down is gone for good and cannot be
               backfilled. Drawing a spliced tape as one line would imply prices that were
