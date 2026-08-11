@@ -400,6 +400,11 @@ export default function LiveDeskPage() {
   // the morning GO / NO-GO verdict per stock (advisor's point 2)
   // TODAY's five, chosen by the checklist every morning
   const [dpick, setDpick] = useState<Pick | null>(null);
+  // 🌙 what the US did overnight - fetched once, cached server-side per day
+  type Ovn = { ok: boolean; fetched_at: string; mood_ko: string; mood_en: string;
+               rows: { sym: string; name: string; chg_pct: number; close: number }[] };
+  const [ovn, setOvn] = useState<Ovn | null>(null);
+  useEffect(() => { api<Ovn>("/paper-desk/overnight").then((d) => d?.ok && setOvn(d)).catch(() => {}); }, []);
   const [pickOpen, setPickOpen] = useState(true);      // the desk is worth seeing at once
   const [pickAll, setPickAll] = useState(false);       // the other 32 stay behind a button
   const [pickCol, setPickCol] = useState("");          // a column header explains itself when clicked
@@ -797,6 +802,25 @@ export default function LiveDeskPage() {
         </div>
       </div>
 
+      {ovn && (
+        <div className="mt-3 rounded-xl border px-3 py-1.5 text-[11px] flex items-center gap-3 flex-wrap"
+          style={{ borderColor: "#37474f", background: "rgba(55,71,79,0.06)" }}>
+          <b style={{ color: "#37474f" }}>🌙 {t("밤사이 미국", "overnight US")}</b>
+          {ovn.rows.map((r) => (
+            <span key={r.sym} className="tabular-nums">
+              {r.name}{" "}
+              <b style={{ color: r.chg_pct > 0 ? "#b02a2a" : r.chg_pct < 0 ? "#1565c0" : "var(--text-muted)" }}>
+                {r.chg_pct > 0 ? "+" : ""}{r.chg_pct}%
+              </b>
+            </span>
+          ))}
+          {(ovn.mood_ko || ovn.mood_en) && (
+            <span className="font-bold" style={{ color: "#e65100" }}>
+              → {lang === "ko" ? ovn.mood_ko : ovn.mood_en}
+            </span>
+          )}
+        </div>
+      )}
       {dpick?.ok && (
         <div className="mt-3 rounded-xl border overflow-hidden" style={{ borderColor: "#1565c0" }}>
           <div className="px-4 py-2 flex items-center gap-2 flex-wrap cursor-pointer"

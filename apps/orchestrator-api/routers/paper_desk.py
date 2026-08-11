@@ -781,6 +781,14 @@ def desk_mode_get():
             "trading_now": [{"code": c, "name": n} for c, n in WATCH]}
 
 
+@router.get("/overnight")
+def overnight(force: int = Query(0)):
+    """What the US did while Korea slept - S&P, NASDAQ, SOXX, USD/KRW with the day's
+    plain-words read. Cached per calendar day; force=1 refetches."""
+    from services.overnight import fetch
+    return fetch(force=bool(force))
+
+
 @router.get("/drill")
 def history_drill(code: str = Query(...), day: str = Query(...),
                   level: str = Query("hours"), hour: str = Query(""),
