@@ -677,6 +677,7 @@ def _dip_state(s: dict, win_sec: int = 600) -> dict:
     rng = [0.0] * n
     drop = [0.0] * n
     span = [0] * n
+    hii = [0] * n
     j = 0
     maxdq = deque()      # decreasing closes: head = window max
     mindq = deque()      # increasing closes: head = window min
@@ -701,6 +702,7 @@ def _dip_state(s: dict, win_sec: int = 600) -> dict:
         hi = cl[hi_i]
         lo = cl[mindq[0]]
         hiw[i] = hi
+        hii[i] = hi_i
         span[i] = ((secs[i] or 0) - (secs[j] or 0)) if by_time else (i - j)
         rng[i] = (hi - lo) / hi * 100 if hi else 0.0
         tr = cl[i]
@@ -710,7 +712,7 @@ def _dip_state(s: dict, win_sec: int = 600) -> dict:
                 break
         drop[i] = (hi - tr) / hi * 100 if hi and hi_i < i else 0.0
     got = {"win_sec": win_sec, "typ": typ, "hi": hiw, "rng": rng, "drop": drop,
-           "span": span, "by_time": by_time}
+           "span": span, "hii": hii, "by_time": by_time}
     box[("t", win_sec)] = got
     return got
 
@@ -750,6 +752,7 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
     n = len(stks)
     up = [0] * n
     dn = [0] * n
+    dip_done = [-1] * n        # per stock: the hii of the last dip this rule traded
     lastc = [0.0] * n          # each stock's most recent close, for the closing bell
 
     def _secs(t: str) -> int:
@@ -864,6 +867,14 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                 pass
             elif v.get("dip") and not _dip_entry(s, v, i, up[si], closes):
                 pass
+            elif v.get("dip") and _dip_state(s, v["dip"].get("win_sec", 600))["hii"][i]                     == dip_done[si]:
+                # ONE ENTRY PER SHARP DECREASE (boss 2026-08-11, after 500 trades in a
+                # morning): the drop stays inside the 10-minute window for minutes, so
+                # after every exit the same standing dip re-fired within seconds - one
+                # dip became fifty trades. A dip is named by the bar its high stands on;
+                # this rule buys each named dip ONCE. Only a new high followed by a new
+                # sharp fall re-arms the entry.
+                pass
             elif (dn[si] if v.get("dir", 1) < 0 else up[si]) >= v["entry"]:
                 if v.get("max_run"):
                     # small-run confirmation, same walk as run_variant - keep in step
@@ -934,6 +945,8 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                     _g = (c - _base) / _base * 100 if _base else 0.0
                     _tp = _st["typ"][i] / c * 100 if c else 0.0
                     _sharp = bool(_tp and _g >= v["ride"].get("sharp_rise", 2.0) * _tp)
+                if v.get("dip"):
+                    dip_done[si] = _dip_state(s, v["dip"].get("win_sec", 600))["hii"][i]
                 if v.get("exec") == "limit":
                     _px, _wall = ((c, None) if v.get("family") != "new"
                                   else _wall_offer(s, i, c, s["tick"]))
