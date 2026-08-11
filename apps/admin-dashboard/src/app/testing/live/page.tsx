@@ -414,7 +414,10 @@ export default function LiveDeskPage() {
                    ko: string; en: string; ups?: number }[] };
   const [dipStat, setDipStat] = useState<DipStat | null>(null);
   useEffect(() => {
-    if ((dpick?.mode ?? "fixed") !== "fixed") { setDipStat(null); return; }
+    // the slim fixed panel no longer shows per-stock status (boss 2026-08-11): the
+    // endpoint stays for the API, but the page stops polling it
+    { setDipStat(null); return; }
+    // eslint-disable-next-line no-unreachable
     let live = true;
     const pullDip = () => {
       const q = perRef.current ? `period=${perRef.current}` : `tick=${tickRef.current}`;
@@ -501,6 +504,13 @@ export default function LiveDeskPage() {
   // and closer to a real account. It scales the money and never the win rate.
   const [budget, setBudget] = useState(0);
   const chartRef = useRef<HTMLDivElement | null>(null);
+  // THE CHART IS ON DEMAND (boss 2026-08-11: the app got heavy). A click on a trade
+  // time opens the trade's row and numbers only; the chart - and the 60,000-bar payload
+  // behind it - loads when 차트 보기 is pressed. Same for the order-book evidence.
+  const [chartOpen, setChartOpen] = useState(false);
+  const chartOpenRef = useRef(false);
+  useEffect(() => { chartOpenRef.current = chartOpen; }, [chartOpen]);
+  const [evOpen, setEvOpen] = useState(false);
   // 🕰️ Data File - the minute record the rules read, built from the REAL executions.
   // The artificial lab has had this since 2026-08-03; the boss asked for the same thing
   // here, because a fill you cannot look up is a fill you cannot check.
@@ -554,7 +564,7 @@ export default function LiveDeskPage() {
     // newest number is allowed to touch the screen.
     const my = ++detSeqRef.current;
     api<RDetail>(`/paper-desk/live/rules/trades?variant=${encodeURIComponent(id)}&${q}`
-      + `&code=${encodeURIComponent(want)}&bars=60000`
+      + `&code=${encodeURIComponent(want)}&bars=${chartOpenRef.current ? 60000 : 1200}`
       + `&around=${tradeIdx ?? -1}&budget=${budgetRef.current}`
       + `&day=${ruleDayRef.current}&frm=${encodeURIComponent(hourFromRef.current)}&to=${encodeURIComponent(hourToRef.current)}`
       + `&gate=${showBlockedRef.current ? 0 : 1}`
@@ -615,7 +625,8 @@ export default function LiveDeskPage() {
     setSel(r.rule);
     autoOpenRef.current = r.rule;
     openRule(r.rule, r.idx, r.code);
-    setTimeout(() => chartRef.current?.scrollIntoView({ behavior: "smooth", block: "center" }), 120);
+    if (chartOpenRef.current)
+      setTimeout(() => chartRef.current?.scrollIntoView({ behavior: "smooth", block: "center" }), 120);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [openRule]);
   
@@ -704,10 +715,6 @@ export default function LiveDeskPage() {
           📡 {t("실시간 키움 데스크 — 진짜 시장", "Live Kiwoom Desk — the real market")}
         </h1>
       </div>
-      <p className="mt-1 text-[12px] text-[var(--text-secondary)]">
-        {t("인공 데이터로 만든 차트와 표를 그대로 진짜 체결 위에 올렸습니다. 인공 데이터 실험(증명 시뮬레이션·전략 실험실)은 그대로 계속 돌아갑니다 — 이 화면은 완전히 별개입니다.",
-           "the same charts and tables as the artificial labs, on real executions. The artificial experiments (Proof Lab, Strategy Lab) keep running untouched — this page is entirely separate.")}
-      </p>
 
       {/* the collector, stated plainly: this page can only draw what has been gathered */}
       <div className="mt-3 px-3 py-2 rounded-xl border text-[11.5px]" style={{ borderColor: TEAL, background: "rgba(0,131,143,0.05)" }}>
@@ -806,63 +813,24 @@ export default function LiveDeskPage() {
               </span>
             </span>
           </div>
+          {/* FIXED MODE IS LIGHT (boss 2026-08-11: per-stock rows made the app heavy).
+              Six names in the header, one button to the merged history+holdings; the
+              score mode below keeps its full ranking - there the information is the
+              point. */}
           {pickOpen && (dpick.mode ?? "fixed") === "fixed" && (
-            <div>
-              <table className="w-full text-[12px] tabular-nums">
-                <thead><tr className="text-[10px] text-[var(--text-muted)]"
-                  style={{ background: "var(--bg-elevated)" }}>
-                  <th className="text-left px-3 py-1">{t("종목", "stock")}</th>
-                  <th className="text-right px-2">{t("오늘 수집 체결", "ticks today")}</th>
-                  <th className="text-left px-3">{t("수집 시간", "collected")}</th>
-                  <th className="text-left px-3">{t("새 규칙 상태 (지금)", "new rule - where it stands now")}</th>
-                  <th className="text-left px-3">{t("오늘 매매", "today's trading")}</th>
-                </tr></thead>
-                <tbody>
-                  {(dpick.picks || []).map((c2) => {
-                    const r = (dpick.rows || []).find((x) => x.code === c2);
-                    const live = (st?.stocks || []).find((x) => x.code === c2);
-                    return (
-                      <tr key={c2} onClick={() => openStock(c2)}
-                        className="border-t border-[var(--border-default)]/40 cursor-pointer"
-                        style={{ background: code === c2 ? "rgba(21,101,192,0.14)" : "transparent" }}>
-                        <td className="px-3 py-1.5 font-bold text-[var(--text-primary)]">
-                          {r?.name || c2}
-                        </td>
-                        <td className="text-right px-2 text-[var(--text-secondary)]">
-                          {live ? live.ticks.toLocaleString() : "—"}
-                        </td>
-                        <td className="px-3 text-[10px] text-[var(--text-muted)]">
-                          {live?.first ? `${live.first} ~ ${live.last}` : t("아직 없음", "nothing yet")}
-                        </td>
-                        <td className="px-3 text-[10.5px]">
-                          {(() => {
-                            const d2 = dipStat?.rows.find((x) => x.code === c2);
-                            if (!d2) return <span className="text-[var(--text-muted)]">—</span>;
-                            const col = d2.stage === "ready" ? "#b02a2a"
-                                      : d2.stage === "turning" ? "#e65100"
-                                      : d2.stage === "chop" ? "var(--text-muted)" : "#1565c0";
-                            return <span style={{ color: col, fontWeight: d2.stage === "ready" ? 700 : 400 }}>
-                              {d2.stage === "ready" ? "🔴 " : d2.stage === "turning" ? "🟠 " : ""}
-                              {lang === "ko" ? d2.ko : d2.en}
-                            </span>;
-                          })()}
-                        </td>
-                        <td className="px-3">
-                          <span className="text-[10.5px] font-bold px-2 py-0.5 rounded border"
-                            style={{ borderColor: "#1565c0", color: "#1565c0" }}>
-                            {t("매수·매도 시간과 차트 보기 →", "see the buy / sell times and the chart →")}
-                          </span>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-              <div className="px-4 py-2 text-[10.5px] text-[var(--text-muted)] border-t"
-                style={{ borderColor: "var(--border-default)" }}>
-                {t("직접 고정한 6종목입니다. 종목을 누르면 그 종목의 오늘 매매 — 몇 시에 얼마에 사고, 몇 시에 얼마에 팔았는지 — 와 차트가 아래에 열립니다. 점수는 이 화면에서 뺐습니다: 어떤 종목을 매매할지 이미 정해져 있으므로 점수가 결정하는 것이 없습니다. 100점 순위를 보시려면 위의 「100점 상위 5종목」으로 바꾸세요.",
-                   "Your own six. Click a stock and its trading opens below - what time it bought and at what price, what time it sold, with the chart. The scores are off this screen: the desk is already decided, so they decide nothing. Switch to \u300c100점 상위 5종목\u300d above to see the ranking.")}
-              </div>
+            <div className="px-4 py-2 flex items-center gap-2 flex-wrap border-t"
+              style={{ borderColor: "var(--border-default)" }}>
+              <button onClick={() => { setFamOpen(true);
+                  setTimeout(() => document.getElementById("fam-table")?.scrollIntoView(
+                    { behavior: "smooth", block: "start" }), 60); }}
+                className="text-[11px] font-bold px-3 py-1 rounded-md border"
+                style={{ borderColor: "#0f5132", color: "#0f5132" }}>
+                📋 {t("전체 매매 내역 · 보유 현황 보기", "trading history & holdings — all six together")}
+              </button>
+              <span className="text-[10px] text-[var(--text-muted)]">
+                {t("종목별 상세는 내역 표에서 시간을 누르면 열립니다.",
+                   "per-trade detail opens from the history table.")}
+              </span>
             </div>
           )}
           {pickOpen && (dpick.mode ?? "fixed") !== "fixed" && (
@@ -1193,7 +1161,7 @@ export default function LiveDeskPage() {
                 {t("해제", "clear")}
               </button>
             )}
-            <div className="w-full mb-1 pb-1 border-b" style={{ borderColor: "var(--border-default)" }}>
+            <div id="fam-table" className="w-full mb-1 pb-1 border-b" style={{ borderColor: "var(--border-default)" }}>
               <div className="flex items-center gap-2 flex-wrap cursor-pointer"
                 onClick={() => setFamOpen(!famOpen)}>
                 <b className="text-[11px]" style={{ color: "#0f5132" }}>
@@ -1255,6 +1223,22 @@ export default function LiveDeskPage() {
                   </table>
                 </div>
               )}
+              {famOpen && fam && ((fam as { holding?: unknown[] }).holding?.length ?? 0) > 0 && (
+                <div className="text-[10.5px] px-2 py-1 flex gap-3 flex-wrap"
+                  style={{ background: "rgba(230,81,0,0.06)" }}>
+                  <b style={{ color: "#e65100" }}>{t("보유 중", "holding now")}</b>
+                  {((fam as unknown as { holding: { rule: string; code: string; name?: string;
+                     buy_t?: string; entry: number; last: number; unreal_pct: number }[] }).holding)
+                    .map((h, k) => (
+                    <span key={k}>
+                      {h.rule} · {h.name || h.code} {h.buy_t?.slice(0, 5)} @₩{Math.round(h.entry).toLocaleString()}
+                      {" → "}
+                      <b style={{ color: h.unreal_pct > 0 ? "#b02a2a" : "#1565c0" }}>
+                        {h.unreal_pct > 0 ? "+" : ""}{h.unreal_pct}%</b>
+                    </span>
+                  ))}
+                </div>
+              )}
               {famOpen && fam && fam.rows.length === 0 && (
                 <div className="text-[10.5px] text-[var(--text-muted)] py-1">
                   {t("이 기간에 완료된 매매가 없습니다.", "no completed trades in this window.")}
@@ -1293,10 +1277,6 @@ export default function LiveDeskPage() {
                 style={{ borderColor: "#6a1b9a", color: "#6a1b9a" }}>
                 {t("다시 계산", "recalculate")}
               </button>
-              <span className="text-[10px] text-[var(--text-muted)]">
-                {t("같은 테이프, 같은 규칙, 봉 크기만 다름 — 각 방식의 모든 규칙 합계",
-                   "same tape, same rules, only the bar size differs - every rule in each family, added up")}
-              </span>
             </div>
             {/* ONE dropdown for "which rules am I looking at" (boss 2026-08-10: put the
                 new rule inside the dropdown that already holds 전체 / 규칙+ML / 규칙만).
@@ -1312,38 +1292,17 @@ export default function LiveDeskPage() {
               style={{ borderColor: "#6a1b9a", color: "#6a1b9a" }}>
               {/* the new rule trades WITHOUT ML - its old ML twins were trained on the
                   wrong target and removed (boss 2026-08-11), so no ML options here */}
-              <option value="new|all">{t("📉📈 급락 후 반등 — 새 규칙 (ML 없음)", "📉📈 sharp drop then bounce - the new rule (no ML)")}</option>
-              <option value="old|all">{t("📈 3연속 상승 — 예전 규칙", "📈 three rises - the old rule")}</option>
+              <option value="new|all">{t("⚡ Sharp 규칙 — 급락 후 반등 (급등·완만 두 경우)", "⚡ Sharp rule — drop then bounce (sharp & normal cases)")}</option>
+              <option value="old|all">{t("📜 예전 규칙 — 기록 보관용 (내일부터 매매 중단)", "📜 Old rule — kept as proof (stops trading tomorrow)")}</option>
               <option value="old|ml">{t("📈 3연속 상승 + ML 만", "📈 three rises + ML only")}</option>
               <option value="old|plain">{t("📈 3연속 상승 (ML 없이)", "📈 three rises (no ML)")}</option>
               <option value="both|all">{t("🔀 두 방식 모두 (비교)", "🔀 both ways (compare)")}</option>
               <option value="both|plain">{t("🔀 두 방식 모두 · 규칙만 (ML 없이)", "🔀 both ways, rules only (no ML)")}</option>
               <option value="both|ml">{t("🔀 두 방식 모두 · 규칙+ML 만", "🔀 both ways, rules + ML only")}</option>
             </select>
-            <span className="text-[10.5px] text-[var(--text-muted)]">
-              {way === "new"
-                ? t("새 방식: 급락 → 멈춤 → 2번째 양봉에 매수. 급등이면 0.5%·1%에 팔지 않고 고점 -0.5% 또는 2연속 음봉까지 보유, 완만하면 3연속 상승 또는 +1%에 매도. 횡보는 아예 매매 안 함. — 1년치 검증에서는 손실이었습니다(진입 신호가 무작위 시점과 통계적으로 같음). 실제 테이프로 확인하려고 올려둔 것이며 가짜 돈입니다.",
-                    "New way: sharp drop -> it stops -> buy the 2nd up candle. A sharp bounce is NOT sold at 0.5% or 1% - it is held to -0.5% off the peak or 2 down candles; a slow one is sold at 3 rises or +1%. Nothing is traded in a flat market. - It lost money in the year-long test (the entry is statistically the same as a random moment). It is here on paper money to be settled on live tape.")
-                : way === "old"
-                ? t("예전 방식: 3연속 상승에 매수, +6 또는 +10호가에 매도, -2% 손절. 지금까지 실제로 거래해 온 규칙입니다.",
-                    "Old way: buy after 3 rises, sell at +6 or +10 ticks, -2% stop. This is what the desk has actually been trading.")
-                : t("두 방식이 같은 테이프 위에서 동시에 돌아갑니다 — 승률과 금액을 나란히 비교하세요.",
-                    "Both families run on the same tape at the same time - compare the win rate and the money side by side.")}
+            <span className="text-[10px] text-[var(--text-muted)]">
+              {rank.stocks.length}{t("종목", " stocks")} · {rank.stocks.reduce((a2, x) => a2 + x.bars, 0).toLocaleString()}{t("봉", " bars")}
             </span>
-            <span className="text-[10px] font-bold px-1.5 py-0.5 rounded"
-              style={{ background: "rgba(106,27,154,0.12)", color: "#6a1b9a" }}>
-              {t("전 규칙 지정가 주문 — 종가에 걸고, 한 호가까지만 쫓고, 하한선 아래로는 팔지 않습니다",
-      "every rule uses limit orders — offer the close, chase at most one tick, never sell below the floor")}
-            </span>
-            {rank.stocks.map((x) => (
-              <span key={x.code} className="text-[10px] text-[var(--text-muted)]">
-                {x.name} {x.bars.toLocaleString()}{t("봉", " bars")}
-              </span>
-            ))}
-          </div>
-          <div className="px-4 py-1.5 text-[10.5px]" style={{ background: "rgba(230,81,0,0.06)", color: GOLD }}>
-            ⚠ {t(`체결가 가정: 살 때 종가+1호가(매도호가를 침), 팔 때 종가(매수호가). 왕복 수수료 ${rank.fee_pct}% 별도. 과거의 실제 호가차는 아무도 기록하지 않으므로 되살릴 수 없어, 가장 좁은 1호가로 가정했습니다 — 호가가 넓은 종목에서는 결과가 실제보다 좋게 나옵니다.`,
-                  `fill assumption: a BUY pays close + one tick (it lifts the ask), a SELL receives close (it hits the bid), plus ${rank.fee_pct}% round trip. The real historical spread was never recorded and cannot be recovered, so the tightest possible one tick is assumed - on a wide-spread stock that FLATTERS the result.`)}
           </div>
           <div className="px-4 py-2 flex items-center gap-2 flex-wrap">
             {/* THE MONEY, off by default (boss 2026-08-04). A win rate and a P&L answer
@@ -1673,7 +1632,19 @@ export default function LiveDeskPage() {
               clicking a row scrolled the page down and away from the very thing the click
               was supposed to show. The Strategy Lab puts the chart directly above its
               trade history and the boss asked for the same here (2026-08-04). */}
-          <div ref={chartRef} className="mx-4 my-2 rounded-xl border p-2" style={{ borderColor: "var(--border-default)", background: "var(--bg-elevated)" }}>
+          {!chartOpen && (
+            <div className="mx-4 my-2">
+              <button onClick={() => { setChartOpen(true); chartOpenRef.current = true;
+                                       if (sel) openRule(sel, pick, det?.chart?.code); }}
+                className="text-[11px] font-bold px-3 py-1 rounded-md border"
+                style={{ borderColor: "#6a1b9a", color: "#6a1b9a" }}>
+                📈 {t("차트 보기", "show the chart")}
+              </button>
+            </div>
+          )}
+          <div ref={chartRef} className="mx-4 my-2 rounded-xl border p-2"
+            style={{ borderColor: "var(--border-default)", background: "var(--bg-elevated)",
+                     display: chartOpen ? undefined : "none" }}>
             <div className="px-2 pt-1 pb-2 text-[11.5px]" style={{ color: "#6a1b9a" }}>
               <b>📈 {(sel && det?.chart ? det.chart.name : tape?.name) ?? ""} — {tape?.clock ?? ""} {t("차트", "chart")}</b>
               {sel && det?.chart && det.chart.code !== code && (
@@ -1813,7 +1784,7 @@ export default function LiveDeskPage() {
                                               || (tr.d8 ?? "") !== detDayRef.current) {
                                             setPick(i); if (sel) openRule(sel, i, tr.code);
                                           }
-                                          chartRef.current?.scrollIntoView({ behavior: "smooth", block: "center" }); }}>
+                                          if (chartOpenRef.current) chartRef.current?.scrollIntoView({ behavior: "smooth", block: "center" }); }}>
                         ▲ {tr.buy_t.slice(0, 5)}
                         {tr.wall && <span title={t(
                           `호가벽 앞 매수: ${tr.wall.qty.toLocaleString()}주 벽(₩${tr.wall.price.toLocaleString()}) 바로 위 1틱에 주문`,
@@ -1826,7 +1797,7 @@ export default function LiveDeskPage() {
                                               || (tr.d8 ?? "") !== detDayRef.current) {
                                             setPick(i); if (sel) openRule(sel, i, tr.code);
                                           }
-                                          chartRef.current?.scrollIntoView({ behavior: "smooth", block: "center" }); }}>
+                                          if (chartOpenRef.current) chartRef.current?.scrollIntoView({ behavior: "smooth", block: "center" }); }}>
                         ▼ {tr.sell_t.slice(0, 5)}</td>
                       <td className="text-right px-2">₩{tr.exit.toLocaleString()}</td>
                       {money && (
@@ -2071,10 +2042,18 @@ export default function LiveDeskPage() {
                     </div>
                   </div>
                 )}
-                <div className="mt-2 grid gap-2" style={{ gridTemplateColumns: "1fr 1fr" }}>
-                  <Side ev={tr.buy_ev} side="BUY" />
-                  <Side ev={tr.sell_ev} side="SELL" />
-                </div>
+                {!evOpen ? (
+                  <button onClick={() => setEvOpen(true)}
+                    className="mt-2 text-[10.5px] px-2 py-0.5 rounded border"
+                    style={{ borderColor: "var(--border-default)", color: "var(--text-secondary)" }}>
+                    📖 {t("호가 근거 보기 (체결가가 정해진 과정)", "show the book evidence (how the fills were set)")}
+                  </button>
+                ) : (
+                  <div className="mt-2 grid gap-2" style={{ gridTemplateColumns: "1fr 1fr" }}>
+                    <Side ev={tr.buy_ev} side="BUY" />
+                    <Side ev={tr.sell_ev} side="SELL" />
+                  </div>
+                )}
                 <div className="mt-2 text-[11.5px] tabular-nums">
                   <b className="text-[var(--text-primary)]">{t("결과", "result")}: </b>
                   ₩{tr.entry.toLocaleString()} → ₩{tr.exit.toLocaleString()}

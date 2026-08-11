@@ -75,6 +75,11 @@ VARIANTS: list[dict] = [
     # ── THE LIMIT-ORDER DESK (boss 2026-08-10): offer the close, never pay more than
     # one tick above it, take +2 ticks, stop -2% with his per-stock floor. Same rule,
     # five variations of the entry filter, so the board keeps comparing.
+    # ── THE OLD FAMILY IS RETIRED (boss 2026-08-11: "keep it, but do not trade -
+    # just as proof we keep our historical"). Every rule below carries retired_from:
+    # on days BEFORE that date they replay exactly as always, so the record stands;
+    # from that date they take no new entries. The date is tomorrow, not today, so
+    # the morning's trades stay on today's board instead of vanishing mid-session.
     # ── THE BIG-TAKE DESK (boss 2026-08-10, from his own observation on the board:
     # every rule wins 96-100%, and the ONLY thing separating profit from loss is the
     # size of the target). The fee is ~0.23% of the position; two ticks does not cover
@@ -85,44 +90,44 @@ VARIANTS: list[dict] = [
     # Every rule here is a limit order (offer the close, cap the chase, floor the stop).
     # "ng" = the same rule with the daily gate IGNORED, so the board settles the gate
     # question by itself instead of us arguing about it.
-    {"id": "T6", "entry": 3, "kind": "pct", "a": 0.3, "b": 2.0, "exec": "limit",
+    {"id": "T6", "retired_from": "20260812", "entry": 3, "kind": "pct", "a": 0.3, "b": 2.0, "exec": "limit",
      "take_ticks": 6, "stop_pct": 2.0, "wait_bars": 2, "vol": 1.5},
-    {"id": "T6ng", "entry": 3, "kind": "pct", "a": 0.3, "b": 2.0, "exec": "limit",
+    {"id": "T6ng", "retired_from": "20260812", "entry": 3, "kind": "pct", "a": 0.3, "b": 2.0, "exec": "limit",
      "take_ticks": 6, "stop_pct": 2.0, "wait_bars": 2, "vol": 1.5, "ignore_gate": True},
-    {"id": "T10", "entry": 3, "kind": "pct", "a": 0.3, "b": 2.0, "exec": "limit",
+    {"id": "T10", "retired_from": "20260812", "entry": 3, "kind": "pct", "a": 0.3, "b": 2.0, "exec": "limit",
      "take_ticks": 10, "stop_pct": 2.0, "wait_bars": 2, "vol": 1.5},
-    {"id": "T10ng", "entry": 3, "kind": "pct", "a": 0.3, "b": 2.0, "exec": "limit",
+    {"id": "T10ng", "retired_from": "20260812", "entry": 3, "kind": "pct", "a": 0.3, "b": 2.0, "exec": "limit",
      "take_ticks": 10, "stop_pct": 2.0, "wait_bars": 2, "vol": 1.5, "ignore_gate": True},
     # EVERY main rule gets an ungated twin (boss 2026-08-10). With one twin each, a
     # gate-closed day left the gated side of the board empty and the comparison could
     # never mature; now both sides collect evidence on every single day.
-    {"id": "T6r", "entry": 3, "kind": "pct", "a": 0.3, "b": 2.0, "exec": "limit",
+    {"id": "T6r", "retired_from": "20260812", "entry": 3, "kind": "pct", "a": 0.3, "b": 2.0, "exec": "limit",
      "take_ticks": 6, "stop_pct": 2.0, "wait_bars": 2, "vol": 1.5, "max_run": 0.2},
-    {"id": "T6rng", "entry": 3, "kind": "pct", "a": 0.3, "b": 2.0, "exec": "limit",
+    {"id": "T6rng", "retired_from": "20260812", "entry": 3, "kind": "pct", "a": 0.3, "b": 2.0, "exec": "limit",
      "take_ticks": 6, "stop_pct": 2.0, "wait_bars": 2, "vol": 1.5, "max_run": 0.2,
      "ignore_gate": True},
-    {"id": "T6twong", "entry": 2, "kind": "pct", "a": 0.3, "b": 2.0, "exec": "limit",
+    {"id": "T6twong", "retired_from": "20260812", "entry": 2, "kind": "pct", "a": 0.3, "b": 2.0, "exec": "limit",
      "take_ticks": 6, "stop_pct": 2.0, "wait_bars": 2, "vol": 1.5, "ignore_gate": True},
-    {"id": "T10twong", "entry": 2, "kind": "pct", "a": 0.3, "b": 2.0, "exec": "limit",
+    {"id": "T10twong", "retired_from": "20260812", "entry": 2, "kind": "pct", "a": 0.3, "b": 2.0, "exec": "limit",
      "take_ticks": 10, "stop_pct": 2.0, "wait_bars": 2, "vol": 1.5, "ignore_gate": True},
-    {"id": "T6barng", "entry": 3, "kind": "pct", "a": 0.3, "b": 2.0, "exec": "limit",
+    {"id": "T6barng", "retired_from": "20260812", "entry": 3, "kind": "pct", "a": 0.3, "b": 2.0, "exec": "limit",
      "take_ticks": 6, "stop_pct": 2.0, "wait_bars": 2, "ignore_gate": True},
-    {"id": "T4ng", "entry": 3, "kind": "pct", "a": 0.3, "b": 2.0, "exec": "limit",
+    {"id": "T4ng", "retired_from": "20260812", "entry": 3, "kind": "pct", "a": 0.3, "b": 2.0, "exec": "limit",
      "take_ticks": 4, "stop_pct": 2.0, "wait_bars": 2, "vol": 1.5, "ignore_gate": True},
-    {"id": "T10r", "entry": 3, "kind": "pct", "a": 0.3, "b": 2.0, "exec": "limit",
+    {"id": "T10r", "retired_from": "20260812", "entry": 3, "kind": "pct", "a": 0.3, "b": 2.0, "exec": "limit",
      "take_ticks": 10, "stop_pct": 2.0, "wait_bars": 2, "vol": 1.5, "max_run": 0.2},
-    {"id": "T6two", "entry": 2, "kind": "pct", "a": 0.3, "b": 2.0, "exec": "limit",
+    {"id": "T6two", "retired_from": "20260812", "entry": 2, "kind": "pct", "a": 0.3, "b": 2.0, "exec": "limit",
      "take_ticks": 6, "stop_pct": 2.0, "wait_bars": 2, "vol": 1.5},
-    {"id": "T10two", "entry": 2, "kind": "pct", "a": 0.3, "b": 2.0, "exec": "limit",
+    {"id": "T10two", "retired_from": "20260812", "entry": 2, "kind": "pct", "a": 0.3, "b": 2.0, "exec": "limit",
      "take_ticks": 10, "stop_pct": 2.0, "wait_bars": 2, "vol": 1.5},
-    {"id": "T6bare", "entry": 3, "kind": "pct", "a": 0.3, "b": 2.0, "exec": "limit",
+    {"id": "T6bare", "retired_from": "20260812", "entry": 3, "kind": "pct", "a": 0.3, "b": 2.0, "exec": "limit",
      "take_ticks": 6, "stop_pct": 2.0, "wait_bars": 2},
     # one +4 kept as the bridge to the old numbers, and the ML twins of the two mains
-    {"id": "T4", "entry": 3, "kind": "pct", "a": 0.3, "b": 2.0, "exec": "limit",
+    {"id": "T4", "retired_from": "20260812", "entry": 3, "kind": "pct", "a": 0.3, "b": 2.0, "exec": "limit",
      "take_ticks": 4, "stop_pct": 2.0, "wait_bars": 2, "vol": 1.5},
-    {"id": "T6ML", "entry": 3, "kind": "pct", "a": 0.3, "b": 2.0, "exec": "limit",
+    {"id": "T6ML", "retired_from": "20260812", "entry": 3, "kind": "pct", "a": 0.3, "b": 2.0, "exec": "limit",
      "take_ticks": 6, "stop_pct": 2.0, "wait_bars": 2, "vol": 1.5, "ml": True},
-    {"id": "T10ML", "entry": 3, "kind": "pct", "a": 0.3, "b": 2.0, "exec": "limit",
+    {"id": "T10ML", "retired_from": "20260812", "entry": 3, "kind": "pct", "a": 0.3, "b": 2.0, "exec": "limit",
      "take_ticks": 10, "stop_pct": 2.0, "wait_bars": 2, "vol": 1.5, "ml": True},
     # ══ THE NEW WAY (boss 2026-08-10) ═══════════════════════════════════════════════
     # "Do not look for 3 red candles anywhere. Find a SHARP DECREASE, and whenever it
@@ -797,7 +802,9 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
             # the daily gate (boss 2026-08-10): a stock whose day was judged NO-GO before
             # the open produces no entries at all today. Exits are untouched - a position
             # opened before a gate closes is still managed to its normal end.
-            if s.get("gate_ok") is False and not v.get("ignore_gate"):
+            if v.get("retired_from") and (s.get("d8") or "") >= v["retired_from"]:
+                pass       # retired rules replay their past and take nothing new
+            elif s.get("gate_ok") is False and not v.get("ignore_gate"):
                 pass
             # OSCILLATION = NO TRADING, for every rule on the desk (boss 2026-08-11:
             # "if the chart is oscillation then not trading - make sure for all"). The

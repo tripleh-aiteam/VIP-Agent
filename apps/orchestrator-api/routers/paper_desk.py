@@ -716,12 +716,24 @@ def live_family_trades(family: str = Query("new"), tick: int = Query(5),
                          "exit_why": tr.get("exit_why"), "qty": tr.get("qty"),
                          "won": won, "result": tr.get("result"),
                          "wall": tr.get("wall")})
+    # the family's OPEN positions ride along, so "what is the desk holding right now"
+    # is one call - the boss asked for history, ongoing and holdings in one place
+    holding = []
+    for v in DESK:
+        if family != "all" and v.get("family", "old") != family:
+            continue
+        d = trades(v["id"], tick=tick, period=max(0, min(int(period or 0), 600)),
+                   bars=10, limit=1, day=day, frm=frm, to=to,
+                   use_gate=bool(gate), allow_fallback=bool(auto))
+        for h in (d.get("holding") or []):
+            holding.append(dict(h, rule=v["id"]))
     rows.sort(key=lambda r: (r.get("d8") or "", r.get("buy_t") or ""))
     w = sum(1 for r in rows if r["result"] == "win")
     l = sum(1 for r in rows if r["result"] == "loss")
     return {"ok": True, "family": family, "rows": rows,
             "trips": len(rows), "wins": w, "losses": l,
             "win_pct": round(w / (w + l) * 100) if (w + l) else 0,
+            "holding": holding,
             "net_won": sum(r["won"] for r in rows)}
 
 

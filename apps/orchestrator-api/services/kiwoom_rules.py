@@ -426,6 +426,7 @@ def rank(tick: int = 5, period: int = 0, day: str = "",
     # front of the biggest bid wall; [] on days before recording began (2026-08-11)
     from services.kiwoom_tape import load_book as _lb
     base_by_day = [(d, [{"code": code, "_dipc": {}, "book": _lb(code, d or _kd0()),
+                         "d8": d or _kd0(),
                          "closes": [c["close"] for c in tp["cs"]],
                          "highs": [c["high"] for c in tp["cs"]],
                          "lows": [c["low"] for c in tp["cs"]],
@@ -588,6 +589,7 @@ def trades(vid: str, tick: int = 5, period: int = 0, code: str = "",
                 continue
             from services.kiwoom_tape import load_book as _lb2
             stks.append({"code": c_code, "name": name, "cs": cs, "_dipc": {},
+                         "d8": d or _kd0(),
                          "book": _lb2(c_code, d or _kd0()),
                          "closes": [c["close"] for c in cs],
                          "highs": [c["high"] for c in cs],
