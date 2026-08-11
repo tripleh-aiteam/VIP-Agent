@@ -2326,6 +2326,10 @@ export default function LiveDeskPage() {
             </div>
             {raw && (
               <div className="overflow-x-auto">
+                <div className="text-[11.5px] font-bold mb-1" style={{ color: "#6a1b9a" }}>
+                  📅 {t(`일별 기록 — ${raw.name} · 하루 한 줄 (최대 250일)`,
+                        `daily table — ${raw.name} · one row per day (up to 250 days)`)}
+                </div>
                 <table className="text-[11px] tabular-nums w-full">
                   <thead><tr className="text-[10px] text-[var(--text-muted)]">
                     <th className="text-left px-2 py-1">{t("날짜", "date")}</th>
