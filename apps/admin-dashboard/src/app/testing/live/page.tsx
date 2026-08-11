@@ -1546,8 +1546,11 @@ export default function LiveDeskPage() {
                 <b className="text-[10.5px]" style={{ color: BLUE }}>{t("파는 조건 — 자동, 먼저 오는 쪽", "SELL — automatic, whichever comes first")}</b>
                 <ul className="mt-1 ml-4 list-disc space-y-[3px] text-[var(--text-secondary)]">
                   {det.ride ? (<>
-                    <li>{t(`내리기 시작하면 팝니다 — 음봉 ${det.ride.downs ?? 1}개가 완성되는 순간, 즉 ${(det.ride.downs ?? 1) + 1}번째 음봉이 시작되는 가격에 매도. 오름이 급하든 완만하든 똑같이 적용됩니다. 매도 호가는 가장 두꺼운 매도벽 바로 앞에 겁니다(호가창 자료가 있을 때).`,
-                           `It sells when the fall starts - the moment ${det.ride.downs ?? 1} down candle${(det.ride.downs ?? 1) > 1 ? "s are" : " is"} complete, at the price where the ${(det.ride.downs ?? 1) + 1 === 2 ? "2nd" : `${(det.ride.downs ?? 1) + 1}th`} down candle begins. Sharp or slow rise - the same exit. The sell is offered one tick in front of the biggest ask wall when the book shows one.`)}</li>
+                    <li>{(det.ride.arm ?? 0) > 0
+                      ? t(`이익이 +${det.ride.arm}%에 도달하면 매도 감시가 켜집니다. 그 뒤 내리기 시작해 음봉 1개가 완성되면, 두 번째 음봉이 시작되는 가격에 팝니다. +${det.ride.arm}% 전에는 음봉이 나와도 팔지 않고 기다립니다(손절 -2%만 살아 있음). 매도 호가는 가장 두꺼운 매도벽 바로 앞에 겁니다.`,
+                          `Reaching +${det.ride.arm}% arms the exit. After that, when the fall starts and one down candle completes, it sells at the start of the 2nd down candle. Before +${det.ride.arm}%, down candles are ignored - it waits (only the -2% stop is live). The sell is offered one tick in front of the biggest ask wall.`)
+                      : t(`내리기 시작하면 팝니다 — 음봉 1개가 완성되는 순간, 두 번째 음봉이 시작되는 가격에 매도.`,
+                          `It sells when the fall starts - one completed down candle, at the start of the 2nd.`)}</li>
                     <li>{t(`손실이 -${det.stop_pct ?? 2}%까지 밀리면 → 손절. 단, 종목별 최저선(원 단위) 아래로는 팔지 않고 들고 있습니다.`,
                            `If the loss slips to −${det.stop_pct ?? 2}% → the stop sells; but never below this stock's own won floor, where it holds instead.`)}</li>
                     <li>{t("15:20 이후에는 새로 사지 않고, 들고 있던 것은 마지막 가격으로 정리합니다. 밤을 넘기지 않습니다.",

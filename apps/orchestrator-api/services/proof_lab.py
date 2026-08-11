@@ -143,15 +143,10 @@ VARIANTS: list[dict] = [
     # vs -0.698%), so it has no edge to trade on. He asked for it on the board anyway,
     # next to the old way, to settle it on live tape rather than on my backtests. Paper
     # money only until it earns better numbers.
-    {"id": "N1", "entry": 1, "kind": "pct", "a": 0.3, "b": 2.0, "exec": "limit",
-     "stop_pct": 2.0, "wait_bars": 2, "family": "new", "ignore_gate": True,
-     "dip": {"drop": 0.8, "sharp": 3.0, "ups": 1, "chop": 1.2, "win_sec": 600},
-     "ride": {"arm": -99.0, "give": 99.0, "downs": 1, "slow_ups": 99, "slow_downs": 99,
-              "slow_take": 1.0, "sharp_rise": 2.0}},
     {"id": "N2", "entry": 1, "kind": "pct", "a": 0.3, "b": 2.0, "exec": "limit",
      "stop_pct": 2.0, "wait_bars": 2, "family": "new", "ignore_gate": True,
-     "dip": {"drop": 0.4, "sharp": 3.0, "ups": 1, "chop": 0.6, "win_sec": 600},
-     "ride": {"arm": -99.0, "give": 99.0, "downs": 1, "slow_ups": 99, "slow_downs": 99,
+     "dip": {"drop": 1.0, "sharp": 3.0, "ups": 1, "chop": 1.5, "win_sec": 1800},
+     "ride": {"arm": 1.0, "give": 99.0, "downs": 1, "slow_ups": 99, "slow_downs": 99,
               "slow_take": 1.0, "sharp_rise": 2.0}},
     # N3 (an extra confirming candle, so the 3rd red) REMOVED 2026-08-11: the boss's
     # rule is explicit - the buy is at the START OF THE SECOND RED, all six stocks, no
@@ -272,12 +267,16 @@ def label(v: dict, ko: bool = True) -> str:
         if ko:
             ent = (f"급락 {d['drop']}% 후 {_u + 1}번째 양봉 시작에 매수" if d
                    else f"{v['entry']}연속 상승에 매수")
-            ex = f"내리기 시작하면 {r.get('downs', 1) + 1}번째 음봉 시작에 매도"
+            ex = (f"+{r['arm']}% 도달 후 내리기 시작하면 {r.get('downs', 1) + 1}번째 음봉 시작에 매도"
+                  if r.get("arm", 0) > 0
+                  else f"내리기 시작하면 {r.get('downs', 1) + 1}번째 음봉 시작에 매도")
             txt = f"{ent} → {ex}"
         else:
             ent = (f"{d['drop']}% sharp drop → buy at the start of the {_ord(_u + 1)} up candle"
                    if d else f"buy after {v['entry']} rises")
-            ex = f"sells at the start of the {_ord(r.get('downs', 1) + 1)} down candle, whenever the fall starts"
+            ex = (f"after +{r['arm']}%, sells at the start of the {_ord(r.get('downs', 1) + 1)} down candle"
+                  if r.get("arm", 0) > 0
+                  else f"sells at the start of the {_ord(r.get('downs', 1) + 1)} down candle, whenever the fall starts")
             txt = f"{ent} → {ex}"
         if v.get("vol"):
             txt += (" · 거래량" if ko else " · volume")
