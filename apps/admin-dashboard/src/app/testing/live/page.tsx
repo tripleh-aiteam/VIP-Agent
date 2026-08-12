@@ -1835,6 +1835,47 @@ export default function LiveDeskPage() {
                   : t("장이 열려야 새 체결이 들어옵니다 (09:00~15:30).", "new executions only arrive while the market is open (09:00-15:30).")}
               </div>
             )}
+            {/* THE CLICKED TRADE, RESTATED UNDER THE CHART (boss 2026-08-12: "if I
+                click any time these trading information should come under the chart
+                so we can easily compare and check, we do not need to remember"). The
+                same line the history shows - buy, sell (or holding), net, why. */}
+            {sel && det?.chart && (() => {
+              const ruleNm = sel.startsWith("N") ? "Sharp" : sel === "OLD3" ? "Old" : sel;
+              const ptr = pick !== null ? det.trades[pick] : null;
+              if (ptr && ptr.code === det.chart.code) {
+                return (
+                  <div className="mt-1 mx-1 px-2 py-1.5 rounded text-[11.5px] tabular-nums"
+                    style={{ background: "rgba(230,81,0,0.07)", border: "1px solid var(--border-default)" }}>
+                    <b style={{ color: "#e65100" }}>{ruleNm}</b>
+                    <b className="ml-2 text-[var(--text-primary)]">{ptr.name}</b>
+                    <span className="ml-2" style={{ color: RED }}>
+                      ▲ {ptr.buy_t} @₩{Math.round(ptr.entry).toLocaleString()}{ptr.wall ? " 🧱" : ""}</span>
+                    <span className="ml-2" style={{ color: BLUE }}>
+                      ▼ {ptr.sell_t} @₩{Math.round(ptr.exit).toLocaleString()}</span>
+                    <b className="ml-2" style={{ color: ptr.net_pct > 0 ? RED : ptr.net_pct < 0 ? BLUE : "var(--text-muted)" }}>
+                      {ptr.net_pct > 0 ? "+" : ""}{ptr.net_pct}%</b>
+                    {ptr.exit_why && <span className="ml-2 text-[var(--text-secondary)]">[{ptr.exit_why}]</span>}
+                  </div>);
+              }
+              const h = det.holding.find((x) => x.code === det.chart?.code);
+              if (h) {
+                return (
+                  <div className="mt-1 mx-1 px-2 py-1.5 rounded text-[11.5px] tabular-nums"
+                    style={{ background: "rgba(230,81,0,0.07)", border: "1px solid var(--border-default)" }}>
+                    <b style={{ color: "#e65100" }}>{ruleNm}</b>
+                    <b className="ml-2 text-[var(--text-primary)]">{h.name}</b>
+                    <span className="ml-2" style={{ color: RED }}>
+                      ▲ {h.buy_t} @₩{Math.round(h.entry).toLocaleString()}</span>
+                    <span className="ml-2" style={{ color: GOLD }}>
+                      ● {t("보유 중", "holding")} ₩{Math.round(h.last).toLocaleString()}</span>
+                    <b className="ml-2" style={{ color: h.unreal_pct > 0 ? RED : h.unreal_pct < 0 ? BLUE : "var(--text-muted)" }}>
+                      {h.unreal_pct > 0 ? "+" : ""}{h.unreal_pct}%</b>
+                    <span className="ml-2 text-[var(--text-secondary)]">
+                      [{t("아직 매도 전 — 수수료 반영 전", "not sold yet - before fees")}]</span>
+                  </div>);
+              }
+              return null;
+            })()}
           </div>
 
           {/* holdings + per-trade table: on TODAY-LIVE these duplicated the 매매 내역
