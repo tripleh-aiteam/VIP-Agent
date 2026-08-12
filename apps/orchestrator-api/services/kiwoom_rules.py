@@ -605,7 +605,7 @@ def trades(vid: str, tick: int = 5, period: int = 0, code: str = "",
                                        if v.get("ml") else None)})
         if not stks:
             continue
-        got, op = run_desk(stks, v, evidence=True, with_open=True, fill_fn=_fill)
+        got, ops = run_desk(stks, v, evidence=True, with_open=True, fill_fn=_fill)
         for g in got:
             sk = stks[g["si"]]
             cs = sk["cs"]
@@ -635,7 +635,7 @@ def trades(vid: str, tick: int = 5, period: int = 0, code: str = "",
                 "buy_ev": g.get("buy_ev"), "sell_ev": g.get("sell_ev"),
             })
         # only the LAST session can still be holding - earlier days are finished
-        if op and d == day_list[-1]:
+        for op in (ops if d == day_list[-1] else []):
             sk = stks[op["si"]]
             b_c = sk["cs"][op["buy_i"]]
             holding.append({"code": sk["code"], "name": sk["name"], "buy_t": b_c["hhmm"],
@@ -689,11 +689,12 @@ def trades(vid: str, tick: int = 5, period: int = 0, code: str = "",
                      "marks": ([{"b": g["buy_i"] - off, "s": g["sell_i"] - off,
                                  "g": g["gross_pct"], "net": g["net_pct"]}
                                 for g in got if off <= g["buy_i"] < hi and off <= g["sell_i"] < hi]
-                               + ([{"b": op["buy_i"] - off, "s": len(cs) - 1 - off,
-                                    "g": op["unreal_pct"], "net": op["unreal_pct"],
-                                    "open": True}]
-                                  if op is not None and stks[op["si"]]["code"] == c_code
-                                  and off <= op["buy_i"] < hi else []))}
+                               + [{"b": op["buy_i"] - off, "s": len(cs) - 1 - off,
+                                   "g": op["unreal_pct"], "net": op["unreal_pct"],
+                                   "open": True}
+                                  for op in ops
+                                  if stks[op["si"]]["code"] == c_code
+                                  and off <= op["buy_i"] < hi])}
 
     w = sum(1 for r in rows if r["result"] == "win")
     l = sum(1 for r in rows if r["result"] == "loss")

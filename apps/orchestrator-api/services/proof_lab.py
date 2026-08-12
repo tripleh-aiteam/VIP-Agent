@@ -397,7 +397,6 @@ def run_variant(closes: list[float], tick: int, v: dict, seed: int,
     iterate that list expecting every entry to have a sell, and an entry without one
     would break them silently rather than loudly."""
     out: list[dict] = []
-    pos = None
     up = dn = 0
     # HOW A FILL IS PRICED, injected. The artificial market has a synthetic order book;
     # the real one has a real spread that was never recorded historically. Keeping the
@@ -816,24 +815,25 @@ def _dip_state(s: dict, win_sec: int = 600) -> dict:
 
 def run_desk(stks: list[dict], v: dict, evidence: bool = False,
              with_open: bool = False, fill_fn=None, events=None):
-    """The rule over the WHOLE DESK with ONE position across every stock (boss
-    2026-08-06: "if I am holding then I can not buy another stock ... implement this to
-    all, and start using from now"). Until today each stock ran run_variant
-    independently, so one rule could hold 삼성전자 and still buy SK하이닉스 - three
-    positions at once filed under one rule, which he saw and rejected.
+    """The rule over the WHOLE DESK with ONE hand PER STOCK (boss 2026-08-12: four
+    stocks fell sharply while the desk's single hand held 두산, and every one was
+    skipped - "it is just fake money so I do not wanna loose chance"). Each stock now
+    holds and manages its own position independently; up to len(stks) positions can
+    be open at once, but a stock never holds two - while a stock's hand is full,
+    that stock buys nothing until it sells.
 
-    Every stock's bars merge onto ONE clock (each bar's own time key, supplied by the
-    caller), and a single position gates all of them: while the rule holds ANYTHING it
-    buys NOTHING, on any stock, until the sell. Runs keep counting while blocked, so
-    with the >=-entry law a still-standing run fires the moment the hands are free.
+    History: 2026-08-06 the boss ordered ONE position across the whole desk ("if I
+    am holding then I can not buy another stock"), replacing fully-independent
+    run_variant loops. 2026-08-12 he reversed it after seeing the skipped drops.
 
-    Entry counting, ML gating, fills and exits are copied line-for-line from
-    run_variant, which remains the single-stock engine (training, audits). The ONLY new
-    behaviour here is the cross-stock lock - keep the two in step.
+    Every stock's bars still merge onto ONE clock (each bar's own time key, supplied
+    by the caller). Entry counting, ML gating, fills and exits are copied
+    line-for-line from run_variant, which remains the single-stock engine (training,
+    audits) - keep the two in step.
 
     stks: [{"closes", "tick", "seed", "times", optional "vols", "ml_bundle"}]
-    Every trade carries "si" - its index into stks. with_open adds the open position
-    (also with "si"), of which there can now be at most ONE for the whole desk.
+    Every trade carries "si" - its index into stks. with_open adds the LIST of open
+    positions (each with "si"), at most one per stock.
     """
     out: list[dict] = []
     pos = None
@@ -845,8 +845,9 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
     # never both be working an order. Exits become real orders too: a resting SELL LIMIT
     # take_ticks above the entry (filled intrabar off the high) and a protective stop that
     # sells only between its trigger and sell_floor_won beneath it - never a won lower.
-    pend = None
     n = len(stks)
+    poss: list = [None] * n     # per stock: its open position (one hand per stock)
+    pends: list = [None] * n    # per stock: its working limit order
     up = [0] * n
     dn = [0] * n
     last_exit = [-1] * n       # per stock: bar index of this rule's last completed sell
@@ -897,32 +898,38 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
         # more, because a position is only ever managed on its OWN stock's bars. Ten
         # minutes of silence from the stock we are holding, while the rest of the desk is
         # still printing, ends the trade at the last price it actually traded.
-        _dark = (pos is not None and endt[pos["si"]] >= 0 and _secs(_now) >= 0
-                 and _secs(_now) - endt[pos["si"]] > 600)
-        if (_late or _dark) and pos is not None:
-            _s2 = stks[pos["si"]]
-            _px = lastc[pos["si"]]
+        _nows = _secs(_now)
+        for _si2 in range(n):
+            _p2 = poss[_si2]
+            if _p2 is None:
+                continue
+            _d2 = (endt[_si2] >= 0 and _nows >= 0 and _nows - endt[_si2] > 600)
+            if not (_late or _d2):
+                continue
+            _s2 = stks[_si2]
+            _px = lastc[_si2] or _s2["closes"][_p2["i"]]
             _bk = dict(book(_s2["seed"] * 2_000 + i, _px, "SELL", _s2["tick"]), fill=_px)
-            _gross = (_px / pos["entry"] - 1) * 100
-            _tr = {"si": pos["si"], "buy_i": pos["i"], "sell_i": pos["i"],
-                   "qty": pos.get("qty", 1), "entry": pos["entry"], "exit": _px,
+            _gross = (_px / _p2["entry"] - 1) * 100
+            _tr = {"si": _si2, "buy_i": _p2["i"], "sell_i": _p2["i"],
+                   "qty": _p2.get("qty", 1), "entry": _p2["entry"], "exit": _px,
                    "gross_pct": round(_gross, 3),
                    "net_pct": round(_gross - FEE_PCT, 3),
                    "exit_why": ("장 마감 정리" if _late else "종목 체결 중단 정리"),
-                   "ml": pos.get("ml")}
+                   "ml": _p2.get("ml")}
             if evidence:
-                _tr["buy_ev"] = {"close": pos["close"], "book": pos["bk"], "seq": pos["seq"]}
+                _tr["buy_ev"] = {"close": _p2["close"], "book": _p2["bk"], "seq": _p2["seq"]}
                 _tr["sell_ev"] = {"close": _px, "book": _bk, "seq": [_px]}
             out.append(_tr)
-            last_exit[_tr["si"]] = i
-            pos = None
+            last_exit[_si2] = i
+            poss[_si2] = None
         # a FLAT close is a PAUSE, not a break (boss 2026-08-06) - the run stands
         if c > prev:
             up[si], dn[si] = up[si] + 1, 0
         elif c < prev:
             up[si], dn[si] = 0, dn[si] + 1
         # ---- a working limit order, on its own stock's bars ----
-        if pend is not None and pend["si"] == si:
+        pend = pends[si]
+        if pend is not None:
             from services.proof_ml import buy_cap_won
             lows = s.get("lows") or closes
             if lows[i] <= pend["px"]:
@@ -931,14 +938,14 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                 _scv = v.get("scout")
                 _q_all = pend["qty"]
                 _q_sc = max(1, int(_q_all * _scv["frac"])) if _scv else _q_all
-                pos = {"si": si, "i": pend["i"], "entry": pend["px"], "bk": bk,
+                poss[si] = {"si": si, "i": pend["i"], "entry": pend["px"], "bk": bk,
                        "close": pend["close"], "qty": _q_sc, "ml": pend["ml"],
                        "qty_add": (_q_all - _q_sc) if _scv else 0,
                        "added": False, "add_px": None,
                        "seq": pend["seq"], "limit": True, "sharp": pend.get("sharp"),
                        "wall": pend.get("wall"), "sig": pend.get("sig"),
                        "peak": pend["px"], "ups": 0, "downs": 0}
-                pend = None
+                pends[si] = None
             else:
                 pend["left"] -= 1
                 if pend["left"] <= 0:
@@ -948,17 +955,17 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                         _scv2 = v.get("scout")
                         _qa2 = pend["qty"]
                         _qs2 = max(1, int(_qa2 * _scv2["frac"])) if _scv2 else _qa2
-                        pos = {"si": si, "i": i, "entry": ask, "bk": bk, "close": c,
+                        poss[si] = {"si": si, "i": i, "entry": ask, "bk": bk, "close": c,
                                "qty": _qs2, "ml": pend["ml"], "seq": pend["seq"],
                                "qty_add": (_qa2 - _qs2) if _scv2 else 0,
                                "added": False, "add_px": None,
                                "limit": True, "sharp": pend.get("sharp"),
                                "wall": pend.get("wall"), "sig": pend.get("sig"),
                                "peak": ask, "ups": 0, "downs": 0}
-                    pend = None                          # else: abandoned, no trade
-        if _late and pend is not None and pend["si"] == si:
-            pend = None                      # a working order is cancelled, not chased
-        if pos is None and pend is None and not _late:
+                    pends[si] = None                     # else: abandoned, no trade
+        if _late and pends[si] is not None:
+            pends[si] = None                 # a working order is cancelled, not chased
+        if poss[si] is None and pends[si] is None and not _late:
             # the daily gate (boss 2026-08-10): a stock whose day was judged NO-GO before
             # the open produces no entries at all today. Exits are untouched - a position
             # opened before a gate closes is still managed to its normal end.
@@ -1063,17 +1070,18 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                     _px, _wall = (_wall_offer(s, i, c, s["tick"])
                                   if (v.get("family") == "new" or v.get("wall_price"))
                                   else (c, None))
-                    pend = {"si": si, "i": i, "px": _px, "close": c, "qty": _q,
+                    pends[si] = {"si": si, "i": i, "px": _px, "close": c, "qty": _q,
                             "ml": ml_meta, "left": v.get("wait_bars", 2), "sharp": _sharp,
                             "wall": _wall, "sig": _sig,
                             "seq": closes[max(0, i - v["entry"]): i + 1]}
                 else:
-                    pos = {"si": si, "i": i, "entry": bk["fill"], "bk": bk, "close": c,
-                           "qty": _q, "ml": ml_meta, "sharp": _sharp,
-                           "seq": closes[max(0, i - v["entry"]): i + 1]}
-        elif pos is not None and pos["si"] == si:
-            # (pos can be None while a limit order is still working - the branch above
-            #  is now guarded by `pend is None`, so this one must test pos explicitly)
+                    poss[si] = {"si": si, "i": i, "entry": bk["fill"], "bk": bk,
+                                "close": c, "qty": _q, "ml": ml_meta, "sharp": _sharp,
+                                "seq": closes[max(0, i - v["entry"]): i + 1]}
+        elif poss[si] is not None:
+            # this stock's own hand (boss 2026-08-12: the desk-wide single hand became
+            # one hand per stock - "I do not wanna loose chance")
+            pos = poss[si]
             if v.get("ride"):
                 # HIS EXIT (2026-08-10): "do not sell at 0.5% or 1% if it is rising
                 # sharply, it can rise again - wait, and sell at the beginning of the
@@ -1175,7 +1183,7 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                         tr["sell_ev"] = {"close": c, "book": bk,
                                          "seq": closes[max(0, i - 1): i + 1]}
                     out.append(tr)
-                    pos = None
+                    poss[si] = None
                 continue
             if v.get("exec") == "limit":
                 from services.proof_ml import sell_floor_won
@@ -1214,7 +1222,7 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                         tr["buy_ev"] = {"close": pos["close"], "book": pos["bk"], "seq": pos["seq"]}
                         tr["sell_ev"] = {"close": c, "book": bk, "seq": closes[max(0, i - 1): i + 1]}
                     out.append(tr)
-                    pos = None
+                    poss[si] = None
                 continue
             if v["kind"] == "candle":
                 if v.get("dir", 1) < 0:
@@ -1253,19 +1261,23 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                     tr["sell_ev"] = {"close": c, "book": bk,
                                      "seq": closes[max(0, i - (v["a"] if v["kind"] == "candle" else 1)): i + 1]}
                 out.append(tr)
-                pos = None
+                poss[si] = None
     if not with_open:
         return out
-    op = None
-    if pos is not None:
-        s = stks[pos["si"]]
-        op = {"si": pos["si"], "buy_i": pos["i"], "entry": pos["entry"],
+    ops: list[dict] = []
+    for _si2 in range(n):
+        pos = poss[_si2]
+        if pos is None:
+            continue
+        s = stks[_si2]
+        op = {"si": _si2, "buy_i": pos["i"], "entry": pos["entry"],
               "last": s["closes"][-1], "sig": pos.get("sig"), "wall": pos.get("wall"),
               "chop": bool(pos.get("chop")),
               "unreal_pct": round((s["closes"][-1] / pos["entry"] - 1) * 100, 3)}
         if evidence:
             op["buy_ev"] = {"close": pos["close"], "book": pos["bk"], "seq": pos["seq"]}
-    return out, op
+        ops.append(op)
+    return out, ops
 
 
 def consistency_gate(seed: int = 7, start: int = 0, tick: int = 5,
@@ -1594,7 +1606,7 @@ def variant_trades(vid: str, seed: int = 7, start: int = 0, tick: int = 5,
                      "closes": [c["close"] for c in cs], "vols": vv, "ml_bundle": mlb,
                      # day travels with the time key, or a two-day tape would interleave
                      "times": [((c.get("end_d") or ""), c["hhmm"]) for c in cs]})
-    got, op = run_desk(stks, v, evidence=True, with_open=True)
+    got, ops = run_desk(stks, v, evidence=True, with_open=True)
     # THE PAIRED BASELINE: the same rule without the model, over the SAME desk under the
     # SAME one-position law. A model that declined everything still needs its baseline
     # on screen, or the row reads "0 trips" and looks broken.
@@ -1633,7 +1645,7 @@ def variant_trades(vid: str, seed: int = 7, start: int = 0, tick: int = 5,
             "buy_ev": g.get("buy_ev"), "sell_ev": g.get("sell_ev"),
             "ml": g.get("ml"),
         })
-    if op:
+    for op in ops:
         sk = stks[op["si"]]
         b_c = sk["cs"][op["buy_i"]]
         holding.append({"code": sk["code"], "name": sk["name"], "buy_i": op["buy_i"],
