@@ -681,6 +681,10 @@ export default function LiveDeskPage() {
     setFocusSide(side);
     setSel(r.rule);
     autoOpenRef.current = r.rule;
+    // clicking a TIME is the proof gesture - it must open the chart, not leave it
+    // behind the 차트 보기 button (boss 2026-08-12: "when I click the time it is
+    // not showing the chart")
+    setChartOpen(true); chartOpenRef.current = true;
     openRule(r.rule, r.idx, r.code);
     if (chartOpenRef.current)
       setTimeout(() => chartRef.current?.scrollIntoView({ behavior: "smooth", block: "center" }), 120);
