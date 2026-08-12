@@ -132,7 +132,8 @@ type RDetail = { ok: boolean; id: string; ko: string; en: string; clock: string;
                             last: number; unreal_pct: number }[];
                  chart: { code: string; name: string; off: number; candles: Bar[];
                           focus: { b: number; s: number } | null;
-                          marks: { b: number; s: number; g: number; net: number }[] } | null;
+                          marks: { b: number; s: number; g: number; net: number;
+                                   open?: boolean }[] } | null;
                  family?: string;
   dip?: { drop: number; sharp: number; ups: number; chop: number;
           look?: number; win_sec?: number } | null;
@@ -160,7 +161,8 @@ type Status = { running: boolean; market_open: boolean; polls: number;
 /** The chart. Same library and the same continuous-bar convention as the labs, so a red
  *  bar means the same thing here as it does there. */
 function LiveChart({ bars, marks, focus, off = 0 }:
-                   { bars: Bar[]; marks?: { b: number; s: number; g: number }[];
+                   { bars: Bar[]; marks?: { b: number; s: number; g: number;
+                                            open?: boolean }[];
                      focus?: number | null; off?: number }) {
   const ref = useRef<HTMLDivElement | null>(null);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -230,11 +232,19 @@ function LiveChart({ bars, marks, focus, off = 0 }:
     // arrows carry GROSS - the same number the trade table shows. Labelling one with net
     // while the table showed gross made one trade read as two results on the artificial
     // side, and there is no reason to repeat it here.
-    const m = (marks ?? []).flatMap((k) => [
-      { time: off + k.b, position: "belowBar", color: RED, shape: "arrowUp", text: "매수" },
-      { time: off + k.s, position: "aboveBar", color: k.g > 0 ? RED : BLUE,
-        shape: "arrowDown", text: `${k.g > 0 ? "+" : ""}${k.g}%` },
-    ]).filter((x) => (x.time as number) >= off && (x.time as number) < off + bars.length);
+    const m = (marks ?? []).flatMap((k) => k.open
+      // an OPEN position is proof of a buy, not of a sell: the buy arrow stands at
+      // its bar and a gold badge rides the live edge - no fake sell arrow
+      ? [
+        { time: off + k.b, position: "belowBar", color: RED, shape: "arrowUp", text: "매수" },
+        { time: off + k.s, position: "aboveBar", color: GOLD, shape: "circle",
+          text: `보유 중 ${k.g > 0 ? "+" : ""}${k.g}%` },
+      ]
+      : [
+        { time: off + k.b, position: "belowBar", color: RED, shape: "arrowUp", text: "매수" },
+        { time: off + k.s, position: "aboveBar", color: k.g > 0 ? RED : BLUE,
+          shape: "arrowDown", text: `${k.g > 0 ? "+" : ""}${k.g}%` },
+      ]).filter((x) => (x.time as number) >= off && (x.time as number) < off + bars.length);
     // the clicked trade gets its own gold marker, so it is obvious WHICH of the arrows
     // on screen is the row he clicked
     if (focus != null && bars[focus]) {
@@ -258,7 +268,15 @@ function LiveChart({ bars, marks, focus, off = 0 }:
         c.chart.timeScale().setVisibleLogicalRange({
           from: Math.max(0, focus - 70), to: Math.min(bars.length - 1, focus + 25) });
       } else {
-        c.chart.timeScale().fitContent();
+        // no clicked trade, but an OPEN position: land on its buy arrow and the live
+        // edge, so a clicked HOLDING shows its proof without hunting (boss 2026-08-12)
+        const om = (marks ?? []).find((k) => k.open);
+        if (om && bars[om.b]) {
+          c.chart.timeScale().setVisibleLogicalRange({
+            from: Math.max(0, om.b - 40), to: bars.length + 2 });
+        } else {
+          c.chart.timeScale().fitContent();
+        }
       }
       setTimeout(() => { prog.current = false; }, 0);
     } else if (userRange.current
