@@ -144,6 +144,9 @@ type RDetail = { ok: boolean; id: string; ko: string; en: string; clock: string;
   take_ticks?: number | null; stop_pct?: number | null;
   scout?: { frac: number; confirm: number } | null;
   ladder?: { half_at: number; take: number; blues: number; give: number } | null;
+  drip?: { step: number; up_frac: number; dn_frac: number; stop_reset: number;
+           rebuy?: boolean } | null;
+  us_habit?: boolean;
   wall_price?: boolean; exact_entry?: boolean;
 };
 type DfRow = { hhmm: string; key: string; date: string; open: number; high: number;
@@ -163,6 +166,16 @@ type Status = { running: boolean; market_open: boolean; polls: number;
 
 /** The chart. Same library and the same continuous-bar convention as the labs, so a red
  *  bar means the same thing here as it does there. */
+
+// every place the board names a rule goes through this one function
+function ruleName(id: string): string {
+  if (id === "D1") return "시나리오1";
+  if (id === "D2") return "시나리오2";
+  if (id === "OLD3") return "Old";
+  if (id.startsWith("N")) return "Sharp";
+  return id;
+}
+
 function LiveChart({ bars, marks, focus, off = 0 }:
                    { bars: Bar[]; marks?: { b: number; s: number; g: number;
                                             open?: boolean }[];
@@ -1276,8 +1289,8 @@ export default function LiveDeskPage() {
                 )}
                 {fam && fam.rows.length > 0 && (
                   <span className="text-[10.5px] text-[var(--text-secondary)]">
-                    {Array.from(new Set(fam.rows.map((r) => r.rule.startsWith("N") ? "Sharp" : r.rule === "OLD3" ? "Old" : r.rule))).map((ru) => {
-                      const rs = fam.rows.filter((r) => (r.rule.startsWith("N") ? "Sharp" : r.rule === "OLD3" ? "Old" : r.rule) === ru);
+                    {Array.from(new Set(fam.rows.map((r) => ruleName(r.rule)))).map((ru) => {
+                      const rs = fam.rows.filter((r) => (ruleName(r.rule)) === ru);
                       const w2 = rs.filter((r) => r.result === "win").length;
                       const l2 = rs.filter((r) => r.result === "loss").length;
                       return `${ru} ${rs.length}${lang === "ko" ? "건" : "t"} ${w2}${lang === "ko" ? "승" : "W"}${l2}${lang === "ko" ? "패" : "L"}`;
@@ -1350,7 +1363,7 @@ export default function LiveDeskPage() {
                                                setSel(h.rule); autoOpenRef.current = h.rule;
                                                openRule(h.rule, null, h.code);
                                              } }}
-                            style={{ color: "#e65100" }}>{h.rule.startsWith("N") ? "Sharp" : h.rule === "OLD3" ? "Old" : h.rule} ⓘ</td>
+                            style={{ color: "#e65100" }}>{ruleName(h.rule)} ⓘ</td>
                           <td className="px-2 font-bold text-[var(--text-primary)]">{h.name || h.code}</td>
                           <td className="px-2 cursor-pointer underline decoration-dotted"
                             style={{ color: RED }}
@@ -1420,7 +1433,7 @@ export default function LiveDeskPage() {
                                                setChartOpen(true); chartOpenRef.current = true;
                                                openFamTrade(r, "b");
                                              } }}
-                            style={{ color: "#6a1b9a" }}>{r.rule.startsWith("N") ? "Sharp" : r.rule === "OLD3" ? "Old" : r.rule} ⓘ</td>
+                            style={{ color: "#6a1b9a" }}>{ruleName(r.rule)} ⓘ</td>
                           <td className="px-2 font-bold text-[var(--text-primary)]">{r.name || r.code}</td>
                           <td className="px-2 cursor-pointer underline decoration-dotted"
                             style={{ color: RED }}
@@ -1662,7 +1675,18 @@ export default function LiveDeskPage() {
               <div>
                 <b className="text-[10.5px]" style={{ color: BLUE }}>{t("파는 조건 — 자동, 먼저 오는 쪽", "SELL — automatic, whichever comes first")}</b>
                 <ul className="mt-1 ml-4 list-disc space-y-[3px] text-[var(--text-secondary)]">
-                  {det.ride ? (<>
+                  {det.drip ? (<>
+                    <li>{t(`+${det.drip.step}% 오를 때마다 ${Math.round(det.drip.up_frac * 100)}%씩 지정가로 팝니다(가격은 호가 단위에 맞춘 실제 주문가). 고점을 찍은 뒤에는 -${det.drip.step}% 내려갈 때마다 ${Math.round(det.drip.dn_frac * 100)}%씩 매도벽 앞에 팝니다.`,
+                           `Every +${det.drip.step}% step sells ${Math.round(det.drip.up_frac * 100)}% at a resting limit (a real tick-grid price). After the top, every -${det.drip.step}% below the highest step sells ${Math.round(det.drip.dn_frac * 100)}% more, in front of the ask wall.`)}</li>
+                    <li>{t(`기준가에서 -${det.drip.stop_reset}%면 전량 매도 후 그 낮은 가격에 즉시 재매수 — 기준이 아래로 다시 잡히고 계단이 다시 시작됩니다. 그 외의 하락에는 팔지 않고 버팁니다.`,
+                           `At -${det.drip.stop_reset}% from the base it sells ALL and immediately re-buys at the lower price — the base resets and the steps start again. No other decline sells.`)}</li>
+                    {det.drip.rebuy && <li>{t("보유 중에도 새 급락 신호가 오면 판 만큼을 다시 사서 100%로 채웁니다 (시나리오2).",
+                           "While holding, a fresh sharp-drop signal buys back what was sold, topping up to 100% (Scenario 2).")}</li>}
+                    {det.us_habit && <li>{t("미국 습관: 반도체지수(SOX) 밤사이 -1.5% 이하면 ⅓ 수량, +1.5% 이상이면 10시 전 매수 금지, 조용하면 평소대로.",
+                           "US habit: SOX overnight <= -1.5% -> one-third size; >= +1.5% -> no buys before 10:00; calm -> normal.")}</li>}
+                    <li>{t("15:20 이후 새로 사지 않고 남은 것은 전부 정리 — 밤을 넘기지 않습니다.",
+                           "After 15:20 nothing new is bought and whatever remains is closed - nothing is carried overnight.")}</li>
+                  </>) : det.ride ? (<>
                     {det.ladder && <li>{t(`이익이 +${det.ladder.half_at}%에 닿는 순간 절반을 지정가로 팝니다 — 절반의 이익은 그 자리에서 확정. 나머지 절반은 넷 중 먼저 오는 것에 팝니다: ① 상승이 이어진 뒤 2번째 음봉 시작 ② +${det.ladder.take}% 도달 ③ 음봉 ${det.ladder.blues}연속 ④ 반등 고점 -${det.ladder.give}% — 매도는 매도벽 바로 앞 1호가. +${det.ladder.half_at}% 전에는 음봉이 나와도 팔지 않습니다(손절만 살아 있음).`,
                            `The moment profit touches +${det.ladder.half_at}%, HALF sells at that exact price — locked in. The other half sells at the FIRST of: ① the 2nd down candle after a renewed rise ② +${det.ladder.take}% total ③ ${det.ladder.blues} straight down candles ④ -${det.ladder.give}% below the post-half peak — offered 1 tick in front of the ask wall. Before +${det.ladder.half_at}% no down candle sells (only the stop is live).`)}</li>}
                     {!det.ladder && <li>{(det.ride.arm ?? 0) > 0
@@ -1856,7 +1880,7 @@ export default function LiveDeskPage() {
                 so we can easily compare and check, we do not need to remember"). The
                 same line the history shows - buy, sell (or holding), net, why. */}
             {sel && det?.chart && (() => {
-              const ruleNm = sel.startsWith("N") ? "Sharp" : sel === "OLD3" ? "Old" : sel;
+              const ruleNm = ruleName(sel);
               const ptr = pick !== null ? det.trades[pick] : null;
               if (ptr && ptr.code === det.chart.code) {
                 return (

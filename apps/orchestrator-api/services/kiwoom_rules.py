@@ -186,6 +186,25 @@ def _gate_ok(code: str, day: str) -> bool:
         return True                      # fail open - never stop the desk on an error
 
 
+def _us_mode_today() -> str:
+    """This morning's American night, classified for the storm habit. Read from
+    the overnight cache the dashboard already shows (SOX = the chip index that
+    predicts SK하이닉스/삼성전자 mornings, corr 0.64 over 250 days)."""
+    try:
+        import json as _j
+        from pathlib import Path as _P
+        d = _j.loads((_P(__file__).resolve().parent.parent / "data"
+                      / "overnight.json").read_text(encoding="utf-8"))
+        chg = next((r.get("chg_pct") for r in d.get("rows", [])
+                    if r.get("sym") == "^SOX"), None)
+        if chg is None:
+            return "calm"
+        return ("storm_down" if chg <= -1.5 else
+                "storm_up" if chg >= 1.5 else "calm")
+    except Exception:
+        return "calm"                    # no data -> no habit, never block the desk
+
+
 def _kd0() -> str:
     from services.kiwoom_tape import _day
     return _day()
@@ -431,6 +450,10 @@ def rank(tick: int = 5, period: int = 0, day: str = "",
                          "highs": [c["high"] for c in tp["cs"]],
                          "lows": [c["low"] for c in tp["cs"]],
                          "tick": tp["tk"], "seed": 1,
+                         # storm habit input: only TODAY has an American night on
+                         # file; stored days replay calm (honest default)
+                         "us_mode": (_us_mode_today() if (d or _kd0()) == _kd0()
+                                     else "calm"),
                          "vols": [float(c.get("vol") or 0) for c in tp["cs"]],
                          "ctx": daily_ctx(code, d or _kd0()),
                          "gate_ok": (_gate_ok(code, d or _kd0()) if use_gate else True),
@@ -595,6 +618,7 @@ def trades(vid: str, tick: int = 5, period: int = 0, code: str = "",
                          "highs": [c["high"] for c in cs],
                          "lows": [c["low"] for c in cs],
                          "tick": krx_tick(cs[-1]["close"]) or 1, "seed": 1,
+                         "us_mode": _us_mode_today(),
                          "times": [c["hhmm"] for c in cs],
                          "vols": [float(c.get("vol") or 0) for c in cs],
                          "ctx": daily_ctx(c_code, d or _kd0()),
@@ -711,6 +735,7 @@ def trades(vid: str, tick: int = 5, period: int = 0, code: str = "",
             "family": v.get("family", "old"), "dip": v.get("dip"), "ride": v.get("ride"),
             "take_ticks": v.get("take_ticks"), "stop_pct": v.get("stop_pct"),
             "scout": v.get("scout"), "ladder": v.get("ladder"),
+            "drip": v.get("drip"), "us_habit": bool(v.get("us_habit")),
             "wall_price": bool(v.get("wall_price") or v.get("family") == "new"),
             "exact_entry": bool(v.get("exact_entry")),
             "dir": v.get("dir", 1),

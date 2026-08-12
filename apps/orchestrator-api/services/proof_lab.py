@@ -176,6 +176,34 @@ VARIANTS: list[dict] = [
      "scout": {"frac": 0.03, "confirm": 0.5},
      "ride": {"arm": 1.0, "give": 99.0, "downs": 1, "slow_ups": 99, "slow_downs": 99,
               "slow_take": 1.0, "sharp_rise": 2.0}},
+    # THE TWO SCENARIOS (boss 2026-08-12 afternoon, live rest-of-day + tomorrow).
+    # Sharp's entry (dip + exact 2nd red + scout 3/97 + wall pricing) plus, at his
+    # order: volume confirmation (>=1.2x recent average on the signal bar), the US
+    # storm habit (SOX <= -1.5% overnight -> 1/3 size; >= +1.5% -> no buys before
+    # 10:00), and the DRIP exit he designed from today's SK하이닉스 +6% run: sell
+    # 10% at every +1% step, 10% more at each -1% below the highest step; at -1.5%
+    # from the base SELL ALL and immediately re-buy at the lower price; 15:20 flat.
+    # D2 additionally tops the position back to 100% when a FRESH dip signal fires
+    # while still holding. 250-day holdout: drip -8.79M vs ladder -11.91M.
+    {"id": "D1", "entry": 1, "kind": "pct", "a": 0.3, "b": 2.0, "exec": "limit",
+     "stop_pct": 1.5, "wait_bars": 2, "family": "new", "ignore_gate": True,
+     # volume law (boss: "volume up -> price up"): at a dip rebound volume is
+     # structurally LOW (0.4-0.6x avg today), so a hard gate trades never -
+     # instead a quiet signal buys HALF size, a busy one full size
+     "vol_size": {"x": 1.2, "frac": 0.5}, "us_habit": True,
+     "dip": {"drop": 1.0, "sharp": 3.0, "ups": 1, "chop": 1.5, "win_sec": 1800},
+     "scout": {"frac": 0.03, "confirm": 0.5},
+     "drip": {"step": 1.0, "up_frac": 0.10, "dn_frac": 0.10, "stop_reset": 1.5}},
+    {"id": "D2", "entry": 1, "kind": "pct", "a": 0.3, "b": 2.0, "exec": "limit",
+     "stop_pct": 1.5, "wait_bars": 2, "family": "new", "ignore_gate": True,
+     # volume law (boss: "volume up -> price up"): at a dip rebound volume is
+     # structurally LOW (0.4-0.6x avg today), so a hard gate trades never -
+     # instead a quiet signal buys HALF size, a busy one full size
+     "vol_size": {"x": 1.2, "frac": 0.5}, "us_habit": True,
+     "dip": {"drop": 1.0, "sharp": 3.0, "ups": 1, "chop": 1.5, "win_sec": 1800},
+     "scout": {"frac": 0.03, "confirm": 0.5},
+     "drip": {"step": 1.0, "up_frac": 0.10, "dn_frac": 0.10, "stop_reset": 1.5,
+              "rebuy": True}},
     {"id": "N2", "entry": 1, "kind": "pct", "a": 0.3, "b": 2.0, "exec": "limit",
      "stop_pct": 2.0, "wait_bars": 2, "family": "new", "ignore_gate": True,
      "dip": {"drop": 1.0, "sharp": 3.0, "ups": 1, "chop": 1.5, "win_sec": 1800},
@@ -914,6 +942,18 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
             _s2 = stks[_si2]
             _px = lastc[_si2] or _s2["closes"][_p2["i"]]
             _bk = dict(book(_s2["seed"] * 2_000 + i, _px, "SELL", _s2["tick"]), fill=_px)
+            if _p2.get("cost") is not None:
+                # a drip episode: the bell sells what remains and the row carries
+                # every real fill; entry/exit become per-share cost and proceeds
+                if _p2.get("qty", 0) > 0 and _px:
+                    _p2["sold_won"] = _p2.get("sold_won", 0.0) + _px * _p2["qty"]
+                    _p2.setdefault("slices", []).append([_px, _p2["qty"], "장 마감"])
+                    _p2["qty"] = 0
+                _q0d = _p2.get("qty0", 1) or 1
+                _p2["entry"] = _p2["cost"] / _q0d
+                _px = _p2["sold_won"] / _q0d
+                _p2["qty"] = _q0d
+                _p2["sells"] = [[p_, q_] for p_, q_, _w in _p2.get("slices", [])]
             if _p2.get("l3"):
                 _lq2 = _p2.get("qty", 1)
                 _qh2 = _p2.get("half_qty", max(1, _lq2 // 2))
@@ -1056,9 +1096,23 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                                "auc": bundle["auc"], "n_train": bundle["n_train"]}
                 else:
                     ml_meta = None
+                # THE US HABIT (boss-approved 2026-08-12, built for both scenarios):
+                # a stormy American night changes the morning here - measured corr
+                # 0.64, and big-gap days are the rules' worst. Storm-up delays buys
+                # to 10:00; storm-down cuts size to a third. Calm changes nothing.
+                if v.get("us_habit") and (s.get("us_mode") or "calm") == "storm_up" \
+                        and _now < "10:00":
+                    continue
                 bk = book(s["seed"] * 1_000 + i, c, "BUY", s["tick"])
                 from services.proof_ml import cap_for as _cap
                 _q = (ml_meta or {}).get("qty") or _cap(c)
+                if v.get("us_habit") and (s.get("us_mode") or "calm") == "storm_down":
+                    _q = max(1, _q // 3)
+                if v.get("vol_size"):
+                    _vv2 = s.get("vols") or []
+                    _w2 = _vv2[max(0, i - 20):i]
+                    if _w2 and _vv2[i] < v["vol_size"].get("x", 1.2)                             * (sum(_w2) / len(_w2)):
+                        _q = max(1, int(_q * v["vol_size"].get("frac", 0.5)))
                 # was the bounce SHARP or slow? his two cases part here, and the answer
                 # is fixed at the signal - not re-judged later when we already know more
                 _sharp = False
@@ -1095,6 +1149,124 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
             # this stock's own hand (boss 2026-08-12: the desk-wide single hand became
             # one hand per stock - "I do not wanna loose chance")
             pos = poss[si]
+            if v.get("drip") is not None:
+                # HIS DRIP (2026-08-12 afternoon, from the SK하이닉스 +6% run the
+                # ladder sold at +1%): sell up_frac of the position at every +step%
+                # above the episode base (a resting limit at the snapped level, so
+                # every price is real), and after the top, dn_frac more at each
+                # -step% below the highest level reached. At -stop_reset% from the
+                # base: SELL ALL and immediately re-buy at the lower price - the
+                # base resets, the steps start again. One trade row per episode,
+                # every fill in parts. 15:20 closes whatever remains (global bell).
+                dp = v["drip"]
+                tk = s["tick"]
+                highs = s.get("highs") or closes
+                if "cost" not in pos:
+                    pos["cost"] = pos["entry"] * pos.get("qty", 1)
+                    pos["base"] = pos["entry"]
+                    pos["qty0"] = pos.get("qty", 1) + pos.get("qty_add", 0)
+                    pos["buys"] = [[pos["entry"], pos.get("qty", 1)]]
+                    pos["sold_won"] = 0.0
+                    pos["slices"] = []
+                    pos["k_up"] = 0
+                    pos["k_dn"] = 0
+                    pos["ref_up"] = 0.0
+                _sc = v.get("scout")
+                if (_sc and not pos.get("added") and pos.get("qty_add", 0) > 0
+                        and (c / pos["base"] - 1) * 100 >= _sc.get("confirm", 0.5)):
+                    _qa = pos["qty_add"]
+                    pos["buys"].append([c, _qa])
+                    pos["cost"] += c * _qa
+                    pos["qty"] = pos.get("qty", 1) + _qa
+                    pos["qty_add"] = 0
+                    pos["added"] = True
+                    pos["add_px"] = c
+                    pos["base"] = pos["cost"] / pos["qty"]
+                    pos["entry"] = pos["base"]
+                _chop_now = (_dip_state(s, (v.get("dip") or {}).get("win_sec", 600))
+                             ["rng"][i] < (v.get("dip") or {}).get("chop", 0.40))
+
+                def _dsell(q, px, why):
+                    q = min(q, pos["qty"])
+                    if q <= 0:
+                        return
+                    pos["sold_won"] += px * q
+                    pos["qty"] -= q
+                    pos["slices"].append([px, q, why])
+
+                def _drow(last_why):
+                    _q0 = pos.get("qty0", 1) or 1
+                    _ein = pos["cost"] / _q0
+                    _eout = pos["sold_won"] / _q0
+                    _g = (pos["sold_won"] / pos["cost"] - 1) * 100 if pos["cost"] else 0.0
+                    _t = {"si": si, "buy_i": pos["i"], "sell_i": i, "qty": _q0,
+                          "entry": _ein, "exit": _eout,
+                          "gross_pct": round(_g, 3), "net_pct": round(_g - FEE_PCT, 3),
+                          "exit_why": last_why, "ml": pos.get("ml"),
+                          "sharp": bool(pos.get("sharp")), "wall": pos.get("wall"),
+                          "scout": ({"added": bool(pos.get("added")),
+                                     "add_px": pos.get("add_px")} if _sc else None),
+                          "sig": pos.get("sig"),
+                          "parts": {"buys": pos.get("buys"),
+                                    "sells": [[p_, q_] for p_, q_, _w in pos["slices"]]}}
+                    if evidence:
+                        _t["buy_ev"] = {"close": pos["close"], "book": pos["bk"],
+                                        "seq": pos["seq"]}
+                        _t["sell_ev"] = {"close": c, "book": None,
+                                         "seq": closes[max(0, i - 1): i + 1]}
+                    out.append(_t)
+                    last_exit[si] = i
+
+                # -1.5% law: sell ALL, re-buy immediately at the lower price
+                if c <= pos["base"] * (1 - dp.get("stop_reset", 1.5) / 100):
+                    _dsell(pos["qty"], c, f"-{dp.get('stop_reset', 1.5):g}% 전량")
+                    _drow(f"-{dp.get('stop_reset', 1.5):g}% 전량 매도 · 즉시 재매수"
+                          + f" · 조각 {len(pos['slices'])}회")
+                    from services.proof_ml import cap_for as _cap2
+                    _nq = _cap2(c)
+                    poss[si] = {"si": si, "i": i, "entry": c, "bk": pos.get("bk"),
+                                "close": c, "qty": _nq, "ml": None,
+                                "seq": closes[max(0, i - 1): i + 1],
+                                "sig": pos.get("sig"), "wall": None}
+                    continue
+                # +1% steps: resting limits at real snapped prices, filled off highs
+                _guard = 0
+                while pos["qty"] > 0 and _guard < 30:
+                    _guard += 1
+                    _lvl = pos["base"] * (1 + (pos["k_up"] + 1) * dp.get("step", 1.0) / 100)
+                    _lvl = float(-int(-_lvl // tk) * tk)
+                    if highs[i] < _lvl:
+                        break
+                    _qs = max(1, int(pos["qty0"] * dp.get("up_frac", 0.10)))
+                    _dsell(_qs, _lvl, f"+{pos['k_up'] + 1}%")
+                    pos["k_up"] += 1
+                    pos["ref_up"] = max(pos["ref_up"], _lvl)
+                    pos["k_dn"] = 0
+                # -1% below the top: dn_frac per step (frozen during oscillation)
+                if pos["k_up"] > 0 and pos["qty"] > 0 and not _chop_now:
+                    _guard = 0
+                    while (pos["qty"] > 0 and _guard < 30 and c <= pos["ref_up"]
+                           * (1 - (pos["k_dn"] + 1) * dp.get("step", 1.0) / 100)):
+                        _guard += 1
+                        _spx2, _aw2 = _ask_wall_offer(s, i, c, tk)
+                        _qs = max(1, int(pos["qty0"] * dp.get("dn_frac", 0.10)))
+                        _dsell(_qs, (_spx2 if _aw2 is not None else c),
+                               f"고점-{pos['k_dn'] + 1}%")
+                        pos["k_dn"] += 1
+                # Scenario 2: a FRESH dip signal while still holding tops back to 100%
+                if (dp.get("rebuy") and 0 < pos["qty"] < pos["qty0"]
+                        and pos.get("qty_add", 0) <= 0
+                        and _dip_entry(s, v, i, up[si], closes)
+                        and _dip_state(s, v["dip"].get("win_sec", 600))["hii"][i]
+                        > pos["i"]):
+                    _miss = pos["qty0"] - pos["qty"]
+                    pos["buys"].append([c, _miss])
+                    pos["cost"] += c * _miss
+                    pos["qty"] += _miss
+                if pos["qty"] <= 0 and pos.get("qty_add", 0) <= 0:
+                    _drow(f"전량 매도 완료 · 조각 {len(pos['slices'])}회")
+                    poss[si] = None
+                continue
             if v.get("ride"):
                 # HIS EXIT (2026-08-10): "do not sell at 0.5% or 1% if it is rising
                 # sharply, it can rise again - wait, and sell at the beginning of the
