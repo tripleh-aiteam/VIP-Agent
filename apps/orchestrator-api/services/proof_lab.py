@@ -967,7 +967,8 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                 _px = ((_p2["half_px"] * _qh2 + _px * (_lq2 - _qh2)) / _lq2
                        if _lq2 else _px)
             _gross = (_px / _p2["entry"] - 1) * 100
-            _tr = {"si": _si2, "buy_i": _p2["i"], "sell_i": _p2["i"],
+            _tr = {"si": _si2, "buy_i": _p2["i"],
+                   "sell_i": len(_s2["closes"]) - 1,
                    "qty": _p2.get("qty", 1), "entry": _p2["entry"], "exit": _px,
                    "gross_pct": round(_gross, 3),
                    "net_pct": round(_gross - FEE_PCT, 3),

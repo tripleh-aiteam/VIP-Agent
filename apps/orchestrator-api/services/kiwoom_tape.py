@@ -413,7 +413,26 @@ def bars_time(ticks: list[dict], seconds: int) -> list[dict]:
             prev_close = close
             cur, cur_key = [], k
         cur.append(x)
-    return out                      # the bar still forming is deliberately not emitted
+    # THE LAST BAR OF THE DAY (found 2026-08-12 at the bell). The 15:30 closing
+    # auction is the final print, so nothing ever arrives after it and the group it
+    # opened was never emitted - the engine's "after 15:20 close everything" law had
+    # no event to fire on, and four drip holdings stood open past the close. A bar
+    # whose TIME WINDOW has fully elapsed is complete whether or not another tick
+    # follows; emit it. The bar still forming (window not yet over) stays unshown.
+    if cur and cur_key is not None:
+        import time as _tt
+        _lt = _tt.localtime()
+        _nowk = (_lt.tm_hour * 3600 + _lt.tm_min * 60 + _lt.tm_sec) // seconds
+        if cur[0]["ts"][:8] != _tt.strftime("%Y%m%d") or _nowk > cur_key:
+            pxs = [y["px"] for y in cur]
+            close = pxs[-1]
+            op = prev_close if prev_close is not None else pxs[0]
+            out.append({"time": cur_key, "hhmm": cur[-1]["t"], "open": op,
+                        "high": max(max(pxs), op), "low": min(min(pxs), op),
+                        "close": close,
+                        "dir": 1 if close > op else (-1 if close < op else 0),
+                        "vol": sum(y["qty"] for y in cur), "n": len(cur)})
+    return out
 
 
 # ── the Data File: the minute-by-minute record of what REALLY traded ────────────────
