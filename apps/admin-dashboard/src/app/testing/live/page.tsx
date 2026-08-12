@@ -1837,7 +1837,11 @@ export default function LiveDeskPage() {
             )}
           </div>
 
-          {/* holdings */}
+          {/* holdings + per-trade table: on TODAY-LIVE these duplicated the 매매 내역
+              below - same trades, GROSS here vs NET there, two numbers for one truth
+              (boss 2026-08-12: "what are they"). Live keeps ONE list (the history
+              below); this pair now serves only the stored-day / all-days drilldown. */}
+          {ruleDay !== "" && (<>
           <div className="px-4 py-2 border-b text-[11.5px]" style={{ borderColor: "var(--border-default)", background: "rgba(230,81,0,0.05)" }}>
             <b style={{ color: GOLD }}>📌 {t("보유 중", "holding now")}</b>
             {det.holding.length === 0 ? (
@@ -1946,6 +1950,7 @@ export default function LiveDeskPage() {
               </tbody>
             </table>
           </div>
+          </>)}
 
           {/* (5) 🕰️ THE DATA FILE - the minute record every rule reads. A trade is only
               believable if the price it claims can be found in the minute it claims, at a
