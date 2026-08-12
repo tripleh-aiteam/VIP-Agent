@@ -843,6 +843,39 @@ def history_drill(code: str = Query(...), day: str = Query(...),
                      for r in rows]}
 
 
+_FAM_DAILY_CACHE: dict = {}
+
+
+@router.get("/live/rules/family-daily")
+def family_daily(family: str = Query("d1"), tick: int = Query(5),
+                 period: int = Query(60)):
+    """One line per stored day for one algorithm - trades, win %, money - so the
+    day dropdown can show what each day WAS at a glance (boss 2026-08-12 night:
+    "I can see what was winning % on 08-12 or other days"). Finished days are
+    frozen and cached for ever; today is recomputed on each call."""
+    from services.kiwoom_rules import stored_days
+    from services.kiwoom_tape import _day as _kd
+    out = []
+    for d in stored_days("000660"):
+        key = (family, d, tick, period)
+        hit = _FAM_DAILY_CACHE.get(key)
+        if hit is None:
+            try:
+                r = live_family_trades(family=family, tick=tick, period=period,
+                                       day=d, frm="", to="", gate=1, auto=0)
+                hit = {"d8": d, "trips": r.get("trips", 0),
+                       "win_pct": r.get("win_pct", 0), "wins": r.get("wins", 0),
+                       "losses": r.get("losses", 0),
+                       "net_won": r.get("net_won", 0)}
+            except Exception:
+                hit = {"d8": d, "trips": 0, "win_pct": 0, "wins": 0,
+                       "losses": 0, "net_won": 0}
+            if d < _kd():
+                _FAM_DAILY_CACHE[key] = hit
+        out.append(hit)
+    return {"ok": True, "family": family, "days": out}
+
+
 @router.get("/drill-days")
 def history_drill_days(code: str = Query(...)):
     """Which days have recorded tape (drillable to the second) for this stock."""

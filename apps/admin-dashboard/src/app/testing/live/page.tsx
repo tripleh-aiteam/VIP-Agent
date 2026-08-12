@@ -652,6 +652,23 @@ export default function LiveDeskPage() {
   // Loading for ever (boss 2026-08-11, "make it consistent"). Only the newest request
   // may touch the screen.
   const famSeqRef = useRef(0);
+  // each stored day's record for the SELECTED algorithm - the day dropdown wears
+  // these numbers so "what was winning % on 08-12" is answered by looking
+  const [famDaily, setFamDaily] = useState<Record<string,
+    { trips: number; win_pct: number; net_won: number }>>({});
+  useEffect(() => {
+    setFamDaily({});
+    const q = perRef.current ? `period=${perRef.current}` : `tick=${tickRef.current}`;
+    api<{ ok: boolean; days: { d8: string; trips: number; win_pct: number;
+                               net_won: number }[] }>(
+      `/paper-desk/live/rules/family-daily?family=${way}&${q}`)
+      .then((d) => { if (d?.ok) {
+        const m: Record<string, { trips: number; win_pct: number; net_won: number }> = {};
+        d.days.forEach((x) => { m[x.d8] = x; });
+        setFamDaily(m);
+      } })
+      .catch(() => {});
+  }, [way, tick, period]);
   const pullFam = useCallback(() => {
     const my = ++famSeqRef.current;
     setFamBusy(true);
@@ -1255,9 +1272,15 @@ export default function LiveDeskPage() {
               {(rank.days ?? []).slice().reverse()
                 .filter((d2) => d2 !== new Intl.DateTimeFormat("sv-SE", { timeZone: "Asia/Seoul" })
                   .format(new Date()).replace(/-/g, ""))
-                .map((d2) => (
-                <option key={d2} value={d2}>{`${d2.slice(4, 6)}-${d2.slice(6)}`}</option>
-              ))}
+                .map((d2) => {
+                  const st = famDaily[d2];
+                  const lab = `${d2.slice(4, 6)}-${d2.slice(6)}`
+                    + (st && st.trips
+                       ? ` · ${st.trips}${t("건", "t")} ${st.win_pct}%`
+                         + (money ? ` · ${st.net_won > 0 ? "+" : ""}₩${Math.round(st.net_won).toLocaleString()}` : "")
+                       : "");
+                  return <option key={d2} value={d2}>{lab}</option>;
+                })}
             </select>
             <span className="text-[10px] text-[var(--text-muted)] ml-1">{t("시간:", "hours:")}</span>
             <input value={hourFrom} onChange={(e) => setHourFrom(e.target.value)} placeholder="09:00"
