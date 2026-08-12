@@ -194,6 +194,10 @@ VARIANTS: list[dict] = [
      "vol_size": {"x": 1.2, "frac": 0.5}, "us_habit": True,
      "dip": {"drop": 1.0, "sharp": 3.0, "ups": 1, "chop": 1.5, "win_sec": 1800},
      "scout": {"frac": 0.03, "confirm": 0.5},
+     # the second door (boss 08-13): a steady 30-min climb of +1.2% with pullbacks
+     # under 0.4%, at a fresh session high, buys too - 삼성전자 rose +6% on 08-12
+     # with zero dip signals and the desk never touched it
+     "trend": {"climb": 1.2, "dd": 0.4, "win": 30},
      "drip": {"step": 1.0, "up_frac": 0.10, "dn_frac": 0.10, "stop_reset": 1.5}},
     {"id": "D2", "entry": 1, "kind": "pct", "a": 0.3, "b": 2.0, "exec": "limit",
      "stop_pct": 1.5, "wait_bars": 2, "family": "d2", "wall_price": True,
@@ -204,6 +208,7 @@ VARIANTS: list[dict] = [
      "vol_size": {"x": 1.2, "frac": 0.5}, "us_habit": True,
      "dip": {"drop": 1.0, "sharp": 3.0, "ups": 1, "chop": 1.5, "win_sec": 1800},
      "scout": {"frac": 0.03, "confirm": 0.5},
+     "trend": {"climb": 1.2, "dd": 0.4, "win": 30},
      # HIS FINAL ALGO 2 (boss 2026-08-12 night, chose B over the ping-pong):
      # sell 10% at each +1% level; through calm pullbacks the rest is HELD
      # (dn_frac 0 - no de-risking slices); only a genuinely NEW sharp decrease
@@ -857,6 +862,35 @@ def _dip_state(s: dict, win_sec: int = 600) -> dict:
     return got
 
 
+def _trend_entry(s: dict, v: dict, i: int, closes: list[float], now_str: str) -> bool:
+    """THE SECOND WAY IN (boss 2026-08-13 pre-open): "it did not sharp decrease
+    but continuously increasing - in this case also if we buy we could earn".
+    삼성전자 rose +6.02% on 08-12 with ZERO dip signals - structurally invisible
+    to a dip-only desk. A steady climb: the last `win` bars rose >= climb% with
+    no pullback deeper than dd% inside, AND the price is a fresh session high.
+    Measured over 250 days with the drip exit: -0.68M/yr holdout, the least-
+    losing entry this desk has ever tested (dip entries: -40.8M/yr)."""
+    tr = v.get("trend") or {}
+    n_w = int(tr.get("win", 30))
+    if i < n_w + 1 or (now_str and now_str < "09:10"):
+        return False
+    c = closes[i]
+    w = closes[i - n_w:i + 1]
+    if not w[0] or (c / w[0] - 1) * 100 < tr.get("climb", 1.2):
+        return False
+    pk = w[0]
+    dd = 0.0
+    for x in w:
+        if x > pk:
+            pk = x
+        d2 = (pk - x) / pk * 100
+        if d2 > dd:
+            dd = d2
+    if dd > tr.get("dd", 0.4):
+        return False
+    return c >= max(closes[:i + 1])
+
+
 def run_desk(stks: list[dict], v: dict, evidence: bool = False,
              with_open: bool = False, fill_fn=None, events=None):
     """The rule over the WHOLE DESK with ONE hand PER STOCK (boss 2026-08-12: four
@@ -1047,7 +1081,9 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                 pass
             elif v.get("run") and not _run_entry(s, v, i, up[si], closes):
                 pass
-            elif v.get("dip") and not _dip_entry(s, v, i, up[si], closes):
+            elif (v.get("dip") and not _dip_entry(s, v, i, up[si], closes)
+                  and not (v.get("trend")
+                           and _trend_entry(s, v, i, closes, _now))):
                 pass
             elif v.get("dip") and _dip_state(s, v["dip"].get("win_sec", 600))["hii"][i]                     <= last_exit[si]:
                 # ONE ENTRY PER SHARP DECREASE, second iteration (boss 2026-08-11: the
@@ -1129,7 +1165,9 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                 # is fixed at the signal - not re-judged later when we already know more
                 _sharp = False
                 _sig = None
-                if v.get("dip"):
+                _via_trend = bool(v.get("trend")) and not _dip_entry(s, v, i,
+                                                                     up[si], closes)
+                if v.get("dip") and not _via_trend:
                     _std = _dip_state(s, v["dip"].get("win_sec", 600))
                     _typd = _std["typ"][i]
                     _hi_ = _std["hi"][i]
@@ -1149,6 +1187,11 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                     _px, _wall = (_wall_offer(s, i, c, s["tick"])
                                   if (v.get("family") == "new" or v.get("wall_price"))
                                   else (c, None))
+                    if _via_trend:
+                        # a climbing stock never dips back to the bid wall - the
+                        # offer stands at the signal price itself (2-bar wait and
+                        # the 1-tick chase cap still apply)
+                        _px, _wall = c, None
                     pends[si] = {"si": si, "i": i, "px": _px, "close": c, "qty": _q,
                             "ml": ml_meta, "left": v.get("wait_bars", 2), "sharp": _sharp,
                             "wall": _wall, "sig": _sig,

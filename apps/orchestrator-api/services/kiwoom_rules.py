@@ -628,7 +628,12 @@ def trades(vid: str, tick: int = 5, period: int = 0, code: str = "",
                          "highs": [c["high"] for c in cs],
                          "lows": [c["low"] for c in cs],
                          "tick": krx_tick(cs[-1]["close"]) or 1, "seed": 1,
-                         "us_mode": _us_mode_today(),
+                         # today's American night gates only TODAY - a stored day
+                         # replays calm, or this morning's storm-up would erase
+                         # yesterday's 09:0x trades from the record (caught in the
+                         # 08-13 pre-open replay: every pre-10:00 buy vanished)
+                         "us_mode": (_us_mode_today()
+                                     if (d or _kd0()) == _kd0() else "calm"),
                          "times": [c["hhmm"] for c in cs],
                          "vols": [float(c.get("vol") or 0) for c in cs],
                          "ctx": daily_ctx(c_code, d or _kd0()),
