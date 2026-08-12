@@ -917,6 +917,7 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
             if _p2.get("l3"):
                 _lq2 = _p2.get("qty", 1)
                 _qh2 = _p2.get("half_qty", max(1, _lq2 // 2))
+                _p2["sells"] = [[_p2["half_px"], _qh2], [_px, _lq2 - _qh2]]
                 _px = ((_p2["half_px"] * _qh2 + _px * (_lq2 - _qh2)) / _lq2
                        if _lq2 else _px)
             _gross = (_px / _p2["entry"] - 1) * 100
@@ -925,7 +926,9 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                    "gross_pct": round(_gross, 3),
                    "net_pct": round(_gross - FEE_PCT, 3),
                    "exit_why": ("장 마감 정리" if _late else "종목 체결 중단 정리"),
-                   "ml": _p2.get("ml")}
+                   "ml": _p2.get("ml"),
+                   "parts": ({"buys": _p2.get("buys"), "sells": _p2.get("sells")}
+                             if (_p2.get("buys") or _p2.get("sells")) else None)}
             if evidence:
                 _tr["buy_ev"] = {"close": _p2["close"], "book": _p2["bk"], "seq": _p2["seq"]}
                 _tr["sell_ev"] = {"close": _px, "book": _bk, "seq": [_px]}
@@ -1161,11 +1164,18 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                                     and pos.get("qty_add", 0) > 0:
                                 _qs3 = pos.get("qty", 1)
                                 _qa3 = pos["qty_add"]
+                                pos["buys"] = [[pos["entry"], _qs3],
+                                               [pos["add_px"], _qa3]]
                                 pos["entry"] = ((pos["entry"] * _qs3
                                                  + pos["add_px"] * _qa3) / (_qs3 + _qa3))
                                 pos["qty"] = _qs3 + _qa3
                                 pos["qty_add"] = 0
                             _lvl = pos["entry"] * (1 + lad.get("half_at", 1.0) / 100)
+                            # a REAL order price: snapped UP to the next tick, so the
+                            # half never earns less than +half_at% and the order is one
+                            # a broker would accept (boss 2026-08-12: the board must
+                            # show only prices that can actually trade)
+                            _lvl = float(-int(-_lvl // tk) * tk)
                             if highs2[i] >= _lvl:
                                 pos["l3"] = True
                                 pos["half_px"] = _lvl
@@ -1227,6 +1237,7 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                     _qs = pos.get("qty", 1)
                     if pos.get("added") and pos.get("add_px") and pos.get("qty_add", 0):
                         _qa = pos.get("qty_add", 0)
+                        pos["buys"] = [[pos["entry"], _qs], [pos["add_px"], _qa]]
                         _went = (pos["entry"] * _qs + pos["add_px"] * _qa) / (_qs + _qa)
                         pos["entry"] = _went
                         pos["qty"] = _qs + _qa
@@ -1235,6 +1246,7 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                         # size-weighted blend, and the story says both parts
                         _lq = pos.get("qty", 1)
                         _qh = pos.get("half_qty", max(1, _lq // 2))
+                        pos["sells"] = [[pos["half_px"], _qh], [fill_px, _lq - _qh]]
                         fill_px = ((pos["half_px"] * _qh + fill_px * (_lq - _qh)) / _lq
                                    if _lq else fill_px)
                         why = (f"사다리: 절반 +"
@@ -1250,7 +1262,9 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                           "scout": ({"added": bool(pos.get("added")),
                                      "add_px": pos.get("add_px")}
                                     if v.get("scout") else None),
-                          "sig": pos.get("sig"), "ask_wall": pos.get("ask_wall")}
+                          "sig": pos.get("sig"), "ask_wall": pos.get("ask_wall"),
+                          "parts": ({"buys": pos.get("buys"), "sells": pos.get("sells")}
+                                    if (pos.get("buys") or pos.get("sells")) else None)}
                     last_exit[si] = i
                     if evidence:
                         tr["buy_ev"] = {"close": pos["close"], "book": pos["bk"],

@@ -730,7 +730,8 @@ def live_family_trades(family: str = Query("new"), tick: int = Query(5),
                          "exit": tr.get("exit"), "net_pct": tr.get("net_pct"),
                          "exit_why": tr.get("exit_why"), "qty": tr.get("qty"),
                          "won": won, "result": tr.get("result"),
-                         "sig": tr.get("sig"), "wall": tr.get("wall")})
+                         "sig": tr.get("sig"), "wall": tr.get("wall"),
+                         "parts": tr.get("parts")})
     # newest first (boss 2026-08-11) - the top of the table is what just happened
     rows.sort(key=lambda r: (r.get("d8") or "", r.get("buy_t") or ""), reverse=True)
     w = sum(1 for r in rows if r["result"] == "win")

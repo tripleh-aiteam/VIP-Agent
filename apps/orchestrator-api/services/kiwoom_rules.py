@@ -619,6 +619,7 @@ def trades(vid: str, tick: int = 5, period: int = 0, code: str = "",
                 "gross_pct": g["gross_pct"], "net_pct": g["net_pct"],
                 "exit_why": g.get("exit_why", ""),
                 "sig": g.get("sig"), "wall": g.get("wall"), "scout": g.get("scout"),
+                "parts": g.get("parts"),
                 "result": ("win" if g["gross_pct"] > 0 else
                            "loss" if g["gross_pct"] < 0 else "flat"),
                 "bars_held": g["sell_i"] - g["buy_i"],

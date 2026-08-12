@@ -117,6 +117,8 @@ type RTrade = { code: string; name: string; day?: string; d8?: string; ml?: MLMe
                 net_pct: number; exit_why?: string; result: "win" | "loss" | "flat";
                 sharp?: boolean;
                 wall?: { price: number; qty: number; ts: string } | null;
+                parts?: { buys?: [number, number][] | null;
+                          sells?: [number, number][] | null } | null;
                 bars_held: number; tick_size: number; qty?: number; buy_ev?: Ev | null; sell_ev?: Ev | null };
 type RDetail = { ok: boolean; id: string; ko: string; en: string; clock: string;
                  entry_n: number; kind: string; a: number; b?: number | null; dir: number;
@@ -623,7 +625,9 @@ export default function LiveDeskPage() {
                   sell_t: string; exit: number; net_pct: number; exit_why?: string;
                   qty?: number; won: number; result: string;
                   sig?: { drop: number; sx: number | null; rng: number; t?: string } | null;
-                  wall?: { price: number; qty: number } | null };
+                  wall?: { price: number; qty: number } | null;
+                  parts?: { buys?: [number, number][] | null;
+                            sells?: [number, number][] | null } | null };
   type FamTrades = { ok: boolean; rows: FamRow[]; trips: number; wins: number;
                      losses: number; win_pct: number; net_won: number };
   const [famOpen, setFamOpen] = useState(true);
@@ -1422,13 +1426,25 @@ export default function LiveDeskPage() {
                             style={{ color: RED }}
                             title={t("클릭: 차트에서 이 매수 확인", "click: see this buy on the chart")}
                             onClick={() => openFamTrade(r, "b")}>
-                            ▲ {r.buy_t?.slice(0, 8)} @₩{Math.round(r.entry).toLocaleString()}
+                            ▲ {r.buy_t?.slice(0, 8)}{" "}
+                            {r.parts?.buys && r.parts.buys.length === 2 ? (<>
+                              @₩{Math.round(r.parts.buys[0][0]).toLocaleString()}
+                              <span className="text-[9.5px] text-[var(--text-muted)]">({r.parts.buys[0][1]}{t("주", "sh")})</span>
+                              {" + "}₩{Math.round(r.parts.buys[1][0]).toLocaleString()}
+                              <span className="text-[9.5px] text-[var(--text-muted)]">({r.parts.buys[1][1]}{t("주", "sh")})</span>
+                            </>) : (<>@₩{Math.round(r.entry).toLocaleString()}</>)}
                             {r.wall ? " 🧱" : ""}</td>
                           <td className="px-2 cursor-pointer underline decoration-dotted"
                             style={{ color: BLUE }}
                             title={t("클릭: 차트에서 이 매도 확인", "click: see this sell on the chart")}
                             onClick={() => openFamTrade(r, "s")}>
-                            ▼ {r.sell_t?.slice(0, 8)} @₩{Math.round(r.exit).toLocaleString()}</td>
+                            ▼ {r.sell_t?.slice(0, 8)}{" "}
+                            {r.parts?.sells && r.parts.sells.length === 2 ? (<>
+                              @₩{Math.round(r.parts.sells[0][0]).toLocaleString()}
+                              <span className="text-[9.5px] text-[var(--text-muted)]">({r.parts.sells[0][1]}{t("주", "sh")})</span>
+                              {" + "}₩{Math.round(r.parts.sells[1][0]).toLocaleString()}
+                              <span className="text-[9.5px] text-[var(--text-muted)]">({r.parts.sells[1][1]}{t("주", "sh")})</span>
+                            </>) : (<>@₩{Math.round(r.exit).toLocaleString()}</>)}</td>
                           <td className="text-right px-2 font-bold"
                             style={{ color: r.net_pct > 0 ? "#b02a2a" : r.net_pct < 0 ? "#1565c0" : "var(--text-muted)" }}>
                             {r.net_pct > 0 ? "+" : ""}{r.net_pct}%</td>
@@ -1849,9 +1865,13 @@ export default function LiveDeskPage() {
                     <b style={{ color: "#e65100" }}>{ruleNm}</b>
                     <b className="ml-2 text-[var(--text-primary)]">{ptr.name}</b>
                     <span className="ml-2" style={{ color: RED }}>
-                      ▲ {ptr.buy_t} @₩{Math.round(ptr.entry).toLocaleString()}{ptr.wall ? " 🧱" : ""}</span>
+                      ▲ {ptr.buy_t} {ptr.parts?.buys && ptr.parts.buys.length === 2
+                        ? `@₩${Math.round(ptr.parts.buys[0][0]).toLocaleString()}(${ptr.parts.buys[0][1]}) + ₩${Math.round(ptr.parts.buys[1][0]).toLocaleString()}(${ptr.parts.buys[1][1]})`
+                        : `@₩${Math.round(ptr.entry).toLocaleString()}`}{ptr.wall ? " 🧱" : ""}</span>
                     <span className="ml-2" style={{ color: BLUE }}>
-                      ▼ {ptr.sell_t} @₩{Math.round(ptr.exit).toLocaleString()}</span>
+                      ▼ {ptr.sell_t} {ptr.parts?.sells && ptr.parts.sells.length === 2
+                        ? `@₩${Math.round(ptr.parts.sells[0][0]).toLocaleString()}(${ptr.parts.sells[0][1]}) + ₩${Math.round(ptr.parts.sells[1][0]).toLocaleString()}(${ptr.parts.sells[1][1]})`
+                        : `@₩${Math.round(ptr.exit).toLocaleString()}`}</span>
                     <b className="ml-2" style={{ color: ptr.net_pct > 0 ? RED : ptr.net_pct < 0 ? BLUE : "var(--text-muted)" }}>
                       {ptr.net_pct > 0 ? "+" : ""}{ptr.net_pct}%</b>
                     {ptr.exit_why && <span className="ml-2 text-[var(--text-secondary)]">[{ptr.exit_why}]</span>}
