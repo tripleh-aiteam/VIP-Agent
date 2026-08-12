@@ -186,7 +186,8 @@ VARIANTS: list[dict] = [
     # D2 additionally tops the position back to 100% when a FRESH dip signal fires
     # while still holding. 250-day holdout: drip -8.79M vs ladder -11.91M.
     {"id": "D1", "entry": 1, "kind": "pct", "a": 0.3, "b": 2.0, "exec": "limit",
-     "stop_pct": 1.5, "wait_bars": 2, "family": "new", "ignore_gate": True,
+     "stop_pct": 1.5, "wait_bars": 2, "family": "d1", "wall_price": True,
+     "ignore_gate": True,
      # volume law (boss: "volume up -> price up"): at a dip rebound volume is
      # structurally LOW (0.4-0.6x avg today), so a hard gate trades never -
      # instead a quiet signal buys HALF size, a busy one full size
@@ -195,7 +196,8 @@ VARIANTS: list[dict] = [
      "scout": {"frac": 0.03, "confirm": 0.5},
      "drip": {"step": 1.0, "up_frac": 0.10, "dn_frac": 0.10, "stop_reset": 1.5}},
     {"id": "D2", "entry": 1, "kind": "pct", "a": 0.3, "b": 2.0, "exec": "limit",
-     "stop_pct": 1.5, "wait_bars": 2, "family": "new", "ignore_gate": True,
+     "stop_pct": 1.5, "wait_bars": 2, "family": "d2", "wall_price": True,
+     "ignore_gate": True,
      # volume law (boss: "volume up -> price up"): at a dip rebound volume is
      # structurally LOW (0.4-0.6x avg today), so a hard gate trades never -
      # instead a quiet signal buys HALF size, a busy one full size
@@ -204,7 +206,11 @@ VARIANTS: list[dict] = [
      "scout": {"frac": 0.03, "confirm": 0.5},
      "drip": {"step": 1.0, "up_frac": 0.10, "dn_frac": 0.10, "stop_reset": 1.5,
               "rebuy": True}},
+    # Sharp (ladder) leaves the live board 2026-08-13: the boss replaced it with
+    # his two drip scenarios ("instead of sharp rule make it Algorithm 1/2").
+    # Today's history replays; from tomorrow it takes nothing new.
     {"id": "N2", "entry": 1, "kind": "pct", "a": 0.3, "b": 2.0, "exec": "limit",
+     "retired_from": "20260813",
      "stop_pct": 2.0, "wait_bars": 2, "family": "new", "ignore_gate": True,
      "dip": {"drop": 1.0, "sharp": 3.0, "ups": 1, "chop": 1.5, "win_sec": 1800},
      "scout": {"frac": 0.03, "confirm": 0.5},

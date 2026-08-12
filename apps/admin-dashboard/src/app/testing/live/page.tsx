@@ -431,7 +431,7 @@ export default function LiveDeskPage() {
   // and new way also - by default it should show new way, and if I click old way it
   // should show our old way". Both families trade on every tape at once; this only
   // chooses which set of rows is on screen.
-  const [way, setWay] = useState<"new" | "old" | "both">("new");
+  const [way, setWay] = useState<"d1" | "d2" | "old" | "new" | "both">("d2");
   // the screener's ranking - loaded once, shown on demand (boss 2026-08-10)
   // the static year-based screener panel was superseded by the daily picker above;
   // /paper-desk/screener still serves its data for reference.
@@ -1162,11 +1162,15 @@ export default function LiveDeskPage() {
         <b className="text-[12px]" style={{ color: "#6a1b9a" }}>{t("알고리즘:", "algorithm:")}</b>
         {/* TWO BUTTONS, no dropdown (boss 2026-08-11: the select misbehaved twice in one
             morning; a button cannot half-work). The pressed one is filled in. */}
-        {([["new", t("⚡ Sharp 규칙", "⚡ Sharp rule"),
-            t("급락 후 반등 — 급등·완만 두 경우", "drop then bounce - sharp & normal cases")],
+        {([["d1", t("① 알고리즘 1 (시나리오1)", "① Algorithm 1 (Scenario 1)"),
+            t("급락 매수 → +1%마다 10%씩 매도, 고점서 -1%마다 10%씩 · -1.5%면 전량 매도 후 즉시 재매수",
+              "dip buy -> sell 10% per +1% step, 10% per -1% off the top · -1.5% sells all and re-buys")],
+           ["d2", t("② 알고리즘 2 (시나리오2)", "② Algorithm 2 (Scenario 2)"),
+            t("알고리즘 1 + 보유 중 새 급락 신호가 오면 판 만큼 다시 사서 100% 채움",
+              "Algorithm 1 + a fresh dip signal while holding buys back to 100%")],
            ["old", t("📜 예전 규칙 (3연속 상승)", "📜 Old rule (3 rises)"),
-            t("오늘 Sharp와 나란히 비교 매매 중 — 3연속 상승 매수 → 2번째 음봉 매도, 호가벽 가격",
-              "trading in parallel against Sharp today - buy 3 rises, sell at the 2nd blue, wall-priced")]] as const)
+            t("3연속 상승 매수 → 2번째 음봉 매도, 호가벽 가격",
+              "buy 3 rises, sell at the 2nd blue, wall-priced")]] as const)
           .map(([k, lab, tip]) => (
           <button key={k} title={tip}
             onClick={() => { if (way === k) return;
