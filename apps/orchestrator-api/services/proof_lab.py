@@ -1229,9 +1229,20 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                     out.append(_t)
                     last_exit[si] = i
 
-                # -1.5% law: sell ALL, re-buy immediately at the lower price
+                # -1.5% law: sell ALL, re-buy immediately at the lower price.
+                # ONLY a confirmed position resets - a 3% scout that never earned
+                # its +0.5% confirmation is cut and the episode ENDS (pre-flight
+                # audit 08-12: resetting a scout would buy 100% of a stock that
+                # is falling and never confirmed its turn - the scout law upside
+                # down). A new dip signal re-enters normally.
                 if c <= pos["base"] * (1 - dp.get("stop_reset", 1.5) / 100):
+                    _scout_only = bool(v.get("scout")) and pos.get("qty_add", 0) > 0
                     _dsell(pos["qty"], c, f"-{dp.get('stop_reset', 1.5):g}% 전량")
+                    if _scout_only:
+                        _drow(f"-{dp.get('stop_reset', 1.5):g}% 정찰 손절"
+                              + " · 확인 전이라 재매수 없음")
+                        poss[si] = None
+                        continue
                     _drow(f"-{dp.get('stop_reset', 1.5):g}% 전량 매도 · 즉시 재매수"
                           + f" · 조각 {len(pos['slices'])}회")
                     from services.proof_ml import cap_for as _cap2
@@ -1279,10 +1290,10 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                     while (pos["qty"] > 0 and _guard < 30 and c <= pos["ref_up"]
                            * (1 - (pos["k_dn"] + 1) * dp.get("step", 1.0) / 100)):
                         _guard += 1
-                        _spx2, _aw2 = _ask_wall_offer(s, i, c, tk)
                         _qs = max(1, int(pos["qty0"] * dp.get("dn_frac", 0.10)))
-                        _dsell(_qs, (_spx2 if _aw2 is not None else c),
-                               f"고점-{pos['k_dn'] + 1}%")
+                        # at the close, honestly - an instant fill in front of the
+                        # ask wall (above market) was optimism, not a simulation
+                        _dsell(_qs, c, f"고점-{pos['k_dn'] + 1}%")
                         pos["k_dn"] += 1
                 # Scenario 2: a FRESH dip signal while still holding tops back to 100%
                 if (dp.get("rebuy") and not dp.get("pingpong")

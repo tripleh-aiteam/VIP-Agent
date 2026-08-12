@@ -186,23 +186,33 @@ def _gate_ok(code: str, day: str) -> bool:
         return True                      # fail open - never stop the desk on an error
 
 
+_US_MODE_CACHE: list = [0.0, "calm"]
+
+
 def _us_mode_today() -> str:
-    """This morning's American night, classified for the storm habit. Read from
-    the overnight cache the dashboard already shows (SOX = the chip index that
-    predicts SK하이닉스/삼성전자 mornings, corr 0.64 over 250 days)."""
+    """This morning's American night, classified for the storm habit (SOX = the
+    chip index that predicts SK하이닉스/삼성전자 mornings, corr 0.64 over 250
+    days). Goes through overnight.fetch(), which refetches when its file belongs
+    to a PAST day - found in the 08-12 pre-flight audit: reading the file raw
+    would have traded tomorrow on yesterday's American night if nobody opened
+    the 🌙 strip before the bell. 10-minute TTL keeps the hot path fast."""
+    import time as _t
+    if _t.time() - _US_MODE_CACHE[0] < 600.0:
+        return _US_MODE_CACHE[1]
+    mode = "calm"
     try:
-        import json as _j
-        from pathlib import Path as _P
-        d = _j.loads((_P(__file__).resolve().parent.parent / "data"
-                      / "overnight.json").read_text(encoding="utf-8"))
+        from services.overnight import fetch as _ofetch
+        d = _ofetch()
         chg = next((r.get("chg_pct") for r in d.get("rows", [])
                     if r.get("sym") == "^SOX"), None)
-        if chg is None:
-            return "calm"
-        return ("storm_down" if chg <= -1.5 else
-                "storm_up" if chg >= 1.5 else "calm")
+        if chg is not None:
+            mode = ("storm_down" if chg <= -1.5 else
+                    "storm_up" if chg >= 1.5 else "calm")
     except Exception:
-        return "calm"                    # no data -> no habit, never block the desk
+        mode = "calm"                    # no data -> no habit, never block the desk
+    _US_MODE_CACHE[0] = _t.time()
+    _US_MODE_CACHE[1] = mode
+    return mode
 
 
 def _kd0() -> str:
