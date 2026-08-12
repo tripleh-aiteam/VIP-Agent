@@ -274,7 +274,9 @@ function LiveChart({ bars, marks, focus, off = 0 }:
 export default function LiveDeskPage() {
   const { t, lang } = useLanguage();
   const [code, setCode] = useState("005930");
-  const [period, setPeriod] = useState(0);          // 0 = tick clock
+  // DEFAULT = 1분 (boss 2026-08-12, demo morning): Sharp lives on the minute chart,
+  // so the board opens on it. 5틱 remains one click away in the 봉 dropdown.
+  const [period, setPeriod] = useState(60);
   const [tick, setTick] = useState(5);
   const [clockIn, setClockIn] = useState("");
   const [tape, setTape] = useState<Tape | null>(null);
