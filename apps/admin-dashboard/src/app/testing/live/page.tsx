@@ -139,6 +139,8 @@ type RDetail = { ok: boolean; id: string; ko: string; en: string; clock: string;
   ride?: { arm: number; give: number; downs: number; slow_ups: number;
            slow_take: number; sharp_rise: number } | null;
   take_ticks?: number | null; stop_pct?: number | null;
+  scout?: { frac: number; confirm: number } | null;
+  wall_price?: boolean; exact_entry?: boolean;
 };
 type DfRow = { hhmm: string; key: string; date: string; open: number; high: number;
                low: number; close: number; diff: number; dir: number; deal_count: number;
@@ -1323,7 +1325,16 @@ export default function LiveDeskPage() {
                                              } }}
                             style={{ color: "#e65100" }}>{h.rule.startsWith("N") ? "Sharp" : h.rule === "OLD3" ? "Old" : h.rule} ⓘ</td>
                           <td className="px-2 font-bold text-[var(--text-primary)]">{h.name || h.code}</td>
-                          <td className="px-2" style={{ color: RED }}>
+                          <td className="px-2 cursor-pointer underline decoration-dotted"
+                            style={{ color: RED }}
+                            title={t("클릭: 이 매수를 차트에서 확인 (열린 포지션은 매수부터 지금까지 표시)",
+                                     "click: see this buy on the chart (an open position is drawn from its buy to now)")}
+                            onClick={() => { setFocusSide("b");
+                                             setChartOpen(true); chartOpenRef.current = true;
+                                             setSel(h.rule); autoOpenRef.current = h.rule;
+                                             openRule(h.rule, null, h.code);
+                                             setTimeout(() => chartRef.current?.scrollIntoView(
+                                               { behavior: "smooth", block: "center" }), 150); }}>
                             ▲ {h.buy_t?.slice(0, 8)} @₩{Math.round(h.entry).toLocaleString()}</td>
                           <td className="px-2 font-bold" style={{ color: "#e65100" }}>
                             {(h as unknown as { chop?: boolean }).chop
@@ -1572,6 +1583,13 @@ export default function LiveDeskPage() {
               explanation ... in English mode then in english otherwise in Korean") */}
           <div className="px-4 py-2 border-b text-[11.5px]" style={{ borderColor: "var(--border-default)", background: "rgba(15,81,50,0.04)" }}>
             <b style={{ color: "#0f5132" }}>📖 {t("이 규칙의 설명", "how this rule works")}</b>
+            {det.wall_price && (
+              <div className="mt-1 text-[11px] px-2 py-1 rounded"
+                style={{ background: "rgba(15,81,50,0.07)", color: "var(--text-secondary)" }}>
+                🕐 {t("1분봉 차트가 사고팔 시점을 정하고, 호가창이 주문 가격을 정합니다 — 매수: 가장 두꺼운 매수벽 바로 위 1호가(단, 신호 가격을 넘지 않음) · 매도: 가장 두꺼운 매도벽 바로 아래 1호가(2봉 안에 체결되지 않으면 다시 가격을 잡음)",
+                    "the 1-minute chart decides WHEN to buy and sell; the order book decides the PRICE — buy: offered 1 tick above the biggest bid wall (never above the signal price) · sell: offered 1 tick in front of the biggest ask wall (re-priced if not filled within 2 bars)")}
+              </div>
+            )}
             <div className="mt-1 grid gap-3" style={{ gridTemplateColumns: "1fr 1fr 1fr" }}>
               <div>
                 <b className="text-[10.5px]" style={{ color: RED }}>{t("사는 조건 — 질문에 전부 \"예\"여야 삽니다", "BUY — every question must answer YES")}</b>
@@ -1583,6 +1601,10 @@ export default function LiveDeskPage() {
                            `"Has it stopped falling and turned up?" — after ${det.dip.ups} completed up candle${det.dip.ups > 1 ? "s" : ""} off the low, it buys at the price where the ${det.dip.ups + 1 === 2 ? "2nd" : `${det.dip.ups + 1}th`} up candle begins. (A flat bar pauses the count, it never resets it)`)}</li>
                     <li>{t(`"횡보장이 아닌가?" — 최근 ${Math.round((det.dip.win_sec ?? 600) / 60)}분의 고저 폭이 ${det.dip.chop}% 미만이면 아무것도 하지 않습니다. 움직임이 없는 시장에서는 매매 자체를 안 합니다 — 손실도 이익도 없습니다.`,
                            `"Is the market actually moving?" — if the last ${Math.round((det.dip.win_sec ?? 600) / 60)} minutes ranged less than ${det.dip.chop}%, nothing is traded at all. In a flat market there is no trade, so no loss and no gain.`)}</li>
+                    {det.scout && <li>{t(`"우선 ${Math.round(det.scout.frac * 100)}%만 산다" — 신호에서는 정찰병 ${Math.round(det.scout.frac * 100)}%만 사고, +${det.scout.confirm}% 상승으로 확인되면 나머지 ${100 - Math.round(det.scout.frac * 100)}%를 추가합니다. 급락이 다시 이어지면 손해는 정찰병에서 끝납니다.`,
+                           `"Buy ${Math.round(det.scout.frac * 100)}% first" — only a ${Math.round(det.scout.frac * 100)}% scout is bought at the signal; the remaining ${100 - Math.round(det.scout.frac * 100)}% is added once a +${det.scout.confirm}% rise confirms the turn. If the drop resumes, the damage ends at the scout.`)}</li>}
+                    <li>{t(`"같은 급락은 두 번 사지 않는다" — 매도 후 새 고점이 만들어져야 다음 매수가 허용됩니다 (딥당 1회).`,
+                           `"The same dip is never bought twice" — a new high must form after the last sell before the next buy is allowed (one trade per dip).`)}</li>
                   </>)}
                   {!det.dip && <li>{t(`"가격이 ${det.entry_n}번 연속 올랐는가?" — 봉의 마감 가격이 직전 봉보다 높으면 상승 1번. 그런 봉이 ${det.entry_n}개 연속. (가격이 그대로인 봉은 세던 숫자를 잠시 멈출 뿐, 0으로 되돌리지 않습니다)`,
                          `"Did the price rise ${det.entry_n} times in a row?" — a bar closing higher than the one before = one rise; ${det.entry_n} such bars back-to-back. (An unchanged bar pauses the count — it never resets it)`)}</li>}
@@ -1640,16 +1662,22 @@ export default function LiveDeskPage() {
                                          "1,271-trade analysis: buys after big runs lost most — small-run-only lifted win 45→51%")}</li>}
                   {det.vol_x && <li>{t("얇은 거래량의 상승은 쉽게 무너짐 — 거래량 조건으로 승률 46→50%",
                                        "thin-volume rises collapse — the volume gate lifted win 46→50%")}</li>}
-                  {det.kind !== "candle" && (det.b ?? 0) >= 1.5 && <li>{t("손절 폭 전수 실험: 좁을수록 나빠짐 (0.4%: 22% → 1.5%: 62%) — 출렁임을 버티는 폭",
+                  {!det.ride && det.kind !== "candle" && (det.b ?? 0) >= 1.5 && <li>{t("손절 폭 전수 실험: 좁을수록 나빠짐 (0.4%: 22% → 1.5%: 62%) — 출렁임을 버티는 폭",
                                        "stop-width sweep: tighter was always worse (0.4%: 22% → 1.5%: 62%) — wide enough to survive wobble")}</li>}
-                  {det.kind !== "candle" && det.a <= 0.3 && <li>{t("+0.3%는 이 시장에서 가장 자주 도달하는 목표 (실험으로 확인)",
+                  {!det.ride && !det.dip && det.kind !== "candle" && det.a <= 0.3 && <li>{t("+0.3%는 이 시장에서 가장 자주 도달하는 목표 (실험으로 확인)",
                                        "+0.3% is the most-often-reached target on these stocks (measured)")}</li>}
                   {det.is_ml && <li>{t("모델은 매수만 거름 — 같은 규칙 대비 승률 +3~21p (매일 비교 중)",
                                        "the model filters buys only — +3–21p win vs the same rule bare (compared daily)")}</li>}
                   {det.take && det.kind === "candle" && <li>{t("회장님 설계: 패턴 손절 + % 익절의 결합 — 원본과 나란히 검증 중",
                                        "the boss's design: pattern stop + % take, validated beside the originals")}</li>}
-                  <li>{t("236개 조합 전수 실험에서 승률 상위만 채택 — 무작위 아님",
-                         "chosen from a 236-combination sweep by win rate — nothing random")}</li>
+                  {!det.ride && !det.dip && <li>{t("236개 조합 전수 실험에서 승률 상위만 채택 — 무작위 아님",
+                         "chosen from a 236-combination sweep by win rate — nothing random")}</li>}
+                  {det.dip && <li>{t(`급락 기준 ${det.dip.drop}%/${Math.round((det.dip.win_sec ?? 600) / 60)}분은 250일 실측으로 선택 — 종목당 하루 2회 안팎의 진짜 급락만 통과하는 문턱`,
+                         `the ${det.dip.drop}%/${Math.round((det.dip.win_sec ?? 600) / 60)}-min drop line was chosen from 250 measured days — a threshold only ~2 real sharp drops per stock per day can pass`)}</li>}
+                  {det.dip && det.scout && <li>{t("정찰 3%→97%와 +1% 무장은 회장님 설계 — 되밀림에는 작게 다치고, 진짜 반등은 끝까지 태웁니다",
+                         "the 3%→97% scout and the +1% arming are the boss's design — small damage on a relapse, the full ride on a real rebound")}</li>}
+                  {det.ride && !det.dip && <li>{t(`회장님 설계: 정확히 ${det.entry_n}번째 상승에 매수, 2번째 음봉에 매도 — Sharp와 같은 판·같은 종에서 나란히 비교 중`,
+                         `the boss's design: buy at the exact ${det.entry_n}rd rise, sell at the 2nd down candle — running beside Sharp on the same tape, same bell`)}</li>}
                 </ul>
               </div>
             </div>
@@ -1658,6 +1686,11 @@ export default function LiveDeskPage() {
             <div className="mt-2 pt-2 border-t text-[11px] leading-relaxed" style={{ borderColor: "var(--border-default)" }}>
               <b style={{ color: "#0f5132" }}>⏱ {t("실제 흐름", "how it plays out, moment by moment")}: </b>
               <span className="text-[var(--text-secondary)]">
+                {det.dip ? t(`각 1분봉이 완성될 때마다 판단합니다 → 최근 ${Math.round((det.dip.win_sec ?? 600) / 60)}분 최고가에서 ${det.dip.drop}% 이상 급락 → 바닥 뒤 양봉 ${det.dip.ups}개 완성 → ${det.dip.ups + 1}번째 양봉이 시작되는 순간, 매수벽 위 1호가에 정찰 ${det.scout ? Math.round(det.scout.frac * 100) : 100}% 매수${det.scout ? ` → +${det.scout.confirm}% 확인되면 나머지 ${100 - Math.round(det.scout.frac * 100)}% 추가` : ""} → +${det.ride?.arm ?? 1}% 도달로 매도 감시 시작 → 음봉 1개 완성 → 2번째 음봉 시작에 매도벽 앞 1호가로 매도 (횡보 중엔 팔지 않고 보유, 손절 −${det.stop_pct ?? 2}%는 항상 살아 있음) → 빈손 복귀. 같은 급락은 다시 사지 않습니다.`,
+                   `each completed 1-minute bar is judged → a drop of ≥${det.dip.drop}% from the ${Math.round((det.dip.win_sec ?? 600) / 60)}-min high → ${det.dip.ups} up candle${det.dip.ups > 1 ? "s" : ""} complete${det.dip.ups > 1 ? "" : "s"} off the low → at the start of the ${det.dip.ups + 1 === 2 ? "2nd" : `${det.dip.ups + 1}th`} up candle, a ${det.scout ? Math.round(det.scout.frac * 100) : 100}% scout is offered 1 tick above the bid wall${det.scout ? ` → a +${det.scout.confirm}% rise confirms → the ${100 - Math.round(det.scout.frac * 100)}% is added` : ""} → +${det.ride?.arm ?? 1}% arms the exit → one down candle completes → sold at the start of the 2nd, in front of the ask wall (during chop it holds instead; the −${det.stop_pct ?? 2}% stop is always live) → empty-handed, and the same dip is never bought again.`)
+                : det.ride ? t(`봉이 완성될 때마다: 종가가 직전보다 높으면 "상승 1" (보합은 유지) → 정확히 ${det.entry_n}번째 상승이 완성되는 그 순간에만 매수 — 놓친 상승은 추격하지 않습니다 → 매수벽 위 1호가에 주문 → 오르는 동안에는 작은 이익에도 팔지 않고 계속 보유 → 음봉 1개 완성 → 2번째 음봉이 시작되는 순간 매도벽 앞 1호가로 매도 → 손절 −${det.stop_pct ?? 2}%는 항상 살아 있음 → 빈손으로 다음 신호 대기 (한 손 법칙).`,
+                   `each completed bar: a close above the previous counts "+1 rise" (a flat keeps the count) → the buy exists only at the exact moment the ${det.entry_n === 3 ? "3rd" : `${det.entry_n}th`} rise completes — a missed rise is never chased → offered 1 tick above the bid wall → while it keeps climbing nothing is sold, however small the gain → one down candle completes → sold at the start of the 2nd, in front of the ask wall → the −${det.stop_pct ?? 2}% stop is always live → empty-handed until the next signal (one-position law).`)
+                : (<>
                 {t(`봉이 하나 완성될 때마다 규칙이 지켜봅니다 → 종가가 직전보다 높으면 "상승 1"로 셉니다 (보합이면 세던 숫자 유지) → ${det.entry_n}번째 상승이 뜨는 순간`,
                    `the rule watches each bar as it completes → a higher close counts "+1 rise" (a flat keeps the count) → the moment the ${det.entry_n}th rise prints`)}
                 {det.vol_x ? t(`, 그 봉의 거래량을 최근 평균과 비교하고(${det.vol_x}배 미만이면 포기)`,
@@ -1674,6 +1707,7 @@ export default function LiveDeskPage() {
                       `${det.take ? `+${det.take}% first → take; otherwise ` : ""}${det.a} straight falls → sell`)}
                 {t(" → 팔고 나면 빈손으로 돌아가 다음 신호를 기다립니다. 그 사이의 다른 신호들은 전부 무시합니다 (한 손 법칙).",
                    " → after selling it returns empty-handed and waits for the next signal. Every signal in between is ignored (one-position law).")}
+                </>)}
               </span>
             </div>
           </div>
