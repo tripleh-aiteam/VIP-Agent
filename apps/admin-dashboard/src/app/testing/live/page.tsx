@@ -1278,7 +1278,8 @@ export default function LiveDeskPage() {
                   {famBusy ? t("갱신 중…", "updating…") : famOpen ? t("닫기 ▲", "close ▲") : t("펼치기 ▼", "open ▼")}
                 </span>
               </div>
-              {famOpen && fam && fam.rows.length > 0 && (
+              {famOpen && fam && (fam.rows.length > 0
+                  || ((fam as { holding?: unknown[] }).holding?.length ?? 0) > 0) && (
                 <div className="overflow-x-auto mt-1">
                   <table className="w-full text-[11px] tabular-nums">
                     <thead><tr className="text-[10px] text-[var(--text-muted)]">
@@ -1443,7 +1444,8 @@ export default function LiveDeskPage() {
                   ⏳ {t("매매 내역을 불러오는 중입니다…", "Loading the trading history…")}
                 </div>
               )}
-              {famOpen && fam && fam.rows.length === 0 && (
+              {famOpen && fam && fam.rows.length === 0
+                  && ((fam as { holding?: unknown[] }).holding?.length ?? 0) === 0 && (
                 <div className="text-[10.5px] text-[var(--text-muted)] py-1">
                   {t("이 기간에 완료된 매매가 없습니다.", "no completed trades in this window.")}
                 </div>
