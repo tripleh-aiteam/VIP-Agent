@@ -1118,8 +1118,9 @@ export default function LiveDeskPage() {
             morning; a button cannot half-work). The pressed one is filled in. */}
         {([["new", t("⚡ Sharp 규칙", "⚡ Sharp rule"),
             t("급락 후 반등 — 급등·완만 두 경우", "drop then bounce - sharp & normal cases")],
-           ["old", t("📜 예전 규칙", "📜 Old rule"),
-            t("기록 보관용 — 내일부터 매매 중단", "kept as proof - stops trading tomorrow")]] as const)
+           ["old", t("📜 예전 규칙 (3연속 상승)", "📜 Old rule (3 rises)"),
+            t("오늘 Sharp와 나란히 비교 매매 중 — 3연속 상승 매수 → 2번째 음봉 매도, 호가벽 가격",
+              "trading in parallel against Sharp today - buy 3 rises, sell at the 2nd blue, wall-priced")]] as const)
           .map(([k, lab, tip]) => (
           <button key={k} title={tip}
             onClick={() => { if (way === k) return;

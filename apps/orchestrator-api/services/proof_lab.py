@@ -151,6 +151,17 @@ VARIANTS: list[dict] = [
     # exist (five candles span ~0.2%) - there the top->now law of N2 is the equivalent.
     # Tested on today's tape before deployment: 3 events, 67% win, +0.093%/trade net -
     # the only entry with a positive per-trade average on today's grind.
+    # OLD3 — the comparison the boss ordered mid-demo (2026-08-12 09:1x): "in the old
+    # rule I will do it parallelly - buy at 3 reds, keep watching, don't sell while it
+    # rises, sell at the start of the 2nd blue, prices per Feedback 4." His words
+    # exactly: the classic 3-rise entry under the ride exit, UNGATED by +1% (arm=0 -
+    # the first completed down candle sells), full size (no scout), wall-priced both
+    # ways. Runs today against Sharp so the close can compare them on one tape.
+    {"id": "OLD3", "entry": 3, "kind": "pct", "a": 0.3, "b": 2.0, "exec": "limit",
+     "stop_pct": 2.0, "wait_bars": 2, "family": "old", "ignore_gate": True,
+     "wall_price": True,
+     "ride": {"arm": 0.0, "give": 99.0, "downs": 1, "slow_ups": 99, "slow_downs": 99,
+              "slow_take": 99.0, "sharp_rise": 2.0}},
     # N3 retired 2026-08-12 pre-open at the boss's instruction: "N3 is confusing
     # people - just Sharp as the name is enough, delete it from today's trading."
     # One algorithm, one name. Its 08-11 history replays as always.
@@ -1044,8 +1055,9 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                     _tp = _st["typ"][i] / c * 100 if c else 0.0
                     _sharp = bool(_tp and _g >= v["ride"].get("sharp_rise", 2.0) * _tp)
                 if v.get("exec") == "limit":
-                    _px, _wall = ((c, None) if v.get("family") != "new"
-                                  else _wall_offer(s, i, c, s["tick"]))
+                    _px, _wall = (_wall_offer(s, i, c, s["tick"])
+                                  if (v.get("family") == "new" or v.get("wall_price"))
+                                  else (c, None))
                     pend = {"si": si, "i": i, "px": _px, "close": c, "qty": _q,
                             "ml": ml_meta, "left": v.get("wait_bars", 2), "sharp": _sharp,
                             "wall": _wall, "sig": _sig,
