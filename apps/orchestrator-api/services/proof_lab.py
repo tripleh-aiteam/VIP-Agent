@@ -180,6 +180,11 @@ VARIANTS: list[dict] = [
      "stop_pct": 2.0, "wait_bars": 2, "family": "new", "ignore_gate": True,
      "dip": {"drop": 1.0, "sharp": 3.0, "ups": 1, "chop": 1.5, "win_sec": 1800},
      "scout": {"frac": 0.03, "confirm": 0.5},
+     # THE LADDER (boss 2026-08-12): half sells at exactly +1%; the rest rides -
+     # 2nd blue after a renewed rise / +2% total / 4 straight blues / -1.5% below
+     # the post-half peak, whichever comes first. Paired-tested over 250 days:
+     # +68.8%p on riding days vs -57.4%p given back, net +11.4%p/year.
+     "ladder": {"half_at": 1.0, "take": 2.0, "blues": 4, "give": 1.5},
      "ride": {"arm": 1.0, "give": 99.0, "downs": 1, "slow_ups": 99, "slow_downs": 99,
               "slow_take": 1.0, "sharp_rise": 2.0}},
     # N3 (an extra confirming candle, so the 3rd red) REMOVED 2026-08-11: the boss's
@@ -909,6 +914,11 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
             _s2 = stks[_si2]
             _px = lastc[_si2] or _s2["closes"][_p2["i"]]
             _bk = dict(book(_s2["seed"] * 2_000 + i, _px, "SELL", _s2["tick"]), fill=_px)
+            if _p2.get("l3"):
+                _lq2 = _p2.get("qty", 1)
+                _qh2 = _p2.get("half_qty", max(1, _lq2 // 2))
+                _px = ((_p2["half_px"] * _qh2 + _px * (_lq2 - _qh2)) / _lq2
+                       if _lq2 else _px)
             _gross = (_px / _p2["entry"] - 1) * 100
             _tr = {"si": _si2, "buy_i": _p2["i"], "sell_i": _p2["i"],
                    "qty": _p2.get("qty", 1), "entry": _p2["entry"], "exit": _px,
@@ -1136,6 +1146,61 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                 elif lows[i] <= trig and lows[i] >= floor:
                     hit, fill_px = True, max(floor, min(c, trig))
                     why = f"-{v.get('stop_pct', 2.0)}% 손절"
+                elif v.get("ladder") is not None:
+                    # THE BOSS'S LADDER (2026-08-12). Nothing sells before +1% except
+                    # the stop above. The half is a RESTING LIMIT at exactly +1% -
+                    # filled off the high the moment it trades. The remainder then
+                    # rides his four laws; its sell is offered at the ask wall.
+                    lad = v["ladder"]
+                    highs2 = s.get("highs") or closes
+                    if not pos.get("l3"):
+                        _sc3 = v.get("scout")
+                        # the half may only sell once the 97% is on board
+                        if (not _sc3) or pos.get("added") or pos.get("qty_add", 0) <= 0:
+                            if pos.get("added") and pos.get("add_px") \
+                                    and pos.get("qty_add", 0) > 0:
+                                _qs3 = pos.get("qty", 1)
+                                _qa3 = pos["qty_add"]
+                                pos["entry"] = ((pos["entry"] * _qs3
+                                                 + pos["add_px"] * _qa3) / (_qs3 + _qa3))
+                                pos["qty"] = _qs3 + _qa3
+                                pos["qty_add"] = 0
+                            _lvl = pos["entry"] * (1 + lad.get("half_at", 1.0) / 100)
+                            if highs2[i] >= _lvl:
+                                pos["l3"] = True
+                                pos["half_px"] = _lvl
+                                pos["half_qty"] = max(1, pos.get("qty", 1) // 2)
+                                pos["peak_r"] = c
+                                pos["downs_r"] = 0
+                                pos["had_up"] = False
+                    elif not _chop_now:
+                        pos["peak_r"] = max(pos.get("peak_r", c), c)
+                        if c < prev:
+                            pos["downs_r"] = pos.get("downs_r", 0) + 1
+                        elif c > prev:
+                            pos["downs_r"] = 0
+                            pos["had_up"] = True
+                        g_tot = (c / pos["entry"] - 1) * 100
+                        _lwhy = None
+                        if g_tot >= lad.get("take", 2.0):
+                            _lwhy = f"+{lad.get('take', 2.0):g}% 도달 매도"
+                        elif pos.get("had_up") and c < prev:
+                            _lwhy = "상승 후 두 번째 음봉 시작 매도"
+                        elif pos.get("downs_r", 0) >= lad.get("blues", 4):
+                            _lwhy = f"{lad.get('blues', 4)}연속 음봉 매도"
+                        elif c <= pos.get("peak_r", c) * (1 - lad.get("give", 1.5) / 100):
+                            _lwhy = f"반등고점 -{lad.get('give', 1.5):g}% 보호 매도"
+                        if _lwhy is not None:
+                            _spx, _aw = _ask_wall_offer(s, i, c, tk)
+                            if _aw is not None:
+                                pos["psell"] = {"px": _spx, "left": v.get("wait_bars", 2),
+                                                "why": _lwhy}
+                                pos["ask_wall"] = _aw
+                            else:
+                                hit, fill_px, why = True, c, _lwhy
+                    else:
+                        # oscillation = hold (boss 2026-08-11): counting freezes
+                        pos["downs_r"] = 0
                 elif pos.get("downs", 0) >= r.get("downs", 1)                         and (r.get("arm", 0) <= 0 or peak_gain >= r["arm"]):
                     # THE ARMED 2ND-BLUE EXIT. History of this line, kept for honesty:
                     # the boss first unified both cases to "sell at the 2nd blue" with
@@ -1160,11 +1225,21 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                     # blended result when the scout was reinforced: entry becomes the
                     # size-weighted average so % and money stay consistent downstream
                     _qs = pos.get("qty", 1)
-                    if pos.get("added") and pos.get("add_px"):
+                    if pos.get("added") and pos.get("add_px") and pos.get("qty_add", 0):
                         _qa = pos.get("qty_add", 0)
                         _went = (pos["entry"] * _qs + pos["add_px"] * _qa) / (_qs + _qa)
                         pos["entry"] = _went
                         pos["qty"] = _qs + _qa
+                    if pos.get("l3"):
+                        # half already sold at +1%: the trade's exit price is the
+                        # size-weighted blend, and the story says both parts
+                        _lq = pos.get("qty", 1)
+                        _qh = pos.get("half_qty", max(1, _lq // 2))
+                        fill_px = ((pos["half_px"] * _qh + fill_px * (_lq - _qh)) / _lq
+                                   if _lq else fill_px)
+                        why = (f"사다리: 절반 +"
+                               f"{(v.get('ladder') or {}).get('half_at', 1.0):g}% 매도 · "
+                               f"나머지 {why}")
                     gross = (fill_px / pos["entry"] - 1) * 100
                     tr = {"si": si, "buy_i": pos["i"], "sell_i": i,
                           "qty": pos.get("qty", 1), "entry": pos["entry"],

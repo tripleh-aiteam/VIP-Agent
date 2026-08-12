@@ -709,7 +709,7 @@ def trades(vid: str, tick: int = 5, period: int = 0, code: str = "",
             # the sharp-drop entry and the riding exit instead of the +N호가 wording
             "family": v.get("family", "old"), "dip": v.get("dip"), "ride": v.get("ride"),
             "take_ticks": v.get("take_ticks"), "stop_pct": v.get("stop_pct"),
-            "scout": v.get("scout"),
+            "scout": v.get("scout"), "ladder": v.get("ladder"),
             "wall_price": bool(v.get("wall_price") or v.get("family") == "new"),
             "exact_entry": bool(v.get("exact_entry")),
             "dir": v.get("dir", 1),
