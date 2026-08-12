@@ -1166,8 +1166,8 @@ export default function LiveDeskPage() {
             t("급락 매수 → +1%마다 10%씩 매도, 고점서 -1%마다 10%씩 · -1.5%면 전량 매도 후 즉시 재매수",
               "dip buy -> sell 10% per +1% step, 10% per -1% off the top · -1.5% sells all and re-buys")],
            ["d2", t("② 알고리즘 2 (시나리오2)", "② Algorithm 2 (Scenario 2)"),
-            t("왕복 수확: +1%마다 10% 매도, 한 계단 내려오면 그 조각 재매수, 다시 오르면 또 매도",
-              "ping-pong: sell 10% per +1%, buy the slice back one step lower, sell again on the next rise")],
+            t("+1%마다 10% 매도 · 되돌림엔 보유 · 새 급락(2번째 양봉 전환)이 오면 판 만큼 전부 재매수",
+              "sell 10% per +1% · hold through pullbacks · a NEW sharp drop (2nd-red turn) buys back all sold")],
            ["old", t("📜 예전 규칙 (3연속 상승)", "📜 Old rule (3 rises)"),
             t("3연속 상승 매수 → 2번째 음봉 매도, 호가벽 가격",
               "buy 3 rises, sell at the 2nd blue, wall-priced")]] as const)
@@ -1683,8 +1683,11 @@ export default function LiveDeskPage() {
                     <li>{det.drip.pingpong
                       ? t(`+${det.drip.step}% 오를 때마다 ${Math.round(det.drip.up_frac * 100)}%씩 지정가로 팝니다. 판 뒤 마지막 매도 단계보다 한 계단(-${det.drip.step}%) 아래로 내려오면 그 조각을 다시 싸게 사서 채우고, 다시 오르면 같은 단계에서 또 팝니다 — 왕복으로 이익을 수확합니다.`,
                           `Every +${det.drip.step}% step sells ${Math.round(det.drip.up_frac * 100)}% at a resting limit. A fall back one full step below the last sold level BUYS the slice back cheaper; on the next rise the same level sells again — harvesting the swing both ways.`)
-                      : t(`+${det.drip.step}% 오를 때마다 ${Math.round(det.drip.up_frac * 100)}%씩 지정가로 팝니다(가격은 호가 단위에 맞춘 실제 주문가). 고점을 찍은 뒤에는 -${det.drip.step}% 내려갈 때마다 ${Math.round((det.drip.dn_frac ?? 0.1) * 100)}%씩 매도벽 앞에 팝니다.`,
-                          `Every +${det.drip.step}% step sells ${Math.round(det.drip.up_frac * 100)}% at a resting limit (a real tick-grid price). After the top, every -${det.drip.step}% below the highest step sells ${Math.round((det.drip.dn_frac ?? 0.1) * 100)}% more, in front of the ask wall.`)}</li>
+                      : (det.drip.dn_frac ?? 0) > 0
+                      ? t(`+${det.drip.step}% 오를 때마다 ${Math.round(det.drip.up_frac * 100)}%씩 지정가로 팝니다(가격은 호가 단위에 맞춘 실제 주문가). 고점을 찍은 뒤에는 -${det.drip.step}% 내려갈 때마다 ${Math.round((det.drip.dn_frac ?? 0.1) * 100)}%씩 매도벽 앞에 팝니다.`,
+                          `Every +${det.drip.step}% step sells ${Math.round(det.drip.up_frac * 100)}% at a resting limit (a real tick-grid price). After the top, every -${det.drip.step}% below the highest step sells ${Math.round((det.drip.dn_frac ?? 0.1) * 100)}% more, in front of the ask wall.`)
+                      : t(`+${det.drip.step}% 오를 때마다 ${Math.round(det.drip.up_frac * 100)}%씩 지정가로 팝니다. 완만한 되돌림에는 팔지도 사지도 않고 나머지를 그대로 듭니다.`,
+                          `Every +${det.drip.step}% step sells ${Math.round(det.drip.up_frac * 100)}% at a resting limit. Through calm pullbacks the rest is simply HELD - nothing sold, nothing bought.`)}</li>
                     <li>{t(`기준가에서 -${det.drip.stop_reset}%면 전량 매도 후 그 낮은 가격에 즉시 재매수 — 기준이 아래로 다시 잡히고 계단이 다시 시작됩니다. 그 외의 하락에는 팔지 않고 버팁니다.`,
                            `At -${det.drip.stop_reset}% from the base it sells ALL and immediately re-buys at the lower price — the base resets and the steps start again. No other decline sells.`)}</li>
                     {det.drip.rebuy && <li>{t("보유 중에도 새 급락 신호가 오면 판 만큼을 다시 사서 100%로 채웁니다 (시나리오2).",

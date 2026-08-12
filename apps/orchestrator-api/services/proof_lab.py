@@ -204,13 +204,13 @@ VARIANTS: list[dict] = [
      "vol_size": {"x": 1.2, "frac": 0.5}, "us_habit": True,
      "dip": {"drop": 1.0, "sharp": 3.0, "ups": 1, "chop": 1.5, "win_sec": 1800},
      "scout": {"frac": 0.03, "confirm": 0.5},
-     # PING-PONG (boss 2026-08-12 evening: "after +1% we sold 10%, it decreases
-     # -1%, we buy again... like this continue"): each +1% level sells 10%; a fall
-     # back to one step BELOW the last sold level buys the slice back cheaper; the
-     # level can then sell again on the next rise. 250-day holdout -47.4M vs the
-     # fresh-dip-rebuy version's -49.6M - his design, measured better.
-     "drip": {"step": 1.0, "up_frac": 0.10, "stop_reset": 1.5,
-              "pingpong": True}},
+     # HIS FINAL ALGO 2 (boss 2026-08-12 night, chose B over the ping-pong):
+     # sell 10% at each +1% level; through calm pullbacks the rest is HELD
+     # (dn_frac 0 - no de-risking slices); only a genuinely NEW sharp decrease
+     # - the full dip pattern with its own 2nd-red turn - buys back everything
+     # sold, topping up to 100%. "Never buy while it is falling; buy the turn."
+     "drip": {"step": 1.0, "up_frac": 0.10, "dn_frac": 0.0, "stop_reset": 1.5,
+              "rebuy": True}},
     # Sharp (ladder) leaves the live board 2026-08-13: the boss replaced it with
     # his two drip scenarios ("instead of sharp rule make it Algorithm 1/2").
     # Today's history replays; from tomorrow it takes nothing new.
@@ -1274,7 +1274,7 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                         pos["qty"] += _qs
                         pos["k_up"] -= 1
                 # -1% below the top: dn_frac per step (frozen during oscillation)
-                if (not dp.get("pingpong")) and pos["k_up"] > 0                         and pos["qty"] > 0 and not _chop_now:
+                if (not dp.get("pingpong")) and dp.get("dn_frac", 0.10) > 0                         and pos["k_up"] > 0                         and pos["qty"] > 0 and not _chop_now:
                     _guard = 0
                     while (pos["qty"] > 0 and _guard < 30 and c <= pos["ref_up"]
                            * (1 - (pos["k_dn"] + 1) * dp.get("step", 1.0) / 100)):
