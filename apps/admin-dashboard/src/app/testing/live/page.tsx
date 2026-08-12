@@ -1440,11 +1440,11 @@ export default function LiveDeskPage() {
                             title={t("클릭: 차트에서 이 매수 확인", "click: see this buy on the chart")}
                             onClick={() => openFamTrade(r, "b")}>
                             ▲ {r.buy_t?.slice(0, 8)}{" "}
-                            {r.parts?.buys && r.parts.buys.length === 2 ? (<>
-                              @₩{Math.round(r.parts.buys[0][0]).toLocaleString()}
-                              <span className="text-[9.5px] text-[var(--text-muted)]">({r.parts.buys[0][1]}{t("주", "sh")})</span>
-                              {" + "}₩{Math.round(r.parts.buys[1][0]).toLocaleString()}
-                              <span className="text-[9.5px] text-[var(--text-muted)]">({r.parts.buys[1][1]}{t("주", "sh")})</span>
+                            {r.parts?.buys && r.parts.buys.length >= 2 ? (<>
+                              {r.parts.buys.map(([p2, q2], k2) => (<span key={k2}>
+                                {k2 > 0 ? " + " : "@"}₩{Math.round(p2).toLocaleString()}
+                                <span className="text-[9.5px] text-[var(--text-muted)]">({q2}{t("주", "sh")})</span>
+                              </span>))}
                             </>) : (<>@₩{Math.round(r.entry).toLocaleString()}</>)}
                             {r.wall ? " 🧱" : ""}</td>
                           <td className="px-2 cursor-pointer underline decoration-dotted"
@@ -1452,11 +1452,11 @@ export default function LiveDeskPage() {
                             title={t("클릭: 차트에서 이 매도 확인", "click: see this sell on the chart")}
                             onClick={() => openFamTrade(r, "s")}>
                             ▼ {r.sell_t?.slice(0, 8)}{" "}
-                            {r.parts?.sells && r.parts.sells.length === 2 ? (<>
-                              @₩{Math.round(r.parts.sells[0][0]).toLocaleString()}
-                              <span className="text-[9.5px] text-[var(--text-muted)]">({r.parts.sells[0][1]}{t("주", "sh")})</span>
-                              {" + "}₩{Math.round(r.parts.sells[1][0]).toLocaleString()}
-                              <span className="text-[9.5px] text-[var(--text-muted)]">({r.parts.sells[1][1]}{t("주", "sh")})</span>
+                            {r.parts?.sells && r.parts.sells.length >= 2 ? (<>
+                              {r.parts.sells.map(([p2, q2], k2) => (<span key={k2}>
+                                {k2 > 0 ? " + " : "@"}₩{Math.round(p2).toLocaleString()}
+                                <span className="text-[9.5px] text-[var(--text-muted)]">({q2}{t("주", "sh")})</span>
+                              </span>))}
                             </>) : (<>@₩{Math.round(r.exit).toLocaleString()}</>)}</td>
                           <td className="text-right px-2 font-bold"
                             style={{ color: r.net_pct > 0 ? "#b02a2a" : r.net_pct < 0 ? "#1565c0" : "var(--text-muted)" }}>
@@ -1889,12 +1889,12 @@ export default function LiveDeskPage() {
                     <b style={{ color: "#e65100" }}>{ruleNm}</b>
                     <b className="ml-2 text-[var(--text-primary)]">{ptr.name}</b>
                     <span className="ml-2" style={{ color: RED }}>
-                      ▲ {ptr.buy_t} {ptr.parts?.buys && ptr.parts.buys.length === 2
-                        ? `@₩${Math.round(ptr.parts.buys[0][0]).toLocaleString()}(${ptr.parts.buys[0][1]}) + ₩${Math.round(ptr.parts.buys[1][0]).toLocaleString()}(${ptr.parts.buys[1][1]})`
+                      ▲ {ptr.buy_t} {ptr.parts?.buys && ptr.parts.buys.length >= 2
+                        ? "@" + ptr.parts.buys.map(([p2, q2]) => `₩${Math.round(p2).toLocaleString()}(${q2})`).join(" + ")
                         : `@₩${Math.round(ptr.entry).toLocaleString()}`}{ptr.wall ? " 🧱" : ""}</span>
                     <span className="ml-2" style={{ color: BLUE }}>
-                      ▼ {ptr.sell_t} {ptr.parts?.sells && ptr.parts.sells.length === 2
-                        ? `@₩${Math.round(ptr.parts.sells[0][0]).toLocaleString()}(${ptr.parts.sells[0][1]}) + ₩${Math.round(ptr.parts.sells[1][0]).toLocaleString()}(${ptr.parts.sells[1][1]})`
+                      ▼ {ptr.sell_t} {ptr.parts?.sells && ptr.parts.sells.length >= 2
+                        ? "@" + ptr.parts.sells.map(([p2, q2]) => `₩${Math.round(p2).toLocaleString()}(${q2})`).join(" + ")
                         : `@₩${Math.round(ptr.exit).toLocaleString()}`}</span>
                     <b className="ml-2" style={{ color: ptr.net_pct > 0 ? RED : ptr.net_pct < 0 ? BLUE : "var(--text-muted)" }}>
                       {ptr.net_pct > 0 ? "+" : ""}{ptr.net_pct}%</b>
