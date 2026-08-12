@@ -1243,8 +1243,8 @@ export default function LiveDeskPage() {
                 )}
                 {fam && fam.rows.length > 0 && (
                   <span className="text-[10.5px] text-[var(--text-secondary)]">
-                    {Array.from(new Set(fam.rows.map((r) => r.rule.startsWith("N") ? "Sharp" : r.rule))).map((ru) => {
-                      const rs = fam.rows.filter((r) => (r.rule.startsWith("N") ? "Sharp" : r.rule) === ru);
+                    {Array.from(new Set(fam.rows.map((r) => r.rule.startsWith("N") ? "Sharp" : r.rule === "OLD3" ? "Old" : r.rule))).map((ru) => {
+                      const rs = fam.rows.filter((r) => (r.rule.startsWith("N") ? "Sharp" : r.rule === "OLD3" ? "Old" : r.rule) === ru);
                       const w2 = rs.filter((r) => r.result === "win").length;
                       const l2 = rs.filter((r) => r.result === "loss").length;
                       return `${ru} ${rs.length}${lang === "ko" ? "건" : "t"} ${w2}${lang === "ko" ? "승" : "W"}${l2}${lang === "ko" ? "패" : "L"}`;
@@ -1316,7 +1316,7 @@ export default function LiveDeskPage() {
                                                setSel(h.rule); autoOpenRef.current = h.rule;
                                                openRule(h.rule, null, h.code);
                                              } }}
-                            style={{ color: "#e65100" }}>{h.rule.startsWith("N") ? "Sharp" : h.rule} ⓘ</td>
+                            style={{ color: "#e65100" }}>{h.rule.startsWith("N") ? "Sharp" : h.rule === "OLD3" ? "Old" : h.rule} ⓘ</td>
                           <td className="px-2 font-bold text-[var(--text-primary)]">{h.name || h.code}</td>
                           <td className="px-2" style={{ color: RED }}>
                             ▲ {h.buy_t?.slice(0, 8)} @₩{Math.round(h.entry).toLocaleString()}</td>
@@ -1377,7 +1377,7 @@ export default function LiveDeskPage() {
                                                setChartOpen(true); chartOpenRef.current = true;
                                                openFamTrade(r, "b");
                                              } }}
-                            style={{ color: "#6a1b9a" }}>{r.rule.startsWith("N") ? "Sharp" : r.rule} ⓘ</td>
+                            style={{ color: "#6a1b9a" }}>{r.rule.startsWith("N") ? "Sharp" : r.rule === "OLD3" ? "Old" : r.rule} ⓘ</td>
                           <td className="px-2 font-bold text-[var(--text-primary)]">{r.name || r.code}</td>
                           <td className="px-2 cursor-pointer underline decoration-dotted"
                             style={{ color: RED }}

@@ -159,7 +159,7 @@ VARIANTS: list[dict] = [
     # ways. Runs today against Sharp so the close can compare them on one tape.
     {"id": "OLD3", "entry": 3, "kind": "pct", "a": 0.3, "b": 2.0, "exec": "limit",
      "stop_pct": 2.0, "wait_bars": 2, "family": "old", "ignore_gate": True,
-     "wall_price": True,
+     "wall_price": True, "clock": [5, 60],
      "ride": {"arm": 0.0, "give": 99.0, "downs": 1, "slow_ups": 99, "slow_downs": 99,
               "slow_take": 99.0, "sharp_rise": 2.0}},
     # N3 retired 2026-08-12 pre-open at the boss's instruction: "N3 is confusing
