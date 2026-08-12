@@ -769,7 +769,11 @@ export default function LiveDeskPage() {
       // a stored day's trades cannot change - re-downloading the multi-MB detail every
       // 3s only churned the chart under his cursor. Refresh it live-only.
       if (sel && !ruleDayRef.current)
-        openRule(sel, pick, pick !== null ? detRef.current?.trades[pick]?.code : undefined);
+        // pick===null covers a clicked HOLDING too: keep the company the chart is
+        // already drawing, or 3s later it snaps to the stock button and the buy
+        // arrow vanishes (boss 2026-08-12: "chart resetting and arrow disappearing")
+        openRule(sel, pick, pick !== null ? detRef.current?.trades[pick]?.code
+                                          : detRef.current?.chart?.code);
     }, 3000);
     const b = setInterval(() => api<Status>("/paper-desk/live/status").then(setSt).catch(() => {}), 15000);
     return () => { clearInterval(a); clearInterval(b); };
