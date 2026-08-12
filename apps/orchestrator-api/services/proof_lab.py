@@ -160,6 +160,9 @@ VARIANTS: list[dict] = [
     {"id": "OLD3", "entry": 3, "kind": "pct", "a": 0.3, "b": 2.0, "exec": "limit",
      "stop_pct": 2.0, "wait_bars": 2, "family": "old", "ignore_gate": True,
      "wall_price": True, "clock": [5, 60],
+     # exactly the 3rd red, never the 6th: the same late-chase law Sharp already has
+     # (boss caught OLD buying ups=6 on 2026-08-12 while the hand had been busy)
+     "exact_entry": True,
      "ride": {"arm": 0.0, "give": 99.0, "downs": 1, "slow_ups": 99, "slow_downs": 99,
               "slow_take": 99.0, "sharp_rise": 2.0}},
     # N3 retired 2026-08-12 pre-open at the boss's instruction: "N3 is confusing
@@ -983,7 +986,9 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                 # that sell. A genuinely new rise, then a new sharp fall - one trade per
                 # dip as the eye sees it.
                 pass
-            elif (dn[si] if v.get("dir", 1) < 0 else up[si]) >= v["entry"]:
+            elif ((dn[si] if v.get("dir", 1) < 0 else up[si]) == v["entry"]
+                  if v.get("exact_entry")
+                  else (dn[si] if v.get("dir", 1) < 0 else up[si]) >= v["entry"]):
                 if v.get("max_run"):
                     # small-run confirmation, same walk as run_variant - keep in step
                     _j = i
