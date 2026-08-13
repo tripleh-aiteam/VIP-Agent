@@ -213,6 +213,10 @@ VARIANTS: list[dict] = [
      # selling (알고1: -1% below top per slice · 알고2: rung-slip).
      "drip": {"step": 1.0, "up_frac": 0.10, "dn_frac": 0.10, "stop_reset": 1.5,
               "rebuy": True,
+              # his retreat law (14:5x): in profit, a rise turns down - the 2nd
+              # blue sells 10%; a single HUGE blue (>=0.9%) sells right away.
+              # Measured cost accepted knowingly: ~ -6M/yr for +4p win rate.
+              "retreat": {"big": 0.9},
               "reinforce": {"frac": 0.5, "max": 2}}},
     {"id": "D2", "entry": 1, "kind": "pct", "a": 0.3, "b": 2.0, "exec": "limit",
      "stop_pct": 1.5, "wait_bars": 2, "family": "d2", "wall_price": True,
@@ -242,7 +246,8 @@ VARIANTS: list[dict] = [
      # RELOAD - a fresh sharp-decrease turn buys back what was sold. The duel now
      # isolates exactly one question: does the reload law earn its keep?
      "drip": {"step": 1.0, "up_frac": 0.10, "dn_frac": 0.10, "stop_reset": 1.5,
-              "rebuy": True, "reinforce": {"frac": 0.5, "max": 2}}},
+              "rebuy": True, "retreat": {"big": 0.9},
+              "reinforce": {"frac": 0.5, "max": 2}}},
     # Sharp (ladder) leaves the live board 2026-08-13: the boss replaced it with
     # his two drip scenarios ("instead of sharp rule make it Algorithm 1/2").
     # Today's history replays; from tomorrow it takes nothing new.
@@ -1331,6 +1336,7 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                     pos["entry"] = pos["base"]
                 _chop_now = (_dip_state(s, (v.get("dip") or {}).get("win_sec", 600))
                              ["rng"][i] < (v.get("dip") or {}).get("chop", 0.40))
+                _qty_bar0 = pos["qty"]
 
                 def _dsell(q, px, why):
                     q = min(q, pos["qty"])
@@ -1443,6 +1449,29 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                         # ask wall (above market) was optimism, not a simulation
                         _dsell(_qs, c, f"고점-{pos['k_dn'] + 1}%")
                         pos["k_dn"] += 1
+                # PEAK-RETREAT SELL (boss 2026-08-13 14:5x): "we already gained,
+                # so after the increase starts to decrease, at the second blue
+                # sell 10% - and a blue can be very huge, around 1%, sell then
+                # too." Fires only in profit, only when the rise stood above
+                # the base, once per retreat (re-arms on a new local high), and
+                # only if no rung-slice already sold this bar.
+                _pr = dp.get("retreat")
+                if _pr and pos["qty"] > 0 and pos.get("qty_add", 0) <= 0:
+                    if c > pos.get("pr_pk", 0.0):
+                        pos["pr_pk"] = c
+                        pos["pr_blues"] = 0
+                        pos["pr_sold"] = False
+                    elif c < prev:
+                        pos["pr_blues"] = pos.get("pr_blues", 0) + 1
+                    _big = bool(prev) and (prev - c) / prev * 100 >= _pr.get("big", 0.9)
+                    if ((not pos.get("pr_sold")) and not _chop_now
+                            and c > pos.get("base", 0)
+                            and pos.get("pr_pk", 0) > pos.get("base", 0)
+                            and (pos.get("pr_blues", 0) >= 2 or _big)
+                            and pos["qty"] == _qty_bar0):
+                        _qs = max(1, int(pos["qty0"] * dp.get("up_frac", 0.10)))
+                        _dsell(_qs, c, ("큰 음봉 10%" if _big else "상승후 2음봉 10%"))
+                        pos["pr_sold"] = True
                 # Scenario 2: a FRESH dip signal while still holding tops back to 100%
                 if (dp.get("rebuy") and not dp.get("pingpong")
                         and 0 < pos["qty"] < pos["qty0"]
