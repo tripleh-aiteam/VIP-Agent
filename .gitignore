@@ -40,3 +40,8 @@ Thumbs.db
 ruvector.db
 
 .vercel
+
+# trading data - sacred records, too big for git; moves between servers as a zip
+apps/orchestrator-api/data/
+apps/orchestrator-api/ml/*.pkl
+r.json
