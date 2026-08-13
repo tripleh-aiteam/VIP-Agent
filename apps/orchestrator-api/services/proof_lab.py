@@ -1256,7 +1256,8 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                 # is fixed at the signal - not re-judged later when we already know more
                 _sharp = False
                 _sig = None
-                _via_dip0 = _dip_entry(s, v, i, up[si], closes)
+                _via_dip0 = bool(v.get("dip")) and _dip_entry(s, v, i,
+                                                              up[si], closes)
                 _via_trend = ((not _via_dip0)
                               and ((bool(v.get("trend"))
                                     and _trend_entry(s, v, i, closes, _now))
