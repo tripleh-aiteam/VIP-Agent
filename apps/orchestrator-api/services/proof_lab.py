@@ -202,9 +202,13 @@ VARIANTS: list[dict] = [
      # with zero dip signals and the desk never touched it
      "trend": {"climb": 1.2, "dd": 0.4, "win": 30},
      "rebound": {"low_win": 20, "near": 3.0, "day_gain": 2.0, "drop": 0.5},
-     # slice sizes per his 11:0x order: 알고리즘1 sells 10% per +1% step,
-     # 알고리즘2 sells 50% - slow harvest vs fast harvest, same entries
+     # boss 12:0x: "when decrease we have to buy even we have a stock - all
+     # rules, all six." 알고리즘1 gains the reload too: a fresh sharp-decrease
+     # turn buys back sold slices mid-hold. Both algorithms now buy on real
+     # decreases while holding; what still separates them is the down-side
+     # selling (알고1: -1% below top per slice · 알고2: rung-slip).
      "drip": {"step": 1.0, "up_frac": 0.10, "dn_frac": 0.10, "stop_reset": 1.5,
+              "rebuy": True,
               "reinforce": {"frac": 0.5, "max": 2}}},
     {"id": "D2", "entry": 1, "kind": "pct", "a": 0.3, "b": 2.0, "exec": "limit",
      "stop_pct": 1.5, "wait_bars": 2, "family": "d2", "wall_price": True,
