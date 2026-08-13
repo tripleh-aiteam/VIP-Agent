@@ -1044,7 +1044,11 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                 _p2["entry"] = _p2["cost"] / _q0d
                 _px = _p2["sold_won"] / _q0d
                 _p2["qty"] = _q0d
-                _p2["sells"] = [[p_, q_] for p_, q_, *_x in _p2.get("slices", [])]
+                _p2["sells"] = [[p_, q_,
+                                 (_s2.get("times") or [""] * (i_ + 1))[i_]
+                                 if i_ < len(_s2.get("times") or []) else "",
+                                 i_, r_, w_]
+                                for p_, q_, w_, i_, r_ in _p2.get("slices", [])]
             if _p2.get("l3"):
                 _lq2 = _p2.get("qty", 1)
                 _qh2 = _p2.get("half_qty", max(1, _lq2 // 2))
@@ -1310,7 +1314,13 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                                      "add_px": pos.get("add_px")} if _sc else None),
                           "sig": pos.get("sig"),
                           "parts": {"buys": pos.get("buys"),
-                                    "sells": [[p_, q_] for p_, q_, *_x in pos["slices"]]}}
+                                    # each sell remembers time, bar, remaining and
+                                    # its reason - the board lists them per line
+                                    "sells": [[p_, q_,
+                                               (s.get("times") or [""] * (i_ + 1))[i_]
+                                               if i_ < len(s.get("times") or []) else "",
+                                               i_, r_, w_]
+                                              for p_, q_, w_, i_, r_ in pos["slices"]]}}
                     if evidence:
                         _t["buy_ev"] = {"close": pos["close"], "book": pos["bk"],
                                         "seq": pos["seq"]}
@@ -1722,7 +1732,11 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
               "last": s["closes"][-1], "sig": pos.get("sig"), "wall": pos.get("wall"),
               "chop": bool(pos.get("chop")),
               "parts": ({"buys": pos.get("buys"),
-                         "sells": ([[p_, q_] for p_, q_, *_x in pos["slices"]]
+                         "sells": ([[p_, q_,
+                                     (s.get("times") or [""] * (i_ + 1))[i_]
+                                     if i_ < len(s.get("times") or []) else "",
+                                     i_, r_, w_]
+                                    for p_, q_, w_, i_, r_ in pos["slices"]]
                                    if pos.get("slices") else None)}
                         if (pos.get("buys") or pos.get("slices")) else None),
               "slices": (pos.get("slices") or None),
