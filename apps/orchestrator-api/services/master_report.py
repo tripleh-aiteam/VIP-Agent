@@ -63,6 +63,37 @@ def _digest(rep: dict, label: str) -> str:
 
 _NO_BROKER = "## Korean Securities Firms — analyst consensus\n(No broker consensus available today.)"
 
+_ISO_DATE_RE = re.compile(r"\b20\d{2}-\d{2}-\d{2}\b")
+
+
+def _ground_dates(text: str, source_material: str) -> tuple[str, list[str]]:
+    """Blank out any calendar date the model INVENTED.
+
+    Section 4 (일정매매 catalysts) is the section the boss actually trades on:
+    "know the future event → position early → sell into the attention". The model
+    is told to write 'upcoming (TBC)' when it doesn't know a date, but a
+    future-date-only instruction is a one-sided guard — it constrains the
+    DIRECTION of a fabricated date without constraining whether the event is
+    real. In practice the model filled the section with plausible-looking dates
+    spaced two days apart in watchlist order, including "earnings" for companies
+    whose 2Q26 results had already been published the week before.
+
+    So the rule is enforced mechanically instead of by instruction: a specific
+    date may only survive if it literally appears in the material we handed the
+    model. Anything else becomes 'upcoming (TBC)' — vague but true, which is what
+    an event-driven strategy needs. Returns (scrubbed_text, dropped_dates)."""
+    grounded = set(_ISO_DATE_RE.findall(source_material or ""))
+    dropped: list[str] = []
+
+    def _sub(m: re.Match) -> str:
+        d = m.group(0)
+        if d in grounded:
+            return d
+        dropped.append(d)
+        return "upcoming (TBC)"
+
+    return _ISO_DATE_RE.sub(_sub, text or ""), dropped
+
 
 def build_master_report(db, trace_id: str) -> dict:
     """Synthesise the 3 source reports + Korean broker consensus into one summary."""
@@ -116,9 +147,17 @@ def build_master_report(db, trace_id: str) -> dict:
             "→ SELL WHEN PUBLIC ATTENTION ARRIVES. Frame the whole report around that. "
             "Use ONLY the provided material — NEVER invent. ALL prices are KRW. "
             "TODAY'S DATE is given at the top of the user message: treat every "
-            "'catalyst' as FUTURE-ONLY (after today) — DISCARD any past-dated event; "
-            "if a date is unknown write 'upcoming (TBC)' or a quarter, NEVER a past "
-            "date. Produce this EXACT structure (~4-PAGE report; do NOT include a "
+            "'catalyst' as FUTURE-ONLY (after today) — DISCARD any past-dated event. "
+            "⚠ DATE RULE (enforced automatically): you may write a specific calendar "
+            "date ONLY if that exact date appears VERBATIM in the material below. You "
+            "do NOT have an earnings calendar — so for an earnings date you almost "
+            "always write 'upcoming (TBC)' or a quarter (e.g. '3Q26'). Guessing a "
+            "plausible-looking date is a FACTUAL ERROR, not a helpful estimate: any "
+            "date you invent is stripped from the report before it is sent, and a "
+            "fabricated catalyst calendar is worse than no calendar because the "
+            "reader POSITIONS MONEY on it. A vague-but-true 'upcoming (TBC)' is "
+            "always preferred over a precise-but-guessed date. "
+            "Produce this EXACT structure (~4-PAGE report; do NOT include a "
             "price/market-data grid — the price table lives only in the Kiwoom "
             "report):\n"
             "## 1. Executive Summary\n## 2. Signal Explanations (per stock)\n"
@@ -144,9 +183,12 @@ def build_master_report(db, trace_id: str) -> dict:
             "(watch) — name the stocks and what the disagreement means.\n"
             "- Section 4: merge ONLY FUTURE catalysts into a BULLET LIST (no table) — "
             "one bullet per event: '• <Date/Timing> — <Event> · Stock(s): <…> · Likely "
-            "impact: <…> · Early-position play: <…>', every date AFTER today; then 2-3 "
-            "bullet 'positioning plays' (buy before <future event> → sell when the "
-            "crowd arrives).\n"
+            "impact: <…> · Early-position play: <…>'. <Date/Timing> must be either a "
+            "date quoted VERBATIM from the material or 'upcoming (TBC)' / a quarter — "
+            "see the DATE RULE. Include ONLY events actually evidenced in the material; "
+            "if the material evidences no future events, say so in one line rather than "
+            "filling the section. Then 2-3 bullet 'positioning plays' (buy before "
+            "<future event> → sell when the crowd arrives).\n"
             "- Section 5 (증권사 추천): use ONLY the 'Korean Securities Firms' "
             "consensus' material provided. Present each KR stock that has data as its "
             "own bullet — '• <종목>: 컨센서스 목표주가 <…>, 상승여력 <…>, 투자의견 <…>' (no "
@@ -181,6 +223,14 @@ def build_master_report(db, trace_id: str) -> dict:
             max_tokens=12000, temperature=0.4, model="groq-llama-3.3-70b", prefer_paid=True) or ""
         bad = (not out.strip()) or out.lstrip().startswith(("[LLM unavailable]", "[server error]"))
         if not bad:
+            # Scrub invented dates BEFORE translating, so the Korean edition
+            # inherits the corrected text instead of translating a fabrication.
+            out, dropped = _ground_dates(out.strip(), user)
+            if dropped:
+                log.warning(
+                    f"master: dropped {len(dropped)} ungrounded date(s) from the "
+                    f"catalyst calendar: {', '.join(sorted(set(dropped))[:10])}",
+                    extra={"action": "master.dates_ungrounded", "count": len(dropped)})
             detail_en = out.strip()
             try:
                 ko_sys = (

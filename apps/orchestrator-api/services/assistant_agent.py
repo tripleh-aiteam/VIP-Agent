@@ -704,6 +704,19 @@ _PRICE_WORDS = ("현재가", "시세", "주가", "얼마", "가격", "price", "q
                 "trading at", "trade at", "how much", "worth", "going for", "trading for")
 # Generic stock-price phrasing with NO specific company → show the watchlist.
 _GENERIC_STOCK_WORDS = ("stock", "주가", "주식", "종목", "시세", "현재가")
+# Bare English quote-field words. Korean says '고가/저가/종가' — single tokens that are
+# already in _PRICE_WORDS — but English says "today's HIGH", "what was the CLOSE", with no
+# 'price' anywhere. Before 2026-08-03 those missed the local quote lane and fell through to
+# the LLM tool-chain, which answered from the DAILY bar: "오늘 고가는?" returned the live
+# Kiwoom high while "what about today's high?" returned a different number from Naver daily.
+# Kept deliberately narrow (no bare 'open' — "open the dashboard" must not look like a
+# quote) and only honoured when a specific stock is on the table.
+_BARE_FIELD_RE = _re.compile(r"\b(high|low|close|closing|highest|lowest)\b", _re.IGNORECASE)
+# Pronoun references that point at the stock under discussion rather than naming it.
+_PRONOUN_REF_RE = _re.compile(
+    r"\b(it|that one|this one|that stock|this stock|the stock|them|those)\b"
+    r"|그거|그것|이거|이것|저거|그 ?종목|이 ?종목|해당 ?종목|얘|걔",
+    _re.IGNORECASE)
 _DEFAULT_WATCHLIST = (("000660", "SK하이닉스"), ("005930", "삼성전자"), ("035420", "NAVER"))
 
 
@@ -885,7 +898,7 @@ def _is_price_field_followup(transcript: Optional[str]) -> bool:
     """A pure quote-field request with NO stock named — e.g. '시가, 고가, 저가,
     거래량' as a follow-up to a prior stock turn. Must borrow the stock from history."""
     t = (transcript or "").lower()
-    if not any(w in t for w in _PRICE_WORDS):
+    if not any(w in t for w in _PRICE_WORDS) and not _BARE_FIELD_RE.search(t):
         return False
     if _all_stocks_in_query(transcript):
         return False  # already has its own stock
@@ -1163,7 +1176,11 @@ def _is_vip_current_price_q(transcript: Optional[str], agent_id: Optional[str]) 
     _compare = (any(w in t for w in ("compare", "비교", " vs ", "versus", "대비"))
                 and not _is_future_outlook(transcript)
                 and len(_all_stocks_in_query(transcript)) >= 2)
-    if not any(w in t for w in _PRICE_WORDS) and not _compare:
+    # A bare English field word ("today's high") counts as a price ask ONLY when a
+    # specific stock is named — so it reads the same as Korean '고가', while
+    # "open the stock page" still can't masquerade as a quote request.
+    _bare_field = bool(_BARE_FIELD_RE.search(t)) and _stock_in_query(transcript) is not None
+    if not any(w in t for w in _PRICE_WORDS) and not _compare and not _bare_field:
         return False
     if (_is_past_price(transcript) or _is_stock_advice(transcript, agent_id)
             or _wants_recommendation(transcript)      # 'from which price should I BUY' = a decision, not a quote
@@ -2407,6 +2424,8 @@ def _build_system_prompt(
         f"You are the {identity['name']} — {identity['tagline']}. "
         f"{identity['scope']}\n\n"
         "Reply in the SAME language the user wrote in (Korean ↔ English).\n"
+        "When replying in Korean, write PURE Korean — Hangul only. Never emit Chinese "
+        "characters (材料, 综合, 某 …); use the Korean word instead (재료, 종합, 어떤).\n"
         "Be warm and conversational, like a smart human consultant. Give as much "
         "detail as the question genuinely needs — a thorough, well-reasoned answer for "
         "substantive/advice questions (a short paragraph or two), and keep it brief only "
@@ -2777,7 +2796,11 @@ def _call_llm_for_decision(
         s = raw.lstrip()
         if s.startswith(("{", "[")) or '"steps"' in raw or '"tool"' in raw or '"args"' in raw:
             return {"_unparsed_decision": True, "_model": primary}
-        return {"answer": raw[:500], "_model": primary}
+        # 2400, not 500: this is the PLAIN-PROSE branch (the model answered in words
+        # instead of the {"answer": …} JSON) and it carries every general-knowledge reply.
+        # A 500-char cut chopped them mid-word — "* 1/4 cup of chopped", "* 2큰술" — while
+        # the JSON branch below happily returned 2400. Same budget for both now.
+        return {"answer": raw[:2400], "_model": primary}
     parsed["_model"] = primary
     return parsed
 
@@ -4317,6 +4340,60 @@ def _enforce_reply_language(reply: str, language: Optional[str], transcript: Opt
         return None
 
 
+# --- Korean purity guard -----------------------------------------------------
+# Groq's Llama 3.3 is the default model for short/normal turns and it intermittently
+# emits Chinese words inside otherwise-fluent Korean ("某 주식의…", "材料:", "调味").
+# _elaborate_answer already patched a handful of finance words locally; this is the
+# shared version, applied to EVERY Korean reply. Cheap string swaps first; only if
+# ideographs still remain do we pay for one rewrite call.
+_CN_KO_MAP = (
+    ("综合", "종합"), ("分析", "분석"), ("市场", "시장"), ("投资", "투자"),
+    ("经济", "경제"), ("技术", "기술"), ("战略", "전략"), ("确认", "확인"),
+    ("材料", "재료"), ("调味", "양념"), ("方法", "방법"), ("准备", "준비"),
+    ("注意", "주의"), ("推荐", "추천"), ("参考", "참고"), ("价格", "가격"),
+    ("股票", "주식"), ("收益", "수익"), ("风险", "리스크"), ("结论", "결론"),
+    ("总结", "요약"), ("说明", "설명"), ("使用", "사용"), ("制作", "만들기"),
+    ("时间", "시간"), ("温度", "온도"), ("需要", "필요"), ("选择", "선택"),
+    ("适量", "적당량"), ("步骤", "순서"), ("提示", "팁"), ("某", "어떤"),
+)
+_HANJA_RE = _re.compile(r"[一-鿿]")
+
+
+def _purify_korean(reply: str) -> Optional[str]:
+    """Strip Chinese-character leakage out of a Korean reply. Returns the cleaned
+    text, or None when nothing needed fixing."""
+    if not reply or not _HANJA_RE.search(reply):
+        return None
+    out = reply
+    for _cn, _ko in _CN_KO_MAP:
+        out = out.replace(_cn, _ko)
+    left = len(_HANJA_RE.findall(out))
+    if left:
+        # Unknown ideographs survived the map — one strict rewrite, numbers frozen.
+        try:
+            fixed = chat_completion_sync(
+                system_prompt=("Rewrite the user's message in natural Korean using ONLY Hangul. "
+                               "Replace every Chinese character with its Korean equivalent. Keep ALL "
+                               "numbers, prices, tickers, %/원/₩, markdown (**, #, tables), emojis and "
+                               "line breaks EXACTLY as they are. Output ONLY the rewritten text."),
+                messages=[{"role": "user", "content": out}],
+                max_tokens=1200, temperature=0.0, model="groq-llama-3.3-70b",
+            )
+            fixed = (fixed or "").strip()
+            # Only accept the rewrite if it actually removed ideographs and didn't
+            # collapse the answer (a truncated/garbage rewrite is worse than a leak).
+            # And never when the provider handed back its '[LLM unavailable] …'
+            # sentinel — that string is ideograph-free and long, so it sailed through
+            # the length/hanja test and got shown to the user AS the answer.
+            if (fixed and not fixed.startswith("[")
+                    and len(_HANJA_RE.findall(fixed)) < left
+                    and len(fixed) > len(out) * 0.6):
+                out = fixed
+        except Exception:
+            pass
+    return out if out != reply else None
+
+
 _SUBQ_LEAD_RE = _re.compile(r"^\s*(그리고|그럼|또한|또|아울러|and also|and then|also|then|and)\b[\s,]*", _re.IGNORECASE)
 
 
@@ -5015,6 +5092,11 @@ def run_agent(
             fixed = _enforce_reply_language(str(result["reply"]), language, transcript)
             if fixed:
                 result["reply"] = fixed
+            # A Korean answer must be Korean all the way through — no leaked 漢字.
+            if _wanted_lang(language, transcript) == "ko":
+                pure = _purify_korean(str(result["reply"]))
+                if pure:
+                    result["reply"] = pure
     except Exception as _e:
         log.warning(f"language guard skipped: {str(_e)[:120]}")
     # SPEED (boss 2026-07-27: "reply must be very fast"): cross-session memory
@@ -6706,6 +6788,21 @@ def _run_agent_impl(
                         _dcs = [_fz]
                 except Exception:
                     pass
+            # PRONOUN FOLLOW-UP (2026-08-03): '그거 사야 할까?' / 'should I buy it?' right
+            # after a turn about a stock used to hit the clarify prompt — asking the boss
+            # for a name the conversation had just established. Borrow the last stock we
+            # actually discussed. Guarded so an open-ended '뭐 사야 할까?' / 'what should I
+            # buy?' still reaches the watchlist scanner instead of being answered about
+            # whatever happened to be mentioned earlier.
+            if (not _dcs and history and not _is_watchlist_question(transcript)
+                    and (_PRONOUN_REF_RE.search(transcript or "")
+                         or len((transcript or "").strip()) <= 25)):
+                for _h in reversed(history):
+                    _body = str(_h.get("content") or _h.get("text") or "")
+                    _prev = [c for (c, _n) in _all_stocks_in_query(_body) if c in _psd.NAMES]
+                    if _prev:
+                        _dcs = _prev[:1]
+                        break
             if _dcs:
                 _sell_focus = _is_sell_timing_q(transcript) or (_pending_dec and _recent_sell_intent(history))
                 _steps = []
@@ -6983,7 +7080,7 @@ def _run_agent_impl(
         return {
             "intent": "llm_chat",
             "language": lang,
-            "reply": (decision.get("answer") or "I'm not sure how to help with that — could you rephrase?")[:500],
+            "reply": (decision.get("answer") or "I'm not sure how to help with that — could you rephrase?")[:2400],
             "action": None,
             "speak": True,
             "transcript": transcript,

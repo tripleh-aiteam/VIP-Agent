@@ -202,7 +202,13 @@ def _auto_daily_reports():
 
     db = SessionLocal()
     base_trace = f"tr-auto-daily-{int(datetime.utcnow().timestamp())}"
-    kst_now = datetime.utcnow().strftime("%Y-%m-%d") + " 08:00 KST"
+    # Real KST label, like every other report job. The old literal pinned the clock
+    # to "08:00 KST" and took the calendar date from utcnow() — so a run at 08:00 KST
+    # (23:00 UTC the previous day) stamped YESTERDAY's date. That date is what the
+    # 08:00 self-heal and the 08:30 watchdog match on, so a wrong stamp reads as
+    # "today's report is missing" and triggers a duplicate rebuild.
+    from services.kst import kst_label as _kst_label
+    kst_now = _kst_label()
 
     log.info("auto-report: starting daily pipeline (3 agents + combined)", extra={"trace_id": base_trace, "action": "auto_report.daily.start"})
 
@@ -314,7 +320,13 @@ def _capture_stock_market_close():
         trace = f"tr-stock-close-{int(datetime.utcnow().timestamp())}"
         rep = build_stock_report(db, trace)
         _attach_detail(rep)  # bilingual 1-page detail captured at close
-        kst = datetime.utcnow().strftime("%Y-%m-%d") + " 15:30 KST"
+        # Stamp the REAL KST wall-clock, never a hardcoded "15:30". The old literal
+        # made a mis-scheduled run (this job used to fire pre-open) save a 06:30
+        # snapshot labelled 15:30 — a row that lied about its own data. Pairing the
+        # UTC calendar date with a KST clock time was wrong for the same reason.
+        from services.kst import kst_now as _kst_now
+        _k = _kst_now()
+        kst = _k.strftime("%Y-%m-%d %H:%M") + " KST"
         r = OrchReport(
             report_type="agent_daily_stock",
             source_run_ids_json=[],
@@ -1694,20 +1706,40 @@ def _watchdog_morning_reports():
         ]
         missing = [label for rtype, per, label in expected if not present(rtype, per)]
 
-        if not missing:
+        # YouTube is produced by an EXTERNAL GPU pipeline, so the 8:00 self-heal
+        # cannot regenerate it — which is exactly why it must be reported here.
+        # It was previously only written to the log as a warning, and the pipeline
+        # sat dead for a month (2026-07-03 → 2026-08-03) without anyone being told.
+        # A source that cannot self-heal needs the alert MORE, not less.
+        stale = []
+        try:
+            from services import youtube_grounded as _yg
+            yage = _yg.latest_age_days(db)
+            if yage is None:
+                stale.append("YouTube (never produced a report)")
+            elif yage > 2:
+                stale.append(f"YouTube ({yage} days stale — external GPU pipeline down)")
+        except Exception as ye:
+            log.warning(f"watchdog: YouTube staleness check failed: {str(ye)[:120]}",
+                        extra={"action": "watchdog.youtube_check_failed"})
+
+        if not missing and not stale:
             log.info(f"watchdog: all morning reports present for {today}",
                      extra={"action": "watchdog.ok"})
             return
 
-        # Missing after the self-heal → alert the boss ONCE (email + Telegram).
+        # Missing/stale after the self-heal → alert the boss ONCE (email + Telegram).
         boss = os.getenv("WATCHDOG_ALERT_EMAIL") or sender_address() or DEFAULT_RECIPIENT
-        subject = f"⚠️ VIP morning reports INCOMPLETE — {today} KST"
+        headline = "INCOMPLETE" if missing else "STALE SOURCE"
+        subject = f"⚠️ VIP morning reports {headline} — {today} KST"
         body = (
-            "The 08:30 KST watchdog found today's morning reports are incomplete.\n\n"
-            f"Missing: {', '.join(missing)}\n\n"
-            "The other reports generated normally; these did not reach the "
-            "dashboard/DB even after the 08:00 self-heal.\n\n"
-            "Likely causes: backend was down at 06:30, a source API failed, or "
+            f"The 08:30 KST watchdog found a problem with today's morning reports.\n\n"
+            + (f"MISSING (not in the dashboard/DB even after the 08:00 self-heal):\n"
+               f"  {', '.join(missing)}\n\n" if missing else "")
+            + (f"STALE (present but the underlying source has stopped updating —\n"
+               f"the self-heal CANNOT regenerate these, they need a human):\n"
+               f"  {', '.join(stale)}\n\n" if stale else "")
+            + "Likely causes: backend was down at 06:30, a source API failed, or "
             "SMTP rejected. Check logs\\backend.err.log around 06:30-08:00 KST.\n"
             "Re-send manually from Reports -> Generate, or "
             "POST /reports/compose/<name>?send_all=true.\n"
@@ -1715,8 +1747,8 @@ def _watchdog_morning_reports():
         try:
             res = send_plain_email(boss, subject, body)
             log.warning(
-                f"watchdog: morning reports INCOMPLETE {missing} — alert email "
-                f"{'sent' if res.get('ok') else 'FAILED'} -> {boss} "
+                f"watchdog: morning reports {headline} missing={missing} stale={stale} — "
+                f"alert email {'sent' if res.get('ok') else 'FAILED'} -> {boss} "
                 f"({res.get('reason', 'ok')})",
                 extra={"action": "watchdog.alert"})
         except Exception as ee:
@@ -1724,8 +1756,9 @@ def _watchdog_morning_reports():
                         extra={"action": "watchdog.alert_failed"})
         try:
             from services.telegram_service import send_alert
-            send_alert(f"⚠️ <b>VIP morning reports incomplete</b> — {today}\n"
-                       f"Missing: {', '.join(missing)}")
+            send_alert(f"⚠️ <b>VIP morning reports {headline.lower()}</b> — {today}\n"
+                       + (f"Missing: {', '.join(missing)}\n" if missing else "")
+                       + (f"Stale: {', '.join(stale)}" if stale else ""))
         except Exception:
             pass
     except Exception as e:
@@ -2066,7 +2099,14 @@ def init_scheduler():
     if _scheduler and _scheduler.running:
         return
 
-    _scheduler = BackgroundScheduler(daemon=True)
+    # PIN the scheduler to KST. Without an explicit timezone APScheduler adopts the
+    # HOST's local zone, so every bare `from_crontab(...)` below silently meant a
+    # different wall-clock hour on Render (UTC container) than on the Korean office
+    # PC — the 07:00 KST Asset report was firing at 22:00 KST, and the "15:30 KST"
+    # market-close capture was running at 06:30 KST (pre-open). The whole schedule is
+    # defined against Korean business hours, so it is pinned here and every trigger
+    # below states its KST time literally.
+    _scheduler = BackgroundScheduler(daemon=True, timezone=_KST_TZ)
 
     if not REPORTS_ENABLED:
         log.info("scheduler: reports disabled on this instance (REPORTS_ENABLED=false) — "
@@ -2275,54 +2315,83 @@ def init_scheduler():
     log.info("scheduler: hourly snapshot capture registered (every hour :05)",
              extra={"action": "scheduler.hourly_registered"})
 
-    # Auto daily reports — 8:00 AM KST = 23:00 UTC (previous day)
-    # Sends 3 individual agent reports + 1 combined summary
+    # Auto daily reports — 8:00 AM KST. Sends 3 individual agent reports + 1
+    # combined summary.
     _add_report_job(
         _auto_daily_reports,
-        CronTrigger.from_crontab("0 23 * * *"),
+        CronTrigger(hour=8, minute=0, timezone=_KST_TZ),
         id="auto-daily-reports",
         replace_existing=True,
     )
-    REPORTS_ENABLED and log.info("scheduler: auto daily reports registered (23:00 UTC = 8:00 AM KST)", extra={"action": "scheduler.auto_daily_registered"})
+    REPORTS_ENABLED and log.info("scheduler: auto daily reports registered (8:00 AM KST)", extra={"action": "scheduler.auto_daily_registered"})
 
-    # Stock market-close capture — 15:30 KST = 06:30 UTC, weekdays (KRX trading days)
+    # Stock market-close capture — 15:30 KST, weekdays (KRX trading days). This
+    # MUST run after the close: the row it writes is labelled "market_close" and
+    # the 8 AM pipeline delivers it as the close-of-day snapshot.
     _scheduler.add_job(
         _capture_stock_market_close,
-        CronTrigger.from_crontab("30 6 * * 1-5"),
+        CronTrigger(day_of_week="mon-fri", hour=15, minute=30, timezone=_KST_TZ),
         id="stock-market-close",
         replace_existing=True,
     )
-    log.info("scheduler: stock market-close capture registered (06:30 UTC = 15:30 KST)", extra={"action": "scheduler.stock_close_registered"})
+    log.info("scheduler: stock market-close capture registered (15:30 KST, Mon-Fri)", extra={"action": "scheduler.stock_close_registered"})
+
+    # 📤 Push the day's real bars OUT to the AI Advisor — 15:40 KST, weekdays, after
+    # the close capture above has settled. VIP dials out; the Advisor never dials in, so
+    # the company server keeps no inbound door open. Off unless ADVISOR_PUSH_* is set,
+    # and it only ever sends the tickers listed in advisor_push.symbols() — that list IS
+    # the permission grant. Failures are logged and dropped: sharing data must never be
+    # able to disturb trading.
+    def _push_bars_to_advisor():
+        try:
+            from services import advisor_push
+            if not advisor_push.enabled():
+                return
+            r = advisor_push.push_all()
+            log.info(f"advisor push: {r.get('sent')}/{r.get('total')}",
+                     extra={"action": "scheduler.advisor_push"})
+        except Exception as e:
+            log.warning(f"advisor push failed: {str(e)[:120]}",
+                        extra={"action": "scheduler.advisor_push_failed"})
+
+    _scheduler.add_job(
+        _push_bars_to_advisor,
+        CronTrigger(day_of_week="mon-fri", hour=15, minute=40, timezone=_KST_TZ),
+        id="advisor-bar-push",
+        replace_existing=True,
+        max_instances=1, coalesce=True,
+    )
+    log.info("scheduler: advisor bar push registered (15:40 KST, Mon-Fri)", extra={"action": "scheduler.advisor_push_registered"})
 
     # Autonomous A2A alerts — agents watch their own live data and proactively
-    # warn each other / the boss. Hourly during business hours (UTC 0-10 =
-    # KST 9-19), weekdays. De-duplicated so it doesn't spam.
+    # warn each other / the boss. Hourly during KST business hours (09:00-19:00),
+    # weekdays. De-duplicated so it doesn't spam.
     from services.autonomous_alerts import run_autonomous_alerts
     _add_report_job(
         run_autonomous_alerts,
-        CronTrigger.from_crontab("0 0-10 * * 1-5"),
+        CronTrigger(day_of_week="mon-fri", hour="9-19", minute=0, timezone=_KST_TZ),
         id="autonomous-alerts",
         replace_existing=True,
     )
-    REPORTS_ENABLED and log.info("scheduler: autonomous A2A alerts registered (hourly, KST business hrs)", extra={"action": "scheduler.auto_alerts_registered"})
+    REPORTS_ENABLED and log.info("scheduler: autonomous A2A alerts registered (hourly 09:00-19:00 KST, Mon-Fri)", extra={"action": "scheduler.auto_alerts_registered"})
 
-    # Auto monthly report — 1st of the month, 23:00 UTC (= 8 AM KST on the 1st)
+    # Auto monthly report — 1st of the month, 8:00 AM KST.
     _add_report_job(
         _auto_monthly_report,
-        CronTrigger.from_crontab("0 23 1 * *"),
+        CronTrigger(day=1, hour=8, minute=0, timezone=_KST_TZ),
         id="auto-monthly-report",
         replace_existing=True,
     )
-    REPORTS_ENABLED and log.info("scheduler: auto monthly report registered (1st of month, 8 AM KST)", extra={"action": "scheduler.auto_monthly_registered"})
+    REPORTS_ENABLED and log.info("scheduler: auto monthly report registered (1st of month, 8:00 AM KST)", extra={"action": "scheduler.auto_monthly_registered"})
 
-    # Auto cross-agent report — daily 23:30 UTC (after the daily pipeline)
+    # Auto cross-agent report — daily 8:30 AM KST (after the daily pipeline).
     _add_report_job(
         _auto_cross_agent_report,
-        CronTrigger.from_crontab("30 23 * * *"),
+        CronTrigger(hour=8, minute=30, timezone=_KST_TZ),
         id="auto-cross-agent-report",
         replace_existing=True,
     )
-    REPORTS_ENABLED and log.info("scheduler: auto cross-agent report registered (daily 23:30 UTC)", extra={"action": "scheduler.auto_cross_registered"})
+    REPORTS_ENABLED and log.info("scheduler: auto cross-agent report registered (daily 8:30 AM KST)", extra={"action": "scheduler.auto_cross_registered"})
 
     # ----- Market reports (Kiwoom / Newspaper / YouTube / Master) -----
     # KRX is closed on weekends, so these run the DAILY edition on KST weekdays
@@ -2423,18 +2492,18 @@ def init_scheduler():
     # 22:00 UTC, to ALL recipients, with BOTH Korean + English .docx attached.
     _add_report_job(
         _asset_daily_all,
-        CronTrigger.from_crontab("0 22 * * *"),
+        CronTrigger(hour=7, minute=0, timezone=_KST_TZ),
         id="asset-daily-report",
         replace_existing=True,
     )
-    REPORTS_ENABLED and log.info("scheduler: Asset detailed report registered (22:00 UTC = 7:00 AM KST, all recipients, KO+EN)", extra={"action": "scheduler.asset_registered"})
+    REPORTS_ENABLED and log.info("scheduler: Asset detailed report registered (7:00 AM KST, all recipients, KO+EN)", extra={"action": "scheduler.asset_registered"})
 
     # Real Estate report — 7:05 AM KST (22:05 UTC) every day. DASHBOARD ONLY:
     # saved to the VIP Reports menu, NOT emailed and NOT sent to Telegram
     # (per boss request — _realty_daily_all uses notify=False).
     _add_report_job(
         _realty_daily_all,
-        CronTrigger.from_crontab("5 22 * * *"),
+        CronTrigger(hour=7, minute=5, timezone=_KST_TZ),
         id="realty-daily-report",
         replace_existing=True,
     )
@@ -2454,10 +2523,10 @@ def init_scheduler():
     REPORTS_ENABLED and log.info("scheduler: breaking-news monitor registered (every 15 min, 24/7, severity-gated)", extra={"action": "scheduler.breaking_registered"})
 
     # Daily per-stock news + sentiment collector -> raw_news (ML training data).
-    # 07:20 UTC = 16:20 KST (after KR market close + news settles).
+    # 16:20 KST — AFTER the KR close, so the day's news has settled.
     _scheduler.add_job(
         _news_sentiment_daily,
-        CronTrigger.from_crontab("20 7 * * *"),
+        CronTrigger(hour=16, minute=20, timezone=_KST_TZ),
         id="news-sentiment-daily",
         replace_existing=True,
         max_instances=1,
@@ -2466,10 +2535,10 @@ def init_scheduler():
     log.info("scheduler: news-sentiment collector registered (16:20 KST daily -> raw_news)", extra={"action": "scheduler.news_sentiment_registered"})
 
     # Daily DART disclosures -> raw_disclosures (Daily Trading brief's effective-news).
-    # 07:35 UTC = 16:35 KST. No-ops without DART_API_KEY.
+    # 16:35 KST. No-ops without DART_API_KEY.
     _scheduler.add_job(
         _dart_disclosures_daily,
-        CronTrigger.from_crontab("35 7 * * *"),
+        CronTrigger(hour=16, minute=35, timezone=_KST_TZ),
         id="dart-disclosures-daily",
         replace_existing=True,
         max_instances=1,
@@ -2477,11 +2546,11 @@ def init_scheduler():
     )
     log.info("scheduler: DART disclosures collector registered (16:35 KST daily -> raw_disclosures)", extra={"action": "scheduler.dart_registered"})
 
-    # Scorekeeper — log today's BUY/SELL calls + grade matured ones. 07:45 UTC = 16:45 KST
+    # Scorekeeper — log today's BUY/SELL calls + grade matured ones. 16:45 KST
     # (after predict + the daily collectors). Builds the per-method track record.
     _scheduler.add_job(
         _scorekeeper_daily,
-        CronTrigger.from_crontab("45 7 * * *"),
+        CronTrigger(hour=16, minute=45, timezone=_KST_TZ),
         id="scorekeeper-daily",
         replace_existing=True,
         max_instances=1,
@@ -2490,39 +2559,39 @@ def init_scheduler():
     log.info("scheduler: scorekeeper registered (16:45 KST daily -> signal_log track record)", extra={"action": "scheduler.scorekeeper_registered"})
 
     # Intraday 2-method hourly forward test — every hour at :05 during KST market hours
-    # (09:05–15:05 KST = 00:05–06:05 UTC), Mon–Fri. Predicts next ~1h with BOTH methods +
-    # grades matured ones. (Also exposed at POST /predictions/intraday/tick for external cron
-    # so it survives Render free-tier sleep.)
+    # (09:05–15:05 KST), Mon–Fri. Predicts next ~1h with BOTH methods + grades matured
+    # ones. (Also exposed at POST /predictions/intraday/tick for external cron so it
+    # survives Render free-tier sleep — that path is idempotent, so both can drive it.)
     _scheduler.add_job(
         _intraday_forecast_tick,
-        CronTrigger.from_crontab("5 0-6 * * 1-5"),
+        CronTrigger(day_of_week="mon-fri", hour="9-15", minute=5, timezone=_KST_TZ),
         id="intraday-forecast-tick",
         replace_existing=True, max_instances=1, coalesce=True,
     )
-    # Morning scorecard email — 08:00 KST = 23:00 UTC daily (before market open).
+    # Morning scorecard email — 08:00 KST daily (before market open).
     _add_report_job(   # 08:00 KST scorecard EMAIL — guarded (the forecast tick stays)
         _intraday_morning_report,
-        CronTrigger.from_crontab("0 23 * * *"),
+        CronTrigger(hour=8, minute=0, timezone=_KST_TZ),
         id="intraday-morning-report",
         replace_existing=True, max_instances=1, coalesce=True,
     )
     # B2 prep — bank order-flow snapshots into history every 5 min during market
-    # (00:00–06:55 UTC = 09:00–15:55 KST, Mon–Fri). Idempotent; also exposed at
+    # (09:00–15:55 KST, Mon–Fri). Idempotent; also exposed at
     # POST /predictions/intraday/bank for the external cron.
     _scheduler.add_job(
         _intraday_snapshot_bank,
-        CronTrigger.from_crontab("*/5 0-6 * * 1-5"),
+        CronTrigger(day_of_week="mon-fri", hour="9-15", minute="*/5", timezone=_KST_TZ),
         id="intraday-snapshot-bank",
         replace_existing=True, max_instances=1, coalesce=True,
     )
-    # Cloud collector — every 2 min during market (00:00–06:31 UTC = 09:00–15:31 KST):
+    # Cloud collector — every 2 min during market (09:00–15:59 KST):
     # the SERVER polls Kiwoom itself (Render IPs are registered), so live 호가/수급 flows
     # with no PC. Skips instantly when the PC collector's snapshot is fresh (<90s) —
     # automatic failover, never double work. Also exposed at POST /predictions/collector/pass
     # so a FREE external cron keeps it alive through Render free-tier sleep.
     _scheduler.add_job(
         _cloud_collector_pass,
-        CronTrigger.from_crontab("*/2 0-6 * * 1-5"),
+        CronTrigger(day_of_week="mon-fri", hour="9-15", minute="*/2", timezone=_KST_TZ),
         id="cloud-collector-pass",
         replace_existing=True, max_instances=1, coalesce=True,
     )
@@ -2530,40 +2599,40 @@ def init_scheduler():
     # for the external cron). The bot proactively flags ≥1.5%/1h dips it would trade.
     _add_report_job(   # EMAILS dip candidates to recipients → guard (Render sends them)
         _dip_alert_pass,
-        CronTrigger.from_crontab("*/10 0-6 * * 1-5"),
+        CronTrigger(day_of_week="mon-fri", hour="9-15", minute="*/10", timezone=_KST_TZ),
         id="dip-alert-pass",
         replace_existing=True, max_instances=1, coalesce=True,
     )
     # Paper trader — every 5 min during market: virtual execution of the bot's signals
-    # (readiness-gate evidence at 10x speed). Morning scorecard at 08:20 KST (23:20 UTC).
+    # (readiness-gate evidence at 10x speed). Morning scorecard at 08:20 KST.
     _scheduler.add_job(
         _paper_trader_tick,
-        CronTrigger.from_crontab("*/5 0-6 * * 1-5"),
+        CronTrigger(day_of_week="mon-fri", hour="9-15", minute="*/5", timezone=_KST_TZ),
         id="paper-trader-tick",
         replace_existing=True, max_instances=1, coalesce=True,
     )
     _add_report_job(   # 08:20 KST paper P&L scorecard EMAIL — guarded (tick stays)
         _paper_morning_report,
-        CronTrigger.from_crontab("20 23 * * *"),
+        CronTrigger(hour=8, minute=20, timezone=_KST_TZ),
         id="paper-morning-report",
         replace_existing=True, max_instances=1, coalesce=True,
     )
-    # Autopilot B — nightly self-tuning at 16:40 KST (07:40 UTC), DAILY incl. weekends:
+    # Autopilot B — nightly self-tuning at 16:40 KST, DAILY incl. weekends:
     # the PC tops up minute_bars_hist at 16:10, so weekend passes retune on the full
     # multi-week series and Monday opens on the freshest evidence.
     _scheduler.add_job(
         _self_tune_nightly,
-        CronTrigger.from_crontab("40 7 * * *"),
+        CronTrigger(hour=16, minute=40, timezone=_KST_TZ),
         id="self-tune-nightly",
         replace_existing=True, max_instances=1, coalesce=True,
     )
     log.info("scheduler: intraday 2-method hourly forward test registered (hourly 09–15 KST + 08:00 KST email + 5-min snapshot banking + 2-min cloud collector)", extra={"action": "scheduler.intraday_registered"})
 
-    # Major-news story monitor — twice daily (09:00 + 16:00 KST = 00:00 + 07:00 UTC) so
+    # Major-news story monitor — twice daily (09:00 + 16:00 KST) so
     # follow-ups (e.g. the 3 Mega Projects 2 PM announcement) are caught + emailed same day.
     _add_report_job(   # emails an exec brief on NEW developments → guard it
         _story_monitor_daily,
-        CronTrigger.from_crontab("0 0,7 * * *"),
+        CronTrigger(hour="9,16", minute=0, timezone=_KST_TZ),
         id="story-monitor",
         replace_existing=True, max_instances=1, coalesce=True,
     )
@@ -2616,44 +2685,44 @@ def init_scheduler():
     )
     REPORTS_ENABLED and log.info("scheduler: morning-report watchdog registered (8:30 KST daily)", extra={"action": "scheduler.watchdog_registered"})
 
-    # Knowledge-base sync (RAG / Phase 2) — 7:10 AM KST = 22:10 UTC, after the
+    # Knowledge-base sync (RAG / Phase 2) — 7:10 AM KST, after the
     # morning reports are written, so the chatbot grounds answers in fresh content.
     _scheduler.add_job(
         _knowledge_sync_job,
-        CronTrigger.from_crontab("10 22 * * *"),
+        CronTrigger(hour=7, minute=10, timezone=_KST_TZ),
         id="knowledge-sync",
         replace_existing=True,
     )
     log.info("scheduler: knowledge sync registered (22:10 UTC = 7:10 AM KST)", extra={"action": "scheduler.knowledge_sync_registered"})
 
-    # ---- Weekly reports — Friday 5:00 PM KST = 08:00 UTC (sources), master 08:20.
+    # ---- Weekly reports — Friday 5:00 PM KST (sources), master 5:20 PM KST.
     for jid, fn in (("kiwoom", _kiwoom_daily_report), ("newspaper", _newspaper_daily_report),
                     ("youtube", _youtube_daily_report)):
-        _add_report_job(fn, CronTrigger.from_crontab("0 8 * * 5"),
+        _add_report_job(fn, CronTrigger(day_of_week="fri", hour=17, minute=0, timezone=_KST_TZ),
                            kwargs={"period": "weekly"}, id=f"{jid}-weekly-report",
                            replace_existing=True)
-    _add_report_job(_master_daily_report, CronTrigger.from_crontab("20 8 * * 5"),
+    _add_report_job(_master_daily_report, CronTrigger(day_of_week="fri", hour=17, minute=20, timezone=_KST_TZ),
                        kwargs={"period": "weekly"}, id="master-weekly-report",
                        replace_existing=True)
-    REPORTS_ENABLED and log.info("scheduler: Weekly reports registered (Fri 08:00/08:20 UTC = 5:00 PM KST)",
+    REPORTS_ENABLED and log.info("scheduler: Weekly reports registered (Fri 5:00/5:20 PM KST)",
              extra={"action": "scheduler.weekly_registered"})
 
-    # ---- Monthly reports — last day of month 5:00 PM KST = 08:00 UTC, master 08:20.
+    # ---- Monthly reports — last day of month 5:00 PM KST, master 5:20 PM KST.
     for jid, fn in (("kiwoom", _kiwoom_daily_report), ("newspaper", _newspaper_daily_report),
                     ("youtube", _youtube_daily_report)):
-        _add_report_job(fn, CronTrigger(day="last", hour=8, minute=0),
+        _add_report_job(fn, CronTrigger(day="last", hour=17, minute=0, timezone=_KST_TZ),
                            kwargs={"period": "monthly"}, id=f"{jid}-monthly-report",
                            replace_existing=True)
-    _add_report_job(_master_daily_report, CronTrigger(day="last", hour=8, minute=20),
+    _add_report_job(_master_daily_report, CronTrigger(day="last", hour=17, minute=20, timezone=_KST_TZ),
                        kwargs={"period": "monthly"}, id="master-monthly-report",
                        replace_existing=True)
-    REPORTS_ENABLED and log.info("scheduler: Monthly reports registered (month-end 08:00/08:20 UTC = 5:00 PM KST)",
+    REPORTS_ENABLED and log.info("scheduler: Monthly reports registered (month-end 5:00/5:20 PM KST)",
              extra={"action": "scheduler.monthly_registered"})
 
-    # Auto weekly report — Friday 6:30 PM KST = 09:30 UTC Friday
+    # Auto weekly report — Friday 6:30 PM KST
     _add_report_job(
         _auto_weekly_report,
-        CronTrigger.from_crontab("30 9 * * 5"),
+        CronTrigger(day_of_week="fri", hour=18, minute=30, timezone=_KST_TZ),
         id="auto-weekly-report",
         replace_existing=True,
     )
@@ -2669,10 +2738,10 @@ def init_scheduler():
     )
     log.info("scheduler: twin auto-mode-switch registered (every 1 min)", extra={"action": "scheduler.twin_mode_registered"})
 
-    # Twin morning handoff — 9:00 AM KST = 00:00 UTC
+    # Twin morning handoff — 9:00 AM KST
     _scheduler.add_job(
         _auto_morning_handoff,
-        CronTrigger.from_crontab("0 0 * * 1-5"),
+        CronTrigger(day_of_week="mon-fri", hour=9, minute=0, timezone=_KST_TZ),
         id="twin-morning-handoff",
         replace_existing=True,
     )
@@ -2696,10 +2765,10 @@ def init_scheduler():
     )
     log.info("scheduler: cloud auto-pull registered (every 2 hours)", extra={"action": "scheduler.cloud_pull_registered"})
 
-    # Twin Feed daily summaries — 6 PM KST = 09:00 UTC, Mon-Fri
+    # Twin Feed daily summaries — 6 PM KST, Mon-Fri
     _scheduler.add_job(
         _auto_feed_summaries,
-        CronTrigger.from_crontab("0 9 * * 1-5"),
+        CronTrigger(day_of_week="mon-fri", hour=18, minute=0, timezone=_KST_TZ),
         id="twin-feed-daily",
         replace_existing=True,
     )
@@ -2724,11 +2793,11 @@ def init_scheduler():
     )
     log.info("scheduler: claude auto-import registered (every hour at :15)", extra={"action": "scheduler.claude_import_registered"})
 
-    # Daily standing tasks — assign 1 standard task per twin every day at 18:00 KST = 09:00 UTC
+    # Daily standing tasks — assign 1 standard task per twin every day at 18:00 KST
     # Ensures twins always have something to do overnight, so morning handoff isn't empty
     _scheduler.add_job(
         _auto_assign_daily_standing_tasks,
-        CronTrigger.from_crontab("0 9 * * *"),
+        CronTrigger(hour=18, minute=0, timezone=_KST_TZ),
         id="daily-standing-tasks",
         replace_existing=True,
     )
@@ -2778,24 +2847,24 @@ def init_scheduler():
     log.info("scheduler: keep-warm registered (self + stock backend, every 12min)",
              extra={"action": "scheduler.keep_warm_registered"})
 
-    # Voice recording retention — daily at 03:00 UTC = 12:00 KST
+    # Voice recording retention — daily at 12:00 KST
     # Deletes Storage objects + DB rows past retention_expires_at.
     from services.voice_storage import cleanup_expired_recordings as _voice_retention
     _scheduler.add_job(
         _voice_retention,
-        CronTrigger.from_crontab("0 3 * * *"),
+        CronTrigger(hour=12, minute=0, timezone=_KST_TZ),
         id="voice-recording-retention",
         replace_existing=True,
     )
     log.info("scheduler: voice recording retention registered (daily 03:00 UTC)",
              extra={"action": "scheduler.voice_retention_registered"})
 
-    # Chatbot morning report — daily at 23:00 UTC = 08:00 KST next day.
+    # Chatbot morning report — daily at 08:00 KST.
     # Aggregates yesterday's chat + call activity per agent + Telegram delivers.
     from services.chatbot_morning_report import deliver_morning_reports_all_agents as _morning_report
     _add_report_job(
         _morning_report,
-        CronTrigger.from_crontab("0 23 * * *"),
+        CronTrigger(hour=8, minute=0, timezone=_KST_TZ),
         id="chatbot-morning-report",
         replace_existing=True,
     )
@@ -2833,11 +2902,11 @@ def init_scheduler():
 
     # Assistant self-improvement — nightly cycle that researches the top
     # recurring low-confidence questions and learns them into each agent's KB.
-    # 17:00 UTC = 02:00 KST (quiet hours). Best-effort.
+    # 02:00 KST (quiet hours). Best-effort.
     try:
         _scheduler.add_job(
             _run_assistant_improvement,
-            CronTrigger.from_crontab("0 17 * * *"),
+            CronTrigger(hour=2, minute=0, timezone=_KST_TZ),
             id="assistant-self-improve",
             replace_existing=True,
             max_instances=1,   # never overlap a long-running cycle

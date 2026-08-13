@@ -114,6 +114,124 @@
     --badge-purple-text: #B692F6;
   }
 
+  /* ============================================
+     APPEARANCE PREFERENCES — Settings → Display
+     <html> carries data-bg / data-accent / data-scale / data-motion, set
+     before first paint by the inline script in layout.tsx and kept in sync by
+     components/appearance.tsx. Light-mode tints are scoped with :not(.dark)
+     and dark ones with .dark so a tint never leaks across themes.
+     ============================================ */
+
+  /* ---- Background tint (light) ---- */
+  :root:not(.dark)[data-bg="paper"] {
+    --bg-app: #FFFFFF;
+    --bg-sidebar: #FFFFFF;
+    --sidebar-bg: #FFFFFF;
+    --bg-card: #FFFFFF;
+    --bg-elevated: #F4F6F8;
+    --bg-input: #F4F6F8;
+    --bg-hover: #F4F6F8;
+    --bg-table-header: #FAFBFC;
+    --border-default: #ECEFF3;
+    --sidebar-hover: #F4F6F8;
+  }
+  :root:not(.dark)[data-bg="warm"] {
+    --bg-app: #FAF8F4;
+    --bg-sidebar: #FFFDF9;
+    --sidebar-bg: #FFFDF9;
+    --bg-card: #FFFDF9;
+    --bg-elevated: #F3EEE4;
+    --bg-input: #F3EEE4;
+    --bg-hover: #F3EEE4;
+    --bg-table-header: #F7F2E9;
+    --border-default: #EAE2D4;
+    --border-strong: #DBD0BC;
+    --sidebar-border: #EAE2D4;
+    --sidebar-hover: #F3EEE4;
+  }
+  :root:not(.dark)[data-bg="cool"] {
+    --bg-app: #F1F5FC;
+    --bg-sidebar: #FFFFFF;
+    --sidebar-bg: #FFFFFF;
+    --bg-card: #FFFFFF;
+    --bg-elevated: #E8F0FA;
+    --bg-input: #E8F0FA;
+    --bg-hover: #E8F0FA;
+    --bg-table-header: #F4F8FD;
+    --border-default: #DEE7F3;
+    --border-strong: #C8D6E8;
+    --sidebar-border: #DEE7F3;
+    --sidebar-hover: #E8F0FA;
+  }
+
+  /* ---- Background tint (dark) ---- */
+  :root.dark[data-bg="paper"] {
+    /* neutral graphite instead of the default navy */
+    --bg-app: #121417;
+    --bg-sidebar: #0E1013;
+    --sidebar-bg: #0E1013;
+    --bg-card: #1A1D21;
+    --bg-elevated: #1A1D21;
+    --bg-input: #1A1D21;
+    --bg-table-header: #1A1D21;
+    --bg-hover: #23272C;
+    --sidebar-hover: #1A1D21;
+  }
+  :root.dark[data-bg="warm"] {
+    --bg-app: #16130F;
+    --bg-sidebar: #12100C;
+    --sidebar-bg: #12100C;
+    --bg-card: #201C16;
+    --bg-elevated: #201C16;
+    --bg-input: #201C16;
+    --bg-table-header: #201C16;
+    --bg-hover: #2A251D;
+    --sidebar-hover: #201C16;
+  }
+  :root.dark[data-bg="cool"] {
+    --bg-app: #080D18;
+    --bg-sidebar: #060A12;
+    --sidebar-bg: #060A12;
+    --bg-card: #101A2C;
+    --bg-elevated: #101A2C;
+    --bg-input: #101A2C;
+    --bg-table-header: #101A2C;
+    --bg-hover: #16233A;
+    --sidebar-hover: #101A2C;
+  }
+
+  /* ---- Accent colour ----
+     "blue" is the built-in default, so it gets no rule and inherits :root/.dark. */
+  :root:not(.dark)[data-accent="purple"]  { --brand-blue:#7F56D9; --brand-blue-deep:#5925DC; --border-active:#7F56D9; --sidebar-active:#F4F3FF; --sidebar-active-text:#6941C6; --sidebar-active-icon:#7F56D9; --badge-blue-bg:#F4F3FF; --badge-blue-text:#6941C6; }
+  :root:not(.dark)[data-accent="green"]   { --brand-blue:#12B76A; --brand-blue-deep:#027A48; --border-active:#12B76A; --sidebar-active:#ECFDF3; --sidebar-active-text:#027A48; --sidebar-active-icon:#12B76A; --badge-blue-bg:#ECFDF3; --badge-blue-text:#027A48; }
+  :root:not(.dark)[data-accent="orange"]  { --brand-blue:#F79009; --brand-blue-deep:#B54708; --border-active:#F79009; --sidebar-active:#FFFAEB; --sidebar-active-text:#B54708; --sidebar-active-icon:#F79009; --badge-blue-bg:#FFFAEB; --badge-blue-text:#B54708; }
+  :root:not(.dark)[data-accent="rose"]    { --brand-blue:#F04438; --brand-blue-deep:#B42318; --border-active:#F04438; --sidebar-active:#FEF3F2; --sidebar-active-text:#B42318; --sidebar-active-icon:#F04438; --badge-blue-bg:#FEF3F2; --badge-blue-text:#B42318; }
+  :root:not(.dark)[data-accent="graphite"]{ --brand-blue:#344054; --brand-blue-deep:#101828; --border-active:#344054; --sidebar-active:#F2F4F7; --sidebar-active-text:#101828; --sidebar-active-icon:#344054; --badge-blue-bg:#F2F4F7; --badge-blue-text:#344054; }
+
+  :root.dark[data-accent="purple"]  { --brand-blue:#9E77ED; --brand-blue-deep:#B692F6; --border-active:#9E77ED; --sidebar-active:rgba(158,119,237,0.14); --sidebar-active-text:#B692F6; --sidebar-active-icon:#B692F6; --badge-blue-bg:rgba(158,119,237,0.14); --badge-blue-text:#B692F6; }
+  :root.dark[data-accent="green"]   { --brand-blue:#34D399; --brand-blue-deep:#6EE7B7; --border-active:#34D399; --sidebar-active:rgba(52,211,153,0.14); --sidebar-active-text:#6EE7B7; --sidebar-active-icon:#6EE7B7; --badge-blue-bg:rgba(52,211,153,0.14); --badge-blue-text:#6EE7B7; }
+  :root.dark[data-accent="orange"]  { --brand-blue:#FBBF24; --brand-blue-deep:#FCD34D; --border-active:#FBBF24; --sidebar-active:rgba(251,191,36,0.14); --sidebar-active-text:#FCD34D; --sidebar-active-icon:#FCD34D; --badge-blue-bg:rgba(251,191,36,0.14); --badge-blue-text:#FCD34D; }
+  :root.dark[data-accent="rose"]    { --brand-blue:#F87171; --brand-blue-deep:#FCA5A5; --border-active:#F87171; --sidebar-active:rgba(248,113,113,0.14); --sidebar-active-text:#FCA5A5; --sidebar-active-icon:#FCA5A5; --badge-blue-bg:rgba(248,113,113,0.14); --badge-blue-text:#FCA5A5; }
+  :root.dark[data-accent="graphite"]{ --brand-blue:#D1D5DB; --brand-blue-deep:#F3F4F6; --border-active:#D1D5DB; --sidebar-active:rgba(255,255,255,0.10); --sidebar-active-text:#F9FAFB; --sidebar-active-icon:#F9FAFB; --badge-blue-bg:rgba(255,255,255,0.10); --badge-blue-text:#E5E7EB; }
+
+  /* ---- Display size ----
+     The UI is built from fixed px sizes, so root font-size can't scale it —
+     `zoom` on <html> is what actually resizes everything (Chromium/WebView2,
+     Safari, Firefox 126+). Unsupported browsers simply stay at 100%. */
+  :root[data-scale="sm"] { zoom: 0.9; }
+  :root[data-scale="lg"] { zoom: 1.1; }
+  :root[data-scale="xl"] { zoom: 1.25; }
+
+  /* ---- Reduce motion ---- */
+  :root[data-motion="reduced"] *,
+  :root[data-motion="reduced"] *::before,
+  :root[data-motion="reduced"] *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+
   body {
     font-family: 'Inter', system-ui, -apple-system, sans-serif;
     letter-spacing: -0.011em;

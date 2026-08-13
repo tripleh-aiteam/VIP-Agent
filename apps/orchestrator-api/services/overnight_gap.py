@@ -267,11 +267,17 @@ def grade_calls(db) -> dict[str, Any]:
 # ---- intent detection (shared by both bots via the orchestrator) ------------- #
 import re as _re
 
+# NB (2026-08-03): a bare 'hold or sell' / 'sell or hold' used to match here. That
+# stole every plain position question in ENGLISH — "I hold SK Hynix, should I sell or
+# hold?" got the overnight-gap card, while the Korean twin ("...팔까 말까?") fell through
+# to the full position_advice engine. Same question, two different answers depending on
+# language. Those two phrasings carry NO overnight meaning on their own, so they're gone;
+# a real overnight ask still matches via 'overnight' / 'till tomorrow' / '들고 가' / etc.
 _OVERNIGHT_RE = _re.compile(
     r"(들고\s?가|들고\s?갈|가져\s?가|가지고\s?가|오버나잇|밤새|내일까지|팔고\s?가|팔고\s?갈|"
     r"장\s?마감\s?전에\s?팔|마감\s?전에\s?팔|종가에\s?팔|내일\s?갭|홀딩할까|홀드할까|"
     r"hold .{0,40}overnight|overnight|(hold|keep|carry) .{0,40}(till|until|to) tomorrow|"
-    r"sell (before|at) (the )?close|hold or sell|sell or hold)",
+    r"sell (before|at) (the )?close)",
     _re.IGNORECASE,
 )
 

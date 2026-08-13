@@ -12,6 +12,8 @@ import UpdateBanner from "@/components/UpdateBanner";
 // The legacy slim chat-bar via VipChatbotMount is no longer mounted.
 import { AssistantProvider, AssistantCardGlobal } from "@/components/AssistantCard";
 import { LanguageProvider } from "@/components/i18n";
+import { AppearanceProvider } from "@/components/appearance";
+import { APPEARANCE_INIT_SCRIPT } from "@/components/appearance-init";
 import PageSnapshotter from "@/components/PageSnapshotter";
 import { vipConfig } from "@/chatbot.config";
 
@@ -44,7 +46,14 @@ export const viewport: Viewport = {
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en">
+      <head>
+        {/* Applies the saved theme / background / accent / size to <html>
+            BEFORE first paint, so dark-mode users never get a white flash and
+            a scaled UI never jumps. Mirrored by components/appearance.tsx. */}
+        <script dangerouslySetInnerHTML={{ __html: APPEARANCE_INIT_SCRIPT }} />
+      </head>
       <body className="bg-[var(--bg-app)] text-[var(--text-primary)] antialiased">
+        <AppearanceProvider>
         <AuthGuard>
           <LanguageProvider>
           <AssistantProvider>
@@ -70,6 +79,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           </AssistantProvider>
           </LanguageProvider>
         </AuthGuard>
+        </AppearanceProvider>
       </body>
     </html>
   );
