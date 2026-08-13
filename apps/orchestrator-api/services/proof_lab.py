@@ -201,6 +201,7 @@ VARIANTS: list[dict] = [
      # under 0.4%, at a fresh session high, buys too - 삼성전자 rose +6% on 08-12
      # with zero dip signals and the desk never touched it
      "trend": {"climb": 1.2, "dd": 0.4, "win": 30},
+     "rebound": {"low_win": 20, "near": 3.0, "day_gain": 2.0, "drop": 0.5},
      # slice sizes per his 11:0x order: 알고리즘1 sells 10% per +1% step,
      # 알고리즘2 sells 50% - slow harvest vs fast harvest, same entries
      "drip": {"step": 1.0, "up_frac": 0.10, "dn_frac": 0.10, "stop_reset": 1.5,
@@ -218,6 +219,7 @@ VARIANTS: list[dict] = [
      "dip": {"drop": 0.9, "sharp": 3.0, "ups": 1, "chop": 1.25, "win_sec": 1800},
      "scout": {"frac": 0.03, "confirm": 0.5},
      "trend": {"climb": 1.2, "dd": 0.4, "win": 30},
+     "rebound": {"low_win": 20, "near": 3.0, "day_gain": 2.0, "drop": 0.5},
      # HIS FINAL ALGO 2 (boss 2026-08-12 night, chose B over the ping-pong):
      # sell 10% at each +1% level; through calm pullbacks the rest is HELD
      # (dn_frac 0 - no de-risking slices); only a genuinely NEW sharp decrease
@@ -900,6 +902,33 @@ def _trend_entry(s: dict, v: dict, i: int, closes: list[float], now_str: str) ->
     return c >= max(closes[:i + 1])
 
 
+def _rebound_entry(s: dict, v: dict, i: int, ups: int, closes: list[float]) -> bool:
+    """THE DAILY REBOUND DOOR (boss 2026-08-13, from NAVER): two time-scales
+    agreeing. The stock closed yesterday near its multi-week bottom, is up hard
+    today (the rebound is real), and a small intraday pullback turns - the daily
+    chart backs the minute chart, so the small pullback that our normal fences
+    reject becomes a buy. Measured: same pullbacks without the daily condition
+    -47M/yr; with it -0.6M/yr, 41% win - beside the climb door as the best
+    entries this desk has tested."""
+    rb = v.get("rebound") or {}
+    if ups != 1 or i < 5:
+        return False
+    pc = s.get("prev_close")
+    lo20 = s.get("low20")
+    if not pc or not lo20:
+        return False
+    if pc > lo20 * (1 + rb.get("near", 3.0) / 100):
+        return False                     # yesterday was not near the bottom
+    c = closes[i]
+    if (c / pc - 1) * 100 < rb.get("day_gain", 2.0):
+        return False                     # today's rebound not strong enough
+    st = _dip_state(s, (v.get("dip") or {}).get("win_sec", 1800))
+    hi = st["hi"][i]
+    if not hi or (hi - c) / hi * 100 < rb.get("drop", 0.5):
+        return False                     # no real pullback to buy
+    return True
+
+
 def run_desk(stks: list[dict], v: dict, evidence: bool = False,
              with_open: bool = False, fill_fn=None, events=None):
     """The rule over the WHOLE DESK with ONE hand PER STOCK (boss 2026-08-12: four
@@ -1092,7 +1121,9 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                 pass
             elif (v.get("dip") and not _dip_entry(s, v, i, up[si], closes)
                   and not (v.get("trend")
-                           and _trend_entry(s, v, i, closes, _now))):
+                           and _trend_entry(s, v, i, closes, _now))
+                  and not (v.get("rebound")
+                           and _rebound_entry(s, v, i, up[si], closes))):
                 pass
             elif v.get("dip") and _dip_state(s, v["dip"].get("win_sec", 600))["hii"][i]                     <= last_exit[si]:
                 # ONE ENTRY PER SHARP DECREASE, second iteration (boss 2026-08-11: the

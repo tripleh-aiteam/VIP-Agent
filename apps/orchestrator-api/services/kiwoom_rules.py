@@ -215,6 +215,50 @@ def _us_mode_today() -> str:
     return mode
 
 
+_D20_CACHE: dict = {}
+
+
+def _daily20(code: str, before_day: str) -> tuple:
+    """(yesterday's close, 20-day low) as of before_day - the rebound door's
+    daily context. Daily closes come from the 250-day 1-minute history plus the
+    desk's own stored tapes; finished days never change, so cache for ever."""
+    key = (code, before_day)
+    hit = _D20_CACHE.get(key)
+    if hit is not None:
+        return hit
+    closes = {}
+    try:
+        import json as _j
+        from pathlib import Path as _P
+        f = _P(__file__).resolve().parent.parent / "data" / "minute1_hist" / f"{code}.json"
+        if f.exists():
+            for row in _j.loads(f.read_text()):
+                ts = row[0]
+                t = ts[8:14]
+                if "090000" <= t <= "153000":
+                    closes[ts[:8]] = float(row[4])
+    except Exception:
+        pass
+    try:
+        for d2 in stored_days(code):
+            if d2 >= before_day:
+                continue
+            cs2 = _bars_for(code, 5, 60, d2)
+            if cs2:
+                closes[d2] = float(cs2[-1]["close"])
+    except Exception:
+        pass
+    days = sorted(d2 for d2 in closes if d2 < before_day)
+    if not days:
+        out = (None, None)
+    else:
+        prev_close = closes[days[-1]]
+        low20 = min(closes[d2] for d2 in days[-20:])
+        out = (prev_close, low20)
+    _D20_CACHE[key] = out
+    return out
+
+
 def _kd0() -> str:
     from services.kiwoom_tape import _day
     return _day()
@@ -464,6 +508,8 @@ def rank(tick: int = 5, period: int = 0, day: str = "",
                          # file; stored days replay calm (honest default)
                          "us_mode": (_us_mode_today() if (d or _kd0()) == _kd0()
                                      else "calm"),
+                         "prev_close": _daily20(code, d or _kd0())[0],
+                         "low20": _daily20(code, d or _kd0())[1],
                          "vols": [float(c.get("vol") or 0) for c in tp["cs"]],
                          "ctx": daily_ctx(code, d or _kd0()),
                          "gate_ok": (_gate_ok(code, d or _kd0()) if use_gate else True),
@@ -634,6 +680,8 @@ def trades(vid: str, tick: int = 5, period: int = 0, code: str = "",
                          # 08-13 pre-open replay: every pre-10:00 buy vanished)
                          "us_mode": (_us_mode_today()
                                      if (d or _kd0()) == _kd0() else "calm"),
+                         "prev_close": _daily20(c_code, d or _kd0())[0],
+                         "low20": _daily20(c_code, d or _kd0())[1],
                          "times": [c["hhmm"] for c in cs],
                          "vols": [float(c.get("vol") or 0) for c in cs],
                          "ctx": daily_ctx(c_code, d or _kd0()),
@@ -767,6 +815,7 @@ def trades(vid: str, tick: int = 5, period: int = 0, code: str = "",
             "take_ticks": v.get("take_ticks"), "stop_pct": v.get("stop_pct"),
             "scout": v.get("scout"), "ladder": v.get("ladder"),
             "drip": v.get("drip"), "us_habit": bool(v.get("us_habit")),
+            "rebound": v.get("rebound"),
             "wall_price": bool(v.get("wall_price") or v.get("family") == "new"),
             "exact_entry": bool(v.get("exact_entry")),
             "dir": v.get("dir", 1),
