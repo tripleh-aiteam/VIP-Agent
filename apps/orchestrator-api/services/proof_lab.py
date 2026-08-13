@@ -205,7 +205,8 @@ VARIANTS: list[dict] = [
      # with zero dip signals and the desk never touched it
      "trend": {"climb": 1.05, "dd": 0.4, "win": 30},
      "rebound": {"low_win": 20, "near": 3.0, "day_gain": 2.0, "drop": 0.5},
-     "morning": {"until": "09:20", "vol_x": 1.5, "min_run": 0.3},
+     "morning": {"until": "09:20", "vol_x": 1.5, "min_run": 0.3,
+                 "alt_run": 1.0},
      # boss 12:0x: "when decrease we have to buy even we have a stock - all
      # rules, all six." 알고리즘1 gains the reload too: a fresh sharp-decrease
      # turn buys back sold slices mid-hold. Both algorithms now buy on real
@@ -235,7 +236,8 @@ VARIANTS: list[dict] = [
      "scout": {"frac": 0.03, "confirm": 0.5},
      "trend": {"climb": 1.05, "dd": 0.4, "win": 30},
      "rebound": {"low_win": 20, "near": 3.0, "day_gain": 2.0, "drop": 0.5},
-     "morning": {"until": "09:20", "vol_x": 1.5, "min_run": 0.3},
+     "morning": {"until": "09:20", "vol_x": 1.5, "min_run": 0.3,
+                 "alt_run": 1.0},
      # HIS FINAL ALGO 2 (boss 2026-08-12 night, chose B over the ping-pong):
      # sell 10% at each +1% level; through calm pullbacks the rest is HELD
      # (dn_frac 0 - no de-risking slices); only a genuinely NEW sharp decrease
@@ -943,11 +945,19 @@ def _morning_entry(s: dict, v: dict, i: int, closes: list[float],
         return False
     if not closes[0] or (c / closes[0] - 1) * 100 < m.get("min_run", 0.3):
         return False
+    # two ways through (boss 2026-08-13 evening, from the SK하이닉스 morning he
+    # watched run +3% unseen): a BUSY open (volume >= vol_x of usual, rise >=
+    # min_run) - the measured-profitable path - OR a STRONG open (rise >=
+    # alt_run from the open, volume regardless). He ordered the second knowing
+    # its measured cost (~-5M/yr strength-only): "start buy after 9:05, 5
+    # minute checking market."
+    if (c / closes[0] - 1) * 100 >= m.get("alt_run", 1.0):
+        return True
     med = s.get("open_vol_med") or 0
     vv = s.get("vols") or []
     if med and sum(vv[:5]) < m.get("vol_x", 1.5) * med:
         return False
-    return True
+    return (c / closes[0] - 1) * 100 >= m.get("min_run", 0.3)
 
 
 def _rebound_entry(s: dict, v: dict, i: int, ups: int, closes: list[float]) -> bool:
@@ -1078,7 +1088,9 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                 # every real fill; entry/exit become per-share cost and proceeds
                 if _p2.get("qty", 0) > 0 and _px:
                     _p2["sold_won"] = _p2.get("sold_won", 0.0) + _px * _p2["qty"]
-                    _p2.setdefault("slices", []).append([_px, _p2["qty"], "장 마감"])
+                    _p2.setdefault("slices", []).append(
+                        [_px, _p2["qty"], "장 마감", i, 0,
+                         _p2.get("base") or _p2.get("entry")])
                     _p2["qty"] = 0
                 _q0d = _p2.get("qty0", 1) or 1
                 _p2["entry"] = _p2["cost"] / _q0d
