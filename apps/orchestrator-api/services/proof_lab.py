@@ -1245,7 +1245,9 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                         return
                     pos["sold_won"] += px * q
                     pos["qty"] -= q
-                    pos["slices"].append([px, q, why, i])
+                    # the slice remembers what REMAINED after it (boss 2026-08-13:
+                    # "if it sold 200 and bought 1000 it must show 800")
+                    pos["slices"].append([px, q, why, i, pos["qty"]])
 
                 def _drow(last_why):
                     _q0 = pos.get("qty0", 1) or 1
@@ -1672,6 +1674,7 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                         if (pos.get("buys") or pos.get("slices")) else None),
               "slices": (pos.get("slices") or None),
               "base": pos.get("base"),
+              "qty_left": pos.get("qty"),
               "unreal_pct": round((s["closes"][-1] / pos["entry"] - 1) * 100, 3)}
         if evidence:
             op["buy_ev"] = {"close": pos["close"], "book": pos["bk"], "seq": pos["seq"]}

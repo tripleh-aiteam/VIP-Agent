@@ -685,8 +685,10 @@ def trades(vid: str, tick: int = 5, period: int = 0, code: str = "",
                             "base": op.get("base") or op["entry"],
                             # each sold slice with its own time and bar - the boss
                             # wants them as completed rows, provable on the chart
-                            "slices": [[p_, q_, w_, sk["cs"][i_]["hhmm"], i_]
-                                       for p_, q_, w_, i_ in (op.get("slices") or [])
+                            "qty_left": op.get("qty_left"),
+                            "slices": [[p_, q_, w_, sk["cs"][i_]["hhmm"], i_,
+                                        (r_[0] if r_ else None)]
+                                       for p_, q_, w_, i_, *r_ in (op.get("slices") or [])
                                        if i_ < len(sk["cs"])],
                             "buy_i": op["buy_i"],
                             "unreal_pct": op["unreal_pct"]})

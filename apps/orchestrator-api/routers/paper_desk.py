@@ -725,7 +725,8 @@ def live_family_trades(family: str = Query("new"), tick: int = Query(5),
             # and clickable time to proof"). P&L measured against the episode's
             # blended base; money realized on the slice's shares.
             _hb = (h.get("parts") or {}).get("buys")
-            for p_, q_, w_, t_, i_ in (h.get("slices") or []):
+            for p_, q_, w_, t_, i_, *r_ in (h.get("slices") or []):
+                _left = r_[0] if r_ else None
                 _base = h.get("base") or h.get("entry") or p_
                 _g = (p_ / _base - 1) * 100 if _base else 0.0
                 rows.append({"rule": v["id"], "rule_ko": d.get("ko"),
@@ -734,7 +735,11 @@ def live_family_trades(family: str = Query("new"), tick: int = Query(5),
                              "d8": None, "buy_t": h.get("buy_t"),
                              "entry": _base, "sell_t": t_, "exit": p_,
                              "net_pct": round(_g - 0.23, 3),
-                             "exit_why": f"{w_} 계단 매도 · 보유 중 에피소드",
+                             "exit_why": (f"{w_} 계단 매도"
+                                          + (f" · 잔여 {_left:,}주 보유 중"
+                                             if _left is not None
+                                             else " · 보유 중 에피소드")),
+                             "left": _left,
                              "qty": q_, "won": round((p_ - _base) * q_),
                              "result": ("win" if _g > 0 else "loss" if _g < 0
                                         else "flat"),

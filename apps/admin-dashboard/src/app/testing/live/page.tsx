@@ -1428,8 +1428,10 @@ export default function LiveDeskPage() {
                           <td colSpan={2} className="px-2 font-bold" style={{ ...CELL, color: "#e65100" }}>
                             {(() => {
                               const hs = (h as unknown as { parts?: { sells?: [number, number][] } }).parts?.sells;
+                              const hl = (h as unknown as { qty_left?: number }).qty_left;
                               if (hs && hs.length) return (<>
-                                <div>{t(`보유 중 — 계단 매도 ${hs.length}회 완료`, `holding — ${hs.length} ladder slice${hs.length > 1 ? "s" : ""} sold`)}</div>
+                                <div>{t(`보유 중 — 계단 매도 ${hs.length}회 완료${hl != null ? ` · 잔여 ${hl.toLocaleString()}주` : ""}`,
+                                        `holding — ${hs.length} slice${hs.length > 1 ? "s" : ""} sold${hl != null ? ` · ${hl.toLocaleString()}sh left` : ""}`)}</div>
                                 {hs.map(([p2, q2], k2) => (
                                   <div key={k2} className="font-normal text-[10.5px]" style={{ color: BLUE }}>
                                     ▼ ₩{Math.round(p2).toLocaleString()}
