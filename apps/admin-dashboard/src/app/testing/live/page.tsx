@@ -1389,19 +1389,21 @@ export default function LiveDeskPage() {
                       const wp = (ew + el) ? Math.round(ew / (ew + el) * 100) : 0;
                       const sp = (sw + sl2) ? Math.round(sw / (sw + sl2) * 100) : 0;
                       const useSrv = !filt && fam.win_pct_ep != null;
-                      const mainPct = useSrv ? fam.win_pct_ep! : wp;
-                      const mainW = useSrv ? (fam.ep_wins ?? 0) : ew;
-                      const mainL = useSrv ? (fam.ep_losses ?? 0) : el;
-                      const slicePct = useSrv ? fam.win_pct : sp;
+                      // the HEADLINE is the boss's counting (2026-08-13): every
+                      // sell judged at its own moment - positives over total
+                      const mainPct = useSrv ? fam.win_pct : sp;
+                      const mainW = useSrv ? fam.wins : sw;
+                      const mainL = useSrv ? fam.losses : sl2;
+                      const epPct = useSrv ? (fam.win_pct_ep ?? 0) : wp;
                       return (<>
                         <span style={{ color: mainPct >= 50 ? "#b02a2a" : "#1565c0" }}
-                          title={t("에피소드(매수부터 전량 매도까지) 단위 승률", "win rate by whole episodes")}>
+                          title={t("모든 매도(조각 포함)를 그 순간의 기준가로 승·패 판정한 승률", "every sell judged against its at-the-moment base - positives over total")}>
                           {t(`승률 ${mainPct}%`, `win ${mainPct}%`)}
                         </span>
                         {" "}({mainW}{t("승", "W")} {mainL}{t("패", "L")})
                         <span className="ml-1 text-[10px] text-[var(--text-muted)]"
-                          title={t("모든 매도(조각)를 그 순간의 기준가로 승·패 판정", "every sell judged against its at-the-moment base")}>
-                          {t(`· 조각 기준 ${slicePct}%`, `· by slices ${slicePct}%`)}
+                          title={t("에피소드(매수부터 전량 매도까지) 단위 승률", "win rate by whole episodes")}>
+                          {t(`· 에피소드 ${epPct}%`, `· episodes ${epPct}%`)}
                         </span>
                         {filt && (
                           <span className="ml-1 text-[10px] font-bold px-1 py-0.5 rounded"
