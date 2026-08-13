@@ -198,7 +198,8 @@ VARIANTS: list[dict] = [
      # under 0.4%, at a fresh session high, buys too - 삼성전자 rose +6% on 08-12
      # with zero dip signals and the desk never touched it
      "trend": {"climb": 1.2, "dd": 0.4, "win": 30},
-     "drip": {"step": 1.0, "up_frac": 0.10, "dn_frac": 0.10, "stop_reset": 1.5}},
+     "drip": {"step": 1.0, "up_frac": 0.10, "dn_frac": 0.10, "stop_reset": 1.5,
+              "reinforce": {"frac": 0.5, "max": 2}}},
     {"id": "D2", "entry": 1, "kind": "pct", "a": 0.3, "b": 2.0, "exec": "limit",
      "stop_pct": 1.5, "wait_bars": 2, "family": "d2", "wall_price": True,
      "ignore_gate": True,
@@ -215,7 +216,7 @@ VARIANTS: list[dict] = [
      # - the full dip pattern with its own 2nd-red turn - buys back everything
      # sold, topping up to 100%. "Never buy while it is falling; buy the turn."
      "drip": {"step": 1.0, "up_frac": 0.10, "dn_frac": 0.0, "stop_reset": 1.5,
-              "rebuy": True}},
+              "rebuy": True, "reinforce": {"frac": 0.5, "max": 2}}},
     # Sharp (ladder) leaves the live board 2026-08-13: the boss replaced it with
     # his two drip scenarios ("instead of sharp rule make it Algorithm 1/2").
     # Today's history replays; from tomorrow it takes nothing new.
@@ -1346,6 +1347,54 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                     pos["buys"].append([c, _miss])
                     pos["cost"] += c * _miss
                     pos["qty"] += _miss
+                # REINFORCEMENT (boss 2026-08-13, from the SK하이닉스 09:46 case
+                # he caught on Kiwoom: the desk held 100% from 1,615,200 and
+                # watched a fresh dip trade at 1,593,000). A NEW sharp-decrease
+                # signal - its own 2nd-red turn, window high formed after our
+                # entry - at a price BELOW our blended cost buys another
+                # reinforce.frac of the position, at most reinforce.max times
+                # per episode. The base re-blends lower and the +1% ladder
+                # re-arms from it. Holdout-measured before building: -20.7M with
+                # vs -21.6M without.
+                _rf = dp.get("reinforce")
+                if (_rf and pos.get("qty_add", 0) > 0
+                        and c < pos["base"]
+                        and _dip_entry(s, v, i, up[si], closes)):
+                    # his SK하이닉스 09:46 case exactly: scout aboard at 1,608,000,
+                    # the 97% still waiting for +0.5% that a falling market never
+                    # gives - while a NEW turn trades 13,000 cheaper. The add
+                    # executes at the new 2nd red instead; the base re-blends down.
+                    _qa4 = pos["qty_add"]
+                    pos["buys"].append([c, _qa4])
+                    pos["cost"] += c * _qa4
+                    pos["qty"] += _qa4
+                    pos["qty_add"] = 0
+                    pos["added"] = True
+                    pos["add_px"] = c
+                    pos["base"] = pos["cost"] / max(1, sum(q_ for _, q_ in pos["buys"]))
+                    pos["entry"] = pos["base"]
+                # the FIRST reinforcement may be the SAME dip cutting deeper below
+                # our cost (his exact SK하이닉스 case shared its 30-min high with
+                # the dip we had already bought); each FURTHER one needs a high
+                # formed after the previous reinforcement - a genuinely new leg
+                if (_rf and pos.get("rf_used", 0) < _rf.get("max", 2)
+                        and pos.get("qty_add", 0) <= 0 and pos["qty"] > 0
+                        and c < pos["base"]
+                        and _dip_entry(s, v, i, up[si], closes)
+                        and _dip_state(s, v["dip"].get("win_sec", 600))["hii"][i]
+                        > pos.get("rf_i", -1)):
+                    _qr = max(1, int(pos["qty0"] * _rf.get("frac", 0.5)))
+                    pos["buys"].append([c, _qr])
+                    pos["cost"] += c * _qr
+                    pos["qty"] += _qr
+                    pos["qty0"] += _qr
+                    pos["base"] = pos["cost"] / max(1, sum(q_ for _, q_ in pos["buys"]))
+                    pos["entry"] = pos["base"]
+                    pos["k_up"] = 0
+                    pos["k_dn"] = 0
+                    pos["ref_up"] = 0.0
+                    pos["rf_used"] = pos.get("rf_used", 0) + 1
+                    pos["rf_i"] = i
                 if pos["qty"] <= 0 and pos.get("qty_add", 0) <= 0:
                     _drow(f"전량 매도 완료 · 조각 {len(pos['slices'])}회")
                     poss[si] = None

@@ -145,7 +145,8 @@ type RDetail = { ok: boolean; id: string; ko: string; en: string; clock: string;
   scout?: { frac: number; confirm: number } | null;
   ladder?: { half_at: number; take: number; blues: number; give: number } | null;
   drip?: { step: number; up_frac: number; dn_frac?: number; stop_reset: number;
-           rebuy?: boolean; pingpong?: boolean } | null;
+           rebuy?: boolean; pingpong?: boolean;
+           reinforce?: { frac: number; max: number } | null } | null;
   us_habit?: boolean;
   wall_price?: boolean; exact_entry?: boolean;
 };
@@ -1700,6 +1701,8 @@ export default function LiveDeskPage() {
                            `"Buy ${Math.round(det.scout.frac * 100)}% first" — only a ${Math.round(det.scout.frac * 100)}% scout is bought at the signal; the remaining ${100 - Math.round(det.scout.frac * 100)}% is added once a +${det.scout.confirm}% rise confirms the turn. If the drop resumes, the damage ends at the scout.`)}</li>}
                     <li>{t(`"같은 급락은 두 번 사지 않는다" — 매도 후 새 고점이 만들어져야 다음 매수가 허용됩니다 (딥당 1회).`,
                            `"The same dip is never bought twice" — a new high must form after the last sell before the next buy is allowed (one trade per dip).`)}</li>
+                    {det.drip?.reinforce && <li>{t(`"내 원가보다 싸게 파는 새 급락은 보강 매수" — 보유 중이라도 새 급락이 전환(2번째 양봉)까지 완성되고 그 가격이 내 평균 원가보다 낮으면 원래 수량의 ${Math.round((det.drip.reinforce.frac ?? 0.5) * 100)}%를 추가 매수합니다 (에피소드당 최대 ${det.drip.reinforce.max ?? 2}회). 기준가가 내려가고 +1% 계단이 새 기준에서 다시 시작됩니다.`,
+                           `"A new dip selling below MY cost reinforces" — even while holding, a fresh sharp decrease that completes its 2nd-red turn at a price below our average cost buys ${Math.round((det.drip.reinforce.frac ?? 0.5) * 100)}% more of the original size (at most ${det.drip.reinforce.max ?? 2} per episode). The base re-blends lower and the +1% ladder re-arms from it.`)}</li>}
                   </>)}
                   {!det.dip && <li>{t(`"가격이 ${det.entry_n}번 연속 올랐는가?" — 봉의 마감 가격이 직전 봉보다 높으면 상승 1번. 그런 봉이 ${det.entry_n}개 연속. (가격이 그대로인 봉은 세던 숫자를 잠시 멈출 뿐, 0으로 되돌리지 않습니다)`,
                          `"Did the price rise ${det.entry_n} times in a row?" — a bar closing higher than the one before = one rise; ${det.entry_n} such bars back-to-back. (An unchanged bar pauses the count — it never resets it)`)}</li>}
