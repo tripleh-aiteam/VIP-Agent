@@ -655,7 +655,8 @@ export default function LiveDeskPage() {
                             sells?: [number, number][] | null } | null;
                   partial?: boolean };
   type FamTrades = { ok: boolean; rows: FamRow[]; trips: number; wins: number;
-                     losses: number; win_pct: number; net_won: number };
+                     losses: number; win_pct: number; net_won: number;
+                     ep_wins?: number; ep_losses?: number; win_pct_ep?: number };
   const [famOpen, setFamOpen] = useState(true);
   // history filters (boss 2026-08-13: "searching bar/filtering - only particular
   // company, or time, or winning and losing") - applies to BOTH algorithms
@@ -1352,10 +1353,17 @@ export default function LiveDeskPage() {
                   <span className="text-[10.5px] font-bold text-[var(--text-primary)]">
                     {fam.trips}{t("건", " trades")}
                     {" · "}
-                    <span style={{ color: fam.win_pct >= 50 ? "#b02a2a" : "#1565c0" }}>
-                      {t(`승률 ${fam.win_pct}%`, `win ${fam.win_pct}%`)}
+                    <span style={{ color: (fam.win_pct_ep ?? fam.win_pct) >= 50 ? "#b02a2a" : "#1565c0" }}
+                      title={t("에피소드(매수부터 전량 매도까지) 단위 승률 — 예전규칙과 같은 계산", "win rate by whole episodes (entry to full exit) - same counting as the old rule")}>
+                      {t(`승률 ${fam.win_pct_ep ?? fam.win_pct}%`, `win ${fam.win_pct_ep ?? fam.win_pct}%`)}
                     </span>
-                    {" "}({fam.wins}{t("승", "W")} {fam.losses}{t("패", "L")})
+                    {" "}({fam.ep_wins ?? fam.wins}{t("승", "W")} {fam.ep_losses ?? fam.losses}{t("패", "L")})
+                    {fam.win_pct_ep != null && (
+                      <span className="ml-1 text-[10px] text-[var(--text-muted)]"
+                        title={t("모든 매도(조각 포함) 하나하나를 승·패로 센 값", "every sell, slice by slice, counted as its own win or loss")}>
+                        {t(`· 조각 기준 ${fam.win_pct}%`, `· by slices ${fam.win_pct}%`)}
+                      </span>
+                    )}
                     {((fam as { holding?: unknown[] }).holding?.length ?? 0) > 0 &&
                       t(` · 보유 ${(fam as { holding?: unknown[] }).holding!.length}`,
                         ` · holding ${(fam as { holding?: unknown[] }).holding!.length}`)}
