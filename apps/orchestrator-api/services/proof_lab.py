@@ -1666,7 +1666,10 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
         op = {"si": _si2, "buy_i": pos["i"], "entry": pos["entry"],
               "last": s["closes"][-1], "sig": pos.get("sig"), "wall": pos.get("wall"),
               "chop": bool(pos.get("chop")),
-              "parts": ({"buys": pos.get("buys")} if pos.get("buys") else None),
+              "parts": ({"buys": pos.get("buys"),
+                         "sells": ([[p_, q_] for p_, q_, _w in pos["slices"]]
+                                   if pos.get("slices") else None)}
+                        if (pos.get("buys") or pos.get("slices")) else None),
               "unreal_pct": round((s["closes"][-1] / pos["entry"] - 1) * 100, 3)}
         if evidence:
             op["buy_ev"] = {"close": pos["close"], "book": pos["bk"], "seq": pos["seq"]}

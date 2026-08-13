@@ -1421,9 +1421,20 @@ export default function LiveDeskPage() {
                               )) : <div>₩{Math.round(h.entry).toLocaleString()}</div>;
                             })()}</td>
                           <td colSpan={2} className="px-2 font-bold" style={{ ...CELL, color: "#e65100" }}>
-                            {(h as unknown as { chop?: boolean }).chop
-                              ? t("보유 중 — 지금 횡보 구간, 매도 판단 정지", "holding — market flat now, exit judging paused")
-                              : t("보유 중 — 아직 매도 전", "holding — not sold yet")}</td>
+                            {(() => {
+                              const hs = (h as unknown as { parts?: { sells?: [number, number][] } }).parts?.sells;
+                              if (hs && hs.length) return (<>
+                                <div>{t(`보유 중 — 계단 매도 ${hs.length}회 완료`, `holding — ${hs.length} ladder slice${hs.length > 1 ? "s" : ""} sold`)}</div>
+                                {hs.map(([p2, q2], k2) => (
+                                  <div key={k2} className="font-normal text-[10.5px]" style={{ color: BLUE }}>
+                                    ▼ ₩{Math.round(p2).toLocaleString()}
+                                    <span className="text-[9.5px] text-[var(--text-muted)]"> × {q2}{t("주", "sh")}</span></div>
+                                ))}
+                              </>);
+                              return (h as unknown as { chop?: boolean }).chop
+                                ? t("보유 중 — 지금 횡보 구간, 매도 판단 정지", "holding — market flat now, exit judging paused")
+                                : t("보유 중 — 아직 매도 전", "holding — not sold yet");
+                            })()}</td>
                           <td className="text-right px-2 font-bold"
                             style={{ ...CELL, color: h.unreal_pct > 0 ? "#b02a2a" : "#1565c0" }}>
                             {h.unreal_pct > 0 ? "+" : ""}{h.unreal_pct}%</td>
