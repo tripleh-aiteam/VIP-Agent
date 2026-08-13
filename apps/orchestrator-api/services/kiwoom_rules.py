@@ -259,6 +259,37 @@ def _daily20(code: str, before_day: str) -> tuple:
     return out
 
 
+_OV_CACHE: dict = {}
+
+
+def _open_vol_med(code: str) -> float:
+    """This stock's median first-five-minutes volume over the 250-day history -
+    the morning door's yardstick for 'the open is unusually busy'."""
+    hit = _OV_CACHE.get(code)
+    if hit is not None:
+        return hit
+    out = 0.0
+    try:
+        import json as _j
+        import statistics as _st
+        from pathlib import Path as _P
+        f = _P(__file__).resolve().parent.parent / "data" / "minute1_hist" / f"{code}.json"
+        if f.exists():
+            days = {}
+            for row in _j.loads(f.read_text()):
+                ts = row[0]
+                t = ts[8:14]
+                if "090000" <= t <= "153000":
+                    days.setdefault(ts[:8], []).append(float(row[5]))
+            sums = [sum(v[:5]) for v in days.values() if len(v) > 10]
+            if sums:
+                out = float(_st.median(sums))
+    except Exception:
+        out = 0.0
+    _OV_CACHE[code] = out
+    return out
+
+
 def _kd0() -> str:
     from services.kiwoom_tape import _day
     return _day()
@@ -510,6 +541,7 @@ def rank(tick: int = 5, period: int = 0, day: str = "",
                                      else "calm"),
                          "prev_close": _daily20(code, d or _kd0())[0],
                          "low20": _daily20(code, d or _kd0())[1],
+                         "open_vol_med": _open_vol_med(code),
                          "vols": [float(c.get("vol") or 0) for c in tp["cs"]],
                          "ctx": daily_ctx(code, d or _kd0()),
                          "gate_ok": (_gate_ok(code, d or _kd0()) if use_gate else True),
@@ -682,6 +714,7 @@ def trades(vid: str, tick: int = 5, period: int = 0, code: str = "",
                                      if (d or _kd0()) == _kd0() else "calm"),
                          "prev_close": _daily20(c_code, d or _kd0())[0],
                          "low20": _daily20(c_code, d or _kd0())[1],
+                         "open_vol_med": _open_vol_med(c_code),
                          "times": [c["hhmm"] for c in cs],
                          "vols": [float(c.get("vol") or 0) for c in cs],
                          "ctx": daily_ctx(c_code, d or _kd0()),
@@ -825,7 +858,7 @@ def trades(vid: str, tick: int = 5, period: int = 0, code: str = "",
             "take_ticks": v.get("take_ticks"), "stop_pct": v.get("stop_pct"),
             "scout": v.get("scout"), "ladder": v.get("ladder"),
             "drip": v.get("drip"), "us_habit": bool(v.get("us_habit")),
-            "rebound": v.get("rebound"),
+            "rebound": v.get("rebound"), "morning": v.get("morning"),
             "wall_price": bool(v.get("wall_price") or v.get("family") == "new"),
             "exact_entry": bool(v.get("exact_entry")),
             "dir": v.get("dir", 1),

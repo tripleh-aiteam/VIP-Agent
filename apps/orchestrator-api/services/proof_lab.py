@@ -202,6 +202,7 @@ VARIANTS: list[dict] = [
      # with zero dip signals and the desk never touched it
      "trend": {"climb": 1.2, "dd": 0.4, "win": 30},
      "rebound": {"low_win": 20, "near": 3.0, "day_gain": 2.0, "drop": 0.5},
+     "morning": {"until": "09:20", "vol_x": 1.5, "min_run": 0.3},
      # boss 12:0x: "when decrease we have to buy even we have a stock - all
      # rules, all six." 알고리즘1 gains the reload too: a fresh sharp-decrease
      # turn buys back sold slices mid-hold. Both algorithms now buy on real
@@ -224,6 +225,7 @@ VARIANTS: list[dict] = [
      "scout": {"frac": 0.03, "confirm": 0.5},
      "trend": {"climb": 1.2, "dd": 0.4, "win": 30},
      "rebound": {"low_win": 20, "near": 3.0, "day_gain": 2.0, "drop": 0.5},
+     "morning": {"until": "09:20", "vol_x": 1.5, "min_run": 0.3},
      # HIS FINAL ALGO 2 (boss 2026-08-12 night, chose B over the ping-pong):
      # sell 10% at each +1% level; through calm pullbacks the rest is HELD
      # (dn_frac 0 - no de-risking slices); only a genuinely NEW sharp decrease
@@ -910,6 +912,33 @@ def _trend_entry(s: dict, v: dict, i: int, closes: list[float], now_str: str) ->
     return c >= max(closes[:i + 1])
 
 
+def _morning_entry(s: dict, v: dict, i: int, closes: list[float],
+                   now_str: str) -> bool:
+    """THE MORNING DOOR (boss 2026-08-13): the dip door needs a fall and the
+    climb door needs 31 bars, so the opening rally was structurally invisible -
+    SK하이닉스 ran 1,573,000->1,629,000 in the first twenty minutes unseen.
+    Between 09:05 and `until`, an opening whose first-five-minute volume runs
+    >= vol_x times this stock's own median, at a fresh session high, up >=
+    min_run% from the open, is bought. Holdout-measured +152,726 won/yr at 42%
+    win; the US-night requirement was tested and rejected (-1.4M - big US
+    mornings fade; volume tells the truth)."""
+    m = v.get("morning") or {}
+    if not now_str or not ("09:05" <= str(now_str)[:5] < m.get("until", "09:20")):
+        return False
+    if i < 5:
+        return False
+    c = closes[i]
+    if not c or c < max(closes[:i + 1]):
+        return False
+    if not closes[0] or (c / closes[0] - 1) * 100 < m.get("min_run", 0.3):
+        return False
+    med = s.get("open_vol_med") or 0
+    vv = s.get("vols") or []
+    if med and sum(vv[:5]) < m.get("vol_x", 1.5) * med:
+        return False
+    return True
+
+
 def _rebound_entry(s: dict, v: dict, i: int, ups: int, closes: list[float]) -> bool:
     """THE DAILY REBOUND DOOR (boss 2026-08-13, from NAVER): two time-scales
     agreeing. The stock closed yesterday near its multi-week bottom, is up hard
@@ -1135,7 +1164,9 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                   and not (v.get("trend")
                            and _trend_entry(s, v, i, closes, _now))
                   and not (v.get("rebound")
-                           and _rebound_entry(s, v, i, up[si], closes))):
+                           and _rebound_entry(s, v, i, up[si], closes))
+                  and not (v.get("morning")
+                           and _morning_entry(s, v, i, closes, _now))):
                 pass
             elif v.get("dip") and _dip_state(s, v["dip"].get("win_sec", 600))["hii"][i]                     <= last_exit[si]:
                 # ONE ENTRY PER SHARP DECREASE, second iteration (boss 2026-08-11: the
@@ -1214,8 +1245,13 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                 # is fixed at the signal - not re-judged later when we already know more
                 _sharp = False
                 _sig = None
-                _via_trend = bool(v.get("trend")) and not _dip_entry(s, v, i,
-                                                                     up[si], closes)
+                _via_dip0 = _dip_entry(s, v, i, up[si], closes)
+                _via_trend = ((not _via_dip0)
+                              and ((bool(v.get("trend"))
+                                    and _trend_entry(s, v, i, closes, _now))
+                                   or (bool(v.get("morning"))
+                                       and _morning_entry(s, v, i, closes,
+                                                          _now))))
                 if v.get("dip") and not _via_trend:
                     _std = _dip_state(s, v["dip"].get("win_sec", 600))
                     _typd = _std["typ"][i]

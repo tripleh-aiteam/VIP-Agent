@@ -150,6 +150,7 @@ type RDetail = { ok: boolean; id: string; ko: string; en: string; clock: string;
   us_habit?: boolean;
   rebound?: { low_win: number; near: number; day_gain: number;
               drop: number } | null;
+  morning?: { until: string; vol_x: number; min_run: number } | null;
   wall_price?: boolean; exact_entry?: boolean;
 };
 type DfRow = { hhmm: string; key: string; date: string; open: number; high: number;
@@ -1811,6 +1812,8 @@ export default function LiveDeskPage() {
                            `"Buy ${Math.round(det.scout.frac * 100)}% first" — only a ${Math.round(det.scout.frac * 100)}% scout is bought at the signal; the remaining ${100 - Math.round(det.scout.frac * 100)}% is added once a +${det.scout.confirm}% rise confirms the turn. If the drop resumes, the damage ends at the scout.`)}</li>}
                     <li>{t(`"같은 급락은 두 번 사지 않는다" — 매도 후 새 고점이 만들어져야 다음 매수가 허용됩니다 (딥당 1회).`,
                            `"The same dip is never bought twice" — a new high must form after the last sell before the next buy is allowed (one trade per dip).`)}</li>
+                    {det.morning && <li>{t(`"바쁜 아침의 강세는 산다" — 09:05~${det.morning.until} 사이, 시초 5분 거래량이 이 종목 평소의 ${det.morning.vol_x}배 이상이고 가격이 당일 신고가·시가 대비 +${det.morning.min_run}% 이상이면 매수합니다. (미국 상승 조건은 검증에서 탈락 — 거래량이 진짜 신호)`,
+                           `"Buy a busy morning's strength" — between 09:05 and ${det.morning.until}, when the first five minutes trade ${det.morning.vol_x}x this stock's usual volume and the price is at a session high, up ${det.morning.min_run}%+ from the open, it buys. (The US-up condition was tested and rejected — volume is the true signal.)`)}</li>}
                     {det.rebound && <li>{t(`"바닥 반등의 눌림은 산다" — 어제 종가가 최근 ${det.rebound.low_win}일 최저가의 ${det.rebound.near}% 이내(바닥권)였고 오늘 전일 대비 +${det.rebound.day_gain}% 이상 오른 날은, 장중 ${det.rebound.drop}% 이상의 작은 눌림이 전환(2번째 양봉)하면 그것도 매수합니다 — 일봉과 분봉이 같은 방향을 말할 때는 작은 눌림도 신뢰합니다.`,
                            `"Buy the pullback of a bottom rebound" — when yesterday closed within ${det.rebound.near}% of the ${det.rebound.low_win}-day low AND today is up ${det.rebound.day_gain}%+ from yesterday, an intraday pullback of ${det.rebound.drop}%+ that turns (2nd red) is also bought — when the daily and minute charts agree, small pullbacks earn trust.`)}</li>}
                     {det.drip?.reinforce && <li>{t(`"내 원가보다 싸게 파는 새 급락은 보강 매수" — 보유 중이라도 새 급락이 전환(2번째 양봉)까지 완성되고 그 가격이 내 평균 원가보다 낮으면 원래 수량의 ${Math.round((det.drip.reinforce.frac ?? 0.5) * 100)}%를 추가 매수합니다 (에피소드당 최대 ${det.drip.reinforce.max ?? 2}회). 기준가가 내려가고 +1% 계단이 새 기준에서 다시 시작됩니다.`,
