@@ -198,7 +198,9 @@ VARIANTS: list[dict] = [
      # under 0.4%, at a fresh session high, buys too - 삼성전자 rose +6% on 08-12
      # with zero dip signals and the desk never touched it
      "trend": {"climb": 1.2, "dd": 0.4, "win": 30},
-     "drip": {"step": 1.0, "up_frac": 0.10, "dn_frac": 0.10, "stop_reset": 1.5,
+     # boss 2026-08-13 ~10:50: 알고리즘1 sells HALF at each +1% step (알고리즘2
+     # keeps 10% slices) - the duel becomes fast-harvest vs slow-harvest
+     "drip": {"step": 1.0, "up_frac": 0.50, "dn_frac": 0.10, "stop_reset": 1.5,
               "reinforce": {"frac": 0.5, "max": 2}}},
     {"id": "D2", "entry": 1, "kind": "pct", "a": 0.3, "b": 2.0, "exec": "limit",
      "stop_pct": 1.5, "wait_bars": 2, "family": "d2", "wall_price": True,

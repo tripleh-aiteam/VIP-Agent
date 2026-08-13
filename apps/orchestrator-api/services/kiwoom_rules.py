@@ -749,7 +749,7 @@ def trades(vid: str, tick: int = 5, period: int = 0, code: str = "",
                                    "net": 0, "part": True}
                                   for op in ops
                                   if stks[op["si"]]["code"] == c_code
-                                  for p_, q_, w_, i_ in (op.get("slices") or [])
+                                  for p_, q_, w_, i_, *r_ in (op.get("slices") or [])
                                   if off <= i_ < hi])}
 
     w = sum(1 for r in rows if r["result"] == "win")
