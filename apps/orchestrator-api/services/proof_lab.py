@@ -225,7 +225,11 @@ VARIANTS: list[dict] = [
      # (dn_frac 0 - no de-risking slices); only a genuinely NEW sharp decrease
      # - the full dip pattern with its own 2nd-red turn - buys back everything
      # sold, topping up to 100%. "Never buy while it is falling; buy the turn."
-     "drip": {"step": 1.0, "up_frac": 0.50, "dn_frac": 0.0, "stop_reset": 1.5,
+     # boss 2026-08-13 ~11:5x, final: 알고리즘2 sells 10% per +1% AND 10% per
+     # -1% below the top (same ladder as 알고리즘1); what remains distinct is the
+     # RELOAD - a fresh sharp-decrease turn buys back what was sold. The duel now
+     # isolates exactly one question: does the reload law earn its keep?
+     "drip": {"step": 1.0, "up_frac": 0.10, "dn_frac": 0.10, "stop_reset": 1.5,
               "rebuy": True, "reinforce": {"frac": 0.5, "max": 2}}},
     # Sharp (ladder) leaves the live board 2026-08-13: the boss replaced it with
     # his two drip scenarios ("instead of sharp rule make it Algorithm 1/2").
