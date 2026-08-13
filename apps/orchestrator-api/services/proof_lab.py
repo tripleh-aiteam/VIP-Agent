@@ -1144,13 +1144,10 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                                "auc": bundle["auc"], "n_train": bundle["n_train"]}
                 else:
                     ml_meta = None
-                # THE US HABIT (boss-approved 2026-08-12, built for both scenarios):
-                # a stormy American night changes the morning here - measured corr
-                # 0.64, and big-gap days are the rules' worst. Storm-up delays buys
-                # to 10:00; storm-down cuts size to a third. Calm changes nothing.
-                if v.get("us_habit") and (s.get("us_mode") or "calm") == "storm_up" \
-                        and _now < "10:00":
-                    continue
+                # THE US HABIT, revised 2026-08-13 morning: the boss watched the
+                # storm-up gate hold the desk to 10:00 and ordered it out - "every
+                # day start from 9am." Only the storm-down third-size remains; a
+                # stormy-up night now changes nothing but the boss's awareness.
                 bk = book(s["seed"] * 1_000 + i, c, "BUY", s["tick"])
                 from services.proof_ml import cap_for as _cap
                 _q = (ml_meta or {}).get("qty") or _cap(c)

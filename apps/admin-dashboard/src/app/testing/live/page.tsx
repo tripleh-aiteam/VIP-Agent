@@ -1731,8 +1731,8 @@ export default function LiveDeskPage() {
                            `At -${det.drip.stop_reset}% from the base it sells ALL and immediately re-buys at the lower price — the base resets and the steps start again. No other decline sells.`)}</li>
                     {det.drip.rebuy && <li>{t("보유 중에도 새 급락 신호가 오면 판 만큼을 다시 사서 100%로 채웁니다 (시나리오2).",
                            "While holding, a fresh sharp-drop signal buys back what was sold, topping up to 100% (Scenario 2).")}</li>}
-                    {det.us_habit && <li>{t("미국 습관: 반도체지수(SOX) 밤사이 -1.5% 이하면 ⅓ 수량, +1.5% 이상이면 10시 전 매수 금지, 조용하면 평소대로.",
-                           "US habit: SOX overnight <= -1.5% -> one-third size; >= +1.5% -> no buys before 10:00; calm -> normal.")}</li>}
+                    {det.us_habit && <li>{t("미국 습관: 반도체지수(SOX)가 밤사이 -1.5% 이하로 떨어진 다음 날은 ⅓ 수량으로만 삽니다. 그 외에는 평소대로 — 매일 9시 정각부터 매매합니다.",
+                           "US habit: after a night the SOX chip index fell -1.5% or more, buys are one-third size. Otherwise normal - trading starts 09:00 sharp, every day.")}</li>}
                     <li>{t("15:20 이후 새로 사지 않고 남은 것은 전부 정리 — 밤을 넘기지 않습니다.",
                            "After 15:20 nothing new is bought and whatever remains is closed - nothing is carried overnight.")}</li>
                   </>) : det.ride ? (<>
