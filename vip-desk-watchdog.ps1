@@ -18,5 +18,11 @@ while ($true) {
         -WorkingDirectory "C:\Users\A\Desktop\VIP\apps\admin-dashboard" -WindowStyle Hidden
     }
   } catch {}
+  try {
+    if (-not (Get-NetTCPConnection -LocalPort 3100 -State Listen -ErrorAction SilentlyContinue)) {
+      Start-Process -FilePath "cmd.exe" -ArgumentList "/c","npx next start -p 3100" `
+        -WorkingDirectory "C:\Users\A\Desktop\VIP\apps\admin-dashboard" -WindowStyle Hidden
+    }
+  } catch {}
   Start-Sleep -Seconds 60
 }

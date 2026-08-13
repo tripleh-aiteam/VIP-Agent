@@ -10,6 +10,9 @@ powershell -NoProfile -WindowStyle Hidden -Command ^
 powershell -NoProfile -WindowStyle Hidden -Command ^
   "if (-not (Get-NetTCPConnection -LocalPort 3000 -State Listen -ErrorAction SilentlyContinue)) { Start-Process -FilePath 'cmd.exe' -ArgumentList '/c','npx next start -p 3000' -WorkingDirectory 'C:\Users\A\Desktop\VIP\apps\admin-dashboard' -WindowStyle Hidden }"
 
+powershell -NoProfile -WindowStyle Hidden -Command ^
+  "if (-not (Get-NetTCPConnection -LocalPort 3100 -State Listen -ErrorAction SilentlyContinue)) { Start-Process -FilePath 'cmd.exe' -ArgumentList '/c','npx next start -p 3100' -WorkingDirectory 'C:\Users\A\Desktop\VIP\apps\admin-dashboard' -WindowStyle Hidden }"
+
 rem give the backend a minute to bind, then warm the models and fetch the overnight US
 powershell -NoProfile -WindowStyle Hidden -Command ^
   "Start-Sleep -Seconds 60; try { Invoke-WebRequest 'http://127.0.0.1:8000/paper-desk/overnight' -UseBasicParsing -TimeoutSec 60 | Out-Null } catch {}; try { Invoke-WebRequest 'http://127.0.0.1:8000/paper-desk/live/warm' -UseBasicParsing -TimeoutSec 2400 | Out-Null } catch {}"
