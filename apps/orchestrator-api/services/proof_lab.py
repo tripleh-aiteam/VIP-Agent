@@ -1087,8 +1087,8 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                 _p2["sells"] = [[p_, q_,
                                  (_s2.get("times") or [""] * (i_ + 1))[i_]
                                  if i_ < len(_s2.get("times") or []) else "",
-                                 i_, r_, w_]
-                                for p_, q_, w_, i_, r_ in _p2.get("slices", [])]
+                                 i_, r_, w_, (b_[0] if b_ else None)]
+                                for p_, q_, w_, i_, r_, *b_ in _p2.get("slices", [])]
             if _p2.get("l3"):
                 _lq2 = _p2.get("qty", 1)
                 _qh2 = _p2.get("half_qty", max(1, _lq2 // 2))
@@ -1349,7 +1349,8 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                     pos["qty"] -= q
                     # the slice remembers what REMAINED after it (boss 2026-08-13:
                     # "if it sold 200 and bought 1000 it must show 800")
-                    pos["slices"].append([px, q, why, i, pos["qty"]])
+                    pos["slices"].append([px, q, why, i, pos["qty"],
+                                          pos.get("base") or pos.get("entry")])
 
                 def _drow(last_why):
                     _q0 = pos.get("qty0", 1) or 1
@@ -1370,8 +1371,8 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                                     "sells": [[p_, q_,
                                                (s.get("times") or [""] * (i_ + 1))[i_]
                                                if i_ < len(s.get("times") or []) else "",
-                                               i_, r_, w_]
-                                              for p_, q_, w_, i_, r_ in pos["slices"]]}}
+                                               i_, r_, w_, (b_[0] if b_ else None)]
+                                              for p_, q_, w_, i_, r_, *b_ in pos["slices"]]}}
                     if evidence:
                         _t["buy_ev"] = {"close": pos["close"], "book": pos["bk"],
                                         "seq": pos["seq"]}
@@ -1828,8 +1829,8 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                          "sells": ([[p_, q_,
                                      (s.get("times") or [""] * (i_ + 1))[i_]
                                      if i_ < len(s.get("times") or []) else "",
-                                     i_, r_, w_]
-                                    for p_, q_, w_, i_, r_ in pos["slices"]]
+                                     i_, r_, w_, (b_[0] if b_ else None)]
+                                    for p_, q_, w_, i_, r_, *b_ in pos["slices"]]
                                    if pos.get("slices") else None)}
                         if (pos.get("buys") or pos.get("slices")) else None),
               "slices": (pos.get("slices") or None),

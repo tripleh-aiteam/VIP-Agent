@@ -768,7 +768,8 @@ def trades(vid: str, tick: int = 5, period: int = 0, code: str = "",
                             # wants them as completed rows, provable on the chart
                             "qty_left": op.get("qty_left"),
                             "slices": [[p_, q_, w_, sk["cs"][i_]["hhmm"], i_,
-                                        (r_[0] if r_ else None)]
+                                        (r_[0] if r_ else None),
+                                        (r_[1] if len(r_) > 1 else None)]
                                        for p_, q_, w_, i_, *r_ in (op.get("slices") or [])
                                        if i_ < len(sk["cs"])],
                             "buy_i": op["buy_i"],

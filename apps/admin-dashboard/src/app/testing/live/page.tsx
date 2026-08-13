@@ -1507,7 +1507,16 @@ export default function LiveDeskPage() {
                                                     setTimeout(() => chartRef.current?.scrollIntoView(
                                                       { behavior: "smooth", block: "center" }), 150); }}>
                                     ▼ {(t2 as string || "").slice(0, 5)} ₩{Math.round(p2).toLocaleString()}
-                                    <span className="text-[9.5px] text-[var(--text-muted)]"> × {q2}{t("주", "sh")}{rem2 != null ? t(` (잔여 ${Number(rem2).toLocaleString()})`, ` (left ${Number(rem2).toLocaleString()})`) : ""}</span></div>
+                                    <span className="text-[9.5px] text-[var(--text-muted)]"> × {q2}{t("주", "sh")}{rem2 != null ? t(` (잔여 ${Number(rem2).toLocaleString()})`, ` (left ${Number(rem2).toLocaleString()})`) : ""}</span>
+                                    {(() => {
+                                      const row6 = ((h as unknown as { parts?: { sells?: (number | string | null)[][] } }).parts?.sells || [])[k2];
+                                      const b2 = (row6 && row6.length > 6 ? row6[6] : null) as number | null;
+                                      const g2 = b2 ? (p2 / b2 - 1) * 100 : null;
+                                      return g2 != null ? (
+                                        <b className="ml-1 text-[10px]" style={{ color: g2 > 0 ? "#b02a2a" : g2 < 0 ? "#1565c0" : "var(--text-muted)" }}>
+                                          {g2 > 0 ? "+" : ""}{g2.toFixed(2)}%</b>
+                                      ) : null;
+                                    })()}</div>
                                 ))}
                               </>);
                               return (h as unknown as { chop?: boolean }).chop
@@ -1636,7 +1645,16 @@ export default function LiveDeskPage() {
                                                   why: (why2 as string) || r.exit_why || "" });
                                                 openFamTrade(r, "s"); }}>
                                 ▼ {((t2 as string) || r.sell_t || "").slice(0, 5)} ₩{Math.round(p2).toLocaleString()}
-                                <span className="text-[9.5px] text-[var(--text-muted)]"> × {q2}{t("주", "sh")}{rem2 != null ? t(` (잔여 ${Number(rem2).toLocaleString()})`, ` (left ${Number(rem2).toLocaleString()})`) : ""}</span></div>
+                                <span className="text-[9.5px] text-[var(--text-muted)]"> × {q2}{t("주", "sh")}{rem2 != null ? t(` (잔여 ${Number(rem2).toLocaleString()})`, ` (left ${Number(rem2).toLocaleString()})`) : ""}</span>
+                                {(() => {
+                                  const row6 = (r.parts!.sells as unknown as (number | string | null)[][])[k2];
+                                  const b2 = (row6 && row6.length > 6 ? row6[6] : null) as number | null;
+                                  const g2 = b2 ? (p2 / b2 - 1) * 100 : null;
+                                  return g2 != null ? (
+                                    <b className="ml-1 text-[10px]" style={{ color: g2 > 0 ? "#b02a2a" : g2 < 0 ? "#1565c0" : "var(--text-muted)" }}>
+                                      {g2 > 0 ? "+" : ""}{g2.toFixed(2)}%</b>
+                                  ) : null;
+                                })()}</div>
                             )) : (
                               <div className="cursor-pointer underline decoration-dotted" style={{ color: BLUE }}
                                 onClick={() => openFamTrade(r, "s")}>

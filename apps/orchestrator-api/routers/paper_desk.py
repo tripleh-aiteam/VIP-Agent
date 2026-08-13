@@ -727,7 +727,9 @@ def live_family_trades(family: str = Query("new"), tick: int = Query(5),
             _hb = (h.get("parts") or {}).get("buys")
             for p_, q_, w_, t_, i_, *r_ in (h.get("slices") or []):
                 _left = r_[0] if r_ else None
-                _base = h.get("base") or h.get("entry") or p_
+                # judged against the base AT THE SALE, not today's drifted one
+                _base = ((r_[1] if len(r_) > 1 else None)
+                         or h.get("base") or h.get("entry") or p_)
                 _g = (p_ / _base - 1) * 100 if _base else 0.0
                 rows.append({"rule": v["id"], "rule_ko": d.get("ko"),
                              "rule_en": d.get("en"), "idx": -1,
@@ -769,9 +771,10 @@ def live_family_trades(family: str = Query("new"), tick: int = Query(5),
         sells = (r.get("parts") or {}).get("sells") or []
         if (not r.get("partial")) and sells and len(sells[0]) >= 4 and r.get("entry"):
             for p_, _q, *_rest in sells:
-                if p_ > r["entry"]:
+                _b0 = (_rest[4] if len(_rest) > 4 and _rest[4] else r["entry"])
+                if p_ > _b0:
                     w += 1
-                elif p_ < r["entry"]:
+                elif p_ < _b0:
                     l += 1
         else:
             if r["result"] == "win":
