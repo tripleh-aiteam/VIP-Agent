@@ -833,13 +833,14 @@ def trades(vid: str, tick: int = 5, period: int = 0, code: str = "",
                                   for p_, q_, w_, i_, *r_ in (op.get("slices") or [])
                                   if off <= i_ < hi]
                                + [{"b": i_ - off, "s": i_ - off,
-                                   "g": round((p_ / g["entry"] - 1) * 100, 2),
+                                   "g": round((p_ / r2["entry"] - 1) * 100, 2),
                                    "net": 0, "part": True}
-                                  for g in got
-                                  if stks[g["si"]]["code"] == c_code
-                                  for p_, q_, _t2, i_, *r2_ in
-                                  ((g.get("parts") or {}).get("sells") or []
-                                   if len(((g.get("parts") or {}).get("sells")
+                                  for r2 in rows
+                                  if r2.get("code") == c_code
+                                  and not r2.get("partial") and r2.get("entry")
+                                  for p_, q_, _t2, i_, *r3_ in
+                                  ((r2.get("parts") or {}).get("sells") or []
+                                   if len(((r2.get("parts") or {}).get("sells")
                                            or [[0, 0]])[0]) >= 4 else [])
                                   if off <= i_ < hi])}
 

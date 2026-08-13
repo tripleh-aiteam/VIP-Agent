@@ -1403,7 +1403,11 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                 _guard = 0
                 while pos["qty"] > 0 and _guard < 30:
                     _guard += 1
-                    _lvl = pos["base"] * (1 + (pos["k_up"] + 1) * dp.get("step", 1.0) / 100)
+                    # his band (15:0x): a rung may fill from +0.85% of its level
+                    # ("if it increases between 0.85 and 1.05 we can sell 10%") -
+                    # rungs arm at +0.85%, +1.85%, +2.85%, ... spacing stays 1%
+                    _lvl = pos["base"] * (1 + ((pos["k_up"] + 1) * dp.get("step", 1.0)
+                                               - dp.get("early", 0.15)) / 100)
                     _lvl = float(-int(-_lvl // tk) * tk)
                     if highs[i] < _lvl:
                         break

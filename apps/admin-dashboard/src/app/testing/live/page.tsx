@@ -1506,9 +1506,31 @@ export default function LiveDeskPage() {
                                 ? t("보유 중 — 지금 횡보 구간, 매도 판단 정지", "holding — market flat now, exit judging paused")
                                 : t("보유 중 — 아직 매도 전", "holding — not sold yet");
                             })()}</td>
-                          <td className="text-right px-2 font-bold"
-                            style={{ ...CELL, color: h.unreal_pct > 0 ? "#b02a2a" : "#1565c0" }}>
-                            {h.unreal_pct > 0 ? "+" : ""}{h.unreal_pct}%</td>
+                          <td className="text-right px-2 font-bold" style={CELL}>
+                            {(() => {
+                              // THE EPISODE SO FAR (boss 2026-08-13): realized slices
+                              // PLUS the remainder at the current price, over the total
+                              // paid - the row's truth, not just the leftover's mood
+                              const pb = (h as unknown as { parts?: { buys?: [number, number][];
+                                sells?: [number, number][] } }).parts;
+                              const hl = (h as unknown as { qty_left?: number }).qty_left;
+                              const cost = (pb?.buys || []).reduce((a2, x) => a2 + x[0] * x[1], 0);
+                              const sold = (pb?.sells || []).reduce((a2, x) => a2 + x[0] * x[1], 0);
+                              if (cost > 0 && hl != null) {
+                                const tot = ((sold + h.last * hl) / cost - 1) * 100;
+                                return (<>
+                                  <div style={{ color: tot > 0 ? "#b02a2a" : tot < 0 ? "#1565c0" : "var(--text-muted)" }}
+                                    title={t("실현 조각 + 잔여 평가, 총 매수금 대비 (수수료 전)",
+                                             "realized slices + remainder at current price, over total paid (before fees)")}>
+                                    {t("합계 ", "total ")}{tot > 0 ? "+" : ""}{tot.toFixed(2)}%</div>
+                                  <div className="font-normal text-[9.5px] text-[var(--text-muted)]">
+                                    {t(`잔여분 ${h.unreal_pct > 0 ? "+" : ""}${h.unreal_pct}%`,
+                                       `remainder ${h.unreal_pct > 0 ? "+" : ""}${h.unreal_pct}%`)}</div>
+                                </>);
+                              }
+                              return (<span style={{ color: h.unreal_pct > 0 ? "#b02a2a" : "#1565c0" }}>
+                                {h.unreal_pct > 0 ? "+" : ""}{h.unreal_pct}%</span>);
+                            })()}</td>
                           <td className="text-right px-2 text-[var(--text-muted)]" style={CELL}
                             title={t("평가손익 (수수료 전)", "unrealized, before fees")}>—</td>
                         </tr>
