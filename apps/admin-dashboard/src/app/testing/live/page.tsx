@@ -656,6 +656,11 @@ export default function LiveDeskPage() {
   type FamTrades = { ok: boolean; rows: FamRow[]; trips: number; wins: number;
                      losses: number; win_pct: number; net_won: number };
   const [famOpen, setFamOpen] = useState(true);
+  // history filters (boss 2026-08-13: "searching bar/filtering - only particular
+  // company, or time, or winning and losing") - applies to BOTH algorithms
+  const [fCode, setFCode] = useState("");
+  const [fRes, setFRes] = useState("");
+  const [fTime, setFTime] = useState("");
   const [fam, setFam] = useState<FamTrades | null>(null);
   const [famBusy, setFamBusy] = useState(false);
   // LAST CLICK WINS, same law as the chart detail: the old family's fetch can take
@@ -1365,6 +1370,35 @@ export default function LiveDeskPage() {
               </div>
               {famOpen && fam && (fam.rows.length > 0
                   || ((fam as { holding?: unknown[] }).holding?.length ?? 0) > 0) && (
+                <>
+                <div className="mt-1 flex items-center gap-2 flex-wrap text-[10.5px]">
+                  <b style={{ color: "#6a1b9a" }}>🔎 {t("찾기:", "filter:")}</b>
+                  <select value={fCode} onChange={(e) => setFCode(e.target.value)}
+                    className="px-1 py-0.5 rounded border bg-[var(--bg-primary)] text-[var(--text-primary)]"
+                    style={{ borderColor: fCode ? "#6a1b9a" : "var(--border-default)" }}>
+                    <option value="">{t("모든 종목", "all stocks")}</option>
+                    {[["000660","SK하이닉스"],["005930","삼성전자"],["035420","NAVER"],
+                      ["017670","SK텔레콤"],["042660","한화오션"],["034020","두산에너빌리티"]]
+                      .map(([c2, n2]) => <option key={c2} value={c2}>{n2}</option>)}
+                  </select>
+                  <select value={fRes} onChange={(e) => setFRes(e.target.value)}
+                    className="px-1 py-0.5 rounded border bg-[var(--bg-primary)] text-[var(--text-primary)]"
+                    style={{ borderColor: fRes ? "#6a1b9a" : "var(--border-default)" }}>
+                    <option value="">{t("승·패 전부", "wins & losses")}</option>
+                    <option value="win">{t("승만", "wins only")}</option>
+                    <option value="loss">{t("패만", "losses only")}</option>
+                  </select>
+                  <input value={fTime} onChange={(e) => setFTime(e.target.value)}
+                    placeholder={t("시간 예: 10:3", "time e.g. 10:3")}
+                    className="w-[90px] px-1 py-0.5 rounded border bg-transparent text-[var(--text-primary)]"
+                    style={{ borderColor: fTime ? "#6a1b9a" : "var(--border-default)" }} />
+                  {(fCode || fRes || fTime) && (
+                    <button onClick={() => { setFCode(""); setFRes(""); setFTime(""); }}
+                      className="px-1.5 py-0.5 rounded border text-[10px] font-bold"
+                      style={{ borderColor: "#e65100", color: "#e65100" }}>
+                      {t("전체 보기", "clear")}</button>
+                  )}
+                </div>
                 <div className="overflow-x-auto mt-1">
                   <table className="w-full text-[11px] tabular-nums"
                     style={{ borderCollapse: "collapse" }}>
@@ -1392,6 +1426,7 @@ export default function LiveDeskPage() {
                       )}
                       {((fam as unknown as { holding?: { rule: string; code: string; name?: string;
                           buy_t?: string; entry: number; last: number; unreal_pct: number }[] }).holding || [])
+                        .filter((h) => !fCode || h.code === fCode)
                         .map((h, k) => (
                         <React.Fragment key={`h-${h.rule}-${k}`}>
                         <tr className="border-t border-[var(--border-default)]/30"
@@ -1484,7 +1519,12 @@ export default function LiveDeskPage() {
                           ✓ {t("매매 완료 — 이미 팔린 거래", "completed - already sold")}
                         </td></tr>
                       )}
-                      {fam.rows.map((r, i) => (
+                      {fam.rows
+                        .filter((r) => (!fCode || r.code === fCode)
+                          && (!fRes || r.result === fRes)
+                          && (!fTime || (r.buy_t || "").startsWith(fTime)
+                              || (r.sell_t || "").startsWith(fTime)))
+                        .map((r, i) => (
                         <React.Fragment key={`${r.rule}-${r.idx}-${i}`}>
                         <tr className="border-t border-[var(--border-default)]/30">
                           <td className="px-2 py-0.5 font-bold cursor-pointer underline decoration-dotted"
@@ -1558,6 +1598,7 @@ export default function LiveDeskPage() {
                     </tbody>
                   </table>
                 </div>
+                </>
               )}
               {famOpen && fam && ((fam as { holding?: unknown[] }).holding?.length ?? 0) > 0 && false && (
                 <div className="text-[10.5px] px-2 py-1 flex gap-3 flex-wrap"
