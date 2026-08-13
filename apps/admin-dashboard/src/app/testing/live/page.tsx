@@ -660,7 +660,8 @@ export default function LiveDeskPage() {
   // company, or time, or winning and losing") - applies to BOTH algorithms
   const [fCode, setFCode] = useState("");
   const [fRes, setFRes] = useState("");
-  const [fTime, setFTime] = useState("");
+  const [fFrom, setFFrom] = useState("");
+  const [fTo, setFTo] = useState("");
   const [fam, setFam] = useState<FamTrades | null>(null);
   const [famBusy, setFamBusy] = useState(false);
   // LAST CLICK WINS, same law as the chart detail: the old family's fetch can take
@@ -1388,12 +1389,17 @@ export default function LiveDeskPage() {
                     <option value="win">{t("승만", "wins only")}</option>
                     <option value="loss">{t("패만", "losses only")}</option>
                   </select>
-                  <input value={fTime} onChange={(e) => setFTime(e.target.value)}
-                    placeholder={t("시간 예: 10:3", "time e.g. 10:3")}
-                    className="w-[90px] px-1 py-0.5 rounded border bg-transparent text-[var(--text-primary)]"
-                    style={{ borderColor: fTime ? "#6a1b9a" : "var(--border-default)" }} />
-                  {(fCode || fRes || fTime) && (
-                    <button onClick={() => { setFCode(""); setFRes(""); setFTime(""); }}
+                  <input value={fFrom} onChange={(e) => setFFrom(e.target.value)}
+                    placeholder="10:00"
+                    className="w-[62px] px-1 py-0.5 rounded border bg-transparent text-[var(--text-primary)]"
+                    style={{ borderColor: fFrom ? "#6a1b9a" : "var(--border-default)" }} />
+                  <span className="text-[var(--text-muted)]">~</span>
+                  <input value={fTo} onChange={(e) => setFTo(e.target.value)}
+                    placeholder="11:00"
+                    className="w-[62px] px-1 py-0.5 rounded border bg-transparent text-[var(--text-primary)]"
+                    style={{ borderColor: fTo ? "#6a1b9a" : "var(--border-default)" }} />
+                  {(fCode || fRes || fFrom || fTo) && (
+                    <button onClick={() => { setFCode(""); setFRes(""); setFFrom(""); setFTo(""); }}
                       className="px-1.5 py-0.5 rounded border text-[10px] font-bold"
                       style={{ borderColor: "#e65100", color: "#e65100" }}>
                       {t("전체 보기", "clear")}</button>
@@ -1520,10 +1526,19 @@ export default function LiveDeskPage() {
                         </td></tr>
                       )}
                       {fam.rows
-                        .filter((r) => (!fCode || r.code === fCode)
-                          && (!fRes || r.result === fRes)
-                          && (!fTime || (r.buy_t || "").startsWith(fTime)
-                              || (r.sell_t || "").startsWith(fTime)))
+                        .filter((r) => {
+                          if (fCode && r.code !== fCode) return false;
+                          if (fRes && r.result !== fRes) return false;
+                          if (fFrom || fTo) {
+                            const inWin = (t2?: string) => {
+                              if (!t2) return false;
+                              const hm = t2.slice(0, 5);
+                              return (!fFrom || hm >= fFrom) && (!fTo || hm <= fTo);
+                            };
+                            if (!inWin(r.buy_t) && !inWin(r.sell_t)) return false;
+                          }
+                          return true;
+                        })
                         .map((r, i) => (
                         <React.Fragment key={`${r.rule}-${r.idx}-${i}`}>
                         <tr className="border-t border-[var(--border-default)]/30">
