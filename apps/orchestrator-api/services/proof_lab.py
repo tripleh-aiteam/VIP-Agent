@@ -999,7 +999,7 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                 _p2["entry"] = _p2["cost"] / _q0d
                 _px = _p2["sold_won"] / _q0d
                 _p2["qty"] = _q0d
-                _p2["sells"] = [[p_, q_] for p_, q_, _w in _p2.get("slices", [])]
+                _p2["sells"] = [[p_, q_] for p_, q_, *_x in _p2.get("slices", [])]
             if _p2.get("l3"):
                 _lq2 = _p2.get("qty", 1)
                 _qh2 = _p2.get("half_qty", max(1, _lq2 // 2))
@@ -1245,7 +1245,7 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                         return
                     pos["sold_won"] += px * q
                     pos["qty"] -= q
-                    pos["slices"].append([px, q, why])
+                    pos["slices"].append([px, q, why, i])
 
                 def _drow(last_why):
                     _q0 = pos.get("qty0", 1) or 1
@@ -1261,7 +1261,7 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                                      "add_px": pos.get("add_px")} if _sc else None),
                           "sig": pos.get("sig"),
                           "parts": {"buys": pos.get("buys"),
-                                    "sells": [[p_, q_] for p_, q_, _w in pos["slices"]]}}
+                                    "sells": [[p_, q_] for p_, q_, *_x in pos["slices"]]}}
                     if evidence:
                         _t["buy_ev"] = {"close": pos["close"], "book": pos["bk"],
                                         "seq": pos["seq"]}
@@ -1667,9 +1667,11 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
               "last": s["closes"][-1], "sig": pos.get("sig"), "wall": pos.get("wall"),
               "chop": bool(pos.get("chop")),
               "parts": ({"buys": pos.get("buys"),
-                         "sells": ([[p_, q_] for p_, q_, _w in pos["slices"]]
+                         "sells": ([[p_, q_] for p_, q_, *_x in pos["slices"]]
                                    if pos.get("slices") else None)}
                         if (pos.get("buys") or pos.get("slices")) else None),
+              "slices": (pos.get("slices") or None),
+              "base": pos.get("base"),
               "unreal_pct": round((s["closes"][-1] / pos["entry"] - 1) * 100, 3)}
         if evidence:
             op["buy_ev"] = {"close": pos["close"], "book": pos["bk"], "seq": pos["seq"]}

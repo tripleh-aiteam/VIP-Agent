@@ -135,7 +135,7 @@ type RDetail = { ok: boolean; id: string; ko: string; en: string; clock: string;
                  chart: { code: string; name: string; off: number; candles: Bar[];
                           focus: { b: number; s: number } | null;
                           marks: { b: number; s: number; g: number; net: number;
-                                   open?: boolean }[] } | null;
+                                   open?: boolean; part?: boolean }[] } | null;
                  family?: string;
   dip?: { drop: number; sharp: number; ups: number; chop: number;
           look?: number; win_sec?: number } | null;
@@ -183,7 +183,7 @@ function ruleName(id: string): string {
 
 function LiveChart({ bars, marks, focus, off = 0 }:
                    { bars: Bar[]; marks?: { b: number; s: number; g: number;
-                                            open?: boolean }[];
+                                            open?: boolean; part?: boolean }[];
                      focus?: number | null; off?: number }) {
   const ref = useRef<HTMLDivElement | null>(null);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -253,7 +253,11 @@ function LiveChart({ bars, marks, focus, off = 0 }:
     // arrows carry GROSS - the same number the trade table shows. Labelling one with net
     // while the table showed gross made one trade read as two results on the artificial
     // side, and there is no reason to repeat it here.
-    const m = (marks ?? []).flatMap((k) => k.open
+    const m = (marks ?? []).flatMap((k) => k.part
+      // a sold slice of a still-open ladder: one sell arrow, no buy pair
+      ? [{ time: off + k.s, position: "aboveBar", color: k.g > 0 ? RED : BLUE,
+           shape: "arrowDown", text: `조각 ${k.g > 0 ? "+" : ""}${k.g}%` }]
+      : k.open
       // an OPEN position is proof of a buy, not of a sell: the buy arrow stands at
       // its bar and a gold badge rides the live edge - no fake sell arrow
       ? [
@@ -645,7 +649,8 @@ export default function LiveDeskPage() {
                   sig?: { drop: number; sx: number | null; rng: number; t?: string } | null;
                   wall?: { price: number; qty: number } | null;
                   parts?: { buys?: [number, number][] | null;
-                            sells?: [number, number][] | null } | null };
+                            sells?: [number, number][] | null } | null;
+                  partial?: boolean };
   type FamTrades = { ok: boolean; rows: FamRow[]; trips: number; wins: number;
                      losses: number; win_pct: number; net_won: number };
   const [famOpen, setFamOpen] = useState(true);
@@ -1489,7 +1494,12 @@ export default function LiveDeskPage() {
                                                openFamTrade(r, "b");
                                              } }}
                             style={{ ...CELL, color: "#6a1b9a" }}>{ruleName(r.rule)}</td>
-                          <td className="px-2 font-bold text-[var(--text-primary)]" style={CELL}>{r.name || r.code}</td>
+                          <td className="px-2 font-bold text-[var(--text-primary)]" style={CELL}>{r.name || r.code}
+                            {r.partial && <span className="ml-1 text-[9px] font-bold px-1 py-0.5 rounded"
+                              style={{ background: "rgba(230,81,0,0.14)", color: "#e65100" }}
+                              title={t("보유 중인 포지션의 계단 매도 조각 — 나머지는 아직 보유 중",
+                                       "a ladder slice of a still-open position - the rest is still held")}>
+                              {t("조각", "slice")}</span>}</td>
                           <td className="px-2 cursor-pointer underline decoration-dotted"
                             style={{ ...CELL, color: RED }}
                             title={t("클릭: 차트에서 이 매수 확인", "click: see this buy on the chart")

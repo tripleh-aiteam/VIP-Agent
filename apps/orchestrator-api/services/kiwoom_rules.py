@@ -682,6 +682,12 @@ def trades(vid: str, tick: int = 5, period: int = 0, code: str = "",
                             "entry": op["entry"], "last": op["last"],
                             "sig": op.get("sig"), "wall": op.get("wall"),
                             "chop": op.get("chop"), "parts": op.get("parts"),
+                            "base": op.get("base") or op["entry"],
+                            # each sold slice with its own time and bar - the boss
+                            # wants them as completed rows, provable on the chart
+                            "slices": [[p_, q_, w_, sk["cs"][i_]["hhmm"], i_]
+                                       for p_, q_, w_, i_ in (op.get("slices") or [])
+                                       if i_ < len(sk["cs"])],
                             "buy_i": op["buy_i"],
                             "unreal_pct": op["unreal_pct"]})
     rows.sort(key=lambda r: (r.get("d8") or "", r["sell_t"]), reverse=True)
@@ -734,7 +740,15 @@ def trades(vid: str, tick: int = 5, period: int = 0, code: str = "",
                                    "open": True}
                                   for op in ops
                                   if stks[op["si"]]["code"] == c_code
-                                  and off <= op["buy_i"] < hi])}
+                                  and off <= op["buy_i"] < hi]
+                               + [{"b": i_ - off, "s": i_ - off,
+                                   "g": round((p_ / (op.get("base") or op["entry"]) - 1)
+                                              * 100, 2),
+                                   "net": 0, "part": True}
+                                  for op in ops
+                                  if stks[op["si"]]["code"] == c_code
+                                  for p_, q_, w_, i_ in (op.get("slices") or [])
+                                  if off <= i_ < hi])}
 
     w = sum(1 for r in rows if r["result"] == "win")
     l = sum(1 for r in rows if r["result"] == "loss")
