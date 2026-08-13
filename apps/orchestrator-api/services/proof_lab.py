@@ -1191,6 +1191,8 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
             elif ((dn[si] if v.get("dir", 1) < 0 else up[si]) == v["entry"]
                   if v.get("exact_entry")
                   else (dn[si] if v.get("dir", 1) < 0 else up[si]) >= v["entry"]):
+                if v.get("drip") and _now and str(_now) >= "15:00":
+                    continue             # closing hour: no new buying after 15:00
                 if v.get("max_run"):
                     # small-run confirmation, same walk as run_variant - keep in step
                     _j = i
@@ -1378,6 +1380,18 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                     out.append(_t)
                     last_exit[si] = i
 
+                # THE CLOSING HOUR (boss 2026-08-13 15:0x): after 15:00 the desk
+                # only harvests - any position whose whole episode stands in ANY
+                # gain sells everything at once; losers wait for the bell.
+                if (_now and str(_now) >= dp.get("sell_after", "15:00")
+                        and pos["qty"] > 0 and pos.get("qty_add", 0) <= 0
+                        and pos.get("cost")):
+                    _tot2 = (pos["sold_won"] + c * pos["qty"]) / pos["cost"]
+                    if _tot2 > 1.0:
+                        _dsell(pos["qty"], c, "15시 이후 이익 정리")
+                        _drow(f"15시 이후 이익 전량 정리 · 조각 {len(pos['slices'])}회")
+                        poss[si] = None
+                        continue
                 # -1.5% law: sell ALL, re-buy immediately at the lower price.
                 # ONLY a confirmed position resets - a 3% scout that never earned
                 # its +0.5% confirmation is cut and the episode ENDS (pre-flight
@@ -1479,6 +1493,7 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                         pos["pr_sold"] = True
                 # Scenario 2: a FRESH dip signal while still holding tops back to 100%
                 if (dp.get("rebuy") and not dp.get("pingpong")
+                        and (not _now or str(_now) < "15:00")
                         and 0 < pos["qty"] < pos["qty0"]
                         and pos.get("qty_add", 0) <= 0
                         and _dip_entry(s, v, i, up[si], closes)
@@ -1499,6 +1514,7 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                 # vs -21.6M without.
                 _rf = dp.get("reinforce")
                 if (_rf and pos.get("qty_add", 0) > 0
+                        and (not _now or str(_now) < "15:00")
                         and c < pos["base"]
                         and _dip_entry(s, v, i, up[si], closes)):
                     # his SK하이닉스 09:46 case exactly: scout aboard at 1,608,000,
@@ -1519,6 +1535,7 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                 # the dip we had already bought); each FURTHER one needs a high
                 # formed after the previous reinforcement - a genuinely new leg
                 if (_rf and pos.get("rf_used", 0) < _rf.get("max", 2)
+                        and (not _now or str(_now) < "15:00")
                         and pos.get("qty_add", 0) <= 0 and pos["qty"] > 0
                         and c < pos["base"]
                         and _dip_entry(s, v, i, up[si], closes)
