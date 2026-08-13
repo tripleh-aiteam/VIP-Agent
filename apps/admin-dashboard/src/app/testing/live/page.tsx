@@ -1477,7 +1477,6 @@ export default function LiveDeskPage() {
                       <th className="text-left px-2" style={CELL}>{t("매수 시각", "buy time")}</th>
                       <th className="text-left px-2" style={CELL}>{t("매수 내역 (가격 × 수량)", "buys (price × qty)")}</th>
                       <th className="text-left px-2" style={CELL}>{t("매도 내역 (시각 · 가격 × 수량 · 잔여) — 줄을 누르면 차트 증거", "sells (time · price × qty · left) — click a line for chart proof")}</th>
-                      <th className="text-right px-2" style={CELL}>{t("손익", "P&L")}</th>
                       <th className="text-right px-2" style={CELL}>{t("실현 금액", "money")}</th>
                     </tr></thead>
                     <tbody>
@@ -1485,7 +1484,7 @@ export default function LiveDeskPage() {
                           RIGHT NOW comes first - open positions - then what is already
                           finished. Each half is labelled so the seam is visible. */}
                       {(((fam as unknown as { holding?: unknown[] }).holding?.length ?? 0) > 0) && (
-                        <tr><td colSpan={6} className="px-3 py-1 text-[10px] font-bold"
+                        <tr><td colSpan={5} className="px-3 py-1 text-[10px] font-bold"
                           style={{ background: "rgba(230,81,0,0.10)", color: "#e65100" }}>
                           ● {t("지금 보유 중 — 아직 매매가 진행 중입니다", "holding now - the trade is still running")}
                         </td></tr>
@@ -1572,31 +1571,6 @@ export default function LiveDeskPage() {
                                 ? t("보유 중 — 지금 횡보 구간, 매도 판단 정지", "holding — market flat now, exit judging paused")
                                 : t("보유 중 — 아직 매도 전", "holding — not sold yet");
                             })()}</td>
-                          <td className="text-right px-2 font-bold" style={CELL}>
-                            {(() => {
-                              // THE EPISODE SO FAR (boss 2026-08-13): realized slices
-                              // PLUS the remainder at the current price, over the total
-                              // paid - the row's truth, not just the leftover's mood
-                              const pb = (h as unknown as { parts?: { buys?: [number, number][];
-                                sells?: [number, number][] } }).parts;
-                              const hl = (h as unknown as { qty_left?: number }).qty_left;
-                              const cost = (pb?.buys || []).reduce((a2, x) => a2 + x[0] * x[1], 0);
-                              const sold = (pb?.sells || []).reduce((a2, x) => a2 + x[0] * x[1], 0);
-                              if (cost > 0 && hl != null) {
-                                const tot = ((sold + h.last * hl) / cost - 1) * 100;
-                                return (<>
-                                  <div style={{ color: tot > 0 ? "#b02a2a" : tot < 0 ? "#1565c0" : "var(--text-muted)" }}
-                                    title={t("실현 조각 + 잔여 평가, 총 매수금 대비 (수수료 전)",
-                                             "realized slices + remainder at current price, over total paid (before fees)")}>
-                                    {t("합계 ", "total ")}{tot > 0 ? "+" : ""}{tot.toFixed(2)}%</div>
-                                  <div className="font-normal text-[9.5px] text-[var(--text-muted)]">
-                                    {t(`잔여분 ${h.unreal_pct > 0 ? "+" : ""}${h.unreal_pct}%`,
-                                       `remainder ${h.unreal_pct > 0 ? "+" : ""}${h.unreal_pct}%`)}</div>
-                                </>);
-                              }
-                              return (<span style={{ color: h.unreal_pct > 0 ? "#b02a2a" : "#1565c0" }}>
-                                {h.unreal_pct > 0 ? "+" : ""}{h.unreal_pct}%</span>);
-                            })()}</td>
                           <td className="text-right px-2 text-[var(--text-muted)]" style={CELL}
                             title={t("평가손익 (수수료 전)", "unrealized, before fees")}>—</td>
                         </tr>
@@ -1605,7 +1579,7 @@ export default function LiveDeskPage() {
                             sig: (h as unknown as { sig?: { drop: number; sx: number | null;
                                   rng: number; t?: string } | null }).sig });
                           return (
-                            <tr><td colSpan={6} className="px-4 py-2 text-[10.5px] leading-relaxed"
+                            <tr><td colSpan={5} className="px-4 py-2 text-[10.5px] leading-relaxed"
                               style={{ background: "rgba(230,81,0,0.06)", color: "var(--text-secondary)" }}>
                               <div><b style={{ color: RED }}>{t("왜 샀나 — ", "why it bought — ")}</b>{lang === "ko" ? ex.buyKo : ex.buyEn}</div>
                               {(h as unknown as { chop?: boolean }).chop && (
@@ -1628,7 +1602,7 @@ export default function LiveDeskPage() {
                         </React.Fragment>
                       ))}
                       {fam.rows.length > 0 && (
-                        <tr><td colSpan={6} className="px-3 py-1 text-[10px] font-bold"
+                        <tr><td colSpan={5} className="px-3 py-1 text-[10px] font-bold"
                           style={{ background: "rgba(15,81,50,0.08)", color: "#0f5132" }}>
                           ✓ {t("매매 완료 — 이미 팔린 거래", "completed - already sold")}
                         </td></tr>
@@ -1710,9 +1684,6 @@ export default function LiveDeskPage() {
                                 ▼ {r.sell_t?.slice(0, 5)} ₩{Math.round(r.exit).toLocaleString()}</div>
                             )}</td>
                           <td className="text-right px-2 font-bold"
-                            style={{ ...CELL, color: r.net_pct > 0 ? "#b02a2a" : r.net_pct < 0 ? "#1565c0" : "var(--text-muted)" }}>
-                            {r.net_pct > 0 ? "+" : ""}{r.net_pct}%</td>
-                          <td className="text-right px-2 font-bold"
                             style={{ ...CELL, color: money ? (r.won > 0 ? "#b02a2a" : r.won < 0 ? "#1565c0" : "var(--text-muted)") : "var(--text-muted)" }}>
                             {money ? `${r.won > 0 ? "+" : ""}₩${Math.round(r.won).toLocaleString()}`
                                    : t("숨김", "hidden")}</td>
@@ -1720,7 +1691,7 @@ export default function LiveDeskPage() {
                         {famExp === `${r.rule}-${r.idx}` && (() => {
                           const ex = explainTrade(r);
                           return (
-                            <tr><td colSpan={6} className="px-4 py-2 text-[10.5px] leading-relaxed border-t"
+                            <tr><td colSpan={5} className="px-4 py-2 text-[10.5px] leading-relaxed border-t"
                               style={{ background: "rgba(106,27,154,0.05)", color: "var(--text-secondary)" }}>
                               <div><b style={{ color: "#6a1b9a" }}>{lang === "ko" ? r.rule_ko : r.rule_en}</b></div>
                               <div className="mt-1"><b style={{ color: RED }}>{t("왜 샀나 — ", "why it bought — ")}</b>{lang === "ko" ? ex.buyKo : ex.buyEn}</div>
