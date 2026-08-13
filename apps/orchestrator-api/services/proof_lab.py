@@ -1326,13 +1326,11 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                 # is falling and never confirmed its turn - the scout law upside
                 # down). A new dip signal re-enters normally.
                 if c <= pos["base"] * (1 - dp.get("stop_reset", 1.5) / 100):
-                    _scout_only = bool(v.get("scout")) and pos.get("qty_add", 0) > 0
+                    # boss 2026-08-13 12:1x: "in ALL cases if it decreases -1.5%,
+                    # sell out all and again buy" - the scout-only exception from
+                    # the pre-flight audit is repealed at his order; every -1.5%
+                    # reset re-buys the full position at the lower price.
                     _dsell(pos["qty"], c, f"-{dp.get('stop_reset', 1.5):g}% 전량")
-                    if _scout_only:
-                        _drow(f"-{dp.get('stop_reset', 1.5):g}% 정찰 손절"
-                              + " · 확인 전이라 재매수 없음")
-                        poss[si] = None
-                        continue
                     _drow(f"-{dp.get('stop_reset', 1.5):g}% 전량 매도 · 즉시 재매수"
                           + f" · 조각 {len(pos['slices'])}회")
                     from services.proof_ml import cap_for as _cap2
