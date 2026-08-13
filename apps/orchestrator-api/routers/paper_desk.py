@@ -759,10 +759,31 @@ def live_family_trades(family: str = Query("new"), tick: int = Query(5),
                          "parts": tr.get("parts")})
     # newest first (boss 2026-08-11) - the top of the table is what just happened
     rows.sort(key=lambda r: (r.get("d8") or "", r.get("buy_t") or ""), reverse=True)
-    w = sum(1 for r in rows if r["result"] == "win")
-    l = sum(1 for r in rows if r["result"] == "loss")
+    # SLICE-TRUE WIN % (boss 2026-08-13 15:1x: "in the 10% buy and selling we
+    # gain more" - a completed episode's harvested slices used to vanish from
+    # the tally when they merged into one row). Every sell is one decision:
+    # completed drip episodes count each slice against the blended entry;
+    # everything else counts its row result. The episode-level % rides along.
+    w = l = 0
+    for r in rows:
+        sells = (r.get("parts") or {}).get("sells") or []
+        if (not r.get("partial")) and sells and len(sells[0]) >= 4 and r.get("entry"):
+            for p_, _q, *_rest in sells:
+                if p_ > r["entry"]:
+                    w += 1
+                elif p_ < r["entry"]:
+                    l += 1
+        else:
+            if r["result"] == "win":
+                w += 1
+            elif r["result"] == "loss":
+                l += 1
+    ew = sum(1 for r in rows if r["result"] == "win")
+    el = sum(1 for r in rows if r["result"] == "loss")
     _res = {"ok": True, "family": family, "rows": rows,
             "trips": len(rows), "wins": w, "losses": l,
+            "ep_wins": ew, "ep_losses": el,
+            "win_pct_ep": round(ew / (ew + el) * 100) if (ew + el) else 0,
             "win_pct": round(w / (w + l) * 100) if (w + l) else 0,
             "holding": holding,
             "net_won": sum(r["won"] for r in rows)}
@@ -1067,6 +1088,15 @@ def live_warm():
             out.append({"rule": v["id"], "stock": name,
                         "model": (b.get("algo") if b else None),
                         "auc": (b.get("auc") if b else None)})
+    # THE HISTORIES TOO (boss 2026-08-13 15:2x: a cold 알고리즘1 history took
+    # 218 seconds after a restart and read as "not showing"). Warm computes all
+    # three families' tables so the first click after any restart is instant.
+    for fam in ("d1", "d2", "old"):
+        try:
+            live_family_trades(family=fam, tick=5, period=60, day="", frm="",
+                               to="", gate=1, auto=1)
+        except Exception:
+            pass
     return {"ok": True, "day": ref, "models": out,
             "trained": sum(1 for x in out if x["model"])}
 
