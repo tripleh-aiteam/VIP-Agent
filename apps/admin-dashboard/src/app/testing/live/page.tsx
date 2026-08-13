@@ -1353,17 +1353,64 @@ export default function LiveDeskPage() {
                   <span className="text-[10.5px] font-bold text-[var(--text-primary)]">
                     {fam.trips}{t("건", " trades")}
                     {" · "}
-                    <span style={{ color: (fam.win_pct_ep ?? fam.win_pct) >= 50 ? "#b02a2a" : "#1565c0" }}
-                      title={t("에피소드(매수부터 전량 매도까지) 단위 승률 — 예전규칙과 같은 계산", "win rate by whole episodes (entry to full exit) - same counting as the old rule")}>
-                      {t(`승률 ${fam.win_pct_ep ?? fam.win_pct}%`, `win ${fam.win_pct_ep ?? fam.win_pct}%`)}
-                    </span>
-                    {" "}({fam.ep_wins ?? fam.wins}{t("승", "W")} {fam.ep_losses ?? fam.losses}{t("패", "L")})
-                    {fam.win_pct_ep != null && (
-                      <span className="ml-1 text-[10px] text-[var(--text-muted)]"
-                        title={t("모든 매도(조각 포함) 하나하나를 승·패로 센 값", "every sell, slice by slice, counted as its own win or loss")}>
-                        {t(`· 조각 기준 ${fam.win_pct}%`, `· by slices ${fam.win_pct}%`)}
-                      </span>
-                    )}
+                    {(() => {
+                      // THE FILTER IS THE LENS (boss 2026-08-13): with any filter
+                      // active - a time window like 09:00~14:30, one stock, wins
+                      // only - the header recounts for exactly what is shown.
+                      const filt = !!(fCode || fRes || fFrom || fTo);
+                      const inWin = (t2?: string) => {
+                        if (!t2) return false;
+                        const hm = t2.slice(0, 5);
+                        return (!fFrom || hm >= fFrom) && (!fTo || hm <= fTo);
+                      };
+                      const rowsF = !filt ? fam.rows : fam.rows.filter((r) =>
+                        (!fCode || r.code === fCode) && (!fRes || r.result === fRes)
+                        && (!(fFrom || fTo) || inWin(r.buy_t) || inWin(r.sell_t)));
+                      let ew = 0, el = 0, sw = 0, sl2 = 0;
+                      for (const r of rowsF) {
+                        if (!r.partial) {
+                          if (r.result === "win") ew++;
+                          else if (r.result === "loss") el++;
+                        }
+                        const sells = (r.parts?.sells || []) as unknown as (number | string | null)[][];
+                        if (!r.partial && sells.length && sells[0].length >= 7) {
+                          for (const sr of sells) {
+                            if (fFrom || fTo) { const tt = (sr[2] as string) || ""; if (!inWin(tt)) continue; }
+                            const b2 = sr[6] as number | null;
+                            const p2 = sr[0] as number;
+                            if (b2 && p2 > b2) sw++;
+                            else if (b2 && p2 < b2) sl2++;
+                          }
+                        } else if (r.partial) {
+                          if (r.result === "win") sw++;
+                          else if (r.result === "loss") sl2++;
+                        }
+                      }
+                      const wp = (ew + el) ? Math.round(ew / (ew + el) * 100) : 0;
+                      const sp = (sw + sl2) ? Math.round(sw / (sw + sl2) * 100) : 0;
+                      const useSrv = !filt && fam.win_pct_ep != null;
+                      const mainPct = useSrv ? fam.win_pct_ep! : wp;
+                      const mainW = useSrv ? (fam.ep_wins ?? 0) : ew;
+                      const mainL = useSrv ? (fam.ep_losses ?? 0) : el;
+                      const slicePct = useSrv ? fam.win_pct : sp;
+                      return (<>
+                        <span style={{ color: mainPct >= 50 ? "#b02a2a" : "#1565c0" }}
+                          title={t("에피소드(매수부터 전량 매도까지) 단위 승률", "win rate by whole episodes")}>
+                          {t(`승률 ${mainPct}%`, `win ${mainPct}%`)}
+                        </span>
+                        {" "}({mainW}{t("승", "W")} {mainL}{t("패", "L")})
+                        <span className="ml-1 text-[10px] text-[var(--text-muted)]"
+                          title={t("모든 매도(조각)를 그 순간의 기준가로 승·패 판정", "every sell judged against its at-the-moment base")}>
+                          {t(`· 조각 기준 ${slicePct}%`, `· by slices ${slicePct}%`)}
+                        </span>
+                        {filt && (
+                          <span className="ml-1 text-[10px] font-bold px-1 py-0.5 rounded"
+                            style={{ background: "rgba(230,81,0,0.14)", color: "#e65100" }}>
+                            {t("선택 구간 기준", "for the filtered window")}
+                          </span>
+                        )}
+                      </>);
+                    })()}
                     {((fam as { holding?: unknown[] }).holding?.length ?? 0) > 0 &&
                       t(` · 보유 ${(fam as { holding?: unknown[] }).holding!.length}`,
                         ` · holding ${(fam as { holding?: unknown[] }).holding!.length}`)}
