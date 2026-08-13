@@ -195,12 +195,15 @@ VARIANTS: list[dict] = [
      # fences lowered at his order (2026-08-13, after 삼성전자 0.93%/1.30% and
      # NAVER 0.91%/1.37 turns were refused by hairs): drop 0.9, range 1.25.
      # Holdout cost measured before setting: about -0.6M/yr vs 1.0/1.5.
-     "dip": {"drop": 0.9, "sharp": 3.0, "ups": 1, "chop": 1.25, "win_sec": 1800},
+     # his band (2026-08-13 14:4x): everything "around 1%" - drop 0.9, range
+     # 1.0 (the 1.25 range was silently raising the real drop floor to 1.25,
+     # caught on the SK하이닉스 11:34 case: -1.02% fall refused by 0.02 of range)
+     "dip": {"drop": 0.9, "sharp": 3.0, "ups": 1, "chop": 1.0, "win_sec": 1800},
      "scout": {"frac": 0.03, "confirm": 0.5},
      # the second door (boss 08-13): a steady 30-min climb of +1.2% with pullbacks
      # under 0.4%, at a fresh session high, buys too - 삼성전자 rose +6% on 08-12
      # with zero dip signals and the desk never touched it
-     "trend": {"climb": 1.2, "dd": 0.4, "win": 30},
+     "trend": {"climb": 1.05, "dd": 0.4, "win": 30},
      "rebound": {"low_win": 20, "near": 3.0, "day_gain": 2.0, "drop": 0.5},
      "morning": {"until": "09:20", "vol_x": 1.5, "min_run": 0.3},
      # boss 12:0x: "when decrease we have to buy even we have a stock - all
@@ -221,9 +224,12 @@ VARIANTS: list[dict] = [
      # fences lowered at his order (2026-08-13, after 삼성전자 0.93%/1.30% and
      # NAVER 0.91%/1.37 turns were refused by hairs): drop 0.9, range 1.25.
      # Holdout cost measured before setting: about -0.6M/yr vs 1.0/1.5.
-     "dip": {"drop": 0.9, "sharp": 3.0, "ups": 1, "chop": 1.25, "win_sec": 1800},
+     # his band (2026-08-13 14:4x): everything "around 1%" - drop 0.9, range
+     # 1.0 (the 1.25 range was silently raising the real drop floor to 1.25,
+     # caught on the SK하이닉스 11:34 case: -1.02% fall refused by 0.02 of range)
+     "dip": {"drop": 0.9, "sharp": 3.0, "ups": 1, "chop": 1.0, "win_sec": 1800},
      "scout": {"frac": 0.03, "confirm": 0.5},
-     "trend": {"climb": 1.2, "dd": 0.4, "win": 30},
+     "trend": {"climb": 1.05, "dd": 0.4, "win": 30},
      "rebound": {"low_win": 20, "near": 3.0, "day_gain": 2.0, "drop": 0.5},
      "morning": {"until": "09:20", "vol_x": 1.5, "min_run": 0.3},
      # HIS FINAL ALGO 2 (boss 2026-08-12 night, chose B over the ping-pong):
