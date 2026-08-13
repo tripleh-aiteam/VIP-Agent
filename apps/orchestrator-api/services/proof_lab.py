@@ -1373,8 +1373,16 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                 # -1% below the top: dn_frac per step (frozen during oscillation)
                 if (not dp.get("pingpong")) and dp.get("dn_frac", 0.10) > 0                         and pos["k_up"] > 0                         and pos["qty"] > 0 and not _chop_now:
                     _guard = 0
-                    while (pos["qty"] > 0 and _guard < 30 and c <= pos["ref_up"]
-                           * (1 - (pos["k_dn"] + 1) * dp.get("step", 1.0) / 100)):
+                    # dn_at_rung (알고리즘2, boss 12:0x): the k-th down-slice fires
+                    # the moment the price slips just UNDER the (top - k steps)
+                    # rung - 0.02% slack, so +0.98% after the +1% rung sells.
+                    # Without the flag (알고리즘1): a full -1% below the top.
+                    while (pos["qty"] > 0 and _guard < 30 and c <= (
+                           pos["ref_up"]
+                           * (1 - pos["k_dn"] * dp.get("step", 1.0) / 100) * 0.9998
+                           if dp.get("dn_at_rung") else
+                           pos["ref_up"]
+                           * (1 - (pos["k_dn"] + 1) * dp.get("step", 1.0) / 100))):
                         _guard += 1
                         _qs = max(1, int(pos["qty0"] * dp.get("dn_frac", 0.10)))
                         # at the close, honestly - an instant fill in front of the
