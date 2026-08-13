@@ -192,15 +192,18 @@ VARIANTS: list[dict] = [
      # structurally LOW (0.4-0.6x avg today), so a hard gate trades never -
      # instead a quiet signal buys HALF size, a busy one full size
      "vol_size": {"x": 1.2, "frac": 0.5}, "us_habit": True,
-     "dip": {"drop": 1.0, "sharp": 3.0, "ups": 1, "chop": 1.5, "win_sec": 1800},
+     # fences lowered at his order (2026-08-13, after 삼성전자 0.93%/1.30% and
+     # NAVER 0.91%/1.37 turns were refused by hairs): drop 0.9, range 1.25.
+     # Holdout cost measured before setting: about -0.6M/yr vs 1.0/1.5.
+     "dip": {"drop": 0.9, "sharp": 3.0, "ups": 1, "chop": 1.25, "win_sec": 1800},
      "scout": {"frac": 0.03, "confirm": 0.5},
      # the second door (boss 08-13): a steady 30-min climb of +1.2% with pullbacks
      # under 0.4%, at a fresh session high, buys too - 삼성전자 rose +6% on 08-12
      # with zero dip signals and the desk never touched it
      "trend": {"climb": 1.2, "dd": 0.4, "win": 30},
-     # boss 2026-08-13 ~10:50: 알고리즘1 sells HALF at each +1% step (알고리즘2
-     # keeps 10% slices) - the duel becomes fast-harvest vs slow-harvest
-     "drip": {"step": 1.0, "up_frac": 0.50, "dn_frac": 0.10, "stop_reset": 1.5,
+     # slice sizes per his 11:0x order: 알고리즘1 sells 10% per +1% step,
+     # 알고리즘2 sells 50% - slow harvest vs fast harvest, same entries
+     "drip": {"step": 1.0, "up_frac": 0.10, "dn_frac": 0.10, "stop_reset": 1.5,
               "reinforce": {"frac": 0.5, "max": 2}}},
     {"id": "D2", "entry": 1, "kind": "pct", "a": 0.3, "b": 2.0, "exec": "limit",
      "stop_pct": 1.5, "wait_bars": 2, "family": "d2", "wall_price": True,
@@ -209,7 +212,10 @@ VARIANTS: list[dict] = [
      # structurally LOW (0.4-0.6x avg today), so a hard gate trades never -
      # instead a quiet signal buys HALF size, a busy one full size
      "vol_size": {"x": 1.2, "frac": 0.5}, "us_habit": True,
-     "dip": {"drop": 1.0, "sharp": 3.0, "ups": 1, "chop": 1.5, "win_sec": 1800},
+     # fences lowered at his order (2026-08-13, after 삼성전자 0.93%/1.30% and
+     # NAVER 0.91%/1.37 turns were refused by hairs): drop 0.9, range 1.25.
+     # Holdout cost measured before setting: about -0.6M/yr vs 1.0/1.5.
+     "dip": {"drop": 0.9, "sharp": 3.0, "ups": 1, "chop": 1.25, "win_sec": 1800},
      "scout": {"frac": 0.03, "confirm": 0.5},
      "trend": {"climb": 1.2, "dd": 0.4, "win": 30},
      # HIS FINAL ALGO 2 (boss 2026-08-12 night, chose B over the ping-pong):
@@ -217,7 +223,7 @@ VARIANTS: list[dict] = [
      # (dn_frac 0 - no de-risking slices); only a genuinely NEW sharp decrease
      # - the full dip pattern with its own 2nd-red turn - buys back everything
      # sold, topping up to 100%. "Never buy while it is falling; buy the turn."
-     "drip": {"step": 1.0, "up_frac": 0.10, "dn_frac": 0.0, "stop_reset": 1.5,
+     "drip": {"step": 1.0, "up_frac": 0.50, "dn_frac": 0.0, "stop_reset": 1.5,
               "rebuy": True, "reinforce": {"frac": 0.5, "max": 2}}},
     # Sharp (ladder) leaves the live board 2026-08-13: the boss replaced it with
     # his two drip scenarios ("instead of sharp rule make it Algorithm 1/2").
