@@ -336,6 +336,7 @@ export default function Desk({ mode }: { mode: TradeMode }) {
       const series = chart.addCandlestickSeries({
         upColor: "#d32f2f", downColor: "#1565c0", borderUpColor: "#d32f2f",
         borderDownColor: "#1565c0", wickUpColor: "#d32f2f", wickDownColor: "#1565c0",
+        priceFormat: { type: "price", precision: 0, minMove: 1 }, // KRW — no decimals
       });
       // 거래량 bars along the bottom, numbers on the LEFT axis (boss: like Kiwoom —
       // the volume value must be readable; K/M-compact formatting)

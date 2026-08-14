@@ -282,7 +282,9 @@ function IntervalChart({ code, t, lang }: { code: string; t: (ko: string, en: st
       });
       if (conf.tf === null) {
         // 실시간: build a tick line from the 3s price lane
-        const series = chart.addLineSeries({ color: INDIGO, lineWidth: 2 });
+        const series = chart.addLineSeries({ color: INDIGO, lineWidth: 2,
+          // KRW has no decimals — but `code` can be an overseas ticker here, so only 6-digit Korean codes
+          ...(/^\d{6}$/.test(code) ? { priceFormat: { type: "price" as const, precision: 0, minMove: 1 } } : {}) });
         const load = async () => {
           try {
             const r = await api<{ prices: Record<string, { price: number }> }>(`/paper-desk/prices?codes=${code}`);
@@ -298,7 +300,8 @@ function IntervalChart({ code, t, lang }: { code: string; t: (ko: string, en: st
         const ivl = setInterval(load, 3000);
         cleanup = () => { clearInterval(ivl); chart.remove(); };
       } else {
-        const series = chart.addCandlestickSeries({ upColor: RED, downColor: BLUE, borderUpColor: RED, borderDownColor: BLUE, wickUpColor: RED, wickDownColor: BLUE });
+        const series = chart.addCandlestickSeries({ upColor: RED, downColor: BLUE, borderUpColor: RED, borderDownColor: BLUE, wickUpColor: RED, wickDownColor: BLUE,
+          ...(/^\d{6}$/.test(code) ? { priceFormat: { type: "price" as const, precision: 0, minMove: 1 } } : {}) });
         const load = async () => {
           try {
             const r = await api<{ bars: Bar[] }>(`/paper-desk/chart?code=${code}&tf=${conf.tf}`);

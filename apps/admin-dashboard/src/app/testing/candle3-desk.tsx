@@ -95,6 +95,7 @@ function MiniChart({ code }: { code: string }) {
       });
       const series = chart.addCandlestickSeries({
         upColor: RED, downColor: BLUE, borderUpColor: RED, borderDownColor: BLUE, wickUpColor: RED, wickDownColor: BLUE,
+        priceFormat: { type: "price", precision: 0, minMove: 1 }, // KRW — no decimals
       });
       const load = async () => {
         try {

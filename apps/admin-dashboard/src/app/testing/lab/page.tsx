@@ -84,7 +84,8 @@ function LabChart({ candles, marks, focus }:
       });
       const series = chart.addCandlestickSeries({
         upColor: RED, downColor: BLUE, borderUpColor: RED, borderDownColor: BLUE,
-        wickUpColor: RED, wickDownColor: BLUE });
+        wickUpColor: RED, wickDownColor: BLUE,
+        priceFormat: { type: "price", precision: 0, minMove: 1 } }); // KRW — no decimals
       cs.current = { chart, series };
       setReady((v) => v + 1);
       cleanup = () => { cs.current = null; chart.remove(); };

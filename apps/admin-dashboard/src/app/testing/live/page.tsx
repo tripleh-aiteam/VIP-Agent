@@ -226,7 +226,8 @@ function LiveChart({ bars, marks, focus, off = 0 }:
       });
       const series = chart.addCandlestickSeries({
         upColor: RED, downColor: BLUE, borderUpColor: RED, borderDownColor: BLUE,
-        wickUpColor: RED, wickDownColor: BLUE });
+        wickUpColor: RED, wickDownColor: BLUE,
+        priceFormat: { type: "price", precision: 0, minMove: 1 } }); // KRW — no decimals
       cs.current = { chart, series };
       chart.timeScale().subscribeVisibleTimeRangeChange(() => {
         if (prog.current) return;

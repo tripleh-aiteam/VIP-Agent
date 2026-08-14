@@ -788,6 +788,7 @@ function CandleChart({ candles, height }: { candles: Candle[]; height: number })
     const series = chart.addCandlestickSeries({
       upColor: "#e53935", downColor: "#1e88e5", borderVisible: false,
       wickUpColor: "#e53935", wickDownColor: "#1e88e5",
+      priceFormat: { type: "price", precision: 0, minMove: 1 }, // KRW — no decimals
     });
     chartRef.current = chart;
     seriesRef.current = series;

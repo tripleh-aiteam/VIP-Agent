@@ -121,6 +121,7 @@ function ProofChart({ candles, trades, focus, buyLabel, sellLabel, openIdxs, hol
       });
       const series = chart.addCandlestickSeries({
         upColor: RED, downColor: BLUE, borderUpColor: RED, borderDownColor: BLUE, wickUpColor: RED, wickDownColor: BLUE,
+        priceFormat: { type: "price", precision: 0, minMove: 1 }, // KRW — no decimals
       });
       // remember the visible TIME window so a timeframe switch (candle indices change
       // meaning) or a data refresh can restore exactly the same clock range
