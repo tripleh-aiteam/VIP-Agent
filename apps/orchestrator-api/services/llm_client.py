@@ -47,9 +47,13 @@ MODEL_CATALOG = {
     # --- Groq (LPU-based, 200-500ms latency, OpenAI-compatible API) ---
     # Free tier on console.groq.com. Fastest option for latency-sensitive
     # Kakao chatbot. Set GROQ_API_KEY env var to enable.
-    "groq-llama-3.3-70b":   ("groq", "llama-3.3-70b-versatile"),
-    "groq-llama-3.1-8b":    ("groq", "llama-3.1-8b-instant"),
-    "groq-qwen-32b":        ("groq", "qwen-2.5-32b"),
+    # 2026-08-19: Groq retired every Llama model (llama-3.3-70b-versatile et al
+    # now 404 "model_not_found" — this silently STUBBED the Kiwoom analysis for
+    # some time). Friendly names kept so callers don't change; real ids remapped
+    # to what console.groq.com actually serves today (verified via /v1/models).
+    "groq-llama-3.3-70b":   ("groq", "openai/gpt-oss-120b"),
+    "groq-llama-3.1-8b":    ("groq", "openai/gpt-oss-20b"),
+    "groq-qwen-32b":        ("groq", "qwen/qwen3.6-27b"),
     # --- Local Ollama ---
     "llama3":   ("ollama", "llama3"),
     "qwen2.5":  ("ollama", "qwen2.5"),
@@ -893,15 +897,16 @@ def chat_completion_sync(
     # OpenAI (only paid in this list, kept as a "last paid try" before
     # going free-only) → Ollama (free, requires local install).
 
-    # Free tier #1 — Groq Llama 3.3 70B (free, 30 RPM, no credit card)
+    # Free tier #1 — Groq gpt-oss-120b (free, no credit card; replaced the
+    # retired llama-3.3-70b-versatile on 2026-08-19)
     if groq_key:
         ok, result = _call_openai_compatible("https://api.groq.com/openai/v1", groq_key,
-                                             "llama-3.3-70b-versatile",
-                                             full_messages_with_sys, max_tokens, temperature, 15.0)
+                                             "openai/gpt-oss-120b",
+                                             full_messages_with_sys, max_tokens, temperature, 30.0)
         if ok:
-            _last_used.update({"provider": "groq", "model": "llama-3.3-70b (free fallback)"})
+            _last_used.update({"provider": "groq", "model": "gpt-oss-120b (free fallback)"})
             return result
-        attempt_log.append(f"llama-3.3-70b (groq free fallback): {str(result)[:200]}")
+        attempt_log.append(f"gpt-oss-120b (groq free fallback): {str(result)[:200]}")
 
     # Free tier #2 — Gemini 2.5 Flash (free, 15 RPM / 1.5M TPM)
     if _env("GEMINI_API_KEY") or _env("GOOGLE_API_KEY"):
