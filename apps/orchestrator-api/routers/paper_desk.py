@@ -662,9 +662,11 @@ def live_rules(tick: int = Query(5), period: int = Query(0), day: str = Query(""
     # switch only; the desk itself always trades gated (boss 2026-08-10)
     # auto=0: the user explicitly chose TODAY, so an empty board is the honest answer -
     # never yesterday's trades under today's label (boss 2026-08-11, three times)
-    return rank(tick=tick, period=max(0, min(int(period or 0), 600)),
-                day=day, frm=frm, to=to, use_gate=bool(gate),
-                allow_fallback=bool(auto))
+    _p = max(0, min(int(period or 0), 600))
+    return _swr(("rank", tick, _p, day, frm, to, bool(gate), bool(auto)), 3.0,
+                lambda: rank(tick=tick, period=_p, day=day, frm=frm, to=to,
+                             use_gate=bool(gate), allow_fallback=bool(auto)),
+                placeholder={"ok": False, "computing": True})
 
 
 @router.get("/live/rules/trades")
@@ -679,14 +681,79 @@ def live_rule_trades(variant: str = Query(...), tick: int = Query(5),
     `budget` is won per trade — 0 means the historical one share. It scales the money and
     never the win rate, which is the point of being able to set it (boss 2026-08-04)."""
     from services.kiwoom_rules import trades
-    return trades(variant, tick=tick, period=max(0, min(int(period or 0), 600)),
-                  code=code, bars=bars, limit=limit, around=around,
-                  budget=max(0, min(int(budget or 0), 1_000_000_000)),
-                  day=day, frm=frm, to=to, use_gate=bool(gate),
-                  allow_fallback=bool(auto))
+    _p = max(0, min(int(period or 0), 600))
+    _b = max(0, min(int(budget or 0), 1_000_000_000))
+    return _swr(("trades", variant, tick, _p, code, bars, limit, around, _b,
+                 day, frm, to, bool(gate), bool(auto)), 10.0,
+                lambda: trades(variant, tick=tick, period=_p, code=code,
+                               bars=bars, limit=limit, around=around, budget=_b,
+                               day=day, frm=frm, to=to, use_gate=bool(gate),
+                               allow_fallback=bool(auto)),
+                placeholder={"ok": False, "computing": True})
 
 
 _FAM_TTL: dict = {}
+
+# SERVE STALE, REFRESH BEHIND (boss 2026-08-19: "when I reload it is opening
+# trading history and other things inside algorithms very slow"). A reload used
+# to wait for a full-day replay of six tapes before showing anything. Now every
+# heavy endpoint answers with the last computed table INSTANTLY and recomputes
+# in a background thread; the page's own 3-20s polls pick up the fresh answer
+# one beat later. Only the very first request after a restart still computes
+# inline - and /live/warm covers that.
+_SWR: dict = {}
+# key -> epoch the refresh started. A refresh thread that stalls (observed
+# 2026-08-19 ~12:1x-13:5x: the 알고리즘2 board served a 12:1x snapshot for
+# ~100 minutes while its refresher hung and the busy flag blocked every new
+# attempt) may hold a key for at most 300s - after that a fresh thread may
+# take over, so a stall heals itself instead of freezing the board.
+_SWR_BUSY: dict = {}
+
+
+def _swr(key, fresh_sec: float, compute, placeholder=None):
+    """placeholder (boss 2026-08-19: 'it is not showing trading history... I do
+    not want more like this case'): a COLD key - an hour window, a stored day,
+    the first poll after a restart - used to compute a full-day replay inline
+    while the page's fetch timed out and the board read as gone. With a
+    placeholder, a cold key answers {computing: true} in milliseconds, the
+    replay runs in a background thread, and the page retries until the real
+    table lands. A failed background compute keeps the last good answer."""
+    import threading
+    import time as _t
+    hit = _SWR.get(key)
+    if hit and _t.time() - hit[0] < fresh_sec:
+        return hit[1]
+
+    def _spawn():
+        st = _SWR_BUSY.get(key)
+        if st is not None and _t.time() - st < 300.0:
+            return                       # a live refresh is already on it
+        # at most 3 replays in flight (2026-08-19 evening: a fresh boot, the
+        # page's cold-key polls and /live/warm together spawned 6-8 full-day
+        # replays at once and the process died without a word - the OS kills
+        # an out-of-memory python silently). A skipped spawn simply retries
+        # on the page's next poll; stale answers keep serving meanwhile.
+        if len(_SWR_BUSY) >= 3:
+            return
+        _SWR_BUSY[key] = _t.time()
+
+        def _go():
+            try:
+                _SWR[key] = (_t.time(), compute())
+            except Exception:
+                pass
+            finally:
+                _SWR_BUSY.pop(key, None)
+        threading.Thread(target=_go, daemon=True).start()
+    if hit:
+        _spawn()
+        return hit[1]
+    if placeholder is not None:
+        _spawn()
+        return placeholder
+    v = compute()
+    _SWR[key] = (_t.time(), v)
+    return v
 
 
 @router.get("/live/rules/family-trades")
@@ -698,16 +765,19 @@ def live_family_trades(family: str = Query("new"), tick: int = Query(5),
     result, money - across the whole family, not one rule at a time). Rows carry the
     rule id and the trade's index inside that rule's own list, so the page can open the
     exact trade on the chart as proof with the machinery it already has."""
+    # stale-serve: the last table answers instantly, a background thread recomputes
+    # (the 20s hard cache alone still made every reload wait out a full-day replay)
+    return _swr(("fam", family, tick, period, day, frm, to, gate, auto), 20.0,
+                lambda: _fam_compute(family, tick, period, day, frm, to, gate,
+                                     auto),
+                placeholder={"ok": False, "computing": True})
+
+
+def _fam_compute(family: str, tick: int, period: int, day: str,
+                 frm: str, to: str, gate: int, auto: int):
     from services.kiwoom_rules import DESK, trades
-    # 4-second answer cache: the page polls this every 20s while the same computation
-    # also feeds the 3s rules poll, and the boss felt the wait (2026-08-11) - the
-    # holdings used to be a SECOND full pass per rule, which doubled the work for
-    # nothing since trades() already returns them
     import time as _t
     _fk = (family, tick, period, day, frm, to, gate, auto)
-    _hit = _FAM_TTL.get(_fk)
-    if _hit and _t.time() - _hit[0] < 20.0:
-        return _hit[1]
     rows = []
     holding = []
     for v in DESK:
@@ -790,7 +860,7 @@ def live_family_trades(family: str = Query("new"), tick: int = Query(5),
             "win_pct": round(w / (w + l) * 100) if (w + l) else 0,
             "holding": holding,
             "net_won": sum(r["won"] for r in rows)}
-    _FAM_TTL[_fk] = (_t.time(), _res)
+    _FAM_TTL[_fk] = (_t.time(), _res)   # kept: family_daily still reads it
     return _res
 
 
@@ -910,8 +980,12 @@ def family_daily(family: str = Query("d1"), tick: int = Query(5),
         hit = _FAM_DAILY_CACHE.get(key)
         if hit is None:
             try:
-                r = live_family_trades(family=family, tick=tick, period=period,
-                                       day=d, frm="", to="", gate=1, auto=0)
+                # read the live cache or compute directly - never the endpoint,
+                # whose {computing} placeholder would record a 0-trade day here
+                _sk = ("fam", family, tick, period, d, "", "", 1, 0)
+                _sh = _SWR.get(_sk)
+                r = _sh[1] if _sh else _fam_compute(family, tick, period,
+                                                    d, "", "", 1, 0)
                 hit = {"d8": d, "trips": r.get("trips", 0),
                        "win_pct": r.get("win_pct", 0), "wins": r.get("wins", 0),
                        "losses": r.get("losses", 0),
@@ -1094,12 +1168,25 @@ def live_warm():
     # THE HISTORIES TOO (boss 2026-08-13 15:2x: a cold 알고리즘1 history took
     # 218 seconds after a restart and read as "not showing"). Warm computes all
     # three families' tables so the first click after any restart is instant.
+    # period=0/tick=5 IS the key the page actually requests (found 2026-08-19:
+    # warm precomputed period=60 - a key the page never asks for, so the warm
+    # never helped a real reload). The rank board is prefilled the same way.
+    # computed DIRECTLY and stored under the endpoints' exact cache keys - going
+    # through the endpoints would now just receive {computing} placeholders
+    import time as _t2
     for fam in ("d1", "d2", "old"):
         try:
-            live_family_trades(family=fam, tick=5, period=60, day="", frm="",
-                               to="", gate=1, auto=1)
+            _SWR[("fam", fam, 5, 0, "", "", "", 1, 1)] = (
+                _t2.time(), _fam_compute(fam, 5, 0, "", "", "", 1, 1))
         except Exception:
             pass
+    try:
+        from services.kiwoom_rules import rank as _rank2
+        _SWR[("rank", 5, 0, "", "", "", True, True)] = (
+            _t2.time(), _rank2(tick=5, period=0, day="", frm="", to="",
+                               use_gate=True, allow_fallback=True))
+    except Exception:
+        pass
     return {"ok": True, "day": ref, "models": out,
             "trained": sum(1 for x in out if x["model"])}
 

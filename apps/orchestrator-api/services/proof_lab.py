@@ -212,11 +212,17 @@ VARIANTS: list[dict] = [
      # turn buys back sold slices mid-hold. Both algorithms now buy on real
      # decreases while holding; what still separates them is the down-side
      # selling (알고1: -1% below top per slice · 알고2: rung-slip).
-     "drip": {"step": 1.0, "up_frac": 0.10, "dn_frac": 0.10, "stop_reset": 1.5,
-              "rebuy": True,
-              # his retreat law (14:5x): in profit, a rise turns down - the 2nd
-              # blue sells 10%; a single HUGE blue (>=0.9%) sells right away.
-              # Measured cost accepted knowingly: ~ -6M/yr for +4p win rate.
+     # THE DUEL REOPENS (boss 2026-08-19 14:4x: "instead of selling just 10%
+     # we sell 50% if we gain around 1%, and if decrease again sell - all
+     # other parts same as Algo 2"). 알고리즘1 now harvests in HALVES: each
+     # rung takes 50% of the position, and the retreat/down-side sales take
+     # 50% too - two rungs and the hand is empty. 알고리즘2 keeps the 10%
+     # drip. Same doors, same sizes, same resets - only the harvest differs.
+     "drip": {"step": 1.0, "up_frac": 0.50, "dn_frac": 0.50, "stop_reset": 1.5,
+              "slice_total": True, "rebuy": True,
+              # his retreat law (14:5x, 08-13): in profit, a rise turns down -
+              # the 2nd blue sells (now 50% here); a single HUGE blue (>=0.9%)
+              # sells right away.
               "retreat": {"big": 0.9},
               "reinforce": {"frac": 0.5, "max": 2}}},
     {"id": "D2", "entry": 1, "kind": "pct", "a": 0.3, "b": 2.0, "exec": "limit",
@@ -248,7 +254,7 @@ VARIANTS: list[dict] = [
      # RELOAD - a fresh sharp-decrease turn buys back what was sold. The duel now
      # isolates exactly one question: does the reload law earn its keep?
      "drip": {"step": 1.0, "up_frac": 0.10, "dn_frac": 0.10, "stop_reset": 1.5,
-              "rebuy": True, "retreat": {"big": 0.9},
+              "slice_total": True, "rebuy": True, "retreat": {"big": 0.9},
               "reinforce": {"frac": 0.5, "max": 2}}},
     # Sharp (ladder) leaves the live board 2026-08-13: the boss replaced it with
     # his two drip scenarios ("instead of sharp rule make it Algorithm 1/2").
@@ -360,6 +366,19 @@ VARIANTS: list[dict] = [
 
 
 def label(v: dict, ko: bool = True) -> str:
+    # the boss's scenarios wear their own name (2026-08-19: the generic label
+    # printed "1 up (no gate) / +2 ticks take" under 알고리즘 rows - the words
+    # of a rule that isn't theirs)
+    if v.get("drip"):
+        dp = v["drip"]
+        _pct = int(round(dp.get("up_frac", 0.10) * 100))
+        if ko:
+            return (f"급락·아침·상승·바닥반등 4개의 문으로 매수 → +1%마다 "
+                    f"{_pct}% 계단 매도 → -{dp.get('stop_reset', 1.5):g}% 전량 리셋"
+                    f"{' (게이트 무시)' if v.get('ignore_gate') else ''}")
+        return (f"4 doors in (dip·morning·climb·rebound) → {_pct}% ladder each "
+                f"+1% → full reset at -{dp.get('stop_reset', 1.5):g}%"
+                f"{' (no gate)' if v.get('ignore_gate') else ''}")
     if v.get("ml"):
         base = dict(v)
         base.pop("ml")
@@ -906,10 +925,37 @@ def _trend_entry(s: dict, v: dict, i: int, closes: list[float], now_str: str) ->
     losing entry this desk has ever tested (dip entries: -40.8M/yr)."""
     tr = v.get("trend") or {}
     n_w = int(tr.get("win", 30))
-    if i < n_w + 1 or (now_str and now_str < "09:10"):
+    if (now_str and now_str < "09:10") or i < 2:
         return False
     c = closes[i]
-    w = closes[i - n_w:i + 1]
+    # THE WINDOW IS TIME, NOT BARS (found 2026-08-19, SK하이닉스 10:00->10:06
+    # +1.9% unseen): 30 BARS of a busy stock's 5틱 tape is ~12 seconds, so this
+    # door demanded +1.05% in seconds and never fired once on the live clock -
+    # while the 250-day study that selected it ran on minute bars, where 30
+    # bars = 30 minutes. Same repair _dip_state got on 08-11. Synthetic tapes
+    # (no clock) keep the bar count.
+    _tms = s.get("times")
+
+    def _sc(x):
+        if isinstance(x, str) and len(x) >= 7:
+            t2 = x.replace(":", "")
+            try:
+                return int(t2[0:2]) * 3600 + int(t2[2:4]) * 60 + int(t2[4:6])
+            except Exception:
+                return None
+        return None
+    _now_s = _sc(_tms[i]) if _tms else None
+    if _now_s is not None:
+        j = i
+        while j > 0 and (_sc(_tms[j - 1]) or 0) >= _now_s - n_w * 60:
+            j -= 1
+        if _now_s - (_sc(_tms[j]) or _now_s) < n_w * 60 - 120:
+            return False          # the session hasn't held a full window yet
+    else:
+        if i < n_w + 1:
+            return False
+        j = i - n_w
+    w = closes[j:i + 1]
     if not w[0] or (c / w[0] - 1) * 100 < tr.get("climb", 1.2):
         return False
     pk = w[0]
@@ -1331,7 +1377,16 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                     pos["cost"] = pos["entry"] * pos.get("qty", 1)
                     pos["base"] = pos["entry"]
                     pos["qty0"] = pos.get("qty", 1) + pos.get("qty_add", 0)
-                    pos["buys"] = [[pos["entry"], pos.get("qty", 1)]]
+                    # the SLICE YARDSTICK (boss 2026-08-19): every share bought
+                    # this episode, reloads included - qty0 stays the refill
+                    # target so reloads never inflate the position itself
+                    pos["qty_tot"] = pos["qty0"]
+                    # each buy carries its own TIME (boss 2026-08-19: he hunted
+                    # 13:14 for a 13:47 reinforcement - the row must say when)
+                    pos["buys"] = [[pos["entry"], pos.get("qty", 1),
+                                    (s.get("times") or [None] * (pos["i"] + 1))
+                                    [min(pos["i"], len(s.get("times") or []) - 1)]
+                                    if s.get("times") else None]]
                     pos["sold_won"] = 0.0
                     pos["slices"] = []
                     pos["k_up"] = 0
@@ -1341,7 +1396,7 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                 if (_sc and not pos.get("added") and pos.get("qty_add", 0) > 0
                         and (c / pos["base"] - 1) * 100 >= _sc.get("confirm", 0.5)):
                     _qa = pos["qty_add"]
-                    pos["buys"].append([c, _qa])
+                    pos["buys"].append([c, _qa, (s.get("times") or [None] * (i + 1))[i]])
                     pos["cost"] += c * _qa
                     pos["qty"] = pos.get("qty", 1) + _qa
                     pos["qty_add"] = 0
@@ -1416,11 +1471,15 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                     # sell out all and again buy" - the scout-only exception from
                     # the pre-flight audit is repealed at his order; every -1.5%
                     # reset re-buys the full position at the lower price.
+                    # the rebuy is THE POSITION JUST SOLD, not the band cap
+                    # (found 2026-08-19, the SOX -4.98% morning: cap_for paid
+                    # 1,000 SK텔레콤 shares where the storm-third and quiet-bar
+                    # laws had sized the entry at 166 - a reset must never
+                    # grow the hand, only move it to the lower price)
+                    _nq = pos["qty"]
                     _dsell(pos["qty"], c, f"-{dp.get('stop_reset', 1.5):g}% 전량")
                     _drow(f"-{dp.get('stop_reset', 1.5):g}% 전량 매도 · 즉시 재매수"
                           + f" · 조각 {len(pos['slices'])}회")
-                    from services.proof_ml import cap_for as _cap2
-                    _nq = _cap2(c)
                     poss[si] = {"si": si, "i": i, "entry": c, "bk": pos.get("bk"),
                                 "close": c, "qty": _nq, "ml": None,
                                 "seq": closes[max(0, i - 1): i + 1],
@@ -1438,7 +1497,9 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                     _lvl = float(-int(-_lvl // tk) * tk)
                     if highs[i] < _lvl:
                         break
-                    _qs = max(1, int(pos["qty0"] * dp.get("up_frac", 0.10)))
+                    _yd = (pos.get("qty_tot") or pos["qty0"]) \
+                        if dp.get("slice_total") else pos["qty0"]
+                    _qs = max(1, int(_yd * dp.get("up_frac", 0.10)))
                     _dsell(_qs, _lvl, f"+{pos['k_up'] + 1}%")
                     pos["k_up"] += 1
                     pos["ref_up"] = max(pos["ref_up"], _lvl)
@@ -1458,9 +1519,10 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                             break
                         _qs = min(max(1, int(pos["qty0"] * dp.get("up_frac", 0.10))),
                                   pos["qty0"] - pos["qty"])
-                        pos["buys"].append([c, _qs])
+                        pos["buys"].append([c, _qs, (s.get("times") or [None] * (i + 1))[i]])
                         pos["cost"] += c * _qs
                         pos["qty"] += _qs
+                        pos["qty_tot"] = pos.get("qty_tot", pos["qty0"]) + _qs
                         pos["k_up"] -= 1
                 # -1% below the top: dn_frac per step (frozen during oscillation)
                 if (not dp.get("pingpong")) and dp.get("dn_frac", 0.10) > 0                         and pos["k_up"] > 0                         and pos["qty"] > 0 and not _chop_now:
@@ -1476,7 +1538,9 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                            pos["ref_up"]
                            * (1 - (pos["k_dn"] + 1) * dp.get("step", 1.0) / 100))):
                         _guard += 1
-                        _qs = max(1, int(pos["qty0"] * dp.get("dn_frac", 0.10)))
+                        _yd2 = (pos.get("qty_tot") or pos["qty0"]) \
+                            if dp.get("slice_total") else pos["qty0"]
+                        _qs = max(1, int(_yd2 * dp.get("dn_frac", 0.10)))
                         # at the close, honestly - an instant fill in front of the
                         # ask wall (above market) was optimism, not a simulation
                         _dsell(_qs, c, f"고점-{pos['k_dn'] + 1}%")
@@ -1501,7 +1565,9 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                             and pos.get("pr_pk", 0) > pos.get("base", 0)
                             and (pos.get("pr_blues", 0) >= 2 or _big)
                             and pos["qty"] == _qty_bar0):
-                        _qs = max(1, int(pos["qty0"] * dp.get("up_frac", 0.10)))
+                        _yd3 = (pos.get("qty_tot") or pos["qty0"]) \
+                            if dp.get("slice_total") else pos["qty0"]
+                        _qs = max(1, int(_yd3 * dp.get("up_frac", 0.10)))
                         _dsell(_qs, c, ("큰 음봉 10%" if _big else "상승후 2음봉 10%"))
                         pos["pr_sold"] = True
                 # Scenario 2: a FRESH dip signal while still holding tops back to 100%
@@ -1513,9 +1579,10 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                         and _dip_state(s, v["dip"].get("win_sec", 600))["hii"][i]
                         > pos["i"]):
                     _miss = pos["qty0"] - pos["qty"]
-                    pos["buys"].append([c, _miss])
+                    pos["buys"].append([c, _miss, (s.get("times") or [None] * (i + 1))[i]])
                     pos["cost"] += c * _miss
                     pos["qty"] += _miss
+                    pos["qty_tot"] = pos.get("qty_tot", pos["qty0"]) + _miss
                 # REINFORCEMENT (boss 2026-08-13, from the SK하이닉스 09:46 case
                 # he caught on Kiwoom: the desk held 100% from 1,615,200 and
                 # watched a fresh dip trade at 1,593,000). A NEW sharp-decrease
@@ -1541,7 +1608,7 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                     pos["qty_add"] = 0
                     pos["added"] = True
                     pos["add_px"] = c
-                    pos["base"] = pos["cost"] / max(1, sum(q_ for _, q_ in pos["buys"]))
+                    pos["base"] = pos["cost"] / max(1, sum(q_ for _, q_, *_x in pos["buys"]))
                     pos["entry"] = pos["base"]
                 # the FIRST reinforcement may be the SAME dip cutting deeper below
                 # our cost (his exact SK하이닉스 case shared its 30-min high with
@@ -1555,11 +1622,12 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                         and _dip_state(s, v["dip"].get("win_sec", 600))["hii"][i]
                         > pos.get("rf_i", -1)):
                     _qr = max(1, int(pos["qty0"] * _rf.get("frac", 0.5)))
-                    pos["buys"].append([c, _qr])
+                    pos["buys"].append([c, _qr, (s.get("times") or [None] * (i + 1))[i]])
                     pos["cost"] += c * _qr
                     pos["qty"] += _qr
                     pos["qty0"] += _qr
-                    pos["base"] = pos["cost"] / max(1, sum(q_ for _, q_ in pos["buys"]))
+                    pos["qty_tot"] = pos.get("qty_tot", pos["qty0"] - _qr) + _qr
+                    pos["base"] = pos["cost"] / max(1, sum(q_ for _, q_, *_x in pos["buys"]))
                     pos["entry"] = pos["base"]
                     pos["k_up"] = 0
                     pos["k_dn"] = 0

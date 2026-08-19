@@ -218,7 +218,10 @@ function LiveChart({ bars, marks, focus, off = 0 }:
         height: 320, autoSize: true,
         layout: { background: { color: "transparent" }, textColor: dark ? "#aaa" : "#666" },
         grid: { vertLines: { color: "rgba(128,128,128,0.10)" }, horzLines: { color: "rgba(128,128,128,0.10)" } },
+        // fixLeftEdge: zooming OUT used to open blank space left of the first bar —
+        // both edges pinned, the zoom stops at the data (boss 2026-08-18)
         timeScale: { timeVisible: true, secondsVisible: true, rightOffset: 2, fixRightEdge: true,
+                     fixLeftEdge: true,
                      // a tick bar has no duration, so its x value is a COUNT, not a clock;
                      // the real time of each bar lives in hhmm and is shown from there
                      tickMarkFormatter: (t: number) => (label.current.get(t) ?? "").slice(0, 5) },
@@ -397,6 +400,9 @@ export default function LiveDeskPage() {
     : null);
   const [pick, setPick] = useState<number | null>(null);
   const [money, setMoney] = useState(false);      // off until he asks - see the button
+  // the rule's law-book text, folded by default (boss 2026-08-19: "it is showing
+  // by default explanations" - the story opens when asked, like the money does)
+  const [ruleDoc, setRuleDoc] = useState(false);
   // which side of the picked trade the chart centres on: clicking the BUY time shows the
   // buy with its arrow, the SELL time the sell (boss 2026-08-05: "if i click time it
   // should go to buying ... selling"). The row itself still defaults to the sell.
@@ -628,6 +634,13 @@ export default function LiveDeskPage() {
       + `&gate=${showBlockedRef.current ? 0 : 1}`
       + `&auto=${dayTouchedRef.current && !ruleDayRef.current ? 0 : 1}`)
       .then((d) => { if (my !== detSeqRef.current) return;
+                     if ((d as unknown as { computing?: boolean })?.computing) {
+                       // cold key: the server answers instantly and replays in
+                       // the background - keep the spinner and re-ask
+                       setTimeout(() => { if (my === detSeqRef.current)
+                                            openRuleRef.current?.(id, tradeIdx, tradeCode); }, 3000);
+                       return;
+                     }
                      setDetBusy(false);
                      const v = d?.ok ? d : null; detRef.current = v;
                      detDayRef.current = (tradeIdx != null
@@ -637,6 +650,9 @@ export default function LiveDeskPage() {
                      setDetBusy(false);
                      detRef.current = null; setDet(null); });
   }, []);
+  const openRuleRef = useRef<((id: string, tradeIdx?: number | null,
+                               tradeCode?: string) => void) | null>(null);
+  openRuleRef.current = openRule;
 
   // CLICK A STOCK, SEE ITS TRADES (boss 2026-08-11: on his own six the scores say
   // nothing he does not already know - what he wants from that panel is when it bought,
@@ -684,6 +700,9 @@ export default function LiveDeskPage() {
     { trips: number; win_pct: number; net_won: number }>>({});
   useEffect(() => {
     setFamDaily({});
+    // every algorithm view starts with money hidden (boss 2026-08-19: "by default
+    // it should be hide money - if I wanna show I will click show money")
+    setMoney(false);
     const q = perRef.current ? `period=${perRef.current}` : `tick=${tickRef.current}`;
     api<{ ok: boolean; days: { d8: string; trips: number; win_pct: number;
                                net_won: number }[] }>(
@@ -705,9 +724,19 @@ export default function LiveDeskPage() {
       + `&gate=${showBlockedRef.current ? 0 : 1}`
       + `&auto=${dayTouchedRef.current && !ruleDayRef.current ? 0 : 1}`)
       .then((d) => { if (my !== famSeqRef.current) return;
+                     if ((d as unknown as { computing?: boolean })?.computing) {
+                       // the server is replaying this view in the background -
+                       // keep the current table on screen, stay in "updating",
+                       // and ask again shortly (boss 2026-08-19: the history
+                       // must never read as gone)
+                       setTimeout(() => { if (my === famSeqRef.current) pullFamRef.current?.(); }, 4000);
+                       return;
+                     }
                      setFam(d?.ok ? d : null); setFamBusy(false); })
       .catch(() => { if (my !== famSeqRef.current) return; setFamBusy(false); });
   }, [way]);
+  const pullFamRef = useRef<(() => void) | null>(null);
+  pullFamRef.current = pullFam;
   useEffect(() => {
     // fetch even while the panel is collapsed - the server answers from a 4s cache,
     // and a collapsed header with no data read as "the history is gone" (2026-08-11)
@@ -723,7 +752,10 @@ export default function LiveDeskPage() {
   const explainTrade = (r: { rule: string; exit_why?: string; buy_t?: string;
                              entry: number; name?: string; sell_t?: string;
                              sig?: { drop: number; sx: number | null; rng: number; t?: string } | null }) => {
-    const isDip = r.rule.startsWith("N");
+    // D-rules are the boss's scenarios - dip-door stories, NOT the old
+    // 3-rises text (2026-08-19: every 알고리즘 slice wore the old algorithm's
+    // "rose 3 times in a row" explanation because only N-names were known)
+    const isDip = r.rule.startsWith("N") || r.rule.startsWith("D");
     // when the trade carries its own measured signal, the story uses THOSE numbers -
     // the proof the boss asked for, not a description (2026-08-11)
     const sg = r.sig;
@@ -814,7 +846,11 @@ export default function LiveDeskPage() {
     api<Rank>(`/paper-desk/live/rules?${q}&gate=${showBlockedRef.current ? 0 : 1}&day=${ruleDayRef.current}`
       + `&auto=${dayTouchedRef.current && !ruleDayRef.current ? 0 : 1}`
       + `&frm=${encodeURIComponent(hourFromRef.current)}&to=${encodeURIComponent(hourToRef.current)}`)
-      .then(setRank).catch(() => {});
+      // a cold server key answers {computing:true} instantly - keep what is on
+      // screen; the 3s interval retries by itself (boss 2026-08-19: the board
+      // must never go blank because the server is thinking)
+      .then((d) => { if (!(d as unknown as { computing?: boolean })?.computing) setRank(d); })
+      .catch(() => {});
     // follows the CHARTED company, so the minute rows always describe the bars above them
     loadDfRef.current?.(detRef.current?.chart?.code || c, dfMinsRef.current,
                         dfFromRef.current, dfToRef.current);
@@ -1478,14 +1514,16 @@ export default function LiveDeskPage() {
                       <th className="text-left px-2" style={CELL}>{t("매수 시각", "buy time")}</th>
                       <th className="text-left px-2" style={CELL}>{t("매수 내역 (가격 × 수량)", "buys (price × qty)")}</th>
                       <th className="text-left px-2" style={CELL}>{t("매도 내역 (시각 · 가격 × 수량 · 잔여) — 줄을 누르면 차트 증거", "sells (time · price × qty · left) — click a line for chart proof")}</th>
-                      <th className="text-right px-2" style={CELL}>{t("실현 금액", "money")}</th>
+                      {/* the money column exists only after 💰 (boss 2026-08-19:
+                          "by default it should be hide money") */}
+                      {money && <th className="text-right px-2" style={CELL}>{t("실현 금액", "money")}</th>}
                     </tr></thead>
                     <tbody>
                       {/* THE ORDER IS THE BOSS'S (2026-08-11): what the desk is doing
                           RIGHT NOW comes first - open positions - then what is already
                           finished. Each half is labelled so the seam is visible. */}
                       {(((fam as unknown as { holding?: unknown[] }).holding?.length ?? 0) > 0) && (
-                        <tr><td colSpan={5} className="px-3 py-1 text-[10px] font-bold"
+                        <tr><td colSpan={money ? 5 : 4} className="px-3 py-1 text-[10px] font-bold"
                           style={{ background: "rgba(230,81,0,0.10)", color: "#e65100" }}>
                           ● {t("지금 보유 중 — 아직 매매가 진행 중입니다", "holding now - the trade is still running")}
                         </td></tr>
@@ -1524,9 +1562,12 @@ export default function LiveDeskPage() {
                             ▲ {h.buy_t?.slice(0, 8)}</td>
                           <td className="px-2" style={CELL}>
                             {(() => {
-                              const hb = (h as unknown as { parts?: { buys?: [number, number][] } }).parts?.buys;
-                              return hb && hb.length ? hb.map(([p2, q2], k2) => (
-                                <div key={k2}>₩{Math.round(p2).toLocaleString()}
+                              const hb = (h as unknown as { parts?: {
+                                buys?: [number, number, (string | null)?][] } }).parts?.buys;
+                              return hb && hb.length ? hb.map(([p2, q2, t3], k2) => (
+                                <div key={k2}>
+                                  {t3 ? <span className="text-[9.5px] font-bold" style={{ color: RED }}>▲ {String(t3).slice(0, 5)} </span> : null}
+                                  ₩{Math.round(p2).toLocaleString()}
                                   <span className="text-[9.5px] text-[var(--text-muted)]"> × {q2}{t("주", "sh")}</span></div>
                               )) : <div>₩{Math.round(h.entry).toLocaleString()}</div>;
                             })()}</td>
@@ -1572,15 +1613,15 @@ export default function LiveDeskPage() {
                                 ? t("보유 중 — 지금 횡보 구간, 매도 판단 정지", "holding — market flat now, exit judging paused")
                                 : t("보유 중 — 아직 매도 전", "holding — not sold yet");
                             })()}</td>
-                          <td className="text-right px-2 text-[var(--text-muted)]" style={CELL}
-                            title={t("평가손익 (수수료 전)", "unrealized, before fees")}>—</td>
+                          {money && <td className="text-right px-2 text-[var(--text-muted)]" style={CELL}
+                            title={t("평가손익 (수수료 전)", "unrealized, before fees")}>—</td>}
                         </tr>
                         {famExp === `h-${h.rule}-${k}` && (() => {
                           const ex = explainTrade({ rule: h.rule, entry: h.entry,
                             sig: (h as unknown as { sig?: { drop: number; sx: number | null;
                                   rng: number; t?: string } | null }).sig });
                           return (
-                            <tr><td colSpan={5} className="px-4 py-2 text-[10.5px] leading-relaxed"
+                            <tr><td colSpan={money ? 5 : 4} className="px-4 py-2 text-[10.5px] leading-relaxed"
                               style={{ background: "rgba(230,81,0,0.06)", color: "var(--text-secondary)" }}>
                               <div><b style={{ color: RED }}>{t("왜 샀나 — ", "why it bought — ")}</b>{lang === "ko" ? ex.buyKo : ex.buyEn}</div>
                               {(h as unknown as { chop?: boolean }).chop && (
@@ -1603,7 +1644,7 @@ export default function LiveDeskPage() {
                         </React.Fragment>
                       ))}
                       {fam.rows.length > 0 && (
-                        <tr><td colSpan={5} className="px-3 py-1 text-[10px] font-bold"
+                        <tr><td colSpan={money ? 5 : 4} className="px-3 py-1 text-[10px] font-bold"
                           style={{ background: "rgba(15,81,50,0.08)", color: "#0f5132" }}>
                           ✓ {t("매매 완료 — 이미 팔린 거래", "completed - already sold")}
                         </td></tr>
@@ -1652,8 +1693,11 @@ export default function LiveDeskPage() {
                             onClick={() => openFamTrade(r, "b")}>
                             ▲ {r.buy_t?.slice(0, 8)}</td>
                           <td className="px-2" style={CELL}>
-                            {r.parts?.buys && r.parts.buys.length ? r.parts.buys.map(([p2, q2], k2) => (
-                              <div key={k2}>₩{Math.round(p2).toLocaleString()}
+                            {r.parts?.buys && r.parts.buys.length ? (r.parts.buys as unknown as
+                              [number, number, (string | null)?][]).map(([p2, q2, t3], k2) => (
+                              <div key={k2}>
+                                {t3 ? <span className="text-[9.5px] font-bold" style={{ color: RED }}>▲ {String(t3).slice(0, 5)} </span> : null}
+                                ₩{Math.round(p2).toLocaleString()}
                                 <span className="text-[9.5px] text-[var(--text-muted)]"> × {q2}{t("주", "sh")}</span></div>
                             )) : <div>₩{Math.round(r.entry).toLocaleString()}</div>}</td>
                           <td className="px-2" style={CELL}>
@@ -1684,15 +1728,14 @@ export default function LiveDeskPage() {
                                 onClick={() => openFamTrade(r, "s")}>
                                 ▼ {r.sell_t?.slice(0, 5)} ₩{Math.round(r.exit).toLocaleString()}</div>
                             )}</td>
-                          <td className="text-right px-2 font-bold"
-                            style={{ ...CELL, color: money ? (r.won > 0 ? "#b02a2a" : r.won < 0 ? "#1565c0" : "var(--text-muted)") : "var(--text-muted)" }}>
-                            {money ? `${r.won > 0 ? "+" : ""}₩${Math.round(r.won).toLocaleString()}`
-                                   : t("숨김", "hidden")}</td>
+                          {money && <td className="text-right px-2 font-bold"
+                            style={{ ...CELL, color: r.won > 0 ? "#b02a2a" : r.won < 0 ? "#1565c0" : "var(--text-muted)" }}>
+                            {r.won > 0 ? "+" : ""}₩{Math.round(r.won).toLocaleString()}</td>}
                         </tr>
                         {famExp === `${r.rule}-${r.idx}` && (() => {
                           const ex = explainTrade(r);
                           return (
-                            <tr><td colSpan={5} className="px-4 py-2 text-[10.5px] leading-relaxed border-t"
+                            <tr><td colSpan={money ? 5 : 4} className="px-4 py-2 text-[10.5px] leading-relaxed border-t"
                               style={{ background: "rgba(106,27,154,0.05)", color: "var(--text-secondary)" }}>
                               <div><b style={{ color: "#6a1b9a" }}>{lang === "ko" ? r.rule_ko : r.rule_en}</b></div>
                               <div className="mt-1"><b style={{ color: RED }}>{t("왜 샀나 — ", "why it bought — ")}</b>{lang === "ko" ? ex.buyKo : ex.buyEn}</div>
@@ -1831,6 +1874,14 @@ export default function LiveDeskPage() {
             <span className="text-[12px] tabular-nums font-extrabold" style={{ color: det.win_pct >= 50 ? "#2e7d32" : GOLD }}>
               {det.win_pct}% {t("승률", "win")}
             </span>
+            {/* the same 💰 that rules the history table - here too, so money can be
+                shown/hidden without scrolling (boss 2026-08-19) */}
+            <button onClick={() => setMoney((v) => !v)}
+              className="text-[10px] px-1.5 py-0.5 rounded border"
+              style={{ borderColor: money ? "#e65100" : "var(--border-default)",
+                       color: money ? "#e65100" : "var(--text-muted)" }}>
+              {money ? t("💰 손익 숨기기", "💰 hide money") : t("💰 손익 보기", "💰 show money")}
+            </button>
                           {/* Added up from the rows on screen when the server does not send a total.
                   The backend runs with NO --reload, so until it restarts `net_total` is
                   absent and this header would read "total 0%%" - a confidently wrong
@@ -1858,7 +1909,14 @@ export default function LiveDeskPage() {
               each condition (boss 2026-08-07: "if I click any rule it should open
               explanation ... in English mode then in english otherwise in Korean") */}
           <div className="px-4 py-2 border-b text-[11.5px]" style={{ borderColor: "var(--border-default)", background: "rgba(15,81,50,0.04)" }}>
-            <b style={{ color: "#0f5132" }}>📖 {t("이 규칙의 설명", "how this rule works")}</b>
+            {/* folded by default (boss 2026-08-19: "in the completed - already sold
+                this part it is showing by default explanations") - one click opens */}
+            <div className="cursor-pointer flex items-center" onClick={() => setRuleDoc((v) => !v)}>
+              <b style={{ color: "#0f5132" }}>📖 {t("이 규칙의 설명", "how this rule works")}</b>
+              <span className="ml-auto text-[10px] font-bold" style={{ color: "#0f5132" }}>
+                {ruleDoc ? t("닫기 ▲", "close ▲") : t("펼치기 ▼", "open ▼")}</span>
+            </div>
+            {ruleDoc && (<>
             {det.wall_price && (
               <div className="mt-1 text-[11px] px-2 py-1 rounded"
                 style={{ background: "rgba(15,81,50,0.07)", color: "var(--text-secondary)" }}>
@@ -2011,6 +2069,7 @@ export default function LiveDeskPage() {
                 </>)}
               </span>
             </div>
+            </>)}
           </div>
           {det.id.endsWith("ML") && (
             <div className="px-4 py-1.5 border-b text-[11px]" style={{ borderColor: "var(--border-default)", background: "rgba(21,101,192,0.06)", color: "#1565c0" }}>

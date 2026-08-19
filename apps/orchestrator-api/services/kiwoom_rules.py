@@ -170,8 +170,15 @@ PLAIN = [v for v in VARIANTS if v.get("exec") == "limit" and not v.get("ml")]
 # THE ONE HONEST DIFFERENCE FROM THE LAB: these models train ONLY on prior days' stored
 # real tape (2026-08-04, 08-05 and whatever accumulates), never on the day being traded.
 # Same features, same trainer, same labels as the lab (proof_ml) - only the tape is real.
-ML_RULES = [v for v in VARIANTS if v.get("ml") and v.get("exec") == "limit"]
-DESK = PLAIN + ML_RULES
+# RETIRED FROM THE LIVE DESK (boss 2026-08-13: "our app is heavy, remove ML -
+# if we need later we can recreate"; re-confirmed 2026-08-19: "you still
+# implementing machine learning?"). The two ML twins trained their models for
+# minutes inside every /live/warm and replayed on every poll, while the boss's
+# algorithms use none of it. The rules stay in VARIANTS and the trainer stays
+# in services/proof_ml.py - re-admitting is restoring one line, see
+# REMOVED_FEATURES.md for the standing recreation promise.
+ML_RULES: list = []
+DESK = PLAIN
 
 _KML_CACHE: dict = {}
 _CTX_CACHE: dict = {}
@@ -744,8 +751,12 @@ def trades(vid: str, tick: int = 5, period: int = 0, code: str = "",
                            "loss" if g["gross_pct"] < 0 else "flat"),
                 "bars_held": g["sell_i"] - g["buy_i"],
                 "tick_size": sk["tick"],
-                # shares this trade would buy for the chosen budget (1 when none is set)
-                "qty": shares_for(g["entry"], budget),
+                # a drip episode carries its REAL share count (every sizing law
+                # applied - storm third, quiet-bar half); only plain rules fall
+                # back to the budget display (found 2026-08-19: the board showed
+                # full-cap money on a storm-third day)
+                "qty": (g.get("qty") if (g.get("parts") and g.get("qty"))
+                        else shares_for(g["entry"], budget)),
                 # held through a stretch of tape the collector missed - the entry and exit
                 # are real, the path between them is unknown
                 "spans_hole": any(g["buy_i"] < h <= g["sell_i"] for h in sk["holes"]),
