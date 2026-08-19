@@ -206,12 +206,24 @@ def gaps(code: str, min_sec: int = 60) -> list[dict]:
     """
     tk = load(code)
     out = []
+
+    def sec(x):
+        t = x["ts"]
+        return int(t[8:10]) * 3600 + int(t[10:12]) * 60 + int(t[12:14])
+
+    # THE CLOSING AUCTION IS NOT A HOLE (boss 2026-08-14: all six stocks "cut out"
+    # 15:19~15:30 while the server was provably up - the book snapshots ran straight
+    # through). Continuous trading ends at 15:20, the 동시호가 collects orders in
+    # silence, and the closing price prints once between 15:30:00 and 15:30:30
+    # (KRX random end). Ten minutes with no executions is the market's design, not a
+    # collector death - so seconds inside that window don't count toward a gap.
+    auction_a = 15 * 3600 + 20 * 60          # 15:20:00
+    auction_b = 15 * 3600 + 30 * 60 + 30     # 15:30:30
     for a_, b_ in zip(tk, tk[1:]):
-        def sec(x):
-            t = x["ts"]
-            return int(t[8:10]) * 3600 + int(t[10:12]) * 60 + int(t[12:14])
-        d = sec(b_) - sec(a_)
-        if d >= min_sec:
+        sa, sb = sec(a_), sec(b_)
+        d = sb - sa
+        quiet = max(0, min(sb, auction_b) - max(sa, auction_a))
+        if d - quiet >= min_sec:
             out.append({"from": a_["t"], "to": b_["t"], "seconds": d})
     return out
 
