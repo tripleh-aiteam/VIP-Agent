@@ -1718,19 +1718,9 @@ def _ensure_morning_reports():
                             extra={"action": "ensure.backfill", "report": rtype})
                 fn()
 
-        # Recommendation report: weekdays only (needs the trading day ahead).
-        # present() matches on kst_time, which recommendation rows carry since
-        # 2026-08-19 (older rows had none — they'd look missing, so this check
-        # only became safe once the save started stamping it).
-        if not weekend and not present("recommendation_report", None):
-            log.warning(f"ensure: recommendation_report missing for {today} — generating now",
-                        extra={"action": "ensure.backfill", "report": "recommendation_report"})
-            try:
-                from services.recommendation_report import send as _rec_send
-                _rec_send(db)
-            except Exception as re_:
-                log.warning(f"ensure: recommendation regen failed: {str(re_)[:120]}",
-                            extra={"action": "ensure.rec_regen_failed"})
+        # (Recommendation self-heal removed with the report's retirement from the
+        # morning lineup, 2026-08-19 evening — no scheduled send means nothing to
+        # backfill. Restore alongside the registration if it ever returns.)
 
         # Cross-agent report: regenerate if today's is MISSING or contains an ERROR
         # marker (e.g. a transient agent fetch failure). It's Telegram/dashboard only
@@ -1831,18 +1821,16 @@ def _watchdog_morning_reports():
                 q = q.filter(OrchReport.content_json["period"].astext == per)
             return db.query(q.exists()).scalar()
 
-        # The morning emails the team expects — the boss's 5-report lineup
+        # The morning emails the team expects — the boss's 4-report lineup
         # (2026-08-19): Kiwoom + Newspaper (daily on weekdays, weekly edition on
-        # weekends), Asset + Real Estate (every day), Recommendation (weekdays).
-        # Master and YouTube left the lineup the same day.
+        # weekends), Asset + Real Estate (every day). Master, YouTube and (same
+        # evening) Recommendation left the lineup on 08-19.
         expected = [
             ("kiwoom_report", period, "Kiwoom"),
             ("newspaper_report", period, "Newspaper"),
             ("asset_report", "daily", "Asset"),
             ("realty_report", "daily", "Real Estate"),
         ]
-        if not weekend:
-            expected.append(("recommendation_report", None, "Recommendation"))
         missing = [label for rtype, per, label in expected if not present(rtype, per)]
 
         stale: list[str] = []   # (YouTube stale-source check retired with the report)
@@ -2514,9 +2502,9 @@ def init_scheduler():
     )
     REPORTS_ENABLED and log.info("scheduler: auto cross-agent report registered (daily 8:30 AM KST)", extra={"action": "scheduler.auto_cross_registered"})
 
-    # ----- Market reports (the boss's 5-report morning lineup, 2026-08-19:
-    #       Kiwoom 6:30 / Newspaper 6:32 / Asset 7:00 / Real Estate 7:05 /
-    #       Recommendation 7:30 — YouTube and the 6:50 Master email retired) -----
+    # ----- Market reports (the boss's 4-report morning lineup, 2026-08-19:
+    #       Kiwoom 6:30 / Newspaper 6:32 / Asset 7:00 / Real Estate 7:05 —
+    #       YouTube, the 6:50 Master email, and the 7:30 Recommendation retired) -----
     # KRX is closed on weekends, so these run the DAILY edition on KST weekdays
     # (Mon-Fri) and a WEEKLY edition on KST Sat+Sun. Scheduled in Asia/Seoul time
     # with named days so there is NO UTC rollover / dow-numbering ambiguity.
@@ -2571,13 +2559,11 @@ def init_scheduler():
             log.warning(f"scheduler: recommendation report failed: {e}", extra={"action": "scheduler.recommendation.failed"})
         finally:
             _db.close()
-    _add_report_job(
-        _recommendation_daily,
-        CronTrigger(day_of_week="mon-fri", hour=7, minute=30, timezone=_KST_TZ),
-        id="recommendation-daily-report",
-        replace_existing=True,
-    )
-    REPORTS_ENABLED and log.info("scheduler: Recommendation report registered (7:30 KST Mon-Fri, full team)", extra={"action": "scheduler.recommendation_registered"})
+    # 7:30 Recommendation email — UNREGISTERED 2026-08-19 evening (boss: "for now
+    # we do not need"). The morning lineup is 4 reports (Kiwoom/Newspaper/Asset/
+    # Real Estate). _recommendation_daily and recommendation_report.send() stay
+    # for manual/on-demand sends; re-register here if the boss wants it back.
+    log.info("scheduler: Recommendation report NOT scheduled (retired from morning lineup 2026-08-19)")
 
     # M1.2 — grade chatbot advice calls every 30 min during market (+ once after close),
     # so the hit-rate (chatbot_scoreboard) matures. Idempotent; external cron can also hit
