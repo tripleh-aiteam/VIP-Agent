@@ -2,10 +2,14 @@
 
 Ranks the tracked universe with the 3-method decision engine (Method 1 ML +
 Method 2 Analysis + Method 3 Wave = services.decision_agent.decide), blends in
-the Kiwoom / Newspaper / YouTube daily reports as market backdrop, and produces
-a **Top-5 "stocks to buy today"** report with the full per-stock reasoning (the
-근거 / proof for WHY each is recommended). Saved to orch_reports and emailed each
-morning at 07:30 KST. Advisory only — not investment advice.
+the Kiwoom / Newspaper daily reports as market backdrop, what the US market did
+overnight (S&P 500 / NASDAQ / SOX semis / USD-KRW via services.overnight), and
+each pick's last-5-trading-day price action, and produces a **Top-5 "stocks to
+buy today"** report with the full per-stock reasoning (the 근거 / proof for WHY
+each is recommended). Saved to orch_reports and emailed each morning at 07:30
+KST. Advisory only — not investment advice.
+(2026-08-19: YouTube dropped from the backdrop — its pipeline died in July —
+and the US-overnight + recent-trading sections were added per the boss's spec.)
 """
 from __future__ import annotations
 
@@ -86,15 +90,73 @@ def _levels(d: dict, cur: Optional[float] = None) -> tuple[Optional[int], Option
 
 
 def _backdrop(db) -> str:
-    """Compact Korean market backdrop from the Kiwoom / Newspaper / YouTube reports."""
+    """Compact Korean market backdrop from the Kiwoom / Newspaper reports."""
     from services.master_report import _latest_report
     parts = ["## 📰 시장 배경 (오늘 아침)"]
     for rtype, label in (("kiwoom_report", "키움 (가격·기술)"),
-                         ("newspaper_report", "신문 (뉴스)"),
-                         ("youtube_report", "유튜브 (시장 심리)")):
+                         ("newspaper_report", "신문 (뉴스)")):
         rep = _latest_report(db, rtype)
         summ = (rep.get("summary_ko") or rep.get("summary") or "").strip() if rep else ""
         parts.append(f"- **{label}:** {summ[:320]}" if summ else f"- **{label}:** (오늘 리포트 없음)")
+    return "\n".join(parts)
+
+
+def _us_overnight() -> str:
+    """What America did while Korea slept — S&P 500 / NASDAQ / SOX(반도체) /
+    USD-KRW closes with % change, plus the one-line semis-based mood read.
+    Cached per calendar day by services.overnight, so this is free after the
+    first call of the morning. Never raises — a fetch problem yields a stub."""
+    try:
+        from services.overnight import fetch
+        d = fetch()
+        rows = d.get("rows") or []
+        if not rows:
+            return "## 🇺🇸 간밤의 미국 시장\n- (미국 시장 데이터를 가져오지 못했습니다)"
+        parts = ["## 🇺🇸 간밤의 미국 시장"]
+        for x in rows:
+            arrow = "▲" if x["chg_pct"] > 0 else "▼" if x["chg_pct"] < 0 else "-"
+            parts.append(f"- **{x.get('name')}**: {x.get('close'):,.2f} "
+                         f"({arrow}{abs(x['chg_pct'])}%) — {x.get('role')}")
+        mood = (d.get("mood_ko") or "").strip()
+        if mood:
+            parts.append(f"\n> 💬 {mood}")
+        return "\n".join(parts)
+    except Exception as e:
+        log.warning(f"rec-report: US overnight section failed: {str(e)[:100]}")
+        return "## 🇺🇸 간밤의 미국 시장\n- (미국 시장 데이터를 가져오지 못했습니다)"
+
+
+def _recent_trading(db, picks: list[dict]) -> str:
+    """Last-5-trading-day tape for each pick (from raw_daily_prices — the same
+    Kiwoom-fed daily history the ranking runs on): day-by-day % moves and the
+    5-day cumulative, so the reader sees whether a pick is bouncing, basing or
+    chasing. Never raises."""
+    from sqlalchemy import text
+    parts = ["## 📈 최근 5거래일 흐름 (추천 종목)"]
+    any_row = False
+    for d in picks:
+        code, name = d.get("ticker"), d.get("name")
+        try:
+            rows = db.execute(text(
+                "SELECT date, close FROM raw_daily_prices WHERE ticker=:t "
+                "ORDER BY date DESC LIMIT 6"), {"t": code}).fetchall()
+        except Exception:
+            rows = []
+        if len(rows) < 2:
+            continue
+        rows = rows[::-1]                      # oldest → newest
+        closes = [float(r[1]) for r in rows]
+        days = []
+        for prev, cur in zip(closes, closes[1:]):
+            chg = (cur / prev - 1) * 100 if prev else 0.0
+            days.append(f"{'▲' if chg > 0 else '▼' if chg < 0 else '·'}{abs(chg):.1f}%")
+        cum = (closes[-1] / closes[0] - 1) * 100 if closes[0] else 0.0
+        parts.append(f"- **{name} ({code})**: {' → '.join(days)}  "
+                     f"(5일 누적 {'▲' if cum > 0 else '▼' if cum < 0 else ''}{abs(cum):.1f}%, "
+                     f"종가 {int(closes[-1]):,}원)")
+        any_row = True
+    if not any_row:
+        parts.append("- (최근 일봉 데이터가 부족합니다)")
     return "\n".join(parts)
 
 
@@ -177,9 +239,10 @@ def build(db) -> dict[str, Any]:
         "## 🧭 오늘의 최종 결론\n\n"
         "이 추천은 다음 순서로 도출했습니다 — "
         "① **키움 리포트**로 가격·기술적 시장 상황을 확인하고, "
-        "② **장 마감 후 네이버 시세**로 당일 종가와 수급을 반영했으며, "
-        "③ **신문·유튜브 리포트**로 뉴스 흐름과 시장 심리를 파악한 뒤, "
-        f"④ **3가지 방법(머신러닝·분석·파동)**으로 전체 {len(ranked)}개 종목을 정량 평가했습니다.\n\n"
+        "② **최근 5거래일 흐름과 장 마감 시세**로 각 종목의 최근 매매 흐름을 반영했으며, "
+        "③ **간밤의 미국 시장**(S&P 500·나스닥·반도체·환율)으로 오늘의 출발 여건을 가늠하고, "
+        "④ **신문 리포트**로 뉴스 흐름을 파악한 뒤, "
+        f"⑤ **3가지 방법(머신러닝·분석·파동)**으로 전체 {len(ranked)}개 종목을 정량 평가했습니다.\n\n"
         f"이 모든 결과를 종합한 결과, 오늘 시장의 매수 신호는 **{buys}종목**으로 {stance}. "
         + (f"최우선 후보는 **{t1.get('name')}**(종합 점수 {t1.get('score')})이며"
            + (f", **{t2.get('name')}**(점수 {t2.get('score')})가 뒤를 잇습니다. " if t2 else ". ") if t1 else "")
@@ -189,12 +252,16 @@ def build(db) -> dict[str, Any]:
     md = "\n".join([
         f"# 💡 데일리 추천 리포트 — {date}",
         "",
-        "본 리포트는 **키움 리포트(가격·기술) · 네이버 장마감 시세 · 신문(뉴스) · 유튜브(시장 심리)** 자료와 "
+        "본 리포트는 **키움 리포트(가격·기술) · 최근 거래일 흐름 · 간밤의 미국 시장 · 신문(뉴스)** 자료와 "
         "**3가지 방법(① 머신러닝 · ② 분석[호가·수급·박스권] · ③ 파동[엘리엇·피보나치])**을 순서대로 종합해 "
         "매일 아침 자동으로 작성됩니다. 아래는 오늘의 매수 후보 상위 5종목과 그 상세 근거입니다.",
         f"(전체 {len(ranked)}종목 분석 · 매수 신호 {buys}종목)",
         "",
         _backdrop(db),
+        "",
+        _us_overnight(),
+        "",
+        _recent_trading(db, top5),
         "",
         f"## 🏆 오늘의 추천 후보 5종목 (종합 점수순)",
         "🟢 = 매수 · ⚪ = 보유/관심. 매수 신호가 5개 미만인 날은 상위 관심 종목으로 채웁니다.",
@@ -206,7 +273,7 @@ def build(db) -> dict[str, Any]:
         final,
         "",
         "---",
-        "※ 키움·네이버·신문·유튜브와 3가지 방법을 종합한 AI 참고 의견이며, 투자 권유나 수익 보장이 아닙니다. "
+        "※ 키움·최근 거래일·미국 시장·신문 자료와 3가지 방법을 종합한 AI 참고 의견이며, 투자 권유나 수익 보장이 아닙니다. "
         "매매 전 반드시 직접 확인하세요.",
     ])
     picks = [{"rank": i, "ticker": d.get("ticker"), "name": d.get("name"),
@@ -225,11 +292,14 @@ def send(db, recipients: Optional[list[str]] = None) -> dict[str, Any]:
     rep = build(db)
     md = rep["markdown_ko"]
 
-    # save to orch_reports (Reports page + history)
+    # save to orch_reports (Reports page + history). kst_time stamped since
+    # 2026-08-19 — the 8:00 self-heal and 8:30 watchdog match on it to tell
+    # whether TODAY's recommendation went out.
     try:
         row = OrchReport(report_type="recommendation_report",
                          content_json={"report_type": "recommendation_report",
                                        "summary": f"오늘의 TOP 5 매수 추천 ({rep['date']})",
+                                       "kst_time": datetime.now(KST).strftime("%Y-%m-%d %H:%M KST"),
                                        "report": rep, "markdown": md})
         db.add(row); db.commit()
     except Exception as e:
@@ -246,7 +316,7 @@ def send(db, recipients: Optional[list[str]] = None) -> dict[str, Any]:
                 if top else "오늘 뚜렷한 매수 후보 없음")
     body = (
         f"{rep['date']} 데일리 추천 리포트입니다.\n"
-        f"키움·네이버·신문·유튜브 + 3가지 방법(머신러닝·분석·파동)을 종합한 오늘의 매수 후보 상위 5종목입니다.\n"
+        f"키움·최근 거래일 흐름·간밤 미국 시장·신문 + 3가지 방법(머신러닝·분석·파동)을 종합한 오늘의 매수 후보 상위 5종목입니다.\n"
         f"오늘 매수 신호 {rep['buys']}종목 · {top_line}.\n"
         f"자세한 근거와 매매 기준(살 가격/목표/손절)은 첨부된 리포트를 확인해 주세요."
     )

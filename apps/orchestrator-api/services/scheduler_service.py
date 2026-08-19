@@ -1627,10 +1627,11 @@ def _asset_daily_all():
 
 
 def _realty_daily_all():
-    """Scheduled 7:05 AM KST — build the Real Estate report and save it to the VIP
-    Reports dashboard ONLY. Per the boss's request the real-estate report is NOT
-    emailed (and not pushed to Telegram) — notify=False."""
-    _realty_daily_report(notify=False)
+    """Scheduled 7:05 AM KST — build the Real Estate report and send it as its
+    OWN standalone email (Korean + English .docx) to the FULL recipient list.
+    (Was dashboard-only for a while; re-enabled 2026-08-19 when the boss set the
+    morning lineup to exactly 5 emailed reports, Real Estate among them.)"""
+    _realty_daily_report(email_override="*ALL*")
 
 
 def _kiwoom_daily_all():
@@ -1697,10 +1698,10 @@ def _ensure_morning_reports():
             return db.query(q.exists()).scalar()
 
         # Market reports: daily on KST weekdays, weekly on KST weekends.
+        # (Master + YouTube left the morning lineup 2026-08-19 — 5 reports now.)
         market = [
             ("kiwoom_report", _kiwoom_daily_all, _kiwoom_weekly_all),
             ("newspaper_report", _newspaper_daily_all, _newspaper_weekly_all),
-            ("master_report", _master_daily_all, _master_weekly_all),
         ]
         for rtype, daily_fn, weekly_fn in market:
             if not present(rtype, market_period):
@@ -1714,6 +1715,20 @@ def _ensure_morning_reports():
                 log.warning(f"ensure: {rtype} missing for {today} — generating now",
                             extra={"action": "ensure.backfill", "report": rtype})
                 fn()
+
+        # Recommendation report: weekdays only (needs the trading day ahead).
+        # present() matches on kst_time, which recommendation rows carry since
+        # 2026-08-19 (older rows had none — they'd look missing, so this check
+        # only became safe once the save started stamping it).
+        if not weekend and not present("recommendation_report", None):
+            log.warning(f"ensure: recommendation_report missing for {today} — generating now",
+                        extra={"action": "ensure.backfill", "report": "recommendation_report"})
+            try:
+                from services.recommendation_report import send as _rec_send
+                _rec_send(db)
+            except Exception as re_:
+                log.warning(f"ensure: recommendation regen failed: {str(re_)[:120]}",
+                            extra={"action": "ensure.rec_regen_failed"})
 
         # Cross-agent report: regenerate if today's is MISSING or contains an ERROR
         # marker (e.g. a transient agent fetch failure). It's Telegram/dashboard only
@@ -1772,16 +1787,9 @@ def _ensure_morning_reports():
             log.warning(f"ensure: news freshness check failed: {str(ne)[:120]}",
                         extra={"action": "ensure.news_check_failed"})
 
-        # YouTube pipeline staleness — external GPU pipeline, we can't regenerate it,
-        # but flag it (delivery + master already skip/exclude stale YouTube data).
-        try:
-            from services import youtube_grounded as _yg
-            yage = _yg.latest_age_days(db)
-            if yage is not None and yage > 2:
-                log.warning(f"ensure: YouTube report is {yage}d old — external GPU pipeline may be down",
-                            extra={"action": "ensure.youtube_stale", "age_days": yage})
-        except Exception:
-            pass
+        # (YouTube staleness check removed 2026-08-19 with the report itself —
+        # the external GPU pipeline had been dead since 07-03 and the boss cut
+        # YouTube from the morning lineup.)
 
         log.info(f"ensure: report health check done for {today} ({'weekend' if weekend else 'weekday'})",
                  extra={"action": "ensure.done"})
@@ -1821,32 +1829,21 @@ def _watchdog_morning_reports():
                 q = q.filter(OrchReport.content_json["period"].astext == per)
             return db.query(q.exists()).scalar()
 
-        # The morning emails the team expects: market reports (daily on weekdays,
-        # weekly edition on weekends) + the daily Asset report (runs every day).
+        # The morning emails the team expects — the boss's 5-report lineup
+        # (2026-08-19): Kiwoom + Newspaper (daily on weekdays, weekly edition on
+        # weekends), Asset + Real Estate (every day), Recommendation (weekdays).
+        # Master and YouTube left the lineup the same day.
         expected = [
             ("kiwoom_report", period, "Kiwoom"),
             ("newspaper_report", period, "Newspaper"),
-            ("master_report", period, "Master"),
             ("asset_report", "daily", "Asset"),
+            ("realty_report", "daily", "Real Estate"),
         ]
+        if not weekend:
+            expected.append(("recommendation_report", None, "Recommendation"))
         missing = [label for rtype, per, label in expected if not present(rtype, per)]
 
-        # YouTube is produced by an EXTERNAL GPU pipeline, so the 8:00 self-heal
-        # cannot regenerate it — which is exactly why it must be reported here.
-        # It was previously only written to the log as a warning, and the pipeline
-        # sat dead for a month (2026-07-03 → 2026-08-03) without anyone being told.
-        # A source that cannot self-heal needs the alert MORE, not less.
-        stale = []
-        try:
-            from services import youtube_grounded as _yg
-            yage = _yg.latest_age_days(db)
-            if yage is None:
-                stale.append("YouTube (never produced a report)")
-            elif yage > 2:
-                stale.append(f"YouTube ({yage} days stale — external GPU pipeline down)")
-        except Exception as ye:
-            log.warning(f"watchdog: YouTube staleness check failed: {str(ye)[:120]}",
-                        extra={"action": "watchdog.youtube_check_failed"})
+        stale: list[str] = []   # (YouTube stale-source check retired with the report)
 
         if not missing and not stale:
             log.info(f"watchdog: all morning reports present for {today}",
@@ -2518,7 +2515,9 @@ def init_scheduler():
     )
     REPORTS_ENABLED and log.info("scheduler: auto cross-agent report registered (daily 8:30 AM KST)", extra={"action": "scheduler.auto_cross_registered"})
 
-    # ----- Market reports (Kiwoom / Newspaper / YouTube / Master) -----
+    # ----- Market reports (the boss's 5-report morning lineup, 2026-08-19:
+    #       Kiwoom 6:30 / Newspaper 6:32 / Asset 7:00 / Real Estate 7:05 /
+    #       Recommendation 7:30 — YouTube and the 6:50 Master email retired) -----
     # KRX is closed on weekends, so these run the DAILY edition on KST weekdays
     # (Mon-Fri) and a WEEKLY edition on KST Sat+Sun. Scheduled in Asia/Seoul time
     # with named days so there is NO UTC rollover / dow-numbering ambiguity.
@@ -2553,23 +2552,13 @@ def init_scheduler():
     )
     REPORTS_ENABLED and log.info("scheduler: Newspaper registered (6:32 KST — daily Mon-Fri, weekly Sat/Sun, all recipients)", extra={"action": "scheduler.newspaper_registered"})
 
-    # YouTube grounded — 6:40 AM KST daily on weekdays; weekly on the weekend.
-    _add_report_job(
-        _youtube_daily_all,
-        CronTrigger(day_of_week="mon-fri", hour=6, minute=40, timezone=_KST_TZ),
-        id="youtube-daily-report",
-        replace_existing=True,
-    )
-    _add_report_job(
-        _youtube_weekly_all,
-        CronTrigger(day_of_week="sat,sun", hour=6, minute=40, timezone=_KST_TZ),
-        id="youtube-weekend-weekly",
-        replace_existing=True,
-    )
-    REPORTS_ENABLED and log.info("scheduler: YouTube registered (6:40 KST — daily Mon-Fri, weekly Sat/Sun, all recipients)", extra={"action": "scheduler.youtube_registered"})
+    # YouTube report — REMOVED from the schedule 2026-08-19 (boss's 5-report
+    # lineup). Its external GPU pipeline had been dead since 2026-07-03 anyway, so
+    # the 6:40 slot produced nothing for six weeks. The service files stay for a
+    # manual POST /reports/compose/youtube if the pipeline ever comes back.
 
-    # Daily 3-method Recommendation Report — 7:30 AM KST Mon-Fri, AFTER Kiwoom(6:30)/
-    # Newspaper(6:32)/YouTube(6:40) so their digests feed the market backdrop.
+    # Daily 3-method Recommendation Report — 7:30 AM KST Mon-Fri, AFTER Kiwoom(6:30)
+    # and Newspaper(6:32) so their digests feed the market backdrop.
     # Owner signed off 2026-07-01 → sends to the full team (DEFAULT_RECIPIENTS).
     def _recommendation_daily():
         from db.base import SessionLocal
@@ -2623,16 +2612,16 @@ def init_scheduler():
     )
     REPORTS_ENABLED and log.info("scheduler: Asset detailed report registered (7:00 AM KST, all recipients, KO+EN)", extra={"action": "scheduler.asset_registered"})
 
-    # Real Estate report — 7:05 AM KST (22:05 UTC) every day. DASHBOARD ONLY:
-    # saved to the VIP Reports menu, NOT emailed and NOT sent to Telegram
-    # (per boss request — _realty_daily_all uses notify=False).
+    # Real Estate report — 7:05 AM KST every day. Its OWN standalone email
+    # (KO + EN .docx) to all recipients since 2026-08-19 — part of the boss's
+    # 5-report morning lineup (dashboard + Telegram + email).
     _add_report_job(
         _realty_daily_all,
         CronTrigger(hour=7, minute=5, timezone=_KST_TZ),
         id="realty-daily-report",
         replace_existing=True,
     )
-    REPORTS_ENABLED and log.info("scheduler: Real Estate report registered (7:05 AM KST, DASHBOARD ONLY — no email/telegram)", extra={"action": "scheduler.realty_registered"})
+    REPORTS_ENABLED and log.info("scheduler: Real Estate report registered (7:05 AM KST, all recipients, KO+EN)", extra={"action": "scheduler.realty_registered"})
 
     # Breaking-news monitor — every 15 min, 24/7. Detects big NEW market-moving
     # events and fires the impact report to ALL recipients (severity-gated, deduped,
@@ -2763,25 +2752,12 @@ def init_scheduler():
     )
     REPORTS_ENABLED and log.info("scheduler: story monitor registered (09:00 + 16:00 KST)", extra={"action": "scheduler.story_registered"})
 
-    # NOTE: the grounded YouTube report is NO LONGER a separate email — it is
-    # bundled into the consolidated master email below (all 4 reports together),
-    # so there is no standalone youtube-daily-report cron anymore.
-
-    # Master synthesis report — 6:50 AM KST. Daily on KST weekdays, weekly edition
-    # on KST Sat+Sun. All recipients. (KST-named days — no UTC dow ambiguity.)
-    _add_report_job(
-        _master_daily_all,   # forces the full recipient list (ignores any single-address test env)
-        CronTrigger(day_of_week="mon-fri", hour=6, minute=50, timezone=_KST_TZ),
-        id="master-daily-report",
-        replace_existing=True,
-    )
-    _add_report_job(
-        _master_weekly_all,
-        CronTrigger(day_of_week="sat,sun", hour=6, minute=50, timezone=_KST_TZ),
-        id="master-weekend-weekly",
-        replace_existing=True,
-    )
-    REPORTS_ENABLED and log.info("scheduler: Master report registered (6:50 KST — daily Mon-Fri, weekly Sat/Sun)", extra={"action": "scheduler.master_registered"})
+    # Master 6:50 morning synthesis — REMOVED from the schedule 2026-08-19: the
+    # boss's morning lineup is exactly 5 standalone reports (Kiwoom / Newspaper /
+    # Asset / Real Estate / Recommendation), so the consolidated morning email is
+    # retired. The Friday-evening WEEKLY and month-end MONTHLY Master editions
+    # below stay — they serve a different purpose than the morning batch, and
+    # _master_daily_report remains callable manually via POST /reports/compose/master.
 
     # Safety net — 8:00 AM KST daily: backfill ANY morning report missing from the
     # dashboard (transient failure / missed run), so the boss always has today's
