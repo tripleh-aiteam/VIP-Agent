@@ -91,7 +91,8 @@ function MiniChart({ code }: { code: string }) {
         height: 260, autoSize: true,
         layout: { background: { color: "transparent" }, textColor: dark ? "#aaa" : "#666" },
         grid: { vertLines: { color: "rgba(128,128,128,0.10)" }, horzLines: { color: "rgba(128,128,128,0.10)" } },
-        timeScale: { timeVisible: true, secondsVisible: false },
+        // fixLeftEdge: zooming out must stop at the first bar, not open blank space
+        timeScale: { timeVisible: true, secondsVisible: false, fixLeftEdge: true },
       });
       const series = chart.addCandlestickSeries({
         upColor: RED, downColor: BLUE, borderUpColor: RED, borderDownColor: BLUE, wickUpColor: RED, wickDownColor: BLUE,

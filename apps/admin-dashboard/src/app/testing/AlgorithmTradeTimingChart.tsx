@@ -353,6 +353,8 @@ function TimingCanvas({
           secondsVisible: false,
           borderColor: "rgba(128,128,128,0.24)",
           rightBarStaysOnScroll: true,
+          // fixLeftEdge: zooming out must stop at the first bar, not open blank space
+          fixLeftEdge: true,
           ...(isKoreanStock
             ? { tickMarkFormatter: (time: unknown) => formatKstTime(time, lang, "tick") }
             : {}),

@@ -278,7 +278,9 @@ function IntervalChart({ code, t, lang }: { code: string; t: (ko: string, en: st
         height: 300, autoSize: true,
         layout: { background: { color: "transparent" }, textColor: dark ? "#aaa" : "#666" },
         grid: { vertLines: { color: "rgba(128,128,128,0.10)" }, horzLines: { color: "rgba(128,128,128,0.10)" } },
-        timeScale: { timeVisible: conf.key === "rt" || conf.key === "1m" || conf.key === "5m", secondsVisible: conf.key === "rt" },
+        // fixLeftEdge: zooming out must stop at the first bar, not open blank space
+        timeScale: { timeVisible: conf.key === "rt" || conf.key === "1m" || conf.key === "5m", secondsVisible: conf.key === "rt",
+                     fixLeftEdge: true },
       });
       if (conf.tf === null) {
         // 실시간: build a tick line from the 3s price lane

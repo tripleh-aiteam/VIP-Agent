@@ -78,7 +78,9 @@ function LabChart({ candles, marks, focus }:
         height: 300, autoSize: true,
         layout: { background: { color: "transparent" }, textColor: dark ? "#aaa" : "#666" },
         grid: { vertLines: { color: "rgba(128,128,128,0.10)" }, horzLines: { color: "rgba(128,128,128,0.10)" } },
+        // fixLeftEdge: zooming out must stop at the first bar, not open blank space
         timeScale: { timeVisible: true, secondsVisible: false, rightOffset: 0, fixRightEdge: true,
+                     fixLeftEdge: true,
                      tickMarkFormatter: (t: number) => (label.current.get(t) ?? "").slice(0, 5) },
         localization: { timeFormatter: (t: number) => label.current.get(t) ?? "" },
       });

@@ -330,7 +330,9 @@ export default function Desk({ mode }: { mode: TradeMode }) {
         height: 380, autoSize: true,
         layout: { background: { color: "transparent" }, textColor: dark ? "#aaa" : "#666" },
         grid: { vertLines: { color: "rgba(128,128,128,0.12)" }, horzLines: { color: "rgba(128,128,128,0.12)" } },
-        timeScale: { timeVisible: chartTf === "5m" || chartTf === "1h", secondsVisible: false },
+        // fixLeftEdge: zooming out must stop at the first bar, not open blank space
+        timeScale: { timeVisible: chartTf === "5m" || chartTf === "1h", secondsVisible: false,
+                     fixLeftEdge: true },
         leftPriceScale: { visible: true, scaleMargins: { top: 0.75, bottom: 0 } },
       });
       const series = chart.addCandlestickSeries({
