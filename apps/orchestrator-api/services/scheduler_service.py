@@ -2418,13 +2418,10 @@ def init_scheduler():
         finally:
             db.close()
 
-    _add_report_job(   # 15:25 result EMAIL — guarded; the 30s tick above always runs
-        _tournament_report,
-        CronTrigger(day_of_week="mon-fri", hour=15, minute=25, timezone="Asia/Seoul"),
-        id="tournament-report", replace_existing=True, max_instances=1, coalesce=True,
-    )
-    log.info("scheduler: strategy tournament registered (30s tick always"
-             + (" + 15:25 report email" if REPORTS_ENABLED else "; 15:25 report email disabled") + ")")
+    # 15:25 tournament result EMAIL — UNREGISTERED 2026-08-19 (boss: "please stop
+    # sending this"). The 30s tournament tick above still runs and the results
+    # stay on the dashboard; _tournament_report remains callable manually.
+    log.info("scheduler: strategy tournament registered (30s tick; 15:25 result email retired 2026-08-19)")
 
     # Hourly snapshot capture — every hour at :05. Saves one 'part' per report
     # type (newspaper/youtube/kiwoom) WITHOUT emailing; the 6 AM build reads all
