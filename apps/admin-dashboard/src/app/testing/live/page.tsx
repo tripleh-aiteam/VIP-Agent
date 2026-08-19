@@ -1241,12 +1241,14 @@ export default function LiveDeskPage() {
         <b className="text-[12px]" style={{ color: "#6a1b9a" }}>{t("알고리즘:", "algorithm:")}</b>
         {/* TWO BUTTONS, no dropdown (boss 2026-08-11: the select misbehaved twice in one
             morning; a button cannot half-work). The pressed one is filled in. */}
-        {([["d1", t("① 알고리즘 1 (시나리오1)", "① Algorithm 1 (Scenario 1)"),
-            t("급락 매수 → +1%마다 10%씩 매도, 고점서 -1%마다 10%씩 · -1.5%면 전량 매도 후 즉시 재매수",
-              "dip buy -> sell 10% per +1% step, 10% per -1% off the top · -1.5% sells all and re-buys")],
-           ["d2", t("② 알고리즘 2 (시나리오2)", "② Algorithm 2 (Scenario 2)"),
-            t("+1%마다 10% 매도 · 되돌림엔 보유 · 새 급락(2번째 양봉 전환)이 오면 판 만큼 전부 재매수",
-              "sell 10% per +1% · hold through pullbacks · a NEW sharp drop (2nd-red turn) buys back all sold")],
+        {/* THE DUEL (boss 2026-08-19): same doors, same sizes, same resets -
+            알고1 harvests in HALVES, 알고2 in TENTHS. One law apart. */}
+        {([["d1", t("① 알고리즘 1 — 50% 수확", "① Algorithm 1 — 50% harvest"),
+            t("같은 4개의 문으로 매수 → +1%마다 50%씩 매도(두 계단이면 빈손, 새 급락에 재진입) · -1.5%면 전량 매도 후 즉시 재매수",
+              "same four doors in -> sells 50% per +1% step (two rungs = empty, re-enters on a fresh dip) · -1.5% sells all and re-buys")],
+           ["d2", t("② 알고리즘 2 — 10% 계단", "② Algorithm 2 — 10% drip"),
+            t("같은 4개의 문으로 매수 → +1%마다 10%씩 매도, 끝까지 타기 · 새 급락(2번째 양봉 전환)이 오면 판 만큼 전부 재매수",
+              "same four doors in -> sells 10% per +1%, rides the whole climb · a NEW sharp drop (2nd-red turn) buys back all sold")],
            ["old", t("📜 예전 규칙 (3연속 상승)", "📜 Old rule (3 rises)"),
             t("3연속 상승 매수 → 2번째 음봉 매도, 호가벽 가격",
               "buy 3 rises, sell at the 2nd blue, wall-priced")]] as const)

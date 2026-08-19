@@ -29,8 +29,8 @@ export default function TestingIndex() {
             📡 {t("실시간 키움 데스크 — 진짜 시장", "Live Kiwoom Desk — the real market")}
           </div>
           <p className="mt-2 text-[13px] leading-relaxed text-[var(--text-secondary)]">
-            {t("회장님의 두 알고리즘(급락·상승·아침·바닥반등 4개의 문, 10% 계단 매도, 재장전·보강, −1.5% 리셋, 15시 이후 이익 정리)과 예전 규칙(3연속 상승)이 고정 6종목을 09:00부터 병렬로 매매합니다. 모든 매수·매도는 1분봉이 시점을, 호가창이 가격을 정하며, 매매 하나하나가 차트 화살표로 증명됩니다.",
-               "The boss's two algorithms (four doors — dip, climb, morning, rebound; 10% ladder sells; reload & reinforcement; −1.5% reset; the 15:00 closing hour) and the old rule (3 rises) trade the fixed six stocks in parallel from 09:00. The 1-minute chart decides timing, the order book decides prices, and every trade proves itself with chart arrows.")}
+            {t("회장님의 두 알고리즘이 결투 중입니다 — 같은 4개의 문(급락·아침·상승·바닥반등), 같은 수량, 같은 −1.5% 리셋에 단 하나의 차이: 알고리즘1은 +1%마다 50%씩, 알고리즘2는 10%씩 수확합니다. 예전 규칙(3연속 상승)도 나란히 달립니다. 모든 매수·매도는 1분봉이 시점을, 호가창이 가격을 정하며, 매매 하나하나가 차트 화살표로 증명됩니다.",
+               "The boss's two algorithms are in a duel — same four doors (dip, morning, climb, rebound), same sizes, same −1.5% reset, one difference: Algorithm 1 harvests 50% per +1%, Algorithm 2 harvests 10%. The old rule (3 rises) runs alongside. The 1-minute chart decides timing, the order book decides prices, and every trade proves itself with chart arrows.")}
           </p>
           <div className="mt-4 flex flex-wrap gap-2">
             <Link prefetch={true} href="/testing/live" className="text-[13.5px] font-extrabold px-4 py-2 rounded-xl text-white" style={{ background: "#00838f" }}>
