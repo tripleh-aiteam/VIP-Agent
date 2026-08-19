@@ -33,7 +33,8 @@ DEFAULT_RECIPIENTS = [
     "koreastone710404@gmail.com",
     "shlee@tripleh.co.kr",
     "hskim@tripleh.co.kr",
-    "shaha3428@tripleh.co.kr",
+    # shaha3428@tripleh.co.kr removed 2026-08-19 (boss): the address does not
+    # exist — every send bounced "Address not found" since it was added.
 ]
 # Single fallback kept for back-compat with existing call sites.
 DEFAULT_RECIPIENT = DEFAULT_RECIPIENTS[0]
