@@ -1169,7 +1169,7 @@ def _youtube_daily_report(email_override: str | None = None, period: str = "dail
 @with_retry(max_attempts=2, backoff_seconds=(60, 300), job_name="asset_daily_report")
 def _asset_daily_report(email_override: str | None = None, period: str = "daily", lang: str = "ko"):
     """Detailed Asset Agent report — built from the live Asset backend, saved to the
-    dashboard + Telegram, and sent as its OWN standalone email with BOTH the Korean
+    dashboard + Telegram, and sent as its OWN standalone email with the Korean
     and English .docx (scheduled 7:00 AM KST to all recipients via _asset_daily_all).
     `email_override` sends to a test address; '*ALL*' = the full recipient list."""
     from services.asset_report import build_asset_report
@@ -1205,7 +1205,7 @@ def _asset_daily_report(email_override: str | None = None, period: str = "daily"
         except Exception as te:
             log.warning(f"asset telegram format failed: {te}")
 
-        # Email BOTH the Korean AND English .docx as its OWN standalone email
+        # Email the Korean .docx (or English for lang="en" test sends) as its OWN
         # (test override, *ALL* = full recipient list, or SEND_INDIVIDUAL_EMAILS).
         try:
             from services.report_docx import markdown_to_docx
@@ -1218,21 +1218,22 @@ def _asset_daily_report(email_override: str | None = None, period: str = "daily"
                 to_addr = (email_override or os.getenv("ASSET_REPORT_EMAIL")
                            or os.getenv("REPORT_EMAIL_TO") or DEFAULT_RECIPIENT)
             if (email_override or os.getenv("SEND_INDIVIDUAL_EMAILS") == "1") and _email_ok() and to_addr:
+                # ONE file in ONE language (boss 2026-08-19: the morning emails are
+                # Korean-only; lang="en" is for on-demand English test sends).
                 ymd = datetime.utcnow().strftime("%Y%m%d")
-                ko_md = rep.get("detail_ko") or rep.get("detail_en") or ""
-                en_md = rep.get("detail_en") or rep.get("detail_ko") or ""
-                files = []
-                if ko_md:
-                    files.append((f"자산리포트_Asset_KO_{ymd}.docx",
-                                  markdown_to_docx(ko_md, "자산 에이전트 상세 리포트 (한국어)", kst)))
-                if en_md:
-                    files.append((f"Asset_Report_EN_{ymd}.docx",
-                                  markdown_to_docx(en_md, "Asset Agent Detailed Report (English)", kst)))
-                res = send_email_with_docs(
-                    to_addr, f"[Asset] 자산 에이전트 상세 리포트 (한/영) — {kst}",
-                    "자산 에이전트 상세 리포트입니다 — 한국어·영문 2개 파일을 첨부합니다.\n\n"
-                    "The detailed Asset Agent report is attached in Korean and English.",
-                    files)
+                if lang == "en":
+                    body_md = rep.get("detail_en") or rep.get("detail_ko") or ""
+                    files = [(f"Asset_Report_EN_{ymd}.docx",
+                              markdown_to_docx(body_md, "Asset Agent Detailed Report (English)", kst))] if body_md else []
+                    subject = f"[Asset] Asset Agent Detailed Report — {kst}"
+                    body_txt = "The detailed Asset Agent report is attached (English)."
+                else:
+                    body_md = rep.get("detail_ko") or rep.get("detail_en") or ""
+                    files = [(f"자산리포트_Asset_{ymd}.docx",
+                              markdown_to_docx(body_md, "자산 에이전트 상세 리포트", kst))] if body_md else []
+                    subject = f"[Asset] 자산 에이전트 상세 리포트 — {kst}"
+                    body_txt = "자산 에이전트 상세 리포트입니다. 첨부된 Word 파일을 확인해 주세요."
+                res = send_email_with_docs(to_addr, subject, body_txt, files)
                 log.info(f"asset: email {'sent' if res.get('ok') else 'skipped'} -> "
                          f"{len(to_addr) if isinstance(to_addr, list) else 1} recipient(s), "
                          f"{len(files)} file(s) ({res.get('reason', 'ok')})",
@@ -1317,21 +1318,22 @@ def _realty_daily_report(email_override: str | None = None, period: str = "daily
                 to_addr = (email_override or os.getenv("REALTY_REPORT_EMAIL")
                            or os.getenv("REPORT_EMAIL_TO") or DEFAULT_RECIPIENT)
             if notify and source_ok and (email_override or os.getenv("SEND_INDIVIDUAL_EMAILS") == "1") and _email_ok() and to_addr:
+                # ONE file in ONE language (boss 2026-08-19: Korean-only mornings;
+                # lang="en" is for on-demand English test sends).
                 ymd = datetime.utcnow().strftime("%Y%m%d")
-                ko_md = rep.get("detail_ko") or rep.get("detail_en") or ""
-                en_md = rep.get("detail_en") or rep.get("detail_ko") or ""
-                files = []
-                if ko_md:
-                    files.append((f"부동산_일일현황_KO_{ymd}.docx",
-                                  markdown_to_docx(ko_md, "부동산 일일 현황", kst)))
-                if en_md:
-                    files.append((f"RealEstate_DailyStatus_EN_{ymd}.docx",
-                                  markdown_to_docx(en_md, "Real Estate Daily Status (English)", kst)))
-                res = send_email_with_docs(
-                    to_addr, f"[Real Estate] 부동산 일일 현황 (한/영) — {kst}",
-                    "부동산 일일 현황 리포트입니다 — 한국어·영문 2개 파일을 첨부합니다.\n\n"
-                    "The Real Estate daily status report is attached in Korean and English.",
-                    files)
+                if lang == "en":
+                    body_md = rep.get("detail_en") or rep.get("detail_ko") or ""
+                    files = [(f"RealEstate_DailyStatus_EN_{ymd}.docx",
+                              markdown_to_docx(body_md, "Real Estate Daily Status (English)", kst))] if body_md else []
+                    subject = f"[Real Estate] Real Estate Daily Status — {kst}"
+                    body_txt = "The Real Estate daily status report is attached (English)."
+                else:
+                    body_md = rep.get("detail_ko") or rep.get("detail_en") or ""
+                    files = [(f"부동산_일일현황_{ymd}.docx",
+                              markdown_to_docx(body_md, "부동산 일일 현황", kst))] if body_md else []
+                    subject = f"[Real Estate] 부동산 일일 현황 — {kst}"
+                    body_txt = "부동산 일일 현황 리포트입니다. 첨부된 Word 파일을 확인해 주세요."
+                res = send_email_with_docs(to_addr, subject, body_txt, files)
                 log.info(f"realty: email {'sent' if res.get('ok') else 'skipped'} -> "
                          f"{len(to_addr) if isinstance(to_addr, list) else 1} recipient(s), "
                          f"{len(files)} file(s) ({res.get('reason', 'ok')})",
@@ -1622,13 +1624,13 @@ def _master_daily_all():
 
 def _asset_daily_all():
     """Scheduled 7:00 AM KST — build the detailed Asset report and send it as its
-    OWN standalone email (Korean + English .docx) to the FULL recipient list."""
+    OWN standalone email (Korean .docx) to the FULL recipient list."""
     _asset_daily_report(email_override="*ALL*")
 
 
 def _realty_daily_all():
     """Scheduled 7:05 AM KST — build the Real Estate report and send it as its
-    OWN standalone email (Korean + English .docx) to the FULL recipient list.
+    OWN standalone email (Korean .docx) to the FULL recipient list.
     (Was dashboard-only for a while; re-enabled 2026-08-19 when the boss set the
     morning lineup to exactly 5 emailed reports, Real Estate among them.)"""
     _realty_daily_report(email_override="*ALL*")
@@ -2603,17 +2605,17 @@ def init_scheduler():
     log.info("scheduler: chatbot call-grader registered (every 30m, 9-16 KST)", extra={"action": "scheduler.callgrade_registered"})
 
     # Asset Agent detailed report — its OWN standalone email at 7:00 AM KST =
-    # 22:00 UTC, to ALL recipients, with BOTH Korean + English .docx attached.
+    # 22:00 UTC, to ALL recipients, Korean .docx (Korean-only since 2026-08-19).
     _add_report_job(
         _asset_daily_all,
         CronTrigger(hour=7, minute=0, timezone=_KST_TZ),
         id="asset-daily-report",
         replace_existing=True,
     )
-    REPORTS_ENABLED and log.info("scheduler: Asset detailed report registered (7:00 AM KST, all recipients, KO+EN)", extra={"action": "scheduler.asset_registered"})
+    REPORTS_ENABLED and log.info("scheduler: Asset detailed report registered (7:00 AM KST, all recipients, Korean)", extra={"action": "scheduler.asset_registered"})
 
     # Real Estate report — 7:05 AM KST every day. Its OWN standalone email
-    # (KO + EN .docx) to all recipients since 2026-08-19 — part of the boss's
+    # (Korean .docx) to all recipients since 2026-08-19 — part of the boss's
     # 5-report morning lineup (dashboard + Telegram + email).
     _add_report_job(
         _realty_daily_all,
@@ -2621,7 +2623,7 @@ def init_scheduler():
         id="realty-daily-report",
         replace_existing=True,
     )
-    REPORTS_ENABLED and log.info("scheduler: Real Estate report registered (7:05 AM KST, all recipients, KO+EN)", extra={"action": "scheduler.realty_registered"})
+    REPORTS_ENABLED and log.info("scheduler: Real Estate report registered (7:05 AM KST, all recipients, Korean)", extra={"action": "scheduler.realty_registered"})
 
     # Breaking-news monitor — every 15 min, 24/7. Detects big NEW market-moving
     # events and fires the impact report to ALL recipients (severity-gated, deduped,
