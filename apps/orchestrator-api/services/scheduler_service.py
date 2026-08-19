@@ -33,20 +33,35 @@ _scheduler: BackgroundScheduler | None = None
 # Every machine (this server + Render + a dev PC) runs the FULL scheduler, so
 # without this each one sends the SAME morning reports/emails — the team got the
 # recommendation email 3x. Set REPORTS_ENABLED=false on every instance EXCEPT the
-# one designated report sender. Default TRUE so an instance with no such env
-# (e.g. Render) keeps sending exactly one copy, unchanged. Read ONCE at startup —
-# a restart applies a change. Guards ONLY outbound report/email jobs; trading
-# ticks, the position guard, call graders, and data collectors always run.
+# one designated report sender. Read ONCE at startup — a restart applies a
+# change. Guards ONLY outbound report/email jobs; trading ticks, the position
+# guard, call graders, and data collectors always run.
+#
+# Default FALSE (flipped 2026-08-19): the old default-true meant any machine
+# that started the orchestrator WITHOUT setting the env silently became a
+# second sender — exactly what happened when the 08-13 migration server came
+# up and the whole team got every report twice for a week. Now an instance
+# must OPT IN with REPORTS_ENABLED=true to send anything.
 # ---------------------------------------------------------------------------
-REPORTS_ENABLED = os.environ.get("REPORTS_ENABLED", "true").lower() != "false"
+REPORTS_ENABLED = os.environ.get("REPORTS_ENABLED", "false").lower() == "true"
 
 
 def _add_report_job(*args, **kwargs):
     """add_job for an OUTBOUND report/email job. Registers it only when this
     instance is the designated report sender (REPORTS_ENABLED); otherwise skips
-    it so the team gets exactly ONE copy from the one sender. Returns Job | None."""
+    it so the team gets exactly ONE copy from the one sender. Returns Job | None.
+
+    Belt-and-braces: the callable is additionally wrapped in a cross-instance
+    send claim (see _claim_wrapped below), so even if TWO instances both have
+    REPORTS_ENABLED=true, only the first to claim a fire slot in the shared DB
+    actually sends — the other skips. REPORTS_ENABLED alone already failed us
+    once (the 08-14→08-19 double-emails); the claim makes duplicates
+    structurally impossible instead of configuration-dependent."""
     if not REPORTS_ENABLED:
         return None
+    if args:
+        job_name = kwargs.get("id") or getattr(args[0], "__name__", "report-job")
+        args = (_claim_wrapped(job_name, args[0]),) + tuple(args[1:])
     return _scheduler.add_job(*args, **kwargs)
 
 
@@ -85,6 +100,116 @@ def _single_flight(name: str):
                     pass
         return wrapper
     return deco
+
+
+# ---------------------------------------------------------------------------
+# Cross-INSTANCE send claim — duplicates are impossible, not just discouraged.
+# _single_flight above only locks within one process; when a second machine
+# runs the same scheduler against the same DB (Render once, the migration
+# server on 08-14→08-19), every report went out twice. All instances share
+# one Supabase, so the DB itself is the referee: before a scheduled send, the
+# job atomically claims its fire slot (job id + KST minute) in
+# report_send_claims. Exactly one instance wins the INSERT; the rest skip.
+# The 5-minute drift window also catches a slow instance whose run starts in
+# a later minute (must stay BELOW the fastest guarded cadence — currently
+# dip-alert-pass at every 10 min).
+# Manual re-sends via the routers call the underlying functions directly and
+# are never claimed — only SCHEDULED fires are.
+# Fail-open: if the claim table is unreachable the send proceeds — a DB blip
+# must never silence the morning reports (worst case is a duplicate, which
+# the team survives; a silent no-send they might not notice for days).
+# ---------------------------------------------------------------------------
+import socket as _socket
+from sqlalchemy import text as _sql_text
+
+_CLAIM_DRIFT_WINDOW_MIN = 5
+_claims_table_ready = False
+
+
+def _ensure_claims_table(db) -> None:
+    global _claims_table_ready
+    if _claims_table_ready:
+        return
+    db.execute(_sql_text(
+        """CREATE TABLE IF NOT EXISTS report_send_claims (
+               job_name   text        NOT NULL,
+               claim_key  text        NOT NULL,
+               host       text,
+               claimed_at timestamptz NOT NULL DEFAULT now(),
+               PRIMARY KEY (job_name, claim_key)
+           )"""))
+    # Housekeeping once per process start: the table only needs recent history.
+    db.execute(_sql_text(
+        "DELETE FROM report_send_claims WHERE claimed_at < now() - interval '14 days'"))
+    db.commit()
+    _claims_table_ready = True
+
+
+def _claim_send_slot(job_name: str) -> str | None:
+    """Atomically claim this job's current fire slot. Returns the claim key if
+    THIS instance won (caller should send), None if another instance did."""
+    key = datetime.now(_KST_TZ).strftime("%Y-%m-%d %H:%M")
+    db = SessionLocal()
+    try:
+        _ensure_claims_table(db)
+        r = db.execute(_sql_text(
+            """INSERT INTO report_send_claims (job_name, claim_key, host)
+               SELECT :n, :k, :h
+               WHERE NOT EXISTS (
+                   SELECT 1 FROM report_send_claims
+                   WHERE job_name = :n
+                     AND claimed_at > now() - (:w * interval '1 minute')
+               )
+               ON CONFLICT (job_name, claim_key) DO NOTHING"""),
+            {"n": job_name, "k": key, "h": _socket.gethostname(),
+             "w": _CLAIM_DRIFT_WINDOW_MIN})
+        db.commit()
+        return key if r.rowcount == 1 else None
+    except Exception as e:
+        try:
+            db.rollback()
+        except Exception:
+            pass
+        log.warning(f"send-claim: claim check failed for {job_name} — sending anyway "
+                    f"(fail-open): {str(e)[:120]}",
+                    extra={"action": "send_claim.fail_open", "job": job_name})
+        return key
+    finally:
+        db.close()
+
+
+def _release_send_slot(job_name: str, key: str) -> None:
+    """Give the slot back after a FAILED send so the self-heal (or the other
+    instance's next pass) isn't blocked by a claim that produced nothing."""
+    db = SessionLocal()
+    try:
+        db.execute(_sql_text(
+            "DELETE FROM report_send_claims WHERE job_name = :n AND claim_key = :k"),
+            {"n": job_name, "k": key})
+        db.commit()
+    except Exception:
+        pass
+    finally:
+        db.close()
+
+
+def _claim_wrapped(job_name: str, fn):
+    """Wrap a scheduled outbound job so it runs only if this instance wins the
+    cross-instance claim for the current fire slot."""
+    @_functools.wraps(fn)
+    def wrapper(*a, **kw):
+        key = _claim_send_slot(job_name)
+        if key is None:
+            log.info(f"send-claim: {job_name} skipped — another instance already "
+                     f"claimed this send slot",
+                     extra={"action": "send_claim.skip", "job": job_name})
+            return None
+        try:
+            return fn(*a, **kw)
+        except Exception:
+            _release_send_slot(job_name, key)
+            raise
+    return wrapper
 
 
 # ---------------------------------------------------------------------------
