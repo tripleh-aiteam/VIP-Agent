@@ -1597,7 +1597,13 @@ export default function LiveDeskPage() {
                               const base = (h as unknown as { base?: number }).base || h.entry;
                               if (hs && hs.length) return (<>
                                 <div className="font-bold">{t(`보유 중 · 잔여 ${hl != null ? hl.toLocaleString() : "?"}주`,
-                                        `holding · ${hl != null ? hl.toLocaleString() : "?"}sh left`)}</div>
+                                        `holding · ${hl != null ? hl.toLocaleString() : "?"}sh left`)}
+                                  {h.unreal_pct != null && (
+                                    <b className="ml-1 text-[11px] tabular-nums"
+                                      style={{ color: h.unreal_pct > 0 ? "#b02a2a" : h.unreal_pct < 0 ? "#1565c0" : "var(--text-muted)" }}>
+                                      {h.unreal_pct > 0 ? "+" : ""}{Math.abs(h.unreal_pct) < 0.01 ? h.unreal_pct.toFixed(3) : h.unreal_pct.toFixed(2)}%
+                                    </b>
+                                  )}</div>
                                 {hs.map(([p2, q2, t2, _i2, rem2, why2], k2) => (
                                   <div key={k2}
                                     className="font-normal text-[10.5px] cursor-pointer underline decoration-dotted"
@@ -1627,9 +1633,23 @@ export default function LiveDeskPage() {
                                     })()}</div>
                                 ))}
                               </>);
-                              return (h as unknown as { chop?: boolean }).chop
+                              // the LIVE unrealized % rides the status line (boss
+                              // 2026-08-20: "while holding show current gaining/
+                              // losing % - it should automatically change with the
+                              // real-time price") - refreshed by every board poll
+                              const _txt = (h as unknown as { chop?: boolean }).chop
                                 ? t("보유 중 — 지금 횡보 구간, 매도 판단 정지", "holding — market flat now, exit judging paused")
                                 : t("보유 중 — 아직 매도 전", "holding — not sold yet");
+                              const _u = h.unreal_pct;
+                              return (<>
+                                {_txt}
+                                {_u != null && (
+                                  <b className="ml-1 text-[11px] tabular-nums"
+                                    style={{ color: _u > 0 ? "#b02a2a" : _u < 0 ? "#1565c0" : "var(--text-muted)" }}>
+                                    {_u > 0 ? "+" : ""}{Math.abs(_u) < 0.01 ? _u.toFixed(3) : _u.toFixed(2)}%
+                                  </b>
+                                )}
+                              </>);
                             })()}</td>
                           {money && <td className="text-right px-2 text-[var(--text-muted)]" style={CELL}
                             title={t("평가손익 (수수료 전)", "unrealized, before fees")}>—</td>}
