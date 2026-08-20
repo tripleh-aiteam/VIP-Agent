@@ -824,7 +824,14 @@ def _fam_compute(family: str, tick: int, period: int, day: str,
                              "result": ("win" if _g > 0 else "loss" if _g < 0
                                         else "flat"),
                              "partial": True, "sig": None, "wall": None,
-                             "parts": {"buys": _hb, "sells": [[p_, q_]]}})
+                             # the slice row's sell carries the FULL record - time,
+                             # bar, remaining, reason, at-sale base - so the board
+                             # prints (잔여 N) and the slice's own % exactly like an
+                             # episode row (boss 2026-08-20: "now I cannot see
+                             # winning % in the completed part")
+                             "parts": {"buys": _hb,
+                                       "sells": [[p_, q_, t_, i_, _left, w_,
+                                                  _base]]}})
         for i, tr in enumerate(d.get("trades") or []):
             won = round((tr.get("entry") or 0) * (tr.get("qty") or 1)
                         * (tr.get("net_pct") or 0) / 100)

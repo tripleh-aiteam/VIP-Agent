@@ -202,7 +202,7 @@ VARIANTS: list[dict] = [
      # his band (2026-08-13 14:4x): everything "around 1%" - drop 0.9, range
      # 1.0 (the 1.25 range was silently raising the real drop floor to 1.25,
      # caught on the SK하이닉스 11:34 case: -1.02% fall refused by 0.02 of range)
-     "dip": {"drop": 0.9, "sharp": 3.0, "ups": 1, "chop": 1.0, "win_sec": 1800},
+     "dip": {"drop": 0.7, "sharp": 3.0, "ups": 1, "chop": 1.0, "win_sec": 1800},
      "scout": {"frac": 0.03, "confirm": 0.5},
      # the second door (boss 08-13): a steady 30-min climb of +1.2% with pullbacks
      # under 0.4%, at a fresh session high, buys too - 삼성전자 rose +6% on 08-12
@@ -242,7 +242,7 @@ VARIANTS: list[dict] = [
      # his band (2026-08-13 14:4x): everything "around 1%" - drop 0.9, range
      # 1.0 (the 1.25 range was silently raising the real drop floor to 1.25,
      # caught on the SK하이닉스 11:34 case: -1.02% fall refused by 0.02 of range)
-     "dip": {"drop": 0.9, "sharp": 3.0, "ups": 1, "chop": 1.0, "win_sec": 1800},
+     "dip": {"drop": 0.7, "sharp": 3.0, "ups": 1, "chop": 1.0, "win_sec": 1800},
      "scout": {"frac": 0.03, "confirm": 0.5},
      "trend": {"climb": 1.05, "dd": 0.4, "win": 30},
      "rebound": {"low_win": 20, "near": 3.0, "day_gain": 2.0, "drop": 0.5},
@@ -272,7 +272,7 @@ VARIANTS: list[dict] = [
      "stop_pct": 1.5, "wait_bars": 2, "family": "d3", "wall_price": True,
      "ignore_gate": True,
      "vol_size": {"x": 1.2, "frac": 0.5}, "us_habit": True,
-     "dip": {"drop": 0.9, "sharp": 3.0, "ups": 1, "chop": 1.0, "win_sec": 1800},
+     "dip": {"drop": 0.7, "sharp": 3.0, "ups": 1, "chop": 1.0, "win_sec": 1800},
      "scout": {"frac": 0.03, "confirm": 0.5},
      "trend": {"climb": 1.05, "dd": 0.4, "win": 30},
      "rebound": {"low_win": 20, "near": 3.0, "day_gain": 2.0, "drop": 0.5},
@@ -1638,7 +1638,7 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                     # gives - while a NEW turn trades 13,000 cheaper. The add
                     # executes at the new 2nd red instead; the base re-blends down.
                     _qa4 = pos["qty_add"]
-                    pos["buys"].append([c, _qa4])
+                    pos["buys"].append([c, _qa4, (s.get("times") or [None] * (i + 1))[i]])
                     pos["cost"] += c * _qa4
                     pos["qty"] += _qa4
                     pos["qty_add"] = 0
