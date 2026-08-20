@@ -630,6 +630,10 @@ export default function LiveDeskPage() {
     // silently cancelled every cross-company click (boss 2026-08-20: "if I
     // click another company in the chart side it is not showing")
     lastReqRef.current = { id, tradeIdx, want };
+    // and the whole page follows the named company AT ONCE - header, tape
+    // chart, order book - so the click visibly lands even while the rule's
+    // own chart is still being built (re-set to the same value is a no-op)
+    if (tradeCode) { setCode(tradeCode); codeRef.current = tradeCode; }
     // LAST CLICK WINS. The detail payload is the whole day (60,000 bars, several MB), so
     // a response can land seconds after it was asked for - and an OLD response arriving
     // after a NEW click used to overwrite the click, which read as "clicking the buy time
@@ -2163,6 +2167,17 @@ export default function LiveDeskPage() {
                   style={{ background: "rgba(230,81,0,0.14)", color: GOLD }}>
                   {t(`선택한 매매의 종목입니다 (${det.chart.name})`,
                      `following the trade you clicked (${det.chart.name})`)}
+                </span>
+              )}
+              {/* the SWITCHING banner: the clicked company's chart is being
+                  built - without this the old chart just sat there and a
+                  cross-company click read as "not working" (boss 2026-08-20) */}
+              {detBusy && lastReqRef.current && det?.chart
+                && lastReqRef.current.want !== det.chart.code && (
+                <span className="ml-2 text-[11px] font-bold px-2 py-0.5 rounded animate-pulse"
+                  style={{ background: "rgba(106,27,154,0.15)", color: "#6a1b9a" }}>
+                  ⏳ {t(`${(st?.stocks || []).find((x) => x.code === lastReqRef.current!.want)?.name || ""} 차트 준비 중 — 몇 초 걸립니다`,
+                       `building ${(st?.stocks || []).find((x) => x.code === lastReqRef.current!.want)?.name || "the"} chart — a few seconds`)}
                 </span>
               )}
               {sel && det?.chart?.focus && (
