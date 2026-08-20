@@ -14,6 +14,7 @@ from __future__ import annotations
 import re
 from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
+from urllib.parse import quote
 
 import httpx
 
@@ -84,6 +85,51 @@ def rss_items(outlet: str, hours: int = 24, cap: int = 25) -> list[dict]:
                     break
         except Exception as e:
             log.warning(f"news_fetch: rss {url} failed: {str(e)[:90]}")
+    return out
+
+
+def google_news_items(site: str, days: int = 7, cap: int = 12,
+                      keywords: str = "") -> list[dict]:
+    """Recent headlines for ONE outlet via Google News' free RSS interface —
+    no API key. Added 2026-08-20: the international outlets (Reuters/Bloomberg/
+    WSJ/Nikkei) used to come through web_search, whose only configured provider
+    (Gemini grounding) was quota-dead, so they silently contributed 0 articles
+    for weeks. Google News RSS gives outlet-scoped, timestamped headlines +
+    snippets — exactly the 'headline + snippet only' contract those paywalled
+    outlets already had. Returns [{title,url,snippet,date}] newest-first-ish."""
+    q = f"site:{site} when:{days}d"
+    if keywords:
+        q += f" ({keywords})"
+    url = ("https://news.google.com/rss/search?q=" + quote(q)
+           + "&hl=en-US&gl=US&ceid=US:en")
+    out: list[dict] = []
+    seen: set[str] = set()
+    try:
+        import defusedxml.ElementTree as ET
+        r = httpx.get(url, headers=_UA, timeout=15, follow_redirects=True)
+        if r.status_code != 200:
+            log.warning(f"news_fetch: google-news rss {site} HTTP {r.status_code}")
+            return []
+        root = ET.fromstring(r.text)
+        for it in root.findall(".//item"):
+            title = (it.findtext("title") or "").strip()
+            # Google News suffixes " - Outlet Name"; strip it for clean display.
+            title = re.sub(r"\s+-\s+[^-]{2,40}$", "", title)
+            link = (it.findtext("link") or "").strip()
+            desc = (it.findtext("description") or "").strip()
+            desc = re.sub(r"(?is)<[^>]+>", " ", desc)
+            desc = re.sub(r"\s+", " ", desc).strip()
+            pub = _pubdate(it.findtext("pubDate"))
+            key = title[:80].lower()
+            if not title or not link or key in seen:
+                continue
+            seen.add(key)
+            out.append({"title": title, "url": link, "snippet": desc[:400],
+                        "date": pub.isoformat() if pub else ""})
+            if len(out) >= cap:
+                break
+    except Exception as e:
+        log.warning(f"news_fetch: google-news rss {site} failed: {str(e)[:90]}")
     return out
 
 

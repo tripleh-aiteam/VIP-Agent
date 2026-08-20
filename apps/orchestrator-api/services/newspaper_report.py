@@ -85,16 +85,19 @@ def _queries_for(paper: dict) -> list[str]:
 
 def _recency_search(site: str, kr: bool, per_query: int = 10) -> list[dict]:
     """Recent (past-week) site-scoped search → [{title,url,snippet}]. Past-week
-    so we cover news from ALL days/times, not only this morning."""
-    try:
-        from services.web_search import search_web
-    except Exception:
-        return []
+    so we cover news from ALL days/times, not only this morning.
+
+    Two layers (2026-08-20): web_search first (Serper/PSE/Tavily/Gemini — best
+    snippets when a provider is configured), then Google News RSS (free, no
+    key) whenever web_search yields nothing. The international outlets had been
+    contributing 0 articles for weeks because the only search provider was
+    quota-dead and nothing stood behind it."""
     kw = (_KR_KEYWORDS + " OR 정책 OR 트럼프 OR 금리 OR 환율") if kr else \
          (_US_KEYWORDS + " OR Fed OR tariff OR Trump OR Iran OR policy")
     out: list[dict] = []
     seen: set[str] = set()
     try:
+        from services.web_search import search_web
         res = search_web(f"site:{site} ({kw})", num_results=per_query, recency="w")
         for h in (res.get("results") or []):
             t = (h.get("title") or "").strip()
@@ -105,6 +108,16 @@ def _recency_search(site: str, kr: bool, per_query: int = 10) -> list[dict]:
             out.append({"title": t, "url": h.get("url", ""), "snippet": (h.get("snippet") or "").strip()})
     except Exception as e:
         log.warning(f"newspaper: recency search {site} failed: {str(e)[:80]}")
+    if not out:
+        try:
+            from services.news_fetch import google_news_items
+            gkw = "" if kr else "markets OR stocks OR Fed OR semiconductor OR tariff OR economy"
+            out = google_news_items(site, days=7, cap=per_query, keywords=gkw)
+            if out:
+                log.info(f"newspaper: {site} filled from Google News RSS ({len(out)} items)",
+                         extra={"action": "newspaper.gnews_fallback"})
+        except Exception as e:
+            log.warning(f"newspaper: google-news fallback {site} failed: {str(e)[:80]}")
     return out
 
 
