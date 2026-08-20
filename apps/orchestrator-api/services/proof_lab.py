@@ -1194,7 +1194,10 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
         # is bought (checklist #100) and anything still open is closed at the last price.
         _t = s.get("times")
         _now = _t[i] if _t and isinstance(_t[i], str) else ""
-        _late = _now >= "15:20"
+        # the bell itself is a dial too (boss 2026-08-20 evening: 'after 14:00
+        # we should not trade' - the hard-stop version closes EVERYTHING at the
+        # hour, losers included). Live default unchanged: 15:20.
+        _late = _now >= v.get("bell", "15:20")
         lastc[si] = c
         # THE STOCK THAT WENT QUIET (found 2026-08-10). 한화오션 stopped ticking at 09:32
         # while the desk was holding it, and because a position is only ever managed on
