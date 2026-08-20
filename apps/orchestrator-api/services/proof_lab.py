@@ -211,6 +211,7 @@ VARIANTS: list[dict] = [
      "rebound": {"low_win": 20, "near": 3.0, "day_gain": 2.0, "drop": 0.5},
      "morning": {"until": "09:20", "vol_x": 1.5, "min_run": 0.3,
                  "alt_run": 1.0},
+     "burst": {"rise": 0.7, "win_min": 10},
      # boss 12:0x: "when decrease we have to buy even we have a stock - all
      # rules, all six." 알고리즘1 gains the reload too: a fresh sharp-decrease
      # turn buys back sold slices mid-hold. Both algorithms now buy on real
@@ -248,6 +249,7 @@ VARIANTS: list[dict] = [
      "rebound": {"low_win": 20, "near": 3.0, "day_gain": 2.0, "drop": 0.5},
      "morning": {"until": "09:20", "vol_x": 1.5, "min_run": 0.3,
                  "alt_run": 1.0},
+     "burst": {"rise": 0.7, "win_min": 10},
      # HIS FINAL ALGO 2 (boss 2026-08-12 night, chose B over the ping-pong):
      # sell 10% at each +1% level; through calm pullbacks the rest is HELD
      # (dn_frac 0 - no de-risking slices); only a genuinely NEW sharp decrease
@@ -278,6 +280,7 @@ VARIANTS: list[dict] = [
      "rebound": {"low_win": 20, "near": 3.0, "day_gain": 2.0, "drop": 0.5},
      "morning": {"until": "09:20", "vol_x": 1.5, "min_run": 0.3,
                  "alt_run": 1.0},
+     "burst": {"rise": 0.7, "win_min": 10},
      "drip": {"step": 999.0, "up_frac": 1.0, "dn_frac": 0.0, "stop_reset": 1.5,
               "rebuy": True, "retreat": {"big": 0.9},
               "reinforce": {"frac": 0.5, "max": 2}}},
@@ -1042,6 +1045,42 @@ def _morning_entry(s: dict, v: dict, i: int, closes: list[float],
     return (c / closes[0] - 1) * 100 >= m.get("min_run", 0.3)
 
 
+def _burst_entry(s: dict, v: dict, i: int, closes: list[float],
+                 now_str: str) -> bool:
+    """THE BURST DOOR (boss 2026-08-20): "a rise that starts without any fall
+    has no owner." Fresh session high + a rise of >= rise% from the lowest
+    close of the last win_min minutes -> board mid-burst for the tail. The
+    first 2 minutes are never judged; deployed at the boss's order with the
+    250-day measurement running alongside."""
+    bcf = v.get("burst") or {}
+    if i < 2 or not now_str or str(now_str)[:5] < "09:02":
+        return False
+    c = closes[i]
+    if not c or c < max(closes[:i + 1]):
+        return False
+    tms = s.get("times")
+    if not tms:
+        return False
+
+    def _sc9(x):
+        if isinstance(x, str) and len(x) >= 7:
+            t2 = x.replace(":", "")
+            try:
+                return int(t2[0:2]) * 3600 + int(t2[2:4]) * 60 + int(t2[4:6])
+            except Exception:
+                return None
+        return None
+    now_s = _sc9(tms[i])
+    if now_s is None:
+        return False
+    j = i
+    lim = bcf.get("win_min", 10) * 60
+    while j > 0 and (_sc9(tms[j - 1]) or 0) >= now_s - lim:
+        j -= 1
+    lo = min(closes[j:i + 1])
+    return bool(lo) and (c / lo - 1) * 100 >= bcf.get("rise", 0.7)
+
+
 def _rebound_entry(s: dict, v: dict, i: int, ups: int, closes: list[float]) -> bool:
     """THE DAILY REBOUND DOOR (boss 2026-08-13, from NAVER): two time-scales
     agreeing. The stock closed yesterday near its multi-week bottom, is up hard
@@ -1271,7 +1310,9 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                   and not (v.get("rebound")
                            and _rebound_entry(s, v, i, up[si], closes))
                   and not (v.get("morning")
-                           and _morning_entry(s, v, i, closes, _now))):
+                           and _morning_entry(s, v, i, closes, _now))
+                  and not (v.get("burst")
+                           and _burst_entry(s, v, i, closes, _now))):
                 pass
             elif v.get("dip") and _dip_state(s, v["dip"].get("win_sec", 600))["hii"][i]                     <= last_exit[si]:
                 # ONE ENTRY PER SHARP DECREASE, second iteration (boss 2026-08-11: the
@@ -1359,7 +1400,10 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                                     and _trend_entry(s, v, i, closes, _now))
                                    or (bool(v.get("morning"))
                                        and _morning_entry(s, v, i, closes,
-                                                          _now))))
+                                                          _now))
+                                   or (bool(v.get("burst"))
+                                       and _burst_entry(s, v, i, closes,
+                                                        _now))))
                 if v.get("dip") and not _via_trend:
                     _std = _dip_state(s, v["dip"].get("win_sec", 600))
                     _typd = _std["typ"][i]
