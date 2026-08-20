@@ -282,7 +282,11 @@ VARIANTS: list[dict] = [
                  "alt_run": 1.0},
      "burst": {"rise": 0.7, "win_min": 10},
      "drip": {"step": 999.0, "up_frac": 1.0, "dn_frac": 0.0, "stop_reset": 1.5,
-              "rebuy": True, "retreat": {"big": 0.9},
+              "rebuy": True,
+              # arm 0.85 (boss's "around 1%" band): the sell-all watch begins
+              # only after the climb stands +0.85% over base - micro-peaks
+              # like NAVER's +0.04% at 09:27 no longer end the ride
+              "retreat": {"big": 0.9, "arm": 0.85},
               "reinforce": {"frac": 0.5, "max": 2}}},
     # Sharp (ladder) leaves the live board 2026-08-13: the boss replaced it with
     # his two drip scenarios ("instead of sharp rule make it Algorithm 1/2").
@@ -1640,8 +1644,18 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                     elif c < prev:
                         pos["pr_blues"] = pos.get("pr_blues", 0) + 1
                     _big = bool(prev) and (prev - c) / prev * 100 >= _pr.get("big", 0.9)
+                    # ARM (boss 2026-08-20, the NAVER 09:27 case: sold on a
+                    # +0.04% micro-peak while the stock was still climbing -
+                    # "it was continuously increasing, it should sell around
+                    # 09:41"): with retreat.arm set, the 2nd-blue watch only
+                    # begins once the peak stands >= arm% above base. Below
+                    # that the ride holds - his old riding law's own rule
+                    # ("do not sell at 0.5% or 1% if it is rising sharply").
+                    # D1/D2 carry no arm (their retreats sell small slices).
                     if ((not pos.get("pr_sold")) and not _chop_now
                             and c > pos.get("base", 0)
+                            and pos.get("pr_pk", 0) >= pos.get("base", 0)
+                            * (1 + _pr.get("arm", 0.0) / 100)
                             and pos.get("pr_pk", 0) > pos.get("base", 0)
                             and (pos.get("pr_blues", 0) >= 2 or _big)
                             and pos["qty"] == _qty_bar0):
