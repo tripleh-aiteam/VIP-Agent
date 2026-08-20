@@ -134,11 +134,45 @@ def google_price(ko_name: str, en_name: str, ticker: str, market: str) -> dict[s
     return {"price": price, "open": open_, "currency": currency, "query": query}
 
 
+def _yahoo_daily(symbol: str) -> list[dict]:
+    """Latest daily candles for one symbol straight from Yahoo's public chart
+    API (no key). Returns [{'date','open','close','volume'}, ...] oldest→newest;
+    [] on any failure. Yahoo blocks default HTTP clients, hence the browser UA."""
+    try:
+        with httpx.Client(timeout=15.0, headers={"User-Agent": "Mozilla/5.0"}) as c:
+            r = c.get(f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}",
+                      params={"range": "10d", "interval": "1d"})
+            r.raise_for_status()
+            res = (r.json().get("chart") or {}).get("result") or []
+        if not res:
+            return []
+        import datetime as _dt
+        ts = res[0].get("timestamp") or []
+        q = ((res[0].get("indicators") or {}).get("quote") or [{}])[0]
+        out = []
+        for i, t in enumerate(ts):
+            close = (q.get("close") or [None] * len(ts))[i]
+            if close is None:
+                continue
+            out.append({"date": _dt.date.fromtimestamp(t).isoformat(),
+                        "open": (q.get("open") or [None] * len(ts))[i],
+                        "close": float(close),
+                        "volume": (q.get("volume") or [None] * len(ts))[i]})
+        return out
+    except Exception as e:
+        log.warning(f"price_validate: yahoo daily {symbol} failed: {str(e)[:80]}")
+        return []
+
+
 def backfill_stale_us(rows: list[dict], expected_latest_us: str) -> int:
     """When the backend's US (Yahoo) data is EMPTY or older than the most recent
-    completed US session, replace that row's price with Google's latest. Fixes the
+    completed US session, replace that row's price with a live lookup. Fixes the
     backend's day-behind ingestion lag (e.g. serving 06-09 when 06-10 has closed).
-    Returns the number of rows backfilled. KR rows are untouched."""
+    Tries Google (Serper) first; when Serper is unconfigured/failing, falls back
+    to Yahoo's public chart API directly — added 2026-08-20 after the 06:30
+    Kiwoom report shipped Aug-18 US closes because Serper was unavailable and
+    nothing else stood behind it. Returns the number of rows backfilled.
+    KR rows are untouched."""
     n = 0
     for r in rows:
         if r.get("mkt") != "US":
@@ -162,8 +196,27 @@ def backfill_stale_us(rows: list[dict], expected_latest_us: str) -> int:
             r["source"] = "google"
             r["ok"] = True
             n += 1
+            continue
+        # Serper had nothing — go straight to Yahoo for the settled candles.
+        candles = _yahoo_daily(r.get("t", ""))
+        settled = [c for c in candles if c["date"] <= expected_latest_us]
+        if settled:
+            last = settled[-1]
+            prev = settled[-2] if len(settled) >= 2 else None
+            r["close"] = last["close"]
+            r["open"] = last.get("open")
+            r["high"] = r["low"] = None
+            r["volume"] = last.get("volume")
+            r["prev_close"] = prev["close"] if prev else None
+            r["change_pct"] = ((last["close"] / prev["close"] - 1) * 100) if prev and prev["close"] else None
+            r["price_kind"] = "prev_close"
+            r["data_date"] = last["date"]
+            r["date"] = last["date"]
+            r["source"] = "yahoo"
+            r["ok"] = True
+            n += 1
     if n:
-        log.info(f"price_validate: backfilled {n} stale US rows from Google",
+        log.info(f"price_validate: backfilled {n} stale US rows (Google/Yahoo)",
                  extra={"action": "price.backfill"})
     return n
 
