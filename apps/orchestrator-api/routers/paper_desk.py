@@ -663,7 +663,12 @@ def live_rules(tick: int = Query(5), period: int = Query(0), day: str = Query(""
     # auto=0: the user explicitly chose TODAY, so an empty board is the honest answer -
     # never yesterday's trades under today's label (boss 2026-08-11, three times)
     _p = max(0, min(int(period or 0), 600))
-    return _swr(("rank", tick, _p, day, frm, to, bool(gate), bool(auto)), 3.0,
+    # the cache key names the ACTUAL day: a live (day="") table computed
+    # yesterday must be unreachable today (boss 2026-08-20 09:0x: "Algo 1
+    # still shows yesterday's result")
+    from services.kiwoom_tape import _day as _kd9
+    return _swr(("rank", tick, _p, day or _kd9(), frm, to, bool(gate),
+                 bool(auto)), 3.0,
                 lambda: rank(tick=tick, period=_p, day=day, frm=frm, to=to,
                              use_gate=bool(gate), allow_fallback=bool(auto)),
                 placeholder={"ok": False, "computing": True})
@@ -683,8 +688,9 @@ def live_rule_trades(variant: str = Query(...), tick: int = Query(5),
     from services.kiwoom_rules import trades
     _p = max(0, min(int(period or 0), 600))
     _b = max(0, min(int(budget or 0), 1_000_000_000))
+    from services.kiwoom_tape import _day as _kd9
     return _swr(("trades", variant, tick, _p, code, bars, limit, around, _b,
-                 day, frm, to, bool(gate), bool(auto)), 10.0,
+                 day or _kd9(), frm, to, bool(gate), bool(auto)), 10.0,
                 lambda: trades(variant, tick=tick, period=_p, code=code,
                                bars=bars, limit=limit, around=around, budget=_b,
                                day=day, frm=frm, to=to, use_gate=bool(gate),
@@ -767,7 +773,9 @@ def live_family_trades(family: str = Query("new"), tick: int = Query(5),
     exact trade on the chart as proof with the machinery it already has."""
     # stale-serve: the last table answers instantly, a background thread recomputes
     # (the 20s hard cache alone still made every reload wait out a full-day replay)
-    return _swr(("fam", family, tick, period, day, frm, to, gate, auto), 20.0,
+    from services.kiwoom_tape import _day as _kd9
+    return _swr(("fam", family, tick, period, day or _kd9(), frm, to, gate,
+                 auto), 20.0,
                 lambda: _fam_compute(family, tick, period, day, frm, to, gate,
                                      auto),
                 placeholder={"ok": False, "computing": True})
@@ -1174,15 +1182,16 @@ def live_warm():
     # computed DIRECTLY and stored under the endpoints' exact cache keys - going
     # through the endpoints would now just receive {computing} placeholders
     import time as _t2
-    for fam in ("d1", "d2", "old"):
+    from services.kiwoom_tape import _day as _kd9
+    for fam in ("d1", "d2", "d3", "old"):
         try:
-            _SWR[("fam", fam, 5, 0, "", "", "", 1, 1)] = (
+            _SWR[("fam", fam, 5, 0, _kd9(), "", "", 1, 1)] = (
                 _t2.time(), _fam_compute(fam, 5, 0, "", "", "", 1, 1))
         except Exception:
             pass
     try:
         from services.kiwoom_rules import rank as _rank2
-        _SWR[("rank", 5, 0, "", "", "", True, True)] = (
+        _SWR[("rank", 5, 0, _kd9(), "", "", True, True)] = (
             _t2.time(), _rank2(tick=5, period=0, day="", frm="", to="",
                                use_gate=True, allow_fallback=True))
     except Exception:

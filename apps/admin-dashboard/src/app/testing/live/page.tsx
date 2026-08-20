@@ -179,6 +179,7 @@ const CELL: React.CSSProperties = { border: "1px solid var(--border-default)" };
 function ruleName(id: string): string {
   if (id === "D1") return "시나리오1";
   if (id === "D2") return "시나리오2";
+  if (id === "D3") return "시나리오3";
   if (id === "OLD3") return "Old";
   if (id.startsWith("N")) return "Sharp";
   return id;
@@ -450,7 +451,7 @@ export default function LiveDeskPage() {
   // and new way also - by default it should show new way, and if I click old way it
   // should show our old way". Both families trade on every tape at once; this only
   // chooses which set of rows is on screen.
-  const [way, setWay] = useState<"d1" | "d2" | "old" | "new" | "both">("d2");
+  const [way, setWay] = useState<"d1" | "d2" | "d3" | "old" | "new" | "both">("d2");
   // the screener's ranking - loaded once, shown on demand (boss 2026-08-10)
   // the static year-based screener panel was superseded by the daily picker above;
   // /paper-desk/screener still serves its data for reference.
@@ -1249,9 +1250,9 @@ export default function LiveDeskPage() {
            ["d2", t("② 알고리즘 2 — 10% 계단", "② Algorithm 2 — 10% drip"),
             t("같은 4개의 문으로 매수 → +1%마다 10%씩 매도, 끝까지 타기 · 새 급락(2번째 양봉 전환)이 오면 판 만큼 전부 재매수",
               "same four doors in -> sells 10% per +1%, rides the whole climb · a NEW sharp drop (2nd-red turn) buys back all sold")],
-           ["old", t("📜 예전 규칙 (3연속 상승)", "📜 Old rule (3 rises)"),
-            t("3연속 상승 매수 → 2번째 음봉 매도, 호가벽 가격",
-              "buy 3 rises, sell at the 2nd blue, wall-priced")]] as const)
+           ["d3", t("③ 알고리즘 3 — 정점 전량", "③ Algorithm 3 — ride & sell all"),
+            t("같은 4개의 문으로 매수 → 오르는 동안 팔지 않고 정점 후 2번째 음봉에 전량 매도 · -1.5%면 전량 매도 후 즉시 재매수 (예전 규칙은 2026-08-20 은퇴 — 기록은 보존)",
+              "same four doors in -> holds the whole climb, sells ALL at the 2nd blue after the peak · -1.5% sells all and re-buys (the old rule retired 2026-08-20 - records preserved)")]] as const)
           .map(([k, lab, tip]) => (
           <button key={k} title={tip}
             onClick={() => { if (way === k) return;

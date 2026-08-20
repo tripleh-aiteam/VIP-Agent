@@ -157,7 +157,11 @@ VARIANTS: list[dict] = [
     # exactly: the classic 3-rise entry under the ride exit, UNGATED by +1% (arm=0 -
     # the first completed down candle sells), full size (no scout), wall-priced both
     # ways. Runs today against Sharp so the close can compare them on one tape.
+    # RETIRED 2026-08-20 (boss: "delete old rule, create Algorithm 3"). The
+    # records stay - stored days replay in full - but from today it takes
+    # nothing new. Never delete trade records; retire the rule instead.
     {"id": "OLD3", "entry": 3, "kind": "pct", "a": 0.3, "b": 2.0, "exec": "limit",
+     "retired_from": "20260820",
      "stop_pct": 2.0, "wait_bars": 2, "family": "old", "ignore_gate": True,
      "wall_price": True, "clock": [5, 60],
      # exactly the 3rd red, never the 6th: the same late-chase law Sharp already has
@@ -255,6 +259,27 @@ VARIANTS: list[dict] = [
      # isolates exactly one question: does the reload law earn its keep?
      "drip": {"step": 1.0, "up_frac": 0.10, "dn_frac": 0.10, "stop_reset": 1.5,
               "slice_total": True, "rebuy": True, "retreat": {"big": 0.9},
+              "reinforce": {"frac": 0.5, "max": 2}}},
+    # 알고리즘 3 (boss 2026-08-20 09:0x): "if the price is continuously
+    # increasing DO NOT sell - wait for the peak, and at the 2nd blue (when it
+    # starts to decrease) sell ALL; after a sharp decrease buy again. Take the
+    # other ideas from Algo 2 - exit protections, price offers, everything."
+    # Same four doors, same scout/reinforce, same -1.5% reset and closing laws
+    # as 알고리즘2; the harvest is the retreat law carrying 100%: no rungs
+    # (step 999 puts the first rung beyond any day), no down-steps - in profit
+    # past a peak, 2 blues (or one >=0.9% blue) sells the whole position.
+    {"id": "D3", "entry": 1, "kind": "pct", "a": 0.3, "b": 2.0, "exec": "limit",
+     "stop_pct": 1.5, "wait_bars": 2, "family": "d3", "wall_price": True,
+     "ignore_gate": True,
+     "vol_size": {"x": 1.2, "frac": 0.5}, "us_habit": True,
+     "dip": {"drop": 0.9, "sharp": 3.0, "ups": 1, "chop": 1.0, "win_sec": 1800},
+     "scout": {"frac": 0.03, "confirm": 0.5},
+     "trend": {"climb": 1.05, "dd": 0.4, "win": 30},
+     "rebound": {"low_win": 20, "near": 3.0, "day_gain": 2.0, "drop": 0.5},
+     "morning": {"until": "09:20", "vol_x": 1.5, "min_run": 0.3,
+                 "alt_run": 1.0},
+     "drip": {"step": 999.0, "up_frac": 1.0, "dn_frac": 0.0, "stop_reset": 1.5,
+              "rebuy": True, "retreat": {"big": 0.9},
               "reinforce": {"frac": 0.5, "max": 2}}},
     # Sharp (ladder) leaves the live board 2026-08-13: the boss replaced it with
     # his two drip scenarios ("instead of sharp rule make it Algorithm 1/2").
@@ -372,6 +397,17 @@ def label(v: dict, ko: bool = True) -> str:
     if v.get("drip"):
         dp = v["drip"]
         _pct = int(round(dp.get("up_frac", 0.10) * 100))
+        if _pct >= 100:
+            # 알고리즘3: rides to the peak, one sale carries everything
+            if ko:
+                return ("급락·아침·상승·바닥반등 4개의 문으로 매수 → 오르는 동안 "
+                        "팔지 않고 정점 후 2번째 음봉에 전량 매도 → "
+                        f"-{dp.get('stop_reset', 1.5):g}% 전량 리셋"
+                        f"{' (게이트 무시)' if v.get('ignore_gate') else ''}")
+            return ("4 doors in (dip·morning·climb·rebound) → holds the whole "
+                    "climb, sells ALL at the 2nd blue after the peak → full "
+                    f"reset at -{dp.get('stop_reset', 1.5):g}%"
+                    f"{' (no gate)' if v.get('ignore_gate') else ''}")
         if ko:
             return (f"급락·아침·상승·바닥반등 4개의 문으로 매수 → +1%마다 "
                     f"{_pct}% 계단 매도 → -{dp.get('stop_reset', 1.5):g}% 전량 리셋"
