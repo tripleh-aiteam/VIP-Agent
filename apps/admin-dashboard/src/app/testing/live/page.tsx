@@ -682,7 +682,7 @@ export default function LiveDeskPage() {
   // and the law's reason)
   const [selSlice, setSelSlice] = useState<{ rule: string; name: string; t: string;
     px: number; qty: number; rem?: number | null; gain?: number | null;
-    why?: string } | null>(null);
+    why?: string; side?: "b" | "s" } | null>(null);
   const [fCode, setFCode] = useState("");
   const [fRes, setFRes] = useState("");
   const [fFrom, setFFrom] = useState("");
@@ -1567,8 +1567,23 @@ export default function LiveDeskPage() {
                             {(() => {
                               const hb = (h as unknown as { parts?: {
                                 buys?: [number, number, (string | null)?][] } }).parts?.buys;
+                              // every buy line is CLICKABLE PROOF (boss 2026-08-20):
+                              // the chart opens on this stock with every ▲ marked at
+                              // its own bar, and the caption restates this exact fill
                               return hb && hb.length ? hb.map(([p2, q2, t3], k2) => (
-                                <div key={k2}>
+                                <div key={k2} className="cursor-pointer underline decoration-dotted"
+                                  title={t("클릭: 이 매수를 차트에서 증명", "click: prove this buy on the chart")}
+                                  onClick={() => { setSelSlice({ rule: h.rule, name: h.name || h.code,
+                                                    t: (t3 as string) || h.buy_t || "", px: p2, qty: q2,
+                                                    side: "b",
+                                                    why: k2 === 0 ? t("진입 매수", "entry buy")
+                                                                  : t("보유 중 추가 매수 (보강·재매수·확정)", "add-on buy (reinforce/reload/confirm)") });
+                                                   setFocusSide("b");
+                                                   setChartOpen(true); chartOpenRef.current = true;
+                                                   setSel(h.rule); autoOpenRef.current = h.rule;
+                                                   openRule(h.rule, null, h.code);
+                                                   setTimeout(() => chartRef.current?.scrollIntoView(
+                                                     { behavior: "smooth", block: "center" }), 150); }}>
                                   {t3 ? <span className="text-[9.5px] font-bold" style={{ color: RED }}>▲ {String(t3).slice(0, 5)} </span> : null}
                                   ₩{Math.round(p2).toLocaleString()}
                                   <span className="text-[9.5px] text-[var(--text-muted)]"> × {q2}{t("주", "sh")}</span></div>
@@ -1698,7 +1713,14 @@ export default function LiveDeskPage() {
                           <td className="px-2" style={CELL}>
                             {r.parts?.buys && r.parts.buys.length ? (r.parts.buys as unknown as
                               [number, number, (string | null)?][]).map(([p2, q2, t3], k2) => (
-                              <div key={k2}>
+                              <div key={k2} className="cursor-pointer underline decoration-dotted"
+                                title={t("클릭: 이 매수를 차트에서 증명", "click: prove this buy on the chart")}
+                                onClick={() => { setSelSlice({ rule: r.rule, name: r.name || r.code,
+                                                  t: (t3 as string) || r.buy_t || "", px: p2, qty: q2,
+                                                  side: "b",
+                                                  why: k2 === 0 ? t("진입 매수", "entry buy")
+                                                                : t("보유 중 추가 매수 (보강·재매수·확정)", "add-on buy (reinforce/reload/confirm)") });
+                                                 openFamTrade(r, "b"); }}>
                                 {t3 ? <span className="text-[9.5px] font-bold" style={{ color: RED }}>▲ {String(t3).slice(0, 5)} </span> : null}
                                 ₩{Math.round(p2).toLocaleString()}
                                 <span className="text-[9.5px] text-[var(--text-muted)]"> × {q2}{t("주", "sh")}</span></div>
@@ -2182,7 +2204,8 @@ export default function LiveDeskPage() {
                 style={{ background: "rgba(21,101,192,0.08)", border: "1px solid var(--border-default)" }}>
                 <b style={{ color: "#6a1b9a" }}>{ruleName(selSlice.rule)}</b>
                 <b className="ml-2 text-[var(--text-primary)]">{selSlice.name}</b>
-                <span className="ml-2" style={{ color: BLUE }}>▼ {selSlice.t.slice(0, 8)} @₩{Math.round(selSlice.px).toLocaleString()} × {selSlice.qty}{t("주", "sh")}</span>
+                <span className="ml-2" style={{ color: selSlice.side === "b" ? RED : BLUE }}>
+                  {selSlice.side === "b" ? "▲" : "▼"} {selSlice.t.slice(0, 8)} @₩{Math.round(selSlice.px).toLocaleString()} × {selSlice.qty}{t("주", "sh")}</span>
                 {selSlice.rem != null && <span className="ml-2 text-[var(--text-muted)]">{t(`잔여 ${Number(selSlice.rem).toLocaleString()}주`, `${Number(selSlice.rem).toLocaleString()}sh left`)}</span>}
                 {selSlice.gain != null && <b className="ml-2" style={{ color: selSlice.gain > 0 ? RED : BLUE }}>{selSlice.gain > 0 ? "+" : ""}{selSlice.gain.toFixed(2)}%</b>}
                 {selSlice.why && <span className="ml-2 text-[var(--text-secondary)]">[{selSlice.why}]</span>}
