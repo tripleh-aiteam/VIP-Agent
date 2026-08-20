@@ -854,7 +854,11 @@ def _dip_entry(s: dict, v: dict, i: int, ups: int, closes: list) -> bool:
     # of the session the window holds 2-3 bars and graded the opening gap as a "sharp
     # drop", buying and selling within the same second (found 2026-08-11). Two minutes
     # of observed tape is the price of admission.
-    if st.get("by_time") and st["span"][i] < 120:
+    if st.get("by_time") and st["span"][i] < 60:
+        # 60s of observed tape (boss 2026-08-20 close: 'start exactly 09:00' -
+        # measured over 251 days: zero cost, and the tick clock gains the
+        # 09:01 minute; the physical floor is the pattern itself, ~09:03 on
+        # the 1-min clock)
         return False
     if st["rng"][i] < d.get("chop", 0.40):          # nothing is happening - stand aside
         return False
@@ -1035,7 +1039,7 @@ def _morning_entry(s: dict, v: dict, i: int, closes: list[float],
     win; the US-night requirement was tested and rejected (-1.4M - big US
     mornings fade; volume tells the truth)."""
     m = v.get("morning") or {}
-    if not now_str or not ("09:05" <= str(now_str)[:5] < m.get("until", "09:20")):
+    if not now_str or not ("09:01" <= str(now_str)[:5] < m.get("until", "09:20")):
         return False
     if i < 5:
         return False
@@ -1067,7 +1071,7 @@ def _burst_entry(s: dict, v: dict, i: int, closes: list[float],
     first 2 minutes are never judged; deployed at the boss's order with the
     250-day measurement running alongside."""
     bcf = v.get("burst") or {}
-    if i < 2 or not now_str or str(now_str)[:5] < "09:02":
+    if i < 2 or not now_str or str(now_str)[:5] < "09:01":
         return False
     c = closes[i]
     if not c or c < max(closes[:i + 1]):
