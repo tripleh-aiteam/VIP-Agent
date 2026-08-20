@@ -226,7 +226,7 @@ VARIANTS: list[dict] = [
      # drip. Same doors, same sizes, same resets - only the harvest differs.
      "drip": {"step": 1.0, "up_frac": 0.50, "dn_frac": 0.50, "stop_reset": 1.5,
               # 14:00 closing hour (boss package 2026-08-20: +39.2M/yr, win 69%)
-              "sell_after": "14:00",
+              "sell_after": "15:00",
               "slice_total": True, "rebuy": True,
               # his retreat law (14:5x, 08-13): in profit, a rise turns down -
               # the 2nd blue sells (now 50% here); a single HUGE blue (>=0.9%)
@@ -297,7 +297,7 @@ VARIANTS: list[dict] = [
               # ends at -0.5% off the peak - a fixed give-back instead of two
               # candles' worth. blues 99 = candle-counting retired; the big
               # single blue (>=0.9%) still sells instantly.
-              "sell_after": "14:00",
+              "sell_after": "15:00",
               "rebuy": True, "reboard": True,
               "retreat": {"big": 0.9, "arm": 0.85, "trail": 0.5, "blues": 99},
               "reinforce": {"frac": 0.5, "max": 2}}},
