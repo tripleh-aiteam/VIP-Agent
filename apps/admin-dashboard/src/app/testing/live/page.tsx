@@ -606,6 +606,8 @@ export default function LiveDeskPage() {
   const tickRef = useRef(tick); tickRef.current = tick;
 
   const detSeqRef = useRef(0);
+  const lastReqRef = useRef<{ id: string; tradeIdx: number | null;
+                              want: string } | null>(null);
   const [detBusy, setDetBusy] = useState(false);
   // the day (d8) of the chart inside `det` - the server draws the clicked trade's day
   const detDayRef = useRef("");
@@ -622,6 +624,12 @@ export default function LiveDeskPage() {
     // NO --reload and a restart during market hours costs ~72s of real tape that cannot
     // be recovered. This makes the fix work against the server that is running right now.
     const want = tradeCode || codeRef.current;
+    // remember exactly what the user asked for: the 3s refresher must re-ask
+    // THIS, not the previous company - a cold key answers {computing} while
+    // the old company's warm key answers instantly, so refreshing the old one
+    // silently cancelled every cross-company click (boss 2026-08-20: "if I
+    // click another company in the chart side it is not showing")
+    lastReqRef.current = { id, tradeIdx, want };
     // LAST CLICK WINS. The detail payload is the whole day (60,000 bars, several MB), so
     // a response can land seconds after it was asked for - and an OLD response arriving
     // after a NEW click used to overwrite the click, which read as "clicking the buy time
@@ -867,12 +875,18 @@ export default function LiveDeskPage() {
       pull();
       // a stored day's trades cannot change - re-downloading the multi-MB detail every
       // 3s only churned the chart under his cursor. Refresh it live-only.
-      if (sel && !ruleDayRef.current)
-        // pick===null covers a clicked HOLDING too: keep the company the chart is
-        // already drawing, or 3s later it snaps to the stock button and the buy
-        // arrow vanishes (boss 2026-08-12: "chart resetting and arrow disappearing")
-        openRule(sel, pick, pick !== null ? detRef.current?.trades[pick]?.code
-                                          : detRef.current?.chart?.code);
+      if (sel && !ruleDayRef.current) {
+        // refresh the USER'S LAST REQUEST, never the previous det's company -
+        // while a cross-company click is still computing, refreshing the old
+        // company's warm key overwrote the click every 3 seconds (boss
+        // 2026-08-20). pick===null still covers a clicked HOLDING.
+        const lr = lastReqRef.current;
+        if (lr && lr.id === sel)
+          openRule(lr.id, lr.tradeIdx, lr.want);
+        else
+          openRule(sel, pick, pick !== null ? detRef.current?.trades[pick]?.code
+                                            : detRef.current?.chart?.code);
+      }
     }, 3000);
     const b = setInterval(() => api<Status>("/paper-desk/live/status").then(setSt).catch(() => {}), 15000);
     return () => { clearInterval(a); clearInterval(b); };
