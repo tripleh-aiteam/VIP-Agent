@@ -822,11 +822,17 @@ export default function LiveDeskPage() {
   // from a click on a trade in the 매매 내역)
   const openStock = useCallback((c2: string) => {
     setCode(c2); codeRef.current = c2;
-    const id = sel || shownRules[0]?.id;
+    // NEVER MIX ALGORITHMS (boss 2026-08-20: "if I am in Algo 3 and click,
+    // it should show only that algorithm's trades"): with no rule open, a
+    // stock click opens the CURRENT BOARD'S algorithm - falling back to the
+    // rank list's top rule could silently chart a different algorithm
+    const famRule = way === "d1" ? "D1" : way === "d2" ? "D2"
+                  : way === "d3" ? "D3" : null;
+    const id = sel || famRule || shownRules[0]?.id;
     if (id) { setSel(id); openRule(id, null, c2); }
     setTimeout(() => document.getElementById("rule-detail")?.scrollIntoView(
       { behavior: "smooth", block: "start" }), 60);
-  }, [sel, shownRules, openRule]);
+  }, [sel, way, shownRules, openRule]);
 
   const loadDf = useCallback((c: string, mins: number, f = "", tt = "") => {
     if (!c) return;
@@ -1277,7 +1283,10 @@ export default function LiveDeskPage() {
             onClick={() => { if (way === k) return;
                              setWay(k); setMlView("all");
                              setFamOpen(true); setFam(null);
-                             setDet(null); setSel(null); }}
+                             setDet(null); setSel(null);
+                             // the old algorithm's last request must not ride
+                             // the refresher into the new board
+                             lastReqRef.current = null; }}
             className="text-[11.5px] font-bold px-3 py-1 rounded-md border"
             style={way === k ? { background: "#6a1b9a", color: "#fff", borderColor: "#6a1b9a" }
                              : { borderColor: "#6a1b9a", color: "#6a1b9a", background: "transparent" }}>
