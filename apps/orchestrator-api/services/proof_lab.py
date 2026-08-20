@@ -1652,12 +1652,21 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                     # that the ride holds - his old riding law's own rule
                     # ("do not sell at 0.5% or 1% if it is rising sharply").
                     # D1/D2 carry no arm (their retreats sell small slices).
+                    # two measurable dials (boss 2026-08-20, hunting the lost
+                    # 34% of wave-height): retreat.blues (how many down candles
+                    # end a ride, default 2) and retreat.trail (a fixed % fall
+                    # from the peak sells regardless of candle count). Neither
+                    # is set on any live variant until the 250-day study picks.
+                    _trail9 = _pr.get("trail")
+                    _trail_hit = bool(_trail9) and pos.get("pr_pk", 0) > 0 \
+                        and c <= pos.get("pr_pk", 0) * (1 - _trail9 / 100)
                     if ((not pos.get("pr_sold")) and not _chop_now
                             and c > pos.get("base", 0)
                             and pos.get("pr_pk", 0) >= pos.get("base", 0)
                             * (1 + _pr.get("arm", 0.0) / 100)
                             and pos.get("pr_pk", 0) > pos.get("base", 0)
-                            and (pos.get("pr_blues", 0) >= 2 or _big)
+                            and (pos.get("pr_blues", 0) >= _pr.get("blues", 2)
+                                 or _big or _trail_hit)
                             and pos["qty"] == _qty_bar0):
                         _yd3 = (pos.get("qty_tot") or pos["qty0"]) \
                             if dp.get("slice_total") else pos["qty0"]
