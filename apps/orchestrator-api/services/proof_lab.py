@@ -295,7 +295,7 @@ VARIANTS: list[dict] = [
               # candles' worth. blues 99 = candle-counting retired; the big
               # single blue (>=0.9%) still sells instantly.
               "sell_after": "14:00",
-              "rebuy": True,
+              "rebuy": True, "reboard": True,
               "retreat": {"big": 0.9, "arm": 0.85, "trail": 0.5, "blues": 99},
               "reinforce": {"frac": 0.5, "max": 2}}},
     # Sharp (ladder) leaves the live board 2026-08-13: the boss replaced it with
@@ -1164,6 +1164,9 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
     up = [0] * n
     dn = [0] * n
     last_exit = [-1] * n       # per stock: bar index of this rule's last completed sell
+    reb_pk = [None] * n        # re-board anchor (boss 2026-08-21: "after the 2nd
+                               # blue sell, THEN AGAIN BUY" - a ride's old peak;
+                               # price back above it = the climb resumed)
     lastc = [0.0] * n          # each stock's most recent close, for the closing bell
 
     def _secs(t: str) -> int:
@@ -1333,7 +1336,9 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                   and not (v.get("morning")
                            and _morning_entry(s, v, i, closes, _now))
                   and not (v.get("burst")
-                           and _burst_entry(s, v, i, closes, _now))):
+                           and _burst_entry(s, v, i, closes, _now))
+                  and not (v.get("drip", {}).get("reboard")
+                           and reb_pk[si] and c > reb_pk[si])):
                 pass
             elif v.get("dip") and _dip_state(s, v["dip"].get("win_sec", 600))["hii"][i]                     <= last_exit[si]:
                 # ONE ENTRY PER SHARP DECREASE, second iteration (boss 2026-08-11: the
@@ -1426,7 +1431,13 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                                                           _now))
                                    or (bool(v.get("burst"))
                                        and _burst_entry(s, v, i, closes,
-                                                        _now))))
+                                                        _now))
+                                   or bool(v.get("drip", {}).get("reboard")
+                                           and reb_pk[si]
+                                           and c > reb_pk[si])))
+                if (v.get("drip", {}).get("reboard") and reb_pk[si]
+                        and c > reb_pk[si]):
+                    reb_pk[si] = None    # one re-board per broken peak
                 if v.get("dip") and not _via_trend:
                     _std = _dip_state(s, v["dip"].get("win_sec", 600))
                     _typd = _std["typ"][i]
@@ -1760,6 +1771,11 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                     pos["rf_i"] = i
                 if pos["qty"] <= 0 and pos.get("qty_add", 0) <= 0:
                     _drow(f"전량 매도 완료 · 조각 {len(pos['slices'])}회")
+                    if (dp.get("reboard") and pos.get("pr_pk")
+                            and pos["sold_won"] > pos["cost"]):
+                        # remember where this ride peaked - if the price beats
+                        # it, the climb never ended and we re-board
+                        reb_pk[si] = pos["pr_pk"]
                     poss[si] = None
                 continue
             if v.get("ride"):
