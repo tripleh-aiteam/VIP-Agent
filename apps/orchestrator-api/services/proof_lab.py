@@ -224,6 +224,8 @@ VARIANTS: list[dict] = [
      # 50% too - two rungs and the hand is empty. 알고리즘2 keeps the 10%
      # drip. Same doors, same sizes, same resets - only the harvest differs.
      "drip": {"step": 1.0, "up_frac": 0.50, "dn_frac": 0.50, "stop_reset": 1.5,
+              # 14:00 closing hour (boss package 2026-08-20: +39.2M/yr, win 69%)
+              "sell_after": "14:00",
               "slice_total": True, "rebuy": True,
               # his retreat law (14:5x, 08-13): in profit, a rise turns down -
               # the 2nd blue sells (now 50% here); a single HUGE blue (>=0.9%)
@@ -260,6 +262,11 @@ VARIANTS: list[dict] = [
      # RELOAD - a fresh sharp-decrease turn buys back what was sold. The duel now
      # isolates exactly one question: does the reload law earn its keep?
      "drip": {"step": 1.0, "up_frac": 0.10, "dn_frac": 0.10, "stop_reset": 1.5,
+              # PING-PONG (boss's law, measured +38M/yr and chosen 2026-08-20
+              # after the SK텔레콤 98,100-top reload: a sold rung re-buys only
+              # a full step CHEAPER and sells again at the same rung - round
+              # trips can only add money; replaces reload & down-steps)
+              "pingpong": True,
               "slice_total": True, "rebuy": True, "retreat": {"big": 0.9},
               "reinforce": {"frac": 0.5, "max": 2}}},
     # 알고리즘 3 (boss 2026-08-20 09:0x): "if the price is continuously
@@ -282,11 +289,14 @@ VARIANTS: list[dict] = [
                  "alt_run": 1.0},
      "burst": {"rise": 0.7, "win_min": 10},
      "drip": {"step": 999.0, "up_frac": 1.0, "dn_frac": 0.0, "stop_reset": 1.5,
+              # 14:00 closing hour + TRAIL exit (boss package 2026-08-20,
+              # +66.5M/yr combined): armed at +0.85% as before, but the ride
+              # ends at -0.5% off the peak - a fixed give-back instead of two
+              # candles' worth. blues 99 = candle-counting retired; the big
+              # single blue (>=0.9%) still sells instantly.
+              "sell_after": "14:00",
               "rebuy": True,
-              # arm 0.85 (boss's "around 1%" band): the sell-all watch begins
-              # only after the climb stands +0.85% over base - micro-peaks
-              # like NAVER's +0.04% at 09:27 no longer end the ride
-              "retreat": {"big": 0.9, "arm": 0.85},
+              "retreat": {"big": 0.9, "arm": 0.85, "trail": 0.5, "blues": 99},
               "reinforce": {"frac": 0.5, "max": 2}}},
     # Sharp (ladder) leaves the live board 2026-08-13: the boss replaced it with
     # his two drip scenarios ("instead of sharp rule make it Algorithm 1/2").
@@ -1542,8 +1552,10 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                         and pos.get("cost")):
                     _tot2 = (pos["sold_won"] + c * pos["qty"]) / pos["cost"]
                     if _tot2 > 1.0:
-                        _dsell(pos["qty"], c, "15시 이후 이익 정리")
-                        _drow(f"15시 이후 이익 전량 정리 · 조각 {len(pos['slices'])}회")
+                        _hh9 = dp.get("sell_after", "15:00")[:2]
+                        _dsell(pos["qty"], c, f"{_hh9}시 이후 이익 정리")
+                        _drow(f"{_hh9}시 이후 이익 전량 정리 · 조각 "
+                              f"{len(pos['slices'])}회")
                         poss[si] = None
                         continue
                 # -1.5% law: sell ALL, re-buy immediately at the lower price.
