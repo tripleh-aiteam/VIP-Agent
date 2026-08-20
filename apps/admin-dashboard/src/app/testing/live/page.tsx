@@ -2676,7 +2676,16 @@ export default function LiveDeskPage() {
             "it is making confussion"). Same shared tick/period state as before. */}
         <span className="text-[10.5px] text-[var(--text-muted)]">{t("종목", "stock")}</span>
         <select value={code}
-          onChange={(e) => { const c2 = e.target.value; setCode(c2); codeRef.current = c2; pull(); }}
+          onChange={(e) => { const c2 = e.target.value;
+                             // THE dropdown the boss actually uses (found
+                             // 2026-08-20 after three fixes elsewhere): it only
+                             // switched the tape, and an open rule detail's
+                             // chart WINS over the tape - so with SK텔레콤's
+                             // detail open, picking SK하이닉스 here changed
+                             // nothing, ever. It now re-points the open detail
+                             // too, same as every other stock click.
+                             setCode(c2); codeRef.current = c2; pull();
+                             if (sel) openRule(sel, null, c2); }}
           className="text-[12px] font-extrabold px-1.5 py-1 rounded-lg border bg-[var(--bg-primary)]"
           style={{ borderColor: TEAL, color: TEAL }}>
           {(st?.stocks ?? [{ code: "005930", name: "삼성전자", ticks: 0 }]).map((x) => (
