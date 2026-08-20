@@ -191,6 +191,7 @@ VARIANTS: list[dict] = [
     # while still holding. 250-day holdout: drip -8.79M vs ladder -11.91M.
     {"id": "D1", "entry": 1, "kind": "pct", "a": 0.3, "b": 2.0, "exec": "limit",
      "stop_pct": 1.5, "wait_bars": 2, "family": "d1", "wall_price": True,
+     "bell": "15:19",
      "ignore_gate": True,
      # volume law (boss: "volume up -> price up"): at a dip rebound volume is
      # structurally LOW (0.4-0.6x avg today), so a hard gate trades never -
@@ -234,6 +235,7 @@ VARIANTS: list[dict] = [
               "reinforce": {"frac": 0.5, "max": 2}}},
     {"id": "D2", "entry": 1, "kind": "pct", "a": 0.3, "b": 2.0, "exec": "limit",
      "stop_pct": 1.5, "wait_bars": 2, "family": "d2", "wall_price": True,
+     "bell": "15:19",
      "ignore_gate": True,
      # volume law (boss: "volume up -> price up"): at a dip rebound volume is
      # structurally LOW (0.4-0.6x avg today), so a hard gate trades never -
@@ -279,6 +281,7 @@ VARIANTS: list[dict] = [
     # past a peak, 2 blues (or one >=0.9% blue) sells the whole position.
     {"id": "D3", "entry": 1, "kind": "pct", "a": 0.3, "b": 2.0, "exec": "limit",
      "stop_pct": 1.5, "wait_bars": 2, "family": "d3", "wall_price": True,
+     "bell": "15:19",
      "ignore_gate": True,
      "vol_size": {"x": 1.2, "frac": 0.5}, "us_habit": True,
      "dip": {"drop": 0.7, "sharp": 3.0, "ups": 1, "chop": 1.0, "win_sec": 1800},
