@@ -695,7 +695,7 @@ def live_rule_trades(variant: str = Query(...), tick: int = Query(5),
                                bars=bars, limit=limit, around=around, budget=_b,
                                day=day, frm=frm, to=to, use_gate=bool(gate),
                                allow_fallback=bool(auto)),
-                placeholder={"ok": False, "computing": True})
+                placeholder={"ok": False, "computing": True}, vital=True)
 
 
 _FAM_TTL: dict = {}
@@ -716,7 +716,7 @@ _SWR: dict = {}
 _SWR_BUSY: dict = {}
 
 
-def _swr(key, fresh_sec: float, compute, placeholder=None):
+def _swr(key, fresh_sec: float, compute, placeholder=None, vital: bool = False):
     """placeholder (boss 2026-08-19: 'it is not showing trading history... I do
     not want more like this case'): a COLD key - an hour window, a stored day,
     the first poll after a restart - used to compute a full-day replay inline
@@ -739,7 +739,11 @@ def _swr(key, fresh_sec: float, compute, placeholder=None):
         # replays at once and the process died without a word - the OS kills
         # an out-of-memory python silently). A skipped spawn simply retries
         # on the page's next poll; stale answers keep serving meanwhile.
-        if len(_SWR_BUSY) >= 3:
+        # VITAL keys (a user's click waiting for a chart) skip the cap: the
+        # board's endless rank/history refreshers were hogging all 3 slots and
+        # a cross-company click starved forever (boss 2026-08-20: "if I am in
+        # SK I cannot move to Samsung")
+        if not vital and len(_SWR_BUSY) >= 3:
             return
         _SWR_BUSY[key] = _t.time()
 
