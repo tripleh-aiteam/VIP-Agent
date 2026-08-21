@@ -1771,6 +1771,16 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                     elif _dps9 is not None and _sc9.get("sell_bot") is not None \
                             and _dps9 <= _sc9["sell_bot"]:
                         _blues9 = _sc9.get("bot_blues", _blues9 + 1)
+                        # THE BOTTOM TAKE (boss 2026-08-21 night: "should we
+                        # sell if we gain 2% even though we cannot reach the
+                        # peak? at 2% also we wait, and if it starts to
+                        # decrease then we sell"): patience until the prize,
+                        # hair-trigger after - once the ride's peak stands
+                        # bot_take% above base, the blues count drops.
+                        if (_sc9.get("bot_take")
+                                and pos.get("pr_pk", 0) >= pos.get("base", 0)
+                                * (1 + _sc9["bot_take"] / 100)):
+                            _blues9 = _sc9.get("bot_take_blues", 2)
                     # THE DECAY EXIT (boss 2026-08-21, the 두산 10:23 case:
                     # "the agent just waits even when there is a good chance
                     # to sell, then sells at -1%"): a position that NEVER
