@@ -805,25 +805,40 @@ def live_layers(code: str = Query(...)):
         fu = kr._fuel(c6, bars) if bars else None
     except Exception:
         pass
+    # every line carries both tongues; the page's language toggle picks
+    # (boss 2026-08-21: "if English the explanation should be in English,
+    # if Korean it should be in Korean")
     steps = []
     if dp is not None:
         pct = round(dp * 100)
         if dp >= 0.85:
             zv = "최고가 근처 - 매수 금지 구역 (자기 최고가를 다시 넘기 어렵다)"
+            zve = "near its own record - NO-BUY zone (hard to beat its own highest)"
         elif dp >= 0.6:
             zv = "연중 상단 - 조심 구역, 절반 매수"
+            zve = "upper year range - caution zone, half-size buys"
         elif dp <= 0.20:
             zv = ("바닥 근처 - 매수 존. 상승을 음봉으로 팔지 않는다 "
                   "(+2% 도달 후 첫 하락에 매도 밸브)")
+            zve = ("near the year's floor - BUYING zone. A rise is not sold "
+                   "on falling candles (valve: after +2%, first dip sells)")
         else:
             zv = "중간 지대 - 정상 사이즈"
+            zve = "middle band - normal size"
         steps.append({"icon": "📅", "name": "일봉 (연중 위치)",
-                      "value": f"1년 범위의 {pct}% 지점", "verdict": zv})
+                      "name_en": "Daily chart (year position)",
+                      "value": f"1년 범위의 {pct}% 지점",
+                      "value_en": f"at {pct}% of the 1-year range",
+                      "verdict": zv, "verdict_en": zve})
     if fu is not None:
         steps.append({"icon": "📊", "name": "거래량 (연료)",
+                      "name_en": "Volume (fuel)",
                       "value": f"최근 10분 = 평소의 {fu:.1f}배",
+                      "value_en": f"last 10 min = {fu:.1f}x its usual",
                       "verdict": ("연료 부족 - 절반 매수" if fu <= 0.7
-                                  else "연료 정상 - 정상 사이즈")})
+                                  else "연료 정상 - 정상 사이즈"),
+                      "verdict_en": ("low fuel - half-size buys" if fu <= 0.7
+                                     else "fuel normal - full size")})
     # the intern's stamps: today's log, or the freshest log there is
     stamps = []
     try:
@@ -841,14 +856,27 @@ def live_layers(code: str = Query(...)):
         pass
     cc = _C(r.get("stamp") for r in stamps)
     steps.append({"icon": "📰", "name": "뉴스 (Qwen3 로컬 분석)",
+                  "name_en": "News (local Qwen3 analysis)",
                   "value": (f"오늘 {len(stamps)}건: 호재 {cc.get('호재', 0)} · "
                             f"중립 {cc.get('중립', 0)} · 위험 {cc.get('위험', 0)}"
                             if stamps else "오늘 분석된 기사 없음"),
-                  "verdict": "관찰 모드 - 참고용 (아직 매매 투표권 없음)"})
+                  "value_en": (f"today {len(stamps)} items: good "
+                               f"{cc.get('호재', 0)} · neutral "
+                               f"{cc.get('중립', 0)} · danger "
+                               f"{cc.get('위험', 0)}"
+                               if stamps else "no articles analyzed today"),
+                  "verdict": "관찰 모드 - 참고용 (아직 매매 투표권 없음)",
+                  "verdict_en": "observe mode - reference only "
+                                "(no vote on trades yet)"})
     steps.append({"icon": "⏱", "name": "분봉 (트리거)",
+                  "name_en": "Minute chart (trigger)",
                   "value": "다섯 개의 문 + 수확/정지 법",
+                  "value_en": "the five doors + harvest/stop laws",
                   "verdict": "실제 매수/매도 순간은 분봉 엔진이 결정 - "
-                             "각 거래의 '이유' 칸이 그 문이다"})
+                             "각 거래의 '이유' 칸이 그 문이다",
+                  "verdict_en": "the exact buy/sell moment is decided by the "
+                                "minute engine - each trade's 'why' names "
+                                "its door"})
     return {"ok": True, "code": c6, "price": px, "daily_pos": dp, "fuel": fu,
             "steps": steps,
             "news": [{"ts": r.get("ts", ""), "stamp": r.get("stamp"),

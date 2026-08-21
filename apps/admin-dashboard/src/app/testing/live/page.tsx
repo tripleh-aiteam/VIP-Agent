@@ -701,14 +701,16 @@ export default function LiveDeskPage() {
   // One small fetch per open company; renders as the layer story under the
   // clicked trade's line.
   const [layers9, setLayers9] = useState<{ ok?: boolean;
-    steps?: { icon: string; name: string; value: string; verdict: string }[];
+    steps?: { icon: string; name: string; name_en?: string; value: string;
+      value_en?: string; verdict: string; verdict_en?: string }[];
     news?: { ts: string; stamp: string; title: string; why: string }[] } | null>(null);
   const layersCode9 = det?.chart?.code || null;
   useEffect(() => {
     if (!layersCode9) { setLayers9(null); return; }
     let on9 = true;
     api<{ ok?: boolean;
-      steps?: { icon: string; name: string; value: string; verdict: string }[];
+      steps?: { icon: string; name: string; name_en?: string; value: string;
+        value_en?: string; verdict: string; verdict_en?: string }[];
       news?: { ts: string; stamp: string; title: string; why: string }[] }>(
       `/paper-desk/live/rules/layers?code=${layersCode9}`)
       .then((d) => { if (on9) setLayers9(d?.ok ? d : null); })
@@ -2286,16 +2288,16 @@ export default function LiveDeskPage() {
                 <b style={{ color: "#2e7d32" }}>🧭 {t("레이어 판정 — 이 종목의 오늘 단계", "layer verdicts — this stock's steps today")}</b>
                 {layers9.steps.map((s9, i9) => (
                   <div key={i9} className="mt-0.5">
-                    <span>{s9.icon}</span> <b className="text-[var(--text-primary)]">{s9.name}</b>
-                    <span className="ml-1 text-[var(--text-secondary)]">{s9.value}</span>
-                    <span className="ml-1 text-[var(--text-muted)]">→ {s9.verdict}</span>
+                    <span>{s9.icon}</span> <b className="text-[var(--text-primary)]">{t(s9.name, s9.name_en || s9.name)}</b>
+                    <span className="ml-1 text-[var(--text-secondary)]">{t(s9.value, s9.value_en || s9.value)}</span>
+                    <span className="ml-1 text-[var(--text-muted)]">→ {t(s9.verdict, s9.verdict_en || s9.verdict)}</span>
                   </div>
                 ))}
                 {(layers9.news?.length ?? 0) > 0 && (
                   <div className="mt-1 pt-1" style={{ borderTop: "1px dashed var(--border-default)" }}>
                     {layers9.news!.map((n9, i9) => (
                       <div key={i9} className="text-[11px]">
-                        <b style={{ color: n9.stamp === "호재" ? RED : n9.stamp === "위험" ? BLUE : "var(--text-muted)" }}>[{n9.stamp}]</b>
+                        <b style={{ color: n9.stamp === "호재" ? RED : n9.stamp === "위험" ? BLUE : "var(--text-muted)" }}>[{t(n9.stamp, n9.stamp === "호재" ? "GOOD" : n9.stamp === "위험" ? "DANGER" : "NEUTRAL")}]</b>
                         <span className="ml-1 text-[var(--text-secondary)]">{n9.title.slice(0, 70)}</span>
                         {n9.why && <span className="ml-1 text-[var(--text-muted)]">— {n9.why.slice(0, 70)}</span>}
                       </div>
