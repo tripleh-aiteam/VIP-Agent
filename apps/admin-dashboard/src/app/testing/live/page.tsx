@@ -1440,7 +1440,14 @@ export default function LiveDeskPage() {
                 )}
                 {fam && (
                   <span className="text-[10.5px] font-bold text-[var(--text-primary)]">
-                    {fam.trips}{t("건", " trades")}
+                    {/* BOTH counts (boss 2026-08-22: episode = money truth,
+                        slices = how hard it actually worked; replacing one
+                        with the other would decorate, showing both is honest) */}
+                    {fam.rows.filter((r) => !r.partial).length}{t("판", " ep")}
+                    <span className="font-normal text-[var(--text-muted)]">
+                      {t(` (조각매도 ${fam.wins + fam.losses}회)`,
+                         ` (${fam.wins + fam.losses} slice-sells)`)}
+                    </span>
                     {" · "}
                     {(() => {
                       // THE FILTER IS THE LENS (boss 2026-08-13): with any filter
@@ -1513,10 +1520,29 @@ export default function LiveDeskPage() {
                            color: money ? "#e65100" : "var(--text-muted)" }}>
                   {money ? t("💰 손익 숨기기", "💰 hide money") : t("💰 손익 보기", "💰 show money")}
                 </button>
-                {money && fam && (
-                  <b className="text-[10.5px]" style={{ color: fam.net_won > 0 ? "#b02a2a" : fam.net_won < 0 ? "#1565c0" : "var(--text-muted)" }}>
-                    {fam.net_won > 0 ? "+" : ""}₩{Math.round(fam.net_won).toLocaleString()}</b>
-                )}
+                {money && fam && (() => {
+                  // the money follows the filter too (boss 2026-08-21: header
+                  // said +1,394,832 while the filtered rows summed +229k -
+                  // percentages were window-recounted but money was not)
+                  const filt9 = !!(fCode || fRes || fFrom || fTo);
+                  const inWin9 = (t2?: string) => {
+                    if (!t2) return false;
+                    const hm = t2.slice(0, 5);
+                    return (!fFrom || hm >= fFrom) && (!fTo || hm <= fTo);
+                  };
+                  const mw = !filt9 ? fam.net_won : fam.rows.filter((r) =>
+                    (!fCode || r.code === fCode) && (!fRes || r.result === fRes)
+                    && (!(fFrom || fTo) || inWin9(r.buy_t) || inWin9(r.sell_t)))
+                    .reduce((s2, r) => s2 + (r.won || 0), 0);
+                  return (
+                    <b className="text-[10.5px]" style={{ color: mw > 0 ? "#b02a2a" : mw < 0 ? "#1565c0" : "var(--text-muted)" }}>
+                      {mw > 0 ? "+" : ""}₩{Math.round(mw).toLocaleString()}
+                      {filt9 && <span className="ml-0.5 text-[9px] font-bold px-1 rounded"
+                        style={{ background: "rgba(230,81,0,0.14)", color: "#e65100" }}>
+                        {t("선택 구간", "window")}</span>}
+                    </b>
+                  );
+                })()}
                 <span className="ml-auto text-[10px]" style={{ color: "#0f5132" }}>
                   {famBusy ? t("갱신 중…", "updating…") : famOpen ? t("닫기 ▲", "close ▲") : t("펼치기 ▼", "open ▼")}
                 </span>
@@ -1796,9 +1822,15 @@ export default function LiveDeskPage() {
                                   const row6 = (r.parts!.sells as unknown as (number | string | null)[][])[k2];
                                   const b2 = (row6 && row6.length > 6 ? row6[6] : null) as number | null;
                                   const g2 = b2 ? (p2 / b2 - 1) * 100 : null;
+                                  // the fee line (boss 2026-08-21: a green %
+                                  // under +0.23% is a loss in disguise) -
+                                  // amber warns the eye
+                                  const feeLine = g2 != null && g2 > 0 && g2 < 0.23;
                                   return g2 != null ? (
-                                    <b className="ml-1 text-[10px]" style={{ color: g2 > 0 ? "#b02a2a" : g2 < 0 ? "#1565c0" : "var(--text-muted)" }}>
-                                      {g2 > 0 ? "+" : ""}{g2.toFixed(2)}%</b>
+                                    <b className="ml-1 text-[10px]"
+                                      title={feeLine ? t("이익이 수수료(0.23%)보다 작음 - 실제로는 손실", "gain smaller than the 0.23% fee - actually a loss") : undefined}
+                                      style={{ color: feeLine ? "#b8860b" : g2 > 0 ? "#b02a2a" : g2 < 0 ? "#1565c0" : "var(--text-muted)" }}>
+                                      {g2 > 0 ? "+" : ""}{g2.toFixed(2)}%{feeLine ? "⚠" : ""}</b>
                                   ) : null;
                                 })()}</div>
                             )) : (
