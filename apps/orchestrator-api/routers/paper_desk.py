@@ -802,40 +802,47 @@ def _fam_compute(family: str, tick: int, period: int, day: str,
             continue
         for h in (d.get("holding") or []):
             holding.append(dict(h, rule=v["id"]))
-            # every sold slice of the open episode is a row of its own in the
-            # completed part (boss 2026-08-13: "it should list including time
-            # and clickable time to proof"). P&L measured against the episode's
-            # blended base; money realized on the slice's shares.
+            # ONE ROW PER OPEN EPISODE (boss 2026-08-21: "one set of buys, and
+            # in the selling column show all sells with time and price" - the
+            # per-slice rows repeated the same buying list and confused the
+            # room). Every sold slice keeps its full record inside the row's
+            # sells; the tally below still counts each slice on its own.
             _hb = (h.get("parts") or {}).get("buys")
-            for p_, q_, w_, t_, i_, *r_ in (h.get("slices") or []):
-                _left = r_[0] if r_ else None
-                # judged against the base AT THE SALE, not today's drifted one
-                _base = ((r_[1] if len(r_) > 1 else None)
-                         or h.get("base") or h.get("entry") or p_)
-                _g = (p_ / _base - 1) * 100 if _base else 0.0
+            _sl = h.get("slices") or []
+            if _sl:
+                _sells7 = []
+                _won_sum = 0.0
+                _cost_sum = 0.0
+                for p_, q_, w_, t_, i_, *r_ in _sl:
+                    _left = r_[0] if r_ else None
+                    _base = ((r_[1] if len(r_) > 1 else None)
+                             or h.get("base") or h.get("entry") or p_)
+                    _sells7.append([p_, q_, t_, i_, _left, w_, _base])
+                    _won_sum += (p_ - _base) * q_
+                    _cost_sum += _base * q_
+                _gt = (_won_sum / _cost_sum * 100) if _cost_sum else 0.0
+                _lastq = _sl[-1]
+                _left0 = (_lastq[5] if len(_lastq) > 5 and
+                          isinstance(_lastq[5], (int, float)) else None)
+                _left9 = h.get("qty_left")
                 rows.append({"rule": v["id"], "rule_ko": d.get("ko"),
                              "rule_en": d.get("en"), "idx": -1,
                              "code": h.get("code"), "name": h.get("name"),
                              "d8": None, "buy_t": h.get("buy_t"),
-                             "entry": _base, "sell_t": t_, "exit": p_,
-                             "net_pct": round(_g - 0.23, 3),
-                             "exit_why": (f"{w_} 계단 매도"
-                                          + (f" · 잔여 {_left:,}주 보유 중"
-                                             if _left is not None
+                             "entry": h.get("base") or h.get("entry"),
+                             "sell_t": _sl[-1][3], "exit": _sl[-1][0],
+                             "net_pct": round(_gt - 0.23, 3),
+                             "exit_why": (f"계단 매도 {len(_sl)}조각"
+                                          + (f" · 잔여 {_left9:,}주 보유 중"
+                                             if _left9 is not None
                                              else " · 보유 중 에피소드")),
-                             "left": _left,
-                             "qty": q_, "won": round((p_ - _base) * q_),
-                             "result": ("win" if _g > 0 else "loss" if _g < 0
-                                        else "flat"),
+                             "left": _left9,
+                             "qty": sum(x[1] for x in _sells7),
+                             "won": round(_won_sum),
+                             "result": ("win" if _won_sum > 0
+                                        else "loss" if _won_sum < 0 else "flat"),
                              "partial": True, "sig": None, "wall": None,
-                             # the slice row's sell carries the FULL record - time,
-                             # bar, remaining, reason, at-sale base - so the board
-                             # prints (잔여 N) and the slice's own % exactly like an
-                             # episode row (boss 2026-08-20: "now I cannot see
-                             # winning % in the completed part")
-                             "parts": {"buys": _hb,
-                                       "sells": [[p_, q_, t_, i_, _left, w_,
-                                                  _base]]}})
+                             "parts": {"buys": _hb, "sells": _sells7}})
         for i, tr in enumerate(d.get("trades") or []):
             won = round((tr.get("entry") or 0) * (tr.get("qty") or 1)
                         * (tr.get("net_pct") or 0) / 100)
@@ -858,7 +865,7 @@ def _fam_compute(family: str, tick: int, period: int, day: str,
     w = l = 0
     for r in rows:
         sells = (r.get("parts") or {}).get("sells") or []
-        if (not r.get("partial")) and sells and len(sells[0]) >= 4 and r.get("entry"):
+        if sells and len(sells[0]) >= 4 and r.get("entry"):
             for p_, _q, *_rest in sells:
                 _b0 = (_rest[4] if len(_rest) > 4 and _rest[4] else r["entry"])
                 if p_ > _b0:
