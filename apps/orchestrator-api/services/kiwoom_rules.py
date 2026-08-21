@@ -266,6 +266,36 @@ def _daily20(code: str, before_day: str) -> tuple:
     return out
 
 
+_YR_CACHE: dict = {}
+
+
+def _daily_pos(code: str, price: float) -> float | None:
+    """LAYER 1 (boss 2026-08-21): where this price sits in the stock's one-year
+    range - 0.0 = the year's low, 1.0 = the year's high. The context every law
+    may consult; near the top the desk gets careful (sizes halve, no averaging
+    down), near the bottom it trades with both hands."""
+    rng = _YR_CACHE.get(code)
+    if rng is None:
+        lo = hi = None
+        try:
+            import json as _j
+            from pathlib import Path as _P
+            f = (_P(__file__).resolve().parent.parent / "data" / "minute1_hist"
+                 / f"{code}.json")
+            if f.exists():
+                closes = [float(r[4]) for r in _j.loads(f.read_text())]
+                if closes:
+                    lo, hi = min(closes), max(closes)
+        except Exception:
+            lo = hi = None
+        rng = (lo, hi)
+        _YR_CACHE[code] = rng
+    lo, hi = rng
+    if not lo or not hi or hi <= lo or not price:
+        return None
+    return max(0.0, min(1.5, (price - lo) / (hi - lo)))
+
+
 _OV_CACHE: dict = {}
 
 
@@ -549,6 +579,9 @@ def rank(tick: int = 5, period: int = 0, day: str = "",
                          "prev_close": _daily20(code, d or _kd0())[0],
                          "low20": _daily20(code, d or _kd0())[1],
                          "open_vol_med": _open_vol_med(code),
+                         "daily_pos": _daily_pos(code,
+                                                 tp["cs"][-1]["close"]
+                                                 if tp["cs"] else 0),
                          "vols": [float(c.get("vol") or 0) for c in tp["cs"]],
                          "ctx": daily_ctx(code, d or _kd0()),
                          "gate_ok": (_gate_ok(code, d or _kd0()) if use_gate else True),
@@ -722,6 +755,8 @@ def trades(vid: str, tick: int = 5, period: int = 0, code: str = "",
                          "prev_close": _daily20(c_code, d or _kd0())[0],
                          "low20": _daily20(c_code, d or _kd0())[1],
                          "open_vol_med": _open_vol_med(c_code),
+                         "daily_pos": _daily_pos(c_code,
+                                                 cs[-1]["close"] if cs else 0),
                          "times": [c["hhmm"] for c in cs],
                          "vols": [float(c.get("vol") or 0) for c in cs],
                          "ctx": daily_ctx(c_code, d or _kd0()),

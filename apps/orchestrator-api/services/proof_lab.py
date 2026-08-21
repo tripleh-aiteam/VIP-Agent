@@ -197,6 +197,7 @@ VARIANTS: list[dict] = [
      # structurally LOW (0.4-0.6x avg today), so a hard gate trades never -
      # instead a quiet signal buys HALF size, a busy one full size
      "vol_size": {"x": 1.2, "frac": 0.5}, "us_habit": True,
+     "ctx": {"top": 0.85, "top_size": 0.5},
      # fences lowered at his order (2026-08-13, after 삼성전자 0.93%/1.30% and
      # NAVER 0.91%/1.37 turns were refused by hairs): drop 0.9, range 1.25.
      # Holdout cost measured before setting: about -0.6M/yr vs 1.0/1.5.
@@ -241,6 +242,7 @@ VARIANTS: list[dict] = [
      # structurally LOW (0.4-0.6x avg today), so a hard gate trades never -
      # instead a quiet signal buys HALF size, a busy one full size
      "vol_size": {"x": 1.2, "frac": 0.5}, "us_habit": True,
+     "ctx": {"top": 0.85, "top_size": 0.5},
      # fences lowered at his order (2026-08-13, after 삼성전자 0.93%/1.30% and
      # NAVER 0.91%/1.37 turns were refused by hairs): drop 0.9, range 1.25.
      # Holdout cost measured before setting: about -0.6M/yr vs 1.0/1.5.
@@ -284,6 +286,7 @@ VARIANTS: list[dict] = [
      "bell": "15:19",
      "ignore_gate": True,
      "vol_size": {"x": 1.2, "frac": 0.5}, "us_habit": True,
+     "ctx": {"top": 0.85, "top_size": 0.5},
      "dip": {"drop": 0.7, "sharp": 3.0, "ups": 1, "chop": 1.0, "win_sec": 1800},
      "scout": {"frac": 0.03, "confirm": 0.5},
      "trend": {"climb": 1.05, "dd": 0.4, "win": 30},
@@ -1428,6 +1431,13 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                 _q = (ml_meta or {}).get("qty") or _cap(c)
                 if v.get("us_habit") and (s.get("us_mode") or "calm") == "storm_down":
                     _q = max(1, _q // 3)
+                # LAYER 1 (boss 2026-08-21): near the year's TOP the desk gets
+                # careful - entries halve. (The bottom keeps full size; the
+                # disputed dials go to tonight's 250-day court before tuning.)
+                _dp9 = s.get("daily_pos")
+                if (v.get("ctx") and _dp9 is not None
+                        and _dp9 >= v["ctx"].get("top", 0.85)):
+                    _q = max(1, int(_q * v["ctx"].get("top_size", 0.5)))
                 if v.get("vol_size"):
                     _vv2 = s.get("vols") or []
                     _w2 = _vv2[max(0, i - 20):i]
@@ -1799,6 +1809,8 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                 # the dip we had already bought); each FURTHER one needs a high
                 # formed after the previous reinforcement - a genuinely new leg
                 if (_rf and pos.get("rf_used", 0) < _rf.get("max", 2)
+                        and not (v.get("ctx") and (s.get("daily_pos") or 0)
+                                 >= v["ctx"].get("top", 0.85))
                         and (not _now or str(_now) < dp.get("sell_after", "15:00"))
                         and pos.get("qty_add", 0) <= 0 and pos["qty"] > 0
                         and c < pos["base"]
