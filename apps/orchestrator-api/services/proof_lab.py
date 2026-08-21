@@ -303,7 +303,8 @@ VARIANTS: list[dict] = [
               # 2 blues, sell at the 3rd blue.' The trail steps aside; his
               # candle law rules the exit (arm 0.85 keeps the wait, big 0.9
               # keeps the huge-blue instant sale).
-              "retreat": {"big": 0.9, "arm": 0.85, "blues": 3},
+              "retreat": {"big": 0.9, "arm": 0.85, "blues": 3,
+                          "decay": True},
               "reinforce": {"frac": 0.5, "max": 2}}},
     # Sharp (ladder) leaves the live board 2026-08-13: the boss replaced it with
     # his two drip scenarios ("instead of sharp rule make it Algorithm 1/2").
@@ -1706,6 +1707,24 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                     elif c < prev:
                         pos["pr_blues"] = pos.get("pr_blues", 0) + 1
                     _big = bool(prev) and (prev - c) / prev * 100 >= _pr.get("big", 0.9)
+                    # THE DECAY EXIT (boss 2026-08-21, the 두산 10:23 case:
+                    # "the agent just waits even when there is a good chance
+                    # to sell, then sells at -1%"): a position that NEVER
+                    # armed and prints its 3rd blue below cost sells ALL right
+                    # there - no more passive bleeding between 0 and -1%.
+                    # The 3-red return re-enters if the stock recovers.
+                    if (_pr.get("decay") and not _chop_now
+                            and pos["qty"] == _qty_bar0
+                            and c <= pos.get("base", 0)
+                            and pos.get("pr_pk", 0) < pos.get("base", 0)
+                            * (1 + _pr.get("arm", 0.0) / 100)
+                            and pos.get("pr_blues", 0) >= _pr.get("blues", 2)):
+                        _dsell(pos["qty"], c, "미상승 3음봉 조기 정리")
+                        _drow(f"미상승 3음봉 전량 정리 · 조각 {len(pos['slices'])}회")
+                        if dp.get("reboard"):
+                            reb_pk[si] = c
+                        poss[si] = None
+                        continue
                     # ARM (boss 2026-08-20, the NAVER 09:27 case: sold on a
                     # +0.04% micro-peak while the stock was still climbing -
                     # "it was continuously increasing, it should sell around
