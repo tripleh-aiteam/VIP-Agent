@@ -1051,7 +1051,13 @@ def _morning_entry(s: dict, v: dict, i: int, closes: list[float],
     win; the US-night requirement was tested and rejected (-1.4M - big US
     mornings fade; volume tells the truth)."""
     m = v.get("morning") or {}
-    if not now_str or not ("09:01" <= str(now_str)[:5] < m.get("until", "09:20")):
+    # boss 2026-08-21 evening: "start buying from 09:00 if condition meets" -
+    # a down day's morning IS the buying zone; the door must not sleep through
+    # it. The clock floor drops to 09:00; the real floor stays the pattern
+    # itself (5 bars + volume/run proof). Delay variants live on as court
+    # dials only, never as the deployed book without his word.
+    if not now_str or not (m.get("from", "09:00") <= str(now_str)[:5]
+                           < m.get("until", "09:20")):
         return False
     if i < 5:
         return False
@@ -1176,6 +1182,10 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
     up = [0] * n
     dn = [0] * n
     last_exit = [-1] * n       # per stock: bar index of this rule's last completed sell
+    stop_ct = [0] * n          # per stock: -stop% full exits today (surrender dial:
+                               # 두산 08-21 walked 11 door->stop cycles on one broken
+                               # tape; v["surrender"]=N closes a stock's doors for
+                               # the day after its N-th stop. Court dial, default off)
     reb_pk = [None] * n        # re-board anchor (boss 2026-08-21: "after the 2nd
                                # blue sell, THEN AGAIN BUY" - a ride's old peak;
                                # price back above it = the climb resumed)
@@ -1331,6 +1341,9 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                 pass       # retired rules replay their past and take nothing new
             elif s.get("gate_ok") is False and not v.get("ignore_gate"):
                 pass
+            elif v.get("surrender") and stop_ct[si] >= v["surrender"]:
+                pass       # this stock's day is broken - doors stay shut until
+                           # tomorrow (exits above run untouched)
             # OSCILLATION = NO TRADING, for every rule on the desk (boss 2026-08-11:
             # "if the chart is oscillation then not trading - make sure for all"). The
             # same floor the dip rules already used: if the last 20 bars ranged less
@@ -1629,6 +1642,7 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                     # and rises again, buy at the 3rd red." The instant re-buy
                     # retires - the fall must PROVE it ended (3 straight rises)
                     # and the re-entry walks in through the scout law.
+                    stop_ct[si] += 1
                     if dp.get("reset_rebuy"):
                         # the old law, kept one switch away: sell all AND
                         # instantly re-buy the same shares at the lower price
@@ -1724,6 +1738,21 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                     elif c < prev:
                         pos["pr_blues"] = pos.get("pr_blues", 0) + 1
                     _big = bool(prev) and (prev - c) / prev * 100 >= _pr.get("big", 0.9)
+                    # SELL-SIDE LAYER (boss 2026-08-21: "around the peak it is
+                    # difficult to increase again so sell there; around the
+                    # bottom do not sell even after blues - it has room"):
+                    # near the year's TOP fewer blues end a ride (thin air,
+                    # take the money); near the BOTTOM extra patience. Court
+                    # dials, default off - buys stay judged, sells join here.
+                    _blues9 = _pr.get("blues", 2)
+                    _sc9 = v.get("ctx") or {}
+                    _dps9 = s.get("daily_pos")
+                    if _dps9 is not None and _sc9.get("sell_top") is not None \
+                            and _dps9 >= _sc9["sell_top"]:
+                        _blues9 = _sc9.get("top_blues", max(2, _blues9 - 1))
+                    elif _dps9 is not None and _sc9.get("sell_bot") is not None \
+                            and _dps9 <= _sc9["sell_bot"]:
+                        _blues9 = _sc9.get("bot_blues", _blues9 + 1)
                     # THE DECAY EXIT (boss 2026-08-21, the 두산 10:23 case:
                     # "the agent just waits even when there is a good chance
                     # to sell, then sells at -1%"): a position that NEVER
@@ -1735,7 +1764,7 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                             and c <= pos.get("base", 0)
                             and pos.get("pr_pk", 0) < pos.get("base", 0)
                             * (1 + _pr.get("arm", 0.0) / 100)
-                            and pos.get("pr_blues", 0) >= _pr.get("blues", 2)):
+                            and pos.get("pr_blues", 0) >= _blues9):
                         _dsell(pos["qty"], c, "미상승 3음봉 조기 정리")
                         _drow(f"미상승 3음봉 전량 정리 · 조각 {len(pos['slices'])}회")
                         if dp.get("reboard"):
@@ -1763,7 +1792,7 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                             and pos.get("pr_pk", 0) >= pos.get("base", 0)
                             * (1 + _pr.get("arm", 0.0) / 100)
                             and pos.get("pr_pk", 0) > pos.get("base", 0)
-                            and (pos.get("pr_blues", 0) >= _pr.get("blues", 2)
+                            and (pos.get("pr_blues", 0) >= _blues9
                                  or _big or _trail_hit)
                             and pos["qty"] == _qty_bar0):
                         _yd3 = (pos.get("qty_tot") or pos["qty0"]) \
