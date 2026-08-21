@@ -1345,7 +1345,7 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                   and not (v.get("burst")
                            and _burst_entry(s, v, i, closes, _now))
                   and not (v.get("drip", {}).get("reboard")
-                           and reb_pk[si] and c > reb_pk[si])):
+                           and reb_pk[si] and up[si] >= 3)):
                 pass
             elif v.get("dip") and _dip_state(s, v["dip"].get("win_sec", 600))["hii"][i]                     <= last_exit[si]:
                 # ONE ENTRY PER SHARP DECREASE, second iteration (boss 2026-08-11: the
@@ -1441,10 +1441,15 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                                                         _now))
                                    or bool(v.get("drip", {}).get("reboard")
                                            and reb_pk[si]
-                                           and c > reb_pk[si])))
+                                           and up[si] >= 3)))
+                # boss 2026-08-21 09:4x, the 하이닉스 09:34 case: "after the
+                # 3-blue sale it should buy again at the 3rd RED" - the climb
+                # resumed is proven by 3 consecutive rises, not by beating the
+                # old peak (that waited 3 minutes and paid 1,723,000 for what
+                # the 3rd red offered cheaper)
                 if (v.get("drip", {}).get("reboard") and reb_pk[si]
-                        and c > reb_pk[si]):
-                    reb_pk[si] = None    # one re-board per broken peak
+                        and up[si] >= 3):
+                    reb_pk[si] = None    # one re-board per sold ride
                 if v.get("dip") and not _via_trend:
                     _std = _dip_state(s, v["dip"].get("win_sec", 600))
                     _typd = _std["typ"][i]
