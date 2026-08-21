@@ -1626,8 +1626,8 @@ export default function LiveDeskPage() {
                               const hs = (h as unknown as { parts?: { sells?: unknown[] } }).parts?.sells;
                               const hl = (h as unknown as { qty_left?: number }).qty_left;
                               if (hs && hs.length) return (
-                                <div className="font-bold">{t(`보유 중 · 잔여 ${hl != null ? hl.toLocaleString() : "?"}주 (판 조각은 아래 완료 목록에)`,
-                                        `holding · ${hl != null ? hl.toLocaleString() : "?"}sh left (sold slices in the completed list)`)}
+                                <div className="font-bold">{t(`보유 중 · 잔여 ${hl != null ? hl.toLocaleString() : "?"}주`,
+                                        `holding · ${hl != null ? hl.toLocaleString() : "?"}sh left`)}
                                   {h.unreal_pct != null && (
                                     <b className="ml-1 text-[11px] tabular-nums"
                                       style={{ color: h.unreal_pct > 0 ? "#b02a2a" : h.unreal_pct < 0 ? "#1565c0" : "var(--text-muted)" }}>
