@@ -287,7 +287,17 @@ VARIANTS: list[dict] = [
      "bell": "15:19",
      "ignore_gate": True,
      "vol_size": {"x": 1.2, "frac": 0.5}, "us_habit": True,
-     "ctx": {"top": 0.6, "top_size": 0.5}, "surrender": 2,
+     # THE DAILY-CHART CIRCLE, D3 first (boss 2026-08-21 night: "near the
+     # lowest part we have to buy, not sell - and be patient with the rise;
+     # near its own highest part it is time for selling"): bottom fifth of
+     # the year range buys 1.5x and rides need a 4th blue to end; top zone
+     # (>=0.85 of the year, near its own record) rides end at the 2nd blue.
+     # The buy-caution line (0.6 half-size) stands unchanged. Court numbers
+     # land in the dawn report; deployed on his explicit order.
+     "ctx": {"top": 0.6, "top_size": 0.5,
+             "bot": 0.20, "bot_size": 1.5,
+             "sell_bot": 0.20, "bot_blues": 4,
+             "sell_top": 0.85, "top_blues": 2}, "surrender": 2,
      "dip": {"drop": 0.7, "sharp": 3.0, "ups": 1, "chop": 1.0, "win_sec": 1800},
      "scout": {"frac": 0.03, "confirm": 0.5},
      "trend": {"climb": 1.05, "dd": 0.4, "win": 30},
@@ -1452,6 +1462,14 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                 if (v.get("ctx") and _dp9 is not None
                         and _dp9 >= v["ctx"].get("top", 0.85)):
                     _q = max(1, int(_q * v["ctx"].get("top_size", 0.5)))
+                # THE BOTTOM BUYING ZONE (boss 2026-08-21 night: "if any price
+                # is near the lowest part we have to buy, not sell - huge
+                # probability it will not decrease from the lowest part"):
+                # near the year's floor the desk gets bolder - entries grow.
+                if (v.get("ctx") and _dp9 is not None
+                        and v["ctx"].get("bot") is not None
+                        and _dp9 <= v["ctx"]["bot"]):
+                    _q = max(1, int(_q * v["ctx"].get("bot_size", 1.5)))
                 # LAYER 2: a half-asleep half hour distrusts its own rises -
                 # entries halve when fuel runs under the stock's usual
                 _fu9 = s.get("fuel")
