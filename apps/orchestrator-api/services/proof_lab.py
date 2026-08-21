@@ -299,7 +299,11 @@ VARIANTS: list[dict] = [
               # single blue (>=0.9%) still sells instantly.
               "sell_after": "15:00",
               "rebuy": True, "reboard": True,
-              "retreat": {"big": 0.9, "arm": 0.85, "trail": 0.5, "blues": 99},
+              # boss 2026-08-21 09:1x: 'continuously increasing - just wait; after
+              # 2 blues, sell at the 3rd blue.' The trail steps aside; his
+              # candle law rules the exit (arm 0.85 keeps the wait, big 0.9
+              # keeps the huge-blue instant sale).
+              "retreat": {"big": 0.9, "arm": 0.85, "blues": 3},
               "reinforce": {"frac": 0.5, "max": 2}}},
     # Sharp (ladder) leaves the live board 2026-08-13: the boss replaced it with
     # his two drip scenarios ("instead of sharp rule make it Algorithm 1/2").
