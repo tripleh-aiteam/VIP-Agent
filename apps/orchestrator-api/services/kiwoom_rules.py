@@ -296,6 +296,53 @@ def _daily_pos(code: str, price: float) -> float | None:
     return max(0.0, min(1.5, (price - lo) / (hi - lo)))
 
 
+_VB_CACHE: dict = {}
+
+
+def _fuel(code: str, bars: list) -> float | None:
+    """LAYER 2 (boss 2026-08-21): 'if volume increases, price increases; in
+    quiet cases most probably decrease or oscillation.' The last 30 minutes'
+    volume against this stock's OWN median for the same half-hour of the day,
+    over the year. 1.0 = a normal half hour; 0.5 = half-asleep; 2.0 = loud."""
+    if not bars:
+        return None
+    med = _VB_CACHE.get(code)
+    if med is None:
+        med = {}
+        try:
+            import json as _j
+            import statistics as _st
+            from pathlib import Path as _P
+            f = (_P(__file__).resolve().parent.parent / "data" / "minute1_hist"
+                 / f"{code}.json")
+            if f.exists():
+                buckets: dict = {}
+                for r in _j.loads(f.read_text()):
+                    t6 = str(r[0])[8:14]
+                    if "090000" <= t6 <= "153000":
+                        bk = (str(r[0])[:8], t6[:3])   # (day, half-hour-ish)
+                        buckets.setdefault(bk, 0.0)
+                        buckets[bk] += float(r[5])
+                per_slot: dict = {}
+                for (d8, slot), vsum in buckets.items():
+                    per_slot.setdefault(slot, []).append(vsum)
+                med = {slot: _st.median(v) for slot, v in per_slot.items() if v}
+        except Exception:
+            med = {}
+        _VB_CACHE[code] = med
+    if not med:
+        return None
+    # the history buckets are ~10-minute slots - the live window must match
+    last = bars[-10:] if len(bars) >= 5 else bars
+    cur = sum(float(b.get("vol") or 0) for b in last)
+    slot = bars[-1]["hhmm"].replace(":", "")[:3]
+    base = med.get(slot)
+    if not base:
+        return None
+    # scale: the buckets sum ~30 minutes of the day; align window lengths
+    return round(cur / base, 2) if base else None
+
+
 _OV_CACHE: dict = {}
 
 
@@ -582,6 +629,7 @@ def rank(tick: int = 5, period: int = 0, day: str = "",
                          "daily_pos": _daily_pos(code,
                                                  tp["cs"][-1]["close"]
                                                  if tp["cs"] else 0),
+                         "fuel": _fuel(code, tp["cs"]),
                          "vols": [float(c.get("vol") or 0) for c in tp["cs"]],
                          "ctx": daily_ctx(code, d or _kd0()),
                          "gate_ok": (_gate_ok(code, d or _kd0()) if use_gate else True),
@@ -757,6 +805,7 @@ def trades(vid: str, tick: int = 5, period: int = 0, code: str = "",
                          "open_vol_med": _open_vol_med(c_code),
                          "daily_pos": _daily_pos(c_code,
                                                  cs[-1]["close"] if cs else 0),
+                         "fuel": _fuel(c_code, cs),
                          "times": [c["hhmm"] for c in cs],
                          "vols": [float(c.get("vol") or 0) for c in cs],
                          "ctx": daily_ctx(c_code, d or _kd0()),

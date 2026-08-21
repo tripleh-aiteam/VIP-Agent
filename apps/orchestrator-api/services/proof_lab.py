@@ -1438,6 +1438,12 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                 if (v.get("ctx") and _dp9 is not None
                         and _dp9 >= v["ctx"].get("top", 0.85)):
                     _q = max(1, int(_q * v["ctx"].get("top_size", 0.5)))
+                # LAYER 2: a half-asleep half hour distrusts its own rises -
+                # entries halve when fuel runs under the stock's usual
+                _fu9 = s.get("fuel")
+                if (v.get("ctx") and _fu9 is not None
+                        and _fu9 <= v["ctx"].get("fuel_low", 0.7)):
+                    _q = max(1, int(_q * v["ctx"].get("fuel_size", 0.5)))
                 if v.get("vol_size"):
                     _vv2 = s.get("vols") or []
                     _w2 = _vv2[max(0, i - 20):i]
