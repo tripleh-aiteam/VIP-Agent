@@ -696,6 +696,25 @@ export default function LiveDeskPage() {
   const [selSlice, setSelSlice] = useState<{ rule: string; name: string; t: string;
     px: number; qty: number; rem?: number | null; gain?: number | null;
     why?: string; side?: "b" | "s" } | null>(null);
+  // THE JUDGES' STAMPS (boss 2026-08-21 night: "if we click it should show
+  // exact steps - daily chart buying zone, volume, news analyzed by Qwen").
+  // One small fetch per open company; renders as the layer story under the
+  // clicked trade's line.
+  const [layers9, setLayers9] = useState<{ ok?: boolean;
+    steps?: { icon: string; name: string; value: string; verdict: string }[];
+    news?: { ts: string; stamp: string; title: string; why: string }[] } | null>(null);
+  const layersCode9 = det?.chart?.code || null;
+  useEffect(() => {
+    if (!layersCode9) { setLayers9(null); return; }
+    let on9 = true;
+    api<{ ok?: boolean;
+      steps?: { icon: string; name: string; value: string; verdict: string }[];
+      news?: { ts: string; stamp: string; title: string; why: string }[] }>(
+      `/paper-desk/live/rules/layers?code=${layersCode9}`)
+      .then((d) => { if (on9) setLayers9(d?.ok ? d : null); })
+      .catch(() => { if (on9) setLayers9(null); });
+    return () => { on9 = false; };
+  }, [layersCode9]);
   const [fCode, setFCode] = useState("");
   const [fRes, setFRes] = useState("");
   const [fFrom, setFFrom] = useState("");
@@ -2256,6 +2275,33 @@ export default function LiveDeskPage() {
                 {selSlice.why && <span className="ml-2 text-[var(--text-secondary)]">[{selSlice.why}]</span>}
                 <button className="ml-2 text-[10px] px-1 rounded border" style={{ borderColor: "var(--border-default)", color: "var(--text-muted)" }}
                   onClick={() => setSelSlice(null)}>{t("닫기", "close")}</button>
+              </div>
+            )}
+            {/* THE LAYER STORY (boss 2026-08-21 night): daily zone -> volume
+                fuel -> Qwen's news stamps -> minute trigger, the exact steps
+                behind every decision on this company, in his order. */}
+            {sel && det?.chart && layers9?.steps && (
+              <div className="mt-1 mx-1 px-2 py-1.5 rounded text-[11.5px]"
+                style={{ background: "rgba(46,125,50,0.06)", border: "1px solid var(--border-default)" }}>
+                <b style={{ color: "#2e7d32" }}>🧭 {t("레이어 판정 — 이 종목의 오늘 단계", "layer verdicts — this stock's steps today")}</b>
+                {layers9.steps.map((s9, i9) => (
+                  <div key={i9} className="mt-0.5">
+                    <span>{s9.icon}</span> <b className="text-[var(--text-primary)]">{s9.name}</b>
+                    <span className="ml-1 text-[var(--text-secondary)]">{s9.value}</span>
+                    <span className="ml-1 text-[var(--text-muted)]">→ {s9.verdict}</span>
+                  </div>
+                ))}
+                {(layers9.news?.length ?? 0) > 0 && (
+                  <div className="mt-1 pt-1" style={{ borderTop: "1px dashed var(--border-default)" }}>
+                    {layers9.news!.map((n9, i9) => (
+                      <div key={i9} className="text-[11px]">
+                        <b style={{ color: n9.stamp === "호재" ? RED : n9.stamp === "위험" ? BLUE : "var(--text-muted)" }}>[{n9.stamp}]</b>
+                        <span className="ml-1 text-[var(--text-secondary)]">{n9.title.slice(0, 70)}</span>
+                        {n9.why && <span className="ml-1 text-[var(--text-muted)]">— {n9.why.slice(0, 70)}</span>}
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             )}
             {sel && det?.chart && (() => {

@@ -785,6 +785,77 @@ def live_family_trades(family: str = Query("new"), tick: int = Query(5),
                 placeholder={"ok": False, "computing": True})
 
 
+@router.get("/live/rules/layers")
+def live_layers(code: str = Query(...)):
+    """THE JUDGES' STAMPS (boss 2026-08-21 night: "if we click it should show
+    exact steps - daily chart buying zone, volume, news analyzed by Qwen").
+    One stock's full layer story for the trade-detail panel: yearly position
+    + zone verdict, volume fuel, and the news intern's freshest stamps."""
+    import datetime as _dt
+    import json as _json
+    from collections import Counter as _C
+    from pathlib import Path as _P
+    from services import kiwoom_rules as kr
+    c6 = _resolve(code)
+    px = dp = fu = None
+    try:
+        bars = kr._bars_for(c6, 5, 60)
+        px = bars[-1]["close"] if bars else None
+        dp = kr._daily_pos(c6, px) if px else None
+        fu = kr._fuel(c6, bars) if bars else None
+    except Exception:
+        pass
+    steps = []
+    if dp is not None:
+        pct = round(dp * 100)
+        if dp >= 0.85:
+            zv = "최고가 근처 - 매수 금지 구역 (자기 최고가를 다시 넘기 어렵다)"
+        elif dp >= 0.6:
+            zv = "연중 상단 - 조심 구역, 절반 매수"
+        elif dp <= 0.20:
+            zv = ("바닥 근처 - 매수 존. 상승을 음봉으로 팔지 않는다 "
+                  "(+2% 도달 후 첫 하락에 매도 밸브)")
+        else:
+            zv = "중간 지대 - 정상 사이즈"
+        steps.append({"icon": "📅", "name": "일봉 (연중 위치)",
+                      "value": f"1년 범위의 {pct}% 지점", "verdict": zv})
+    if fu is not None:
+        steps.append({"icon": "📊", "name": "거래량 (연료)",
+                      "value": f"최근 10분 = 평소의 {fu:.1f}배",
+                      "verdict": ("연료 부족 - 절반 매수" if fu <= 0.7
+                                  else "연료 정상 - 정상 사이즈")})
+    # the intern's stamps: today's log, or the freshest log there is
+    stamps = []
+    try:
+        nd = _P(__file__).resolve().parent.parent / "data" / "news_intern"
+        files = sorted(nd.glob("2*.jsonl"))
+        if files:
+            for ln in files[-1].read_text(encoding="utf-8").splitlines():
+                try:
+                    r = _json.loads(ln)
+                except Exception:
+                    continue
+                if r.get("code") == c6:
+                    stamps.append(r)
+    except Exception:
+        pass
+    cc = _C(r.get("stamp") for r in stamps)
+    steps.append({"icon": "📰", "name": "뉴스 (Qwen3 로컬 분석)",
+                  "value": (f"오늘 {len(stamps)}건: 호재 {cc.get('호재', 0)} · "
+                            f"중립 {cc.get('중립', 0)} · 위험 {cc.get('위험', 0)}"
+                            if stamps else "오늘 분석된 기사 없음"),
+                  "verdict": "관찰 모드 - 참고용 (아직 매매 투표권 없음)"})
+    steps.append({"icon": "⏱", "name": "분봉 (트리거)",
+                  "value": "다섯 개의 문 + 수확/정지 법",
+                  "verdict": "실제 매수/매도 순간은 분봉 엔진이 결정 - "
+                             "각 거래의 '이유' 칸이 그 문이다"})
+    return {"ok": True, "code": c6, "price": px, "daily_pos": dp, "fuel": fu,
+            "steps": steps,
+            "news": [{"ts": r.get("ts", ""), "stamp": r.get("stamp"),
+                      "title": r.get("title", ""), "why": r.get("why", "")}
+                     for r in stamps[-3:]]}
+
+
 def _fam_compute(family: str, tick: int, period: int, day: str,
                  frm: str, to: str, gate: int, auto: int):
     from services.kiwoom_rules import DESK, trades
