@@ -1619,48 +1619,22 @@ export default function LiveDeskPage() {
                             })()}</td>
                           <td className="px-2" style={{ ...CELL, color: "#e65100" }}>
                             {(() => {
-                              const hs = (h as unknown as { parts?: { sells?: [number, number, string?, number?,
-                                number?, string?][] } }).parts?.sells;
+                              // HOLDING SHOWS ONLY THE HOLDING (boss 2026-08-21:
+                              // the sold slices appeared here AND in the completed
+                              // part - now they live only in the completed part).
+                              // This cell: remaining shares + the live % vs cost.
+                              const hs = (h as unknown as { parts?: { sells?: unknown[] } }).parts?.sells;
                               const hl = (h as unknown as { qty_left?: number }).qty_left;
-                              const base = (h as unknown as { base?: number }).base || h.entry;
-                              if (hs && hs.length) return (<>
-                                <div className="font-bold">{t(`보유 중 · 잔여 ${hl != null ? hl.toLocaleString() : "?"}주`,
-                                        `holding · ${hl != null ? hl.toLocaleString() : "?"}sh left`)}
+                              if (hs && hs.length) return (
+                                <div className="font-bold">{t(`보유 중 · 잔여 ${hl != null ? hl.toLocaleString() : "?"}주 (판 조각은 아래 완료 목록에)`,
+                                        `holding · ${hl != null ? hl.toLocaleString() : "?"}sh left (sold slices in the completed list)`)}
                                   {h.unreal_pct != null && (
                                     <b className="ml-1 text-[11px] tabular-nums"
                                       style={{ color: h.unreal_pct > 0 ? "#b02a2a" : h.unreal_pct < 0 ? "#1565c0" : "var(--text-muted)" }}>
                                       {h.unreal_pct > 0 ? "+" : ""}{Math.abs(h.unreal_pct) < 0.01 ? h.unreal_pct.toFixed(3) : h.unreal_pct.toFixed(2)}%
                                     </b>
                                   )}</div>
-                                {hs.map(([p2, q2, t2, _i2, rem2, why2], k2) => (
-                                  <div key={k2}
-                                    className="font-normal text-[10.5px] cursor-pointer underline decoration-dotted"
-                                    style={{ color: BLUE }}
-                                    title={t("클릭: 차트에서 이 조각 확인", "click: this slice on the chart")}
-                                    onClick={() => { setSelSlice({ rule: h.rule, name: h.name || h.code,
-                                                      t: (t2 as string) || "", px: p2, qty: q2,
-                                                      rem: rem2 as number | undefined,
-                                                      gain: base ? (p2 / base - 1) * 100 : null,
-                                                      why: (why2 as string) || "" });
-                                                    setFocusSide("s");
-                                                    setChartOpen(true); chartOpenRef.current = true;
-                                                    setSel(h.rule); autoOpenRef.current = h.rule;
-                                                    openRule(h.rule, null, h.code);
-                                                    setTimeout(() => chartRef.current?.scrollIntoView(
-                                                      { behavior: "smooth", block: "center" }), 150); }}>
-                                    ▼ {(t2 as string || "").slice(0, 5)} ₩{Math.round(p2).toLocaleString()}
-                                    <span className="text-[9.5px] text-[var(--text-muted)]"> × {q2}{t("주", "sh")}{rem2 != null ? t(` (잔여 ${Number(rem2).toLocaleString()})`, ` (left ${Number(rem2).toLocaleString()})`) : ""}</span>
-                                    {(() => {
-                                      const row6 = ((h as unknown as { parts?: { sells?: (number | string | null)[][] } }).parts?.sells || [])[k2];
-                                      const b2 = (row6 && row6.length > 6 ? row6[6] : null) as number | null;
-                                      const g2 = b2 ? (p2 / b2 - 1) * 100 : null;
-                                      return g2 != null ? (
-                                        <b className="ml-1 text-[10px]" style={{ color: g2 > 0 ? "#b02a2a" : g2 < 0 ? "#1565c0" : "var(--text-muted)" }}>
-                                          {g2 > 0 ? "+" : ""}{g2.toFixed(2)}%</b>
-                                      ) : null;
-                                    })()}</div>
-                                ))}
-                              </>);
+                              );
                               // the LIVE unrealized % rides the status line (boss
                               // 2026-08-20: "while holding show current gaining/
                               // losing % - it should automatically change with the
