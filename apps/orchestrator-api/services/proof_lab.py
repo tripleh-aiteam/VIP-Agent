@@ -224,10 +224,10 @@ VARIANTS: list[dict] = [
      # rung takes 50% of the position, and the retreat/down-side sales take
      # 50% too - two rungs and the hand is empty. 알고리즘2 keeps the 10%
      # drip. Same doors, same sizes, same resets - only the harvest differs.
-     "drip": {"step": 1.0, "up_frac": 0.50, "dn_frac": 0.50, "stop_reset": 1.5,
+     "drip": {"step": 1.0, "up_frac": 0.50, "dn_frac": 0.50, "stop_reset": 1.0,
               # 14:00 closing hour (boss package 2026-08-20: +39.2M/yr, win 69%)
               "sell_after": "15:00",
-              "slice_total": True, "rebuy": True,
+              "slice_total": True, "rebuy": True, "reboard": True,
               # his retreat law (14:5x, 08-13): in profit, a rise turns down -
               # the 2nd blue sells (now 50% here); a single HUGE blue (>=0.9%)
               # sells right away.
@@ -263,12 +263,12 @@ VARIANTS: list[dict] = [
      # -1% below the top (same ladder as 알고리즘1); what remains distinct is the
      # RELOAD - a fresh sharp-decrease turn buys back what was sold. The duel now
      # isolates exactly one question: does the reload law earn its keep?
-     "drip": {"step": 1.0, "up_frac": 0.10, "dn_frac": 0.10, "stop_reset": 1.5,
+     "drip": {"step": 1.0, "up_frac": 0.10, "dn_frac": 0.10, "stop_reset": 1.0,
               # PING-PONG (boss's law, measured +38M/yr and chosen 2026-08-20
               # after the SK텔레콤 98,100-top reload: a sold rung re-buys only
               # a full step CHEAPER and sells again at the same rung - round
               # trips can only add money; replaces reload & down-steps)
-              "pingpong": True,
+              "pingpong": True, "reboard": True,
               "slice_total": True, "rebuy": True, "retreat": {"big": 0.9},
               "reinforce": {"frac": 0.5, "max": 2}}},
     # 알고리즘 3 (boss 2026-08-20 09:0x): "if the price is continuously
@@ -291,7 +291,7 @@ VARIANTS: list[dict] = [
      "morning": {"until": "09:20", "vol_x": 1.5, "min_run": 0.3,
                  "alt_run": 1.0},
      "burst": {"rise": 0.7, "win_min": 10},
-     "drip": {"step": 999.0, "up_frac": 1.0, "dn_frac": 0.0, "stop_reset": 1.5,
+     "drip": {"step": 999.0, "up_frac": 1.0, "dn_frac": 0.0, "stop_reset": 1.0,
               # 14:00 closing hour + TRAIL exit (boss package 2026-08-20,
               # +66.5M/yr combined): armed at +0.85% as before, but the ride
               # ends at -0.5% off the peak - a fixed give-back instead of two
@@ -1607,19 +1607,15 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                     # sell out all and again buy" - the scout-only exception from
                     # the pre-flight audit is repealed at his order; every -1.5%
                     # reset re-buys the full position at the lower price.
-                    # the rebuy is THE POSITION JUST SOLD, not the band cap
-                    # (found 2026-08-19, the SOX -4.98% morning: cap_for paid
-                    # 1,000 SK텔레콤 shares where the storm-third and quiet-bar
-                    # laws had sized the entry at 166 - a reset must never
-                    # grow the hand, only move it to the lower price)
-                    _nq = pos["qty"]
-                    _dsell(pos["qty"], c, f"-{dp.get('stop_reset', 1.5):g}% 전량")
-                    _drow(f"-{dp.get('stop_reset', 1.5):g}% 전량 매도 · 즉시 재매수"
-                          + f" · 조각 {len(pos['slices'])}회")
-                    poss[si] = {"si": si, "i": i, "entry": c, "bk": pos.get("bk"),
-                                "close": c, "qty": _nq, "ml": None,
-                                "seq": closes[max(0, i - 1): i + 1],
-                                "sig": pos.get("sig"), "wall": None}
+                    # boss 2026-08-21: "-1% exit, then if it stops decreasing
+                    # and rises again, buy at the 3rd red." The instant re-buy
+                    # retires - the fall must PROVE it ended (3 straight rises)
+                    # and the re-entry walks in through the scout law.
+                    _dsell(pos["qty"], c, f"-{dp.get('stop_reset', 1.0):g}% 전량")
+                    _drow(f"-{dp.get('stop_reset', 1.0):g}% 전량 매도 · 3번째 "
+                          f"양봉 재진입 대기 · 조각 {len(pos['slices'])}회")
+                    reb_pk[si] = c        # arms the 3-red re-entry
+                    poss[si] = None
                     continue
                 # +1% steps: resting limits at real snapped prices, filled off highs
                 _guard = 0

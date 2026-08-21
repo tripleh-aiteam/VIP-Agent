@@ -2057,8 +2057,8 @@ export default function LiveDeskPage() {
                           `Every +${det.drip.step}% step sells ${Math.round(det.drip.up_frac * 100)}% at a resting limit (a real tick-grid price). After the top, every -${det.drip.step}% below the highest step sells ${Math.round((det.drip.dn_frac ?? 0.1) * 100)}% more, in front of the ask wall.`)
                       : t(`+${det.drip.step}% 오를 때마다 ${Math.round(det.drip.up_frac * 100)}%씩 지정가로 팝니다. 완만한 되돌림에는 팔지도 사지도 않고 나머지를 그대로 듭니다.`,
                           `Every +${det.drip.step}% step sells ${Math.round(det.drip.up_frac * 100)}% at a resting limit. Through calm pullbacks the rest is simply HELD - nothing sold, nothing bought.`)}</li>
-                    <li>{t(`기준가에서 -${det.drip.stop_reset}%면 전량 매도 후 그 낮은 가격에 즉시 재매수 — 기준이 아래로 다시 잡히고 계단이 다시 시작됩니다. 그 외의 하락에는 팔지 않고 버팁니다.`,
-                           `At -${det.drip.stop_reset}% from the base it sells ALL and immediately re-buys at the lower price — the base resets and the steps start again. No other decline sells.`)}</li>
+                    <li>{t(`기준가에서 -${det.drip.stop_reset}%면 전량 매도 — 그리고 하락이 멈추고 3번째 양봉이 뜨면 다시 매수합니다 (정찰 3%부터). 그 외의 하락에는 팔지 않고 버팁니다.`,
+                           `At -${det.drip.stop_reset}% from the base it sells ALL — and when the fall stops and the 3rd up-candle prints, it re-enters (scout 3% first). No other decline sells.`)}</li>
                     {det.drip.rebuy && <li>{t("보유 중에도 새 급락 신호가 오면 판 만큼을 다시 사서 100%로 채웁니다 (시나리오2).",
                            "While holding, a fresh sharp-drop signal buys back what was sold, topping up to 100% (Scenario 2).")}</li>}
                     {det.us_habit && <li>{t("미국 습관: 반도체지수(SOX)가 밤사이 -1.5% 이하로 떨어진 다음 날은 ⅓ 수량으로만 삽니다. 그 외에는 평소대로 — 매일 9시 정각부터 매매합니다.",
