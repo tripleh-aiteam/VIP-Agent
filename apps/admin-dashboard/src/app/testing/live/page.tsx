@@ -1729,7 +1729,7 @@ export default function LiveDeskPage() {
                           }
                           return true;
                         })
-                        .map((r, i) => (
+                        .map((r, i, arrF) => (
                         <React.Fragment key={`${r.rule}-${r.idx}-${i}`}>
                         <tr className="border-t border-[var(--border-default)]/30">
                           <td className="px-2 py-0.5 font-bold cursor-pointer underline decoration-dotted"
@@ -1759,7 +1759,17 @@ export default function LiveDeskPage() {
                             onClick={() => openFamTrade(r, "b")}>
                             ▲ {r.buy_t?.slice(0, 8)}</td>
                           <td className="px-2" style={CELL}>
-                            {r.parts?.buys && r.parts.buys.length ? (r.parts.buys as unknown as
+                            {/* SAME EPISODE'S SLICES SHARE ONE BUY LIST (boss
+                                2026-08-21: "same buying showing 4 times makes
+                                confusion") - only the first slice row prints
+                                the buys; siblings wear a small ditto */}
+                            {(i > 0 && r.partial && arrF[i - 1].partial
+                              && arrF[i - 1].rule === r.rule
+                              && arrF[i - 1].buy_t === r.buy_t
+                              && arrF[i - 1].code === r.code) ? (
+                              <div className="text-[10px] text-[var(--text-muted)]">
+                                〃 {t("위와 같은 매수", "same buys as above")}</div>
+                            ) : r.parts?.buys && r.parts.buys.length ? (r.parts.buys as unknown as
                               [number, number, (string | null)?][]).map(([p2, q2, t3], k2) => (
                               <div key={k2} className="cursor-pointer underline decoration-dotted"
                                 title={t("클릭: 이 매수를 차트에서 증명", "click: prove this buy on the chart")}

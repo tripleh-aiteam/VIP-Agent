@@ -1347,7 +1347,15 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                   and not (v.get("drip", {}).get("reboard")
                            and reb_pk[si] and up[si] >= 3)):
                 pass
-            elif v.get("dip") and _dip_state(s, v["dip"].get("win_sec", 600))["hii"][i]                     <= last_exit[si]:
+            elif (v.get("dip")
+                  and not (v.get("drip", {}).get("reboard")
+                           and reb_pk[si] and up[si] >= 3)
+                  and _dip_state(s, v["dip"].get("win_sec", 600))["hii"][i]
+                  <= last_exit[si]):
+                # the 3rd-red re-board is EXEMPT from one-per-dip (boss
+                # 2026-08-21, the 하이닉스 09:34 case: the resumed climb's
+                # window-high predates our sale by definition - that is the
+                # point of re-boarding, not a double-dip)
                 # ONE ENTRY PER SHARP DECREASE, second iteration (boss 2026-08-11: the
                 # first guard named a dip by the exact bar of its high, and at 5틱 a new
                 # micro-high seconds later renamed the same visual dip - he caught
