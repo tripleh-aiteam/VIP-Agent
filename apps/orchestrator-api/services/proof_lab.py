@@ -197,7 +197,9 @@ VARIANTS: list[dict] = [
      # structurally LOW (0.4-0.6x avg today), so a hard gate trades never -
      # instead a quiet signal buys HALF size, a busy one full size
      "vol_size": {"x": 1.2, "frac": 0.5}, "us_habit": True,
-     "ctx": {"top": 0.6, "top_size": 0.5}, "surrender": 2,
+     "ctx": {"top": 0.6, "top_size": 0.5, "no_buy_top": 0.85,
+             "sell_bot": 0.20, "bot_blues": 999,
+             "bot_take": 2.0, "bot_take_blues": 1}, "surrender": 2,
      # fences lowered at his order (2026-08-13, after 삼성전자 0.93%/1.30% and
      # NAVER 0.91%/1.37 turns were refused by hairs): drop 0.9, range 1.25.
      # Holdout cost measured before setting: about -0.6M/yr vs 1.0/1.5.
@@ -242,7 +244,9 @@ VARIANTS: list[dict] = [
      # structurally LOW (0.4-0.6x avg today), so a hard gate trades never -
      # instead a quiet signal buys HALF size, a busy one full size
      "vol_size": {"x": 1.2, "frac": 0.5}, "us_habit": True,
-     "ctx": {"top": 0.6, "top_size": 0.5}, "surrender": 2,
+     "ctx": {"top": 0.6, "top_size": 0.5, "no_buy_top": 0.85,
+             "sell_bot": 0.20, "bot_blues": 999,
+             "bot_take": 2.0, "bot_take_blues": 1}, "surrender": 2,
      # fences lowered at his order (2026-08-13, after 삼성전자 0.93%/1.30% and
      # NAVER 0.91%/1.37 turns were refused by hairs): drop 0.9, range 1.25.
      # Holdout cost measured before setting: about -0.6M/yr vs 1.0/1.5.
@@ -294,9 +298,10 @@ VARIANTS: list[dict] = [
      # (>=0.85 of the year, near its own record) rides end at the 2nd blue.
      # The buy-caution line (0.6 half-size) stands unchanged. Court numbers
      # land in the dawn report; deployed on his explicit order.
-     "ctx": {"top": 0.6, "top_size": 0.5,
+     "ctx": {"top": 0.6, "top_size": 0.5, "no_buy_top": 0.85,
              "bot": 0.20, "bot_size": 1.5,
-             "sell_bot": 0.20, "bot_blues": 4,
+             "sell_bot": 0.20, "bot_blues": 999,
+             "bot_take": 2.0, "bot_take_blues": 1,
              "sell_top": 0.85, "top_blues": 2}, "surrender": 2,
      "dip": {"drop": 0.7, "sharp": 3.0, "ups": 1, "chop": 1.0, "win_sec": 1800},
      "scout": {"frac": 0.03, "confirm": 0.5},
@@ -1354,6 +1359,13 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
             elif v.get("surrender") and stop_ct[si] >= v["surrender"]:
                 pass       # this stock's day is broken - doors stay shut until
                            # tomorrow (exits above run untouched)
+            elif (v.get("ctx") and s.get("daily_pos") is not None
+                  and v["ctx"].get("no_buy_top") is not None
+                  and s["daily_pos"] >= v["ctx"]["no_buy_top"]):
+                pass       # THE PEAK-ZONE BAN (boss 2026-08-21 night: "at
+                           # least we are not buying in the highest zone") -
+                           # near the stock's own yearly record no door opens
+                           # at all; below it the 0.6 half-size caution stands
             # OSCILLATION = NO TRADING, for every rule on the desk (boss 2026-08-11:
             # "if the chart is oscillation then not trading - make sure for all"). The
             # same floor the dip rules already used: if the last 20 bars ranged less
