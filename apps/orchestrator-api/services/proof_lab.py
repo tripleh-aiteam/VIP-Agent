@@ -1611,6 +1611,20 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                     # and rises again, buy at the 3rd red." The instant re-buy
                     # retires - the fall must PROVE it ended (3 straight rises)
                     # and the re-entry walks in through the scout law.
+                    if dp.get("reset_rebuy"):
+                        # the old law, kept one switch away: sell all AND
+                        # instantly re-buy the same shares at the lower price
+                        _nq0 = pos["qty"]
+                        _dsell(pos["qty"], c,
+                               f"-{dp.get('stop_reset', 1.0):g}% 전량")
+                        _drow(f"-{dp.get('stop_reset', 1.0):g}% 전량 매도 · "
+                              f"즉시 재매수 · 조각 {len(pos['slices'])}회")
+                        poss[si] = {"si": si, "i": i, "entry": c,
+                                    "bk": pos.get("bk"), "close": c,
+                                    "qty": _nq0, "ml": None,
+                                    "seq": closes[max(0, i - 1): i + 1],
+                                    "sig": pos.get("sig"), "wall": None}
+                        continue
                     _dsell(pos["qty"], c, f"-{dp.get('stop_reset', 1.0):g}% 전량")
                     _drow(f"-{dp.get('stop_reset', 1.0):g}% 전량 매도 · 3번째 "
                           f"양봉 재진입 대기 · 조각 {len(pos['slices'])}회")
