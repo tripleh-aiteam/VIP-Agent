@@ -135,7 +135,8 @@ type RDetail = { ok: boolean; id: string; ko: string; en: string; clock: string;
                  chart: { code: string; name: string; off: number; candles: Bar[];
                           focus: { b: number; s: number } | null;
                           marks: { b: number; s: number; g: number; net: number;
-                                   open?: boolean; part?: boolean }[] } | null;
+                                   open?: boolean; part?: boolean;
+                                   xb?: boolean; label?: string }[] } | null;
                  family?: string;
   dip?: { drop: number; sharp: number; ups: number; chop: number;
           look?: number; win_sec?: number } | null;
@@ -188,7 +189,8 @@ function ruleName(id: string): string {
 
 function LiveChart({ bars, marks, focus, off = 0 }:
                    { bars: Bar[]; marks?: { b: number; s: number; g: number;
-                                            open?: boolean; part?: boolean }[];
+                                            open?: boolean; part?: boolean;
+                                            xb?: boolean; label?: string }[];
                      focus?: number | null; off?: number }) {
   const ref = useRef<HTMLDivElement | null>(null);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -262,7 +264,12 @@ function LiveChart({ bars, marks, focus, off = 0 }:
     // arrows carry GROSS - the same number the trade table shows. Labelling one with net
     // while the table showed gross made one trade read as two results on the artificial
     // side, and there is no reason to repeat it here.
-    const m = (marks ?? []).flatMap((k) => k.part
+    const m = (marks ?? []).flatMap((k) => k.xb
+      // EVERY buy of the clicked episode gets its own ▲ (boss 2026-08-21:
+      // scout, army, reinforcement, re-board - each proves itself at its bar)
+      ? [{ time: off + k.b, position: "belowBar", color: "#e65100",
+           shape: "arrowUp", text: k.label || "▲" }]
+      : k.part
       // a sold slice of a still-open ladder: one sell arrow, no buy pair
       ? [{ time: off + k.s, position: "aboveBar", color: k.g > 0 ? RED : BLUE,
            shape: "arrowDown", text: `조각 ${k.g > 0 ? "+" : ""}${k.g}%` }]
@@ -1290,15 +1297,17 @@ export default function LiveDeskPage() {
             morning; a button cannot half-work). The pressed one is filled in. */}
         {/* THE DUEL (boss 2026-08-19): same doors, same sizes, same resets -
             알고1 harvests in HALVES, 알고2 in TENTHS. One law apart. */}
+        {/* tooltips = the CURRENT book (2026-08-22): five doors + layer
+            judges + iron rule + valve - stale -1.5%/four-door text retired */}
         {([["d1", t("① 알고리즘 1 — 50% 수확", "① Algorithm 1 — 50% harvest"),
-            t("같은 4개의 문으로 매수 → +1%마다 50%씩 매도(두 계단이면 빈손, 새 급락에 재진입) · -1.5%면 전량 매도 후 즉시 재매수",
-              "same four doors in -> sells 50% per +1% step (two rungs = empty, re-enters on a fresh dip) · -1.5% sells all and re-buys")],
+            t("다섯 문(급락·아침·상승·반등·분출)으로 매수, 레이어 판정(연중 85%↑ 매수금지·60%↑ 절반·연료 부족 절반) → +1%마다 50%씩 매도 · 바닥 20%는 +2% 도달 후 첫 하락까지 음봉 매도 없음 · -1% 전량 후 3양봉 재진입, 하루 2회 손절이면 그 종목 종료 · 15:19 전량",
+              "five doors in (dip/open/climb/rebound/burst), layer judges size it (>=85% of year: no buy · >=60%: half · low fuel: half) -> sells 50% per +1% rung · bottom fifth: no blue-candle sells until +2% then first dip · -1% stop + 3-red return, 2 stops = done for the day · 15:19 all out")],
            ["d2", t("② 알고리즘 2 — 10% 계단", "② Algorithm 2 — 10% drip"),
-            t("같은 4개의 문으로 매수 → +1%마다 10%씩 매도, 끝까지 타기 · 새 급락(2번째 양봉 전환)이 오면 판 만큼 전부 재매수",
-              "same four doors in -> sells 10% per +1%, rides the whole climb · a NEW sharp drop (2nd-red turn) buys back all sold")],
-           ["d3", t("③ 알고리즘 3 — 정점 전량", "③ Algorithm 3 — ride & sell all"),
-            t("같은 4개의 문으로 매수 → 오르는 동안 팔지 않고 정점 후 2번째 음봉에 전량 매도 · -1.5%면 전량 매도 후 즉시 재매수 (예전 규칙은 2026-08-20 은퇴 — 기록은 보존)",
-              "same four doors in -> holds the whole climb, sells ALL at the 2nd blue after the peak · -1.5% sells all and re-buys (the old rule retired 2026-08-20 - records preserved)")]] as const)
+            t("같은 다섯 문·같은 레이어 판정 → +1%마다 10%씩 매도, 한 계단 내려오면 그 조각 되사기(핑퐁) · 바닥 20% +2% 밸브 · -1% 전량 후 3양봉, 2회면 종목 종료 · 15:19 전량 — 연간 성적 1위",
+              "same five doors & judges -> sells 10% per +1% rung, buys the slice back one step lower (ping-pong) · bottom-fifth +2% valve · -1% stop + 3-red, 2 stops = done · 15:19 all out - the year's best earner")],
+           ["d3", t("③ 알고리즘 3 — 정점 전량", "③ Algorithm 3 — ride to the peak"),
+            t("같은 다섯 문 + 바닥 20%는 1.5배 매수(사장님의 일봉 서클) → 오르는 동안 보유, +0.85% 무장 후 3번째 음봉에 전량(최고가권은 2번째) · 큰 음봉 0.9% 즉시 · 미상승 3음봉 조기 정리 · 바닥은 +2% 밸브까지 인내 · -1% 전량+3양봉, 2회면 종료 · 15:19 전량",
+              "same five doors + bottom fifth buys 1.5x (the boss's daily-chart circle) -> holds the whole climb, armed at +0.85% sells ALL on the 3rd blue (2nd near the record) · a 0.9% blue sells instantly · never-rose 3 blues = early cut · bottom-zone patience to the +2% valve · -1% stop + 3-red, 2 stops = done · 15:19 all out")]] as const)
           .map(([k, lab, tip]) => (
           <button key={k} title={tip}
             onClick={() => { if (way === k) return;
@@ -2049,8 +2058,8 @@ export default function LiveDeskPage() {
                            `"Buy ${Math.round(det.scout.frac * 100)}% first" — only a ${Math.round(det.scout.frac * 100)}% scout is bought at the signal; the remaining ${100 - Math.round(det.scout.frac * 100)}% is added once a +${det.scout.confirm}% rise confirms the turn. If the drop resumes, the damage ends at the scout.`)}</li>}
                     <li>{t(`"같은 급락은 두 번 사지 않는다" — 매도 후 새 고점이 만들어져야 다음 매수가 허용됩니다 (딥당 1회).`,
                            `"The same dip is never bought twice" — a new high must form after the last sell before the next buy is allowed (one trade per dip).`)}</li>
-                    {det.morning && <li>{t(`"바쁜 아침의 강세는 산다" — 09:05~${det.morning.until} 사이, 시초 5분 거래량이 이 종목 평소의 ${det.morning.vol_x}배 이상이고 가격이 당일 신고가·시가 대비 +${det.morning.min_run}% 이상이면 매수합니다. (미국 상승 조건은 검증에서 탈락 — 거래량이 진짜 신호)`,
-                           `"Buy a busy morning's strength" — between 09:05 and ${det.morning.until}, when the first five minutes trade ${det.morning.vol_x}x this stock's usual volume and the price is at a session high, up ${det.morning.min_run}%+ from the open, it buys. (The US-up condition was tested and rejected — volume is the true signal.)`)}</li>}
+                    {det.morning && <li>{t(`"바쁜 아침의 강세는 산다" — 09:00~${det.morning.until} 사이, 시초 5분 거래량이 이 종목 평소의 ${det.morning.vol_x}배 이상이고 가격이 당일 신고가·시가 대비 +${det.morning.min_run}% 이상이면 매수합니다. (미국 상승 조건은 검증에서 탈락 — 거래량이 진짜 신호)`,
+                           `"Buy a busy morning's strength" — between 09:00 and ${det.morning.until}, when the first five minutes trade ${det.morning.vol_x}x this stock's usual volume and the price is at a session high, up ${det.morning.min_run}%+ from the open, it buys. (The US-up condition was tested and rejected — volume is the true signal.)`)}</li>}
                     {det.burst && <li>{t(`"떨어진 적 없는 급등도 산다" — 최근 ${det.burst.win_min}분의 최저가에서 ${det.burst.rise}% 이상 올라 당일 신고가에 섰으면 급등의 남은 구간에 올라탑니다. (2026-08-20 설치 — 아침 급등 5건이 4개의 문을 모두 지나쳐 간 날)`,
                            `"A rise that never fell is bought too" — up ${det.burst.rise}%+ from the lowest close of the last ${det.burst.win_min} minutes, standing at a session high, it boards the burst's remaining leg. (Installed 2026-08-20 - the day five morning bursts slipped past all four doors.)`)}</li>}
                     {det.rebound && <li>{t(`"바닥 반등의 눌림은 산다" — 어제 종가가 최근 ${det.rebound.low_win}일 최저가의 ${det.rebound.near}% 이내(바닥권)였고 오늘 전일 대비 +${det.rebound.day_gain}% 이상 오른 날은, 장중 ${det.rebound.drop}% 이상의 작은 눌림이 전환(2번째 양봉)하면 그것도 매수합니다 — 일봉과 분봉이 같은 방향을 말할 때는 작은 눌림도 신뢰합니다.`,
@@ -2070,6 +2079,8 @@ export default function LiveDeskPage() {
                          `"Is the market actually moving?" — if the last 10 minutes ranged under 0.4%, NO rule trades at all.`)}</li>}
                   <li>{t(`"빈손인가?" — 이 규칙이 아직 아무 주식도 들고 있지 않아야 합니다. 들고 있으면 다 팔 때까지 새로 사지 않습니다.`,
                          `"Are the hands empty?" — the rule must not be holding anything. While holding, it never buys again until it sells.`)}</li>
+                  <li>{t(`"레이어 판정을 통과했는가?" — 연중 85% 이상(자기 최고가권)이면 매수 금지, 60% 이상이면 절반 수량, 바닥 20%는 알고3에서 1.5배. 최근 10분 연료(거래량)가 평소의 0.7배 이하면 절반. 하루 -1% 손절 2번이면 그 종목의 문은 내일까지 닫힙니다. 뉴스(Qwen3)는 매 분 스탬프를 기록만 합니다 — 아직 투표권 없음.`,
+                         `"Did the layer judges pass it?" — at >=85% of the 1-year range buying is BANNED; >=60% halves the size; the bottom fifth buys 1.5x on Algo 3. Fuel (last 10 min volume) under 0.7x usual halves it. Two -1% stops in one day close that stock's doors until tomorrow. News (Qwen3) stamps every minute but only observes - no vote yet.`)}</li>
                 </ol>
               </div>
               <div>
@@ -2086,6 +2097,10 @@ export default function LiveDeskPage() {
                           `Every +${det.drip.step}% step sells ${Math.round(det.drip.up_frac * 100)}% at a resting limit. Through calm pullbacks the rest is simply HELD - nothing sold, nothing bought.`)}</li>
                     <li>{t(`기준가에서 -${det.drip.stop_reset}%면 전량 매도 — 그리고 하락이 멈추고 3번째 양봉이 뜨면 다시 매수합니다 (정찰 3%부터). 그 외의 하락에는 팔지 않고 버팁니다.`,
                            `At -${det.drip.stop_reset}% from the base it sells ALL — and when the fall stops and the 3rd up-candle prints, it re-enters (scout 3% first). No other decline sells.`)}</li>
+                    <li>{t(`연중 바닥 20% 구간에서는 상승을 음봉으로 팔지 않습니다 — +2%에 도달한 뒤 첫 하락이 오면 그때 팝니다 (바닥 밸브). 최고가권(85% 이상)에서는 반대로 한 박자 빨리 정리합니다.`,
+                           `In the bottom fifth of the year a rise is never sold on falling candles — once +2% is reached, the FIRST dip sells (the bottom valve). Near the record (>=85%) it lets go one beat earlier instead.`)}</li>
+                    <li>{t(`15:19 종 — 전 종목 전량 매도, 예외 없음. 15:20부터는 동시호가라 자유 매매가 끝납니다. 빈손으로 잠듭니다.`,
+                           `The 15:19 bell — everything sells, no exceptions. From 15:20 the closing auction ends free trading. We sleep flat.`)}</li>
                     {det.drip.rebuy && <li>{t("보유 중에도 새 급락 신호가 오면 판 만큼을 다시 사서 100%로 채웁니다 (시나리오2).",
                            "While holding, a fresh sharp-drop signal buys back what was sold, topping up to 100% (Scenario 2).")}</li>}
                     {det.us_habit && <li>{t("미국 습관: 반도체지수(SOX)가 밤사이 -1.5% 이하로 떨어진 다음 날은 ⅓ 수량으로만 삽니다. 그 외에는 평소대로 — 매일 9시 정각부터 매매합니다.",
@@ -2263,7 +2278,31 @@ export default function LiveDeskPage() {
                 key={`det-${sel ?? "tape"}-${det?.chart?.code ?? code}-${tick}-${period}`}
                 off={sel && det?.chart ? det.chart.off : (tape?.off ?? 0)}
                 bars={sel && det?.chart ? det.chart.candles : bars}
-                                      marks={sel && det?.chart ? det.chart.marks : undefined}
+                                      marks={sel && det?.chart ? (() => {
+                  // the clicked episode's OTHER buys join the chart as ▲s
+                  // (boss 2026-08-21: the 14:27 SK텔레콤 army buy had a time
+                  // but no mark - "in the chart I can not see")
+                  const base9 = det.chart.marks || [];
+                  const ptr9 = pick !== null ? det.trades[pick] : null;
+                  if (!ptr9 || ptr9.code !== det.chart.code) return base9;
+                  const buys9 = (ptr9.parts?.buys || []) as unknown as (number | string | null)[][];
+                  if (buys9.length < 2) return base9;
+                  const cds9 = det.chart.candles;
+                  const extra9 = buys9.map((b9, i9) => {
+                    const tt9 = typeof b9[2] === "string" ? (b9[2] as string).slice(0, 5) : "";
+                    if (!tt9) return null;
+                    let ix9 = -1;
+                    for (let j9 = 0; j9 < cds9.length; j9++) {
+                      if ((cds9[j9].hhmm || "").slice(0, 5) >= tt9) { ix9 = j9; break; }
+                    }
+                    if (ix9 < 0) return null;
+                    return { b: ix9, s: ix9, g: 0, net: 0, xb: true,
+                             label: (i9 === 0 ? t("진입", "entry") : t("추가", "add"))
+                                    + ` ₩${Math.round(b9[0] as number).toLocaleString()}` };
+                  }).filter(Boolean) as { b: number; s: number; g: number; net: number;
+                                          xb: boolean; label: string }[];
+                  return [...base9, ...extra9];
+                })() : undefined}
                                       focus={sel && det?.chart
                   ? (() => {
                       // INSTANT JUMP. The chart already holds the whole day and every

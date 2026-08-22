@@ -13,9 +13,12 @@ Run standalone, detached:
   .venv/Scripts/python.exe -m services.news_intern          # loop forever
   .venv/Scripts/python.exe -m services.news_intern --once   # one cycle, verbose
 
-Kiwoom REST news TR: not found in the documented catalog (prices/charts/
-rankings/shsa only) - re-check their api guide before wiring; the generic
-transport in kiwoom_rest._request() takes any api-id the day one appears.
+Kiwoom REST news TR: CONFIRMED ABSENT 2026-08-22 - the full REST catalog
+(~186 endpoints, 17 modules: account/stkinfo/market/orders/charts/ranking/
+sector/frgn/shsa/lending/themes/condition/ELW/ETF/websocket) carries no
+news or 공시 endpoint at all. Google News RSS + DART stay the sources; the
+generic transport in kiwoom_rest._request() takes any api-id the day
+Kiwoom ships one.
 """
 from __future__ import annotations
 
