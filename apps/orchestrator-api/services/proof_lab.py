@@ -199,7 +199,8 @@ VARIANTS: list[dict] = [
      "vol_size": {"x": 1.2, "frac": 0.5}, "us_habit": True,
      "ctx": {"top": 0.6, "top_size": 0.5, "no_buy_top": 0.85,
              "sell_bot": 0.20, "bot_blues": 999,
-             "bot_take": 2.0, "bot_take_blues": 1}, "surrender": 2,
+             "bot_take": 2.0, "bot_take_blues": 1,
+             "news_n": 2, "news_size": 0.5}, "surrender": 2,
      # fences lowered at his order (2026-08-13, after 삼성전자 0.93%/1.30% and
      # NAVER 0.91%/1.37 turns were refused by hairs): drop 0.9, range 1.25.
      # Holdout cost measured before setting: about -0.6M/yr vs 1.0/1.5.
@@ -246,7 +247,8 @@ VARIANTS: list[dict] = [
      "vol_size": {"x": 1.2, "frac": 0.5}, "us_habit": True,
      "ctx": {"top": 0.6, "top_size": 0.5, "no_buy_top": 0.85,
              "sell_bot": 0.20, "bot_blues": 999,
-             "bot_take": 2.0, "bot_take_blues": 1}, "surrender": 2,
+             "bot_take": 2.0, "bot_take_blues": 1,
+             "news_n": 2, "news_size": 0.5}, "surrender": 2,
      # fences lowered at his order (2026-08-13, after 삼성전자 0.93%/1.30% and
      # NAVER 0.91%/1.37 turns were refused by hairs): drop 0.9, range 1.25.
      # Holdout cost measured before setting: about -0.6M/yr vs 1.0/1.5.
@@ -302,7 +304,8 @@ VARIANTS: list[dict] = [
              "bot": 0.20, "bot_size": 1.5,
              "sell_bot": 0.20, "bot_blues": 999,
              "bot_take": 2.0, "bot_take_blues": 1,
-             "sell_top": 0.85, "top_blues": 2}, "surrender": 2,
+             "sell_top": 0.85, "top_blues": 2,
+             "news_n": 2, "news_size": 0.5}, "surrender": 2,
      "dip": {"drop": 0.7, "sharp": 3.0, "ups": 1, "chop": 1.0, "win_sec": 1800},
      "scout": {"frac": 0.03, "confirm": 0.5},
      "trend": {"climb": 1.05, "dd": 0.4, "win": 30},
@@ -1488,6 +1491,14 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                 if (v.get("ctx") and _fu9 is not None
                         and _fu9 <= v["ctx"].get("fuel_low", 0.7)):
                     _q = max(1, int(_q * v["ctx"].get("fuel_size", 0.5)))
+                # LAYER 3, SAFE MODE (boss 2026-08-24, explicit order: "test
+                # and implement in parallel, start from today - news does not
+                # decide solely"): >=news_n 위험 stamps on this stock in the
+                # last hour halve NEW buys. Never bans, never sells; the
+                # intern's grading runs every evening in parallel.
+                if (v.get("ctx") and v["ctx"].get("news_n")
+                        and (s.get("news_risk") or 0) >= v["ctx"]["news_n"]):
+                    _q = max(1, int(_q * v["ctx"].get("news_size", 0.5)))
                 if v.get("vol_size"):
                     _vv2 = s.get("vols") or []
                     _w2 = _vv2[max(0, i - 20):i]

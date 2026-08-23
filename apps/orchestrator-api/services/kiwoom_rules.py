@@ -296,6 +296,42 @@ def _daily_pos(code: str, price: float) -> float | None:
     return max(0.0, min(1.5, (price - lo) / (hi - lo)))
 
 
+_NEWS_CACHE: dict = {"mtime": 0.0, "rows": []}
+
+
+def _news_risk(code: str) -> int:
+    """LAYER 3, SAFE MODE (boss 2026-08-24 morning, explicit order: "test and
+    implement in parallel, start to use from today - news does not decide
+    solely, other factors also help"): how many 위험 stamps the news intern
+    put on this stock in the LAST 60 MINUTES. The engine halves NEW buys at
+    >=2 - it never bans a door and never sells a position. The intern's
+    week-one grading continues every evening in parallel; full power (door
+    closing) only after the graded record and the boss's word."""
+    import datetime as _dt
+    import json as _json
+    from pathlib import Path as _P
+    try:
+        f = (_P(__file__).resolve().parent.parent / "data" / "news_intern"
+             / f"{_dt.datetime.now().strftime('%Y%m%d')}.jsonl")
+        mt = f.stat().st_mtime
+        if mt != _NEWS_CACHE["mtime"]:
+            rows = []
+            for ln in f.read_text(encoding="utf-8").splitlines():
+                try:
+                    rows.append(_json.loads(ln))
+                except Exception:
+                    continue
+            _NEWS_CACHE["mtime"] = mt
+            _NEWS_CACHE["rows"] = rows
+        cut = (_dt.datetime.now()
+               - _dt.timedelta(minutes=60)).isoformat(timespec="seconds")
+        return sum(1 for r in _NEWS_CACHE["rows"]
+                   if r.get("code") == code and r.get("stamp") == "위험"
+                   and (r.get("ts") or "") >= cut)
+    except Exception:
+        return 0
+
+
 _VB_CACHE: dict = {}
 
 
@@ -630,6 +666,7 @@ def rank(tick: int = 5, period: int = 0, day: str = "",
                                                  tp["cs"][-1]["close"]
                                                  if tp["cs"] else 0),
                          "fuel": _fuel(code, tp["cs"]),
+                         "news_risk": _news_risk(code),
                          "vols": [float(c.get("vol") or 0) for c in tp["cs"]],
                          "ctx": daily_ctx(code, d or _kd0()),
                          "gate_ok": (_gate_ok(code, d or _kd0()) if use_gate else True),
@@ -806,6 +843,7 @@ def trades(vid: str, tick: int = 5, period: int = 0, code: str = "",
                          "daily_pos": _daily_pos(c_code,
                                                  cs[-1]["close"] if cs else 0),
                          "fuel": _fuel(c_code, cs),
+                         "news_risk": _news_risk(c_code),
                          "times": [c["hhmm"] for c in cs],
                          "vols": [float(c.get("vol") or 0) for c in cs],
                          "ctx": daily_ctx(c_code, d or _kd0()),

@@ -878,9 +878,11 @@ def live_layers(code: str = Query(...)):
                                f"{cc.get('중립', 0)} · danger "
                                f"{cc.get('위험', 0)}"
                                if stamps else "no articles analyzed today"),
-                  "verdict": "관찰 모드 - 참고용 (아직 매매 투표권 없음)",
-                  "verdict_en": "observe mode - reference only "
-                                "(no vote on trades yet)"})
+                  "verdict": "안전 모드 - 최근 1시간 위험 2건 이상이면 신규 매수 "
+                             "절반 (금지·강제매도 없음, 채점은 매일 저녁 계속)",
+                  "verdict_en": "SAFE MODE - 2+ danger stamps in the last hour "
+                                "halve NEW buys (no bans, no forced sells; "
+                                "grading continues nightly)"})
     steps.append({"icon": "⏱", "name": "분봉 (트리거)",
                   "name_en": "Minute chart (trigger)",
                   "value": "다섯 개의 문 + 수확/정지 법",
