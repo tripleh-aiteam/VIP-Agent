@@ -805,6 +805,19 @@ def live_layers(code: str = Query(...)):
         fu = kr._fuel(c6, bars) if bars else None
     except Exception:
         pass
+    if px is None:
+        # market closed / pre-open: no live tape, but the year map still
+        # exists - fall back to the last stored close so the daily-chart
+        # step never goes dark (Sunday rehearsal catch, 2026-08-23)
+        try:
+            _hist9 = (_P(__file__).resolve().parent.parent / "data"
+                      / "minute1_hist" / f"{c6}.json")
+            _rows9 = _json.loads(_hist9.read_text())
+            if _rows9:
+                px = float(_rows9[-1][4])
+                dp = kr._daily_pos(c6, px)
+        except Exception:
+            pass
     # every line carries both tongues; the page's language toggle picks
     # (boss 2026-08-21: "if English the explanation should be in English,
     # if Korean it should be in Korean")
