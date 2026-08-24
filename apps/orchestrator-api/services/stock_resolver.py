@@ -103,6 +103,12 @@ def _build() -> None:
     for c, n in off.items():
         if n:
             _ALIAS[n.lower()] = c
+    # ENGLISH official names too (boss 2026-08-24: "Samsung Biologics" resolved to
+    # 삼성전자 because only the bare "samsung" alias existed on the EN side — the
+    # evidence click and a price question both went to the wrong company).
+    for c, n in _EN_NAMES.items():
+        _ALIAS.setdefault(n.lower(), c)
+    _ALIAS.setdefault("samsung bio", "207940")
     _ALIAS.update(_SLANG)
     # ensure every slang ticker has a display name
     for a, c in _SLANG.items():

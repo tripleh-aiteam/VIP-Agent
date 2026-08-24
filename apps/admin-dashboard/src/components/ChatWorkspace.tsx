@@ -41,7 +41,7 @@ function inlineFmt(s: string): ReactNode[] {
   // Tokens: **bold**, `code`, [label](url) markdown links (http, chart:CODE, or
   // ask:QUESTION), and bare http(s) URLs. chart:CODE opens the TradingView proof
   // panel; ask:Q sends Q as the next chat message (proof-on-click evidence links).
-  const re = /(\*\*[^*]+\*\*|`[^`]+`|\[[^\]]+\]\((?:https?:\/\/[^\s)]+|chart:\d{6}|ask:[^)]+)\)|https?:\/\/[^\s)]+)/g;
+  const re = /(\*\*[^*]+\*\*|`[^`]+`|\[[^\]]+\]\((?:https?:\/\/[^\s)]+|chart:\d{6}|evidence:\d{6}|ask:[^)]+)\)|https?:\/\/[^\s)]+)/g;
   const link = (href: string, label: string, k: number) => (
     <a key={k} href={href} target="_blank" rel="noopener noreferrer"
        className="text-blue-600 underline break-all hover:text-blue-700">{label}</a>
@@ -60,9 +60,15 @@ function inlineFmt(s: string): ReactNode[] {
     else if (tok.startsWith("`")) out.push(<code key={k++} className="px-1 py-0.5 bg-gray-100 rounded text-[13px] font-mono">{tok.slice(1, -1)}</code>);
     else if (tok.startsWith("[")) {
       const mc = /^\[([^\]]+)\]\(chart:(\d{6})\)$/.exec(tok);
+      const me = /^\[([^\]]+)\]\(evidence:(\d{6})\)$/.exec(tok);
       const ma = /^\[([^\]]+)\]\(ask:([^)]+)\)$/.exec(tok);
       const mm = /^\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)$/.exec(tok);
       if (mc) out.push(chartLink(mc[2], mc[1], k++));
+      else if (me) out.push(
+        <a key={k++} href="#" role="button"
+           onClick={(e) => { e.preventDefault(); try { window.dispatchEvent(new CustomEvent("vip-evidence", { detail: me[2] })); } catch {} }}
+           title="근거 데이터 + 차트 (오른쪽 패널) / evidence data + chart (right panel)"
+           className="inline-block px-1.5 rounded bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100 cursor-pointer text-[13px] no-underline">{me[1]}</a>);
       else if (ma) out.push(
         <a key={k++} href="#" role="button"
            onClick={(e) => { e.preventDefault(); try { window.dispatchEvent(new CustomEvent("vip-ask", { detail: ma[2] })); } catch {} }}
@@ -471,6 +477,30 @@ export default function ChatWorkspace({ apiBase, agentId, agentLabel }: Props) {
     window.addEventListener("vip-ask", h);
     return () => window.removeEventListener("vip-ask", h);
   }, []);
+  // Evidence PANEL ([근거](evidence:005930) links): opens on the RIGHT with the
+  // TradingView chart + the checklist/daily/minute/volume/news data fetched by code.
+  const [evidenceCode, setEvidenceCode] = useState<string | null>(null);
+  const [evidenceMd, setEvidenceMd] = useState<string>("");
+  const evidenceLangRef = useRef("ko");
+  evidenceLangRef.current = /[가-힣]/.test(lastQuestion || "") ? "ko" : "en";
+  useEffect(() => {
+    const h = (e: Event) => {
+      const code = (e as CustomEvent).detail;
+      if (code) setEvidenceCode(String(code));
+    };
+    window.addEventListener("vip-evidence", h);
+    return () => window.removeEventListener("vip-evidence", h);
+  }, []);
+  useEffect(() => {
+    if (!evidenceCode) { setEvidenceMd(""); return; }
+    let live = true;
+    setEvidenceMd("");
+    fetchWithRetry(`${base}/chat/reco-evidence/${evidenceCode}?lang=${evidenceLangRef.current}`)
+      .then(r => r.json())
+      .then(d => { if (live) setEvidenceMd(d?.reply || "데이터를 불러오지 못했습니다 / could not load"); })
+      .catch(() => { if (live) setEvidenceMd("데이터를 불러오지 못했습니다 / could not load"); });
+    return () => { live = false; };
+  }, [evidenceCode, base]);
   // Live connectivity — drives the automatic switch to no-internet mode.
   const [online, setOnline] = useState<boolean>(() => (typeof navigator === "undefined" ? true : navigator.onLine));
   useEffect(() => {
@@ -1521,6 +1551,32 @@ export default function ChatWorkspace({ apiBase, agentId, agentLabel }: Props) {
             className="mt-10 px-6 py-2.5 rounded-full bg-white text-gray-900 text-[14px] font-medium hover:bg-gray-100"
           >End voice</button>
         </div>
+      )}
+
+      {/* ========================================================== */}
+      {/* === Evidence panel (right): the PROOF behind a recommendation === */}
+      {/* Chart on top, the checklist/daily/minute/volume/news data below.  */}
+      {/* ========================================================== */}
+      {evidenceCode && (
+        <aside className="hidden md:flex w-[420px] shrink-0 flex-col border-l border-gray-200 bg-white">
+          <div className="flex items-center justify-between px-3 py-2 border-b border-gray-200">
+            <span className="text-[12px] font-semibold text-gray-700">🔍 근거 / evidence · KRX:{evidenceCode}</span>
+            <button onClick={() => setEvidenceCode(null)}
+              className="px-1.5 text-[14px] text-gray-400 hover:text-gray-700" title="Close">✕</button>
+          </div>
+          <iframe
+            key={evidenceCode}
+            src={`https://s.tradingview.com/widgetembed/?symbol=KRX%3A${evidenceCode}&interval=D&theme=light&style=1&locale=kr&withdateranges=1&hide_side_toolbar=1`}
+            className="w-full border-0 shrink-0"
+            style={{ height: "42%" }}
+            title="TradingView chart"
+          />
+          <div className="flex-1 overflow-y-auto px-3 py-2 text-[13px] leading-relaxed text-gray-900">
+            {evidenceMd
+              ? <MarkdownLite text={evidenceMd} />
+              : <div className="text-gray-400 text-[12px] py-4">근거 데이터 불러오는 중… / loading evidence…</div>}
+          </div>
+        </aside>
       )}
     </div>
   );

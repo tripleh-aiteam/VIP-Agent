@@ -235,14 +235,15 @@ def build(db, n: int = 3, transcript: str = "", lang: str = "ko") -> dict[str, A
         if rt.get("pressure"):
             bits.append(rt.get("pressure_en") if en and rt.get("pressure_en") else rt["pressure"])
         zs = _zone_str(lv.get("zone"), en)
-        ask = (f"ask:evidence for {name} recommendation" if en
-               else f"ask:{name} 추천 근거")
+        # evidence:CODE — the chat opens a RIGHT-side proof panel (chart + the data),
+        # no round-trip through name resolution (boss 2026-08-24: the ask-link version
+        # re-asked "which stock do you mean?" on English names).
         L.append(f"**{i}. [{name}](chart:{code})** — "
                  + (f"{round(tot, 1)} pts (base {r.get('score')} + now {lv['adj']:+g})"
                     if en else f"{round(tot, 1)}점 (기준 {r.get('score')} + 지금 {lv['adj']:+g})")
                  + (f" · {' · '.join(bits)}" if bits else "")
                  + f" · {zs}"
-                 + f" · [{'evidence 🔍' if en else '근거 🔍'}]({ask})")
+                 + f" · [{'evidence 🔍' if en else '근거 🔍'}](evidence:{code})")
     L += ["",
           ("Click a NAME to open its live chart on the left · click 근거/evidence to see exactly "
            "how the 100-item checklist, daily chart, minute/real-time, volume and news scored it — "
@@ -254,8 +255,7 @@ def build(db, n: int = 3, transcript: str = "", lang: str = "ko") -> dict[str, A
 
 
 def detail(db, query: str, lang: str = "ko") -> Optional[str]:
-    """PROOF VIEW for one stock: checklist group scores mapped to their 100-item
-    numbers + 일봉 zone + 분봉/실시간 + 거래량 + 뉴스 + chart link."""
+    """PROOF VIEW routed from a typed question — resolves the stock, then delegates."""
     en = str(lang or "").lower().startswith("en")
     if not en and query and not re.search(r"[가-힣]", query) and re.search(r"[a-zA-Z]", query):
         en = True
@@ -266,6 +266,21 @@ def detail(db, query: str, lang: str = "ko") -> Optional[str]:
         code, name = None, None
     if not code:
         return None
+    return detail_by_code(db, code, "en" if en else "ko", name=name)
+
+
+def detail_by_code(db, code: str, lang: str = "ko", name: Optional[str] = None) -> Optional[str]:
+    """PROOF VIEW for one stock BY CODE (the right-side evidence panel fetches this):
+    checklist group scores mapped to their 100-item numbers + 일봉 zone + 분봉/실시간 +
+    거래량 + 뉴스 (clickable headlines) — the chart renders in the panel itself."""
+    en = str(lang or "").lower().startswith("en")
+    code = str(code).zfill(6)
+    if name is None:
+        try:
+            from services.stock_resolver import display_name
+            name = display_name(code)
+        except Exception:
+            name = code
     rank = _ranking() or {}
     row = next((r for r in rank.get("rows", []) if r["code"] == code), None)
     lv = _live_state(db, code)
@@ -318,6 +333,7 @@ def detail(db, query: str, lang: str = "ko") -> Optional[str]:
             v_line += " · " + ("volume surge" if en else "거래량 급증")
     L.append(f"**④ {'Volume' if en else '거래량'}:** {v_line}")
     n_line = "no recent stamps" if en else "최근 뉴스 스탬프 없음"
+    n_links: list[str] = []
     try:
         from services import news_impact as ni
         items = list(ni.effective_news(db, code, limit=6) or [])
@@ -326,10 +342,19 @@ def detail(db, query: str, lang: str = "ko") -> Optional[str]:
                      for it in items)
             n_line = (f"score {max(-3, min(3, sc)):+d} ({len(items)})" if en
                       else f"점수 {max(-3, min(3, sc)):+d} ({len(items)}건)")
+            # summary here, full article one click away (boss 2026-08-24: "news also
+            # clickable, I can read if I wanna more detail")
+            for it in items[:3]:
+                t = (it.get("title") or "").strip()[:70].replace("[", "").replace("]", "")
+                u = (it.get("url") or "").strip()
+                d = it.get("direction")
+                mark = "📈" if d in (1, "▲") else "📉" if d in (-1, "▼") else "•"
+                if t:
+                    n_links.append(f"  {mark} [{t}]({u})" if u.startswith("http") else f"  {mark} {t}")
     except Exception:
         pass
     L.append(f"**⑤ {'News' if en else '뉴스'}:** {n_line}")
-    L += ["", f"📈 [{nm} {'chart' if en else '차트 열기'}](chart:{code})",
-          (f"Full live 36-item check: ask \"{nm} checklist\"." if en
-           else f"실측 36항목 점검은 \"{nm} 체크리스트\"라고 물어보세요.")]
+    L += n_links
+    L += ["", (f"Full live 36-item check: ask \"{nm} checklist\"." if en
+               else f"실측 36항목 점검은 \"{nm} 체크리스트\"라고 물어보세요.")]
     return "\n".join(L)

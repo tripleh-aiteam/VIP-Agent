@@ -18,6 +18,17 @@ from services.api_security import rate_limit_compose
 router = APIRouter(prefix="/chat", tags=["chat"])
 
 
+@router.get("/reco-evidence/{ticker}")
+def reco_evidence(ticker: str, lang: str = Query("ko"), db: Session = Depends(get_db)):
+    """Content for the chat's RIGHT-side proof panel (boss 2026-08-24: clicking
+    evidence must SHOW the data — checklist scores with item numbers, 일봉 zone,
+    분봉/실시간, 거래량, clickable news — beside a TradingView chart, not re-ask).
+    By CODE, so no name resolution can miss."""
+    from services.checklist_reco import detail_by_code
+    r = detail_by_code(db, str(ticker), lang=lang)
+    return {"ok": bool(r), "ticker": str(ticker).zfill(6), "reply": r or ""}
+
+
 # ---------------------------------------------------------------------------
 # Voice Assistant ("Chatbot") — single endpoint for Web Speech API integration
 # ---------------------------------------------------------------------------

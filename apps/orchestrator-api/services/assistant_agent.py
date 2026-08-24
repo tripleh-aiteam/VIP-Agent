@@ -1180,7 +1180,17 @@ def _is_vip_current_price_q(transcript: Optional[str], agent_id: Optional[str]) 
     # specific stock is named — so it reads the same as Korean '고가', while
     # "open the stock page" still can't masquerade as a quote request.
     _bare_field = bool(_BARE_FIELD_RE.search(t)) and _stock_in_query(transcript) is not None
-    if not any(w in t for w in _PRICE_WORDS) and not _compare and not _bare_field:
+    # TYPO-TOLERANT price word ('current prtice' — boss 2026-08-24 — fell past the exact
+    # match, and the LLM answered a price question with the full 4-algorithm advice).
+    _fuzzy_price = False
+    if not any(w in t for w in _PRICE_WORDS):
+        import difflib as _dl
+        for _tok in _re.findall(r"[a-z]{4,8}", t):
+            if _dl.get_close_matches(_tok, ("price", "quote", "volume"), n=1, cutoff=0.8):
+                _fuzzy_price = True
+                break
+    if not any(w in t for w in _PRICE_WORDS) and not _compare and not _bare_field \
+            and not _fuzzy_price:
         return False
     if (_is_past_price(transcript) or _is_stock_advice(transcript, agent_id)
             or _wants_recommendation(transcript)      # 'from which price should I BUY' = a decision, not a quote
