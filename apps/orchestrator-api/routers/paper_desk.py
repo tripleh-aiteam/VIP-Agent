@@ -847,6 +847,37 @@ def live_daily_chart(code: str = Query(...)):
                       "bottom_20": lo + (hi - lo) * 0.20}}
 
 
+@router.get("/live/news-stamps")
+def live_news_stamps(code: str = Query(...), stamp: str = Query("")):
+    """THE EVIDENCE BEHIND THE RULING (boss 2026-08-24: "I do not see which
+    news, why - you have to put hyperlink so I can click and read the full
+    news"): today's intern stamps for one stock, headline + link + Qwen's
+    one-line reason, newest first. Filter with stamp=위험 for the danger
+    list a halving was based on."""
+    import json as _json
+    from pathlib import Path as _P
+    c6 = _resolve(code)
+    out = []
+    try:
+        nd = _P(__file__).resolve().parent.parent / "data" / "news_intern"
+        files = sorted(nd.glob("2*.jsonl"))
+        if files:
+            for ln in files[-1].read_text(encoding="utf-8").splitlines():
+                try:
+                    r = _json.loads(ln)
+                except Exception:
+                    continue
+                if r.get("code") == c6 and (not stamp
+                                            or r.get("stamp") == stamp):
+                    out.append({"ts": r.get("ts", ""), "stamp": r.get("stamp"),
+                                "title": r.get("title", ""),
+                                "link": r.get("link", ""),
+                                "why": r.get("why", "")})
+    except Exception:
+        pass
+    return {"ok": True, "code": c6, "stamps": out[-30:][::-1]}
+
+
 @router.get("/live/rules/layers")
 def live_layers(code: str = Query(...)):
     """THE JUDGES' STAMPS (boss 2026-08-21 night: "if we click it should show

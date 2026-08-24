@@ -888,6 +888,25 @@ export default function LiveDeskPage() {
              `📰 news: ${j.news ?? 0} danger stamp${(j.news ?? 0) === 1 ? "" : "s"} in the last hour → ${j.news_half ? "danger, HALF size" : "clear, normal size"}`));
     return L;
   };
+  // THE EVIDENCE LINKS (boss 2026-08-24: "put hyperlink so I can read the
+  // full news"): when the expanded trade was news-judged, fetch that stock's
+  // danger stamps so the ruling shows its articles
+  const [newsSt9, setNewsSt9] = useState<{ ts: string; stamp: string;
+    title: string; link: string; why: string }[] | null>(null);
+  useEffect(() => {
+    setNewsSt9(null);
+    if (!famExp || !fam) return;
+    const r9 = fam.rows.find((r) => `${r.rule}-${r.idx}` === famExp);
+    if (!r9?.code || !((r9.judge?.news ?? 0) > 0)) return;
+    let on9 = true;
+    api<{ ok?: boolean; stamps?: { ts: string; stamp: string; title: string;
+      link: string; why: string }[] }>(
+      `/paper-desk/live/news-stamps?code=${r9.code}&stamp=${encodeURIComponent("위험")}`)
+      .then((d) => { if (on9) setNewsSt9(d?.stamps || null); })
+      .catch(() => {});
+    return () => { on9 = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [famExp, fam]);
   const openFamTrade = useCallback((r: FamRow, side: "b" | "s") => {
     setFocusSide(side);
     setSel(r.rule);
@@ -1927,6 +1946,20 @@ export default function LiveDeskPage() {
                                     <b style={{ color: "#2e7d32" }}>{t("그 순간의 레이어 판정: ", "the judges at that moment: ")}</b>
                                     {js9.map((l9, i9) => <div key={i9}>{l9}</div>)}
                                   </div>) : null; })()}
+                              {(r.judge?.news ?? 0) > 0 && newsSt9 && newsSt9.length > 0 && (
+                                <div className="mt-0.5 pl-2" style={{ borderLeft: "2px solid #b02a2a" }}>
+                                  <b style={{ color: "#b02a2a" }}>{t("판정 근거가 된 위험 뉴스 (클릭하면 기사 원문): ", "the danger news behind the ruling (click to read): ")}</b>
+                                  {newsSt9.slice(0, 5).map((n9, i9) => (
+                                    <div key={i9}>
+                                      <a href={n9.link} target="_blank" rel="noreferrer"
+                                        className="underline decoration-dotted" style={{ color: "#1565c0" }}>
+                                        📰 {n9.title.slice(0, 85)}</a>
+                                      <span className="ml-1 text-[10px] text-[var(--text-muted)]">
+                                        {n9.ts.slice(11, 16)}{n9.why ? ` — ${n9.why.slice(0, 70)}` : ""}</span>
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
                               <div className="mt-0.5"><b style={{ color: BLUE }}>{t("왜 팔았나 — ", "why it sold — ")}</b>{lang === "ko" ? ex.sellKo : ex.sellEn}</div>
                               <div className="mt-1 text-[10px]" style={{ color: "#6a1b9a" }}>
                                 📈 {r.rule.startsWith("N")
