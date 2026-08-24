@@ -380,6 +380,47 @@ def detail(db, query: str, lang: str = "ko") -> Optional[str]:
     return detail_by_code(db, code, "en" if en else "ko", name=name)
 
 
+def _news_answers(db, code: str, en: bool) -> dict:
+    """Per-stock yes/no for the news items #26/27/29/40/42/44/45, computed from the
+    Qwen-scored headline stream (boss 2026-08-24: 'we have news, so it can be a data
+    source — kind of yes/no'). Returns {no: (ok, detail)}."""
+    try:
+        from services import news_impact as ni
+        items = list(ni.effective_news(db, code, limit=8) or [])
+    except Exception:
+        return {}
+    titles = [(it.get("title") or "") for it in items]
+    joined = " ".join(titles)
+    n = len(items)
+    out: dict = {}
+
+    def put(no, ok, ko, en_):
+        out[no] = (ok, en_ if en else ko)
+
+    theme = any(k in joined for k in ("테마", "주도", "급등", "강세", "랠리"))
+    put(26, True, f"종목 뉴스 {n}건 · 테마성 언급 {'있음' if theme else '없음'}",
+        f"{n} headlines · theme mention: {'yes' if theme else 'no'}")
+    sect = [k for k in ("반도체", "바이오", "방산", "조선", "배터리", "2차전지", "AI", "정유") if k in joined]
+    put(27, True, ("섹터 뉴스: " + ", ".join(sect[:3])) if sect else "핵심 섹터 뉴스 없음",
+        ("sector news: " + ", ".join(sect[:3])) if sect else "no key sector news")
+    earn = any(k in joined for k in ("실적", "공시", "영업이익", "수주", "계약", "매출"))
+    put(29, True, "실적/공시 뉴스 " + ("있음" if earn else "없음"),
+        "earnings/disclosure news: " + ("yes" if earn else "no"))
+    put(40, True, f"자체 재료 뉴스 {n}건 — 차별성 {'있음' if n >= 2 else '약함'}",
+        f"{n} own-story headlines — differentiation {'yes' if n >= 2 else 'weak'}")
+    strong = any(k in joined for k in ("실적", "수주", "계약", "증설", "공급", "인수"))
+    put(42, strong or n == 0,
+        ("지속성 재료(실적/수주/증설) 있음" if strong else ("뉴스 없음" if n == 0 else "단발성 재료 가능 — 지속성 근거 없음")),
+        ("sustainable catalyst (earnings/orders/capacity)" if strong else ("no news" if n == 0 else "possibly one-off — no durable catalyst")))
+    lockup = any(k in joined for k in ("보호예수", "블록딜", "오버행", "물량 해제"))
+    put(44, not lockup, ("⚠ 보호예수/블록딜 뉴스 감지" if lockup else "보호예수/오버행 뉴스 없음"),
+        ("⚠ lock-up/block-deal news detected" if lockup else "no lock-up/overhang news"))
+    hi_imp = sum(1 for it in items if float(it.get("impact") or 0) >= 0.7)
+    put(45, True, f"고신뢰(임팩트≥0.7) 뉴스 {hi_imp}건 / 전체 {n}건",
+        f"high-credibility (impact≥0.7) headlines: {hi_imp} of {n}")
+    return out
+
+
 def detail_by_code(db, code: str, lang: str = "ko", name: Optional[str] = None) -> Optional[str]:
     """PROOF VIEW for one stock BY CODE (the right-side evidence panel fetches this):
     checklist group scores mapped to their 100-item numbers + 일봉 zone + 분봉/실시간 +
@@ -487,6 +528,7 @@ def detail_by_code(db, code: str, lang: str = "ko", name: Optional[str] = None) 
         measured = {it.get("no"): it for it in (mkt.get("items") or [])}
         measured.update({it.get("no"): it for it in (lay.get("items") or [])})
         algo = ALGO_EN if en else ALGO_KO
+        news_ans = _news_answers(db, code, en)
         L += ["", f"**⑥ {nm} — {'the full 100, answered for this stock' if en else '이 종목의 100문항 실측'} · "
                   f"{lay.get('score')}/{lay.get('max')}{'' if en else '점'} ({card.get('pct')}%)**"]
         for it in sorted(full_checklist()["items"], key=lambda x: x["no"]):
@@ -501,6 +543,9 @@ def detail_by_code(db, code: str, lang: str = "ko", name: Optional[str] = None) 
                                                if en else "유동성·유연성·호가 점수로 반영"))
             elif no in algo:
                 L.append(f"🤖 {no}. {q} — {algo[no]}")
+            elif no in news_ans:
+                ok2, det2 = news_ans[no]
+                L.append(f"{'✅' if ok2 else '❌'} {no}. {q} — 📰 {det2}")
             elif no in NEWS_NOS:
                 L.append(f"📰 {no}. {q} — " + ("see the news stamps above (⑤)" if en else "위 ⑤ 뉴스 스탬프 참조"))
             elif it["cat"] in ("준비", "실행/관리"):

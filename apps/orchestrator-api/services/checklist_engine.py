@@ -289,6 +289,49 @@ def _c_mkt_liquidity(m):
     return r >= 0.7, f"유동성 {'충분' if r >= 0.7 else '부족'} (거래대금이 평균의 {r:.2f}배)"
 
 
+def _c_futures_flow(m):
+    """#24 — intraday futures flow, proxied by KODEX200 (the spot twin of the K200
+    futures; no free futures feed exists, and the proxy is labeled as one)."""
+    r = m.get("mkt_ret")
+    if r is None:
+        return None, "지수 데이터 없음"
+    return r > -1.0, f"KODEX200 {r:+.1f}% (지수선물 대용 지표)"
+
+
+def _c_pension(m):
+    hits = m.get("pension_hits")
+    if hits is None:
+        return None, "뉴스 데이터 없음"
+    return True, ("연기금 관련 뉴스: " + ", ".join(hits[:2])) if hits else "연기금 매매 관련 특이 뉴스 없음"
+
+
+def _c_fut_fx(m):
+    """#37 — stock/dollar futures flows, proxied by the spot pair (환율 + 지수)."""
+    fx = (m.get("mi") or {}).get("usdkrw")
+    r = m.get("mkt_ret")
+    if not fx and r is None:
+        return None, "데이터 없음"
+    bits = []
+    ok = True
+    if fx:
+        bits.append(f"달러선물 대용: 환율 {fx['price']} ({fx['pct']:+.2f}%)")
+        ok = ok and abs(fx["pct"]) < 1.0
+    if r is not None:
+        bits.append(f"주식선물 대용: KODEX200 {r:+.1f}%")
+        ok = ok and r > -2.5
+    return ok, " · ".join(bits)
+
+
+def _c_sector_rotation(m):
+    hits = m.get("sector_hits")
+    if hits is None:
+        return None, "뉴스 데이터 없음"
+    if not hits:
+        return True, "오늘 뉴스에 뚜렷한 주도 섹터 언급 없음"
+    top = " · ".join(f"{k} {v}건" for k, v in hits[:3])
+    return True, f"오늘 뉴스 언급 섹터: {top}"
+
+
 def _c_econ_events(m):
     hits = m.get("econ_hits")
     if hits is None:
@@ -384,6 +427,30 @@ def _c_recovered_open(c):
     if not cur or not op:
         return None, "시가 데이터 부족"
     return cur >= op * 0.995, f"시가 대비 {'회복' if cur >= op * 0.995 else '미회복'} ({(cur - op) / op * 100:+.1f}%)"
+
+
+def _c_spoof(c):
+    """#57 — fake bid/ask suspicion: an extreme one-sided order-book wall. Live
+    imbalance first; after hours, the last recorded book snapshot."""
+    imb = (c.get("rt") or {}).get("imbalance")
+    src = "실시간 호가"
+    if imb is None:
+        try:
+            from services.kiwoom_tape import load_book
+            rows = load_book(c.get("code") or "")
+            if rows:
+                b = rows[-1]
+                asks = sum(q for _p, q in (b.get("asks") or []))
+                bids = sum(q for _p, q in (b.get("bids") or []))
+                if asks + bids:
+                    imb = (bids - asks) / (bids + asks)
+                    src = f"마지막 호가 스냅샷 {str(b.get('t') or '')[:5]}"
+        except Exception:
+            pass
+    if imb is None:
+        return None, "호가 데이터 없음 (데스크 종목만 측정)"
+    ok = abs(imb) <= 0.6
+    return ok, f"호가 쏠림 {imb:+.0%} ({src}) — " + ("허매수/허매도 의심 없음" if ok else "한쪽 벽 과대 — 허수 주의")
 
 
 def _c_min5_align(c):
@@ -629,6 +696,10 @@ MARKET_ITEMS = [
     (16, "시장", "유가가 급변동하고 있지 않은가?", "Is oil NOT swinging sharply?", _c_oil, 1, False),
     (21, "시장", "시장 전체 거래 대금이 평소보다 많은가?", "Is total market trading value above normal?", _c_mkt_value, 1, False),
     (25, "시장", "시장의 전반적인 유동성이 충분한가?", "Is overall market liquidity sufficient?", _c_mkt_liquidity, 1, False),
+    (24, "시장", "장중 선물 시장의 흐름은?", "Intraday futures market flow?", _c_futures_flow, 1, False),
+    (33, "이슈", "연기금의 매매 방향은?", "Pension funds' trading direction?", _c_pension, 1, False),
+    (37, "이슈", "주식선물/달러선물 수급 체크", "Check stock-futures / dollar-futures flows", _c_fut_fx, 1, False),
+    (39, "이슈", "섹터별 순환매 흐름은 어디인가?", "Where is the sector rotation flowing?", _c_sector_rotation, 1, False),
     (22, "시장", "시장 전체를 압도하는 악재는 없는가?", "No market-wide overwhelming bad news?", _c_market_news, 2, True),
     (20, "시장", "지정학적 리스크는 없는가?", "No geopolitical risk?", _c_geopolitics, 1, False),
     (95, "시장", "지수 급락일이 아닌가? (방어)", "Not an index-plunge day? (defense)", _c_market_plunge, 3, True),
@@ -657,6 +728,7 @@ STOCK_ITEMS = [
     (66, "종목선정", "피봇 R2 아래(과열 아님)인가?", "Below pivot R2 (not overheated)?", _c_pivot_r2, 1, False),
     (75, "종목선정", "당일 고점 추격 매수가 아닌가?", "Not chasing today's high?", _c_near_day_high, 1, False),
     (55, "수급", "호가창 체결 강도(매수우위)가 있는가?", "Order-book strength on the bid side?", _c_orderbook_strength, 2, False),
+    (57, "수급", "허매수/허매도가 의심되는가?", "Suspected fake bids/asks (spoofing)?", _c_spoof, 1, False),
     (43, "수급", "공매도 과열 종목이 아닌가?", "Not a short-selling-overheated stock?", _c_short_overheat, 2, True),
     (35, "수급", "프로그램 매매가 우호적인가?", "Is program trading favorable?", _c_program, 1, False),
     (31, "수급", "외국인이 오늘 순매수인가?", "Are foreigners net buying today?", _c_foreign_today, 1, False),
@@ -709,6 +781,11 @@ def market_preflight(db) -> dict[str, Any]:
             _POL_KW = ("금리 결정", "금리결정", "FOMC", "금통위", "연준", "기준금리", "한국은행")
             _BEN_KW = ("수혜", "정책 지원", "보조금", "규제 완화", "지원책", "육성")
             _MSCI_KW = ("MSCI", "배당락", "배당 기준일", "리밸런싱")
+            _PEN_KW = ("연기금", "국민연금", "공무원연금")
+            _SECT_KW = ("반도체", "바이오", "방산", "조선", "2차전지", "배터리", "금융",
+                        "자동차", "정유", "화학", "플랫폼", "AI")
+            pen: list = []
+            sect: dict = {}
             for n in items:
                 d = n.get("direction") or 0
                 sc += (1 if d in (1, "▲") else -1 if d in (-1, "▼") else 0)
@@ -723,7 +800,14 @@ def market_preflight(db) -> dict[str, Any]:
                     ben.append(t_[:30])
                 if any(k in t_ for k in _MSCI_KW):
                     msci.append(t_[:30])
+                if any(k in t_ for k in _PEN_KW):
+                    pen.append(t_[:30])
+                for k in _SECT_KW:
+                    if k in t_:
+                        sect[k] = sect.get(k, 0) + 1
             m["news_score"] = max(-3, min(3, sc))
+            m["pension_hits"] = pen
+            m["sector_hits"] = sorted(sect.items(), key=lambda x: -x[1])
             m["geo_hits"] = geo
             m["econ_hits"] = econ
             m["policy_hits"] = pol
@@ -736,6 +820,8 @@ def market_preflight(db) -> dict[str, Any]:
             m["policy_hits"] = None
             m["benefit_hits"] = None
             m["msci_hits"] = None
+            m["pension_hits"] = None
+            m["sector_hits"] = None
         try:
             # 나스닥100 선물 (Yahoo NQ=F) — checklist #13; cached with the 5-min preflight
             import httpx as _hx2
