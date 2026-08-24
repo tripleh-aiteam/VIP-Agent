@@ -300,10 +300,15 @@ VARIANTS: list[dict] = [
      # (>=0.85 of the year, near its own record) rides end at the 2nd blue.
      # The buy-caution line (0.6 half-size) stands unchanged. Court numbers
      # land in the dawn report; deployed on his explicit order.
+     # boss 2026-08-24 10:2x, 알고3's bottom zone rewritten in his words:
+     # "continuously increase in ANY percent - not sell; after it stops and
+     # starts to decrease, at the 3rd blue sell all; then buy again at the
+     # 3rd red." The +2% valve retires from 알고3 (알고1/2 keep it for their
+     # riding remainders); the ride ends only when three falling candles
+     # prove the turn.
      "ctx": {"top": 0.6, "top_size": 0.5, "no_buy_top": 0.85,
              "bot": 0.20, "bot_size": 1.5,
-             "sell_bot": 0.20, "bot_blues": 999,
-             "bot_take": 2.0, "bot_take_blues": 1,
+             "sell_bot": 0.20, "bot_blues": 3,
              "sell_top": 0.85, "top_blues": 2,
              "news_n": 2, "news_size": 0.5}, "surrender": 2,
      "dip": {"drop": 0.7, "sharp": 3.0, "ups": 1, "chop": 1.0, "win_sec": 1800},
