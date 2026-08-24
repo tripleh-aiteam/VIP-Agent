@@ -237,6 +237,32 @@ def _c_bond(m):
     return abs(b["pct"]) < 4.0, f"국고채 10년 {b['price']}% ({b['pct']:+.2f}%)" + (" — 급변동" if abs(b["pct"]) >= 4.0 else "")
 
 
+def _c_nq_futures(m):
+    f = m.get("nqf")
+    if not f:
+        return None, "나스닥 선물 데이터 없음"
+    return f["pct"] > -1.5, f"나스닥100 선물 {f['price']:,.0f} ({f['pct']:+.2f}%)"
+
+
+def _c_policy_benefit(m):
+    hits = m.get("benefit_hits")
+    if hits is None:
+        return None, "뉴스 데이터 없음"
+    return True, ("정책 수혜 뉴스 감지: " + ", ".join(hits[:3])) if hits else "감지된 정책 수혜 뉴스 없음"
+
+
+def _c_msci_div(m):
+    hits = m.get("msci_hits") or []
+    now = datetime.now(KST)
+    msci_window = now.month in (2, 5, 8, 11) and now.day >= 22   # quarterly review effective window
+    bits = []
+    if msci_window:
+        bits.append("MSCI 분기 리뷰 반영 시기(월말)")
+    if hits:
+        bits.append("일정 뉴스: " + ", ".join(hits[:2]))
+    return True, " · ".join(bits) if bits else "감지된 배당/MSCI 일정 없음"
+
+
 def _c_econ_events(m):
     hits = m.get("econ_hits")
     if hits is None:
@@ -332,6 +358,45 @@ def _c_recovered_open(c):
     if not cur or not op:
         return None, "시가 데이터 부족"
     return cur >= op * 0.995, f"시가 대비 {'회복' if cur >= op * 0.995 else '미회복'} ({(cur - op) / op * 100:+.1f}%)"
+
+
+def _c_min5_align(c):
+    """#59 — 5-minute-bar bullish alignment, from OUR OWN recorded tape (desk stocks)."""
+    try:
+        from services.kiwoom_tape import bars_time, load
+        ticks = load(c.get("code") or "")
+        if not ticks:
+            return None, "실시간 테이프 없음 (데스크 종목만 측정)"
+        bars = bars_time(ticks, 300)
+        if len(bars) < 12:
+            return None, "5분봉 부족"
+        cl = [b["close"] for b in bars]
+        m5, m10 = sum(cl[-5:]) / 5, sum(cl[-10:]) / 10
+        ok = cl[-1] > m5 > m10
+        return ok, (f"5분봉 {'정배열' if ok else '역배열/혼조'} "
+                    f"(현재 {cl[-1]:,.0f} · MA5 {m5:,.0f} · MA10 {m10:,.0f})")
+    except Exception:
+        return None, "테이프 읽기 실패"
+
+
+def _c_min_pullback(c):
+    """#64 — a pullback forming on the minute chart: a rise, then a shallow dip."""
+    try:
+        from services.kiwoom_tape import bars_time, load
+        ticks = load(c.get("code") or "")
+        if not ticks:
+            return None, "실시간 테이프 없음 (데스크 종목만 측정)"
+        bars = bars_time(ticks, 300)
+        if len(bars) < 8:
+            return None, "5분봉 부족"
+        cl = [b["close"] for b in bars]
+        rise = (cl[-3] - cl[-8]) / cl[-8] * 100 if cl[-8] else 0
+        dip = (cl[-1] - cl[-3]) / cl[-3] * 100 if cl[-3] else 0
+        ok = rise >= 0.3 and -0.6 <= dip < 0
+        return ok, (f"직전 상승 {rise:+.2f}% · 최근 되돌림 {dip:+.2f}%"
+                    + (" — 눌림목 형성" if ok else ""))
+    except Exception:
+        return None, "테이프 읽기 실패"
 
 
 def _c_vs_yday_range(c):
@@ -527,6 +592,9 @@ def _c_method_agreement(c):
 MARKET_ITEMS = [
     (11, "시장", "코스피/코스닥 방향은 상방인가?", "Are KOSPI/KOSDAQ pointing up?", _c_market_direction, 2, False),
     (12, "시장", "전일 미국 증시(나스닥) 마감은 무난했는가?", "Was the previous US (NASDAQ) close OK?", _c_us_close, 1, False),
+    (13, "시장", "나스닥 선물 지수의 흐름은?", "How are NASDAQ futures moving?", _c_nq_futures, 1, False),
+    (28, "이슈", "정부의 정책 수혜 기대감이 있는가?", "Expectation of government policy benefits?", _c_policy_benefit, 1, False),
+    (30, "이슈", "배당/MSCI 등 주요 일정이 있는가?", "Key schedules like dividends/MSCI?", _c_msci_div, 1, False),
     (14, "시장", "원·달러 환율이 급변동하지 않는가?", "Is USD/KRW NOT swinging sharply?", _c_fx, 1, False),
     (15, "시장", "국채 금리 움직임이 안정적인가?", "Are government bond yields stable?", _c_bond, 1, False),
     (18, "시장", "오늘 발표될 경제 지표가 있는가?", "Any economic indicators being released today?", _c_econ_events, 1, False),
@@ -543,6 +611,8 @@ MARKET_ITEMS = [
 STOCK_ITEMS = [
     (51, "종목선정", "가격이 이동평균선(5/20/60) 위에 정렬돼 있는가?", "Price aligned above the 5/20/60 moving averages?", _c_ma_align, 2, False),
     (58, "종목선정", "일봉 추세가 상방인가?", "Is the daily-chart trend up?", _c_daily_uptrend, 2, False),
+    (59, "종목선정", "5분봉상 정배열인가?", "Bullish alignment on the 5-minute chart?", _c_min5_align, 1, False),
+    (64, "종목선정", "분봉상 눌림목 형성인가?", "Pullback forming on the minute chart?", _c_min_pullback, 1, False),
     (52, "종목선정", "추세장인가 박스권인가 파악됐는가?", "Trending or range-bound — identified?", _c_box_or_trend, 1, False),
     (53, "종목선정", "지지/저항선이 명확한가?", "Are support/resistance clear?", _c_support_clear, 1, False),
     (47, "종목선정", "거래량이 평소보다 증가했는가?", "Is volume above normal?", _c_vol_surge, 2, False),
@@ -606,9 +676,11 @@ def market_preflight(db) -> dict[str, Any]:
             items = effective_news(db, None, limit=8) or []
             sc = 0
             geo = 0
-            econ, pol = [], []
+            econ, pol, ben, msci = [], [], [], []
             _ECON_KW = ("CPI", "GDP", "고용", "물가", "PMI", "실업", "수출입", "경제지표")
             _POL_KW = ("금리 결정", "금리결정", "FOMC", "금통위", "연준", "기준금리", "한국은행")
+            _BEN_KW = ("수혜", "정책 지원", "보조금", "규제 완화", "지원책", "육성")
+            _MSCI_KW = ("MSCI", "배당락", "배당 기준일", "리밸런싱")
             for n in items:
                 d = n.get("direction") or 0
                 sc += (1 if d in (1, "▲") else -1 if d in (-1, "▼") else 0)
@@ -619,15 +691,36 @@ def market_preflight(db) -> dict[str, Any]:
                     econ.append(t_[:30])
                 if any(k in t_ for k in _POL_KW):
                     pol.append(t_[:30])
+                if any(k in t_ for k in _BEN_KW):
+                    ben.append(t_[:30])
+                if any(k in t_ for k in _MSCI_KW):
+                    msci.append(t_[:30])
             m["news_score"] = max(-3, min(3, sc))
             m["geo_hits"] = geo
             m["econ_hits"] = econ
             m["policy_hits"] = pol
+            m["benefit_hits"] = ben
+            m["msci_hits"] = msci
         except Exception:
             m["news_score"] = None
             m["geo_hits"] = 0
             m["econ_hits"] = None
             m["policy_hits"] = None
+            m["benefit_hits"] = None
+            m["msci_hits"] = None
+        try:
+            # 나스닥100 선물 (Yahoo NQ=F) — checklist #13; cached with the 5-min preflight
+            import httpx as _hx2
+            j2 = _hx2.get("https://query1.finance.yahoo.com/v8/finance/chart/NQ%3DF"
+                          "?range=1d&interval=1d",
+                          headers={"User-Agent": "Mozilla/5.0"}, timeout=8).json()
+            mt = j2["chart"]["result"][0]["meta"]
+            px_, pv_ = mt.get("regularMarketPrice"), (mt.get("chartPreviousClose")
+                                                     or mt.get("previousClose"))
+            if px_ and pv_:
+                m["nqf"] = {"price": float(px_), "pct": (float(px_) / float(pv_) - 1) * 100}
+        except Exception:
+            m["nqf"] = None
         m["expiry"] = _expiry_day_kr(datetime.now(KST))
         try:
             # 국고채 10년 (Naver bond API) — checklist #15

@@ -239,7 +239,11 @@ def build(db, n: int = 3, transcript: str = "", lang: str = "ko") -> dict[str, A
     NEWS_NOS = {26, 27, 29, 40, 42, 44, 45}
     # HANDLED BY THE ALGORITHM (boss 2026-08-24: "it should decide by agent, like
     # stop-loss — we have exit right"): the engine executes these rules itself.
-    ALGO_NOS = ({77: "-1% hard stop — the engine sells the moment the low is touched",
+    ALGO_NOS = ({71: "the five doors + layer judgment filter fake-out candles at entry",
+                 72: "post-entry is engine-managed — trailing off the peak, never below break-even",
+                 73: "Algo2 (ripple) specializes in ranging tape — regime handled by the rules",
+                 74: "buying the pullback IS the entry rule (dip/rebound doors + scout)",
+                 77: "-1% hard stop — the engine sells the moment the low is touched",
                  78: "Algo1 harvests 50% per +1% · Algo2 10% · Algo3 sells all at the 3rd red after the peak",
                  80: "scaled entry — the scout/ladder entry rules",
                  81: "scaled exit — the 50%/10% harvest ladders + selling-zone full exit, automatic",
@@ -250,7 +254,11 @@ def build(db, n: int = 3, transcript: str = "", lang: str = "ko") -> dict[str, A
                  93: "sell-pressure response — the sell rules react to red candles/lows automatically",
                  97: "unfilled orders are managed/cancelled by the engine",
                  99: "0.23% round-trip fee+tax is inside every calculation"} if en else
-                {77: "-1% 하드스톱 — 저가 터치 즉시 엔진이 전량 매도",
+                {71: "다섯 문 + 레이어 판정이 진입 시 속임수 캔들을 거릅니다",
+                 72: "진입 후는 엔진 관리 — 정점 추적 매도, 본전 아래로는 안 내려감",
+                 73: "알고2(잔물결)가 횡보 장세 특화 — 장세 인식은 규칙이 처리",
+                 74: "돌파 후 눌림 매수가 곧 진입 규칙(급락/반등 문 + 스카웃)",
+                 77: "-1% 하드스톱 — 저가 터치 즉시 엔진이 전량 매도",
                  78: "알고1 +1%마다 50% 수확 · 알고2 10% · 알고3 정점 후 3음봉 전량 매도",
                  80: "분할 진입 — 스카웃/사다리 진입 규칙",
                  81: "분할 매도 — 50%/10% 수확 사다리 + 매도구간 전량 매도, 자동",

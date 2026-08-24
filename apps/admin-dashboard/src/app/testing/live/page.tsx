@@ -1174,7 +1174,12 @@ export default function LiveDeskPage() {
           <div className="px-4 py-2 flex items-center gap-2 flex-wrap cursor-pointer"
             style={{ background: "rgba(21,101,192,0.06)" }} onClick={() => setPickOpen(!pickOpen)}>
             <b className="text-[13px]" style={{ color: "#1565c0" }}>
-              🎯 {(dpick.mode ?? "both") === "score"
+              {/* RECO PAGE: score picks only, top→down — the six have their own menu
+                  (boss 2026-08-24: "remove my 6 from the 2nd menu, no need duplication") */}
+              🎯 {deskView === "reco"
+                ? t(`체크리스트 상위 ${_recoRows.length}종목 — 점수 높은 순`,
+                    `checklist top ${_recoRows.length} — highest score first`)
+                : (dpick.mode ?? "both") === "score"
                 ? t(`100점 상위 ${(dpick.picks || []).length}종목 — 오늘 아침 점수로 뽑았습니다`,
                     `top ${(dpick.picks || []).length} by score — chosen by this morning's checklist`)
                 : (dpick.mode ?? "both") === "both"
@@ -1186,14 +1191,19 @@ export default function LiveDeskPage() {
             <span className="text-[11px] font-bold">
               {/* no scores on his own six: the desk is already decided, so a number
                   beside each name decides nothing (boss 2026-08-11) */}
-              {(dpick.picks || []).map((c) => (dpick.rows || []).find((r) => r.code === c))
-                .filter(Boolean)
-                .map((r) => ((dpick.mode ?? "both") !== "score" && r!.pinned ? r!.name
-                                                                            : `${r!.name} ${r!.score}`))
-                .join(" · ")}
+              {deskView === "reco"
+                ? _recoRows.map((r) => `${r.name} ${r.score}`).join(" · ")
+                : (dpick.picks || []).map((c) => (dpick.rows || []).find((r) => r.code === c))
+                    .filter(Boolean)
+                    .map((r) => ((dpick.mode ?? "both") !== "score" && r!.pinned ? r!.name
+                                                                                : `${r!.name} ${r!.score}`))
+                    .join(" · ")}
             </span>
             <span className="text-[10px] text-[var(--text-muted)]">
-              {(dpick.mode ?? "both") === "fixed"
+              {deskView === "reco"
+                ? t("오늘 아침 100문항 체크리스트가 뽑은 종목만 — 매일 다시 채점합니다. 내 6종목은 실시간 키움 데스크에서.",
+                    "only the stocks the 100-item checklist chose this morning — re-scored daily. My 6 live on the Live Kiwoom Desk.")
+                : (dpick.mode ?? "both") === "fixed"
                 ? t("직접 고른 고정 종목입니다. 종목을 누르면 그 종목의 매수·매도 시각과 차트가 아래에 열립니다.",
                     "your own fixed list. Click a stock to open its buy and sell times and its chart below.")
                 : (dpick.mode ?? "both") === "both"
@@ -1210,7 +1220,9 @@ export default function LiveDeskPage() {
               </span>
             )}
             <span className="ml-auto flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
-              {([["fixed", t("내 6종목", "my 6 stocks")],
+              {/* desk on/off toggles belong to the Live Kiwoom Desk only — the reco page
+                  is a pure score view (boss 2026-08-24) */}
+              {deskView !== "reco" && ([["fixed", t("내 6종목", "my 6 stocks")],
                  ["score", t("100점 상위 5종목", "top 5 by the 100-point score")]] as const)
                 .map(([m, lab]) => {
                 const cur = (dpick.mode ?? "both") as string;
