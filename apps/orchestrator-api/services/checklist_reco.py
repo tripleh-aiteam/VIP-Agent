@@ -192,29 +192,41 @@ def build(db, n: int = 3, transcript: str = "", lang: str = "ko") -> dict[str, A
     day = rank["day"]
     day_disp = f"{day[:4]}-{day[4:6]}-{day[6:]}"
 
-    mkt = ""
+    # THE PROCESS, SHOWN (boss 2026-08-24: "it should show like checklist and for each
+    # checkpoint yes or no ... like people made, step by step, then finally give us
+    # whatever we want"): step 1 = the market checklist item by item with live values,
+    # step 2 = the candidate scan, step 3 = the live re-rank, then the final list.
+    L = [(f"**🎯 Top {len(top)} for trading right now — 100-item checklist + our algo · as of {now}**"
+          if en else
+          f"**🎯 지금 매매 추천 TOP {len(top)} — 100문항 체크리스트 + 우리 알고 · {now} 기준**"), ""]
     try:
         from services.checklist_engine import market_preflight
         m = market_preflight(db)
+        L.append(f"**{'[STEP 1] Market check (checklist #11–25, auto items)' if en else '[1단계] 시장 체크 (체크리스트 #11~25 자동 항목)'} — "
+                 f"{m['score']}/{m['max']}{'점' if not en else ''}**")
+        for it in m.get("items", []):
+            mark = "✅" if it.get("ok") else "❌" if it.get("ok") is False else "❓"
+            q = (it.get("q_en") if en else it.get("q")) or it.get("q")
+            L.append(f"{mark} #{it['no']} {q} — {it.get('detail')}")
         if m.get("deal_breakers"):
             det = "; ".join(f"#{b['no']} {b['detail']}" for b in m["deal_breakers"][:2])
-            mkt = (f"Market: {m['score']}/{m['max']} · 🚫 {det} — reference only today."
-                   if en else f"시장: {m['score']}/{m['max']}점 · 🚫 {det} — 오늘 신규 매수는 참고만.")
-        else:
-            mkt = (f"Market: {m['score']}/{m['max']} · no deal-breakers ✅"
-                   if en else f"시장: {m['score']}/{m['max']}점 · 결격 없음 ✅")
+            L.append(("🚫 Deal-breaker today — new buying is reference only: " if en
+                      else "🚫 오늘 결격 — 신규 매수는 참고만: ") + det)
     except Exception:
         pass
-
-    L = [(f"**🎯 Top {len(top)} for trading right now — 100-item checklist + our algo · as of {now}**"
-          if en else
-          f"**🎯 지금 매매 추천 TOP {len(top)} — 100문항 체크리스트 + 우리 알고 · {now} 기준**"),
-         (f"base score {day_disp} morning · live layer (price, order book, zone) re-ranks it — "
-          f"ask again later and the order can change." if en else
-          f"기준 점수는 {day_disp} 아침 채점 · 실시간(가격·호가·구간)으로 다시 줄 세움 — 시간이 지나면 순위가 달라질 수 있습니다.")]
-    if mkt:
-        L.append(mkt)
-    L.append("")
+    _n_cand = len(rank.get("rows", []))
+    L += ["", (f"**[STEP 2] Stock scoring (checklist #26–75)** — {_n_cand} candidates scored on "
+               f"trend·liquidity·flexibility·levels·momentum·flows ({day_disp} morning, weighted); "
+               f"top of the base: " if en else
+               f"**[2단계] 종목 채점 (체크리스트 #26~75)** — 후보 {_n_cand}종목을 추세·유동성·유연성·"
+               f"지지저항·모멘텀·수급 가중 채점 ({day_disp} 아침 기준) · 상위: ")
+          + " · ".join(f"{r.get('name')} {r.get('score')}" for r in base[:5])]
+    L += ["", (f"**[STEP 3] Live re-rank (right now, {now})** — price move ×1.5 (±4) + "
+               f"order book (±2) + year zone (+2 bottom / −3 selling zone); "
+               f"ask again later and the order can change." if en else
+               f"**[3단계] 실시간 보정 ({now} 현재)** — 등락×1.5(±4) + 호가(±2) + 연중구간(바닥 +2 / 매도구간 −3) · "
+               f"시간이 지나면 순위가 달라질 수 있습니다.")]
+    L += ["", f"**{'[RESULT] TOP ' + str(len(top)) if en else '[결과] 추천 TOP ' + str(len(top))}**"]
     for i, (r, lv, tot) in enumerate(top, 1):
         code = r["code"]
         name = r.get("name") or code
@@ -368,6 +380,23 @@ def detail_by_code(db, code: str, lang: str = "ko", name: Optional[str] = None) 
         pass
     L.append(f"**⑤ {'News' if en else '뉴스'}:** {n_line}")
     L += n_links
-    L += ["", (f"Full live 36-item check: ask \"{nm} checklist\"." if en
-               else f"실측 36항목 점검은 \"{nm} 체크리스트\"라고 물어보세요.")]
+    # ⑥ THE FULL PER-ITEM CHECK, live (boss 2026-08-24: "for each checkpoint yes or no,
+    # and if it is about some % or number it should answer") — the 27 stock items of the
+    # checklist scored against live data, each with its measured value.
+    try:
+        from services.checklist_engine import stock_scorecard
+        card = stock_scorecard(db, code)
+        lay = card.get("stock") or {}
+        L += ["", f"**⑥ {'Live item-by-item check' if en else '100문항 실측 (종목 항목)'} — "
+                  f"{lay.get('score')}/{lay.get('max')}{'' if en else '점'} ({card.get('pct')}%)**"]
+        for it in lay.get("items", []):
+            mark = "✅" if it.get("ok") else "❌" if it.get("ok") is False else "❓"
+            q = (it.get("q_en") if en else it.get("q")) or it.get("q")
+            L.append(f"{mark} #{it['no']} {q} — {it.get('detail')}")
+        if card.get("deal_breakers"):
+            L.append(("🚫 deal-breakers: " if en else "🚫 결격: ")
+                     + "; ".join(f"#{b['no']} {b['detail']}" for b in card["deal_breakers"][:3]))
+    except Exception:
+        L += ["", (f"(live item check unavailable — ask \"{nm} checklist\" in chat)" if en
+                   else f"(실측 점검을 불러오지 못했습니다 — 챗봇에 \"{nm} 체크리스트\"라고 물어보세요)")]
     return "\n".join(L)

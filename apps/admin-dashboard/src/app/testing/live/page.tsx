@@ -356,6 +356,12 @@ function LiveChart({ bars, marks, focus, off = 0 }:
 
 export default function LiveDeskPage() {
   const { t, lang } = useLanguage();
+  // RECO DESK VIEW (boss 2026-08-24: a second menu for the checklist's recommended
+  // stocks, same UI as the live desk): /testing/live?desk=reco filters the stock tabs
+  // to today's top-5 by score. Read once from the URL — client page, no useSearchParams
+  // (that would force a Suspense boundary at build time).
+  const [deskView] = useState<string | null>(() =>
+    typeof window === "undefined" ? null : new URLSearchParams(window.location.search).get("desk"));
   const [code, setCode] = useState("005930");
   // DEFAULT = 1분 (boss 2026-08-12, demo morning): Sharp lives on the minute chart,
   // so the board opens on it. 5틱 remains one click away in the 봉 dropdown.
@@ -1051,6 +1057,19 @@ export default function LiveDeskPage() {
   const fmt = (n?: number | null) => (n == null ? "-" : n.toLocaleString());
   const bars = tape?.bars ?? [];
   const me = st?.stocks.find((x) => x.code === code);
+  // RECO DESK: the checklist's top-5 by score (★ rows) — the tabs filter to them and
+  // the page opens on the first one.
+  const recoSet = new Set((dpick?.rows || []).filter((r) => r.by_score).map((r) => r.code));
+  const tabStocks = (deskView === "reco" && recoSet.size > 0)
+    ? (st?.stocks ?? []).filter((x) => recoSet.has(x.code))
+    : (st?.stocks ?? []);
+  useEffect(() => {
+    if (deskView === "reco" && recoSet.size > 0 && !recoSet.has(code)) {
+      const first = (st?.stocks ?? []).find((x) => recoSet.has(x.code));
+      if (first) { setCode(first.code); codeRef.current = first.code; }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [deskView, dpick, st]);
 
   return (
     <div className="p-5 max-w-[1400px]">
@@ -1059,7 +1078,9 @@ export default function LiveDeskPage() {
           ← {t("알고리즘 선택", "algorithms")}
         </Link>
         <h1 className="text-[20px] font-extrabold text-[var(--text-primary)]">
-          📡 {t("실시간 키움 데스크 — 진짜 시장", "Live Kiwoom Desk — the real market")}
+          {deskView === "reco"
+            ? <>🎯 {t("체크리스트 추천 데스크 — 100문항이 고른 종목", "Checklist Reco Desk — chosen by the 100 items")}</>
+            : <>📡 {t("실시간 키움 데스크 — 진짜 시장", "Live Kiwoom Desk — the real market")}</>}
         </h1>
       </div>
 
@@ -3005,7 +3026,7 @@ export default function LiveDeskPage() {
                              if (sel) openRule(sel, null, c2); }}
           className="text-[12px] font-extrabold px-1.5 py-1 rounded-lg border bg-[var(--bg-primary)]"
           style={{ borderColor: TEAL, color: TEAL }}>
-          {(st?.stocks ?? [{ code: "005930", name: "삼성전자", ticks: 0 }]).map((x) => (
+          {(tabStocks.length ? tabStocks : [{ code: "005930", name: "삼성전자", ticks: 0 }]).map((x) => (
             <option key={x.code} value={x.code}>{x.name}</option>
           ))}
         </select>

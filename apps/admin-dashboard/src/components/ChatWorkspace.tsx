@@ -35,7 +35,7 @@ import { fetchWithRetry } from "../lib/fetchWithRetry";
 
 // Bump on every user-facing chat-UI change — rendered as a tiny badge above the
 // composer so a stale browser tab is diagnosable at a glance.
-const UI_BUILD = "ui v08.24-7";
+const UI_BUILD = "ui v08.24-8";
 
 // ── Lightweight markdown renderer (no deps) ───────────────────────────────
 // Renders GitHub-flavored tables, **bold**, `code`, bullet lists and line
@@ -1052,7 +1052,7 @@ export default function ChatWorkspace({ apiBase, agentId, agentLabel }: Props) {
       {/* Opens from the 📈 button under any answer that names a KRX ticker.    */}
       {/* ========================================================== */}
       {proofCode && (
-        <aside className="hidden md:flex w-[430px] shrink-0 flex-col border-r border-gray-200 bg-white">
+        <aside className="hidden md:flex w-[560px] xl:w-[680px] shrink-0 flex-col border-r border-gray-200 bg-white">
           <div className="flex items-center justify-between px-3 py-2 border-b border-gray-200">
             <span className="text-[12px] font-semibold text-gray-700">📈 TradingView · KRX:{proofCode} — 답변 검증 / verify</span>
             <button onClick={() => setProofCode(null)}
@@ -1566,7 +1566,7 @@ export default function ChatWorkspace({ apiBase, agentId, agentLabel }: Props) {
       {/* Chart on top, the checklist/daily/minute/volume/news data below.  */}
       {/* ========================================================== */}
       {evidenceCode && (
-        <aside className="hidden md:flex w-[420px] shrink-0 flex-col border-l border-gray-200 bg-white">
+        <aside className="hidden md:flex w-[560px] xl:w-[680px] shrink-0 flex-col border-l border-gray-200 bg-white">
           <div className="flex items-center justify-between px-3 py-2 border-b border-gray-200">
             <span className="text-[12px] font-semibold text-gray-700">🔍 근거 / evidence · KRX:{evidenceCode}</span>
             <button onClick={() => setEvidenceCode(null)}
@@ -1576,7 +1576,7 @@ export default function ChatWorkspace({ apiBase, agentId, agentLabel }: Props) {
             key={evidenceCode}
             src={`https://s.tradingview.com/widgetembed/?symbol=KRX%3A${evidenceCode}&interval=D&theme=light&style=1&locale=kr&withdateranges=1&hide_side_toolbar=1`}
             className="w-full border-0 shrink-0"
-            style={{ height: "42%" }}
+            style={{ height: "55%" }}
             title="TradingView chart"
           />
           <div className="flex-1 overflow-y-auto px-3 py-2 text-[13px] leading-relaxed text-gray-900">

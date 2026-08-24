@@ -38,6 +38,22 @@ export default function TestingIndex() {
             </Link>
           </div>
         </div>
+
+        {/* ---- 🎯 Checklist Reco Desk — the 100-item picks, trading live (boss 2026-08-24) ---- */}
+        <div className="rounded-2xl border-2 p-5" style={{ borderColor: "#e65100", background: "rgba(230,81,0,0.04)" }}>
+          <div className="text-[18px] font-extrabold" style={{ color: "#e65100" }}>
+            🎯 {t("체크리스트 추천 데스크 — 100문항이 고른 종목", "Checklist Reco Desk — chosen by the 100 items")}
+          </div>
+          <p className="mt-2 text-[13px] leading-relaxed text-[var(--text-secondary)]">
+            {t("매일 아침 100문항 체크리스트가 후보 전체를 채점해 상위 5종목을 뽑고, 그 종목들이 같은 알고리즘 1·2·3으로 실전 매매됩니다. 이 화면은 추천 5종목만 모아서 봅니다 — 추천이 실제로 사고파는 것을 매매 화살표로 확인하세요. 내 6종목과 병렬로 돌아갑니다 (둘 다 기본 ON).",
+               "Every morning the 100-item checklist scores every candidate and picks the top five, and those five trade live on the same Algorithms 1·2·3. This view shows just the recommended five — watch the recommendation actually buy and sell, proven by the chart arrows. Runs in parallel with my six (both ON by default).")}
+          </p>
+          <div className="mt-4 flex flex-wrap gap-2">
+            <Link prefetch={true} href="/testing/live?desk=reco" className="text-[13.5px] font-extrabold px-4 py-2 rounded-xl text-white" style={{ background: "#e65100" }}>
+              {t("추천 데스크 열기", "Open the reco desk")}
+            </Link>
+          </div>
+        </div>
       </div>
 
       <p className="mt-6 text-[11.5px] text-[var(--text-muted)]">
