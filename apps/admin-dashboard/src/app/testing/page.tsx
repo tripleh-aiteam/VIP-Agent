@@ -49,7 +49,7 @@ export default function TestingIndex() {
                "Every morning the 100-item checklist scores every candidate and picks the top five, and those five trade live on the same Algorithms 1·2·3. This view shows just the recommended five — watch the recommendation actually buy and sell, proven by the chart arrows. Runs in parallel with my six (both ON by default).")}
           </p>
           <div className="mt-4 flex flex-wrap gap-2">
-            <Link prefetch={true} href="/testing/live?desk=reco" className="text-[13.5px] font-extrabold px-4 py-2 rounded-xl text-white" style={{ background: "#e65100" }}>
+            <Link prefetch={true} href="/testing/reco" className="text-[13.5px] font-extrabold px-4 py-2 rounded-xl text-white" style={{ background: "#e65100" }}>
               {t("추천 데스크 열기", "Open the reco desk")}
             </Link>
           </div>

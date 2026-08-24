@@ -360,8 +360,14 @@ export default function LiveDeskPage() {
   // stocks, same UI as the live desk): /testing/live?desk=reco filters the stock tabs
   // to today's top-5 by score. Read once from the URL — client page, no useSearchParams
   // (that would force a Suspense boundary at build time).
-  const [deskView] = useState<string | null>(() =>
-    typeof window === "undefined" ? null : new URLSearchParams(window.location.search).get("desk"));
+  // /testing/reco is the reco desk's OWN route (query-param navigation between the two
+  // desks did not remount the page, so the header/stocks showed the previous desk —
+  // boss 2026-08-24: "looks like mixed"). The ?desk=reco form still works for old links.
+  const [deskView] = useState<string | null>(() => {
+    if (typeof window === "undefined") return null;
+    if (window.location.pathname.includes("/testing/reco")) return "reco";
+    return new URLSearchParams(window.location.search).get("desk");
+  });
   const [code, setCode] = useState("005930");
   // DEFAULT = 1분 (boss 2026-08-12, demo morning): Sharp lives on the minute chart,
   // so the board opens on it. 5틱 remains one click away in the 봉 dropdown.
@@ -1062,10 +1068,18 @@ export default function LiveDeskPage() {
   // 2026-08-24 order: "in the Live Kiwoom menu it should be the 6 predefined stocks");
   // either filter falls back to everything rather than ever showing an empty desk.
   const SIX_CODES = new Set(["000660", "005930", "035420", "017670", "042660", "034020"]);
-  const recoSet = new Set((dpick?.rows || []).filter((r) => r.by_score).map((r) => r.code));
+  // reco tabs: SCORE ORDER, top → down (boss 2026-08-24: "only score based, from top
+  // to less, no need our 6 prefixed") — a six-member appears here only if it EARNED a
+  // score spot; the six have their own desk at /testing/live.
+  const _recoRows = (dpick?.rows || []).filter((r) => r.by_score)
+    .sort((a, b) => (b.score || 0) - (a.score || 0));
+  const recoSet = new Set(_recoRows.map((r) => r.code));
+  const _recoTabs = _recoRows
+    .map((r) => (st?.stocks ?? []).find((x) => x.code === r.code))
+    .filter(Boolean) as NonNullable<typeof st>["stocks"];
   const _sixTabs = (st?.stocks ?? []).filter((x) => SIX_CODES.has(x.code));
   const tabStocks = deskView === "reco"
-    ? (recoSet.size > 0 ? (st?.stocks ?? []).filter((x) => recoSet.has(x.code)) : (st?.stocks ?? []))
+    ? (_recoTabs.length > 0 ? _recoTabs : (st?.stocks ?? []))
     : (_sixTabs.length > 0 ? _sixTabs : (st?.stocks ?? []));
   useEffect(() => {
     if (deskView === "reco" && recoSet.size > 0 && !recoSet.has(code)) {

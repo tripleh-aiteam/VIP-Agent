@@ -223,6 +223,34 @@ def _c_oil(m):
     return abs(o["pct"]) < 3, f"WTI ${o['price']} ({o['pct']:+.2f}%)" + (" — 급변동" if abs(o["pct"]) >= 3 else "")
 
 
+def _c_fx(m):
+    fx = (m.get("mi") or {}).get("usdkrw")
+    if not fx:
+        return None, "환율 데이터 없음"
+    return abs(fx["pct"]) < 1.0, f"원/달러 {fx['price']} ({fx['pct']:+.2f}%)" + (" — 급변동" if abs(fx["pct"]) >= 1.0 else "")
+
+
+def _c_bond(m):
+    b = m.get("bond")
+    if not b:
+        return None, "국채 금리 데이터 없음"
+    return abs(b["pct"]) < 4.0, f"국고채 10년 {b['price']}% ({b['pct']:+.2f}%)" + (" — 급변동" if abs(b["pct"]) >= 4.0 else "")
+
+
+def _c_econ_events(m):
+    hits = m.get("econ_hits")
+    if hits is None:
+        return None, "뉴스 데이터 없음"
+    return True, ("주요 지표 일정 감지: " + ", ".join(hits[:3])) if hits else "감지된 경제지표 일정 없음"
+
+
+def _c_policy_events(m):
+    hits = m.get("policy_hits")
+    if hits is None:
+        return None, "뉴스 데이터 없음"
+    return True, ("정책 이벤트 감지: " + ", ".join(hits[:3])) if hits else "감지된 정책 이벤트 없음"
+
+
 def _mk(ok, detail):
     return ok, detail
 
@@ -304,6 +332,33 @@ def _c_recovered_open(c):
     if not cur or not op:
         return None, "시가 데이터 부족"
     return cur >= op * 0.995, f"시가 대비 {'회복' if cur >= op * 0.995 else '미회복'} ({(cur - op) / op * 100:+.1f}%)"
+
+
+def _c_vs_yday_range(c):
+    """#54 — where the current price sits against YESTERDAY's high/low/open."""
+    hi, lo, op = c.get("highs") or [], c.get("lows") or [], c.get("opens") or []
+    cur = c.get("cur")
+    if len(hi) < 2 or not cur:
+        return None, "전일 데이터 부족"
+    yh, yl, yo = hi[-2], lo[-2], (op[-2] if len(op) >= 2 else None)
+    if yh <= yl:
+        return None, "전일 범위 없음"
+    pos = (cur - yl) / (yh - yl) * 100
+    return cur >= yl, (f"전일 고가 {yh:,.0f} · 저가 {yl:,.0f}"
+                       + (f" · 시가 {yo:,.0f}" if yo else "")
+                       + f" — 현재 범위 {round(pos)}% 지점"
+                       + (" (전일 저가 이탈)" if cur < yl else ""))
+
+
+def _c_prev_support(c):
+    """#63 — holding above the previous low (support intact)."""
+    lo = c.get("lows") or []
+    cur = c.get("cur")
+    if len(lo) < 6 or not cur:
+        return None, "일봉 부족"
+    sup = min(lo[-6:-1])
+    ok = cur >= sup * 0.995
+    return ok, f"최근 5일 저점 {sup:,.0f} — " + ("지지 유지" if ok else "지지 이탈")
 
 
 def _c_rsi(c):
@@ -472,6 +527,10 @@ def _c_method_agreement(c):
 MARKET_ITEMS = [
     (11, "시장", "코스피/코스닥 방향은 상방인가?", "Are KOSPI/KOSDAQ pointing up?", _c_market_direction, 2, False),
     (12, "시장", "전일 미국 증시(나스닥) 마감은 무난했는가?", "Was the previous US (NASDAQ) close OK?", _c_us_close, 1, False),
+    (14, "시장", "원·달러 환율이 급변동하지 않는가?", "Is USD/KRW NOT swinging sharply?", _c_fx, 1, False),
+    (15, "시장", "국채 금리 움직임이 안정적인가?", "Are government bond yields stable?", _c_bond, 1, False),
+    (18, "시장", "오늘 발표될 경제 지표가 있는가?", "Any economic indicators being released today?", _c_econ_events, 1, False),
+    (19, "시장", "금리 결정 등 정책 이벤트가 있는가?", "Any policy events like rate decisions?", _c_policy_events, 1, False),
     (17, "시장", "VIX(공포지수)가 적정 수준인가?", "Is the VIX (fear index) at a reasonable level?", _c_vix, 1, False),
     (16, "시장", "유가가 급변동하고 있지 않은가?", "Is oil NOT swinging sharply?", _c_oil, 1, False),
     (22, "시장", "시장 전체를 압도하는 악재는 없는가?", "No market-wide overwhelming bad news?", _c_market_news, 2, True),
@@ -489,6 +548,8 @@ STOCK_ITEMS = [
     (47, "종목선정", "거래량이 평소보다 증가했는가?", "Is volume above normal?", _c_vol_surge, 2, False),
     (49, "종목선정", "과도한 갭 시가가 아닌가?", "No excessive opening gap?", _c_gap_open, 1, False),
     (50, "종목선정", "신고가/신저가 위치는 유리한가?", "Is the new-high/new-low position favorable?", _c_new_high_low, 1, False),
+    (54, "종목선정", "전일 고점/저점/시가 위치는?", "Position vs yesterday's high/low/open?", _c_vs_yday_range, 1, False),
+    (63, "종목선정", "이전 고점/저점 지지인가?", "Holding above previous high/low support?", _c_prev_support, 1, False),
     (67, "종목선정", "전일 종가 대비 위치는 건전한가?", "Healthy position vs yesterday's close?", _c_vs_yesterday, 1, False),
     (68, "종목선정", "시가를 회복했는가?", "Has it recovered the opening price?", _c_recovered_open, 1, False),
     (60, "종목선정", "RSI가 과열/과매도 구간이 아닌가?", "RSI not overbought/oversold?", _c_rsi, 1, False),
@@ -545,17 +606,41 @@ def market_preflight(db) -> dict[str, Any]:
             items = effective_news(db, None, limit=8) or []
             sc = 0
             geo = 0
+            econ, pol = [], []
+            _ECON_KW = ("CPI", "GDP", "고용", "물가", "PMI", "실업", "수출입", "경제지표")
+            _POL_KW = ("금리 결정", "금리결정", "FOMC", "금통위", "연준", "기준금리", "한국은행")
             for n in items:
                 d = n.get("direction") or 0
                 sc += (1 if d in (1, "▲") else -1 if d in (-1, "▼") else 0)
                 if n.get("type") == "지정학/매크로" and d in (-1, "▼"):
                     geo += 1
+                t_ = n.get("title") or ""
+                if any(k in t_ for k in _ECON_KW):
+                    econ.append(t_[:30])
+                if any(k in t_ for k in _POL_KW):
+                    pol.append(t_[:30])
             m["news_score"] = max(-3, min(3, sc))
             m["geo_hits"] = geo
+            m["econ_hits"] = econ
+            m["policy_hits"] = pol
         except Exception:
             m["news_score"] = None
             m["geo_hits"] = 0
+            m["econ_hits"] = None
+            m["policy_hits"] = None
         m["expiry"] = _expiry_day_kr(datetime.now(KST))
+        try:
+            # 국고채 10년 (Naver bond API) — checklist #15
+            import httpx as _hx
+            j = _hx.get("https://m.stock.naver.com/front-api/marketIndex/prices"
+                        "?category=bond&reutersCode=KR10YT%3DRR&page=1&pageSize=10",
+                        headers={"User-Agent": "Mozilla/5.0"}, timeout=6).json()
+            row = ((j.get("result") or [{}])[0]) if isinstance(j.get("result"), list) else {}
+            if row.get("closePrice"):
+                m["bond"] = {"price": row["closePrice"],
+                             "pct": float(str(row.get("fluctuationsRatio") or 0).replace(",", ""))}
+        except Exception:
+            m["bond"] = None
         try:
             from services.decision_agent import _market_indicators
             m["mi"] = _market_indicators()      # 나스닥/VIX/유가 (+국내지수/환율)

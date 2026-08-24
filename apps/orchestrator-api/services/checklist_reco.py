@@ -199,6 +199,18 @@ def build(db, n: int = 3, transcript: str = "", lang: str = "ko") -> dict[str, A
     L = [(f"**🎯 Top {len(top)} for trading right now — 100-item checklist + our algo · as of {now}**"
           if en else
           f"**🎯 지금 매매 추천 TOP {len(top)} — 100문항 체크리스트 + 우리 알고 · {now} 기준**"), ""]
+    # AFTER-HOURS NOTICE (boss 2026-08-24: "after market, if we ask any recommendation
+    # or price, you should indicate this is not market hours")
+    try:
+        from services.kiwoom_tape import market_open
+        if not market_open():
+            L.insert(1, ("🌙 The market is CLOSED right now (KRX 09:00–15:30 KST) — prices, "
+                         "order-book reads and this ranking reflect the LAST session; execution "
+                         "resumes at the next open." if en else
+                         "🌙 지금은 장외 시간입니다 (KRX 정규장 09:00~15:30) — 가격·호가·순위는 마지막 "
+                         "거래 기준이며, 실제 매매는 다음 개장부터 실행됩니다."))
+    except Exception:
+        pass
     # ALL 100 ITEMS, STRICT ORDER 1→100 (boss 2026-08-24: "show all 100 checklist,
     # make them correct sequential order"). Each item is marked by HOW it is checked:
     #   ✅/❌/❓ = measured live today (market-wide items)
@@ -220,6 +232,35 @@ def build(db, n: int = 3, transcript: str = "", lang: str = "ko") -> dict[str, A
         per_stock_nos = {it[0] for it in STOCK_ITEMS}
     except Exception:
         pass
+    # data proxies: these are measured through the ranking's own inputs
+    # (#46 거래대금→유동성 · #48 시가총액/호가→유연성 · #56/#70 잔량/매수세→호가압력 · #69→거래량 급증)
+    per_stock_nos |= {46, 48, 56, 69, 70}
+    # per-stock news items — read by the Qwen news engine (the danger-stamp judge)
+    NEWS_NOS = {26, 27, 29, 40, 42, 44, 45}
+    # HANDLED BY THE ALGORITHM (boss 2026-08-24: "it should decide by agent, like
+    # stop-loss — we have exit right"): the engine executes these rules itself.
+    ALGO_NOS = ({77: "-1% hard stop — the engine sells the moment the low is touched",
+                 78: "Algo1 harvests 50% per +1% · Algo2 10% · Algo3 sells all at the 3rd red after the peak",
+                 80: "scaled entry — the scout/ladder entry rules",
+                 81: "scaled exit — the 50%/10% harvest ladders + selling-zone full exit, automatic",
+                 83: "mechanical stop — executed by the engine, no human hand",
+                 84: "the harvest ladder banks profit every +1% automatically",
+                 86: "every trade is journaled automatically (chart arrows + history)",
+                 92: "the loss-limit reset (-1.5%) halts the run automatically",
+                 93: "sell-pressure response — the sell rules react to red candles/lows automatically",
+                 97: "unfilled orders are managed/cancelled by the engine",
+                 99: "0.23% round-trip fee+tax is inside every calculation"} if en else
+                {77: "-1% 하드스톱 — 저가 터치 즉시 엔진이 전량 매도",
+                 78: "알고1 +1%마다 50% 수확 · 알고2 10% · 알고3 정점 후 3음봉 전량 매도",
+                 80: "분할 진입 — 스카웃/사다리 진입 규칙",
+                 81: "분할 매도 — 50%/10% 수확 사다리 + 매도구간 전량 매도, 자동",
+                 83: "기계적 손절 — 사람 손 없이 엔진이 실행",
+                 84: "수확 사다리가 +1%마다 이익을 자동 실현",
+                 86: "모든 매매가 자동 기록 (차트 화살표 + 매매 이력)",
+                 92: "손실 한도 리셋(-1.5%) 도달 시 자동 중단",
+                 93: "매도세 강화 시 매도 규칙(음봉/저가)이 자동 대응",
+                 97: "미체결 주문은 엔진이 자동 관리/취소",
+                 99: "왕복 수수료+세금 0.23%가 모든 계산에 반영"})
     sections = ([("[STEP 0] Preparation #1–10 — your own check", 1, 10),
                  ("[STEP 1] Market #11–25", 11, 25),
                  ("[STEP 2] Issue / supply-demand #26–45", 26, 45),
@@ -234,9 +275,10 @@ def build(db, n: int = 3, transcript: str = "", lang: str = "ko") -> dict[str, A
         from services.checklist_engine import full_checklist
         all_items = sorted(full_checklist()["items"], key=lambda x: x["no"])
         L.append(("Legend: ✅/❌/❓ measured live today · 📊 scored per stock (feeds the ranking, "
-                  "see 근거 🔍) · 🧑 your own item · ⬜ no data source yet" if en else
-                  "표기: ✅/❌/❓ 오늘 실측 · 📊 종목별 채점(아래 순위에 반영, 근거 🔍에서 확인) · "
-                  "🧑 본인 확인 · ⬜ 데이터 미연결"))
+                  "see 근거 🔍) · 📰 read by the Qwen news engine (per-stock stamps) · "
+                  "🤖 executed by the algorithm itself · 🧑 your own item · ⬜ no data source yet" if en else
+                  "표기: ✅/❌/❓ 오늘 실측 · 📊 종목별 채점(순위에 반영, 근거 🔍) · 📰 Qwen 뉴스 엔진 판독(종목별 스탬프) · "
+                  "🤖 알고리즘이 직접 실행 · 🧑 본인 확인 · ⬜ 데이터 미연결"))
         for title, lo_no, hi_no in sections:
             head = f"**{title}**"
             if lo_no == 11 and m:
@@ -254,6 +296,10 @@ def build(db, n: int = 3, transcript: str = "", lang: str = "ko") -> dict[str, A
                     L.append(f"{mark} {no}. {q} — {lv.get('detail')}")
                 elif no in per_stock_nos:
                     L.append(f"📊 {no}. {q}")
+                elif no in ALGO_NOS:
+                    L.append(f"🤖 {no}. {q} — {ALGO_NOS[no]}")
+                elif no in NEWS_NOS:
+                    L.append(f"📰 {no}. {q}")
                 elif it["cat"] in ("준비", "실행/관리"):
                     L.append(f"🧑 {no}. {q}")
                 else:
@@ -333,9 +379,9 @@ def build(db, n: int = 3, transcript: str = "", lang: str = "ko") -> dict[str, A
                    f"하지 않습니다(교체하면 그날의 기록과 포지션을 버리게 됩니다)."),
               # the PROOF button (boss 2026-08-24: "put button like go to menu that we
               # can see actually going on market") — opens the reco desk page
-              (f"[📡 Watch them trading live → Checklist Reco Desk](nav:/testing/live?desk=reco)"
+              (f"[📡 Watch them trading live → Checklist Reco Desk](nav:/testing/reco)"
                if en else
-               f"[📡 실제 매매 보러가기 → 체크리스트 추천 데스크](nav:/testing/live?desk=reco)")]
+               f"[📡 실제 매매 보러가기 → 체크리스트 추천 데스크](nav:/testing/reco)")]
     L += ["",
           ("Click a NAME to open its live chart on the left · click 근거/evidence to see exactly "
            "how the 100-item checklist, daily chart, minute/real-time, volume and news scored it — "

@@ -1358,6 +1358,10 @@ def _vip_live_price_reply(transcript: Optional[str], lang: str, db=None) -> Opti
                 f"minute feed). Showing the closest current price instead:\n\n")
         reply = note + reply
 
+    _ah = _afterhours_note(_en)
+    if _ah:
+        reply = _ah + "\n\n" + reply
+
     return {"intent": "stock_price", "language": lang, "reply": reply,
             "action": None, "speak": True, "transcript": transcript,
             "tool_used": "stock_quote",
@@ -1820,6 +1824,20 @@ _MKT_DIR_KW = ("코스피", "코스닥", "kospi", "kosdaq", "시장 방향", "�
                "exchange rate", "usd/krw", "usdkrw", "wti", "oil price")
 
 
+def _afterhours_note(en: bool) -> Optional[str]:
+    """After-hours banner (boss 2026-08-24): any price/market/recommendation answer
+    outside KRX 09:00–15:30 must say so."""
+    try:
+        from services.kiwoom_tape import market_open
+        if market_open():
+            return None
+    except Exception:
+        return None
+    return ("🌙 The market is CLOSED right now (KRX 09:00–15:30 KST) — figures reflect the last session."
+            if en else
+            "🌙 지금은 장외 시간입니다 (KRX 정규장 09:00~15:30) — 아래 수치는 마지막 거래 기준입니다.")
+
+
 def _market_direction_reply(db, transcript: Optional[str], lang: str) -> Optional[str]:
     try:
         from services.decision_agent import _market_indicators
@@ -1845,7 +1863,11 @@ def _market_direction_reply(db, transcript: Optional[str], lang: str) -> Optiona
         return "flat" if en else "보합"
 
     now = _dt_now_kst().strftime("%Y-%m-%d %H:%M")
-    L = [f"**📊 {'Today' + chr(39) + 's market' if en else '오늘의 시장'} — {now} KST**", "",
+    _ah = _afterhours_note(en)
+    L = [f"**📊 {'Today' + chr(39) + 's market' if en else '오늘의 시장'} — {now} KST**"]
+    if _ah:
+        L.append(_ah)
+    L += ["",
          ("| Indicator | Level | Change | Read |" if en else "| 지표 | 값 | 등락 | 판단 |"),
          "|---|---|---|---|"]
     rows = (("kospi", "KOSPI" if en else "코스피"),
