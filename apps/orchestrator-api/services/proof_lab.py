@@ -200,6 +200,7 @@ VARIANTS: list[dict] = [
      "ctx": {"top": 0.6, "top_size": 0.5, "no_buy_top": 0.85,
              "sell_bot": 0.20, "bot_blues": 999,
              "bot_take": 2.0, "bot_take_blues": 1,
+             "sell_top": 0.85, "top_blues": 3,
              "news_n": 2, "news_size": 0.5}, "surrender": 2,
      # fences lowered at his order (2026-08-13, after 삼성전자 0.93%/1.30% and
      # NAVER 0.91%/1.37 turns were refused by hairs): drop 0.9, range 1.25.
@@ -248,6 +249,7 @@ VARIANTS: list[dict] = [
      "ctx": {"top": 0.6, "top_size": 0.5, "no_buy_top": 0.85,
              "sell_bot": 0.20, "bot_blues": 999,
              "bot_take": 2.0, "bot_take_blues": 1,
+             "sell_top": 0.85, "top_blues": 3,
              "news_n": 2, "news_size": 0.5}, "surrender": 2,
      # fences lowered at his order (2026-08-13, after 삼성전자 0.93%/1.30% and
      # NAVER 0.91%/1.37 turns were refused by hairs): drop 0.9, range 1.25.
@@ -309,7 +311,7 @@ VARIANTS: list[dict] = [
      "ctx": {"top": 0.6, "top_size": 0.5, "no_buy_top": 0.85,
              "bot": 0.20, "bot_size": 1.5,
              "sell_bot": 0.20, "bot_blues": 3,
-             "sell_top": 0.85, "top_blues": 2,
+             "sell_top": 0.85, "top_blues": 3,
              "news_n": 2, "news_size": 0.5}, "surrender": 2,
      "dip": {"drop": 0.7, "sharp": 3.0, "ups": 1, "chop": 1.0, "win_sec": 1800},
      "scout": {"frac": 0.03, "confirm": 0.5},
