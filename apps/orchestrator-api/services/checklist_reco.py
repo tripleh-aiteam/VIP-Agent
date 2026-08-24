@@ -199,44 +199,82 @@ def build(db, n: int = 3, transcript: str = "", lang: str = "ko") -> dict[str, A
     L = [(f"**🎯 Top {len(top)} for trading right now — 100-item checklist + our algo · as of {now}**"
           if en else
           f"**🎯 지금 매매 추천 TOP {len(top)} — 100문항 체크리스트 + 우리 알고 · {now} 기준**"), ""]
-    # [0단계] 준비 #1~10 — the boss's own items come FIRST, in order (2026-08-24 round 10)
-    try:
-        from services.checklist_engine import full_checklist
-        prep = [i for i in full_checklist()["items"] if i["cat"] == "준비"]
-        L.append(f"**{'[STEP 0] Preparation (checklist #1–10 — your own check, the agent reminds)' if en else '[0단계] 준비 (체크리스트 #1~10 — 본인 확인, 에이전트는 상기만)'}**")
-        for i2 in sorted(prep, key=lambda x: x["no"]):
-            L.append(f"🧑 {i2['no']}. {(i2.get('q_en') if en else i2['q']) or i2['q']}")
-        L.append("")
-    except Exception:
-        pass
+    # ALL 100 ITEMS, STRICT ORDER 1→100 (boss 2026-08-24: "show all 100 checklist,
+    # make them correct sequential order"). Each item is marked by HOW it is checked:
+    #   ✅/❌/❓ = measured live today (market-wide items)
+    #   📊      = scored PER STOCK — feeds the candidate ranking below (see 근거 🔍)
+    #   🧑      = the trader's own item (the agent reminds, never answers for him)
+    #   ⬜      = no data source connected yet — honest, never faked
     m_items: list = []
+    m = {}
     try:
         from services.checklist_engine import market_preflight
         m = market_preflight(db)
-        m_items = sorted(m.get("items", []), key=lambda x: x.get("no", 0))
-        L.append(f"**{'[STEP 1] Market check (checklist #11–25, auto items)' if en else '[1단계] 시장 체크 (체크리스트 #11~25 자동 항목)'} — "
-                 f"{m['score']}/{m['max']}{'점' if not en else ''}**")
-        for it in m_items:                      # sequential order: #11, #12, #16, #17 …
-            mark = "✅" if it.get("ok") else "❌" if it.get("ok") is False else "❓"
-            q = (it.get("q_en") if en else it.get("q")) or it.get("q")
-            L.append(f"{mark} #{it['no']} {q} — {it.get('detail')}")
+        m_items = m.get("items", [])
+    except Exception:
+        pass
+    live_by_no = {it.get("no"): it for it in m_items}
+    per_stock_nos: set = set()
+    try:
+        from services.checklist_engine import STOCK_ITEMS
+        per_stock_nos = {it[0] for it in STOCK_ITEMS}
+    except Exception:
+        pass
+    sections = ([("[STEP 0] Preparation #1–10 — your own check", 1, 10),
+                 ("[STEP 1] Market #11–25", 11, 25),
+                 ("[STEP 2] Issue / supply-demand #26–45", 26, 45),
+                 ("[STEP 3] Stock selection #46–75", 46, 75),
+                 ("[STEP 4] Execution / management #76–100", 76, 100)] if en else
+                [("[0단계] 준비 #1~10 — 본인 확인", 1, 10),
+                 ("[1단계] 시장 #11~25", 11, 25),
+                 ("[2단계] 이슈/수급 #26~45", 26, 45),
+                 ("[3단계] 종목선정 #46~75", 46, 75),
+                 ("[4단계] 실행/관리 #76~100", 76, 100)])
+    try:
+        from services.checklist_engine import full_checklist
+        all_items = sorted(full_checklist()["items"], key=lambda x: x["no"])
+        L.append(("Legend: ✅/❌/❓ measured live today · 📊 scored per stock (feeds the ranking, "
+                  "see 근거 🔍) · 🧑 your own item · ⬜ no data source yet" if en else
+                  "표기: ✅/❌/❓ 오늘 실측 · 📊 종목별 채점(아래 순위에 반영, 근거 🔍에서 확인) · "
+                  "🧑 본인 확인 · ⬜ 데이터 미연결"))
+        for title, lo_no, hi_no in sections:
+            head = f"**{title}**"
+            if lo_no == 11 and m:
+                head += (f" — auto {m.get('score')}/{m.get('max')}" if en
+                         else f" — 자동 {m.get('score')}/{m.get('max')}점")
+            L += ["", head]
+            for it in all_items:
+                no = it["no"]
+                if not (lo_no <= no <= hi_no):
+                    continue
+                q = (it.get("q_en") if en else it["q"]) or it["q"]
+                lv = live_by_no.get(no)
+                if lv is not None:
+                    mark = "✅" if lv.get("ok") else "❌" if lv.get("ok") is False else "❓"
+                    L.append(f"{mark} {no}. {q} — {lv.get('detail')}")
+                elif no in per_stock_nos:
+                    L.append(f"📊 {no}. {q}")
+                elif it["cat"] in ("준비", "실행/관리"):
+                    L.append(f"🧑 {no}. {q}")
+                else:
+                    L.append(f"⬜ {no}. {q}")
         if m.get("deal_breakers"):
             det = "; ".join(f"#{b['no']} {b['detail']}" for b in m["deal_breakers"][:2])
-            L.append(("🚫 Deal-breaker today — new buying is reference only: " if en
-                      else "🚫 오늘 결격 — 신규 매수는 참고만: ") + det)
+            L += ["", ("🚫 Deal-breaker today — new buying is reference only: " if en
+                       else "🚫 오늘 결격 — 신규 매수는 참고만: ") + det]
     except Exception:
         pass
     _n_cand = len(rank.get("rows", []))
-    L += ["", (f"**[STEP 2] Stock scoring (checklist #26–75)** — {_n_cand} candidates scored on "
-               f"trend·liquidity·flexibility·levels·momentum·flows ({day_disp} morning, weighted); "
+    L += ["", (f"**[STEP 5] Stock scoring** — the 📊 items above scored for all {_n_cand} candidates "
+               f"({day_disp} morning, weighted trend·liquidity·flexibility·levels·momentum·flows); "
                f"top of the base: " if en else
-               f"**[2단계] 종목 채점 (체크리스트 #26~75)** — 후보 {_n_cand}종목을 추세·유동성·유연성·"
-               f"지지저항·모멘텀·수급 가중 채점 ({day_disp} 아침 기준) · 상위: ")
+               f"**[5단계] 종목 채점** — 위 📊 항목들을 후보 {_n_cand}종목 전부에 적용 "
+               f"({day_disp} 아침, 추세·유동성·유연성·지지저항·모멘텀·수급 가중) · 상위: ")
           + " · ".join(f"{r.get('name')} {r.get('score')}" for r in base[:5])]
-    L += ["", (f"**[STEP 3] Live re-rank (right now, {now})** — price move ×1.5 (±4) + "
+    L += ["", (f"**[STEP 6] Live re-rank (right now, {now})** — price move ×1.5 (±4) + "
                f"order book (±2) + year zone (+2 bottom / −3 selling zone); "
                f"ask again later and the order can change." if en else
-               f"**[3단계] 실시간 보정 ({now} 현재)** — 등락×1.5(±4) + 호가(±2) + 연중구간(바닥 +2 / 매도구간 −3) · "
+               f"**[6단계] 실시간 보정 ({now} 현재)** — 등락×1.5(±4) + 호가(±2) + 연중구간(바닥 +2 / 매도구간 −3) · "
                f"시간이 지나면 순위가 달라질 수 있습니다.")]
     L += ["", f"**{'[RESULT] TOP ' + str(len(top)) if en else '[결과] 추천 TOP ' + str(len(top))}**"]
     # which recommendations are ACTUALLY TRADING today (the reco desk's five, fixed at
