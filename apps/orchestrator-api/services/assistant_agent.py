@@ -1824,6 +1824,28 @@ _MKT_DIR_KW = ("코스피", "코스닥", "kospi", "kosdaq", "시장 방향", "�
                "exchange rate", "usd/krw", "usdkrw", "wti", "oil price")
 
 
+def _wants_candidates(transcript: Optional[str]) -> bool:
+    """A 'give me N stock candidates for trading' ask, TYPO-TOLERANT (boss 2026-08-24:
+    'give em 3 sotck condidate for trading' slipped past every deterministic route and
+    the LLM answered with the ML predictions tool — recommendations must ALWAYS come
+    from the checklist engine)."""
+    tl = (transcript or "").lower()
+    if not tl:
+        return False
+    import difflib as _dl
+    toks = [x for x in _re.findall(r"[a-z]+", tl) if len(x) >= 3]
+
+    def has(word: str, cut: float = 0.8) -> bool:
+        return any(_dl.get_close_matches(x, (word,), n=1, cutoff=cut) for x in toks)
+
+    stockish = "종목" in tl or "후보" in tl or has("stock") or has("stocks") \
+        or has("candidate", 0.75) or has("picks")
+    tradeish = "매매" in tl or "단타" in tl or "살" in tl or "추천" in tl \
+        or has("trading") or has("trade") or has("buy") or has("invest")
+    n = bool(_re.search(r"(?<!\d)(\d{1,2})(?!\d)", tl))
+    return stockish and tradeish and (n or has("candidate", 0.75) or "추천" in tl or "후보" in tl)
+
+
 def _afterhours_note(en: bool) -> Optional[str]:
     """After-hours banner (boss 2026-08-24): any price/market/recommendation answer
     outside KRX 09:00–15:30 must say so."""
@@ -6730,6 +6752,21 @@ def _run_agent_impl(
         except Exception as e:
             log.warning(f"reco evidence lane failed: {str(e)[:120]}")
 
+    # ===== STOCK CANDIDATES, typo-tolerant ("give em 3 sotck condidate for trading")
+    # → ALWAYS the checklist engine, NEVER the ML predictions tool (boss 2026-08-24). =====
+    if (not confirmed_tool and not attachment_ids
+            and _wants_candidates(transcript)
+            and not _all_stocks_in_query(transcript)):
+        try:
+            from services.checklist_reco import build as _cr_build2
+            _cr2 = _cr_build2(db, n=3, transcript=transcript, lang=lang)
+            if _cr2.get("ok") and _cr2.get("reply"):
+                return {"intent": "checklist_reco", "language": lang, "reply": _cr2["reply"],
+                        "action": None, "speak": True, "transcript": transcript,
+                        "tool_used": "checklist_reco", "process": _cr2.get("process")}
+        except Exception as e:
+            log.warning(f"checklist_reco (candidates route) failed: {str(e)[:120]}")
+
     # ===== TRADE-INTENT FIRST (order beats guards): any buy/sell ask on a resolvable
     # stock — even misspelled ('skynix') — goes to the 3-method decide composer BEFORE
     # the relay/price routes can swallow it ('from which price should I buy' kept
@@ -7022,6 +7059,17 @@ def _run_agent_impl(
         "shaped answer than the other.\n\n"
     )
     system = _parity_rule + system
+    # NO-ML RULE (boss 2026-08-24: retired ML from recommendations — a typo'd ask still
+    # reached stock_predictions): any "which stocks to buy/trade/candidates" question is
+    # the checklist engine's job; the LLM must never answer it with ML tools.
+    _no_ml_rule = (
+        "■ RECOMMENDATIONS: NEVER call stock_predictions (ML) for any 'which stocks "
+        "should I buy/trade' or 'give me N candidates' question — the boss retired ML "
+        "from recommendations. Such questions are answered by the 100-item checklist "
+        "engine; if one reaches you, answer that the checklist recommendation handles "
+        "it and do NOT produce an ML-based stock list.\n\n"
+    )
+    system = _no_ml_rule + system
     # 100-ITEM CHECKLIST KNOWLEDGE (boss 2026-08-24: "whatever we ask related to the
     # 100 checklist it should tell us"): free-form checklist questions that the
     # deterministic intercept doesn't cover get the verbatim list as grounded context.
