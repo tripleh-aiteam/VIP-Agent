@@ -1109,10 +1109,11 @@ def live_dip_status(tick: int = Query(5), period: int = Query(0)):
 
 @router.post("/desk-mode")
 def desk_mode_set(mode: str = Query(...), force: int = Query(0)):
-    """Switch the whole desk between the boss's six and the checklist's top five.
-    One is always OFF: the collector follows whichever is set. During market hours the
-    swap needs force=1, because re-pointing mid-session abandons the tape already
-    collected for the stocks that leave."""
+    """Set which desks trade: "both" (default since 2026-08-24 — the boss's six AND the
+    checklist's top five together, deduped), "fixed" (six only) or "score" (five only).
+    The collector follows the combined list. During market hours a switch that REMOVES
+    stocks needs force=1, because re-pointing mid-session abandons the tape already
+    collected for the stocks that leave (adding stocks never abandons anything)."""
     from services.daily_pick import desk_mode, save_picks, set_desk_mode
     from services.kiwoom_tape import WATCH, _day, market_open, refresh_watch
     m = set_desk_mode(mode)

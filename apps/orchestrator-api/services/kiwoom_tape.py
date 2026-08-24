@@ -37,26 +37,16 @@ ROOT = Path(__file__).resolve().parent.parent / "data" / "kiwoom_tape"
 
 # The stocks the live desk follows. Deliberately few: every one is another poll against a
 # rate-limited API, and the point is depth of tape, not breadth of coverage.
+# The MODULE DEFAULT is the boss's six — refresh_watch() re-points per desk_mode at
+# startup/daily, but until it runs a fresh process must already be watching his six
+# (2026-08-24 restart check: the old default here was a screener five, so the process
+# was blind on 5 of the 6 between bind and the first refresh — same failure class as
+# the 11:00 emergency). History of earlier lists (screener five of 08-10, advisor's
+# checklist five) lives in git.
 WATCH: list[tuple[str, str]] = [
-    ("005930", "삼성전자"),
-    # THE SCREENER'S PICKS (boss 2026-08-10, advisor's point 1: "100 checkpoints ->
-    # about 5 companies"). All 39 stocks with a year of data were scored on cost,
-    # liquidity, movement, continuation behaviour, flows and how our own rules did -
-    # scored ONLY on 2025-07..2026-03, then the chosen five were traded on the four
-    # months the screener never saw: 97% win vs 93%, half the loss of the old five.
-    # NAVER ranked 38th of 39 (its tick is 0.24% of its price - one tick eats a whole
-    # target) and 삼성SDI 16th; both give way to the two below. Their stored tape and
-    # history stay on disk - only the collector's attention moves.
-    ("012450", "한화에어로스페이스"),
-    ("247540", "에코프로비엠"),
-    # THE ADVISOR'S CHECKLIST PICKS (boss 2026-08-10, option B). His real 100-item list
-    # replaced my first screener: 20 of its stock-selection items plus the supply-demand
-    # items, scored on data before 2026-04. It named SK스퀘어 #1 and 한미반도체 #3, so
-    # 현대로템 and SK하이닉스 give way. Recorded honestly: on the holdout months these
-    # five earned +4.15M against the previous five's +4.64M - the boss chose the
-    # advisor's method over the higher number, and the board will keep score.
-    ("402340", "SK스퀘어"),
-    ("042700", "한미반도체"),
+    ("000660", "SK하이닉스"), ("005930", "삼성전자"),
+    ("035420", "NAVER"), ("017670", "SK텔레콤"),
+    ("042660", "한화오션"), ("034020", "두산에너빌리티"),
 ]
 
 _watch_day = ""         # the day WATCH was last chosen for
@@ -71,40 +61,47 @@ def refresh_watch(force: bool = False) -> list[tuple[str, str]]:
     today = _day()
     if not force and _watch_day == today:
         return WATCH
-    # THE LIST IS THE BOSS'S, FIXED (his standing order: "the traded list is
-    # fixed by you - SK하이닉스, 삼성전자, NAVER, SK텔레콤, 한화오션,
-    # 두산에너빌리티; the checklist no longer decides who trades"). On
-    # 2026-08-24 ~11:00 a mid-session restart hit an empty picks file and the
-    # old screener silently chose ITS OWN five - the desk went blind on 5 of
-    # 6 stocks for ~15 minutes until the hourly audit caught it. The picker
-    # may never override this list again; it still runs for its morning
-    # scores, but WATCH is pinned.
-    WATCH[:] = [("000660", "SK하이닉스"), ("005930", "삼성전자"),
-                ("035420", "NAVER"), ("017670", "SK텔레콤"),
-                ("042660", "한화오션"), ("034020", "두산에너빌리티")]
-    _watch_day = today
-    logger.info("kiwoom_tape: watch pinned to the boss's six")
+    # THE BOSS'S SIX are the backbone (his 2026-08-10 list). Since 2026-08-24 his rule
+    # is "if I do not turn off one of them, BOTH must continue trading": desk_mode
+    # "both" (the default) = his six PLUS the checklist's top five, deduped; "fixed" =
+    # six only; "score" = the five only. The blind-desk lesson stands (2026-08-24
+    # ~11:00: a mid-session restart hit an empty picks file and the old screener chose
+    # its OWN five — the desk went blind on 5 of 6 stocks for ~15 min): the picker may
+    # never REPLACE the six in "both"/"fixed", and in "score" an empty pick falls back
+    # to the six — the desk is never left with no stocks.
+    SIX = [("000660", "SK하이닉스"), ("005930", "삼성전자"),
+           ("035420", "NAVER"), ("017670", "SK텔레콤"),
+           ("042660", "한화오션"), ("034020", "두산에너빌리티")]
+    mode = "both"
     try:
-        from services.daily_pick import load_picks, save_picks
-        picks = load_picks()
-        if not picks:
-            res = save_picks(today)
-        if False:
-            WATCH[:] = picks
-            _watch_day = today
-            logger.info("kiwoom_tape: today's five = %s", [n for _c, n in picks])
-            # the investor flows ride the same once-a-day moment: the pykrx job that
-            # used to fill them died 2026-07-02 and nobody noticed for five weeks
-            # (boss caught it 2026-08-11). ~40 Kiwoom calls in the quiet window.
-            try:
-                from services.flow_sync import sync_flows
-                r = sync_flows()
-                logger.info("flow_sync: +%s rows", r.get("added"))
-            except Exception as e:
-                logger.warning("flow_sync failed: %s", str(e)[:120])
-    except Exception as e:
-        logger.warning("kiwoom_tape: daily pick failed (%s) - keeping %s",
-                       str(e)[:80], [n for _c, n in WATCH])
+        from services.daily_pick import desk_mode
+        mode = desk_mode()
+    except Exception:
+        pass
+    extras: list[tuple[str, str]] = []
+    if mode in ("both", "score"):
+        try:
+            from services.daily_pick import save_picks, score_five
+            sf = score_five()
+            if not sf:
+                save_picks(today)
+                sf = score_five()
+            extras = [(c, n) for c, n in sf if c not in {x[0] for x in SIX}]
+            if mode == "score":
+                if sf:
+                    WATCH[:] = sf
+                else:
+                    WATCH[:] = SIX      # picker down → the six, never an empty desk
+                    logger.warning("kiwoom_tape: score desk has no picks - falling back to the six")
+            else:
+                WATCH[:] = SIX + extras
+        except Exception as e:
+            WATCH[:] = SIX
+            logger.warning("kiwoom_tape: daily pick failed (%s) - watch = the six", str(e)[:80])
+    else:
+        WATCH[:] = SIX
+    _watch_day = today
+    logger.info("kiwoom_tape: watch (%s desk) = %s", mode, [n for _c, n in WATCH])
     return WATCH
 
 

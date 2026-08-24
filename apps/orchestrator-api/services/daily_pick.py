@@ -67,28 +67,59 @@ def _today() -> str:
 
 
 def desk_mode() -> str:
-    """EVERY DAY STARTS ON HIS SIX (boss 2026-08-11: "by default every day, if I do not
-    say anything, it must trade using the 6 companies"). A switch to the score desk holds
-    for the rest of that day and no longer: the stored mode is stamped with the day it
-    was chosen, and a stamp from any earlier day reads back as "fixed"."""
+    """BOTH DESKS TRADE BY DEFAULT (boss 2026-08-24: "if I do not turn off one of them,
+    both must continue trading") — his six AND the checklist's top five together, every
+    day, unless he switches one off. A switch to a single desk ("fixed" or "score")
+    holds for the rest of that day and no longer: the stored mode is stamped with the
+    day it was chosen, and a stamp from any earlier day reads back as "both".
+    (History: 2026-08-11→08-24 the default was "fixed" — his six only.)"""
     try:
         d = json.loads(_MODE_FILE.read_text(encoding="utf-8"))
         m = d.get("mode")
-        if m not in ("fixed", "score"):
-            return "fixed"
-        if m == "score" and d.get("day") != _today():
-            return "fixed"          # yesterday's choice does not carry into today
+        if m not in ("fixed", "score", "both"):
+            return "both"
+        if m != "both" and d.get("day") != _today():
+            return "both"           # yesterday's single-desk choice does not carry into today
         return m
     except Exception:
-        return "fixed"
+        return "both"
 
 
 def set_desk_mode(mode: str) -> str:
-    mode = mode if mode in ("fixed", "score") else "fixed"
+    mode = mode if mode in ("fixed", "score", "both") else "both"
     _DATA.mkdir(exist_ok=True)
     _MODE_FILE.write_text(json.dumps({"mode": mode, "day": _today()}),
                           encoding="utf-8")
     return mode
+
+
+def score_five(n: int = N_PICKS) -> list[tuple[str, str]]:
+    """Today's top-n by the 100-item score — saved morning file first, fresh compute
+    fallback, [] when the picker cannot run (callers must then fall back to DESK,
+    never to an empty desk — the 2026-08-24 blind-desk lesson)."""
+    def _nm(r):
+        # some rows carry the code as their name (e.g. 069500) — resolve to a real name
+        if r.get("name") and r["name"] != r["code"]:
+            return r["name"]
+        try:
+            from services.stock_resolver import display_name
+            return display_name(r["code"]) or r["code"]
+        except Exception:
+            return r["code"]
+    try:
+        d = json.loads(_PICK_FILE.read_text(encoding="utf-8"))
+        if d.get("day") == _today() and d.get("rows"):
+            rows = sorted(d["rows"], key=lambda r: -(r.get("score") or 0))
+            return [(r["code"], _nm(r)) for r in rows[:n]]
+    except Exception:
+        pass
+    try:
+        res = pick(_today(), n)
+        if res.get("ok"):
+            return [(r["code"], _nm(r)) for r in res["rows"][:n]]
+    except Exception:
+        pass
+    return []
 
 
 def _conn():
@@ -291,6 +322,12 @@ def pick(day: str, n: int = N_PICKS, refresh_character: bool = False) -> dict[st
     mode = desk_mode()
     if mode == "score":
         chosen = list(earned)
+    elif mode == "both":
+        # BOTH DESKS AT ONCE (boss 2026-08-24): his six in his order, then the score's
+        # top n that aren't already among the six — one combined desk, no duplicates.
+        chosen = [r for r in rows if r["code"] in DESK]
+        chosen.sort(key=lambda r: DESK.index(r["code"]))
+        chosen += [r for r in earned if r["code"] not in DESK]
     else:
         chosen = [r for r in rows if r["code"] in DESK]
         chosen.sort(key=lambda r: DESK.index(r["code"]))   # his order, not the score's

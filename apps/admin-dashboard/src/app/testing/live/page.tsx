@@ -501,12 +501,29 @@ export default function LiveDeskPage() {
     const h = setInterval(pullDip, 15000);
     return () => { live = false; clearInterval(h); };
   }, [dpick?.mode]);
-  const switchDesk = useCallback((mode: "fixed" | "score") => {
-    if (mode === (dpick?.mode ?? "fixed")) return;
+  // TWO TOGGLES, ONE MODE (boss 2026-08-24: "if I do not turn off one of them, both
+  // must continue trading"). Each desk is an on/off switch: six on + five on = "both"
+  // (the default), six alone = "fixed", five alone = "score". Both off is refused —
+  // the desk must never be empty. Turning a desk OFF mid-session abandons its stocks'
+  // tape, so only that direction asks for confirmation.
+  const switchDesk = useCallback((desk: "fixed" | "score") => {
+    const cur = (dpick?.mode ?? "both") as "fixed" | "score" | "both";
+    const sixOn = cur === "fixed" || cur === "both";
+    const fiveOn = cur === "score" || cur === "both";
+    const nextSix = desk === "fixed" ? !sixOn : sixOn;
+    const nextFive = desk === "score" ? !fiveOn : fiveOn;
+    if (!nextSix && !nextFive) {
+      alert(t("적어도 하나의 데스크는 켜져 있어야 합니다 — 데스크를 비울 수는 없습니다.",
+              "At least one desk must stay on — the desk can never be empty."));
+      return;
+    }
+    const mode: "fixed" | "score" | "both" = nextSix && nextFive ? "both" : nextSix ? "fixed" : "score";
+    if (mode === cur) return;
     const open = !!dpick?.market_open;
-    if (open && !confirm(t(
-      "지금은 장중입니다. 지금 바꾸면 빠지는 종목의 오늘 체결 기록 수집이 중단됩니다. 바꿀까요?",
-      "The market is open. Switching now stops collecting today's tape for the stocks that leave. Switch anyway?"))) return;
+    const removing = (sixOn && !nextSix) || (fiveOn && !nextFive);
+    if (open && removing && !confirm(t(
+      "지금은 장중입니다. 데스크를 끄면 빠지는 종목의 오늘 체결 기록 수집이 중단됩니다. 끌까요?",
+      "The market is open. Turning this desk off stops collecting today's tape for the stocks that leave. Turn it off anyway?"))) return;
     setDeskBusy(true);
     api<{ ok: boolean }>(`/paper-desk/desk-mode?mode=${mode}&force=${open ? 1 : 0}`, { method: "POST" })
       .then(() => api<Pick>("/paper-desk/daily-pick"))
@@ -1082,9 +1099,12 @@ export default function LiveDeskPage() {
           <div className="px-4 py-2 flex items-center gap-2 flex-wrap cursor-pointer"
             style={{ background: "rgba(21,101,192,0.06)" }} onClick={() => setPickOpen(!pickOpen)}>
             <b className="text-[13px]" style={{ color: "#1565c0" }}>
-              🎯 {(dpick.mode ?? "fixed") === "score"
+              🎯 {(dpick.mode ?? "both") === "score"
                 ? t(`100점 상위 ${(dpick.picks || []).length}종목 — 오늘 아침 점수로 뽑았습니다`,
                     `top ${(dpick.picks || []).length} by score — chosen by this morning's checklist`)
+                : (dpick.mode ?? "both") === "both"
+                ? t(`두 데스크 함께 ${(dpick.picks || []).length}종목 — 내 6종목 + 100점 상위 5`,
+                    `both desks: ${(dpick.picks || []).length} stocks — my 6 + top 5 by score`)
                 : t(`내 종목 ${(dpick.picks || []).length} — 매일 이 종목만 매매합니다`,
                     `my desk: ${(dpick.picks || []).length} stocks — these are what we trade, every day`)}
             </b>
@@ -1093,14 +1113,17 @@ export default function LiveDeskPage() {
                   beside each name decides nothing (boss 2026-08-11) */}
               {(dpick.picks || []).map((c) => (dpick.rows || []).find((r) => r.code === c))
                 .filter(Boolean)
-                .map((r) => ((dpick.mode ?? "fixed") === "fixed" ? r!.name
-                                                                 : `${r!.name} ${r!.score}`))
+                .map((r) => ((dpick.mode ?? "both") !== "score" && r!.pinned ? r!.name
+                                                                            : `${r!.name} ${r!.score}`))
                 .join(" · ")}
             </span>
             <span className="text-[10px] text-[var(--text-muted)]">
-              {(dpick.mode ?? "fixed") === "fixed"
+              {(dpick.mode ?? "both") === "fixed"
                 ? t("직접 고른 고정 종목입니다. 종목을 누르면 그 종목의 매수·매도 시각과 차트가 아래에 열립니다.",
                     "your own fixed list. Click a stock to open its buy and sell times and its chart below.")
+                : (dpick.mode ?? "both") === "both"
+                ? t("내 6종목과 체크리스트 상위 5종목이 함께 매매합니다 — 하나를 끄지 않는 한 둘 다 계속됩니다.",
+                    "my 6 and the checklist's top 5 trade together — both continue unless one is switched off.")
                 : t(`오늘 아침 100점 체크리스트가 뽑은 상위 5종목입니다 — 매일 다시 채점합니다.`,
                     `the top five chosen by this morning's 100-item checklist - re-scored every day.`)}
             </span>
@@ -1114,26 +1137,32 @@ export default function LiveDeskPage() {
             <span className="ml-auto flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
               {([["fixed", t("내 6종목", "my 6 stocks")],
                  ["score", t("100점 상위 5종목", "top 5 by the 100-point score")]] as const)
-                .map(([m, lab]) => (
+                .map(([m, lab]) => {
+                const cur = (dpick.mode ?? "both") as string;
+                const on = cur === "both" || cur === m;
+                return (
                 <button key={m} disabled={deskBusy} onClick={() => switchDesk(m)}
-                  title={m === "fixed"
+                  title={(m === "fixed"
                     ? t("SK하이닉스 · 삼성전자 · NAVER · SK텔레콤 · 한화오션 · 두산에너빌리티",
                         "SK하이닉스, 삼성전자, NAVER, SK텔레콤, 한화오션, 두산에너빌리티")
                     : t("매일 아침 100항목 점수로 다시 뽑는 상위 5종목",
-                        "the top five re-scored by the 100-item checklist every morning")}
+                        "the top five re-scored by the 100-item checklist every morning"))
+                    + t(" — 눌러서 켜기/끄기 (둘 다 켜면 함께 매매)",
+                        " — click to switch on/off (both on = both trade)")}
                   className="text-[10px] font-bold px-2 py-0.5 rounded border"
-                  style={(dpick.mode ?? "fixed") === m
+                  style={on
                     ? { background: "#1565c0", color: "#fff", borderColor: "#1565c0" }
                     : { borderColor: "var(--border-default)", color: "var(--text-secondary)" }}>
-                  {(dpick.mode ?? "fixed") === m ? "● " : ""}{lab}
+                  {on ? "● " : "○ "}{lab}
                 </button>
-              ))}
+                );
+              })}
               <span className="text-[10.5px] ml-1" style={{ color: "#1565c0" }}>
                 {pickOpen ? t("닫기 ▲", "close ▲") : t("순위 보기 ▼", "see the ranking ▼")}
               </span>
             </span>
           </div>
-          {pickOpen && (dpick.mode ?? "fixed") !== "fixed" && (
+          {pickOpen && (dpick.mode ?? "both") !== "fixed" && (
             <div className="overflow-y-auto" style={{ maxHeight: 340 }}>
               <table className="w-full text-[11.5px] tabular-nums">
                 <thead><tr className="text-[10px] text-[var(--text-muted)] sticky top-0"
@@ -1315,7 +1344,7 @@ export default function LiveDeskPage() {
       {/* the GO/NO-GO strip only rides with the SCORE desk (boss 2026-08-11): on his
           fixed six the rules on the board ignore the gate anyway, so a wall of NO-GO
           over stocks that are trading regardless read as a contradiction */}
-      {gate?.ok && (dpick?.mode ?? "fixed") === "score" && (
+      {gate?.ok && (dpick?.mode ?? "both") !== "fixed" && (
         <div className="mt-3 rounded-xl border px-4 py-2" style={{ borderColor: "#e65100",
              background: gate.go === 0 ? "rgba(176,42,42,0.06)" : "rgba(230,81,0,0.05)" }}>
           <div className="flex items-center gap-2 flex-wrap">
