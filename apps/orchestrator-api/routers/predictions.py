@@ -315,6 +315,14 @@ def checklist_market_ep(db: Session = Depends(get_db)):
     return market_preflight(db)
 
 
+@router.get("/checklist-full")
+def checklist_full_ep():
+    """The boss's ORIGINAL 100-item paper checklist, verbatim (data/checklist_100.json,
+    stored 2026-08-24) — KO + EN + category + which items the agent auto-checks."""
+    from services.checklist_engine import full_checklist
+    return full_checklist()
+
+
 @router.post("/collector/pass")
 def collector_pass(force: bool = Query(False)):
     """Cloud collection pass — the server polls Kiwoom itself (Render IPs are

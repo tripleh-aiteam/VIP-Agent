@@ -18,8 +18,10 @@ full card via the '체크리스트' intent.
 """
 from __future__ import annotations
 
+import json
 import time
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Any, Callable, Optional
 
 KST = timezone(timedelta(hours=9))
@@ -678,7 +680,7 @@ def render_market_en(db) -> str:
         mark = "✅" if it["ok"] else "❌" if it["ok"] is False else "❓"
         L.append(f"{mark} #{it['no']} {it.get('q_en') or it['q']} — {it['detail']}")
     L += ["", "**🧑 Self-check:**"] + [f"- {r}" for r in HUMAN_REMINDERS_EN]
-    L += ["", 'Per-stock check: ask "<stock name> checklist".']
+    L += ["", 'Per-stock check: ask "<stock name> checklist" · full 100-item list: "show all checklist".']
     return "\n".join(L)
 
 
@@ -692,7 +694,57 @@ def render_market_ko(db) -> str:
         mark = "✅" if it["ok"] else "❌" if it["ok"] is False else "❓"
         L.append(f"{mark} #{it['no']} {it['q']} — {it['detail']}")
     L += ["", "**🧑 본인 확인:**"] + [f"· {r}" for r in HUMAN_REMINDERS_KO]
-    L += ["", "종목별 점검은 \"종목명 체크리스트\"로 물어보세요."]
+    L += ["", "종목별 점검은 \"종목명 체크리스트\" · 전체 100문항은 \"체크리스트 전체 보여줘\"로 물어보세요."]
+    return "\n".join(L)
+
+
+# ---------------------------------------------------------------- full 100-item list
+# The boss handed over his ORIGINAL paper checklist verbatim (2026-08-24). It lives in
+# data/checklist_100.json — his exact KO wording + EN translation, with `auto` marking
+# the 36 items this engine already checks from live data. The chatbot's "체크리스트 전체"
+# intent renders it; editing the JSON changes the answer without touching code.
+
+_FULL_FILE = Path(__file__).resolve().parent.parent / "data" / "checklist_100.json"
+
+
+def full_checklist() -> dict[str, Any]:
+    """The boss's verbatim 100-item list ({categories, items}); cached 10 min so a
+    JSON edit shows up without a restart."""
+    return _cached("full100", 600, lambda: json.loads(_FULL_FILE.read_text(encoding="utf-8")))
+
+
+def render_full_ko() -> str:
+    data = full_checklist()
+    items = data["items"]
+    n_auto = sum(1 for i in items if i.get("auto"))
+    L = [f"**📋 매매 체크리스트 전체 {len(items)}문항** (🤖 자동 점검 {n_auto} · 🧑 본인 확인 {len(items) - n_auto})"]
+    by_cat: dict[str, list] = {}
+    for it in items:
+        by_cat.setdefault(it["cat"], []).append(it)
+    for cat, its in by_cat.items():
+        L += ["", f"**{cat} ({its[0]['no']}~{its[-1]['no']})**"]
+        for it in its:
+            L.append(f"{'🤖' if it.get('auto') else '🧑'} {it['no']}. {it['q']}")
+    L += ["", "🤖 = 에이전트가 실시간 데이터로 자동 점검 (\"종목명 체크리스트\"로 확인) · 🧑 = 본인이 지켜야 하는 원칙",
+          "오늘의 시장 점검은 \"체크리스트\", 오늘 매매할 종목 추천은 \"오늘 뭐 살까?\"로 물어보세요."]
+    return "\n".join(L)
+
+
+def render_full_en() -> str:
+    data = full_checklist()
+    items = data["items"]
+    cats_en = data.get("categories") or {}
+    n_auto = sum(1 for i in items if i.get("auto"))
+    L = [f"**📋 The full {len(items)}-item trading checklist** (🤖 auto-checked {n_auto} · 🧑 self-check {len(items) - n_auto})"]
+    by_cat: dict[str, list] = {}
+    for it in items:
+        by_cat.setdefault(it["cat"], []).append(it)
+    for cat, its in by_cat.items():
+        L += ["", f"**{cats_en.get(cat, cat)} ({its[0]['no']}–{its[-1]['no']})**"]
+        for it in its:
+            L.append(f"{'🤖' if it.get('auto') else '🧑'} {it['no']}. {it.get('q_en') or it['q']}")
+    L += ["", "🤖 = the agent checks this automatically from live data (ask \"<stock> checklist\") · 🧑 = your own discipline",
+          "Today's market check: ask \"checklist\". Today's stock recommendation: ask \"what should I buy today?\"."]
     return "\n".join(L)
 
 

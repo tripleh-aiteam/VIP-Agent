@@ -1619,6 +1619,185 @@ def _vip_history_reply(transcript: Optional[str], lang: str, hist=None,
     return result
 
 
+# ===== PERIOD STATS — "삼성바이오 최근 6개월 최저/최고/거래량" / "last 6 months min, max,
+# volume of Samsung Bio" → deterministic summary table + monthly breakdown + a written
+# explanation from Naver daily history (up to ~18 months). The old lanes couldn't answer
+# this: _requested_history_dates only parses day/week ranges (≤40 rows) and would either
+# dump a raw table or fall through to the live-price route (boss ask 2026-08-24). =====
+
+_PERIOD_STATS_KW = ("최저", "최고", "저가", "고가", "거래량", "평균", "요약", "변동", "추이", "흐름",
+                    "min", "max", "low", "high", "volume", "average", "avg", "summary",
+                    "range", "stats", "statistic", "trend", "movement")
+
+
+def _period_stats_window(q: Optional[str]):
+    """A months-long window in the question → (cutoff_date, months, label_ko, label_en),
+    else None. Day/week ranges stay with the existing history-table lane."""
+    from datetime import date as _date
+    t = (q or "").lower()
+    today = _dt_now_kst().date()
+
+    def _back(months: int):
+        y, m = today.year, today.month - months
+        while m <= 0:
+            y, m = y - 1, m + 12
+        try:
+            return _date(y, m, min(today.day, 28))
+        except ValueError:
+            return _date(y, m, 28)
+
+    m = _re.search(r"(\d+)\s*(?:개\s*월|달)", t) or _re.search(r"(\d+)\s*(?:months?|mo)\b", t)
+    if m:
+        n = max(1, min(int(m.group(1)), 18))
+        return _back(n), n, f"최근 {n}개월", f"last {n} months"
+    m = _re.search(r"(\d+)\s*년", t) or _re.search(r"(\d+)\s*(?:years?|yrs?)\b", t)
+    if m:
+        n = max(1, min(int(m.group(1)) * 12, 18))
+        return _back(n), n, f"최근 {n // 12}년" if n % 12 == 0 else f"최근 {n}개월", \
+            f"last {n // 12} year(s)" if n % 12 == 0 else f"last {n} months"
+    if _re.search(r"반\s*년|half\s*(?:a\s*)?year", t):
+        return _back(6), 6, "최근 6개월(반년)", "last 6 months"
+    if _re.search(r"일\s*년|한\s*해|a\s+year|one\s+year", t):
+        return _back(12), 12, "최근 1년", "last 1 year"
+    if _re.search(r"올해|금년|this\s+year|ytd", t):
+        cut = _date(today.year, 1, 1)
+        n = max(1, today.month)
+        return cut, n, "올해(연초 이후)", "this year (YTD)"
+    return None
+
+
+def _is_period_stats_q(transcript: Optional[str]) -> bool:
+    t = (transcript or "").lower()
+    return bool(t) and _period_stats_window(t) is not None \
+        and any(k in t for k in _PERIOD_STATS_KW)
+
+
+def _vol_str(v, en: bool) -> str:
+    try:
+        return f"{int(v):,}" + ("" if en else "주")
+    except Exception:
+        return str(v)
+
+
+def _period_stats_reply(transcript: Optional[str], lang: str,
+                        history: Optional[list[dict]] = None, db=None) -> Optional[str]:
+    """Deterministic period summary (no LLM — same speed rule as the price lanes):
+    headline table (high/low/volume with dates) + per-month breakdown + explanation."""
+    if not _is_period_stats_q(transcript):
+        return None
+    win = _period_stats_window(transcript)
+    if not win:
+        return None
+    cutoff, months, label_ko, label_en = win
+    stocks = _all_stocks_in_query(transcript)
+    if not stocks and history:            # bare follow-up: "그럼 최근 3개월 최저가는?"
+        for h in reversed(history):
+            s = _all_stocks_in_query(str(h.get("content") or h.get("text") or ""))
+            if s:
+                stocks = s[:1]
+                break
+    if not stocks:
+        return None
+    from services import naver_stock
+    _en = (lang or "").lower().startswith("en")
+    if not _en and not _re.search(r"[가-힣]", transcript or "") \
+            and _re.search(r"[a-zA-Z]", transcript or ""):
+        _en = True
+    cut_iso = cutoff.isoformat()
+    sections = []
+    for code, name in stocks[:3]:
+        try:
+            rows = naver_stock.daily_history(code, days=min(400, months * 23 + 15))
+        except Exception as e:
+            log.warning(f"period stats {code} failed: {str(e)[:120]}")
+            rows = []
+        sel = [r for r in rows if r.get("date") and r["date"] >= cut_iso and r.get("close")]
+        if len(sel) < 2:
+            continue
+        chron = list(reversed(sel))                       # oldest → newest
+        hi_row = max(sel, key=lambda r: r.get("high") or 0)
+        lo_row = min(sel, key=lambda r: r.get("low") or 10 ** 12)
+        hi, lo = hi_row.get("high"), lo_row.get("low")
+        first, last = chron[0], chron[-1]
+        chg = (last["close"] - first["close"]) / first["close"] * 100
+        vols = [r.get("volume") or 0 for r in sel]
+        avg_vol = sum(vols) / len(vols) if vols else 0
+        mv_row = max(sel, key=lambda r: r.get("volume") or 0)
+        pos = (last["close"] - lo) / (hi - lo) * 100 if hi and lo and hi > lo else 50
+        width = (hi - lo) / lo * 100 if lo else 0
+        recent20 = [r.get("volume") or 0 for r in sel[:20]]
+        v_ratio = (sum(recent20) / len(recent20) / avg_vol) if (recent20 and avg_vol) else None
+        nm = (name or code).upper()
+        if _en:
+            try:
+                from services.stock_resolver import display_name_en
+                nm = display_name_en(code) or nm
+            except Exception:
+                pass
+        # ---- headline summary table
+        if _en:
+            S = [f"**📊 {nm} ({code}) — {label_en} summary ({first['date']} ~ {last['date']} · {len(sel)} trading days)**", "",
+                 "| Item | Value | Date |", "|---|---|---|",
+                 f"| Period high | {_won_str(hi)} | {hi_row.get('date')} |",
+                 f"| Period low | {_won_str(lo)} | {lo_row.get('date')} |",
+                 f"| Start close | {_won_str(first['close'])} | {first['date']} |",
+                 f"| Latest close | {_won_str(last['close'])} | {last['date']} |",
+                 f"| Period change | {chg:+.1f}% | |",
+                 f"| Avg daily volume | {_vol_str(avg_vol, True)} | |",
+                 f"| Biggest volume day | {_vol_str(mv_row.get('volume'), True)} | {mv_row.get('date')} |"]
+        else:
+            S = [f"**📊 {nm} ({code}) — {label_ko} 요약 ({first['date']} ~ {last['date']} · {len(sel)} 거래일)**", "",
+                 "| 항목 | 값 | 날짜 |", "|---|---|---|",
+                 f"| 기간 최고가 | {_won_str(hi)} | {hi_row.get('date')} |",
+                 f"| 기간 최저가 | {_won_str(lo)} | {lo_row.get('date')} |",
+                 f"| 기간 시작 종가 | {_won_str(first['close'])} | {first['date']} |",
+                 f"| 최근 종가 | {_won_str(last['close'])} | {last['date']} |",
+                 f"| 기간 등락률 | {chg:+.1f}% | |",
+                 f"| 하루 평균 거래량 | {_vol_str(avg_vol, False)} | |",
+                 f"| 최대 거래량일 | {_vol_str(mv_row.get('volume'), False)} | {mv_row.get('date')} |"]
+        # ---- monthly breakdown
+        by_m: dict[str, list] = {}
+        for r in chron:
+            by_m.setdefault(r["date"][:7], []).append(r)
+        S += ["", ("| Month | Low | High | Avg volume | Month-end close |" if _en
+                   else "| 월 | 최저가 | 최고가 | 평균 거래량 | 월말 종가 |"), "|---|---|---|---|---|"]
+        for mk in sorted(by_m):
+            mr = by_m[mk]
+            m_lo = min(r.get("low") or 10 ** 12 for r in mr)
+            m_hi = max(r.get("high") or 0 for r in mr)
+            m_av = sum(r.get("volume") or 0 for r in mr) / len(mr)
+            S.append(f"| {mk} | {_won_str(m_lo)} | {_won_str(m_hi)} | {_vol_str(m_av, _en)} | {_won_str(mr[-1]['close'])} |")
+        # ---- written explanation (deterministic, from the numbers above)
+        zone_ko = "저점권" if pos <= 30 else "고점권" if pos >= 70 else "중간 구간"
+        zone_en = "near the period low" if pos <= 30 else "near the period high" if pos >= 70 else "mid-range"
+        if _en:
+            expl = [f"**Explanation:** over the {label_en}, {nm} moved between {_won_str(lo)} "
+                    f"({lo_row.get('date')}) and {_won_str(hi)} ({hi_row.get('date')}) — a {width:.1f}% band. "
+                    f"The latest close {_won_str(last['close'])} sits at the {pos:.0f}% point of that band ({zone_en}), "
+                    f"and the period return is {chg:+.1f}%."]
+            if v_ratio is not None:
+                expl.append(f"Recent trading is {'heavier' if v_ratio >= 1.15 else 'lighter' if v_ratio <= 0.85 else 'about the same as'} "
+                            f"the period norm — the last ~20 sessions averaged {v_ratio:.1f}× the period's daily volume.")
+        else:
+            expl = [f"**설명:** {label_ko} 동안 {nm}는 최저 {_won_str(lo)}({lo_row.get('date')}) ~ "
+                    f"최고 {_won_str(hi)}({hi_row.get('date')}) 사이, 폭 {width:.1f}%에서 움직였습니다. "
+                    f"최근 종가 {_won_str(last['close'])}는 이 범위의 {pos:.0f}% 지점({zone_ko})이며, "
+                    f"기간 수익률은 {chg:+.1f}%입니다."]
+            if v_ratio is not None:
+                expl.append(f"최근 20거래일 평균 거래량은 기간 평균의 {v_ratio:.1f}배로, "
+                            f"{'거래가 활발해진' if v_ratio >= 1.15 else '거래가 한산해진' if v_ratio <= 0.85 else '평소 수준의'} 흐름입니다.")
+        S += ["", " ".join(expl)]
+        sections.append("\n".join(S))
+    if not sections:
+        return None
+    out = "\n\n---\n\n".join(sections)
+    if months >= 18:
+        out += ("\n\n※ 무료 일봉 데이터는 약 18개월까지만 제공되어 그 범위 내에서 계산했습니다."
+                if not _en else
+                "\n\n※ Free daily data covers ~18 months, so the figures are computed within that range.")
+    return out
+
+
 def _vip_stock_data_reply(transcript: Optional[str], lang: str, db=None) -> Optional[str]:
     """Unified VIP stock-data answer (the single source the AI Advisor relays):
     공매도 (Kiwoom ka10014) → history table (past/range) → live current price (with
@@ -1629,6 +1808,9 @@ def _vip_stock_data_reply(transcript: Optional[str], lang: str, db=None) -> Opti
         ss = _vip_short_selling_reply(transcript, lang)
         if ss and ss.get("reply"):
             return ss["reply"]
+    ps = _period_stats_reply(transcript, lang, db=db)
+    if ps:
+        return ps
     h = _requested_history_dates(transcript)
     if h:
         r = _vip_history_reply(transcript, lang, h, db=db)
@@ -6296,12 +6478,21 @@ def _run_agent_impl(
     if not confirmed_tool and not attachment_ids and any(
             k in (transcript or "").lower() for k in ("체크리스트", "체크 리스트", "checklist", "check list")):
         try:
-            from services.checklist_engine import (render_en, render_ko, render_market_en,
+            from services.checklist_engine import (render_en, render_full_en, render_full_ko,
+                                                   render_ko, render_market_en,
                                                    render_market_ko, stock_scorecard)
             from services.stock_resolver import resolve_one
             _cc, _cn = resolve_one(transcript or "")
             _en_l = str(lang or "").lower().startswith("en")
-            if _cc:
+            # "체크리스트 전체/100개 보여줘" / "show me all checklist" → the boss's verbatim
+            # 100-item paper list (stored data/checklist_100.json), not the live scorecard.
+            _tl_ck = (transcript or "").lower()
+            _wants_full = any(k in _tl_ck for k in (
+                "전체", "전부", "모든", "모두", "100", "다 보여", "다보여",
+                "all", "full", "whole", "entire", "complete", "everything"))
+            if _wants_full and not _cc:
+                _reply = render_full_en() if _en_l else render_full_ko()
+            elif _cc:
                 _card = stock_scorecard(db, _cc)
                 _reply = render_en(_card) if _en_l else render_ko(_card)
             else:
@@ -6671,6 +6862,19 @@ def _run_agent_impl(
                                           selected_id, system, history or [], agent_id=agent_id, user_id=user_id)
                 except Exception:
                     pass
+
+    # ===== PERIOD STATS ("최근 6개월 최저/최고/거래량", "last 6 months min/max/volume") —
+    # months-long summary table + explanation. Runs BEFORE the history-table lane (which
+    # only knows day/week ranges) and before current-price (which would answer TODAY). =====
+    if (not confirmed_tool and not _is_future_outlook(transcript)
+            and not _is_stock_advice(transcript, agent_id)
+            and not _wants_recommendation(transcript)
+            and _is_period_stats_q(transcript)):
+        _pstats = _period_stats_reply(transcript, lang, history=history or [], db=db)
+        if _pstats:
+            return {"intent": "stock_period_stats", "language": lang, "reply": _pstats,
+                    "action": None, "speak": True, "transcript": transcript,
+                    "tool_used": "stock_period_stats"}
 
     if (not confirmed_tool and (agent_id or "vip").lower() != "stock"
             and not _is_future_outlook(transcript)        # '앞으로 5일 전망' is a FORECAST, not history
