@@ -712,6 +712,23 @@ export default function LiveDeskPage() {
       value_en?: string; verdict: string; verdict_en?: string }[];
     news?: { ts: string; stamp: string; title: string; why: string }[] } | null>(null);
   const layersCode9 = det?.chart?.code || null;
+  // THE DAILY VIEW (boss 2026-08-24): the year map behind the charted stock
+  const [dailyView, setDailyView] = useState(false);
+  const [daily9, setDaily9] = useState<{ ok?: boolean; code?: string;
+    candles?: { d8: string; open: number; high: number; low: number;
+                close: number; vol: number }[];
+    year_hi?: number; year_lo?: number; pos?: number | null;
+    lines?: { no_buy_85: number; caution_60: number; bottom_20: number } } | null>(null);
+  const dailyCode9 = dailyView ? (det?.chart?.code || code) : null;
+  useEffect(() => {
+    if (!dailyCode9) { setDaily9(null); return; }
+    let on9 = true;
+    api<typeof daily9>(`/paper-desk/live/daily-chart?code=${dailyCode9}`)
+      .then((d) => { if (on9) setDaily9(d?.ok ? d : null); })
+      .catch(() => { if (on9) setDaily9(null); });
+    return () => { on9 = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dailyCode9]);
   useEffect(() => {
     if (!layersCode9) { setLayers9(null); return; }
     let on9 = true;
@@ -1365,8 +1382,14 @@ export default function LiveDeskPage() {
             {/* One dropdown, 5틱 selected by default (boss 2026-08-06: four buttons PLUS a
                 "showing" badge read as two different things). The select IS the badge now. */}
             <span className="text-[10px] text-[var(--text-muted)]">{t("봉:", "bars:")}</span>
-            <select value={period ? `p${period}` : `t${tick}`}
+            <select value={dailyView ? "daily" : period ? `p${period}` : `t${tick}`}
               onChange={(e) => { const val = e.target.value;
+                                 // 일봉 = a VIEW, not a trading clock (boss
+                                 // 2026-08-24): the engine keeps its 1분/5틱
+                                 // book; the chart shows the year map with
+                                 // the judges' zone lines
+                                 if (val === "daily") { setDailyView(true); return; }
+                                 setDailyView(false);
                                  const per = val[0] === "p" ? Number(val.slice(1)) : 0;
                                  const tk = val[0] === "t" ? Number(val.slice(1)) : 5;
                                  setTick(tk); setPeriod(per);
@@ -1376,6 +1399,7 @@ export default function LiveDeskPage() {
               style={{ borderColor: "#6a1b9a", color: "#6a1b9a" }}>
               <option value="t5">5틱</option>
               <option value="p60">1분</option>
+              <option value="daily">{t("일봉 (1년)", "daily (1yr)")}</option>
             </select>
             {/* WHICH DAY. "" = today's live tape; any stored day is one click. The ML
                 models honestly re-train per day: viewing 08-05 uses only 08-04. */}
@@ -2274,7 +2298,29 @@ export default function LiveDeskPage() {
                 so before 09:00 (or after a restart) a stored day's fully loaded chart was
                 replaced by "market is closed" - the boss could not review 08-04/08-05 at
                 dawn (2026-08-06). A rule's own chart must show whenever IT has bars. */}
-            {(sel && det?.chart ? det.chart.candles.length : bars.length) ? <LiveChart
+            {/* THE DAILY VIEW (boss 2026-08-24): a year of daily candles with
+                the judges' zone lines - the map the layers read, visible */}
+            {dailyView && daily9?.candles?.length ? (<>
+              <div className="mx-1 mb-1 px-2 py-1 rounded text-[11px] tabular-nums"
+                style={{ background: "rgba(46,125,50,0.06)", border: "1px solid var(--border-default)" }}>
+                <b style={{ color: "#2e7d32" }}>📅 {t("일봉 1년", "daily, 1 year")}</b>
+                <b className="ml-2 text-[var(--text-primary)]">{st?.stocks.find((x) => x.code === daily9!.code)?.name || daily9.code}</b>
+                {daily9.pos != null && <b className="ml-2" style={{ color: daily9.pos >= 0.85 ? "#b02a2a" : daily9.pos >= 0.6 ? "#b8860b" : daily9.pos <= 0.2 ? "#1565c0" : "var(--text-secondary)" }}>
+                  {t(`연중 ${Math.round(daily9.pos * 100)}% 지점`, `at ${Math.round(daily9.pos * 100)}% of the year`)}</b>}
+                <span className="ml-2 text-[var(--text-muted)]">
+                  {t("금지선(85%)", "no-buy(85%)")} ₩{Math.round(daily9.lines!.no_buy_85).toLocaleString()}
+                  {" · "}{t("조심선(60%)", "caution(60%)")} ₩{Math.round(daily9.lines!.caution_60).toLocaleString()}
+                  {" · "}{t("바닥선(20%)", "bottom(20%)")} ₩{Math.round(daily9.lines!.bottom_20).toLocaleString()}
+                  {" · "}{t("연중 최저", "yr low")} ₩{Math.round(daily9.year_lo!).toLocaleString()}
+                  {" ~ "}{t("최고", "hi")} ₩{Math.round(daily9.year_hi!).toLocaleString()}</span>
+              </div>
+              <LiveChart key={`daily-${daily9.code}`} off={0} focus={null}
+                bars={daily9.candles.map((d9, i9) => ({
+                  time: i9, hhmm: `${d9.d8.slice(4, 6)}/${d9.d8.slice(6)}`,
+                  open: d9.open, high: d9.high, low: d9.low, close: d9.close,
+                  vol: d9.vol })) as unknown as Bar[]} />
+            </>) : null}
+            {!dailyView && (sel && det?.chart ? det.chart.candles.length : bars.length) ? <LiveChart
                 key={`det-${sel ?? "tape"}-${det?.chart?.code ?? code}-${tick}-${period}`}
                 off={sel && det?.chart ? det.chart.off : (tape?.off ?? 0)}
                 bars={sel && det?.chart ? det.chart.candles : bars}
@@ -2319,7 +2365,7 @@ export default function LiveDeskPage() {
                       }
                       return (focusSide === "b" ? det.chart.focus?.b : det.chart.focus?.s) ?? null;
                     })()
-                  : null} /> : (
+                  : null} /> : dailyView ? null : (
               <div className="px-4 py-10 text-center text-[12px] text-[var(--text-muted)]">
                 {ruleDay
                   ? (ruleDay === "all"

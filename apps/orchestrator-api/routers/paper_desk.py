@@ -785,6 +785,62 @@ def live_family_trades(family: str = Query("new"), tick: int = Query(5),
                 placeholder={"ok": False, "computing": True})
 
 
+@router.get("/live/daily-chart")
+def live_daily_chart(code: str = Query(...)):
+    """THE DAILY CHART on the live desk (boss 2026-08-24: "in this part can
+    you put daily chart also" - next to the 5틱/1분 selector). A year of
+    daily candles from minute1_hist + today's live tape as the newest one,
+    with the layer-zone price lines (85% no-buy / 60% caution / 20% bottom)
+    so the year map the judges read is visible to the eye too."""
+    import json as _json
+    from pathlib import Path as _P
+    from services import kiwoom_rules as kr
+    c6 = _resolve(code)
+    days: dict = {}
+    try:
+        hist = (_P(__file__).resolve().parent.parent / "data"
+                / "minute1_hist" / f"{c6}.json")
+        for r in _json.loads(hist.read_text()):
+            ts = str(r[0])
+            if not ("090000" <= ts[8:14] <= "153000"):
+                continue
+            d = days.setdefault(ts[:8], {"o": float(r[1]), "h": float(r[2]),
+                                         "l": float(r[3]), "c": float(r[4]),
+                                         "v": 0.0})
+            d["h"] = max(d["h"], float(r[2]))
+            d["l"] = min(d["l"], float(r[3]))
+            d["c"] = float(r[4])
+            d["v"] += float(r[5] or 0)
+    except Exception:
+        return {"ok": False}
+    try:
+        cs = kr._bars_for(c6, 5, 60)
+        if cs:
+            from services.kiwoom_tape import _day as _kd
+            days[_kd()] = {"o": cs[0]["close"],
+                           "h": max(x["high"] for x in cs),
+                           "l": min(x["low"] for x in cs),
+                           "c": cs[-1]["close"],
+                           "v": sum(float(x.get("vol") or 0) for x in cs)}
+    except Exception:
+        pass
+    if not days:
+        return {"ok": False}
+    seq = sorted(days.items())[-260:]
+    closes = [d["c"] for _, d in seq[:-1]] or [seq[-1][1]["c"]]
+    lo, hi = min(closes), max(closes)
+    px = seq[-1][1]["c"]
+    return {"ok": True, "code": c6,
+            "candles": [{"d8": d8, "open": d["o"], "high": d["h"],
+                         "low": d["l"], "close": d["c"], "vol": d["v"]}
+                        for d8, d in seq],
+            "year_hi": hi, "year_lo": lo,
+            "pos": (px - lo) / (hi - lo) if hi > lo else None,
+            "lines": {"no_buy_85": lo + (hi - lo) * 0.85,
+                      "caution_60": lo + (hi - lo) * 0.60,
+                      "bottom_20": lo + (hi - lo) * 0.20}}
+
+
 @router.get("/live/rules/layers")
 def live_layers(code: str = Query(...)):
     """THE JUDGES' STAMPS (boss 2026-08-21 night: "if we click it should show
