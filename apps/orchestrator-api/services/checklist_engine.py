@@ -263,6 +263,32 @@ def _c_msci_div(m):
     return True, " · ".join(bits) if bits else "감지된 배당/MSCI 일정 없음"
 
 
+def _c_mkt_value(m):
+    """#21 — total KOSPI trading value vs its own recent average (the baseline builds
+    itself: each session's final value is stored, judgment starts at 5 stored days)."""
+    v = m.get("mkt_value")
+    base = m.get("mkt_value_base")
+    if not v:
+        return None, "시장 거래대금 데이터 없음"
+    disp = f"코스피 거래대금 {v / 1e12:.1f}조원"
+    if not base:
+        return None, disp + " — 평균 축적 중 (5거래일 후 판정 시작)"
+    r = v / base
+    return r >= 0.8, disp + f" (최근 평균의 {r:.2f}배)" + (" — 한산" if r < 0.8 else "")
+
+
+def _c_mkt_liquidity(m):
+    """#25 — overall liquidity, read from the same trading-value ratio."""
+    v = m.get("mkt_value")
+    base = m.get("mkt_value_base")
+    if not v:
+        return None, "시장 거래대금 데이터 없음"
+    if not base:
+        return None, f"거래대금 {v / 1e12:.1f}조원 — 평균 축적 중"
+    r = v / base
+    return r >= 0.7, f"유동성 {'충분' if r >= 0.7 else '부족'} (거래대금이 평균의 {r:.2f}배)"
+
+
 def _c_econ_events(m):
     hits = m.get("econ_hits")
     if hits is None:
@@ -601,6 +627,8 @@ MARKET_ITEMS = [
     (19, "시장", "금리 결정 등 정책 이벤트가 있는가?", "Any policy events like rate decisions?", _c_policy_events, 1, False),
     (17, "시장", "VIX(공포지수)가 적정 수준인가?", "Is the VIX (fear index) at a reasonable level?", _c_vix, 1, False),
     (16, "시장", "유가가 급변동하고 있지 않은가?", "Is oil NOT swinging sharply?", _c_oil, 1, False),
+    (21, "시장", "시장 전체 거래 대금이 평소보다 많은가?", "Is total market trading value above normal?", _c_mkt_value, 1, False),
+    (25, "시장", "시장의 전반적인 유동성이 충분한가?", "Is overall market liquidity sufficient?", _c_mkt_liquidity, 1, False),
     (22, "시장", "시장 전체를 압도하는 악재는 없는가?", "No market-wide overwhelming bad news?", _c_market_news, 2, True),
     (20, "시장", "지정학적 리스크는 없는가?", "No geopolitical risk?", _c_geopolitics, 1, False),
     (95, "시장", "지수 급락일이 아닌가? (방어)", "Not an index-plunge day? (defense)", _c_market_plunge, 3, True),
@@ -721,6 +749,33 @@ def market_preflight(db) -> dict[str, Any]:
                 m["nqf"] = {"price": float(px_), "pct": (float(px_) / float(pv_) - 1) * 100}
         except Exception:
             m["nqf"] = None
+        try:
+            # 코스피 전체 거래대금 (Naver polling API) — checklist #21/#25. The baseline is
+            # our own rolling store: today's max-seen value is written per day, judgment
+            # begins once 5 prior sessions are stored (never a made-up threshold).
+            import httpx as _hx3
+            j3 = _hx3.get("https://polling.finance.naver.com/api/realtime/domestic/index/KOSPI",
+                          headers={"User-Agent": "Mozilla/5.0"}, timeout=6).json()
+            d3 = (j3.get("datas") or [{}])[0]
+            raw = d3.get("accumulatedTradingValueRaw")
+            if raw:
+                v = float(raw)
+                m["mkt_value"] = v
+                _hf = Path(__file__).resolve().parent.parent / "data" / "market_value_hist.json"
+                try:
+                    hist = json.loads(_hf.read_text(encoding="utf-8"))
+                except Exception:
+                    hist = {}
+                _dkey = datetime.now(KST).strftime("%Y%m%d")
+                hist[_dkey] = max(v, float(hist.get(_dkey, 0)))
+                hist = dict(sorted(hist.items())[-40:])
+                _hf.parent.mkdir(exist_ok=True)
+                _hf.write_text(json.dumps(hist), encoding="utf-8")
+                prior = [float(x) for k, x in hist.items() if k != _dkey]
+                if len(prior) >= 5:
+                    m["mkt_value_base"] = sum(prior[-20:]) / len(prior[-20:])
+        except Exception:
+            m["mkt_value"] = None
         m["expiry"] = _expiry_day_kr(datetime.now(KST))
         try:
             # 국고채 10년 (Naver bond API) — checklist #15

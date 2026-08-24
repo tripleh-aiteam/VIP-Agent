@@ -278,11 +278,13 @@ def build(db, n: int = 3, transcript: str = "", lang: str = "ko") -> dict[str, A
             L.append(("🚫 Deal-breaker today — new buying is reference only: " if en
                       else "🚫 오늘 결격 — 신규 매수는 참고만: ") + det)
         L.append("")
-    L += [(f"**[Scoring]** {_n_cand} candidates × the checklist's per-stock items "
-           f"({day_disp} morning base) + live re-rank at {now} (price ±4 · book ±2 · zone +2/−3). "
+    L += [(f"**[Scoring]** {_n_cand} candidates, weighted: trend 25 + liquidity 20 + flexibility 20 "
+           f"+ levels 15 + momentum 10 + flows 10 = 100 ({day_disp} morning base), then the live "
+           f"re-rank at {now} (price ±4 · book ±2 · zone +2/−3, max ±9). "
            f"Each pick's own 100-item answers: click [근거 🔍]." if en else
-           f"**[채점]** 후보 {_n_cand}종목 × 체크리스트 종목 항목 ({day_disp} 아침 기준) + {now} 실시간 보정"
-           f"(등락 ±4 · 호가 ±2 · 구간 +2/−3). 종목별 100문항 실측 답은 [근거 🔍] 클릭."), ""]
+           f"**[채점]** 후보 {_n_cand}종목 가중 채점: 추세 25 + 유동성 20 + 유연성 20 + 지지저항 15 "
+           f"+ 모멘텀 10 + 수급 10 = 100 ({day_disp} 아침 기준) + {now} 실시간 보정"
+           f"(등락 ±4 · 호가 ±2 · 구간 +2/−3, 최대 ±9). 종목별 100문항 실측 답은 [근거 🔍] 클릭."), ""]
     L += ["", f"**{'[RESULT] TOP ' + str(len(top)) if en else '[결과] 추천 TOP ' + str(len(top))}**"]
     # which recommendations are ACTUALLY TRADING today (the reco desk's five, fixed at
     # the morning bell — the desk never swaps mid-session, so the live list can differ)

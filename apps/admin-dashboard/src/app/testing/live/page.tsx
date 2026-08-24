@@ -37,9 +37,9 @@ const COL_HELP: Record<string, [string, string, string, string]> = {
   stock: ["종목", "stock",
     "종목 이름입니다. 📌 표시는 점수와 상관없이 항상 데스크에 넣는 고정 종목(SK하이닉스·삼성전자)이라는 뜻입니다. 나머지는 그날 점수로 뽑힌 상위 5개입니다.",
     "The stock's name. 📌 means it is a fixed name (SK하이닉스, 삼성전자) that goes on the desk regardless of its score. The rest are the day's top five by score."],
-  score: ["오늘 점수 (0~100)", "today's score (0-100)",
-    "오른쪽 여섯 항목의 가중평균입니다 — 단순 평균이 아닙니다. 추세 한 칸이 수급 한 칸보다 2.5배 무겁습니다. 비중은 추세 25 · 유동성 20 · 유연성 20 · 지지저항 15 · 모멘텀 10 · 수급 10. 100에 가까울수록 오늘 단타에 적합하다는 뜻이며, 그날 이전 자료만 사용합니다(미래 정보 없음).",
-    "A weighted average of the six columns to the right - not a plain average. One point of trend counts 2.5x one point of flows. The weights: trend 25, liquidity 20, flexibility 20, levels 15, momentum 10, flows 10. Closer to 100 means better suited to today's short-term trading. Only data from before the day is used - no peeking ahead."],
+  score: ["총점 — 가중치 계산식", "Total score - the weight formula",
+    "총점 = (추세×25 + 유동성×20 + 유연성×20 + 지지저항×15 + 모멘텀×10 + 수급×10) ÷ 100. 단순 평균이 아니라 가중 평균 — 추세 1점이 수급 1점보다 2.5배 무겁습니다. 체크리스트 분류로 보면 종목선정(#46~75)이 90, 이슈/수급(#31·32·34·43)이 10입니다. 아침에 채점되고, 상위 10종목은 실시간 보정(등락 ±4 · 호가 ±2 · 연중구간 +2/−3, 최대 ±9)이 더해집니다 — 셀에 마우스를 올리면 '아침 + 실시간 = 총점' 계산이 보입니다. 그날 이전 자료만 사용합니다(미래 정보 없음).",
+    "Total = (trend x25 + liquidity x20 + flexibility x20 + levels x15 + momentum x10 + flows x10) / 100. A weighted average, not a plain one - one point of trend counts 2.5x one point of flows. In checklist categories: Stock selection (#46-75) carries 90, Issue/Supply&Demand (#31/32/34/43) carries 10. Scored each morning; the top 10 also get the live adjustment (price +-4, order book +-2, year zone +2/-3, max +-9) - hover a cell to see 'morning + live = total'. Only data from before the day is used."],
   trend: ["추세 — 비중 25 (가장 중요)", "trend - weight 25 (the biggest)",
     "값이 위로 질서 있게 움직이고 있는가. ① 5일선 > 20일선 > 60일선 정배열(35%) ② 1년 동안 얼마나 곧게 움직였는지, 위아래로 흔들리지 않고 한 방향으로 가는 성질(25%) ③ 20일 신고가 여부(20%) ④ 최근 20일선 위에서 보낸 날의 비율(20%). 우리 규칙은 3번 오르면 사기 때문에 위로 가는 종목에서만 통합니다.",
     "Is it moving up in an orderly way? (1) the 5-day line above the 20 above the 60 (35%), (2) how straight it travels over a year rather than sawing up and down (25%), (3) a 20-day new high (20%), (4) how much of the recent stretch it spent above its 20-day line (20%). Our rules buy after three rises, so they only work on stocks that actually go up."],
@@ -66,12 +66,12 @@ const COL_HELP: Record<string, [string, string, string, string]> = {
   market: ["시장 (체크리스트 11~25번)", "market (checklist #11-25)",
     "종목이 아니라 오늘 시장 전체의 점수라 모든 줄이 같습니다. 자동 점검 항목: #11 코스피/코스닥 방향 · #12 미국 증시 · #16 유가 · #17 VIX · #20 지정학 · #22 시장 악재 · #36 만기일 · #95 급락일 · #100 마감 직전. 자세히는 챗봇에 \"체크리스트\"라고 물어보세요.",
     "Scores TODAY's market, not the stock, so every row shows the same number. Auto-checked items: #11 KOSPI/KOSDAQ direction, #12 US close, #16 oil, #17 VIX, #20 geopolitics, #22 market-wide bad news, #36 expiry day, #95 plunge day, #100 near the close. Ask the chatbot \"checklist\" for the live detail."],
-  issue: ["이슈/수급 (체크리스트 26~45번)", "issue/flows (checklist #26-45)",
-    "종목별 자동 점검 가능한 수급 항목의 점수입니다: #31 외국인 순매수 · #32 기관 순매수 · #34 개인 쏠림(감점) · #43 공매도 과열(감점). 뉴스/테마(#26~30, #40~42, #44~45)는 순위표가 아니라 챗봇 추천의 '근거 🔍'와 뉴스 스탬프에서 봅니다.",
-    "The per-stock flow items that can be auto-checked: #31 foreign net buying, #32 institutional net buying, #34 retail crowding (penalty), #43 short-selling overheat (penalty). News/theme items (#26-30, #40-42, #44-45) live in the chatbot's evidence 🔍 and the news stamps, not this table."],
-  stock_sel: ["종목선정 (체크리스트 46~75번)", "stock selection (checklist #46-75)",
-    "다섯 소분류의 가중평균입니다: 추세(#50·51·52·58) 25 · 유동성(#21·46·47·69) 20 · 유연성(#48 호가비용) 20 · 지지저항(#62·63·67·74) 15 · 모멘텀(#60·61) 10. 아래 '세부 6칸 보기' 버튼을 누르면 소분류별 점수가 각각 열립니다.",
-    "The weighted average of five subcategories: trend (#50·51·52·58) w25, liquidity (#21·46·47·69) w20, flexibility (#48 tick cost) w20, levels (#62·63·67·74) w15, momentum (#60·61) w10. Press 'show the 6 detail columns' below to see each subcategory."],
+  issue: ["이슈/수급 (#26~45) — 총점 비중 10", "Issue/Supply&Demand (#26-45) - weight 10 of 100",
+    "총점 100 중 10을 차지합니다. 소분류(클릭한 이 칸의 구성): #31 외국인 순매수 45% · #32 기관 순매수 30% · #34 개인 쏠림 감점 15% · #43 공매도 과열 감점 10%. 뉴스/테마(#26~30, #40~42, #44~45)는 Qwen 뉴스 엔진이 종목별 스탬프로 판독 — 챗봇 '근거 🔍'에서 봅니다.",
+    "Carries 10 of the 100 total. Subcategories of this column: #31 foreign net buying 45%, #32 institutional net 30%, #34 retail-crowding penalty 15%, #43 short-overheat penalty 10%. News/theme items (#26-30, #40-42, #44-45) are read per stock by the Qwen news engine - see the chatbot's evidence 🔍."],
+  stock_sel: ["종목선정 (#46~75) — 총점 비중 90", "Stock selection (#46-75) - weight 90 of 100",
+    "총점 100 중 90을 차지하는 핵심 칸입니다. 소분류와 비중: 추세(#50·51·52·58) 25 · 유동성(#21·46·47·69) 20 · 유연성(#48 호가비용) 20 · 지지저항(#62·63·67·74) 15 · 모멘텀(#60·61) 10. 아래 '세부 6칸 보기' 버튼으로 소분류별 점수를 각각 볼 수 있습니다.",
+    "The core column - 90 of the 100 total. Subcategories and weights: trend (#50·51·52·58) 25, liquidity (#21·46·47·69) 20, flexibility (#48 tick cost) 20, levels (#62·63·67·74) 15, momentum (#60·61) 10. Press 'show the 6 detail columns' below to see each one."],
   exec: ["실행/관리 (체크리스트 76~100번)", "execution (checklist #76-100)",
     "매수 타점(#76) · 손절/익절(#77·78) · 손익비(#79) · 진입 근거 3개(#82) 같은 항목은 '사는 순간'에 계산되는 것이라 아침 순위표에는 없습니다. 종목을 정한 뒤 챗봇에 \"종목명 체크리스트\"라고 물으면 이 항목들이 실시간으로 채점됩니다.",
     "Items like the entry point (#76), stop/target (#77·78), risk:reward (#79) and 3+ reasons (#82) are computed AT THE MOMENT OF BUYING, so they can't rank a morning table. Once you pick a stock, ask the chatbot \"<stock> checklist\" and these are scored live."],
@@ -1285,10 +1285,12 @@ export default function LiveDeskPage() {
                        ["trend", t("추세", "trend"), "right"], ["liquidity", t("유동성", "liq"), "right"],
                        ["flexibility", t("유연성", "flex"), "right"], ["levels", t("지지저항", "levels"), "right"],
                        ["momentum", t("모멘텀", "mom"), "right"], ["flows", t("수급", "flows"), "right"]]
-                    : [["rank", t("순위", "#"), "left"], ["stock", t("종목", "stock"), "left"],
-                       ["score", t("점수", "score"), "right"], ["now", t("지금", "now"), "right"],
-                       ["market", t("시장", "market"), "right"], ["issue", t("이슈/수급", "issue/flows"), "right"],
-                       ["stock_sel", t("종목선정", "selection"), "right"], ["exec", t("실행/관리", "execution"), "right"]]
+                    : [["rank", t("순위", "#"), "left"], ["stock", t("종목", "Stock"), "left"],
+                       ["score", t("총점", "Total score"), "right"],
+                       ["market", t("시장", "Market"), "right"],
+                       ["issue", t("이슈/수급 (10)", "Issue/Supply&Demand (10)"), "right"],
+                       ["stock_sel", t("종목선정 (90)", "Stock selection (90)"), "right"],
+                       ["exec", t("실행/관리", "Execution management"), "right"]]
                   ).map(([k, lab, al]) => (
                     <th key={k} onClick={() => setPickCol(pickCol === k ? "" : k)}
                       title={t("눌러서 소분류/설명 보기", "click for the subcategories / explanation")}
@@ -1301,7 +1303,7 @@ export default function LiveDeskPage() {
                 </tr></thead>
                 <tbody>
                   {pickCol && COL_HELP[pickCol] && (
-                    <tr><td colSpan={pickDetail ? 10 : 8} className="px-4 py-2.5 text-[11px] leading-relaxed border-b"
+                    <tr><td colSpan={pickDetail ? 10 : 7} className="px-4 py-2.5 text-[11px] leading-relaxed border-b"
                       style={{ background: "rgba(21,101,192,0.07)", borderColor: "#1565c0",
                                color: "var(--text-secondary)" }}>
                       <div className="flex items-start gap-2">
@@ -1325,7 +1327,7 @@ export default function LiveDeskPage() {
                    ).map((r, ri) => (
                     <React.Fragment key={r.code}>
                     {pickAll && ri === 0 && (
-                      <tr><td colSpan={pickDetail ? 10 : 8} className="px-3 py-1 text-[10px] font-bold text-center"
+                      <tr><td colSpan={pickDetail ? 10 : 7} className="px-3 py-1 text-[10px] font-bold text-center"
                         style={{ background: "rgba(128,128,128,0.10)", color: "var(--text-muted)" }}>
                         {t("▼ 100점 체크리스트 전체 순위 — '지금' 합계 순 (챗봇 추천과 동일) · ★ = 아침 점수 상위 5 · 색칠된 줄 = 내 종목",
                            "▼ the full 100-item checklist ranking — sorted by the 'now' total (same as the chatbot) · ★ = morning top 5 · shaded = your desk")}
@@ -1338,16 +1340,30 @@ export default function LiveDeskPage() {
                       <td className="px-2 font-bold text-[var(--text-primary)]">
                         {r.by_score ? <span title={t("아침 점수 상위 5", "morning top 5 by score")}
                           style={{ color: "#e65100" }}>★ </span> : ""}{r.name}</td>
-                      <td className="text-right px-3 font-extrabold" style={{ color: "#1565c0" }}>{r.score}</td>
-                      <td className="text-right px-2 font-extrabold"
-                        title={r.live_adj !== undefined
-                          ? t(`아침 ${r.score} + 실시간 ${r.live_adj >= 0 ? "+" : ""}${r.live_adj}`,
-                              `morning ${r.score} + live ${r.live_adj >= 0 ? "+" : ""}${r.live_adj}`)
-                          : t("상위 10만 실시간 계산", "live pass covers the top 10")}
-                        style={{ color: r.live_total !== undefined
-                          ? ((r.live_adj ?? 0) >= 0 ? "#0f5132" : "#b02a2a") : "var(--text-muted)" }}>
-                        {r.live_total !== undefined ? r.live_total : "·"}
-                      </td>
+                      {pickDetail ? (
+                        <>
+                          <td className="text-right px-3 font-extrabold" style={{ color: "#1565c0" }}>{r.score}</td>
+                          <td className="text-right px-2 font-extrabold"
+                            title={r.live_adj !== undefined
+                              ? t(`아침 ${r.score} + 실시간 ${r.live_adj >= 0 ? "+" : ""}${r.live_adj}`,
+                                  `morning ${r.score} + live ${r.live_adj >= 0 ? "+" : ""}${r.live_adj}`)
+                              : t("상위 10만 실시간 계산", "live pass covers the top 10")}
+                            style={{ color: r.live_total !== undefined
+                              ? ((r.live_adj ?? 0) >= 0 ? "#0f5132" : "#b02a2a") : "var(--text-muted)" }}>
+                            {r.live_total !== undefined ? r.live_total : "·"}
+                          </td>
+                        </>
+                      ) : (
+                        // TOTAL SCORE = morning weighted total, live-adjusted when computed
+                        // (boss 2026-08-24: one clear Total-score column, weights on click)
+                        <td className="text-right px-3 font-extrabold" style={{ color: "#1565c0" }}
+                          title={r.live_adj !== undefined
+                            ? t(`아침 ${r.score} + 실시간 ${r.live_adj >= 0 ? "+" : ""}${r.live_adj} = ${r.live_total}`,
+                                `morning ${r.score} + live ${r.live_adj >= 0 ? "+" : ""}${r.live_adj} = ${r.live_total}`)
+                            : t("아침 가중 총점 (실시간 보정은 상위 10만)", "morning weighted total (live pass covers the top 10)")}>
+                          {r.live_total !== undefined ? r.live_total : r.score}
+                        </td>
+                      )}
                       {(pickDetail
                         ? (["trend","liquidity","flexibility","levels","momentum","flows"] as const)
                             .map((g) => [g, r.groups?.[g]] as const)
