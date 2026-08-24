@@ -513,7 +513,15 @@ export default function LiveDeskPage() {
   const [pickAll, setPickAll] = useState(false);       // the other 32 stay behind a button
   const [pickCol, setPickCol] = useState("");          // a column header explains itself when clicked
   const [pickDetail, setPickDetail] = useState(false); // category columns ↔ the 6 subcategory columns
-  useEffect(() => { api<Pick>("/paper-desk/daily-pick").then(setDpick).catch(() => {}); }, []);
+  // Poll — the ranking carries the LIVE layer (same math as the chatbot), so it must
+  // keep moving during the session (boss 2026-08-24: "the menu must match what the
+  // chatbot answers, in real time"). Server caches 60s; 45s polling tracks it.
+  useEffect(() => {
+    const load = () => api<Pick>("/paper-desk/daily-pick").then(setDpick).catch(() => {});
+    load();
+    const h = setInterval(load, 45000);
+    return () => clearInterval(h);
+  }, []);
   // WHICH DESK TRADES (boss 2026-08-11): his six by default, or the checklist's top five
   // - and switching one ON turns the other OFF, collector included. During market hours
   // the swap needs confirming, because the stocks that leave abandon their tape.
@@ -1079,6 +1087,11 @@ export default function LiveDeskPage() {
   // score spot; the six have their own desk at /testing/live.
   const _recoRows = (dpick?.rows || []).filter((r) => r.by_score)
     .sort((a, b) => (b.score || 0) - (a.score || 0));
+  // LIVE top-N — identical order and totals to the chatbot's [RESULT] (same backend
+  // live layer). 🟢 = actually trading (the morning-fixed desk member).
+  const _recoLive = [...(dpick?.rows || [])]
+    .sort((a, b) => (b.live_total ?? b.score ?? 0) - (a.live_total ?? a.score ?? 0))
+    .slice(0, dpick?.n_picks ?? 5);
   const recoSet = new Set(_recoRows.map((r) => r.code));
   const _recoTabs = _recoRows
     .map((r) => (st?.stocks ?? []).find((x) => x.code === r.code))
@@ -1192,20 +1205,20 @@ export default function LiveDeskPage() {
                   (boss 2026-08-24: "in the Live Kiwoom Desk must be only the prefixed
                   6, nothing more") */}
               🎯 {deskView === "reco"
-                ? t(`체크리스트 자동매매 상위 ${dpick.n_picks ?? _recoRows.length}종목 · 전체 ${(dpick.rows || []).length}종목 점수순`,
-                    `checklist auto-trades the top ${dpick.n_picks ?? _recoRows.length} · all ${(dpick.rows || []).length} ranked below`)
+                ? t(`지금 순위 TOP ${_recoLive.length} (챗봇 추천과 동일·실시간) · 전체 ${(dpick.rows || []).length}종목 아래`,
+                    `LIVE top ${_recoLive.length} (identical to the chatbot, real-time) · all ${(dpick.rows || []).length} ranked below`)
                 : t("내 6종목 — 이 데스크는 항상 이 여섯만 매매합니다",
                     "my 6 stocks — this desk trades only these six")}
             </b>
             <span className="text-[11px] font-bold">
               {deskView === "reco"
-                ? _recoRows.map((r) => `${r.name} ${r.score}`).join(" · ")
+                ? _recoLive.map((r) => `${r.name} ${r.live_total ?? r.score}${r.by_score ? " 🟢" : ""}`).join(" · ")
                 : (dpick.rows || []).filter((r) => r.pinned).map((r) => r.name).join(" · ")}
             </span>
             <span className="text-[10px] text-[var(--text-muted)]">
               {deskView === "reco"
-                ? t("아침 100문항 채점 순위 그대로, 위에서부터. 내 6종목은 실시간 키움 데스크에서.",
-                    "the morning 100-item ranking, top down. My 6 live on the Live Kiwoom Desk.")
+                ? t("챗봇과 같은 실시간 순위(45초 갱신) · 🟢 = 아침 확정으로 실제 자동매매 중. 내 6종목은 실시간 키움 데스크에서.",
+                    "the same live ranking as the chatbot (45s refresh) · 🟢 = actually auto-trading (fixed at the bell). My 6 live on the Live Kiwoom Desk.")
                 : (dpick.mode ?? "both") === "both"
                 ? t("추천 상위 종목도 병렬로 매매 중 — 그쪽은 체크리스트 추천 데스크 메뉴에서 봅니다.",
                     "the checklist picks also trade in parallel — see them on the Checklist Reco Desk menu.")
