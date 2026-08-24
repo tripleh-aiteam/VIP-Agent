@@ -827,9 +827,15 @@ def live_daily_chart(code: str = Query(...)):
     if not days:
         return {"ok": False}
     seq = sorted(days.items())[-260:]
-    closes = [d["c"] for _, d in seq[:-1]] or [seq[-1][1]["c"]]
-    lo, hi = min(closes), max(closes)
     px = seq[-1][1]["c"]
+    # the VIEW must read the judge's own map (the engine's _daily_pos range),
+    # not a private recount - a 73%-vs-39% split between eye and law would
+    # mislead the boss about the very zones he ordered
+    kr._daily_pos(c6, px)
+    lo, hi = kr._YR_CACHE.get(c6) or (None, None)
+    if not lo or not hi or hi <= lo:
+        closes = [d["c"] for _, d in seq[:-1]] or [px]
+        lo, hi = min(closes), max(closes)
     return {"ok": True, "code": c6,
             "candles": [{"d8": d8, "open": d["o"], "high": d["h"],
                          "low": d["l"], "close": d["c"], "vol": d["v"]}
