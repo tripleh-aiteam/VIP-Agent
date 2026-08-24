@@ -199,12 +199,24 @@ def build(db, n: int = 3, transcript: str = "", lang: str = "ko") -> dict[str, A
     L = [(f"**🎯 Top {len(top)} for trading right now — 100-item checklist + our algo · as of {now}**"
           if en else
           f"**🎯 지금 매매 추천 TOP {len(top)} — 100문항 체크리스트 + 우리 알고 · {now} 기준**"), ""]
+    # [0단계] 준비 #1~10 — the boss's own items come FIRST, in order (2026-08-24 round 10)
+    try:
+        from services.checklist_engine import full_checklist
+        prep = [i for i in full_checklist()["items"] if i["cat"] == "준비"]
+        L.append(f"**{'[STEP 0] Preparation (checklist #1–10 — your own check, the agent reminds)' if en else '[0단계] 준비 (체크리스트 #1~10 — 본인 확인, 에이전트는 상기만)'}**")
+        for i2 in sorted(prep, key=lambda x: x["no"]):
+            L.append(f"🧑 {i2['no']}. {(i2.get('q_en') if en else i2['q']) or i2['q']}")
+        L.append("")
+    except Exception:
+        pass
+    m_items: list = []
     try:
         from services.checklist_engine import market_preflight
         m = market_preflight(db)
+        m_items = sorted(m.get("items", []), key=lambda x: x.get("no", 0))
         L.append(f"**{'[STEP 1] Market check (checklist #11–25, auto items)' if en else '[1단계] 시장 체크 (체크리스트 #11~25 자동 항목)'} — "
                  f"{m['score']}/{m['max']}{'점' if not en else ''}**")
-        for it in m.get("items", []):
+        for it in m_items:                      # sequential order: #11, #12, #16, #17 …
             mark = "✅" if it.get("ok") else "❌" if it.get("ok") is False else "❓"
             q = (it.get("q_en") if en else it.get("q")) or it.get("q")
             L.append(f"{mark} #{it['no']} {q} — {it.get('detail')}")
@@ -289,7 +301,17 @@ def build(db, n: int = 3, transcript: str = "", lang: str = "ko") -> dict[str, A
            if en else
            "종목 이름 클릭 = 왼쪽에 실시간 차트 · [근거 🔍] 클릭 = 100문항 체크리스트·일봉·분봉·거래량·뉴스가 "
            "어떻게 점수를 만들었는지 그대로 보여줍니다 — 이 순위는 LLM 의견이 아니라 그 숫자들로 계산됩니다.")]
-    return {"ok": True, "reply": "\n".join(L), "picks": [r["code"] for r, _l, _t in top]}
+    # PROCESS payload for the frontend's live checking simulation (boss 2026-08-24:
+    # "I wanna see like simulation process to proof that our agent is using the
+    # checklist to decide") — every candidate's real scores, in rank order.
+    proc = {"market": [{"no": it.get("no"), "ok": it.get("ok"), "q": it.get("q"),
+                        "q_en": it.get("q_en"), "detail": it.get("detail")} for it in m_items],
+            "candidates": [{"code": r["code"], "name": r.get("name"), "score": r.get("score"),
+                            "groups": r.get("groups")}
+                           for r in sorted(rank["rows"], key=lambda r: -(r.get("score") or 0))],
+            "picked": [r["code"] for r, _l, _t in top], "n": len(top)}
+    return {"ok": True, "reply": "\n".join(L), "picks": [r["code"] for r, _l, _t in top],
+            "process": proc}
 
 
 def detail(db, query: str, lang: str = "ko") -> Optional[str]:
@@ -411,7 +433,7 @@ def detail_by_code(db, code: str, lang: str = "ko", name: Optional[str] = None) 
         lay = card.get("stock") or {}
         L += ["", f"**⑥ {'Live item-by-item check' if en else '100문항 실측 (종목 항목)'} — "
                   f"{lay.get('score')}/{lay.get('max')}{'' if en else '점'} ({card.get('pct')}%)**"]
-        for it in lay.get("items", []):
+        for it in sorted(lay.get("items", []), key=lambda x: x.get("no", 0)):
             mark = "✅" if it.get("ok") else "❌" if it.get("ok") is False else "❓"
             q = (it.get("q_en") if en else it.get("q")) or it.get("q")
             L.append(f"{mark} #{it['no']} {q} — {it.get('detail')}")

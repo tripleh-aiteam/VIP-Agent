@@ -35,7 +35,7 @@ import { fetchWithRetry } from "../lib/fetchWithRetry";
 
 // Bump on every user-facing chat-UI change — rendered as a tiny badge above the
 // composer so a stale browser tab is diagnosable at a glance.
-const UI_BUILD = "ui v08.24-9";
+const UI_BUILD = "ui v08.24-10";
 
 // ── Lightweight markdown renderer (no deps) ───────────────────────────────
 // Renders GitHub-flavored tables, **bold**, `code`, bullet lists and line
@@ -140,6 +140,7 @@ export interface AssistantTurn {
   tool_used?: string;
   pendingAction?: { query: string; confirmText: string };
   attachmentNames?: string[];
+  process?: AgentResponse["process"];   // checklist_reco checking-simulation data
 }
 
 interface Session {
@@ -177,6 +178,9 @@ interface AgentResponse {
   action?: { type: string; to?: string; external?: boolean; command?: string };
   proposed_action?: { confirm_text?: string; tool?: string; args?: Record<string, unknown> };
   suggestions?: string[];
+  // checklist_reco: every candidate's real scores → drives the live checking simulation
+  process?: { market?: unknown[]; candidates?: { code: string; name: string; score: number;
+              groups?: Record<string, number> }[]; picked?: string[]; n?: number };
 }
 
 interface Props {
@@ -439,6 +443,63 @@ function proofCodeIn(text: string): string | null {
   return m ? m[1] : null;
 }
 
+// LIVE CHECKING SIMULATION (boss 2026-08-24: "I wanna see like simulation process to
+// proof that our agent is using checklist to decide, to selecting company"): animates
+// through every candidate's REAL scores (from the backend's process payload), one by
+// one, then collapses to the full scoreboard behind a toggle. Fresh answers animate;
+// reloaded history shows the collapsed result instantly.
+const _simDone = new Set<number>();
+function ChecklistSimulation({ process, ts }: { process: NonNullable<AgentResponse["process"]>; ts: number }) {
+  const cands = process.candidates || [];
+  const picked = process.picked || [];
+  const fresh = !_simDone.has(ts) && Date.now() - ts < 20000;
+  const [i, setI] = useState(fresh ? 0 : cands.length);
+  const [open, setOpen] = useState(false);
+  useEffect(() => {
+    if (!fresh) { setI(cands.length); return; }
+    _simDone.add(ts);
+    const timer = setInterval(() => setI(v => {
+      if (v + 1 >= cands.length) { clearInterval(timer); return cands.length; }
+      return v + 1;
+    }), 140);
+    return () => clearInterval(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ts]);
+  if (!cands.length) return null;
+  const running = i < cands.length;
+  const cur = cands[Math.min(i, cands.length - 1)];
+  return (
+    <div className="mb-2 rounded-xl border border-blue-200 bg-blue-50/60 px-3 py-2 text-[13px]">
+      <div className="flex items-center gap-2 font-semibold text-blue-800">
+        {running ? <span className="animate-pulse">🔎</span> : "✅"}
+        {running
+          ? <>100문항 체크리스트 점검 중… {i + 1}/{cands.length} 종목</>
+          : <>100문항 점검 완료 — {cands.length}종목 전수 채점 → 상위 {picked.length} 선정</>}
+        {!running && (
+          <button onClick={() => setOpen(!open)}
+            className="ml-auto text-[11.5px] text-blue-600 underline">{open ? "접기 ▲" : "전 종목 점수 보기 ▼"}</button>
+        )}
+      </div>
+      {running && cur && (
+        <div className="mt-1 font-mono text-[12.5px] text-gray-700">
+          {cur.name} — 추세 {cur.groups?.trend ?? "-"} · 유동성 {cur.groups?.liquidity ?? "-"} ·
+          지지저항 {cur.groups?.levels ?? "-"} · 모멘텀 {cur.groups?.momentum ?? "-"} ·
+          수급 {cur.groups?.flows ?? "-"} → 종합 <b>{cur.score}</b>
+        </div>
+      )}
+      {!running && open && (
+        <div className="mt-1.5 max-h-56 overflow-y-auto font-mono text-[12px] text-gray-700">
+          {cands.map((c2, ci) => (
+            <div key={c2.code} className={picked.includes(c2.code) ? "text-emerald-700 font-bold" : ""}>
+              {String(ci + 1).padStart(2, " ")}. {c2.name} — {c2.score}{picked.includes(c2.code) ? " ★ 선정" : ""}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ----------------------------------------------------------------------
 //  Workspace
 // ----------------------------------------------------------------------
@@ -456,17 +517,19 @@ export default function ChatWorkspace({ apiBase, agentId, agentLabel }: Props) {
   const [prompt, setPrompt] = useState("");
   const [thinking, setThinking] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  // TradingView proof panel (left side) + the question the thinking status narrates.
-  const [proofCode, setProofCode] = useState<string | null>(null);
+  // The question the thinking status narrates.
   const [lastQuestion, setLastQuestion] = useState("");
-  // Clickable stock names ([이름](chart:005930) links in answers) dispatch this event.
+  // Clickable stock names ([이름](chart:005930) links) open the SAME bottom proof
+  // sheet as evidence clicks (boss 2026-08-24: side panels were too small — one big
+  // bottom panel with the chart large and the data in readable type).
   useEffect(() => {
     const h = (e: Event) => {
       const code = (e as CustomEvent).detail;
-      if (code) setProofCode(String(code));
+      if (code) setEvidenceCode(String(code));
     };
     window.addEventListener("vip-open-chart", h);
     return () => window.removeEventListener("vip-open-chart", h);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   // Evidence links ([근거](ask:...) in answers) send their question as the next chat
   // message. A ref keeps the CURRENT send() (fresh state) reachable from the one-time
@@ -765,6 +828,7 @@ export default function ChatWorkspace({ apiBase, agentId, agentLabel }: Props) {
         ts: Date.now(),
         intent: data.intent,
         tool_used: data.tool_used,
+        process: data.process,
       };
       update(prev => ({
         ...prev,
@@ -1044,31 +1108,9 @@ export default function ChatWorkspace({ apiBase, agentId, agentLabel }: Props) {
   return (
     <div
       data-assistant-ui="workspace"
-      className="flex w-full overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm"
+      className="relative flex w-full overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm"
       style={{ height: "100%", minHeight: 560 }}
     >
-      {/* ========================================================== */}
-      {/* === Proof panel (left): live TradingView chart to VERIFY an answer === */}
-      {/* Opens from the 📈 button under any answer that names a KRX ticker.    */}
-      {/* ========================================================== */}
-      {proofCode && (
-        <aside className="hidden md:flex w-[560px] xl:w-[680px] shrink-0 flex-col border-r border-gray-200 bg-white">
-          <div className="flex items-center justify-between px-3 py-2 border-b border-gray-200">
-            <span className="text-[12px] font-semibold text-gray-700">📈 TradingView · KRX:{proofCode} — 답변 검증 / verify</span>
-            <button onClick={() => setProofCode(null)}
-              className="px-1.5 text-[14px] text-gray-400 hover:text-gray-700" title="Close">✕</button>
-          </div>
-          <iframe
-            key={proofCode}
-            src={`https://s.tradingview.com/widgetembed/?symbol=KRX%3A${proofCode}&interval=D&theme=light&style=1&locale=kr&withdateranges=1&hide_side_toolbar=0&allow_symbol_change=1`}
-            className="flex-1 w-full border-0"
-            title="TradingView chart"
-          />
-          <div className="px-3 py-1.5 text-[10px] text-gray-400 border-t border-gray-100">
-            실제 차트에서 최저/최고/거래량을 직접 확인하세요 · Check the min/max/volume on the real chart
-          </div>
-        </aside>
-      )}
       {/* ========================================================== */}
       {/* === Sidebar: folder/session tree                       === */}
       {/* Chat-history rail hidden per user request (2026-07-06) — sessions still persist  */}
@@ -1307,6 +1349,7 @@ export default function ChatWorkspace({ apiBase, agentId, agentLabel }: Props) {
                         <span>{(agentLabel || agentId)} · Answer</span>
                       </div>
                       <div className="bg-white border border-gray-200 rounded-2xl rounded-tl-md px-4 py-3 text-[15px] leading-relaxed text-gray-900 shadow-sm w-full">
+                        {t.process && <ChecklistSimulation process={t.process} ts={t.ts} />}
                         <RevealMarkdown text={t.text} ts={t.ts} />
                         {(t.intent || t.tool_used) && (
                           <div className="text-[10px] text-gray-400 mt-2 pt-2 border-t border-gray-100">
@@ -1322,13 +1365,13 @@ export default function ChatWorkspace({ apiBase, agentId, agentLabel }: Props) {
                         >📋 Copy</button>
                         {proofCodeIn(t.text) && (
                           <button
-                            onClick={() => setProofCode(proofCodeIn(t.text))}
+                            onClick={() => setEvidenceCode(proofCodeIn(t.text))}
                             className={`px-2 py-1 rounded-md flex items-center gap-1 ${
-                              proofCode === proofCodeIn(t.text)
+                              evidenceCode === proofCodeIn(t.text)
                                 ? "text-blue-600 bg-blue-50"
                                 : "text-gray-500 hover:bg-gray-100 hover:text-gray-700"
                             }`}
-                            title="Open the live TradingView chart (left) to verify this answer"
+                            title="Open the big chart + evidence panel (bottom) to verify this answer"
                           >📈 {/[가-힣]/.test(t.text) ? "차트 검증" : "Verify chart"}</button>
                         )}
                         <button
@@ -1562,29 +1605,36 @@ export default function ChatWorkspace({ apiBase, agentId, agentLabel }: Props) {
       )}
 
       {/* ========================================================== */}
-      {/* === Evidence panel (right): the PROOF behind a recommendation === */}
-      {/* Chart on top, the checklist/daily/minute/volume/news data below.  */}
+      {/* === PROOF SHEET (bottom, big): chart LARGE + evidence data readable === */}
+      {/* Opens from stock-name clicks, 근거 🔍 pills, and 📈 차트 검증 buttons.   */}
+      {/* (boss 2026-08-24: side panels were too small — "open in the downside   */}
+      {/* full page which we can use easily with larger font")                   */}
       {/* ========================================================== */}
       {evidenceCode && (
-        <aside className="hidden md:flex w-[560px] xl:w-[680px] shrink-0 flex-col border-l border-gray-200 bg-white">
-          <div className="flex items-center justify-between px-3 py-2 border-b border-gray-200">
-            <span className="text-[12px] font-semibold text-gray-700">🔍 근거 / evidence · KRX:{evidenceCode}</span>
+        <div className="absolute inset-x-0 bottom-0 z-40 flex flex-col bg-white border-t-2 border-blue-400 shadow-2xl"
+          style={{ height: "72%" }}>
+          <div className="flex items-center justify-between px-4 py-2 border-b border-gray-200 bg-gray-50 shrink-0">
+            <span className="text-[15px] font-bold text-gray-800">
+              📈 KRX:{evidenceCode} — 차트 + 근거 / chart + evidence
+            </span>
             <button onClick={() => setEvidenceCode(null)}
-              className="px-1.5 text-[14px] text-gray-400 hover:text-gray-700" title="Close">✕</button>
+              className="px-2.5 py-0.5 text-[15px] rounded-lg text-gray-500 hover:bg-gray-200" title="Close">✕ 닫기</button>
           </div>
-          <iframe
-            key={evidenceCode}
-            src={`https://s.tradingview.com/widgetembed/?symbol=KRX%3A${evidenceCode}&interval=D&theme=light&style=1&locale=kr&withdateranges=1&hide_side_toolbar=1`}
-            className="w-full border-0 shrink-0"
-            style={{ height: "55%" }}
-            title="TradingView chart"
-          />
-          <div className="flex-1 overflow-y-auto px-3 py-2 text-[13px] leading-relaxed text-gray-900">
-            {evidenceMd
-              ? <MarkdownLite text={evidenceMd} />
-              : <div className="text-gray-400 text-[12px] py-4">근거 데이터 불러오는 중… / loading evidence…</div>}
+          <div className="flex flex-1 min-h-0">
+            <iframe
+              key={evidenceCode}
+              src={`https://s.tradingview.com/widgetembed/?symbol=KRX%3A${evidenceCode}&interval=D&theme=light&style=1&locale=kr&withdateranges=1&hide_side_toolbar=0&allow_symbol_change=1`}
+              className="border-0 h-full"
+              style={{ width: "58%" }}
+              title="TradingView chart"
+            />
+            <div className="flex-1 overflow-y-auto px-5 py-3 text-[14.5px] leading-relaxed text-gray-900 border-l border-gray-200">
+              {evidenceMd
+                ? <MarkdownLite text={evidenceMd} />
+                : <div className="text-gray-400 text-[13px] py-4">근거 데이터 불러오는 중… / loading evidence…</div>}
+            </div>
           </div>
-        </aside>
+        </div>
       )}
     </div>
   );

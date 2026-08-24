@@ -6339,7 +6339,7 @@ def _run_agent_impl(
             if _cr.get("ok") and _cr.get("reply"):
                 return {"intent": "checklist_reco", "language": lang, "reply": _cr["reply"],
                         "action": None, "speak": True, "transcript": transcript,
-                        "tool_used": "checklist_reco"}
+                        "tool_used": "checklist_reco", "process": _cr.get("process")}
         except Exception as e:
             log.warning(f"checklist_reco (setup route) failed: {str(e)[:120]}")
         try:
@@ -6450,7 +6450,7 @@ def _run_agent_impl(
                 if _cr.get("ok") and _cr.get("reply"):
                     return {"intent": "checklist_reco", "language": lang, "reply": _cr["reply"],
                             "action": None, "speak": True, "transcript": transcript,
-                            "tool_used": "checklist_reco"}
+                            "tool_used": "checklist_reco", "process": _cr.get("process")}
             except Exception as e:
                 log.warning(f"checklist_reco (watchlist route) failed: {str(e)[:120]}")
             try:
@@ -7425,7 +7425,7 @@ def _run_agent_impl(
                 if _cr.get("ok") and _cr.get("reply"):
                     return {"intent": "checklist_reco", "language": lang, "reply": _cr["reply"],
                             "action": None, "speak": True, "transcript": transcript,
-                            "tool_used": "checklist_reco"}
+                            "tool_used": "checklist_reco", "process": _cr.get("process")}
             except Exception as e:
                 log.warning(f"checklist_reco (generic route) failed: {str(e)[:120]}")
             try:
