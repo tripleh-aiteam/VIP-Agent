@@ -2952,6 +2952,30 @@ def _call_llm_for_decision(
         log.warning(f"assistant_agent: both LLM tiers failed (after retries) — "
                     f"primary {primary}: {err_primary} | "
                     f"fallback {fallback}: {err_fallback}")
+        # LAST RESORT = WEB SEARCH (boss 2026-08-24: "if LLM can not answer it can
+        # websearch"): both tiers are down, so answer from live search results
+        # deterministically (no LLM needed to format a source list) instead of a
+        # bare "try again".
+        try:
+            _q = next((m.get("content") for m in reversed(messages or [])
+                       if m.get("role") == "user" and m.get("content")), None)
+            if _q:
+                from services.web_search import search_web as _ws
+                _res = _ws(str(_q)[:200], num_results=5)
+                _hits = (_res or {}).get("results") or []
+                if _hits:
+                    _ko = bool(_re.search(r"[가-힣]", str(_q)))
+                    _L = ["🌐 " + ("모델 연결이 잠시 불안정해 웹 검색 결과로 대신 답해드립니다:" if _ko
+                                   else "The model is briefly unreachable, so here are live web-search results instead:"), ""]
+                    for _h in _hits[:5]:
+                        _t = (_h.get("title") or "").strip()
+                        _s = (_h.get("snippet") or "").strip()
+                        _u = (_h.get("url") or "").strip()
+                        if _t:
+                            _L.append(f"- **{_t}** — {_s}" + (f" ([{'링크' if _ko else 'link'}]({_u}))" if _u else ""))
+                    return {"answer": "\n".join(_L)}
+        except Exception as _wse:
+            log.warning(f"web-search last resort failed: {str(_wse)[:120]}")
         # Graceful user-facing message (the technical reason is in the logs above).
         # Both tiers failed even after transient retries → a real outage, so we ask
         # the user to retry rather than dumping provider errors at them.
@@ -6784,6 +6808,16 @@ def _run_agent_impl(
         "'최근 리포트 기준', 'per web search') without exposing internal filenames.\n\n"
     )
     system = _ground_rule + system
+    # KO==EN parity (boss 2026-08-24: "it must answer same format and exactly same in
+    # all aspects in Korean and English"): the language changes, the answer does not.
+    _parity_rule = (
+        "■ LANGUAGE PARITY: A Korean question and its English equivalent MUST get the "
+        "IDENTICALLY structured answer — same sections in the same order, same tables "
+        "with the same columns, same numbers, same level of detail. Only the language "
+        "of the words changes. Never give one language a shorter or differently "
+        "shaped answer than the other.\n\n"
+    )
+    system = _parity_rule + system
     # Deterministic cross-agent pre-router (VIP only): force ask_agent for clear
     # stock/asset questions so they never fall through to web_search.
     _route_hint = _cross_agent_route_hint(transcript, agent_id)

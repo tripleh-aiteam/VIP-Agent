@@ -359,6 +359,61 @@ function localOfflineAnswer(q: string, pageCtx: string): { reply: string; navTo?
 }
 
 // ----------------------------------------------------------------------
+//  Thinking status + natural answer reveal (boss 2026-08-24)
+// ----------------------------------------------------------------------
+
+// While the server composes the full answer, rotate human-readable stages so the
+// boss knows the bot is working and roughly what it's doing ("when it is thinking
+// it should say something ... that we can understand and wait"). Client-side only —
+// the backend still returns one complete reply.
+function ThinkingStatus({ question }: { question: string }) {
+  const ko = /[가-힣]/.test(question || "");
+  const stages = ko
+    ? ["🔍 질문을 읽고 있어요…", "📊 관련 데이터를 모으는 중…", "🤔 분석하며 생각하는 중…", "✍️ 답변을 정리하는 중…", "⏳ 거의 다 됐어요 — 잠시만요…"]
+    : ["🔍 Reading your question…", "📊 Gathering the data…", "🤔 Thinking it through…", "✍️ Writing the answer…", "⏳ Almost there — one moment…"];
+  const [i, setI] = useState(0);
+  useEffect(() => {
+    setI(0);
+    const t = setInterval(() => setI(v => Math.min(v + 1, 4)), 3000);
+    return () => clearInterval(t);
+  }, [question]);
+  return <span className="text-[12px] text-gray-500">{stages[Math.min(i, stages.length - 1)]}</span>;
+}
+
+// Fresh answers type themselves out (~2.5s) so they arrive naturally instead of
+// slamming in as a wall of text. Old turns (reloads, session switches) render
+// instantly — the Set remembers which timestamps already animated.
+const _revealedTs = new Set<number>();
+function RevealMarkdown({ text, ts }: { text: string; ts: number }) {
+  const fresh = !_revealedTs.has(ts) && Date.now() - ts < 15000;
+  const [n, setN] = useState(fresh ? 0 : (text || "").length);
+  useEffect(() => {
+    if (!fresh) { setN((text || "").length); return; }
+    _revealedTs.add(ts);
+    const total = (text || "").length;
+    const step = Math.max(12, Math.ceil(total / 90));
+    const timer = setInterval(() => {
+      setN(v => {
+        if (v + step >= total) { clearInterval(timer); return total; }
+        return v + step;
+      });
+    }, 28);
+    return () => clearInterval(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ts]);
+  const full = (text || "");
+  return <MarkdownLite text={n >= full.length ? full : full.slice(0, n)} />;
+}
+
+// A KRX ticker mentioned in an answer, e.g. "삼성바이오로직스 (207940)" — powers the
+// "verify on TradingView" proof button (boss 2026-08-24: clicking should open the
+// chart inside the chat, left side, to prove the answer right or wrong).
+function proofCodeIn(text: string): string | null {
+  const m = /\((\d{6})\)/.exec(text || "");
+  return m ? m[1] : null;
+}
+
+// ----------------------------------------------------------------------
 //  Workspace
 // ----------------------------------------------------------------------
 
@@ -375,6 +430,9 @@ export default function ChatWorkspace({ apiBase, agentId, agentLabel }: Props) {
   const [prompt, setPrompt] = useState("");
   const [thinking, setThinking] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // TradingView proof panel (left side) + the question the thinking status narrates.
+  const [proofCode, setProofCode] = useState<string | null>(null);
+  const [lastQuestion, setLastQuestion] = useState("");
   // Live connectivity — drives the automatic switch to no-internet mode.
   const [online, setOnline] = useState<boolean>(() => (typeof navigator === "undefined" ? true : navigator.onLine));
   useEffect(() => {
@@ -546,6 +604,7 @@ export default function ChatWorkspace({ apiBase, agentId, agentLabel }: Props) {
     }
     setThinking(true);
     setError(null);
+    setLastQuestion(q);
     if (textOverride === undefined) setPrompt("");
 
     const userTurn: AssistantTurn = { who: "user", text: q, ts: Date.now() };
@@ -917,6 +976,28 @@ export default function ChatWorkspace({ apiBase, agentId, agentLabel }: Props) {
       style={{ height: "100%", minHeight: 560 }}
     >
       {/* ========================================================== */}
+      {/* === Proof panel (left): live TradingView chart to VERIFY an answer === */}
+      {/* Opens from the 📈 button under any answer that names a KRX ticker.    */}
+      {/* ========================================================== */}
+      {proofCode && (
+        <aside className="hidden md:flex w-[430px] shrink-0 flex-col border-r border-gray-200 bg-white">
+          <div className="flex items-center justify-between px-3 py-2 border-b border-gray-200">
+            <span className="text-[12px] font-semibold text-gray-700">📈 TradingView · KRX:{proofCode} — 답변 검증 / verify</span>
+            <button onClick={() => setProofCode(null)}
+              className="px-1.5 text-[14px] text-gray-400 hover:text-gray-700" title="Close">✕</button>
+          </div>
+          <iframe
+            key={proofCode}
+            src={`https://s.tradingview.com/widgetembed/?symbol=KRX%3A${proofCode}&interval=D&theme=light&style=1&locale=kr&withdateranges=1&hide_side_toolbar=0&allow_symbol_change=1`}
+            className="flex-1 w-full border-0"
+            title="TradingView chart"
+          />
+          <div className="px-3 py-1.5 text-[10px] text-gray-400 border-t border-gray-100">
+            실제 차트에서 최저/최고/거래량을 직접 확인하세요 · Check the min/max/volume on the real chart
+          </div>
+        </aside>
+      )}
+      {/* ========================================================== */}
       {/* === Sidebar: folder/session tree                       === */}
       {/* Chat-history rail hidden per user request (2026-07-06) — sessions still persist  */}
       {/* in localStorage; flip SHOW_CHAT_HISTORY to bring it back.                        */}
@@ -1154,7 +1235,7 @@ export default function ChatWorkspace({ apiBase, agentId, agentLabel }: Props) {
                         <span>{(agentLabel || agentId)} · Answer</span>
                       </div>
                       <div className="bg-white border border-gray-200 rounded-2xl rounded-tl-md px-4 py-3 text-[15px] leading-relaxed text-gray-900 shadow-sm w-full">
-                        <MarkdownLite text={t.text} />
+                        <RevealMarkdown text={t.text} ts={t.ts} />
                         {(t.intent || t.tool_used) && (
                           <div className="text-[10px] text-gray-400 mt-2 pt-2 border-t border-gray-100">
                             {t.intent}{t.tool_used ? ` · ${t.tool_used}` : ""}
@@ -1167,6 +1248,17 @@ export default function ChatWorkspace({ apiBase, agentId, agentLabel }: Props) {
                           className="px-2 py-1 rounded-md text-gray-500 hover:bg-gray-100 hover:text-gray-700 flex items-center gap-1"
                           title="Copy"
                         >📋 Copy</button>
+                        {proofCodeIn(t.text) && (
+                          <button
+                            onClick={() => setProofCode(proofCodeIn(t.text))}
+                            className={`px-2 py-1 rounded-md flex items-center gap-1 ${
+                              proofCode === proofCodeIn(t.text)
+                                ? "text-blue-600 bg-blue-50"
+                                : "text-gray-500 hover:bg-gray-100 hover:text-gray-700"
+                            }`}
+                            title="Open the live TradingView chart (left) to verify this answer"
+                          >📈 {/[가-힣]/.test(t.text) ? "차트 검증" : "Verify chart"}</button>
+                        )}
                         <button
                           onClick={() => {
                             const prev = i > 0 ? activeSession.turns[i - 1] : undefined;
@@ -1216,10 +1308,13 @@ export default function ChatWorkspace({ apiBase, agentId, agentLabel }: Props) {
                     🤖
                   </div>
                   <div className="bg-white border border-gray-200 px-4 py-3 rounded-2xl rounded-tl-md mt-6 shadow-sm">
-                    <div className="flex gap-1.5">
-                      <span className="w-2 h-2 bg-blue-500 rounded-full animate-bounce" />
-                      <span className="w-2 h-2 bg-blue-500 rounded-full animate-bounce" style={{ animationDelay: "150ms" }} />
-                      <span className="w-2 h-2 bg-blue-500 rounded-full animate-bounce" style={{ animationDelay: "300ms" }} />
+                    <div className="flex items-center gap-2.5">
+                      <div className="flex gap-1.5">
+                        <span className="w-2 h-2 bg-blue-500 rounded-full animate-bounce" />
+                        <span className="w-2 h-2 bg-blue-500 rounded-full animate-bounce" style={{ animationDelay: "150ms" }} />
+                        <span className="w-2 h-2 bg-blue-500 rounded-full animate-bounce" style={{ animationDelay: "300ms" }} />
+                      </div>
+                      <ThinkingStatus question={lastQuestion} />
                     </div>
                   </div>
                 </div>
