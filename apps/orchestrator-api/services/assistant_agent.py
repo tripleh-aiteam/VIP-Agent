@@ -6355,6 +6355,11 @@ def _run_agent_impl(
             # recommendation (boss's screenshot). _is_sd's own _ACTION regex
             # already excludes real 살까/should-I-buy asks.
             _simple = (not _full and _is_sd(transcript))
+            # month/year-window stats ("최근 8개월 최저·최고·거래량") belong to the
+            # deterministic period-stats lane, not an LLM data-pack answer (boss audit
+            # 2026-08-24: the KO phrasing got a "data not included" apology here).
+            if (_full or _simple) and _is_period_stats_q(transcript):
+                _full = _simple = False
             if _full or _simple:
                 _an_out = _an_answer(db, transcript, lang, _an_stocks, history,
                                      concise=_simple)
@@ -6734,6 +6739,41 @@ def _run_agent_impl(
                         "tool_used": "market_direction"}
         except Exception as e:
             log.warning(f"market direction lane failed: {str(e)[:120]}")
+
+    # ===== STOCK NEWS, deterministic ("한미반도체 뉴스 알려줘") — from OUR news engine
+    # (Qwen-scored stamps + live headlines), never an LLM "search tool not working"
+    # apology (boss audit 2026-08-24). =====
+    _tl_nw = (transcript or "").lower()
+    if (not confirmed_tool and not attachment_ids
+            and ("뉴스" in _tl_nw or _re.search(r"\bnews\b", _tl_nw))
+            and not any(k in _tl_nw for k in ("체크리스트", "checklist"))):
+        try:
+            from services.stock_resolver import resolve_one as _rn1
+            _nc, _nn = (resolve_one_r := _rn1(transcript or "")) or (None, None)
+            if _nc:
+                _en_n = str(lang or "").lower().startswith("en") or (
+                    not _re.search(r"[가-힣]", transcript or "") and _re.search(r"[a-zA-Z]", transcript or ""))
+                from services.decision_agent import _news as _news_fn
+                _nv = _news_fn(db, _nc, _nn) or {}
+                _titles = _nv.get("titles") or []
+                _Ln = [(f"**📰 {_nn} — recent news (our Qwen-scored stream)**" if _en_n
+                        else f"**📰 {_nn} — 최근 뉴스 (Qwen 판독 기준)**"),
+                       (f"News score {_nv.get('score', 0):+d} · {_nv.get('count', 0)} items"
+                        if _en_n else f"뉴스 점수 {_nv.get('score', 0):+d} · {_nv.get('count', 0)}건"), ""]
+                if _titles:
+                    _Ln += [f"- {t_}" for t_ in _titles[:6]]
+                else:
+                    _Ln.append("최근 수집된 헤드라인이 없습니다 — 뉴스 스탬프는 장중에 갱신됩니다."
+                               if not _en_n else
+                               "No recent headlines collected — news stamps refresh during market hours.")
+                _Ln += ["", (f"Checklist view: [{'evidence' if _en_n else '근거'} 🔍](evidence:{_nc}) · "
+                             + (f"ask \"{_nn} checklist\" for the live 100-item card." if _en_n
+                                else f"\"{_nn} 체크리스트\"로 100문항 실측을 볼 수 있습니다."))]
+                return {"intent": "stock_news", "language": lang, "reply": "\n".join(_Ln),
+                        "action": None, "speak": True, "transcript": transcript,
+                        "tool_used": "stock_news"}
+        except Exception as e:
+            log.warning(f"stock news lane failed: {str(e)[:120]}")
 
     # ===== RECOMMENDATION EVIDENCE (the proof click): "한미반도체 추천 근거" / "evidence
     # for X recommendation" → the checklist/일봉/분봉/거래량/뉴스 breakdown with item
