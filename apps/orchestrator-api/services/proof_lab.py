@@ -1674,7 +1674,9 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                 # audit 08-12: resetting a scout would buy 100% of a stock that
                 # is falling and never confirmed its turn - the scout law upside
                 # down). A new dip signal re-enters normally.
-                if c <= pos["base"] * (1 - dp.get("stop_reset", 1.5) / 100):
+                _stpl9 = pos["base"] * (1 - dp.get("stop_reset", 1.5) / 100)
+                _lo9 = (s.get("lows") or closes)[i]
+                if _lo9 <= _stpl9 or c <= _stpl9:
                     # boss 2026-08-13 12:1x: "in ALL cases if it decreases -1.5%,
                     # sell out all and again buy" - the scout-only exception from
                     # the pre-flight audit is repealed at his order; every -1.5%
@@ -1683,25 +1685,35 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                     # and rises again, buy at the 3rd red." The instant re-buy
                     # retires - the fall must PROVE it ended (3 straight rises)
                     # and the re-entry walks in through the scout law.
+                    # THE INTRABAR STOP (boss 2026-08-24 09:2x, live order after
+                    # NAVER filled -1.50% on a -1% law: "not tonight, do it
+                    # right now"): the line is a resting trigger - the candle's
+                    # LOW trips it and the fill is the line itself, snapped to
+                    # the tick grid. A bar that OPENED below the line (gap
+                    # through) fills at its close, honestly - the market never
+                    # offered the line.
+                    _fill9 = (float(int(_stpl9 // tk) * tk)
+                              if prev >= _stpl9 else c)
                     stop_ct[si] += 1
                     if dp.get("reset_rebuy"):
                         # the old law, kept one switch away: sell all AND
                         # instantly re-buy the same shares at the lower price
                         _nq0 = pos["qty"]
-                        _dsell(pos["qty"], c,
+                        _dsell(pos["qty"], _fill9,
                                f"-{dp.get('stop_reset', 1.0):g}% 전량")
                         _drow(f"-{dp.get('stop_reset', 1.0):g}% 전량 매도 · "
                               f"즉시 재매수 · 조각 {len(pos['slices'])}회")
-                        poss[si] = {"si": si, "i": i, "entry": c,
-                                    "bk": pos.get("bk"), "close": c,
+                        poss[si] = {"si": si, "i": i, "entry": _fill9,
+                                    "bk": pos.get("bk"), "close": _fill9,
                                     "qty": _nq0, "ml": None,
                                     "seq": closes[max(0, i - 1): i + 1],
                                     "sig": pos.get("sig"), "wall": None}
                         continue
-                    _dsell(pos["qty"], c, f"-{dp.get('stop_reset', 1.0):g}% 전량")
+                    _dsell(pos["qty"], _fill9,
+                           f"-{dp.get('stop_reset', 1.0):g}% 전량")
                     _drow(f"-{dp.get('stop_reset', 1.0):g}% 전량 매도 · 3번째 "
                           f"양봉 재진입 대기 · 조각 {len(pos['slices'])}회")
-                    reb_pk[si] = c        # arms the 3-red re-entry
+                    reb_pk[si] = _fill9   # arms the 3-red re-entry
                     poss[si] = None
                     continue
                 # +1% steps: resting limits at real snapped prices, filled off highs
