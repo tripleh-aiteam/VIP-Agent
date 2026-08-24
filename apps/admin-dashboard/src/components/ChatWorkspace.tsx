@@ -38,11 +38,18 @@ import { fetchWithRetry } from "../lib/fetchWithRetry";
 // breaks so "make a table" actually shows a table (not raw pipes).
 function inlineFmt(s: string): ReactNode[] {
   const out: ReactNode[] = [];
-  // Tokens: **bold**, `code`, [label](url) markdown links, and bare http(s) URLs.
-  const re = /(\*\*[^*]+\*\*|`[^`]+`|\[[^\]]+\]\(https?:\/\/[^\s)]+\)|https?:\/\/[^\s)]+)/g;
+  // Tokens: **bold**, `code`, [label](url) markdown links (http or chart:CODE),
+  // and bare http(s) URLs. chart:CODE opens the TradingView proof panel in-chat.
+  const re = /(\*\*[^*]+\*\*|`[^`]+`|\[[^\]]+\]\((?:https?:\/\/[^\s)]+|chart:\d{6})\)|https?:\/\/[^\s)]+)/g;
   const link = (href: string, label: string, k: number) => (
     <a key={k} href={href} target="_blank" rel="noopener noreferrer"
        className="text-blue-600 underline break-all hover:text-blue-700">{label}</a>
+  );
+  const chartLink = (code: string, label: string, k: number) => (
+    <a key={k} href="#" role="button"
+       onClick={(e) => { e.preventDefault(); try { window.dispatchEvent(new CustomEvent("vip-open-chart", { detail: code })); } catch {} }}
+       title="차트 열기 / open chart"
+       className="text-blue-600 font-semibold underline decoration-dotted hover:text-blue-800 cursor-pointer">📈{label}</a>
   );
   let last = 0, k = 0, m: RegExpExecArray | null;
   while ((m = re.exec(s))) {
@@ -51,8 +58,10 @@ function inlineFmt(s: string): ReactNode[] {
     if (tok.startsWith("**")) out.push(<strong key={k++}>{tok.slice(2, -2)}</strong>);
     else if (tok.startsWith("`")) out.push(<code key={k++} className="px-1 py-0.5 bg-gray-100 rounded text-[13px] font-mono">{tok.slice(1, -1)}</code>);
     else if (tok.startsWith("[")) {
+      const mc = /^\[([^\]]+)\]\(chart:(\d{6})\)$/.exec(tok);
       const mm = /^\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)$/.exec(tok);
-      if (mm) out.push(link(mm[2], mm[1], k++));
+      if (mc) out.push(chartLink(mc[2], mc[1], k++));
+      else if (mm) out.push(link(mm[2], mm[1], k++));
       else out.push(tok);
     } else out.push(link(tok, tok, k++));  // bare URL
     last = m.index + tok.length;
@@ -433,6 +442,15 @@ export default function ChatWorkspace({ apiBase, agentId, agentLabel }: Props) {
   // TradingView proof panel (left side) + the question the thinking status narrates.
   const [proofCode, setProofCode] = useState<string | null>(null);
   const [lastQuestion, setLastQuestion] = useState("");
+  // Clickable stock names ([이름](chart:005930) links in answers) dispatch this event.
+  useEffect(() => {
+    const h = (e: Event) => {
+      const code = (e as CustomEvent).detail;
+      if (code) setProofCode(String(code));
+    };
+    window.addEventListener("vip-open-chart", h);
+    return () => window.removeEventListener("vip-open-chart", h);
+  }, []);
   // Live connectivity — drives the automatic switch to no-internet mode.
   const [online, setOnline] = useState<boolean>(() => (typeof navigator === "undefined" ? true : navigator.onLine));
   useEffect(() => {

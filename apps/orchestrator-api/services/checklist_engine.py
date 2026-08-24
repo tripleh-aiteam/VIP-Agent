@@ -748,6 +748,59 @@ def render_full_en() -> str:
     return "\n".join(L)
 
 
+def render_items(nos: list[int], en: bool = False) -> str:
+    """Specific checklist items by number — "59번이 뭐야?" / "what is the 59th item?"."""
+    data = full_checklist()
+    cats_en = data.get("categories") or {}
+    found = [it for it in data["items"] if it["no"] in set(nos)]
+    if not found:
+        return ("해당 번호의 체크리스트 항목이 없습니다 (1~100)." if not en
+                else "No checklist item with that number (1–100).")
+    L = []
+    for it in found[:15]:
+        cat = cats_en.get(it["cat"], it["cat"]) if en else it["cat"]
+        if en:
+            L += [f"**{it['no']}. {it.get('q_en') or it['q']}**",
+                  f"· Category: {cat} · " + ("🤖 auto-checked by the agent — ask \"<stock> checklist\" for the live result"
+                                             if it.get("auto") else
+                                             "🧑 self-check item (your own discipline — the agent reminds, you confirm)"),
+                  f"· KO: {it['q']}", ""]
+        else:
+            L += [f"**{it['no']}. {it['q']}**",
+                  f"· 분류: {cat} · " + ("🤖 자동 점검 항목 — \"종목명 체크리스트\"로 실시간 확인 가능"
+                                        if it.get("auto") else
+                                        "🧑 본인 확인 항목 (에이전트가 대신 판단하지 않는 원칙)"),
+                  f"· EN: {it.get('q_en') or ''}", ""]
+    return "\n".join(L).rstrip()
+
+
+def render_category(cat_key: str, en: bool = False) -> str:
+    """One category of the 100 — "준비 항목 보여줘" / "market checklist items"."""
+    data = full_checklist()
+    cats_en = data.get("categories") or {}
+    its = [it for it in data["items"] if it["cat"] == cat_key]
+    if not its:
+        return render_full_en() if en else render_full_ko()
+    title = cats_en.get(cat_key, cat_key) if en else cat_key
+    L = [f"**📋 {title} ({its[0]['no']}–{its[-1]['no']}) — {len(its)}" + (" items**" if en else "문항**"), ""]
+    for it in its:
+        L.append(f"{'🤖' if it.get('auto') else '🧑'} {it['no']}. {(it.get('q_en') or it['q']) if en else it['q']}")
+    L += ["", ("🤖 = auto-checked from live data · 🧑 = self-check" if en
+               else "🤖 = 실시간 자동 점검 · 🧑 = 본인 확인")]
+    return "\n".join(L)
+
+
+# query keyword → category key; used by the chat intent (gated on an explicit
+# list word so "market checklist" alone still means the live market pre-flight)
+CATEGORY_ALIASES = (
+    ("준비", "준비"), ("preparation", "준비"), ("prep ", "준비"),
+    ("이슈", "이슈/수급"), ("수급", "이슈/수급"), ("catalyst", "이슈/수급"), ("flow", "이슈/수급"),
+    ("실행", "실행/관리"), ("관리", "실행/관리"), ("execution", "실행/관리"), ("management", "실행/관리"),
+    ("시장", "시장"), ("market", "시장"),
+    ("종목", "종목"), ("stock", "종목"),
+)
+
+
 def summary_line(card: dict[str, Any], en: bool = False) -> str:
     """One-line summary appended to decide()/scalp answers."""
     if en:

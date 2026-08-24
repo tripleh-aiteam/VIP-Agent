@@ -6233,6 +6233,18 @@ def _run_agent_impl(
         # 1-hour verdict (scanner + reasons + forming watch) on top, 🛒 multi-day ideas
         # below. Previously KO scalp phrasings hit the raw scanner while EN hit
         # buy_picks — same question, two different answers. Scanner reply = fallback.
+        # OUR ALGO, NOT ML (boss 2026-08-24): recommendations come from the 100-item
+        # checklist ranking + the algo's own materials (일봉·분봉·거래량·뉴스).
+        # buy_picks (ML-led 3-method) survives only as the no-data fallback.
+        try:
+            from services.checklist_reco import build as _cr_build
+            _cr = _cr_build(db, n=3, transcript=transcript, lang=lang)
+            if _cr.get("ok") and _cr.get("reply"):
+                return {"intent": "checklist_reco", "language": lang, "reply": _cr["reply"],
+                        "action": None, "speak": True, "transcript": transcript,
+                        "tool_used": "checklist_reco"}
+        except Exception as e:
+            log.warning(f"checklist_reco (setup route) failed: {str(e)[:120]}")
         try:
             from services.buy_picks import build as _bp_build
             _bp = _bp_build(db, n=3, transcript=transcript, user_key=user_id, lang=lang)
@@ -6334,6 +6346,16 @@ def _run_agent_impl(
                                   "day trad"))
         _en = str(lang or "").lower().startswith("en")
         if not _scalpish:
+            # OUR ALGO, NOT ML (boss 2026-08-24) — checklist ranking first, buy_picks fallback.
+            try:
+                from services.checklist_reco import build as _cr_build
+                _cr = _cr_build(db, n=3, transcript=transcript, lang=lang)
+                if _cr.get("ok") and _cr.get("reply"):
+                    return {"intent": "checklist_reco", "language": lang, "reply": _cr["reply"],
+                            "action": None, "speak": True, "transcript": transcript,
+                            "tool_used": "checklist_reco"}
+            except Exception as e:
+                log.warning(f"checklist_reco (watchlist route) failed: {str(e)[:120]}")
             try:
                 from services.buy_picks import build as _bp_build
                 _bp = _bp_build(db, n=3, transcript=transcript, user_key=user_id, lang=lang)
@@ -6500,29 +6522,61 @@ def _run_agent_impl(
     # MUST run BEFORE the stock-backend relay below, or the relay's LLM composes its own
     # slow (~30s) checklist-ish answer instead of the deterministic 36-item card. KO/EN.
     if not confirmed_tool and not attachment_ids and any(
-            k in (transcript or "").lower() for k in ("체크리스트", "체크 리스트", "checklist", "check list")):
+            # loose stems so typos still land ('checlkis', 'cheklist' — boss types fast)
+            k in (transcript or "").lower() for k in ("체크리스트", "체크 리스트", "체크리",
+                                                      "checklist", "check list", "checkl",
+                                                      "chekl", "checl")):
         try:
-            from services.checklist_engine import (render_en, render_full_en, render_full_ko,
-                                                   render_ko, render_market_en,
+            from services.checklist_engine import (CATEGORY_ALIASES, render_category,
+                                                   render_en, render_full_en, render_full_ko,
+                                                   render_items, render_ko, render_market_en,
                                                    render_market_ko, stock_scorecard)
             from services.stock_resolver import resolve_one
             _cc, _cn = resolve_one(transcript or "")
             _en_l = str(lang or "").lower().startswith("en")
-            # "체크리스트 전체/100개 보여줘" / "show me all checklist" → the boss's verbatim
-            # 100-item paper list (stored data/checklist_100.json), not the live scorecard.
             _tl_ck = (transcript or "").lower()
+            if not _en_l and not _re.search(r"[가-힣]", transcript or "") \
+                    and _re.search(r"[a-zA-Z]", transcript or ""):
+                _en_l = True
+            # ① SPECIFIC ITEM(S): "59번이 뭐야", "what is the 59 th of the checklist",
+            # "checklist 12, 43" → those exact items from the stored 100 (boss 2026-08-24:
+            # "whatever we ask related to the 100 checklist it should tell us").
+            # (no \b after 번/th: Hangul counts as \w, so '59번이' has no boundary there)
+            _ord = [int(x) for x in _re.findall(r"(\d{1,3})\s*(?:번째|번|th|st|nd|rd)", _tl_ck)]
+            # lookarounds instead of \b (Hangul is \w); block decimals/thousands (1,228 / 1.5 / 59%)
+            _bare = [int(x) for x in _re.findall(r"(?<![\d.,])(\d{1,2})(?![\d%])(?![.,]\d)", _tl_ck)]
+            _nos = sorted({x for x in _ord if 1 <= x <= 100} | {x for x in _bare if 1 <= x <= 99})
+            # ② FULL LIST: "체크리스트 전체/다 보여줘", "list up all checklist", "checklist 100"
             _wants_full = any(k in _tl_ck for k in (
-                "전체", "전부", "모든", "모두", "100", "다 보여", "다보여",
+                "전체", "전부", "모든", "모두", "100", "다 보여", "다보여", "리스트업", "list up",
                 "all", "full", "whole", "entire", "complete", "everything"))
-            if _wants_full and not _cc:
-                _reply = render_full_en() if _en_l else render_full_ko()
+            # ③ ONE CATEGORY: "준비 항목", "market checklist items" — needs an explicit
+            # list word so bare "market checklist" still means the LIVE market pre-flight.
+            _cat_key = None
+            if any(w in _tl_ck for w in ("항목", "items", "item", "질문", "questions", "list", "보여")):
+                for _kw, _key in CATEGORY_ALIASES:
+                    if _kw in _tl_ck:
+                        _cat_key = _key
+                        break
+            if _nos:
+                _reply = render_items(_nos, en=_en_l)
             elif _cc:
                 _card = stock_scorecard(db, _cc)
                 _reply = render_en(_card) if _en_l else render_ko(_card)
-            else:
+            elif _cat_key and not _wants_full:
+                _reply = render_category(_cat_key, en=_en_l)
+            elif _wants_full:
+                _reply = render_full_en() if _en_l else render_full_ko()
+            elif len(_tl_ck) <= 32 or any(w in _tl_ck for w in ("오늘", "today", "지금", "now")):
+                # short/today-flavored ask → the LIVE market pre-flight (original behavior)
                 _reply = render_market_en(db) if _en_l else render_market_ko(db)
-            return {"intent": "checklist", "language": lang, "reply": _reply, "action": None,
-                    "speak": True, "transcript": transcript, "tool_used": "checklist"}
+            else:
+                # free-form checklist question ("감정 관련 항목은 왜 있어?") → fall through
+                # to the LLM, which gets the verbatim 100 items injected as knowledge below.
+                _reply = None
+            if _reply:
+                return {"intent": "checklist", "language": lang, "reply": _reply, "action": None,
+                        "speak": True, "transcript": transcript, "tool_used": "checklist"}
         except Exception as e:
             log.warning(f"checklist intent failed: {str(e)[:120]}")
 
@@ -6818,6 +6872,24 @@ def _run_agent_impl(
         "shaped answer than the other.\n\n"
     )
     system = _parity_rule + system
+    # 100-ITEM CHECKLIST KNOWLEDGE (boss 2026-08-24: "whatever we ask related to the
+    # 100 checklist it should tell us"): free-form checklist questions that the
+    # deterministic intercept doesn't cover get the verbatim list as grounded context.
+    if any(k in (transcript or "").lower() for k in ("체크리스트", "체크 리스트", "체크리",
+                                                     "checklist", "check list", "checkl",
+                                                     "chekl", "checl")):
+        try:
+            from services.checklist_engine import full_checklist
+            _ckd = full_checklist()
+            _ck_lines = "\n".join(
+                f"{i['no']}. [{i['cat']}] {i['q']} / EN: {i.get('q_en', '')}"
+                + (" (auto-checked by the agent)" if i.get("auto") else "")
+                for i in _ckd["items"])
+            system = ("■ THE BOSS'S 100-ITEM TRADING CHECKLIST (authoritative, verbatim — "
+                      "answer any checklist question from THIS list, never invent items):\n"
+                      + _ck_lines + "\n\n") + system
+        except Exception:
+            pass
     # Deterministic cross-agent pre-router (VIP only): force ask_agent for clear
     # stock/asset questions so they never fall through to web_search.
     _route_hint = _cross_agent_route_hint(transcript, agent_id)
@@ -7218,6 +7290,16 @@ def _run_agent_impl(
         # deterministic 3-method top-picks. This used to fall through to a raw LLM
         # chain that gave vague/truncated answers ("Final Recommendation" with no body).
         if _wants_recommendation(transcript) and not _code and not _is_sell_timing_q(transcript):
+            # OUR ALGO, NOT ML (boss 2026-08-24) — checklist ranking first, buy_picks fallback.
+            try:
+                from services.checklist_reco import build as _cr_build
+                _cr = _cr_build(db, n=3, transcript=transcript, lang=lang)
+                if _cr.get("ok") and _cr.get("reply"):
+                    return {"intent": "checklist_reco", "language": lang, "reply": _cr["reply"],
+                            "action": None, "speak": True, "transcript": transcript,
+                            "tool_used": "checklist_reco"}
+            except Exception as e:
+                log.warning(f"checklist_reco (generic route) failed: {str(e)[:120]}")
             try:
                 from services.buy_picks import build as _bp_build
                 _bp = _bp_build(db, n=3, transcript=transcript,
