@@ -687,6 +687,9 @@ export default function LiveDeskPage() {
                   code: string; name?: string; d8?: string; buy_t: string; entry: number;
                   sell_t: string; exit: number; net_pct: number; exit_why?: string;
                   qty?: number; won: number; result: string;
+                  judge?: { dp?: number | null; fuel?: number | null; news?: number;
+                            top_half?: boolean; bot_boost?: boolean;
+                            fuel_half?: boolean; news_half?: boolean } | null;
                   sig?: { drop: number; sx: number | null; rng: number; t?: string } | null;
                   wall?: { price: number; qty: number } | null;
                   parts?: { buys?: [number, number][] | null;
@@ -847,7 +850,43 @@ export default function LiveDeskPage() {
       sellKo = "이 종목의 체결이 10분 이상 끊겨, 마지막 거래 가격으로 정리했습니다.";
       sellEn = "This stock stopped printing for 10+ minutes, so the trade was closed at its last traded price.";
     }
+    // the CURRENT book's exits, in plain words (2026-08-24: the old 2%/15:20
+    // texts described a retired book)
+    if (w.includes("-1") && w.includes("전량")) {
+      sellKo = "기준가에서 -1% 보호선에 캔들의 저가가 닿는 순간 전량 매도했습니다 (장중 즉시 체결). 하락이 멈추고 양봉 3개가 연속으로 나오면 다시 들어갑니다.";
+      sellEn = "The candle's low touched the -1% protection line and everything sold instantly (intrabar). It re-enters after 3 straight up-candles prove the fall ended.";
+    } else if (w.includes("미상승")) {
+      sellKo = "산 뒤 한 번도 +0.85%까지 오르지 못한 채 음봉 3개가 나와, -1%까지 기다리지 않고 일찍 정리했습니다 (출혈 방지 조기 정리).";
+      sellEn = "It never rose to +0.85% and printed 3 down-candles below cost, so it was cut early instead of bleeding to -1% (the decay exit).";
+    } else if (w.includes("이익 정리")) {
+      sellKo = "마감 전 이익 정리 — 이익이 있는 상태로 마감 시간대에 들어와, 규칙이 이익을 확정했습니다.";
+      sellEn = "The closing-hour harvest — it carried a gain into the close window, so the rule banked it.";
+    } else if (w.includes("15:19") || w.includes("종")) {
+      sellKo = "15:19 종 — 하루의 마지막 자유 매매 분에 전 종목을 전량 매도했습니다 (15:20부터는 동시호가).";
+      sellEn = "The 15:19 bell — everything sells in the last free-trading minute (the closing auction starts at 15:20).";
+    }
     return { buyKo, buyEn, sellKo, sellEn };
+  };
+  // THE JUDGES' STORY per trade (boss 2026-08-24: "when I click it must show
+  // clear explanation why it bought based on daily, minute, volume, news") -
+  // rendered from the bench's ACTUAL readings recorded at the buy moment
+  const judgeStory = (j?: { dp?: number | null; fuel?: number | null;
+    news?: number; top_half?: boolean; bot_boost?: boolean;
+    fuel_half?: boolean; news_half?: boolean } | null) => {
+    if (!j) return null;
+    const L: string[] = [];
+    if (j.dp != null) {
+      const p9 = Math.round(j.dp * 100);
+      L.push(t(`📅 일봉: 연중 ${p9}% 지점 → ${j.top_half ? "상단 조심 구역, 절반 매수" : j.bot_boost ? "바닥 매수 존, 1.5배 매수" : "중간 지대, 정상 사이즈"}`,
+               `📅 daily: at ${p9}% of the year → ${j.top_half ? "upper caution zone, HALF size" : j.bot_boost ? "bottom buying zone, 1.5x size" : "middle band, normal size"}`));
+    }
+    if (j.fuel != null) {
+      L.push(t(`📊 거래량: 평소의 ${j.fuel.toFixed(1)}배 → ${j.fuel_half ? "연료 부족, 절반 매수" : "연료 정상"}`,
+               `📊 volume: ${j.fuel.toFixed(1)}x its usual → ${j.fuel_half ? "low fuel, HALF size" : "fuel normal"}`));
+    }
+    L.push(t(`📰 뉴스: 최근 1시간 위험 ${j.news ?? 0}건 → ${j.news_half ? "위험 신호, 절반 매수" : "이상 없음, 정상 사이즈"}`,
+             `📰 news: ${j.news ?? 0} danger stamp${(j.news ?? 0) === 1 ? "" : "s"} in the last hour → ${j.news_half ? "danger, HALF size" : "clear, normal size"}`));
+    return L;
   };
   const openFamTrade = useCallback((r: FamRow, side: "b" | "s") => {
     setFocusSide(side);
@@ -1882,6 +1921,12 @@ export default function LiveDeskPage() {
                               style={{ background: "rgba(106,27,154,0.05)", color: "var(--text-secondary)" }}>
                               <div><b style={{ color: "#6a1b9a" }}>{lang === "ko" ? r.rule_ko : r.rule_en}</b></div>
                               <div className="mt-1"><b style={{ color: RED }}>{t("왜 샀나 — ", "why it bought — ")}</b>{lang === "ko" ? ex.buyKo : ex.buyEn}</div>
+                              {(() => { const js9 = judgeStory(r.judge);
+                                return js9 ? (
+                                  <div className="mt-0.5 pl-2" style={{ borderLeft: "2px solid #2e7d32" }}>
+                                    <b style={{ color: "#2e7d32" }}>{t("그 순간의 레이어 판정: ", "the judges at that moment: ")}</b>
+                                    {js9.map((l9, i9) => <div key={i9}>{l9}</div>)}
+                                  </div>) : null; })()}
                               <div className="mt-0.5"><b style={{ color: BLUE }}>{t("왜 팔았나 — ", "why it sold — ")}</b>{lang === "ko" ? ex.sellKo : ex.sellEn}</div>
                               <div className="mt-1 text-[10px]" style={{ color: "#6a1b9a" }}>
                                 📈 {r.rule.startsWith("N")

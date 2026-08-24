@@ -444,24 +444,27 @@ def label(v: dict, ko: bool = True) -> str:
     if v.get("drip"):
         dp = v["drip"]
         _pct = int(round(dp.get("up_frac", 0.10) * 100))
+        _bl9 = ((v.get("drip") or {}).get("retreat") or {}).get("blues", 2)
         if _pct >= 100:
             # 알고리즘3: rides to the peak, one sale carries everything
             if ko:
-                return ("급락·아침·상승·바닥반등 4개의 문으로 매수 → 오르는 동안 "
-                        "팔지 않고 정점 후 2번째 음봉에 전량 매도 → "
-                        f"-{dp.get('stop_reset', 1.5):g}% 전량 리셋"
-                        f"{' (게이트 무시)' if v.get('ignore_gate') else ''}")
-            return ("4 doors in (dip·morning·climb·rebound) → holds the whole "
-                    "climb, sells ALL at the 2nd blue after the peak → full "
-                    f"reset at -{dp.get('stop_reset', 1.5):g}%"
-                    f"{' (no gate)' if v.get('ignore_gate') else ''}")
+                return ("다섯 문(급락·아침·상승·바닥반등·분출) + 레이어 판정 매수 → "
+                        f"오르는 동안 팔지 않고 정점 후 {_bl9}번째 음봉에 전량 매도 → "
+                        f"-{dp.get('stop_reset', 1.5):g}% 전량 (저가 터치 즉시), "
+                        "3양봉 재진입")
+            return ("5 doors (dip·morning·climb·rebound·burst) + layer judges "
+                    "→ holds the whole climb, sells ALL at the "
+                    f"{_bl9}rd blue after the peak → -"
+                    f"{dp.get('stop_reset', 1.5):g}% stop (intrabar), "
+                    "3-red return")
         if ko:
-            return (f"급락·아침·상승·바닥반등 4개의 문으로 매수 → +1%마다 "
-                    f"{_pct}% 계단 매도 → -{dp.get('stop_reset', 1.5):g}% 전량 리셋"
-                    f"{' (게이트 무시)' if v.get('ignore_gate') else ''}")
-        return (f"4 doors in (dip·morning·climb·rebound) → {_pct}% ladder each "
-                f"+1% → full reset at -{dp.get('stop_reset', 1.5):g}%"
-                f"{' (no gate)' if v.get('ignore_gate') else ''}")
+            return (f"다섯 문 + 레이어 판정 매수 → +1%마다 {_pct}% 계단 매도"
+                    f"{' (핑퐁 되사기)' if dp.get('pingpong') else ''} → "
+                    f"-{dp.get('stop_reset', 1.5):g}% 전량 (저가 터치 즉시), "
+                    "3양봉 재진입")
+        return (f"5 doors + layer judges → {_pct}% ladder each +1%"
+                f"{' (ping-pong)' if dp.get('pingpong') else ''} → -"
+                f"{dp.get('stop_reset', 1.5):g}% stop (intrabar), 3-red return")
     if v.get("ml"):
         base = dict(v)
         base.pop("ml")
@@ -1330,6 +1333,7 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                        "added": False, "add_px": None,
                        "seq": pend["seq"], "limit": True, "sharp": pend.get("sharp"),
                        "wall": pend.get("wall"), "sig": pend.get("sig"),
+                               "judge": pend.get("judge"),
                        "peak": pend["px"], "ups": 0, "downs": 0}
                 pends[si] = None
             else:
@@ -1347,6 +1351,7 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                                "added": False, "add_px": None,
                                "limit": True, "sharp": pend.get("sharp"),
                                "wall": pend.get("wall"), "sig": pend.get("sig"),
+                               "judge": pend.get("judge"),
                                "peak": ask, "ups": 0, "downs": 0}
                     pends[si] = None                     # else: abandoned, no trade
         if _late and pends[si] is not None:
@@ -1499,6 +1504,23 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                 if (v.get("ctx") and v["ctx"].get("news_n")
                         and (s.get("news_risk") or 0) >= v["ctx"]["news_n"]):
                     _q = max(1, int(_q * v["ctx"].get("news_size", 0.5)))
+                # THE JUDGES' RECORD (boss 2026-08-24: "when I click it must
+                # show clear explanation why it bought based on daily, minute,
+                # volume, news") - each buy carries the bench's actual reading
+                # at ITS moment, so the board can tell the true story later
+                _c9 = v.get("ctx") or {}
+                _jd9 = {"dp": _dp9, "fuel": _fu9,
+                        "news": s.get("news_risk") or 0,
+                        "top_half": bool(_c9 and _dp9 is not None
+                                         and _dp9 >= _c9.get("top", 0.85)),
+                        "bot_boost": bool(_c9 and _dp9 is not None
+                                          and _c9.get("bot") is not None
+                                          and _dp9 <= _c9["bot"]),
+                        "fuel_half": bool(_c9 and _fu9 is not None
+                                          and _fu9 <= _c9.get("fuel_low", 0.7)),
+                        "news_half": bool(_c9 and _c9.get("news_n")
+                                          and (s.get("news_risk") or 0)
+                                          >= _c9["news_n"])}
                 if v.get("vol_size"):
                     _vv2 = s.get("vols") or []
                     _w2 = _vv2[max(0, i - 20):i]
@@ -1558,10 +1580,12 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                     pends[si] = {"si": si, "i": i, "px": _px, "close": c, "qty": _q,
                             "ml": ml_meta, "left": v.get("wait_bars", 2), "sharp": _sharp,
                             "wall": _wall, "sig": _sig,
+                            "judge": _jd9,
                             "seq": closes[max(0, i - v["entry"]): i + 1]}
                 else:
                     poss[si] = {"si": si, "i": i, "entry": bk["fill"], "bk": bk,
                                 "close": c, "qty": _q, "ml": ml_meta, "sharp": _sharp,
+                                "judge": _jd9,
                                 "seq": closes[max(0, i - v["entry"]): i + 1]}
         elif poss[si] is not None:
             # this stock's own hand (boss 2026-08-12: the desk-wide single hand became
@@ -1626,7 +1650,12 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                                           pos.get("base") or pos.get("entry")])
 
                 def _drow(last_why):
-                    _q0 = pos.get("qty0", 1) or 1
+                    # the row tells what was BOUGHT, not what was planned - a
+                    # 1-share scout whose army never confirmed divided its cost
+                    # by the planned 50 and printed "bought at ₩4,660" for a
+                    # ₩233,000 NAVER share (boss caught it 2026-08-24 09:2x)
+                    _q0 = (sum(b9[1] for b9 in (pos.get("buys") or []))
+                           or pos.get("qty_tot") or pos.get("qty0", 1) or 1)
                     _ein = pos["cost"] / _q0
                     _eout = pos["sold_won"] / _q0
                     _g = (pos["sold_won"] / pos["cost"] - 1) * 100 if pos["cost"] else 0.0
@@ -1638,6 +1667,7 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                           "scout": ({"added": bool(pos.get("added")),
                                      "add_px": pos.get("add_px")} if _sc else None),
                           "sig": pos.get("sig"),
+                          "judge": pos.get("judge"),
                           "parts": {"buys": pos.get("buys"),
                                     # each sell remembers time, bar, remaining and
                                     # its reason - the board lists them per line
