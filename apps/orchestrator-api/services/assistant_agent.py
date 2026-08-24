@@ -6692,6 +6692,12 @@ def _run_agent_impl(
             # lookarounds instead of \b (Hangul is \w); block decimals/thousands (1,228 / 1.5 / 59%)
             _bare = [int(x) for x in _re.findall(r"(?<![\d.,])(\d{1,2})(?![\d%])(?![.,]\d)", _tl_ck)]
             _nos = sorted({x for x in _ord if 1 <= x <= 100} | {x for x in _bare if 1 <= x <= 99})
+            # REASONING beats recital (boss 2026-08-25: "knows the checklist, not
+            # memorizing — reasoning"): '왜/why/설명…' about an item falls through to
+            # the LLM, which carries the verbatim 100 as injected knowledge.
+            if _nos and any(w in _tl_ck for w in ("왜", "이유", "설명", "why", "reason", "explain",
+                                                  "어떤 의미", "무슨 의미", "protect")):
+                _nos = []
             # ② FULL LIST: "체크리스트 전체/다 보여줘", "list up all checklist", "checklist 100"
             _wants_full = any(k in _tl_ck for k in (
                 "전체", "전부", "모든", "모두", "100", "다 보여", "다보여", "리스트업", "list up",
@@ -6713,8 +6719,11 @@ def _run_agent_impl(
                 _reply = render_category(_cat_key, en=_en_l)
             elif _wants_full:
                 _reply = render_full_en() if _en_l else render_full_ko()
-            elif len(_tl_ck) <= 32 or any(w in _tl_ck for w in ("오늘", "today", "지금", "now")):
-                # short/today-flavored ask → the LIVE market pre-flight (original behavior)
+            elif ((len(_tl_ck) <= 32 or any(w in _tl_ck for w in ("오늘", "today", "지금", "now")))
+                  and not any(w in _tl_ck for w in ("왜", "이유", "설명", "why", "reason", "explain",
+                                                    "어떤 의미", "무슨 의미"))):
+                # short/today-flavored ask → the LIVE market pre-flight (original behavior);
+                # reasoning words always fall through to the LLM (knows-not-memorizes)
                 _reply = render_market_en(db) if _en_l else render_market_ko(db)
             else:
                 # free-form checklist question ("감정 관련 항목은 왜 있어?") → fall through
