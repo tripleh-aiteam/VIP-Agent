@@ -326,12 +326,16 @@ def build(db, n: int = 3, transcript: str = "", lang: str = "ko") -> dict[str, A
         L += ["", (f"🟢 Today's RECO DESK (fixed at the morning bell, actually trading now): "
                    f"{' · '.join(_traded_names)}. The list above is the LIVE view and can differ "
                    f"intraday — the desk never swaps stocks mid-session (a swap would abandon the "
-                   f"day's tape and open positions). Watch them trade: Paper Trading → 체크리스트 추천 데스크."
+                   f"day's tape and open positions)."
                    if en else
                    f"🟢 오늘의 추천 데스크(아침 확정, 지금 실제 매매중): {' · '.join(_traded_names)}. "
                    f"위 목록은 '지금' 실시간 순위라 장중에는 달라질 수 있습니다 — 데스크는 장중 종목 교체를 "
-                   f"하지 않습니다(교체하면 그날의 기록과 포지션을 버리게 됩니다). "
-                   f"매매 화면: 모의투자 → 체크리스트 추천 데스크.")]
+                   f"하지 않습니다(교체하면 그날의 기록과 포지션을 버리게 됩니다)."),
+              # the PROOF button (boss 2026-08-24: "put button like go to menu that we
+              # can see actually going on market") — opens the reco desk page
+              (f"[📡 Watch them trading live → Checklist Reco Desk](nav:/testing/live?desk=reco)"
+               if en else
+               f"[📡 실제 매매 보러가기 → 체크리스트 추천 데스크](nav:/testing/live?desk=reco)")]
     L += ["",
           ("Click a NAME to open its live chart on the left · click 근거/evidence to see exactly "
            "how the 100-item checklist, daily chart, minute/real-time, volume and news scored it — "

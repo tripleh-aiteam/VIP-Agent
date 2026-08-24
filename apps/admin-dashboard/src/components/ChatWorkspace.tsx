@@ -35,7 +35,7 @@ import { fetchWithRetry } from "../lib/fetchWithRetry";
 
 // Bump on every user-facing chat-UI change — rendered as a tiny badge above the
 // composer so a stale browser tab is diagnosable at a glance.
-const UI_BUILD = "ui v08.24-10";
+const UI_BUILD = "ui v08.24-11";
 
 // ── Lightweight markdown renderer (no deps) ───────────────────────────────
 // Renders GitHub-flavored tables, **bold**, `code`, bullet lists and line
@@ -45,7 +45,7 @@ function inlineFmt(s: string): ReactNode[] {
   // Tokens: **bold**, `code`, [label](url) markdown links (http, chart:CODE, or
   // ask:QUESTION), and bare http(s) URLs. chart:CODE opens the TradingView proof
   // panel; ask:Q sends Q as the next chat message (proof-on-click evidence links).
-  const re = /(\*\*[^*]+\*\*|`[^`]+`|\[[^\]]+\]\((?:https?:\/\/[^\s)]+|chart:\d{6}|evidence:\d{6}|ask:[^)]+)\)|https?:\/\/[^\s)]+)/g;
+  const re = /(\*\*[^*]+\*\*|`[^`]+`|\[[^\]]+\]\((?:https?:\/\/[^\s)]+|chart:\d{6}|evidence:\d{6}|nav:[^)]+|ask:[^)]+)\)|https?:\/\/[^\s)]+)/g;
   const link = (href: string, label: string, k: number) => (
     <a key={k} href={href} target="_blank" rel="noopener noreferrer"
        className="text-blue-600 underline break-all hover:text-blue-700">{label}</a>
@@ -65,9 +65,14 @@ function inlineFmt(s: string): ReactNode[] {
     else if (tok.startsWith("[")) {
       const mc = /^\[([^\]]+)\]\(chart:(\d{6})\)$/.exec(tok);
       const me = /^\[([^\]]+)\]\(evidence:(\d{6})\)$/.exec(tok);
+      const mn = /^\[([^\]]+)\]\(nav:([^)]+)\)$/.exec(tok);
       const ma = /^\[([^\]]+)\]\(ask:([^)]+)\)$/.exec(tok);
       const mm = /^\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)$/.exec(tok);
       if (mc) out.push(chartLink(mc[2], mc[1], k++));
+      else if (mn) out.push(
+        <a key={k++} href={mn[2]} role="button"
+           onClick={(e) => { e.preventDefault(); try { window.dispatchEvent(new CustomEvent("vip-nav", { detail: mn[2] })); } catch {} }}
+           className="inline-block px-3 py-1 my-0.5 rounded-lg bg-teal-600 text-white font-bold hover:bg-teal-700 cursor-pointer text-[13.5px] no-underline">{mn[1]}</a>);
       else if (me) out.push(
         <a key={k++} href="#" role="button"
            onClick={(e) => { e.preventDefault(); try { window.dispatchEvent(new CustomEvent("vip-evidence", { detail: me[2] })); } catch {} }}
@@ -531,6 +536,16 @@ export default function ChatWorkspace({ apiBase, agentId, agentLabel }: Props) {
     return () => window.removeEventListener("vip-open-chart", h);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+  // [nav:/path] buttons in answers ("go watch it trading") navigate the app.
+  useEffect(() => {
+    const h = (e: Event) => {
+      const path = (e as CustomEvent).detail;
+      if (path) { try { router.push(String(path)); } catch {} }
+    };
+    window.addEventListener("vip-nav", h);
+    return () => window.removeEventListener("vip-nav", h);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   // Evidence links ([근거](ask:...) in answers) send their question as the next chat
   // message. A ref keeps the CURRENT send() (fresh state) reachable from the one-time
   // listener registration.
@@ -548,6 +563,7 @@ export default function ChatWorkspace({ apiBase, agentId, agentLabel }: Props) {
   // TradingView chart + the checklist/daily/minute/volume/news data fetched by code.
   const [evidenceCode, setEvidenceCode] = useState<string | null>(null);
   const [evidenceMd, setEvidenceMd] = useState<string>("");
+  const [evidenceShowData, setEvidenceShowData] = useState(false);   // chart-only default
   const evidenceLangRef = useRef("ko");
   evidenceLangRef.current = /[가-힣]/.test(lastQuestion || "") ? "ko" : "en";
   useEffect(() => {
@@ -1612,27 +1628,38 @@ export default function ChatWorkspace({ apiBase, agentId, agentLabel }: Props) {
       {/* ========================================================== */}
       {evidenceCode && (
         <div className="absolute inset-x-0 bottom-0 z-40 flex flex-col bg-white border-t-2 border-blue-400 shadow-2xl"
-          style={{ height: "72%" }}>
+          style={{ height: "82%" }}>
           <div className="flex items-center justify-between px-4 py-2 border-b border-gray-200 bg-gray-50 shrink-0">
-            <span className="text-[15px] font-bold text-gray-800">
-              📈 KRX:{evidenceCode} — 차트 + 근거 / chart + evidence
+            <span className="text-[16px] font-bold text-gray-800">
+              📈 KRX:{evidenceCode}
             </span>
-            <button onClick={() => setEvidenceCode(null)}
-              className="px-2.5 py-0.5 text-[15px] rounded-lg text-gray-500 hover:bg-gray-200" title="Close">✕ 닫기</button>
+            <span className="flex items-center gap-2">
+              {/* chart-only by default (boss 2026-08-24: "when we click evidence it
+                  should show only chart — the checklist is already above") */}
+              <button onClick={() => setEvidenceShowData(!evidenceShowData)}
+                className={`px-3 py-1 text-[13px] font-bold rounded-lg border ${
+                  evidenceShowData ? "bg-blue-600 text-white border-blue-600"
+                                   : "text-blue-600 border-blue-300 hover:bg-blue-50"}`}>
+                {evidenceShowData ? "차트만 보기" : "📋 근거 데이터 보기"}
+              </button>
+              <button onClick={() => setEvidenceCode(null)}
+                className="px-2.5 py-0.5 text-[15px] rounded-lg text-gray-500 hover:bg-gray-200" title="Close">✕ 닫기</button>
+            </span>
           </div>
           <div className="flex flex-1 min-h-0">
             <iframe
               key={evidenceCode}
               src={`https://s.tradingview.com/widgetembed/?symbol=KRX%3A${evidenceCode}&interval=D&theme=light&style=1&locale=kr&withdateranges=1&hide_side_toolbar=0&allow_symbol_change=1`}
-              className="border-0 h-full"
-              style={{ width: "58%" }}
+              className="border-0 h-full flex-1"
               title="TradingView chart"
             />
-            <div className="flex-1 overflow-y-auto px-5 py-3 text-[14.5px] leading-relaxed text-gray-900 border-l border-gray-200">
-              {evidenceMd
-                ? <MarkdownLite text={evidenceMd} />
-                : <div className="text-gray-400 text-[13px] py-4">근거 데이터 불러오는 중… / loading evidence…</div>}
-            </div>
+            {evidenceShowData && (
+              <div className="w-[420px] xl:w-[500px] shrink-0 overflow-y-auto px-5 py-3 text-[15px] leading-relaxed text-gray-900 border-l border-gray-200">
+                {evidenceMd
+                  ? <MarkdownLite text={evidenceMd} />
+                  : <div className="text-gray-400 text-[14px] py-4">근거 데이터 불러오는 중… / loading evidence…</div>}
+              </div>
+            )}
           </div>
         </div>
       )}
