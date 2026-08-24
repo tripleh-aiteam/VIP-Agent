@@ -200,7 +200,7 @@ VARIANTS: list[dict] = [
      "ctx": {"top": 0.6, "top_size": 0.5, "no_buy_top": 0.85,
              "sell_bot": 0.20, "bot_blues": 999,
              "bot_take": 2.0, "bot_take_blues": 1,
-             "sell_top": 0.85, "top_blues": 3,
+             "sell_top": 0.85, "top_blues": 3, "top_all": True,
              "news_n": 2, "news_size": 0.5}, "surrender": 2,
      # fences lowered at his order (2026-08-13, after 삼성전자 0.93%/1.30% and
      # NAVER 0.91%/1.37 turns were refused by hairs): drop 0.9, range 1.25.
@@ -249,7 +249,7 @@ VARIANTS: list[dict] = [
      "ctx": {"top": 0.6, "top_size": 0.5, "no_buy_top": 0.85,
              "sell_bot": 0.20, "bot_blues": 999,
              "bot_take": 2.0, "bot_take_blues": 1,
-             "sell_top": 0.85, "top_blues": 3,
+             "sell_top": 0.85, "top_blues": 3, "top_all": True,
              "news_n": 2, "news_size": 0.5}, "surrender": 2,
      # fences lowered at his order (2026-08-13, after 삼성전자 0.93%/1.30% and
      # NAVER 0.91%/1.37 turns were refused by hairs): drop 0.9, range 1.25.
@@ -311,7 +311,7 @@ VARIANTS: list[dict] = [
      "ctx": {"top": 0.6, "top_size": 0.5, "no_buy_top": 0.85,
              "bot": 0.20, "bot_size": 1.5,
              "sell_bot": 0.20, "bot_blues": 3,
-             "sell_top": 0.85, "top_blues": 3,
+             "sell_top": 0.85, "top_blues": 3, "top_all": True,
              "news_n": 2, "news_size": 0.5}, "surrender": 2,
      "dip": {"drop": 0.7, "sharp": 3.0, "ups": 1, "chop": 1.0, "win_sec": 1800},
      "scout": {"frac": 0.03, "confirm": 0.5},
@@ -1895,6 +1895,22 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
                             and (pos.get("pr_blues", 0) >= _blues9
                                  or _big or _trail_hit)
                             and pos["qty"] == _qty_bar0):
+                        # THE SELLING-ZONE FULL EXIT (boss 2026-08-24 11:0x,
+                        # his idea for 알고1/2: "we sold some percent, waited
+                        # for another +1%, it starts to decrease instead - at
+                        # the 3rd blue sell ALL, if it is in the selling
+                        # zone"): near the yearly record a failed continuation
+                        # is not retreated slice by slice - everything goes.
+                        if (_sc9.get("top_all") and _dps9 is not None
+                                and _sc9.get("sell_top") is not None
+                                and _dps9 >= _sc9["sell_top"]):
+                            _dsell(pos["qty"], c, "최고가권 3음봉 전량")
+                            _drow("최고가권 3음봉 전량 매도 · 조각 "
+                                  f"{len(pos['slices'])}회")
+                            if dp.get("reboard"):
+                                reb_pk[si] = c
+                            poss[si] = None
+                            continue
                         _yd3 = (pos.get("qty_tot") or pos["qty0"]) \
                             if dp.get("slice_total") else pos["qty0"]
                         _qs = max(1, int(_yd3 * dp.get("up_frac", 0.10)))
