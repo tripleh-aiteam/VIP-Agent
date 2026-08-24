@@ -13,6 +13,7 @@
  * the day, which is the honest behaviour and not a fault.
  */
 import Link from "next/link";
+import { usePathname } from "next/navigation";
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "@/components/api";
 import { useLanguage } from "@/components/i18n";
@@ -360,14 +361,15 @@ export default function LiveDeskPage() {
   // stocks, same UI as the live desk): /testing/live?desk=reco filters the stock tabs
   // to today's top-5 by score. Read once from the URL — client page, no useSearchParams
   // (that would force a Suspense boundary at build time).
-  // /testing/reco is the reco desk's OWN route (query-param navigation between the two
-  // desks did not remount the page, so the header/stocks showed the previous desk —
-  // boss 2026-08-24: "looks like mixed"). The ?desk=reco form still works for old links.
-  const [deskView] = useState<string | null>(() => {
-    if (typeof window === "undefined") return null;
-    if (window.location.pathname.includes("/testing/reco")) return "reco";
-    return new URLSearchParams(window.location.search).get("desk");
-  });
+  // /testing/reco is the reco desk's OWN route. Both routes render THIS component, so
+  // Next PRESERVES it across navigation (no remount) — a one-shot useState kept showing
+  // the previous desk (boss 2026-08-24 ×2: "it shows again Live Kiwoom Desk"). Derive
+  // the view REACTIVELY from usePathname so every navigation re-evaluates it.
+  const pathname = usePathname();
+  const deskView: string | null = (pathname || "").includes("/testing/reco")
+    ? "reco"
+    : (typeof window !== "undefined"
+        ? new URLSearchParams(window.location.search).get("desk") : null);
   const [code, setCode] = useState("005930");
   // DEFAULT = 1분 (boss 2026-08-12, demo morning): Sharp lives on the minute chart,
   // so the board opens on it. 5틱 remains one click away in the 봉 dropdown.
@@ -1083,8 +1085,12 @@ export default function LiveDeskPage() {
     : (_sixTabs.length > 0 ? _sixTabs : (st?.stocks ?? []));
   useEffect(() => {
     if (deskView === "reco" && recoSet.size > 0 && !recoSet.has(code)) {
-      const first = (st?.stocks ?? []).find((x) => recoSet.has(x.code));
+      // reco view opens on the top-scored pick
+      const first = _recoTabs[0];
       if (first) { setCode(first.code); codeRef.current = first.code; }
+    } else if (deskView !== "reco" && !SIX_CODES.has(code)) {
+      // back on the six-desk: never leave a reco stock selected there
+      setCode("005930"); codeRef.current = "005930";
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [deskView, dpick, st]);
