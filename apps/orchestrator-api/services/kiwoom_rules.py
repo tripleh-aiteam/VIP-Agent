@@ -612,7 +612,7 @@ def dip_status(tick: int = 5, period: int = 0) -> dict[str, Any]:
 
 def rank(tick: int = 5, period: int = 0, day: str = "",
          frm: str = "", to: str = "", use_gate: bool = True,
-         allow_fallback: bool = True) -> dict[str, Any]:
+         allow_fallback: bool = True, codes: str = "") -> dict[str, Any]:
     """Every plain rule over the real tape of every watched stock, ranked.
 
     day="all" is the CUMULATIVE board (boss 2026-08-06: "total result up to today"):
@@ -620,16 +620,21 @@ def rank(tick: int = 5, period: int = 0, day: str = "",
     span the overnight gap, and each day's ML models are the ones that day actually had
     (trained only on the days before it) - then the trades are added up."""
     import time as _t
-    _rk = (tick, period, day, frm, to, use_gate, allow_fallback)
+    _rk = (tick, period, day, frm, to, use_gate, allow_fallback, codes)
     _hit = _RANK_TTL.get(_rk)
     if _hit and _t.time() - _hit[0] < 20.0:
         return _hit[1]         # the page polls every 3s; identical answers are reused
     day, auto_day = _auto_day(day) if allow_fallback else (day, False)
     day_list = stored_days() if day == "all" else [day]
+    # per-desk view (boss 2026-08-24: the two desks' histories looked the same):
+    # `codes` limits the replay to those stocks — the six-desk and the reco desk
+    # each see only their own trades.
+    _csel = {c.strip() for c in (codes or "").split(",") if c.strip()}
+    _watch = [(c, n) for c, n in WATCH if not _csel or c in _csel]
     tapes_by_day = []
     for d in day_list:
         tapes = {}
-        for code, name in WATCH:
+        for code, name in _watch:
             cs = _bars_for(code, tick, period, d, frm, to)
             if len(cs) < 10:
                 continue
@@ -791,14 +796,15 @@ def shares_for(entry: float, budget: int) -> int:
 def trades(vid: str, tick: int = 5, period: int = 0, code: str = "",
            bars: int = 2500, limit: int = 300, around: int = -1,
            budget: int = 0, day: str = "", frm: str = "", to: str = "",
-           use_gate: bool = True, allow_fallback: bool = True) -> dict[str, Any]:
+           use_gate: bool = True, allow_fallback: bool = True,
+           codes: str = "") -> dict[str, Any]:
     """One rule's trades on the real tape, with the chart and the evidence per trade."""
     v = next((x for x in DESK if x["id"] == vid), None)
     if v is None:
         return {"ok": False, "error": f"unknown rule {vid}"}
     import time as _t
     day, _auto = _auto_day(day) if allow_fallback else (day, False)
-    _tk2 = (vid, tick, period, code, bars, limit, around, budget, day, frm, to, use_gate)
+    _tk2 = (vid, tick, period, code, bars, limit, around, budget, day, frm, to, use_gate, codes)
     _hit2 = _TRADES_TTL.get(_tk2)
     if _hit2 and _t.time() - _hit2[0] < 20.0:
         return _hit2[1]
@@ -817,9 +823,11 @@ def trades(vid: str, tick: int = 5, period: int = 0, code: str = "",
     # rule across the whole desk - see proof_lab.run_desk. day="all" runs every stored
     # day as its own session and concatenates the trades (cumulative view).
     day_list = stored_days() if day == "all" else [day]
+    _csel2 = {c.strip() for c in (codes or "").split(",") if c.strip()}
+    _watch2 = [(c, n) for c, n in WATCH if not _csel2 or c in _csel2]
     for d in day_list:
         stks = []
-        for c_code, name in WATCH:
+        for c_code, name in _watch2:
             cs = _bars_for(c_code, tick, period, d, frm, to)
             if len(cs) < 10:
                 continue

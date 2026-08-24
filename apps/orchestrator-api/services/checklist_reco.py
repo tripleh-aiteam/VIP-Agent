@@ -44,6 +44,42 @@ GROUP_KO = {"trend": "추세", "liquidity": "유동성", "flexibility": "유연�
 GROUP_EN = {"trend": "Trend", "liquidity": "Liquidity", "flexibility": "Flexibility",
             "levels": "Levels", "momentum": "Momentum", "flows": "Flows"}
 
+# items measured through the ranking's own inputs (data proxies)
+PROXY_NOS = {46, 48, 56, 69, 70}
+# per-stock news items — read by the Qwen news engine (danger stamps)
+NEWS_NOS = {26, 27, 29, 40, 42, 44, 45}
+# HANDLED BY THE ALGORITHM (boss: "it should decide by agent, like stop-loss")
+ALGO_EN = {71: "the five doors + layer judgment filter fake-out candles at entry",
+           72: "post-entry is engine-managed — trailing off the peak, never below break-even",
+           73: "Algo2 (ripple) specializes in ranging tape — regime handled by the rules",
+           74: "buying the pullback IS the entry rule (dip/rebound doors + scout)",
+           77: "-1% hard stop — the engine sells the moment the low is touched",
+           78: "Algo1 harvests 50% per +1% · Algo2 10% · Algo3 sells all at the 3rd red after the peak",
+           80: "scaled entry — the scout/ladder entry rules",
+           81: "scaled exit — the 50%/10% harvest ladders + selling-zone full exit, automatic",
+           83: "mechanical stop — executed by the engine, no human hand",
+           84: "the harvest ladder banks profit every +1% automatically",
+           86: "every trade is journaled automatically (chart arrows + history)",
+           92: "the loss-limit reset (-1.5%) halts the run automatically",
+           93: "sell-pressure response — the sell rules react to red candles/lows automatically",
+           97: "unfilled orders are managed/cancelled by the engine",
+           99: "0.23% round-trip fee+tax is inside every calculation"}
+ALGO_KO = {71: "다섯 문 + 레이어 판정이 진입 시 속임수 캔들을 거릅니다",
+           72: "진입 후는 엔진 관리 — 정점 추적 매도, 본전 아래로는 안 내려감",
+           73: "알고2(잔물결)가 횡보 장세 특화 — 장세 인식은 규칙이 처리",
+           74: "돌파 후 눌림 매수가 곧 진입 규칙(급락/반등 문 + 스카웃)",
+           77: "-1% 하드스톱 — 저가 터치 즉시 엔진이 전량 매도",
+           78: "알고1 +1%마다 50% 수확 · 알고2 10% · 알고3 정점 후 3음봉 전량 매도",
+           80: "분할 진입 — 스카웃/사다리 진입 규칙",
+           81: "분할 매도 — 50%/10% 수확 사다리 + 매도구간 전량 매도, 자동",
+           83: "기계적 손절 — 사람 손 없이 엔진이 실행",
+           84: "수확 사다리가 +1%마다 이익을 자동 실현",
+           86: "모든 매매가 자동 기록 (차트 화살표 + 매매 이력)",
+           92: "손실 한도 리셋(-1.5%) 도달 시 자동 중단",
+           93: "매도세 강화 시 매도 규칙(음봉/저가)이 자동 대응",
+           97: "미체결 주문은 엔진이 자동 관리/취소",
+           99: "왕복 수수료+세금 0.23%가 모든 계산에 반영"}
+
 _cache: dict[str, tuple[float, Any]] = {}
 
 
@@ -225,111 +261,28 @@ def build(db, n: int = 3, transcript: str = "", lang: str = "ko") -> dict[str, A
         m_items = m.get("items", [])
     except Exception:
         pass
-    live_by_no = {it.get("no"): it for it in m_items}
-    per_stock_nos: set = set()
-    try:
-        from services.checklist_engine import STOCK_ITEMS
-        per_stock_nos = {it[0] for it in STOCK_ITEMS}
-    except Exception:
-        pass
-    # data proxies: these are measured through the ranking's own inputs
-    # (#46 거래대금→유동성 · #48 시가총액/호가→유연성 · #56/#70 잔량/매수세→호가압력 · #69→거래량 급증)
-    per_stock_nos |= {46, 48, 56, 69, 70}
-    # per-stock news items — read by the Qwen news engine (the danger-stamp judge)
-    NEWS_NOS = {26, 27, 29, 40, 42, 44, 45}
-    # HANDLED BY THE ALGORITHM (boss 2026-08-24: "it should decide by agent, like
-    # stop-loss — we have exit right"): the engine executes these rules itself.
-    ALGO_NOS = ({71: "the five doors + layer judgment filter fake-out candles at entry",
-                 72: "post-entry is engine-managed — trailing off the peak, never below break-even",
-                 73: "Algo2 (ripple) specializes in ranging tape — regime handled by the rules",
-                 74: "buying the pullback IS the entry rule (dip/rebound doors + scout)",
-                 77: "-1% hard stop — the engine sells the moment the low is touched",
-                 78: "Algo1 harvests 50% per +1% · Algo2 10% · Algo3 sells all at the 3rd red after the peak",
-                 80: "scaled entry — the scout/ladder entry rules",
-                 81: "scaled exit — the 50%/10% harvest ladders + selling-zone full exit, automatic",
-                 83: "mechanical stop — executed by the engine, no human hand",
-                 84: "the harvest ladder banks profit every +1% automatically",
-                 86: "every trade is journaled automatically (chart arrows + history)",
-                 92: "the loss-limit reset (-1.5%) halts the run automatically",
-                 93: "sell-pressure response — the sell rules react to red candles/lows automatically",
-                 97: "unfilled orders are managed/cancelled by the engine",
-                 99: "0.23% round-trip fee+tax is inside every calculation"} if en else
-                {71: "다섯 문 + 레이어 판정이 진입 시 속임수 캔들을 거릅니다",
-                 72: "진입 후는 엔진 관리 — 정점 추적 매도, 본전 아래로는 안 내려감",
-                 73: "알고2(잔물결)가 횡보 장세 특화 — 장세 인식은 규칙이 처리",
-                 74: "돌파 후 눌림 매수가 곧 진입 규칙(급락/반등 문 + 스카웃)",
-                 77: "-1% 하드스톱 — 저가 터치 즉시 엔진이 전량 매도",
-                 78: "알고1 +1%마다 50% 수확 · 알고2 10% · 알고3 정점 후 3음봉 전량 매도",
-                 80: "분할 진입 — 스카웃/사다리 진입 규칙",
-                 81: "분할 매도 — 50%/10% 수확 사다리 + 매도구간 전량 매도, 자동",
-                 83: "기계적 손절 — 사람 손 없이 엔진이 실행",
-                 84: "수확 사다리가 +1%마다 이익을 자동 실현",
-                 86: "모든 매매가 자동 기록 (차트 화살표 + 매매 이력)",
-                 92: "손실 한도 리셋(-1.5%) 도달 시 자동 중단",
-                 93: "매도세 강화 시 매도 규칙(음봉/저가)이 자동 대응",
-                 97: "미체결 주문은 엔진이 자동 관리/취소",
-                 99: "왕복 수수료+세금 0.23%가 모든 계산에 반영"})
-    sections = ([("[STEP 0] Preparation #1–10 — your own check", 1, 10),
-                 ("[STEP 1] Market #11–25", 11, 25),
-                 ("[STEP 2] Issue / supply-demand #26–45", 26, 45),
-                 ("[STEP 3] Stock selection #46–75", 46, 75),
-                 ("[STEP 4] Execution / management #76–100", 76, 100)] if en else
-                [("[0단계] 준비 #1~10 — 본인 확인", 1, 10),
-                 ("[1단계] 시장 #11~25", 11, 25),
-                 ("[2단계] 이슈/수급 #26~45", 26, 45),
-                 ("[3단계] 종목선정 #46~75", 46, 75),
-                 ("[4단계] 실행/관리 #76~100", 76, 100)])
-    try:
-        from services.checklist_engine import full_checklist
-        all_items = sorted(full_checklist()["items"], key=lambda x: x["no"])
-        L.append(("Legend: ✅/❌/❓ measured live today · 📊 scored per stock (feeds the ranking, "
-                  "see 근거 🔍) · 📰 read by the Qwen news engine (per-stock stamps) · "
-                  "🤖 executed by the algorithm itself · 🧑 your own item · ⬜ no data source yet" if en else
-                  "표기: ✅/❌/❓ 오늘 실측 · 📊 종목별 채점(순위에 반영, 근거 🔍) · 📰 Qwen 뉴스 엔진 판독(종목별 스탬프) · "
-                  "🤖 알고리즘이 직접 실행 · 🧑 본인 확인 · ⬜ 데이터 미연결"))
-        for title, lo_no, hi_no in sections:
-            head = f"**{title}**"
-            if lo_no == 11 and m:
-                head += (f" — auto {m.get('score')}/{m.get('max')}" if en
-                         else f" — 자동 {m.get('score')}/{m.get('max')}점")
-            L += ["", head]
-            for it in all_items:
-                no = it["no"]
-                if not (lo_no <= no <= hi_no):
-                    continue
-                q = (it.get("q_en") if en else it["q"]) or it["q"]
-                lv = live_by_no.get(no)
-                if lv is not None:
-                    mark = "✅" if lv.get("ok") else "❌" if lv.get("ok") is False else "❓"
-                    L.append(f"{mark} {no}. {q} — {lv.get('detail')}")
-                elif no in per_stock_nos:
-                    L.append(f"📊 {no}. {q}")
-                elif no in ALGO_NOS:
-                    L.append(f"🤖 {no}. {q} — {ALGO_NOS[no]}")
-                elif no in NEWS_NOS:
-                    L.append(f"📰 {no}. {q}")
-                elif it["cat"] in ("준비", "실행/관리"):
-                    L.append(f"🧑 {no}. {q}")
-                else:
-                    L.append(f"⬜ {no}. {q}")
+    # COMPACT BY DEFAULT (boss 2026-08-24 evening: "just listing 100 checkpoints tells
+    # nothing — show the list of companies; clicking shows THAT stock's checklist,
+    # because each company's 100-item result is different"). The answer carries only
+    # the MEASURED market items (real values); the per-stock 100 lives behind 근거 🔍.
+    _n_cand = len(rank.get("rows", []))
+    if m_items:
+        L.append(f"**{'[Market check — measured now, checklist #11–25/#36/#95/#100]' if en else '[시장 실측 — 체크리스트 시장 항목]'} "
+                 + (f"{m.get('score')}/{m.get('max')}**" if m else "**"))
+        for it in sorted(m_items, key=lambda x: x.get("no", 0)):
+            mark = "✅" if it.get("ok") else "❌" if it.get("ok") is False else "❓"
+            q = (it.get("q_en") if en else it.get("q")) or it.get("q")
+            L.append(f"{mark} {it['no']}. {q} — {it.get('detail')}")
         if m.get("deal_breakers"):
             det = "; ".join(f"#{b['no']} {b['detail']}" for b in m["deal_breakers"][:2])
-            L += ["", ("🚫 Deal-breaker today — new buying is reference only: " if en
-                       else "🚫 오늘 결격 — 신규 매수는 참고만: ") + det]
-    except Exception:
-        pass
-    _n_cand = len(rank.get("rows", []))
-    L += ["", (f"**[STEP 5] Stock scoring** — the 📊 items above scored for all {_n_cand} candidates "
-               f"({day_disp} morning, weighted trend·liquidity·flexibility·levels·momentum·flows); "
-               f"top of the base: " if en else
-               f"**[5단계] 종목 채점** — 위 📊 항목들을 후보 {_n_cand}종목 전부에 적용 "
-               f"({day_disp} 아침, 추세·유동성·유연성·지지저항·모멘텀·수급 가중) · 상위: ")
-          + " · ".join(f"{r.get('name')} {r.get('score')}" for r in base[:5])]
-    L += ["", (f"**[STEP 6] Live re-rank (right now, {now})** — price move ×1.5 (±4) + "
-               f"order book (±2) + year zone (+2 bottom / −3 selling zone); "
-               f"ask again later and the order can change." if en else
-               f"**[6단계] 실시간 보정 ({now} 현재)** — 등락×1.5(±4) + 호가(±2) + 연중구간(바닥 +2 / 매도구간 −3) · "
-               f"시간이 지나면 순위가 달라질 수 있습니다.")]
+            L.append(("🚫 Deal-breaker today — new buying is reference only: " if en
+                      else "🚫 오늘 결격 — 신규 매수는 참고만: ") + det)
+        L.append("")
+    L += [(f"**[Scoring]** {_n_cand} candidates × the checklist's per-stock items "
+           f"({day_disp} morning base) + live re-rank at {now} (price ±4 · book ±2 · zone +2/−3). "
+           f"Each pick's own 100-item answers: click [근거 🔍]." if en else
+           f"**[채점]** 후보 {_n_cand}종목 × 체크리스트 종목 항목 ({day_disp} 아침 기준) + {now} 실시간 보정"
+           f"(등락 ±4 · 호가 ±2 · 구간 +2/−3). 종목별 100문항 실측 답은 [근거 🔍] 클릭."), ""]
     L += ["", f"**{'[RESULT] TOP ' + str(len(top)) if en else '[결과] 추천 TOP ' + str(len(top))}**"]
     # which recommendations are ACTUALLY TRADING today (the reco desk's five, fixed at
     # the morning bell — the desk never swaps mid-session, so the live list can differ)
@@ -520,19 +473,38 @@ def detail_by_code(db, code: str, lang: str = "ko", name: Optional[str] = None) 
         pass
     L.append(f"**⑤ {'News' if en else '뉴스'}:** {n_line}")
     L += n_links
-    # ⑥ THE FULL PER-ITEM CHECK, live (boss 2026-08-24: "for each checkpoint yes or no,
-    # and if it is about some % or number it should answer") — the 27 stock items of the
-    # checklist scored against live data, each with its measured value.
+    # ⑥ THIS STOCK'S FULL 100 — every checkpoint answered FOR THIS COMPANY (boss
+    # 2026-08-24: "the 100-checklist result is different for each stock, so clicking
+    # should show that stock's checklist"). Market items are today's shared measurements;
+    # stock items carry THIS stock's live values.
     try:
-        from services.checklist_engine import stock_scorecard
+        from services.checklist_engine import full_checklist, stock_scorecard
         card = stock_scorecard(db, code)
         lay = card.get("stock") or {}
-        L += ["", f"**⑥ {'Live item-by-item check' if en else '100문항 실측 (종목 항목)'} — "
+        mkt = card.get("market") or {}
+        measured = {it.get("no"): it for it in (mkt.get("items") or [])}
+        measured.update({it.get("no"): it for it in (lay.get("items") or [])})
+        algo = ALGO_EN if en else ALGO_KO
+        L += ["", f"**⑥ {nm} — {'the full 100, answered for this stock' if en else '이 종목의 100문항 실측'} · "
                   f"{lay.get('score')}/{lay.get('max')}{'' if en else '점'} ({card.get('pct')}%)**"]
-        for it in sorted(lay.get("items", []), key=lambda x: x.get("no", 0)):
-            mark = "✅" if it.get("ok") else "❌" if it.get("ok") is False else "❓"
-            q = (it.get("q_en") if en else it.get("q")) or it.get("q")
-            L.append(f"{mark} #{it['no']} {q} — {it.get('detail')}")
+        for it in sorted(full_checklist()["items"], key=lambda x: x["no"]):
+            no = it["no"]
+            q = (it.get("q_en") if en else it["q"]) or it["q"]
+            mv = measured.get(no)
+            if mv is not None:
+                mark = "✅" if mv.get("ok") else "❌" if mv.get("ok") is False else "❓"
+                L.append(f"{mark} {no}. {q} — {mv.get('detail')}")
+            elif no in PROXY_NOS:
+                L.append(f"📊 {no}. {q} — " + ("reflected via the liquidity/flexibility/book scores"
+                                               if en else "유동성·유연성·호가 점수로 반영"))
+            elif no in algo:
+                L.append(f"🤖 {no}. {q} — {algo[no]}")
+            elif no in NEWS_NOS:
+                L.append(f"📰 {no}. {q} — " + ("see the news stamps above (⑤)" if en else "위 ⑤ 뉴스 스탬프 참조"))
+            elif it["cat"] in ("준비", "실행/관리"):
+                L.append(f"🧑 {no}. {q}")
+            else:
+                L.append(f"⬜ {no}. {q}")
         if card.get("deal_breakers"):
             L.append(("🚫 deal-breakers: " if en else "🚫 결격: ")
                      + "; ".join(f"#{b['no']} {b['detail']}" for b in card["deal_breakers"][:3]))

@@ -93,10 +93,32 @@ def set_desk_mode(mode: str) -> str:
     return mode
 
 
-def score_five(n: int = N_PICKS) -> list[tuple[str, str]]:
+_N_FILE = _DATA / "reco_n.json"
+
+
+def reco_n() -> int:
+    """How many top-scored stocks the reco desk trades (boss 2026-08-24: 'we can
+    choose number of stock also'). Default 5; persisted on disk; clamped 1..10."""
+    try:
+        n = int(json.loads(_N_FILE.read_text(encoding="utf-8")).get("n", N_PICKS))
+        return max(1, min(n, 10))
+    except Exception:
+        return N_PICKS
+
+
+def set_reco_n(n: int) -> int:
+    n = max(1, min(int(n), 10))
+    _DATA.mkdir(exist_ok=True)
+    _N_FILE.write_text(json.dumps({"n": n}), encoding="utf-8")
+    return n
+
+
+def score_five(n: int | None = None) -> list[tuple[str, str]]:
     """Today's top-n by the 100-item score — saved morning file first, fresh compute
     fallback, [] when the picker cannot run (callers must then fall back to DESK,
     never to an empty desk — the 2026-08-24 blind-desk lesson)."""
+    if n is None:
+        n = reco_n()
     def _nm(r):
         # some rows carry the code as their name (e.g. 069500) — resolve to a real name
         if r.get("name") and r["name"] != r["code"]:
@@ -258,8 +280,10 @@ def _pct(vals: list[float], v: float, hi: bool = True) -> float:
     return p if hi else 100 - p
 
 
-def pick(day: str, n: int = N_PICKS, refresh_character: bool = False) -> dict[str, Any]:
+def pick(day: str, n: int | None = None, refresh_character: bool = False) -> dict[str, Any]:
     """TODAY's ranking. Character (year) x Condition (recent days), checklist weights."""
+    if n is None:
+        n = reco_n()
     ch = character(refresh=refresh_character, before=day)
     codes = list(ch)
     co = condition(day, codes)
@@ -353,7 +377,7 @@ def pick(day: str, n: int = N_PICKS, refresh_character: bool = False) -> dict[st
             "missing": missing, "weights": WEIGHTS, "rows": rows}
 
 
-def save_picks(day: str, n: int = N_PICKS) -> dict[str, Any]:
+def save_picks(day: str, n: int | None = None) -> dict[str, Any]:
     res = pick(day, n)
     if res.get("ok"):
         chosen = {c for c in res["picks"]}

@@ -654,7 +654,7 @@ def live_tape(code: str = Query("005930"), period: int = Query(0),
 @router.get("/live/rules")
 def live_rules(tick: int = Query(5), period: int = Query(0), day: str = Query(""),
                frm: str = Query(""), to: str = Query(""), gate: int = Query(1),
-               auto: int = Query(1)):
+               auto: int = Query(1), codes: str = Query("")):
     """The same rules the Strategy Lab runs, over the REAL Kiwoom tape. No ML here — the
     boss asked for the plain rules on real data first, which is the right order."""
     from services.kiwoom_rules import rank
@@ -668,9 +668,9 @@ def live_rules(tick: int = Query(5), period: int = Query(0), day: str = Query(""
     # still shows yesterday's result")
     from services.kiwoom_tape import _day as _kd9
     return _swr(("rank", tick, _p, day or _kd9(), frm, to, bool(gate),
-                 bool(auto)), 3.0,
+                 bool(auto), codes), 3.0,
                 lambda: rank(tick=tick, period=_p, day=day, frm=frm, to=to,
-                             use_gate=bool(gate), allow_fallback=bool(auto)),
+                             use_gate=bool(gate), allow_fallback=bool(auto), codes=codes),
                 placeholder={"ok": False, "computing": True})
 
 
@@ -680,7 +680,7 @@ def live_rule_trades(variant: str = Query(...), tick: int = Query(5),
                      bars: int = Query(2500), limit: int = Query(300),
                      around: int = Query(-1), budget: int = Query(0),
                      day: str = Query(""), frm: str = Query(""), to: str = Query(""),
-                     gate: int = Query(1), auto: int = Query(1)):
+                     gate: int = Query(1), auto: int = Query(1), codes: str = Query("")):
     """One rule's real trades: what it bought, at what, when, and why.
 
     `budget` is won per trade — 0 means the historical one share. It scales the money and
@@ -690,11 +690,11 @@ def live_rule_trades(variant: str = Query(...), tick: int = Query(5),
     _b = max(0, min(int(budget or 0), 1_000_000_000))
     from services.kiwoom_tape import _day as _kd9
     return _swr(("trades", variant, tick, _p, code, bars, limit, around, _b,
-                 day or _kd9(), frm, to, bool(gate), bool(auto)), 10.0,
+                 day or _kd9(), frm, to, bool(gate), bool(auto), codes), 10.0,
                 lambda: trades(variant, tick=tick, period=_p, code=code,
                                bars=bars, limit=limit, around=around, budget=_b,
                                day=day, frm=frm, to=to, use_gate=bool(gate),
-                               allow_fallback=bool(auto)),
+                               allow_fallback=bool(auto), codes=codes),
                 placeholder={"ok": False, "computing": True}, vital=True)
 
 
@@ -1141,6 +1141,25 @@ def desk_mode_set(mode: str = Query(...), force: int = Query(0),
             "trading_now": [{"code": c, "name": n} for c, n in WATCH]}
 
 
+@router.post("/reco-n")
+def reco_n_set(n: int = Query(...), force: int = Query(0)):
+    """How many top-scored stocks the reco desk trades (boss 2026-08-24: a menu to
+    choose the number). Persists, re-saves today's picks, re-points the collector.
+    Mid-session it needs force=1 (shrinking N abandons the leavers' tape)."""
+    from services.daily_pick import reco_n, set_reco_n
+    from services.kiwoom_tape import WATCH, _day, market_open, refresh_watch
+    from services.daily_pick import save_picks
+    nn = set_reco_n(n)
+    _DP_TTL.clear()
+    if market_open() and not force:
+        return {"ok": True, "n": nn, "applied": False,
+                "note": "market is open - pass force=1 to re-point the collector now"}
+    save_picks(_day())
+    refresh_watch(force=True)
+    return {"ok": True, "n": nn, "applied": True,
+            "trading_now": [{"code": c, "name": x} for c, x in WATCH]}
+
+
 @router.get("/desk-mode")
 def desk_mode_get():
     from services.daily_pick import DESK, desk_mode
@@ -1370,6 +1389,11 @@ def daily_pick_today(day: str = Query(""), refresh: int = Query(0),
             refresh_watch(force=True)
     res = pick(d)
     _enrich_pick(res, db)
+    try:
+        from services.daily_pick import reco_n as _rn
+        res["n_picks"] = _rn()
+    except Exception:
+        pass
     res["trading_now"] = [{"code": c, "name": n} for c, n in WATCH]
     # SETS, not lists: the collector holds the picks in score order while a fixed desk
     # lists them in the boss's order, and comparing lists made the board warn "still

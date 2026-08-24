@@ -105,7 +105,7 @@ type Pick = { ok: boolean; day: string; market_open?: boolean; applied?: boolean
               trading_now?: { code: string; name: string }[];
               pinned?: string[]; n_earned?: number; n_added?: number;
               mode?: string; desk?: string[]; missing?: string[];
-              market_pct?: number | null;
+              market_pct?: number | null; n_picks?: number;
               rows: { rank: number; code: string; name: string; score: number;
                       tick_pct: number; rsi: number; aligned: number; new_high: number;
                       why: string[]; groups: Record<string, number>;
@@ -371,6 +371,8 @@ export default function LiveDeskPage() {
     : (typeof window !== "undefined"
         ? new URLSearchParams(window.location.search).get("desk") : null);
   const [code, setCode] = useState("005930");
+  // which desk's stocks the rules/trades replay covers (assigned each render below)
+  const deskCodesRef = useRef("");
   // DEFAULT = 1분 (boss 2026-08-12, demo morning): Sharp lives on the minute chart,
   // so the board opens on it. 5틱 remains one click away in the 봉 dropdown.
   const [period, setPeriod] = useState(60);
@@ -710,6 +712,7 @@ export default function LiveDeskPage() {
       + `&around=${tradeIdx ?? -1}&budget=${budgetRef.current}`
       + `&day=${ruleDayRef.current}&frm=${encodeURIComponent(hourFromRef.current)}&to=${encodeURIComponent(hourToRef.current)}`
       + `&gate=${showBlockedRef.current ? 0 : 1}`
+      + `&codes=${encodeURIComponent(deskCodesRef.current)}`
       + `&auto=${dayTouchedRef.current && !ruleDayRef.current ? 0 : 1}`)
       .then((d) => { if (my !== detSeqRef.current) return;
                      if ((d as unknown as { computing?: boolean })?.computing) {
@@ -1025,6 +1028,7 @@ export default function LiveDeskPage() {
     api<Execs>(`/paper-desk/live/execs?code=${c}&n=120`).then(setExecs).catch(() => {});
     api<Rank>(`/paper-desk/live/rules?${q}&gate=${showBlockedRef.current ? 0 : 1}&day=${ruleDayRef.current}`
       + `&auto=${dayTouchedRef.current && !ruleDayRef.current ? 0 : 1}`
+      + `&codes=${encodeURIComponent(deskCodesRef.current)}`
       + `&frm=${encodeURIComponent(hourFromRef.current)}&to=${encodeURIComponent(hourToRef.current)}`)
       // a cold server key answers {computing:true} instantly - keep what is on
       // screen; the 3s interval retries by itself (boss 2026-08-19: the board
@@ -1083,6 +1087,11 @@ export default function LiveDeskPage() {
   const tabStocks = deskView === "reco"
     ? (_recoTabs.length > 0 ? _recoTabs : (st?.stocks ?? []))
     : (_sixTabs.length > 0 ? _sixTabs : (st?.stocks ?? []));
+  // the trades/rank replay covers only THIS desk's stocks (boss 2026-08-24: the two
+  // desks' trading histories looked identical)
+  deskCodesRef.current = deskView === "reco"
+    ? _recoRows.map((r) => r.code).join(",")
+    : Array.from(SIX_CODES).join(",");
   useEffect(() => {
     if (deskView === "reco" && recoSet.size > 0 && !recoSet.has(code)) {
       // reco view opens on the top-scored pick
@@ -1094,6 +1103,11 @@ export default function LiveDeskPage() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [deskView, dpick, st]);
+  // reco page defaults to the FULL ranking, all 40 top→down (boss 2026-08-24)
+  useEffect(() => {
+    if (deskView === "reco") setPickAll(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [deskView]);
 
   return (
     <div className="p-5 max-w-[1400px]">
@@ -1126,18 +1140,18 @@ export default function LiveDeskPage() {
           </span>
           {st && (
             <span className="text-[var(--text-muted)]">
-              {st.stocks.length}{t("종목", " stocks")} · {fmt(st.stocks.reduce((a2, x) => a2 + x.ticks, 0))}{t("틱", " ticks")}
+              {tabStocks.length}{t("종목", " stocks")} · {fmt(tabStocks.reduce((a2, x) => a2 + x.ticks, 0))}{t("틱", " ticks")}
             </span>
           )}
           {/* A hole in the tape is not cosmetic. Kiwoom remembers ~40 seconds, so whatever
               traded while the collector was down is gone for good and cannot be
               backfilled. Drawing a spliced tape as one line would imply prices that were
               never observed, so every hole is named. */}
-          {(st?.stocks ?? []).some((x) => (x.gap_sec ?? 0) > 0) && (
+          {tabStocks.some((x) => (x.gap_sec ?? 0) > 0) && (
             <div className="w-full mt-1 text-[10.5px]" style={{ color: GOLD }}>
               ⚠ {t("수집이 끊긴 구간이 있습니다 — 그 사이 체결은 되살릴 수 없습니다(키움은 40초만 보관). 서버를 재시작하면 그때마다 구멍이 생깁니다:",
                     "there are holes where collection stopped - those executions cannot be recovered (Kiwoom keeps only 40s). Every server restart makes one:")}
-              {(st?.stocks ?? []).filter((x) => (x.gap_sec ?? 0) > 0).map((x) => (
+              {tabStocks.filter((x) => (x.gap_sec ?? 0) > 0).map((x) => (
                 <span key={x.code} className="ml-2">
                   {x.name} {(x.gaps ?? []).map((g) => `${g.from.slice(0, 5)}~${g.to.slice(0, 5)} (${g.seconds}s)`).join(", ")}
                 </span>
@@ -1174,44 +1188,53 @@ export default function LiveDeskPage() {
           <div className="px-4 py-2 flex items-center gap-2 flex-wrap cursor-pointer"
             style={{ background: "rgba(21,101,192,0.06)" }} onClick={() => setPickOpen(!pickOpen)}>
             <b className="text-[13px]" style={{ color: "#1565c0" }}>
-              {/* RECO PAGE: score picks only, top→down — the six have their own menu
-                  (boss 2026-08-24: "remove my 6 from the 2nd menu, no need duplication") */}
+              {/* LIVE DESK shows ONLY the six; RECO DESK shows only score picks
+                  (boss 2026-08-24: "in the Live Kiwoom Desk must be only the prefixed
+                  6, nothing more") */}
               🎯 {deskView === "reco"
-                ? t(`체크리스트 상위 ${_recoRows.length}종목 — 점수 높은 순`,
-                    `checklist top ${_recoRows.length} — highest score first`)
-                : (dpick.mode ?? "both") === "score"
-                ? t(`100점 상위 ${(dpick.picks || []).length}종목 — 오늘 아침 점수로 뽑았습니다`,
-                    `top ${(dpick.picks || []).length} by score — chosen by this morning's checklist`)
-                : (dpick.mode ?? "both") === "both"
-                ? t(`두 데스크 함께 ${(dpick.picks || []).length}종목 — 내 6종목 + 100점 상위 5`,
-                    `both desks: ${(dpick.picks || []).length} stocks — my 6 + top 5 by score`)
-                : t(`내 종목 ${(dpick.picks || []).length} — 매일 이 종목만 매매합니다`,
-                    `my desk: ${(dpick.picks || []).length} stocks — these are what we trade, every day`)}
+                ? t(`체크리스트 자동매매 상위 ${dpick.n_picks ?? _recoRows.length}종목 · 전체 ${(dpick.rows || []).length}종목 점수순`,
+                    `checklist auto-trades the top ${dpick.n_picks ?? _recoRows.length} · all ${(dpick.rows || []).length} ranked below`)
+                : t("내 6종목 — 이 데스크는 항상 이 여섯만 매매합니다",
+                    "my 6 stocks — this desk trades only these six")}
             </b>
             <span className="text-[11px] font-bold">
-              {/* no scores on his own six: the desk is already decided, so a number
-                  beside each name decides nothing (boss 2026-08-11) */}
               {deskView === "reco"
                 ? _recoRows.map((r) => `${r.name} ${r.score}`).join(" · ")
-                : (dpick.picks || []).map((c) => (dpick.rows || []).find((r) => r.code === c))
-                    .filter(Boolean)
-                    .map((r) => ((dpick.mode ?? "both") !== "score" && r!.pinned ? r!.name
-                                                                                : `${r!.name} ${r!.score}`))
-                    .join(" · ")}
+                : (dpick.rows || []).filter((r) => r.pinned).map((r) => r.name).join(" · ")}
             </span>
             <span className="text-[10px] text-[var(--text-muted)]">
               {deskView === "reco"
-                ? t("오늘 아침 100문항 체크리스트가 뽑은 종목만 — 매일 다시 채점합니다. 내 6종목은 실시간 키움 데스크에서.",
-                    "only the stocks the 100-item checklist chose this morning — re-scored daily. My 6 live on the Live Kiwoom Desk.")
-                : (dpick.mode ?? "both") === "fixed"
-                ? t("직접 고른 고정 종목입니다. 종목을 누르면 그 종목의 매수·매도 시각과 차트가 아래에 열립니다.",
-                    "your own fixed list. Click a stock to open its buy and sell times and its chart below.")
+                ? t("아침 100문항 채점 순위 그대로, 위에서부터. 내 6종목은 실시간 키움 데스크에서.",
+                    "the morning 100-item ranking, top down. My 6 live on the Live Kiwoom Desk.")
                 : (dpick.mode ?? "both") === "both"
-                ? t("내 6종목과 체크리스트 상위 5종목이 함께 매매합니다 — 하나를 끄지 않는 한 둘 다 계속됩니다.",
-                    "my 6 and the checklist's top 5 trade together — both continue unless one is switched off.")
-                : t(`오늘 아침 100점 체크리스트가 뽑은 상위 5종목입니다 — 매일 다시 채점합니다.`,
-                    `the top five chosen by this morning's 100-item checklist - re-scored every day.`)}
+                ? t("추천 상위 종목도 병렬로 매매 중 — 그쪽은 체크리스트 추천 데스크 메뉴에서 봅니다.",
+                    "the checklist picks also trade in parallel — see them on the Checklist Reco Desk menu.")
+                : t("직접 고른 고정 종목입니다. 종목을 누르면 매수·매도 시각과 차트가 아래에 열립니다.",
+                    "your own fixed list. Click a stock to open its buy and sell times and its chart below.")}
             </span>
+            {deskView === "reco" && (
+              <span className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
+                <span className="text-[10px] font-bold text-[var(--text-muted)]">{t("자동매매 종목 수:", "auto-trade top:")}</span>
+                {[3, 5, 7, 10].map((nOpt) => (
+                  <button key={nOpt} disabled={deskBusy}
+                    onClick={() => {
+                      const open = !!dpick?.market_open;
+                      if (open && !confirm(t(`장중입니다. 지금 ${nOpt}종목으로 바꾸면 빠지는 종목의 오늘 기록 수집이 중단됩니다. 바꿀까요?`,
+                                             `Market is open. Changing to ${nOpt} now stops tape collection for the stocks that leave. Change?`))) return;
+                      setDeskBusy(true);
+                      api<{ ok: boolean }>(`/paper-desk/reco-n?n=${nOpt}&force=${open ? 1 : 0}`, { method: "POST" })
+                        .then(() => api<Pick>("/paper-desk/daily-pick"))
+                        .then(setDpick).catch(() => {}).finally(() => setDeskBusy(false));
+                    }}
+                    className="text-[10.5px] font-bold px-2 py-0.5 rounded border"
+                    style={(dpick.n_picks ?? 5) === nOpt
+                      ? { background: "#e65100", color: "#fff", borderColor: "#e65100" }
+                      : { borderColor: "var(--border-default)", color: "var(--text-secondary)" }}>
+                    {nOpt}
+                  </button>
+                ))}
+              </span>
+            )}
             {!dpick.applied && (
               <span className="text-[10px] font-bold px-1.5 py-0.5 rounded"
                 style={{ background: "rgba(230,81,0,0.14)", color: "#e65100" }}>
