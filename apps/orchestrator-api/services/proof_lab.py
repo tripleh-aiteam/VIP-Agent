@@ -2233,6 +2233,7 @@ def run_desk(stks: list[dict], v: dict, evidence: bool = False,
             continue
         s = stks[_si2]
         op = {"si": _si2, "buy_i": pos["i"], "entry": pos["entry"],
+              "judge": pos.get("judge"),
               "last": s["closes"][-1], "sig": pos.get("sig"), "wall": pos.get("wall"),
               "chop": bool(pos.get("chop")),
               "parts": ({"buys": pos.get("buys"),

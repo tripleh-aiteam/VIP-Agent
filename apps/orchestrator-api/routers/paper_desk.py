@@ -1018,6 +1018,7 @@ def _fam_compute(family: str, tick: int, period: int, day: str,
                              "result": ("win" if _won_sum > 0
                                         else "loss" if _won_sum < 0 else "flat"),
                              "partial": True, "sig": None, "wall": None,
+                             "judge": h.get("judge"),
                              "parts": {"buys": _hb, "sells": _sells7}})
         for i, tr in enumerate(d.get("trades") or []):
             won = round((tr.get("entry") or 0) * (tr.get("qty") or 1)
@@ -1030,6 +1031,7 @@ def _fam_compute(family: str, tick: int, period: int, day: str,
                          "exit_why": tr.get("exit_why"), "qty": tr.get("qty"),
                          "won": won, "result": tr.get("result"),
                          "sig": tr.get("sig"), "wall": tr.get("wall"),
+                         "judge": tr.get("judge"),
                          "parts": tr.get("parts")})
     # newest first (boss 2026-08-11) - the top of the table is what just happened
     rows.sort(key=lambda r: (r.get("d8") or "", r.get("buy_t") or ""), reverse=True)
