@@ -1079,7 +1079,11 @@ export default function LiveDeskPage() {
         </Link>
         <h1 className="text-[20px] font-extrabold text-[var(--text-primary)]">
           {deskView === "reco"
-            ? <>🎯 {t("체크리스트 추천 데스크 — 100문항이 고른 종목", "Checklist Reco Desk — chosen by the 100 items")}</>
+            ? <>🎯 {t("체크리스트 추천 데스크 — 100문항이 고른 종목", "Checklist Reco Desk — chosen by the 100 items")}
+                <span className="ml-2 text-[10.5px] font-normal text-[var(--text-muted)]">
+                  {t("아침 확정 5종목 (장중 교체 없음) · 챗봇의 '지금' 순위는 실시간 참고용",
+                     "the 5 fixed at the morning bell (no mid-session swaps) · the chatbot's 'now' ranking is the live reference")}
+                </span></>
             : <>📡 {t("실시간 키움 데스크 — 진짜 시장", "Live Kiwoom Desk — the real market")}</>}
         </h1>
       </div>

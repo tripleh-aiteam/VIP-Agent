@@ -35,7 +35,7 @@ import { fetchWithRetry } from "../lib/fetchWithRetry";
 
 // Bump on every user-facing chat-UI change — rendered as a tiny badge above the
 // composer so a stale browser tab is diagnosable at a glance.
-const UI_BUILD = "ui v08.24-8";
+const UI_BUILD = "ui v08.24-9";
 
 // ── Lightweight markdown renderer (no deps) ───────────────────────────────
 // Renders GitHub-flavored tables, **bold**, `code`, bullet lists and line

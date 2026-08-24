@@ -227,6 +227,17 @@ def build(db, n: int = 3, transcript: str = "", lang: str = "ko") -> dict[str, A
                f"**[3단계] 실시간 보정 ({now} 현재)** — 등락×1.5(±4) + 호가(±2) + 연중구간(바닥 +2 / 매도구간 −3) · "
                f"시간이 지나면 순위가 달라질 수 있습니다.")]
     L += ["", f"**{'[RESULT] TOP ' + str(len(top)) if en else '[결과] 추천 TOP ' + str(len(top))}**"]
+    # which recommendations are ACTUALLY TRADING today (the reco desk's five, fixed at
+    # the morning bell — the desk never swaps mid-session, so the live list can differ)
+    _traded: set = set()
+    _traded_names: list = []
+    try:
+        from services.daily_pick import score_five
+        for _c, _nm2 in score_five():
+            _traded.add(_c)
+            _traded_names.append(_nm2)
+    except Exception:
+        pass
     for i, (r, lv, tot) in enumerate(top, 1):
         code = r["code"]
         name = r.get("name") or code
@@ -259,7 +270,18 @@ def build(db, n: int = 3, transcript: str = "", lang: str = "ko") -> dict[str, A
                     if en else f"{round(tot, 1)}점 (기준 {r.get('score')} + 지금 {lv['adj']:+g})")
                  + (f" · {' · '.join(bits)}" if bits else "")
                  + f" · {zs}"
+                 + (f" · 🟢 {'trading today' if en else '오늘 매매중'}" if code in _traded else "")
                  + f" · [{'evidence 🔍' if en else '근거 🔍'}](evidence:{code})")
+    if _traded_names:
+        L += ["", (f"🟢 Today's RECO DESK (fixed at the morning bell, actually trading now): "
+                   f"{' · '.join(_traded_names)}. The list above is the LIVE view and can differ "
+                   f"intraday — the desk never swaps stocks mid-session (a swap would abandon the "
+                   f"day's tape and open positions). Watch them trade: Paper Trading → 체크리스트 추천 데스크."
+                   if en else
+                   f"🟢 오늘의 추천 데스크(아침 확정, 지금 실제 매매중): {' · '.join(_traded_names)}. "
+                   f"위 목록은 '지금' 실시간 순위라 장중에는 달라질 수 있습니다 — 데스크는 장중 종목 교체를 "
+                   f"하지 않습니다(교체하면 그날의 기록과 포지션을 버리게 됩니다). "
+                   f"매매 화면: 모의투자 → 체크리스트 추천 데스크.")]
     L += ["",
           ("Click a NAME to open its live chart on the left · click 근거/evidence to see exactly "
            "how the 100-item checklist, daily chart, minute/real-time, volume and news scored it — "
