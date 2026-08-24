@@ -6681,6 +6681,23 @@ def _run_agent_impl(
         except Exception as e:
             log.warning(f"market direction lane failed: {str(e)[:120]}")
 
+    # ===== RECOMMENDATION EVIDENCE (the proof click): "한미반도체 추천 근거" / "evidence
+    # for X recommendation" → the checklist/일봉/분봉/거래량/뉴스 breakdown with item
+    # numbers. MUST run before trade-intent — '추천' alone would route to decide(). =====
+    _tl_ev = (transcript or "").lower()
+    if (not confirmed_tool and not attachment_ids
+            and ("추천" in _tl_ev or "recommend" in _tl_ev)
+            and any(k in _tl_ev for k in ("근거", "이유", "왜 ", "evidence", "why", "reason", "proof"))):
+        try:
+            from services.checklist_reco import detail as _cr_detail
+            _dv = _cr_detail(db, transcript, lang)
+            if _dv:
+                return {"intent": "reco_evidence", "language": lang, "reply": _dv,
+                        "action": None, "speak": True, "transcript": transcript,
+                        "tool_used": "reco_evidence"}
+        except Exception as e:
+            log.warning(f"reco evidence lane failed: {str(e)[:120]}")
+
     # ===== TRADE-INTENT FIRST (order beats guards): any buy/sell ask on a resolvable
     # stock — even misspelled ('skynix') — goes to the 3-method decide composer BEFORE
     # the relay/price routes can swallow it ('from which price should I buy' kept

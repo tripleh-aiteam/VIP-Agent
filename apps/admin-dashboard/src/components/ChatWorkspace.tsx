@@ -38,9 +38,10 @@ import { fetchWithRetry } from "../lib/fetchWithRetry";
 // breaks so "make a table" actually shows a table (not raw pipes).
 function inlineFmt(s: string): ReactNode[] {
   const out: ReactNode[] = [];
-  // Tokens: **bold**, `code`, [label](url) markdown links (http or chart:CODE),
-  // and bare http(s) URLs. chart:CODE opens the TradingView proof panel in-chat.
-  const re = /(\*\*[^*]+\*\*|`[^`]+`|\[[^\]]+\]\((?:https?:\/\/[^\s)]+|chart:\d{6})\)|https?:\/\/[^\s)]+)/g;
+  // Tokens: **bold**, `code`, [label](url) markdown links (http, chart:CODE, or
+  // ask:QUESTION), and bare http(s) URLs. chart:CODE opens the TradingView proof
+  // panel; ask:Q sends Q as the next chat message (proof-on-click evidence links).
+  const re = /(\*\*[^*]+\*\*|`[^`]+`|\[[^\]]+\]\((?:https?:\/\/[^\s)]+|chart:\d{6}|ask:[^)]+)\)|https?:\/\/[^\s)]+)/g;
   const link = (href: string, label: string, k: number) => (
     <a key={k} href={href} target="_blank" rel="noopener noreferrer"
        className="text-blue-600 underline break-all hover:text-blue-700">{label}</a>
@@ -59,8 +60,14 @@ function inlineFmt(s: string): ReactNode[] {
     else if (tok.startsWith("`")) out.push(<code key={k++} className="px-1 py-0.5 bg-gray-100 rounded text-[13px] font-mono">{tok.slice(1, -1)}</code>);
     else if (tok.startsWith("[")) {
       const mc = /^\[([^\]]+)\]\(chart:(\d{6})\)$/.exec(tok);
+      const ma = /^\[([^\]]+)\]\(ask:([^)]+)\)$/.exec(tok);
       const mm = /^\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)$/.exec(tok);
       if (mc) out.push(chartLink(mc[2], mc[1], k++));
+      else if (ma) out.push(
+        <a key={k++} href="#" role="button"
+           onClick={(e) => { e.preventDefault(); try { window.dispatchEvent(new CustomEvent("vip-ask", { detail: ma[2] })); } catch {} }}
+           title={ma[2]}
+           className="inline-block px-1.5 rounded bg-blue-50 text-blue-700 border border-blue-200 hover:bg-blue-100 cursor-pointer text-[13px] no-underline">{ma[1]}</a>);
       else if (mm) out.push(link(mm[2], mm[1], k++));
       else out.push(tok);
     } else out.push(link(tok, tok, k++));  // bare URL
@@ -450,6 +457,19 @@ export default function ChatWorkspace({ apiBase, agentId, agentLabel }: Props) {
     };
     window.addEventListener("vip-open-chart", h);
     return () => window.removeEventListener("vip-open-chart", h);
+  }, []);
+  // Evidence links ([근거](ask:...) in answers) send their question as the next chat
+  // message. A ref keeps the CURRENT send() (fresh state) reachable from the one-time
+  // listener registration.
+  const askSendRef = useRef<(q: string) => void>(() => {});
+  askSendRef.current = (q: string) => { void send(q); };
+  useEffect(() => {
+    const h = (e: Event) => {
+      const q = (e as CustomEvent).detail;
+      if (q) askSendRef.current(String(q));
+    };
+    window.addEventListener("vip-ask", h);
+    return () => window.removeEventListener("vip-ask", h);
   }, []);
   // Live connectivity — drives the automatic switch to no-internet mode.
   const [online, setOnline] = useState<boolean>(() => (typeof navigator === "undefined" ? true : navigator.onLine));
