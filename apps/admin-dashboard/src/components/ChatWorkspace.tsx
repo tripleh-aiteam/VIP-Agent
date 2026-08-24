@@ -33,6 +33,10 @@ import { useRouter } from "next/navigation";
 import { jsPDF } from "jspdf";
 import { fetchWithRetry } from "../lib/fetchWithRetry";
 
+// Bump on every user-facing chat-UI change — rendered as a tiny badge above the
+// composer so a stale browser tab is diagnosable at a glance.
+const UI_BUILD = "ui v08.24-7";
+
 // ── Lightweight markdown renderer (no deps) ───────────────────────────────
 // Renders GitHub-flavored tables, **bold**, `code`, bullet lists and line
 // breaks so "make a table" actually shows a table (not raw pipes).
@@ -1397,6 +1401,10 @@ export default function ChatWorkspace({ apiBase, agentId, agentLabel }: Props) {
         {/* Composer */}
         <div className="border-t border-gray-200 bg-white px-4 py-3 md:px-6">
           <div className="mx-auto max-w-3xl">
+            {/* UI build badge — if a feature "doesn't click", check this first: an old
+                number means the tab is running a stale bundle → Ctrl+F5. */}
+            <div className="text-right text-[9px] text-gray-300 select-none -mb-1"
+              title="chat UI build — hard-refresh (Ctrl+F5) if features look missing">{UI_BUILD}</div>
             {!online && (
               <div className="mb-2 flex items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-1.5 text-[12px] text-amber-800">
                 <span>📴</span>

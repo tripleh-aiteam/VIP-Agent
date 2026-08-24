@@ -142,15 +142,19 @@ def _live_state(db, code: str) -> dict:
         except Exception:
             chg = None
     out["chg"] = chg
-    # LIVE ADJUSTMENT: intraday change (±3), order-book pressure (±2) — this is what
-    # makes the answer differ an hour later.
-    adj = 0.0
-    if chg is not None:
-        adj += max(-3.0, min(3.0, chg))
+    # LIVE ADJUSTMENT — what makes the answer differ an hour later (boss 2026-08-24
+    # "one hour ago also same answer": widened from ±5 to ±9 so real market movement
+    # can actually reorder the list, and split into named parts so the evidence panel
+    # can PROVE where the number came from):
+    #   price ±4  = today's move ×1.5, capped
+    #   book  ±2  = order-book pressure (bid/ask imbalance)
+    #   zone  +2/-3 = year-range position — bottom zone helps a BUY, selling zone hurts
+    a_px = max(-4.0, min(4.0, chg * 1.5)) if chg is not None else 0.0
     imb = rt.get("imbalance")
-    if imb is not None:
-        adj += 2.0 if imb > 0.15 else -2.0 if imb < -0.15 else 0.0
-    out["adj"] = round(adj, 1)
+    a_ob = 2.0 if (imb is not None and imb > 0.15) else -2.0 if (imb is not None and imb < -0.15) else 0.0
+    a_zn = 2.0 if (z and z.get("zone") == "buy") else -3.0 if (z and z.get("zone") == "sell") else 0.0
+    out["adj_parts"] = {"price": round(a_px, 1), "book": a_ob, "zone": a_zn}
+    out["adj"] = round(a_px + a_ob + a_zn, 1)
     return out
 
 
@@ -325,6 +329,15 @@ def detail_by_code(db, code: str, lang: str = "ko", name: Optional[str] = None) 
         t_bits.append((f"program {rt['program_net']:+,}" if en else f"프로그램 {rt['program_net']:+,}"))
     L.append(f"**③ {'Minute/real-time' if en else '분봉·실시간'}:** "
              + (" · ".join(t_bits) if t_bits else ("no live tape" if en else "실시간 데이터 없음")))
+    ap = lv.get("adj_parts") or {}
+    if ap:
+        L.append((f"· live adjustment **{lv.get('adj', 0):+g}** = price move {ap.get('price', 0):+g} "
+                  f"+ order book {ap.get('book', 0):+g} + year zone {ap.get('zone', 0):+g} "
+                  f"(this is what moves the ranking during the day)"
+                  if en else
+                  f"· 실시간 보정 **{lv.get('adj', 0):+g}점** = 등락 {ap.get('price', 0):+g} "
+                  f"+ 호가 {ap.get('book', 0):+g} + 연중구간 {ap.get('zone', 0):+g} "
+                  f"(장중에 순위를 움직이는 부분입니다)"))
     v_line = "—"
     if row and (row.get("groups") or {}).get("liquidity") is not None:
         v_line = (f"liquidity {row['groups']['liquidity']}/100" if en
