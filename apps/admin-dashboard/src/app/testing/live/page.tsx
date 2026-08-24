@@ -1058,11 +1058,15 @@ export default function LiveDeskPage() {
   const bars = tape?.bars ?? [];
   const me = st?.stocks.find((x) => x.code === code);
   // RECO DESK: the checklist's top-5 by score (★ rows) — the tabs filter to them and
-  // the page opens on the first one.
+  // the page opens on the first one. The DEFAULT view is the boss's six ONLY (his
+  // 2026-08-24 order: "in the Live Kiwoom menu it should be the 6 predefined stocks");
+  // either filter falls back to everything rather than ever showing an empty desk.
+  const SIX_CODES = new Set(["000660", "005930", "035420", "017670", "042660", "034020"]);
   const recoSet = new Set((dpick?.rows || []).filter((r) => r.by_score).map((r) => r.code));
-  const tabStocks = (deskView === "reco" && recoSet.size > 0)
-    ? (st?.stocks ?? []).filter((x) => recoSet.has(x.code))
-    : (st?.stocks ?? []);
+  const _sixTabs = (st?.stocks ?? []).filter((x) => SIX_CODES.has(x.code));
+  const tabStocks = deskView === "reco"
+    ? (recoSet.size > 0 ? (st?.stocks ?? []).filter((x) => recoSet.has(x.code)) : (st?.stocks ?? []))
+    : (_sixTabs.length > 0 ? _sixTabs : (st?.stocks ?? []));
   useEffect(() => {
     if (deskView === "reco" && recoSet.size > 0 && !recoSet.has(code)) {
       const first = (st?.stocks ?? []).find((x) => recoSet.has(x.code));
@@ -1430,7 +1434,10 @@ export default function LiveDeskPage() {
       {/* the GO/NO-GO strip only rides with the SCORE desk (boss 2026-08-11): on his
           fixed six the rules on the board ignore the gate anyway, so a wall of NO-GO
           over stocks that are trading regardless read as a contradiction */}
-      {gate?.ok && (dpick?.mode ?? "both") !== "fixed" && (
+      {/* GO/NO-GO buy permission = a RECOMMENDATION verdict → lives on the 추천 데스크
+          only (boss 2026-08-24: "the Live Kiwoom menu should be the 6 predefined
+          stocks' trading"). */}
+      {deskView === "reco" && gate?.ok && (
         <div className="mt-3 rounded-xl border px-4 py-2" style={{ borderColor: "#e65100",
              background: gate.go === 0 ? "rgba(176,42,42,0.06)" : "rgba(230,81,0,0.05)" }}>
           <div className="flex items-center gap-2 flex-wrap">
