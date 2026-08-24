@@ -1108,14 +1108,26 @@ def live_dip_status(tick: int = Query(5), period: int = Query(0)):
 
 
 @router.post("/desk-mode")
-def desk_mode_set(mode: str = Query(...), force: int = Query(0)):
+def desk_mode_set(mode: str = Query(...), force: int = Query(0),
+                  confirm_six_off: int = Query(0)):
     """Set which desks trade: "both" (default since 2026-08-24 — the boss's six AND the
     checklist's top five together, deduped), "fixed" (six only) or "score" (five only).
     The collector follows the combined list. During market hours a switch that REMOVES
     stocks needs force=1, because re-pointing mid-session abandons the tape already
-    collected for the stocks that leave (adding stocks never abandons anything)."""
+    collected for the stocks that leave (adding stocks never abandons anything).
+
+    SIX-OFF GUARD (boss 2026-08-24 ~14:10: his six silently stopped — a STALE board page,
+    built before the toggle UI, still sent mode=score as a radio click): turning the six
+    OFF (mode="score") now also needs confirm_six_off=1, which only the new toggle UI
+    sends after its confirmation dialog. Old cached pages can no longer stop the six."""
     from services.daily_pick import desk_mode, save_picks, set_desk_mode
     from services.kiwoom_tape import WATCH, _day, market_open, refresh_watch
+    if mode == "score" and not confirm_six_off:
+        return {"ok": False, "mode": desk_mode(), "applied": False,
+                "note": ("mode=score turns the boss's six OFF - refused without "
+                         "confirm_six_off=1 (sent only by the current board UI after "
+                         "its confirmation dialog). Reload the board page if you meant it."),
+                "trading_now": [{"code": c, "name": n} for c, n in WATCH]}
     m = set_desk_mode(mode)
     _DP_TTL.clear()
     d = _day()

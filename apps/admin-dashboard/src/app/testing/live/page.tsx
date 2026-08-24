@@ -525,7 +525,10 @@ export default function LiveDeskPage() {
       "지금은 장중입니다. 데스크를 끄면 빠지는 종목의 오늘 체결 기록 수집이 중단됩니다. 끌까요?",
       "The market is open. Turning this desk off stops collecting today's tape for the stocks that leave. Turn it off anyway?"))) return;
     setDeskBusy(true);
-    api<{ ok: boolean }>(`/paper-desk/desk-mode?mode=${mode}&force=${open ? 1 : 0}`, { method: "POST" })
+    // mode=score turns the six OFF — the backend refuses it without confirm_six_off=1
+    // (stale-page protection); we send it only here, after the confirm dialog above.
+    const sixOff = mode === "score" ? "&confirm_six_off=1" : "";
+    api<{ ok: boolean }>(`/paper-desk/desk-mode?mode=${mode}&force=${open ? 1 : 0}${sixOff}`, { method: "POST" })
       .then(() => api<Pick>("/paper-desk/daily-pick"))
       .then(setDpick)
       .catch(() => {})
