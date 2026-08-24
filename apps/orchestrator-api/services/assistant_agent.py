@@ -1798,6 +1798,93 @@ def _period_stats_reply(transcript: Optional[str], lang: str,
     return out
 
 
+# ===== MARKET DIRECTION — checklist #11 asked as a question ("오늘 코스피/코스닥
+# 방향은?", "What is today's KOSPI/KOSDAQ direction?") plus VIX/나스닥/유가/환율 asks.
+# Deterministic, from the same live indicators decide() uses — the LLM used to pick a
+# Yahoo summary tool with no KR indices and answer "no data" (boss 2026-08-24). =====
+
+_MKT_DIR_KW = ("코스피", "코스닥", "kospi", "kosdaq", "시장 방향", "시장방향", "오늘 시장",
+               "오늘 증시", "오늘 장", "market direction", "index direction",
+               "how is the market", "market today", "지수 방향", "오늘 지수",
+               "vix", "공포지수", "나스닥", "nasdaq", "유가", "환율", "원달러", "원/달러",
+               "exchange rate", "usd/krw", "usdkrw", "wti", "oil price")
+
+
+def _market_direction_reply(db, transcript: Optional[str], lang: str) -> Optional[str]:
+    try:
+        from services.decision_agent import _market_indicators
+        mi = _market_indicators() or {}
+    except Exception:
+        mi = {}
+    if not mi.get("kospi") and not mi.get("kosdaq"):
+        return None
+    en = str(lang or "").lower().startswith("en")
+    if not en and not _re.search(r"[가-힣]", transcript or "") \
+            and _re.search(r"[a-zA-Z]", transcript or ""):
+        en = True
+
+    def _word(p):
+        if p is None:
+            return "-"
+        if p <= -2.5:
+            return "plunge 📉" if en else "급락 📉"
+        if p <= -0.3:
+            return "down" if en else "하락"
+        if p >= 0.3:
+            return "up 📈" if en else "상승 📈"
+        return "flat" if en else "보합"
+
+    now = _dt_now_kst().strftime("%Y-%m-%d %H:%M")
+    L = [f"**📊 {'Today' + chr(39) + 's market' if en else '오늘의 시장'} — {now} KST**", "",
+         ("| Indicator | Level | Change | Read |" if en else "| 지표 | 값 | 등락 | 판단 |"),
+         "|---|---|---|---|"]
+    rows = (("kospi", "KOSPI" if en else "코스피"),
+            ("kosdaq", "KOSDAQ" if en else "코스닥"),
+            ("usdkrw", "USD/KRW" if en else "원/달러 환율"),
+            ("nasdaq", "NASDAQ (prev close)" if en else "나스닥(전일)"),
+            ("vix", "VIX (fear index)" if en else "VIX 공포지수"),
+            ("wti", "WTI oil" if en else "WTI 유가"))
+    for key, label in rows:
+        v = mi.get(key)
+        if not v:
+            continue
+        pct = v.get("pct")
+        read = _word(pct) if key in ("kospi", "kosdaq", "nasdaq") else ""
+        if key == "vix" and v.get("price") is not None:
+            try:
+                _vx = float(str(v["price"]).replace(",", ""))
+                read = ("calm" if _vx < 20 else "wary" if _vx < 28 else "fear") if en else \
+                       ("안정권" if _vx < 20 else "경계권" if _vx < 28 else "공포권")
+            except Exception:
+                pass
+        L.append(f"| {label} | {v.get('price', '-')} | {pct:+.2f}% | {read} |"
+                 if pct is not None else f"| {label} | {v.get('price', '-')} | - | {read} |")
+    # one-line verdict from the checklist's own market pre-flight
+    verdict = ""
+    try:
+        from services.checklist_engine import market_preflight
+        m = market_preflight(db)
+        if m.get("deal_breakers"):
+            _det = "; ".join(f"#{b['no']} {b['detail']}" for b in m["deal_breakers"][:2])
+            verdict = (f"**One line:** market check {m['score']}/{m['max']} · 🚫 {_det} — "
+                       f"better to skip NEW buying today." if en else
+                       f"**한 줄 판단:** 시장 체크 {m['score']}/{m['max']}점 · 🚫 {_det} — "
+                       f"오늘 신규 매수는 쉬는 게 좋습니다.")
+        else:
+            verdict = (f"**One line:** market check {m['score']}/{m['max']} · no deal-breakers — "
+                       f"conditions are OK for trading." if en else
+                       f"**한 줄 판단:** 시장 체크 {m['score']}/{m['max']}점 · 결격 없음 — "
+                       f"매매 가능한 환경입니다.")
+    except Exception:
+        pass
+    if verdict:
+        L += ["", verdict]
+    L += ["", ("Details: ask \"checklist\" for the full market check, \"recommend N stocks\" for today's picks."
+               if en else
+               "자세히: \"체크리스트\"로 시장 점검 전체, \"종목 N개 추천\"으로 오늘의 추천을 볼 수 있습니다.")]
+    return "\n".join(L)
+
+
 def _vip_stock_data_reply(transcript: Optional[str], lang: str, db=None) -> Optional[str]:
     """Unified VIP stock-data answer (the single source the AI Advisor relays):
     공매도 (Kiwoom ka10014) → history table (past/range) → live current price (with
@@ -6579,6 +6666,20 @@ def _run_agent_impl(
                         "speak": True, "transcript": transcript, "tool_used": "checklist"}
         except Exception as e:
             log.warning(f"checklist intent failed: {str(e)[:120]}")
+
+    # ===== MARKET DIRECTION (오늘 코스피/코스닥 방향? / VIX / 유가 / 환율) — deterministic
+    # snapshot from the live indicators; steps aside when a specific stock is named. =====
+    if (not confirmed_tool and not attachment_ids
+            and any(k in (transcript or "").lower() for k in _MKT_DIR_KW)
+            and not _all_stocks_in_query(transcript)):
+        try:
+            _mdr = _market_direction_reply(db, transcript, lang)
+            if _mdr:
+                return {"intent": "market_direction", "language": lang, "reply": _mdr,
+                        "action": None, "speak": True, "transcript": transcript,
+                        "tool_used": "market_direction"}
+        except Exception as e:
+            log.warning(f"market direction lane failed: {str(e)[:120]}")
 
     # ===== TRADE-INTENT FIRST (order beats guards): any buy/sell ask on a resolvable
     # stock — even misspelled ('skynix') — goes to the 3-method decide composer BEFORE
