@@ -71,17 +71,25 @@ def refresh_watch(force: bool = False) -> list[tuple[str, str]]:
     today = _day()
     if not force and _watch_day == today:
         return WATCH
+    # THE LIST IS THE BOSS'S, FIXED (his standing order: "the traded list is
+    # fixed by you - SK하이닉스, 삼성전자, NAVER, SK텔레콤, 한화오션,
+    # 두산에너빌리티; the checklist no longer decides who trades"). On
+    # 2026-08-24 ~11:00 a mid-session restart hit an empty picks file and the
+    # old screener silently chose ITS OWN five - the desk went blind on 5 of
+    # 6 stocks for ~15 minutes until the hourly audit caught it. The picker
+    # may never override this list again; it still runs for its morning
+    # scores, but WATCH is pinned.
+    WATCH[:] = [("000660", "SK하이닉스"), ("005930", "삼성전자"),
+                ("035420", "NAVER"), ("017670", "SK텔레콤"),
+                ("042660", "한화오션"), ("034020", "두산에너빌리티")]
+    _watch_day = today
+    logger.info("kiwoom_tape: watch pinned to the boss's six")
     try:
         from services.daily_pick import load_picks, save_picks
         picks = load_picks()
         if not picks:
             res = save_picks(today)
-            if res.get("ok"):
-                sel = {c for c in res["picks"]}
-                picks = [(r["code"], r["name"]) for r in res["rows"] if r["code"] in sel]
-            else:
-                picks = []
-        if picks:
+        if False:
             WATCH[:] = picks
             _watch_day = today
             logger.info("kiwoom_tape: today's five = %s", [n for _c, n in picks])
