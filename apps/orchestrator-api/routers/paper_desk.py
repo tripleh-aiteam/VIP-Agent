@@ -1300,9 +1300,48 @@ def raw_daily(code: str = Query(...), days: int = Query(20), to: str = Query("")
 _DP_TTL: dict = {}
 
 
+def _enrich_pick(res: dict, db) -> None:
+    """CONSISTENCY WITH THE CHATBOT (boss 2026-08-24: board 순위표 and chat 추천 showed
+    different lists): attach the same live layer the chat recommendation uses — base
+    (morning) + now (intraday change ±3, order-book pressure ±2) → live_total — plus
+    the checklist-CATEGORY columns (시장/이슈·수급/종목선정/실행·관리) for the new table."""
+    try:
+        from services.checklist_reco import _live_state
+        rows_sorted = sorted(res.get("rows", []), key=lambda r: -(r.get("score") or 0))
+        for r in rows_sorted[:10]:
+            lv = _live_state(db, r["code"])
+            r["live_adj"] = lv["adj"]
+            r["live_total"] = round((r.get("score") or 0) + lv["adj"], 1)
+            if lv.get("chg") is not None:
+                r["live_chg"] = round(lv["chg"], 1)
+            z = lv.get("zone")
+            if z:
+                r["zone"] = z["zone"]
+                r["zone_pos"] = z["pos"]
+    except Exception:
+        pass
+    try:
+        from services.checklist_engine import market_preflight
+        res["market_pct"] = (market_preflight(db) or {}).get("pct")
+    except Exception:
+        res["market_pct"] = None
+    _W = {"trend": 25, "liquidity": 20, "flexibility": 20, "levels": 15, "momentum": 10}
+    for r in res.get("rows", []):
+        g = r.get("groups") or {}
+        try:
+            _wsum = sum(w for k, w in _W.items() if k in g)
+            ssel = round(sum(g[k] * w for k, w in _W.items() if k in g) / _wsum) if _wsum else None
+        except Exception:
+            ssel = None
+        # exec (실행/관리 76~100) is computed at BUY time (타점/손익비/근거), not rankable
+        # here — the column shows "—" and points at the per-stock checklist.
+        r["cats"] = {"market": res.get("market_pct"), "issue": g.get("flows"),
+                     "stock_sel": ssel, "exec": None}
+
+
 @router.get("/daily-pick")
 def daily_pick_today(day: str = Query(""), refresh: int = Query(0),
-                     force: int = Query(0)):
+                     force: int = Query(0), db: Session = Depends(get_db)):
     """TODAY's five, chosen by the checklist: long-run character x current condition,
     everything from data before today. refresh=1 recomputes and re-points the collector
     (only honoured outside market hours - swapping stocks mid-session would abandon
@@ -1330,6 +1369,7 @@ def daily_pick_today(day: str = Query(""), refresh: int = Query(0),
             save_picks(d)
             refresh_watch(force=True)
     res = pick(d)
+    _enrich_pick(res, db)
     res["trading_now"] = [{"code": c, "name": n} for c, n in WATCH]
     # SETS, not lists: the collector holds the picks in score order while a fixed desk
     # lists them in the boss's order, and comparing lists made the board warn "still

@@ -57,6 +57,23 @@ const COL_HELP: Record<string, [string, string, string, string]> = {
   flows: ["수급 — 비중 10", "flows - weight 10",
     "큰 손이 같은 편인가. ① 외국인 3일 순매수(45%) ② 기관 3일 순매수(30%) ③ 개인만 몰려 있는 종목이면 감점(15%) ④ 공매도 비중이 낮을수록 가점(10%). 외국인·기관이 파는 종목은 오전에 올라도 되돌림이 자주 나옵니다.",
     "Is the big money on our side? (1) foreigners' 3-day net buying (45%), (2) institutions' 3-day net (30%), (3) a penalty when only retail is crowded in (15%), (4) a bonus for low short interest (10%). Names that foreigners and institutions are selling tend to give back their morning gains."],
+  // — checklist-CATEGORY columns (boss 2026-08-24: columns named after his checklist's
+  //   own 분류, click shows the subcategories) + the live "지금" column —
+  now: ["지금 (실시간 보정)", "now (live adjustment)",
+    "챗봇 추천과 똑같은 계산입니다: 아침 점수 + 실시간 보정(당일 등락 ±3점 · 호가 매수/매도 우위 ±2점) = 합계. 이 칸이 있는 종목만 실시간 계산 대상(상위 10)이며, 표는 이 합계 순으로 정렬됩니다 — 챗봇의 추천 순서와 같습니다.",
+    "The exact same math as the chatbot's recommendation: morning score + live adjustment (today's move ±3, order-book pressure ±2) = total. Only the top 10 get the live pass, and the table sorts by this total — the same order the chatbot recommends."],
+  market: ["시장 (체크리스트 11~25번)", "market (checklist #11-25)",
+    "종목이 아니라 오늘 시장 전체의 점수라 모든 줄이 같습니다. 자동 점검 항목: #11 코스피/코스닥 방향 · #12 미국 증시 · #16 유가 · #17 VIX · #20 지정학 · #22 시장 악재 · #36 만기일 · #95 급락일 · #100 마감 직전. 자세히는 챗봇에 \"체크리스트\"라고 물어보세요.",
+    "Scores TODAY's market, not the stock, so every row shows the same number. Auto-checked items: #11 KOSPI/KOSDAQ direction, #12 US close, #16 oil, #17 VIX, #20 geopolitics, #22 market-wide bad news, #36 expiry day, #95 plunge day, #100 near the close. Ask the chatbot \"checklist\" for the live detail."],
+  issue: ["이슈/수급 (체크리스트 26~45번)", "issue/flows (checklist #26-45)",
+    "종목별 자동 점검 가능한 수급 항목의 점수입니다: #31 외국인 순매수 · #32 기관 순매수 · #34 개인 쏠림(감점) · #43 공매도 과열(감점). 뉴스/테마(#26~30, #40~42, #44~45)는 순위표가 아니라 챗봇 추천의 '근거 🔍'와 뉴스 스탬프에서 봅니다.",
+    "The per-stock flow items that can be auto-checked: #31 foreign net buying, #32 institutional net buying, #34 retail crowding (penalty), #43 short-selling overheat (penalty). News/theme items (#26-30, #40-42, #44-45) live in the chatbot's evidence 🔍 and the news stamps, not this table."],
+  stock_sel: ["종목선정 (체크리스트 46~75번)", "stock selection (checklist #46-75)",
+    "다섯 소분류의 가중평균입니다: 추세(#50·51·52·58) 25 · 유동성(#21·46·47·69) 20 · 유연성(#48 호가비용) 20 · 지지저항(#62·63·67·74) 15 · 모멘텀(#60·61) 10. 아래 '세부 6칸 보기' 버튼을 누르면 소분류별 점수가 각각 열립니다.",
+    "The weighted average of five subcategories: trend (#50·51·52·58) w25, liquidity (#21·46·47·69) w20, flexibility (#48 tick cost) w20, levels (#62·63·67·74) w15, momentum (#60·61) w10. Press 'show the 6 detail columns' below to see each subcategory."],
+  exec: ["실행/관리 (체크리스트 76~100번)", "execution (checklist #76-100)",
+    "매수 타점(#76) · 손절/익절(#77·78) · 손익비(#79) · 진입 근거 3개(#82) 같은 항목은 '사는 순간'에 계산되는 것이라 아침 순위표에는 없습니다. 종목을 정한 뒤 챗봇에 \"종목명 체크리스트\"라고 물으면 이 항목들이 실시간으로 채점됩니다.",
+    "Items like the entry point (#76), stop/target (#77·78), risk:reward (#79) and 3+ reasons (#82) are computed AT THE MOMENT OF BUYING, so they can't rank a morning table. Once you pick a stock, ask the chatbot \"<stock> checklist\" and these are scored live."],
 };
 
 const RED = "#d32f2f";
@@ -87,11 +104,16 @@ type Pick = { ok: boolean; day: string; market_open?: boolean; applied?: boolean
               trading_now?: { code: string; name: string }[];
               pinned?: string[]; n_earned?: number; n_added?: number;
               mode?: string; desk?: string[]; missing?: string[];
+              market_pct?: number | null;
               rows: { rank: number; code: string; name: string; score: number;
                       tick_pct: number; rsi: number; aligned: number; new_high: number;
                       why: string[]; groups: Record<string, number>;
                       pinned?: boolean; by_score?: boolean; on_desk?: boolean;
-                      added?: boolean }[] };
+                      added?: boolean;
+                      live_adj?: number; live_total?: number; live_chg?: number;
+                      zone?: string; zone_pos?: number;
+                      cats?: { market?: number | null; issue?: number | null;
+                               stock_sel?: number | null; exec?: number | null } }[] };
 type Screen = { ok: boolean; scored_on?: string; tested_on?: string;
                 test_result?: { picked: { trades: number; win: number; won: number };
                                 previous: { trades: number; win: number; won: number } };
@@ -474,6 +496,7 @@ export default function LiveDeskPage() {
   const [pickOpen, setPickOpen] = useState(true);      // the desk is worth seeing at once
   const [pickAll, setPickAll] = useState(false);       // the other 32 stay behind a button
   const [pickCol, setPickCol] = useState("");          // a column header explains itself when clicked
+  const [pickDetail, setPickDetail] = useState(false); // category columns ↔ the 6 subcategory columns
   useEffect(() => { api<Pick>("/paper-desk/daily-pick").then(setDpick).catch(() => {}); }, []);
   // WHICH DESK TRADES (boss 2026-08-11): his six by default, or the checklist's top five
   // - and switching one ON turns the other OFF, collector included. During market hours
@@ -1170,13 +1193,21 @@ export default function LiveDeskPage() {
               <table className="w-full text-[11.5px] tabular-nums">
                 <thead><tr className="text-[10px] text-[var(--text-muted)] sticky top-0"
                   style={{ background: "var(--bg-elevated)" }}>
-                  {[["rank", t("순위", "#"), "left"], ["stock", t("종목", "stock"), "left"],
-                    ["score", t("점수", "score"), "right"], ["trend", t("추세", "trend"), "right"],
-                    ["liquidity", t("유동성", "liq"), "right"], ["flexibility", t("유연성", "flex"), "right"],
-                    ["levels", t("지지저항", "levels"), "right"], ["momentum", t("모멘텀", "mom"), "right"],
-                    ["flows", t("수급", "flows"), "right"]].map(([k, lab, al]) => (
+                  {/* CATEGORY VIEW = the checklist's own 분류 as columns (boss 2026-08-24);
+                      the button below swaps in the six subcategory columns. */}
+                  {(pickDetail
+                    ? [["rank", t("순위", "#"), "left"], ["stock", t("종목", "stock"), "left"],
+                       ["score", t("점수", "score"), "right"], ["now", t("지금", "now"), "right"],
+                       ["trend", t("추세", "trend"), "right"], ["liquidity", t("유동성", "liq"), "right"],
+                       ["flexibility", t("유연성", "flex"), "right"], ["levels", t("지지저항", "levels"), "right"],
+                       ["momentum", t("모멘텀", "mom"), "right"], ["flows", t("수급", "flows"), "right"]]
+                    : [["rank", t("순위", "#"), "left"], ["stock", t("종목", "stock"), "left"],
+                       ["score", t("점수", "score"), "right"], ["now", t("지금", "now"), "right"],
+                       ["market", t("시장", "market"), "right"], ["issue", t("이슈/수급", "issue/flows"), "right"],
+                       ["stock_sel", t("종목선정", "selection"), "right"], ["exec", t("실행/관리", "execution"), "right"]]
+                  ).map(([k, lab, al]) => (
                     <th key={k} onClick={() => setPickCol(pickCol === k ? "" : k)}
-                      title={t("눌러서 설명 보기", "click for an explanation")}
+                      title={t("눌러서 소분류/설명 보기", "click for the subcategories / explanation")}
                       className={`px-2 py-1 cursor-pointer select-none whitespace-nowrap ${al === "left" ? "text-left" : "text-right"}`}
                       style={pickCol === k ? { color: "#1565c0", fontWeight: 800 } : undefined}>
                       <span style={{ borderBottom: "1px dotted currentColor" }}>{lab}</span>
@@ -1185,8 +1216,8 @@ export default function LiveDeskPage() {
                   ))}
                 </tr></thead>
                 <tbody>
-                  {pickCol && (
-                    <tr><td colSpan={9} className="px-4 py-2.5 text-[11px] leading-relaxed border-b"
+                  {pickCol && COL_HELP[pickCol] && (
+                    <tr><td colSpan={pickDetail ? 10 : 8} className="px-4 py-2.5 text-[11px] leading-relaxed border-b"
                       style={{ background: "rgba(21,101,192,0.07)", borderColor: "#1565c0",
                                color: "var(--text-secondary)" }}>
                       <div className="flex items-start gap-2">
@@ -1200,30 +1231,50 @@ export default function LiveDeskPage() {
                       </div>
                     </td></tr>
                   )}
-                  {(pickAll ? dpick.rows
-                            : (dpick.picks || []).map((c) => dpick.rows.find((r) => r.code === c))
-                                                 .filter(Boolean) as typeof dpick.rows).map((r) => (
+                  {(pickAll
+                      // full ranking, sorted by the LIVE total when present — the same
+                      // order the chatbot recommends (boss 2026-08-24: consistency)
+                      ? [...dpick.rows].sort((a, b) =>
+                          (b.live_total ?? b.score) - (a.live_total ?? a.score))
+                      : (dpick.picks || []).map((c) => dpick.rows.find((r) => r.code === c))
+                                           .filter(Boolean) as typeof dpick.rows
+                   ).map((r, ri) => (
                     <React.Fragment key={r.code}>
-                    {pickAll && r === dpick.rows[0] && (
-                      <tr><td colSpan={9} className="px-3 py-1 text-[10px] font-bold text-center"
+                    {pickAll && ri === 0 && (
+                      <tr><td colSpan={pickDetail ? 10 : 8} className="px-3 py-1 text-[10px] font-bold text-center"
                         style={{ background: "rgba(128,128,128,0.10)", color: "var(--text-muted)" }}>
-                        {t("▼ 100점 체크리스트 전체 순위 (참고용) · ★ = 오늘 점수 상위 5 · 색칠된 줄 = 내 종목",
-                           "▼ the full 100-item checklist ranking (for reference) · ★ = today's top 5 by score · shaded = your desk")}
+                        {t("▼ 100점 체크리스트 전체 순위 — '지금' 합계 순 (챗봇 추천과 동일) · ★ = 아침 점수 상위 5 · 색칠된 줄 = 내 종목",
+                           "▼ the full 100-item checklist ranking — sorted by the 'now' total (same as the chatbot) · ★ = morning top 5 · shaded = your desk")}
                       </td></tr>
                     )}
                     <tr className="border-t border-[var(--border-default)]/40"
                       style={{ background: r.on_desk ? (r.pinned ? "rgba(230,81,0,0.09)" : "rgba(21,101,192,0.10)")
                                                      : "transparent" }}>
-                      <td className="px-3 py-1 text-[var(--text-muted)]">{r.rank}</td>
+                      <td className="px-3 py-1 text-[var(--text-muted)]">{pickAll ? ri + 1 : r.rank}</td>
                       <td className="px-2 font-bold text-[var(--text-primary)]">
-                        {r.by_score ? <span title={t("오늘 점수 상위 5", "top 5 by score today")}
+                        {r.by_score ? <span title={t("아침 점수 상위 5", "morning top 5 by score")}
                           style={{ color: "#e65100" }}>★ </span> : ""}{r.name}</td>
                       <td className="text-right px-3 font-extrabold" style={{ color: "#1565c0" }}>{r.score}</td>
-                      {["trend","liquidity","flexibility","levels","momentum","flows"].map((g) => (
+                      <td className="text-right px-2 font-extrabold"
+                        title={r.live_adj !== undefined
+                          ? t(`아침 ${r.score} + 실시간 ${r.live_adj >= 0 ? "+" : ""}${r.live_adj}`,
+                              `morning ${r.score} + live ${r.live_adj >= 0 ? "+" : ""}${r.live_adj}`)
+                          : t("상위 10만 실시간 계산", "live pass covers the top 10")}
+                        style={{ color: r.live_total !== undefined
+                          ? ((r.live_adj ?? 0) >= 0 ? "#0f5132" : "#b02a2a") : "var(--text-muted)" }}>
+                        {r.live_total !== undefined ? r.live_total : "·"}
+                      </td>
+                      {(pickDetail
+                        ? (["trend","liquidity","flexibility","levels","momentum","flows"] as const)
+                            .map((g) => [g, r.groups?.[g]] as const)
+                        : ([["market", r.cats?.market], ["issue", r.cats?.issue],
+                            ["stock_sel", r.cats?.stock_sel], ["exec", r.cats?.exec]] as const)
+                      ).map(([g, v]) => (
                         <td key={g} className="text-right px-2"
-                          style={{ color: (r.groups?.[g] ?? 0) >= 70 ? "#0f5132"
-                                   : (r.groups?.[g] ?? 0) >= 40 ? "var(--text-secondary)" : "#b02a2a" }}>
-                          {r.groups?.[g] ?? "-"}
+                          style={{ color: v == null ? "var(--text-muted)"
+                                   : (v ?? 0) >= 70 ? "#0f5132"
+                                   : (v ?? 0) >= 40 ? "var(--text-secondary)" : "#b02a2a" }}>
+                          {v == null ? (g === "exec" ? "—" : "-") : v}
                         </td>
                       ))}
                     </tr>
@@ -1239,6 +1290,13 @@ export default function LiveDeskPage() {
                   {pickAll ? t("내 종목만 보기 ▲", "show only my desk ▲")
                            : t(`100점 체크리스트 순위 보기 (${dpick.rows.length}종목) ▼`,
                                `see the 100-item checklist ranking (${dpick.rows.length} stocks) ▼`)}
+                </button>
+                <button onClick={() => { setPickDetail(!pickDetail); setPickCol(""); }}
+                  className="ml-2 text-[10.5px] font-bold px-2.5 py-1 rounded-md border"
+                  style={pickDetail ? { background: "#00838f", color: "#fff", borderColor: "#00838f" }
+                                    : { borderColor: "#00838f", color: "#00838f" }}>
+                  {pickDetail ? t("체크리스트 4분류로 보기", "show the 4 checklist categories")
+                              : t("세부 6칸 보기 (추세·유동성…)", "show the 6 detail columns")}
                 </button>
                 <button onClick={() => setRawCode(rawCode ? "" : (dpick.rows[0]?.code || ""))}
                   className="ml-2 text-[10.5px] font-bold px-2.5 py-1 rounded-md border"

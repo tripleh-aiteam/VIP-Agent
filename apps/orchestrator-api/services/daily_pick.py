@@ -306,7 +306,14 @@ def pick(day: str, n: int = N_PICKS, refresh_character: bool = False) -> dict[st
         if b["foreign3"] > 0: why.append("외국인 순매수")
         if b["vol_surge"] > 1.5: why.append("거래량 급증")
         if a["tick_pct"] < 0.10: why.append("호가 비용 낮음")
-        rows.append({"code": c, "name": a["name"], "score": round(score, 1),
+        nm = a.get("name") or c
+        if nm == c:                     # some rows carry the code as their name (069500)
+            try:
+                from services.stock_resolver import display_name
+                nm = display_name(c) or c
+            except Exception:
+                pass
+        rows.append({"code": c, "name": nm, "score": round(score, 1),
                      "groups": {k: round(v) for k, v in g.items()},
                      "tick_pct": round(a["tick_pct"], 3), "rsi": round(b["rsi"]),
                      "aligned": b["aligned"], "new_high": b["new_high"],
