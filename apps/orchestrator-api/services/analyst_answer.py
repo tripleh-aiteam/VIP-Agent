@@ -144,6 +144,33 @@ def _stock_pack(db, code: str, name: str) -> str:
             lines.append(f"- 뉴스 무드 점수: {int(nw['score']):+d} (범위 −3~+3)")
     except Exception:
         pass
+    # recent DAILY rows + fundamentals (deep audit 2026-08-25: with no past rows in the
+    # pack, "why did it drop yesterday" got an invented 2024 story — now the real
+    # yesterday is right here, and valuation questions have real figures too)
+    try:
+        from services.price_history import rows as _ph_rows
+        rws, _src = _ph_rows(db, code, 6)
+        if rws:
+            lines.append("- 최근 일별(우리 DB): " + " / ".join(
+                f"{r.get('date')} 종가 {_fmt(r.get('close'))} "
+                f"({r.get('change_pct') if r.get('change_pct') is not None else '?'}%) "
+                f"거래량 {_fmt(r.get('volume'))}" for r in rws[:6]))
+    except Exception:
+        pass
+    try:
+        from services.naver_stock import fundamentals as _fund
+        f = _fund(code) or {}
+        info = f.get("info") or {}
+        if info:
+            lines.append(f"- 기본지표: PER {info.get('per')} · PBR {info.get('pbr')} · "
+                         f"시총 {info.get('marketValue')} · 배당수익률 {info.get('dividendYieldRatio')} · "
+                         f"52주 {info.get('lowPriceOf52Weeks')}~{info.get('highPriceOf52Weeks')} · "
+                         f"외국인 {info.get('foreignRate')}")
+        if f.get("target_mean"):
+            lines.append(f"- 증권사 컨센서스 목표가 {f.get('target_mean')}원 "
+                         f"(평균 투자의견 {f.get('recomm_mean')}/5)")
+    except Exception:
+        pass
     return "\n".join(lines)
 
 
@@ -208,6 +235,11 @@ HOW TO ANSWER — read, think, then write:
    explanation with the cases laid out; a "what does today mean" question
    gets an interpretation grounded in the numbers; a scenario question gets
    scenarios with rough probabilities and the key levels to watch.
+4. NEVER invent a date, price, event, or reason that is not in the data pack
+   or the conversation. Recent-past facts come from the 최근 일별 rows in the
+   pack (the dates there are correct — never restate them with a different
+   year). If the pack lacks the asked figure, say exactly that in one sentence
+   and give the closest real figure — never apologize into a non-answer.
 
 STYLE:
 - Conclusion first, then the reasoning, in clean sections or short numbered

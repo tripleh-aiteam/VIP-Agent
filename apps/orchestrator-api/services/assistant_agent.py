@@ -2070,7 +2070,10 @@ _FUND_KW = ("배당", "dividend", "시가총액", "시총", "market cap", "marke
             "foreign ownership", "foreign rate", "52주", "52 week", "52-week",
             "목표가", "목표 주가", "target price", "컨센서스", "consensus", "투자의견",
             "애널리스트", "analyst rating", "analyst target", "fundamental", "펀더멘털",
-            "밸류에이션", "valuation")
+            "밸류에이션", "valuation",
+            # "is it expensive?" is a VALUATION ask (deep audit 2026-08-25: it got a
+            # current-price table) — answer with PER/PBR + the 52-week band
+            "expensive", "overvalued", "undervalued", "너무 비싸", "고평가", "저평가")
 
 
 def _is_fundamentals_q(transcript: Optional[str]) -> bool:
@@ -2100,9 +2103,11 @@ def _fundamentals_reply(transcript: Optional[str], lang: str, db=None) -> Option
     w_mcap = any(k in t for k in ("시가총액", "시총", "market cap", "marketcap",
                                   "market value", "market capitalization"))
     w_frn = "외국인" in t or "foreign" in t
-    w_52 = "52" in t
+    w_pricey = any(k in t for k in ("expensive", "overvalued", "undervalued", "너무 비싸",
+                                    "고평가", "저평가"))
+    w_52 = "52" in t or w_pricey
     w_val = bool(_FUND_RE.search(t)) or "밸류에이션" in t or "valuation" in t or "펀더멘털" in t \
-        or "fundamental" in t
+        or "fundamental" in t or w_pricey
     broad = not any((w_target, w_div, w_mcap, w_frn, w_52, w_val))
     secs = []
     for code, name in stocks[:3]:
@@ -2169,6 +2174,60 @@ def _fundamentals_reply(transcript: Optional[str], lang: str, db=None) -> Option
     out += ("\n\n📦 출처: 시장 공시·증권사 컨센서스 데이터 (실시간 조회)" if not _en
             else "\n\n📦 Source: market disclosure & analyst consensus data (live)")
     return out
+
+
+def _looks_refusal(text: str) -> bool:
+    """An apology / 'no information' non-answer — the thing the boss never wants."""
+    tl = (text or "").lower()
+    return any(p in tl for p in ("i'm sorry", "i am sorry", "cannot provide", "can't provide",
+                                 "unable to provide", "do not have access", "don't have access",
+                                 "no information available", "not able to answer",
+                                 "죄송하지만", "죄송합니다만", "제공할 수 없", "정보가 없습니다",
+                                 "알 수 없습니다", "도와드릴 수 없"))
+
+
+def _ground_pack(db, stocks) -> str:
+    """Compact REAL-data block for up to 2 named stocks — live price, last 5 daily rows
+    (our DB), fundamentals, consensus. Injected into the fallback LLM's system prompt so
+    ANY question shape is grounded (boss 2026-08-25: 'not only for specific questions —
+    it must answer in all cases')."""
+    parts = []
+    for code, name in stocks[:2]:
+        L = [f"### {(name or code).upper()} ({code})"]
+        try:
+            from services.paper_desk import _chg_cache, _live_price
+            px, _n = _live_price(code)
+            if px:
+                _c = _chg_cache.get(code)
+                L.append(f"- live price ₩{px:,.0f}" + (f" ({_c:+.2f}% today)" if _c is not None else ""))
+        except Exception:
+            pass
+        try:
+            from services.price_history import rows as _ph5
+            rws, _s5 = _ph5(db, code, 5)
+            for r in rws[:5]:
+                L.append(f"- {r.get('date')}: close {r.get('close')} "
+                         f"({r.get('change_pct') if r.get('change_pct') is not None else '?'}%) "
+                         f"open {r.get('open')} high {r.get('high')} low {r.get('low')} "
+                         f"vol {r.get('volume')}")
+        except Exception:
+            pass
+        try:
+            from services.naver_stock import fundamentals as _fund
+            f = _fund(code) or {}
+            info = f.get("info") or {}
+            if info:
+                L.append(f"- PER {info.get('per')} · PBR {info.get('pbr')} · mktcap {info.get('marketValue')} "
+                         f"· div yield {info.get('dividendYieldRatio')} · 52w {info.get('lowPriceOf52Weeks')}"
+                         f"~{info.get('highPriceOf52Weeks')} · foreign {info.get('foreignRate')}")
+            if f.get("target_mean"):
+                L.append(f"- analyst consensus target {f['target_mean']}원 "
+                         f"(mean rating {f.get('recomm_mean')}/5, {f.get('consensus_date')})")
+        except Exception:
+            pass
+        if len(L) > 1:
+            parts.append("\n".join(L))
+    return "\n\n".join(parts)
 
 
 # ===== ❓ WHY DID IT MOVE (deep audit 2026-08-25): "why did SK hynix drop yesterday?"
@@ -7813,6 +7872,21 @@ def _run_agent_impl(
                       + _ck_lines + "\n\n") + system
         except Exception:
             pass
+    # UNIVERSAL LIVE GROUND PACK (boss 2026-08-25: "not only for specific questions —
+    # it must answer in all cases"): whatever the question shape, a named stock puts
+    # its REAL numbers in front of the LLM so there is nothing left to invent.
+    try:
+        _gp_st = _all_stocks_in_query(transcript)[:2]
+        if _gp_st:
+            _gp = _ground_pack(db, _gp_st)
+            if _gp:
+                system = ("■ LIVE DATA for the stock(s) in the question (real, from our own "
+                          "systems — ground every number/date in THIS or a tool result; if "
+                          "the asked figure is not here and no tool provides it, say exactly "
+                          "what is missing and give the closest real figure — NEVER apologize "
+                          "into a non-answer, NEVER invent):\n" + _gp + "\n\n") + system
+    except Exception:
+        pass
     # Deterministic cross-agent pre-router (VIP only): force ask_agent for clear
     # stock/asset questions so they never fall through to web_search.
     _route_hint = _cross_agent_route_hint(transcript, agent_id)
@@ -8315,6 +8389,19 @@ def _run_agent_impl(
 
     # If the LLM chose to answer directly, return it
     if decision.get("answer") and not decision.get("tool"):
+        # UNIVERSAL NO-APOLOGY GUARD (boss 2026-08-25 "must answer in all cases"): a
+        # refusal about a NAMED stock is replaced with what we actually know.
+        if _looks_refusal(str(decision.get("answer") or "")):
+            try:
+                if _all_stocks_in_query(transcript):
+                    _fb = (_fundamentals_reply(transcript, lang, db)
+                           or _vip_stock_data_reply(transcript, lang, db=db))
+                    if _fb:
+                        return {"intent": "stock_data", "language": lang, "reply": _fb,
+                                "action": None, "speak": True, "transcript": transcript,
+                                "tool_used": "stock_data"}
+            except Exception as e:
+                log.warning(f"no-apology fallback failed: {str(e)[:120]}")
         return {
             "intent": "llm_chat",
             "language": lang,
