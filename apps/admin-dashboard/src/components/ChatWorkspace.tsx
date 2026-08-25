@@ -35,7 +35,7 @@ import { fetchWithRetry } from "../lib/fetchWithRetry";
 
 // Bump on every user-facing chat-UI change — rendered as a tiny badge above the
 // composer so a stale browser tab is diagnosable at a glance.
-const UI_BUILD = "ui v08.24-11";
+const UI_BUILD = "ui v08.25-12";
 
 // ── Lightweight markdown renderer (no deps) ───────────────────────────────
 // Renders GitHub-flavored tables, **bold**, `code`, bullet lists and line
@@ -820,23 +820,35 @@ export default function ChatWorkspace({ apiBase, agentId, agentLabel }: Props) {
         return;
       }
 
-      const r = await fetchWithRetry(`${base}/chat/agent`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          transcript: q,
-          language: "auto",
-          agentId,
-          model: model || undefined,
-          history: (activeSession.turns || []).slice(-6).map(t => ({
-            role: t.who, text: t.text, intent: t.intent,
-          })),
-          current_path: "/chatbot",
-          page_context: pageCtx || undefined,
-        }),
-      });
-      if (!r.ok) throw new Error(`HTTP ${r.status}`);
-      const data: AgentResponse = await r.json();
+      // ONE AUTOMATIC RETRY on any failure (boss 2026-08-25: "it suddenly stops with an
+      // HTTP error, and if I copy-paste the question it recovers" — so recover for him).
+      // fetchWithRetry already ladders gateway errors; this catches transient 500s too.
+      const _doSend = async (): Promise<AgentResponse> => {
+        const r = await fetchWithRetry(`${base}/chat/agent`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            transcript: q,
+            language: "auto",
+            agentId,
+            model: model || undefined,
+            history: (activeSession.turns || []).slice(-6).map(t => ({
+              role: t.who, text: t.text, intent: t.intent,
+            })),
+            current_path: "/chatbot",
+            page_context: pageCtx || undefined,
+          }),
+        });
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        return r.json();
+      };
+      let data: AgentResponse;
+      try {
+        data = await _doSend();
+      } catch {
+        await new Promise(res => setTimeout(res, 2500));
+        data = await _doSend();
+      }
       const replyText = data.reply || "";
       const assistantTurn: AssistantTurn = {
         who: "assistant",

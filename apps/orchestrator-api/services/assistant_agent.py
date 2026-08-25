@@ -1601,6 +1601,26 @@ def _vip_history_reply(transcript: Optional[str], lang: str, hist=None,
                         sel.append(row)
         out.append({"name": (name or code).upper(), "code": code, "rows": sel})
 
+        # TREND SUMMARY for a range ask (boss 2026-08-25: "overall trend last 6 days,
+        # how many % changed" got only the raw table) — one line above the table:
+        # net % close→close across the window + up/down day counts.
+        if kind == "range" and len(sel) >= 2:
+            try:
+                newest, oldest = sel[0], sel[-1]
+                _chg = (newest["close"] / oldest["close"] - 1) * 100
+                _ups = sum(1 for r2 in sel if (r2.get("change_pct") or 0) > 0)
+                _dns = sum(1 for r2 in sel if (r2.get("change_pct") or 0) < 0)
+                _tr_ko = "상승 추세" if _chg > 1 else "하락 추세" if _chg < -1 else "보합권"
+                _tr_en = "uptrend" if _chg > 1 else "downtrend" if _chg < -1 else "sideways"
+                notes.append(
+                    f"📈 **{(name or code).upper()}** {len(sel)}거래일 종합: 종가 {_won_str(oldest['close'])} → "
+                    f"{_won_str(newest['close'])} = **{_chg:+.1f}%** ({_tr_ko} · 상승 {_ups}일 / 하락 {_dns}일)"
+                    if not _en else
+                    f"📈 **{(name or code).upper()}** over {len(sel)} trading days: close {_won_str(oldest['close'])} → "
+                    f"{_won_str(newest['close'])} = **{_chg:+.1f}%** ({_tr_en} · {_ups} up / {_dns} down days)")
+            except Exception:
+                pass
+
         # Time-aware precise line (after-close → that day's close; before open →
         # previous close; intraday → no minute data on free feed).
         if tm and single_date and sel:
