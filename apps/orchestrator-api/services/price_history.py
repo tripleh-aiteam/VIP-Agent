@@ -19,6 +19,9 @@ from services.logger import log
 DATA_PC = "http://100.96.115.29:8010"
 
 
+_PC_DOWN_UNTIL = [0.0]     # circuit breaker: after a failure, skip the data PC 120s
+
+
 def _from_data_pc(code: str, days: int) -> list[dict]:
     """Daily OHLCV from the data PC (oldest-first there → newest-first here)."""
     import httpx
@@ -38,15 +41,32 @@ def _from_data_pc(code: str, days: int) -> list[dict]:
 
 
 def rows(db, code: str, days: int) -> tuple[list[dict], str]:
-    """Newest-first [{date, open, high, low, close, volume}] + a source label.
+    r, s, _m = rows_traced(db, code, days)
+    return r, s
+
+
+def rows_traced(db, code: str, days: int) -> tuple[list[dict], str, dict]:
+    """Newest-first [{date, open, high, low, close, volume}] + source label + TRACE
+    (which servers were tried, timing, row counts — drives the chat's animated
+    'getting data from OUR server' view, boss 2026-08-25).
     Priority: DATA PC (2,815 codes, local, free) → Supabase (our 51) → Naver."""
+    import time as _t
     code = str(code).zfill(6)
+    trace: dict = {"steps": [], "source": None}
+
+    def _step(tier, ok, t0, n=0, note=""):
+        trace["steps"].append({"tier": tier, "ok": ok, "ms": int((_t.time() - t0) * 1000),
+                               "rows": n, "note": note})
     out: list[dict] = []
     # tier 1 — the data PC (unless the ask outreaches its store: then the deeper
     # Supabase archive below wins — e.g. NAVER 10년 needs 2015→, data PC holds ~2y)
+    _t0 = _t.time()
     try:
+        if _t.time() < _PC_DOWN_UNTIL[0]:
+            raise RuntimeError("data-pc cooling down after a failure")
         out = _from_data_pc(code, days)
         if len(out) >= 5 and len(out) >= int(days * 0.8):
+            _step("data_pc", True, _t0, len(out))
             src = "데이터 PC"
             try:                        # freshest session top-up (today's live day)
                 from services import naver_stock as ns
@@ -60,10 +80,16 @@ def rows(db, code: str, days: int) -> tuple[list[dict], str]:
                     src = "데이터 PC + 네이버(오늘)"
             except Exception:
                 pass
-            return out[:days], src
+            trace["source"] = src
+            return out[:days], src, trace
+        _step("data_pc", False, _t0, len(out), "depth")
     except Exception as e:
+        _step("data_pc", False, _t0, 0, "timeout")
+        if "cooling down" not in str(e):
+            _PC_DOWN_UNTIL[0] = _t.time() + 120
         log.warning(f"price_history data-pc failed ({code}): {str(e)[:80]}")
     out = []
+    _t0 = _t.time()
     try:
         if db is not None:
             from sqlalchemy import text
@@ -84,13 +110,20 @@ def rows(db, code: str, days: int) -> tuple[list[dict], str]:
     except Exception as e:
         log.warning(f"price_history db read failed ({code}): {str(e)[:100]}")
         out = []
+    _step("supabase", len(out) >= 5, _t0, len(out))
 
     from services import naver_stock as ns
     if len(out) < 5:                       # untracked ticker / empty table → Naver fully
+        _t0 = _t.time()
         try:
-            return ns.daily_history(code, days=days), "네이버"
+            nv_all = ns.daily_history(code, days=days)
+            _step("naver", True, _t0, len(nv_all))
+            trace["source"] = "네이버"
+            return nv_all, "네이버", trace
         except Exception:
-            return out, "자체 DB"
+            _step("naver", False, _t0)
+            trace["source"] = "자체 DB"
+            return out, "자체 DB", trace
 
     # freshness top-up: the collector writes end-of-day, so today/yesterday may be
     # missing — merge the newest Naver rows on top (dates the DB doesn't have yet).
@@ -106,4 +139,5 @@ def rows(db, code: str, days: int) -> tuple[list[dict], str]:
             src = "자체 DB + 네이버(최신)"
     except Exception:
         pass
-    return out[:days], src
+    trace["source"] = src
+    return out[:days], src, trace

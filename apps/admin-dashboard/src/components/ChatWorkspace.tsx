@@ -35,7 +35,7 @@ import { fetchWithRetry } from "../lib/fetchWithRetry";
 
 // Bump on every user-facing chat-UI change — rendered as a tiny badge above the
 // composer so a stale browser tab is diagnosable at a glance.
-const UI_BUILD = "ui v08.25-12";
+const UI_BUILD = "ui v08.25-13";
 
 // ── Lightweight markdown renderer (no deps) ───────────────────────────────
 // Renders GitHub-flavored tables, **bold**, `code`, bullet lists and line
@@ -146,6 +146,7 @@ export interface AssistantTurn {
   pendingAction?: { query: string; confirmText: string };
   attachmentNames?: string[];
   process?: AgentResponse["process"];   // checklist_reco checking-simulation data
+  datasource?: AgentResponse["datasource"];   // data-fetch journey (history answers)
 }
 
 interface Session {
@@ -186,6 +187,9 @@ interface AgentResponse {
   // checklist_reco: every candidate's real scores → drives the live checking simulation
   process?: { market?: unknown[]; candidates?: { code: string; name: string; score: number;
               groups?: Record<string, number> }[]; picked?: string[]; n?: number };
+  // history answers: which servers the data came from (drives the animated fetch view)
+  datasource?: { steps: { tier: string; ok: boolean; ms: number; rows: number; note?: string }[];
+                 source?: string };
 }
 
 interface Props {
@@ -438,6 +442,63 @@ function RevealMarkdown({ text, ts }: { text: string; ts: number }) {
   }, [ts]);
   const full = (text || "");
   return <MarkdownLite text={n >= full.length ? full : full.slice(0, n)} />;
+}
+
+// 📡 DATA-FETCH JOURNEY (boss 2026-08-25: "show interactively that we are getting data
+// from ANOTHER SERVER, not from the internet — not just with words"). Animates the real
+// tiers the backend tried, with real timings and row counts, ending in a source chip.
+const _dsDone = new Set<number>();
+const _DS_TIERS: Record<string, [string, string]> = {
+  data_pc: ["🖥️", "우리 데이터 서버 (Tailscale 직결 · DESKTOP-P1PIS12)"],
+  supabase: ["🗄️", "자체 아카이브 DB (2015~ 수집분)"],
+  naver: ["🌐", "네이버 (인터넷)"],
+};
+function DataSourceTrace({ ds, ts }: { ds: NonNullable<AgentResponse["datasource"]>; ts: number }) {
+  const steps = ds.steps || [];
+  const fresh = !_dsDone.has(ts) && Date.now() - ts < 20000;
+  const [i, setI] = useState(fresh ? 0 : steps.length);
+  useEffect(() => {
+    if (!fresh) { setI(steps.length); return; }
+    _dsDone.add(ts);
+    const timer = setInterval(() => setI(v => {
+      if (v + 1 >= steps.length) { clearInterval(timer); return steps.length; }
+      return v + 1;
+    }), 550);
+    return () => clearInterval(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ts]);
+  if (!steps.length) return null;
+  const running = i < steps.length;
+  const ownServer = !!ds.source && (ds.source.includes("데이터 PC") || ds.source.includes("자체"));
+  return (
+    <div className="mb-2 rounded-xl border border-teal-200 bg-teal-50/50 px-3 py-2 text-[12.5px]">
+      <div className="font-semibold text-teal-800 flex items-center gap-2">
+        {running ? <span className="animate-pulse">📡</span> : "📡"}
+        {running ? "데이터 가져오는 중…" : "데이터 수신 완료"}
+        {!running && ds.source && (
+          <span className={`ml-auto px-2 py-0.5 rounded-full text-[11px] font-bold text-white ${
+            ownServer ? "bg-emerald-600" : "bg-gray-500"}`}>
+            {ownServer ? `✓ ${ds.source} — 인터넷 아님` : ds.source}
+          </span>
+        )}
+      </div>
+      <div className="mt-1 space-y-0.5 font-mono text-[12px] text-gray-700">
+        {steps.slice(0, Math.max(i, running ? i + 1 : i)).map((s, si) => {
+          const [icon, name] = _DS_TIERS[s.tier] || ["📦", s.tier];
+          const active = running && si === i;
+          return (
+            <div key={si} className={active ? "animate-pulse" : ""}>
+              {icon} {name} — {active
+                ? "연결 중…"
+                : s.ok
+                ? <b className="text-emerald-700">✓ {s.rows.toLocaleString()}행 · {s.ms.toLocaleString()}ms</b>
+                : <span className="text-gray-500">✗ {s.note === "depth" ? "보유 기간 부족 → 다음 소스" : "응답 없음 → 다음 소스"}</span>}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
 }
 
 // A KRX ticker mentioned in an answer, e.g. "삼성바이오로직스 (207940)" — powers the
@@ -857,6 +918,7 @@ export default function ChatWorkspace({ apiBase, agentId, agentLabel }: Props) {
         intent: data.intent,
         tool_used: data.tool_used,
         process: data.process,
+        datasource: data.datasource,
       };
       update(prev => ({
         ...prev,
@@ -1377,6 +1439,7 @@ export default function ChatWorkspace({ apiBase, agentId, agentLabel }: Props) {
                         <span>{(agentLabel || agentId)} · Answer</span>
                       </div>
                       <div className="bg-white border border-gray-200 rounded-2xl rounded-tl-md px-4 py-3 text-[15px] leading-relaxed text-gray-900 shadow-sm w-full">
+                        {t.datasource && <DataSourceTrace ds={t.datasource} ts={t.ts} />}
                         {t.process && <ChecklistSimulation process={t.process} ts={t.ts} />}
                         <RevealMarkdown text={t.text} ts={t.ts} />
                         {(t.intent || t.tool_used) && (

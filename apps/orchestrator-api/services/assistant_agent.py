@@ -1809,10 +1809,10 @@ def _period_stats_reply(transcript: Optional[str], lang: str,
     """Deterministic period summary (no LLM — same speed rule as the price lanes):
     headline table (high/low/volume with dates) + per-month breakdown + explanation."""
     if not _is_period_stats_q(transcript):
-        return None
+        return None, None
     win = _period_stats_window(transcript)
     if not win:
-        return None
+        return None, None
     cutoff, months, label_ko, label_en = win
     stocks = _all_stocks_in_query(transcript)
     if not stocks and history:            # bare follow-up: "그럼 최근 3개월 최저가는?"
@@ -1831,10 +1831,13 @@ def _period_stats_reply(transcript: Optional[str], lang: str,
     cut_iso = cutoff.isoformat()
     sections = []
     _src_lbl = None
+    _ds_trace = None
     for code, name in stocks[:3]:
         try:
-            from services.price_history import rows as _ph_rows
-            rows, _src_lbl = _ph_rows(db, code, min(2900, months * 23 + 15))
+            from services.price_history import rows_traced as _ph_rows
+            rows, _src_lbl, _tr = _ph_rows(db, code, min(2900, months * 23 + 15))
+            if _ds_trace is None:
+                _ds_trace = _tr
         except Exception as e:
             log.warning(f"period stats {code} failed: {str(e)[:120]}")
             rows = []
@@ -1924,7 +1927,7 @@ def _period_stats_reply(transcript: Optional[str], lang: str,
         S += ["", " ".join(expl)]
         sections.append("\n".join(S))
     if not sections:
-        return None
+        return None, None
     out = "\n\n---\n\n".join(sections)
     out += (f"\n\n📦 {'Source' if _en else '데이터 출처'}: "
             + (_src_lbl or ("네이버" if not _en else "Naver"))
@@ -1932,7 +1935,7 @@ def _period_stats_reply(transcript: Optional[str], lang: str,
                if _en and _src_lbl and "자체" in _src_lbl else
                " — 우리 서버가 수집한 일봉(2015~) 기준, 최신 1~2일만 네이버 보충"
                if _src_lbl and "자체" in _src_lbl else ""))
-    return out
+    return out, _ds_trace
 
 
 # ===== MARKET DIRECTION — checklist #11 asked as a question ("오늘 코스피/코스닥
@@ -2158,7 +2161,7 @@ def _vip_stock_data_reply(transcript: Optional[str], lang: str, db=None) -> Opti
         ss = _vip_short_selling_reply(transcript, lang)
         if ss and ss.get("reply"):
             return ss["reply"]
-    ps = _period_stats_reply(transcript, lang, db=db)
+    ps, _ps_tr = _period_stats_reply(transcript, lang, db=db)
     if ps:
         return ps
     h = _requested_history_dates(transcript)
@@ -7502,11 +7505,11 @@ def _run_agent_impl(
             and not _is_stock_advice(transcript, agent_id)
             and not _wants_recommendation(transcript)
             and _is_period_stats_q(transcript)):
-        _pstats = _period_stats_reply(transcript, lang, history=history or [], db=db)
+        _pstats, _ps_trace = _period_stats_reply(transcript, lang, history=history or [], db=db)
         if _pstats:
             return {"intent": "stock_period_stats", "language": lang, "reply": _pstats,
                     "action": None, "speak": True, "transcript": transcript,
-                    "tool_used": "stock_period_stats"}
+                    "tool_used": "stock_period_stats", "datasource": _ps_trace}
 
     if (not confirmed_tool and (agent_id or "vip").lower() != "stock"
             and not _is_future_outlook(transcript)        # '앞으로 5일 전망' is a FORECAST, not history
