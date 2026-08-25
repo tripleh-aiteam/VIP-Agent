@@ -1197,7 +1197,10 @@ export default function LiveDeskPage() {
           )}
         </div>
       )}
-      {dpick?.ok && (
+      {/* the ranking board renders ONLY on the reco page — the Live Kiwoom Desk shows
+          no rankings at all for the six (boss 2026-08-25: "do not show rankings of the
+          6 fixed in the Live Kiwoom Desk") */}
+      {deskView === "reco" && dpick?.ok && (
         <div className="mt-3 rounded-xl border overflow-hidden" style={{ borderColor: "#1565c0" }}>
           <div className="px-4 py-2 flex items-center gap-2 flex-wrap cursor-pointer"
             style={{ background: "rgba(21,101,192,0.06)" }} onClick={() => setPickOpen(!pickOpen)}>
