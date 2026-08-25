@@ -430,6 +430,13 @@ function RecoLiveCheckPanel({ t, lang }: { t: (ko: string, en: string) => string
           {t(`${uni9 || "?"}종목 × 100문항 → 톱${topN} · 오늘 실제 검사 ${pulse9?.checks ?? "?"}회 · 순위변동 기록 ${count9}건`,
              `${uni9 || "?"} stocks × 100 items → top-${topN} · ${pulse9?.checks ?? "?"} real checks today · ${count9} rank records`)}</span>
       </div>
+      {pulse9?.top && pulse9.top.length > 0 && (
+        <div className="mt-1 tabular-nums font-bold" style={{ color: "#e65100" }}>
+          {t("지금 톱", "LIVE top ")}{topN}: {pulse9.top.slice(0, topN)
+            .map((x) => `${x.name} ${x.avg ?? ""}`).join(" · ")}
+          <span className="ml-1 font-normal opacity-60">{t("(4초 갱신)", "(4s refresh)")}</span>
+        </div>
+      )}
       <div className="mt-1 max-h-[92px] overflow-y-auto leading-relaxed">
         {snaps.slice().reverse().map((s9, i9) => {
           const prev = snaps[snaps.length - 2 - i9];
@@ -1636,7 +1643,8 @@ export default function LiveDeskPage() {
                         <td className="text-right px-3 font-extrabold" style={{ color: "#1565c0" }}
                           title={t("평균 = (시장 + 이슈·수급 + 종목선정 + 실행·관리) ÷ 계산된 칸 수 — 종목명 클릭(🧮)이 전체 계산식",
                                    "average = (market + issue/supply + stock selection + execution mgmt) ÷ computed columns - click the name (🧮) for the full formula")}>
-                          {(r.cats as { avg?: number } | undefined)?.avg
+                          {(rankHead9?.rows?.find((x) => x.code === r.code)?.avg)
+                            ?? (r.cats as { avg?: number } | undefined)?.avg
                             ?? (r.live_total !== undefined ? r.live_total : r.score)}
                         </td>
                       )}
