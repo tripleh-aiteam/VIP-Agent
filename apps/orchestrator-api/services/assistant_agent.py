@@ -1084,6 +1084,39 @@ def _prev_user_msg(history: Optional[list[dict]]) -> str:
     return ""
 
 
+def _strip_stock_names(text: str) -> str:
+    """Blank every known stock alias out of the text — for a switch follow-up that
+    re-runs the previous question with the stocks swapped ('how about S-Oil?' after
+    'last 6 days Skhynix ... table' must not keep SK하이닉스 in the rebuilt question)."""
+    try:
+        from services import stock_resolver as _sr
+        out = " " + (text or "") + " "
+        low = out.lower()
+        for alias in _sr._aliases_longest_first():
+            if len(alias) < 2:
+                continue
+            i = low.find(alias)
+            while i != -1:
+                j = i + len(alias)
+                # short ascii aliases (gs/kt) need word edges — don't eat 'gs' from 'things'
+                if alias.isascii() and (low[i - 1: i].isalnum() or low[j: j + 1].isalnum()):
+                    i = low.find(alias, i + 1)
+                    continue
+                out = out[:i] + " " * (j - i) + out[j:]
+                low = low[:i] + " " * (j - i) + low[j:]
+                i = low.find(alias, j)
+        # typo'd names ("Samsun") aren't exact aliases — drop any leftover token that
+        # still fuzzy-resolves to a stock, so the rebuilt question names ONLY the new one
+        kept = []
+        for w in _re.split(r"\s+", out.strip()):
+            if len(w) >= 5 and w.isascii() and _sr.resolve_one(w)[0]:
+                continue
+            kept.append(w)
+        return " ".join(kept).strip()
+    except Exception:
+        return text or ""
+
+
 # An explicit BUY/SELL/HOLD DECISION or advice ask ('사야 할까/팔까/hold or sell/advise').
 _DECISION_KW = (
     "사야", "팔까", "팔아야", "사도 될", "매수해", "매도해", "보유할까", "보유 vs",
@@ -1203,6 +1236,16 @@ def _is_bare_switch_followup(transcript: Optional[str]) -> bool:
             or _is_stock_advice(t, "vip") or _is_daytrade_followup(t)
             or any(w in tl for w in ("news", "뉴스", "chart", "차트", "report", "리포트", "공매도"))):
         return False
+    # TYPO-TOLERANT starter ("how abiut S-Oil?" — boss 2026-08-25 — missed the exact
+    # 'how about' and fell to the LLM advice chain): fuzzy-fix the first few English
+    # words against the known starter vocabulary before matching.
+    toks = t.split()
+    if toks and any(w.isascii() for w in toks[:3]):
+        import difflib as _dl
+        fixed = [(m[0] if w.isascii() and
+                  (m := _dl.get_close_matches(w.lower(), ("how", "what", "about"), n=1, cutoff=0.75))
+                  else w) for w in toks[:3]]
+        t = " ".join(fixed + toks[3:])
     return bool(_SWITCH_PREFIX_RE.search(t) or _BARE_STOCK_RE.match(t)
                 or _BARE_STOCK_EN_RE.match(t))
 
@@ -1590,7 +1633,7 @@ def _vip_history_reply(transcript: Optional[str], lang: str, hist=None,
     the live quote is prepended so BOTH asks are answered (not just the past date)."""
     hist = hist or _requested_history_dates(transcript)
     if not hist:
-        return None
+        return None, None
     stocks = _all_stocks_in_query(transcript)
     if not stocks and history:
         for h in reversed(history):
@@ -1599,7 +1642,7 @@ def _vip_history_reply(transcript: Optional[str], lang: str, hist=None,
                 stocks = s[:1]
                 break
     if not stocks:
-        return None
+        return None, None
     from services import naver_stock, price_format
     _en = (lang or "").lower().startswith("en")
     if not _en and not _re.search(r"[가-힣]", transcript or "") \
@@ -1889,7 +1932,7 @@ def _period_stats_reply(transcript: Optional[str], lang: str,
                 stocks = s[:1]
                 break
     if not stocks:
-        return None
+        return None, None
     from services import naver_stock
     _en = (lang or "").lower().startswith("en")
     if not _en and not _re.search(r"[가-힣]", transcript or "") \
@@ -1933,9 +1976,11 @@ def _period_stats_reply(transcript: Optional[str], lang: str,
                 nm = display_name_en(code) or nm
             except Exception:
                 pass
-        # ---- headline summary table
+        # ---- headline summary table (assembled LAST — boss 2026-08-25: "if we ask past
+        # data it should directly start answering from daily information, not summary —
+        # summary should be in the end")
         if _en:
-            S = [f"**📊 {nm} ({code}) — {label_en} summary ({first['date']} ~ {last['date']} · {len(sel)} trading days)**", "",
+            sum_tbl = [
                  "| Item | Value | Date |", "|---|---|---|",
                  f"| Period high | {_won_str(hi)} | {hi_row.get('date')} |",
                  f"| Period low | {_won_str(lo)} | {lo_row.get('date')} |",
@@ -1944,8 +1989,9 @@ def _period_stats_reply(transcript: Optional[str], lang: str,
                  f"| Period change | {chg:+.1f}% | |",
                  f"| Avg daily volume | {_vol_str(avg_vol, True)} | |",
                  f"| Biggest volume day | {_vol_str(mv_row.get('volume'), True)} | {mv_row.get('date')} |"]
+            S = [f"**📊 {nm} ({code}) — {label_en} daily data ({first['date']} ~ {last['date']} · {len(sel)} trading days)**"]
         else:
-            S = [f"**📊 {nm} ({code}) — {label_ko} 요약 ({first['date']} ~ {last['date']} · {len(sel)} 거래일)**", "",
+            sum_tbl = [
                  "| 항목 | 값 | 날짜 |", "|---|---|---|",
                  f"| 기간 최고가 | {_won_str(hi)} | {hi_row.get('date')} |",
                  f"| 기간 최저가 | {_won_str(lo)} | {lo_row.get('date')} |",
@@ -1954,20 +2000,21 @@ def _period_stats_reply(transcript: Optional[str], lang: str,
                  f"| 기간 등락률 | {chg:+.1f}% | |",
                  f"| 하루 평균 거래량 | {_vol_str(avg_vol, False)} | |",
                  f"| 최대 거래량일 | {_vol_str(mv_row.get('volume'), False)} | {mv_row.get('date')} |"]
-        # ---- monthly breakdown
+            S = [f"**📊 {nm} ({code}) — {label_ko} 일별 데이터 ({first['date']} ~ {last['date']} · {len(sel)} 거래일)**"]
+        # ---- monthly breakdown (assembled AFTER the daily rows below)
         by_m: dict[str, list] = {}
         for r in chron:
             by_m.setdefault(r["date"][:7], []).append(r)
-        S += ["", ("| Month | Low | High | Avg volume | Month-end close |" if _en
-                   else "| 월 | 최저가 | 최고가 | 평균 거래량 | 월말 종가 |"), "|---|---|---|---|---|"]
+        mon_tbl = [("| Month | Low | High | Avg volume | Month-end close |" if _en
+                    else "| 월 | 최저가 | 최고가 | 평균 거래량 | 월말 종가 |"), "|---|---|---|---|---|"]
         for mk in sorted(by_m):
             mr = by_m[mk]
             m_lo = min(r.get("low") or 10 ** 12 for r in mr)
             m_hi = max(r.get("high") or 0 for r in mr)
             m_av = sum(r.get("volume") or 0 for r in mr) / len(mr)
-            S.append(f"| {mk} | {_won_str(m_lo)} | {_won_str(m_hi)} | {_vol_str(m_av, _en)} | {_won_str(mr[-1]['close'])} |")
-        # ---- EVERY DAY's data (boss 2026-08-25: "I am asking last 6 months, it should
-        # show every day data") — the full daily OHLCV rows behind the summary
+            mon_tbl.append(f"| {mk} | {_won_str(m_lo)} | {_won_str(m_hi)} | {_vol_str(m_av, _en)} | {_won_str(mr[-1]['close'])} |")
+        # ---- EVERY DAY's data FIRST (boss 2026-08-25: "it should directly start
+        # answering from daily information, not summary — summary in the end")
         S += ["", ("| Date | Open | High | Low | Close | Volume |" if _en
                    else "| 날짜 | 시가 | 고가 | 저가 | 종가 | 거래량 |"), "|---|---|---|---|---|---|"]
         for r in chron:
@@ -1993,6 +2040,9 @@ def _period_stats_reply(transcript: Optional[str], lang: str,
             if v_ratio is not None:
                 expl.append(f"최근 20거래일 평균 거래량은 기간 평균의 {v_ratio:.1f}배로, "
                             f"{'거래가 활발해진' if v_ratio >= 1.15 else '거래가 한산해진' if v_ratio <= 0.85 else '평소 수준의'} 흐름입니다.")
+        # order: daily rows (already in S) → monthly → period summary → explanation
+        S += ["", ("**📅 Monthly breakdown**" if _en else "**📅 월별 요약**"), ""] + mon_tbl
+        S += ["", ("**📌 Period summary**" if _en else "**📌 기간 요약**"), ""] + sum_tbl
         S += ["", " ".join(expl)]
         sections.append("\n".join(S))
     if not sections:
@@ -3632,6 +3682,12 @@ _PRED_VERB = ("predict", "prediction", "forecast", "expect", "outlook", "estimat
 def _is_future_prediction(text: str) -> bool:
     t = text or ""
     tl = t.lower()
+    # A question about the PAST can accidentally contain both cue lists — "last 6 days
+    # ... opening prices table" hit 'opening price' + 'price' and got a 3-algorithm
+    # FORECAST instead of the history table (boss 2026-08-25). An explicit past window
+    # with no future word is never a prediction ask.
+    if not _is_future_outlook(t) and (_requested_history_dates(t) or _is_period_stats_q(t)):
+        return False
     nd = any(k in t or k in tl for k in _PRED_NEXTDAY)
     vb = any(k in t or k in tl for k in _PRED_VERB)
     return bool(nd and vb)
@@ -7544,6 +7600,24 @@ def _run_agent_impl(
         _sw = _all_stocks_in_query(transcript)
         if _sw:
             _prev = _prev_user_msg(history)
+            # prev was a PAST-DATA question ("last 6 days ... prices table" → "how about
+            # S-Oil?") → re-run the SAME question for the new stock. Boss 2026-08-25: this
+            # switch fell to the LLM chain and answered with Hold ADVICE instead of the
+            # same 6-day table. Checked BEFORE the price branch — a dated question can
+            # contain price words too.
+            if _is_period_stats_q(_prev) or _requested_history_dates(_prev):
+                _syn = f"{_sw[0][1]} {_strip_stock_names(_prev)}"
+                if _is_period_stats_q(_prev):
+                    _pst, _pst_tr = _period_stats_reply(_syn, lang, db=db)
+                    if _pst:
+                        return {"intent": "stock_period_stats", "language": lang, "reply": _pst,
+                                "action": None, "speak": True, "transcript": transcript,
+                                "tool_used": "stock_period_stats", "datasource": _pst_tr}
+                _hin, _hin_tr = _vip_history_reply(_syn, lang, db=db)
+                if _hin:
+                    return {"intent": "stock_history", "language": lang, "reply": _hin,
+                            "action": None, "speak": True, "transcript": transcript,
+                            "tool_used": "stock_history", "datasource": _hin_tr}
             if _is_vip_current_price_q(_prev, agent_id):           # prev was price → price
                 _vp = _vip_live_price_reply(transcript, lang, db)
                 if _vp:
