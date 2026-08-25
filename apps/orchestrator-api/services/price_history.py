@@ -34,7 +34,7 @@ def _from_data_pc(code: str, days: int) -> list[dict]:
     rows_ = j.get("data") or []
     out = [{"date": r.get("date"), "open": r.get("open"), "high": r.get("high"),
             "low": r.get("low"), "close": r.get("close"), "volume": r.get("volume"),
-            "change_pct": (float(r["change"]) * 100 if r.get("change") is not None else None)}
+            "change_pct": (round(float(r["change"]) * 100, 2) if r.get("change") is not None else None)}
            for r in rows_ if r.get("date") and r.get("close")]
     out.sort(key=lambda r: r["date"], reverse=True)
     return out[:days]
@@ -145,7 +145,7 @@ def rows_traced(db, code: str, days: int) -> tuple[list[dict], str, dict]:
         if out[_i2].get("change_pct") is None:
             try:
                 _prev = out[_i2 + 1]["close"]
-                out[_i2]["change_pct"] = (out[_i2]["close"] / _prev - 1) * 100
+                out[_i2]["change_pct"] = round((out[_i2]["close"] / _prev - 1) * 100, 2)
             except Exception:
                 pass
     trace["source"] = src

@@ -838,7 +838,31 @@ def _all_stocks_in_query(transcript: Optional[str]) -> list[tuple[str, str]]:
     if names:
         import difflib
         norm = {_re.sub(r"\s+", "", n.lower()): n for n in names}  # spaceless name -> name
-        keys = list(norm.keys())
+        # resolver aliases (incl. ENGLISH official names) join the fuzzy space —
+        # _NAME_TO_TICKER alone lacks 'hanwha ocean', so 'Hana ocean' had no target
+        # to fuzzy-match and the third stock silently vanished (boss 2026-08-25)
+        _extra_code: dict[str, str] = {}
+        try:
+            from services.stock_resolver import _ALIAS as _RAL, _build as _rb
+            _rb()
+            for _al, _cd2 in _RAL.items():
+                _k2 = _re.sub(r"\s+", "", _al.lower())
+                if len(_k2) >= 4 and _k2 not in norm:
+                    _extra_code[_k2] = str(_cd2)
+        except Exception:
+            pass
+        keys = list(norm.keys()) + list(_extra_code.keys())
+
+        def _fuzzy_code(hit_key: str):
+            if hit_key in norm:
+                _nm3 = norm[hit_key]
+                return str(_NAME_TO_TICKER[_nm3]), _nm3
+            _cd3 = _extra_code.get(hit_key)
+            try:
+                from services.stock_resolver import display_name as _dn3
+                return _cd3, (_dn3(_cd3) if _cd3 else hit_key)
+            except Exception:
+                return _cd3, hit_key
         # prefer the longest Hangul name per code so a fuzzy hit on an english alias
         # displays cleanly ('skyhix' -> 'SK하이닉스', not the lowercase 'sk hynix').
         canon: dict[str, str] = {}
@@ -855,9 +879,22 @@ def _all_stocks_in_query(transcript: Optional[str]) -> list[tuple[str, str]]:
             # out at 0.44 — the gap is wide, so 0.72 catches typos without false hits.
             hit = difflib.get_close_matches(w, keys, n=1, cutoff=0.72)
             if hit:
-                name = norm[hit[0]]
-                code = str(_NAME_TO_TICKER[name])
-                if code.isdigit() and code not in seen:
+                code, name = _fuzzy_code(hit[0])
+                if code and code.isdigit() and code not in seen:
+                    seen.add(code)
+                    out.append((code, canon.get(code, name)))
+        # BIGRAM fuzzy for typo'd TWO-WORD English names ('Hana ocean' → Hanwha Ocean —
+        # boss 2026-08-25: the third stock silently vanished from a 3-stock question).
+        _wtoks = [w for w in _re.split(r"[\s,/&]+", consumed) if len(w) >= 3
+                  and w not in _STOCK_FUZZY_STOP]
+        for _bi in range(len(_wtoks) - 1):
+            pair = _wtoks[_bi] + _wtoks[_bi + 1]
+            if len(pair) < 8:
+                continue
+            hit2 = difflib.get_close_matches(pair, keys, n=1, cutoff=0.78)
+            if hit2:
+                code, name = _fuzzy_code(hit2[0])
+                if code and code.isdigit() and code not in seen:
                     seen.add(code)
                     out.append((code, canon.get(code, name)))
     # last resort: if NOTHING resolved at all, one fuzzy single-stock guess (typos)
