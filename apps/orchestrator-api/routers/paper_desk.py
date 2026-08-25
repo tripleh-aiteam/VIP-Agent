@@ -876,10 +876,10 @@ def live_reco_rank_log(n: int = Query(30), day: str = Query("")):
     logger's recent snapshots, newest last, for the reco desk's live-check
     panel - each one is a completed 40-stock re-examination."""
     from services.kiwoom_tape import WATCH
-    from services.reco_rank_log import snapshots, top_n
+    from services.reco_rank_log import live_pulse, snapshots, top_n
     sn = snapshots(day or None)
     return {"ok": True, "top_n": top_n(), "universe": len(WATCH),
-            "count": len(sn),
+            "count": len(sn), "live": live_pulse(),
             "snaps": sn[-max(1, min(int(n or 30), 200)):]}
 
 

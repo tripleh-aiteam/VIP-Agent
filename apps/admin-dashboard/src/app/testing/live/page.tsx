@@ -385,6 +385,8 @@ function RecoLiveCheckPanel({ t, lang }: { t: (ko: string, en: string) => string
   const [topN, setTopN] = useState(3);
   const [uni9, setUni9] = useState(0);
   const [count9, setCount9] = useState(0);
+  const [pulse9, setPulse9] = useState<{ t?: string; checks?: number;
+    top?: { code: string; name: string; avg?: number }[] } | null>(null);
   const [nowS, setNowS] = useState(Date.now());
   useEffect(() => {
     let live = true;
@@ -392,20 +394,25 @@ function RecoLiveCheckPanel({ t, lang }: { t: (ko: string, en: string) => string
       count?: number; snaps: Snap[] }>(
       "/paper-desk/live/reco-rank-log?n=15")
       .then((d) => { if (live && d?.ok) { setSnaps(d.snaps || []); setTopN(d.top_n || 3);
-                                          setUni9(d.universe || 0); setCount9(d.count || 0); } })
+                                          setUni9(d.universe || 0); setCount9(d.count || 0);
+                                          setPulse9((d as unknown as { live?: { t?: string;
+                                            checks?: number; top?: { code: string; name: string;
+                                            avg?: number }[] } }).live || null); } })
       .catch(() => {});
     load();
     const h = setInterval(load, 5000);
     const h2 = setInterval(() => setNowS(Date.now()), 1000);
     return () => { live = false; clearInterval(h); clearInterval(h2); };
   }, []);
-  if (!snaps.length) return null;
-  const last = snaps[snaps.length - 1];
-  const [hh, mm, ss] = (last.t || "0:0:0").split(":").map(Number);
+  if (!snaps.length && !pulse9?.t) return null;
+  // the TRUE pulse: the last CHECK time (every 4s), not the last written
+  // record (only on rank changes / 60s heartbeats)
+  const tSrc = pulse9?.t || snaps[snaps.length - 1]?.t || "0:0:0";
+  const [hh, mm, ss] = tSrc.split(":").map(Number);
   const lastMs = new Date().setHours(hh, mm, ss, 0);
   const ago = Math.max(0, Math.round((nowS - lastMs) / 1000));
-  const nextIn = Math.max(0, 20 - (ago % 20));
-  const frac = Math.min(1, (20 - nextIn) / 20);
+  const nextIn = Math.max(0, 4 - (ago % 4));
+  const frac = Math.min(1, (4 - nextIn) / 4);
   return (
     <div className="mt-2 px-3 py-2 rounded-xl border text-[11px]"
       style={{ borderColor: "#e65100", background: "rgba(230,81,0,0.04)" }}>
@@ -414,14 +421,14 @@ function RecoLiveCheckPanel({ t, lang }: { t: (ko: string, en: string) => string
         <span className="inline-block w-2 h-2 rounded-full"
           style={{ background: ago < 40 ? "#2e7d32" : "#b8860b",
                    animation: ago < 40 ? "pulse 1.2s infinite" : undefined }} />
-        <span>{t(`마지막 검사 ${last.t} (${ago}초 전)`, `last check ${last.t} (${ago}s ago)`)}</span>
+        <span>{t(`마지막 검사 ${tSrc} (${ago}초 전)`, `last check ${tSrc} (${ago}s ago)`)}</span>
         <span className="text-[var(--text-muted)]">{t(`· 다음 ~${nextIn}초 후`, `· next in ~${nextIn}s`)}</span>
         <span className="ml-1 flex-1 h-1.5 rounded" style={{ background: "rgba(128,128,128,0.15)", minWidth: 60, maxWidth: 160 }}>
           <span className="block h-1.5 rounded" style={{ width: `${Math.round(frac * 100)}%`, background: "#e65100", transition: "width 1s linear" }} />
         </span>
         <span className="text-[var(--text-muted)]">
-          {t(`${uni9 || "?"}종목 × 100문항, 4초마다 재검사 → 톱${topN} 결정 · 오늘 기록 ${count9}회`,
-             `${uni9 || "?"} stocks × 100 items, re-checked every 4s → top-${topN} decided · ${count9} records today`)}</span>
+          {t(`${uni9 || "?"}종목 × 100문항 → 톱${topN} · 오늘 실제 검사 ${pulse9?.checks ?? "?"}회 · 순위변동 기록 ${count9}건`,
+             `${uni9 || "?"} stocks × 100 items → top-${topN} · ${pulse9?.checks ?? "?"} real checks today · ${count9} rank records`)}</span>
       </div>
       <div className="mt-1 max-h-[92px] overflow-y-auto leading-relaxed">
         {snaps.slice().reverse().map((s9, i9) => {

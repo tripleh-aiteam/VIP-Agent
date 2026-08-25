@@ -823,11 +823,24 @@ def _rank_win9(code: str, day: str = ""):
         return None
 
 
-def _rank_t09(day: str = ""):
+def _rank_t09(day: str = "", code: str = ""):
+    """Grace boundary for the rank gate. Before the day's first snapshot the
+    timeline is blind - but grace admits ONLY the morning's own picks, never
+    the whole universe (boss 2026-08-25 14:0x: the six's morning trades were
+    leaking into the reco desk through the pre-log window)."""
     try:
         from services.reco_rank_log import snapshots
         sn = snapshots(day or None)
-        return sn[0].get("t") if sn else None
+        t0 = sn[0].get("t") if sn else None
+        if code:
+            try:
+                from services.daily_pick import load_picks
+                picks = {c for c, _n in (load_picks() or [])}
+                if code not in picks:
+                    return "00:00:00"       # no grace - top-N windows only
+            except Exception:
+                pass
+        return t0
     except Exception:
         return None
 
@@ -896,7 +909,8 @@ def trades(vid: str, tick: int = 5, period: int = 0, code: str = "",
                          # rank timeline; None = no log (gate off)
                          "rank_win": (_rank_win9(c_code, day) if rank_gate
                                       else None),
-                         "rank_t0": (_rank_t09(day) if rank_gate else None),
+                         "rank_t0": (_rank_t09(day, c_code) if rank_gate
+                                     else None),
                          "times": [c["hhmm"] for c in cs],
                          "vols": [float(c.get("vol") or 0) for c in cs],
                          "ctx": daily_ctx(c_code, d or _kd0()),

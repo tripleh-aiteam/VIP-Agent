@@ -126,6 +126,16 @@ def _news_counts(code: str, minutes: int = 60) -> tuple[int, int]:
         return 0, 0
 
 
+# THE TRUE PULSE (boss 2026-08-25 13:4x: the panel showed the last RECORD
+# time - written only on rank changes/60s - so the 4s checking looked slow):
+# every single check stamps here, even when nothing changed.
+_live = {"t": "", "checks": 0, "top": []}
+
+
+def live_pulse() -> dict:
+    return dict(_live)
+
+
 _base = {"t": 0.0, "rows": []}      # morning scores, refreshed every 5 min
 
 
@@ -191,6 +201,9 @@ def _fast_cycle() -> None:
     if not rows:
         return
     rows.sort(key=lambda x: -(x["avg"] or 0))
+    _live["t"] = datetime.now(KST).strftime("%H:%M:%S")
+    _live["checks"] += 1
+    _live["top"] = rows[:10]
     _write_snapshot(rows[:10])
 
 
