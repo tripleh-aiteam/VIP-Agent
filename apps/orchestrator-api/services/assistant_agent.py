@@ -6837,7 +6837,11 @@ def _run_agent_impl(
     if not confirmed_tool and not attachment_ids:
         try:
             from services.position_parse import is_position_question, parse
-            if is_position_question(transcript):
+            # the CHECKLIST advice engine owns buy/sell verdicts now (boss 2026-08-25:
+            # no ML in advice) — this ML-backed lane keeps only what that engine
+            # doesn't claim
+            from services import checklist_advice as _ca_gate
+            if is_position_question(transcript) and not _ca_gate.kind(transcript):
                 from services.position_advice import advise as _pos_advise
                 _adv = _pos_advise(db, parse(transcript))
                 if _adv.get("ok"):
@@ -6987,6 +6991,25 @@ def _run_agent_impl(
                         "tool_used": "chat_trade"}
         except Exception as e:
             log.warning(f"chat trade lane failed: {str(e)[:120]}")
+
+    # === 🧭 CHECKLIST ADVICE (boss 2026-08-25: "when we ask any advise again ML is
+    # coming out... it should analyze deeply using 100 checklist, news, then answer" +
+    # the holder's case "yesterday I bought, should I sell now?" judged by our own
+    # laws: rising→hold, selling zone→sell at 3rd blue, buying zone→never sell).
+    # Replaces every ML decide-chain for buy/sell advice, and ships the same animated
+    # checklist "process" the reco desk shows. ===
+    if not confirmed_tool and not attachment_ids and not _is_movers_q(transcript):
+        try:
+            from services import checklist_advice as _ca
+            if _ca.kind(transcript) and _all_stocks_in_query(transcript):
+                _adv = _ca.build(db, transcript, lang)
+                if _adv and _adv.get("reply"):
+                    return {"intent": "checklist_advice", "language": lang,
+                            "reply": _adv["reply"], "action": None, "speak": True,
+                            "transcript": transcript, "tool_used": "checklist_advice",
+                            "process": _adv.get("process")}
+        except Exception as e:
+            log.warning(f"checklist advice lane failed: {str(e)[:120]}")
 
     # === 📚 FUNDAMENTALS / CONSENSUS lane (deep audit 2026-08-25) — before the analyst
     # LLM so PER/배당/시가총액/목표가 get real sourced numbers, never an apology. ===
@@ -7992,11 +8015,20 @@ def _run_agent_impl(
                 try:
                     from services import prediction_service as _ps2
                     _c = next((c for (c, _n) in _sw if c in _ps2.NAMES), None)
-                    # prev was a buy/sell RECOMMENDATION → keep recommending (decide); prev was a
-                    # pure OUTLOOK → keep forecasting (two_method). Mirrors the main routing split.
-                    if _c and _wants_recommendation(_prev) and "decide" in TOOL_REGISTRY:
-                        return _run_chain(db, transcript, lang, [{"tool": "decide", "args": {"ticker": _c}}],
-                                          current_path, selected_id, system, history or [], agent_id=agent_id, user_id=user_id)
+                    # prev was a buy/sell RECOMMENDATION → keep advising via the CHECKLIST
+                    # engine (boss 2026-08-25: no ML in advice — the decide chain retired);
+                    # prev was a pure OUTLOOK → keep forecasting (two_method).
+                    if _c and _wants_recommendation(_prev):
+                        try:
+                            from services import checklist_advice as _ca2
+                            _adv2 = _ca2.build(db, f"{_sw[0][1]} 살까?", lang)
+                            if _adv2 and _adv2.get("reply"):
+                                return {"intent": "checklist_advice", "language": lang,
+                                        "reply": _adv2["reply"], "action": None, "speak": True,
+                                        "transcript": transcript, "tool_used": "checklist_advice",
+                                        "process": _adv2.get("process")}
+                        except Exception:
+                            pass
                     if _c and "two_method_view" in TOOL_REGISTRY:
                         _st = [{"tool": "two_method_view", "args": {"ticker": _c}}]
                         if "read_chart" in TOOL_REGISTRY:
