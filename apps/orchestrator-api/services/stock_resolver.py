@@ -56,6 +56,7 @@ _SLANG: dict[str, str] = {
     "에코프로비엠": "247540", "에코프로bm": "247540",
     "진에어": "272450", "하나투어": "039130",
     "에쓰오일": "010950", "에스오일": "010950", "s-oil": "010950", "soil": "010950",
+    "s oil": "010950", "es oil": "010950",
     "gs": "078930",
     "메리츠": "138040", "메리츠금융지주": "138040",
     "모비스": "012330", "현대모비스": "012330",
@@ -168,7 +169,10 @@ def find_all(text: str) -> list[tuple[str, str]]:
     for code in re.findall(r"\b\d{6}\b", text or ""):
         if code in _TICKER_NAME or code in _ALIAS.values():
             found.setdefault(code, code)
-    work = " " + (text or "").lower() + " "     # consumable copy
+    # "S- oil" / "s - oil" (boss 2026-08-25: the stray space made S-OIL unresolvable,
+    # and the answer borrowed SK하이닉스 from the conversation) — collapse spaces
+    # around a hyphen so hyphenated names match however they're spaced.
+    work = " " + re.sub(r"\s*-\s*", "-", (text or "").lower()) + " "     # consumable copy
     for alias in _aliases_longest_first():
         if len(alias) < 2:
             continue
