@@ -339,6 +339,8 @@ _PICKS_PATTERN_RE = _re.compile(
 
 def _is_watchlist_question(transcript: Optional[str]) -> bool:
     """A 'what should I day-trade today?' question (no single stock needed)."""
+    if _is_movers_q(transcript):     # 'which stock increased most?' = a DATA question
+        return False
     t = (transcript or "").lower()
     return any(k in t for k in _WATCHLIST_KW) or bool(_PICKS_PATTERN_RE.search(t))
 
@@ -394,6 +396,8 @@ _SETUP_KW = (
 
 
 def _is_setup_question(transcript: Optional[str]) -> bool:
+    if _is_movers_q(transcript):     # 'which stock increased most?' = a DATA question
+        return False
     t = (transcript or "").lower()
     return any(k in t for k in _SETUP_KW)
 
@@ -1906,6 +1910,91 @@ _MKT_DIR_KW = ("코스피", "코스닥", "kospi", "kosdaq", "시장 방향", "�
                "exchange rate", "usd/krw", "usdkrw", "wti", "oil price")
 
 
+_MV_CACHE: dict = {}
+
+
+def _is_movers_q(transcript: Optional[str]) -> bool:
+    """'which stock increased/decreased most (yesterday/today)?' — a DATA question that
+    the which-stock recommendation keywords kept hijacking (boss 2026-08-25)."""
+    tl = (transcript or "").lower()
+    if not tl:
+        return False
+    _dir = any(w in tl for w in ("increas", "decreas", "gainer", "loser", "오른", "내린",
+                                 "상승", "하락", "급등", "급락"))
+    _pick = any(w in tl for w in ("which", "what stock", "어떤", "무슨", "가장", "제일",
+                                  "most", "top", "상위"))
+    _stok = "종목" in tl or bool(_re.search(r"\bstocks?\b|\bstokcs?\b", tl)) \
+        or "급등" in tl or "급락" in tl
+    return _dir and _pick and _stok
+
+
+def _movers_reply(db, transcript: Optional[str], lang: str) -> Optional[str]:
+    """Top gainers/losers among the 40 candidates for TODAY or YESTERDAY, from real
+    Naver daily rows (cached 10 min per stock)."""
+    import time as _t
+    tl = (transcript or "").lower()
+    en = str(lang or "").lower().startswith("en") or (
+        not _re.search(r"[가-힣]", transcript or "") and _re.search(r"[a-zA-Z]", transcript or ""))
+    want_today = any(w in tl for w in ("오늘", "today", "지금", "now")) \
+        and not any(w in tl for w in ("어제", "yesterday"))
+    from services import naver_stock as ns
+    from services.checklist_reco import _ranking
+    rows = (_ranking() or {}).get("rows", [])[:40]
+    if not rows:
+        return None
+    from datetime import datetime as _dtm
+    _today_iso = _dt_now_kst().date().isoformat()
+    moves = []
+    ref_date = None
+    for r in rows:
+        code = r["code"]
+        hit = _MV_CACHE.get(code)
+        if hit and _t.time() - hit[0] < 600:
+            h = hit[1]
+        else:
+            try:
+                h = ns.daily_history(code, days=4)
+            except Exception:
+                h = []
+            _MV_CACHE[code] = (_t.time(), h)
+        if len(h) < 3:
+            continue
+        # h[0] = the latest row (today's ongoing session when trading)
+        if want_today:
+            cur, prev = h[0], h[1]
+        else:  # yesterday = the last COMPLETED session before today
+            if h[0].get("date") == _today_iso:
+                cur, prev = h[1], h[2]
+            else:
+                cur, prev = h[0], h[1]
+        if not (cur.get("close") and prev.get("close")):
+            continue
+        chg = (cur["close"] / prev["close"] - 1) * 100
+        ref_date = ref_date or cur.get("date")
+        moves.append((r.get("name") or code, code, chg, cur.get("close")))
+    if not moves:
+        return None
+    moves.sort(key=lambda x: -x[2])
+    ups = [m for m in moves if m[2] > 0][:4]
+    downs = sorted([m for m in moves if m[2] < 0], key=lambda x: x[2])[:4]
+    day_lab = (("today" if want_today else "yesterday") + f" ({ref_date})") if en else \
+              (("오늘" if want_today else "어제") + f" ({ref_date})")
+    L = [f"**{'📊 Top movers' if en else '📊 등락 상위'} — {day_lab} · "
+         + (f"{len(moves)} tracked candidates**" if en else f"추적 {len(moves)}종목 기준**"), ""]
+    L.append("**📈 " + ("Biggest gainers" if en else "상승 상위") + "**")
+    L += [f"{i}. [{n}](chart:{c}) — **{g:+.1f}%** ({_won_str(px)})"
+          for i, (n, c, g, px) in enumerate(ups, 1)] or ["-"]
+    L += ["", "**📉 " + ("Biggest losers" if en else "하락 상위") + "**"]
+    L += [f"{i}. [{n}](chart:{c}) — **{g:+.1f}%** ({_won_str(px)})"
+          for i, (n, c, g, px) in enumerate(downs, 1)] or ["-"]
+    L += ["", ("Universe = our 40 scored candidates, not the whole market. Click a name for its chart."
+               if en else "범위는 전체 시장이 아니라 우리가 채점하는 40종목입니다. 이름 클릭 = 차트.")]
+    ah = _afterhours_note(en)
+    if ah:
+        L.insert(1, ah)
+    return "\n".join(L)
+
+
 def _wants_candidates(transcript: Optional[str]) -> bool:
     """A 'give me N stock candidates for trading' ask, TYPO-TOLERANT (boss 2026-08-24:
     'give em 3 sotck condidate for trading' slipped past every deterministic route and
@@ -1923,7 +2012,8 @@ def _wants_candidates(transcript: Optional[str]) -> bool:
     stockish = "종목" in tl or "후보" in tl or has("stock") or has("stocks") \
         or has("candidate", 0.75) or has("picks")
     tradeish = "매매" in tl or "단타" in tl or "살" in tl or "추천" in tl \
-        or has("trading") or has("trade") or has("buy") or has("invest")
+        or has("trading") or has("trade") or has("buy") or has("invest") \
+        or has("recommend", 0.75)
     n = bool(_re.search(r"(?<!\d)(\d{1,2})(?!\d)", tl))
     return stockish and tradeish and (n or has("candidate", 0.75) or "추천" in tl or "후보" in tl)
 
@@ -6836,6 +6926,20 @@ def _run_agent_impl(
                         "tool_used": "market_direction"}
         except Exception as e:
             log.warning(f"market direction lane failed: {str(e)[:120]}")
+
+    # ===== TOP MOVERS ("yesterday which stock mostly increased/decreased?") — real
+    # daily data across the 40 candidates, never a recommendation hijack (boss
+    # 2026-08-25: this question was answered with the trading top-3). =====
+    if (not confirmed_tool and not attachment_ids and _is_movers_q(transcript)
+            and not _all_stocks_in_query(transcript)):
+        try:
+            _mv = _movers_reply(db, transcript, lang)
+            if _mv:
+                return {"intent": "top_movers", "language": lang, "reply": _mv,
+                        "action": None, "speak": True, "transcript": transcript,
+                        "tool_used": "top_movers"}
+        except Exception as e:
+            log.warning(f"movers lane failed: {str(e)[:120]}")
 
     # ===== STOCK NEWS, deterministic ("한미반도체 뉴스 알려줘") — from OUR news engine
     # (Qwen-scored stamps + live headlines), never an LLM "search tool not working"
