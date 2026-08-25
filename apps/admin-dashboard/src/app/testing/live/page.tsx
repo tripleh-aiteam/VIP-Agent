@@ -355,6 +355,73 @@ function LiveChart({ bars, marks, focus, off = 0 }:
   return <div ref={ref} style={{ width: "100%", height: 320 }} />;
 }
 
+// 🔄 THE VISIBLE HEARTBEAT (boss 2026-08-25: "show the process that every 20
+// sec is rechecking — real-time, interactive"): a live monitor of the rank
+// logger — countdown to the next re-check, and a feed where every completed
+// 40-stock examination prints one line, rank changes highlighted.
+function RecoLiveCheckPanel({ t, lang }: { t: (ko: string, en: string) => string; lang: string }) {
+  type Snap = { t: string; rows: { code: string; name: string; avg?: number }[] };
+  const [snaps, setSnaps] = useState<Snap[]>([]);
+  const [topN, setTopN] = useState(3);
+  const [nowS, setNowS] = useState(Date.now());
+  useEffect(() => {
+    let live = true;
+    const load = () => api<{ ok: boolean; top_n: number; snaps: Snap[] }>(
+      "/paper-desk/live/reco-rank-log?n=15")
+      .then((d) => { if (live && d?.ok) { setSnaps(d.snaps || []); setTopN(d.top_n || 3); } })
+      .catch(() => {});
+    load();
+    const h = setInterval(load, 5000);
+    const h2 = setInterval(() => setNowS(Date.now()), 1000);
+    return () => { live = false; clearInterval(h); clearInterval(h2); };
+  }, []);
+  if (!snaps.length) return null;
+  const last = snaps[snaps.length - 1];
+  const [hh, mm, ss] = (last.t || "0:0:0").split(":").map(Number);
+  const lastMs = new Date().setHours(hh, mm, ss, 0);
+  const ago = Math.max(0, Math.round((nowS - lastMs) / 1000));
+  const nextIn = Math.max(0, 20 - (ago % 20));
+  const frac = Math.min(1, (20 - nextIn) / 20);
+  return (
+    <div className="mt-2 px-3 py-2 rounded-xl border text-[11px]"
+      style={{ borderColor: "#e65100", background: "rgba(230,81,0,0.04)" }}>
+      <div className="flex items-center gap-2 flex-wrap tabular-nums">
+        <b style={{ color: "#e65100" }}>🔄 {t("실시간 재검사", "live re-check")}</b>
+        <span className="inline-block w-2 h-2 rounded-full"
+          style={{ background: ago < 40 ? "#2e7d32" : "#b8860b",
+                   animation: ago < 40 ? "pulse 1.2s infinite" : undefined }} />
+        <span>{t(`마지막 검사 ${last.t} (${ago}초 전)`, `last check ${last.t} (${ago}s ago)`)}</span>
+        <span className="text-[var(--text-muted)]">{t(`· 다음 ~${nextIn}초 후`, `· next in ~${nextIn}s`)}</span>
+        <span className="ml-1 flex-1 h-1.5 rounded" style={{ background: "rgba(128,128,128,0.15)", minWidth: 60, maxWidth: 160 }}>
+          <span className="block h-1.5 rounded" style={{ width: `${Math.round(frac * 100)}%`, background: "#e65100", transition: "width 1s linear" }} />
+        </span>
+        <span className="text-[var(--text-muted)]">
+          {t(`40종목 × 100문항 → 톱${topN} 결정 · 오늘 ${snaps.length}회+ 기록`,
+             `40 stocks × 100 items → top-${topN} decided · ${snaps.length}+ checks logged today`)}</span>
+      </div>
+      <div className="mt-1 max-h-[92px] overflow-y-auto leading-relaxed">
+        {snaps.slice().reverse().map((s9, i9) => {
+          const prev = snaps[snaps.length - 2 - i9];
+          const tops = (s9.rows || []).slice(0, topN);
+          const prevTops = prev ? (prev.rows || []).slice(0, topN).map((x) => x.code) : null;
+          const entered = prevTops ? tops.filter((x) => !prevTops.includes(x.code)) : [];
+          const left9 = prevTops && prev ? (prev.rows || []).slice(0, topN).filter((x) => !tops.some((y) => y.code === x.code)) : [];
+          const changed = entered.length > 0 || left9.length > 0;
+          return (
+            <div key={`${s9.t}-${i9}`} style={changed ? { color: "#e65100", fontWeight: 700 } : undefined}>
+              {s9.t} {changed ? "🔄" : "✓"} {t(`톱${topN}: `, `top-${topN}: `)}
+              {tops.map((x) => `${x.name} ${x.avg ?? ""}`).join(" · ")}
+              {changed && entered.length > 0 && <span> {t("↑진입 ", "↑in ")}{entered.map((x) => x.name).join(",")}</span>}
+              {changed && left9.length > 0 && <span> {t("↓이탈(신규 매수 중단) ", "↓out (new buys stop) ")}{left9.map((x) => x.name).join(",")}</span>}
+              {!changed && <span className="opacity-50"> {t("변동 없음", "no change")}</span>}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 // 🤝 Auto / Semi-auto for the reco desk (boss 2026-08-25). Auto = the picks trade
 // themselves on the 100-checklist recommendation. Semi = algo BUY signals appear here
 // as suggestions and the FINAL CLICK IS HUMAN; SELLs/stops always execute on their own.
@@ -1813,6 +1880,7 @@ export default function LiveDeskPage() {
       {/* SEMI-AUTO control + pending suggestions (boss 2026-08-25: "Auto trades by the
           100-checklist recommendation; in Semi-auto it suggests and the final click is
           human"). SELLs/stops always execute; the six always auto-trade. */}
+      {deskView === "reco" && <RecoLiveCheckPanel t={t} lang={lang} />}
       {deskView === "reco" && <RecoTradeModePanel t={t} />}
       {/* GO/NO-GO board removed at the boss's order (2026-08-25) — code preserved. */}
       {/* THE ALGORITHM CHOICE, its own bar above the panel (boss 2026-08-11: it was

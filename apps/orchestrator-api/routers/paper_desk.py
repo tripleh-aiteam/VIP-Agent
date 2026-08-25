@@ -869,6 +869,18 @@ def live_daily_chart(code: str = Query(...)):
                       "bottom_20": lo + (hi - lo) * 0.20}}
 
 
+@router.get("/live/reco-rank-log")
+def live_reco_rank_log(n: int = Query(30), day: str = Query("")):
+    """THE VISIBLE HEARTBEAT (boss 2026-08-25: "show the process that every
+    20 sec is rechecking, like a real-time interactive check"): the rank
+    logger's recent snapshots, newest last, for the reco desk's live-check
+    panel - each one is a completed 40-stock re-examination."""
+    from services.reco_rank_log import TOP_N, snapshots
+    sn = snapshots(day or None)
+    return {"ok": True, "top_n": TOP_N, "count": len(sn),
+            "snaps": sn[-max(1, min(int(n or 30), 200)):]}
+
+
 @router.get("/live/reco-rank-at")
 def live_reco_rank_at(code: str = Query(...), t: str = Query(...),
                       day: str = Query("")):
