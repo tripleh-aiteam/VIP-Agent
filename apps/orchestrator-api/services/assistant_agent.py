@@ -1660,7 +1660,9 @@ def _period_stats_window(q: Optional[str]):
         except ValueError:
             return _date(y, m, 28)
 
-    m = _re.search(r"(\d+)\s*(?:개\s*월|달)", t) or _re.search(r"(\d+)\s*(?:months?|mo)\b", t)
+    # 'mo/mon/mont/month/months/monthes' — the boss types fast ('last 6 mont' returned
+    # the CURRENT price because the window parse missed, 2026-08-25)
+    m = _re.search(r"(\d+)\s*(?:개\s*월|달)", t) or _re.search(r"(\d+)\s*mo(?:n(?:th?e?s?)?)?\b", t)
     if m:
         n = max(1, min(int(m.group(1)), 18))
         return _back(n), n, f"최근 {n}개월", f"last {n} months"
@@ -1781,6 +1783,14 @@ def _period_stats_reply(transcript: Optional[str], lang: str,
             m_hi = max(r.get("high") or 0 for r in mr)
             m_av = sum(r.get("volume") or 0 for r in mr) / len(mr)
             S.append(f"| {mk} | {_won_str(m_lo)} | {_won_str(m_hi)} | {_vol_str(m_av, _en)} | {_won_str(mr[-1]['close'])} |")
+        # ---- EVERY DAY's data (boss 2026-08-25: "I am asking last 6 months, it should
+        # show every day data") — the full daily OHLCV rows behind the summary
+        S += ["", ("| Date | Open | High | Low | Close | Volume |" if _en
+                   else "| 날짜 | 시가 | 고가 | 저가 | 종가 | 거래량 |"), "|---|---|---|---|---|---|"]
+        for r in chron:
+            S.append(f"| {r.get('date')} | {_won_str(r.get('open')) if r.get('open') else '-'} "
+                     f"| {_won_str(r.get('high'))} | {_won_str(r.get('low'))} "
+                     f"| {_won_str(r.get('close'))} | {int(r.get('volume') or 0):,} |")
         # ---- written explanation (deterministic, from the numbers above)
         zone_ko = "저점권" if pos <= 30 else "고점권" if pos >= 70 else "중간 구간"
         zone_en = "near the period low" if pos <= 30 else "near the period high" if pos >= 70 else "mid-range"

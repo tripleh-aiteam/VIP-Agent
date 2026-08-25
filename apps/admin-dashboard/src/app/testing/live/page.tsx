@@ -1197,6 +1197,24 @@ export default function LiveDeskPage() {
           )}
         </div>
       )}
+      {/* the SIX's simple name strip — so anyone can see what this desk trades, with
+          no scores or rankings attached (boss 2026-08-25: "show the 6 stock names like
+          before, no rankings") */}
+      {deskView !== "reco" && (
+        <div className="mt-3 rounded-xl border px-4 py-2 flex items-center gap-2 flex-wrap"
+          style={{ borderColor: "#e65100", background: "rgba(230,81,0,0.05)" }}>
+          <b className="text-[13px]" style={{ color: "#e65100" }}>
+            🎯 {t("매매 종목 — 고정 6", "trading — the fixed 6")}
+          </b>
+          <span className="text-[12px] font-bold text-[var(--text-primary)]">
+            {tabStocks.map((x) => x.name).join(" · ")}
+          </span>
+          <span className="text-[10px] text-[var(--text-muted)]">
+            {t("매일 이 여섯 종목만 — 추천 종목은 체크리스트 추천 데스크에서.",
+               "these six every day — the checklist picks live on the Reco Desk.")}
+          </span>
+        </div>
+      )}
       {/* the ranking board renders ONLY on the reco page — the Live Kiwoom Desk shows
           no rankings at all for the six (boss 2026-08-25: "do not show rankings of the
           6 fixed in the Live Kiwoom Desk") */}
