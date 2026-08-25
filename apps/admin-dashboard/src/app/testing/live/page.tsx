@@ -1290,14 +1290,38 @@ export default function LiveDeskPage() {
   // reco tabs: SCORE ORDER, top → down (boss 2026-08-24: "only score based, from top
   // to less, no need our 6 prefixed") — a six-member appears here only if it EARNED a
   // score spot; the six have their own desk at /testing/live.
+  const recoSetPre9 = new Set(((dpick?.rows || []).filter((r) => r.by_score)).map((r) => r.code));
   const _recoRows = (dpick?.rows || []).filter((r) => r.by_score)
     .sort((a, b) => (b.score || 0) - (a.score || 0));
-  // LIVE top-N — identical order and totals to the chatbot's [RESULT] (same backend
-  // live layer). 🟢 = actually trading (the morning-fixed desk member).
-  const _recoLive = [...(dpick?.rows || [])]
-    .sort((a, b) => (b.live_total ?? b.score ?? 0) - (a.live_total ?? a.score ?? 0))
-    .slice(0, dpick?.n_picks ?? 5);
-  const recoSet = new Set(_recoRows.map((r) => r.code));
+  // LIVE top-N — ONE TRUTH (boss 2026-08-25 13:5x: the header showed one set
+  // of numbers and the heartbeat another): the header chips now read the SAME
+  // 4-second tape-scorer snapshot the heartbeat and the buy-gate use; the
+  // slow dpick ordering remains only as a fallback before the first snapshot.
+  const [rankHead9, setRankHead9] = useState<{ top_n?: number; universe?: number;
+    rows?: { code: string; name: string; avg?: number }[] } | null>(null);
+  useEffect(() => {
+    if (deskView !== "reco") return;
+    let live9 = true;
+    const load9 = () => api<{ ok: boolean; top_n: number; universe?: number;
+      snaps: { t: string; rows: { code: string; name: string; avg?: number }[] }[] }>(
+      "/paper-desk/live/reco-rank-log?n=1")
+      .then((d) => { if (live9 && d?.ok && d.snaps?.length)
+        setRankHead9({ top_n: d.top_n, universe: d.universe,
+                       rows: d.snaps[d.snaps.length - 1].rows }); })
+      .catch(() => {});
+    load9();
+    const h9 = setInterval(load9, 5000);
+    return () => { live9 = false; clearInterval(h9); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [deskView]);
+  const _recoLive = rankHead9?.rows
+    ? rankHead9.rows.slice(0, rankHead9.top_n ?? 5).map((x) => ({
+        code: x.code, name: x.name, live_total: x.avg, score: x.avg,
+        by_score: recoSetPre9.has(x.code) }))
+    : [...(dpick?.rows || [])]
+        .sort((a, b) => (b.live_total ?? b.score ?? 0) - (a.live_total ?? a.score ?? 0))
+        .slice(0, dpick?.n_picks ?? 5);
+  const recoSet = recoSetPre9;
   const _recoTabs = _recoRows
     .map((r) => (st?.stocks ?? []).find((x) => x.code === r.code))
     .filter(Boolean) as NonNullable<typeof st>["stocks"];
@@ -1437,8 +1461,8 @@ export default function LiveDeskPage() {
                   (boss 2026-08-24: "in the Live Kiwoom Desk must be only the prefixed
                   6, nothing more") */}
               🎯 {deskView === "reco"
-                ? t(`지금 순위 TOP ${_recoLive.length} (챗봇 추천과 동일·실시간) · 전체 ${(dpick.rows || []).length}종목 아래`,
-                    `LIVE top ${_recoLive.length} (identical to the chatbot, real-time) · all ${(dpick.rows || []).length} ranked below`)
+                ? t(`지금 순위 TOP ${_recoLive.length} — 4초 재검사(하트비트와 동일 점수) · 감시 ${rankHead9?.universe || (st?.stocks ?? []).length}종목 · 아침 스캔 ${(dpick.rows || []).length}종목 순위 아래`,
+                    `LIVE top ${_recoLive.length} — the 4s re-check (same scores as the heartbeat) · watching ${rankHead9?.universe || (st?.stocks ?? []).length} · the morning's ${(dpick.rows || []).length}-stock scan ranked below`)
                 : t("내 6종목 — 이 데스크는 항상 이 여섯만 매매합니다",
                     "my 6 stocks — this desk trades only these six")}
             </b>
