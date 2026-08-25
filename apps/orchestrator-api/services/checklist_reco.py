@@ -388,11 +388,23 @@ def build(db, n: int = 3, transcript: str = "", lang: str = "ko") -> dict[str, A
         # evidence:CODE — the chat opens a RIGHT-side proof panel (chart + the data),
         # no round-trip through name resolution (boss 2026-08-24: the ask-link version
         # re-asked "which stock do you mean?" on English names).
+        # advised ORDER SIZE (boss 2026-08-25: "advise us stock name and stock quantity
+        # and stock price") — budget ÷ live price, same sizing the chat order desk uses
+        _qty_bit = ""
+        if lv.get("cur"):
+            try:
+                from services.chat_trade import advise_qty as _aq, budget as _bg
+                _qn = _aq(lv["cur"])
+                _qty_bit = (f" · qty **{_qn:,}** (₩{_bg():,.0f} budget)" if en
+                            else f" · 수량 **{_qn:,}주** (예산 ₩{_bg():,.0f} 기준)")
+            except Exception:
+                pass
         L.append(f"**{i}. [{name}](chart:{code})** — "
                  + (f"{round(tot, 1)} pts (base {r.get('score')} + now {lv['adj']:+g})"
                     if en else f"{round(tot, 1)}점 (기준 {r.get('score')} + 지금 {lv['adj']:+g})")
                  + (f" · {' · '.join(bits)}" if bits else "")
                  + f" · {zs}"
+                 + _qty_bit
                  + (f" · 🟢 {'trading today' if en else '오늘 매매중'}" if code in _traded else "")
                  + f" · [{'evidence 🔍' if en else '근거 🔍'}](evidence:{code})")
     if _traded_names:
@@ -408,7 +420,14 @@ def build(db, n: int = 3, transcript: str = "", lang: str = "ko") -> dict[str, A
               # can see actually going on market") — opens the reco desk page
               (f"[📡 Watch them trading live → Checklist Reco Desk](nav:/testing/reco)"
                if en else
-               f"[📡 실제 매매 보러가기 → 체크리스트 추천 데스크](nav:/testing/reco)")]
+               f"[📡 실제 매매 보러가기 → 체크리스트 추천 데스크](nav:/testing/reco)"),
+              # order-by-chat (boss 2026-08-25): the advice line above already names
+              # stock + quantity + price — the order is one sentence away
+              (f"🧾 To order right here, just say e.g. **\"buy {_traded_names[0]}\"** — "
+               f"I'll show the confirmation first, then execute on your \"yes\"."
+               if en else
+               f"🧾 바로 주문하려면 **\"{_traded_names[0]} 매수\"** 라고 말씀하세요 — "
+               f"확인 메시지를 먼저 보여드리고, \"네\" 하시면 체결됩니다.")]
     L += ["",
           ("Click a NAME to open its live chart on the left · click 근거/evidence to see exactly "
            "how the 100-item checklist, daily chart, minute/real-time, volume and news scored it — "

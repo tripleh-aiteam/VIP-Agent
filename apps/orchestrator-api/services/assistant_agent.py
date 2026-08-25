@@ -6966,6 +6966,28 @@ def _run_agent_impl(
         except Exception as e:
             log.warning(f"readiness failed: {str(e)[:120]}")
 
+    # === 🧾 CHAT ORDER DESK (boss 2026-08-25: "if we say then buy samsung electronics
+    # is it possible?") — an imperative BUY/SELL command becomes a real desk order via
+    # a two-turn confirmation. The confirm word ('네/yes') is checked FIRST so it is
+    # never stolen by another lane while an order is pending. ===
+    if not confirmed_tool and not attachment_ids:
+        try:
+            from services import chat_trade as _ct
+            _cw = _ct.confirm_check(transcript)
+            if _cw is not None:
+                _ctr = _ct.finish(db, _cw)
+                if _ctr:
+                    return {"intent": "chat_trade", "language": lang, "reply": _ctr,
+                            "action": None, "speak": True, "transcript": transcript,
+                            "tool_used": "chat_trade"}
+            _ctp = _ct.build_preview(db, transcript, lang)
+            if _ctp:
+                return {"intent": "chat_trade_confirm", "language": lang, "reply": _ctp,
+                        "action": None, "speak": True, "transcript": transcript,
+                        "tool_used": "chat_trade"}
+        except Exception as e:
+            log.warning(f"chat trade lane failed: {str(e)[:120]}")
+
     # === 📚 FUNDAMENTALS / CONSENSUS lane (deep audit 2026-08-25) — before the analyst
     # LLM so PER/배당/시가총액/목표가 get real sourced numbers, never an apology. ===
     if not confirmed_tool and not attachment_ids and _is_fundamentals_q(transcript):
