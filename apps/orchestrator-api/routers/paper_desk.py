@@ -795,6 +795,11 @@ def live_family_trades(family: str = Query("new"), tick: int = Query(5),
     # ONLY the recommended - no mixed"): the history is desk-scoped by codes,
     # normalized (sorted) in the key so the warm can prefill both desks.
     _nc = ",".join(sorted(c for c in (codes or "").split(",") if c))
+    if not _nc:
+        # an empty codes list (a page mid-load) must NEVER serve the mixed
+        # pot - it defaults to the boss's six (menu 1 semantics)
+        codes = "000660,005930,017670,034020,035420,042660"
+        _nc = codes
     return _swr(("fam", family, tick, period, day or _kd9(), frm, to, gate,
                  auto, _nc), 20.0,
                 lambda: _fam_compute(family, tick, period, day, frm, to, gate,
@@ -1389,6 +1394,15 @@ def _enrich_pick(res: dict, db) -> None:
     except Exception:
         res["market_pct"] = None
     _W = {"trend": 25, "liquidity": 20, "flexibility": 20, "levels": 15, "momentum": 10}
+    # THE FOUR-CATEGORY AVERAGE (boss 2026-08-25: "use market / issue-supply /
+    # stock-selection / execution-management, calculate each column and divide
+    # by the number of columns - the average score - and calculate execution
+    # management too, it shows nothing"). exec = the automatable 실행 items
+    # (#76 levels, #79 risk:reward, #82 method) run per stock, plus #83
+    # (mechanical stop) which our engine guarantees by law. Computed for the
+    # ranking's top rows + the desk (the ctx fetch costs ~db-read per stock).
+    _rows_by = sorted(res.get("rows", []), key=lambda r: -(r.get("score") or 0))
+    _exec_on = {r["code"] for r in _rows_by[:10]} | {r["code"] for r in res.get("rows", []) if r.get("pinned") or r.get("by_score")}
     for r in res.get("rows", []):
         g = r.get("groups") or {}
         try:
@@ -1396,10 +1410,39 @@ def _enrich_pick(res: dict, db) -> None:
             ssel = round(sum(g[k] * w for k, w in _W.items() if k in g) / _wsum) if _wsum else None
         except Exception:
             ssel = None
-        # exec (실행/관리 76~100) is computed at BUY time (타점/손익비/근거), not rankable
-        # here — the column shows "—" and points at the per-stock checklist.
-        r["cats"] = {"market": res.get("market_pct"), "issue": g.get("flows"),
-                     "stock_sel": ssel, "exec": None}
+        _exec9 = None
+        _exec_items9 = []
+        if r["code"] in _exec_on:
+            try:
+                from services.checklist_engine import (_c_entry_levels, _c_rr,
+                                                       _c_method_agreement,
+                                                       _stock_ctx)
+                _cx9 = _stock_ctx(db, r["code"])
+                _got9 = []
+                for _no9, _q9, _fn9 in ((76, "진입/손절/목표 레벨", _c_entry_levels),
+                                        (79, "손익비 ≥1.2", _c_rr),
+                                        (82, "방법(ML/파동) 지지", _c_method_agreement)):
+                    try:
+                        _ok9, _dt9 = _fn9(_cx9)
+                    except Exception:
+                        _ok9, _dt9 = None, "계산 불가"
+                    if _ok9 is not None:
+                        _got9.append(bool(_ok9))
+                    _exec_items9.append({"no": _no9, "q": _q9,
+                                         "ok": _ok9, "d": str(_dt9)[:80]})
+                _got9.append(True)   # #83 기계식 손절 - the engine's own law
+                _exec_items9.append({"no": 83, "q": "기계식 손절 (엔진 자동)",
+                                     "ok": True, "d": "-1% 보호선을 엔진이 즉시 실행"})
+                _exec9 = round(sum(_got9) / len(_got9) * 100) if _got9 else None
+            except Exception:
+                _exec9 = None
+        _cats9 = {"market": res.get("market_pct"), "issue": g.get("flows"),
+                  "stock_sel": ssel, "exec": _exec9}
+        _have9 = [v for v in _cats9.values() if v is not None]
+        _cats9["avg"] = round(sum(_have9) / len(_have9), 1) if _have9 else None
+        r["cats"] = _cats9
+        if _exec_items9:
+            r["exec_items"] = _exec_items9
 
 
 @router.get("/daily-pick")

@@ -931,6 +931,10 @@ export default function LiveDeskPage() {
       .catch(() => {});
   }, [way, tick, period]);
   const pullFam = useCallback(() => {
+    // NO MIXED DESKS (boss 2026-08-25 x2): on the reco desk, wait until the
+    // picks are known - an empty codes list must never fetch another desk's
+    // table into this menu
+    if (deskView === "reco" && !deskCodesRef.current) return;
     const my = ++famSeqRef.current;
     setFamBusy(true);
     const q = perRef.current ? `period=${perRef.current}` : `tick=${tickRef.current}`;
@@ -953,9 +957,13 @@ export default function LiveDeskPage() {
                      }
                      setFam(d?.ok ? d : null); setFamBusy(false); })
       .catch(() => { if (my !== famSeqRef.current) return; setFamBusy(false); });
-  }, [way]);
+  }, [way, deskView]);
   const pullFamRef = useRef<(() => void) | null>(null);
   pullFamRef.current = pullFam;
+  useEffect(() => {
+    if (deskView === "reco" && deskCodesRef.current) pullFamRef.current?.();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [deskView, dpick]);
   useEffect(() => {
     // fetch even while the panel is collapsed - the server answers from a 4s cache,
     // and a collapsed header with no data read as "the history is gone" (2026-08-11)
@@ -1403,7 +1411,7 @@ export default function LiveDeskPage() {
                        ["flexibility", t("유연성", "flex"), "right"], ["levels", t("지지저항", "levels"), "right"],
                        ["momentum", t("모멘텀", "mom"), "right"], ["flows", t("수급", "flows"), "right"]]
                     : [["rank", t("순위", "#"), "left"], ["stock", t("종목", "Stock"), "left"],
-                       ["score", t("총점", "Total score"), "right"],
+                       ["score", t("평균 점수", "Average score"), "right"],
                        ["market", t("시장", "Market"), "right"],
                        ["issue", t("이슈/수급 (10)", "Issue/Supply&Demand (10)"), "right"],
                        ["stock_sel", t("종목선정 (90)", "Stock selection (90)"), "right"],
@@ -1479,14 +1487,13 @@ export default function LiveDeskPage() {
                           </td>
                         </>
                       ) : (
-                        // TOTAL SCORE = morning weighted total, live-adjusted when computed
-                        // (boss 2026-08-24: one clear Total-score column, weights on click)
+                        // AVERAGE SCORE (boss 2026-08-25: the four checklist
+                        // categories, each scored, divided by their count)
                         <td className="text-right px-3 font-extrabold" style={{ color: "#1565c0" }}
-                          title={r.live_adj !== undefined
-                            ? t(`아침 ${r.score} + 실시간 ${r.live_adj >= 0 ? "+" : ""}${r.live_adj} = ${r.live_total}`,
-                                `morning ${r.score} + live ${r.live_adj >= 0 ? "+" : ""}${r.live_adj} = ${r.live_total}`)
-                            : t("아침 가중 총점 (실시간 보정은 상위 10만)", "morning weighted total (live pass covers the top 10)")}>
-                          {r.live_total !== undefined ? r.live_total : r.score}
+                          title={t("평균 = (시장 + 이슈·수급 + 종목선정 + 실행·관리) ÷ 계산된 칸 수 — 종목명 클릭(🧮)이 전체 계산식",
+                                   "average = (market + issue/supply + stock selection + execution mgmt) ÷ computed columns - click the name (🧮) for the full formula")}>
+                          {(r.cats as { avg?: number } | undefined)?.avg
+                            ?? (r.live_total !== undefined ? r.live_total : r.score)}
                         </td>
                       )}
                       {(pickDetail
@@ -1520,7 +1527,44 @@ export default function LiveDeskPage() {
                         <tr><td colSpan={pickDetail ? 10 : 7} className="px-6 py-2 text-[10.5px] border-b"
                           style={{ background: "rgba(230,81,0,0.05)", borderColor: "#e65100",
                                    color: "var(--text-secondary)" }}>
-                          <div><b style={{ color: "#e65100" }}>🧮 {r.name} — {t("총점 계산식", "the total-score formula")}</b></div>
+                          <div><b style={{ color: "#e65100" }}>🧮 {r.name} — {t("점수 계산식 전체", "the full score calculation")}</b></div>
+                          {(() => {
+                            const c9 = r.cats as { market?: number | null; issue?: number | null;
+                              stock_sel?: number | null; exec?: number | null; avg?: number | null } | undefined;
+                            const ex9 = (r as unknown as { exec_items?: { no: number; q: string;
+                              ok: boolean | null; d: string }[] }).exec_items;
+                            if (!c9) return null;
+                            const parts9: [string, string, number | null | undefined][] = [
+                              ["시장", "market", c9.market], ["이슈·수급", "issue/supply", c9.issue],
+                              ["종목선정", "stock sel.", c9.stock_sel], ["실행·관리", "exec mgmt", c9.exec]];
+                            const nn9 = parts9.filter(([, , v]) => v != null).length;
+                            return (<>
+                              <div className="mt-1 tabular-nums">
+                                <b style={{ color: "#e65100" }}>{t("평균 점수", "average score")}</b> = (
+                                {parts9.map(([ko9, en9, v9], i9) => (
+                                  <span key={i9}>{i9 > 0 ? " + " : ""}
+                                    {lang === "ko" ? ko9 : en9} <b className="text-[var(--text-primary)]">{v9 ?? "—"}</b></span>
+                                ))}) ÷ {nn9} = <b style={{ color: "#1565c0" }}>{c9.avg ?? "—"}</b>
+                              </div>
+                              {ex9 && ex9.length > 0 && (
+                                <div className="mt-0.5">
+                                  <b style={{ color: "#1565c0" }}>{t("실행·관리의 계산", "execution mgmt calculation")}</b>:
+                                  {ex9.map((e9, i9) => (
+                                    <span key={i9} className="ml-2 whitespace-nowrap">
+                                      #{e9.no} {e9.q}: <b style={{ color: e9.ok === true ? "#0f5132" : e9.ok === false ? "#b02a2a" : "var(--text-muted)" }}>
+                                        {e9.ok === true ? "O" : e9.ok === false ? "X" : "—"}</b>
+                                      <span className="opacity-60"> ({e9.d.slice(0, 40)})</span>
+                                    </span>
+                                  ))}
+                                  <span className="ml-2 opacity-70">{t("= O의 비율", "= share of O answers")}</span>
+                                </div>
+                              )}
+                              <div className="mt-0.5 opacity-70">
+                                {t("아래는 종목선정 칸(90문항 자동분)의 내부 구성 — 아침 가중식:",
+                                   "below: the stock-selection column's internals (the automated 90) - the morning weighted formula:")}
+                              </div>
+                            </>);
+                          })()}
                           <div className="mt-1 tabular-nums">
                             {t("총점", "total")} = {W9.map(([k9, ko9, en9, w9], i9) => (
                               <span key={k9}>{i9 > 0 ? " + " : ""}
