@@ -173,6 +173,14 @@ def build_character(before: str = "") -> dict[str, dict]:
     tickers = sorted(set(tickers) | set(DESK))
     cur.execute("SELECT code, name FROM krx_stocks")
     names = dict(cur.fetchall())
+    # KOSPI ONLY (boss 2026-08-25 evening: "remove any KOSDAQ and ETF"):
+    # candidates must be KOSPI-listed companies. ETFs (KODEX 200) are not in
+    # krx_stocks with a KOSPI market tag and fall out with the same net.
+    # The desk six are KOSPI and stay unconditionally.
+    cur.execute("SELECT code, market FROM krx_stocks")
+    _mkt9 = dict(cur.fetchall())
+    tickers = [tk for tk in tickers
+               if tk in DESK or (_mkt9.get(tk) or "").upper() == "KOSPI"]
     for tk in tickers:
         cur.execute("""SELECT date, close, volume FROM raw_daily_prices
                        WHERE ticker=%s ORDER BY date""", (tk,))
