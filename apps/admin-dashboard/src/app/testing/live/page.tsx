@@ -1640,13 +1640,27 @@ export default function LiveDeskPage() {
                       ) : (
                         // AVERAGE SCORE (boss 2026-08-25: the four checklist
                         // categories, each scored, divided by their count)
-                        <td className="text-right px-3 font-extrabold" style={{ color: "#1565c0" }}
-                          title={t("평균 = (시장 + 이슈·수급 + 종목선정 + 실행·관리) ÷ 계산된 칸 수 — 종목명 클릭(🧮)이 전체 계산식",
-                                   "average = (market + issue/supply + stock selection + execution mgmt) ÷ computed columns - click the name (🧮) for the full formula")}>
-                          {(rankHead9?.rows?.find((x) => x.code === r.code)?.avg)
-                            ?? (r.cats as { avg?: number } | undefined)?.avg
-                            ?? (r.live_total !== undefined ? r.live_total : r.score)}
-                        </td>
+                        {(() => {
+                          const base9 = (r.cats as { avg?: number } | undefined)?.avg
+                            ?? (r.live_total !== undefined ? r.live_total : r.score);
+                          const live9 = rankHead9?.rows?.find((x) => x.code === r.code)?.avg;
+                          const adj9 = live9 != null && base9 != null
+                            ? Math.round((live9 - base9) * 10) / 10 : null;
+                          return (
+                            <td className="text-right px-3 font-extrabold" style={{ color: "#1565c0" }}
+                              title={adj9 != null
+                                ? t(`4칸 평균 ${base9} + 실시간(4초, 가격·구간·뉴스) ${adj9 >= 0 ? "+" : ""}${adj9} = ${live9} — 종목명 클릭(🧮)이 전체 계산식`,
+                                    `4-column average ${base9} + live adj (4s: price/zone/news) ${adj9 >= 0 ? "+" : ""}${adj9} = ${live9} - click the name (🧮) for the full formula`)
+                                : t("평균 = (시장 + 이슈·수급 + 종목선정 + 실행·관리) ÷ 계산된 칸 수",
+                                    "average = the four columns ÷ their count")}>
+                              {live9 ?? base9}
+                              {adj9 != null && adj9 !== 0 && (
+                                <span className="ml-0.5 text-[9px] font-normal"
+                                  style={{ color: adj9 > 0 ? "#0f5132" : "#b02a2a" }}>
+                                  {adj9 > 0 ? "▲" : "▼"}</span>)}
+                            </td>
+                          );
+                        })()}
                       )}
                       {(pickDetail
                         ? (["trend","liquidity","flexibility","levels","momentum","flows"] as const)
@@ -1703,6 +1717,17 @@ export default function LiveDeskPage() {
                                 <span key={i9}>{i9 > 0 ? " + " : ""}
                                   {lang === "ko" ? ko9 : en9} <b className="text-[var(--text-primary)]">{v9 ?? "—"}</b></span>
                               ))}) ÷ {nn9} = <b style={{ color: "#1565c0" }}>{c9.avg ?? "—"}</b>
+                              {(() => {
+                                const lv9 = rankHead9?.rows?.find((x) => x.code === r.code)?.avg;
+                                const ad9 = lv9 != null && c9.avg != null
+                                  ? Math.round((lv9 - c9.avg) * 10) / 10 : null;
+                                return ad9 != null ? (
+                                  <span className="ml-2">
+                                    {t(`+ 실시간 조정(4초: 가격·구간·뉴스) ${ad9 >= 0 ? "+" : ""}${ad9} = `,
+                                       `+ live adj (4s: price/zone/news) ${ad9 >= 0 ? "+" : ""}${ad9} = `)}
+                                    <b style={{ color: "#e65100" }}>{lv9}</b>
+                                    {t(" ← 지금 점수(칩과 동일)", " ← the LIVE score (same as the chips)")}
+                                  </span>) : null; })()}
                             </div>
                           )}
                           {mi9.length > 0 && (
