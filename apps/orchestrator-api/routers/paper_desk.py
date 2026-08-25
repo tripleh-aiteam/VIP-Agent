@@ -1526,15 +1526,12 @@ def live_warm():
     # through the endpoints would now just receive {computing} placeholders
     import time as _t2
     from services.kiwoom_tape import _day as _kd9
+    # SLIM WARM (2026-08-25 midday: the fat warm - 8 fam computes + 4 ranks
+    # in ONE request - outlived its client and took the process with it).
+    # Only what the page's default view actually asks for: the three live
+    # families + old, 1분 clock. Everything else earns its cache on first
+    # click through the vital lane.
     for fam in ("d1", "d2", "d3", "old"):
-        try:
-            _SWR[("fam", fam, 5, 0, _kd9(), "", "", 1, 1)] = (
-                _t2.time(), _fam_compute(fam, 5, 0, "", "", "", 1, 1))
-        except Exception:
-            pass
-        # the page's 1분 default asks with period=60 - a warm that skips this
-        # key leaves every reload cold (the 2026-08-25 crash-loop morning:
-        # cold keys + 9-stock replays = OOM). Sequential, so memory-safe.
         try:
             _SWR[("fam", fam, 5, 60, _kd9(), "", "", 1, 1)] = (
                 _t2.time(), _fam_compute(fam, 5, 60, "", "", "", 1, 1))
@@ -1554,12 +1551,11 @@ def live_warm():
             _reco9 = []
         for _codes9 in ([_six9, _reco9] if _reco9 else [_six9]):
             _nc9 = ",".join(sorted(_codes9))
-            for _per9 in (0, 60):
-                _SWR[("rank", 5, _per9, _kd9(), "", "", True, True, _nc9)] = (
-                    _t2.time(), _rank2(tick=5, period=_per9, day="", frm="",
-                                       to="", use_gate=True,
-                                       allow_fallback=True,
-                                       codes=",".join(_codes9)))
+            _SWR[("rank", 5, 60, _kd9(), "", "", True, True, _nc9)] = (
+                _t2.time(), _rank2(tick=5, period=60, day="", frm="",
+                                   to="", use_gate=True,
+                                   allow_fallback=True,
+                                   codes=",".join(_codes9)))
     except Exception:
         pass
     return {"ok": True, "day": ref, "models": out,
