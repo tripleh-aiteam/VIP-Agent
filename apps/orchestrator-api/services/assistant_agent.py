@@ -1500,6 +1500,7 @@ _FIELD_FAMILIES = (
     ("high", ("고가", "high price", "highest price")),
     ("low", ("저가", "low price", "lowest price")),
     ("close", ("종가", "close price", "closing price")),
+    ("change_pct", ("등락", "변동률", "변화율", "변동", "changes", "chang")),
 )
 
 
@@ -1663,11 +1664,39 @@ def _vip_history_reply(transcript: Optional[str], lang: str, hist=None,
                     f"{nm}: minute-level price for {d} {hh:02d}:{mm:02d} isn't on the free feed. Day close {_won_str(close)} (H {_won_str(row.get('high'))} / L {_won_str(row.get('low'))}).")
     if not any(s["rows"] for s in out):
         return None
-    # ONE FIELD ASKED, ONE NUMBER ANSWERED (+ a natural offer) — single past date only;
-    # ranges and multi-field asks keep the full table.
+    # ONE FIELD ASKED → ONLY that field answered (boss 2026-08-25: "I asked only changes
+    # but it is showing all days' info, which is token consumption").
     _fld = _single_field_asked(transcript)
+    # RANGE + one field: compact per-day list of just that field, plus the verdict note.
+    if _fld and kind == "range" and not tm:
+        _F_KO2 = {"volume": "거래량", "open": "시가", "high": "고가", "low": "저가",
+                  "close": "종가", "change_pct": "등락"}
+        _fl2 = list(notes)
+        for s in out:
+            if not s["rows"]:
+                continue
+            if len(out) > 1 or not notes:
+                _fl2.append(f"**{s['name']}** — {_F_KO2[_fld] if not _en else _fld.replace('_pct', '')}:")
+            for row in s["rows"]:
+                v = row.get(_fld)
+                if v is None:
+                    continue
+                if _fld == "change_pct":
+                    _val = f"**{v:+.2f}%**"
+                elif _fld == "volume":
+                    _val = f"**{int(v):,}{'주' if not _en else ' shares'}**"
+                else:
+                    _val = f"**{_won_str(v)}**"
+                _fl2.append(f"- {row.get('date')}: {_val}")
+        if len(_fl2) > len(notes):
+            _fl2 += ["", ("Want the full daily table (open/high/low/close/volume)? Just ask."
+                          if _en else
+                          "전체 표(시가·고가·저가·종가·거래량)가 필요하시면 말씀해 주세요.")]
+            return "\n".join(_fl2)
+    # single past date + one field
     if _fld and kind == "dates" and len({d.isoformat() for d in payload}) == 1 and not tm:
-        _F_KO = {"volume": "거래량", "open": "시가", "high": "고가", "low": "저가", "close": "종가"}
+        _F_KO = {"volume": "거래량", "open": "시가", "high": "고가", "low": "저가",
+                 "close": "종가", "change_pct": "등락"}
         _fl = list(notes)
         for s in out:
             if not s["rows"]:
@@ -1676,12 +1705,14 @@ def _vip_history_reply(transcript: Optional[str], lang: str, hist=None,
             v = row.get(_fld)
             if v is None:
                 continue
-            if _en:
-                _val = f"{int(v):,} shares" if _fld == "volume" else _won_str(v)
-                _fl.append(f"**{s['name']}** — {row.get('date')} {_fld}: **{_val}**")
+            if _fld == "change_pct":
+                _val = f"{v:+.2f}%"
+            elif _fld == "volume":
+                _val = f"{int(v):,}" + (" shares" if _en else "주")
             else:
-                _val = f"{int(v):,}주" if _fld == "volume" else _won_str(v)
-                _fl.append(f"**{s['name']}** — {row.get('date')} {_F_KO[_fld]}: **{_val}**")
+                _val = _won_str(v)
+            _lbl = _fld.replace("_pct", "") if _en else _F_KO[_fld]
+            _fl.append(f"**{s['name']}** — {row.get('date')} {_lbl}: **{_val}**")
         if len(_fl) > len(notes):
             _fl += ["", ("Want that day's open/high/low/close too, or another date? Just ask."
                          if _en else
