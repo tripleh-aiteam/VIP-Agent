@@ -126,6 +126,34 @@ Corrections submitted via the Review tab become highest-priority knowledge entri
 
 `services/docx_export.py` converts twin task results (Markdown) into styled `.docx` for download. Endpoint: `GET /twins/{twin_id}/tasks/{task_id}/download.docx`. Used by the boss/worker to grab overnight research reports as Word files. Supports headings (#/##/###), bullets, numbered lists, tables (`| col |`), code blocks, bold/italic/inline-code.
 
+## Data PC API — Query This FIRST for Stock/Crypto Data
+
+The boss's second server ("data PC", hostname DESKTOP-P1PIS12) serves collected market
+data over a read-only HTTP API on Tailscale: **`http://100.96.115.29:8010`**. For any
+stock/crypto price or history question, query it BEFORE web search or external APIs —
+local, fast, free. If it's unreachable, check `tailscale status` (this machine must be
+on the boss's Tailscale network).
+
+Coverage: 2,815 KR daily codes · 115 KR minute-bar codes · 517 US daily tickers ·
+crypto (BTC/ETH/XRP/GOLD daily + 220 realtime pairs) · live tick tape for the six desk
+stocks · market news. All GET, all JSON:
+
+```
+/health                              alive check
+/catalog                             what data exists
+/resolve?q=naver                     name → KR code
+/kr/daily/{code}?months=3            full daily OHLCV (data[].date/open/high/low/close/volume/change)
+/kr/daily/{code}/summary?months=6    min/max/latest summary
+/kr/minute/{code}?date=YYYY-MM-DD    1-minute bars (115 codes)
+/us/daily/{TICKER}[/summary]         US tickers (AAPL, ZTS…)
+/crypto/daily/{BTC|ETH|XRP|GOLD}[/summary]
+/ticks/{code}?limit=100              today's live ticks (000660,005930,017670,034020,035420,042660)
+/news                                latest market news
+```
+
+`services/price_history.py` already uses it as tier 1 (→ Supabase → Naver fallback)
+for the chatbot's history answers.
+
 ## Daily Changes Log
 
 `Daily_changes.md` is updated by the human team (not auto-generated) and is the canonical narrative log of what was built/changed each day, with file references. When investigating "why does this code look like this?", check this file first — it often explains intent that isn't obvious from the diff.
