@@ -355,6 +355,91 @@ function LiveChart({ bars, marks, focus, off = 0 }:
   return <div ref={ref} style={{ width: "100%", height: 320 }} />;
 }
 
+// 🤝 Auto / Semi-auto for the reco desk (boss 2026-08-25). Auto = the picks trade
+// themselves on the 100-checklist recommendation. Semi = algo BUY signals appear here
+// as suggestions and the FINAL CLICK IS HUMAN; SELLs/stops always execute on their own.
+function RecoTradeModePanel({ t }: { t: (ko: string, en: string) => string }) {
+  type Sug = { id: string; ts: number; ticker: string; name: string; side: string;
+               qty: number; source: string; status: string };
+  const [mode, setMode] = useState<string>("auto");
+  const [pending, setPending] = useState<Sug[]>([]);
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    let live = true;
+    const load = () => api<{ mode: string; pending: Sug[] }>("/paper-desk/reco-trade-mode")
+      .then((d) => { if (live) { setMode(d.mode || "auto"); setPending(d.pending || []); } })
+      .catch(() => {});
+    load();
+    const h = setInterval(load, 8000);
+    return () => { live = false; clearInterval(h); };
+  }, []);
+  const setModeReq = (m: string) => {
+    if (m === mode) return;
+    setBusy(true);
+    api<{ mode: string }>(`/paper-desk/reco-trade-mode?mode=${m}`, { method: "POST" })
+      .then((d) => setMode(d.mode)).catch(() => {}).finally(() => setBusy(false));
+  };
+  const decideReq = (id: string, approve: boolean) => {
+    setBusy(true);
+    api(`/paper-desk/suggestions/${id}?approve=${approve ? 1 : 0}`, { method: "POST" })
+      .then(() => api<{ mode: string; pending: Sug[] }>("/paper-desk/reco-trade-mode"))
+      .then((d) => setPending(d.pending || [])).catch(() => {}).finally(() => setBusy(false));
+  };
+  return (
+    <div className="mt-3 rounded-xl border px-4 py-2" style={{ borderColor: "#6a1b9a", background: "rgba(106,27,154,0.04)" }}>
+      <div className="flex items-center gap-2 flex-wrap">
+        <b className="text-[13px]" style={{ color: "#6a1b9a" }}>
+          🤝 {t("추천 매매 방식", "reco trading mode")}
+        </b>
+        {([["auto", t("⚡ 자동 — 체크리스트 추천대로 자동매매", "⚡ Auto — trades the checklist picks itself")],
+           ["semi", t("🤝 반자동 — 제안하면 내가 최종 클릭", "🤝 Semi — it suggests, my click is final")]] as const)
+          .map(([m, lab]) => (
+          <button key={m} disabled={busy} onClick={() => setModeReq(m)}
+            className="text-[11px] font-bold px-2.5 py-1 rounded-lg border"
+            style={mode === m ? { background: "#6a1b9a", color: "#fff", borderColor: "#6a1b9a" }
+                              : { borderColor: "var(--border-default)", color: "var(--text-secondary)" }}>
+            {mode === m ? "● " : "○ "}{lab}
+          </button>
+        ))}
+        <span className="text-[10px] text-[var(--text-muted)]">
+          {t("매도/손절은 항상 자동 실행 · 내 6종목은 항상 자동", "sells/stops always execute · my 6 always auto")}
+        </span>
+      </div>
+      {mode === "semi" && (
+        <div className="mt-2 space-y-1">
+          {pending.length === 0 ? (
+            <div className="text-[11px] text-[var(--text-muted)]">
+              {t("대기 중인 매수 제안 없음 — 알고리즘이 신호를 잡으면 여기에 나타납니다.",
+                 "no pending buy suggestions — they appear here when an algorithm fires.")}
+            </div>
+          ) : pending.map((s) => (
+            <div key={s.id} className="flex items-center gap-2 flex-wrap rounded-lg border px-3 py-1.5"
+              style={{ borderColor: "#2e7d32", background: "rgba(46,125,50,0.06)" }}>
+              <b className="text-[12px]" style={{ color: "#2e7d32" }}>🟢 {s.side}</b>
+              <b className="text-[12px] text-[var(--text-primary)]">{s.name}</b>
+              <span className="text-[11px] text-[var(--text-secondary)]">
+                {s.qty.toLocaleString()}{t("주 · 시장가", " sh · market")} · {s.source} ·
+                {" "}{new Date(s.ts * 1000).toLocaleTimeString()}
+              </span>
+              <span className="ml-auto flex gap-1.5">
+                <button disabled={busy} onClick={() => decideReq(s.id, true)}
+                  className="text-[11px] font-bold px-3 py-1 rounded-lg text-white" style={{ background: "#2e7d32" }}>
+                  {t("✔ 승인 (매수 실행)", "✔ Approve (buy)")}
+                </button>
+                <button disabled={busy} onClick={() => decideReq(s.id, false)}
+                  className="text-[11px] font-bold px-3 py-1 rounded-lg border"
+                  style={{ borderColor: "#b02a2a", color: "#b02a2a" }}>
+                  {t("✖ 거절", "✖ Reject")}
+                </button>
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function LiveDeskPage() {
   const { t, lang } = useLanguage();
   // RECO DESK VIEW (boss 2026-08-24: a second menu for the checklist's recommended
@@ -1541,58 +1626,11 @@ export default function LiveDeskPage() {
       {/* the GO/NO-GO strip only rides with the SCORE desk (boss 2026-08-11): on his
           fixed six the rules on the board ignore the gate anyway, so a wall of NO-GO
           over stocks that are trading regardless read as a contradiction */}
-      {/* GO/NO-GO buy permission = a RECOMMENDATION verdict → lives on the 추천 데스크
-          only (boss 2026-08-24: "the Live Kiwoom menu should be the 6 predefined
-          stocks' trading"). */}
-      {deskView === "reco" && gate?.ok && (
-        <div className="mt-3 rounded-xl border px-4 py-2" style={{ borderColor: "#e65100",
-             background: gate.go === 0 ? "rgba(176,42,42,0.06)" : "rgba(230,81,0,0.05)" }}>
-          <div className="flex items-center gap-2 flex-wrap">
-            <b className="text-[13px]" style={{ color: "#e65100" }}>
-              📅 {t("오늘 매수 가능 여부 (장 시작 전 판정)", "today's buy permission (decided before the open)")}
-            </b>
-            <span className="text-[11px] font-bold px-1.5 py-0.5 rounded"
-              style={{ background: gate.go > 0 ? "rgba(15,81,50,0.14)" : "rgba(176,42,42,0.14)",
-                       color: gate.go > 0 ? "#0f5132" : "#b02a2a" }}>
-              {t(`${gate.total}개 중 ${gate.go}개 매수 가능`, `${gate.go} of ${gate.total} cleared to buy`)}
-            </span>
-            <span className="text-[10px] text-[var(--text-muted)]">
-              {t("어제까지의 일봉만 보고 판정합니다 — 오늘 자료는 쓰지 않습니다",
-                 "judged only on daily bars up to yesterday - today's data is never used")}
-            </span>
-            <button onClick={() => { setShowBlocked(!showBlocked); showBlockedRef.current = !showBlocked;
-                                     setDet(null); setSel(null); setPick(null); pull(); }}
-              className="ml-auto text-[10.5px] font-bold px-2 py-0.5 rounded-md border"
-              title={t("금지된 종목도 포함해 '만약 거래했다면' 결과를 봅니다 — 실제 매매에는 영향이 없습니다",
-                       "see what the rules WOULD have done including blocked stocks - real trading is unaffected")}
-              style={showBlocked ? { background: "#e65100", color: "#fff", borderColor: "#e65100" }
-                                 : { borderColor: "#e65100", color: "#e65100" }}>
-              {showBlocked ? t("가상 결과 보는 중 (클릭해 끄기)", "showing would-have results (click to stop)")
-                           : t("금지된 날도 결과 보기", "show results anyway")}
-            </button>
-          </div>
-          <div className="mt-1.5 grid gap-1" style={{ gridTemplateColumns: "repeat(auto-fit,minmax(330px,1fr))" }}>
-            {gate.rows.map((r) => (
-              <div key={r.code} className="text-[11px] flex items-start gap-2">
-                <span className="font-extrabold px-1.5 py-0.5 rounded shrink-0"
-                  style={{ background: r.go ? "#0f5132" : "#b02a2a", color: "#fff" }}>
-                  {r.go ? "GO" : "NO-GO"}
-                </span>
-                <b className="text-[var(--text-primary)] shrink-0" style={{ minWidth: 110 }}>{r.name}</b>
-                <span style={{ color: r.go ? "#0f5132" : "var(--text-secondary)" }}>
-                  {lang === "ko" ? r.reason_ko : r.reason_en}
-                </span>
-              </div>
-            ))}
-          </div>
-          {gate.go === 0 && (
-            <div className="mt-1.5 text-[10.5px] font-bold" style={{ color: "#b02a2a" }}>
-              {t("⚠ 오늘은 모든 종목이 매수 금지입니다 — 새 매수는 없고, 보유 중인 건은 규칙대로 정리됩니다.",
-                 "⚠ every stock is closed for buying today - no new entries; open positions still exit by their rules.")}
-            </div>
-          )}
-        </div>
-      )}
+      {/* SEMI-AUTO control + pending suggestions (boss 2026-08-25: "Auto trades by the
+          100-checklist recommendation; in Semi-auto it suggests and the final click is
+          human"). SELLs/stops always execute; the six always auto-trade. */}
+      {deskView === "reco" && <RecoTradeModePanel t={t} />}
+      {/* GO/NO-GO board removed at the boss's order (2026-08-25) — code preserved. */}
       {/* THE ALGORITHM CHOICE, its own bar above the panel (boss 2026-08-11: it was
           buried under the history table inside the toolbar and unreachable) */}
       <div className="mt-3 flex items-center gap-2">

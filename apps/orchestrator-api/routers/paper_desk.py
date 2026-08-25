@@ -1167,6 +1167,33 @@ def reco_n_set(n: int = Query(...), force: int = Query(0)):
             "trading_now": [{"code": c, "name": x} for c, x in WATCH]}
 
 
+@router.get("/reco-trade-mode")
+def reco_trade_mode_get():
+    """auto = the reco picks trade themselves · semi = algo BUYs on reco picks become
+    suggestions awaiting the human click (SELLs always execute; the six always auto)."""
+    from services.trade_suggestions import pending, trade_mode
+    return {"ok": True, "mode": trade_mode(), "pending": pending()}
+
+
+@router.post("/reco-trade-mode")
+def reco_trade_mode_set(mode: str = Query(...)):
+    from services.trade_suggestions import set_trade_mode
+    return {"ok": True, "mode": set_trade_mode(mode)}
+
+
+@router.get("/suggestions")
+def suggestions_list():
+    from services.trade_suggestions import pending
+    return {"ok": True, "pending": pending()}
+
+
+@router.post("/suggestions/{sug_id}")
+def suggestion_decide(sug_id: str, approve: int = Query(...), db: Session = Depends(get_db)):
+    """The human's final click: approve=1 executes the suggested order, approve=0 rejects."""
+    from services.trade_suggestions import decide
+    return decide(db, sug_id, bool(approve))
+
+
 @router.get("/desk-mode")
 def desk_mode_get():
     from services.daily_pick import DESK, desk_mode

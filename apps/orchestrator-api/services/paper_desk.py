@@ -336,10 +336,22 @@ def _fill(db, order_id: int, ticker: str, name: str, side: str, qty: int, px: fl
 
 def place_order(db, ticker: str, side: str, qty: int,
                 order_type: str = "market", limit_price: Optional[float] = None,
-                source: str = "manual", ref_price: Optional[float] = None) -> dict:
+                source: str = "manual", ref_price: Optional[float] = None,
+                direct: bool = False) -> dict:
     _ensure(db)
     ticker = str(ticker).strip().zfill(6)
     side = side.upper()
+    # 🤝 SEMI-AUTO (boss 2026-08-25): in "semi" mode an ALGO BUY on a RECO stock becomes
+    # a pending suggestion for the human to approve — the final click is his. SELLs
+    # always execute (a stop/harvest must never wait), the six always auto-trade, and
+    # `direct=True` is the approval path itself.
+    if (not direct and side == "BUY" and str(source).startswith("algo")):
+        try:
+            from services.trade_suggestions import is_reco_stock, suggest, trade_mode
+            if trade_mode() == "semi" and is_reco_stock(ticker):
+                return suggest(ticker, side, qty, order_type, limit_price, source, ref_price)
+        except Exception:
+            pass                      # suggestion layer must never block real trading
     order_type = order_type.lower()
     if side not in ("BUY", "SELL") or qty <= 0:
         return {"ok": False, "error": "side must be BUY/SELL and qty > 0"}
